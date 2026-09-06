@@ -136,6 +136,14 @@ fn window_size() -> WindowSize {
     }
 }
 
+/// Host process memory in KB for diagnostics UI: Apple phys_footprint
+/// (Xcode's memory-gauge number), Linux/Android resident set, live wasm
+/// heap on the web host (0 = unknown).
+fn mem_kb() -> int {
+    arena.ensure()
+    return platform.plat_mem_kb()
+}
+
 /// Enter the event loop with `node` as the tree root.
 /// `ZEUS_HEADLESS=1` layouts once and exits (tests). Prefer `zeus.App`.
 fn run(node: Node) {
@@ -961,6 +969,22 @@ fn virt_stale() -> int {
     return 0
 }
 
+/// A refit host (chart, plot) whose measured width moved since its last
+/// rebuild. Checked after the layout that measured it, so the refresh pass
+/// rebuilds it with the width it will paint this very frame — no one-frame
+/// lag and no empty band while a window is being resized.
+fn refit_stale() -> int {
+    let n = arena.nodes.len
+    for i in 1..n {
+        if arena.nodes[i].list_fn > 0 {
+            if arena.nodes[i].w != arena.nodes[i].list_gen {
+                return 1
+            }
+        }
+    }
+    return 0
+}
+
 fn engine_layout(width: int, height: int) {
     // One frame of the async world first: steppers advance in-flight socket
     // state machines, then spawns and due timers fire. Callbacks set signals;
@@ -982,12 +1006,13 @@ fn engine_layout(width: int, height: int) {
         arena.stamp_edits()
     } else {
         arena.stamp_edits()
-        refresh_lists()
     }
     layout.layout(width, height)
-    // Windowed lists size their window from the scroller's laid-out height.
-    // The first pass may have h = 0; rebuild the window and lay out once more.
-    if virt_stale() != 0 {
+    // Windowed lists size their window from the scroller's laid-out height,
+    // and refit hosts (charts) rebuild when this frame's layout moved their
+    // width. One refresh pass after layout covers both; the second pass
+    // re-lays-out with the new rows / fresh chart width.
+    if (virt_stale() != 0) || (refit_stale() != 0) {
         refresh_lists()
         layout.layout(width, height)
     }
@@ -2624,6 +2649,13 @@ fn refit_refresh(nid: int, build: fn()) {
     if w == arena.nodes[nid].list_gen {
         return
     }
+    // A zero-width host (hidden tab, or not laid out yet) defers its rebuild
+    // until it is measured at a real width. Syncing `list_gen` here keeps it
+    // from refitting on every resize frame while off-screen.
+    if w == 0 {
+        arena.nodes[nid].list_gen = 0
+        return
+    }
     arena.nodes[nid].list_gen = w
     let prev = arena.scope_begin(nid)
     arena.release_sigs(nid)
@@ -4199,6 +4231,26 @@ fn __c_col_x(gutter: int, col_w: int, i: int) -> int {
     return gutter + i * col_w
 }
 
+/// Plot x of category `i` when the series spans the full plot width: the
+/// first point sits on the left grid edge and the last on the right edge,
+/// so a line/area chart has no half-column dead space at its ends.
+/// `col_w * n` is the plot width; the n marks divide it into n-1 spans.
+fn __c_pt_x(gutter: int, col_w: int, n: int, i: int) -> int {
+    if n <= 1 {
+        return gutter + col_w * n / 2
+    }
+    return gutter + i * (col_w * n) / (n - 1)
+}
+
+/// Mark x for category `i`: span mode (pt = 1, line/area charts) uses
+/// `__c_pt_x`; column mode (pt = 0, bar charts) keeps the band centers.
+fn __c_mx(pt: int, gutter: int, col_w: int, n: int, i: int) -> int {
+    if pt != 0 {
+        return __c_pt_x(gutter, col_w, n, i)
+    }
+    return __c_col_x(gutter, col_w, i) + col_w / 2
+}
+
 fn __c_y(maxv: int, plot_h: int, top: int, v: int) -> int {
     return top + plot_h - v * plot_h / maxv
 }
@@ -4235,7 +4287,7 @@ fn __c_line_d(vals: []int, s: int, j: int, maxv: int, gutter: int, col_w: int,
     let mut b = []int {}
     b = __b_s(b, "M")
     for i in 0..n {
-        let x = __c_col_x(gutter, col_w, i) + col_w / 2
+        let x = __c_pt_x(gutter, col_w, n, i)
         let y = __c_y(maxv, plot_h, top, __c_val(vals, s, i, j))
         b = __b_i(b, x)
         b = __b_s(b, " ")
@@ -4251,12 +4303,12 @@ fn __c_line_d(vals: []int, s: int, j: int, maxv: int, gutter: int, col_w: int,
 fn __c_area_d(vals: []int, s: int, j: int, maxv: int, gutter: int, col_w: int,
               plot_h: int, top: int, n: int) -> string {
     let base = top + plot_h
-    let first_x = gutter + col_w / 2
-    let last_x = __c_col_x(gutter, col_w, n - 1) + col_w / 2
+    let first_x = __c_pt_x(gutter, col_w, n, 0)
+    let last_x = __c_pt_x(gutter, col_w, n, n - 1)
     let mut b = []int {}
     b = __b_s(b, "M")
     for i in 0..n {
-        let x = __c_col_x(gutter, col_w, i) + col_w / 2
+        let x = __c_pt_x(gutter, col_w, n, i)
         let y = __c_y(maxv, plot_h, top, __c_val(vals, s, i, j))
         b = __b_i(b, x)
         b = __b_s(b, " ")
@@ -4308,7 +4360,7 @@ fn __c_axes(w: int, h: int, maxv: int) {
 /// position track the hovered column (`act` = category + 1, 0 = none)
 /// through prop thunks, instead of one pre-built panel per category.
 fn __c_tooltip(labels: []string, names: []string, vals: []int, s: int, n: int,
-               w: int, col_w: int, act: Signal<int>) {
+               w: int, col_w: int, act: Signal<int>, pt: int) {
     let panel = Box(
         align_direction = DIRECTION.Column,
         width = 128,
@@ -4322,13 +4374,13 @@ fn __c_tooltip(labels: []string, names: []string, vals: []int, s: int, n: int,
         position = pos_absolute(),
         top = 0,
         z_index = 8,
-        // Slide to the hovered column; -1 (no pin) while `act` is 0, when
+        // Slide to the hovered mark; -1 (no pin) while `act` is 0, when
         // the panel is hidden anyway.
         left = fn() -> int {
             let a = act.get() - 1
             if a >= 0 {
                 if a < n {
-                    let mut x = __c_col_x(CHART_GUTTER, col_w, a) + col_w / 2 - 64
+                    let mut x = __c_mx(pt, CHART_GUTTER, col_w, n, a) - 64
                     if x < CHART_GUTTER {
                         x = CHART_GUTTER
                     }
@@ -4376,12 +4428,40 @@ fn __c_tooltip(labels: []string, names: []string, vals: []int, s: int, n: int,
     __ui_pop()
 }
 
-/// Transparent hover column for a category. Hovering it flips its own
-/// signal; a watch effect folds that into the shared `act`.
-fn __c_zone(i: int, hov: Signal<int>, act: Signal<int>, h: int, col_w: int) {
-    let zone = Box(width = col_w, height = h,
+/// Transparent hover zone for a category. Hovering it flips its own
+/// signal; a watch effect folds that into the shared `act`. Span mode
+/// gives each mark a contiguous catch strip from the midpoint of the
+/// previous mark to the midpoint of the next (the ends reach the plot
+/// edges), so the pointer always lands on the nearest mark; column mode
+/// keeps the full-band coverage of the bar columns.
+fn __c_zone(i: int, hov: Signal<int>, act: Signal<int>, h: int, col_w: int, pt: int,
+            n: int) {
+    let mut zl = 0
+    let mut zw = col_w
+    if pt != 0 {
+        // Span mode: Voronoi strip around mark `i`.
+        if n <= 1 {
+            zl = CHART_GUTTER
+            zw = col_w * n
+        } else {
+            if i == 0 {
+                zl = CHART_GUTTER
+            } else {
+                zl = (__c_pt_x(CHART_GUTTER, col_w, n, i - 1) + __c_pt_x(CHART_GUTTER, col_w, n, i)) / 2
+            }
+            if i == n - 1 {
+                zw = CHART_GUTTER + col_w * n - zl
+            } else {
+                let zr = (__c_pt_x(CHART_GUTTER, col_w, n, i) + __c_pt_x(CHART_GUTTER, col_w, n, i + 1)) / 2
+                zw = zr - zl
+            }
+        }
+    } else {
+        zl = __c_col_x(CHART_GUTTER, col_w, i)
+    }
+    let zone = Box(width = zw, height = h,
                         position = pos_absolute(),
-                        left = __c_col_x(CHART_GUTTER, col_w, i),
+                        left = zl,
                         top = 0)
     hover(zone, hov)
     styled(zone, || {
@@ -4398,12 +4478,14 @@ fn __c_zone(i: int, hov: Signal<int>, act: Signal<int>, h: int, col_w: int) {
 /// X category label under the plot, rotated 45° clockwise around its top-left.
 /// Rotated labels are parallel diagonal strips, so they never collide with
 /// each other however narrow the plot gets; CHART_XLAB reserves their room.
-fn __c_xlab(label: string, i: int, col_w: int, plot_h: int) {
+fn __c_xlab(label: string, i: int, col_w: int, plot_h: int, pt: int, n: int) {
     // 8px of air below the baseline axis: the rotated strip starts below the
-    // line, not on it (the pivot corner is the strip's top edge).
+    // line, not on it (the pivot corner is the strip's top edge). Span mode
+    // labels sit just left of their mark so the strip stays inside the plot.
+    let x = if pt != 0 { __c_pt_x(CHART_GUTTER, col_w, n, i) - 4 } else { __c_col_x(CHART_GUTTER, col_w, i) + 3 }
     let lab = Text(label, color = mute(), font = tk(FONT_CAPTION),
                         position = pos_absolute(),
-                        left = __c_col_x(CHART_GUTTER, col_w, i) + 3,
+                        left = x,
                         top = CHART_TOP + plot_h + 8)
     text_rot(lab, 45)
 }
@@ -4421,9 +4503,9 @@ fn __c_legend(names: []string) {
     }
 }
 
-/// Hover cursor: a hairline through the hovered column (recharts-style).
+/// Hover cursor: a single hairline through the hovered mark (no wash band).
 /// `act` = category + 1; the line shows and slides with it.
-fn __c_cursor(act: Signal<int>, n: int, col_w: int, plot_h: int) {
+fn __c_cursor(act: Signal<int>, n: int, col_w: int, plot_h: int, pt: int) {
     let line = Box(width = 1, height = plot_h, background = hard(),
                         opacity = 55, radius = 0, a11y_label = "cursor",
                         position = pos_absolute(),
@@ -4432,7 +4514,7 @@ fn __c_cursor(act: Signal<int>, n: int, col_w: int, plot_h: int) {
                             let a = act.get() - 1
                             if a >= 0 {
                                 if a < n {
-                                    return __c_col_x(CHART_GUTTER, col_w, a) + col_w / 2
+                                    return __c_mx(pt, CHART_GUTTER, col_w, n, a)
                                 }
                             }
                             return -1
@@ -4440,36 +4522,18 @@ fn __c_cursor(act: Signal<int>, n: int, col_w: int, plot_h: int) {
     show(line, act)
 }
 
-/// Wash band behind the hovered column (recharts' active bar): a soft raised
-/// rectangle that slides with `act`, under the marks.
-fn __c_band(act: Signal<int>, n: int, col_w: int, plot_h: int) {
-    let band = Box(width = col_w, height = plot_h, background = raised(),
-                        opacity = 60, radius = 0, a11y_label = "band",
-                        position = pos_absolute(),
-                        top = CHART_TOP,
-                        left = fn() -> int {
-                            let a = act.get() - 1
-                            if a >= 0 {
-                                if a < n {
-                                    return __c_col_x(CHART_GUTTER, col_w, a)
-                                }
-                            }
-                            return -1
-                        })
-    show(band, act)
-}
-
 /// Hover zones + the shared cursor + the single following tooltip; call with
 /// the plot pushed. `act` is created by the chart builder so the marks can
-/// dim for the hovered column.
+/// dim for the hovered column. `pt` = 1 for plot-spanning line/area charts
+/// (zone strips snap to the nearest mark), 0 for column-mode bar charts.
 fn __c_tooltips(labels: []string, names: []string, vals: []int, s: int, n: int,
-                h: int, w: int, col_w: int, act: Signal<int>) {
+                h: int, w: int, col_w: int, act: Signal<int>, pt: int) {
     for i in 0..n {
         let hov = signal(0)
-        __c_zone(i, hov, act, h, col_w)
+        __c_zone(i, hov, act, h, col_w, pt, n)
     }
-    __c_cursor(act, n, col_w, h - CHART_TOP - CHART_XLAB)
-    __c_tooltip(labels, names, vals, s, n, w, col_w, act)
+    __c_cursor(act, n, col_w, h - CHART_TOP - CHART_XLAB, pt)
+    __c_tooltip(labels, names, vals, s, n, w, col_w, act, pt)
 }
 
 /// Dim/restore a mark for the hovered column: full at rest or on its own
@@ -4527,12 +4591,11 @@ fn __c_bars(labels: []string, names: []string, vals: []int, n: int, s: int,
     let domain = __c_domain(vals, s, n)
     let base_y = CHART_TOP + plot_h
     let bar_w = (col_w - 10) / s
-    // Shared hovered column: zones, cursor, tooltip, and the marks read it.
+    // Shared hovered mark: zones, cursor, tooltip, and the marks read it.
     let act = signal(0)
     let plot = Box(width = gw, height = h)
     __ui_push(plot.id)
     __c_axes(gw, h, domain)
-    __c_band(act, n, col_w, plot_h)
     for i in 0..n {
         let x0 = __c_col_x(CHART_GUTTER, col_w, i) + 5
         let ii = i
@@ -4551,9 +4614,9 @@ fn __c_bars(labels: []string, names: []string, vals: []int, n: int, s: int,
                                    top = base_y - bar_h)
             }
         }
-        __c_xlab(labels[i], i, col_w, plot_h)
+        __c_xlab(labels[i], i, col_w, plot_h, 0, n)
     }
-    __c_tooltips(labels, names, vals, s, n, h, gw, col_w, act)
+    __c_tooltips(labels, names, vals, s, n, h, gw, col_w, act, 0)
     __ui_pop()
     __c_legend(names)
 }
@@ -4584,18 +4647,17 @@ fn __c_lines(labels: []string, names: []string, vals: []int, n: int, s: int,
     let plot_h = h - CHART_TOP - CHART_XLAB
     let col_w = (gw - CHART_GUTTER) / n
     let domain = __c_domain(vals, s, n)
-    // Shared hovered column: zones, cursor, tooltip, and the marks read it.
+    // Shared hovered mark: zones, cursor, tooltip, and the marks read it.
     let act = signal(0)
     let plot = Box(width = gw, height = h)
     __ui_push(plot.id)
     __c_axes(gw, h, domain)
-    __c_band(act, n, col_w, plot_h)
     for j in 0..s {
         let d = __c_line_d(vals, s, j, domain, CHART_GUTTER, col_w, plot_h,
                            CHART_TOP, n)
         __c_layer(__c_svg(d, gw, h, "none", chart_color(j), 2), gw, h)
         for i in 0..n {
-            let x = __c_col_x(CHART_GUTTER, col_w, i) + col_w / 2
+            let x = __c_pt_x(CHART_GUTTER, col_w, n, i)
             let y = __c_y(domain, plot_h, CHART_TOP, __c_val(vals, s, i, j))
             let dot = Box(width = 6, height = 6, radius = 3,
                                background = chart_color(j),
@@ -4606,9 +4668,9 @@ fn __c_lines(labels: []string, names: []string, vals: []int, n: int, s: int,
         }
     }
     for i in 0..n {
-        __c_xlab(labels[i], i, col_w, plot_h)
+        __c_xlab(labels[i], i, col_w, plot_h, 1, n)
     }
-    __c_tooltips(labels, names, vals, s, n, h, gw, col_w, act)
+    __c_tooltips(labels, names, vals, s, n, h, gw, col_w, act, 1)
     __ui_pop()
     __c_legend(names)
 }
@@ -4639,12 +4701,11 @@ fn __c_areas(labels: []string, names: []string, vals: []int, n: int, s: int,
     let plot_h = h - CHART_TOP - CHART_XLAB
     let col_w = (gw - CHART_GUTTER) / n
     let domain = __c_domain(vals, s, n)
-    // Shared hovered column: zones, cursor, tooltip, and the marks read it.
+    // Shared hovered mark: zones, cursor, tooltip, and the marks read it.
     let act = signal(0)
     let plot = Box(width = gw, height = h)
     __ui_push(plot.id)
     __c_axes(gw, h, domain)
-    __c_band(act, n, col_w, plot_h)
     for j in 0..s {
         let d = __c_area_d(vals, s, j, domain, CHART_GUTTER, col_w, plot_h,
                            CHART_TOP, n)
@@ -4658,7 +4719,7 @@ fn __c_areas(labels: []string, names: []string, vals: []int, n: int, s: int,
                             CHART_TOP, n)
         __c_layer(__c_svg(dl, gw, h, "none", chart_color(j), 2), gw, h)
         for i in 0..n {
-            let x = __c_col_x(CHART_GUTTER, col_w, i) + col_w / 2
+            let x = __c_pt_x(CHART_GUTTER, col_w, n, i)
             let y = __c_y(domain, plot_h, CHART_TOP, __c_val(vals, s, i, j))
             let dot = Box(width = 6, height = 6, radius = 3,
                                background = chart_color(j),
@@ -4669,9 +4730,9 @@ fn __c_areas(labels: []string, names: []string, vals: []int, n: int, s: int,
         }
     }
     for i in 0..n {
-        __c_xlab(labels[i], i, col_w, plot_h)
+        __c_xlab(labels[i], i, col_w, plot_h, 1, n)
     }
-    __c_tooltips(labels, names, vals, s, n, h, gw, col_w, act)
+    __c_tooltips(labels, names, vals, s, n, h, gw, col_w, act, 1)
     __ui_pop()
     __c_legend(names)
 }

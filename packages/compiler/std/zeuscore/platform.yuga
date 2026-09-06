@@ -29,6 +29,10 @@ fn plat_image(x: int, y: int, w: int, h: int, src: string, radius: int, alpha: i
 /// image's intrinsic size in layout points (0 if still loading).
 fn plat_pick_image(w: &mut int, h: &mut int) -> string {}
 fn plat_save() {}
+/// Host process memory in KB: Apple phys_footprint (Xcode's memory-gauge
+/// number), Linux/Android resident set, or the live wasm heap on the web
+/// host. 0 when the host reports nothing.
+fn plat_mem_kb() -> int {}
 fn plat_clip(x: int, y: int, w: int, h: int) {}
 fn plat_restore() {}
 fn plat_key_intern(name: string) -> int {}

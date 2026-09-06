@@ -1,8 +1,30 @@
 // Catalog screens. Components mirror the shadcn/ui catalogue (default zinc
 // theme): every row here demos one `std:zeus` component with its SVG icons.
 // Dark restyles the whole palette via `zeus.appearance()`.
+import "std:async"
 import "std:zeus"
 import "std:kv"
+
+let mut ram_armed: int = 0
+
+/// Navbar RAM pill: refreshes twice a second through the async timer, so the
+/// chip shows live host memory (resident set on desktop, live wasm heap on
+/// web). Reads once at mount so the chip is never blank.
+fn RamChip() {
+    let ram = zeus.signal(zeus.mem_kb())
+    if ram_armed == 0 {
+        ram_armed = 1
+        async.interval(500, fn() { ram.set(zeus.mem_kb()) })
+    }
+    zeus.Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
+             spacing = SPACE.Exxs, padding_x = 10, padding_y = 4, height = 26,
+             radius = zeus.RAD_FULL, background = zeus.raised()) {
+        zeus.Text(fn() -> string {
+            let mb = ram.get() / 1024
+            return "RAM {{mb}} MB"
+        }, color = zeus.mute(), font = zeus.FONT_CAPTION)
+    }
+}
 
 fn Navbar(page: Signal<int>) {
     zeus.Column(0) {
@@ -14,6 +36,7 @@ fn Navbar(page: Signal<int>) {
             zeus.NavTab("Components", page, 1)
             zeus.NavTab("Patterns", page, 2)
             zeus.Grow()
+            RamChip()
             zeus.Text("Dark", color = zeus.mute(), font = zeus.FONT_CONTROL)
             zeus.Switch(zeus.appearance())
         }

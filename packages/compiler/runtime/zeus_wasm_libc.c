@@ -21,7 +21,7 @@ static FILE file_err = {2};
 FILE *stdout = &file_out;
 FILE *stderr = &file_err;
 
-#define HEAP_SIZE (32 * 1024 * 1024)
+#define HEAP_SIZE (64 * 1024 * 1024)
 #define HDR 8u
 #define FTR 8u
 #define FREE_BIT ((size_t)1)
@@ -159,6 +159,18 @@ void free(void *p) {
         }
     }
     free_make(off, pay);
+}
+
+/* Heap bytes currently in use (live), not the watermark: heap_off minus the
+   bytes sitting on the free list. The wasm side of the RAM chip. */
+int32_t zeus_heap_used(void) {
+    size_t o, free_bytes = 0;
+    o = free_head;
+    while (o) {
+        free_bytes += HDR + payload_sz(*hdr_at(o)) + FTR;
+        o = fl_next(o);
+    }
+    return (int32_t)(heap_off - free_bytes);
 }
 
 void abort(void) {
