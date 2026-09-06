@@ -31,6 +31,12 @@
 //! stepper (the http async client registers its socket state machines here);
 //! `io_open` / `io_close` keep `busy()` true while an op is in flight so the
 //! hosts keep drawing frames until it completes.
+//!
+//! CPU-bound work that must not block this pump runs on `std:thread` workers;
+//! `busy()` includes their liveness, so the hosts keep drawing frames until
+//! every worker is done and its result channel is drained.
+
+import "std:thread"
 
 struct Timer {
     id: int,
@@ -129,12 +135,16 @@ fn io_close() {
 }
 
 /// Whether the engine should keep drawing frames: an op is in flight (its
-/// completion is not time-scheduled) or a spawn waits for the next tick.
+/// completion is not time-scheduled), a spawn waits for the next tick, or a
+/// `thread.spawn`ed worker is still running.
 fn busy() -> int {
     if io_ops > 0 {
         return 1
     }
     if spawns.len > 0 {
+        return 1
+    }
+    if thread.running() > 0 {
         return 1
     }
     return 0

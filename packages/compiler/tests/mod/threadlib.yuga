@@ -1,0 +1,24 @@
+import "std:thread"
+
+// A library module that launches workers: the spawn lives in this module, so
+// the Send discipline must scan imported modules too, and DCE must keep the
+// worker fn alive even though only the spawned closure calls it.
+
+fn crunch(n: int) -> int {
+    let mut acc = 0
+    let mut i = 0
+    while i < n {
+        acc = acc + i
+        i = i + 1
+    }
+    return acc
+}
+
+fn launch(done: Chan<int>) {
+    thread.spawn(|| {
+        done.send(crunch(20000))
+    })
+    thread.spawn(|| {
+        done.send(crunch(30000))
+    })
+}

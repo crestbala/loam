@@ -1,0 +1,18 @@
+import "std:thread"
+import "std:fmt"
+
+// A worker may not call through an opaque fn value: the code it would run is
+// not statically visible, so nothing guarantees it stays off module state.
+
+fn apply(cb: fn()) {
+    cb()
+}
+
+fn worker() {
+    apply(|| { fmt.println("hi") })
+}
+
+fn main() {
+    thread.spawn(worker)
+    fmt.println("ok")
+}

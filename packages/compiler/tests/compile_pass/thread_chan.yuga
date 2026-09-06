@@ -1,0 +1,127 @@
+import "std:thread"
+import "std:fmt"
+import "std:async"
+import "std:sys"
+
+// Worker pool over std:thread channels:
+//   - 3 workers pull int jobs from a bounded chan (blocking recv), square
+//     them, and push results on a tiny (cap 2) chan — send blocks when full,
+//     so the mutex/condvar wait paths run for real;
+//   - the UI thread posts jobs with try_send and drains with ready/try_recv;
+//   - a string payload chan round-trips a worker-concatenated string;
+//   - a struct payload chan carries a plain-data struct;
+//   - sentinels shut the pool down; thread.running() returns to 0.
+
+struct Pair {
+    a: int,
+    b: int,
+}
+
+fn main() {
+    let jobs = thread.chan(16, 0)
+    let done = thread.chan(2, 0)
+    let msgs = thread.chan(4, "")
+    let pairs = thread.chan(4, Pair { a: 0, b: 0 })
+    let mut w = 0
+    while w < 3 {
+        thread.spawn(|| {
+            let mut got = 0
+            while got >= 0 {
+                got = jobs.recv()
+                if got >= 0 {
+                    done.send(got * got)
+                    msgs.send("job {{got}} squared")
+                    pairs.send(Pair { a: got, b: got * got })
+                }
+            }
+        })
+        w = w + 1
+    }
+    let mut guard = 0
+    let mut sent = 0
+    while sent < 12 && guard < 40000 {
+        if jobs.try_send(sent) != 0 {
+            sent = sent + 1
+        } else {
+            async.sleep(1)
+        }
+        guard = guard + 1
+    }
+    if sent != 12 {
+        fmt.println("FAIL: only", sent, "jobs posted")
+        sys.exit(1)
+    }
+    // post one sentinel per worker. FIFO guarantees every worker drains all
+    // 12 jobs before it sees a sentinel, so no extra synchronization is
+    // needed and no worker exits early.
+    guard = 0
+    let mut dropped = 0
+    while dropped < 3 && guard < 40000 {
+        if jobs.try_send(-1) != 0 {
+            dropped = dropped + 1
+        } else {
+            async.sleep(1)
+        }
+        guard = guard + 1
+    }
+    if dropped != 3 {
+        fmt.println("FAIL: sentinels")
+        sys.exit(1)
+    }
+    // drain all three channels in one loop: workers block on whichever chan
+    // fills first, so the UI must keep every chan moving until all 12
+    // replies are in (done) and all 12 payloads were consumed.
+    let mut total = 0
+    let mut gotn = 0
+    let mut mseen = 0
+    let mut pseen = 0
+    let mut bad = 0
+    guard = 0
+    while (gotn < 12 || mseen < 12 || pseen < 12) && guard < 40000 {
+        let mut moved = 0
+        while done.ready() > 0 && gotn < 12 {
+            total = total + done.try_recv()
+            gotn = gotn + 1
+            moved = 1
+        }
+        while msgs.ready() > 0 && mseen < 12 {
+            let m = msgs.try_recv()
+            if m.len == 0 {
+                bad = 1
+            }
+            mseen = mseen + 1
+            moved = 1
+        }
+        while pairs.ready() > 0 && pseen < 12 {
+            let p = pairs.try_recv()
+            if p.b != p.a * p.a {
+                bad = 1
+            }
+            pseen = pseen + 1
+            moved = 1
+        }
+        if moved == 0 || gotn < 12 || mseen < 12 || pseen < 12 {
+            async.sleep(1)
+        }
+        guard = guard + 1
+    }
+    if gotn != 12 || mseen != 12 || pseen != 12 {
+        fmt.println("FAIL: got", gotn, "msgs", mseen, "pairs", pseen)
+        sys.exit(1)
+    }
+    if total != 506 || bad != 0 {
+        fmt.println("FAIL: total", total, "bad", bad)
+        sys.exit(1)
+    }
+    // wait for the workers to exit (detached; sentinel path)
+    guard = 0
+    while thread.running() > 0 && guard < 40000 {
+        async.sleep(1)
+        guard = guard + 1
+    }
+    if thread.running() > 0 {
+        fmt.println("FAIL: workers still running")
+        sys.exit(1)
+    }
+    fmt.println("ok pool total", total)
+}

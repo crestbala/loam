@@ -1,0 +1,50 @@
+import "std:thread"
+import "std:async"
+import "std:fmt"
+import "std:sys"
+
+// The frame contract: while a worker is running, async.busy() is true, so
+// the zeus hosts keep calling engine_step (drawing frames) and a UI drain
+// sees results the frame they arrive. busy() must drop to 0 when the
+// worker exits.
+
+fn heavy(n: int) -> int {
+    let mut acc = 0
+    let mut i = 0
+    while i < n {
+        acc = acc + i % 101
+        i = i + 1
+    }
+    return acc
+}
+
+fn main() {
+    let done = thread.chan(2, 0)
+    thread.spawn(|| { done.send(heavy(40000000)) })
+    let mut saw_busy = 0
+    let mut got = 0
+    let mut guard = 0
+    while (saw_busy == 0 || got == 0 || thread.running() > 0) && guard < 60000 {
+        if async.busy() != 0 {
+            saw_busy = 1
+        }
+        while done.ready() > 0 {
+            got = got + done.try_recv()
+        }
+        async.sleep(1)
+        guard = guard + 1
+    }
+    if saw_busy == 0 {
+        fmt.println("FAIL: busy() never true while a worker ran")
+        sys.exit(1)
+    }
+    if got == 0 {
+        fmt.println("FAIL: result never arrived")
+        sys.exit(1)
+    }
+    if async.busy() != 0 {
+        fmt.println("FAIL: busy() still true after workers exited")
+        sys.exit(1)
+    }
+    fmt.println("ok busy", got)
+}

@@ -1,0 +1,16 @@
+import "std:thread"
+import "std:sys"
+import "std:fmt"
+
+// The C seam (sys, net, zeus platform, ...) touches shared process state.
+// Workers may only call the pure helpers (fmt writes, string conversion,
+// clock/sleep) and the channel ops. sys.exit must be rejected.
+
+fn worker() {
+    sys.exit(0)
+}
+
+fn main() {
+    thread.spawn(worker)
+    fmt.println("ok")
+}

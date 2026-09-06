@@ -60,6 +60,13 @@ int type_is_copy(const Type *t);
 /** 1 if a local of this type must run a destructor (Box, []T, or a struct/array of those). */
 int type_needs_drop(const Type *t);
 
+/** 1 if a value of this type may cross an OS-thread boundary (channel<T>
+ *  payloads, thread.spawn captures). Plain data only: scalars, immutable
+ *  strings, and structs/arrays of Send fields. Not Send: []T (non-atomic
+ *  refcount), fn values (C-seam/global reachability is unchecked), Box, and
+ *  any borrow — sharing those with a worker thread races the UI thread. */
+int type_is_send(const Type *t);
+
 /** C identifier for a struct type (`Pair__int` for `Pair<int>`). */
 void type_c_name(const Type *t, char *buf, size_t cap);
 

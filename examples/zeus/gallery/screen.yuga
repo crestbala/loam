@@ -27,7 +27,7 @@ fn RamChip() {
 }
 
 fn Navbar(page: Signal<int>) {
-    zeus.Column(0) {
+    zeus.Column(SPACE.None) {
         zeus.Box(align_direction = DIRECTION.Row, spacing = SPACE.Md,
                  align_items = ALIGN.Center, height = zeus.BAR) {
             zeus.Box(width = 22, height = 22, radius = 6, background = zeus.ink())

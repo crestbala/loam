@@ -86,7 +86,9 @@ yuga/
   bin/yuga-lsp    editor diagnostics / hover (incl. doc comments) / go-to-def / completion / semantic tokens
 ```
 
-Std modules today: `fmt` (print), `zeus` (UI), `http`, `maya` (tiny 3D).
+Std modules today: `fmt` (print), `zeus` (UI), `http`, `maya` (tiny 3D),
+`thread` (OS threads + `Chan<T>` for CPU-bound work; Send discipline keeps
+workers off module state — native/iOS/Android only, wasm `spawn` is a no-op).
 
 Document them with `///` above each `fn` / `struct` and `//!` at the top of the
 file. Hover in the editor shows those comments plus the type.
@@ -286,6 +288,7 @@ frame that created the closure is gone.
 | You want | Start with |
 |---|---|
 | A CLI or algorithm | `import "std:fmt"`, `fn main()` |
+| CPU-bound work off the UI thread | `import "std:thread"` — `spawn` a closure, return results through a `Chan<T>` drained on the UI thread |
 | A desktop UI | [zeus.md](zeus.md) — `import "std:zeus"` |
 | A tiny RPC server | `import "std:http"` (`examples/language/http_server.yuga`) |
 | A 3D/2D toy scene | `import "std:maya"` (`examples/language/solar.yuga`) |

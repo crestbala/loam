@@ -468,6 +468,30 @@ static int lower_call(AstNode *n) {
         else i->callee = "yuga_fut_clear";
         return no_dst ? -1 : dst;
     }
+    if (n->as.call.ch_cell) {
+        size_t ac = n->as.call.arg_count;
+        int *args = ac ? (int *)calloc(ac, sizeof(int)) : NULL;
+        for (size_t k = 0; k < ac; k++)
+            args[k] = lower_expr(n->as.call.args[k]);
+        IrInst *i = emit(IR_CALL, n->loc);
+        int no_dst = n->as.call.ch_cell == 2;
+        i->dst = no_dst ? -1 : dst;
+        i->args = args;
+        i->nargs = (int)ac;
+        /* inst ty = payload T (new/send/try_send) or the return type; codegen
+           prints sizeof(T) from it. No []T payloads exist: Send excludes them. */
+        if ((n->as.call.ch_cell == 1 || n->as.call.ch_cell == 2 || n->as.call.ch_cell == 3) && ac >= 2)
+            i->ty = ir_subst(n->as.call.args[1]->ty);
+        else
+            i->ty = ir_subst(n->ty);
+        if (n->as.call.ch_cell == 1) i->callee = "yuga_ch_alloc";
+        else if (n->as.call.ch_cell == 2) i->callee = "yuga_ch_send";
+        else if (n->as.call.ch_cell == 3) i->callee = "yuga_ch_try_send";
+        else if (n->as.call.ch_cell == 4) i->callee = "yuga_ch_recv";
+        else if (n->as.call.ch_cell == 5) i->callee = "yuga_ch_pop";
+        else i->callee = "yuga_ch_ready";
+        return no_dst ? -1 : dst;
+    }
     if (n->as.call.is_println) return lower_println(n);
     if (n->as.call.is_vec_push) {
         int *args = (int *)calloc(2, sizeof(int));

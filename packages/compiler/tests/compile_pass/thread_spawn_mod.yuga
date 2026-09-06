@@ -1,0 +1,35 @@
+import "std:thread"
+import "std:fmt"
+import "std:async"
+import "std:sys"
+import "../mod/threadlib.yuga"
+
+// Spawns from an imported module (threadlib.launch): the walker scans every
+// module, and DCE keeps the lib worker/crunch fns alive for the thread.
+
+fn main() {
+    let done = thread.chan(4, 0)
+    threadlib.launch(done)
+    let mut total = 0
+    let mut got = 0
+    let mut guard = 0
+    while got < 2 && guard < 40000 {
+        while done.ready() > 0 && got < 2 {
+            total = total + done.try_recv()
+            got = got + 1
+        }
+        if got < 2 {
+            async.sleep(1)
+        }
+        guard = guard + 1
+    }
+    if got != 2 {
+        fmt.println("FAIL: got", got)
+        sys.exit(1)
+    }
+    if total != 20000 * 19999 / 2 + 30000 * 29999 / 2 {
+        fmt.println("FAIL: total", total)
+        sys.exit(1)
+    }
+    fmt.println("ok lib workers", total)
+}
