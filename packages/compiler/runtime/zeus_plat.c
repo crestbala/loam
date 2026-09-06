@@ -10,6 +10,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(__APPLE__)
+#include <mach/mach.h>
+#elif defined(__linux__)
+#include <unistd.h>
+#endif
 
 extern yuga_vec yuga_arena_sigs;
 /* Rebuild-scope ownership (arena.yuga): while `scope_node` is non-zero, a
@@ -96,11 +101,18 @@ int64_t yuga_zeus_sig_gen(int64_t id) {
     return g_cells[id].gen;
 }
 
+static int64_t sig_slot_zero(void);
+
+/* Captured-`let mut` (state) signals: `signal(0)`-style decls inside a
+   rebuild scope must be recycled and freed like every other signal, or a
+   chart refit leaks a slot per captured mutable (zone strips, bar heights,
+   ...). sig_slot_zero recycles freed ids and records the scope owner, so
+   arena teardown (release_sigs) frees them with the rest of the subtree. */
 Signal yuga_zeus_signal(int64_t value) {
     Signal s;
     yuga_arena_ensure();
-    yuga_vec_push(&yuga_arena_sigs, &value, sizeof(value), __FILE__, __LINE__);
-    s.id = yuga_arena_sigs.len - 1;
+    s.id = sig_slot_zero();
+    ((int64_t *)yuga_arena_sigs.ptr)[s.id] = value;
     yuga_zeus_sig_bind(s.id, &value, (int64_t)sizeof(value));
     return s;
 }
@@ -595,6 +607,38 @@ yuga_str yuga_platform_plat_pick_image(int64_t *w, int64_t *h) {
     return yuga_zeus_plat_pick_image(w, h);
 }
 void yuga_platform_plat_save(void) { yuga_zeus_plat_save(); }
+
+/* Host process memory in KB for the gallery RAM chip: Apple phys_footprint
+   (the number Xcode's memory gauge shows — RSS overstates iOS processes),
+   Linux/Android resident set, wasm live heap on the web host. */
+int64_t yuga_platform_plat_mem_kb(void) {
+#ifdef __wasm32__
+    extern int32_t zeus_heap_used(void);
+    return (int64_t)(zeus_heap_used() / 1024);
+#elif defined(__APPLE__)
+    {
+        struct task_vm_info info;
+        mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+        if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&info, &count) == KERN_SUCCESS)
+            return (int64_t)(info.phys_footprint / 1024);
+        return 0;
+    }
+#elif defined(__linux__)
+    {
+        long rss_kb = 0;
+        FILE *f = fopen("/proc/self/statm", "r");
+        if (f) {
+            unsigned long size_pages = 0, res_pages = 0;
+            if (fscanf(f, "%lu %lu", &size_pages, &res_pages) == 2)
+                rss_kb = (long)res_pages * (long)sysconf(_SC_PAGESIZE) / 1024;
+            fclose(f);
+        }
+        return (int64_t)rss_kb;
+    }
+#else
+    return 0;
+#endif
+}
 void yuga_platform_plat_clip(int64_t x, int64_t y, int64_t w, int64_t h) {
     yuga_zeus_plat_clip(x, y, w, h);
 }

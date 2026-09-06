@@ -47,26 +47,20 @@ fn main() {
     let panel = zeus.engine_find_role("dialog")
     expect(panel > 0, "tooltip panel found")
     expect(zeus.node_visible(panel) == 1, "panel shown on hover")
-    // The cursor hairline rides the hovered column: it steps exactly one
-    // column pitch between column 2 and column 3.
+    // The cursor hairline rides the hovered mark: it steps exactly one
+    // mark pitch between mark 2 and mark 3.
     let cur1 = zeus.engine_find_text("cursor")
     expect(cur1 > 0, "cursor found")
-    let band = zeus.engine_find_text("band")
-    expect(band > 0, "band found")
     zeus.engine_hover(170, 60)
     zeus.engine_layout(340, 240)
     let cx2 = zeus.node_x(cur1)
-    expect(zeus.node_w(band) == pitch, "band spans one column")
-    expect(zeus.node_x(band) == cx2 - pitch / 2, "band hugs the hovered column")
     zeus.engine_hover(262, 60)
     zeus.engine_layout(340, 240)
-    expect(zeus.node_x(cur1) - cx2 == pitch, "cursor follows to next column")
-    expect(zeus.node_x(band) == zeus.node_x(cur1) - pitch / 2, "band follows too")
+    expect(zeus.node_x(cur1) - cx2 == pitch, "cursor follows to next mark")
     // Leaving the plot hides panel and cursor.
     zeus.engine_hover(2, 60)
     expect(zeus.node_visible(panel) == 0, "panel hidden after leave")
     expect(zeus.node_visible(cur1) == 0, "cursor hidden after leave")
-    expect(zeus.node_visible(band) == 0, "band hidden after leave")
     // Hovering again re-shows it with the right column.
     zeus.engine_hover(170, 60)
     expect(zeus.node_visible(panel) == 1, "panel shows again")

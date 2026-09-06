@@ -60,17 +60,23 @@ fn note_read(sid: int) {
 }
 
 fn drop_eid_deps(eid: int) {
-    let mut ns = []int {}
-    let mut ne = []int {}
     let n = dep_sig.len
-    for i in 0..n {
-        if dep_eff[i] != eid {
-            push(ns, dep_sig[i])
-            push(ne, dep_eff[i])
+    if n == 0 {
+        return
+    }
+    /* Swap-remove every edge of `eid` in one pass (no keep-list rebuilds). */
+    let mut i = 0
+    while i < dep_sig.len {
+        if dep_eff[i] == eid {
+            let last = dep_sig.len - 1
+            dep_sig[i] = dep_sig[last]
+            dep_eff[i] = dep_eff[last]
+            pop(dep_sig)
+            pop(dep_eff)
+        } else {
+            i = i + 1
         }
     }
-    dep_sig = ns
-    dep_eff = ne
 }
 
 /// Drop every dependency edge on a freed signal. A live effect must never
@@ -79,66 +85,104 @@ fn drop_sig(sid: int) {
     if sid <= 0 {
         return
     }
-    let mut ns = []int {}
-    let mut ne = []int {}
     let n = dep_sig.len
-    for i in 0..n {
-        if dep_sig[i] != sid {
-            push(ns, dep_sig[i])
-            push(ne, dep_eff[i])
+    if n == 0 {
+        return
+    }
+    let mut i = 0
+    while i < dep_sig.len {
+        if dep_sig[i] == sid {
+            let last = dep_sig.len - 1
+            dep_sig[i] = dep_sig[last]
+            dep_eff[i] = dep_eff[last]
+            pop(dep_sig)
+            pop(dep_eff)
+        } else {
+            i = i + 1
         }
     }
-    dep_sig = ns
-    dep_eff = ne
 }
 
-/// Remove the effects of a torn-down node. The interned handlers behind the
-/// effects were recorded on the rebuild scope that created the node and are
-/// freed there; this only drops the dependency edges and compacts the tables.
-/// Effect ids are table positions, so surviving edges are remapped.
-fn free_node_effects(nid: int) {
+/// Remove the effects of every torn-down node in `ids` (one batched sweep —
+/// per-node sweeps made refit subtree drops ~25 ms). The interned handlers
+/// behind the effects were recorded on the rebuild scope that created the
+/// node and are freed there; this only drops the dependency edges and
+/// compacts the tables. Effect ids are table positions, so surviving edges
+/// are remapped.
+fn member(v: int, ids: []int) -> int {
+    let n = ids.len
+    for i in 0..n {
+        if ids[i] == v {
+            return 1
+        }
+    }
+    return 0
+}
+
+fn free_nodes_effects(ids: []int) {
     boot()
+    let k = ids.len
+    if k == 0 {
+        return
+    }
     let n = node_ids.len
     if n <= 1 {
         return
     }
-    let mut remap = []int {}
-    push(remap, 0)
-    let mut keep_fn = []int {}
-    let mut keep_node = []int {}
-    for i in 1..n {
-        if node_ids[i] == nid {
-            push(remap, -1)
-        } else {
-            push(remap, keep_fn.len + 1)
-            push(keep_fn, fn_ids[i])
-            push(keep_node, node_ids[i])
-        }
-    }
-    fn_ids = []int { 0 }
-    node_ids = []int { 0 }
-    let k = keep_fn.len
-    for i in 0..k {
-        push(fn_ids, keep_fn[i])
-        push(node_ids, keep_node[i])
-    }
-    let mut ns = []int {}
-    let mut ne = []int {}
-    let d = dep_sig.len
-    for i in 0..d {
-        let e = dep_eff[i]
-        if e > 0 {
-            if e < remap.len {
-                let ne2 = remap[e]
-                if ne2 > 0 {
-                    push(ns, dep_sig[i])
-                    push(ne, ne2)
+    /* Allocation-free compaction: dead rows are swap-removed in place.
+       Per removal, edges pointing at the dead row are dropped and edges of
+       the tail row that filled the hole are rewritten — no per-drop table
+       copies (those were ~200-260 KB per chart refit). */
+    let mut i = 1
+    while i < node_ids.len {
+        if member(node_ids[i], ids) != 0 {
+            let last = node_ids.len - 1
+            if i == last {
+                // Tail row is dead: pop it after dropping its edges.
+                let mut e = 0
+                while e < dep_sig.len {
+                    if dep_eff[e] == i {
+                        let el = dep_sig.len - 1
+                        dep_sig[e] = dep_sig[el]
+                        dep_eff[e] = dep_eff[el]
+                        pop(dep_sig)
+                        pop(dep_eff)
+                    } else {
+                        e = e + 1
+                    }
                 }
+                pop(fn_ids)
+                pop(node_ids)
+            } else {
+                // Drop the dead row's edges first, then fill the hole with
+                // the tail row and follow its edges to the new position.
+                let mut e = 0
+                while e < dep_sig.len {
+                    if dep_eff[e] == i {
+                        let el = dep_sig.len - 1
+                        dep_sig[e] = dep_sig[el]
+                        dep_eff[e] = dep_eff[el]
+                        pop(dep_sig)
+                        pop(dep_eff)
+                    } else {
+                        e = e + 1
+                    }
+                }
+                for q in 0..dep_sig.len {
+                    if dep_eff[q] == last {
+                        dep_eff[q] = i
+                    }
+                }
+                fn_ids[i] = fn_ids[last]
+                node_ids[i] = node_ids[last]
+                pop(fn_ids)
+                pop(node_ids)
             }
+            // The row swapped into `i` may itself be dead: re-check it.
+        } else {
+            i = i + 1
         }
     }
-    dep_sig = ns
-    dep_eff = ne
 }
 
 fn run(eid: int) {

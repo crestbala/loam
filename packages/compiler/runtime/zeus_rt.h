@@ -249,6 +249,7 @@ void yuga_platform_plat_image(int64_t x, int64_t y, int64_t w, int64_t h, yuga_s
                               int64_t radius, int64_t alpha, int64_t fit);
 yuga_str yuga_platform_plat_pick_image(int64_t *w, int64_t *h);
 void yuga_platform_plat_save(void);
+int64_t yuga_platform_plat_mem_kb(void);
 void yuga_platform_plat_clip(int64_t x, int64_t y, int64_t w, int64_t h);
 void yuga_platform_plat_restore(void);
 int64_t yuga_platform_plat_key_intern(yuga_str name);

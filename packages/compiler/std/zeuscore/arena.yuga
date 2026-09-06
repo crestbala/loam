@@ -194,6 +194,11 @@ let mut rec_fowner: []int = []int {}
 /// Freed node ids, recycled by `alloc_node`.
 let mut free_nodes: []int = []int {}
 
+/* Ids freed by the current drop_children pass: effect teardown runs once per
+   subtree (track.free_nodes_effects) instead of once per node — per-node
+   table sweeps made every chart refit ~25 ms. */
+let mut drop_pool: []int = []int {}
+
 fn blank_node() -> UiNode {
     return UiNode {
         kind: 0, dir: 0, kids: []int {}, pad: 0, padx: 0, pady: 0,
@@ -257,27 +262,31 @@ fn record_intern(id: int, owner: int) {
     }
 }
 
-/// Free every signal a node's rebuilds allocated, in one pass over the
-/// record lists (records are per build scope, so an id has one owner).
+/// Free every signal a node's rebuilds allocated. Records are per build
+/// scope, so an id has one owner: swap-remove matching owners in one pass —
+/// rebuilding the keep-list on every release was O(all records) per chart
+/// refit, which is what made window-resize frames crawl once the catalog
+/// accumulated records.
 fn release_sigs(nid: int) {
     let n = rec_owner.len
     if n == 0 {
         return
     }
-    let mut keep_sid = []int {}
-    let mut keep_owner = []int {}
-    for i in 0..n {
+    let mut i = 0
+    while i < rec_owner.len {
         if rec_owner[i] == nid {
             let sid = rec_sid[i]
+            let last = rec_owner.len - 1
+            rec_owner[i] = rec_owner[last]
+            rec_sid[i] = rec_sid[last]
+            pop(rec_owner)
+            pop(rec_sid)
             platform.plat_sig_free(sid)
             track.drop_sig(sid)
         } else {
-            push(keep_sid, rec_sid[i])
-            push(keep_owner, rec_owner[i])
+            i = i + 1
         }
     }
-    rec_sid = keep_sid
-    rec_owner = keep_owner
 }
 
 /// Free every interned handler a node's rebuilds created, in one pass.
@@ -286,23 +295,26 @@ fn release_fns(nid: int) {
     if n == 0 {
         return
     }
-    let mut keep_fid = []int {}
-    let mut keep_owner = []int {}
-    for i in 0..n {
+    let mut i = 0
+    while i < rec_fowner.len {
         if rec_fowner[i] == nid {
-            platform.plat_intern_free(rec_fid[i])
+            let fid = rec_fid[i]
+            let last = rec_fowner.len - 1
+            rec_fowner[i] = rec_fowner[last]
+            rec_fid[i] = rec_fid[last]
+            pop(rec_fowner)
+            pop(rec_fid)
+            platform.plat_intern_free(fid)
         } else {
-            push(keep_fid, rec_fid[i])
-            push(keep_owner, rec_fowner[i])
+            i = i + 1
         }
     }
-    rec_fid = keep_fid
-    rec_fowner = keep_owner
 }
 
 /// Tear down a node: free its subtree (sigs, interned handlers, effects) and
 /// recycle the slot. Freed slots are blanked so global scans (hover, cursor,
-/// refresh lists) treat them as empty.
+/// refresh lists) treat them as empty. Effect cleanup is batched by the
+/// enclosing drop_children, so this only recurses and recycles.
 fn free_node(id: int) {
     if id <= 0 {
         return
@@ -313,12 +325,14 @@ fn free_node(id: int) {
     if nodes[id].kind == 0 {
         return
     }
-    drop_children(id)
+    let n = nodes[id].kids.len
+    for i in 0..n {
+        free_node(nodes[id].kids[i])
+    }
     if nodes[id].list_fn > 0 {
         release_sigs(id)
         release_fns(id)
     }
-    track.free_node_effects(id)
     if focus_id == id {
         focus_id = 0
     }
@@ -334,6 +348,7 @@ fn free_node(id: int) {
             platform.plat_edit_reset(nodes[id].edit_slot)
         }
     }
+    push(drop_pool, id)
     nodes[id].kids = []int {}
     nodes[id] = blank_node()
     push(free_nodes, id)
@@ -357,6 +372,7 @@ fn reset_tree() {
     rec_fid = []int {}
     rec_fowner = []int {}
     free_nodes = []int {}
+    drop_pool = []int {}
 }
 
 let mut scroll_save: []int = []int {}
@@ -398,6 +414,10 @@ fn drop_children(id: int) {
         free_node(nodes[id].kids[i])
     }
     nodes[id].kids = []int {}
+    // One effect-table sweep for the whole freed subtree: per-node sweeps
+    // made refit drops ~25 ms once the table had accumulated records.
+    track.free_nodes_effects(drop_pool)
+    drop_pool = []int {}
 }
 
 fn store_sig(id: int, value: int) {
