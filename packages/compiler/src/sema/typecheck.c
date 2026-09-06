@@ -529,7 +529,8 @@ static int is_ffi_mod(const char *name) {
     return strcmp(name, "zeus") == 0 || strcmp(name, "http") == 0 ||
            strcmp(name, "fmt") == 0 || strcmp(name, "maya") == 0 ||
            strcmp(name, "platform") == 0 || strcmp(name, "sys") == 0 ||
-           strcmp(name, "net") == 0 || strcmp(name, "async") == 0;
+           strcmp(name, "net") == 0 || strcmp(name, "async") == 0 ||
+           strcmp(name, "thread") == 0;
 }
 
 static AstNode *find_struct(const char *name) {
@@ -1069,6 +1070,15 @@ static Type *finish_proc_call(AstNode *n, Type *ft, AstNode *named) {
              strcmp(named->as.fn.cname, "yuga_async_await_value") == 0) &&
             !type_is_copy(bound[0]))
             err(n->loc, "Future<%s> requires a Copy type", type_name(bound[0]));
+        if (named->as.fn.cname && bound && bound[0] &&
+            (strcmp(named->as.fn.cname, "yuga_thread_chan") == 0 ||
+             strcmp(named->as.fn.cname, "yuga_thread_send") == 0 ||
+             strcmp(named->as.fn.cname, "yuga_thread_try_send") == 0 ||
+             strcmp(named->as.fn.cname, "yuga_thread_recv") == 0 ||
+             strcmp(named->as.fn.cname, "yuga_thread_try_recv") == 0) &&
+            !type_is_send(bound[0]))
+            err(n->loc, "Chan<%s> requires a Send type (plain data: no []T, fn, Box, or borrows)",
+                type_name(bound[0]));
         free(bound);
     }
     n->ty = ret;
@@ -1523,6 +1533,97 @@ static Type *check_call(AstNode *n, Type *expect) {
                 err(n->as.call.args[0]->loc, "__fut_clear requires int id");
             n->as.call.fut_cell = 5;
             n->ty = ty_void();
+            n->place_mut = 0;
+            return n->ty;
+        }
+        if (strcmp(nm, "__ch_new") == 0) {
+            if (n->as.call.arg_count != 2) {
+                err(n->loc, "__ch_new expects 2 arguments");
+                return ty_void();
+            }
+            Type *a = check_expr(n->as.call.args[0]);
+            check_expr(n->as.call.args[1]);
+            if (!type_eq(a, ty_int()))
+                err(n->as.call.args[0]->loc, "__ch_new requires int cap");
+            n->as.call.ch_cell = 1;
+            n->ty = ty_int();
+            n->place_mut = 0;
+            return n->ty;
+        }
+        if (strcmp(nm, "__ch_send") == 0) {
+            if (n->as.call.arg_count != 2) {
+                err(n->loc, "__ch_send expects 2 arguments");
+                return ty_void();
+            }
+            Type *a = check_expr(n->as.call.args[0]);
+            check_expr(n->as.call.args[1]);
+            if (!type_eq(a, ty_int()))
+                err(n->as.call.args[0]->loc, "__ch_send requires int id");
+            n->as.call.ch_cell = 2;
+            n->ty = ty_void();
+            n->place_mut = 0;
+            return n->ty;
+        }
+        if (strcmp(nm, "__ch_try_send") == 0) {
+            if (n->as.call.arg_count != 2) {
+                err(n->loc, "__ch_try_send expects 2 arguments");
+                return ty_void();
+            }
+            Type *a = check_expr(n->as.call.args[0]);
+            check_expr(n->as.call.args[1]);
+            if (!type_eq(a, ty_int()))
+                err(n->as.call.args[0]->loc, "__ch_try_send requires int id");
+            n->as.call.ch_cell = 3;
+            n->ty = ty_int();
+            n->place_mut = 0;
+            return n->ty;
+        }
+        if (strcmp(nm, "__ch_recv") == 0) {
+            if (n->as.call.arg_count != 1) {
+                err(n->loc, "__ch_recv expects 1 argument");
+                return ty_void();
+            }
+            Type *a = check_expr(n->as.call.args[0]);
+            if (!type_eq(a, ty_int()))
+                err(n->as.call.args[0]->loc, "__ch_recv requires int id");
+            if (!expect || expect->kind == TY_VOID) {
+                err(n->loc, "cannot infer type of __ch_recv");
+                n->ty = ty_void();
+                return n->ty;
+            }
+            n->as.call.ch_cell = 4;
+            n->ty = expect;
+            n->place_mut = 0;
+            return n->ty;
+        }
+        if (strcmp(nm, "__ch_pop") == 0) {
+            if (n->as.call.arg_count != 1) {
+                err(n->loc, "__ch_pop expects 1 argument");
+                return ty_void();
+            }
+            Type *a = check_expr(n->as.call.args[0]);
+            if (!type_eq(a, ty_int()))
+                err(n->as.call.args[0]->loc, "__ch_pop requires int id");
+            if (!expect || expect->kind == TY_VOID) {
+                err(n->loc, "cannot infer type of __ch_pop");
+                n->ty = ty_void();
+                return n->ty;
+            }
+            n->as.call.ch_cell = 5;
+            n->ty = expect;
+            n->place_mut = 0;
+            return n->ty;
+        }
+        if (strcmp(nm, "__ch_ready") == 0) {
+            if (n->as.call.arg_count != 1) {
+                err(n->loc, "__ch_ready expects 1 argument");
+                return ty_void();
+            }
+            Type *a = check_expr(n->as.call.args[0]);
+            if (!type_eq(a, ty_int()))
+                err(n->as.call.args[0]->loc, "__ch_ready requires int id");
+            n->as.call.ch_cell = 6;
+            n->ty = ty_int();
             n->place_mut = 0;
             return n->ty;
         }

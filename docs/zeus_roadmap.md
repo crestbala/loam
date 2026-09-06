@@ -132,8 +132,13 @@ server story. Thread-per-connection in C *under* the API is a later option.
 ### 5.4 Concurrency primitives
 - v1: **message passing only** (`channel<T>` between tasks and the UI loop) —
   composes with signals, keeps the no-shared-mutable-state property.
-- No shared-memory threads in the language until a workload demands them
-  (they need a Send-like discipline; the runtime is not thread-safe by design).
+- **Phase 8 added language threads** for CPU-bound workloads, under a
+  compile-time Send discipline: `thread.spawn` runs a detached worker; Send
+  payloads (`Chan<T>`, captures) are plain data only, and worker code is
+  verified to never touch module state or the C seam — the single-threaded
+  runtime (globals, arenas, refcounts) stays sound because the compiler
+  proves workers cannot reach it. No shared-memory threading: values cross
+  threads, never memory.
 
 ### 5.5 New primitives ride the existing pipeline
 Any draw primitive (image, gradient, rounded-text) travels
@@ -230,8 +235,51 @@ thread.
 - **Tests:** `zeus_focus.yuga` (roles → document-order tab traversal → ring paint deltas → Enter/Space activation → Tab semantics), `zeus_scale.yuga` (150/100/clamp round-trips), `golden_focus_ring` (ring fills byte-exact), `golden_scale_gallery` (gallery chrome at scale 1.0); every pre-existing DRAW golden stays byte-identical.
 
 ### Phase 8 — Revisit only if demanded
-- [ ] Language threads + Send discipline + channels (CPU-bound workloads).
+- [x] Language threads + Send discipline + channels (CPU-bound workloads).
+      `std:thread`: `spawn(fn)` runs a closure (or a same-module fn name) on a
+      detached OS thread; `Chan<T>` is a bounded, mutex/condvar FIFO of Send
+      payloads (`recv` blocks for workers, `try_recv`/`ready`/`try_send` never
+      block for the UI drain). The discipline is compile-time, like the rest
+      of the language:
+      - **Send types** (`type_is_send`): plain data — int/float/bool/string
+        and structs/arrays of those. Not Send: `[]T` (non-atomic refcount),
+        `fn` (body unchecked), `Box`, any borrow. Enforced on `Chan<T>`
+        payloads (typecheck, like the `Future<T>` Copy bound) and on `spawn`
+        closure captures (threadcheck pass).
+      - **Worker purity** (`src/threadcheck.c`, post-typecheck AST pass): the
+        spawned fn and every statically-reachable callee may not touch module
+        state (globals, arenas) or the C seam outside a pure allowlist
+        (channel cells, fmt writes, string conversion, clock/sleep,
+        wrapping ops, `spawn`/`running` itself). Callbacks must be closures
+        or fn names — a fn value of unknown origin is rejected. Results come
+        back through channels only; the UI drains and feeds signals.
+      - C stays minimal: `yuga_rt.h` gains only the pthread entry + a generic
+        byte-FIFO + mutex/condvars (same category as the fut-slot table);
+        queue policy, docs, and API shape live in `std/thread.yuga`. wasm
+        compiles with inert stubs (no threads); `async.busy()` includes
+        `thread.running()`, so zeus hosts keep drawing frames while workers
+        run and a UI drain sees results the frame they arrive.
 - [ ] Rich text spans (bold/italic/inline color) once text is measured in-tree.
+      **Still gated**: all text metrics are host-side today (`plat_measure` →
+      CoreText / canvas `measureText` / Skia; headless `measure_default`);
+      there is no in-tree font data, so per-span advance/wrap/hit-test would
+      fork the one-string one-font C wrap/caret engine per span. The gate the
+      roadmap set for this item is the in-tree metrics precondition, which is
+      its own project (embed + parse a font: cmap/hmtx in Yuga) — not yet
+      scheduled in any phase.
+
+**Exit (threads):** a headless test proves N real workers compute on other
+cores, return results through bounded channels, and the UI drains them
+without blocking (`thread_chan.yuga` — 3-worker pool, blocking recv + send,
+try_send/ready drains, string + struct payloads, sentinel shutdown;
+`thread_spawn_mod.yuga` — spawn from an imported module, DCE keeps the
+worker alive; `thread_busy.yuga` — `async.busy()` true while workers run,
+false after). compile_fail locks the discipline: non-Send captures/payloads
+(`thread_spawn_cap_vec`, `thread_chan_vec`, `thread_chan_fn`), worker global
+access (`thread_spawn_global`), opaque fn-value callbacks (`thread_spawn_cb_value`),
+C-seam calls from workers (`thread_worker_seam`), and calls through fn
+params (`thread_worker_fn_val`). **Green.** Caveat: native + iOS/Android
+only (pthreads); wasm `spawn` is a documented no-op.
 
 ---
 

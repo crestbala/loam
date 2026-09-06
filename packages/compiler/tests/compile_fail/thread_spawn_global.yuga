@@ -1,0 +1,17 @@
+import "std:thread"
+import "std:fmt"
+
+// Module state belongs to the UI thread. A spawned fn that reads a module
+// global would race it, so the whole worker call graph is banned from
+// touching globals.
+
+let mut counter: int = 0
+
+fn worker() {
+    counter = counter + 1
+}
+
+fn main() {
+    thread.spawn(worker)
+    fmt.println("ok")
+}

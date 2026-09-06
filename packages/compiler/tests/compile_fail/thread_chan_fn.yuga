@@ -1,0 +1,12 @@
+import "std:thread"
+import "std:fmt"
+
+// fn values are Copy handles but not Send: their bodies may touch module
+// state or the C seam. Chan<fn()> must be rejected at the chan<> call.
+
+fn noop() {}
+
+fn main() {
+    let cs = thread.chan(4, noop)
+    fmt.println("ok")
+}

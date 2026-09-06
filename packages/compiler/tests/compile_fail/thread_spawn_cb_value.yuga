@@ -1,0 +1,13 @@
+import "std:thread"
+import "std:fmt"
+
+// The spawn callback must be a closure or a fn name: its code must be
+// statically visible so the compiler can check what the worker touches.
+
+fn worker() {}
+
+fn main() {
+    let f = worker
+    thread.spawn(f)
+    fmt.println("ok")
+}

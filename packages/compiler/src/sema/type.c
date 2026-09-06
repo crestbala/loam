@@ -127,6 +127,24 @@ int type_is_copy(const Type *t) {
     return 0;
 }
 
+/* Send = Copy minus shared-mutable escape: no heap handles ([]T, fn, Box),
+   no borrows. Strings are Send: immutable and never freed (yuga_rt.h), so
+   sharing one with a worker is a read-only alias. Structs recurse. */
+int type_is_send(const Type *t) {
+    if (!t) return 0;
+    if (t->kind == TY_INT || t->kind == TY_FLOAT || t->kind == TY_BOOL || t->kind == TY_STRING ||
+        t->kind == TY_VOID)
+        return 1;
+    if (t->kind == TY_PARAM) return 1; /* concrete at the check sites */
+    if (t->kind == TY_ARRAY) return type_is_send(t->elem);
+    if (t->kind == TY_STRUCT) {
+        for (size_t i = 0; i < t->field_count; i++)
+            if (!type_is_send(t->field_types[i])) return 0;
+        return 1;
+    }
+    return 0; /* PTR, BOX, PROC, VEC */
+}
+
 /** 1 if this type can carry a fn out of a call (escape of capturing clos). */
 int type_can_hold_fn(const Type *t) {
     if (!t) return 1;
@@ -165,8 +183,10 @@ void type_c_name(const Type *t, char *buf, size_t cap) {
         return;
     }
     snprintf(buf, cap, "%s", t->name ? t->name : "struct");
-    /* Signal<T> / Future<T> are typed handles; the C layout is always { id }. */
-    if (t->name && (strcmp(t->name, "Signal") == 0 || strcmp(t->name, "Future") == 0))
+    /* Signal<T> / Future<T> / Chan<T> are typed handles; the C layout is
+       always { id }. */
+    if (t->name && (strcmp(t->name, "Signal") == 0 || strcmp(t->name, "Future") == 0 ||
+                    strcmp(t->name, "Chan") == 0))
         return;
     for (size_t i = 0; i < t->param_count; i++) {
         size_t used = strlen(buf);

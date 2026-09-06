@@ -1,0 +1,10 @@
+import "std:thread"
+import "std:fmt"
+
+// Channel payloads must be Send. []int is Copy but its refcount is
+// single-threaded, so Chan<[]int> must be rejected at the chan<> call.
+
+fn main() {
+    let xs = thread.chan(4, []int {})
+    fmt.println("ok")
+}

@@ -11,6 +11,7 @@
 #include "sema/typecheck.h"
 #include "sema/borrowck.h"
 #include "sema/boundscheck.h"
+#include "threadcheck.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -260,6 +261,8 @@ int yuga_session_check(YugaSession *s, const char *path, const char *src) {
     if (!load_err && s->nmods > 0) {
         if (typecheck_modules(s->mods, s->nmods) != 0) { /* errors captured */ }
         else {
+            /* Send discipline: validate every thread.spawn callback. */
+            threadcheck_modules(s->mods, s->nmods);
             borrowck_modules(s->mods, s->nmods);
             boundscheck_modules(s->mods, s->nmods);
         }

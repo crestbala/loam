@@ -733,4 +733,220 @@ static inline void yuga_async_sleep(int64_t ms) {
 }
 #endif
 
+/* --- thread + channel: std/thread.yuga. The ABI is a detached pthread and a ---
+   --- bounded FIFO of byte payloads guarded by a mutex + two condvars. All ---
+   --- queue/dispatch policy lives in Yuga; this is only the synchronization. --- */
+
+#ifndef __wasm32__
+#include <pthread.h>
+
+static int64_t yuga_thread_live;            /* detached workers still running */
+static pthread_mutex_t yuga_thread_mtx = PTHREAD_MUTEX_INITIALIZER;
+
+typedef struct {
+    unsigned char *buf;     /* cap * esz ring */
+    size_t esz;             /* payload byte size (sizeof T) */
+    int64_t cap;            /* slots */
+    int64_t head;           /* first live slot */
+    int64_t count;          /* live slots */
+    pthread_mutex_t mtx;
+    pthread_cond_t has_data, has_space;
+} yuga_ch;
+
+static yuga_ch **yuga_chs;
+static size_t yuga_ch_n, yuga_ch_cap;
+static pthread_mutex_t yuga_ch_tab_mtx = PTHREAD_MUTEX_INITIALIZER;
+
+static int64_t yuga_ch_alloc(int64_t cap, size_t esz) {
+    yuga_ch *c;
+    size_t i;
+    if (cap < 1) cap = 1;
+    if (esz < 1) esz = 1;
+    c = (yuga_ch *)yuga_new(sizeof(yuga_ch), "channel", 0);
+    c->buf = (unsigned char *)yuga_new((size_t)cap * esz, "channel", 0);
+    c->esz = esz;
+    c->cap = cap;
+    c->head = 0;
+    c->count = 0;
+    pthread_mutex_init(&c->mtx, NULL);
+    pthread_cond_init(&c->has_data, NULL);
+    pthread_cond_init(&c->has_space, NULL);
+    pthread_mutex_lock(&yuga_ch_tab_mtx);
+    if (yuga_ch_n == yuga_ch_cap) {
+        size_t nc = yuga_ch_cap ? yuga_ch_cap * 2 : 16;
+        yuga_ch **next = (yuga_ch **)realloc(yuga_chs, nc * sizeof(yuga_ch *));
+        if (!next) yuga_panic(__FILE__, __LINE__, "out of memory");
+        yuga_chs = next;
+        yuga_ch_cap = nc;
+    }
+    i = yuga_ch_n;
+    yuga_chs[i] = c;
+    yuga_ch_n++;
+    pthread_mutex_unlock(&yuga_ch_tab_mtx);
+    return (int64_t)i;
+}
+
+static inline yuga_ch *yuga_ch_get(int64_t id) {
+    yuga_ch *c;
+    /* Readers may run on worker threads while the UI thread grows the table
+       (realloc). Lock the table for the fetch so the entry pointer is read
+       race-free; the entry itself is stable once published. */
+    pthread_mutex_lock(&yuga_ch_tab_mtx);
+    if (id < 0 || (size_t)id >= yuga_ch_n)
+        c = NULL;
+    else
+        c = yuga_chs[(size_t)id];
+    pthread_mutex_unlock(&yuga_ch_tab_mtx);
+    return c;
+}
+
+static inline void yuga_ch_send(int64_t id, const void *val, size_t sz) {
+    yuga_ch *c = yuga_ch_get(id);
+    if (!c || !val) return;
+    pthread_mutex_lock(&c->mtx);
+    while (c->count == c->cap) pthread_cond_wait(&c->has_space, &c->mtx);
+    if (sz > c->esz) sz = c->esz;
+    if (sz)
+        memcpy(c->buf + (size_t)((c->head + c->count) % c->cap) * c->esz, val, sz);
+    c->count++;
+    pthread_cond_signal(&c->has_data);
+    pthread_mutex_unlock(&c->mtx);
+}
+
+static inline int64_t yuga_ch_try_send(int64_t id, const void *val, size_t sz) {
+    yuga_ch *c = yuga_ch_get(id);
+    if (!c || !val) return 0;
+    pthread_mutex_lock(&c->mtx);
+    if (c->count == c->cap) {
+        pthread_mutex_unlock(&c->mtx);
+        return 0;
+    }
+    if (sz > c->esz) sz = c->esz;
+    if (sz)
+        memcpy(c->buf + (size_t)((c->head + c->count) % c->cap) * c->esz, val, sz);
+    c->count++;
+    pthread_cond_signal(&c->has_data);
+    pthread_mutex_unlock(&c->mtx);
+    return 1;
+}
+
+static inline void yuga_ch_recv(int64_t id, void *out, size_t sz) {
+    yuga_ch *c = yuga_ch_get(id);
+    if (!c || !out) return;
+    pthread_mutex_lock(&c->mtx);
+    while (c->count == 0) pthread_cond_wait(&c->has_data, &c->mtx);
+    if (sz > c->esz) sz = c->esz;
+    if (sz) memcpy(out, c->buf + (size_t)c->head * c->esz, sz);
+    c->head = (c->head + 1) % c->cap;
+    c->count--;
+    pthread_cond_signal(&c->has_space);
+    pthread_mutex_unlock(&c->mtx);
+}
+
+static inline int64_t yuga_ch_pop(int64_t id, void *out, size_t sz) {
+    yuga_ch *c = yuga_ch_get(id);
+    if (!c || !out) return 0;
+    pthread_mutex_lock(&c->mtx);
+    if (c->count == 0) {
+        pthread_mutex_unlock(&c->mtx);
+        return 0;
+    }
+    if (sz > c->esz) sz = c->esz;
+    if (sz) memcpy(out, c->buf + (size_t)c->head * c->esz, sz);
+    c->head = (c->head + 1) % c->cap;
+    c->count--;
+    pthread_cond_signal(&c->has_space);
+    pthread_mutex_unlock(&c->mtx);
+    return 1;
+}
+
+static inline int64_t yuga_ch_ready(int64_t id) {
+    yuga_ch *c = yuga_ch_get(id);
+    int64_t r;
+    if (!c) return 0;
+    pthread_mutex_lock(&c->mtx);
+    r = c->count;
+    pthread_mutex_unlock(&c->mtx);
+    return r;
+}
+
+typedef struct {
+    yuga_fn cb;
+} yuga_thread_arg;
+
+static void *yuga_thread_entry(void *p) {
+    yuga_thread_arg *a = (yuga_thread_arg *)p;
+    yuga_fn cb = a->cb;
+    free(a);
+    ((void (*)(void *))cb.fn)(cb.env);
+    pthread_mutex_lock(&yuga_thread_mtx);
+    yuga_thread_live--;
+    pthread_mutex_unlock(&yuga_thread_mtx);
+    return NULL;
+}
+
+/* Bodyless `thread.spawn(cb: fn())`. Detached: results come back through
+   channel<T>, never through join. The fn env is leaked by design (fn values
+   are never freed), so the worker outlives the spawn callsite safely. */
+static inline void yuga_thread_spawn(yuga_fn cb) {
+    pthread_t t;
+    yuga_thread_arg *a;
+    if (!cb.fn) return;
+    a = (yuga_thread_arg *)yuga_new(sizeof(yuga_thread_arg), "thread.spawn", 0);
+    a->cb = cb;
+    if (pthread_create(&t, NULL, yuga_thread_entry, a) != 0) {
+        free(a);
+        yuga_panic(__FILE__, __LINE__, "thread.spawn: pthread_create failed");
+    }
+    pthread_detach(t);
+    pthread_mutex_lock(&yuga_thread_mtx);
+    yuga_thread_live++;
+    pthread_mutex_unlock(&yuga_thread_mtx);
+}
+
+static inline int64_t yuga_thread_running(void) {
+    int64_t n;
+    pthread_mutex_lock(&yuga_thread_mtx);
+    n = yuga_thread_live;
+    pthread_mutex_unlock(&yuga_thread_mtx);
+    return n;
+}
+#else /* __wasm32__: no threads; channel ops are inert so std:thread compiles */
+static inline int64_t yuga_ch_alloc(int64_t cap, size_t esz) {
+    (void)cap;
+    (void)esz;
+    return -1;
+}
+static inline void yuga_ch_send(int64_t id, const void *val, size_t sz) {
+    (void)id;
+    (void)val;
+    (void)sz;
+}
+static inline int64_t yuga_ch_try_send(int64_t id, const void *val, size_t sz) {
+    (void)id;
+    (void)val;
+    (void)sz;
+    return 0;
+}
+static inline void yuga_ch_recv(int64_t id, void *out, size_t sz) {
+    (void)id;
+    (void)sz;
+    if (out) memset(out, 0, sz);
+}
+static inline int64_t yuga_ch_pop(int64_t id, void *out, size_t sz) {
+    (void)id;
+    (void)sz;
+    if (out) memset(out, 0, sz);
+    return 0;
+}
+static inline int64_t yuga_ch_ready(int64_t id) {
+    (void)id;
+    return 0;
+}
+static inline void yuga_thread_spawn(yuga_fn cb) {
+    (void)cb; /* wasm has no threads; spawn is a no-op */
+}
+static inline int64_t yuga_thread_running(void) { return 0; }
+#endif
+
 #endif /* YUGA_RT_H */
