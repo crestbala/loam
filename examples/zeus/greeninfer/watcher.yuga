@@ -1,0 +1,537 @@
+//! watcher.yuga — GreenInfer folder watcher + chunker (phase 2).
+//!
+//! Everything that decides lives in Yuga, under the language's checks:
+//!   - recursive directory walk, skip lists, extension filters, sorting;
+//!   - manifest diffing (path + mtime) that turns "something changed" into
+//!     a re-index (the engine is append-only, so a changed tree is rebuilt);
+//!   - 500-token chunk boundaries for source and markdown;
+//!   - per-chunk labels + snippets for the UI.
+//!
+//! The C seam (runtime/greeninfer_runtime.c) contributes only data movement
+//! for this module: read a whole file, list one directory level, and return
+//! an mtime. Chunks are embedded by engine.yuga's word-overlap hash and
+//! stored L2-normalized by the engine, so every search score is a cosine.
+
+import "engine.yuga"
+
+/// Chunk budget in tokens (a token is a word run or one punctuation byte).
+const CHUNK_TOKENS: int = 500
+
+/// Files larger than this are not indexed (4 MB).
+const MAX_FILE_BYTES: int = 4194304
+
+/// Walk depth cap so a directory loop cannot hang the scan.
+const WALK_DEPTH: int = 10
+
+/// One open watch: root folder, engine file it indexes into, extension list.
+struct CodebaseWatcher {
+    root: string,
+    file: string,
+    cap: int,
+    on: int,
+    exts: []string,
+}
+
+/// UI-facing metadata for one indexed chunk (parallel to engine row ids).
+struct ChunkMeta {
+    label: string,
+    snippet: string,
+}
+
+// ---------------------------------------------------------------------------
+// C seam — bodyless declarations of `yuga_watcher_gi_*` (same runtime file
+// as the engine seam; yugac emits the extern prototypes automatically).
+// ---------------------------------------------------------------------------
+
+/// Whole file as a string. Empty on error or when bigger than 256 MB.
+fn gi_read_file(path: string) -> string {}
+
+/// One directory level: "name\n" lines; directories end with '/'.
+fn gi_dir_list(path: string) -> string {}
+
+/// Modification time in seconds since the epoch; -1 on error.
+fn gi_file_mtime(path: string) -> int {}
+
+// ---------------------------------------------------------------------------
+// Watch state (module-owned, like engine.yuga's engine singleton)
+// ---------------------------------------------------------------------------
+
+let mut watcher: CodebaseWatcher = CodebaseWatcher {
+    root: "", file: "", cap: 0, on: 0, exts: []string {},
+}
+let mut metas: []ChunkMeta = []ChunkMeta {}
+let mut manifest_paths: []string = []string {}
+let mut manifest_mt: []int = []int {}
+let mut watch_last: string = ""
+let mut watch_err: string = ""
+
+// ---------------------------------------------------------------------------
+// Tokenizer + chunker (pure Yuga, byte-level, ASCII-folded like the embedder)
+// ---------------------------------------------------------------------------
+
+fn is_word_byte(b: int) -> bool {
+    return (b >= 97 && b <= 122) || (b >= 48 && b <= 57) || b == 95
+}
+
+/// Count tokens in `text` with the same rule the chunker uses: a word run
+/// is one token, every non-space punctuation byte is one token.
+fn count_tokens(text: string) -> int {
+    let mut n = 0
+    let mut in_word = 0
+    for i in 0..text.len {
+        let b = text[i]
+        if is_word_byte(b) {
+            if in_word == 0 {
+                in_word = 1
+                n = n + 1
+            }
+        } else {
+            in_word = 0
+            if b != 32 && b != 9 && b != 10 && b != 13 {
+                n = n + 1
+            }
+        }
+    }
+    return n
+}
+
+fn byte_is_ws(b: int) -> bool {
+    return b == 32 || b == 9 || b == 10 || b == 13
+}
+
+/// Split `text` into chunks of at most `max_tokens` tokens. Boundaries land
+/// on token edges (word starts and punctuation), preferring line ends: a
+/// chunk is flushed when the budget is met at a newline, or immediately at
+/// the next token edge mid-line. Whitespace is preserved inside chunks.
+fn chunk_text(text: string, max_tokens: int) -> []string {
+    let mut out = []string {}
+    let mut acc = []int {}
+    let mut acc_tok = 0
+    let mut in_word = 0
+    let mut i = 0
+    while i <= text.len {
+        let mut at_end = 0
+        let mut is_w = 0
+        let mut b = 0
+        if i == text.len {
+            at_end = 1
+        } else {
+            b = text[i]
+            if is_word_byte(b) {
+                is_w = 1
+            }
+        }
+        if at_end == 0 && is_w == 1 {
+            if in_word == 0 {
+                if acc_tok >= max_tokens && acc.len > 0 {
+                    let s = string_from_bytes(acc)
+                    push(out, s)
+                    acc = []int {}
+                    acc_tok = 0
+                }
+                acc_tok = acc_tok + 1
+                in_word = 1
+            }
+            push(acc, b)
+        } else {
+            if in_word == 1 {
+                in_word = 0
+            }
+            if at_end == 1 {
+                if acc.len > 0 {
+                    let s = string_from_bytes(acc)
+                    push(out, s)
+                    acc = []int {}
+                }
+            } else if b == 10 {
+                if acc_tok >= max_tokens && acc.len > 0 {
+                    let s = string_from_bytes(acc)
+                    push(out, s)
+                    acc = []int {}
+                    acc_tok = 0
+                } else {
+                    push(acc, b)
+                }
+            } else if byte_is_ws(b) {
+                push(acc, b)
+            } else {
+                if acc_tok >= max_tokens && acc.len > 0 {
+                    let s = string_from_bytes(acc)
+                    push(out, s)
+                    acc = []int {}
+                    acc_tok = 0
+                }
+                acc_tok = acc_tok + 1
+                push(acc, b)
+            }
+        }
+        i = i + 1
+    }
+    return out
+}
+
+// ---------------------------------------------------------------------------
+// Byte-string helpers (no slicing in Yuga; walk bytes into a new string)
+// ---------------------------------------------------------------------------
+
+fn starts_with(s: string, p: string) -> bool {
+    if p.len > s.len {
+        return false
+    }
+    for i in 0..p.len {
+        if s[i] != p[i] {
+            return false
+        }
+    }
+    return true
+}
+
+fn ends_with(s: string, suf: string) -> bool {
+    if suf.len > s.len {
+        return false
+    }
+    let off = s.len - suf.len
+    for i in 0..suf.len {
+        if s[off + i] != suf[i] {
+            return false
+        }
+    }
+    return true
+}
+
+/// Lexicographic compare of two strings (byte order), for stable manifests.
+fn cmp_str(a: string, b: string) -> int {
+    let mut n = a.len
+    if b.len < n {
+        n = b.len
+    }
+    for i in 0..n {
+        if a[i] < b[i] {
+            return -1
+        }
+        if a[i] > b[i] {
+            return 1
+        }
+    }
+    if a.len < b.len {
+        return -1
+    }
+    if a.len > b.len {
+        return 1
+    }
+    return 0
+}
+
+fn has_ext(name: string, exts: []string) -> bool {
+    for i in 0..exts.len {
+        if ends_with(name, exts[i]) {
+            return true
+        }
+    }
+    return false
+}
+
+/// Directories the walk skips: dot-prefixed plus repo/vendor noise.
+fn skip_dir(name: string) -> bool {
+    if name.len > 0 && name[0] == 46 {
+        return true
+    }
+    if name == "build" || name == "node_modules" || name == "obj" {
+        return true
+    }
+    return false
+}
+
+// ---------------------------------------------------------------------------
+// Recursive walk (policy in Yuga; the seam lists one level at a time)
+// ---------------------------------------------------------------------------
+
+fn push_file(files: &mut []string, mts: &mut []int, full: string) {
+    push(files, full)
+    push(mts, gi_file_mtime(full))
+}
+
+fn walk_dir(dir: string, depth: int, exts: []string, files: &mut []string,
+            mts: &mut []int) {
+    if depth > WALK_DEPTH {
+        return
+    }
+    let list = gi_dir_list(dir)
+    if list.len == 0 {
+        return
+    }
+    let mut name = []int {}
+    let mut i = 0
+    while i <= list.len {
+        let mut b = 0
+        let mut at_end = 0
+        if i < list.len {
+            b = list[i]
+        } else {
+            at_end = 1
+        }
+        if at_end == 0 && b != 10 {
+            push(name, b)
+        } else if name.len > 0 {
+            let mut is_dir = 0
+            if name[name.len - 1] == 47 {
+                is_dir = 1
+            }
+            let mut nb = []int {}
+            let mut k = 0
+            while k < name.len {
+                if is_dir == 0 || k < name.len - 1 {
+                    push(nb, name[k])
+                }
+                k = k + 1
+            }
+            let entry = string_from_bytes(nb)
+            if is_dir == 1 {
+                if skip_dir(entry) == false {
+                    let sub = "{{dir}}/{{entry}}"
+                    walk_dir(sub, depth + 1, exts, files, mts)
+                }
+            } else if has_ext(entry, exts) {
+                let full = "{{dir}}/{{entry}}"
+                push_file(files, mts, full)
+            }
+            name = []int {}
+        }
+        i = i + 1
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Path helpers
+// ---------------------------------------------------------------------------
+
+/// The part of `full` after the watcher root, for display.
+fn rel_of(full: string) -> string {
+    let root = watcher.root
+    if starts_with(full, root) && full.len > root.len {
+        let mut b = []int {}
+        let mut i = root.len + 1
+        while i < full.len {
+            push(b, full[i])
+            i = i + 1
+        }
+        return string_from_bytes(b)
+    }
+    return full
+}
+
+/// First line of `s`, collapsed whitespace, capped for the row + prompt.
+fn snippet_of(s: string) -> string {
+    let mut b = []int {}
+    let mut i = 0
+    while i < s.len && b.len < 120 {
+        let c = s[i]
+        if c == 10 || c == 9 || c == 13 {
+            push(b, 32)
+        } else {
+            push(b, c)
+        }
+        i = i + 1
+    }
+    return string_from_bytes(b)
+}
+
+// ---------------------------------------------------------------------------
+// Scanning + indexing (the engine singleton is the sink)
+// ---------------------------------------------------------------------------
+
+/// Index one file: read, chunk at CHUNK_TOKENS, embed, insert. Returns the
+/// number of chunks indexed (0 for an unindexable file, -1 on engine error).
+/// Row ids are metas indices, so the UI can label hits 1:1.
+fn scan_and_index_file(full: string) -> int {
+    let body = gi_read_file(full)
+    if body.len == 0 || body.len > MAX_FILE_BYTES {
+        return 0
+    }
+    let rel = rel_of(full)
+    let chunks = chunk_text(body, CHUNK_TOKENS)
+    if chunks.len == 0 {
+        return 0
+    }
+    let total = chunks.len
+    let mut ci = 0
+    while ci < total {
+        let chunk = chunks[ci]
+        if chunk.len > 0 {
+            let vec = engine.embed_text(chunk)
+            let id = metas.len
+            let ok = engine.engine_insert(id, vec)
+            if ok == false {
+                watch_err = "engine full while indexing {{rel}}"
+                if ci == 0 {
+                    return -1
+                }
+                return ci
+            }
+            let cn = ci + 1
+            let label = "{{rel}}  c{{cn}}/{{total}}"
+            let snip = snippet_of(chunk)
+            push(metas, ChunkMeta { label: label, snippet: snip })
+        }
+        ci = ci + 1
+    }
+    return total
+}
+
+/// Collect every matching file under `root` into sorted manifest order.
+fn collect_files(root: string, exts: []string, files: &mut []string,
+                 mts: &mut []int) {
+    walk_dir(root, 0, exts, files, mts)
+    // Insertion sort by path so manifests and labels are deterministic
+    // regardless of readdir order.
+    let mut i = 1
+    while i < files.len {
+        let p = files[i]
+        let m = mts[i]
+        let mut j = i
+        while j > 0 && cmp_str(p, files[j - 1]) < 0 {
+            files[j] = files[j - 1]
+            mts[j] = mts[j - 1]
+            j = j - 1
+        }
+        files[j] = p
+        mts[j] = m
+        i = i + 1
+    }
+}
+
+/// Full scan: wipe the engine file, walk `root`, index every matching file
+/// as chunks. Returns the chunk count (0 when nothing matched, -1 on error).
+fn watch_scan(root: string, file: string, cap: int, exts: []string) -> int {
+    watcher.root = root
+    watcher.file = file
+    watcher.cap = cap
+    watcher.exts = exts
+    metas = []ChunkMeta {}
+    watch_err = ""
+    if engine.engine_wipe(file, cap) != 0 {
+        watch_err = "engine open failed on {{file}}"
+        return -1
+    }
+    let mut files = []string {}
+    let mut mts = []int {}
+    collect_files(root, exts, &mut files, &mut mts)
+    manifest_paths = files
+    manifest_mt = mts
+    let nfiles = files.len
+    if nfiles == 0 {
+        watch_last = "no matching files under {{root}}"
+        return 0
+    }
+    // Pass 1: document frequencies. Embed every chunk unweighted, count the
+    // dimensions it touches, and total the chunk count — then activate the
+    // corpus weighting so pass 2 stores IDF-weighted vectors (queries embed
+    // with the same table, so retrieval ranks rare, specific tokens first).
+    engine.embed_df_reset()
+    let mut total_chunks = 0
+    let mut f1 = 0
+    while f1 < nfiles {
+        let body = gi_read_file(files[f1])
+        if body.len > 0 && body.len <= MAX_FILE_BYTES {
+            let chunks = chunk_text(body, CHUNK_TOKENS)
+            let mut c1 = 0
+            while c1 < chunks.len {
+                if chunks[c1].len > 0 {
+                    total_chunks = total_chunks + 1
+                    let v = engine.embed_text(chunks[c1])
+                    let mut d = 0
+                    while d < v.len {
+                        if v[d] != 0.0 {
+                            engine.embed_df_note(d)
+                        }
+                        d = d + 1
+                    }
+                }
+                c1 = c1 + 1
+            }
+        }
+        f1 = f1 + 1
+    }
+    engine.embed_df_done(total_chunks)
+    // Pass 2: store the weighted vectors (embedding + meta per chunk).
+    let mut fi = 0
+    while fi < nfiles {
+        let got = scan_and_index_file(files[fi])
+        if got < 0 {
+            return -1
+        }
+        fi = fi + 1
+    }
+    let n = metas.len
+    let nf = files.len
+    watch_last = "indexed {{n}} chunks from {{nf}} files under {{root}}"
+    return n
+}
+
+/// Poll: re-walk and compare path+mtime against the manifest. On any change
+/// the whole tree is re-indexed (append-only engine). 0 = unchanged;
+/// > 0 = chunk count after the automatic re-index; -1 = error.
+fn watch_tick() -> int {
+    if watcher.on == 0 {
+        return 0
+    }
+    let mut files = []string {}
+    let mut mts = []int {}
+    collect_files(watcher.root, watcher.exts, &mut files, &mut mts)
+    let mut changed = 0
+    if files.len != manifest_paths.len {
+        changed = 1
+    } else {
+        let mut i = 0
+        while i < files.len {
+            if files[i] != manifest_paths[i] || mts[i] != manifest_mt[i] {
+                changed = 1
+                break
+            }
+            i = i + 1
+        }
+    }
+    if changed == 0 {
+        return 0
+    }
+    let n = watch_scan(watcher.root, watcher.file, watcher.cap, watcher.exts)
+    if n >= 0 {
+        watch_last = "{{watch_last}}  (auto)"
+    }
+    return n
+}
+
+fn watch_set_on(on: int) {
+    watcher.on = on
+}
+
+fn watch_is_on() -> int {
+    return watcher.on
+}
+
+/// Chunks currently indexed (== engine rows).
+fn watch_chunks() -> int {
+    return metas.len
+}
+
+fn watch_label(id: int) -> string {
+    if id >= 0 && id < metas.len {
+        return metas[id].label
+    }
+    return "row #{{id}}"
+}
+
+fn watch_snippet(id: int) -> string {
+    if id >= 0 && id < metas.len {
+        return metas[id].snippet
+    }
+    return ""
+}
+
+fn watch_last_msg() -> string {
+    return watch_last
+}
+
+fn watch_err_msg() -> string {
+    return watch_err
+}

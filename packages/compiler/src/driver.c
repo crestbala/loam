@@ -658,6 +658,13 @@ int main(int argc, char **argv) {
         close(fd);
         cpath_is_temp = 1;
     }
+    /* App-owned C seam: `runtime/<stem>_runtime.c` next to the entry file is
+       compiled and linked for native targets (used by e.g.
+       examples/zeus/greeninfer). wasm / ios / android targets ignore it. */
+    char app_rt[1024] = "";
+    if (!emit_c && !target_wasm && !target_ios && !target_android)
+        snprintf(app_rt, sizeof app_rt, "%s/runtime/%s_runtime.c", srcdir, stem);
+    if (app_rt[0] && access(app_rt, R_OK) != 0) app_rt[0] = '\0';
     free(srcdir);
     if (ensure_parent_dir(emit_c ? cpath : binpath) != 0) {
         fprintf(stderr, "error: cannot create directory for output\n");
@@ -701,6 +708,25 @@ int main(int argc, char **argv) {
         snprintf(http_link, sizeof http_link, " \"%s/net.c\"", YUGA_RUNTIME_DIR);
     } else if (uses_net) {
         snprintf(http_link, sizeof http_link, " \"%s/net.c\"", YUGA_RUNTIME_DIR);
+    }
+
+    /* App C seam (above): compile it inside the native link command. */
+    char extra_link[1400] = "";
+    if (app_rt[0])
+        snprintf(extra_link, sizeof extra_link,
+                 " -I\"%s\" -x c \"%s\"", YUGA_RUNTIME_DIR, app_rt);
+    /* YUGA_LINK_EXTRA: extra .c/.o inputs appended to the native link, for
+       entries without a sibling runtime file (e.g. CLI tools sharing an
+       app's C seam). Space-separated paths. */
+    const char *le = getenv("YUGA_LINK_EXTRA");
+    if (le && le[0]) {
+        size_t used = strlen(extra_link);
+        size_t left = sizeof extra_link - used - 1;
+        if (strlen(le) + 64 <= left) {
+            snprintf(extra_link + used, left + 1, " -I\"%s\" %s", YUGA_RUNTIME_DIR, le);
+        } else {
+            fprintf(stderr, "yugac: warning: YUGA_LINK_EXTRA too long, ignored\n");
+        }
     }
 
     if (target_wasm) {
@@ -954,19 +980,20 @@ int main(int argc, char **argv) {
                 return 1;
             }
             snprintf(cmd, sizeof cmd,
-                     "cc %s %s -o \"%s\" -I\"%s\" -x c \"%s\" -x none \"%s\" \"%s\" \"%s\"%s "
+                     "cc %s %s -o \"%s\" -I\"%s\" -x c \"%s\" -x none \"%s\" \"%s\" \"%s\"%s%s "
                      "-framework Cocoa -framework Security -framework CoreFoundation -lm",
-                     copt, ld, binpath, YUGA_RUNTIME_DIR, cpath, plat_o, key_o, mac_o, http_link);
+                     copt, ld, binpath, YUGA_RUNTIME_DIR, cpath, plat_o, key_o, mac_o, http_link,
+                     extra_link);
         } else {
             snprintf(cmd, sizeof cmd,
-                     "cc %s -o \"%s\" -I\"%s\" -x c \"%s\" -x none \"%s\" \"%s\"%s "
+                     "cc %s -o \"%s\" -I\"%s\" -x c \"%s\" -x none \"%s\" \"%s\"%s%s "
                      "-framework Security -framework CoreFoundation -lm",
-                     copt, binpath, YUGA_RUNTIME_DIR, cpath, plat_o, key_o, http_link);
+                     copt, binpath, YUGA_RUNTIME_DIR, cpath, plat_o, key_o, http_link, extra_link);
         }
 #else
         snprintf(cmd, sizeof cmd,
-                 "cc %s -o \"%s\" -I\"%s\" -x c \"%s\" -x none \"%s\" \"%s\"%s -lm",
-                 copt, binpath, YUGA_RUNTIME_DIR, cpath, plat_o, key_o, http_link);
+                 "cc %s -o \"%s\" -I\"%s\" -x c \"%s\" -x none \"%s\" \"%s\"%s%s -lm",
+                 copt, binpath, YUGA_RUNTIME_DIR, cpath, plat_o, key_o, http_link, extra_link);
         (void)mac_m;
         (void)mac_o;
 #endif
@@ -975,37 +1002,39 @@ int main(int argc, char **argv) {
         snprintf(cmd, sizeof cmd,
                  "cc %s %s -o \"%s\" -I\"%s\" -x c \"%s\" \"%s/maya_plat.c\" "
                  "-x objective-c -fobjc-arc \"%s/maya_mac.m\" "
-                 "-framework Cocoa -lm",
-                 copt, ld, binpath, YUGA_RUNTIME_DIR, cpath, YUGA_RUNTIME_DIR, YUGA_RUNTIME_DIR);
+                 "-framework Cocoa -lm%s",
+                 copt, ld, binpath, YUGA_RUNTIME_DIR, cpath, YUGA_RUNTIME_DIR, YUGA_RUNTIME_DIR,
+                 extra_link);
 #else
         snprintf(cmd, sizeof cmd,
-                 "cc %s %s -o \"%s\" -I\"%s\" -x c \"%s\" \"%s/maya_plat.c\" -lm",
-                 copt, ld, binpath, YUGA_RUNTIME_DIR, cpath, YUGA_RUNTIME_DIR);
+                 "cc %s %s -o \"%s\" -I\"%s\" -x c \"%s\" \"%s/maya_plat.c\" -lm%s",
+                 copt, ld, binpath, YUGA_RUNTIME_DIR, cpath, YUGA_RUNTIME_DIR, extra_link);
 #endif
     } else if (uses_http) {
 #if defined(__APPLE__)
         snprintf(cmd, sizeof cmd,
                  "cc %s %s -o \"%s\" -I\"%s\" -x c \"%s\" \"%s/net.c\" "
-                 "-framework Security -framework CoreFoundation",
-                 copt, ld, binpath, YUGA_RUNTIME_DIR, cpath, YUGA_RUNTIME_DIR);
+                 "-framework Security -framework CoreFoundation%s",
+                 copt, ld, binpath, YUGA_RUNTIME_DIR, cpath, YUGA_RUNTIME_DIR, extra_link);
 #else
         snprintf(cmd, sizeof cmd,
-                 "cc %s %s -o \"%s\" -I\"%s\" -x c \"%s\" \"%s/net.c\"",
-                 copt, ld, binpath, YUGA_RUNTIME_DIR, cpath, YUGA_RUNTIME_DIR);
+                 "cc %s %s -o \"%s\" -I\"%s\" -x c \"%s\" \"%s/net.c\"%s",
+                 copt, ld, binpath, YUGA_RUNTIME_DIR, cpath, YUGA_RUNTIME_DIR, extra_link);
 #endif
     } else if (uses_net) {
 #if defined(__APPLE__)
         snprintf(cmd, sizeof cmd,
                  "cc %s %s -o \"%s\" -I\"%s\" -x c \"%s\" \"%s/net.c\" "
-                 "-framework Security -framework CoreFoundation",
-                 copt, ld, binpath, YUGA_RUNTIME_DIR, cpath, YUGA_RUNTIME_DIR);
+                 "-framework Security -framework CoreFoundation%s",
+                 copt, ld, binpath, YUGA_RUNTIME_DIR, cpath, YUGA_RUNTIME_DIR, extra_link);
 #else
         snprintf(cmd, sizeof cmd,
-                 "cc %s %s -o \"%s\" -I\"%s\" -x c \"%s\" \"%s/net.c\"",
-                 copt, ld, binpath, YUGA_RUNTIME_DIR, cpath, YUGA_RUNTIME_DIR);
+                 "cc %s %s -o \"%s\" -I\"%s\" -x c \"%s\" \"%s/net.c\"%s",
+                 copt, ld, binpath, YUGA_RUNTIME_DIR, cpath, YUGA_RUNTIME_DIR, extra_link);
 #endif
     } else {
-        snprintf(cmd, sizeof cmd, "cc %s %s -x c \"%s\" -o \"%s\"", copt, ld, cpath, binpath);
+        snprintf(cmd, sizeof cmd, "cc %s %s -x c \"%s\" -o \"%s\"%s", copt, ld, cpath,
+                 binpath, extra_link);
     }
     int rc = system(cmd);
     if (show_time) fprintf(stderr, "yugac: cc %.3fs\n", now_sec() - t0);
