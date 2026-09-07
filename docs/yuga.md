@@ -133,6 +133,21 @@ Useful flags:
 ./bin/yugac --target=android examples/zeus/counter/android/app.yuga  # Gradle project
 ```
 
+### App C seams
+
+Bodyless fns are not just for std: any fn whose body is missing is an **extern
+C hook** (`yuga_<module>_<name>`, no Yuga body emitted — see
+[boundary.md](boundary.md)). Std modules resolve theirs in `yuga_rt` / the
+runtime headers; an app resolves its own by shipping one C file:
+
+- `runtime/<app>_runtime.c` beside the entry program is compiled and linked
+  automatically for native targets (`driver.c`), and
+- `YUGA_LINK_EXTRA="path.c …"` appends extra `.c`/`.o` inputs for entries
+  that share a seam (CLI tools, smoke tests).
+
+GreenInfer is the working example (`examples/zeus/greeninfer/`): Yuga owns
+all engine logic; the C file is only the NEON kernel and mmap trampolines.
+
 ### Compile time
 
 `yugac` itself is fast (tens of milliseconds to typecheck and emit C). Linking

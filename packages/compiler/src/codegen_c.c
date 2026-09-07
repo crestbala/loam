@@ -2594,11 +2594,27 @@ void codegen_emit_c(FILE *out, YugaModule *mods, int nmods, const char *rt_path)
     for (int m = 0; m < nmods; m++) {
         AstNode *p = mods[m].ast;
         if (!p) continue;
+        /* std module seams are declared by the runtime headers included above
+           (yuga_rt.h / zeus_rt.h / net_rt.h / maya_rt.h). Bodyless fns in
+           user modules are app C seams: emit an extern prototype so the
+           generated C compiles against app-supplied C (driver links a
+           `runtime/<app>_runtime.c` beside the entry file, if present). */
+        int std_mod = 0;
+        if (mods[m].path) {
+            size_t sd = strlen(YUGA_STD_DIR);
+            std_mod = strncmp(mods[m].path, YUGA_STD_DIR, sd) == 0 &&
+                      (mods[m].path[sd] == '/' || mods[m].path[sd] == '\0');
+        }
         for (size_t i = 0; i < p->as.program.decl_count; i++) {
             AstNode *d = p->as.program.decls[i];
-            if (d->kind != AST_FN_DECL || d->as.fn.is_intrinsic || d->as.fn.tparam_count)
-                continue;
+            if (d->kind != AST_FN_DECL || d->as.fn.tparam_count) continue;
             if (!yuga_dce_keep(d)) continue;
+            if (d->as.fn.is_intrinsic) {
+                if (std_mod) continue;
+                emit_fn_sig(out, d, 0);
+                fprintf(out, ";\n");
+                continue;
+            }
             int is_main = (m == 0 && strcmp(d->as.fn.name, "main") == 0);
             if (is_main) continue;
             emit_fn_sig(out, d, 0);

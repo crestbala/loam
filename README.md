@@ -203,9 +203,12 @@ Golden programs under `packages/compiler/tests/golden/` (hello, fib, fizzbuzz,
 | `gallery` | Every zeus component in isolation. Start here to see the component library. |
 | `dashboard` | A small dashboard: stats, activity, dialog, signals. |
 | `counter` | Full-stack: shared `#[proto]` contract, Yuga backend, Zeus UI on web / macOS / iOS / Android. |
+| `greeninfer` | Local vector memory engine: mmap + NEON row sweep in a Zeus harness. [README](examples/zeus/greeninfer/README.md) |
 
 ```
 ./run.sh gallery              # Vite wasm UI at http://127.0.0.1:5174
+./run.sh greeninfer           # Cocoa engine check (mmap + NEON)
+```
 ./run.sh gallery web          # same
 ./run.sh gallery macos        # Cocoa
 ./run.sh gallery ios          # Simulator (Xcode)

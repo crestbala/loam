@@ -533,6 +533,17 @@ static int is_ffi_mod(const char *name) {
            strcmp(name, "thread") == 0;
 }
 
+/* User (non-std) modules may declare bodyless C-seam hooks the same way std
+ * modules do: an empty body marks the fn as intrinsic (extern C symbol, no
+ * Yuga body emitted — see codegen_c.c). std modules keep the allow-list
+ * above; `main` stays a plain function so `fn main() {}` still links. */
+static int user_seam_mod(const char *path) {
+    if (!path) return 0;
+    size_t sd = strlen(YUGA_STD_DIR);
+    return !(strncmp(path, YUGA_STD_DIR, sd) == 0 &&
+             (path[sd] == '/' || path[sd] == '\0'));
+}
+
 static AstNode *find_struct(const char *name) {
     if (Gmods && Gn > 0) {
         AstNode *d = lookup_unqualified(name, find_struct_in);
@@ -3148,10 +3159,12 @@ int typecheck_modules(YugaModule *mods, int nmods) {
             AstNode *d = p->as.program.decls[i];
             if (d->kind != AST_FN_DECL) continue;
             fn_type_of(d);
-            if (is_ffi_mod(mods[m].name)) {
+            if (is_ffi_mod(mods[m].name) || user_seam_mod(mods[m].path)) {
                 AstNode *body = d->as.fn.body;
-                if (!body || (body->kind == AST_BLOCK && body->as.block.stmt_count == 0))
-                    d->as.fn.is_intrinsic = 1;
+                if (!body || (body->kind == AST_BLOCK && body->as.block.stmt_count == 0)) {
+                    if (strcmp(d->as.fn.name, "main") != 0)
+                        d->as.fn.is_intrinsic = 1;
+                }
             }
             {
                 const char *fnn = d->as.fn.name;
