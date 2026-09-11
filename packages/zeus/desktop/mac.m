@@ -907,6 +907,12 @@ static NSCursor *zeus_cursor_for(const char *name) {
 - (void)keyDown:(NSEvent *)event {
     int mods = [self zeusMods:event];
     unsigned short code = [event keyCode];
+    if ((mods & ZEUS_MOD_CMD) && code == 9) {
+        /* Cmd+V: the bare Zeus view has no Edit menu, so route the
+           key equivalent straight to the pasteboard handler. */
+        [self paste:nil];
+        return;
+    }
     if (code == 48 || code == 53 || (mods & (ZEUS_MOD_CMD | ZEUS_MOD_CTRL))) {
         int key = [self zeusKeyFromEvent:event];
         if (key && zeus_handle_key_ev(key, mods))

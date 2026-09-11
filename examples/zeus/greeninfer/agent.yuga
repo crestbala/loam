@@ -276,7 +276,8 @@ fn extract_after_from(body: string, key: string, from: int) -> string {
     return string_from_bytes(b)
 }
 
-/// Pull the answer text out of a reply, per API shape.
+/// Pull the answer text out of a reply, per API shape, with fallbacks so a
+/// shape drift degrades to a visible error instead of a silent miss.
 fn extract_reply(body: string, kind: int) -> string {
     if kind == 1 {
         // Anthropic Messages: content:[{type:"text", text:"..."}]
@@ -293,10 +294,33 @@ fn extract_reply(body: string, kind: int) -> string {
                 return t
             }
         }
-        return extract_after_from(body, "\"text\":", 0)
+        let t1 = extract_after_from(body, "\"text\":", 0)
+        if t1.len > 0 {
+            return t1
+        }
+        // Some endpoints mirror chat.completions on /v1/responses.
+        return extract_after_from(body, "\"content\":", 0)
     }
     // OpenAI-style chat: choices:[{message:{content:"..."}}]
-    return extract_after_from(body, "\"content\":", 0)
+    let c = extract_after_from(body, "\"content\":", 0)
+    if c.len > 0 {
+        return c
+    }
+    return extract_after_from(body, "\"text\":", 0)
+}
+
+/// Clip `s` to `n` bytes (for status lines).
+fn clip(s: string, n: int) -> string {
+    if s.len <= n {
+        return s
+    }
+    let mut b = []int {}
+    let mut i = 0
+    while i < n {
+        push(b, s[i])
+        i = i + 1
+    }
+    return string_from_bytes(b)
 }
 
 /// A JSON error message from an API error body, when the reply has none.
@@ -433,10 +457,12 @@ fn query_agent(p: FrontierPipeline, prompt: string, topk: int) -> AgentAnswer {
             let err = extract_error(resp)
             let us = engine.engine_now_us() - t0
             if err.len > 0 {
+                agent_err = clip(err, 220)
                 text = "model/api error: {{err}}"
             } else {
                 text = offline_reply(us, ctx)
                 text = "{{text}}  [remote reply unparsed; offline context above]"
+                agent_err = "unparsed reply from {{p.host}} (check the model id)"
             }
         }
     }
