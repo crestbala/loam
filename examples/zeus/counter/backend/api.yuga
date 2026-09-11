@@ -40,13 +40,13 @@ fn stats_rpc() -> string {
     return "Counter.Stats"
 }
 
-/// Native macOS / iOS Simulator loopback. Wasm uses `http.client("")` (Vite proxy).
+/// Explicit loopback. Prefer `http.client()` (fills per `--target`).
 fn native_addr() -> string {
     return "127.0.0.1:8080"
 }
 
-/// Android emulator alias for the host loopback (`127.0.0.1` on the Mac).
-/// A USB/Wi-Fi device cannot use this; pass the Mac's LAN IP instead.
+/// Explicit Android emulator alias. Prefer `http.client()`. A USB/Wi-Fi
+/// device cannot use this; set `YUGA_RPC_ADDR` to the Mac's LAN IP:port.
 fn android_addr() -> string {
     return "10.0.2.2:8080"
 }

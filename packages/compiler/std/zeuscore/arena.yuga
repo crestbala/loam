@@ -24,6 +24,8 @@ struct UiNode {
     grow: int,
     shrink: int,
     bg: int,
+    /// Second fill color for a vertical gradient (`bg` → `bg2`). `-1` = solid `bg`.
+    bg2: int,
     fg: int,
     radius: int,
     ew: int,
@@ -203,7 +205,7 @@ fn blank_node() -> UiNode {
     return UiNode {
         kind: 0, dir: 0, kids: []int {}, pad: 0, padx: 0, pady: 0,
         pad_t: 0, pad_r: 0, pad_b: 0, pad_l: 0, gap: 0, grow: 0, shrink: 1,
-        bg: -1, fg: -1, radius: 0, ew: -1, eh: -1, font: 0, justify: 0, align: 0,
+        bg: -1, bg2: -1, fg: -1, radius: 0, ew: -1, eh: -1, font: 0, justify: 0, align: 0,
         min_w: -1, max_w: -1, min_h: -1, max_h: -1, w_pct: 100, h_pct: -1,
         text: "", bind_sig: 0, click_sig: 0, click_mode: 0, click_set: 0,
         click2_sig: 0, click2_mode: 0, click2_set: 0,

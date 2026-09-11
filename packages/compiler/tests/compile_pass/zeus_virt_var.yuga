@@ -1,0 +1,57 @@
+// Variable-height windowed list: spacers follow per-row heights.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn expect(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn RowOf(i: int, s: string) {
+    let mut h = 20
+    if i % 2 == 1 {
+        h = 40
+    }
+    zeus.Box(height = h) {
+        zeus.Text(s)
+    }
+}
+
+fn main() {
+    let mut xs = []string {}
+    let mut hs = []int {}
+    let mut i = 0
+    while i < 1000 {
+        push(xs, "r{{i}}")
+        if i % 2 == 0 {
+            push(hs, 20)
+        } else {
+            push(hs, 40)
+        }
+        i = i + 1
+    }
+    let items = zeus.signal(xs)
+    let heights = zeus.signal(hs)
+
+    zeus.snapshot(200, 200, fn() -> Node {
+        zeus.VirtualListVar(items, heights, 20, RowOf)
+    })
+
+    expect(zeus.arena_nodes() < 200, "var list stays small")
+    expect(zeus.engine_find_text("r0") != 0, "first row")
+    expect(zeus.engine_find_text("r500") == 0, "far row not mounted")
+
+    let list = zeus.engine_find_role("list")
+    expect(list > 0, "list")
+    // 500 even rows * 20 + 500 odd * 40 = 30000; index 500 starts at
+    // 250*20 + 250*40 = 15000.
+    zeus.scroll_to(Node { id: list }, 15000)
+    zeus.engine_layout(200, 200)
+    expect(zeus.engine_find_text("r500") != 0, "windowed var row")
+    expect(zeus.engine_find_text("r0") == 0, "offscreen dropped")
+    fmt.println("virt var ok")
+}

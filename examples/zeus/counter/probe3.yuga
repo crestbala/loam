@@ -17,8 +17,7 @@ fn jobs_near(step: string) {
 }
 
 fn main() {
-    let win = zeus.window_size()
-    zeus.App("virt-app", win.width, win.height, fn() {
+    zeus.App("virt-app", fn() {
         screen.Screen("virt-app", "head", "1", "2", "3", 0, 0)
     })
     // zeus.App headless runs one layout; continue driving frames ourselves.

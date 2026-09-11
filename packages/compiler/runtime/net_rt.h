@@ -9,6 +9,9 @@
 
 int64_t yuga_net_tcp_connect(yuga_str host, int64_t port);
 int64_t yuga_net_tls_connect(yuga_str host, int64_t port);
+int64_t yuga_net_tls_nb_connect(yuga_str host, int64_t port);
+int64_t yuga_net_tls_nb_ready(int64_t fd);
+int64_t yuga_net_tcp_wouldblock(void);
 int64_t yuga_net_tcp_nb_connect(yuga_str host, int64_t port);
 int64_t yuga_net_tcp_poll(int64_t fd, int64_t want, int64_t ms);
 int64_t yuga_net_tcp_send(int64_t fd, yuga_str data, int64_t off);

@@ -6,6 +6,7 @@ and invokes `cc`. C is the **platform binding target**, not the language's
 semantics.
 
 Language rules live in [spec.md](spec.md). C vs Yuga: [boundary.md](boundary.md).
+Self-improvement phases: [downsides.md](downsides.md).
 This file is architecture plus how to write and run programs.
 
 ## Architecture

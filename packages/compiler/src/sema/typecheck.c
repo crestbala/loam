@@ -950,6 +950,35 @@ static Type *finish_proc_call(AstNode *n, Type *ft, AstNode *named) {
                 is_props_lit(n->as.call.args[ft->param_count - 1])) {
                 n->as.call.args[ft->param_count - 1]->as.struct_lit.type_name =
                     yuga_dup(last->name);
+            } else if (n->as.call.arg_count > ft->param_count &&
+                       is_props_lit(n->as.call.args[n->as.call.arg_count - 1])) {
+                /* `Button("Go", look = Solid)`: extra leading positionals
+                   fill the first fields of the trailing props struct. */
+                size_t extra = n->as.call.arg_count - ft->param_count;
+                AstNode *lit = n->as.call.args[n->as.call.arg_count - 1];
+                AstNode *st = find_struct(last->name);
+                if (st && extra <= st->as.strct.field_count) {
+                    size_t oldn = lit->as.struct_lit.field_count;
+                    FieldInit *nf = (FieldInit *)calloc(extra + oldn, sizeof(FieldInit));
+                    size_t k = 0;
+                    for (size_t i = 0; i < extra; i++) {
+                        nf[k].name = yuga_dup(st->as.strct.fields[i].name);
+                        nf[k].init = n->as.call.args[i];
+                        k++;
+                    }
+                    memcpy(nf + k, lit->as.struct_lit.fields, oldn * sizeof(FieldInit));
+                    free(lit->as.struct_lit.fields);
+                    lit->as.struct_lit.fields = nf;
+                    lit->as.struct_lit.field_count = extra + oldn;
+                    lit->as.struct_lit.type_name = yuga_dup(last->name);
+                    size_t keep = ft->param_count;
+                    AstNode **na = (AstNode **)malloc(keep * sizeof(AstNode *));
+                    for (size_t i = 0; i + 1 < keep; i++)
+                        na[i] = n->as.call.args[extra + i];
+                    na[keep - 1] = lit;
+                    n->as.call.args = na;
+                    n->as.call.arg_count = keep;
+                }
             } else if (n->as.call.arg_count + 1 == ft->param_count &&
                        struct_all_defaulted(find_struct(last->name))) {
                 size_t ac = n->as.call.arg_count;

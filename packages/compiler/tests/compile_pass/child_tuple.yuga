@@ -1,7 +1,7 @@
 import "std:zeus"
 
 fn main() {
-    zeus.App("Tuple", 320, 200, fn() {
+    zeus.App("Tuple", fn() {
         zeus.Box(align_direction = DIRECTION.Column, padding = 8) {
             zeus.Text("a")
             zeus.Text("b")
@@ -10,5 +10,5 @@ fn main() {
                 zeus.Text("d")
             }
         }
-    })
+    }, 320, 200)
 }

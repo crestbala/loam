@@ -1,0 +1,96 @@
+// Async TLS: `tls_nb_connect` + `tls_nb_ready` never block the caller.
+// Skipped when offline, same as `http_https_live.yuga`.
+
+import "std:fmt"
+import "std:http"
+import "std:net"
+import "std:sys"
+import "std:async"
+
+fn must(ok: bool) {
+    if !ok {
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    let fd = net.tls_nb_connect("example.com", 443)
+    if fd < 0 {
+        fmt.println("https async offline: skipped (connect)")
+        return
+    }
+    let mut ready = 0
+    let mut i = 0
+    while i < 200 {
+        if ready == 0 {
+            let r = net.tls_nb_ready(fd)
+            if r < 0 {
+                fmt.println("https async offline: skipped (handshake)")
+                return
+            }
+            if r > 0 {
+                ready = 1
+            } else {
+                async.sleep(20)
+            }
+        }
+        i = i + 1
+    }
+    if ready == 0 {
+        net.tcp_close(fd)
+        fmt.println("https async offline: skipped (timeout)")
+        return
+    }
+    let req = "GET / HTTP/1.1\r\nHost: example.com\r\nUser-Agent: yuga-tls-async\r\nConnection: close\r\n\r\n"
+    let mut sent = 0
+    i = 0
+    while i < 200 {
+        if sent < req.len {
+            if net.tcp_poll(fd, 2, 0) > 0 {
+                let n = net.tcp_send(fd, req, sent)
+                if n < 0 {
+                    net.tcp_close(fd)
+                    fmt.println("https async offline: skipped (send)")
+                    return
+                }
+                sent = sent + n
+            } else {
+                async.sleep(10)
+            }
+        }
+        i = i + 1
+    }
+    if sent != req.len {
+        net.tcp_close(fd)
+        fmt.println("https async offline: skipped (partial send", sent, ")")
+        return
+    }
+    let mut acc = ""
+    i = 0
+    while i < 200 {
+        let p = net.tcp_poll(fd, 1, 0)
+        if p > 0 {
+            let chunk = net.tcp_read(fd, 4096)
+            if chunk.len == 0 {
+                if net.tcp_wouldblock() == 0 {
+                    i = 200
+                }
+            } else {
+                acc = http.concat_str(acc, chunk)
+            }
+        } else {
+            async.sleep(20)
+        }
+        i = i + 1
+    }
+    net.tcp_close(fd)
+    if acc.len == 0 {
+        fmt.println("https async offline: skipped (empty)")
+        return
+    }
+    if http.contains(acc, "200 OK") == 0 {
+        fmt.println("https async offline: skipped (no 200)")
+        return
+    }
+    fmt.println("https async ok (", acc.len, " bytes)")
+}

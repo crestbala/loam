@@ -1,14 +1,6 @@
-//! iOS Simulator gallery UI. Same Zeus tree as wasm, macOS, and Android.
-//! The iOS host lays out to the view every frame, so the width/height here
-//! only matter until the first real layout; zeus.window_size() keeps this
-//! file in sync with the other hosts.
-
-import "std:zeus"
-import "../screen.yuga"
+//! iOS Simulator host. Shared UI: ../ui.yuga
+import "../ui.yuga"
 
 fn main() {
-    let win = zeus.window_size()
-    zeus.App("Zeus Gallery", win.width, win.height, fn() {
-        screen.Screen()
-    })
+    ui.start()
 }

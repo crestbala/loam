@@ -22,8 +22,8 @@ fn Counter() {
 }
 
 fn main() {
-    zeus.App("Zeus spec", 360, 220, fn() {
+    zeus.App("Zeus spec", fn() {
         Header("Counter")
         Counter()
-    })
+    }, 360, 220)
 }

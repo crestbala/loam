@@ -20,7 +20,7 @@ use Material widgets or system colors.
 | View type | `zeus.Node`. Yuga has no traits / `impl View`. |
 | Imports | `import "std:zeus"`. No glob prelude. |
 | Events | `on_click = handler` on `Box` / `Button`. Intern copies the closure env (`yuga_fn.env_size`). Captures stay Copy-only. `bind` on `Input` writes a `Signal<string>`. |
-| HTTP types | Shared `.yuga` module with `#[proto]` structs + `*_rpc()` name helpers. Wasm: `http.client("").call` (Vite proxy). macOS/iOS: `http.client(api.native_addr())`. Android emulator: `http.client(api.android_addr())` (`10.0.2.2:8080`). |
+| HTTP types | Shared `.yuga` module with `#[proto]` structs + `*_rpc()` name helpers. `http.client()` fills the addr per `--target` (wasm same-origin, mac/iOS loopback, Android emulator `10.0.2.2:8080`). |
 | SSR | Out of scope. First paint is client WASM. |
 
 ## Pipeline

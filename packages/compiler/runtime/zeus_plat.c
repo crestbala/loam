@@ -309,6 +309,15 @@ void yuga_zeus_plat_fill_a(int64_t x, int64_t y, int64_t w, int64_t h, int64_t r
         paint_draw.fill(paint_ctx, x, y, w, h, rgb & 0xFFFFFF, radius);
 }
 
+void yuga_zeus_plat_fill_g(int64_t x, int64_t y, int64_t w, int64_t h, int64_t c0,
+                          int64_t c1, int64_t axis) {
+    if (!have_draw) return;
+    if (paint_draw.fill_g)
+        paint_draw.fill_g(paint_ctx, x, y, w, h, c0 & 0xFFFFFF, c1 & 0xFFFFFF, axis);
+    else if (paint_draw.fill)
+        paint_draw.fill(paint_ctx, x, y, w, h, c0 & 0xFFFFFF, 0);
+}
+
 void yuga_zeus_plat_text(int64_t x, int64_t y, yuga_str s, int64_t rgb, int64_t font) {
     char *p;
     if (!have_draw || !paint_draw.text) return;
@@ -583,6 +592,10 @@ void yuga_platform_plat_fill(int64_t x, int64_t y, int64_t w, int64_t h, int64_t
 void yuga_platform_plat_fill_a(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
                                int64_t radius, int64_t alpha) {
     yuga_zeus_plat_fill_a(x, y, w, h, rgb, radius, alpha);
+}
+void yuga_platform_plat_fill_g(int64_t x, int64_t y, int64_t w, int64_t h, int64_t c0,
+                               int64_t c1, int64_t axis) {
+    yuga_zeus_plat_fill_g(x, y, w, h, c0, c1, axis);
 }
 void yuga_platform_plat_text(int64_t x, int64_t y, yuga_str s, int64_t rgb, int64_t font) {
     yuga_zeus_plat_text(x, y, s, rgb, font);

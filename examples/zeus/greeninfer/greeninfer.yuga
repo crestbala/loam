@@ -453,7 +453,7 @@ fn GreenInferPage() {
 }
 
 fn main() {
-    zeus.App("GreenInfer", 1060, 900, fn() {
+    zeus.App("GreenInfer", fn() {
         GreenInferPage()
-    })
+    }, 1060, 900)
 }

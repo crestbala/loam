@@ -9,6 +9,11 @@ fn must(ok: bool) {
 }
 
 fn main() {
+    must(sys.target() == "native")
+    let def = http.client()
+    must(http.eq(def.addr, "127.0.0.1:8080"))
+    let empty = http.client("")
+    must(http.eq(empty.addr, "127.0.0.1:8080"))
     let hp = http.parse_addr("127.0.0.1:8080")
     must(http.eq(hp.host, "127.0.0.1"))
     must(hp.port == 8080)

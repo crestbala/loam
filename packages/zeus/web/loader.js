@@ -346,6 +346,16 @@
         ctx.fillStyle = rgba(color, a);
         roundRect(x, y, w, h, r);
       },
+      fill_g: (x, y, w, h, c0, c1, axis) => {
+        const p = snapRect(x, y, w, h);
+        const g = axis
+          ? ctx.createLinearGradient(p.x, p.y, p.x + p.w, p.y)
+          : ctx.createLinearGradient(p.x, p.y, p.x, p.y + p.h);
+        g.addColorStop(0, rgb(c0));
+        g.addColorStop(1, rgb(c1));
+        ctx.fillStyle = g;
+        ctx.fillRect(p.x, p.y, p.w, p.h);
+      },
       text: (x, y, ptr, color, font) => {
         const s = cstr(ptr);
         const px = font > 0 ? font : 13;
@@ -632,6 +642,7 @@
           let next = 0;
           try {
             next = exp.zeus_paint() | 0;
+            syncIme();
           } catch (e) {
             console.error("zeus_paint", e);
             return;
@@ -659,6 +670,48 @@
            finish loading and input listeners can attach. */
         exp.zeus_start();
         if (exp.zeus_resize) exp.zeus_resize(sz.w, sz.h);
+        const ime = document.createElement("textarea");
+        ime.setAttribute("autocapitalize", "off");
+        ime.setAttribute("autocomplete", "off");
+        ime.setAttribute("autocorrect", "off");
+        ime.setAttribute("spellcheck", "false");
+        ime.setAttribute("aria-hidden", "true");
+        ime.style.cssText =
+          "position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;border:0;padding:0;margin:0;resize:none;z-index:-1;";
+        document.body.appendChild(ime);
+        function syncIme() {
+          if (!exp) return;
+          if (exp.zeus_captures_text && exp.zeus_captures_text()) {
+            if (document.activeElement !== ime) ime.focus({ preventScroll: true });
+          } else if (document.activeElement === ime) {
+            ime.blur();
+          }
+        }
+        ime.addEventListener(
+          "input",
+          (e) => {
+            if (e.isComposing) return;
+            if (ime.value) sendWasmText(ime.value, false);
+            ime.value = "";
+          },
+          { signal }
+        );
+        ime.addEventListener(
+          "compositionupdate",
+          (e) => {
+            if (e.data) sendWasmText(e.data, true);
+          },
+          { signal }
+        );
+        ime.addEventListener(
+          "compositionend",
+          (e) => {
+            sendWasmText("", true);
+            if (e.data) sendWasmText(e.data, false);
+            ime.value = "";
+          },
+          { signal }
+        );
         window.addEventListener(
           "resize",
           () => {
@@ -796,21 +849,7 @@
           },
           { signal }
         );
-        window.addEventListener(
-          "compositionupdate",
-          (e) => {
-            if (e.data) sendWasmText(e.data, true);
-          },
-          { signal }
-        );
-        window.addEventListener(
-          "compositionend",
-          (e) => {
-            sendWasmText("", true);
-            if (e.data) sendWasmText(e.data, false);
-          },
-          { signal }
-        );
+        /* IME composition is owned by the hidden textarea (CJK / dead keys). */
         schedule(0);
     }
 

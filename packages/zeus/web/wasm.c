@@ -18,6 +18,10 @@ __attribute__((import_module("zeus"), import_name("fill_a")))
 void zeus_js_fill_a(int32_t x, int32_t y, int32_t w, int32_t h, int32_t rgb, int32_t radius,
                     int32_t alpha);
 
+__attribute__((import_module("zeus"), import_name("fill_g")))
+void zeus_js_fill_g(int32_t x, int32_t y, int32_t w, int32_t h, int32_t c0, int32_t c1,
+                    int32_t axis);
+
 __attribute__((import_module("zeus"), import_name("text")))
 void zeus_js_text(int32_t x, int32_t y, const char *s, int32_t rgb, int32_t font);
 
@@ -60,6 +64,13 @@ static void draw_fill_a(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h, i
     (void)ctx;
     zeus_js_fill_a((int32_t)x, (int32_t)y, (int32_t)w, (int32_t)h, (int32_t)(rgb & 0xFFFFFF),
                    (int32_t)radius, (int32_t)alpha);
+}
+
+static void draw_fill_g(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h, int64_t c0,
+                        int64_t c1, int64_t axis) {
+    (void)ctx;
+    zeus_js_fill_g((int32_t)x, (int32_t)y, (int32_t)w, (int32_t)h, (int32_t)(c0 & 0xFFFFFF),
+                   (int32_t)(c1 & 0xFFFFFF), (int32_t)axis);
 }
 
 static void draw_text(void *ctx, int64_t x, int64_t y, const char *s, int64_t rgb, int64_t font) {
@@ -133,6 +144,7 @@ static void bind_canvas(void) {
     memset(&d, 0, sizeof d);
     d.fill = draw_fill;
     d.fill_a = draw_fill_a;
+    d.fill_g = draw_fill_g;
     d.text = draw_text;
     d.text_rot = draw_text_rot;
     d.save = draw_save;

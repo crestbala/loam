@@ -443,6 +443,20 @@ static inline yuga_str yuga_string_from_bytes(yuga_vec b) {
     return (yuga_str){ .ptr = p, .len = n };
 }
 
+/** Compile target: "wasm" | "ios" | "android" | "native". Used by
+ *  `http.client()` to pick a default RPC address. */
+static inline yuga_str yuga_sys_target(void) {
+#ifdef __wasm32__
+    return (yuga_str){"wasm", 4};
+#elif defined(YUGA_ANDROID)
+    return (yuga_str){"android", 7};
+#elif defined(YUGA_IOS)
+    return (yuga_str){"ios", 3};
+#else
+    return (yuga_str){"native", 6};
+#endif
+}
+
 #ifdef __wasm32__
 static inline int64_t yuga_sys_env_set(yuga_str name) {
     (void)name;

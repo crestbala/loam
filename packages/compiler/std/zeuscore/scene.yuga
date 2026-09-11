@@ -37,6 +37,11 @@ fn fill_a(x: int, y: int, w: int, h: int, rgb: int, radius: int, alpha: int) {
     emit(1, x, y, w, h, rgb, radius, alpha, 0, "", 0)
 }
 
+/// Vertical (`axis` 0) or horizontal (`axis` 1) linear gradient.
+fn fill_g(x: int, y: int, w: int, h: int, c0: int, c1: int, axis: int) {
+    emit(11, x, y, w, h, c0, axis, 255, 0, "", c1)
+}
+
 fn text(x: int, y: int, s: string, rgb: int, font: int) {
     emit(2, x, y, 0, 0, rgb, 0, 255, font, s, 0)
 }
@@ -101,6 +106,8 @@ fn present() {
             platform.plat_text_rot(d.x, d.y, d.text, d.rgb, d.font, d.w)
         } else if d.kind == 10 {
             platform.plat_image(d.x, d.y, d.w, d.h, d.text, d.radius, d.alpha, d.value)
+        } else if d.kind == 11 {
+            platform.plat_fill_g(d.x, d.y, d.w, d.h, d.rgb, d.value, d.radius)
         }
     }
 }
@@ -111,6 +118,9 @@ fn prepaint() {
 }
 
 fn paint_hover_wash(id: int) {
+    if platform.plat_overlay_scroll() != 0 {
+        return
+    }
     let t = arena.hover_paint(id)
     if t > 0 {
         let mut a = t * 48 / 100
@@ -150,7 +160,10 @@ fn paint_fill_box(id: int, wash: int) {
         }
     }
     let rgb = arena.paint_rgb(arena.nodes[id].bg)
-    if a < 255 {
+    if arena.nodes[id].bg2 >= 0 {
+        let c1 = arena.paint_rgb(arena.nodes[id].bg2)
+        fill_g(x, y, w, h, rgb, c1, 0)
+    } else if a < 255 {
         fill_a(x, y, w, h, rgb, inner_r, a)
     } else {
         fill(x, y, w, h, rgb, inner_r)
