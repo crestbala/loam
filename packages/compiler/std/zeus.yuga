@@ -58,6 +58,52 @@ import "zeuscore/track.yuga"
 import "std:async"
 import "std:fmt"
 
+/// Button variants, named after the fill they carry. `Solid` is the shadcn
+/// `default` (primary) variant, `Soft` is `secondary`, `Danger` is
+/// `destructive`, and `Link` is text-only. Gallery rows read
+/// Primary / Secondary / Outline / Ghost / Destructive / Link.
+enum LOOK {
+    Solid = 0,
+    Soft = 1,
+    Outline = 2,
+    Ghost = 3,
+    Danger = 4,
+    Link = 5,
+}
+
+/// Button sizes: sm h-8, default h-9, lg h-10.
+enum SIZE {
+    Sm = 0,
+    Md = 1,
+    Lg = 2,
+}
+
+/// Status tints for chips, badges, stats, meters.
+enum TINT {
+    Ink = 0,
+    Ok = 1,
+    Mute = 2,
+    Dim = 3,
+    Danger = 4,
+    Warn = 5,
+}
+
+fn tint_of(kind: int) -> string {
+    if kind == TINT.Ok {
+        ok()
+    } else if kind == TINT.Mute {
+        mute()
+    } else if kind == TINT.Dim {
+        dim()
+    } else if kind == TINT.Danger {
+        danger()
+    } else if kind == TINT.Warn {
+        warn()
+    } else {
+        ink()
+    }
+}
+
 /// A widget in the tree. Copy handle (`id`).
 struct Node {
     /// Slot in the engine arena. Do not construct by hand; use `Box` / `Text`.
@@ -1846,32 +1892,34 @@ struct TextProps {
 /// `background` / `color` / `font` / `padding` / `radius` / `width` /
 /// `height` / `enabled` (dims when false) style it, `on_click` fires it.
 struct ButtonProps {
+    /// Label of the Button
+    label: string,
     /// `LOOK` token for themed chrome; -1 = raw (props below decide the look).
-    look: fn() -> int = -1,
+    look: int = LOOK.Solid,
     /// `SIZE` token for themed chrome.
-    size: fn() -> int = -1,
-    color: fn() -> string = "",
-    background: fn() -> string = "",
-    font: fn() -> int = -1,
-    padding: fn() -> int = -1,
-    radius: fn() -> int = -1,
-    width: fn() -> int = -1,
-    height: fn() -> int = -1,
+    size: int = SIZE.Md,
+    color: string = "",
+    background: string = "",
+    font: int = -1,
+    padding: int = -1,
+    radius: int = -1,
+    width: int = -1,
+    height: int = -1,
     // position / left / top / right / bottom / z_index: as BoxProps.
-    position: fn() -> int = -1,
-    left: fn() -> int = -1,
-    top: fn() -> int = -1,
-    right: fn() -> int = -1,
-    bottom: fn() -> int = -1,
-    z_index: fn() -> int = -1,
+    position: int = -1,
+    left: int = -1,
+    top: int = -1,
+    right: int = -1,
+    bottom: int = -1,
+    z_index: int = -1,
     /// Visible when the thunk is true (signal shows win, as BoxProps).
-    show: fn() -> bool = true,
-    enabled: fn() -> bool = true,
+    show: bool = true,
+    enabled: bool = true,
     /// 1 silences the gray hover wash (the shadcn default: flat chrome).
     /// Set `hover_off = false` to let the button wash on hover.
-    hover_off: fn() -> bool = true,
+    hover_off: bool = false,
     /// CSS cursor under the pointer (default `""` = arrow).
-    cursor: fn() -> string = "",
+    cursor: string = "",
     on_click: fn() = __noop,
     on_click__set: bool = false,
 }
@@ -2131,14 +2179,14 @@ fn Text(label: fn() -> string, p: TextProps) -> Node {
 /// styled by the props (`background` / `color` / `width` / `height` /
 /// `enabled` dims when false). `on_click` is optional — omit it for a
 /// look-only button.
-fn Button(label: fn() -> string, p: ButtonProps) -> Node {
+fn Button(p: ButtonProps) -> Node {
     arena.ensure()
     if platform.plat_invoke_int_fn(__intern_int(p.look)) >= 0 {
-        return __btn_look(label, p)
+        return __btn_look(p)
     }
     let n = raw_button("")
     shrink(n, 0)
-    prop_str(n, 100, label)
+    prop_str(n, 100, p.label)
     prop_str(n, 16, p.color)
     prop_str(n, 15, p.background)
     prop_int(n, 12, p.font)
@@ -2170,7 +2218,7 @@ fn Button(label: fn() -> string, p: ButtonProps) -> Node {
 
 /// Themed chrome branch of `Button` (look + size tokens): centered label in
 /// the shadcn fill / border / radius, hover wash on, pointer cursor.
-fn __btn_look(label: fn() -> string, p: ButtonProps) -> Node {
+fn __btn_look(p: ButtonProps) -> Node {
     let look = platform.plat_invoke_int_fn(__intern_int(p.look))
     let size = platform.plat_invoke_int_fn(__intern_int(p.size))
     let n = Box(
@@ -2187,11 +2235,11 @@ fn __btn_look(label: fn() -> string, p: ButtonProps) -> Node {
         border_color = btn_edge(look),
         on_click = p.on_click,
         a11y_role = "button",
-        a11y_label = label,
+        a11y_label = p.label,
         hover_off = false,
         cursor = "pointer"
     ) {
-        Text(label, color = btn_fg(look), font = btn_font(size))
+        Text(p.label, color = btn_fg(look), font = btn_font(size))
     }
     return n
 }
@@ -3028,52 +3076,6 @@ fn roles() {
     theme(36, hex(LIGHT.text), hex(DARK.text))
 }
 
-/// Button variants, named after the fill they carry. `Solid` is the shadcn
-/// `default` (primary) variant, `Soft` is `secondary`, `Danger` is
-/// `destructive`, and `Link` is text-only. Gallery rows read
-/// Primary / Secondary / Outline / Ghost / Destructive / Link.
-enum LOOK {
-    Solid = 0,
-    Soft = 1,
-    Outline = 2,
-    Ghost = 3,
-    Danger = 4,
-    Link = 5,
-}
-
-/// Button sizes: sm h-8, default h-9, lg h-10.
-enum SIZE {
-    Sm = 0,
-    Md = 1,
-    Lg = 2,
-}
-
-/// Status tints for chips, badges, stats, meters.
-enum TINT {
-    Ink = 0,
-    Ok = 1,
-    Mute = 2,
-    Dim = 3,
-    Danger = 4,
-    Warn = 5,
-}
-
-fn tint_of(kind: int) -> string {
-    if kind == TINT.Ok {
-        ok()
-    } else if kind == TINT.Mute {
-        mute()
-    } else if kind == TINT.Dim {
-        dim()
-    } else if kind == TINT.Danger {
-        danger()
-    } else if kind == TINT.Warn {
-        warn()
-    } else {
-        ink()
-    }
-}
-
 /// Type scale. Canvas hosts draw one weight, so hierarchy leans on size and
 /// color. 14 is the shadcn `text-sm` workhorse.
 const FONT_DISPLAY: int = 30
@@ -3537,8 +3539,11 @@ fn Label(text: string) {
 }
 
 /// Text input frame (themed; raw editing widget is `Input`): h-9, rounded-md, 1px input border, transparent fill.
-fn TextInput(value: Signal<string>, placeholder: string) {
-    Box(
+/// Single-line compose field. `width >= 0` pins the field (typing then
+/// scrolls inside it instead of resizing the layout); -1 keeps the natural
+/// content width.
+fn TextInput(value: Signal<string>, placeholder: string, width: int = -1) {
+    let node = Box(
         background = plate(),
         border = HAIRLINE,
         border_color = rule(),
@@ -3551,12 +3556,18 @@ fn TextInput(value: Signal<string>, placeholder: string) {
                    background = "", color = ink(), font = tk(FONT_BODY),
                    padding = 0, a11y_label = placeholder)
     }
+    if width >= 0 {
+        w(node, width)
+    }
+    node
 }
 
 /// Multiline compose field: min-height ~4 lines, same chrome as `TextInput`.
+/// `width >= 0` pins the field width; -1 keeps the natural content width.
 /// `on_edit` runs on key-up (autosave).
-fn TextArea(value: Signal<string>, placeholder: string, on_edit: fn() = __noop) {
-    Box(
+fn TextArea(value: Signal<string>, placeholder: string, on_edit: fn() = __noop,
+            width: int = -1) {
+    let node = Box(
         background = plate(),
         border = HAIRLINE,
         border_color = rule(),
@@ -3571,13 +3582,19 @@ fn TextArea(value: Signal<string>, placeholder: string, on_edit: fn() = __noop) 
                    padding = 0, multiline = 1, grow = 1, a11y_label = placeholder,
                    on_key_up = on_edit)
     }
+    if width >= 0 {
+        w(node, width)
+    }
+    node
 }
 
-/// Label + input, the shadcn form demo.
-fn Field(label: string, value: Signal<string>, placeholder: string) {
+/// Label + input, the shadcn form demo. `width >= 0` pins the field so the
+/// row around it does not reflow while typing.
+fn Field(label: string, value: Signal<string>, placeholder: string,
+         width: int = -1) {
     Column(SPACE.Exs) {
         Label(label)
-        TextInput(value, placeholder)
+        TextInput(value, placeholder, width)
     }
 }
 

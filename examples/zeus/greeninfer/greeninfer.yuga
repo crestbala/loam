@@ -1,10 +1,9 @@
-//! greeninfer.yuga — GreenInfer desktop demo (macOS Cocoa via std:zeus).
+//! greeninfer.yuga — GreenInfer desktop (macOS Cocoa via std:zeus).
 //!
-//! The window explains the engine, then proves it: watch a folder, chunk
-//! source + markdown at 500 tokens, embed every chunk into 384 dims, and
-//! search the mmap'd memory with the Apple Silicon NEON sweep. The RSS chip
-//! in the header is the app's real physical RAM footprint (resident set
-//! size, OS-reported), so the "lightweight" claim is measured live.
+//! Clean, three-step flow: 1) point at a folder, 2) ask your code, 3) get a
+//! model answer. Everything else (stats, watch toggle, key/model) is tucked
+//! into the card it belongs to — no walls of copy. Retrieval is local and
+//! microsecond-fast; models are optional (Grok cloud or a local Ollama).
 
 import "std:async"
 import "std:zeus"
@@ -15,12 +14,12 @@ import "watcher.yuga"
 const DEMO_FILE: string = "/tmp/greeninfer_demo.bin"
 const DEMO_CAP: int = 20000
 const KNN_K: int = 6
-const ROW_H: int = 46
-const LIST_H: int = 260
+const HIT_H: int = 42
+const LIST_H: int = 220
 const DEFAULT_ROOT: string = "./examples/zeus/greeninfer"
-const DEFAULT_QUERY: string = "watch the folder and reindex changed files"
+const DEFAULT_QUERY: string = "how does the watcher reindex a changed file"
 
-/// One hit row: file/chunk label plus a content snippet.
+/// One retrieved chunk row.
 struct Hit {
     label: string,
     snippet: string,
@@ -50,11 +49,46 @@ fn default_exts() -> []string {
     return e
 }
 
+/// Does `s` contain `p`? (byte scan, for error-ish captions)
+fn has_text(s: string, p: string) -> bool {
+    if p.len == 0 || p.len > s.len {
+        return false
+    }
+    let mut i = 0
+    while i + p.len <= s.len {
+        let mut hit = 1
+        let mut k = 0
+        while k < p.len {
+            if s[i + k] != p[k] {
+                hit = 0
+                break
+            }
+            k = k + 1
+        }
+        if hit == 1 {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+fn is_err_msg(s: string) -> bool {
+    return has_text(s, "error") || has_text(s, "fail") || has_text(s, "unparsed")
+}
+
+fn endpoint_labels() -> []string {
+    let mut e = []string {}
+    push(e, "Local model (ollama)")
+    push(e, "Grok (cloud)")
+    return e
+}
+
 // ---------------------------------------------------------------------------
-// Chrome
+// Small building blocks
 // ---------------------------------------------------------------------------
 
-/// Live RSS chip: zeus.mem_kb() is the host resident-set size in KB.
+/// Live RAM chip: zeus.mem_kb() is the host resident-set size in KB.
 fn RamChip() {
     let ram = zeus.signal(zeus.mem_kb())
     if ram_armed == 0 {
@@ -67,7 +101,7 @@ fn RamChip() {
         zeus.Box(width = 6, height = 6, radius = 3, background = zeus.ok())
         zeus.Text(fn() -> string {
             let mb = ram.get() / 1024
-            return "app RAM {{mb}} MB (RSS)"
+            return "RAM {{mb}} MB"
         }, color = zeus.mute(), font = zeus.FONT_CAPTION)
     }
 }
@@ -76,9 +110,7 @@ fn Header() {
     zeus.Row(SPACE.Md) {
         zeus.Box(width = 10, height = 26, radius = 5, background = zeus.ink())
         zeus.Text("GreenInfer", color = zeus.ink(), font = zeus.FONT_TITLE)
-        zeus.Chip("local memory engine", zeus.TINT.Ink)
-        zeus.Chip("mmap + NEON", zeus.TINT.Ok)
-        zeus.Chip("zero deps", zeus.TINT.Mute)
+        zeus.Chip("code memory", zeus.TINT.Mute)
         zeus.Grow()
         RamChip()
         zeus.Text("Dark", color = zeus.mute(), font = zeus.FONT_BODY)
@@ -86,104 +118,25 @@ fn Header() {
     }
 }
 
-/// One bullet in the "why it matters" list.
-fn Bullet(text: string) {
-    zeus.Row(SPACE.Sm) {
-        zeus.Box(width = 6, height = 6, radius = 3, background = zeus.ink())
-        zeus.Text(text, color = zeus.mute(), font = zeus.FONT_BODY)
-    }
-}
-
-/// The explainer card: what GreenInfer is, what it does, why it helps.
-fn About() {
-    zeus.Card() {
-        zeus.Row(SPACE.Sm) {
-            zeus.Title("What is GreenInfer?")
-            zeus.Grow()
-            zeus.Badge("phase 3: engine + watcher + agent", zeus.TINT.Mute)
+/// Card caption: quiet by default, red when it reports a problem.
+fn Caption(sig: Signal<string>) {
+    zeus.Text(fn() -> string {
+        return sig.get()
+    }, color = fn() -> string {
+        if is_err_msg(sig.get()) {
+            return zeus.danger()
         }
-        zeus.Body("A local-first vector memory for your codebase. It chunks source files into ~500-token pieces, embeds each chunk into a 384-dimensional vector, and stores everything in one memory-mapped file. When you ask something, it sweeps every chunk with the ARM NEON SIMD kernel and returns the nearest ones in microseconds — no server, no cloud, no index rebuild.")
-        zeus.Overline("What you can do with it")
-        zeus.Column(SPACE.Exxs) {
-            Bullet("Ask questions about your own code and get the exact file + chunk that answers, instantly and offline.")
-            Bullet("Watch a folder: edits are re-indexed automatically ~1.5 s after you save (toggle below).")
-            Bullet("Retrieve relevant chunks to feed a frontier model — local-first RAG with a minimal context payload.")
-            Bullet("Stay tiny: one file holds the memory (mapped, not copied), search stays under a millisecond, and the app's real RAM footprint (the RSS chip above) sits near 15 MB.")
-        }
-    }
+        return zeus.mute()
+    }, font = zeus.FONT_CAPTION)
 }
-
-// ---------------------------------------------------------------------------
-// Search + stats
-// ---------------------------------------------------------------------------
 
 fn HitRow(i: int, h: Hit) {
-    zeus.Column(SPACE.Exxxs) {
+    zeus.Box(align_direction = DIRECTION.Column, justify = ALIGN.Center,
+             height = HIT_H, padding_x = SPACE.Exs, spacing = 2) {
         zeus.Text(h.label, color = zeus.ink(), font = zeus.FONT_CONTROL)
         zeus.Text(h.snippet, color = zeus.dim(), font = zeus.FONT_CAPTION)
     }
 }
-
-fn SearchCard(query: Signal<string>, rows: Signal<[]Hit>, qus: Signal<int>,
-              st: Signal<string>) {
-    zeus.Card() {
-        zeus.Row(SPACE.Sm) {
-            zeus.Title("Try it")
-            zeus.Grow()
-            zeus.Badge("top {{KNN_K}} chunks", zeus.TINT.Ok)
-        }
-        zeus.Body("Ask in plain words, like you would ask an agent. The sim % is cosine similarity between your prompt's embedding and each chunk.")
-        zeus.Row(SPACE.Sm) {
-            zeus.Field("Question", query, "e.g. how does the search sweep the rows?")
-            zeus.Button("Ask the memory", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
-                        on_click = fn() {
-                            let text = query.get()
-                            if text.len == 0 {
-                                st.set("question is empty")
-                                return
-                            }
-                            let qv = engine.embed_text(text)
-                            let t0 = engine.engine_now_us()
-                            let hits = engine.engine_search(qv, KNN_K)
-                            let us = engine.engine_now_us() - t0
-                            let nrows = engine.engine_rows()
-                            qus.set(us)
-                            let mut items = []Hit {}
-                            let mut i = 0
-                            while i < hits.len {
-                                let r = hits[i]
-                                let pct = pct_of(r.score)
-                                let lab = watcher.watch_label(r.id)
-                                let snip = watcher.watch_snippet(r.id)
-                                push(items, Hit {
-                                    label: "{{pct}}%  {{lab}}",
-                                    snippet: snip,
-                                })
-                                i = i + 1
-                            }
-                            rows.set(items)
-                            st.set("swept {{nrows}} chunks in {{us}} us")
-                        })
-        }
-        zeus.Box(height = LIST_H, border = 1, border_color = zeus.rule(), radius = 8) {
-            zeus.VirtualList(rows, ROW_H, HitRow)
-        }
-    }
-}
-
-fn StatsGrid(rows_sig: Signal<int>, cap_sig: Signal<int>, kb_sig: Signal<int>,
-             qus: Signal<int>) {
-    zeus.Grid(config = GridConfig(columns = 4, gap = SPACE.Md)) {
-        zeus.StatCount("chunks in memory", rows_sig, zeus.TINT.Ink)
-        zeus.StatCount("capacity", cap_sig, zeus.TINT.Mute)
-        zeus.StatCount("memory file KB", kb_sig, zeus.TINT.Ok)
-        zeus.StatCount("last answer us", qus, zeus.TINT.Danger)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Agent card (optional Grok integration)
-// ---------------------------------------------------------------------------
 
 fn AnsRow(i: int, s: string) {
     zeus.Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
@@ -192,7 +145,7 @@ fn AnsRow(i: int, s: string) {
     }
 }
 
-/// Split `s` into newline-separated lines (for the answer box).
+/// Split `s` into newline-separated lines (for the model answer box).
 fn split_lines(s: string) -> []string {
     let mut out = []string {}
     let mut b = []int {}
@@ -216,83 +169,26 @@ fn split_lines(s: string) -> []string {
     return out
 }
 
-/// Ask the chosen model with the retrieved local chunks in the system
-/// prompt. Endpoint 0 = local Ollama, 1 = Grok cloud.
-fn AgentCard(query: Signal<string>, endpoint: Signal<int>, key_sig: Signal<string>,
-              model_sig: Signal<string>, ans_sig: Signal<[]string>,
-              qus: Signal<int>, st: Signal<string>) {
+// ---------------------------------------------------------------------------
+// Step 1 — watch a folder
+// ---------------------------------------------------------------------------
+
+fn StepWatch(folder: Signal<string>, watch_on: Signal<int>, cap: Signal<string>,
+             chunk_stat: Signal<int>, kb_stat: Signal<int>) {
     zeus.Card() {
         zeus.Row(SPACE.Sm) {
-            zeus.Title("Ask an AI model (optional)")
+            zeus.Title("1 · Watch a folder")
             zeus.Grow()
-            zeus.Badge("local-first RAG", zeus.TINT.Ok)
+            zeus.Badge("one file holds it all", zeus.TINT.Mute)
         }
-        zeus.Body("GreenInfer retrieves the best chunks locally, then sends only your question plus those chunks to the model. Grok needs an xAI key; the local endpoint uses Ollama on 127.0.0.1:11434 (ollama serve, then e.g. ollama pull llama3.2).")
+        zeus.Body("Point at a source tree. Files are chunked at 500 tokens and embedded into a single mmap'd index.")
         zeus.Row(SPACE.Sm) {
-            zeus.Field("Model", model_sig, "grok-4.6 / llama3.2 / qwen2.5-coder …")
-            zeus.Select(endpoint, endpoint_labels())
-            zeus.Grow()
-        }
-        zeus.Row(SPACE.Sm) {
-            zeus.Field("API key (cloud only)", key_sig, "xai-...  (from console.x.ai; local needs none)")
-            zeus.Button("Ask", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
-                        on_click = fn() {
-                            let question = query.get()
-                            if question.len == 0 {
-                                st.set("question is empty — use the Try it box above")
-                                return
-                            }
-                            let mut p = agent.ollama_pipeline(model_sig.get())
-                            let mut backend = "local"
-                            if endpoint.get() == 1 {
-                                let key = key_sig.get()
-                                if key.len == 0 {
-                                    st.set("grok needs an API key — or switch to the local endpoint")
-                                    return
-                                }
-                                p = agent.grok_pipeline(key)
-                                backend = "grok"
-                            }
-                            p.model = model_sig.get()
-                            let ans = agent.query_agent(p, question, KNN_K)
-                            let lines = split_lines(ans.text)
-                            ans_sig.set(lines)
-                            qus.set(ans.us)
-                            let chunks = ans.context_chunks
-                            let remote = ans.remote
-                            if remote == 1 {
-                                st.set("{{backend}} answered over {{chunks}} local chunks in {{ans.us}} us")
-                            } else {
-                                let e = agent.agent_last_error()
-                                st.set("{{backend}} failed ({{e}}) — offline fallback with {{chunks}} chunks")
-                            }
-                        })
-        }
-        zeus.Box(height = 220, border = 1, border_color = zeus.rule(), radius = 8) {
-            zeus.VirtualList(ans_sig, 20, AnsRow)
-        }
-        zeus.Note("The key lives only in this field for the session. Cloud calls are TLS + cert-verified; local calls never leave your machine.")
-    }
-}
-
-fn endpoint_labels() -> []string {
-    let mut e = []string {}
-    push(e, "Local model (ollama)")
-    push(e, "Grok (cloud)")
-    return e
-}
-
-fn Actions(folder: Signal<string>, st: Signal<string>, watch_on: Signal<int>) {
-    zeus.Card() {
-        zeus.Title("Point it at a folder")
-        zeus.Body("Index any source tree (default: this app's own sources, so you can search the engine's code with the engine). Watch re-indexes on change.")
-        zeus.Row(SPACE.Sm) {
-            zeus.Field("Source folder", folder, "absolute or repo-relative path")
-            zeus.Button("Index", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
+            zeus.Field("Source folder", folder, "repo-relative or absolute path", 560)
+            zeus.Button("Index folder", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
                         on_click = fn() {
                             let root = folder.get()
                             if root.len == 0 {
-                                st.set("folder path is empty")
+                                cap.set("folder path is empty")
                                 return
                             }
                             let t0 = engine.engine_now_us()
@@ -300,41 +196,161 @@ fn Actions(folder: Signal<string>, st: Signal<string>, watch_on: Signal<int>) {
                                                        default_exts())
                             let ms = (engine.engine_now_us() - t0) / 1000
                             if n < 0 {
-                                let e = watcher.watch_err_msg()
-                                st.set(e)
-                                return
-                            }
-                            if n == 0 {
-                                let m = watcher.watch_last_msg()
-                                st.set(m)
+                                cap.set(watcher.watch_err_msg())
                                 return
                             }
                             let m = watcher.watch_last_msg()
-                            st.set("{{m}} in {{ms}} ms")
+                            chunk_stat.set(engine.engine_rows())
+                            kb_stat.set(engine.engine_bytes() / 1024)
+                            cap.set("{{m}} in {{ms}} ms")
                         })
         }
         zeus.Row(SPACE.Sm) {
-            zeus.Text("Auto re-index when files change", color = zeus.mute(),
+            zeus.Text("Re-index automatically when files change", color = zeus.mute(),
                       font = zeus.FONT_BODY)
             zeus.Switch(watch_on)
             zeus.Grow()
-            zeus.Button("Close index", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md,
-                        on_click = fn() {
-                            engine.engine_close()
-                            st.set("index closed; the memory file stays on disk")
-                        })
+            Caption(cap)
         }
-        zeus.Note("Try editing a watched .yuga file and searching again: the new chunk appears in ~1.5 s.")
     }
 }
 
 // ---------------------------------------------------------------------------
-// Boot + status
+// Step 2 — ask your code
 // ---------------------------------------------------------------------------
 
-/// One scan + demo search at boot so the window opens with results.
-fn boot_search(folder: Signal<string>, query: Signal<string>,
-               rows: Signal<[]Hit>, qus: Signal<int>, st: Signal<string>) {
+fn StepAsk(query: Signal<string>, hits: Signal<[]Hit>, qus: Signal<int>,
+           cap: Signal<string>) {
+    zeus.Card() {
+        zeus.Title("2 · Ask your code")
+        zeus.Body("Plain words work: the search is a cosine sweep over every chunk — local, no model involved.")
+        zeus.Row(SPACE.Sm) {
+            zeus.Field("Question", query, "e.g. how does search sweep the rows?", 480)
+            zeus.Button("Search chunks", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
+                        on_click = fn() {
+                            let text = query.get()
+                            if text.len == 0 {
+                                cap.set("type a question first")
+                                return
+                            }
+                            let qv = engine.embed_text(text)
+                            let t0 = engine.engine_now_us()
+                            let res = engine.engine_search(qv, KNN_K)
+                            let us = engine.engine_now_us() - t0
+                            let nrows = engine.engine_rows()
+                            qus.set(us)
+                            let mut items = []Hit {}
+                            let mut i = 0
+                            while i < res.len {
+                                let r = res[i]
+                                let pct = pct_of(r.score)
+                                let lab = watcher.watch_label(r.id)
+                                let snip = watcher.watch_snippet(r.id)
+                                push(items, Hit {
+                                    label: "{{pct}}%  {{lab}}",
+                                    snippet: snip,
+                                })
+                                i = i + 1
+                            }
+                            hits.set(items)
+                            cap.set("swept {{nrows}} chunks in {{us}} us")
+                        })
+        }
+        zeus.Box(height = LIST_H, border = 1, border_color = zeus.rule(), radius = 8) {
+            zeus.VirtualList(hits, HIT_H, HitRow)
+        }
+        zeus.Row(SPACE.Sm) {
+            Caption(cap)
+            zeus.Grow()
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Step 3 — model answer (optional)
+// ---------------------------------------------------------------------------
+
+fn StepModel(prompt: Signal<string>, endpoint: Signal<int>, key_sig: Signal<string>,
+             model_sig: Signal<string>, ans: Signal<[]string>, mus: Signal<int>,
+             cap: Signal<string>) {
+    zeus.Card() {
+        zeus.Row(SPACE.Sm) {
+            zeus.Title("3 · Model answer")
+            zeus.Grow()
+            zeus.Badge("optional", zeus.TINT.Ok)
+        }
+        zeus.Body("Ask a question in your own words: the closest chunks are retrieved locally and go into the model's context. Grok needs an xAI key; the local option talks to Ollama on 127.0.0.1 and never leaves your machine.")
+        zeus.Row(SPACE.Sm) {
+            zeus.Field("Question for the model", prompt, "e.g. how does the watcher detect a changed file?", 600)
+        }
+        zeus.Row(SPACE.Sm) {
+            zeus.Field("Model", model_sig, "grok-4.6 / llama3.2 / qwen2.5-coder", 300)
+            zeus.Select(endpoint, endpoint_labels())
+            zeus.Grow()
+        }
+        zeus.Row(SPACE.Sm) {
+            zeus.Field("API key", key_sig, "xai-... only for Grok (console.x.ai)", 420)
+            zeus.Button("Ask model", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
+                        on_click = fn() {
+                            let question = prompt.get()
+                            if question.len == 0 {
+                                cap.set("type a question above first")
+                                return
+                            }
+                            let mut p = agent.ollama_pipeline(model_sig.get())
+                            if endpoint.get() == 1 {
+                                let key = key_sig.get()
+                                if key.len == 0 {
+                                    cap.set("paste a Grok API key, or switch to the local endpoint")
+                                    return
+                                }
+                                p = agent.grok_pipeline(key)
+                            }
+                            p.model = model_sig.get()
+                            let a = agent.query_agent(p, question, KNN_K)
+                            let lines = split_lines(a.text)
+                            ans.set(lines)
+                            mus.set(a.us)
+                            let chunks = a.context_chunks
+                            if a.remote == 1 {
+                                cap.set("answered with {{chunks}} local chunks in {{a.us}} us")
+                            } else {
+                                let e = agent.agent_last_error()
+                                cap.set("not answered ({{e}}) — offline context in the box")
+                            }
+                        })
+        }
+        zeus.Box(height = 200, border = 1, border_color = zeus.rule(), radius = 8) {
+            zeus.VirtualList(ans, 20, AnsRow)
+        }
+        zeus.Row(SPACE.Sm) {
+            Caption(cap)
+            zeus.Grow()
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stats strip
+// ---------------------------------------------------------------------------
+
+fn StatsRow(chunk_stat: Signal<int>, kb_stat: Signal<int>, qus: Signal<int>,
+            mus: Signal<int>) {
+    zeus.Grid(config = GridConfig(columns = 4, gap = SPACE.Md)) {
+        zeus.StatCount("chunks", chunk_stat, zeus.TINT.Ink)
+        zeus.StatCount("index KB", kb_stat, zeus.TINT.Mute)
+        zeus.StatCount("search us", qus, zeus.TINT.Ok)
+        zeus.StatCount("model us", mus, zeus.TINT.Danger)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Boot + watch poll
+// ---------------------------------------------------------------------------
+
+fn boot(folder: Signal<string>, query: Signal<string>, hits: Signal<[]Hit>,
+        qus: Signal<int>, wcap: Signal<string>, scap: Signal<string>,
+        chunk_stat: Signal<int>, kb_stat: Signal<int>) {
     if booted != 0 {
         return
     }
@@ -342,61 +358,56 @@ fn boot_search(folder: Signal<string>, query: Signal<string>,
     let t0 = engine.engine_now_us()
     let n = watcher.watch_scan(DEFAULT_ROOT, DEMO_FILE, DEMO_CAP, default_exts())
     let ms = (engine.engine_now_us() - t0) / 1000
+    chunk_stat.set(engine.engine_rows())
+    kb_stat.set(engine.engine_bytes() / 1024)
     if n < 0 {
-        let e = watcher.watch_err_msg()
-        st.set(e)
+        wcap.set(watcher.watch_err_msg())
         return
     }
     folder.set(DEFAULT_ROOT)
+    let m = watcher.watch_last_msg()
+    wcap.set("{{m}} in {{ms}} ms")
     query.set(DEFAULT_QUERY)
     let qv = engine.embed_text(DEFAULT_QUERY)
     let t1 = engine.engine_now_us()
-    let hits = engine.engine_search(qv, KNN_K)
+    let res = engine.engine_search(qv, KNN_K)
     let us = engine.engine_now_us() - t1
     qus.set(us)
     let mut items = []Hit {}
     let mut i = 0
-    while i < hits.len {
-        let r = hits[i]
+    while i < res.len {
+        let r = res[i]
         let pct = pct_of(r.score)
         let lab = watcher.watch_label(r.id)
         let snip = watcher.watch_snippet(r.id)
         push(items, Hit { label: "{{pct}}%  {{lab}}", snippet: snip })
         i = i + 1
     }
-    rows.set(items)
-    let m = watcher.watch_last_msg()
-    st.set("{{m}} in {{ms}} ms; demo answer {{us}} us")
-}
-
-fn StatusLine(st: Signal<string>) {
-    zeus.Row(SPACE.Exs) {
-        zeus.Box(width = 6, height = 6, radius = 3, background = zeus.ok())
-        zeus.Text(fn() -> string {
-            return st.get()
-        }, color = zeus.mute(), font = zeus.FONT_CAPTION)
-    }
+    hits.set(items)
+    scap.set("boot sweep {{us}} us — ask anything about the indexed code")
 }
 
 fn GreenInferPage() {
     let folder = zeus.signal(DEFAULT_ROOT)
     let query = zeus.signal(DEFAULT_QUERY)
-    let rows = zeus.signal([]Hit {})
+    let prompt = zeus.signal("how does the watcher detect a changed file and re-index it?")
+    let hits = zeus.signal([]Hit {})
+    let ans0 = split_lines("The model's answer appears here when you ask.")
+    let ans = zeus.signal(ans0)
     let qus = zeus.signal(0)
-    let rows_sig = zeus.signal(0)
-    let cap_sig = zeus.signal(0)
-    let kb_sig = zeus.signal(0)
+    let mus = zeus.signal(0)
+    let chunk_stat = zeus.signal(0)
+    let kb_stat = zeus.signal(0)
     let watch_on = zeus.signal(0)
     let endpoint = zeus.signal(1)
     let key_sig = zeus.signal("")
     let model_sig = zeus.signal("grok-4.6")
-    let ans0 = split_lines("Grok's answer appears here once you add a key and ask.")
-    let ans_sig = zeus.signal(ans0)
-    let st = zeus.signal("starting…")
+    let wcap = zeus.signal("")
+    let scap = zeus.signal("")
+    let mcap = zeus.signal("model calls are optional — retrieval is already local")
 
-    boot_search(folder, query, rows, qus, st)
+    boot(folder, query, hits, qus, wcap, scap, chunk_stat, kb_stat)
 
-    // Watch poll: every 1.5 s, re-walk the tree and re-index on change.
     if poll_armed == 0 {
         poll_armed = 1
         async.interval(1500, fn() {
@@ -406,46 +417,43 @@ fn GreenInferPage() {
             let n = watcher.watch_tick()
             if n > 0 {
                 let msg = watcher.watch_last_msg()
-                rows_sig.set(watcher.watch_chunks())
-                cap_sig.set(engine.engine_cap())
-                kb_sig.set(engine.engine_bytes() / 1024)
-                st.set(msg)
+                chunk_stat.set(watcher.watch_chunks())
+                kb_stat.set(engine.engine_bytes() / 1024)
+                wcap.set(msg)
             }
         })
     }
 
-    // Mirror engine state into stats without re-triggering a rebuild when
-    // nothing moved (the page rebuilds on signal change).
+    // Mirror engine state into stats (only when something moved).
     let mut kb = 0
     if engine.engine_open_map() != 0 {
         kb = engine.engine_bytes() / 1024
     }
-    if kb_sig.get() != kb {
-        kb_sig.set(kb)
+    if kb_stat.get() != kb {
+        kb_stat.set(kb)
     }
-    let nrows = engine.engine_rows()
-    if rows_sig.get() != nrows {
-        rows_sig.set(nrows)
-    }
-    let ncap = engine.engine_cap()
-    if cap_sig.get() != ncap {
-        cap_sig.set(ncap)
+    let nch = engine.engine_rows()
+    if chunk_stat.get() != nch {
+        chunk_stat.set(nch)
     }
 
     zeus.Page() {
         Header()
-        zeus.Breadcrumbs("GreenInfer", "Demo", "Watch + ask")
-        About()
-        StatsGrid(rows_sig, cap_sig, kb_sig, qus)
-        SearchCard(query, rows, qus, st)
-        AgentCard(query, endpoint, key_sig, model_sig, ans_sig, qus, st)
-        Actions(folder, st, watch_on)
-        StatusLine(st)
+        zeus.Row(SPACE.Md) {
+            zeus.Box(width = 6, height = 6, radius = 3, background = zeus.ok())
+            zeus.Text("Your codebase as local memory — watch a folder, ask in plain words. Everything stays in one file on this machine.", color = zeus.mute(), font = zeus.FONT_BODY)
+            zeus.Grow()
+        }
+        StatsRow(chunk_stat, kb_stat, qus, mus)
+        StepWatch(folder, watch_on, wcap, chunk_stat, kb_stat)
+        StepAsk(query, hits, qus, scap)
+        StepModel(prompt, endpoint, key_sig, model_sig, ans, mus, mcap)
+        zeus.Note("GreenInfer: Yuga engine + mmap + ARM NEON sweep. Tip: edit a file under the watched folder and it appears in search ~1.5 s later.")
     }
 }
 
 fn main() {
-    zeus.App("GreenInfer", 1020, 860, fn() {
+    zeus.App("GreenInfer", 1060, 900, fn() {
         GreenInferPage()
     })
 }

@@ -26,8 +26,8 @@ fn Header(title: string, ticks: Signal<int>, open: Signal<int>) {
         zeus.Switch(zeus.appearance())
         zeus.Text("ticks", color = zeus.dim(), font = zeus.FONT_BODY)
         zeus.Text("{{ticks.get()}}", color = zeus.ink(), font = zeus.FONT_BODY)
-        zeus.Button("Tick", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click =  fn() => ticks.set(ticks.get() + 1))
-        zeus.Button("Dialog", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click =  fn() => open.set(1))
+        zeus.Button(label = "Ticks", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click =  fn() => ticks.set(ticks.get() + 1))
+        zeus.Button(label = "Dialog", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click =  fn() => open.set(1))
     }
 }
 
@@ -53,8 +53,8 @@ fn Load(load: Signal<int>) {
         zeus.Text("Load", color = zeus.dim(), font = zeus.FONT_BODY)
         zeus.Progress(load)
         zeus.Text("{{load.get()}}%", color = zeus.mute(), font = zeus.FONT_BODY)
-        zeus.Button("+10", look = zeus.LOOK.Soft, size = zeus.SIZE.Md, on_click =  fn() => load.set(clamp(load.get() + 10)))
-        zeus.Button("-10", look = zeus.LOOK.Soft, size = zeus.SIZE.Md, on_click =  fn() => load.set(clamp(load.get() - 10)))
+        zeus.Button(label = "+10", look = zeus.LOOK.Soft, size = zeus.SIZE.Md, on_click =  fn() => load.set(clamp(load.get() + 10)))
+        zeus.Button(label = "-10", look = zeus.LOOK.Soft, size = zeus.SIZE.Md, on_click =  fn() => load.set(clamp(load.get() - 10)))
     }
 }
 
@@ -185,8 +185,8 @@ fn Dashboard() {
             zeus.Body("This cannot be undone. The working tree keeps whatever you have not saved.")
             zeus.Row(SPACE.Sm) {
                 zeus.Grow()
-                zeus.Button("Cancel", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click =  fn() => open.set(0))
-                zeus.Button("Discard", look = zeus.LOOK.Danger, size = zeus.SIZE.Md, on_click =  fn() => open.set(0))
+                zeus.Button(label = "Cancel", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click =  fn() => open.set(0))
+                zeus.Button(label = "Discard", look = zeus.LOOK.Danger, size = zeus.SIZE.Md, on_click =  fn() => open.set(0))
             }
         }
     }
