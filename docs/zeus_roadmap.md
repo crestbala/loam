@@ -4,9 +4,10 @@ Phase-by-phase plan for turning `std/zeus.yuga` (engine + design system)
 (+ `std/net`, `std/http`, the C runtime) into a stack you can build real
 products on — ecommerce tools, team chat (Slack/Teams-shaped), social apps.
 
-Related: this file is the living plan; the sharp-edge catalog it grew from
-and the API/spec docs were removed with the rest of `docs/` — the roadmap
-below is written to stand alone, and each phase re-states its own rationale.
+Related: the next series (one host entry, honest `App` size, touch vs
+pointer, `zeus.yuga` tidy) lives in [downsides.md](downsides.md). This
+file is the living Zeus/product plan (Phases 1–8 here); each phase
+re-states its own rationale.
 Status: tick phases off as they land, with their exit criteria as the
 definition of done.
 
@@ -75,7 +76,7 @@ demos. Phase column points into §6.
 | 1 | ~~No raster image primitive (draw op + host decode)~~ **Phase 2** | `zeus.Image`; hosts decode PNG/JPEG/WebP/GIF | — | 2 |
 | 2 | ~~Single-line text, no IME on canvas hosts~~ **Phase 3** | chat compose exists; wasm IME is paste+composition, not a hidden field | — | 3 |
 | 3 | ~~`For` rebuilds the whole list per push (recycling yes, O(n) still)~~ **Phase 5** | `VirtualList` / windowed `For` / `VirtualTable`; `push_item` / `insert_item` | — | 5 |
-| 4 | Nested scroll chaining (momentum + overscroll **Phase 5**) | nested feed/page scrollers | medium | 5b |
+| 4 | ~~Nested scroll chaining~~ **self-improvement Phase 8** | leftover wheel at an inner bound goes to the parent (`zeus_scroll_chain.yuga`) | — | 8 |
 | 5 | ~~`Signal<int>` only (no float/date/bool scalar store)~~ **Phase 6** | float signals + float timestamp scalars (the byte-typed cell store was already generic; exit test proves it) | — | 6 |
 | 6 | ~~Zeus monolith, no dead-code elimination~~ **Phase 7** | web bundle size, componentization | — | 7 |
 | 7 | ~~a11y = labels only; no focus ring, thin keyboard model~~ **Phase 7** | visible keyboard focus + tab order across interactive chrome | — | 7 |

@@ -1,13 +1,6 @@
-//! Android emulator gallery UI. Same Zeus tree as wasm, iOS, and macOS.
-//! The Android host lays out to the view every frame (Canvas / JNI), so the
-//! width/height here only matter until the first real layout.
-
-import "std:zeus"
-import "../screen.yuga"
+//! Android host. Shared UI: ../ui.yuga
+import "../ui.yuga"
 
 fn main() {
-    let win = zeus.window_size()
-    zeus.App("Zeus Gallery", win.width, win.height, fn() {
-        screen.Screen()
-    })
+    ui.start()
 }

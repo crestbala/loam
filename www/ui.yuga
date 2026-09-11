@@ -1,0 +1,36 @@
+//! Shared docs UI. Wasm uses same-origin `http.client()`; native uses
+//! `api.native_addr()` (`:8082`).
+
+import "std:zeus"
+import "std:http"
+import "std:sys"
+import "backend/api.yuga"
+import "cache.yuga"
+import "screen.yuga"
+
+fn rpc_addr() -> string {
+    if sys.target() == "wasm" {
+        return ""
+    }
+    return api.native_addr()
+}
+
+fn host_chip() -> string {
+    if sys.target() == "wasm" {
+        return "Canvas2D"
+    }
+    return "macOS"
+}
+
+fn start() {
+    let c = http.client(rpc_addr())
+    cache.load(c)
+    let page = zeus.signal(0)
+    zeus.App("Yuga", fn() {
+        screen.Screen(host_chip(), page)
+    })
+}
+
+fn main() {
+    start()
+}

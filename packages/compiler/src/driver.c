@@ -746,7 +746,8 @@ int main(int argc, char **argv) {
             copy_file(cpath, keep);
             fprintf(stderr,
                     "yugac: no clang with wasm32 (Apple /usr/bin/clang cannot).\n"
-                    "  brew install llvm\n"
+                    "  ./install.sh          # Homebrew LLVM, puts clang on PATH\n"
+                    "  or: brew install llvm\n"
                     "  YUGA_WASM_CC=/opt/homebrew/opt/llvm/bin/clang ./bin/yugac --target=wasm32 "
                     "%s -o %s\n"
                     "  generated C kept at %s ; Canvas2D loader at %s\n",
@@ -822,7 +823,7 @@ int main(int argc, char **argv) {
         }
         if (ios_sdk_path(sdk, sizeof sdk) != 0) {
             fprintf(stderr,
-                    "yugac: no iPhone Simulator SDK. Install Xcode and run:\n"
+                    "yugac: no iPhone Simulator SDK. Install Xcode (App Store), then:\n"
                     "  xcodebuild -downloadPlatform iOS\n"
                     "  or open Xcode → Settings → Platforms\n");
             if (cpath_is_temp) unlink(cpath);
@@ -991,9 +992,30 @@ int main(int argc, char **argv) {
                      copt, binpath, YUGA_RUNTIME_DIR, cpath, plat_o, key_o, http_link, extra_link);
         }
 #else
-        snprintf(cmd, sizeof cmd,
-                 "cc %s -o \"%s\" -I\"%s\" -x c \"%s\" -x none \"%s\" \"%s\"%s%s -lm",
-                 copt, binpath, YUGA_RUNTIME_DIR, cpath, plat_o, key_o, http_link, extra_link);
+        if (!headless) {
+            char linux_c[512], linux_o[512];
+            snprintf(linux_c, sizeof linux_c, "%s/desktop/linux.c", YUGA_ZEUS_DIR);
+            snprintf(linux_o, sizeof linux_o, "%s/.obj/zeus_linux.o", YUGA_RUNTIME_DIR);
+            {
+                const char *linux_deps[] = {linux_c, rt_h, key_h};
+                if (ensure_obj(linux_c, linux_o, "", linux_deps, 3)) {
+                    fprintf(stderr, "yugac: failed to compile %s (need libx11)\n", linux_c);
+                    if (cpath_is_temp) unlink(cpath);
+                    free(stem);
+                    yuga_session_free(&sess);
+                    return 1;
+                }
+            }
+            snprintf(cmd, sizeof cmd,
+                     "cc %s -o \"%s\" -I\"%s\" -x c \"%s\" -x none \"%s\" \"%s\" \"%s\"%s%s "
+                     "-lX11 -lm",
+                     copt, binpath, YUGA_RUNTIME_DIR, cpath, plat_o, key_o, linux_o, http_link,
+                     extra_link);
+        } else {
+            snprintf(cmd, sizeof cmd,
+                     "cc %s -o \"%s\" -I\"%s\" -x c \"%s\" -x none \"%s\" \"%s\"%s%s -lm",
+                     copt, binpath, YUGA_RUNTIME_DIR, cpath, plat_o, key_o, http_link, extra_link);
+        }
         (void)mac_m;
         (void)mac_o;
 #endif

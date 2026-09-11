@@ -1,5 +1,5 @@
 /** Gallery wasm dev server: compiles `app.yuga`, serves `build/app.wasm`. */
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import {
   createReadStream,
   existsSync,
@@ -54,35 +54,70 @@ function wasmIsCurrent() {
   return acc.t <= wasmT;
 }
 
-function compileWasm() {
+let compileProc = null;
+let compileQueued = false;
+
+function runYugac() {
   if (!existsSync(yugac)) {
-    throw new Error("missing " + yugac + " — run `make` in the yuga repo first");
+    return Promise.reject(
+      new Error("missing " + yugac + " — run `make` in the yuga repo first"),
+    );
   }
   mkdirSync(buildDir, { recursive: true });
   const tmp = resolve(buildDir, "app.wasm.tmp");
-  const r = spawnSync(yugac, ["build", "--target=wasm32", "-o", tmp, app], {
-    cwd: repo,
-    encoding: "utf8",
+  return new Promise((resolveP, reject) => {
+    const child = spawn(yugac, ["build", "--target=wasm32", "-o", tmp, app], {
+      cwd: repo,
+    });
+    let stderr = "";
+    let stdout = "";
+    child.stdout.on("data", (d) => {
+      process.stdout.write(d);
+      stdout += d;
+    });
+    child.stderr.on("data", (d) => {
+      process.stderr.write(d);
+      stderr += d;
+    });
+    child.on("error", reject);
+    child.on("close", (status) => {
+      if (status !== 0) {
+        rmSync(tmp, { force: true });
+        reject(new Error(stderr.trim() || stdout.trim() || "yugac failed"));
+        return;
+      }
+      if (!existsSync(tmp)) {
+        reject(new Error("yugac did not produce " + tmp));
+        return;
+      }
+      renameSync(tmp, wasmFile);
+      resolveP();
+    });
   });
-  if (r.stdout) process.stdout.write(r.stdout);
-  if (r.stderr) process.stderr.write(r.stderr);
-  if (r.status !== 0) {
-    rmSync(tmp, { force: true });
-    throw new Error(r.stderr?.trim() || r.stdout?.trim() || "yugac failed");
+}
+
+function compileWasm() {
+  if (compileProc) {
+    compileQueued = true;
+    return compileProc;
   }
-  if (!existsSync(tmp)) {
-    throw new Error("yugac did not produce " + tmp);
-  }
-  renameSync(tmp, wasmFile);
+  compileProc = runYugac().finally(() => {
+    compileProc = null;
+    if (compileQueued) {
+      compileQueued = false;
+      return compileWasm();
+    }
+  });
+  return compileProc;
 }
 
 function rebuild(reason) {
   if (reason === "start" && wasmIsCurrent()) {
     console.log("[yugac] start: wasm is current");
-    return;
+    return Promise.resolve();
   }
   console.log("[yugac] " + reason + ": compiling wasm");
-  compileWasm();
+  return compileWasm();
 }
 
 function shouldRebuild(file) {
@@ -102,8 +137,8 @@ export default defineConfig({
   plugins: [
     {
       name: "yugac-wasm",
-      buildStart() {
-        rebuild("start");
+      async buildStart() {
+        await rebuild("start");
       },
       configureServer(server) {
         const watch = [
@@ -126,12 +161,9 @@ export default defineConfig({
           if (!shouldRebuild(file)) return;
           clearTimeout(timer);
           timer = setTimeout(() => {
-            try {
-              rebuild("change " + file);
-              server.ws.send({ type: "full-reload" });
-            } catch (e) {
-              console.error("[yugac]", e.message || e);
-            }
+            rebuild("change " + file)
+              .then(() => server.ws.send({ type: "full-reload" }))
+              .catch((e) => console.error("[yugac]", e.message || e));
           }, 80);
         });
         server.middlewares.use((req, res, next) => {

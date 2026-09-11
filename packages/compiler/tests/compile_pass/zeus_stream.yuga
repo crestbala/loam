@@ -124,9 +124,9 @@ fn cli_main() {
     let n = zeus.signal(0)
     let se = zeus.signal(0)
     let we = zeus.signal(0)
-    zeus.App("stream", 240, 90, fn() {
+    zeus.App("stream", fn() {
         Panel(n)
-    })
+    }, 240, 90)
 
     // SSE: 5 events.
     sys.exec("YUGA_SSE_SRV=1 packages/compiler/tests/tmp/zeus_stream >/dev/null 2>&1 &")

@@ -8,13 +8,13 @@
 import "std:zeus"
 
 fn main() {
-    zeus.App("zeus-snap", 420, 320, fn() {
+    zeus.App("zeus-snap", fn() {
         zeus.Page() {
             zeus.Display("Short page")
             zeus.Body("Content ends here; the area below stays paper,")
             zeus.Body("and edge overscroll reveals paper, not black.")
         }
-    })
+    }, 420, 320)
     zeus.engine_paint()
     zeus.dump()
 }

@@ -107,7 +107,7 @@ import "std:zeus"
 
 fn main() {
     let n = zeus.signal(0)
-    zeus.App("Count", 320, 200, fn() {
+    zeus.App("Count", fn() {
         zeus.Box(align_direction = DIRECTION.Column, padding = 16, spacing = 8) {
             zeus.Text("Count", font = 22)
             zeus.Text("{{n.get()}}", font = 28)
@@ -257,6 +257,7 @@ examples/language/     standalone .yuga programs
 examples/zeus/         gallery (component catalog), dashboard, full-stack counter
 www/                   Zeus + gRPC docs (Vite serves wasm, no Svelte)
 docs/                  yuga.md (language + architecture), boundary.md (C seam),
+                       downsides.md (self-improvement phases),
                        zeus_roadmap.md (phase history)
 bin/yugac              compiler
 bin/yuga-lsp           diagnostics, hover, go-to-def, completion, semantic tokens

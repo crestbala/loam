@@ -61,9 +61,9 @@ fn Panel(n: Signal<int>) {
 fn cli_main() {
     sys.write_file("/tmp/yuga_async_rpc.port", "")
     let n = zeus.signal(0)
-    zeus.App("async-rpc", 240, 90, fn() {
+    zeus.App("async-rpc", fn() {
         Panel(n)
-    })
+    }, 240, 90)
 
     // Fake async op: a spawn completes on the very next pump's tick; the
     // signal it sets must repaint the label without a manual engine_layout.

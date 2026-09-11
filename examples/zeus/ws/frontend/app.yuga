@@ -34,8 +34,8 @@ fn main() {
     let n = zeus.signal(0)
     let last = zeus.signal("(waiting)")
     let state = zeus.signal("connecting")
-    zeus.App("ws", 300, 200, fn() {
+    zeus.App("ws", fn() {
         Panel(n, last, state)
-    })
+    }, 300, 200)
     connect(n, last, state)
 }

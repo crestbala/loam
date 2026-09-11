@@ -1037,11 +1037,21 @@ fn layout_overlays(id: int) {
         let c = arena.nodes[id].kids[i]
         if arena.want_show(c) != 0 {
             if arena.nodes[c].kind == 9 {
-                layout_node(c, 0, 0, arena.win_w, arena.win_h)
-                arena.nodes[c].x = 0
-                arena.nodes[c].y = 0
-                arena.nodes[c].w = arena.win_w
-                arena.nodes[c].h = arena.win_h
+                let ox = arena.safe_l
+                let oy = arena.safe_t
+                let mut ow = arena.win_w - arena.safe_l - arena.safe_r
+                let mut oh = arena.win_h - arena.safe_t - arena.safe_b
+                if ow < 0 {
+                    ow = 0
+                }
+                if oh < 0 {
+                    oh = 0
+                }
+                layout_node(c, ox, oy, ow, oh)
+                arena.nodes[c].x = ox
+                arena.nodes[c].y = oy
+                arena.nodes[c].w = ow
+                arena.nodes[c].h = oh
             }
             layout_overlays(c)
         }

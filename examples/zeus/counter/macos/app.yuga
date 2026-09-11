@@ -1,24 +1,6 @@
-//! macOS desktop counter UI. Same Zeus tree as wasm, iOS, and Android; HTTP is gRPC-Web.
-//!
-//! `main` is an `async fn`: each `await c.async_call(...)` runs the one-thread
-//! async pump (timers + non-blocking socket state machines) until the
-//! gRPC-Web round trip completes — the UI never blocks on a socket. Start
-//! the backend first: `../backend/run.sh`, or use `./run.sh`.
+//! macOS host. Shared UI: ../ui.yuga
+import "../ui.yuga"
 
-import "std:async"
-import "std:zeus"
-import "std:http"
-import "../backend/api.yuga"
-import "../screen.yuga"
-
-async fn main() {
-    let c = http.client(api.native_addr())
-    let hello_raw = await c.async_call(api.hello_rpc(), api.encode_HelloReq(HelloReq {}))
-    let stats_raw = await c.async_call(api.stats_rpc(), api.encode_StatsReq(StatsReq {}))
-    let hello = api.decode_HelloResp(hello_raw)
-    let stats = api.decode_StatsResp(stats_raw)
-    let win = zeus.window_size()
-    zeus.App("Zeus", win.width, win.height, fn() {
-        screen.Screen("API", "macOS", stats.users, stats.jobs, stats.uptime, stats.load, hello.count)
-    })
+fn main() {
+    ui.start()
 }

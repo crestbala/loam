@@ -1,23 +1,6 @@
-//! Canvas2D counter UI. Same Zeus tree as iOS, macOS, and Android; HTTP is gRPC-Web.
-//!
-//! `main` is an `async fn`: each `await c.async_call(...)` is a gRPC-Web round
-//! trip (same `#[proto]` contract as macOS). Vite serves this wasm and proxies
-//! `/Counter` to `:8080`.
+//! Canvas2D host. Shared UI: ../ui.yuga
+import "../ui.yuga"
 
-import "std:async"
-import "std:zeus"
-import "std:http"
-import "../backend/api.yuga"
-import "../screen.yuga"
-
-async fn main() {
-    let c = http.client("")
-    let hello_raw = await c.async_call(api.hello_rpc(), api.encode_HelloReq(HelloReq {}))
-    let stats_raw = await c.async_call(api.stats_rpc(), api.encode_StatsReq(StatsReq {}))
-    let hello = api.decode_HelloResp(hello_raw)
-    let stats = api.decode_StatsResp(stats_raw)
-    let win = zeus.window_size()
-    zeus.App("Zeus", win.width, win.height, fn() {
-        screen.Screen("API", "Canvas2D", stats.users, stats.jobs, stats.uptime, stats.load, hello.count)
-    })
+fn main() {
+    ui.start()
 }

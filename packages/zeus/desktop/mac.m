@@ -70,6 +70,16 @@ static void mac_fill_a(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
     }
 }
 
+static void mac_fill_g(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
+                       int64_t c0, int64_t c1, int64_t axis) {
+    (void)ctx;
+    NSRect r = NSMakeRect((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h);
+    NSGradient *g = [[NSGradient alloc] initWithStartingColor:zeus_color(c0)
+                                                 endingColor:zeus_color(c1)];
+    [g drawInRect:r angle:(axis ? 0.0 : 90.0)];
+    [g release];
+}
+
 static void mac_fill(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
                      int64_t rgb, int64_t radius) {
     (void)ctx;
@@ -774,6 +784,7 @@ static NSCursor *zeus_cursor_for(const char *name) {
         memset(&d, 0, sizeof d);
         d.fill = mac_fill;
         d.fill_a = mac_fill_a;
+        d.fill_g = mac_fill_g;
         d.text = mac_text;
         d.text_rot = mac_text_rot;
         d.save = mac_save;

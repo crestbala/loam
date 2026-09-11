@@ -63,7 +63,7 @@ fn ProjectCard() {
 }
 
 fn Foundations() {
-    zeus.Breadcrumbs("Zeus", "Examples", "Gallery")
+    zeus.Breadcrumbs([]string{"Zeus", "Examples", "Gallery"})
     zeus.Column(SPACE.Exs) {
         zeus.Display("Build interfaces with Zeus")
         zeus.Body("Zinc tokens, neutral primary, and lucide SVG icons. Dark inverts every token that reads appearance.")
@@ -286,10 +286,10 @@ fn Data() {
     let page = zeus.signal(3)
     zeus.SectionTitle("Data", "Table and pagination")
     zeus.Card() {
-        zeus.TableHead("Name", "Role", "Status")
-        zeus.TableRow("Ada", "Operator", "Active")
-        zeus.TableRow("Bea", "Editor", "Away")
-        zeus.TableRow("Cal", "Viewer", "Active")
+        zeus.TableHead([]string{"Name", "Role", "Status"})
+        zeus.TableRow([]string{"Ada", "Operator", "Active"})
+        zeus.TableRow([]string{"Bea", "Editor", "Away"})
+        zeus.TableRow([]string{"Cal", "Viewer", "Active"})
     }
     zeus.Note("Pagination — {{page.get()}} / 5 · ghost pages, outline current")
     zeus.Pagination(page, 5)

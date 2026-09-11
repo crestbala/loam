@@ -16,7 +16,7 @@ fn CounterPanel(initial: int) {
 }
 
 fn main() {
-    zeus.App("Counter", 400, 240, fn() {
+    zeus.App("Counter", fn() {
         CounterPanel(0)
-    })
+    }, 400, 240)
 }

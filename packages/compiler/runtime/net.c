@@ -193,6 +193,19 @@ int64_t yuga_net_tls_connect(yuga_str host, int64_t port) {
     return -1;
 }
 
+int64_t yuga_net_tls_nb_connect(yuga_str host, int64_t port) {
+    (void)host;
+    (void)port;
+    return -1;
+}
+
+int64_t yuga_net_tls_nb_ready(int64_t fd) {
+    (void)fd;
+    return -1;
+}
+
+int64_t yuga_net_tcp_wouldblock(void) { return 0; }
+
 int64_t yuga_net_tcp_nb_connect(yuga_str host, int64_t port) {
     (void)host;
     (void)port;
@@ -296,10 +309,13 @@ typedef struct {
     int used;
     int fd;
     SSLContextRef ctx;
+    /* 0 = ready (handshake done), 1 = TCP connecting, 2 = TLS handshake. */
+    int hs;
 } TlsConn;
 
 static TlsConn g_tls[TLS_SLOTS];
 static int tls_slot_of(int64_t fd);
+static int g_tls_wouldblock;
 #endif
 
 #if defined(__APPLE__) && defined(__clang__)
@@ -394,8 +410,13 @@ yuga_str yuga_net_tcp_read(int64_t fd, int64_t max) {
             OSStatus st;
             p = (char *)malloc((size_t)max + 1);
             if (!p) return (yuga_str){ .ptr = "", .len = 0 };
+            g_tls_wouldblock = 0;
             st = SSLRead(g_tls[slot].ctx, p, (size_t)max, &got);
-            (void)st; /* any error with no bytes is EOF, like a raw read of 0 */
+            if (st == errSSLWouldBlock) {
+                g_tls_wouldblock = 1;
+                free(p);
+                return (yuga_str){ .ptr = "", .len = 0 };
+            }
             if (got > 0) {
                 p[got] = 0;
                 return (yuga_str){ .ptr = p, .len = (int64_t)got };
@@ -630,6 +651,7 @@ int64_t yuga_net_tls_connect(yuga_str host, int64_t port) {
     g_tls[i].used = 1;
     g_tls[i].fd = fd;
     g_tls[i].ctx = ctx;
+    g_tls[i].hs = 0;
     {
         int idle = 0;
         for (;;) {
@@ -665,6 +687,111 @@ int64_t yuga_net_tls_connect(yuga_str host, int64_t port) {
     return TLS_BASE + (int64_t)i;
 }
 
+/* Non-blocking TLS: TCP connect + SSLHandshake polled per frame so the UI
+   thread never waits on a socket. `hs` 1 = TCP connecting, 2 = handshake. */
+int64_t yuga_net_tls_nb_connect(yuga_str host, int64_t port) {
+    char name[256];
+    int fd = -1, i, flags, rc;
+    SSLContextRef ctx = NULL;
+    struct addrinfo hints, *res = NULL, *ai;
+    char sp[8];
+    if (port <= 0 || port > 65535 || host.len <= 0 || host.len >= 256 || !host.ptr)
+        return -1;
+    memcpy(name, host.ptr, (size_t)host.len);
+    name[host.len] = '\0';
+    for (i = 0; i < TLS_SLOTS; i++)
+        if (!g_tls[i].used) break;
+    if (i >= TLS_SLOTS) return -1;
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    snprintf(sp, sizeof sp, "%u", (unsigned)port);
+    if (getaddrinfo(name, sp, &hints, &res) != 0) return -1;
+    for (ai = res; ai && fd < 0; ai = ai->ai_next) {
+        int f = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        if (f < 0) continue;
+        flags = fcntl(f, F_GETFL, 0);
+        if (flags < 0 || fcntl(f, F_SETFL, flags | O_NONBLOCK) != 0) {
+            close(f);
+            continue;
+        }
+        {
+            int yes = 1;
+#ifdef SO_NOSIGPIPE
+            (void)setsockopt(f, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof yes);
+#endif
+        }
+        rc = connect(f, ai->ai_addr, ai->ai_addrlen);
+        if (rc != 0 && errno != EINPROGRESS && errno != EINTR && errno != EALREADY) {
+            close(f);
+            continue;
+        }
+        fd = f;
+    }
+    freeaddrinfo(res);
+    if (fd < 0) return -1;
+    ctx = SSLCreateContext(NULL, kSSLClientSide, kSSLStreamType);
+    if (!ctx) {
+        close(fd);
+        return -1;
+    }
+    SSLSetIOFuncs(ctx, tls_io_read, tls_io_write);
+    SSLSetConnection(ctx, (SSLConnectionRef)(intptr_t)fd);
+    SSLSetPeerDomainName(ctx, name, strlen(name));
+    SSLSetProtocolVersionMin(ctx, kTLSProtocol12);
+    g_tls[i].used = 1;
+    g_tls[i].fd = fd;
+    g_tls[i].ctx = ctx;
+    g_tls[i].hs = 1;
+    return TLS_BASE + (int64_t)i;
+}
+
+int64_t yuga_net_tls_nb_ready(int64_t fd) {
+    int slot = tls_slot_of(fd);
+    OSStatus st;
+    if (slot < 0) return -1;
+    if (g_tls[slot].hs == 0) return 1;
+    if (g_tls[slot].hs == 1) {
+        struct pollfd p;
+        int err = 0;
+        socklen_t n = sizeof err;
+        p.fd = g_tls[slot].fd;
+        p.events = POLLOUT;
+        p.revents = 0;
+        if (poll(&p, 1, 0) <= 0) return 0;
+        if (getsockopt(g_tls[slot].fd, SOL_SOCKET, SO_ERROR, &err, &n) != 0 || err != 0) {
+            g_tls[slot].used = 0;
+            CFRelease(g_tls[slot].ctx);
+            close(g_tls[slot].fd);
+            g_tls[slot].ctx = NULL;
+            g_tls[slot].fd = -1;
+            return -1;
+        }
+        g_tls[slot].hs = 2;
+    }
+    {
+        struct pollfd p;
+        p.fd = g_tls[slot].fd;
+        p.events = POLLIN | POLLOUT;
+        p.revents = 0;
+        (void)poll(&p, 1, 0);
+    }
+    st = SSLHandshake(g_tls[slot].ctx);
+    if (st == noErr) {
+        g_tls[slot].hs = 0;
+        return 1;
+    }
+    if (st == errSSLWouldBlock) return 0;
+    g_tls[slot].used = 0;
+    CFRelease(g_tls[slot].ctx);
+    if (g_tls[slot].fd >= 0) close(g_tls[slot].fd);
+    g_tls[slot].ctx = NULL;
+    g_tls[slot].fd = -1;
+    return -1;
+}
+
+int64_t yuga_net_tcp_wouldblock(void) { return g_tls_wouldblock; }
+
 #else
 
 /* No SecureTransport/OpenSSL on this host: TLS is unavailable. */
@@ -673,6 +800,19 @@ int64_t yuga_net_tls_connect(yuga_str host, int64_t port) {
     (void)port;
     return -1;
 }
+
+int64_t yuga_net_tls_nb_connect(yuga_str host, int64_t port) {
+    (void)host;
+    (void)port;
+    return -1;
+}
+
+int64_t yuga_net_tls_nb_ready(int64_t fd) {
+    (void)fd;
+    return -1;
+}
+
+int64_t yuga_net_tcp_wouldblock(void) { return 0; }
 
 #endif
 
@@ -731,6 +871,12 @@ int64_t yuga_net_tcp_poll(int64_t fd, int64_t want, int64_t ms) {
     struct pollfd p;
     int ev, rc;
     if (fd < 0) return -1;
+#if defined(__APPLE__)
+    {
+        int slot = tls_slot_of(fd);
+        if (slot >= 0) fd = (int64_t)g_tls[slot].fd;
+    }
+#endif
     if (ms < 0) ms = 0;
     if (ms > 60000) ms = 60000;
     p.fd = (int)fd;
@@ -758,6 +904,23 @@ int64_t yuga_net_tcp_send(int64_t fd, yuga_str data, int64_t off) {
     if (off < 0 || !data.ptr || off > data.len) return -1;
     left = (size_t)(data.len - off);
     if (left == 0) return 0;
+#if defined(__APPLE__)
+    {
+        int slot = tls_slot_of(fd);
+        if (slot >= 0) {
+            size_t got = 0;
+            OSStatus st;
+            g_tls_wouldblock = 0;
+            st = SSLWrite(g_tls[slot].ctx, data.ptr + off, left, &got);
+            if (st == errSSLWouldBlock) {
+                g_tls_wouldblock = 1;
+                return 0;
+            }
+            if (st != noErr) return -1;
+            return (int64_t)got;
+        }
+    }
+#endif
     for (;;) {
 #if defined(MSG_NOSIGNAL)
         n = send((int)fd, data.ptr + off, left, MSG_NOSIGNAL);
@@ -777,6 +940,15 @@ int64_t yuga_net_tcp_so_error(int64_t fd) {
     int err = 0;
     socklen_t n = sizeof err;
     if (fd < 0) return 1;
+#if defined(__APPLE__)
+    {
+        int slot = tls_slot_of(fd);
+        if (slot >= 0) {
+            if (g_tls[slot].hs != 0) return 1;
+            fd = (int64_t)g_tls[slot].fd;
+        }
+    }
+#endif
     if (getsockopt((int)fd, SOL_SOCKET, SO_ERROR, &err, &n) != 0) return 1;
     return (int64_t)err;
 }

@@ -52,7 +52,7 @@ fn of(id: int) -> PageResp {
             "Modules",
             "Quoted imports only. No glob imports. Symbols are always name.symbol.",
             "import \"std:foo\" loads packages/compiler/std/foo.yuga. Relative import \"rel/path.yuga\" is from the importing file; the module name is the file stem.\n\nCycles are errors. UI children are trailing blocks on Box / Text, not chained .child calls.",
-            "import \"std:zeus\"\n\nfn main() {\n    zeus.App(\"Hello\", 400, 240, fn() {\n        zeus.Box(padding = 16) {\n            zeus.Text(\"Hello\")\n        }\n    })\n}"
+            "import \"std:zeus\"\n\nfn main() {\n    zeus.App(\"Hello\", fn() {\n        zeus.Box(padding = 16) {\n            zeus.Text(\"Hello\")\n        }\n    })\n}"
         )
     }
     if id == 7 {
@@ -76,14 +76,14 @@ fn of(id: int) -> PageResp {
             "zeus",
             "UI toolkit. Native Cocoa and WASM/Canvas2D run the same source. Backend is a --target flag, not an import.",
             "A component is a fn. Hierarchy is a trailing block. Signal<T> is a Copy handle; T must be Copy (including []U when U is Copy). Read and write with sig.get() and sig.set(v). zeus.For + push_item grow a list after launch. Button(on_click = fn() => ...) is the click API.\n\nzeus.App builds the tree once. Text(\"{{n.get()}}\") re-paints when the signal changes. Same source on Cocoa, iOS, Android, and wasm Canvas2D (no HTML DOM). ZEUS_HEADLESS=1 layouts once and exits.",
-            "import \"std:zeus\"\n\nfn main() {\n    let n = zeus.signal(0)\n    zeus.App(\"Count\", 320, 200, fn() {\n        zeus.Box(align_direction = DIRECTION.Column, padding = 16, spacing = 8) {\n            zeus.Text(\"Count\", font = 22)\n            zeus.Text(\"{{n.get()}}\", font = 28)\n            zeus.Box(align_direction = DIRECTION.Row, spacing = 8) {\n                zeus.Button(\"-\", on_click = fn() => n.set(n.get() - 1))\n                zeus.Button(\"+\", on_click = fn() => n.set(n.get() + 1))\n            }\n        }\n    })\n}"
+            "import \"std:zeus\"\n\nfn main() {\n    let n = zeus.signal(0)\n    zeus.App(\"Count\", fn() {\n        zeus.Box(align_direction = DIRECTION.Column, padding = 16, spacing = 8) {\n            zeus.Text(\"Count\", font = 22)\n            zeus.Text(\"{{n.get()}}\", font = 28)\n            zeus.Box(align_direction = DIRECTION.Row, spacing = 8) {\n                zeus.Button(\"-\", on_click = fn() => n.set(n.get() - 1))\n                zeus.Button(\"+\", on_click = fn() => n.set(n.get() + 1))\n            }\n        }\n    })\n}"
         )
     }
     if id == 10 {
         return pack(
             "http",
             "Unary RPC over gRPC-Web (HTTP/1.1) and h2c. No REST routes.",
-            "#[proto] structs get encode_Name / decode_Name in their module. app.rpc / c.call are method rewrite. c.call is gRPC-Web; http.h2_call is unary h2c. Empty addr http.client(\"\") is same-origin (wasm / Vite proxy). Native uses 127.0.0.1. Android emulator uses 10.0.2.2.",
+            "#[proto] structs get encode_Name / decode_Name in their module. app.rpc / c.call are method rewrite. c.call is gRPC-Web; http.h2_call is unary h2c. http.client() fills the addr per --target (wasm same-origin, mac/iOS 127.0.0.1:8080, Android emulator 10.0.2.2:8080).",
             "import \"std:http\"\nimport \"std:fmt\"\n\n#[proto]\nstruct Ping {\n}\n\n#[proto]\nstruct Pong {\n    msg: string,\n}\n\nfn main() {\n    let app = http.app()\n    app.rpc(\"Health.Ping\", |body| {\n        let req = decode_Ping(body)\n        encode_Pong(Pong { msg: \"ok\" })\n    })\n    app.listen(8080)\n}"
         )
     }

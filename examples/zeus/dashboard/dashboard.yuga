@@ -165,7 +165,7 @@ fn Dashboard() {
 
     zeus.Page() {
         Header("Zeus Dashboard", ticks, open)
-        zeus.Breadcrumbs("Zeus", "App", "Dashboard")
+        zeus.Breadcrumbs([]string{"Zeus", "App", "Dashboard"})
         zeus.Body("Rows and cards fill the window. Labels stay left; actions sit on the right.")
         zeus.Alert("Heads up", "Signals update on click. Scroll if the page overflows.")
         zeus.Row(SPACE.Md) {
@@ -193,7 +193,7 @@ fn Dashboard() {
 }
 
 fn main() {
-    zeus.App("Zeus Dashboard", 920, 720, fn() {
+    zeus.App("Zeus Dashboard", fn() {
         Dashboard()
-    })
+    }, 920, 720)
 }

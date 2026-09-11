@@ -67,8 +67,8 @@ struct MwEntry {
 
 /// A client endpoint. `addr` is `host:port` for plain TCP (h1 gRPC-Web, h2c,
 /// SSE, ws) or `https://host[:port]` for TLS — `call`/`rt_call` then use
-/// `net.tls_connect`, which verifies the server certificate. The empty
-/// string is the wasm same-origin fetch target.
+/// `net.tls_connect`, which verifies the server certificate. Empty `addr`
+/// (and `http.client()` with no argument) is filled by `default_addr`.
 struct Client {
     addr: string,
 }
@@ -2554,8 +2554,32 @@ fn serve_grpc_web(app: App, path: string, body: string) -> string {
     return grpc_web_frame(out, last_status)
 }
 
-fn client(addr: string) -> Client {
-    Client { addr: addr }
+/// Default RPC address for this `--target`. `YUGA_RPC_ADDR` (native) wins
+/// when set — use it for a physical Android device's LAN IP. Otherwise:
+/// wasm same-origin `""`, Android emulator `10.0.2.2:8080`, mac/iOS
+/// `127.0.0.1:8080`.
+fn default_addr() -> string {
+    let ov = sys.env("YUGA_RPC_ADDR")
+    if ov.len > 0 {
+        return ov
+    }
+    let t = sys.target()
+    if t == "wasm" {
+        return ""
+    }
+    if t == "android" {
+        return "10.0.2.2:8080"
+    }
+    return "127.0.0.1:8080"
+}
+
+/// Client for `call` / `async_call` / `ws_open`. Omit `addr` (or pass `""`)
+/// to use `default_addr` for this host. An explicit `host:port` always wins.
+fn client(addr: string = "") -> Client {
+    if addr.len > 0 {
+        return Client { addr: addr }
+    }
+    return Client { addr: default_addr() }
 }
 
 fn call(c: Client, name: string, body: string) -> string {
@@ -2584,8 +2608,8 @@ fn async_call(c: Client, name: string, body: string) -> Future<string> {
 // "", the same shape as `call`.
 
 /// One in-flight async call. `stage`: 1 connecting, 2 sending, 3 reading,
-/// 4 wasm fetch wait. `cbid` indexes `acbs`; callbacks stay in their own
-/// table so this record remains a plain Copy struct.
+/// 4 wasm fetch wait, 5 TLS handshake. `cbid` indexes `acbs`; callbacks stay
+/// in their own table so this record remains a plain Copy struct.
 struct RpcCall {
     req: string,
     sent: int,
@@ -2658,6 +2682,17 @@ fn acall_advance(idx: int) -> int {
     while guard < 8 {
         guard = guard + 1
         let stage = acalls[idx].stage
+        if stage == 5 {
+            let r = net.tls_nb_ready(acalls[idx].fd)
+            if r < 0 {
+                acall_finish(idx, "")
+                return 1
+            }
+            if r == 0 {
+                return 0
+            }
+            acalls[idx].stage = 2
+        }
         if stage == 1 {
             let fd = acalls[idx].fd
             let p = net.tcp_poll(fd, 2, 0)
@@ -2702,6 +2737,9 @@ fn acall_advance(idx: int) -> int {
             }
             let chunk = net.tcp_read(fd, 4096)
             if chunk.len == 0 {
+                if net.tcp_wouldblock() != 0 {
+                    return 0
+                }
                 // EOF: the server closed after the body (Connection: close).
                 acall_finish(idx, unframe_str(http_payload(acalls[idx].acc)))
                 return 1
@@ -2754,19 +2792,23 @@ fn call_async(c: Client, name: string, body: string, cb: fn(string)) {
     }
     let framed = frame_str(body)
     let hp = parse_addr(c.addr)
-    if hp.tls == 1 {
-        // Async transport is plain TCP today; https:// needs the blocking
-        // TLS client (`call`). Deliver "" like any transport failure.
-        cb("")
-        return
-    }
     if astep_on == 0 {
         astep_on = 1
         async.add_step(|| { io_pump() })
     }
     let cbid = acbs.len
     push(acbs, cb)
-    if hp.port != 0 {
+    if hp.tls == 1 {
+        let fd = net.tls_nb_connect(hp.host, hp.port)
+        if fd >= 0 {
+            let req = client_post(hp.host, hp.port, path, framed)
+            push(acalls, RpcCall { req: req, sent: 0, fd: fd, stage: 5, acc: "",
+                                   cbid: cbid, at: async.now_ms() + 15000 })
+            async.io_open()
+            return
+        }
+        // wasm: browser TLS via fetch. Native: no SecureTransport.
+    } else if hp.port != 0 {
         let fd = net.tcp_nb_connect(hp.host, hp.port)
         if fd >= 0 {
             let req = client_post(hp.host, hp.port, path, framed)

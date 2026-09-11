@@ -14,6 +14,17 @@ fn tcp_connect(host: string, port: int) -> int {}
 /// handshake / certificate check fails.
 fn tls_connect(host: string, port: int) -> int {}
 
+/// Non-blocking TLS connect (macOS SecureTransport). Returns a TLS handle
+/// immediately; poll `tls_nb_ready` until 1. `-1` when TLS is unavailable.
+fn tls_nb_connect(host: string, port: int) -> int {}
+
+/// 1 = handshake done, 0 = still in progress, `-1` = failed. No-op / `-1`
+/// when `fd` is not a TLS handle.
+fn tls_nb_ready(fd: int) -> int {}
+
+/// 1 if the last `tcp_read` / `tcp_send` on a TLS handle would block (not EOF).
+fn tcp_wouldblock() -> int {}
+
 /// Non-blocking connect for the async transport: returns a non-blocking fd
 /// that is connected or connecting in the background, or `-1` on immediate
 /// failure. Poll it writable, then `tcp_so_error` says whether it connected.

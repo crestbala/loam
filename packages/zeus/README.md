@@ -22,7 +22,7 @@ fn Chip(label: string) {
 
 fn main() {
     let n = zeus.signal(0)
-    zeus.App("Count", 320, 200, fn() {
+    zeus.App("Count", fn() {
         zeus.Box(align_direction = DIRECTION.Column, padding = 16, spacing = 8) {
             zeus.Text("Count", font = 22)
             zeus.Text("{{n.get()}}", font = 28)
@@ -61,7 +61,7 @@ examples/zeus/counter/
   backend/api.yuga  shared contract: #[proto] payloads, imported by both sides
   backend/server    native backend
   screen.yuga       the Zeus UI, imported by every host's app.yuga
-  frontend/         wasm host — http.client("") calls same-origin, Vite proxies
+  frontend/         wasm host stub — shared `app.yuga`, `http.client()` per target
   macos/ ios/ android/   native hosts
 ```
 
@@ -69,9 +69,10 @@ To add a new endpoint:
 
 1. Add a `#[proto]` request/response struct to `api.yuga`.
 2. Handle it on the server with `app.rpc(...)`.
-3. Call it from `screen.yuga` via `http.client(addr).call(...)` — the same call
-   compiles unchanged on wasm, macOS, iOS, and Android because `addr` is the
-   only thing that varies per host.
+3. Call it from the shared `app.yuga` via `http.client().call(...)` — empty
+   addr is filled per `--target` (wasm same-origin, mac/iOS loopback,
+   Android emulator `10.0.2.2`). Override with an explicit addr or
+   `YUGA_RPC_ADDR`.
 4. `./run.sh zeus/counter` (web) or `./run.sh zeus/counter macos` (native).
 
 For the full request/response type story see [`docs/spec.md`](docs/spec.md) and

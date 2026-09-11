@@ -1,23 +1,6 @@
-//! iOS Simulator counter UI. Same Zeus tree as wasm, macOS, and Android; HTTP is gRPC-Web sockets.
-//!
-//! `main` is an `async fn`: each `await c.async_call(...)` runs the one-thread
-//! async pump until the gRPC-Web round trip completes. Simulator shares the
-//! Mac loopback (`127.0.0.1:8080`). Start the backend first: `../backend/run.sh`,
-//! or use `./run.sh`.
+//! iOS Simulator host. Shared UI: ../ui.yuga
+import "../ui.yuga"
 
-import "std:async"
-import "std:zeus"
-import "std:http"
-import "../backend/api.yuga"
-import "../screen.yuga"
-
-async fn main() {
-    let c = http.client(api.native_addr())
-    let hello_raw = await c.async_call(api.hello_rpc(), api.encode_HelloReq(HelloReq {}))
-    let stats_raw = await c.async_call(api.stats_rpc(), api.encode_StatsReq(StatsReq {}))
-    let hello = api.decode_HelloResp(hello_raw)
-    let stats = api.decode_StatsResp(stats_raw)
-    zeus.App("Zeus", 640, 680, fn() {
-        screen.Screen("API", "iOS", stats.users, stats.jobs, stats.uptime, stats.load, hello.count)
-    })
+fn main() {
+    ui.start()
 }

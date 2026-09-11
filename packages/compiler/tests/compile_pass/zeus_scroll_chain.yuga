@@ -1,0 +1,90 @@
+// Nested scroll chaining: leftover wheel at an inner bound goes to the page.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn expect(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn scroller_of(id: int) -> int {
+    let mut p = id
+    while p > 0 {
+        if zeus.node_kind(p) == 11 {
+            return p
+        }
+        p = zeus.node_parent(p)
+    }
+    return 0
+}
+
+fn main() {
+    zeus.snapshot(240, 240, fn() -> Node {
+        zeus.Scroll(height = 240) {
+            zeus.Box(height = 80) {
+                zeus.Text("page-top")
+            }
+            zeus.Scroll(height = 80) {
+                zeus.Box(height = 400) {
+                    zeus.Text("inner-top")
+                    zeus.Box(height = 360) {
+                        zeus.Text("inner-bot")
+                    }
+                }
+            }
+            zeus.Box(height = 200) {
+                zeus.Text("page-bot")
+            }
+        }
+    })
+
+    let inner_lab = zeus.engine_find_text("inner-top")
+    expect(inner_lab > 0, "inner label")
+    let inner = scroller_of(inner_lab)
+    expect(inner > 0, "inner scroller")
+    let outer = zeus.node_parent(inner)
+    let mut page = outer
+    while page > 0 {
+        if zeus.node_kind(page) == 11 {
+            break
+        }
+        page = zeus.node_parent(page)
+    }
+    expect(page > 0, "page scroller")
+    expect(page != inner, "nested")
+    expect(zeus.node_scroll_max(inner) > 0, "inner overflows")
+    expect(zeus.node_scroll_max(page) > 0, "page overflows")
+
+    let ix = zeus.node_x(inner) + zeus.node_w(inner) / 2
+    let iy = zeus.node_y(inner) + zeus.node_h(inner) / 2
+
+    // Inner not at a bound: the page stays put.
+    zeus.engine_scroll_step(ix, iy, 0, 40)
+    expect(zeus.node_scroll_y(inner) == 40, "inner takes the wheel")
+    expect(zeus.node_scroll_y(page) == 0, "page does not move yet")
+
+    // Drive the inner to its end; leftover must chain to the page.
+    zeus.scroll_to(Node { id: inner }, zeus.node_scroll_max(inner))
+    zeus.engine_layout(240, 240)
+    let imax = zeus.node_scroll_max(inner)
+    expect(zeus.node_scroll_y(inner) == imax, "inner at end")
+    let p0 = zeus.node_scroll_y(page)
+    zeus.engine_scroll_step(ix, iy, 0, 50)
+    expect(zeus.node_scroll_y(inner) == imax, "inner stays at end")
+    expect(zeus.node_scroll_y(page) == p0 + 50, "page takes leftover")
+
+    // Inner at top: scrolling up chains to the page.
+    zeus.scroll_to(Node { id: inner }, 0)
+    zeus.engine_layout(240, 240)
+    expect(zeus.node_scroll_y(inner) == 0, "inner at top")
+    let p1 = zeus.node_scroll_y(page)
+    zeus.engine_scroll_step(ix, iy, 0, -30)
+    expect(zeus.node_scroll_y(inner) == 0, "inner stays at top")
+    expect(zeus.node_scroll_y(page) == p1 - 30, "page takes upward leftover")
+
+    fmt.println("scroll chain ok")
+}

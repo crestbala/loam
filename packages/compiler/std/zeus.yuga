@@ -28,7 +28,7 @@
 //!
 //! fn main() {
 //!     let n = zeus.signal(0)
-//!     zeus.App("Count", 320, 200, fn() {
+//!     zeus.App("Count", fn() {
 //!         zeus.Box(align_direction = DIRECTION.Column, padding = 16, spacing = 8) {
 //!             zeus.Text("Count", font = 22)
 //!             zeus.Text("{{n.get()}}", font = 28)
@@ -43,10 +43,13 @@
 //! }
 //! ```
 //!
-//! `zeus.App` builds the tree once (retained). Per-frame rebuild is
-//! `zeus.view` / `zeus.app`. Internals: `std/zeuscore/*.yuga`. C is host FFI
-//! (`platform.yuga`). `Node` is `{ id: int }`. See `docs/boundary.md`.
-//! `ZEUS_HEADLESS=1` layouts once and exits.
+//! `zeus.App(title, build)` is the entry: retained tree, view size from
+//! the host (`window_size`); pass trailing `width`/`height` only to pin a
+//! macOS/wasm window. Per-frame rebuild is `zeus.view` / `zeus.app`.
+//! Hide live nodes with `If` / `show` (`Signal<int>` 0/1). `Box.show` is
+//! the bool-thunk form of the same flag. Internals: `std/zeuscore/*.yuga`.
+//! C is host FFI (`platform.yuga`). `Node` is `{ id: int }`.
+//! See `docs/boundary.md`. `ZEUS_HEADLESS=1` layouts once and exits.
 
 import "zeuscore/geometry.yuga"
 import "zeuscore/platform.yuga"
@@ -678,6 +681,12 @@ fn bg(node: Node, rgb: int) -> Node {
     arena.nodes[node.id].bg = rgb
     return node
 }
+
+/// Second stop of a vertical gradient (`bg` → `bg2`). Solid fill when unset.
+fn bg2(node: Node, rgb: int) -> Node {
+    arena.nodes[node.id].bg2 = rgb
+    return node
+}
 fn fg(node: Node, rgb: int) -> Node {
     arena.nodes[node.id].fg = rgb
     return node
@@ -831,13 +840,6 @@ fn hover(node: Node, sig: Signal<int>) -> Node {
     return raw_hover(node, sig)
 }
 
-fn hover_delay(node: Node, ms: int) -> Node {
-    return node
-}
-fn hover_leave(node: Node, ms: int) -> Node {
-    return node
-}
-
 fn pulse(node: Node) -> Node {
     arena.nodes[node.id].pulse = 1
     return node
@@ -855,9 +857,6 @@ fn hover_off(node: Node) -> Node {
 
 fn enter_fade(node: Node) -> Node {
     arena.nodes[node.id].enter_fade = 1
-    return node
-}
-fn dismiss(node: Node) -> Node {
     return node
 }
 fn keys(node: Node, sig: Signal<int>, lo: int, hi: int) -> Node {
@@ -1307,6 +1306,16 @@ fn node_h(id: int) -> int {
     return arena.nodes[id].h
 }
 
+/// Parent id in the retained tree (0 = root). Tests walk scroll chains with this.
+fn node_parent(id: int) -> int {
+    return arena.nodes[id].parent
+}
+
+/// Engine kind: 11 is a scroll pane.
+fn node_kind(id: int) -> int {
+    return arena.nodes[id].kind
+}
+
 /// Current vertical scroll offset of node `id` (tests, `scroll_to`).
 fn node_scroll_y(id: int) -> int {
     return arena.nodes[id].scroll_y
@@ -1360,6 +1369,8 @@ fn dump() {
             fmt.println("text_rot", d.x, d.y, d.rgb, d.font, d.w, d.text)
         } else if d.kind == 10 {
             fmt.println("image", d.x, d.y, d.w, d.h, d.alpha, d.radius, d.value)
+        } else if d.kind == 11 {
+            fmt.println("grad", d.x, d.y, d.w, d.h, d.rgb, d.value, d.radius)
         }
     }
 }
@@ -1809,8 +1820,9 @@ struct BoxProps {
     /// Flex-shrink weight. `-1` (the default) follows `grow`: a grown child
     /// may narrow before a row wraps; `0` refuses to narrow, `1` allows it.
     shrink: fn() -> int = -1,
-    /// Visible when the thunk is true. Signal shows (`zeus.show` / `show_eq`
-    /// / `If`) win over this prop on the same node.
+    /// Visible when the thunk is true. Live hide is `If` / `zeus.show` on a
+    /// `Signal<int>` (0/1); this bool thunk is the same flag for named props.
+    /// Signal shows (`zeus.show` / `show_eq` / `If`) win over this prop.
     show: fn() -> bool = true,
     align_direction: fn() -> int = 1,
     align_items: fn() -> int = -1,
@@ -1886,15 +1898,14 @@ struct TextProps {
     a11y_role: fn() -> string = "",
 }
 
-/// Options for `Button`. Pass `look = LOOK.*` and `size = SIZE.*` for the
-/// themed chrome (solid / soft / outline / ghost / danger / link across
-/// sm / md / lg). Without them the button is a plain clickable label:
+/// Options for `Button`. Default `look = LOOK.Solid` (gallery "Primary")
+/// paints themed chrome. `look = -1` is a plain clickable label styled by
 /// `background` / `color` / `font` / `padding` / `radius` / `width` /
-/// `height` / `enabled` (dims when false) style it, `on_click` fires it.
+/// `height` / `enabled` (dims when false). `on_click` fires it.
 struct ButtonProps {
     /// Label of the Button
     label: string,
-    /// `LOOK` token for themed chrome; -1 = raw (props below decide the look).
+    /// `LOOK` token for themed chrome; `-1` = raw (props below decide the look).
     look: int = LOOK.Solid,
     /// `SIZE` token for themed chrome.
     size: int = SIZE.Md,
@@ -2173,10 +2184,9 @@ fn Text(label: fn() -> string, p: TextProps) -> Node {
     return ui_emit(n)
 }
 
-/// Action button. With `look = LOOK.*` (`Solid` / `Soft` / `Outline` /
-/// `Ghost` / `Danger` / `Link`) and `size = SIZE.*` (`Sm` / `Md` / `Lg`)
-/// it paints the themed chrome; without them it is a plain clickable label
-/// styled by the props (`background` / `color` / `width` / `height` /
+/// Action button. Default `look = LOOK.Solid` (gallery Primary) plus
+/// `size = SIZE.*` paints themed chrome. `look = -1` is a plain clickable
+/// label styled by the props (`background` / `color` / `width` / `height` /
 /// `enabled` dims when false). `on_click` is optional — omit it for a
 /// look-only button.
 fn Button(p: ButtonProps) -> Node {
@@ -2228,7 +2238,8 @@ fn __btn_look(p: ButtonProps) -> Node {
         spacing = SPACE.Exs,
         background = btn_bg(look),
         color = btn_fg(look),
-        height = btn_h(size),
+        width = p.width,
+        height = if p.height >= 0 { p.height } else { btn_h(size) },
         padding_x = btn_px(size),
         radius = btn_radius(size),
         border = btn_bw(look),
@@ -2586,6 +2597,133 @@ fn virt_refresh<T>(nid: int, items: Signal<[]T>, build: fn(int, T), row_h: int) 
     arena.scope_end(prev)
 }
 
+fn virt_row_h(heights: []int, i: int, fallback: int) -> int {
+    if i >= 0 {
+        if i < heights.len {
+            if heights[i] > 0 {
+                return heights[i]
+            }
+        }
+    }
+    return fallback
+}
+
+fn virt_prefix(heights: []int, n: int, fallback: int) -> int {
+    let mut y = 0
+    let mut i = 0
+    while i < n {
+        y = y + virt_row_h(heights, i, fallback)
+        i = i + 1
+    }
+    return y
+}
+
+fn virt_window_var(nid: int, n: int, heights: []int, fallback: int) -> VirtWin {
+    if heights.len == 0 {
+        return virt_window(nid, n, fallback)
+    }
+    let sid = find_scroller(nid)
+    let mut view_h = 240
+    let mut local = 0
+    if sid > 0 {
+        if arena.nodes[sid].h > 0 {
+            view_h = arena.nodes[sid].h
+        }
+        if nid == sid {
+            local = arena.nodes[sid].scroll_y
+        } else {
+            local = arena.nodes[sid].scroll_y - (arena.nodes[nid].y - arena.nodes[sid].y)
+        }
+    } else if arena.nodes[nid].h > 0 {
+        view_h = arena.nodes[nid].h
+    }
+    if local < 0 {
+        local = 0
+    }
+    let mut acc = 0
+    let mut first = n
+    let mut last = n
+    let mut i = 0
+    while i < n {
+        let rh = virt_row_h(heights, i, fallback)
+        if acc + rh > local {
+            first = i
+            break
+        }
+        acc = acc + rh
+        i = i + 1
+    }
+    first = first - VIRT_OVERSCAN
+    if first < 0 {
+        first = 0
+    }
+    acc = virt_prefix(heights, first, fallback)
+    last = first
+    while last < n {
+        if acc >= local + view_h {
+            last = last + VIRT_OVERSCAN
+            if last > n {
+                last = n
+            }
+            return VirtWin { first: first, last: last }
+        }
+        acc = acc + virt_row_h(heights, last, fallback)
+        last = last + 1
+    }
+    return VirtWin { first: first, last: last }
+}
+
+fn virt_refresh_var<T>(nid: int, items: Signal<[]T>, build: fn(int, T), fallback: int,
+                       heights: Signal<[]int>) {
+    let xs = items.get()
+    let hs = heights.get()
+    let m = xs.len
+    let gen = platform.plat_sig_gen(items.id) + platform.plat_sig_gen(heights.id)
+    let w = virt_window_var(nid, m, hs, fallback)
+    let first = w.first
+    let last = w.last
+    if gen == arena.nodes[nid].list_gen {
+        if first == arena.nodes[nid].list_lo {
+            if last == arena.nodes[nid].list_hi {
+                if arena.nodes[nid].kids.len > 0 {
+                    return
+                }
+                if m == 0 {
+                    arena.nodes[nid].list_n = 0
+                    return
+                }
+            }
+        }
+    }
+    arena.nodes[nid].list_gen = gen
+    arena.nodes[nid].list_lo = first
+    arena.nodes[nid].list_hi = last
+    arena.nodes[nid].list_n = m
+    arena.nodes[nid].row_h = fallback
+    let prev = arena.scope_begin(nid)
+    arena.release_sigs(nid)
+    arena.release_fns(nid)
+    arena.drop_children(nid)
+    __ui_push(nid)
+    if first > 0 {
+        let top = raw_spacer()
+        h(top, virt_prefix(hs, first, fallback))
+        ui_emit(top)
+    }
+    let mut i = first
+    while i < last {
+        build(i, xs[i])
+        i = i + 1
+    }
+    if last < m {
+        let bot = raw_spacer()
+        h(bot, virt_prefix(hs, m, fallback) - virt_prefix(hs, last, fallback))
+        ui_emit(bot)
+    }
+    __ui_pop()
+    arena.scope_end(prev)
+}
+
 /// Growing list. `items` is `zeus.signal([]T {})` (`T` Copy). Push with
 /// `push_item` / `insert_item`. Rebuilds on the next layout after a mutation.
 /// Pass `row_h` > 0 to window: only the rows that intersect the ancestor
@@ -2620,6 +2758,25 @@ fn VirtualList<T>(items: Signal<[]T>, row_h: int, build: fn(int, T)) -> Node {
     virt_refresh(nid, items, build, row_h)
     arena.nodes[nid].list_fn = __intern(|| {
         virt_refresh(nid, items, build, row_h)
+    })
+    return ui_emit(n)
+}
+
+/// Windowed list with per-row heights. `heights[i]` is row `i` in points
+/// (0 / missing uses `fallback`). Spacers use the prefix sum so `scroll_max`
+/// matches the real list.
+fn VirtualListVar<T>(items: Signal<[]T>, heights: Signal<[]int>, fallback: int,
+                     build: fn(int, T)) -> Node {
+    arena.ensure()
+    let n = raw_scroll()
+    grow(n, 1)
+    shrink(n, 1)
+    arena.nodes[n.id].a11y_role = "list"
+    arena.nodes[n.id].row_h = fallback
+    let nid = n.id
+    virt_refresh_var(nid, items, build, fallback, heights)
+    arena.nodes[nid].list_fn = __intern(|| {
+        virt_refresh_var(nid, items, build, fallback, heights)
     })
     return ui_emit(n)
 }
@@ -2847,16 +3004,29 @@ fn engine_picked_image(src: string, w: int, h: int) {
 
 /// Open a window and build the tree once. The tree is retained: signals
 /// update the props that read them, never a whole subtree.
-/// The root is a vertical scroller: children keep their intrinsic height
-/// (they are not shrunk to the window) and a bar appears when they overflow.
-fn App(title: string, width: int, height: int, build: fn()) {
+/// Size comes from the host view (`window_size`) so iOS/Android fill the
+/// screen; pass trailing `width` / `height` only to pin a macOS/wasm window
+/// (headless tests). The root is a vertical scroller: children keep their
+/// intrinsic height and a bar appears when they overflow. A full-bleed
+/// `VirtualList` inside should `grow = 1` so it is the scrolling pane —
+/// nested momentum chaining is not this function.
+fn App(title: string, build: fn(), width: int = 0, height: int = 0) {
     init()
-    window(title, width, height)
+    let mut w = width
+    let mut h = height
+    if w <= 0 {
+        w = window_size().width
+    }
+    if h <= 0 {
+        h = window_size().height
+    }
+    window(title, w, h)
     let top = raw_scroll()
     // Paint the page background on the root scroller itself (theme-aware,
     // like `Page`): when content rubber-bands past the top/bottom edge or
     // ends short of the viewport, the revealed strip stays paper instead of
     // showing the host's clear color (black on a dark window / wasm page).
+    // Root already takes host safe-area insets (`inset_here(root)`).
     prop_str(top, 15, paper)
     __ui_push(top.id)
     build()
@@ -3665,13 +3835,18 @@ fn StatCount(label: string, sig: Signal<int>, kind: int) {
 }
 
 /// Breadcrumb: items separated by chevron icons; last item is foreground.
-fn Breadcrumbs(a: string, b: string, c: string) {
+fn Breadcrumbs(items: []string) {
     Row(6) {
-        Text(a, color = mute(), font = tk(FONT_BODY))
-        Icon(IC_CHEV_RIGHT, tk(14), mute)
-        Text(b, color = mute(), font = tk(FONT_BODY))
-        Icon(IC_CHEV_RIGHT, tk(14), mute)
-        Text(c, color = ink(), font = tk(FONT_BODY))
+        Each(items, fn(i, s) {
+            if i > 0 {
+                Icon(IC_CHEV_RIGHT, tk(14), mute)
+            }
+            if i == items.len - 1 {
+                Text(s, color = ink(), font = tk(FONT_BODY))
+            } else {
+                Text(s, color = mute(), font = tk(FONT_BODY))
+            }
+        })
     }
 }
 
@@ -3981,7 +4156,9 @@ fn AlertDialog(open: Signal<int>) -> Node {
     return __dialog(open, 0)
 }
 
-fn Navbar(brand: string) {
+/// Top bar. `dark = 1` (default) includes the appearance switch; pass
+/// `dark = 0` to omit it and put Dark in the trailing chrome yourself.
+fn Navbar(brand: string, dark: int = 1) {
     Column(0) {
         Box(align_direction = DIRECTION.Row, spacing = SPACE.Md,
                  align_items = ALIGN.Center, height = tk(BAR),
@@ -3989,8 +4166,10 @@ fn Navbar(brand: string) {
             Pip(ink(), 10)
             Text(brand, color = ink(), font = tk(FONT_TITLE))
             Grow()
-            Text("Dark", color = mute(), font = tk(FONT_CONTROL))
-            Switch(appearance())
+            if dark != 0 {
+                Text("Dark", color = mute(), font = tk(FONT_CONTROL))
+                Switch(appearance())
+            }
         }
         Separator()
     }
@@ -4017,27 +4196,26 @@ fn NavTab(label: string, page: Signal<int>, index: int) {
     }
 }
 
-/// Header row: muted label cells above a hairline (th h-10 px-2). Cells use
-/// zero basis + grow so the three columns split the row evenly and line up
-/// with `TableRow` bodies regardless of text width.
-fn TableHead(a: string, b: string, c: string) {
+/// Header row: muted label cells above a hairline. Cells use zero basis +
+/// grow so columns split the row evenly and line up with `TableRow`.
+fn TableHead(cols: []string) {
     Column(SPACE.Exs) {
         Row(SPACE.Sm) {
-            basis0(Text(a, color = mute(), font = tk(FONT_BODY), grow = 1))
-            basis0(Text(b, color = mute(), font = tk(FONT_BODY), grow = 1))
-            basis0(Text(c, color = mute(), font = tk(FONT_BODY), grow = 1))
+            Each(cols, fn(i, t) {
+                basis0(Text(t, color = mute(), font = tk(FONT_BODY), grow = 1))
+            })
         }
         Separator()
     }
 }
 
-/// Body row: three cells under a hairline, foreground text (td p-2).
-fn TableRow(a: string, b: string, c: string) {
+/// Body row: cells under a hairline, foreground text. Pair with `TableHead`.
+fn TableRow(cols: []string) {
     Column(SPACE.Exs) {
         Row(SPACE.Sm) {
-            basis0(Text(a, color = ink(), font = tk(FONT_BODY), grow = 1))
-            basis0(Text(b, color = ink(), font = tk(FONT_BODY), grow = 1))
-            basis0(Text(c, color = ink(), font = tk(FONT_BODY), grow = 1))
+            Each(cols, fn(i, t) {
+                basis0(Text(t, color = ink(), font = tk(FONT_BODY), grow = 1))
+            })
         }
         Separator()
     }

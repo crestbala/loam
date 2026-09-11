@@ -80,13 +80,13 @@ That script:
 3. Runs `yugac --target=android --run app.yuga` (Gradle `installDebug` + `adb`).
 
 The emulator reaches the Mac backend at **`10.0.2.2:8080`**, not `127.0.0.1`
-(`api.android_addr()` in `../backend/api.yuga`). The Simulator and Cocoa apps
-use `127.0.0.1` because they share the Mac loopback.
+(`http.client()` fills this per `--target`). The Simulator and Cocoa apps
+use `127.0.0.1` because they share the Mac loopback. A physical device
+cannot use `10.0.2.2` — set `YUGA_RPC_ADDR` to the Mac's LAN IP:port.
 
 Layout is the phone view in density-independent pixels, like iOS points.
-`zeus.App("Zeus", 640, 680, ...)` only sizes the macOS window; wasm and iOS
-use the canvas / `UIView` bounds. Android does the same. Rebuild the APK
-after host changes (`./run.sh`).
+`zeus.App(title, build)` uses `window_size()`; trailing width/height only
+pin a macOS/wasm window. Rebuild the APK after host changes (`./run.sh`).
 
 Output Gradle tree: `examples/zeus/counter/android/build/app`.
 Launch activity: `com.yuga.app/com.yuga.zeus.ZeusActivity`.

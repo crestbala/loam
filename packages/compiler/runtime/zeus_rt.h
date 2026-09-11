@@ -179,6 +179,10 @@ typedef struct {
        fit: 0 stretch, 1 contain, 2 cover, 3 none. */
     void (*image)(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
                   const char *src, int64_t radius, int64_t alpha, int64_t fit);
+    /* Linear gradient. axis 0 = top c0 → bottom c1, 1 = left → right.
+       NULL hosts fall back to a solid `c0` fill. */
+    void (*fill_g)(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
+                   int64_t c0, int64_t c1, int64_t axis);
 } ZeusDraw;
 
 void zeus_set_platform(void (*run)(void),
@@ -195,6 +199,8 @@ void yuga_zeus_plat_fill(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb
                         int64_t radius);
 void yuga_zeus_plat_fill_a(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
                           int64_t radius, int64_t alpha);
+void yuga_zeus_plat_fill_g(int64_t x, int64_t y, int64_t w, int64_t h, int64_t c0,
+                          int64_t c1, int64_t axis);
 void yuga_zeus_plat_text(int64_t x, int64_t y, yuga_str s, int64_t rgb, int64_t font);
 void yuga_zeus_plat_text_rot(int64_t x, int64_t y, yuga_str s, int64_t rgb, int64_t font,
                              int64_t deg);
@@ -230,6 +236,8 @@ void yuga_platform_plat_fill(int64_t x, int64_t y, int64_t w, int64_t h, int64_t
                              int64_t radius);
 void yuga_platform_plat_fill_a(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
                                int64_t radius, int64_t alpha);
+void yuga_platform_plat_fill_g(int64_t x, int64_t y, int64_t w, int64_t h, int64_t c0,
+                               int64_t c1, int64_t axis);
 void yuga_platform_plat_text(int64_t x, int64_t y, yuga_str s, int64_t rgb, int64_t font);
 void yuga_platform_plat_text_rot(int64_t x, int64_t y, yuga_str s, int64_t rgb, int64_t font,
                                  int64_t deg);

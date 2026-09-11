@@ -1,7 +1,8 @@
 //! input — hit-test, click, scroll, drag, hover (GPUI input.rs / window events).
 //!
-//! Scroll: wheel `dx`/`dy` go to the innermost scroller that actually overflows
-//! on that axis (table H vs page V). Thumb drag: `drag_bar` 1 = vertical,
+//! Scroll: wheel `dx`/`dy` go to the innermost scroller that overflows on that
+//! axis (table H vs page V). Leftover delta at a bound chains to the parent
+//! scroller (nested feed vs page). Thumb drag: `drag_bar` 1 = vertical,
 //! 2 = horizontal. Hit tests add `scroll_x`/`scroll_y` when walking into a pane.
 
 import "arena.yuga"
@@ -352,6 +353,78 @@ fn find_scroll_axis(id: int, px: int, py: int, horiz: int) -> int {
     return 0
 }
 
+/// Next overflowing scroller above `id` on the same axis (nested chaining).
+fn parent_scroll(id: int, horiz: int) -> int {
+    if id <= 0 {
+        return 0
+    }
+    if id >= arena.nodes.len {
+        return 0
+    }
+    let mut p = arena.nodes[id].parent
+    while p > 0 {
+        if p >= arena.nodes.len {
+            return 0
+        }
+        if arena.nodes[p].kind == 11 {
+            if horiz != 0 {
+                if arena.scrolls_x(p) != 0 {
+                    if arena.scroll_max_x(p) > 0 {
+                        return p
+                    }
+                }
+            } else {
+                if arena.scroll_max(p) > 0 {
+                    return p
+                }
+            }
+        }
+        p = arena.nodes[p].parent
+    }
+    return 0
+}
+
+/// Apply `delta` to the innermost overflowing scroller under the pointer,
+/// then any leftover at a bound to each ancestor. Returns 1 if anything moved.
+fn chain_axis(px: int, py: int, delta: int, horiz: int, momentum: int) -> int {
+    if delta == 0 {
+        return 0
+    }
+    let mut s = find_scroll_axis(arena.root_id, px, py, horiz)
+    let mut rem = delta
+    let mut changed = 0
+    while s > 0 {
+        if rem == 0 {
+            return changed
+        }
+        let mut before = 0
+        if horiz != 0 {
+            before = arena.nodes[s].scroll_x
+            arena.apply_delta_x(s, rem, momentum)
+            let used = arena.nodes[s].scroll_x - before
+            if used != 0 {
+                changed = 1
+                arena.bar_on(s)
+            }
+            rem = rem - used
+        } else {
+            before = arena.nodes[s].scroll_y
+            arena.apply_delta_y(s, rem, momentum)
+            let used = arena.nodes[s].scroll_y - before
+            if used != 0 {
+                changed = 1
+                arena.bar_on(s)
+            }
+            rem = rem - used
+        }
+        if rem == 0 {
+            return changed
+        }
+        s = parent_scroll(s, horiz)
+    }
+    return changed
+}
+
 /// Pan / precise-wheel scroll with momentum: the delta is applied now and
 /// becomes the velocity the physics coast decays from (touch, trackpads).
 fn scroll(px: int, py: int, dx: int, dy: int) -> int {
@@ -359,28 +432,15 @@ fn scroll(px: int, py: int, dx: int, dy: int) -> int {
     if arena.root_id <= 0 {
         return 0
     }
-    if dx == 0 {
-        if dy == 0 {
-            return 0
-        }
-    }
     let mut changed = 0
     if dy != 0 {
-        let s = find_scroll_axis(arena.root_id, px, py, 0)
-        if s > 0 {
-            if arena.apply_delta_y(s, dy, 1) != 0 {
-                changed = 1
-            }
-            arena.bar_on(s)
+        if chain_axis(px, py, dy, 0, 1) != 0 {
+            changed = 1
         }
     }
     if dx != 0 {
-        let s = find_scroll_axis(arena.root_id, px, py, 1)
-        if s > 0 {
-            if arena.apply_delta_x(s, dx, 1) != 0 {
-                changed = 1
-            }
-            arena.bar_on(s)
+        if chain_axis(px, py, dx, 1, 1) != 0 {
+            changed = 1
         }
     }
     return changed
@@ -394,28 +454,15 @@ fn scroll_step(px: int, py: int, dx: int, dy: int) -> int {
     if arena.root_id <= 0 {
         return 0
     }
-    if dx == 0 {
-        if dy == 0 {
-            return 0
-        }
-    }
     let mut changed = 0
     if dy != 0 {
-        let s = find_scroll_axis(arena.root_id, px, py, 0)
-        if s > 0 {
-            if arena.apply_delta_y(s, dy, 0) != 0 {
-                changed = 1
-            }
-            arena.bar_on(s)
+        if chain_axis(px, py, dy, 0, 0) != 0 {
+            changed = 1
         }
     }
     if dx != 0 {
-        let s = find_scroll_axis(arena.root_id, px, py, 1)
-        if s > 0 {
-            if arena.apply_delta_x(s, dx, 0) != 0 {
-                changed = 1
-            }
-            arena.bar_on(s)
+        if chain_axis(px, py, dx, 1, 0) != 0 {
+            changed = 1
         }
     }
     return changed
@@ -698,6 +745,9 @@ fn over_button() -> int {
 /// cursor ("" = default) win; later-created nodes outrank earlier ones, so
 /// children override parents. Returns "" when nothing claims a cursor.
 fn cursor_at() -> string {
+    if platform.plat_overlay_scroll() != 0 {
+        return ""
+    }
     let n = arena.nodes.len
     for i in 1..n {
         let id = n - i

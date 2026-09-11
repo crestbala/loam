@@ -2,6 +2,9 @@
 //!
 //! Bodyless `fn`s resolve to `yuga_sys_<name>` in `yuga_rt`. No protocol here.
 
+/// Compile `--target`: `"wasm"`, `"ios"`, `"android"`, or `"native"`.
+fn target() -> string {}
+
 /// `1` if the environment variable is set and non-empty.
 fn env_set(name: string) -> int {}
 
