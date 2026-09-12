@@ -12,6 +12,10 @@ let mut node_ids: []int = []int {}
 let mut dep_sig: []int = []int {}
 let mut dep_eff: []int = []int {}
 let mut ready: int = 0
+/* Untracked-read depth. `peek` / `untrack` raise it so reads inside a
+   reactive scope do not become dependency edges — a setter that reads the
+   value it is about to overwrite must not subscribe the effect to itself. */
+let mut mute: int = 0
 
 fn boot() {
     if ready != 0 {
@@ -28,6 +32,7 @@ fn reset() {
     node_ids = []int {}
     dep_sig = []int {}
     dep_eff = []int {}
+    mute = 0
     ready = 0
     boot()
 }
@@ -39,7 +44,20 @@ fn alloc(fnid: int, nid: int) -> int {
     return fn_ids.len - 1
 }
 
+fn mute_begin() {
+    mute = mute + 1
+}
+
+fn mute_end() {
+    if mute > 0 {
+        mute = mute - 1
+    }
+}
+
 fn note_read(sid: int) {
+    if mute != 0 {
+        return
+    }
     if stack.len == 0 {
         return
     }

@@ -178,6 +178,32 @@ contradicts its comment, arity-3 tables, a `Navbar` that always ships Dark.
 - **Exit:** headless tests green. **Green** (`make test`). Rich text remains
   its own project.
 
+### Phase 9 — Component system (Skin + slots)
+
+Widgets were recipes you had to fork. Props were a mix of positionals,
+tokens, and raw Box fields. No one overlay restyled a control.
+
+- [x] `Skin` is the chrome overlay: `skin = Skin(radius = 4, …)` on
+      `Button` / `Card` / `Chip` / `Comp` / `IconButton` / `Badge` /
+      `Alert` / `Field` / `TextInput`. Empty / `-1` keeps the recipe.
+      Construct with `Skin(...)` (named fields), not `Skin { }`.
+- [x] Last-param props structs: named args (`skin =`, `width =`,
+      `on_click =`) fill the trailing struct. `Card()` / `Chip("ok", TINT.Ok)`
+      still work (all-defaulted last param).
+- [x] `Comp` is the function-widget primitive (trailing block = slot).
+      `Button(...) { … }` extra children land in the same slot.
+- [x] One `component(node, bind=/visible=/press=)` finish: parent attach,
+      signal bind, signal hide, press overlay. `slot(host, build)` is the
+      parent stack (`__ui_scope` is `slot`). `If(open)`, `Box(visible=)`,
+      `Card(visible=)`, `Overlay(visible=)`, `Switch`/`Slider`/`Progress`
+      `bind=` all go through it. Recipes do not call `__ui_push` / `bind` /
+      `show` themselves.
+- [x] Motion: hover eases (`d/5`); press overlay eases (`press_amt`);
+      enter fade is ease-out. Rest `press_amt` / `hover_amt` are 0 so DRAW
+      goldens stay pixel-identical at scale 100.
+- **Exit:** `zeus_skin.yuga` + existing component tests + DRAW goldens
+  green in `make test`. Gallery Foundations shows a Customize row. **Green.**
+
 ---
 
 ## What will not change

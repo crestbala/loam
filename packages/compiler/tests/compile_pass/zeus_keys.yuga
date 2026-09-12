@@ -26,9 +26,9 @@ fn main() {
     zeus.on_range(box, "select.next", sel, 1, 0, 2)
     zeus.on_range(box, "select.prev", sel, -1, 0, 2)
     zeus.on_action(box, "select.toggle", open, 1, 0)
-    zeus.__ui_push(box.id)
-    zeus.Button("Comfortable", on_click = fn() => open.set(1 - open.get()), width = 200, height = 40)
-    zeus.__ui_pop()
+    zeus.slot(box, fn() {
+        zeus.Button("Comfortable", on_click = fn() => open.set(1 - open.get()), width = 200, height = 40)
+    })
     let top = zeus.Box(align_direction = DIRECTION.Column)
     zeus.child(top, box)
     zeus.root(top)

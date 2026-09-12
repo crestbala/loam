@@ -123,9 +123,11 @@ fn paint_hover_wash(id: int) {
     }
     let t = arena.hover_paint(id)
     if t > 0 {
-        let mut a = t * 48 / 100
+        // xAI chrome hover: a low-alpha ink wash — a hair over the surface
+        // in dark, a hair under it in light. Not a highlight.
+        let mut a = t * 12 / 100
         if arena.hover_rgb() == 0 {
-            a = t * 22 / 100
+            a = t * 8 / 100
         }
         fill_a(arena.draw_x(id), arena.draw_y(id), arena.nodes[id].w, arena.nodes[id].h, arena.hover_rgb(), arena.nodes[id].radius, a)
     }
@@ -170,6 +172,12 @@ fn paint_fill_box(id: int, wash: int) {
     }
     if wash != 0 {
         paint_hover_wash(id)
+    }
+    if arena.nodes[id].press != 0 {
+        let pa = arena.nodes[id].press_amt
+        if pa > 0 {
+            fill_a(x, y, w, h, 0, inner_r, pa * 36 / 100)
+        }
     }
 }
 
@@ -263,31 +271,37 @@ fn paint_button(id: int) {
 }
 
 fn paint_scrollbar(id: int) {
-    // iOS/Android: panes scroll by touch; the desktop-style track/thumb is
-    // never painted (input already ignores it via plat_overlay_scroll), so
-    // the main scroll and nested panes stay clean, like native mobile
-    // scrollbars that appear only during a scroll.
+    // Overlay hosts (iOS/Android) never paint a desktop thumb. On desktop
+    // the bar appears only while scrolling (wheel / pan / thumb drag) and
+    // fades out after `bar_hide` ticks — idle panes stay clean.
     if platform.plat_overlay_scroll() != 0 {
+        return
+    }
+    let a = arena.bar_alpha(id)
+    if a <= 0 {
         return
     }
     let ox = arena.draw_x(id)
     let oy = arena.draw_y(id)
     let rgb = arena.hover_rgb()
+    let ta = a * 36 / 180
     if arena.bar_visible(id) != 0 {
         let tw = arena.bar_w()
         let tx = arena.bar_x(id, ox)
         let thh = arena.bar_thumb_h(id)
         let thy = arena.bar_thumb_y(id, oy)
         let track_h = geometry.max2(arena.nodes[id].h - 16, 8)
-        fill_a(tx, oy + 8, tw, track_h, rgb, tw / 2, 36)
-        fill_a(tx, thy, tw, thh, rgb, tw / 2, 180)
+        if ta > 0 {
+            fill_a(tx, oy + 8, tw, track_h, rgb, tw / 2, ta)
+        }
+        fill_a(tx, thy, tw, thh, rgb, tw / 2, a)
     }
     if arena.bar_visible_x(id) != 0 {
         let th = arena.bar_w()
         let ty = arena.bar_hy(id, oy)
         let thw = arena.bar_thumb_w(id)
         let tx = arena.bar_thumb_x(id, ox)
-        fill_a(tx, ty, thw, th, rgb, th / 2, 180)
+        fill_a(tx, ty, thw, th, rgb, th / 2, a)
     }
 }
 
@@ -467,7 +481,7 @@ fn paint_node(id: int) {
         }
     } else {
         // Text inputs paint flat: no hover/press wash, so clicking never
-        // greys the field — shadcn keeps the surface clear and the outline
+        // greys the field — we keep the surface clear and the outline
         // is the only affordance. Focus is drawn at paint time by the host
         // theme (border_c was never reset, so no sticky mutation here).
         paint_fill_box(id, if k == 10 { 0 } else { 1 })
@@ -592,21 +606,55 @@ fn step() -> int {
                 target = 100
             }
             let mut a = arena.nodes[i].hover_amt
-            if a < target {
-                a = a + 11
+            let d = target - a
+            let mut step = d / 5
+            if step == 0 {
+                if d > 0 {
+                    step = 1
+                }
+                if d < 0 {
+                    step = -1
+                }
+            }
+            if step != 0 {
+                a = a + step
+                if a < 0 {
+                    a = 0
+                }
                 if a > 100 {
                     a = 100
                 }
                 dirty = 1
             }
-            if a > target {
-                a = a - 11
+            arena.nodes[i].hover_amt = a
+        }
+        if arena.nodes[i].press != 0 {
+            let mut target = 0
+            if arena.down_id == i {
+                target = 100
+            }
+            let mut a = arena.nodes[i].press_amt
+            let d = target - a
+            let mut step = d / 4
+            if step == 0 {
+                if d > 0 {
+                    step = 1
+                }
+                if d < 0 {
+                    step = -1
+                }
+            }
+            if step != 0 {
+                a = a + step
                 if a < 0 {
                     a = 0
                 }
+                if a > 100 {
+                    a = 100
+                }
                 dirty = 1
             }
-            arena.nodes[i].hover_amt = a
+            arena.nodes[i].press_amt = a
         }
         let k = arena.nodes[i].kind
         if k == 7 {
@@ -659,11 +707,28 @@ fn step() -> int {
             }
             arena.nodes[i].tween = t
         }
+        if k == 11 {
+            if arena.nodes[i].bar_t != 0 {
+                let dt = arena.pulse_t - arena.nodes[i].bar_t
+                if dt < 0 {
+                    dirty = 1
+                } else if dt <= arena.bar_hide() {
+                    dirty = 1
+                } else {
+                    arena.nodes[i].bar_t = 0
+                }
+            }
+        }
         if arena.nodes[i].enter_fade != 0 {
             if arena.want_show(i) != 0 {
                 let mut s = arena.nodes[i].show_amt
                 if s < 100 {
-                    s = s + 9
+                    let step = (100 - s) / 5
+                    if step < 1 {
+                        s = 100
+                    } else {
+                        s = s + step
+                    }
                     if s > 100 {
                         s = 100
                     }

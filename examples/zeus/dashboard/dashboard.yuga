@@ -180,8 +180,7 @@ fn Dashboard() {
         Alerts(notify)
         Feed()
         zeus.Note("Hover the area chart to read exact request counts. Tick, Load, and Alerts are signals.")
-        zeus.Dialog(open) {
-            zeus.Title("Discard changes?")
+        zeus.Dialog(open, title = "Discard changes?") {
             zeus.Body("This cannot be undone. The working tree keeps whatever you have not saved.")
             zeus.Row(SPACE.Sm) {
                 zeus.Grow()

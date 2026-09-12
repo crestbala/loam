@@ -1,4 +1,4 @@
-// Scale-token probe: components read `tk` (the UI scale percent), never raw
+// Scale-token probe: components read `scaled` (the UI scale percent), never raw
 // constants. Identity at 100 is proven by the DRAW goldens; this test proves
 // one knob rescales chrome and that 100 restores the base size in a
 // per-frame `view` (zoom reacts live there). Phase 7 exit test.
@@ -15,11 +15,11 @@ fn expect(ok: bool, what: string) {
 }
 
 fn h_of(role: string) -> int {
-    return zeus.node_h(zeus.engine_find_role(role))
+    return zeus.node_height(zeus.engine_find_role(role))
 }
 
 fn w_of(role: string) -> int {
-    return zeus.node_w(zeus.engine_find_role(role))
+    return zeus.node_width(zeus.engine_find_role(role))
 }
 
 fn main() {

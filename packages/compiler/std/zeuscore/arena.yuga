@@ -91,6 +91,10 @@ struct UiNode {
     tw: int,
     th: int,
     pulse: int,
+    /// 1 = press overlay while this node is `down_id` (buttons).
+    press: int,
+    /// 0..100 ease of the press overlay. Rest is 0, so DRAW goldens hold.
+    press_amt: int,
     aw: int,
     ah: int,
     bar_t: int,
@@ -216,7 +220,7 @@ fn blank_node() -> UiNode {
         gap_row: 0, gap_col: 0, aspect_w: 0, aspect_h: 0,
         wrap: 0, reverse: 0, align_self: -1,
         pin_t: -1, pin_r: -1, pin_b: -1, pin_l: -1,
-        z_index: 0, grid_auto: 0, scroll_x: 0, scroll_y: 0, tw: 0, th: 0, pulse: 0,
+        z_index: 0, grid_auto: 0, scroll_x: 0, scroll_y: 0, tw: 0, th: 0, pulse: 0, press: 0, press_amt: 0,
         aw: 0, ah: 0, bar_t: 0, parent: 0, key_ctx: 0, focusable: 0, capture_text: 0, edit_slot: -1,
         click_fn: 0, ui_size: 1, ui_look: 1, restyle_fn: 0,
         hover_fade: 0, hover_amt: 0, tween: -1, enter_fade: 0, show_amt: 0,
@@ -639,7 +643,7 @@ fn has_h(id: int) -> int {
 }
 
 /// Default w_pct is 100: fill the parent in a column. In a row the same
-/// default means content width so siblings sit side by side; `.w(px)` and
+/// default means content width so siblings sit side by side; `.set_width(px)` and
 /// any width_pct other than 100 still win.
 fn sized_w(c: int, avail: int, row: int) -> int {
     let mut w = nodes[c].iw
@@ -1101,6 +1105,7 @@ fn apply_delta_y(id: int, dy: int, momentum: int) -> int {
         return 0
     }
     nodes[id].scroll_y = ny
+    bar_on(id)
     if nodes[id].bind_sig > 0 {
         store_sig(nodes[id].bind_sig, ny)
     }
@@ -1133,6 +1138,7 @@ fn apply_delta_x(id: int, dx: int, momentum: int) -> int {
         return 0
     }
     nodes[id].scroll_x = nx
+    bar_on(id)
     return 1
 }
 
@@ -1176,6 +1182,33 @@ fn bar_on(id: int) {
     }
 }
 
+/// Ticks since the last scroll on this pane. Huge when the bar has never
+/// been shown (`bar_t` 0).
+fn bar_dt(id: int) -> int {
+    let t = nodes[id].bar_t
+    if t == 0 {
+        return 100000
+    }
+    let dt = pulse_t - t
+    if dt < 0 {
+        return 0
+    }
+    return dt
+}
+
+/// 1 while this pane is scrolling, coasting, or the thumb is dragged.
+fn bar_active(id: int) -> int {
+    if drag_id == id {
+        if drag_bar != 0 {
+            return 1
+        }
+    }
+    if bar_dt(id) > bar_hide() {
+        return 0
+    }
+    return 1
+}
+
 fn bar_visible(id: int) -> int {
     if id <= 0 {
         return 0
@@ -1189,7 +1222,7 @@ fn bar_visible(id: int) -> int {
     if scroll_max(id) <= 0 {
         return 0
     }
-    return 1
+    return bar_active(id)
 }
 
 fn bar_visible_x(id: int) -> int {
@@ -1205,16 +1238,29 @@ fn bar_visible_x(id: int) -> int {
     if scroll_max_x(id) <= 0 {
         return 0
     }
-    return 1
+    return bar_active(id)
 }
 
 fn bar_alpha(id: int) -> int {
-    if bar_visible(id) == 0 {
-        if bar_visible_x(id) == 0 {
-            return 0
+    if bar_active(id) == 0 {
+        return 0
+    }
+    if drag_id == id {
+        if drag_bar != 0 {
+            return 180
         }
     }
-    return 170
+    let hide = bar_hide()
+    let dt = bar_dt(id)
+    let fade = 16
+    if dt + fade >= hide {
+        let left = hide - dt
+        if left <= 0 {
+            return 0
+        }
+        return 180 * left / fade
+    }
+    return 180
 }
 
 fn bar_w() -> int {

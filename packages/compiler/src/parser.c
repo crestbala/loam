@@ -647,7 +647,7 @@ static AstNode *parse_postfix(Parser *p, AstNode *left) {
                 AstNode **sa = (AstNode **)malloc(2 * sizeof(AstNode *));
                 sa[0] = left;
                 sa[1] = clos;
-                left = ast_call(ast_ident(yuga_dup("__ui_scope"), loc), sa, 2, loc);
+                left = ast_call(ast_ident(yuga_dup("slot"), loc), sa, 2, loc);
             }
             continue;
         }
@@ -811,7 +811,7 @@ static int is_assign_op(TokenKind k) {
            k == TOK_SHL_EQ || k == TOK_SHR_EQ;
 }
 
-/** One match pattern: literal or `_`. */
+/** One match pattern: literal, enum constant (`LOOK.Solid`), or `_`. */
 static AstNode *parse_match_pat(Parser *p, int *wild) {
     SourceLoc loc = p->current.loc;
     *wild = 0;
@@ -822,8 +822,22 @@ static AstNode *parse_match_pat(Parser *p, int *wild) {
             *wild = 1;
             return NULL;
         }
+        /* `Enum.Member` is a compile-time constant, so it is a legal pattern
+           and keeps the arm readable — matching on raw 0/1/2 would not. */
+        if (match(p, TOK_DOT)) {
+            if (!match(p, TOK_IDENT)) {
+                free(nm);
+                error(p, "expected a name after `.` in a match pattern");
+                return NULL;
+            }
+            char *field = tok_text(p->previous);
+            loc.end_line = p->previous.loc.end_line;
+            loc.end_col = p->previous.loc.end_col;
+            /* ast_ident / ast_field take ownership of these names. */
+            return ast_field(ast_ident(nm, loc), field, 0, loc);
+        }
         free(nm);
-        error(p, "match patterns are literals or `_`");
+        error(p, "match patterns are literals, `Enum.Member`, or `_`");
         return NULL;
     }
     if (match(p, TOK_NUMBER)) {

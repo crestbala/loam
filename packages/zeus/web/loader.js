@@ -87,7 +87,11 @@
   /* Match Cocoa: line box is ascent+descent, paint origin is the top of that
      box. Canvas `textBaseline = "top"` is the em square and `size+4` is taller
      than the glyphs, so labels sit high in buttons, chips, and avatars. */
-  const fontFace = "system-ui, sans-serif";
+  /* One global family (see zeus_plat.c). `set_font_family` swaps it and
+     drops every cached metric, because ascent, descent and every measured
+     width belong to the face that produced them. */
+  const fontFallback = "system-ui, sans-serif";
+  let fontFace = fontFallback;
   const fontMetrics = new Map();
   /* Measured text widths per (px, string): layout re-measures every label
      on every frame, and measureText is the priciest JS import. */
@@ -97,6 +101,11 @@
     if (px === lastFontPx) return;
     ctx.font = px + "px " + fontFace;
     lastFontPx = px;
+  }
+  function resetFontCaches() {
+    fontMetrics.clear();
+    textWidths.clear();
+    lastFontPx = 0;
   }
   function lineBox(px) {
     let m = fontMetrics.get(px);
@@ -378,6 +387,32 @@
         ctx.rotate((deg * Math.PI) / 180);
         ctx.fillText(s, 0, 0);
         ctx.restore();
+      },
+      /* "" restores the host default. Quoting the family lets names with
+         spaces ("Universal Sans") survive the CSS shorthand. */
+      set_font_family: (ptr) => {
+        const name = cstr(ptr);
+        fontFace = name ? '"' + name + '", ' + fontFallback : fontFallback;
+        resetFontCaches();
+      },
+      /* Loads asynchronously; 1 means "accepted", not "ready". Metrics are
+         dropped again on arrival so the first frames using the fallback are
+         re-measured once the real face lands. */
+      load_font: (famPtr, srcPtr) => {
+        const family = cstr(famPtr);
+        const src = cstr(srcPtr);
+        if (!family || !src || typeof FontFace === "undefined") return 0;
+        try {
+          const face = new FontFace(family, 'url("' + src + '")');
+          face.load().then((f) => {
+            document.fonts.add(f);
+            resetFontCaches();
+            schedule(0);
+          }).catch(() => {});
+          return 1;
+        } catch (e) {
+          return 0;
+        }
       },
       measure: (ptr, px, wPtr, hPtr) => {
         const s = cstr(ptr);

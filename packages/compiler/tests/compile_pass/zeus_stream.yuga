@@ -26,7 +26,7 @@ fn pump_until(want: int, n: Signal<int>, done: Signal<int>) {
     let mut guard = 0
     while n.get() < want && guard < 6000 {
         async.sleep(1)
-        zeus.pump()
+        zeus.pump_frame()
         guard = guard + 1
     }
     if n.get() != want {
@@ -36,7 +36,7 @@ fn pump_until(want: int, n: Signal<int>, done: Signal<int>) {
     let mut g2 = 0
     while done.get() == 0 && g2 < 200 {
         async.sleep(1)
-        zeus.pump()
+        zeus.pump_frame()
         g2 = g2 + 1
     }
     if done.get() == 0 {

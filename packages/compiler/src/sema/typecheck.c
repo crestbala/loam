@@ -1034,10 +1034,20 @@ static Type *finish_proc_call(AstNode *n, Type *ft, AstNode *named) {
             if (ok) filled = 1;
         }
     }
+    /* A props literal is nameless, so nothing downstream can resolve it as a
+       struct. Report and stop here: checking it against a non-struct
+       parameter dereferences that null type name. */
+    int bad_props = 0;
     for (size_t i = 0; i < n->as.call.arg_count && i < ft->param_count; i++) {
-        if (is_props_lit(n->as.call.args[i]))
+        if (is_props_lit(n->as.call.args[i])) {
             err(n->as.call.args[i]->loc,
                 "named arguments only fill the last parameter, which must be a struct");
+            bad_props = 1;
+        }
+    }
+    if (bad_props) {
+        free(bound);
+        return ft->ret ? ft->ret : ty_void();
     }
     if (n->as.call.arg_count != ft->param_count) {
         err(n->loc, "'%s' expects %zu argument(s), got %zu",

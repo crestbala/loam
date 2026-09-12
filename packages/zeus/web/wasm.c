@@ -32,6 +32,12 @@ void zeus_js_text_rot(int32_t x, int32_t y, const char *s, int32_t rgb, int32_t 
 __attribute__((import_module("zeus"), import_name("measure")))
 void zeus_js_measure(const char *s, int32_t px, int32_t *w, int32_t *h);
 
+__attribute__((import_module("zeus"), import_name("set_font_family")))
+void zeus_js_set_font_family(const char *name);
+
+__attribute__((import_module("zeus"), import_name("load_font")))
+int32_t zeus_js_load_font(const char *family, const char *src);
+
 __attribute__((import_module("zeus"), import_name("save")))
 void zeus_js_save(void);
 
@@ -114,6 +120,16 @@ static void draw_image(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h, co
                   (int32_t)radius, (int32_t)alpha, (int32_t)fit);
 }
 
+/* Canvas2D caches metrics per size, so the family change has to reach JS. */
+static void wasm_set_font_family(const char *family) {
+    zeus_js_set_font_family(family ? family : "");
+}
+
+static int wasm_load_font(const char *family, const char *src) {
+    if (!family || !src) return 0;
+    return zeus_js_load_font(family, src) ? 1 : 0;
+}
+
 static void wasm_measure(const char *s, int64_t px, int64_t *w, int64_t *h) {
     int32_t tw = 0, th = 0;
     zeus_js_measure(s ? s : "", (int32_t)px, &tw, &th);
@@ -159,6 +175,7 @@ __attribute__((export_name("zeus_start")))
 void zeus_start(void) {
     zeus_set_platform(wasm_run, wasm_measure, wasm_redraw);
     zeus_set_pick_image(wasm_pick_image);
+    zeus_set_font_hooks(wasm_load_font, wasm_set_font_family);
     bind_canvas();
     main();
 }

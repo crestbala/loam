@@ -1,0 +1,44 @@
+// Style props are plain data, read once at build — so a palette token cannot
+// be a resolved color or a theme switch would never repaint a retained tree.
+// `plate()` and friends return a role token; the paint pass resolves it
+// against `appearance()` every frame. That is reactivity through a Signal,
+// with no effect attached to the node.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+let mut reads: int = 0
+
+fn surface() -> string {
+    reads = reads + 1
+    return zeus.plate()
+}
+
+fn main() {
+    zeus.window("roles", 40, 20)
+    let box = zeus.Box(width = 20, height = 10, background = surface())
+    let root = zeus.Column(0) { }
+    zeus.root(root)
+    zeus.engine_layout(40, 20)
+
+    // The prop was evaluated once: it is data, not an effect.
+    if reads != 1 {
+        fmt.println("FAIL prop evaluated", reads, "times, want 1")
+        sys.exit(1)
+    }
+
+    // Light and dark resolve to different colors from that one stored role.
+    zeus.appearance().set(0)
+    let light = zeus.node_background_rgb(box.id)
+    zeus.appearance().set(1)
+    let dark = zeus.node_background_rgb(box.id)
+    if light == dark {
+        fmt.println("FAIL role did not follow appearance:", light)
+        sys.exit(1)
+    }
+    if reads != 1 {
+        fmt.println("FAIL prop re-evaluated on theme switch")
+        sys.exit(1)
+    }
+    fmt.println("zeus theme roles ok")
+}

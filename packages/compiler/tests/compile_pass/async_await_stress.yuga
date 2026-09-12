@@ -63,7 +63,7 @@ async fn nested_branch() -> int {
     return acc
 }
 
-async fn pick(flag: int) -> int {
+async fn pick_by_appearance(flag: int) -> int {
     if flag == 1 {
         return after_int(10)
     }
@@ -96,13 +96,13 @@ fn main() {
     if nested_branch() != 104 {
         fail("nested_branch")
     }
-    if pick(1) != 10 {
+    if pick_by_appearance(1) != 10 {
         fail("pick 1")
     }
-    if pick(2) != 20 {
+    if pick_by_appearance(2) != 20 {
         fail("pick 2")
     }
-    if pick(0) != 30 {
+    if pick_by_appearance(0) != 30 {
         fail("pick else")
     }
     if !fmt.eq(label_of(1), "yes") {

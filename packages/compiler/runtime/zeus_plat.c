@@ -213,6 +213,23 @@ void yuga_platform_plat_sig_free(int64_t id) {
 
 static void (*plat_run)(void);
 static void (*plat_measure)(const char *s, int64_t px, int64_t *w, int64_t *h);
+
+/* One global font family, not a per-node field: the text ABI carries a pixel
+   size only, and threading a family through it would change every host
+   (Cocoa / Canvas2D / Android / iOS). A design system uses one typeface, so
+   the host reads the current family here when it measures and draws. "" =
+   the host default. */
+static char font_family[128];
+static int (*plat_load_font_fn)(const char *family, const char *src);
+static void (*plat_set_family_fn)(const char *family);
+
+const char *zeus_font_family(void) { return font_family; }
+
+void zeus_set_font_hooks(int (*load)(const char *family, const char *src),
+                         void (*set_family)(const char *family)) {
+    plat_load_font_fn = load;
+    plat_set_family_fn = set_family;
+}
 static void (*plat_redraw)(void);
 static void (*plat_pick_image)(char *out, int cap, int64_t *w, int64_t *h);
 
@@ -374,6 +391,34 @@ void yuga_zeus_plat_clip(int64_t x, int64_t y, int64_t w, int64_t h) {
 
 void yuga_zeus_plat_restore(void) {
     if (have_draw && paint_draw.restore) paint_draw.restore(paint_ctx);
+}
+
+void yuga_platform_plat_set_font_family(yuga_str name) {
+    char *p = dup_ys(name);
+    if (p) {
+        size_t n = strlen(p);
+        if (n >= sizeof font_family) n = sizeof font_family - 1;
+        memcpy(font_family, p, n);
+        font_family[n] = 0;
+        free(p);
+    }
+    /* Metrics change with the family, so anything cached is stale. A host
+       that caches by size (Canvas2D) needs telling; one that reads
+       zeus_font_family() per call (Cocoa) does not. */
+    if (plat_set_family_fn) plat_set_family_fn(font_family);
+    if (plat_redraw) plat_redraw();
+}
+
+int64_t yuga_platform_plat_load_font(yuga_str family, yuga_str src) {
+    char *f, *u;
+    int ok = 0;
+    if (!plat_load_font_fn) return 0;
+    f = dup_ys(family);
+    u = dup_ys(src);
+    if (f && u) ok = plat_load_font_fn(f, u);
+    free(f);
+    free(u);
+    return ok ? 1 : 0;
 }
 
 void yuga_zeus_plat_measure(yuga_str s, int64_t px, int64_t *w, int64_t *h) {

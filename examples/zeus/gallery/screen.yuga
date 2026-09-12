@@ -1,4 +1,4 @@
-// Catalog screens. Components mirror the shadcn/ui catalogue (default zinc
+// Catalog screens. Components cover the standard widget catalogue (zinc
 // theme): every row here demos one `std:zeus` component with its SVG icons.
 // Dark restyles the whole palette via `zeus.appearance()`.
 import "std:async"
@@ -11,10 +11,10 @@ let mut ram_armed: int = 0
 /// chip shows live host memory (resident set on desktop, live wasm heap on
 /// web). Reads once at mount so the chip is never blank.
 fn RamChip() {
-    let ram = zeus.signal(zeus.mem_kb())
+    let ram = zeus.signal(zeus.memory_kb())
     if ram_armed == 0 {
         ram_armed = 1
-        async.interval(500, fn() { ram.set(zeus.mem_kb()) })
+        async.interval(500, fn() { ram.set(zeus.memory_kb()) })
     }
     zeus.Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
              spacing = SPACE.Exxs, padding_x = 10, padding_y = 4, height = 26,
@@ -77,11 +77,39 @@ fn Foundations() {
     zeus.Alert("Heads up", "Signals update on click. Hover and press are engine fades — no DOM.")
     zeus.AlertDestructive("Session expired", "Sign back in to keep syncing. Your drafts are saved locally.")
     ProjectCard()
+    Customize()
+}
+
+fn Customize() {
+    zeus.SectionHeader("Customize", "Style props + slots",
+        "Style props restyle a recipe without copying it. Comp is the primitive for your own widget. Trailing blocks are slots.")
+    zeus.Card() {
+        zeus.RowWrap(SPACE.Sm) {
+            zeus.Button("Recipe", look = zeus.LOOK.Solid, size = zeus.SIZE.Md)
+            zeus.Button("Styled", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
+                        radius = 999, padding_x = 20,)
+            zeus.IconButton(zeus.IC_CHECK, zeus.LOOK.Soft, zeus.SIZE.Md, "Save")
+            zeus.Chip("pill", zeus.TINT.Ok, radius = 6)
+        }
+        zeus.Card(radius = 6, padding = 12) {
+            zeus.Body("This card used radius = 6, padding = 12.")
+        }
+        zeus.Comp(background = zeus.raised(), radius = 10,
+                  padding = 12, spacing = 8,
+                  align_direction = DIRECTION.Row, align_items = ALIGN.Center) {
+            zeus.Pip(zeus.accent(), 8)
+            zeus.Text("Comp — a function widget, styled by props", font = zeus.FONT_BODY,
+                      color = zeus.ink())
+        }
+        zeus.Badge("custom", zeus.TINT.Mute, radius = 2, padding_x = 8)
+        zeus.Alert("Styled alert", "Same recipe, different radius.",
+                   radius = 4, padding = 10)
+    }
 }
 
 fn ButtonScale() {
     zeus.SectionHeader("Actions", "Buttons",
-        "The six shadcn variants across three sizes. Primary is the neutral ink fill; it inverts with appearance.")
+        "The six variants across three sizes. Primary is the neutral ink fill; it inverts with appearance.")
     zeus.Card() {
         zeus.Overline("Primary · Secondary · Outline · Ghost · Destructive · Link")
         zeus.Note("small")
@@ -152,7 +180,7 @@ fn DisplayRow() {
 
 fn Field(name: Signal<string>, note: Signal<string>, st: Store) {
     zeus.SectionHeader("Forms", "Input",
-        "A label + input pair, shadcn style: h-9, rounded-md, hairline border.")
+        "A label + input pair: 36px tall, rounded, hairline border.")
     zeus.Card() {
         zeus.Field("Name", name, "Your name")
         zeus.Text(if name.get().len < 3 { "Name must be at least 3 characters." } else { "" },
@@ -255,16 +283,13 @@ fn Upload() {
             justify = ALIGN.Center,
             radius = 8,
             background = zeus.raised(),
-            max_width = || {
-                let w = pw.get()
-                if w > 0 { w } else { 100000 }
-            }) {
+            max_width = if pw.get() > 0 { pw.get() } else { 100000 }) {
             zeus.Text("No image yet", color = zeus.mute(), font = zeus.FONT_CAPTION,
-                      show = || { photo.get().len == 0 })
-            zeus.Image(|| { photo.get() },
+                      show = photo.get().len == 0)
+            zeus.Image(photo.get(),
                        position = zeus.pos_absolute(), left = 0, top = 0, right = 0, bottom = 0,
                        radius = 8, fit = IMAGE_FIT.Contain,
-                       show = || { photo.get().len > 0 })
+                       show = photo.get().len > 0)
         }
         zeus.styled(host, || {
             let iw = pw.get()
@@ -272,12 +297,12 @@ fn Upload() {
             if iw > 0 {
                 if ih > 0 {
                     zeus.aspect(host, iw, ih)
-                    zeus.h(host, -1)
+                    zeus.set_height(host, -1)
                     return
                 }
             }
             zeus.aspect(host, 0, 0)
-            zeus.h(host, 200)
+            zeus.set_height(host, 200)
         })
     }
 }
@@ -373,8 +398,7 @@ fn Overlays() {
         zeus.Button("Alert dialog", look = zeus.LOOK.Outline, size = zeus.SIZE.Md, on_click =  fn() => ask.set(1))
     }
     zeus.Body("Dialog has a corner X; alert dialog does not. Cancel is ghost or outline; the destructive action closes.")
-    zeus.Dialog(open) {
-        zeus.Title("Share the link?")
+    zeus.Dialog(open, title = "Share the link?") {
         zeus.Body("Anyone with the link can view this project. You can revoke access later.")
         zeus.Row(SPACE.Sm) {
             zeus.Grow()
@@ -382,8 +406,7 @@ fn Overlays() {
             zeus.Button("Share", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click =  fn() => open.set(0))
         }
     }
-    zeus.AlertDialog(ask) {
-        zeus.Title("Discard changes?")
+    zeus.AlertDialog(ask, title = "Discard changes?") {
         zeus.Body("This cannot be undone. The working tree keeps whatever you have not saved.")
         zeus.Row(SPACE.Sm) {
             zeus.Grow()
@@ -393,7 +416,7 @@ fn Overlays() {
     }
 }
 
-// --- Charts (Patterns page): shadcn chart cards over zeus plots ---
+// --- Charts (Patterns page): chart cards over zeus plots ---
 
 let mut chart_labs: []string = []string {}
 let mut chart_series: []string = []string {}

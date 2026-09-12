@@ -1,0 +1,12 @@
+// Named arguments fill the last parameter only, and it must be a struct.
+// `Column(spacing: int)` takes a plain positional int, so `spacing = 4` is a
+// props literal bound to a non-struct parameter. A props literal is nameless,
+// so the diagnostic has to stop the call here: letting it fall through to the
+// argument check dereferenced that null type name and crashed the compiler.
+import "std:zeus"
+
+fn main() {
+    zeus.Column(spacing = 4) {
+        zeus.Text("x")
+    }
+}
