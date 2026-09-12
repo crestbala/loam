@@ -64,7 +64,8 @@ static const struct {
 
 static int lower(int c) { return (c >= 'A' && c <= 'Z') ? c + 32 : c; }
 
-/* One token: modifier words joined by '-', then a key name. A letter is
+/* One token: modifier words joined by '-' or '+', then a key name. Both
+   separators are accepted because "cmd+s" is what people write. A letter is
    stored lowercased with shift as a separate bit, so "cmd-S" and "cmd-shift-s"
    cannot resolve to two different bindings. */
 static int parse_one(const char *s, int len, int *key, int *mods) {
@@ -73,7 +74,7 @@ static int parse_one(const char *s, int len, int *key, int *mods) {
     *key = 0;
     *mods = 0;
     for (int i = 0; i <= len; i++) {
-        if (i != len && s[i] != '-') continue;
+        if (i != len && s[i] != '-' && s[i] != '+') continue;
         int n = i - start;
         if (n <= 0 || n >= (int)sizeof buf) return 0;
         for (int j = 0; j < n; j++) buf[j] = (char)lower(s[start + j]);

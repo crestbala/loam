@@ -2214,7 +2214,12 @@ static void emit_ir_fn_body(FILE *o, const IrFn *fn, int is_main) {
     fprintf(o, " {\n");
     if (fn->clos_id && fn->ncaps == 0) fprintf(o, "    (void)_env;\n");
     if (fn->is_main && emit_ir_mod) {
-        for (int i = 0; i < emit_ir_mod->nfns; i++) {
+        /* Imports first, main module last. Modules are lowered importer-
+           before-imported, so walking back puts a module's dependencies
+           ahead of it: a global initialised with `zeus.signal(0)` must not
+           run before the arena it allocates into, or the arena's own
+           initialiser wipes the slot and every later write is dropped. */
+        for (int i = emit_ir_mod->nfns - 1; i >= 0; i--) {
             IrFn *g = &emit_ir_mod->fns[i];
             if (g->name && strcmp(g->name, "__init") == 0 && g->cname)
                 fprintf(o, "    %s();\n", g->cname);

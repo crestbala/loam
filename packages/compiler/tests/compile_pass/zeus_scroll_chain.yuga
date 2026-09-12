@@ -59,8 +59,8 @@ fn main() {
     expect(zeus.node_scroll_max(inner) > 0, "inner overflows")
     expect(zeus.node_scroll_max(page) > 0, "page overflows")
 
-    let ix = zeus.node_x(inner) + zeus.node_w(inner) / 2
-    let iy = zeus.node_y(inner) + zeus.node_h(inner) / 2
+    let ix = zeus.node_x(inner) + zeus.node_width(inner) / 2
+    let iy = zeus.node_y(inner) + zeus.node_height(inner) / 2
 
     // Inner not at a bound: the page stays put.
     zeus.engine_scroll_step(ix, iy, 0, 40)

@@ -14,7 +14,7 @@ fn fail(what: string) {
     sys.exit(1)
 }
 
-fn pump(ms: int) {
+fn pump_frame(ms: int) {
     async.sleep(ms)
     async.tick()
 }
@@ -31,7 +31,7 @@ fn main() {
     // The one-shot is not due yet (10ms), and later fires exactly once.
     let mut g = 0
     while order != 124 && g < 4000 {
-        pump(1)
+        pump_frame(1)
         g = g + 1
     }
     if order != 124 {
@@ -39,7 +39,7 @@ fn main() {
     }
     let mut g1 = 0
     while g1 < 20 {
-        pump(1)
+        pump_frame(1)
         g1 = g1 + 1
     }
     if order != 124 {
@@ -49,7 +49,7 @@ fn main() {
     let iv = async.interval(1, || { count = count + 1 })
     let mut g2 = 0
     while count < 3 && g2 < 4000 {
-        pump(1)
+        pump_frame(1)
         g2 = g2 + 1
     }
     if count < 3 {
@@ -59,7 +59,7 @@ fn main() {
     let frozen = count
     let mut g3 = 0
     while g3 < 20 {
-        pump(1)
+        pump_frame(1)
         g3 = g3 + 1
     }
     if count != frozen {
@@ -70,7 +70,7 @@ fn main() {
     async.cancel(t)
     let mut g4 = 0
     while g4 < 20 {
-        pump(1)
+        pump_frame(1)
         g4 = g4 + 1
     }
     if order == 999 {

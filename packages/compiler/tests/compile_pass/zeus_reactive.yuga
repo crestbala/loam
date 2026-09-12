@@ -1,0 +1,104 @@
+// The five reactive rules, each checked on its own: signals track reads,
+// effects re-run, derivations cache, components run once, and a set
+// repaints a bound attribute without re-running the component.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+let mut runs: int = 0
+let mut calcs: int = 0
+let mut setups: int = 0
+let mut peeks: int = 0
+let mut blind: int = 0
+
+fn eq(what: string, got: int, want: int) {
+    if got != want {
+        fmt.println("FAIL", what, "got", got, "want", want)
+        sys.exit(1)
+    }
+}
+
+// A component: a setup function that runs once and returns bindings.
+fn Counter(n: Signal<int>) {
+    setups = setups + 1
+    zeus.Column(4) {
+        zeus.Text("n={{n.get()}}")
+        zeus.Button("+", on_click = fn() => n.set(n.get() + 1))
+    }
+}
+
+fn main() {
+    let n = zeus.signal(0)
+    let other = zeus.signal(0)
+
+    // Derivation: recomputes only when its own input moves.
+    let doubled = zeus.computed(|| {
+        calcs = calcs + 1
+        n.get() * 2
+    })
+    // A derivation of a derivation, to check the graph composes.
+    let big = zeus.computed_bool(|| { doubled.get() > 4 })
+
+    // Effect: re-runs on every change to a signal it read.
+    zeus.effect(|| {
+        runs = runs + 1
+        n.get()
+    })
+
+    eq("computed initial", doubled.get(), 0)
+    eq("effect ran at setup", runs, 1)
+    eq("calc ran once at setup", calcs, 1)
+
+    n.set(3)
+    eq("computed recomputed", doubled.get(), 6)
+    eq("effect re-ran", runs, 2)
+    if big.get() != true {
+        fmt.println("FAIL chained bool derivation")
+        sys.exit(1)
+    }
+
+    // An unrelated signal must not recompute or re-run anything.
+    other.set(99)
+    eq("unrelated set skips calc", calcs, 2)
+    eq("unrelated set skips effect", runs, 2)
+
+    // Writing the value it already holds notifies nobody.
+    n.set(3)
+    eq("idempotent set skips calc", calcs, 2)
+    eq("idempotent set skips effect", runs, 2)
+
+    // peek reads without subscribing: this effect must never re-run.
+    let quiet = zeus.signal(0)
+    zeus.effect(|| {
+        peeks = peeks + 1
+        quiet.peek()
+    })
+    quiet.set(7)
+    eq("peek does not subscribe", peeks, 1)
+
+    // untrack suspends tracking for a whole block.
+    zeus.effect(|| {
+        blind = blind + 1
+        zeus.untrack(|| { quiet.get() })
+    })
+    quiet.set(8)
+    eq("untrack does not subscribe", blind, 1)
+
+    // The component runs once; a later set must not re-run it.
+    zeus.snapshot(200, 120, fn() -> Node {
+        zeus.Column(0) {
+            Counter(n)
+        }
+    })
+    eq("component ran once", setups, 1)
+    if zeus.draw_count() < 1 {
+        fmt.println("FAIL nothing drawn")
+        sys.exit(1)
+    }
+    n.set(4)
+    eq("component did not re-run", setups, 1)
+    eq("effect saw the set", runs, 3)
+    eq("derivation saw the set", doubled.get(), 8)
+
+    fmt.println("zeus reactive ok")
+}

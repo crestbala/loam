@@ -34,10 +34,12 @@ fn main() {
                 right = 8, bottom = 6, width = 20, height = 10,
                 background = "#0000ff", a11y_label = "rb"
             )
-            zeus.Text("slide",
+            // A pin that must follow a signal is an effect: style props are
+            // plain data.
+            let s = zeus.Text("slide",
                 position = zeus.pos_absolute(),
-                left = fn() -> int { slide.get() }, top = 90,
-                color = "#000000")
+                top = 90, color = "#000000")
+            zeus.styled(s, || { zeus.set_prop_int(s, zeus.SET.Left, slide.get()) })
         }
         return host
     })
@@ -50,21 +52,21 @@ fn main() {
            "nodes found")
     let hx = zeus.node_x(host)
     let hy = zeus.node_y(host)
-    let hw = zeus.node_w(host)
-    let hh = zeus.node_h(host)
+    let hw = zeus.node_width(host)
+    let hh = zeus.node_height(host)
     // Absolute children land at the parent content origin (pad 10), offset
     // by their pins; in-flow siblings do not move for them.
     expect(zeus.node_x(pinned) == hx + 40, "left pin lands at pad + left")
     expect(zeus.node_y(pinned) == hy + 50, "top pin lands at pad + top")
-    expect(zeus.node_w(pinned) == 60 && zeus.node_h(pinned) == 20,
+    expect(zeus.node_width(pinned) == 60 && zeus.node_height(pinned) == 20,
            "pinned child keeps its size")
-    expect(zeus.node_x(pinned) + zeus.node_w(pinned) <= hx + hw,
+    expect(zeus.node_x(pinned) + zeus.node_width(pinned) <= hx + hw,
            "pinned child stays inside the host")
     expect(zeus.node_y(flow) == hy + 10, "in-flow child starts at content origin")
     // right/bottom pin from the opposite edges of the inner box.
-    expect(zeus.node_x(rb) + zeus.node_w(rb) == hx + hw - 18,
+    expect(zeus.node_x(rb) + zeus.node_width(rb) == hx + hw - 18,
            "right pin hugs the inner right edge")
-    expect(zeus.node_y(rb) + zeus.node_h(rb) == hy + hh - 16,
+    expect(zeus.node_y(rb) + zeus.node_height(rb) == hy + hh - 16,
            "bottom pin hugs the inner bottom edge")
     expect(zeus.node_x(slide_node) == hx + 10, "reactive pin starts unpinned at 0")
     // A pin thunk that reads a signal re-pins on the next layout after set.

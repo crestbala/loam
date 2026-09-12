@@ -41,14 +41,12 @@ fn main() {
     ts.set(ts.get() + 1000.0)
     expect((ts.get() as int), t0 + 1000)
 
-    // Float-driven prop: the styled closure reads `anim` (float) and writes
-    // the pixel-rounded value into `seen`; every `anim.set` re-runs it.
+    // Float-driven effect: the styled closure reads `anim` (float) and
+    // writes the pixel-rounded value into `seen`; every `anim.set` re-runs it.
     let anim = zeus.signal(0.0)
     let seen = zeus.signal(-1)
-    zeus.Box(background = fn() -> string {
-        seen.set((anim.get() * 4.0) as int)
-        "#010101"
-    })
+    let fb = zeus.Box(background = "#010101")
+    zeus.styled(fb, || { seen.set((anim.get() * 4.0) as int) })
     expect(seen.get(), 0)
     anim.set(3.25)
     expect(seen.get(), 13)

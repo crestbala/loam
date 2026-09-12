@@ -18,7 +18,7 @@
 //! }
 //! ```
 //!
-//! `app.rpc` / `c.call` are method rewrite, like `node.w(32)` in Zeus.
+//! `app.rpc` / `c.call` are method rewrite, like `node.set_width(32)` in Zeus.
 //! `c.call` is gRPC-Web (HTTP/1.1); `http.h2_call` is unary h2c.
 //! `ZEUS_HEADLESS=1` runs a self-test and exits.
 

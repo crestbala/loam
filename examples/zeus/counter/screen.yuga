@@ -118,9 +118,9 @@ fn FeedRow(i: int, s: string) {
 fn JobRow(i: int, r: Job) {
     zeus.Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
              height = ROW_H, spacing = SPACE.Sm, padding_x = SPACE.Exs) {
-        zeus.basis0(zeus.Text(r.name, color = zeus.ink(), font = zeus.FONT_BODY, grow = 1))
-        zeus.basis0(zeus.Text(r.role, color = zeus.mute(), font = zeus.FONT_BODY, grow = 1))
-        zeus.basis0(zeus.Text(r.status, color = zeus.dim(), font = zeus.FONT_BODY, grow = 1))
+        zeus.set_flex_basis_zero(zeus.Text(r.name, color = zeus.ink(), font = zeus.FONT_BODY, grow = 1))
+        zeus.set_flex_basis_zero(zeus.Text(r.role, color = zeus.mute(), font = zeus.FONT_BODY, grow = 1))
+        zeus.set_flex_basis_zero(zeus.Text(r.status, color = zeus.dim(), font = zeus.FONT_BODY, grow = 1))
     }
 }
 

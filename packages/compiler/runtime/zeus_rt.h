@@ -202,6 +202,14 @@ void yuga_zeus_plat_fill_a(int64_t x, int64_t y, int64_t w, int64_t h, int64_t r
 void yuga_zeus_plat_fill_g(int64_t x, int64_t y, int64_t w, int64_t h, int64_t c0,
                           int64_t c1, int64_t axis);
 void yuga_zeus_plat_text(int64_t x, int64_t y, yuga_str s, int64_t rgb, int64_t font);
+/* Current global font family ("" = host default) and the hook a host
+   registers to load one. See zeus_plat.c for why the family is global. */
+const char *zeus_font_family(void);
+void zeus_set_font_hooks(int (*load)(const char *family, const char *src),
+                         void (*set_family)(const char *family));
+void yuga_platform_plat_set_font_family(yuga_str name);
+int64_t yuga_platform_plat_load_font(yuga_str family, yuga_str src);
+
 void yuga_zeus_plat_text_rot(int64_t x, int64_t y, yuga_str s, int64_t rgb, int64_t font,
                              int64_t deg);
 void yuga_zeus_plat_text_int(int64_t x, int64_t y, int64_t v, int64_t rgb, int64_t font);

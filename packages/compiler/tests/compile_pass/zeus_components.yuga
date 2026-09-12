@@ -43,8 +43,7 @@ fn main() {
             zeus.BarChart(labs, cs, cv, 260, 120)
             zeus.LineChart(labs, cs, cv, 260, 120)
             zeus.AreaChart(labs, cs, cv, 260, 120)
-            zeus.Dialog(open) {
-                zeus.Title("Hi")
+            zeus.Dialog(open, title = "Hi") {
                 zeus.Button("Ok", look = zeus.LOOK.Solid, size = zeus.SIZE.Sm, on_click =  fn() => open.set(0))
             }
         }

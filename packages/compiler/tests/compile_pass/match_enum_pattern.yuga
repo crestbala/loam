@@ -1,0 +1,36 @@
+// Match patterns accept `Enum.Member`, not just bare literals — matching on
+// raw 0/1/2 would lose the names the enum exists to provide. Alternatives
+// (`A | B`) and `_` work the same as with literals.
+import "std:fmt"
+import "std:sys"
+
+enum LOOK {
+    Solid = 0,
+    Soft = 1,
+    Outline = 2,
+    Ghost = 3,
+}
+
+fn name_of(look: int) -> string {
+    match look {
+        LOOK.Solid => { return "solid" }
+        LOOK.Soft | LOOK.Outline => { return "layered" }
+        _ => { return "bare" }
+    }
+}
+
+fn check(got: string, want: string) {
+    if !fmt.eq(got, want) {
+        fmt.println("FAIL got", got, "want", want)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    check(name_of(LOOK.Solid), "solid")
+    check(name_of(LOOK.Soft), "layered")
+    check(name_of(LOOK.Outline), "layered")
+    check(name_of(LOOK.Ghost), "bare")
+    check(name_of(99), "bare")
+    fmt.println("match enum pattern ok")
+}

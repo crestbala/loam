@@ -7,14 +7,51 @@
 
 static NSView *g_view;
 
+/* Font cache, keyed by size and invalidated when the family changes
+   (zeus_font_family() is global — see zeus_plat.c). Falling back to the
+   system font keeps text rendering when a face is missing. */
+static char font_cache_family[128];
+
 static NSFont *font_at(int64_t px) {
     static NSFont *cache[72];
+    const char *fam = zeus_font_family();
     int i = (int)px;
+    if (!fam) fam = "";
+    if (strcmp(fam, font_cache_family) != 0) {
+        for (int k = 0; k < 72; k++) {
+            if (cache[k]) [cache[k] release];
+            cache[k] = nil;
+        }
+        strncpy(font_cache_family, fam, sizeof font_cache_family - 1);
+        font_cache_family[sizeof font_cache_family - 1] = 0;
+    }
     if (i < 8) i = 8;
     if (i > 71) i = 71;
-    if (!cache[i])
-        cache[i] = [[NSFont systemFontOfSize:(CGFloat)i] retain];
+    if (!cache[i]) {
+        NSFont *f = nil;
+        if (fam[0]) {
+            NSString *n = [NSString stringWithUTF8String:fam];
+            f = [NSFont fontWithName:n size:(CGFloat)i];
+        }
+        if (!f) f = [NSFont systemFontOfSize:(CGFloat)i];
+        cache[i] = [f retain];
+    }
     return cache[i];
+}
+
+/* Register a font file with the process so `fontWithName:` can find it.
+   `src` is a path to a .ttf / .otf / .ttc. */
+static int mac_load_font(const char *family, const char *src) {
+    (void)family;
+    if (!src || !src[0]) return 0;
+    NSString *path = [NSString stringWithUTF8String:src];
+    NSURL *url = [NSURL fileURLWithPath:path];
+    if (![[NSFileManager defaultManager] fileExistsAtPath:path]) return 0;
+    CFErrorRef err = NULL;
+    bool ok = CTFontManagerRegisterFontsForURL((__bridge CFURLRef)url,
+                                               kCTFontManagerScopeProcess, &err);
+    if (!ok && err) CFRelease(err);
+    return ok ? 1 : 0;
 }
 
 static NSColor *zeus_color(int64_t rgb) {
@@ -1207,4 +1244,5 @@ __attribute__((constructor))
 static void zeus_mac_register(void) {
     zeus_set_platform(mac_run, mac_measure, mac_redraw);
     zeus_set_pick_image(mac_pick_image);
+    zeus_set_font_hooks(mac_load_font, NULL);
 }

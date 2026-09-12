@@ -1,0 +1,11 @@
+// A match pattern must be a literal, an `Enum.Member`, or `_`. A bare name is
+// not a binding pattern in this language, so it is rejected rather than
+// silently shadowing the scrutinee.
+fn main() {
+    let x = 3
+    match x {
+        y => {
+            let _ = y
+        }
+    }
+}

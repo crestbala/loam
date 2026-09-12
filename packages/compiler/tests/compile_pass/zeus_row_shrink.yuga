@@ -38,8 +38,8 @@ fn main() {
     // button still ends inside the 200 px row. The text absorbed the
     // overflow by narrowing.
     expect(zeus.node_y(b1) == zeus.node_y(text1), "flexed row stays one line")
-    expect(zeus.node_x(b1) + zeus.node_w(b1) <= 200, "flexed row fits width")
-    expect(zeus.node_w(text1) < 160, "flex text narrowed")
+    expect(zeus.node_x(b1) + zeus.node_width(b1) <= 200, "flexed row fits width")
+    expect(zeus.node_width(text1) < 160, "flex text narrowed")
     // Unflexed row: same content but no flex child — the button wrapped to
     // the second line, below the first row's button.
     expect(zeus.node_y(b2) > zeus.node_y(b1), "unflexed row still wraps")

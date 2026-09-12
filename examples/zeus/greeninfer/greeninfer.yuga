@@ -88,12 +88,12 @@ fn endpoint_labels() -> []string {
 // Small building blocks
 // ---------------------------------------------------------------------------
 
-/// Live RAM chip: zeus.mem_kb() is the host resident-set size in KB.
+/// Live RAM chip: zeus.memory_kb() is the host resident-set size in KB.
 fn RamChip() {
-    let ram = zeus.signal(zeus.mem_kb())
+    let ram = zeus.signal(zeus.memory_kb())
     if ram_armed == 0 {
         ram_armed = 1
-        async.interval(1000, fn() { ram.set(zeus.mem_kb()) })
+        async.interval(1000, fn() { ram.set(zeus.memory_kb()) })
     }
     zeus.Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
              spacing = SPACE.Exxs, padding_x = 10, padding_y = 4, height = 26,
@@ -120,14 +120,17 @@ fn Header() {
 
 /// Card caption: quiet by default, red when it reports a problem.
 fn Caption(sig: Signal<string>) {
-    zeus.Text(fn() -> string {
+    let t = zeus.Text(fn() -> string {
         return sig.get()
-    }, color = fn() -> string {
-        if is_err_msg(sig.get()) {
-            return zeus.danger()
-        }
-        return zeus.mute()
     }, font = zeus.FONT_CAPTION)
+    // Colour tracks the message, so it is an effect: style props are data.
+    zeus.styled(t, || {
+        if is_err_msg(sig.get()) {
+            zeus.set_color(t, zeus.parse_hex_color(zeus.danger()))
+            return
+        }
+        zeus.set_color(t, zeus.parse_hex_color(zeus.mute()))
+    })
 }
 
 fn HitRow(i: int, h: Hit) {
@@ -183,7 +186,7 @@ fn StepWatch(folder: Signal<string>, watch_on: Signal<int>, cap: Signal<string>,
         }
         zeus.Body("Point at a source tree. Files are chunked at 500 tokens and embedded into a single mmap'd index.")
         zeus.Row(SPACE.Sm) {
-            zeus.Field("Source folder", folder, "repo-relative or absolute path", 560)
+            zeus.Field("Source folder", folder, "repo-relative or absolute path", width = 560)
             zeus.Button("Index folder", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
                         on_click = fn() {
                             let root = folder.get()
@@ -225,7 +228,7 @@ fn StepAsk(query: Signal<string>, hits: Signal<[]Hit>, qus: Signal<int>,
         zeus.Title("2 · Ask your code")
         zeus.Body("Plain words work: the search is a cosine sweep over every chunk — local, no model involved.")
         zeus.Row(SPACE.Sm) {
-            zeus.Field("Question", query, "e.g. how does search sweep the rows?", 480)
+            zeus.Field("Question", query, "e.g. how does search sweep the rows?", width = 480)
             zeus.Button("Search chunks", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
                         on_click = fn() {
                             let text = query.get()
@@ -281,15 +284,15 @@ fn StepModel(prompt: Signal<string>, endpoint: Signal<int>, key_sig: Signal<stri
         }
         zeus.Body("Ask a question in your own words: the closest chunks are retrieved locally and go into the model's context. Grok needs an xAI key; the local option talks to Ollama on 127.0.0.1 and never leaves your machine.")
         zeus.Row(SPACE.Sm) {
-            zeus.Field("Question for the model", prompt, "e.g. how does the watcher detect a changed file?", 600)
+            zeus.Field("Question for the model", prompt, "e.g. how does the watcher detect a changed file?", width = 600)
         }
         zeus.Row(SPACE.Sm) {
-            zeus.Field("Model", model_sig, "grok-4.6 / llama3.2 / qwen2.5-coder", 300)
+            zeus.Field("Model", model_sig, "grok-4.6 / llama3.2 / qwen2.5-coder", width = 300)
             zeus.Select(endpoint, endpoint_labels())
             zeus.Grow()
         }
         zeus.Row(SPACE.Sm) {
-            zeus.Field("API key", key_sig, "xai-... only for Grok (console.x.ai)", 420)
+            zeus.Field("API key", key_sig, "xai-... only for Grok (console.x.ai)", width = 420)
             zeus.Button("Ask model", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
                         on_click = fn() {
                             let question = prompt.get()

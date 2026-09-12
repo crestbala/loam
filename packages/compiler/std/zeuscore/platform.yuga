@@ -12,6 +12,15 @@ fn plat_text(x: int, y: int, s: string, rgb: int, font: int) {}
 fn plat_text_rot(x: int, y: int, s: string, rgb: int, font: int, deg: int) {}
 fn plat_text_int(x: int, y: int, v: int, rgb: int, font: int) {}
 fn plat_measure(s: string, px: int, w: &mut int, h: &mut int) {}
+/// Set the family every later measure and draw uses. One global family, not
+/// a per-node field: the text ABI carries a pixel size only, and every host
+/// (Cocoa / Canvas2D / Android) would have to change to thread a family
+/// through it. A design system uses one typeface, so the host holds it.
+fn plat_set_font_family(name: string) {}
+/// Register a font the host does not already have: `src` is a file path or,
+/// on the web, a URL. Returns 1 when the host accepted it. Call before
+/// `plat_set_font_family(name)`.
+fn plat_load_font(family: string, src: string) -> int {}
 fn plat_measure_int(v: int, px: int, w: &mut int, h: &mut int) {}
 fn plat_measure_wrap(s: string, px: int, max_w: int, w: &mut int, h: &mut int) {}
 fn plat_text_wrap(x: int, y: int, s: string, rgb: int, font: int, max_w: int) {}

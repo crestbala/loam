@@ -68,7 +68,7 @@ fn cli_main() {
     // Fake async op: a spawn completes on the very next pump's tick; the
     // signal it sets must repaint the label without a manual engine_layout.
     async.spawn(|| { n.set(7) })
-    zeus.pump()
+    zeus.pump_frame()
     if n.get() != 7 {
         fail("spawn did not complete")
     }
@@ -102,7 +102,7 @@ fn cli_main() {
     let mut guard2 = 0
     while n.get() != 9 && n.get() != 11 && guard2 < 4000 {
         async.sleep(1)
-        zeus.pump()
+        zeus.pump_frame()
         guard2 = guard2 + 1
     }
     if n.get() != 9 {

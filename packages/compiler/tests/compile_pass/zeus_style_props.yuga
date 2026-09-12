@@ -1,0 +1,62 @@
+// Style props on recipe widgets: pass radius / padding / background straight
+// to the widget. Omitted props keep the recipe's own look.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn expect(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn main() {
+    let hidden = zeus.signal(0)
+    let shown = zeus.signal(1)
+    zeus.snapshot(320, 280, fn() -> Node {
+        zeus.Column(8) {
+            zeus.Button("Go", look = zeus.LOOK.Solid, size = zeus.SIZE.Md)
+            zeus.Button("Styled", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
+                        radius = 4)
+            zeus.IconButton(zeus.IC_CHECK, zeus.LOOK.Soft, zeus.SIZE.Md, "Icon")
+            zeus.Card() {
+                zeus.Text("plain card")
+            }
+            zeus.Card(radius = 2, padding = 8) {
+                zeus.Text("restyled")
+            }
+            zeus.Chip("ok", zeus.TINT.Ok)
+            zeus.Chip("round", zeus.TINT.Mute, radius = 4)
+            zeus.Badge("tag", zeus.TINT.Ok, radius = 2)
+            zeus.Comp(background = "#111", radius = 6, padding = 8) {
+                zeus.Text("comp", color = "#fff")
+            }
+            zeus.Alert("Heads", "Restyled.", radius = 4)
+            zeus.Field("Name", zeus.signal(""), "Ada", width = 120,
+                       radius = 2)
+            zeus.Comp(visible = hidden, a11y_label = "ghost") {
+                zeus.Text("kid")
+            }
+            zeus.If(shown) {
+                zeus.Text("shown")
+            }
+            zeus.Card(visible = shown) {
+                zeus.Text("card vis")
+            }
+        }
+    })
+    expect(zeus.engine_find_text("Go") != 0, "recipe button")
+    expect(zeus.engine_find_text("Styled") != 0, "styled button")
+    expect(zeus.engine_find_text("Icon") != 0, "icon button")
+    expect(zeus.engine_find_text("plain card") != 0, "card()")
+    expect(zeus.engine_find_text("restyled") != 0, "styled card")
+    expect(zeus.engine_find_text("comp") != 0, "comp")
+    expect(zeus.engine_find_text("Heads") != 0, "alert")
+    expect(zeus.engine_find_text("Name") != 0, "field")
+    expect(zeus.engine_find_text("ghost") == 0, "comp visible=0")
+    expect(zeus.engine_find_text("shown") != 0, "If visible")
+    expect(zeus.engine_find_text("card vis") != 0, "card visible")
+    fmt.println("style props ok")
+}

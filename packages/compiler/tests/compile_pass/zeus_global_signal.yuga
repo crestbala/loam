@@ -1,0 +1,55 @@
+// A signal held in a module global must survive startup. Module initialisers
+// run imports-first, so `zeus.signal(0)` here allocates into an arena that is
+// already live; when main ran first, the arena's own initialiser reset the
+// slot array afterwards and every later write was silently dropped (and the
+// stale id then collided with the first local signal).
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+let mut dark = zeus.signal(0)
+let mut repaints: int = 0
+
+fn shade() -> string {
+    repaints = repaints + 1
+    if dark.get() == 0 {
+        return "#111111"
+    }
+    return "#eeeeee"
+}
+
+fn check(what: string, got: int, want: int) {
+    if got != want {
+        fmt.println("FAIL", what, "got", got, "want", want)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("globals", 60, 30)
+    // Style props are plain data: evaluated once, at build.
+    let box = zeus.Box(width = 10, height = 10, background = shade())
+    check("prop evaluated at build", repaints, 1)
+
+    dark.set(1)
+    check("global set survives startup", dark.get(), 1)
+    check("plain prop is not re-evaluated", repaints, 1)
+
+    // Reactive styling is opt-in, through an effect on the node.
+    zeus.styled(box, || { zeus.set_background(box, zeus.parse_hex_color(shade())) })
+    check("effect ran once when attached", repaints, 2)
+    dark.set(0)
+    check("effect re-runs on the signal", repaints, 3)
+    dark.set(1)
+
+    // A local signal must not be handed an id the global already owns.
+    let other = zeus.signal(7)
+    if other.id == dark.id {
+        fmt.println("FAIL local signal collided with global id")
+        sys.exit(1)
+    }
+    check("local signal independent", other.get(), 7)
+    check("global untouched by local", dark.get(), 1)
+
+    fmt.println("zeus global signal ok")
+}

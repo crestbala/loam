@@ -28,9 +28,9 @@ fn main() {
             // Static hide: out of flow, so the sibling below does not move.
             zeus.Box(show = false, height = 30, a11y_label = "gone")
             zeus.Box(height = 10, a11y_label = "after")
-            // Reactive hide follows the signal through the prop thunk.
-            zeus.Box(show = fn() -> bool { flag.get() != 0 }, height = 10,
-                     a11y_label = "tog")
+            // Reactive hide goes through the `visible` Signal: `show` is a
+            // plain bool, read once at build.
+            zeus.Box(visible = flag, height = 10, a11y_label = "tog")
         }
     })
     let flexy = zeus.engine_find_text("flexy")
@@ -39,9 +39,9 @@ fn main() {
     let after = zeus.engine_find_text("after")
     expect(flexy > 0 && fixr > 0 && r1 > 0 && after > 0, "nodes found")
     expect(zeus.engine_find_text("gone") == 0, "static show=false hides")
-    expect(zeus.node_x(flexy) + zeus.node_w(flexy) == zeus.node_x(fixr) - 4,
+    expect(zeus.node_x(flexy) + zeus.node_width(flexy) == zeus.node_x(fixr) - 4,
            "grow child absorbs leftover space")
-    expect(zeus.node_y(after) == zeus.node_y(r1) + zeus.node_h(r1) + 8,
+    expect(zeus.node_y(after) == zeus.node_y(r1) + zeus.node_height(r1) + 8,
            "hidden box leaves no gap")
     // Reactive: hidden at 0, shown after set, hidden again.
     expect(zeus.engine_find_text("tog") == 0, "thunk hide at 0")

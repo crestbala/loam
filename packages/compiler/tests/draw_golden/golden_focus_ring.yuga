@@ -18,5 +18,5 @@ fn main() {
     zeus.engine_layout(360, 200)
     zeus.engine_focus_step(0)
     zeus.engine_paint()
-    zeus.dump()
+    zeus.dump_draw_list()
 }

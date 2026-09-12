@@ -5,7 +5,7 @@ import "std:zeus"
 
 fn main() {
     zeus.snapshot(80, 40, fn() -> Node {
-        zeus.bg2(zeus.Box(width = 80, height = 40, background = "#ff0000"), 255)
+        zeus.set_background_end(zeus.Box(width = 80, height = 40, background = "#ff0000"), 255)
     })
     sys.exit(0)
 }

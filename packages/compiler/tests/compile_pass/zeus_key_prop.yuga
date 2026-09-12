@@ -1,0 +1,49 @@
+// A key binding is a prop, so it goes on any widget — not just the ones that
+// happened to ship a helper. The chord runs `on_key`, or falls back to
+// `on_click` so a button and its shortcut share one handler.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+let mut saves: int = 0
+let mut opens: int = 0
+let mut boxes: int = 0
+
+fn check(what: string, got: int, want: int) {
+    if got != want {
+        fmt.println("FAIL", what, "got", got, "want", want)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    let count = zeus.signal(0)
+    zeus.snapshot(300, 200, fn() -> Node {
+        zeus.Column(8) {
+            // Button: the chord reuses on_click, no second handler.
+            zeus.Button("Save", look = zeus.LOOK.Solid,
+                        key = "cmd+s", on_click = fn() { saves = saves + 1 })
+            // Plain Box: same prop, different widget.
+            zeus.Box(width = 20, height = 20, a11y_label = "panel",
+                     key = "cmd+b", on_key = fn() { boxes = boxes + 1 })
+            // Global chord: fires wherever focus is.
+            zeus.Text("hint", key = "cmd+k", key_global = true,
+                      on_key = fn() { opens = opens + 1 })
+        }
+    })
+
+    // Nothing fires until the chord arrives.
+    check("no stray fire", saves + boxes + opens, 0)
+
+    // A global chord needs no focus. (107 = k, 115 = s, mods 8 = cmd)
+    zeus.engine_key_ev(107, 8)
+    check("global chord fired", opens, 1)
+
+    // Focus the button, then its chord runs the click handler.
+    zeus.engine_click_text("Save")
+    zeus.engine_key_ev(115, 8)
+    check("button chord ran on_click", saves, 1)
+    check("button chord did not fire others", boxes, 0)
+
+    fmt.println("zeus key prop ok")
+}

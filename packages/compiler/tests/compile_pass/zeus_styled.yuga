@@ -18,10 +18,8 @@ fn expect(got: int, want: int) {
 fn main() {
     let sig = zeus.signal(1)
     let out = zeus.signal(0)
-    zeus.Box(background = fn() -> string {
-        out.set(sig.get())
-        "#010101"
-    })
+    let b = zeus.Box(background = "#010101")
+    zeus.styled(b, || { out.set(sig.get()) })
     expect(out.get(), 1)
     expect(sig.get(), 1)
 

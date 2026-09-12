@@ -28,9 +28,9 @@ fn PersonRow(i: int, p: Person) {
     zeus.Box(align_direction = DIRECTION.Row, height = 36) {
         // Zero basis + grow: cells split the row evenly, so columns stay
         // under the header no matter how long the strings are.
-        zeus.basis0(zeus.Text(p.name, grow = 1))
-        zeus.basis0(zeus.Text(p.role, grow = 1))
-        zeus.basis0(zeus.Text(p.status, grow = 1))
+        zeus.set_flex_basis_zero(zeus.Text(p.name, grow = 1))
+        zeus.set_flex_basis_zero(zeus.Text(p.role, grow = 1))
+        zeus.set_flex_basis_zero(zeus.Text(p.status, grow = 1))
     }
 }
 
