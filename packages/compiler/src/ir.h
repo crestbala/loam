@@ -72,6 +72,7 @@ typedef struct {
     int nargs;
     int binop;          /* AstBinOp for IR_BIN / IR_UN */
     int is_mut;         /* IR_ADDR */
+    int conv_mode;      /* IR_CAST: 0 = trap, 1 = wrapping, 2 = saturating */
     int checked;        /* IR_BIN: overflow/div trap required */
     Type *ty;
     SourceLoc loc;

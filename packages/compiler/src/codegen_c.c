@@ -72,10 +72,10 @@ static void emit_ctype(FILE *o, Type *t) {
     }
     switch (t->kind) {
         case TY_INT:
-            fprintf(o, "int64_t");
+            fprintf(o, "%s", type_c_scalar(t));
             break;
         case TY_FLOAT:
-            fprintf(o, "double");
+            fprintf(o, "%s", type_c_scalar(t));
             break;
         case TY_BOOL:
             fprintf(o, "bool");
@@ -135,10 +135,10 @@ static void format_ctype(char *buf, size_t cap, Type *t) {
     }
     switch (t->kind) {
         case TY_INT:
-            snprintf(buf, cap, "int64_t");
+            snprintf(buf, cap, "%s", type_c_scalar(t));
             break;
         case TY_FLOAT:
-            snprintf(buf, cap, "double");
+            snprintf(buf, cap, "%s", type_c_scalar(t));
             break;
         case TY_BOOL:
             snprintf(buf, cap, "bool");
@@ -289,6 +289,91 @@ static void emit_checked_bin(FILE *o, const char *fn, AstNode *n) {
     fprintf(o, ")");
 }
 
+/** Trapping arithmetic helper for integer type `t` (`yuga_add_i32`). NULL for
+ *  a non-integer type or a non-arithmetic operator. Rotating static buffer. */
+static const char *arith_fn(const Type *t, int op) {
+    const char *sfx = type_int_suffix(t);
+    if (!sfx) return NULL;
+    const char *base = NULL;
+    switch ((TokenKind)op) {
+        case TOK_PLUS: case TOK_PLUS_EQ: base = "add"; break;
+        case TOK_MINUS: case TOK_MINUS_EQ: base = "sub"; break;
+        case TOK_STAR: case TOK_STAR_EQ: base = "mul"; break;
+        case TOK_SLASH: case TOK_SLASH_EQ: base = "div"; break;
+        case TOK_PERCENT: case TOK_PERCENT_EQ: base = "mod"; break;
+        default: return NULL;
+    }
+    static char bufs[6][32];
+    static int rot;
+    char *b = bufs[rot++ % 6];
+    snprintf(b, 32, "yuga_%s_%s", base, sfx);
+    return b;
+}
+
+/** Trapping shift helper (`yuga_shl_u8`). NULL if not an integer type. */
+static const char *shift_fn(const Type *t, int op) {
+    const char *sfx = type_int_suffix(t);
+    if (!sfx) return NULL;
+    static char bufs[4][32];
+    static int rot;
+    char *b = bufs[rot++ & 3];
+    snprintf(b, 32, "yuga_%s_%s", op == TOK_SHR ? "shr" : "shl", sfx);
+    return b;
+}
+
+/** Trapping negation helper (`yuga_neg_i16`). NULL if not an integer type. */
+static const char *neg_fn(const Type *t) {
+    const char *sfx = type_int_suffix(t);
+    if (!sfx) return NULL;
+    static char bufs[4][32];
+    static int rot;
+    char *b = bufs[rot++ & 3];
+    snprintf(b, 32, "yuga_neg_%s", sfx);
+    return b;
+}
+
+/* How a numeric conversion is emitted. `fn` receives the helper name. */
+typedef enum {
+    CAST_PLAIN = 0, /* (to)(src) */
+    CAST_CONV,      /* fn((int64_t)(src), f, l) */
+    CAST_CONVU,     /* fn((uint64_t)(src), f, l) */
+    CAST_CONVF,     /* fn((double)(src), f, l) */
+    CAST_SAT,       /* fn((int64_t)(src)) */
+    CAST_SATU,      /* fn((uint64_t)(src)) */
+} CastShape;
+
+/** Classify a numeric cast and fill `fn` with the runtime helper to call. */
+static CastShape cast_shape(const Type *from, const Type *to, int mode, char *fn, size_t fncap) {
+    if (fncap) fn[0] = '\0';
+    if (!from || !to) return CAST_PLAIN;
+    if (to->kind != TY_INT) return CAST_PLAIN; /* to float / bool / same */
+    const char *sfx = type_int_suffix(to);
+    if (!sfx) return CAST_PLAIN;
+    if (from->kind == TY_FLOAT) {
+        if (mode != 0) return CAST_PLAIN;
+        snprintf(fn, fncap, "yuga_convf_%s", sfx);
+        return CAST_CONVF;
+    }
+    if (from->kind != TY_INT) return CAST_PLAIN;
+    if (mode == 1) return CAST_PLAIN; /* wrapping: a plain truncating cast */
+    int from_u64 = from->bits == 64 && from->is_unsigned;
+    int to_u64 = to->bits == 64 && to->is_unsigned;
+    if (from_u64 && !to_u64) {
+        if (mode == 2) {
+            snprintf(fn, fncap, "yuga_satu_%s", sfx);
+            return CAST_SATU;
+        }
+        snprintf(fn, fncap, "yuga_convu_%s", sfx);
+        return CAST_CONVU;
+    }
+    if (mode == 2) {
+        snprintf(fn, fncap, "yuga_sat_%s", sfx);
+        return CAST_SAT;
+    }
+    snprintf(fn, fncap, "yuga_conv_%s", sfx);
+    return CAST_CONV;
+}
+
 static void emit_c_string_body(FILE *o, const char *s) {
     if (!s) return;
     for (const char *p = s; *p; p++) {
@@ -307,13 +392,14 @@ static void emit_c_string_body(FILE *o, const char *s) {
     }
 }
 
-static void emit_float_lit(FILE *o, double f) {
+static void emit_float_lit(FILE *o, double f, int is_f32) {
     char buf[64];
     snprintf(buf, sizeof buf, "%.17g", f);
-    if (!strchr(buf, '.') && !strchr(buf, 'e') && !strchr(buf, 'E'))
-        fprintf(o, "%s.0", buf);
+    int need_dot = !strchr(buf, '.') && !strchr(buf, 'e') && !strchr(buf, 'E');
+    if (is_f32)
+        fprintf(o, need_dot ? "%s.0f" : "%sf", buf);
     else
-        fprintf(o, "%s", buf);
+        fprintf(o, need_dot ? "%s.0" : "%s", buf);
 }
 
 /** yuga_str compound literal with compile-time length (no strlen). */
@@ -585,7 +671,7 @@ static void emit_expr(FILE *o, AstNode *n) {
             fprintf(o, "%lld", (long long)n->as.lit.value);
             break;
         case AST_FLOAT:
-            emit_float_lit(o, n->as.lit.f);
+            emit_float_lit(o, n->as.lit.f, n->ty && n->ty->kind == TY_FLOAT && n->ty->bits == 32);
             break;
         case AST_BOOL:
             fprintf(o, "%s", n->as.lit.b ? "true" : "false");
@@ -610,11 +696,13 @@ static void emit_expr(FILE *o, AstNode *n) {
         case AST_BINARY: {
             TokenKind op = n->as.binary.op;
             int is_f = n->ty && n->ty->kind == TY_FLOAT;
-            if (!is_f && op == TOK_PLUS) emit_checked_bin(o, "yuga_add_i64", n);
-            else if (!is_f && op == TOK_MINUS) emit_checked_bin(o, "yuga_sub_i64", n);
-            else if (!is_f && op == TOK_STAR) emit_checked_bin(o, "yuga_mul_i64", n);
-            else if (!is_f && op == TOK_SLASH) emit_checked_bin(o, "yuga_div_i64", n);
-            else if (!is_f && op == TOK_PERCENT) emit_checked_bin(o, "yuga_mod_i64", n);
+            if (type_is_int_kind(n->ty) && (op == TOK_SHL || op == TOK_SHR))
+                emit_checked_bin(o, shift_fn(n->ty, op), n);
+            else if (!is_f && op == TOK_PLUS) emit_checked_bin(o, arith_fn(n->ty, op), n);
+            else if (!is_f && op == TOK_MINUS) emit_checked_bin(o, arith_fn(n->ty, op), n);
+            else if (!is_f && op == TOK_STAR) emit_checked_bin(o, arith_fn(n->ty, op), n);
+            else if (!is_f && op == TOK_SLASH) emit_checked_bin(o, arith_fn(n->ty, op), n);
+            else if (!is_f && op == TOK_PERCENT) emit_checked_bin(o, arith_fn(n->ty, op), n);
             else if (n->as.binary.left && n->as.binary.left->ty &&
                      n->as.binary.left->ty->kind == TY_STRING &&
                      (op == TOK_EQ_EQ || op == TOK_BANG_EQ)) {
@@ -651,14 +739,31 @@ static void emit_expr(FILE *o, AstNode *n) {
             }
             break;
         }
-        case AST_UNARY:
-            fprintf(o, "(");
-            if (n->as.unary.op == TOK_BANG) fprintf(o, "!");
-            else if (n->as.unary.op == TOK_TILDE) fprintf(o, "~");
-            else fprintf(o, "-");
-            emit_expr(o, n->as.unary.operand);
-            fprintf(o, ")");
+        case AST_UNARY: {
+            TokenKind uop = n->as.unary.op;
+            if (uop == TOK_BANG) {
+                fprintf(o, "(!");
+                emit_expr(o, n->as.unary.operand);
+                fprintf(o, ")");
+            } else if (uop == TOK_TILDE) {
+                fprintf(o, "((");
+                emit_ctype(o, n->ty);
+                fprintf(o, ")(~");
+                emit_expr(o, n->as.unary.operand);
+                fprintf(o, "))");
+            } else if (type_is_int_kind(n->ty)) {
+                fprintf(o, "%s(", neg_fn(n->ty));
+                emit_expr(o, n->as.unary.operand);
+                fprintf(o, ", ");
+                emit_loc_args(o, n);
+                fprintf(o, ")");
+            } else {
+                fprintf(o, "(-");
+                emit_expr(o, n->as.unary.operand);
+                fprintf(o, ")");
+            }
             break;
+        }
         case AST_INCDEC: {
             /* Read-modify-write of the operand place. GCC/Clang statement
                expression: the place is addressed once (side effects in an
@@ -670,21 +775,48 @@ static void emit_expr(FILE *o, AstNode *n) {
             fprintf(o, "; ");
             if (n->as.incdec.is_post) {
                 emit_ctype(o, n->ty);
-                fprintf(o, " _old = *_p; *_p = _old ");
-                fprintf(o, n->as.incdec.is_dec ? "- 1; _old; })" : "+ 1; _old; })");
+                fprintf(o, " _old = *_p; ");
+            }
+            if (type_is_int_kind(n->ty)) {
+                fprintf(o, "*_p = %s(*_p, (", arith_fn(n->ty, n->as.incdec.is_dec ? TOK_MINUS : TOK_PLUS));
+                emit_ctype(o, n->ty);
+                fprintf(o, ")1, ");
+                emit_loc_args(o, n);
+                fprintf(o, "); ");
             } else {
                 fprintf(o, "*_p = *_p ");
-                fprintf(o, n->as.incdec.is_dec ? "- 1; *_p; })" : "+ 1; *_p; })");
+                fprintf(o, n->as.incdec.is_dec ? "- 1; " : "+ 1; ");
+            }
+            fprintf(o, n->as.incdec.is_post ? "_old; })" : "*_p; })");
+            break;
+        }
+        case AST_CAST: {
+            Type *from = n->as.cast.expr ? n->as.cast.expr->ty : NULL;
+            char fn[32];
+            CastShape cs = cast_shape(from, n->ty, n->as.cast.conv_mode, fn, sizeof fn);
+            if (cs == CAST_PLAIN) {
+                fprintf(o, "((");
+                emit_ctype(o, n->ty);
+                fprintf(o, ")");
+                emit_expr(o, n->as.cast.expr);
+                fprintf(o, ")");
+            } else {
+                fprintf(o, "%s(", fn);
+                if (cs == CAST_CONV || cs == CAST_SAT)
+                    fprintf(o, "(int64_t)");
+                else if (cs == CAST_CONVU || cs == CAST_SATU)
+                    fprintf(o, "(uint64_t)");
+                else
+                    fprintf(o, "(double)");
+                emit_expr(o, n->as.cast.expr);
+                if (cs == CAST_CONV || cs == CAST_CONVU || cs == CAST_CONVF) {
+                    fprintf(o, ", ");
+                    emit_loc_args(o, n);
+                }
+                fprintf(o, ")");
             }
             break;
         }
-        case AST_CAST:
-            fprintf(o, "((");
-            emit_ctype(o, n->ty);
-            fprintf(o, ")");
-            emit_expr(o, n->as.cast.expr);
-            fprintf(o, ")");
-            break;
         case AST_ADDR:
             fprintf(o, "&");
             emit_place(o, n->as.access.target);
@@ -707,7 +839,8 @@ static void emit_expr(FILE *o, AstNode *n) {
             }
             if (n->as.call.sig_cell == 1 && n->as.call.arg_count == 1) {
                 fprintf(o, "({ yuga_arena_ensure(); int64_t _sid = ");
-                if (n->as.call.args[0]->ty && n->as.call.args[0]->ty->kind == TY_INT) {
+                if (n->as.call.args[0]->ty && n->as.call.args[0]->ty->kind == TY_INT &&
+                    n->as.call.args[0]->ty->bits == 32) {
                     fprintf(o, "yuga_zeus_sig_alloc_int(");
                     emit_expr(o, n->as.call.args[0]);
                     fprintf(o, "); ");
@@ -738,7 +871,7 @@ static void emit_expr(FILE *o, AstNode *n) {
             }
             if (n->as.call.sig_cell == 3 && n->as.call.arg_count == 2) {
                 Type *vt = n->as.call.args[1]->ty;
-                if (vt && vt->kind == TY_INT) {
+                if (vt && vt->kind == TY_INT && vt->bits == 32) {
                     fprintf(o, "(yuga_arena_store_sig(");
                     emit_expr(o, n->as.call.args[0]);
                     fprintf(o, ", ");
@@ -882,19 +1015,12 @@ static void emit_expr(FILE *o, AstNode *n) {
                 fprintf(o, ")");
                 break;
             }
-            if (n->as.call.is_wrapping_add) {
-                fprintf(o, "yuga_wrapping_add(");
-                emit_expr(o, n->as.call.args[0]);
-                fprintf(o, ", ");
-                emit_expr(o, n->as.call.args[1]);
-                fprintf(o, ")");
-                break;
-            }
-            if (n->as.call.is_saturating_add) {
-                fprintf(o, "yuga_saturating_add(");
-                emit_expr(o, n->as.call.args[0]);
-                fprintf(o, ", ");
-                emit_expr(o, n->as.call.args[1]);
+            if (n->as.call.num_builtin != NUMB_NONE) {
+                fprintf(o, "%s(", numeric_builtin_cname(n->as.call.num_builtin, n->ty));
+                for (size_t k = 0; k < n->as.call.arg_count; k++) {
+                    if (k) fprintf(o, ", ");
+                    emit_expr(o, n->as.call.args[k]);
+                }
                 fprintf(o, ")");
                 break;
             }
@@ -1050,6 +1176,19 @@ static void emit_assign(FILE *o, AstNode *n, int ind) {
         fprintf(o, ";\n");
         return;
     }
+    Type *lt = n->as.assign.left ? n->as.assign.left->ty : NULL;
+    if (type_is_int_kind(lt) &&
+        (n->as.assign.op == TOK_SHL_EQ || n->as.assign.op == TOK_SHR_EQ)) {
+        emit_place(o, n->as.assign.left);
+        fprintf(o, " = %s(", shift_fn(lt, n->as.assign.op == TOK_SHR_EQ ? TOK_SHR : TOK_SHL));
+        emit_place(o, n->as.assign.left);
+        fprintf(o, ", ");
+        emit_expr(o, n->as.assign.right);
+        fprintf(o, ", ");
+        emit_loc_args(o, n);
+        fprintf(o, ");\n");
+        return;
+    }
     const char *aop = c_assignop(n->as.assign.op);
     if (aop) {
         emit_place(o, n->as.assign.left);
@@ -1058,7 +1197,7 @@ static void emit_assign(FILE *o, AstNode *n, int ind) {
         fprintf(o, ";\n");
         return;
     }
-    if (n->as.assign.left && n->as.assign.left->ty && n->as.assign.left->ty->kind == TY_FLOAT) {
+    if (lt && lt->kind == TY_FLOAT) {
         const char *op = "+=";
         if (n->as.assign.op == TOK_MINUS_EQ) op = "-=";
         else if (n->as.assign.op == TOK_STAR_EQ) op = "*=";
@@ -1069,11 +1208,8 @@ static void emit_assign(FILE *o, AstNode *n, int ind) {
         fprintf(o, ";\n");
         return;
     }
-    const char *fn = "yuga_add_i64";
-    if (n->as.assign.op == TOK_MINUS_EQ) fn = "yuga_sub_i64";
-    else if (n->as.assign.op == TOK_STAR_EQ) fn = "yuga_mul_i64";
-    else if (n->as.assign.op == TOK_SLASH_EQ) fn = "yuga_div_i64";
-    else if (n->as.assign.op == TOK_PERCENT_EQ) fn = "yuga_mod_i64";
+    const char *fn = arith_fn(lt, (int)n->as.assign.op);
+    if (!fn) fn = "yuga_add_i64";
     emit_place(o, n->as.assign.left);
     fprintf(o, " = %s(", fn);
     emit_place(o, n->as.assign.left);
@@ -1481,22 +1617,6 @@ static const char *c_assignop(int op) {
     }
 }
 
-static const char *chk_fn(int op) {
-    switch ((TokenKind)op) {
-        case TOK_PLUS:
-        case TOK_PLUS_EQ: return "yuga_add_i64";
-        case TOK_MINUS:
-        case TOK_MINUS_EQ: return "yuga_sub_i64";
-        case TOK_STAR:
-        case TOK_STAR_EQ: return "yuga_mul_i64";
-        case TOK_SLASH:
-        case TOK_SLASH_EQ: return "yuga_div_i64";
-        case TOK_PERCENT:
-        case TOK_PERCENT_EQ: return "yuga_mod_i64";
-        default: return NULL;
-    }
-}
-
 static void emit_steal(FILE *o, const char *place, Type *t, int ind) {
     if (!t || !place) return;
     if (t->kind == TY_BOX) {
@@ -1645,7 +1765,7 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
             break;
         case IR_CONST_FLOAT:
             fprintf(o, "%s = ", lv(in->dst));
-            emit_float_lit(o, in->fimm);
+            emit_float_lit(o, in->fimm, in->ty && in->ty->kind == TY_FLOAT && in->ty->bits == 32);
             fprintf(o, ";\n");
             break;
         case IR_CONST_BOOL:
@@ -1662,11 +1782,15 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
             fprintf(o, ";\n");
             break;
         case IR_STORE: {
-            const char *cf = chk_fn(in->binop);
-            if (cf && in->ty && in->ty->kind == TY_FLOAT) cf = NULL;
+            int is_shift = in->binop == TOK_SHL_EQ || in->binop == TOK_SHR_EQ;
+            const char *cf = NULL;
+            if (in->ty && type_is_int_kind(in->ty)) {
+                cf = is_shift ? shift_fn(in->ty, in->binop == TOK_SHR_EQ ? TOK_SHR : TOK_SHL)
+                              : arith_fn(in->ty, in->binop);
+            }
             if (cf && (in->binop == TOK_PLUS_EQ || in->binop == TOK_MINUS_EQ ||
                        in->binop == TOK_STAR_EQ || in->binop == TOK_SLASH_EQ ||
-                       in->binop == TOK_PERCENT_EQ)) {
+                       in->binop == TOK_PERCENT_EQ || is_shift)) {
                 emit_ir_place(o, in->place);
                 fprintf(o, " = %s(", cf);
                 emit_ir_place(o, in->place);
@@ -1750,8 +1874,13 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
             break;
         }
         case IR_BIN: {
-            const char *cf = in->checked ? chk_fn(in->binop) : NULL;
             Type *at = (in->a >= 0 && in->a < CF->nlocals) ? CF->locals[in->a].ty : NULL;
+            const char *cf = NULL;
+            if ((in->binop == TOK_SHL || in->binop == TOK_SHR) && in->ty &&
+                type_is_int_kind(in->ty))
+                cf = shift_fn(in->ty, in->binop);
+            else if (in->checked)
+                cf = arith_fn(in->ty, in->binop);
             if ((in->binop == TOK_EQ_EQ || in->binop == TOK_BANG_EQ) && at &&
                 at->kind == TY_STRING) {
                 fprintf(o, "%s = %syuga_fmt_eq(%s, %s);\n", lv(in->dst),
@@ -1766,16 +1895,49 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
             }
             break;
         }
-        case IR_UN:
-            fprintf(o, "%s = (%s%s);\n", lv(in->dst),
-                    in->binop == TOK_BANG ? "!" : (in->binop == TOK_TILDE ? "~" : "-"),
-                    lv(in->a));
+        case IR_UN: {
+            Type *at = (in->a >= 0 && in->a < CF->nlocals) ? CF->locals[in->a].ty : NULL;
+            if (in->binop == TOK_TILDE && at && type_is_int_kind(at)) {
+                fprintf(o, "%s = (", lv(in->dst));
+                emit_ctype(o, in->ty);
+                fprintf(o, ")(~%s);\n", lv(in->a));
+            } else if (in->binop != TOK_BANG && in->binop != TOK_TILDE && at &&
+                       type_is_int_kind(at)) {
+                fprintf(o, "%s = %s(%s, ", lv(in->dst), neg_fn(in->ty), lv(in->a));
+                emit_ir_loc(o, in->loc);
+                fprintf(o, ");\n");
+            } else {
+                fprintf(o, "%s = (%s%s);\n", lv(in->dst),
+                        in->binop == TOK_BANG ? "!" : (in->binop == TOK_TILDE ? "~" : "-"),
+                        lv(in->a));
+            }
             break;
-        case IR_CAST:
-            fprintf(o, "%s = (", lv(in->dst));
-            emit_ctype(o, in->ty);
-            fprintf(o, ")%s;\n", lv(in->a));
+        }
+        case IR_CAST: {
+            Type *from = (in->a >= 0 && in->a < CF->nlocals) ? CF->locals[in->a].ty : NULL;
+            char fn[32];
+            CastShape cs = cast_shape(from, in->ty, in->conv_mode, fn, sizeof fn);
+            if (cs == CAST_PLAIN) {
+                fprintf(o, "%s = (", lv(in->dst));
+                emit_ctype(o, in->ty);
+                fprintf(o, ")%s;\n", lv(in->a));
+            } else {
+                fprintf(o, "%s = %s(", lv(in->dst), fn);
+                if (cs == CAST_CONV || cs == CAST_SAT)
+                    fprintf(o, "(int64_t)");
+                else if (cs == CAST_CONVU || cs == CAST_SATU)
+                    fprintf(o, "(uint64_t)");
+                else
+                    fprintf(o, "(double)");
+                fprintf(o, "%s", lv(in->a));
+                if (cs == CAST_CONV || cs == CAST_CONVU || cs == CAST_CONVF) {
+                    fprintf(o, ", ");
+                    emit_ir_loc(o, in->loc);
+                }
+                fprintf(o, ");\n");
+            }
             break;
+        }
         case IR_CALL:
         case IR_CALL_VAL: {
             if (in->op == IR_CALL && in->callee && strcmp(in->callee, "yuga_sig_push") == 0 &&
@@ -1783,7 +1945,7 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                 Type *vt = in->ty;
                 fprintf(o, "yuga_arena_ensure();\n");
                 indent(o, 1);
-                if (vt && vt->kind == TY_INT) {
+                if (vt && vt->kind == TY_INT && vt->bits == 32) {
                     /* Mirror slot + cell, reusing freed ids when possible. */
                     fprintf(o, "%s = yuga_zeus_sig_alloc_int(%s);\n", lv(in->dst),
                             lv(in->args[0]));
@@ -1817,7 +1979,7 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                 Type *vt = in->ty;
                 if (vt && vt->kind == TY_VOID && in->args[1] >= 0 && in->args[1] < CF->nlocals)
                     vt = CF->locals[in->args[1]].ty;
-                if (vt && vt->kind == TY_INT) {
+                if (vt && vt->kind == TY_INT && vt->bits == 32) {
                     fprintf(o, "yuga_arena_store_sig(%s, %s);\n", lv(in->args[0]),
                             lv(in->args[1]));
                 } else if (type_is_copy_vec(vt)) {

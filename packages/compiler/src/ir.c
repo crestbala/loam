@@ -519,16 +519,16 @@ static int lower_call(AstNode *n) {
         i->ty = ir_subst(n->ty);
         return dst;
     }
-    if (n->as.call.is_wrapping_add || n->as.call.is_saturating_add) {
-        int *args = (int *)calloc(2, sizeof(int));
-        args[0] = n->as.call.arg_count > 0 ? lower_expr(n->as.call.args[0]) : -1;
-        args[1] = n->as.call.arg_count > 1 ? lower_expr(n->as.call.args[1]) : -1;
+    if (n->as.call.num_builtin != NUMB_NONE) {
+        size_t ac = n->as.call.arg_count;
+        int *args = ac ? (int *)calloc(ac, sizeof(int)) : NULL;
+        for (size_t k = 0; k < ac; k++) args[k] = lower_expr(n->as.call.args[k]);
         IrInst *i = emit(IR_CALL, n->loc);
         i->dst = dst;
         i->args = args;
-        i->nargs = 2;
-        i->ty = ty_int();
-        i->callee = n->as.call.is_wrapping_add ? "yuga_wrapping_add" : "yuga_saturating_add";
+        i->nargs = (int)ac;
+        i->ty = ir_subst(n->ty);
+        i->callee = yuga_dup(numeric_builtin_cname(n->as.call.num_builtin, n->ty));
         return dst;
     }
     if (n->as.call.c_builtin) {
@@ -875,6 +875,7 @@ static int lower_expr(AstNode *n) {
             i->dst = d;
             i->a = a;
             i->ty = ir_subst(n->ty);
+            i->conv_mode = n->as.cast.conv_mode;
             return d;
         }
         case AST_CALL:

@@ -1,0 +1,8 @@
+// Phase 9: a constant shift by the width or more is a compile error.
+
+fn main() {
+    let a: i32 = 1
+    let b = a << 32
+    let c: u64 = 1
+    let d = c << 64
+}

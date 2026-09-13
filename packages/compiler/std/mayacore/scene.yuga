@@ -62,7 +62,7 @@ let mut cam_itz: float = 0.0
 let mut cam_inited: int = 0
 let mut ambient_rgb: int = 789012
 let mut clear_rgb: int = 131592
-let mut t0_ms: int = 0
+let mut t0_ms: i64 = 0
 let mut map_mode: int = 0
 let mut view_w: int = 0
 let mut view_h: int = 0
@@ -212,7 +212,7 @@ fn refresh_hud() {
     hud = string_from_bytes(b)
 }
 
-fn do_init(now_ms: int) {
+fn do_init(now_ms: i64) {
     if inited != 0 {
         return
     }
@@ -1028,7 +1028,7 @@ fn render(w: int, h: int) {
     }
 }
 
-fn frame(now_ms: int, headless: int) {
+fn frame(now_ms: i64, headless: int) {
     let mut sec_ms = now_ms - t0_ms
     let mut w = win_w
     let mut h = win_h
@@ -1037,7 +1037,7 @@ fn frame(now_ms: int, headless: int) {
         w = 160
         h = 90
     }
-    update_orbits(sec_ms)
+    update_orbits(i32(sec_ms))
     ensure_fb(w, h)
     render(w, h)
 }

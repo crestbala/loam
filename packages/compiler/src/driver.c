@@ -346,7 +346,7 @@ static int android_write_cmake(const char *path, int uses_http) {
             ")\n"
             "target_include_directories(zeus PRIVATE \"%s\")\n"
             "target_compile_definitions(zeus PRIVATE YUGA_ANDROID)\n"
-            "target_compile_options(zeus PRIVATE -std=gnu99 -O1 "
+            "target_compile_options(zeus PRIVATE -std=gnu99 -O1 -ffp-contract=off "
             "-fno-asynchronous-unwind-tables)\n"
             "target_link_libraries(zeus android log)\n",
             YUGA_RUNTIME_DIR);
@@ -517,6 +517,7 @@ static void usage(void) {
             "  --target ios     iOS Simulator .app (same Zeus paint as Cocoa; needs Xcode)\n"
             "  --target android Gradle + JNI Canvas host (needs Android SDK/NDK to build APK)\n"
             "  --run       compile and run (Simulator for --target=ios; gradle+adb for android)\n"
+            "  --int64-compat  `int` = i64 and `float` = f64 (pre-Phase-10 behavior)\n"
             "Default output: <source-dir>/build/<name> (.app on ios; Gradle tree on android)\n");
 }
 
@@ -530,6 +531,7 @@ int main(int argc, char **argv) {
     int target_wasm = 0;
     int target_ios = 0;
     int target_android = 0;
+    int int64_compat = 0;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -568,6 +570,8 @@ int main(int argc, char **argv) {
             }
         } else if (strcmp(argv[i], "--run") == 0) {
             run = 1;
+        } else if (strcmp(argv[i], "--int64-compat") == 0) {
+            int64_compat = 1;
         } else if (strcmp(argv[i], "build") == 0) {
             /* `yugac build --target=native app.yuga` — same as omitting `build`. */
             continue;
@@ -583,6 +587,8 @@ int main(int argc, char **argv) {
         usage();
         return 1;
     }
+
+    type_set_int64_compat(int64_compat);
 
     int show_time = env_on("YUGA_TIME");
     double t0 = now_sec();
@@ -765,7 +771,7 @@ int main(int argc, char **argv) {
             if (uses_zeus) {
                 snprintf(cmdw, sizeof cmdw,
                          "\"%s\" --target=wasm32 -nostdlib -ffreestanding "
-                         "-fno-stack-protector -O2 -I\"%s/wasm_inc\" -I\"%s\" "
+                         "-fno-stack-protector -O2 -ffp-contract=off -I\"%s/wasm_inc\" -I\"%s\" "
                          "-Wl,--no-entry -Wl,--export-dynamic "
                          "-x c \"%s\" -x none "
                          "\"%s/zeus_wasm_libc.c\" \"%s/web/wasm.c\" "
@@ -775,7 +781,7 @@ int main(int argc, char **argv) {
             } else {
                 snprintf(cmdw, sizeof cmdw,
                          "\"%s\" --target=wasm32 -nostdlib -ffreestanding "
-                         "-fno-stack-protector -O2 -I\"%s/wasm_inc\" -I\"%s\" "
+                         "-fno-stack-protector -O2 -ffp-contract=off -I\"%s/wasm_inc\" -I\"%s\" "
                          "-Wl,--no-entry -Wl,--export-dynamic -Wl,--export=main "
                          "-x c \"%s\" -x none \"%s/zeus_wasm_libc.c\"%s -o \"%s\"",
                          cc, YUGA_RUNTIME_DIR, YUGA_RUNTIME_DIR, cpath, YUGA_RUNTIME_DIR,
@@ -858,7 +864,7 @@ int main(int argc, char **argv) {
             snprintf(http_ios, sizeof http_ios, " \"%s/net.c\"", YUGA_RUNTIME_DIR);
         snprintf(cmdios, sizeof cmdios,
                  "xcrun clang -isysroot \"%s\" -target %s-apple-ios16.0-simulator "
-                 "-O1 -fno-asynchronous-unwind-tables -DYUGA_IOS -I\"%s\" "
+                 "-O1 -ffp-contract=off -fno-asynchronous-unwind-tables -DYUGA_IOS -I\"%s\" "
                  "-x c -std=gnu99 \"%s\" \"%s/zeus_plat.c\" \"%s/zeus_key.c\"%s "
                  "-x objective-c -fno-objc-arc \"%s/ios/ios.m\" "
                  "-framework UIKit -framework Foundation -framework CoreGraphics "
@@ -937,9 +943,9 @@ int main(int argc, char **argv) {
        wall time. Headless tests skip the optimizer and Cocoa; GUI uses -O1.
        Runtime .c/.m compile once into runtime/.obj/. */
     int headless = want_headless();
-    const char *copt = headless ? "-std=gnu99 -O0 -fno-asynchronous-unwind-tables"
+    const char *copt = headless ? "-std=gnu99 -O0 -fno-asynchronous-unwind-tables -ffp-contract=off"
                                 : "-std=gnu99 -O1 -fno-asynchronous-unwind-tables "
-                                  "-fomit-frame-pointer";
+                                  "-fomit-frame-pointer -ffp-contract=off";
 #if defined(__APPLE__)
     const char *ld = headless ? "" : "-Wl,-dead_strip";
 #else

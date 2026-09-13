@@ -79,6 +79,11 @@
   function: (path_expression
     name: (identifier) @function))
 
+; Primitive scalar types are data types, not functions — `u8(x)` is a
+; conversion. After the call_expression rules so it wins over `@function`.
+((identifier) @type.builtin
+ (#match? @type.builtin "^(i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|int|float|bool|string)$"))
+
 (struct_item
   name: (identifier) @type)
 

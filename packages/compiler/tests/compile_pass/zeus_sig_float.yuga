@@ -12,7 +12,7 @@ fn fail() {
     sys.exit(1)
 }
 
-fn expect(got: int, want: int) {
+fn expect(got: i64, want: i64) {
     if got < want {
         fail()
     }
@@ -24,22 +24,22 @@ fn expect(got: int, want: int) {
 fn main() {
     // Float cell round-trip: set / get / read-modify-write, exact halves.
     let f = zeus.signal(0.5)
-    expect((f.get() as int), 0)
+    expect(i64(f.get()), 0)
     f.set(1.25)
     f.set(f.get() + 0.75)
-    expect((f.get() as int), 2)
+    expect(i64(f.get()), 2)
     if f.get() != 2.0 {
         fail()
     }
 
-    // Timestamp scalar: clock milliseconds stored as float seconds, with a
-    // fractional tick that survives the round trip (`as int` truncates).
+    // Timestamp scalar: clock milliseconds (i64, §3.6) stored as an f64
+    // fraction that survives the round trip (`as int` truncates).
     let t0 = async.now_ms()
-    let ts = zeus.signal(t0 as float)
+    let ts = zeus.signal(f64(t0))
     ts.set(ts.get() + 0.5)
-    expect((ts.get() as int), t0)
+    expect(i64(ts.get()), t0)
     ts.set(ts.get() + 1000.0)
-    expect((ts.get() as int), t0 + 1000)
+    expect(i64(ts.get()), t0 + 1000)
 
     // Float-driven effect: the styled closure reads `anim` (float) and
     // writes the pixel-rounded value into `seen`; every `anim.set` re-runs it.
@@ -47,10 +47,10 @@ fn main() {
     let seen = zeus.signal(-1)
     let fb = zeus.Box(background = "#010101")
     zeus.styled(fb, || { seen.set((anim.get() * 4.0) as int) })
-    expect(seen.get(), 0)
+    expect(i64(seen.get()), 0)
     anim.set(3.25)
-    expect(seen.get(), 13)
+    expect(i64(seen.get()), 13)
     anim.set(anim.get() + 0.5)
-    expect(seen.get(), 15)
+    expect(i64(seen.get()), 15)
     fmt.println("float signal store + prop ok")
 }

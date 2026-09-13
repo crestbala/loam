@@ -2617,7 +2617,7 @@ struct RpcCall {
     stage: int,
     acc: string,
     cbid: int,
-    at: int,
+    at: i64,
 }
 
 let mut acalls: []RpcCall = []RpcCall {}
@@ -2911,7 +2911,7 @@ struct SseCall {
     acc: string,
     on_event: fn(string),
     on_done: fn(),
-    at: int,
+    at: i64,
 }
 
 let mut sse_calls: []SseCall = []SseCall {}
@@ -3129,7 +3129,7 @@ struct WsCall {
     acc: string,
     on_text: fn(string),
     on_done: fn(),
-    at: int,
+    at: i64,
 }
 
 let mut ws_calls: []WsCall = []WsCall {}

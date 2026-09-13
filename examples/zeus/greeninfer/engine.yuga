@@ -425,11 +425,11 @@ fn hash_segment(seg: []int, out: &mut []float) {
     } else {
         return
     }
-    let mut h1 = 2166136261
-    let mut h2 = 2246822519
+    let mut h1: u64 = 2166136261
+    let mut h2: u64 = 2246822519
     k = 0
     while k < n {
-        let b = folded[k]
+        let b = u64(folded[k])
         // 32-bit FNV-1a, masked after each multiply so the checked
         // arithmetic stays in range (h <= 2^32-1 keeps h*p < 2^63).
         h1 = (h1 * 16777619) & 4294967295
@@ -438,7 +438,7 @@ fn hash_segment(seg: []int, out: &mut []float) {
         h2 = h2 ^ b
         k = k + 1
     }
-    let d = (h1 & 2147483647) % GI_DIM
+    let d = i32((h1 & 2147483647) % u64(GI_DIM))
     let mut sgn = -1.0
     if (h2 & 1) != 0 {
         sgn = 1.0
@@ -524,7 +524,7 @@ fn embed_text(text: string) -> []float {
 /// arithmetic never traps; 24 low bits -> one float in [-1, 1).
 fn rand_vec(seed: int) -> []float {
     let mut out = []float {}
-    let mut x = seed * 2654435761 + 40503
+    let mut x = u64(seed) * 2654435761 + 40503
     x = x & 4294967295
     for i in 0..GI_DIM {
         x = x * 1103515245 + 12345

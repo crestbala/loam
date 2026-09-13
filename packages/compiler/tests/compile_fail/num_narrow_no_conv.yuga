@@ -1,0 +1,7 @@
+// Phase 9: narrowing to a smaller width needs an explicit conversion.
+
+fn main() {
+    let wide: i64 = 5000
+    let small: u8 = wide
+    let also: i16 = wide
+}

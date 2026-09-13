@@ -51,7 +51,7 @@ struct Body {
 fn plat_run() {}
 fn plat_headless() -> int {}
 fn plat_window(title: string, w: int, h: int) {}
-fn plat_now_ms() -> int {}
+fn plat_now_ms() -> i64 {}
 
 /// Build a `Vec3`.
 fn vec3(x: int, y: int, z: int) -> Vec3 {

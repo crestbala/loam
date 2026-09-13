@@ -1,0 +1,123 @@
+// Phase 9: sized integer widths. Every width compiles and evaluates;
+// untyped literals adopt context; conversions are call-shaped; the
+// per-width wrapping_* / saturating_* opt-outs work; `int` is still 64-bit.
+import "std:fmt"
+import "std:sys"
+
+fn expect(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn widen(x: i8) -> i64 {
+    i64(x)
+}
+
+struct Small {
+    n: u8,
+    k: i16,
+}
+
+fn main() {
+    // Every width, with literals adopting the declared type.
+    let a: i8 = -128
+    let b: i16 = 300
+    let c: i32 = 70000
+    let d: i64 = 5000000000
+    let e: u8 = 200
+    let f: u16 = 40000
+    let g: u32 = 3000000000
+    let h: u64 = 9000000000
+    expect(a == i8(-128), "i8")
+    expect(b - i16(1) == i16(299), "i16")
+    expect(c / i32(2) == i32(35000), "i32")
+    expect(d * i64(2) == i64(10000000000), "i64")
+    expect(e + u8(50) == u8(250), "u8")
+    expect(f - u16(10000) == u16(30000), "u16")
+    expect(g / u32(2) == u32(1500000000), "u32")
+    expect(h - u64(1) == u64(8999999999), "u64")
+
+    // `int` and `float` still mean 64-bit.
+    let default_int = 5
+    expect(default_int == 5, "int default")
+
+    // Explicit, call-shaped conversions.
+    let w: i32 = i32(100)
+    let narrow: u8 = u8(w)
+    expect(narrow == u8(100), "narrow conversion")
+    expect(widen(i8(-5)) == i64(-5), "sign extend")
+    expect(i32(3) == i32(3), "identity conversion")
+    // Range-checked conversions trap; the wrap / saturate opt-outs do not.
+    expect(u8(wrapping_u8(i32(300))) == u8(44), "wrapping_u8")
+    expect(u8(saturating_u8(i32(300))) == u8(255), "saturating_u8")
+    expect(i8(saturating_i8(i32(300))) == i8(127), "saturating_i8")
+
+    // Per-width wrapping_* / saturating_*.
+    expect(wrapping_add(u8(250), u8(10)) == u8(4), "wrapping_add u8")
+    expect(saturating_add(u8(250), u8(10)) == u8(255), "saturating_add u8")
+    expect(wrapping_sub(u8(3), u8(10)) == u8(249), "wrapping_sub u8")
+    expect(saturating_sub(u8(3), u8(10)) == u8(0), "saturating_sub u8")
+    expect(wrapping_mul(u8(20), u8(20)) == u8(144), "wrapping_mul u8")
+    expect(saturating_mul(u8(20), u8(20)) == u8(255), "saturating_mul u8")
+    expect(wrapping_neg(u8(1)) == u8(255), "wrapping_neg u8")
+    expect(wrapping_add(i8(127), i8(1)) == i8(-128), "wrapping_add i8")
+    expect(saturating_add(i8(127), i8(1)) == i8(127), "saturating_add i8")
+    expect(saturating_sub(i8(-128), i8(1)) == i8(-128), "saturating_sub i8")
+    expect(wrapping_add(u16(65535), u16(1)) == u16(0), "wrapping_add u16")
+    expect(saturating_add(u16(65535), u16(1)) == u16(65535), "saturating_add u16")
+    expect(wrapping_add(u32(4294967295), u32(1)) == u32(0), "wrapping_add u32")
+    expect(saturating_add(u32(4294967295), u32(1)) == u32(4294967295), "saturating_add u32")
+    expect(wrapping_sub(i64(-9223372036854775807), i64(2)) == i64(9223372036854775807), "wrapping_sub i64")
+    expect(saturating_sub(i64(-9223372036854775807), i64(2)) == i64(-9223372036854775807) - i64(1), "saturating_sub i64")
+    expect(wrapping_add(u64(9000000000), u64(1)) == u64(9000000001), "wrapping_add u64")
+
+    // Shifts, including wrap through the unsigned width.
+    let s: u16 = u16(1)
+    expect((s << 3) == u16(8), "shl u16")
+    expect((s >> 0) == u16(1), "shr u16")
+    expect(s << 15 == u16(32768), "shl to top bit")
+    expect(wrapping_shl(u8(1), u8(9)) == u8(0), "wrapping_shl u8")
+    expect(wrapping_shr(i8(-8), i8(1)) == i8(124), "wrapping_shr i8")
+
+    // Compound assignment keeps the width.
+    let mut m: u8 = 250
+    m += u8(1)
+    expect(m == u8(251), "compound add")
+    m -= u8(51)
+    expect(m == u8(200), "compound sub")
+    m <<= u8(0)
+    expect(m == u8(200), "compound shl")
+
+    // Division / modulo trap on zero; keep them in range here.
+    expect(i16(300) / i16(7) == i16(42), "i16 div")
+    expect(i16(300) % i16(7) == i16(6), "i16 mod")
+    expect(u32(7) / u32(2) == u32(3), "u32 div")
+
+    // `as` still converts, explicitly.
+    let via_as: i64 = i32(5) as i64
+    expect(via_as == i64(5), "as widening")
+    let via_as_narrow: u8 = i64(7) as u8
+    expect(via_as_narrow == u8(7), "as narrowing")
+
+    // Struct fields and fixed arrays carry widths.
+    let sm = Small { n: 7, k: -300 }
+    expect(sm.n == u8(7), "struct u8 field")
+    expect(sm.k == i16(-300), "struct i16 field")
+    let arr = [3]u8 { 1, 2, 3 }
+    expect(arr[2] == u8(3), "array u8 element")
+
+    // Literal patterns adopt the scrutinee's width.
+    let code: u8 = 2
+    let mut label = 0
+    match code {
+        1 => { label = 1 }
+        2 => { label = 2 }
+        _ => { label = 3 }
+    }
+    expect(label == 2, "match u8")
+
+    fmt.println("sized ints ok")
+}

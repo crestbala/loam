@@ -1,0 +1,40 @@
+// Phase 10 benchmark app: a fixed, moderately large retained tree. `make bench`
+// builds it with the 32-bit default and with `--int64-compat`, then records
+// arena size, layout time, binary size, and wasm size.
+import "std:async"
+import "std:fmt"
+import "std:zeus"
+
+fn row(label: string) {
+    zeus.Box(align_direction = DIRECTION.Row, spacing = 4, padding = 2) {
+        zeus.Text(label)
+    }
+}
+
+fn main() {
+    let mut items = []string {}
+    for i in 0..1500 {
+        push(items, "benchmark row")
+    }
+
+    zeus.window("bench", 1024, 768)
+    zeus.view(fn() -> Node {
+        zeus.Box(align_direction = DIRECTION.Column, padding = 12, spacing = 4) {
+            zeus.Each(items, fn(i, s) {
+                row(s)
+            })
+        }
+    })
+
+    zeus.engine_layout(1024, 768) // warm
+    let t0 = async.now_ms()
+    for i in 0..500 {
+        zeus.engine_layout(1024, 768)
+    }
+    let dt = async.now_ms() - t0
+
+    fmt.println("arena_nodes", zeus.arena_nodes())
+    fmt.println("arena_sigs", zeus.arena_sigs())
+    fmt.println("draw_ops", zeus.draw_count())
+    fmt.println("layout_total_ms", dt)
+}

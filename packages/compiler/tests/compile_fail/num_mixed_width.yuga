@@ -1,0 +1,9 @@
+// Phase 9: no implicit mixed-width arithmetic. i32 and i64 never mix
+// silently; the error must name both sides and suggest a conversion.
+
+fn main() {
+    let a: i32 = 1
+    let b: i64 = 2
+    let c = a + b
+    let d = b - a
+}

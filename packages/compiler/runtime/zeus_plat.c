@@ -19,11 +19,11 @@
 extern yuga_vec yuga_arena_sigs;
 /* Rebuild-scope ownership (arena.yuga): while `scope_node` is non-zero, a
    signal allocation is recorded against it so teardown can recycle the id. */
-extern int64_t yuga_arena_scope_node;
+extern int32_t yuga_arena_scope_node;
 extern yuga_vec yuga_arena_rec_sid;
 extern yuga_vec yuga_arena_rec_owner;
 void yuga_arena_ensure(void);
-void yuga_arena_store_sig(int64_t id, int64_t value);
+void yuga_arena_store_sig(int32_t id, int32_t value);
 void yuga_track_note_read(int64_t sid);
 void yuga_track_notify(int64_t sid);
 
@@ -110,28 +110,30 @@ static int64_t sig_slot_zero(void);
    arena teardown (release_sigs) frees them with the rest of the subtree. */
 Signal yuga_zeus_signal(int64_t value) {
     Signal s;
+    int32_t v32 = (int32_t)value;
     yuga_arena_ensure();
     s.id = sig_slot_zero();
-    ((int64_t *)yuga_arena_sigs.ptr)[s.id] = value;
-    yuga_zeus_sig_bind(s.id, &value, (int64_t)sizeof(value));
+    ((int32_t *)yuga_arena_sigs.ptr)[s.id] = v32;
+    yuga_zeus_sig_bind(s.id, &v32, (int64_t)sizeof(v32));
     return s;
 }
 
 int64_t yuga_zeus_get(Signal sig) {
-    int64_t v = 0;
+    int32_t v = 0;
     yuga_arena_ensure();
     yuga_track_note_read(sig.id);
     yuga_zeus_sig_load(sig.id, &v, (int64_t)sizeof(v));
-    return v;
+    return (int64_t)v;
 }
 
 void yuga_zeus_set(Signal sig, int64_t value) {
     yuga_arena_ensure();
-    yuga_arena_store_sig(sig.id, value);
+    yuga_arena_store_sig((int32_t)sig.id, (int32_t)value);
 }
 
 void yuga_platform_plat_sig_bind_int(int64_t id, int64_t value) {
-    yuga_zeus_sig_bind(id, &value, (int64_t)sizeof(value));
+    int32_t v32 = (int32_t)value;
+    yuga_zeus_sig_bind(id, &v32, (int64_t)sizeof(v32));
 }
 
 int64_t yuga_platform_plat_sig_gen(int64_t id) {
@@ -168,27 +170,30 @@ static int64_t free_sig_pop(void) {
    Allocations made while a rebuild scope is open are recorded against the
    scope node so the yuga teardown can free them. */
 static int64_t sig_slot_zero(void) {
-    int64_t id, zero = 0;
+    int64_t id;
+    int32_t zero = 0;
     yuga_arena_ensure();
     id = free_sig_pop();
     if (id >= 0) {
-        ((int64_t *)yuga_arena_sigs.ptr)[id] = 0;
+        ((int32_t *)yuga_arena_sigs.ptr)[id] = 0;
     } else {
-        yuga_vec_push(&yuga_arena_sigs, &zero, sizeof(int64_t), __FILE__, __LINE__);
+        yuga_vec_push(&yuga_arena_sigs, &zero, sizeof(int32_t), __FILE__, __LINE__);
         id = yuga_arena_sigs.len - 1;
     }
     if (yuga_arena_scope_node > 0) {
-        yuga_vec_push(&yuga_arena_rec_sid, &id, sizeof(int64_t), __FILE__, __LINE__);
-        yuga_vec_push(&yuga_arena_rec_owner, &yuga_arena_scope_node, sizeof(int64_t),
-                      __FILE__, __LINE__);
+        int32_t sid32 = (int32_t)id;
+        int32_t owner32 = yuga_arena_scope_node;
+        yuga_vec_push(&yuga_arena_rec_sid, &sid32, sizeof(int32_t), __FILE__, __LINE__);
+        yuga_vec_push(&yuga_arena_rec_owner, &owner32, sizeof(int32_t), __FILE__, __LINE__);
     }
     return id;
 }
 
 int64_t yuga_zeus_sig_alloc_int(int64_t value) {
+    int32_t v32 = (int32_t)value;
     int64_t id = sig_slot_zero();
-    ((int64_t *)yuga_arena_sigs.ptr)[id] = value;
-    yuga_zeus_sig_bind(id, &value, sizeof(value));
+    ((int32_t *)yuga_arena_sigs.ptr)[id] = v32;
+    yuga_zeus_sig_bind(id, &v32, sizeof(v32));
     return id;
 }
 
@@ -199,7 +204,7 @@ int64_t yuga_zeus_sig_alloc_zero(void) {
 void yuga_zeus_sig_free(int64_t id) {
     if (id <= 0 || (size_t)id >= g_ncells) return;
     if (!g_cells[id].p && g_cells[id].n == 0 && g_cells[id].gen == 0) return;
-    if (id < yuga_arena_sigs.len) ((int64_t *)yuga_arena_sigs.ptr)[id] = 0;
+    if (id < yuga_arena_sigs.len) ((int32_t *)yuga_arena_sigs.ptr)[id] = 0;
     free(g_cells[id].p);
     g_cells[id].p = NULL;
     g_cells[id].n = 0;
@@ -288,12 +293,13 @@ static yuga_str pick_dup(const char *src) {
     return (yuga_str){p, (int64_t)n};
 }
 
-yuga_str yuga_zeus_plat_pick_image(int64_t *w, int64_t *h) {
+yuga_str yuga_zeus_plat_pick_image(int32_t *w, int32_t *h) {
     char buf[4096];
+    int64_t lw = 0, lh = 0;
     buf[0] = 0;
-    if (w) *w = 0;
-    if (h) *h = 0;
-    if (plat_pick_image) plat_pick_image(buf, (int)sizeof buf, w, h);
+    if (plat_pick_image) plat_pick_image(buf, (int)sizeof buf, &lw, &lh);
+    if (w) *w = (int32_t)lw;
+    if (h) *h = (int32_t)lh;
     return pick_dup(buf);
 }
 
@@ -421,21 +427,24 @@ int64_t yuga_platform_plat_load_font(yuga_str family, yuga_str src) {
     return ok ? 1 : 0;
 }
 
-void yuga_zeus_plat_measure(yuga_str s, int64_t px, int64_t *w, int64_t *h) {
+void yuga_zeus_plat_measure(yuga_str s, int32_t px, int32_t *w, int32_t *h) {
     char *p = dup_ys(s);
     int64_t tw = 0, th = 0;
     if (plat_measure) plat_measure(p, px, &tw, &th);
     else measure_default(p, px, &tw, &th);
-    if (w) *w = tw;
-    if (h) *h = th;
+    if (w) *w = (int32_t)tw;
+    if (h) *h = (int32_t)th;
     free(p);
 }
 
-void yuga_zeus_plat_measure_int(int64_t v, int64_t px, int64_t *w, int64_t *h) {
+void yuga_zeus_plat_measure_int(int32_t v, int32_t px, int32_t *w, int32_t *h) {
     char buf[32];
+    int64_t tw = 0, th = 0;
     snprintf(buf, sizeof buf, "%lld", (long long)v);
-    if (plat_measure) plat_measure(buf, px, w, h);
-    else measure_default(buf, px, w, h);
+    if (plat_measure) plat_measure(buf, px, &tw, &th);
+    else measure_default(buf, px, &tw, &th);
+    if (w) *w = (int32_t)tw;
+    if (h) *h = (int32_t)th;
 }
 
 static void measure_span(const char *s, int64_t n, int64_t px, int64_t *w, int64_t *h) {
@@ -532,8 +541,11 @@ static void wrap_text(const char *s, int64_t n, int64_t px, int64_t max_w, int p
     if (out_h) *out_h = lines * lh;
 }
 
-void yuga_zeus_plat_measure_wrap(yuga_str s, int64_t px, int64_t max_w, int64_t *w, int64_t *h) {
-    wrap_text(s.ptr, s.len, px, max_w, 0, 0, 0, 0, w, h);
+void yuga_zeus_plat_measure_wrap(yuga_str s, int32_t px, int32_t max_w, int32_t *w, int32_t *h) {
+    int64_t ww = 0, hh = 0;
+    wrap_text(s.ptr, s.len, px, max_w, 0, 0, 0, 0, &ww, &hh);
+    if (w) *w = (int32_t)ww;
+    if (h) *h = (int32_t)hh;
 }
 
 void yuga_zeus_plat_text_wrap(int64_t x, int64_t y, yuga_str s, int64_t rgb, int64_t font,
@@ -661,7 +673,7 @@ void yuga_platform_plat_image(int64_t x, int64_t y, int64_t w, int64_t h, yuga_s
                               int64_t radius, int64_t alpha, int64_t fit) {
     yuga_zeus_plat_image(x, y, w, h, src, radius, alpha, fit);
 }
-yuga_str yuga_platform_plat_pick_image(int64_t *w, int64_t *h) {
+yuga_str yuga_platform_plat_pick_image(int32_t *w, int32_t *h) {
     return yuga_zeus_plat_pick_image(w, h);
 }
 void yuga_platform_plat_save(void) { yuga_zeus_plat_save(); }
@@ -1143,14 +1155,14 @@ void yuga_platform_plat_edit_reset(int64_t slot) {
     edit_clear_mark((int)slot);
 }
 
-void yuga_platform_plat_measure(yuga_str s, int64_t px, int64_t *w, int64_t *h) {
+void yuga_platform_plat_measure(yuga_str s, int32_t px, int32_t *w, int32_t *h) {
     yuga_zeus_plat_measure(s, px, w, h);
 }
-void yuga_platform_plat_measure_int(int64_t v, int64_t px, int64_t *w, int64_t *h) {
+void yuga_platform_plat_measure_int(int32_t v, int32_t px, int32_t *w, int32_t *h) {
     yuga_zeus_plat_measure_int(v, px, w, h);
 }
-void yuga_platform_plat_measure_wrap(yuga_str s, int64_t px, int64_t max_w, int64_t *w,
-                                     int64_t *h) {
+void yuga_platform_plat_measure_wrap(yuga_str s, int32_t px, int32_t max_w, int32_t *w,
+                                     int32_t *h) {
     yuga_zeus_plat_measure_wrap(s, px, max_w, w, h);
 }
 void yuga_platform_plat_text_wrap(int64_t x, int64_t y, yuga_str s, int64_t rgb, int64_t font,
