@@ -214,9 +214,9 @@ fn click(px: int, py: int) -> int {
     if arena.nodes[id].kind == 10 {
         let slot = arena.edit_ready(id)
         if slot >= 0 {
-            let relx = px - arena.nodes[id].x - arena.nodes[id].pad_l - arena.nodes[id].border_w
-            let rely = py - arena.nodes[id].y - arena.nodes[id].pad_t - arena.nodes[id].border_w
-            let mut font = arena.nodes[id].font
+            let relx = px - arena.nodes[id].x - i32(arena.nodes[id].pad_l) - i32(arena.nodes[id].border_w)
+            let rely = py - arena.nodes[id].y - i32(arena.nodes[id].pad_t) - i32(arena.nodes[id].border_w)
+            let mut font = i32(arena.nodes[id].font)
             if font < 8 {
                 font = 14
             }

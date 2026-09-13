@@ -1510,6 +1510,19 @@ static Type *check_call(AstNode *n, Type *expect) {
     /* wrapping_add / saturating_add / wrapping bit ops / string_from_bytes */
     if (cal && cal->kind == AST_IDENT) {
         const char *nm = cal->as.ident.name;
+        /* `__sizeof(x)` — byte size of x's type, a compile-time constant. Used
+           by the Phase 11 arena-size benchmark; x is not evaluated. */
+        if (strcmp(nm, "__sizeof") == 0) {
+            if (n->as.call.arg_count != 1) {
+                err(n->loc, "__sizeof expects 1 argument");
+                return ty_void();
+            }
+            Type *at = check_expr(n->as.call.args[0]);
+            (void)at;
+            n->as.call.is_sizeof = 1;
+            n->ty = ty_int();
+            return n->ty;
+        }
         /* `"a {{x}} b"` arrives as __interp(parts...). Fold it here into
            yuga_str_of_* / yuga_str_concat builtin calls, so neither backend
            needs to know interpolation existed. */
