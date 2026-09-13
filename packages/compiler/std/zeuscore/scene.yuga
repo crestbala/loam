@@ -5,7 +5,12 @@ import "arena.yuga"
 import "geometry.yuga"
 import "platform.yuga"
 
+// Fields grouped by width, widest first, so the 8-byte-aligned `text` slice
+// does not force padding between 4-byte ints (Phase 11). `text` is empty for
+// every primitive except text ops, but keeping it in the record means one
+// uniform draw list; grouping recovers the bytes that interleaving cost.
 struct Draw {
+    text: string,
     kind: int,
     x: int,
     y: int,
@@ -15,7 +20,6 @@ struct Draw {
     radius: int,
     alpha: int,
     font: int,
-    text: string,
     value: int,
 }
 
@@ -129,7 +133,7 @@ fn paint_hover_wash(id: int) {
         if arena.hover_rgb() == 0 {
             a = t * 8 / 100
         }
-        fill_a(arena.draw_x(id), arena.draw_y(id), arena.nodes[id].w, arena.nodes[id].h, arena.hover_rgb(), arena.nodes[id].radius, a)
+        fill_a(arena.draw_x(id), arena.draw_y(id), arena.nodes[id].w, arena.nodes[id].h, arena.hover_rgb(), i32(arena.nodes[id].radius), a)
     }
 }
 
@@ -145,20 +149,20 @@ fn paint_fill_box(id: int, wash: int) {
         }
         return
     }
-    let mut inner_r = arena.nodes[id].radius
+    let mut inner_r = i32(arena.nodes[id].radius)
     if arena.nodes[id].border_w > 0 {
         if arena.nodes[id].border_c >= 0 {
             let bc = arena.paint_rgb(arena.nodes[id].border_c)
             if a < 255 {
-                fill_a(x, y, w, h, bc, arena.nodes[id].radius, a)
+                fill_a(x, y, w, h, bc, i32(arena.nodes[id].radius), a)
             } else {
-                fill(x, y, w, h, bc, arena.nodes[id].radius)
+                fill(x, y, w, h, bc, i32(arena.nodes[id].radius))
             }
-            x = x + arena.nodes[id].border_w
-            y = y + arena.nodes[id].border_w
-            w = geometry.max2(w - arena.nodes[id].border_w * 2, 0)
-            h = geometry.max2(h - arena.nodes[id].border_w * 2, 0)
-            inner_r = geometry.max2(arena.nodes[id].radius - arena.nodes[id].border_w, 0)
+            x = x + i32(arena.nodes[id].border_w)
+            y = y + i32(arena.nodes[id].border_w)
+            w = geometry.max2(w - i32(arena.nodes[id].border_w) * 2, 0)
+            h = geometry.max2(h - i32(arena.nodes[id].border_w) * 2, 0)
+            inner_r = geometry.max2(i32(arena.nodes[id].radius) - i32(arena.nodes[id].border_w), 0)
         }
     }
     let rgb = arena.paint_rgb(arena.nodes[id].bg)
@@ -186,8 +190,8 @@ fn paint_input(id: int) {
     let y = arena.draw_y(id)
     let w = arena.nodes[id].w
     let h = arena.nodes[id].h
-    let tx = x + arena.nodes[id].pad_l + arena.nodes[id].border_w
-    let ty = y + arena.nodes[id].pad_t + arena.nodes[id].border_w
+    let tx = x + i32(arena.nodes[id].pad_l) + i32(arena.nodes[id].border_w)
+    let ty = y + i32(arena.nodes[id].pad_t) + i32(arena.nodes[id].border_w)
     let fg = arena.fg_of(id)
     let shown = arena.input_shown(id)
     let inner = arena.inner_w(id)
@@ -195,7 +199,7 @@ fn paint_input(id: int) {
     save()
     clip(x, y, w, h)
     if slot >= 0 {
-        let mut font = arena.nodes[id].font
+        let mut font = i32(arena.nodes[id].font)
         if font < 8 {
             font = 14
         }
@@ -212,9 +216,9 @@ fn paint_input(id: int) {
         }
     }
     if inner > 0 {
-        text_wrap(tx, ty, shown, fg, arena.nodes[id].font, inner)
+        text_wrap(tx, ty, shown, fg, i32(arena.nodes[id].font), inner)
     } else {
-        text(tx, ty, shown, fg, arena.nodes[id].font)
+        text(tx, ty, shown, fg, i32(arena.nodes[id].font))
     }
     if arena.focus_id == id {
         if slot >= 0 {
@@ -228,44 +232,44 @@ fn paint_input(id: int) {
 }
 
 fn paint_label(id: int) {
-    let x = arena.draw_x(id) + arena.nodes[id].pad_l + arena.nodes[id].border_w
+    let x = arena.draw_x(id) + i32(arena.nodes[id].pad_l) + i32(arena.nodes[id].border_w)
     let fg = arena.fg_of(id)
     let rot = arena.nodes[id].text_rot
     if rot != 0 {
-        text_rot(x, arena.draw_y(id) + arena.nodes[id].pad_t + arena.nodes[id].border_w,
-                 arena.nodes[id].text, fg, arena.nodes[id].font, rot)
+        text_rot(x, arena.draw_y(id) + i32(arena.nodes[id].pad_t) + i32(arena.nodes[id].border_w),
+                 arena.nodes[id].text, fg, i32(arena.nodes[id].font), rot)
         return
     }
     if arena.has_bound_num(id) != 0 {
-        let y = arena.draw_y(id) + arena.nodes[id].pad_t + geometry.max2(arena.nodes[id].h - arena.nodes[id].pad_t - arena.nodes[id].pad_b - arena.nodes[id].th, 0) / 2
-        text_int(x, y, arena.bound_num(id), fg, arena.nodes[id].font)
+        let y = arena.draw_y(id) + i32(arena.nodes[id].pad_t) + geometry.max2(arena.nodes[id].h - i32(arena.nodes[id].pad_t) - i32(arena.nodes[id].pad_b) - arena.nodes[id].th, 0) / 2
+        text_int(x, y, arena.bound_num(id), fg, i32(arena.nodes[id].font))
         return
     }
     let inner = arena.inner_w(id)
     if arena.nodes[id].wrap != 0 {
         if inner > 0 {
             if inner < arena.nodes[id].tw {
-                text_wrap(x, arena.draw_y(id) + arena.nodes[id].pad_t + arena.nodes[id].border_w, arena.nodes[id].text, fg, arena.nodes[id].font, inner)
+                text_wrap(x, arena.draw_y(id) + i32(arena.nodes[id].pad_t) + i32(arena.nodes[id].border_w), arena.nodes[id].text, fg, i32(arena.nodes[id].font), inner)
                 return
             }
         }
     }
-    let y = arena.draw_y(id) + arena.nodes[id].pad_t + geometry.max2(arena.nodes[id].h - arena.nodes[id].pad_t - arena.nodes[id].pad_b - arena.nodes[id].th, 0) / 2
-    text(x, y, arena.nodes[id].text, fg, arena.nodes[id].font)
+    let y = arena.draw_y(id) + i32(arena.nodes[id].pad_t) + geometry.max2(arena.nodes[id].h - i32(arena.nodes[id].pad_t) - i32(arena.nodes[id].pad_b) - arena.nodes[id].th, 0) / 2
+    text(x, y, arena.nodes[id].text, fg, i32(arena.nodes[id].font))
 }
 
 fn paint_button(id: int) {
     if arena.nodes[id].bg >= 0 {
-        fill(arena.draw_x(id), arena.draw_y(id), arena.nodes[id].w, arena.nodes[id].h, arena.paint_rgb(arena.nodes[id].bg), arena.nodes[id].radius)
+        fill(arena.draw_x(id), arena.draw_y(id), arena.nodes[id].w, arena.nodes[id].h, arena.paint_rgb(arena.nodes[id].bg), i32(arena.nodes[id].radius))
     }
     let tw = arena.nodes[id].tw
     let th = arena.nodes[id].th
     let tx = arena.draw_x(id) + geometry.max2(arena.nodes[id].w - tw, 0) / 2
     let ty = arena.draw_y(id) + geometry.max2(arena.nodes[id].h - th, 0) / 2
     if arena.has_bound_num(id) != 0 {
-        text_int(tx, ty, arena.bound_num(id), arena.fg_of(id), arena.nodes[id].font)
+        text_int(tx, ty, arena.bound_num(id), arena.fg_of(id), i32(arena.nodes[id].font))
     } else {
-        text(tx, ty, arena.nodes[id].text, arena.fg_of(id), arena.nodes[id].font)
+        text(tx, ty, arena.nodes[id].text, arena.fg_of(id), i32(arena.nodes[id].font))
     }
     paint_hover_wash(id)
 }
@@ -334,7 +338,7 @@ fn paint_node(id: int) {
     }
     if k == 11 {
         if arena.nodes[id].bg >= 0 {
-            fill(x, y, w, h, arena.paint_rgb(arena.nodes[id].bg), arena.nodes[id].radius)
+            fill(x, y, w, h, arena.paint_rgb(arena.nodes[id].bg), i32(arena.nodes[id].radius))
         }
         save()
         clip(x, y, w, h)
@@ -370,10 +374,10 @@ fn paint_node(id: int) {
         if arena.nodes[id].bg >= 0 {
             track = arena.paint_rgb(arena.nodes[id].bg)
         }
-        fill(x, y, w, h, track, arena.nodes[id].radius)
+        fill(x, y, w, h, track, i32(arena.nodes[id].radius))
         let fw = w * arena.bind_pct(id) / 100
         if fw > 0 {
-            fill(x, y, fw, h, arena.fg_of(id), arena.nodes[id].radius)
+            fill(x, y, fw, h, arena.fg_of(id), i32(arena.nodes[id].radius))
         }
         paint_hover_wash(id)
     } else if k == 13 {
@@ -420,7 +424,7 @@ fn paint_node(id: int) {
                 track = arena.paint_rgb(arena.nodes[id].fg)
             }
         }
-        fill(x, y, w, h, track, arena.nodes[id].radius)
+        fill(x, y, w, h, track, i32(arena.nodes[id].radius))
         let pad = geometry.max2(h / 6, 1)
         let th = geometry.max2(h - pad * 2, 1)
         let t0 = x + pad
@@ -450,7 +454,7 @@ fn paint_node(id: int) {
         if twn > 50 {
             fillc = arena.fg_of(id)
         }
-        fill(x, y, w, h, fillc, arena.nodes[id].radius)
+        fill(x, y, w, h, fillc, i32(arena.nodes[id].radius))
         if twn > 0 {
             svg(x, y, w, h, arena.nodes[id].text, arena.paint_rgb(arena.nodes[id].border_c), arena.paint_alpha(id) * twn / 100)
         }
@@ -476,8 +480,8 @@ fn paint_node(id: int) {
             }
         }
         if draw != 0 {
-            image(x, y, w, h, arena.nodes[id].text, arena.nodes[id].radius, arena.paint_alpha(id),
-                  arena.nodes[id].font)
+            image(x, y, w, h, arena.nodes[id].text, i32(arena.nodes[id].radius), arena.paint_alpha(id),
+                  i32(arena.nodes[id].font))
         }
     } else {
         // Text inputs paint flat: no hover/press wash, so clicking never

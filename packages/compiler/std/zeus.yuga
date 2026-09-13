@@ -385,8 +385,8 @@ fn raw_image(src: string) -> Node {
 }
 fn raw_grid(columns: int, gap: int) -> Node {
     let id = arena.alloc_node(2)
-    arena.nodes[id].grid_cols = columns
-    arena.nodes[id].gap = gap
+    arena.nodes[id].grid_cols = u16(columns)
+    arena.nodes[id].gap = u16(gap)
     return node_handle(id)
 }
 fn raw_hover(node: Node, sig: Signal<int>) -> Node {
@@ -481,45 +481,45 @@ fn shrink(node: Node, weight: int) -> Node {
 /// Inset all four edges. Padding lives on the node rather than on a wrapper
 /// box so a widget stays one node and layout stays one pass.
 fn set_padding(node: Node, all: int) -> Node {
-    arena.nodes[node.id].pad = all
-    arena.nodes[node.id].pad_t = all
-    arena.nodes[node.id].pad_r = all
-    arena.nodes[node.id].pad_b = all
-    arena.nodes[node.id].pad_l = all
+    arena.nodes[node.id].pad = u16(all)
+    arena.nodes[node.id].pad_t = u16(all)
+    arena.nodes[node.id].pad_r = u16(all)
+    arena.nodes[node.id].pad_b = u16(all)
+    arena.nodes[node.id].pad_l = u16(all)
     return node
 }
 /// Inset left and right only — the common case for control chrome, where
 /// horizontal breathing room is set independently of height.
 fn set_padding_x(node: Node, px: int) -> Node {
-    arena.nodes[node.id].pad_l = px
-    arena.nodes[node.id].pad_r = px
+    arena.nodes[node.id].pad_l = u16(px)
+    arena.nodes[node.id].pad_r = u16(px)
     return node
 }
 /// Inset top and bottom only, the vertical half of `set_padding_x`.
 fn set_padding_y(node: Node, py: int) -> Node {
-    arena.nodes[node.id].pad_t = py
-    arena.nodes[node.id].pad_b = py
+    arena.nodes[node.id].pad_t = u16(py)
+    arena.nodes[node.id].pad_b = u16(py)
     return node
 }
 /// Inset one edge. The per-edge setters exist so a recipe can override a
 /// single side without restating the other three.
 fn set_padding_top(node: Node, px: int) -> Node {
-    arena.nodes[node.id].pad_t = px
+    arena.nodes[node.id].pad_t = u16(px)
     return node
 }
 /// Inset one edge; see `set_padding_top`.
 fn set_padding_right(node: Node, px: int) -> Node {
-    arena.nodes[node.id].pad_r = px
+    arena.nodes[node.id].pad_r = u16(px)
     return node
 }
 /// Inset one edge; see `set_padding_top`.
 fn set_padding_bottom(node: Node, px: int) -> Node {
-    arena.nodes[node.id].pad_b = px
+    arena.nodes[node.id].pad_b = u16(px)
     return node
 }
 /// Inset one edge; see `set_padding_top`.
 fn set_padding_left(node: Node, px: int) -> Node {
-    arena.nodes[node.id].pad_l = px
+    arena.nodes[node.id].pad_l = u16(px)
     return node
 }
 fn margin(node: Node, all: int) -> Node {
@@ -556,7 +556,13 @@ fn marginLeft(node: Node, px: int) -> Node {
     return node
 }
 fn border(node: Node, width: int) -> Node {
-    arena.nodes[node.id].border_w = width
+    // A negative width is the "unset" sentinel; a non-positive width means no
+    // border, so it maps to 0 rather than a u16 trap.
+    if width > 0 {
+        arena.nodes[node.id].border_w = u16(width)
+    } else {
+        arena.nodes[node.id].border_w = 0
+    }
     return node
 }
 fn border_color(node: Node, rgb: int) -> Node {
@@ -567,18 +573,18 @@ fn border_color(node: Node, rgb: int) -> Node {
 /// Space between children. Gap belongs to the parent, not to each child's
 /// margin, so adding or removing a child cannot leave a stray edge gap.
 fn set_spacing(node: Node, g: int) -> Node {
-    arena.nodes[node.id].gap = g
+    arena.nodes[node.id].gap = u16(g)
     return node
 }
 /// Row-axis gap for wrapped and grid layouts, where the two axes need
 /// different spacing and one `set_spacing` cannot express it.
 fn set_spacing_row(node: Node, g: int) -> Node {
-    arena.nodes[node.id].gap_row = g
+    arena.nodes[node.id].gap_row = u16(g)
     return node
 }
 /// Column-axis gap; the other half of `set_spacing_row`.
 fn set_spacing_col(node: Node, g: int) -> Node {
-    arena.nodes[node.id].gap_col = g
+    arena.nodes[node.id].gap_col = u16(g)
     return node
 }
 
@@ -698,7 +704,7 @@ fn align_self(node: Node, mode: int) -> Node {
     return node
 }
 fn span(node: Node, columns: int) -> Node {
-    arena.nodes[node.id].span = columns
+    arena.nodes[node.id].span = u16(columns)
     return node
 }
 
@@ -707,7 +713,7 @@ fn justify(node: Node, mode: int) -> Node {
     return node
 }
 fn align(node: Node, mode: int) -> Node {
-    arena.nodes[node.id].align = mode
+    arena.nodes[node.id].align = u8(mode)
     return node
 }
 
@@ -756,7 +762,7 @@ fn set_color(node: Node, rgb: int) -> Node {
     return node
 }
 fn radius(node: Node, px: int) -> Node {
-    arena.nodes[node.id].radius = px
+    arena.nodes[node.id].radius = u16(px)
     return node
 }
 fn opacity(node: Node, pct: int) -> Node {
@@ -764,11 +770,11 @@ fn opacity(node: Node, pct: int) -> Node {
     return node
 }
 fn overflow(node: Node, mode: int) -> Node {
-    arena.nodes[node.id].overflow = mode
+    arena.nodes[node.id].overflow = u8(mode)
     return node
 }
 fn font(node: Node, px: int) -> Node {
-    arena.nodes[node.id].font = px
+    arena.nodes[node.id].font = u16(px)
     return node
 }
 
@@ -1506,6 +1512,40 @@ fn arena_sigs() -> int {
     return arena.sigs.len
 }
 
+/// Byte size of one arena node record (diagnostics for the Phase 11 layout
+/// steps).
+fn node_bytes() -> int {
+    if arena.nodes.len == 0 {
+        return 0
+    }
+    return __sizeof(arena.nodes[0])
+}
+
+/// Total bytes held by live arena node records.
+fn arena_bytes() -> i64 {
+    if arena.nodes.len == 0 {
+        return 0
+    }
+    return i64(arena.nodes.len) * i64(__sizeof(arena.nodes[0]))
+}
+
+/// Byte size of one draw-list record (diagnostics for the Phase 11 layout
+/// steps).
+fn draw_op_bytes() -> int {
+    if scene.draws.len == 0 {
+        return 0
+    }
+    return __sizeof(scene.draws[0])
+}
+
+/// Total bytes held by the draw list at paint time.
+fn draw_bytes() -> i64 {
+    if scene.draws.len == 0 {
+        return 0
+    }
+    return i64(scene.draws.len) * i64(__sizeof(scene.draws[0]))
+}
+
 /// Print the current draw list. The DRAW goldens diff this text, which is
 /// why the format is stable and why paint order is deterministic.
 fn dump_draw_list() {
@@ -1971,10 +2011,12 @@ enum SET {
 /// Does this write carry no value? Most props use -1 for "the caller did not
 /// pass this", so one rule here replaces the same `if v >= 0` repeated in
 /// every arm below. The flag-like setters opt out: they mean something at 0
-/// and -1, so they always apply.
+/// and -1, so they always apply. `SET.Border` is deliberately not one of them:
+/// its width is additive in `content_x`/`content_y`, so applying the unset `-1`
+/// shifted every container's content by one pixel.
 fn skip_unset(setter: int, v: int) -> bool {
     match setter {
-        SET.Border | SET.Direction | SET.Wrap | SET.Safe | SET.ShowOn => { return false }
+        SET.Direction | SET.Wrap | SET.Safe | SET.ShowOn => { return false }
         // A 0px glyph is not a size, so font rejects 0 as well.
         SET.Font => { return v <= 0 }
         _ => { return v < 0 }
@@ -1999,7 +2041,7 @@ fn apply_int(nid: int, setter: int, v: int) {
         SET.PaddingY => { set_padding_y(n, scaled(v)) }
         SET.Spacing => { set_spacing(n, scaled(v)) }
         SET.Radius => { radius(n, scaled(v)) }
-        SET.Border => { arena.nodes[nid].border_w = v }
+        SET.Border => { arena.nodes[nid].border_w = u16(v) }
         SET.Grow => { grow(n, v) }
         SET.AlignItems => { align(n, v) }
         SET.Justify => { justify(n, v) }
@@ -2039,11 +2081,11 @@ fn apply_int(nid: int, setter: int, v: int) {
         SET.Shrink => { shrink(n, v) }
         SET.ShowOn => {
             match v {
-                0 | 1 => { arena.nodes[nid].show_on = v }
+                0 | 1 => { arena.nodes[nid].show_on = u8(v) }
                 _ => { }
             }
         }
-        SET.SvgFit => { arena.nodes[nid].font = v }
+        SET.SvgFit => { arena.nodes[nid].font = u16(v) }
         SET.SvgLazy => { arena.nodes[nid].wrap = v }
         _ => { }
     }
@@ -5068,7 +5110,7 @@ fn PageButton(page: Signal<int>, n: int) {
         if page.get() == n {
             bw = HAIRLINE
         }
-        arena.nodes[btn.id].border_w = bw
+        arena.nodes[btn.id].border_w = u16(bw)
     })
 }
 

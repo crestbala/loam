@@ -531,6 +531,13 @@ static int lower_call(AstNode *n) {
         i->callee = yuga_dup(numeric_builtin_cname(n->as.call.num_builtin, n->ty));
         return dst;
     }
+    if (n->as.call.is_sizeof) {
+        IrInst *i = emit(IR_SIZEOF, n->loc);
+        i->dst = dst;
+        i->a = -1;
+        i->ty = n->as.call.arg_count ? ir_subst(n->as.call.args[0]->ty) : ty_void();
+        return dst;
+    }
     if (n->as.call.c_builtin) {
         int nargs = (int)n->as.call.arg_count;
         int *args = nargs ? (int *)calloc((size_t)nargs, sizeof(int)) : NULL;
@@ -1796,6 +1803,9 @@ static void print_inst(FILE *o, const IrInst *i) {
             break;
         case IR_CAST:
             fprintf(o, "cast %%%d", i->a);
+            break;
+        case IR_SIZEOF:
+            fprintf(o, "sizeof %s", i->ty ? type_name(i->ty) : "?");
             break;
     }
     fprintf(o, "\n");

@@ -207,6 +207,7 @@ struct AstNode {
             int is_box_new;
             int is_vec_push;
             int is_vec_pop;
+            int is_sizeof; /* __sizeof(x) — byte size of x's type (Phase 11 bench) */
             NumericBuiltin num_builtin; /* wrapping_ / saturating_ op, width from args */
             const char *c_builtin; /* emit this C symbol (wrapping_shr, string_from_bytes, …) */
             const char *resolved_cname;

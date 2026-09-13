@@ -10,36 +10,30 @@ import "platform.yuga"
 import "track.yuga"
 
 struct UiNode {
+    kids: []int,
+    text: string,
+    a11y_label: string,
+    a11y_role: string,
+    /// CSS cursor shown while the pointer is over this node ("" = default).
+    cursor: string,
+
     kind: int,
     dir: int,
-    kids: []int,
-    pad: int,
-    padx: int,
-    pady: int,
-    pad_t: int,
-    pad_r: int,
-    pad_b: int,
-    pad_l: int,
-    gap: int,
     grow: int,
     shrink: int,
     bg: int,
     /// Second fill color for a vertical gradient (`bg` → `bg2`). `-1` = solid `bg`.
     bg2: int,
     fg: int,
-    radius: int,
     ew: int,
     eh: int,
-    font: int,
     justify: int,
-    align: int,
     min_w: int,
     max_w: int,
     min_h: int,
     max_h: int,
     w_pct: int,
     h_pct: int,
-    text: string,
     bind_sig: int,
     click_sig: int,
     click_mode: int,
@@ -48,11 +42,7 @@ struct UiNode {
     click2_mode: int,
     click2_set: int,
     show_sig: int,
-    show_mode: int,
     show_val: int,
-    /// Declarative `show` prop result (0 hidden / 1 visible); consulted when
-    /// no `show_sig` is bound. Signal shows (`show` / `show_eq` / `If`) win.
-    show_on: int,
     hover_sig: int,
     x: int,
     y: int,
@@ -62,19 +52,12 @@ struct UiNode {
     ih: int,
     nid: int,
     pos: int,
-    overflow: int,
     opacity: int,
-    span: int,
-    grid_cols: int,
-    grid_min: int,
     m_t: int,
     m_r: int,
     m_b: int,
     m_l: int,
-    border_w: int,
     border_c: int,
-    gap_row: int,
-    gap_col: int,
     aspect_w: int,
     aspect_h: int,
     wrap: int,
@@ -85,14 +68,11 @@ struct UiNode {
     pin_b: int,
     pin_l: int,
     z_index: int,
-    grid_auto: int,
     scroll_x: int,
     scroll_y: int,
     tw: int,
     th: int,
     pulse: int,
-    /// 1 = press overlay while this node is `down_id` (buttons).
-    press: int,
     /// 0..100 ease of the press overlay. Rest is 0, so DRAW goldens hold.
     press_amt: int,
     aw: int,
@@ -101,11 +81,8 @@ struct UiNode {
     parent: int,
     key_ctx: int,
     focusable: int,
-    capture_text: int,
     edit_slot: int,
     click_fn: int,
-    ui_size: int,
-    ui_look: int,
     restyle_fn: int,
     hover_fade: int,
     hover_amt: int,
@@ -134,12 +111,45 @@ struct UiNode {
     /// no blank strip is ever revealed past the first/last content).
     vel_x: int,
     vel_y: int,
-    a11y_label: string,
-    a11y_role: string,
-    /// CSS cursor shown while the pointer is over this node ("" = default).
-    cursor: string,
     /// Clockwise-on-screen degrees for text nodes (0 = horizontal).
     text_rot: int,
+
+    /// Style lengths in dp, unscaled (the DPI scale is applied at paint), so
+    /// the stored value is the authored value. Each is at most the `u16`
+    /// maximum (65535); an out-of-range literal is a compile error at the
+    /// literal, not a runtime trap.
+    pad: u16,
+    padx: u16,
+    pady: u16,
+    pad_t: u16,
+    pad_r: u16,
+    pad_b: u16,
+    pad_l: u16,
+    gap: u16,
+    gap_row: u16,
+    gap_col: u16,
+    radius: u16,
+    /// Border width in dp. `-1` at the props layer is "unset" and maps to 0, so
+    /// `content_x`/`content_y` never add a negative inset.
+    border_w: u16,
+    /// Font size in px. On svg nodes it also carries the `fit` mode.
+    font: u16,
+    span: u16,
+    grid_cols: u16,
+    grid_min: u16,
+
+    align: u8,
+    show_mode: u8,
+    /// Declarative `show` prop result (0 hidden / 1 visible); consulted when
+    /// no `show_sig` is bound. Signal shows (`show` / `show_eq` / `If`) win.
+    show_on: u8,
+    overflow: u8,
+    grid_auto: u8,
+    /// 1 = press overlay while this node is `down_id` (buttons).
+    press: u8,
+    capture_text: u8,
+    ui_size: u8,
+    ui_look: u8,
 }
 
 let mut nodes: []UiNode = []UiNode {}
@@ -534,22 +544,28 @@ fn has_bound_num(id: int) -> int {
 }
 
 fn box_pad_x(id: int) -> int {
-    return nodes[id].pad_l + nodes[id].pad_r + nodes[id].border_w + nodes[id].border_w
+    let pl = i32(nodes[id].pad_l)
+    let pr = i32(nodes[id].pad_r)
+    let bw = i32(nodes[id].border_w)
+    return pl + pr + bw + bw
 }
 fn box_pad_y(id: int) -> int {
-    return nodes[id].pad_t + nodes[id].pad_b + nodes[id].border_w + nodes[id].border_w
+    let pt = i32(nodes[id].pad_t)
+    let pb = i32(nodes[id].pad_b)
+    let bw = i32(nodes[id].border_w)
+    return pt + pb + bw + bw
 }
 fn gap_x(id: int) -> int {
     if nodes[id].gap_col > 0 {
-        return nodes[id].gap_col
+        return i32(nodes[id].gap_col)
     }
-    return nodes[id].gap
+    return i32(nodes[id].gap)
 }
 fn gap_y(id: int) -> int {
     if nodes[id].gap_row > 0 {
-        return nodes[id].gap_row
+        return i32(nodes[id].gap_row)
     }
-    return nodes[id].gap
+    return i32(nodes[id].gap)
 }
 fn inset_here(id: int) -> int {
     if id == root_id {
@@ -559,14 +575,14 @@ fn inset_here(id: int) -> int {
 }
 
 fn content_x(id: int) -> int {
-    let mut x = nodes[id].x + nodes[id].pad_l + nodes[id].border_w
+    let mut x = nodes[id].x + i32(nodes[id].pad_l) + i32(nodes[id].border_w)
     if inset_here(id) != 0 {
         x = x + safe_l
     }
     return x
 }
 fn content_y(id: int) -> int {
-    let mut y = nodes[id].y + nodes[id].pad_t + nodes[id].border_w
+    let mut y = nodes[id].y + i32(nodes[id].pad_t) + i32(nodes[id].border_w)
     if inset_here(id) != 0 {
         y = y + safe_t
     }
@@ -620,7 +636,7 @@ fn child_align(p: int, c: int) -> int {
     if nodes[c].align_self >= 0 {
         return nodes[c].align_self
     }
-    return nodes[p].align
+    return i32(nodes[p].align)
 }
 
 fn has_w(id: int) -> int {
@@ -779,7 +795,7 @@ fn want_show(id: int) -> int {
     if nodes[id].show_sig <= 0 {
         /* No signal bound: the declarative `show` prop decides (or the
            default, visible). */
-        return nodes[id].show_on
+        return i32(nodes[id].show_on)
     }
     if nodes[id].show_sig >= sigs.len {
         return 1
@@ -788,10 +804,10 @@ fn want_show(id: int) -> int {
     let mode = nodes[id].show_mode
     let val = nodes[id].show_val
     if mode == 0 {
-        if vv == 0 {
-            return 0
+        if vv != 0 {
+            return 1
         }
-        return 1
+        return 0
     }
     if mode == 1 {
         if vv == val {
@@ -1607,7 +1623,7 @@ fn edit_ready(id: int) -> int {
     if slot < 0 {
         return -1
     }
-    let mut font = nodes[id].font
+    let mut font = i32(nodes[id].font)
     if font < 8 {
         font = 14
     }

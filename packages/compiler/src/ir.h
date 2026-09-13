@@ -57,6 +57,7 @@ typedef enum {
     IR_FN_VAL,     /* dst = (fn, NULL) fat pointer for a named function */
     IR_CLOS,       /* dst = { callee, env }; args = capture values (heap env) */
     IR_CAST,       /* dst = (ty) a */
+    IR_SIZEOF,     /* dst = sizeof(ty) in bytes (Phase 11 bench) */
 } IrOp;
 
 typedef struct {

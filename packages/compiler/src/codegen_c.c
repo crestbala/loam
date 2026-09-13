@@ -1015,6 +1015,16 @@ static void emit_expr(FILE *o, AstNode *n) {
                 fprintf(o, ")");
                 break;
             }
+            if (n->as.call.is_sizeof && n->as.call.arg_count == 1) {
+                Type *at = n->as.call.args[0]->ty;
+                size_t nel = (at && at->kind == TY_ARRAY && at->array_len > 0)
+                                 ? (size_t)at->array_len
+                                 : 1;
+                fprintf(o, "((int32_t)(sizeof(");
+                emit_ctype(o, at && at->kind == TY_ARRAY ? at->elem : at);
+                fprintf(o, ") * %zu))", nel);
+                break;
+            }
             if (n->as.call.num_builtin != NUMB_NONE) {
                 fprintf(o, "%s(", numeric_builtin_cname(n->as.call.num_builtin, n->ty));
                 for (size_t k = 0; k < n->as.call.arg_count; k++) {
@@ -1936,6 +1946,16 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                 }
                 fprintf(o, ");\n");
             }
+            break;
+        }
+        case IR_SIZEOF: {
+            Type *at = in->ty;
+            size_t nel = (at && at->kind == TY_ARRAY && at->array_len > 0)
+                             ? (size_t)at->array_len
+                             : 1;
+            fprintf(o, "%s = (int32_t)(sizeof(", lv(in->dst));
+            emit_ctype(o, at && at->kind == TY_ARRAY ? at->elem : at);
+            fprintf(o, ") * %zu);\n", nel);
             break;
         }
         case IR_CALL:

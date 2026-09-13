@@ -17,11 +17,11 @@
 #endif
 
 typedef struct {
-    int64_t id;
+    uint32_t id;
 } Node;
 
 typedef struct {
-    int64_t id;
+    uint32_t id;
 } Signal;
 
 /* --- Yuga API: import "std:zeus" → yuga_zeus_* --- */

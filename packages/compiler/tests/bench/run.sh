@@ -39,7 +39,8 @@ if [ ! -x "$BASE/bin/yugac" ]; then
         echo "bench: baseline build failed"; exit 1; }
 fi
 mkdir -p "$BASE/$(dirname "$APP_REL")"
-cp "$APP_REL" "$BASE/$APP_REL"
+# The HEAD std has no `__sizeof` diagnostics, so the baseline app omits them.
+grep -v -E 'node_bytes|arena_bytes|draw_op_bytes|draw_bytes' "$APP_REL" > "$BASE/$APP_REL"
 run_one "before (HEAD, int=i64)" "$BASE/bin/yugac" "$BASE/$APP_REL" "$OUT/bench_before"
 run_one "after  (default, int=i32)" "$YUGAC" "$APP_REL" "$OUT/bench_after"
 

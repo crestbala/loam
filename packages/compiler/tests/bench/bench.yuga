@@ -35,6 +35,11 @@ fn main() {
 
     fmt.println("arena_nodes", zeus.arena_nodes())
     fmt.println("arena_sigs", zeus.arena_sigs())
+    fmt.println("node_bytes", zeus.node_bytes())
+    fmt.println("arena_bytes", zeus.arena_bytes())
+    zeus.engine_paint()
     fmt.println("draw_ops", zeus.draw_count())
+    fmt.println("draw_op_bytes", zeus.draw_op_bytes())
+    fmt.println("draw_bytes", zeus.draw_bytes())
     fmt.println("layout_total_ms", dt)
 }
