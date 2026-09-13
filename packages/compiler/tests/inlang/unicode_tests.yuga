@@ -1,0 +1,68 @@
+// In-language tests for `std:unicode` (UTF-8 + extended grapheme clusters).
+
+import "std:test"
+import "std:unicode"
+
+fn bytes(xs: []int) -> string {
+    return string_from_bytes(xs)
+}
+
+#[test]
+fn test_ascii_boundaries() {
+    test.assert_eq_int(unicode.grapheme_count("hello"), 5)
+    test.assert_eq_int(unicode.next_grapheme("hello", 0), 1)
+    test.assert_eq_int(unicode.prev_grapheme("hello", 5), 4)
+    test.assert_eq_int(unicode.grapheme_start("hello", 3), 3)
+    test.assert_eq_int(unicode.grapheme_count(""), 0)
+}
+
+#[test]
+fn test_tamil_clusters() {
+    // தமிழ் = [த][மி][ழ்] — 3 clusters at bytes 0, 3, 9, 15.
+    let s = "தமிழ்"
+    test.assert_eq_int(s.len, 15)
+    test.assert_eq_int(unicode.grapheme_count(s), 3)
+    test.assert_eq_int(unicode.next_grapheme(s, 0), 3)
+    test.assert_eq_int(unicode.next_grapheme(s, 3), 9)
+    test.assert_eq_int(unicode.next_grapheme(s, 9), 15)
+    test.assert_eq_int(unicode.prev_grapheme(s, 15), 9)
+    test.assert_eq_int(unicode.prev_grapheme(s, 3), 0)
+}
+
+#[test]
+fn test_combining_mark() {
+    // "e" + U+0301 COMBINING ACUTE ACCENT is one cluster.
+    let s = bytes([]int { 0x65, 0xCC, 0x81 })
+    test.assert_eq_int(s.len, 3)
+    test.assert_eq_int(unicode.grapheme_count(s), 1)
+    test.assert_eq_int(unicode.next_grapheme(s, 0), 3)
+    test.assert_eq_int(unicode.codepoint(s, 1), 0x0301)
+}
+
+#[test]
+fn test_flag_is_two_regional_indicators() {
+    // 🇮🇳 = U+1F1EE U+1F1F3 → one cluster.
+    let s = bytes([]int { 0xF0, 0x9F, 0x87, 0xAE, 0xF0, 0x9F, 0x87, 0xB3 })
+    test.assert_eq_int(unicode.grapheme_count(s), 1)
+    test.assert_eq_int(unicode.next_grapheme(s, 0), 8)
+}
+
+#[test]
+fn test_emoji_zwj_family_is_one_cluster() {
+    // 👨 + ZWJ + 👩 + ZWJ + 👧 (GB11) → one cluster.
+    let s = bytes([]int {
+        0xF0, 0x9F, 0x91, 0xA8, 0xE2, 0x80, 0x8D,
+        0xF0, 0x9F, 0x91, 0xA9, 0xE2, 0x80, 0x8D,
+        0xF0, 0x9F, 0x91, 0xA7,
+    })
+    test.assert_eq_int(s.len, 18)
+    test.assert_eq_int(unicode.grapheme_count(s), 1)
+}
+
+#[test]
+fn test_hangul_cluster() {
+    // 각 = U+AC01 LVT, one cluster; a bare L + V + T (U+1100 U+1161 U+11A8)
+    // is also one cluster (GB6-GB8).
+    let s = bytes([]int { 0xE1, 0x84, 0x80, 0xE1, 0x85, 0xA1, 0xE1, 0x86, 0xA8 })
+    test.assert_eq_int(unicode.grapheme_count(s), 1)
+}

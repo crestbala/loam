@@ -7,6 +7,7 @@
 #include "zeus_rt.h"
 #include "zeus_key.h"
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 int main(void);
@@ -37,6 +38,9 @@ void zeus_js_set_font_family(const char *name);
 
 __attribute__((import_module("zeus"), import_name("load_font")))
 int32_t zeus_js_load_font(const char *family, const char *src);
+
+__attribute__((import_module("zeus"), import_name("font_fetch")))
+int32_t zeus_js_font_fetch(const char *src);
 
 __attribute__((import_module("zeus"), import_name("save")))
 void zeus_js_save(void);
@@ -130,6 +134,50 @@ static int wasm_load_font(const char *family, const char *src) {
     return zeus_js_load_font(family, src) ? 1 : 0;
 }
 
+/* In-tree metrics need the font's bytes, which this host has no filesystem to
+   read. Ask JS to fetch `src`; it copies the bytes back into `wasm_font_buf`
+   and calls `zeus_font_set`, which binds them. Until then `yuga_metrics_bind`
+   is not called and layout keeps Canvas2D `measureText` — the same "accepted,
+   not ready" contract as `load_font`. */
+static char *wasm_font_buf;
+static int32_t wasm_font_cap;
+
+static yuga_str wasm_font_bytes(yuga_str src) {
+    char buf[512];
+    size_t n = src.len > 0 && src.ptr ? (size_t)src.len : 0;
+    if (n >= sizeof buf) n = sizeof buf - 1;
+    if (n && src.ptr) memcpy(buf, src.ptr, n);
+    buf[n] = '\0';
+    if (n) zeus_js_font_fetch(buf);
+    return (yuga_str){"", 0};
+}
+
+int32_t yuga_metrics_bind(yuga_str bytes);
+
+/* JS fetches a font, reserves space here, writes it, then calls `zeus_font_set`.
+   Bind copies into the Yuga arena so a later fetch's realloc cannot dangle the
+   bytes the metrics hold. */
+__attribute__((export_name("zeus_font_reserve")))
+char *zeus_font_reserve(int32_t n) {
+    if (n <= 0) return wasm_font_buf;
+    if (n > wasm_font_cap) {
+        char *p = (char *)realloc(wasm_font_buf, (size_t)n);
+        if (!p) return wasm_font_buf;
+        wasm_font_buf = p;
+        wasm_font_cap = n;
+    }
+    return wasm_font_buf;
+}
+
+__attribute__((export_name("zeus_font_set")))
+int32_t zeus_font_set(int32_t n) {
+    char *p;
+    if (n <= 0 || n > wasm_font_cap || !wasm_font_buf) return 0;
+    p = (char *)yuga_new((size_t)n, "font_bytes", 0);
+    memcpy(p, wasm_font_buf, (size_t)n);
+    return yuga_metrics_bind((yuga_str){p, n});
+}
+
 static void wasm_measure(const char *s, int64_t px, int64_t *w, int64_t *h) {
     int32_t tw = 0, th = 0;
     zeus_js_measure(s ? s : "", (int32_t)px, &tw, &th);
@@ -176,6 +224,7 @@ void zeus_start(void) {
     zeus_set_platform(wasm_run, wasm_measure, wasm_redraw);
     zeus_set_pick_image(wasm_pick_image);
     zeus_set_font_hooks(wasm_load_font, wasm_set_font_family);
+    zeus_set_font_bytes_hook(wasm_font_bytes);
     bind_canvas();
     main();
 }

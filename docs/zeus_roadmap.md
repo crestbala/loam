@@ -261,13 +261,14 @@ thread.
         `thread.running()`, so zeus hosts keep drawing frames while workers
         run and a UI drain sees results the frame they arrive.
 - [ ] Rich text spans (bold/italic/inline color) once text is measured in-tree.
-      **Still gated**: all text metrics are host-side today (`plat_measure` →
-      CoreText / canvas `measureText` / Skia; headless `measure_default`);
-      there is no in-tree font data, so per-span advance/wrap/hit-test would
-      fork the one-string one-font C wrap/caret engine per span. The gate the
-      roadmap set for this item is the in-tree metrics precondition, which is
-      its own project (embed + parse a font: cmap/hmtx in Yuga) — not yet
-      scheduled in any phase.
+      **Still gated**: per-span advance/wrap/hit-test would fork the one-string
+      one-font wrap/caret engine per span. Phase 13 landed the parser
+      (`std:font`) and external loading (`zeus.use_font`), which route layout
+      measurement through in-tree table parsing when a font is bound; hosts
+      still draw with `plat_text`, and there is no in-tree font *embed*, so the
+      web host needs a fetch bridge before it can measure in-tree. The gate the
+      roadmap set (embed + parse a font) is now half done — parse and external
+      load are green, embed remains open.
 
 **Exit (threads):** a headless test proves N real workers compute on other
 cores, return results through bounded channels, and the UI drains them

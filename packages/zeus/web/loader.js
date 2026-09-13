@@ -414,6 +414,24 @@
           return 0;
         }
       },
+      /* In-tree metrics need the font's bytes, which wasm cannot read from a
+         URL. Fetch them, copy into the wasm buffer, and bind — async like
+         load_font, so layout keeps measureText until this lands. */
+      font_fetch: (ptr) => {
+        const src = cstr(ptr);
+        if (!src) return 0;
+        fetch(src).then((r) => r.arrayBuffer()).then((buf) => {
+          if (!exp || !mem) return;
+          const n = buf.byteLength;
+          if (!n) return;
+          const dst = exp.zeus_font_reserve ? exp.zeus_font_reserve(n) : 0;
+          if (!dst) return;
+          new Uint8Array(mem.buffer, dst, n).set(new Uint8Array(buf));
+          if (exp.zeus_font_set) exp.zeus_font_set(n);
+          schedule(0);
+        }).catch(() => {});
+        return 1;
+      },
       measure: (ptr, px, wPtr, hPtr) => {
         const s = cstr(ptr);
         const size = px > 0 ? px : 13;

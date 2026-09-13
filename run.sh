@@ -14,10 +14,14 @@
 # Zeus app: `./run.sh counter` is the Zeus stack; the language file is
 # `./run.sh language/counter`. `zeus/counter` is an alias for the stack.
 #
-# GUI examples open a real window and servers block until Ctrl-C. To render one
-# frame and exit instead (what `make test` does), set ZEUS_HEADLESS=1 for Zeus
-# apps or MAYA_HEADLESS=1 for the maya 3D examples.
+# GUI examples open a real window and servers block until Ctrl-C. `make test`
+# exports ZEUS_HEADLESS=1/MAYA_HEADLESS=1 to render one frame and exit; `run.sh`
+# clears those so a value left exported in your shell cannot silently build a
+# window-less binary that exits before anything appears. To render one frame on
+# purpose, invoke `bin/yugac` with ZEUS_HEADLESS=1 directly (see the Makefile).
 set -e
+
+unset ZEUS_HEADLESS YUGA_HEADLESS MAYA_HEADLESS
 
 HERE=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 LANGDIR=$HERE/examples/language

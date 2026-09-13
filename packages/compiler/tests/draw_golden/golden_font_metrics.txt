@@ -1,0 +1,5 @@
+DRAW 4
+fill 0 0 320 220 16777215 0
+text 32 32 0 16 A A
+text 54 32 0 16 ABC
+text 32 75 0 16 AB AB AB

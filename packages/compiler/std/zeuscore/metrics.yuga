@@ -1,0 +1,98 @@
+//! metrics — in-tree text measurement (`docs/yuga_zeus_v2.md` §1.4, Phase 13).
+//!
+//! When a font is bound (`zeus.use_font` / `bind`), measurement parses its
+//! tables with `std:font`, so every host computes the same line box for the
+//! same (font, size, string) — the point of moving metrics in-tree. Unbound, it
+//! falls through to the host's own measurement (`platform.plat_measure`), which
+//! is exactly the behavior before Phase 13.
+//!
+//! Drawing is still the host's job (`platform.plat_text`). These metrics are
+//! what layout sizes boxes with; until the draw path is also moved in-tree,
+//! a bound font can differ slightly from what the host draws.
+
+import "platform.yuga"
+import "std:font"
+
+/// Font bytes for in-tree metrics, or `""` when unbound.
+let mut metrics_font: string = ""
+
+/// Bind font bytes (a `.ttf` / `.otf` the app or host loaded). Returns 1 when
+/// the bytes parse as a font with a usable `hmtx`, 0 otherwise — the caller
+/// then keeps host measurement.
+fn bind(bytes: string) -> int {
+    if bytes.len == 0 {
+        return 0
+    }
+    if font.units_per_em(bytes) <= 0 {
+        return 0
+    }
+    if font.num_hmetrics(bytes) <= 0 {
+        return 0
+    }
+    metrics_font = bytes
+    return 1
+}
+
+/// Drop the bound font; measurement falls back to the host.
+fn unbind() {
+    metrics_font = ""
+}
+
+/// 1 when in-tree metrics are active.
+fn bound() -> int {
+    return metrics_font.len
+}
+
+/// Decimal string of `v`, so bound numeric labels measure in-tree too.
+fn decimal(v: int) -> string {
+    let mut n = i64(v)
+    let mut out = []int {}
+    if n < 0 {
+        out.push(45)
+        n = -n
+    }
+    let mut rev = []int {}
+    if n == 0 {
+        rev.push(48)
+    }
+    for k in 0..20 {
+        if n > 0 {
+            rev.push(48 + i32(n % 10))
+            n = n / 10
+        }
+    }
+    let mut i = rev.len
+    for k in 0..rev.len {
+        i = i - 1
+        out.push(rev[i])
+    }
+    return string_from_bytes(out)
+}
+
+/// Measure one line of `s` at `px`. `w`/`h` are out-params (the shape layout
+/// already uses).
+fn measure(s: string, px: int, w: &mut int, h: &mut int) {
+    if metrics_font.len > 0 {
+        font.measure(metrics_font, px, s, w, h)
+        return
+    }
+    platform.plat_measure(s, px, w, h)
+}
+
+/// Measure the decimal form of `v` at `px`.
+fn measure_int(v: int, px: int, w: &mut int, h: &mut int) {
+    if metrics_font.len > 0 {
+        font.measure(metrics_font, px, decimal(v), w, h)
+        return
+    }
+    platform.plat_measure_int(v, px, w, h)
+}
+
+/// Measure `s` wrapped to `max_w`, for the height a label grows to.
+fn measure_wrap(s: string, px: int, max_w: int, w: &mut int, h: &mut int) {
+    if metrics_font.len > 0 {
+        font.measure_wrap(metrics_font, px, s, max_w, w, h)
+        return
+    }
+    platform.plat_measure_wrap(s, px, max_w, w, h)
+}

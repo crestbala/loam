@@ -23,6 +23,10 @@ fn plat_set_font_family(name: string) {}
 fn plat_load_font(family: string, src: string) -> int {}
 fn plat_measure_int(v: int, px: int, w: &mut int, h: &mut int) {}
 fn plat_measure_wrap(s: string, px: int, max_w: int, w: &mut int, h: &mut int) {}
+/// Bytes of a font file for in-tree metrics (`std:font`): a path on desktop, a
+/// URL on the web. Empty when the host cannot provide them; the caller then
+/// keeps host measurement (`std/zeuscore/metrics.yuga`).
+fn plat_font_bytes(src: string) -> string {}
 fn plat_text_wrap(x: int, y: int, s: string, rgb: int, font: int, max_w: int) {}
 fn plat_set_window(title: string, width: int, height: int) {}
 /// Host view size in points (browser canvas or native content view). On
@@ -61,6 +65,12 @@ fn plat_edit_set(slot: int, text: string) -> int {}
 fn plat_edit_insert(slot: int, text: string) -> int {}
 fn plat_edit_caret(slot: int) -> int {}
 fn plat_edit_anchor(slot: int) -> int {}
+/// Move the caret (selection pivot unchanged) to byte offset `pos`.
+fn plat_edit_set_caret(slot: int, pos: int) -> int {}
+/// Move the selection anchor to byte offset `pos`. With `plat_edit_set_caret`
+/// this forms a selection, which `plat_edit_back` / `plat_edit_del` then
+/// delete — how grapheme-aware editing removes one cluster at a time.
+fn plat_edit_set_anchor(slot: int, pos: int) -> int {}
 fn plat_edit_mark(slot: int, text: string) -> int {}
 fn plat_edit_metrics(slot: int, wrap_w: int, font: int) {}
 fn plat_edit_click(slot: int, x: int, y: int, wrap_w: int, font: int) -> int {}

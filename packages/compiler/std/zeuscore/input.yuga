@@ -8,6 +8,7 @@
 import "arena.yuga"
 import "geometry.yuga"
 import "platform.yuga"
+import "std:unicode"
 
 struct Click {
     sid: int,
@@ -771,6 +772,54 @@ fn cursor_at() -> string {
     return ""
 }
 
+/// Move the caret one extended grapheme cluster. `dir` < 0 = left, > 0 =
+/// right. Boundaries come from `std:unicode`, so a Tamil akshara or an emoji
+/// ZWJ sequence moves as one unit instead of one code point (`docs/yuga_zeus_v2.md`
+/// §1.4, Phase 13).
+fn edit_move_grapheme(slot: int, dir: int, extend: int) -> int {
+    let text = platform.plat_edit_text(slot)
+    let caret = platform.plat_edit_caret(slot)
+    let mut pos = caret
+    if dir < 0 {
+        pos = unicode.prev_grapheme(text, caret)
+    } else {
+        pos = unicode.next_grapheme(text, caret)
+    }
+    platform.plat_edit_set_caret(slot, pos)
+    if extend == 0 {
+        platform.plat_edit_set_anchor(slot, pos)
+    }
+    return 1
+}
+
+/// Backspace one grapheme cluster, or the current selection.
+fn edit_back_grapheme(slot: int) -> int {
+    let caret = platform.plat_edit_caret(slot)
+    if platform.plat_edit_anchor(slot) != caret {
+        return platform.plat_edit_back(slot)
+    }
+    if caret <= 0 {
+        return 0
+    }
+    let text = platform.plat_edit_text(slot)
+    platform.plat_edit_set_anchor(slot, unicode.prev_grapheme(text, caret))
+    return platform.plat_edit_back(slot)
+}
+
+/// Delete forward one grapheme cluster, or the current selection.
+fn edit_del_grapheme(slot: int) -> int {
+    let caret = platform.plat_edit_caret(slot)
+    if platform.plat_edit_anchor(slot) != caret {
+        return platform.plat_edit_del(slot)
+    }
+    let text = platform.plat_edit_text(slot)
+    if caret >= text.len {
+        return 0
+    }
+    platform.plat_edit_set_anchor(slot, unicode.next_grapheme(text, caret))
+    return platform.plat_edit_del(slot)
+}
+
 fn key(k: int) -> int {
     let handled = key_handlers(k, arena.ev_mods, 0)
     if k == 27 {
@@ -847,9 +896,9 @@ fn key(k: int) -> int {
     let extend = arena.ev_mods % 2
     let mut edited = 0
     if k == 8 {
-        edited = platform.plat_edit_back(slot)
+        edited = edit_back_grapheme(slot)
     } else if k == 127 {
-        edited = platform.plat_edit_del(slot)
+        edited = edit_del_grapheme(slot)
     } else if k == 9 {
         edited = platform.plat_edit_append(slot, 9)
     } else if k == 10 {
@@ -861,9 +910,9 @@ fn key(k: int) -> int {
             edited = platform.plat_edit_append(slot, 10)
         }
     } else if k == 1000 {
-        edited = platform.plat_edit_move(slot, -1, extend)
+        edited = edit_move_grapheme(slot, -1, extend)
     } else if k == 1001 {
-        edited = platform.plat_edit_move(slot, 1, extend)
+        edited = edit_move_grapheme(slot, 1, extend)
     } else if k == 1002 {
         edited = platform.plat_edit_move(slot, -3, extend)
     } else if k == 1003 {

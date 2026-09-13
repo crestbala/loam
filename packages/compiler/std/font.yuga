@@ -1,0 +1,365 @@
+//! font — TrueType/OpenType table parsing and metrics.
+//!
+//! `measure` / `measure_wrap` are pure functions of (font bytes, pixel size,
+//! string). Every host that calls them gets identical widths and heights, which
+//! is what makes text layout host-independent (`docs/yuga_zeus_v2.md` §1.4).
+//!
+//! Parsed tables: `head`, `maxp`, `hhea`, `hmtx`, and `cmap` formats 4 and 12.
+//! Metrics are unshaped — one glyph per grapheme cluster — so complex-script
+//! widths are approximate until the shaping decision in §1.4 lands.
+
+import "std:unicode"
+
+// --- big-endian readers ----------------------------------------------------
+
+/// Byte at `o`, or 0 when `o` is out of range (font tables are walked by
+/// computed offsets, so a malformed file must not trap).
+fn read_u8(s: string, o: int) -> int {
+    if o < 0 || o >= s.len {
+        return 0
+    }
+    return s[o]
+}
+
+/// 16-bit big-endian unsigned.
+fn read_u16_be(s: string, o: int) -> int {
+    return (read_u8(s, o) << 8) | read_u8(s, o + 1)
+}
+
+/// 16-bit big-endian signed.
+fn read_i16_be(s: string, o: int) -> int {
+    let v = read_u16_be(s, o)
+    if v >= 0x8000 {
+        return v - 0x10000
+    }
+    return v
+}
+
+/// 32-bit big-endian, widened through `i64` so a high half cannot trap `i32`.
+fn read_u32_be(s: string, o: int) -> int {
+    return i32(i64(read_u16_be(s, o)) * 65536 + i64(read_u16_be(s, o + 2)))
+}
+
+/// Absolute offset of the table tagged `tag` (a 4-character string), or -1.
+fn table_offset(s: string, tag: string) -> int {
+    if tag.len != 4 {
+        return -1
+    }
+    let n = read_u16_be(s, 4)
+    let mut i = 0
+    while i < n {
+        let rec = 12 + i * 16
+        if read_u8(s, rec) == tag[0] && read_u8(s, rec + 1) == tag[1] && read_u8(s, rec + 2) == tag[2] &&
+            read_u8(s, rec + 3) == tag[3]
+        {
+            return read_u32_be(s, rec + 8)
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+// --- horizontal metrics ----------------------------------------------------
+
+/// Design units per em (`head.unitsPerEm`), or 0 when absent.
+fn units_per_em(s: string) -> int {
+    let h = table_offset(s, "head")
+    if h < 0 {
+        return 0
+    }
+    return read_u16_be(s, h + 18)
+}
+
+/// Number of glyphs (`maxp.numGlyphs`).
+fn num_glyphs(s: string) -> int {
+    let m = table_offset(s, "maxp")
+    if m < 0 {
+        return 0
+    }
+    return read_u16_be(s, m + 4)
+}
+
+fn ascender(s: string) -> int {
+    let h = table_offset(s, "hhea")
+    if h < 0 {
+        return 0
+    }
+    return read_i16_be(s, h + 4)
+}
+
+fn descender(s: string) -> int {
+    let h = table_offset(s, "hhea")
+    if h < 0 {
+        return 0
+    }
+    return read_i16_be(s, h + 6)
+}
+
+fn line_gap(s: string) -> int {
+    let h = table_offset(s, "hhea")
+    if h < 0 {
+        return 0
+    }
+    return read_i16_be(s, h + 8)
+}
+
+fn num_hmetrics(s: string) -> int {
+    let h = table_offset(s, "hhea")
+    if h < 0 {
+        return 0
+    }
+    return read_u16_be(s, h + 34)
+}
+
+/// Advance width of glyph `gid` in font design units.
+fn advance_units(s: string, gid: int) -> int {
+    let nh = num_hmetrics(s)
+    if nh <= 0 {
+        return 0
+    }
+    let mut idx = gid
+    if idx >= nh {
+        idx = nh - 1
+    }
+    if idx < 0 {
+        idx = 0
+    }
+    let h = table_offset(s, "hmtx")
+    if h < 0 {
+        return 0
+    }
+    return read_u16_be(s, h + idx * 4)
+}
+
+// --- character map ---------------------------------------------------------
+
+/// Choose the best Unicode `cmap` subtable offset: prefer a Windows full
+/// Unicode subtable (3,10), then Windows BMP (3,1), then a Unicode platform.
+/// Format 12 beats format 4 within a platform.
+fn cmap_best(s: string) -> int {
+    let c = table_offset(s, "cmap")
+    if c < 0 {
+        return -1
+    }
+    let n = read_u16_be(s, c + 2)
+    let mut best = -1
+    let mut best_score = -1
+    let mut i = 0
+    while i < n {
+        let rec = c + 4 + i * 8
+        let plat = read_u16_be(s, rec)
+        let enc = read_u16_be(s, rec + 2)
+        if plat == 0 || (plat == 3 && (enc == 1 || enc == 10)) {
+            let off = c + read_u32_be(s, rec + 4)
+            let fmt = read_u16_be(s, off)
+            let mut score = 0
+            if plat == 3 && enc == 10 {
+                score = 4
+            } else if plat == 3 && enc == 1 {
+                score = 3
+            } else {
+                score = 2
+            }
+            if fmt == 12 {
+                score = score + 10
+            } else if fmt != 4 {
+                score = -1
+            }
+            if score > best_score {
+                best_score = score
+                best = off
+            }
+        }
+        i = i + 1
+    }
+    return best
+}
+
+fn cmap4(s: string, sub: int, cp: int) -> int {
+    if cp > 0xFFFF {
+        return 0
+    }
+    let segx2 = read_u16_be(s, sub + 6)
+    let seg = segx2 / 2
+    let end_base = sub + 14
+    let start_base = end_base + segx2 + 2
+    let delta_base = start_base + segx2
+    let range_base = delta_base + segx2
+    let mut i = 0
+    while i < seg {
+        let e = read_u16_be(s, end_base + i * 2)
+        if cp <= e {
+            let st = read_u16_be(s, start_base + i * 2)
+            if cp < st {
+                return 0
+            }
+            let delta = read_u16_be(s, delta_base + i * 2)
+            let ro = read_u16_be(s, range_base + i * 2)
+            if ro == 0 {
+                return (cp + delta) & 0xFFFF
+            }
+            let gid = read_u16_be(s, range_base + i * 2 + ro + (cp - st) * 2)
+            if gid == 0 {
+                return 0
+            }
+            return (gid + delta) & 0xFFFF
+        }
+        i = i + 1
+    }
+    return 0
+}
+
+fn cmap12(s: string, sub: int, cp: int) -> int {
+    let ngroups = read_u32_be(s, sub + 12)
+    let base = sub + 16
+    let mut lo = 0
+    let mut hi = ngroups - 1
+    while lo <= hi {
+        let mid = (lo + hi) / 2
+        let g = base + mid * 12
+        let sc = read_u32_be(s, g)
+        let ec = read_u32_be(s, g + 4)
+        if cp < sc {
+            hi = mid - 1
+        } else if cp > ec {
+            lo = mid + 1
+        } else {
+            return read_u32_be(s, g + 8) + (cp - sc)
+        }
+    }
+    return 0
+}
+
+/// Glyph id for code point `cp`, or 0 (`.notdef`) when unmapped.
+fn glyph_index(s: string, cp: int) -> int {
+    let sub = cmap_best(s)
+    if sub < 0 {
+        return 0
+    }
+    let fmt = read_u16_be(s, sub)
+    if fmt == 4 {
+        return cmap4(s, sub, cp)
+    }
+    if fmt == 12 {
+        return cmap12(s, sub, cp)
+    }
+    return 0
+}
+
+// --- glyph runs ------------------------------------------------------------
+
+/// One positioned glyph: the font's glyph id and its pen x in pixels from the
+/// run's left edge.
+struct Glyph {
+    id: int,
+    x: int,
+}
+
+/// Positioned glyphs for `text` at `px`, one per grapheme cluster. This is the
+/// run a `plat_glyphs` draw consumes. It is **unshaped** — no GSUB/GPOS, so no
+/// ligatures or mark repositioning — and shaping will replace the
+/// cluster-to-glyph mapping and the advances without changing this shape.
+fn glyph_run(s: string, px: int, text: string) -> []Glyph {
+    let mut run = []Glyph {}
+    let mut pen = 0
+    let mut i = 0
+    while i < text.len {
+        let gid = glyph_index(s, unicode.codepoint(text, i))
+        run.push(Glyph { id: gid, x: pen })
+        pen = pen + advance_px(s, gid, px)
+        i = unicode.next_grapheme(text, i)
+    }
+    return run
+}
+
+// --- measurement -----------------------------------------------------------
+
+/// Pixel advance of glyph `gid` at size `px`.
+fn advance_px(s: string, gid: int, px: int) -> int {
+    let upm = units_per_em(s)
+    if upm <= 0 {
+        return 0
+    }
+    return i32(i64(advance_units(s, gid)) * i64(px) / i64(upm))
+}
+
+/// Pixel width of `text` at size `px` (unshaped: one glyph per grapheme
+/// cluster, approximated by the cluster's first code point).
+fn text_width(s: string, px: int, text: string) -> int {
+    let mut w = 0
+    let mut i = 0
+    while i < text.len {
+        let cp = unicode.codepoint(text, i)
+        w = w + advance_px(s, glyph_index(s, cp), px)
+        i = unicode.next_grapheme(text, i)
+    }
+    return w
+}
+
+/// Line height at size `px` from the font's ascent/descent/line gap.
+fn line_height(s: string, px: int) -> int {
+    let upm = units_per_em(s)
+    if upm <= 0 {
+        return px
+    }
+    let h = i32(i64(ascender(s) - descender(s) + line_gap(s)) * i64(px) / i64(upm))
+    if h < 1 {
+        return px
+    }
+    return h
+}
+
+/// Measure one unwrapped line. `w`/`h` are out-params (the call shape Zeus's
+/// layout already uses).
+fn measure(s: string, px: int, text: string, w: &mut int, h: &mut int) {
+    *w = text_width(s, px, text)
+    *h = line_height(s, px)
+}
+
+/// Greedy wrap at grapheme-cluster boundaries, with `\n` as a hard break.
+/// `w` is the widest line, `h` the total height.
+fn measure_wrap(s: string, px: int, text: string, max_w: int, w: &mut int, h: &mut int) {
+    let lh = line_height(s, px)
+    if max_w <= 0 || text.len == 0 {
+        *w = text_width(s, px, text)
+        *h = lh
+        return
+    }
+    let mut lines = 1
+    let mut line_w = 0
+    let mut best = 0
+    let mut i = 0
+    while i < text.len {
+        let cp = unicode.codepoint(text, i)
+        let j = unicode.next_grapheme(text, i)
+        if cp == 10 {
+            if line_w > best {
+                best = line_w
+            }
+            lines = lines + 1
+            line_w = 0
+            i = j
+            continue
+        }
+        let gw = advance_px(s, glyph_index(s, cp), px)
+        if line_w > 0 && line_w + gw > max_w {
+            if line_w > best {
+                best = line_w
+            }
+            lines = lines + 1
+            line_w = 0
+            if cp == 32 {
+                // Do not start a wrapped line with the space we broke at.
+                i = j
+                continue
+            }
+        }
+        line_w = line_w + gw
+        i = j
+    }
+    if line_w > best {
+        best = line_w
+    }
+    *w = best
+    *h = lines * lh
+}

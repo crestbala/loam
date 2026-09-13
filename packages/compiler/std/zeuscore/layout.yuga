@@ -8,6 +8,7 @@
 import "arena.yuga"
 import "geometry.yuga"
 import "platform.yuga"
+import "metrics.yuga"
 
 fn flex_grow_shrink(id: int, extra: int, row: int) -> int {
     let nk = arena.nodes[id].kids.len
@@ -103,7 +104,7 @@ fn apply_input_wrap(id: int) {
     }
     let mut ww = 0
     let mut hh = 0
-    platform.plat_measure_wrap(arena.input_shown(id), i32(arena.nodes[id].font), inner, &mut ww, &mut hh)
+    metrics.measure_wrap(arena.input_shown(id), i32(arena.nodes[id].font), inner, &mut ww, &mut hh)
     let need = hh + arena.box_pad_y(id)
     if need > arena.nodes[id].h {
         arena.nodes[id].h = arena.clamp_h(id, need)
@@ -137,7 +138,7 @@ fn apply_label_wrap(id: int) {
     }
     let mut ww = 0
     let mut hh = 0
-    platform.plat_measure_wrap(arena.nodes[id].text, i32(arena.nodes[id].font), inner, &mut ww, &mut hh)
+    metrics.measure_wrap(arena.nodes[id].text, i32(arena.nodes[id].font), inner, &mut ww, &mut hh)
     arena.nodes[id].wrap = 1
     let need = hh + arena.box_pad_y(id)
     if need > arena.nodes[id].h {
@@ -189,11 +190,11 @@ fn measure_text(id: int) {
     let mut tw = 0
     let mut th = 0
     if arena.has_bound_num(id) != 0 {
-        platform.plat_measure_int(arena.bound_num(id), i32(arena.nodes[id].font), &mut tw, &mut th)
+        metrics.measure_int(arena.bound_num(id), i32(arena.nodes[id].font), &mut tw, &mut th)
     } else if arena.nodes[id].kind == 10 {
-        platform.plat_measure(arena.input_shown(id), i32(arena.nodes[id].font), &mut tw, &mut th)
+        metrics.measure(arena.input_shown(id), i32(arena.nodes[id].font), &mut tw, &mut th)
     } else {
-        platform.plat_measure(arena.nodes[id].text, i32(arena.nodes[id].font), &mut tw, &mut th)
+        metrics.measure(arena.nodes[id].text, i32(arena.nodes[id].font), &mut tw, &mut th)
     }
     arena.nodes[id].tw = tw
     arena.nodes[id].th = th
