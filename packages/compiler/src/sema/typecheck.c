@@ -471,6 +471,70 @@ static Type *lower_to_int(AstNode *n, int64_t v) {
     return n->ty;
 }
 
+/** A numeric literal that context may still give a type (§3.4). A negated
+ *  literal counts, so `-128` can take the i8 minimum. */
+static int is_num_lit(const AstNode *n) {
+    if (!n) return 0;
+    if (n->kind == AST_NUMBER || n->kind == AST_FLOAT) return 1;
+    if (n->kind == AST_UNARY && n->as.unary.op == TOK_MINUS)
+        return is_num_lit(n->as.unary.operand);
+    return 0;
+}
+
+/** 1 if integer literal `v` fits integer type `t`. */
+static int int_lit_fits(int64_t v, const Type *t) {
+    if (!t || t->kind != TY_INT) return 0;
+    if (t->is_unsigned) {
+        if (v < 0) return 0;
+        if (t->bits >= 64) return 1;
+        return v < ((int64_t)1 << t->bits);
+    }
+    if (t->bits >= 64) return 1;
+    if (t->bits == 32) return v >= INT32_MIN && v <= INT32_MAX;
+    if (t->bits == 16) return v >= INT16_MIN && v <= INT16_MAX;
+    return v >= INT8_MIN && v <= INT8_MAX;
+}
+
+/** A literal checked against `expect`: adopt it when it fits, otherwise
+ *  report at the literal and stay at the default width (so checking can
+ *  continue without cascading). */
+static Type *lit_with_expect(AstNode *n, Type *expect) {
+    if (n->kind == AST_FLOAT) {
+        if (expect && expect->kind == TY_FLOAT) {
+            n->ty = expect;
+            return n->ty;
+        }
+        n->ty = ty_float();
+        return n->ty;
+    }
+    if (expect && expect->kind == TY_FLOAT) {
+        n->kind = AST_FLOAT;
+        n->as.lit.f = (double)n->as.lit.value;
+        n->ty = expect;
+        return n->ty;
+    }
+    if (expect && expect->kind == TY_INT) {
+        int64_t v = n->as.lit.value;
+        if (!int_lit_fits(v, expect))
+            err(n->loc, "literal %lld does not fit %s", (long long)v, type_name(expect));
+        n->ty = expect;
+        return n->ty;
+    }
+    /* Unconstrained: prefer the default integer, but a value that only fits a
+       wider type takes it rather than silently truncating (§3.6). */
+    if (!int_lit_fits(n->as.lit.value, ty_int())) {
+        Type *wide = ty_int_bits(64, 0);
+        if (ty_int()->bits < 64 && int_lit_fits(n->as.lit.value, wide))
+            n->ty = wide;
+        else
+            err(n->loc, "integer literal %lld is too large", (long long)n->as.lit.value);
+        return n->ty;
+    }
+    n->ty = ty_int();
+    return n->ty;
+}
+
+
 static Type *fn_type_of(AstNode *fn);
 static Type *peel_ref(Type *t);
 
@@ -641,6 +705,24 @@ static Type *make_struct_inst(AstNode *st, Type **args, size_t n) {
     return t;
 }
 
+/** `int`/`float` aliases plus the sized primitives (i8..u64, f32/f64). */
+static Type *primitive_type(const char *nm) {
+    if (!nm) return NULL;
+    if (strcmp(nm, "int") == 0) return ty_int();
+    if (strcmp(nm, "float") == 0) return ty_float();
+    if (nm[0] == 'i' || nm[0] == 'u') {
+        int uns = nm[0] == 'u';
+        const char *d = nm + 1;
+        if (strcmp(d, "8") == 0) return ty_int_bits(8, uns);
+        if (strcmp(d, "16") == 0) return ty_int_bits(16, uns);
+        if (strcmp(d, "32") == 0) return ty_int_bits(32, uns);
+        if (strcmp(d, "64") == 0) return ty_int_bits(64, uns);
+    }
+    if (strcmp(nm, "f32") == 0) return ty_float_bits(32);
+    if (strcmp(nm, "f64") == 0) return ty_float_bits(64);
+    return NULL;
+}
+
 /** AST type syntax → Type. */
 static Type *resolve_type(AstNode *tn) {
     if (!tn) return ty_void();
@@ -663,8 +745,10 @@ static Type *resolve_type(AstNode *tn) {
     }
     const char *nm = tn->as.type.name;
     if (!nm) return ty_void();
-    if (strcmp(nm, "int") == 0) return ty_int();
-    if (strcmp(nm, "float") == 0) return ty_float();
+    {
+        Type *prim = primitive_type(nm);
+        if (prim) return prim;
+    }
     if (strcmp(nm, "bool") == 0) return ty_bool();
     if (strcmp(nm, "string") == 0) return ty_string();
     if (strcmp(nm, "void") == 0) return ty_void();
@@ -1677,36 +1761,82 @@ static Type *check_call(AstNode *n, Type *expect) {
             n->place_mut = 0;
             return n->ty;
         }
-        if (strcmp(nm, "wrapping_add") == 0 || strcmp(nm, "saturating_add") == 0) {
-            if (n->as.call.arg_count != 2) {
-                err(n->loc, "%s expects 2 arguments", nm);
-                return ty_void();
+        /* Numeric conversions: `i64(x)`, `f32(x)`, `u8(x)`, and the wrap /
+           saturate opt-outs `wrapping_u8(x)` / `saturating_u8(x)` (§3.4). */
+        {
+            Type *ct = primitive_type(nm);
+            int mode = 0;
+            if (!ct) {
+                const char *sfx = NULL;
+                if (strncmp(nm, "wrapping_", 9) == 0) {
+                    mode = 1;
+                    sfx = nm + 9;
+                } else if (strncmp(nm, "saturating_", 11) == 0) {
+                    mode = 2;
+                    sfx = nm + 11;
+                }
+                if (mode) {
+                    Type *wt = primitive_type(sfx);
+                    if (wt && wt->kind == TY_INT) ct = wt;
+                }
             }
-            Type *a = check_expr(n->as.call.args[0]);
-            Type *b = check_expr(n->as.call.args[1]);
-            if (!type_eq(a, ty_int()) || !type_eq(b, ty_int()))
-                err(n->loc, "%s requires int arguments", nm);
-            if (strcmp(nm, "wrapping_add") == 0) n->as.call.is_wrapping_add = 1;
-            else n->as.call.is_saturating_add = 1;
-            n->ty = ty_int();
-            return n->ty;
+            if (ct && type_is_numeric(ct)) {
+                if (n->as.call.arg_count != 1) {
+                    err(n->loc, "%s(x) expects 1 argument", nm);
+                    return ty_void();
+                }
+                AstNode *arg = n->as.call.args[0];
+                Type *at = check_expr(arg);
+                if (!type_is_numeric(at) && at->kind != TY_BOOL)
+                    err(arg->loc, "cannot convert %s to %s", type_name(at), type_name(ct));
+                if (mode && !type_is_int_kind(at))
+                    err(arg->loc, "%s requires an integer argument", nm);
+                /* Rewrite in place into a cast so both backends see one node. */
+                free(n->as.call.args);
+                if (cal) ast_free(cal);
+                n->kind = AST_CAST;
+                n->as.cast.expr = arg;
+                n->as.cast.type = ast_type(yuga_dup(type_name(ct)), 2, NULL, 0, n->loc);
+                n->as.cast.conv_mode = mode;
+                n->ty = ct;
+                n->place_mut = 0;
+                return n->ty;
+            }
         }
-        if (strcmp(nm, "wrapping_shr") == 0 || strcmp(nm, "wrapping_shl") == 0 ||
-            strcmp(nm, "wrapping_or") == 0 || strcmp(nm, "wrapping_and") == 0) {
-            if (n->as.call.arg_count != 2) {
-                err(n->loc, "%s expects 2 arguments", nm);
-                return ty_void();
+        /* wrapping_* / saturating_*: the width comes from the operands. */
+        {
+            NumericBuiltin nb = NUMB_NONE;
+            int arity = 2;
+            if (strcmp(nm, "wrapping_add") == 0) nb = NUMB_WRAP_ADD;
+            else if (strcmp(nm, "wrapping_sub") == 0) nb = NUMB_WRAP_SUB;
+            else if (strcmp(nm, "wrapping_mul") == 0) nb = NUMB_WRAP_MUL;
+            else if (strcmp(nm, "wrapping_neg") == 0) { nb = NUMB_WRAP_NEG; arity = 1; }
+            else if (strcmp(nm, "wrapping_shl") == 0) nb = NUMB_WRAP_SHL;
+            else if (strcmp(nm, "wrapping_shr") == 0) nb = NUMB_WRAP_SHR;
+            else if (strcmp(nm, "wrapping_and") == 0) nb = NUMB_WRAP_AND;
+            else if (strcmp(nm, "wrapping_or") == 0) nb = NUMB_WRAP_OR;
+            else if (strcmp(nm, "wrapping_xor") == 0) nb = NUMB_WRAP_XOR;
+            else if (strcmp(nm, "saturating_add") == 0) nb = NUMB_SAT_ADD;
+            else if (strcmp(nm, "saturating_sub") == 0) nb = NUMB_SAT_SUB;
+            else if (strcmp(nm, "saturating_mul") == 0) nb = NUMB_SAT_MUL;
+            if (nb != NUMB_NONE) {
+                if (n->as.call.arg_count != (size_t)arity) {
+                    err(n->loc, "%s expects %d argument(s)", nm, arity);
+                    return ty_void();
+                }
+                Type *a = check_expr(n->as.call.args[0]);
+                Type *b = arity == 2
+                    ? check_expr_ty(n->as.call.args[1], type_is_int_kind(a) ? a : NULL)
+                    : NULL;
+                if (!type_is_int_kind(a) || (arity == 2 && !type_is_int_kind(b)))
+                    err(n->loc, "%s requires int arguments", nm);
+                else if (arity == 2 && !type_eq(a, b))
+                    err(n->loc, "%s requires matching int widths (%s, %s)", nm, type_name(a),
+                        type_name(b));
+                n->as.call.num_builtin = nb;
+                n->ty = type_is_int_kind(a) ? a : ty_int();
+                return n->ty;
             }
-            Type *a = check_expr(n->as.call.args[0]);
-            Type *b = check_expr(n->as.call.args[1]);
-            if (!type_eq(a, ty_int()) || !type_eq(b, ty_int()))
-                err(n->loc, "%s requires int arguments", nm);
-            if (strcmp(nm, "wrapping_shr") == 0) n->as.call.c_builtin = "yuga_wrapping_shr";
-            else if (strcmp(nm, "wrapping_shl") == 0) n->as.call.c_builtin = "yuga_wrapping_shl";
-            else if (strcmp(nm, "wrapping_or") == 0) n->as.call.c_builtin = "yuga_wrapping_or";
-            else n->as.call.c_builtin = "yuga_wrapping_and";
-            n->ty = ty_int();
-            return n->ty;
         }
         if (strcmp(nm, "string_from_bytes") == 0) {
             if (n->as.call.arg_count != 1) {
@@ -2015,22 +2145,52 @@ static Type *check_closure(AstNode *n, Type *expect) {
     return n->ty;
 }
 
+/** Check both operands of a binary expression, letting an untyped numeric
+ *  literal adopt the other operand's (or the expected) width (§3.4). */
+static void check_bin_ops(AstNode *n, Type *expect, Type **out_l, Type **out_r) {
+    AstNode *ln = n->as.binary.left, *rn = n->as.binary.right;
+    Type *en = (expect && type_is_numeric(expect)) ? expect : NULL;
+    if (en) {
+        *out_l = check_expr_ty(ln, en);
+        *out_r = check_expr_ty(rn, en);
+        return;
+    }
+    int ll = is_num_lit(ln), rl = is_num_lit(rn);
+    if (ll && rl) {
+        if (ln->kind == AST_FLOAT || rn->kind == AST_FLOAT) {
+            Type *want = ty_float();
+            *out_l = check_expr_ty(ln, want);
+            *out_r = check_expr_ty(rn, want);
+        } else {
+            *out_l = check_expr_ty(ln, NULL);
+            *out_r = check_expr_ty(rn, type_is_int_kind(*out_l) ? *out_l : NULL);
+        }
+        return;
+    }
+    if (ll) {
+        Type *r = check_expr(rn);
+        *out_r = r;
+        *out_l = check_expr_ty(ln, type_is_numeric(r) ? r : NULL);
+        return;
+    }
+    if (rl) {
+        Type *l = check_expr(ln);
+        *out_l = l;
+        *out_r = check_expr_ty(rn, type_is_numeric(l) ? l : NULL);
+        return;
+    }
+    *out_l = check_expr(ln);
+    *out_r = check_expr(rn);
+}
+
 /** Infer/check an expression; sets n->ty. May rewrite args for auto-borrow. */
 static Type *check_expr_ty(AstNode *n, Type *expect) {
     if (!n) return ty_void();
     switch (n->kind) {
         case AST_NUMBER:
-            if (expect && expect->kind == TY_FLOAT) {
-                n->kind = AST_FLOAT;
-                n->as.lit.f = (double)n->as.lit.value;
-                n->ty = ty_float();
-                return n->ty;
-            }
-            n->ty = ty_int();
-            return n->ty;
+            return lit_with_expect(n, expect);
         case AST_FLOAT:
-            n->ty = ty_float();
-            return n->ty;
+            return lit_with_expect(n, expect);
         case AST_BOOL:
             n->ty = ty_bool();
             return n->ty;
@@ -2085,16 +2245,19 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
             return n->ty;
         }
         case AST_BINARY: {
-            Type *l = check_expr(n->as.binary.left);
-            Type *r = check_expr(n->as.binary.right);
             TokenKind op = n->as.binary.op;
+            Type *l, *r;
             if (op == TOK_DOT_DOT) {
-                if (!type_eq(l, ty_int()) || !type_eq(r, ty_int()))
+                l = check_expr(n->as.binary.left);
+                r = check_expr_ty(n->as.binary.right, type_is_int_kind(l) ? l : NULL);
+                if (!type_is_int_kind(l) || !type_is_int_kind(r))
                     err(n->loc, "range bounds must be int");
                 n->ty = ty_int(); /* marker; for-loop consumes this */
                 return n->ty;
             }
             if (op == TOK_AMP_AMP || op == TOK_PIPE_PIPE) {
+                l = check_expr(n->as.binary.left);
+                r = check_expr(n->as.binary.right);
                 if (!type_eq(l, ty_bool()) || !type_eq(r, ty_bool()))
                     err(n->loc, "logical operators require bool");
                 n->ty = ty_bool();
@@ -2102,10 +2265,11 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
             }
             if (op == TOK_EQ_EQ || op == TOK_BANG_EQ || op == TOK_LT || op == TOK_GT ||
                 op == TOK_LT_EQ || op == TOK_GT_EQ) {
+                check_bin_ops(n, NULL, &l, &r);
                 if (!type_eq(l, r))
                     err(n->loc, "cannot compare %s with %s", type_name(l), type_name(r));
                 if (op == TOK_LT || op == TOK_GT || op == TOK_LT_EQ || op == TOK_GT_EQ) {
-                    if (l && l->kind != TY_INT && l->kind != TY_FLOAT)
+                    if (!type_is_numeric(l))
                         err(n->loc, "ordering comparison requires int or float");
                 } else if (l && l->kind != TY_INT && l->kind != TY_FLOAT && l->kind != TY_BOOL &&
                            l->kind != TY_STRING) {
@@ -2114,38 +2278,102 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
                 n->ty = ty_bool();
                 return n->ty;
             }
-            /* Bitwise & shifts: int only (wrapping, like the wrapping_* fns). */
-            if (op == TOK_AMP || op == TOK_PIPE || op == TOK_CARET || op == TOK_SHL ||
-                op == TOK_SHR) {
-                if (!type_eq(l, ty_int()) || !type_eq(r, ty_int()))
+            /* Bitwise & shifts: integer widths only, same width on both sides
+               (§3.4). Shifts lower through the unsigned type (§3.5). */
+            if (op == TOK_AMP || op == TOK_PIPE || op == TOK_CARET) {
+                check_bin_ops(n, expect, &l, &r);
+                if (!type_is_int_kind(l) || !type_is_int_kind(r))
                     err(n->loc, "bitwise operator requires int operands");
-                n->ty = ty_int();
+                else if (!type_eq(l, r))
+                    err(n->loc, "cannot mix %s and %s; convert explicitly (%s(x))",
+                        type_name(l), type_name(r), type_name(l));
+                n->ty = type_is_int_kind(l) ? l : ty_int();
                 return n->ty;
             }
-            if (type_eq(l, ty_float()) && type_eq(r, ty_float())) {
+            if (op == TOK_SHL || op == TOK_SHR) {
+                check_bin_ops(n, expect, &l, &r);
+                if (!type_is_int_kind(l) || !type_is_int_kind(r)) {
+                    err(n->loc, "shift requires int operands");
+                } else {
+                    AstNode *amt = n->as.binary.right;
+                    /* The right operand was checked with the left's type when it
+                       is an untyped literal; read the literal value directly. */
+                    if (amt->kind == AST_NUMBER &&
+                        (amt->as.lit.value < 0 || amt->as.lit.value >= (int64_t)l->bits))
+                        err(amt->loc, "shift by %lld is out of range for %s (width %d)",
+                            (long long)amt->as.lit.value, type_name(l), (int)l->bits);
+                }
+                n->ty = type_is_int_kind(l) ? l : ty_int();
+                return n->ty;
+            }
+            check_bin_ops(n, expect, &l, &r);
+            if (type_is_float_kind(l) && type_is_float_kind(r)) {
+                if (!type_eq(l, r))
+                    err(n->loc, "cannot mix %s and %s; convert explicitly (%s(x))",
+                        type_name(l), type_name(r), type_name(l->bits >= r->bits ? l : r));
                 if (op == TOK_PERCENT)
                     err(n->loc, "%% is not defined for float");
-                n->ty = ty_float();
+                n->ty = l;
                 return n->ty;
             }
-            if (!type_eq(l, ty_int()) || !type_eq(r, ty_int()))
+            if (type_is_int_kind(l) && type_is_int_kind(r)) {
+                if (!type_eq(l, r))
+                    err(n->loc, "cannot mix %s and %s; convert explicitly (%s(x))",
+                        type_name(l), type_name(r), type_name(l->bits >= r->bits ? l : r));
+                n->ty = l;
+                return n->ty;
+            }
+            if (type_is_numeric(l) && type_is_numeric(r))
+                err(n->loc, "cannot mix %s and %s; convert explicitly", type_name(l), type_name(r));
+            else
                 err(n->loc, "arithmetic requires int or float");
-            n->ty = ty_int();
+            n->ty = l;
             return n->ty;
         }
         case AST_UNARY: {
+            /* A negated untyped literal is still a literal: give it the
+               expected width so `-128` can be the i8 minimum. */
+            if (n->as.unary.op == TOK_MINUS && is_num_lit(n->as.unary.operand) &&
+                expect && type_is_numeric(expect)) {
+                AstNode *op0 = n->as.unary.operand;
+                if (op0->kind == AST_NUMBER) {
+                    int64_t v = -op0->as.lit.value;
+                    if (expect->kind == TY_FLOAT) {
+                        n->kind = AST_FLOAT;
+                        n->as.lit.f = -(double)op0->as.lit.value;
+                    } else {
+                        if (!int_lit_fits(v, expect))
+                            err(n->loc, "literal %lld does not fit %s", (long long)v,
+                                type_name(expect));
+                        n->kind = AST_NUMBER;
+                        n->as.lit.value = v;
+                    }
+                    n->ty = expect;
+                    n->place_mut = 0;
+                    return n->ty;
+                }
+                if (op0->kind == AST_FLOAT && expect->kind == TY_FLOAT) {
+                    double fv = -op0->as.lit.f;
+                    n->kind = AST_FLOAT;
+                    n->as.lit.f = fv;
+                    n->ty = expect;
+                    n->place_mut = 0;
+                    return n->ty;
+                }
+            }
             Type *o = check_expr(n->as.unary.operand);
             if (n->as.unary.op == TOK_BANG) {
                 if (!type_eq(o, ty_bool())) err(n->loc, "! requires bool");
                 n->ty = ty_bool();
             } else if (n->as.unary.op == TOK_TILDE) {
-                if (!type_eq(o, ty_int())) err(n->loc, "~ requires int");
-                n->ty = ty_int();
-            } else if (type_eq(o, ty_float())) {
-                n->ty = ty_float();
+                if (!type_is_int_kind(o)) err(n->loc, "~ requires int");
+                n->ty = o ? o : ty_int();
             } else {
-                if (!type_eq(o, ty_int())) err(n->loc, "unary minus requires int or float");
-                n->ty = ty_int();
+                if (!type_is_numeric(o))
+                    err(n->loc, "unary minus requires int or float");
+                else if (o->kind == TY_INT && o->is_unsigned)
+                    err(n->loc, "cannot negate an unsigned value (use a signed width)");
+                n->ty = o;
             }
             return n->ty;
         }
@@ -2154,7 +2382,7 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
             if (!n->as.incdec.operand->place_mut)
                 err(n->loc, n->as.incdec.is_dec ? "cannot decrement immutable place"
                                                 : "cannot increment immutable place");
-            if (o && o->kind != TY_INT && o->kind != TY_FLOAT)
+            if (!type_is_numeric(o))
                 err(n->loc, n->as.incdec.is_dec ? "-- requires int or float"
                                                 : "++ requires int or float");
             n->ty = o;
@@ -2165,10 +2393,9 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
             Type *to = resolve_type(n->as.cast.type);
             int ok = 0;
             if (from && to) {
-                if (from->kind == TY_INT && to->kind == TY_FLOAT) ok = 1;
-                if (from->kind == TY_FLOAT && to->kind == TY_INT) ok = 1;
+                if (type_is_numeric(from) && type_is_numeric(to)) ok = 1;
                 if (from->kind == TY_BOOL && to->kind == TY_INT) ok = 1;
-                if (from->kind == TY_INT && to->kind == TY_BOOL) ok = 1;
+                if (type_is_int_kind(from) && to->kind == TY_BOOL) ok = 1;
                 if (type_eq(from, to)) ok = 1;
             }
             if (!ok)
@@ -2283,7 +2510,7 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
         case AST_INDEX: {
             Type *t = check_expr(n->as.access.target);
             Type *ix = check_expr(n->as.access.index);
-            if (!type_eq(ix, ty_int())) err(n->as.access.index->loc, "index must be int");
+            if (!type_is_int_kind(ix)) err(n->as.access.index->loc, "index must be int");
             Type *base = peel_ref(t);
             if (base && base->kind == TY_STRING) {
                 n->ty = ty_int();
@@ -2449,7 +2676,7 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
                 err(n->loc, "array literal has %zu elements, expected %lld",
                     n->as.array_lit.count, (long long)n->as.array_lit.len);
             for (size_t i = 0; i < n->as.array_lit.count; i++) {
-                Type *e = check_expr(n->as.array_lit.elems[i]);
+                Type *e = check_expr_ty(n->as.array_lit.elems[i], et);
                 if (!type_eq(e, et))
                     err(n->as.array_lit.elems[i]->loc, "array element type mismatch");
             }
@@ -2501,22 +2728,29 @@ static void check_stmt(AstNode *n) {
         }
         case AST_ASSIGN: {
             Type *l = check_expr(n->as.assign.left);
-            Type *r = check_expr_ty(n->as.assign.right, n->as.assign.op == TOK_EQ ? l : NULL);
+            TokenKind aop = n->as.assign.op;
+            Type *r = check_expr_ty(n->as.assign.right,
+                                    (aop == TOK_EQ || type_is_numeric(l)) ? l : NULL);
             if (!n->as.assign.left->place_mut)
                 err(n->loc, "cannot assign to immutable place");
-            if (n->as.assign.op == TOK_EQ) {
+            if (aop == TOK_EQ) {
                 if (!type_eq(l, r))
                     err(n->loc, "cannot assign %s to %s", type_name(r), type_name(l));
             } else {
-                TokenKind aop = n->as.assign.op;
                 int bit_mod = aop == TOK_PERCENT_EQ || aop == TOK_AMP_EQ ||
                               aop == TOK_PIPE_EQ || aop == TOK_CARET_EQ ||
                               aop == TOK_SHL_EQ || aop == TOK_SHR_EQ;
-                int ok = (type_eq(l, ty_int()) && type_eq(r, ty_int())) ||
-                         (!bit_mod && type_eq(l, ty_float()) && type_eq(r, ty_float()));
+                int ok = 0;
+                if (type_is_int_kind(l) && type_is_int_kind(r))
+                    ok = type_eq(l, r);
+                else if (!bit_mod && type_is_float_kind(l) && type_is_float_kind(r))
+                    ok = type_eq(l, r);
                 if (!ok) {
-                    if (bit_mod)
-                        err(n->loc, "%=, &=, |=, ^=, <<=, >>= require int operands");
+                    if (type_is_numeric(l) && type_is_numeric(r) && !type_eq(l, r))
+                        err(n->loc, "cannot mix %s and %s in compound assignment; convert explicitly",
+                            type_name(l), type_name(r));
+                    else if (bit_mod)
+                        err(n->loc, "%%=, &=, |=, ^=, <<=, >>= require matching int operands");
                     else
                         err(n->loc, "compound assignment requires int or float");
                 }
@@ -2606,7 +2840,8 @@ static void check_stmt(AstNode *n) {
                     continue;
                 }
                 for (size_t p = 0; p < arm->as.match_arm.pat_count; p++) {
-                    Type *pt = check_expr(arm->as.match_arm.pats[p]);
+                    Type *pt = check_expr_ty(arm->as.match_arm.pats[p],
+                                             type_is_numeric(st) ? st : NULL);
                     if (st && pt && !type_eq(st, pt))
                         err(arm->as.match_arm.pats[p]->loc, "pattern type %s does not match %s",
                             type_name(pt), type_name(st));

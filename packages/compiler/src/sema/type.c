@@ -1,8 +1,8 @@
 /**
  * type.c — interned Yuga types.
  *
- * void/int/float/bool/string are static singletons. Everything else is calloc'd
- * into a pool and released by type_pool_reset at the end of a compile.
+ * Numeric scalars are static singletons keyed by (kind, bits, is_unsigned).
+ * Everything else is calloc'd into a pool released by type_pool_reset.
  */
 #include "type.h"
 #include "../diagnostics.h"
@@ -10,21 +10,57 @@
 #include <string.h>
 #include <stdio.h>
 
-static Type t_void = {TY_VOID, 0, NULL, NULL, NULL, 0, NULL, 0, NULL, NULL, 0};
-static Type t_int = {TY_INT, 0, NULL, NULL, NULL, 0, NULL, 0, NULL, NULL, 0};
-static Type t_float = {TY_FLOAT, 0, NULL, NULL, NULL, 0, NULL, 0, NULL, NULL, 0};
-static Type t_bool = {TY_BOOL, 0, NULL, NULL, NULL, 0, NULL, 0, NULL, NULL, 0};
-static Type t_string = {TY_STRING, 0, NULL, NULL, NULL, 0, NULL, 0, NULL, NULL, 0};
+/* kind, is_mut, bits, is_unsigned, name, elem, ret, param_count, params,
+   field_count, field_names, field_types, array_len */
+#define SCALAR(K, B, U) {K, 0, B, U, NULL, NULL, NULL, 0, NULL, 0, NULL, NULL, 0}
+
+static Type t_void = SCALAR(TY_VOID, 0, 0);
+static Type t_i8 = SCALAR(TY_INT, 8, 0);
+static Type t_i16 = SCALAR(TY_INT, 16, 0);
+static Type t_i32 = SCALAR(TY_INT, 32, 0);
+static Type t_i64 = SCALAR(TY_INT, 64, 0);
+static Type t_u8 = SCALAR(TY_INT, 8, 1);
+static Type t_u16 = SCALAR(TY_INT, 16, 1);
+static Type t_u32 = SCALAR(TY_INT, 32, 1);
+static Type t_u64 = SCALAR(TY_INT, 64, 1);
+static Type t_f32 = SCALAR(TY_FLOAT, 32, 0);
+static Type t_f64 = SCALAR(TY_FLOAT, 64, 0);
+static Type t_bool = SCALAR(TY_BOOL, 0, 0);
+static Type t_string = SCALAR(TY_STRING, 0, 0);
+#undef SCALAR
 
 #define POOL_MAX 4096
 static Type *pool[POOL_MAX];
 static int npool;
 
+/** Phase 10: 0 (default) = `int`/`float` are 32-bit; 1 = i64/f64 for compat. */
+static int g_int64_compat = 0;
+
+void type_set_int64_compat(int on) { g_int64_compat = on ? 1 : 0; }
+int type_int64_compat(void) { return g_int64_compat; }
+
 Type *ty_void(void) { return &t_void; }
-Type *ty_int(void) { return &t_int; }
-Type *ty_float(void) { return &t_float; }
+Type *ty_int(void) { return g_int64_compat ? &t_i64 : &t_i32; }
+Type *ty_float(void) { return g_int64_compat ? &t_f64 : &t_f32; }
 Type *ty_bool(void) { return &t_bool; }
 Type *ty_string(void) { return &t_string; }
+
+/** Static singleton for an integer width. Unknown widths fall back to i64. */
+Type *ty_int_bits(int bits, int is_unsigned) {
+    switch (bits * 2 + (is_unsigned ? 1 : 0)) {
+        case 16: return &t_i8;
+        case 32: return &t_i16;
+        case 64: return &t_i32;
+        case 128: return &t_i64;
+        case 17: return &t_u8;
+        case 33: return &t_u16;
+        case 65: return &t_u32;
+        case 129: return &t_u64;
+        default: return &t_i64;
+    }
+}
+
+Type *ty_float_bits(int bits) { return bits == 32 ? &t_f32 : &t_f64; }
 
 /** Fresh pooled type of kind `k` (zeroed). */
 Type *type_new(TypeKind k) {
@@ -65,7 +101,7 @@ Type *type_proc(Type **params, size_t n, Type *ret) {
     Type *t = type_new(TY_PROC);
     t->params = params;
     t->param_count = n;
-    t->ret = ret ? ret : &t_void;
+    t->ret = ret ? ret : ty_void();
     return t;
 }
 
@@ -80,6 +116,10 @@ int type_eq(const Type *a, const Type *b) {
     if (!a || !b) return 0;
     if (a->kind != b->kind) return 0;
     switch (a->kind) {
+        case TY_INT:
+            return a->bits == b->bits && a->is_unsigned == b->is_unsigned;
+        case TY_FLOAT:
+            return a->bits == b->bits;
         case TY_PTR:
             return a->is_mut == b->is_mut && type_eq(a->elem, b->elem);
         case TY_BOX:
@@ -96,7 +136,7 @@ int type_eq(const Type *a, const Type *b) {
             return 1;
         case TY_PROC:
             if (a->param_count != b->param_count) return 0;
-            if (!type_eq(a->ret ? a->ret : &t_void, b->ret ? b->ret : &t_void)) return 0;
+            if (!type_eq(a->ret ? a->ret : ty_void(), b->ret ? b->ret : ty_void())) return 0;
             for (size_t i = 0; i < a->param_count; i++)
                 if (!type_eq(a->params[i], b->params[i])) return 0;
             return 1;
@@ -104,6 +144,67 @@ int type_eq(const Type *a, const Type *b) {
             return a->name && b->name && strcmp(a->name, b->name) == 0;
         default:
             return 1;
+    }
+}
+
+int type_is_int_kind(const Type *t) { return t && t->kind == TY_INT; }
+int type_is_float_kind(const Type *t) { return t && t->kind == TY_FLOAT; }
+int type_is_numeric(const Type *t) { return t && (t->kind == TY_INT || t->kind == TY_FLOAT); }
+
+const char *type_int_suffix(const Type *t) {
+    if (!t || t->kind != TY_INT) return NULL;
+    switch (t->bits * 2 + (t->is_unsigned ? 1 : 0)) {
+        case 16: return "i8";
+        case 32: return "i16";
+        case 64: return "i32";
+        case 128: return "i64";
+        case 17: return "u8";
+        case 33: return "u16";
+        case 65: return "u32";
+        case 129: return "u64";
+        default: return "i64";
+    }
+}
+
+const char *numeric_builtin_cname(NumericBuiltin b, const Type *t) {
+    static char bufs[4][48];
+    static int rot;
+    char *buf = bufs[rot++ & 3];
+    const char *base = NULL;
+    switch (b) {
+        case NUMB_WRAP_ADD: base = "wrapping_add"; break;
+        case NUMB_WRAP_SUB: base = "wrapping_sub"; break;
+        case NUMB_WRAP_MUL: base = "wrapping_mul"; break;
+        case NUMB_WRAP_NEG: base = "wrapping_neg"; break;
+        case NUMB_WRAP_SHL: base = "wrapping_shl"; break;
+        case NUMB_WRAP_SHR: base = "wrapping_shr"; break;
+        case NUMB_WRAP_AND: base = "wrapping_and"; break;
+        case NUMB_WRAP_OR: base = "wrapping_or"; break;
+        case NUMB_WRAP_XOR: base = "wrapping_xor"; break;
+        case NUMB_SAT_ADD: base = "saturating_add"; break;
+        case NUMB_SAT_SUB: base = "saturating_sub"; break;
+        case NUMB_SAT_MUL: base = "saturating_mul"; break;
+        default: base = "wrapping_add"; break;
+    }
+    snprintf(buf, 48, "yuga_%s_%s", base, type_int_suffix(t) ? type_int_suffix(t) : "i64");
+    return buf;
+}
+
+/** C scalar name (int32_t, uint8_t, float, double). NULL for non-numeric. */
+const char *type_c_scalar(const Type *t) {
+    if (!t) return NULL;
+    if (t->kind == TY_FLOAT) return t->bits == 32 ? "float" : "double";
+    if (t->kind != TY_INT) return NULL;
+    switch (t->bits * 2 + (t->is_unsigned ? 1 : 0)) {
+        case 16: return "int8_t";
+        case 32: return "int16_t";
+        case 64: return "int32_t";
+        case 128: return "int64_t";
+        case 17: return "uint8_t";
+        case 33: return "uint16_t";
+        case 65: return "uint32_t";
+        case 129: return "uint64_t";
+        default: return "int64_t";
     }
 }
 
@@ -213,8 +314,21 @@ const char *type_name(const Type *t) {
     if (!t) return "<unknown>";
     switch (t->kind) {
         case TY_VOID: return "void";
-        case TY_INT: return "int";
-        case TY_FLOAT: return "float";
+        case TY_INT:
+            switch (t->bits * 2 + (t->is_unsigned ? 1 : 0)) {
+                case 16: return "i8";
+                case 32: return "i16";
+                case 64: return g_int64_compat ? "i32" : "int";
+                case 128: return g_int64_compat ? "int" : "i64";
+                case 17: return "u8";
+                case 33: return "u16";
+                case 65: return "u32";
+                case 129: return "u64";
+                default: return g_int64_compat ? "int" : "i32";
+            }
+        case TY_FLOAT:
+            if (t->bits == 32) return g_int64_compat ? "f32" : "float";
+            return g_int64_compat ? "float" : "f64";
         case TY_BOOL: return "bool";
         case TY_STRING: return "string";
         case TY_PTR:

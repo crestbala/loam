@@ -1103,6 +1103,16 @@ static void handle_completion(const char *msg, const char *id) {
         add_comp(&c, "as", "keyword", 14, prefix);
         add_comp(&c, "int", "type", 25, prefix);
         add_comp(&c, "float", "type", 25, prefix);
+        add_comp(&c, "i8", "type", 25, prefix);
+        add_comp(&c, "i16", "type", 25, prefix);
+        add_comp(&c, "i32", "type", 25, prefix);
+        add_comp(&c, "i64", "type", 25, prefix);
+        add_comp(&c, "u8", "type", 25, prefix);
+        add_comp(&c, "u16", "type", 25, prefix);
+        add_comp(&c, "u32", "type", 25, prefix);
+        add_comp(&c, "u64", "type", 25, prefix);
+        add_comp(&c, "f32", "type", 25, prefix);
+        add_comp(&c, "f64", "type", 25, prefix);
         add_comp(&c, "bool", "type", 25, prefix);
         add_comp(&c, "string", "type", 25, prefix);
     }
@@ -1494,7 +1504,9 @@ static void st_scan_gap(SemToks *s, const char *src, const char *from, const cha
 }
 
 static int st_is_type_name(const char *s, int n) {
-    static const char *names[] = {"int", "float", "bool", "string", "Box", NULL};
+    static const char *names[] = {"int", "float", "i8", "i16", "i32", "i64",
+                                  "u8", "u16", "u32", "u64", "f32", "f64",
+                                  "bool", "string", "Box", NULL};
     for (int i = 0; names[i]; i++) {
         int m = (int)strlen(names[i]);
         if (n == m && strncmp(s, names[i], (size_t)n) == 0) return 1;

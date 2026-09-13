@@ -1,8 +1,10 @@
 /**
  * type.h — Yuga types used by typecheck, borrowck, and codegen.
  *
- * Singletons for void/int/float/bool/string. Compound types come from type_new
- * and live in a pool until type_pool_reset (end of a compile).
+ * Numeric scalars are static singletons keyed by (kind, bits, is_unsigned):
+ * i8..i64, u8..u64, f32/f64. `int` is the i64 singleton and `float` the f64
+ * one during the additive phase. Compound types come from type_new and live in
+ * a pool until type_pool_reset (end of a compile).
  */
 #ifndef YUGA_TYPE_H
 #define YUGA_TYPE_H
@@ -31,6 +33,8 @@ typedef struct Type Type;
 struct Type {
     TypeKind kind;
     int is_mut;           /* TY_PTR: 1 = &mut T */
+    unsigned char bits;   /* TY_INT: 8/16/32/64; TY_FLOAT: 32/64 */
+    unsigned char is_unsigned; /* TY_INT: 1 = u8/u16/u32/u64 */
     const char *name;     /* struct name or type-param name */
     Type *elem;           /* ptr/box/array/vec element */
     Type *ret;            /* proc return */
@@ -50,7 +54,12 @@ Type *type_vec(Type *elem);
 Type *type_proc(Type **params, size_t n, Type *ret);
 Type *type_param(const char *name);
 
-/** Structural equality. Generic structs compare name + type arguments. */
+/** Singleton scalar by width: ty_int_bits(64,0) is `int`. */
+Type *ty_int_bits(int bits, int is_unsigned);
+Type *ty_float_bits(int bits);
+
+/** Structural equality. Generic structs compare name + type arguments.
+ *  Numeric scalars compare kind + bits + signedness. */
 int type_eq(const Type *a, const Type *b);
 
 /** 1 if the value is copied on use (not moved). Box and &mut are not Copy.
@@ -84,9 +93,49 @@ const char *type_name(const Type *t);
 void type_pool_reset(void);
 
 Type *ty_void(void);
-Type *ty_int(void);
-Type *ty_float(void);
+Type *ty_int(void);   /* `int` alias: i32 by default, i64 under --int64-compat */
+Type *ty_float(void); /* `float` alias: f32 by default, f64 under --int64-compat */
 Type *ty_bool(void);
 Type *ty_string(void);
+
+/** Phase 10: when on, `int` means i64 and `float` means f64 (the old default).
+ *  Set once, before any type is resolved. */
+void type_set_int64_compat(int on);
+int type_int64_compat(void);
+
+/** 1 if t is any integer width (signed or unsigned). */
+int type_is_int_kind(const Type *t);
+/** 1 if t is f32 or f64. */
+int type_is_float_kind(const Type *t);
+/** 1 if t is any integer or float width. */
+int type_is_numeric(const Type *t);
+
+/** Suffix naming an integer width in a runtime helper (`i8`..`u64`), NULL if
+ *  t is not an integer width. */
+const char *type_int_suffix(const Type *t);
+
+/** Numeric builtins whose width comes from the operand type (§3.4). */
+typedef enum {
+    NUMB_NONE = 0,
+    NUMB_WRAP_ADD,
+    NUMB_WRAP_SUB,
+    NUMB_WRAP_MUL,
+    NUMB_WRAP_NEG,
+    NUMB_WRAP_SHL,
+    NUMB_WRAP_SHR,
+    NUMB_WRAP_AND,
+    NUMB_WRAP_OR,
+    NUMB_WRAP_XOR,
+    NUMB_SAT_ADD,
+    NUMB_SAT_SUB,
+    NUMB_SAT_MUL,
+} NumericBuiltin;
+
+/** Runtime helper name for `b` at width `t` (`yuga_wrapping_add_u8`), in a
+ *  rotating static buffer. */
+const char *numeric_builtin_cname(NumericBuiltin b, const Type *t);
+
+/** C scalar name for a numeric type (`int32_t`, `uint8_t`, `float`, `double`). */
+const char *type_c_scalar(const Type *t);
 
 #endif

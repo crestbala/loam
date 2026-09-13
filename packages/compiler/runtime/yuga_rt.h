@@ -231,6 +231,198 @@ static inline int64_t yuga_saturating_add(int64_t a, int64_t b) {
 #endif
 }
 
+/* ---- sized integer arithmetic (Phase 9) ----------------------------------
+ * One helper family per width. `int`/`float` keep their existing i64 helpers
+ * above so generated code for already-64-bit programs is unchanged.
+ *
+ * Overflow is checked with __builtin_*_overflow, which computes in infinite
+ * precision and reports whether the result fits the destination type exactly —
+ * C's own promoting rules never decide a result here (§3.5 rules 1–2). */
+#define YUGA_DEF_INT_ASM(SFX, T)                                                  \
+static inline T yuga_add_##SFX(T a, T b, const char *f, int l) {                  \
+    T r; if (__builtin_add_overflow(a, b, &r)) yuga_panic(f, l, "integer overflow"); \
+    return r;                                                                     \
+}                                                                                 \
+static inline T yuga_sub_##SFX(T a, T b, const char *f, int l) {                  \
+    T r; if (__builtin_sub_overflow(a, b, &r)) yuga_panic(f, l, "integer overflow"); \
+    return r;                                                                     \
+}                                                                                 \
+static inline T yuga_mul_##SFX(T a, T b, const char *f, int l) {                  \
+    T r; if (__builtin_mul_overflow(a, b, &r)) yuga_panic(f, l, "integer overflow"); \
+    return r;                                                                     \
+}                                                                                 \
+static inline T yuga_neg_##SFX(T a, const char *f, int l) {                       \
+    T r; if (__builtin_sub_overflow((T)0, a, &r)) yuga_panic(f, l, "integer overflow"); \
+    return r;                                                                     \
+}
+
+#define YUGA_DEF_INT_S(SFX, T, MINV) YUGA_DEF_INT_ASM(SFX, T)                    \
+static inline T yuga_div_##SFX(T a, T b, const char *f, int l) {                  \
+    if (b == 0) yuga_panic(f, l, "division by zero");                            \
+    if (a == (T)(MINV) && b == (T)-1) yuga_panic(f, l, "integer overflow");      \
+    return (T)(a / b);                                                            \
+}                                                                                 \
+static inline T yuga_mod_##SFX(T a, T b, const char *f, int l) {                  \
+    if (b == 0) yuga_panic(f, l, "division by zero");                            \
+    if (a == (T)(MINV) && b == (T)-1) return (T)0;                                \
+    return (T)(a % b);                                                            \
+}
+
+#define YUGA_DEF_INT_U(SFX, T) YUGA_DEF_INT_ASM(SFX, T)                           \
+static inline T yuga_div_##SFX(T a, T b, const char *f, int l) {                  \
+    if (b == 0) yuga_panic(f, l, "division by zero");                            \
+    return (T)(a / b);                                                            \
+}                                                                                 \
+static inline T yuga_mod_##SFX(T a, T b, const char *f, int l) {                  \
+    if (b == 0) yuga_panic(f, l, "division by zero");                            \
+    return (T)(a % b);                                                            \
+}
+
+YUGA_DEF_INT_S(i8, int8_t, INT8_MIN)
+YUGA_DEF_INT_S(i16, int16_t, INT16_MIN)
+YUGA_DEF_INT_S(i32, int32_t, INT32_MIN)
+YUGA_DEF_INT_U(u8, uint8_t)
+YUGA_DEF_INT_U(u16, uint16_t)
+YUGA_DEF_INT_U(u32, uint32_t)
+YUGA_DEF_INT_U(u64, uint64_t)
+static inline int64_t yuga_neg_i64(int64_t a, const char *f, int l) {
+    int64_t r;
+    if (__builtin_sub_overflow((int64_t)0, a, &r)) yuga_panic(f, l, "integer overflow");
+    return r;
+}
+
+/* Shifts lower through the unsigned type so a signed left shift is never UB,
+ * and a count at or past the width traps (§3.5 rule 3). */
+#define YUGA_DEF_SHIFT(SFX, T, UT)                                                \
+static inline T yuga_shl_##SFX(T a, uint64_t n, const char *f, int l) {           \
+    if (n >= (uint64_t)(sizeof(T) * 8)) yuga_panic(f, l, "shift amount out of range"); \
+    return (T)((UT)a << n);                                                       \
+}                                                                                 \
+static inline T yuga_shr_##SFX(T a, uint64_t n, const char *f, int l) {           \
+    if (n >= (uint64_t)(sizeof(T) * 8)) yuga_panic(f, l, "shift amount out of range"); \
+    return (T)(a >> n);                                                           \
+}
+
+YUGA_DEF_SHIFT(i8, int8_t, uint8_t)
+YUGA_DEF_SHIFT(i16, int16_t, uint16_t)
+YUGA_DEF_SHIFT(i32, int32_t, uint32_t)
+YUGA_DEF_SHIFT(i64, int64_t, uint64_t)
+YUGA_DEF_SHIFT(u8, uint8_t, uint8_t)
+YUGA_DEF_SHIFT(u16, uint16_t, uint16_t)
+YUGA_DEF_SHIFT(u32, uint32_t, uint32_t)
+YUGA_DEF_SHIFT(u64, uint64_t, uint64_t)
+
+/* Per-width explicit wrap (per §3.4). */
+#define YUGA_DEF_WRAP(SFX, T, UT)                                                 \
+static inline T yuga_wrapping_add_##SFX(T a, T b) { return (T)((UT)a + (UT)b); }  \
+static inline T yuga_wrapping_sub_##SFX(T a, T b) { return (T)((UT)a - (UT)b); }  \
+static inline T yuga_wrapping_mul_##SFX(T a, T b) { return (T)((UT)a * (UT)b); }  \
+static inline T yuga_wrapping_neg_##SFX(T a) { return (T)((UT)0 - (UT)a); }       \
+static inline T yuga_wrapping_shl_##SFX(T a, UT n) {                              \
+    return n >= (UT)(sizeof(T) * 8) ? (T)0 : (T)((UT)a << n);                     \
+}                                                                                 \
+static inline T yuga_wrapping_shr_##SFX(T a, UT n) {                              \
+    return n >= (UT)(sizeof(T) * 8) ? (T)0 : (T)((UT)a >> n);                     \
+}                                                                                 \
+static inline T yuga_wrapping_and_##SFX(T a, T b) { return (T)(a & b); }          \
+static inline T yuga_wrapping_or_##SFX(T a, T b) { return (T)(a | b); }           \
+static inline T yuga_wrapping_xor_##SFX(T a, T b) { return (T)(a ^ b); }
+
+YUGA_DEF_WRAP(i8, int8_t, uint8_t)
+YUGA_DEF_WRAP(i16, int16_t, uint16_t)
+YUGA_DEF_WRAP(i32, int32_t, uint32_t)
+YUGA_DEF_WRAP(i64, int64_t, uint64_t)
+YUGA_DEF_WRAP(u8, uint8_t, uint8_t)
+YUGA_DEF_WRAP(u16, uint16_t, uint16_t)
+YUGA_DEF_WRAP(u32, uint32_t, uint32_t)
+YUGA_DEF_WRAP(u64, uint64_t, uint64_t)
+
+/* Per-width saturating arithmetic. */
+#define YUGA_DEF_SAT(SFX, T, MINV, MAXV)                                          \
+static inline T yuga_saturating_add_##SFX(T a, T b) {                             \
+    T r; if (!__builtin_add_overflow(a, b, &r)) return r;                         \
+    return (b > 0) ? (T)(MAXV) : (T)(MINV);                                       \
+}                                                                                 \
+static inline T yuga_saturating_sub_##SFX(T a, T b) {                             \
+    T r; if (!__builtin_sub_overflow(a, b, &r)) return r;                         \
+    return (b < 0) ? (T)(MAXV) : (T)(MINV);                                       \
+}                                                                                 \
+static inline T yuga_saturating_mul_##SFX(T a, T b) {                             \
+    T r; if (!__builtin_mul_overflow(a, b, &r)) return r;                         \
+    return ((a > 0) == (b > 0)) ? (T)(MAXV) : (T)(MINV);                          \
+}
+
+YUGA_DEF_SAT(i8, int8_t, INT8_MIN, INT8_MAX)
+YUGA_DEF_SAT(i16, int16_t, INT16_MIN, INT16_MAX)
+YUGA_DEF_SAT(i32, int32_t, INT32_MIN, INT32_MAX)
+YUGA_DEF_SAT(i64, int64_t, INT64_MIN, INT64_MAX)
+YUGA_DEF_SAT(u8, uint8_t, 0, UINT8_MAX)
+YUGA_DEF_SAT(u16, uint16_t, 0, UINT16_MAX)
+YUGA_DEF_SAT(u32, uint32_t, 0, UINT32_MAX)
+YUGA_DEF_SAT(u64, uint64_t, 0, UINT64_MAX)
+
+/* Numeric narrowing conversions trap on a value the destination cannot hold
+ * (§3.4). `convu`/`satu` take a u64 source; the others an int64 source. */
+#define YUGA_DEF_CONV(SFX, T, LO, HI)                                             \
+static inline T yuga_conv_##SFX(int64_t v, const char *f, int l) {                \
+    if (v < (int64_t)(LO) || v > (int64_t)(HI))                                   \
+        yuga_panic(f, l, "integer conversion out of range");                      \
+    return (T)v;                                                                  \
+}                                                                                 \
+static inline T yuga_convf_##SFX(double v, const char *f, int l) {                \
+    if (!(v >= (double)(LO) && v <= (double)(HI)))                                \
+        yuga_panic(f, l, "float conversion out of range");                        \
+    return (T)v;                                                                  \
+}                                                                                 \
+static inline T yuga_sat_##SFX(int64_t v) {                                       \
+    if (v < (int64_t)(LO)) return (T)(LO);                                        \
+    if (v > (int64_t)(HI)) return (T)(HI);                                        \
+    return (T)v;                                                                  \
+}
+
+YUGA_DEF_CONV(i8, int8_t, INT8_MIN, INT8_MAX)
+YUGA_DEF_CONV(i16, int16_t, INT16_MIN, INT16_MAX)
+YUGA_DEF_CONV(i32, int32_t, INT32_MIN, INT32_MAX)
+YUGA_DEF_CONV(u8, uint8_t, 0, UINT8_MAX)
+YUGA_DEF_CONV(u16, uint16_t, 0, UINT16_MAX)
+YUGA_DEF_CONV(u32, uint32_t, 0, UINT32_MAX)
+static inline int64_t yuga_conv_i64(int64_t v, const char *f, int l) {
+    (void)f; (void)l; return v;
+}
+static inline int64_t yuga_convf_i64(double v, const char *f, int l) {
+    if (!(v >= -9223372036854775808.0 && v < 9223372036854775808.0))
+        yuga_panic(f, l, "float conversion out of range");
+    return (int64_t)v;
+}
+static inline int64_t yuga_sat_i64(int64_t v) { return v; }
+static inline uint64_t yuga_conv_u64(int64_t v, const char *f, int l) {
+    if (v < 0) yuga_panic(f, l, "integer conversion out of range");
+    return (uint64_t)v;
+}
+static inline uint64_t yuga_convf_u64(double v, const char *f, int l) {
+    if (!(v >= 0.0 && v < 18446744073709551616.0))
+        yuga_panic(f, l, "float conversion out of range");
+    return (uint64_t)v;
+}
+static inline uint64_t yuga_sat_u64(int64_t v) { return v < 0 ? (uint64_t)0 : (uint64_t)v; }
+
+#define YUGA_DEF_CONVU(SFX, T, MAXV)                                              \
+static inline T yuga_convu_##SFX(uint64_t v, const char *f, int l) {              \
+    if (v > (uint64_t)(MAXV)) yuga_panic(f, l, "integer conversion out of range"); \
+    return (T)v;                                                                  \
+}                                                                                 \
+static inline T yuga_satu_##SFX(uint64_t v) {                                     \
+    return v > (uint64_t)(MAXV) ? (T)(MAXV) : (T)v;                               \
+}
+
+YUGA_DEF_CONVU(i8, int8_t, INT8_MAX)
+YUGA_DEF_CONVU(i16, int16_t, INT16_MAX)
+YUGA_DEF_CONVU(i32, int32_t, INT32_MAX)
+YUGA_DEF_CONVU(i64, int64_t, INT64_MAX)
+YUGA_DEF_CONVU(u8, uint8_t, UINT8_MAX)
+YUGA_DEF_CONVU(u16, uint16_t, UINT16_MAX)
+YUGA_DEF_CONVU(u32, uint32_t, UINT32_MAX)
+
 static inline int64_t yuga_idx(int64_t i, int64_t n, const char *f, int l) {
     if (i < 0 || i >= n) yuga_panic(f, l, "index out of bounds");
     return i;
@@ -434,7 +626,7 @@ static inline yuga_str yuga_str_of_string(yuga_str s) { return s; }
 static inline yuga_str yuga_string_from_bytes(yuga_vec b) {
     int64_t n = b.len > 0 ? b.len : 0;
     char *p = (char *)yuga_new((size_t)n + 1, "string_from_bytes", 0);
-    int64_t *el = (int64_t *)b.ptr;
+    int32_t *el = (int32_t *)b.ptr;
     int64_t i;
     for (i = 0; i < n; i++)
         p[i] = (char)(el ? (el[i] & 255) : 0);

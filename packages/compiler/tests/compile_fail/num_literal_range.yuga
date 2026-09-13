@@ -1,0 +1,7 @@
+// Phase 9: an out-of-range literal is a compile error at the literal,
+// naming the target type.
+
+fn main() {
+    let a: u8 = 300
+    let b: i8 = 200
+}

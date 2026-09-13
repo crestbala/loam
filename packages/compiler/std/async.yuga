@@ -40,7 +40,7 @@ import "std:thread"
 
 struct Timer {
     id: int,
-    at: int,
+    at: i64,
     every: int,
     cb: fn(),
 }
@@ -52,8 +52,9 @@ struct Future<T> {
     id: int,
 }
 
-/// Monotonic milliseconds (host clock). Bodyless: `yuga_async_now_ms`.
-fn now_ms() -> int {}
+/// Monotonic milliseconds (host clock). i64: epoch millis overflow i32 in ~24
+/// days (§3.6). Bodyless: `yuga_async_now_ms`.
+fn now_ms() -> i64 {}
 
 /// Block the calling thread for `ms`. Console/headless only — never in UI
 /// code; use `after` there. Bodyless: `yuga_async_sleep_ms`.
@@ -77,7 +78,7 @@ fn after(ms: int, cb: fn()) -> int {
     if d < 0 {
         d = 0
     }
-    push(timers, Timer { id: id, at: now_ms() + d, every: 0, cb: cb })
+    push(timers, Timer { id: id, at: now_ms() + i64(d), every: 0, cb: cb })
     return id
 }
 
@@ -92,7 +93,7 @@ fn interval(ms: int, cb: fn()) -> int {
     if d < 1 {
         d = 1
     }
-    push(timers, Timer { id: id, at: now_ms() + d, every: d, cb: cb })
+    push(timers, Timer { id: id, at: now_ms() + i64(d), every: d, cb: cb })
     return id
 }
 
@@ -163,7 +164,7 @@ fn next_due() -> int {
     let now = now_ms()
     let mut soon = 0
     for i in 0..n {
-        let mut d = timers[i].at - now
+        let mut d = i32(timers[i].at - now)
         if d < 1 {
             d = 1
         }
@@ -232,7 +233,7 @@ fn tick() {
                 let every = timers[idx].every
                 let cb = timers[idx].cb
                 if every > 0 {
-                    timers[idx].at = now_ms() + every
+                    timers[idx].at = now_ms() + i64(every)
                 } else {
                     let mut keep = []Timer {}
                     let m2 = timers.len

@@ -142,7 +142,7 @@ static void worker_call(AstNode *call, ThreadCheck *tc) {
     /* Vec and interpolation builtins operate on worker-local storage only
        (module globals are banned above, so no shared vec can be reached). */
     if (call->as.call.is_vec_push || call->as.call.is_vec_pop || call->as.call.is_println ||
-        call->as.call.is_wrapping_add || call->as.call.is_saturating_add) {
+        call->as.call.num_builtin != NUMB_NONE) {
         for (i = 0; i < call->as.call.arg_count; i++)
             worker_walk(call->as.call.args[i], tc);
         return;

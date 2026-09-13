@@ -5,10 +5,10 @@ struct HuffOut {
     val: string,
 }
 
-fn bit_mask(n: int) -> int {
-    let mut m = 0
+fn bit_mask(n: int) -> i64 {
+    let mut m = i64(0)
     if n > 0 {
-        m = wrapping_shl(1, n) - 1
+        m = wrapping_shl(i64(1), i64(n)) - 1
     }
     return m
 }
@@ -68,7 +68,7 @@ fn decode(s: string) -> HuffOut {
         134217707, 268435454, 134217708, 134217709, 134217710, 134217711, 134217712, 67108846,
     }
     let mut out = []int {}
-    let mut acc = 0
+    let mut acc = i64(0)
     let mut nacc = 0
     let mut i = 0
     let mut ok = 1
@@ -83,7 +83,7 @@ fn decode(s: string) -> HuffOut {
             if ok == 1 {
                 if i < s.len {
                     if nacc < 30 {
-                        acc = wrapping_or(wrapping_shl(acc, 8), s[i])
+                        acc = wrapping_or(wrapping_shl(acc, i64(8)), i64(s[i]))
                         nacc = nacc + 8
                         i = i + 1
                     }
@@ -92,8 +92,8 @@ fn decode(s: string) -> HuffOut {
                 for sym in 0..256 {
                     let nb = nbits[sym]
                     if nacc >= nb {
-                        let got = wrapping_and(wrapping_shr(acc, nacc - nb), bit_mask(nb))
-                        if got == codes[sym] {
+                        let got = wrapping_and(wrapping_shr(acc, i64(nacc - nb)), bit_mask(nb))
+                        if got == i64(codes[sym]) {
                             hit = sym
                         }
                     }
@@ -193,7 +193,7 @@ fn encode(s: string) -> string {
         134217707, 268435454, 134217708, 134217709, 134217710, 134217711, 134217712, 67108846,
     }
     let mut out = []int {}
-    let mut acc = 0
+    let mut acc = i64(0)
     let mut nacc = 0
     let mut ok = 1
     if s.len > 65536 {
@@ -203,11 +203,11 @@ fn encode(s: string) -> string {
         for i in 0..s.len {
             let c = s[i]
             let nb = nbits[c]
-            acc = wrapping_or(wrapping_shl(acc, nb), codes[c])
+            acc = wrapping_or(wrapping_shl(acc, i64(nb)), i64(codes[c]))
             nacc = nacc + nb
             for e in 0..8 {
                 if nacc >= 8 {
-                    out.push(wrapping_and(wrapping_shr(acc, nacc - 8), 255))
+                    out.push(i32(wrapping_and(wrapping_shr(acc, i64(nacc - 8)), 255)))
                     nacc = nacc - 8
                     acc = wrapping_and(acc, bit_mask(nacc))
                 }
@@ -215,8 +215,8 @@ fn encode(s: string) -> string {
         }
         if nacc > 0 {
             let pad = 8 - nacc
-            acc = wrapping_or(wrapping_shl(acc, pad), bit_mask(pad))
-            out.push(wrapping_and(acc, 255))
+            acc = wrapping_or(wrapping_shl(acc, i64(pad)), bit_mask(pad))
+            out.push(i32(wrapping_and(acc, 255)))
         }
     }
     let mut val = string_from_bytes(out)

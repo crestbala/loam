@@ -38,7 +38,7 @@ ZEUSAPPS := $(foreach d,$(wildcard $(ZEUSEX)/*),$(wildcard $(d)/$(notdir $(d)).y
 EXAMPLES:= $(sort $(filter-out $(LANGEX)/oob.yuga,\
              $(wildcard $(GOLDEN)/*.yuga) $(wildcard $(LANGEX)/*.yuga) $(ZEUSAPPS)))
 
-.PHONY: all clean test mkdirs lsp grammar zed-grammar install-editor
+.PHONY: all clean test mkdirs lsp grammar zed-grammar install-editor bench
 
 all: mkdirs $(TARGET) $(LSP)
 
@@ -81,6 +81,11 @@ $(OBJDIR)/%.o: $(SRCDIR)/%.c
 
 clean:
 	rm -rf $(OBJDIR) $(BINDIR) $(TESTDIR)/tmp $(COMPILER_DIR)/runtime/.obj
+
+# Phase 10: arena size, layout time, and binary size with the 32-bit default
+# vs --int64-compat. See packages/compiler/tests/bench/.
+bench: all
+	@sh $(TESTDIR)/bench/run.sh
 
 test: all
 	@mkdir -p $(TESTDIR)/tmp $(EXBUILD)

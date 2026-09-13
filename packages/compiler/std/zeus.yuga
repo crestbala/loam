@@ -1988,21 +1988,22 @@ fn apply_int(nid: int, setter: int, v: int) {
     let n = node_handle(nid)
     // The UI-scale knob is applied here, once, so recipes and callers both
     // write plain design px and never call `scaled` themselves. Only
-    // geometry and type scale; weights, flags, colors and z-order do not.
-    let s = scaled(v)
+    // geometry and type scale; weights, flags, colors and z-order do not —
+    // so `scaled` is called in those arms only (scaling a packed color would
+    // overflow the 32-bit default).
     match setter {
-        SET.Width => { set_width(n, s) }
-        SET.Height => { set_height(n, s) }
-        SET.Padding => { set_padding(n, s) }
-        SET.PaddingX => { set_padding_x(n, s) }
-        SET.PaddingY => { set_padding_y(n, s) }
-        SET.Spacing => { set_spacing(n, s) }
-        SET.Radius => { radius(n, s) }
+        SET.Width => { set_width(n, scaled(v)) }
+        SET.Height => { set_height(n, scaled(v)) }
+        SET.Padding => { set_padding(n, scaled(v)) }
+        SET.PaddingX => { set_padding_x(n, scaled(v)) }
+        SET.PaddingY => { set_padding_y(n, scaled(v)) }
+        SET.Spacing => { set_spacing(n, scaled(v)) }
+        SET.Radius => { radius(n, scaled(v)) }
         SET.Border => { arena.nodes[nid].border_w = v }
         SET.Grow => { grow(n, v) }
         SET.AlignItems => { align(n, v) }
         SET.Justify => { justify(n, v) }
-        SET.Font => { font(n, s) }
+        SET.Font => { font(n, scaled(v)) }
         SET.Opacity => { opacity(n, v) }
         SET.Direction => {
             match v {
@@ -2013,10 +2014,10 @@ fn apply_int(nid: int, setter: int, v: int) {
         SET.Background => { set_background(n, v) }
         SET.Color => { set_color(n, v) }
         SET.BorderColor => { border_color(n, v) }
-        SET.MinWidth => { set_min_width(n, s) }
-        SET.MaxWidth => { set_max_width(n, s) }
-        SET.MinHeight => { set_min_height(n, s) }
-        SET.MaxHeight => { set_max_height(n, s) }
+        SET.MinWidth => { set_min_width(n, scaled(v)) }
+        SET.MaxWidth => { set_max_width(n, scaled(v)) }
+        SET.MinHeight => { set_min_height(n, scaled(v)) }
+        SET.MaxHeight => { set_max_height(n, scaled(v)) }
         SET.Wrap => {
             match v {
                 0 => { }
@@ -2030,10 +2031,10 @@ fn apply_int(nid: int, setter: int, v: int) {
             }
         }
         SET.Position => { arena.nodes[nid].pos = v }
-        SET.Left => { arena.nodes[nid].pin_l = s }
-        SET.Top => { arena.nodes[nid].pin_t = s }
-        SET.Right => { arena.nodes[nid].pin_r = s }
-        SET.Bottom => { arena.nodes[nid].pin_b = s }
+        SET.Left => { arena.nodes[nid].pin_l = scaled(v) }
+        SET.Top => { arena.nodes[nid].pin_t = scaled(v) }
+        SET.Right => { arena.nodes[nid].pin_r = scaled(v) }
+        SET.Bottom => { arena.nodes[nid].pin_b = scaled(v) }
         SET.ZIndex => { arena.nodes[nid].z_index = v }
         SET.Shrink => { shrink(n, v) }
         SET.ShowOn => {
@@ -3745,7 +3746,7 @@ fn load_font(family: string, src: string) -> int {
 /// 20 at 125%. Internal — `apply_int` calls it for every geometry and type
 /// prop, which is the only place scaling happens. Widgets never call it.
 fn scaled(v: int) -> int {
-    return v * ui_scale / 100
+    return i32(i64(v) * i64(ui_scale) / i64(100))
 }
 
 // --- button geometry: heights 32/36/40px, side padding 12/16/32px ---

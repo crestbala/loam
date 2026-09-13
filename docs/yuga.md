@@ -239,9 +239,22 @@ fn main() {
 the compiler proved the index in range. `struct Pair<T> { a: T, b: T }` is
 monomorphized; `Pair { a: 1, b: 2 }` infers `Pair<int>`.
 
-`int` is `int64_t`. `+ - *` trap on overflow; use `wrapping_add` /
-`saturating_add` / `wrapping_shr` / `wrapping_shl` / `wrapping_or` /
-`wrapping_and` when wrap is intended. `s[i]` is the unsigned byte at `i`.
+`int` is `i32` and `float` is `f32` by default. Sized widths are also
+available:
+`i8`/`i16`/`i32`/`i64`, `u8`/`u16`/`u32`/`u64`, and `f32`/`f64`. Numeric
+literals are untyped until context gives them one (`let p: u8 = 200`); a
+literal that does not fit its target is a compile error. Widths never mix
+implicitly: `a: i32 + b: i64` is an error, and conversions are explicit and
+call-shaped — `i64(x)`, `f32(x)`, `u8(x)` (also `x as u8`). Converting to a
+width that cannot hold the value traps, as does `u32(5) - u32(10)` (unsigned
+underflow). Opt out with `wrapping_u8(x)` / `saturating_u8(x)`, or with the
+per-width arithmetic builtins `wrapping_add` / `wrapping_sub` / `wrapping_mul`
+/ `wrapping_neg` / `wrapping_shl` / `wrapping_shr` / `wrapping_and` /
+`wrapping_or` / `wrapping_xor` and `saturating_add` / `saturating_sub` /
+`saturating_mul`, whose width comes from their operands. `+ - *` trap on
+overflow at every width. `s[i]` is the unsigned byte at `i`. Things that must
+stay 64-bit (clocks, hashes, large byte counts) are listed in
+`docs/numeric-widths.md`.
 
 ### 4. Modules
 

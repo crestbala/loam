@@ -1,0 +1,51 @@
+// Phase 9: f32 / f64 widths. Literals adopt context, conversions are
+// explicit, and arithmetic is never evaluated in double for f32.
+import "std:fmt"
+import "std:sys"
+
+fn expect(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+struct P {
+    x: f32,
+    y: f32,
+}
+
+fn main() {
+    // f64 is the default float and still called `float`.
+    let c: f64 = 1.5
+    expect(c + f64(2.25) == f64(3.75), "f64 add")
+    let legacy: float = 1.5
+    expect(legacy == 1.5, "float is f64")
+
+    // f32 adopts its own literals and stays 32-bit.
+    let a: f32 = 1.5
+    let b: f32 = f32(2.25)
+    expect(a + b == f32(3.75), "f32 add")
+    expect(a * f32(2.0) == f32(3.0), "f32 mul")
+
+    // Conversions between widths and integers are explicit.
+    expect(i32(a) == i32(1), "f32 to i32 truncates")
+    expect(f32(3) == f32(3.0), "int to f32")
+    let d: f32 = f32(c)
+    expect(d == f32(1.5), "f64 to f32")
+    let e: f64 = f64(a)
+    expect(e == f64(1.5), "f32 to f64")
+
+    // Compound assignment and comparisons.
+    let mut f: f32 = 1.0
+    f += 0.5
+    expect(f == f32(1.5), "f32 compound")
+    expect(a < f32(2.0), "f32 compare")
+
+    // Struct fields.
+    let p = P { x: 1.25, y: 2.5 }
+    expect(p.x + p.y == f32(3.75), "f32 fields")
+
+    fmt.println("sized floats ok")
+}

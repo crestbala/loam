@@ -197,6 +197,7 @@ struct AstNode {
         struct {
             AstNode *expr;
             AstNode *type;
+            int conv_mode; /* 0 = trap on range error, 1 = wrapping, 2 = saturating */
         } cast;
         struct {
             AstNode *callee;
@@ -204,10 +205,9 @@ struct AstNode {
             size_t arg_count;
             int is_println;
             int is_box_new;
-            int is_wrapping_add;
-            int is_saturating_add;
             int is_vec_push;
             int is_vec_pop;
+            NumericBuiltin num_builtin; /* wrapping_ / saturating_ op, width from args */
             const char *c_builtin; /* emit this C symbol (wrapping_shr, string_from_bytes, …) */
             const char *resolved_cname;
             int is_fn_val;
