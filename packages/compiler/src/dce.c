@@ -90,6 +90,14 @@ static const char *const c_roots_maya[] = {
     NULL,
 };
 
+/* `std/zeuscore/metrics.yuga` is not named `zeus`, but the web host calls its
+   `bind` from C (`zeus_font_set` → `yuga_metrics_bind`), so it must survive DCE
+   even when no app call to `zeus.use_font` reaches it. */
+static const char *const c_roots_metrics[] = {
+    "bind",
+    NULL,
+};
+
 static void mark_fn(AstNode *fn) {
     if (!fn || fn->kind != AST_FN_DECL) return;
     add_set(&kept, fn);
@@ -316,6 +324,8 @@ void yuga_dce_run(YugaModule *mods, int nmods) {
                     roots = c_roots_zeus;
                 else if (strcmp(mods[m].name, "maya") == 0)
                     roots = c_roots_maya;
+                else if (strcmp(mods[m].name, "metrics") == 0)
+                    roots = c_roots_metrics;
                 if (roots) {
                     for (int r = 0; roots[r]; r++) {
                         char want[128];

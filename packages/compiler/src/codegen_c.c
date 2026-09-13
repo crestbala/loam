@@ -2948,6 +2948,16 @@ void codegen_emit_c(FILE *out, YugaModule *mods, int nmods, const char *rt_path)
            `test.summary`. Naming the test *before* the call means a trap (which
            aborts without unwinding) still reports which test was running. */
         fprintf(out, "\nint main(void) {\n");
+        /* Module-level `let` initializers run in per-module `__init` fns that
+           the program's own `main` would call; the runner replaces `main`, so
+           it must call them too (std tables, arena, etc.). */
+        if (emit_ir_mod) {
+            for (int i = emit_ir_mod->nfns - 1; i >= 0; i--) {
+                IrFn *g = &emit_ir_mod->fns[i];
+                if (g->name && strcmp(g->name, "__init") == 0 && g->cname)
+                    fprintf(out, "    %s();\n", g->cname);
+            }
+        }
         for (int m = 0; m < nmods; m++) {
             AstNode *p = mods[m].ast;
             if (!p) continue;

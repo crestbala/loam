@@ -427,6 +427,21 @@ int64_t yuga_platform_plat_load_font(yuga_str family, yuga_str src) {
     return ok ? 1 : 0;
 }
 
+/* In-tree metrics (`std/zeuscore/metrics.yuga`) parse the font's tables, so
+   they need its bytes. The default reads `src` as a path — desktop, iOS, and
+   Android all have a filesystem. The web host has none and installs a hook
+   that fetches the URL and pushes the bytes back (packages/zeus/web). */
+static yuga_str (*plat_font_bytes_fn)(yuga_str src);
+
+void zeus_set_font_bytes_hook(yuga_str (*fetch)(yuga_str src)) {
+    plat_font_bytes_fn = fetch;
+}
+
+yuga_str yuga_platform_plat_font_bytes(yuga_str src) {
+    if (plat_font_bytes_fn) return plat_font_bytes_fn(src);
+    return yuga_sys_read_file(src);
+}
+
 void yuga_zeus_plat_measure(yuga_str s, int32_t px, int32_t *w, int32_t *h) {
     char *p = dup_ys(s);
     int64_t tw = 0, th = 0;
@@ -934,6 +949,23 @@ int64_t yuga_platform_plat_edit_caret(int64_t slot) {
 int64_t yuga_platform_plat_edit_anchor(int64_t slot) {
     if (!edit_ok(slot)) return 0;
     return edit_anchor[slot];
+}
+
+/* Absolute caret / anchor setters. The Yuga side computes grapheme-cluster
+   boundaries with `std:unicode` and parks them here, then reuses the existing
+   selection delete paths. */
+int64_t yuga_platform_plat_edit_set_caret(int64_t slot, int64_t pos) {
+    if (!edit_ok(slot)) return 0;
+    edit_pos[slot] = (int)pos;
+    edit_clamp((int)slot);
+    return 1;
+}
+
+int64_t yuga_platform_plat_edit_set_anchor(int64_t slot, int64_t pos) {
+    if (!edit_ok(slot)) return 0;
+    edit_anchor[slot] = (int)pos;
+    edit_clamp((int)slot);
+    return 1;
 }
 
 int64_t yuga_platform_plat_edit_mark(int64_t slot, yuga_str text) {

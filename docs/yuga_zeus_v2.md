@@ -122,6 +122,23 @@ your own C boundary rule. Three options, pick one deliberately:
 Recommendation: option 2 now, option 1 as a long-horizon project. Option 3 quietly
 kills the framework's main claim.
 
+**Decision (recorded; implementation deferred — "look at later").** The
+direction this tree takes is **option 1**: port a minimal shaper into Yuga for
+the scripts it targets, so shaping, metrics, and glyph runs stay Yuga values and
+`docs/boundary.md` holds. Until the port lands, metrics are unshaped — one glyph
+per grapheme cluster — and `std:font.glyph_run` returns that unshaped run.
+**Option 2 (HarfBuzz) is not adopted as the architecture:** it is C *library
+logic*, which the boundary rule rejects; it computes advances only (drawing still
+needs a host rasterizer); and it grows the wasm artifact. Reopen it only if
+correct Indic advances are needed before the port, and then only as a temporary,
+named exception behind `platform.yuga` and marked for removal. Option 3 is
+rejected.
+
+The shaper boundary to design when this is picked up: one `shape` step turning a
+grapheme cluster plus its script into glyph ids and advances, consumed by
+`std:font.glyph_run`; the host ABI stays `plat_glyphs(run)`, so shaping itself
+needs no host change.
+
 ### 1.5 Debug experience is generated C
 
 Debuggers, profilers, and crash reports show `a.c`, not `app.yuga`. **Cheap, large
@@ -1101,7 +1118,10 @@ One phase at a time. The ordering is a dependency chain, not a preference.
 
 **Position: Phases 9, 10, and 12 are green. Phase 11 is green on the two layout
 steps that landed (grouping, narrowing); `f32` geometry and struct-of-arrays
-are deferred and recorded in `docs/numeric-widths.md`. Next: Phase 13.**
+are deferred and recorded in `docs/numeric-widths.md`. Phase 13 is green on
+its engine and editing steps — grapheme clusters, the in-tree font
+parser/metrics, and grapheme-aware caret/backspace/delete; shipping a font and
+`plat_glyphs`/shaping are open, with the reason below. Next: Phase 14.**
 
 ### Phase 9 — Sized numeric types (additive)
 
@@ -1164,10 +1184,68 @@ names it directly, and the `#line`-mapped debug line table references
 `app.yuga` under `-g`); `make test` runs in-language tests. **Green.**
 
 ### Phase 13 — Text in-tree
+
+**Status: green on grapheme clusters, the font parser/metrics and glyph runs,
+grapheme-aware editing, and external-font layout measurement on all four hosts
+(the web path via an async fetch bridge); open on shipping a font, the shaping
+decision, and `plat_glyphs`.**
+
+`std:unicode` implements UTF-8 and extended grapheme clusters (UAX #29) with the
+GCB property tables in Yuga: `next_grapheme` / `prev_grapheme` /
+`grapheme_count`, including combining marks, Hangul L/V/T, regional-indicator
+pairs, and emoji ZWJ sequences. `Input` caret movement, backspace, and delete
+step by cluster — a Tamil akshara moves as one unit per press, which is the
+second exit line below, now green.
+
+`std:font` parses `head` / `maxp` / `hhea` / `hmtx` and `cmap` formats 4 and 12,
+and exposes pure `measure` / `measure_wrap`. Text width and line breaking are
+functions of (font bytes, size, string), so once the hosts call them,
+`measure_text` is host-independent by construction. Tested against a generated
+fixture (`packages/compiler/tests/fonts/tiny.ttf`, remade by
+`make_tiny_font.py`).
+
+`std/zeuscore/metrics.yuga` binds an external font (`zeus.use_font(src)` reads a
+file; `zeus.use_font_bytes` takes bytes the app holds) and routes layout
+measurement through `std:font`, falling back to the host seam when unbound.
+`zeus_plat.c` reads the file for desktop/iOS/Android; on wasm the loader fetches
+the URL, the host copies the bytes back (`zeus_font_reserve` / `zeus_font_set`),
+and the loader binds them — async, so layout keeps `measureText` until they land.
+`std:font.glyph_run` produces the positioned glyph run a `plat_glyphs` draw will
+consume; it is deliberately the same shape shaping will fill. The goldens lock
+the load path: `draw_golden/golden_font_metrics` binds `tiny.ttf` and shows the
+in-tree advance and wrap differing from the headless fallback.
+
+The web bridge is compile-verified (wasm links, exports present) but not
+browser-tested, and `plat_glyphs` has no host draw implementation yet.
+
+Still open, and why — this is a staged landing, not a claim the phase is done:
+
+- **`plat_glyphs` host draw** — `glyph_run` exists, but no host draws a run:
+  Cocoa/iOS/Android can (`CTFontDrawGlyphs` / `Canvas.drawGlyphs`), Canvas2D
+  cannot without a glyph atlas parsed from `glyf`. Naming `plat_text` →
+  `plat_glyphs` is the interface step still to land.
+- **shaping** — metrics and runs are unshaped (one glyph per cluster), so Indic
+  reordering and ligatures wait on the port. §1.4 records the direction
+  (**option 1**: port a minimal shaper; HarfBuzz only as a temporary exception);
+  the port itself is deferred.
+- **shipping a font** — an app still supplies its own font; there is no in-tree
+  asset or compiler `@embed`, so `measure_text` is identical across hosts only
+  for an app that binds the same font everywhere.
+
+**Deferred — pick up later** (recorded here so it is not lost):
+
+1. Design the shaper boundary and port a minimal shaper (§1.4, option 1).
+2. `plat_glyphs(run)` on hosts — Cocoa first (`CTFontDrawGlyphs`), then the
+   `plat_text` → `plat_glyphs` ABI. Canvas2D needs a `glyf`-derived glyph atlas.
+3. A shipped or `@embed`-ed font so `measure_text` is identical without the app
+   binding one. The web fetch bridge is compile-verified, not browser-tested.
+
 Font table parsing, metrics, line breaking, grapheme clusters, shaping (with the
 §1.4 option chosen and written down). `plat_glyphs` replaces `plat_text`.
 **Exit:** `measure_text` is identical on macOS, wasm, iOS, and Android for the
-same input. Caret movement through a Tamil string moves one grapheme per press.
+same input (**open** — needs a shipped font and the §1.4 shaper port above);
+caret movement through a Tamil string moves one grapheme per press (**green** —
+`std:unicode` boundaries in `Input`).
 
 ### Phase 14 — Closures, boundaries, control flow
 Refcounted closure envs owned by their Node. Stale-capture diagnostic.

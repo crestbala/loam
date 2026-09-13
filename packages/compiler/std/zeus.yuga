@@ -88,6 +88,7 @@ import "zeuscore/geometry.yuga"
 import "zeuscore/platform.yuga"
 import "zeuscore/arena.yuga"
 import "zeuscore/layout.yuga"
+import "zeuscore/metrics.yuga"
 import "zeuscore/scene.yuga"
 import "zeuscore/input.yuga"
 import "zeuscore/track.yuga"
@@ -3782,6 +3783,37 @@ fn load_font(family: string, src: string) -> int {
         platform.plat_set_font_family(family)
     }
     return ok
+}
+
+/// Measure text in-tree from an external font, so every host computes the same
+/// line box for the same (font, size, string). `src` is a file path on desktop
+/// or a URL on the web.
+///
+/// Pair it with `load_font(family, src)` so the host *draws* with the same
+/// face; this binds the bytes that layout measures with. Returns 1 when the
+/// font was read and parsed, 0 when it could not be (the app then keeps host
+/// measurement and should not assume the face is present).
+///
+/// ```
+/// if zeus.use_font("./fonts/Inter.ttf") == 0 {
+///     // host metrics remain in effect
+/// }
+/// ```
+fn use_font(src: string) -> int {
+    arena.ensure()
+    return metrics.bind(platform.plat_font_bytes(src))
+}
+
+/// Bind already-loaded font bytes for in-tree measurement. The web host has no
+/// filesystem, so a web app passes the bytes it fetched itself; desktop apps
+/// can use `use_font` instead.
+fn use_font_bytes(bytes: string) -> int {
+    return metrics.bind(bytes)
+}
+
+/// Drop the external font; measurement falls back to the host default.
+fn clear_font() {
+    metrics.unbind()
 }
 
 /// A design px scaled by the UI-scale knob: `scaled(16)` is 16 at 100%,

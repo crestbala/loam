@@ -207,6 +207,9 @@ void yuga_zeus_plat_text(int64_t x, int64_t y, yuga_str s, int64_t rgb, int64_t 
 const char *zeus_font_family(void);
 void zeus_set_font_hooks(int (*load)(const char *family, const char *src),
                          void (*set_family)(const char *family));
+/* Bytes for in-tree metrics. Desktop/iOS/Android default to reading `src` as a
+   file; the web host (no filesystem) installs a hook that fetches it. */
+void zeus_set_font_bytes_hook(yuga_str (*fetch)(yuga_str src));
 void yuga_platform_plat_set_font_family(yuga_str name);
 int64_t yuga_platform_plat_load_font(yuga_str family, yuga_str src);
 
@@ -251,6 +254,7 @@ void yuga_platform_plat_text_rot(int64_t x, int64_t y, yuga_str s, int64_t rgb, 
                                  int64_t deg);
 void yuga_platform_plat_text_int(int64_t x, int64_t y, int64_t v, int64_t rgb, int64_t font);
 void yuga_platform_plat_measure(yuga_str s, int32_t px, int32_t *w, int32_t *h);
+yuga_str yuga_platform_plat_font_bytes(yuga_str src);
 void yuga_platform_plat_measure_int(int32_t v, int32_t px, int32_t *w, int32_t *h);
 void yuga_platform_plat_measure_wrap(yuga_str s, int32_t px, int32_t max_w, int32_t *w,
                                      int32_t *h);
@@ -283,6 +287,8 @@ int64_t yuga_platform_plat_edit_set(int64_t slot, yuga_str text);
 int64_t yuga_platform_plat_edit_insert(int64_t slot, yuga_str text);
 int64_t yuga_platform_plat_edit_caret(int64_t slot);
 int64_t yuga_platform_plat_edit_anchor(int64_t slot);
+int64_t yuga_platform_plat_edit_set_caret(int64_t slot, int64_t pos);
+int64_t yuga_platform_plat_edit_set_anchor(int64_t slot, int64_t pos);
 int64_t yuga_platform_plat_edit_mark(int64_t slot, yuga_str text);
 void yuga_platform_plat_edit_metrics(int64_t slot, int64_t wrap_w, int64_t font);
 int64_t yuga_platform_plat_edit_click(int64_t slot, int64_t x, int64_t y, int64_t wrap_w,
