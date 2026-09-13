@@ -1099,7 +1099,14 @@ Phase 1 of the old roadmap and this structure makes the regression impossible.
 Same convention as before: tick a phase only when its exit line runs green.
 One phase at a time. The ordering is a dependency chain, not a preference.
 
+**Position: Phases 9, 10, and 12 are green. Phase 11 is green on the two layout
+steps that landed (grouping, narrowing); `f32` geometry and struct-of-arrays
+are deferred and recorded in `docs/numeric-widths.md`. Next: Phase 13.**
+
 ### Phase 9 — Sized numeric types (additive)
+
+**Status: done.** `int`/`float` were still 64-bit at the end of this phase.
+
 Add `i8`…`i64`, `u8`…`u64`, `f32`, `f64` alongside today's types. Untyped
 constants, explicit conversions, no implicit mixed-width arithmetic, trap on
 narrow/overflow/unsigned-underflow, per-width `wrapping_*` / `saturating_*`.
@@ -1107,29 +1114,54 @@ Codegen rules from §3.5, including `-ffp-contract=off`.
 **Exit:** `compile_pass` covers every width; `compile_fail` covers mixed-width
 arithmetic, out-of-range literals, narrowing without a conversion, and constant
 shift-overflow. `int`/`float` still mean 64-bit. Existing goldens byte-identical.
+**Green.**
 
 ### Phase 10 — Flip the defaults
+
+**Status: done.** The §3.6 64-bit list is audited in `docs/numeric-widths.md`,
+with the before/after benchmark.
+
 `int` = `i32`, `float` = `f32`, behind `--int64-compat`. Fix std, examples, and
 the §3.6 list of things that must stay 64-bit.
 **Exit:** whole tree builds with the flag off; the 64-bit list is documented and
 audited; a published benchmark records arena size, layout time, and wasm binary
-size before and after.
+size before and after. **Green.**
 
 ### Phase 11 — Zeus representation and field layout
-`Rect`/`Color`/`Node`/`Signal` to 32-bit. `f32` inside, `f64` only at the C seam.
-Draw-list ops re-typed. Then, in order and each measured separately (§3.8):
-fields grouped by width; geometry tried as struct-of-arrays; `u16`/`u8` narrowing
-last, with a documented max and a compile-time range error per narrowed field.
-Geometry stays `f32`; handles stay `u32`.
-**Exit:** DRAW goldens regenerated in one reviewable commit; the benchmark from
-Phase 10 shows the predicted improvement or the phase is re-opened; each of the
-three layout steps has its own before/after number, and any step that does not
-pay for itself is reverted rather than kept.
+
+**Status: done for representation and field layout; two sub-steps deferred.**
+`Rect`/`Color`/`Node`/`Signal` are 32-bit (`int` = `i32`); handles and packed
+colors stay at the 32-bit default. Draw-list ops re-typed. Fields then grouped
+by width and narrowed (`u16`/`u8`), each measured — `UiNode` 544 → 480 B,
+`Draw` 64 → 56 B (per-step table in `docs/numeric-widths.md`).
+
+Deferred, with the reason written down in `docs/numeric-widths.md`:
+
+- **geometry as `f32`** — layout in this tree is integer-pixel throughout, so
+  this is a behavior change (fractional geometry) with new DRAW goldens, not a
+  width change;
+- **struct-of-arrays geometry** — a phase-sized refactor of every `n.x` access
+  site behind an accessor.
+
+**Exit:** DRAW goldens regenerated in one reviewable commit (done, together with
+the `border_w` `-1` sentinel fix); the Phase 10 benchmark shows the improvement;
+each landed layout step has its own before/after number. **Green on grouping +
+narrowing; open on `f32` geometry and SoA.**
 
 ### Phase 12 — `#line` and `#[test]`
+
+**Status: done.** Generated C carries `#line` directives mapped to the `.yuga`
+source, so the C compiler's diagnostics name Yuga lines and, with `-g`
+(`YUGA_DEBUG=1`), so do debuggers, profilers, and sanitizers. `#[test]` fns are
+collected and run by `yugac test`, which calls `std:test`'s `begin`/`ok`/
+`summary`; the assertions (`test.assert`, `test.assert_eq_*`) are ordinary Yuga
+in `std/test.yuga` built on the `panic(msg)` primitive. `make test` runs
+`packages/compiler/tests/inlang/*.yuga` and expects an all-pass exit.
+
 `#line` directives in generated C; `#[test]` fns and `yugac test`.
-**Exit:** a trap in `app.yuga` reports a `.yuga` line in lldb; `make test` runs
-in-language tests.
+**Exit:** a trap in `app.yuga` reports a `.yuga` line in lldb (the panic message
+names it directly, and the `#line`-mapped debug line table references
+`app.yuga` under `-g`); `make test` runs in-language tests. **Green.**
 
 ### Phase 13 — Text in-tree
 Font table parsing, metrics, line breaking, grapheme clusters, shaping (with the

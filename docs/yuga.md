@@ -312,6 +312,53 @@ returned or stored. Zeus intern (`plat_intern_fn`) memcpy's that env using
 `env_size`, so a click handler still sees captured `Signal`s after the stack
 frame that created the closure is gone.
 
+### 6. Tests
+
+`std:test` is the in-language test module. `#[test]` marks a parameterless,
+value-less fn; `yugac test app.yuga` compiles a runner that calls every
+`#[test]` fn (entry module and imports, in declaration order) through
+`std:test`, and the entry file must `import "std:test"`:
+
+```yuga
+import "std:test"
+
+#[test]
+fn addition() {
+    test.assert(1 + 1 == 2)
+}
+```
+
+```
+./bin/yugac test tests.yuga
+# test addition ... ok
+# 1 test(s) passed
+```
+
+`test.assert(cond)`, `test.assert_eq_int(a, b)`, and `test.assert_eq_str(a, b)`
+are ordinary Yuga in `std/test.yuga`, built on the `panic(msg)` primitive. A
+failed assertion traps and the run exits non-zero:
+
+```
+test addition ... .../std/test.yuga:36: panic: assertion failed (in test addition)
+```
+
+A trap aborts the run (there is no unwinding yet — `Boundary` is a later phase),
+so the suite stops at the first failure; the name printed before the panic and
+the `(in test …)` tag on the message identify which test failed.
+
+### 7. Debug info
+
+Generated C carries `#line` directives pointing at the `.yuga` source, so the C
+compiler's own warnings and errors name Yuga lines. With `YUGA_DEBUG=1`, `yugac`
+also compiles the native target with `-g`, so lldb / gdb, profilers, and
+sanitizers report Yuga `file:line` for stack frames and non-panic crashes:
+
+```
+YUGA_DEBUG=1 ./bin/yugac app.yuga -o app
+```
+
+`-g` is off by default, because it inflates binaries.
+
 ### Use cases
 
 | You want | Start with |

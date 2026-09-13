@@ -48,15 +48,17 @@ Representative run on macOS, headless, `-O0`:
 | arena bytes | — | 1,440,960 |
 | draw ops | 1500 | 1500 |
 | draw-op record | (not available) | 56 B |
-| layout, 500 passes | 3737 ms | 3439 ms |
+| layout, 500 passes | 7060 ms | 6044 ms |
 | native binary | 352096 B | 352616 B |
-| generated C | 856259 B | 803191 B |
+| generated C | 856259 B | 846977 B |
 
 The `node_bytes` / `draw_op_bytes` rows come from the `__sizeof` diagnostics
 added in Phase 11; the HEAD tree has no `__sizeof`, so it cannot report them.
 The native size is flat — `-O0` code for the extra explicit conversions offsets
 the smaller generated C. Layout time is the noisiest row; both columns come from
 the same run so the comparison holds, but expect wider spread across runs.
+`--emit-c` grew in Phase 12: the generated C is now interleaved with `#line`
+directives (about +5% here), which map it back to the `.yuga` source.
 
 ## Phase 11 — Zeus representation and field layout
 

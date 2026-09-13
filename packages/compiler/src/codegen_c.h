@@ -16,4 +16,11 @@
  */
 void codegen_emit_c(FILE *out, YugaModule *mods, int nmods, const char *rt_path);
 
+/**
+ * Phase 12: `yugac test` mode. When enabled, `codegen_emit_c` skips the
+ * program's own `main` and emits a runner `main` that calls every `#[test]`
+ * fn, printing each test before it runs so a trap names the failing one.
+ */
+void codegen_set_test_mode(int on);
+
 #endif

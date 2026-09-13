@@ -1523,6 +1523,20 @@ static Type *check_call(AstNode *n, Type *expect) {
             n->ty = ty_int();
             return n->ty;
         }
+        /* `panic(msg)` — trap with `msg` at the call site. The one primitive
+           `std:test` builds its assertions on. */
+        if (strcmp(nm, "panic") == 0) {
+            if (n->as.call.arg_count != 1) {
+                err(n->loc, "panic expects 1 argument");
+                return ty_void();
+            }
+            Type *at = check_expr(n->as.call.args[0]);
+            if (!at || at->kind != TY_STRING)
+                err(n->as.call.args[0]->loc, "panic expects a string");
+            n->as.call.is_panic = 1;
+            n->ty = ty_void();
+            return n->ty;
+        }
         /* `"a {{x}} b"` arrives as __interp(parts...). Fold it here into
            yuga_str_of_* / yuga_str_concat builtin calls, so neither backend
            needs to know interpolation existed. */
@@ -3446,6 +3460,14 @@ int typecheck_modules(YugaModule *mods, int nmods) {
             AstNode *d = p->as.program.decls[i];
             if (d->kind != AST_FN_DECL) continue;
             fn_type_of(d);
+            if (d->as.fn.is_test) {
+                if (d->as.fn.param_count != 0)
+                    err(d->loc, "#[test] fn '%s' must take no parameters", d->as.fn.name);
+                if (d->as.fn.ret_type)
+                    err(d->loc, "#[test] fn '%s' must not return a value", d->as.fn.name);
+                if (d->as.fn.tparam_count)
+                    err(d->loc, "#[test] fn '%s' must not be generic", d->as.fn.name);
+            }
             if (is_ffi_mod(mods[m].name) || user_seam_mod(mods[m].path)) {
                 AstNode *body = d->as.fn.body;
                 if (!body || (body->kind == AST_BLOCK && body->as.block.stmt_count == 0)) {

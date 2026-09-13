@@ -2,6 +2,10 @@
 
 (comment) @comment
 
+; `#[proto]` / `#[test]` attributes
+(attribute
+  (identifier) @attribute)
+
 [
   "fn"
   "async"

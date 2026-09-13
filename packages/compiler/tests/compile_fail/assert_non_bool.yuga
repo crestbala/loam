@@ -1,0 +1,6 @@
+// `test.assert` takes a bool, not an int.
+import "std:test"
+
+fn main() {
+    test.assert(1)
+}

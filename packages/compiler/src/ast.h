@@ -128,6 +128,7 @@ struct AstNode {
             int clos_id;
             int used_as_value;
             int is_async; /* `async fn`: body may contain `await` */
+            int is_test;  /* `#[test] fn`: collected and run by `yugac test` */
         } fn;
         struct {
             const char *name;
@@ -208,6 +209,7 @@ struct AstNode {
             int is_vec_push;
             int is_vec_pop;
             int is_sizeof; /* __sizeof(x) — byte size of x's type (Phase 11 bench) */
+            int is_panic; /* `panic(msg)` — trap with the caller's line (Phase 12) */
             NumericBuiltin num_builtin; /* wrapping_ / saturating_ op, width from args */
             const char *c_builtin; /* emit this C symbol (wrapping_shr, string_from_bytes, …) */
             const char *resolved_cname;

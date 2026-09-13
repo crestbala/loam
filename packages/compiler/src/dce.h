@@ -20,6 +20,11 @@
 /** Compute the reachable set for `mods`. Safe to call once per emit. */
 void yuga_dce_run(YugaModule *mods, int nmods);
 
+/** `yugac test`: keep every fn in the `test` std module, since the generated
+ *  runner calls `test.begin` / `test.ok` / `test.summary` by name and nothing
+ *  in the Yuga call graph reaches them. Call before yuga_dce_run. */
+void yuga_dce_set_test_mode(int on);
+
 /** 1 = emit this fn declaration's prototype/body/tramp (and its clones). */
 int yuga_dce_keep(const AstNode *fn_decl);
 

@@ -1,0 +1,8 @@
+// `#[test]` applies to a fn, not a struct.
+#[test]
+struct S {
+    n: int,
+}
+
+fn main() {
+}

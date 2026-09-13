@@ -4,6 +4,7 @@
   "scopeName": "source.yuga",
   "patterns": [
     { "include": "#comments" },
+    { "include": "#attributes" },
     { "include": "#strings" },
     { "include": "#keywords" },
     { "include": "#types" },
@@ -16,6 +17,14 @@
     { "include": "#punctuation" }
   ],
   "repository": {
+    "attributes": {
+      "patterns": [
+        {
+          "name": "meta.attribute.yuga",
+          "match": "#\\[[A-Za-z_][A-Za-z0-9_]*\\]"
+        }
+      ]
+    },
     "comments": {
       "patterns": [
         { "name": "comment.line.double-slash.yuga", "match": "//.*$" },

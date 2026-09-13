@@ -1233,10 +1233,46 @@ AstNode *parser_parse(Parser *p) {
             }
             continue;
         }
+        int is_proto = 0;
+        int is_test = 0;
+        if (match(p, TOK_HASH)) {
+            consume(p, TOK_LBRACKET, "expected [ after #");
+            if (!match(p, TOK_IDENT)) {
+                error(p, "expected attribute name");
+                free(doc);
+                break;
+            }
+            char *attr = tok_text(p->previous);
+            if (strcmp(attr, "proto") == 0) {
+                is_proto = 1;
+            } else if (strcmp(attr, "test") == 0) {
+                is_test = 1;
+            } else {
+                char msg[96];
+                snprintf(msg, sizeof msg, "unknown attribute '%s'", attr);
+                error(p, msg);
+                free(attr);
+                free(doc);
+                break;
+            }
+            free(attr);
+            consume(p, TOK_RBRACKET, "expected ] after attribute");
+            if (is_proto && !check(p, TOK_STRUCT)) {
+                error(p, "#[proto] can only be applied to a struct");
+                free(doc);
+                break;
+            }
+            if (is_test && !check(p, TOK_FN)) {
+                error(p, "#[test] can only be applied to a fn");
+                free(doc);
+                break;
+            }
+        }
         if (match(p, TOK_FN)) {
             AstNode *fn = parse_fn(p);
             if (fn) {
                 fn->doc = doc;
+                fn->as.fn.is_test = is_test;
                 decls = (AstNode **)realloc(decls, (nd + 1) * sizeof(AstNode *));
                 decls[nd++] = fn;
             } else {
@@ -1265,37 +1301,7 @@ AstNode *parser_parse(Parser *p) {
             }
             continue;
         }
-        int is_proto = 0;
-        if (match(p, TOK_HASH)) {
-            consume(p, TOK_LBRACKET, "expected [ after #");
-            if (!match(p, TOK_IDENT)) {
-                error(p, "expected attribute name");
-                free(doc);
-                break;
-            }
-            char *attr = tok_text(p->previous);
-            if (strcmp(attr, "proto") == 0) {
-                is_proto = 1;
-            } else {
-                error(p, "unknown attribute");
-                free(attr);
-                free(doc);
-                break;
-            }
-            free(attr);
-            consume(p, TOK_RBRACKET, "expected ] after attribute");
-            if (!check(p, TOK_STRUCT)) {
-                error(p, "#[proto] can only be applied to a struct");
-                free(doc);
-                break;
-            }
-        }
         if (match(p, TOK_ENUM)) {
-            if (is_proto) {
-                error(p, "#[proto] can only be applied to a struct");
-                free(doc);
-                break;
-            }
             AstNode *en = parse_enum(p);
             if (en) {
                 en->doc = doc;
@@ -1318,8 +1324,9 @@ AstNode *parser_parse(Parser *p) {
             }
             continue;
         }
-        if (is_proto) {
-            error(p, "#[proto] can only be applied to a struct");
+        if (is_proto || is_test) {
+            error(p, is_test ? "#[test] can only be applied to a fn"
+                             : "#[proto] can only be applied to a struct");
             free(doc);
             break;
         }
