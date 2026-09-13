@@ -36,6 +36,11 @@ static DceSet kept;   /* fn decls whose C is emitted */
 static DceSet todo;   /* fn decls still to process (body walk) */
 static DceSet done;   /* fn decls already processed */
 static int ran;       /* yuga_dce_run completed (YUGA_NO_DCE skips it) */
+static int dce_test_mode;
+
+void yuga_dce_set_test_mode(int on) {
+    dce_test_mode = on;
+}
 
 static int in_set(const DceSet *s, const AstNode *d) {
     for (size_t i = 0; i < s->n; i++)
@@ -281,13 +286,25 @@ void yuga_dce_run(YugaModule *mods, int nmods) {
     for (int m = 0; m < nmods; m++) {
         AstNode *p = mods[m].ast;
         if (!p) continue;
+        /* `yugac test` calls test.begin/ok/summary from generated C. */
+        int test_mod = dce_test_mode && mods[m].name && strcmp(mods[m].name, "test") == 0;
         for (size_t i = 0; i < p->as.program.decl_count; i++) {
             AstNode *d = p->as.program.decls[i];
+            if (test_mod && d->kind == AST_FN_DECL) {
+                mark_fn(d);
+                continue;
+            }
             if (d->kind == AST_VAR_DECL) {
                 walk(d->as.var.init);
                 continue;
             }
             if (d->kind != AST_FN_DECL) continue;
+            /* Phase 12: a `#[test]` fn is reachable from the generated test
+               runner in every module, not just the entry module. */
+            if (d->as.fn.is_test) {
+                mark_fn(d);
+                continue;
+            }
             if (m == 0) {
                 mark_fn(d);
                 continue;

@@ -509,6 +509,7 @@ static void usage(void) {
     fprintf(stderr,
             "usage: yugac [build] [options] <file.yuga>\n"
             "  build       compile (optional; same as omitting it)\n"
+            "  test        compile a runner for every `#[test]` fn and run it\n"
             "  -o PATH     output binary (or .c/.ir with --emit-c/--emit-ir)\n"
             "  --emit-c    emit C99 (gnu99) instead of a binary\n"
             "  --emit-ir   emit backend-neutral IR instead of a binary\n"
@@ -528,6 +529,7 @@ int main(int argc, char **argv) {
     int emit_c = 0;
     int emit_ir = 0;
     int run = 0;
+    int test_mode = 0;
     int target_wasm = 0;
     int target_ios = 0;
     int target_android = 0;
@@ -570,6 +572,10 @@ int main(int argc, char **argv) {
             }
         } else if (strcmp(argv[i], "--run") == 0) {
             run = 1;
+        } else if (strcmp(argv[i], "test") == 0) {
+            /* `yugac test app.yuga` — build a runner that executes every
+               `#[test]` fn and run it. */
+            test_mode = 1;
         } else if (strcmp(argv[i], "--int64-compat") == 0) {
             int64_compat = 1;
         } else if (strcmp(argv[i], "build") == 0) {
@@ -587,6 +593,7 @@ int main(int argc, char **argv) {
         usage();
         return 1;
     }
+    if (test_mode) run = 1;
 
     type_set_int64_compat(int64_compat);
 
@@ -600,6 +607,19 @@ int main(int argc, char **argv) {
         return 1;
     }
     if (show_time) fprintf(stderr, "yugac: check %.3fs\n", now_sec() - t0);
+
+    if (test_mode) {
+        /* The generated runner calls test.begin/ok/summary. */
+        int has_test_mod = 0;
+        for (int i = 0; i < sess.nmods; i++)
+            if (sess.mods[i].name && strcmp(sess.mods[i].name, "test") == 0)
+                has_test_mod = 1;
+        if (!has_test_mod) {
+            fprintf(stderr, "yugac test: %s must import \"std:test\"\n", in_path);
+            yuga_session_free(&sess);
+            return 1;
+        }
+    }
 
     if (emit_ir) {
         IrModule *ir = ir_lower(sess.mods, sess.nmods);
@@ -663,6 +683,24 @@ int main(int argc, char **argv) {
         }
         close(fd);
         cpath_is_temp = 1;
+        if (test_mode) {
+            /* The runner binary is a throwaway; never write it into the app's
+               build/ tree. `cc` overwrites the mkstemp'd empty file. */
+            char tb[1024];
+            snprintf(tb, sizeof tb, "%s/yuga_test_XXXXXX",
+                     (tmpdir && tmpdir[0]) ? tmpdir : "/tmp");
+            int tfd = mkstemp(tb);
+            if (tfd < 0) {
+                fprintf(stderr, "error: cannot create temp test binary\n");
+                unlink(cpath);
+                free(srcdir);
+                free(stem);
+                yuga_session_free(&sess);
+                return 1;
+            }
+            close(tfd);
+            snprintf(binpath, sizeof binpath, "%s", tb);
+        }
     }
     /* App-owned C seam: `runtime/<stem>_runtime.c` next to the entry file is
        compiled and linked for native targets (used by e.g.
@@ -689,6 +727,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     t0 = now_sec();
+    codegen_set_test_mode(test_mode);
     codegen_emit_c(out, sess.mods, sess.nmods, YUGA_RT_PATH);
     fclose(out);
     if (show_time) fprintf(stderr, "yugac: codegen %.3fs\n", now_sec() - t0);
@@ -943,9 +982,16 @@ int main(int argc, char **argv) {
        wall time. Headless tests skip the optimizer and Cocoa; GUI uses -O1.
        Runtime .c/.m compile once into runtime/.obj/. */
     int headless = want_headless();
-    const char *copt = headless ? "-std=gnu99 -O0 -fno-asynchronous-unwind-tables -ffp-contract=off"
-                                : "-std=gnu99 -O1 -fno-asynchronous-unwind-tables "
-                                  "-fomit-frame-pointer -ffp-contract=off";
+    /* Generated C carries `#line` directives pointing at `.yuga` sources, so
+       -g makes lldb/gdb, profilers, and sanitizers report Yuga lines. Off by
+       default: it inflates binaries and the published size benchmark. */
+    static char copt_buf[256];
+    snprintf(copt_buf, sizeof copt_buf, "%s%s",
+             headless ? "-std=gnu99 -O0 -fno-asynchronous-unwind-tables -ffp-contract=off"
+                      : "-std=gnu99 -O1 -fno-asynchronous-unwind-tables "
+                        "-fomit-frame-pointer -ffp-contract=off",
+             env_on("YUGA_DEBUG") ? " -g" : "");
+    const char *copt = copt_buf;
 #if defined(__APPLE__)
     const char *ld = headless ? "" : "-Wl,-dead_strip";
 #else
@@ -1073,7 +1119,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     unlink(cpath);
-    printf("yugac: %s -> %s\n", in_path, binpath);
+    if (!test_mode) printf("yugac: %s -> %s\n", in_path, binpath);
 
     int run_rc = 0;
     if (run) {
@@ -1085,6 +1131,7 @@ int main(int argc, char **argv) {
         run_rc = system(rcmd);
         if (run_rc != 0) run_rc = 1;
     }
+    if (test_mode) unlink(binpath);
 
     free(stem);
     yuga_session_free(&sess);

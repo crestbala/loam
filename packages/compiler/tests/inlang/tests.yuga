@@ -1,0 +1,36 @@
+// In-language tests (`yugac test tests/inlang/tests.yuga`). Each `#[test]` fn
+// runs in declaration order; `test.assert(cond)` traps with this file's line on
+// failure, so a failure names both the test and the assertion.
+
+import "std:test"
+
+fn sum(xs: []int) -> int {
+    let mut s = 0
+    for i in 0..xs.len {
+        s = s + xs[i]
+    }
+    return s
+}
+
+#[test]
+fn test_sum_empty() {
+    let xs: []int = []int {}
+    test.assert(sum(xs) == 0)
+}
+
+#[test]
+fn test_sum_values() {
+    test.assert(sum([]int { 1, 2, 3, 4 }) == 10)
+}
+
+#[test]
+fn test_string_len() {
+    let s = "hello"
+    test.assert(s.len == 5)
+}
+
+#[test]
+fn test_assert_helpers() {
+    test.assert_eq_int(2 + 2, 4)
+    test.assert_eq_str("ab", "ab")
+}

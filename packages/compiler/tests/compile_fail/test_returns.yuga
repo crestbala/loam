@@ -1,0 +1,8 @@
+// `#[test]` fns return nothing.
+#[test]
+fn t() -> int {
+    return 0
+}
+
+fn main() {
+}

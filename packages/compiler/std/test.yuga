@@ -1,0 +1,70 @@
+//! `test` — in-language tests.
+//!
+//! `#[test] fn name()` marks a test (no parameters, no return value).
+//! `yugac test app.yuga` compiles a runner that calls `begin(name)` before each
+//! test, `ok()` after it, then `summary()`. Assertions are ordinary Yuga on top
+//! of the `panic(msg)` primitive: a failed assertion traps, which aborts the
+//! run, and the message names the test it happened in.
+
+import "std:fmt"
+
+/// Name of the test now running; the runner sets it via `begin`.
+let mut current: string = ""
+
+/// Number of tests that returned without trapping.
+let mut ran: int = 0
+
+/// Print `<name>` as the test about to run. The generated runner calls this
+/// before each `#[test]` fn.
+fn begin(name: string) {
+    current = name
+    fmt.write("test ")
+    fmt.write(name)
+    fmt.write(" ... ")
+}
+
+/// Record a passing test. The generated runner calls this after a `#[test]` fn
+/// returns.
+fn ok() {
+    ran = ran + 1
+    fmt.println("ok")
+}
+
+/// Fail the current test with `msg`. Traps, so the run stops here; `msg` is
+/// tagged with the running test's name.
+fn fail(msg: string) {
+    panic("{{msg}} (in test {{current}})")
+}
+
+/// Trap when `cond` is false.
+fn assert(cond: bool) {
+    if !cond {
+        fail("assertion failed")
+    }
+}
+
+/// Trap when `a != b`.
+fn assert_eq_int(a: int, b: int) {
+    if a != b {
+        fail("assert_eq_int failed")
+    }
+}
+
+/// Trap when `a != b`.
+fn assert_eq_str(a: string, b: string) {
+    if a != b {
+        fail("assert_eq_str failed")
+    }
+}
+
+/// Print the run summary. Returns the process exit code; the runner returns it
+/// from `main`. Only reached when nothing trapped.
+fn summary() -> int {
+    if ran == 0 {
+        fmt.println("no tests")
+        return 0
+    }
+    fmt.write_int(ran)
+    fmt.println(" test(s) passed")
+    return 0
+}

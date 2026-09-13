@@ -538,6 +538,16 @@ static int lower_call(AstNode *n) {
         i->ty = n->as.call.arg_count ? ir_subst(n->as.call.args[0]->ty) : ty_void();
         return dst;
     }
+    if (n->as.call.is_panic) {
+        /* Lower the message first: lowering can emit instructions and realloc
+           the block, which would dangle the pointer emit() returns. */
+        int msg = n->as.call.arg_count ? lower_expr(n->as.call.args[0]) : -1;
+        IrInst *i = emit(IR_PANIC, n->loc);
+        i->dst = -1;
+        i->a = msg;
+        i->ty = ty_void();
+        return -1;
+    }
     if (n->as.call.c_builtin) {
         int nargs = (int)n->as.call.arg_count;
         int *args = nargs ? (int *)calloc((size_t)nargs, sizeof(int)) : NULL;
@@ -1806,6 +1816,9 @@ static void print_inst(FILE *o, const IrInst *i) {
             break;
         case IR_SIZEOF:
             fprintf(o, "sizeof %s", i->ty ? type_name(i->ty) : "?");
+            break;
+        case IR_PANIC:
+            fprintf(o, "panic %%%d", i->a);
             break;
     }
     fprintf(o, "\n");

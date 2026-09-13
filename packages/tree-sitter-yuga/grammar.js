@@ -28,6 +28,7 @@ module.exports = grammar({
     attribute: $ => seq('#', '[', $.identifier, ']'),
 
     function_item: $ => seq(
+      optional($.attribute),
       optional(field('async', 'async')),
       'fn',
       field('name', $.identifier),

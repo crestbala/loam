@@ -1,0 +1,7 @@
+// `#[test]` fns take no parameters.
+#[test]
+fn t(x: int) {
+}
+
+fn main() {
+}

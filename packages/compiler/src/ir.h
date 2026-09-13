@@ -58,6 +58,7 @@ typedef enum {
     IR_CLOS,       /* dst = { callee, env }; args = capture values (heap env) */
     IR_CAST,       /* dst = (ty) a */
     IR_SIZEOF,     /* dst = sizeof(ty) in bytes (Phase 11 bench) */
+    IR_PANIC,      /* trap with local a (a string); source line from loc */
 } IrOp;
 
 typedef struct {

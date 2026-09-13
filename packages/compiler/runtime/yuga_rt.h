@@ -145,6 +145,15 @@ static inline void yuga_panic(const char *file, int line, const char *msg) {
     abort();
 }
 
+/* `panic(msg)` — like yuga_panic but with a runtime string, so `std:test` and
+   other Yuga code can build the message. */
+static inline void yuga_panic_str(const char *file, int line, yuga_str msg) {
+    fflush(stdout);
+    fprintf(stderr, "%s:%d: panic: %.*s\n", file, line,
+            (int)(msg.len > 0 ? msg.len : 0), msg.ptr ? msg.ptr : "");
+    abort();
+}
+
 static inline int64_t yuga_add_i64(int64_t a, int64_t b, const char *f, int l) {
     int64_t r;
 #if defined(__GNUC__) || defined(__clang__)

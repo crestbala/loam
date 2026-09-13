@@ -1,0 +1,4 @@
+// `panic(msg)` takes a string.
+fn main() {
+    panic(1)
+}

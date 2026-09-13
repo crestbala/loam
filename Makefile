@@ -27,6 +27,8 @@ FAIL    := $(sort $(wildcard $(TESTDIR)/compile_fail/*.yuga))
 # Headless DRAW-list goldens: a fixture's stdout must match its .txt byte
 # for byte (deterministic default metrics; see zeus_plat.c measure_default).
 GOLDRAW := $(sort $(wildcard $(TESTDIR)/draw_golden/*.yuga))
+# Phase 12: files whose `#[test]` fns `yugac test` collects and runs.
+INLANG  := $(sort $(wildcard $(TESTDIR)/inlang/*.yuga))
 GOLDEN  := $(TESTDIR)/golden
 LANGEX  := examples/language
 ZEUSEX  := examples/zeus
@@ -165,6 +167,14 @@ test: all
 	    echo "FAIL draw golden $$stem"; cat $(TESTDIR)/tmp/dg_$$stem.diff; err=1; \
 	  else \
 	    echo "ok   draw golden $$stem"; \
+	  fi; \
+	done; \
+	for f in $(INLANG); do \
+	  stem=$$(basename $$f .yuga); \
+	  if ! ./$(TARGET) test $$f >$(TESTDIR)/tmp/inlang_$$stem.log 2>&1; then \
+	    echo "FAIL in-language tests $$f"; cat $(TESTDIR)/tmp/inlang_$$stem.log; err=1; \
+	  else \
+	    echo "ok   in-language $$f"; \
 	  fi; \
 	done; \
 	if ! python3 $(TESTDIR)/lsp_smoke.py; then err=1; fi; \

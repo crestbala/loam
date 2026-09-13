@@ -1703,6 +1703,10 @@ static int st_ident_kind(Token *ts, int n, int i, int paren) {
     if (st_tok_is(t, "async") && next == TOK_FN) return ST_KEYWORD;
     if (st_tok_is(t, "await") && !st_prev_ends_value(prev)) return ST_KEYWORD;
 
+    /* `#[test]`, `#[proto]` — the identifier between `[` and `]` after `#`. */
+    if (prev == TOK_LBRACKET && next == TOK_RBRACKET && st_at(ts, n, i - 2) == TOK_HASH)
+        return ST_KEYWORD;
+
     if (prev == TOK_FN) return ST_FUNCTION;
     if (prev == TOK_ENUM) return ST_ENUM;
     if (prev == TOK_STRUCT) return ST_STRUCT;

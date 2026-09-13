@@ -1,0 +1,9 @@
+// `std:test.assert(cond)` traps at the call site when cond is false.
+import "std:test"
+
+fn main() {
+    let x = 2
+    test.assert(x == 2)
+    test.assert(x != 0)
+    test.assert(x + 1 == 3)
+}
