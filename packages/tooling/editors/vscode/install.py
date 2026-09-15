@@ -13,10 +13,10 @@ HOME = Path.home()
 EXT_ID = "loam.loam"
 VERSION = "0.1.0"
 FOLDER = f"{EXT_ID}-{VERSION}"
-# The pre-rename extension. Its client spawns `bin/yuga-lsp`, which the rename
+# The pre-rename extension. Its client spawns `bin/loam-lsp`, which the rename
 # deleted, so it now errors on every startup -- and a leftover copy of it can
 # shadow this one. Installing removes it rather than leaving both registered.
-LEGACY_IDS = ("yuga.yuga",)
+LEGACY_IDS = ("loam.loam",)
 
 
 def dest_dirs() -> list[Path]:
