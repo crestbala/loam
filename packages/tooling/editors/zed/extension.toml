@@ -1,18 +1,18 @@
 id = "yuga"
-name = "Yuga"
+name = "Loam"
 version = "0.1.12"
 schema_version = 1
-authors = ["Yuga"]
-description = "Yuga language: syntax highlighting and diagnostics via yuga-lsp"
+authors = ["Loam"]
+description = "Loam language: syntax highlighting and diagnostics via yuga-lsp"
 
 [grammars.loam]
-repository = "file:///Users/bala_mani/Documents/yuga/packages/tooling/tree-sitter-yuga"
+repository = "file:///Users/bala_mani/Documents/loam/packages/tooling/tree-sitter-yuga"
 rev = "a0bda9f5c925cb6bc83d54e72ef488c792cca7d4"
 
 [language_servers.loam-lsp]
-name = "Yuga LSP"
-language = "Yuga"
-languages = ["Yuga"]
+name = "Loam LSP"
+language = "Loam"
+languages = ["Loam"]
 
 [language_servers.loam-lsp.language_ids]
-Yuga = "yuga"
+Loam = "yuga"
