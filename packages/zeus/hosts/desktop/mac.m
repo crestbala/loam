@@ -871,24 +871,37 @@ static NSAccessibilityRole mac_a11y_role(NSString *r) {
 }
 
 /* A CG-drawn window's drawable is IOSurface memory the compositor allocates at
-   the display's scale. On a screen-filling window `vmmap` shows it as essentially
-   the whole footprint (72 MB of a 99 MB footprint here), and it does *not* follow
-   `layer.contentsScale` — a window store cannot be talked into rendering fewer
-   pixels. The supported way to supply a layer's content without AppKit allocating
-   a store for the view is `wantsUpdateLayer` / `updateLayer` (AppKit calls those
-   instead of `drawRect:`), so this path hands the layer one bitmap *we* own.
+   the display's scale, and it does *not* follow `layer.contentsScale` — a window
+   store cannot be talked into rendering fewer pixels. Measured on a
+   screen-filling window: 2–3 full-window buffers plus a few 16 KB bookkeeping
+   regions, against an 85–182 MB footprint depending on the window's colour space
+   and how much is resident when you sample (see `mac_run`). The supported way to
+   supply a layer's content without AppKit allocating a store for the view is
+   `wantsUpdateLayer` / `updateLayer` (AppKit calls those instead of `drawRect:`),
+   so this path hands the layer one bitmap *we* own.
 
-   Two display paths:
+   Display paths:
 
-     default              AppKit's store. `drawRect:` paints straight into the
-                          surface the compositor reads, so nothing is ever
-                          copied and a screen-filling window holds 60 fps — at
-                          the cost of a third surface (~130 MB).
-     ZEUS_OWN_BUFFER=1    the bitmap below: two surfaces (~60 MB) instead of
-                          three, but CoreAnimation must materialise every frame
-                          into a texture, which costs ~18-30 ms per frame and
-                          caps the app around 40 fps. That copy *is* the whole
-                          difference between the paths.
+     default              AppKit's store, window pinned to sRGB. `drawRect:`
+                          paints straight into the surface the compositor reads,
+                          so nothing is ever copied and a screen-filling window
+                          holds 60 fps — at the cost of ~54 MB of IOSurface.
+     ZEUS_WIDE_GAMUT=1    the same, but the window keeps the display's ICC
+                          profile, which doubles each buffer's depth to 8 bytes
+                          per pixel: ~109 MB for identical pixels.
+     ZEUS_OWN_BUFFER=1    the bitmap below: one buffer (~18 MB) instead of three,
+                          but CoreAnimation must materialise every frame into a
+                          texture of its own — 16.6 ms against the sRGB window,
+                          25.4 ms against a half-float one, since the copy also
+                          converts. That copy is the whole difference between the
+                          paths.
+
+   Measured, handing the layer the IOSurface itself (rather than a CGImage over
+   the bitmap) does remove that copy: `other` fell from 32 ms to 9.5 ms, the frame
+   held 60 fps and the footprint dropped to ~35 MB. It is not shipped because
+   CoreAnimation then holds the surface as the layer's texture, so locking it to
+   write the next frame deadlocks the app after a few frames. The untried fix is a
+   two-buffer swap with a non-blocking `kIOSurfaceLockAvoidSync` lock.
 
    No scale knob: the bitmap is always the display's own resolution. */
 static int own_buffer = -1;
@@ -1058,10 +1071,23 @@ static void mac_link_arm(void) {
 /* `setNeedsDisplay` from inside a display callback is dropped by AppKit; queue
    the next frame instead — or sleep until the next async deadline when idle.
    -1 = a spawn is waiting, draw a frame soon. */
+/* A benchmark hook. The engine stops asking for frames when nothing is pending
+   (the tail of `mac_schedule_next`), so frame cost can only be sampled while
+   something is animating — which would make `bench/own_buffer.sh` depend on a
+   human moving the mouse, and let the two display paths be measured at different
+   workloads. `ZEUS_FRAME_BENCH=1` keeps frames coming. Off by default; it exists
+   so the numbers in examples/zeus/myapp/readme.md can be re-derived. */
+static int frame_bench_on(void) {
+    static int v = -1;
+    if (v < 0) v = env_truthy("ZEUS_FRAME_BENCH");
+    return v;
+}
+
 static void mac_schedule_next(int more) {
     NSView *v = g_view;
     int64_t due;
     if (!v) return;
+    if (frame_bench_on()) more = 1;
     if (more) {
         if (g_link) {
             /* The link asks at the next display refresh (see `mac_link_tick`). */
@@ -1590,6 +1616,21 @@ static void mac_run(void) {
         [win setReleasedWhenClosed:YES];
         [win setRestorable:NO];
         [win setCollectionBehavior:NSWindowCollectionBehaviorFullScreenPrimary];
+        /* The window's colour space decides the *depth* of the store AppKit
+           gives it. Left alone, a window inherits the display's ICC profile
+           ("Color LCD"), which on a wide-gamut Mac is a P3/EDR space — and
+           CoreAnimation then backs the window with an RGBA **half-float**
+           surface: `vmmap` shows 'CA Whippet Drawable', 2940x1612 (RGhA),
+           36.2 MB per buffer, three of them. That is 8 bytes per pixel where the
+           pixels need 4, and it is the whole of the AppKit path's IOSurface
+           cost. Pinning the window to sRGB makes the store 32-bpp BGRA and
+           halves it — to ~54 MB — and costs no fidelity here, because every
+           colour this host can name is already a 24-bit packed value (see
+           `zeus_color`): 8 bits per channel holds all of them. `ZEUS_WIDE_GAMUT=1`
+           keeps the display profile, and so the half-float store, for anyone who
+           wants extended range. */
+        if (!env_truthy("ZEUS_WIDE_GAMUT"))
+            [win setColorSpace:[NSColorSpace sRGBColorSpace]];
         [view setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
         [win setContentView:view];
         /* The default size is the work area, so this fills the screen; any
