@@ -11,8 +11,8 @@ let mut samples: []string = []string {}
 fn load(c: Client) {
     let n = api.page_count()
     for i in 0..n {
-        let raw = c.call(api.page_rpc(), api.encode_PageReq(PageReq { id: i }))
-        let r = api.decode_PageResp(raw)
+        let res = c.call(api.page_rpc(), api.encode_PageReq(PageReq { id: i }))
+        let r = api.decode_PageResp(res.val)
         push(titles, r.title)
         push(leads, r.lead)
         push(bodies, r.body)

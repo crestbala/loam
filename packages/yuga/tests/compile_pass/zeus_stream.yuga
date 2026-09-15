@@ -1,0 +1,183 @@
+// Phase 1b exit proof: SSE and WebSocket events stream into the UI through
+// the headless pump — each event lands in a signal-fed label, no manual
+// `engine_layout`. Each transport runs against a child process of this same
+// binary (YUGA_SSE_SRV=1 / YUGA_WS_SRV=1) that binds an ephemeral port,
+// writes "127.0.0.1:<port>" to a file, pushes N events, and exits.
+
+import "std:async"
+import "std:fmt"
+import "std:http"
+import "std:net"
+import "std:sys"
+import "std:zeus"
+
+fn fail(what: string) {
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn Panel(n: Signal<int>) {
+    zeus.Box(align_direction = DIRECTION.Column, padding = 8, width = 220) {
+        zeus.Text("events: {{n.get()}}", font = 18)
+    }
+}
+
+fn pump_until(want: int, n: Signal<int>, done: Signal<int>) {
+    let mut guard = 0
+    while n.get() < want && guard < 6000 {
+        async.sleep(1)
+        zeus.pump_frame()
+        guard = guard + 1
+    }
+    if n.get() != want {
+        fail("stream did not deliver all events")
+    }
+    // a few more frames for the close/EOF callback
+    let mut g2 = 0
+    while done.get() == 0 && g2 < 200 {
+        async.sleep(1)
+        zeus.pump_frame()
+        g2 = g2 + 1
+    }
+    if done.get() == 0 {
+        fail("stream did not finish cleanly")
+    }
+}
+
+/// Child: one SSE client, 5 events, then close.
+fn sse_srv_main() {
+    let l = net.tcp_listen(0)
+    if l < 0 {
+        fail("sse listen")
+    }
+    let p = net.tcp_bound_port(l)
+    let addr = http.concat_str("127.0.0.1:", http.string_of(http.u_itoa(p)))
+    if sys.write_file("/tmp/yuga_stream_sse.port", addr) != 0 {
+        fail("sse port file")
+    }
+    for k in 0..5 {
+        if net.tcp_poll(l, 1, 400) > 0 {
+            let c = net.tcp_accept(l)
+            if c >= 0 {
+                http.read_head(c)
+                http.sse_start(c)
+                for i in 0..5 {
+                    let mut tag = http.string_of(http.u_itoa(i + 1))
+                    http.sse_send(c, http.concat_str("s", tag))
+                    async.sleep(2)
+                }
+                net.tcp_close(c)
+            }
+            net.tcp_close(l)
+            sys.exit(0)
+        }
+    }
+    sys.exit(0)
+}
+
+/// Child: one WebSocket client, 5 text frames, then close the socket.
+fn ws_srv_main() {
+    let l = net.tcp_listen(0)
+    if l < 0 {
+        fail("ws listen")
+    }
+    let p = net.tcp_bound_port(l)
+    let addr = http.concat_str("127.0.0.1:", http.string_of(http.u_itoa(p)))
+    if sys.write_file("/tmp/yuga_stream_ws.port", addr) != 0 {
+        fail("ws port file")
+    }
+    for k in 0..5 {
+        if net.tcp_poll(l, 1, 400) > 0 {
+            let c = net.tcp_accept(l)
+            if c >= 0 {
+                let head = http.read_head(c)
+                let key = http.ws_header(head, "sec-websocket-key")
+                if key.len == 0 {
+                    net.tcp_close(c)
+                    net.tcp_close(l)
+                    sys.exit(0)
+                }
+                if http.ws_upgrade(c, key) != 0 {
+                    net.tcp_close(c)
+                    net.tcp_close(l)
+                    sys.exit(0)
+                }
+                for i in 0..5 {
+                    let mut tag = http.string_of(http.u_itoa(i + 1))
+                    if http.ws_send_text(c, http.concat_str("w", tag)) != 0 {
+                        break
+                    }
+                    async.sleep(2)
+                }
+                net.tcp_close(c)
+            }
+            net.tcp_close(l)
+            sys.exit(0)
+        }
+    }
+    sys.exit(0)
+}
+
+fn cli_main() {
+    sys.write_file("/tmp/yuga_stream_sse.port", "")
+    sys.write_file("/tmp/yuga_stream_ws.port", "")
+    let n = zeus.signal(0)
+    let se = zeus.signal(0)
+    let we = zeus.signal(0)
+    zeus.App("stream", fn() {
+        Panel(n)
+    }, 240, 90)
+
+    // SSE: 5 events.
+    sys.exec("YUGA_SSE_SRV=1 packages/yuga/tests/tmp/zeus_stream >/dev/null 2>&1 &")
+    let mut addr = sys.read_file("/tmp/yuga_stream_sse.port")
+    let mut guard = 0
+    while addr.len == 0 && guard < 400 {
+        async.sleep(5)
+        addr = sys.read_file("/tmp/yuga_stream_sse.port")
+        guard = guard + 1
+    }
+    if addr.len == 0 {
+        fail("sse server never started")
+    }
+    http.sse_open(http.client(addr), "/events", fn(ev) {
+        n.set(n.get() + 1)
+    }, || { se.set(1) })
+    pump_until(5, n, se)
+    if zeus.engine_find_text("events: 5") == 0 {
+        fail("sse events did not repaint")
+    }
+
+    // WebSocket: 5 messages on top.
+    sys.exec("YUGA_WS_SRV=1 packages/yuga/tests/tmp/zeus_stream >/dev/null 2>&1 &")
+    let mut addr2 = sys.read_file("/tmp/yuga_stream_ws.port")
+    let mut guard2 = 0
+    while addr2.len == 0 && guard2 < 400 {
+        async.sleep(5)
+        addr2 = sys.read_file("/tmp/yuga_stream_ws.port")
+        guard2 = guard2 + 1
+    }
+    if addr2.len == 0 {
+        fail("ws server never started")
+    }
+    http.ws_open(http.client(addr2), "/ws", fn(msg) {
+        n.set(n.get() + 1)
+    }, || { we.set(1) })
+    pump_until(10, n, we)
+    if zeus.engine_find_text("events: 10") == 0 {
+        fail("ws messages did not repaint")
+    }
+    fmt.println("stream ok")
+}
+
+fn main() {
+    if sys.env_set("YUGA_SSE_SRV") != 0 {
+        sse_srv_main()
+        return
+    }
+    if sys.env_set("YUGA_WS_SRV") != 0 {
+        ws_srv_main()
+        return
+    }
+    cli_main()
+}

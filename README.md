@@ -30,6 +30,8 @@ Android stack) installs everything below that Homebrew can. See [Setup](#setup).
 
 - A C11 compiler (`cc`) and `make` (Apple Command Line Tools)
 - macOS for native desktop GUI (Cocoa) and Maya present
+- [raylib](https://www.raylib.com) (`brew install raylib`) for the `std:raygui`
+  example (`examples/language/raygui.yuga`); nothing else needs it
 - [Xcode](https://developer.apple.com/xcode/) for the iOS Simulator target
 - A `wasm32` clang (Homebrew LLVM, not Apple `/usr/bin/clang`) for web builds;
   `./install.sh` puts it where `yugac` looks by default. Set `YUGA_WASM_CC`
@@ -75,12 +77,13 @@ That produces `bin/yugac` and `bin/yuga-lsp`. Then:
 ```
 
 `make test` compiles and runs the language tests, golden programs, and
-examples (GUI and Maya in headless mode). Set `YUGA_TIME=1` to print
+examples (GUI, Maya, and raygui in headless mode; the raygui example is
+skipped when `pkg-config raylib` is absent). Set `YUGA_TIME=1` to print
 check / codegen / cc timings.
 
 ## Libraries
 
-Quoted imports only. `import "std:foo"` loads `packages/compiler/std/foo.yuga`.
+Quoted imports only. `import "std:foo"` loads `packages/yuga/std/foo.yuga`.
 Call imported items as `foo.bar(...)`.
 
 | Import | What it is |
@@ -89,6 +92,7 @@ Call imported items as `foo.bar(...)`.
 | `std:zeus` | UI toolkit + design system in one module: one `Node` tree, signals, `Box` / `Text` / `Button` / `App`, themed chrome (`Card`, `Button` with `LOOK` / `SIZE`, `Dialog`, `Tabs`, `Navbar`, charts, `DatePicker`). Same source on Cocoa, iOS, Android, and wasm Canvas2D (no HTML DOM). |
 | `std:http` | Unary RPC over gRPC-Web (HTTP/1.1) and h2c. `#[proto]` structs, no REST routes. |
 | `std:maya` | Tiny 3D/2D engine. Scene and tracer in Yuga; C is the event loop and present. |
+| `std:raygui` | Immediate-mode GUI: [raygui](https://github.com/raysan5/raygui) controls on [raylib](https://www.raylib.com). No retained tree; the frame loop lives in Yuga. Host seam: `raygui_plat.c`; RAM probe included. |
 | `std:thread` | Detached OS threads for CPU-bound work, plus Send-disciplined `channel<T>` between workers and the UI loop. `spawn` callbacks must be Send (plain data) and are checked to never touch module state or the C seam. Native/iOS/Android; wasm `spawn` is a no-op. |
 | `std:net` | TCP connect / listen / read / write. Used by `http`; not an app-level import. |
 | `std:sys` | `env_set` / `exit`. Language-level seam into `yuga_rt`. |
@@ -121,10 +125,10 @@ fn main() {
 ```
 
 The themed look (zinc palette, `Card`, `Button` with `LOOK` / `SIZE`, dialogs,
-charts, `DatePicker`) ships inside [`std:zeus`](packages/compiler/std/zeus.yuga).
+charts, `DatePicker`) ships inside [`std:zeus`](packages/zeus/std/zeus.yuga).
 The catalog is [`examples/zeus/gallery`](examples/zeus/gallery). Zeus paints
 its own theme on every host; Cocoa / UIKit / Android widgets are not used.
-Map: [packages/zeus/README.md](packages/zeus/README.md). Architecture:
+Map: [zeus/README.md](zeus/README.md). Architecture:
 [packages/zeus/docs/spec.md](packages/zeus/docs/spec.md).
 
 The component catalog running in the browser (same source as the Cocoa,
@@ -144,7 +148,8 @@ _Open the recording in a new tab: [docs/media/gallery-demo.mp4](docs/media/galle
 | Android | `--target=android` | JNI Canvas | Writes a Gradle project. Layout is density-independent pixels. |
 
 CLI and `std:http` servers are ordinary native binaries. Maya present is
-Cocoa 2D on macOS (`MAYA_HEADLESS=1` updates once and exits).
+Cocoa 2D on macOS (`MAYA_HEADLESS=1` updates once and exits). raygui opens a
+raylib window (`RAYGUI_HEADLESS=1` draws a few frames and exits).
 
 The Android emulator reaches a Mac backend at `10.0.2.2:8080`, not
 `127.0.0.1`. The Simulator and Cocoa apps share the Mac loopback.
@@ -153,12 +158,14 @@ The Android emulator reaches a Mac backend at `10.0.2.2:8080`, not
 
 `./run.sh` with no arguments lists everything. It builds `yugac` if needed.
 GUI examples open a window and servers block until Ctrl-C. For one frame then
-exit (what `make test` does), set `ZEUS_HEADLESS=1` or `MAYA_HEADLESS=1`.
+exit (what `make test` does), set `ZEUS_HEADLESS=1`, `MAYA_HEADLESS=1`, or
+`RAYGUI_HEADLESS=1`.
 
 ```
 ./run.sh                      # list
 ./run.sh language/counter     # language demo
 ./run.sh solar                # Maya 3D (macOS window)
+./run.sh raygui               # raygui immediate-mode controls + RAM (needs raylib)
 ./run.sh dashboard            # Zeus app, Cocoa
 ./run.sh dashboard wasm32     # same app, browser
 ./run.sh dashboard ios        # same app, Simulator
@@ -180,6 +187,7 @@ language demo is `./run.sh language/counter`. `zeus/counter` is an alias.
 | `http_server` | `std:http` unary RPC on `:8080`. |
 | `solar` | Maya solar-system scene (orbit camera). |
 | `studio` | Maya 3D toy with orbiting bodies. |
+| `raygui` | raygui immediate-mode controls (buttons, slider, combo, list) with a live process-RAM panel; prints a RAM summary on exit. Needs raylib. |
 | `oob` | Out-of-bounds index; expected to trap. |
 
 ```
@@ -193,7 +201,7 @@ Equivalent without `run.sh`:
 ./bin/yugac --run examples/language/http_server.yuga
 ```
 
-Golden programs under `packages/compiler/tests/golden/` (hello, fib, fizzbuzz,
+Golden programs under `packages/yuga/tests/golden/` (hello, fib, fizzbuzz,
 …) are compiled by `make test`. They are fixtures, not demos.
 
 ### Zeus (`examples/zeus/`)
@@ -247,11 +255,19 @@ All zeus `android/run.sh` scripts share one `yuga` AVD.
 ## Repository
 
 ```
-packages/compiler/     yugac, yuga-lsp, std/, runtime/, tests
-packages/zeus/         Zeus UI hosts: desktop/ Cocoa, ios/, android/, web/ (Canvas2D)
-packages/zeus/docs/    spec.md = zeus backends and paint model
-packages/tree-sitter-yuga/
-packages/editors/      Zed extension, VSCode extension
+yuga/                  the language
+  src/                 compiler (C11): lexer, parser, sema, ir, codegen_c
+  std/                 language libraries (Yuga), incl. zeuscore/httpcore/mayacore
+  runtime/             yuga_rt (language) + host shims
+  tests/               compile_pass / compile_fail / golden / inlang / bench
+zeus/                  the framework
+  hosts/               desktop/ Cocoa, ios/ UIKit, android/ JNI, web/ Canvas2D
+  docs/                spec.md = zeus backends and paint model
+raygui/                immediate-mode GUI package (std:raygui)
+  std/raygui.yuga      the Yuga API + frame loop
+  vendor/raygui.h      vendored raygui (raysan5/raygui)
+packages/tooling/tree-sitter-yuga/  grammar
+packages/tooling/editors/       Zed extension, VSCode extension
 install.sh             one-time macOS setup (core tools; android stack)
 examples/language/     standalone .yuga programs
 examples/zeus/         gallery (component catalog), dashboard, full-stack counter
@@ -263,5 +279,5 @@ bin/yugac              compiler
 bin/yuga-lsp           diagnostics, hover, go-to-def, completion, semantic tokens
 ```
 
-Cursor / VS Code: [packages/editors/vscode/README.md](packages/editors/vscode/README.md) (`make && make install-editor`).
-Zed: [packages/editors/zed/README.md](packages/editors/zed/README.md).
+Cursor / VS Code: [packages/tooling/editors/vscode/README.md](packages/tooling/editors/vscode/README.md) (`make && make install-editor`).
+Zed: [packages/tooling/editors/zed/README.md](packages/tooling/editors/zed/README.md).

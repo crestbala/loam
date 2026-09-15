@@ -1,0 +1,48 @@
+// Phase 17 NLL: a borrow is live only up to its last use, not to the end of the
+// enclosing scope. Each of these is rejected by a scope-length borrow checker.
+
+import "std:fmt"
+import "std:sys"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    // A mutable borrow ends after its last use, so `x` is free again.
+    let mut x = 1
+    let p = &mut x
+    *p = 2
+    x = 3
+    must(x == 3, "mut borrow ends at last use")
+
+    // A shared borrow likewise ends after `q` is last read.
+    let mut y = 10
+    let q = &y
+    let v = *q
+    y = 20
+    must(v == 10, "shared borrow value")
+    must(y == 20, "shared borrow ends at last use")
+
+    // A second mutable borrow is legal once the first is dead.
+    let mut z = 1
+    let a = &mut z
+    *a = 5
+    let b = &mut z
+    *b = 6
+    must(z == 6, "reborrow after first borrow is dead")
+
+    // A dead borrow does not block a move either.
+    let mut w = 1
+    let r = &mut w
+    *r = 9
+    let taken = *r
+    must(taken == 9, "read through borrow")
+    let moved = w
+    must(moved == 9, "move after borrow is dead")
+
+    fmt.println("nll ok")
+}

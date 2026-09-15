@@ -1,0 +1,18 @@
+import "std:zeus"
+import "std:router"
+
+fn page(p: Params) {
+    zeus.Text(router.param(p, "slug"))
+}
+
+fn paths() -> []string {
+    return []string { "/blog/hello-world", "/blog/second" }
+}
+
+fn meta(p: Params) -> Meta {
+    return Meta {
+        title: router.param(p, "slug"),
+        description: "A blog post.",
+        jsonld: "{\"@context\":\"https://schema.org\",\"@type\":\"Article\"}",
+    }
+}

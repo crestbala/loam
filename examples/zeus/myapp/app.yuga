@@ -1,0 +1,15 @@
+//! myapp — application entry. One entry, every host.
+//!
+//! `zeus routes` generates app_routes.yuga from routes/; this file
+//! mounts it. `zeus build` emits all five targets from here.
+
+import "std:zeus"
+import "app_routes.yuga" as approutes
+import "server/api.yuga" as api
+import "tests/smoke.yuga" as smoketest
+
+fn main() {
+    zeus.App("myapp", fn() {
+        approutes.app()
+    })
+}

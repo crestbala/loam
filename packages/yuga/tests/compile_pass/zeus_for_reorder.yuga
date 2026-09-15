@@ -1,0 +1,46 @@
+// A keyed `For` moves rows on reorder instead of rebuilding them, so per-row
+// state survives. Here each row owns a signal that a button increments; if a
+// reorder rebuilt the row, the signal would reset and the "1" label would
+// disappear. (The streaming push/pop case is covered by zeus_for_recycle.)
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn Row(i: int, s: string) {
+    let c = zeus.signal(0)
+    zeus.Box(align_direction = DIRECTION.Row, spacing = 4) {
+        zeus.Text(s)
+        zeus.Button("inc", on_click = fn() => c.set(c.get() + 1), width = 40)
+        zeus.Text("{{c.get()}}")
+    }
+}
+
+fn main() {
+    let names = zeus.signal([]string {})
+    zeus.push_item(names, "Ada")
+    zeus.push_item(names, "Bea")
+    zeus.snapshot(240, 160, fn() -> Node {
+        zeus.Box(align_direction = DIRECTION.Column) {
+            zeus.For(names, fn(s) => s, Row)
+        }
+    })
+    // Increment the first row's counter ("Ada").
+    if zeus.engine_click_text("inc") == 0 {
+        fmt.println("FAIL click inc")
+        sys.exit(1)
+    }
+    zeus.engine_layout(240, 160)
+    if zeus.engine_find_text("1") == 0 {
+        fmt.println("FAIL row signal did not update")
+        sys.exit(1)
+    }
+    // Reorder: Ada moves to the second row. A rebuild would reset the counter.
+    names.set([]string { "Bea", "Ada" })
+    zeus.engine_layout(240, 160)
+    if zeus.engine_find_text("1") == 0 {
+        fmt.println("FAIL reorder rebuilt the row (state lost)")
+        sys.exit(1)
+    }
+    fmt.println("for reorder ok")
+}

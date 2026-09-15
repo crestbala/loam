@@ -1,0 +1,50 @@
+// Fixture app for the `zeus routes` generator: a file-system routes/ tree.
+// `zeus routes` writes app_routes.yuga; this entry imports it and drives
+// the headless engine to prove the conventions compose and navigate.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:router"
+import "app_routes.yuga" as approutes
+
+fn fail(what: string) {
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn main() {
+    zeus.snapshot(320, 200, fn() -> Node {
+        zeus.Box(align_direction = DIRECTION.Column) {
+            approutes.app()
+        }
+    })
+    if zeus.engine_find_text("home") == 0 {
+        fail("root page")
+    }
+    if zeus.engine_find_text("root layout") == 0 {
+        fail("root layout chrome")
+    }
+    router.navigate("/blog")
+    zeus.engine_layout(320, 200)
+    if zeus.engine_find_text("blog") == 0 {
+        fail("blog page")
+    }
+    if zeus.engine_find_text("blog layout") == 0 {
+        fail("blog layout chrome")
+    }
+    if zeus.engine_find_text("root layout") == 0 {
+        fail("root layout lost across navigation")
+    }
+    router.navigate("/blog/hello-world")
+    zeus.engine_layout(320, 200)
+    if zeus.engine_find_text("hello-world") == 0 {
+        fail("slug param")
+    }
+    router.navigate("/nope")
+    zeus.engine_layout(320, 200)
+    if zeus.engine_find_text("nf") == 0 {
+        fail("not-found page")
+    }
+    fmt.println("routes app ok")
+}

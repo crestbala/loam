@@ -1,0 +1,44 @@
+// Phase 14 control-flow primitives: positional `Index` and single-arm `Match`.
+// `Match` mounts one arm at a time and swaps it when the tag signal changes.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn Item(i: int, s: string) {
+    zeus.Text(s)
+}
+
+fn main() {
+    let tab = zeus.signal(0)
+    let items = zeus.signal([]string {})
+    zeus.push_item(items, "a")
+    zeus.push_item(items, "b")
+    zeus.snapshot(240, 160, fn() -> Node {
+        zeus.Box(align_direction = DIRECTION.Column) {
+            zeus.Index(items, Item)
+            zeus.Match(tab, fn(t) {
+                if t == 0 {
+                    zeus.Text("tab zero")
+                } else {
+                    zeus.Text("tab one")
+                }
+            })
+        }
+    })
+    if zeus.engine_find_text("tab zero") == 0 {
+        fmt.println("FAIL match arm zero")
+        sys.exit(1)
+    }
+    tab.set(1)
+    zeus.engine_layout(240, 160)
+    if zeus.engine_find_text("tab one") == 0 {
+        fmt.println("FAIL match arm one")
+        sys.exit(1)
+    }
+    if zeus.engine_find_text("tab zero") != 0 {
+        fmt.println("FAIL old arm still mounted")
+        sys.exit(1)
+    }
+    fmt.println("match/index ok")
+}

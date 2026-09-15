@@ -1,0 +1,6 @@
+//! Blog list query. Make `posts` a `#[server] fn` to fetch it from the
+//! backend; it stays a plain fn here so the scaffold runs on every host.
+
+fn posts() -> []string {
+    return []string { "hello world", "second post" }
+}

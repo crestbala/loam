@@ -48,7 +48,7 @@ Pipeline, in order:
 | Load | `src/compile.c` | Resolve `import "std:bar"` → `std/bar.yuga`, relative `"path.yuga"` from the importer. Cycles are errors. |
 | Lex / parse | `src/lexer.c`, `src/parser.c` | Tokens → AST. |
 | Typecheck | `src/sema/typecheck.c` | Names, types, auto-borrow, generics (monomorphized, including nested calls and defaults), `mod.fn` / `mod.global`, method rewrite `n.w(32)` → `zeus.w(n, 32)`. |
-| Borrowck | `src/sema/borrowck.c` | Exclusive vs shared, moves, place paths (`p.a` vs `p.b`). |
+| Borrowck | `src/sema/borrowck.c` | Exclusive vs shared, moves, place paths (`p.a` vs `p.b`). Borrows end at the holder's last use (NLL). Enforces `#[must_check]`. |
 | Boundscheck | `src/sema/boundscheck.c` | Proven in-range indexes skip the runtime trap. |
 | IR | `src/ir.c` | CFG, drops, closures as heap env + fn pointer (`yuga_fn`: fn, env, env_size). |
 | C | `src/codegen_c.c` | C99, then `cc`. |
@@ -58,8 +58,8 @@ Ownership state (from the spec):
 ```
 Owned ──copy──► Owned
 Owned ──move──► Moved
-Owned ──&────► Borrowed ──end──► Owned
-Owned ──&mut─► MutBorrowed ──end──► Owned
+Owned ──&────► Borrowed ──last use──► Owned
+Owned ──&mut─► MutBorrowed ──last use──► Owned
 Owned ──scope exit──► Dropped   (free boxes / []T / closures)
 ```
 
@@ -71,20 +71,21 @@ the last owner drops (vectors) or interned for the process (handlers).
 
 ```
 yuga/
-  packages/
-    compiler/       compiler (C11) + language libraries + runtime + its own tests
-      src/          compiler (C11)
-      std/          language libraries (Yuga)
-      runtime/      yuga_rt (language) + host shims (not library protocol C)
-      tests/        compile_pass / compile_fail / golden (fixtures w/ .expected)
-    zeus/           Zeus UI + hosts: desktop/ Cocoa, ios/ UIKit, android/ Canvas, web/ Canvas2D
+  yuga/           the language
+    src/          compiler (C11)
+    std/          language libraries (Yuga)
+    runtime/      yuga_rt (language) + host shims (not library protocol C)
+    tests/        compile_pass / compile_fail / golden (fixtures w/ .expected)
+  zeus/           the framework: hosts/ (Cocoa, iOS, Android, Canvas2D), docs/
+  tooling/
     tree-sitter-yuga/  grammar
-    editors/        editor integrations (Zed, Cursor/VS Code)
+    editors/      editor integrations (Zed, Cursor/VS Code)
   examples/
-    language/       standalone demo .yuga programs (not test fixtures)
-    zeus/           zeus apps (gallery, dashboard) + full-stack counter example
+    language/     standalone demo .yuga programs (not test fixtures)
+    zeus/         zeus apps (gallery, dashboard, myapp scaffold) + full-stack counter example
   bin/yugac       the compiler
   bin/yuga-lsp    editor diagnostics / hover (incl. doc comments) / go-to-def / completion / semantic tokens
+  bin/yugafmt     formatter (one style, no options)
 ```
 
 Std modules today: `fmt` (print), `zeus` (UI), `http`, `maya` (tiny 3D),
@@ -93,6 +94,25 @@ workers off module state — native/iOS/Android only, wasm `spawn` is a no-op).
 
 Document them with `///` above each `fn` / `struct` and `//!` at the top of the
 file. Hover in the editor shows those comments plus the type.
+
+### Module resolution
+
+Three import forms, one per kind of dependency:
+
+| Form | Resolves to | Use for |
+|---|---|---|
+| `import "std:name"` | `packages/yuga/std/name.yuga`, then each `YUGA_PATH` root's `std/name.yuga` | language std and frameworks |
+| `import "path.yuga"` | relative to the importing file | files shipped with this module |
+| `import "pkg:name"` | `vendor/name/name.yuga`, searched upward from the entry | vendored third-party code |
+
+The `std:` search path is a real path, not "`std/` next to the compiler".
+`packages/yuga/std/` holds the language core (`fmt`, `net`, `sys`, `thread`, `math`,
+`str`, `time`, `kv`, `json`, `result`, `test`); `zeus`, `http`, and `maya` are
+**frameworks** that live outside `yuga/` and are found because `YUGA_PATH`
+names their roots (`packages/zeus/std/zeus.yuga`, `packages/http/std/http.yuga`, …). Language std
+is searched first, so a framework cannot shadow `std:fmt`. Relative imports
+are for a module's own siblings (`packages/zeus/std/router.yuga` →
+`"zeuscore/platform.yuga"`), never for dependencies.
 
 ## How to use the language
 
@@ -157,8 +177,8 @@ on macOS a GUI build also compiles Cocoa.
 
 What `yugac` does about that:
 
-- Runtime files (`zeus_plat.c`, `zeus_key.c`, `packages/zeus/desktop/mac.m`) compile once into
-  `packages/compiler/runtime/.obj/` and are reused until those sources change.
+- Runtime files (`zeus_plat.c`, `zeus_key.c`, `packages/zeus/hosts/desktop/mac.m`) compile once into
+  `packages/yuga/runtime/.obj/` and are reused until those sources change.
 - `ZEUS_HEADLESS=1` (tests) skips Cocoa and uses `-O0` on generated C.
 - GUI builds use `-O1` on generated C, not `-O2` (same overflow checks,
   much less optimizer work).
@@ -210,8 +230,36 @@ fn main() {
 ```
 
 `let` is immutable, `let mut` is mutable. Passing an owned place to a `&T` /
-`&mut T` parameter inserts the borrow. Stored borrows last until that binding
-leaves scope (not NLL).
+`&mut T` parameter inserts the borrow. A stored borrow is live only up to the
+holder's **last use** (NLL-style liveness), so the borrowed place is free again
+afterward:
+
+```yuga
+let mut x = 1
+let p = &mut x
+*p = 2
+x = 3            // legal: p is dead after `*p = 2`
+```
+
+### 2b. Error handling: `Res<T>`
+
+There is no `Result` type system, no `?`, and no pattern matching. The one
+checked container is `Res<T>` (`std:result`), marked `#[must_check]`:
+
+```yuga
+import "std:result"
+
+let r = http.call(c, "Counter.Increment", body)
+if r.ok {
+    use(decode_Count(r.val))
+}
+```
+
+A `#[must_check]` value that is dropped without reading any field — or
+discarded as a bare expression statement — is a **compile error**. `res.or(x)`
+gives the value or a default; `res.or_trap()` gives the value or traps with
+`r.err`. `http.call` returns `Res<string>`; its optional REST counterparts stay
+plain values.
 
 ### 3. Arrays and generics
 
@@ -378,8 +426,8 @@ modules sit above that for the "text in-tree" work:
   unshaped (one glyph per cluster), so complex-script widths and ligatures are
   approximate until a shaper lands (`yuga_zeus_v2.md` §1.4).
 
-In-language tests live in `packages/compiler/tests/inlang/unicode_tests.yuga` and
-`font_tests.yuga`; the font fixture is `packages/compiler/tests/fonts/tiny.ttf`,
+In-language tests live in `packages/yuga/tests/inlang/unicode_tests.yuga` and
+`font_tests.yuga`; the font fixture is `packages/yuga/tests/fonts/tiny.ttf`,
 regenerated by `make_tiny_font.py` beside it.
 
 `zeus.use_font(src)` binds an external font — a file path on desktop, a URL on
@@ -407,9 +455,9 @@ callers should not assume the face is present.
 
 Corpus you can compile as examples:
 
-- `packages/compiler/tests/compile_pass/hello.yuga`, `vec.yuga`, `globals.yuga`, `import_math.yuga`
+- `packages/yuga/tests/compile_pass/hello.yuga`, `vec.yuga`, `globals.yuga`, `import_math.yuga`
 - `examples/language/counter.yuga`, `fib.yuga`, `http_server.yuga`
-- Failures the checker must reject: `packages/compiler/tests/compile_fail/*.yuga`
+- Failures the checker must reject: `packages/yuga/tests/compile_fail/*.yuga`
 
 ```
 make && make test

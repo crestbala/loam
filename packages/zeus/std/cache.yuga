@@ -1,0 +1,148 @@
+//! cache — a route/params-keyed data cache (§5.5), backed by `std:kv`.
+//!
+//! One entry is `<timestamp-ms>\n<value>`. `get` dates the entry against
+//! `async.now_ms()` and marks it `fresh` while it is within `ttl` seconds. An
+//! entry whose timestamp is in the future (the clock moved backwards) is
+//! treated as stale, so the cache can never serve a value it cannot date.
+//! Native persists through `std:kv` (file under the app-data dir); wasm is
+//! memory-only. That is what buys a Zeus app an offline story: a file-backed
+//! cache survives the process.
+//!
+//! ```
+//! import "std:cache"
+//!
+//! let c = cache.open("my-app")
+//! let k = cache.key("/post/:slug", slug)
+//! let body = cache.cached(c, k, 60, fn() { http.rest_get(api, p).body })
+//! ```
+
+import "std:kv"
+import "std:sys"
+import "std:async"
+
+/// A cache handle. The rows live in the `std:kv` store.
+struct Cache {
+    store: Store,
+}
+
+/// A dated entry. Read `val` when `fresh == 1`.
+struct Entry {
+    fresh: int,
+    val: string,
+}
+
+/// Open the app's persistent cache (`kv.open(app)`).
+fn open(app: string) -> Cache {
+    return Cache { store: kv.open(app) }
+}
+
+/// Open a cache at an explicit file path (empty = memory-only). For tests and
+/// for callers that manage their own location.
+fn open_path(path: string) -> Cache {
+    return Cache { store: kv.open_path(path) }
+}
+
+/// Cache key for a route pattern plus already-serialized params.
+fn key(pattern: string, params: string) -> string {
+    return "{{pattern}}?{{params}}"
+}
+
+fn cut(s: string, a: int, b: int) -> string {
+    let mut out = []int {}
+    let mut i = a
+    if i < 0 {
+        i = 0
+    }
+    let mut e = b
+    if e > s.len {
+        e = s.len
+    }
+    while i < e {
+        push(out, s[i])
+        i = i + 1
+    }
+    return string_from_bytes(out)
+}
+
+/// Read the entry for `k`. `fresh == 1` when present and no older than `ttl`
+/// seconds (`ttl <= 0` means "never expires"). Missing entries are not fresh.
+fn get(c: Cache, k: string, ttl: int) -> Entry {
+    let raw = kv.get(c.store, k)
+    if raw.len == 0 {
+        return Entry { fresh: 0, val: "" }
+    }
+    let mut i = 0
+    let mut ts: i64 = 0
+    while i < raw.len {
+        let b = raw[i]
+        if b < 48 {
+            break
+        }
+        if b > 57 {
+            break
+        }
+        ts = ts * 10 + i64(b - 48)
+        i = i + 1
+    }
+    let mut val = ""
+    if i < raw.len {
+        val = cut(raw, i + 1, raw.len)
+    }
+    let now = async.now_ms()
+    let mut fresh = 0
+    if ttl <= 0 {
+        fresh = 1
+    } else {
+        if now >= ts {
+            if now - ts <= i64(ttl) * 1000 {
+                fresh = 1
+            }
+        }
+    }
+    return Entry { fresh: fresh, val: val }
+}
+
+/// The stored value regardless of age ("" when absent).
+fn value(c: Cache, k: string) -> string {
+    return get(c, k, 0).val
+}
+
+/// Store `val` under `k`, dated now.
+fn put(c: Cache, k: string, val: string) {
+    let ts = async.now_ms()
+    kv.set(c.store, k, "{{ts}}\n{{val}}")
+}
+
+/// Drop one key.
+fn invalidate(c: Cache, k: string) {
+    kv.delete(c.store, k)
+}
+
+/// Drop every key in the cache.
+fn clear(c: Cache) {
+    let ks = kv.list(c.store)
+    let mut copy = []string {}
+    let mut i = 0
+    while i < ks.len {
+        push(copy, ks[i])
+        i = i + 1
+    }
+    i = 0
+    while i < copy.len {
+        kv.delete(c.store, copy[i])
+        i = i + 1
+    }
+}
+
+/// Return the cached value when fresh, otherwise call `produce()`, cache the
+/// result, and return it. This is the loader-side primitive: `revalidate` is
+/// the `ttl` in seconds and `invalidate` forces the next call to recompute.
+fn cached(c: Cache, k: string, ttl: int, produce: fn() -> string) -> string {
+    let e = get(c, k, ttl)
+    if e.fresh == 1 {
+        return e.val
+    }
+    let v = produce()
+    put(c, k, v)
+    return v
+}

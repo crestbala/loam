@@ -47,8 +47,9 @@ fi
 command -v brew >/dev/null 2>&1 || die "Homebrew did not finish installing — re-run this script"
 
 # 3. Core brew packages: LLVM (its clang has the wasm32 target that Apple's
-#    /usr/bin/clang lacks) and Node (Vite dev servers for the wasm examples).
-for p in llvm node; do
+#    /usr/bin/clang lacks), Node (Vite dev servers for the wasm examples), and
+#    raylib (the raygui example).
+for p in llvm node raylib; do
   if brew list --formula "$p" >/dev/null 2>&1; then
     say "$p already installed"
   else

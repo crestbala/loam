@@ -1,0 +1,68 @@
+import "std:http"
+import "std:fmt"
+import "std:sys"
+
+fn must(ok: bool) {
+    if !ok {
+        sys.exit(1)
+    }
+}
+
+fn ping(body: string) -> string {
+    if http.eq(body, "{\"n\":1}") {
+        return "{\"ok\":true}"
+    }
+    return "{\"ok\":false}"
+}
+
+fn bump(body: string) -> string {
+    return "PONG"
+}
+
+fn main() {
+    let app = http.app()
+    app.json("/hook", |body| { ping(body) })
+
+    let post = http.serve_h1(app, "POST /hook HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 7\r\n\r\n{\"n\":1}")
+    must(http.http_status(post) == 200)
+    must(http.eq(http.http_payload(post), "{\"ok\":true}"))
+
+    let post2 = http.serve_h1(app, "POST /hook HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 7\r\n\r\n{\"n\":2}")
+    must(http.http_status(post2) == 200)
+    must(http.eq(http.http_payload(post2), "{\"ok\":false}"))
+
+    // An unmatched path stays a 404 — JSON routes are opt-in.
+    let miss = http.serve_h1(app, "POST /nope HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n")
+    must(http.http_status(miss) == 404)
+
+    // Known path, unhandled method (HEAD is parser-legal): 405.
+    let bad = http.serve_h1(app, "HEAD /hook HTTP/1.1\r\nHost: x\r\n\r\n")
+    must(http.http_status(bad) == 405)
+
+    // gRPC remains the default and is unaffected by JSON routes.
+    app.rpc("Counter.Increment", |body| { bump(body) })
+    let grpc = http.serve_h1(app, "POST /Counter/Increment HTTP/1.1\r\nHost: x\r\nContent-Type: application/grpc-web+proto\r\nContent-Length: 2\r\n\r\nab")
+    must(http.http_status(grpc) == 200)
+    must(http.eq(http.unframe_str(http.http_payload(grpc)), "PONG"))
+
+    // GET on a registered route gets an empty body.
+    let get = http.serve_h1(app, "GET /hook HTTP/1.1\r\nHost: x\r\n\r\n")
+    must(http.http_status(get) == 200)
+
+    // REST URL parsing (client side).
+    let u = http.parse_url("https://api.example.com/v1")
+    must(u.ok == 1)
+    must(u.tls == 1)
+    must(u.port == 443)
+    must(http.eq(u.host, "api.example.com"))
+    must(http.eq(u.path, "/v1"))
+    let u2 = http.parse_url("http://127.0.0.1:9000")
+    must(u2.ok == 1)
+    must(u2.tls == 0)
+    must(u2.port == 9000)
+    must(http.eq(u2.path, ""))
+    let u3 = http.parse_url("not a url")
+    must(u3.ok == 0)
+
+    fmt.println("json route", http.last_json_status())
+}

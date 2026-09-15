@@ -1,0 +1,152 @@
+//! raygui example — immediate-mode controls with a live RAM readout.
+//!
+//!     ./run.sh raygui                  # window (needs raylib; brew install raylib)
+//!     RAYGUI_HEADLESS=1 ./run.sh raygui # 3 frames, prints the RAM summary
+//!
+//! `std:raygui` is the raygui immediate-mode GUI (raysan5/raygui) on raylib.
+//! Immediate mode means nothing is retained: every frame re-issues every
+//! control, and the only state is the handful of `let mut` values below. That
+//! is what makes it a fair RAM test — if the footprint climbs while this panel
+//! sits open (or while you press the stress button), the growth is the UI
+//! layer allocating per frame, not the tree growing.
+//!
+//! The right panel samples the host process footprint every frame —
+//! Apple `phys_footprint` (the number Xcode's memory gauge shows) or the
+//! Linux/Android resident set — and the program prints first/min/max/growth on
+//! exit so a run can be compared or scripted.
+
+import "std:raygui"
+import "std:fmt"
+
+// ── retained state: the whole of it (immediate mode lives here) ───────────
+let mut clicks: int = 0
+let mut check: int = 1
+let mut toggle: int = 0
+let mut slider_v: float = 0.35
+let mut progress_v: float = 0.0
+let mut spinner_v: int = 7
+let mut value_v: int = 42
+let mut combo_i: int = 1
+let mut list_scroll: int = 0
+let mut list_active: int = 0
+/// Extra controls the stress button keeps alive, to watch per-frame cost.
+let mut stress: int = 0
+
+let mut frames: int = 0
+let mut ram_first: int = 0
+let mut ram_min: int = 0
+let mut ram_max: int = 0
+let mut ram_now: int = 0
+
+let win_w: int = 760
+let win_h: int = 520
+
+fn sample_ram() {
+    ram_now = raygui.ram_kb()
+    if frames == 0 {
+        ram_first = ram_now
+        ram_min = ram_now
+        ram_max = ram_now
+        return
+    }
+    if ram_now < ram_min {
+        ram_min = ram_now
+    }
+    if ram_now > ram_max {
+        ram_max = ram_now
+    }
+}
+
+/// Left panel: the controls. Every call is re-issued each frame.
+fn controls() {
+    raygui.panel(16, 16, 376, win_h - 32, "raygui — controls")
+    raygui.label(32, 46, 344, 22, "Immediate mode: no widget tree is retained.")
+
+    raygui.line(32, 74, 344, 1, "")
+    raygui.button(32, 84, 168, 34, "Press me — {{clicks}}")
+    if raygui.button(212, 84, 164, 34, "Stress +4") != 0 {
+        stress = stress + 4
+    }
+
+    raygui.checkbox(32, 128, 168, 26, "Check box", &mut check)
+    raygui.toggle(212, 128, 164, 26, "Toggle", &mut toggle)
+
+    raygui.label(32, 166, 344, 22, "Slider (raygui draws the value)")
+    raygui.slider(32, 190, 344, 24, "", "", &mut slider_v, 0.0, 1.0)
+
+    raygui.label(32, 226, 344, 22, "Progress")
+    raygui.progress(32, 250, 344, 28, "", "", &mut progress_v, 0.0, 1.0)
+
+    raygui.label(32, 290, 344, 22, "Spinner · value box")
+    raygui.spinner(32, 314, 168, 32, "", &mut spinner_v, 0, 20, 0)
+    raygui.value_box(212, 314, 164, 32, "", &mut value_v, 0, 999, 0)
+
+    raygui.label(32, 356, 344, 22, "Combo box · list view")
+    raygui.combo(32, 380, 168, 30, "Small;Medium;Large", &mut combo_i)
+    raygui.listview(212, 380, 164, 76, "alpha;bravo;charlie;delta;echo",
+                    &mut list_scroll, &mut list_active)
+
+    raygui.label(32, win_h - 56, 344, 22,
+                 "combo {{combo_i}} · list {{list_active}} · stress {{stress}}")
+}
+
+/// Right panel: what a RAM test watches. All values are host-reported.
+fn ram_panel() {
+    // Read the host values into locals first: a `raygui.*` call inside `{{ }}`
+    // interpolation tripped sema, so keep interpolation to plain values.
+    let fps = raygui.fps()
+    let fms = raygui.frame_ms()
+    let sw = raygui.screen_w()
+    let sh = raygui.screen_h()
+    let growth = ram_max - ram_min
+
+    raygui.panel(408, 16, win_w - 424, win_h - 32, "RAM")
+    raygui.label(424, 46, 300, 22, "now     {{ram_now}} KB")
+    raygui.label(424, 72, 300, 22, "first   {{ram_first}} KB")
+    raygui.label(424, 98, 300, 22, "min     {{ram_min}} KB")
+    raygui.label(424, 124, 300, 22, "max     {{ram_max}} KB")
+    raygui.label(424, 150, 300, 22, "growth  {{growth}} KB")
+
+    raygui.line(424, 182, 300, 1, "")
+    raygui.label(424, 194, 300, 22, "frames  {{frames}}")
+    raygui.label(424, 220, 300, 22, "fps     {{fps}}")
+    raygui.label(424, 246, 300, 22, "frame   {{fms}} ms")
+    raygui.label(424, 272, 300, 22, "view    {{sw}}x{{sh}}")
+
+    raygui.line(424, 304, 300, 1, "")
+    raygui.label(424, 316, 300, 22, "Sample every frame:")
+    raygui.label(424, 342, 300, 22, "phys_footprint (macOS),")
+    raygui.label(424, 366, 300, 22, "resident set (Linux/Android).")
+    raygui.label(424, 402, 300, 22, "A flat line while this sits")
+    raygui.label(424, 426, 300, 22, "open means no per-frame leak.")
+}
+
+fn main() {
+    raygui.init("raygui — controls + RAM", 1200, 800, 60)
+    if raygui.headless() == 0 {
+        raygui.set_style(raygui.DEFAULT, raygui.DEFAULT_TEXT_SIZE, 18)
+    }
+
+    while raygui.open() != 0 {
+        sample_ram()
+        progress_v = progress_v + 0.004
+        if progress_v > 1.0 {
+            progress_v = 0.0
+        }
+
+        raygui.begin(raygui.rgb(244, 244, 245))
+        controls()
+        ram_panel()
+        raygui.end()
+
+        frames = frames + 1
+    }
+
+    raygui.close()
+
+    // The RAM test: one line per sample class, scriptable from `make test` or
+    // a shell loop. `growth` is max - min over the whole run.
+    fmt.println("raygui frames", frames)
+    fmt.println("raygui ram_kb first", ram_first, "min", ram_min, "max", ram_max)
+    fmt.println("raygui ram_growth_kb", ram_max - ram_min)
+}

@@ -1,0 +1,110 @@
+// std:json — the Phase 16 exit cases: a malformed document, a 70-deep nesting
+// bomb, a missing field, and an out-of-range integer all return an error
+// naming the field path, and none of them trap.
+
+import "std:fmt"
+import "std:sys"
+import "std:json"
+
+fn fail(m: string) {
+    fmt.println("FAIL", m)
+    sys.exit(1)
+}
+
+fn main() {
+    // 1. Malformed document.
+    let bad = json.parse("{")
+    if bad.ok != 0 {
+        fail("malformed accepted")
+    }
+    if bad.err.len == 0 {
+        fail("malformed has no message")
+    }
+
+    // 2. 70-deep nesting bomb: an error, not a stack overflow.
+    let mut b = []int {}
+    let mut i = 0
+    while i < 70 {
+        push(b, 91)
+        i = i + 1
+    }
+    i = 0
+    while i < 70 {
+        push(b, 93)
+        i = i + 1
+    }
+    let deep = json.parse(string_from_bytes(b))
+    if deep.ok != 0 {
+        fail("nesting bomb accepted")
+    }
+
+    // 3. Missing field names the field path.
+    let d = json.parse("{\"user\":{\"name\":\"ada\"}}")
+    if d.ok == 0 {
+        fail("valid doc rejected")
+    }
+    let u = json.field(d.root, "user", "user")
+    if u.ok == 0 {
+        fail("user field")
+    }
+    let age = json.field(u.id, "age", "user.age")
+    if age.ok != 0 {
+        fail("missing field accepted")
+    }
+    if age.err != "user.age: missing" {
+        fail("missing field path wrong")
+    }
+
+    // 4. Out-of-range integer names the field path.
+    let big = json.parse("{\"n\":99999999999999999999}")
+    let nid = json.field(big.root, "n", "n")
+    if nid.ok == 0 {
+        fail("n field")
+    }
+    let iv = json.as_int(nid.id, "n")
+    if iv.ok != 0 {
+        fail("overflow accepted")
+    }
+    if iv.err != "n: integer out of range" {
+        fail("overflow path wrong")
+    }
+
+    // Happy path: kinds, indexing, stringify.
+    let v = json.parse("{\"a\":[1,2,3],\"s\":\"hi\",\"t\":true}")
+    let a = json.field(v.root, "a", "a")
+    if json.kind(a.id) != JSON_KIND.Arr {
+        fail("array kind")
+    }
+    if json.child_count(a.id) != 3 {
+        fail("array length")
+    }
+    let e = json.index(a.id, 1, "a[1]")
+    let n = json.as_int(e.id, "a[1]")
+    if n.ok == 0 {
+        fail("int access")
+    }
+    if n.n != 2 {
+        fail("int value")
+    }
+    let sfield = json.field(v.root, "s", "s")
+    let s = json.as_str(sfield.id, "s")
+    if s.ok == 0 {
+        fail("str access")
+    }
+    if s.s != "hi" {
+        fail("str value")
+    }
+    let tfield = json.field(v.root, "t", "t")
+    let t = json.as_bool(tfield.id, "t")
+    if t.ok == 0 {
+        fail("bool access")
+    }
+    if t.b == false {
+        fail("bool value")
+    }
+    let rt = json.stringify(v.root)
+    if rt != "{\"a\":[1,2,3],\"s\":\"hi\",\"t\":true}" {
+        fail("stringify round-trip")
+    }
+    fmt.println("json ok")
+}

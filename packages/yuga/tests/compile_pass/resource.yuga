@@ -1,0 +1,60 @@
+// Phase 16 resource signals: async data as loading / ready / error state, with
+// stale completions ignored.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:res"
+
+fn load_ok(gen: int, settle: fn(int, string, int)) {
+    settle(gen, "", 42)
+}
+
+fn load_err(gen: int, settle: fn(int, string, int)) {
+    settle(gen, "boom", 0)
+}
+
+// A completion from an old generation must be dropped.
+fn load_stale(gen: int, settle: fn(int, string, int)) {
+    settle(gen + 99, "", 7)
+}
+
+fn fail(m: string) {
+    fmt.println("FAIL", m)
+    sys.exit(1)
+}
+
+fn main() {
+    let r = res.resource(0, load_ok)
+    if res.is_ready(r) == false {
+        fail("ready state")
+    }
+    if res.data(r) != 42 {
+        fail("value")
+    }
+
+    let e = res.resource(0, load_err)
+    if res.is_error(e) == false {
+        fail("error state")
+    }
+    if res.error(e) != "boom" {
+        fail("error message")
+    }
+
+    let s = res.resource(0, load_stale)
+    if res.is_loading(s) == false {
+        fail("stale completion accepted")
+    }
+
+    // reload bumps the generation and swaps in the new loader's result.
+    let t = res.resource(0, load_err)
+    res.reload(t, load_ok)
+    if res.is_ready(t) == false {
+        fail("reload state")
+    }
+    if res.data(t) != 42 {
+        fail("reload value")
+    }
+
+    fmt.println("resource ok")
+}

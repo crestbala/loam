@@ -1,0 +1,76 @@
+//! App chrome: the top bar. Unlike the gallery's tab strip, every entry here
+//! is a real URL — the bar reads `router.path_signal()` to mark the active
+//! route, so navigation repaints the marker without rebuilding the shell.
+
+import "std:async"
+import "std:zeus"
+import "std:router"
+
+let mut ram_armed: int = 0
+
+/// Live host memory: resident set on desktop, wasm heap on web. Reads once at
+/// mount so the chip is never blank, then refreshes twice a second.
+fn RamChip() {
+    let ram = zeus.signal(zeus.memory_kb())
+    if ram_armed == 0 {
+        ram_armed = 1
+        async.interval(500, fn() { ram.set(zeus.memory_kb()) })
+    }
+    zeus.Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
+             spacing = SPACE.Exxs, padding_x = 10, padding_y = 4, height = 26,
+             radius = zeus.RAD_FULL, background = zeus.raised()) {
+        zeus.Text(fn() -> string {
+            let mb = ram.get() / 1024
+            return "RAM {{mb}} MB"
+        }, color = zeus.mute(), font = zeus.FONT_CAPTION)
+    }
+}
+
+/// One nav entry, mirroring `zeus.NavTab` but driven by the URL instead of a
+/// tab index. The active test is a thunk, so `selected_chrome` re-runs it
+/// whenever `cur_path` changes: the highlight follows navigation even though
+/// the bar itself is retained and never rebuilds. Evaluating `path.get()`
+/// directly into a `look =` prop would bake the answer in at build time.
+fn NavLink(label: string, href: string) {
+    let path = router.path_signal()
+    let item = zeus.Box(
+        align_direction = DIRECTION.Row,
+        align_items = ALIGN.Center,
+        spacing = SPACE.Exxs,
+        padding_x = 12,
+        height = 36,
+        radius = zeus.RAD_MD,
+        on_click = fn() => router.navigate(href),
+        a11y_role = "button",
+        a11y_label = label,
+        cursor = "pointer")
+    zeus.ui_push(item.id)
+    let text = zeus.Text(label, font = zeus.FONT_BODY)
+    zeus.ui_pop()
+    zeus.selected_chrome(item, text, || { path.get() == href },
+                         zeus.raised(), "", zeus.ink(), zeus.mute())
+}
+
+/// Top bar: brand, route links, live RAM, and the light/dark switch. The
+/// switch drives `zeus.appearance()`, which every role token resolves against
+/// at paint — one toggle restyles the whole tree with no rebuild.
+fn Navbar() {
+    zeus.Column(SPACE.None) {
+        zeus.Box(align_direction = DIRECTION.Row, spacing = SPACE.Md,
+                 align_items = ALIGN.Center, height = zeus.BAR) {
+            zeus.Box(width = 22, height = 22, radius = 6, background = zeus.ink())
+            zeus.Text("myapp", color = zeus.ink(), font = zeus.FONT_TITLE)
+            NavLink("Foundations", "/")
+            NavLink("Components", "/components")
+            NavLink("Patterns", "/patterns")
+            NavLink("Blog", "/blog")
+            NavLink("About", "/about")
+            NavLink("Pricing", "/pricing")
+            zeus.Grow()
+            RamChip()
+            zeus.Text("Dark", color = zeus.mute(), font = zeus.FONT_CONTROL)
+            zeus.Switch(zeus.appearance())
+        }
+        zeus.Separator()
+    }
+}

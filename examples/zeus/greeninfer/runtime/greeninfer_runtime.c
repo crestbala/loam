@@ -102,12 +102,17 @@ static int64_t path_copy(const yuga_str p, char *out) { /* Yuga strings are not 
     return 0;
 }
 
+/* Error sentinel for gi_row_dot. Must be finite in f32 (the old -1e300
+ * became -inf) and below any real dot product; engine.yuga rejects rows
+ * scoring under GI_DOT_FLOOR (-2e38). */
+#define GI_DOT_ERR (-3.0e38f)
+
 static size_t row_size(const GiHdr *h) { return 4 + (size_t)h->dim * 4; }
 static uint8_t *row_ptr(const GiHdr *h, uint8_t *base, int64_t row) {
     return base + sizeof(GiHdr) + (size_t)row * row_size(h) + 4; /* f32 vector after the u32 id */
 }
 
-int64_t yuga_engine_gi_map_create(yuga_str path, int64_t cap) {
+int32_t yuga_engine_gi_map_create(yuga_str path, int32_t cap) {
     char pb[1024];
     if (path_copy(path, pb) < 0 || cap <= 0 || cap > (1 << 22)) return 0;
     GiHdr h = { GI_MAGIC, GI_DIM, (uint64_t)cap, 0, {0} };
@@ -120,7 +125,7 @@ int64_t yuga_engine_gi_map_create(yuga_str path, int64_t cap) {
     return slot_new(fd, base, bytes);
 }
 
-int64_t yuga_engine_gi_map_open(yuga_str path) {
+int32_t yuga_engine_gi_map_open(yuga_str path) {
     char pb[1024]; struct stat st; GiHdr h;
     if (path_copy(path, pb) < 0) return 0;
     int fd = open(pb, O_RDWR);
@@ -132,7 +137,7 @@ int64_t yuga_engine_gi_map_open(yuga_str path) {
     return slot_new(fd, base, (size_t)st.st_size);
 }
 
-int64_t yuga_engine_gi_map_close(int64_t map) {
+int32_t yuga_engine_gi_map_close(int32_t map) {
     int i = (int)(map - 1);
     if (i < 0 || i >= GI_MAX_MAPS || !g_m[i].used) return -1;
     msync(g_m[i].base, g_m[i].bytes, MS_SYNC); /* flush MAP_SHARED (count header too) */
@@ -142,7 +147,7 @@ int64_t yuga_engine_gi_map_close(int64_t map) {
     return 0;
 }
 
-int64_t yuga_engine_gi_map_unlink(yuga_str path) {
+int32_t yuga_engine_gi_map_unlink(yuga_str path) {
     char pb[1024];
     if (path_copy(path, pb) < 0) return -1;
     return remove(pb) == 0 ? 0 : -1;
@@ -151,23 +156,23 @@ int64_t yuga_engine_gi_map_unlink(yuga_str path) {
 /* Read the live header fields. The count is the append log: row_write keeps
  * it current in the mapped header, so a crashed process still reopens at the
  * last fully written row. */
-int64_t yuga_engine_gi_map_count(int64_t map) { GiHdr h; uint8_t *b; return slot_of(map, &h, &b) == 0 ? (int64_t)h.count : -1; }
-int64_t yuga_engine_gi_map_cap(int64_t map)   { GiHdr h; uint8_t *b; return slot_of(map, &h, &b) == 0 ? (int64_t)h.cap : -1; }
-int64_t yuga_engine_gi_map_bytes(int64_t map) { int i = (int)(map - 1); return (i >= 0 && i < GI_MAX_MAPS && g_m[i].used) ? (int64_t)g_m[i].bytes : -1; }
+int32_t yuga_engine_gi_map_count(int32_t map) { GiHdr h; uint8_t *b; return slot_of(map, &h, &b) == 0 ? (int32_t)h.count : -1; }
+int32_t yuga_engine_gi_map_cap(int32_t map)   { GiHdr h; uint8_t *b; return slot_of(map, &h, &b) == 0 ? (int32_t)h.cap : -1; }
+int32_t yuga_engine_gi_map_bytes(int32_t map) { int i = (int)(map - 1); return (i >= 0 && i < GI_MAX_MAPS && g_m[i].used) ? (int32_t)g_m[i].bytes : -1; }
 
 /* Store `vec` (exactly dim doubles) into mapped `row` under `rid`. Rows
  * 0..cap-1 are vectors; row == cap is the scratch row Yuga stages queries
  * into. Append bookkeeping only: if `row` extends the written prefix, the
  * header count follows. */
-int64_t yuga_engine_gi_row_write(int64_t map, int64_t row, int64_t rid, yuga_vec v) {
+int32_t yuga_engine_gi_row_write(int32_t map, int32_t row, int32_t rid, yuga_vec v) {
     GiHdr h; uint8_t *base;
     if (slot_of(map, &h, &base) != 0 || v.len != h.dim) return -1;
     if (row < 0 || row > (int64_t)h.cap) return -1; /* cap = last legal row (scratch) */
-    const double *src = (const double *)v.ptr;      /* Yuga float = double */
+    const float *src = (const float *)v.ptr;        /* Yuga float = f32 */
     uint8_t *rp = row_ptr(&h, base, row) - 4;
     *(uint32_t *)rp = (uint32_t)(rid & 0xffffffff);
     float *dst = (float *)(rp + 4);
-    for (int64_t d = 0; d < h.dim; d++) dst[d] = (float)src[d]; /* 384 converts, once per row */
+    for (int64_t d = 0; d < h.dim; d++) dst[d] = src[d]; /* already f32 — straight copy */
     if (row < (int64_t)h.cap && row >= (int64_t)h.count) {
         h.count = (uint64_t)row + 1;
         memcpy(base, &h, sizeof h); /* keep the on-disk append log live */
@@ -176,28 +181,28 @@ int64_t yuga_engine_gi_row_write(int64_t map, int64_t row, int64_t rid, yuga_vec
 }
 
 /* The u32 id stored in `row` (the 4 bytes before its f32 vector). */
-int64_t yuga_engine_gi_row_id(int64_t map, int64_t row) {
+int32_t yuga_engine_gi_row_id(int32_t map, int32_t row) {
     GiHdr h; uint8_t *base;
     if (slot_of(map, &h, &base) != 0) return -1;
     if (row < 0 || row > (int64_t)h.cap) return -1;
-    return (int64_t)*(const uint32_t *)(row_ptr(&h, base, row) - 4);
+    return (int32_t)*(const uint32_t *)(row_ptr(&h, base, row) - 4);
 }
 
 /* NEON dot of two mapped rows (both f32; no conversion, no copy). Row `a`
  * and `b` may be the same. The Yuga search sweep calls this once per row. */
-double yuga_engine_gi_row_dot(int64_t map, int64_t row_a, int64_t row_b) {
+float yuga_engine_gi_row_dot(int32_t map, int32_t row_a, int32_t row_b) {
     GiHdr h; uint8_t *base;
-    if (slot_of(map, &h, &base) != 0) return -1e300;
-    if (row_a < 0 || row_a > (int64_t)h.cap || row_b < 0 || row_b > (int64_t)h.cap) return -1e300;
-    return (double)gi_neon_dot_product((const float *)row_ptr(&h, base, row_a),
-                                       (const float *)row_ptr(&h, base, row_b), (size_t)h.dim);
+    if (slot_of(map, &h, &base) != 0) return GI_DOT_ERR;
+    if (row_a < 0 || row_a > (int64_t)h.cap || row_b < 0 || row_b > (int64_t)h.cap) return GI_DOT_ERR;
+    return gi_neon_dot_product((const float *)row_ptr(&h, base, row_a),
+                               (const float *)row_ptr(&h, base, row_b), (size_t)h.dim);
 }
 
 /* Monotonic microseconds — the search budget is measured on this clock. */
-int64_t yuga_engine_gi_now_us(void) {
+int32_t yuga_engine_gi_now_us(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (int64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+    return (int32_t)((int64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000);
 }
 
 /* ---- file data-movement trampolines (watcher.yuga) -----------------------
@@ -263,7 +268,7 @@ yuga_str yuga_watcher_gi_dir_list(yuga_str path) {
 }
 
 /* Modification time in whole seconds since the epoch; -1 on error. */
-int64_t yuga_watcher_gi_file_mtime(yuga_str path) {
+int32_t yuga_watcher_gi_file_mtime(yuga_str path) {
     char pb[1024]; struct stat st;
     if (path_copy(path, pb) < 0) return -1;
     if (stat(pb, &st) != 0) return -1;

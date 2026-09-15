@@ -1,0 +1,68 @@
+//! Foundations page: the type scale, status accents, and the two ways to
+//! build a surface — a recipe (`zeus.Card`) and a primitive (`zeus.Comp`).
+//! Every color is a role token, so the whole page inverts with the appearance.
+
+import "std:zeus"
+
+fn ProjectCard() {
+    let ticks = zeus.signal(0)
+    zeus.Card() {
+        zeus.Row(SPACE.Sm) {
+            zeus.Title("Project card")
+            zeus.Grow()
+            zeus.Badge("In progress", zeus.TINT.Ok)
+        }
+        zeus.Body("A card with a title, supporting copy, and a footer of actions. Rounded-xl, hairline border, paper surface.")
+        zeus.Row(SPACE.Sm) {
+            zeus.Button("Cancel", look = zeus.LOOK.Outline, size = zeus.SIZE.Md, on_click = fn() => ticks.set(ticks.get() + 1))
+            zeus.Button("Save", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => ticks.set(ticks.get() + 1))
+            zeus.Grow()
+            zeus.Text("{{ticks.get()}}", color = zeus.mute(), font = zeus.FONT_CAPTION)
+        }
+    }
+}
+
+fn Customize() {
+    zeus.SectionHeader("Customize", "Style props + slots",
+        "Style props restyle a recipe without copying it. Comp is the primitive for your own widget. Trailing blocks are slots.")
+    zeus.Card() {
+        zeus.RowWrap(SPACE.Sm) {
+            zeus.Button("Recipe", look = zeus.LOOK.Solid, size = zeus.SIZE.Md)
+            zeus.Button("Styled", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
+                        radius = 999, padding_x = 20,)
+            zeus.IconButton(zeus.IC_CHECK, zeus.LOOK.Soft, zeus.SIZE.Md, "Save")
+            zeus.Chip("pill", zeus.TINT.Ok, radius = 6)
+        }
+        zeus.Card(radius = 6, padding = 12) {
+            zeus.Body("This card used radius = 6, padding = 12.")
+        }
+        zeus.Comp(background = zeus.raised(), radius = 10,
+                  padding = 12, spacing = 8,
+                  align_direction = DIRECTION.Row, align_items = ALIGN.Center) {
+            zeus.Pip(zeus.accent(), 8)
+            zeus.Text("Comp — a function widget, styled by props", font = zeus.FONT_BODY,
+                      color = zeus.ink())
+        }
+        zeus.Badge("custom", zeus.TINT.Mute, radius = 2, padding_x = 8)
+        zeus.Alert("Styled alert", "Same recipe, different radius.",
+                   radius = 4, padding = 10)
+    }
+}
+
+fn Foundations() {
+    zeus.Breadcrumbs([]string{"myapp", "Examples", "Foundations"})
+    zeus.Column(SPACE.Exs) {
+        zeus.Display("Build interfaces with Zeus")
+        zeus.Body("One entry, every host. Dark inverts every token that reads appearance.")
+    }
+    zeus.Row(SPACE.Sm) {
+        zeus.Chip("Stable", zeus.TINT.Ok)
+        zeus.Chip("Canvas2D", zeus.TINT.Ink)
+        zeus.Badge("zeus", zeus.TINT.Mute)
+        zeus.Kbd("⌘K")
+    }
+    zeus.Alert("Heads up", "Signals update on click. Hover and press are engine fades — no DOM.")
+    zeus.AlertDestructive("Session expired", "Sign back in to keep syncing. Your drafts are saved locally.")
+    ProjectCard()
+    Customize()
+}

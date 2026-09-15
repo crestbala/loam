@@ -1,0 +1,103 @@
+//! res — resource signals: async data as reactive state.
+//!
+//! A `Resource<T>` holds three signals — `state` (RES.Loading / Ready /
+//! Error), `value`, and `err` — plus a generation counter. `resource` runs the
+//! loader once; `reload` bumps the generation and runs it again. A completion
+//! whose generation is stale is dropped, so a slow first request can never
+//! overwrite a newer answer.
+//!
+//! The loader is callback-shaped, which is exactly the shape `http.call_async`
+//! already has, so a resource turns a chain of callbacks into a chain of
+//! derived signals without new language syntax (§5.5).
+//!
+//! ```
+//! let r = res.resource("", fn(gen, done) {
+//!     http.client("").call_async(req, fn(reply) { done(gen, "", reply.name) })
+//! })
+//! zeus.Match(r.state, fn(st) {
+//!     if st == RES.Loading { zeus.Text("loading") }
+//!     else if st == RES.Error { zeus.Text(res.error(r)) }
+//!     else { zeus.Text(res.data(r)) }
+//! })
+//! ```
+
+import "std:zeus"
+
+enum RES {
+    Loading = 0,
+    Ready = 1,
+    Error = 2,
+}
+
+/// A loader receives its generation and a `settle(gen, err, value)` callback.
+/// `err == ""` means success.
+struct Resource<T> {
+    state: Signal<int>,
+    value: Signal<T>,
+    err: Signal<string>,
+    gen: Signal<int>,
+}
+
+fn set_state<T>(r: Resource<T>, g: int, e: string, v: T) {
+    if g != r.gen.get() {
+        return
+    }
+    if e.len == 0 {
+        r.value.set(v)
+        r.state.set(1)
+    } else {
+        r.err.set(e)
+        r.state.set(2)
+    }
+}
+
+/// Start a load. `load(gen, settle)` runs the work and calls
+/// `settle(gen, err, value)` when it finishes. The resource starts in
+/// `RES.Loading`.
+fn resource<T>(initial: T, load: fn(int, fn(int, string, T))) -> Resource<T> {
+    let gen = zeus.signal(0)
+    let state = zeus.signal(0)
+    let value = zeus.signal(initial)
+    let err = zeus.signal("")
+    let r = Resource { state: state, value: value, err: err, gen: gen }
+    let g = r.gen.get()
+    load(g, fn(gg, e, v) {
+        set_state(r, gg, e, v)
+    })
+    return r
+}
+
+/// Run the loader again with a fresh generation. The previous result stays
+/// visible until the new one settles; stale completions are ignored.
+fn reload<T>(r: Resource<T>, load: fn(int, fn(int, string, T))) -> Resource<T> {
+    r.err.set("")
+    r.state.set(0)
+    let g = r.gen.get() + 1
+    r.gen.set(g)
+    load(g, fn(gg, e, v) {
+        set_state(r, gg, e, v)
+    })
+    return r
+}
+
+fn is_loading<T>(r: Resource<T>) -> bool {
+    return r.state.get() == RES.Loading
+}
+
+fn is_ready<T>(r: Resource<T>) -> bool {
+    return r.state.get() == RES.Ready
+}
+
+fn is_error<T>(r: Resource<T>) -> bool {
+    return r.state.get() == RES.Error
+}
+
+/// The current value (the seed value until the first success).
+fn data<T>(r: Resource<T>) -> T {
+    return r.value.get()
+}
+
+/// The most recent error ("" until one arrives).
+fn error<T>(r: Resource<T>) -> string {
+    return r.err.get()
+}

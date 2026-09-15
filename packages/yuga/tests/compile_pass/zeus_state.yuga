@@ -1,0 +1,40 @@
+// Phase 19 hot reload: the signal arena can be snapshotted and restored, so a
+// rebuild can carry state across (§2.5).
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    let a = zeus.signal(1)
+    let b = zeus.signal(2)
+    a.set(30)
+    b.set(40)
+
+    let snap = zeus.engine_signals_dump()
+    must(a.get() == 30, "precondition a")
+    must(b.get() == 40, "precondition b")
+
+    // Mutate, then restore the snapshot: values come back.
+    a.set(99)
+    b.set(98)
+    let n = zeus.engine_state_load(snap)
+    must(n > 0, "applied at least one slot")
+    must(a.get() == 30, "restored a")
+    must(b.get() == 40, "restored b")
+
+    // A snapshot taken after a change restores to the newer value.
+    let snap2 = zeus.engine_signals_dump()
+    a.set(5)
+    zeus.engine_state_load(snap2)
+    must(a.get() == 30, "restores the captured generation")
+
+    fmt.println("state ok")
+}

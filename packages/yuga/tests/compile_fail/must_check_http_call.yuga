@@ -1,0 +1,8 @@
+// Phase 17 exit: ignoring the result of `http.call` is a compile error,
+// because `call` returns the #[must_check] `Res<string>`.
+
+import "std:http"
+
+fn main() {
+    let r = http.call(http.client("127.0.0.1:8080"), "Nope.Missing", "")
+}

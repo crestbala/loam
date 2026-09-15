@@ -265,7 +265,7 @@ fn Upload() {
     let pw = zeus.signal(0)
     let ph = zeus.signal(0)
     zeus.SectionHeader("Media", "Upload",
-        "Choose a PNG, JPEG, WebP, or GIF. The preview keeps aspect and shrinks to the card.")
+        "Choose a PNG, JPEG, WebP, or GIF. The preview keeps its aspect and auto-sizes to the device width.")
     zeus.Card() {
         zeus.Row(SPACE.Sm) {
             zeus.Button("Choose image", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click =  fn() {
@@ -277,33 +277,22 @@ fn Upload() {
                 ph.set(0)
             })
         }
-        let host = zeus.Box(
+        // `show =` is a plain bool read once at build, so it cannot follow the
+        // pick; signal shows do. `pw` is 0 until `pick_image` reports a size.
+        let empty = zeus.Box(
             align_direction = DIRECTION.Row,
             align_items = ALIGN.Center,
             justify = ALIGN.Center,
+            height = 200,
             radius = 8,
-            background = zeus.raised(),
-            max_width = if pw.get() > 0 { pw.get() } else { 100000 }) {
-            zeus.Text("No image yet", color = zeus.mute(), font = zeus.FONT_CAPTION,
-                      show = photo.get().len == 0)
-            zeus.Image(photo.get(),
-                       position = zeus.pos_absolute(), left = 0, top = 0, right = 0, bottom = 0,
-                       radius = 8, fit = IMAGE_FIT.Contain,
-                       show = photo.get().len > 0)
+            background = zeus.raised()) {
+            zeus.Text("No image yet", color = zeus.mute(), font = zeus.FONT_CAPTION)
         }
-        zeus.styled(host, || {
-            let iw = pw.get()
-            let ih = ph.get()
-            if iw > 0 {
-                if ih > 0 {
-                    zeus.aspect(host, iw, ih)
-                    zeus.set_height(host, -1)
-                    return
-                }
-            }
-            zeus.aspect(host, 0, 0)
-            zeus.set_height(host, 200)
-        })
+        zeus.show_eq(empty, pw, 0)
+        // No `width` / `max_width` / aspect wiring: `Image` takes the decoded
+        // source size and shrinks to the card (device) width on its own.
+        let shot = zeus.Image(photo.get(), radius = 8, fit = IMAGE_FIT.Contain)
+        zeus.show_ne(shot, pw, 0)
     }
 }
 

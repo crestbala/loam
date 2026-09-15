@@ -1,0 +1,20 @@
+//! RPC surface: `#[proto]` contracts and `#[server]` fns. The entry
+//! imports this, so the same source compiles to a direct call on native
+//! and an RPC boundary on the client.
+
+import "std:http"
+
+#[proto]
+struct HelloReq {
+    name: string,
+}
+
+#[proto]
+struct HelloResp {
+    greeting: string,
+}
+
+#[server]
+fn hello(req: HelloReq) -> HelloResp {
+    return HelloResp { greeting: req.name }
+}

@@ -1,0 +1,5 @@
+name = "myapp"
+targets = ["web", "macos", "ios", "android", "server"]
+routes = "routes"
+theme = "theme.yuga"
+revalidate = 60

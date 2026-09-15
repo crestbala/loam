@@ -1,0 +1,70 @@
+//! Drives myapp's generated route table headlessly and asserts every route
+//! actually paints. `zeus build` only proves the targets link; this proves the
+//! nav reaches each page and the retained root shell survives navigation.
+//!
+//! Run via `make test`, or directly:
+//!
+//!     ZEUS_HEADLESS=1 ./bin/yugac examples/zeus/myapp/tests/routes.yuga -o /tmp/r && /tmp/r
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:router"
+import "../app_routes.yuga" as approutes
+
+fn fail(what: string) {
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+/// Navigate, relayout, and assert the page painted its marker text. The root
+/// shell is checked every time: it is mounted outside the page slot, so losing
+/// it means navigation rebuilt too much.
+fn visit(path: string, want: string) {
+    router.navigate(path)
+    zeus.engine_layout(400, 300)
+    if zeus.engine_find_text(want) == 0 {
+        fail(path)
+    }
+    if zeus.engine_find_text("myapp") == 0 {
+        fail("root shell lost at {{path}}")
+    }
+}
+
+fn main() {
+    zeus.snapshot(400, 300, fn() -> Node {
+        zeus.Box(align_direction = DIRECTION.Column) {
+            approutes.app()
+        }
+    })
+    if zeus.engine_find_text("Build interfaces with Zeus") == 0 {
+        fail("root page")
+    }
+    // Every nav entry the root layout renders must be present up front.
+    if zeus.engine_find_text("Foundations") == 0 {
+        fail("nav missing Foundations")
+    }
+    if zeus.engine_find_text("Components") == 0 {
+        fail("nav missing Components")
+    }
+    if zeus.engine_find_text("Patterns") == 0 {
+        fail("nav missing Patterns")
+    }
+    if zeus.engine_find_text("About") == 0 {
+        fail("nav missing About")
+    }
+    if zeus.engine_find_text("Pricing") == 0 {
+        fail("nav missing Pricing")
+    }
+    if zeus.engine_find_text("Blog") == 0 {
+        fail("nav missing Blog")
+    }
+    visit("/components", "Buttons")
+    visit("/patterns", "Growing rows")
+    visit("/about", "about")
+    visit("/pricing", "pricing")
+    visit("/blog", "hello world")
+    visit("/blog/hello-world", "hello-world")
+    visit("/nope", "not found")
+    fmt.println("myapp routes ok")
+}

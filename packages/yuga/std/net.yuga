@@ -1,0 +1,97 @@
+//! Socket ABI (`docs/boundary.md`).
+//!
+//! Bodyless `fn`s resolve to `yuga_net_<name>`. Implementations are generic
+//! trampolines (POSIX sockets, or a wasm `fetch` for `fetch_rpc`). No HTTP
+//! parsing lives here — that stays in `packages/http/std/http.yuga`.
+
+/// Connect to `host`:`port`. Returns a fd, or `-1`.
+fn tcp_connect(host: string, port: int) -> int {}
+
+/// Connect to `host`:`port` over TLS and verify the server certificate
+/// against `host` (macOS SecureTransport). Returns a TLS fd that `tcp_write`
+/// / `tcp_read` / `tcp_close` handle like any socket, or `-1` when TLS is
+/// unavailable (wasm keeps browser TLS; other hosts have none) or the
+/// handshake / certificate check fails.
+fn tls_connect(host: string, port: int) -> int {}
+
+/// Non-blocking TLS connect (macOS SecureTransport). Returns a TLS handle
+/// immediately; poll `tls_nb_ready` until 1. `-1` when TLS is unavailable.
+fn tls_nb_connect(host: string, port: int) -> int {}
+
+/// 1 = handshake done, 0 = still in progress, `-1` = failed. No-op / `-1`
+/// when `fd` is not a TLS handle.
+fn tls_nb_ready(fd: int) -> int {}
+
+/// 1 if the last `tcp_read` / `tcp_send` on a TLS handle would block (not EOF).
+fn tcp_wouldblock() -> int {}
+
+/// Non-blocking connect for the async transport: returns a non-blocking fd
+/// that is connected or connecting in the background, or `-1` on immediate
+/// failure. Poll it writable, then `tcp_so_error` says whether it connected.
+fn tcp_nb_connect(host: string, port: int) -> int {}
+
+/// Poll one fd. `want`: 1 = readable, 2 = writable. `ms`: timeout, `0` =
+/// immediate. Returns 1 when ready (EOF and failed connects included), 0 on
+/// timeout, `-1` on error.
+fn tcp_poll(fd: int, want: int, ms: int) -> int {}
+
+/// One non-blocking send of `data[off..]`: bytes written (> 0), `0` when the
+/// socket would block (poll writable, then resume), `-1` on error.
+fn tcp_send(fd: int, data: string, off: int) -> int {}
+
+/// Socket error after a non-blocking connect polled writable: 0 = connected.
+fn tcp_so_error(fd: int) -> int {}
+
+/// Write `data`. Returns bytes written, or `-1`.
+fn tcp_write(fd: int, data: string) -> int {}
+
+/// Read up to `max` bytes. Empty means EOF or error.
+fn tcp_read(fd: int, max: int) -> string {}
+
+/// Close `fd`. No-op if `fd < 0`.
+fn tcp_close(fd: int) {}
+
+/// Bind 127.0.0.1:`port` and listen. `port == 0` picks an ephemeral port.
+/// Returns a fd, or `-1`.
+fn tcp_listen(port: int) -> int {}
+
+/// Accept one client. Returns a fd, or `-1`.
+fn tcp_accept(fd: int) -> int {}
+
+/// Bound port of `fd` (after `tcp_listen`). `0` on failure.
+fn tcp_bound_port(fd: int) -> int {}
+
+/// Peek up to `max` bytes without consuming them. Empty means EOF or error.
+fn tcp_peek(fd: int, max: int) -> string {}
+
+/// Same-origin gRPC-Web POST (wasm). Native returns empty.
+fn fetch_rpc(path: string, body: string) -> string {}
+
+/// Start an async gRPC-Web POST (wasm; native returns `-1`): the XHR runs in
+/// JS and the response lands in the next frame's `tick`. At most four in
+/// flight; `-1` when busy or native. Poll `fetch_ready`, then `fetch_take`.
+fn fetch_issue(path: string, body: string) -> int {}
+
+/// Number of completed async fetches waiting for `fetch_take` (wasm; native 0).
+fn fetch_ready() -> int {}
+
+/// Take one completed async fetch response (ownership moves). Empty on error
+/// or when nothing is ready.
+fn fetch_take() -> string {}
+
+/// Open a same-origin WebSocket over the browser bridge (wasm; native
+/// returns -1). Returns a slot handle to poll with the ws_* calls.
+fn ws_issue(url: string) -> int {}
+
+/// WebSocket state of `slot`: 0 = open, 1 = closed/error (wasm; native 1).
+fn ws_state(slot: int) -> int {}
+
+/// Pending inbound messages on `slot` (wasm; native 0).
+fn ws_count(slot: int) -> int {}
+
+/// Take the next inbound message of `slot` (ownership moves). Empty when
+/// none is pending.
+fn ws_copy(slot: int, max: int) -> string {}
+
+/// Close the socket and free `slot`.
+fn ws_close(slot: int) {}

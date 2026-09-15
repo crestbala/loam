@@ -1,0 +1,6 @@
+//! One post by slug. In a real app this is
+//! `#[server] fn get_post(slug: string) -> Post`.
+
+fn get_post(slug: string) -> string {
+    return slug
+}

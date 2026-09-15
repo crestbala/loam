@@ -1,0 +1,9 @@
+// Two live mutable borrows conflict. (`a` is read after `b` is created, so
+// its borrow is still live — unlike an unused first borrow, which NLL ends.)
+fn main() {
+    let mut x = 42
+    let a = &mut x
+    let b = &mut x
+    *a = 1
+    *b = 2
+}

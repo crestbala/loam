@@ -1176,7 +1176,7 @@ source, so the C compiler's diagnostics name Yuga lines and, with `-g`
 collected and run by `yugac test`, which calls `std:test`'s `begin`/`ok`/
 `summary`; the assertions (`test.assert`, `test.assert_eq_*`) are ordinary Yuga
 in `std/test.yuga` built on the `panic(msg)` primitive. `make test` runs
-`packages/compiler/tests/inlang/*.yuga` and expects an all-pass exit.
+`packages/yuga/tests/inlang/*.yuga` and expects an all-pass exit.
 
 `#line` directives in generated C; `#[test]` fns and `yugac test`.
 **Exit:** a trap in `app.yuga` reports a `.yuga` line in lldb (the panic message
@@ -1201,7 +1201,7 @@ second exit line below, now green.
 and exposes pure `measure` / `measure_wrap`. Text width and line breaking are
 functions of (font bytes, size, string), so once the hosts call them,
 `measure_text` is host-independent by construction. Tested against a generated
-fixture (`packages/compiler/tests/fonts/tiny.ttf`, remade by
+fixture (`packages/yuga/tests/fonts/tiny.ttf`, remade by
 `make_tiny_font.py`).
 
 `std/zeuscore/metrics.yuga` binds an external font (`zeus.use_font(src)` reads a
@@ -1312,3 +1312,35 @@ shows tree, layout boxes, and signal values live.
 - Not RSC. Stream data, not serialized UI.
 - Not traits, macros, comptime, or lifetime parameters. Sized numeric types are
   the one reversal in this document, and §3.2 states its price.
+
+
+Native
+
+Two ways:
+
+```bash
+# build then run
+./bin/zeus build examples/zeus/myapp --targets macos
+./examples/zeus/myapp/build/macos/app
+
+# or one step (what the other examples' run.sh use)
+./bin/yugac --target=native --run examples/zeus/myapp/app.yuga
+```
+
+One gotcha: `zeus_plat.c:322` gates on `ZEUS_HEADLESS` —
+
+```c
+if (getenv("ZEUS_HEADLESS") || !plat_run) return 1;
+```
+
+so if that's exported (e.g. left over from `make test`) the binary starts, does nothing, and exits 0. `unset ZEUS_HEADLESS YUGA_HEADLESS MAYA_HEADLESS` first. `zeus build` already strips them at build time, but the check is at *runtime*.
+
+## Wasm
+
+```bash
+./bin/zeus dev examples/zeus/myapp --port 5173
+```
+
+It's running now at **http://127.0.0.1:5173** — verified serving:
+
+deno run --allow-read --allow-write packages/zeus/cli/zeus.ts routes examples/zeus/myapp

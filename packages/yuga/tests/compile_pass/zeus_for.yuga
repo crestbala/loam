@@ -1,0 +1,43 @@
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn RowOf(i: int, s: string) {
+    zeus.Text(s)
+}
+
+fn main() {
+    let names = zeus.signal([]string {})
+    zeus.push_item(names, "Ada")
+    zeus.push_item(names, "Bea")
+    zeus.snapshot(240, 160, fn() -> Node {
+        zeus.Box(align_direction = DIRECTION.Column) {
+            zeus.For(names, fn(s) => s, RowOf)
+            zeus.Button("Add", on_click = fn() => zeus.push_item(names, "Cyd"))
+            zeus.Each(names.get(), fn(i, s) {
+                zeus.Text(s)
+            })
+        }
+    })
+    if zeus.draw_count() < 3 {
+        fmt.println("FAIL for draw")
+        sys.exit(1)
+    }
+    if zeus.engine_click_text("Add") == 0 {
+        fmt.println("FAIL click Add")
+        sys.exit(1)
+    }
+    zeus.engine_layout(240, 160)
+    let after_add = names.get().len
+    if after_add != 3 {
+        fmt.println("FAIL len after add", after_add)
+        sys.exit(1)
+    }
+    zeus.pop_item(names)
+    let after_pop = names.get().len
+    if after_pop != 2 {
+        fmt.println("FAIL len after pop", after_pop)
+        sys.exit(1)
+    }
+    fmt.println("for ok")
+}

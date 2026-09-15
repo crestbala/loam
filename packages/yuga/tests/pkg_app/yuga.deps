@@ -1,0 +1,2 @@
+# Fixture dependencies. `path:` is a local directory (no network).
+greet   path:../pkglib

@@ -1,0 +1,3647 @@
+//! `http` — unary RPC over gRPC-Web (HTTP/1.1) and h2c. gRPC is the default
+//! wire; optional REST/JSON routes (`app.json`) and a REST client (`rest_send`)
+//! exist for third-party interop only.
+//!
+//! Protobuf field codecs live here (`encode_int_field`, `bytes_of`, …).
+//! `#[proto]` structs get `encode_Name` / `decode_Name` in **their** module;
+//! those functions call this library. Sockets are `std/net`. `listen` is Yuga
+//! (accept loop + HTTP/1.1 + h2c). `ZEUS_HEADLESS=1` runs a Yuga self-test.
+//!
+//! ```
+//! import "std:http"
+//!
+//! fn main() {
+//!     let app = http.app()
+//!     app.rpc("Counter.Increment", |body| {
+//!         let req = decode_Inc(body)
+//!         encode_Count(Count { n: req.by })
+//!     })
+//!     app.listen(8080)
+//! }
+//! ```
+//!
+//! `app.rpc` / `c.call` are method rewrite, like `node.set_width(32)` in Zeus.
+//! `c.call` is gRPC-Web (HTTP/1.1); `http.h2_call` is unary h2c. First-party
+//! traffic is always gRPC; `app.json` + `rest_send` are the optional REST/JSON
+//! interop path (`#[server]` side only).
+//! `ZEUS_HEADLESS=1` runs a self-test and exits.
+
+import "std:net"
+import "std:async"
+import "std:fmt"
+import "std:sys"
+import "std:result"
+import "httpcore/wire.yuga"
+import "httpcore/h2.yuga"
+import "httpcore/ws.yuga"
+
+/// Handle for a listening app (runtime table index). Copy.
+struct App {
+    /// Runtime slot. Do not build this yourself; call `http.app()`.
+    id: int,
+}
+
+/// RPC error. `code` 0 is unused (success lives on `Result.ok`).
+struct Error {
+    code: int,
+    msg: string,
+}
+
+/// Unary RPC outcome. Read `val` only when `ok == 1`.
+struct Result<T> {
+    ok: int,
+    val: T,
+    err: Error,
+}
+
+/// Named RPC contract. `Req` / `Resp` are phantom type arguments.
+struct Rpc<Req, Resp> {
+    name: string,
+}
+
+struct RpcEntry {
+    app: int,
+    name: string,
+    hid: int,
+}
+
+struct MwEntry {
+    app: int,
+    hid: int,
+}
+
+/// One optional REST/JSON route. gRPC (`RpcEntry`) is the default; these exist
+/// only when the app registers one with `app.json`.
+struct JsonRoute {
+    app: int,
+    path: string,
+    hid: int,
+}
+
+/// A client endpoint. `addr` is `host:port` for plain TCP (h1 gRPC-Web, h2c,
+/// SSE, ws) or `https://host[:port]` for TLS — `call`/`rt_call` then use
+/// `net.tls_connect`, which verifies the server certificate. Empty `addr`
+/// (and `http.client()` with no argument) is filled by `default_addr`.
+struct Client {
+    addr: string,
+}
+
+/// `host:port` from a client address. `port == 0` means parse failed.
+struct HostPort {
+    host: string,
+    port: int,
+    /// 1 when the address had an `https://` scheme (TLS transport).
+    tls: int,
+}
+
+/// Percent-decode / path-normalize result. Read `val` only when `ok == 1`.
+struct Decoded {
+    ok: int,
+    val: string,
+}
+
+/// `http(s)://host[:port][/path]` parsed for the optional REST client
+/// (third-party interop only; first-party traffic is gRPC).
+struct Url {
+    ok: int,
+    tls: int,
+    host: string,
+    port: int,
+    path: string,
+}
+
+/// Outcome of an optional REST call. `ok` is 1 only for a 2xx status.
+/// `status` is the HTTP status (0 when the exchange never happened).
+struct RestResult {
+    ok: int,
+    status: int,
+    body: string,
+}
+
+/// HTTP/1.1 request. `err` is 0 on success, otherwise an HTTP status.
+struct ParsedReq {
+    err: int,
+    method: string,
+    path: string,
+    query: string,
+    body: string,
+    host: string,
+    ctype: string,
+    /// Lowercased `name\\0value\\0` pairs (C copies these into the transaction).
+    hdrs: string,
+}
+
+/// String field read from a protobuf buffer, plus the next index.
+struct DecodedStr {
+    val: string,
+    next: int,
+}
+
+let mut rpcs: []RpcEntry = []RpcEntry {}
+let mut mws: []MwEntry = []MwEntry {}
+let mut json_routes: []JsonRoute = []JsonRoute {}
+/// HTTP status chosen by the last `serve_json` (0 = no route matched).
+let mut json_status: int = 0
+let mut json_ctype: string = "application/json; charset=utf-8"
+let mut last_status: int = 0
+let mut handlers: []fn(string) -> string = []fn(string) -> string {}
+let mut mw_fns: []fn(string, string) -> string = []fn(string, string) -> string {}
+let mut next_app: int = 0
+
+// --- Auth/session convention (Phase 1b) --------------------------------
+// Clients carry one bearer token (`set_token`); `client_post` sends it as
+// `Authorization: Bearer <t>`. The server parses it into `req_token()` for
+// the request being dispatched, and `app.before` hooks (alias of `use`) can
+// `reject()` to gate the handler — dispatch then answers unauthenticated
+// (grpc-status 16) without running it.
+let mut auth_tok: string = ""
+let mut req_tok: string = ""
+let mut gate: int = 0
+
+/// Set the bearer token the sync/async clients send on every call.
+fn set_token(t: string) {
+    auth_tok = t
+}
+
+/// Current client token ("" = anonymous).
+fn token() -> string {
+    return auth_tok
+}
+
+/// Bearer token of the request being dispatched (server side).
+fn req_token() -> string {
+    return req_tok
+}
+
+/// From a `before` hook: skip the handler, answer grpc-status 16.
+fn reject() {
+    gate = 1
+}
+
+/// Middleware alias matching the roadmap convention: `app.before(fn)`.
+fn before(app: App, hook: fn(string, string) -> string) -> App {
+    return use(app, hook)
+}
+
+/// Allocate an empty app. Register RPCs, then `listen`.
+///
+/// Example:
+/// ```
+/// let app = http.app()
+/// app.rpc("Counter.Hello", |body| { body })
+/// app.listen(8080)
+/// ```
+fn app() -> App {
+    next_app = next_app + 1
+    App { id: next_app }
+}
+
+/// Length-based string equality (not C `strcmp`).
+fn eq(a: string, b: string) -> bool {
+    let mut same = true
+    if a.len != b.len {
+        same = false
+    }
+    if a.len == b.len {
+        for i in 0..a.len {
+            if a[i] != b[i] {
+                same = false
+            }
+        }
+    }
+    return same
+}
+
+/// Logical `>> 7` on the i64 bit pattern (proto3 unsigned varint).
+fn u_shr7(v: int) -> int {
+    return wrapping_shr(v, 7)
+}
+
+/// `acc | ((chunk & 127) << shift)` on the i64 bit pattern.
+fn u_or7(acc: int, chunk: int, shift: int) -> int {
+    return wrapping_or(acc, wrapping_shl(wrapping_and(chunk, 127), shift))
+}
+
+/// Copy `[]int` bytes (0..255) into a `string`. Adds a trailing NUL for Canvas2D.
+fn string_of(b: []int) -> string {
+    return string_from_bytes(b)
+}
+
+/// Copy a `string` into `[]int` bytes (0..255).
+fn bytes_of(s: string) -> []int {
+    let mut out = []int {}
+    for i in 0..s.len {
+        out.push(s[i])
+    }
+    return out
+}
+
+/// Decimal digits of a non-negative int (`0` if `n < 0`).
+fn u_itoa(n: int) -> []int {
+    let mut v = n
+    if v < 0 {
+        v = 0
+    }
+    let mut rev = []int {}
+    if v == 0 {
+        rev.push(48)
+    }
+    for k in 0..20 {
+        if v > 0 {
+            rev.push(48 + (v % 10))
+            v = v / 10
+        }
+    }
+    let mut out = []int {}
+    let mut i = rev.len
+    for k in 0..rev.len {
+        i = i - 1
+        out.push(rev[i])
+    }
+    return out
+}
+
+/// Minimal single-field JSON body: `{"key":123}`. Not a general JSON writer —
+/// each `json_from_*` has a matching `json_get_*` that reads back exactly
+/// what it wrote, not arbitrary JSON from elsewhere.
+fn json_from_int(key: string, value: int) -> string {
+    let mut b = []int {}
+    b.push(123)
+    b.push(34)
+    let kb = bytes_of(key)
+    for i in 0..kb.len {
+        b.push(kb[i])
+    }
+    b.push(34)
+    b.push(58)
+    let vb = u_itoa(value)
+    for i in 0..vb.len {
+        b.push(vb[i])
+    }
+    b.push(125)
+    return string_of(b)
+}
+
+/// Read the int value out of a `json_from_int` body — the digits between the
+/// last `:` and the end of the string.
+fn json_get_int(body: string, key: string) -> int {
+    let mut colon = -1
+    for i in 0..body.len {
+        if body[i] == 58 {
+            colon = i
+        }
+    }
+    if colon < 0 {
+        return 0
+    }
+    let mut n = 0
+    let start = colon + 1
+    for i in start..body.len {
+        let d = body[i] - 48
+        if d >= 0 {
+            if d <= 9 {
+                n = n * 10 + d
+            }
+        }
+    }
+    return n
+}
+
+/// `{"key":"value"}` — the string counterpart to `json_from_int`.
+fn json_from_string(key: string, value: string) -> string {
+    let mut b = []int {}
+    b.push(123)
+    b.push(34)
+    let kb = bytes_of(key)
+    for i in 0..kb.len {
+        b.push(kb[i])
+    }
+    b.push(34)
+    b.push(58)
+    b.push(34)
+    let vb = bytes_of(value)
+    for i in 0..vb.len {
+        b.push(vb[i])
+    }
+    b.push(34)
+    b.push(125)
+    return string_of(b)
+}
+
+/// Read the string value out of a `json_from_string` body — the text between
+/// the quotes that follow the last `:`.
+fn json_get_string(body: string, key: string) -> string {
+    let mut colon = -1
+    for i in 0..body.len {
+        if body[i] == 58 {
+            colon = i
+        }
+    }
+    if colon < 0 {
+        return ""
+    }
+    let mut q1 = -1
+    let mut q2 = -1
+    let start = colon + 1
+    for i in start..body.len {
+        if body[i] == 34 {
+            if q1 < 0 {
+                q1 = i
+            } else if q2 < 0 {
+                q2 = i
+            }
+        }
+    }
+    if q1 < 0 {
+        return ""
+    }
+    if q2 < 0 {
+        return ""
+    }
+    let mut out = []int {}
+    let vstart = q1 + 1
+    for i in vstart..q2 {
+        out.push(body[i])
+    }
+    return string_of(out)
+}
+
+/// `/Service/Method` → `Service.Method`. Last `/` splits; empty on a bad path.
+fn path_to_name(path: string) -> string {
+    if path.len < 3 {
+        return ""
+    }
+    if path[0] != 47 {
+        return ""
+    }
+    let mut slash = 0
+    let mut found = 0
+    for i in 1..path.len {
+        if path[i] == 47 {
+            slash = i
+            found = 1
+        }
+    }
+    if found == 0 {
+        return ""
+    }
+    if slash < 2 {
+        return ""
+    }
+    if slash + 1 >= path.len {
+        return ""
+    }
+    let mut b = []int {}
+    for i in 1..slash {
+        b.push(path[i])
+    }
+    b.push(46)
+    let start = slash + 1
+    for i in start..path.len {
+        b.push(path[i])
+    }
+    return string_of(b)
+}
+
+/// `Service.Method` → `/Service/Method`. Last `.` splits; empty on a bad name.
+fn name_to_path(name: string) -> string {
+    if name.len < 3 {
+        return ""
+    }
+    let mut dot = 0
+    let mut found = 0
+    for i in 0..name.len {
+        if name[i] == 46 {
+            dot = i
+            found = 1
+        }
+    }
+    if found == 0 {
+        return ""
+    }
+    if dot == 0 {
+        return ""
+    }
+    if dot + 1 >= name.len {
+        return ""
+    }
+    let mut b = []int {}
+    b.push(47)
+    for i in 0..dot {
+        b.push(name[i])
+    }
+    b.push(47)
+    let start = dot + 1
+    for i in start..name.len {
+        b.push(name[i])
+    }
+    return string_of(b)
+}
+
+/// Wrap `val` as a successful `Result`.
+fn ok<T>(val: T) -> Result<T> {
+    Result { ok: 1, val: val, err: Error { code: 0, msg: "" } }
+}
+
+/// Build an error payload. Put it in `Result.err` with `ok: 0`.
+fn fail(code: int, msg: string) -> Error {
+    Error { code: code, msg: msg }
+}
+
+fn put_varint(v: int) -> []int {
+    let mut out = []int {}
+    let mut u = v
+    let mut more = 1
+    for k in 0..10 {
+        if more == 1 {
+            let mut b = u % 128
+            if b < 0 {
+                b = b + 128
+            }
+            u = u_shr7(u)
+            if u == 0 {
+                out.push(b)
+                more = 0
+            }
+            if u != 0 {
+                out.push(b + 128)
+            }
+        }
+    }
+    return out
+}
+
+fn get_varint(buf: &[]int, i: int) -> Varint {
+    let mut acc = 0
+    let mut shift = 0
+    let mut pos = i
+    let mut done = 0
+    let mut val = 0
+    for k in 0..10 {
+        if done == 0 {
+            if pos >= buf.len {
+                done = 1
+            }
+            if done == 0 {
+                let b = buf[pos]
+                pos += 1
+                acc = u_or7(acc, b, shift)
+                if b < 128 {
+                    val = acc
+                    done = 1
+                }
+                if b >= 128 {
+                    shift = shift + 7
+                }
+            }
+        }
+    }
+    if done == 0 {
+        val = acc
+    }
+    return Varint { val: val, next: pos }
+}
+
+fn frame(payload: &[]int) -> []int {
+    return wire.frame(payload)
+}
+
+fn unframe(buf: &[]int) -> []int {
+    return wire.unframe(buf)
+}
+
+/// Join two byte buffers. Used by `#[proto]` encode.
+fn concat_bytes(a: []int, b: []int) -> []int {
+    let mut out = []int {}
+    for i in 0..a.len {
+        out.push(a[i])
+    }
+    for i in 0..b.len {
+        out.push(b[i])
+    }
+    return out
+}
+
+/// Append `src` onto `dst`. Avoids `dst = concat(dst, src)` (that moves `dst`).
+fn append_bytes(dst: &mut []int, src: []int) {
+    for i in 0..src.len {
+        dst.push(src[i])
+    }
+}
+
+/// Strip a gRPC data-frame header from a wire `string`. Compressed payloads are empty.
+fn unframe_str(s: string) -> string {
+    if s.len < 5 {
+        return ""
+    }
+    if wrapping_and(s[0], 1) == 1 {
+        return ""
+    }
+    let b = bytes_of(s)
+    let u = unframe(b)
+    return string_of(u)
+}
+
+/// Wrap protobuf bytes as a gRPC data frame (`string`).
+fn frame_str(s: string) -> string {
+    let b = bytes_of(s)
+    let f = frame(b)
+    return string_of(f)
+}
+
+/// gRPC-Web body: data frame plus a `grpc-status` trailer frame.
+fn grpc_web_frame(proto: string, status: int) -> string {
+    let mut trail = bytes_of("grpc-status: ")
+    append_bytes(trail, u_itoa(status))
+    append_bytes(trail, bytes_of("\r\n"))
+    let b = bytes_of(proto)
+    let mut out = frame(b)
+    out.push(128)
+    wire.push_u32be(out, trail.len)
+    append_bytes(out, trail)
+    return string_of(out)
+}
+
+/// Proto3 key + varint. Zero is omitted.
+fn encode_int_field(tag: int, v: int) -> []int {
+    let mut out = []int {}
+    if v != 0 {
+        append_bytes(out, put_varint(tag * 8))
+        append_bytes(out, put_varint(v))
+    }
+    return out
+}
+
+/// Proto3 key + length-delimited string. Empty is omitted.
+fn encode_string_field(tag: int, s: string) -> []int {
+    let mut out = []int {}
+    if s.len > 0 {
+        append_bytes(out, put_varint(tag * 8 + 2))
+        append_bytes(out, put_varint(s.len))
+        append_bytes(out, bytes_of(s))
+    }
+    return out
+}
+
+/// Skip one field payload starting at `i` (after the key). Returns the new index.
+fn skip_field(b: &[]int, i: int, wt: int) -> int {
+    if wt == 0 {
+        let v = get_varint(b, i)
+        return v.next
+    }
+    if wt == 2 {
+        let sl = get_varint(b, i)
+        let mut n = sl.next + sl.val
+        if n < sl.next {
+            n = sl.next
+        }
+        return n
+    }
+    if wt == 1 {
+        return i + 8
+    }
+    if wt == 5 {
+        return i + 4
+    }
+    return i
+}
+
+/// Length-delimited string at `i`.
+fn decode_string_at(b: &[]int, i: int) -> DecodedStr {
+    let sl = get_varint(b, i)
+    let mut bytes = []int {}
+    let mut p = sl.next
+    let mut left = sl.val
+    if left < 0 {
+        left = 0
+    }
+    for k in 0..left {
+        if p < b.len {
+            bytes.push(b[p])
+            p += 1
+        }
+    }
+    DecodedStr { val: string_of(bytes), next: p }
+}
+
+fn intern_handler(h: fn(string) -> string) -> int {
+    handlers.push(h)
+    return handlers.len - 1
+}
+
+fn invoke_handler(id: int, body: string) -> string {
+    if id < 0 {
+        return ""
+    }
+    if id >= handlers.len {
+        return ""
+    }
+    return handlers[id](body)
+}
+
+fn intern_mw(h: fn(string, string) -> string) -> int {
+    mw_fns.push(h)
+    return mw_fns.len - 1
+}
+
+fn invoke_mw(id: int, name: string, body: string) -> string {
+    if id < 0 {
+        return ""
+    }
+    if id >= mw_fns.len {
+        return ""
+    }
+    return mw_fns[id](name, body)
+}
+
+fn parse_port(s: string) -> int {
+    let mut n = 0
+    if s.len == 0 {
+        return 0
+    }
+    for i in 0..s.len {
+        let d = s[i] - 48
+        if d < 0 {
+            return 0
+        }
+        if d > 9 {
+            return 0
+        }
+        n = n * 10 + d
+        if n > 65535 {
+            return 0
+        }
+    }
+    return n
+}
+
+/// Split `[scheme://]host[:port]`. `tls == 1` when the address has an
+/// `https://` scheme — the caller must use a TLS transport. A scheme with no
+/// port defaults to 443 (`https`) or 80 (`http`); a bare `host:port` keeps
+/// its explicit port. `port == 0` means parse failed.
+fn parse_addr(addr: string) -> HostPort {
+    if addr.len < 3 {
+        return HostPort { host: "", port: 0, tls: 0 }
+    }
+    let mut a = addr
+    let mut tls = 0
+    let mut scheme = 0
+    if starts_at(addr, 0, "https://") == 1 {
+        tls = 1
+        scheme = 1
+        a = slice_str(addr, 8, addr.len)
+    } else {
+        if starts_at(addr, 0, "http://") == 1 {
+            scheme = 1
+            a = slice_str(addr, 7, addr.len)
+        }
+    }
+    if a.len == 0 {
+        return HostPort { host: "", port: 0, tls: tls }
+    }
+    let mut colon = 0
+    let mut found = 0
+    for i in 0..a.len {
+        if a[i] == 58 {
+            colon = i
+            found = 1
+        }
+    }
+    if found == 0 {
+        if scheme == 1 {
+            if tls == 1 {
+                return HostPort { host: a, port: 443, tls: 1 }
+            }
+            return HostPort { host: a, port: 80, tls: 0 }
+        }
+        return HostPort { host: "", port: 0, tls: 0 }
+    }
+    if colon == 0 {
+        return HostPort { host: "", port: 0, tls: 0 }
+    }
+    if colon + 1 >= a.len {
+        return HostPort { host: "", port: 0, tls: 0 }
+    }
+    let mut hb = []int {}
+    for i in 0..colon {
+        hb.push(a[i])
+    }
+    let start = colon + 1
+    let mut pb = []int {}
+    for i in start..a.len {
+        pb.push(a[i])
+    }
+    let port = parse_port(string_of(pb))
+    if port <= 0 {
+        return HostPort { host: "", port: 0, tls: 0 }
+    }
+    return HostPort { host: string_of(hb), port: port, tls: tls }
+}
+
+fn concat_str(a: string, b: string) -> string {
+    let mut out = bytes_of(a)
+    append_bytes(out, bytes_of(b))
+    return string_of(out)
+}
+
+/// Unary gRPC-Web POST request (headers + framed body). Carries the bearer
+/// token set by `set_token` (the auth/session convention, Phase 1b).
+fn client_post(host: string, port: int, path: string, body: string) -> string {
+    let mut b = bytes_of("POST ")
+    append_bytes(b, bytes_of(path))
+    append_bytes(b, bytes_of(" HTTP/1.1\r\nHost: "))
+    append_bytes(b, bytes_of(host))
+    append_bytes(b, bytes_of(":"))
+    append_bytes(b, u_itoa(port))
+    append_bytes(b, bytes_of("\r\nContent-Type: application/grpc-web+proto\r\nContent-Length: "))
+    append_bytes(b, u_itoa(body.len))
+    if auth_tok.len > 0 {
+        append_bytes(b, bytes_of("\r\nAuthorization: Bearer "))
+        append_bytes(b, bytes_of(auth_tok))
+    }
+    append_bytes(b, bytes_of("\r\nConnection: close\r\n\r\n"))
+    append_bytes(b, bytes_of(body))
+    return string_of(b)
+}
+
+/// Parse `http(s)://host[:port][/base]` for the optional REST client. A
+/// bare `host:port` (no scheme) is also accepted. `ok == 0` means malformed —
+/// including a scheme-less name with no explicit port.
+fn parse_url(addr: string) -> Url {
+    let mut rest = addr
+    let mut tls = 0
+    let mut scheme = 0
+    if starts_at(addr, 0, "https://") == 1 {
+        tls = 1
+        scheme = 1
+        rest = slice_str(addr, 8, addr.len)
+    } else {
+        if starts_at(addr, 0, "http://") == 1 {
+            scheme = 1
+            rest = slice_str(addr, 7, addr.len)
+        }
+    }
+    if rest.len == 0 {
+        return Url { ok: 0, tls: 0, host: "", port: 0, path: "" }
+    }
+    let mut slash = rest.len
+    let mut has_slash = 0
+    let mut i = 0
+    while i < rest.len {
+        if rest[i] == 47 {
+            slash = i
+            has_slash = 1
+            i = rest.len
+        } else {
+            i = i + 1
+        }
+    }
+    let mut hp = rest
+    let mut base = ""
+    if has_slash == 1 {
+        hp = slice_str(rest, 0, slash)
+        base = slice_str(rest, slash, rest.len)
+    }
+    let mut colon = -1
+    let mut j = 0
+    while j < hp.len {
+        if hp[j] == 58 {
+            colon = j
+        }
+        j = j + 1
+    }
+    // Require a scheme, or at least an explicit port on a bare host.
+    if scheme == 0 {
+        if colon < 0 {
+            return Url { ok: 0, tls: 0, host: "", port: 0, path: "" }
+        }
+    }
+    let mut host = hp
+    let mut port = 80
+    if tls == 1 {
+        port = 443
+    }
+    if colon >= 0 {
+        host = slice_str(hp, 0, colon)
+        port = parse_port(slice_str(hp, colon + 1, hp.len))
+    }
+    if host.len == 0 {
+        return Url { ok: 0, tls: 0, host: "", port: 0, path: "" }
+    }
+    if port <= 0 {
+        return Url { ok: 0, tls: 0, host: "", port: 0, path: "" }
+    }
+    return Url { ok: 1, tls: tls, host: host, port: port, path: base }
+}
+
+/// HTTP/1.1 request for the optional REST client. `method` is `GET`/`POST`/…
+/// Carries the bearer token set by `set_token`, same as `client_post`.
+fn client_rest(host: string, port: int, method: string, path: string, ctype: string, body: string) -> string {
+    let mut b = bytes_of(method)
+    append_bytes(b, bytes_of(" "))
+    append_bytes(b, bytes_of(path))
+    append_bytes(b, bytes_of(" HTTP/1.1\r\nHost: "))
+    append_bytes(b, bytes_of(host))
+    append_bytes(b, bytes_of(":"))
+    append_bytes(b, u_itoa(port))
+    append_bytes(b, bytes_of("\r\nContent-Type: "))
+    append_bytes(b, bytes_of(ctype))
+    append_bytes(b, bytes_of("\r\nAccept: application/json\r\nContent-Length: "))
+    append_bytes(b, u_itoa(body.len))
+    if auth_tok.len > 0 {
+        append_bytes(b, bytes_of("\r\nAuthorization: Bearer "))
+        append_bytes(b, bytes_of(auth_tok))
+    }
+    append_bytes(b, bytes_of("\r\nConnection: close\r\n\r\n"))
+    if body.len > 0 {
+        append_bytes(b, bytes_of(body))
+    }
+    return string_of(b)
+}
+
+/// Raw HTTP/1.1 response bytes read on `fd` until EOF. Does not close `fd`.
+fn h1_read_all(fd: int) -> string {
+    let mut acc = ""
+    let mut more = 1
+    for k in 0..256 {
+        if more == 1 {
+            let chunk = net.tcp_read(fd, 4096)
+            if chunk.len == 0 {
+                more = 0
+            }
+            if chunk.len != 0 {
+                acc = concat_str(acc, chunk)
+            }
+        }
+    }
+    return acc
+}
+
+/// Optional REST/JSON client for third-party interop — first-party traffic is
+/// gRPC (`call` / `async_call`). `addr` is `http(s)://host[:port]`; `path` is
+/// the request path, appended to any base path in `addr`. Native only: wasm
+/// returns `ok == 0`, so reach REST from a `#[server]` fn, not client code.
+fn rest_send(addr: string, method: string, path: string, ctype: string, body: string) -> RestResult {
+    let u = parse_url(addr)
+    if u.ok == 0 {
+        return RestResult { ok: 0, status: 0, body: "" }
+    }
+    let full = concat_str(u.path, path)
+    let mut fd = -1
+    if u.tls == 1 {
+        fd = net.tls_connect(u.host, u.port)
+    } else {
+        fd = net.tcp_connect(u.host, u.port)
+    }
+    if fd < 0 {
+        return RestResult { ok: 0, status: 0, body: "" }
+    }
+    let req = client_rest(u.host, u.port, method, full, ctype, body)
+    let n = net.tcp_write(fd, req)
+    if n < 0 {
+        net.tcp_close(fd)
+        return RestResult { ok: 0, status: 0, body: "" }
+    }
+    let raw = h1_read_all(fd)
+    net.tcp_close(fd)
+    let st = http_status(raw)
+    let mut ok = 0
+    if st >= 200 {
+        if st < 300 {
+            ok = 1
+        }
+    }
+    return RestResult { ok: ok, status: st, body: http_payload(raw) }
+}
+
+/// `GET` a JSON document (optional interop; see `rest_send`).
+fn rest_get(addr: string, path: string) -> RestResult {
+    return rest_send(addr, "GET", path, "application/json", "")
+}
+
+/// `POST` a JSON body (optional interop; see `rest_send`).
+fn rest_post(addr: string, path: string, body: string) -> RestResult {
+    return rest_send(addr, "POST", path, "application/json", body)
+}
+
+/// Unary h2c request: preface, SETTINGS, HEADERS (`POST` + `:path`), DATA.
+fn client_h2(path: string, body: string) -> string {
+    let mut b = bytes_of("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
+    append_bytes(b, bytes_of(h2.frame(4, 0, 0, "")))
+    let mut hdrp = []int {}
+    hdrp.push(131)
+    append_bytes(hdrp, bytes_of(h2.lit(":path", path)))
+    append_bytes(hdrp, bytes_of(h2.lit("content-type", "application/grpc")))
+    append_bytes(b, bytes_of(h2.frame(1, 4, 1, string_of(hdrp))))
+    append_bytes(b, bytes_of(h2.frame(0, 1, 1, body)))
+    return string_of(b)
+}
+
+/// Bytes after the first `\r\n\r\n`. Empty if the splitter is missing.
+fn http_payload(resp: string) -> string {
+    let mut hit = 0
+    let mut at = 0
+    for i in 0..resp.len {
+        if hit == 0 {
+            if i + 3 < resp.len {
+                if resp[i] == 13 {
+                    if resp[i + 1] == 10 {
+                        if resp[i + 2] == 13 {
+                            if resp[i + 3] == 10 {
+                                hit = 1
+                                at = i + 4
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if hit == 0 {
+        return ""
+    }
+    let mut b = []int {}
+    for i in at..resp.len {
+        b.push(resp[i])
+    }
+    return string_of(b)
+}
+
+/// Concatenate HTTP/2 DATA payloads. Ignores SETTINGS / HEADERS / trailers.
+fn h2_data(raw: string) -> string {
+    let mut i = 0
+    let mut out = []int {}
+    let mut more = 1
+    for k in 0..1024 {
+        if more == 1 {
+            if i + 9 > raw.len {
+                more = 0
+            }
+            if more == 1 {
+                let hdr = h2.parse_hdr(h2.slice_str(raw, i, i + 9))
+                i = i + 9
+                if hdr.ok == 0 {
+                    more = 0
+                }
+                if hdr.len > 262144 {
+                    more = 0
+                }
+                if more == 1 {
+                    if i + hdr.len > raw.len {
+                        more = 0
+                    }
+                }
+                if more == 1 {
+                    let payload = h2.slice_str(raw, i, i + hdr.len)
+                    i = i + hdr.len
+                    if hdr.ty == 0 {
+                        append_bytes(out, bytes_of(payload))
+                    }
+                }
+            }
+        }
+    }
+    return string_of(out)
+}
+
+/// `grpc-status` from trailing HEADERS. `-1` if the trailer is missing.
+fn h2_grpc_status(raw: string) -> int {
+    let mut i = 0
+    let mut st = -1
+    let mut more = 1
+    for k in 0..1024 {
+        if more == 1 {
+            if i + 9 > raw.len {
+                more = 0
+            }
+            if more == 1 {
+                let hdr = h2.parse_hdr(h2.slice_str(raw, i, i + 9))
+                i = i + 9
+                if hdr.ok == 0 {
+                    more = 0
+                }
+                if hdr.len > 262144 {
+                    more = 0
+                }
+                if more == 1 {
+                    if i + hdr.len > raw.len {
+                        more = 0
+                    }
+                }
+                if more == 1 {
+                    let payload = h2.slice_str(raw, i, i + hdr.len)
+                    i = i + hdr.len
+                    if hdr.ty == 1 {
+                        let r = h2.decode_path(payload)
+                        if r.has_gs == 1 {
+                            st = r.grpc_status
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return st
+}
+
+fn slice_str(s: string, start: int, end: int) -> string {
+    let mut b = []int {}
+    let mut i = start
+    if i < 0 {
+        i = 0
+    }
+    let mut e = end
+    if e > s.len {
+        e = s.len
+    }
+    if i > e {
+        i = e
+    }
+    let n = e - i
+    for k in 0..n {
+        b.push(s[i])
+        i = i + 1
+    }
+    return string_of(b)
+}
+
+fn hex_val(c: int) -> int {
+    if c >= 48 {
+        if c <= 57 {
+            return c - 48
+        }
+    }
+    if c >= 97 {
+        if c <= 102 {
+            return c - 87
+        }
+    }
+    if c >= 65 {
+        if c <= 70 {
+            return c - 55
+        }
+    }
+    return -1
+}
+
+fn lower_byte(c: int) -> int {
+    if c >= 65 {
+        if c <= 90 {
+            return c + 32
+        }
+    }
+    return c
+}
+
+fn find_char(s: string, start: int, end: int, ch: int) -> int {
+    let mut at = -1
+    let mut e = end
+    if e > s.len {
+        e = s.len
+    }
+    for i in 0..s.len {
+        if at < 0 {
+            if i >= start {
+                if i < e {
+                    if s[i] == ch {
+                        at = i
+                    }
+                }
+            }
+        }
+    }
+    return at
+}
+
+fn find_dbl_crlf(s: string) -> int {
+    let mut at = -1
+    for i in 0..s.len {
+        if at < 0 {
+            if i + 3 < s.len {
+                if s[i] == 13 {
+                    if s[i + 1] == 10 {
+                        if s[i + 2] == 13 {
+                            if s[i + 3] == 10 {
+                                at = i
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return at
+}
+
+fn has_nul(s: string, start: int, end: int) -> int {
+    let mut hit = 0
+    let mut e = end
+    if e > s.len {
+        e = s.len
+    }
+    for i in 0..s.len {
+        if i >= start {
+            if i < e {
+                if s[i] == 0 {
+                    hit = 1
+                }
+            }
+        }
+    }
+    return hit
+}
+
+fn starts_at(s: string, off: int, lit: string) -> int {
+    let mut ok = 1
+    if off + lit.len > s.len {
+        ok = 0
+    }
+    if ok == 1 {
+        for i in 0..lit.len {
+            if s[off + i] != lit[i] {
+                ok = 0
+            }
+        }
+    }
+    return ok
+}
+
+fn http_method_err(m: string) -> int {
+    let mut e = 501
+    if eq(m, "GET") {
+        e = 0
+    }
+    if eq(m, "HEAD") {
+        e = 0
+    }
+    if eq(m, "POST") {
+        e = 0
+    }
+    if eq(m, "PUT") {
+        e = 0
+    }
+    if eq(m, "DELETE") {
+        e = 0
+    }
+    if eq(m, "TRACE") {
+        e = 405
+    }
+    if eq(m, "CONNECT") {
+        e = 405
+    }
+    return e
+}
+
+fn parse_cl(s: string) -> int {
+    let mut n = 0
+    let mut bad = 0
+    if s.len == 0 {
+        bad = 1
+    }
+    for i in 0..s.len {
+        let d = s[i] - 48
+        if d < 0 {
+            bad = 1
+        }
+        if d > 9 {
+            bad = 1
+        }
+        if bad == 0 {
+            n = n * 10 + d
+            if n > 65536 {
+                bad = 2
+            }
+        }
+    }
+    if bad == 1 {
+        return -1
+    }
+    if bad == 2 {
+        return -2
+    }
+    return n
+}
+
+/// Decode `%XX`. Reject `%00`, truncated `%`, backslash, raw NUL.
+fn pct_decode(s: string) -> Decoded {
+    let mut ok = 1
+    let mut out = []int {}
+    let mut i = 0
+    for k in 0..s.len {
+        if ok == 1 {
+            if i < s.len {
+                let c = s[i]
+                let mut step = 1
+                let mut put = c
+                if c == 0 {
+                    ok = 0
+                }
+                if c == 92 {
+                    ok = 0
+                }
+                if c == 37 {
+                    if i + 2 >= s.len {
+                        ok = 0
+                    }
+                    if ok == 1 {
+                        let hi = hex_val(s[i + 1])
+                        let lo = hex_val(s[i + 2])
+                        if hi < 0 {
+                            ok = 0
+                        }
+                        if lo < 0 {
+                            ok = 0
+                        }
+                        if ok == 1 {
+                            put = hi * 16 + lo
+                            if put == 0 {
+                                ok = 0
+                            }
+                            step = 3
+                        }
+                    }
+                }
+                if ok == 1 {
+                    out.push(put)
+                    i = i + step
+                }
+            }
+        }
+    }
+    if i != s.len {
+        ok = 0
+    }
+    return Decoded { ok: ok, val: string_of(out) }
+}
+
+/// Decode, require a leading `/`, drop `.`, reject `..`.
+fn norm_path(raw: string) -> Decoded {
+    let d = pct_decode(raw)
+    let mut ok = d.ok
+    let s = d.val
+    let mut out = []int {}
+    if ok == 1 {
+        if s.len == 0 {
+            ok = 0
+        }
+    }
+    if ok == 1 {
+        if s[0] != 47 {
+            ok = 0
+        }
+    }
+    out.push(47)
+    let mut start = 1
+    let mut nseg = 0
+    let mut need_slash = 0
+    let lim = s.len + 1
+    for i in 1..lim {
+        if ok == 1 {
+            let mut is_sep = 0
+            if i == s.len {
+                is_sep = 1
+            }
+            if i < s.len {
+                if s[i] == 47 {
+                    is_sep = 1
+                }
+            }
+            if is_sep == 1 {
+                let sl = i - start
+                if sl >= 64 {
+                    ok = 0
+                }
+                if sl > 0 {
+                    if nseg >= 32 {
+                        ok = 0
+                    }
+                    let mut skip = 0
+                    if sl == 1 {
+                        if s[start] == 46 {
+                            skip = 1
+                        }
+                    }
+                    if sl == 2 {
+                        if s[start] == 46 {
+                            if s[start + 1] == 46 {
+                                ok = 0
+                            }
+                        }
+                    }
+                    if ok == 1 {
+                        if skip == 0 {
+                            if need_slash == 1 {
+                                out.push(47)
+                            }
+                            let mut j = 0
+                            for t in 0..sl {
+                                out.push(s[start + j])
+                                j = j + 1
+                            }
+                            need_slash = 1
+                            nseg = nseg + 1
+                        }
+                    }
+                }
+                start = i + 1
+            }
+        }
+    }
+    return Decoded { ok: ok, val: string_of(out) }
+}
+
+fn hdr_name_ok(s: string) -> int {
+    let mut ok = 1
+    if s.len == 0 {
+        ok = 0
+    }
+    for i in 0..s.len {
+        let c = s[i]
+        if c <= 32 {
+            ok = 0
+        }
+        if c == 127 {
+            ok = 0
+        }
+    }
+    return ok
+}
+
+fn hdr_has_crlf(s: string) -> int {
+    let mut hit = 0
+    for i in 0..s.len {
+        if s[i] == 13 {
+            hit = 1
+        }
+        if s[i] == 10 {
+            hit = 1
+        }
+    }
+    return hit
+}
+
+fn eq_ci(a: string, b: string) -> int {
+    let mut ok = 1
+    if a.len != b.len {
+        ok = 0
+    }
+    if ok == 1 {
+        for i in 0..a.len {
+            if lower_byte(a[i]) != lower_byte(b[i]) {
+                ok = 0
+            }
+        }
+    }
+    return ok
+}
+
+/// HTTP/1.1 request line + headers + body. `err` is an HTTP status on failure.
+fn parse_http11(raw: string) -> ParsedReq {
+    let mut err = 0
+    let mut method = ""
+    let mut path = ""
+    let mut query = ""
+    let mut body = ""
+    let mut host = ""
+    let mut ctype = ""
+    let mut hdrs_b = []int {}
+    let mut http11 = 0
+    let mut is_post = 0
+    let mut cl = -1
+    if raw.len == 0 {
+        err = 400
+    }
+    if raw.len > 90112 {
+        err = 400
+    }
+    let hdr_end = find_dbl_crlf(raw)
+    if err == 0 {
+        if hdr_end < 0 {
+            err = 400
+        }
+    }
+    if err == 0 {
+        if hdr_end > 16384 {
+            err = 431
+        }
+    }
+    if err == 0 {
+        if has_nul(raw, 0, hdr_end + 4) == 1 {
+            err = 400
+        }
+    }
+    let sp1 = find_char(raw, 0, hdr_end, 32)
+    if err == 0 {
+        if sp1 <= 0 {
+            err = 400
+        }
+    }
+    if err == 0 {
+        if sp1 > 7 {
+            err = 400
+        }
+    }
+    if err == 0 {
+        method = slice_str(raw, 0, sp1)
+        for i in 0..method.len {
+            if method[i] < 65 {
+                err = 400
+            }
+            if method[i] > 90 {
+                err = 400
+            }
+        }
+    }
+    if err == 0 {
+        let me = http_method_err(method)
+        if me != 0 {
+            err = me
+        }
+        if eq(method, "POST") {
+            is_post = 1
+        }
+        if eq(method, "PUT") {
+            is_post = 1
+        }
+    }
+    let sp2 = find_char(raw, sp1 + 1, hdr_end, 32)
+    if err == 0 {
+        if sp2 < 0 {
+            err = 400
+        }
+    }
+    let ulen = sp2 - (sp1 + 1)
+    if err == 0 {
+        if ulen <= 0 {
+            err = 400
+        }
+    }
+    if err == 0 {
+        if ulen > 512 {
+            err = 414
+        }
+    }
+    if err == 0 {
+        if starts_at(raw, sp2 + 1, "HTTP/1.1") == 1 {
+            http11 = 1
+        }
+        if http11 == 0 {
+            if starts_at(raw, sp2 + 1, "HTTP/1.0") == 0 {
+                err = 400
+            }
+        }
+    }
+    let uri = slice_str(raw, sp1 + 1, sp2)
+    let qat = find_char(uri, 0, uri.len, 63)
+    let mut path_raw = uri
+    if qat >= 0 {
+        path_raw = slice_str(uri, 0, qat)
+        query = slice_str(uri, qat + 1, uri.len)
+        if has_nul(query, 0, query.len) == 1 {
+            err = 400
+        }
+        if query.len >= 1024 {
+            err = 414
+        }
+    }
+    let np = norm_path(path_raw)
+    if err == 0 {
+        if np.ok == 0 {
+            err = 400
+        }
+    }
+    if err == 0 {
+        path = np.val
+    }
+    let first_nl = find_char(raw, 0, hdr_end + 2, 10)
+    let mut line = first_nl + 1
+    let mut nh = 0
+    let mut has_host = 0
+    let hend = hdr_end + 2
+    for h in 0..42 {
+        if err == 0 {
+            if line < hend {
+                let eol = find_char(raw, line, hend, 10)
+                if eol < 0 {
+                    err = 400
+                }
+                if err == 0 {
+                    let mut llen = eol - line
+                    if llen > 0 {
+                        if raw[eol - 1] == 13 {
+                            llen = llen - 1
+                        }
+                    }
+                    if llen == 0 {
+                        line = hend
+                    }
+                    if llen > 0 {
+                        if raw[line] == 32 {
+                            err = 400
+                        }
+                        if raw[line] == 9 {
+                            err = 400
+                        }
+                    }
+                    if err == 0 {
+                        if llen > 0 {
+                            let col = find_char(raw, line, line + llen, 58)
+                            if col < 0 {
+                                err = 400
+                            }
+                            if err == 0 {
+                                let nn = col - line
+                                if nn <= 0 {
+                                    err = 400
+                                }
+                                if nn >= 64 {
+                                    err = 400
+                                }
+                                let mut vs = col + 1 - line
+                                let mut scanning = 1
+                                for t in 0..llen {
+                                    if scanning == 1 {
+                                        if vs >= llen {
+                                            scanning = 0
+                                        }
+                                        if scanning == 1 {
+                                            let c = raw[line + vs]
+                                            if c == 32 {
+                                                vs = vs + 1
+                                            }
+                                            if c == 9 {
+                                                vs = vs + 1
+                                            }
+                                            if c != 32 {
+                                                if c != 9 {
+                                                    scanning = 0
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                let vl = llen - vs
+                                if vl >= 256 {
+                                    err = 400
+                                }
+                                if nh >= 40 {
+                                    err = 431
+                                }
+                                if err == 0 {
+                                    let hname = slice_str(raw, line, col)
+                                    let hval = slice_str(raw, line + vs, line + llen)
+                                    if hdr_name_ok(hname) == 0 {
+                                        err = 400
+                                    }
+                                    if hdr_has_crlf(hname) == 1 {
+                                        err = 400
+                                    }
+                                    if hdr_has_crlf(hval) == 1 {
+                                        err = 400
+                                    }
+                                    if err == 0 {
+                                        for i in 0..hname.len {
+                                            hdrs_b.push(lower_byte(hname[i]))
+                                        }
+                                        hdrs_b.push(0)
+                                        for i in 0..hval.len {
+                                            hdrs_b.push(hval[i])
+                                        }
+                                        hdrs_b.push(0)
+                                        nh = nh + 1
+                                        if eq_ci(hname, "host") == 1 {
+                                            has_host = 1
+                                            host = hval
+                                        }
+                                        if eq_ci(hname, "content-type") == 1 {
+                                            ctype = hval
+                                        }
+                                        if eq_ci(hname, "transfer-encoding") == 1 {
+                                            err = 400
+                                        }
+                                        if eq_ci(hname, "content-length") == 1 {
+                                            cl = parse_cl(hval)
+                                            if cl == -1 {
+                                                err = 400
+                                            }
+                                            if cl == -2 {
+                                                err = 413
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if llen > 0 {
+                        line = eol + 1
+                    }
+                }
+            }
+        }
+    }
+    if err == 0 {
+        if http11 == 1 {
+            if has_host == 0 {
+                err = 400
+            }
+        }
+    }
+    let body_off = hdr_end + 4
+    if err == 0 {
+        if cl >= 0 {
+            if body_off + cl > raw.len {
+                err = 400
+            }
+            if body_off + cl < raw.len {
+                err = 400
+            }
+            if err == 0 {
+                body = slice_str(raw, body_off, body_off + cl)
+            }
+        }
+        if cl < 0 {
+            if raw.len > body_off {
+                err = 400
+            }
+            if is_post == 1 {
+                err = 400
+            }
+        }
+    }
+    return ParsedReq {
+        err: err,
+        method: method,
+        path: path,
+        query: query,
+        body: body,
+        host: host,
+        ctype: ctype,
+        hdrs: string_of(hdrs_b),
+    }
+}
+
+fn header_cl(raw: string, hdr_end: int) -> int {
+    let first_nl = find_char(raw, 0, hdr_end + 2, 10)
+    let mut line = first_nl + 1
+    let hend = hdr_end + 2
+    let mut cl = -1
+    for h in 0..42 {
+        if line < hend {
+            let eol = find_char(raw, line, hend, 10)
+            if eol < 0 {
+                line = hend
+            }
+            if eol >= 0 {
+                let mut llen = eol - line
+                if llen > 0 {
+                    if raw[eol - 1] == 13 {
+                        llen = llen - 1
+                    }
+                }
+                if llen == 0 {
+                    line = hend
+                }
+                if llen > 0 {
+                    let col = find_char(raw, line, line + llen, 58)
+                    if col >= 0 {
+                        let hname = slice_str(raw, line, col)
+                        if eq_ci(hname, "content-length") == 1 {
+                            let mut vs = col + 1 - line
+                            let mut scanning = 1
+                            for t in 0..llen {
+                                if scanning == 1 {
+                                    if vs >= llen {
+                                        scanning = 0
+                                    }
+                                    if scanning == 1 {
+                                        let c = raw[line + vs]
+                                        if c == 32 {
+                                            vs = vs + 1
+                                        }
+                                        if c == 9 {
+                                            vs = vs + 1
+                                        }
+                                        if c != 32 {
+                                            if c != 9 {
+                                                scanning = 0
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            cl = parse_cl(slice_str(raw, line + vs, line + llen))
+                        }
+                    }
+                    line = eol + 1
+                }
+            }
+        }
+    }
+    return cl
+}
+
+/// `1` when `raw` has a full HTTP/1.1 message (headers + declared body).
+fn request_ready(raw: string) -> int {
+    let mut ready = 0
+    if raw.len > 90112 {
+        ready = 1
+    }
+    let hdr_end = find_dbl_crlf(raw)
+    if ready == 0 {
+        if hdr_end < 0 {
+            ready = 0
+        }
+        if hdr_end >= 0 {
+            let cl = header_cl(raw, hdr_end)
+            if cl < 0 {
+                ready = 1
+            }
+            if cl >= 0 {
+                if raw.len >= hdr_end + 4 + cl {
+                    ready = 1
+                }
+            }
+        }
+    }
+    return ready
+}
+
+fn reason_phrase(code: int) -> string {
+    let mut s = "OK"
+    if code == 400 {
+        s = "Bad Request"
+    }
+    if code == 404 {
+        s = "Not Found"
+    }
+    if code == 405 {
+        s = "Method Not Allowed"
+    }
+    if code == 413 {
+        s = "Payload Too Large"
+    }
+    if code == 414 {
+        s = "URI Too Long"
+    }
+    if code == 431 {
+        s = "Request Header Fields Too Large"
+    }
+    if code == 500 {
+        s = "Internal Server Error"
+    }
+    if code == 501 {
+        s = "Not Implemented"
+    }
+    return s
+}
+
+fn ctype_grpc_web(ct: string) -> int {
+    let lit = "application/grpc-web"
+    let mut ok = 1
+    if ct.len < lit.len {
+        ok = 0
+    }
+    if ok == 1 {
+        for i in 0..lit.len {
+            if lower_byte(ct[i]) != lower_byte(lit[i]) {
+                ok = 0
+            }
+        }
+    }
+    return ok
+}
+
+fn ctype_json(ct: string) -> int {
+    let lit = "application/json"
+    let mut ok = 1
+    if ct.len < lit.len {
+        ok = 0
+    }
+    if ok == 1 {
+        for i in 0..lit.len {
+            if lower_byte(ct[i]) != lower_byte(lit[i]) {
+                ok = 0
+            }
+        }
+    }
+    return ok
+}
+
+/// HTTP/1.1 response with the same security headers as the old C writer.
+fn http_reply(code: int, ctype: string, body: string) -> string {
+    let mut b = bytes_of("HTTP/1.1 ")
+    append_bytes(b, u_itoa(code))
+    append_bytes(b, bytes_of(" "))
+    append_bytes(b, bytes_of(reason_phrase(code)))
+    append_bytes(b, bytes_of("\r\nContent-Type: "))
+    append_bytes(b, bytes_of(ctype))
+    append_bytes(b, bytes_of("\r\nContent-Length: "))
+    append_bytes(b, u_itoa(body.len))
+    append_bytes(b, bytes_of("\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nContent-Security-Policy: default-src 'none'; frame-ancestors 'none'\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\n\r\n"))
+    append_bytes(b, bytes_of(body))
+    return string_of(b)
+}
+
+/// Unary gRPC-Web POST, or an HTTP error. GET and other REST methods are 404.
+fn str_slice(s: string, a: int, b: int) -> string {
+    let mut out = []int {}
+    let mut i = a
+    if i < 0 {
+        i = 0
+    }
+    let mut e = b
+    if e > s.len {
+        e = s.len
+    }
+    while i < e {
+        out.push(s[i])
+        i = i + 1
+    }
+    return string_of(out)
+}
+
+/// Bearer token from the lowercased `name\0value\0` header pairs
+/// (`ParsedReq.hdrs`). "" when absent.
+fn bearer_of(hdrs: string) -> string {
+    let mut pos = 0
+    let n = hdrs.len
+    let mut val = ""
+    while pos < n {
+        let mut nend = pos
+        while nend < n {
+            if hdrs[nend] == 0 {
+                break
+            }
+            nend = nend + 1
+        }
+        let name = str_slice(hdrs, pos, nend)
+        let mut vstart = nend + 1
+        let mut vend = vstart
+        while vend < n {
+            if hdrs[vend] == 0 {
+                break
+            }
+            vend = vend + 1
+        }
+        if eq(name, "authorization") {
+            if vstart < n {
+                val = str_slice(hdrs, vstart, vend)
+            }
+        }
+        pos = vend + 1
+    }
+    // strip a "Bearer " prefix (case-insensitive); otherwise use it raw
+    let mut out = val
+    if val.len > 7 {
+        let lit = "bearer "
+        let mut ok = 1
+        for i in 0..7 {
+            if lower_byte(val[i]) != lit[i] {
+                ok = 0
+            }
+        }
+        if ok == 1 {
+            out = str_slice(val, 7, val.len)
+        }
+    }
+    return out
+}
+
+fn serve_h1(app: App, raw: string) -> string {
+    let req = parse_http11(raw)
+    if req.err != 0 {
+        return http_reply(req.err, "text/plain; charset=utf-8", reason_phrase(req.err))
+    }
+    req_tok = bearer_of(req.hdrs)
+    let mut grpc = 0
+    if eq(req.method, "POST") {
+        if ctype_grpc_web(req.ctype) == 1 {
+            grpc = 1
+        }
+    }
+    if grpc == 1 {
+        let out = serve_grpc_web(app, req.path, req.body)
+        if out.len == 0 {
+            return http_reply(404, "text/plain; charset=utf-8", "Not Found")
+        }
+        return http_reply(200, "application/grpc-web+proto", out)
+    }
+    // Optional REST/JSON routes: only reachable when the app registered one
+    // with `app.json`. Anything else stays a 404 as before.
+    let jbody = serve_json(app, req.method, req.path, req.body)
+    if json_status != 0 {
+        return http_reply(json_status, json_ctype, jbody)
+    }
+    return http_reply(404, "text/plain; charset=utf-8", "Not Found")
+}
+
+fn h2_frame(ty: int, flags: int, stream: int, payload: string) -> string {
+    return h2.frame(ty, flags, stream, payload)
+}
+
+fn hpack_lit(name: string, value: string) -> string {
+    return h2.lit(name, value)
+}
+
+fn huff_encode(s: string) -> string {
+    return h2.encode_huff(s)
+}
+
+fn h2_rst_stream(stream: int, code: int) -> string {
+    return h2.rst_stream(stream, code)
+}
+
+/// Last GOAWAY error code in `raw`, or `-1` if none.
+fn h2_goaway_code(raw: string) -> int {
+    let mut i = 0
+    let mut st = -1
+    let mut more = 1
+    for k in 0..1024 {
+        if more == 1 {
+            if i + 9 > raw.len {
+                more = 0
+            }
+            if more == 1 {
+                let hdr = h2.parse_hdr(h2.slice_str(raw, i, i + 9))
+                i = i + 9
+                if hdr.ok == 0 {
+                    more = 0
+                }
+                if hdr.len > 262144 {
+                    more = 0
+                }
+                if more == 1 {
+                    if i + hdr.len > raw.len {
+                        more = 0
+                    }
+                }
+                if more == 1 {
+                    let payload = h2.slice_str(raw, i, i + hdr.len)
+                    i = i + hdr.len
+                    if hdr.ty == 7 {
+                        if payload.len >= 8 {
+                            st = wrapping_or(
+                                wrapping_or(
+                                    wrapping_or(wrapping_shl(wrapping_and(payload[4], 127), 24), wrapping_shl(payload[5], 16)),
+                                    wrapping_shl(payload[6], 8),
+                                ),
+                                payload[7],
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return st
+}
+
+/// RFC 7540 frame checks. `0` means the frame is acceptable.
+fn h2_check_frame(ty: int, flags: int, stream: int, payload: string) -> int {
+    let mut code = 0
+    if ty == 4 {
+        if stream != 0 {
+            code = 1
+        }
+        if wrapping_and(flags, 1) == 1 {
+            if payload.len != 0 {
+                code = 6
+            }
+        }
+    }
+    if ty == 6 {
+        if stream != 0 {
+            code = 1
+        }
+        if payload.len != 8 {
+            code = 6
+        }
+    }
+    if ty == 1 {
+        if stream == 0 {
+            code = 1
+        }
+        if wrapping_and(stream, 1) == 0 {
+            if stream != 0 {
+                code = 1
+            }
+        }
+    }
+    if ty == 0 {
+        if stream == 0 {
+            code = 1
+        }
+        if wrapping_and(stream, 1) == 0 {
+            if stream != 0 {
+                code = 1
+            }
+        }
+    }
+    return code
+}
+
+fn h2_conn_err(stream: int, code: int) -> string {
+    let mut b = []int {}
+    if stream != 0 {
+        append_bytes(b, bytes_of(h2.rst_stream(stream, code)))
+    }
+    append_bytes(b, bytes_of(h2.goaway_err(0, code)))
+    return string_of(b)
+}
+
+fn hpack_path(buf: string) -> string {
+    let r = h2.decode_path(buf)
+    if r.ok == 0 {
+        return ""
+    }
+    return r.path
+}
+
+fn h2_reply(app: App, path: string, data: string, stream: int) -> string {
+    let name = path_to_name(path)
+    let mut b = []int {}
+    if name.len != 0 {
+        let inn = unframe_str(data)
+        let body = dispatch(app, name, inn)
+        let st = last_rpc_status()
+        let mut hdrs = h2.lit(":status", "200")
+        hdrs = concat_str(hdrs, h2.lit("content-type", "application/grpc"))
+        append_bytes(b, bytes_of(h2.frame(1, 4, stream, hdrs)))
+        append_bytes(b, bytes_of(h2.frame(0, 0, stream, frame_str(body))))
+        let trail = h2.lit("grpc-status", string_of(u_itoa(st)))
+        append_bytes(b, bytes_of(h2.frame(1, 5, stream, trail)))
+        append_bytes(b, bytes_of(h2.goaway(stream)))
+    }
+    return string_of(b)
+}
+
+/// Unary h2c on `fd`. Preface + frames in Yuga; `tcp_*` is `std/net`.
+fn h2_serve(fd: int, app: App) {
+    let pre = h2.read_exact(fd, 24)
+    if eq(pre, "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n") {
+        let z = net.tcp_write(fd, h2.frame(4, 0, 0, ""))
+        let mut path = ""
+        let mut data = ""
+        let mut stream = 0
+        let mut got = 0
+        let mut err = 0
+        let mut estream = 0
+        for k in 0..1024 {
+            if got == 0 {
+                let raw = h2.read_exact(fd, 9)
+                if raw.len != 9 {
+                    got = 2
+                }
+                if got == 0 {
+                    let hdr = h2.parse_hdr(raw)
+                    if hdr.ok == 0 {
+                        got = 2
+                    }
+                    if hdr.len > 262144 {
+                        got = 2
+                        err = 6
+                        estream = hdr.stream
+                    }
+                    if got == 0 {
+                        let mut payload = ""
+                        if hdr.len > 0 {
+                            payload = h2.read_exact(fd, hdr.len)
+                            if payload.len != hdr.len {
+                                got = 2
+                            }
+                        }
+                        if got == 0 {
+                            if hdr.ty == 3 {
+                                got = 3
+                            }
+                            if hdr.ty == 7 {
+                                got = 3
+                            }
+                        }
+                        if got == 0 {
+                            let fe = h2_check_frame(hdr.ty, hdr.flags, hdr.stream, payload)
+                            if fe != 0 {
+                                got = 2
+                                err = fe
+                                estream = hdr.stream
+                            }
+                        }
+                        if got == 0 {
+                            if hdr.ty == 4 {
+                                if wrapping_and(hdr.flags, 1) == 0 {
+                                    let a = net.tcp_write(fd, h2.frame(4, 1, 0, ""))
+                                    if a < 0 {
+                                        got = 2
+                                    }
+                                }
+                            }
+                            if hdr.ty == 6 {
+                                if wrapping_and(hdr.flags, 1) == 0 {
+                                    let a = net.tcp_write(fd, h2.frame(6, 1, 0, payload))
+                                    if a < 0 {
+                                        got = 2
+                                    }
+                                }
+                            }
+                            if hdr.ty == 1 {
+                                let req = h2.decode_path(payload)
+                                if req.ok == 0 {
+                                    got = 2
+                                    err = 1
+                                    estream = hdr.stream
+                                }
+                                if req.ok == 1 {
+                                    path = req.path
+                                    stream = hdr.stream
+                                    if wrapping_and(hdr.flags, 1) == 1 {
+                                        got = 1
+                                    }
+                                }
+                            }
+                            if hdr.ty == 0 {
+                                data = payload
+                                if payload.len > 0 {
+                                    let wu0 = net.tcp_write(fd, h2.window_update(0, payload.len))
+                                    let wu1 = net.tcp_write(fd, h2.window_update(hdr.stream, payload.len))
+                                    if wu0 < 0 {
+                                        got = 2
+                                    }
+                                    if wu1 < 0 {
+                                        got = 2
+                                    }
+                                }
+                                if wrapping_and(hdr.flags, 1) == 1 {
+                                    got = 1
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if got == 1 {
+            let resp = h2_reply(app, path, data, stream)
+            let w = net.tcp_write(fd, resp)
+            if w < 0 {
+                return
+            }
+        }
+        if got == 2 {
+            if err != 0 {
+                let eframes = h2_conn_err(estream, err)
+                let w = net.tcp_write(fd, eframes)
+                if w < 0 {
+                    return
+                }
+            }
+        }
+        if z < 0 {
+            return
+        }
+    }
+}
+
+/// Unary h2c from a complete client preface + frames (HEADLESS / tests).
+fn serve_h2(app: App, raw: string) -> string {
+    let mut outb = []int {}
+    let mut path = ""
+    let mut data = ""
+    let mut stream = 0
+    let mut got = 0
+    let mut err = 0
+    let mut estream = 0
+    let mut i = 0
+    if raw.len >= 24 {
+        let pre = h2.slice_str(raw, 0, 24)
+        if eq(pre, "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n") {
+            i = 24
+            append_bytes(outb, bytes_of(h2.frame(4, 0, 0, "")))
+            for k in 0..1024 {
+                if got == 0 {
+                    if i + 9 > raw.len {
+                        got = 2
+                    }
+                    if got == 0 {
+                        let hdr = h2.parse_hdr(h2.slice_str(raw, i, i + 9))
+                        i = i + 9
+                        if hdr.ok == 0 {
+                            got = 2
+                        }
+                        if hdr.len > 262144 {
+                            got = 2
+                            err = 6
+                            estream = hdr.stream
+                        }
+                        if got == 0 {
+                            if i + hdr.len > raw.len {
+                                got = 2
+                            }
+                        }
+                        if got == 0 {
+                            let payload = h2.slice_str(raw, i, i + hdr.len)
+                            i = i + hdr.len
+                            if hdr.ty == 3 {
+                                got = 3
+                            }
+                            if hdr.ty == 7 {
+                                got = 3
+                            }
+                            if got == 0 {
+                                let fe = h2_check_frame(hdr.ty, hdr.flags, hdr.stream, payload)
+                                if fe != 0 {
+                                    got = 2
+                                    err = fe
+                                    estream = hdr.stream
+                                }
+                            }
+                            if got == 0 {
+                                if hdr.ty == 4 {
+                                    if wrapping_and(hdr.flags, 1) == 0 {
+                                        append_bytes(outb, bytes_of(h2.frame(4, 1, 0, "")))
+                                    }
+                                }
+                                if hdr.ty == 6 {
+                                    if wrapping_and(hdr.flags, 1) == 0 {
+                                        append_bytes(outb, bytes_of(h2.frame(6, 1, 0, payload)))
+                                    }
+                                }
+                                if hdr.ty == 1 {
+                                    let req = h2.decode_path(payload)
+                                    if req.ok == 0 {
+                                        got = 2
+                                        err = 1
+                                        estream = hdr.stream
+                                    }
+                                    if req.ok == 1 {
+                                        path = req.path
+                                        stream = hdr.stream
+                                        if wrapping_and(hdr.flags, 1) == 1 {
+                                            got = 1
+                                        }
+                                    }
+                                }
+                                if hdr.ty == 0 {
+                                    data = payload
+                                    if payload.len > 0 {
+                                        append_bytes(outb, bytes_of(h2.window_update(0, payload.len)))
+                                        append_bytes(outb, bytes_of(h2.window_update(hdr.stream, payload.len)))
+                                    }
+                                    if wrapping_and(hdr.flags, 1) == 1 {
+                                        got = 1
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if got == 1 {
+        append_bytes(outb, bytes_of(h2_reply(app, path, data, stream)))
+    }
+    if got == 2 {
+        if err != 0 {
+            append_bytes(outb, bytes_of(h2_conn_err(estream, err)))
+        }
+    }
+    return string_of(outb)
+}
+
+fn serve_conn(app: App, fd: int) {
+    let peek = net.tcp_peek(fd, 24)
+    if peek.len == 24 {
+        if eq(peek, "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n") {
+            h2_serve(fd, app)
+            return
+        }
+    }
+    let mut acc = ""
+    let mut more = 1
+    for k in 0..256 {
+        if more == 1 {
+            let chunk = net.tcp_read(fd, 4096)
+            if chunk.len == 0 {
+                more = 0
+            }
+            if chunk.len != 0 {
+                acc = concat_str(acc, chunk)
+                if request_ready(acc) == 1 {
+                    more = 0
+                }
+                if acc.len > 90112 {
+                    more = 0
+                }
+            }
+        }
+    }
+    if acc.len == 0 {
+        return
+    }
+    let resp = serve_h1(app, acc)
+    let n = net.tcp_write(fd, resp)
+    if n < 0 {
+        return
+    }
+}
+
+fn http_status(resp: string) -> int {
+    if resp.len < 12 {
+        return 0
+    }
+    let prefix = "HTTP/1.1 "
+    let mut ok = 1
+    for i in 0..9 {
+        if resp[i] != prefix[i] {
+            ok = 0
+        }
+    }
+    if ok == 0 {
+        return 0
+    }
+    let mut digs = []int {}
+    digs.push(resp[9])
+    digs.push(resp[10])
+    digs.push(resp[11])
+    return parse_port(string_of(digs))
+}
+
+fn contains(hay: string, needle: string) -> int {
+    let mut found = 0
+    if needle.len == 0 {
+        found = 1
+    }
+    if needle.len > 0 {
+        if hay.len >= needle.len {
+            let last = hay.len - needle.len + 1
+            for i in 0..last {
+                let mut ok = 1
+                for j in 0..needle.len {
+                    if hay[i + j] != needle[j] {
+                        ok = 0
+                    }
+                }
+                if ok == 1 {
+                    found = 1
+                }
+            }
+        }
+    }
+    return found
+}
+
+fn expect_st(app: App, name: string, req: string, want: int) -> int {
+    let resp = serve_h1(app, req)
+    let got = http_status(resp)
+    if got != want {
+        fmt.write("http selftest FAIL ")
+        fmt.write(name)
+        fmt.write(": status ")
+        fmt.write_int(got)
+        fmt.write(" want ")
+        fmt.write_int(want)
+        fmt.writeln()
+        return 1
+    }
+    fmt.write("ok   ")
+    fmt.write(name)
+    fmt.write(" (")
+    fmt.write_int(want)
+    fmt.write(")")
+    fmt.writeln()
+    return 0
+}
+
+fn long_uri_req() -> string {
+    let mut b = bytes_of("GET /")
+    for i in 0..520 {
+        b.push(97)
+    }
+    append_bytes(b, bytes_of(" HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"))
+    return string_of(b)
+}
+
+fn grpc_unimpl_req() -> string {
+    let mut b = bytes_of("POST /Counter/Increment HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/grpc-web+proto\r\nContent-Length: 5\r\n\r\n")
+    b.push(0)
+    b.push(0)
+    b.push(0)
+    b.push(0)
+    b.push(0)
+    return string_of(b)
+}
+
+fn h2_unimpl_req() -> string {
+    let mut data = []int {}
+    data.push(0)
+    data.push(0)
+    data.push(0)
+    data.push(0)
+    data.push(0)
+    return client_h2("/Counter/Increment", string_of(data))
+}
+
+fn expect_h2(app: App, name: string) -> int {
+    let resp = serve_h2(app, h2_unimpl_req())
+    let gs = h2_grpc_status(resp)
+    if gs != 12 {
+        fmt.write("http selftest FAIL ")
+        fmt.write(name)
+        if gs < 0 {
+            fmt.write(": missing grpc-status")
+        }
+        if gs >= 0 {
+            fmt.write(": grpc-status ")
+            fmt.write_int(gs)
+            fmt.write(" want 12")
+        }
+        fmt.writeln()
+        return 1
+    }
+    fmt.write("ok   ")
+    fmt.write(name)
+    fmt.writeln()
+    return 0
+}
+
+fn xss_probe(app: App) -> int {
+    let resp = serve_h1(app, "GET /echo?q=<script>alert(1)</script> HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+    let st = http_status(resp)
+    let mut bad = 0
+    if st == 200 {
+        if contains(resp, "<script>") == 1 {
+            bad = 1
+        }
+    }
+    if bad == 1 {
+        fmt.write("http selftest FAIL xss-static-404-or-escape: unescaped script in body")
+        fmt.writeln()
+        return 1
+    }
+    fmt.write("ok   xss-probe-no-raw-script")
+    fmt.writeln()
+    return 0
+}
+
+/// If `ZEUS_HEADLESS` (or `YUGA_HEADLESS` / `YUGA_HTTP_SELFTEST`) is set, run
+/// the security checklist and return `1`. Otherwise return `0`.
+fn headless_selftest(user_app: App) -> int {
+    let mut on = 0
+    if sys.env_set("YUGA_HEADLESS") != 0 {
+        on = 1
+    }
+    if sys.env_set("ZEUS_HEADLESS") != 0 {
+        on = 1
+    }
+    if sys.env_set("YUGA_HTTP_SELFTEST") != 0 {
+        on = 1
+    }
+    if on == 0 {
+        return 0
+    }
+    let id = app()
+    let H = "Host: 127.0.0.1\r\n"
+    let mut err = 0
+    err += expect_st(id, "get-root", concat_str("GET / HTTP/1.1\r\n", concat_str(H, "\r\n")), 404)
+    err += expect_st(id, "not-found", concat_str("GET /missing HTTP/1.1\r\n", concat_str(H, "\r\n")), 404)
+    err += expect_st(id, "no-rest-asset", concat_str("GET /public/ok.txt HTTP/1.1\r\n", concat_str(H, "\r\n")), 404)
+    err += expect_st(id, "path-dotdot", concat_str("GET /public/../ok.txt HTTP/1.1\r\n", concat_str(H, "\r\n")), 400)
+    err += expect_st(id, "path-encoded-dotdot", concat_str("GET /public/%2e%2e/ok.txt HTTP/1.1\r\n", concat_str(H, "\r\n")), 400)
+    err += expect_st(id, "path-escape-root", concat_str("GET /%2e%2e/%2e%2e/etc/passwd HTTP/1.1\r\n", concat_str(H, "\r\n")), 400)
+    err += expect_st(id, "path-nul", concat_str("GET /public/ok.txt%00.txt HTTP/1.1\r\n", concat_str(H, "\r\n")), 400)
+    err += expect_st(id, "trace-disabled", concat_str("TRACE / HTTP/1.1\r\n", concat_str(H, "\r\n")), 405)
+    err += expect_st(id, "connect-disabled", concat_str("CONNECT 127.0.0.1:80 HTTP/1.1\r\n", concat_str(H, "\r\n")), 405)
+    err += expect_st(id, "reject-te", "GET / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n", 400)
+    err += expect_st(id, "reject-cl-te", concat_str("POST / HTTP/1.1\r\n", concat_str(H, "Content-Length: 4\r\nTransfer-Encoding: chunked\r\n\r\nabcd")), 400)
+    err += expect_st(id, "http11-needs-host", "GET / HTTP/1.1\r\n\r\n", 400)
+    err += expect_st(id, "reject-obs-fold", concat_str("GET / HTTP/1.1\r\n", concat_str(H, "X-A: one\r\n two\r\n\r\n")), 400)
+    err += expect_st(id, "reject-pipeline-extra", concat_str("GET / HTTP/1.1\r\n", concat_str(H, concat_str("X-A: one\r\nX-B: two\r\n\r\nGET /admin HTTP/1.1\r\n", concat_str(H, "\r\n")))), 400)
+    err += expect_st(id, "body-too-large", concat_str("POST / HTTP/1.1\r\n", concat_str(H, "Content-Length: 70000\r\n\r\n")), 413)
+    let uri = long_uri_req()
+    err += expect_st(id, "uri-too-long", uri, 414)
+    err += xss_probe(id)
+    let grpc = grpc_unimpl_req()
+    err += expect_st(id, "grpc-web-unimpl", grpc, 200)
+    err += expect_h2(id, "h2c-grpc-unimpl")
+    err += expect_st(user_app, "user-root", concat_str("GET / HTTP/1.1\r\n", concat_str(H, "\r\n")), 404)
+    err += expect_st(user_app, "user-param-dotdot", concat_str("GET /users/../secret HTTP/1.1\r\n", concat_str(H, "\r\n")), 400)
+    if err != 0 {
+        fmt.write("http selftest failed")
+        fmt.writeln()
+        sys.exit(1)
+    }
+    fmt.write("http selftest passed")
+    fmt.writeln()
+    return 1
+}
+
+/// Bind 127.0.0.1:`port` and serve until killed. Port 0 picks an ephemeral port.
+fn listen(app: App, port: int) {
+    if headless_selftest(app) != 0 {
+        return
+    }
+    let fd = net.tcp_listen(port)
+    if fd < 0 {
+        return
+    }
+    let p = net.tcp_bound_port(fd)
+    fmt.write("http listening on 127.0.0.1:")
+    fmt.write_int(p)
+    fmt.writeln()
+    for k in 0..2147483647 {
+        let c = net.tcp_accept(fd)
+        if c >= 0 {
+            serve_conn(app, c)
+            net.tcp_close(c)
+        }
+    }
+    net.tcp_close(fd)
+}
+
+fn rt_call(addr: string, name: string, body: string) -> string {
+    let path = name_to_path(name)
+    if path.len == 0 {
+        return ""
+    }
+    let framed = frame_str(body)
+    let hp = parse_addr(addr)
+    let mut fd = -1
+    if hp.tls == 1 {
+        fd = net.tls_connect(hp.host, hp.port)
+    } else {
+        fd = net.tcp_connect(hp.host, hp.port)
+    }
+    if fd < 0 {
+        // Native: unreachable. Wasm: browser TLS via the same-origin fetch.
+        return unframe_str(net.fetch_rpc(path, framed))
+    }
+    let req = client_post(hp.host, hp.port, path, framed)
+    let n = net.tcp_write(fd, req)
+    if n < 0 {
+        net.tcp_close(fd)
+        return ""
+    }
+    let out = h1_read_unary(fd)
+    net.tcp_close(fd)
+    return out
+}
+
+/// Read one gRPC-Web HTTP/1.1 response on `fd` until EOF (`Connection: close`).
+/// Does not close `fd`.
+fn h1_read_unary(fd: int) -> string {
+    let mut acc = ""
+    let mut more = 1
+    for k in 0..256 {
+        if more == 1 {
+            let chunk = net.tcp_read(fd, 4096)
+            if chunk.len == 0 {
+                more = 0
+            }
+            if chunk.len != 0 {
+                acc = concat_str(acc, chunk)
+            }
+        }
+    }
+    return unframe_str(http_payload(acc))
+}
+
+/// Read one unary h2c response on `fd`. ACKs SETTINGS/PING; WINDOW_UPDATE after DATA; stops on END_STREAM, RST_STREAM, or GOAWAY.
+/// Sets `last_rpc_status` from trailing `grpc-status`. Does not close `fd`.
+fn h2_read_unary(fd: int) -> string {
+    let mut data = ""
+    let mut done = 0
+    for k in 0..1024 {
+        if done == 0 {
+            let raw = h2.read_exact(fd, 9)
+            if raw.len != 9 {
+                done = 1
+            }
+            if done == 0 {
+                let hdr = h2.parse_hdr(raw)
+                if hdr.ok == 0 {
+                    done = 1
+                }
+                if hdr.len > 262144 {
+                    done = 1
+                }
+                if done == 0 {
+                    let mut payload = ""
+                    if hdr.len > 0 {
+                        payload = h2.read_exact(fd, hdr.len)
+                        if payload.len != hdr.len {
+                            done = 1
+                        }
+                    }
+                    if done == 0 {
+                        if hdr.ty == 4 {
+                            if wrapping_and(hdr.flags, 1) == 0 {
+                                let a = net.tcp_write(fd, h2.frame(4, 1, 0, ""))
+                                if a < 0 {
+                                    done = 1
+                                }
+                            }
+                        }
+                        if hdr.ty == 6 {
+                            if wrapping_and(hdr.flags, 1) == 0 {
+                                let a = net.tcp_write(fd, h2.frame(6, 1, 0, payload))
+                                if a < 0 {
+                                    done = 1
+                                }
+                            }
+                        }
+                        if hdr.ty == 3 {
+                            done = 1
+                        }
+                        if hdr.ty == 7 {
+                            done = 1
+                        }
+                        if hdr.ty == 0 {
+                            data = concat_str(data, payload)
+                            if payload.len > 0 {
+                                let wu0 = net.tcp_write(fd, h2.window_update(0, payload.len))
+                                let wu1 = net.tcp_write(fd, h2.window_update(hdr.stream, payload.len))
+                                if wu0 < 0 {
+                                    done = 1
+                                }
+                                if wu1 < 0 {
+                                    done = 1
+                                }
+                            }
+                            if wrapping_and(hdr.flags, 1) == 1 {
+                                done = 1
+                            }
+                        }
+                        if hdr.ty == 1 {
+                            let r = h2.decode_path(payload)
+                            if r.has_gs == 1 {
+                                last_status = r.grpc_status
+                            }
+                            if wrapping_and(hdr.flags, 1) == 1 {
+                                done = 1
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return unframe_str(data)
+}
+
+/// Unary gRPC over h2c. Empty if connect fails (wasm has no TCP).
+fn h2_call(addr: string, name: string, body: string) -> string {
+    let path = name_to_path(name)
+    if path.len == 0 {
+        return ""
+    }
+    let framed = frame_str(body)
+    let hp = parse_addr(addr)
+    if hp.tls == 1 {
+        // h2 here is h2c (cleartext); https:// must go through `rt_call`.
+        return ""
+    }
+    let fd = net.tcp_connect(hp.host, hp.port)
+    if fd < 0 {
+        return ""
+    }
+    let req = client_h2(path, framed)
+    let n = net.tcp_write(fd, req)
+    if n < 0 {
+        net.tcp_close(fd)
+        return ""
+    }
+    let out = h2_read_unary(fd)
+    net.tcp_close(fd)
+    return out
+}
+
+/// Register unary RPC `name` (`Service.Method`). Handler gets protobuf bytes.
+fn rpc(app: App, name: string, handler: fn(string) -> string) -> App {
+    let hid = intern_handler(handler)
+    rpcs.push(RpcEntry { app: app.id, name: name, hid: hid })
+    return app
+}
+
+/// Middleware: `(name, body) -> body` before the RPC handler.
+fn use(app: App, hook: fn(string, string) -> string) -> App {
+    let hid = intern_mw(hook)
+    mws.push(MwEntry { app: app.id, hid: hid })
+    return app
+}
+
+fn last_rpc_status() -> int {
+    return last_status
+}
+
+/// Look up `name` and run middleware + handler.
+fn dispatch(app: App, name: string, body: string) -> string {
+    let mut b = body
+    last_status = 12
+    gate = 0
+    for i in 0..mws.len {
+        if mws[i].app == app.id {
+            b = invoke_mw(mws[i].hid, name, b)
+        }
+    }
+    if gate != 0 {
+        // a `before` hook rejected: unauthenticated, handler skipped
+        last_status = 16
+        return ""
+    }
+    for i in 0..rpcs.len {
+        if rpcs[i].app == app.id {
+            if eq(rpcs[i].name, name) {
+                last_status = 0
+                return invoke_handler(rpcs[i].hid, b)
+            }
+        }
+    }
+    return ""
+}
+
+/// HTTP/1.1 gRPC-Web POST: path → dispatch → framed body. Empty means HTTP 404.
+fn serve_grpc_web(app: App, path: string, body: string) -> string {
+    let name = path_to_name(path)
+    if name.len == 0 {
+        return ""
+    }
+    let inn = unframe_str(body)
+    let out = dispatch(app, name, inn)
+    return grpc_web_frame(out, last_status)
+}
+
+// --- Optional REST/JSON routes (interop; gRPC stays the default) ---------
+//
+// `app.json(path, handler)` registers a `POST`/`PUT`/`DELETE` (JSON body) or
+// `GET` (empty body) endpoint. `serve_h1` consults these only after the gRPC
+// branch declines the request, so adding a route never changes RPC behaviour.
+// The handler returns the response body; `json_status` carries the status.
+
+/// Register an optional REST/JSON route. First-party traffic should still use
+/// `app.rpc` (gRPC); this is for third-party webhooks and REST clients.
+fn json(app: App, path: string, handler: fn(string) -> string) -> App {
+    let hid = intern_handler(handler)
+    json_routes.push(JsonRoute { app: app.id, path: path, hid: hid })
+    return app
+}
+
+/// Status chosen by the last `serve_json` call (0 = no route matched).
+fn last_json_status() -> int {
+    return json_status
+}
+
+/// Serve one inbound JSON request against the routes registered with
+/// `app.json`. Returns the response body and sets `json_status`:
+/// 200 for a handled `GET`/`POST`/`PUT`/`PATCH`/`DELETE`, 405 when the path
+/// matched but the method did not, 0 when no route matched (caller sends 404).
+fn serve_json(app: App, method: string, path: string, body: string) -> string {
+    json_status = 0
+    json_ctype = "application/json; charset=utf-8"
+    for i in 0..json_routes.len {
+        if json_routes[i].app == app.id {
+            if eq(json_routes[i].path, path) {
+                if eq(method, "GET") {
+                    json_status = 200
+                    return invoke_handler(json_routes[i].hid, "")
+                }
+                if eq(method, "POST") {
+                    json_status = 200
+                    return invoke_handler(json_routes[i].hid, body)
+                }
+                if eq(method, "PUT") {
+                    json_status = 200
+                    return invoke_handler(json_routes[i].hid, body)
+                }
+                if eq(method, "PATCH") {
+                    json_status = 200
+                    return invoke_handler(json_routes[i].hid, body)
+                }
+                if eq(method, "DELETE") {
+                    json_status = 200
+                    return invoke_handler(json_routes[i].hid, body)
+                }
+                json_status = 405
+                json_ctype = "text/plain; charset=utf-8"
+                return "Method Not Allowed"
+            }
+        }
+    }
+    return ""
+}
+
+/// Default RPC address for this `--target`. `YUGA_RPC_ADDR` (native) wins
+/// when set — use it for a physical Android device's LAN IP. Otherwise:
+/// wasm same-origin `""`, Android emulator `10.0.2.2:8080`, mac/iOS
+/// `127.0.0.1:8080`.
+fn default_addr() -> string {
+    let ov = sys.env("YUGA_RPC_ADDR")
+    if ov.len > 0 {
+        return ov
+    }
+    let t = sys.target()
+    if t == "wasm" {
+        return ""
+    }
+    if t == "android" {
+        return "10.0.2.2:8080"
+    }
+    return "127.0.0.1:8080"
+}
+
+/// Client for `call` / `async_call` / `ws_open`. Omit `addr` (or pass `""`)
+/// to use `default_addr` for this host. An explicit `host:port` always wins.
+fn client(addr: string = "") -> Client {
+    if addr.len > 0 {
+        return Client { addr: addr }
+    }
+    return Client { addr: default_addr() }
+}
+
+/// Unary gRPC-Web call. The result is `#[must_check]`: read `r.ok` / `r.val`,
+/// or use `res.or` / `res.or_trap`. An empty reply body is reported as a
+/// failure (`r.ok` false), since the transport exposes no `grpc-status`.
+fn call(c: Client, name: string, body: string) -> Res<string> {
+    let out = rt_call(c.addr, name, body)
+    if out.len == 0 {
+        return result.err("rpc: empty response", "")
+    }
+    return result.ok(out)
+}
+
+/// Awaitable unary gRPC-Web call: `let raw = await c.async_call(name, body)`
+/// inside an `async fn`. Same `#[proto]` contract as `call` / `call_async`;
+/// the await pumps the one-thread async world until the response lands.
+fn async_call(c: Client, name: string, body: string) -> Future<string> {
+    let f = async.future_str()
+    call_async(c, name, body, fn(out) { async.resolve(f, out) })
+    return f
+}
+
+// --- Async unary client (`call_async`) -------------------------------
+//
+// Same `#[proto]` contract as `call`, but the gRPC-Web exchange advances one
+// step per frame on the UI thread and never blocks it: a non-blocking
+// connect, then poll-driven send/read state machines run by `std:async`'s
+// per-frame steppers. The completion callback fires on the UI thread inside
+// the next tick; a signal set there repaints that same frame.
+// Wasm has no sockets: a failed connect falls back to the JS async fetch
+// slots (same framed gRPC-Web POST as `fetch_rpc`, delivered per frame).
+// Transport failure — or an empty browser-style address on native — yields
+// "", the same shape as `call`.
+
+/// One in-flight async call. `stage`: 1 connecting, 2 sending, 3 reading,
+/// 4 wasm fetch wait, 5 TLS handshake. `cbid` indexes `acbs`; callbacks stay
+/// in their own table so this record remains a plain Copy struct.
+struct RpcCall {
+    req: string,
+    sent: int,
+    fd: int,
+    stage: int,
+    acc: string,
+    cbid: int,
+    at: i64,
+}
+
+let mut acalls: []RpcCall = []RpcCall {}
+let mut acbs: []fn(string) = []fn(string) {}
+let mut astep_on: int = 0
+
+fn acb_drop(cbid: int) {
+    let mut keep = []fn(string) {}
+    let n = acbs.len
+    for i in 0..n {
+        if i != cbid {
+            push(keep, acbs[i])
+        }
+    }
+    acbs = keep
+}
+
+/// Rewrite every live record's `cbid` after `acb_drop` shifted the table:
+/// ids above the dropped one move down by one.
+fn acbs_remap(dropped: int) {
+    let n = acalls.len
+    for i in 0..n {
+        if acalls[i].cbid > dropped {
+            acalls[i].cbid = acalls[i].cbid - 1
+        }
+    }
+}
+
+fn acall_remove(idx: int) {
+    let mut keep = []RpcCall {}
+    let n = acalls.len
+    for i in 0..n {
+        if i != idx {
+            push(keep, acalls[i])
+        }
+    }
+    acalls = keep
+}
+
+/// Terminal path for call `idx`: close the socket, release the in-flight
+/// count, drop the callback slot, then run the callback with `out`. The
+/// callback value is retained before the table is rebuilt, so the drop and
+/// the id remap cannot free it.
+fn acall_finish(idx: int, out: string) {
+    let fd = acalls[idx].fd
+    let cbid = acalls[idx].cbid
+    let cb = acbs[cbid]
+    if fd >= 0 {
+        net.tcp_close(fd)
+    }
+    async.io_close()
+    acall_remove(idx)
+    acb_drop(cbid)
+    acbs_remap(cbid)
+    cb(out)
+}
+
+/// Advance call `idx` by as much as the socket allows right now. Returns 1
+/// when the call terminated (its record was removed and the callback ran).
+fn acall_advance(idx: int) -> int {
+    let mut guard = 0
+    while guard < 8 {
+        guard = guard + 1
+        let stage = acalls[idx].stage
+        if stage == 5 {
+            let r = net.tls_nb_ready(acalls[idx].fd)
+            if r < 0 {
+                acall_finish(idx, "")
+                return 1
+            }
+            if r == 0 {
+                return 0
+            }
+            acalls[idx].stage = 2
+        }
+        if stage == 1 {
+            let fd = acalls[idx].fd
+            let p = net.tcp_poll(fd, 2, 0)
+            if p < 0 {
+                acall_finish(idx, "")
+                return 1
+            }
+            if p == 0 {
+                return 0
+            }
+            if net.tcp_so_error(fd) != 0 {
+                acall_finish(idx, "")
+                return 1
+            }
+            acalls[idx].stage = 2
+        }
+        if stage == 2 {
+            let n = net.tcp_send(acalls[idx].fd, acalls[idx].req, acalls[idx].sent)
+            if n < 0 {
+                acall_finish(idx, "")
+                return 1
+            }
+            if n == 0 {
+                return 0
+            }
+            acalls[idx].sent = acalls[idx].sent + n
+            if acalls[idx].sent >= acalls[idx].req.len {
+                acalls[idx].stage = 3
+            } else {
+                return 0
+            }
+        }
+        if stage == 3 {
+            let fd = acalls[idx].fd
+            let p = net.tcp_poll(fd, 1, 0)
+            if p < 0 {
+                acall_finish(idx, "")
+                return 1
+            }
+            if p == 0 {
+                return 0
+            }
+            let chunk = net.tcp_read(fd, 4096)
+            if chunk.len == 0 {
+                if net.tcp_wouldblock() != 0 {
+                    return 0
+                }
+                // EOF: the server closed after the body (Connection: close).
+                acall_finish(idx, unframe_str(http_payload(acalls[idx].acc)))
+                return 1
+            }
+            acalls[idx].acc = concat_str(acalls[idx].acc, chunk)
+            if acalls[idx].acc.len > 1048576 {
+                acall_finish(idx, "")
+                return 1
+            }
+        }
+        if stage == 4 {
+            if net.fetch_ready() != 0 {
+                acall_finish(idx, unframe_str(net.fetch_take()))
+                return 1
+            }
+            return 0
+        }
+        if stage <= 0 {
+            return 0
+        }
+    }
+    return 0
+}
+
+/// Per-frame stepper: give every in-flight call one non-blocking advance.
+fn io_pump() {
+    let mut i = 0
+    while i < acalls.len {
+        if acalls[i].at > 0 {
+            if async.now_ms() > acalls[i].at {
+                acall_finish(i, "")
+                continue
+            }
+        }
+        if acall_advance(i) == 0 {
+            i = i + 1
+        }
+    }
+}
+
+/// Unary gRPC-Web call whose completion runs `cb` on the UI thread (inside a
+/// frame's async tick) with the same protobuf `out` `call` returns. Native:
+/// non-blocking TCP, pumped per frame. Wasm: JS fetch slots (`http.client("")`
+/// is same-origin). Prefer `await c.async_call(...)` inside an `async fn`.
+fn call_async(c: Client, name: string, body: string, cb: fn(string)) {
+    let path = name_to_path(name)
+    if path.len == 0 {
+        cb("")
+        return
+    }
+    let framed = frame_str(body)
+    let hp = parse_addr(c.addr)
+    if astep_on == 0 {
+        astep_on = 1
+        async.add_step(|| { io_pump() })
+    }
+    let cbid = acbs.len
+    push(acbs, cb)
+    if hp.tls == 1 {
+        let fd = net.tls_nb_connect(hp.host, hp.port)
+        if fd >= 0 {
+            let req = client_post(hp.host, hp.port, path, framed)
+            push(acalls, RpcCall { req: req, sent: 0, fd: fd, stage: 5, acc: "",
+                                   cbid: cbid, at: async.now_ms() + 15000 })
+            async.io_open()
+            return
+        }
+        // wasm: browser TLS via fetch. Native: no SecureTransport.
+    } else if hp.port != 0 {
+        let fd = net.tcp_nb_connect(hp.host, hp.port)
+        if fd >= 0 {
+            let req = client_post(hp.host, hp.port, path, framed)
+            push(acalls, RpcCall { req: req, sent: 0, fd: fd, stage: 1, acc: "",
+                                   cbid: cbid, at: async.now_ms() + 8000 })
+            async.io_open()
+            return
+        }
+    }
+    // Wasm: no TCP. Empty addr is same-origin (`http.client("")`); a host:port
+    // still falls through to the JS fetch slots. Native connect failure is "".
+    if net.fetch_issue(path, framed) >= 0 {
+        push(acalls, RpcCall { req: "", sent: 0, fd: -1, stage: 4, acc: "",
+                               cbid: cbid, at: async.now_ms() + 8000 })
+        async.io_open()
+        return
+    }
+    acb_drop(cbid)
+    cb("")
+}
+
+// --- Streaming clients + server push (Phase 1b) -------------------------
+// SSE and WebSocket both ride the same per-frame steppers as `call_async`:
+// a non-blocking connect, one request write, then poll-driven reads that
+// deliver each event/message to a callback on the UI thread. The server
+// side stays on the blocking accept loop: `read_head` / `sse_start` /
+// `sse_send` / `ws_upgrade` / `ws_send_text` are the push helpers a server
+// process (or a later reactor) calls per connection.
+
+fn read_head(fd: int) -> string {
+    let mut acc = ""
+    let mut more = 1
+    for k in 0..128 {
+        if more == 1 {
+            let chunk = net.tcp_read(fd, 2048)
+            if chunk.len == 0 {
+                more = 0
+            }
+            if chunk.len != 0 {
+                acc = concat_str(acc, chunk)
+                if contains(acc, "\r\n\r\n") == 1 {
+                    more = 0
+                }
+                if acc.len > 32768 {
+                    more = 0
+                }
+            }
+        }
+    }
+    return acc
+}
+
+/// SSE response head (text/event-stream, close at EOF).
+fn sse_start(fd: int) {
+    let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n"
+    net.tcp_write(fd, head)
+}
+
+/// One SSE event: `data: <data>\n\n`.
+fn sse_send(fd: int, data: string) {
+    let mut b = bytes_of("data: ")
+    append_bytes(b, bytes_of(data))
+    append_bytes(b, bytes_of("\n\n"))
+    net.tcp_write(fd, string_of(b))
+}
+
+/// WebSocket upgrade reply for a client `Sec-WebSocket-Key`. Returns 0 on
+/// success, 1 when the write failed.
+fn ws_upgrade(fd: int, key: string) -> int {
+    let mut b = bytes_of("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ")
+    append_bytes(b, bytes_of(ws.accept_key(key)))
+    append_bytes(b, bytes_of("\r\n\r\n"))
+    let n = net.tcp_write(fd, string_of(b))
+    if n < 0 {
+        return 1
+    }
+    return 0
+}
+
+/// Header value (case-insensitive) from a raw request head — thin wrapper
+/// over the ws codec so apps do not need to import httpcore.
+fn ws_header(head: string, name: string) -> string {
+    return ws.header_val(head, name)
+}
+
+/// Push one WebSocket text frame (server side).
+fn ws_send_text(fd: int, s: string) -> int {
+    let n = net.tcp_write(fd, ws.server_text(s))
+    if n < 0 {
+        return 1
+    }
+    return 0
+}
+
+struct SseCall {
+    req: string,
+    sent: int,
+    fd: int,
+    stage: int,
+    acc: string,
+    on_event: fn(string),
+    on_done: fn(),
+    at: i64,
+}
+
+let mut sse_calls: []SseCall = []SseCall {}
+let mut sse_on: int = 0
+
+/// Stream one SSE endpoint: `on_event(data)` per `data:` line, `on_done` at
+/// EOF/error. Callbacks run on the UI thread inside a frame's async tick.
+fn sse_open(c: Client, path: string, on_event: fn(string), on_done: fn()) {
+    let hp = parse_addr(c.addr)
+    if hp.tls == 1 {
+        on_done()
+        return
+    }
+    if hp.port == 0 {
+        on_done()
+        return
+    }
+    let mut b = bytes_of("GET ")
+    append_bytes(b, bytes_of(path))
+    append_bytes(b, bytes_of(" HTTP/1.1\r\nHost: "))
+    append_bytes(b, bytes_of(hp.host))
+    append_bytes(b, bytes_of(":"))
+    append_bytes(b, u_itoa(hp.port))
+    append_bytes(b, bytes_of("\r\nAccept: text/event-stream\r\nConnection: close\r\n\r\n"))
+    if sse_on == 0 {
+        sse_on = 1
+        async.add_step(|| { sse_pump() })
+    }
+    let fd = net.tcp_nb_connect(hp.host, hp.port)
+    if fd < 0 {
+        on_done()
+        return
+    }
+    push(sse_calls, SseCall { req: string_of(b), sent: 0, fd: fd, stage: 1, acc: "",
+                              on_event: on_event, on_done: on_done, at: async.now_ms() + 8000 })
+    async.io_open()
+}
+
+fn sse_finish(idx: int) {
+    let fd = sse_calls[idx].fd
+    let done = sse_calls[idx].on_done
+    if fd >= 0 {
+        net.tcp_close(fd)
+    }
+    async.io_close()
+    let mut keep = []SseCall {}
+    let n = sse_calls.len
+    for i in 0..n {
+        if i != idx {
+            push(keep, sse_calls[i])
+        }
+    }
+    sse_calls = keep
+    done()
+}
+
+/// Index of the next "\n\n" at or after `from`, or -1.
+fn find_nl2(s: string, from: int) -> int {
+    let mut i = from
+    if i < 0 {
+        i = 0
+    }
+    while i + 1 < s.len {
+        if s[i] == 10 {
+            if s[i + 1] == 10 {
+                return i
+            }
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+/// Deliver every complete `\n\n`-separated event in `sse_calls[idx].acc`;
+/// returns the undelivered remainder.
+fn sse_deliver(idx: int) -> string {
+    let buf = sse_calls[idx].acc
+    let n = buf.len
+    let mut prev = 0
+    let mut evs = 0
+    let mut at = find_nl2(buf, 0)
+    while at >= 0 {
+        let mut seg = str_slice(buf, prev, at)
+        if seg.len > 6 {
+            let lit = "data: "
+            let mut ok = 1
+            for i in 0..6 {
+                if seg[i] != lit[i] {
+                    ok = 0
+                }
+            }
+            if ok == 1 {
+                seg = str_slice(seg, 6, seg.len)
+            }
+        }
+        let cb = sse_calls[idx].on_event
+        cb(seg)
+        evs = 1
+        prev = at + 2
+        at = find_nl2(buf, prev)
+    }
+    if evs == 1 {
+        return str_slice(buf, prev, n)
+    }
+    return buf
+}
+
+fn sse_advance(idx: int) -> int {
+    let mut guard = 0
+    while guard < 8 {
+        guard = guard + 1
+        let stage = sse_calls[idx].stage
+        if stage == 1 {
+            let p = net.tcp_poll(sse_calls[idx].fd, 2, 0)
+            if p < 0 {
+                sse_finish(idx)
+                return 1
+            }
+            if p == 0 {
+                return 0
+            }
+            if net.tcp_so_error(sse_calls[idx].fd) != 0 {
+                sse_finish(idx)
+                return 1
+            }
+            sse_calls[idx].stage = 2
+        }
+        if stage == 2 {
+            let n = net.tcp_send(sse_calls[idx].fd, sse_calls[idx].req, sse_calls[idx].sent)
+            if n < 0 {
+                sse_finish(idx)
+                return 1
+            }
+            if n == 0 {
+                return 0
+            }
+            sse_calls[idx].sent = sse_calls[idx].sent + n
+            if sse_calls[idx].sent >= sse_calls[idx].req.len {
+                sse_calls[idx].stage = 3
+            } else {
+                return 0
+            }
+        }
+        if stage == 3 {
+            let p = net.tcp_poll(sse_calls[idx].fd, 1, 0)
+            if p < 0 {
+                sse_finish(idx)
+                return 1
+            }
+            if p == 0 {
+                return 0
+            }
+            let chunk = net.tcp_read(sse_calls[idx].fd, 4096)
+            if chunk.len == 0 {
+                sse_finish(idx)
+                return 1
+            }
+            sse_calls[idx].acc = concat_str(sse_calls[idx].acc, chunk)
+            // skip the response head once
+            let hd = contains(sse_calls[idx].acc, "\r\n\r\n")
+            if hd == 1 {
+                let at = find_dbl_crlf(sse_calls[idx].acc)
+                if at >= 0 {
+                    let body = str_slice(sse_calls[idx].acc, at + 4, sse_calls[idx].acc.len)
+                    sse_calls[idx].acc = body
+                    sse_calls[idx].stage = 4
+                }
+            }
+            if sse_calls[idx].stage == 4 {
+                sse_calls[idx].acc = sse_deliver(idx)
+            }
+        }
+        if stage == 4 {
+            let p = net.tcp_poll(sse_calls[idx].fd, 1, 0)
+            if p < 0 {
+                sse_finish(idx)
+                return 1
+            }
+            if p == 0 {
+                return 0
+            }
+            let chunk = net.tcp_read(sse_calls[idx].fd, 4096)
+            if chunk.len == 0 {
+                sse_finish(idx)
+                return 1
+            }
+            sse_calls[idx].acc = concat_str(sse_calls[idx].acc, chunk)
+            sse_calls[idx].acc = sse_deliver(idx)
+        }
+        if stage <= 0 {
+            return 0
+        }
+    }
+    return 0
+}
+
+fn sse_pump() {
+    let mut i = 0
+    while i < sse_calls.len {
+        if async.now_ms() > sse_calls[i].at {
+            sse_finish(i)
+            continue
+        }
+        if sse_advance(i) == 0 {
+            i = i + 1
+        }
+    }
+}
+
+struct WsCall {
+    req: string,
+    sent: int,
+    fd: int,
+    stage: int,
+    acc: string,
+    on_text: fn(string),
+    on_done: fn(),
+    at: i64,
+}
+
+let mut ws_calls: []WsCall = []WsCall {}
+let mut ws_on: int = 0
+
+/// Open one WebSocket: `on_text(payload)` per text frame, `on_done` on
+/// close/EOF/error. Callbacks run on the UI thread inside a frame's tick.
+/// Native: TCP + the RFC 6455 codec. Wasm (`client("")`): the browser's
+/// WebSocket via the JS bridge — `path` is same-origin (`"/ws"`).
+fn ws_open(c: Client, path: string, on_text: fn(string), on_done: fn()) {
+    let hp = parse_addr(c.addr)
+    if hp.tls == 1 {
+        on_done()
+        return
+    }
+    if hp.port == 0 {
+        // wasm/browser style: the JS loader owns the WebSocket; wasm drains
+        // its message queue per frame (stage 5). Native cannot reach "".
+        if ws_on == 0 {
+            ws_on = 1
+            async.add_step(|| { ws_pump() })
+        }
+        let slot = net.ws_issue(path)
+        if slot < 0 {
+            on_done()
+            return
+        }
+        push(ws_calls, WsCall { req: "", sent: 0, fd: slot, stage: 5, acc: "",
+                                on_text: on_text, on_done: on_done, at: 0 })
+        async.io_open()
+        return
+    }
+    let key = ws.client_key(async.now_ms())
+    let mut b = bytes_of("GET ")
+    append_bytes(b, bytes_of(path))
+    append_bytes(b, bytes_of(" HTTP/1.1\r\nHost: "))
+    append_bytes(b, bytes_of(hp.host))
+    append_bytes(b, bytes_of(":"))
+    append_bytes(b, u_itoa(hp.port))
+    append_bytes(b, bytes_of("\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: "))
+    append_bytes(b, bytes_of(key))
+    append_bytes(b, bytes_of("\r\nSec-WebSocket-Version: 13\r\n\r\n"))
+    if ws_on == 0 {
+        ws_on = 1
+        async.add_step(|| { ws_pump() })
+    }
+    let fd = net.tcp_nb_connect(hp.host, hp.port)
+    if fd < 0 {
+        on_done()
+        return
+    }
+    push(ws_calls, WsCall { req: string_of(b), sent: 0, fd: fd, stage: 1, acc: "",
+                            on_text: on_text, on_done: on_done, at: async.now_ms() + 8000 })
+    async.io_open()
+}
+
+fn ws_finish(idx: int) {
+    let fd = ws_calls[idx].fd
+    let stage = ws_calls[idx].stage
+    let done = ws_calls[idx].on_done
+    if fd >= 0 {
+        if stage == 5 {
+            net.ws_close(fd)
+        } else {
+            net.tcp_close(fd)
+        }
+    }
+    async.io_close()
+    let mut keep = []WsCall {}
+    let n = ws_calls.len
+    for i in 0..n {
+        if i != idx {
+            push(keep, ws_calls[i])
+        }
+    }
+    ws_calls = keep
+    done()
+}
+
+fn ws_advance(idx: int) -> int {
+    let mut guard = 0
+    while guard < 16 {
+        guard = guard + 1
+        let stage = ws_calls[idx].stage
+        if stage == 1 {
+            let p = net.tcp_poll(ws_calls[idx].fd, 2, 0)
+            if p < 0 {
+                ws_finish(idx)
+                return 1
+            }
+            if p == 0 {
+                return 0
+            }
+            if net.tcp_so_error(ws_calls[idx].fd) != 0 {
+                ws_finish(idx)
+                return 1
+            }
+            ws_calls[idx].stage = 2
+        }
+        if stage == 2 {
+            let n = net.tcp_send(ws_calls[idx].fd, ws_calls[idx].req, ws_calls[idx].sent)
+            if n < 0 {
+                ws_finish(idx)
+                return 1
+            }
+            if n == 0 {
+                return 0
+            }
+            ws_calls[idx].sent = ws_calls[idx].sent + n
+            if ws_calls[idx].sent >= ws_calls[idx].req.len {
+                ws_calls[idx].stage = 3
+            } else {
+                return 0
+            }
+        }
+        if stage == 3 {
+            let p = net.tcp_poll(ws_calls[idx].fd, 1, 0)
+            if p < 0 {
+                ws_finish(idx)
+                return 1
+            }
+            if p == 0 {
+                return 0
+            }
+            let chunk = net.tcp_read(ws_calls[idx].fd, 4096)
+            if chunk.len == 0 {
+                ws_finish(idx)
+                return 1
+            }
+            ws_calls[idx].acc = concat_str(ws_calls[idx].acc, chunk)
+            let hd = contains(ws_calls[idx].acc, "\r\n\r\n")
+            if hd == 1 {
+                let head = str_slice(ws_calls[idx].acc, 0, find_dbl_crlf(ws_calls[idx].acc))
+                if contains(head, "101") == 0 {
+                    ws_finish(idx)
+                    return 1
+                }
+                let at = find_dbl_crlf(ws_calls[idx].acc)
+                ws_calls[idx].acc = str_slice(ws_calls[idx].acc, at + 4, ws_calls[idx].acc.len)
+                ws_calls[idx].stage = 4
+            }
+        }
+        if stage == 4 {
+            let mut done = 0
+            let mut broke = 0
+            while done == 0 && broke == 0 {
+                let f = ws.take_frame(ws_calls[idx].acc)
+                if f.ok == 0 {
+                    broke = 1
+                }
+                if f.ok < 0 {
+                    ws_finish(idx)
+                    return 1
+                }
+                if f.ok == 1 {
+                    if f.op == 1 {
+                        let cb = ws_calls[idx].on_text
+                        cb(f.text)
+                    }
+                    if f.op == 8 {
+                        ws_finish(idx)
+                        return 1
+                    }
+                    ws_calls[idx].acc = f.rest
+                    if f.rest.len == 0 {
+                        broke = 1
+                    }
+                }
+            }
+            if ws_calls.len == 0 {
+                return 1
+            }
+            if ws_calls[idx].stage != 4 {
+                return 1
+            }
+            let p = net.tcp_poll(ws_calls[idx].fd, 1, 0)
+            if p < 0 {
+                ws_finish(idx)
+                return 1
+            }
+            if p == 0 {
+                return 0
+            }
+            let chunk = net.tcp_read(ws_calls[idx].fd, 4096)
+            if chunk.len == 0 {
+                ws_finish(idx)
+                return 1
+            }
+            ws_calls[idx].acc = concat_str(ws_calls[idx].acc, chunk)
+        }
+        if stage == 5 {
+            // wasm: drain the JS message queue; finish when the socket closes.
+            if net.ws_state(ws_calls[idx].fd) != 0 {
+                ws_finish(idx)
+                return 1
+            }
+            let mut took = 0
+            while took < 16 {
+                if net.ws_count(ws_calls[idx].fd) == 0 {
+                    break
+                }
+                let txt = net.ws_copy(ws_calls[idx].fd, 8192)
+                if txt.len == 0 {
+                    break
+                }
+                let cb = ws_calls[idx].on_text
+                cb(txt)
+                took = took + 1
+            }
+            return 0
+        }
+        if stage <= 0 {
+            return 0
+        }
+    }
+    return 0
+}
+
+fn ws_pump() {
+    let mut i = 0
+    while i < ws_calls.len {
+        if ws_calls[i].at > 0 {
+            if async.now_ms() > ws_calls[i].at {
+                ws_finish(i)
+                continue
+            }
+        }
+        if ws_advance(i) == 0 {
+            i = i + 1
+        }
+    }
+}

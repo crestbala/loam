@@ -1,0 +1,237 @@
+//! `raygui` — immediate-mode GUI controls (raysan5/raygui) on raylib.
+//!
+//! Immediate mode means there is no retained widget tree: state lives in the
+//! caller and every frame re-issues the controls. raylib owns the window and
+//! the OS event pump; the frame loop lives in Yuga:
+//!
+//! ```
+//! import "std:raygui"
+//!
+//! let mut value: float = 0.5
+//! let mut on: int = 1
+//!
+//! fn main() {
+//!     raygui.init("demo", 640, 400, 60)
+//!     while raygui.open() != 0 {
+//!         raygui.begin("#f5f5f5")
+//!         raygui.label(16, 16, 200, 24, "hello")
+//!         if raygui.button(16, 48, 120, 32, "press") != 0 { on = 1 - on }
+//!         raygui.checkbox(16, 88, 160, 24, "on", &mut on)
+//!         raygui.slider(16, 120, 300, 24, "low", "high", &mut value, 0.0, 1.0)
+//!         raygui.end()
+//!     }
+//!     raygui.close()
+//! }
+//! ```
+//!
+//! `RAYGUI_HEADLESS=1` (or `ZEUS_HEADLESS` / `YUGA_HEADLESS`, which `make test`
+//! sets) opens no window: `begin`/`end` are inert and `open()` returns 0 after
+//! `RAYGUI_FRAMES` frames (default 3), so the control code still runs.
+//!
+//! The C side (`packages/yuga/runtime/raygui_plat.c`) is only the raylib +
+//! raygui trampoline and the RAM probe — no widget logic, per
+//! `docs/boundary.md`.
+
+/// Open the window and set the target frame rate. `fps <= 0` leaves raylib's
+/// default. Headless: records the size and opens nothing.
+fn plat_init(title: string, w: int, h: int, fps: int) {}
+/// 1 when no window will open (env override or no display host).
+fn plat_headless() -> int {}
+/// 1 once the user closed the window (or the headless frame cap is reached).
+fn plat_should_close() -> int {}
+fn plat_begin(bg: int) {}
+fn plat_end() {}
+fn plat_close() {}
+/// Host process memory in KB: Apple phys_footprint (Xcode's memory-gauge
+/// number) or the Linux/Android resident set. 0 when unknown.
+fn plat_ram_kb() -> int {}
+fn plat_fps() -> int {}
+/// Last frame time, milliseconds.
+fn plat_frame_ms() -> int {}
+fn plat_screen_w() -> int {}
+fn plat_screen_h() -> int {}
+fn plat_set_style(control: int, prop: int, value: int) {}
+fn plat_load_style_default() {}
+
+fn plat_label(x: int, y: int, w: int, h: int, text: string) -> int {}
+fn plat_panel(x: int, y: int, w: int, h: int, text: string) -> int {}
+fn plat_group_box(x: int, y: int, w: int, h: int, text: string) -> int {}
+fn plat_line(x: int, y: int, w: int, h: int, text: string) -> int {}
+fn plat_button(x: int, y: int, w: int, h: int, text: string) -> int {}
+/// Toggle button. `active` is 1/0 in, 1/0 out.
+fn plat_toggle(x: int, y: int, w: int, h: int, text: string, active: &mut int) -> int {}
+/// Check box. `checked` is 1/0 in, 1/0 out.
+fn plat_checkbox(x: int, y: int, w: int, h: int, text: string, checked: &mut int) -> int {}
+fn plat_slider(x: int, y: int, w: int, h: int, left: string, right: string,
+               value: &mut float, lo: float, hi: float) -> int {}
+fn plat_progress(x: int, y: int, w: int, h: int, left: string, right: string,
+                 value: &mut float, lo: float, hi: float) -> int {}
+fn plat_spinner(x: int, y: int, w: int, h: int, text: string, value: &mut int,
+                lo: int, hi: int, edit: int) -> int {}
+fn plat_value_box(x: int, y: int, w: int, h: int, text: string, value: &mut int,
+                  lo: int, hi: int, edit: int) -> int {}
+/// Dropdown. `active` is the selected index in, the new index out (-1 = none).
+fn plat_combo(x: int, y: int, w: int, h: int, text: string, active: &mut int) -> int {}
+/// List view. `text` items are separated by `;`. `scroll`/`active` are in/out.
+fn plat_listview(x: int, y: int, w: int, h: int, text: string,
+                 scroll: &mut int, active: &mut int) -> int {}
+
+// ── style property + control tokens (raygui.h) ────────────────────────────
+// Control ids (a subset; raygui `GuiControlProperty` values for `set_style`).
+let DEFAULT: int = 0
+let LABEL: int = 1
+let BUTTON: int = 2
+let TOGGLE: int = 3
+let SLIDER: int = 4
+let PROGRESSBAR: int = 5
+let CHECKBOX: int = 6
+let COMBOBOX: int = 7
+let DEFAULT_TEXT_SIZE: int = 16
+let TEXT_ALIGNMENT: int = 17
+let TEXT_PADDING: int = 20
+let BACKGROUND_COLOR: int = 1
+let BORDER_COLOR: int = 9
+let TEXT_COLOR: int = 2
+let BASE_COLOR: int = 3
+
+/// Pack 0..255 channels into a raygui color int (`r<<24 | g<<16 | b<<8 | a`).
+fn rgba(r: int, g: int, b: int, a: int) -> int {
+    return (r << 24) | (g << 16) | (b << 8) | a
+}
+
+/// Pack 0..255 channels, opaque.
+fn rgb(r: int, g: int, b: int) -> int {
+    return rgba(r, g, b, 255)
+}
+
+/// Open the window (`fps <= 0` keeps raylib's default of 60 target).
+fn init(title: string, w: int, h: int, fps: int) {
+    plat_init(title, w, h, fps)
+    if plat_headless() == 0 {
+        plat_load_style_default()
+    }
+}
+
+/// Headless: no window (env override or a host with no display).
+fn headless() -> int {
+    return plat_headless()
+}
+
+/// 1 while the window is open; 0 once it is closed (or the headless cap hits).
+fn open() -> int {
+    return 1 - plat_should_close()
+}
+
+/// Start a frame and clear to `bg` (packed as `rgb` / `rgba`).
+fn begin(bg: int) {
+    plat_begin(bg)
+}
+
+/// End the frame (present).
+fn end() {
+    plat_end()
+}
+
+/// Release the window and raylib's resources.
+fn close() {
+    plat_close()
+}
+
+/// Host process memory in KB — the number a RAM test watches.
+fn ram_kb() -> int {
+    return plat_ram_kb()
+}
+
+/// Frames per second raylib reports for the last second.
+fn fps() -> int {
+    return plat_fps()
+}
+
+/// Last frame's duration in milliseconds.
+fn frame_ms() -> int {
+    return plat_frame_ms()
+}
+
+fn screen_w() -> int {
+    return plat_screen_w()
+}
+
+fn screen_h() -> int {
+    return plat_screen_h()
+}
+
+/// Set one raygui style property, e.g.
+/// `set_style(BUTTON, DEFAULT_TEXT_SIZE, 20)`.
+fn set_style(control: int, prop: int, value: int) {
+    plat_set_style(control, prop, value)
+}
+
+/// Text label. Returns 0 (raygui labels have no result).
+fn label(x: int, y: int, w: int, h: int, text: string) -> int {
+    return plat_label(x, y, w, h, text)
+}
+
+/// Panel background.
+fn panel(x: int, y: int, w: int, h: int, text: string) -> int {
+    return plat_panel(x, y, w, h, text)
+}
+
+/// Group box with a titled border.
+fn group_box(x: int, y: int, w: int, h: int, text: string) -> int {
+    return plat_group_box(x, y, w, h, text)
+}
+
+/// Separator line.
+fn line(x: int, y: int, w: int, h: int, text: string) -> int {
+    return plat_line(x, y, w, h, text)
+}
+
+/// Push button. 1 on the frame it is clicked.
+fn button(x: int, y: int, w: int, h: int, text: string) -> int {
+    return plat_button(x, y, w, h, text)
+}
+
+/// Toggle button; flips `active` (1/0) when pressed.
+fn toggle(x: int, y: int, w: int, h: int, text: string, active: &mut int) -> int {
+    return plat_toggle(x, y, w, h, text, active)
+}
+
+/// Check box; flips `checked` (1/0) when clicked.
+fn checkbox(x: int, y: int, w: int, h: int, text: string, checked: &mut int) -> int {
+    return plat_checkbox(x, y, w, h, text, checked)
+}
+
+/// Draggable slider over `lo..hi`, writing `value`.
+fn slider(x: int, y: int, w: int, h: int, left: string, right: string,
+          value: &mut float, lo: float, hi: float) -> int {
+    return plat_slider(x, y, w, h, left, right, value, lo, hi)
+}
+
+/// Progress bar reading `value` over `lo..hi`.
+fn progress(x: int, y: int, w: int, h: int, left: string, right: string,
+            value: &mut float, lo: float, hi: float) -> int {
+    return plat_progress(x, y, w, h, left, right, value, lo, hi)
+}
+
+/// Spinner over `lo..hi`, writing `value`. `edit = 1` opens the text field.
+fn spinner(x: int, y: int, w: int, h: int, text: string, value: &mut int,
+           lo: int, hi: int, edit: int) -> int {
+    return plat_spinner(x, y, w, h, text, value, lo, hi, edit)
+}
+
+/// Numeric value box; `edit = 1` opens the text field.
+fn value_box(x: int, y: int, w: int, h: int, text: string, value: &mut int,
+             lo: int, hi: int, edit: int) -> int {
+    return plat_value_box(x, y, w, h, text, value, lo, hi, edit)
+}
+
+/// Dropdown; `text` items separated by `;`, `active` is the index in/out.
+fn combo(x: int, y: int, w: int, h: int, text: string, active: &mut int) -> int {
+    return plat_combo(x, y, w, h, text, active)
+}
+
+/// Scrollable list view; `text` items separated by `;`, `scroll`/`active` in/out.
+fn listview(x: int, y: int, w: int, h: int, text: string,
+            scroll: &mut int, active: &mut int) -> int {
+    return plat_listview(x, y, w, h, text, scroll, active)
+}
