@@ -561,7 +561,7 @@ static int lower_call(AstNode *n) {
         i->callee = n->as.call.c_builtin;
         for (int k = 0; k < nargs; k++) {
             int a = args[k];
-            if (a >= 0 && a < F->nlocals && type_needs_drop(F->locals[a].ty))
+            if (a >= 0 && a < F->nlocals && type_arg_transfers(F->locals[a].ty))
                 F->locals[a].needs_drop = 0;
         }
         return dst;
@@ -606,10 +606,14 @@ static int lower_call(AstNode *n) {
         i->a = callee_local;
     else
         i->callee = callee;
-    /* Ownership of Box/[]T args leaves with the callee. */
+    /* The callee adopts the heap handles of the arguments it was passed
+       without the codegen retaining a copy of them — a Box or an fn. A []T
+       arrives retained instead, so the caller still owns a reference and has
+       to run its drop; clearing the flag for one would leak the buffer, which
+       is what this loop used to do for every argument of those types. */
     for (int k = 0; k < i->nargs; k++) {
         int a = i->args[k];
-        if (a >= 0 && a < F->nlocals && type_needs_drop(F->locals[a].ty))
+        if (a >= 0 && a < F->nlocals && type_arg_transfers(F->locals[a].ty))
             F->locals[a].needs_drop = 0;
     }
     return dst;
@@ -727,10 +731,12 @@ static int lower_expr(AstNode *n) {
                 i->place = p;
                 i->ty = ir_subst(n->ty);
                 src = d;
-                /* A load of an owning type is a copy for reading/calling, not
-                   a transfer — the place still owns it. */
-                if (!(n->flags & ASTF_MOVED) && type_needs_drop(F->locals[d].ty))
-                    F->locals[d].needs_drop = 0;
+                /* Reading an owning value out of a place hands out an *owned*
+                   copy: the codegen retains on the load, and `d` drops it at
+                   the end of the scope unless a consumer moves it out first.
+                   This used to mark the copy as "for reading only", which
+                   left the reference with nobody to release: a `let` or a
+                   struct field that stole it then leaked the buffer. */
             }
             /* Ownership transfer: the source is dead after this use. */
             if ((n->flags & ASTF_MOVED) && n->ty && type_needs_drop(n->ty)) {
@@ -1102,6 +1108,20 @@ static void lower_stmt(AstNode *n) {
             return;
         case AST_RETURN: {
             int v = n->as.ret.expr ? lower_expr(n->as.ret.expr) : -1;
+            /* A module global is never dropped, so returning one hands the
+               caller an alias that it would free. Materialize an owned copy:
+               the load takes a reference and the return value is exempt from
+               the exit drops, so that reference transfers to the caller. */
+            if (v >= 0 && v < F->nlocals && F->locals[v].is_global &&
+                type_needs_drop(F->locals[v].ty)) {
+                Type *vt = F->locals[v].ty;
+                int d = new_local(vt, NULL, 0);
+                IrInst *ld = emit(IR_LOAD, n->loc);
+                ld->dst = d;
+                ld->place = place_local(v, vt);
+                ld->ty = vt;
+                v = d;
+            }
             term_ret(v, n->loc);
             return;
         }
@@ -1164,11 +1184,17 @@ static void lower_stmt(AstNode *n) {
             CUR = body;
             sdepth++;
             scope_push(n->as.for_stmt.var, iv);
-            loop_push(latch, exit, F->nlocals);
+            int base = F->nlocals;
+            loop_push(latch, exit, base);
             lower_stmt(n->as.for_stmt.body);
             if (nloop > 0) nloop--;
             scope_pop_to(sdepth - 1);
             sdepth--;
+            /* The body's `let`s are re-initialized on the next pass, so this
+               pass has to release what they own before looping. `break` and
+               `continue` already do this; falling through to the latch did
+               not, so a body local that owns a buffer leaked one per pass. */
+            if (!block_closed()) emit_drops_from(base, n->loc);
             term_jmp(latch);
 
             CUR = latch;
@@ -1194,14 +1220,19 @@ static void lower_stmt(AstNode *n) {
         }
         case AST_WHILE: {
             int head = new_block(), body = new_block(), exit = new_block();
+            /* Everything a pass creates — the condition's temporaries and the
+               body's `let`s — is re-created on the next pass, so the per-pass
+               drop range starts here and is released at the end of the pass. */
+            int base = F->nlocals;
             term_jmp(head);
             CUR = head;
             int c = lower_expr(n->as.if_stmt.cond);
             term_br(c, body, exit);
             CUR = body;
-            loop_push(head, exit, F->nlocals);
+            loop_push(head, exit, base);
             lower_stmt(n->as.if_stmt.then_block);
             if (nloop > 0) nloop--;
+            if (!block_closed()) emit_drops_from(base, n->loc);
             term_jmp(head);
             CUR = exit;
             return;
