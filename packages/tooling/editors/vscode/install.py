@@ -10,7 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 HOME = Path.home()
-EXT_ID = "yuga.loam"
+EXT_ID = "loam.loam"
 VERSION = "0.1.0"
 FOLDER = f"{EXT_ID}-{VERSION}"
 

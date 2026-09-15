@@ -12,7 +12,7 @@ From the **repo root**. macOS + Homebrew.
 ```
 
 This installs Temurin (JDK), Android command-line tools, Gradle, platform 34,
-NDK, the emulator image, and an AVD named `yuga`. It is several gigabytes and
+NDK, the emulator image, and an AVD named `loam`. It is several gigabytes and
 asks you to accept Google’s SDK licenses.
 
 **`.sdk-env` is created by this script.** It is gitignored. Do not `source` it
@@ -34,7 +34,7 @@ Optional: copy the `export` lines from `.sdk-env` into `~/.zshrc`.
 
 ## 2. Start the emulator (optional — `run.sh` auto-boots it)
 
-`run.sh` detects when no device is connected and boots the shared `yuga` AVD
+`run.sh` detects when no device is connected and boots the shared `loam` AVD
 itself (SwiftShader, same flags as `emu.sh`). Only run this manually if you
 want the emulator in its own terminal or need custom flags.
 
@@ -45,7 +45,7 @@ Quit any emulator window that is already open (the host-GPU path logs
 ./examples/zeus/counter/android/emu.sh
 ```
 
-That boots AVD `yuga` with **SwiftShader** (`-gpu swiftshader_indirect`) so
+That boots AVD `loam` with **SwiftShader** (`-gpu swiftshader_indirect`) so
 macOS does not have to bind a host OpenGL/Metal context. Leave this terminal
 open. Wait until the home screen appears.
 
@@ -53,10 +53,10 @@ Equivalent:
 
 ```
 source ./examples/zeus/counter/android/.sdk-env
-emulator -avd yuga -gpu swiftshader_indirect -feature -Vulkan -no-snapshot-load
+emulator -avd loam -gpu swiftshader_indirect -feature -Vulkan -no-snapshot-load
 ```
 
-Do not use `emulator -avd yuga` alone on this Mac — that is what produces
+Do not use `emulator -avd loam` alone on this Mac — that is what produces
 errors 12299 / 12301 and a black window.
 
 If SwiftShader is slow, try host GPU instead:
@@ -114,9 +114,9 @@ until that bind is opened.
 |---|---|
 | `source: no such file or directory: .sdk-env` | Run `./install.sh` to completion. |
 | `run.sh: no Android SDK` | Same: `./install.sh`. Or set `ANDROID_HOME`. |
-| `gradle installDebug` / no devices | Emulator not booted. `emulator -avd yuga` and wait. |
+| `gradle installDebug` / no devices | Emulator not booted. `emulator -avd loam` and wait. |
 | `Failed to make display surface context current` / `12299` / `12301` / blank emulator | Host GPU bind failed. Quit the emulator and start `./emu.sh` (SwiftShader). |
-| Emulator home screen is black | Same GPU issue. `./emu.sh`, not `emulator -avd yuga` alone. |
+| Emulator home screen is black | Same GPU issue. `./emu.sh`, not `emulator -avd loam` alone. |
 | App activity is blank / frozen | RPC used to run on the UI thread. Rebuild (`./run.sh`). Keep `../backend/run.sh` on `:8080`. |
 | `emulator: command not found` | Use `./emu.sh`, or `source .sdk-env` then `$ANDROID_HOME/emulator/emulator`. |
 | App opens but RPC fails | Backend not on `:8080`. `run.sh` starts it; or `../backend/run.sh`. Confirm you used `10.0.2.2`, not `127.0.0.1`. |

@@ -98,7 +98,7 @@ one UI thread**. Keep it.
 ### 5.2 Async = one UI thread + Loam queues (no language threads)
 Loam fns cannot run on arbitrary threads (globals, arenas). Shape:
 
-```yuga
+```loam
 let c = http.client("127.0.0.1:8080")
 c.call_async("Identity.Me", "", fn(resp) {   // gRPC I/O runs off the UI thread
     profile.set(decode_Me(resp))                // callback runs ON the UI thread

@@ -1,5 +1,5 @@
 import "std:fmt"
 
 fn main() {
-    fmt.println("hello, yuga")
+    fmt.println("hello, loam")
 }

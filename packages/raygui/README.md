@@ -3,7 +3,7 @@
 [raygui](https://github.com/raysan5/raygui) is a single-header immediate-mode
 GUI built on [raylib](https://www.raylib.com). This package exposes it to Loam.
 
-```yuga
+```loam
 import "std:raygui"
 
 let mut value: float = 0.5

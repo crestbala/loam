@@ -102,7 +102,7 @@ static void linux_run(void) {
     }
     g_dpy = XOpenDisplay(NULL);
     if (!g_dpy) {
-        fprintf(stderr, "yuga: no X11 display (set DISPLAY or use ZEUS_HEADLESS=1)\n");
+        fprintf(stderr, "loam: no X11 display (set DISPLAY or use ZEUS_HEADLESS=1)\n");
         return;
     }
     g_scr = DefaultScreen(g_dpy);

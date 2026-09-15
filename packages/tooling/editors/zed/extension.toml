@@ -1,4 +1,4 @@
-id = "yuga"
+id = "loam"
 name = "Loam"
 version = "0.1.12"
 schema_version = 1
@@ -15,4 +15,4 @@ language = "Loam"
 languages = ["Loam"]
 
 [language_servers.loam-lsp.language_ids]
-Loam = "yuga"
+Loam = "loam"

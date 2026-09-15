@@ -60,7 +60,7 @@ fn of(id: int) -> PageResp {
             "Libraries",
             "Language libraries live in packages/loam/std/. Import with import \"std:name\".",
             "std:fmt — stdout, not printf. std:zeus — UI Node tree, Signal<T>, and the whole themed design system (Card, Button with LOOK/SIZE, Dialog, Navbar, For lists). std:http — unary RPC, #[proto], gRPC-Web and h2c. std:maya — 3D/2D, integer world units. std:sys — env, files, exec (native). std:net — TCP; used by http, not a typical app import.\n\nWidgets and components share one import: std:zeus.",
-            "import \"std:fmt\"\n\nfn main() {\n    fmt.println(\"hello, yuga\")\n}"
+            "import \"std:fmt\"\n\nfn main() {\n    fmt.println(\"hello, loam\")\n}"
         )
     }
     if id == 8 {
@@ -131,6 +131,6 @@ fn of(id: int) -> PageResp {
         "Loam",
         "A memory-safe systems language: Odin-like syntax, Rust-like ownership.",
         "The compiler (loam) typechecks a program, lowers it to IR, emits C99, and invokes cc. C is the platform binding target, not the language's semantics.\n\nQuoted imports only: import \"std:foo\" loads packages/loam/std/foo.loam. Call imported items as foo.bar(...).\n\nThis site is a Zeus app. Page copy comes from Docs.Page over gRPC-Web (Loam backend). Vite serves the Canvas2D wasm and proxies /Docs to :8082.",
-        "import \"std:fmt\"\n\nfn main() {\n    fmt.println(\"hello, yuga\")\n}"
+        "import \"std:fmt\"\n\nfn main() {\n    fmt.println(\"hello, loam\")\n}"
     )
 ))

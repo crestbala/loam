@@ -172,7 +172,7 @@ static int64_t free_sig_pop(void) {
 
 /* Reserve a slot: recycle a freed id or append a fresh one (mirror 0).
    Allocations made while a rebuild scope is open are recorded against the
-   scope node so the yuga teardown can free them. */
+   scope node so the loam teardown can free them. */
 static int64_t sig_slot_zero(void) {
     int64_t id;
     int32_t zero = 0;

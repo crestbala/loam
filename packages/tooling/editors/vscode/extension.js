@@ -12,7 +12,7 @@ const pending = new Map();
 let ready = Promise.resolve();
 
 function findLsp(folder) {
-  const configured = vscode.workspace.getConfiguration("yuga").get("lspPath");
+  const configured = vscode.workspace.getConfiguration("loam").get("lspPath");
   if (configured && fs.existsSync(configured)) return configured;
   let dir = folder || "";
   while (dir && dir !== path.dirname(dir)) {
@@ -104,7 +104,7 @@ function hoverFrom(result) {
 let diagnosticCollection;
 
 function activate(context) {
-  diagnosticCollection = vscode.languages.createDiagnosticCollection("yuga");
+  diagnosticCollection = vscode.languages.createDiagnosticCollection("loam");
   context.subscriptions.push(diagnosticCollection);
 
   const folder = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0]
@@ -138,16 +138,16 @@ function activate(context) {
     },
   }).then((msg) => {
     notify("initialized", {});
-    vscode.workspace.textDocuments.filter((d) => d.languageId === "yuga").forEach(openDoc);
+    vscode.workspace.textDocuments.filter((d) => d.languageId === "loam").forEach(openDoc);
     return msg;
   });
 
   function openDoc(doc) {
-    if (doc.languageId !== "yuga") return;
+    if (doc.languageId !== "loam") return;
     notify("textDocument/didOpen", {
       textDocument: {
         uri: doc.uri.toString(),
-        languageId: "yuga",
+        languageId: "loam",
         version: doc.version,
         text: doc.getText(),
       },
@@ -157,18 +157,18 @@ function activate(context) {
   context.subscriptions.push(
     vscode.workspace.onDidOpenTextDocument(openDoc),
     vscode.workspace.onDidChangeTextDocument((e) => {
-      if (e.document.languageId !== "yuga") return;
+      if (e.document.languageId !== "loam") return;
       notify("textDocument/didChange", {
         textDocument: { uri: e.document.uri.toString(), version: e.document.version },
         contentChanges: [{ text: e.document.getText() }],
       });
     }),
     vscode.workspace.onDidCloseTextDocument((doc) => {
-      if (doc.languageId !== "yuga") return;
+      if (doc.languageId !== "loam") return;
       notify("textDocument/didClose", { textDocument: { uri: doc.uri.toString() } });
       diagnosticCollection.delete(doc.uri);
     }),
-    vscode.languages.registerHoverProvider("yuga", {
+    vscode.languages.registerHoverProvider("loam", {
         async provideHover(doc, position) {
         await ready;
         const msg = await request("textDocument/hover", {
@@ -178,7 +178,7 @@ function activate(context) {
         return hoverFrom(msg && msg.result);
       },
     }),
-    vscode.languages.registerDefinitionProvider("yuga", {
+    vscode.languages.registerDefinitionProvider("loam", {
         async provideDefinition(doc, position) {
         await ready;
         const msg = await request("textDocument/definition", {
@@ -191,7 +191,7 @@ function activate(context) {
       },
     }),
     vscode.languages.registerCompletionItemProvider(
-      "yuga",
+      "loam",
       {
         async provideCompletionItems(doc, position) {
           await ready;
@@ -223,7 +223,7 @@ function activate(context) {
   const legend = new vscode.SemanticTokensLegend(legendTypes, ["declaration"]);
   context.subscriptions.push(
     vscode.languages.registerDocumentSemanticTokensProvider(
-      "yuga",
+      "loam",
       {
         async provideDocumentSemanticTokens(doc) {
           await ready;

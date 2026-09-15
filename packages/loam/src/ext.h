@@ -2,7 +2,7 @@
  * ext.h — source-file extensions accepted by the compiler.
  *
  * `.loam` is canonical and `.loa` is an accepted short alias. There is no
- * legacy spelling: the pre-rename `.yuga` extension is not recognized.
+ * legacy spelling: the pre-rename `.loam` extension is not recognized.
  *
  * All lookups try the extensions in that order, so when a module exists under
  * both spellings the canonical one wins.

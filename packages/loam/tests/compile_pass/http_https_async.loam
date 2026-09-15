@@ -41,7 +41,7 @@ fn main() {
         fmt.println("https async offline: skipped (timeout)")
         return
     }
-    let req = "GET / HTTP/1.1\r\nHost: example.com\r\nUser-Agent: yuga-tls-async\r\nConnection: close\r\n\r\n"
+    let req = "GET / HTTP/1.1\r\nHost: example.com\r\nUser-Agent: loam-tls-async\r\nConnection: close\r\n\r\n"
     let mut sent = 0
     i = 0
     while i < 200 {

@@ -485,8 +485,8 @@ static void android_howto(const char *proj, const char *pkg) {
                 "  No Android SDK found. For the counter example:\n"
                 "    ./zeus/examples/counter/android/install.sh\n"
                 "  That installs Temurin, command-line tools, Gradle, platform 34, NDK,\n"
-                "  and an AVD named yuga (macOS + Homebrew). Then:\n"
-                "    emulator -avd yuga\n"
+                "  and an AVD named loam (macOS + Homebrew). Then:\n"
+                "    emulator -avd loam\n"
                 "    ./zeus/examples/counter/android/run.sh\n"
                 "  Or install Android Studio and set ANDROID_HOME=~/Library/Android/sdk\n");
 }

@@ -75,7 +75,7 @@ fn main() {
     let mut queries = []string {}
     push(queries, "how does the engine search the mapped rows")
     push(queries, "what does the watcher do when a file changes")
-    push(queries, "keep the c seam minimal and the logic in yuga")
+    push(queries, "keep the c seam minimal and the logic in loam")
     push(queries, "which file chunks does a crash search find")
 
     // Optional models: a Grok key file goes to api.x.ai; a model name file

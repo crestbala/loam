@@ -227,7 +227,7 @@ static void emit_var_decl_type(FILE *o, Type *t, const char *name) {
 }
 
 static const char *src_file(AstNode *n) {
-    return (n && n->loc.file) ? n->loc.file : "yuga";
+    return (n && n->loc.file) ? n->loc.file : "loam";
 }
 
 /** File and line arguments for loam_panic / loam_idx / loam_new. */
@@ -1576,7 +1576,7 @@ static const char *lv(int id) {
 
 static void emit_ir_loc(FILE *o, SourceLoc loc) {
     fprintf(o, "\"");
-    const char *f = loc.file ? loc.file : "yuga";
+    const char *f = loc.file ? loc.file : "loam";
     for (const char *p = f; *p; p++) {
         if (*p == '\\' || *p == '"') fputc('\\', o);
         fputc(*p, o);
@@ -2513,7 +2513,7 @@ static void emit_ir_term(FILE *o, const IrBlock *bb, int is_main) {
                     bb->succ[1]);
             break;
         case IR_TERM_UNREACHABLE:
-            fprintf(o, "loam_panic(\"yuga\", 0, \"unreachable\");\n");
+            fprintf(o, "loam_panic(\"loam\", 0, \"unreachable\");\n");
             break;
     }
 }

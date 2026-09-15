@@ -13,7 +13,7 @@ From the **repo root**. macOS + Homebrew.
 ```
 
 This installs Temurin (JDK), Android command-line tools, Gradle, platform 34,
-NDK, the emulator image, and an AVD named `yuga`. It is several gigabytes and
+NDK, the emulator image, and an AVD named `loam`. It is several gigabytes and
 asks you to accept Google's SDK licenses.
 
 **`.sdk-env` is created by this script.** It is gitignored. Do not `source` it
@@ -36,12 +36,12 @@ ln -s ../../counter/android/.sdk-env examples/zeus/gallery/android/.sdk-env
 
 ## 2. Boot the emulator (optional — `run.sh` auto-boots it)
 
-`run.sh` detects when no device is connected and boots the shared `yuga` AVD
+`run.sh` detects when no device is connected and boots the shared `loam` AVD
 itself (SwiftShader, same flags as below). Only run this manually if you want
 the emulator in its own terminal or to adjust flags:
 ## 2. Start the emulator (optional — `run.sh` auto-boots it)
 
-`run.sh` detects when no device is connected and boots the shared `yuga` AVD
+`run.sh` detects when no device is connected and boots the shared `loam` AVD
 itself. Only run this manually if you want the emulator in its own terminal
 or need custom flags:
 
@@ -49,7 +49,7 @@ or need custom flags:
 ./examples/zeus/counter/android/emu.sh
 ```
 
-`emu.sh` launches the `yuga` AVD with SwiftShader (the counter example shares
+`emu.sh` launches the `loam` AVD with SwiftShader (the counter example shares
 the same AVD). You can also boot it from Android Studio. Keep it running if
 you started it by hand.
 

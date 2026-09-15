@@ -87,7 +87,7 @@ fn take_n(s: string, c: &mut Cur, n: int) -> string {
 }
 
 fn magic_ok(s: string) -> int {
-    let m = "YUGAKV1\n"
+    let m = "LOAMKV1\n"
     if s.len < m.len {
         return 0
     }
@@ -103,7 +103,7 @@ fn magic_ok(s: string) -> int {
 
 fn encode(keys: []string, vals: []string) -> string {
     let n = keys.len
-    let mut out = "YUGAKV1\n{{n}}\n"
+    let mut out = "LOAMKV1\n{{n}}\n"
     let mut i = 0
     while i < n {
         let k = keys[i]

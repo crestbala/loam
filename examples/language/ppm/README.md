@@ -55,7 +55,7 @@ LOAM_PPM_FRAMES=240 LOAM_PPM_CRF=0 ./bin/loam examples/language/ppm/plasma.loam 
 
 One frame is one `[]int` byte buffer:
 
-```yuga
+```loam
 let mut b = frames.image(w, h)          // "P6\n<w> <h>\n255\n"
 frames.rgbf(&mut b, c.x, c.y, c.z)      // 3 bytes per pixel, clamped
 frames.save(dir, "plasma", f, 3, b)     // sys.write_file(...)

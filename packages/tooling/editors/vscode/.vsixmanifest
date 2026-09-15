@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
 	<Metadata>
-		<Identity Language="en-US" Id="yuga" Version="0.1.0" Publisher="yuga" />
+		<Identity Language="en-US" Id="loam" Version="0.1.0" Publisher="loam" />
 		<DisplayName>Loam</DisplayName>
 		<Description xml:space="preserve">Loam language: syntax highlighting and IntelliSense via loam-lsp.</Description>
-		<Tags>yuga,language</Tags>
+		<Tags>loam,language</Tags>
 		<Categories>Programming Languages</Categories>
 		<Properties>
 			<Property Id="Microsoft.VisualStudio.Code.Engine" Value="^1.74.0" />

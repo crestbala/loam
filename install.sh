@@ -78,7 +78,7 @@ if [ "$MODE" = android ]; then
   say "android stack: JDK / SDK / NDK / Gradle / emulator AVD (several GB)"
   sh "$HERE/examples/zeus/counter/android/install.sh"
   ln -sfn ../../counter/android/.sdk-env "$HERE/examples/zeus/gallery/android/.sdk-env"
-  say "android ok — boot the shared 'yuga' AVD with examples/zeus/<app>/android/emu.sh"
+  say "android ok — boot the shared 'loam' AVD with examples/zeus/<app>/android/emu.sh"
 fi
 
 say "done. Next steps:"

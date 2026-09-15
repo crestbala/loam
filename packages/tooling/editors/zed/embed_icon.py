@@ -4,9 +4,9 @@ from PIL import Image
 import base64
 
 src = Path(
-    "/Users/bala_mani/.cursor/projects/Users-bala-mani-Projects-MyProjects-yuga/assets/4104036f-c043-4e77-a6d7-b10b117683cb.png"
+    "/Users/bala_mani/.cursor/projects/Users-bala-mani-Projects-MyProjects-loam/assets/4104036f-c043-4e77-a6d7-b10b117683cb.png"
 )
-icons = Path("/Users/bala_mani/Projects/MyProjects/yuga/editors/zed/icons")
+icons = Path("/Users/bala_mani/Projects/MyProjects/loam/editors/zed/icons")
 img = Image.open(src).convert("RGBA")
 pixels = img.load()
 w, h = img.size
@@ -19,7 +19,7 @@ for y in range(h):
         else:
             pixels[x, y] = (0, 0, 0, a if a else 255)
 
-png_path = icons / "yuga.png"
+png_path = icons / "loam.png"
 img.save(png_path)
 buf = Path("/tmp/loam_icon.png")
 img.save(buf)

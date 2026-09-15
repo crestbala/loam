@@ -142,7 +142,7 @@ def main() -> int:
                 "params": {
                     "textDocument": {
                         "uri": uri,
-                        "languageId": "yuga",
+                        "languageId": "loam",
                         "version": 1,
                         "text": bad,
                     }
@@ -306,7 +306,7 @@ def main() -> int:
                 "params": {
                     "textDocument": {
                         "uri": async_uri,
-                        "languageId": "yuga",
+                        "languageId": "loam",
                         "version": 1,
                         "text": async_src,
                     }
@@ -336,7 +336,7 @@ def main() -> int:
                 "params": {
                     "textDocument": {
                         "uri": async_uri,
-                        "languageId": "yuga",
+                        "languageId": "loam",
                         "version": 2,
                         "text": async_src,
                     }
@@ -358,7 +358,7 @@ def main() -> int:
                 "params": {
                     "textDocument": {
                         "uri": kv_uri,
-                        "languageId": "yuga",
+                        "languageId": "loam",
                         "version": 1,
                         "text": kv_src,
                     }

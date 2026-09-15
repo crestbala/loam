@@ -24,7 +24,7 @@ const loader = resolve(here, "loader.js");
 
 function compileWasm() {
   if (!existsSync(loam)) {
-    throw new Error("missing " + loam + " — run `make` in the yuga repo first");
+    throw new Error("missing " + loam + " — run `make` in the loam repo first");
   }
   if (!existsSync(src)) {
     throw new Error("no Zeus app at " + src);
@@ -55,7 +55,7 @@ function rebuild(reason) {
 function shouldRebuild(file) {
   const n = file.replace(/\\/g, "/");
   if (n.includes("/node_modules/") || n.includes("/build/")) return false;
-  return /\.(yuga|c|h)$/.test(n) || n.endsWith("/web/loader.js");
+  return /\.(loam|c|h)$/.test(n) || n.endsWith("/web/loader.js");
 }
 
 export default defineConfig({

@@ -11,7 +11,7 @@ event loop and call back into `engine_*` trampolines.
 A **boundary module** (today: `packages/zeus/std/zeuscore/platform.loam`, empty `fn`s in
 `packages/loam/std/fmt.loam` / `packages/loam/std/net.loam` / `packages/loam/std/sys.loam`) declares plain, **bodyless** functions:
 
-```yuga
+```loam
 fn plat_set_window(title: string, width: int, height: int) {}
 ```
 

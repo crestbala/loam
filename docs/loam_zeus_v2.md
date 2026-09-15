@@ -468,7 +468,7 @@ Narrowing saves nothing if narrow fields are scattered between `f32`s — the
 compiler just inserts padding and the struct is the same size. Group by width,
 widest first:
 
-```yuga
+```loam
 struct NodeRec {
     // f32 block — geometry, hot in layout
     x: f32, y: f32, w: f32, h: f32,
@@ -686,7 +686,7 @@ Special files per directory, matching Next.js conventions so the knowledge trans
 Next.js's server actions exist to cross a language/serialization boundary. You
 don't have that boundary: it's Loam on both sides.
 
-```yuga
+```loam
 // routes/blog/[slug]/loader.loam
 #[server]
 fn get_post(slug: string) -> Post {
@@ -726,7 +726,7 @@ This is a thin layer over the async that already exists (`call_async`,
 composition out of call sites and into the signal graph, where dependency tracking
 is already solved:
 
-```yuga
+```loam
 let post = zeus.resource(fn() => get_post(router.param("slug")))
 
 zeus.Match(post.state, {
@@ -790,7 +790,7 @@ traits, no macros, no comptime, and no reflection. **The answer already exists i
 the tree: do exactly what `#[proto]` does.** The compiler generates encode/decode
 for an attributed struct. Same mechanism, second format.
 
-```yuga
+```loam
 #[json]
 struct Charge {
     #[json(name = "id")]              id: string,
@@ -890,7 +890,7 @@ tool and you should know that before starting, not after.
 
 ### Per-route metadata
 
-```yuga
+```loam
 // routes/blog/[slug]/page.loam
 
 fn meta(p: Params) -> Meta {
@@ -954,7 +954,7 @@ component ever produces an element.
 `assets/` is compiled, not copied. Images are decoded and resized at build time
 into the format each host wants; the build emits a typed handle per asset:
 
-```yuga
+```loam
 zeus.Image(assets.hero, width = 320)
 ```
 
@@ -1011,8 +1011,8 @@ Zeus is a framework, not a package inside the compiler repo. Lifting it out make
 the boundary between language and framework enforceable rather than aspirational.
 
 ```
-yuga/
-  yuga/                     the language
+loam/
+  loam/                     the language
     src/                    loam (C11): lexer, parser, sema, ir, codegen_c
     std/                    core std only: fmt, net, sys, thread, math, str, time
     runtime/                loam_rt — the ONE C runtime for the ecosystem
@@ -1048,7 +1048,7 @@ yuga/
     language/
     zeus/                   gallery, dashboard, counter, greeninfer
 
-  docs/                     yuga.md, boundary.md, this file
+  docs/                     loam.md, boundary.md, this file
   bin/                      loam, loam-lsp, loam-fmt, zeus
   install.sh  run.sh  Makefile
 ```

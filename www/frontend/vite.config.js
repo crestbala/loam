@@ -20,7 +20,7 @@ function wipeBuild() {
 
 function compileWasm() {
   if (!existsSync(loam)) {
-    throw new Error("missing " + loam + " — run `make` in the yuga repo first");
+    throw new Error("missing " + loam + " — run `make` in the loam repo first");
   }
   const r = spawnSync(loam, ["build", "--target=wasm32", app], {
     cwd: repo,
@@ -42,7 +42,7 @@ function rebuild(reason) {
 function shouldRebuild(file) {
   const n = file.replace(/\\/g, "/");
   if (n.includes("/node_modules/") || n.includes("/build/")) return false;
-  return /\.(yuga|c|h)$/.test(n) || n.endsWith("/web/loader.js");
+  return /\.(loam|c|h)$/.test(n) || n.endsWith("/web/loader.js");
 }
 
 export default defineConfig({

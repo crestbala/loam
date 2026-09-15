@@ -30,7 +30,7 @@ fn main() {
         fmt.println("https offline: skipped")
         return
     }
-    let req = "GET / HTTP/1.1\r\nHost: example.com\r\nUser-Agent: yuga-tls\r\nConnection: close\r\n\r\n"
+    let req = "GET / HTTP/1.1\r\nHost: example.com\r\nUser-Agent: loam-tls\r\nConnection: close\r\n\r\n"
     let n = net.tcp_write(fd, req)
     must(n >= 0)
     let mut acc = ""

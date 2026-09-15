@@ -9,7 +9,7 @@ This file is the **next series of phases**: make the same Zeus app easier
 to write and run on every host. The production stack (async, images, IME,
 virtual lists, TLS, KV, DCE, focus, scale, threads) is in
 [zeus_roadmap.md](zeus_roadmap.md). Do not re-plan those. Language
-architecture: [yuga.md](yuga.md). C seam: [boundary.md](boundary.md).
+architecture: [loam.md](loam.md). C seam: [boundary.md](boundary.md).
 
 Status: tick a phase only when its exit criteria run green in `make test`
 (headless) unless a box says otherwise. One phase at a time.
