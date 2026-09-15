@@ -59,30 +59,30 @@ all: mkdirs $(TARGET) $(LSP) $(FMT) $(ZEUS)
 lsp: mkdirs $(LSP)
 
 grammar:
-	cd packages/tooling/tree-sitter-yuga && npx --yes tree-sitter-cli generate
+	cd packages/tooling/tree-sitter-loam && npx --yes tree-sitter-cli generate
 	$(MAKE) grammar-check
 	$(MAKE) zed-grammar
 
 # The grammar is a second, hand-maintained parser and nothing in `make test`
 # reads it, so it rots silently while loam moves on. Gate `make grammar` on it.
 grammar-check:
-	@bash packages/tooling/tree-sitter-yuga/check.sh
+	@bash packages/tooling/tree-sitter-loam/check.sh
 
 # Zed clones this directory via file://, so it must be its own git repo with
 # src/parser.c at the clone root. The nested .git is local-only (not committed).
 zed-grammar:
-	@cd packages/tooling/tree-sitter-yuga && \
+	@cd packages/tooling/tree-sitter-loam && \
 	  if [ ! -d .git ]; then git init; fi && \
 	  git add -A && \
 	  if git diff --cached --quiet && git rev-parse --verify HEAD >/dev/null 2>&1; then :; \
 	  else git -c user.name=loam -c user.email=loam@local commit --quiet -m "loam grammar"; fi
-	@rev=$$(git -C packages/tooling/tree-sitter-yuga rev-parse HEAD); \
+	@rev=$$(git -C packages/tooling/tree-sitter-loam rev-parse HEAD); \
 	  sed -i '' "s/^rev = \".*\"/rev = \"$$rev\"/" packages/tooling/editors/zed/extension.toml; \
 	  echo "zed grammar rev $$rev"
 	@# Pin the clone URL to this checkout too, not just the rev: a moved grammar
 	@# directory otherwise leaves Zed cloning a path that no longer exists and
 	@# failing with "failed to compile grammar 'loam'".
-	@repo="file://$(CURDIR)/packages/tooling/tree-sitter-yuga"; \
+	@repo="file://$(CURDIR)/packages/tooling/tree-sitter-loam"; \
 	  sed -i '' "s|^repository = \".*\"|repository = \"$$repo\"|" packages/tooling/editors/zed/extension.toml; \
 	  echo "zed grammar repo $$repo"
 	@rm -rf packages/tooling/editors/zed/grammars

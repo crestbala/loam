@@ -268,7 +268,7 @@ zeus/                  the framework
 raygui/                immediate-mode GUI package (std:raygui)
   std/raygui.loam      the Loam API + frame loop
   vendor/raygui.h      vendored raygui (raysan5/raygui)
-packages/tooling/tree-sitter-yuga/  grammar
+packages/tooling/tree-sitter-loam/  grammar
 packages/tooling/editors/       Zed extension, VSCode extension
 install.sh             one-time macOS setup (core tools; android stack)
 examples/language/     standalone .loam programs

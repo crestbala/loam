@@ -1041,7 +1041,7 @@ loam/
   maya/                     3D/2D engine
 
   tooling/
-    tree-sitter-yuga/
+    tree-sitter-loam/
     editors/                Zed, VS Code / Cursor
 
   examples/

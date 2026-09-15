@@ -13,11 +13,44 @@ HOME = Path.home()
 EXT_ID = "loam.loam"
 VERSION = "0.1.0"
 FOLDER = f"{EXT_ID}-{VERSION}"
+# The pre-rename extension. Its client spawns `bin/yuga-lsp`, which the rename
+# deleted, so it now errors on every startup -- and a leftover copy of it can
+# shadow this one. Installing removes it rather than leaving both registered.
+LEGACY_IDS = ("yuga.yuga",)
 
 
 def dest_dirs() -> list[Path]:
     dirs = [HOME / ".cursor" / "extensions", HOME / ".vscode" / "extensions"]
     return [d for d in dirs if d.parent.is_dir()]
+
+
+def drop_legacy(parent: Path) -> None:
+    """Uninstall the pre-rename extension, folder and registration alike."""
+    for legacy in LEGACY_IDS:
+        for folder in parent.glob(f"{legacy}-*"):
+            shutil.rmtree(folder, ignore_errors=True)
+            print("removed", folder)
+    index = parent / "extensions.json"
+    if not index.is_file():
+        return
+    try:
+        entries = json.loads(index.read_text())
+    except json.JSONDecodeError:
+        return
+    if not isinstance(entries, list):
+        return
+    kept = [
+        e
+        for e in entries
+        if not (
+            isinstance(e, dict)
+            and isinstance(e.get("identifier"), dict)
+            and e["identifier"].get("id") in LEGACY_IDS
+        )
+    ]
+    if len(kept) != len(entries):
+        index.write_text(json.dumps(kept))
+        print("unregistered", ", ".join(LEGACY_IDS))
 
 
 def copy_ext(parent: Path) -> Path:
@@ -86,6 +119,7 @@ def main() -> None:
     n = 0
     for parent in dest_dirs():
         parent.mkdir(parents=True, exist_ok=True)
+        drop_legacy(parent)
         dest = copy_ext(parent)
         register(parent, dest)
         print("installed", dest)

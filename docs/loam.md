@@ -78,7 +78,7 @@ loam/
     tests/        compile_pass / compile_fail / golden (fixtures w/ .expected)
   zeus/           the framework: hosts/ (Cocoa, iOS, Android, Canvas2D), docs/
   tooling/
-    tree-sitter-yuga/  grammar
+    tree-sitter-loam/  grammar
     editors/      editor integrations (Zed, Cursor/VS Code)
   examples/
     language/     standalone demo .loam programs (not test fixtures)
