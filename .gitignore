@@ -15,6 +15,7 @@ packages/tooling/editors/zed/target/
 packages/tooling/editors/zed/grammars/
 packages/tooling/editors/zed/extension.wasm
 examples/language/build/
+examples/language/*/build/
 examples/zeus/*/build/
 examples/zeus/repl/tmp/
 examples/zeus/repl/backend/tmp/
@@ -41,6 +42,10 @@ www/backend/build/
 www/macos/build/
 examples/zeus/counter/backend/build/
 bezel/
+
+# examples/language/ppm writes PPM frames and the encoded video into ./out
+# (`YUGA_PPM_OUT` overrides the directory).
+out/
 
 # Phase 1b realtime demo scratch
 .yuga_tmp/

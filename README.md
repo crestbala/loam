@@ -189,10 +189,12 @@ language demo is `./run.sh language/counter`. `zeus/counter` is an alias.
 | `studio` | Maya 3D toy with orbiting bodies. |
 | `raygui` | raygui immediate-mode controls (buttons, slider, combo, list) with a live process-RAM panel; prints a RAM summary on exit. Needs raylib. |
 | `oob` | Out-of-bounds index; expected to trap. |
+| `ppm/` | PPM (P6) frame generators encoded to mp4 by ffmpeg — `checker` and `plasma` ports of [rexim's gist](https://gist.github.com/rexim/ef86bf70918034a5a57881456c0a0ccf). [README](examples/language/ppm/README.md) |
 
 ```
 ./run.sh http_server          # then Ctrl-C to stop
 ./run.sh oob                  # compile, run, confirm the trap
+./run.sh language/ppm/checker # raster frames -> out/checker.mp4
 ```
 
 Equivalent without `run.sh`:

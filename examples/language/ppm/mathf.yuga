@@ -1,0 +1,187 @@
+//! `mathf` — the float math these raster demos need, written in Yuga.
+//!
+//! There is no `std:math` and no libm seam here, so `sin`, `cos`, `exp`,
+//! `tanh`, `abs` and `sqrt` are ordinary Yuga functions over `float` (f32).
+//! Each one reduces its argument into the interval a polynomial is accurate
+//! on, then evaluates that polynomial in Horner form. Accuracy is around
+//! `1e-6` relative, which is orders of magnitude below one 8-bit color step.
+//!
+//! Because this is plain arithmetic and not a C hook, it is also what makes
+//! the PPM demos portable to `--target wasm`.
+
+//! Pi and its friends, as `float` literals.
+const PI: float = 3.14159265358979
+const TAU: float = 6.28318530717959
+const HALF_PI: float = 1.5707963267949
+const INV_LN2: float = 1.44269504088896
+const LN2: float = 0.693147180559945
+
+//! Reciprocals of n!, the coefficients of every series below.
+const R2: float = 0.5
+const R3: float = 0.166666666666667
+const R4: float = 0.0416666666666667
+const R5: float = 0.00833333333333333
+const R6: float = 0.00138888888888889
+const R7: float = 0.000198412698412698
+const R8: float = 0.0000248015873015873
+const R9: float = 0.00000275573192239859
+const R10: float = 0.000000275573192239859
+
+/// `exp` overflows f32 above ~88.7 and underflows below ~-103; clamp to the
+/// saturating ends of the range instead of trapping in `pow2`.
+const EXP_MAX: float = 88.0
+
+/// `|x|`.
+fn abs(x: float) -> float {
+    if x < 0.0 {
+        return 0.0 - x
+    }
+    return x
+}
+
+/// Nearest integer to `x` as a float. Only used for argument reduction, where
+/// a tie either way is equally correct, so the clamping is about keeping the
+/// `float` -> `i32` conversion in range rather than about rounding mode: an
+/// `f32` -> `i32` conversion traps on a value it cannot hold, and `NaN`
+/// fails every comparison, so it has to be caught first.
+fn round(x: float) -> float {
+    if x > 1000000.0 {
+        return 1000000.0
+    }
+    if x < 0.0 - 1000000.0 {
+        return 0.0 - 1000000.0
+    }
+    if x != x {
+        return 0.0
+    }
+    if x >= 0.0 {
+        return f32(i32(x + 0.5))
+    }
+    return 0.0 - f32(i32(0.0 - x + 0.5))
+}
+
+/// `x` folded into `[-TAU/2, TAU/2]`, so the kernels below never see a large
+/// argument.
+fn wrap(x: float) -> float {
+    return x - TAU * round(x / TAU)
+}
+
+/// `sin t` for `0 <= t <= HALF_PI`.
+fn sin_kernel(t: float) -> float {
+    let z = t * t
+    return t * (1.0 - z * (R3 - z * (R5 - z * (R7 - z * R9))))
+}
+
+/// `cos t` for `0 <= t <= HALF_PI`.
+fn cos_kernel(t: float) -> float {
+    let z = t * t
+    return 1.0 - z * (R2 - z * (R4 - z * (R6 - z * (R8 - z * R10))))
+}
+
+/// `sin x`, all `x`.
+fn sin(x: float) -> float {
+    let r = wrap(x)
+    let a = abs(r)
+    let mut t = a
+    if a > HALF_PI {
+        t = PI - a
+    }
+    let s = sin_kernel(t)
+    if r < 0.0 {
+        return 0.0 - s
+    }
+    return s
+}
+
+/// `cos x`, all `x`.
+fn cos(x: float) -> float {
+    let r = wrap(x)
+    let mut a = abs(r)
+    let mut s = 1.0
+    if a > HALF_PI {
+        a = PI - a
+        s = 0.0 - 1.0
+    }
+    return s * cos_kernel(a)
+}
+
+/// `2^n` for an integer-valued `n` in `-126..126`.
+fn pow2(n: float) -> float {
+    let k = i32(n)
+    let mut m = 1.0
+    let mut i = 0
+    while i < k {
+        m = m * 2.0
+        i = i + 1
+    }
+    i = 0
+    while i < 0 - k {
+        m = m * 0.5
+        i = i + 1
+    }
+    return m
+}
+
+/// `e^r` for `|r| <= LN2/2` (so the series needs only seven terms).
+fn exp_kernel(r: float) -> float {
+    return 1.0 + r * (1.0 + r * (R2 + r * (R3 + r * (R4 + r * (R5 + r * (R6 + r * R7))))))
+}
+
+/// `e^x`. Splits `x` into `k*LN2 + r` so the series sees only `|r| <= 0.35`.
+fn exp(x: float) -> float {
+    if x > EXP_MAX {
+        return 3.0e38
+    }
+    if x < 0.0 - EXP_MAX {
+        return 0.0
+    }
+    let k = round(x * INV_LN2)
+    let r = x - k * LN2
+    return exp_kernel(r) * pow2(k)
+}
+
+/// `tanh x`. `exp` is only ever called with a non-positive argument here, so
+/// the large-|x| ends saturate to ±1 instead of overflowing.
+fn tanh(x: float) -> float {
+    if x >= 0.0 {
+        let t = exp(0.0 - 2.0 * x)
+        return (1.0 - t) / (1.0 + t)
+    }
+    let t = exp(2.0 * x)
+    return 0.0 - (1.0 - t) / (1.0 + t)
+}
+
+/// `sqrt x` for `x >= 0`, by scaling into `[1, 4)` and running Newton.
+fn sqrt(x: float) -> float {
+    if x <= 0.0 {
+        return 0.0
+    }
+    let mut g = x
+    let mut s = 1.0
+    while g >= 4.0 {
+        g = g * 0.25
+        s = s * 2.0
+    }
+    while g < 1.0 {
+        g = g * 4.0
+        s = s * 0.5
+    }
+    let mut y = (g + 1.0) * R2
+    let mut i = 0
+    while i < 4 {
+        y = (y + g / y) * R2
+        i = i + 1
+    }
+    return y * s
+}
+
+/// Clamp `x` into `[lo, hi]`.
+fn clamp(x: float, lo: float, hi: float) -> float {
+    if x < lo {
+        return lo
+    }
+    if x > hi {
+        return hi
+    }
+    return x
+}
