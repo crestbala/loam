@@ -1,12 +1,11 @@
 /**
  * ext.h — source-file extensions accepted by the compiler.
  *
- * `.loam` is canonical and `.loa` is an accepted short alias; `.loam` is the
- * pre-rename spelling, still accepted so existing trees keep compiling. The
- * `.loam` entry is removed once the tree has been converted.
+ * `.loam` is canonical and `.loa` is an accepted short alias. There is no
+ * legacy spelling: the pre-rename `.yuga` extension is not recognized.
  *
  * All lookups try the extensions in that order, so when a module exists under
- * two spellings the canonical one wins.
+ * both spellings the canonical one wins.
  */
 #ifndef YUGA_EXT_H
 #define YUGA_EXT_H
@@ -16,17 +15,15 @@
 
 #define YUGA_EXT ".loam"
 #define YUGA_EXT_SHORT ".loa"
-#define YUGA_EXT_LEGACY ".loam"
 
 /** Number of extensions accepted by yuga_ext_name / yuga_ext_size. */
-#define YUGA_EXT_COUNT 3
+#define YUGA_EXT_COUNT 2
 
 /** The `i`-th accepted extension, or NULL past the end. */
 static inline const char *yuga_ext_name(size_t i) {
     switch (i) {
     case 0: return YUGA_EXT;
     case 1: return YUGA_EXT_SHORT;
-    case 2: return YUGA_EXT_LEGACY;
     default: return NULL;
     }
 }
