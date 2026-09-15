@@ -19,9 +19,9 @@ and style/type values. 64-bit is reserved for the cases in
 | `async.now_ms`, `async.Timer.at` | `i64` | monotonic / epoch millis overflow i32 in ~24 days |
 | `http` call deadlines (`at` fields in the async/ws call records) | `i64` | same clock |
 | `maya.plat_now_ms`, `mayacore.scene.t0_ms`, `scene.frame` | `i64` | same clock |
-| SHA-1 in `packages/http/std/httpcore/ws.yuga` | `u64` | 32-bit hash bit patterns with headroom before the mask |
-| HPACK Huffman accumulator in `packages/http/std/httpcore/huff.yuga` | `i64` | the bit buffer holds up to ~37 bits between codewords |
-| FNV / LCG in `examples/zeus/greeninfer/engine.yuga` | `u64` | same |
+| SHA-1 in `packages/http/std/httpcore/ws.loam` | `u64` | 32-bit hash bit patterns with headroom before the mask |
+| HPACK Huffman accumulator in `packages/http/std/httpcore/huff.loam` | `i64` | the bit buffer holds up to ~37 bits between codewords |
+| FNV / LCG in `examples/zeus/greeninfer/engine.loam` | `u64` | same |
 | `zeus.scaled` intermediate product | `i64` | `v * scale` before the `/ 100`; the result is `int` |
 | C seam: file sizes, mmap offsets, byte counts, `yuga_str.len` storage | `int64_t` | 2 GB is not a limit worth baking in |
 
@@ -34,7 +34,7 @@ signatures.
 
 ## Benchmark
 
-`make bench` builds `packages/yuga/tests/bench/bench.yuga` (a fixed ~3000
+`make bench` builds `packages/yuga/tests/bench/bench.loam` (a fixed ~3000
 node tree, 500 layout passes, then one paint) with the pre-flip tree (`git HEAD`,
 `int` = i64) and with the current default, and records arena counts, layout time,
 native binary size, generated C size, and wasm size when `YUGA_WASM_CC` is set.
@@ -58,7 +58,7 @@ The native size is flat — `-O0` code for the extra explicit conversions offset
 the smaller generated C. Layout time is the noisiest row; both columns come from
 the same run so the comparison holds, but expect wider spread across runs.
 `--emit-c` grew in Phase 12: the generated C is now interleaved with `#line`
-directives (about +5% here), which map it back to the `.yuga` source.
+directives (about +5% here), which map it back to the `.loam` source.
 
 ## Phase 11 — Zeus representation and field layout
 
@@ -86,7 +86,7 @@ between `i32`s would have the compiler re-insert padding and save nothing.
 The `u16` fields are `pad`, `padx`, `pady`, `pad_t`/`pad_r`/`pad_b`/`pad_l`,
 `gap`, `gap_row`, `gap_col`, `radius`, `border_w`, `font`, `span`, `grid_cols`,
 `grid_min`. They are style lengths stored unscaled in dp (the DPI scale is
-applied at paint), and each is documented as `u16` in `arena.yuga`; a literal
+applied at paint), and each is documented as `u16` in `arena.loam`; a literal
 that does not fit is a compile error at the literal (`literal 70000 does not fit
 u16`). Values reach these fields through the props layer, where `-1` means
 "unset" and `skip_unset` returns before the narrowed setter runs, so the
@@ -97,7 +97,7 @@ Fifteen are enums or flags whose whole value set is enumerable from the source
 (`kind` tops out at 13; `dir`, `justify`, `pos`, `wrap`, `reverse`,
 `click_mode`, `click2_mode`, `focusable`, `pulse`, `enter_fade`, `safe` are
 0/1 or a small enum) plus the three eases `press_amt` / `hover_amt` /
-`show_amt`, which `scene.yuga` clamps to `0..100` explicitly. Four take a `-1`
+`show_amt`, which `scene.loam` clamps to `0..100` explicitly. Four take a `-1`
 "unset" sentinel and so go to `i8` rather than `u8`: `w_pct`, `h_pct`,
 `align_self`, `hover_fade`. `opacity` and `z_index` go to `i16` (both signed,
 neither clamped at its setter), and `text_rot` to `u16` (0..359).
@@ -130,9 +130,9 @@ record from 64 to 56 bytes — 12.5% off the draw list, which is rebuilt every
 frame.
 
 The four grammar conversions the compiler needed (explicit `u16(...)` at the
-setter, `i32(...)` at every int-using read) live in `zeus.yuga`,
-`zeuscore/arena.yuga`, `zeuscore/layout.yuga`, `zeuscore/scene.yuga`, and
-`zeuscore/input.yuga`.
+setter, `i32(...)` at every int-using read) live in `zeus.loam`,
+`zeuscore/arena.loam`, `zeuscore/layout.loam`, `zeuscore/scene.loam`, and
+`zeuscore/input.loam`.
 
 ### Not done in this pass
 

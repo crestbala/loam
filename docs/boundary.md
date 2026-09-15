@@ -8,8 +8,8 @@ event loop and call back into `engine_*` trampolines.
 
 ## Convention
 
-A **boundary module** (today: `packages/zeus/std/zeuscore/platform.yuga`, empty `fn`s in
-`packages/yuga/std/fmt.yuga` / `packages/yuga/std/net.yuga` / `packages/yuga/std/sys.yuga`) declares plain, **bodyless** functions:
+A **boundary module** (today: `packages/zeus/std/zeuscore/platform.loam`, empty `fn`s in
+`packages/yuga/std/fmt.loam` / `packages/yuga/std/net.loam` / `packages/yuga/std/sys.loam`) declares plain, **bodyless** functions:
 
 ```yuga
 fn plat_set_window(title: string, width: int, height: int) {}
@@ -21,7 +21,7 @@ from `yuga_rt` or from a **host** that drives the event loop — not from a
 library-specific runtime file that contains retries, parsers, or widget code.
 
 No `extern` keyword. No `impl`. Method chaining is UFCS (`n.pad(8)` → `zeus.pad(n, 8)`).
-`Node` is `{ id: int }`, not `Node<Backend>`. Generics are allowed in `zeus.yuga`
+`Node` is `{ id: int }`, not `Node<Backend>`. Generics are allowed in `zeus.loam`
 where they help (`each<T>`); they are not a substitute for a
 backend type parameter.
 
@@ -34,9 +34,9 @@ The other direction: C calls compiled Yuga as `yuga_zeus_engine_paint`,
 |---|---|---|
 | Language (`yuga_rt`) | Allocator, panic/trap, overflow, wrapping bit ops, `string_from_bytes`, `yuga_fn` `{fn, env, env_size}`, `env_set` / `exit` | — |
 | net (`packages/yuga/std/net`) | TCP connect/read/write/close, listen/accept/peek, wasm `fetch_rpc` | — |
-| Zeus | Host event loop + replay of the draw list; `plat_intern_fn` memcpy's a `yuga_fn` env so click/styled handlers outlive the interned value | Tree, layout, signals, design system, `platform.yuga` signatures |
+| Zeus | Host event loop + replay of the draw list; `plat_intern_fn` memcpy's a `yuga_fn` env so click/styled handlers outlive the interned value | Tree, layout, signals, design system, `platform.loam` signatures |
 | Maya | Host event loop + present (Cocoa blit / 2D discs) | Scene, orbits, camera, CPU tracer, 2D map layout, `sin`/`cos` |
-| raygui | Host window + event pump (raylib) and a thin raygui trampoline (`runtime/raygui_plat.c`); no widget logic | API, frame loop, and all retained state (`packages/raygui/std/raygui.yuga`) |
+| raygui | Host window + event pump (raylib) and a thin raygui trampoline (`runtime/raygui_plat.c`); no widget logic | API, frame loop, and all retained state (`packages/raygui/std/raygui.loam`) |
 | http | — | unary gRPC: `#[proto]`, dispatch, path/frame, HTTP/1.1 parse, h2c, `listen`, client `rt_call` / `h2_call`, loopback `h1_read_unary` / `h2_read_unary`, HEADLESS selftest |
 
 A new `*_rt.c` outside `yuga_rt`, or a `yuga_rt` stub that knows Zeus widgets

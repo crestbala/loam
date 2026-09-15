@@ -15,6 +15,7 @@
  */
 #include "compile.h"
 #include "codegen_c.h"
+#include "ext.h"
 #include "ir.h"
 #include "diagnostics.h"
 #include <stdio.h>
@@ -46,17 +47,11 @@ static char *dir_of(const char *path) {
     return yuga_dupn(path, (size_t)(slash - path));
 }
 
-/** File stem without directory or `.yuga`. */
+/** File stem without directory or source extension. */
 static char *stem_of(const char *path) {
     const char *base = strrchr(path, '/');
     base = base ? base + 1 : path;
-    size_t n = strlen(base);
-    if (n > 5 && strcmp(base + n - 5, ".yuga") == 0) n -= 5;
-    else {
-        const char *dot = strrchr(base, '.');
-        if (dot) n = (size_t)(dot - base);
-    }
-    return yuga_dupn(base, n);
+    return yuga_dupn(base, yuga_stem_len(base, strlen(base)));
 }
 
 /* raylib compile+link flags for the raygui host. `RAYLIB_PREFIX` wins, then
@@ -355,7 +350,7 @@ static void android_app_id(const char *stem, char *out, size_t n) {
             suf[j++] = '_';
     }
     suf[j] = 0;
-    snprintf(out, n, "com.yuga.%s", suf);
+    snprintf(out, n, "com.loam.%s", suf);
 }
 
 static int android_write_cmake(const char *path, int uses_http) {
@@ -394,7 +389,7 @@ static int android_write_app_gradle(const char *path, const char *app_id) {
     fprintf(f,
             "apply plugin: 'com.android.application'\n"
             "android {\n"
-            "    namespace 'com.yuga.zeus'\n"
+            "    namespace 'com.loam.zeus'\n"
             "    compileSdk 34\n"
             "    defaultConfig {\n"
             "        applicationId \"%s\"\n"
@@ -479,7 +474,7 @@ static void android_howto(const char *proj, const char *pkg) {
             "  applicationId:  %s\n"
             "  Open in Android Studio, or with ANDROID_HOME, NDK, and Gradle 8.2+:\n"
             "    cd \"%s\" && gradle installDebug\n"
-            "    adb shell am start -n %s/com.yuga.zeus.ZeusActivity\n"
+            "    adb shell am start -n %s/com.loam.zeus.ZeusActivity\n"
             "  Emulator RPC host is 10.0.2.2 (not 127.0.0.1). A physical device\n"
             "  needs the Mac LAN IP instead, and the backend must bind that path.\n",
             proj, pkg, proj, pkg);
@@ -521,7 +516,7 @@ static int android_run(const char *proj, const char *pkg) {
              "export ANDROID_HOME=\"%s\"; export ANDROID_SDK_ROOT=\"%s\"; "
              "export PATH=\"%s/platform-tools:$PATH\"; "
              "cd \"%s\" && \"%s\" installDebug && "
-             "adb shell am start -n %s/com.yuga.zeus.ZeusActivity",
+             "adb shell am start -n %s/com.loam.zeus.ZeusActivity",
              java_export, sdk, sdk, sdk, proj, gradle, pkg);
     return system(cmd) != 0;
 }
@@ -539,7 +534,7 @@ static void print_diags(YugaSession *s) {
 /** CLI help on stderr. */
 static void usage(void) {
     fprintf(stderr,
-            "usage: yugac [build] [options] <file.yuga>\n"
+            "usage: yugac [build] [options] <file.loam>\n"
             "  build       compile (optional; same as omitting it)\n"
             "  test        compile a runner for every `#[test]` fn and run it\n"
             "  check       typecheck only: no codegen, no cc, no output file\n"
@@ -607,17 +602,17 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--run") == 0) {
             run = 1;
         } else if (strcmp(argv[i], "test") == 0) {
-            /* `yugac test app.yuga` — build a runner that executes every
+            /* `yugac test app.loam` — build a runner that executes every
                `#[test]` fn and run it. */
             test_mode = 1;
         } else if (strcmp(argv[i], "check") == 0) {
-            /* `yugac check app.yuga` — run the frontend and stop. Used by
+            /* `yugac check app.loam` — run the frontend and stop. Used by
                run.sh and the zeus CLI to gate every run on a clean check. */
             check_only = 1;
         } else if (strcmp(argv[i], "--int64-compat") == 0) {
             int64_compat = 1;
         } else if (strcmp(argv[i], "build") == 0) {
-            /* `yugac build --target=native app.yuga` — same as omitting `build`. */
+            /* `yugac build --target=native app.loam` — same as omitting `build`. */
             continue;
         } else if (argv[i][0] == '-') {
             fprintf(stderr, "unknown option %s\n", argv[i]);
@@ -945,7 +940,7 @@ int main(int argc, char **argv) {
         }
         snprintf(exe, sizeof exe, "%s/%s", appdir, stem);
         snprintf(plist, sizeof plist, "%s/Info.plist", appdir);
-        snprintf(bid, sizeof bid, "com.yuga.%s", stem);
+        snprintf(bid, sizeof bid, "com.loam.%s", stem);
         if (write_ios_plist(plist, stem, bid) != 0) {
             fprintf(stderr, "yugac: cannot write Info.plist\n");
             if (cpath_is_temp) unlink(cpath);
@@ -1036,7 +1031,7 @@ int main(int argc, char **argv) {
        wall time. Headless tests skip the optimizer and Cocoa; GUI uses -O1.
        Runtime .c/.m compile once into runtime/.obj/. */
     int headless = want_headless();
-    /* Generated C carries `#line` directives pointing at `.yuga` sources, so
+    /* Generated C carries `#line` directives pointing at `.loam` sources, so
        -g makes lldb/gdb, profilers, and sanitizers report Yuga lines. Off by
        default: it inflates binaries and the published size benchmark. */
     static char copt_buf[256];

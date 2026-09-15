@@ -1,0 +1,671 @@
+//! HTTP/2 (h2c) frames and HPACK. Huffman codec is `huff.loam`. Dispatch stays in `http`.
+
+import "std:net"
+import "huff.loam"
+
+struct HpackInt {
+    ok: int,
+    val: int,
+    next: int,
+}
+
+struct HpackStr {
+    ok: int,
+    val: string,
+    next: int,
+}
+
+struct HpackPair {
+    name: string,
+    val: string,
+}
+
+struct H2Hdr {
+    ok: int,
+    ty: int,
+    flags: int,
+    stream: int,
+    len: int,
+}
+
+struct H2Req {
+    ok: int,
+    path: string,
+    method: string,
+    grpc_status: int,
+    has_gs: int,
+}
+
+fn eq(a: string, b: string) -> bool {
+    let mut same = true
+    if a.len != b.len {
+        same = false
+    }
+    if a.len == b.len {
+        for i in 0..a.len {
+            if a[i] != b[i] {
+                same = false
+            }
+        }
+    }
+    return same
+}
+
+fn slice_str(s: string, start: int, end: int) -> string {
+    let mut b = []int {}
+    let mut i = start
+    if i < 0 {
+        i = 0
+    }
+    let mut e = end
+    if e > s.len {
+        e = s.len
+    }
+    if i > e {
+        i = e
+    }
+    let n = e - i
+    for k in 0..n {
+        b.push(s[i])
+        i = i + 1
+    }
+    return string_from_bytes(b)
+}
+
+fn concat_str(a: string, b: string) -> string {
+    let mut out = []int {}
+    for i in 0..a.len {
+        out.push(a[i])
+    }
+    for i in 0..b.len {
+        out.push(b[i])
+    }
+    return string_from_bytes(out)
+}
+
+fn read_exact(fd: int, n: int) -> string {
+    let mut acc = ""
+    let mut more = 1
+    if n <= 0 {
+        more = 0
+    }
+    for k in 0..256 {
+        if more == 1 {
+            if acc.len >= n {
+                more = 0
+            }
+            if more == 1 {
+                let want = n - acc.len
+                let chunk = net.tcp_read(fd, want)
+                if chunk.len == 0 {
+                    more = 0
+                    acc = ""
+                }
+                if chunk.len != 0 {
+                    acc = concat_str(acc, chunk)
+                }
+            }
+        }
+    }
+    if acc.len != n {
+        return ""
+    }
+    return acc
+}
+
+fn hpack_static(idx: int) -> HpackPair {
+    let mut name = ""
+    let mut val = ""
+    if idx == 1 {
+        name = ":authority"
+    }
+    if idx == 2 {
+        name = ":method"
+        val = "GET"
+    }
+    if idx == 3 {
+        name = ":method"
+        val = "POST"
+    }
+    if idx == 4 {
+        name = ":path"
+        val = "/"
+    }
+    if idx == 5 {
+        name = ":path"
+        val = "/index.html"
+    }
+    if idx == 6 {
+        name = ":scheme"
+        val = "http"
+    }
+    if idx == 7 {
+        name = ":scheme"
+        val = "https"
+    }
+    if idx == 8 {
+        name = ":status"
+        val = "200"
+    }
+    if idx == 9 {
+        name = ":status"
+        val = "204"
+    }
+    if idx == 10 {
+        name = ":status"
+        val = "206"
+    }
+    if idx == 11 {
+        name = ":status"
+        val = "304"
+    }
+    if idx == 12 {
+        name = ":status"
+        val = "400"
+    }
+    if idx == 13 {
+        name = ":status"
+        val = "404"
+    }
+    if idx == 14 {
+        name = ":status"
+        val = "500"
+    }
+    if idx == 15 {
+        name = "accept-charset"
+    }
+    if idx == 16 {
+        name = "accept-encoding"
+        val = "gzip, deflate"
+    }
+    if idx == 17 {
+        name = "accept-language"
+    }
+    if idx == 18 {
+        name = "accept-ranges"
+    }
+    if idx == 19 {
+        name = "accept"
+    }
+    if idx == 20 {
+        name = "access-control-allow-origin"
+    }
+    if idx == 21 {
+        name = "age"
+    }
+    if idx == 22 {
+        name = "allow"
+    }
+    if idx == 23 {
+        name = "authorization"
+    }
+    if idx == 24 {
+        name = "cache-control"
+    }
+    if idx == 25 {
+        name = "content-disposition"
+    }
+    if idx == 26 {
+        name = "content-encoding"
+    }
+    if idx == 27 {
+        name = "content-language"
+    }
+    if idx == 28 {
+        name = "content-length"
+    }
+    if idx == 29 {
+        name = "content-location"
+    }
+    if idx == 30 {
+        name = "content-range"
+    }
+    if idx == 31 {
+        name = "content-type"
+    }
+    if idx == 32 {
+        name = "cookie"
+    }
+    if idx == 33 {
+        name = "date"
+    }
+    if idx == 34 {
+        name = "etag"
+    }
+    if idx == 35 {
+        name = "expect"
+    }
+    if idx == 36 {
+        name = "expires"
+    }
+    if idx == 37 {
+        name = "from"
+    }
+    if idx == 38 {
+        name = "host"
+    }
+    if idx == 39 {
+        name = "if-match"
+    }
+    if idx == 40 {
+        name = "if-modified-since"
+    }
+    if idx == 41 {
+        name = "if-none-match"
+    }
+    if idx == 42 {
+        name = "if-range"
+    }
+    if idx == 43 {
+        name = "if-unmodified-since"
+    }
+    if idx == 44 {
+        name = "last-modified"
+    }
+    if idx == 45 {
+        name = "link"
+    }
+    if idx == 46 {
+        name = "location"
+    }
+    if idx == 47 {
+        name = "max-forwards"
+    }
+    if idx == 48 {
+        name = "proxy-authenticate"
+    }
+    if idx == 49 {
+        name = "proxy-authorization"
+    }
+    if idx == 50 {
+        name = "range"
+    }
+    if idx == 51 {
+        name = "referer"
+    }
+    if idx == 52 {
+        name = "refresh"
+    }
+    if idx == 53 {
+        name = "retry-after"
+    }
+    if idx == 54 {
+        name = "server"
+    }
+    if idx == 55 {
+        name = "set-cookie"
+    }
+    if idx == 56 {
+        name = "strict-transport-security"
+    }
+    if idx == 57 {
+        name = "transfer-encoding"
+    }
+    if idx == 58 {
+        name = "user-agent"
+    }
+    if idx == 59 {
+        name = "vary"
+    }
+    if idx == 60 {
+        name = "via"
+    }
+    if idx == 61 {
+        name = "www-authenticate"
+    }
+    return HpackPair { name: name, val: val }
+}
+
+fn hpack_int(buf: string, i: int, prefix: int) -> HpackInt {
+    let mut mask = 15
+    if prefix == 5 {
+        mask = 31
+    }
+    if prefix == 6 {
+        mask = 63
+    }
+    if prefix == 7 {
+        mask = 127
+    }
+    let mut ok = 1
+    let mut val = 0
+    let mut pos = i
+    if pos >= buf.len {
+        ok = 0
+    }
+    if ok == 1 {
+        val = wrapping_and(buf[pos], mask)
+        pos = pos + 1
+        if val == mask {
+            let mut m = 0
+            let mut more = 1
+            for k in 0..5 {
+                if more == 1 {
+                    if pos >= buf.len {
+                        ok = 0
+                        more = 0
+                    }
+                    if more == 1 {
+                        let b = buf[pos]
+                        pos = pos + 1
+                        val = wrapping_add(val, wrapping_shl(wrapping_and(b, 127), m))
+                        if wrapping_and(b, 128) == 0 {
+                            more = 0
+                        }
+                        m = m + 7
+                        if m > 28 {
+                            ok = 0
+                            more = 0
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return HpackInt { ok: ok, val: val, next: pos }
+}
+
+fn hpack_str(buf: string, i: int) -> HpackStr {
+    let mut ok = 1
+    let mut val = ""
+    let mut pos = i
+    let mut huff = 0
+    if pos >= buf.len {
+        ok = 0
+    }
+    if ok == 1 {
+        if wrapping_and(buf[pos], 128) == 128 {
+            huff = 1
+        }
+    }
+    let n = hpack_int(buf, pos, 7)
+    if n.ok == 0 {
+        ok = 0
+    }
+    pos = n.next
+    if ok == 1 {
+        if pos + n.val > buf.len {
+            ok = 0
+        }
+    }
+    if ok == 1 {
+        let chunk = slice_str(buf, pos, pos + n.val)
+        pos = pos + n.val
+        if huff == 1 {
+            let d = huff.decode(chunk)
+            if d.ok == 0 {
+                ok = 0
+            }
+            val = d.val
+        }
+        if huff == 0 {
+            val = chunk
+        }
+    }
+    return HpackStr { ok: ok, val: val, next: pos }
+}
+
+fn decode_path(buf: string) -> H2Req {
+    let mut i = 0
+    let mut path = ""
+    let mut method = ""
+    let mut gs = 0
+    let mut has_gs = 0
+    let mut ok = 1
+    let n = buf.len
+    for k in 0..n {
+        if ok == 1 {
+            if i < n {
+                let b = buf[i]
+                let mut name = ""
+                let mut value = ""
+                let mut skip = 0
+                if wrapping_and(b, 128) == 128 {
+                    let hp = hpack_int(buf, i, 7)
+                    if hp.ok == 0 {
+                        ok = 0
+                    }
+                    i = hp.next
+                    if hp.val == 0 {
+                        skip = 1
+                    }
+                    if hp.val > 61 {
+                        skip = 1
+                    }
+                    if skip == 0 {
+                        let st = hpack_static(hp.val)
+                        name = st.name
+                        value = st.val
+                    }
+                }
+                if wrapping_and(b, 128) != 128 {
+                    if wrapping_and(b, 192) == 64 {
+                        let hp = hpack_int(buf, i, 6)
+                        if hp.ok == 0 {
+                            ok = 0
+                        }
+                        i = hp.next
+                        if hp.val == 0 {
+                            let hs = hpack_str(buf, i)
+                            if hs.ok == 0 {
+                                ok = 0
+                            }
+                            name = hs.val
+                            i = hs.next
+                        }
+                        if hp.val != 0 {
+                            if hp.val <= 61 {
+                                let st = hpack_static(hp.val)
+                                name = st.name
+                            }
+                        }
+                        let hs = hpack_str(buf, i)
+                        if hs.ok == 0 {
+                            ok = 0
+                        }
+                        value = hs.val
+                        i = hs.next
+                    }
+                    if wrapping_and(b, 192) != 64 {
+                        if wrapping_and(b, 240) == 0 {
+                            skip = 2
+                        }
+                        if wrapping_and(b, 240) == 16 {
+                            skip = 2
+                        }
+                        if skip == 2 {
+                            let hp = hpack_int(buf, i, 4)
+                            if hp.ok == 0 {
+                                ok = 0
+                            }
+                            i = hp.next
+                            if hp.val == 0 {
+                                let hs = hpack_str(buf, i)
+                                if hs.ok == 0 {
+                                    ok = 0
+                                }
+                                name = hs.val
+                                i = hs.next
+                            }
+                            if hp.val != 0 {
+                                if hp.val <= 61 {
+                                    let st = hpack_static(hp.val)
+                                    name = st.name
+                                }
+                            }
+                            let hs = hpack_str(buf, i)
+                            if hs.ok == 0 {
+                                ok = 0
+                            }
+                            value = hs.val
+                            i = hs.next
+                        }
+                        if skip != 2 {
+                            if wrapping_and(b, 224) == 32 {
+                                let hp = hpack_int(buf, i, 5)
+                                if hp.ok == 0 {
+                                    ok = 0
+                                }
+                                i = hp.next
+                            }
+                            if wrapping_and(b, 224) != 32 {
+                                if skip == 0 {
+                                    ok = 0
+                                }
+                            }
+                        }
+                    }
+                }
+                if eq(name, ":path") {
+                    path = value
+                }
+                if eq(name, ":method") {
+                    method = value
+                }
+                if eq(name, "grpc-status") {
+                    has_gs = 1
+                    gs = 0
+                    let mut bad = 0
+                    if value.len == 0 {
+                        bad = 1
+                    }
+                    for u in 0..value.len {
+                        let d = value[u] - 48
+                        if d < 0 {
+                            bad = 1
+                        }
+                        if d > 9 {
+                            bad = 1
+                        }
+                        if bad == 0 {
+                            gs = gs * 10 + d
+                        }
+                    }
+                    if bad == 1 {
+                        gs = -1
+                    }
+                }
+            }
+        }
+    }
+    let mut good = 0
+    if ok == 1 {
+        if path.len != 0 {
+            good = 1
+        }
+    }
+    return H2Req { ok: good, path: path, method: method, grpc_status: gs, has_gs: has_gs }
+}
+
+/// HPACK string: Huffman when the encoded form is shorter and fits in 7 bits.
+fn hpack_maybe_huff(s: string) -> string {
+    let enc = huff.encode(s)
+    let mut mode = 0
+    if enc.len < 127 {
+        if enc.len < s.len {
+            if enc.len > 0 {
+                mode = 1
+            }
+        }
+    }
+    let mut b = []int {}
+    if mode == 1 {
+        b.push(wrapping_or(128, enc.len))
+        for i in 0..enc.len {
+            b.push(enc[i])
+        }
+    }
+    if mode == 0 {
+        if s.len < 127 {
+            b.push(s.len)
+            for i in 0..s.len {
+                b.push(s[i])
+            }
+        }
+    }
+    return string_from_bytes(b)
+}
+
+fn lit(name: string, value: string) -> string {
+    let mut b = []int {}
+    b.push(0)
+    let ns = hpack_maybe_huff(name)
+    let vs = hpack_maybe_huff(value)
+    for i in 0..ns.len {
+        b.push(ns[i])
+    }
+    for i in 0..vs.len {
+        b.push(vs[i])
+    }
+    return string_from_bytes(b)
+}
+
+fn encode_huff(s: string) -> string {
+    return huff.encode(s)
+}
+
+fn frame(ty: int, flags: int, stream: int, payload: string) -> string {
+    let mut b = []int {}
+    let n = payload.len
+    b.push((n / 65536) % 256)
+    b.push((n / 256) % 256)
+    b.push(n % 256)
+    b.push(ty)
+    b.push(flags)
+    b.push(wrapping_and(wrapping_shr(stream, 24), 127))
+    b.push(wrapping_and(wrapping_shr(stream, 16), 255))
+    b.push(wrapping_and(wrapping_shr(stream, 8), 255))
+    b.push(wrapping_and(stream, 255))
+    for i in 0..payload.len {
+        b.push(payload[i])
+    }
+    return string_from_bytes(b)
+}
+
+fn parse_hdr(s: string) -> H2Hdr {
+    let mut ok = 0
+    let mut ty = 0
+    let mut flags = 0
+    let mut stream = 0
+    let mut n = 0
+    if s.len == 9 {
+        ok = 1
+        n = wrapping_or(wrapping_or(wrapping_shl(s[0], 16), wrapping_shl(s[1], 8)), s[2])
+        ty = s[3]
+        flags = s[4]
+        stream = wrapping_or(
+            wrapping_or(wrapping_or(wrapping_shl(wrapping_and(s[5], 127), 24), wrapping_shl(s[6], 16)), wrapping_shl(s[7], 8)),
+            s[8],
+        )
+    }
+    return H2Hdr { ok: ok, ty: ty, flags: flags, stream: stream, len: n }
+}
+
+fn u32be(n: int) -> string {
+    let mut b = []int {}
+    b.push(wrapping_and(wrapping_shr(n, 24), 127))
+    b.push(wrapping_and(wrapping_shr(n, 16), 255))
+    b.push(wrapping_and(wrapping_shr(n, 8), 255))
+    b.push(wrapping_and(n, 255))
+    return string_from_bytes(b)
+}
+
+/// GOAWAY. `last` is the highest processed stream id; `code` is the RFC 7540 error.
+fn goaway_err(last: int, code: int) -> string {
+    return frame(7, 0, 0, concat_str(u32be(last), u32be(code)))
+}
+
+/// GOAWAY, `NO_ERROR`. `last` is the highest processed stream id.
+fn goaway(last: int) -> string {
+    return goaway_err(last, 0)
+}
+
+/// RST_STREAM. `code` is the RFC 7540 error.
+fn rst_stream(stream: int, code: int) -> string {
+    return frame(3, 0, stream, u32be(code))
+}
+
+/// WINDOW_UPDATE. `n` must be positive.
+fn window_update(stream: int, n: int) -> string {
+    return frame(8, 0, stream, u32be(n))
+}

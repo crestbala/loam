@@ -1,6 +1,6 @@
 /* maya_plat.c — host seam for Maya. No scene/tracer logic.
  *
- * plat_* match empty fns in packages/maya/std/maya.yuga. Cocoa (maya_mac.m) owns the
+ * plat_* match empty fns in packages/maya/std/maya.loam. Cocoa (maya_mac.m) owns the
  * event loop; this file is getenv / clock / framebuffer blit for CGImage.
  */
 #include "maya_rt.h"

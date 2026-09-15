@@ -1,0 +1,19 @@
+// `import "path.loam" as name` gives two files with the same stem distinct
+// aliases — file-system routing imports many `page.loam`.
+
+import "std:fmt"
+import "std:sys"
+import "../mod/left/page.loam" as lpage
+import "../mod/right/page.loam" as rpage
+
+fn main() {
+    if lpage.who() != "left" {
+        fmt.println("FAIL left")
+        sys.exit(1)
+    }
+    if rpage.who() != "right" {
+        fmt.println("FAIL right")
+        sys.exit(1)
+    }
+    fmt.println("import alias ok")
+}

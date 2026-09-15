@@ -1,0 +1,150 @@
+//! smoke.loam — GreenInfer self-test (headless CLI). Phase 2 coverage:
+//! the chunker's token budgets and boundaries, cosine normalization, the
+//! mmap engine (rank, capacity guard, reopen), and a real folder scan via
+//! watcher.loam with manifest tick.
+//!
+//! Run from the repo root:
+//!   make
+//!   YUGA_LINK_EXTRA="examples/zeus/greeninfer/runtime/greeninfer_runtime.c" \
+//!     ./bin/yugac --run examples/zeus/greeninfer/smoke.loam
+
+import "std:fmt"
+import "std:sys"
+import "engine.loam"
+import "watcher.loam"
+
+const SMOKE_FILE: string = "/tmp/greeninfer_smoke.bin"
+const SMOKE_CAP: int = 512
+
+fn fail(what: string) {
+    fmt.println("FAIL:", what)
+    sys.exit(1)
+}
+
+fn expect(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fail(what)
+}
+
+/// Build a string of `n` copies of `piece` (for chunker tests).
+fn repeat(piece: string, n: int) -> string {
+    let mut b = []int {}
+    let mut k = 0
+    while k < n {
+        let mut i = 0
+        while i < piece.len {
+            push(b, piece[i])
+            i = i + 1
+        }
+        k = k + 1
+    }
+    return string_from_bytes(b)
+}
+
+fn chunk_token_counts(text: string, max: int, out: &mut []int) {
+    let chunks = watcher.chunk_text(text, max)
+    let mut i = 0
+    while i < chunks.len {
+        push(out, watcher.count_tokens(chunks[i]))
+        i = i + 1
+    }
+}
+
+fn main() {
+    // --- chunker: budget, boundaries, punctuation tokens -----------------
+    let mut counts = []int {}
+    chunk_token_counts(repeat("word ", 1500), 500, &mut counts)
+    expect(counts.len == 3, "1500 words -> 3 chunks")
+    let mut i = 0
+    while i < counts.len {
+        expect(counts[i] <= 500, "chunk under token budget")
+        i = i + 1
+    }
+    let mut c2 = []int {}
+    chunk_token_counts(repeat("a(", 600), 500, &mut c2)
+    expect(c2.len == 3, "word+punct tokens split past budget")
+    let mut c3 = []int {}
+    chunk_token_counts("one two three", 500, &mut c3)
+    expect(c3.len == 1 && c3[0] == 3, "short text is one chunk")
+
+    // --- cosine semantics: normalized vectors have unit norm --------------
+    let e0 = engine.embed_text("app crashes on launch with a null pointer")
+    let unit = engine.vec_normalize(e0)
+    let norm = engine.vec_norm(unit)
+    expect(norm > 0.999 && norm < 1.001, "normalized embed has unit norm")
+    expect(norm > 0.0, "norm positive")
+
+    // --- engine: fresh file, ranking, capacity, reopen --------------------
+    let rc = engine.engine_wipe(SMOKE_FILE, SMOKE_CAP)
+    expect(rc == 0, "wipe/open failed")
+    let mut docs = []string {}
+    push(docs, "app crashes on launch with a null pointer")
+    push(docs, "blue button layout wraps the icon row")
+    push(docs, "search returns nearest neighbors over vectors")
+    push(docs, "memory map engine loads the index file")
+    let mut d = 0
+    while d < docs.len {
+        let v = engine.engine_embed(docs[d])
+        expect(engine.engine_insert(d, v), "insert doc {{d}}")
+        d = d + 1
+    }
+    expect(engine.engine_rows() == 4, "four docs stored")
+    let qv = engine.engine_embed("app crashes at launch")
+    let hits = engine.engine_search(qv, 4)
+    expect(hits.len == 4, "knn returns 4")
+    expect(hits[0].id == 0, "crash query ranks doc 0 first")
+    expect(hits[0].score > 0.5 && hits[0].score <= 1.0001, "cosine in range")
+    fmt.println("rank0: doc", hits[0].id, "cosine", hits[0].score)
+
+    let mut j = 4
+    while j < SMOKE_CAP + 100 {
+        let v = engine.engine_rand_vec(j)
+        if engine.engine_insert(j, v) == false {
+            break
+        }
+        j = j + 1
+    }
+    expect(engine.engine_rows() == SMOKE_CAP, "fill stops at cap")
+    expect(engine.engine_insert(999999, engine.embed_text("one more")) == false,
+           "insert past cap refused")
+
+    let t0 = engine.engine_now_us()
+    let hits2 = engine.engine_search(qv, 6)
+    let us = engine.engine_now_us() - t0
+    expect(hits2.len == 6, "knn returns 6 of 512")
+    expect(hits2[0].id == 0, "cosine keeps doc 0 on top after bulk fill")
+    fmt.println("sweep 512 rows x 384 dims:", us, "us; top id", hits2[0].id)
+
+    engine.engine_close()
+    expect(engine.engine_open(SMOKE_FILE, SMOKE_CAP), "reopen")
+    expect(engine.engine_rows() == SMOKE_CAP, "count restored from file header")
+    let a = engine.engine_rand_vec(7)
+    let b = engine.engine_rand_vec(7)
+    expect(a[0] == b[0] && a[383] == b[383], "rand_vec deterministic")
+
+    // --- watcher: scan a real folder and search the chunks ---------------
+    let nchunks = watcher.watch_scan("./examples/language", SMOKE_FILE,
+                                     SMOKE_CAP, default_exts_for_smoke())
+    expect(nchunks > 0, "folder scan indexed chunks")
+    expect(engine.engine_rows() == nchunks, "engine rows == chunk metas")
+    let q2 = engine.engine_embed("draw circles orbiting the sun")
+    let hits3 = engine.engine_search(q2, 3)
+    expect(hits3.len > 0, "scan search returns hits")
+    expect(hits3[0].id >= 0 && hits3[0].id < nchunks, "hit id in chunk range")
+    fmt.println("scan:", watcher.watch_last_msg())
+    fmt.println("top hit:", watcher.watch_label(hits3[0].id))
+    expect(watcher.watch_tick() == 0, "unchanged tree ticks 0")
+
+    engine.engine_close()
+    engine.delete_index_file(SMOKE_FILE)
+    fmt.println("engine + watcher smoke: all ok")
+}
+
+/// Smoke ext list (built by hand — no shared const arrays in Yuga).
+fn default_exts_for_smoke() -> []string {
+    let mut e = []string {}
+    push(e, ".loam")
+    return e
+}

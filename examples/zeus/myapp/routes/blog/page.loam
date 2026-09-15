@@ -1,0 +1,14 @@
+import "std:zeus"
+import "std:router"
+import "loader.loam" as blog_loader
+
+fn page(p: Params) {
+    let ps = blog_loader.posts()
+    for i in 0..ps.len {
+        zeus.Text(ps[i])
+    }
+}
+
+fn meta(p: Params) -> Meta {
+    return Meta { title: "Blog" }
+}

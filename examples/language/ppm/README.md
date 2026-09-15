@@ -7,19 +7,19 @@ gist](https://gist.github.com/rexim/ef86bf70918034a5a57881456c0a0ccf):
 
 | File | What it is |
 |---|---|
-| `checker.yuga` | Port of `checker.c`: 60 frames of a red/black checkerboard whose cells slide one cell per frame. |
-| `plasma.yuga` | Port of `plasma.cpp`: XorDev's twigl interference shader evaluated per pixel on the CPU. |
-| `frames.yuga` | The PPM/ffmpeg pipeline both demos share: frame naming, the P6 header, `sys.write_file`, `ffmpeg` via `sys.exec`. |
-| `mathf.yuga` | `sin` / `cos` / `exp` / `tanh` / `abs` / `sqrt` for `float` (f32), as polynomials in plain Yuga. |
-| `mathf_tests.yuga`, `frames_tests.yuga` | `#[test]` suites for the two modules. |
+| `checker.loam` | Port of `checker.c`: 60 frames of a red/black checkerboard whose cells slide one cell per frame. |
+| `plasma.loam` | Port of `plasma.cpp`: XorDev's twigl interference shader evaluated per pixel on the CPU. |
+| `frames.loam` | The PPM/ffmpeg pipeline both demos share: frame naming, the P6 header, `sys.write_file`, `ffmpeg` via `sys.exec`. |
+| `mathf.loam` | `sin` / `cos` / `exp` / `tanh` / `abs` / `sqrt` for `float` (f32), as polynomials in plain Yuga. |
+| `mathf_tests.loam`, `frames_tests.loam` | `#[test]` suites for the two modules. |
 
 ## Run
 
 From the repository root, after `make`:
 
 ```
-./bin/yugac examples/language/ppm/checker.yuga --run    # ~2s, 960x540 x 60
-./bin/yugac examples/language/ppm/plasma.yuga  --run    # ~52s, 960x540 x 120
+./bin/yugac examples/language/ppm/checker.loam --run    # ~2s, 960x540 x 60
+./bin/yugac examples/language/ppm/plasma.loam  --run    # ~52s, 960x540 x 120
 ```
 
 `./run.sh language/ppm/checker` does the same thing (it runs `yugac check`
@@ -45,10 +45,10 @@ levers on how long it takes and how much memory it holds.
 
 ```
 # Cheapest useful preview: 1/16 the pixels and 1/8 the frames.
-YUGA_PPM_SCALE=15 YUGA_PPM_FRAMES=15 ./bin/yugac examples/language/ppm/plasma.yuga --run
+YUGA_PPM_SCALE=15 YUGA_PPM_FRAMES=15 ./bin/yugac examples/language/ppm/plasma.loam --run
 
 # The gist's exact framing, and lossless to boot (~8 MB for 2s).
-YUGA_PPM_FRAMES=240 YUGA_PPM_CRF=0 ./bin/yugac examples/language/ppm/plasma.yuga --run
+YUGA_PPM_FRAMES=240 YUGA_PPM_CRF=0 ./bin/yugac examples/language/ppm/plasma.loam --run
 ```
 
 ## How it works
@@ -100,7 +100,7 @@ encoder settings yourself, `YUGA_PPM_KEEP=1` leaves the frames in place, and
 any ffmpeg invocation can be pointed at `out/plasma-%03d.ppm`:
 
 ```
-YUGA_PPM_KEEP=1 ./bin/yugac examples/language/ppm/plasma.yuga --run
+YUGA_PPM_KEEP=1 ./bin/yugac examples/language/ppm/plasma.loam --run
 ffmpeg -framerate 60 -i out/plasma-%03d.ppm -c:v libx264 -crf 12 \
        -preset veryslow -pix_fmt yuv420p out/plasma-hq.mp4
 ```
@@ -111,10 +111,10 @@ so the encoder is the only place quality is decided.
 The demos also round the scale factor down to an even number, because H.264
 with `yuv420p` requires even dimensions.
 
-### Why `mathf.yuga` exists
+### Why `mathf.loam` exists
 
-`plasma.yuga` needs `sin`, `cos`, `exp`, `tanh` and `abs` on floats, and there
-is no `std:math`. Rather than adding a C seam, `mathf.yuga` writes them as
+`plasma.loam` needs `sin`, `cos`, `exp`, `tanh` and `abs` on floats, and there
+is no `std:math`. Rather than adding a C seam, `mathf.loam` writes them as
 argument reduction plus a Horner polynomial — plain Yuga arithmetic, accurate
 to about `1e-6` relative, which is far below one 8-bit color step. That also
 keeps the demos portable to `--target wasm`, since nothing crosses the C
@@ -122,10 +122,10 @@ boundary except `sys` and `fmt`.
 
 ## Fidelity to the originals
 
-`checker.yuga` produces **byte-identical** files to `checker.c`: all 60 frames
+`checker.loam` produces **byte-identical** files to `checker.c`: all 60 frames
 at 960x540 compare equal.
 
-`plasma.yuga` matches `plasma.cpp` except for float rounding at the truncation
+`plasma.loam` matches `plasma.cpp` except for float rounding at the truncation
 boundary — libm's `sinf`/`expf`/`tanhf` versus the polynomials here differ in
 the last bits, and a channel that lands on `x.9999999` rather than `(x+1).0`
 truncates one lower. Measured against the C++ reference:
@@ -136,24 +136,24 @@ truncates one lower. Measured against the C++ reference:
 | 4 frames @ 480x270 | 52 of 1,555,200 | 1 |
 
 Comment 6 on the gist notes that the C++ port flips the image relative to the
-shader it came from (the blue field ends up at the top). `plasma.yuga` keeps
+shader it came from (the blue field ends up at the top). `plasma.loam` keeps
 the C++ behaviour by default and exposes the row flip as `YUGA_PPM_FLIP=1`
 rather than hardcoding either one.
 
 ## Tests
 
 ```
-./bin/yugac test examples/language/ppm/mathf_tests.yuga
-./bin/yugac test examples/language/ppm/frames_tests.yuga
+./bin/yugac test examples/language/ppm/mathf_tests.loam
+./bin/yugac test examples/language/ppm/frames_tests.loam
 ```
 
-`mathf_tests.yuga` checks the polynomials against reference libm values,
+`mathf_tests.loam` checks the polynomials against reference libm values,
 including the reduction seams (`sin²x + cos²x == 1` across the period) and the
 saturation ends (`exp` clamps instead of overflowing, `tanh(±20) == ±1`).
-`frames_tests.yuga` covers frame naming, the float → byte clamp (NaN included),
+`frames_tests.loam` covers frame naming, the float → byte clamp (NaN included),
 and the environment reader.
 
-These are not in `make test`, which globs `examples/language/*.yuga` and would
+These are not in `make test`, which globs `examples/language/*.loam` and would
 otherwise spend a minute rendering every time the suite runs.
 
 ## Memory

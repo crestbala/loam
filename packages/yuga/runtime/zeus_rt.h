@@ -1,7 +1,7 @@
 /* zeus_rt.h — platform seam and handle types for `import "std:zeus"`.
  *
  * Node and Signal are typed handles (id + struct). The retained tree,
- * layout, paint, and hit-test live in packages/zeus/std/zeus.yuga. Empty fns in that
+ * layout, paint, and hit-test live in packages/zeus/std/zeus.loam. Empty fns in that
  * file (plat_*, keyboard) map to the hooks below. Cocoa talks to the
  * engine through zeus_layout / zeus_paint / zeus_handle_*.
  */
@@ -193,7 +193,7 @@ void zeus_set_image_size(void (*size)(const char *src, int64_t *w, int64_t *h));
 void zeus_picked_image(const char *src, int64_t w, int64_t h);
 void zeus_bind_draw(ZeusDraw draw);
 
-/* Empty packages/zeus/std/zeus.yuga fns → these C symbols. */
+/* Empty packages/zeus/std/zeus.loam fns → these C symbols. */
 void yuga_zeus_plat_run(void);
 int64_t yuga_zeus_plat_headless(void);
 void yuga_zeus_plat_fill(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
@@ -242,7 +242,7 @@ int64_t yuga_zeus_plat_inset_right(void);
 int64_t yuga_zeus_plat_inset_bottom(void);
 int64_t yuga_zeus_plat_inset_left(void);
 
-/* packages/zeus/std/zeuscore/platform.yuga FFI (aliases of yuga_zeus_plat_*). */
+/* packages/zeus/std/zeuscore/platform.loam FFI (aliases of yuga_zeus_plat_*). */
 void yuga_platform_plat_run(void);
 int64_t yuga_platform_plat_headless(void);
 void yuga_platform_plat_fill(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
@@ -327,7 +327,7 @@ int64_t yuga_platform_plat_inset_right(void);
 int64_t yuga_platform_plat_inset_bottom(void);
 int64_t yuga_platform_plat_inset_left(void);
 
-/* Yuga engine entry points (packages/zeus/std/zeus.yuga). Cocoa trampolines through these. */
+/* Yuga engine entry points (packages/zeus/std/zeus.loam). Cocoa trampolines through these. */
 void yuga_zeus_engine_layout(int32_t width, int32_t height);
 void yuga_zeus_engine_paint(void);
 int32_t yuga_zeus_engine_step(void);

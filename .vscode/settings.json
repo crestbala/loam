@@ -1,15 +1,15 @@
 {
   "files.associations": {
-    "*.yuga": "yuga"
+    "*.loam": "yuga"
   },
   "editor.tokenColorCustomizations": {
     "textMateRules": [
       {
-        "scope": "keyword.control.async.yuga",
+        "scope": "keyword.control.async.loam",
         "settings": { "foreground": "#7C3AED" }
       },
       {
-        "scope": "keyword.control.await.yuga",
+        "scope": "keyword.control.await.loam",
         "settings": { "foreground": "#7C3AED" }
       }
     ]

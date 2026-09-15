@@ -1,0 +1,257 @@
+//! Fine-grained reactivity: a tracking-scope stack and a signal → effect map.
+//!
+//! `styled` / any future tracked closure pushes an effect id. `get(sig)`
+//! records that signal as a dependency. `set(sig)` re-runs only those
+//! closures. Closures never rebuild the tree.
+
+import "platform.loam"
+
+let mut stack: []int = []int {}
+let mut fn_ids: []int = []int {}
+let mut node_ids: []int = []int {}
+let mut dep_sig: []int = []int {}
+let mut dep_eff: []int = []int {}
+let mut ready: int = 0
+/* Untracked-read depth. `peek` / `untrack` raise it so reads inside a
+   reactive scope do not become dependency edges — a setter that reads the
+   value it is about to overwrite must not subscribe the effect to itself. */
+let mut mute: int = 0
+
+fn boot() {
+    if ready != 0 {
+        return
+    }
+    ready = 1
+    push(fn_ids, 0)
+    push(node_ids, 0)
+}
+
+fn reset() {
+    stack = []int {}
+    fn_ids = []int {}
+    node_ids = []int {}
+    dep_sig = []int {}
+    dep_eff = []int {}
+    mute = 0
+    ready = 0
+    boot()
+}
+
+fn alloc(fnid: int, nid: int) -> int {
+    boot()
+    push(fn_ids, fnid)
+    push(node_ids, nid)
+    return fn_ids.len - 1
+}
+
+fn mute_begin() {
+    mute = mute + 1
+}
+
+fn mute_end() {
+    if mute > 0 {
+        mute = mute - 1
+    }
+}
+
+fn note_read(sid: int) {
+    if mute != 0 {
+        return
+    }
+    if stack.len == 0 {
+        return
+    }
+    if sid <= 0 {
+        return
+    }
+    let eid = stack[stack.len - 1]
+    let n = dep_sig.len
+    for i in 0..n {
+        if dep_sig[i] == sid {
+            if dep_eff[i] == eid {
+                return
+            }
+        }
+    }
+    push(dep_sig, sid)
+    push(dep_eff, eid)
+}
+
+fn drop_eid_deps(eid: int) {
+    let n = dep_sig.len
+    if n == 0 {
+        return
+    }
+    /* Swap-remove every edge of `eid` in one pass (no keep-list rebuilds). */
+    let mut i = 0
+    while i < dep_sig.len {
+        if dep_eff[i] == eid {
+            let last = dep_sig.len - 1
+            dep_sig[i] = dep_sig[last]
+            dep_eff[i] = dep_eff[last]
+            pop(dep_sig)
+            pop(dep_eff)
+        } else {
+            i = i + 1
+        }
+    }
+}
+
+/// Drop every dependency edge on a freed signal. A live effect must never
+/// re-run from a signal id that was recycled onto another value.
+fn drop_sig(sid: int) {
+    if sid <= 0 {
+        return
+    }
+    let n = dep_sig.len
+    if n == 0 {
+        return
+    }
+    let mut i = 0
+    while i < dep_sig.len {
+        if dep_sig[i] == sid {
+            let last = dep_sig.len - 1
+            dep_sig[i] = dep_sig[last]
+            dep_eff[i] = dep_eff[last]
+            pop(dep_sig)
+            pop(dep_eff)
+        } else {
+            i = i + 1
+        }
+    }
+}
+
+/// Remove the effects of every torn-down node in `ids` (one batched sweep —
+/// per-node sweeps made refit subtree drops ~25 ms). The interned handlers
+/// behind the effects were recorded on the rebuild scope that created the
+/// node and are freed there; this only drops the dependency edges and
+/// compacts the tables. Effect ids are table positions, so surviving edges
+/// are remapped.
+fn member(v: int, ids: []int) -> int {
+    let n = ids.len
+    for i in 0..n {
+        if ids[i] == v {
+            return 1
+        }
+    }
+    return 0
+}
+
+fn free_nodes_effects(ids: []int) {
+    boot()
+    let k = ids.len
+    if k == 0 {
+        return
+    }
+    let n = node_ids.len
+    if n <= 1 {
+        return
+    }
+    /* Allocation-free compaction: dead rows are swap-removed in place.
+       Per removal, edges pointing at the dead row are dropped and edges of
+       the tail row that filled the hole are rewritten — no per-drop table
+       copies (those were ~200-260 KB per chart refit). */
+    let mut i = 1
+    while i < node_ids.len {
+        if member(node_ids[i], ids) != 0 {
+            let last = node_ids.len - 1
+            if i == last {
+                // Tail row is dead: pop it after dropping its edges.
+                let mut e = 0
+                while e < dep_sig.len {
+                    if dep_eff[e] == i {
+                        let el = dep_sig.len - 1
+                        dep_sig[e] = dep_sig[el]
+                        dep_eff[e] = dep_eff[el]
+                        pop(dep_sig)
+                        pop(dep_eff)
+                    } else {
+                        e = e + 1
+                    }
+                }
+                pop(fn_ids)
+                pop(node_ids)
+            } else {
+                // Drop the dead row's edges first, then fill the hole with
+                // the tail row and follow its edges to the new position.
+                let mut e = 0
+                while e < dep_sig.len {
+                    if dep_eff[e] == i {
+                        let el = dep_sig.len - 1
+                        dep_sig[e] = dep_sig[el]
+                        dep_eff[e] = dep_eff[el]
+                        pop(dep_sig)
+                        pop(dep_eff)
+                    } else {
+                        e = e + 1
+                    }
+                }
+                for q in 0..dep_sig.len {
+                    if dep_eff[q] == last {
+                        dep_eff[q] = i
+                    }
+                }
+                fn_ids[i] = fn_ids[last]
+                node_ids[i] = node_ids[last]
+                pop(fn_ids)
+                pop(node_ids)
+            }
+            // The row swapped into `i` may itself be dead: re-check it.
+        } else {
+            i = i + 1
+        }
+    }
+}
+
+fn run(eid: int) {
+    boot()
+    if eid <= 0 {
+        return
+    }
+    if eid >= fn_ids.len {
+        return
+    }
+    drop_eid_deps(eid)
+    push(stack, eid)
+    platform.plat_invoke_fn(fn_ids[eid])
+    if stack.len > 0 {
+        pop(stack)
+    }
+}
+
+fn run_node(nid: int) {
+    boot()
+    let n = node_ids.len
+    for i in 1..n {
+        if node_ids[i] == nid {
+            run(i)
+        }
+    }
+}
+
+fn notify(sid: int) {
+    if sid <= 0 {
+        return
+    }
+    let mut hit = []int {}
+    let n = dep_sig.len
+    for i in 0..n {
+        if dep_sig[i] == sid {
+            let e = dep_eff[i]
+            let mut seen = 0
+            let h = hit.len
+            for j in 0..h {
+                if hit[j] == e {
+                    seen = 1
+                }
+            }
+            if seen == 0 {
+                push(hit, e)
+            }
+        }
+    }
+    let h = hit.len
+    for i in 0..h {
+        run(hit[i])
+    }
+}

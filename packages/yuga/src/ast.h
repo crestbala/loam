@@ -110,7 +110,7 @@ struct AstNode {
             const char *path;
             /* Resolved filesystem path (compile.c). Lets a qualified `alias.fn`
                find the module imported under that alias even when another
-               module registered the same name — e.g. a file `raygui.yuga`
+               module registered the same name — e.g. a file `raygui.loam`
                importing `std:raygui` would otherwise shadow it. */
             const char *resolved;
         } import;

@@ -2,17 +2,17 @@
 
 A docs/marketing site built with Zeus: a nav shell, seven routes with a layout
 and its own theme, a small server API, and two headless test programs. One
-entry (`app.yuga`), every host the framework targets.
+entry (`app.loam`), every host the framework targets.
 
 ```
-app.yuga            entry: mounts the generated route table
+app.loam            entry: mounts the generated route table
 zeus.toml           targets (web, macos, ios, android, server), routes dir, theme
 routes/             page / layout / loading / error / not-found, plus route groups
-app_routes.yuga     generated from routes/ by `zeus routes` — do not hand-edit
+app_routes.loam     generated from routes/ by `zeus routes` — do not hand-edit
 components/         nav, catalog, foundations, patterns (the design-system pages)
-theme.yuga          palette + type roles
-server/             api.yuga
-tests/              smoke.yuga (`#[test]` fns), routes.yuga (headless route drive)
+theme.loam          palette + type roles
+server/             api.loam
+tests/              smoke.loam (`#[test]` fns), routes.loam (headless route drive)
 ```
 
 Routes: `/`, `/about`, `/pricing`, `/blog`, `/blog/:slug`, `/components`,
@@ -28,11 +28,11 @@ Routes: `/`, `/about`, `/pricing`, `/blog`, `/blog/:slug`, `/components`,
 ./run.sh myapp build      # emit every target
 ```
 
-`run.sh` regenerates `app_routes.yuga` (`zeus routes`) and runs `yugac check`
+`run.sh` regenerates `app_routes.loam` (`zeus routes`) and runs `yugac check`
 before building, so a broken route fails before a window opens. Directly:
 
 ```sh
-./bin/yugac --run examples/zeus/myapp/app.yuga
+./bin/yugac --run examples/zeus/myapp/app.loam
 ```
 
 ## Display paths
@@ -125,11 +125,11 @@ ZEUS_FRAME_DEBUG=1 ./run.sh myapp
 ## Tests
 
 ```sh
-ZEUS_HEADLESS=1 ./bin/yugac test examples/zeus/myapp/app.yuga   # tests/smoke.yuga
-ZEUS_HEADLESS=1 ./bin/yugac examples/zeus/myapp/tests/routes.yuga -o /tmp/r && /tmp/r
+ZEUS_HEADLESS=1 ./bin/yugac test examples/zeus/myapp/app.loam   # tests/smoke.loam
+ZEUS_HEADLESS=1 ./bin/yugac examples/zeus/myapp/tests/routes.loam -o /tmp/r && /tmp/r
 ```
 
-`tests/routes.yuga` drives the generated route table headlessly: it navigates to
+`tests/routes.loam` drives the generated route table headlessly: it navigates to
 every route, re-lays out, and asserts the page's marker text painted *and* that
 the root shell outside the page slot survived — `zeus build` only proves the
 targets link, this proves navigation actually paints.

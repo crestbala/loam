@@ -32,9 +32,9 @@ die() { echo "run.sh: $*" >&2; exit 1; }
 
 list() {
   echo "language examples  (./run.sh <name>)"
-  for f in "$LANGDIR"/*.yuga; do
+  for f in "$LANGDIR"/*.loam; do
     [ -e "$f" ] || continue
-    printf '  %s\n' "$(basename "$f" .yuga)"
+    printf '  %s\n' "$(basename "$f" .loam)"
   done
   echo
   echo "zeus apps          (./run.sh <name> [native|web|wasm32|ios|android])"
@@ -43,7 +43,7 @@ list() {
     name=$(basename "$d")
     if [ -f "$d/zeus.toml" ]; then
       printf '  %-18s routes/ app via the zeus CLI\n' "$name"
-    elif [ -f "$d/$name.yuga" ]; then
+    elif [ -f "$d/$name.loam" ]; then
       printf '  %s\n' "$name"
     fi
   done
@@ -118,7 +118,7 @@ run_gallery_stack() {
 # Override the port with ZEUS_WEB_PORT (default 5174).
 run_zeus_web() {
   name=$1
-  src=$ZEUSDIR/$name/$name.yuga
+  src=$ZEUSDIR/$name/$name.loam
   port=${ZEUS_WEB_PORT:-5174}
   web=$HERE/packages/zeus
   [ -f "$src" ] || die "no Zeus app at $src"
@@ -155,14 +155,14 @@ EOF
 # Same entry resolution as the zeus CLI's findEntry().
 zeus_entry() {
   d=$1
-  for f in app.yuga "$(basename "$d").yuga" main.yuga; do
+  for f in app.loam "$(basename "$d").loam" main.loam; do
     [ -f "$d/$f" ] && { printf '%s\n' "$d/$f"; return 0; }
   done
   return 1
 }
 
 # A zeus.toml app (routes/ tree, generated route table) is driven by the zeus
-# CLI, not by pointing yugac at <name>/<name>.yuga — that file does not exist
+# CLI, not by pointing yugac at <name>/<name>.loam — that file does not exist
 # for these. Regenerate the route table first so a new routes/ file is picked
 # up, then gate on `yugac check` like every other path here.
 run_zeus_framework_app() {
@@ -171,7 +171,7 @@ run_zeus_framework_app() {
   appdir=$ZEUSDIR/$name
   ensure_yugac
   "$HERE/bin/zeus" routes "$appdir" >/dev/null || die "zeus routes failed for $name"
-  entry=$(zeus_entry "$appdir") || die "no entry .yuga in $appdir"
+  entry=$(zeus_entry "$appdir") || die "no entry .loam in $appdir"
   check_yuga "$entry"
   case $target in
     native|macos) exec "$YUGAC" --run "$entry" ;;
@@ -188,36 +188,36 @@ run_zeus_app() {
   if [ -f "$ZEUSDIR/$name/zeus.toml" ]; then
     run_zeus_framework_app "$name" "$target"
   fi
-  check_yuga "$ZEUSDIR/$name/$name.yuga"
+  check_yuga "$ZEUSDIR/$name/$name.loam"
   case $target in
-    native) exec "$YUGAC" --run "$ZEUSDIR/$name/$name.yuga" ;;
+    native) exec "$YUGAC" --run "$ZEUSDIR/$name/$name.loam" ;;
     web) run_zeus_web "$name" ;;
     wasm32|wasm)
-      exec "$YUGAC" --target=wasm32 --run "$ZEUSDIR/$name/$name.yuga" ;;
+      exec "$YUGAC" --target=wasm32 --run "$ZEUSDIR/$name/$name.loam" ;;
     ios|android)
-      exec "$YUGAC" "--target=$target" --run "$ZEUSDIR/$name/$name.yuga" ;;
+      exec "$YUGAC" "--target=$target" --run "$ZEUSDIR/$name/$name.loam" ;;
     *) die "unknown target '$target' (native web wasm32 ios android)" ;;
   esac
 }
 
 run_language() {
   name=$1
-  check_yuga "$LANGDIR/$name.yuga"
-  # oob.yuga exists to prove the bounds check traps, so a nonzero exit from the
+  check_yuga "$LANGDIR/$name.loam"
+  # oob.loam exists to prove the bounds check traps, so a nonzero exit from the
   # program is the expected outcome. A compile error is still a real failure,
   # so build and run as separate steps rather than using --run.
   if [ "$name" = oob ]; then
     out=$LANGDIR/build/oob
     mkdir -p "$LANGDIR/build"
-    "$YUGAC" "$LANGDIR/oob.yuga" -o "$out" || die "oob.yuga failed to compile"
-    echo "run.sh: oob.yuga is expected to trap on an out-of-bounds index"
+    "$YUGAC" "$LANGDIR/oob.loam" -o "$out" || die "oob.loam failed to compile"
+    echo "run.sh: oob.loam is expected to trap on an out-of-bounds index"
     if "$out"; then
-      die "oob.yuga did not trap"
+      die "oob.loam did not trap"
     fi
     echo "run.sh: trapped as expected"
     exit 0
   fi
-  exec "$YUGAC" --run "$LANGDIR/$name.yuga"
+  exec "$YUGAC" --run "$LANGDIR/$name.loam"
 }
 
 [ $# -eq 0 ] && { list; exit 0; }
@@ -237,8 +237,8 @@ esac
 
 # Bare name: resolve it, and refuse if it is ambiguous.
 is_lang=0; is_zeus=0
-[ -f "$LANGDIR/$what.yuga" ] && is_lang=1
-{ [ -f "$ZEUSDIR/$what/$what.yuga" ] || [ -d "$ZEUSDIR/$what" ]; } && is_zeus=1
+[ -f "$LANGDIR/$what.loam" ] && is_lang=1
+{ [ -f "$ZEUSDIR/$what/$what.loam" ] || [ -d "$ZEUSDIR/$what" ]; } && is_zeus=1
 
 if [ "$is_lang" = 1 ] && [ "$is_zeus" = 1 ]; then
   die "'$what' is ambiguous; use language/$what or zeus/$what"

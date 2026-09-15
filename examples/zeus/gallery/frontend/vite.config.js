@@ -1,4 +1,4 @@
-/** Gallery wasm dev server: compiles `app.yuga`, serves `build/app.wasm`. */
+/** Gallery wasm dev server: compiles `app.loam`, serves `build/app.wasm`. */
 import { spawn } from "node:child_process";
 import {
   createReadStream,
@@ -19,7 +19,7 @@ const yugac = resolve(repo, "bin/yugac");
 const buildDir = resolve(here, "build");
 const wasmFile = resolve(buildDir, "app.wasm");
 const loader = resolve(repo, "packages/zeus/hosts/web/loader.js");
-const app = resolve(here, "app.yuga");
+const app = resolve(here, "app.loam");
 
 function newestMtime(dir, acc) {
   let ents;

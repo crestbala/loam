@@ -1,6 +1,0 @@
-//! macOS host. Shared UI: ../ui.yuga
-import "../ui.yuga"
-
-fn main() {
-    ui.start()
-}

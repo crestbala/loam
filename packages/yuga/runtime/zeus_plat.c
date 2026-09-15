@@ -1,6 +1,6 @@
 /* zeus_plat.c — Cocoa/headless seam for the Yuga zeus library.
  *
- * packages/zeus/std/zeus.yuga owns the node arena, layout, paint, and hit-test. This file
+ * packages/zeus/std/zeus.loam owns the node arena, layout, paint, and hit-test. This file
  * is the other side of that seam: window title/size, text measure, present,
  * and the zeus_* entry points the Cocoa/iOS/web hosts already call. Keyboard chords live
  * in zeus_key.c; focus chain and Tab walk the Yuga node tree.
@@ -17,14 +17,14 @@
 #endif
 
 extern yuga_vec yuga_arena_sigs;
-/* Rebuild-scope ownership (arena.yuga): while `scope_node` is non-zero, a
+/* Rebuild-scope ownership (arena.loam): while `scope_node` is non-zero, a
    signal allocation is recorded against it so teardown can recycle the id. */
 extern int32_t yuga_arena_scope_node;
 extern yuga_vec yuga_arena_rec_sid;
 extern yuga_vec yuga_arena_rec_owner;
 void yuga_arena_ensure(void);
 void yuga_arena_store_sig(int32_t id, int32_t value);
-/* `fn note_read(sid: int)` / `fn notify(sid: int)` in zeuscore/track.yuga, and
+/* `fn note_read(sid: int)` / `fn notify(sid: int)` in zeuscore/track.loam, and
    `int` is i32 since the Phase 10 width flip. Declaring these i64 is a silent
    truncation on native but a hard signature mismatch under wasm-ld, which then
    links a trapping stub in place of the call. */
@@ -607,7 +607,7 @@ int64_t yuga_platform_plat_load_font(yuga_str family, yuga_str src) {
     return ok ? 1 : 0;
 }
 
-/* In-tree metrics (`packages/zeus/std/zeuscore/metrics.yuga`) parse the font's tables, so
+/* In-tree metrics (`packages/zeus/std/zeuscore/metrics.loam`) parse the font's tables, so
    they need its bytes. The default reads `src` as a path — desktop, iOS, and
    Android all have a filesystem. The web host has none and installs a hook
    that fetches the URL and pushes the bytes back (packages/zeus/hosts/web). */
@@ -832,7 +832,7 @@ int64_t yuga_zeus_plat_inset_right(void) { return g_inset_r; }
 int64_t yuga_zeus_plat_inset_bottom(void) { return g_inset_b; }
 int64_t yuga_zeus_plat_inset_left(void) { return g_inset_l; }
 
-/* packages/zeus/std/zeuscore/platform.yuga is the GPUI-style platform leaf. Empty Yuga stubs
+/* packages/zeus/std/zeuscore/platform.loam is the GPUI-style platform leaf. Empty Yuga stubs
    compile to yuga_platform_plat_*; the Cocoa implementations stay as
    yuga_zeus_plat_* so existing callers do not change. */
 void yuga_platform_plat_run(void) { yuga_zeus_plat_run(); }

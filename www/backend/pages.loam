@@ -1,0 +1,136 @@
+//! Page bodies for `Docs.Page`. Ids match the sidebar in `screen.loam`.
+
+import "api.loam"
+
+fn pack(title: string, lead: string, body: string, sample: string) -> PageResp {
+    return PageResp { title: title, lead: lead, body: body, sample: sample }
+}
+
+fn of(id: int) -> PageResp {
+    if id == 1 {
+        return pack(
+            "Install",
+            "Build the compiler from this repo, then compile programs with yugac.",
+            "Needs a C11 compiler (cc) and make. macOS for native GUI and Maya. Xcode for iOS Simulator. A wasm32 clang (Homebrew LLVM, not Apple /usr/bin/clang) for web; set YUGA_WASM_CC if needed. Android SDK, NDK, Gradle 8.2+, and adb for --target=android.\n\nmake produces bin/yugac and bin/yuga-lsp. make test runs language tests (GUI and Maya headless). YUGA_TIME=1 prints check / codegen / cc timings.\n\nThis site: ./run.sh www (UI :5175, RPC :8082).",
+            "make\n./bin/yugac hello.loam -o hello\n./hello\n\n./bin/yugac app.loam --run\n./bin/yugac app.loam --emit-c -o a.c\n./bin/yugac --target wasm app.loam -o app.wasm"
+        )
+    }
+    if id == 2 {
+        return pack(
+            "Syntax",
+            "Statically typed. let is immutable, let mut is mutable. Semicolons are optional.",
+            "fn name(params) -> T { ... }. Closures are values: |x| { x + 1 }, zero-arg || { ... }. fn is only for named items. Type: fn(T, U) -> R. Captures Copy locals. (x, y) => { ... } is sugar for |x, y| { ... }.\n\nStructs: struct Name { field: T }. Generics are monomorphized. Comments: // and /* */, /// docs, //! module docs.",
+            "import \"std:fmt\"\n\nstruct Counter {\n    name: string,\n    count: int,\n}\n\nfn increment(c: &mut Counter) {\n    c.count += 1\n}\n\nfn greet(c: &Counter) {\n    fmt.println(\"hello,\", c.name)\n}\n\nfn main() {\n    let mut c = Counter { name: \"tick\", count: 0 }\n    increment(&mut c)\n    increment(c)\n    greet(c)\n    let b = Box::new(42)\n    fmt.println(\"boxed:\", *b)\n}"
+        )
+    }
+    if id == 3 {
+        return pack(
+            "Types",
+            "Scalars, heap types, arrays, generics, and function types.",
+            "int is int64_t; + - * trap on overflow. float is double. bool is true / false. string is {ptr, len} UTF-8, Copy. Box<T> via Box::new (moves). []T is a growable array (push / pop / .len); Copy when T is Copy (refcount, copy-on-write on push). [N]T is a fixed array. &T / &mut T are borrows. fn(T) -> R is a Copy handle.\n\nHex ints: 0xff. wrapping_add and friends when you need wrap instead of trap.",
+            "import \"std:fmt\"\n\nfn sum(xs: &[]int) -> int {\n    let mut s = 0\n    for i in 0..xs.len {\n        s += xs[i]\n    }\n    return s\n}\n\nfn main() {\n    let mut v = []int {}\n    push(v, 10)\n    v.push(20)\n    fmt.println(\"sum:\", sum(v))\n}"
+        )
+    }
+    if id == 4 {
+        return pack(
+            "Ownership",
+            "Rust-like ownership without lifetime syntax. Copy types duplicate; everything else moves.",
+            "Copy: int, float, bool, string, fn(...), [N]T if T is Copy, []T if T is Copy, &T, structs of Copy fields. Not Copy: Box<T>, &mut T, []T / structs with a non-Copy field.\n\n&T shared, &mut T exclusive. Auto-borrow: passing an owned place to a &T / &mut T param inserts the borrow. Stored borrows last until the binding leaves scope (not NLL).",
+            "fn increment(c: &mut Counter) {\n    c.count += 1\n}\n\nfn greet(c: &Counter) {\n    fmt.println(\"hello,\", c.name)\n}\n\nfn main() {\n    let mut c = Counter { name: \"tick\", count: 0 }\n    increment(&mut c)\n    increment(c)\n    greet(c)\n}"
+        )
+    }
+    if id == 5 {
+        return pack(
+            "Control flow",
+            "if, for, while, and match. break and continue have no labels.",
+            "Ranges are half-open: for i in lo..hi runs while i < hi. match patterns: literals, or-patterns, _. bool needs both arms or _; other types need _.",
+            "if n > 0 {\n    fmt.println(\"positive\")\n}\n\nfor i in 0..10 {\n    fmt.println(i)\n}\n\nmatch x {\n    0 | 1 => { fmt.println(\"small\") }\n    _ => { fmt.println(\"other\") }\n}"
+        )
+    }
+    if id == 6 {
+        return pack(
+            "Modules",
+            "Quoted imports only. No glob imports. Symbols are always name.symbol.",
+            "import \"std:foo\" loads packages/yuga/std/foo.loam. Relative import \"rel/path.loam\" is from the importing file; the module name is the file stem.\n\nCycles are errors. UI children are trailing blocks on Box / Text, not chained .child calls.",
+            "import \"std:zeus\"\n\nfn main() {\n    zeus.App(\"Hello\", fn() {\n        zeus.Box(padding = 16) {\n            zeus.Text(\"Hello\")\n        }\n    })\n}"
+        )
+    }
+    if id == 7 {
+        return pack(
+            "Libraries",
+            "Language libraries live in packages/yuga/std/. Import with import \"std:name\".",
+            "std:fmt — stdout, not printf. std:zeus — UI Node tree, Signal<T>, and the whole themed design system (Card, Button with LOOK/SIZE, Dialog, Navbar, For lists). std:http — unary RPC, #[proto], gRPC-Web and h2c. std:maya — 3D/2D, integer world units. std:sys — env, files, exec (native). std:net — TCP; used by http, not a typical app import.\n\nWidgets and components share one import: std:zeus.",
+            "import \"std:fmt\"\n\nfn main() {\n    fmt.println(\"hello, yuga\")\n}"
+        )
+    }
+    if id == 8 {
+        return pack(
+            "fmt",
+            "Write to stdout. No heap, no printf, no C strings.",
+            "fmt.println is not a real function: the compiler turns mixed string / int / bool / float arguments into write / write_int / write_bool / write_float plus a newline.\n\nfmt.write(s) uses s.len bytes. fmt.eq is length-based string equality — Yuga strings are not C strcmp.",
+            "import \"std:fmt\"\n\nfn main() {\n    fmt.println(\"hello,\", 42, true)\n    if fmt.eq(name, \"ok\") {\n        fmt.println(\"yes\")\n    }\n}"
+        )
+    }
+    if id == 9 {
+        return pack(
+            "zeus",
+            "UI toolkit. Native Cocoa and WASM/Canvas2D run the same source. Backend is a --target flag, not an import.",
+            "A component is a fn. Hierarchy is a trailing block. Signal<T> is a Copy handle; T must be Copy (including []U when U is Copy). Read and write with sig.get() and sig.set(v). zeus.For + push_item grow a list after launch. Button(on_click = fn() => ...) is the click API.\n\nzeus.App builds the tree once. Text(\"{{n.get()}}\") re-paints when the signal changes. Same source on Cocoa, iOS, Android, and wasm Canvas2D (no HTML DOM). ZEUS_HEADLESS=1 layouts once and exits.",
+            "import \"std:zeus\"\n\nfn main() {\n    let n = zeus.signal(0)\n    zeus.App(\"Count\", fn() {\n        zeus.Box(align_direction = DIRECTION.Column, padding = 16, spacing = 8) {\n            zeus.Text(\"Count\", font = 22)\n            zeus.Text(\"{{n.get()}}\", font = 28)\n            zeus.Box(align_direction = DIRECTION.Row, spacing = 8) {\n                zeus.Button(\"-\", on_click = fn() => n.set(n.get() - 1))\n                zeus.Button(\"+\", on_click = fn() => n.set(n.get() + 1))\n            }\n        }\n    })\n}"
+        )
+    }
+    if id == 10 {
+        return pack(
+            "http",
+            "Unary RPC over gRPC-Web (HTTP/1.1) and h2c. No REST routes.",
+            "#[proto] structs get encode_Name / decode_Name in their module. app.rpc / c.call are method rewrite. c.call is gRPC-Web; http.h2_call is unary h2c. http.client() fills the addr per --target (wasm same-origin, mac/iOS 127.0.0.1:8080, Android emulator 10.0.2.2:8080).",
+            "import \"std:http\"\nimport \"std:fmt\"\n\n#[proto]\nstruct Ping {\n}\n\n#[proto]\nstruct Pong {\n    msg: string,\n}\n\nfn main() {\n    let app = http.app()\n    app.rpc(\"Health.Ping\", |body| {\n        let req = decode_Ping(body)\n        encode_Pong(Pong { msg: \"ok\" })\n    })\n    app.listen(8080)\n}"
+        )
+    }
+    if id == 11 {
+        return pack(
+            "maya",
+            "Small 3D/2D engine. Scene in Yuga; C is the host event loop and present.",
+            "Analytic spheres. World unit 1024 = 1.0. Camera: drag orbit, scroll zoom, WASD, Q/E zoom, R reset. Sine/cosine: 1024 turns = 360, result -1024..1024. MAYA_HEADLESS=1: one frame, then exit. Try ./run.sh solar.",
+            "import \"std:maya\"\n\nfn main() {\n    maya.init()\n    maya.window(\"hello\", 800, 600)\n    maya.add(maya.sphere(16)).pos(0, 0, 0).scale(512).tint(maya.rgb(200, 80, 80))\n    maya.run()\n}"
+        )
+    }
+    if id == 12 {
+        return pack(
+            "sys",
+            "Language-level seam into the runtime. Bodyless fns resolve to yuga_sys_<name>.",
+            "sys.env_set(name) is 1 if set and non-empty. sys.env(name) is the value (empty on wasm). sys.exit(code). sys.write_file / read_file are native (wasm fails / empty). sys.exec runs a shell command; sys.exec_status is the last exit code.",
+            "import \"std:sys\"\nimport \"std:fmt\"\n\nfn main() {\n    if sys.env_set(\"YUGA_TIME\") {\n        fmt.println(\"timing on\")\n    }\n    fmt.println(sys.env(\"HOME\"))\n}"
+        )
+    }
+    if id == 13 {
+        return pack(
+            "net",
+            "Socket ABI. HTTP parsing lives in std:http, not here.",
+            "Used by http. Not a typical app import — prefer http.app / http.client.\n\ntcp_connect, tcp_write, tcp_read, tcp_peek, tcp_close, tcp_listen (127.0.0.1, port 0 is ephemeral), tcp_accept, tcp_bound_port. fetch_rpc is same-origin gRPC-Web on wasm.",
+            "import \"std:net\"\n\nfn main() {\n    let fd = net.tcp_listen(0)\n    let port = net.tcp_bound_port(fd)\n    net.tcp_close(fd)\n}"
+        )
+    }
+    if id == 14 {
+        return pack(
+            "Platforms",
+            "Same Yuga source; the host is a --target flag. Zeus paints its own theme everywhere.",
+            "native (default) — macOS Cocoa window, not AppKit widgets. wasm / wasm32 — Canvas2D in the browser (no HTML DOM widgets). ios — Simulator, Xcode. android — Gradle + JNI Canvas, density-independent pixels.\n\nCLI and std:http servers are native binaries. ZEUS_HEADLESS=1 / MAYA_HEADLESS=1 for one frame (make test).",
+            "./bin/yugac --target=native --run app.loam\n./bin/yugac --target=wasm32 -o app.wasm app.loam\n./bin/yugac --target=ios --run examples/zeus/dashboard/dashboard.loam"
+        )
+    }
+    if id == 15 {
+        return pack(
+            "Examples",
+            "./run.sh with no arguments lists everything. It builds yugac if needed.",
+            "Language: minimal, counter, http_server, solar, studio, oob (expected trap).\nZeus: gallery, dashboard, counter (full-stack :8080 + :5173). Same UI on Canvas2D wasm and native.\nDocs: ./run.sh www — this UI on :5175, Docs.Page on :8082.\n\ncounter is both a language example and a Zeus app; use language/counter or zeus/counter.",
+            "./run.sh\n./run.sh gallery\n./run.sh gallery wasm32\n./run.sh dashboard\n./run.sh zeus/counter\n./run.sh www"
+        )
+    }
+    return pack(
+        "Yuga",
+        "A memory-safe systems language: Odin-like syntax, Rust-like ownership.",
+        "The compiler (yugac) typechecks a program, lowers it to IR, emits C99, and invokes cc. C is the platform binding target, not the language's semantics.\n\nQuoted imports only: import \"std:foo\" loads packages/yuga/std/foo.loam. Call imported items as foo.bar(...).\n\nThis site is a Zeus app. Page copy comes from Docs.Page over gRPC-Web (Yuga backend). Vite serves the Canvas2D wasm and proxies /Docs to :8082.",
+        "import \"std:fmt\"\n\nfn main() {\n    fmt.println(\"hello, yuga\")\n}"
+    )
+))

@@ -26,27 +26,27 @@ LSP     := $(BINDIR)/yuga-lsp
 FMT     := $(BINDIR)/yugafmt
 ZEUS    := $(BINDIR)/zeus
 
-PASS    := $(sort $(wildcard $(TESTDIR)/compile_pass/*.yuga))
-FAIL    := $(sort $(wildcard $(TESTDIR)/compile_fail/*.yuga))
+PASS    := $(sort $(wildcard $(TESTDIR)/compile_pass/*.loam))
+FAIL    := $(sort $(wildcard $(TESTDIR)/compile_fail/*.loam))
 # Headless DRAW-list goldens: a fixture's stdout must match its .txt byte
 # for byte (deterministic default metrics; see zeus_plat.c measure_default).
-GOLDRAW := $(sort $(wildcard $(TESTDIR)/draw_golden/*.yuga))
+GOLDRAW := $(sort $(wildcard $(TESTDIR)/draw_golden/*.loam))
 # Phase 12: files whose `#[test]` fns `yugac test` collects and runs.
-INLANG  := $(sort $(wildcard $(TESTDIR)/inlang/*.yuga))
+INLANG  := $(sort $(wildcard $(TESTDIR)/inlang/*.loam))
 GOLDEN  := $(TESTDIR)/golden
 LANGEX  := examples/language
 ZEUSEX  := examples/zeus
 EXBUILD := $(TESTDIR)/tmp/build
-# An app's entry point is named after its directory; every other .yuga beside
+# An app's entry point is named after its directory; every other .loam beside
 # it is a module that app imports, not a program to link. Full-stack examples
 # (e.g. examples/zeus/counter) have no such file and are excluded on purpose.
-ZEUSAPPS := $(foreach d,$(wildcard $(ZEUSEX)/*),$(wildcard $(d)/$(notdir $(d)).yuga))
-EXAMPLES:= $(sort $(filter-out $(LANGEX)/oob.yuga,\
-             $(wildcard $(GOLDEN)/*.yuga) $(wildcard $(LANGEX)/*.yuga) $(ZEUSAPPS)))
-# `examples/language/raygui.yuga` links raylib (and the vendored raygui header).
+ZEUSAPPS := $(foreach d,$(wildcard $(ZEUSEX)/*),$(wildcard $(d)/$(notdir $(d)).loam))
+EXAMPLES:= $(sort $(filter-out $(LANGEX)/oob.loam,\
+             $(wildcard $(GOLDEN)/*.loam) $(wildcard $(LANGEX)/*.loam) $(ZEUSAPPS)))
+# `examples/language/raygui.loam` links raylib (and the vendored raygui header).
 # Keep it out of the default test set when raylib is not installed so `make test`
 # stays dependency-light; `./run.sh raygui` still builds and runs it.
-RAYGUI_EX := $(LANGEX)/raygui.yuga
+RAYGUI_EX := $(LANGEX)/raygui.loam
 HAVE_RAYLIB := $(shell pkg-config --exists raylib 2>/dev/null && echo 1)
 ifeq ($(HAVE_RAYLIB),)
 EXAMPLES := $(filter-out $(RAYGUI_EX),$(EXAMPLES))
@@ -130,7 +130,7 @@ test: all
 	@export ZEUS_HEADLESS=1 MAYA_HEADLESS=1; \
 	err=0; \
 	for f in $(PASS); do \
-	  stem=$$(basename $$f .yuga); \
+	  stem=$$(basename $$f .loam); \
 	  if ! ./$(TARGET) $$f -o $(TESTDIR)/tmp/$$stem >$(TESTDIR)/tmp/$$stem.log 2>&1; then \
 	    echo "FAIL compile $$f"; cat $(TESTDIR)/tmp/$$stem.log; err=1; continue; \
 	  fi; \
@@ -140,7 +140,7 @@ test: all
 	  echo "ok   $$f"; \
 	done; \
 	for f in $(FAIL); do \
-	  stem=$$(basename $$f .yuga); \
+	  stem=$$(basename $$f .loam); \
 	  if ./$(TARGET) $$f -o $(TESTDIR)/tmp/$$stem >$(TESTDIR)/tmp/$$stem.log 2>&1; then \
 	    echo "FAIL should-reject $$f"; err=1; \
 	  else \
@@ -148,7 +148,7 @@ test: all
 	  fi; \
 	done; \
 	for f in $(EXAMPLES); do \
-	  stem=$$(basename $$f .yuga); \
+	  stem=$$(basename $$f .loam); \
 	  if ! ./$(TARGET) $$f -o $(EXBUILD)/$$stem >$(TESTDIR)/tmp/ex_$$stem.log 2>&1; then \
 	    echo "FAIL compile $$f"; cat $(TESTDIR)/tmp/ex_$$stem.log; err=1; continue; \
 	  fi; \
@@ -157,17 +157,17 @@ test: all
 	  fi; \
 	  echo "ok   $$f"; \
 	done; \
-	if ! ./$(TARGET) $(LANGEX)/oob.yuga -o $(EXBUILD)/oob >$(TESTDIR)/tmp/ex_oob.log 2>&1; then \
-	  echo "FAIL compile $(LANGEX)/oob.yuga"; cat $(TESTDIR)/tmp/ex_oob.log; err=1; \
+	if ! ./$(TARGET) $(LANGEX)/oob.loam -o $(EXBUILD)/oob >$(TESTDIR)/tmp/ex_oob.log 2>&1; then \
+	  echo "FAIL compile $(LANGEX)/oob.loam"; cat $(TESTDIR)/tmp/ex_oob.log; err=1; \
 	elif $(EXBUILD)/oob >$(TESTDIR)/tmp/ex_oob.out 2>$(TESTDIR)/tmp/ex_oob.err; then \
-	  echo "FAIL should-trap $(LANGEX)/oob.yuga"; err=1; \
+	  echo "FAIL should-trap $(LANGEX)/oob.loam"; err=1; \
 	elif ! grep -q "index out of bounds" $(TESTDIR)/tmp/ex_oob.err; then \
-	  echo "FAIL trap message $(LANGEX)/oob.yuga"; cat $(TESTDIR)/tmp/ex_oob.err; err=1; \
+	  echo "FAIL trap message $(LANGEX)/oob.loam"; cat $(TESTDIR)/tmp/ex_oob.err; err=1; \
 	else \
-	  echo "ok   $(LANGEX)/oob.yuga (trapped)"; \
+	  echo "ok   $(LANGEX)/oob.loam (trapped)"; \
 	fi; \
 	for f in $(PASS) $(EXAMPLES); do \
-	  stem=$$(basename $$f .yuga); \
+	  stem=$$(basename $$f .loam); \
 	  if ! ./$(TARGET) --emit-ir $$f -o $(TESTDIR)/tmp/ir_$$stem.ir >$(TESTDIR)/tmp/ir_$$stem.log 2>&1; then \
 	    echo "FAIL ir $$f"; cat $(TESTDIR)/tmp/ir_$$stem.log; err=1; continue; \
 	  fi; \
@@ -179,8 +179,8 @@ test: all
 	for g in $(TESTDIR)/ir_golden/*.ir; do \
 	  [ -e $$g ] || continue; \
 	  stem=$$(basename $$g .ir); \
-	  src=$(TESTDIR)/compile_pass/$$stem.yuga; \
-	  if [ ! -f $$src ]; then src=$(GOLDEN)/$$stem.yuga; fi; \
+	  src=$(TESTDIR)/compile_pass/$$stem.loam; \
+	  if [ ! -f $$src ]; then src=$(GOLDEN)/$$stem.loam; fi; \
 	  if [ ! -f $$src ]; then echo "FAIL ir golden missing source $$stem"; err=1; continue; fi; \
 	  if ! ./$(TARGET) --emit-ir $$src -o $(TESTDIR)/tmp/golden_$$stem.ir >$(TESTDIR)/tmp/golden_$$stem.log 2>&1; then \
 	    echo "FAIL ir golden emit $$stem"; cat $(TESTDIR)/tmp/golden_$$stem.log; err=1; continue; \
@@ -192,7 +192,7 @@ test: all
 	  fi; \
 	done; \
 	for g in $(GOLDRAW); do \
-	  stem=$$(basename $$g .yuga); \
+	  stem=$$(basename $$g .loam); \
 	  if ! ./$(TARGET) $$g -o $(TESTDIR)/tmp/dg_$$stem >$(TESTDIR)/tmp/dg_$$stem.log 2>&1; then \
 	    echo "FAIL compile $$g"; cat $(TESTDIR)/tmp/dg_$$stem.log; err=1; continue; \
 	  fi; \
@@ -206,7 +206,7 @@ test: all
 	  fi; \
 	done; \
 	for f in $(INLANG); do \
-	  stem=$$(basename $$f .yuga); \
+	  stem=$$(basename $$f .loam); \
 	  if ! ./$(TARGET) test $$f >$(TESTDIR)/tmp/inlang_$$stem.log 2>&1; then \
 	    echo "FAIL in-language tests $$f"; cat $(TESTDIR)/tmp/inlang_$$stem.log; err=1; \
 	  else \
@@ -215,10 +215,10 @@ test: all
 	done; \
 	if ! DENO_DIR=$(TESTDIR)/tmp/deno deno run --quiet --allow-read --allow-write packages/zeus/cli/zeus.ts routes packages/yuga/tests/routes_app >$(TESTDIR)/tmp/routes_gen.log 2>&1; then \
 	  echo "FAIL zeus routes generator"; cat $(TESTDIR)/tmp/routes_gen.log; err=1; \
-	elif ! ./$(TARGET) packages/yuga/tests/routes_app/app.yuga -o $(TESTDIR)/tmp/routes_app >$(TESTDIR)/tmp/routes_compile.log 2>&1; then \
-	  echo "FAIL compile packages/yuga/tests/routes_app/app.yuga"; cat $(TESTDIR)/tmp/routes_compile.log; err=1; \
+	elif ! ./$(TARGET) packages/yuga/tests/routes_app/app.loam -o $(TESTDIR)/tmp/routes_app >$(TESTDIR)/tmp/routes_compile.log 2>&1; then \
+	  echo "FAIL compile packages/yuga/tests/routes_app/app.loam"; cat $(TESTDIR)/tmp/routes_compile.log; err=1; \
 	elif ! $(TESTDIR)/tmp/routes_app >$(TESTDIR)/tmp/routes_run.log 2>&1; then \
-	  echo "FAIL run packages/yuga/tests/routes_app/app.yuga"; cat $(TESTDIR)/tmp/routes_run.log; err=1; \
+	  echo "FAIL run packages/yuga/tests/routes_app/app.loam"; cat $(TESTDIR)/tmp/routes_run.log; err=1; \
 	else \
 	  echo "ok   zeus routes app"; \
 	fi; \
@@ -243,20 +243,20 @@ test: all
 	fi; \
 	if ! DENO_DIR=$(TESTDIR)/tmp/deno deno run --quiet --allow-read --allow-write --allow-run --allow-env packages/zeus/cli/zeus.ts pkg sync packages/yuga/tests/pkg_app >$(TESTDIR)/tmp/pkg_sync.log 2>&1; then \
 	  echo "FAIL zeus pkg sync"; cat $(TESTDIR)/tmp/pkg_sync.log; err=1; \
-	elif ! ./$(TARGET) packages/yuga/tests/pkg_app/app.yuga -o $(TESTDIR)/tmp/pkg_app >$(TESTDIR)/tmp/pkg_app.log 2>&1; then \
+	elif ! ./$(TARGET) packages/yuga/tests/pkg_app/app.loam -o $(TESTDIR)/tmp/pkg_app >$(TESTDIR)/tmp/pkg_app.log 2>&1; then \
 	  echo "FAIL compile pkg app"; cat $(TESTDIR)/tmp/pkg_app.log; err=1; \
 	elif ! $(TESTDIR)/tmp/pkg_app >$(TESTDIR)/tmp/pkg_run.log 2>&1; then \
 	  echo "FAIL run pkg app"; cat $(TESTDIR)/tmp/pkg_run.log; err=1; \
 	else \
 	  echo "ok   zeus pkg sync + import pkg:name"; \
 	fi; \
-	if ./$(FMT) packages/yuga/tests/fmt/in.yuga >$(TESTDIR)/tmp/fmt.out 2>&1 && \
-	   diff -u packages/yuga/tests/fmt/want.yuga $(TESTDIR)/tmp/fmt.out >/dev/null 2>&1 && \
-	   ./$(FMT) packages/yuga/tests/fmt/want.yuga >$(TESTDIR)/tmp/fmt.idem 2>&1 && \
-	   diff -u packages/yuga/tests/fmt/want.yuga $(TESTDIR)/tmp/fmt.idem >/dev/null 2>&1; then \
+	if ./$(FMT) packages/yuga/tests/fmt/in.loam >$(TESTDIR)/tmp/fmt.out 2>&1 && \
+	   diff -u packages/yuga/tests/fmt/want.loam $(TESTDIR)/tmp/fmt.out >/dev/null 2>&1 && \
+	   ./$(FMT) packages/yuga/tests/fmt/want.loam >$(TESTDIR)/tmp/fmt.idem 2>&1 && \
+	   diff -u packages/yuga/tests/fmt/want.loam $(TESTDIR)/tmp/fmt.idem >/dev/null 2>&1; then \
 	  echo "ok   yugafmt (canonical + idempotent)"; \
 	else \
-	  echo "FAIL yugafmt"; diff -u packages/yuga/tests/fmt/want.yuga $(TESTDIR)/tmp/fmt.out; err=1; \
+	  echo "FAIL yugafmt"; diff -u packages/yuga/tests/fmt/want.loam $(TESTDIR)/tmp/fmt.out; err=1; \
 	fi; \
 	if ! DENO_DIR=$(TESTDIR)/tmp/deno deno run --quiet --allow-read --allow-write --allow-run --allow-env packages/zeus/cli/zeus.ts dev packages/yuga/tests/routes_app --build-only >$(TESTDIR)/tmp/zeus_dev.log 2>&1; then \
 	  echo "FAIL zeus dev"; cat $(TESTDIR)/tmp/zeus_dev.log; err=1; \
@@ -268,7 +268,7 @@ test: all
 	else \
 	  echo "ok   zeus dev handler"; \
 	fi; \
-	if ./$(TARGET) --target=wasm32 packages/yuga/tests/wasm_smoke/app.yuga -o $(TESTDIR)/tmp/wasm_smoke.wasm >$(TESTDIR)/tmp/wasm_smoke_build.log 2>&1 && \
+	if ./$(TARGET) --target=wasm32 packages/yuga/tests/wasm_smoke/app.loam -o $(TESTDIR)/tmp/wasm_smoke.wasm >$(TESTDIR)/tmp/wasm_smoke_build.log 2>&1 && \
 	   DENO_DIR=$(TESTDIR)/tmp/deno deno run --quiet --allow-read packages/zeus/hosts/web/wasm_smoke.ts $(TESTDIR)/tmp/wasm_smoke.wasm >$(TESTDIR)/tmp/wasm_smoke.log 2>&1; then \
 	  echo "ok   wasm smoke (host entry points)"; \
 	else \
@@ -287,13 +287,13 @@ test: all
 	else \
 	  echo "FAIL zeus example myapp wasm"; cat $(TESTDIR)/tmp/myapp_wasm.log 2>/dev/null; err=1; \
 	fi; \
-	if ./$(TARGET) examples/zeus/myapp/tests/routes.yuga -o $(TESTDIR)/tmp/myapp_routes >$(TESTDIR)/tmp/myapp_routes.log 2>&1 && \
+	if ./$(TARGET) examples/zeus/myapp/tests/routes.loam -o $(TESTDIR)/tmp/myapp_routes >$(TESTDIR)/tmp/myapp_routes.log 2>&1 && \
 	   $(TESTDIR)/tmp/myapp_routes >>$(TESTDIR)/tmp/myapp_routes.log 2>&1; then \
 	  echo "ok   zeus example myapp (every route paints)"; \
 	else \
 	  echo "FAIL zeus example myapp routes"; cat $(TESTDIR)/tmp/myapp_routes.log 2>/dev/null; err=1; \
 	fi; \
-	if YUGA_SERVER_SPLIT=1 ./$(TARGET) --emit-c packages/yuga/tests/compile_pass/server_split.yuga -o $(TESTDIR)/tmp/server_split.c >/dev/null 2>&1; then \
+	if YUGA_SERVER_SPLIT=1 ./$(TARGET) --emit-c packages/yuga/tests/compile_pass/server_split.loam -o $(TESTDIR)/tmp/server_split.c >/dev/null 2>&1; then \
 	  if grep -q "SERVER_SECRET_MARKER" $(TESTDIR)/tmp/server_split.c; then \
 	    echo "FAIL server body leaked into client build"; err=1; \
 	  else \

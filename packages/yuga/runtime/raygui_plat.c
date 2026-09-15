@@ -2,7 +2,7 @@
  *
  * This is a host seam, not a runtime: the window and OS event pump belong to
  * raylib, the widget logic belongs to raygui (vendored header), and the API and
- * frame loop belong to `packages/raygui/std/raygui.yuga`. Everything here is a
+ * frame loop belong to `packages/raygui/std/raygui.loam`. Everything here is a
  * thin conversion (NUL-terminate a `yuga_str`, mirror raygui's `bool *` state
  * as `int *`) plus the memory probe a RAM test reads. See docs/boundary.md.
  *

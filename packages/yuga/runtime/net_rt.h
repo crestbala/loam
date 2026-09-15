@@ -1,4 +1,4 @@
-/* net_rt.h — declarations for `std/net.yuga` (`yuga_net_*`). */
+/* net_rt.h — declarations for `std/net.loam` (`yuga_net_*`). */
 #ifndef NET_RT_H
 #define NET_RT_H
 

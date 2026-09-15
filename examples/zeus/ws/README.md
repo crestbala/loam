@@ -8,10 +8,10 @@ frames every 500 ms; a wasm page receives them through the browser's
 examples/zeus/ws/
 ├── run.sh                 # start backend + frontend, Ctrl-C stops both
 ├── backend/
-│   └── server.yuga        # native ws server on :8080 (one client, ticks)
+│   └── server.loam        # native ws server on :8080 (one client, ticks)
 └── frontend/
-    ├── app.yuga           # wasm UI: http.ws_open(client(""), "/ws", ...)
-    ├── vite.config.js     # compiles app.yuga -> wasm; proxies /ws -> :8080
+    ├── app.loam           # wasm UI: http.ws_open(client(""), "/ws", ...)
+    ├── vite.config.js     # compiles app.loam -> wasm; proxies /ws -> :8080
     └── index.html         # canvas + loader
 ```
 
@@ -33,5 +33,5 @@ messages queue in JS; every animation frame the engine's async tick drains
 the queue (`net.ws_count` / `ws_copy`) and delivers each message to the
 callback on the UI thread — the same stepper model as native TCP.
 
-Native WebSockets (RFC 6455 in pure Yuga, `httpcore/ws.yuga`) are covered by
-`packages/yuga/tests/compile_pass/zeus_stream.yuga`.
+Native WebSockets (RFC 6455 in pure Yuga, `httpcore/ws.loam`) are covered by
+`packages/yuga/tests/compile_pass/zeus_stream.loam`.

@@ -22,4 +22,4 @@ if [ ! -x "$REPO/bin/yugac" ]; then
   make -C "$REPO" -j4
 fi
 echo "macos: Cocoa desktop"
-exec "$REPO/bin/yugac" --target=native --run "$HERE/app.yuga"
+exec "$REPO/bin/yugac" --target=native --run "$HERE/app.loam"

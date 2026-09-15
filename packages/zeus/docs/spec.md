@@ -20,7 +20,7 @@ use Material widgets or system colors.
 | View type | `zeus.Node`. Yuga has no traits / `impl View`. |
 | Imports | `import "std:zeus"`. No glob prelude. |
 | Events | `on_click = handler` on `Box` / `Button`. Intern copies the closure env (`yuga_fn.env_size`). Captures stay Copy-only. `bind` on `Input` writes a `Signal<string>`. |
-| HTTP types | Shared `.yuga` module with `#[proto]` structs + `*_rpc()` name helpers. `http.client()` fills the addr per `--target` (wasm same-origin, mac/iOS loopback, Android emulator `10.0.2.2:8080`). |
+| HTTP types | Shared `.loam` module with `#[proto]` structs + `*_rpc()` name helpers. `http.client()` fills the addr per `--target` (wasm same-origin, mac/iOS loopback, Android emulator `10.0.2.2:8080`). |
 | Wire protocol | gRPC-first: first-party traffic is always gRPC-Web / h2c. REST + JSON (`std:json`, `http.rest_*`, `app.json`) exist only as third-party interop, reachable from `#[server]` code. |
 | Routing | `std:router`: a `[]Route` table in a retained shell; loaders registered with `on_load` start before paint. |
 | Data | `std:res` resource signals (`Loading`/`Ready`/`Error`); `std:cache` over `std:kv` for `revalidate` + `invalidate`. |
@@ -118,7 +118,7 @@ Browser events → `loader.js` → exported `zeus_pointer_*` / `zeus_key` →
 Native (headless snapshot):
 
 ```
-ZEUS_HEADLESS=1 ./bin/yugac packages/yuga/tests/compile_pass/zeus_snap.yuga -o packages/yuga/tests/tmp/zeus_snap
+ZEUS_HEADLESS=1 ./bin/yugac packages/yuga/tests/compile_pass/zeus_snap.loam -o packages/yuga/tests/tmp/zeus_snap
 ```
 
 WASM (needs a clang that has `wasm32`, e.g. Homebrew `llvm` or wasi-sdk).
@@ -134,13 +134,13 @@ That starts `backend/run.sh` (`http.listen` on `:8080`) then `frontend/run.sh`
 scripts in separate terminals to start them apart.
 
 ```
-./bin/yugac build --target=wasm32 examples/zeus/counter/frontend/app.yuga
+./bin/yugac build --target=wasm32 examples/zeus/counter/frontend/app.loam
 cd examples/zeus/counter/frontend && npm install && npm run dev
 ./examples/zeus/counter/backend/run.sh
 ```
 
 `npm run dev` deletes `frontend/build/` then runs `yugac --target=wasm32` before Vite
-listens, and again when `.yuga` / runtime sources change. The wasm page calls
+listens, and again when `.loam` / runtime sources change. The wasm page calls
 `http.client("").call` (gRPC-Web) on the same origin; Vite forwards `/Counter` to `:8080`.
 
 iOS Simulator (same RPC contracts as wasm; Zeus theme, not UIKit controls).
@@ -154,7 +154,7 @@ Or:
 
 ```
 ./examples/zeus/counter/backend/run.sh
-./bin/yugac --target=ios --run examples/zeus/counter/ios/app.yuga
+./bin/yugac --target=ios --run examples/zeus/counter/ios/app.loam
 ```
 
 Needs Xcode and an iPhone Simulator. Output is
@@ -176,7 +176,7 @@ Step-by-step: `examples/zeus/counter/android/guide.md`. On macOS with Homebrew:
 
 ```
 ./examples/zeus/counter/backend/run.sh
-./bin/yugac --target=android --run examples/zeus/counter/android/app.yuga
+./bin/yugac --target=android --run examples/zeus/counter/android/app.loam
 ```
 
 Output is the Gradle tree `examples/zeus/counter/android/build/app`.
@@ -186,7 +186,7 @@ and `adb` when the SDK is present; otherwise it points at `install.sh`.
 A physical device cannot use `10.0.2.2` — pass the Mac's LAN IP in
 `api.android_addr()` (and the backend currently binds loopback only).
 
-macOS Cocoa (same RPC contracts and `screen.yuga`; Zeus theme, not AppKit
+macOS Cocoa (same RPC contracts and `screen.loam`; Zeus theme, not AppKit
 controls). Needs the backend on `:8080` (the script starts it if missing):
 
 ```
@@ -197,14 +197,14 @@ Or:
 
 ```
 ./examples/zeus/counter/backend/run.sh
-./bin/yugac --target=native --run examples/zeus/counter/macos/app.yuga
+./bin/yugac --target=native --run examples/zeus/counter/macos/app.loam
 ```
 
 Output is `examples/zeus/counter/macos/build/app`.
 
 ## Packages, inspector, animation
 
-`import "pkg:name"` resolves to `vendor/name/name.yuga` (or `main.yuga`),
+`import "pkg:name"` resolves to `vendor/name/name.loam` (or `main.loam`),
 searched upward from the entry file. `zeus pkg sync <appdir>` reads
 `<appdir>/yuga.deps` — one `name source [rev]` per line, `#` comments —
 materializes each package under `<appdir>/vendor/<name>/`, and writes
@@ -228,10 +228,10 @@ retargets mid-flight.
 ## Scaffold
 
 `zeus new <name> [dir]` writes the §6.2 app tree: `zeus.toml`, a single
-`app.yuga` entry (one entry for every host), `routes/` (root
-layout/page/loading/error/not-found, a nested `blog/` with `loader.yuga`, a
+`app.loam` entry (one entry for every host), `routes/` (root
+layout/page/loading/error/not-found, a nested `blog/` with `loader.loam`, a
 `[slug]` route with `paths()` + `meta`, and a `(marketing)` group), plus
-`components/`, `server/` (`#[proto]` contracts + a `#[server]` fn), `theme.yuga`,
+`components/`, `server/` (`#[proto]` contracts + a `#[server]` fn), `theme.loam`,
 `assets/`, `public/`, and `tests/`. It refuses a non-empty target. The output is
 checked in at `examples/zeus/myapp/` and built by the test gate, so the tree
 `zeus build` accepts is the tree it scaffolds.
@@ -249,7 +249,7 @@ parser, because the parser discards comments.
 ## Dev server
 
 `zeus dev <appdir> [--port N]` builds the web target, serves `build/web` on
-localhost, and watches the app plus the framework `std/` trees for `.yuga`
+localhost, and watches the app plus the framework `std/` trees for `.loam`
 changes, rebuilding on each. Served HTML gets a live-reload script: on a new
 revision it saves the signal arena (`zeus_state_snapshot` → `sessionStorage`)
 and reloads, and the loader restores it with `zeus_state_load` on boot — a
@@ -260,7 +260,7 @@ build and exits (the test gate uses it).
 ## Layout
 
 ```
-packages/zeus/std/zeus.yuga         public API + design system
+packages/zeus/std/zeus.loam         public API + design system
 packages/zeus/std/zeuscore/         layout, paint, hit-test (shared)
 examples/zeus/                 same apps on every host
 packages/zeus/hosts/desktop/mac.m        Cocoa present
@@ -275,6 +275,6 @@ examples/zeus/counter/frontend   wasm UI (`http.client("").call`)
 examples/zeus/counter/macos      Cocoa UI (`http.client(api.native_addr())`)
 examples/zeus/counter/ios        Simulator UI (`http.client(api.native_addr())`)
 examples/zeus/counter/android    emulator UI (`http.client(api.android_addr())`)
-examples/zeus/counter/screen.yuga  shared page (signals + components)
-examples/zeus/counter/backend    shared `api.yuga` + native `server.yuga`
+examples/zeus/counter/screen.loam  shared page (signals + components)
+examples/zeus/counter/backend    shared `api.loam` + native `server.loam`
 ```

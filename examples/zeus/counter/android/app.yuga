@@ -1,7 +1,0 @@
-//! Android host. Shared UI: ../ui.yuga
-//! Physical device: YUGA_RPC_ADDR=<Mac LAN IP>:8080
-import "../ui.yuga"
-
-fn main() {
-    ui.start()
-}

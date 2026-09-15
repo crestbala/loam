@@ -1,4 +1,4 @@
-/* raygui_rt.h — declarations for `std/raygui.yuga` (`yuga_raygui_plat_*`).
+/* raygui_rt.h — declarations for `std/raygui.loam` (`yuga_raygui_plat_*`).
  *
  * The immediate-mode widget logic is raygui (vendored: packages/raygui/vendor/
  * raygui.h); the module is the Yuga API and raygui_plat.c is the raylib +

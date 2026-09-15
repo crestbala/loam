@@ -1,12 +1,13 @@
 /**
  * compile.c — load modules from disk and run lexer/parser/sema.
  *
- * Import `"std:name"` → `<std dir>/name.yuga`, searched across YUGA_STD_DIR
+ * Import `"std:name"` → `<std dir>/name.<ext>`, searched across YUGA_STD_DIR
  * and each YUGA_PATH root's `std/` subdir. Relative paths are from the
  * importing file. Cycles and missing files are errors. After all modules
  * parse, typecheck → borrowck → boundscheck.
  */
 #include "compile.h"
+#include "ext.h"
 #include "lexer.h"
 #include "parser.h"
 #include "sema/typecheck.h"
@@ -100,21 +101,23 @@ int yuga_is_std_path(const char *path) {
     return 0;
 }
 
-/* First existing `<std dir>/<name>.yuga`, language std first. */
+/* First existing `<std dir>/<name><ext>`, language std first. Inside a root the
+   extensions are tried in ext.h order, so one std dir keeps beating the next. */
 static int std_module_lookup(const char *name, char *out, size_t outsz) {
     const char *dirs[YUGA_MAX_STD_DIRS];
     int n = yuga_std_dirs(dirs, YUGA_MAX_STD_DIRS);
-    for (int i = 0; i < n; i++) {
-        snprintf(out, outsz, "%s/%s.yuga", dirs[i], name);
-        if (file_exists(out)) return 1;
-    }
+    for (int i = 0; i < n; i++)
+        for (size_t e = 0; e < YUGA_EXT_COUNT; e++) {
+            snprintf(out, outsz, "%s/%s%s", dirs[i], name, yuga_ext_name(e));
+            if (file_exists(out)) return 1;
+        }
     return 0;
 }
 
 /*
  * `import "pkg:name"` — a vendored package. Walk up from the entry file to the
- * nearest directory holding `vendor/name/`, then take `name.yuga` (or
- * `main.yuga`). `zeus pkg sync` materializes that tree from `yuga.deps`.
+ * nearest directory holding `vendor/name/`, then take `name.<ext>` (or
+ * `main.<ext>`). `zeus pkg sync` materializes that tree from `yuga.deps`.
  */
 static int pkg_module_lookup(const char *name, char *out, size_t outsz) {
     if (!name[0] || strchr(name, '/') || strchr(name, '\\') || strchr(name, ':')) return 0;
@@ -126,17 +129,18 @@ static int pkg_module_lookup(const char *name, char *out, size_t outsz) {
         char *slash = strrchr(dir, '/');
         if (slash) *slash = '\0';
         else dir[0] = '\0';
-        char cand[1200];
-        if (dir[0])
-            snprintf(cand, sizeof cand, "%s/vendor/%s/%s.yuga", dir, name, name);
-        else
-            snprintf(cand, sizeof cand, "vendor/%s/%s.yuga", name, name);
-        if (file_exists(cand)) { snprintf(out, outsz, "%s", cand); return 1; }
-        if (dir[0])
-            snprintf(cand, sizeof cand, "%s/vendor/%s/main.yuga", dir, name);
-        else
-            snprintf(cand, sizeof cand, "vendor/%s/main.yuga", name);
-        if (file_exists(cand)) { snprintf(out, outsz, "%s", cand); return 1; }
+        /* The package's own file beats a generic `main`, whichever spelling. */
+        for (int which = 0; which < 2; which++) {
+            const char *file = which ? "main" : name;
+            for (size_t e = 0; e < YUGA_EXT_COUNT; e++) {
+                char cand[1200];
+                if (dir[0])
+                    snprintf(cand, sizeof cand, "%s/vendor/%s/%s%s", dir, name, file, yuga_ext_name(e));
+                else
+                    snprintf(cand, sizeof cand, "vendor/%s/%s%s", name, file, yuga_ext_name(e));
+                if (file_exists(cand)) { snprintf(out, outsz, "%s", cand); return 1; }
+            }
+        }
         if (dir[0] == '\0') break;
     }
     return 0;
@@ -195,16 +199,11 @@ static char *normalize_path(const char *in) {
     return yuga_dup(out);
 }
 
+/* Module alias for a path: stem, without directory or source extension. */
 static char *stem_of(const char *path) {
     const char *base = strrchr(path, '/');
     base = base ? base + 1 : path;
-    size_t n = strlen(base);
-    if (n > 5 && strcmp(base + n - 5, ".yuga") == 0) n -= 5;
-    else {
-        const char *dot = strrchr(base, '.');
-        if (dot) n = (size_t)(dot - base);
-    }
-    return yuga_dupn(base, n);
+    return yuga_dupn(base, yuga_stem_len(base, strlen(base)));
 }
 
 /** Map an import spec to a filesystem path, or NULL and an error. */

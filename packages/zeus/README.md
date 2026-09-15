@@ -40,8 +40,8 @@ Public widgets in `std:zeus`: `App`, `Box`, `Text`, `Button`, `Input`, `Grid`,
 (look + palette + `Card` / `Dialog` / `Tabs` / charts / `DatePicker`) lives
 in the same module. Growing lists:
 `zeus.signal([]string {})` + `zeus.For` + `zeus.push_item`.
-SVG path strings live in [`lib/ui/display/icons.yuga`](lib/ui/display/icons.yuga).
-Theme tokens live in [`lib/theme.yuga`](lib/theme.yuga) and `std:zeus`.
+SVG path strings live in [`lib/ui/display/icons.loam`](lib/ui/display/icons.loam).
+Theme tokens live in [`lib/theme.loam`](lib/theme.loam) and `std:zeus`.
 Web is **Canvas2D wasm** — not HTML/DOM.
 
 `zeus.App` builds the tree **once**. A signal write re-runs only the props that
@@ -58,18 +58,18 @@ runtime 404. `examples/zeus/counter` is the reference implementation:
 
 ```
 examples/zeus/counter/
-  backend/api.yuga  shared contract: #[proto] payloads, imported by both sides
+  backend/api.loam  shared contract: #[proto] payloads, imported by both sides
   backend/server    native backend
-  screen.yuga       the Zeus UI, imported by every host's app.yuga
-  frontend/         wasm host stub — shared `app.yuga`, `http.client()` per target
+  screen.loam       the Zeus UI, imported by every host's app.loam
+  frontend/         wasm host stub — shared `app.loam`, `http.client()` per target
   macos/ ios/ android/   native hosts
 ```
 
 To add a new endpoint:
 
-1. Add a `#[proto]` request/response struct to `api.yuga`.
+1. Add a `#[proto]` request/response struct to `api.loam`.
 2. Handle it on the server with `app.rpc(...)`.
-3. Call it from the shared `app.yuga` via `http.client().call(...)` — empty
+3. Call it from the shared `app.loam` via `http.client().call(...)` — empty
    addr is filled per `--target` (wasm same-origin, mac/iOS loopback,
    Android emulator `10.0.2.2`). Override with an explicit addr or
    `YUGA_RPC_ADDR`.

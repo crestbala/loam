@@ -2,7 +2,7 @@
  *
  *   ZEUS_APP=gallery ZEUS_WEB_PORT=5174 npx vite --config packages/zeus/hosts/web/vite.config.js
  *
- * Compiles `examples/zeus/<app>/<app>.yuga` to `build/<app>.wasm`, serves the
+ * Compiles `examples/zeus/<app>/<app>.loam` to `build/<app>.wasm`, serves the
  * live `web/loader.js`, and rebuilds when Yuga / runtime / loader sources change.
  */
 import { spawnSync } from "node:child_process";
@@ -16,7 +16,7 @@ const repo = resolve(here, "../../../..");
 const name = process.env.ZEUS_APP || "gallery";
 const port = Number(process.env.ZEUS_WEB_PORT || 5174);
 const appDir = resolve(repo, "examples/zeus", name);
-const src = resolve(appDir, name + ".yuga");
+const src = resolve(appDir, name + ".loam");
 const buildDir = resolve(appDir, "build");
 const wasmFile = resolve(buildDir, name + ".wasm");
 const yugac = resolve(repo, "bin/yugac");

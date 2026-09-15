@@ -1,0 +1,31 @@
+import "std:zeus"
+
+struct Row {
+    a: string,
+    b: string,
+}
+
+fn main() {
+    let mut rows = []Row {}
+    push(rows, Row { a: "bezel.toml", b: "Config" })
+    push(rows, Row { a: "app.loam", b: "Source" })
+    let open = zeus.signal(1)
+    let mut nums = []int {}
+    for i in 1..4 {
+        push(nums, i)
+    }
+    let top = zeus.Box(align_direction = DIRECTION.Column)
+    zeus.slot(top, fn() {
+        for i in 0..nums.len {
+            let v = nums[i]
+            zeus.Text("{{v}}")
+        }
+        for i in 0..rows.len {
+            let a = rows[i].a
+            zeus.Text(a)
+        }
+        let shown = zeus.Text("shown")
+        zeus.show(shown, open)
+    })
+    zeus.snapshot(240, 160, fn() -> Node { top })
+}

@@ -1,0 +1,14 @@
+//! Shared gallery UI. Hosts are three-line stubs that call `ui.start`.
+
+import "std:zeus"
+import "screen.loam"
+
+fn start() {
+    zeus.App("Zeus Gallery", fn() {
+        screen.Screen()
+    })
+}
+
+fn main() {
+    start()
+}

@@ -1,11 +1,11 @@
 # Zeus / Yuga — production roadmap
 
-Phase-by-phase plan for turning `packages/zeus/std/zeus.yuga` (engine + design system)
+Phase-by-phase plan for turning `packages/zeus/std/zeus.loam` (engine + design system)
 (+ `packages/yuga/std/net`, `packages/http/std/http`, the C runtime) into a stack you can build real
 products on — ecommerce tools, team chat (Slack/Teams-shaped), social apps.
 
 Related: the next series (one host entry, honest `App` size, touch vs
-pointer, `zeus.yuga` tidy) lives in [downsides.md](downsides.md). This
+pointer, `zeus.loam` tidy) lives in [downsides.md](downsides.md). This
 file is the living Zeus/product plan (Phases 1–8 here); each phase
 re-states its own rationale.
 Status: tick phases off as they land, with their exit criteria as the
@@ -31,8 +31,8 @@ definition of done.
 
 Landmarks that are done and tested — the roadmap starts past them:
 
-- Arena recycling: `For`/`refit` rebuilds free nodes, signals, handlers, effects (`zeus_for_recycle.yuga`).
-- Windowed lists: `VirtualList` / `For(..., row_h)` / `VirtualTable` of row structs + `TableCol`; `insert_item`; scroll momentum, overscroll, `scroll_to` (`zeus_virt.yuga`).
+- Arena recycling: `For`/`refit` rebuilds free nodes, signals, handlers, effects (`zeus_for_recycle.loam`).
+- Windowed lists: `VirtualList` / `For(..., row_h)` / `VirtualTable` of row structs + `TableCol`; `insert_item`; scroll momentum, overscroll, `scroll_to` (`zeus_virt.loam`).
 - Lazy DatePicker: one 7×6 signal-driven grid, no rebuild on month/year change.
 - Row shrink-before-wrap; `grow = 1` is elastic by default (CSS `flex: 1`), `shrink` prop overrides.
 - Single following chart tooltip + cursor + band driven by one `act` signal.
@@ -76,7 +76,7 @@ demos. Phase column points into §6.
 | 1 | ~~No raster image primitive (draw op + host decode)~~ **Phase 2** | `zeus.Image`; hosts decode PNG/JPEG/WebP/GIF | — | 2 |
 | 2 | ~~Single-line text, no IME on canvas hosts~~ **Phase 3** | chat compose exists; wasm IME is paste+composition, not a hidden field | — | 3 |
 | 3 | ~~`For` rebuilds the whole list per push (recycling yes, O(n) still)~~ **Phase 5** | `VirtualList` / windowed `For` / `VirtualTable`; `push_item` / `insert_item` | — | 5 |
-| 4 | ~~Nested scroll chaining~~ **self-improvement Phase 8** | leftover wheel at an inner bound goes to the parent (`zeus_scroll_chain.yuga`) | — | 8 |
+| 4 | ~~Nested scroll chaining~~ **self-improvement Phase 8** | leftover wheel at an inner bound goes to the parent (`zeus_scroll_chain.loam`) | — | 8 |
 | 5 | ~~`Signal<int>` only (no float/date/bool scalar store)~~ **Phase 6** | float signals + float timestamp scalars (the byte-typed cell store was already generic; exit test proves it) | — | 6 |
 | 6 | ~~Zeus monolith, no dead-code elimination~~ **Phase 7** | web bundle size, componentization | — | 7 |
 | 7 | ~~a11y = labels only; no focus ring, thin keyboard model~~ **Phase 7** | visible keyboard focus + tab order across interactive chrome | — | 7 |
@@ -143,7 +143,7 @@ server story. Thread-per-connection in C *under* the API is a later option.
 
 ### 5.5 New primitives ride the existing pipeline
 Any draw primitive (image, gradient, rounded-text) travels
-`scene.yuga → platform.yuga → zeus_plat.c → zeus_rt.h → mac/iOS/wasm/android
+`scene.loam → platform.loam → zeus_plat.c → zeus_rt.h → mac/iOS/wasm/android
 hosts` + both canvas loaders. Budget that blast radius per primitive; add
 decode (PNG/JPEG) in the hosts, never in Yuga.
 
@@ -153,18 +153,18 @@ Definition of done per phase = exit criteria, all verified by `make test`
 (headless runs) unless noted. Tick boxes as phases land.
 
 ### Phase 1 — Async runtime, timers, non-blocking net  (foundation)
-- [x] Async on the one UI thread, queues in Yuga: `std/async.yuga` (spawn / after / interval / cancel / per-frame steps), a minimal C seam (clock + sleep in `yuga_rt.h`), hosts drain per frame via `engine_layout`'s tick (mac + wasm; mac sleeps idle and wakes at `engine_next_ms`).
-- [x] `after(ms, fn)` / `interval(ms, fn)` / `spawn` / `cancel` in std (feed signals; `async_timers.yuga`).
+- [x] Async on the one UI thread, queues in Yuga: `std/async.loam` (spawn / after / interval / cancel / per-frame steps), a minimal C seam (clock + sleep in `yuga_rt.h`), hosts drain per frame via `engine_layout`'s tick (mac + wasm; mac sleeps idle and wakes at `engine_next_ms`).
+- [x] `after(ms, fn)` / `interval(ms, fn)` / `spawn` / `cancel` in std (feed signals; `async_timers.loam`).
 - [x] Non-blocking transport: `net.tcp_nb_connect` / `tcp_poll` / `tcp_send` / `tcp_so_error` — the UI never blocks on sockets.
 - [x] First async-to-UI proof: `compile_pass` fake async op (`spawn`) completes, sets a signal, and a prop repaints through the headless pump (`zeus.pump`, no manual `engine_layout`).
 - [x] `http.call_async(c, name, body, fn(resp))` gRPC-Web callback client (native sockets via per-frame steppers; wasm async fetch slots) — same `#[proto]` contract as `call`, no JSON layer.
-- **Exit:** an app completes a gRPC round-trip while animating; headless test asserts completion → repaint without a manual `engine_layout`. **Green** (`zeus_async_rpc.yuga` runs a real child-process `Echo.Ping` server; wasm fetch path compiles, needs a browser to run).
+- **Exit:** an app completes a gRPC round-trip while animating; headless test asserts completion → repaint without a manual `engine_layout`. **Green** (`zeus_async_rpc.loam` runs a real child-process `Echo.Ping` server; wasm fetch path compiles, needs a browser to run).
 
 ### Phase 1b — Realtime transport
 - [x] SSE on the existing HTTP/1.1 server (server → client push): `read_head` / `sse_start` / `sse_send` per connection, `http.sse_open` streaming client (events per `data:` line, UI-thread callback).
-- [x] WebSocket client (native **and** wasm) and server: pure-Yuga RFC 6455 codec in `httpcore/ws.yuga` (base64, SHA-1, accept key, masked/unmasked frames), `http.ws_upgrade` / `ws_send_text` server push, `http.ws_open` streaming client — native TCP steppers, wasm via the browser's WebSocket (JS loader bridge, per-frame drain). Live demo: `examples/zeus/ws` (native tick server + wasm page).
-- [x] Auth/session convention: bearer token header (`http.set_token`), parsed server-side into `req_token()`, `app.before(fn)` middleware hook (alias of `use`) that can `reject()` → handler skipped, grpc-status 16 (`http_auth.yuga`).
-- **Exit:** a headless loop test streams N events over SSE/ws and the UI shows each (golden or probe assertions). **Green** (`zeus_stream.yuga`: 5 SSE events + 5 ws messages → signal-fed label `events: 10`, repaint probes, child-process servers).
+- [x] WebSocket client (native **and** wasm) and server: pure-Yuga RFC 6455 codec in `httpcore/ws.loam` (base64, SHA-1, accept key, masked/unmasked frames), `http.ws_upgrade` / `ws_send_text` server push, `http.ws_open` streaming client — native TCP steppers, wasm via the browser's WebSocket (JS loader bridge, per-frame drain). Live demo: `examples/zeus/ws` (native tick server + wasm page).
+- [x] Auth/session convention: bearer token header (`http.set_token`), parsed server-side into `req_token()`, `app.before(fn)` middleware hook (alias of `use`) that can `reject()` → handler skipped, grpc-status 16 (`http_auth.loam`).
+- **Exit:** a headless loop test streams N events over SSE/ws and the UI shows each (golden or probe assertions). **Green** (`zeus_stream.loam`: 5 SSE events + 5 ws messages → signal-fed label `events: 10`, repaint probes, child-process servers).
 
 ### Phase 1c — JS-shaped `async fn` / `await` (language sugar)
 Callback APIs (`call_async`) are the runtime; this phase adds the syntax the
@@ -175,7 +175,7 @@ thread.
 
 - [x] Grammar + sema: `async fn name(...)`, `await expr` (contextual keywords — parser desugars `await e` to `async.await_value(e)`; typecheck rejects `await` outside an `async fn` body or inside a closure, like JS).
 - [x] Awaitable surface: `Future<T>` mailboxes in `std:async` (`future` / `future_str` / `resolve` / `await_value` — Copy `T`; cells in `yuga_rt.h`); `http.async_call(c, name, body)` is the awaitable gRPC-Web call (`Future<string>`); awaiting pumps timers/spawns/socket steppers until `resolve`, then returns the value.
-- [x] Demo + tests: `examples/zeus/counter/macos/app.yuga` is `async fn main` with two awaited RPCs (`let raw = await c.async_call(...)`) feeding the App; `compile_pass/async_await.yuga` (sequential awaits, sync call of an async fn, pre-resolved future, `Future<int>` / `bool` / `float` / Copy struct / `[]int`); `compile_pass/async_await_stress.yuga` (for/while/if/match/continue/break around awaits); `compile_fail/async_await_ctx.yuga`, `compile_fail/async_future_not_copy.yuga`.
+- [x] Demo + tests: `examples/zeus/counter/macos/app.loam` is `async fn main` with two awaited RPCs (`let raw = await c.async_call(...)`) feeding the App; `compile_pass/async_await.loam` (sequential awaits, sync call of an async fn, pre-resolved future, `Future<int>` / `bool` / `float` / Copy struct / `[]int`); `compile_pass/async_await_stress.loam` (for/while/if/match/continue/break around awaits); `compile_fail/async_await_ctx.loam`, `compile_fail/async_future_not_copy.loam`.
 - **Exit:** sequential awaited values flow in order through the pump and repaint; awaits outside `async fn` are compile errors. **Green** — caveat: awaiting re-enters the pump on the UI thread, so an await inside an event handler pauses host repaint until it returns; init/startup awaits (the counter App) and headless flows are the sweet spot, callbacks stay the reactive path.
 - [x] Follow-up: `async`/`await` highlighting landed in the tree-sitter grammar + Zed/VSCode grammars (violet scopes in VSCode).
 - [x] Follow-ups: widen `Future<T>` beyond string payloads; loop-and-branch-heavy bodies are already fine (no CPS split in this design) but want a stress test.
@@ -194,13 +194,13 @@ thread.
 - [x] Multiline text input (kind 10 `multiline` / `wrap`): line breaks, caret, click-to-caret, arrow/home/end, shift-select.
 - [x] IME composition on mac (`NSTextInputClient`); canvas/wasm ASCII + paste + compositionend.
 - [x] Components: `TextArea` widget (shadcn-style chrome reusing `Input` tokens).
-- **Exit:** a chat-compose headless test (type, edit, bind signal) + golden. **Green** (`zeus_textarea.yuga`, `draw_golden/golden_textarea`).
+- **Exit:** a chat-compose headless test (type, edit, bind signal) + golden. **Green** (`zeus_textarea.loam`, `draw_golden/golden_textarea`).
 
 ### Phase 4 — KV persistence
-- [x] `std/kv.yuga` over the `yuga_sys_*` seam: `get/set/delete/list`, file-backed, atomic-ish (`write` + `rename`).
+- [x] `std/kv.loam` over the `yuga_sys_*` seam: `get/set/delete/list`, file-backed, atomic-ish (`write` + `rename`).
 - [x] App-data path helper (`kv.data_dir`, `~/Library/Application Support/<app>`; wasm: empty → in-memory).
 - **Exit:** a compile_pass test that round-trips rows across two "processes"
-  (reopen), plus gallery draft/autosave demo. **Green** (`kv_roundtrip.yuga`; gallery Forms draft).
+  (reopen), plus gallery draft/autosave demo. **Green** (`kv_roundtrip.loam`; gallery Forms draft).
 
 ### Phase 5 — Virtualized lists + Virtualized table + scroll
 - [x] Windowed `For` (render visible rows ± margin; recycle beyond the window).
@@ -208,9 +208,9 @@ thread.
 - [x] Scroll physics: momentum, overscroll clamp, `scroll_to` (signal-driven).
 - **Exit:** headless test: 10k-row feed stays under a node/effect budget while
   scrolling (`arena_nodes()` bounded), items paint on demand. **Green**
-  (`zeus_virt.yuga`: 10k `VirtualList` + 10k `VirtualTable` of row structs /
+  (`zeus_virt.loam`: 10k `VirtualList` + 10k `VirtualTable` of row structs /
   `TableCol` columns; append/insert; `scroll_to`; overscroll rubber-band).
-  Demo: `examples/zeus/counter` (wasm / iOS / macOS / Android share `screen.yuga`).
+  Demo: `examples/zeus/counter` (wasm / iOS / macOS / Android share `screen.loam`).
 
 ### Phase 6 — TLS + float/date signals
 - [x] TLS on `net` (SecureTransport on macOS; wasm keeps browser TLS):
@@ -221,10 +221,10 @@ thread.
   store already covers any Copy type (int fast-path only), so floats and
   float timestamps need no backend change; the exit test proves it.
 - **Exit:** `https` client test (skipped when offline), float-driven animation
-  prop test. **Green** (`http_https_live.yuga`: TLS GET against
+  prop test. **Green** (`http_https_live.loam`: TLS GET against
   `example.com`, retries DPI-mangled first handshakes, skips when offline;
-  `zeus_sig_float.yuga`: float round-trips, a float timestamp scalar over
-  `async.now_ms`, and a float-driven styled prop; `http_client.yuga` pins
+  `zeus_sig_float.loam`: float round-trips, a float timestamp scalar over
+  `async.now_ms`, and a float-driven styled prop; `http_client.loam` pins
   `https://` address parsing).
 
 ### Phase 7 — Design system & a11y growth discipline
@@ -232,9 +232,9 @@ thread.
 - [x] Focus ring painting + visible tab order on native hosts.
 - [x] Density/font-scale tokens (components read a scale signal, not constants).
 - **Exit:** gallery unchanged visually at scale 1.0 (golden); a11y probe test asserts roles/focus order. **Green** — chose per-widget opt-in over a namespace split: the monolith stays one cycle-free module, and codegen now emits only decls reachable from the entry module + the C-seam roots (`yuga_zeus_engine_*` etc. in `src/dce.c`, gated in `codegen_c.c`; typecheck/IR still verify everything, `YUGA_NO_DCE=1` restores full emission). Generated C: spec −64%, counter −47%, gallery −8%; counter wasm byte-identical (it reaches the whole engine).
-- [x] Focus ring + tab order: `kb_focus` (keyboard-only ring — clicks clear it), 4-fill ring in theme role 36 painted in `scene`, every click target is a tab stop (Enter/Space activate it), Tab leaves single-line fields and soft-tabs (4 spaces) in multiline ones (`input.yuga` + `zeus_plat.c` reroute plain Tab through the engine), roles/labels on interactive chrome (checkbox / radio / switch / slider / tab / combobox).
+- [x] Focus ring + tab order: `kb_focus` (keyboard-only ring — clicks clear it), 4-fill ring in theme role 36 painted in `scene`, every click target is a tab stop (Enter/Space activate it), Tab leaves single-line fields and soft-tabs (4 spaces) in multiline ones (`input.loam` + `zeus_plat.c` reroute plain Tab through the engine), roles/labels on interactive chrome (checkbox / radio / switch / slider / tab / combobox).
 - [x] Scale tokens: `set_scale(50..200)` percent + `tk(x)` (identity at 100, so goldens hold); fonts, control geometry, glyph icons, and form chrome read `tk` instead of constants. Retained trees read the scale at build; `zeus.view` apps re-read it every frame (live zoom).
-- **Tests:** `zeus_focus.yuga` (roles → document-order tab traversal → ring paint deltas → Enter/Space activation → Tab semantics), `zeus_scale.yuga` (150/100/clamp round-trips), `golden_focus_ring` (ring fills byte-exact), `golden_scale_gallery` (gallery chrome at scale 1.0); every pre-existing DRAW golden stays byte-identical.
+- **Tests:** `zeus_focus.loam` (roles → document-order tab traversal → ring paint deltas → Enter/Space activation → Tab semantics), `zeus_scale.loam` (150/100/clamp round-trips), `golden_focus_ring` (ring fills byte-exact), `golden_scale_gallery` (gallery chrome at scale 1.0); every pre-existing DRAW golden stays byte-identical.
 
 ### Phase 8 — Revisit only if demanded
 - [x] Language threads + Send discipline + channels (CPU-bound workloads).
@@ -257,7 +257,7 @@ thread.
         back through channels only; the UI drains and feeds signals.
       - C stays minimal: `yuga_rt.h` gains only the pthread entry + a generic
         byte-FIFO + mutex/condvars (same category as the fut-slot table);
-        queue policy, docs, and API shape live in `std/thread.yuga`. wasm
+        queue policy, docs, and API shape live in `std/thread.loam`. wasm
         compiles with inert stubs (no threads); `async.busy()` includes
         `thread.running()`, so zeus hosts keep drawing frames while workers
         run and a UI drain sees results the frame they arrive.
@@ -273,10 +273,10 @@ thread.
 
 **Exit (threads):** a headless test proves N real workers compute on other
 cores, return results through bounded channels, and the UI drains them
-without blocking (`thread_chan.yuga` — 3-worker pool, blocking recv + send,
+without blocking (`thread_chan.loam` — 3-worker pool, blocking recv + send,
 try_send/ready drains, string + struct payloads, sentinel shutdown;
-`thread_spawn_mod.yuga` — spawn from an imported module, DCE keeps the
-worker alive; `thread_busy.yuga` — `async.busy()` true while workers run,
+`thread_spawn_mod.loam` — spawn from an imported module, DCE keeps the
+worker alive; `thread_busy.loam` — `async.busy()` true while workers run,
 false after). compile_fail locks the discipline: non-Send captures/payloads
 (`thread_spawn_cap_vec`, `thread_chan_vec`, `thread_chan_fn`), worker global
 access (`thread_spawn_global`), opaque fn-value callbacks (`thread_spawn_cb_value`),

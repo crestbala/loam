@@ -29,7 +29,7 @@ Run the example: `./run.sh raygui` (needs `brew install raylib`).
 
 | Piece | Where | What |
 |---|---|---|
-| API + frame loop | `std/raygui.yuga` | Bodyless `plat_*` hooks plus the public wrappers and the `init` / `open` / `begin` / `end` / `close` loop. |
+| API + frame loop | `std/raygui.loam` | Bodyless `plat_*` hooks plus the public wrappers and the `init` / `open` / `begin` / `end` / `close` loop. |
 | Host seam | `packages/yuga/runtime/raygui_plat.c` | Includes `RAYGUI_IMPLEMENTATION`, owns the raylib window, and converts each call (NUL-terminate a `yuga_str`, mirror raygui's `bool *` state as `int *`). No widget logic. |
 | Declarations | `packages/yuga/runtime/raygui_rt.h` | The `yuga_raygui_plat_*` prototypes the generated C calls. |
 | Vendored header | `vendor/raygui.h` | raygui 4.0 (matches raylib 5.x). |

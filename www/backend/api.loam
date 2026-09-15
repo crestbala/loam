@@ -1,0 +1,29 @@
+//! Shared RPC contracts for the docs site.
+//!
+//! Wasm (`frontend/app.loam`) and macOS (`macos/app.loam`) POST `Docs.Page`.
+//! `#[proto]` injects `encode_*` / `decode_*`.
+
+#[proto]
+struct PageReq {
+    id: int,
+}
+
+#[proto]
+struct PageResp {
+    title: string,
+    lead: string,
+    body: string,
+    sample: string,
+}
+
+fn page_rpc() -> string {
+    return "Docs.Page"
+}
+
+fn page_count() -> int {
+    return 16
+}
+
+fn native_addr() -> string {
+    return "127.0.0.1:8082"
+}

@@ -1,0 +1,437 @@
+//! router — route table, typed params, history, and navigation.
+//!
+//! The router is a plain Yuga module over the public `std:zeus` primitives:
+//! the current path is a `Signal<string>`, the page slot is a `zeus.Match`
+//! host (one page mounted at a time), and each page build runs under
+//! `zeus.Boundary`, so a bad route paints `error(msg)` instead of killing the
+//! app.
+//!
+//! ```
+//! import "std:zeus"
+//! import "std:router"
+//!
+//! fn Home(p: Params) { zeus.Text("home") }
+//! fn Post(p: Params) { zeus.Text("post " + router.param(p, "slug")) }
+//!
+//! fn main() {
+//!     zeus.App("app", fn() {
+//!         zeus.Box(align_direction = DIRECTION.Column) {
+//!             Navbar()                                  // retained shell
+//!             router.Router([]Route {
+//!                 Route { pattern: "/", build: Home },
+//!                 Route { pattern: "/post/:slug", build: Post },
+//!             }, RouterProps {})
+//!         }
+//!     })
+//! }
+//! ```
+//!
+//! Data loads with `on_load`: every loader whose pattern matches the target
+//! path starts when navigation begins — before the page builds — so a route's
+//! independent fetches are in flight together (no waterfalls, §5.5).
+//!
+//! ```yuga
+//! router.on_load("/post/:slug", fn(p) {
+//!     let slug = router.param(p, "slug")
+//!     http.client("").call_async(get_post_req(slug), fn(reply) {
+//!         post_state.set(decode_Post(reply))
+//!     })
+//! })
+//! ```
+//!
+//! A shell built around `router.Router` is created once, so its state (nav
+//! selection, scroll, open menus) survives navigation — only the page slot
+//! rebuilds.
+//!
+//! Host history is the `platform.plat_history_*` seam; the core keeps the
+//! back/forward stack and hosts call `router.engine_open_url` for a deep link
+//! or an OS back button.
+
+import "std:zeus"
+import "zeuscore/platform.loam"
+
+/// Captured `:name` segments of a matched route.
+struct Params {
+    keys: []string,
+    vals: []string,
+}
+
+/// Per-route metadata (§5.7). On web it fills the generated HTML `<head>`; on
+/// native the same struct fills the window title and the share sheet. All
+/// fields have defaults, so `Meta {}` is valid.
+struct Meta {
+    title: string = "",
+    description: string = "",
+    /// Absolute or root-relative canonical URL; empty means "use the path".
+    canonical: string = "",
+    og_image: string = "",
+    og_type: string = "website",
+    /// `index,follow` (default) or `noindex`.
+    robots: string = "index,follow",
+    /// Optional JSON-LD structured data, emitted verbatim in the shell head
+    /// (§5.7). It is a crawler annotation, not application data transport.
+    jsonld: string = "",
+}
+
+/// One route: a `/`-separated pattern with `:name` captures and the builder
+/// that mounts the page. `build` runs under an error boundary. Loaders are
+/// registered separately with `on_load` (§5.5). `meta` and `paths` feed the
+/// build-time HTML shell (§5.7): `paths()` enumerates a dynamic route's
+/// concrete URLs, and `meta()` gives each one its head.
+struct Route {
+    pattern: string,
+    build: fn(Params),
+    meta: fn(Params) -> Meta = router_default_meta,
+    paths: fn() -> []string = router_default_paths,
+}
+
+fn router_default_meta(p: Params) -> Meta {
+    return Meta {}
+}
+
+fn router_default_paths() -> []string {
+    return []string {}
+}
+
+/// 1 when `pattern` has a `:name` capture (so a build cannot know its URLs
+/// without `paths()`).
+fn is_dynamic(pattern: string) -> int {
+    let mut i = 0
+    while i < pattern.len {
+        if pattern[i] == 58 {
+            return 1
+        }
+        i = i + 1
+    }
+    return 0
+}
+
+/// A loader registered for a route pattern. Several may share a pattern; all
+/// of them start, in registration order, when navigation to it begins.
+struct LoaderEntry {
+    pattern: string,
+    load: fn(Params),
+}
+
+/// Per-router fallbacks. Both default to a plain `Text`, so `RouterProps {}`
+/// works out of the box.
+struct RouterProps {
+    not_found: fn() = router_default_not_found,
+    error: fn(string) = router_default_error,
+}
+
+fn router_default_not_found() {
+    zeus.Text("not found")
+}
+
+fn router_default_error(msg: string) {
+    zeus.Text("route error")
+}
+
+// --- byte helpers (strings are bytes) ---
+
+fn r_is_slash(b: int) -> int {
+    if b == 47 {
+        return 1
+    }
+    return 0
+}
+
+fn r_seg_end(s: string, i: int, end: int) -> int {
+    let mut j = i
+    while j < end {
+        if s[j] == 47 {
+            break
+        }
+        j = j + 1
+    }
+    return j
+}
+
+/// Length of `s` with trailing slashes removed (never below 1, so "/" stays).
+fn r_trim_end(s: string) -> int {
+    let mut e = s.len
+    while e > 1 {
+        if s[e - 1] == 47 {
+            e = e - 1
+        } else {
+            break
+        }
+    }
+    return e
+}
+
+fn r_substr(s: string, a: int, b: int) -> string {
+    let mut out = []int {}
+    let mut i = a
+    while i < b {
+        push(out, s[i])
+        i = i + 1
+    }
+    return string_from_bytes(out)
+}
+
+fn r_starts_slash(s: string) -> int {
+    if s.len == 0 {
+        return 0
+    }
+    if s[0] == 47 {
+        return 1
+    }
+    return 0
+}
+
+/// Result buffers for `match_route`.
+///
+/// `match_route` used to return a struct holding `[]string`; copying its slice
+/// fields out of the returned value corrupts under wasm codegen, so the match
+/// writes into these module buffers instead and returns just `ok`. Read them
+/// with `match_keys()` / `match_vals()` immediately after a successful match.
+let mut mr_keys: []string = []string {}
+let mut mr_vals: []string = []string {}
+
+/// Match `path` against `pattern`. Literal segments compare byte-for-byte; a
+/// `:name` segment captures the path segment. Returns 1 on a match and fills
+/// `match_keys()` / `match_vals()` with the captured params.
+fn match_route(pattern: string, path: string) -> int {
+    mr_keys = []string {}
+    mr_vals = []string {}
+    if r_starts_slash(pattern) == 0 {
+        return 0
+    }
+    if r_starts_slash(path) == 0 {
+        return 0
+    }
+    let pend = r_trim_end(pattern)
+    let send = r_trim_end(path)
+    let mut pi = 1
+    let mut si = 1
+    while pi < pend {
+        // Pattern has a segment here, so the path must too.
+        if si >= send {
+            return 0
+        }
+        let pe = r_seg_end(pattern, pi, pend)
+        let se = r_seg_end(path, si, send)
+        let plen = pe - pi
+        if plen == 0 {
+            return 0
+        }
+        if pattern[pi] == 58 {
+            // `:name` — capture the path segment.
+            push(mr_keys, r_substr(pattern, pi + 1, pe))
+            push(mr_vals, r_substr(path, si, se))
+        } else {
+            if plen != se - si {
+                return 0
+            }
+            let mut k = 0
+            while k < plen {
+                if pattern[pi + k] != path[si + k] {
+                    return 0
+                }
+                k = k + 1
+            }
+        }
+        pi = pe + 1
+        si = se + 1
+    }
+    // Pattern exhausted: the path may carry a trailing slash, nothing more.
+    if si < send {
+        return 0
+    }
+    return 1
+}
+
+/// Captured `:name` keys from the last successful `match_route`.
+fn match_keys() -> []string {
+    return mr_keys
+}
+
+/// Captured path values from the last successful `match_route`.
+fn match_vals() -> []string {
+    return mr_vals
+}
+
+fn param(p: Params, name: string) -> string {
+    let mut i = 0
+    while i < p.keys.len {
+        if p.keys[i] == name {
+            if i < p.vals.len {
+                return p.vals[i]
+            }
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+/// Decimal `:param` as an int (0 when absent or non-numeric).
+fn param_int(p: Params, name: string) -> int {
+    let s = param(p, name)
+    let mut n = 0
+    let mut i = 0
+    while i < s.len {
+        let b = s[i]
+        if b < 48 {
+            return n
+        }
+        if b > 57 {
+            return n
+        }
+        n = n * 10 + (b - 48)
+        i = i + 1
+    }
+    return n
+}
+
+// --- history + current path ---
+
+let mut cur_path: Signal<string> = Signal { id: 0 }
+let mut hist: []string = []string {}
+let mut hist_at: int = 0
+/// Loaders registered with `on_load`, matched against the target path when
+/// navigation begins.
+let mut route_loaders: []LoaderEntry = []LoaderEntry {}
+let mut initial_loads_done: int = 0
+/// Last title pushed to the host (`Meta.title`); tests and hosts poll it.
+let mut cur_title: string = ""
+
+fn ensure_path() {
+    if cur_path.id == 0 {
+        cur_path = zeus.signal("/")
+        hist = []string { "/" }
+        hist_at = 0
+    }
+}
+
+/// The current path as a signal: read it to build a nav highlight, `set` it
+/// through `navigate` / `replace`, never directly.
+fn path_signal() -> Signal<string> {
+    ensure_path()
+    return cur_path
+}
+
+fn current() -> string {
+    ensure_path()
+    return cur_path.get()
+}
+
+/// Start every loader registered for the route matching `path`, in order.
+/// Called the moment navigation begins — before `cur_path` changes and the
+/// page paints — so a route's fetches are all in flight together.
+fn start_loaders(path: string) {
+    let mut i = 0
+    while i < route_loaders.len {
+        if match_route(route_loaders[i].pattern, path) == 1 {
+            let params = Params { keys: match_keys(), vals: match_vals() }
+            route_loaders[i].load(params)
+        }
+        i = i + 1
+    }
+}
+
+/// Register a loader for the routes matching `pattern`. All loaders for the
+/// target route start (in registration order) when navigation begins, before
+/// the page builds, so their requests run concurrently (§5.5).
+fn on_load(pattern: string, load: fn(Params)) {
+    route_loaders.push(LoaderEntry { pattern: pattern, load: load })
+}
+
+/// Push a route's title to the host (window title / `document.title`). Empty
+/// titles are ignored, so routes without `meta` leave the title alone. Called
+/// from `router_page`, where the matched route is already in hand.
+fn apply_title(m: Meta) {
+    if m.title.len > 0 {
+        cur_title = m.title
+        platform.plat_set_title(m.title)
+    }
+}
+
+/// Title last applied on navigation ("" until a route with `meta` is shown).
+fn meta_title() -> string {
+    return cur_title
+}
+
+/// Push `path` onto history and mount its route.
+fn navigate(path: string) {
+    ensure_path()
+    let mut out = []string {}
+    let mut i = 0
+    while i <= hist_at {
+        push(out, hist[i])
+        i = i + 1
+    }
+    push(out, path)
+    hist = out
+    hist_at = out.len - 1
+    start_loaders(path)
+    cur_path.set(path)
+    platform.plat_history_push(path)
+}
+
+/// Replace the current history entry (no new back step).
+fn replace(path: string) {
+    ensure_path()
+    if hist.len == 0 {
+        push(hist, path)
+        hist_at = 0
+    } else {
+        hist[hist_at] = path
+    }
+    start_loaders(path)
+    cur_path.set(path)
+    platform.plat_history_replace(path)
+}
+
+/// Go back one history entry. No-op at the start of history.
+fn back() {
+    ensure_path()
+    if hist_at > 0 {
+        hist_at = hist_at - 1
+        start_loaders(hist[hist_at])
+        cur_path.set(hist[hist_at])
+        platform.plat_history_back()
+    }
+}
+
+/// Host callback: a deep link or an OS back/forward button. `url` is the
+/// target path (for back, hosts pass `hist`-relative paths via the events they
+/// receive; the core keeps the stack).
+fn engine_open_url(url: string) {
+    ensure_path()
+    navigate(url)
+}
+
+/// Back one entry, for a host that only knows "the user went back".
+fn engine_history_back() {
+    back()
+}
+
+// --- the router ---
+
+fn router_page(routes: []Route, p: RouterProps, path: string) {
+    let mut i = 0
+    while i < routes.len {
+        if match_route(routes[i].pattern, path) == 1 {
+            let params = Params { keys: match_keys(), vals: match_vals() }
+            apply_title(routes[i].meta(params))
+            zeus.Boundary(fn() { routes[i].build(params) }, fn(msg) { p.error(msg) })
+            return
+        }
+        i = i + 1
+    }
+    p.not_found()
+}
+
+/// The page slot. Put it inside a retained shell: on navigation only this
+/// host rebuilds, so shell state survives. `RouterProps {}` uses the built-in
+/// not-found / error pages.
+fn Router(routes: []Route, p: RouterProps) -> Node {
+    ensure_path()
+    if initial_loads_done == 0 {
+        initial_loads_done = 1
+        start_loaders(cur_path.get())
+    }
+    return zeus.Match(cur_path, fn(path) { router_page(routes, p, path) })
+}

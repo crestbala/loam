@@ -1,6 +1,6 @@
 /* maya_rt.h — handles + host/engine seam for `import "std:maya"`.
  *
- * Scene, tracer, and 2D map are Yuga (`packages/maya/std/maya.yuga`, `packages/maya/std/mayacore/`).
+ * Scene, tracer, and 2D map are Yuga (`packages/maya/std/maya.loam`, `packages/maya/std/mayacore/`).
  * This header is Vec3/Mesh/Body (codegen skips those) plus plat_* (host)
  * and engine_* (generated C) that Cocoa calls.
  */
@@ -26,7 +26,7 @@ typedef struct {
     int64_t id;
 } Body;
 
-/* Host (maya_plat.c / maya_mac.m). Empty `fn plat_*` in packages/maya/std/maya.yuga. */
+/* Host (maya_plat.c / maya_mac.m). Empty `fn plat_*` in packages/maya/std/maya.loam. */
 void yuga_maya_plat_run(void);
 int64_t yuga_maya_plat_headless(void);
 void yuga_maya_plat_window(yuga_str title, int64_t w, int64_t h);

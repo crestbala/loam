@@ -1,0 +1,18 @@
+//! Native gRPC-Web server for the docs site (`:8082`).
+//!
+//! Vite on `:5175` and the macOS Cocoa app POST `Docs.Page` here.
+
+import "std:http"
+import "std:fmt"
+import "api.loam"
+import "pages.loam"
+
+fn main() {
+    let app = http.app()
+    app.rpc(api.page_rpc(), |body| {
+        let req = api.decode_PageReq(body)
+        api.encode_PageResp(pages.of(req.id))
+    })
+    fmt.println("docs rpc (127.0.0.1:8082). Docs.Page")
+    app.listen(8082)
+}

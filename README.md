@@ -15,7 +15,7 @@ fn main() {
 
 ```
 make
-./bin/yugac hello.yuga -o hello
+./bin/yugac hello.loam -o hello
 ./hello
 ```
 
@@ -31,7 +31,7 @@ Android stack) installs everything below that Homebrew can. See [Setup](#setup).
 - A C11 compiler (`cc`) and `make` (Apple Command Line Tools)
 - macOS for native desktop GUI (Cocoa) and Maya present
 - [raylib](https://www.raylib.com) (`brew install raylib`) for the `std:raygui`
-  example (`examples/language/raygui.yuga`); nothing else needs it
+  example (`examples/language/raygui.loam`); nothing else needs it
 - [Xcode](https://developer.apple.com/xcode/) for the iOS Simulator target
 - A `wasm32` clang (Homebrew LLVM, not Apple `/usr/bin/clang`) for web builds;
   `./install.sh` puts it where `yugac` looks by default. Set `YUGA_WASM_CC`
@@ -67,13 +67,13 @@ make
 That produces `bin/yugac` and `bin/yuga-lsp`. Then:
 
 ```
-./bin/yugac app.yuga -o app          # native binary
-./bin/yugac app.yuga --run           # compile and run
-./bin/yugac app.yuga --emit-c -o a.c # C99
-./bin/yugac app.yuga --emit-ir -o a.ir
-./bin/yugac --target wasm app.yuga -o app.wasm
-./bin/yugac --target=ios --run examples/zeus/dashboard/dashboard.yuga
-./bin/yugac --target=android examples/zeus/counter/android/app.yuga
+./bin/yugac app.loam -o app          # native binary
+./bin/yugac app.loam --run           # compile and run
+./bin/yugac app.loam --emit-c -o a.c # C99
+./bin/yugac app.loam --emit-ir -o a.ir
+./bin/yugac --target wasm app.loam -o app.wasm
+./bin/yugac --target=ios --run examples/zeus/dashboard/dashboard.loam
+./bin/yugac --target=android examples/zeus/counter/android/app.loam
 ```
 
 `make test` compiles and runs the language tests, golden programs, and
@@ -83,7 +83,7 @@ check / codegen / cc timings.
 
 ## Libraries
 
-Quoted imports only. `import "std:foo"` loads `packages/yuga/std/foo.yuga`.
+Quoted imports only. `import "std:foo"` loads `packages/yuga/std/foo.loam`.
 Call imported items as `foo.bar(...)`.
 
 | Import | What it is |
@@ -125,7 +125,7 @@ fn main() {
 ```
 
 The themed look (zinc palette, `Card`, `Button` with `LOOK` / `SIZE`, dialogs,
-charts, `DatePicker`) ships inside [`std:zeus`](packages/zeus/std/zeus.yuga).
+charts, `DatePicker`) ships inside [`std:zeus`](packages/zeus/std/zeus.loam).
 The catalog is [`examples/zeus/gallery`](examples/zeus/gallery). Zeus paints
 its own theme on every host; Cocoa / UIKit / Android widgets are not used.
 Map: [zeus/README.md](zeus/README.md). Architecture:
@@ -200,7 +200,7 @@ language demo is `./run.sh language/counter`. `zeus/counter` is an alias.
 Equivalent without `run.sh`:
 
 ```
-./bin/yugac --run examples/language/http_server.yuga
+./bin/yugac --run examples/language/http_server.loam
 ```
 
 Golden programs under `packages/yuga/tests/golden/` (hello, fib, fizzbuzz,
@@ -266,12 +266,12 @@ zeus/                  the framework
   hosts/               desktop/ Cocoa, ios/ UIKit, android/ JNI, web/ Canvas2D
   docs/                spec.md = zeus backends and paint model
 raygui/                immediate-mode GUI package (std:raygui)
-  std/raygui.yuga      the Yuga API + frame loop
+  std/raygui.loam      the Yuga API + frame loop
   vendor/raygui.h      vendored raygui (raysan5/raygui)
 packages/tooling/tree-sitter-yuga/  grammar
 packages/tooling/editors/       Zed extension, VSCode extension
 install.sh             one-time macOS setup (core tools; android stack)
-examples/language/     standalone .yuga programs
+examples/language/     standalone .loam programs
 examples/zeus/         gallery (component catalog), dashboard, full-stack counter
 www/                   Zeus + gRPC docs (Vite serves wasm, no Svelte)
 docs/                  yuga.md (language + architecture), boundary.md (C seam),

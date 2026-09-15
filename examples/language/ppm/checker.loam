@@ -1,0 +1,77 @@
+//! `checker.loam` — rexim's `checker.c`, in Yuga.
+//!
+//! https://gist.github.com/rexim/ef86bf70918034a5a57881456c0a0ccf
+//!
+//! 60 frames of a red/black checkerboard whose 60x60 cells slide one cell per
+//! frame, at the C original's 16:9 * 60 = 960x540. The C program writes
+//! `output-%02d.ppm` and leaves the encode to a hand-run
+//! `ffmpeg -i output-%02d.ppm -r 60 output.mp4`; here the encode is the last
+//! step of the program, so one command produces the video:
+//!
+//!     ./bin/yugac examples/language/ppm/checker.loam --run
+//!
+//! Knobs (all optional): `YUGA_PPM_SCALE` (60), `YUGA_PPM_FRAMES` (60),
+//! `YUGA_PPM_FPS` (60), `YUGA_PPM_OUT` (`out`), `YUGA_PPM_KEEP=1`.
+
+import "std:fmt"
+import "std:sys"
+import "frames.loam"
+
+/// Cell size in pixels. The board slides one cell per frame, so this is also
+/// the per-frame offset.
+const CELL: int = 60
+
+/// Frame file numbers are zero-padded to this width, matching the C original's
+/// `output-%02d.ppm`.
+const DIGITS: int = 2
+
+fn main() {
+    // One scale factor drives both sides, so 16:9 * 60 is the C original's
+    // 960x540. `even` keeps H.264's `yuv420p` (and its even-dimension rule)
+    // happy for any scale the caller asks for.
+    let scale = frames.even(frames.env_int("YUGA_PPM_SCALE", 60))
+    let count = frames.env_int("YUGA_PPM_FRAMES", 60)
+    let fps = frames.env_int("YUGA_PPM_FPS", 60)
+    let w = 16 * scale
+    let h = 9 * scale
+    let dir = frames.out_dir()
+
+    if frames.ensure_dir(dir) != 0 {
+        fmt.println("cannot create", dir)
+        sys.exit(1)
+    }
+
+    fmt.println("checker:", w, "x", h, "-", count, "frame(s) ->", dir)
+
+    let mut i = 0
+    while i < count {
+        if frames.save(dir, "checker", i, DIGITS, render(w, h, i)) != 0 {
+            fmt.println("cannot write", frames.path(dir, "checker", i, DIGITS))
+            sys.exit(1)
+        }
+        i = i + 1
+    }
+
+    frames.finish(dir, "checker", DIGITS, count, fps)
+}
+
+/// One frame: red where `(x + i) / CELL` and `(y + i) / CELL` differ in parity,
+/// black otherwise. Adding the frame index to both coordinates slides the whole
+/// board down and to the right by one cell per frame.
+fn render(w: int, h: int, i: int) -> []int {
+    let mut b = frames.image(w, h)
+    let mut y = 0
+    while y < h {
+        let mut x = 0
+        while x < w {
+            if ((x + i) / CELL + (y + i) / CELL) % 2 == 1 {
+                frames.rgb(&mut b, 255, 0, 0)
+            } else {
+                frames.rgb(&mut b, 0, 0, 0)
+            }
+            x = x + 1
+        }
+        y = y + 1
+    }
+    return b
+}

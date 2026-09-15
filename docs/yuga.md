@@ -14,14 +14,14 @@ This file is architecture plus how to write and run programs.
 ```mermaid
 flowchart LR
   subgraph src [Your program]
-    A["app.yuga"]
-    B["math.yuga"]
+    A["app.loam"]
+    B["math.loam"]
   end
   subgraph stdlib [std/]
-    F["fmt.yuga"]
-    Y["zeus.yuga"]
-    H["http.yuga"]
-    M["maya.yuga"]
+    F["fmt.loam"]
+    Y["zeus.loam"]
+    H["http.loam"]
+    M["maya.loam"]
   end
   subgraph yugac [yugac]
     L[lexer]
@@ -45,7 +45,7 @@ Pipeline, in order:
 
 | Stage | Where | What it does |
 |---|---|---|
-| Load | `src/compile.c` | Resolve `import "std:bar"` → `std/bar.yuga`, relative `"path.yuga"` from the importer. Cycles are errors. |
+| Load | `src/compile.c` | Resolve `import "std:bar"` → `std/bar.loam`, relative `"path.loam"` from the importer. Cycles are errors. |
 | Lex / parse | `src/lexer.c`, `src/parser.c` | Tokens → AST. |
 | Typecheck | `src/sema/typecheck.c` | Names, types, auto-borrow, generics (monomorphized, including nested calls and defaults), `mod.fn` / `mod.global`, method rewrite `n.w(32)` → `zeus.w(n, 32)`. |
 | Borrowck | `src/sema/borrowck.c` | Exclusive vs shared, moves, place paths (`p.a` vs `p.b`). Borrows end at the holder's last use (NLL). Enforces `#[must_check]`. |
@@ -81,7 +81,7 @@ yuga/
     tree-sitter-yuga/  grammar
     editors/      editor integrations (Zed, Cursor/VS Code)
   examples/
-    language/     standalone demo .yuga programs (not test fixtures)
+    language/     standalone demo .loam programs (not test fixtures)
     zeus/         zeus apps (gallery, dashboard, myapp scaffold) + full-stack counter example
   bin/yugac       the compiler
   bin/yuga-lsp    editor diagnostics / hover (incl. doc comments) / go-to-def / completion / semantic tokens
@@ -101,18 +101,18 @@ Three import forms, one per kind of dependency:
 
 | Form | Resolves to | Use for |
 |---|---|---|
-| `import "std:name"` | `packages/yuga/std/name.yuga`, then each `YUGA_PATH` root's `std/name.yuga` | language std and frameworks |
-| `import "path.yuga"` | relative to the importing file | files shipped with this module |
-| `import "pkg:name"` | `vendor/name/name.yuga`, searched upward from the entry | vendored third-party code |
+| `import "std:name"` | `packages/yuga/std/name.loam`, then each `YUGA_PATH` root's `std/name.loam` | language std and frameworks |
+| `import "path.loam"` | relative to the importing file | files shipped with this module |
+| `import "pkg:name"` | `vendor/name/name.loam`, searched upward from the entry | vendored third-party code |
 
 The `std:` search path is a real path, not "`std/` next to the compiler".
 `packages/yuga/std/` holds the language core (`fmt`, `net`, `sys`, `thread`, `math`,
 `str`, `time`, `kv`, `json`, `result`, `test`); `zeus`, `http`, and `maya` are
 **frameworks** that live outside `yuga/` and are found because `YUGA_PATH`
-names their roots (`packages/zeus/std/zeus.yuga`, `packages/http/std/http.yuga`, …). Language std
+names their roots (`packages/zeus/std/zeus.loam`, `packages/http/std/http.loam`, …). Language std
 is searched first, so a framework cannot shadow `std:fmt`. Relative imports
-are for a module's own siblings (`packages/zeus/std/router.yuga` →
-`"zeuscore/platform.yuga"`), never for dependencies.
+are for a module's own siblings (`packages/zeus/std/router.loam` →
+`"zeuscore/platform.loam"`), never for dependencies.
 
 ## How to use the language
 
@@ -124,7 +124,7 @@ make
 
 ### 1. Hello
 
-`hello.yuga`:
+`hello.loam`:
 
 ```yuga
 import "std:fmt"
@@ -135,7 +135,7 @@ fn main() {
 ```
 
 ```
-./bin/yugac hello.yuga -o hello
+./bin/yugac hello.loam -o hello
 ./hello
 ```
 
@@ -145,13 +145,13 @@ fn main() {
 Useful flags:
 
 ```
-./bin/yugac app.yuga -o app          # binary
-./bin/yugac app.yuga --emit-c -o a.c # C99
-./bin/yugac app.yuga --emit-ir -o a.ir
-./bin/yugac app.yuga --run           # compile and run
-./bin/yugac app.yuga --target wasm -o app.wasm  # Canvas2D .wasm (clang wasm32)
-./bin/yugac --target=ios --run examples/zeus/dashboard/dashboard.yuga  # Simulator
-./bin/yugac --target=android examples/zeus/counter/android/app.yuga  # Gradle project
+./bin/yugac app.loam -o app          # binary
+./bin/yugac app.loam --emit-c -o a.c # C99
+./bin/yugac app.loam --emit-ir -o a.ir
+./bin/yugac app.loam --run           # compile and run
+./bin/yugac app.loam --target wasm -o app.wasm  # Canvas2D .wasm (clang wasm32)
+./bin/yugac --target=ios --run examples/zeus/dashboard/dashboard.loam  # Simulator
+./bin/yugac --target=android examples/zeus/counter/android/app.loam  # Gradle project
 ```
 
 ### App C seams
@@ -310,16 +310,16 @@ Quoted imports only. No glob, no `use`.
 
 | Spec | Loads | Call as |
 |---|---|---|
-| `import "std:fmt"` | `std/fmt.yuga` | `fmt.println(...)` |
-| `import "math.yuga"` | `math.yuga` next to this file | `math.add(2, 40)` |
-| `import "../mod/math.yuga"` | relative to the importer | `math.add(...)` |
+| `import "std:fmt"` | `std/fmt.loam` | `fmt.println(...)` |
+| `import "math.loam"` | `math.loam` next to this file | `math.add(2, 40)` |
+| `import "../mod/math.loam"` | relative to the importer | `math.add(...)` |
 
 The module name is the file stem (`math`), or `bar` from `std:bar`.
 
 Functions: `mod.fn(...)`. Module-level `let` bindings are places:
 `counter.n += 1`.
 
-`lib.yuga`:
+`lib.loam`:
 
 ```yuga
 let mut n: int = 0
@@ -329,11 +329,11 @@ fn bump() {
 }
 ```
 
-`app.yuga`:
+`app.loam`:
 
 ```yuga
 import "std:fmt"
-import "lib.yuga"
+import "lib.loam"
 
 fn main() {
     lib.bump()
@@ -363,7 +363,7 @@ frame that created the closure is gone.
 ### 6. Tests
 
 `std:test` is the in-language test module. `#[test]` marks a parameterless,
-value-less fn; `yugac test app.yuga` compiles a runner that calls every
+value-less fn; `yugac test app.loam` compiles a runner that calls every
 `#[test]` fn (entry module and imports, in declaration order) through
 `std:test`, and the entry file must `import "std:test"`:
 
@@ -377,17 +377,17 @@ fn addition() {
 ```
 
 ```
-./bin/yugac test tests.yuga
+./bin/yugac test tests.loam
 # test addition ... ok
 # 1 test(s) passed
 ```
 
 `test.assert(cond)`, `test.assert_eq_int(a, b)`, and `test.assert_eq_str(a, b)`
-are ordinary Yuga in `std/test.yuga`, built on the `panic(msg)` primitive. A
+are ordinary Yuga in `std/test.loam`, built on the `panic(msg)` primitive. A
 failed assertion traps and the run exits non-zero:
 
 ```
-test addition ... .../std/test.yuga:36: panic: assertion failed (in test addition)
+test addition ... .../std/test.loam:36: panic: assertion failed (in test addition)
 ```
 
 A trap aborts the run (there is no unwinding yet — `Boundary` is a later phase),
@@ -396,13 +396,13 @@ the `(in test …)` tag on the message identify which test failed.
 
 ### 7. Debug info
 
-Generated C carries `#line` directives pointing at the `.yuga` source, so the C
+Generated C carries `#line` directives pointing at the `.loam` source, so the C
 compiler's own warnings and errors name Yuga lines. With `YUGA_DEBUG=1`, `yugac`
 also compiles the native target with `-g`, so lldb / gdb, profilers, and
 sanitizers report Yuga `file:line` for stack frames and non-panic crashes:
 
 ```
-YUGA_DEBUG=1 ./bin/yugac app.yuga -o app
+YUGA_DEBUG=1 ./bin/yugac app.loam -o app
 ```
 
 `-g` is off by default, because it inflates binaries.
@@ -426,8 +426,8 @@ modules sit above that for the "text in-tree" work:
   unshaped (one glyph per cluster), so complex-script widths and ligatures are
   approximate until a shaper lands (`yuga_zeus_v2.md` §1.4).
 
-In-language tests live in `packages/yuga/tests/inlang/unicode_tests.yuga` and
-`font_tests.yuga`; the font fixture is `packages/yuga/tests/fonts/tiny.ttf`,
+In-language tests live in `packages/yuga/tests/inlang/unicode_tests.loam` and
+`font_tests.loam`; the font fixture is `packages/yuga/tests/fonts/tiny.ttf`,
 regenerated by `make_tiny_font.py` beside it.
 
 `zeus.use_font(src)` binds an external font — a file path on desktop, a URL on
@@ -449,15 +449,15 @@ callers should not assume the face is present.
 | A CLI or algorithm | `import "std:fmt"`, `fn main()` |
 | CPU-bound work off the UI thread | `import "std:thread"` — `spawn` a closure, return results through a `Chan<T>` drained on the UI thread |
 | A desktop UI | [zeus.md](zeus.md) — `import "std:zeus"` |
-| A tiny RPC server | `import "std:http"` (`examples/language/http_server.yuga`) |
-| A 3D/2D toy scene | `import "std:maya"` (`examples/language/solar.yuga`) |
+| A tiny RPC server | `import "std:http"` (`examples/language/http_server.loam`) |
+| A 3D/2D toy scene | `import "std:maya"` (`examples/language/solar.loam`) |
 | Grapheme-correct text | `import "std:unicode"` for cluster boundaries; `import "std:font"` for in-tree metrics |
 
 Corpus you can compile as examples:
 
-- `packages/yuga/tests/compile_pass/hello.yuga`, `vec.yuga`, `globals.yuga`, `import_math.yuga`
-- `examples/language/counter.yuga`, `fib.yuga`, `http_server.yuga`
-- Failures the checker must reject: `packages/yuga/tests/compile_fail/*.yuga`
+- `packages/yuga/tests/compile_pass/hello.loam`, `vec.loam`, `globals.loam`, `import_math.loam`
+- `examples/language/counter.loam`, `fib.loam`, `http_server.loam`
+- Failures the checker must reject: `packages/yuga/tests/compile_fail/*.loam`
 
 ```
 make && make test

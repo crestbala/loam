@@ -1,7 +1,7 @@
 name = "Yuga"
 grammar = "yuga"
 path_suffixes = ["yuga"]
-# Queries must match the grammar compiled from extension.toml [grammars.yuga].rev.
+# Queries must match the grammar compiled from extension.toml [grammars.loam].rev.
 language_servers = ["yuga-lsp"]
 line_comments = ["// "]
 block_comment = { start = "/*", prefix = "* ", end = "*/", tab_size = 1 }

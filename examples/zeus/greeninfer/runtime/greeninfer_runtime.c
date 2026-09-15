@@ -8,7 +8,7 @@
  * (docs/boundary.md). Yuga is memory-safe and has no raw pointers, so a map
  * is an opaque int handle into the registry below; every entry re-validates
  * its handle and row bounds against the 64-byte on-disk header before
- * touching the mapping. ALL policy lives in Yuga (engine.yuga): capacity
+ * touching the mapping. ALL policy lives in Yuga (engine.loam): capacity
  * checks, count mirrors, the per-row search sweep, top-k, timing. This file
  * only maps files, stores one row of doubles (converting to f32 once), and
  * scores two mapped rows. The file layout (also engine-owned in spirit):
@@ -103,7 +103,7 @@ static int64_t path_copy(const yuga_str p, char *out) { /* Yuga strings are not 
 }
 
 /* Error sentinel for gi_row_dot. Must be finite in f32 (the old -1e300
- * became -inf) and below any real dot product; engine.yuga rejects rows
+ * became -inf) and below any real dot product; engine.loam rejects rows
  * scoring under GI_DOT_FLOOR (-2e38). */
 #define GI_DOT_ERR (-3.0e38f)
 
@@ -205,9 +205,9 @@ int32_t yuga_engine_gi_now_us(void) {
     return (int32_t)((int64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000);
 }
 
-/* ---- file data-movement trampolines (watcher.yuga) -----------------------
+/* ---- file data-movement trampolines (watcher.loam) -----------------------
  * Reading, listing, and mtimes are OS I/O; *what* to read, recurse into, or
- * exclude is Yuga policy (walk, filters, manifest diff all in watcher.yuga).
+ * exclude is Yuga policy (walk, filters, manifest diff all in watcher.loam).
  * Fresh allocations each call: Yuga strings are never freed, and the caller
  * (the walk) holds several of these at once, so no static buffer. */
 

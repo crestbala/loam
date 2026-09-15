@@ -1,4 +1,4 @@
-/* net.c — POSIX TCP trampolines for `std/net.yuga` (`yuga_net_*`).
+/* net.c — POSIX TCP trampolines for `std/net.loam` (`yuga_net_*`).
  *
  * Blocking ops (connect/read/write/…), non-blocking ops for the async
  * transport (`tcp_nb_connect` / `tcp_poll` / `tcp_send` / `tcp_so_error`),
@@ -7,7 +7,7 @@
  *
  * macOS also gets a blocking TLS client (`yuga_net_tls_connect`,
  * SecureTransport): the returned handle drives `tcp_write` / `tcp_read` /
- * `tcp_close` exactly like a plain socket, so `packages/http/std/http.yuga` runs an HTTPS
+ * `tcp_close` exactly like a plain socket, so `packages/http/std/http.loam` runs an HTTPS
  * request over the same read path as HTTP. Wasm keeps browser TLS (nothing
  * to add); other hosts return -1.
  */

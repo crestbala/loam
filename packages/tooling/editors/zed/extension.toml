@@ -5,14 +5,14 @@ schema_version = 1
 authors = ["Yuga"]
 description = "Yuga language: syntax highlighting and diagnostics via yuga-lsp"
 
-[grammars.yuga]
+[grammars.loam]
 repository = "file:///Users/bala_mani/Documents/yuga/packages/tooling/tree-sitter-yuga"
 rev = "a0bda9f5c925cb6bc83d54e72ef488c792cca7d4"
 
-[language_servers.yuga-lsp]
+[language_servers.loam-lsp]
 name = "Yuga LSP"
 language = "Yuga"
 languages = ["Yuga"]
 
-[language_servers.yuga-lsp.language_ids]
+[language_servers.loam-lsp.language_ids]
 Yuga = "yuga"

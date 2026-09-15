@@ -1,0 +1,7 @@
+//! Android host. Shared UI: ../ui.loam
+//! Physical device: YUGA_RPC_ADDR=<Mac LAN IP>:8080
+import "../ui.loam"
+
+fn main() {
+    ui.start()
+}

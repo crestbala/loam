@@ -348,7 +348,7 @@ static int module_imported(AstNode *prog, const char *name) {
 
 /* Module for a qualified `name.fn` / `name.global` reference. Prefer the
    module the *current* module imported under that alias: file stems name the
-   entry module (e.g. `raygui.yuga`), so a global scan would otherwise return a
+   entry module (e.g. `raygui.loam`), so a global scan would otherwise return a
    file that happens to share the alias instead of the imported module. */
 static YugaModule *find_mod(const char *name) {
     AstNode *prog = Gcur >= 0 && Gcur < Gn ? Gmods[Gcur].ast : NULL;
@@ -1973,7 +1973,7 @@ static Type *check_call(AstNode *n, Type *expect) {
         const char *mod = cal->as.access.target->as.ident.name;
         const char *fnn = cal->as.access.field;
         if (!module_imported(Gmods[Gcur].ast, mod)) {
-            err(n->loc, "unknown module '%s' — add `import \"std:%s\"` or `import \"%s.yuga\"`",
+            err(n->loc, "unknown module '%s' — add `import \"std:%s\"` or `import \"%s.loam\"`",
                 mod, mod, mod);
             return ty_void();
         }

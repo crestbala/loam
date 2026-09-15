@@ -1,0 +1,52 @@
+//! Shared RPC contracts for the counter example.
+//!
+//! Wasm (`frontend/app.loam`), iOS (`ios/app.loam`), macOS (`macos/app.loam`),
+//! Android (`android/app.loam`), and this backend all import this file.
+//! `#[proto]` injects `encode_*` / `decode_*` that call `std:http`. A renamed
+//! method or field is a compile error.
+
+/// Empty request for `Counter.Hello`. Encodes to zero protobuf bytes.
+#[proto]
+struct HelloReq {
+}
+
+/// Reply for `Counter.Hello`. `count` is the UI starting value.
+#[proto]
+struct HelloResp {
+    count: int,
+}
+
+/// Empty request for `Counter.Stats`.
+#[proto]
+struct StatsReq {
+}
+
+/// Dashboard strings + load for the four metric cards and the load bar.
+#[proto]
+struct StatsResp {
+    users: string,
+    jobs: string,
+    uptime: string,
+    load: int,
+}
+
+/// RPC name `Counter.Hello` → path `/Counter/Hello`.
+fn hello_rpc() -> string {
+    return "Counter.Hello"
+}
+
+/// RPC name `Counter.Stats` → path `/Counter/Stats`.
+fn stats_rpc() -> string {
+    return "Counter.Stats"
+}
+
+/// Explicit loopback. Prefer `http.client()` (fills per `--target`).
+fn native_addr() -> string {
+    return "127.0.0.1:8080"
+}
+
+/// Explicit Android emulator alias. Prefer `http.client()`. A USB/Wi-Fi
+/// device cannot use this; set `YUGA_RPC_ADDR` to the Mac's LAN IP:port.
+fn android_addr() -> string {
+    return "10.0.2.2:8080"
+}

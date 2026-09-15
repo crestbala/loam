@@ -1,0 +1,6 @@
+//! macOS host. Shared UI: ../ui.loam
+import "../ui.loam"
+
+fn main() {
+    ui.start()
+}

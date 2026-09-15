@@ -890,7 +890,7 @@ static inline int64_t yuga_sys_rename(yuga_str from, yuga_str to) {
 }
 #endif
 
-/* --- async: std/async.yuga. Timers/queues live in Yuga; the C seam is a  ---
+/* --- async: std/async.loam. Timers/queues live in Yuga; the C seam is a  ---
    --- monotonic clock, a blocking sleep, and typed Future<T> mailboxes.  --- */
 
 typedef struct {
@@ -985,7 +985,7 @@ static inline void yuga_async_sleep(int64_t ms) {
 }
 #endif
 
-/* --- thread + channel: std/thread.yuga. The ABI is a detached pthread and a ---
+/* --- thread + channel: std/thread.loam. The ABI is a detached pthread and a ---
    --- bounded FIFO of byte payloads guarded by a mutex + two condvars. All ---
    --- queue/dispatch policy lives in Yuga; this is only the synchronization. --- */
 

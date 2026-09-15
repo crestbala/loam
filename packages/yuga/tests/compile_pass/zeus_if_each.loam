@@ -1,0 +1,30 @@
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+let mut names: []string = []string {}
+
+fn Files() {
+    zeus.Each(names, fn(i, s) {
+        zeus.Text(s)
+    })
+}
+
+fn main() {
+    let open = zeus.signal(1)
+    push(names, "a.loam")
+    push(names, "b.loam")
+    zeus.snapshot(240, 160, fn() -> Node {
+        zeus.Box(align_direction = DIRECTION.Column, wrap = 1, min_width = 40) {
+            Files()
+            zeus.If(open) {
+                zeus.Text("shown")
+            }
+        }
+    })
+    if zeus.draw_count() < 3 {
+        fmt.println("FAIL if/each")
+        sys.exit(1)
+    }
+    fmt.println("if each wrap ok")
+}

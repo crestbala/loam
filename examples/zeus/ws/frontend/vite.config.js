@@ -1,4 +1,4 @@
-/** WebSocket wasm demo dev server: compiles `app.yuga`, serves
+/** WebSocket wasm demo dev server: compiles `app.loam`, serves
  *  `build/app.wasm`, and proxies `ws://127.0.0.1:5173/ws` to the native
  *  backend on :8080 (`examples/zeus/ws/backend`). Start the backend first. */
 import { spawnSync } from "node:child_process";
@@ -13,7 +13,7 @@ const yugac = resolve(repo, "bin/yugac");
 const buildDir = resolve(here, "build");
 const wasmFile = resolve(buildDir, "app.wasm");
 const loader = resolve(repo, "packages/zeus/hosts/web/loader.js");
-const app = resolve(here, "app.yuga");
+const app = resolve(here, "app.loam");
 
 function wipeBuild() {
   rmSync(buildDir, { recursive: true, force: true });

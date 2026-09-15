@@ -77,7 +77,7 @@ That script:
 
 1. Sources `.sdk-env` (or finds Homebrew’s SDK / `~/Library/Android/sdk`).
 2. Starts `../backend/run.sh` on `:8080` if nothing is listening.
-3. Runs `yugac --target=android --run app.yuga` (Gradle `installDebug` + `adb`).
+3. Runs `yugac --target=android --run app.loam` (Gradle `installDebug` + `adb`).
 
 The emulator reaches the Mac backend at **`10.0.2.2:8080`**, not `127.0.0.1`
 (`http.client()` fills this per `--target`). The Simulator and Cocoa apps
@@ -89,13 +89,13 @@ Layout is the phone view in density-independent pixels, like iOS points.
 pin a macOS/wasm window. Rebuild the APK after host changes (`./run.sh`).
 
 Output Gradle tree: `examples/zeus/counter/android/build/app`.
-Launch activity: `com.yuga.app/com.yuga.zeus.ZeusActivity`.
+Launch activity: `com.loam.app/com.loam.zeus.ZeusActivity`.
 
 Without the helper scripts:
 
 ```
 ./examples/zeus/counter/backend/run.sh
-./bin/yugac --target=android --run examples/zeus/counter/android/app.yuga
+./bin/yugac --target=android --run examples/zeus/counter/android/app.loam
 ```
 
 `--target=android` always writes the Gradle project. `--run` needs the SDK,

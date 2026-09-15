@@ -1,4 +1,4 @@
-/** Counter wasm dev server: compiles `app.yuga`, serves `build/app.wasm`,
+/** Counter wasm dev server: compiles `app.loam`, serves `build/app.wasm`,
  *  and proxies gRPC-Web `POST /Counter/*` to the native backend on :8080. */
 import { spawnSync } from "node:child_process";
 import { createReadStream, existsSync, mkdirSync, rmSync } from "node:fs";
@@ -11,7 +11,7 @@ const repo = resolve(here, "../../../..");
 const yugac = resolve(repo, "bin/yugac");
 const buildDir = resolve(here, "build");
 const loader = resolve(repo, "packages/zeus/hosts/web/loader.js");
-const app = resolve(here, "app.yuga");
+const app = resolve(here, "app.loam");
 
 function wipeBuild() {
   rmSync(buildDir, { recursive: true, force: true });

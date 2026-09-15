@@ -1,0 +1,12 @@
+//! `#[test]` fns. Import this from the entry and run `yugac test app.loam`.
+
+import "std:test"
+
+fn add(a: int, b: int) -> int {
+    return a + b
+}
+
+#[test]
+fn adds() {
+    assert_eq_int(add(1, 2), 3)
+}

@@ -20,7 +20,7 @@ if [ ! -x "$REPO/bin/yugac" ]; then
   make -C "$REPO" -j4
 fi
 mkdir -p "$HERE/build"
-echo "backend: compiling server.yuga"
-"$REPO/bin/yugac" "$HERE/server.yuga" -o "$HERE/build/server"
+echo "backend: compiling server.loam"
+"$REPO/bin/yugac" "$HERE/server.loam" -o "$HERE/build/server"
 echo "backend: ws://127.0.0.1:8080/ws"
 exec "$HERE/build/server"

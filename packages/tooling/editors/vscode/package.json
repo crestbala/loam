@@ -10,7 +10,7 @@
   "categories": ["Programming Languages"],
   "activationEvents": [
     "onLanguage:yuga",
-    "workspaceContains:**/*.yuga",
+    "workspaceContains:**/*.loam",
     "onStartupFinished"
   ],
   "main": "./extension.js",
@@ -19,14 +19,14 @@
       {
         "id": "yuga",
         "aliases": ["Yuga", "yuga"],
-        "extensions": [".yuga"],
+        "extensions": [".loam"],
         "configuration": "./language-configuration.json"
       }
     ],
     "grammars": [
       {
         "language": "yuga",
-        "scopeName": "source.yuga",
+        "scopeName": "source.loam",
         "path": "./syntaxes/yuga.tmLanguage.json"
       }
     ],

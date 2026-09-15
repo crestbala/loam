@@ -7,6 +7,7 @@
  */
 #include "parser.h"
 #include "diagnostics.h"
+#include "ext.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -134,12 +135,12 @@ static char *unescape_string(Token t) {
     return out;
 }
 
+/* Import alias for a path: the file name with a source extension removed.
+   Dots before the extension belong to the module name, so `v1.2.loam` → `v1.2`. */
 static char *file_stem(const char *path) {
     const char *base = strrchr(path, '/');
     base = base ? base + 1 : path;
-    size_t n = strlen(base);
-    if (n > 5 && strcmp(base + n - 5, ".yuga") == 0) n -= 5;
-    return yuga_dupn(base, n);
+    return yuga_dupn(base, yuga_stem_len_ext(base, strlen(base)));
 }
 
 /** Prime current and peek from the lexer. */
@@ -1167,11 +1168,11 @@ static AstNode *parse_enum(Parser *p) {
     return ast_enum(name, vn, vals, n, loc);
 }
 
-/** `import "std:foo"` or `import "rel/path.yuga"` only (quoted). */
+/** `import "std:foo"` or `import "rel/path.loam"` only (quoted). */
 static AstNode *parse_import(Parser *p) {
     SourceLoc loc = p->previous.loc;
     if (match(p, TOK_IDENT)) {
-        error(p, "import requires a quoted path, e.g. import \"std:zeus\" or import \"foo.yuga\"");
+        error(p, "import requires a quoted path, e.g. import \"std:zeus\" or import \"foo.loam\"");
         return NULL;
     }
     if (!match(p, TOK_STRING)) {
@@ -1207,8 +1208,8 @@ static AstNode *parse_import(Parser *p) {
             return NULL;
         }
     }
-    /* `import "path.yuga" as name` — needed when two files share a stem
-       (file-system routing: many `page.yuga`). */
+    /* `import "path.loam" as name` — needed when two files share a stem
+       (file-system routing: many `page.loam`). */
     if (match(p, TOK_AS)) {
         if (!match(p, TOK_IDENT)) {
             error(p, "expected a module name after 'as'");

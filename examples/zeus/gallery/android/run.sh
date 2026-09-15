@@ -76,4 +76,4 @@ if ! adb get-state 2>/dev/null | grep -q device; then
 fi
 
 echo "android: emulator (pure UI, no backend)"
-exec "$REPO/bin/yugac" --target=android --run "$HERE/app.yuga"
+exec "$REPO/bin/yugac" --target=android --run "$HERE/app.loam"

@@ -7,15 +7,15 @@ agent phases land on top next.
 
 ```
 examples/zeus/greeninfer/
-  greeninfer.yuga            desktop UI (engine + watcher + search harness)
-  engine.yuga                the engine: all policy in Yuga (capacity, count
+  greeninfer.loam            desktop UI (engine + watcher + search harness)
+  engine.loam                the engine: all policy in Yuga (capacity, count
                              mirror, top-k sweep, embeddings, cosine norm)
-  watcher.yuga               folder scan, 500-token chunker, manifest diff,
+  watcher.loam               folder scan, 500-token chunker, manifest diff,
                              per-chunk labels/snippets
-  agent.yuga                 frontier pipeline: retrieval -> context payload
+  agent.loam                 frontier pipeline: retrieval -> context payload
                              -> offline reply or optional TLS API call
-  main.yuga                  headless CLI (greeninfer-macos)
-  smoke.yuga                 headless self-test (no window)
+  main.loam                  headless CLI (greeninfer-macos)
+  smoke.loam                 headless self-test (no window)
   runtime/greeninfer_runtime.c   the C seam — POSIX mmap + ARM NEON kernel
                              + file data-movement trampolines, nothing else
 ```
@@ -42,7 +42,7 @@ cap rows     { u32 id + 384 f32 }        stored vectors
 1 scratch row                            query staging for the search sweep
 ```
 
-`search_knn` (engine.yuga) stages the query once in the scratch row, then
+`search_knn` (engine.loam) stages the query once in the scratch row, then
 sweeps every stored row with one in-place NEON dot each — no per-row
 conversion, no copy — while Yuga keeps the top-k.
 
@@ -66,7 +66,7 @@ clang -O1 -I packages/yuga/runtime -c \
   -o examples/zeus/greeninfer/build/greeninfer_runtime.o
 
 # 2. the native arm64 binary (Yuga -> C99 -> cc; seam auto-linked)
-./bin/yugac examples/zeus/greeninfer/greeninfer.yuga -o greeninfer-macos
+./bin/yugac examples/zeus/greeninfer/greeninfer.loam -o greeninfer-macos
 ./greeninfer-macos
 ```
 
@@ -75,11 +75,11 @@ clang -O1 -I packages/yuga/runtime -c \
 ```
 # smoke: engine + chunker + cosine + folder scan assertions
 YUGA_LINK_EXTRA="examples/zeus/greeninfer/runtime/greeninfer_runtime.c" \
-  ./bin/yugac --run examples/zeus/greeninfer/smoke.yuga
+  ./bin/yugac --run examples/zeus/greeninfer/smoke.loam
 
 # CLI demo: index ./examples/zeus/greeninfer, run 4 prompts, print hits + timing
 YUGA_LINK_EXTRA="examples/zeus/greeninfer/runtime/greeninfer_runtime.c" \
-  ./bin/yugac examples/zeus/greeninfer/main.yuga -o greeninfer-macos
+  ./bin/yugac examples/zeus/greeninfer/main.loam -o greeninfer-macos
 ./greeninfer-macos
 ```
 
@@ -93,11 +93,11 @@ YUGA_LINK_EXTRA="examples/zeus/greeninfer/runtime/greeninfer_runtime.c" \
    500-token chunk boundaries for source + markdown, cosine embeddings
    (L2-normalized on insert, so sim % is cosine), live auto-reindex in the
    desktop app.
-3. **Frontier agent** (`agent.yuga`, done): KNN-retrieved context assembled
+3. **Frontier agent** (`agent.loam`, done): KNN-retrieved context assembled
    into a minimal payload; offline context answers by default, optional TLS
    call to Anthropic / xAI style endpoints when a key is configured (all
    failures degrade to the offline answer).
-4. **CLI + packaging** (`main.yuga`, done): `greeninfer-macos` build, RAM
+4. **CLI + packaging** (`main.loam`, done): `greeninfer-macos` build, RAM
    budget pass (< 15 MB RSS, measured).
 
 Remaining for the presentation demo: final UI pass over the watcher +

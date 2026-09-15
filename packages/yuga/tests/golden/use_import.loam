@@ -1,0 +1,6 @@
+import "std:fmt"
+import "../mod/math.loam"
+
+fn main() {
+    fmt.println("2 + 40 =", math.add(2, 40))
+}

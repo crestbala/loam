@@ -20,4 +20,4 @@ if [ ! -x "$REPO/bin/yugac" ]; then
   make -C "$REPO" -j4
 fi
 echo "ios: Simulator (pure UI, no backend)"
-exec "$REPO/bin/yugac" --target=ios --run "$HERE/app.yuga"
+exec "$REPO/bin/yugac" --target=ios --run "$HERE/app.loam"

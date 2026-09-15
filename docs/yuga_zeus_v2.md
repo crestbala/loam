@@ -131,7 +131,7 @@ per grapheme cluster — and `std:font.glyph_run` returns that unshaped run.
 logic*, which the boundary rule rejects; it computes advances only (drawing still
 needs a host rasterizer); and it grows the wasm artifact. Reopen it only if
 correct Indic advances are needed before the port, and then only as a temporary,
-named exception behind `platform.yuga` and marked for removal. Option 3 is
+named exception behind `platform.loam` and marked for removal. Option 3 is
 rejected.
 
 The shaper boundary to design when this is picked up: one `shape` step turning a
@@ -141,8 +141,8 @@ needs no host change.
 
 ### 1.5 Debug experience is generated C
 
-Debuggers, profilers, and crash reports show `a.c`, not `app.yuga`. **Cheap, large
-fix:** emit `#line N "app.yuga"` directives in `codegen_c.c`. lldb, gdb, perf,
+Debuggers, profilers, and crash reports show `a.c`, not `app.loam`. **Cheap, large
+fix:** emit `#line N "app.loam"` directives in `codegen_c.c`. lldb, gdb, perf,
 Instruments and every sanitizer will then report Yuga line numbers with no other
 work. This is a day of work and it changes how the language *feels*.
 
@@ -160,7 +160,7 @@ style and no options.
 
 ### 1.8 No dependency story at all
 
-`import "path.yuga"` is relative-path only. There is no way to use someone else's
+`import "path.loam"` is relative-path only. There is no way to use someone else's
 code, pin a version, or vendor. You don't need a registry. You need:
 `import "pkg:name"` resolving to `vendor/name/`, plus a lockfile of git URLs and
 SHAs, plus `yugac vendor sync`. Ten percent of the work, ninety percent of the value.
@@ -232,7 +232,7 @@ cannot be one without runtime support.
   undo C-seam side effects, and it is not general exception handling. Boundaries
   are route-level and opt-in.
 
-Without this, `error.yuga` in §5 is undeliverable.
+Without this, `error.loam` in §5 is undeliverable.
 
 ### 2.3 Accessibility is the strongest legitimate attack on canvas-only UI
 
@@ -614,10 +614,10 @@ Everything Next.js built to make it work in a browser is something you don't nee
 |---|---|---|
 | `routes/` directory is the route table | Webpack/Turbopack route manifest, JS chunks per route | `yugac` scans the dir and generates a route table at compile time |
 | `[slug]`, `[...rest]`, `(group)` naming | String-parsed at runtime | Same names; params are **typed** and validated before mount |
-| `layout.yuga` nesting, persistent across navigation | RSC payload diffing to preserve layout state | Retained tree — shared layout nodes are simply never touched |
-| `loading.yuga` | Suspense + thrown promises + streaming HTML | `resource` signal in `LOADING` state (§5.5) |
-| `error.yuga` | Error boundary class component | `Boundary` with arena mark/release (§2.2) |
-| `not-found.yuga` | Same | Route match failure or param validation failure |
+| `layout.loam` nesting, persistent across navigation | RSC payload diffing to preserve layout state | Retained tree — shared layout nodes are simply never touched |
+| `loading.loam` | Suspense + thrown promises + streaming HTML | `resource` signal in `LOADING` state (§5.5) |
+| `error.loam` | Error boundary class component | `Boundary` with arena mark/release (§2.2) |
+| `not-found.loam` | Same | Route match failure or param validation failure |
 | Server functions | `"use server"` directive, RSC serialization, action IDs in the bundle | `#[server]` fn split into a gRPC method + typed client stub (§5.3) |
 | Data loading per route | `fetch` with a patched global cache, React cache, `revalidate` tags | gRPC call + cache keyed on method + message (§5.5, §5.6) |
 | Third-party API calls | `fetch` anywhere, including client components | Server-side only, re-exposed as a `#[server]` fn with a proto return (§5.6) |
@@ -643,11 +643,11 @@ bar on native, the router is an abstraction over four different navigation model
 and that unification is a genuine advantage, not a workaround.
 
 ```
-routes/page.yuga                  →  /
-routes/blog/page.yuga             →  /blog
-routes/blog/[slug]/page.yuga      →  /blog/:slug
-routes/docs/[...path]/page.yuga   →  /docs/*
-routes/(marketing)/about/page.yuga →  /about     (group, not in the path)
+routes/page.loam                  →  /
+routes/blog/page.loam             →  /blog
+routes/blog/[slug]/page.loam      →  /blog/:slug
+routes/docs/[...path]/page.loam   →  /docs/*
+routes/(marketing)/about/page.loam →  /about     (group, not in the path)
 ```
 
 | Host | Back | URL | Deep link |
@@ -664,7 +664,7 @@ instead of trapping.
 
 ## 5.2 Nested layouts
 
-`layout.yuga` in a directory wraps every route beneath it. On navigation, shared
+`layout.loam` in a directory wraps every route beneath it. On navigation, shared
 layouts **are not rebuilt** — the retained tree does this natively and better than
 React, where preserving layout state needed an entire RSC redesign. Sidebar scroll
 position, an open accordion, a playing audio element: all survive navigation for
@@ -674,12 +674,12 @@ Special files per directory, matching Next.js conventions so the knowledge trans
 
 | File | Role |
 |---|---|
-| `page.yuga` | the route's UI |
-| `layout.yuga` | persistent wrapper for this segment and below |
-| `loading.yuga` | shown while this segment's loader is pending |
-| `error.yuga` | `Boundary` fallback for this segment (§2.2) |
-| `not-found.yuga` | unmatched child path or failed param validation |
-| `loader.yuga` | data this segment needs, started in parallel with its parents |
+| `page.loam` | the route's UI |
+| `layout.loam` | persistent wrapper for this segment and below |
+| `loading.loam` | shown while this segment's loader is pending |
+| `error.loam` | `Boundary` fallback for this segment (§2.2) |
+| `not-found.loam` | unmatched child path or failed param validation |
+| `loader.loam` | data this segment needs, started in parallel with its parents |
 
 ## 5.3 Server functions — where Zeus beats Next.js
 
@@ -687,7 +687,7 @@ Next.js's server actions exist to cross a language/serialization boundary. You
 don't have that boundary: it's Yuga on both sides.
 
 ```yuga
-// routes/blog/[slug]/loader.yuga
+// routes/blog/[slug]/loader.loam
 #[server]
 fn get_post(slug: string) -> Post {
     return db.query_post(slug)     // native-only code, never in the wasm binary
@@ -891,7 +891,7 @@ tool and you should know that before starting, not after.
 ### Per-route metadata
 
 ```yuga
-// routes/blog/[slug]/page.yuga
+// routes/blog/[slug]/page.loam
 
 fn meta(p: Params) -> Meta {
     return Meta {
@@ -1073,32 +1073,32 @@ myapp/
   zeus.toml               name, targets, routes dir, theme, revalidate defaults
 
   routes/
-    layout.yuga           root shell: nav, theme provider
-    page.yuga             /
-    loading.yuga
-    error.yuga
-    not-found.yuga
+    layout.loam           root shell: nav, theme provider
+    page.loam             /
+    loading.loam
+    error.loam
+    not-found.loam
 
     blog/
-      layout.yuga
-      page.yuga           /blog
-      loader.yuga         list query
+      layout.loam
+      page.loam           /blog
+      loader.loam         list query
       [slug]/
-        page.yuga         /blog/:slug
-        loader.yuga       #[server] fn get_post(slug)
-        error.yuga
+        page.loam         /blog/:slug
+        loader.loam       #[server] fn get_post(slug)
+        error.loam
 
     (marketing)/          group — not part of the URL
-      about/page.yuga     /about
-      pricing/page.yuga   /pricing
+      about/page.loam     /about
+      pricing/page.loam   /pricing
 
   components/             shared components, no routing knowledge
   server/                 #[server] fns and #[proto] contracts
-    db.yuga
-    api.yuga
+    db.loam
+    api.loam
   assets/                 images, fonts, icons — compiled, typed
   public/                 web shell only: favicon, robots.txt
-  theme.yuga              tokens: palette, spacing, type scale
+  theme.loam              tokens: palette, spacing, type scale
   tests/                  #[test] fns
 
   build/
@@ -1106,7 +1106,7 @@ myapp/
 ```
 
 `zeus new myapp` scaffolds exactly this. `zeus dev` runs the server and the
-current host with hot reload. No four copies of `app.yuga` per host — that was
+current host with hot reload. No four copies of `app.loam` per host — that was
 Phase 1 of the old roadmap and this structure makes the regression impossible.
 
 ---
@@ -1170,18 +1170,18 @@ narrowing; open on `f32` geometry and SoA.**
 
 ### Phase 12 — `#line` and `#[test]`
 
-**Status: done.** Generated C carries `#line` directives mapped to the `.yuga`
+**Status: done.** Generated C carries `#line` directives mapped to the `.loam`
 source, so the C compiler's diagnostics name Yuga lines and, with `-g`
 (`YUGA_DEBUG=1`), so do debuggers, profilers, and sanitizers. `#[test]` fns are
 collected and run by `yugac test`, which calls `std:test`'s `begin`/`ok`/
 `summary`; the assertions (`test.assert`, `test.assert_eq_*`) are ordinary Yuga
-in `std/test.yuga` built on the `panic(msg)` primitive. `make test` runs
-`packages/yuga/tests/inlang/*.yuga` and expects an all-pass exit.
+in `std/test.loam` built on the `panic(msg)` primitive. `make test` runs
+`packages/yuga/tests/inlang/*.loam` and expects an all-pass exit.
 
 `#line` directives in generated C; `#[test]` fns and `yugac test`.
-**Exit:** a trap in `app.yuga` reports a `.yuga` line in lldb (the panic message
+**Exit:** a trap in `app.loam` reports a `.loam` line in lldb (the panic message
 names it directly, and the `#line`-mapped debug line table references
-`app.yuga` under `-g`); `make test` runs in-language tests. **Green.**
+`app.loam` under `-g`); `make test` runs in-language tests. **Green.**
 
 ### Phase 13 — Text in-tree
 
@@ -1204,7 +1204,7 @@ functions of (font bytes, size, string), so once the hosts call them,
 fixture (`packages/yuga/tests/fonts/tiny.ttf`, remade by
 `make_tiny_font.py`).
 
-`std/zeuscore/metrics.yuga` binds an external font (`zeus.use_font(src)` reads a
+`std/zeuscore/metrics.loam` binds an external font (`zeus.use_font(src)` reads a
 file; `zeus.use_font_bytes` takes bytes the app holds) and routes layout
 measurement through `std:font`, falling back to the host seam when unbound.
 `zeus_plat.c` reads the file for desktop/iOS/Android; on wasm the loader fetches
@@ -1324,7 +1324,7 @@ Two ways:
 ./examples/zeus/myapp/build/macos/app
 
 # or one step (what the other examples' run.sh use)
-./bin/yugac --target=native --run examples/zeus/myapp/app.yuga
+./bin/yugac --target=native --run examples/zeus/myapp/app.loam
 ```
 
 One gotcha: `zeus_plat.c:322` gates on `ZEUS_HEADLESS` —

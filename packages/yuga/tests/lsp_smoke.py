@@ -76,7 +76,7 @@ def main() -> int:
     if not LSP.is_file():
         return fail("missing " + str(LSP))
 
-    yuga_path = ROOT / "tests" / "tmp" / "lsp_smoke.yuga"
+    yuga_path = ROOT / "tests" / "tmp" / "lsp_smoke.loam"
     uri = yuga_path.resolve().as_uri()
     bad = "fn main() {\n    let x = y\n}\n"
     good = (
@@ -101,7 +101,7 @@ def main() -> int:
         "    fmt.\n"
         "}\n"
     )
-    fmt_uri = (ROOT / "std" / "fmt.yuga").resolve().as_uri()
+    fmt_uri = (ROOT / "std" / "fmt.loam").resolve().as_uri()
 
     async_src = (
         'import "std:async"\n'
@@ -119,7 +119,7 @@ def main() -> int:
         "    fmt.println(s)\n"
         "}\n"
     )
-    async_uri = (ROOT / "tmp" / "lsp_async.yuga").resolve().as_uri()
+    async_uri = (ROOT / "tmp" / "lsp_async.loam").resolve().as_uri()
 
     kv_src = (
         'import "std:kv"\n'
@@ -130,7 +130,7 @@ def main() -> int:
         "    kv.\n"
         "}\n"
     )
-    kv_uri = (ROOT / "tmp" / "lsp_kv.yuga").resolve().as_uri()
+    kv_uri = (ROOT / "tmp" / "lsp_kv.loam").resolve().as_uri()
 
     payload = (
         rpc({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}}})
@@ -506,8 +506,8 @@ def main() -> int:
     if not defs_fmt:
         return fail("no definition result for module fmt", messages)
     floc = defs_fmt[0].get("result")
-    if not isinstance(floc, dict) or "fmt.yuga" not in str(floc.get("uri", "")):
-        return fail("definition of fmt should jump to std/fmt.yuga", floc)
+    if not isinstance(floc, dict) or "fmt.loam" not in str(floc.get("uri", "")):
+        return fail("definition of fmt should jump to std/fmt.loam", floc)
 
     if 11 not in hovers:
         return fail("no hover result for closure", messages)
@@ -554,7 +554,7 @@ def main() -> int:
         return fail("completion at line start should list keywords", klabels[:30])
 
     if 13 not in hovers:
-        return fail("no hover result in imported std/fmt.yuga", messages)
+        return fail("no hover result in imported std/fmt.loam", messages)
     value_w = hover_text(hovers[13].get("result"))
     if "write" not in value_w:
         return fail("hover in imported module should find fn write", value_w)

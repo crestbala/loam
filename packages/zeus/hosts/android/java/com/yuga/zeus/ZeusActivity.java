@@ -1,4 +1,4 @@
-package com.yuga.zeus;
+package com.loam.zeus;
 
 import android.app.Activity;
 import android.os.Bundle;

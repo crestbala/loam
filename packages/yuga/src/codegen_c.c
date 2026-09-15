@@ -62,7 +62,7 @@ static void indent(FILE *o, int n) {
     for (int i = 0; i < n; i++) fprintf(o, "    ");
 }
 
-/* Phase 12: `#line` directives map generated C back to the `.yuga` source, so
+/* Phase 12: `#line` directives map generated C back to the `.loam` source, so
    debuggers, profilers, and sanitizers report Yuga lines. Emitted only at
    statement/instruction boundaries and only when the (file, line) changes, so
    the generated C stays readable. The runtime header is pasted before any

@@ -10,6 +10,7 @@
 #include "compile.h"
 #include "sema/type.h"
 #include "ast.h"
+#include "ext.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1598,8 +1599,9 @@ static void load_std_names(void) {
         if (!d) continue;
         while ((ent = readdir(d))) {
             size_t n = strlen(ent->d_name);
-            if (n <= 5 || strcmp(ent->d_name + n - 5, ".yuga") != 0) continue;
-            add_std_name(ent->d_name, n - 5);
+            size_t e = yuga_ext_at(ent->d_name, n);
+            if (!e) continue;
+            add_std_name(ent->d_name, n - e);
         }
         closedir(d);
     }
@@ -1671,7 +1673,7 @@ static void st_mod_from_import(Token str) {
         if (s[i] == '/' || s[i] == ':') stem = s + i + 1;
     }
     int len = (int)((s + n) - stem);
-    if (len > 5 && strncmp(stem + len - 5, ".yuga", 5) == 0) len -= 5;
+    len -= (int)yuga_ext_at(stem, (size_t)len);
     st_add_mod(stem, len);
 }
 

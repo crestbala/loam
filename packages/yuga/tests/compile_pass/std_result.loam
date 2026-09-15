@@ -1,0 +1,46 @@
+// Phase 17: `Res<T>` — a #[must_check] outcome. Reading any field (or using
+// or/or_trap) satisfies the check; the compiler enforces it (see
+// compile_fail/must_check_ignored.loam).
+
+import "std:fmt"
+import "std:sys"
+import "std:result"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+#[must_check]
+struct Checked {
+    ok: bool,
+    n: int,
+}
+
+fn mk(v: int) -> Checked {
+    return Checked { ok: v > 0, n: v }
+}
+
+fn main() {
+    let r = result.ok(7)
+    must(r.ok, "ok is true")
+    must(r.val == 7, "val retained")
+
+    let e = result.err("bad", 0)
+    must(!e.ok, "err is false")
+    must(fmt.eq(e.err, "bad"), "err message")
+
+    must(result.or(r, -1) == 7, "or keeps value")
+    must(result.or(e, -1) == -1, "or uses default")
+    must(result.or_trap(r) == 7, "or_trap keeps value")
+
+    // A locally declared #[must_check] type: reading a field satisfies it.
+    let c = mk(3)
+    must(c.ok, "checked ok")
+    let d = mk(0)
+    must(!d.ok, "checked false")
+
+    fmt.println("result ok")
+}

@@ -45,8 +45,8 @@ Definition of done = the exit line, verified by `make test` unless noted.
 
 ### Phase 1 — One host entry
 
-Four copies of `app.yuga` (macos / ios / android / frontend) share a
-`screen.yuga` and differ by `http.client(addr)` and sometimes size. That is
+Four copies of `app.loam` (macos / ios / android / frontend) share a
+`screen.loam` and differ by `http.client(addr)` and sometimes size. That is
 the first thing a new app copies wrong.
 
 - [x] `http.client()` with no addr (or `http.client("")` on every target)
@@ -54,12 +54,12 @@ the first thing a new app copies wrong.
       Android emulator `10.0.2.2:8080`. An explicit addr still wins.
       `sys.target()` is `"wasm"` / `"ios"` / `"android"` / `"native"`.
 - [x] Physical Android device: `YUGA_RPC_ADDR=<lan>:8080`, not a fourth
-      `app.yuga`.
-- [x] Counter, gallery, and www: shared `ui.yuga` + a three-line host stub
-      (`import "../ui.yuga"`; `ui.start()`).
+      `app.loam`.
+- [x] Counter, gallery, and www: shared `ui.loam` + a three-line host stub
+      (`import "../ui.loam"`; `ui.start()`).
 - **Exit:** `./run.sh counter` / `counter macos` / `counter ios` /
   `counter android` all build from `ui.start`; changing an RPC in
-  `screen.yuga` is the only UI edit. **Green** (`http_client.yuga` pins
+  `screen.loam` is the only UI edit. **Green** (`http_client.loam` pins
   native default `127.0.0.1:8080`; counter/gallery macos compile).
 
 ### Phase 2 — Honest `App` size
@@ -111,7 +111,7 @@ Hover wash, CSS `cursor`, and stub methods (`hover_delay`, `hover_leave`,
 - [x] Deleted `hover_delay` / `hover_leave` / `dismiss`. No silent no-ops.
 - [x] Hover wash and `cursor` skip on `plat_overlay_scroll` (iOS/Android).
 - [x] Gallery / chrome DRAW goldens byte-identical.
-- **Exit:** `compile_fail/zeus_hover_stub.yuga` (`no method 'hover_delay'`).
+- **Exit:** `compile_fail/zeus_hover_stub.loam` (`no method 'hover_delay'`).
   DRAW goldens byte-identical. **Green.**
 
 ### Phase 5 — Safe area and root scroll
@@ -130,7 +130,7 @@ the notch.
 
 ### Phase 6 — Dev loop
 
-Gallery Vite `spawnSync` blocks the dev server on every `.yuga` change.
+Gallery Vite `spawnSync` blocks the dev server on every `.loam` change.
 Hidden gallery tabs still build and lay out (wasm first paint ~0.5 s after
 the heap fix).
 
@@ -138,10 +138,10 @@ the heap fix).
       `app.wasm` stays served; `full-reload` when the new one is ready.
 - [x] Won’t: lazy-build hidden gallery tabs — retained tree builds once;
       first paint is already ~0.5 s after the heap fix.
-- **Exit:** saving `screen.yuga` does not `spawnSync`-block the Vite
+- **Exit:** saving `screen.loam` does not `spawnSync`-block the Vite
   thread. **Green.**
 
-### Phase 7 — `zeus.yuga` API tidy
+### Phase 7 — `zeus.loam` API tidy
 
 Same module, overlapping ways to hide a node, a `Button` default that
 contradicts its comment, arity-3 tables, a `Navbar` that always ships Dark.
@@ -149,7 +149,7 @@ contradicts its comment, arity-3 tables, a `Navbar` that always ships Dark.
 - [x] Hide API: live hide is `If` / `zeus.show` on `Signal<int>` (0/1);
       `Box.show` is the bool-thunk form of the same flag (documented).
 - [x] `Button`: default `LOOK.Solid` (gallery Primary); `look = -1` is
-      plain (`zeus_btn_plain.yuga`). Themed chrome honors `width`/`height`.
+      plain (`zeus_btn_plain.loam`). Themed chrome honors `width`/`height`.
 - [x] `TableHead` / `TableRow` / `Breadcrumbs` take `[]string`.
 - [x] `Navbar(brand, dark = 1)`; pass `dark = 0` to omit the switch.
 - [x] `App` is the retained entry; `app` / `view` rebuild every layout.
@@ -159,16 +159,16 @@ contradicts its comment, arity-3 tables, a `Navbar` that always ships Dark.
 ### Phase 8 — Engine leftovers
 
 - [x] Nested scroll chaining: leftover wheel at an inner bound goes to the
-      parent scroller (`zeus_scroll_chain.yuga`).
+      parent scroller (`zeus_scroll_chain.loam`).
 - [x] wasm IME: hidden `<textarea>` in `packages/zeus/hosts/web/loader.js` takes
       composition / input when `zeus_captures_text`; window-level composition
       listeners are gone.
 - [x] Async TLS: `net.tls_nb_connect` / `tls_nb_ready` (SecureTransport,
       non-blocking). `http.call_async("https://…")` is stage 5 handshake then
-      the existing send/read pump (`http_https_async.yuga`). Wasm still uses
+      the existing send/read pump (`http_https_async.loam`). Wasm still uses
       browser `fetch`.
 - [x] Variable-height windowed lists: `VirtualListVar(items, heights,
-      fallback, build)` (`zeus_virt_var.yuga`).
+      fallback, build)` (`zeus_virt_var.loam`).
 - [x] Gradients: draw op `grad` / `plat_fill_g` / `node.bg2`. Cocoa
       `NSGradient`, Canvas2D `createLinearGradient`, headless dump.
       **Won’t:** rich text spans — still gated on in-tree font metrics.
@@ -201,7 +201,7 @@ tokens, and raw Box fields. No one overlay restyled a control.
 - [x] Motion: hover eases (`d/5`); press overlay eases (`press_amt`);
       enter fade is ease-out. Rest `press_amt` / `hover_amt` are 0 so DRAW
       goldens stay pixel-identical at scale 100.
-- **Exit:** `zeus_skin.yuga` + existing component tests + DRAW goldens
+- **Exit:** `zeus_skin.loam` + existing component tests + DRAW goldens
   green in `make test`. Gallery Foundations shows a Customize row. **Green.**
 
 ---
