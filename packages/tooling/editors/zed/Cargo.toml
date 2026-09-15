@@ -3,7 +3,7 @@ name = "zed_yuga"
 version = "0.1.11"
 edition = "2021"
 license = "MIT"
-description = "Zed extension for the Yuga language"
+description = "Zed extension for the Loam language"
 publish = false
 
 [lib]

@@ -13,7 +13,7 @@
 //!
 //! `println` is not a real function: the compiler turns the arguments into
 //! `write` / `write_int` / `write_bool` plus a newline. Empty bodies below
-//! are runtime hooks (`yuga_fmt_*` in yuga_rt.h).
+//! are runtime hooks (`loam_fmt_*` in loam_rt.h).
 
 /// Write `s` to stdout (`write(2)`). Uses `s.len` bytes; no trailing NUL.
 ///
@@ -48,7 +48,7 @@ fn writeln() {}
 /// ```
 fn println() {}
 
-/// Length-based string equality. Yuga strings are not C `strcmp` / NUL-terminated.
+/// Length-based string equality. Loam strings are not C `strcmp` / NUL-terminated.
 ///
 /// Example:
 /// ```

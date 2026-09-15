@@ -1,11 +1,11 @@
-/* net.c — POSIX TCP trampolines for `std/net.loam` (`yuga_net_*`).
+/* net.c — POSIX TCP trampolines for `std/net.loam` (`loam_net_*`).
  *
  * Blocking ops (connect/read/write/…), non-blocking ops for the async
  * transport (`tcp_nb_connect` / `tcp_poll` / `tcp_send` / `tcp_so_error`),
  * and — wasm only — async fetch slots (`fetch_issue` / `fetch_ready` /
  * `fetch_take`) whose XHR completes in JS and lands per frame.
  *
- * macOS also gets a blocking TLS client (`yuga_net_tls_connect`,
+ * macOS also gets a blocking TLS client (`loam_net_tls_connect`,
  * SecureTransport): the returned handle drives `tcp_write` / `tcp_read` /
  * `tcp_close` exactly like a plain socket, so `packages/http/std/http.loam` runs an HTTPS
  * request over the same read path as HTTP. Wasm keeps browser TLS (nothing
@@ -56,7 +56,7 @@ void zeus_js_ws_close(int32_t slot);
 static char *g_ws_buf[WS_SLOTS];
 static int g_ws_used[WS_SLOTS];
 
-int64_t yuga_net_ws_issue(yuga_str url) {
+int64_t loam_net_ws_issue(loam_str url) {
     int i;
     if (url.len <= 0 || !url.ptr) return -1;
     for (i = 0; i < WS_SLOTS; i++) {
@@ -74,34 +74,34 @@ int64_t yuga_net_ws_issue(yuga_str url) {
     return -1;
 }
 
-int64_t yuga_net_ws_state(int64_t slot) {
+int64_t loam_net_ws_state(int64_t slot) {
     if (slot < 0 || slot >= WS_SLOTS || !g_ws_used[slot]) return 1;
     return (int64_t)zeus_js_ws_state((int32_t)slot);
 }
 
-int64_t yuga_net_ws_count(int64_t slot) {
+int64_t loam_net_ws_count(int64_t slot) {
     if (slot < 0 || slot >= WS_SLOTS || !g_ws_used[slot]) return 0;
     return (int64_t)zeus_js_ws_count((int32_t)slot);
 }
 
-yuga_str yuga_net_ws_copy(int64_t slot, int64_t max) {
+loam_str loam_net_ws_copy(int64_t slot, int64_t max) {
     char *p;
     int32_t n;
     if (slot < 0 || slot >= WS_SLOTS || !g_ws_used[slot]) {
-        return (yuga_str){ .ptr = "", .len = 0 };
+        return (loam_str){ .ptr = "", .len = 0 };
     }
     if (max < 1) max = 1;
     if (max > WS_CAP - 1) max = WS_CAP - 1;
     n = zeus_js_ws_copy((int32_t)slot, g_ws_buf[slot], (int32_t)max);
-    if (n <= 0) return (yuga_str){ .ptr = "", .len = 0 };
+    if (n <= 0) return (loam_str){ .ptr = "", .len = 0 };
     p = (char *)malloc((size_t)n + 1);
-    if (!p) return (yuga_str){ .ptr = "", .len = 0 };
+    if (!p) return (loam_str){ .ptr = "", .len = 0 };
     memcpy(p, g_ws_buf[slot], (size_t)n);
     p[n] = 0;
-    return (yuga_str){ .ptr = p, .len = (int64_t)n };
+    return (loam_str){ .ptr = p, .len = (int64_t)n };
 }
 
-void yuga_net_ws_close(int64_t slot) {
+void loam_net_ws_close(int64_t slot) {
     if (slot < 0 || slot >= WS_SLOTS || !g_ws_used[slot]) return;
     zeus_js_ws_close((int32_t)slot);
     free(g_ws_buf[slot]);
@@ -130,7 +130,7 @@ void zeus_fetch_done(int32_t handle, int32_t n) {
     }
 }
 
-int64_t yuga_net_fetch_issue(yuga_str path, yuga_str body) {
+int64_t loam_net_fetch_issue(loam_str path, loam_str body) {
     int i;
     if (path.len <= 0 || !path.ptr) return -1;
     for (i = 0; i < ASYNC_FETCH_SLOTS; i++) {
@@ -155,124 +155,124 @@ int64_t yuga_net_fetch_issue(yuga_str path, yuga_str body) {
     return -1;
 }
 
-int64_t yuga_net_fetch_ready(void) {
+int64_t loam_net_fetch_ready(void) {
     int i, n = 0;
     for (i = 0; i < ASYNC_FETCH_SLOTS; i++)
         if (g_fetches[i].used && g_fetches[i].len >= 0) n++;
     return (int64_t)n;
 }
 
-/* Hands one completed response to Yuga (ownership of the slot buffer moves;
-   Yuga frees it when the string drops). Errors come back empty. */
-yuga_str yuga_net_fetch_take(void) {
+/* Hands one completed response to Loam (ownership of the slot buffer moves;
+   Loam frees it when the string drops). Errors come back empty. */
+loam_str loam_net_fetch_take(void) {
     int i;
     for (i = 0; i < ASYNC_FETCH_SLOTS; i++) {
         if (!g_fetches[i].used || g_fetches[i].len < 0) continue;
         g_fetches[i].used = 0;
         if (g_fetches[i].len > 0) {
             g_fetches[i].buf[g_fetches[i].len] = 0;
-            return (yuga_str){ .ptr = g_fetches[i].buf, .len = g_fetches[i].len };
+            return (loam_str){ .ptr = g_fetches[i].buf, .len = g_fetches[i].len };
         }
         free(g_fetches[i].buf);
         g_fetches[i].buf = NULL;
-        return (yuga_str){ .ptr = "", .len = 0 };
+        return (loam_str){ .ptr = "", .len = 0 };
     }
-    return (yuga_str){ .ptr = "", .len = 0 };
+    return (loam_str){ .ptr = "", .len = 0 };
 }
 
-int64_t yuga_net_tcp_connect(yuga_str host, int64_t port) {
+int64_t loam_net_tcp_connect(loam_str host, int64_t port) {
     (void)host;
     (void)port;
     return -1;
 }
 
 /* Browser TLS: the wasm fetch/ws bridges never speak TLS themselves. */
-int64_t yuga_net_tls_connect(yuga_str host, int64_t port) {
+int64_t loam_net_tls_connect(loam_str host, int64_t port) {
     (void)host;
     (void)port;
     return -1;
 }
 
-int64_t yuga_net_tls_nb_connect(yuga_str host, int64_t port) {
+int64_t loam_net_tls_nb_connect(loam_str host, int64_t port) {
     (void)host;
     (void)port;
     return -1;
 }
 
-int64_t yuga_net_tls_nb_ready(int64_t fd) {
+int64_t loam_net_tls_nb_ready(int64_t fd) {
     (void)fd;
     return -1;
 }
 
-int64_t yuga_net_tcp_wouldblock(void) { return 0; }
+int64_t loam_net_tcp_wouldblock(void) { return 0; }
 
-int64_t yuga_net_tcp_nb_connect(yuga_str host, int64_t port) {
+int64_t loam_net_tcp_nb_connect(loam_str host, int64_t port) {
     (void)host;
     (void)port;
     return -1;
 }
 
-int64_t yuga_net_tcp_poll(int64_t fd, int64_t want, int64_t ms) {
+int64_t loam_net_tcp_poll(int64_t fd, int64_t want, int64_t ms) {
     (void)fd;
     (void)want;
     (void)ms;
     return -1;
 }
 
-int64_t yuga_net_tcp_send(int64_t fd, yuga_str data, int64_t off) {
+int64_t loam_net_tcp_send(int64_t fd, loam_str data, int64_t off) {
     (void)fd;
     (void)data;
     (void)off;
     return -1;
 }
 
-int64_t yuga_net_tcp_so_error(int64_t fd) {
+int64_t loam_net_tcp_so_error(int64_t fd) {
     (void)fd;
     return 1;
 }
 
-int64_t yuga_net_tcp_write(int64_t fd, yuga_str data) {
+int64_t loam_net_tcp_write(int64_t fd, loam_str data) {
     (void)fd;
     (void)data;
     return -1;
 }
 
-yuga_str yuga_net_tcp_read(int64_t fd, int64_t max) {
+loam_str loam_net_tcp_read(int64_t fd, int64_t max) {
     (void)fd;
     (void)max;
-    return (yuga_str){ .ptr = "", .len = 0 };
+    return (loam_str){ .ptr = "", .len = 0 };
 }
 
-void yuga_net_tcp_close(int64_t fd) { (void)fd; }
+void loam_net_tcp_close(int64_t fd) { (void)fd; }
 
-int64_t yuga_net_tcp_listen(int64_t port) {
+int64_t loam_net_tcp_listen(int64_t port) {
     (void)port;
     return -1;
 }
 
-int64_t yuga_net_tcp_accept(int64_t fd) {
+int64_t loam_net_tcp_accept(int64_t fd) {
     (void)fd;
     return -1;
 }
 
-int64_t yuga_net_tcp_bound_port(int64_t fd) {
+int64_t loam_net_tcp_bound_port(int64_t fd) {
     (void)fd;
     return 0;
 }
 
-yuga_str yuga_net_tcp_peek(int64_t fd, int64_t max) {
+loam_str loam_net_tcp_peek(int64_t fd, int64_t max) {
     (void)fd;
     (void)max;
-    return (yuga_str){ .ptr = "", .len = 0 };
+    return (loam_str){ .ptr = "", .len = 0 };
 }
 
-yuga_str yuga_net_fetch_rpc(yuga_str path, yuga_str body) {
+loam_str loam_net_fetch_rpc(loam_str path, loam_str body) {
     char *buf;
     int32_t n;
-    yuga_str out;
-    if (path.len <= 0 || !path.ptr) return (yuga_str){ .ptr = "", .len = 0 };
+    loam_str out;
+    if (path.len <= 0 || !path.ptr) return (loam_str){ .ptr = "", .len = 0 };
     buf = (char *)malloc(65536);
-    if (!buf) return (yuga_str){ .ptr = "", .len = 0 };
+    if (!buf) return (loam_str){ .ptr = "", .len = 0 };
     n = zeus_js_fetch_rpc(path.ptr, (int32_t)path.len, body.ptr ? body.ptr : "",
                           (int32_t)(body.len > 0 ? body.len : 0), buf, 65535);
     if (n < 0) n = 0;
@@ -300,7 +300,7 @@ yuga_str yuga_net_fetch_rpc(yuga_str path, yuga_str body) {
 
 /* Blocking TLS client (SecureTransport). Each conn is a slot in `g_tls`; its
    handle is TLS_BASE + slot, far above any raw fd, so `tcp_write` / `tcp_read`
-   / `tcp_close` can dispatch on it and the Yuga HTTP client treats a TLS conn
+   / `tcp_close` can dispatch on it and the Loam HTTP client treats a TLS conn
    exactly like a plain socket. */
 #define TLS_SLOTS 8
 #define TLS_BASE 0x40000000
@@ -325,7 +325,7 @@ static int g_tls_wouldblock;
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 #endif
 
-int64_t yuga_net_tcp_connect(yuga_str host, int64_t port) {
+int64_t loam_net_tcp_connect(loam_str host, int64_t port) {
     char name[256];
     int fd;
     struct sockaddr_in sa;
@@ -359,7 +359,7 @@ int64_t yuga_net_tcp_connect(yuga_str host, int64_t port) {
     return (int64_t)fd;
 }
 
-int64_t yuga_net_tcp_write(int64_t fd, yuga_str data) {
+int64_t loam_net_tcp_write(int64_t fd, loam_str data) {
     size_t len;
     size_t off;
     if (fd < 0) return -1;
@@ -398,9 +398,9 @@ int64_t yuga_net_tcp_write(int64_t fd, yuga_str data) {
     return (int64_t)off;
 }
 
-yuga_str yuga_net_tcp_read(int64_t fd, int64_t max) {
+loam_str loam_net_tcp_read(int64_t fd, int64_t max) {
     char *p;
-    if (fd < 0 || max <= 0) return (yuga_str){ .ptr = "", .len = 0 };
+    if (fd < 0 || max <= 0) return (loam_str){ .ptr = "", .len = 0 };
     if (max > 65536) max = 65536;
 #if defined(__APPLE__)
     {
@@ -409,37 +409,37 @@ yuga_str yuga_net_tcp_read(int64_t fd, int64_t max) {
             size_t got = 0;
             OSStatus st;
             p = (char *)malloc((size_t)max + 1);
-            if (!p) return (yuga_str){ .ptr = "", .len = 0 };
+            if (!p) return (loam_str){ .ptr = "", .len = 0 };
             g_tls_wouldblock = 0;
             st = SSLRead(g_tls[slot].ctx, p, (size_t)max, &got);
             if (st == errSSLWouldBlock) {
                 g_tls_wouldblock = 1;
                 free(p);
-                return (yuga_str){ .ptr = "", .len = 0 };
+                return (loam_str){ .ptr = "", .len = 0 };
             }
             if (got > 0) {
                 p[got] = 0;
-                return (yuga_str){ .ptr = p, .len = (int64_t)got };
+                return (loam_str){ .ptr = p, .len = (int64_t)got };
             }
             free(p);
-            return (yuga_str){ .ptr = "", .len = 0 };
+            return (loam_str){ .ptr = "", .len = 0 };
         }
     }
 #endif
     p = (char *)malloc((size_t)max + 1);
-    if (!p) return (yuga_str){ .ptr = "", .len = 0 };
+    if (!p) return (loam_str){ .ptr = "", .len = 0 };
     {
         ssize_t n = read((int)fd, p, (size_t)max);
         if (n <= 0) {
             free(p);
-            return (yuga_str){ .ptr = "", .len = 0 };
+            return (loam_str){ .ptr = "", .len = 0 };
         }
         p[n] = 0;
-        return (yuga_str){ .ptr = p, .len = n };
+        return (loam_str){ .ptr = p, .len = n };
     }
 }
 
-void yuga_net_tcp_close(int64_t fd) {
+void loam_net_tcp_close(int64_t fd) {
     if (fd < 0) return;
 #if defined(__APPLE__)
     {
@@ -458,7 +458,7 @@ void yuga_net_tcp_close(int64_t fd) {
     close((int)fd);
 }
 
-int64_t yuga_net_tcp_listen(int64_t port) {
+int64_t loam_net_tcp_listen(int64_t port) {
     int fd;
     struct sockaddr_in sa;
     int one = 1;
@@ -482,7 +482,7 @@ int64_t yuga_net_tcp_listen(int64_t port) {
     return (int64_t)fd;
 }
 
-int64_t yuga_net_tcp_accept(int64_t fd) {
+int64_t loam_net_tcp_accept(int64_t fd) {
     int c;
     struct timeval tv;
     if (fd < 0) return -1;
@@ -500,7 +500,7 @@ int64_t yuga_net_tcp_accept(int64_t fd) {
     return (int64_t)c;
 }
 
-int64_t yuga_net_tcp_bound_port(int64_t fd) {
+int64_t loam_net_tcp_bound_port(int64_t fd) {
     struct sockaddr_in sa;
     socklen_t n = sizeof sa;
     if (fd < 0) return 0;
@@ -509,20 +509,20 @@ int64_t yuga_net_tcp_bound_port(int64_t fd) {
     return (int64_t)ntohs(sa.sin_port);
 }
 
-yuga_str yuga_net_tcp_peek(int64_t fd, int64_t max) {
+loam_str loam_net_tcp_peek(int64_t fd, int64_t max) {
     char *p;
     ssize_t n;
-    if (fd < 0 || max <= 0) return (yuga_str){ .ptr = "", .len = 0 };
+    if (fd < 0 || max <= 0) return (loam_str){ .ptr = "", .len = 0 };
     if (max > 65536) max = 65536;
     p = (char *)malloc((size_t)max + 1);
-    if (!p) return (yuga_str){ .ptr = "", .len = 0 };
+    if (!p) return (loam_str){ .ptr = "", .len = 0 };
     n = recv((int)fd, p, (size_t)max, MSG_PEEK);
     if (n <= 0) {
         free(p);
-        return (yuga_str){ .ptr = "", .len = 0 };
+        return (loam_str){ .ptr = "", .len = 0 };
     }
     p[n] = 0;
-    return (yuga_str){ .ptr = p, .len = n };
+    return (loam_str){ .ptr = p, .len = n };
 }
 
 #if defined(__APPLE__)
@@ -623,7 +623,7 @@ static int tls_connect_tcp(const char *name, uint16_t port) {
     return fd;
 }
 
-int64_t yuga_net_tls_connect(yuga_str host, int64_t port) {
+int64_t loam_net_tls_connect(loam_str host, int64_t port) {
     char name[256];
     int fd = -1, i;
     SSLContextRef ctx = NULL;
@@ -689,7 +689,7 @@ int64_t yuga_net_tls_connect(yuga_str host, int64_t port) {
 
 /* Non-blocking TLS: TCP connect + SSLHandshake polled per frame so the UI
    thread never waits on a socket. `hs` 1 = TCP connecting, 2 = handshake. */
-int64_t yuga_net_tls_nb_connect(yuga_str host, int64_t port) {
+int64_t loam_net_tls_nb_connect(loam_str host, int64_t port) {
     char name[256];
     int fd = -1, i, flags, rc;
     SSLContextRef ctx = NULL;
@@ -746,7 +746,7 @@ int64_t yuga_net_tls_nb_connect(yuga_str host, int64_t port) {
     return TLS_BASE + (int64_t)i;
 }
 
-int64_t yuga_net_tls_nb_ready(int64_t fd) {
+int64_t loam_net_tls_nb_ready(int64_t fd) {
     int slot = tls_slot_of(fd);
     OSStatus st;
     if (slot < 0) return -1;
@@ -790,29 +790,29 @@ int64_t yuga_net_tls_nb_ready(int64_t fd) {
     return -1;
 }
 
-int64_t yuga_net_tcp_wouldblock(void) { return g_tls_wouldblock; }
+int64_t loam_net_tcp_wouldblock(void) { return g_tls_wouldblock; }
 
 #else
 
 /* No SecureTransport/OpenSSL on this host: TLS is unavailable. */
-int64_t yuga_net_tls_connect(yuga_str host, int64_t port) {
+int64_t loam_net_tls_connect(loam_str host, int64_t port) {
     (void)host;
     (void)port;
     return -1;
 }
 
-int64_t yuga_net_tls_nb_connect(yuga_str host, int64_t port) {
+int64_t loam_net_tls_nb_connect(loam_str host, int64_t port) {
     (void)host;
     (void)port;
     return -1;
 }
 
-int64_t yuga_net_tls_nb_ready(int64_t fd) {
+int64_t loam_net_tls_nb_ready(int64_t fd) {
     (void)fd;
     return -1;
 }
 
-int64_t yuga_net_tcp_wouldblock(void) { return 0; }
+int64_t loam_net_tcp_wouldblock(void) { return 0; }
 
 #endif
 
@@ -822,7 +822,7 @@ int64_t yuga_net_tcp_wouldblock(void) { return 0; }
    already or connecting in the background, or -1 on immediate failure. After
    `tcp_poll(fd, 2, ...)` reports ready, `tcp_so_error(fd)` says whether the
    connect actually succeeded. */
-int64_t yuga_net_tcp_nb_connect(yuga_str host, int64_t port) {
+int64_t loam_net_tcp_nb_connect(loam_str host, int64_t port) {
     char name[256];
     int fd, rc, flags;
     struct sockaddr_in sa;
@@ -867,7 +867,7 @@ int64_t yuga_net_tcp_nb_connect(yuga_str host, int64_t port) {
 /* Single-fd poll. `want`: 1 = readable, 2 = writable. `ms`: timeout
    (0 = immediate). Returns 1 when ready (including HUP/ERR so the caller can
    observe EOF or a failed connect), 0 on timeout, -1 on error. */
-int64_t yuga_net_tcp_poll(int64_t fd, int64_t want, int64_t ms) {
+int64_t loam_net_tcp_poll(int64_t fd, int64_t want, int64_t ms) {
     struct pollfd p;
     int ev, rc;
     if (fd < 0) return -1;
@@ -897,7 +897,7 @@ int64_t yuga_net_tcp_poll(int64_t fd, int64_t want, int64_t ms) {
 /* One non-blocking send of `data[off..]`. Returns bytes written (> 0),
    0 when the socket would block (poll for writable, then resume), -1 on
    error. Offsets past the end are an error; an empty remainder writes 0. */
-int64_t yuga_net_tcp_send(int64_t fd, yuga_str data, int64_t off) {
+int64_t loam_net_tcp_send(int64_t fd, loam_str data, int64_t off) {
     ssize_t n;
     size_t left;
     if (fd < 0) return -1;
@@ -936,7 +936,7 @@ int64_t yuga_net_tcp_send(int64_t fd, yuga_str data, int64_t off) {
 
 /* Socket error after a non-blocking connect polled writable: 0 = connected,
    otherwise the errno the connect failed with. */
-int64_t yuga_net_tcp_so_error(int64_t fd) {
+int64_t loam_net_tcp_so_error(int64_t fd) {
     int err = 0;
     socklen_t n = sizeof err;
     if (fd < 0) return 1;
@@ -955,46 +955,46 @@ int64_t yuga_net_tcp_so_error(int64_t fd) {
 
 /* Async fetch is wasm-only (browser XHR). Native: issue fails, nothing is
    ever ready, take returns empty. */
-int64_t yuga_net_fetch_issue(yuga_str path, yuga_str body) {
+int64_t loam_net_fetch_issue(loam_str path, loam_str body) {
     (void)path;
     (void)body;
     return -1;
 }
 
-int64_t yuga_net_fetch_ready(void) { return 0; }
+int64_t loam_net_fetch_ready(void) { return 0; }
 
-yuga_str yuga_net_fetch_take(void) {
-    return (yuga_str){ .ptr = "", .len = 0 };
+loam_str loam_net_fetch_take(void) {
+    return (loam_str){ .ptr = "", .len = 0 };
 }
 
 /* Browser WebSocket bridge is wasm-only. */
-int64_t yuga_net_ws_issue(yuga_str url) {
+int64_t loam_net_ws_issue(loam_str url) {
     (void)url;
     return -1;
 }
 
-int64_t yuga_net_ws_state(int64_t slot) {
+int64_t loam_net_ws_state(int64_t slot) {
     (void)slot;
     return 1;
 }
 
-int64_t yuga_net_ws_count(int64_t slot) {
+int64_t loam_net_ws_count(int64_t slot) {
     (void)slot;
     return 0;
 }
 
-yuga_str yuga_net_ws_copy(int64_t slot, int64_t max) {
+loam_str loam_net_ws_copy(int64_t slot, int64_t max) {
     (void)slot;
     (void)max;
-    return (yuga_str){ .ptr = "", .len = 0 };
+    return (loam_str){ .ptr = "", .len = 0 };
 }
 
-void yuga_net_ws_close(int64_t slot) { (void)slot; }
+void loam_net_ws_close(int64_t slot) { (void)slot; }
 
-yuga_str yuga_net_fetch_rpc(yuga_str path, yuga_str body) {
+loam_str loam_net_fetch_rpc(loam_str path, loam_str body) {
     (void)path;
     (void)body;
-    return (yuga_str){ .ptr = "", .len = 0 };
+    return (loam_str){ .ptr = "", .len = 0 };
 }
 
 #if defined(__APPLE__) && defined(__clang__)

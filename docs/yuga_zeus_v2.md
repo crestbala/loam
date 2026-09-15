@@ -1,8 +1,8 @@
-# Yuga + Zeus v2 — drawbacks and the plan to fix them
+# Loam + Zeus v2 — drawbacks and the plan to fix them
 
 Scope of this document:
 
-1. Honest drawbacks of the Yuga language as it stands today.
+1. Honest drawbacks of the Loam language as it stands today.
 2. Honest drawbacks of Zeus as a UI library.
 3. The numeric type system rebuild (`f32` / `i32` default, sized + unsigned types).
 4. Zeus taking React's *structures* while rejecting React's *implementation*.
@@ -13,7 +13,7 @@ Scope of this document:
 7. Phases, in order, with exit criteria.
 
 This supersedes the framing in `docs/downsides.md`. That file closed eight phases
-of "make the same app run on every host." This one is about making Yuga a language
+of "make the same app run on every host." This one is about making Loam a language
 people can write large programs in, and Zeus a framework people can ship products
 with.
 
@@ -38,9 +38,9 @@ Text and types are load-bearing for everything after them.
 
 ---
 
-# Part 1 — Yuga: real drawbacks
+# Part 1 — Loam: real drawbacks
 
-Ordered by how much they will hurt once other people write Yuga code.
+Ordered by how much they will hurt once other people write Loam code.
 
 ### 1.1 No error-handling discipline (biggest gap)
 
@@ -105,9 +105,9 @@ cluster layer. Consequences:
 - Rich text spans are already blocked on this (`downsides.md` Phase 8, "Won't").
 
 **One fix unlocks all four: in-tree font metrics.** Ship a font, parse its tables
-in Yuga, do shaping and line breaking in Yuga, and make `measure_text` a pure
+in Loam, do shaping and line breaking in Loam, and make `measure_text` a pure
 function of (font bytes, size, string). Hosts then only draw glyph runs at
-positions Yuga computed — `plat_glyphs(run)` instead of `plat_text(str)`.
+positions Loam computed — `plat_glyphs(run)` instead of `plat_text(str)`.
 
 **The honest conflict:** real shaping for Indic scripts is HarfBuzz-class work.
 HarfBuzz is C *library logic*, not a platform/vendor API, so linking it violates
@@ -115,7 +115,7 @@ your own C boundary rule. Three options, pick one deliberately:
 
 | Option | Cost | Result |
 |---|---|---|
-| Port a minimal shaper to Yuga (Latin + the scripts you target) | Months, but it's a real Yuga workload | Rule intact, pixel-identical everywhere |
+| Port a minimal shaper to Loam (Latin + the scripts you target) | Months, but it's a real Loam workload | Rule intact, pixel-identical everywhere |
 | Link HarfBuzz, document it as a named exception | Days | Rule has one hole, but a defensible one |
 | Keep platform shaping | Zero | Cross-host text never matches; no SSR; caret stays wrong |
 
@@ -123,8 +123,8 @@ Recommendation: option 2 now, option 1 as a long-horizon project. Option 3 quiet
 kills the framework's main claim.
 
 **Decision (recorded; implementation deferred — "look at later").** The
-direction this tree takes is **option 1**: port a minimal shaper into Yuga for
-the scripts it targets, so shaping, metrics, and glyph runs stay Yuga values and
+direction this tree takes is **option 1**: port a minimal shaper into Loam for
+the scripts it targets, so shaping, metrics, and glyph runs stay Loam values and
 `docs/boundary.md` holds. Until the port lands, metrics are unshaped — one glyph
 per grapheme cluster — and `std:font.glyph_run` returns that unshaped run.
 **Option 2 (HarfBuzz) is not adopted as the architecture:** it is C *library
@@ -143,14 +143,14 @@ needs no host change.
 
 Debuggers, profilers, and crash reports show `a.c`, not `app.loam`. **Cheap, large
 fix:** emit `#line N "app.loam"` directives in `codegen_c.c`. lldb, gdb, perf,
-Instruments and every sanitizer will then report Yuga line numbers with no other
+Instruments and every sanitizer will then report Loam line numbers with no other
 work. This is a day of work and it changes how the language *feels*.
 
 ### 1.6 No test story inside the language
 
 Tests are compiler fixtures (`compile_pass` / `compile_fail` / golden). There is no
 way for an application author to write a test. Add `#[test] fn` and `yugac test` —
-collect, run, report. Without it nobody will write a serious app in Yuga.
+collect, run, report. Without it nobody will write a serious app in Loam.
 
 ### 1.7 No formatter
 
@@ -167,7 +167,7 @@ SHAs, plus `yugac vendor sync`. Ten percent of the work, ninety percent of the v
 
 ### 1.9 Async and threading exist — the gaps are at the edges
 
-Correction to an earlier framing of this document: Yuga **has** async and
+Correction to an earlier framing of this document: Loam **has** async and
 multithreading. `std:thread` gives detached OS threads with a Send discipline and
 `Chan<T>` back to the UI loop; `http.call_async` is non-blocking including the TLS
 handshake. This is not a missing feature.
@@ -218,13 +218,13 @@ site in the widget kit is deleted.
 
 ### 2.2 No error boundary — a trap kills the app
 
-Yuga traps on overflow and out-of-bounds. In a CLI that's correct. In a framework,
+Loam traps on overflow and out-of-bounds. In a CLI that's correct. In a framework,
 a bad index in one card must not take down the whole application. There is no
 recovery mechanism today, and with trapping semantics and no unwinding there
 cannot be one without runtime support.
 
 **Design:** `zeus.Boundary(fallback, build)`.
-- On entry, record an arena mark and `setjmp` in `yuga_rt`.
+- On entry, record an arena mark and `setjmp` in `loam_rt`.
 - A trap inside longjmps back, releases the node arena to the mark (bump allocator
   makes this trivial), drops any closures interned since the mark, and builds
   `fallback` with the error.
@@ -684,7 +684,7 @@ Special files per directory, matching Next.js conventions so the knowledge trans
 ## 5.3 Server functions — where Zeus beats Next.js
 
 Next.js's server actions exist to cross a language/serialization boundary. You
-don't have that boundary: it's Yuga on both sides.
+don't have that boundary: it's Loam on both sides.
 
 ```yuga
 // routes/blog/[slug]/loader.loam
@@ -751,7 +751,7 @@ zeus.Match(post.state, {
 
 Two different things, and the distinction is the whole rule:
 
-**First-party traffic — Zeus client ↔ your Yuga server — is gRPC, always.**
+**First-party traffic — Zeus client ↔ your Loam server — is gRPC, always.**
 `#[proto]` messages over gRPC-Web in the browser, h2c natively. There is no
 JSON option for this path, no "just this one endpoint," no config flag that turns
 it on. One calling convention for your own backend.
@@ -765,7 +765,7 @@ capability.
 ### Where the boundary sits
 
 ```
-Zeus client  ──gRPC──►  Your Yuga server  ──REST/JSON──►  Third-party API
+Zeus client  ──gRPC──►  Your Loam server  ──REST/JSON──►  Third-party API
                                           ◄──REST/JSON──  Inbound webhook
 ```
 
@@ -785,7 +785,7 @@ Zeus client  ──gRPC──►  Your Yuga server  ──REST/JSON──►  Th
 Keep the codec in its own module. `std:json` parses and emits; `std:http` moves
 bytes. They compose, and the codec is testable without a socket.
 
-Deserializing into a struct is the real design problem, because Yuga has no
+Deserializing into a struct is the real design problem, because Loam has no
 traits, no macros, no comptime, and no reflection. **The answer already exists in
 the tree: do exactly what `#[proto]` does.** The compiler generates encode/decode
 for an attributed struct. Same mechanism, second format.
@@ -836,7 +836,7 @@ This is a parser on bytes from someone else's server, so treat it that way:
   way to blow a recursive parser's stack.
 - Maximum document size, caller-settable.
 - No trapping paths anywhere in decode — every failure is a `Res`.
-- Written in Yuga, not linked from a C library. JSON is library logic, so the
+- Written in Loam, not linked from a C library. JSON is library logic, so the
   C-boundary rule applies without an exception here.
 
 ### Dynamic JSON
@@ -1015,7 +1015,7 @@ yuga/
   yuga/                     the language
     src/                    yugac (C11): lexer, parser, sema, ir, codegen_c
     std/                    core std only: fmt, net, sys, thread, math, str, time
-    runtime/                yuga_rt — the ONE C runtime for the ecosystem
+    runtime/                loam_rt — the ONE C runtime for the ecosystem
     tests/                  compile_pass / compile_fail / golden
 
   yuga-lsp/                 diagnostics, hover, go-to-def, completion, tokens
@@ -1056,7 +1056,7 @@ yuga/
 Consequences worth noting:
 
 - `import "std:zeus"` now resolves outside the compiler tree. Module resolution
-  needs a real search-path notion (`YUGA_PATH`, or a workspace manifest at the
+  needs a real search-path notion (`LOAM_PATH`, or a workspace manifest at the
   root) instead of "`std/` next to the compiler." Do this properly once; it's the
   same machinery `import "pkg:name"` (§1.8) needs.
 - The compiler's `make test` no longer depends on Zeus. Zeus gets its own test
@@ -1171,10 +1171,10 @@ narrowing; open on `f32` geometry and SoA.**
 ### Phase 12 — `#line` and `#[test]`
 
 **Status: done.** Generated C carries `#line` directives mapped to the `.loam`
-source, so the C compiler's diagnostics name Yuga lines and, with `-g`
-(`YUGA_DEBUG=1`), so do debuggers, profilers, and sanitizers. `#[test]` fns are
+source, so the C compiler's diagnostics name Loam lines and, with `-g`
+(`LOAM_DEBUG=1`), so do debuggers, profilers, and sanitizers. `#[test]` fns are
 collected and run by `yugac test`, which calls `std:test`'s `begin`/`ok`/
-`summary`; the assertions (`test.assert`, `test.assert_eq_*`) are ordinary Yuga
+`summary`; the assertions (`test.assert`, `test.assert_eq_*`) are ordinary Loam
 in `std/test.loam` built on the `panic(msg)` primitive. `make test` runs
 `packages/yuga/tests/inlang/*.loam` and expects an all-pass exit.
 
@@ -1191,7 +1191,7 @@ grapheme-aware editing, and external-font layout measurement on all four hosts
 decision, and `plat_glyphs`.**
 
 `std:unicode` implements UTF-8 and extended grapheme clusters (UAX #29) with the
-GCB property tables in Yuga: `next_grapheme` / `prev_grapheme` /
+GCB property tables in Loam: `next_grapheme` / `prev_grapheme` /
 `grapheme_count`, including combining marks, Hangul L/V/T, regional-indicator
 pairs, and emoji ZWJ sequences. `Input` caret movement, backspace, and delete
 step by cluster — a Tamil akshara moves as one unit per press, which is the
@@ -1303,7 +1303,7 @@ shows tree, layout boxes, and signal values live.
 - Not SSR, not SSG of markup, not prerendering. Every route renders on the client
   on every host. SEO is handled by metadata, not by rendering (§5.7).
 - Not a `View` trait. A component is a `fn`. `Node` is a handle.
-- **First-party traffic is gRPC, no exceptions.** Every Zeus client ↔ Yuga server
+- **First-party traffic is gRPC, no exceptions.** Every Zeus client ↔ Loam server
   path is `#[proto]` over gRPC-Web / h2c. JSON and REST are supported for
   third-party APIs and inbound webhooks only, and they stop at the server binary
   (§5.6).
@@ -1333,7 +1333,7 @@ One gotcha: `zeus_plat.c:322` gates on `ZEUS_HEADLESS` —
 if (getenv("ZEUS_HEADLESS") || !plat_run) return 1;
 ```
 
-so if that's exported (e.g. left over from `make test`) the binary starts, does nothing, and exits 0. `unset ZEUS_HEADLESS YUGA_HEADLESS MAYA_HEADLESS` first. `zeus build` already strips them at build time, but the check is at *runtime*.
+so if that's exported (e.g. left over from `make test`) the binary starts, does nothing, and exits 0. `unset ZEUS_HEADLESS LOAM_HEADLESS MAYA_HEADLESS` first. `zeus build` already strips them at build time, but the check is at *runtime*.
 
 ## Wasm
 

@@ -1,4 +1,4 @@
-//! metrics — in-tree text measurement (`docs/yuga_zeus_v2.md` §1.4, Phase 13).
+//! metrics — in-tree text measurement (`docs/loam_zeus_v2.md` §1.4, Phase 13).
 //!
 //! When a font is bound (`zeus.use_font` / `bind`), measurement parses its
 //! tables with `std:font`, so every host computes the same line box for the

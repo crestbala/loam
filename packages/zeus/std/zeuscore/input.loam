@@ -774,7 +774,7 @@ fn cursor_at() -> string {
 
 /// Move the caret one extended grapheme cluster. `dir` < 0 = left, > 0 =
 /// right. Boundaries come from `std:unicode`, so a Tamil akshara or an emoji
-/// ZWJ sequence moves as one unit instead of one code point (`docs/yuga_zeus_v2.md`
+/// ZWJ sequence moves as one unit instead of one code point (`docs/loam_zeus_v2.md`
 /// §1.4, Phase 13).
 fn edit_move_grapheme(slot: int, dir: int, extend: int) -> int {
     let text = platform.plat_edit_text(slot)

@@ -1,5 +1,5 @@
 #!/usr/bin/env -S deno run --allow-read --allow-write --allow-run --allow-env
-// zeus — the Yuga/Zeus framework CLI (first cut).
+// zeus — the Loam/Zeus framework CLI (first cut).
 //
 //     deno run --allow-read --allow-write packages/zeus/cli/zeus.ts new <name> [dir]
 //     deno run --allow-read --allow-write packages/zeus/cli/zeus.ts routes <appdir>
@@ -222,7 +222,7 @@ function buildEnv(): Record<string, string> | undefined {
   try {
     const env = { ...Deno.env.toObject() };
     delete env.ZEUS_HEADLESS;
-    delete env.YUGA_HEADLESS;
+    delete env.LOAM_HEADLESS;
     delete env.MAYA_HEADLESS;
     return env;
   } catch {
@@ -334,7 +334,7 @@ type MetaRec = {
   jsonld: string;
 };
 
-/** The metadata dump: a native Yuga program that prints one JSON record per
+/** The metadata dump: a native Loam program that prints one JSON record per
  *  concrete route URL by calling each route's `meta()` (and `paths()` for
  *  dynamic routes). */
 function metaDumpSource(): string {
@@ -405,7 +405,7 @@ function collectMeta(appdir: string): MetaRec[] {
   const cc = new Deno.Command(YUGAC, {
     args: [src, "-o", bin],
     cwd: REPO,
-    env: { ...Deno.env.toObject(), YUGA_NO_DCE: "1" },
+    env: { ...Deno.env.toObject(), LOAM_NO_DCE: "1" },
     stdout: "piped",
     stderr: "piped",
   }).outputSync();
@@ -617,7 +617,7 @@ function pkgSync(appdir: string): number {
 
 // --- zeus dev: build, watch, serve, live reload (§2.5) ---
 
-function collectYuga(dir: string, out: string[]): void {
+function collectLoam(dir: string, out: string[]): void {
   let entries: Deno.DirEntry[];
   try {
     entries = [...Deno.readDirSync(dir)];
@@ -628,7 +628,7 @@ function collectYuga(dir: string, out: string[]): void {
     if (e.name.startsWith(".") || e.name === "node_modules" || e.name === "build" ||
         e.name === "vendor") continue;
     const p = path.join(dir, e.name);
-    if (e.isDirectory) collectYuga(p, out);
+    if (e.isDirectory) collectLoam(p, out);
     else if (e.isFile && p.endsWith(".loam")) out.push(p);
   }
 }
@@ -695,7 +695,7 @@ async function dev(appdir: string, port: number, buildOnly: boolean): Promise<nu
   const files: string[] = [];
   const scan = (): number => {
     files.length = 0;
-    for (const r of watchRoots) collectYuga(r, files);
+    for (const r of watchRoots) collectLoam(r, files);
     return newestMtime(files);
   };
   let last = scan();

@@ -1,10 +1,10 @@
 {
   "$schema": "https://zed.dev/schema/icon_themes/v0.3.0.json",
-  "name": "Yuga",
-  "author": "Yuga",
+  "name": "Loam",
+  "author": "Loam",
   "themes": [
     {
-      "name": "Yuga",
+      "name": "Loam",
       "appearance": "dark",
       "file_suffixes": {
         "yuga": "yuga"
@@ -14,7 +14,7 @@
       }
     },
     {
-      "name": "Yuga",
+      "name": "Loam",
       "appearance": "light",
       "file_suffixes": {
         "yuga": "yuga-file"

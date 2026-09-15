@@ -11,21 +11,21 @@
  * Typecheck, borrowck, boundscheck, IR lowering, and verification still see
  * every declaration, so errors in unused code keep failing loudly.
  */
-#ifndef YUGA_DCE_H
-#define YUGA_DCE_H
+#ifndef LOAM_DCE_H
+#define LOAM_DCE_H
 
 #include "ast.h"
 #include "module.h"
 
 /** Compute the reachable set for `mods`. Safe to call once per emit. */
-void yuga_dce_run(YugaModule *mods, int nmods);
+void loam_dce_run(LoamModule *mods, int nmods);
 
 /** `yugac test`: keep every fn in the `test` std module, since the generated
  *  runner calls `test.begin` / `test.ok` / `test.summary` by name and nothing
- *  in the Yuga call graph reaches them. Call before yuga_dce_run. */
-void yuga_dce_set_test_mode(int on);
+ *  in the Loam call graph reaches them. Call before loam_dce_run. */
+void loam_dce_set_test_mode(int on);
 
 /** 1 = emit this fn declaration's prototype/body/tramp (and its clones). */
-int yuga_dce_keep(const AstNode *fn_decl);
+int loam_dce_keep(const AstNode *fn_decl);
 
 #endif

@@ -1,6 +1,6 @@
 # Zeus
 
-A component-based GUI library for Yuga, plus the `std:http` pieces you need
+A component-based GUI library for Loam, plus the `std:http` pieces you need
 to back a component with a real service. One `Node` tree, built once with
 signals for reactivity, replayed as native paint calls on desktop/iOS/Android
 and as Canvas2D on the web. See [`docs/spec.md`](docs/spec.md) for backends;
@@ -53,7 +53,7 @@ unmounting it.
 ## Recipe: add a backend service (grpc/http)
 
 Zeus apps talk to a backend through `std:http`, with the wire contract living
-in Yuga so a typo in a path or field is a compile error on both sides, not a
+in Loam so a typo in a path or field is a compile error on both sides, not a
 runtime 404. `examples/zeus/counter` is the reference implementation:
 
 ```
@@ -72,7 +72,7 @@ To add a new endpoint:
 3. Call it from the shared `app.loam` via `http.client().call(...)` — empty
    addr is filled per `--target` (wasm same-origin, mac/iOS loopback,
    Android emulator `10.0.2.2`). Override with an explicit addr or
-   `YUGA_RPC_ADDR`.
+   `LOAM_RPC_ADDR`.
 4. `./run.sh zeus/counter` (web) or `./run.sh zeus/counter macos` (native).
 
 For the full request/response type story see [`docs/spec.md`](docs/spec.md) and

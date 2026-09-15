@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 use zed_extension_api::{self as zed, Result};
 
-struct YugaExtension;
+struct LoamExtension;
 
-fn yuga_lsp_path(worktree: &zed::Worktree) -> String {
+fn loam_lsp_path(worktree: &zed::Worktree) -> String {
     let mut dir = PathBuf::from(worktree.root_path());
     loop {
         let candidate = dir.join("bin").join("yuga-lsp");
@@ -19,7 +19,7 @@ fn yuga_lsp_path(worktree: &zed::Worktree) -> String {
         .unwrap_or_else(|| format!("{}/bin/yuga-lsp", worktree.root_path()))
 }
 
-impl zed::Extension for YugaExtension {
+impl zed::Extension for LoamExtension {
     fn new() -> Self {
         Self
     }
@@ -30,11 +30,11 @@ impl zed::Extension for YugaExtension {
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
         Ok(zed::Command {
-            command: yuga_lsp_path(worktree),
+            command: loam_lsp_path(worktree),
             args: vec![],
             env: Default::default(),
         })
     }
 }
 
-zed::register_extension!(YugaExtension);
+zed::register_extension!(LoamExtension);

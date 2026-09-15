@@ -2,7 +2,7 @@
 //!
 //! `measure` / `measure_wrap` are pure functions of (font bytes, pixel size,
 //! string). Every host that calls them gets identical widths and heights, which
-//! is what makes text layout host-independent (`docs/yuga_zeus_v2.md` §1.4).
+//! is what makes text layout host-independent (`docs/loam_zeus_v2.md` §1.4).
 //!
 //! Parsed tables: `head`, `maxp`, `hhea`, `hmtx`, and `cmap` formats 4 and 12.
 //! Metrics are unshaped — one glyph per grapheme cluster — so complex-script

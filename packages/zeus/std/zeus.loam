@@ -1297,7 +1297,7 @@ fn engine_key_up(key: int, mods: int) -> int {
 }
 
 // --- engine trampolines ---
-/// Cocoa calls these through zeus_plat.c (`yuga_zeus_engine_*`). Do not use
+/// Cocoa calls these through zeus_plat.c (`loam_zeus_engine_*`). Do not use
 /// from app code; use `App`, clicks, and signals instead.
 
 fn engine_paint() {

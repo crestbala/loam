@@ -1,5 +1,5 @@
-#ifndef YUGA_WASM_STRING_H
-#define YUGA_WASM_STRING_H
+#ifndef LOAM_WASM_STRING_H
+#define LOAM_WASM_STRING_H
 #include <stddef.h>
 void *memcpy(void *d, const void *s, size_t n);
 void *memmove(void *d, const void *s, size_t n);

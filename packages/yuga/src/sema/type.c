@@ -1,5 +1,5 @@
 /**
- * type.c — interned Yuga types.
+ * type.c — interned Loam types.
  *
  * Numeric scalars are static singletons keyed by (kind, bits, is_unsigned).
  * Everything else is calloc'd into a pool released by type_pool_reset.
@@ -107,7 +107,7 @@ Type *type_proc(Type **params, size_t n, Type *ret) {
 
 Type *type_param(const char *name) {
     Type *t = type_new(TY_PARAM);
-    t->name = yuga_dup(name);
+    t->name = loam_dup(name);
     return t;
 }
 
@@ -186,7 +186,7 @@ const char *numeric_builtin_cname(NumericBuiltin b, const Type *t) {
         case NUMB_SAT_MUL: base = "saturating_mul"; break;
         default: base = "wrapping_add"; break;
     }
-    snprintf(buf, 48, "yuga_%s_%s", base, type_int_suffix(t) ? type_int_suffix(t) : "i64");
+    snprintf(buf, 48, "loam_%s_%s", base, type_int_suffix(t) ? type_int_suffix(t) : "i64");
     return buf;
 }
 
@@ -229,7 +229,7 @@ int type_is_copy(const Type *t) {
 }
 
 /* Send = Copy minus shared-mutable escape: no heap handles ([]T, fn, Box),
-   no borrows. Strings are Send: immutable and never freed (yuga_rt.h), so
+   no borrows. Strings are Send: immutable and never freed (loam_rt.h), so
    sharing one with a worker is a read-only alias. Structs recurse. */
 int type_is_send(const Type *t) {
     if (!t) return 0;

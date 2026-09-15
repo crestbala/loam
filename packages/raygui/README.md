@@ -1,7 +1,7 @@
 # `std:raygui` — immediate-mode GUI on raylib
 
 [raygui](https://github.com/raysan5/raygui) is a single-header immediate-mode
-GUI built on [raylib](https://www.raylib.com). This package exposes it to Yuga.
+GUI built on [raylib](https://www.raylib.com). This package exposes it to Loam.
 
 ```yuga
 import "std:raygui"
@@ -30,8 +30,8 @@ Run the example: `./run.sh raygui` (needs `brew install raylib`).
 | Piece | Where | What |
 |---|---|---|
 | API + frame loop | `std/raygui.loam` | Bodyless `plat_*` hooks plus the public wrappers and the `init` / `open` / `begin` / `end` / `close` loop. |
-| Host seam | `packages/yuga/runtime/raygui_plat.c` | Includes `RAYGUI_IMPLEMENTATION`, owns the raylib window, and converts each call (NUL-terminate a `yuga_str`, mirror raygui's `bool *` state as `int *`). No widget logic. |
-| Declarations | `packages/yuga/runtime/raygui_rt.h` | The `yuga_raygui_plat_*` prototypes the generated C calls. |
+| Host seam | `packages/yuga/runtime/raygui_plat.c` | Includes `RAYGUI_IMPLEMENTATION`, owns the raylib window, and converts each call (NUL-terminate a `loam_str`, mirror raygui's `bool *` state as `int *`). No widget logic. |
+| Declarations | `packages/yuga/runtime/raygui_rt.h` | The `loam_raygui_plat_*` prototypes the generated C calls. |
 | Vendored header | `vendor/raygui.h` | raygui 4.0 (matches raylib 5.x). |
 | Link | `packages/yuga/src/driver.c` | `import "std:raygui"` links the seam and raylib (`RAYLIB_PREFIX`, else `pkg-config raylib`, else Homebrew). |
 
@@ -42,6 +42,6 @@ per frame.
 
 ## Headless
 
-`RAYGUI_HEADLESS=1` (or `ZEUS_HEADLESS` / `YUGA_HEADLESS`, which `make test`
+`RAYGUI_HEADLESS=1` (or `ZEUS_HEADLESS` / `LOAM_HEADLESS`, which `make test`
 sets) opens no window, makes the frame calls inert, and ends the loop after
 `RAYGUI_FRAMES` frames (default 3).

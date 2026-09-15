@@ -2,7 +2,7 @@
 //!
 //! `#[test] fn name()` marks a test (no parameters, no return value).
 //! `yugac test app.loam` compiles a runner that calls `begin(name)` before each
-//! test, `ok()` after it, then `summary()`. Assertions are ordinary Yuga on top
+//! test, `ok()` after it, then `summary()`. Assertions are ordinary Loam on top
 //! of the `panic(msg)` primitive: a failed assertion traps, which aborts the
 //! run, and the message names the test it happened in.
 

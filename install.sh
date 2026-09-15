@@ -1,5 +1,5 @@
 #!/bin/sh
-# One-time macOS setup for building Yuga and running its examples.
+# One-time macOS setup for building Loam and running its examples.
 #
 #   ./install.sh            core: Apple CLT, Homebrew, LLVM (wasm32 clang), Node
 #   ./install.sh android    core + Android SDK/NDK/Gradle + emulator AVD (several GB)
@@ -68,7 +68,7 @@ if ! "$WASMCC" --target=wasm32 -fsyntax-only -x c /dev/null >/dev/null 2>&1; the
   die "wasm32 probe failed on $WASMCC — is this LLVM built with the wasm target?"
 fi
 say "wasm32 clang ok ($WASMCC) — yugac finds this path automatically"
-say "different LLVM? export YUGA_WASM_CC=/path/to/clang instead"
+say "different LLVM? export LOAM_WASM_CC=/path/to/clang instead"
 
 # 4. Android stack (optional): JDK, SDK, NDK, Gradle, emulator image + AVD.
 #    The counter example's installer is the canonical one; every zeus

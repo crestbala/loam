@@ -6,7 +6,7 @@
  *   - module-level `let mut` initializers are compiled into per-module
  *     `__init` functions that codegen emits unconditionally, so every
  *     init expression in every module is a root.
- *   - the fixed `yuga_zeus_*` entry points the C runtime and hosts call
+ *   - the fixed `loam_zeus_*` entry points the C runtime and hosts call
  *     (engine_*, `on_action*`, `get`/`set`/`signal`, ...).
  *
  * Reachability: worklist over fn decl bodies (incl. parameter defaults,
@@ -19,7 +19,7 @@
  *
  * Intrinsic decls (empty std hooks that map to C symbols) and the
  * `is_main` entry are handled by codegen's own loops; this pass only
- * answers yuga_dce_keep() for regular fn decls.
+ * answers loam_dce_keep() for regular fn decls.
  */
 #include "dce.h"
 #include "sema/typecheck.h"
@@ -35,10 +35,10 @@ typedef struct {
 static DceSet kept;   /* fn decls whose C is emitted */
 static DceSet todo;   /* fn decls still to process (body walk) */
 static DceSet done;   /* fn decls already processed */
-static int ran;       /* yuga_dce_run completed (YUGA_NO_DCE skips it) */
+static int ran;       /* loam_dce_run completed (LOAM_NO_DCE skips it) */
 static int dce_test_mode;
 
-void yuga_dce_set_test_mode(int on) {
+void loam_dce_set_test_mode(int on) {
     dce_test_mode = on;
 }
 
@@ -63,7 +63,7 @@ static void add_set(DceSet *s, AstNode *d) {
 }
 
 /** C symbols the runtime/hosts may reference, by module prefix
- *  (`yuga_zeus_*` from zeus_rt.h/zeus_plat.c/hosts, `yuga_maya_*` from
+ *  (`loam_zeus_*` from zeus_rt.h/zeus_plat.c/hosts, `loam_maya_*` from
  *  maya_rt.h/maya_plat.c/maya_mac.m). Entries that no longer exist in the
  *  module are ignored. Keep in sync when hosts grow new entry points. */
 static const char *const c_roots_zeus[] = {
@@ -92,7 +92,7 @@ static const char *const c_roots_maya[] = {
 };
 
 /* `packages/zeus/std/zeuscore/metrics.loam` is not named `zeus`, but the web host calls its
-   `bind` from C (`zeus_font_set` → `yuga_metrics_bind`), so it must survive DCE
+   `bind` from C (`zeus_font_set` → `loam_metrics_bind`), so it must survive DCE
    even when no app call to `zeus.use_font` reaches it. */
 static const char *const c_roots_metrics[] = {
     "bind",
@@ -295,7 +295,7 @@ static int has_mono_instance(AstNode *decl) {
     return 0;
 }
 
-void yuga_dce_run(YugaModule *mods, int nmods) {
+void loam_dce_run(LoamModule *mods, int nmods) {
     kept.n = todo.n = done.n = 0;
     ran = 1;
 
@@ -340,7 +340,7 @@ void yuga_dce_run(YugaModule *mods, int nmods) {
                 if (roots) {
                     for (int r = 0; roots[r]; r++) {
                         char want[128];
-                        snprintf(want, sizeof want, "yuga_%s_%s", mods[m].name, roots[r]);
+                        snprintf(want, sizeof want, "loam_%s_%s", mods[m].name, roots[r]);
                         if (strcmp(d->as.fn.cname, want) == 0) {
                             mark_fn(d);
                             break;
@@ -380,7 +380,7 @@ void yuga_dce_run(YugaModule *mods, int nmods) {
     }
 }
 
-int yuga_dce_keep(const AstNode *fn_decl) {
+int loam_dce_keep(const AstNode *fn_decl) {
     if (!fn_decl) return 0;
     if (!ran) return 1; /* pass skipped: emit the full monolith as before */
     return in_set(&kept, fn_decl);

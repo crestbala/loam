@@ -68,8 +68,8 @@ fn parse_int_accepts_decimals_only() {
 
 #[test]
 fn env_int_reads_or_falls_back() {
-    // `YUGA_PPM_TEST_UNSET` is not exported by anything, so this is the
+    // `LOAM_PPM_TEST_UNSET` is not exported by anything, so this is the
     // unset path; the parsing path is covered above and by passing
-    // `YUGA_PPM_SCALE` et al. to a demo.
-    test.assert(frames.env_int("YUGA_PPM_TEST_UNSET", 42) == 42)
+    // `LOAM_PPM_SCALE` et al. to a demo.
+    test.assert(frames.env_int("LOAM_PPM_TEST_UNSET", 42) == 42)
 }

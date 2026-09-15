@@ -1,3 +1,3 @@
-#ifndef YUGA_WASM_MATH_H
-#define YUGA_WASM_MATH_H
+#ifndef LOAM_WASM_MATH_H
+#define LOAM_WASM_MATH_H
 #endif

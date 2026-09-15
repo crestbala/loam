@@ -80,7 +80,7 @@ static char *path_cat(const char *base, const char *suffix) {
 /** Textual place for an lvalue expression, or NULL if it is not one. */
 static char *path_of(AstNode *n) {
     if (!n) return NULL;
-    if (n->kind == AST_IDENT) return yuga_dup(n->as.ident.name);
+    if (n->kind == AST_IDENT) return loam_dup(n->as.ident.name);
     if (n->kind == AST_FIELD) {
         char *base = path_of(n->as.access.target);
         if (!base) return NULL;
@@ -109,7 +109,7 @@ static Binding *find_b(const char *name) {
 
 static void push_b(const char *name, Type *ty) {
     Binding *b = calloc(1, sizeof(Binding));
-    b->name = yuga_dup(name);
+    b->name = loam_dup(name);
     b->own = ST_OWNED;
     b->is_copy = type_is_copy(ty);
     b->is_box = ty && ty->kind == TY_BOX;
@@ -128,7 +128,7 @@ static void pop_to_depth(int d) {
         /* A `#[must_check]` value that was neither read nor moved out is a
            bug: the caller ignored a failure. */
         if (b->must_check && !b->checked && b->own != ST_MOVED) {
-            yuga_error(b->loc,
+            loam_error(b->loc,
                        "unused `#[must_check]` value '%s' — read a field or use "
                        "`.or()` / `.or_trap()`",
                        b->name);
@@ -160,7 +160,7 @@ static int take_borrow_path(const char *path, int is_mut, SourceLoc loc) {
     Binding *v = find_b(root);
     if (!v) return 0;
     if (v->own == ST_MOVED) {
-        yuga_error(loc, "borrow of moved value '%s'", root);
+        loam_error(loc, "borrow of moved value '%s'", root);
         errn = 1;
         return 1;
     }
@@ -168,16 +168,16 @@ static int take_borrow_path(const char *path, int is_mut, SourceLoc loc) {
         if (!paths_conflict(b->path, path)) continue;
         if (!b->is_mut && !is_mut) continue;
         if (is_mut)
-            yuga_error(loc,
+            loam_error(loc,
                        "cannot borrow '%s' as mutable more than once, or while shared-borrowed",
                        path);
         else
-            yuga_error(loc, "cannot borrow '%s' as shared while mutably borrowed", path);
+            loam_error(loc, "cannot borrow '%s' as shared while mutably borrowed", path);
         errn = 1;
         return 1;
     }
     Borrow *nb = (Borrow *)calloc(1, sizeof(Borrow));
-    nb->path = yuga_dup(path);
+    nb->path = loam_dup(path);
     nb->is_mut = is_mut;
     nb->depth = depth;
     nb->next = borrows;
@@ -205,13 +205,13 @@ static void mark_path_moved(Binding *v, const char *path) {
     if (path_is_moved(v, path)) return;
     v->moved_paths = (char **)realloc(v->moved_paths, (size_t)(v->nmoved + 1) * sizeof(char *));
     if (!v->moved_paths) return;
-    v->moved_paths[v->nmoved++] = yuga_dup(path);
+    v->moved_paths[v->nmoved++] = loam_dup(path);
 }
 
 static int check_use_path(const char *path, SourceLoc loc) {
     for (Borrow *b = borrows; b; b = b->next)
         if (b->is_mut && paths_conflict(b->path, path)) {
-            yuga_error(loc, "cannot use '%s' while mutably borrowed", path);
+            loam_error(loc, "cannot use '%s' while mutably borrowed", path);
             errn = 1;
             return 1;
         }
@@ -421,14 +421,14 @@ static int check_expr(AstNode *n, int as_move) {
             if (!v) return 0;
             if (v->must_check) v->checked = 1;
             if (v->own == ST_MOVED) {
-                yuga_error(n->loc, "use of moved value '%s'", n->as.ident.name);
+                loam_error(n->loc, "use of moved value '%s'", n->as.ident.name);
                 errn = 1;
                 return 1;
             }
             if (check_use_path(n->as.ident.name, n->loc)) return 1;
             if (as_move && !v->is_copy) {
                 if (borrow_covers(n->as.ident.name)) {
-                    yuga_error(n->loc, "cannot move '%s' while borrowed", n->as.ident.name);
+                    loam_error(n->loc, "cannot move '%s' while borrowed", n->as.ident.name);
                     errn = 1;
                     return 1;
                 }
@@ -458,11 +458,11 @@ static int check_expr(AstNode *n, int as_move) {
             if (v && v->must_check) v->checked = 1;
             int rc = 0;
             if (v && v->own == ST_MOVED) {
-                yuga_error(n->loc, "use of moved value '%s'", rbuf);
+                loam_error(n->loc, "use of moved value '%s'", rbuf);
                 errn = 1;
                 rc = 1;
             } else if (v && path_is_moved(v, p)) {
-                yuga_error(n->loc, "use of moved value '%s'", p);
+                loam_error(n->loc, "use of moved value '%s'", p);
                 errn = 1;
                 rc = 1;
             } else {
@@ -490,7 +490,7 @@ static int check_expr(AstNode *n, int as_move) {
             for (size_t i = 0; i < n->as.fn.cap_count; i++) {
                 Binding *v = find_b(n->as.fn.caps[i]);
                 if (v && v->own == ST_MOVED) {
-                    yuga_error(n->loc, "use of moved value '%s'", n->as.fn.caps[i]);
+                    loam_error(n->loc, "use of moved value '%s'", n->as.fn.caps[i]);
                     errn = 1;
                     return 1;
                 }
@@ -595,7 +595,7 @@ static int check_stmt(AstNode *n) {
             if (n->as.expr_stmt.expr) {
                 Type *et = n->as.expr_stmt.expr->ty;
                 if (et && et->kind == TY_STRUCT && et->must_check) {
-                    yuga_error(n->loc,
+                    loam_error(n->loc,
                                "unused `#[must_check]` value of type '%s' — read a "
                                "field or use `.or()` / `.or_trap()`",
                                et->name);
@@ -707,7 +707,7 @@ static int check_stmt(AstNode *n) {
 }
 
 /** Check all non-intrinsic functions. Returns 1 if any error. */
-int borrowck_modules(YugaModule *mods, int nmods) {
+int borrowck_modules(LoamModule *mods, int nmods) {
     errn = 0;
     for (int m = 0; m < nmods; m++) {
         AstNode *p = mods[m].ast;

@@ -1,19 +1,19 @@
 /**
- * ast.h — Yuga abstract syntax tree.
+ * ast.h — Loam abstract syntax tree.
  *
  * Every node has kind, source location, and after typecheck a Type* and
  * flags. The `as` union is selected by kind. Strings and names stored on
  * nodes are heap-owned unless noted; ast_free recursively releases them.
  *
  * Flags (bitmask on AstNode.flags):
- *   ASTF_INDEX_SAFE — boundscheck proved this index in range (no yuga_idx)
+ *   ASTF_INDEX_SAFE — boundscheck proved this index in range (no loam_idx)
  *   ASTF_NEEDS_DROP — Box binding; codegen frees at scope exit
  *   ASTF_MOVED      — borrowck: this use moved a non-Copy value
  *   ASTF_FN_VAL     — identifier names a function used as a value
  *   ASTF_STATE      — let mut int captured by a closure; lowered to a Signal
  */
-#ifndef YUGA_AST_H
-#define YUGA_AST_H
+#ifndef LOAM_AST_H
+#define LOAM_AST_H
 
 #include "diagnostics.h"
 #include "lexer.h"
@@ -122,7 +122,7 @@ struct AstNode {
             AstNode *ret_type;
             AstNode *body;
             int is_intrinsic; /* empty std hook: no C body emitted */
-            int is_proto_codec; /* unused; #[proto] encode/decode are real Yuga now */
+            int is_proto_codec; /* unused; #[proto] encode/decode are real Loam now */
             int proto_is_encode;
             AstNode *proto_struct; /* not owned; the #[proto] struct */
             const char **tparams;
@@ -142,7 +142,7 @@ struct AstNode {
             size_t field_count;
             const char **tparams;
             size_t tparam_count;
-            int is_proto; /* inject encode_/decode_ as Yuga calling std:http */
+            int is_proto; /* inject encode_/decode_ as Loam calling std:http */
             int is_json;  /* `#[json]`: inject json_encode_/json_decode_ */
             int is_must_check; /* `#[must_check]`: a dropped value must read a field */
         } strct;

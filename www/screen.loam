@@ -71,7 +71,7 @@ fn Screen(chip: string, page: Signal<int>) {
     zeus.Box(align_direction = DIRECTION.Column, spacing = 16, padding = 28,
              background = zeus.paper()) {
         zeus.Row(8) {
-            zeus.Text("Yuga", color = zeus.ink(), font = 22)
+            zeus.Text("Loam", color = zeus.ink(), font = 22)
             zeus.Chip(chip, zeus.TINT.Ink)
             zeus.Badge("Docs.Page", zeus.TINT.Ok)
         }

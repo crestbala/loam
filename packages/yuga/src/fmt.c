@@ -1,5 +1,5 @@
 /**
- * fmt.c — `yugafmt`, the Yuga formatter (§1.7).
+ * fmt.c — `yugafmt`, the Loam formatter (§1.7).
  *
  * One style, no options. Comments (`//`, `///`, `//!`, block) and string
  * literals are copied verbatim; the formatter normalizes indentation, spacing,

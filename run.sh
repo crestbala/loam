@@ -21,7 +21,7 @@
 # purpose, invoke `bin/yugac` with ZEUS_HEADLESS=1 directly (see the Makefile).
 set -e
 
-unset ZEUS_HEADLESS YUGA_HEADLESS MAYA_HEADLESS
+unset ZEUS_HEADLESS LOAM_HEADLESS MAYA_HEADLESS
 
 HERE=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 LANGDIR=$HERE/examples/language
@@ -52,7 +52,7 @@ list() {
   [ -d "$ZEUSDIR/counter" ] && echo "  counter"
   echo
   echo "playground         (./run.sh repl [web|backend|frontend|macos])"
-  echo "  repl               edit Yuga in the browser; Run is Playground.Run over gRPC-Web"
+  echo "  repl               edit Loam in the browser; Run is Playground.Run over gRPC-Web"
   echo
   echo "docs               (./run.sh www [web|backend|frontend|macos])"
   echo "  www                Zeus docs; UI :5175, Docs.Page :8082"

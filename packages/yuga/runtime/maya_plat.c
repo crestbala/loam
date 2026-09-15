@@ -12,10 +12,10 @@
 static uint8_t *fb;
 static int fb_w, fb_h, fb_cap;
 
-int64_t yuga_maya_plat_headless(void) {
+int64_t loam_maya_plat_headless(void) {
     const char *a = getenv("MAYA_HEADLESS");
     const char *b = getenv("ZEUS_HEADLESS");
-    const char *c = getenv("YUGA_HEADLESS");
+    const char *c = getenv("LOAM_HEADLESS");
     if ((a && a[0] == '1') || (b && b[0] == '1') || (c && c[0] == '1')) return 1;
 #if !defined(__APPLE__)
     return 1;
@@ -24,7 +24,7 @@ int64_t yuga_maya_plat_headless(void) {
 #endif
 }
 
-int64_t yuga_maya_plat_now_ms(void) {
+int64_t loam_maya_plat_now_ms(void) {
 #if defined(CLOCK_MONOTONIC)
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -35,8 +35,8 @@ int64_t yuga_maya_plat_now_ms(void) {
 }
 
 const uint8_t *maya_cpu_fb(int *w, int *h) {
-    int64_t ww = yuga_maya_engine_fb_w();
-    int64_t hh = yuga_maya_engine_fb_h();
+    int64_t ww = loam_maya_engine_fb_w();
+    int64_t hh = loam_maya_engine_fb_h();
     int need, i, n;
     if (ww < 1 || hh < 1) {
         if (w) *w = 0;
@@ -53,7 +53,7 @@ const uint8_t *maya_cpu_fb(int *w, int *h) {
     fb_h = (int)hh;
     n = fb_w * fb_h;
     for (i = 0; i < n; i++) {
-        int64_t rgb = yuga_maya_engine_fb_at(i);
+        int64_t rgb = loam_maya_engine_fb_at(i);
         int p = i * 4;
         fb[p] = (uint8_t)((rgb / 65536) % 256);
         fb[p + 1] = (uint8_t)((rgb / 256) % 256);
@@ -66,11 +66,11 @@ const uint8_t *maya_cpu_fb(int *w, int *h) {
 }
 
 #if !defined(__APPLE__)
-void yuga_maya_plat_window(yuga_str title, int64_t w, int64_t h) {
+void loam_maya_plat_window(loam_str title, int64_t w, int64_t h) {
     (void)title;
     (void)w;
     (void)h;
 }
 
-void yuga_maya_plat_run(void) {}
+void loam_maya_plat_run(void) {}
 #endif

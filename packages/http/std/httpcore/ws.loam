@@ -1,5 +1,5 @@
 //! WebSocket (RFC 6455) codec bits for `std:http`: base64, SHA-1, the
-//! handshake accept key, and text-frame encode/decode. Pure Yuga over
+//! handshake accept key, and text-frame encode/decode. Pure Loam over
 //! bytes-in-strings — no C, no crypto library. Bit ops use the `wrapping_*`
 //! builtins; 32-bit words live in ints masked to 32 bits.
 //!

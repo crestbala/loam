@@ -11,7 +11,7 @@ fn of(id: int) -> PageResp {
         return pack(
             "Install",
             "Build the compiler from this repo, then compile programs with yugac.",
-            "Needs a C11 compiler (cc) and make. macOS for native GUI and Maya. Xcode for iOS Simulator. A wasm32 clang (Homebrew LLVM, not Apple /usr/bin/clang) for web; set YUGA_WASM_CC if needed. Android SDK, NDK, Gradle 8.2+, and adb for --target=android.\n\nmake produces bin/yugac and bin/yuga-lsp. make test runs language tests (GUI and Maya headless). YUGA_TIME=1 prints check / codegen / cc timings.\n\nThis site: ./run.sh www (UI :5175, RPC :8082).",
+            "Needs a C11 compiler (cc) and make. macOS for native GUI and Maya. Xcode for iOS Simulator. A wasm32 clang (Homebrew LLVM, not Apple /usr/bin/clang) for web; set LOAM_WASM_CC if needed. Android SDK, NDK, Gradle 8.2+, and adb for --target=android.\n\nmake produces bin/yugac and bin/yuga-lsp. make test runs language tests (GUI and Maya headless). LOAM_TIME=1 prints check / codegen / cc timings.\n\nThis site: ./run.sh www (UI :5175, RPC :8082).",
             "make\n./bin/yugac hello.loam -o hello\n./hello\n\n./bin/yugac app.loam --run\n./bin/yugac app.loam --emit-c -o a.c\n./bin/yugac --target wasm app.loam -o app.wasm"
         )
     }
@@ -67,7 +67,7 @@ fn of(id: int) -> PageResp {
         return pack(
             "fmt",
             "Write to stdout. No heap, no printf, no C strings.",
-            "fmt.println is not a real function: the compiler turns mixed string / int / bool / float arguments into write / write_int / write_bool / write_float plus a newline.\n\nfmt.write(s) uses s.len bytes. fmt.eq is length-based string equality — Yuga strings are not C strcmp.",
+            "fmt.println is not a real function: the compiler turns mixed string / int / bool / float arguments into write / write_int / write_bool / write_float plus a newline.\n\nfmt.write(s) uses s.len bytes. fmt.eq is length-based string equality — Loam strings are not C strcmp.",
             "import \"std:fmt\"\n\nfn main() {\n    fmt.println(\"hello,\", 42, true)\n    if fmt.eq(name, \"ok\") {\n        fmt.println(\"yes\")\n    }\n}"
         )
     }
@@ -90,7 +90,7 @@ fn of(id: int) -> PageResp {
     if id == 11 {
         return pack(
             "maya",
-            "Small 3D/2D engine. Scene in Yuga; C is the host event loop and present.",
+            "Small 3D/2D engine. Scene in Loam; C is the host event loop and present.",
             "Analytic spheres. World unit 1024 = 1.0. Camera: drag orbit, scroll zoom, WASD, Q/E zoom, R reset. Sine/cosine: 1024 turns = 360, result -1024..1024. MAYA_HEADLESS=1: one frame, then exit. Try ./run.sh solar.",
             "import \"std:maya\"\n\nfn main() {\n    maya.init()\n    maya.window(\"hello\", 800, 600)\n    maya.add(maya.sphere(16)).pos(0, 0, 0).scale(512).tint(maya.rgb(200, 80, 80))\n    maya.run()\n}"
         )
@@ -98,9 +98,9 @@ fn of(id: int) -> PageResp {
     if id == 12 {
         return pack(
             "sys",
-            "Language-level seam into the runtime. Bodyless fns resolve to yuga_sys_<name>.",
+            "Language-level seam into the runtime. Bodyless fns resolve to loam_sys_<name>.",
             "sys.env_set(name) is 1 if set and non-empty. sys.env(name) is the value (empty on wasm). sys.exit(code). sys.write_file / read_file are native (wasm fails / empty). sys.exec runs a shell command; sys.exec_status is the last exit code.",
-            "import \"std:sys\"\nimport \"std:fmt\"\n\nfn main() {\n    if sys.env_set(\"YUGA_TIME\") {\n        fmt.println(\"timing on\")\n    }\n    fmt.println(sys.env(\"HOME\"))\n}"
+            "import \"std:sys\"\nimport \"std:fmt\"\n\nfn main() {\n    if sys.env_set(\"LOAM_TIME\") {\n        fmt.println(\"timing on\")\n    }\n    fmt.println(sys.env(\"HOME\"))\n}"
         )
     }
     if id == 13 {
@@ -114,7 +114,7 @@ fn of(id: int) -> PageResp {
     if id == 14 {
         return pack(
             "Platforms",
-            "Same Yuga source; the host is a --target flag. Zeus paints its own theme everywhere.",
+            "Same Loam source; the host is a --target flag. Zeus paints its own theme everywhere.",
             "native (default) — macOS Cocoa window, not AppKit widgets. wasm / wasm32 — Canvas2D in the browser (no HTML DOM widgets). ios — Simulator, Xcode. android — Gradle + JNI Canvas, density-independent pixels.\n\nCLI and std:http servers are native binaries. ZEUS_HEADLESS=1 / MAYA_HEADLESS=1 for one frame (make test).",
             "./bin/yugac --target=native --run app.loam\n./bin/yugac --target=wasm32 -o app.wasm app.loam\n./bin/yugac --target=ios --run examples/zeus/dashboard/dashboard.loam"
         )
@@ -128,9 +128,9 @@ fn of(id: int) -> PageResp {
         )
     }
     return pack(
-        "Yuga",
+        "Loam",
         "A memory-safe systems language: Odin-like syntax, Rust-like ownership.",
-        "The compiler (yugac) typechecks a program, lowers it to IR, emits C99, and invokes cc. C is the platform binding target, not the language's semantics.\n\nQuoted imports only: import \"std:foo\" loads packages/yuga/std/foo.loam. Call imported items as foo.bar(...).\n\nThis site is a Zeus app. Page copy comes from Docs.Page over gRPC-Web (Yuga backend). Vite serves the Canvas2D wasm and proxies /Docs to :8082.",
+        "The compiler (yugac) typechecks a program, lowers it to IR, emits C99, and invokes cc. C is the platform binding target, not the language's semantics.\n\nQuoted imports only: import \"std:foo\" loads packages/yuga/std/foo.loam. Call imported items as foo.bar(...).\n\nThis site is a Zeus app. Page copy comes from Docs.Page over gRPC-Web (Loam backend). Vite serves the Canvas2D wasm and proxies /Docs to :8082.",
         "import \"std:fmt\"\n\nfn main() {\n    fmt.println(\"hello, yuga\")\n}"
     )
 ))

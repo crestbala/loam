@@ -44,7 +44,7 @@ void zeus_key_on_range(int nid, const char *action, int sig, int64_t delta, int6
                       int64_t hi);
 int zeus_key_dispatch(int key, int mods);
 
-/* provided by zeus_plat.c (Yuga engine trampolines) */
+/* provided by zeus_plat.c (Loam engine trampolines) */
 int zeus_focus_chain(int *nodes, int *ctxs, int max);
 void zeus_key_apply(int sig, int mode, int64_t value, int64_t lo, int64_t hi);
 int zeus_focus_captures_text(void);

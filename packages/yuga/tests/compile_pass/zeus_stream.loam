@@ -1,7 +1,7 @@
 // Phase 1b exit proof: SSE and WebSocket events stream into the UI through
 // the headless pump — each event lands in a signal-fed label, no manual
 // `engine_layout`. Each transport runs against a child process of this same
-// binary (YUGA_SSE_SRV=1 / YUGA_WS_SRV=1) that binds an ephemeral port,
+// binary (LOAM_SSE_SRV=1 / LOAM_WS_SRV=1) that binds an ephemeral port,
 // writes "127.0.0.1:<port>" to a file, pushes N events, and exits.
 
 import "std:async"
@@ -52,7 +52,7 @@ fn sse_srv_main() {
     }
     let p = net.tcp_bound_port(l)
     let addr = http.concat_str("127.0.0.1:", http.string_of(http.u_itoa(p)))
-    if sys.write_file("/tmp/yuga_stream_sse.port", addr) != 0 {
+    if sys.write_file("/tmp/loam_stream_sse.port", addr) != 0 {
         fail("sse port file")
     }
     for k in 0..5 {
@@ -83,7 +83,7 @@ fn ws_srv_main() {
     }
     let p = net.tcp_bound_port(l)
     let addr = http.concat_str("127.0.0.1:", http.string_of(http.u_itoa(p)))
-    if sys.write_file("/tmp/yuga_stream_ws.port", addr) != 0 {
+    if sys.write_file("/tmp/loam_stream_ws.port", addr) != 0 {
         fail("ws port file")
     }
     for k in 0..5 {
@@ -119,8 +119,8 @@ fn ws_srv_main() {
 }
 
 fn cli_main() {
-    sys.write_file("/tmp/yuga_stream_sse.port", "")
-    sys.write_file("/tmp/yuga_stream_ws.port", "")
+    sys.write_file("/tmp/loam_stream_sse.port", "")
+    sys.write_file("/tmp/loam_stream_ws.port", "")
     let n = zeus.signal(0)
     let se = zeus.signal(0)
     let we = zeus.signal(0)
@@ -129,12 +129,12 @@ fn cli_main() {
     }, 240, 90)
 
     // SSE: 5 events.
-    sys.exec("YUGA_SSE_SRV=1 packages/yuga/tests/tmp/zeus_stream >/dev/null 2>&1 &")
-    let mut addr = sys.read_file("/tmp/yuga_stream_sse.port")
+    sys.exec("LOAM_SSE_SRV=1 packages/yuga/tests/tmp/zeus_stream >/dev/null 2>&1 &")
+    let mut addr = sys.read_file("/tmp/loam_stream_sse.port")
     let mut guard = 0
     while addr.len == 0 && guard < 400 {
         async.sleep(5)
-        addr = sys.read_file("/tmp/yuga_stream_sse.port")
+        addr = sys.read_file("/tmp/loam_stream_sse.port")
         guard = guard + 1
     }
     if addr.len == 0 {
@@ -149,12 +149,12 @@ fn cli_main() {
     }
 
     // WebSocket: 5 messages on top.
-    sys.exec("YUGA_WS_SRV=1 packages/yuga/tests/tmp/zeus_stream >/dev/null 2>&1 &")
-    let mut addr2 = sys.read_file("/tmp/yuga_stream_ws.port")
+    sys.exec("LOAM_WS_SRV=1 packages/yuga/tests/tmp/zeus_stream >/dev/null 2>&1 &")
+    let mut addr2 = sys.read_file("/tmp/loam_stream_ws.port")
     let mut guard2 = 0
     while addr2.len == 0 && guard2 < 400 {
         async.sleep(5)
-        addr2 = sys.read_file("/tmp/yuga_stream_ws.port")
+        addr2 = sys.read_file("/tmp/loam_stream_ws.port")
         guard2 = guard2 + 1
     }
     if addr2.len == 0 {
@@ -171,11 +171,11 @@ fn cli_main() {
 }
 
 fn main() {
-    if sys.env_set("YUGA_SSE_SRV") != 0 {
+    if sys.env_set("LOAM_SSE_SRV") != 0 {
         sse_srv_main()
         return
     }
-    if sys.env_set("YUGA_WS_SRV") != 0 {
+    if sys.env_set("LOAM_WS_SRV") != 0 {
         ws_srv_main()
         return
     }

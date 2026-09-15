@@ -1,6 +1,6 @@
 /* wasm.c — Canvas2D glue for Zeus (zeus/web). Not WebGPU.
  *
- * One paint path: Yuga `scene.paint` (`yuga_zeus_engine_paint`). This file
+ * One paint path: Loam `scene.paint` (`loam_zeus_engine_paint`). This file
  * binds Canvas2D as the plat_* backend. The browser owns rAF: `zeus_paint`
  * returns 0 when idle so the loader can stop, like Cocoa `engine_next_ms`.
  */
@@ -139,26 +139,26 @@ static int wasm_load_font(const char *family, const char *src) {
 
 /* In-tree metrics need the font's bytes, which this host has no filesystem to
    read. Ask JS to fetch `src`; it copies the bytes back into `wasm_font_buf`
-   and calls `zeus_font_set`, which binds them. Until then `yuga_metrics_bind`
+   and calls `zeus_font_set`, which binds them. Until then `loam_metrics_bind`
    is not called and layout keeps Canvas2D `measureText` — the same "accepted,
    not ready" contract as `load_font`. */
 static char *wasm_font_buf;
 static int32_t wasm_font_cap;
 
-static yuga_str wasm_font_bytes(yuga_str src) {
+static loam_str wasm_font_bytes(loam_str src) {
     char buf[512];
     size_t n = src.len > 0 && src.ptr ? (size_t)src.len : 0;
     if (n >= sizeof buf) n = sizeof buf - 1;
     if (n && src.ptr) memcpy(buf, src.ptr, n);
     buf[n] = '\0';
     if (n) zeus_js_font_fetch(buf);
-    return (yuga_str){"", 0};
+    return (loam_str){"", 0};
 }
 
-int32_t yuga_metrics_bind(yuga_str bytes);
+int32_t loam_metrics_bind(loam_str bytes);
 
 /* JS fetches a font, reserves space here, writes it, then calls `zeus_font_set`.
-   Bind copies into the Yuga arena so a later fetch's realloc cannot dangle the
+   Bind copies into the Loam arena so a later fetch's realloc cannot dangle the
    bytes the metrics hold. */
 __attribute__((export_name("zeus_font_reserve")))
 char *zeus_font_reserve(int32_t n) {
@@ -176,9 +176,9 @@ __attribute__((export_name("zeus_font_set")))
 int32_t zeus_font_set(int32_t n) {
     char *p;
     if (n <= 0 || n > wasm_font_cap || !wasm_font_buf) return 0;
-    p = (char *)yuga_new((size_t)n, "font_bytes", 0);
+    p = (char *)loam_new((size_t)n, "font_bytes", 0);
     memcpy(p, wasm_font_buf, (size_t)n);
-    return yuga_metrics_bind((yuga_str){p, n});
+    return loam_metrics_bind((loam_str){p, n});
 }
 
 static void wasm_measure(const char *s, int64_t px, int64_t *w, int64_t *h) {
@@ -252,9 +252,9 @@ int32_t zeus_wasm_paint(void) {
     int64_t due;
     zeus_layout(zeus_window_width(), zeus_window_height());
     more = zeus_step(1.f / 60.f);
-    yuga_zeus_engine_paint();
+    loam_zeus_engine_paint();
     if (more) return 1;
-    due = yuga_zeus_engine_next_ms();
+    due = loam_zeus_engine_next_ms();
     if (due < 0) return 1;
     if (due > 2147483647) return 2147483647;
     return (int32_t)due;
@@ -296,7 +296,7 @@ static char wasm_a11y_buf[16384];
 
 __attribute__((export_name("zeus_a11y_sync")))
 const char *zeus_a11y_sync(void) {
-    yuga_str s = yuga_zeus_engine_a11y_dump();
+    loam_str s = loam_zeus_engine_a11y_dump();
     size_t n = (s.len > 0 && s.ptr) ? (size_t)s.len : 0;
     if (n >= sizeof wasm_a11y_buf) n = sizeof wasm_a11y_buf - 1;
     if (n) memcpy(wasm_a11y_buf, s.ptr, n);
@@ -309,11 +309,11 @@ const char *zeus_a11y_sync(void) {
 __attribute__((export_name("zeus_open_url")))
 void zeus_open_url(const char *path) {
     size_t n = path ? strlen(path) : 0;
-    char *p = (char *)yuga_new(n + 1, "open_url", 0);
+    char *p = (char *)loam_new(n + 1, "open_url", 0);
     if (!p) return;
     if (n) memcpy(p, path, n);
     p[n] = '\0';
-    yuga_router_engine_open_url((yuga_str){p, n});
+    loam_router_engine_open_url((loam_str){p, n});
 }
 
 /* Hot reload (§2.5): expose the signal arena as text, and restore it. The dev
@@ -322,7 +322,7 @@ static char wasm_state_buf[65536];
 
 __attribute__((export_name("zeus_state_snapshot")))
 const char *zeus_state_snapshot(void) {
-    yuga_str s = yuga_zeus_engine_signals_dump();
+    loam_str s = loam_zeus_engine_signals_dump();
     size_t n = (s.len > 0 && s.ptr) ? (size_t)s.len : 0;
     if (n >= sizeof wasm_state_buf) n = sizeof wasm_state_buf - 1;
     if (n) memcpy(wasm_state_buf, s.ptr, n);
@@ -334,11 +334,11 @@ __attribute__((export_name("zeus_state_restore")))
 int32_t zeus_state_restore(const char *snapshot) {
     size_t n = snapshot ? strlen(snapshot) : 0;
     if (n == 0) return 0;
-    char *p = (char *)yuga_new(n + 1, "state_restore", 0);
+    char *p = (char *)loam_new(n + 1, "state_restore", 0);
     if (!p) return 0;
     memcpy(p, snapshot, n);
     p[n] = '\0';
-    return yuga_zeus_engine_state_load((yuga_str){p, n});
+    return loam_zeus_engine_state_load((loam_str){p, n});
 }
 
 __attribute__((export_name("zeus_scroll")))

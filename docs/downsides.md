@@ -1,6 +1,6 @@
-# Yuga / Zeus self-improvement
+# Loam / Zeus self-improvement
 
-Yuga is **Odin-shaped syntax with Rust-shaped ownership**. It is not Rust.
+Loam is **Odin-shaped syntax with Rust-shaped ownership**. It is not Rust.
 A type, method, or syntactic form lands only when a program needs it.
 Missing traits, lifetime syntax, algebraic enums, macros, `u32`, and
 `for x in xs` are the point — not a backlog.
@@ -53,7 +53,7 @@ the first thing a new app copies wrong.
       resolves per `--target`: wasm same-origin, mac/iOS `127.0.0.1:8080`,
       Android emulator `10.0.2.2:8080`. An explicit addr still wins.
       `sys.target()` is `"wasm"` / `"ios"` / `"android"` / `"native"`.
-- [x] Physical Android device: `YUGA_RPC_ADDR=<lan>:8080`, not a fourth
+- [x] Physical Android device: `LOAM_RPC_ADDR=<lan>:8080`, not a fourth
       `app.loam`.
 - [x] Counter, gallery, and www: shared `ui.loam` + a three-line host stub
       (`import "../ui.loam"`; `ui.start()`).
@@ -82,7 +82,7 @@ What differs per host is folklore across READMEs.
 
 - [x] One table in this file; `http.default_addr` / `sys.target` `///`.
 - [x] `yugac --target=wasm` without a `wasm32` clang names `./install.sh`
-      / `YUGA_WASM_CC`.
+      / `LOAM_WASM_CC`.
 - [x] Missing iOS SDK / Android SDK still point at Xcode / `install.sh`.
 - **Exit:** a new contributor can pick a host from the table; a missing
   wasm clang is a one-line fix. **Green.**

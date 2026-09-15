@@ -291,7 +291,7 @@
       set_title: (t) => {
         document.title = cstr(t);
       },
-      /* Router history mirror: the Yuga stack is authoritative; these keep the
+      /* Router history mirror: the Loam stack is authoritative; these keep the
          browser's own back/forward in step and make URLs shareable. */
       history_push: (p) => {
         const path = cstr(p);

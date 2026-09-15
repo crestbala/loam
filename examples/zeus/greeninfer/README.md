@@ -1,14 +1,14 @@
 # GreenInfer
 
 Ultra-lightweight, zero-dependency, local-first vector memory engine on
-macOS Apple Silicon — written in Yuga. Phase 1 ships the **memory engine
+macOS Apple Silicon — written in Loam. Phase 1 ships the **memory engine
 core + a macOS desktop check UI** (Zeus/Cocoa); the watcher and frontier
 agent phases land on top next.
 
 ```
 examples/zeus/greeninfer/
   greeninfer.loam            desktop UI (engine + watcher + search harness)
-  engine.loam                the engine: all policy in Yuga (capacity, count
+  engine.loam                the engine: all policy in Loam (capacity, count
                              mirror, top-k sweep, embeddings, cosine norm)
   watcher.loam               folder scan, 500-token chunker, manifest diff,
                              per-chunk labels/snippets
@@ -22,16 +22,16 @@ examples/zeus/greeninfer/
 
 ## The seam rule
 
-Everything that decides lives in Yuga, where the language's checks apply:
+Everything that decides lives in Loam, where the language's checks apply:
 bounds traps on every row access, overflow traps on every counter, safe
-ownership of every buffer. The C seam is only what Yuga cannot express:
+ownership of every buffer. The C seam is only what Loam cannot express:
 
 - `gi_sys_mmap` / `gi_sys_munmap` — POSIX zero-copy mapping (`MAP_SHARED`;
-  pages fault in, nothing is ever `read()` into a Yuga buffer)
+  pages fault in, nothing is ever `read()` into a Loam buffer)
 - `gi_neon_dot_product` — Apple Silicon NEON kernel (`float32x4_t`,
   `vmlaq_f32`, `vaddvq_f32`)
 - row trampolines — a map is an opaque `int` handle; each entry re-validates
-  handle, header magic, and row bounds before touching the mapping. Yuga
+  handle, header magic, and row bounds before touching the mapping. Loam
   never sees a raw pointer.
 
 File layout (engine-owned constants, sealed in the seam):
@@ -44,7 +44,7 @@ cap rows     { u32 id + 384 f32 }        stored vectors
 
 `search_knn` (engine.loam) stages the query once in the scratch row, then
 sweeps every stored row with one in-place NEON dot each — no per-row
-conversion, no copy — while Yuga keeps the top-k.
+conversion, no copy — while Loam keeps the top-k.
 
 ## Build & run (macOS desktop)
 
@@ -65,7 +65,7 @@ clang -O1 -I packages/yuga/runtime -c \
   examples/zeus/greeninfer/runtime/greeninfer_runtime.c \
   -o examples/zeus/greeninfer/build/greeninfer_runtime.o
 
-# 2. the native arm64 binary (Yuga -> C99 -> cc; seam auto-linked)
+# 2. the native arm64 binary (Loam -> C99 -> cc; seam auto-linked)
 ./bin/yugac examples/zeus/greeninfer/greeninfer.loam -o greeninfer-macos
 ./greeninfer-macos
 ```
@@ -74,11 +74,11 @@ clang -O1 -I packages/yuga/runtime -c \
 
 ```
 # smoke: engine + chunker + cosine + folder scan assertions
-YUGA_LINK_EXTRA="examples/zeus/greeninfer/runtime/greeninfer_runtime.c" \
+LOAM_LINK_EXTRA="examples/zeus/greeninfer/runtime/greeninfer_runtime.c" \
   ./bin/yugac --run examples/zeus/greeninfer/smoke.loam
 
 # CLI demo: index ./examples/zeus/greeninfer, run 4 prompts, print hits + timing
-YUGA_LINK_EXTRA="examples/zeus/greeninfer/runtime/greeninfer_runtime.c" \
+LOAM_LINK_EXTRA="examples/zeus/greeninfer/runtime/greeninfer_runtime.c" \
   ./bin/yugac examples/zeus/greeninfer/main.loam -o greeninfer-macos
 ./greeninfer-macos
 ```

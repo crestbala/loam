@@ -1,5 +1,5 @@
-#ifndef YUGA_WASM_SYS_UIO_H
-#define YUGA_WASM_SYS_UIO_H
+#ifndef LOAM_WASM_SYS_UIO_H
+#define LOAM_WASM_SYS_UIO_H
 #include <stddef.h>
 struct iovec {
     void *iov_base;

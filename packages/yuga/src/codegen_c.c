@@ -1,8 +1,8 @@
 /**
- * codegen_c.c — translate a typechecked Yuga program to gnu99 C.
+ * codegen_c.c — translate a typechecked Loam program to gnu99 C.
  *
  * Layout of the generated file:
- *   1. paste yuga_rt.h (panic, overflow, fmt writev, Box malloc)
+ *   1. paste loam_rt.h (panic, overflow, fmt writev, Box malloc)
  *   2. zeus_rt.h / maya_rt.h if those modules are used (handles + plat/engine decls)
  *   3. struct typedefs (Node/Signal and maya handles stay in runtime headers)
  *   4. prototypes, closure envs, monomorphized generics
@@ -63,7 +63,7 @@ static void indent(FILE *o, int n) {
 }
 
 /* Phase 12: `#line` directives map generated C back to the `.loam` source, so
-   debuggers, profilers, and sanitizers report Yuga lines. Emitted only at
+   debuggers, profilers, and sanitizers report Loam lines. Emitted only at
    statement/instruction boundaries and only when the (file, line) changes, so
    the generated C stays readable. The runtime header is pasted before any
    directive, so its own __FILE__/__LINE__ uses are unaffected. */
@@ -97,7 +97,7 @@ static void emit_block_body(FILE *o, AstNode *b, int ind, int is_main);
 static IrFn *find_ir_fn(const char *cname);
 static const char *c_assignop(int op);
 
-/** C type for a Yuga Type (int64_t, yuga_str, yuga_fn, T*, …). */
+/** C type for a Loam Type (int64_t, loam_str, loam_fn, T*, …). */
 static void emit_ctype(FILE *o, Type *t) {
     if (t && subst_n)
         t = typecheck_subst(t, subst_names, subst_args, subst_n);
@@ -124,7 +124,7 @@ static void emit_ctype(FILE *o, Type *t) {
             fprintf(o, "bool");
             break;
         case TY_STRING:
-            fprintf(o, "yuga_str");
+            fprintf(o, "loam_str");
             break;
         case TY_VOID:
             fprintf(o, "void");
@@ -136,7 +136,7 @@ static void emit_ctype(FILE *o, Type *t) {
             break;
         }
         case TY_VEC:
-            fprintf(o, "yuga_vec");
+            fprintf(o, "loam_vec");
             break;
         case TY_PTR:
             if (!t->is_mut) fprintf(o, "const ");
@@ -151,7 +151,7 @@ static void emit_ctype(FILE *o, Type *t) {
             emit_ctype(o, t->elem);
             break;
         case TY_PROC:
-            fprintf(o, "yuga_fn");
+            fprintf(o, "loam_fn");
             break;
         default:
             fprintf(o, "int64_t");
@@ -187,7 +187,7 @@ static void format_ctype(char *buf, size_t cap, Type *t) {
             snprintf(buf, cap, "bool");
             break;
         case TY_STRING:
-            snprintf(buf, cap, "yuga_str");
+            snprintf(buf, cap, "loam_str");
             break;
         case TY_VOID:
             snprintf(buf, cap, "void");
@@ -196,10 +196,10 @@ static void format_ctype(char *buf, size_t cap, Type *t) {
             type_c_name(t, buf, cap);
             break;
         case TY_VEC:
-            snprintf(buf, cap, "yuga_vec");
+            snprintf(buf, cap, "loam_vec");
             break;
         case TY_PROC:
-            snprintf(buf, cap, "yuga_fn");
+            snprintf(buf, cap, "loam_fn");
             break;
         case TY_PTR:
         case TY_BOX: {
@@ -230,7 +230,7 @@ static const char *src_file(AstNode *n) {
     return (n && n->loc.file) ? n->loc.file : "yuga";
 }
 
-/** File and line arguments for yuga_panic / yuga_idx / yuga_new. */
+/** File and line arguments for loam_panic / loam_idx / loam_new. */
 static void emit_loc_args(FILE *o, AstNode *n) {
     fprintf(o, "\"");
     const char *f = src_file(n);
@@ -290,7 +290,7 @@ static void emit_place(FILE *o, AstNode *n) {
                 if (n->flags & ASTF_INDEX_SAFE)
                     emit_expr(o, n->as.access.index);
                 else {
-                    fprintf(o, "yuga_idx(");
+                    fprintf(o, "loam_idx(");
                     emit_expr(o, n->as.access.index);
                     fprintf(o, ", ");
                     emit_place(o, n->as.access.target);
@@ -307,7 +307,7 @@ static void emit_place(FILE *o, AstNode *n) {
             if (n->flags & ASTF_INDEX_SAFE)
                 emit_expr(o, n->as.access.index);
             else {
-                fprintf(o, "yuga_idx(");
+                fprintf(o, "loam_idx(");
                 emit_expr(o, n->as.access.index);
                 fprintf(o, ", %lld, ", (long long)len);
                 emit_loc_args(o, n);
@@ -332,7 +332,7 @@ static void emit_checked_bin(FILE *o, const char *fn, AstNode *n) {
     fprintf(o, ")");
 }
 
-/** Trapping arithmetic helper for integer type `t` (`yuga_add_i32`). NULL for
+/** Trapping arithmetic helper for integer type `t` (`loam_add_i32`). NULL for
  *  a non-integer type or a non-arithmetic operator. Rotating static buffer. */
 static const char *arith_fn(const Type *t, int op) {
     const char *sfx = type_int_suffix(t);
@@ -349,29 +349,29 @@ static const char *arith_fn(const Type *t, int op) {
     static char bufs[6][32];
     static int rot;
     char *b = bufs[rot++ % 6];
-    snprintf(b, 32, "yuga_%s_%s", base, sfx);
+    snprintf(b, 32, "loam_%s_%s", base, sfx);
     return b;
 }
 
-/** Trapping shift helper (`yuga_shl_u8`). NULL if not an integer type. */
+/** Trapping shift helper (`loam_shl_u8`). NULL if not an integer type. */
 static const char *shift_fn(const Type *t, int op) {
     const char *sfx = type_int_suffix(t);
     if (!sfx) return NULL;
     static char bufs[4][32];
     static int rot;
     char *b = bufs[rot++ & 3];
-    snprintf(b, 32, "yuga_%s_%s", op == TOK_SHR ? "shr" : "shl", sfx);
+    snprintf(b, 32, "loam_%s_%s", op == TOK_SHR ? "shr" : "shl", sfx);
     return b;
 }
 
-/** Trapping negation helper (`yuga_neg_i16`). NULL if not an integer type. */
+/** Trapping negation helper (`loam_neg_i16`). NULL if not an integer type. */
 static const char *neg_fn(const Type *t) {
     const char *sfx = type_int_suffix(t);
     if (!sfx) return NULL;
     static char bufs[4][32];
     static int rot;
     char *b = bufs[rot++ & 3];
-    snprintf(b, 32, "yuga_neg_%s", sfx);
+    snprintf(b, 32, "loam_neg_%s", sfx);
     return b;
 }
 
@@ -394,7 +394,7 @@ static CastShape cast_shape(const Type *from, const Type *to, int mode, char *fn
     if (!sfx) return CAST_PLAIN;
     if (from->kind == TY_FLOAT) {
         if (mode != 0) return CAST_PLAIN;
-        snprintf(fn, fncap, "yuga_convf_%s", sfx);
+        snprintf(fn, fncap, "loam_convf_%s", sfx);
         return CAST_CONVF;
     }
     if (from->kind != TY_INT) return CAST_PLAIN;
@@ -403,17 +403,17 @@ static CastShape cast_shape(const Type *from, const Type *to, int mode, char *fn
     int to_u64 = to->bits == 64 && to->is_unsigned;
     if (from_u64 && !to_u64) {
         if (mode == 2) {
-            snprintf(fn, fncap, "yuga_satu_%s", sfx);
+            snprintf(fn, fncap, "loam_satu_%s", sfx);
             return CAST_SATU;
         }
-        snprintf(fn, fncap, "yuga_convu_%s", sfx);
+        snprintf(fn, fncap, "loam_convu_%s", sfx);
         return CAST_CONVU;
     }
     if (mode == 2) {
-        snprintf(fn, fncap, "yuga_sat_%s", sfx);
+        snprintf(fn, fncap, "loam_sat_%s", sfx);
         return CAST_SAT;
     }
-    snprintf(fn, fncap, "yuga_conv_%s", sfx);
+    snprintf(fn, fncap, "loam_conv_%s", sfx);
     return CAST_CONV;
 }
 
@@ -445,10 +445,10 @@ static void emit_float_lit(FILE *o, double f, int is_f32) {
         fprintf(o, need_dot ? "%s.0" : "%s", buf);
 }
 
-/** yuga_str compound literal with compile-time length (no strlen). */
+/** loam_str compound literal with compile-time length (no strlen). */
 static void emit_str_lit(FILE *o, const char *s) {
     size_t n = s ? strlen(s) : 0;
-    fprintf(o, "((yuga_str){(const char *)\"");
+    fprintf(o, "((loam_str){(const char *)\"");
     emit_c_string_body(o, s);
     fprintf(o, "\", %lld})", (long long)n);
 }
@@ -485,7 +485,7 @@ static int type_is_copy_vec(Type *t) {
 /** Copy a capture into a closure env; []T must retain the buffer. */
 static void emit_cap_set_ident(FILE *o, Type *ty, const char *dst_field, const char *src) {
     if (type_is_copy_vec(ty)) {
-        fprintf(o, "%s = yuga_vec_retain(&", dst_field);
+        fprintf(o, "%s = loam_vec_retain(&", dst_field);
         emit_ident_name(o, src);
         fprintf(o, ")");
     } else {
@@ -499,7 +499,7 @@ static void hoist_capturing_clos(FILE *o, AstNode *clos) {
     if (!is_capturing_clos(clos) || clos_hoist_n >= 64) return;
     int tid = tmp_id++;
     int id = clos->as.fn.clos_id;
-    fprintf(o, "struct yuga_env_%d _ce%d; ", id, tid);
+    fprintf(o, "struct loam_env_%d _ce%d; ", id, tid);
     for (size_t i = 0; i < clos->as.fn.cap_count; i++) {
         char dst[128];
         snprintf(dst, sizeof dst, "_ce%d.%s", tid, clos->as.fn.caps[i]);
@@ -534,7 +534,7 @@ static void emit_box_new(FILE *o, AstNode *n) {
     emit_ctype(o, et);
     fprintf(o, " *_b%d = (", id);
     emit_ctype(o, et);
-    fprintf(o, " *)yuga_new(sizeof(");
+    fprintf(o, " *)loam_new(sizeof(");
     emit_ctype(o, et);
     fprintf(o, "), ");
     emit_loc_args(o, n);
@@ -570,7 +570,7 @@ static void emit_println(FILE *o, AstNode *n, int ind) {
                         (unsigned long long)nlen);
             } else {
                 indent(o, ind + 1);
-                fprintf(o, "yuga_str _ss%zu = ", i);
+                fprintf(o, "loam_str _ss%zu = ", i);
                 emit_expr(o, a);
                 fprintf(o, ";\n");
                 indent(o, ind + 1);
@@ -585,7 +585,7 @@ static void emit_println(FILE *o, AstNode *n, int ind) {
             fprintf(o, " else { _iov[_ni].iov_base = (void *)\"false\"; _iov[_ni].iov_len = 5; } _ni++;\n");
         } else if (t && t->kind == TY_FLOAT) {
             indent(o, ind + 1);
-            fprintf(o, "char _fb%zu[64]; yuga_str _fs%zu = yuga_fmt_ftoa(_fb%zu, ", i, i, i);
+            fprintf(o, "char _fb%zu[64]; loam_str _fs%zu = loam_fmt_ftoa(_fb%zu, ", i, i, i);
             emit_expr(o, a);
             fprintf(o, ");\n");
             indent(o, ind + 1);
@@ -593,7 +593,7 @@ static void emit_println(FILE *o, AstNode *n, int ind) {
                     i, i);
         } else {
             indent(o, ind + 1);
-            fprintf(o, "char _ib%zu[24]; yuga_str _is%zu = yuga_fmt_itoa(_ib%zu, ", i, i, i);
+            fprintf(o, "char _ib%zu[24]; loam_str _is%zu = loam_fmt_itoa(_ib%zu, ", i, i, i);
             emit_expr(o, a);
             fprintf(o, ");\n");
             indent(o, ind + 1);
@@ -604,7 +604,7 @@ static void emit_println(FILE *o, AstNode *n, int ind) {
     indent(o, ind + 1);
     fprintf(o, "_iov[_ni].iov_base = (void *)\"\\n\"; _iov[_ni].iov_len = 1; _ni++;\n");
     indent(o, ind + 1);
-    fprintf(o, "yuga_writev_all(_iov, _ni);\n");
+    fprintf(o, "loam_writev_all(_iov, _ni);\n");
     indent(o, ind);
     fprintf(o, "}\n");
 }
@@ -619,22 +619,22 @@ static const char *cname_for_call(AstNode *cal) {
             cal->as.ident.resolved->as.fn.cname)
             return cal->as.ident.resolved->as.fn.cname;
         if (cur_is_main_mod)
-            snprintf(buf, sizeof buf, "yuga_%s", cal->as.ident.name);
+            snprintf(buf, sizeof buf, "loam_%s", cal->as.ident.name);
         else
-            snprintf(buf, sizeof buf, "yuga_%s_%s",
+            snprintf(buf, sizeof buf, "loam_%s_%s",
                      cur_mod_name ? cur_mod_name : "mod", cal->as.ident.name);
         return buf;
     }
     if (cal->kind == AST_FIELD && cal->as.access.target &&
         cal->as.access.target->kind == AST_IDENT) {
-        snprintf(buf, sizeof buf, "yuga_%s_%s", cal->as.access.target->as.ident.name,
+        snprintf(buf, sizeof buf, "loam_%s_%s", cal->as.access.target->as.ident.name,
                  cal->as.access.field);
         return buf;
     }
     return "unknown";
 }
 
-/** Call through a yuga_fn fat pointer (env first argument). */
+/** Call through a loam_fn fat pointer (env first argument). */
 static void emit_fn_val_call(FILE *o, AstNode *n) {
     Type *ft = n->as.call.callee ? n->as.call.callee->ty : NULL;
     if (!ft || ft->kind != TY_PROC) ft = n->ty;
@@ -645,7 +645,7 @@ static void emit_fn_val_call(FILE *o, AstNode *n) {
     fprintf(o, "({ ");
     if (stack) pushed = hoist_call_clos_envs(o, n);
     int id = tmp_id++;
-    fprintf(o, "yuga_fn _fv%d = ", id);
+    fprintf(o, "loam_fn _fv%d = ", id);
     emit_expr(o, n->as.call.callee);
     fprintf(o, "; ((");
     emit_ctype(o, ret);
@@ -725,11 +725,11 @@ static void emit_expr(FILE *o, AstNode *n) {
         case AST_IDENT:
             if (n->flags & ASTF_FN_VAL) {
                 const char *cn = cname_for_call(n);
-                fprintf(o, "((yuga_fn){(void *)%s__as_fn, NULL, 0})", cn);
+                fprintf(o, "((loam_fn){(void *)%s__as_fn, NULL, 0})", cn);
             } else if ((n->flags & ASTF_MOVED) && n->ty && n->ty->kind == TY_BOX) {
                 fprintf(o, "((");
                 emit_ctype(o, n->ty);
-                fprintf(o, ")yuga_move_ptr((void **)&");
+                fprintf(o, ")loam_move_ptr((void **)&");
                 emit_ident_name(o, n->as.ident.name);
                 fprintf(o, "))");
             } else {
@@ -749,7 +749,7 @@ static void emit_expr(FILE *o, AstNode *n) {
             else if (n->as.binary.left && n->as.binary.left->ty &&
                      n->as.binary.left->ty->kind == TY_STRING &&
                      (op == TOK_EQ_EQ || op == TOK_BANG_EQ)) {
-                fprintf(o, "%syuga_fmt_eq(", op == TOK_BANG_EQ ? "!" : "");
+                fprintf(o, "%sloam_fmt_eq(", op == TOK_BANG_EQ ? "!" : "");
                 emit_expr(o, n->as.binary.left);
                 fprintf(o, ", ");
                 emit_expr(o, n->as.binary.right);
@@ -881,22 +881,22 @@ static void emit_expr(FILE *o, AstNode *n) {
                 break;
             }
             if (n->as.call.sig_cell == 1 && n->as.call.arg_count == 1) {
-                fprintf(o, "({ yuga_arena_ensure(); int64_t _sid = ");
+                fprintf(o, "({ loam_arena_ensure(); int64_t _sid = ");
                 if (n->as.call.args[0]->ty && n->as.call.args[0]->ty->kind == TY_INT &&
                     n->as.call.args[0]->ty->bits == 32) {
-                    fprintf(o, "yuga_zeus_sig_alloc_int(");
+                    fprintf(o, "loam_zeus_sig_alloc_int(");
                     emit_expr(o, n->as.call.args[0]);
                     fprintf(o, "); ");
                 } else {
-                    fprintf(o, "yuga_zeus_sig_alloc_zero(); ");
+                    fprintf(o, "loam_zeus_sig_alloc_zero(); ");
                     emit_ctype(o, n->as.call.args[0]->ty);
                     fprintf(o, " _sv = ");
                     emit_expr(o, n->as.call.args[0]);
                     fprintf(o, "; ");
                     if (type_is_copy_vec(n->as.call.args[0]->ty))
-                        fprintf(o, "{ yuga_vec _kept = yuga_vec_retain(&_sv); yuga_zeus_sig_bind(_sid, &_kept, sizeof(_kept)); } ");
+                        fprintf(o, "{ loam_vec _kept = loam_vec_retain(&_sv); loam_zeus_sig_bind(_sid, &_kept, sizeof(_kept)); } ");
                     else
-                        fprintf(o, "yuga_zeus_sig_bind(_sid, &_sv, sizeof(_sv)); ");
+                        fprintf(o, "loam_zeus_sig_bind(_sid, &_sv, sizeof(_sv)); ");
                 }
                 fprintf(o, "_sid; })");
                 break;
@@ -904,33 +904,33 @@ static void emit_expr(FILE *o, AstNode *n) {
             if (n->as.call.sig_cell == 2 && n->as.call.arg_count == 1) {
                 fprintf(o, "({ ");
                 emit_ctype(o, n->ty);
-                fprintf(o, " _sv; yuga_zeus_sig_load(");
+                fprintf(o, " _sv; loam_zeus_sig_load(");
                 emit_expr(o, n->as.call.args[0]);
                 fprintf(o, ", &_sv, sizeof(_sv)); ");
                 if (type_is_copy_vec(n->ty))
-                    fprintf(o, "_sv = yuga_vec_retain(&_sv); ");
+                    fprintf(o, "_sv = loam_vec_retain(&_sv); ");
                 fprintf(o, "_sv; })");
                 break;
             }
             if (n->as.call.sig_cell == 3 && n->as.call.arg_count == 2) {
                 Type *vt = n->as.call.args[1]->ty;
                 if (vt && vt->kind == TY_INT && vt->bits == 32) {
-                    fprintf(o, "(yuga_arena_store_sig(");
+                    fprintf(o, "(loam_arena_store_sig(");
                     emit_expr(o, n->as.call.args[0]);
                     fprintf(o, ", ");
                     emit_expr(o, n->as.call.args[1]);
                     fprintf(o, "), 0)");
                 } else if (type_is_copy_vec(vt)) {
-                    fprintf(o, "({ yuga_vec _sv = ");
+                    fprintf(o, "({ loam_vec _sv = ");
                     emit_expr(o, n->as.call.args[1]);
                     fprintf(o, "; int64_t _sid = ");
                     emit_expr(o, n->as.call.args[0]);
-                    fprintf(o, "; if (yuga_zeus_sig_changed(_sid, &_sv, sizeof(_sv))) { "
-                               "yuga_vec _old; yuga_zeus_sig_load(_sid, &_old, sizeof(_old)); "
-                               "_old = yuga_vec_retain(&_old); "
-                               "yuga_vec _new = yuga_vec_retain(&_sv); "
-                               "yuga_zeus_sig_bind(_sid, &_new, sizeof(_new)); "
-                               "yuga_vec_drop(&_old); yuga_track_notify(_sid); } 0; })");
+                    fprintf(o, "; if (loam_zeus_sig_changed(_sid, &_sv, sizeof(_sv))) { "
+                               "loam_vec _old; loam_zeus_sig_load(_sid, &_old, sizeof(_old)); "
+                               "_old = loam_vec_retain(&_old); "
+                               "loam_vec _new = loam_vec_retain(&_sv); "
+                               "loam_zeus_sig_bind(_sid, &_new, sizeof(_new)); "
+                               "loam_vec_drop(&_old); loam_track_notify(_sid); } 0; })");
                 } else {
                     fprintf(o, "({ ");
                     emit_ctype(o, vt);
@@ -938,8 +938,8 @@ static void emit_expr(FILE *o, AstNode *n) {
                     emit_expr(o, n->as.call.args[1]);
                     fprintf(o, "; int64_t _sid = ");
                     emit_expr(o, n->as.call.args[0]);
-                    fprintf(o, "; if (yuga_zeus_sig_changed(_sid, &_sv, sizeof(_sv))) { "
-                               "yuga_zeus_sig_bind(_sid, &_sv, sizeof(_sv)); yuga_track_notify(_sid); "
+                    fprintf(o, "; if (loam_zeus_sig_changed(_sid, &_sv, sizeof(_sv))) { "
+                               "loam_zeus_sig_bind(_sid, &_sv, sizeof(_sv)); loam_track_notify(_sid); "
                                "} 0; })");
                 }
                 break;
@@ -948,25 +948,25 @@ static void emit_expr(FILE *o, AstNode *n) {
                 Type *vt = n->as.call.args[0]->ty;
                 fprintf(o, "({ ");
                 if (type_is_copy_vec(vt)) {
-                    fprintf(o, "yuga_vec _fv = yuga_vec_retain(&");
+                    fprintf(o, "loam_vec _fv = loam_vec_retain(&");
                     emit_expr(o, n->as.call.args[0]);
-                    fprintf(o, "); yuga_fut_push(&_fv, sizeof(_fv)); })");
+                    fprintf(o, "); loam_fut_push(&_fv, sizeof(_fv)); })");
                 } else {
                     emit_ctype(o, vt);
                     fprintf(o, " _fv = ");
                     emit_expr(o, n->as.call.args[0]);
-                    fprintf(o, "; yuga_fut_push(&_fv, sizeof(_fv)); })");
+                    fprintf(o, "; loam_fut_push(&_fv, sizeof(_fv)); })");
                 }
                 break;
             }
             if (n->as.call.fut_cell == 2 && n->as.call.arg_count == 1) {
                 fprintf(o, "({ ");
                 emit_ctype(o, n->ty);
-                fprintf(o, " _fv; yuga_fut_load(");
+                fprintf(o, " _fv; loam_fut_load(");
                 emit_expr(o, n->as.call.args[0]);
                 fprintf(o, ", &_fv, sizeof(_fv)); ");
                 if (type_is_copy_vec(n->ty))
-                    fprintf(o, "_fv = yuga_vec_retain(&_fv); ");
+                    fprintf(o, "_fv = loam_vec_retain(&_fv); ");
                 fprintf(o, "_fv; })");
                 break;
             }
@@ -975,30 +975,30 @@ static void emit_expr(FILE *o, AstNode *n) {
                 if (type_is_copy_vec(vt)) {
                     fprintf(o, "({ int64_t _fid = ");
                     emit_expr(o, n->as.call.args[0]);
-                    fprintf(o, "; yuga_vec _old; yuga_fut_load(_fid, &_old, sizeof(_old)); "
-                               "yuga_vec _new = yuga_vec_retain(&");
+                    fprintf(o, "; loam_vec _old; loam_fut_load(_fid, &_old, sizeof(_old)); "
+                               "loam_vec _new = loam_vec_retain(&");
                     emit_expr(o, n->as.call.args[1]);
-                    fprintf(o, "); yuga_fut_store(_fid, &_new, sizeof(_new)); "
-                               "yuga_vec_drop(&_old); 0; })");
+                    fprintf(o, "); loam_fut_store(_fid, &_new, sizeof(_new)); "
+                               "loam_vec_drop(&_old); 0; })");
                 } else {
                     fprintf(o, "({ ");
                     emit_ctype(o, vt);
                     fprintf(o, " _fv = ");
                     emit_expr(o, n->as.call.args[1]);
-                    fprintf(o, "; yuga_fut_store(");
+                    fprintf(o, "; loam_fut_store(");
                     emit_expr(o, n->as.call.args[0]);
                     fprintf(o, ", &_fv, sizeof(_fv)); 0; })");
                 }
                 break;
             }
             if (n->as.call.fut_cell == 4 && n->as.call.arg_count == 1) {
-                fprintf(o, "yuga_fut_ready(");
+                fprintf(o, "loam_fut_ready(");
                 emit_expr(o, n->as.call.args[0]);
                 fprintf(o, ")");
                 break;
             }
             if (n->as.call.fut_cell == 5 && n->as.call.arg_count == 1) {
-                fprintf(o, "(yuga_fut_clear(");
+                fprintf(o, "(loam_fut_clear(");
                 emit_expr(o, n->as.call.args[0]);
                 fprintf(o, "), 0)");
                 break;
@@ -1009,7 +1009,7 @@ static void emit_expr(FILE *o, AstNode *n) {
                 emit_ctype(o, vt);
                 fprintf(o, " _cv = ");
                 emit_expr(o, n->as.call.args[1]);
-                fprintf(o, "; yuga_ch_alloc(");
+                fprintf(o, "; loam_ch_alloc(");
                 emit_expr(o, n->as.call.args[0]);
                 fprintf(o, ", sizeof(_cv)); })");
                 break;
@@ -1020,7 +1020,7 @@ static void emit_expr(FILE *o, AstNode *n) {
                 emit_ctype(o, vt);
                 fprintf(o, " _cv = ");
                 emit_expr(o, n->as.call.args[1]);
-                fprintf(o, "; yuga_ch_send(");
+                fprintf(o, "; loam_ch_send(");
                 emit_expr(o, n->as.call.args[0]);
                 fprintf(o, ", &_cv, sizeof(_cv)); 0; })");
                 break;
@@ -1031,7 +1031,7 @@ static void emit_expr(FILE *o, AstNode *n) {
                 emit_ctype(o, vt);
                 fprintf(o, " _cv = ");
                 emit_expr(o, n->as.call.args[1]);
-                fprintf(o, "; yuga_ch_try_send(");
+                fprintf(o, "; loam_ch_try_send(");
                 emit_expr(o, n->as.call.args[0]);
                 fprintf(o, ", &_cv, sizeof(_cv)); })");
                 break;
@@ -1039,7 +1039,7 @@ static void emit_expr(FILE *o, AstNode *n) {
             if (n->as.call.ch_cell == 4 && n->as.call.arg_count == 1) {
                 fprintf(o, "({ ");
                 emit_ctype(o, n->ty);
-                fprintf(o, " _cv; yuga_ch_recv(");
+                fprintf(o, " _cv; loam_ch_recv(");
                 emit_expr(o, n->as.call.args[0]);
                 fprintf(o, ", &_cv, sizeof(_cv)); _cv; })");
                 break;
@@ -1047,13 +1047,13 @@ static void emit_expr(FILE *o, AstNode *n) {
             if (n->as.call.ch_cell == 5 && n->as.call.arg_count == 1) {
                 fprintf(o, "({ ");
                 emit_ctype(o, n->ty);
-                fprintf(o, " _cv; yuga_ch_pop(");
+                fprintf(o, " _cv; loam_ch_pop(");
                 emit_expr(o, n->as.call.args[0]);
                 fprintf(o, ", &_cv, sizeof(_cv)); _cv; })");
                 break;
             }
             if (n->as.call.ch_cell == 6 && n->as.call.arg_count == 1) {
-                fprintf(o, "yuga_ch_ready(");
+                fprintf(o, "loam_ch_ready(");
                 emit_expr(o, n->as.call.args[0]);
                 fprintf(o, ")");
                 break;
@@ -1069,7 +1069,7 @@ static void emit_expr(FILE *o, AstNode *n) {
                 break;
             }
             if (n->as.call.is_panic && n->as.call.arg_count == 1) {
-                fprintf(o, "yuga_panic_str(");
+                fprintf(o, "loam_panic_str(");
                 emit_loc_args(o, n);
                 fprintf(o, ", ");
                 emit_expr(o, n->as.call.args[0]);
@@ -1163,16 +1163,16 @@ static void emit_expr(FILE *o, AstNode *n) {
             int id = n->as.fn.clos_id;
             int hid = hoist_tid_for(n);
             if (hid >= 0) {
-                fprintf(o, "((yuga_fn){(void *)yuga_clos_%d, &_ce%d, sizeof(struct yuga_env_%d)})",
+                fprintf(o, "((loam_fn){(void *)loam_clos_%d, &_ce%d, sizeof(struct loam_env_%d)})",
                         id, hid, id);
                 break;
             }
             if (!n->as.fn.cap_count) {
-                fprintf(o, "((yuga_fn){(void *)yuga_clos_%d, NULL, 0})", id);
+                fprintf(o, "((loam_fn){(void *)loam_clos_%d, NULL, 0})", id);
                 break;
             }
             int tid = tmp_id++;
-            fprintf(o, "({ struct yuga_env_%d *_ce%d = (struct yuga_env_%d *)yuga_new(sizeof(struct yuga_env_%d), ",
+            fprintf(o, "({ struct loam_env_%d *_ce%d = (struct loam_env_%d *)loam_new(sizeof(struct loam_env_%d), ",
                     id, tid, id, id);
             emit_loc_args(o, n);
             fprintf(o, "); ");
@@ -1182,7 +1182,7 @@ static void emit_expr(FILE *o, AstNode *n) {
                 emit_cap_set_ident(o, n->as.fn.cap_types[i], dst, n->as.fn.caps[i]);
                 fprintf(o, "; ");
             }
-            fprintf(o, "(yuga_fn){(void *)yuga_clos_%d, _ce%d, sizeof(struct yuga_env_%d)}; })",
+            fprintf(o, "(loam_fn){(void *)loam_clos_%d, _ce%d, sizeof(struct loam_env_%d)}; })",
                     id, tid, id);
             break;
         }
@@ -1216,11 +1216,11 @@ static void emit_cond(FILE *o, AstNode *n) {
     emit_expr(o, n);
 }
 
-/** yuga_drop Box bindings recorded for this scope, reverse order. */
+/** loam_drop Box bindings recorded for this scope, reverse order. */
 static void emit_drops_scope(FILE *o, int ind, int sp) {
     for (int i = drop_n[sp] - 1; i >= 0; i--) {
         indent(o, ind);
-        fprintf(o, "yuga_drop((void **)&%s);\n", drop_names[sp][i]);
+        fprintf(o, "loam_drop((void **)&%s);\n", drop_names[sp][i]);
     }
 }
 
@@ -1270,7 +1270,7 @@ static void emit_assign(FILE *o, AstNode *n, int ind) {
         return;
     }
     const char *fn = arith_fn(lt, (int)n->as.assign.op);
-    if (!fn) fn = "yuga_add_i64";
+    if (!fn) fn = "loam_add_i64";
     emit_place(o, n->as.assign.left);
     fprintf(o, " = %s(", fn);
     emit_place(o, n->as.assign.left);
@@ -1293,7 +1293,7 @@ static void emit_stmt(FILE *o, AstNode *n, int ind) {
                 int id = cl->as.fn.clos_id;
                 int tid = tmp_id++;
                 indent(o, ind);
-                fprintf(o, "struct yuga_env_%d _ce%d;\n", id, tid);
+                fprintf(o, "struct loam_env_%d _ce%d;\n", id, tid);
                 for (size_t i = 0; i < cl->as.fn.cap_count; i++) {
                     indent(o, ind);
                     {
@@ -1305,7 +1305,7 @@ static void emit_stmt(FILE *o, AstNode *n, int ind) {
                 }
                 indent(o, ind);
                 emit_var_decl_type(o, n->ty, n->as.var.name);
-                fprintf(o, " = (yuga_fn){(void *)yuga_clos_%d, &_ce%d, sizeof(struct yuga_env_%d)};\n",
+                fprintf(o, " = (loam_fn){(void *)loam_clos_%d, &_ce%d, sizeof(struct loam_env_%d)};\n",
                         id, tid, id);
                 break;
             }
@@ -1315,7 +1315,7 @@ static void emit_stmt(FILE *o, AstNode *n, int ind) {
                 n->as.var.init->as.call.is_box_new) {
                 fprintf(o, " = (");
                 emit_ctype(o, n->ty);
-                fprintf(o, ")yuga_new(sizeof(");
+                fprintf(o, ")loam_new(sizeof(");
                 emit_ctype(o, n->ty->elem);
                 fprintf(o, "), ");
                 emit_loc_args(o, n);
@@ -1403,7 +1403,7 @@ static void emit_stmt(FILE *o, AstNode *n, int ind) {
             emit_expr(o, n->as.for_stmt.iter->as.binary.right);
             fprintf(o, ";\n");
             indent(o, ind + 1);
-            fprintf(o, "for (int64_t %s = _lo%d; %s < _hi%d; %s = yuga_add_i64(%s, 1, ",
+            fprintf(o, "for (int64_t %s = _lo%d; %s < _hi%d; %s = loam_add_i64(%s, 1, ",
                     n->as.for_stmt.var, id, n->as.for_stmt.var, id, n->as.for_stmt.var,
                     n->as.for_stmt.var);
             emit_loc_args(o, n);
@@ -1462,7 +1462,7 @@ static void emit_stmt(FILE *o, AstNode *n, int ind) {
                     for (size_t p = 0; p < (arm ? arm->as.match_arm.pat_count : 0); p++) {
                         if (p) fprintf(o, " || ");
                         if (st && st->kind == TY_STRING) {
-                            fprintf(o, "yuga_fmt_eq(_m, ");
+                            fprintf(o, "loam_fmt_eq(_m, ");
                             emit_expr(o, arm->as.match_arm.pats[p]);
                             fprintf(o, ")");
                         } else {
@@ -1543,9 +1543,9 @@ static void emit_struct(FILE *o, AstNode *st) {
 
 static void emit_fn_sig(FILE *o, AstNode *fn, int is_main) {
     if (is_main) {
-        /* iOS / Android: the host owns process main; Yuga entry is yuga_app_main. */
-        fprintf(o, "#if defined(YUGA_IOS) || defined(YUGA_ANDROID)\n"
-                   "int yuga_app_main(void)\n#else\nint main(void)\n#endif\n");
+        /* iOS / Android: the host owns process main; Loam entry is loam_app_main. */
+        fprintf(o, "#if defined(LOAM_IOS) || defined(LOAM_ANDROID)\n"
+                   "int loam_app_main(void)\n#else\nint main(void)\n#endif\n");
         return;
     }
     Type *ft = fn->ty;
@@ -1598,7 +1598,7 @@ static void emit_ir_place(FILE *o, const IrPlace *p) {
         case IR_PL_FIELD:
             if (CF && CF->clos_id && CF->env_local >= 0 && p->base &&
                 p->base->kind == IR_PL_LOCAL && p->base->local == CF->env_local) {
-                fprintf(o, "((struct yuga_env_%d *)%s)->%s", CF->clos_id, lv(CF->env_local),
+                fprintf(o, "((struct loam_env_%d *)%s)->%s", CF->clos_id, lv(CF->env_local),
                         p->field ? p->field : "?");
             } else if (is_ptrish_ty(p->base ? p->base->ty : NULL)) {
                 fprintf(o, "(");
@@ -1719,12 +1719,12 @@ static void emit_drop_place(FILE *o, const char *place, Type *t, int ind) {
     if (!type_needs_drop(t) || !place) return;
     if (t->kind == TY_BOX) {
         indent(o, ind);
-        fprintf(o, "yuga_drop((void **)&%s);\n", place);
+        fprintf(o, "loam_drop((void **)&%s);\n", place);
         return;
     }
     if (t->kind == TY_PROC) {
         indent(o, ind);
-        fprintf(o, "yuga_fn_drop(&%s);\n", place);
+        fprintf(o, "loam_fn_drop(&%s);\n", place);
         return;
     }
     if (t->kind == TY_VEC) {
@@ -1739,7 +1739,7 @@ static void emit_drop_place(FILE *o, const char *place, Type *t, int ind) {
             fprintf(o, "} }\n");
         }
         indent(o, ind);
-        fprintf(o, "yuga_vec_drop(&%s);\n", place);
+        fprintf(o, "loam_vec_drop(&%s);\n", place);
         return;
     }
     if (t->kind == TY_ARRAY) {
@@ -1774,7 +1774,7 @@ static void emit_nested_keeps(FILE *o, const char *place, Type *t, int ind) {
     if (!t || !type_needs_drop(t)) return;
     if (t->kind == TY_VEC) {
         indent(o, ind);
-        fprintf(o, "yuga_vec_retain(&%s);\n", place);
+        fprintf(o, "loam_vec_retain(&%s);\n", place);
         if (t->elem && type_needs_drop(t->elem)) {
             char cn[256], ebuf[256];
             format_ctype(cn, sizeof cn, t->elem);
@@ -1925,11 +1925,11 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                     emit_ir_place(o, in->place);
                     fprintf(o, " %s %s;\n", aop, lv(in->a));
                 } else if (in->ty && in->ty->kind == TY_VEC && type_is_copy(in->ty)) {
-                    fprintf(o, "{\n        yuga_vec _repl = ");
+                    fprintf(o, "{\n        loam_vec _repl = ");
                     emit_ir_place(o, in->place);
                     fprintf(o, ";\n        ");
                     emit_ir_place(o, in->place);
-                    fprintf(o, " = yuga_vec_retain(&%s);\n", lv(in->a));
+                    fprintf(o, " = loam_vec_retain(&%s);\n", lv(in->a));
                     emit_drop_place(o, "_repl", in->ty, 1);
                     fprintf(o, "    }\n");
                 } else if (in->ty && type_needs_drop(in->ty) && in->ty->kind != TY_ARRAY) {
@@ -1960,17 +1960,17 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
             if (ty && ty->kind == TY_BOX) {
                 fprintf(o, "%s = (", lv(in->dst));
                 emit_ctype(o, ty);
-                fprintf(o, ")yuga_move_ptr((void **)&%s);\n", lv(in->a));
+                fprintf(o, ")loam_move_ptr((void **)&%s);\n", lv(in->a));
             } else if (ty && ty->kind == TY_PROC) {
                 if (type_is_copy(ty))
                     fprintf(o, "%s = %s;\n", lv(in->dst), lv(in->a));
                 else
-                    fprintf(o, "%s = yuga_fn_move(&%s);\n", lv(in->dst), lv(in->a));
+                    fprintf(o, "%s = loam_fn_move(&%s);\n", lv(in->dst), lv(in->a));
             } else if (ty && ty->kind == TY_VEC) {
                 if (type_is_copy(ty))
-                    fprintf(o, "%s = yuga_vec_retain(&%s);\n", lv(in->dst), lv(in->a));
+                    fprintf(o, "%s = loam_vec_retain(&%s);\n", lv(in->dst), lv(in->a));
                 else
-                    fprintf(o, "%s = yuga_vec_move(&%s);\n", lv(in->dst), lv(in->a));
+                    fprintf(o, "%s = loam_vec_move(&%s);\n", lv(in->dst), lv(in->a));
             } else if (ty && ty->kind == TY_ARRAY) {
                 fprintf(o, "\n");
                 emit_array_copy(o, in->dst, in->a, ty);
@@ -1995,7 +1995,7 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                 cf = arith_fn(in->ty, in->binop);
             if ((in->binop == TOK_EQ_EQ || in->binop == TOK_BANG_EQ) && at &&
                 at->kind == TY_STRING) {
-                fprintf(o, "%s = %syuga_fmt_eq(%s, %s);\n", lv(in->dst),
+                fprintf(o, "%s = %sloam_fmt_eq(%s, %s);\n", lv(in->dst),
                         in->binop == TOK_BANG_EQ ? "!" : "", lv(in->a), lv(in->b));
             } else if (cf) {
                 fprintf(o, "%s = %s(%s, %s, ", lv(in->dst), cf, lv(in->a), lv(in->b));
@@ -2061,114 +2061,114 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
             break;
         }
         case IR_PANIC:
-            fprintf(o, "yuga_panic_str(");
+            fprintf(o, "loam_panic_str(");
             emit_ir_loc(o, in->loc);
             fprintf(o, ", %s);\n", lv(in->a));
             break;
         case IR_CALL:
         case IR_CALL_VAL: {
-            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "yuga_sig_push") == 0 &&
+            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "loam_sig_push") == 0 &&
                 in->nargs >= 1 && in->dst >= 0) {
                 Type *vt = in->ty;
-                fprintf(o, "yuga_arena_ensure();\n");
+                fprintf(o, "loam_arena_ensure();\n");
                 indent(o, 1);
                 if (vt && vt->kind == TY_INT && vt->bits == 32) {
                     /* Mirror slot + cell, reusing freed ids when possible. */
-                    fprintf(o, "%s = yuga_zeus_sig_alloc_int(%s);\n", lv(in->dst),
+                    fprintf(o, "%s = loam_zeus_sig_alloc_int(%s);\n", lv(in->dst),
                             lv(in->args[0]));
                 } else {
-                    fprintf(o, "%s = yuga_zeus_sig_alloc_zero();\n", lv(in->dst));
+                    fprintf(o, "%s = loam_zeus_sig_alloc_zero();\n", lv(in->dst));
                 }
                 indent(o, 1);
                 if (type_is_copy_vec(vt)) {
-                    fprintf(o, "{ yuga_vec _sigv = yuga_vec_retain(&%s); yuga_zeus_sig_bind(%s, &_sigv, sizeof(_sigv)); }\n",
+                    fprintf(o, "{ loam_vec _sigv = loam_vec_retain(&%s); loam_zeus_sig_bind(%s, &_sigv, sizeof(_sigv)); }\n",
                             lv(in->args[0]), lv(in->dst));
                 } else {
-                    fprintf(o, "yuga_zeus_sig_bind(%s, &%s, sizeof(", lv(in->dst), lv(in->args[0]));
+                    fprintf(o, "loam_zeus_sig_bind(%s, &%s, sizeof(", lv(in->dst), lv(in->args[0]));
                     emit_ctype(o, vt);
                     fprintf(o, "));\n");
                 }
                 break;
             }
-            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "yuga_sig_load") == 0 &&
+            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "loam_sig_load") == 0 &&
                 in->nargs >= 1 && in->dst >= 0) {
-                fprintf(o, "yuga_zeus_sig_load(%s, &%s, sizeof(", lv(in->args[0]), lv(in->dst));
+                fprintf(o, "loam_zeus_sig_load(%s, &%s, sizeof(", lv(in->args[0]), lv(in->dst));
                 emit_ctype(o, in->ty);
                 fprintf(o, "));\n");
                 if (type_is_copy_vec(in->ty)) {
                     indent(o, 1);
-                    fprintf(o, "%s = yuga_vec_retain(&%s);\n", lv(in->dst), lv(in->dst));
+                    fprintf(o, "%s = loam_vec_retain(&%s);\n", lv(in->dst), lv(in->dst));
                 }
                 break;
             }
-            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "yuga_sig_store") == 0 &&
+            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "loam_sig_store") == 0 &&
                 in->nargs >= 2) {
                 Type *vt = in->ty;
                 if (vt && vt->kind == TY_VOID && in->args[1] >= 0 && in->args[1] < CF->nlocals)
                     vt = CF->locals[in->args[1]].ty;
                 if (vt && vt->kind == TY_INT && vt->bits == 32) {
-                    fprintf(o, "yuga_arena_store_sig(%s, %s);\n", lv(in->args[0]),
+                    fprintf(o, "loam_arena_store_sig(%s, %s);\n", lv(in->args[0]),
                             lv(in->args[1]));
                 } else if (type_is_copy_vec(vt)) {
-                    fprintf(o, "if (yuga_zeus_sig_changed(%s, &%s, sizeof(%s))) {\n",
+                    fprintf(o, "if (loam_zeus_sig_changed(%s, &%s, sizeof(%s))) {\n",
                             lv(in->args[0]), lv(in->args[1]), lv(in->args[1]));
                     indent(o, 2);
-                    fprintf(o, "yuga_vec _old; yuga_zeus_sig_load(%s, &_old, sizeof(_old)); _old = yuga_vec_retain(&_old);\n",
+                    fprintf(o, "loam_vec _old; loam_zeus_sig_load(%s, &_old, sizeof(_old)); _old = loam_vec_retain(&_old);\n",
                             lv(in->args[0]));
                     indent(o, 2);
-                    fprintf(o, "yuga_vec _new = yuga_vec_retain(&%s); yuga_zeus_sig_bind(%s, &_new, sizeof(_new));\n",
+                    fprintf(o, "loam_vec _new = loam_vec_retain(&%s); loam_zeus_sig_bind(%s, &_new, sizeof(_new));\n",
                             lv(in->args[1]), lv(in->args[0]));
                     indent(o, 2);
-                    fprintf(o, "yuga_vec_drop(&_old); yuga_track_notify(%s);\n", lv(in->args[0]));
+                    fprintf(o, "loam_vec_drop(&_old); loam_track_notify(%s);\n", lv(in->args[0]));
                     indent(o, 1);
                     fprintf(o, "}\n");
                 } else {
-                    fprintf(o, "if (yuga_zeus_sig_changed(%s, &%s, sizeof(", lv(in->args[0]),
+                    fprintf(o, "if (loam_zeus_sig_changed(%s, &%s, sizeof(", lv(in->args[0]),
                             lv(in->args[1]));
                     emit_ctype(o, vt);
-                    fprintf(o, "))) { yuga_zeus_sig_bind(%s, &%s, sizeof(", lv(in->args[0]),
+                    fprintf(o, "))) { loam_zeus_sig_bind(%s, &%s, sizeof(", lv(in->args[0]),
                             lv(in->args[1]));
                     emit_ctype(o, vt);
-                    fprintf(o, ")); yuga_track_notify(%s); }\n", lv(in->args[0]));
+                    fprintf(o, ")); loam_track_notify(%s); }\n", lv(in->args[0]));
                 }
                 break;
             }
-            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "yuga_fut_push") == 0 &&
+            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "loam_fut_push") == 0 &&
                 in->nargs >= 1 && in->dst >= 0) {
                 Type *vt = in->ty;
                 if (type_is_copy_vec(vt)) {
-                    fprintf(o, "{ yuga_vec _fv = yuga_vec_retain(&%s); %s = yuga_fut_push(&_fv, sizeof(_fv)); }\n",
+                    fprintf(o, "{ loam_vec _fv = loam_vec_retain(&%s); %s = loam_fut_push(&_fv, sizeof(_fv)); }\n",
                             lv(in->args[0]), lv(in->dst));
                 } else {
-                    fprintf(o, "%s = yuga_fut_push(&%s, sizeof(", lv(in->dst), lv(in->args[0]));
+                    fprintf(o, "%s = loam_fut_push(&%s, sizeof(", lv(in->dst), lv(in->args[0]));
                     emit_ctype(o, vt);
                     fprintf(o, "));\n");
                 }
                 break;
             }
-            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "yuga_fut_load") == 0 &&
+            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "loam_fut_load") == 0 &&
                 in->nargs >= 1 && in->dst >= 0) {
-                fprintf(o, "yuga_fut_load(%s, &%s, sizeof(", lv(in->args[0]), lv(in->dst));
+                fprintf(o, "loam_fut_load(%s, &%s, sizeof(", lv(in->args[0]), lv(in->dst));
                 emit_ctype(o, in->ty);
                 fprintf(o, "));\n");
                 if (type_is_copy_vec(in->ty)) {
                     indent(o, 1);
-                    fprintf(o, "%s = yuga_vec_retain(&%s);\n", lv(in->dst), lv(in->dst));
+                    fprintf(o, "%s = loam_vec_retain(&%s);\n", lv(in->dst), lv(in->dst));
                 }
                 break;
             }
-            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "yuga_fut_store") == 0 &&
+            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "loam_fut_store") == 0 &&
                 in->nargs >= 2) {
                 Type *vt = in->ty;
                 if (vt && vt->kind == TY_VOID && in->args[1] >= 0 && in->args[1] < CF->nlocals)
                     vt = CF->locals[in->args[1]].ty;
                 if (type_is_copy_vec(vt)) {
-                    fprintf(o, "{ yuga_vec _old; yuga_fut_load(%s, &_old, sizeof(_old)); "
-                               "yuga_vec _new = yuga_vec_retain(&%s); yuga_fut_store(%s, &_new, sizeof(_new)); "
-                               "yuga_vec_drop(&_old); }\n",
+                    fprintf(o, "{ loam_vec _old; loam_fut_load(%s, &_old, sizeof(_old)); "
+                               "loam_vec _new = loam_vec_retain(&%s); loam_fut_store(%s, &_new, sizeof(_new)); "
+                               "loam_vec_drop(&_old); }\n",
                             lv(in->args[0]), lv(in->args[1]), lv(in->args[0]));
                 } else {
-                    fprintf(o, "yuga_fut_store(%s, &%s, sizeof(", lv(in->args[0]), lv(in->args[1]));
+                    fprintf(o, "loam_fut_store(%s, &%s, sizeof(", lv(in->args[0]), lv(in->args[1]));
                     emit_ctype(o, vt);
                     fprintf(o, "));\n");
                 }
@@ -2176,54 +2176,54 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
             }
             /* Channels: payloads are Send (plain data), so the value is one
                C blob of sizeof(T) — no vec retain/drop dance like futures. */
-            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "yuga_ch_alloc") == 0 &&
+            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "loam_ch_alloc") == 0 &&
                 in->nargs >= 1 && in->dst >= 0) {
-                fprintf(o, "%s = yuga_ch_alloc(%s, sizeof(", lv(in->dst), lv(in->args[0]));
+                fprintf(o, "%s = loam_ch_alloc(%s, sizeof(", lv(in->dst), lv(in->args[0]));
                 emit_ctype(o, in->ty);
                 fprintf(o, "));\n");
                 break;
             }
-            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "yuga_ch_send") == 0 &&
+            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "loam_ch_send") == 0 &&
                 in->nargs >= 2) {
-                fprintf(o, "yuga_ch_send(%s, &%s, sizeof(", lv(in->args[0]), lv(in->args[1]));
+                fprintf(o, "loam_ch_send(%s, &%s, sizeof(", lv(in->args[0]), lv(in->args[1]));
                 emit_ctype(o, in->ty);
                 fprintf(o, "));\n");
                 break;
             }
-            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "yuga_ch_try_send") == 0 &&
+            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "loam_ch_try_send") == 0 &&
                 in->nargs >= 2 && in->dst >= 0) {
-                fprintf(o, "%s = yuga_ch_try_send(%s, &%s, sizeof(", lv(in->dst),
+                fprintf(o, "%s = loam_ch_try_send(%s, &%s, sizeof(", lv(in->dst),
                         lv(in->args[0]), lv(in->args[1]));
                 emit_ctype(o, in->ty);
                 fprintf(o, "));\n");
                 break;
             }
-            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "yuga_ch_recv") == 0 &&
+            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "loam_ch_recv") == 0 &&
                 in->nargs >= 1 && in->dst >= 0) {
-                fprintf(o, "yuga_ch_recv(%s, &%s, sizeof(", lv(in->args[0]), lv(in->dst));
+                fprintf(o, "loam_ch_recv(%s, &%s, sizeof(", lv(in->args[0]), lv(in->dst));
                 emit_ctype(o, in->ty);
                 fprintf(o, "));\n");
                 break;
             }
-            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "yuga_ch_pop") == 0 &&
+            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "loam_ch_pop") == 0 &&
                 in->nargs >= 1 && in->dst >= 0) {
-                fprintf(o, "yuga_ch_pop(%s, &%s, sizeof(", lv(in->args[0]), lv(in->dst));
+                fprintf(o, "loam_ch_pop(%s, &%s, sizeof(", lv(in->args[0]), lv(in->dst));
                 emit_ctype(o, in->ty);
                 fprintf(o, "));\n");
                 break;
             }
-            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "yuga_ch_ready") == 0 &&
+            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "loam_ch_ready") == 0 &&
                 in->nargs >= 1 && in->dst >= 0) {
-                fprintf(o, "%s = yuga_ch_ready(%s);\n", lv(in->dst), lv(in->args[0]));
+                fprintf(o, "%s = loam_ch_ready(%s);\n", lv(in->dst), lv(in->args[0]));
                 break;
             }
-            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "yuga_vec_push") == 0 &&
+            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "loam_vec_push") == 0 &&
                 in->nargs >= 2) {
                 Type *vt = (in->args[0] >= 0 && in->args[0] < CF->nlocals)
                                ? CF->locals[in->args[0]].ty
                                : NULL;
                 const char *amp = (vt && vt->kind == TY_VEC) ? "&" : "";
-                fprintf(o, "yuga_vec_push(%s%s, &%s, sizeof(", amp, lv(in->args[0]),
+                fprintf(o, "loam_vec_push(%s%s, &%s, sizeof(", amp, lv(in->args[0]),
                         lv(in->args[1]));
                 emit_ctype(o, in->ty);
                 fprintf(o, "), ");
@@ -2231,13 +2231,13 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                 fprintf(o, ");\n");
                 break;
             }
-            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "yuga_vec_pop") == 0 &&
+            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "loam_vec_pop") == 0 &&
                 in->nargs >= 1 && in->dst >= 0) {
                 Type *vt = (in->args[0] >= 0 && in->args[0] < CF->nlocals)
                                ? CF->locals[in->args[0]].ty
                                : NULL;
                 const char *amp = (vt && vt->kind == TY_VEC) ? "&" : "";
-                fprintf(o, "yuga_vec_pop(%s%s, &%s, sizeof(", amp, lv(in->args[0]), lv(in->dst));
+                fprintf(o, "loam_vec_pop(%s%s, &%s, sizeof(", amp, lv(in->args[0]), lv(in->dst));
                 emit_ctype(o, in->ty);
                 fprintf(o, "), ");
                 emit_ir_loc(o, in->loc);
@@ -2335,7 +2335,7 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
             Type *et = (bt && bt->kind == TY_BOX) ? bt->elem : ty_int();
             fprintf(o, "%s = (", lv(in->dst));
             emit_ctype(o, et);
-            fprintf(o, " *)yuga_new(sizeof(");
+            fprintf(o, " *)loam_new(sizeof(");
             emit_ctype(o, et);
             fprintf(o, "), ");
             emit_ir_loc(o, in->loc);
@@ -2353,14 +2353,14 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
             if (ty && type_needs_drop(ty))
                 emit_drop_place(o, buf, ty, 0);
             else
-                fprintf(o, "yuga_drop((void **)&%s);\n", buf);
+                fprintf(o, "loam_drop((void **)&%s);\n", buf);
             break;
         }
         case IR_BOUND:
             if (in->b >= 0)
-                fprintf(o, "(void)yuga_idx(%s, %s, ", lv(in->a), lv(in->b));
+                fprintf(o, "(void)loam_idx(%s, %s, ", lv(in->a), lv(in->b));
             else
-                fprintf(o, "(void)yuga_idx(%s, %lld, ", lv(in->a), (long long)in->imm);
+                fprintf(o, "(void)loam_idx(%s, %lld, ", lv(in->a), (long long)in->imm);
             emit_ir_loc(o, in->loc);
             fprintf(o, ");\n");
             break;
@@ -2386,10 +2386,10 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
             char dbuf[64];
             snprintf(dbuf, sizeof dbuf, "%s", lv(in->dst));
             if (in->ty && in->ty->kind == TY_VEC) {
-                fprintf(o, "%s = yuga_vec_new();\n", dbuf);
+                fprintf(o, "%s = loam_vec_new();\n", dbuf);
                 for (int k = 0; k < in->nargs; k++) {
                     indent(o, 1);
-                    fprintf(o, "yuga_vec_push(&%s, &%s, sizeof(", dbuf, lv(in->args[k]));
+                    fprintf(o, "loam_vec_push(&%s, &%s, sizeof(", dbuf, lv(in->args[k]));
                     emit_ctype(o, in->ty->elem);
                     fprintf(o, "), ");
                     emit_ir_loc(o, in->loc);
@@ -2408,21 +2408,21 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
             break;
         }
         case IR_FN_VAL:
-            fprintf(o, "%s = ((yuga_fn){(void *)%s__as_fn, NULL, 0});\n", lv(in->dst),
+            fprintf(o, "%s = ((loam_fn){(void *)%s__as_fn, NULL, 0});\n", lv(in->dst),
                     in->callee ? in->callee : "unknown");
             break;
         case IR_CLOS: {
             char dbuf[64];
             snprintf(dbuf, sizeof dbuf, "%s", lv(in->dst));
             if (in->nargs == 0) {
-                fprintf(o, "%s = ((yuga_fn){(void *)%s, NULL, 0});\n", dbuf,
+                fprintf(o, "%s = ((loam_fn){(void *)%s, NULL, 0});\n", dbuf,
                         in->callee ? in->callee : "unknown");
             } else {
                 int id = (int)in->imm;
                 IrFn *cf = find_ir_fn(in->callee);
                 fprintf(o, "{\n");
                 indent(o, 2);
-                fprintf(o, "struct yuga_env_%d *_ce = (struct yuga_env_%d *)yuga_new(sizeof(struct yuga_env_%d), ",
+                fprintf(o, "struct loam_env_%d *_ce = (struct loam_env_%d *)loam_new(sizeof(struct loam_env_%d), ",
                         id, id, id);
                 emit_ir_loc(o, in->loc);
                 fprintf(o, ");\n");
@@ -2431,7 +2431,7 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                     Type *ct = (cf && k < cf->ncaps && cf->cap_types) ? cf->cap_types[k] : NULL;
                     indent(o, 2);
                     if (type_is_copy_vec(ct)) {
-                        fprintf(o, "_ce->%s = yuga_vec_retain(&%s);\n", fnm, lv(in->args[k]));
+                        fprintf(o, "_ce->%s = loam_vec_retain(&%s);\n", fnm, lv(in->args[k]));
                     } else {
                         fprintf(o, "_ce->%s = %s;\n", fnm, lv(in->args[k]));
                         /* The env outlives the frame that captured it, so it
@@ -2447,7 +2447,7 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                     }
                 }
                 indent(o, 2);
-                fprintf(o, "%s = ((yuga_fn){(void *)%s, _ce, sizeof(struct yuga_env_%d)});\n",
+                fprintf(o, "%s = ((loam_fn){(void *)%s, _ce, sizeof(struct loam_env_%d)});\n",
                         dbuf, in->callee ? in->callee : "unknown", id);
                 indent(o, 1);
                 fprintf(o, "}\n");
@@ -2471,7 +2471,7 @@ static void emit_zero_ret(FILE *o, Type *t) {
             fprintf(o, "0.0");
             break;
         case TY_STRING:
-            fprintf(o, "((yuga_str){0})");
+            fprintf(o, "((loam_str){0})");
             break;
         case TY_PTR:
         case TY_BOX:
@@ -2481,7 +2481,7 @@ static void emit_zero_ret(FILE *o, Type *t) {
             fprintf(o, "(%s){0}", t->name ? t->name : "struct");
             break;
         case TY_PROC:
-            fprintf(o, "((yuga_fn){0})");
+            fprintf(o, "((loam_fn){0})");
             break;
         default:
             fprintf(o, "0");
@@ -2513,7 +2513,7 @@ static void emit_ir_term(FILE *o, const IrBlock *bb, int is_main) {
                     bb->succ[1]);
             break;
         case IR_TERM_UNREACHABLE:
-            fprintf(o, "yuga_panic(\"yuga\", 0, \"unreachable\");\n");
+            fprintf(o, "loam_panic(\"yuga\", 0, \"unreachable\");\n");
             break;
     }
 }
@@ -2567,7 +2567,7 @@ static void emit_ir_fn_body(FILE *o, const IrFn *fn, int is_main) {
 
 static void emit_fn_sig(FILE *o, AstNode *fn, int is_main);
 
-/** Emit a Yuga function as C. Fully-lowered functions come from IR. */
+/** Emit a Loam function as C. Fully-lowered functions come from IR. */
 static void emit_fn(FILE *o, AstNode *fn, int is_main) {
     const char *cn = cname_override ? cname_override
                                     : (fn->as.fn.cname ? fn->as.fn.cname : fn->as.fn.name);
@@ -2589,10 +2589,10 @@ static void emit_fn(FILE *o, AstNode *fn, int is_main) {
     fprintf(o, "}\n\n");
 }
 
-/** Paste yuga_rt.h into the translation unit (fallback includes if missing). */
+/** Paste loam_rt.h into the translation unit (fallback includes if missing). */
 static void copy_runtime(FILE *out, const char *rt_path) {
     /* The pasted runtime defines the recoverable-trap state in this TU. */
-    fputs("#define YUGA_RT_DEFINE_JMP 1\n", out);
+    fputs("#define LOAM_RT_DEFINE_JMP 1\n", out);
     FILE *f = rt_path ? fopen(rt_path, "r") : NULL;
     if (f) {
         char buf[4096];
@@ -2605,7 +2605,7 @@ static void copy_runtime(FILE *out, const char *rt_path) {
     fprintf(out, "#include <stdio.h>\n#include <stdint.h>\n#include <stdlib.h>\n#include <stdbool.h>\n\n");
 }
 
-static int mods_use(YugaModule *mods, int nmods, const char *name) {
+static int mods_use(LoamModule *mods, int nmods, const char *name) {
     for (int m = 0; m < nmods; m++)
         if (mods[m].name && strcmp(mods[m].name, name) == 0) return 1;
     return 0;
@@ -2618,7 +2618,7 @@ static void collect_clos(AstNode *n) {
         if (nclos_nodes >= clos_cap) {
             clos_cap = clos_cap ? clos_cap * 2 : 256;
             clos_nodes = (AstNode **)realloc(clos_nodes, (size_t)clos_cap * sizeof(AstNode *));
-            if (!clos_nodes) yuga_fatal("out of memory");
+            if (!clos_nodes) loam_fatal("out of memory");
         }
         clos_nodes[nclos_nodes++] = n;
         collect_clos(n->as.fn.body);
@@ -2711,7 +2711,7 @@ static void emit_clos_sig(FILE *o, AstNode *fn, int proto) {
     Type *ft = fn->ty;
     Type *ret = (ft && ft->ret) ? ft->ret : ty_void();
     emit_ctype(o, ret);
-    fprintf(o, " yuga_clos_%d(void *_env", fn->as.fn.clos_id);
+    fprintf(o, " loam_clos_%d(void *_env", fn->as.fn.clos_id);
     for (size_t i = 0; i < fn->as.fn.param_count; i++) {
         fprintf(o, ", ");
         Type *pt = (ft && i < ft->param_count) ? ft->params[i] : ty_int();
@@ -2723,7 +2723,7 @@ static void emit_clos_sig(FILE *o, AstNode *fn, int proto) {
 
 static void emit_clos_env(FILE *o, AstNode *fn) {
     if (!fn->as.fn.cap_count) return;
-    fprintf(o, "struct yuga_env_%d {\n", fn->as.fn.clos_id);
+    fprintf(o, "struct loam_env_%d {\n", fn->as.fn.clos_id);
     for (size_t i = 0; i < fn->as.fn.cap_count; i++) {
         fprintf(o, "    ");
         emit_var_decl_type(o, fn->as.fn.cap_types[i], fn->as.fn.caps[i]);
@@ -2732,10 +2732,10 @@ static void emit_clos_env(FILE *o, AstNode *fn) {
     fprintf(o, "};\n");
 }
 
-/** Closures lowered from a generic instance: `yuga_clos_<id>_<mono>`. */
+/** Closures lowered from a generic instance: `loam_clos_<id>_<mono>`. */
 static int is_mono_clos(const IrFn *fn) {
     if (!fn || !fn->cname) return 0;
-    if (strncmp(fn->cname, "yuga_clos_", 10) != 0) return 0;
+    if (strncmp(fn->cname, "loam_clos_", 10) != 0) return 0;
     const char *p = fn->cname + 10;
     while (*p >= '0' && *p <= '9') p++;
     return *p == '_';
@@ -2753,7 +2753,7 @@ static void emit_mono_clos_env(FILE *o, const IrFn *fn, int *seen, int *nseen, i
     for (int i = 0; i < *nseen; i++)
         if (seen[i] == fn->clos_id) return;
     if (*nseen < nseen_cap) seen[(*nseen)++] = fn->clos_id;
-    fprintf(o, "struct yuga_env_%d {\n", fn->clos_id);
+    fprintf(o, "struct loam_env_%d {\n", fn->clos_id);
     for (int k = 0; k < fn->ncaps; k++) {
         fprintf(o, "    ");
         emit_var_decl_type(o, fn->cap_types ? fn->cap_types[k] : ty_int(),
@@ -2780,7 +2780,7 @@ static void emit_mono_clos_sig(FILE *o, const IrFn *fn, int proto) {
 /** C function that implements a closure (env pointer + params). */
 static void emit_closure_fn(FILE *o, AstNode *fn) {
     char cn[32];
-    snprintf(cn, sizeof cn, "yuga_clos_%d", fn->as.fn.clos_id);
+    snprintf(cn, sizeof cn, "loam_clos_%d", fn->as.fn.clos_id);
     IrFn *irf = find_ir_fn(cn);
     emit_clos_sig(o, fn, 0);
     if (irf && irf->lowered) {
@@ -2789,7 +2789,7 @@ static void emit_closure_fn(FILE *o, AstNode *fn) {
     }
     fprintf(o, " {\n");
     if (fn->as.fn.cap_count)
-        fprintf(o, "    struct yuga_env_%d *_e = (struct yuga_env_%d *)_env;\n",
+        fprintf(o, "    struct loam_env_%d *_e = (struct loam_env_%d *)_env;\n",
                 fn->as.fn.clos_id, fn->as.fn.clos_id);
     else
         fprintf(o, "    (void)_env;\n");
@@ -2804,7 +2804,7 @@ static void emit_closure_fn(FILE *o, AstNode *fn) {
     fprintf(o, "}\n\n");
 }
 
-/** Adapter so a named Yuga fn can be stored in a yuga_fn (env unused). */
+/** Adapter so a named Loam fn can be stored in a loam_fn (env unused). */
 static void emit_as_fn_tramp(FILE *o, AstNode *fn) {
     Type *ft = fn->ty;
     Type *ret = (ft && ft->ret) ? ft->ret : ty_void();
@@ -2842,13 +2842,13 @@ static void clear_subst(void) {
 }
 
 /** Write a complete C translation unit for `mods`. */
-void codegen_emit_c(FILE *out, YugaModule *mods, int nmods, const char *rt_path) {
+void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path) {
     /* Per-widget opt-in: emit only decls reachable from the entry module and
        the C-seam entry points. Typecheck/IR still cover everything. Set
-       YUGA_NO_DCE=1 to emit the full monolith (debug / size comparisons). */
-    if (!getenv("YUGA_NO_DCE")) {
-        yuga_dce_set_test_mode(test_mode);
-        yuga_dce_run(mods, nmods);
+       LOAM_NO_DCE=1 to emit the full monolith (debug / size comparisons). */
+    if (!getenv("LOAM_NO_DCE")) {
+        loam_dce_set_test_mode(test_mode);
+        loam_dce_run(mods, nmods);
     }
     IrModule *ir = ir_lower(mods, nmods);
     (void)ir_verify(ir);
@@ -2878,7 +2878,7 @@ void codegen_emit_c(FILE *out, YugaModule *mods, int nmods, const char *rt_path)
         for (size_t i = 0; i < p->as.program.decl_count; i++) {
             AstNode *d = p->as.program.decls[i];
             if (d->kind == AST_FN_DECL) {
-                if (d->as.fn.tparam_count || !yuga_dce_keep(d)) continue;
+                if (d->as.fn.tparam_count || !loam_dce_keep(d)) continue;
                 collect_clos(d->as.fn.body);
             } else if (d->kind == AST_VAR_DECL) {
                 collect_clos(d->as.var.init);
@@ -2930,15 +2930,15 @@ void codegen_emit_c(FILE *out, YugaModule *mods, int nmods, const char *rt_path)
         AstNode *p = mods[m].ast;
         if (!p) continue;
         /* std module seams are declared by the runtime headers included above
-           (yuga_rt.h / zeus_rt.h / net_rt.h / maya_rt.h). Bodyless fns in
+           (loam_rt.h / zeus_rt.h / net_rt.h / maya_rt.h). Bodyless fns in
            user modules are app C seams: emit an extern prototype so the
            generated C compiles against app-supplied C (driver links a
            `runtime/<app>_runtime.c` beside the entry file, if present). */
-        int std_mod = yuga_is_std_path(mods[m].path);
+        int std_mod = loam_is_std_path(mods[m].path);
         for (size_t i = 0; i < p->as.program.decl_count; i++) {
             AstNode *d = p->as.program.decls[i];
             if (d->kind != AST_FN_DECL || d->as.fn.tparam_count) continue;
-            if (!yuga_dce_keep(d)) continue;
+            if (!loam_dce_keep(d)) continue;
             if (d->as.fn.is_intrinsic) {
                 if (std_mod) continue;
                 emit_fn_sig(out, d, 0);
@@ -2967,7 +2967,7 @@ void codegen_emit_c(FILE *out, YugaModule *mods, int nmods, const char *rt_path)
     }
     for (int i = 0; i < typecheck_mono_count(); i++) {
         AstNode *fn = typecheck_mono_fn(i);
-        if (!fn || !yuga_dce_keep(fn)) continue;
+        if (!fn || !loam_dce_keep(fn)) continue;
         set_mono_subst(i);
         emit_fn_sig(out, fn, 0);
         fprintf(out, ";\n");
@@ -2981,7 +2981,7 @@ void codegen_emit_c(FILE *out, YugaModule *mods, int nmods, const char *rt_path)
         for (size_t i = 0; i < p->as.program.decl_count; i++) {
             AstNode *d = p->as.program.decls[i];
             if (d->kind == AST_FN_DECL && d->as.fn.used_as_value && !d->as.fn.is_intrinsic &&
-                !d->as.fn.tparam_count && yuga_dce_keep(d))
+                !d->as.fn.tparam_count && loam_dce_keep(d))
                 emit_as_fn_tramp(out, d);
         }
     }
@@ -2999,7 +2999,7 @@ void codegen_emit_c(FILE *out, YugaModule *mods, int nmods, const char *rt_path)
 
     for (int i = 0; i < typecheck_mono_count(); i++) {
         AstNode *fn = typecheck_mono_fn(i);
-        if (!fn || !yuga_dce_keep(fn)) continue;
+        if (!fn || !loam_dce_keep(fn)) continue;
         set_mono_subst(i);
         emit_fn(out, fn, 0);
         clear_subst();
@@ -3021,7 +3021,7 @@ void codegen_emit_c(FILE *out, YugaModule *mods, int nmods, const char *rt_path)
             AstNode *d = p->as.program.decls[i];
             if (d->kind != AST_FN_DECL || d->as.fn.is_intrinsic || d->as.fn.tparam_count)
                 continue;
-            if (!yuga_dce_keep(d)) continue;
+            if (!loam_dce_keep(d)) continue;
             int is_main = (m == 0 && strcmp(d->as.fn.name, "main") == 0);
             if (is_main && test_mode) continue; /* the runner owns `main` */
             if (d->as.fn.is_server && server_split) {
@@ -3029,7 +3029,7 @@ void codegen_emit_c(FILE *out, YugaModule *mods, int nmods, const char *rt_path)
                    body is never emitted, so its literals are provably absent. */
                 emit_fn_sig(out, d, 0);
                 fprintf(out,
-                        " { yuga_panic(\"<server>\", 0, \"server function excluded "
+                        " { loam_panic(\"<server>\", 0, \"server function excluded "
                         "from client build\"); }\n");
                 continue;
             }
@@ -3059,7 +3059,7 @@ void codegen_emit_c(FILE *out, YugaModule *mods, int nmods, const char *rt_path)
             for (size_t i = 0; i < p->as.program.decl_count; i++) {
                 AstNode *d = p->as.program.decls[i];
                 if (d->kind != AST_FN_DECL || !d->as.fn.is_test) continue;
-                if (!d->as.fn.cname || !yuga_dce_keep(d)) continue;
+                if (!d->as.fn.cname || !loam_dce_keep(d)) continue;
                 char label[192];
                 if (m == 0 || !mods[m].name)
                     snprintf(label, sizeof label, "%s",
@@ -3067,14 +3067,14 @@ void codegen_emit_c(FILE *out, YugaModule *mods, int nmods, const char *rt_path)
                 else
                     snprintf(label, sizeof label, "%s.%s", mods[m].name,
                              d->as.fn.name ? d->as.fn.name : "test");
-                fprintf(out, "    yuga_test_begin(");
+                fprintf(out, "    loam_test_begin(");
                 emit_str_lit(out, label);
                 fprintf(out, ");\n");
                 fprintf(out, "    %s();\n", d->as.fn.cname);
-                fprintf(out, "    yuga_test_ok();\n");
+                fprintf(out, "    loam_test_ok();\n");
             }
         }
-        fprintf(out, "    return yuga_test_summary();\n}\n");
+        fprintf(out, "    return loam_test_summary();\n}\n");
     }
 
     emit_ir_mod = NULL;

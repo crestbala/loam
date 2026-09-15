@@ -1,12 +1,12 @@
-//! engine.loam — GreenInfer core (Yuga). All policy and algorithms live
+//! engine.loam — GreenInfer core (Loam). All policy and algorithms live
 //! here, where the language's checks apply (bounds traps, ownership,
 //! overflow): capacity decisions, the count mirror, the per-row search
 //! sweep, top-k selection, embeddings, timing.
 //!
 //! The C seam (`runtime/greeninfer_runtime.c`) is only the hardware/OS
-//! primitives Yuga cannot express: POSIX zero-copy mmap (no read() copy into
-//! Yuga buffers) and the Apple Silicon NEON dot kernel. Mapped bytes never
-//! cross into Yuga as pointers — a `VectorIndex` is a plain data struct and
+//! primitives Loam cannot express: POSIX zero-copy mmap (no read() copy into
+//! Loam buffers) and the Apple Silicon NEON dot kernel. Mapped bytes never
+//! cross into Loam as pointers — a `VectorIndex` is a plain data struct and
 //! each row is scored in place by `gi_row_dot`, so search_knn below iterates
 //! vectors exactly as the design intends, one NEON dot per row.
 //!
@@ -29,9 +29,9 @@ struct Record {
     score: float,
 }
 
-/// An open memory-mapped index. `count` / `cap` are Yuga mirrors of the file
+/// An open memory-mapped index. `count` / `cap` are Loam mirrors of the file
 /// header (re-read on open; count advances on every successful insert), so
-/// all capacity decisions are made here under Yuga checks. The struct is
+/// all capacity decisions are made here under Loam checks. The struct is
 /// Copy and cheap to carry.
 struct VectorIndex {
     map: int,
@@ -41,7 +41,7 @@ struct VectorIndex {
 }
 
 // ---------------------------------------------------------------------------
-// C seam — bodyless declarations of `yuga_engine_gi_*`. yugac emits extern
+// C seam — bodyless declarations of `loam_engine_gi_*`. yugac emits extern
 // prototypes for bodyless fns in user modules and links the app runtime
 // (codegen_c.c / driver.c). Nothing below returns or accepts a pointer.
 // ---------------------------------------------------------------------------
@@ -84,7 +84,7 @@ fn gi_row_dot(map: int, row_a: int, row_b: int) -> float {}
 fn gi_now_us() -> int {}
 
 // ---------------------------------------------------------------------------
-// Public API — every function below is plain Yuga with safe data.
+// Public API — every function below is plain Loam with safe data.
 // ---------------------------------------------------------------------------
 
 /// Open the index at `file_path` if present, otherwise create it with room
@@ -144,7 +144,7 @@ fn insert_vector(index: &mut VectorIndex, vector_id: int, vector_data: []float) 
 
 /// Insert an already-stored vector row for `query` in the scratch row and
 /// sweep every stored row with one NEON dot each; keep the best `k` in
-/// descending order. All of the selection logic below is Yuga-checked.
+/// descending order. All of the selection logic below is Loam-checked.
 fn search_knn(index: VectorIndex, query: []float, k: int) -> []Record {
     let mut out = []Record {}
     if index.map == 0 {
@@ -190,7 +190,7 @@ fn search_knn(index: VectorIndex, query: []float, k: int) -> []Record {
 }
 
 // ---------------------------------------------------------------------------
-// top-k machinery (pure Yuga, index-checked on every access)
+// top-k machinery (pure Loam, index-checked on every access)
 // ---------------------------------------------------------------------------
 
 /// Insert (rid, s) into the descending `scores`/`ids` arrays (length `cap`,
@@ -236,11 +236,11 @@ fn keep_rank(ids: &mut []int, scores: &mut []float, n: int, cap: int, rid: int, 
 }
 
 // ---------------------------------------------------------------------------
-// Vector math (pure Yuga; floats are unchecked, so no traps here)
+// Vector math (pure Loam; floats are unchecked, so no traps here)
 // ---------------------------------------------------------------------------
 
-/// Newton–Raphson square root. Yuga has no float sqrt primitive, so this is
-/// Yuga arithmetic: each pass doubles the correct digits. Norms here are
+/// Newton–Raphson square root. Loam has no float sqrt primitive, so this is
+/// Loam arithmetic: each pass doubles the correct digits. Norms here are
 /// small (< 1e12), so 20 passes is ~6 ulp from perfect.
 fn sqrt_newton(a: float) -> float {
     if a <= 0.0 {
@@ -281,7 +281,7 @@ fn vec_normalize(v: []float) -> []float {
 }
 
 // ---------------------------------------------------------------------------
-// Embedder — retrieval quality lives here (all pure Yuga).
+// Embedder — retrieval quality lives here (all pure Loam).
 //
 // Tokens are identifiers split at underscore/camelCase boundaries and digit
 // runs, case-folded; common English stopwords and single letters are
@@ -580,7 +580,7 @@ fn engine_wipe(file_path: string, cap: int) -> int {
     return -1
 }
 
-/// Insert one vector into the engine (capacity check in Yuga).
+/// Insert one vector into the engine (capacity check in Loam).
 fn engine_insert(vector_id: int, data: []float) -> bool {
     return insert_vector(&mut gi, vector_id, data)
 }

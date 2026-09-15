@@ -5,7 +5,7 @@
  * The frontend is cheap (~50ms for a zeus app); wall time is `cc` on
  * ~800KB of generated C plus Cocoa. Runtime .c/.m files compile once into
  * `runtime/.obj/` and are reused. `ZEUS_HEADLESS=1` skips Cocoa entirely.
- * Set `YUGA_TIME=1` to print check / codegen / cc timings on stderr.
+ * Set `LOAM_TIME=1` to print check / codegen / cc timings on stderr.
  *
  * zeus links runtime/zeus_plat.c + zeus_key.c and a host:
  *   zeus/desktop/mac.m     Cocoa
@@ -26,32 +26,32 @@
 #include <unistd.h>
 #include <time.h>
 
-#ifndef YUGA_RT_PATH
-#define YUGA_RT_PATH "runtime/yuga_rt.h"
+#ifndef LOAM_RT_PATH
+#define LOAM_RT_PATH "runtime/loam_rt.h"
 #endif
-#ifndef YUGA_RUNTIME_DIR
-#define YUGA_RUNTIME_DIR "runtime"
+#ifndef LOAM_RUNTIME_DIR
+#define LOAM_RUNTIME_DIR "runtime"
 #endif
-#ifndef YUGA_ZEUS_DIR
-#define YUGA_ZEUS_DIR "zeus"
+#ifndef LOAM_ZEUS_DIR
+#define LOAM_ZEUS_DIR "zeus"
 #endif
-#ifndef YUGA_RAYGUI_DIR
-#define YUGA_RAYGUI_DIR "raygui"
+#ifndef LOAM_RAYGUI_DIR
+#define LOAM_RAYGUI_DIR "raygui"
 #endif
 
 /** Directory containing `path`, or ".". */
 static char *dir_of(const char *path) {
     const char *slash = strrchr(path, '/');
-    if (!slash) return yuga_dup(".");
-    if (slash == path) return yuga_dup("/");
-    return yuga_dupn(path, (size_t)(slash - path));
+    if (!slash) return loam_dup(".");
+    if (slash == path) return loam_dup("/");
+    return loam_dupn(path, (size_t)(slash - path));
 }
 
 /** File stem without directory or source extension. */
 static char *stem_of(const char *path) {
     const char *base = strrchr(path, '/');
     base = base ? base + 1 : path;
-    return yuga_dupn(base, yuga_stem_len(base, strlen(base)));
+    return loam_dupn(base, loam_stem_len(base, strlen(base)));
 }
 
 /* raylib compile+link flags for the raygui host. `RAYLIB_PREFIX` wins, then
@@ -86,7 +86,7 @@ static void raygui_raylib_flags(char *out, size_t n) {
 /** mkdir -p. 0 on success. */
 static int mkdir_p(const char *dir) {
     if (!dir || !dir[0] || strcmp(dir, ".") == 0) return 0;
-    char *copy = yuga_dup(dir);
+    char *copy = loam_dup(dir);
     for (char *p = copy + 1; *p; p++) {
         if (*p == '/') {
             *p = '\0';
@@ -121,7 +121,7 @@ static int env_on(const char *name) {
 }
 
 static int want_headless(void) {
-    return env_on("ZEUS_HEADLESS") || env_on("YUGA_HEADLESS");
+    return env_on("ZEUS_HEADLESS") || env_on("LOAM_HEADLESS");
 }
 
 static double now_sec(void) {
@@ -153,8 +153,8 @@ static int ensure_obj(const char *src, const char *obj, const char *extra,
     if (ensure_parent_dir(obj) != 0) return 1;
     char cmd[2048];
     snprintf(cmd, sizeof cmd, "cc -std=gnu99 -O1 -c -I\"%s\" %s \"%s\" -o \"%s\"",
-             YUGA_RUNTIME_DIR, extra ? extra : "", src, obj);
-    if (env_on("YUGA_TIME")) fprintf(stderr, "yugac: cc %s\n", src);
+             LOAM_RUNTIME_DIR, extra ? extra : "", src, obj);
+    if (env_on("LOAM_TIME")) fprintf(stderr, "yugac: cc %s\n", src);
     return system(cmd) != 0;
 }
 
@@ -180,14 +180,14 @@ static int wasm_cc_ok(const char *cc) {
     char cmd[1024];
     if (!cc || !cc[0]) return 0;
     snprintf(cmd, sizeof cmd,
-             "echo 'void yuga_wasm_probe(void){}' | \"%s\" --target=wasm32 -c -x c - "
+             "echo 'void loam_wasm_probe(void){}' | \"%s\" --target=wasm32 -c -x c - "
              "-o /dev/null >/dev/null 2>&1",
              cc);
     return system(cmd) == 0;
 }
 
 static const char *find_wasm_cc(char *buf, size_t n) {
-    const char *env = getenv("YUGA_WASM_CC");
+    const char *env = getenv("LOAM_WASM_CC");
     const char *cands[] = {
         "clang",
         "/opt/homebrew/opt/llvm/bin/clang",
@@ -366,17 +366,17 @@ static int android_write_cmake(const char *path, int uses_http) {
             "  \"%s/hosts/android/android.c\"\n"
             "  \"%s/zeus_plat.c\"\n"
             "  \"%s/zeus_key.c\"\n",
-            YUGA_ZEUS_DIR, YUGA_RUNTIME_DIR, YUGA_RUNTIME_DIR);
+            LOAM_ZEUS_DIR, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR);
             if (uses_http)
-        fprintf(f, "  \"%s/net.c\"\n", YUGA_RUNTIME_DIR);
+        fprintf(f, "  \"%s/net.c\"\n", LOAM_RUNTIME_DIR);
     fprintf(f,
             ")\n"
             "target_include_directories(zeus PRIVATE \"%s\")\n"
-            "target_compile_definitions(zeus PRIVATE YUGA_ANDROID)\n"
+            "target_compile_definitions(zeus PRIVATE LOAM_ANDROID)\n"
             "target_compile_options(zeus PRIVATE -std=gnu99 -O1 -ffp-contract=off "
             "-fno-asynchronous-unwind-tables)\n"
             "target_link_libraries(zeus android log)\n",
-            YUGA_RUNTIME_DIR);
+            LOAM_RUNTIME_DIR);
     fclose(f);
     return 0;
 }
@@ -433,25 +433,25 @@ static int android_emit_project(const char *proj, const char *cpath, const char 
                                 int uses_http) {
     char src[1536], dst[1536], sdk[1024];
     if (mkdir_p(proj) != 0) return 1;
-    snprintf(src, sizeof src, "%s/hosts/android/java/com/yuga/zeus/ZeusActivity.java", YUGA_ZEUS_DIR);
+    snprintf(src, sizeof src, "%s/hosts/android/java/com/yuga/zeus/ZeusActivity.java", LOAM_ZEUS_DIR);
     snprintf(dst, sizeof dst, "%s/app/src/main/java/com/yuga/zeus/ZeusActivity.java", proj);
     if (android_copy(src, dst) != 0) return 1;
-    snprintf(src, sizeof src, "%s/hosts/android/java/com/yuga/zeus/ZeusView.java", YUGA_ZEUS_DIR);
+    snprintf(src, sizeof src, "%s/hosts/android/java/com/yuga/zeus/ZeusView.java", LOAM_ZEUS_DIR);
     snprintf(dst, sizeof dst, "%s/app/src/main/java/com/yuga/zeus/ZeusView.java", proj);
     if (android_copy(src, dst) != 0) return 1;
-    snprintf(src, sizeof src, "%s/hosts/android/AndroidManifest.xml", YUGA_ZEUS_DIR);
+    snprintf(src, sizeof src, "%s/hosts/android/AndroidManifest.xml", LOAM_ZEUS_DIR);
     snprintf(dst, sizeof dst, "%s/app/src/main/AndroidManifest.xml", proj);
     if (android_copy(src, dst) != 0) return 1;
-    snprintf(src, sizeof src, "%s/hosts/android/network_security_config.xml", YUGA_ZEUS_DIR);
+    snprintf(src, sizeof src, "%s/hosts/android/network_security_config.xml", LOAM_ZEUS_DIR);
     snprintf(dst, sizeof dst, "%s/app/src/main/res/xml/network_security_config.xml", proj);
     if (android_copy(src, dst) != 0) return 1;
-    snprintf(src, sizeof src, "%s/hosts/android/root-build.gradle", YUGA_ZEUS_DIR);
+    snprintf(src, sizeof src, "%s/hosts/android/root-build.gradle", LOAM_ZEUS_DIR);
     snprintf(dst, sizeof dst, "%s/build.gradle", proj);
     if (android_copy(src, dst) != 0) return 1;
-    snprintf(src, sizeof src, "%s/hosts/android/settings.gradle", YUGA_ZEUS_DIR);
+    snprintf(src, sizeof src, "%s/hosts/android/settings.gradle", LOAM_ZEUS_DIR);
     snprintf(dst, sizeof dst, "%s/settings.gradle", proj);
     if (android_copy(src, dst) != 0) return 1;
-    snprintf(src, sizeof src, "%s/hosts/android/gradle.properties", YUGA_ZEUS_DIR);
+    snprintf(src, sizeof src, "%s/hosts/android/gradle.properties", LOAM_ZEUS_DIR);
     snprintf(dst, sizeof dst, "%s/gradle.properties", proj);
     if (android_copy(src, dst) != 0) return 1;
     snprintf(dst, sizeof dst, "%s/app/src/main/cpp/app.c", proj);
@@ -522,9 +522,9 @@ static int android_run(const char *proj, const char *pkg) {
 }
 
 /** Print session diagnostics to stderr. */
-static void print_diags(YugaSession *s) {
+static void print_diags(LoamSession *s) {
     for (int i = 0; i < s->ndiag; i++) {
-        YugaDiag *d = &s->diags[i];
+        LoamDiag *d = &s->diags[i];
         fprintf(stderr, "%s:%d:%d: error: %s\n",
                 d->file && d->file[0] ? d->file : "<unknown>",
                 d->line, d->col, d->msg);
@@ -630,13 +630,13 @@ int main(int argc, char **argv) {
 
     type_set_int64_compat(int64_compat);
 
-    int show_time = env_on("YUGA_TIME");
+    int show_time = env_on("LOAM_TIME");
     double t0 = now_sec();
-    YugaSession sess;
-    yuga_session_init(&sess);
-    if (yuga_session_check(&sess, in_path, NULL) != 0) {
+    LoamSession sess;
+    loam_session_init(&sess);
+    if (loam_session_check(&sess, in_path, NULL) != 0) {
         print_diags(&sess);
-        yuga_session_free(&sess);
+        loam_session_free(&sess);
         return 1;
     }
     if (show_time) fprintf(stderr, "yugac: check %.3fs\n", now_sec() - t0);
@@ -644,7 +644,7 @@ int main(int argc, char **argv) {
     if (check_only) {
         /* The frontend already ran above; a clean session is the whole result. */
         printf("yugac: %s ok\n", in_path);
-        yuga_session_free(&sess);
+        loam_session_free(&sess);
         return 0;
     }
 
@@ -656,7 +656,7 @@ int main(int argc, char **argv) {
                 has_test_mod = 1;
         if (!has_test_mod) {
             fprintf(stderr, "yugac test: %s must import \"std:test\"\n", in_path);
-            yuga_session_free(&sess);
+            loam_session_free(&sess);
             return 1;
         }
     }
@@ -669,21 +669,21 @@ int main(int argc, char **argv) {
             if (ensure_parent_dir(out_path) != 0) {
                 fprintf(stderr, "error: cannot create directory for output\n");
                 ir_free(ir);
-                yuga_session_free(&sess);
+                loam_session_free(&sess);
                 return 1;
             }
             ir_out = fopen(out_path, "w");
             if (!ir_out) {
                 fprintf(stderr, "error: cannot write '%s'\n", out_path);
                 ir_free(ir);
-                yuga_session_free(&sess);
+                loam_session_free(&sess);
                 return 1;
             }
         }
         ir_print(ir_out, ir);
         if (out_path) fclose(ir_out);
         ir_free(ir);
-        yuga_session_free(&sess);
+        loam_session_free(&sess);
         return bad ? 1 : 0;
     }
 
@@ -709,16 +709,16 @@ int main(int argc, char **argv) {
             snprintf(binpath, sizeof binpath, "%s/build/%s", srcdir, stem);
         else
             snprintf(binpath, sizeof binpath, "%s/build/%s", srcdir, stem);
-        snprintf(cpath, sizeof cpath, "/tmp/yuga_%s_XXXXXX", stem);
+        snprintf(cpath, sizeof cpath, "/tmp/loam_%s_XXXXXX", stem);
         const char *tmpdir = getenv("TMPDIR");
         if (tmpdir && tmpdir[0])
-            snprintf(cpath, sizeof cpath, "%s/yuga_%s_XXXXXX", tmpdir, stem);
+            snprintf(cpath, sizeof cpath, "%s/loam_%s_XXXXXX", tmpdir, stem);
         int fd = mkstemp(cpath);
         if (fd < 0) {
             fprintf(stderr, "error: cannot create temp C file\n");
             free(srcdir);
             free(stem);
-            yuga_session_free(&sess);
+            loam_session_free(&sess);
             return 1;
         }
         close(fd);
@@ -727,7 +727,7 @@ int main(int argc, char **argv) {
             /* The runner binary is a throwaway; never write it into the app's
                build/ tree. `cc` overwrites the mkstemp'd empty file. */
             char tb[1024];
-            snprintf(tb, sizeof tb, "%s/yuga_test_XXXXXX",
+            snprintf(tb, sizeof tb, "%s/loam_test_XXXXXX",
                      (tmpdir && tmpdir[0]) ? tmpdir : "/tmp");
             int tfd = mkstemp(tb);
             if (tfd < 0) {
@@ -735,7 +735,7 @@ int main(int argc, char **argv) {
                 unlink(cpath);
                 free(srcdir);
                 free(stem);
-                yuga_session_free(&sess);
+                loam_session_free(&sess);
                 return 1;
             }
             close(tfd);
@@ -754,7 +754,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "error: cannot create directory for output\n");
         if (cpath_is_temp) unlink(cpath);
         free(stem);
-        yuga_session_free(&sess);
+        loam_session_free(&sess);
         return 1;
     }
 
@@ -763,23 +763,23 @@ int main(int argc, char **argv) {
         fprintf(stderr, "error: cannot write '%s'\n", cpath);
         if (cpath_is_temp) unlink(cpath);
         free(stem);
-        yuga_session_free(&sess);
+        loam_session_free(&sess);
         return 1;
     }
     t0 = now_sec();
     codegen_set_test_mode(test_mode);
     /* `#[server]` bodies are excluded from client targets (wasm here; the other
-       client hosts join when their targets are split out). `YUGA_SERVER_SPLIT`
+       client hosts join when their targets are split out). `LOAM_SERVER_SPLIT`
        forces it on so the exclusion can be checked from a generated-C build. */
-    codegen_set_server_split(target_wasm || getenv("YUGA_SERVER_SPLIT") != NULL);
-    codegen_emit_c(out, sess.mods, sess.nmods, YUGA_RT_PATH);
+    codegen_set_server_split(target_wasm || getenv("LOAM_SERVER_SPLIT") != NULL);
+    codegen_emit_c(out, sess.mods, sess.nmods, LOAM_RT_PATH);
     fclose(out);
     if (show_time) fprintf(stderr, "yugac: codegen %.3fs\n", now_sec() - t0);
 
     if (emit_c) {
         printf("yugac: %s -> %s\n", in_path, cpath);
         free(stem);
-        yuga_session_free(&sess);
+        loam_session_free(&sess);
         return 0;
     }
 
@@ -795,27 +795,27 @@ int main(int argc, char **argv) {
 
     char http_link[768] = "";
     if (uses_http) {
-        snprintf(http_link, sizeof http_link, " \"%s/net.c\"", YUGA_RUNTIME_DIR);
+        snprintf(http_link, sizeof http_link, " \"%s/net.c\"", LOAM_RUNTIME_DIR);
     } else if (uses_net) {
-        snprintf(http_link, sizeof http_link, " \"%s/net.c\"", YUGA_RUNTIME_DIR);
+        snprintf(http_link, sizeof http_link, " \"%s/net.c\"", LOAM_RUNTIME_DIR);
     }
 
     /* App C seam (above): compile it inside the native link command. */
     char extra_link[1400] = "";
     if (app_rt[0])
         snprintf(extra_link, sizeof extra_link,
-                 " -I\"%s\" -x c \"%s\"", YUGA_RUNTIME_DIR, app_rt);
-    /* YUGA_LINK_EXTRA: extra .c/.o inputs appended to the native link, for
+                 " -I\"%s\" -x c \"%s\"", LOAM_RUNTIME_DIR, app_rt);
+    /* LOAM_LINK_EXTRA: extra .c/.o inputs appended to the native link, for
        entries without a sibling runtime file (e.g. CLI tools sharing an
        app's C seam). Space-separated paths. */
-    const char *le = getenv("YUGA_LINK_EXTRA");
+    const char *le = getenv("LOAM_LINK_EXTRA");
     if (le && le[0]) {
         size_t used = strlen(extra_link);
         size_t left = sizeof extra_link - used - 1;
         if (strlen(le) + 64 <= left) {
-            snprintf(extra_link + used, left + 1, " -I\"%s\" %s", YUGA_RUNTIME_DIR, le);
+            snprintf(extra_link + used, left + 1, " -I\"%s\" %s", LOAM_RUNTIME_DIR, le);
         } else {
-            fprintf(stderr, "yugac: warning: YUGA_LINK_EXTRA too long, ignored\n");
+            fprintf(stderr, "yugac: warning: LOAM_LINK_EXTRA too long, ignored\n");
         }
     }
 
@@ -825,7 +825,7 @@ int main(int argc, char **argv) {
         char *outdir = dir_of(binpath);
         char cmdw[8192];
         const char *cc;
-        snprintf(loader_src, sizeof loader_src, "%s/hosts/web/loader.js", YUGA_ZEUS_DIR);
+        snprintf(loader_src, sizeof loader_src, "%s/hosts/web/loader.js", LOAM_ZEUS_DIR);
         snprintf(loader_dst, sizeof loader_dst, "%s/loader.js", outdir);
         if (copy_file(loader_src, loader_dst) != 0)
             fprintf(stderr, "yugac: warning: could not copy %s\n", loader_src);
@@ -838,14 +838,14 @@ int main(int argc, char **argv) {
                     "yugac: no clang with wasm32 (Apple /usr/bin/clang cannot).\n"
                     "  ./install.sh          # Homebrew LLVM, puts clang on PATH\n"
                     "  or: brew install llvm\n"
-                    "  YUGA_WASM_CC=/opt/homebrew/opt/llvm/bin/clang ./bin/yugac --target=wasm32 "
+                    "  LOAM_WASM_CC=/opt/homebrew/opt/llvm/bin/clang ./bin/yugac --target=wasm32 "
                     "%s -o %s\n"
                     "  generated C kept at %s ; Canvas2D loader at %s\n",
                     in_path, binpath, keep, loader_dst);
             if (cpath_is_temp) unlink(cpath);
             free(outdir);
             free(stem);
-            yuga_session_free(&sess);
+            loam_session_free(&sess);
             return 1;
         }
         /* --fatal-warnings: wasm-ld downgrades a C prototype that disagrees with
@@ -855,7 +855,7 @@ int main(int argc, char **argv) {
         {
             char http_w[512] = "";
             if (uses_http || uses_net)
-                snprintf(http_w, sizeof http_w, " \"%s/net.c\"", YUGA_RUNTIME_DIR);
+                snprintf(http_w, sizeof http_w, " \"%s/net.c\"", LOAM_RUNTIME_DIR);
             if (uses_zeus) {
                 snprintf(cmdw, sizeof cmdw,
                          "\"%s\" --target=wasm32 -nostdlib -ffreestanding "
@@ -864,25 +864,25 @@ int main(int argc, char **argv) {
                          "-x c \"%s\" -x none "
                          "\"%s/zeus_wasm_libc.c\" \"%s/hosts/web/wasm.c\" "
                          "\"%s/zeus_plat.c\" \"%s/zeus_key.c\"%s -o \"%s\"",
-                         cc, YUGA_RUNTIME_DIR, YUGA_RUNTIME_DIR, cpath, YUGA_RUNTIME_DIR,
-                         YUGA_ZEUS_DIR, YUGA_RUNTIME_DIR, YUGA_RUNTIME_DIR, http_w, binpath);
+                         cc, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR, cpath, LOAM_RUNTIME_DIR,
+                         LOAM_ZEUS_DIR, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR, http_w, binpath);
             } else {
                 snprintf(cmdw, sizeof cmdw,
                          "\"%s\" --target=wasm32 -nostdlib -ffreestanding "
                          "-fno-stack-protector -O2 -ffp-contract=off -I\"%s/wasm_inc\" -I\"%s\" "
                          "-Wl,--no-entry -Wl,--export-dynamic -Wl,--export=main -Wl,--fatal-warnings "
                          "-x c \"%s\" -x none \"%s/zeus_wasm_libc.c\"%s -o \"%s\"",
-                         cc, YUGA_RUNTIME_DIR, YUGA_RUNTIME_DIR, cpath, YUGA_RUNTIME_DIR,
+                         cc, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR, cpath, LOAM_RUNTIME_DIR,
                          http_w, binpath);
             }
         }
         t0 = now_sec();
-        if (env_on("YUGA_TIME")) fprintf(stderr, "yugac: cc %s\n", cc);
+        if (env_on("LOAM_TIME")) fprintf(stderr, "yugac: cc %s\n", cc);
         if (system(cmdw) != 0) {
             fprintf(stderr, "yugac: wasm compile failed (C: %s)\n", cpath);
             free(outdir);
             free(stem);
-            yuga_session_free(&sess);
+            loam_session_free(&sess);
             return 1;
         }
         if (show_time) fprintf(stderr, "yugac: cc %.3fs\n", now_sec() - t0);
@@ -890,7 +890,7 @@ int main(int argc, char **argv) {
         printf("yugac: %s -> %s (Canvas2D wasm)\n", in_path, binpath);
         free(outdir);
         free(stem);
-        yuga_session_free(&sess);
+        loam_session_free(&sess);
         return 0;
     }
 
@@ -912,7 +912,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "yugac: --target=ios requires import \"std:zeus\"\n");
             if (cpath_is_temp) unlink(cpath);
             free(stem);
-            yuga_session_free(&sess);
+            loam_session_free(&sess);
             return 1;
         }
         if (ios_sdk_path(sdk, sizeof sdk) != 0) {
@@ -922,7 +922,7 @@ int main(int argc, char **argv) {
                     "  or open Xcode → Settings → Platforms\n");
             if (cpath_is_temp) unlink(cpath);
             free(stem);
-            yuga_session_free(&sess);
+            loam_session_free(&sess);
             return 1;
         }
         snprintf(appdir, sizeof appdir, "%s", binpath);
@@ -935,7 +935,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "yugac: cannot create %s\n", appdir);
             if (cpath_is_temp) unlink(cpath);
             free(stem);
-            yuga_session_free(&sess);
+            loam_session_free(&sess);
             return 1;
         }
         snprintf(exe, sizeof exe, "%s/%s", appdir, stem);
@@ -945,28 +945,28 @@ int main(int argc, char **argv) {
             fprintf(stderr, "yugac: cannot write Info.plist\n");
             if (cpath_is_temp) unlink(cpath);
             free(stem);
-            yuga_session_free(&sess);
+            loam_session_free(&sess);
             return 1;
         }
         if (uses_http)
-            snprintf(http_ios, sizeof http_ios, " \"%s/net.c\"", YUGA_RUNTIME_DIR);
+            snprintf(http_ios, sizeof http_ios, " \"%s/net.c\"", LOAM_RUNTIME_DIR);
         snprintf(cmdios, sizeof cmdios,
                  "xcrun clang -isysroot \"%s\" -target %s-apple-ios16.0-simulator "
-                 "-O1 -ffp-contract=off -fno-asynchronous-unwind-tables -DYUGA_IOS -I\"%s\" "
+                 "-O1 -ffp-contract=off -fno-asynchronous-unwind-tables -DLOAM_IOS -I\"%s\" "
                  "-x c -std=gnu99 \"%s\" \"%s/zeus_plat.c\" \"%s/zeus_key.c\"%s "
                  "-x objective-c -fno-objc-arc \"%s/hosts/ios/ios.m\" "
                  "-framework UIKit -framework Foundation -framework CoreGraphics "
                  "-framework CoreText -framework QuartzCore "
                  "-framework Security -framework CoreFoundation -o \"%s\"",
-                 sdk, arch, YUGA_RUNTIME_DIR, cpath, YUGA_RUNTIME_DIR, YUGA_RUNTIME_DIR,
-                 http_ios, YUGA_ZEUS_DIR, exe);
+                 sdk, arch, LOAM_RUNTIME_DIR, cpath, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR,
+                 http_ios, LOAM_ZEUS_DIR, exe);
         t0 = now_sec();
-        if (env_on("YUGA_TIME")) fprintf(stderr, "yugac: cc ios\n");
+        if (env_on("LOAM_TIME")) fprintf(stderr, "yugac: cc ios\n");
         if (system(cmdios) != 0) {
             fprintf(stderr, "yugac: iOS compile failed (C: %s)\n", cpath);
             if (cpath_is_temp) unlink(cpath);
             free(stem);
-            yuga_session_free(&sess);
+            loam_session_free(&sess);
             return 1;
         }
         {
@@ -982,7 +982,7 @@ int main(int argc, char **argv) {
             int run_rc = 0;
             if (run && ios_sim_run(appdir, bid) != 0) run_rc = 1;
             free(stem);
-            yuga_session_free(&sess);
+            loam_session_free(&sess);
             return run_rc;
         }
     }
@@ -993,7 +993,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "yugac: --target=android requires import \"std:zeus\"\n");
             if (cpath_is_temp) unlink(cpath);
             free(stem);
-            yuga_session_free(&sess);
+            loam_session_free(&sess);
             return 1;
         }
         android_app_id(stem, pkg, sizeof pkg);
@@ -1001,14 +1001,14 @@ int main(int argc, char **argv) {
             fprintf(stderr, "yugac: cannot create %s\n", binpath);
             if (cpath_is_temp) unlink(cpath);
             free(stem);
-            yuga_session_free(&sess);
+            loam_session_free(&sess);
             return 1;
         }
         if (android_emit_project(binpath, cpath, pkg, uses_http) != 0) {
             fprintf(stderr, "yugac: cannot write Android project to %s\n", binpath);
             if (cpath_is_temp) unlink(cpath);
             free(stem);
-            yuga_session_free(&sess);
+            loam_session_free(&sess);
             return 1;
         }
         if (cpath_is_temp) unlink(cpath);
@@ -1022,7 +1022,7 @@ int main(int argc, char **argv) {
                 android_howto(binpath, pkg);
             }
             free(stem);
-            yuga_session_free(&sess);
+            loam_session_free(&sess);
             return run_rc;
         }
     }
@@ -1032,14 +1032,14 @@ int main(int argc, char **argv) {
        Runtime .c/.m compile once into runtime/.obj/. */
     int headless = want_headless();
     /* Generated C carries `#line` directives pointing at `.loam` sources, so
-       -g makes lldb/gdb, profilers, and sanitizers report Yuga lines. Off by
+       -g makes lldb/gdb, profilers, and sanitizers report Loam lines. Off by
        default: it inflates binaries and the published size benchmark. */
     static char copt_buf[256];
     snprintf(copt_buf, sizeof copt_buf, "%s%s",
              headless ? "-std=gnu99 -O0 -fno-asynchronous-unwind-tables -ffp-contract=off"
                       : "-std=gnu99 -O1 -fno-asynchronous-unwind-tables "
                         "-fomit-frame-pointer -ffp-contract=off",
-             env_on("YUGA_DEBUG") ? " -g" : "");
+             env_on("LOAM_DEBUG") ? " -g" : "");
     const char *copt = copt_buf;
 #if defined(__APPLE__)
     const char *ld = headless ? "" : "-Wl,-dead_strip";
@@ -1050,14 +1050,14 @@ int main(int argc, char **argv) {
     char cmd[4096];
     char plat_c[512], key_c[512], mac_m[512], rt_h[512], key_h[512];
     char plat_o[512], key_o[512], mac_o[512];
-    snprintf(plat_c, sizeof plat_c, "%s/zeus_plat.c", YUGA_RUNTIME_DIR);
-    snprintf(key_c, sizeof key_c, "%s/zeus_key.c", YUGA_RUNTIME_DIR);
-    snprintf(mac_m, sizeof mac_m, "%s/hosts/desktop/mac.m", YUGA_ZEUS_DIR);
-    snprintf(rt_h, sizeof rt_h, "%s/zeus_rt.h", YUGA_RUNTIME_DIR);
-    snprintf(key_h, sizeof key_h, "%s/zeus_key.h", YUGA_RUNTIME_DIR);
-    snprintf(plat_o, sizeof plat_o, "%s/.obj/zeus_plat.o", YUGA_RUNTIME_DIR);
-    snprintf(key_o, sizeof key_o, "%s/.obj/zeus_key.o", YUGA_RUNTIME_DIR);
-    snprintf(mac_o, sizeof mac_o, "%s/.obj/zeus_mac.o", YUGA_RUNTIME_DIR);
+    snprintf(plat_c, sizeof plat_c, "%s/zeus_plat.c", LOAM_RUNTIME_DIR);
+    snprintf(key_c, sizeof key_c, "%s/zeus_key.c", LOAM_RUNTIME_DIR);
+    snprintf(mac_m, sizeof mac_m, "%s/hosts/desktop/mac.m", LOAM_ZEUS_DIR);
+    snprintf(rt_h, sizeof rt_h, "%s/zeus_rt.h", LOAM_RUNTIME_DIR);
+    snprintf(key_h, sizeof key_h, "%s/zeus_key.h", LOAM_RUNTIME_DIR);
+    snprintf(plat_o, sizeof plat_o, "%s/.obj/zeus_plat.o", LOAM_RUNTIME_DIR);
+    snprintf(key_o, sizeof key_o, "%s/.obj/zeus_key.o", LOAM_RUNTIME_DIR);
+    snprintf(mac_o, sizeof mac_o, "%s/.obj/zeus_mac.o", LOAM_RUNTIME_DIR);
 
     t0 = now_sec();
     if (uses_zeus) {
@@ -1068,7 +1068,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "yugac: failed to compile zeus runtime\n");
             if (cpath_is_temp) unlink(cpath);
             free(stem);
-            yuga_session_free(&sess);
+            loam_session_free(&sess);
             return 1;
         }
 #if defined(__APPLE__)
@@ -1078,45 +1078,45 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "yugac: failed to compile %s\n", mac_m);
                 if (cpath_is_temp) unlink(cpath);
                 free(stem);
-                yuga_session_free(&sess);
+                loam_session_free(&sess);
                 return 1;
             }
             snprintf(cmd, sizeof cmd,
                      "cc %s %s -o \"%s\" -I\"%s\" -x c \"%s\" -x none \"%s\" \"%s\" \"%s\"%s%s "
                      "-framework Cocoa -framework QuartzCore -framework Security "
                      "-framework CoreFoundation -lm",
-                     copt, ld, binpath, YUGA_RUNTIME_DIR, cpath, plat_o, key_o, mac_o, http_link,
+                     copt, ld, binpath, LOAM_RUNTIME_DIR, cpath, plat_o, key_o, mac_o, http_link,
                      extra_link);
         } else {
             snprintf(cmd, sizeof cmd,
                      "cc %s -o \"%s\" -I\"%s\" -x c \"%s\" -x none \"%s\" \"%s\"%s%s "
                      "-framework Security -framework CoreFoundation -lm",
-                     copt, binpath, YUGA_RUNTIME_DIR, cpath, plat_o, key_o, http_link, extra_link);
+                     copt, binpath, LOAM_RUNTIME_DIR, cpath, plat_o, key_o, http_link, extra_link);
         }
 #else
         if (!headless) {
             char linux_c[512], linux_o[512];
-            snprintf(linux_c, sizeof linux_c, "%s/hosts/desktop/linux.c", YUGA_ZEUS_DIR);
-            snprintf(linux_o, sizeof linux_o, "%s/.obj/zeus_linux.o", YUGA_RUNTIME_DIR);
+            snprintf(linux_c, sizeof linux_c, "%s/hosts/desktop/linux.c", LOAM_ZEUS_DIR);
+            snprintf(linux_o, sizeof linux_o, "%s/.obj/zeus_linux.o", LOAM_RUNTIME_DIR);
             {
                 const char *linux_deps[] = {linux_c, rt_h, key_h};
                 if (ensure_obj(linux_c, linux_o, "", linux_deps, 3)) {
                     fprintf(stderr, "yugac: failed to compile %s (need libx11)\n", linux_c);
                     if (cpath_is_temp) unlink(cpath);
                     free(stem);
-                    yuga_session_free(&sess);
+                    loam_session_free(&sess);
                     return 1;
                 }
             }
             snprintf(cmd, sizeof cmd,
                      "cc %s -o \"%s\" -I\"%s\" -x c \"%s\" -x none \"%s\" \"%s\" \"%s\"%s%s "
                      "-lX11 -lm",
-                     copt, binpath, YUGA_RUNTIME_DIR, cpath, plat_o, key_o, linux_o, http_link,
+                     copt, binpath, LOAM_RUNTIME_DIR, cpath, plat_o, key_o, linux_o, http_link,
                      extra_link);
         } else {
             snprintf(cmd, sizeof cmd,
                      "cc %s -o \"%s\" -I\"%s\" -x c \"%s\" -x none \"%s\" \"%s\"%s%s -lm",
-                     copt, binpath, YUGA_RUNTIME_DIR, cpath, plat_o, key_o, http_link, extra_link);
+                     copt, binpath, LOAM_RUNTIME_DIR, cpath, plat_o, key_o, http_link, extra_link);
         }
         (void)mac_m;
         (void)mac_o;
@@ -1127,46 +1127,46 @@ int main(int argc, char **argv) {
                  "cc %s %s -o \"%s\" -I\"%s\" -x c \"%s\" \"%s/maya_plat.c\" "
                  "-x objective-c -fobjc-arc \"%s/maya_mac.m\" "
                  "-framework Cocoa -lm%s",
-                 copt, ld, binpath, YUGA_RUNTIME_DIR, cpath, YUGA_RUNTIME_DIR, YUGA_RUNTIME_DIR,
+                 copt, ld, binpath, LOAM_RUNTIME_DIR, cpath, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR,
                  extra_link);
 #else
         snprintf(cmd, sizeof cmd,
                  "cc %s %s -o \"%s\" -I\"%s\" -x c \"%s\" \"%s/maya_plat.c\" -lm%s",
-                 copt, ld, binpath, YUGA_RUNTIME_DIR, cpath, YUGA_RUNTIME_DIR, extra_link);
+                 copt, ld, binpath, LOAM_RUNTIME_DIR, cpath, LOAM_RUNTIME_DIR, extra_link);
 #endif
     } else if (uses_http) {
 #if defined(__APPLE__)
         snprintf(cmd, sizeof cmd,
                  "cc %s %s -o \"%s\" -I\"%s\" -x c \"%s\" \"%s/net.c\" "
                  "-framework Security -framework CoreFoundation%s",
-                 copt, ld, binpath, YUGA_RUNTIME_DIR, cpath, YUGA_RUNTIME_DIR, extra_link);
+                 copt, ld, binpath, LOAM_RUNTIME_DIR, cpath, LOAM_RUNTIME_DIR, extra_link);
 #else
         snprintf(cmd, sizeof cmd,
                  "cc %s %s -o \"%s\" -I\"%s\" -x c \"%s\" \"%s/net.c\"%s",
-                 copt, ld, binpath, YUGA_RUNTIME_DIR, cpath, YUGA_RUNTIME_DIR, extra_link);
+                 copt, ld, binpath, LOAM_RUNTIME_DIR, cpath, LOAM_RUNTIME_DIR, extra_link);
 #endif
     } else if (uses_net) {
 #if defined(__APPLE__)
         snprintf(cmd, sizeof cmd,
                  "cc %s %s -o \"%s\" -I\"%s\" -x c \"%s\" \"%s/net.c\" "
                  "-framework Security -framework CoreFoundation%s",
-                 copt, ld, binpath, YUGA_RUNTIME_DIR, cpath, YUGA_RUNTIME_DIR, extra_link);
+                 copt, ld, binpath, LOAM_RUNTIME_DIR, cpath, LOAM_RUNTIME_DIR, extra_link);
 #else
         snprintf(cmd, sizeof cmd,
                  "cc %s %s -o \"%s\" -I\"%s\" -x c \"%s\" \"%s/net.c\"%s",
-                 copt, ld, binpath, YUGA_RUNTIME_DIR, cpath, YUGA_RUNTIME_DIR, extra_link);
+                 copt, ld, binpath, LOAM_RUNTIME_DIR, cpath, LOAM_RUNTIME_DIR, extra_link);
 #endif
     } else if (uses_raygui) {
         /* raygui.h is vendored in the raygui package; raylib comes from the
            system (Homebrew / pkg-config / RAYLIB_PREFIX). The host shim owns
-           the window + raygui implementation; Yuga owns the frame loop. */
+           the window + raygui implementation; Loam owns the frame loop. */
         char rlib[512];
         raygui_raylib_flags(rlib, sizeof rlib);
         snprintf(cmd, sizeof cmd,
                  "cc %s %s -o \"%s\" -I\"%s\" -I\"%s/vendor\" %s "
                  "-x c \"%s\" -x none \"%s/raygui_plat.c\" -lm%s",
-                 copt, ld, binpath, YUGA_RUNTIME_DIR, YUGA_RAYGUI_DIR, rlib, cpath,
-                 YUGA_RUNTIME_DIR, extra_link);
+                 copt, ld, binpath, LOAM_RUNTIME_DIR, LOAM_RAYGUI_DIR, rlib, cpath,
+                 LOAM_RUNTIME_DIR, extra_link);
     } else {
         snprintf(cmd, sizeof cmd, "cc %s %s -x c \"%s\" -o \"%s\"%s", copt, ld, cpath,
                  binpath, extra_link);
@@ -1176,7 +1176,7 @@ int main(int argc, char **argv) {
     if (rc != 0) {
         fprintf(stderr, "yugac: C compile failed (temp source: %s)\n", cpath);
         free(stem);
-        yuga_session_free(&sess);
+        loam_session_free(&sess);
         return 1;
     }
     unlink(cpath);
@@ -1195,6 +1195,6 @@ int main(int argc, char **argv) {
     if (test_mode) unlink(binpath);
 
     free(stem);
-    yuga_session_free(&sess);
+    loam_session_free(&sess);
     return run_rc;
 }

@@ -1,6 +1,6 @@
 //! router — route table, typed params, history, and navigation.
 //!
-//! The router is a plain Yuga module over the public `std:zeus` primitives:
+//! The router is a plain Loam module over the public `std:zeus` primitives:
 //! the current path is a `Signal<string>`, the page slot is a `zeus.Match`
 //! host (one page mounted at a time), and each page build runs under
 //! `zeus.Boundary`, so a bad route paints `error(msg)` instead of killing the

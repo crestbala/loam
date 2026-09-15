@@ -1,6 +1,6 @@
 # Zeus WebSocket demo (wasm)
 
-A tiny end-to-end WebSocket demo: a native Yuga server pushes `tick-N` text
+A tiny end-to-end WebSocket demo: a native Loam server pushes `tick-N` text
 frames every 500 ms; a wasm page receives them through the browser's
 `WebSocket` and repaints a counter + last message, live.
 
@@ -33,5 +33,5 @@ messages queue in JS; every animation frame the engine's async tick drains
 the queue (`net.ws_count` / `ws_copy`) and delivers each message to the
 callback on the UI thread — the same stepper model as native TCP.
 
-Native WebSockets (RFC 6455 in pure Yuga, `httpcore/ws.loam`) are covered by
+Native WebSockets (RFC 6455 in pure Loam, `httpcore/ws.loam`) are covered by
 `packages/yuga/tests/compile_pass/zeus_stream.loam`.

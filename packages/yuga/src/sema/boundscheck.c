@@ -1,7 +1,7 @@
 /**
  * boundscheck.c — mark `a[k]` safe when k is a literal in 0..N for `[N]T`.
  *
- * Other indexes keep a run-time yuga_idx trap. Never fails the compile.
+ * Other indexes keep a run-time loam_idx trap. Never fails the compile.
  */
 #include "boundscheck.h"
 #include "type.h"
@@ -105,7 +105,7 @@ static void walk(AstNode *n) {
 }
 
 /** Mark safe constant indexes. Always returns 0. */
-int boundscheck_modules(YugaModule *mods, int nmods) {
+int boundscheck_modules(LoamModule *mods, int nmods) {
     for (int i = 0; i < nmods; i++)
         if (mods[i].ast) walk(mods[i].ast);
     return 0;

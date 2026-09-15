@@ -1,13 +1,13 @@
 /**
- * type.h — Yuga types used by typecheck, borrowck, and codegen.
+ * type.h — Loam types used by typecheck, borrowck, and codegen.
  *
  * Numeric scalars are static singletons keyed by (kind, bits, is_unsigned):
  * i8..i64, u8..u64, f32/f64. `int` is the i64 singleton and `float` the f64
  * one during the additive phase. Compound types come from type_new and live in
  * a pool until type_pool_reset (end of a compile).
  */
-#ifndef YUGA_TYPE_H
-#define YUGA_TYPE_H
+#ifndef LOAM_TYPE_H
+#define LOAM_TYPE_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -143,7 +143,7 @@ typedef enum {
     NUMB_SAT_MUL,
 } NumericBuiltin;
 
-/** Runtime helper name for `b` at width `t` (`yuga_wrapping_add_u8`), in a
+/** Runtime helper name for `b` at width `t` (`loam_wrapping_add_u8`), in a
  *  rotating static buffer. */
 const char *numeric_builtin_cname(NumericBuiltin b, const Type *t);
 

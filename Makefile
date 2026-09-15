@@ -1,13 +1,13 @@
-# Yuga compiler — C11, libc only. Generated programs are gnu99 (C99 + statement exprs).
+# Loam compiler — C11, libc only. Generated programs are gnu99 (C99 + statement exprs).
 
 CC      := cc
 CFLAGS  := -std=c11 -Wall -Wextra -Wpedantic -O2 -g -MMD -MP
-CFLAGS  += -DYUGA_RT_PATH=\"$(CURDIR)/packages/yuga/runtime/yuga_rt.h\"
-CFLAGS  += -DYUGA_RUNTIME_DIR=\"$(CURDIR)/packages/yuga/runtime\"
-CFLAGS  += -DYUGA_STD_DIR=\"$(CURDIR)/packages/yuga/std\"
-CFLAGS  += -DYUGA_ZEUS_DIR=\"$(CURDIR)/packages/zeus\"
-CFLAGS  += -DYUGA_RAYGUI_DIR=\"$(CURDIR)/packages/raygui\"
-CFLAGS  += -DYUGA_PATH=\"$(CURDIR)/packages/zeus:$(CURDIR)/packages/http:$(CURDIR)/packages/maya:$(CURDIR)/packages/raygui\"
+CFLAGS  += -DLOAM_RT_PATH=\"$(CURDIR)/packages/yuga/runtime/loam_rt.h\"
+CFLAGS  += -DLOAM_RUNTIME_DIR=\"$(CURDIR)/packages/yuga/runtime\"
+CFLAGS  += -DLOAM_STD_DIR=\"$(CURDIR)/packages/yuga/std\"
+CFLAGS  += -DLOAM_ZEUS_DIR=\"$(CURDIR)/packages/zeus\"
+CFLAGS  += -DLOAM_RAYGUI_DIR=\"$(CURDIR)/packages/raygui\"
+CFLAGS  += -DLOAM_PATH=\"$(CURDIR)/packages/zeus:$(CURDIR)/packages/http:$(CURDIR)/packages/maya:$(CURDIR)/packages/raygui\"
 
 COMPILER_DIR := packages/yuga
 SRCDIR  := $(COMPILER_DIR)/src
@@ -108,9 +108,9 @@ $(ZEUS): packages/zeus/cli/zeus.ts
 	@printf '#!/bin/sh\nexec deno run --quiet --allow-read --allow-write --allow-run --allow-env --allow-net "%s/packages/zeus/cli/zeus.ts" "$$@"\n' "$(CURDIR)" > $@
 	@chmod +x $@
 
-# CFLAGS in this file carry the build-time paths (YUGA_PATH, YUGA_*_DIR), so an
+# CFLAGS in this file carry the build-time paths (LOAM_PATH, LOAM_*_DIR), so an
 # edit to the Makefile must rebuild every object — `.d` files only track source
-# includes, which is how a path change silently kept a stale YUGA_PATH.
+# includes, which is how a path change silently kept a stale LOAM_PATH.
 $(OBJDIR)/%.o: $(SRCDIR)/%.c Makefile
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -293,7 +293,7 @@ test: all
 	else \
 	  echo "FAIL zeus example myapp routes"; cat $(TESTDIR)/tmp/myapp_routes.log 2>/dev/null; err=1; \
 	fi; \
-	if YUGA_SERVER_SPLIT=1 ./$(TARGET) --emit-c packages/yuga/tests/compile_pass/server_split.loam -o $(TESTDIR)/tmp/server_split.c >/dev/null 2>&1; then \
+	if LOAM_SERVER_SPLIT=1 ./$(TARGET) --emit-c packages/yuga/tests/compile_pass/server_split.loam -o $(TESTDIR)/tmp/server_split.c >/dev/null 2>&1; then \
 	  if grep -q "SERVER_SECRET_MARKER" $(TESTDIR)/tmp/server_split.c; then \
 	    echo "FAIL server body leaked into client build"; err=1; \
 	  else \

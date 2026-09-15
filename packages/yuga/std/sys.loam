@@ -1,6 +1,6 @@
 //! Language-level seam (`docs/boundary.md`).
 //!
-//! Bodyless `fn`s resolve to `yuga_sys_<name>` in `yuga_rt`. No protocol here.
+//! Bodyless `fn`s resolve to `loam_sys_<name>` in `loam_rt`. No protocol here.
 
 /// Compile `--target`: `"wasm"`, `"ios"`, `"android"`, or `"native"`.
 fn target() -> string {}

@@ -1,5 +1,5 @@
-#ifndef YUGA_WASM_STDBOOL_H
-#define YUGA_WASM_STDBOOL_H
+#ifndef LOAM_WASM_STDBOOL_H
+#define LOAM_WASM_STDBOOL_H
 #define bool _Bool
 #define true 1
 #define false 0

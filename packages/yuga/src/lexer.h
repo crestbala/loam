@@ -1,5 +1,5 @@
 /**
- * lexer.h — tokenize Yuga source.
+ * lexer.h — tokenize Loam source.
  *
  * Tokens are spans into the caller's buffer (`start` + `len`); the lexer
  * does not copy lexemes. Keywords are TokenKind values, not identifiers.
@@ -7,8 +7,8 @@
  * tokens (item / module docs), not skipped. Semicolons are tokens; the parser
  * treats them as optional.
  */
-#ifndef YUGA_LEXER_H
-#define YUGA_LEXER_H
+#ifndef LOAM_LEXER_H
+#define LOAM_LEXER_H
 
 #include "diagnostics.h"
 

@@ -194,7 +194,7 @@ fn offline_reply(us: int, ctx: AgentContext) -> string {
 }
 
 // ---------------------------------------------------------------------------
-// JSON + HTTP/1.1 over the net seam (all Yuga)
+// JSON + HTTP/1.1 over the net seam (all Loam)
 // ---------------------------------------------------------------------------
 
 fn find_from(s: string, pat: string, from: int) -> int {

@@ -5,7 +5,7 @@
 //!
 //! Build & run from the repo root:
 //!   make
-//!   YUGA_LINK_EXTRA="examples/zeus/greeninfer/runtime/greeninfer_runtime.c" \
+//!   LOAM_LINK_EXTRA="examples/zeus/greeninfer/runtime/greeninfer_runtime.c" \
 //!     ./bin/yugac examples/zeus/greeninfer/main.loam -o greeninfer-macos
 //!   ./greeninfer-macos
 //!

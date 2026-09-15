@@ -82,7 +82,7 @@ That script:
 The emulator reaches the Mac backend at **`10.0.2.2:8080`**, not `127.0.0.1`
 (`http.client()` fills this per `--target`). The Simulator and Cocoa apps
 use `127.0.0.1` because they share the Mac loopback. A physical device
-cannot use `10.0.2.2` — set `YUGA_RPC_ADDR` to the Mac's LAN IP:port.
+cannot use `10.0.2.2` — set `LOAM_RPC_ADDR` to the Mac's LAN IP:port.
 
 Layout is the phone view in density-independent pixels, like iOS points.
 `zeus.App(title, build)` uses `window_size()`; trailing width/height only

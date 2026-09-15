@@ -1,7 +1,7 @@
 //! `async` — timers, spawn, and the one-thread async pump (std:async).
 //!
 //! The UI thread is the only thread (§5.1). Everything here runs **on** it:
-//! queues and dispatch are plain Yuga state; the C seam is only a monotonic
+//! queues and dispatch are plain Loam state; the C seam is only a monotonic
 //! clock (`now_ms`) and a blocking `sleep` (console/headless loops).
 //!
 //! ```
@@ -53,11 +53,11 @@ struct Future<T> {
 }
 
 /// Monotonic milliseconds (host clock). i64: epoch millis overflow i32 in ~24
-/// days (§3.6). Bodyless: `yuga_async_now_ms`.
+/// days (§3.6). Bodyless: `loam_async_now_ms`.
 fn now_ms() -> i64 {}
 
 /// Block the calling thread for `ms`. Console/headless only — never in UI
-/// code; use `after` there. Bodyless: `yuga_async_sleep_ms`.
+/// code; use `after` there. Bodyless: `loam_async_sleep_ms`.
 fn sleep(ms: int) {}
 
 let mut timers: []Timer = []Timer {}
