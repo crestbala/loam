@@ -1,0 +1,101 @@
+//! In-language tests for `mathf` (`mathf_tests.yuga`).
+//!
+//! The expected values are the reference libm results, rounded to 7 decimals.
+//! `yugac test` runs them:
+//!
+//!     ./bin/yugac test examples/language/ppm/mathf_tests.yuga
+
+import "std:test"
+import "mathf.yuga"
+
+fn near(got: float, want: float, eps: float) -> bool {
+    return mathf.abs(got - want) <= eps
+}
+
+/// Relative comparison, for values whose magnitude differs from 1.
+fn near_rel(got: float, want: float, eps: float) -> bool {
+    return mathf.abs(got - want) <= mathf.abs(want) * eps
+}
+
+#[test]
+fn sin_matches_libm() {
+    test.assert(near(mathf.sin(0.0), 0.0, 1e-6))
+    test.assert(near(mathf.sin(1.0), 0.841471, 1e-5))
+    test.assert(near(mathf.sin(-1.0), -0.841471, 1e-5))
+    test.assert(near(mathf.sin(0.5), 0.4794255, 1e-5))
+    test.assert(near(mathf.sin(3.0), 0.14112, 1e-5))
+    test.assert(near(mathf.sin(mathf.TAU), 0.0, 1e-5))
+    test.assert(near(mathf.sin(12.5), -0.0663219, 1e-4))
+    test.assert(near(mathf.sin(-9.25), -0.1738895, 1e-4))
+    test.assert(near(mathf.sin(100.0), -0.5063656, 1e-4))
+}
+
+#[test]
+fn cos_matches_libm() {
+    test.assert(near(mathf.cos(0.0), 1.0, 1e-6))
+    test.assert(near(mathf.cos(1.0), 0.5403023, 1e-5))
+    test.assert(near(mathf.cos(3.0), -0.9899925, 1e-5))
+    test.assert(near(mathf.cos(0.5), 0.8775826, 1e-5))
+    test.assert(near(mathf.cos(mathf.TAU), 1.0, 1e-5))
+    test.assert(near(mathf.cos(-9.25), -0.9847652, 1e-4))
+    test.assert(near(mathf.cos(100.0), 0.8623189, 1e-4))
+}
+
+#[test]
+fn sin_cos_pythagoras() {
+    // The identities have to hold across the reduction seams too.
+    test.assert(near(mathf.sin(1.1) * mathf.sin(1.1) + mathf.cos(1.1) * mathf.cos(1.1), 1.0, 1e-5))
+    test.assert(near(mathf.sin(-4.4) * mathf.sin(-4.4) + mathf.cos(-4.4) * mathf.cos(-4.4), 1.0, 1e-5))
+    test.assert(near(mathf.sin(9.0) * mathf.sin(9.0) + mathf.cos(9.0) * mathf.cos(9.0), 1.0, 1e-5))
+}
+
+#[test]
+fn exp_matches_libm() {
+    test.assert(near(mathf.exp(0.0), 1.0, 1e-6))
+    test.assert(near_rel(mathf.exp(1.0), 2.7182818, 1e-5))
+    test.assert(near_rel(mathf.exp(-1.0), 0.3678794, 1e-5))
+    test.assert(near_rel(mathf.exp(2.5), 12.182494, 1e-5))
+    test.assert(near_rel(mathf.exp(-2.5), 0.082085, 1e-5))
+    test.assert(near_rel(mathf.exp(5.0), 148.4131591, 1e-5))
+    test.assert(near_rel(mathf.exp(40.0), 2.3538526683702e17, 1e-5))
+    test.assert(near_rel(mathf.exp(-80.0), 1.8048513878454e-35, 1e-4))
+}
+
+#[test]
+fn exp_saturates_instead_of_overflowing() {
+    test.assert(mathf.exp(1000.0) > 1.0e38)
+    test.assert(mathf.exp(-1000.0) == 0.0)
+}
+
+#[test]
+fn tanh_matches_libm() {
+    test.assert(near(mathf.tanh(0.0), 0.0, 1e-6))
+    test.assert(near(mathf.tanh(0.5), 0.4621172, 1e-5))
+    test.assert(near(mathf.tanh(-0.5), -0.4621172, 1e-5))
+    test.assert(near(mathf.tanh(1.0), 0.7615942, 1e-5))
+    test.assert(near(mathf.tanh(3.0), 0.9950548, 1e-5))
+    test.assert(near(mathf.tanh(-3.0), -0.9950548, 1e-5))
+    // Far out, tanh is exactly ±1 in f32.
+    test.assert(mathf.tanh(20.0) == 1.0)
+    test.assert(mathf.tanh(-20.0) == -1.0)
+}
+
+#[test]
+fn sqrt_matches_libm() {
+    test.assert(mathf.sqrt(0.0) == 0.0)
+    test.assert(near(mathf.sqrt(1.0), 1.0, 1e-6))
+    test.assert(near_rel(mathf.sqrt(2.0), 1.4142136, 1e-5))
+    test.assert(near(mathf.sqrt(0.25), 0.5, 1e-6))
+    test.assert(near(mathf.sqrt(16.0), 4.0, 1e-5))
+    test.assert(near_rel(mathf.sqrt(1000000.0), 1000.0, 1e-5))
+    test.assert(near_rel(mathf.sqrt(0.001), 0.0316228, 1e-4))
+}
+
+#[test]
+fn abs_and_clamp() {
+    test.assert(mathf.abs(-2.5) == 2.5)
+    test.assert(mathf.abs(2.5) == 2.5)
+    test.assert(mathf.clamp(0.5, 0.0, 1.0) == 0.5)
+    test.assert(mathf.clamp(-3.0, 0.0, 1.0) == 0.0)
+    test.assert(mathf.clamp(9.0, 0.0, 1.0) == 1.0)
+}

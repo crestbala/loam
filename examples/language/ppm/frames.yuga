@@ -1,0 +1,242 @@
+//! `frames` — the PPM frame pipeline behind the demos in this directory.
+//!
+//! One `.ppm` file per frame (binary P6: an ASCII header, then `w * h * 3` raw
+//! bytes), then a single `ffmpeg` pass that turns the sequence into an `.mp4`.
+//! `ffmpeg` is invoked through `sys.exec`, so the only C involved is the small
+//! set of runtime hooks `std:sys` already exposes: there is no image or video
+//! code in the language, and none is needed.
+//!
+//! Everything a demo needs is read from the environment:
+//!
+//! | Variable | Meaning |
+//! |---|---|
+//! | `YUGA_PPM_OUT` | output directory (default `out`) |
+//! | `YUGA_PPM_CRF` | x264 quality, 0 (lossless) to 51 (default 16) |
+//! | `YUGA_PPM_PRESET` | x264 preset, e.g. `slow` (default), `veryslow` |
+//! | `YUGA_PPM_KEEP` | keep the `.ppm` files after encoding |
+//!
+//! The per-demo knobs (`YUGA_PPM_SCALE`, `YUGA_PPM_FRAMES`, `YUGA_PPM_FPS`)
+//! go through `frames.env_int`.
+
+import "std:fmt"
+import "std:sys"
+
+/// `name` from the environment, or `fallback` when unset or empty.
+fn env_str(name: string, fallback: string) -> string {
+    let v = sys.env(name)
+    if v.len == 0 {
+        return fallback
+    }
+    return v
+}
+
+/// Where frames and the encoded video are written. `YUGA_PPM_OUT` overrides,
+/// so a demo can be pointed at a scratch directory without being rebuilt.
+fn out_dir() -> string {
+    return env_str("YUGA_PPM_OUT", "out")
+}
+
+/// Create `dir` and its parents. `0` on success.
+fn ensure_dir(dir: string) -> int {
+    return sys.mkdir(dir)
+}
+
+/// `s` as a non-negative decimal int, or `fallback`.
+///
+/// Three implementation notes: an empty string is "unset", any non-digit ends
+/// the scan and returns the fallback rather than a partial read, and the
+/// accumulator stops growing at seven digits so a typo cannot overflow `int`
+/// and trap before the fallback is reached.
+fn parse_int(s: string, fallback: int) -> int {
+    if s.len == 0 {
+        return fallback
+    }
+    let mut v = 0
+    let mut i = 0
+    while i < s.len {
+        let c = s[i]
+        if c < 48 || c > 57 {
+            return fallback
+        }
+        if v > 100000 {
+            return fallback
+        }
+        v = v * 10 + (c - 48)
+        i = i + 1
+    }
+    return v
+}
+
+/// `name` from the environment as an int, or `fallback` when it is unset or
+/// not a plain decimal number.
+fn env_int(name: string, fallback: int) -> int {
+    return parse_int(sys.env(name), fallback)
+}
+
+/// `1`/`true` when `name` is set and non-empty.
+fn env_flag(name: string) -> bool {
+    return sys.env_set(name) == 1
+}
+
+/// True when `s` is a non-empty run of lowercase letters, digits and dashes.
+///
+/// x264 preset names are all of that shape (`veryfast`, `medium`, `slower`),
+/// and this value is pasted into a shell command, so anything else falls back
+/// to the default instead of reaching the shell.
+fn is_word(s: string) -> bool {
+    let mut i = 0
+    while i < s.len {
+        let c = s[i]
+        let lower = c >= 97 && c <= 122
+        let digit = c >= 48 && c <= 57
+        if !lower && !digit && c != 45 {
+            return false
+        }
+        i = i + 1
+    }
+    return s.len > 0
+}
+
+/// The x264 preset to encode with.
+fn preset() -> string {
+    let p = env_str("YUGA_PPM_PRESET", "slow")
+    if !is_word(p) {
+        return "slow"
+    }
+    return p
+}
+
+/// `n` rounded down to an even number, with a floor of 2. H.264 with
+/// `yuv420p` wants even dimensions, and the demos derive both sides from one
+/// scale factor — so an odd scale would otherwise fail at the encode step.
+fn even(n: int) -> int {
+    let m = (n / 2) * 2
+    if m < 2 {
+        return 2
+    }
+    return m
+}
+
+/// `i` in decimal, left-padded with zeros to `digits`.
+///
+/// 7 -> "007" for `digits = 3`. A number wider than `digits` is not truncated:
+/// frame 1000 of a 3-digit pattern is "1000", which is still a legal file name
+/// even though it no longer sorts next to its neighbours.
+fn padded(i: int, digits: int) -> string {
+    let mut s = "{{i}}"
+    let mut pad = digits - s.len
+    while pad > 0 {
+        s = "0{{s}}"
+        pad = pad - 1
+    }
+    return s
+}
+
+/// `dir/name-003.ppm` — the file one frame is written to. `ffmpeg` reads the
+/// same names back through the `dir/name-%03d.ppm` pattern in `encode`.
+fn path(dir: string, name: string, i: int, digits: int) -> string {
+    return "{{dir}}/{{name}}-{{padded(i, digits)}}.ppm"
+}
+
+/// The `ffmpeg` input pattern, `dir/name-%03d.ppm`.
+fn pattern(dir: string, name: string, digits: int) -> string {
+    return "{{dir}}/{{name}}-%0{{digits}}d.ppm"
+}
+
+/// Start a `w` x `h` frame: a byte buffer that already holds the P6 header.
+///
+/// The header is ASCII, the pixels that follow are raw bytes, and the buffer
+/// is `[]int` because `string_from_bytes` — the language's one bridge from a
+/// byte buffer to a `string` — reads `i32` elements.
+fn image(w: int, h: int) -> []int {
+    let mut b = []int {}
+    push_str(&mut b, "P6\n{{w}} {{h}}\n255\n")
+    return b
+}
+
+/// Append every byte of `s`.
+fn push_str(b: &mut []int, s: string) {
+    let mut i = 0
+    while i < s.len {
+        b.push(s[i])
+        i = i + 1
+    }
+}
+
+/// Append one pixel, each channel `0..255`.
+fn rgb(b: &mut []int, r: int, g: int, bl: int) {
+    b.push(r)
+    b.push(g)
+    b.push(bl)
+}
+
+/// One `0.0..1.0` float channel as a byte. Out-of-range and NaN inputs clamp
+/// instead of trapping, because a shader's output is not guaranteed to be
+/// in gamut and one bad pixel should not kill a 240-frame render.
+fn byte_of(x: float) -> int {
+    if x != x {
+        return 0
+    }
+    if x <= 0.0 {
+        return 0
+    }
+    if x >= 1.0 {
+        return 255
+    }
+    return i32(x * 255.0)
+}
+
+/// Append one pixel from three `0.0..1.0` float channels.
+fn rgbf(b: &mut []int, r: float, g: float, bl: float) {
+    rgb(b, byte_of(r), byte_of(g), byte_of(bl))
+}
+
+/// Write frame `i`. `0` on success. The pixel buffer is converted to a
+/// `string` and handed to `sys.write_file` in one call.
+fn save(dir: string, name: string, i: int, digits: int, body: []int) -> int {
+    return sys.write_file(path(dir, name, i, digits), string_from_bytes(body))
+}
+
+/// Encode `dir/name-*.ppm` into `dir/name.mp4` at `fps`. Returns the `ffmpeg`
+/// exit status, so the caller can report a failure instead of silently
+/// finishing with no video.
+///
+/// Three settings matter for these images:
+///
+/// - `-crf 16` (x264's default is 23, and `YUGA_PPM_CRF` overrides). A plasma
+///   is a field of very smooth gradients, which is the case CRF 23 handles
+///   worst: it quantizes the ramps into visible bands. `-crf 0` is lossless.
+/// - `-preset slow`, for a better rate/distortion trade at the same CRF.
+/// - `-framerate` on the *input* side: a still-image sequence otherwise
+///   arrives at ffmpeg's default 25 fps and the output plays at the wrong
+///   speed. `-pix_fmt yuv420p` is what makes the file playable outside ffmpeg.
+fn encode(dir: string, name: string, digits: int, fps: int) -> int {
+    let crf = env_int("YUGA_PPM_CRF", 16)
+    let cmd = "ffmpeg -y -loglevel error -framerate {{fps}} -i \"{{pattern(dir, name, digits)}}\" -c:v libx264 -crf {{crf}} -preset {{preset()}} -pix_fmt yuv420p \"{{dir}}/{{name}}.mp4\""
+    sys.exec(cmd)
+    return sys.exec_status()
+}
+
+/// Delete the frame files `encode` has already read.
+///
+/// The directory is quoted so it survives a path with spaces, and the
+/// `name-*.ppm` glob deliberately is not: it has to reach the shell
+/// unexpanded, or `rm` is handed a literal `*` and matches nothing.
+fn remove_frames(dir: string, name: string) {
+    sys.exec("rm -f \"{{dir}}\"/{{name}}-*.ppm")
+}
+
+/// Encode the frames and report where the video landed: the one step both
+/// demos end with, so each of them is only its pixel loop.
+fn finish(dir: string, name: string, digits: int, count: int, fps: int) {
+    fmt.println("encoding", count, "frame(s) at", fps, "fps ...")
+    if encode(dir, name, digits, fps) != 0 {
+        fmt.println("ffmpeg failed; frames left in", dir)
+        sys.exit(1)
+    }
+    let video = "{{dir}}/{{name}}.mp4"
+    if !env_flag("YUGA_PPM_KEEP") {
+        remove_frames(dir, name)
+    }
+    fmt.println("wrote", video)
+}
