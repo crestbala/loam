@@ -1572,7 +1572,7 @@ static char st_mods[ST_MAX_MOD][64];
 static int st_nmods;
 
 #ifndef LOAM_STD_DIR
-#define LOAM_STD_DIR "packages/yuga/std"
+#define LOAM_STD_DIR "packages/loam/std"
 #endif
 
 static char std_names[32][32];

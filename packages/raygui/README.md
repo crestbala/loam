@@ -30,10 +30,10 @@ Run the example: `./run.sh raygui` (needs `brew install raylib`).
 | Piece | Where | What |
 |---|---|---|
 | API + frame loop | `std/raygui.loam` | Bodyless `plat_*` hooks plus the public wrappers and the `init` / `open` / `begin` / `end` / `close` loop. |
-| Host seam | `packages/yuga/runtime/raygui_plat.c` | Includes `RAYGUI_IMPLEMENTATION`, owns the raylib window, and converts each call (NUL-terminate a `loam_str`, mirror raygui's `bool *` state as `int *`). No widget logic. |
-| Declarations | `packages/yuga/runtime/raygui_rt.h` | The `loam_raygui_plat_*` prototypes the generated C calls. |
+| Host seam | `packages/loam/runtime/raygui_plat.c` | Includes `RAYGUI_IMPLEMENTATION`, owns the raylib window, and converts each call (NUL-terminate a `loam_str`, mirror raygui's `bool *` state as `int *`). No widget logic. |
+| Declarations | `packages/loam/runtime/raygui_rt.h` | The `loam_raygui_plat_*` prototypes the generated C calls. |
 | Vendored header | `vendor/raygui.h` | raygui 4.0 (matches raylib 5.x). |
-| Link | `packages/yuga/src/driver.c` | `import "std:raygui"` links the seam and raylib (`RAYLIB_PREFIX`, else `pkg-config raylib`, else Homebrew). |
+| Link | `packages/loam/src/driver.c` | `import "std:raygui"` links the seam and raylib (`RAYLIB_PREFIX`, else `pkg-config raylib`, else Homebrew). |
 
 Immediate mode keeps **no** retained state in the library: the app holds the
 values (`let mut`) and re-issues every control each frame, which is why the

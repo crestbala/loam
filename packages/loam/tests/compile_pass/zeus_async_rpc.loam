@@ -79,7 +79,7 @@ fn cli_main() {
     // Real async gRPC-Web round trip against the child server. The pump loop
     // below is the headless frame loop: each pump ticks the async state
     // machines, relayouts, and repaints.
-    let cmd = "LOAM_ASYNC_SRV=1 packages/yuga/tests/tmp/zeus_async_rpc >/dev/null 2>&1 &"
+    let cmd = "LOAM_ASYNC_SRV=1 packages/loam/tests/tmp/zeus_async_rpc >/dev/null 2>&1 &"
     sys.exec(cmd)
     let mut addr = sys.read_file("/tmp/loam_async_rpc.port")
     let mut guard = 0

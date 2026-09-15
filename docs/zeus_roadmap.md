@@ -1,7 +1,7 @@
 # Zeus / Loam — production roadmap
 
 Phase-by-phase plan for turning `packages/zeus/std/zeus.loam` (engine + design system)
-(+ `packages/yuga/std/net`, `packages/http/std/http`, the C runtime) into a stack you can build real
+(+ `packages/loam/std/net`, `packages/http/std/http`, the C runtime) into a stack you can build real
 products on — ecommerce tools, team chat (Slack/Teams-shaped), social apps.
 
 Related: the next series (one host entry, honest `App` size, touch vs

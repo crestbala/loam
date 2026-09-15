@@ -118,7 +118,7 @@ Browser events → `loader.js` → exported `zeus_pointer_*` / `zeus_key` →
 Native (headless snapshot):
 
 ```
-ZEUS_HEADLESS=1 ./bin/yugac packages/yuga/tests/compile_pass/zeus_snap.loam -o packages/yuga/tests/tmp/zeus_snap
+ZEUS_HEADLESS=1 ./bin/yugac packages/loam/tests/compile_pass/zeus_snap.loam -o packages/loam/tests/tmp/zeus_snap
 ```
 
 WASM (needs a clang that has `wasm32`, e.g. Homebrew `llvm` or wasi-sdk).
@@ -206,9 +206,9 @@ Output is `examples/zeus/counter/macos/build/app`.
 
 `import "pkg:name"` resolves to `vendor/name/name.loam` (or `main.loam`),
 searched upward from the entry file. `zeus pkg sync <appdir>` reads
-`<appdir>/yuga.deps` — one `name source [rev]` per line, `#` comments —
+`<appdir>/loam.deps` — one `name source [rev]` per line, `#` comments —
 materializes each package under `<appdir>/vendor/<name>/`, and writes
-`<appdir>/yuga.lock`. A `path:../dir` source is copied locally (no network);
+`<appdir>/loam.lock`. A `path:../dir` source is copied locally (no network);
 anything else is a git URL, cloned and pinned to a SHA.
 
 For the devtools, two core dumps read the arena directly:

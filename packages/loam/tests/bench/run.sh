@@ -10,13 +10,13 @@ cd "$(dirname "$0")/../../../.."
 export ZEUS_HEADLESS=1 MAYA_HEADLESS=1
 
 YUGAC=./bin/yugac
-APP_REL=packages/yuga/tests/bench/bench.loam
-OUT=packages/yuga/tests/tmp/bench
+APP_REL=packages/loam/tests/bench/bench.loam
+OUT=packages/loam/tests/tmp/bench
 BASE="$OUT/baseline"
 # The baseline is whatever HEAD happens to be, and the language has lived at
 # three paths across the restructure. Probe them newest-first.
-BASE_APP_REL=packages/yuga/tests/bench/bench.loam
-for cand in packages/yuga/tests/bench/bench.loam yuga/tests/bench/bench.loam; do
+BASE_APP_REL=packages/loam/tests/bench/bench.loam
+for cand in packages/loam/tests/bench/bench.loam yuga/tests/bench/bench.loam; do
     if [ -f "$BASE/$cand" ]; then BASE_APP_REL=$cand; break; fi
 done
 mkdir -p "$OUT"

@@ -34,4 +34,4 @@ the queue (`net.ws_count` / `ws_copy`) and delivers each message to the
 callback on the UI thread — the same stepper model as native TCP.
 
 Native WebSockets (RFC 6455 in pure Loam, `httpcore/ws.loam`) are covered by
-`packages/yuga/tests/compile_pass/zeus_stream.loam`.
+`packages/loam/tests/compile_pass/zeus_stream.loam`.

@@ -1,9 +1,9 @@
 obj/
 bin/
-packages/yuga/tests/tmp/
-packages/yuga/runtime/.obj/
-packages/yuga/tests/routes_app/.zeus/
-packages/yuga/tests/routes_app/build/
+packages/loam/tests/tmp/
+packages/loam/runtime/.obj/
+packages/loam/tests/routes_app/.zeus/
+packages/loam/tests/routes_app/build/
 *.o
 *.dSYM/
 .DS_Store
@@ -52,5 +52,5 @@ out/
 examples/zeus/ws/frontend/build/
 examples/zeus/ws/frontend/node_modules/
 examples/zeus/ws/backend/build/
-packages/yuga/tests/pkg_app/vendor/
-packages/yuga/tests/pkg_app/yuga.lock
+packages/loam/tests/pkg_app/vendor/
+packages/loam/tests/pkg_app/loam.lock

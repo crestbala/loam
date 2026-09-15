@@ -1,6 +1,6 @@
 // DRAW-list golden: in-tree text metrics from a bound external font.
 //
-// `zeus.use_font` binds packages/yuga/tests/fonts/tiny.ttf. tiny.ttf's
+// `zeus.use_font` binds packages/loam/tests/fonts/tiny.ttf. tiny.ttf's
 // space is 250/1000 em where the headless fallback charges 0.6em per byte, so:
 //   * `ABC` lands at a smaller x after `A A`, and
 //   * `AB AB AB` fits one 65px line in-tree but wraps to two without the font.
@@ -11,7 +11,7 @@
 import "std:zeus"
 
 fn main() {
-    zeus.use_font("packages/yuga/tests/fonts/tiny.ttf")
+    zeus.use_font("packages/loam/tests/fonts/tiny.ttf")
     zeus.snapshot(320, 220, fn() -> Node {
         zeus.Page() {
             zeus.Row(0) {

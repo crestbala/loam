@@ -61,7 +61,7 @@ Or step by step, as the toolchain intends:
 
 ```
 # 1. the C runtime: NEON + mmap primitives
-clang -O1 -I packages/yuga/runtime -c \
+clang -O1 -I packages/loam/runtime -c \
   examples/zeus/greeninfer/runtime/greeninfer_runtime.c \
   -o examples/zeus/greeninfer/build/greeninfer_runtime.o
 

@@ -48,8 +48,8 @@ function wasmIsCurrent() {
   const acc = { t: 0 };
   newestMtime(here, acc);
   newestMtime(resolve(here, ".."), acc);
-  newestMtime(resolve(repo, "packages/yuga/std"), acc);
-  newestMtime(resolve(repo, "packages/yuga/runtime"), acc);
+  newestMtime(resolve(repo, "packages/loam/std"), acc);
+  newestMtime(resolve(repo, "packages/loam/runtime"), acc);
   newestMtime(resolve(repo, "packages/zeus/std"), acc);
   newestMtime(resolve(repo, "packages/http/std"), acc);
   newestMtime(resolve(repo, "packages/maya/std"), acc);
@@ -147,8 +147,8 @@ export default defineConfig({
         const watch = [
           here,
           resolve(here, ".."),
-          resolve(repo, "packages/yuga/std"),
-          resolve(repo, "packages/yuga/runtime"),
+          resolve(repo, "packages/loam/std"),
+          resolve(repo, "packages/loam/runtime"),
           resolve(repo, "packages/zeus/std"),
           resolve(repo, "packages/http/std"),
           resolve(repo, "packages/maya/std"),

@@ -1,6 +1,6 @@
 # The C / Loam boundary
 
-There is exactly one C runtime in the tree: **`loam_rt`** (`packages/yuga/runtime/loam_rt.h`,
+There is exactly one C runtime in the tree: **`loam_rt`** (`packages/loam/runtime/loam_rt.h`,
 included into generated C). No library gets a `*_rt.c` of its own as a place
 to hide protocol or widget logic. Zeus layout/paint/hit-test and http
 encode/dispatch live in Loam. Hosts (Cocoa / UIKit / Canvas / JNI) own the
@@ -9,7 +9,7 @@ event loop and call back into `engine_*` trampolines.
 ## Convention
 
 A **boundary module** (today: `packages/zeus/std/zeuscore/platform.loam`, empty `fn`s in
-`packages/yuga/std/fmt.loam` / `packages/yuga/std/net.loam` / `packages/yuga/std/sys.loam`) declares plain, **bodyless** functions:
+`packages/loam/std/fmt.loam` / `packages/loam/std/net.loam` / `packages/loam/std/sys.loam`) declares plain, **bodyless** functions:
 
 ```yuga
 fn plat_set_window(title: string, width: int, height: int) {}
@@ -33,7 +33,7 @@ The other direction: C calls compiled Loam as `loam_zeus_engine_paint`,
 | Layer | C | Loam |
 |---|---|---|
 | Language (`loam_rt`) | Allocator, panic/trap, overflow, wrapping bit ops, `string_from_bytes`, `loam_fn` `{fn, env, env_size}`, `env_set` / `exit` | — |
-| net (`packages/yuga/std/net`) | TCP connect/read/write/close, listen/accept/peek, wasm `fetch_rpc` | — |
+| net (`packages/loam/std/net`) | TCP connect/read/write/close, listen/accept/peek, wasm `fetch_rpc` | — |
 | Zeus | Host event loop + replay of the draw list; `plat_intern_fn` memcpy's a `loam_fn` env so click/styled handlers outlive the interned value | Tree, layout, signals, design system, `platform.loam` signatures |
 | Maya | Host event loop + present (Cocoa blit / 2D discs) | Scene, orbits, camera, CPU tracer, 2D map layout, `sin`/`cos` |
 | raygui | Host window + event pump (raylib) and a thin raygui trampoline (`runtime/raygui_plat.c`); no widget logic | API, frame loop, and all retained state (`packages/raygui/std/raygui.loam`) |

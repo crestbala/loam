@@ -83,7 +83,7 @@ check / codegen / cc timings.
 
 ## Libraries
 
-Quoted imports only. `import "std:foo"` loads `packages/yuga/std/foo.loam`.
+Quoted imports only. `import "std:foo"` loads `packages/loam/std/foo.loam`.
 Call imported items as `foo.bar(...)`.
 
 | Import | What it is |
@@ -203,7 +203,7 @@ Equivalent without `run.sh`:
 ./bin/yugac --run examples/language/http_server.loam
 ```
 
-Golden programs under `packages/yuga/tests/golden/` (hello, fib, fizzbuzz,
+Golden programs under `packages/loam/tests/golden/` (hello, fib, fizzbuzz,
 …) are compiled by `make test`. They are fixtures, not demos.
 
 ### Zeus (`examples/zeus/`)

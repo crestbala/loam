@@ -34,7 +34,7 @@ signatures.
 
 ## Benchmark
 
-`make bench` builds `packages/yuga/tests/bench/bench.loam` (a fixed ~3000
+`make bench` builds `packages/loam/tests/bench/bench.loam` (a fixed ~3000
 node tree, 500 layout passes, then one paint) with the pre-flip tree (`git HEAD`,
 `int` = i64) and with the current default, and records arena counts, layout time,
 native binary size, generated C size, and wasm size when `LOAM_WASM_CC` is set.
