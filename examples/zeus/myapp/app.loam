@@ -5,10 +5,15 @@
 
 import "std:zeus"
 import "app_routes.loam" as approutes
-import "server/api.loam" as api
+// The one piece of data myapp fetches: `Blog.Posts` from the backend in
+// `server/main.loam`. Started here, before `zeus.App`, so the connection's state
+// is allocated outside a rebuild host — a `Match`/`For` rebuild frees what it
+// allocated on its next pass. The route only reads the result.
+import "routes/blog/loader.loam" as blog_loader
 import "tests/smoke.loam" as smoketest
 
 fn main() {
+    blog_loader.start()
     zeus.App("myapp", fn() {
         approutes.app()
     })

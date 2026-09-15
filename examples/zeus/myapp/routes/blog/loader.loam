@@ -1,6 +1,84 @@
-//! Blog list query. Make `posts` a `#[server] fn` to fetch it from the
-//! backend; it stays a plain fn here so the scaffold runs on every host.
+//! Blog list, fetched from the backend over gRPC (`Blog.Posts` in
+//! `server/api.loam`).
+//!
+//! On module state: some of it is unavoidable — a signal has to outlive a page
+//! build, and there is nowhere else to keep one — but it is kept to two *zero*
+//! handles, created on first use, with no separate flag. This is `std:router`'s
+//! own idiom (`ensure_path`, router.loam:300):
+//!
+//!     let mut cur_path: Signal<string> = Signal { id: 0 }
+//!     fn ensure_path() { if cur_path.id == 0 { cur_path = zeus.signal("/") } }
+//!
+//! **Creating a signal at module-init time is unsafe, not just unconventional.**
+//! Bisected against this loader: with `zeus.signal(...)` at module scope the app
+//! segfaults inside `zeus.snapshot` while building the tree; with the creation
+//! inside `start()` the same program runs to completion. `state.id == 0` doubles
+//! as the "already started" latch, so there is no `started` flag either.
+//!
+//! Two signals and not one `Signal<Feed>`: a signal holding a struct that owns a
+//! list loses the list's *elements* when the store happens inside an async
+//! callback — exactly where a reply lands. Minimal reproduction (the value reads
+//! back fine, nothing paints):
+//!
+//!     struct Feed { state: int, titles: []string }
+//!     let a = zeus.signal(Feed { state: 0, titles: []string {} })
+//!     async.spawn(|| { a.set(Feed { state: 1, titles: pushed("delta") }) })
+//!     zeus.pump_frame()
+//!     // a.get().titles.len == 1, but `zeus.Text(a.get().titles[0])` inside a
+//!     // `zeus.Match` over `a` paints nothing.
+//!
+//! `start()` is called from `app.loam` before `zeus.App`, not from the page:
+//! `call_async` registers connection state, and anything allocated during a
+//! `Match` / `For` rebuild belongs to that host, which frees it on its next
+//! rebuild.
 
-fn posts() -> []string {
-    return []string { "hello world", "second post" }
+import "std:http"
+import "std:zeus"
+// Bare (no `as`), so `PostsReq` is in scope unqualified — a struct literal
+// cannot be qualified (`api.PostsReq { }` is a parse error) — while
+// `api.posts_rpc()` and the injected codecs resolve through the module stem.
+// Import paths are relative to this file, hence the climb to the app root.
+import "../../server/api.loam"
+
+/// In flight, or answered. `std:res`'s RES.Loading / RES.Ready.
+let STATE_LOADING = 0
+let STATE_READY = 1
+
+let mut state: Signal<int> = Signal { id: 0 }
+let mut titles: Signal<[]string> = Signal { id: 0 }
+
+/// Start the request, once. Idempotent, and the zero handle *is* the latch: an
+/// allocated `state` means a request is already under way.
+///
+/// A transport failure leaves the state at `STATE_LOADING`: `call_async` has no
+/// error channel and the synchronous `call` would block the frame. Adding a
+/// timeout is a separate change.
+fn start() {
+    if state.id != 0 {
+        return
+    }
+    state = zeus.signal(STATE_LOADING)
+    titles = zeus.signal([]string {})
+    http.client().call_async(api.posts_rpc(), api.encode_PostsReq(PostsReq {}), fn(raw) {
+        let reply = api.decode_PostsResp(raw)
+        titles.set(reply.titles)
+        state.set(STATE_READY)
+    })
+}
+
+/// The load state, for the page to `zeus.Match` on.
+fn load_state() -> Signal<int> {
+    return state
+}
+
+/// The reply, read inside the `Match` so the repaint follows it.
+fn load_data() -> Signal<[]string> {
+    return titles
+}
+
+/// Is a reply in hand? A function rather than a constant the page could compare
+/// against, because a cross-module `let` cannot be read (see
+/// tests/compile_fail/zeus_mod_get.loam).
+fn is_ready(st: int) -> bool {
+    return st == STATE_READY
 }

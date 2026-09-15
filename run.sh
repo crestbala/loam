@@ -165,6 +165,30 @@ zeus_entry() {
 # CLI, not by pointing loam at <name>/<name>.loam — that file does not exist
 # for these. Regenerate the route table first so a new routes/ file is picked
 # up, then gate on `loam check` like every other path here.
+# An app with a `server/main.loam` needs its backend up, or every route that
+# fetches data sits on its Loading state with nothing to explain why. One command
+# brings up both halves, the way `./run.sh counter` does. These branches
+# deliberately do not `exec`, so the trap still fires and the backend is not left
+# orphaned on 8080.
+backend_pid=""
+
+backend_up() {
+  [ -f "$appdir/server/main.loam" ] || return 0
+  check_loam "$appdir/server/main.loam"
+  echo "run.sh: backend on 127.0.0.1:8080 (Ctrl-C stops both)"
+  "$LOAM" --run "$appdir/server/main.loam" &
+  backend_pid=$!
+  trap 'backend_down' EXIT
+  trap 'backend_down; exit 130' INT TERM
+}
+
+backend_down() {
+  if [ -n "$backend_pid" ]; then
+    kill "$backend_pid" 2>/dev/null
+    backend_pid=""
+  fi
+}
+
 run_zeus_framework_app() {
   name=$1
   target=${2:-native}
@@ -174,11 +198,26 @@ run_zeus_framework_app() {
   entry=$(zeus_entry "$appdir") || die "no entry .loam in $appdir"
   check_loam "$entry"
   case $target in
-    native|macos) exec "$LOAM" --run "$entry" ;;
-    wasm32|wasm|web) exec "$HERE/bin/zeus" dev "$appdir" ;;
+    native|macos)
+      backend_up
+      "$LOAM" --run "$entry"
+      status=$?
+      backend_down
+      exit $status ;;
+    wasm32|wasm|web)
+      backend_up
+      "$HERE/bin/zeus" dev "$appdir"
+      status=$?
+      backend_down
+      exit $status ;;
     ios|android) exec "$LOAM" "--target=$target" --run "$entry" ;;
     build) exec "$HERE/bin/zeus" build "$appdir" ;;
-    *) die "unknown target '$target' (native macos web ios android build)" ;;
+    # The app's own gRPC backend (`server/main.loam`), not a `zeus` target: it
+    # is a second entry, so it is built and run directly. See examples/zeus/myapp.
+    backend)
+      check_loam "$appdir/server/main.loam"
+      exec "$LOAM" --run "$appdir/server/main.loam" ;;
+    *) die "unknown target '$target' (native macos web ios android backend build)" ;;
   esac
 }
 

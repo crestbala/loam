@@ -1,0 +1,33 @@
+//! myapp's backend: the server half of `server/api.loam`.
+//!
+//!   ./run.sh myapp backend          # serves 127.0.0.1:8080
+//!
+//! A second entry on purpose. `app.loam` opens a window and a server must not;
+//! keeping this apart is also what keeps `db.loam` out of every client build —
+//! nothing a client compiles imports it.
+//!
+//! Clients reach this through `http.client()`: gRPC-Web from wasm, h2c from
+//! native, with `LOAM_RPC_ADDR` overriding the address on native.
+
+import "std:http"
+// Bare (no `as`): a struct literal cannot be qualified — `api.HelloResp { .. }`
+// is a parse error — so types must be in scope unqualified. The module still
+// answers to its stem, which is how `api.hello_rpc()` below resolves.
+import "api.loam"
+import "db.loam"
+
+fn main() {
+    let app = http.app()
+
+    app.rpc(api.hello_rpc(), |body| {
+        let req = api.decode_HelloReq(body)
+        api.encode_HelloResp(HelloResp { greeting: api.greet(req.name) })
+    })
+
+    app.rpc(api.posts_rpc(), |body| {
+        let req = api.decode_PostsReq(body)
+        api.encode_PostsResp(PostsResp { titles: db.posts() })
+    })
+
+    app.listen(8080)
+}

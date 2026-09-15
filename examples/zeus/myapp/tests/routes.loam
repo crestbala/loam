@@ -63,7 +63,10 @@ fn main() {
     visit("/patterns", "Growing rows")
     visit("/about", "about")
     visit("/pricing", "pricing")
-    visit("/blog", "hello world")
+    // `/blog` fetches its list over gRPC, so with no backend running it paints
+    // the heading and its Loading state. The list itself only arrives from
+    // `./run.sh myapp backend`.
+    visit("/blog", "Posts")
     visit("/blog/hello-world", "hello-world")
     visit("/nope", "not found")
     fmt.println("myapp routes ok")

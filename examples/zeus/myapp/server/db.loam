@@ -1,2 +1,16 @@
-//! Database access belongs here, behind `#[server]` fns so handles and
-//! secrets never reach a client binary.
+//! Database access belongs here, behind an RPC handler so handles and secrets
+//! never reach a client binary.
+//!
+//! This module is imported by `server/main.loam` and by nothing else. That
+//! import graph — not the `#[server]` attribute — is what keeps it out of the
+//! client builds: `#[server]` only strips a body from a wasm build, it does not
+//! move code behind a boundary (see the note in `api.loam`).
+
+/// Blog post titles, newest first. Stand-in for a query.
+fn posts() -> []string {
+    return []string {
+        "hello world",
+        "second post",
+        "shipping the backend",
+    }
+}

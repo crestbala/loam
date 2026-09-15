@@ -1,0 +1,74 @@
+// #[proto] repeated fields: `[]string` and `[]int`.
+//
+// A list differs from a scalar in ways worth pinning down:
+//   - an element holding its default value is *data* — a `0` or an `""` in a
+//     list must survive, where a singular field would omit it;
+//   - an unset list decodes to empty, not to null;
+//   - the packed form (protobuf's default for repeated numerics, and what a
+//     writer in another language sends) has to decode too, or the list silently
+//     comes back empty.
+
+import "std:fmt"
+import "std:http"
+import "std:sys"
+
+#[proto]
+struct Lists {
+    names: []string,
+    nums: []int,
+    one: string,
+}
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+/// Hand-built wire bytes, for the forms our encoder does not emit.
+fn wire(xs: []int) -> string {
+    return string_from_bytes(xs)
+}
+
+fn main() {
+    // Round trip, defaults inside the list included.
+    let m = Lists { names: []string { "a", "", "c" }, nums: []int { 0, 7 }, one: "s" }
+    let d = decode_Lists(encode_Lists(m))
+    must(d.names.len == 3, "names length")
+    must(d.nums.len == 2, "nums length")
+    must(d.nums[0] == 0, "a zero element survives")
+    must(d.names[1].len == 0, "an empty element survives")
+    must(d.one == "s", "a scalar beside a list still decodes")
+
+    // A separator inside an element is data, not a boundary — the whole reason
+    // a list is not joined into one string field.
+    let nl = Lists { names: []string { "first\nsecond", "x" }, nums: []int {}, one: "" }
+    let nd = decode_Lists(encode_Lists(nl))
+    must(nd.names.len == 2, "a newline does not split an element")
+    must(nd.names[0].len == 12, "the newline is kept")
+
+    // Unset fields: zero bytes in, empty lists out.
+    must(encode_Lists(Lists { names: []string {}, nums: []int {}, one: "" }).len == 0,
+         "an all-default message is zero bytes")
+    let z = decode_Lists("")
+    must(z.names.len == 0, "an unset list is empty, not null")
+    must(z.nums.len == 0, "an unset int list is empty")
+
+    // Negatives go through the ten-byte varint path.
+    let neg = decode_Lists(encode_Lists(Lists { names: []string {}, nums: []int { -1, -2 }, one: "" }))
+    must(neg.nums.len == 2, "negatives length")
+    must(neg.nums[0] == -1, "negative element")
+
+    // Packed: key 18 = field 2, wire type 2; payload 1, 2, 300 (300 = 0xAC 0x02).
+    let pd = decode_Lists(wire([]int { 18, 4, 1, 2, 172, 2 }))
+    must(pd.nums.len == 3, "a packed run decodes every element")
+    must(pd.nums[2] == 300, "packed element value")
+
+    // Unpacked from another writer: key 16 = field 2, wire type 0, twice.
+    let ud = decode_Lists(wire([]int { 16, 5, 16, 6 }))
+    must(ud.nums.len == 2, "occurrences append")
+    must(ud.nums[1] == 6, "second occurrence value")
+
+    fmt.println("proto repeated ok", d.names.len, pd.nums.len, z.names.len)
+}
