@@ -19,7 +19,7 @@
       {
         "id": "yuga",
         "aliases": ["Loam", "yuga"],
-        "extensions": [".loam"],
+        "extensions": [".loam", ".loa"],
         "configuration": "./language-configuration.json"
       }
     ],
@@ -27,7 +27,7 @@
       {
         "language": "yuga",
         "scopeName": "source.loam",
-        "path": "./syntaxes/yuga.tmLanguage.json"
+        "path": "./syntaxes/loam.tmLanguage.json"
       }
     ],
     "configuration": {
