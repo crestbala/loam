@@ -15,12 +15,12 @@ if [ -z "$REPO" ]; then
   echo "run.sh: could not find the yuga repo (Makefile + packages/loam/src/)" >&2
   exit 1
 fi
-if [ ! -x "$REPO/bin/yugac" ]; then
-  echo "run.sh: building yugac"
+if [ ! -x "$REPO/bin/loam" ]; then
+  echo "run.sh: building loam"
   make -C "$REPO" -j4
 fi
 mkdir -p "$HERE/build"
 echo "backend: compiling server.loam"
-"$REPO/bin/yugac" "$HERE/server.loam" -o "$HERE/build/server"
+"$REPO/bin/loam" "$HERE/server.loam" -o "$HERE/build/server"
 echo "backend: ws://127.0.0.1:8080/ws"
 exec "$HERE/build/server"

@@ -67,7 +67,7 @@ fi
 if ! "$WASMCC" --target=wasm32 -fsyntax-only -x c /dev/null >/dev/null 2>&1; then
   die "wasm32 probe failed on $WASMCC — is this LLVM built with the wasm target?"
 fi
-say "wasm32 clang ok ($WASMCC) — yugac finds this path automatically"
+say "wasm32 clang ok ($WASMCC) — loam finds this path automatically"
 say "different LLVM? export LOAM_WASM_CC=/path/to/clang instead"
 
 # 4. Android stack (optional): JDK, SDK, NDK, Gradle, emulator image + AVD.
@@ -82,7 +82,7 @@ if [ "$MODE" = android ]; then
 fi
 
 say "done. Next steps:"
-say "  make && make test            # build yugac, run the full gate"
+say "  make && make test            # build loam, run the full gate"
 say "  ./run.sh gallery web         # wasm UI (Vite) at http://127.0.0.1:5174"
 say "  ./run.sh gallery macos       # Cocoa window"
 say "  ./run.sh gallery ios         # iOS Simulator (needs full Xcode)"

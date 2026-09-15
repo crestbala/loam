@@ -1,5 +1,5 @@
 /**
- * driver.c — `yugac` CLI: check, emit C, or compile+link with cc.
+ * driver.c — `loam` CLI: check, emit C, or compile+link with cc.
  *
  * Default: write a binary next to the source under build/. Generated C is
  * The frontend is cheap (~50ms for a zeus app); wall time is `cc` on
@@ -154,7 +154,7 @@ static int ensure_obj(const char *src, const char *obj, const char *extra,
     char cmd[2048];
     snprintf(cmd, sizeof cmd, "cc -std=gnu99 -O1 -c -I\"%s\" %s \"%s\" -o \"%s\"",
              LOAM_RUNTIME_DIR, extra ? extra : "", src, obj);
-    if (env_on("LOAM_TIME")) fprintf(stderr, "yugac: cc %s\n", src);
+    if (env_on("LOAM_TIME")) fprintf(stderr, "loam: cc %s\n", src);
     return system(cmd) != 0;
 }
 
@@ -264,7 +264,7 @@ static int ios_sim_run(const char *app, const char *bid) {
     snprintf(cmd, sizeof cmd,
              "udid=$(xcrun simctl list devices available 2>/dev/null | "
              "awk -F '[()]' '/iPhone/{gsub(/^ +| +$/,\"\",$2); print $2; exit}'); "
-             "if [ -z \"$udid\" ]; then echo 'yugac: no iPhone Simulator found' >&2; exit 1; fi; "
+             "if [ -z \"$udid\" ]; then echo 'loam: no iPhone Simulator found' >&2; exit 1; fi; "
              "xcrun simctl boot \"$udid\" >/dev/null 2>&1 || true; "
              "xcrun simctl bootstatus \"$udid\" -b >/dev/null; "
              "xcrun simctl install booted \"%s\" && xcrun simctl launch booted %s",
@@ -423,7 +423,7 @@ static int android_write_local_properties(const char *path, const char *sdk) {
 
 static int android_copy(const char *src, const char *dst) {
     if (copy_file(src, dst) != 0) {
-        fprintf(stderr, "yugac: cannot copy %s -> %s\n", src, dst);
+        fprintf(stderr, "loam: cannot copy %s -> %s\n", src, dst);
         return 1;
     }
     return 0;
@@ -496,13 +496,13 @@ static int android_run(const char *proj, const char *pkg) {
     char java_export[512] = "";
     if (find_gradle(gradle, sizeof gradle) != 0) {
         fprintf(stderr,
-                "yugac: no gradle on PATH. Install Gradle 8.2+ or open the project "
+                "loam: no gradle on PATH. Install Gradle 8.2+ or open the project "
                 "in Android Studio.\n");
         android_howto(proj, pkg);
         return 1;
     }
     if (find_android_sdk(sdk, sizeof sdk) != 0) {
-        fprintf(stderr, "yugac: no Android SDK (set ANDROID_HOME).\n");
+        fprintf(stderr, "loam: no Android SDK (set ANDROID_HOME).\n");
         android_howto(proj, pkg);
         return 1;
     }
@@ -534,7 +534,7 @@ static void print_diags(LoamSession *s) {
 /** CLI help on stderr. */
 static void usage(void) {
     fprintf(stderr,
-            "usage: yugac [build] [options] <file.loam>\n"
+            "usage: loam [build] [options] <file.loam>\n"
             "  build       compile (optional; same as omitting it)\n"
             "  test        compile a runner for every `#[test]` fn and run it\n"
             "  check       typecheck only: no codegen, no cc, no output file\n"
@@ -602,17 +602,17 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--run") == 0) {
             run = 1;
         } else if (strcmp(argv[i], "test") == 0) {
-            /* `yugac test app.loam` — build a runner that executes every
+            /* `loam test app.loam` — build a runner that executes every
                `#[test]` fn and run it. */
             test_mode = 1;
         } else if (strcmp(argv[i], "check") == 0) {
-            /* `yugac check app.loam` — run the frontend and stop. Used by
+            /* `loam check app.loam` — run the frontend and stop. Used by
                run.sh and the zeus CLI to gate every run on a clean check. */
             check_only = 1;
         } else if (strcmp(argv[i], "--int64-compat") == 0) {
             int64_compat = 1;
         } else if (strcmp(argv[i], "build") == 0) {
-            /* `yugac build --target=native app.loam` — same as omitting `build`. */
+            /* `loam build --target=native app.loam` — same as omitting `build`. */
             continue;
         } else if (argv[i][0] == '-') {
             fprintf(stderr, "unknown option %s\n", argv[i]);
@@ -639,11 +639,11 @@ int main(int argc, char **argv) {
         loam_session_free(&sess);
         return 1;
     }
-    if (show_time) fprintf(stderr, "yugac: check %.3fs\n", now_sec() - t0);
+    if (show_time) fprintf(stderr, "loam: check %.3fs\n", now_sec() - t0);
 
     if (check_only) {
         /* The frontend already ran above; a clean session is the whole result. */
-        printf("yugac: %s ok\n", in_path);
+        printf("loam: %s ok\n", in_path);
         loam_session_free(&sess);
         return 0;
     }
@@ -655,7 +655,7 @@ int main(int argc, char **argv) {
             if (sess.mods[i].name && strcmp(sess.mods[i].name, "test") == 0)
                 has_test_mod = 1;
         if (!has_test_mod) {
-            fprintf(stderr, "yugac test: %s must import \"std:test\"\n", in_path);
+            fprintf(stderr, "loam test: %s must import \"std:test\"\n", in_path);
             loam_session_free(&sess);
             return 1;
         }
@@ -774,10 +774,10 @@ int main(int argc, char **argv) {
     codegen_set_server_split(target_wasm || getenv("LOAM_SERVER_SPLIT") != NULL);
     codegen_emit_c(out, sess.mods, sess.nmods, LOAM_RT_PATH);
     fclose(out);
-    if (show_time) fprintf(stderr, "yugac: codegen %.3fs\n", now_sec() - t0);
+    if (show_time) fprintf(stderr, "loam: codegen %.3fs\n", now_sec() - t0);
 
     if (emit_c) {
-        printf("yugac: %s -> %s\n", in_path, cpath);
+        printf("loam: %s -> %s\n", in_path, cpath);
         free(stem);
         loam_session_free(&sess);
         return 0;
@@ -815,7 +815,7 @@ int main(int argc, char **argv) {
         if (strlen(le) + 64 <= left) {
             snprintf(extra_link + used, left + 1, " -I\"%s\" %s", LOAM_RUNTIME_DIR, le);
         } else {
-            fprintf(stderr, "yugac: warning: LOAM_LINK_EXTRA too long, ignored\n");
+            fprintf(stderr, "loam: warning: LOAM_LINK_EXTRA too long, ignored\n");
         }
     }
 
@@ -828,17 +828,17 @@ int main(int argc, char **argv) {
         snprintf(loader_src, sizeof loader_src, "%s/hosts/web/loader.js", LOAM_ZEUS_DIR);
         snprintf(loader_dst, sizeof loader_dst, "%s/loader.js", outdir);
         if (copy_file(loader_src, loader_dst) != 0)
-            fprintf(stderr, "yugac: warning: could not copy %s\n", loader_src);
+            fprintf(stderr, "loam: warning: could not copy %s\n", loader_src);
         cc = find_wasm_cc(wasmcc, sizeof wasmcc);
         if (!cc) {
             char keep[1024];
             snprintf(keep, sizeof keep, "%s.c", binpath);
             copy_file(cpath, keep);
             fprintf(stderr,
-                    "yugac: no clang with wasm32 (Apple /usr/bin/clang cannot).\n"
+                    "loam: no clang with wasm32 (Apple /usr/bin/clang cannot).\n"
                     "  ./install.sh          # Homebrew LLVM, puts clang on PATH\n"
                     "  or: brew install llvm\n"
-                    "  LOAM_WASM_CC=/opt/homebrew/opt/llvm/bin/clang ./bin/yugac --target=wasm32 "
+                    "  LOAM_WASM_CC=/opt/homebrew/opt/llvm/bin/clang ./bin/loam --target=wasm32 "
                     "%s -o %s\n"
                     "  generated C kept at %s ; Canvas2D loader at %s\n",
                     in_path, binpath, keep, loader_dst);
@@ -877,17 +877,17 @@ int main(int argc, char **argv) {
             }
         }
         t0 = now_sec();
-        if (env_on("LOAM_TIME")) fprintf(stderr, "yugac: cc %s\n", cc);
+        if (env_on("LOAM_TIME")) fprintf(stderr, "loam: cc %s\n", cc);
         if (system(cmdw) != 0) {
-            fprintf(stderr, "yugac: wasm compile failed (C: %s)\n", cpath);
+            fprintf(stderr, "loam: wasm compile failed (C: %s)\n", cpath);
             free(outdir);
             free(stem);
             loam_session_free(&sess);
             return 1;
         }
-        if (show_time) fprintf(stderr, "yugac: cc %.3fs\n", now_sec() - t0);
+        if (show_time) fprintf(stderr, "loam: cc %.3fs\n", now_sec() - t0);
         if (cpath_is_temp) unlink(cpath);
-        printf("yugac: %s -> %s (Canvas2D wasm)\n", in_path, binpath);
+        printf("loam: %s -> %s (Canvas2D wasm)\n", in_path, binpath);
         free(outdir);
         free(stem);
         loam_session_free(&sess);
@@ -909,7 +909,7 @@ int main(int argc, char **argv) {
             "x86_64";
 #endif
         if (!uses_zeus) {
-            fprintf(stderr, "yugac: --target=ios requires import \"std:zeus\"\n");
+            fprintf(stderr, "loam: --target=ios requires import \"std:zeus\"\n");
             if (cpath_is_temp) unlink(cpath);
             free(stem);
             loam_session_free(&sess);
@@ -917,7 +917,7 @@ int main(int argc, char **argv) {
         }
         if (ios_sdk_path(sdk, sizeof sdk) != 0) {
             fprintf(stderr,
-                    "yugac: no iPhone Simulator SDK. Install Xcode (App Store), then:\n"
+                    "loam: no iPhone Simulator SDK. Install Xcode (App Store), then:\n"
                     "  xcodebuild -downloadPlatform iOS\n"
                     "  or open Xcode → Settings → Platforms\n");
             if (cpath_is_temp) unlink(cpath);
@@ -932,7 +932,7 @@ int main(int argc, char **argv) {
                 snprintf(appdir, sizeof appdir, "%s.app", binpath);
         }
         if (mkdir_p(appdir) != 0) {
-            fprintf(stderr, "yugac: cannot create %s\n", appdir);
+            fprintf(stderr, "loam: cannot create %s\n", appdir);
             if (cpath_is_temp) unlink(cpath);
             free(stem);
             loam_session_free(&sess);
@@ -942,7 +942,7 @@ int main(int argc, char **argv) {
         snprintf(plist, sizeof plist, "%s/Info.plist", appdir);
         snprintf(bid, sizeof bid, "com.loam.%s", stem);
         if (write_ios_plist(plist, stem, bid) != 0) {
-            fprintf(stderr, "yugac: cannot write Info.plist\n");
+            fprintf(stderr, "loam: cannot write Info.plist\n");
             if (cpath_is_temp) unlink(cpath);
             free(stem);
             loam_session_free(&sess);
@@ -961,9 +961,9 @@ int main(int argc, char **argv) {
                  sdk, arch, LOAM_RUNTIME_DIR, cpath, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR,
                  http_ios, LOAM_ZEUS_DIR, exe);
         t0 = now_sec();
-        if (env_on("LOAM_TIME")) fprintf(stderr, "yugac: cc ios\n");
+        if (env_on("LOAM_TIME")) fprintf(stderr, "loam: cc ios\n");
         if (system(cmdios) != 0) {
-            fprintf(stderr, "yugac: iOS compile failed (C: %s)\n", cpath);
+            fprintf(stderr, "loam: iOS compile failed (C: %s)\n", cpath);
             if (cpath_is_temp) unlink(cpath);
             free(stem);
             loam_session_free(&sess);
@@ -975,9 +975,9 @@ int main(int argc, char **argv) {
                      "codesign --sign - --force --timestamp=none \"%s\"", appdir);
             (void)system(sign);
         }
-        if (show_time) fprintf(stderr, "yugac: cc %.3fs\n", now_sec() - t0);
+        if (show_time) fprintf(stderr, "loam: cc %.3fs\n", now_sec() - t0);
         if (cpath_is_temp) unlink(cpath);
-        printf("yugac: %s -> %s (iOS Simulator)\n", in_path, appdir);
+        printf("loam: %s -> %s (iOS Simulator)\n", in_path, appdir);
         {
             int run_rc = 0;
             if (run && ios_sim_run(appdir, bid) != 0) run_rc = 1;
@@ -990,7 +990,7 @@ int main(int argc, char **argv) {
     if (target_android) {
         char pkg[256];
         if (!uses_zeus) {
-            fprintf(stderr, "yugac: --target=android requires import \"std:zeus\"\n");
+            fprintf(stderr, "loam: --target=android requires import \"std:zeus\"\n");
             if (cpath_is_temp) unlink(cpath);
             free(stem);
             loam_session_free(&sess);
@@ -998,21 +998,21 @@ int main(int argc, char **argv) {
         }
         android_app_id(stem, pkg, sizeof pkg);
         if (mkdir_p(binpath) != 0) {
-            fprintf(stderr, "yugac: cannot create %s\n", binpath);
+            fprintf(stderr, "loam: cannot create %s\n", binpath);
             if (cpath_is_temp) unlink(cpath);
             free(stem);
             loam_session_free(&sess);
             return 1;
         }
         if (android_emit_project(binpath, cpath, pkg, uses_http) != 0) {
-            fprintf(stderr, "yugac: cannot write Android project to %s\n", binpath);
+            fprintf(stderr, "loam: cannot write Android project to %s\n", binpath);
             if (cpath_is_temp) unlink(cpath);
             free(stem);
             loam_session_free(&sess);
             return 1;
         }
         if (cpath_is_temp) unlink(cpath);
-        printf("yugac: %s -> %s (Android Gradle)\n", in_path, binpath);
+        printf("loam: %s -> %s (Android Gradle)\n", in_path, binpath);
         fflush(stdout);
         {
             int run_rc = 0;
@@ -1065,7 +1065,7 @@ int main(int argc, char **argv) {
         const char *key_deps[] = {key_c, key_h};
         if (ensure_obj(plat_c, plat_o, "", plat_deps, 3) ||
             ensure_obj(key_c, key_o, "", key_deps, 2)) {
-            fprintf(stderr, "yugac: failed to compile zeus runtime\n");
+            fprintf(stderr, "loam: failed to compile zeus runtime\n");
             if (cpath_is_temp) unlink(cpath);
             free(stem);
             loam_session_free(&sess);
@@ -1075,7 +1075,7 @@ int main(int argc, char **argv) {
         if (!headless) {
             const char *mac_deps[] = {mac_m, rt_h, key_h};
             if (ensure_obj(mac_m, mac_o, "-x objective-c", mac_deps, 3)) {
-                fprintf(stderr, "yugac: failed to compile %s\n", mac_m);
+                fprintf(stderr, "loam: failed to compile %s\n", mac_m);
                 if (cpath_is_temp) unlink(cpath);
                 free(stem);
                 loam_session_free(&sess);
@@ -1101,7 +1101,7 @@ int main(int argc, char **argv) {
             {
                 const char *linux_deps[] = {linux_c, rt_h, key_h};
                 if (ensure_obj(linux_c, linux_o, "", linux_deps, 3)) {
-                    fprintf(stderr, "yugac: failed to compile %s (need libx11)\n", linux_c);
+                    fprintf(stderr, "loam: failed to compile %s (need libx11)\n", linux_c);
                     if (cpath_is_temp) unlink(cpath);
                     free(stem);
                     loam_session_free(&sess);
@@ -1172,15 +1172,15 @@ int main(int argc, char **argv) {
                  binpath, extra_link);
     }
     int rc = system(cmd);
-    if (show_time) fprintf(stderr, "yugac: cc %.3fs\n", now_sec() - t0);
+    if (show_time) fprintf(stderr, "loam: cc %.3fs\n", now_sec() - t0);
     if (rc != 0) {
-        fprintf(stderr, "yugac: C compile failed (temp source: %s)\n", cpath);
+        fprintf(stderr, "loam: C compile failed (temp source: %s)\n", cpath);
         free(stem);
         loam_session_free(&sess);
         return 1;
     }
     unlink(cpath);
-    if (!test_mode) printf("yugac: %s -> %s\n", in_path, binpath);
+    if (!test_mode) printf("loam: %s -> %s\n", in_path, binpath);
 
     int run_rc = 0;
     if (run) {

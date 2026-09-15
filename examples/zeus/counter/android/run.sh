@@ -54,8 +54,8 @@ if [ -z "$JAVA_HOME" ] && [ -x /usr/libexec/java_home ]; then
   [ -n "$JAVA_HOME" ] && export JAVA_HOME
 fi
 
-if [ ! -x "$REPO/bin/yugac" ]; then
-  echo "run.sh: building yugac"
+if [ ! -x "$REPO/bin/loam" ]; then
+  echo "run.sh: building loam"
   make -C "$REPO" -j4
 fi
 
@@ -111,4 +111,4 @@ if ! nc -z 127.0.0.1 8080 >/dev/null 2>&1; then
 fi
 
 echo "android: emulator  (RPC http://10.0.2.2:8080 → host :8080)"
-exec "$REPO/bin/yugac" --target=android --run "$HERE/app.loam"
+exec "$REPO/bin/loam" --target=android --run "$HERE/app.loam"

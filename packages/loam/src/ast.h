@@ -133,7 +133,7 @@ struct AstNode {
             int clos_id;
             int used_as_value;
             int is_async; /* `async fn`: body may contain `await` */
-            int is_test;  /* `#[test] fn`: collected and run by `yugac test` */
+            int is_test;  /* `#[test] fn`: collected and run by `loam test` */
             int is_server; /* `#[server] fn`: body excluded from client targets */
         } fn;
         struct {

@@ -9,7 +9,7 @@
 //! `sin`/`cos`/`exp`/`tanh`/`abs` as pure Loam polynomials, `frames.loam`
 //! writes the P6 frames and runs ffmpeg, and nothing else is involved.
 //!
-//!     ./bin/yugac examples/language/ppm/plasma.loam --run
+//!     ./bin/loam examples/language/ppm/plasma.loam --run
 //!
 //! Knobs (all optional): `LOAM_PPM_SCALE` (60, so the gist's 960x540),
 //! `LOAM_PPM_FRAMES` (120), `LOAM_PPM_FPS` (60), `LOAM_PPM_OUT` (`out`),

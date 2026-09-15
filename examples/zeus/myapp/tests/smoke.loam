@@ -1,4 +1,4 @@
-//! `#[test]` fns. Import this from the entry and run `yugac test app.loam`.
+//! `#[test]` fns. Import this from the entry and run `loam test app.loam`.
 
 import "std:test"
 

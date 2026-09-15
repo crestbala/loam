@@ -3,7 +3,7 @@
 	<Metadata>
 		<Identity Language="en-US" Id="yuga" Version="0.1.0" Publisher="yuga" />
 		<DisplayName>Loam</DisplayName>
-		<Description xml:space="preserve">Loam language: syntax highlighting and IntelliSense via yuga-lsp.</Description>
+		<Description xml:space="preserve">Loam language: syntax highlighting and IntelliSense via loam-lsp.</Description>
 		<Tags>yuga,language</Tags>
 		<Categories>Programming Languages</Categories>
 		<Properties>

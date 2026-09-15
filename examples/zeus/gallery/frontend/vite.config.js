@@ -15,7 +15,7 @@ import { defineConfig } from "vite";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, "../../../..");
-const yugac = resolve(repo, "bin/yugac");
+const loam = resolve(repo, "bin/loam");
 const buildDir = resolve(here, "build");
 const wasmFile = resolve(buildDir, "app.wasm");
 const loader = resolve(repo, "packages/zeus/hosts/web/loader.js");
@@ -61,15 +61,15 @@ let compileProc = null;
 let compileQueued = false;
 
 function runLoamc() {
-  if (!existsSync(yugac)) {
+  if (!existsSync(loam)) {
     return Promise.reject(
-      new Error("missing " + yugac + " — run `make` in the yuga repo first"),
+      new Error("missing " + loam + " — run `make` in the yuga repo first"),
     );
   }
   mkdirSync(buildDir, { recursive: true });
   const tmp = resolve(buildDir, "app.wasm.tmp");
   return new Promise((resolveP, reject) => {
-    const child = spawn(yugac, ["build", "--target=wasm32", "-o", tmp, app], {
+    const child = spawn(loam, ["build", "--target=wasm32", "-o", tmp, app], {
       cwd: repo,
     });
     let stderr = "";
@@ -86,11 +86,11 @@ function runLoamc() {
     child.on("close", (status) => {
       if (status !== 0) {
         rmSync(tmp, { force: true });
-        reject(new Error(stderr.trim() || stdout.trim() || "yugac failed"));
+        reject(new Error(stderr.trim() || stdout.trim() || "loam failed"));
         return;
       }
       if (!existsSync(tmp)) {
-        reject(new Error("yugac did not produce " + tmp));
+        reject(new Error("loam did not produce " + tmp));
         return;
       }
       renameSync(tmp, wasmFile);
@@ -116,10 +116,10 @@ function compileWasm() {
 
 function rebuild(reason) {
   if (reason === "start" && wasmIsCurrent()) {
-    console.log("[yugac] start: wasm is current");
+    console.log("[loam] start: wasm is current");
     return Promise.resolve();
   }
-  console.log("[yugac] " + reason + ": compiling wasm");
+  console.log("[loam] " + reason + ": compiling wasm");
   return compileWasm();
 }
 
@@ -139,7 +139,7 @@ export default defineConfig({
   },
   plugins: [
     {
-      name: "yugac-wasm",
+      name: "loam-wasm",
       async buildStart() {
         await rebuild("start");
       },
@@ -169,7 +169,7 @@ export default defineConfig({
           timer = setTimeout(() => {
             rebuild("change " + file)
               .then(() => server.ws.send({ type: "full-reload" }))
-              .catch((e) => console.error("[yugac]", e.message || e));
+              .catch((e) => console.error("[loam]", e.message || e));
           }, 80);
         });
         server.middlewares.use((req, res, next) => {

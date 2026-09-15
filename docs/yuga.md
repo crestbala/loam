@@ -1,7 +1,7 @@
 # Loam language
 
 Loam is a memory-safe systems language: Odin-like syntax, Rust-like ownership.
-`yugac` is written in C11, typechecks a program, lowers it to IR, emits C99,
+`loam` is written in C11, typechecks a program, lowers it to IR, emits C99,
 and invokes `cc`. C is the **platform binding target**, not the language's
 semantics.
 
@@ -23,7 +23,7 @@ flowchart LR
     H["http.loam"]
     M["maya.loam"]
   end
-  subgraph yugac [yugac]
+  subgraph loam [loam]
     L[lexer]
     P[parser]
     T[typecheck]
@@ -83,9 +83,9 @@ yuga/
   examples/
     language/     standalone demo .loam programs (not test fixtures)
     zeus/         zeus apps (gallery, dashboard, myapp scaffold) + full-stack counter example
-  bin/yugac       the compiler
-  bin/yuga-lsp    editor diagnostics / hover (incl. doc comments) / go-to-def / completion / semantic tokens
-  bin/yugafmt     formatter (one style, no options)
+  bin/loam       the compiler
+  bin/loam-lsp    editor diagnostics / hover (incl. doc comments) / go-to-def / completion / semantic tokens
+  bin/loam-fmt     formatter (one style, no options)
 ```
 
 Std modules today: `fmt` (print), `zeus` (UI), `http`, `maya` (tiny 3D),
@@ -135,7 +135,7 @@ fn main() {
 ```
 
 ```
-./bin/yugac hello.loam -o hello
+./bin/loam hello.loam -o hello
 ./hello
 ```
 
@@ -145,13 +145,13 @@ fn main() {
 Useful flags:
 
 ```
-./bin/yugac app.loam -o app          # binary
-./bin/yugac app.loam --emit-c -o a.c # C99
-./bin/yugac app.loam --emit-ir -o a.ir
-./bin/yugac app.loam --run           # compile and run
-./bin/yugac app.loam --target wasm -o app.wasm  # Canvas2D .wasm (clang wasm32)
-./bin/yugac --target=ios --run examples/zeus/dashboard/dashboard.loam  # Simulator
-./bin/yugac --target=android examples/zeus/counter/android/app.loam  # Gradle project
+./bin/loam app.loam -o app          # binary
+./bin/loam app.loam --emit-c -o a.c # C99
+./bin/loam app.loam --emit-ir -o a.ir
+./bin/loam app.loam --run           # compile and run
+./bin/loam app.loam --target wasm -o app.wasm  # Canvas2D .wasm (clang wasm32)
+./bin/loam --target=ios --run examples/zeus/dashboard/dashboard.loam  # Simulator
+./bin/loam --target=android examples/zeus/counter/android/app.loam  # Gradle project
 ```
 
 ### App C seams
@@ -171,11 +171,11 @@ all engine logic; the C file is only the NEON kernel and mmap trampolines.
 
 ### Compile time
 
-`yugac` itself is fast (tens of milliseconds to typecheck and emit C). Linking
+`loam` itself is fast (tens of milliseconds to typecheck and emit C). Linking
 a Zeus app is where the seconds go: generated C is hundreds of kilobytes, and
 on macOS a GUI build also compiles Cocoa.
 
-What `yugac` does about that:
+What `loam` does about that:
 
 - Runtime files (`zeus_plat.c`, `zeus_key.c`, `packages/zeus/hosts/desktop/mac.m`) compile once into
   `packages/loam/runtime/.obj/` and are reused until those sources change.
@@ -363,7 +363,7 @@ frame that created the closure is gone.
 ### 6. Tests
 
 `std:test` is the in-language test module. `#[test]` marks a parameterless,
-value-less fn; `yugac test app.loam` compiles a runner that calls every
+value-less fn; `loam test app.loam` compiles a runner that calls every
 `#[test]` fn (entry module and imports, in declaration order) through
 `std:test`, and the entry file must `import "std:test"`:
 
@@ -377,7 +377,7 @@ fn addition() {
 ```
 
 ```
-./bin/yugac test tests.loam
+./bin/loam test tests.loam
 # test addition ... ok
 # 1 test(s) passed
 ```
@@ -397,12 +397,12 @@ the `(in test …)` tag on the message identify which test failed.
 ### 7. Debug info
 
 Generated C carries `#line` directives pointing at the `.loam` source, so the C
-compiler's own warnings and errors name Loam lines. With `LOAM_DEBUG=1`, `yugac`
+compiler's own warnings and errors name Loam lines. With `LOAM_DEBUG=1`, `loam`
 also compiles the native target with `-g`, so lldb / gdb, profilers, and
 sanitizers report Loam `file:line` for stack frames and non-panic crashes:
 
 ```
-LOAM_DEBUG=1 ./bin/yugac app.loam -o app
+LOAM_DEBUG=1 ./bin/loam app.loam -o app
 ```
 
 `-g` is off by default, because it inflates binaries.

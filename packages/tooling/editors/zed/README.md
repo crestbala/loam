@@ -1,6 +1,6 @@
 # Loam for Zed
 
-Syntax highlighting (Tree-sitter) and error checking (`yuga-lsp`).
+Syntax highlighting (Tree-sitter) and error checking (`loam-lsp`).
 
 ## Install
 
@@ -20,7 +20,7 @@ Then uninstall Loam in Zed and install the dev extension again.
 
 Open a `.loam` file. You should see highlighting, and the status bar should show **Loam** / **Loam LSP**.
 
-After `make` rebuilds `bin/yuga-lsp`, restart the language server (**editor: restart language server**) so Zed picks up the new binary. The extension walks up from the worktree to `<repo>/bin/yuga-lsp` first, then `PATH`.
+After `make` rebuilds `bin/loam-lsp`, restart the language server (**editor: restart language server**) so Zed picks up the new binary. The extension walks up from the worktree to `<repo>/bin/loam-lsp` first, then `PATH`.
 
 For the `.loam` file icon: command palette → **theme selector: toggle icon theme** → **Loam**. Only `.loam` files get the YG badge; `.expected` and other types keep the normal icons. The badge uses Zed’s `fill="black"` convention, so it follows the UI theme (grey on dark, dark on light), same as TypeScript.
 

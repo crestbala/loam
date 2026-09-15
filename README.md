@@ -1,7 +1,7 @@
 # Loam
 
 Loam is a memory-safe system language: Odin-like syntax, Rust-like ownership.
-The compiler (`yugac`) is C11. It typechecks a program, lowers it to IR, emits
+The compiler (`loam`) is C11. It typechecks a program, lowers it to IR, emits
 C99, and invokes `cc`. C is the platform binding target, not the language's
 semantics.
 
@@ -15,7 +15,7 @@ fn main() {
 
 ```
 make
-./bin/yugac hello.loam -o hello
+./bin/loam hello.loam -o hello
 ./hello
 ```
 
@@ -34,7 +34,7 @@ Android stack) installs everything below that Homebrew can. See [Setup](#setup).
   example (`examples/language/raygui.loam`); nothing else needs it
 - [Xcode](https://developer.apple.com/xcode/) for the iOS Simulator target
 - A `wasm32` clang (Homebrew LLVM, not Apple `/usr/bin/clang`) for web builds;
-  `./install.sh` puts it where `yugac` looks by default. Set `LOAM_WASM_CC`
+  `./install.sh` puts it where `loam` looks by default. Set `LOAM_WASM_CC`
   only if your LLVM lives somewhere else
 - Node.js for the Vite dev servers behind the wasm examples (`gallery web`, `www`)
 - Android SDK, NDK, Gradle 8.2+, a JDK, and `adb` for `--target=android`
@@ -64,16 +64,16 @@ From the repo root:
 make
 ```
 
-That produces `bin/yugac` and `bin/yuga-lsp`. Then:
+That produces `bin/loam` and `bin/loam-lsp`. Then:
 
 ```
-./bin/yugac app.loam -o app          # native binary
-./bin/yugac app.loam --run           # compile and run
-./bin/yugac app.loam --emit-c -o a.c # C99
-./bin/yugac app.loam --emit-ir -o a.ir
-./bin/yugac --target wasm app.loam -o app.wasm
-./bin/yugac --target=ios --run examples/zeus/dashboard/dashboard.loam
-./bin/yugac --target=android examples/zeus/counter/android/app.loam
+./bin/loam app.loam -o app          # native binary
+./bin/loam app.loam --run           # compile and run
+./bin/loam app.loam --emit-c -o a.c # C99
+./bin/loam app.loam --emit-ir -o a.ir
+./bin/loam --target wasm app.loam -o app.wasm
+./bin/loam --target=ios --run examples/zeus/dashboard/dashboard.loam
+./bin/loam --target=android examples/zeus/counter/android/app.loam
 ```
 
 `make test` compiles and runs the language tests, golden programs, and
@@ -156,7 +156,7 @@ The Android emulator reaches a Mac backend at `10.0.2.2:8080`, not
 
 ## Examples
 
-`./run.sh` with no arguments lists everything. It builds `yugac` if needed.
+`./run.sh` with no arguments lists everything. It builds `loam` if needed.
 GUI examples open a window and servers block until Ctrl-C. For one frame then
 exit (what `make test` does), set `ZEUS_HEADLESS=1`, `MAYA_HEADLESS=1`, or
 `RAYGUI_HEADLESS=1`.
@@ -200,7 +200,7 @@ language demo is `./run.sh language/counter`. `zeus/counter` is an alias.
 Equivalent without `run.sh`:
 
 ```
-./bin/yugac --run examples/language/http_server.loam
+./bin/loam --run examples/language/http_server.loam
 ```
 
 Golden programs under `packages/loam/tests/golden/` (hello, fib, fizzbuzz,
@@ -277,8 +277,8 @@ www/                   Zeus + gRPC docs (Vite serves wasm, no Svelte)
 docs/                  yuga.md (language + architecture), boundary.md (C seam),
                        downsides.md (self-improvement phases),
                        zeus_roadmap.md (phase history)
-bin/yugac              compiler
-bin/yuga-lsp           diagnostics, hover, go-to-def, completion, semantic tokens
+bin/loam              compiler
+bin/loam-lsp           diagnostics, hover, go-to-def, completion, semantic tokens
 ```
 
 Cursor / VS Code: [packages/tooling/editors/vscode/README.md](packages/tooling/editors/vscode/README.md) (`make && make install-editor`).

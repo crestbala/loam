@@ -40,7 +40,7 @@ struct ChunkMeta {
 
 // ---------------------------------------------------------------------------
 // C seam — bodyless declarations of `loam_watcher_gi_*` (same runtime file
-// as the engine seam; yugac emits the extern prototypes automatically).
+// as the engine seam; loam emits the extern prototypes automatically).
 // ---------------------------------------------------------------------------
 
 /// Whole file as a string. Empty on error or when bigger than 256 MB.

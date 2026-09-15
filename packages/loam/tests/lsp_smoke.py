@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # pyright: basic
-# Smoke-test yuga-lsp: diagnostics, hover, go-to-definition, completion.
+# Smoke-test loam-lsp: diagnostics, hover, go-to-definition, completion.
 from __future__ import annotations
 
 import json
@@ -11,7 +11,7 @@ from typing import Any, Optional
 
 ROOT = Path(__file__).resolve().parent.parent
 REPO = ROOT.parent.parent
-LSP = REPO / "bin" / "yuga-lsp"
+LSP = REPO / "bin" / "loam-lsp"
 Json = dict[str, Any]
 
 
@@ -656,7 +656,7 @@ def main() -> int:
     if "std:kv" not in ilabs:
         return fail("import completion should list std:kv", ilabs[:40])
 
-    print("ok   yuga-lsp (%d diagnostic(s), hover, definition, completion, semantic tokens)" % len(items))
+    print("ok   loam-lsp (%d diagnostic(s), hover, definition, completion, semantic tokens)" % len(items))
     return 0
 
 

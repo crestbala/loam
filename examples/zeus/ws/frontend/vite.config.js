@@ -9,7 +9,7 @@ import { defineConfig } from "vite";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, "../../../..");
-const yugac = resolve(repo, "bin/yugac");
+const loam = resolve(repo, "bin/loam");
 const buildDir = resolve(here, "build");
 const wasmFile = resolve(buildDir, "app.wasm");
 const loader = resolve(repo, "packages/zeus/hosts/web/loader.js");
@@ -21,14 +21,14 @@ function wipeBuild() {
 }
 
 function compileWasm() {
-  if (!existsSync(yugac)) {
-    throw new Error("missing " + yugac + " — run `make` in the yuga repo first");
+  if (!existsSync(loam)) {
+    throw new Error("missing " + loam + " — run `make` in the yuga repo first");
   }
   /* Compile to a temp name and rename into place: the dev server must never
      serve a half-written or missing /app.wasm (vite's SPA fallback would
      answer with index.html and the loader dies on the magic word). */
   const tmp = resolve(buildDir, "app.wasm.tmp");
-  const r = spawnSync(yugac, ["build", "--target=wasm32", "-o", tmp, app], {
+  const r = spawnSync(loam, ["build", "--target=wasm32", "-o", tmp, app], {
     cwd: repo,
     encoding: "utf8",
   });
@@ -36,16 +36,16 @@ function compileWasm() {
   if (r.stderr) process.stderr.write(r.stderr);
   if (r.status !== 0) {
     rmSync(tmp, { force: true });
-    throw new Error(r.stderr?.trim() || r.stdout?.trim() || "yugac failed");
+    throw new Error(r.stderr?.trim() || r.stdout?.trim() || "loam failed");
   }
   if (!existsSync(tmp)) {
-    throw new Error("yugac did not produce " + tmp);
+    throw new Error("loam did not produce " + tmp);
   }
   renameSync(tmp, wasmFile);
 }
 
 function rebuild(reason) {
-  console.log("[yugac] " + reason + ": removing build/, compiling wasm");
+  console.log("[loam] " + reason + ": removing build/, compiling wasm");
   wipeBuild();
   compileWasm();
 }
@@ -70,7 +70,7 @@ export default defineConfig({
   },
   plugins: [
     {
-      name: "yugac-wasm",
+      name: "loam-wasm",
       buildStart() {
         rebuild("start");
       },
@@ -103,7 +103,7 @@ export default defineConfig({
               rebuild("change " + file);
               server.ws.send({ type: "full-reload" });
             } catch (e) {
-              console.error("[yugac]", e.message || e);
+              console.error("[loam]", e.message || e);
             }
           }, 80);
         });

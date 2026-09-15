@@ -6,7 +6,7 @@ struct LoamExtension;
 fn loam_lsp_path(worktree: &zed::Worktree) -> String {
     let mut dir = PathBuf::from(worktree.root_path());
     loop {
-        let candidate = dir.join("bin").join("yuga-lsp");
+        let candidate = dir.join("bin").join("loam-lsp");
         if candidate.is_file() {
             return candidate.to_string_lossy().into_owned();
         }
@@ -15,8 +15,8 @@ fn loam_lsp_path(worktree: &zed::Worktree) -> String {
         }
     }
     worktree
-        .which("yuga-lsp")
-        .unwrap_or_else(|| format!("{}/bin/yuga-lsp", worktree.root_path()))
+        .which("loam-lsp")
+        .unwrap_or_else(|| format!("{}/bin/loam-lsp", worktree.root_path()))
 }
 
 impl zed::Extension for LoamExtension {

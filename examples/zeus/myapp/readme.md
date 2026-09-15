@@ -28,11 +28,11 @@ Routes: `/`, `/about`, `/pricing`, `/blog`, `/blog/:slug`, `/components`,
 ./run.sh myapp build      # emit every target
 ```
 
-`run.sh` regenerates `app_routes.loam` (`zeus routes`) and runs `yugac check`
+`run.sh` regenerates `app_routes.loam` (`zeus routes`) and runs `loam check`
 before building, so a broken route fails before a window opens. Directly:
 
 ```sh
-./bin/yugac --run examples/zeus/myapp/app.loam
+./bin/loam --run examples/zeus/myapp/app.loam
 ```
 
 ## Display paths
@@ -125,8 +125,8 @@ ZEUS_FRAME_DEBUG=1 ./run.sh myapp
 ## Tests
 
 ```sh
-ZEUS_HEADLESS=1 ./bin/yugac test examples/zeus/myapp/app.loam   # tests/smoke.loam
-ZEUS_HEADLESS=1 ./bin/yugac examples/zeus/myapp/tests/routes.loam -o /tmp/r && /tmp/r
+ZEUS_HEADLESS=1 ./bin/loam test examples/zeus/myapp/app.loam   # tests/smoke.loam
+ZEUS_HEADLESS=1 ./bin/loam examples/zeus/myapp/tests/routes.loam -o /tmp/r && /tmp/r
 ```
 
 `tests/routes.loam` drives the generated route table headlessly: it navigates to

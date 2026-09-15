@@ -10,9 +10,9 @@ fn of(id: int) -> PageResp {
     if id == 1 {
         return pack(
             "Install",
-            "Build the compiler from this repo, then compile programs with yugac.",
-            "Needs a C11 compiler (cc) and make. macOS for native GUI and Maya. Xcode for iOS Simulator. A wasm32 clang (Homebrew LLVM, not Apple /usr/bin/clang) for web; set LOAM_WASM_CC if needed. Android SDK, NDK, Gradle 8.2+, and adb for --target=android.\n\nmake produces bin/yugac and bin/yuga-lsp. make test runs language tests (GUI and Maya headless). LOAM_TIME=1 prints check / codegen / cc timings.\n\nThis site: ./run.sh www (UI :5175, RPC :8082).",
-            "make\n./bin/yugac hello.loam -o hello\n./hello\n\n./bin/yugac app.loam --run\n./bin/yugac app.loam --emit-c -o a.c\n./bin/yugac --target wasm app.loam -o app.wasm"
+            "Build the compiler from this repo, then compile programs with loam.",
+            "Needs a C11 compiler (cc) and make. macOS for native GUI and Maya. Xcode for iOS Simulator. A wasm32 clang (Homebrew LLVM, not Apple /usr/bin/clang) for web; set LOAM_WASM_CC if needed. Android SDK, NDK, Gradle 8.2+, and adb for --target=android.\n\nmake produces bin/loam and bin/loam-lsp. make test runs language tests (GUI and Maya headless). LOAM_TIME=1 prints check / codegen / cc timings.\n\nThis site: ./run.sh www (UI :5175, RPC :8082).",
+            "make\n./bin/loam hello.loam -o hello\n./hello\n\n./bin/loam app.loam --run\n./bin/loam app.loam --emit-c -o a.c\n./bin/loam --target wasm app.loam -o app.wasm"
         )
     }
     if id == 2 {
@@ -116,13 +116,13 @@ fn of(id: int) -> PageResp {
             "Platforms",
             "Same Loam source; the host is a --target flag. Zeus paints its own theme everywhere.",
             "native (default) — macOS Cocoa window, not AppKit widgets. wasm / wasm32 — Canvas2D in the browser (no HTML DOM widgets). ios — Simulator, Xcode. android — Gradle + JNI Canvas, density-independent pixels.\n\nCLI and std:http servers are native binaries. ZEUS_HEADLESS=1 / MAYA_HEADLESS=1 for one frame (make test).",
-            "./bin/yugac --target=native --run app.loam\n./bin/yugac --target=wasm32 -o app.wasm app.loam\n./bin/yugac --target=ios --run examples/zeus/dashboard/dashboard.loam"
+            "./bin/loam --target=native --run app.loam\n./bin/loam --target=wasm32 -o app.wasm app.loam\n./bin/loam --target=ios --run examples/zeus/dashboard/dashboard.loam"
         )
     }
     if id == 15 {
         return pack(
             "Examples",
-            "./run.sh with no arguments lists everything. It builds yugac if needed.",
+            "./run.sh with no arguments lists everything. It builds loam if needed.",
             "Language: minimal, counter, http_server, solar, studio, oob (expected trap).\nZeus: gallery, dashboard, counter (full-stack :8080 + :5173). Same UI on Canvas2D wasm and native.\nDocs: ./run.sh www — this UI on :5175, Docs.Page on :8082.\n\ncounter is both a language example and a Zeus app; use language/counter or zeus/counter.",
             "./run.sh\n./run.sh gallery\n./run.sh gallery wasm32\n./run.sh dashboard\n./run.sh zeus/counter\n./run.sh www"
         )
@@ -130,7 +130,7 @@ fn of(id: int) -> PageResp {
     return pack(
         "Loam",
         "A memory-safe systems language: Odin-like syntax, Rust-like ownership.",
-        "The compiler (yugac) typechecks a program, lowers it to IR, emits C99, and invokes cc. C is the platform binding target, not the language's semantics.\n\nQuoted imports only: import \"std:foo\" loads packages/loam/std/foo.loam. Call imported items as foo.bar(...).\n\nThis site is a Zeus app. Page copy comes from Docs.Page over gRPC-Web (Loam backend). Vite serves the Canvas2D wasm and proxies /Docs to :8082.",
+        "The compiler (loam) typechecks a program, lowers it to IR, emits C99, and invokes cc. C is the platform binding target, not the language's semantics.\n\nQuoted imports only: import \"std:foo\" loads packages/loam/std/foo.loam. Call imported items as foo.bar(...).\n\nThis site is a Zeus app. Page copy comes from Docs.Page over gRPC-Web (Loam backend). Vite serves the Canvas2D wasm and proxies /Docs to :8082.",
         "import \"std:fmt\"\n\nfn main() {\n    fmt.println(\"hello, yuga\")\n}"
     )
 ))

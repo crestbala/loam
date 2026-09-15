@@ -77,7 +77,7 @@ That script:
 
 1. Sources `.sdk-env` (or finds Homebrew’s SDK / `~/Library/Android/sdk`).
 2. Starts `../backend/run.sh` on `:8080` if nothing is listening.
-3. Runs `yugac --target=android --run app.loam` (Gradle `installDebug` + `adb`).
+3. Runs `loam --target=android --run app.loam` (Gradle `installDebug` + `adb`).
 
 The emulator reaches the Mac backend at **`10.0.2.2:8080`**, not `127.0.0.1`
 (`http.client()` fills this per `--target`). The Simulator and Cocoa apps
@@ -95,7 +95,7 @@ Without the helper scripts:
 
 ```
 ./examples/zeus/counter/backend/run.sh
-./bin/yugac --target=android --run examples/zeus/counter/android/app.loam
+./bin/loam --target=android --run examples/zeus/counter/android/app.loam
 ```
 
 `--target=android` always writes the Gradle project. `--run` needs the SDK,
@@ -120,7 +120,7 @@ until that bind is opened.
 | App activity is blank / frozen | RPC used to run on the UI thread. Rebuild (`./run.sh`). Keep `../backend/run.sh` on `:8080`. |
 | `emulator: command not found` | Use `./emu.sh`, or `source .sdk-env` then `$ANDROID_HOME/emulator/emulator`. |
 | App opens but RPC fails | Backend not on `:8080`. `run.sh` starts it; or `../backend/run.sh`. Confirm you used `10.0.2.2`, not `127.0.0.1`. |
-| `yugac` missing | `make` at the repo root. `run.sh` does this if `bin/yugac` is absent. |
+| `loam` missing | `make` at the repo root. `run.sh` does this if `bin/loam` is absent. |
 
 Android Studio is an alternative to Homebrew: install Platform 34 + NDK +
 platform-tools, then `export ANDROID_HOME="$HOME/Library/Android/sdk"`.

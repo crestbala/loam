@@ -32,7 +32,7 @@ over a new keyword.
 | `for i in lo..hi`, trailing constant defaults | Iterators, mid-list defaults, labeled break |
 
 Costs that still bite and stay unless a later phase names them: C99 + `cc`
-backend (debuggers see generated C); `yugac` is C11; no package registry;
+backend (debuggers see generated C); `loam` is C11; no package registry;
 borrowck is not NLL; closures capture Copy only; `+ - *` and indexes trap;
 wasm `thread.spawn` is a no-op; no async TLS (Phase 8 here); HTTP server is
 one thread; native GUI is macOS.
@@ -81,7 +81,7 @@ counter android/ios still pass `640, 680`.
 What differs per host is folklore across READMEs.
 
 - [x] One table in this file; `http.default_addr` / `sys.target` `///`.
-- [x] `yugac --target=wasm` without a `wasm32` clang names `./install.sh`
+- [x] `loam --target=wasm` without a `wasm32` clang names `./install.sh`
       / `LOAM_WASM_CC`.
 - [x] Missing iOS SDK / Android SDK still point at Xcode / `install.sh`.
 - **Exit:** a new contributor can pick a host from the table; a missing
@@ -173,7 +173,7 @@ contradicts its comment, arity-3 tables, a `Navbar` that always ships Dark.
       `NSGradient`, Canvas2D `createLinearGradient`, headless dump.
       **Won’t:** rich text spans — still gated on in-tree font metrics.
 - [x] Linux GUI host: `packages/zeus/hosts/desktop/linux.c` (X11 fill + text).
-      Linked when `yugac --target=native` is not headless on Linux (`-lX11`).
+      Linked when `loam --target=native` is not headless on Linux (`-lX11`).
       iOS device signing stays out of scope.
 - **Exit:** headless tests green. **Green** (`make test`). Rich text remains
   its own project.

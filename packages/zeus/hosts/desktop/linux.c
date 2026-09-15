@@ -1,5 +1,5 @@
 /* linux.c — X11 present for Zeus. Fill + text only; no native widgets.
-   Linked on Linux GUI builds (`yugac --target=native` without ZEUS_HEADLESS). */
+   Linked on Linux GUI builds (`loam --target=native` without ZEUS_HEADLESS). */
 #if defined(__linux__)
 #include "zeus_rt.h"
 #include "zeus_key.h"

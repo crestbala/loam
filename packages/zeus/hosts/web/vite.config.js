@@ -19,19 +19,19 @@ const appDir = resolve(repo, "examples/zeus", name);
 const src = resolve(appDir, name + ".loam");
 const buildDir = resolve(appDir, "build");
 const wasmFile = resolve(buildDir, name + ".wasm");
-const yugac = resolve(repo, "bin/yugac");
+const loam = resolve(repo, "bin/loam");
 const loader = resolve(here, "loader.js");
 
 function compileWasm() {
-  if (!existsSync(yugac)) {
-    throw new Error("missing " + yugac + " — run `make` in the yuga repo first");
+  if (!existsSync(loam)) {
+    throw new Error("missing " + loam + " — run `make` in the yuga repo first");
   }
   if (!existsSync(src)) {
     throw new Error("no Zeus app at " + src);
   }
   mkdirSync(buildDir, { recursive: true });
   const tmp = resolve(buildDir, name + ".wasm.tmp");
-  const r = spawnSync(yugac, ["build", "--target=wasm32", "-o", tmp, src], {
+  const r = spawnSync(loam, ["build", "--target=wasm32", "-o", tmp, src], {
     cwd: repo,
     encoding: "utf8",
   });
@@ -39,16 +39,16 @@ function compileWasm() {
   if (r.stderr) process.stderr.write(r.stderr);
   if (r.status !== 0) {
     rmSync(tmp, { force: true });
-    throw new Error(r.stderr?.trim() || r.stdout?.trim() || "yugac failed");
+    throw new Error(r.stderr?.trim() || r.stdout?.trim() || "loam failed");
   }
   if (!existsSync(tmp)) {
-    throw new Error("yugac did not produce " + tmp);
+    throw new Error("loam did not produce " + tmp);
   }
   renameSync(tmp, wasmFile);
 }
 
 function rebuild(reason) {
-  console.log("[yugac] " + reason + ": compiling " + name + " wasm");
+  console.log("[loam] " + reason + ": compiling " + name + " wasm");
   compileWasm();
 }
 
@@ -69,7 +69,7 @@ export default defineConfig({
   },
   plugins: [
     {
-      name: "yugac-wasm",
+      name: "loam-wasm",
       buildStart() {
         rebuild("start");
       },
@@ -100,7 +100,7 @@ export default defineConfig({
               rebuild("change " + file);
               server.ws.send({ type: "full-reload" });
             } catch (e) {
-              console.error("[yugac]", e.message || e);
+              console.error("[loam]", e.message || e);
             }
           }, 80);
         });
