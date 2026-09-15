@@ -17,7 +17,7 @@
  *   [row 0..cap-1:  u32 id + dim f32]      stored vectors
  *   [row cap:       scratch]               query staging for the Loam sweep
  *
- * Linked automatically by yugac for native targets when this file sits in
+ * Linked automatically by loam for native targets when this file sits in
  * runtime/ next to the entry program (driver.c). Requires -I runtime dir.
  */
 #ifndef _DARWIN_C_SOURCE

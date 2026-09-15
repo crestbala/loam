@@ -4,7 +4,7 @@
 //!
 //! Run via `make test`, or directly:
 //!
-//!     ZEUS_HEADLESS=1 ./bin/yugac examples/zeus/myapp/tests/routes.loam -o /tmp/r && /tmp/r
+//!     ZEUS_HEADLESS=1 ./bin/loam examples/zeus/myapp/tests/routes.loam -o /tmp/r && /tmp/r
 
 import "std:fmt"
 import "std:sys"

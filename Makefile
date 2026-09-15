@@ -18,12 +18,12 @@ BINDIR  := bin
 ALL_C   := $(wildcard $(SRCDIR)/*.c) $(wildcard $(SRCDIR)/sema/*.c)
 LIB_C   := $(filter-out $(SRCDIR)/driver.c $(SRCDIR)/lsp.c $(SRCDIR)/fmt.c,$(ALL_C))
 LIB_O   := $(patsubst $(SRCDIR)/%.c,$(OBJDIR)/%.o,$(LIB_C))
-YUGAC_O := $(LIB_O) $(OBJDIR)/driver.o
+LOAM_O := $(LIB_O) $(OBJDIR)/driver.o
 LSP_O   := $(LIB_O) $(OBJDIR)/lsp.o
 
-TARGET  := $(BINDIR)/yugac
-LSP     := $(BINDIR)/yuga-lsp
-FMT     := $(BINDIR)/yugafmt
+TARGET  := $(BINDIR)/loam
+LSP     := $(BINDIR)/loam-lsp
+FMT     := $(BINDIR)/loam-fmt
 ZEUS    := $(BINDIR)/zeus
 
 PASS    := $(sort $(wildcard $(TESTDIR)/compile_pass/*.loam))
@@ -31,7 +31,7 @@ FAIL    := $(sort $(wildcard $(TESTDIR)/compile_fail/*.loam))
 # Headless DRAW-list goldens: a fixture's stdout must match its .txt byte
 # for byte (deterministic default metrics; see zeus_plat.c measure_default).
 GOLDRAW := $(sort $(wildcard $(TESTDIR)/draw_golden/*.loam))
-# Phase 12: files whose `#[test]` fns `yugac test` collects and runs.
+# Phase 12: files whose `#[test]` fns `loam test` collects and runs.
 INLANG  := $(sort $(wildcard $(TESTDIR)/inlang/*.loam))
 GOLDEN  := $(TESTDIR)/golden
 LANGEX  := examples/language
@@ -64,7 +64,7 @@ grammar:
 	$(MAKE) zed-grammar
 
 # The grammar is a second, hand-maintained parser and nothing in `make test`
-# reads it, so it rots silently while yugac moves on. Gate `make grammar` on it.
+# reads it, so it rots silently while loam moves on. Gate `make grammar` on it.
 grammar-check:
 	@bash packages/tooling/tree-sitter-yuga/check.sh
 
@@ -93,8 +93,8 @@ install-editor:
 mkdirs:
 	@mkdir -p $(OBJDIR) $(OBJDIR)/sema $(BINDIR) $(TESTDIR)/tmp $(EXBUILD)
 
-$(TARGET): $(YUGAC_O)
-	$(CC) $(CFLAGS) $(YUGAC_O) -o $@
+$(TARGET): $(LOAM_O)
+	$(CC) $(CFLAGS) $(LOAM_O) -o $@
 
 $(LSP): $(LSP_O)
 	$(CC) $(CFLAGS) $(LSP_O) -o $@
@@ -254,9 +254,9 @@ test: all
 	   diff -u packages/loam/tests/fmt/want.loam $(TESTDIR)/tmp/fmt.out >/dev/null 2>&1 && \
 	   ./$(FMT) packages/loam/tests/fmt/want.loam >$(TESTDIR)/tmp/fmt.idem 2>&1 && \
 	   diff -u packages/loam/tests/fmt/want.loam $(TESTDIR)/tmp/fmt.idem >/dev/null 2>&1; then \
-	  echo "ok   yugafmt (canonical + idempotent)"; \
+	  echo "ok   loam-fmt (canonical + idempotent)"; \
 	else \
-	  echo "FAIL yugafmt"; diff -u packages/loam/tests/fmt/want.loam $(TESTDIR)/tmp/fmt.out; err=1; \
+	  echo "FAIL loam-fmt"; diff -u packages/loam/tests/fmt/want.loam $(TESTDIR)/tmp/fmt.out; err=1; \
 	fi; \
 	if ! DENO_DIR=$(TESTDIR)/tmp/deno deno run --quiet --allow-read --allow-write --allow-run --allow-env packages/zeus/cli/zeus.ts dev packages/loam/tests/routes_app --build-only >$(TESTDIR)/tmp/zeus_dev.log 2>&1; then \
 	  echo "FAIL zeus dev"; cat $(TESTDIR)/tmp/zeus_dev.log; err=1; \

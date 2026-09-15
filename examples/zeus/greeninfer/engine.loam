@@ -41,7 +41,7 @@ struct VectorIndex {
 }
 
 // ---------------------------------------------------------------------------
-// C seam — bodyless declarations of `loam_engine_gi_*`. yugac emits extern
+// C seam — bodyless declarations of `loam_engine_gi_*`. loam emits extern
 // prototypes for bodyless fns in user modules and links the app runtime
 // (codegen_c.c / driver.c). Nothing below returns or accepts a pointer.
 // ---------------------------------------------------------------------------

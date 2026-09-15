@@ -16,11 +16,11 @@ function findLsp(folder) {
   if (configured && fs.existsSync(configured)) return configured;
   let dir = folder || "";
   while (dir && dir !== path.dirname(dir)) {
-    const candidate = path.join(dir, "bin", "yuga-lsp");
+    const candidate = path.join(dir, "bin", "loam-lsp");
     if (fs.existsSync(candidate)) return candidate;
     dir = path.dirname(dir);
   }
-  return "yuga-lsp";
+  return "loam-lsp";
 }
 
 function send(obj) {
@@ -113,14 +113,14 @@ function activate(context) {
   const cmd = findLsp(folder);
   proc = spawn(cmd, [], { stdio: ["pipe", "pipe", "pipe"] });
   proc.on("error", (err) => {
-    vscode.window.showErrorMessage(`yuga-lsp failed to start (${cmd}): ${err.message}`);
+    vscode.window.showErrorMessage(`loam-lsp failed to start (${cmd}): ${err.message}`);
   });
   proc.stdout.on("data", (chunk) => {
     buf = Buffer.concat([buf, chunk]);
     readMessages();
   });
   proc.stderr.on("data", (chunk) => {
-    console.log("[yuga-lsp]", chunk.toString());
+    console.log("[loam-lsp]", chunk.toString());
   });
   proc.on("exit", () => {
     proc = null;

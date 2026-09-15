@@ -17,9 +17,9 @@ if [ -z "$REPO" ]; then
   echo "run.sh: could not find the yuga repo (Makefile + packages/loam/src/)" >&2
   exit 1
 fi
-if [ ! -x "$REPO/bin/yugac" ]; then
-  echo "run.sh: building yugac"
+if [ ! -x "$REPO/bin/loam" ]; then
+  echo "run.sh: building loam"
   make -C "$REPO" -j4
 fi
 echo "macos: Cocoa desktop"
-exec "$REPO/bin/yugac" --target=native --run "$HERE/app.loam"
+exec "$REPO/bin/loam" --target=native --run "$HERE/app.loam"

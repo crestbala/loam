@@ -2,7 +2,7 @@
  * compile.h — load a program and its imports, then run all frontend passes.
  *
  * Pipeline: parse each module → typecheck → borrowck → boundscheck.
- * Does not invoke codegen or `cc`; that is driver.c / yuga-lsp.
+ * Does not invoke codegen or `cc`; that is driver.c / loam-lsp.
  */
 #ifndef LOAM_COMPILE_H
 #define LOAM_COMPILE_H

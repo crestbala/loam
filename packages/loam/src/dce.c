@@ -303,7 +303,7 @@ void loam_dce_run(LoamModule *mods, int nmods) {
     for (int m = 0; m < nmods; m++) {
         AstNode *p = mods[m].ast;
         if (!p) continue;
-        /* `yugac test` calls test.begin/ok/summary from generated C. */
+        /* `loam test` calls test.begin/ok/summary from generated C. */
         int test_mod = dce_test_mode && mods[m].name && strcmp(mods[m].name, "test") == 0;
         for (size_t i = 0; i < p->as.program.decl_count; i++) {
             AstNode *d = p->as.program.decls[i];

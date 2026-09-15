@@ -4,7 +4,7 @@
 //! clamp and the environment reader. `save` / `encode` would need ffmpeg and a
 //! writable directory, which is what the demos themselves already exercise.
 //!
-//!     ./bin/yugac test examples/language/ppm/frames_tests.loam
+//!     ./bin/loam test examples/language/ppm/frames_tests.loam
 
 import "std:test"
 import "frames.loam"

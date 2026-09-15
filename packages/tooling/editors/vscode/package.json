@@ -1,7 +1,7 @@
 {
   "name": "yuga",
   "displayName": "Loam",
-  "description": "Loam language: syntax highlighting and IntelliSense via yuga-lsp",
+  "description": "Loam language: syntax highlighting and IntelliSense via loam-lsp",
   "version": "0.1.0",
   "publisher": "yuga",
   "engines": {
@@ -36,7 +36,7 @@
         "yuga.lspPath": {
           "type": "string",
           "default": "",
-          "description": "Path to yuga-lsp. Empty walks up from the workspace to bin/yuga-lsp, then PATH."
+          "description": "Path to loam-lsp. Empty walks up from the workspace to bin/loam-lsp, then PATH."
         }
       }
     }

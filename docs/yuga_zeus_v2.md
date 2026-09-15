@@ -149,13 +149,13 @@ work. This is a day of work and it changes how the language *feels*.
 ### 1.6 No test story inside the language
 
 Tests are compiler fixtures (`compile_pass` / `compile_fail` / golden). There is no
-way for an application author to write a test. Add `#[test] fn` and `yugac test` —
+way for an application author to write a test. Add `#[test] fn` and `loam test` —
 collect, run, report. Without it nobody will write a serious app in Loam.
 
 ### 1.7 No formatter
 
 A new language's biggest cheap win is that formatting is not a conversation.
-`yugafmt`, driven by the existing parser (or the tree-sitter grammar), with one
+`loam-fmt`, driven by the existing parser (or the tree-sitter grammar), with one
 style and no options.
 
 ### 1.8 No dependency story at all
@@ -163,7 +163,7 @@ style and no options.
 `import "path.loam"` is relative-path only. There is no way to use someone else's
 code, pin a version, or vendor. You don't need a registry. You need:
 `import "pkg:name"` resolving to `vendor/name/`, plus a lockfile of git URLs and
-SHAs, plus `yugac vendor sync`. Ten percent of the work, ninety percent of the value.
+SHAs, plus `loam vendor sync`. Ten percent of the work, ninety percent of the value.
 
 ### 1.9 Async and threading exist — the gaps are at the edges
 
@@ -586,7 +586,7 @@ Not "we'll add it later" — structurally absent:
   API for avoiding it, so there is no way to use the optimization API wrongly.
 - **No StrictMode double-invoke**, because nothing needs to be pure-checked.
 - **No JSX, no Babel, no bundler, no transform step.** Components are fns with
-  trailing blocks, compiled by `yugac`.
+  trailing blocks, compiled by `loam`.
 
 Those last two bullets are the actual pitch, and they're worth putting in the
 README verbatim.
@@ -612,7 +612,7 @@ Everything Next.js built to make it work in a browser is something you don't nee
 
 | Structure borrowed | Next.js implementation — **rejected** | Zeus implementation |
 |---|---|---|
-| `routes/` directory is the route table | Webpack/Turbopack route manifest, JS chunks per route | `yugac` scans the dir and generates a route table at compile time |
+| `routes/` directory is the route table | Webpack/Turbopack route manifest, JS chunks per route | `loam` scans the dir and generates a route table at compile time |
 | `[slug]`, `[...rest]`, `(group)` naming | String-parsed at runtime | Same names; params are **typed** and validated before mount |
 | `layout.loam` nesting, persistent across navigation | RSC payload diffing to preserve layout state | Retained tree — shared layout nodes are simply never touched |
 | `loading.loam` | Suspense + thrown promises + streaming HTML | `resource` signal in `LOADING` state (§5.5) |
@@ -1013,13 +1013,13 @@ the boundary between language and framework enforceable rather than aspirational
 ```
 yuga/
   yuga/                     the language
-    src/                    yugac (C11): lexer, parser, sema, ir, codegen_c
+    src/                    loam (C11): lexer, parser, sema, ir, codegen_c
     std/                    core std only: fmt, net, sys, thread, math, str, time
     runtime/                loam_rt — the ONE C runtime for the ecosystem
     tests/                  compile_pass / compile_fail / golden
 
-  yuga-lsp/                 diagnostics, hover, go-to-def, completion, tokens
-  yugafmt/                  formatter (§1.7)
+  loam-lsp/                 diagnostics, hover, go-to-def, completion, tokens
+  loam-fmt/                  formatter (§1.7)
 
   zeus/                     the framework
     core/                   arena, geometry, layout, scene, input, signals
@@ -1049,7 +1049,7 @@ yuga/
     zeus/                   gallery, dashboard, counter, greeninfer
 
   docs/                     yuga.md, boundary.md, this file
-  bin/                      yugac, yuga-lsp, yugafmt, zeus
+  bin/                      loam, loam-lsp, loam-fmt, zeus
   install.sh  run.sh  Makefile
 ```
 
@@ -1173,12 +1173,12 @@ narrowing; open on `f32` geometry and SoA.**
 **Status: done.** Generated C carries `#line` directives mapped to the `.loam`
 source, so the C compiler's diagnostics name Loam lines and, with `-g`
 (`LOAM_DEBUG=1`), so do debuggers, profilers, and sanitizers. `#[test]` fns are
-collected and run by `yugac test`, which calls `std:test`'s `begin`/`ok`/
+collected and run by `loam test`, which calls `std:test`'s `begin`/`ok`/
 `summary`; the assertions (`test.assert`, `test.assert_eq_*`) are ordinary Loam
 in `std/test.loam` built on the `panic(msg)` primitive. `make test` runs
 `packages/loam/tests/inlang/*.loam` and expects an all-pass exit.
 
-`#line` directives in generated C; `#[test]` fns and `yugac test`.
+`#line` directives in generated C; `#[test]` fns and `loam test`.
 **Exit:** a trap in `app.loam` reports a `.loam` line in lldb (the panic message
 names it directly, and the `#line`-mapped debug line table references
 `app.loam` under `-g`); `make test` runs in-language tests. **Green.**
@@ -1288,7 +1288,7 @@ prerendered scenes.
 right title and image; `<body>` contains the canvas and nothing else.
 
 ### Phase 19 — Developer experience
-`yugafmt`. Hot reload preserving the signal arena. Devtools inspector.
+`loam-fmt`. Hot reload preserving the signal arena. Devtools inspector.
 `import "pkg:name"` + vendor lockfile. Animation and transition primitives.
 **Exit:** `zeus dev` reflects a component edit without losing state; the inspector
 shows tree, layout boxes, and signal values live.
@@ -1324,7 +1324,7 @@ Two ways:
 ./examples/zeus/myapp/build/macos/app
 
 # or one step (what the other examples' run.sh use)
-./bin/yugac --target=native --run examples/zeus/myapp/app.loam
+./bin/loam --target=native --run examples/zeus/myapp/app.loam
 ```
 
 One gotcha: `zeus_plat.c:322` gates on `ZEUS_HEADLESS` —

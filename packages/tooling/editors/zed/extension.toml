@@ -3,7 +3,7 @@ name = "Loam"
 version = "0.1.12"
 schema_version = 1
 authors = ["Loam"]
-description = "Loam language: syntax highlighting and diagnostics via yuga-lsp"
+description = "Loam language: syntax highlighting and diagnostics via loam-lsp"
 
 [grammars.loam]
 repository = "file:///Users/bala_mani/Documents/loam/packages/tooling/tree-sitter-yuga"

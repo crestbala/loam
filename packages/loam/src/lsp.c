@@ -1,5 +1,5 @@
 /**
- * lsp.c — yuga-lsp: Language Server Protocol over stdin/stdout.
+ * lsp.c — loam-lsp: Language Server Protocol over stdin/stdout.
  *
  * Full document sync, plus incremental contentChanges when a client sends them.
  * didOpen/didChange recompile the editor buffer (never a stale on-disk file)
@@ -1190,7 +1190,7 @@ static void handle_definition(const char *msg, const char *id) {
 }
 
 /* --- Open documents ------------------------------------------------------
-   yuga-lsp compiles one document at a time (the session is single-module),
+   loam-lsp compiles one document at a time (the session is single-module),
    but clients keep many buffers open and can re-open one already tracked
    (a "redundant" didOpen after a client or server restart). Every open
    buffer is stored here; the doc a request names is compiled lazily, and a
@@ -1865,7 +1865,7 @@ static void handle(const char *msg) {
                  "\"operator\",\"modifier\",\"punctuation\"],"
                  "\"tokenModifiers\":[\"declaration\"]},"
                  "\"full\":true,\"range\":false}},"
-                 "\"serverInfo\":{\"name\":\"yuga-lsp\",\"version\":\"0.4\"}}}",
+                 "\"serverInfo\":{\"name\":\"loam-lsp\",\"version\":\"0.4\"}}}",
                  id ? id : "null");
         send_raw(out);
     } else if (strcmp(method, "initialized") == 0) {

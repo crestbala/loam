@@ -1,5 +1,5 @@
 /* Zeus browser host. Canvas2D only — no WebGPU, no WebGL, no DOM widgets.
-   One <canvas>, this file, and a .wasm built by `yugac --target wasm`.
+   One <canvas>, this file, and a .wasm built by `loam --target wasm`.
    `window.attachZeus(canvas, opts)` boots from an ArrayBuffer; a canvas with
    `data-wasm` still auto-loads that URL (counter, gallery). */
 (function (root) {

@@ -8,7 +8,7 @@ import { defineConfig } from "vite";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, "../..");
-const yugac = resolve(repo, "bin/yugac");
+const loam = resolve(repo, "bin/loam");
 const buildDir = resolve(here, "build");
 const loader = resolve(here, "../../packages/zeus/hosts/web/loader.js");
 const app = resolve(here, "app.loam");
@@ -19,22 +19,22 @@ function wipeBuild() {
 }
 
 function compileWasm() {
-  if (!existsSync(yugac)) {
-    throw new Error("missing " + yugac + " — run `make` in the yuga repo first");
+  if (!existsSync(loam)) {
+    throw new Error("missing " + loam + " — run `make` in the yuga repo first");
   }
-  const r = spawnSync(yugac, ["build", "--target=wasm32", app], {
+  const r = spawnSync(loam, ["build", "--target=wasm32", app], {
     cwd: repo,
     encoding: "utf8",
   });
   if (r.stdout) process.stdout.write(r.stdout);
   if (r.stderr) process.stderr.write(r.stderr);
   if (r.status !== 0) {
-    throw new Error(r.stderr?.trim() || r.stdout?.trim() || "yugac failed");
+    throw new Error(r.stderr?.trim() || r.stdout?.trim() || "loam failed");
   }
 }
 
 function rebuild(reason) {
-  console.log("[yugac] " + reason + ": removing build/, compiling wasm");
+  console.log("[loam] " + reason + ": removing build/, compiling wasm");
   wipeBuild();
   compileWasm();
 }
@@ -56,7 +56,7 @@ export default defineConfig({
   },
   plugins: [
     {
-      name: "yugac-wasm",
+      name: "loam-wasm",
       buildStart() {
         rebuild("start");
       },
@@ -90,7 +90,7 @@ export default defineConfig({
               rebuild("change " + file);
               server.ws.send({ type: "full-reload" });
             } catch (e) {
-              console.error("[yugac]", e.message || e);
+              console.error("[loam]", e.message || e);
             }
           }, 80);
         });

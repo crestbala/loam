@@ -1,14 +1,14 @@
 /**
- * fmt.c — `yugafmt`, the Loam formatter (§1.7).
+ * fmt.c — `loam-fmt`, the Loam formatter (§1.7).
  *
  * One style, no options. Comments (`//`, `///`, `//!`, block) and string
  * literals are copied verbatim; the formatter normalizes indentation, spacing,
  * and blank lines around them. It is a scanner, not the parser: the parser
  * discards comments, and a formatter that deletes them is worse than none.
  *
- *     yugafmt <file>     formatted source to stdout
- *     yugafmt -w <file>  formatted source written back in place
- *     yugafmt            read stdin, write stdout
+ *     loam-fmt <file>     formatted source to stdout
+ *     loam-fmt -w <file>  formatted source written back in place
+ *     loam-fmt            read stdin, write stdout
  *
  * Style: 4-space indent by bracket depth; single spaces between tokens; no
  * space before `,` `;` `)` `]` `:` or after `(` `[`; one space before `{`; at
@@ -34,7 +34,7 @@ static void bput(Buf *b, char c) {
         b->cap = b->cap ? b->cap * 2 : 256;
         b->p = (char *)realloc(b->p, b->cap);
         if (!b->p) {
-            fprintf(stderr, "yugafmt: out of memory\n");
+            fprintf(stderr, "loam-fmt: out of memory\n");
             exit(2);
         }
     }
@@ -205,7 +205,7 @@ static char *read_all(FILE *f) {
 }
 
 static void die(const char *msg, const char *arg) {
-    fprintf(stderr, "yugafmt: %s%s%s\n", msg, arg ? ": " : "", arg ? arg : "");
+    fprintf(stderr, "loam-fmt: %s%s%s\n", msg, arg ? ": " : "", arg ? arg : "");
     exit(2);
 }
 

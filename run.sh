@@ -18,7 +18,7 @@
 # exports ZEUS_HEADLESS=1/MAYA_HEADLESS=1 to render one frame and exit; `run.sh`
 # clears those so a value left exported in your shell cannot silently build a
 # window-less binary that exits before anything appears. To render one frame on
-# purpose, invoke `bin/yugac` with ZEUS_HEADLESS=1 directly (see the Makefile).
+# purpose, invoke `bin/loam` with ZEUS_HEADLESS=1 directly (see the Makefile).
 set -e
 
 unset ZEUS_HEADLESS LOAM_HEADLESS MAYA_HEADLESS
@@ -26,7 +26,7 @@ unset ZEUS_HEADLESS LOAM_HEADLESS MAYA_HEADLESS
 HERE=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 LANGDIR=$HERE/examples/language
 ZEUSDIR=$HERE/examples/zeus
-YUGAC=$HERE/bin/yugac
+LOAM=$HERE/bin/loam
 
 die() { echo "run.sh: $*" >&2; exit 1; }
 
@@ -58,21 +58,21 @@ list() {
   echo "  www                Zeus docs; UI :5175, Docs.Page :8082"
 }
 
-ensure_yugac() {
-  if [ ! -x "$YUGAC" ]; then
+ensure_loam() {
+  if [ ! -x "$LOAM" ]; then
     echo "run.sh: building the compiler"
     make -C "$HERE" -j4
   fi
 }
 
-# Nothing runs from this script until `yugac check` is clean. The check is the
+# Nothing runs from this script until `loam check` is clean. The check is the
 # same frontend a build runs, so it costs one parse and catches the errors that
 # would otherwise surface as a broken window, a trapping wasm module, or a
 # Vite server happily serving a stale .wasm from the last good build.
 check_yuga() {
   src=$1
-  ensure_yugac
-  if ! "$YUGAC" check "$src"; then
+  ensure_loam
+  if ! "$LOAM" check "$src"; then
     die "$src failed the compiler check (nothing was run)"
   fi
 }
@@ -162,21 +162,21 @@ zeus_entry() {
 }
 
 # A zeus.toml app (routes/ tree, generated route table) is driven by the zeus
-# CLI, not by pointing yugac at <name>/<name>.loam — that file does not exist
+# CLI, not by pointing loam at <name>/<name>.loam — that file does not exist
 # for these. Regenerate the route table first so a new routes/ file is picked
-# up, then gate on `yugac check` like every other path here.
+# up, then gate on `loam check` like every other path here.
 run_zeus_framework_app() {
   name=$1
   target=${2:-native}
   appdir=$ZEUSDIR/$name
-  ensure_yugac
+  ensure_loam
   "$HERE/bin/zeus" routes "$appdir" >/dev/null || die "zeus routes failed for $name"
   entry=$(zeus_entry "$appdir") || die "no entry .loam in $appdir"
   check_yuga "$entry"
   case $target in
-    native|macos) exec "$YUGAC" --run "$entry" ;;
+    native|macos) exec "$LOAM" --run "$entry" ;;
     wasm32|wasm|web) exec "$HERE/bin/zeus" dev "$appdir" ;;
-    ios|android) exec "$YUGAC" "--target=$target" --run "$entry" ;;
+    ios|android) exec "$LOAM" "--target=$target" --run "$entry" ;;
     build) exec "$HERE/bin/zeus" build "$appdir" ;;
     *) die "unknown target '$target' (native macos web ios android build)" ;;
   esac
@@ -190,12 +190,12 @@ run_zeus_app() {
   fi
   check_yuga "$ZEUSDIR/$name/$name.loam"
   case $target in
-    native) exec "$YUGAC" --run "$ZEUSDIR/$name/$name.loam" ;;
+    native) exec "$LOAM" --run "$ZEUSDIR/$name/$name.loam" ;;
     web) run_zeus_web "$name" ;;
     wasm32|wasm)
-      exec "$YUGAC" --target=wasm32 --run "$ZEUSDIR/$name/$name.loam" ;;
+      exec "$LOAM" --target=wasm32 --run "$ZEUSDIR/$name/$name.loam" ;;
     ios|android)
-      exec "$YUGAC" "--target=$target" --run "$ZEUSDIR/$name/$name.loam" ;;
+      exec "$LOAM" "--target=$target" --run "$ZEUSDIR/$name/$name.loam" ;;
     *) die "unknown target '$target' (native web wasm32 ios android)" ;;
   esac
 }
@@ -209,7 +209,7 @@ run_language() {
   if [ "$name" = oob ]; then
     out=$LANGDIR/build/oob
     mkdir -p "$LANGDIR/build"
-    "$YUGAC" "$LANGDIR/oob.loam" -o "$out" || die "oob.loam failed to compile"
+    "$LOAM" "$LANGDIR/oob.loam" -o "$out" || die "oob.loam failed to compile"
     echo "run.sh: oob.loam is expected to trap on an out-of-bounds index"
     if "$out"; then
       die "oob.loam did not trap"
@@ -217,7 +217,7 @@ run_language() {
     echo "run.sh: trapped as expected"
     exit 0
   fi
-  exec "$YUGAC" --run "$LANGDIR/$name.loam"
+  exec "$LOAM" --run "$LANGDIR/$name.loam"
 }
 
 [ $# -eq 0 ] && { list; exit 0; }

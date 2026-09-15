@@ -1,4 +1,4 @@
-// In-language tests (`yugac test tests/inlang/tests.loam`). Each `#[test]` fn
+// In-language tests (`loam test tests/inlang/tests.loam`). Each `#[test]` fn
 // runs in declaration order; `test.assert(cond)` traps with this file's line on
 // failure, so a failure names both the test and the assertion.
 

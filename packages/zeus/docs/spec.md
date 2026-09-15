@@ -118,7 +118,7 @@ Browser events → `loader.js` → exported `zeus_pointer_*` / `zeus_key` →
 Native (headless snapshot):
 
 ```
-ZEUS_HEADLESS=1 ./bin/yugac packages/loam/tests/compile_pass/zeus_snap.loam -o packages/loam/tests/tmp/zeus_snap
+ZEUS_HEADLESS=1 ./bin/loam packages/loam/tests/compile_pass/zeus_snap.loam -o packages/loam/tests/tmp/zeus_snap
 ```
 
 WASM (needs a clang that has `wasm32`, e.g. Homebrew `llvm` or wasi-sdk).
@@ -134,12 +134,12 @@ That starts `backend/run.sh` (`http.listen` on `:8080`) then `frontend/run.sh`
 scripts in separate terminals to start them apart.
 
 ```
-./bin/yugac build --target=wasm32 examples/zeus/counter/frontend/app.loam
+./bin/loam build --target=wasm32 examples/zeus/counter/frontend/app.loam
 cd examples/zeus/counter/frontend && npm install && npm run dev
 ./examples/zeus/counter/backend/run.sh
 ```
 
-`npm run dev` deletes `frontend/build/` then runs `yugac --target=wasm32` before Vite
+`npm run dev` deletes `frontend/build/` then runs `loam --target=wasm32` before Vite
 listens, and again when `.loam` / runtime sources change. The wasm page calls
 `http.client("").call` (gRPC-Web) on the same origin; Vite forwards `/Counter` to `:8080`.
 
@@ -154,7 +154,7 @@ Or:
 
 ```
 ./examples/zeus/counter/backend/run.sh
-./bin/yugac --target=ios --run examples/zeus/counter/ios/app.loam
+./bin/loam --target=ios --run examples/zeus/counter/ios/app.loam
 ```
 
 Needs Xcode and an iPhone Simulator. Output is
@@ -176,7 +176,7 @@ Step-by-step: `examples/zeus/counter/android/guide.md`. On macOS with Homebrew:
 
 ```
 ./examples/zeus/counter/backend/run.sh
-./bin/yugac --target=android --run examples/zeus/counter/android/app.loam
+./bin/loam --target=android --run examples/zeus/counter/android/app.loam
 ```
 
 Output is the Gradle tree `examples/zeus/counter/android/build/app`.
@@ -197,7 +197,7 @@ Or:
 
 ```
 ./examples/zeus/counter/backend/run.sh
-./bin/yugac --target=native --run examples/zeus/counter/macos/app.loam
+./bin/loam --target=native --run examples/zeus/counter/macos/app.loam
 ```
 
 Output is `examples/zeus/counter/macos/build/app`.
@@ -238,11 +238,11 @@ checked in at `examples/zeus/myapp/` and built by the test gate, so the tree
 
 ## Formatter
 
-`yugafmt` is one style with no options: 4-space indentation by bracket depth,
+`loam-fmt` is one style with no options: 4-space indentation by bracket depth,
 single spaces between tokens, no space before `,` `;` `)` `]` `:` or after
 `(` `[`, one space around `=` and `->`, one space before `{`, at most one blank
-line, one trailing newline. `yugafmt <file>` prints to stdout, `yugafmt -w
-<file>` rewrites in place, `yugafmt` reads stdin. Comments (`//`, `///`, `//!`,
+line, one trailing newline. `loam-fmt <file>` prints to stdout, `loam-fmt -w
+<file>` rewrites in place, `loam-fmt` reads stdin. Comments (`//`, `///`, `//!`,
 block) and string literals are copied verbatim — it scans rather than using the
 parser, because the parser discards comments.
 

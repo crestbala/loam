@@ -1,9 +1,9 @@
 //! In-language tests for `mathf` (`mathf_tests.loam`).
 //!
 //! The expected values are the reference libm results, rounded to 7 decimals.
-//! `yugac test` runs them:
+//! `loam test` runs them:
 //!
-//!     ./bin/yugac test examples/language/ppm/mathf_tests.loam
+//!     ./bin/loam test examples/language/ppm/mathf_tests.loam
 
 import "std:test"
 import "mathf.loam"

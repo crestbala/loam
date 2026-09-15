@@ -11,7 +11,7 @@
 //!   `&T` (that bookkeeping is single-threaded by design).
 //! - The spawned fn and everything it calls may not touch module state
 //!   (globals, zeus arenas, async timers) or the C seam, except pure value
-//!   helpers (`yugac` rejects the rest at compile time). Values go **in** as
+//!   helpers (`loam` rejects the rest at compile time). Values go **in** as
 //!   captures; results come **out** through a `channel<T>`.
 //! - `channel<T>` is a bounded FIFO of Send `T` guarded by the C runtime:
 //!   `recv` blocks (workers pulling jobs), `try_recv` never blocks (the UI
@@ -60,7 +60,7 @@ struct Chan<T> {
 
 /// Run `cb` on a new detached OS thread. `cb` must be a fn name or a closure
 /// whose captures are Send, and its code (plus everything it calls) may not
-/// touch module state or the C seam — `yugac` checks all of that. Bodyless:
+/// touch module state or the C seam — `loam` checks all of that. Bodyless:
 /// `loam_thread_spawn` (pthread, detached; results return via channels).
 fn spawn(cb: fn()) {}
 

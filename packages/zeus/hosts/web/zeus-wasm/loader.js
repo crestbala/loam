@@ -1,5 +1,5 @@
 /* Zeus browser host. Canvas2D only — no WebGPU, no WebGL, no DOM widgets.
-   One <canvas>, this file, and a .wasm built by `yugac --target wasm`. */
+   One <canvas>, this file, and a .wasm built by `loam --target wasm`. */
 (function () {
   const canvas = document.getElementById("zeus");
   const ctx = canvas.getContext("2d");

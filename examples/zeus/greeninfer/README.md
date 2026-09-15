@@ -48,12 +48,12 @@ conversion, no copy — while Loam keeps the top-k.
 
 ## Build & run (macOS desktop)
 
-The compiler auto-links the seam: yugac compiles and links
+The compiler auto-links the seam: loam compiles and links
 `runtime/<app>_runtime.c` whenever it sits next to the entry program
 (`driver.c`). From the repo root:
 
 ```
-make                          # yugac (once)
+make                          # loam (once)
 ./run.sh greeninfer           # compile + open the Cocoa window
 ```
 
@@ -66,7 +66,7 @@ clang -O1 -I packages/loam/runtime -c \
   -o examples/zeus/greeninfer/build/greeninfer_runtime.o
 
 # 2. the native arm64 binary (Loam -> C99 -> cc; seam auto-linked)
-./bin/yugac examples/zeus/greeninfer/greeninfer.loam -o greeninfer-macos
+./bin/loam examples/zeus/greeninfer/greeninfer.loam -o greeninfer-macos
 ./greeninfer-macos
 ```
 
@@ -75,11 +75,11 @@ clang -O1 -I packages/loam/runtime -c \
 ```
 # smoke: engine + chunker + cosine + folder scan assertions
 LOAM_LINK_EXTRA="examples/zeus/greeninfer/runtime/greeninfer_runtime.c" \
-  ./bin/yugac --run examples/zeus/greeninfer/smoke.loam
+  ./bin/loam --run examples/zeus/greeninfer/smoke.loam
 
 # CLI demo: index ./examples/zeus/greeninfer, run 4 prompts, print hits + timing
 LOAM_LINK_EXTRA="examples/zeus/greeninfer/runtime/greeninfer_runtime.c" \
-  ./bin/yugac examples/zeus/greeninfer/main.loam -o greeninfer-macos
+  ./bin/loam examples/zeus/greeninfer/main.loam -o greeninfer-macos
 ./greeninfer-macos
 ```
 

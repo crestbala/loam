@@ -30,7 +30,7 @@ import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "..", "..", "..");
-const YUGAC = path.join(REPO, "bin", "yugac");
+const LOAM = path.join(REPO, "bin", "loam");
 
 type Entry = { parts: string[]; dir: string; files: Set<string> };
 type Builder = { parts: string[]; alias: string; meta: boolean; paths: boolean };
@@ -213,7 +213,7 @@ function exists(p: string): boolean {
 }
 
 /**
- * Environment for spawning `yugac` from build/dev. The headless switches are
+ * Environment for spawning `loam` from build/dev. The headless switches are
  * compile-time (they decide whether the GUI host is linked), and the test
  * runner exports them for *running* fixtures. A user build must not inherit
  * them, or `zeus build` silently produces a windowless binary.
@@ -241,14 +241,14 @@ function findEntry(appdir: string): string {
 }
 
 /**
- * `yugac check <entry>` — the frontend only, no codegen. Every command that
+ * `loam check <entry>` — the frontend only, no codegen. Every command that
  * runs or emits an app gates on this first, so a type error fails once, up
  * front, instead of once per target (or not at all when a target's host
  * toolchain is missing and its failure looks like the same thing).
  */
 function checkEntry(entry: string): boolean {
   const env = buildEnv();
-  const r = new Deno.Command(YUGAC, {
+  const r = new Deno.Command(LOAM, {
     args: ["check", entry],
     cwd: REPO,
     ...(env ? { env, clearEnv: true } : {}),
@@ -264,7 +264,7 @@ function checkEntry(entry: string): boolean {
   return false;
 }
 
-function yugacArgs(t: TargetName, entry: string, out: string): string[] {
+function loamArgs(t: TargetName, entry: string, out: string): string[] {
   switch (t) {
     case "web":
       return ["--target=wasm32", entry, "-o", out];
@@ -287,7 +287,7 @@ function yugacArgs(t: TargetName, entry: string, out: string): string[] {
  * the rest still build.
  */
 function build(appdir: string, targets: TargetName[], base: string): number {
-  if (!exists(YUGAC)) die(`zeus: missing ${YUGAC} — run \`make\` in ${REPO} first`);
+  if (!exists(LOAM)) die(`zeus: missing ${LOAM} — run \`make\` in ${REPO} first`);
   if (exists(path.join(appdir, "routes"))) generate(appdir);
   const entry = findEntry(appdir);
   if (!checkEntry(entry)) return 1;
@@ -299,8 +299,8 @@ function build(appdir: string, targets: TargetName[], base: string): number {
     const outName = t === "web" ? stem + ".wasm" : stem;
     const out = path.join(dir, outName);
     const env = buildEnv();
-    const r = new Deno.Command(YUGAC, {
-      args: yugacArgs(t, entry, out),
+    const r = new Deno.Command(LOAM, {
+      args: loamArgs(t, entry, out),
       cwd: REPO,
       ...(env ? { env, clearEnv: true } : {}),
       stdout: "piped",
@@ -402,7 +402,7 @@ function collectMeta(appdir: string): MetaRec[] {
   const bin = path.join(zdir, "meta_dump");
   // The dump only *calls* meta()/paths(); a DCE edge case can drop a needed
   // std:zeus helper while keeping its call, so compile it with DCE off.
-  const cc = new Deno.Command(YUGAC, {
+  const cc = new Deno.Command(LOAM, {
     args: [src, "-o", bin],
     cwd: REPO,
     env: { ...Deno.env.toObject(), LOAM_NO_DCE: "1" },
@@ -653,7 +653,7 @@ function devBuildOnce(appdir: string): boolean {
   const dir = path.join(appdir, "build", "web");
   Deno.mkdirSync(dir, { recursive: true });
   const env = buildEnv();
-  const r = new Deno.Command(YUGAC, {
+  const r = new Deno.Command(LOAM, {
     args: ["--target=wasm32", entry, "-o", path.join(dir, stem + ".wasm")],
     cwd: REPO,
     ...(env ? { env, clearEnv: true } : {}),
@@ -678,7 +678,7 @@ function devBuildOnce(appdir: string): boolean {
  * loader restores it on boot — an edit reflects without losing state.
  */
 async function dev(appdir: string, port: number, buildOnly: boolean): Promise<number> {
-  if (!exists(YUGAC)) die(`zeus: missing ${YUGAC} — run \`make\` in ${REPO} first`);
+  if (!exists(LOAM)) die(`zeus: missing ${LOAM} — run \`make\` in ${REPO} first`);
   console.log("zeus: initial build…");
   if (!devBuildOnce(appdir)) return 1;
   if (buildOnly) {
@@ -969,7 +969,7 @@ function scaffoldFiles(name: string): Record<string, string> {
     "public/robots.txt": `User-agent: *\nAllow: /\n`,
 
     "tests/smoke.loam":
-      `//! \`#[test]\` fns. Import this from the entry and run \`yugac test app.loam\`.\n\n` +
+      `//! \`#[test]\` fns. Import this from the entry and run \`loam test app.loam\`.\n\n` +
       `import "std:test"\n\n` +
       `fn add(a: int, b: int) -> int {\n` +
       `    return a + b\n` +
@@ -1001,7 +1001,7 @@ function scaffold(appdir: string, name: string): number {
     Deno.writeTextFileSync(p, body);
   }
   // app.loam imports app_routes.loam, so generate it now: a fresh app must
-  // typecheck under plain `yugac` (and the LSP) before anyone runs a build.
+  // typecheck under plain `loam` (and the LSP) before anyone runs a build.
   generate(appdir);
   console.log(`zeus: created ${name} (${Object.keys(files).length + 1} files)`);
   console.log(`  cd ${path.relative(Deno.cwd(), appdir) || "."} && zeus dev`);

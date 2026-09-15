@@ -2,7 +2,7 @@
 import "std:sys"
 
 
-// a messy fixture for yugafmt
+// a messy fixture for loam-fmt
 fn   add(a:int,b : int)->int   {
         // inner comment
     return a+b
