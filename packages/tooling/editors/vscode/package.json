@@ -1,15 +1,15 @@
 {
-  "name": "yuga",
+  "name": "loam",
   "displayName": "Loam",
   "description": "Loam language: syntax highlighting and IntelliSense via loam-lsp",
   "version": "0.1.0",
-  "publisher": "yuga",
+  "publisher": "loam",
   "engines": {
     "vscode": "^1.74.0"
   },
   "categories": ["Programming Languages"],
   "activationEvents": [
-    "onLanguage:yuga",
+    "onLanguage:loam",
     "workspaceContains:**/*.loam",
     "onStartupFinished"
   ],
@@ -17,15 +17,15 @@
   "contributes": {
     "languages": [
       {
-        "id": "yuga",
-        "aliases": ["Loam", "yuga"],
+        "id": "loam",
+        "aliases": ["Loam", "loam"],
         "extensions": [".loam", ".loa"],
         "configuration": "./language-configuration.json"
       }
     ],
     "grammars": [
       {
-        "language": "yuga",
+        "language": "loam",
         "scopeName": "source.loam",
         "path": "./syntaxes/loam.tmLanguage.json"
       }
@@ -33,7 +33,7 @@
     "configuration": {
       "title": "Loam",
       "properties": {
-        "yuga.lspPath": {
+        "loam.lspPath": {
           "type": "string",
           "default": "",
           "description": "Path to loam-lsp. Empty walks up from the workspace to bin/loam-lsp, then PATH."

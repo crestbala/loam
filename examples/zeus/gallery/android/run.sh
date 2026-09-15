@@ -12,7 +12,7 @@ while [ "$d" != / ]; do
   d=$(CDPATH= cd -- "$d/.." && pwd)
 done
 if [ -z "$REPO" ]; then
-  echo "run.sh: could not find the yuga repo (Makefile + packages/loam/src/)" >&2
+  echo "run.sh: could not find the loam repo (Makefile + packages/loam/src/)" >&2
   exit 1
 fi
 if [ -f "$HERE/.sdk-env" ]; then
@@ -47,7 +47,7 @@ if [ ! -x "$REPO/bin/loam" ]; then
   make -C "$REPO" -j4
 fi
 
-# No device or emulator connected? Boot the shared 'yuga' AVD so a fresh
+# No device or emulator connected? Boot the shared 'loam' AVD so a fresh
 # user gets a clear flow instead of gradle's 'No connected devices!'.
 if ! adb get-state 2>/dev/null | grep -q device; then
   EMU=$ANDROID_HOME/emulator/emulator
@@ -57,8 +57,8 @@ if ! adb get-state 2>/dev/null | grep -q device; then
     echo "  $HERE/emu.sh" >&2
     exit 1
   fi
-  echo "android: no device connected — booting the 'yuga' emulator"
-  "$EMU" -avd yuga -gpu swiftshader_indirect -feature -Vulkan \
+  echo "android: no device connected — booting the 'loam' emulator"
+  "$EMU" -avd loam -gpu swiftshader_indirect -feature -Vulkan \
     -no-snapshot-load -no-boot-anim >/dev/null 2>&1 &
   n=0
   while [ "$n" -lt 240 ]; do

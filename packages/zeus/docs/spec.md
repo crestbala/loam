@@ -32,7 +32,7 @@ use Material widgets or system colors.
 page slot rebuilds on navigation, so shell state survives. The current path is
 a `Signal<string>`, and each page builds under `zeus.Boundary`.
 
-```yuga
+```loam
 router.Router([]Route {
     Route { pattern: "/", build: Home },
     Route { pattern: "/post/:slug", build: Post },
@@ -43,7 +43,7 @@ Route loaders are registered separately and start the moment navigation
 begins, before the page paints — every loader for the target route starts, so
 independent fetches run concurrently (no waterfalls, §5.5):
 
-```yuga
+```loam
 router.on_load("/post/:slug", fn(p) {
     http.client("").call_async(get_post_req(router.param(p, "slug")), fn(reply) {
         post.set(decode_Post(reply))

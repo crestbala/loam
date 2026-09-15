@@ -1,5 +1,5 @@
 name = "Loam"
-grammar = "yuga"
+grammar = "loam"
 path_suffixes = ["loam", "loa"]
 # Queries must match the grammar compiled from extension.toml [grammars.loam].rev.
 language_servers = ["loam-lsp"]

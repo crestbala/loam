@@ -5,11 +5,11 @@ The compiler (`loam`) is C11. It typechecks a program, lowers it to IR, emits
 C99, and invokes `cc`. C is the platform binding target, not the language's
 semantics.
 
-```yuga
+```loam
 import "std:fmt"
 
 fn main() {
-    fmt.println("hello, yuga")
+    fmt.println("hello, loam")
 }
 ```
 
@@ -19,7 +19,7 @@ make
 ./hello
 ```
 
-Language: [docs/yuga.md](docs/yuga.md). C vs Loam: [docs/boundary.md](docs/boundary.md).
+Language: [docs/loam.md](docs/loam.md). C vs Loam: [docs/boundary.md](docs/boundary.md).
 Zeus backends and specifications: [packages/zeus/docs/spec.md](packages/zeus/docs/spec.md).
 Browsable docs: `./run.sh www` — Zeus UI at http://127.0.0.1:5175, `Docs.Page` on `:8082`.
 
@@ -106,7 +106,7 @@ Zeus is Loam's UI library. A component is a function; hierarchy is a
 trailing block. No `View` trait, no HTML DOM. Backend is a `--target`
 flag, not an import. Web is Canvas2D wasm.
 
-```yuga
+```loam
 import "std:zeus"
 
 fn main() {
@@ -248,16 +248,16 @@ SDK stack; the counter one is canonical and `./install.sh android` wraps it):
 ./run.sh gallery android            # or the gallery on the emulator
 ```
 
-`run.sh` auto-boots the shared `yuga` AVD when no device is connected (stop
+`run.sh` auto-boots the shared `loam` AVD when no device is connected (stop
 it later with `adb emu kill`); `emu.sh` runs it in its own terminal if you
 prefer. Step-by-step: [examples/zeus/counter/android/guide.md](examples/zeus/counter/android/guide.md)
 and [examples/zeus/gallery/android/guide.md](examples/zeus/gallery/android/guide.md).
-All zeus `android/run.sh` scripts share one `yuga` AVD.
+All zeus `android/run.sh` scripts share one `loam` AVD.
 
 ## Repository
 
 ```
-yuga/                  the language
+loam/                  the language
   src/                 compiler (C11): lexer, parser, sema, ir, codegen_c
   std/                 language libraries (Loam), incl. zeuscore/httpcore/mayacore
   runtime/             loam_rt (language) + host shims
@@ -274,7 +274,7 @@ install.sh             one-time macOS setup (core tools; android stack)
 examples/language/     standalone .loam programs
 examples/zeus/         gallery (component catalog), dashboard, full-stack counter
 www/                   Zeus + gRPC docs (Vite serves wasm, no Svelte)
-docs/                  yuga.md (language + architecture), boundary.md (C seam),
+docs/                  loam.md (language + architecture), boundary.md (C seam),
                        downsides.md (self-improvement phases),
                        zeus_roadmap.md (phase history)
 bin/loam              compiler

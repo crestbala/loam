@@ -22,7 +22,7 @@ function wipeBuild() {
 
 function compileWasm() {
   if (!existsSync(loam)) {
-    throw new Error("missing " + loam + " — run `make` in the yuga repo first");
+    throw new Error("missing " + loam + " — run `make` in the loam repo first");
   }
   /* Compile to a temp name and rename into place: the dev server must never
      serve a half-written or missing /app.wasm (vite's SPA fallback would
@@ -53,7 +53,7 @@ function rebuild(reason) {
 function shouldRebuild(file) {
   const n = file.replace(/\\/g, "/");
   if (n.includes("/node_modules/") || n.includes("/build/")) return false;
-  return /\.(yuga|c|h)$/.test(n) || n.endsWith("/web/loader.js");
+  return /\.(loam|c|h)$/.test(n) || n.endsWith("/web/loader.js");
 }
 
 export default defineConfig({

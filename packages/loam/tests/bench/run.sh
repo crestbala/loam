@@ -16,7 +16,7 @@ BASE="$OUT/baseline"
 # The baseline is whatever HEAD happens to be, and the language has lived at
 # three paths across the restructure. Probe them newest-first.
 BASE_APP_REL=packages/loam/tests/bench/bench.loam
-for cand in packages/loam/tests/bench/bench.loam yuga/tests/bench/bench.loam; do
+for cand in packages/loam/tests/bench/bench.loam loam/tests/bench/bench.loam; do
     if [ -f "$BASE/$cand" ]; then BASE_APP_REL=$cand; break; fi
 done
 mkdir -p "$OUT"

@@ -628,7 +628,7 @@ static void send_diagnostics(const char *uri, const char *path, int opened) {
         int m = snprintf(item, sizeof item,
                          "%s{\"range\":{\"start\":{\"line\":%d,\"character\":%d},"
                          "\"end\":{\"line\":%d,\"character\":%d}},"
-                         "\"severity\":1,\"source\":\"yuga\",\"message\":\"%s\"}",
+                         "\"severity\":1,\"source\":\"loam\",\"message\":\"%s\"}",
                          first ? "" : ",", sl, sc, el, ec, em ? em : "");
         first = 0;
         free(em);

@@ -7,20 +7,20 @@
       "name": "Loam",
       "appearance": "dark",
       "file_suffixes": {
-        "yuga": "yuga"
+        "loam": "loam"
       },
       "file_icons": {
-        "yuga-file": { "path": "./icons/loam.svg" }
+        "loam-file": { "path": "./icons/loam.svg" }
       }
     },
     {
       "name": "Loam",
       "appearance": "light",
       "file_suffixes": {
-        "yuga": "yuga-file"
+        "loam": "loam-file"
       },
       "file_icons": {
-        "yuga-file": { "path": "./icons/yuga-file.svg" }
+        "loam-file": { "path": "./icons/loam-file.svg" }
       }
     }
   ]

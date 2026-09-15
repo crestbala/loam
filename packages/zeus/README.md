@@ -11,7 +11,7 @@ this file is the public API map.
 A **component** is a plain function. Hierarchy is a trailing block. Props are
 named arguments. There is no base class, no `impl View`, and no chain builder.
 
-```yuga
+```loam
 import "std:zeus"
 
 fn Chip(label: string) {

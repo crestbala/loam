@@ -125,11 +125,14 @@ path_suffixes@@s/path_suffixes = \["yuga"\]/path_suffixes = ["loam", "loa"]/g
 EOF
     ;;
     6)  cat <<'EOF'
-tree-sitter-yuga@@s/tree-sitter-yuga/@@TSY@@/g
+# The grammar directory is still named tree-sitter-yuga (see the stage-5 note),
+# so hide that one path from the sweep. The placeholder must not itself contain
+# the rule separator, or `<pat>@@<expr>` parses wrong.
+tree-sitter-yuga@@s/tree-sitter-yuga/ZZTSYZZ/g
 YUGA@@s/YUGA/LOAM/g
 Yuga@@s/Yuga/Loam/g
 yuga@@s/yuga/loam/g
-@@TSY@@@@s/@@TSY@@/tree-sitter-yuga/g
+ZZTSYZZ@@s/ZZTSYZZ/tree-sitter-yuga/g
 EOF
     ;;
     esac

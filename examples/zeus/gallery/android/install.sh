@@ -7,7 +7,7 @@ ENV_FILE=$HERE/.sdk-env
 API=34
 NDK=26.3.11579264
 BUILD_TOOLS=34.0.0
-AVD_NAME=yuga
+AVD_NAME=loam
 
 die() {
   echo "install.sh: $*" >&2

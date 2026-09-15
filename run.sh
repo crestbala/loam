@@ -69,7 +69,7 @@ ensure_loam() {
 # same frontend a build runs, so it costs one parse and catches the errors that
 # would otherwise surface as a broken window, a trapping wasm module, or a
 # Vite server happily serving a stale .wasm from the last good build.
-check_yuga() {
+check_loam() {
   src=$1
   ensure_loam
   if ! "$LOAM" check "$src"; then
@@ -172,7 +172,7 @@ run_zeus_framework_app() {
   ensure_loam
   "$HERE/bin/zeus" routes "$appdir" >/dev/null || die "zeus routes failed for $name"
   entry=$(zeus_entry "$appdir") || die "no entry .loam in $appdir"
-  check_yuga "$entry"
+  check_loam "$entry"
   case $target in
     native|macos) exec "$LOAM" --run "$entry" ;;
     wasm32|wasm|web) exec "$HERE/bin/zeus" dev "$appdir" ;;
@@ -188,7 +188,7 @@ run_zeus_app() {
   if [ -f "$ZEUSDIR/$name/zeus.toml" ]; then
     run_zeus_framework_app "$name" "$target"
   fi
-  check_yuga "$ZEUSDIR/$name/$name.loam"
+  check_loam "$ZEUSDIR/$name/$name.loam"
   case $target in
     native) exec "$LOAM" --run "$ZEUSDIR/$name/$name.loam" ;;
     web) run_zeus_web "$name" ;;
@@ -202,7 +202,7 @@ run_zeus_app() {
 
 run_language() {
   name=$1
-  check_yuga "$LANGDIR/$name.loam"
+  check_loam "$LANGDIR/$name.loam"
   # oob.loam exists to prove the bounds check traps, so a nonzero exit from the
   # program is the expected outcome. A compile error is still a real failure,
   # so build and run as separate steps rather than using --run.

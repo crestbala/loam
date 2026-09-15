@@ -690,7 +690,7 @@ async function dev(appdir: string, port: number, buildOnly: boolean): Promise<nu
     appdir,
     path.join(REPO, "packages", "zeus", "std"),
     path.join(REPO, "packages", "http", "std"),
-    path.join(REPO, "packages", "yuga", "std"),
+    path.join(REPO, "packages", "loam", "std"),
   ];
   const files: string[] = [];
   const scan = (): number => {

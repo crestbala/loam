@@ -1,9 +1,9 @@
 #!/bin/sh
-# Boot the `yuga` AVD. SwiftShader avoids host-GPU bind failures on macOS
+# Boot the `loam` AVD. SwiftShader avoids host-GPU bind failures on macOS
 # (ERROR 12299 / 12301, blank emulator window).
 set -e
 HERE=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
-AVD_NAME=yuga
+AVD_NAME=loam
 
 if [ -f "$HERE/.sdk-env" ]; then
   # shellcheck disable=SC1091

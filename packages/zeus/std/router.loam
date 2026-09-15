@@ -30,7 +30,7 @@
 //! path starts when navigation begins — before the page builds — so a route's
 //! independent fetches are in flight together (no waterfalls, §5.5).
 //!
-//! ```yuga
+//! ```loam
 //! router.on_load("/post/:slug", fn(p) {
 //!     let slug = router.param(p, "slug")
 //!     http.client("").call_async(get_post_req(slug), fn(reply) {

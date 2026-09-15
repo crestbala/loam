@@ -1,6 +1,6 @@
 {
   "files.associations": {
-    "*.loam": "yuga"
+    "*.loam": "loam"
   },
   "editor.tokenColorCustomizations": {
     "textMateRules": [

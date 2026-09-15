@@ -9,7 +9,7 @@ Syntax highlighting (Tree-sitter) and error checking (`loam-lsp`).
 3. In Zed: command palette → **zed: install dev extension**
 4. Choose `packages/tooling/editors/zed`
 
-Zed clones the grammar from `packages/tooling/tree-sitter-yuga` via `file://`. That directory must be its own git repo (`make grammar` creates it). If install fails with **failed to compile grammar 'yuga'**:
+Zed clones the grammar from `packages/tooling/tree-sitter-yuga` via `file://`. That directory must be its own git repo (`make grammar` creates it). If install fails with **failed to compile grammar 'loam'**:
 
 ```bash
 rm -rf packages/tooling/editors/zed/grammars

@@ -75,13 +75,13 @@ zed-grammar:
 	  if [ ! -d .git ]; then git init; fi && \
 	  git add -A && \
 	  if git diff --cached --quiet && git rev-parse --verify HEAD >/dev/null 2>&1; then :; \
-	  else git -c user.name=yuga -c user.email=yuga@local commit --quiet -m "yuga grammar"; fi
+	  else git -c user.name=loam -c user.email=loam@local commit --quiet -m "loam grammar"; fi
 	@rev=$$(git -C packages/tooling/tree-sitter-yuga rev-parse HEAD); \
 	  sed -i '' "s/^rev = \".*\"/rev = \"$$rev\"/" packages/tooling/editors/zed/extension.toml; \
 	  echo "zed grammar rev $$rev"
 	@# Pin the clone URL to this checkout too, not just the rev: a moved grammar
 	@# directory otherwise leaves Zed cloning a path that no longer exists and
-	@# failing with "failed to compile grammar 'yuga'".
+	@# failing with "failed to compile grammar 'loam'".
 	@repo="file://$(CURDIR)/packages/tooling/tree-sitter-yuga"; \
 	  sed -i '' "s|^repository = \".*\"|repository = \"$$repo\"|" packages/tooling/editors/zed/extension.toml; \
 	  echo "zed grammar repo $$repo"

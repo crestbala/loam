@@ -12,7 +12,7 @@ while [ "$d" != / ]; do
   d=$(CDPATH= cd -- "$d/.." && pwd)
 done
 if [ -z "$REPO" ]; then
-  echo "run.sh: could not find the yuga repo (Makefile + packages/loam/src/)" >&2
+  echo "run.sh: could not find the loam repo (Makefile + packages/loam/src/)" >&2
   exit 1
 fi
 if [ ! -x "$REPO/bin/loam" ]; then

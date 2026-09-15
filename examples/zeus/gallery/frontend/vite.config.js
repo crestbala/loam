@@ -32,7 +32,7 @@ function newestMtime(dir, acc) {
     if (e.name === "node_modules" || e.name === "build" || e.name === ".git") continue;
     const p = resolve(dir, e.name);
     if (e.isDirectory()) newestMtime(p, acc);
-    else if (/\.(yuga|c|h)$/.test(e.name)) {
+    else if (/\.(loam|c|h)$/.test(e.name)) {
       try {
         const t = statSync(p).mtimeMs;
         if (t > acc.t) acc.t = t;
@@ -63,7 +63,7 @@ let compileQueued = false;
 function runLoamc() {
   if (!existsSync(loam)) {
     return Promise.reject(
-      new Error("missing " + loam + " — run `make` in the yuga repo first"),
+      new Error("missing " + loam + " — run `make` in the loam repo first"),
     );
   }
   mkdirSync(buildDir, { recursive: true });
@@ -126,7 +126,7 @@ function rebuild(reason) {
 function shouldRebuild(file) {
   const n = file.replace(/\\/g, "/");
   if (n.includes("/node_modules/") || n.includes("/build/")) return false;
-  return /\.(yuga|c|h)$/.test(n) || n.endsWith("/web/loader.js");
+  return /\.(loam|c|h)$/.test(n) || n.endsWith("/web/loader.js");
 }
 
 export default defineConfig({
