@@ -71,7 +71,6 @@ packages/zeus/hosts/android/java/com/yuga packages/zeus/hosts/android/java/com/l
 EOF
     ;;
     5)  cat <<'EOF'
-packages/tooling/tree-sitter-yuga packages/tooling/tree-sitter-loam
 packages/tooling/editors/vscode/syntaxes/yuga.tmLanguage.json packages/tooling/editors/vscode/syntaxes/loam.tmLanguage.json
 packages/tooling/editors/zed/icon_themes/yuga.json packages/tooling/editors/zed/icon_themes/loam.json
 packages/tooling/editors/zed/icons/yuga.svg packages/tooling/editors/zed/icons/loam.svg
@@ -122,12 +121,15 @@ yuga\.svg@@s/yuga\.svg/loam.svg/g
 editors/zed/languages/yuga@@s#editors/zed/languages/yuga#editors/zed/languages/loam#g
 "file-types"@@s/"file-types": \["yuga"\]/"file-types": ["loam", "loa"]/g
 "extensions": \["\.loam"\]@@s/"extensions": \["\.loam"\]/"extensions": [".loam", ".loa"]/g
+path_suffixes@@s/path_suffixes = \["yuga"\]/path_suffixes = ["loam", "loa"]/g
 EOF
     ;;
     6)  cat <<'EOF'
+tree-sitter-yuga@@s/tree-sitter-yuga/@@TSY@@/g
 YUGA@@s/YUGA/LOAM/g
 Yuga@@s/Yuga/Loam/g
 yuga@@s/yuga/loam/g
+@@TSY@@@@s/@@TSY@@/tree-sitter-yuga/g
 EOF
     ;;
     esac

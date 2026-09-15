@@ -24,7 +24,7 @@ img.save(png_path)
 buf = Path("/tmp/loam_icon.png")
 img.save(buf)
 b64 = base64.b64encode(buf.read_bytes()).decode("ascii")
-(icons / "yuga.svg").write_text(
+(icons / "loam.svg").write_text(
     f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}">
   <image href="data:image/png;base64,{b64}" width="{w}" height="{h}"/>
 </svg>
