@@ -767,7 +767,25 @@ static CGPoint zeus_content_point(UIView *v, CGPoint p) {
     return p;
 }
 
-@interface ZeusView : UIView {
+/* Keep the software keyboard in step with the engine's focus.
+  
+   The engine owns the field and its contents; the host supplies only the
+   keyboard. The browser host does the same with a hidden <textarea> (`syncIme`
+   in hosts/web/loader.js): focus it while `zeus_focus_captures_text()` and blur
+   it otherwise. Call after anything that can move focus — today, a touch. */
+static void zeus_sync_keyboard(UIView *v) {
+    if (zeus_focus_captures_text()) {
+        if (![v isFirstResponder]) [v becomeFirstResponder];
+    } else if ([v isFirstResponder]) {
+        [v resignFirstResponder];
+    }
+}
+
+/* `UIKeyInput` is what raises the software keyboard on a device, and what routes
+   a hardware keyboard (Simulator, or a paired one) to `insertText:` /
+   `deleteBackward`. Without it the host has no text path at all: taps move
+   focus, and typing goes nowhere. */
+@interface ZeusView : UIView <UIKeyInput> {
     CADisplayLink *link;
     CGPoint last;
     int tracking;
@@ -831,14 +849,24 @@ static CGPoint zeus_content_point(UIView *v, CGPoint p) {
 - (void)touchesBegan:(NSSet *)touches withEvent:(UIEvent *)event {
     UITouch *t = [touches anyObject];
     CGPoint p;
+    int dirty;
     (void)event;
     if (!t) return;
     p = zeus_content_point(self, [t locationInView:self]);
     last = p;
     tracking = 1;
     scrolling = 0;
-    if (zeus_handle_click((int64_t)p.x, (int64_t)p.y))
-        [self setNeedsDisplay];
+    /* A finger has no hover, so the touch *is* the pointer: report the position
+       before the press. Without this a tap only ever produces a click, and
+       hover-driven widgets (chart tooltips, hover states) never appear on iOS —
+       while the same tap works on Cocoa and Canvas2D, where a mouse move has
+       already hovered that point. Left in place on `touchesEnded`, so a tap
+       keeps its tooltip rather than clearing it when the finger lifts. */
+    dirty = zeus_handle_hover((int64_t)p.x, (int64_t)p.y);
+    if (zeus_handle_click((int64_t)p.x, (int64_t)p.y)) dirty = 1;
+    /* The press may have moved focus into or out of a text field. */
+    zeus_sync_keyboard(self);
+    if (dirty) [self setNeedsDisplay];
 }
 
 - (void)touchesMoved:(NSSet *)touches withEvent:(UIEvent *)event {
@@ -871,6 +899,48 @@ static CGPoint zeus_content_point(UIView *v, CGPoint p) {
 
 - (void)touchesCancelled:(NSSet *)touches withEvent:(UIEvent *)event {
     [self touchesEnded:touches withEvent:event];
+}
+
+/* ── text input ──────────────────────────────────────────────────────────
+   The engine owns the field and its contents, so there is nothing to store
+   here: each call forwards to the engine and repaints if it says the tree
+   changed. Key codes match mac.m and the browser host — backspace 8, Return 13
+   (`insertNewline:` there, `Enter` in loader.js) — so a single-line field
+   submits instead of growing a newline. */
+- (BOOL)canBecomeFirstResponder {
+    return YES;
+}
+
+- (BOOL)hasText {
+    return zeus_focus_captures_text() ? YES : NO;
+}
+
+- (void)insertText:(NSString *)text {
+    const char *u;
+    if ([text isEqualToString:@"\n"]) {
+        if (zeus_handle_key_ev(13, 0)) [self setNeedsDisplay];
+        return;
+    }
+    u = [text UTF8String];
+    if (u && zeus_handle_text(u, (int)strlen(u))) [self setNeedsDisplay];
+}
+
+- (void)deleteBackward {
+    if (zeus_handle_key_ev(8, 0)) [self setNeedsDisplay];
+}
+
+/* IME composition, kept separate from committed text exactly as mac.m does with
+   setMarkedText / unmarkText. Implementing these without adopting the whole
+   `UITextInput` protocol is enough for UIKit to use them when present. */
+- (void)setMarkedText:(NSString *)markedText selectedRange:(NSRange)selectedRange {
+    const char *u;
+    (void)selectedRange;
+    u = [markedText UTF8String];
+    if (u && zeus_handle_marked(u, (int)strlen(u))) [self setNeedsDisplay];
+}
+
+- (void)unmarkText {
+    if (zeus_handle_marked("", 0)) [self setNeedsDisplay];
 }
 @end
 

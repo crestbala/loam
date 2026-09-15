@@ -378,19 +378,19 @@ fn measure_node(id: int) {
                 rh = geometry.max2(rh, arena.nodes[c].ih)
             }
         }
-        let mut cols = i32(arena.nodes[id].grid_cols)
-        if cols < 1 {
-            cols = 1
-        }
-        if arena.nodes[id].grid_auto != 0 {
-            cols = 2
-        }
+        let gx = arena.gap_x(id)
+        let gy = arena.gap_y(id)
+        /* Intrinsic width: the flow children in one row. An auto grid measures
+           at that natural (widest) column count, because the width that would
+           narrow it is not known yet — the parent assigns it after measuring.
+           `layout_grid` makes the real choice, and grows the height when that
+           choice lands on more rows than this guess. */
+        let natural = nflow * cw + gx * geometry.max2(nflow - 1, 0)
+        let cols = grid_cols_at(id, natural, nflow, cw)
         let mut rows = 0
         if nflow > 0 {
             rows = (nflow + cols - 1) / cols
         }
-        let gx = arena.gap_x(id)
-        let gy = arena.gap_y(id)
         let mut iw = cols * cw + gx * geometry.max2(cols - 1, 0) + arena.box_pad_x(id)
         let mut ih = rows * rh + gy * geometry.max2(rows - 1, 0) + arena.box_pad_y(id)
         if arena.nodes[id].ew >= 0 {
@@ -926,30 +926,79 @@ fn layout_flex_col(id: int) {
     }
 }
 
+/// Column count a grid resolves to, shared by `measure_node` and
+/// `layout_grid` so the two cannot disagree.
+///
+/// `grid_auto == 0` is the fixed case: `grid_cols` is the count, floored at 1
+/// (`grid_cols == 0`, i.e. `GridConfig {}`, means a single column).
+///
+/// `grid_auto != 0` is auto mode, where a column is a *cell* of a minimum
+/// width and the count is however many such cells fit the width `iw` has,
+/// capped by `grid_cols` when the caller gave one and by `flow` children so
+/// the last row is never empty tracks.
+///
+/// The cell width is `grid_min` when the caller set one. With no floor it is
+/// `nat` — the widest child's natural width — because a column has to be at
+/// least wide enough for what goes in it; that is the same rule `measure_node`
+/// uses to guess the grid's own width, so the two agree by construction. If
+/// neither is available (`nat <= 0`: the children report no width of their
+/// own) the count falls back to `grid_cols`, which is the fixed behaviour.
+///
+/// The gap is part of the cell (`cell + gx`), matching the packing in
+/// `layout_grid`, where `cols` cells plus `cols - 1` gaps span `iw`.
+///
+/// `flow` is how many children will actually be placed. `0` means the caller
+/// has none to offer (measure saw no flow children) — the cap is skipped
+/// rather than collapsing the count to nothing.
+fn grid_cols_at(id: int, iw: int, flow: int, nat: int) -> int {
+    let mut cols = i32(arena.nodes[id].grid_cols)
+    if arena.nodes[id].grid_auto != 0 {
+        let mut cell = i32(arena.nodes[id].grid_min)
+        if cell <= 0 {
+            cell = nat
+        }
+        if cell > 0 {
+            cell = cell + arena.gap_x(id)
+            cols = (iw + arena.gap_x(id)) / cell
+        }
+        if cols < 1 {
+            cols = 1
+        }
+        if arena.nodes[id].grid_cols > 0 {
+            if cols > i32(arena.nodes[id].grid_cols) {
+                cols = i32(arena.nodes[id].grid_cols)
+            }
+        }
+        if flow > 0 {
+            if cols > flow {
+                cols = flow
+            }
+        }
+    } else if cols < 1 {
+        cols = 1
+    }
+    return cols
+}
+
 fn layout_grid(id: int) {
     let nk = arena.nodes[id].kids.len
     let iw = arena.inner_w(id)
     let ih = arena.inner_h(id)
     let gx = arena.gap_x(id)
     let gy = arena.gap_y(id)
-    let mut cols = i32(arena.nodes[id].grid_cols)
-    if arena.nodes[id].grid_auto != 0 {
-        let cell = i32(arena.nodes[id].grid_min) + gx
-        cols = 1
-        if cell > 0 {
-            cols = (iw + gx) / cell
+    /* Count flow children before choosing columns: a hidden child must not
+       claim a track, or every visible cell would be that much narrower. The
+       widest of them is the natural cell width when no floor was given. */
+    let mut flow = 0
+    let mut nat = 0
+    for i in 0..nk {
+        let c = arena.nodes[id].kids[i]
+        if arena.skip_flow(c) == 0 {
+            flow = flow + 1
+            nat = geometry.max2(nat, arena.nodes[c].iw)
         }
-        if cols < 1 {
-            cols = 1
-        }
-        if nk > 0 {
-            if cols > nk {
-                cols = nk
-            }
-        }
-    } else if cols < 1 {
-        cols = 1
     }
+    let cols = grid_cols_at(id, iw, flow, nat)
     let mut cw = iw
     if cols > 0 {
         cw = (iw - gx * (cols - 1)) / cols

@@ -34,6 +34,21 @@ fn main() {
                 zeus.Button("g3", width = 70, height = 40, on_click = fn() {})
                 zeus.Button("g4", width = 70, height = 40, on_click = fn() {})
             }
+            // Responsive grid: a 130 dp floor at gap 8 has room for three
+            // cells across the 416 point content width, but `columns = 2` is
+            // the cap, so two 204 wide cells and the rest wrap.
+            zeus.Grid(config = zeus.GridConfig(columns = 2, auto_columns = 130, gap = 8)) {
+                zeus.Button("a1", height = 20, on_click = fn() {})
+                zeus.Button("a2", height = 20, on_click = fn() {})
+                zeus.Button("a3", height = 20, on_click = fn() {})
+                zeus.Button("a4", height = 20, on_click = fn() {})
+            }
+            // Same floor, no cap, half the width: the floor alone decides and
+            // 200 points leaves a single column.
+            zeus.Grid(config = zeus.GridConfig(auto_columns = 130, gap = 8), width = 200) {
+                zeus.Button("b1", height = 20, on_click = fn() {})
+                zeus.Button("b2", height = 20, on_click = fn() {})
+            }
             zeus.Button("open", width = 60, height = 24, on_click = fn() => open.set(1))
             zeus.Dialog(open, title = "Golden") {
                 zeus.Body("Fixed 440 wide card, centered over the dim.")
@@ -63,6 +78,25 @@ fn main() {
     expect(zeus.node_y(g3) - zeus.node_y(g1) == 48, "grid row pitch")
     expect(zeus.node_x(g4) == zeus.node_x(g2) && zeus.node_y(g4) == zeus.node_y(g3),
            "grid last cell lands")
+    // Responsive grid: the floor is what fills the row, `columns` is only the
+    // ceiling, and the gap is part of the cell the floor measures.
+    let a1 = zeus.engine_find_text("a1")
+    let a2 = zeus.engine_find_text("a2")
+    let a3 = zeus.engine_find_text("a3")
+    let a4 = zeus.engine_find_text("a4")
+    expect(a1 > 0 && a4 > 0, "auto grid cells found")
+    expect(zeus.node_width(a1) == 204, "auto grid cell divides the width")
+    expect(zeus.node_x(a2) - zeus.node_x(a1) == 212, "auto grid column pitch")
+    expect(zeus.node_y(a2) == zeus.node_y(a1), "auto grid cap holds two in the row")
+    expect(zeus.node_y(a3) - zeus.node_y(a1) == 28, "auto grid wraps to a second row")
+    expect(zeus.node_x(a3) == zeus.node_x(a1), "auto grid row starts at the content edge")
+    expect(zeus.node_x(a4) == zeus.node_x(a2), "auto grid row fills both cells")
+    // A narrower grid with no cap: one full-width column, stacked.
+    let n1 = zeus.engine_find_text("b1")
+    let n2 = zeus.engine_find_text("b2")
+    expect(zeus.node_width(n1) == 200, "narrow auto grid is a full-width column")
+    expect(zeus.node_x(n2) == zeus.node_x(n1), "narrow auto grid stacks")
+    expect(zeus.node_y(n2) - zeus.node_y(n1) == 28, "narrow auto grid row pitch")
     // Dialog: opening centers the fixed 440 card over the dim.
     expect(zeus.engine_click_text("open") != 0, "open click")
     zeus.engine_layout(480, 320)

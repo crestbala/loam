@@ -656,6 +656,28 @@ fn set_max_height(node: Node, px: int) -> Node {
     arena.nodes[node.id].max_h = px
     return node
 }
+/// Make a grid responsive. `px > 0` is a minimum *cell* width, in dp like
+/// `gap` (not a scaled style prop — the layout it feeds is unscaled). `px == 0`
+/// also turns it on but takes the cell width from the children: the widest
+/// child's natural width is what a column has to hold, so the grid fits as
+/// many as the content allows, capped by `columns`. `px < 0` turns it off and
+/// restores the fixed `columns`.
+///
+/// Reached from `GridConfig.auto_columns`; public so a caller building a node
+/// by hand can set it.
+fn set_auto_columns(node: Node, px: int) -> Node {
+    // Both fields move together, so `grid_auto != 0` never leaves a stale
+    // floor behind for `grid_cols_at` to pick up.
+    arena.nodes[node.id].grid_auto = 1
+    arena.nodes[node.id].grid_min = 0
+    if px > 0 {
+        arena.nodes[node.id].grid_min = u16(px)
+    }
+    if px < 0 {
+        arena.nodes[node.id].grid_auto = 0
+    }
+    return node
+}
 fn aspect(node: Node, aw: int, ah: int) -> Node {
     arena.nodes[node.id].aspect_w = aw
     arena.nodes[node.id].aspect_h = ah
@@ -1939,9 +1961,28 @@ fn str_or_default(v: string, fallback: string) -> string {
 
 /// 2D grid configuration.
 struct GridConfig {
-    columns: int = 1,
+    /// Column count. In auto mode (see `auto_columns`) it is instead the cap
+    /// on the count, and `0` means no cap — the width alone decides.
+    /// `GridConfig {}`, like any count `< 1`, is a single column.
+    columns: int = 0,
     gap: int = 0,
     padding: int = 0,
+    /// The narrowest a cell may be, in points like `gap`. This is what makes
+    /// the grid responsive: the count becomes how many cells at least this
+    /// wide fit the width the grid is given, capped by `columns` and by the
+    /// child count. With `gap = 12` and `auto_columns = 220`, a grid with 1000
+    /// points of content width fits four cells (and `columns = 3` takes it back
+    /// to three), 620 points fits two, 420 fits one. The gap is part of the
+    /// cell, because `cols` cells leave `cols - 1` gaps.
+    ///
+    /// `0` is the same thing with the width taken from the children instead —
+    /// a cell is as wide as the widest child wants to be — so the count
+    /// follows the content and needs no number to pick. `-1` (the default)
+    /// keeps the fixed `columns` behaviour.
+    ///
+    /// A constant, not a signal: a cell width is a layout parameter, so
+    /// re-resolving it every frame would buy nothing.
+    auto_columns: int = -1,
 }
 
 /// The event payload for the handler now running. A handler is invoked with
@@ -3021,9 +3062,15 @@ fn Input(p: InputProps) -> Node {
     return apply_key(__n, p.key, p.key_action, p.on_key, p.on_key__set, p.key_global)
 }
 
-/// 2D grid. `config = GridConfig(columns = 3, gap = 12, padding = 16)`.
+/// 2D grid. Fixed: `config = GridConfig(columns = 3, gap = 12, padding = 16)`.
+/// Responsive: `auto_columns` is the narrowest a cell may be, in points like
+/// `gap`. `GridConfig(columns = 3, auto_columns = 220, gap = 12)` fits as many
+/// 220 point cells as the width allows — three at most, the `columns` cap —
+/// and `auto_columns = 0` instead sizes a cell to the widest child.
 fn Grid(p: GridProps) -> Node {
-    let __n = Component(raw_grid(p.config.columns, p.config.gap), width = p.width,
+    let __n = Component(
+        set_auto_columns(raw_grid(p.config.columns, p.config.gap), p.config.auto_columns),
+        width = p.width,
         padding = p.config.padding, position = p.position, left = p.left,
         top = p.top, right = p.right, bottom = p.bottom, z_index = p.z_index,
         show = p.show, background = p.background)
@@ -4334,6 +4381,12 @@ struct CardProps {
     padding_y: int = -1,
     width: int = -1,
     height: int = -1,
+    /// Bounds the card can lay out within. `Box` has always had these; the
+    /// recipe dropped them, so `Card(min_width = …)` was an unknown field.
+    min_width: int = -1,
+    max_width: int = -1,
+    min_height: int = -1,
+    max_height: int = -1,
     font: int = -1,
     border: int = -1,
     border_color: string = "",
@@ -4371,6 +4424,10 @@ fn Card(p: CardProps) -> Node {
         font = p.font,
         width = p.width,
         height = p.height,
+        min_width = p.min_width,
+        max_width = p.max_width,
+        min_height = p.min_height,
+        max_height = p.max_height,
         visible = p.visible,
         bind = p.bind
     )
@@ -4392,6 +4449,11 @@ struct CompProps {
     padding_y: int = -1,
     width: int = -1,
     height: int = -1,
+    /// Bounds for a custom widget; `Box` has always had these.
+    min_width: int = -1,
+    max_width: int = -1,
+    min_height: int = -1,
+    max_height: int = -1,
     font: int = -1,
     border: int = -1,
     border_color: string = "",
@@ -4438,6 +4500,10 @@ fn Comp(p: CompProps) -> Node {
         padding_y = p.padding_y,
         width = p.width,
         height = p.height,
+        min_width = p.min_width,
+        max_width = p.max_width,
+        min_height = p.min_height,
+        max_height = p.max_height,
         font = p.font,
         border = p.border,
         border_color = p.border_color,
