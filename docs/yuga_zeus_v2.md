@@ -1176,7 +1176,7 @@ source, so the C compiler's diagnostics name Loam lines and, with `-g`
 collected and run by `yugac test`, which calls `std:test`'s `begin`/`ok`/
 `summary`; the assertions (`test.assert`, `test.assert_eq_*`) are ordinary Loam
 in `std/test.loam` built on the `panic(msg)` primitive. `make test` runs
-`packages/yuga/tests/inlang/*.loam` and expects an all-pass exit.
+`packages/loam/tests/inlang/*.loam` and expects an all-pass exit.
 
 `#line` directives in generated C; `#[test]` fns and `yugac test`.
 **Exit:** a trap in `app.loam` reports a `.loam` line in lldb (the panic message
@@ -1201,7 +1201,7 @@ second exit line below, now green.
 and exposes pure `measure` / `measure_wrap`. Text width and line breaking are
 functions of (font bytes, size, string), so once the hosts call them,
 `measure_text` is host-independent by construction. Tested against a generated
-fixture (`packages/yuga/tests/fonts/tiny.ttf`, remade by
+fixture (`packages/loam/tests/fonts/tiny.ttf`, remade by
 `make_tiny_font.py`).
 
 `std/zeuscore/metrics.loam` binds an external font (`zeus.use_font(src)` reads a

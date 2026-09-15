@@ -12,7 +12,7 @@ Two `cmap` subtables are emitted so both parsers are exercised:
   - format 4, platform (3,1), BMP; one segment uses `glyphIdArray` (idRangeOffset)
   - format 12, platform (3,10), full Unicode (wins in `cmap_best`)
 
-Run from anywhere:  python3 packages/yuga/tests/fonts/make_tiny_font.py
+Run from anywhere:  python3 packages/loam/tests/fonts/make_tiny_font.py
 The output path is next to this script.
 """
 import os

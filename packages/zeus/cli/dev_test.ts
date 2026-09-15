@@ -13,7 +13,7 @@ function must(ok: boolean, what: string): void {
   }
 }
 
-const root = "packages/yuga/tests/tmp/devweb";
+const root = "packages/loam/tests/tmp/devweb";
 try {
   Deno.removeSync(root, { recursive: true });
 } catch { /* absent */ }

@@ -54,7 +54,7 @@ function must(ok: boolean, what: string): void {
   }
 }
 
-const wasmPath = Deno.args[0] ?? "packages/yuga/tests/routes_app/build/web/app.wasm";
+const wasmPath = Deno.args[0] ?? "packages/loam/tests/routes_app/build/web/app.wasm";
 const bytes = Deno.readFileSync(wasmPath);
 const { instance } = await WebAssembly.instantiate(bytes, {
   env: importsFor(),

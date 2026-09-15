@@ -177,7 +177,7 @@ per frame. Everything else — the `[]int` staging buffer, which is four bytes
 per frame byte — is allocated and released once per frame.
 
 Getting there needed three ownership fixes in the compiler, all of which are
-in `packages/yuga/src`: the `[]int` that feeds `string_from_bytes` used to be
+in `packages/loam/src`: the `[]int` that feeds `string_from_bytes` used to be
 leaked twice over (once as a call argument whose caller drop was dropped, once
 as a `let` inside a loop body that was only released on the way *out* of the
 loop). Before them the same plasma held **985 MB** and the checker **512 MB**,

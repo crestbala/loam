@@ -117,7 +117,7 @@ static int std_module_lookup(const char *name, char *out, size_t outsz) {
 /*
  * `import "pkg:name"` — a vendored package. Walk up from the entry file to the
  * nearest directory holding `vendor/name/`, then take `name.<ext>` (or
- * `main.<ext>`). `zeus pkg sync` materializes that tree from `yuga.deps`.
+ * `main.<ext>`). `zeus pkg sync` materializes that tree from `loam.deps`.
  */
 static int pkg_module_lookup(const char *name, char *out, size_t outsz) {
     if (!name[0] || strchr(name, '/') || strchr(name, '\\') || strchr(name, ':')) return 0;

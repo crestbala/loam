@@ -433,11 +433,11 @@ static int android_emit_project(const char *proj, const char *cpath, const char 
                                 int uses_http) {
     char src[1536], dst[1536], sdk[1024];
     if (mkdir_p(proj) != 0) return 1;
-    snprintf(src, sizeof src, "%s/hosts/android/java/com/yuga/zeus/ZeusActivity.java", LOAM_ZEUS_DIR);
-    snprintf(dst, sizeof dst, "%s/app/src/main/java/com/yuga/zeus/ZeusActivity.java", proj);
+    snprintf(src, sizeof src, "%s/hosts/android/java/com/loam/zeus/ZeusActivity.java", LOAM_ZEUS_DIR);
+    snprintf(dst, sizeof dst, "%s/app/src/main/java/com/loam/zeus/ZeusActivity.java", proj);
     if (android_copy(src, dst) != 0) return 1;
-    snprintf(src, sizeof src, "%s/hosts/android/java/com/yuga/zeus/ZeusView.java", LOAM_ZEUS_DIR);
-    snprintf(dst, sizeof dst, "%s/app/src/main/java/com/yuga/zeus/ZeusView.java", proj);
+    snprintf(src, sizeof src, "%s/hosts/android/java/com/loam/zeus/ZeusView.java", LOAM_ZEUS_DIR);
+    snprintf(dst, sizeof dst, "%s/app/src/main/java/com/loam/zeus/ZeusView.java", proj);
     if (android_copy(src, dst) != 0) return 1;
     snprintf(src, sizeof src, "%s/hosts/android/AndroidManifest.xml", LOAM_ZEUS_DIR);
     snprintf(dst, sizeof dst, "%s/app/src/main/AndroidManifest.xml", proj);

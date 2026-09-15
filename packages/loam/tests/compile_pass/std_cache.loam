@@ -21,7 +21,7 @@ fn produce() -> string {
 }
 
 fn main() {
-    let path = "packages/yuga/tests/tmp/cache_test.dat"
+    let path = "packages/loam/tests/tmp/cache_test.dat"
     sys.write_file(path, "")
     let c = cache.open_path(path)
 

@@ -28,7 +28,7 @@
 //! sets) opens no window: `begin`/`end` are inert and `open()` returns 0 after
 //! `RAYGUI_FRAMES` frames (default 3), so the control code still runs.
 //!
-//! The C side (`packages/yuga/runtime/raygui_plat.c`) is only the raylib +
+//! The C side (`packages/loam/runtime/raygui_plat.c`) is only the raylib +
 //! raygui trampoline and the RAM probe — no widget logic, per
 //! `docs/boundary.md`.
 

@@ -129,7 +129,7 @@ fn cli_main() {
     }, 240, 90)
 
     // SSE: 5 events.
-    sys.exec("LOAM_SSE_SRV=1 packages/yuga/tests/tmp/zeus_stream >/dev/null 2>&1 &")
+    sys.exec("LOAM_SSE_SRV=1 packages/loam/tests/tmp/zeus_stream >/dev/null 2>&1 &")
     let mut addr = sys.read_file("/tmp/loam_stream_sse.port")
     let mut guard = 0
     while addr.len == 0 && guard < 400 {
@@ -149,7 +149,7 @@ fn cli_main() {
     }
 
     // WebSocket: 5 messages on top.
-    sys.exec("LOAM_WS_SRV=1 packages/yuga/tests/tmp/zeus_stream >/dev/null 2>&1 &")
+    sys.exec("LOAM_WS_SRV=1 packages/loam/tests/tmp/zeus_stream >/dev/null 2>&1 &")
     let mut addr2 = sys.read_file("/tmp/loam_stream_ws.port")
     let mut guard2 = 0
     while addr2.len == 0 && guard2 < 400 {

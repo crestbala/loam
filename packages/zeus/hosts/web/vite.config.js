@@ -76,8 +76,8 @@ export default defineConfig({
       configureServer(server) {
         const watch = [
           appDir,
-          resolve(repo, "packages/yuga/std"),
-          resolve(repo, "packages/yuga/runtime"),
+          resolve(repo, "packages/loam/std"),
+          resolve(repo, "packages/loam/runtime"),
           resolve(repo, "packages/zeus/std"),
           resolve(repo, "packages/http/std"),
           resolve(repo, "packages/maya/std"),
