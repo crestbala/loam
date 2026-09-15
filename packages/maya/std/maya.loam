@@ -1,7 +1,7 @@
 //! `maya` — small 3D/2D engine (raylib-shaped, not raylib-heavy).
 //!
 //! Build a retained scene, then `maya.run()`. Scene, tracer, and 2D map
-//! live in Yuga (`mayacore/`). C is the host event loop and present.
+//! live in Loam (`mayacore/`). C is the host event loop and present.
 //!
 //! Example (3D sphere):
 //! ```

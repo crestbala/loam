@@ -1,6 +1,6 @@
 //! watcher.loam — GreenInfer folder watcher + chunker (phase 2).
 //!
-//! Everything that decides lives in Yuga, under the language's checks:
+//! Everything that decides lives in Loam, under the language's checks:
 //!   - recursive directory walk, skip lists, extension filters, sorting;
 //!   - manifest diffing (path + mtime) that turns "something changed" into
 //!     a re-index (the engine is append-only, so a changed tree is rebuilt);
@@ -39,7 +39,7 @@ struct ChunkMeta {
 }
 
 // ---------------------------------------------------------------------------
-// C seam — bodyless declarations of `yuga_watcher_gi_*` (same runtime file
+// C seam — bodyless declarations of `loam_watcher_gi_*` (same runtime file
 // as the engine seam; yugac emits the extern prototypes automatically).
 // ---------------------------------------------------------------------------
 
@@ -66,7 +66,7 @@ let mut watch_last: string = ""
 let mut watch_err: string = ""
 
 // ---------------------------------------------------------------------------
-// Tokenizer + chunker (pure Yuga, byte-level, ASCII-folded like the embedder)
+// Tokenizer + chunker (pure Loam, byte-level, ASCII-folded like the embedder)
 // ---------------------------------------------------------------------------
 
 fn is_word_byte(b: int) -> bool {
@@ -171,7 +171,7 @@ fn chunk_text(text: string, max_tokens: int) -> []string {
 }
 
 // ---------------------------------------------------------------------------
-// Byte-string helpers (no slicing in Yuga; walk bytes into a new string)
+// Byte-string helpers (no slicing in Loam; walk bytes into a new string)
 // ---------------------------------------------------------------------------
 
 fn starts_with(s: string, p: string) -> bool {
@@ -243,7 +243,7 @@ fn skip_dir(name: string) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Recursive walk (policy in Yuga; the seam lists one level at a time)
+// Recursive walk (policy in Loam; the seam lists one level at a time)
 // ---------------------------------------------------------------------------
 
 fn push_file(files: &mut []string, mts: &mut []int, full: string) {

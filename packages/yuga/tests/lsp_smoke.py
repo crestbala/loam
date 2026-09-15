@@ -76,8 +76,8 @@ def main() -> int:
     if not LSP.is_file():
         return fail("missing " + str(LSP))
 
-    yuga_path = ROOT / "tests" / "tmp" / "lsp_smoke.loam"
-    uri = yuga_path.resolve().as_uri()
+    loam_path = ROOT / "tests" / "tmp" / "lsp_smoke.loam"
+    uri = loam_path.resolve().as_uri()
     bad = "fn main() {\n    let x = y\n}\n"
     good = (
         "/// Adds two integers.\n"
@@ -125,7 +125,7 @@ def main() -> int:
         'import "std:kv"\n'
         "\n"
         "fn main() {\n"
-        "    let s = kv.open_path(\"/tmp/yuga_lsp_kv.kv\")\n"
+        "    let s = kv.open_path(\"/tmp/loam_lsp_kv.kv\")\n"
         "    kv.set(s, \"a\", \"1\")\n"
         "    kv.\n"
         "}\n"

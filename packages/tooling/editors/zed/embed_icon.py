@@ -21,7 +21,7 @@ for y in range(h):
 
 png_path = icons / "yuga.png"
 img.save(png_path)
-buf = Path("/tmp/yuga_icon.png")
+buf = Path("/tmp/loam_icon.png")
 img.save(buf)
 b64 = base64.b64encode(buf.read_bytes()).decode("ascii")
 (icons / "yuga.svg").write_text(

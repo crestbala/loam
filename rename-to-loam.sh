@@ -100,12 +100,14 @@ EOF
     ;;
     3)  cat <<'EOF'
 packages/yuga@@s#packages/yuga#packages/loam#g
+com/yuga/@@s#com/yuga/#com/loam/#g
 yuga\.deps@@s/yuga\.deps/loam.deps/g
 yuga\.lock@@s/yuga\.lock/loam.lock/g
 com\.yuga\.@@s/com\.yuga\./com.loam./g
 EOF
     ;;
     4)  cat <<'EOF'
+YUGAC@@s/YUGAC/LOAM/g
 yugac@@s/yugac/loam/g
 yuga-lsp@@s/yuga-lsp/loam-lsp/g
 yugafmt@@s/yugafmt/loam-fmt/g

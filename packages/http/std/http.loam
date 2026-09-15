@@ -4,8 +4,8 @@
 //!
 //! Protobuf field codecs live here (`encode_int_field`, `bytes_of`, …).
 //! `#[proto]` structs get `encode_Name` / `decode_Name` in **their** module;
-//! those functions call this library. Sockets are `std/net`. `listen` is Yuga
-//! (accept loop + HTTP/1.1 + h2c). `ZEUS_HEADLESS=1` runs a Yuga self-test.
+//! those functions call this library. Sockets are `std/net`. `listen` is Loam
+//! (accept loop + HTTP/1.1 + h2c). `ZEUS_HEADLESS=1` runs a Loam self-test.
 //!
 //! ```
 //! import "std:http"
@@ -2076,7 +2076,7 @@ fn h2_reply(app: App, path: string, data: string, stream: int) -> string {
     return string_of(b)
 }
 
-/// Unary h2c on `fd`. Preface + frames in Yuga; `tcp_*` is `std/net`.
+/// Unary h2c on `fd`. Preface + frames in Loam; `tcp_*` is `std/net`.
 fn h2_serve(fd: int, app: App) {
     let pre = h2.read_exact(fd, 24)
     if eq(pre, "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n") {
@@ -2484,17 +2484,17 @@ fn xss_probe(app: App) -> int {
     return 0
 }
 
-/// If `ZEUS_HEADLESS` (or `YUGA_HEADLESS` / `YUGA_HTTP_SELFTEST`) is set, run
+/// If `ZEUS_HEADLESS` (or `LOAM_HEADLESS` / `LOAM_HTTP_SELFTEST`) is set, run
 /// the security checklist and return `1`. Otherwise return `0`.
 fn headless_selftest(user_app: App) -> int {
     let mut on = 0
-    if sys.env_set("YUGA_HEADLESS") != 0 {
+    if sys.env_set("LOAM_HEADLESS") != 0 {
         on = 1
     }
     if sys.env_set("ZEUS_HEADLESS") != 0 {
         on = 1
     }
-    if sys.env_set("YUGA_HTTP_SELFTEST") != 0 {
+    if sys.env_set("LOAM_HTTP_SELFTEST") != 0 {
         on = 1
     }
     if on == 0 {
@@ -2830,12 +2830,12 @@ fn serve_json(app: App, method: string, path: string, body: string) -> string {
     return ""
 }
 
-/// Default RPC address for this `--target`. `YUGA_RPC_ADDR` (native) wins
+/// Default RPC address for this `--target`. `LOAM_RPC_ADDR` (native) wins
 /// when set — use it for a physical Android device's LAN IP. Otherwise:
 /// wasm same-origin `""`, Android emulator `10.0.2.2:8080`, mac/iOS
 /// `127.0.0.1:8080`.
 fn default_addr() -> string {
-    let ov = sys.env("YUGA_RPC_ADDR")
+    let ov = sys.env("LOAM_RPC_ADDR")
     if ov.len > 0 {
         return ov
     }

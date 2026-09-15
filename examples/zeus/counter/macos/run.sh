@@ -2,7 +2,7 @@
 # macOS Cocoa UI. Starts the gRPC-Web backend on :8080 if it is not up.
 set -e
 # Ignore a headless export left over from `make test`; we want a real window.
-unset ZEUS_HEADLESS YUGA_HEADLESS MAYA_HEADLESS
+unset ZEUS_HEADLESS LOAM_HEADLESS MAYA_HEADLESS
 HERE=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 d=$HERE
 REPO=

@@ -3,19 +3,19 @@
  *
  * Pass 1 assigns C names. Empty bodies in std boundary modules
  * (`platform`, `fmt`, `maya`, `sys`, `net`; `http` if it has empty `fn`s) are link-boundary
- * FFI (`is_intrinsic`): declaration only, symbol `yuga_<mod>_<name>`.
+ * FFI (`is_intrinsic`): declaration only, symbol `loam_<mod>_<name>`.
  * Pass 2 checks bodies. Generic calls are monomorphized; codegen asks
  * for those instances via typecheck_mono_*.
  *
  * Capturing closures own a heap env (RAII, like Box) and may escape.
  */
-#ifndef YUGA_TYPECHECK_H
-#define YUGA_TYPECHECK_H
+#ifndef LOAM_TYPECHECK_H
+#define LOAM_TYPECHECK_H
 
 #include "../module.h"
 
 /** Typecheck all modules. mods[0] is main. Returns 1 if any error. */
-int typecheck_modules(YugaModule *mods, int nmods);
+int typecheck_modules(LoamModule *mods, int nmods);
 
 /** Free monomorphization tables and the type pool. */
 void typecheck_cleanup(void);

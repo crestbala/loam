@@ -60,7 +60,7 @@ function wasmIsCurrent() {
 let compileProc = null;
 let compileQueued = false;
 
-function runYugac() {
+function runLoamc() {
   if (!existsSync(yugac)) {
     return Promise.reject(
       new Error("missing " + yugac + " — run `make` in the yuga repo first"),
@@ -104,7 +104,7 @@ function compileWasm() {
     compileQueued = true;
     return compileProc;
   }
-  compileProc = runYugac().finally(() => {
+  compileProc = runLoamc().finally(() => {
     compileProc = null;
     if (compileQueued) {
       compileQueued = false;

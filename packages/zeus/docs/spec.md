@@ -1,6 +1,6 @@
 # Zeus
 
-Full-stack UI for Yuga. Theme, layout, and the draw list live in Yuga.
+Full-stack UI for Loam. Theme, layout, and the draw list live in Loam.
 Hosts only replay that list: Cocoa, iOS, and Android use their native 2D
 APIs; the browser uses **Canvas2D**. Backend APIs stay `std:http`.
 
@@ -17,9 +17,9 @@ use Material widgets or system colors.
 | Rasterizer | **Canvas2D**. No WebGPU, no WebGL. |
 | Text | `fillText` / `measureText` in the loader (v1). Native Core Text will not match pixel-for-pixel. |
 | Reactivity | **Signals**, retained tree. `zeus.mount` builds once. `zeus.view` (rebuild every frame) is the VDOM alternative and is not the Zeus default. |
-| View type | `zeus.Node`. Yuga has no traits / `impl View`. |
+| View type | `zeus.Node`. Loam has no traits / `impl View`. |
 | Imports | `import "std:zeus"`. No glob prelude. |
-| Events | `on_click = handler` on `Box` / `Button`. Intern copies the closure env (`yuga_fn.env_size`). Captures stay Copy-only. `bind` on `Input` writes a `Signal<string>`. |
+| Events | `on_click = handler` on `Box` / `Button`. Intern copies the closure env (`loam_fn.env_size`). Captures stay Copy-only. `bind` on `Input` writes a `Signal<string>`. |
 | HTTP types | Shared `.loam` module with `#[proto]` structs + `*_rpc()` name helpers. `http.client()` fills the addr per `--target` (wasm same-origin, mac/iOS loopback, Android emulator `10.0.2.2:8080`). |
 | Wire protocol | gRPC-first: first-party traffic is always gRPC-Web / h2c. REST + JSON (`std:json`, `http.rest_*`, `app.json`) exist only as third-party interop, reachable from `#[server]` code. |
 | Routing | `std:router`: a `[]Route` table in a retained shell; loaders registered with `on_load` start before paint. |
@@ -57,7 +57,7 @@ dropped). `std:cache` adds a route/params-keyed cache over `std:kv` —
 `revalidate` is the `ttl` in seconds, `invalidate` forces a recompute, and the
 cache is file-backed on native (offline) and memory-only on wasm.
 
-First-party traffic (Zeus client ↔ your Yuga server) is **always gRPC**:
+First-party traffic (Zeus client ↔ your Loam server) is **always gRPC**:
 `#[proto]` over gRPC-Web in the browser, h2c natively, with no JSON option.
 Third-party traffic gets the optional interop path: `http.rest_get` /
 `http.rest_send` on the `#[server]` side, `app.json(path, handler)` for inbound
@@ -74,7 +74,7 @@ the window title and share sheet.
 
 `zeus build --targets web` emits **one HTML file per route** (never a single
 `index.html`), plus `sitemap.xml` and `robots.txt`. It does this by generating a
-small Yuga program that calls each route's `meta()` — and `paths()`, for a
+small Loam program that calls each route's `meta()` — and `paths()`, for a
 dynamic route that enumerates its concrete URLs — printing JSON the CLI reads
 back. `<body>` holds only the canvas and the loader script: HTML here is a
 document-header format for crawlers, not a UI runtime. Pass `--base
@@ -122,7 +122,7 @@ ZEUS_HEADLESS=1 ./bin/yugac packages/yuga/tests/compile_pass/zeus_snap.loam -o p
 ```
 
 WASM (needs a clang that has `wasm32`, e.g. Homebrew `llvm` or wasi-sdk).
-Apple `/usr/bin/clang` does **not**. Set `YUGA_WASM_CC` if the compiler is not
+Apple `/usr/bin/clang` does **not**. Set `LOAM_WASM_CC` if the compiler is not
 on `PATH`:
 
 ```
@@ -270,7 +270,7 @@ packages/zeus/hosts/web/loader.js        Canvas2D host
 packages/zeus/hosts/web/wasm.c           WASM entry / JS imports
 runtime/zeus_plat.c        shared C seam
 runtime/zeus_key.c         keyboard
-runtime/net.c              TCP trampolines (`packages/http/std/http` is Yuga)
+runtime/net.c              TCP trampolines (`packages/http/std/http` is Loam)
 examples/zeus/counter/frontend   wasm UI (`http.client("").call`)
 examples/zeus/counter/macos      Cocoa UI (`http.client(api.native_addr())`)
 examples/zeus/counter/ios        Simulator UI (`http.client(api.native_addr())`)

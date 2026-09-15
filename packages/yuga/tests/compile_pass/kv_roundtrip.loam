@@ -16,7 +16,7 @@ fn expect(ok: bool, what: string) {
 }
 
 fn main() {
-    let path = "/tmp/yuga_kv_roundtrip.kv"
+    let path = "/tmp/loam_kv_roundtrip.kv"
     sys.write_file(path, "")
     let s = kv.open_path(path)
     kv.set(s, "a", "one")

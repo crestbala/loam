@@ -3,7 +3,7 @@
  *   ZEUS_APP=gallery ZEUS_WEB_PORT=5174 npx vite --config packages/zeus/hosts/web/vite.config.js
  *
  * Compiles `examples/zeus/<app>/<app>.loam` to `build/<app>.wasm`, serves the
- * live `web/loader.js`, and rebuilds when Yuga / runtime / loader sources change.
+ * live `web/loader.js`, and rebuilds when Loam / runtime / loader sources change.
  */
 import { spawnSync } from "node:child_process";
 import { createReadStream, existsSync, mkdirSync, renameSync, rmSync } from "node:fs";

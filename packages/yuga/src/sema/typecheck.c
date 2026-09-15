@@ -3,7 +3,7 @@
  *
  * Nested scopes. Generic fns are monomorphized per call (record_mono).
  * Empty bodies in fmt/zeus/maya/platform/sys/net are the link boundary
- * (`yuga_<mod>_<fn>`). wrapping_* / string_from_bytes are language builtins.
+ * (`loam_<mod>_<fn>`). wrapping_* / string_from_bytes are language builtins.
  * Capturing closures copy Copy locals into a heap env and may escape.
  */
 #include "typecheck.h"
@@ -15,7 +15,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 
-static YugaModule *Gmods;
+static LoamModule *Gmods;
 static int Gn;
 static int Gcur;
 static int Gerr;
@@ -39,7 +39,7 @@ static void err(SourceLoc loc, const char *fmt, ...) {
     va_start(ap, fmt);
     vsnprintf(buf, sizeof buf, fmt, ap);
     va_end(ap);
-    yuga_error(loc, "%s", buf);
+    loam_error(loc, "%s", buf);
     Gerr = 1;
 }
 
@@ -173,7 +173,7 @@ static void add_cap(AstNode *clos, const char *name, Type *ty) {
     size_t n = clos->as.fn.cap_count;
     clos->as.fn.caps = realloc(clos->as.fn.caps, (n + 1) * sizeof(char *));
     clos->as.fn.cap_types = realloc(clos->as.fn.cap_types, (n + 1) * sizeof(Type *));
-    clos->as.fn.caps[n] = yuga_dup(name);
+    clos->as.fn.caps[n] = loam_dup(name);
     clos->as.fn.cap_types[n] = ty;
     clos->as.fn.cap_count = n + 1;
 }
@@ -315,7 +315,7 @@ static char *mono_cname(AstNode *fn, Type **args, size_t n) {
         snprintf(buf + used, sizeof buf - used, "__");
         cname_append_ty(buf, sizeof buf, args[i]);
     }
-    return yuga_dup(buf);
+    return loam_dup(buf);
 }
 
 static void record_mono(AstNode *fn, Type **args, size_t n, const char *cname) {
@@ -332,7 +332,7 @@ static void record_mono(AstNode *fn, Type **args, size_t n, const char *cname) {
     monos[nmono].fn = fn;
     monos[nmono].args = copy;
     monos[nmono].n = n;
-    monos[nmono].cname = yuga_dup(cname);
+    monos[nmono].cname = loam_dup(cname);
     nmono++;
 }
 
@@ -350,7 +350,7 @@ static int module_imported(AstNode *prog, const char *name) {
    module the *current* module imported under that alias: file stems name the
    entry module (e.g. `raygui.loam`), so a global scan would otherwise return a
    file that happens to share the alias instead of the imported module. */
-static YugaModule *find_mod(const char *name) {
+static LoamModule *find_mod(const char *name) {
     AstNode *prog = Gcur >= 0 && Gcur < Gn ? Gmods[Gcur].ast : NULL;
     if (prog) {
         for (size_t i = 0; i < prog->as.program.import_count; i++) {
@@ -372,7 +372,7 @@ static YugaModule *find_mod(const char *name) {
 /** Point `mod.fn` / `mod.global` prefixes at the module file for hover/def. */
 static void mark_module_ident(AstNode *id, const char *name) {
     if (!id || id->kind != AST_IDENT || !name) return;
-    YugaModule *m = find_mod(name);
+    LoamModule *m = find_mod(name);
     if (!m || !m->ast) return;
     id->as.ident.resolved = m->ast;
     id->as.ident.def_loc.file = m->path;
@@ -383,7 +383,7 @@ static void mark_module_ident(AstNode *id, const char *name) {
     id->as.ident.def_loc.end_col = n + 1;
 }
 
-static AstNode *find_fn_in(YugaModule *m, const char *name) {
+static AstNode *find_fn_in(LoamModule *m, const char *name) {
     if (!m || !m->ast) return NULL;
     AstNode *p = m->ast;
     for (size_t i = 0; i < p->as.program.decl_count; i++) {
@@ -393,7 +393,7 @@ static AstNode *find_fn_in(YugaModule *m, const char *name) {
     return NULL;
 }
 
-static AstNode *find_enum_in(YugaModule *m, const char *name) {
+static AstNode *find_enum_in(LoamModule *m, const char *name) {
     if (!m || !m->ast || !name) return NULL;
     AstNode *p = m->ast;
     for (size_t i = 0; i < p->as.program.decl_count; i++) {
@@ -404,7 +404,7 @@ static AstNode *find_enum_in(YugaModule *m, const char *name) {
     return NULL;
 }
 
-static AstNode *find_struct_in(YugaModule *m, const char *name) {
+static AstNode *find_struct_in(LoamModule *m, const char *name) {
     if (!m || !m->ast || !name) return NULL;
     AstNode *p = m->ast;
     for (size_t i = 0; i < p->as.program.decl_count; i++) {
@@ -420,7 +420,7 @@ static AstNode *find_struct_in(YugaModule *m, const char *name) {
  *  earlier one), and only then the imports of those imports. This is what lets
  *  a barrel module re-export widgets by importing them. */
 static AstNode *lookup_unqualified(const char *name,
-                                   AstNode *(*pick)(YugaModule *, const char *)) {
+                                   AstNode *(*pick)(LoamModule *, const char *)) {
     if (!name) return NULL;
     AstNode *d = pick(&Gmods[Gcur], name);
     if (d) return d;
@@ -431,7 +431,7 @@ static AstNode *lookup_unqualified(const char *name,
         i--;
         AstNode *im = prog->as.program.imports[i];
         if (!im || !im->as.import.alias) continue;
-        YugaModule *m = find_mod(im->as.import.alias);
+        LoamModule *m = find_mod(im->as.import.alias);
         d = m ? pick(m, name) : NULL;
         if (d) return d;
     }
@@ -440,14 +440,14 @@ static AstNode *lookup_unqualified(const char *name,
         i--;
         AstNode *im = prog->as.program.imports[i];
         if (!im || !im->as.import.alias) continue;
-        YugaModule *m = find_mod(im->as.import.alias);
+        LoamModule *m = find_mod(im->as.import.alias);
         if (!m || !m->ast) continue;
         size_t k = m->ast->as.program.import_count;
         while (k > 0) {
             k--;
             AstNode *im2 = m->ast->as.program.imports[k];
             if (!im2 || !im2->as.import.alias) continue;
-            YugaModule *m2 = find_mod(im2->as.import.alias);
+            LoamModule *m2 = find_mod(im2->as.import.alias);
             d = m2 ? pick(m2, name) : NULL;
             if (d) return d;
         }
@@ -584,14 +584,14 @@ static AstNode *find_method(const char *fnn, Type *recv) {
         i--;
         AstNode *im = prog->as.program.imports[i];
         if (!im || !im->as.import.alias) continue;
-        YugaModule *m = find_mod(im->as.import.alias);
+        LoamModule *m = find_mod(im->as.import.alias);
         fn = m ? find_fn_in(m, fnn) : NULL;
         if (fn && method_recv_matches(fn, recv)) return fn;
     }
     return NULL;
 }
 
-static AstNode *find_global_in(YugaModule *m, const char *name) {
+static AstNode *find_global_in(LoamModule *m, const char *name) {
     if (!m || !m->ast || !name) return NULL;
     AstNode *p = m->ast;
     for (size_t i = 0; i < p->as.program.decl_count; i++) {
@@ -602,7 +602,7 @@ static AstNode *find_global_in(YugaModule *m, const char *name) {
     return NULL;
 }
 
-/** Bodyless fns in these modules are the link boundary (`yuga_<mod>_<fn>`).
+/** Bodyless fns in these modules are the link boundary (`loam_<mod>_<fn>`).
  *  Not a keyword: ordinary empty `fn` in a std seam module. See docs/boundary.md. */
 static int is_ffi_mod(const char *name) {
     if (!name) return 0;
@@ -615,12 +615,12 @@ static int is_ffi_mod(const char *name) {
 
 /* User (non-std) modules may declare bodyless C-seam hooks the same way std
  * modules do: an empty body marks the fn as intrinsic (extern C symbol, no
- * Yuga body emitted — see codegen_c.c). std modules keep the allow-list
+ * Loam body emitted — see codegen_c.c). std modules keep the allow-list
  * above; `main` stays a plain function so `fn main() {}` still links. */
 static int user_seam_mod(const char *path) {
     if (!path) return 0;
-    size_t sd = strlen(YUGA_STD_DIR);
-    return !(strncmp(path, YUGA_STD_DIR, sd) == 0 &&
+    size_t sd = strlen(LOAM_STD_DIR);
+    return !(strncmp(path, LOAM_STD_DIR, sd) == 0 &&
              (path[sd] == '/' || path[sd] == '\0'));
 }
 
@@ -650,7 +650,7 @@ static Type *struct_type_of(AstNode *st) {
     cur_tparams = st->as.strct.tparams;
     cur_ntparams = st->as.strct.tparam_count;
     Type *t = type_new(TY_STRUCT);
-    t->name = yuga_dup(st->as.strct.name);
+    t->name = loam_dup(st->as.strct.name);
     t->must_check = st->as.strct.is_must_check;
     t->field_count = st->as.strct.field_count;
     t->field_names = calloc(t->field_count, sizeof(char *));
@@ -662,7 +662,7 @@ static Type *struct_type_of(AstNode *st) {
             t->params[i] = type_param(st->as.strct.tparams[i]);
     }
     for (size_t i = 0; i < t->field_count; i++) {
-        t->field_names[i] = yuga_dup(st->as.strct.fields[i].name);
+        t->field_names[i] = loam_dup(st->as.strct.fields[i].name);
         t->field_types[i] = resolve_type(st->as.strct.fields[i].type);
     }
     st->ty = t;
@@ -679,7 +679,7 @@ Type *typecheck_signal_type(void) {
     return make_struct_inst(st, args, 1);
 }
 
-/** Captured `let mut int` is component state: keep the Yuga type as int (props
+/** Captured `let mut int` is component state: keep the Loam type as int (props
     stay int) but record a Signal handle in the closure env. */
 static Type *cap_type_for(AstNode *dnode, Type *ty) {
     if (!dnode || dnode->kind != AST_VAR_DECL || !dnode->as.var.is_mut) return ty;
@@ -705,7 +705,7 @@ static Type *make_struct_inst(AstNode *st, Type **args, size_t n) {
         if (same) return ex;
     }
     Type *t = type_new(TY_STRUCT);
-    t->name = yuga_dup(st->as.strct.name);
+    t->name = loam_dup(st->as.strct.name);
     t->must_check = tmpl->must_check;
     t->param_count = n;
     if (n) {
@@ -716,7 +716,7 @@ static Type *make_struct_inst(AstNode *st, Type **args, size_t n) {
     t->field_names = calloc(t->field_count, sizeof(char *));
     t->field_types = calloc(t->field_count, sizeof(Type *));
     for (size_t i = 0; i < t->field_count; i++) {
-        t->field_names[i] = yuga_dup(tmpl->field_names[i]);
+        t->field_names[i] = loam_dup(tmpl->field_names[i]);
         t->field_types[i] = subst_type(tmpl->field_types[i], st->as.strct.tparams, args, n);
     }
     if (nstruct_insts < 256) struct_insts[nstruct_insts++] = t;
@@ -938,11 +938,11 @@ static AstNode *clone_const(AstNode *e) {
         case AST_NUMBER: return ast_number(e->as.lit.value, e->loc);
         case AST_FLOAT: return ast_float(e->as.lit.f, e->loc);
         case AST_BOOL: return ast_bool(e->as.lit.b, e->loc);
-        case AST_STRING: return ast_string(yuga_dup(e->as.lit.str ? e->as.lit.str : ""), e->loc);
-        case AST_IDENT: return ast_ident(yuga_dup(e->as.ident.name), e->loc);
+        case AST_STRING: return ast_string(loam_dup(e->as.lit.str ? e->as.lit.str : ""), e->loc);
+        case AST_IDENT: return ast_ident(loam_dup(e->as.ident.name), e->loc);
         case AST_UNARY: return ast_unary(e->as.unary.op, clone_const(e->as.unary.operand), e->loc);
         case AST_FIELD:
-            return ast_field(clone_const(e->as.access.target), yuga_dup(e->as.access.field),
+            return ast_field(clone_const(e->as.access.target), loam_dup(e->as.access.field),
                              e->as.access.via_colon, e->loc);
         case AST_CALL: {
             size_t n = e->as.call.arg_count;
@@ -954,11 +954,11 @@ static AstNode *clone_const(AstNode *e) {
             size_t n = e->as.struct_lit.field_count;
             FieldInit *fi = n ? (FieldInit *)calloc(n, sizeof(FieldInit)) : NULL;
             for (size_t i = 0; i < n; i++) {
-                fi[i].name = yuga_dup(e->as.struct_lit.fields[i].name);
+                fi[i].name = loam_dup(e->as.struct_lit.fields[i].name);
                 fi[i].init = clone_const(e->as.struct_lit.fields[i].init);
             }
             return ast_struct_lit(e->as.struct_lit.type_name
-                                      ? yuga_dup(e->as.struct_lit.type_name) : NULL,
+                                      ? loam_dup(e->as.struct_lit.type_name) : NULL,
                                   fi, n, e->loc);
         }
         default:
@@ -993,7 +993,7 @@ static Type *peek_type(AstNode *a) {
         if (a->as.access.target && a->as.access.target->kind == AST_IDENT) {
             const char *base = a->as.access.target->as.ident.name;
             if (module_imported(Gmods[Gcur].ast, base)) {
-                YugaModule *m = find_mod(base);
+                LoamModule *m = find_mod(base);
                 AstNode *gv = m ? find_global_in(m, a->as.access.field) : NULL;
                 return gv ? gv->ty : NULL;
             }
@@ -1018,7 +1018,7 @@ static int wants_thunk(Type *pt, AstNode *arg) {
 
 static AstNode *make_thunk(AstNode *arg) {
     AstNode **st = (AstNode **)malloc(sizeof(AstNode *));
-    if (!st) yuga_fatal("out of memory");
+    if (!st) loam_fatal("out of memory");
     st[0] = ast_expr_stmt(arg, arg->loc);
     AstNode *body = ast_block(st, 1, arg->loc);
     AstNode *c = ast_fn(NULL, NULL, 0, NULL, body, arg->loc);
@@ -1051,7 +1051,7 @@ static Type *finish_proc_call(AstNode *n, Type *ft, AstNode *named) {
             if (n->as.call.arg_count == ft->param_count &&
                 is_props_lit(n->as.call.args[ft->param_count - 1])) {
                 n->as.call.args[ft->param_count - 1]->as.struct_lit.type_name =
-                    yuga_dup(last->name);
+                    loam_dup(last->name);
             } else if (n->as.call.arg_count > ft->param_count &&
                        is_props_lit(n->as.call.args[n->as.call.arg_count - 1])) {
                 /* `Button("Go", look = Solid)`: extra leading positionals
@@ -1064,7 +1064,7 @@ static Type *finish_proc_call(AstNode *n, Type *ft, AstNode *named) {
                     FieldInit *nf = (FieldInit *)calloc(extra + oldn, sizeof(FieldInit));
                     size_t k = 0;
                     for (size_t i = 0; i < extra; i++) {
-                        nf[k].name = yuga_dup(st->as.strct.fields[i].name);
+                        nf[k].name = loam_dup(st->as.strct.fields[i].name);
                         nf[k].init = n->as.call.args[i];
                         k++;
                     }
@@ -1072,7 +1072,7 @@ static Type *finish_proc_call(AstNode *n, Type *ft, AstNode *named) {
                     free(lit->as.struct_lit.fields);
                     lit->as.struct_lit.fields = nf;
                     lit->as.struct_lit.field_count = extra + oldn;
-                    lit->as.struct_lit.type_name = yuga_dup(last->name);
+                    lit->as.struct_lit.type_name = loam_dup(last->name);
                     size_t keep = ft->param_count;
                     AstNode **na = (AstNode **)malloc(keep * sizeof(AstNode *));
                     for (size_t i = 0; i + 1 < keep; i++)
@@ -1086,8 +1086,8 @@ static Type *finish_proc_call(AstNode *n, Type *ft, AstNode *named) {
                 size_t ac = n->as.call.arg_count;
                 AstNode **na = (AstNode **)realloc(n->as.call.args,
                                                    (ac + 1) * sizeof(AstNode *));
-                if (!na) yuga_fatal("out of memory");
-                na[ac] = ast_struct_lit(yuga_dup(last->name), NULL, 0, n->loc);
+                if (!na) loam_fatal("out of memory");
+                na[ac] = ast_struct_lit(loam_dup(last->name), NULL, 0, n->loc);
                 n->as.call.args = na;
                 n->as.call.arg_count = ac + 1;
             }
@@ -1128,7 +1128,7 @@ static Type *finish_proc_call(AstNode *n, Type *ft, AstNode *named) {
                         named->as.fn.params[i].name, nm, type_name(dt), type_name(pt));
                 AstNode **na = (AstNode **)realloc(
                     n->as.call.args, (n->as.call.arg_count + 1) * sizeof(AstNode *));
-                if (!na) yuga_fatal("out of memory");
+                if (!na) loam_fatal("out of memory");
                 na[n->as.call.arg_count] = cp;
                 n->as.call.args = na;
                 n->as.call.arg_count++;
@@ -1211,23 +1211,23 @@ static Type *finish_proc_call(AstNode *n, Type *ft, AstNode *named) {
             record_mono(named, bound, nt, cn);
         }
         if (named->as.fn.cname && bound && bound[0] &&
-            (strcmp(named->as.fn.cname, "yuga_zeus_signal") == 0 ||
-             strcmp(named->as.fn.cname, "yuga_zeus_get") == 0 ||
-             strcmp(named->as.fn.cname, "yuga_zeus_set") == 0) &&
+            (strcmp(named->as.fn.cname, "loam_zeus_signal") == 0 ||
+             strcmp(named->as.fn.cname, "loam_zeus_get") == 0 ||
+             strcmp(named->as.fn.cname, "loam_zeus_set") == 0) &&
             !type_is_copy(bound[0]))
             err(n->loc, "Signal<%s> requires a Copy type", type_name(bound[0]));
         if (named->as.fn.cname && bound && bound[0] &&
-            (strcmp(named->as.fn.cname, "yuga_async_future") == 0 ||
-             strcmp(named->as.fn.cname, "yuga_async_resolve") == 0 ||
-             strcmp(named->as.fn.cname, "yuga_async_await_value") == 0) &&
+            (strcmp(named->as.fn.cname, "loam_async_future") == 0 ||
+             strcmp(named->as.fn.cname, "loam_async_resolve") == 0 ||
+             strcmp(named->as.fn.cname, "loam_async_await_value") == 0) &&
             !type_is_copy(bound[0]))
             err(n->loc, "Future<%s> requires a Copy type", type_name(bound[0]));
         if (named->as.fn.cname && bound && bound[0] &&
-            (strcmp(named->as.fn.cname, "yuga_thread_chan") == 0 ||
-             strcmp(named->as.fn.cname, "yuga_thread_send") == 0 ||
-             strcmp(named->as.fn.cname, "yuga_thread_try_send") == 0 ||
-             strcmp(named->as.fn.cname, "yuga_thread_recv") == 0 ||
-             strcmp(named->as.fn.cname, "yuga_thread_try_recv") == 0) &&
+            (strcmp(named->as.fn.cname, "loam_thread_chan") == 0 ||
+             strcmp(named->as.fn.cname, "loam_thread_send") == 0 ||
+             strcmp(named->as.fn.cname, "loam_thread_try_send") == 0 ||
+             strcmp(named->as.fn.cname, "loam_thread_recv") == 0 ||
+             strcmp(named->as.fn.cname, "loam_thread_try_recv") == 0) &&
             !type_is_send(bound[0]))
             err(n->loc, "Chan<%s> requires a Send type (plain data: no []T, fn, Box, or borrows)",
                 type_name(bound[0]));
@@ -1366,19 +1366,19 @@ static int expand_children(AstNode *n) {
             tup->as.array_lit.elems = NULL;
             tup->as.array_lit.count = 0;
             ast_free(tup);
-            cal->as.access.field = yuga_dup("child");
+            cal->as.access.field = loam_dup("child");
             return 1;
         }
         AstNode *inner = cal->as.access.target;
         for (size_t i = 0; i + 1 < nc; i++) {
-            AstNode *fld = ast_field(inner, yuga_dup("child"), 0, n->loc);
+            AstNode *fld = ast_field(inner, loam_dup("child"), 0, n->loc);
             AstNode **a = (AstNode **)malloc(sizeof(AstNode *));
             a[0] = els[i];
             inner = ast_call(fld, a, 1, n->loc);
         }
         cal->as.access.target = inner;
         n->as.call.args[0] = els[nc - 1];
-        cal->as.access.field = yuga_dup("child");
+        cal->as.access.field = loam_dup("child");
         tup->as.array_lit.elems = NULL;
         tup->as.array_lit.count = 0;
         ast_free(tup);
@@ -1393,8 +1393,8 @@ static int expand_children(AstNode *n) {
         const char *modn = cal->as.access.target->as.ident.name;
         AstNode *acc = n->as.call.args[0];
         for (size_t i = 0; i + 1 < nc; i++) {
-            AstNode *fld = ast_field(ast_ident(yuga_dup(modn), cal->as.access.target->loc),
-                                    yuga_dup("child"), 0, n->loc);
+            AstNode *fld = ast_field(ast_ident(loam_dup(modn), cal->as.access.target->loc),
+                                    loam_dup("child"), 0, n->loc);
             AstNode **a = (AstNode **)malloc(2 * sizeof(AstNode *));
             a[0] = acc;
             a[1] = els[i];
@@ -1402,14 +1402,14 @@ static int expand_children(AstNode *n) {
         }
         n->as.call.args[0] = acc;
         n->as.call.args[1] = els[nc - 1];
-        cal->as.access.field = yuga_dup("child");
+        cal->as.access.field = loam_dup("child");
         tup->as.array_lit.elems = NULL;
         tup->as.array_lit.count = 0;
         ast_free(tup);
         return 1;
     }
     if (!mod && n->as.call.arg_count == 1) {
-        cal->as.access.field = yuga_dup("child");
+        cal->as.access.field = loam_dup("child");
         return 1;
     }
     if (!mod && n->as.call.arg_count >= 2) {
@@ -1417,7 +1417,7 @@ static int expand_children(AstNode *n) {
         size_t nc = n->as.call.arg_count;
         AstNode *inner = cal->as.access.target;
         for (size_t i = 0; i + 1 < nc; i++) {
-            AstNode *fld = ast_field(inner, yuga_dup("child"), 0, n->loc);
+            AstNode *fld = ast_field(inner, loam_dup("child"), 0, n->loc);
             AstNode **a = (AstNode **)malloc(sizeof(AstNode *));
             a[0] = els[i];
             inner = ast_call(fld, a, 1, n->loc);
@@ -1426,12 +1426,12 @@ static int expand_children(AstNode *n) {
         n->as.call.args = (AstNode **)malloc(sizeof(AstNode *));
         n->as.call.args[0] = els[nc - 1];
         n->as.call.arg_count = 1;
-        cal->as.access.field = yuga_dup("child");
+        cal->as.access.field = loam_dup("child");
         free(els);
         return 1;
     }
     if (mod && n->as.call.arg_count == 2) {
-        cal->as.access.field = yuga_dup("child");
+        cal->as.access.field = loam_dup("child");
         return 1;
     }
     if (mod && n->as.call.arg_count >= 3) {
@@ -1440,8 +1440,8 @@ static int expand_children(AstNode *n) {
         const char *modn = cal->as.access.target->as.ident.name;
         AstNode *acc = els[0];
         for (size_t i = 1; i + 1 < nc; i++) {
-            AstNode *fld = ast_field(ast_ident(yuga_dup(modn), cal->as.access.target->loc),
-                                    yuga_dup("child"), 0, n->loc);
+            AstNode *fld = ast_field(ast_ident(loam_dup(modn), cal->as.access.target->loc),
+                                    loam_dup("child"), 0, n->loc);
             AstNode **a = (AstNode **)malloc(2 * sizeof(AstNode *));
             a[0] = acc;
             a[1] = els[i];
@@ -1451,7 +1451,7 @@ static int expand_children(AstNode *n) {
         n->as.call.args[0] = acc;
         n->as.call.args[1] = els[nc - 1];
         n->as.call.arg_count = 2;
-        cal->as.access.field = yuga_dup("child");
+        cal->as.access.field = loam_dup("child");
         free(els);
         return 1;
     }
@@ -1471,7 +1471,7 @@ static int as_struct_ctor(AstNode *n) {
     } else if (cal && cal->kind == AST_FIELD && !cal->as.access.via_colon &&
                cal->as.access.target && cal->as.access.target->kind == AST_IDENT &&
                module_imported(Gmods[Gcur].ast, cal->as.access.target->as.ident.name)) {
-        YugaModule *m = find_mod(cal->as.access.target->as.ident.name);
+        LoamModule *m = find_mod(cal->as.access.target->as.ident.name);
         if (m && find_fn_in(m, cal->as.access.field)) return 0;
         if (m && find_struct_in(m, cal->as.access.field)) sname = cal->as.access.field;
     }
@@ -1487,7 +1487,7 @@ static int as_struct_ctor(AstNode *n) {
         return 0;
     }
     SourceLoc loc = n->loc;
-    char *nm = yuga_dup(sname);
+    char *nm = loam_dup(sname);
     free(n->as.call.args);
     n->kind = AST_STRUCT_LIT;
     n->as.struct_lit.type_name = nm;
@@ -1556,7 +1556,7 @@ static Type *check_call(AstNode *n, Type *expect) {
             return n->ty;
         }
         /* `"a {{x}} b"` arrives as __interp(parts...). Fold it here into
-           yuga_str_of_* / yuga_str_concat builtin calls, so neither backend
+           loam_str_of_* / loam_str_concat builtin calls, so neither backend
            needs to know interpolation existed. */
         if (strcmp(nm, "__interp") == 0) {
             size_t np = n->as.call.arg_count;
@@ -1574,9 +1574,9 @@ static Type *check_call(AstNode *n, Type *expect) {
                     AstNode **a = (AstNode **)malloc(sizeof(AstNode *));
                     a[0] = part;
                     AstNode *w = ast_call(NULL, a, 1, part->loc);
-                    w->as.call.c_builtin = t->kind == TY_INT     ? "yuga_str_of_int"
-                                           : t->kind == TY_FLOAT ? "yuga_str_of_float"
-                                                                 : "yuga_str_of_bool";
+                    w->as.call.c_builtin = t->kind == TY_INT     ? "loam_str_of_int"
+                                           : t->kind == TY_FLOAT ? "loam_str_of_float"
+                                                                 : "loam_str_of_bool";
                     w->ty = ty_string();
                     part = w;
                 }
@@ -1588,12 +1588,12 @@ static Type *check_call(AstNode *n, Type *expect) {
                 a[0] = acc;
                 a[1] = part;
                 AstNode *cat = ast_call(NULL, a, 2, n->loc);
-                cat->as.call.c_builtin = "yuga_str_concat";
+                cat->as.call.c_builtin = "loam_str_concat";
                 cat->ty = ty_string();
                 acc = cat;
             }
             if (!acc) {
-                acc = ast_string(yuga_dup(""), n->loc);
+                acc = ast_string(loam_dup(""), n->loc);
                 acc->ty = ty_string();
             }
             free(n->as.call.args);
@@ -1841,7 +1841,7 @@ static Type *check_call(AstNode *n, Type *expect) {
                 if (cal) ast_free(cal);
                 n->kind = AST_CAST;
                 n->as.cast.expr = arg;
-                n->as.cast.type = ast_type(yuga_dup(type_name(ct)), 2, NULL, 0, n->loc);
+                n->as.cast.type = ast_type(loam_dup(type_name(ct)), 2, NULL, 0, n->loc);
                 n->as.cast.conv_mode = mode;
                 n->ty = ct;
                 n->place_mut = 0;
@@ -1891,7 +1891,7 @@ static Type *check_call(AstNode *n, Type *expect) {
             Type *a = check_expr(n->as.call.args[0]);
             if (!a || a->kind != TY_VEC || !type_eq(a->elem, ty_int()))
                 err(n->loc, "string_from_bytes requires []int");
-            n->as.call.c_builtin = "yuga_string_from_bytes";
+            n->as.call.c_builtin = "loam_string_from_bytes";
             n->ty = ty_string();
             return n->ty;
         }
@@ -1982,7 +1982,7 @@ static Type *check_call(AstNode *n, Type *expect) {
             err(n->loc, "use sig.%s(...) instead of zeus.%s", fnn, fnn);
             return ty_void();
         }
-        YugaModule *m = find_mod(mod);
+        LoamModule *m = find_mod(mod);
         fn = m ? find_fn_in(m, fnn) : NULL;
         if (!fn) {
             err(n->loc, "no function '%s' in module '%s'", fnn, mod);
@@ -2049,7 +2049,7 @@ static void wrap_else_if(AstNode *n) {
     if (!e || e->kind != AST_IF) return;
     wrap_else_if(e);
     AstNode **st = (AstNode **)malloc(sizeof(AstNode *));
-    if (!st) yuga_fatal("out of memory");
+    if (!st) loam_fatal("out of memory");
     st[0] = ast_expr_stmt(e, e->loc);
     n->as.if_stmt.else_block = ast_block(st, 1, e->loc);
 }
@@ -2097,13 +2097,13 @@ static void stage_event_param(AstNode *n, Type *expect) {
     else if (strcmp(pt->as.type.name, "KeyEvent") == 0) reader = "current_key";
     if (!reader) return;
     SourceLoc loc = n->as.fn.params[0].loc;
-    AstNode *call = ast_call(ast_ident(yuga_dup(reader), loc), NULL, 0, loc);
-    AstNode *let = ast_var(yuga_dup(n->as.fn.params[0].name), NULL, call, 0, loc);
+    AstNode *call = ast_call(ast_ident(loam_dup(reader), loc), NULL, 0, loc);
+    AstNode *let = ast_var(loam_dup(n->as.fn.params[0].name), NULL, call, 0, loc);
     AstNode *body = n->as.fn.body;
     if (!body || body->kind != AST_BLOCK) return;
     size_t c = body->as.block.stmt_count;
     AstNode **st = (AstNode **)malloc((c + 1) * sizeof(AstNode *));
-    if (!st) yuga_fatal("out of memory");
+    if (!st) loam_fatal("out of memory");
     st[0] = let;
     if (c) memcpy(st + 1, body->as.block.stmts, c * sizeof(AstNode *));
     free(body->as.block.stmts);
@@ -2492,7 +2492,7 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
                 n->as.access.target->as.access.target->kind == AST_IDENT &&
                 module_imported(Gmods[Gcur].ast,
                                 n->as.access.target->as.access.target->as.ident.name)) {
-                YugaModule *em = find_mod(n->as.access.target->as.access.target->as.ident.name);
+                LoamModule *em = find_mod(n->as.access.target->as.access.target->as.ident.name);
                 AstNode *en = em ? find_enum_in(em, n->as.access.target->as.access.field) : NULL;
                 if (en) {
                     int64_t v = 0;
@@ -2510,7 +2510,7 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
                 const char *base = n->as.access.target->as.ident.name;
                 if (module_imported(Gmods[Gcur].ast, base) || strcmp(base, "Box") == 0) {
                     mark_module_ident(n->as.access.target, base);
-                    YugaModule *mod = find_mod(base);
+                    LoamModule *mod = find_mod(base);
                     AstNode *gv = mod ? find_global_in(mod, n->as.access.field) : NULL;
                     if (gv && gv->ty) {
                         n->as.access.resolved = gv;
@@ -2663,9 +2663,9 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
                         n->as.struct_lit.fields = (FieldInit *)realloc(
                             n->as.struct_lit.fields,
                             (n->as.struct_lit.field_count + 1) * sizeof(FieldInit));
-                        if (!n->as.struct_lit.fields) yuga_fatal("out of memory");
+                        if (!n->as.struct_lit.fields) loam_fatal("out of memory");
                         n->as.struct_lit.fields[n->as.struct_lit.field_count].name =
-                            yuga_dup(fname);
+                            loam_dup(fname);
                         n->as.struct_lit.fields[n->as.struct_lit.field_count].init = b;
                         n->as.struct_lit.field_count++;
                         continue;
@@ -2693,8 +2693,8 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
                 n->as.struct_lit.fields = (FieldInit *)realloc(
                     n->as.struct_lit.fields,
                     (n->as.struct_lit.field_count + 1) * sizeof(FieldInit));
-                if (!n->as.struct_lit.fields) yuga_fatal("out of memory");
-                n->as.struct_lit.fields[n->as.struct_lit.field_count].name = yuga_dup(fname);
+                if (!n->as.struct_lit.fields) loam_fatal("out of memory");
+                n->as.struct_lit.fields[n->as.struct_lit.field_count].name = loam_dup(fname);
                 n->as.struct_lit.fields[n->as.struct_lit.field_count].init = cp;
                 n->as.struct_lit.field_count++;
             }
@@ -2978,14 +2978,14 @@ static void program_add_decl(AstNode *prog, AstNode *d) {
     if (!prog || !d) return;
     size_t n = prog->as.program.decl_count;
     AstNode **ds = (AstNode **)realloc(prog->as.program.decls, (n + 1) * sizeof(AstNode *));
-    if (!ds) yuga_fatal("out of memory");
+    if (!ds) loam_fatal("out of memory");
     ds[n] = d;
     prog->as.program.decls = ds;
     prog->as.program.decl_count = n + 1;
 }
 
 static AstNode *named_type_node(const char *name, SourceLoc loc) {
-    return ast_type(yuga_dup(name), 2, NULL, 0, loc);
+    return ast_type(loam_dup(name), 2, NULL, 0, loc);
 }
 
 static int proto_field_ok(Type *t) {
@@ -2993,11 +2993,11 @@ static int proto_field_ok(Type *t) {
 }
 
 static AstNode *proto_id(const char *n, SourceLoc loc) {
-    return ast_ident(yuga_dup(n), loc);
+    return ast_ident(loam_dup(n), loc);
 }
 
 static AstNode *proto_http(const char *fn, SourceLoc loc) {
-    return ast_field(proto_id("http", loc), yuga_dup(fn), 0, loc);
+    return ast_field(proto_id("http", loc), loam_dup(fn), 0, loc);
 }
 
 static AstNode *proto_call(const char *fn, AstNode **args, size_t n, SourceLoc loc) {
@@ -3006,13 +3006,13 @@ static AstNode *proto_call(const char *fn, AstNode **args, size_t n, SourceLoc l
 
 static void proto_stmts_add(AstNode ***ps, size_t *n, AstNode *s) {
     *ps = (AstNode **)realloc(*ps, (*n + 1) * sizeof(AstNode *));
-    if (!*ps) yuga_fatal("out of memory");
+    if (!*ps) loam_fatal("out of memory");
     (*ps)[*n] = s;
     (*n)++;
 }
 
 static AstNode *proto_empty_bytes(SourceLoc loc) {
-    return ast_array_lit(ast_type(yuga_dup("int"), 2, NULL, 0, loc), -1, NULL, 0, loc);
+    return ast_array_lit(ast_type(loam_dup("int"), 2, NULL, 0, loc), -1, NULL, 0, loc);
 }
 
 static AstNode *proto_skip_i(SourceLoc loc) {
@@ -3037,19 +3037,19 @@ static AstNode *proto_field_payload(Type *ft, const char *fnm, SourceLoc loc) {
     ga[1] = proto_id("i", loc);
     if (ft && ft->kind == TY_STRING) {
         proto_stmts_add(&st, &n,
-                        ast_var(yuga_dup("v"), NULL, proto_call("decode_string_at", ga, 2, loc), 0,
+                        ast_var(loam_dup("v"), NULL, proto_call("decode_string_at", ga, 2, loc), 0,
                                 loc));
     } else {
         proto_stmts_add(&st, &n,
-                        ast_var(yuga_dup("v"), NULL, proto_call("get_varint", ga, 2, loc), 0, loc));
+                        ast_var(loam_dup("v"), NULL, proto_call("get_varint", ga, 2, loc), 0, loc));
     }
     proto_stmts_add(&st, &n,
                     ast_assign(TOK_EQ, proto_id("i", loc),
-                               ast_field(proto_id("v", loc), yuga_dup("next"), 0, loc), loc));
+                               ast_field(proto_id("v", loc), loam_dup("next"), 0, loc), loc));
     proto_stmts_add(&st, &n,
                     ast_assign(TOK_EQ,
-                               ast_field(proto_id("m", loc), yuga_dup(fnm), 0, loc),
-                               ast_field(proto_id("v", loc), yuga_dup("val"), 0, loc), loc));
+                               ast_field(proto_id("m", loc), loam_dup(fnm), 0, loc),
+                               ast_field(proto_id("v", loc), loam_dup("val"), 0, loc), loc));
     return ast_block(st, n, loc);
 }
 
@@ -3076,7 +3076,7 @@ static AstNode *proto_tag_chain(Type *t, size_t from, SourceLoc loc) {
 static AstNode *proto_encode_body(AstNode *st, Type *t, SourceLoc loc) {
     AstNode **stmts = NULL;
     size_t n = 0;
-    proto_stmts_add(&stmts, &n, ast_var(yuga_dup("out"), NULL, proto_empty_bytes(loc), 1, loc));
+    proto_stmts_add(&stmts, &n, ast_var(loam_dup("out"), NULL, proto_empty_bytes(loc), 1, loc));
     if (t) {
         for (size_t f = 0; f < t->field_count; f++) {
             const char *fnm = t->field_names[f];
@@ -3085,7 +3085,7 @@ static AstNode *proto_encode_body(AstNode *st, Type *t, SourceLoc loc) {
             const char *enc = ft->kind == TY_STRING ? "encode_string_field" : "encode_int_field";
             AstNode **fa = (AstNode **)malloc(2 * sizeof(AstNode *));
             fa[0] = ast_number((int64_t)f + 1, loc);
-            fa[1] = ast_field(proto_id("m", loc), yuga_dup(fnm), 0, loc);
+            fa[1] = ast_field(proto_id("m", loc), loam_dup(fnm), 0, loc);
             AstNode **aa = (AstNode **)malloc(2 * sizeof(AstNode *));
             aa[0] = proto_id("out", loc);
             aa[1] = proto_call(enc, fa, 2, loc);
@@ -3108,14 +3108,14 @@ static AstNode *proto_zero_lit(AstNode *st, Type *t, SourceLoc loc) {
         fc = t->field_count;
         fi = (FieldInit *)calloc(fc, sizeof(FieldInit));
         for (size_t f = 0; f < fc; f++) {
-            fi[f].name = yuga_dup(t->field_names[f] ? t->field_names[f] : "_");
+            fi[f].name = loam_dup(t->field_names[f] ? t->field_names[f] : "_");
             if (t->field_types[f] && t->field_types[f]->kind == TY_STRING)
-                fi[f].init = ast_string(yuga_dup(""), loc);
+                fi[f].init = ast_string(loam_dup(""), loc);
             else
                 fi[f].init = ast_number(0, loc);
         }
     }
-    return ast_struct_lit(yuga_dup(st->as.strct.name), fi, fc, loc);
+    return ast_struct_lit(loam_dup(st->as.strct.name), fi, fc, loc);
 }
 
 static AstNode *proto_decode_body(AstNode *st, Type *t, SourceLoc loc) {
@@ -3124,10 +3124,10 @@ static AstNode *proto_decode_body(AstNode *st, Type *t, SourceLoc loc) {
     AstNode **ba = (AstNode **)malloc(sizeof(AstNode *));
     ba[0] = proto_id("buf", loc);
     proto_stmts_add(&stmts, &n,
-                    ast_var(yuga_dup("b"), NULL, proto_call("bytes_of", ba, 1, loc), 0, loc));
-    proto_stmts_add(&stmts, &n, ast_var(yuga_dup("m"), NULL, proto_zero_lit(st, t, loc), 1, loc));
-    proto_stmts_add(&stmts, &n, ast_var(yuga_dup("i"), NULL, ast_number(0, loc), 1, loc));
-    proto_stmts_add(&stmts, &n, ast_var(yuga_dup("more"), NULL, ast_number(1, loc), 1, loc));
+                    ast_var(loam_dup("b"), NULL, proto_call("bytes_of", ba, 1, loc), 0, loc));
+    proto_stmts_add(&stmts, &n, ast_var(loam_dup("m"), NULL, proto_zero_lit(st, t, loc), 1, loc));
+    proto_stmts_add(&stmts, &n, ast_var(loam_dup("i"), NULL, ast_number(0, loc), 1, loc));
+    proto_stmts_add(&stmts, &n, ast_var(loam_dup("more"), NULL, ast_number(1, loc), 1, loc));
 
     AstNode **ga = (AstNode **)malloc(2 * sizeof(AstNode *));
     ga[0] = proto_id("b", loc);
@@ -3137,15 +3137,15 @@ static AstNode *proto_decode_body(AstNode *st, Type *t, SourceLoc loc) {
     size_t gn = 0;
     proto_stmts_add(&got, &gn,
                     ast_assign(TOK_EQ, proto_id("i", loc),
-                               ast_field(proto_id("kv", loc), yuga_dup("next"), 0, loc), loc));
+                               ast_field(proto_id("kv", loc), loam_dup("next"), 0, loc), loc));
     proto_stmts_add(&got, &gn,
-                    ast_var(yuga_dup("tag"), NULL,
-                            ast_binary(TOK_SLASH, ast_field(proto_id("kv", loc), yuga_dup("val"), 0, loc),
+                    ast_var(loam_dup("tag"), NULL,
+                            ast_binary(TOK_SLASH, ast_field(proto_id("kv", loc), loam_dup("val"), 0, loc),
                                        ast_number(8, loc), loc),
                             0, loc));
     proto_stmts_add(&got, &gn,
-                    ast_var(yuga_dup("wt"), NULL,
-                            ast_binary(TOK_PERCENT, ast_field(proto_id("kv", loc), yuga_dup("val"), 0, loc),
+                    ast_var(loam_dup("wt"), NULL,
+                            ast_binary(TOK_PERCENT, ast_field(proto_id("kv", loc), loam_dup("val"), 0, loc),
                                        ast_number(8, loc), loc),
                             0, loc));
     proto_stmts_add(&got, &gn, proto_tag_chain(t, 0, loc));
@@ -3153,10 +3153,10 @@ static AstNode *proto_decode_body(AstNode *st, Type *t, SourceLoc loc) {
     AstNode **core = NULL;
     size_t cn = 0;
     proto_stmts_add(&core, &cn,
-                    ast_var(yuga_dup("kv"), NULL, proto_call("get_varint", ga, 2, loc), 0, loc));
+                    ast_var(loam_dup("kv"), NULL, proto_call("get_varint", ga, 2, loc), 0, loc));
     proto_stmts_add(
         &core, &cn,
-        ast_if(ast_binary(TOK_LT_EQ, ast_field(proto_id("kv", loc), yuga_dup("next"), 0, loc),
+        ast_if(ast_binary(TOK_LT_EQ, ast_field(proto_id("kv", loc), loam_dup("next"), 0, loc),
                           proto_id("i", loc), loc),
                proto_block1(ast_assign(TOK_EQ, proto_id("more", loc), ast_number(0, loc), loc), loc),
                NULL, loc));
@@ -3168,7 +3168,7 @@ static AstNode *proto_decode_body(AstNode *st, Type *t, SourceLoc loc) {
     size_t ln = 0;
     proto_stmts_add(&loopst, &ln,
                     ast_if(ast_binary(TOK_GT_EQ, proto_id("i", loc),
-                                      ast_field(proto_id("b", loc), yuga_dup("len"), 0, loc), loc),
+                                      ast_field(proto_id("b", loc), loam_dup("len"), 0, loc), loc),
                            proto_block1(ast_assign(TOK_EQ, proto_id("more", loc), ast_number(0, loc), loc),
                                         loc),
                            NULL, loc));
@@ -3178,9 +3178,9 @@ static AstNode *proto_decode_body(AstNode *st, Type *t, SourceLoc loc) {
 
     proto_stmts_add(
         &stmts, &n,
-        ast_for(yuga_dup("k"),
+        ast_for(loam_dup("k"),
                 ast_binary(TOK_DOT_DOT, ast_number(0, loc),
-                           ast_field(proto_id("b", loc), yuga_dup("len"), 0, loc), loc),
+                           ast_field(proto_id("b", loc), loam_dup("len"), 0, loc), loc),
                 ast_block(loopst, ln, loc), loc));
     proto_stmts_add(&stmts, &n, ast_expr_stmt(proto_id("m", loc), loc));
     return ast_block(stmts, n, loc);
@@ -3198,23 +3198,23 @@ static void inject_proto_fn(AstNode *prog, AstNode *st, int is_encode) {
         }
     }
     Param *ps = (Param *)calloc(1, sizeof(Param));
-    if (!ps) yuga_fatal("out of memory");
+    if (!ps) loam_fatal("out of memory");
     SourceLoc loc = st->loc;
     AstNode *ret;
     Type *t = struct_type_of(st);
     if (is_encode) {
-        ps[0].name = yuga_dup("m");
+        ps[0].name = loam_dup("m");
         ps[0].type = named_type_node(sname, loc);
         ps[0].loc = loc;
         ret = named_type_node("string", loc);
     } else {
-        ps[0].name = yuga_dup("buf");
+        ps[0].name = loam_dup("buf");
         ps[0].type = named_type_node("string", loc);
         ps[0].loc = loc;
         ret = named_type_node(sname, loc);
     }
     AstNode *body = is_encode ? proto_encode_body(st, t, loc) : proto_decode_body(st, t, loc);
-    AstNode *fn = ast_fn(yuga_dup(fnname), ps, 1, ret, body, loc);
+    AstNode *fn = ast_fn(loam_dup(fnname), ps, 1, ret, body, loc);
     program_add_decl(prog, fn);
 }
 
@@ -3246,11 +3246,11 @@ static int json_field_ok(Type *t) {
 }
 
 static AstNode *jdent(const char *n, SourceLoc loc) {
-    return ast_ident(yuga_dup(n), loc);
+    return ast_ident(loam_dup(n), loc);
 }
 
 static AstNode *jfield(AstNode *base, const char *n, SourceLoc loc) {
-    return ast_field(base, yuga_dup(n), 0, loc);
+    return ast_field(base, loam_dup(n), 0, loc);
 }
 
 static AstNode *json_mod_fn(const char *fn, SourceLoc loc) {
@@ -3263,13 +3263,13 @@ static AstNode *json_call(const char *fn, AstNode **args, size_t n, SourceLoc lo
 
 static AstNode **one(AstNode *a) {
     AstNode **v = (AstNode **)malloc(sizeof(AstNode *));
-    if (!v) yuga_fatal("out of memory");
+    if (!v) loam_fatal("out of memory");
     v[0] = a;
     return v;
 }
 
 static AstNode *jstr(const char *s, SourceLoc loc) {
-    return ast_string(yuga_dup(s), loc);
+    return ast_string(loam_dup(s), loc);
 }
 
 /** `if (<ok> == 0) { json.set_err(<err>); return <zero struct>; }` */
@@ -3324,7 +3324,7 @@ static AstNode *json_encode_body(AstNode *st, Type *t, SourceLoc loc) {
 static AstNode *json_decode_body(AstNode *st, Type *t, SourceLoc loc) {
     AstNode **stmts = NULL;
     size_t n = 0;
-    proto_stmts_add(&stmts, &n, ast_var(yuga_dup("m"), NULL, proto_zero_lit(st, t, loc), 1, loc));
+    proto_stmts_add(&stmts, &n, ast_var(loam_dup("m"), NULL, proto_zero_lit(st, t, loc), 1, loc));
     if (t) {
         for (size_t f = 0; f < t->field_count; f++) {
             const char *fnm = t->field_names[f];
@@ -3337,13 +3337,13 @@ static AstNode *json_decode_body(AstNode *st, Type *t, SourceLoc loc) {
             pa[0] = jdent("path", loc);
             pa[1] = jstr(fnm, loc);
             proto_stmts_add(&fs, &fn_,
-                            ast_var(yuga_dup("px"), NULL, json_call("child", pa, 2, loc), 0, loc));
+                            ast_var(loam_dup("px"), NULL, json_call("child", pa, 2, loc), 0, loc));
             AstNode **fa = (AstNode **)malloc(3 * sizeof(AstNode *));
             fa[0] = jdent("id", loc);
             fa[1] = jstr(fnm, loc);
             fa[2] = jdent("px", loc);
             proto_stmts_add(&fs, &fn_,
-                            ast_var(yuga_dup("f"), NULL, json_call("field", fa, 3, loc), 0, loc));
+                            ast_var(loam_dup("f"), NULL, json_call("field", fa, 3, loc), 0, loc));
             proto_stmts_add(&fs, &fn_,
                             json_guard_fail(st, t, jfield(jdent("f", loc), "ok", loc),
                                             jfield(jdent("f", loc), "err", loc), loc));
@@ -3352,7 +3352,7 @@ static AstNode *json_decode_body(AstNode *st, Type *t, SourceLoc loc) {
             va[1] = jdent("px", loc);
             const char *getter = ft->kind == TY_STRING ? "as_str" : "as_int";
             proto_stmts_add(&fs, &fn_,
-                            ast_var(yuga_dup("v"), NULL, json_call(getter, va, 2, loc), 0, loc));
+                            ast_var(loam_dup("v"), NULL, json_call(getter, va, 2, loc), 0, loc));
             proto_stmts_add(&fs, &fn_,
                             json_guard_fail(st, t, jfield(jdent("v", loc), "ok", loc),
                                             jfield(jdent("v", loc), "err", loc), loc));
@@ -3405,23 +3405,23 @@ static void inject_json_fn(AstNode *prog, AstNode *st, int is_encode) {
     Type *t = struct_type_of(st);
     if (is_encode) {
         Param *ps = (Param *)calloc(1, sizeof(Param));
-        if (!ps) yuga_fatal("out of memory");
-        ps[0].name = yuga_dup("m");
+        if (!ps) loam_fatal("out of memory");
+        ps[0].name = loam_dup("m");
         ps[0].type = named_type_node(sname, loc);
         ps[0].loc = loc;
-        AstNode *fn = ast_fn(yuga_dup(fnname), ps, 1, named_type_node("string", loc),
+        AstNode *fn = ast_fn(loam_dup(fnname), ps, 1, named_type_node("string", loc),
                             json_encode_body(st, t, loc), loc);
         program_add_decl(prog, fn);
     } else {
         Param *ps = (Param *)calloc(2, sizeof(Param));
-        if (!ps) yuga_fatal("out of memory");
-        ps[0].name = yuga_dup("id");
+        if (!ps) loam_fatal("out of memory");
+        ps[0].name = loam_dup("id");
         ps[0].type = named_type_node("int", loc);
         ps[0].loc = loc;
-        ps[1].name = yuga_dup("path");
+        ps[1].name = loam_dup("path");
         ps[1].type = named_type_node("string", loc);
         ps[1].loc = loc;
-        AstNode *fn = ast_fn(yuga_dup(fnname), ps, 2, named_type_node(sname, loc),
+        AstNode *fn = ast_fn(loam_dup(fnname), ps, 2, named_type_node(sname, loc),
                             json_decode_body(st, t, loc), loc);
         program_add_decl(prog, fn);
     }
@@ -3502,7 +3502,7 @@ const char *typecheck_callee_cname(AstNode *call, const char **names, Type **arg
     if (!ft) return NULL;
     size_t nt = fn->as.fn.tparam_count;
     Type **bound = calloc(nt, sizeof(Type *));
-    if (!bound) yuga_fatal("out of memory");
+    if (!bound) loam_fatal("out of memory");
     for (size_t i = 0; i < call->as.call.arg_count && i < ft->param_count; i++) {
         if (!call->as.call.args[i]) continue;
         Type *at = subst_type(call->as.call.args[i]->ty, names, args, n);
@@ -3652,7 +3652,7 @@ static void instantiate_nested(void) {
  * Pass 1: types and C names, mark std intrinsics.
  * Pass 2: check bodies. Returns 1 if any error.
  */
-int typecheck_modules(YugaModule *mods, int nmods) {
+int typecheck_modules(LoamModule *mods, int nmods) {
     Gmods = mods;
     Gn = nmods;
     Gerr = 0;
@@ -3705,16 +3705,16 @@ int typecheck_modules(YugaModule *mods, int nmods) {
             {
                 const char *fnn = d->as.fn.name;
                 if (is_main_mod && strcmp(fnn, "main") == 0) {
-                    d->as.fn.cname = yuga_dup("main");
+                    d->as.fn.cname = loam_dup("main");
                 } else if (is_main_mod) {
                     size_t ln = 5 + strlen(fnn) + 1;
                     char *cn = malloc(ln);
-                    snprintf(cn, ln, "yuga_%s", fnn);
+                    snprintf(cn, ln, "loam_%s", fnn);
                     d->as.fn.cname = cn;
                 } else {
                     size_t ln = 5 + strlen(mods[m].name) + 1 + strlen(fnn) + 1;
                     char *cn = malloc(ln);
-                    snprintf(cn, ln, "yuga_%s_%s", mods[m].name, fnn);
+                    snprintf(cn, ln, "loam_%s_%s", mods[m].name, fnn);
                     d->as.fn.cname = cn;
                 }
             }
@@ -3735,11 +3735,11 @@ int typecheck_modules(YugaModule *mods, int nmods) {
             if (ngvars < 256) {
                 char buf[256];
                 if (m == 0)
-                    snprintf(buf, sizeof buf, "yuga_%s", d->as.var.name);
+                    snprintf(buf, sizeof buf, "loam_%s", d->as.var.name);
                 else
-                    snprintf(buf, sizeof buf, "yuga_%s_%s", mods[m].name, d->as.var.name);
+                    snprintf(buf, sizeof buf, "loam_%s_%s", mods[m].name, d->as.var.name);
                 gvars[ngvars].var = d;
-                gvars[ngvars].cname = yuga_dup(buf);
+                gvars[ngvars].cname = loam_dup(buf);
                 gvars[ngvars].mod = m;
                 ngvars++;
             }

@@ -1,11 +1,11 @@
-# Yuga language
+# Loam language
 
-Yuga is a memory-safe systems language: Odin-like syntax, Rust-like ownership.
+Loam is a memory-safe systems language: Odin-like syntax, Rust-like ownership.
 `yugac` is written in C11, typechecks a program, lowers it to IR, emits C99,
 and invokes `cc`. C is the **platform binding target**, not the language's
 semantics.
 
-Language rules live in [spec.md](spec.md). C vs Yuga: [boundary.md](boundary.md).
+Language rules live in [spec.md](spec.md). C vs Loam: [boundary.md](boundary.md).
 Self-improvement phases: [downsides.md](downsides.md).
 This file is architecture plus how to write and run programs.
 
@@ -50,7 +50,7 @@ Pipeline, in order:
 | Typecheck | `src/sema/typecheck.c` | Names, types, auto-borrow, generics (monomorphized, including nested calls and defaults), `mod.fn` / `mod.global`, method rewrite `n.w(32)` → `zeus.w(n, 32)`. |
 | Borrowck | `src/sema/borrowck.c` | Exclusive vs shared, moves, place paths (`p.a` vs `p.b`). Borrows end at the holder's last use (NLL). Enforces `#[must_check]`. |
 | Boundscheck | `src/sema/boundscheck.c` | Proven in-range indexes skip the runtime trap. |
-| IR | `src/ir.c` | CFG, drops, closures as heap env + fn pointer (`yuga_fn`: fn, env, env_size). |
+| IR | `src/ir.c` | CFG, drops, closures as heap env + fn pointer (`loam_fn`: fn, env, env_size). |
 | C | `src/codegen_c.c` | C99, then `cc`. |
 
 Ownership state (from the spec):
@@ -73,8 +73,8 @@ the last owner drops (vectors) or interned for the process (handlers).
 yuga/
   yuga/           the language
     src/          compiler (C11)
-    std/          language libraries (Yuga)
-    runtime/      yuga_rt (language) + host shims (not library protocol C)
+    std/          language libraries (Loam)
+    runtime/      loam_rt (language) + host shims (not library protocol C)
     tests/        compile_pass / compile_fail / golden (fixtures w/ .expected)
   zeus/           the framework: hosts/ (Cocoa, iOS, Android, Canvas2D), docs/
   tooling/
@@ -101,14 +101,14 @@ Three import forms, one per kind of dependency:
 
 | Form | Resolves to | Use for |
 |---|---|---|
-| `import "std:name"` | `packages/yuga/std/name.loam`, then each `YUGA_PATH` root's `std/name.loam` | language std and frameworks |
+| `import "std:name"` | `packages/yuga/std/name.loam`, then each `LOAM_PATH` root's `std/name.loam` | language std and frameworks |
 | `import "path.loam"` | relative to the importing file | files shipped with this module |
 | `import "pkg:name"` | `vendor/name/name.loam`, searched upward from the entry | vendored third-party code |
 
 The `std:` search path is a real path, not "`std/` next to the compiler".
 `packages/yuga/std/` holds the language core (`fmt`, `net`, `sys`, `thread`, `math`,
 `str`, `time`, `kv`, `json`, `result`, `test`); `zeus`, `http`, and `maya` are
-**frameworks** that live outside `yuga/` and are found because `YUGA_PATH`
+**frameworks** that live outside `yuga/` and are found because `LOAM_PATH`
 names their roots (`packages/zeus/std/zeus.loam`, `packages/http/std/http.loam`, …). Language std
 is searched first, so a framework cannot shadow `std:fmt`. Relative imports
 are for a module's own siblings (`packages/zeus/std/router.loam` →
@@ -157,16 +157,16 @@ Useful flags:
 ### App C seams
 
 Bodyless fns are not just for std: any fn whose body is missing is an **extern
-C hook** (`yuga_<module>_<name>`, no Yuga body emitted — see
-[boundary.md](boundary.md)). Std modules resolve theirs in `yuga_rt` / the
+C hook** (`loam_<module>_<name>`, no Loam body emitted — see
+[boundary.md](boundary.md)). Std modules resolve theirs in `loam_rt` / the
 runtime headers; an app resolves its own by shipping one C file:
 
 - `runtime/<app>_runtime.c` beside the entry program is compiled and linked
   automatically for native targets (`driver.c`), and
-- `YUGA_LINK_EXTRA="path.c …"` appends extra `.c`/`.o` inputs for entries
+- `LOAM_LINK_EXTRA="path.c …"` appends extra `.c`/`.o` inputs for entries
   that share a seam (CLI tools, smoke tests).
 
-GreenInfer is the working example (`examples/zeus/greeninfer/`): Yuga owns
+GreenInfer is the working example (`examples/zeus/greeninfer/`): Loam owns
 all engine logic; the C file is only the NEON kernel and mmap trampolines.
 
 ### Compile time
@@ -183,10 +183,10 @@ What `yugac` does about that:
 - GUI builds use `-O1` on generated C, not `-O2` (same overflow checks,
   much less optimizer work).
 
-Set `YUGA_TIME=1` to print `check` / `codegen` / `cc` timings on stderr.
+Set `LOAM_TIME=1` to print `check` / `codegen` / `cc` timings on stderr.
 
 `--target wasm` emits a Canvas2D `.wasm` (no WebGPU). Apple `/usr/bin/clang`
-has no `wasm32` target; use Homebrew LLVM and `YUGA_WASM_CC`. See
+has no `wasm32` target; use Homebrew LLVM and `LOAM_WASM_CC`. See
 `packages/zeus/docs/spec.md`.
 
 `--target ios` builds an iOS Simulator `.app`. Zeus still paints its own
@@ -383,7 +383,7 @@ fn addition() {
 ```
 
 `test.assert(cond)`, `test.assert_eq_int(a, b)`, and `test.assert_eq_str(a, b)`
-are ordinary Yuga in `std/test.loam`, built on the `panic(msg)` primitive. A
+are ordinary Loam in `std/test.loam`, built on the `panic(msg)` primitive. A
 failed assertion traps and the run exits non-zero:
 
 ```
@@ -397,12 +397,12 @@ the `(in test …)` tag on the message identify which test failed.
 ### 7. Debug info
 
 Generated C carries `#line` directives pointing at the `.loam` source, so the C
-compiler's own warnings and errors name Yuga lines. With `YUGA_DEBUG=1`, `yugac`
+compiler's own warnings and errors name Loam lines. With `LOAM_DEBUG=1`, `yugac`
 also compiles the native target with `-g`, so lldb / gdb, profilers, and
-sanitizers report Yuga `file:line` for stack frames and non-panic crashes:
+sanitizers report Loam `file:line` for stack frames and non-panic crashes:
 
 ```
-YUGA_DEBUG=1 ./bin/yugac app.loam -o app
+LOAM_DEBUG=1 ./bin/yugac app.loam -o app
 ```
 
 `-g` is off by default, because it inflates binaries.
@@ -424,7 +424,7 @@ modules sit above that for the "text in-tree" work:
   what makes text layout host-independent. `glyph_run(text)` returns the
   positioned glyph ids a `plat_glyphs` draw consumes. Metrics and runs are
   unshaped (one glyph per cluster), so complex-script widths and ligatures are
-  approximate until a shaper lands (`yuga_zeus_v2.md` §1.4).
+  approximate until a shaper lands (`loam_zeus_v2.md` §1.4).
 
 In-language tests live in `packages/yuga/tests/inlang/unicode_tests.loam` and
 `font_tests.loam`; the font fixture is `packages/yuga/tests/fonts/tiny.ttf`,

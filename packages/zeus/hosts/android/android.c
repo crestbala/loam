@@ -2,14 +2,14 @@
  *
  * Android views are only the host: Activity / View / touch. Buttons, Material
  * widgets, and system colors are not used. Theme, layout, and paint stay in
- * Yuga — the same fill / text / clip / SVG list as Cocoa, iOS, and Canvas2D.
+ * Loam — the same fill / text / clip / SVG list as Cocoa, iOS, and Canvas2D.
  */
 #include "zeus_rt.h"
 #include <jni.h>
 #include <string.h>
 #include <stdlib.h>
 
-int yuga_app_main(void);
+int loam_app_main(void);
 
 static JavaVM *g_jvm;
 static jobject g_view;
@@ -207,7 +207,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     return JNI_VERSION_1_6;
 }
 
-JNIEXPORT void JNICALL Java_com_yuga_zeus_ZeusView_nativeStart(JNIEnv *env, jobject thiz) {
+JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativeStart(JNIEnv *env, jobject thiz) {
     if (g_started) return;
     g_started = 1;
     g_env = env;
@@ -218,14 +218,14 @@ JNIEXPORT void JNICALL Java_com_yuga_zeus_ZeusView_nativeStart(JNIEnv *env, jobj
     zeus_set_pick_image(android_pick_image);
     zeus_set_image_size(android_image_size);
     bind_canvas();
-    /* HTTP in yuga_app_main blocks. Java calls this off the UI thread. */
-    yuga_app_main();
+    /* HTTP in loam_app_main blocks. Java calls this off the UI thread. */
+    loam_app_main();
     g_env = NULL;
     g_ready = 1;
     android_redraw();
 }
 
-JNIEXPORT void JNICALL Java_com_yuga_zeus_ZeusView_nativeResize(JNIEnv *env, jobject thiz, jint w,
+JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativeResize(JNIEnv *env, jobject thiz, jint w,
                                                                 jint h, jint inset_t, jint inset_r,
                                                                 jint inset_b, jint inset_l) {
     (void)thiz;
@@ -237,7 +237,7 @@ JNIEXPORT void JNICALL Java_com_yuga_zeus_ZeusView_nativeResize(JNIEnv *env, job
     if (w > 0 && h > 0) zeus_layout(w, h);
 }
 
-JNIEXPORT void JNICALL Java_com_yuga_zeus_ZeusView_nativePaint(JNIEnv *env, jobject thiz,
+JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativePaint(JNIEnv *env, jobject thiz,
                                                                jobject canvas) {
     ZeusDraw d;
     int w, h;
@@ -264,14 +264,14 @@ JNIEXPORT void JNICALL Java_com_yuga_zeus_ZeusView_nativePaint(JNIEnv *env, jobj
     g_canvas = NULL;
 }
 
-JNIEXPORT void JNICALL Java_com_yuga_zeus_ZeusView_nativePointerDown(JNIEnv *env, jobject thiz,
+JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativePointerDown(JNIEnv *env, jobject thiz,
                                                                      jint x, jint y) {
     (void)env;
     (void)thiz;
     (void)zeus_handle_click(x, y);
 }
 
-JNIEXPORT void JNICALL Java_com_yuga_zeus_ZeusView_nativePointerMove(JNIEnv *env, jobject thiz,
+JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativePointerMove(JNIEnv *env, jobject thiz,
                                                                      jint x, jint y, jint dx,
                                                                      jint dy) {
     int dirty;
@@ -283,20 +283,20 @@ JNIEXPORT void JNICALL Java_com_yuga_zeus_ZeusView_nativePointerMove(JNIEnv *env
     (void)dirty;
 }
 
-JNIEXPORT void JNICALL Java_com_yuga_zeus_ZeusView_nativePointerUp(JNIEnv *env, jobject thiz) {
+JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativePointerUp(JNIEnv *env, jobject thiz) {
     (void)env;
     (void)thiz;
     zeus_handle_mouseup();
 }
 
-JNIEXPORT void JNICALL Java_com_yuga_zeus_ZeusView_nativeKey(JNIEnv *env, jobject thiz, jint key,
+JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativeKey(JNIEnv *env, jobject thiz, jint key,
                                                             jint mods) {
     (void)env;
     (void)thiz;
     (void)zeus_handle_key_ev((int)key, (int)mods);
 }
 
-JNIEXPORT void JNICALL Java_com_yuga_zeus_ZeusView_nativePicked(JNIEnv *env, jobject thiz,
+JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativePicked(JNIEnv *env, jobject thiz,
                                                                jstring src, jint w, jint h) {
     const char *s;
     (void)thiz;

@@ -1,6 +1,6 @@
 //! Socket ABI (`docs/boundary.md`).
 //!
-//! Bodyless `fn`s resolve to `yuga_net_<name>`. Implementations are generic
+//! Bodyless `fn`s resolve to `loam_net_<name>`. Implementations are generic
 //! trampolines (POSIX sockets, or a wasm `fetch` for `fetch_rpc`). No HTTP
 //! parsing lives here — that stays in `packages/http/std/http.loam`.
 

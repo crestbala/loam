@@ -5,7 +5,7 @@
 //!
 //! Run from the repo root:
 //!   make
-//!   YUGA_LINK_EXTRA="examples/zeus/greeninfer/runtime/greeninfer_runtime.c" \
+//!   LOAM_LINK_EXTRA="examples/zeus/greeninfer/runtime/greeninfer_runtime.c" \
 //!     ./bin/yugac --run examples/zeus/greeninfer/smoke.loam
 
 import "std:fmt"
@@ -142,7 +142,7 @@ fn main() {
     fmt.println("engine + watcher smoke: all ok")
 }
 
-/// Smoke ext list (built by hand — no shared const arrays in Yuga).
+/// Smoke ext list (built by hand — no shared const arrays in Loam).
 fn default_exts_for_smoke() -> []string {
     let mut e = []string {}
     push(e, ".loam")

@@ -1,4 +1,4 @@
-; Yuga syntax highlighting for Zed — node types must match the compiled grammar.
+; Loam syntax highlighting for Zed — node types must match the compiled grammar.
 
 (comment) @comment
 

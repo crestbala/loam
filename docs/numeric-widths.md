@@ -10,7 +10,7 @@ benchmark and the per-step Phase 11 measurements.
 
 32-bit is the default for geometry, sizes, indices, counts, colors, handles,
 and style/type values. 64-bit is reserved for the cases in
-`docs/yuga_zeus_v2.md §3.6`, restated with the concrete sites here.
+`docs/loam_zeus_v2.md §3.6`, restated with the concrete sites here.
 
 ## Sites that stay 64-bit
 
@@ -23,7 +23,7 @@ and style/type values. 64-bit is reserved for the cases in
 | HPACK Huffman accumulator in `packages/http/std/httpcore/huff.loam` | `i64` | the bit buffer holds up to ~37 bits between codewords |
 | FNV / LCG in `examples/zeus/greeninfer/engine.loam` | `u64` | same |
 | `zeus.scaled` intermediate product | `i64` | `v * scale` before the `/ 100`; the result is `int` |
-| C seam: file sizes, mmap offsets, byte counts, `yuga_str.len` storage | `int64_t` | 2 GB is not a limit worth baking in |
+| C seam: file sizes, mmap offsets, byte counts, `loam_str.len` storage | `int64_t` | 2 GB is not a limit worth baking in |
 
 Money is integer minor units, never a float.
 
@@ -37,7 +37,7 @@ signatures.
 `make bench` builds `packages/yuga/tests/bench/bench.loam` (a fixed ~3000
 node tree, 500 layout passes, then one paint) with the pre-flip tree (`git HEAD`,
 `int` = i64) and with the current default, and records arena counts, layout time,
-native binary size, generated C size, and wasm size when `YUGA_WASM_CC` is set.
+native binary size, generated C size, and wasm size when `LOAM_WASM_CC` is set.
 
 Representative run on macOS, headless, `-O0`:
 
@@ -147,7 +147,7 @@ setter, `i32(...)` at every int-using read) live in `zeus.loam`,
 
 ## Mirror types that had to change with the default
 
-Two C-seam structures mirror a Yuga type and must use the same element width:
+Two C-seam structures mirror a Loam type and must use the same element width:
 
 - `arena.sigs` (`[]int`) is written by the C signal allocators as `int32_t`
   elements now, and the rebuild-scope owner lists (`rec_sid` / `rec_owner`,

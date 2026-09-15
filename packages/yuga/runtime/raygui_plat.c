@@ -3,10 +3,10 @@
  * This is a host seam, not a runtime: the window and OS event pump belong to
  * raylib, the widget logic belongs to raygui (vendored header), and the API and
  * frame loop belong to `packages/raygui/std/raygui.loam`. Everything here is a
- * thin conversion (NUL-terminate a `yuga_str`, mirror raygui's `bool *` state
+ * thin conversion (NUL-terminate a `loam_str`, mirror raygui's `bool *` state
  * as `int *`) plus the memory probe a RAM test reads. See docs/boundary.md.
  *
- * Headless (RAYGUI_HEADLESS / ZEUS_HEADLESS / YUGA_HEADLESS) opens no window:
+ * Headless (RAYGUI_HEADLESS / ZEUS_HEADLESS / LOAM_HEADLESS) opens no window:
  * the frame calls are inert and `should_close` ends the loop after
  * RAYGUI_FRAMES frames (default 3) so `make test` exercises the control code.
  */
@@ -34,7 +34,7 @@ static int env_is(const char *name) {
     return v && v[0] == '1';
 }
 
-static const char *rg_cstr(yuga_str s, char *buf, size_t cap) {
+static const char *rg_cstr(loam_str s, char *buf, size_t cap) {
     size_t n = s.len < 0 ? 0 : (size_t)s.len;
     if (n >= cap) n = cap - 1;
     if (n > 0 && s.ptr) memcpy(buf, s.ptr, n);
@@ -49,13 +49,13 @@ static int frame_cap(void) {
     return n > 0 ? n : 3;
 }
 
-int32_t yuga_raygui_plat_headless(void) {
+int32_t loam_raygui_plat_headless(void) {
     return headless;
 }
 
-void yuga_raygui_plat_init(yuga_str title, int32_t w, int32_t h, int32_t fps) {
+void loam_raygui_plat_init(loam_str title, int32_t w, int32_t h, int32_t fps) {
     char tb[256];
-    headless = env_is("RAYGUI_HEADLESS") || env_is("ZEUS_HEADLESS") || env_is("YUGA_HEADLESS");
+    headless = env_is("RAYGUI_HEADLESS") || env_is("ZEUS_HEADLESS") || env_is("LOAM_HEADLESS");
 #if !defined(__APPLE__) && !defined(__linux__)
     headless = 1;
 #endif
@@ -68,7 +68,7 @@ void yuga_raygui_plat_init(yuga_str title, int32_t w, int32_t h, int32_t fps) {
     inited = 1;
 }
 
-int32_t yuga_raygui_plat_should_close(void) {
+int32_t loam_raygui_plat_should_close(void) {
     if (headless) {
         frames++;
         return frames > frame_cap() ? 1 : 0;
@@ -77,51 +77,51 @@ int32_t yuga_raygui_plat_should_close(void) {
     return WindowShouldClose() ? 1 : 0;
 }
 
-void yuga_raygui_plat_begin(int32_t bg) {
+void loam_raygui_plat_begin(int32_t bg) {
     if (!inited) return;
     BeginDrawing();
     ClearBackground(GetColor((unsigned int)bg));
 }
 
-void yuga_raygui_plat_end(void) {
+void loam_raygui_plat_end(void) {
     if (!inited) return;
     EndDrawing();
 }
 
-void yuga_raygui_plat_close(void) {
+void loam_raygui_plat_close(void) {
     if (!inited) return;
     CloseWindow();
     inited = 0;
 }
 
-int32_t yuga_raygui_plat_fps(void) {
+int32_t loam_raygui_plat_fps(void) {
     return inited ? GetFPS() : 0;
 }
 
-int32_t yuga_raygui_plat_frame_ms(void) {
+int32_t loam_raygui_plat_frame_ms(void) {
     return inited ? (int32_t)(GetFrameTime() * 1000.0f) : 0;
 }
 
-int32_t yuga_raygui_plat_screen_w(void) {
+int32_t loam_raygui_plat_screen_w(void) {
     return inited ? GetScreenWidth() : 0;
 }
 
-int32_t yuga_raygui_plat_screen_h(void) {
+int32_t loam_raygui_plat_screen_h(void) {
     return inited ? GetScreenHeight() : 0;
 }
 
-void yuga_raygui_plat_set_style(int32_t control, int32_t prop, int32_t value) {
+void loam_raygui_plat_set_style(int32_t control, int32_t prop, int32_t value) {
     GuiSetStyle((int)control, (int)prop, (int)value);
 }
 
-void yuga_raygui_plat_load_style_default(void) {
+void loam_raygui_plat_load_style_default(void) {
     GuiLoadStyleDefault();
 }
 
 /* Host process memory in KB: Apple phys_footprint (the number Xcode's memory
    gauge shows; RSS overstates iOS/desktop scope) or the Linux/Android peak
    resident set. This is the value a RAM test watches. */
-int32_t yuga_raygui_plat_ram_kb(void) {
+int32_t loam_raygui_plat_ram_kb(void) {
 #if defined(__APPLE__)
     struct task_vm_info info;
     mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
@@ -151,37 +151,37 @@ static Rectangle rg_rect(int32_t x, int32_t y, int32_t w, int32_t h) {
     return r;
 }
 
-int32_t yuga_raygui_plat_label(int32_t x, int32_t y, int32_t w, int32_t h, yuga_str text) {
+int32_t loam_raygui_plat_label(int32_t x, int32_t y, int32_t w, int32_t h, loam_str text) {
     char b[512];
     if (!inited) return 0;
     return GuiLabel(rg_rect(x, y, w, h), rg_cstr(text, b, sizeof b));
 }
 
-int32_t yuga_raygui_plat_panel(int32_t x, int32_t y, int32_t w, int32_t h, yuga_str text) {
+int32_t loam_raygui_plat_panel(int32_t x, int32_t y, int32_t w, int32_t h, loam_str text) {
     char b[512];
     if (!inited) return 0;
     return GuiPanel(rg_rect(x, y, w, h), rg_cstr(text, b, sizeof b));
 }
 
-int32_t yuga_raygui_plat_group_box(int32_t x, int32_t y, int32_t w, int32_t h, yuga_str text) {
+int32_t loam_raygui_plat_group_box(int32_t x, int32_t y, int32_t w, int32_t h, loam_str text) {
     char b[512];
     if (!inited) return 0;
     return GuiGroupBox(rg_rect(x, y, w, h), rg_cstr(text, b, sizeof b));
 }
 
-int32_t yuga_raygui_plat_line(int32_t x, int32_t y, int32_t w, int32_t h, yuga_str text) {
+int32_t loam_raygui_plat_line(int32_t x, int32_t y, int32_t w, int32_t h, loam_str text) {
     char b[512];
     if (!inited) return 0;
     return GuiLine(rg_rect(x, y, w, h), rg_cstr(text, b, sizeof b));
 }
 
-int32_t yuga_raygui_plat_button(int32_t x, int32_t y, int32_t w, int32_t h, yuga_str text) {
+int32_t loam_raygui_plat_button(int32_t x, int32_t y, int32_t w, int32_t h, loam_str text) {
     char b[512];
     if (!inited) return 0;
     return GuiButton(rg_rect(x, y, w, h), rg_cstr(text, b, sizeof b));
 }
 
-int32_t yuga_raygui_plat_toggle(int32_t x, int32_t y, int32_t w, int32_t h, yuga_str text,
+int32_t loam_raygui_plat_toggle(int32_t x, int32_t y, int32_t w, int32_t h, loam_str text,
                                 int32_t *active) {
     char b[512];
     bool on;
@@ -193,7 +193,7 @@ int32_t yuga_raygui_plat_toggle(int32_t x, int32_t y, int32_t w, int32_t h, yuga
     return r;
 }
 
-int32_t yuga_raygui_plat_checkbox(int32_t x, int32_t y, int32_t w, int32_t h, yuga_str text,
+int32_t loam_raygui_plat_checkbox(int32_t x, int32_t y, int32_t w, int32_t h, loam_str text,
                                   int32_t *checked) {
     char b[512];
     bool on;
@@ -205,8 +205,8 @@ int32_t yuga_raygui_plat_checkbox(int32_t x, int32_t y, int32_t w, int32_t h, yu
     return r;
 }
 
-int32_t yuga_raygui_plat_slider(int32_t x, int32_t y, int32_t w, int32_t h, yuga_str left,
-                                yuga_str right, float *value, float lo, float hi) {
+int32_t loam_raygui_plat_slider(int32_t x, int32_t y, int32_t w, int32_t h, loam_str left,
+                                loam_str right, float *value, float lo, float hi) {
     char lb[128], rb[128];
     float v;
     int r;
@@ -218,8 +218,8 @@ int32_t yuga_raygui_plat_slider(int32_t x, int32_t y, int32_t w, int32_t h, yuga
     return r;
 }
 
-int32_t yuga_raygui_plat_progress(int32_t x, int32_t y, int32_t w, int32_t h, yuga_str left,
-                                  yuga_str right, float *value, float lo, float hi) {
+int32_t loam_raygui_plat_progress(int32_t x, int32_t y, int32_t w, int32_t h, loam_str left,
+                                  loam_str right, float *value, float lo, float hi) {
     char lb[128], rb[128];
     float v;
     int r;
@@ -231,7 +231,7 @@ int32_t yuga_raygui_plat_progress(int32_t x, int32_t y, int32_t w, int32_t h, yu
     return r;
 }
 
-int32_t yuga_raygui_plat_spinner(int32_t x, int32_t y, int32_t w, int32_t h, yuga_str text,
+int32_t loam_raygui_plat_spinner(int32_t x, int32_t y, int32_t w, int32_t h, loam_str text,
                                  int32_t *value, int32_t lo, int32_t hi, int32_t edit) {
     char b[256];
     int v;
@@ -243,7 +243,7 @@ int32_t yuga_raygui_plat_spinner(int32_t x, int32_t y, int32_t w, int32_t h, yug
     return r;
 }
 
-int32_t yuga_raygui_plat_value_box(int32_t x, int32_t y, int32_t w, int32_t h, yuga_str text,
+int32_t loam_raygui_plat_value_box(int32_t x, int32_t y, int32_t w, int32_t h, loam_str text,
                                    int32_t *value, int32_t lo, int32_t hi, int32_t edit) {
     char b[256];
     int v;
@@ -256,7 +256,7 @@ int32_t yuga_raygui_plat_value_box(int32_t x, int32_t y, int32_t w, int32_t h, y
     return r;
 }
 
-int32_t yuga_raygui_plat_combo(int32_t x, int32_t y, int32_t w, int32_t h, yuga_str text,
+int32_t loam_raygui_plat_combo(int32_t x, int32_t y, int32_t w, int32_t h, loam_str text,
                                int32_t *active) {
     char b[512];
     int a;
@@ -268,7 +268,7 @@ int32_t yuga_raygui_plat_combo(int32_t x, int32_t y, int32_t w, int32_t h, yuga_
     return r;
 }
 
-int32_t yuga_raygui_plat_listview(int32_t x, int32_t y, int32_t w, int32_t h, yuga_str text,
+int32_t loam_raygui_plat_listview(int32_t x, int32_t y, int32_t w, int32_t h, loam_str text,
                                   int32_t *scroll, int32_t *active) {
     char b[1024];
     int s = scroll ? *scroll : 0;

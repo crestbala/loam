@@ -451,7 +451,7 @@ fn GreenInferPage() {
         StepWatch(folder, watch_on, wcap, chunk_stat, kb_stat)
         StepAsk(query, hits, qus, scap)
         StepModel(prompt, endpoint, key_sig, model_sig, ans, mus, mcap)
-        zeus.Note("GreenInfer: Yuga engine + mmap + ARM NEON sweep. Tip: edit a file under the watched folder and it appears in search ~1.5 s later.")
+        zeus.Note("GreenInfer: Loam engine + mmap + ARM NEON sweep. Tip: edit a file under the watched folder and it appears in search ~1.5 s later.")
     }
 }
 

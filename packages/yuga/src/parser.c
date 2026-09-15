@@ -30,7 +30,7 @@ static int match(Parser *p, TokenKind k) {
 
 static void error(Parser *p, const char *m) {
     if (p->had_error) return;
-    yuga_error(p->current.loc, "%s (got %s)", m, token_kind_name(p->current.kind));
+    loam_error(p->current.loc, "%s (got %s)", m, token_kind_name(p->current.kind));
     p->had_error = 1;
 }
 
@@ -44,22 +44,22 @@ static void optional_semi(Parser *p) { match(p, TOK_SEMICOLON); }
 /** Text after `///` / `//!`, dropping one leading space. */
 static char *doc_line_text(Token t) {
     int skip = 3;
-    if (t.len < skip) return yuga_dup("");
+    if (t.len < skip) return loam_dup("");
     const char *s = t.start + skip;
     int n = t.len - skip;
     if (n > 0 && s[0] == ' ') {
         s++;
         n--;
     }
-    return yuga_dupn(s, n > 0 ? (size_t)n : 0);
+    return loam_dupn(s, n > 0 ? (size_t)n : 0);
 }
 
 static char *doc_append(char *acc, const char *line) {
     if (!line) line = "";
-    if (!acc) return yuga_dup(line);
+    if (!acc) return loam_dup(line);
     size_t a = strlen(acc), b = strlen(line);
     char *n = (char *)malloc(a + b + 2);
-    if (!n) yuga_fatal("out of memory");
+    if (!n) loam_fatal("out of memory");
     memcpy(n, acc, a);
     n[a] = '\n';
     memcpy(n + a + 1, line, b + 1);
@@ -99,7 +99,7 @@ static char *doc_join(char *a, char *b) {
     return n;
 }
 
-static char *tok_text(Token t) { return yuga_dupn(t.start, (size_t)t.len); }
+static char *tok_text(Token t) { return loam_dupn(t.start, (size_t)t.len); }
 
 /** A `TOK_NUMBER` lexeme: decimal, or `0x`/`0X` hex (e.g. a packed RGB color).
  * Never base 0 — that would read a bare leading-zero decimal as octal. */
@@ -116,7 +116,7 @@ static char *unescape_string(Token t) {
     int len = t.len;
     const char *s = t.start;
     char *out = (char *)malloc((size_t)len);
-    if (!out) yuga_fatal("out of memory");
+    if (!out) loam_fatal("out of memory");
     int j = 0;
     for (int i = 1; i < len - 1; i++) {
         if (s[i] == '\\' && i + 1 < len - 1) {
@@ -140,7 +140,7 @@ static char *unescape_string(Token t) {
 static char *file_stem(const char *path) {
     const char *base = strrchr(path, '/');
     base = base ? base + 1 : path;
-    return yuga_dupn(base, yuga_stem_len_ext(base, strlen(base)));
+    return loam_dupn(base, loam_stem_len_ext(base, strlen(base)));
 }
 
 /** Prime current and peek from the lexer. */
@@ -164,7 +164,7 @@ static Param *parse_params(Parser *p, size_t *out);
  * diagnostics name `file`), which matches how module sources are retained. */
 static AstNode *parse_sub_expr(char *src, const char *file, SourceLoc loc) {
     Lexer *sub = (Lexer *)malloc(sizeof(Lexer));
-    if (!sub) yuga_fatal("out of memory");
+    if (!sub) loam_fatal("out of memory");
     lexer_init(sub, src, file);
     sub->line = loc.line;
     Parser q;
@@ -172,7 +172,7 @@ static AstNode *parse_sub_expr(char *src, const char *file, SourceLoc loc) {
     q.allow_struct_lit = 1;
     AstNode *e = parse_expr(&q);
     if (q.had_error || q.current.kind != TOK_EOF) {
-        if (!q.had_error) yuga_error(loc, "unexpected token in {{ }} interpolation");
+        if (!q.had_error) loam_error(loc, "unexpected token in {{ }} interpolation");
         return NULL;
     }
     return e;
@@ -200,9 +200,9 @@ static AstNode *interp_node(char *text, SourceLoc loc, int *had_holes) {
             if (depth) break; /* unterminated: treat the rest as literal text */
             if (i > lit) {
                 parts = (AstNode **)realloc(parts, (np + 1) * sizeof(AstNode *));
-                parts[np++] = ast_string(yuga_dupn(text + lit, i - lit), loc);
+                parts[np++] = ast_string(loam_dupn(text + lit, i - lit), loc);
             }
-            char *ex = yuga_dupn(text + i + 2, close - (i + 2));
+            char *ex = loam_dupn(text + i + 2, close - (i + 2));
             AstNode *e = parse_sub_expr(ex, loc.file, loc);
             if (!e) { free(parts); return NULL; }
             parts = (AstNode **)realloc(parts, (np + 1) * sizeof(AstNode *));
@@ -218,9 +218,9 @@ static AstNode *interp_node(char *text, SourceLoc loc, int *had_holes) {
     if (!*had_holes) { free(parts); return NULL; }
     if (n > lit) {
         parts = (AstNode **)realloc(parts, (np + 1) * sizeof(AstNode *));
-        parts[np++] = ast_string(yuga_dupn(text + lit, n - lit), loc);
+        parts[np++] = ast_string(loam_dupn(text + lit, n - lit), loc);
     }
-    AstNode *call = ast_call(ast_ident(yuga_dup("__interp"), loc), parts, np, loc);
+    AstNode *call = ast_call(ast_ident(loam_dup("__interp"), loc), parts, np, loc);
     free(text);
     return call;
 }
@@ -648,14 +648,14 @@ static AstNode *parse_postfix(Parser *p, AstNode *left) {
                 AstNode **sa = (AstNode **)malloc(2 * sizeof(AstNode *));
                 sa[0] = left;
                 sa[1] = clos;
-                left = ast_call(ast_ident(yuga_dup("slot"), loc), sa, 2, loc);
+                left = ast_call(ast_ident(loam_dup("slot"), loc), sa, 2, loc);
             }
             continue;
         }
         if (match(p, TOK_DOT)) {
             if (!match(p, TOK_IDENT)) {
                 /* While typing `recv.` the next token is often `}` / EOF. */
-                if (yuga_diag_capturing() &&
+                if (loam_diag_capturing() &&
                     (check(p, TOK_EOF) || check(p, TOK_RBRACE) || check(p, TOK_RPAREN) ||
                      check(p, TOK_COMMA) || check(p, TOK_RBRACKET) || check(p, TOK_SEMICOLON)))
                     break;
@@ -667,7 +667,7 @@ static AstNode *parse_postfix(Parser *p, AstNode *left) {
         }
         if (match(p, TOK_COLON_COLON)) {
             if (!match(p, TOK_IDENT)) {
-                if (yuga_diag_capturing() &&
+                if (loam_diag_capturing() &&
                     (check(p, TOK_EOF) || check(p, TOK_RBRACE) || check(p, TOK_RPAREN) ||
                      check(p, TOK_COMMA) || check(p, TOK_RBRACKET) || check(p, TOK_SEMICOLON)))
                     break;
@@ -709,7 +709,7 @@ static AstNode *parse_unary(Parser *p) {
         advance(p);
         AstNode *opnd = parse_unary(p);
         if (!opnd) return NULL;
-        AstNode *callee = ast_field(ast_ident(yuga_dup("async"), loc), yuga_dup("await_value"),
+        AstNode *callee = ast_field(ast_ident(loam_dup("async"), loc), loam_dup("await_value"),
                                     0, loc);
         AstNode **args = (AstNode **)malloc(sizeof(AstNode *));
         args[0] = opnd;
@@ -1190,7 +1190,7 @@ static AstNode *parse_import(Parser *p) {
             free(path);
             return NULL;
         }
-        alias = yuga_dup(name);
+        alias = loam_dup(name);
     } else if (strncmp(path, "pkg:", 4) == 0) {
         const char *name = path + 4;
         if (!name[0] || strchr(name, '/') || strchr(name, '\\') || strchr(name, ':')) {
@@ -1198,7 +1198,7 @@ static AstNode *parse_import(Parser *p) {
             free(path);
             return NULL;
         }
-        alias = yuga_dup(name);
+        alias = loam_dup(name);
     } else {
         alias = file_stem(path);
         if (!alias || !alias[0]) {

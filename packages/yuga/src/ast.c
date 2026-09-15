@@ -11,7 +11,7 @@
 /** Zeroed node with kind and location. */
 AstNode *ast_new(AstKind kind, SourceLoc loc) {
     AstNode *n = (AstNode *)calloc(1, sizeof(AstNode));
-    if (!n) yuga_fatal("out of memory");
+    if (!n) loam_fatal("out of memory");
     n->kind = kind;
     n->loc = loc;
     return n;

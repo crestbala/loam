@@ -18,7 +18,7 @@
 #include <string.h>
 
 static IrFn *F;
-static YugaModule *Gmods;
+static LoamModule *Gmods;
 static int Gnmods, Gcur;
 static const char **subst_names;
 static Type **subst_args;
@@ -31,7 +31,7 @@ static Type *ir_subst(Type *t) {
     return typecheck_subst(t, subst_names, subst_args, subst_n);
 }
 
-static const char *fn_cname_in(YugaModule *m, const char *name) {
+static const char *fn_cname_in(LoamModule *m, const char *name) {
     AstNode *p = m ? m->ast : NULL;
     if (!p) return NULL;
     for (size_t i = 0; i < p->as.program.decl_count; i++) {
@@ -121,7 +121,7 @@ static void loop_push(int cont, int brk, int base) {
         loop_cont = (int *)realloc(loop_cont, (size_t)loop_cap * sizeof(int));
         loop_brk = (int *)realloc(loop_brk, (size_t)loop_cap * sizeof(int));
         loop_base = (int *)realloc(loop_base, (size_t)loop_cap * sizeof(int));
-        if (!loop_cont || !loop_brk || !loop_base) yuga_fatal("out of memory");
+        if (!loop_cont || !loop_brk || !loop_base) loam_fatal("out of memory");
     }
     loop_cont[nloop] = cont;
     loop_brk[nloop] = brk;
@@ -358,14 +358,14 @@ static int state_sig_local(AstNode *n) {
 static int emit_state_get(int sid, SourceLoc loc) {
     int *args = (int *)calloc(1, sizeof(int));
     args[0] = sid;
-    return emit_named_call("yuga_zeus_get", args, 1, ty_int(), loc);
+    return emit_named_call("loam_zeus_get", args, 1, ty_int(), loc);
 }
 
 static void emit_state_set(int sid, int val, SourceLoc loc) {
     int *args = (int *)calloc(2, sizeof(int));
     args[0] = sid;
     args[1] = val;
-    emit_named_call("yuga_zeus_set", args, 2, ty_void(), loc);
+    emit_named_call("loam_zeus_set", args, 2, ty_void(), loc);
 }
 
 static int assign_to_bin(int op) {
@@ -383,7 +383,7 @@ static int assign_to_bin(int op) {
 }
 
 /** Lower `fmt.println` to the write/write_int/write_bool + writeln sequence.
-    Variadic mixed types are not a Yuga function; this is the language's
+    Variadic mixed types are not a Loam function; this is the language's
     compile-time expansion, not a C-backend special case. */
 static int lower_println(AstNode *n) {
     for (size_t k = 0; k < n->as.call.arg_count; k++) {
@@ -395,7 +395,7 @@ static int lower_println(AstNode *n) {
             c->ty = ty_string();
             int *a = (int *)calloc(1, sizeof(int));
             a[0] = sp;
-            emit_named_call("yuga_fmt_write", a, 1, ty_void(), n->loc);
+            emit_named_call("loam_fmt_write", a, 1, ty_void(), n->loc);
         }
         AstNode *arg = n->as.call.args[k];
         int v = lower_expr(arg);
@@ -403,15 +403,15 @@ static int lower_println(AstNode *n) {
         a[0] = v;
         Type *t = ir_subst(arg->ty);
         if (t && t->kind == TY_STRING)
-            emit_named_call("yuga_fmt_write", a, 1, ty_void(), n->loc);
+            emit_named_call("loam_fmt_write", a, 1, ty_void(), n->loc);
         else if (t && t->kind == TY_BOOL)
-            emit_named_call("yuga_fmt_write_bool", a, 1, ty_void(), n->loc);
+            emit_named_call("loam_fmt_write_bool", a, 1, ty_void(), n->loc);
         else if (t && t->kind == TY_FLOAT)
-            emit_named_call("yuga_fmt_write_float", a, 1, ty_void(), n->loc);
+            emit_named_call("loam_fmt_write_float", a, 1, ty_void(), n->loc);
         else
-            emit_named_call("yuga_fmt_write_int", a, 1, ty_void(), n->loc);
+            emit_named_call("loam_fmt_write_int", a, 1, ty_void(), n->loc);
     }
-    emit_named_call("yuga_fmt_writeln", NULL, 0, ty_void(), n->loc);
+    emit_named_call("loam_fmt_writeln", NULL, 0, ty_void(), n->loc);
     return -1;
 }
 
@@ -440,9 +440,9 @@ static int lower_call(AstNode *n) {
             i->ty = ir_subst(n->as.call.args[0]->ty);
         else
             i->ty = ir_subst(n->ty);
-        if (n->as.call.sig_cell == 1) i->callee = "yuga_sig_push";
-        else if (n->as.call.sig_cell == 2) i->callee = "yuga_sig_load";
-        else i->callee = "yuga_sig_store";
+        if (n->as.call.sig_cell == 1) i->callee = "loam_sig_push";
+        else if (n->as.call.sig_cell == 2) i->callee = "loam_sig_load";
+        else i->callee = "loam_sig_store";
         return n->as.call.sig_cell == 3 ? -1 : dst;
     }
     if (n->as.call.fut_cell) {
@@ -461,11 +461,11 @@ static int lower_call(AstNode *n) {
             i->ty = ir_subst(n->as.call.args[1]->ty);
         else
             i->ty = ir_subst(n->ty);
-        if (n->as.call.fut_cell == 1) i->callee = "yuga_fut_push";
-        else if (n->as.call.fut_cell == 2) i->callee = "yuga_fut_load";
-        else if (n->as.call.fut_cell == 3) i->callee = "yuga_fut_store";
-        else if (n->as.call.fut_cell == 4) i->callee = "yuga_fut_ready";
-        else i->callee = "yuga_fut_clear";
+        if (n->as.call.fut_cell == 1) i->callee = "loam_fut_push";
+        else if (n->as.call.fut_cell == 2) i->callee = "loam_fut_load";
+        else if (n->as.call.fut_cell == 3) i->callee = "loam_fut_store";
+        else if (n->as.call.fut_cell == 4) i->callee = "loam_fut_ready";
+        else i->callee = "loam_fut_clear";
         return no_dst ? -1 : dst;
     }
     if (n->as.call.ch_cell) {
@@ -484,12 +484,12 @@ static int lower_call(AstNode *n) {
             i->ty = ir_subst(n->as.call.args[1]->ty);
         else
             i->ty = ir_subst(n->ty);
-        if (n->as.call.ch_cell == 1) i->callee = "yuga_ch_alloc";
-        else if (n->as.call.ch_cell == 2) i->callee = "yuga_ch_send";
-        else if (n->as.call.ch_cell == 3) i->callee = "yuga_ch_try_send";
-        else if (n->as.call.ch_cell == 4) i->callee = "yuga_ch_recv";
-        else if (n->as.call.ch_cell == 5) i->callee = "yuga_ch_pop";
-        else i->callee = "yuga_ch_ready";
+        if (n->as.call.ch_cell == 1) i->callee = "loam_ch_alloc";
+        else if (n->as.call.ch_cell == 2) i->callee = "loam_ch_send";
+        else if (n->as.call.ch_cell == 3) i->callee = "loam_ch_try_send";
+        else if (n->as.call.ch_cell == 4) i->callee = "loam_ch_recv";
+        else if (n->as.call.ch_cell == 5) i->callee = "loam_ch_pop";
+        else i->callee = "loam_ch_ready";
         return no_dst ? -1 : dst;
     }
     if (n->as.call.is_println) return lower_println(n);
@@ -498,7 +498,7 @@ static int lower_call(AstNode *n) {
         args[0] = n->as.call.arg_count > 0 ? lower_expr(n->as.call.args[0]) : -1;
         args[1] = n->as.call.arg_count > 1 ? lower_expr(n->as.call.args[1]) : -1;
         IrInst *i = emit(IR_CALL, n->loc);
-        i->callee = "yuga_vec_push";
+        i->callee = "loam_vec_push";
         i->args = args;
         i->nargs = 2;
         i->ty = n->as.call.arg_count > 1 && n->as.call.args[1]
@@ -513,7 +513,7 @@ static int lower_call(AstNode *n) {
         args[0] = n->as.call.arg_count > 0 ? lower_expr(n->as.call.args[0]) : -1;
         IrInst *i = emit(IR_CALL, n->loc);
         i->dst = dst;
-        i->callee = "yuga_vec_pop";
+        i->callee = "loam_vec_pop";
         i->args = args;
         i->nargs = 1;
         i->ty = ir_subst(n->ty);
@@ -528,7 +528,7 @@ static int lower_call(AstNode *n) {
         i->args = args;
         i->nargs = (int)ac;
         i->ty = ir_subst(n->ty);
-        i->callee = yuga_dup(numeric_builtin_cname(n->as.call.num_builtin, n->ty));
+        i->callee = loam_dup(numeric_builtin_cname(n->as.call.num_builtin, n->ty));
         return dst;
     }
     if (n->as.call.is_sizeof) {
@@ -578,7 +578,7 @@ static int lower_call(AstNode *n) {
         if (!callee) callee = n->as.call.resolved_cname;
         if (!callee) callee = resolve_callee(n->as.call.callee);
     }
-    int bind_state = callee && strcmp(callee, "yuga_zeus_bind_n") == 0 &&
+    int bind_state = callee && strcmp(callee, "loam_zeus_bind_n") == 0 &&
                      n->as.call.arg_count >= 2 && ident_is_state(n->as.call.args[1]);
 
     int *args = n->as.call.arg_count
@@ -595,7 +595,7 @@ static int lower_call(AstNode *n) {
             args[k] = lower_expr(n->as.call.args[k]);
         }
     }
-    if (bind_state) callee = "yuga_zeus_bind";
+    if (bind_state) callee = "loam_zeus_bind";
 
     IrInst *i = emit(n->as.call.is_fn_val ? IR_CALL_VAL : IR_CALL, n->loc);
     i->dst = dst;
@@ -974,10 +974,10 @@ static int lower_expr(AstNode *n) {
             {
                 char buf[256];
                 if (cname_override)
-                    snprintf(buf, sizeof buf, "yuga_clos_%d_%s", n->as.fn.clos_id, cname_override);
+                    snprintf(buf, sizeof buf, "loam_clos_%d_%s", n->as.fn.clos_id, cname_override);
                 else
-                    snprintf(buf, sizeof buf, "yuga_clos_%d", n->as.fn.clos_id);
-                i->callee = yuga_dup(buf);
+                    snprintf(buf, sizeof buf, "loam_clos_%d", n->as.fn.clos_id);
+                i->callee = loam_dup(buf);
             }
             return d;
         }
@@ -990,7 +990,7 @@ static int lower_expr(AstNode *n) {
 /**
  * Ownership follows the move: a local that has been moved out of is dead, so
  * it must not appear in a drop list. The C backend gets away without this
- * because `yuga_move_ptr` NULLs the source and `yuga_drop` skips NULL — a
+ * because `loam_move_ptr` NULLs the source and `loam_drop` skips NULL — a
  * runtime check standing in for a static fact. Stating it here means a backend
  * that does not null on move is still correct.
  */
@@ -1047,7 +1047,7 @@ static void lower_stmt(AstNode *n) {
                 }
                 int *args = (int *)calloc(1, sizeof(int));
                 args[0] = initv;
-                const char *callee = fn_returns_node() ? "yuga_zeus_hook_signal" : "yuga_zeus_signal";
+                const char *callee = fn_returns_node() ? "loam_zeus_hook_signal" : "loam_zeus_signal";
                 int id = emit_named_call(callee, args, 1, sig_ty, n->loc);
                 if (id >= 0 && n->as.var.name) F->locals[id].name = n->as.var.name;
                 scope_push(n->as.var.name, id);
@@ -1322,7 +1322,7 @@ static void collect_clos(AstNode *n) {
             clos_cap = clos_cap ? clos_cap * 2 : 256;
             clos_nodes = (AstNode **)realloc(clos_nodes, (size_t)clos_cap * sizeof(AstNode *));
             clos_mods = (int *)realloc(clos_mods, (size_t)clos_cap * sizeof(int));
-            if (!clos_nodes || !clos_mods) yuga_fatal("out of memory");
+            if (!clos_nodes || !clos_mods) loam_fatal("out of memory");
         }
         clos_mods[nclos_nodes] = Gcur;
         clos_nodes[nclos_nodes++] = n;
@@ -1465,10 +1465,10 @@ static void lower_closure(IrModule *m, AstNode *d) {
     {
         char buf[256];
         if (cname_override)
-            snprintf(buf, sizeof buf, "yuga_clos_%d_%s", d->as.fn.clos_id, cname_override);
+            snprintf(buf, sizeof buf, "loam_clos_%d_%s", d->as.fn.clos_id, cname_override);
         else
-            snprintf(buf, sizeof buf, "yuga_clos_%d", d->as.fn.clos_id);
-        F->cname = yuga_dup(buf);
+            snprintf(buf, sizeof buf, "loam_clos_%d", d->as.fn.clos_id);
+        F->cname = loam_dup(buf);
     }
     F->name = d->as.fn.name;
     F->sig = ir_subst(d->ty);
@@ -1647,7 +1647,7 @@ static void lower_fn(IrModule *m, AstNode *d) {
     scope_pop_to(-1);
 }
 
-IrModule *ir_lower(YugaModule *mods, int nmods) {
+IrModule *ir_lower(LoamModule *mods, int nmods) {
     IrModule *m = (IrModule *)calloc(1, sizeof(IrModule));
     Gmods = mods;
     Gnmods = nmods;
@@ -1688,10 +1688,10 @@ IrModule *ir_lower(YugaModule *mods, int nmods) {
         {
             char buf[256];
             if (mi == 0)
-                snprintf(buf, sizeof buf, "yuga__init");
+                snprintf(buf, sizeof buf, "loam__init");
             else
-                snprintf(buf, sizeof buf, "yuga_%s__init", mods[mi].name);
-            F->cname = yuga_dup(buf);
+                snprintf(buf, sizeof buf, "loam_%s__init", mods[mi].name);
+            F->cname = loam_dup(buf);
         }
         F->name = "__init";
         F->lowered = 1;

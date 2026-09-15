@@ -1,5 +1,5 @@
 /**
- * lexer.c — scan Yuga source into tokens.
+ * lexer.c — scan Loam source into tokens.
  *
  * Identifier vs keyword is decided after scanning a word. Integers are
  * decimal digits. Floats are `1.5`, `1e-9`, `1.0e3` (`1..10` stays a range).

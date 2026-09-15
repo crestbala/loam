@@ -8,8 +8,8 @@
  *
  * A backend walking this emits code; it never makes a language decision.
  */
-#ifndef YUGA_IR_H
-#define YUGA_IR_H
+#ifndef LOAM_IR_H
+#define LOAM_IR_H
 
 #include "ast.h"
 #include "module.h"
@@ -118,7 +118,7 @@ typedef struct {
     int nparams;
     int is_main;
     int lowered;        /* 0 when a construct was not representable yet */
-    int clos_id;        /* non-zero: this IrFn is yuga_clos_<id> */
+    int clos_id;        /* non-zero: this IrFn is loam_clos_<id> */
     int env_local;      /* closure: the local holding `_env`; -1 otherwise */
     const char **caps;
     Type **cap_types;
@@ -130,7 +130,7 @@ typedef struct {
     int nfns, cap;
 } IrModule;
 
-IrModule *ir_lower(YugaModule *mods, int nmods);
+IrModule *ir_lower(LoamModule *mods, int nmods);
 void ir_print(FILE *out, const IrModule *m);
 int ir_verify(const IrModule *m);
 void ir_free(IrModule *m);

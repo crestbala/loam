@@ -17,7 +17,7 @@
  *     through their initializer; anything else is rejected.
  *
  * The allowlist is the complete set of C symbols that are safe from any
- * thread: pure value plumbing in yuga_rt.h (string conversion, concat,
+ * thread: pure value plumbing in loam_rt.h (string conversion, concat,
  * fmt writes), the monotonic clock and sleep, wrapping/saturating int ops,
  * the channel cell ops (they take their own locks), and `thread.spawn` /
  * `thread.running` themselves. Everything else in the seam — zeus platform
@@ -99,18 +99,18 @@ static int cname_in(const char *cname, const char *const *list) {
 
 /* C symbols a worker may call. Everything else in the seam stays on the UI
    thread. Channel cell ops and spawn/running are thread-safe by construction
-   (yuga_rt.h); the rest is pure value plumbing. */
+   (loam_rt.h); the rest is pure value plumbing. */
 static const char *const worker_seam_ok[] = {
-    "yuga_thread_spawn", "yuga_thread_running",
-    "yuga_ch_alloc", "yuga_ch_send", "yuga_ch_try_send", "yuga_ch_recv",
-    "yuga_ch_pop", "yuga_ch_ready",
-    "yuga_fmt_write", "yuga_fmt_writeln", "yuga_fmt_write_int",
-    "yuga_fmt_write_bool", "yuga_fmt_write_float", "yuga_fmt_eq",
-    "yuga_str_of_int", "yuga_str_of_float", "yuga_str_of_bool",
-    "yuga_str_of_string", "yuga_str_concat", "yuga_string_from_bytes",
-    "yuga_async_now_ms", "yuga_async_sleep",
-    "yuga_wrapping_add", "yuga_wrapping_shr", "yuga_wrapping_shl",
-    "yuga_wrapping_or", "yuga_wrapping_and", "yuga_saturating_add",
+    "loam_thread_spawn", "loam_thread_running",
+    "loam_ch_alloc", "loam_ch_send", "loam_ch_try_send", "loam_ch_recv",
+    "loam_ch_pop", "loam_ch_ready",
+    "loam_fmt_write", "loam_fmt_writeln", "loam_fmt_write_int",
+    "loam_fmt_write_bool", "loam_fmt_write_float", "loam_fmt_eq",
+    "loam_str_of_int", "loam_str_of_float", "loam_str_of_bool",
+    "loam_str_of_string", "loam_str_concat", "loam_string_from_bytes",
+    "loam_async_now_ms", "loam_async_sleep",
+    "loam_wrapping_add", "loam_wrapping_shr", "loam_wrapping_shl",
+    "loam_wrapping_or", "loam_wrapping_and", "loam_saturating_add",
     NULL,
 };
 
@@ -131,7 +131,7 @@ static void report(const ThreadCheck *tc, SourceLoc loc, const char *fmt,
                  tc->spawn_line);
     else
         snprintf(msg, sizeof msg, "%s", fmt);
-    yuga_error(loc, msg, a1, a2);
+    loam_error(loc, msg, a1, a2);
 }
 
 /** Follow one CALL site in worker mode. */
@@ -148,7 +148,7 @@ static void worker_call(AstNode *call, ThreadCheck *tc) {
             worker_walk(call->as.call.args[i], tc);
         return;
     }
-    /* Pure value helpers wired by name in typecheck (yuga_str_of_*,
+    /* Pure value helpers wired by name in typecheck (loam_str_of_*,
        string_from_bytes, concat, wrapping bit ops). */
     if (call->as.call.c_builtin) {
         const char *c = call->as.call.c_builtin;
@@ -428,7 +428,7 @@ static void scan_walk(AstNode *n, ThreadCheck *tc) {
         case AST_CALL: {
             AstNode *cal = n->as.call.callee;
             const char *cn = callee_cname(n);
-            if (cn && strcmp(cn, "yuga_thread_spawn") == 0) {
+            if (cn && strcmp(cn, "loam_thread_spawn") == 0) {
                 scan_spawn(n, tc);
                 return;
             }
@@ -517,9 +517,9 @@ static void scan_walk(AstNode *n, ThreadCheck *tc) {
 
 /** Check every module (spawn sites anywhere, incl. dead fns — same rule as
  *  typecheck/IR covering everything). Returns the number of errors. */
-int threadcheck_modules(YugaModule *mods, int nmods) {
+int threadcheck_modules(LoamModule *mods, int nmods) {
     ThreadCheck tc;
-    int errs_before = yuga_diag_count();
+    int errs_before = loam_diag_count();
     int have_thread = 0;
     tc.nglobals = 0;
     tc.globals = NULL;
@@ -564,5 +564,5 @@ int threadcheck_modules(YugaModule *mods, int nmods) {
     }
     free(tc.globals);
     free(tc.walked.items);
-    return yuga_diag_count() - errs_before;
+    return loam_diag_count() - errs_before;
 }

@@ -2,7 +2,7 @@
 // the headless pump (no manual `engine_layout`), and a real gRPC-Web round
 // trip (`http.call_async`) completes while the pump keeps running frames.
 //
-// The RPC server is this same binary re-executed with YUGA_ASYNC_SRV=1 (the
+// The RPC server is this same binary re-executed with LOAM_ASYNC_SRV=1 (the
 // make test runner executes binaries from the repo root, so the child path
 // below matches the tmp output path). The child binds an ephemeral port,
 // writes "127.0.0.1:<port>" to a file, serves one Echo.Ping, and exits.
@@ -32,7 +32,7 @@ fn srv_main() {
         fail("child port")
     }
     let addr = http.concat_str("127.0.0.1:", http.string_of(http.u_itoa(p)))
-    let w = sys.write_file("/tmp/yuga_async_rpc.port", addr)
+    let w = sys.write_file("/tmp/loam_async_rpc.port", addr)
     if w != 0 {
         fail("child port file")
     }
@@ -59,7 +59,7 @@ fn Panel(n: Signal<int>) {
 }
 
 fn cli_main() {
-    sys.write_file("/tmp/yuga_async_rpc.port", "")
+    sys.write_file("/tmp/loam_async_rpc.port", "")
     let n = zeus.signal(0)
     zeus.App("async-rpc", fn() {
         Panel(n)
@@ -79,13 +79,13 @@ fn cli_main() {
     // Real async gRPC-Web round trip against the child server. The pump loop
     // below is the headless frame loop: each pump ticks the async state
     // machines, relayouts, and repaints.
-    let cmd = "YUGA_ASYNC_SRV=1 packages/yuga/tests/tmp/zeus_async_rpc >/dev/null 2>&1 &"
+    let cmd = "LOAM_ASYNC_SRV=1 packages/yuga/tests/tmp/zeus_async_rpc >/dev/null 2>&1 &"
     sys.exec(cmd)
-    let mut addr = sys.read_file("/tmp/yuga_async_rpc.port")
+    let mut addr = sys.read_file("/tmp/loam_async_rpc.port")
     let mut guard = 0
     while addr.len == 0 && guard < 400 {
         async.sleep(5)
-        addr = sys.read_file("/tmp/yuga_async_rpc.port")
+        addr = sys.read_file("/tmp/loam_async_rpc.port")
         guard = guard + 1
     }
     if addr.len == 0 {
@@ -115,7 +115,7 @@ fn cli_main() {
 }
 
 fn main() {
-    if sys.env_set("YUGA_ASYNC_SRV") != 0 {
+    if sys.env_set("LOAM_ASYNC_SRV") != 0 {
         srv_main()
         return
     }

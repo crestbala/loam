@@ -1,7 +1,7 @@
-//! `mathf` — the float math these raster demos need, written in Yuga.
+//! `mathf` — the float math these raster demos need, written in Loam.
 //!
 //! There is no `std:math` and no libm seam here, so `sin`, `cos`, `exp`,
-//! `tanh`, `abs` and `sqrt` are ordinary Yuga functions over `float` (f32).
+//! `tanh`, `abs` and `sqrt` are ordinary Loam functions over `float` (f32).
 //! Each one reduces its argument into the interval a polynomial is accurate
 //! on, then evaluates that polynomial in Horner form. Accuracy is around
 //! `1e-6` relative, which is orders of magnitude below one 8-bit color step.

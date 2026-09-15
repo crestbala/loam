@@ -7,7 +7,7 @@ fn main() {
     fmt.println(a[0])
     fmt.println(a[3])
 
-    // Out of bounds — Yuga traps instead of reading past the array.
+    // Out of bounds — Loam traps instead of reading past the array.
     let i = 4
     fmt.println(a[i])
 }

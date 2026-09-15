@@ -1,6 +1,6 @@
-# PPM frames in Yuga
+# PPM frames in Loam
 
-Raster demos that write binary **PPM (P6)** frames from Yuga and hand the
+Raster demos that write binary **PPM (P6)** frames from Loam and hand the
 sequence to **ffmpeg** — no C, no image library, no video library. Both
 programs are ports of [rexim's `checker.c` / `plasma.cpp`
 gist](https://gist.github.com/rexim/ef86bf70918034a5a57881456c0a0ccf):
@@ -10,7 +10,7 @@ gist](https://gist.github.com/rexim/ef86bf70918034a5a57881456c0a0ccf):
 | `checker.loam` | Port of `checker.c`: 60 frames of a red/black checkerboard whose cells slide one cell per frame. |
 | `plasma.loam` | Port of `plasma.cpp`: XorDev's twigl interference shader evaluated per pixel on the CPU. |
 | `frames.loam` | The PPM/ffmpeg pipeline both demos share: frame naming, the P6 header, `sys.write_file`, `ffmpeg` via `sys.exec`. |
-| `mathf.loam` | `sin` / `cos` / `exp` / `tanh` / `abs` / `sqrt` for `float` (f32), as polynomials in plain Yuga. |
+| `mathf.loam` | `sin` / `cos` / `exp` / `tanh` / `abs` / `sqrt` for `float` (f32), as polynomials in plain Loam. |
 | `mathf_tests.loam`, `frames_tests.loam` | `#[test]` suites for the two modules. |
 
 ## Run
@@ -30,25 +30,25 @@ Everything is re-scalable without editing a file:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `YUGA_PPM_OUT` | `out` | output directory (created with `sys.mkdir`) |
-| `YUGA_PPM_SCALE` | 60 | `w = 16 * scale`, `h = 9 * scale` — the gist's `16*60 x 9*60` = 960x540 |
-| `YUGA_PPM_FRAMES` | checker 60, plasma 120 | frame count |
-| `YUGA_PPM_FPS` | 60 | output frame rate |
-| `YUGA_PPM_CRF` | 16 | x264 quality; `0` is lossless, `23` is x264's own default |
-| `YUGA_PPM_PRESET` | `slow` | x264 preset (`fast`, `medium`, `slower`, `veryslow`, …) |
-| `YUGA_PPM_KEEP` | unset | keep the `.ppm` files after encoding |
-| `YUGA_PPM_FLIP` | unset | plasma only: flip the row the shader sees (see below) |
+| `LOAM_PPM_OUT` | `out` | output directory (created with `sys.mkdir`) |
+| `LOAM_PPM_SCALE` | 60 | `w = 16 * scale`, `h = 9 * scale` — the gist's `16*60 x 9*60` = 960x540 |
+| `LOAM_PPM_FRAMES` | checker 60, plasma 120 | frame count |
+| `LOAM_PPM_FPS` | 60 | output frame rate |
+| `LOAM_PPM_CRF` | 16 | x264 quality; `0` is lossless, `23` is x264's own default |
+| `LOAM_PPM_PRESET` | `slow` | x264 preset (`fast`, `medium`, `slower`, `veryslow`, …) |
+| `LOAM_PPM_KEEP` | unset | keep the `.ppm` files after encoding |
+| `LOAM_PPM_FLIP` | unset | plasma only: flip the row the shader sees (see below) |
 
 The plasma defaults are the gist's own 960x540 at 120 frames (it uses 240);
-the render is CPU-bound, so `YUGA_PPM_SCALE` and `YUGA_PPM_FRAMES` are the two
+the render is CPU-bound, so `LOAM_PPM_SCALE` and `LOAM_PPM_FRAMES` are the two
 levers on how long it takes and how much memory it holds.
 
 ```
 # Cheapest useful preview: 1/16 the pixels and 1/8 the frames.
-YUGA_PPM_SCALE=15 YUGA_PPM_FRAMES=15 ./bin/yugac examples/language/ppm/plasma.loam --run
+LOAM_PPM_SCALE=15 LOAM_PPM_FRAMES=15 ./bin/yugac examples/language/ppm/plasma.loam --run
 
 # The gist's exact framing, and lossless to boot (~8 MB for 2s).
-YUGA_PPM_FRAMES=240 YUGA_PPM_CRF=0 ./bin/yugac examples/language/ppm/plasma.loam --run
+LOAM_PPM_FRAMES=240 LOAM_PPM_CRF=0 ./bin/yugac examples/language/ppm/plasma.loam --run
 ```
 
 ## How it works
@@ -96,11 +96,11 @@ PSNR/SSIM against the source `.ppm` frames:
 
 `yuv420p` is deliberate over `yuv444p` (which is smaller here and keeps full
 chroma) because it is the format everything plays. If you want to judge
-encoder settings yourself, `YUGA_PPM_KEEP=1` leaves the frames in place, and
+encoder settings yourself, `LOAM_PPM_KEEP=1` leaves the frames in place, and
 any ffmpeg invocation can be pointed at `out/plasma-%03d.ppm`:
 
 ```
-YUGA_PPM_KEEP=1 ./bin/yugac examples/language/ppm/plasma.loam --run
+LOAM_PPM_KEEP=1 ./bin/yugac examples/language/ppm/plasma.loam --run
 ffmpeg -framerate 60 -i out/plasma-%03d.ppm -c:v libx264 -crf 12 \
        -preset veryslow -pix_fmt yuv420p out/plasma-hq.mp4
 ```
@@ -115,7 +115,7 @@ with `yuv420p` requires even dimensions.
 
 `plasma.loam` needs `sin`, `cos`, `exp`, `tanh` and `abs` on floats, and there
 is no `std:math`. Rather than adding a C seam, `mathf.loam` writes them as
-argument reduction plus a Horner polynomial — plain Yuga arithmetic, accurate
+argument reduction plus a Horner polynomial — plain Loam arithmetic, accurate
 to about `1e-6` relative, which is far below one 8-bit color step. That also
 keeps the demos portable to `--target wasm`, since nothing crosses the C
 boundary except `sys` and `fmt`.
@@ -137,7 +137,7 @@ truncates one lower. Measured against the C++ reference:
 
 Comment 6 on the gist notes that the C++ port flips the image relative to the
 shader it came from (the blue field ends up at the top). `plasma.loam` keeps
-the C++ behaviour by default and exposes the row flip as `YUGA_PPM_FLIP=1`
+the C++ behaviour by default and exposes the row flip as `LOAM_PPM_FLIP=1`
 rather than hardcoding either one.
 
 ## Tests
@@ -171,7 +171,7 @@ frame buffer:
 | Checker 96x54 | 60 | 5,184 | 20 MB |
 
 That is about **1 byte per frame byte**, which is exactly the string
-`string_from_bytes` returns: `yuga_rt.h` frees no string ("the language has no
+`string_from_bytes` returns: `loam_rt.h` frees no string ("the language has no
 string ownership story to hook into yet"), so one frame's bytes stay resident
 per frame. Everything else — the `[]int` staging buffer, which is four bytes
 per frame byte — is allocated and released once per frame.
@@ -185,7 +185,7 @@ about 5.5 bytes per frame byte; a `250`-frame render at 960x540 was not
 practical.
 
 So the lever on peak memory is still the frame count and the size — and
-`YUGA_PPM_SCALE=15 YUGA_PPM_FRAMES=15` keeps a preview under 20 MB.
+`LOAM_PPM_SCALE=15 LOAM_PPM_FRAMES=15` keeps a preview under 20 MB.
 
 ## Limitations
 

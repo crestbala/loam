@@ -18,7 +18,7 @@
 #include <strings.h>
 #include <dirent.h>
 
-static YugaSession Gsess;
+static LoamSession Gsess;
 static char *Guri;
 static char *Gpath;
 static char *Gtext;
@@ -187,8 +187,8 @@ static char *uri_to_path(const char *uri) {
 }
 
 static char *path_to_uri(const char *path) {
-    if (!path || !path[0]) return yuga_dup("file://");
-    if (strncmp(path, "file://", 7) == 0) return yuga_dup(path);
+    if (!path || !path[0]) return loam_dup("file://");
+    if (strncmp(path, "file://", 7) == 0) return loam_dup(path);
     size_t n = strlen(path);
     char *u = (char *)malloc(n + 8);
     if (!u) return NULL;
@@ -206,13 +206,13 @@ static char *extract_id(const char *json) {
             else end++;
         }
         if (*end == '"') end++;
-        return yuga_dupn(p, (size_t)(end - p));
+        return loam_dupn(p, (size_t)(end - p));
     }
     const char *e = p;
     if (*e == '-') e++;
     while (isdigit((unsigned char)*e)) e++;
     if (e == p) return NULL;
-    return yuga_dupn(p, (size_t)(e - p));
+    return loam_dupn(p, (size_t)(e - p));
 }
 
 static char *extract_method(const char *json) {
@@ -394,7 +394,7 @@ static char *extract_uri(const char *msg) {
     return uri;
 }
 
-static YugaModule *mod_by_path(const char *path) {
+static LoamModule *mod_by_path(const char *path) {
     if (!path) return NULL;
     for (int i = 0; i < Gsess.nmods; i++) {
         if (Gsess.mods[i].path && strcmp(Gsess.mods[i].path, path) == 0)
@@ -403,7 +403,7 @@ static YugaModule *mod_by_path(const char *path) {
     return NULL;
 }
 
-static YugaModule *mod_by_alias(const char *alias) {
+static LoamModule *mod_by_alias(const char *alias) {
     if (!alias) return NULL;
     for (int i = 0; i < Gsess.nmods; i++) {
         if (Gsess.mods[i].name && strcmp(Gsess.mods[i].name, alias) == 0)
@@ -412,9 +412,9 @@ static YugaModule *mod_by_alias(const char *alias) {
     return NULL;
 }
 
-static YugaModule *mod_for_uri(const char *uri) {
+static LoamModule *mod_for_uri(const char *uri) {
     char *path = uri ? uri_to_path(uri) : NULL;
-    YugaModule *m = path ? mod_by_path(path) : NULL;
+    LoamModule *m = path ? mod_by_path(path) : NULL;
     free(path);
     if (m) return m;
     if (Gpath) m = mod_by_path(Gpath);
@@ -428,7 +428,7 @@ static Pick pick_at(const char *uri, int line, int col) {
     best.fn = NULL;
     best.param_i = -1;
     if (!Ghave) return best;
-    YugaModule *m = mod_for_uri(uri);
+    LoamModule *m = mod_for_uri(uri);
     if (!m || !m->ast) return best;
     pick_node(m->ast, line, col, &best, NULL);
     return best;
@@ -522,7 +522,7 @@ static const char *lookup_doc(Pick *pk) {
             return struct_field_doc(base->name, n->as.access.field);
     }
     if (n->kind == AST_IMPORT) {
-        YugaModule *m = mod_by_alias(n->as.import.alias);
+        LoamModule *m = mod_by_alias(n->as.import.alias);
         if (m && m->ast && m->ast->as.program.mod_doc)
             return m->ast->as.program.mod_doc;
     }
@@ -534,10 +534,10 @@ static char *hover_alloc(Pick *pk) {
     hover_text(pk, head, sizeof head);
     const char *doc = lookup_doc(pk);
     if (!head[0] && (!doc || !doc[0])) return NULL;
-    if (!doc || !doc[0]) return yuga_dup(head);
+    if (!doc || !doc[0]) return loam_dup(head);
     size_t n = strlen(head) + strlen(doc) + 8;
     char *s = (char *)malloc(n);
-    if (!s) return yuga_dup(head);
+    if (!s) return loam_dup(head);
     if (head[0])
         snprintf(s, n, "%s\n\n%s", head, doc);
     else
@@ -548,7 +548,7 @@ static char *hover_alloc(Pick *pk) {
 static int module_file_loc(const char *alias, const char *path_hint, SourceLoc *out) {
     SourceLoc z = {0};
     *out = z;
-    YugaModule *m = mod_by_alias(alias);
+    LoamModule *m = mod_by_alias(alias);
     if (!m && path_hint) m = mod_by_path(path_hint);
     if (!m || !m->path) return 0;
     out->file = m->path;
@@ -594,7 +594,7 @@ static int def_loc_of(Pick *pk, SourceLoc *out) {
     return 0;
 }
 
-static int diag_for_file(YugaDiag *d, const char *path, int opened) {
+static int diag_for_file(LoamDiag *d, const char *path, int opened) {
     if (!d->file || !d->file[0]) return opened;
     if (path && strcmp(d->file, path) == 0) return 1;
     return 0;
@@ -613,7 +613,7 @@ static void send_diagnostics(const char *uri, const char *path, int opened) {
 
     int first = 1;
     for (int i = 0; i < Gsess.ndiag; i++) {
-        YugaDiag *d = &Gsess.diags[i];
+        LoamDiag *d = &Gsess.diags[i];
         if (!diag_for_file(d, path, opened)) continue;
         SourceLoc loc;
         loc.file = d->file;
@@ -671,11 +671,11 @@ static int pos_to_off(const char *src, int line0, int col0);
 static void compile_buffer(const char *uri, const char *path, const char *src) {
     free(Guri);
     free(Gpath);
-    Guri = yuga_dup(uri);
-    Gpath = yuga_dup(path);
+    Guri = loam_dup(uri);
+    Gpath = loam_dup(path);
     free(Gtext);
-    Gtext = yuga_dup(src);
-    yuga_session_check(&Gsess, path, src);
+    Gtext = loam_dup(src);
+    loam_session_check(&Gsess, path, src);
     Ghave = 1;
     publish_all();
 }
@@ -790,9 +790,9 @@ static void add_comp_d(Completions *c, const char *lab, const char *detail, int 
         c->docs = realloc(c->docs, (size_t)c->cap * sizeof(char *));
         c->kinds = realloc(c->kinds, (size_t)c->cap * sizeof(int));
     }
-    c->labels[c->n] = yuga_dup(lab);
-    c->details[c->n] = yuga_dup(detail ? detail : "");
-    c->docs[c->n] = (doc && doc[0]) ? yuga_dup(doc) : NULL;
+    c->labels[c->n] = loam_dup(lab);
+    c->details[c->n] = loam_dup(detail ? detail : "");
+    c->docs[c->n] = (doc && doc[0]) ? loam_dup(doc) : NULL;
     c->kinds[c->n] = kind;
     c->n++;
 }
@@ -802,7 +802,7 @@ static void add_comp(Completions *c, const char *lab, const char *detail, int ki
     add_comp_d(c, lab, detail, kind, prefix, NULL);
 }
 
-static void add_mod_members(Completions *c, YugaModule *m, const char *prefix, Type *recv) {
+static void add_mod_members(Completions *c, LoamModule *m, const char *prefix, Type *recv) {
     if (!m || !m->ast) return;
     AstNode *p = m->ast;
     for (size_t i = 0; i < p->as.program.decl_count; i++) {
@@ -897,11 +897,11 @@ static void add_vars_in(AstNode *n, Completions *c, const char *prefix, int line
 }
 
 static const char *src_for_uri(const char *uri) {
-    YugaModule *m = mod_for_uri(uri);
+    LoamModule *m = mod_for_uri(uri);
     return m && m->src ? m->src : NULL;
 }
 
-static int ident_is_module(AstNode *n, YugaModule *cur) {
+static int ident_is_module(AstNode *n, LoamModule *cur) {
     if (is_module_ident(n)) return 1;
     if (!n || n->kind != AST_IDENT || !n->as.ident.name) return 0;
     if (mod_by_alias(n->as.ident.name)) return 1;
@@ -1026,7 +1026,7 @@ static void handle_completion(const char *msg, const char *id) {
     memcpy(prefix, src + j, plen);
     prefix[plen] = '\0';
     int after_dot = (j > 0 && src[j - 1] == '.');
-    YugaModule *cur = mod_for_uri(uri);
+    LoamModule *cur = mod_for_uri(uri);
     if (in_import_str(src, off)) {
         char ipre[128];
         import_str_prefix(src, off, ipre, sizeof ipre);
@@ -1216,14 +1216,14 @@ static void doc_put(const char *uri, const char *path, const char *text) {
     DocBuf *d = doc_find(uri);
     if (!d) {
         d = (DocBuf *)calloc(1, sizeof *d);
-        d->uri = yuga_dup(uri);
+        d->uri = loam_dup(uri);
         d->next = Gdocs;
         Gdocs = d;
     }
     free(d->path);
-    d->path = yuga_dup(path ? path : "");
+    d->path = loam_dup(path ? path : "");
     free(d->text);
-    d->text = yuga_dup(text ? text : "");
+    d->text = loam_dup(text ? text : "");
 }
 
 static void doc_drop(const char *uri) {
@@ -1309,7 +1309,7 @@ static void handle_doc(const char *msg, const char *method) {
             /* clear squiggles for this buffer */
             char *saved_uri = Guri, *saved_path = Gpath;
             int saved_n = Gsess.ndiag;
-            YugaDiag *saved_d = Gsess.diags;
+            LoamDiag *saved_d = Gsess.diags;
             Guri = uri;
             Gpath = path;
             Gsess.ndiag = 0;
@@ -1321,8 +1321,8 @@ static void handle_doc(const char *msg, const char *method) {
             Gsess.diags = saved_d;
         }
         if (Guri && strcmp(Guri, uri) == 0) {
-            yuga_session_free(&Gsess);
-            yuga_session_init(&Gsess);
+            loam_session_free(&Gsess);
+            loam_session_init(&Gsess);
             Ghave = 0;
             free(Guri);
             free(Gpath);
@@ -1339,12 +1339,12 @@ static void handle_doc(const char *msg, const char *method) {
     /* didChange must use the editor buffer, not a stale file on disk. */
     if (!text && strcmp(method, "textDocument/didChange") == 0 && Gtext &&
         Guri && strcmp(Guri, uri) == 0)
-        text = yuga_dup(Gtext);
+        text = loam_dup(Gtext);
     if (!text && path) {
         DocBuf *known = doc_find(uri);
         if (known && known->text && known->text[0]) {
             /* editing a stored buffer with no payload: keep editor content */
-            text = yuga_dup(known->text);
+            text = loam_dup(known->text);
         } else {
             FILE *f = fopen(path, "rb");
             if (f) {
@@ -1571,8 +1571,8 @@ static TokenKind st_at(Token *ts, int n, int i) {
 static char st_mods[ST_MAX_MOD][64];
 static int st_nmods;
 
-#ifndef YUGA_STD_DIR
-#define YUGA_STD_DIR "packages/yuga/std"
+#ifndef LOAM_STD_DIR
+#define LOAM_STD_DIR "packages/yuga/std"
 #endif
 
 static char std_names[32][32];
@@ -1588,18 +1588,18 @@ static void add_std_name(const char *name, size_t n) {
 }
 
 static void load_std_names(void) {
-    const char *dirs[YUGA_MAX_STD_DIRS];
+    const char *dirs[LOAM_MAX_STD_DIRS];
     DIR *d;
     struct dirent *ent;
     int nd;
     if (nstd_names) return;
-    nd = yuga_std_dirs(dirs, YUGA_MAX_STD_DIRS);
+    nd = loam_std_dirs(dirs, LOAM_MAX_STD_DIRS);
     for (int i = 0; i < nd && nstd_names < 32; i++) {
         d = opendir(dirs[i]);
         if (!d) continue;
         while ((ent = readdir(d))) {
             size_t n = strlen(ent->d_name);
-            size_t e = yuga_ext_at(ent->d_name, n);
+            size_t e = loam_ext_at(ent->d_name, n);
             if (!e) continue;
             add_std_name(ent->d_name, n - e);
         }
@@ -1673,7 +1673,7 @@ static void st_mod_from_import(Token str) {
         if (s[i] == '/' || s[i] == ':') stem = s + i + 1;
     }
     int len = (int)((s + n) - stem);
-    len -= (int)yuga_ext_at(stem, (size_t)len);
+    len -= (int)loam_ext_at(stem, (size_t)len);
     st_add_mod(stem, len);
 }
 
@@ -1879,7 +1879,7 @@ static void handle(const char *msg) {
         free(method);
         free(id);
         doc_free_all();
-        yuga_session_free(&Gsess);
+        loam_session_free(&Gsess);
         free(Guri);
         free(Gpath);
         free(Gtext);
@@ -1923,7 +1923,7 @@ static void handle(const char *msg) {
 }
 
 int main(void) {
-    yuga_session_init(&Gsess);
+    loam_session_init(&Gsess);
     /* Unbuffered: a 64KiB stdin buffer can deadlock JSON-RPC over a pipe. */
     setvbuf(stdin, NULL, _IONBF, 0);
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -1934,7 +1934,7 @@ int main(void) {
         free(msg);
     }
     doc_free_all();
-    yuga_session_free(&Gsess);
+    loam_session_free(&Gsess);
     free(Guri);
     free(Gpath);
     free(Gtext);

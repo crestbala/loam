@@ -1,4 +1,4 @@
-//! `checker.loam` — rexim's `checker.c`, in Yuga.
+//! `checker.loam` — rexim's `checker.c`, in Loam.
 //!
 //! https://gist.github.com/rexim/ef86bf70918034a5a57881456c0a0ccf
 //!
@@ -10,8 +10,8 @@
 //!
 //!     ./bin/yugac examples/language/ppm/checker.loam --run
 //!
-//! Knobs (all optional): `YUGA_PPM_SCALE` (60), `YUGA_PPM_FRAMES` (60),
-//! `YUGA_PPM_FPS` (60), `YUGA_PPM_OUT` (`out`), `YUGA_PPM_KEEP=1`.
+//! Knobs (all optional): `LOAM_PPM_SCALE` (60), `LOAM_PPM_FRAMES` (60),
+//! `LOAM_PPM_FPS` (60), `LOAM_PPM_OUT` (`out`), `LOAM_PPM_KEEP=1`.
 
 import "std:fmt"
 import "std:sys"
@@ -29,9 +29,9 @@ fn main() {
     // One scale factor drives both sides, so 16:9 * 60 is the C original's
     // 960x540. `even` keeps H.264's `yuv420p` (and its even-dimension rule)
     // happy for any scale the caller asks for.
-    let scale = frames.even(frames.env_int("YUGA_PPM_SCALE", 60))
-    let count = frames.env_int("YUGA_PPM_FRAMES", 60)
-    let fps = frames.env_int("YUGA_PPM_FPS", 60)
+    let scale = frames.even(frames.env_int("LOAM_PPM_SCALE", 60))
+    let count = frames.env_int("LOAM_PPM_FRAMES", 60)
+    let fps = frames.env_int("LOAM_PPM_FPS", 60)
     let w = 16 * scale
     let h = 9 * scale
     let dir = frames.out_dir()

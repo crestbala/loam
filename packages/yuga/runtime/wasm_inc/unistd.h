@@ -1,5 +1,5 @@
-#ifndef YUGA_WASM_UNISTD_H
-#define YUGA_WASM_UNISTD_H
+#ifndef LOAM_WASM_UNISTD_H
+#define LOAM_WASM_UNISTD_H
 #include <stddef.h>
 typedef long ssize_t;
 #define STDOUT_FILENO 1

@@ -1,6 +1,6 @@
-# Yuga
+# Loam
 
-Yuga is a memory-safe system language: Odin-like syntax, Rust-like ownership.
+Loam is a memory-safe system language: Odin-like syntax, Rust-like ownership.
 The compiler (`yugac`) is C11. It typechecks a program, lowers it to IR, emits
 C99, and invokes `cc`. C is the platform binding target, not the language's
 semantics.
@@ -19,7 +19,7 @@ make
 ./hello
 ```
 
-Language: [docs/yuga.md](docs/yuga.md). C vs Yuga: [docs/boundary.md](docs/boundary.md).
+Language: [docs/yuga.md](docs/yuga.md). C vs Loam: [docs/boundary.md](docs/boundary.md).
 Zeus backends and specifications: [packages/zeus/docs/spec.md](packages/zeus/docs/spec.md).
 Browsable docs: `./run.sh www` — Zeus UI at http://127.0.0.1:5175, `Docs.Page` on `:8082`.
 
@@ -34,7 +34,7 @@ Android stack) installs everything below that Homebrew can. See [Setup](#setup).
   example (`examples/language/raygui.loam`); nothing else needs it
 - [Xcode](https://developer.apple.com/xcode/) for the iOS Simulator target
 - A `wasm32` clang (Homebrew LLVM, not Apple `/usr/bin/clang`) for web builds;
-  `./install.sh` puts it where `yugac` looks by default. Set `YUGA_WASM_CC`
+  `./install.sh` puts it where `yugac` looks by default. Set `LOAM_WASM_CC`
   only if your LLVM lives somewhere else
 - Node.js for the Vite dev servers behind the wasm examples (`gallery web`, `www`)
 - Android SDK, NDK, Gradle 8.2+, a JDK, and `adb` for `--target=android`
@@ -78,7 +78,7 @@ That produces `bin/yugac` and `bin/yuga-lsp`. Then:
 
 `make test` compiles and runs the language tests, golden programs, and
 examples (GUI, Maya, and raygui in headless mode; the raygui example is
-skipped when `pkg-config raylib` is absent). Set `YUGA_TIME=1` to print
+skipped when `pkg-config raylib` is absent). Set `LOAM_TIME=1` to print
 check / codegen / cc timings.
 
 ## Libraries
@@ -91,18 +91,18 @@ Call imported items as `foo.bar(...)`.
 | `std:fmt` | Stdout. `fmt.println` is compile-time lowering to length-based writes, not `printf`. |
 | `std:zeus` | UI toolkit + design system in one module: one `Node` tree, signals, `Box` / `Text` / `Button` / `App`, themed chrome (`Card`, `Button` with `LOOK` / `SIZE`, `Dialog`, `Tabs`, `Navbar`, charts, `DatePicker`). Same source on Cocoa, iOS, Android, and wasm Canvas2D (no HTML DOM). |
 | `std:http` | Unary RPC over gRPC-Web (HTTP/1.1) and h2c. `#[proto]` structs, no REST routes. |
-| `std:maya` | Tiny 3D/2D engine. Scene and tracer in Yuga; C is the event loop and present. |
-| `std:raygui` | Immediate-mode GUI: [raygui](https://github.com/raysan5/raygui) controls on [raylib](https://www.raylib.com). No retained tree; the frame loop lives in Yuga. Host seam: `raygui_plat.c`; RAM probe included. |
+| `std:maya` | Tiny 3D/2D engine. Scene and tracer in Loam; C is the event loop and present. |
+| `std:raygui` | Immediate-mode GUI: [raygui](https://github.com/raysan5/raygui) controls on [raylib](https://www.raylib.com). No retained tree; the frame loop lives in Loam. Host seam: `raygui_plat.c`; RAM probe included. |
 | `std:thread` | Detached OS threads for CPU-bound work, plus Send-disciplined `channel<T>` between workers and the UI loop. `spawn` callbacks must be Send (plain data) and are checked to never touch module state or the C seam. Native/iOS/Android; wasm `spawn` is a no-op. |
 | `std:net` | TCP connect / listen / read / write. Used by `http`; not an app-level import. |
-| `std:sys` | `env_set` / `exit`. Language-level seam into `yuga_rt`. |
+| `std:sys` | `env_set` / `exit`. Language-level seam into `loam_rt`. |
 
 Document items with `///` (and `//!` at the file top). Hover in the editor
 shows those comments plus the type.
 
 ### Zeus
 
-Zeus is Yuga's UI library. A component is a function; hierarchy is a
+Zeus is Loam's UI library. A component is a function; hierarchy is a
 trailing block. No `View` trait, no HTML DOM. Backend is a `--target`
 flag, not an import. Web is Canvas2D wasm.
 
@@ -212,7 +212,7 @@ Golden programs under `packages/yuga/tests/golden/` (hello, fib, fizzbuzz,
 |---|---|
 | `gallery` | Every zeus component in isolation. Start here to see the component library. |
 | `dashboard` | A small dashboard: stats, activity, dialog, signals. |
-| `counter` | Full-stack: shared `#[proto]` contract, Yuga backend, Zeus UI on web / macOS / iOS / Android. |
+| `counter` | Full-stack: shared `#[proto]` contract, Loam backend, Zeus UI on web / macOS / iOS / Android. |
 | `greeninfer` | Local vector memory engine: mmap + NEON row sweep in a Zeus harness. [README](examples/zeus/greeninfer/README.md) |
 
 ```
@@ -259,14 +259,14 @@ All zeus `android/run.sh` scripts share one `yuga` AVD.
 ```
 yuga/                  the language
   src/                 compiler (C11): lexer, parser, sema, ir, codegen_c
-  std/                 language libraries (Yuga), incl. zeuscore/httpcore/mayacore
-  runtime/             yuga_rt (language) + host shims
+  std/                 language libraries (Loam), incl. zeuscore/httpcore/mayacore
+  runtime/             loam_rt (language) + host shims
   tests/               compile_pass / compile_fail / golden / inlang / bench
 zeus/                  the framework
   hosts/               desktop/ Cocoa, ios/ UIKit, android/ JNI, web/ Canvas2D
   docs/                spec.md = zeus backends and paint model
 raygui/                immediate-mode GUI package (std:raygui)
-  std/raygui.loam      the Yuga API + frame loop
+  std/raygui.loam      the Loam API + frame loop
   vendor/raygui.h      vendored raygui (raysan5/raygui)
 packages/tooling/tree-sitter-yuga/  grammar
 packages/tooling/editors/       Zed extension, VSCode extension

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Copy the Yuga editor extension into Cursor/VS Code and register it."""
+"""Copy the Loam editor extension into Cursor/VS Code and register it."""
 from __future__ import annotations
 
 import json
@@ -74,7 +74,7 @@ def register(parent: Path, dest: Path) -> None:
                 "isApplicationScoped": False,
                 "isMachineScoped": False,
                 "isBuiltin": False,
-                "publisherDisplayName": "Yuga",
+                "publisherDisplayName": "Loam",
                 "publisherId": str(uuid.UUID("8a0d4c2e-6f31-4b9a-9c11-2e7b1d4a90f3")),
             },
         }
@@ -92,7 +92,7 @@ def main() -> None:
         n += 1
     if n == 0:
         raise SystemExit("no Cursor/VS Code extensions directory found")
-    print("Reload the editor window. Status bar should show Yuga, not Plain Text.")
+    print("Reload the editor window. Status bar should show Loam, not Plain Text.")
 
 
 if __name__ == "__main__":

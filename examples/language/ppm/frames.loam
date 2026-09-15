@@ -10,12 +10,12 @@
 //!
 //! | Variable | Meaning |
 //! |---|---|
-//! | `YUGA_PPM_OUT` | output directory (default `out`) |
-//! | `YUGA_PPM_CRF` | x264 quality, 0 (lossless) to 51 (default 16) |
-//! | `YUGA_PPM_PRESET` | x264 preset, e.g. `slow` (default), `veryslow` |
-//! | `YUGA_PPM_KEEP` | keep the `.ppm` files after encoding |
+//! | `LOAM_PPM_OUT` | output directory (default `out`) |
+//! | `LOAM_PPM_CRF` | x264 quality, 0 (lossless) to 51 (default 16) |
+//! | `LOAM_PPM_PRESET` | x264 preset, e.g. `slow` (default), `veryslow` |
+//! | `LOAM_PPM_KEEP` | keep the `.ppm` files after encoding |
 //!
-//! The per-demo knobs (`YUGA_PPM_SCALE`, `YUGA_PPM_FRAMES`, `YUGA_PPM_FPS`)
+//! The per-demo knobs (`LOAM_PPM_SCALE`, `LOAM_PPM_FRAMES`, `LOAM_PPM_FPS`)
 //! go through `frames.env_int`.
 
 import "std:fmt"
@@ -30,10 +30,10 @@ fn env_str(name: string, fallback: string) -> string {
     return v
 }
 
-/// Where frames and the encoded video are written. `YUGA_PPM_OUT` overrides,
+/// Where frames and the encoded video are written. `LOAM_PPM_OUT` overrides,
 /// so a demo can be pointed at a scratch directory without being rebuilt.
 fn out_dir() -> string {
-    return env_str("YUGA_PPM_OUT", "out")
+    return env_str("LOAM_PPM_OUT", "out")
 }
 
 /// Create `dir` and its parents. `0` on success.
@@ -99,7 +99,7 @@ fn is_word(s: string) -> bool {
 
 /// The x264 preset to encode with.
 fn preset() -> string {
-    let p = env_str("YUGA_PPM_PRESET", "slow")
+    let p = env_str("LOAM_PPM_PRESET", "slow")
     if !is_word(p) {
         return "slow"
     }
@@ -203,7 +203,7 @@ fn save(dir: string, name: string, i: int, digits: int, body: []int) -> int {
 ///
 /// Three settings matter for these images:
 ///
-/// - `-crf 16` (x264's default is 23, and `YUGA_PPM_CRF` overrides). A plasma
+/// - `-crf 16` (x264's default is 23, and `LOAM_PPM_CRF` overrides). A plasma
 ///   is a field of very smooth gradients, which is the case CRF 23 handles
 ///   worst: it quantizes the ramps into visible bands. `-crf 0` is lossless.
 /// - `-preset slow`, for a better rate/distortion trade at the same CRF.
@@ -211,7 +211,7 @@ fn save(dir: string, name: string, i: int, digits: int, body: []int) -> int {
 ///   arrives at ffmpeg's default 25 fps and the output plays at the wrong
 ///   speed. `-pix_fmt yuv420p` is what makes the file playable outside ffmpeg.
 fn encode(dir: string, name: string, digits: int, fps: int) -> int {
-    let crf = env_int("YUGA_PPM_CRF", 16)
+    let crf = env_int("LOAM_PPM_CRF", 16)
     let cmd = "ffmpeg -y -loglevel error -framerate {{fps}} -i \"{{pattern(dir, name, digits)}}\" -c:v libx264 -crf {{crf}} -preset {{preset()}} -pix_fmt yuv420p \"{{dir}}/{{name}}.mp4\""
     sys.exec(cmd)
     return sys.exec_status()
@@ -235,7 +235,7 @@ fn finish(dir: string, name: string, digits: int, count: int, fps: int) {
         sys.exit(1)
     }
     let video = "{{dir}}/{{name}}.mp4"
-    if !env_flag("YUGA_PPM_KEEP") {
+    if !env_flag("LOAM_PPM_KEEP") {
         remove_frames(dir, name)
     }
     fmt.println("wrote", video)

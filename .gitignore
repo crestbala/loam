@@ -44,7 +44,7 @@ examples/zeus/counter/backend/build/
 bezel/
 
 # examples/language/ppm writes PPM frames and the encoded video into ./out
-# (`YUGA_PPM_OUT` overrides the directory).
+# (`LOAM_PPM_OUT` overrides the directory).
 out/
 
 # Phase 1b realtime demo scratch

@@ -1,4 +1,4 @@
-# Zeus / Yuga — production roadmap
+# Zeus / Loam — production roadmap
 
 Phase-by-phase plan for turning `packages/zeus/std/zeus.loam` (engine + design system)
 (+ `packages/yuga/std/net`, `packages/http/std/http`, the C runtime) into a stack you can build real
@@ -24,7 +24,7 @@ definition of done.
 | Storage | `sys.read_file` / `write_file` (whole-file), env | KV/table store, structured persistence, fs tree, app-data paths |
 | Media | inline SVG + raster `Image` (PNG / JPEG / WebP / GIF, host decode) | gradients |
 | Text | one weight per host; kind 10 multiline + caret/selection; mac IME; wasm paste | rich text spans, emoji metrics |
-| Server | single-threaded Yuga accept loop (HTTP/1.1 + h2c + one SSE/ws client per connection) | concurrency model for chat-class servers |
+| Server | single-threaded Loam accept loop (HTTP/1.1 + h2c + one SSE/ws client per connection) | concurrency model for chat-class servers |
 | Design system | ~50 shadcn widgets, palette tokens, goldens | monolith namespace, no DCE, fixed-pixel tuning |
 
 ## 2. Already fixed (do not re-plan)
@@ -46,7 +46,7 @@ Landmarks that are done and tested — the roadmap starts past them:
 
 `#[proto]` structs give you schema + codecs; `http.app().rpc(...)` /
 `http.rpc_call` give unary calls over gRPC-Web (HTTP/1.1) and h2c, in pure
-Yuga, client and server, native and wasm. That covers catalog, carts,
+Loam, client and server, native and wasm. That covers catalog, carts,
 messages, presence payloads, sync — whatever the app is. Build on it:
 
 1. **RPC is the only data API, and gRPC/proto the only wire format.** New
@@ -95,8 +95,8 @@ stateful; threading zeus would be a rewrite with no user-visible gain. The
 industry answer (Android/UIKit/Swing) is: background I/O, completion **on the
 one UI thread**. Keep it.
 
-### 5.2 Async = one UI thread + Yuga queues (no language threads)
-Yuga fns cannot run on arbitrary threads (globals, arenas). Shape:
+### 5.2 Async = one UI thread + Loam queues (no language threads)
+Loam fns cannot run on arbitrary threads (globals, arenas). Shape:
 
 ```yuga
 let c = http.client("127.0.0.1:8080")
@@ -110,8 +110,8 @@ The wire format is always proto over gRPC-Web — never JSON or an ad-hoc
 format, so the callback hands back `#[proto]` bytes `decode_Me` already
 understands.
 
-- C side: **Phase 1 shipped queues in Yuga with a minimal C seam** — monotonic
-  clock + blocking sleep (`yuga_rt.h`), non-blocking connect/poll/send
+- C side: **Phase 1 shipped queues in Loam with a minimal C seam** — monotonic
+  clock + blocking sleep (`loam_rt.h`), non-blocking connect/poll/send
   (`net.c`), wasm async-fetch slots (JS XHR → per-frame drain). Every host
   frame calls `engine_layout`, which ticks the async world first (steppers,
   spawns, due timers) and lays out over whatever signals changed. Hosts
@@ -120,13 +120,13 @@ understands.
   console/headless/`http.call`; the UI's per-frame async world (`call_async`)
   still rejects `https://` addresses — a task pool or async TLS stays the
   option for truly non-blocking encrypted RPC.
-- Yuga side: `spawn(fn)` + completion callbacks run everything; the
+- Loam side: `spawn(fn)` + completion callbacks run everything; the
   `async fn` / `await` sugar (Phase 1c) re-enters the same pump — sequential
   code reads like JS, still on the one thread.
 - Timers (`sleep`, `after(ms, fn)`, interval) ship with the same queue.
 
 ### 5.3 Server: reactor, not threads
-One thread, non-blocking `net` (poll/select in C), resuming Yuga handlers on
+One thread, non-blocking `net` (poll/select in C), resuming Loam handlers on
 readiness. Thousands of concurrent connections, zero locks. This is the chat
 server story. Thread-per-connection in C *under* the API is a later option.
 
@@ -145,7 +145,7 @@ server story. Thread-per-connection in C *under* the API is a later option.
 Any draw primitive (image, gradient, rounded-text) travels
 `scene.loam → platform.loam → zeus_plat.c → zeus_rt.h → mac/iOS/wasm/android
 hosts` + both canvas loaders. Budget that blast radius per primitive; add
-decode (PNG/JPEG) in the hosts, never in Yuga.
+decode (PNG/JPEG) in the hosts, never in Loam.
 
 ## 6. Phases
 
@@ -153,7 +153,7 @@ Definition of done per phase = exit criteria, all verified by `make test`
 (headless runs) unless noted. Tick boxes as phases land.
 
 ### Phase 1 — Async runtime, timers, non-blocking net  (foundation)
-- [x] Async on the one UI thread, queues in Yuga: `std/async.loam` (spawn / after / interval / cancel / per-frame steps), a minimal C seam (clock + sleep in `yuga_rt.h`), hosts drain per frame via `engine_layout`'s tick (mac + wasm; mac sleeps idle and wakes at `engine_next_ms`).
+- [x] Async on the one UI thread, queues in Loam: `std/async.loam` (spawn / after / interval / cancel / per-frame steps), a minimal C seam (clock + sleep in `loam_rt.h`), hosts drain per frame via `engine_layout`'s tick (mac + wasm; mac sleeps idle and wakes at `engine_next_ms`).
 - [x] `after(ms, fn)` / `interval(ms, fn)` / `spawn` / `cancel` in std (feed signals; `async_timers.loam`).
 - [x] Non-blocking transport: `net.tcp_nb_connect` / `tcp_poll` / `tcp_send` / `tcp_so_error` — the UI never blocks on sockets.
 - [x] First async-to-UI proof: `compile_pass` fake async op (`spawn`) completes, sets a signal, and a prop repaints through the headless pump (`zeus.pump`, no manual `engine_layout`).
@@ -162,7 +162,7 @@ Definition of done per phase = exit criteria, all verified by `make test`
 
 ### Phase 1b — Realtime transport
 - [x] SSE on the existing HTTP/1.1 server (server → client push): `read_head` / `sse_start` / `sse_send` per connection, `http.sse_open` streaming client (events per `data:` line, UI-thread callback).
-- [x] WebSocket client (native **and** wasm) and server: pure-Yuga RFC 6455 codec in `httpcore/ws.loam` (base64, SHA-1, accept key, masked/unmasked frames), `http.ws_upgrade` / `ws_send_text` server push, `http.ws_open` streaming client — native TCP steppers, wasm via the browser's WebSocket (JS loader bridge, per-frame drain). Live demo: `examples/zeus/ws` (native tick server + wasm page).
+- [x] WebSocket client (native **and** wasm) and server: pure-Loam RFC 6455 codec in `httpcore/ws.loam` (base64, SHA-1, accept key, masked/unmasked frames), `http.ws_upgrade` / `ws_send_text` server push, `http.ws_open` streaming client — native TCP steppers, wasm via the browser's WebSocket (JS loader bridge, per-frame drain). Live demo: `examples/zeus/ws` (native tick server + wasm page).
 - [x] Auth/session convention: bearer token header (`http.set_token`), parsed server-side into `req_token()`, `app.before(fn)` middleware hook (alias of `use`) that can `reject()` → handler skipped, grpc-status 16 (`http_auth.loam`).
 - **Exit:** a headless loop test streams N events over SSE/ws and the UI shows each (golden or probe assertions). **Green** (`zeus_stream.loam`: 5 SSE events + 5 ws messages → signal-fed label `events: 10`, repaint probes, child-process servers).
 
@@ -174,7 +174,7 @@ sequential code reads like JS and still never touches a socket on the UI
 thread.
 
 - [x] Grammar + sema: `async fn name(...)`, `await expr` (contextual keywords — parser desugars `await e` to `async.await_value(e)`; typecheck rejects `await` outside an `async fn` body or inside a closure, like JS).
-- [x] Awaitable surface: `Future<T>` mailboxes in `std:async` (`future` / `future_str` / `resolve` / `await_value` — Copy `T`; cells in `yuga_rt.h`); `http.async_call(c, name, body)` is the awaitable gRPC-Web call (`Future<string>`); awaiting pumps timers/spawns/socket steppers until `resolve`, then returns the value.
+- [x] Awaitable surface: `Future<T>` mailboxes in `std:async` (`future` / `future_str` / `resolve` / `await_value` — Copy `T`; cells in `loam_rt.h`); `http.async_call(c, name, body)` is the awaitable gRPC-Web call (`Future<string>`); awaiting pumps timers/spawns/socket steppers until `resolve`, then returns the value.
 - [x] Demo + tests: `examples/zeus/counter/macos/app.loam` is `async fn main` with two awaited RPCs (`let raw = await c.async_call(...)`) feeding the App; `compile_pass/async_await.loam` (sequential awaits, sync call of an async fn, pre-resolved future, `Future<int>` / `bool` / `float` / Copy struct / `[]int`); `compile_pass/async_await_stress.loam` (for/while/if/match/continue/break around awaits); `compile_fail/async_await_ctx.loam`, `compile_fail/async_future_not_copy.loam`.
 - **Exit:** sequential awaited values flow in order through the pump and repaint; awaits outside `async fn` are compile errors. **Green** — caveat: awaiting re-enters the pump on the UI thread, so an await inside an event handler pauses host repaint until it returns; init/startup awaits (the counter App) and headless flows are the sweet spot, callbacks stay the reactive path.
 - [x] Follow-up: `async`/`await` highlighting landed in the tree-sitter grammar + Zed/VSCode grammars (violet scopes in VSCode).
@@ -197,7 +197,7 @@ thread.
 - **Exit:** a chat-compose headless test (type, edit, bind signal) + golden. **Green** (`zeus_textarea.loam`, `draw_golden/golden_textarea`).
 
 ### Phase 4 — KV persistence
-- [x] `std/kv.loam` over the `yuga_sys_*` seam: `get/set/delete/list`, file-backed, atomic-ish (`write` + `rename`).
+- [x] `std/kv.loam` over the `loam_sys_*` seam: `get/set/delete/list`, file-backed, atomic-ish (`write` + `rename`).
 - [x] App-data path helper (`kv.data_dir`, `~/Library/Application Support/<app>`; wasm: empty → in-memory).
 - **Exit:** a compile_pass test that round-trips rows across two "processes"
   (reopen), plus gallery draft/autosave demo. **Green** (`kv_roundtrip.loam`; gallery Forms draft).
@@ -231,7 +231,7 @@ thread.
 - [x] Zeus namespace pass or per-widget opt-in (DCE) before the monolith doubles.
 - [x] Focus ring painting + visible tab order on native hosts.
 - [x] Density/font-scale tokens (components read a scale signal, not constants).
-- **Exit:** gallery unchanged visually at scale 1.0 (golden); a11y probe test asserts roles/focus order. **Green** — chose per-widget opt-in over a namespace split: the monolith stays one cycle-free module, and codegen now emits only decls reachable from the entry module + the C-seam roots (`yuga_zeus_engine_*` etc. in `src/dce.c`, gated in `codegen_c.c`; typecheck/IR still verify everything, `YUGA_NO_DCE=1` restores full emission). Generated C: spec −64%, counter −47%, gallery −8%; counter wasm byte-identical (it reaches the whole engine).
+- **Exit:** gallery unchanged visually at scale 1.0 (golden); a11y probe test asserts roles/focus order. **Green** — chose per-widget opt-in over a namespace split: the monolith stays one cycle-free module, and codegen now emits only decls reachable from the entry module + the C-seam roots (`loam_zeus_engine_*` etc. in `src/dce.c`, gated in `codegen_c.c`; typecheck/IR still verify everything, `LOAM_NO_DCE=1` restores full emission). Generated C: spec −64%, counter −47%, gallery −8%; counter wasm byte-identical (it reaches the whole engine).
 - [x] Focus ring + tab order: `kb_focus` (keyboard-only ring — clicks clear it), 4-fill ring in theme role 36 painted in `scene`, every click target is a tab stop (Enter/Space activate it), Tab leaves single-line fields and soft-tabs (4 spaces) in multiline ones (`input.loam` + `zeus_plat.c` reroute plain Tab through the engine), roles/labels on interactive chrome (checkbox / radio / switch / slider / tab / combobox).
 - [x] Scale tokens: `set_scale(50..200)` percent + `tk(x)` (identity at 100, so goldens hold); fonts, control geometry, glyph icons, and form chrome read `tk` instead of constants. Retained trees read the scale at build; `zeus.view` apps re-read it every frame (live zoom).
 - **Tests:** `zeus_focus.loam` (roles → document-order tab traversal → ring paint deltas → Enter/Space activation → Tab semantics), `zeus_scale.loam` (150/100/clamp round-trips), `golden_focus_ring` (ring fills byte-exact), `golden_scale_gallery` (gallery chrome at scale 1.0); every pre-existing DRAW golden stays byte-identical.
@@ -255,7 +255,7 @@ thread.
         wrapping ops, `spawn`/`running` itself). Callbacks must be closures
         or fn names — a fn value of unknown origin is rejected. Results come
         back through channels only; the UI drains and feeds signals.
-      - C stays minimal: `yuga_rt.h` gains only the pthread entry + a generic
+      - C stays minimal: `loam_rt.h` gains only the pthread entry + a generic
         byte-FIFO + mutex/condvars (same category as the fut-slot table);
         queue policy, docs, and API shape live in `std/thread.loam`. wasm
         compiles with inert stubs (no threads); `async.busy()` includes

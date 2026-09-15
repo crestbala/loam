@@ -2,8 +2,8 @@
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
 	<Metadata>
 		<Identity Language="en-US" Id="yuga" Version="0.1.0" Publisher="yuga" />
-		<DisplayName>Yuga</DisplayName>
-		<Description xml:space="preserve">Yuga language: syntax highlighting and IntelliSense via yuga-lsp.</Description>
+		<DisplayName>Loam</DisplayName>
+		<Description xml:space="preserve">Loam language: syntax highlighting and IntelliSense via yuga-lsp.</Description>
 		<Tags>yuga,language</Tags>
 		<Categories>Programming Languages</Categories>
 		<Properties>

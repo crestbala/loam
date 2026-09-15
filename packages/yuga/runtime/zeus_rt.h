@@ -10,10 +10,10 @@
 
 #include <stdint.h>
 
-#ifdef YUGA_RT_H
-/* yuga_str already defined in generated C */
+#ifdef LOAM_RT_H
+/* loam_str already defined in generated C */
 #else
-#include "yuga_rt.h"
+#include "loam_rt.h"
 #endif
 
 typedef struct {
@@ -24,136 +24,136 @@ typedef struct {
     uint32_t id;
 } Signal;
 
-/* --- Yuga API: import "std:zeus" → yuga_zeus_* --- */
+/* --- Loam API: import "std:zeus" → loam_zeus_* --- */
 
-void yuga_zeus_raw_init(void);
-void yuga_zeus_open_window(yuga_str title, int32_t width, int32_t height);
-void yuga_zeus_raw_run(void);
+void loam_zeus_raw_init(void);
+void loam_zeus_open_window(loam_str title, int32_t width, int32_t height);
+void loam_zeus_raw_run(void);
 
-Signal yuga_zeus_signal(int64_t value);
+Signal loam_zeus_signal(int64_t value);
 /* Signal slot allocation with free-list reuse (arena compaction). The int
    form writes the int mirror slot; the zero form reserves a placeholder slot
    for a typed payload the caller binds afterwards. */
-int64_t yuga_zeus_sig_alloc_int(int64_t value);
-int64_t yuga_zeus_sig_alloc_zero(void);
-void yuga_zeus_sig_free(int64_t id);
-void yuga_zeus_hook_begin(void);
-Signal yuga_zeus_hook_signal(int32_t value);
-int64_t yuga_zeus_get(Signal sig);
-void yuga_zeus_set(Signal sig, int64_t value);
-void yuga_zeus_inc(Signal sig, int32_t delta);
+int64_t loam_zeus_sig_alloc_int(int64_t value);
+int64_t loam_zeus_sig_alloc_zero(void);
+void loam_zeus_sig_free(int64_t id);
+void loam_zeus_hook_begin(void);
+Signal loam_zeus_hook_signal(int32_t value);
+int64_t loam_zeus_get(Signal sig);
+void loam_zeus_set(Signal sig, int64_t value);
+void loam_zeus_inc(Signal sig, int32_t delta);
 
-void yuga_zeus_sig_bind(int64_t id, const void *src, int64_t n);
-void yuga_zeus_sig_load(int64_t id, void *dst, int64_t n);
-int64_t yuga_zeus_sig_changed(int64_t id, const void *src, int64_t n);
-int64_t yuga_zeus_sig_gen(int64_t id);
-Signal yuga_zeus_appearance(void);
-void yuga_zeus_theme(int32_t slot, int32_t light, int32_t dark);
-int32_t yuga_zeus_role(int32_t slot);
+void loam_zeus_sig_bind(int64_t id, const void *src, int64_t n);
+void loam_zeus_sig_load(int64_t id, void *dst, int64_t n);
+int64_t loam_zeus_sig_changed(int64_t id, const void *src, int64_t n);
+int64_t loam_zeus_sig_gen(int64_t id);
+Signal loam_zeus_appearance(void);
+void loam_zeus_theme(int32_t slot, int32_t light, int32_t dark);
+int32_t loam_zeus_role(int32_t slot);
 
-Node yuga_zeus_raw_row(void);
-Node yuga_zeus_raw_col(void);
-Node yuga_zeus_raw_box(void);
-Node yuga_zeus_grid(int32_t columns, int32_t gap);
-Node yuga_zeus_grid_auto(int32_t min_width, int32_t gap);
-Node yuga_zeus_raw_label(yuga_str text);
-Node yuga_zeus_raw_button(yuga_str text);
-Node yuga_zeus_raw_spacer(void);
-Node yuga_zeus_raw_progress(void);
-Node yuga_zeus_raw_slider(void);
-Node yuga_zeus_raw_toggle(void);
-Node yuga_zeus_raw_check(yuga_str markup);
-Node yuga_zeus_raw_overlay(void);
-Node yuga_zeus_raw_input(yuga_str placeholder);
-Node yuga_zeus_raw_scroll(void);
-Node yuga_zeus_raw_svg(yuga_str markup);
+Node loam_zeus_raw_row(void);
+Node loam_zeus_raw_col(void);
+Node loam_zeus_raw_box(void);
+Node loam_zeus_grid(int32_t columns, int32_t gap);
+Node loam_zeus_grid_auto(int32_t min_width, int32_t gap);
+Node loam_zeus_raw_label(loam_str text);
+Node loam_zeus_raw_button(loam_str text);
+Node loam_zeus_raw_spacer(void);
+Node loam_zeus_raw_progress(void);
+Node loam_zeus_raw_slider(void);
+Node loam_zeus_raw_toggle(void);
+Node loam_zeus_raw_check(loam_str markup);
+Node loam_zeus_raw_overlay(void);
+Node loam_zeus_raw_input(loam_str placeholder);
+Node loam_zeus_raw_scroll(void);
+Node loam_zeus_raw_svg(loam_str markup);
 
-Node yuga_zeus_child(Node parent, Node node);
-Node yuga_zeus_root(Node node);
+Node loam_zeus_child(Node parent, Node node);
+Node loam_zeus_root(Node node);
 
-Node yuga_zeus_grow(Node node, int32_t weight);
-Node yuga_zeus_shrink(Node node, int32_t weight);
-Node yuga_zeus_pad(Node node, int32_t all);
-Node yuga_zeus_padX(Node node, int32_t px);
-Node yuga_zeus_padY(Node node, int32_t py);
-Node yuga_zeus_padTop(Node node, int32_t px);
-Node yuga_zeus_padRight(Node node, int32_t px);
-Node yuga_zeus_padBottom(Node node, int32_t px);
-Node yuga_zeus_padLeft(Node node, int32_t px);
-Node yuga_zeus_margin(Node node, int32_t all);
-Node yuga_zeus_marginX(Node node, int32_t px);
-Node yuga_zeus_marginY(Node node, int32_t py);
-Node yuga_zeus_marginTop(Node node, int32_t px);
-Node yuga_zeus_marginRight(Node node, int32_t px);
-Node yuga_zeus_marginBottom(Node node, int32_t px);
-Node yuga_zeus_marginLeft(Node node, int32_t px);
-Node yuga_zeus_border(Node node, int32_t width);
-Node yuga_zeus_border_color(Node node, int32_t rgb);
-Node yuga_zeus_gap(Node node, int32_t g);
-Node yuga_zeus_gap_row(Node node, int32_t g);
-Node yuga_zeus_gap_col(Node node, int32_t g);
-Node yuga_zeus_bg(Node node, int32_t rgb);
-Node yuga_zeus_fg(Node node, int32_t rgb);
-Node yuga_zeus_w(Node node, int32_t px);
-Node yuga_zeus_h(Node node, int32_t px);
-Node yuga_zeus_width_pct(Node node, int32_t pct);
-Node yuga_zeus_height_pct(Node node, int32_t pct);
-Node yuga_zeus_min_w(Node node, int32_t px);
-Node yuga_zeus_max_w(Node node, int32_t px);
-Node yuga_zeus_min_h(Node node, int32_t px);
-Node yuga_zeus_max_h(Node node, int32_t px);
-Node yuga_zeus_aspect(Node node, int32_t aw, int32_t ah);
-Node yuga_zeus_flex_row(Node node);
-Node yuga_zeus_flex_col(Node node);
-Node yuga_zeus_flex_row_reverse(Node node);
-Node yuga_zeus_flex_col_reverse(Node node);
-Node yuga_zeus_flex_wrap(Node node);
-Node yuga_zeus_align_self(Node node, int32_t mode);
-Node yuga_zeus_span(Node node, int32_t columns);
-Node yuga_zeus_radius(Node node, int32_t px);
-Node yuga_zeus_justify(Node node, int32_t mode);
-Node yuga_zeus_align(Node node, int32_t mode);
-Node yuga_zeus_position(Node node, int32_t mode);
-Node yuga_zeus_top(Node node, int32_t px);
-Node yuga_zeus_right(Node node, int32_t px);
-Node yuga_zeus_bottom(Node node, int32_t px);
-Node yuga_zeus_left(Node node, int32_t px);
-Node yuga_zeus_z_index(Node node, int32_t z);
-Node yuga_zeus_opacity(Node node, int32_t pct);
-Node yuga_zeus_overflow(Node node, int32_t mode);
-Node yuga_zeus_font(Node node, int32_t px);
+Node loam_zeus_grow(Node node, int32_t weight);
+Node loam_zeus_shrink(Node node, int32_t weight);
+Node loam_zeus_pad(Node node, int32_t all);
+Node loam_zeus_padX(Node node, int32_t px);
+Node loam_zeus_padY(Node node, int32_t py);
+Node loam_zeus_padTop(Node node, int32_t px);
+Node loam_zeus_padRight(Node node, int32_t px);
+Node loam_zeus_padBottom(Node node, int32_t px);
+Node loam_zeus_padLeft(Node node, int32_t px);
+Node loam_zeus_margin(Node node, int32_t all);
+Node loam_zeus_marginX(Node node, int32_t px);
+Node loam_zeus_marginY(Node node, int32_t py);
+Node loam_zeus_marginTop(Node node, int32_t px);
+Node loam_zeus_marginRight(Node node, int32_t px);
+Node loam_zeus_marginBottom(Node node, int32_t px);
+Node loam_zeus_marginLeft(Node node, int32_t px);
+Node loam_zeus_border(Node node, int32_t width);
+Node loam_zeus_border_color(Node node, int32_t rgb);
+Node loam_zeus_gap(Node node, int32_t g);
+Node loam_zeus_gap_row(Node node, int32_t g);
+Node loam_zeus_gap_col(Node node, int32_t g);
+Node loam_zeus_bg(Node node, int32_t rgb);
+Node loam_zeus_fg(Node node, int32_t rgb);
+Node loam_zeus_w(Node node, int32_t px);
+Node loam_zeus_h(Node node, int32_t px);
+Node loam_zeus_width_pct(Node node, int32_t pct);
+Node loam_zeus_height_pct(Node node, int32_t pct);
+Node loam_zeus_min_w(Node node, int32_t px);
+Node loam_zeus_max_w(Node node, int32_t px);
+Node loam_zeus_min_h(Node node, int32_t px);
+Node loam_zeus_max_h(Node node, int32_t px);
+Node loam_zeus_aspect(Node node, int32_t aw, int32_t ah);
+Node loam_zeus_flex_row(Node node);
+Node loam_zeus_flex_col(Node node);
+Node loam_zeus_flex_row_reverse(Node node);
+Node loam_zeus_flex_col_reverse(Node node);
+Node loam_zeus_flex_wrap(Node node);
+Node loam_zeus_align_self(Node node, int32_t mode);
+Node loam_zeus_span(Node node, int32_t columns);
+Node loam_zeus_radius(Node node, int32_t px);
+Node loam_zeus_justify(Node node, int32_t mode);
+Node loam_zeus_align(Node node, int32_t mode);
+Node loam_zeus_position(Node node, int32_t mode);
+Node loam_zeus_top(Node node, int32_t px);
+Node loam_zeus_right(Node node, int32_t px);
+Node loam_zeus_bottom(Node node, int32_t px);
+Node loam_zeus_left(Node node, int32_t px);
+Node loam_zeus_z_index(Node node, int32_t z);
+Node loam_zeus_opacity(Node node, int32_t pct);
+Node loam_zeus_overflow(Node node, int32_t mode);
+Node loam_zeus_font(Node node, int32_t px);
 
-Node yuga_zeus_bind(Node label, Signal sig);
-Node yuga_zeus_bind_n(Node label, int32_t n);
-Node yuga_zeus_digits(int32_t n);
-Node yuga_zeus_on_click_inc(Node button, Signal sig);
-Node yuga_zeus_on_click_toggle(Node node, Signal sig);
-Node yuga_zeus_on_click_set(Node node, Signal sig, int32_t value);
-Node yuga_zeus_on_click_add(Node node, Signal sig, int32_t delta);
-Node yuga_zeus_show(Node node, Signal sig);
-Node yuga_zeus_show_eq(Node node, Signal sig, int32_t value);
-Node yuga_zeus_show_ne(Node node, Signal sig, int32_t value);
-Node yuga_zeus_key_context(Node node, yuga_str name);
-Node yuga_zeus_focusable(Node node);
-Node yuga_zeus_capture_text(Node node);
-Node yuga_zeus_on_action(Node node, yuga_str action, Signal sig, int64_t mode, int64_t value);
-Node yuga_zeus_on_key_fn(Node node, yuga_str action);
-Node yuga_zeus_on_range(Node node, yuga_str action, Signal sig, int64_t delta, int64_t lo,
+Node loam_zeus_bind(Node label, Signal sig);
+Node loam_zeus_bind_n(Node label, int32_t n);
+Node loam_zeus_digits(int32_t n);
+Node loam_zeus_on_click_inc(Node button, Signal sig);
+Node loam_zeus_on_click_toggle(Node node, Signal sig);
+Node loam_zeus_on_click_set(Node node, Signal sig, int32_t value);
+Node loam_zeus_on_click_add(Node node, Signal sig, int32_t delta);
+Node loam_zeus_show(Node node, Signal sig);
+Node loam_zeus_show_eq(Node node, Signal sig, int32_t value);
+Node loam_zeus_show_ne(Node node, Signal sig, int32_t value);
+Node loam_zeus_key_context(Node node, loam_str name);
+Node loam_zeus_focusable(Node node);
+Node loam_zeus_capture_text(Node node);
+Node loam_zeus_on_action(Node node, loam_str action, Signal sig, int64_t mode, int64_t value);
+Node loam_zeus_on_key_fn(Node node, loam_str action);
+Node loam_zeus_on_range(Node node, loam_str action, Signal sig, int64_t delta, int64_t lo,
                        int64_t hi);
-void yuga_zeus_on_action_global(yuga_str action, Signal sig, int64_t mode, int64_t value);
-void yuga_zeus_map_key(yuga_str spec, yuga_str action, yuga_str ctx);
-void yuga_zeus_remap_key(yuga_str spec, yuga_str action, yuga_str ctx);
+void loam_zeus_on_action_global(loam_str action, Signal sig, int64_t mode, int64_t value);
+void loam_zeus_map_key(loam_str spec, loam_str action, loam_str ctx);
+void loam_zeus_remap_key(loam_str spec, loam_str action, loam_str ctx);
 int zeus_handle_key_ev(int key, int mods);
 
-Node yuga_zeus_show_ge(Node node, Signal sig, int32_t value);
-Node yuga_zeus_show_le(Node node, Signal sig, int32_t value);
-Node yuga_zeus_raw_hover(Node node, Signal sig);
-Node yuga_zeus_hover_delay(Node node, int32_t ms);
-Node yuga_zeus_hover_leave(Node node, int32_t ms);
-Node yuga_zeus_pulse(Node node);
-Node yuga_zeus_dismiss(Node node);
-Node yuga_zeus_keys(Node node, Signal sig, int32_t lo, int32_t hi);
-Node yuga_zeus_keys_page(Node node, Signal sig);
+Node loam_zeus_show_ge(Node node, Signal sig, int32_t value);
+Node loam_zeus_show_le(Node node, Signal sig, int32_t value);
+Node loam_zeus_raw_hover(Node node, Signal sig);
+Node loam_zeus_hover_delay(Node node, int32_t ms);
+Node loam_zeus_hover_leave(Node node, int32_t ms);
+Node loam_zeus_pulse(Node node);
+Node loam_zeus_dismiss(Node node);
+Node loam_zeus_keys(Node node, Signal sig, int32_t lo, int32_t hi);
+Node loam_zeus_keys_page(Node node, Signal sig);
 
 /* --- Platform hosts: zeus/desktop/mac.m, zeus/ios/ios.m, zeus/web/wasm.c --- */
 
@@ -194,15 +194,15 @@ void zeus_picked_image(const char *src, int64_t w, int64_t h);
 void zeus_bind_draw(ZeusDraw draw);
 
 /* Empty packages/zeus/std/zeus.loam fns → these C symbols. */
-void yuga_zeus_plat_run(void);
-int64_t yuga_zeus_plat_headless(void);
-void yuga_zeus_plat_fill(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
+void loam_zeus_plat_run(void);
+int64_t loam_zeus_plat_headless(void);
+void loam_zeus_plat_fill(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
                         int64_t radius);
-void yuga_zeus_plat_fill_a(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
+void loam_zeus_plat_fill_a(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
                           int64_t radius, int64_t alpha);
-void yuga_zeus_plat_fill_g(int64_t x, int64_t y, int64_t w, int64_t h, int64_t c0,
+void loam_zeus_plat_fill_g(int64_t x, int64_t y, int64_t w, int64_t h, int64_t c0,
                           int64_t c1, int64_t axis);
-void yuga_zeus_plat_text(int64_t x, int64_t y, yuga_str s, int64_t rgb, int64_t font);
+void loam_zeus_plat_text(int64_t x, int64_t y, loam_str s, int64_t rgb, int64_t font);
 /* Current global font family ("" = host default) and the hook a host
    registers to load one. See zeus_plat.c for why the family is global. */
 const char *zeus_font_family(void);
@@ -210,164 +210,164 @@ void zeus_set_font_hooks(int (*load)(const char *family, const char *src),
                          void (*set_family)(const char *family));
 /* Bytes for in-tree metrics. Desktop/iOS/Android default to reading `src` as a
    file; the web host (no filesystem) installs a hook that fetches it. */
-void zeus_set_font_bytes_hook(yuga_str (*fetch)(yuga_str src));
-void yuga_platform_plat_set_font_family(yuga_str name);
-int64_t yuga_platform_plat_load_font(yuga_str family, yuga_str src);
+void zeus_set_font_bytes_hook(loam_str (*fetch)(loam_str src));
+void loam_platform_plat_set_font_family(loam_str name);
+int64_t loam_platform_plat_load_font(loam_str family, loam_str src);
 
-void yuga_zeus_plat_text_rot(int64_t x, int64_t y, yuga_str s, int64_t rgb, int64_t font,
+void loam_zeus_plat_text_rot(int64_t x, int64_t y, loam_str s, int64_t rgb, int64_t font,
                              int64_t deg);
-void yuga_zeus_plat_text_int(int64_t x, int64_t y, int64_t v, int64_t rgb, int64_t font);
-void yuga_zeus_plat_measure(yuga_str s, int32_t px, int32_t *w, int32_t *h);
-void yuga_zeus_plat_measure_int(int32_t v, int32_t px, int32_t *w, int32_t *h);
-void yuga_zeus_plat_measure_wrap(yuga_str s, int32_t px, int32_t max_w, int32_t *w, int32_t *h);
-void yuga_zeus_plat_text_wrap(int64_t x, int64_t y, yuga_str s, int64_t rgb, int64_t font,
+void loam_zeus_plat_text_int(int64_t x, int64_t y, int64_t v, int64_t rgb, int64_t font);
+void loam_zeus_plat_measure(loam_str s, int32_t px, int32_t *w, int32_t *h);
+void loam_zeus_plat_measure_int(int32_t v, int32_t px, int32_t *w, int32_t *h);
+void loam_zeus_plat_measure_wrap(loam_str s, int32_t px, int32_t max_w, int32_t *w, int32_t *h);
+void loam_zeus_plat_text_wrap(int64_t x, int64_t y, loam_str s, int64_t rgb, int64_t font,
                              int64_t max_w);
-void yuga_zeus_plat_set_window(yuga_str title, int64_t width, int64_t height);
-int64_t yuga_zeus_plat_view_width(void);
-int64_t yuga_zeus_plat_view_height(void);
-void yuga_zeus_plat_svg(int64_t x, int64_t y, int64_t w, int64_t h, yuga_str markup,
+void loam_zeus_plat_set_window(loam_str title, int64_t width, int64_t height);
+int64_t loam_zeus_plat_view_width(void);
+int64_t loam_zeus_plat_view_height(void);
+void loam_zeus_plat_svg(int64_t x, int64_t y, int64_t w, int64_t h, loam_str markup,
                        int64_t rgb, int64_t alpha);
-void yuga_zeus_plat_image(int64_t x, int64_t y, int64_t w, int64_t h, yuga_str src,
+void loam_zeus_plat_image(int64_t x, int64_t y, int64_t w, int64_t h, loam_str src,
                          int64_t radius, int64_t alpha, int64_t fit);
-void yuga_zeus_plat_image_size(yuga_str src, int32_t *w, int32_t *h);
-yuga_str yuga_zeus_plat_pick_image(int32_t *w, int32_t *h);
-void yuga_zeus_plat_save(void);
-void yuga_zeus_plat_clip(int64_t x, int64_t y, int64_t w, int64_t h);
-void yuga_zeus_plat_restore(void);
+void loam_zeus_plat_image_size(loam_str src, int32_t *w, int32_t *h);
+loam_str loam_zeus_plat_pick_image(int32_t *w, int32_t *h);
+void loam_zeus_plat_save(void);
+void loam_zeus_plat_clip(int64_t x, int64_t y, int64_t w, int64_t h);
+void loam_zeus_plat_restore(void);
 
 void zeus_set_insets(int64_t top, int64_t right, int64_t bottom, int64_t left);
-int64_t yuga_zeus_plat_overlay_scroll(void);
-int64_t yuga_zeus_plat_inset_top(void);
-int64_t yuga_zeus_plat_inset_right(void);
-int64_t yuga_zeus_plat_inset_bottom(void);
-int64_t yuga_zeus_plat_inset_left(void);
+int64_t loam_zeus_plat_overlay_scroll(void);
+int64_t loam_zeus_plat_inset_top(void);
+int64_t loam_zeus_plat_inset_right(void);
+int64_t loam_zeus_plat_inset_bottom(void);
+int64_t loam_zeus_plat_inset_left(void);
 
-/* packages/zeus/std/zeuscore/platform.loam FFI (aliases of yuga_zeus_plat_*). */
-void yuga_platform_plat_run(void);
-int64_t yuga_platform_plat_headless(void);
-void yuga_platform_plat_fill(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
+/* packages/zeus/std/zeuscore/platform.loam FFI (aliases of loam_zeus_plat_*). */
+void loam_platform_plat_run(void);
+int64_t loam_platform_plat_headless(void);
+void loam_platform_plat_fill(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
                              int64_t radius);
-void yuga_platform_plat_fill_a(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
+void loam_platform_plat_fill_a(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
                                int64_t radius, int64_t alpha);
-void yuga_platform_plat_fill_g(int64_t x, int64_t y, int64_t w, int64_t h, int64_t c0,
+void loam_platform_plat_fill_g(int64_t x, int64_t y, int64_t w, int64_t h, int64_t c0,
                                int64_t c1, int64_t axis);
-void yuga_platform_plat_text(int64_t x, int64_t y, yuga_str s, int64_t rgb, int64_t font);
-void yuga_platform_plat_text_rot(int64_t x, int64_t y, yuga_str s, int64_t rgb, int64_t font,
+void loam_platform_plat_text(int64_t x, int64_t y, loam_str s, int64_t rgb, int64_t font);
+void loam_platform_plat_text_rot(int64_t x, int64_t y, loam_str s, int64_t rgb, int64_t font,
                                  int64_t deg);
-void yuga_platform_plat_text_int(int64_t x, int64_t y, int64_t v, int64_t rgb, int64_t font);
-void yuga_platform_plat_measure(yuga_str s, int32_t px, int32_t *w, int32_t *h);
-yuga_str yuga_platform_plat_font_bytes(yuga_str src);
-void yuga_platform_plat_measure_int(int32_t v, int32_t px, int32_t *w, int32_t *h);
-void yuga_platform_plat_measure_wrap(yuga_str s, int32_t px, int32_t max_w, int32_t *w,
+void loam_platform_plat_text_int(int64_t x, int64_t y, int64_t v, int64_t rgb, int64_t font);
+void loam_platform_plat_measure(loam_str s, int32_t px, int32_t *w, int32_t *h);
+loam_str loam_platform_plat_font_bytes(loam_str src);
+void loam_platform_plat_measure_int(int32_t v, int32_t px, int32_t *w, int32_t *h);
+void loam_platform_plat_measure_wrap(loam_str s, int32_t px, int32_t max_w, int32_t *w,
                                      int32_t *h);
-void yuga_platform_plat_text_wrap(int64_t x, int64_t y, yuga_str s, int64_t rgb, int64_t font,
+void loam_platform_plat_text_wrap(int64_t x, int64_t y, loam_str s, int64_t rgb, int64_t font,
                                   int64_t max_w);
-void yuga_platform_plat_set_window(yuga_str title, int64_t width, int64_t height);
-void yuga_platform_plat_set_title(yuga_str title);
-int64_t yuga_platform_plat_view_width(void);
-int64_t yuga_platform_plat_view_height(void);
-void yuga_platform_plat_svg(int64_t x, int64_t y, int64_t w, int64_t h, yuga_str markup,
+void loam_platform_plat_set_window(loam_str title, int64_t width, int64_t height);
+void loam_platform_plat_set_title(loam_str title);
+int64_t loam_platform_plat_view_width(void);
+int64_t loam_platform_plat_view_height(void);
+void loam_platform_plat_svg(int64_t x, int64_t y, int64_t w, int64_t h, loam_str markup,
                             int64_t rgb, int64_t alpha);
-void yuga_platform_plat_image(int64_t x, int64_t y, int64_t w, int64_t h, yuga_str src,
+void loam_platform_plat_image(int64_t x, int64_t y, int64_t w, int64_t h, loam_str src,
                               int64_t radius, int64_t alpha, int64_t fit);
-void yuga_platform_plat_image_size(yuga_str src, int32_t *w, int32_t *h);
-yuga_str yuga_platform_plat_pick_image(int32_t *w, int32_t *h);
-void yuga_platform_plat_save(void);
-int64_t yuga_platform_plat_mem_kb(void);
-void yuga_platform_plat_clip(int64_t x, int64_t y, int64_t w, int64_t h);
-void yuga_platform_plat_restore(void);
-int64_t yuga_platform_plat_key_intern(yuga_str name);
-int64_t yuga_platform_plat_key_intern_action(yuga_str action);
-void yuga_platform_plat_key_reset(void);
-void yuga_platform_plat_map_key(yuga_str spec, yuga_str action, int64_t ctx);
-int64_t yuga_platform_plat_key_ev(int64_t key, int64_t mods);
-int64_t yuga_platform_plat_edit_append(int64_t slot, int64_t key);
-int64_t yuga_platform_plat_edit_back(int64_t slot);
-int64_t yuga_platform_plat_edit_del(int64_t slot);
-int64_t yuga_platform_plat_edit_len(int64_t slot);
-yuga_str yuga_platform_plat_edit_text(int64_t slot);
-yuga_str yuga_platform_plat_edit_shown(int64_t slot);
-int64_t yuga_platform_plat_edit_set(int64_t slot, yuga_str text);
-int64_t yuga_platform_plat_edit_insert(int64_t slot, yuga_str text);
-int64_t yuga_platform_plat_edit_caret(int64_t slot);
-int64_t yuga_platform_plat_edit_anchor(int64_t slot);
-int64_t yuga_platform_plat_edit_set_caret(int64_t slot, int64_t pos);
-int64_t yuga_platform_plat_edit_set_anchor(int64_t slot, int64_t pos);
-int64_t yuga_platform_plat_edit_mark(int64_t slot, yuga_str text);
-void yuga_platform_plat_edit_metrics(int64_t slot, int64_t wrap_w, int64_t font);
-int64_t yuga_platform_plat_edit_click(int64_t slot, int64_t x, int64_t y, int64_t wrap_w,
+void loam_platform_plat_image_size(loam_str src, int32_t *w, int32_t *h);
+loam_str loam_platform_plat_pick_image(int32_t *w, int32_t *h);
+void loam_platform_plat_save(void);
+int64_t loam_platform_plat_mem_kb(void);
+void loam_platform_plat_clip(int64_t x, int64_t y, int64_t w, int64_t h);
+void loam_platform_plat_restore(void);
+int64_t loam_platform_plat_key_intern(loam_str name);
+int64_t loam_platform_plat_key_intern_action(loam_str action);
+void loam_platform_plat_key_reset(void);
+void loam_platform_plat_map_key(loam_str spec, loam_str action, int64_t ctx);
+int64_t loam_platform_plat_key_ev(int64_t key, int64_t mods);
+int64_t loam_platform_plat_edit_append(int64_t slot, int64_t key);
+int64_t loam_platform_plat_edit_back(int64_t slot);
+int64_t loam_platform_plat_edit_del(int64_t slot);
+int64_t loam_platform_plat_edit_len(int64_t slot);
+loam_str loam_platform_plat_edit_text(int64_t slot);
+loam_str loam_platform_plat_edit_shown(int64_t slot);
+int64_t loam_platform_plat_edit_set(int64_t slot, loam_str text);
+int64_t loam_platform_plat_edit_insert(int64_t slot, loam_str text);
+int64_t loam_platform_plat_edit_caret(int64_t slot);
+int64_t loam_platform_plat_edit_anchor(int64_t slot);
+int64_t loam_platform_plat_edit_set_caret(int64_t slot, int64_t pos);
+int64_t loam_platform_plat_edit_set_anchor(int64_t slot, int64_t pos);
+int64_t loam_platform_plat_edit_mark(int64_t slot, loam_str text);
+void loam_platform_plat_edit_metrics(int64_t slot, int64_t wrap_w, int64_t font);
+int64_t loam_platform_plat_edit_click(int64_t slot, int64_t x, int64_t y, int64_t wrap_w,
                                       int64_t font);
-int64_t yuga_platform_plat_edit_move(int64_t slot, int64_t dir, int64_t extend);
-int64_t yuga_platform_plat_edit_caret_x(int64_t slot);
-int64_t yuga_platform_plat_edit_caret_y(int64_t slot);
-int64_t yuga_platform_plat_edit_line_h(int64_t slot);
-int64_t yuga_platform_plat_intern_fn(yuga_fn handler);
-void yuga_platform_plat_invoke_fn(int64_t id);
+int64_t loam_platform_plat_edit_move(int64_t slot, int64_t dir, int64_t extend);
+int64_t loam_platform_plat_edit_caret_x(int64_t slot);
+int64_t loam_platform_plat_edit_caret_y(int64_t slot);
+int64_t loam_platform_plat_edit_line_h(int64_t slot);
+int64_t loam_platform_plat_intern_fn(loam_fn handler);
+void loam_platform_plat_invoke_fn(int64_t id);
 /* Reactive prop thunks: interned like handlers, called for their result. */
-int64_t yuga_platform_plat_intern_int_fn(yuga_fn thunk);
-int64_t yuga_platform_plat_invoke_int_fn(int64_t id);
-int64_t yuga_platform_plat_intern_bool_fn(yuga_fn thunk);
-int64_t yuga_platform_plat_invoke_bool_fn(int64_t id);
-int64_t yuga_platform_plat_intern_str_fn(yuga_fn thunk);
-yuga_str yuga_platform_plat_invoke_str_fn(int64_t id);
-void yuga_platform_plat_sig_bind_int(int64_t id, int64_t value);
-int64_t yuga_platform_plat_sig_gen(int64_t id);
-void yuga_platform_plat_sig_free(int64_t id);
-void yuga_platform_plat_edit_reset(int64_t slot);
-void yuga_platform_plat_intern_free(int64_t id);
+int64_t loam_platform_plat_intern_int_fn(loam_fn thunk);
+int64_t loam_platform_plat_invoke_int_fn(int64_t id);
+int64_t loam_platform_plat_intern_bool_fn(loam_fn thunk);
+int64_t loam_platform_plat_invoke_bool_fn(int64_t id);
+int64_t loam_platform_plat_intern_str_fn(loam_fn thunk);
+loam_str loam_platform_plat_invoke_str_fn(int64_t id);
+void loam_platform_plat_sig_bind_int(int64_t id, int64_t value);
+int64_t loam_platform_plat_sig_gen(int64_t id);
+void loam_platform_plat_sig_free(int64_t id);
+void loam_platform_plat_edit_reset(int64_t slot);
+void loam_platform_plat_intern_free(int64_t id);
 /* Recoverable trap (`zeus.Boundary`): "" on success, else the panic message. */
-yuga_str yuga_platform_plat_boundary(yuga_fn build);
+loam_str loam_platform_plat_boundary(loam_fn build);
 /* Router history mirror (host back stack). */
-void yuga_platform_plat_history_push(yuga_str path);
-void yuga_platform_plat_history_replace(yuga_str path);
-void yuga_platform_plat_history_back(void);
-int64_t yuga_platform_plat_overlay_scroll(void);
-int64_t yuga_platform_plat_inset_top(void);
-int64_t yuga_platform_plat_inset_right(void);
-int64_t yuga_platform_plat_inset_bottom(void);
-int64_t yuga_platform_plat_inset_left(void);
+void loam_platform_plat_history_push(loam_str path);
+void loam_platform_plat_history_replace(loam_str path);
+void loam_platform_plat_history_back(void);
+int64_t loam_platform_plat_overlay_scroll(void);
+int64_t loam_platform_plat_inset_top(void);
+int64_t loam_platform_plat_inset_right(void);
+int64_t loam_platform_plat_inset_bottom(void);
+int64_t loam_platform_plat_inset_left(void);
 
-/* Yuga engine entry points (packages/zeus/std/zeus.loam). Cocoa trampolines through these. */
-void yuga_zeus_engine_layout(int32_t width, int32_t height);
-void yuga_zeus_engine_paint(void);
-int32_t yuga_zeus_engine_step(void);
+/* Loam engine entry points (packages/zeus/std/zeus.loam). Cocoa trampolines through these. */
+void loam_zeus_engine_layout(int32_t width, int32_t height);
+void loam_zeus_engine_paint(void);
+int32_t loam_zeus_engine_step(void);
 /* ms until the next async timer is due (0 = none; -1 = a spawn waits). */
-int32_t yuga_zeus_engine_next_ms(void);
-int32_t yuga_zeus_engine_click(int32_t x, int32_t y);
-int32_t yuga_zeus_engine_scroll(int32_t x, int32_t y, int32_t dx, int32_t dy);
-int32_t yuga_zeus_engine_scroll_step(int32_t x, int32_t y, int32_t dx, int32_t dy);
-int32_t yuga_zeus_engine_drag(int32_t x, int32_t y);
-int32_t yuga_zeus_engine_hover(int32_t x, int32_t y);
-void yuga_zeus_engine_mouseup(void);
-int32_t yuga_zeus_engine_over_button(void);
-yuga_str yuga_zeus_engine_cursor(void);
+int32_t loam_zeus_engine_next_ms(void);
+int32_t loam_zeus_engine_click(int32_t x, int32_t y);
+int32_t loam_zeus_engine_scroll(int32_t x, int32_t y, int32_t dx, int32_t dy);
+int32_t loam_zeus_engine_scroll_step(int32_t x, int32_t y, int32_t dx, int32_t dy);
+int32_t loam_zeus_engine_drag(int32_t x, int32_t y);
+int32_t loam_zeus_engine_hover(int32_t x, int32_t y);
+void loam_zeus_engine_mouseup(void);
+int32_t loam_zeus_engine_over_button(void);
+loam_str loam_zeus_engine_cursor(void);
 /* Visible semantic tree, one `depth\trole\tlabel` line per node (§2.3). */
-yuga_str yuga_zeus_engine_a11y_dump(void);
+loam_str loam_zeus_engine_a11y_dump(void);
 /* Inspector dumps (devtools §2.4). */
-yuga_str yuga_zeus_engine_tree_dump(void);
-yuga_str yuga_zeus_engine_signals_dump(void);
+loam_str loam_zeus_engine_tree_dump(void);
+loam_str loam_zeus_engine_signals_dump(void);
 /* Hot reload (§2.5): restore signal values from a signals dump. Returns the
    number of slots applied. */
-int32_t yuga_zeus_engine_state_load(yuga_str snapshot);
+int32_t loam_zeus_engine_state_load(loam_str snapshot);
 
 /* Router host entry points (std:router). A host calls `open_url` for a deep
    link and `history_back` for an OS back button. */
-void yuga_router_engine_open_url(yuga_str url);
-void yuga_router_engine_history_back(void);
-void yuga_zeus_engine_key_apply(int32_t sig, int32_t mode, int32_t value, int32_t lo,
+void loam_router_engine_open_url(loam_str url);
+void loam_router_engine_history_back(void);
+void loam_zeus_engine_key_apply(int32_t sig, int32_t mode, int32_t value, int32_t lo,
                                int32_t hi);
-void yuga_zeus_engine_fill_focus(void);
-int32_t yuga_zeus_engine_focus_depth(void);
-int32_t yuga_zeus_engine_focus_node(int32_t i);
-int32_t yuga_zeus_engine_focus_ctx(int32_t i);
-int32_t yuga_zeus_engine_focus_step(int32_t back);
-int32_t yuga_zeus_engine_focus_captures_text(void);
-int32_t yuga_zeus_engine_key(int32_t key);
-int32_t yuga_zeus_engine_key_up(int32_t key, int32_t mods);
-void yuga_zeus_engine_set_mods(int32_t mods);
-int32_t yuga_zeus_engine_insert(yuga_str text);
-int32_t yuga_zeus_engine_marked(yuga_str text);
-void yuga_zeus_engine_picked_image(yuga_str src, int32_t w, int32_t h);
+void loam_zeus_engine_fill_focus(void);
+int32_t loam_zeus_engine_focus_depth(void);
+int32_t loam_zeus_engine_focus_node(int32_t i);
+int32_t loam_zeus_engine_focus_ctx(int32_t i);
+int32_t loam_zeus_engine_focus_step(int32_t back);
+int32_t loam_zeus_engine_focus_captures_text(void);
+int32_t loam_zeus_engine_key(int32_t key);
+int32_t loam_zeus_engine_key_up(int32_t key, int32_t mods);
+void loam_zeus_engine_set_mods(int32_t mods);
+int32_t loam_zeus_engine_insert(loam_str text);
+int32_t loam_zeus_engine_marked(loam_str text);
+void loam_zeus_engine_picked_image(loam_str src, int32_t w, int32_t h);
 
 void zeus_layout(int64_t width, int64_t height);
 int zeus_step(float dt);

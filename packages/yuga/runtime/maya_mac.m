@@ -1,6 +1,6 @@
 /* maya_mac.m — Cocoa 2D present for Maya (no Metal).
  *
- * Host only: window, input, vsync. Scene/tracer/map are Yuga engine_*.
+ * Host only: window, input, vsync. Scene/tracer/map are Loam engine_*.
  * 2D map draws discs and orbit rings. 3D blits the CPU RGBA buffer.
  */
 #import <Cocoa/Cocoa.h>
@@ -18,7 +18,7 @@ static int g_inited_time;
 static NSPoint g_mouse;
 static int g_have_mouse;
 
-static NSString *ys(yuga_str s) {
+static NSString *ys(loam_str s) {
     if (!s.ptr || s.len <= 0) return @"";
     return [[NSString alloc] initWithBytes:s.ptr length:(NSUInteger)s.len
                                   encoding:NSUTF8StringEncoding];
@@ -81,7 +81,7 @@ static void draw_stars(NSRect bounds) {
 }
 
 static void draw_hud(void) {
-    yuga_str hud = yuga_maya_engine_hud();
+    loam_str hud = loam_maya_engine_hud();
     if (hud.len > 0 && hud.ptr) {
         NSString *str = ys(hud);
         [str drawAtPoint:NSMakePoint(14.0, 12.0) withAttributes:hud_attrs()];
@@ -93,32 +93,32 @@ static void draw_map(NSRect bounds) {
     CGFloat cx = 0, cy = 0;
 
     draw_stars(bounds);
-    n = (int)yuga_maya_engine_sprite_count();
+    n = (int)loam_maya_engine_sprite_count();
     for (i = 0; i < n; i++) {
-        if (yuga_maya_engine_sprite_is_sun(i)) {
-            cx = (CGFloat)yuga_maya_engine_sprite_x(i);
-            cy = (CGFloat)yuga_maya_engine_sprite_y(i);
+        if (loam_maya_engine_sprite_is_sun(i)) {
+            cx = (CGFloat)loam_maya_engine_sprite_x(i);
+            cy = (CGFloat)loam_maya_engine_sprite_y(i);
             break;
         }
     }
     for (i = 0; i < n; i++) {
-        CGFloat orbit = (CGFloat)yuga_maya_engine_sprite_orbit_r(i);
+        CGFloat orbit = (CGFloat)loam_maya_engine_sprite_orbit_r(i);
         if (orbit > 1.0)
             stroke_oval(cx, cy, orbit, rgb_a(107, 117, 158, 0.55), 1.15);
     }
     for (i = 0; i < n; i++) {
-        int64_t rgb = yuga_maya_engine_sprite_rgb(i);
+        int64_t rgb = loam_maya_engine_sprite_rgb(i);
         uint8_t cr = (uint8_t)((rgb / 65536) % 256);
         uint8_t cg = (uint8_t)((rgb / 256) % 256);
         uint8_t cb = (uint8_t)(rgb % 256);
-        CGFloat x = (CGFloat)yuga_maya_engine_sprite_x(i);
-        CGFloat y = (CGFloat)yuga_maya_engine_sprite_y(i);
-        CGFloat r = (CGFloat)yuga_maya_engine_sprite_r(i);
+        CGFloat x = (CGFloat)loam_maya_engine_sprite_x(i);
+        CGFloat y = (CGFloat)loam_maya_engine_sprite_y(i);
+        CGFloat r = (CGFloat)loam_maya_engine_sprite_r(i);
         NSColor *c = rgb_a(cr, cg, cb, 1.0);
-        if (yuga_maya_engine_sprite_is_sun(i))
+        if (loam_maya_engine_sprite_is_sun(i))
             fill_oval(x, y, r * 2.4f, rgb_a(cr, cg, cb, 0.20));
         fill_oval(x, y, r, c);
-        yuga_str nm = yuga_maya_engine_sprite_name(i);
+        loam_str nm = loam_maya_engine_sprite_name(i);
         if (nm.len > 0 && nm.ptr) {
             NSString *str = ys(nm);
             NSSize sz = [str sizeWithAttributes:name_attrs()];
@@ -181,17 +181,17 @@ static void tick_view(NSView *view) {
     if (dt < 0) dt = 0;
     dt_ms = (int64_t)(dt * 1000.0);
     if (dt_ms < 1 && dt > 0) dt_ms = 1;
-    yuga_maya_engine_note_present(dt_ms);
+    loam_maya_engine_note_present(dt_ms);
     if (dt > 0.25) dt = 0.25;
-    yuga_maya_engine_set_viewport(vw, vh);
-    if (yuga_maya_engine_is_map()) {
+    loam_maya_engine_set_viewport(vw, vh);
+    if (loam_maya_engine_is_map()) {
         g_acc += dt;
         while (g_acc >= MAYA_DT) {
-            yuga_maya_engine_fixed_update(16);
+            loam_maya_engine_fixed_update(16);
             g_acc -= MAYA_DT;
         }
     } else {
-        yuga_maya_engine_frame();
+        loam_maya_engine_frame();
     }
 }
 
@@ -212,7 +212,7 @@ static void tick_view(NSView *view) {
     (void)dirty;
     @autoreleasepool {
         tick_view(self);
-        if (yuga_maya_engine_is_map())
+        if (loam_maya_engine_is_map())
             draw_map(self.bounds);
         else
             draw_cpu(self.bounds);
@@ -222,9 +222,9 @@ static void tick_view(NSView *view) {
 - (void)keyDown:(NSEvent *)e {
     NSString *c = [e charactersIgnoringModifiers];
     unichar k = c.length ? [c characterAtIndex:0] : 0;
-    if (yuga_maya_engine_is_map()) {
+    if (loam_maya_engine_is_map()) {
         if (k == ' ' || k == '+' || k == '=' || k == '-' || k == '_') {
-            yuga_maya_engine_input_key((int64_t)k);
+            loam_maya_engine_input_key((int64_t)k);
             [self setNeedsDisplay:YES];
             return;
         }
@@ -236,7 +236,7 @@ static void tick_view(NSView *view) {
         if (k == 'a' || k == 'A' || k == 'd' || k == 'D' || k == 'w' || k == 'W' ||
             k == 's' || k == 'S' || k == 'q' || k == 'Q' || k == 'e' || k == 'E' ||
             k == 'r' || k == 'R' || k == '+' || k == '=' || k == '-' || k == '_') {
-            yuga_maya_engine_input_key((int64_t)k);
+            loam_maya_engine_input_key((int64_t)k);
             [self setNeedsDisplay:YES];
             return;
         }
@@ -260,11 +260,11 @@ static void tick_view(NSView *view) {
     dx = p.x - g_mouse.x;
     dy = p.y - g_mouse.y;
     g_mouse = p;
-    if (yuga_maya_engine_is_map()) return;
+    if (loam_maya_engine_is_map()) return;
     if (e.modifierFlags & NSEventModifierFlagShift)
-        yuga_maya_engine_cam_pan((int64_t)dx, (int64_t)(-dy));
+        loam_maya_engine_cam_pan((int64_t)dx, (int64_t)(-dy));
     else
-        yuga_maya_engine_cam_orbit((int64_t)dx, (int64_t)(-dy));
+        loam_maya_engine_cam_orbit((int64_t)dx, (int64_t)(-dy));
     [self setNeedsDisplay:YES];
 }
 
@@ -279,8 +279,8 @@ static void tick_view(NSView *view) {
     dx = p.x - g_mouse.x;
     dy = p.y - g_mouse.y;
     g_mouse = p;
-    if (!yuga_maya_engine_is_map()) {
-        yuga_maya_engine_cam_pan((int64_t)dx, (int64_t)(-dy));
+    if (!loam_maya_engine_is_map()) {
+        loam_maya_engine_cam_pan((int64_t)dx, (int64_t)(-dy));
         [self setNeedsDisplay:YES];
     }
 }
@@ -292,9 +292,9 @@ static void tick_view(NSView *view) {
 
 - (void)scrollWheel:(NSEvent *)e {
     double d = [e scrollingDeltaY];
-    if (yuga_maya_engine_is_map()) return;
+    if (loam_maya_engine_is_map()) return;
     if (![e hasPreciseScrollingDeltas]) d *= 4.0;
-    yuga_maya_engine_cam_zoom((int64_t)(d * 100.0));
+    loam_maya_engine_cam_zoom((int64_t)(d * 100.0));
     [self setNeedsDisplay:YES];
 }
 
@@ -306,7 +306,7 @@ static void tick_view(NSView *view) {
 }
 @end
 
-void yuga_maya_plat_window(yuga_str title, int64_t w, int64_t h) {
+void loam_maya_plat_window(loam_str title, int64_t w, int64_t h) {
     NSRect rect;
     MayaView *v;
     int wi = (int)w, hi = (int)h;
@@ -330,7 +330,7 @@ void yuga_maya_plat_window(yuga_str title, int64_t w, int64_t h) {
     [g_win makeKeyAndOrderFront:nil];
     [g_win makeFirstResponder:v];
     [NSApp activateIgnoringOtherApps:YES];
-    yuga_maya_engine_set_viewport(wi, hi);
+    loam_maya_engine_set_viewport(wi, hi);
     g_timer = [NSTimer scheduledTimerWithTimeInterval:MAYA_DT
                                               repeats:YES
                                                 block:^(NSTimer *t) {
@@ -340,6 +340,6 @@ void yuga_maya_plat_window(yuga_str title, int64_t w, int64_t h) {
     [[NSRunLoop mainRunLoop] addTimer:g_timer forMode:NSRunLoopCommonModes];
 }
 
-void yuga_maya_plat_run(void) {
+void loam_maya_plat_run(void) {
     [NSApp run];
 }

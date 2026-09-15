@@ -180,11 +180,11 @@ fn safe_app(app: string) -> string {
     return string_from_bytes(b)
 }
 
-/// App-data directory for `app`. `YUGA_KV_DIR` overrides the parent. Empty
+/// App-data directory for `app`. `LOAM_KV_DIR` overrides the parent. Empty
 /// when `HOME` is unset (wasm). Desktop: `~/Library/Application Support/<app>`.
 fn data_dir(app: string) -> string {
     let name = safe_app(app)
-    let ov = sys.env("YUGA_KV_DIR")
+    let ov = sys.env("LOAM_KV_DIR")
     if ov.len > 0 {
         return "{{ov}}/{{name}}"
     }

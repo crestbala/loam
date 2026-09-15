@@ -1,4 +1,4 @@
-//! `plasma.loam` — rexim's `plasma.cpp`, in Yuga.
+//! `plasma.loam` — rexim's `plasma.cpp`, in Loam.
 //!
 //! https://gist.github.com/rexim/ef86bf70918034a5a57881456c0a0ccf
 //!
@@ -6,15 +6,15 @@
 //! (https://x.com/XorDev/status/1894123951401378051) per pixel on the CPU,
 //! writes 240 frames as `output-%03d.ppm`, and leaves the encode to ffmpeg.
 //! This is the same shader ported line for line: `mathf.loam` supplies
-//! `sin`/`cos`/`exp`/`tanh`/`abs` as pure Yuga polynomials, `frames.loam`
+//! `sin`/`cos`/`exp`/`tanh`/`abs` as pure Loam polynomials, `frames.loam`
 //! writes the P6 frames and runs ffmpeg, and nothing else is involved.
 //!
 //!     ./bin/yugac examples/language/ppm/plasma.loam --run
 //!
-//! Knobs (all optional): `YUGA_PPM_SCALE` (60, so the gist's 960x540),
-//! `YUGA_PPM_FRAMES` (120), `YUGA_PPM_FPS` (60), `YUGA_PPM_OUT` (`out`),
-//! `YUGA_PPM_CRF` (16), `YUGA_PPM_PRESET` (`slow`), `YUGA_PPM_KEEP=1`,
-//! and `YUGA_PPM_FLIP=1` to flip the row the shader sees (see `main`).
+//! Knobs (all optional): `LOAM_PPM_SCALE` (60, so the gist's 960x540),
+//! `LOAM_PPM_FRAMES` (120), `LOAM_PPM_FPS` (60), `LOAM_PPM_OUT` (`out`),
+//! `LOAM_PPM_CRF` (16), `LOAM_PPM_PRESET` (`slow`), `LOAM_PPM_KEEP=1`,
+//! and `LOAM_PPM_FLIP=1` to flip the row the shader sees (see `main`).
 //!
 //! At the defaults this renders for roughly a minute and peaks around 250 MB
 //! (one leaked string per frame; see "Memory" in README.md).
@@ -33,13 +33,13 @@ fn main() {
     // This is a CPU shader with no SIMD behind it and every pixel costs ~25
     // transcendental calls, so scale and frame count are the two levers on
     // wall time; both are in README.md with measurements.
-    let scale = frames.even(frames.env_int("YUGA_PPM_SCALE", 60))
-    let count = frames.env_int("YUGA_PPM_FRAMES", 120)
-    let fps = frames.env_int("YUGA_PPM_FPS", 60)
+    let scale = frames.even(frames.env_int("LOAM_PPM_SCALE", 60))
+    let count = frames.env_int("LOAM_PPM_FRAMES", 120)
+    let fps = frames.env_int("LOAM_PPM_FPS", 60)
     let w = 16 * scale
     let h = 9 * scale
     let dir = frames.out_dir()
-    let flip = frames.env_flag("YUGA_PPM_FLIP")
+    let flip = frames.env_flag("LOAM_PPM_FLIP")
 
     if frames.ensure_dir(dir) != 0 {
         fmt.println("cannot create", dir)
@@ -83,7 +83,7 @@ fn main() {
 
 // --- GLSL vector types, as Copy structs -------------------------------------
 //
-// GLSL has swizzles and operator overloads; Yuga has neither, so the shader
+// GLSL has swizzles and operator overloads; Loam has neither, so the shader
 // below is written as named steps over the same values the C++ one-liner
 // computes. Each helper is the operator it replaces.
 

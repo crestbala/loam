@@ -2,7 +2,7 @@
 //!
 //! Immediate mode means there is no retained widget tree: state lives in the
 //! caller and every frame re-issues the controls. raylib owns the window and
-//! the OS event pump; the frame loop lives in Yuga:
+//! the OS event pump; the frame loop lives in Loam:
 //!
 //! ```
 //! import "std:raygui"
@@ -24,7 +24,7 @@
 //! }
 //! ```
 //!
-//! `RAYGUI_HEADLESS=1` (or `ZEUS_HEADLESS` / `YUGA_HEADLESS`, which `make test`
+//! `RAYGUI_HEADLESS=1` (or `ZEUS_HEADLESS` / `LOAM_HEADLESS`, which `make test`
 //! sets) opens no window: `begin`/`end` are inert and `open()` returns 0 after
 //! `RAYGUI_FRAMES` frames (default 3), so the control code still runs.
 //!

@@ -1,5 +1,5 @@
 //! platform — OS seam. Bodyless `fn`s are the link boundary (docs/boundary.md).
-//! Compiler emits `yuga_platform_plat_*` declarations only; the host / yuga_rt
+//! Compiler emits `loam_platform_plat_*` declarations only; the host / loam_rt
 //! provides the symbols. No widget or layout logic here.
 
 fn plat_run() {}

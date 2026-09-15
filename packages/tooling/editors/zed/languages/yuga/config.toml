@@ -1,4 +1,4 @@
-name = "Yuga"
+name = "Loam"
 grammar = "yuga"
 path_suffixes = ["yuga"]
 # Queries must match the grammar compiled from extension.toml [grammars.loam].rev.

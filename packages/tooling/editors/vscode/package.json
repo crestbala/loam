@@ -1,7 +1,7 @@
 {
   "name": "yuga",
-  "displayName": "Yuga",
-  "description": "Yuga language: syntax highlighting and IntelliSense via yuga-lsp",
+  "displayName": "Loam",
+  "description": "Loam language: syntax highlighting and IntelliSense via yuga-lsp",
   "version": "0.1.0",
   "publisher": "yuga",
   "engines": {
@@ -18,7 +18,7 @@
     "languages": [
       {
         "id": "yuga",
-        "aliases": ["Yuga", "yuga"],
+        "aliases": ["Loam", "yuga"],
         "extensions": [".loam"],
         "configuration": "./language-configuration.json"
       }
@@ -31,7 +31,7 @@
       }
     ],
     "configuration": {
-      "title": "Yuga",
+      "title": "Loam",
       "properties": {
         "yuga.lspPath": {
           "type": "string",

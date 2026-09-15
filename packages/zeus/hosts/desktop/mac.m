@@ -790,7 +790,7 @@ static void mac_redraw(void) {
 }
 
 /* `ZEUS_MEM_DEBUG=1`: once a second, log the process footprint next to the
-   malloc heap Yuga actually owns. The two tell different stories — a spike in
+   malloc heap Loam actually owns. The two tell different stories — a spike in
    `phys` with `malloc` flat is the graphics stack (window drawable, CoreText
    caches), not the engine — which is the first thing to check when chasing
    app memory. */
@@ -802,7 +802,7 @@ static void mac_mem_debug(void) {
     malloc_zone_statistics(malloc_default_zone(), &ms);
     fprintf(stderr, "[mem] malloc=%uKB blocks=%u phys=%lldKB win=%lldx%lld view=%.0fx%.0f\n",
             (unsigned)(ms.size_in_use / 1024), (unsigned)ms.blocks_in_use,
-            (long long)yuga_platform_plat_mem_kb(),
+            (long long)loam_platform_plat_mem_kb(),
             (long long)zeus_window_width(), (long long)zeus_window_height(),
             g_view ? g_view.bounds.size.width : 0.0, g_view ? g_view.bounds.size.height : 0.0);
 }
@@ -985,7 +985,7 @@ static void frame_trace(double t0, FramePhases p) {
             "[frame] interval=%.1fms setup=%.2f engine=%.1f image=%.2f set=%.2f other=%.1f "
             "more=%d next=%dms\n",
             interval, p.setup_ms, p.engine_ms, p.image_ms, p.set_ms, interval - work, p.more,
-            (int)yuga_zeus_engine_next_ms());
+            (int)loam_zeus_engine_next_ms());
 }
 
 /* One engine frame: layout, step, and paint through the host's draw callbacks.
@@ -1074,7 +1074,7 @@ static void mac_schedule_next(int more) {
         });
         return;
     }
-    due = yuga_zeus_engine_next_ms();
+    due = loam_zeus_engine_next_ms();
     if (due) {
         double delay = (due < 0) ? 0.0 : ((double)due / 1000.0);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
@@ -1104,7 +1104,7 @@ static void mac_schedule_next(int more) {
 - (BOOL)isAccessibilityElement { return NO; }
 - (NSArray *)accessibilityChildren {
     NSMutableArray *kids = [NSMutableArray array];
-    yuga_str dump = yuga_zeus_engine_a11y_dump();
+    loam_str dump = loam_zeus_engine_a11y_dump();
     if (!dump.ptr || dump.len <= 0) return kids;
     NSString *s = [[[NSString alloc] initWithBytes:dump.ptr
                                            length:(NSUInteger)dump.len

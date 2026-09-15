@@ -2,7 +2,7 @@
  *
  * UIKit is only the host: UIWindow / UIView / touches. Buttons, labels,
  * navigation bars, Dynamic Type, and semantic colors are not used. Theme,
- * layout, and paint stay in Yuga — the same fill / text / clip / SVG list
+ * layout, and paint stay in Loam — the same fill / text / clip / SVG list
  * as Cocoa and Canvas2D.
  */
 #import <UIKit/UIKit.h>
@@ -12,7 +12,7 @@
 #include <string.h>
 #include <stdlib.h>
 
-int yuga_app_main(void);
+int loam_app_main(void);
 
 static UIView *g_view;
 static UIWindow *g_window;
@@ -914,7 +914,7 @@ static CGPoint zeus_content_point(UIView *v, CGPoint p) {
     (void)application;
     (void)launchOptions;
     g_del = self;
-    yuga_app_main();
+    loam_app_main();
     return YES;
 }
 - (void)dealloc {

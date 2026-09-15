@@ -25,7 +25,7 @@ import java.util.HashSet;
 
 /**
  * Zeus host view. Density-scaled so layout units match iOS points. Touch is
- * forwarded to the Yuga hit-test; Android widgets are not used.
+ * forwarded to the Loam hit-test; Android widgets are not used.
  */
 public class ZeusView extends View implements Choreographer.FrameCallback {
     static {
