@@ -164,7 +164,12 @@ plan_substs() {
         if [ "$APPLY" = 1 ]; then
             printf '%s\n' "$files" | while IFS= read -r f; do
                 tmp="$f.loamtmp"
+                # sed cannot edit in place portably, so it writes a temp file and
+                # we move it over the original -- which would silently drop the
+                # executable bit on scripts. Carry the mode across.
+                mode=$(stat -f '%Lp' "$f" 2>/dev/null) || mode=644
                 if sed -e "$expr" "$f" > "$tmp"; then
+                    chmod "$mode" "$tmp"
                     mv "$tmp" "$f"
                 else
                     rm -f "$tmp"; echo "sed FAILED: $expr in $f" >&2
