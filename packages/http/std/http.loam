@@ -583,6 +583,50 @@ fn encode_string_field(tag: int, s: string) -> []int {
     return out
 }
 
+// --- repeated fields -------------------------------------------------------
+// A `repeated` field is a key per element. Unlike a singular field, an element
+// is emitted even when it holds the default value: an empty string or a 0 in a
+// list is data, so omitting it would come back shorter than it was sent.
+
+/// One element of a `repeated int` field.
+fn encode_int_elem(tag: int, v: int) -> []int {
+    let mut out = []int {}
+    append_bytes(out, put_varint(tag * 8))
+    append_bytes(out, put_varint(v))
+    return out
+}
+
+/// One element of a `repeated string` field.
+fn encode_string_elem(tag: int, s: string) -> []int {
+    let mut out = []int {}
+    append_bytes(out, put_varint(tag * 8 + 2))
+    append_bytes(out, put_varint(s.len))
+    append_bytes(out, bytes_of(s))
+    return out
+}
+
+/// Append a *packed* `repeated int` field's elements to `dst`, returning the
+/// index after it. Packed is protobuf's default for repeated numerics, so this
+/// is the form a writer in another language sends; the unpacked form (one key
+/// per element) is the caller's other branch.
+fn push_packed_ints(dst: &mut []int, b: &[]int, i: int) -> int {
+    let sl = get_varint(b, i)
+    let mut p = sl.next
+    let mut end = sl.next + sl.val
+    if end < p {
+        end = p
+    }
+    while p < end {
+        let e = get_varint(b, p)
+        if e.next <= p {
+            break
+        }
+        dst.push(e.val)
+        p = e.next
+    }
+    return p
+}
+
 /// Skip one field payload starting at `i` (after the key). Returns the new index.
 fn skip_field(b: &[]int, i: int, wt: int) -> int {
     if wt == 0 {
@@ -2543,7 +2587,16 @@ fn listen(app: App, port: int) {
     }
     let fd = net.tcp_listen(port)
     if fd < 0 {
-        return
+        /* Exiting rather than returning: a server that asked to serve and
+           silently got nothing is indistinguishable, from the client's side,
+           from a request that never settles. */
+        fmt.writeln()
+        fmt.write("http: cannot bind 127.0.0.1:")
+        fmt.write_int(port)
+        fmt.writeln()
+        fmt.write("http: is something else already listening on that port?")
+        fmt.writeln()
+        sys.exit(1)
     }
     let p = net.tcp_bound_port(fd)
     fmt.write("http listening on 127.0.0.1:")

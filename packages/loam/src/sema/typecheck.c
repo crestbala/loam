@@ -2988,8 +2988,24 @@ static AstNode *named_type_node(const char *name, SourceLoc loc) {
     return ast_type(loam_dup(name), 2, NULL, 0, loc);
 }
 
-static int proto_field_ok(Type *t) {
+static int proto_scalar_ok(Type *t) {
     return t && (t->kind == TY_INT || t->kind == TY_STRING);
+}
+
+/* A field is a scalar, or `[]T` of one — i.e. a `repeated` field. There are no
+   nested messages yet. */
+static int proto_field_ok(Type *t) {
+    if (proto_scalar_ok(t)) return 1;
+    return t && t->kind == TY_VEC && proto_scalar_ok(t->elem);
+}
+
+static int proto_repeated(Type *t) { return t && t->kind == TY_VEC; }
+
+/* The wire type a field's payload carries: 2 for length-delimited (a string),
+   0 for a varint. An element of a repeated string field is still a string. */
+static int proto_want_wt(Type *ft) {
+    Type *et = proto_repeated(ft) ? ft->elem : ft;
+    return (et && et->kind == TY_STRING) ? 2 : 0;
 }
 
 static AstNode *proto_id(const char *n, SourceLoc loc) {
@@ -3032,10 +3048,12 @@ static AstNode *proto_block1(AstNode *s, SourceLoc loc) {
 static AstNode *proto_field_payload(Type *ft, const char *fnm, SourceLoc loc) {
     AstNode **st = NULL;
     size_t n = 0;
+    int repeated = proto_repeated(ft);
+    Type *et = repeated ? ft->elem : ft;
     AstNode **ga = (AstNode **)malloc(2 * sizeof(AstNode *));
     ga[0] = proto_id("b", loc);
     ga[1] = proto_id("i", loc);
-    if (ft && ft->kind == TY_STRING) {
+    if (et && et->kind == TY_STRING) {
         proto_stmts_add(&st, &n,
                         ast_var(loam_dup("v"), NULL, proto_call("decode_string_at", ga, 2, loc), 0,
                                 loc));
@@ -3046,17 +3064,47 @@ static AstNode *proto_field_payload(Type *ft, const char *fnm, SourceLoc loc) {
     proto_stmts_add(&st, &n,
                     ast_assign(TOK_EQ, proto_id("i", loc),
                                ast_field(proto_id("v", loc), loam_dup("next"), 0, loc), loc));
-    proto_stmts_add(&st, &n,
-                    ast_assign(TOK_EQ,
-                               ast_field(proto_id("m", loc), loam_dup(fnm), 0, loc),
-                               ast_field(proto_id("v", loc), loam_dup("val"), 0, loc), loc));
+    if (repeated) {
+        /* `m.f.push(v.val)` — an element appends, it does not replace the list. */
+        AstNode **pa = (AstNode **)malloc(sizeof(AstNode *));
+        pa[0] = ast_field(proto_id("v", loc), loam_dup("val"), 0, loc);
+        AstNode *push = ast_call(ast_field(ast_field(proto_id("m", loc), loam_dup(fnm), 0, loc),
+                                           loam_dup("push"), 0, loc),
+                                 pa, 1, loc);
+        proto_stmts_add(&st, &n, ast_expr_stmt(push, loc));
+    } else {
+        proto_stmts_add(&st, &n,
+                        ast_assign(TOK_EQ,
+                                   ast_field(proto_id("m", loc), loam_dup(fnm), 0, loc),
+                                   ast_field(proto_id("v", loc), loam_dup("val"), 0, loc), loc));
+    }
     return ast_block(st, n, loc);
 }
 
+/* The wire-type-2 branch of a repeated int field: `i = push_packed_ints(m.f, b, i)`.
+   Packed is what another language's protobuf sends by default, and reading it as
+   the unpacked form would silently yield an empty list. */
+static AstNode *proto_packed_ints(const char *fnm, SourceLoc loc) {
+    AstNode **aa = (AstNode **)malloc(3 * sizeof(AstNode *));
+    aa[0] = ast_field(proto_id("m", loc), loam_dup(fnm), 0, loc);
+    aa[1] = proto_id("b", loc);
+    aa[2] = proto_id("i", loc);
+    return ast_assign(TOK_EQ, proto_id("i", loc),
+                      proto_call("push_packed_ints", aa, 3, loc), loc);
+}
+
 static AstNode *proto_one_field(Type *ft, const char *fnm, SourceLoc loc) {
-    int want_wt = (ft && ft->kind == TY_STRING) ? 2 : 0;
+    int want_wt = proto_want_wt(ft);
     AstNode *ok = proto_field_payload(ft, fnm, loc);
     AstNode *bad = proto_block1(proto_skip_i(loc), loc);
+    if (proto_repeated(ft) && want_wt == 0) {
+        /* One key per element, or one packed run for the whole list. */
+        AstNode *scalar = ast_if(ast_binary(TOK_EQ_EQ, proto_id("wt", loc),
+                                            ast_number(0, loc), loc),
+                                 ok, bad, loc);
+        return ast_if(ast_binary(TOK_EQ_EQ, proto_id("wt", loc), ast_number(2, loc), loc),
+                      proto_block1(proto_packed_ints(fnm, loc), loc), scalar, loc);
+    }
     return ast_if(ast_binary(TOK_EQ_EQ, proto_id("wt", loc), ast_number(want_wt, loc), loc), ok,
                   bad, loc);
 }
@@ -3082,9 +3130,32 @@ static AstNode *proto_encode_body(AstNode *st, Type *t, SourceLoc loc) {
             const char *fnm = t->field_names[f];
             Type *ft = t->field_types[f];
             if (!fnm || !ft) continue;
+            AstNode *tag = ast_number((int64_t)f + 1, loc);
+            if (proto_repeated(ft)) {
+                /* for e in 0..m.f.len { out = append_bytes(out, encode_*_elem(tag, m.f[e])) } */
+                const char *elem = (ft->elem && ft->elem->kind == TY_STRING)
+                                       ? "encode_string_elem"
+                                       : "encode_int_elem";
+                AstNode **fa = (AstNode **)malloc(2 * sizeof(AstNode *));
+                fa[0] = tag;
+                fa[1] = ast_index(ast_field(proto_id("m", loc), loam_dup(fnm), 0, loc),
+                                  proto_id("e", loc), loc);
+                AstNode **aa = (AstNode **)malloc(2 * sizeof(AstNode *));
+                aa[0] = proto_id("out", loc);
+                aa[1] = proto_call(elem, fa, 2, loc);
+                AstNode *body = proto_block1(
+                    ast_expr_stmt(proto_call("append_bytes", aa, 2, loc), loc), loc);
+                AstNode *iter = ast_binary(
+                    TOK_DOT_DOT, ast_number(0, loc),
+                    ast_field(ast_field(proto_id("m", loc), loam_dup(fnm), 0, loc),
+                              loam_dup("len"), 0, loc),
+                    loc);
+                proto_stmts_add(&stmts, &n, ast_for(loam_dup("e"), iter, body, loc));
+                continue;
+            }
             const char *enc = ft->kind == TY_STRING ? "encode_string_field" : "encode_int_field";
             AstNode **fa = (AstNode **)malloc(2 * sizeof(AstNode *));
-            fa[0] = ast_number((int64_t)f + 1, loc);
+            fa[0] = tag;
             fa[1] = ast_field(proto_id("m", loc), loam_dup(fnm), 0, loc);
             AstNode **aa = (AstNode **)malloc(2 * sizeof(AstNode *));
             aa[0] = proto_id("out", loc);
@@ -3109,10 +3180,17 @@ static AstNode *proto_zero_lit(AstNode *st, Type *t, SourceLoc loc) {
         fi = (FieldInit *)calloc(fc, sizeof(FieldInit));
         for (size_t f = 0; f < fc; f++) {
             fi[f].name = loam_dup(t->field_names[f] ? t->field_names[f] : "_");
-            if (t->field_types[f] && t->field_types[f]->kind == TY_STRING)
+            Type *ft = t->field_types[f];
+            if (proto_repeated(ft)) {
+                /* An empty `[]T`, so a message that arrives with the field unset
+                   decodes to an empty list rather than to null. */
+                const char *en = (ft->elem && ft->elem->kind == TY_STRING) ? "string" : "int";
+                fi[f].init = ast_array_lit(named_type_node(en, loc), -1, NULL, 0, loc);
+            } else if (ft && ft->kind == TY_STRING) {
                 fi[f].init = ast_string(loam_dup(""), loc);
-            else
+            } else {
                 fi[f].init = ast_number(0, loc);
+            }
         }
     }
     return ast_struct_lit(loam_dup(st->as.strct.name), fi, fc, loc);
@@ -3231,7 +3309,8 @@ static void inject_proto_codecs(AstNode *prog) {
         Type *t = struct_type_of(d);
         for (size_t f = 0; f < t->field_count; f++) {
             if (!proto_field_ok(t->field_types[f])) {
-                err(d->loc, "#[proto] field '%s' must be int or string", t->field_names[f]);
+                err(d->loc, "#[proto] field '%s' must be int, string, or a list of those",
+                    t->field_names[f]);
             }
         }
         inject_proto_fn(prog, d, 1);

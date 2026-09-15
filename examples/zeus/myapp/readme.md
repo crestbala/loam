@@ -25,6 +25,7 @@ Routes: `/`, `/about`, `/pricing`, `/blog`, `/blog/:slug`, `/components`,
 ./run.sh myapp web        # wasm + Vite at http://127.0.0.1:5174
 ./run.sh myapp ios        # iOS simulator
 ./run.sh myapp android    # Android device/emulator
+./run.sh myapp backend    # the gRPC backend on 127.0.0.1:8080
 ./run.sh myapp build      # emit every target
 ```
 
@@ -34,6 +35,51 @@ before building, so a broken route fails before a window opens. Directly:
 ```sh
 ./bin/loam --run examples/zeus/myapp/app.loam
 ```
+
+## Data
+
+`/blog` gets its list from the backend over gRPC: `Blog.Posts`, declared in
+`server/api.loam`, served by `server/main.loam`, consumed by
+`routes/blog/loader.loam`.
+
+```sh
+./run.sh myapp backend    # terminal 1 — serves 127.0.0.1:8080
+./run.sh myapp            # terminal 2 — the app; /blog fills in on arrival
+```
+
+`./run.sh myapp` brings up both halves — the app and the backend — so `/blog`
+fills in. `./run.sh myapp backend` runs just the backend, and `LOAM_RPC_ADDR`
+overrides the address on both ends.
+
+Without a backend the route paints its heading plus `loading...` and stays
+there: the client transport is `call_async` (non-blocking, no error channel), so
+an absent server reads as a pending request rather than an error. That is the
+deliberate trade — the synchronous `call` would block the frame. A timeout is a
+follow-up.
+
+On the **web** target the browser's RPC is same-origin (`default_addr()` returns
+`""` for wasm), so `POST /Blog/Posts` arrives at the `zeus dev` server rather
+than at the backend. The dev server forwards any `application/grpc-web*` POST to
+`LOAM_RPC_ADDR` and returns the reply verbatim; with nothing on that port it
+answers 502, so the failure is loud instead of being the SPA shell. Native needs
+no such hop — `Blog.Posts` round-trips over h2c.
+
+Three things to know before adding a method:
+
+- **`#[server] fn` is not the boundary.** On a wasm build codegen replaces its
+  body with `loam_panic("<server>", ...)` and generates no client stub, so
+  calling one from the UI traps. Register with `app.rpc(...)` and call with
+  `http.client().call_async(...)`, as `examples/zeus/counter` does.
+- **`#[proto]` fields are `int`, `string`, or a list of those** — protobuf's
+  `repeated`, sent as one key per element and decoded back into a `[]T`. Nested
+  messages are not supported yet, so a list of structs has nowhere to go. Hence
+  `Blog.Posts` returns `titles: []string` directly.
+- **`res.resource` does not compile for a list `T`.** `std:res` is the intended
+  abstraction for async data and its loader signature matches `call_async`, but a
+  non-scalar `T` fails inside its own body (`assigning to 'Resource__string' from
+  incompatible type 'Resource__int'`); `T = int` and `T = string` are fine. The
+  loader here is that state machine written out, which is also what
+  `examples/zeus/greeninfer` does for its `Signal<[]string>`.
 
 ## Display paths
 

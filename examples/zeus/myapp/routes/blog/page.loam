@@ -3,10 +3,22 @@ import "std:router"
 import "loader.loam" as blog_loader
 
 fn page(p: Params) {
-    let ps = blog_loader.posts()
-    for i in 0..ps.len {
-        zeus.Text(ps[i])
-    }
+    // The heading paints unconditionally, so the route renders something
+    // identifiable whether or not the backend answered — the list below arrives
+    // asynchronously. The request itself is started from `app.loam`, before the
+    // window opens; see the note there.
+    zeus.Text("Posts", font = 24)
+
+    zeus.Match(blog_loader.load_state(), fn(st) {
+        if blog_loader.is_ready(st) {
+            let xs = blog_loader.load_data().get()
+            for i in 0..xs.len {
+                zeus.Text(xs[i])
+            }
+        } else {
+            zeus.Text("loading...")
+        }
+    })
 }
 
 fn meta(p: Params) -> Meta {

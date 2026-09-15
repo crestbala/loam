@@ -713,14 +713,24 @@ async function dev(appdir: string, port: number, buildOnly: boolean): Promise<nu
   }, 700);
 
   const web = path.join(appdir, "build", "web");
+  /* Where the app's own backend listens. The same override `default_addr()` in
+     std:http honours, so both ends agree without configuration. */
+  const rpcAddr = Deno.env.get("LOAM_RPC_ADDR") ?? "127.0.0.1:8080";
   const snippet =
     `<script>(function(){var r=null;setInterval(function(){fetch('/.zeus-rev')` +
     `.then(function(x){return x.text()}).then(function(t){if(r===null){r=t}` +
     `else if(t!==r){try{if(window.__zeus_save)window.__zeus_save()}catch(e){}` +
     `location.reload()}}).catch(function(){})},700)})()</script>`;
 
-  Deno.serve({ port, hostname: "127.0.0.1" }, (req) => {
+  Deno.serve({ port, hostname: "127.0.0.1" }, async (req) => {
     const u = new URL(req.url);
+    /* The app's RPC is same-origin (for wasm `default_addr()` returns ""), so a
+       browser build POSTs its gRPC-Web call here rather than to the backend.
+       Without this it would be answered by the SPA fallback below. */
+    const ctype = req.headers.get("content-type") ?? "";
+    if (req.method === "POST" && ctype.includes("grpc-web")) {
+      return await proxyRpc(req, rpcAddr, u.pathname, u.search);
+    }
     const reply = devReply(web, rev, u.pathname, snippet);
     return new Response(reply.body, {
       status: reply.status,
@@ -733,6 +743,52 @@ async function dev(appdir: string, port: number, buildOnly: boolean): Promise<nu
 }
 
 export type DevReply = { status: number; contentType: string; body: Uint8Array };
+
+/**
+ * Forward one gRPC-Web request to the app's backend, verbatim.
+ *
+ * A browser build calls its RPC same-origin — `default_addr()` in `std:http`
+ * returns `""` for wasm — so `POST /Blog/Posts` arrives at *this* server, not at
+ * the backend, and would otherwise be answered by the SPA fallback in
+ * `devReply` (200 + HTML), which the client reads as a failed exchange and
+ * reports as a request that never settles.
+ *
+ * No CORS handling is needed: the hop from the browser is same-origin, and this
+ * hop is server-to-server. A missing backend is a 502, so it shows up as a
+ * failure rather than as silence.
+ */
+export async function proxyRpc(
+  req: Request,
+  addr: string,
+  pathname: string,
+  search: string,
+): Promise<Response> {
+  const body = await req.arrayBuffer();
+  try {
+    const up = await fetch(`http://${addr}${pathname}${search}`, {
+      method: "POST",
+      headers: {
+        "content-type": req.headers.get("content-type") ?? "application/grpc-web+proto",
+        "x-grpc-web": req.headers.get("x-grpc-web") ?? "1",
+      },
+      body,
+    });
+    /* Streamed rather than buffered: the reply is already framed, and there is
+       no reason to hold it in the dev server. */
+    return new Response(up.body, {
+      status: up.status,
+      headers: {
+        "content-type": up.headers.get("content-type") ?? "application/grpc-web+proto",
+      },
+    });
+  } catch (e) {
+    console.warn(`zeus: rpc ${pathname} -> ${addr} failed: ${e}`);
+    return new Response(`rpc backend ${addr} unreachable\n`, {
+      status: 502,
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
+  }
+}
 
 const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
 
