@@ -277,6 +277,26 @@ int type_needs_drop(const Type *t) {
     return 0;
 }
 
+int type_arg_transfers(const Type *t) {
+    if (!t) return 0;
+    /* Passed through as-is: the callee's parameter drop frees it. */
+    if (t->kind == TY_BOX || t->kind == TY_PROC) return 1;
+    /* Retained at the call site, so the caller still owns a reference. */
+    if (t->kind == TY_VEC) return 0;
+    if (t->kind == TY_ARRAY) return type_arg_transfers(t->elem);
+    if (t->kind == TY_STRUCT) {
+        for (size_t i = 0; i < t->field_count; i++) {
+            if (!type_needs_drop(t->field_types[i])) continue;
+            /* One leaf that stays with the caller is enough: the caller has to
+               run the destructor for that leaf, and the codegen nulls the
+               leaves the callee adopted before it does. */
+            if (!type_arg_transfers(t->field_types[i])) return 0;
+        }
+        return 1;
+    }
+    return 0;
+}
+
 void type_c_name(const Type *t, char *buf, size_t cap) {
     if (!buf || cap == 0) return;
     if (!t || t->kind != TY_STRUCT) {

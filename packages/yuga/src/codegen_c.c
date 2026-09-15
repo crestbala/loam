@@ -1810,6 +1810,49 @@ static void emit_nested_keeps(FILE *o, const char *place, Type *t, int ind) {
     }
 }
 
+/* The counterpart to `emit_nested_keeps` for the handles a call *adopts*. A
+   `Box`/`fn` leaf is passed to the callee as-is, so the callee's parameter
+   drop frees it; the caller keeps its own copy of the pointer only because the
+   argument's type also has a `[]T` leaf that had to be retained (see
+   `type_arg_transfers`). Clear those adopted pointers so the caller's own drop
+   does not release them a second time. */
+static void emit_nested_transfers(FILE *o, const char *place, Type *t, int ind) {
+    if (!t || !type_needs_drop(t)) return;
+    if (t->kind == TY_BOX) {
+        indent(o, ind);
+        fprintf(o, "%s = NULL;\n", place);
+        return;
+    }
+    if (t->kind == TY_PROC) {
+        indent(o, ind);
+        fprintf(o, "%s.fn = NULL; %s.env = NULL;\n", place, place);
+        return;
+    }
+    /* A retained []T leaf still belongs to the caller, so it stays. */
+    if (t->kind == TY_VEC) return;
+    if (t->kind == TY_ARRAY) {
+        if (t->elem && type_needs_drop(t->elem)) {
+            char ebuf[256];
+            indent(o, ind);
+            fprintf(o, "{ int64_t _ti; for (_ti = 0; _ti < %lld; _ti++) {\n",
+                    (long long)t->array_len);
+            snprintf(ebuf, sizeof ebuf, "%s[_ti]", place);
+            emit_nested_transfers(o, ebuf, t->elem, ind + 1);
+            indent(o, ind);
+            fprintf(o, "} }\n");
+        }
+        return;
+    }
+    if (t->kind == TY_STRUCT) {
+        for (size_t i = 0; i < t->field_count; i++) {
+            if (!type_needs_drop(t->field_types[i])) continue;
+            char buf[256];
+            snprintf(buf, sizeof buf, "%s.%s", place, t->field_names[i]);
+            emit_nested_transfers(o, buf, t->field_types[i], ind);
+        }
+    }
+}
+
 static void emit_array_copy(FILE *o, int dst, int src, Type *t) {
     int64_t n = t && t->kind == TY_ARRAY ? t->array_len : 0;
     char dbuf[64], sbuf[64];
@@ -1842,6 +1885,13 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
             fprintf(o, "%s = ", lv(in->dst));
             emit_ir_place(o, in->place);
             fprintf(o, ";\n");
+            /* A read of an owning value is an owned copy: the place keeps its
+               own reference, so the temporary takes one and releases it at the
+               end of its scope. Every consumer then balances — a `let` or a
+               call argument retains again and a struct field, a `return`, or a
+               `push` steals this reference. */
+            if (in->ty && type_needs_drop(in->ty))
+                emit_nested_keeps(o, lv(in->dst), in->ty, 1);
             break;
         case IR_STORE: {
             int is_shift = in->binop == TOK_SHL_EQ || in->binop == TOK_SHR_EQ;
@@ -2258,8 +2308,26 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                 for (int k = 0; k < in->nargs; k++) fprintf(o, ", %s", lv(in->args[k]));
                 fprintf(o, ");\n");
             }
-            if (nkeep > 0)
+            if (nkeep > 0) {
+                /* After the call: the callee owns those handles now. Before it,
+                   the argument expressions would see NULL. */
+                for (int k = 0; k < in->nargs; k++) {
+                    Type *at = (in->args[k] >= 0 && in->args[k] < CF->nlocals)
+                                   ? CF->locals[in->args[k]].ty
+                                   : NULL;
+                    if (in->op == IR_CALL_VAL && at == NULL) {
+                        Type *ft = (in->a >= 0 && in->a < CF->nlocals)
+                                       ? CF->locals[in->a].ty
+                                       : NULL;
+                        if (ft && ft->kind == TY_PROC && (size_t)k < ft->param_count)
+                            at = ft->params[k];
+                    }
+                    if (!at || !type_needs_drop(at)) continue;
+                    if (!type_arg_transfers(at))
+                        emit_nested_transfers(o, lv(in->args[k]), at, 2);
+                }
                 fprintf(o, "    }\n");
+            }
             break;
         }
         case IR_ALLOC: {
@@ -2362,10 +2430,21 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                     const char *fnm = (cf && k < cf->ncaps && cf->caps[k]) ? cf->caps[k] : "f";
                     Type *ct = (cf && k < cf->ncaps && cf->cap_types) ? cf->cap_types[k] : NULL;
                     indent(o, 2);
-                    if (type_is_copy_vec(ct))
+                    if (type_is_copy_vec(ct)) {
                         fprintf(o, "_ce->%s = yuga_vec_retain(&%s);\n", fnm, lv(in->args[k]));
-                    else
+                    } else {
                         fprintf(o, "_ce->%s = %s;\n", fnm, lv(in->args[k]));
+                        /* The env outlives the frame that captured it, so it
+                           needs its own reference to every []T the capture
+                           reaches — including the ones inside a struct, which
+                           a plain struct copy leaves shared with the captured
+                           local's own drop. */
+                        if (ct && type_needs_drop(ct) && !type_arg_transfers(ct)) {
+                            char ep[256];
+                            snprintf(ep, sizeof ep, "_ce->%s", fnm);
+                            emit_nested_keeps(o, ep, ct, 2);
+                        }
+                    }
                 }
                 indent(o, 2);
                 fprintf(o, "%s = ((yuga_fn){(void *)%s, _ce, sizeof(struct yuga_env_%d)});\n",

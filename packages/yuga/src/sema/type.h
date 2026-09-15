@@ -70,6 +70,17 @@ int type_is_copy(const Type *t);
 /** 1 if a local of this type must run a destructor (Box, []T, or a struct/array of those). */
 int type_needs_drop(const Type *t);
 
+/** 1 if every heap handle a call argument of this type carries is *adopted* by
+ *  the callee, so the caller must not drop its own binding.
+ *
+ *  The codegen keeps a `[]T` alive across a call by retaining each `[]T` leaf
+ *  the argument reaches (see `emit_nested_keeps`), which leaves that reference
+ *  with the caller; a `Box`/`fn` leaf is passed through untouched, so the
+ *  callee's own parameter drop is what frees it. The two halves have to agree
+ *  with the drop insertion in ir.c, or an argument either leaks its reference
+ *  or is released twice, which is why both read this predicate. */
+int type_arg_transfers(const Type *t);
+
 /** 1 if a value of this type may cross an OS-thread boundary (channel<T>
  *  payloads, thread.spawn captures). Plain data only: scalars, immutable
  *  strings, and structs/arrays of Send fields. Not Send: []T (non-atomic

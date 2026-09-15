@@ -158,36 +158,33 @@ otherwise spend a minute rendering every time the suite runs.
 
 ## Memory
 
-Frame bytes are never reclaimed while the program runs, so peak memory scales
-with the render. Every frame ends in `string_from_bytes([]int)`, and the C
-generated for that call retains the staging vector without ever dropping the
-local that holds it — in the emitted C, the call site is
-
-```c
-{
-    yuga_vec_retain(&_l5);
-    _l14 = yuga_string_from_bytes(_l5);
-}
-```
-
-with no `yuga_vec_drop` for `_l5` anywhere in the function, so the two handles
-the buffer arrived with never reach a count of zero. The string the call
-returns is not freed either, by design (`yuga_rt.h`: "never freed — the
-language has no string ownership story to hook into yet"). Neither is
-reachable from Yuga, so the cost is a flat 5 bytes per frame byte: 4 for the
-`[]int` staging buffer, 1 for the string.
-
-Measured `max RSS`, which tracks the frame count linearly:
+Frame bytes are reclaimed as the render goes, so peak memory is the frame count
+times one leaked *string* (see below) plus the allocation high-water of the
+frame buffer:
 
 | Run | Frames | Pixels/frame | Max RSS |
 |---|---|---|---|
 | Checker 960x540 | 15 | 518,400 | 135 MB |
-| Checker 960x540 | 60 | 518,400 | 512 MB |
-| Plasma 960x540 (default) | 120 | 518,400 | 985 MB |
-| Plasma 480x270 | 120 | 129,600 | 236 MB |
+| Checker 960x540 | 60 | 518,400 | 231 MB |
+| Plasma 960x540 (default) | 120 | 518,400 | 252 MB |
+| Checker 480x270 | 60 | 129,600 | 72 MB |
+| Checker 96x54 | 60 | 5,184 | 20 MB |
 
-So the lever is the frame count and the size, not the on-disk cleanup — the
-frames are deleted after encoding, but the process has already paid for them.
+That is about **1 byte per frame byte**, which is exactly the string
+`string_from_bytes` returns: `yuga_rt.h` frees no string ("the language has no
+string ownership story to hook into yet"), so one frame's bytes stay resident
+per frame. Everything else — the `[]int` staging buffer, which is four bytes
+per frame byte — is allocated and released once per frame.
+
+Getting there needed three ownership fixes in the compiler, all of which are
+in `packages/yuga/src`: the `[]int` that feeds `string_from_bytes` used to be
+leaked twice over (once as a call argument whose caller drop was dropped, once
+as a `let` inside a loop body that was only released on the way *out* of the
+loop). Before them the same plasma held **985 MB** and the checker **512 MB**,
+about 5.5 bytes per frame byte; a `250`-frame render at 960x540 was not
+practical.
+
+So the lever on peak memory is still the frame count and the size — and
 `YUGA_PPM_SCALE=15 YUGA_PPM_FRAMES=15` keeps a preview under 20 MB.
 
 ## Limitations
