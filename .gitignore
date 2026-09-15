@@ -7,10 +7,10 @@ packages/loam/tests/routes_app/build/
 *.o
 *.dSYM/
 .DS_Store
-packages/tooling/tree-sitter-yuga/node_modules/
-packages/tooling/tree-sitter-yuga/bindings/
-packages/tooling/tree-sitter-yuga/build/
-packages/tooling/tree-sitter-yuga/target/
+packages/tooling/tree-sitter-loam/node_modules/
+packages/tooling/tree-sitter-loam/bindings/
+packages/tooling/tree-sitter-loam/build/
+packages/tooling/tree-sitter-loam/target/
 packages/tooling/editors/zed/target/
 packages/tooling/editors/zed/grammars/
 packages/tooling/editors/zed/extension.wasm
