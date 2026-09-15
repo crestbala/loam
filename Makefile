@@ -2,25 +2,29 @@
 
 CC      := cc
 CFLAGS  := -std=c11 -Wall -Wextra -Wpedantic -O2 -g -MMD -MP
-CFLAGS  += -DYUGA_RT_PATH=\"$(CURDIR)/packages/compiler/runtime/yuga_rt.h\"
-CFLAGS  += -DYUGA_RUNTIME_DIR=\"$(CURDIR)/packages/compiler/runtime\"
-CFLAGS  += -DYUGA_STD_DIR=\"$(CURDIR)/packages/compiler/std\"
+CFLAGS  += -DYUGA_RT_PATH=\"$(CURDIR)/packages/yuga/runtime/yuga_rt.h\"
+CFLAGS  += -DYUGA_RUNTIME_DIR=\"$(CURDIR)/packages/yuga/runtime\"
+CFLAGS  += -DYUGA_STD_DIR=\"$(CURDIR)/packages/yuga/std\"
 CFLAGS  += -DYUGA_ZEUS_DIR=\"$(CURDIR)/packages/zeus\"
+CFLAGS  += -DYUGA_RAYGUI_DIR=\"$(CURDIR)/packages/raygui\"
+CFLAGS  += -DYUGA_PATH=\"$(CURDIR)/packages/zeus:$(CURDIR)/packages/http:$(CURDIR)/packages/maya:$(CURDIR)/packages/raygui\"
 
-COMPILER_DIR := packages/compiler
+COMPILER_DIR := packages/yuga
 SRCDIR  := $(COMPILER_DIR)/src
 TESTDIR := $(COMPILER_DIR)/tests
 OBJDIR  := obj
 BINDIR  := bin
 
 ALL_C   := $(wildcard $(SRCDIR)/*.c) $(wildcard $(SRCDIR)/sema/*.c)
-LIB_C   := $(filter-out $(SRCDIR)/driver.c $(SRCDIR)/lsp.c,$(ALL_C))
+LIB_C   := $(filter-out $(SRCDIR)/driver.c $(SRCDIR)/lsp.c $(SRCDIR)/fmt.c,$(ALL_C))
 LIB_O   := $(patsubst $(SRCDIR)/%.c,$(OBJDIR)/%.o,$(LIB_C))
 YUGAC_O := $(LIB_O) $(OBJDIR)/driver.o
 LSP_O   := $(LIB_O) $(OBJDIR)/lsp.o
 
 TARGET  := $(BINDIR)/yugac
 LSP     := $(BINDIR)/yuga-lsp
+FMT     := $(BINDIR)/yugafmt
+ZEUS    := $(BINDIR)/zeus
 
 PASS    := $(sort $(wildcard $(TESTDIR)/compile_pass/*.yuga))
 FAIL    := $(sort $(wildcard $(TESTDIR)/compile_fail/*.yuga))
@@ -39,32 +43,52 @@ EXBUILD := $(TESTDIR)/tmp/build
 ZEUSAPPS := $(foreach d,$(wildcard $(ZEUSEX)/*),$(wildcard $(d)/$(notdir $(d)).yuga))
 EXAMPLES:= $(sort $(filter-out $(LANGEX)/oob.yuga,\
              $(wildcard $(GOLDEN)/*.yuga) $(wildcard $(LANGEX)/*.yuga) $(ZEUSAPPS)))
+# `examples/language/raygui.yuga` links raylib (and the vendored raygui header).
+# Keep it out of the default test set when raylib is not installed so `make test`
+# stays dependency-light; `./run.sh raygui` still builds and runs it.
+RAYGUI_EX := $(LANGEX)/raygui.yuga
+HAVE_RAYLIB := $(shell pkg-config --exists raylib 2>/dev/null && echo 1)
+ifeq ($(HAVE_RAYLIB),)
+EXAMPLES := $(filter-out $(RAYGUI_EX),$(EXAMPLES))
+endif
 
-.PHONY: all clean test mkdirs lsp grammar zed-grammar install-editor bench
+.PHONY: all clean test mkdirs lsp grammar grammar-check zed-grammar install-editor bench
 
-all: mkdirs $(TARGET) $(LSP)
+all: mkdirs $(TARGET) $(LSP) $(FMT) $(ZEUS)
 
 lsp: mkdirs $(LSP)
 
 grammar:
-	cd packages/tree-sitter-yuga && npx --yes tree-sitter-cli generate
+	cd packages/tooling/tree-sitter-yuga && npx --yes tree-sitter-cli generate
+	$(MAKE) grammar-check
 	$(MAKE) zed-grammar
+
+# The grammar is a second, hand-maintained parser and nothing in `make test`
+# reads it, so it rots silently while yugac moves on. Gate `make grammar` on it.
+grammar-check:
+	@bash packages/tooling/tree-sitter-yuga/check.sh
 
 # Zed clones this directory via file://, so it must be its own git repo with
 # src/parser.c at the clone root. The nested .git is local-only (not committed).
 zed-grammar:
-	@cd packages/tree-sitter-yuga && \
+	@cd packages/tooling/tree-sitter-yuga && \
 	  if [ ! -d .git ]; then git init; fi && \
 	  git add -A && \
 	  if git diff --cached --quiet && git rev-parse --verify HEAD >/dev/null 2>&1; then :; \
 	  else git -c user.name=yuga -c user.email=yuga@local commit --quiet -m "yuga grammar"; fi
-	@rev=$$(git -C packages/tree-sitter-yuga rev-parse HEAD); \
-	  sed -i '' "s/^rev = \".*\"/rev = \"$$rev\"/" packages/editors/zed/extension.toml; \
+	@rev=$$(git -C packages/tooling/tree-sitter-yuga rev-parse HEAD); \
+	  sed -i '' "s/^rev = \".*\"/rev = \"$$rev\"/" packages/tooling/editors/zed/extension.toml; \
 	  echo "zed grammar rev $$rev"
-	@rm -rf packages/editors/zed/grammars
+	@# Pin the clone URL to this checkout too, not just the rev: a moved grammar
+	@# directory otherwise leaves Zed cloning a path that no longer exists and
+	@# failing with "failed to compile grammar 'yuga'".
+	@repo="file://$(CURDIR)/packages/tooling/tree-sitter-yuga"; \
+	  sed -i '' "s|^repository = \".*\"|repository = \"$$repo\"|" packages/tooling/editors/zed/extension.toml; \
+	  echo "zed grammar repo $$repo"
+	@rm -rf packages/tooling/editors/zed/grammars
 
 install-editor:
-	@python3 packages/editors/vscode/install.py
+	@python3 packages/tooling/editors/vscode/install.py
 
 mkdirs:
 	@mkdir -p $(OBJDIR) $(OBJDIR)/sema $(BINDIR) $(TESTDIR)/tmp $(EXBUILD)
@@ -75,7 +99,19 @@ $(TARGET): $(YUGAC_O)
 $(LSP): $(LSP_O)
 	$(CC) $(CFLAGS) $(LSP_O) -o $@
 
-$(OBJDIR)/%.o: $(SRCDIR)/%.c
+# Standalone: fmt.c has its own main and links nothing else.
+$(FMT): $(SRCDIR)/fmt.c
+	$(CC) $(CFLAGS) $< -o $@
+
+# `bin/zeus` — run the framework CLI without spelling out the deno invocation.
+$(ZEUS): packages/zeus/cli/zeus.ts
+	@printf '#!/bin/sh\nexec deno run --quiet --allow-read --allow-write --allow-run --allow-env --allow-net "%s/packages/zeus/cli/zeus.ts" "$$@"\n' "$(CURDIR)" > $@
+	@chmod +x $@
+
+# CFLAGS in this file carry the build-time paths (YUGA_PATH, YUGA_*_DIR), so an
+# edit to the Makefile must rebuild every object — `.d` files only track source
+# includes, which is how a path change silently kept a stale YUGA_PATH.
+$(OBJDIR)/%.o: $(SRCDIR)/%.c Makefile
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -85,7 +121,7 @@ clean:
 	rm -rf $(OBJDIR) $(BINDIR) $(TESTDIR)/tmp $(COMPILER_DIR)/runtime/.obj
 
 # Phase 10: arena size, layout time, and binary size with the 32-bit default
-# vs --int64-compat. See packages/compiler/tests/bench/.
+# vs --int64-compat. See packages/yuga/tests/bench/.
 bench: all
 	@sh $(TESTDIR)/bench/run.sh
 
@@ -177,6 +213,95 @@ test: all
 	    echo "ok   in-language $$f"; \
 	  fi; \
 	done; \
+	if ! DENO_DIR=$(TESTDIR)/tmp/deno deno run --quiet --allow-read --allow-write packages/zeus/cli/zeus.ts routes packages/yuga/tests/routes_app >$(TESTDIR)/tmp/routes_gen.log 2>&1; then \
+	  echo "FAIL zeus routes generator"; cat $(TESTDIR)/tmp/routes_gen.log; err=1; \
+	elif ! ./$(TARGET) packages/yuga/tests/routes_app/app.yuga -o $(TESTDIR)/tmp/routes_app >$(TESTDIR)/tmp/routes_compile.log 2>&1; then \
+	  echo "FAIL compile packages/yuga/tests/routes_app/app.yuga"; cat $(TESTDIR)/tmp/routes_compile.log; err=1; \
+	elif ! $(TESTDIR)/tmp/routes_app >$(TESTDIR)/tmp/routes_run.log 2>&1; then \
+	  echo "FAIL run packages/yuga/tests/routes_app/app.yuga"; cat $(TESTDIR)/tmp/routes_run.log; err=1; \
+	else \
+	  echo "ok   zeus routes app"; \
+	fi; \
+	if ! DENO_DIR=$(TESTDIR)/tmp/deno deno run --quiet --allow-read --allow-write --allow-run --allow-env packages/zeus/cli/zeus.ts build packages/yuga/tests/routes_app --targets web,macos >$(TESTDIR)/tmp/zeus_build.log 2>&1; then \
+	  echo "FAIL zeus build"; cat $(TESTDIR)/tmp/zeus_build.log; err=1; \
+	elif [ ! -f packages/yuga/tests/routes_app/build/web/app.wasm ] || [ ! -f packages/yuga/tests/routes_app/build/macos/app ]; then \
+	  echo "FAIL zeus build artifacts"; cat $(TESTDIR)/tmp/zeus_build.log; err=1; \
+	else \
+	  echo "ok   zeus build (web + macos artifacts)"; \
+	fi; \
+	if [ -f packages/yuga/tests/routes_app/build/web/index.html ] && \
+	   [ -f packages/yuga/tests/routes_app/build/web/blog/index.html ] && \
+	   [ -f packages/yuga/tests/routes_app/build/web/blog/hello-world/index.html ] && \
+	   grep -q "<title>Blog</title>" packages/yuga/tests/routes_app/build/web/blog/index.html && \
+	   grep -q "<title>hello-world</title>" packages/yuga/tests/routes_app/build/web/blog/hello-world/index.html && \
+	   grep -q "/blog/hello-world" packages/yuga/tests/routes_app/build/web/sitemap.xml && \
+	   grep -q "User-agent" packages/yuga/tests/routes_app/build/web/robots.txt && \
+	   [ "$$(grep -c '<canvas' packages/yuga/tests/routes_app/build/web/blog/index.html)" = "1" ]; then \
+	  echo "ok   zeus web shell (per-route head + sitemap + robots)"; \
+	else \
+	  echo "FAIL zeus web shell"; err=1; \
+	fi; \
+	if ! DENO_DIR=$(TESTDIR)/tmp/deno deno run --quiet --allow-read --allow-write --allow-run --allow-env packages/zeus/cli/zeus.ts pkg sync packages/yuga/tests/pkg_app >$(TESTDIR)/tmp/pkg_sync.log 2>&1; then \
+	  echo "FAIL zeus pkg sync"; cat $(TESTDIR)/tmp/pkg_sync.log; err=1; \
+	elif ! ./$(TARGET) packages/yuga/tests/pkg_app/app.yuga -o $(TESTDIR)/tmp/pkg_app >$(TESTDIR)/tmp/pkg_app.log 2>&1; then \
+	  echo "FAIL compile pkg app"; cat $(TESTDIR)/tmp/pkg_app.log; err=1; \
+	elif ! $(TESTDIR)/tmp/pkg_app >$(TESTDIR)/tmp/pkg_run.log 2>&1; then \
+	  echo "FAIL run pkg app"; cat $(TESTDIR)/tmp/pkg_run.log; err=1; \
+	else \
+	  echo "ok   zeus pkg sync + import pkg:name"; \
+	fi; \
+	if ./$(FMT) packages/yuga/tests/fmt/in.yuga >$(TESTDIR)/tmp/fmt.out 2>&1 && \
+	   diff -u packages/yuga/tests/fmt/want.yuga $(TESTDIR)/tmp/fmt.out >/dev/null 2>&1 && \
+	   ./$(FMT) packages/yuga/tests/fmt/want.yuga >$(TESTDIR)/tmp/fmt.idem 2>&1 && \
+	   diff -u packages/yuga/tests/fmt/want.yuga $(TESTDIR)/tmp/fmt.idem >/dev/null 2>&1; then \
+	  echo "ok   yugafmt (canonical + idempotent)"; \
+	else \
+	  echo "FAIL yugafmt"; diff -u packages/yuga/tests/fmt/want.yuga $(TESTDIR)/tmp/fmt.out; err=1; \
+	fi; \
+	if ! DENO_DIR=$(TESTDIR)/tmp/deno deno run --quiet --allow-read --allow-write --allow-run --allow-env packages/zeus/cli/zeus.ts dev packages/yuga/tests/routes_app --build-only >$(TESTDIR)/tmp/zeus_dev.log 2>&1; then \
+	  echo "FAIL zeus dev"; cat $(TESTDIR)/tmp/zeus_dev.log; err=1; \
+	else \
+	  echo "ok   zeus dev --build-only"; \
+	fi; \
+	if ! DENO_DIR=$(TESTDIR)/tmp/deno deno run --quiet --allow-read --allow-write packages/zeus/cli/dev_test.ts >$(TESTDIR)/tmp/dev_test.log 2>&1; then \
+	  echo "FAIL zeus dev handler"; cat $(TESTDIR)/tmp/dev_test.log; err=1; \
+	else \
+	  echo "ok   zeus dev handler"; \
+	fi; \
+	if ./$(TARGET) --target=wasm32 packages/yuga/tests/wasm_smoke/app.yuga -o $(TESTDIR)/tmp/wasm_smoke.wasm >$(TESTDIR)/tmp/wasm_smoke_build.log 2>&1 && \
+	   DENO_DIR=$(TESTDIR)/tmp/deno deno run --quiet --allow-read packages/zeus/hosts/web/wasm_smoke.ts $(TESTDIR)/tmp/wasm_smoke.wasm >$(TESTDIR)/tmp/wasm_smoke.log 2>&1; then \
+	  echo "ok   wasm smoke (host entry points)"; \
+	else \
+	  echo "FAIL wasm smoke"; cat $(TESTDIR)/tmp/wasm_smoke.log 2>/dev/null; cat $(TESTDIR)/tmp/wasm_smoke_build.log; err=1; \
+	fi; \
+	if DENO_DIR=$(TESTDIR)/tmp/deno deno run --quiet --allow-read --allow-write --allow-run --allow-env packages/zeus/cli/zeus.ts build examples/zeus/myapp >$(TESTDIR)/tmp/myapp_build.log 2>&1 && \
+	   [ -f examples/zeus/myapp/build/macos/app ] && \
+	   grep -q "<title>Blog</title>" examples/zeus/myapp/build/web/blog/index.html && \
+	   grep -q "/blog/hello-world" examples/zeus/myapp/build/web/sitemap.xml; then \
+	  echo "ok   zeus example myapp (barebone builds all targets)"; \
+	else \
+	  echo "FAIL zeus example myapp"; cat $(TESTDIR)/tmp/myapp_build.log 2>/dev/null; err=1; \
+	fi; \
+	if DENO_DIR=$(TESTDIR)/tmp/deno deno run --quiet --allow-read packages/zeus/hosts/web/wasm_smoke.ts examples/zeus/myapp/build/web/app.wasm >$(TESTDIR)/tmp/myapp_wasm.log 2>&1; then \
+	  echo "ok   zeus example myapp (wasm runs)"; \
+	else \
+	  echo "FAIL zeus example myapp wasm"; cat $(TESTDIR)/tmp/myapp_wasm.log 2>/dev/null; err=1; \
+	fi; \
+	if ./$(TARGET) examples/zeus/myapp/tests/routes.yuga -o $(TESTDIR)/tmp/myapp_routes >$(TESTDIR)/tmp/myapp_routes.log 2>&1 && \
+	   $(TESTDIR)/tmp/myapp_routes >>$(TESTDIR)/tmp/myapp_routes.log 2>&1; then \
+	  echo "ok   zeus example myapp (every route paints)"; \
+	else \
+	  echo "FAIL zeus example myapp routes"; cat $(TESTDIR)/tmp/myapp_routes.log 2>/dev/null; err=1; \
+	fi; \
+	if YUGA_SERVER_SPLIT=1 ./$(TARGET) --emit-c packages/yuga/tests/compile_pass/server_split.yuga -o $(TESTDIR)/tmp/server_split.c >/dev/null 2>&1; then \
+	  if grep -q "SERVER_SECRET_MARKER" $(TESTDIR)/tmp/server_split.c; then \
+	    echo "FAIL server body leaked into client build"; err=1; \
+	  else \
+	    echo "ok   server split (body excluded)"; \
+	  fi; \
+	else \
+	  echo "FAIL server split emit"; err=1; \
+	fi; \
 	if ! python3 $(TESTDIR)/lsp_smoke.py; then err=1; fi; \
 	if [ $$err -ne 0 ]; then echo "TESTS FAILED"; exit 1; fi; \
 	echo "ALL TESTS PASSED"

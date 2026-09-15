@@ -1,0 +1,67 @@
+// Phase 15 router core: route matching with typed params, navigation, a
+// retained shell, and per-route error recovery through `zeus.Boundary`.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:router"
+
+fn Home(p: Params) {
+    zeus.Text("home")
+}
+
+fn Post(p: Params) {
+    zeus.Text(router.param(p, "slug"))
+}
+
+fn Boom(p: Params) {
+    let a = []int { 1 }
+    let mut i = 5
+    let bad = a[i]
+    zeus.Text("{{bad}}")
+}
+
+fn fail(what: string) {
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn main() {
+    zeus.snapshot(240, 160, fn() -> Node {
+        zeus.Box(align_direction = DIRECTION.Column) {
+            zeus.Text("shell")
+            router.Router([]Route {
+                Route { pattern: "/", build: Home },
+                Route { pattern: "/post/:slug", build: Post },
+                Route { pattern: "/boom", build: Boom },
+            }, RouterProps {})
+        }
+    })
+    if zeus.engine_find_text("home") == 0 {
+        fail("initial route")
+    }
+    router.navigate("/post/hello")
+    zeus.engine_layout(240, 160)
+    if zeus.engine_find_text("hello") == 0 {
+        fail("param route")
+    }
+    if zeus.engine_find_text("shell") == 0 {
+        fail("shell lost across navigation")
+    }
+    router.navigate("/boom")
+    zeus.engine_layout(240, 160)
+    if zeus.engine_find_text("route error") == 0 {
+        fail("route trap not caught by boundary")
+    }
+    router.navigate("/missing")
+    zeus.engine_layout(240, 160)
+    if zeus.engine_find_text("not found") == 0 {
+        fail("not-found fallback")
+    }
+    router.back()
+    zeus.engine_layout(240, 160)
+    if zeus.engine_find_text("route error") == 0 {
+        fail("back navigation")
+    }
+    fmt.println("router ok")
+}

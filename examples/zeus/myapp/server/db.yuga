@@ -1,0 +1,2 @@
+//! Database access belongs here, behind `#[server]` fns so handles and
+//! secrets never reach a client binary.

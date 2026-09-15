@@ -1,0 +1,52 @@
+//! result — `Res<T>`, a checked outcome for fallible APIs (§1.1).
+//!
+//! `Res<T>` is marked `#[must_check]`: a `Res` value that is dropped without
+//! being read is a **compile error**, so a caller cannot silently ignore a
+//! failure (`let r = http.call(...)` and then never touching `r`).
+//!
+//! There is no pattern matching and no `?` operator. Handle a result by
+//! reading a field (`.ok`, `.val`, `.err`) or by calling `or_trap` / `or`.
+//!
+//! ```
+//! import "std:result"
+//!
+//! let r = http.call(c, "Counter.Increment", body)
+//! if r.ok {
+//!     use(decode_Count(r.val))
+//! }
+//! ```
+
+/// A fallible outcome. Read `val` only when `ok` is true.
+#[must_check]
+struct Res<T> {
+    ok: bool,
+    val: T,
+    err: string,
+}
+
+/// A successful result carrying `v`.
+fn ok<T>(v: T) -> Res<T> {
+    return Res { ok: true, val: v, err: "" }
+}
+
+/// A failed result carrying `e`; `dflt` stands in for a value that is absent.
+fn err<T>(e: string, dflt: T) -> Res<T> {
+    return Res { ok: false, val: dflt, err: e }
+}
+
+/// The value, or a trap when the operation failed. Use when a failure is
+/// genuinely unrecoverable at this call site.
+fn or_trap<T>(r: Res<T>) -> T {
+    if !r.ok {
+        panic(r.err)
+    }
+    return r.val
+}
+
+/// The value, or `dflt` when the operation failed.
+fn or<T>(r: Res<T>, dflt: T) -> T {
+    if r.ok {
+        return r.val
+    }
+    return dflt
+}

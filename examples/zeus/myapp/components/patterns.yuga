@@ -1,0 +1,157 @@
+//! Patterns page: compositions rather than single widgets — growing lists,
+//! card grids, charts, loading placeholders, and modal overlays.
+
+import "std:zeus"
+
+let mut chart_labs: []string = []string {}
+let mut chart_series: []string = []string {}
+let mut chart_vals: []int = []int {}
+
+fn NameRow(name: string) -> Node {
+    zeus.Row(SPACE.Sm) {
+        zeus.Pip(zeus.mute(), 6)
+        zeus.Body(name)
+    }
+}
+
+fn LiveList() {
+    let n = zeus.signal(2)
+    zeus.SectionHeader("Lists", "Growing rows",
+        "Add and remove rows. Extra rows are shown, not rebuilt with zeus.For.")
+    zeus.Card() {
+        zeus.show_ge(NameRow("Ada"), n, 1)
+        zeus.show_ge(NameRow("Bea"), n, 2)
+        zeus.show_ge(NameRow("Row"), n, 3)
+        zeus.show_ge(NameRow("Row"), n, 4)
+        zeus.Row(SPACE.Sm) {
+            zeus.Button("Add row", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() {
+                if n.get() < 4 {
+                    n.set(n.get() + 1)
+                }
+            })
+            zeus.Button("Remove", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click = fn() {
+                if n.get() > 0 {
+                    n.set(n.get() - 1)
+                }
+            })
+        }
+    }
+}
+
+fn Cards() {
+    zeus.SectionTitle("Surfaces", "Cards")
+    zeus.Grid(config = GridConfig(columns = 3, gap = SPACE.Md)) {
+        zeus.Card() { zeus.Pip(zeus.accent(), 8) zeus.Title("Small") zeus.Body("Neutral primary on paper.") }
+        zeus.Card() { zeus.Pip(zeus.ok(), 8) zeus.Title("Medium") zeus.Body("Rounded-xl is the card radius.") }
+        zeus.Card() { zeus.Pip(zeus.danger(), 8) zeus.Title("Large") zeus.Body("Badges and caps mark status.") }
+    }
+}
+
+fn Skeletons() {
+    zeus.SectionHeader("Feedback", "Skeleton",
+        "Placeholder fills while content loads. Radius matches the shape it replaces.")
+    zeus.Card() {
+        zeus.Row(SPACE.Md) {
+            zeus.Skeleton(40, 40, 20)
+            zeus.Column(SPACE.Exs) {
+                zeus.Skeleton(220, 14, 7)
+                zeus.Skeleton(160, 14, 7)
+            }
+        }
+    }
+}
+
+fn Overlays() {
+    let open = zeus.signal(0)
+    let ask = zeus.signal(0)
+    zeus.SectionTitle("Overlay", "Dialog and alert dialog")
+    zeus.Row(SPACE.Sm) {
+        zeus.Button("Dialog", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => open.set(1))
+        zeus.Button("Alert dialog", look = zeus.LOOK.Outline, size = zeus.SIZE.Md, on_click = fn() => ask.set(1))
+    }
+    zeus.Body("Dialog has a corner X; alert dialog does not. Cancel is ghost or outline; the destructive action closes.")
+    zeus.Dialog(open, title = "Share the link?") {
+        zeus.Body("Anyone with the link can view this project. You can revoke access later.")
+        zeus.Row(SPACE.Sm) {
+            zeus.Grow()
+            zeus.Button("Cancel", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click = fn() => open.set(0))
+            zeus.Button("Share", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => open.set(0))
+        }
+    }
+    zeus.AlertDialog(ask, title = "Discard changes?") {
+        zeus.Body("This cannot be undone. The working tree keeps whatever you have not saved.")
+        zeus.Row(SPACE.Sm) {
+            zeus.Grow()
+            zeus.Button("Cancel", look = zeus.LOOK.Outline, size = zeus.SIZE.Md, on_click = fn() => ask.set(0))
+            zeus.Button("Discard", look = zeus.LOOK.Danger, size = zeus.SIZE.Md, on_click = fn() => ask.set(0))
+        }
+    }
+}
+
+fn ChartCards() {
+    if chart_labs.len == 0 {
+        push(chart_labs, "Jan")
+        push(chart_labs, "Feb")
+        push(chart_labs, "Mar")
+        push(chart_labs, "Apr")
+        push(chart_labs, "May")
+        push(chart_labs, "Jun")
+        push(chart_labs, "Jul")
+        push(chart_labs, "Aug")
+        push(chart_labs, "Sep")
+        push(chart_labs, "Oct")
+        push(chart_labs, "Nov")
+        push(chart_labs, "Dec")
+        push(chart_series, "Desktop")
+        push(chart_series, "Mobile")
+        push(chart_vals, 186)
+        push(chart_vals, 82)
+        push(chart_vals, 305)
+        push(chart_vals, 134)
+        push(chart_vals, 237)
+        push(chart_vals, 120)
+        push(chart_vals, 73)
+        push(chart_vals, 190)
+        push(chart_vals, 209)
+        push(chart_vals, 130)
+        push(chart_vals, 214)
+        push(chart_vals, 140)
+        push(chart_vals, 240)
+        push(chart_vals, 180)
+        push(chart_vals, 170)
+        push(chart_vals, 160)
+        push(chart_vals, 210)
+        push(chart_vals, 150)
+        push(chart_vals, 230)
+        push(chart_vals, 190)
+        push(chart_vals, 250)
+        push(chart_vals, 220)
+        push(chart_vals, 170)
+        push(chart_vals, 260)
+    }
+    zeus.SectionHeader("Data", "Charts",
+        "Hover a column or a point: the floating tooltip lists every series value. The plot re-fits its card on window resize.")
+    zeus.Card() {
+        zeus.Title("Bar chart · Total visitors")
+        zeus.Body("Desktop and mobile sessions by month, grouped per category.")
+        zeus.BarChart(chart_labs, chart_series, chart_vals, 850, 216)
+    }
+    zeus.Card() {
+        zeus.Title("Line chart · Trend")
+        zeus.Body("Straight segments with a dot on every data point; the stroke follows the series color.")
+        zeus.LineChart(chart_labs, chart_series, chart_vals, 850, 216)
+    }
+    zeus.Card() {
+        zeus.Title("Area chart · Volume")
+        zeus.Body("A tinted wash under the line; the fill restyles with the appearance.")
+        zeus.AreaChart(chart_labs, chart_series, chart_vals, 850, 216)
+    }
+}
+
+fn Patterns() {
+    LiveList()
+    Cards()
+    ChartCards()
+    Skeletons()
+    Overlays()
+}

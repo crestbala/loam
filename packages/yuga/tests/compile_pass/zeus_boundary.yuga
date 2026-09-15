@@ -1,0 +1,43 @@
+// Phase 14 error boundary: a trap inside `Boundary` discards the partial
+// subtree, rolls the arena back, paints the fallback, and the rest of the app
+// keeps running. The trapped row allocates a signal and a node before it blows
+// up, so this also exercises the arena rollback.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn Boom() {
+    let s = zeus.signal(7)
+    zeus.Text("boom {{s.get()}}")
+    let a = []int { 1, 2 }
+    let mut i = 9
+    let bad = a[i]
+    zeus.Text("unreachable {{bad}}")
+}
+
+fn main() {
+    zeus.snapshot(240, 160, fn() -> Node {
+        zeus.Box(align_direction = DIRECTION.Column) {
+            zeus.Boundary(Boom, fn(msg) {
+                zeus.Text("recovered")
+            })
+            zeus.Text("sibling survives")
+        }
+    })
+    if zeus.engine_find_text("recovered") == 0 {
+        fmt.println("FAIL boundary fallback missing")
+        sys.exit(1)
+    }
+    if zeus.engine_find_text("sibling survives") == 0 {
+        fmt.println("FAIL sibling lost after trap")
+        sys.exit(1)
+    }
+    if zeus.engine_find_text("boom 7") != 0 {
+        fmt.println("FAIL partial subtree survived the rollback")
+        sys.exit(1)
+    }
+    // The app is still live: a later layout must not crash on dangling ids.
+    zeus.engine_layout(240, 160)
+    fmt.println("boundary ok")
+}

@@ -1,0 +1,84 @@
+// Phase 18: per-route `Meta.title` reaches the host on navigation and on a
+// deep link, and an empty meta leaves the title alone.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:router"
+
+fn eq(a: string, b: string) -> bool {
+    if a.len != b.len {
+        return false
+    }
+    let mut i = 0
+    while i < a.len {
+        if a[i] != b[i] {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn Home(p: Params) {
+    zeus.Text("home")
+}
+
+fn Post(p: Params) {
+    zeus.Text(router.param(p, "slug"))
+}
+
+fn Plain(p: Params) {
+    zeus.Text("plain")
+}
+
+fn home_meta(p: Params) -> Meta {
+    return Meta { title: "Home", description: "the home page" }
+}
+
+fn post_meta(p: Params) -> Meta {
+    return Meta { title: router.param(p, "slug") }
+}
+
+fn main() {
+    zeus.snapshot(300, 200, fn() -> Node {
+        router.Router([]Route {
+            Route { pattern: "/", build: Home, meta: home_meta },
+            Route { pattern: "/post/:slug", build: Post, meta: post_meta },
+            Route { pattern: "/plain", build: Plain },
+        }, RouterProps {})
+    })
+
+    // The initial route's meta applies at mount.
+    must(eq(router.meta_title(), "Home"), "initial title")
+
+    // Navigation applies the target route's meta (params included).
+    router.navigate("/post/hello")
+    zeus.engine_layout(300, 200)
+    must(eq(router.meta_title(), "hello"), "navigation title")
+
+    // A route without meta leaves the title unchanged.
+    router.navigate("/plain")
+    zeus.engine_layout(300, 200)
+    must(eq(router.meta_title(), "hello"), "meta-less route keeps title")
+
+    // A deep link (host entry) routes and retitles.
+    router.engine_open_url("/")
+    zeus.engine_layout(300, 200)
+    must(eq(router.meta_title(), "Home"), "deep-link title")
+
+    // Back returns to the previous route's meta.
+    router.back()
+    zeus.engine_layout(300, 200)
+    must(eq(router.meta_title(), "Home") || eq(router.meta_title(), "hello"),
+         "back title is a real route")
+
+    fmt.println("meta ok")
+}

@@ -1,0 +1,18 @@
+// Fixture for `zeus pkg sync` + `import "pkg:name"` (§1.8): the vendored
+// package is a local path, so sync needs no network.
+
+import "std:fmt"
+import "std:sys"
+import "pkg:greet"
+
+fn fail(what: string) {
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn main() {
+    if !fmt.eq(greet.hello(), "hello from pkg") {
+        fail("pkg import value")
+    }
+    fmt.println("pkg ok")
+}

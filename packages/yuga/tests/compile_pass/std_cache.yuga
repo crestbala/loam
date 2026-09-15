@@ -1,0 +1,71 @@
+// Phase 16 route cache: revalidate (ttl), explicit invalidate, persistence
+// through std:kv, and the loader-side `cached` primitive (§5.5).
+
+import "std:fmt"
+import "std:sys"
+import "std:kv"
+import "std:cache"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+let mut calls: int = 0
+
+fn produce() -> string {
+    calls = calls + 1
+    return "made"
+}
+
+fn main() {
+    let path = "packages/yuga/tests/tmp/cache_test.dat"
+    sys.write_file(path, "")
+    let c = cache.open_path(path)
+
+    let k = cache.key("/post/:slug", "abc")
+    must(fmt.eq(k, "/post/:slug?abc"), "key shape")
+    must(cache.get(c, k, 60).fresh == 0, "missing is not fresh")
+
+    cache.put(c, k, "v1")
+    let e = cache.get(c, k, 60)
+    must(e.fresh == 1, "fresh within ttl")
+    must(fmt.eq(e.val, "v1"), "value round-trips")
+
+    // A stale entry still reads its value, it is just not fresh.
+    kv.set(c.store, "old", "0\nstale")
+    let so = cache.get(c, "old", 1)
+    must(so.fresh == 0, "old entry is stale")
+    must(fmt.eq(so.val, "stale"), "stale value still readable")
+
+    // Persistence: a fresh handle sees the rows through std:kv.
+    let c2 = cache.open_path(path)
+    must(fmt.eq(cache.value(c2, k), "v1"), "persisted value")
+
+    // `cached` computes once, then serves from the cache.
+    let v1 = cache.cached(c2, "made-key", 600, fn() { produce() })
+    must(fmt.eq(v1, "made"), "produce result")
+    must(calls == 1, "produced once")
+    let v2 = cache.cached(c2, "made-key", 600, fn() { produce() })
+    must(fmt.eq(v2, "made"), "cached result")
+    must(calls == 1, "second read served from cache")
+
+    // `invalidate` forces the next call to recompute.
+    cache.invalidate(c2, "made-key")
+    let v3 = cache.cached(c2, "made-key", 600, fn() { produce() })
+    must(fmt.eq(v3, "made"), "recomputed result")
+    must(calls == 2, "invalidated key recomputed")
+
+    // ttl <= 0 never expires.
+    cache.put(c2, "forever", "x")
+    must(cache.get(c2, "forever", 0).fresh == 1, "ttl 0 never expires")
+
+    // `clear` drops every key.
+    cache.clear(c2)
+    must(cache.get(c2, "made-key", 600).fresh == 0, "cleared key gone")
+    must(fmt.eq(cache.value(c2, k), ""), "cleared entry gone")
+
+    fmt.println("cache ok")
+}

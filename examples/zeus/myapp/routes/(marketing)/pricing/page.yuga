@@ -1,0 +1,10 @@
+import "std:zeus"
+import "std:router"
+
+fn page(p: Params) {
+    zeus.Text("pricing")
+}
+
+fn meta(p: Params) -> Meta {
+    return Meta { title: "Pricing" }
+}

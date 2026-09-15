@@ -1,0 +1,15 @@
+// Phase 17: a #[must_check] value discarded as a bare expression statement is
+// also an error, not just an unused `let`.
+
+#[must_check]
+struct Checked {
+    ok: bool,
+}
+
+fn mk() -> Checked {
+    return Checked { ok: true }
+}
+
+fn main() {
+    mk()
+}

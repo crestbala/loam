@@ -19,8 +19,8 @@ and style/type values. 64-bit is reserved for the cases in
 | `async.now_ms`, `async.Timer.at` | `i64` | monotonic / epoch millis overflow i32 in ~24 days |
 | `http` call deadlines (`at` fields in the async/ws call records) | `i64` | same clock |
 | `maya.plat_now_ms`, `mayacore.scene.t0_ms`, `scene.frame` | `i64` | same clock |
-| SHA-1 in `std/httpcore/ws.yuga` | `u64` | 32-bit hash bit patterns with headroom before the mask |
-| HPACK Huffman accumulator in `std/httpcore/huff.yuga` | `i64` | the bit buffer holds up to ~37 bits between codewords |
+| SHA-1 in `packages/http/std/httpcore/ws.yuga` | `u64` | 32-bit hash bit patterns with headroom before the mask |
+| HPACK Huffman accumulator in `packages/http/std/httpcore/huff.yuga` | `i64` | the bit buffer holds up to ~37 bits between codewords |
 | FNV / LCG in `examples/zeus/greeninfer/engine.yuga` | `u64` | same |
 | `zeus.scaled` intermediate product | `i64` | `v * scale` before the `/ 100`; the result is `int` |
 | C seam: file sizes, mmap offsets, byte counts, `yuga_str.len` storage | `int64_t` | 2 GB is not a limit worth baking in |
@@ -34,7 +34,7 @@ signatures.
 
 ## Benchmark
 
-`make bench` builds `packages/compiler/tests/bench/bench.yuga` (a fixed ~3000
+`make bench` builds `packages/yuga/tests/bench/bench.yuga` (a fixed ~3000
 node tree, 500 layout passes, then one paint) with the pre-flip tree (`git HEAD`,
 `int` = i64) and with the current default, and records arena counts, layout time,
 native binary size, generated C size, and wasm size when `YUGA_WASM_CC` is set.
@@ -44,7 +44,7 @@ Representative run on macOS, headless, `-O0`:
 | Metric | before (int = i64) | after (int = i32, Phase 11 layout) |
 |---|---|---|
 | arena nodes | 3002 | 3002 |
-| node record | (not available) | 480 B |
+| node record | (not available) | 416 B |
 | arena bytes | — | 1,440,960 |
 | draw ops | 1500 | 1500 |
 | draw-op record | (not available) | 56 B |
@@ -77,8 +77,9 @@ out below and is why the goldens were regenerated.
 | widest-first order, every field `int` | 536 |
 | + nine flag/enum fields narrowed to `u8` | 512 |
 | + sixteen length fields narrowed to `u16` | 480 |
+| + twenty-two enum/ease/percent fields narrowed to `u8`/`i8`/`i16`/`u16` | 416 |
 
-That is **12% off the record** on top of Phase 10's 32-bit flip, and the
+That is **24% off the record** on top of Phase 10's 32-bit flip, and the
 ordering step is what makes the narrowing pay: scattering `u8`/`u16` fields
 between `i32`s would have the compiler re-insert padding and save nothing.
 
@@ -90,6 +91,27 @@ that does not fit is a compile error at the literal (`literal 70000 does not fit
 u16`). Values reach these fields through the props layer, where `-1` means
 "unset" and `skip_unset` returns before the narrowed setter runs, so the
 sentinel never reaches `u16`.
+
+The second narrowing pass moves twenty-two more fields out of the `i32` block.
+Fifteen are enums or flags whose whole value set is enumerable from the source
+(`kind` tops out at 13; `dir`, `justify`, `pos`, `wrap`, `reverse`,
+`click_mode`, `click2_mode`, `focusable`, `pulse`, `enter_fade`, `safe` are
+0/1 or a small enum) plus the three eases `press_amt` / `hover_amt` /
+`show_amt`, which `scene.yuga` clamps to `0..100` explicitly. Four take a `-1`
+"unset" sentinel and so go to `i8` rather than `u8`: `w_pct`, `h_pct`,
+`align_self`, `hover_fade`. `opacity` and `z_index` go to `i16` (both signed,
+neither clamped at its setter), and `text_rot` to `u16` (0..359).
+
+Deliberately **not** narrowed: `bg` / `bg2` / `fg` / `border_c` are 24-bit
+colors carrying a `-1` sentinel; the geometry fields are unbounded in practice
+(`max_w` legitimately reaches 100000 — `Upload` in the gallery sets exactly
+that); and `*_sig` / `*_fn` / `parent` / `nid` / `key_ctx` / `edit_slot` /
+`list_*` are arena indices, where a 16-bit ceiling would be a hard cap on tree
+size rather than a width saving. `grow` / `shrink` are left alone because
+`shrink_weight` composes them arithmetically.
+
+The pass is value-preserving: all eight DRAW goldens are byte-identical, so no
+regeneration was needed (unlike the `border_w` fix below).
 
 `border_w` narrowing exposed a latent bug that had to be fixed in the same
 commit. `SET.Border` was in `skip_unset`'s always-apply set, and every container

@@ -7,7 +7,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const app = process.env.ZEUS_APP || "examples/counter";
 const appDir = resolve(here, app);
 const buildDir = resolve(appDir, "build");
-const loaderPath = resolve(here, "zeus-wasm/loader.js");
+const loaderPath = resolve(here, "hosts/web/zeus-wasm/loader.js");
 
 function sendFile(res, file, type) {
   if (!existsSync(file)) {

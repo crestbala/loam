@@ -51,14 +51,14 @@ fn of(id: int) -> PageResp {
         return pack(
             "Modules",
             "Quoted imports only. No glob imports. Symbols are always name.symbol.",
-            "import \"std:foo\" loads packages/compiler/std/foo.yuga. Relative import \"rel/path.yuga\" is from the importing file; the module name is the file stem.\n\nCycles are errors. UI children are trailing blocks on Box / Text, not chained .child calls.",
+            "import \"std:foo\" loads packages/yuga/std/foo.yuga. Relative import \"rel/path.yuga\" is from the importing file; the module name is the file stem.\n\nCycles are errors. UI children are trailing blocks on Box / Text, not chained .child calls.",
             "import \"std:zeus\"\n\nfn main() {\n    zeus.App(\"Hello\", fn() {\n        zeus.Box(padding = 16) {\n            zeus.Text(\"Hello\")\n        }\n    })\n}"
         )
     }
     if id == 7 {
         return pack(
             "Libraries",
-            "Language libraries live in packages/compiler/std/. Import with import \"std:name\".",
+            "Language libraries live in packages/yuga/std/. Import with import \"std:name\".",
             "std:fmt — stdout, not printf. std:zeus — UI Node tree, Signal<T>, and the whole themed design system (Card, Button with LOOK/SIZE, Dialog, Navbar, For lists). std:http — unary RPC, #[proto], gRPC-Web and h2c. std:maya — 3D/2D, integer world units. std:sys — env, files, exec (native). std:net — TCP; used by http, not a typical app import.\n\nWidgets and components share one import: std:zeus.",
             "import \"std:fmt\"\n\nfn main() {\n    fmt.println(\"hello, yuga\")\n}"
         )
@@ -130,7 +130,7 @@ fn of(id: int) -> PageResp {
     return pack(
         "Yuga",
         "A memory-safe systems language: Odin-like syntax, Rust-like ownership.",
-        "The compiler (yugac) typechecks a program, lowers it to IR, emits C99, and invokes cc. C is the platform binding target, not the language's semantics.\n\nQuoted imports only: import \"std:foo\" loads packages/compiler/std/foo.yuga. Call imported items as foo.bar(...).\n\nThis site is a Zeus app. Page copy comes from Docs.Page over gRPC-Web (Yuga backend). Vite serves the Canvas2D wasm and proxies /Docs to :8082.",
+        "The compiler (yugac) typechecks a program, lowers it to IR, emits C99, and invokes cc. C is the platform binding target, not the language's semantics.\n\nQuoted imports only: import \"std:foo\" loads packages/yuga/std/foo.yuga. Call imported items as foo.bar(...).\n\nThis site is a Zeus app. Page copy comes from Docs.Page over gRPC-Web (Yuga backend). Vite serves the Canvas2D wasm and proxies /Docs to :8082.",
         "import \"std:fmt\"\n\nfn main() {\n    fmt.println(\"hello, yuga\")\n}"
     )
 ))

@@ -1,0 +1,128 @@
+// Phase 16 route loaders: every loader for the target route starts when
+// navigation begins — before the page builds — and all of them start, so
+// independent fetches are concurrent (§5.5).
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:router"
+
+let mut log: []string = []string {}
+
+fn eq(a: string, b: string) -> bool {
+    if a.len != b.len {
+        return false
+    }
+    let mut i = 0
+    while i < a.len {
+        if a[i] != b[i] {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+fn cat(a: string, b: string) -> string {
+    let mut out = []int {}
+    let mut i = 0
+    while i < a.len {
+        push(out, a[i])
+        i = i + 1
+    }
+    i = 0
+    while i < b.len {
+        push(out, b[i])
+        i = i + 1
+    }
+    return string_from_bytes(out)
+}
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn Home(p: Params) {
+    zeus.Text("home")
+}
+
+fn Post(p: Params) {
+    push(log, cat("build:", router.param(p, "slug")))
+    zeus.Text(router.param(p, "slug"))
+}
+
+fn Other(p: Params) {
+    push(log, "otherbuild")
+    zeus.Text("other")
+}
+
+fn loader_a(p: Params) {
+    push(log, cat("a:", router.param(p, "slug")))
+}
+
+fn loader_b(p: Params) {
+    push(log, cat("b:", router.param(p, "slug")))
+}
+
+fn loader_c(p: Params) {
+    push(log, "c")
+}
+
+fn main() {
+    router.on_load("/post/:slug", |p| { loader_a(p) })
+    router.on_load("/post/:slug", |p| { loader_b(p) })
+    router.on_load("/other", |p| { loader_c(p) })
+
+    zeus.snapshot(240, 160, fn() -> Node {
+        router.Router([]Route {
+            Route { pattern: "/", build: Home },
+            Route { pattern: "/post/:slug", build: Post },
+            Route { pattern: "/other", build: Other },
+        }, RouterProps {})
+    })
+
+    // The initial route ("/") has no loaders.
+    must(log.len == 0, "no loaders on initial route")
+
+    // Two loaders, in order, then the build — loaders run before paint.
+    router.navigate("/post/hello")
+    zeus.engine_layout(240, 160)
+    must(log.len == 3, "both loaders plus build")
+    must(eq(log[0], "a:hello"), "loader a first")
+    must(eq(log[1], "b:hello"), "loader b second")
+    must(eq(log[2], "build:hello"), "build after loaders")
+    if zeus.engine_find_text("hello") == 0 {
+        must(false, "param route painted")
+    }
+
+    // A different route runs only its own loader.
+    router.navigate("/other")
+    zeus.engine_layout(240, 160)
+    must(log.len == 5, "other loader plus build")
+    must(eq(log[3], "c"), "other loader")
+    must(eq(log[4], "otherbuild"), "other build")
+
+    // New params re-fire the loaders.
+    router.navigate("/post/world")
+    zeus.engine_layout(240, 160)
+    must(log.len == 8, "loaders re-fire on param change")
+    must(eq(log[5], "a:world"), "loader a world")
+    must(eq(log[6], "b:world"), "loader b world")
+    must(eq(log[7], "build:world"), "build world")
+
+    // Back also starts the target route's loaders.
+    router.back()
+    zeus.engine_layout(240, 160)
+    must(eq(log[8], "c"), "back starts other loader")
+
+    // A loader-free route adds nothing.
+    let before = log.len
+    router.navigate("/")
+    zeus.engine_layout(240, 160)
+    must(log.len == before, "no loaders on loader-free route")
+
+    fmt.println("router loaders ok")
+}

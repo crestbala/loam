@@ -1,0 +1,120 @@
+//! devtools — the Zeus inspector, itself a Zeus app (§2.4).
+//!
+//! The whole UI state is one arena, so the inspector just reads it:
+//! `zeus.engine_tree_dump()` gives the node tree with each node's layout box,
+//! `zeus.engine_signals_dump()` gives live signal values. `Panel()` renders
+//! both as a scrollable list you can drop into any app in dev builds.
+//!
+//! ```
+//! import "std:devtools"
+//!
+//! zeus.Box(align_direction = DIRECTION.Column) {
+//!     App()
+//!     devtools.Panel()
+//! }
+//! ```
+
+import "std:zeus"
+
+/// Bytes `s[a..b)` as a string.
+fn dv_slice(s: string, a: int, b: int) -> string {
+    let mut out = []int {}
+    let mut i = a
+    if i < 0 {
+        i = 0
+    }
+    let mut e = b
+    if e > s.len {
+        e = s.len
+    }
+    while i < e {
+        push(out, s[i])
+        i = i + 1
+    }
+    return string_from_bytes(out)
+}
+
+/// Split on `\n`, dropping empty lines.
+fn dv_lines(s: string) -> []string {
+    let mut out = []string {}
+    let mut start = 0
+    let mut i = 0
+    while i < s.len {
+        if s[i] == 10 {
+            if i > start {
+                push(out, dv_slice(s, start, i))
+            }
+            start = i + 1
+        }
+        i = i + 1
+    }
+    if start < s.len {
+        push(out, dv_slice(s, start, s.len))
+    }
+    return out
+}
+
+/// Split one dump line on `\t`.
+fn dv_fields(line: string) -> []string {
+    let mut out = []string {}
+    let mut start = 0
+    let mut i = 0
+    while i < line.len {
+        if line[i] == 9 {
+            push(out, dv_slice(line, start, i))
+            start = i + 1
+        }
+        i = i + 1
+    }
+    push(out, dv_slice(line, start, line.len))
+    return out
+}
+
+/// The node tree as display lines: `id role label (x,y wxh)`.
+fn tree_lines() -> []string {
+    let rows = dv_lines(zeus.engine_tree_dump())
+    let mut out = []string {}
+    let mut i = 0
+    while i < rows.len {
+        let f = dv_fields(rows[i])
+        if f.len >= 8 {
+            push(out, "{{f[0]}} {{f[6]}} {{f[7]}} ({{f[2]}},{{f[3]}} {{f[4]}}x{{f[5]}})")
+        }
+        i = i + 1
+    }
+    return out
+}
+
+/// Live signal values as display lines: `sig id = value`.
+fn signal_lines() -> []string {
+    let rows = dv_lines(zeus.engine_signals_dump())
+    let mut out = []string {}
+    let mut i = 0
+    while i < rows.len {
+        let f = dv_fields(rows[i])
+        if f.len >= 2 {
+            push(out, "sig {{f[0]}} = {{f[1]}}")
+        }
+        i = i + 1
+    }
+    return out
+}
+
+/// The inspector panel: the node tree with layout boxes, then signal values.
+/// Drop it into a dev build; it repaints with the rest of the tree.
+fn Panel() -> Node {
+    let root = zeus.raw_scroll()
+    zeus.slot(root, fn() {
+        zeus.Text("tree")
+        let ts = tree_lines()
+        for i in 0..ts.len {
+            zeus.Text(ts[i])
+        }
+        zeus.Text("signals")
+        let ss = signal_lines()
+        for i in 0..ss.len {
+            zeus.Text(ss[i])
+        }
+    })
+    return root
+}

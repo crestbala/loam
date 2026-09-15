@@ -1,0 +1,16 @@
+// Phase 17: dropping a #[must_check] value without reading any field is an
+// error — the caller ignored a possible failure.
+
+#[must_check]
+struct Checked {
+    ok: bool,
+    n: int,
+}
+
+fn mk(v: int) -> Checked {
+    return Checked { ok: v > 0, n: v }
+}
+
+fn main() {
+    let c = mk(1)
+}

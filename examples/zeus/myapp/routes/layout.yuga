@@ -1,0 +1,15 @@
+//! Root shell: theme + top bar. Retained across navigation, so the nav state
+//! and the light/dark switch survive — only the page slot rebuilds.
+
+import "std:zeus"
+import "../theme.yuga" as theme
+import "../components/nav.yuga" as nav
+
+fn layout(build: fn()) {
+    theme.install()
+    let page = zeus.Page()
+    zeus.slot(page, fn() {
+        nav.Navbar()
+        zeus.slot(page, build)
+    })
+}

@@ -1,0 +1,40 @@
+// A keyed `For` moves rows on reorder, so the focused node keeps focus.
+// A rebuild would free the old node (clearing `focus_id`) and the assertion
+// would fail.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn Row(i: int, s: string) {
+    zeus.Box(align_direction = DIRECTION.Row, spacing = 4) {
+        zeus.Text(s)
+        zeus.focusable(zeus.Button("hit", width = 40))
+    }
+}
+
+fn main() {
+    let names = zeus.signal([]string {})
+    zeus.push_item(names, "Ada")
+    zeus.push_item(names, "Bea")
+    zeus.snapshot(240, 160, fn() -> Node {
+        zeus.Box(align_direction = DIRECTION.Column) {
+            zeus.For(names, fn(s) => s, Row)
+        }
+    })
+    zeus.engine_fill_focus()
+    zeus.engine_focus_step(0)
+    zeus.engine_layout(240, 160)
+    let fid = zeus.engine_focus_id()
+    if fid == 0 {
+        fmt.println("FAIL no focus after step")
+        sys.exit(1)
+    }
+    names.set([]string { "Bea", "Ada" })
+    zeus.engine_layout(240, 160)
+    if zeus.engine_focus_id() != fid {
+        fmt.println("FAIL focus not preserved across reorder", fid, zeus.engine_focus_id())
+        sys.exit(1)
+    }
+    fmt.println("reorder focus ok", fid)
+}

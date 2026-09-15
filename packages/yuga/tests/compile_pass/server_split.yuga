@@ -1,0 +1,21 @@
+// Phase 16 `#[server]` splitting: the body of a `#[server]` fn must be absent
+// from a client build. `make test` checks the generated C (with splitting
+// forced on) does not contain the body's marker literal; the native build
+// keeps the body, so this program runs and prints normally.
+
+import "std:fmt"
+import "std:sys"
+
+#[server]
+fn secret() -> string {
+    return "SERVER_SECRET_MARKER_9f3a"
+}
+
+fn main() {
+    let s = secret()
+    if s.len == 0 {
+        fmt.println("FAIL server call")
+        sys.exit(1)
+    }
+    fmt.println("server split ok")
+}

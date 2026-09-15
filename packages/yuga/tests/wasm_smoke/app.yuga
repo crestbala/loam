@@ -1,0 +1,15 @@
+// Minimal app for the headless wasm smoke test: build a tree and stop. No
+// assertions — under stubbed host imports the draw/measure calls are no-ops,
+// so the point is only that the host entry points link and run.
+
+import "std:zeus"
+
+fn main() {
+    let count = zeus.signal(5)
+    zeus.snapshot(320, 200, fn() -> Node {
+        zeus.Box(align_direction = DIRECTION.Column) {
+            zeus.Text("smoke")
+            zeus.Button(label = "Go")
+        }
+    })
+}

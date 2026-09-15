@@ -1,0 +1,58 @@
+// Phase 16 `#[json]` derive: encode/decode generated over std:json, with
+// field-path errors (missing field, out-of-range integer) that do not trap.
+
+import "std:fmt"
+import "std:sys"
+import "std:json"
+
+#[json]
+struct Point {
+    x: int,
+    name: string,
+}
+
+fn fail(m: string) {
+    fmt.println("FAIL", m)
+    sys.exit(1)
+}
+
+fn main() {
+    let d = json.parse("{\"x\":7,\"name\":\"ada\"}")
+    if d.ok == 0 {
+        fail("parse")
+    }
+    let p = json_decode_Point(d.root, "")
+    let e = json.take_err()
+    if e.len != 0 {
+        fail(e)
+    }
+    if p.x != 7 {
+        fail("x")
+    }
+    if p.name != "ada" {
+        fail("name")
+    }
+
+    let out = json_encode_Point(Point { x: 7, name: "ada" })
+    if out != "{\"x\":7,\"name\":\"ada\"}" {
+        fail(out)
+    }
+
+    // Missing field names the field path.
+    let d2 = json.parse("{\"x\":1}")
+    let p2 = json_decode_Point(d2.root, "")
+    let e2 = json.take_err()
+    if e2 != "name: missing" {
+        fail(e2)
+    }
+
+    // Out-of-range integer names the field path, does not trap.
+    let d3 = json.parse("{\"x\":9999999999999,\"name\":\"a\"}")
+    let p3 = json_decode_Point(d3.root, "")
+    let e3 = json.take_err()
+    if e3 != "x" {
+        fail(e3)
+    }
+
+    fmt.println("json derive ok")
+}

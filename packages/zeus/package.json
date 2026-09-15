@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --config web/vite.config.js",
-    "dev:gallery": "ZEUS_APP=gallery ZEUS_WEB_PORT=5174 vite --config web/vite.config.js"
+    "dev": "vite --config hosts/web/vite.config.js",
+    "dev:gallery": "ZEUS_APP=gallery ZEUS_WEB_PORT=5174 vite --config hosts/web/vite.config.js"
   },
   "devDependencies": {
     "vite": "^6.3.5"

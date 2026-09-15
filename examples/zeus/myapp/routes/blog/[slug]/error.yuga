@@ -1,0 +1,5 @@
+import "std:zeus"
+
+fn error(msg: string) {
+    zeus.Text("post not available")
+}

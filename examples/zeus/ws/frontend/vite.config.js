@@ -12,7 +12,7 @@ const repo = resolve(here, "../../../..");
 const yugac = resolve(repo, "bin/yugac");
 const buildDir = resolve(here, "build");
 const wasmFile = resolve(buildDir, "app.wasm");
-const loader = resolve(repo, "packages/zeus/web/loader.js");
+const loader = resolve(repo, "packages/zeus/hosts/web/loader.js");
 const app = resolve(here, "app.yuga");
 
 function wipeBuild() {
@@ -79,9 +79,12 @@ export default defineConfig({
           here,
           resolve(here, ".."),
           resolve(here, "../backend"),
-          resolve(repo, "packages/compiler/std"),
-          resolve(repo, "packages/compiler/runtime"),
-          resolve(repo, "packages/zeus/web"),
+          resolve(repo, "packages/yuga/std"),
+          resolve(repo, "packages/yuga/runtime"),
+          resolve(repo, "packages/zeus/std"),
+          resolve(repo, "packages/http/std"),
+          resolve(repo, "packages/maya/std"),
+          resolve(repo, "packages/zeus/hosts/web"),
         ];
         for (const p of watch) {
           if (existsSync(p)) server.watcher.add(p);

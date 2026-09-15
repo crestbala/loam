@@ -160,7 +160,7 @@ contradicts its comment, arity-3 tables, a `Navbar` that always ships Dark.
 
 - [x] Nested scroll chaining: leftover wheel at an inner bound goes to the
       parent scroller (`zeus_scroll_chain.yuga`).
-- [x] wasm IME: hidden `<textarea>` in `packages/zeus/web/loader.js` takes
+- [x] wasm IME: hidden `<textarea>` in `packages/zeus/hosts/web/loader.js` takes
       composition / input when `zeus_captures_text`; window-level composition
       listeners are gone.
 - [x] Async TLS: `net.tls_nb_connect` / `tls_nb_ready` (SecureTransport,
@@ -172,7 +172,7 @@ contradicts its comment, arity-3 tables, a `Navbar` that always ships Dark.
 - [x] Gradients: draw op `grad` / `plat_fill_g` / `node.bg2`. Cocoa
       `NSGradient`, Canvas2D `createLinearGradient`, headless dump.
       **Won’t:** rich text spans — still gated on in-tree font metrics.
-- [x] Linux GUI host: `packages/zeus/desktop/linux.c` (X11 fill + text).
+- [x] Linux GUI host: `packages/zeus/hosts/desktop/linux.c` (X11 fill + text).
       Linked when `yugac --target=native` is not headless on Linux (`-lX11`).
       iOS device signing stays out of scope.
 - **Exit:** headless tests green. **Green** (`make test`). Rich text remains

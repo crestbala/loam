@@ -1,7 +1,7 @@
 # Zeus / Yuga — production roadmap
 
-Phase-by-phase plan for turning `std/zeus.yuga` (engine + design system)
-(+ `std/net`, `std/http`, the C runtime) into a stack you can build real
+Phase-by-phase plan for turning `packages/zeus/std/zeus.yuga` (engine + design system)
+(+ `packages/yuga/std/net`, `packages/http/std/http`, the C runtime) into a stack you can build real
 products on — ecommerce tools, team chat (Slack/Teams-shaped), social apps.
 
 Related: the next series (one host entry, honest `App` size, touch vs
@@ -184,6 +184,7 @@ thread.
 - [x] New draw op kind (raster) through scene → platform → C trampoline → hosts + canvas loaders.
 - [x] Host decode of PNG / JPEG / WebP / GIF (ImageIO, Canvas `Image`, BitmapFactory); `zeus.Image(...)` widget + `SvgProps`-style props (`width` / `height` / `radius` clip).
 - [x] Network image + cache by `src` (path, `data:` URI, or `http(s):` URL; http loads off the UI thread, next frame paints).
+- [x] Intrinsic-size auto-sizing: a new `platform.plat_image_size` seam reports a decoded image's size in layout points (hosts answer from their decode cache; the C runtime falls back to parsing PNG/GIF/JPEG/WebP headers of a `data:` URI or local file, which is what makes headless goldens deterministic). An `Image` with no explicit height takes the source aspect ratio, and a widthless `Image` behaves like web `max-width: 100%` — it fills the container (device) width but never grows past the source. The Upload previews no longer wire `max_width` / `aspect` / `set_height` by hand. **Exit green** (`draw_golden/golden_image_auto`).
 - **Exit:** a golden fixture with an image draw op; raster images render in the gallery (Upload preview; the static avatar/product `data:` placeholders were later removed — see the follow-up below). **Green** (`draw_golden/golden_image`).
 - [x] Follow-up (resolved — wasm first-paint stall): `examples/zeus/gallery` wasm sat blank for ~40 s (up to minutes in some browsers) before first paint, while Cocoa/iOS/Android were instant. `app.wasm` + `loader.js` arrived in ms, so the stall was inside `zeus_start`. **Root cause: the hand-rolled wasm heap (`runtime/zeus_wasm_libc.c`) linearly scanned every block in the heap on each `malloc`, so the gallery's tree build (tens of thousands of allocations) was O(n²) — later widgets cost more, which is why the delay grew as content was added and why the 1×1 image blobs looked like the culprit.** Fixed by replacing the bump scan with a coalescing free list (boundary-tag footers, O(1) free, first-fit over free blocks only): `zeus_start` 40 s → ~0.6 s. Two more wins on top: wasm codegen now compiles at `-O2` (was `-O1`) and `loader.js` caches `measureText` widths per (px, string) (layout re-measures every label every frame) → `zeus_start` ≈ 0.46 s, idle frames 1–2 ms, and the engine idles cleanly (`engine_next_ms` already stops rAF like Cocoa). Profiling method: temporary per-stage timers in the gallery/sections + a headless-Chromium console pass, bisecting build → tab → section → widget.
 - [ ] Follow-up (dev server, not the app): the gallery Vite plugin recompiles wasm **synchronously** (`spawnSync`) on every source change, blocking the dev server for the whole compile — in-flight requests (`/node_modules/vite/dist/client/env.mjs` and friends) stall and HMR lags. Switch the watcher to an async compile (`spawn`, serve the previous wasm meanwhile, `full-reload` when the new one is ready).

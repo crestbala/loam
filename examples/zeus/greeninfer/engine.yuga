@@ -19,6 +19,9 @@ const GI_DIM: int = 384
 
 /// The largest top-k the engine keeps (search_knn clamps k to this).
 const GI_MAX_K: int = 16
+/// Rows scoring below this are the runtime's GI_DOT_ERR sentinel, not data.
+/// Finite so it survives f32; real cosine scores sit near [-1, 1].
+const GI_DOT_FLOOR: float = -2.0e38
 
 /// One search result: the stored vector id and its raw dot score.
 struct Record {
@@ -72,8 +75,9 @@ fn gi_row_write(map: int, row: int, rid: int, vec: []float) -> int {}
 /// The u32 id stored in row `row` (-1 on error).
 fn gi_row_id(map: int, row: int) -> int {}
 
-/// NEON dot product of two mapped rows (in place, no copy). -1e300 on a bad
-/// map/row, otherwise the raw f32 dot.
+/// NEON dot product of two mapped rows (in place, no copy). GI_DOT_ERR
+/// (-3e38, see greeninfer_runtime.c) on a bad map/row, otherwise the raw f32
+/// dot. The old -1e300 sentinel is not representable in f32.
 fn gi_row_dot(map: int, row_a: int, row_b: int) -> float {}
 
 /// Monotonic microseconds.
@@ -173,7 +177,7 @@ fn search_knn(index: VectorIndex, query: []float, k: int) -> []Record {
     let mut r = 0
     while r < index.count {
         let s = gi_row_dot(index.map, r, index.cap)
-        if s > -1e299 {
+        if s > GI_DOT_FLOOR {
             n = keep_rank(ids, scores, n, want, r, s)
         }
         r = r + 1

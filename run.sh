@@ -41,8 +41,11 @@ list() {
   for d in "$ZEUSDIR"/*/; do
     d=${d%/}
     name=$(basename "$d")
-    [ -f "$d/$name.yuga" ] || continue
-    printf '  %s\n' "$name"
+    if [ -f "$d/zeus.toml" ]; then
+      printf '  %-18s routes/ app via the zeus CLI\n' "$name"
+    elif [ -f "$d/$name.yuga" ]; then
+      printf '  %s\n' "$name"
+    fi
   done
   echo
   echo "full stack         (./run.sh counter [web|backend|macos|ios|android])"
@@ -59,6 +62,18 @@ ensure_yugac() {
   if [ ! -x "$YUGAC" ]; then
     echo "run.sh: building the compiler"
     make -C "$HERE" -j4
+  fi
+}
+
+# Nothing runs from this script until `yugac check` is clean. The check is the
+# same frontend a build runs, so it costs one parse and catches the errors that
+# would otherwise surface as a broken window, a trapping wasm module, or a
+# Vite server happily serving a stale .wasm from the last good build.
+check_yuga() {
+  src=$1
+  ensure_yugac
+  if ! "$YUGAC" check "$src"; then
+    die "$src failed the compiler check (nothing was run)"
   fi
 }
 
@@ -134,13 +149,46 @@ EOF
   export ZEUS_APP=$name
   export ZEUS_WEB_PORT=$port
   cd "$web" || exit 1
-  exec npx vite --config web/vite.config.js
+  exec npx vite --config hosts/web/vite.config.js
+}
+
+# Same entry resolution as the zeus CLI's findEntry().
+zeus_entry() {
+  d=$1
+  for f in app.yuga "$(basename "$d").yuga" main.yuga; do
+    [ -f "$d/$f" ] && { printf '%s\n' "$d/$f"; return 0; }
+  done
+  return 1
+}
+
+# A zeus.toml app (routes/ tree, generated route table) is driven by the zeus
+# CLI, not by pointing yugac at <name>/<name>.yuga — that file does not exist
+# for these. Regenerate the route table first so a new routes/ file is picked
+# up, then gate on `yugac check` like every other path here.
+run_zeus_framework_app() {
+  name=$1
+  target=${2:-native}
+  appdir=$ZEUSDIR/$name
+  ensure_yugac
+  "$HERE/bin/zeus" routes "$appdir" >/dev/null || die "zeus routes failed for $name"
+  entry=$(zeus_entry "$appdir") || die "no entry .yuga in $appdir"
+  check_yuga "$entry"
+  case $target in
+    native|macos) exec "$YUGAC" --run "$entry" ;;
+    wasm32|wasm|web) exec "$HERE/bin/zeus" dev "$appdir" ;;
+    ios|android) exec "$YUGAC" "--target=$target" --run "$entry" ;;
+    build) exec "$HERE/bin/zeus" build "$appdir" ;;
+    *) die "unknown target '$target' (native macos web ios android build)" ;;
+  esac
 }
 
 run_zeus_app() {
   name=$1
   target=${2:-native}
-  ensure_yugac
+  if [ -f "$ZEUSDIR/$name/zeus.toml" ]; then
+    run_zeus_framework_app "$name" "$target"
+  fi
+  check_yuga "$ZEUSDIR/$name/$name.yuga"
   case $target in
     native) exec "$YUGAC" --run "$ZEUSDIR/$name/$name.yuga" ;;
     web) run_zeus_web "$name" ;;
@@ -154,7 +202,7 @@ run_zeus_app() {
 
 run_language() {
   name=$1
-  ensure_yugac
+  check_yuga "$LANGDIR/$name.yuga"
   # oob.yuga exists to prove the bounds check traps, so a nonzero exit from the
   # program is the expected outcome. A compile error is still a real failure,
   # so build and run as separate steps rather than using --run.

@@ -1,0 +1,15 @@
+import "std:zeus"
+import "std:router"
+import "../../components/catalog.yuga" as catalog
+
+// `zeus.Match` (what the router mounts pages into) is a Column with no
+// spacing, so the page sets its own section rhythm.
+fn page(p: Params) {
+    zeus.Column(zeus.SECTION) {
+        catalog.Components()
+    }
+}
+
+fn meta(p: Params) -> Meta {
+    return Meta { title: "Components", description: "The standard widget catalogue." }
+}
