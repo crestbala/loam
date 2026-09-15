@@ -40,7 +40,9 @@ fn LiveList() {
 
 fn Cards() {
     zeus.SectionTitle("Surfaces", "Cards")
-    zeus.Grid(config = GridConfig(columns = 3, gap = SPACE.Md)) {
+    // Responsive: a cell is as wide as the cards want to be, so three fit
+    // across a wide window and two or one as it narrows, never more than three.
+    zeus.Grid(config = GridConfig(columns = 3, auto_columns = 200, gap = SPACE.Md)) {
         zeus.Card() { zeus.Pip(zeus.accent(), 8) zeus.Title("Small") zeus.Body("Neutral primary on paper.") }
         zeus.Card() { zeus.Pip(zeus.ok(), 8) zeus.Title("Medium") zeus.Body("Rounded-xl is the card radius.") }
         zeus.Card() { zeus.Pip(zeus.danger(), 8) zeus.Title("Large") zeus.Body("Badges and caps mark status.") }
