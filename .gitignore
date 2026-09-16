@@ -4,6 +4,7 @@ packages/loam/tests/tmp/
 packages/loam/runtime/.obj/
 packages/loam/tests/routes_app/.zeus/
 packages/loam/tests/routes_app/build/
+packages/loam/tests/routes_app/app_routes.loam
 *.o
 *.dSYM/
 .DS_Store

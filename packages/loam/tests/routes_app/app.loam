@@ -22,7 +22,8 @@ fn main() {
     if zeus.engine_find_text("home") == 0 {
         fail("root page")
     }
-    if zeus.engine_find_text("root layout") == 0 {
+    if zeus.engine_find_text("root layout") == 0 
+    {
         fail("root layout chrome")
     }
     router.navigate("/blog")

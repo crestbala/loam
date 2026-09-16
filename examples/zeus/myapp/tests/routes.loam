@@ -33,10 +33,10 @@ fn visit(path: string, want: string) {
 
 fn main() {
     zeus.snapshot(400, 300, fn() -> Node {
-        zeus.Box(align_direction = DIRECTION.Column) {
-            approutes.app()
-        }
-    })
+            zeus.Box(align_direction = DIRECTION.Column) {
+                approutes.app()
+            }
+        })
     if zeus.engine_find_text("Build interfaces with Zeus") == 0 {
         fail("root page")
     }

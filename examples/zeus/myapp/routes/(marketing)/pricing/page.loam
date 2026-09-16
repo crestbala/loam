@@ -6,5 +6,5 @@ fn page(p: Params) {
 }
 
 fn meta(p: Params) -> Meta {
-    return Meta { title: "Pricing" }
+    return Meta { title: "Pricing"}
 }

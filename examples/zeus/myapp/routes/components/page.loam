@@ -11,5 +11,5 @@ fn page(p: Params) {
 }
 
 fn meta(p: Params) -> Meta {
-    return Meta { title: "Components", description: "The standard widget catalogue." }
+    return Meta { title: "Components", description: "The standard widget catalogue."}
 }

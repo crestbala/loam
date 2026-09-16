@@ -11,5 +11,5 @@ fn page(p: Params) {
 }
 
 fn meta(p: Params) -> Meta {
-    return Meta { title: "myapp — Foundations", description: "Type scale, status accents, and surfaces." }
+    return Meta { title: "myapp — Foundations", description: "Type scale, status accents, and surfaces."}
 }
