@@ -44,8 +44,8 @@ import "../../server/api.loam"
 let STATE_LOADING = 0
 let STATE_READY = 1
 
-let mut state: Signal<int> = Signal { id: 0 }
-let mut titles: Signal<[]string> = Signal { id: 0 }
+let mut state: Signal<int> = Signal { id: 0}
+let mut titles: Signal<[]string> = Signal { id: 0}
 
 /// Start the request, once. Idempotent, and the zero handle *is* the latch: an
 /// allocated `state` means a request is already under way.
@@ -60,10 +60,10 @@ fn start() {
     state = zeus.signal(STATE_LOADING)
     titles = zeus.signal([]string {})
     http.client().call_async(api.posts_rpc(), api.encode_PostsReq(PostsReq {}), fn(raw) {
-        let reply = api.decode_PostsResp(raw)
-        titles.set(reply.titles)
-        state.set(STATE_READY)
-    })
+            let reply = api.decode_PostsResp(raw)
+            titles.set(reply.titles)
+            state.set(STATE_READY)
+        })
 }
 
 /// The load state, for the page to `zeus.Match` on.

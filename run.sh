@@ -42,7 +42,7 @@ list() {
     d=${d%/}
     name=$(basename "$d")
     if [ -f "$d/zeus.toml" ]; then
-      printf '  %-18s routes/ app via the zeus CLI\n' "$name"
+      printf '  %-18s routes/ app via the zeli CLI\n' "$name"
     elif [ -f "$d/$name.loam" ]; then
       printf '  %s\n' "$name"
     fi
@@ -152,7 +152,7 @@ EOF
   exec npx vite --config hosts/web/vite.config.js
 }
 
-# Same entry resolution as the zeus CLI's findEntry().
+# Same entry resolution as the zeli CLI's findEntry().
 zeus_entry() {
   d=$1
   for f in app.loam "$(basename "$d").loam" main.loam; do
@@ -161,7 +161,7 @@ zeus_entry() {
   return 1
 }
 
-# A zeus.toml app (routes/ tree, generated route table) is driven by the zeus
+# A zeus.toml app (routes/ tree, generated route table) is driven by the zeli
 # CLI, not by pointing loam at <name>/<name>.loam — that file does not exist
 # for these. Regenerate the route table first so a new routes/ file is picked
 # up, then gate on `loam check` like every other path here.
@@ -194,7 +194,7 @@ run_zeus_framework_app() {
   target=${2:-native}
   appdir=$ZEUSDIR/$name
   ensure_loam
-  "$HERE/bin/zeus" routes "$appdir" >/dev/null || die "zeus routes failed for $name"
+  "$HERE/bin/zeli" routes "$appdir" >/dev/null || die "zeli routes failed for $name"
   entry=$(zeus_entry "$appdir") || die "no entry .loam in $appdir"
   check_loam "$entry"
   case $target in
@@ -206,12 +206,12 @@ run_zeus_framework_app() {
       exit $status ;;
     wasm32|wasm|web)
       backend_up
-      "$HERE/bin/zeus" dev "$appdir"
+      "$HERE/bin/zeli" dev "$appdir"
       status=$?
       backend_down
       exit $status ;;
     ios|android) exec "$LOAM" "--target=$target" --run "$entry" ;;
-    build) exec "$HERE/bin/zeus" build "$appdir" ;;
+    build) exec "$HERE/bin/zeli" build "$appdir" ;;
     # The app's own gRPC backend (`server/main.loam`), not a `zeus` target: it
     # is a second entry, so it is built and run directly. See examples/zeus/myapp.
     backend)

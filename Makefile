@@ -24,7 +24,7 @@ LSP_O   := $(LIB_O) $(OBJDIR)/lsp.o
 TARGET  := $(BINDIR)/loam
 LSP     := $(BINDIR)/loam-lsp
 FMT     := $(BINDIR)/loam-fmt
-ZEUS    := $(BINDIR)/zeus
+ZELI    := $(BINDIR)/zeli
 
 PASS    := $(sort $(wildcard $(TESTDIR)/compile_pass/*.loam))
 FAIL    := $(sort $(wildcard $(TESTDIR)/compile_fail/*.loam))
@@ -54,7 +54,7 @@ endif
 
 .PHONY: all clean test mkdirs lsp grammar grammar-check zed-grammar install-editor bench
 
-all: mkdirs $(TARGET) $(LSP) $(FMT) $(ZEUS)
+all: mkdirs $(TARGET) $(LSP) $(FMT) $(ZELI)
 
 lsp: mkdirs $(LSP)
 
@@ -103,9 +103,9 @@ $(LSP): $(LSP_O)
 $(FMT): $(SRCDIR)/fmt.c
 	$(CC) $(CFLAGS) $< -o $@
 
-# `bin/zeus` — run the framework CLI without spelling out the deno invocation.
-$(ZEUS): packages/zeus/cli/zeus.ts
-	@printf '#!/bin/sh\nexec deno run --quiet --allow-read --allow-write --allow-run --allow-env --allow-net "%s/packages/zeus/cli/zeus.ts" "$$@"\n' "$(CURDIR)" > $@
+# `bin/zeli` — run the framework CLI without spelling out the deno invocation.
+$(ZELI): packages/zeus/cli/zeli.ts
+	@printf '#!/bin/sh\nexec deno run --quiet --allow-read --allow-write --allow-run --allow-env --allow-net "%s/packages/zeus/cli/zeli.ts" "$$@"\n' "$(CURDIR)" > $@
 	@chmod +x $@
 
 # CFLAGS in this file carry the build-time paths (LOAM_PATH, LOAM_*_DIR), so an
@@ -213,8 +213,8 @@ test: all
 	    echo "ok   in-language $$f"; \
 	  fi; \
 	done; \
-	if ! DENO_DIR=$(TESTDIR)/tmp/deno deno run --quiet --allow-read --allow-write packages/zeus/cli/zeus.ts routes packages/loam/tests/routes_app >$(TESTDIR)/tmp/routes_gen.log 2>&1; then \
-	  echo "FAIL zeus routes generator"; cat $(TESTDIR)/tmp/routes_gen.log; err=1; \
+	if ! DENO_DIR=$(TESTDIR)/tmp/deno deno run --quiet --allow-read --allow-write packages/zeus/cli/zeli.ts routes packages/loam/tests/routes_app >$(TESTDIR)/tmp/routes_gen.log 2>&1; then \
+	  echo "FAIL zeli routes generator"; cat $(TESTDIR)/tmp/routes_gen.log; err=1; \
 	elif ! ./$(TARGET) packages/loam/tests/routes_app/app.loam -o $(TESTDIR)/tmp/routes_app >$(TESTDIR)/tmp/routes_compile.log 2>&1; then \
 	  echo "FAIL compile packages/loam/tests/routes_app/app.loam"; cat $(TESTDIR)/tmp/routes_compile.log; err=1; \
 	elif ! $(TESTDIR)/tmp/routes_app >$(TESTDIR)/tmp/routes_run.log 2>&1; then \
@@ -222,12 +222,12 @@ test: all
 	else \
 	  echo "ok   zeus routes app"; \
 	fi; \
-	if ! DENO_DIR=$(TESTDIR)/tmp/deno deno run --quiet --allow-read --allow-write --allow-run --allow-env packages/zeus/cli/zeus.ts build packages/loam/tests/routes_app --targets web,macos >$(TESTDIR)/tmp/zeus_build.log 2>&1; then \
-	  echo "FAIL zeus build"; cat $(TESTDIR)/tmp/zeus_build.log; err=1; \
+	if ! DENO_DIR=$(TESTDIR)/tmp/deno deno run --quiet --allow-read --allow-write --allow-run --allow-env packages/zeus/cli/zeli.ts build packages/loam/tests/routes_app --targets web,macos >$(TESTDIR)/tmp/zeus_build.log 2>&1; then \
+	  echo "FAIL zeli build"; cat $(TESTDIR)/tmp/zeus_build.log; err=1; \
 	elif [ ! -f packages/loam/tests/routes_app/build/web/app.wasm ] || [ ! -f packages/loam/tests/routes_app/build/macos/app ]; then \
-	  echo "FAIL zeus build artifacts"; cat $(TESTDIR)/tmp/zeus_build.log; err=1; \
+	  echo "FAIL zeli build artifacts"; cat $(TESTDIR)/tmp/zeus_build.log; err=1; \
 	else \
-	  echo "ok   zeus build (web + macos artifacts)"; \
+	  echo "ok   zeli build (web + macos artifacts)"; \
 	fi; \
 	if [ -f packages/loam/tests/routes_app/build/web/index.html ] && \
 	   [ -f packages/loam/tests/routes_app/build/web/blog/index.html ] && \
@@ -241,14 +241,14 @@ test: all
 	else \
 	  echo "FAIL zeus web shell"; err=1; \
 	fi; \
-	if ! DENO_DIR=$(TESTDIR)/tmp/deno deno run --quiet --allow-read --allow-write --allow-run --allow-env packages/zeus/cli/zeus.ts pkg sync packages/loam/tests/pkg_app >$(TESTDIR)/tmp/pkg_sync.log 2>&1; then \
-	  echo "FAIL zeus pkg sync"; cat $(TESTDIR)/tmp/pkg_sync.log; err=1; \
+	if ! DENO_DIR=$(TESTDIR)/tmp/deno deno run --quiet --allow-read --allow-write --allow-run --allow-env packages/zeus/cli/zeli.ts pkg sync packages/loam/tests/pkg_app >$(TESTDIR)/tmp/pkg_sync.log 2>&1; then \
+	  echo "FAIL zeli pkg sync"; cat $(TESTDIR)/tmp/pkg_sync.log; err=1; \
 	elif ! ./$(TARGET) packages/loam/tests/pkg_app/app.loam -o $(TESTDIR)/tmp/pkg_app >$(TESTDIR)/tmp/pkg_app.log 2>&1; then \
 	  echo "FAIL compile pkg app"; cat $(TESTDIR)/tmp/pkg_app.log; err=1; \
 	elif ! $(TESTDIR)/tmp/pkg_app >$(TESTDIR)/tmp/pkg_run.log 2>&1; then \
 	  echo "FAIL run pkg app"; cat $(TESTDIR)/tmp/pkg_run.log; err=1; \
 	else \
-	  echo "ok   zeus pkg sync + import pkg:name"; \
+	  echo "ok   zeli pkg sync + import pkg:name"; \
 	fi; \
 	if ./$(FMT) packages/loam/tests/fmt/in.loam >$(TESTDIR)/tmp/fmt.out 2>&1 && \
 	   diff -u packages/loam/tests/fmt/want.loam $(TESTDIR)/tmp/fmt.out >/dev/null 2>&1 && \
@@ -258,15 +258,31 @@ test: all
 	else \
 	  echo "FAIL loam-fmt"; diff -u packages/loam/tests/fmt/want.loam $(TESTDIR)/tmp/fmt.out; err=1; \
 	fi; \
-	if ! DENO_DIR=$(TESTDIR)/tmp/deno deno run --quiet --allow-read --allow-write --allow-run --allow-env packages/zeus/cli/zeus.ts dev packages/loam/tests/routes_app --build-only >$(TESTDIR)/tmp/zeus_dev.log 2>&1; then \
-	  echo "FAIL zeus dev"; cat $(TESTDIR)/tmp/zeus_dev.log; err=1; \
+	if ! rm -rf $(TESTDIR)/tmp/fmtapp || ! mkdir -p $(TESTDIR)/tmp/fmtapp || \
+	   ! cp packages/loam/tests/fmt/in.loam $(TESTDIR)/tmp/fmtapp/ugly.loam || \
+	   ! printf '// Generated by `zeli routes`. Do not edit.\nfn x( ){ }\n' >$(TESTDIR)/tmp/fmtapp/app_routes.loam; then \
+	  echo "FAIL zeli fmt (setup)"; err=1; \
+	elif ! DENO_DIR=$(TESTDIR)/tmp/deno deno run --quiet --allow-read --allow-write --allow-run --allow-env packages/zeus/cli/zeli.ts fmt $(TESTDIR)/tmp/fmtapp >$(TESTDIR)/tmp/fmt_cmd.log 2>&1; then \
+	  echo "FAIL zeli fmt"; cat $(TESTDIR)/tmp/fmt_cmd.log; err=1; \
+	elif ! diff -u packages/loam/tests/fmt/want.loam $(TESTDIR)/tmp/fmtapp/ugly.loam >/dev/null; then \
+	  echo "FAIL zeli fmt (not canonical)"; diff -u packages/loam/tests/fmt/want.loam $(TESTDIR)/tmp/fmtapp/ugly.loam; err=1; \
+	elif ! grep -q 'fn x( ){ }' $(TESTDIR)/tmp/fmtapp/app_routes.loam; then \
+	  echo "FAIL zeli fmt (rewrote a generated file)"; err=1; \
+	elif ! DENO_DIR=$(TESTDIR)/tmp/deno deno run --quiet --allow-read --allow-write --allow-run --allow-env packages/zeus/cli/zeli.ts fmt $(TESTDIR)/tmp/fmtapp >$(TESTDIR)/tmp/fmt_cmd2.log 2>&1 || \
+	     ! grep -q '0 formatted' $(TESTDIR)/tmp/fmt_cmd2.log; then \
+	  echo "FAIL zeli fmt (second run is not a no-op)"; cat $(TESTDIR)/tmp/fmt_cmd2.log; err=1; \
 	else \
-	  echo "ok   zeus dev --build-only"; \
+	  echo "ok   zeli fmt (a tree, canonical + idempotent, skips generated)"; \
+	fi; \
+	if ! DENO_DIR=$(TESTDIR)/tmp/deno deno run --quiet --allow-read --allow-write --allow-run --allow-env packages/zeus/cli/zeli.ts dev packages/loam/tests/routes_app --build-only >$(TESTDIR)/tmp/zeus_dev.log 2>&1; then \
+	  echo "FAIL zeli dev"; cat $(TESTDIR)/tmp/zeus_dev.log; err=1; \
+	else \
+	  echo "ok   zeli dev --build-only"; \
 	fi; \
 	if ! DENO_DIR=$(TESTDIR)/tmp/deno deno run --quiet --allow-read --allow-write packages/zeus/cli/dev_test.ts >$(TESTDIR)/tmp/dev_test.log 2>&1; then \
-	  echo "FAIL zeus dev handler"; cat $(TESTDIR)/tmp/dev_test.log; err=1; \
+	  echo "FAIL zeli dev handler"; cat $(TESTDIR)/tmp/dev_test.log; err=1; \
 	else \
-	  echo "ok   zeus dev handler"; \
+	  echo "ok   zeli dev handler"; \
 	fi; \
 	if ./$(TARGET) --target=wasm32 packages/loam/tests/wasm_smoke/app.loam -o $(TESTDIR)/tmp/wasm_smoke.wasm >$(TESTDIR)/tmp/wasm_smoke_build.log 2>&1 && \
 	   DENO_DIR=$(TESTDIR)/tmp/deno deno run --quiet --allow-read packages/zeus/hosts/web/wasm_smoke.ts $(TESTDIR)/tmp/wasm_smoke.wasm >$(TESTDIR)/tmp/wasm_smoke.log 2>&1; then \
@@ -274,7 +290,7 @@ test: all
 	else \
 	  echo "FAIL wasm smoke"; cat $(TESTDIR)/tmp/wasm_smoke.log 2>/dev/null; cat $(TESTDIR)/tmp/wasm_smoke_build.log; err=1; \
 	fi; \
-	if DENO_DIR=$(TESTDIR)/tmp/deno deno run --quiet --allow-read --allow-write --allow-run --allow-env packages/zeus/cli/zeus.ts build examples/zeus/myapp >$(TESTDIR)/tmp/myapp_build.log 2>&1 && \
+	if DENO_DIR=$(TESTDIR)/tmp/deno deno run --quiet --allow-read --allow-write --allow-run --allow-env packages/zeus/cli/zeli.ts build examples/zeus/myapp >$(TESTDIR)/tmp/myapp_build.log 2>&1 && \
 	   [ -f examples/zeus/myapp/build/macos/app ] && \
 	   grep -q "<title>Blog</title>" examples/zeus/myapp/build/web/blog/index.html && \
 	   grep -q "/blog/hello-world" examples/zeus/myapp/build/web/sitemap.xml; then \

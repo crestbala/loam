@@ -10,17 +10,17 @@ fn page(p: Params) {
     zeus.Text("Posts", font = 24)
 
     zeus.Match(blog_loader.load_state(), fn(st) {
-        if blog_loader.is_ready(st) {
-            let xs = blog_loader.load_data().get()
-            for i in 0..xs.len {
-                zeus.Text(xs[i])
+            if blog_loader.is_ready(st) {
+                let xs = blog_loader.load_data().get()
+                for i in 0..xs.len {
+                    zeus.Text(xs[i])
+                }
+            } else {
+                zeus.Text("loading...")
             }
-        } else {
-            zeus.Text("loading...")
-        }
-    })
+        })
 }
 
 fn meta(p: Params) -> Meta {
-    return Meta { title: "Blog" }
+    return Meta { title: "Blog"}
 }

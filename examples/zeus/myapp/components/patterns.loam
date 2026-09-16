@@ -25,15 +25,15 @@ fn LiveList() {
         zeus.show_ge(NameRow("Row"), n, 4)
         zeus.Row(SPACE.Sm) {
             zeus.Button("Add row", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() {
-                if n.get() < 4 {
-                    n.set(n.get() + 1)
-                }
-            })
+                    if n.get() < 4 {
+                        n.set(n.get() + 1)
+                    }
+                })
             zeus.Button("Remove", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click = fn() {
-                if n.get() > 0 {
-                    n.set(n.get() - 1)
-                }
-            })
+                    if n.get() > 0 {
+                        n.set(n.get() - 1)
+                    }
+                })
         }
     }
 }
@@ -43,9 +43,9 @@ fn Cards() {
     // Responsive: a cell is as wide as the cards want to be, so three fit
     // across a wide window and two or one as it narrows, never more than three.
     zeus.Grid(config = GridConfig(columns = 3, auto_columns = 200, gap = SPACE.Md)) {
-        zeus.Card() { zeus.Pip(zeus.accent(), 8) zeus.Title("Small") zeus.Body("Neutral primary on paper.") }
-        zeus.Card() { zeus.Pip(zeus.ok(), 8) zeus.Title("Medium") zeus.Body("Rounded-xl is the card radius.") }
-        zeus.Card() { zeus.Pip(zeus.danger(), 8) zeus.Title("Large") zeus.Body("Badges and caps mark status.") }
+        zeus.Card() { zeus.Pip(zeus.accent(), 8) zeus.Title("Small") zeus.Body("Neutral primary on paper.")}
+        zeus.Card() { zeus.Pip(zeus.ok(), 8) zeus.Title("Medium") zeus.Body("Rounded-xl is the card radius.")}
+        zeus.Card() { zeus.Pip(zeus.danger(), 8) zeus.Title("Large") zeus.Body("Badges and caps mark status.")}
     }
 }
 

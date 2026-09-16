@@ -9,7 +9,7 @@ fn layout(build: fn()) {
     theme.install()
     let page = zeus.Page()
     zeus.slot(page, fn() {
-        nav.Navbar()
-        zeus.slot(page, build)
-    })
+            nav.Navbar()
+            zeus.slot(page, build)
+        })
 }

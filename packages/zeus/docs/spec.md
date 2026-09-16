@@ -72,7 +72,7 @@ No SSR. Each route may define `fn meta(p: Params) -> Meta` (`title`,
 that fills the document `<head>`; on native the same struct is meant to fill
 the window title and share sheet.
 
-`zeus build --targets web` emits **one HTML file per route** (never a single
+`zeli build --targets web` emits **one HTML file per route** (never a single
 `index.html`), plus `sitemap.xml` and `robots.txt`. It does this by generating a
 small Loam program that calls each route's `meta()` — and `paths()`, for a
 dynamic route that enumerates its concrete URLs — printing JSON the CLI reads
@@ -97,7 +97,7 @@ Routing fills the host title too: `router` applies the matched route's
 web and retitles the open window on macOS. On web the router's stack is
 mirrored to `history.pushState` / `replaceState` / `back`, and the loader
 routes the app to `location.pathname` at boot and on `popstate` — so a URL
-built by `zeus build` opens on the right route.
+built by `zeli build` opens on the right route.
 
 ## Pipeline
 
@@ -205,7 +205,7 @@ Output is `examples/zeus/counter/macos/build/app`.
 ## Packages, inspector, animation
 
 `import "pkg:name"` resolves to `vendor/name/name.loam` (or `main.loam`),
-searched upward from the entry file. `zeus pkg sync <appdir>` reads
+searched upward from the entry file. `zeli pkg sync <appdir>` reads
 `<appdir>/loam.deps` — one `name source [rev]` per line, `#` comments —
 materializes each package under `<appdir>/vendor/<name>/`, and writes
 `<appdir>/loam.lock`. A `path:../dir` source is copied locally (no network);
@@ -227,14 +227,14 @@ retargets mid-flight.
 
 ## Scaffold
 
-`zeus new <name> [dir]` writes the §6.2 app tree: `zeus.toml`, a single
+`zeli new <name> [dir]` writes the §6.2 app tree: `zeus.toml`, a single
 `app.loam` entry (one entry for every host), `routes/` (root
 layout/page/loading/error/not-found, a nested `blog/` with `loader.loam`, a
 `[slug]` route with `paths()` + `meta`, and a `(marketing)` group), plus
 `components/`, `server/` (`#[proto]` contracts + a `#[server]` fn), `theme.loam`,
 `assets/`, `public/`, and `tests/`. It refuses a non-empty target. The output is
 checked in at `examples/zeus/myapp/` and built by the test gate, so the tree
-`zeus build` accepts is the tree it scaffolds.
+`zeli build` accepts is the tree it scaffolds.
 
 ## Formatter
 
@@ -246,16 +246,27 @@ line, one trailing newline. `loam-fmt <file>` prints to stdout, `loam-fmt -w
 block) and string literals are copied verbatim — it scans rather than using the
 parser, because the parser discards comments.
 
+`zeli fmt [dir]` runs that over every `.loam` under a tree (the current
+directory by default, skipping output and cache directories) and writes the
+result back in place: one command, no flags. Files the build generates are left
+alone, since formatting one would only be undone by the next build.
+
 ## Dev server
 
-`zeus dev <appdir> [--port N]` builds the web target, serves `build/web` on
+`zeli dev <appdir> [--port N]` builds the web target, serves `build/web` on
 localhost, and watches the app plus the framework `std/` trees for `.loam`
-changes, rebuilding on each. Served HTML gets a live-reload script: on a new
-revision it saves the signal arena (`zeus_state_snapshot` → `sessionStorage`)
-and reloads, and the loader restores it with `zeus_state_load` on boot — a
-component edit reflects without resetting state. Signal ids are positional, so
-state carries over as long as the signal set lines up. `--build-only` does the
-build and exits (the test gate uses it).
+changes, rebuilding on each. The watch is filesystem-driven (`Deno.watchFs`, not
+a timer), so an edit is noticed as it lands, and a *new* file — a route, say — is
+noticed at all. Served HTML subscribes to `/.zeli-live` over Server-Sent Events:
+the server pushes a frame per rebuild, so an idle page holds one connection and
+does no work. On a new revision the page saves the signal arena
+(`zeus_state_snapshot` → `sessionStorage`) and reloads, and the loader restores
+it with `zeus_state_load` on boot — a component edit reflects without resetting
+state. Signal ids are positional, so state carries over as long as the signal set
+lines up. `<appdir>/app_routes.loam` is regenerated before every build, so a new
+file under `routes/` needs nothing run by hand. A failed compiler check is not a
+reload: the previous build keeps being served. `--build-only` does the build and
+exits (the test gate uses it).
 
 ## Layout
 
