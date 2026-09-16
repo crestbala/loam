@@ -1,0 +1,27 @@
+//! The app `zeli serve --target macos` is gated on: it stays up until it is
+//! killed, which is all a native serve can observe. A plain Loam program rather
+//! than a Zeus one, so the gate opens no window.
+//!
+//! `SERVE_LAUNCHES`, when set, is a file each launch appends its own pid to. That
+//! pid comes from a shell this process starts, so it is this process, and the
+//! gate can check that the pids `serve` reports are the ones that actually ran —
+//! and that the one it replaced is gone. Unset, this is just an app that prints.
+import "std:fmt"
+import "std:sys"
+
+fn main() {
+    fmt.println("serve fixture up")
+    let launches = sys.env("SERVE_LAUNCHES")
+    if launches == "" {
+        idle()
+        return
+    }
+    sys.exec("echo $PPID >> {{launches}}")
+    idle()
+}
+
+fn idle() {
+    while true {
+        sys.exec("sleep 1")
+    }
+}

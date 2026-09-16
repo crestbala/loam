@@ -1,3 +1,6 @@
+cwd exists = 1
+cwd is_dir = 1
+cwd absolute = true
 mkdir = 0
 write = 0
 write nested = 0

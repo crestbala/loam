@@ -79,3 +79,35 @@ fn list_dir(path: string) -> []string {
 /// Remove `path`, recursing into a directory. `0` on success, including when
 /// `path` is already gone. Native only; wasm returns `1`.
 fn remove_path(path: string) -> int {}
+
+/// The process's working directory, absolute. Empty when it cannot be read, and
+/// on wasm, where there is none.
+fn cwd() -> string {}
+
+/// Open a filesystem watcher, for the paths `watch_add` is then given. Returns a
+/// handle (> 0), or `0` when this host has no kernel watcher — macOS and the
+/// BSDs do, wasm and Linux do not yet.
+fn watch_open() -> int {}
+
+/// Watch one path — a directory or a file — under `handle`. Returns a
+/// registration id (> 0), which is also a descriptor the caller closes with
+/// `watch_close`. `0` when the path cannot be opened.
+///
+/// The id is the caller's to keep: the mapping from id back to path is the
+/// caller's business, because the watcher itself holds no state.
+fn watch_add(handle: int, path: string) -> int {}
+
+/// Wait for one change, and return the id of the watcher that fired — or `0`
+/// when nothing happened in time.
+///
+/// `timeout_ms` follows `poll(2)`: negative blocks until something changes, `0`
+/// returns at once, positive waits at most that long. Block with a negative
+/// value for the first event of a burst, then drain the rest with `0`.
+///
+/// A file fires when its contents change. A directory fires when an entry inside
+/// it is added, removed or renamed — so a caller that wants the *name* of a new
+/// file has to list the directory it was handed.
+fn watch_next(handle: int, timeout_ms: int) -> int {}
+
+/// Close a descriptor from `watch_open` or `watch_add`. Returns `0`.
+fn watch_close(fd: int) -> int {}

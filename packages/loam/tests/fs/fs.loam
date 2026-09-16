@@ -11,6 +11,19 @@ fn main() {
         return
     }
 
+    // `cwd` is the process's absolute working directory. Its value is asserted,
+    // never printed: a golden file has to hold whatever directory the test is
+    // run from. It exists, it is a directory, and it is absolute (a leading
+    // `/`), which is all a tool joining paths onto it needs.
+    let cwd = sys.cwd()
+    let mut cwd_absolute = false
+    if cwd.len > 0 {
+        cwd_absolute = cwd[0] == 47 /* / */
+    }
+    fmt.println("cwd exists =", sys.exists(cwd))
+    fmt.println("cwd is_dir =", sys.is_dir(cwd))
+    fmt.println("cwd absolute =", cwd_absolute)
+
     sys.remove_path(root)
     fmt.println("mkdir =", sys.mkdir("{{root}}/a/b"))
     fmt.println("write =", sys.write_file("{{root}}/zeta.txt", "z"))

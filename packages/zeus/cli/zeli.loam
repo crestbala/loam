@@ -1,0 +1,3077 @@
+//! zeli — the Loam/Zeus CLI, written in Loam.
+//!
+//! Built as `bin/zeli` by `make`, and the only implementation of these commands
+//! there is: it was ported from a TypeScript one that has since been removed, so
+//! running a CLI command no longer needs a second language or a second runtime.
+//!
+//!     zeli fmt [dir]        format every .loam under a tree (default: .)
+//!     zeli routes <appdir>  write <appdir>/app_routes.loam from routes/
+//!     zeli new <name> [dir] write a new app and generate its route table
+//!
+//! A command here owns its own walking, quoting and reporting rather than
+//! borrowing the shell: `sys.exec` is the one seam that goes through `sh`, so
+//! every path is quoted on the way in.
+
+import "std:async"
+import "std:fmt"
+import "std:http"
+import "std:json"
+import "std:net"
+import "std:sys"
+
+/// `p` without its last path segment ("" when it has none).
+fn dir_of(p: string) -> string {
+    let mut cut = -1
+    for i in 0..p.len {
+        if p[i] == 47 {
+            cut = i
+        }
+    }
+    if cut < 0 {
+        return ""
+    }
+    let mut b = []int {}
+    for i in 0..cut {
+        push(b, p[i])
+    }
+    return string_from_bytes(b)
+}
+
+/// `dir` with `name` under it. Interpolation rather than `+`: Loam has no string
+/// concatenation operator, and this is the idiom for building a path.
+fn join(dir: string, name: string) -> string {
+    if dir == "" {
+        return name
+    }
+    if dir == "/" {
+        return "/{{name}}"
+    }
+    return "{{dir}}/{{name}}"
+}
+
+/// `s` as one word for the shell: single-quoted, with an embedded quote closed,
+/// backslash-escaped and reopened (`'` -> `'\''`), which is the only character a
+/// single-quoted word cannot carry. This tree really does contain paths like
+/// `routes/(marketing)/about/page.loam`, so nothing here may reach `sh` bare.
+fn shell_quote(s: string) -> string {
+    let mut b = []int {}
+    push(b, 39) /* ' */
+    for i in 0..s.len {
+        let c = s[i]
+        if c == 39 {
+            push(b, 39)
+            push(b, 92) /* \ */
+            push(b, 39)
+            push(b, 39)
+        } else {
+            push(b, c)
+        }
+    }
+    push(b, 39)
+    return string_from_bytes(b)
+}
+
+fn starts_with(s: string, prefix: string) -> bool {
+    if prefix.len > s.len {
+        return false
+    }
+    for i in 0..prefix.len {
+        if s[i] != prefix[i] {
+            return false
+        }
+    }
+    return true
+}
+
+/// `a` with `b` after it. Strings are values here and a helper cannot append to
+/// one, so building text is a pure function returning a new string.
+fn cat(a: string, b: string) -> string {
+    let mut x = []int {}
+    for i in 0..a.len {
+        push(x, a[i])
+    }
+    for i in 0..b.len {
+        push(x, b[i])
+    }
+    return string_from_bytes(x)
+}
+
+/// `s[a..b]` as a new string (empty when the range is empty or backwards).
+fn slice(s: string, a: int, b: int) -> string {
+    let mut x = []int {}
+    if a < b {
+        for i in a..b {
+            push(x, s[i])
+        }
+    }
+    return string_from_bytes(x)
+}
+
+fn ends_with(s: string, suffix: string) -> bool {
+    if suffix.len > s.len {
+        return false
+    }
+    let off = s.len - suffix.len
+    for i in 0..suffix.len {
+        if s[i + off] != suffix[i] {
+            return false
+        }
+    }
+    return true
+}
+
+/// Is this a hidden entry (`.git`, `.zeus`, …)? A walk never enters one.
+fn is_dot(name: string) -> bool {
+    if name.len == 0 {
+        return false
+    }
+    return name[0] == 46 /* . */
+}
+
+/// A directory a walk never descends into: build output and vendored packages.
+/// Keeping this list identical to the TypeScript CLI's is what makes the two
+/// implementations see the same set of files.
+fn skip_dir(name: string) -> bool {
+    if name == "build" {
+        return true
+    }
+    if name == "vendor" {
+        return true
+    }
+    if name == "node_modules" {
+        return true
+    }
+    return false
+}
+
+/// Every `.loam` under `dir`, directories-first order of sorted listings.
+fn loam_sources(dir: string) -> []string {
+    let mut out = []string {}
+    let entries = sys.list_dir(dir)
+    for i in 0..entries.len {
+        let name = entries[i]
+        if is_dot(name) {
+            continue
+        }
+        if skip_dir(name) {
+            continue
+        }
+        let p = join(dir, name)
+        if sys.is_dir(p) == 1 {
+            let sub = loam_sources(p)
+            for j in 0..sub.len {
+                push(out, sub[j])
+            }
+        } else {
+            if ends_with(name, ".loam") {
+                push(out, p)
+            }
+        }
+    }
+    return out
+}
+
+/// `bin/loam-fmt`, next to this binary: the CLI is run as `./bin/zeli`
+/// from the repo, or as a bare name from `PATH`. Both have to work, so this
+/// prefers the sibling of `argv[0]` and falls back to the name.
+fn formatter_path() -> string {
+    let d = dir_of(sys.arg(0))
+    if d != "" {
+        let sibling = join(d, "loam-fmt")
+        if sys.exists(sibling) == 1 {
+            return sibling
+        }
+    }
+    return "loam-fmt"
+}
+
+/// `zeli fmt [dir]` — run `loam-fmt` over every `.loam` under `dir` and write
+/// the canonical form back in place.
+///
+/// Files the build generates are left alone: formatting one would only be undone
+/// by the next build. The output matches the TypeScript CLI line for line on the
+/// success path, which is what the suite checks.
+fn fmt(dir: string) -> int {
+    let tool = formatter_path()
+    if sys.exists(tool) == 0 {
+        fmt.println("zeli: missing", tool, "— run `make` first")
+        return 1
+    }
+    let files = loam_sources(dir)
+    if files.len == 0 {
+        fmt.println("zeli: no .loam files under", dir)
+        return 0
+    }
+    let mut changed = 0
+    let mut failed = 0
+    for i in 0..files.len {
+        let f = files[i]
+        let src = sys.read_file(f)
+        if starts_with(src, "// Generated by `zeli") {
+            continue
+        }
+        let out = sys.exec("{{shell_quote(tool)}} {{shell_quote(f)}} 2>&1")
+        if sys.exec_status() != 0 {
+            fmt.println("zeli:", f, ":", out)
+            failed += 1
+            continue
+        }
+        if !fmt.eq(out, src) {
+            sys.write_file(f, out)
+            fmt.println("zeli: formatted", f)
+            changed += 1
+        }
+    }
+    if failed == 0 {
+        fmt.println("zeli:", files.len, "file(s),", changed, "formatted")
+    } else {
+        fmt.println("zeli:", files.len, "file(s),", changed, "formatted,", failed, "failed")
+    }
+    if failed != 0 {
+        return 1
+    }
+    return 0
+}
+
+// --- shared: paths and text ---
+//
+// The TypeScript CLI leans on `node:path` and on `String.replace` / `split` /
+// `trim`. There is no `std:str`, so the few shapes it actually needs live here,
+// written on the byte level like the rest of this file. Every one of them has to
+// agree with its Node counterpart exactly: the commands that use them are the
+// ones whose output the suite diffs against the TypeScript CLI.
+
+/// `p` with `.` segments dropped, `..` resolved against what precedes them, and
+/// no trailing `/`. An empty result means "here". `path.resolve` normalises this
+/// way, and it is what makes the printed paths equal to the TypeScript CLI's.
+///
+/// Written as its own scan rather than on `segments`, which is declared further
+/// down with the route helpers.
+fn normalize(p: string) -> string {
+    let abs = starts_with(p, "/")
+    let mut parts = []string {}
+    let mut start = 0
+    let mut i = 0
+    while i <= p.len {
+        if i == p.len || p[i] == 47 {
+            push(parts, slice(p, start, i))
+            start = i + 1
+        }
+        i += 1
+    }
+    let mut out = []string {}
+    for i in 0..parts.len {
+        let s = parts[i]
+        if s == "" || s == "." {
+            continue
+        }
+        if s == ".." {
+            if out.len > 0 {
+                if out[out.len - 1] != ".." {
+                    /* Drop the segment this one cancels. */
+                    let mut kept = []string {}
+                    for j in 0..out.len - 1 {
+                        push(kept, out[j])
+                    }
+                    out = kept
+                    continue
+                }
+            }
+            /* Nothing to cancel: keep it only in a relative path, so `/..`
+               cannot escape the root. */
+            if abs {
+                continue
+            }
+        }
+        push(out, s)
+    }
+    let mut r = ""
+    if abs {
+        r = "/"
+    }
+    for i in 0..out.len {
+        if i > 0 {
+            r = cat(r, "/")
+        }
+        r = cat(r, out[i])
+    }
+    return r
+}
+
+/// `p` as an absolute path: itself when it already is one, else under the
+/// working directory. The `path.resolve` of the TypeScript CLI.
+fn abs_path(p: string) -> string {
+    if starts_with(p, "/") {
+        return normalize(p)
+    }
+    let cwd = sys.cwd()
+    if cwd == "" {
+        return normalize(p)
+    }
+    return normalize(cat(cat(cwd, "/"), p))
+}
+
+/// `p` relative to `base` when `base` is a prefix of it, else `p`. Both are
+/// expected to be normalised already. `path.relative`, used to print paths the
+/// way the TypeScript CLI does.
+fn rel_to(base: string, p: string) -> string {
+    if base == "" {
+        return p
+    }
+    if !starts_with(p, base) {
+        return p
+    }
+    let rest = slice(p, base.len, p.len)
+    if rest == "/" {
+        return "."
+    }
+    if starts_with(rest, "/") {
+        return slice(rest, 1, rest.len)
+    }
+    return rest
+}
+
+/// The last segment of `p` (`path.basename`).
+fn base_name(p: string) -> string {
+    let mut cut = -1
+    for i in 0..p.len {
+        if p[i] == 47 {
+            cut = i
+        }
+    }
+    return slice(p, cut + 1, p.len)
+}
+
+/// `s` without `suf` when it ends with it (`path.basename(p, suf)`).
+fn drop_suffix(s: string, suf: string) -> string {
+    if !ends_with(s, suf) {
+        return s
+    }
+    return slice(s, 0, s.len - suf.len)
+}
+
+/// `s` without one trailing `/` (`s.replace(/\/$/, "")`). Only one: the pattern
+/// has no `g`, and `base` in `--base` can end with a single slash.
+fn strip_slash(s: string) -> string {
+    if ends_with(s, "/") {
+        return slice(s, 0, s.len - 1)
+    }
+    return s
+}
+
+/// `s` without one leading `/` (`s.replace(/^\//, "")`).
+fn strip_lead_slash(s: string) -> string {
+    if starts_with(s, "/") {
+        return slice(s, 1, s.len)
+    }
+    return s
+}
+
+/// `s` split on `\n`. A trailing newline yields no final empty line, which is
+/// what the callers here want: the metadata dump ends with one.
+fn split_lines(s: string) -> []string {
+    let mut out = []string {}
+    let mut start = 0
+    for i in 0..s.len {
+        if s[i] == 10 {
+            push(out, slice(s, start, i))
+            start = i + 1
+        }
+    }
+    if start < s.len {
+        push(out, slice(s, start, s.len))
+    }
+    return out
+}
+
+/// `s` split on the byte `ch`, keeping empty pieces (`String.split`).
+fn split_on(s: string, ch: int) -> []string {
+    let mut out = []string {}
+    let mut start = 0
+    for i in 0..s.len {
+        if s[i] == ch {
+            push(out, slice(s, start, i))
+            start = i + 1
+        }
+    }
+    push(out, slice(s, start, s.len))
+    return out
+}
+
+/// `s` without leading or trailing whitespace (`String.trim`). Carriage returns
+/// count, so a line that came through a CRLF file or a pipe is still clean.
+fn trim(s: string) -> string {
+    let mut a = 0
+    while a < s.len {
+        let c = s[a]
+        if c == 32 || c == 9 || c == 13 || c == 10 {
+            a += 1
+        } else {
+            break
+        }
+    }
+    let mut b = s.len
+    while b > a {
+        let c = s[b - 1]
+        if c == 32 || c == 9 || c == 13 || c == 10 {
+            b -= 1
+        } else {
+            break
+        }
+    }
+    return slice(s, a, b)
+}
+
+/// `1` when `word` sits in `s` at `at` — a local scan, so this needs nothing
+/// from the route helpers further down.
+fn at_word(s: string, at: int, word: string) -> int {
+    if at + word.len > s.len {
+        return 0
+    }
+    for i in 0..word.len {
+        if s[at + i] != word[i] {
+            return 0
+        }
+    }
+    return 1
+}
+
+/// `s` with every occurrence of `from` replaced by `to`. `from` must not be
+/// empty; the scan does not rescan what it inserted.
+fn replace_all(s: string, from: string, to: string) -> string {
+    if from.len == 0 {
+        return s
+    }
+    let mut r = ""
+    let mut i = 0
+    while i < s.len {
+        if at_word(s, i, from) == 1 {
+            r = cat(r, to)
+            i += from.len
+        } else {
+            r = cat(r, slice(s, i, i + 1))
+            i += 1
+        }
+    }
+    return r
+}
+
+/// `s` safe in an HTML attribute or text node. The order is the TypeScript
+/// CLI's: the ampersand first, so the entities it writes are not escaped again.
+fn esc(s: string) -> string {
+    let mut r = replace_all(s, "&", "&amp;")
+    r = replace_all(r, "<", "&lt;")
+    r = replace_all(r, ">", "&gt;")
+    r = replace_all(r, "\"", "&quot;")
+    return r
+}
+
+/// `needle` in `hay`. The server asks it of a request's content type, and
+/// the tests ask it of the injected snippet.
+fn contains_str(hay: string, needle: string) -> bool {
+    if needle.len > hay.len {
+        return false
+    }
+    for i in 0..hay.len - needle.len + 1 {
+        let mut same = true
+        for j in 0..needle.len {
+            if hay[i + j] != needle[j] {
+                same = false
+            }
+        }
+        if same {
+            return true
+        }
+    }
+    return false
+}
+
+/// Where `needle` first sits in `hay`, or `-1`. `contains_str` answers the
+/// yes/no question; this is the one that has to say where, for the ids the CLI
+/// reads back out of an artifact the compiler wrote.
+fn idx_of(hay: string, needle: string) -> int {
+    if needle.len == 0 || needle.len > hay.len {
+        return -1
+    }
+    for i in 0..hay.len - needle.len + 1 {
+        let mut same = true
+        for j in 0..needle.len {
+            if hay[i + j] != needle[j] {
+                same = false
+            }
+        }
+        if same {
+            return i
+        }
+    }
+    return -1
+}
+
+/// The text between `open` and the next `stop` byte, or `""` when `open` is not
+/// there. `Info.plist` and `build.gradle` are both read this way: one tagged
+/// value out of a file whose shape belongs to the compiler.
+fn between(text: string, open: string, stop: int) -> string {
+    let at = idx_of(text, open)
+    if at < 0 {
+        return ""
+    }
+    let mut bs = []int {}
+    let mut i = at + open.len
+    while i < text.len && text[i] != stop {
+        push(bs, text[i])
+        i += 1
+    }
+    return string_from_bytes(bs)
+}
+
+/// Every line of `s` prefixed with `pad`. The two-space indent the CLI puts
+/// under a `failed` line, so compiler output stays readable in a terminal.
+fn indent_lines(s: string, pad: string) -> string {
+    let lines = split_lines(s)
+    let mut r = ""
+    for i in 0..lines.len {
+        if i > 0 {
+            r = cat(r, "\n")
+        }
+        r = cat(cat(r, pad), lines[i])
+    }
+    return r
+}
+
+/// `lines` joined with `\n` and closed with one, which is how the generated
+/// files in this tree end.
+fn join_lines(lines: []string) -> string {
+    let mut r = ""
+    for i in 0..lines.len {
+        if i > 0 {
+            r = cat(r, "\n")
+        }
+        r = cat(r, lines[i])
+    }
+    return cat(r, "\n")
+}
+
+/// `p` is an absolute `http:`/`https:` URL (`/^https?:\/\//`).
+fn is_http(s: string) -> bool {
+    if starts_with(s, "http://") {
+        return true
+    }
+    return starts_with(s, "https://")
+}
+
+/// `base` and `p` joined into an absolute canonical URL, or `p` alone when it
+/// is already one or no `--base` was given.
+fn canonical_url(base: string, p: string) -> string {
+    if is_http(p) {
+        return p
+    }
+    if base == "" {
+        return p
+    }
+    if starts_with(p, "/") {
+        return cat(strip_slash(base), p)
+    }
+    return cat(cat(strip_slash(base), "/"), p)
+}
+
+/// The repository root. `bin/zeli` sits in `<repo>/bin`, so two levels up from
+/// the binary; with no directory in `argv[0]` (a bare `zeli` from
+/// `PATH`) the working directory is the best answer available.
+fn repo_root() -> string {
+    let bin = dir_of(sys.arg(0))
+    if bin == "" {
+        return abs_path(".")
+    }
+    let up = dir_of(bin)
+    if up == "" {
+        return abs_path(".")
+    }
+    return abs_path(up)
+}
+
+/// `bin/loamc`, the compiler this CLI drives. It is looked up beside this
+/// binary and not through `PATH`, so a checkout can never pick up a different
+/// compiler than the one it built.
+fn loam_path() -> string {
+    return join(repo_root(), "bin/loamc")
+}
+
+/// The TypeScript CLI's `die`: report and exit 2. The message goes to stdout
+/// here rather than stderr — `std:fmt` has no stderr writer, and the suite
+/// normalises the two streams when it diffs the CLIs.
+fn die(msg: string) {
+    fmt.println(msg)
+    sys.exit(2)
+}
+
+/// `die` with captured output indented under the headline.
+fn die_extra(head: string, body: string) {
+    if body == "" {
+        die(head)
+    }
+    fmt.println(cat(cat(head, "\n"), indent_lines(body, "  ")))
+    sys.exit(2)
+}
+
+/// Run `bin/loamc` with `args` (already quoted) from the repo root, stderr
+/// merged into stdout. `env` is a `NAME=1` prefix, or `""`.
+///
+/// The headless switches are unset: they are compile-time — they decide whether
+/// a GUI host is linked — and the test runner exports them for *running*
+/// fixtures. A user build must not inherit them, or it silently produces a
+/// windowless binary.
+///
+/// `env` is applied to the `loamc` word itself, never to the `cd`: an
+/// assignment before `cd` scopes to that builtin alone and the compiler then
+/// runs without it — which for `LOAM_NO_DCE` means DCE silently returns and the
+/// metadata dump fails to compile.
+fn run_loam(env: string, args: string) -> string {
+    let mut envs = ""
+    if env != "" {
+        envs = cat(env, " ")
+    }
+    return sys.exec("unset ZEUS_HEADLESS LOAM_HEADLESS MAYA_HEADLESS; cd {{shell_quote(repo_root())}} && {{envs}}{{shell_quote(loam_path())}} {{args}} 2>&1")
+}
+
+/// Run `cmd` from the repo root, stderr merged into stdout.
+fn run_here(cmd: string) -> string {
+    return sys.exec("cd {{shell_quote(repo_root())}} && {{cmd}} 2>&1")
+}
+
+// --- routes ---
+//
+// `app_routes.loam` is a build artifact of the `routes/` tree: one import per
+// route file, one builder per page (wrapped in the layouts above it), a route
+// table, and `app()` applying the root layout once around the router. The output
+// is byte-for-byte what the TypeScript CLI produces, which the suite checks by
+// diffing the two on real apps.
+
+fn is_word(c: int) -> int {
+    if c >= 97 && c <= 122 {
+        return 1 /* a-z */
+    }
+    if c >= 65 && c <= 90 {
+        return 1 /* A-Z */
+    }
+    if c >= 48 && c <= 57 {
+        return 1 /* 0-9 */
+    }
+    if c == 95 {
+        return 1 /* _ */
+    }
+    return 0
+}
+
+fn is_group(seg: string) -> bool {
+    if seg.len < 2 {
+        return false
+    }
+    if seg[0] != 40 {
+        return false /* ( */
+    }
+    return seg[seg.len - 1] == 41 /* ) */
+}
+
+fn is_param(seg: string) -> bool {
+    if seg.len < 2 {
+        return false
+    }
+    if seg[0] != 91 {
+        return false /* [ */
+    }
+    return seg[seg.len - 1] == 93 /* ] */
+}
+
+fn dash_to_underscore(s: string) -> string {
+    let mut x = []int {}
+    for i in 0..s.len {
+        if s[i] == 45 {
+            push(x, 95)
+        } else {
+            push(x, s[i])
+        }
+    }
+    return string_from_bytes(x)
+}
+
+/// `s` from `i`, with spaces and tabs skipped.
+fn after_spaces(s: string, i: int) -> int {
+    let mut j = i
+    while j < s.len {
+        if s[j] == 32 || s[j] == 9 {
+            j += 1
+        } else {
+            break
+        }
+    }
+    return j
+}
+
+fn match_at(s: string, i: int, word: string) -> int {
+    if i + word.len > s.len {
+        return 0
+    }
+    for k in 0..word.len {
+        if s[i + k] != word[k] {
+            return 0
+        }
+    }
+    return 1
+}
+
+/// `1` when the source defines `fn <name> (`. This is what the TypeScript CLI
+/// tests with `\bfn\s+name\s*\(`, and it decides whether the route table wires
+/// up `meta` / `paths` for a page.
+fn has_fn(src: string, name: string) -> int {
+    let mut i = 0
+    while i + 2 < src.len {
+        if src[i] == 102 && src[i + 1] == 110 {
+            if i == 0 || is_word(src[i - 1]) == 0 {
+                let j = after_spaces(src, i + 2)
+                if match_at(src, j, name) == 1 {
+                    let k = after_spaces(src, j + name.len)
+                    if k < src.len {
+                        if src[k] == 40 {
+                            return 1 /* ( */
+                        }
+                    }
+                }
+            }
+        }
+        i += 1
+    }
+    return 0
+}
+
+/// `rel` split on `/` (empty when it is empty).
+fn segments(rel: string) -> []string {
+    let mut out = []string {}
+    if rel == "" {
+        return out
+    }
+    let mut start = 0
+    let mut i = 0
+    while i <= rel.len {
+        if i == rel.len || rel[i] == 47 {
+            push(out, slice(rel, start, i))
+            start = i + 1
+        }
+        i += 1
+    }
+    return out
+}
+
+/// The URL pattern a route directory serves: `(group)` segments drop out and
+/// `[x]` becomes `:x`.
+fn url_for(rel: string) -> string {
+    let segs = segments(rel)
+    let mut url = ""
+    for i in 0..segs.len {
+        let seg = segs[i]
+        if is_group(seg) {
+            continue
+        }
+        if is_param(seg) {
+            url = cat(cat(url, "/:"), slice(seg, 1, seg.len - 1))
+        } else {
+            url = cat(cat(url, "/"), seg)
+        }
+    }
+    if url == "" {
+        return "/"
+    }
+    return url
+}
+
+/// The import alias for a route file: `(group)` and `[param]` lose their
+/// brackets and `-` becomes `_`.
+fn alias_for(rel: string, kind: string) -> string {
+    let mut name = "root"
+    let segs = segments(rel)
+    for i in 0..segs.len {
+        let mut bit = segs[i]
+        if is_group(bit) || is_param(bit) {
+            bit = slice(bit, 1, bit.len - 1)
+        }
+        bit = dash_to_underscore(bit)
+        if name == "root" && i == 0 {
+            name = bit
+        } else {
+            name = cat(cat(name, "_"), bit)
+        }
+    }
+    return cat(cat(cat("r_", name), "_"), kind)
+}
+
+/// `rel` under `root` ("" keeps `root` itself).
+fn under(root: string, rel: string) -> string {
+    if rel == "" {
+        return root
+    }
+    return join(root, rel)
+}
+
+/// `rel` cut after its `keep`-th segment.
+fn first_segments(rel: string, keep: int) -> string {
+    let mut seen = 0
+    let mut i = 0
+    while i < rel.len {
+        if rel[i] == 47 {
+            seen += 1
+            if seen == keep {
+                return slice(rel, 0, i)
+            }
+        }
+        i += 1
+    }
+    return rel
+}
+
+fn segment_count(rel: string) -> int {
+    if rel == "" {
+        return 0
+    }
+    let mut n = 1
+    for i in 0..rel.len {
+        if rel[i] == 47 {
+            n += 1
+        }
+    }
+    return n
+}
+
+fn index_of(keys: []string, key: string) -> int {
+    for i in 0..keys.len {
+        if keys[i] == key {
+            return i
+        }
+    }
+    return -1
+}
+
+/// `1` when `a` sorts after `b` byte for byte — the order the TypeScript CLI's
+/// `Array.sort()` gives for these paths.
+fn str_gt(a: string, b: string) -> int {
+    let mut n = a.len
+    if b.len < n {
+        n = b.len
+    }
+    let mut i = 0
+    while i < n {
+        if a[i] != b[i] {
+            if a[i] > b[i] {
+                return 1
+            }
+            return 0
+        }
+        i += 1
+    }
+    if a.len > b.len {
+        return 1
+    }
+    return 0
+}
+
+/// Does this directory hold a file the route table cares about?
+fn is_route_dir(here: string) -> int {
+    if sys.exists(join(here, "page.loam")) == 1 {
+        return 1
+    }
+    if sys.exists(join(here, "layout.loam")) == 1 {
+        return 1
+    }
+    if sys.exists(join(here, "not-found.loam")) == 1 {
+        return 1
+    }
+    return 0
+}
+
+/// Every directory under `routes/` that holds a route file, as a path relative
+/// to `routes/` ("" for the root), parents before children so a layout is always
+/// known by the time the page beneath it is wrapped.
+fn route_dirs(routes: string, rel: string) -> []string {
+    let mut out = []string {}
+    let here = under(routes, rel)
+    if is_route_dir(here) == 1 {
+        push(out, rel)
+    }
+    let entries = sys.list_dir(here)
+    for i in 0..entries.len {
+        let name = entries[i]
+        if is_dot(name) {
+            continue
+        }
+        if sys.is_dir(join(here, name)) == 1 {
+            let sub = route_dirs(routes, under(rel, name))
+            for j in 0..sub.len {
+                push(out, sub[j])
+            }
+        }
+    }
+    return out
+}
+
+/// Write `<appdir>/app_routes.loam` from the `routes/` tree and return its
+/// path, or `""` after reporting why not. The worker behind both
+/// `zeli routes` and `zeli new`, which reports differently — which is why this
+/// one does not print on success.
+fn generate(appdir: string) -> string {
+    let routes_dir = join(appdir, "routes")
+    if sys.is_dir(routes_dir) == 0 {
+        fmt.println("zeli: no routes/ directory in", appdir)
+        return ""
+    }
+    let out = join(appdir, "app_routes.loam")
+    let dirs = route_dirs(routes_dir, "")
+
+    /* Imports (every route file) and layouts, as parallel arrays: a helper here
+       cannot append to a vector passed in, so each list is built locally. */
+    let mut imp_alias = []string {}
+    let mut imp_path = []string {}
+    let mut lay_rel = []string {}
+    let mut lay_alias = []string {}
+    let mut pages = []string {}
+    let mut page_alias = []string {}
+    let mut page_meta = []int {}
+    let mut page_paths = []int {}
+    let mut nf_root = ""
+
+    for d in 0..dirs.len {
+        let rel = dirs[d]
+        let here = under(routes_dir, rel)
+        if sys.exists(join(here, "layout.loam")) == 1 {
+            let al = alias_for(rel, "layout")
+            push(lay_rel, rel)
+            push(lay_alias, al)
+            push(imp_alias, al)
+            push(imp_path, join("routes", under(rel, "layout.loam")))
+        }
+        if sys.exists(join(here, "page.loam")) == 1 {
+            let al = alias_for(rel, "page")
+            push(pages, rel)
+            push(page_alias, al)
+            push(imp_alias, al)
+            push(imp_path, join("routes", under(rel, "page.loam")))
+            let src = sys.read_file(join(here, "page.loam"))
+            push(page_meta, has_fn(src, "meta"))
+            push(page_paths, has_fn(src, "paths"))
+        }
+        if sys.exists(join(here, "not-found.loam")) == 1 {
+            let al = alias_for(rel, "not_found")
+            push(imp_alias, al)
+            push(imp_path, join("routes", under(rel, "not-found.loam")))
+            if rel == "" {
+                nf_root = al
+            }
+        }
+    }
+    if pages.len == 0 {
+        fmt.println("zeli: no page.loam under", routes_dir)
+        return ""
+    }
+
+    let mut lines = []string {}
+    push(lines, "// Generated by `zeli routes`. Do not edit.")
+    push(lines, "import \"std:zeus\"")
+    push(lines, "import \"std:router\"")
+    /* Imports sorted by alias, emitted by repeatedly taking the smallest alias
+       after the last one written. */
+    let mut last = ""
+    let mut emitted = 0
+    while emitted < imp_alias.len {
+        let mut best = -1
+        for i in 0..imp_alias.len {
+            if str_gt(imp_alias[i], last) == 0 {
+                continue
+            }
+            if best < 0 {
+                best = i
+            } else {
+                if str_gt(imp_alias[best], imp_alias[i]) == 1 {
+                    best = i
+                }
+            }
+        }
+        if best < 0 {
+            break
+        }
+        push(lines, cat(cat(cat("import \"", imp_path[best]), "\" as "), imp_alias[best]))
+        last = imp_alias[best]
+        emitted += 1
+    }
+    push(lines, "")
+
+    for p in 0..pages.len {
+        let rel = pages[p]
+        let al = page_alias[p]
+        let stem = slice(al, 2, al.len)
+        let mut body = cat(al, ".page(p)")
+        /* Outside in: the page's own layout first, then each one above it. */
+        let mut keep = segment_count(rel)
+        while keep >= 1 {
+            let idx = index_of(lay_rel, first_segments(rel, keep))
+            if idx >= 0 {
+                body = cat(cat(cat(lay_alias[idx], ".layout(fn() { "), body), " })")
+            }
+            keep -= 1
+        }
+        push(lines, cat(cat("fn b_", stem), "(p: Params) {"))
+        push(lines, cat("    ", body))
+        push(lines, "}")
+        push(lines, "")
+        if page_meta[p] == 1 {
+            push(lines, cat(cat("fn m_", stem), "(p: Params) -> Meta {"))
+            push(lines, cat(cat("    return ", al), ".meta(p)"))
+            push(lines, "}")
+            push(lines, "")
+        }
+        if page_paths[p] == 1 {
+            push(lines, cat(cat("fn p_", stem), "() -> []string {"))
+            push(lines, cat(cat("    return ", al), ".paths()"))
+            push(lines, "}")
+            push(lines, "")
+        }
+    }
+
+    push(lines, "fn routes() -> []Route {")
+    push(lines, "    return []Route {")
+    for p in 0..pages.len {
+        let stem = slice(page_alias[p], 2, page_alias[p].len)
+        let mut extra = ""
+        if page_meta[p] == 1 {
+            extra = cat("meta: m_", stem)
+        }
+        if page_paths[p] == 1 {
+            if extra != "" {
+                extra = cat(extra, ", ")
+            }
+            extra = cat(extra, cat("paths: p_", stem))
+        }
+        let mut tail = ""
+        if extra != "" {
+            tail = cat(", ", extra)
+        }
+        push(lines, cat(cat(cat(cat(cat("        Route { pattern: \"", url_for(pages[p])), "\", build: b_"), stem), tail), " },"))
+    }
+    push(lines, "    }")
+    push(lines, "}")
+    push(lines, "")
+
+    /* The root layout wraps the router once, so its state survives navigation;
+       a root not-found overrides the router's default. */
+    let mut props = ""
+    if nf_root != "" {
+        props = cat(cat(" RouterProps { not_found: fn() { ", nf_root), ".not_found() } }")
+    }
+    let router = cat(cat("router.Router(routes(),", props), ")")
+    let root_lay = index_of(lay_rel, "")
+    push(lines, "fn app() {")
+    if root_lay >= 0 {
+        push(lines, cat(cat("    ", lay_alias[root_lay]), ".layout(fn() {"))
+        push(lines, cat("        ", router))
+        push(lines, "    })")
+    } else {
+        push(lines, cat("    ", router))
+    }
+    push(lines, "}")
+
+    let mut text = ""
+    for i in 0..lines.len {
+        if i > 0 {
+            text = cat(text, "\n")
+        }
+        text = cat(text, lines[i])
+    }
+    text = cat(text, "\n")
+    sys.write_file(out, text)
+    return out
+}
+
+/// `zeli routes <appdir>` — regenerate the route table and say so.
+fn routes(appdir: string) -> int {
+    let out = generate(appdir)
+    if out == "" {
+        return 2
+    }
+    fmt.println("zeli: wrote", out)
+    return 0
+}
+
+// --- serve: the reload channel ---
+//
+// `zeli serve` builds one target and watches the sources, so an edit is reflected
+// without a manual rebuild: the web target reloads the page, and a native or
+// device target is stopped and started again. This section holds the pieces the
+// reload channel is made of; they are pure (`is_watched_source`, `sse_frame`,
+// `live_snippet`) so they can be read and tested as source rather than only
+// through a running server.
+
+/// The decimal integer in `s`, or `-1` when it holds none. Only what `--port`
+/// needs: an optional run of leading spaces, then digits.
+fn int_of(s: string) -> int {
+    let mut i = 0
+    while i < s.len {
+        if s[i] == 32 || s[i] == 9 {
+            i += 1
+        } else {
+            break
+        }
+    }
+    let mut n = 0
+    let mut digits = 0
+    while i < s.len {
+        let c = s[i]
+        if c < 48 || c > 57 {
+            break
+        }
+        n = n * 10 + (c - 48)
+        digits += 1
+        i += 1
+    }
+    if digits == 0 {
+        return -1
+    }
+    return n
+}
+
+/// `n` in decimal, as a string — the reverse of `int_of`. `std:fmt` writes an
+/// integer to stdout instead of returning it, and what is needed here is one
+/// inside a shell command: a pid to signal, a count to report.
+fn int_str(n: int) -> string {
+    let mut v = n
+    if v < 0 {
+        v = 0
+    }
+    let mut rev = []int {}
+    if v == 0 {
+        push(rev, 48 /* 0 */)
+    }
+    while v > 0 {
+        push(rev, 48 + (v % 10))
+        v = v / 10
+    }
+    let mut out = []int {}
+    let mut i = rev.len
+    while i > 0 {
+        i -= 1
+        push(out, rev[i])
+    }
+    return string_from_bytes(out)
+}
+
+/// The Server-Sent Events channel the injected snippet subscribes to.
+fn live_path() -> string {
+    return "/.zeli-live"
+}
+
+/// One SSE frame. `EventSource.onmessage` receives the payload as `data`.
+fn sse_frame(rev: int) -> string {
+    return "data: {{rev}}\n\n"
+}
+
+/// The live-reload script injected into every served HTML page.
+///
+/// The server pushes a frame per successful rebuild, so an idle tab holds one
+/// open connection and does nothing — no `setInterval`, no request a second.
+/// `EventSource` reconnects by itself if the server restarts. The first
+/// frame on connect is the current revision: a baseline, not a reload. Only a
+/// later, different revision reloads, and it saves the signal arena first so an
+/// edit does not throw away app state.
+fn live_snippet() -> string {
+    return "<script>(function(){var r=null,s=new EventSource('{{live_path()}}');s.onmessage=function(e){if(r===null){r=e.data;return}if(e.data!==r){r=e.data;try{if(window.__zeus_save)window.__zeus_save()}catch(x){}location.reload()}}})()</script>"
+}
+
+/// Does a path under one of `roots` belong to the serve build's input set?
+///
+/// Only `.loam` sources count, and never anything under an output or cache dir —
+/// a rebuild writes into `<appdir>/build/`, which sits *inside* a watched root,
+/// so an unfiltered watch would rebuild forever. The skip list is the one the
+/// walk uses, which is what keeps "the sources" one idea across the commands.
+///
+/// `app_routes.loam` is rejected by name as well: it is the route table serve
+/// *generates* before every build, so it is an output like `build/` and not a
+/// source. Watching it closes a loop — the rebuild rewrites it, the rewrite is an
+/// event, the event is a rebuild — which runs until the server is stopped.
+///
+/// The decision is made on the path *relative* to the root it was under, so a
+/// checkout that happens to live under a dotted directory still reloads. With no
+/// roots the whole path is judged, which is all a path with no known root can be
+/// held to.
+fn is_watched_source(file: string, roots: []string) -> bool {
+    let mut rel = file
+    for i in 0..roots.len {
+        if starts_with(rel, cat(roots[i], "/")) {
+            rel = slice(rel, roots[i].len + 1, rel.len)
+            break
+        }
+    }
+    if !ends_with(rel, ".loam") {
+        return false
+    }
+    if base_name(rel) == "app_routes.loam" {
+        return false /* generated by this command, not a source */
+    }
+    let segs = segments(rel)
+    for i in 0..segs.len {
+        if is_dot(segs[i]) {
+            return false /* .git/, .zeus/ */
+        }
+        if skip_dir(segs[i]) {
+            return false /* build/, vendor/, node_modules/ */
+        }
+    }
+    return true
+}
+
+/// The file's text, or `""` when it is not there. The before/after read that
+/// tells serve whether the route table it regenerates actually changed.
+fn read_text_if_present(p: string) -> string {
+    if sys.exists(p) == 0 {
+        return ""
+    }
+    return sys.read_file(p)
+}
+
+/// A regenerated route table: whether it worked, and whether it differs from
+/// what was there before.
+struct Regen {
+    ok: bool,
+    changed: bool,
+}
+
+/// Regenerate `<appdir>/app_routes.loam` and report whether it changed.
+///
+/// The route table is a build artifact of the `routes/` tree, not a file to
+/// maintain: serve regenerates it before every build, so adding
+/// `routes/pricing/page.loam` is enough — nothing to run, nothing to keep in
+/// sync by hand.
+fn generate_tracked(appdir: string) -> Regen {
+    let out = join(appdir, "app_routes.loam")
+    let before = read_text_if_present(out)
+    if generate(appdir) == "" {
+        return Regen { ok: false, changed: false }
+    }
+    return Regen { ok: true, changed: read_text_if_present(out) != before }
+}
+
+/// One serve build: whether it worked, and whether the route table it regenerated
+/// moved.
+struct BuildStep {
+    ok: bool,
+    routes_changed: bool,
+}
+
+/// The build a *watched* target gets: the compiler's development profile, which
+/// skips the optimizer and dead-strip. Those exist for the shipped binary, and in
+/// a loop that recompiles on every edit they are most of the edit's cost. Only
+/// `serve` asks for it, so nothing built by `zeli build` changes.
+fn serve_build_env(target: string) -> string {
+    if target == "web" {
+        return ""
+    }
+    return "LOAM_DEV=1"
+}
+
+/// Regenerate the route table and typecheck the entry: the part of a build that
+/// is not the compiler, and the part every target needs before it can be built
+/// or launched.
+fn serve_prepare(appdir: string) -> BuildStep {
+    let mut routes_changed = false
+    if sys.exists(join(appdir, "routes")) == 1 {
+        let r = generate_tracked(appdir)
+        routes_changed = r.changed
+        if !r.ok {
+            return BuildStep { ok: false, routes_changed: routes_changed }
+        }
+    }
+    if !check_entry(find_entry(appdir)) {
+        return BuildStep { ok: false, routes_changed: routes_changed }
+    }
+    return BuildStep { ok: true, routes_changed: routes_changed }
+}
+
+/// Build one target into `build/<target>/` and, for web, refresh the HTML shell.
+///
+/// A failed prepare or compile is reported and is not fatal: `serve` keeps the
+/// last build that worked — the page it serves, or the process it started — up,
+/// so the error is on the terminal while the thing you were looking at stays
+/// where it was. Only the route table failing to generate stops the build here,
+/// because the entry imports it and nothing downstream can name it.
+fn serve_build(appdir: string, target: string) -> BuildStep {
+    let step = serve_prepare(appdir)
+    if !step.ok {
+        return step
+    }
+    let entry = find_entry(appdir)
+    let stem = drop_suffix(base_name(entry), ".loam")
+    let dir = join(join(appdir, "build"), target)
+    sys.mkdir(dir)
+    let out = join(dir, out_name(target, stem))
+    let flags = target_flags(target)
+    let mut args = ""
+    if flags != "" {
+        args = cat(flags, " ")
+    }
+    args = cat(cat(cat(args, shell_quote(entry)), " -o "), shell_quote(out))
+    let log = run_loam(serve_build_env(target), args)
+    if sys.exec_status() != 0 {
+        fmt.println(trim(log))
+        return BuildStep { ok: false, routes_changed: step.routes_changed }
+    }
+    if target == "web" {
+        emit_web_shell(appdir, stem, "")
+    }
+    return BuildStep { ok: true, routes_changed: step.routes_changed }
+}
+
+/// Where a launched app's output goes: `build/<target>/<stem>.log`. The CLI owns
+/// this rather than leaving it on the terminal, because that file is the only
+/// place a trap survives the window closing.
+fn app_log(appdir: string, target: string, stem: string) -> string {
+    return cat(join(join(join(appdir, "build"), target), stem), ".log")
+}
+
+/// This process's own pid. A shell it starts reports its parent, and `serve` is
+/// alive to be reported: the watchdog below needs a handle on it.
+fn self_pid() -> int {
+    return int_of(trim(sys.exec("echo $PPID")))
+}
+
+/// Tie a launched app to this process: if `serve` goes away — Ctrl-C, a crash,
+/// a `kill -9` — the app goes with it.
+///
+/// The app cannot be relied on to *hear* the interrupt: a shell starts a
+/// background job with `SIGINT` ignored and `exec` inherits that, which is why
+/// Ctrl-C used to leave it running. `launch_app` resets the disposition, and this
+/// is the belt to those braces — the watchdog polls both pids and kills the app
+/// once either is gone. It exits by itself, so a rebuild leaves none behind.
+fn guard_app(self: int, app: int) -> bool {
+    if self <= 0 || app <= 0 {
+        return false
+    }
+    let me = int_str(self)
+    let them = int_str(app)
+    let cmd = "sh -c 'while kill -0 {{me}} 2>/dev/null && kill -0 {{them}} 2>/dev/null; do sleep 1; done; kill {{them}} 2>/dev/null' >/dev/null 2>&1 &"
+    sys.exec(cmd)
+    return true
+}
+
+/// Start `cmd` in the background with its output appended to `log`, and return
+/// its pid (0 when the shell would not start it). `cmd` is a shell word — the
+/// caller quotes the path it passes — so a test can hand it anything runnable.
+///
+/// `&` on a single command makes the shell fork and `exec` it, so the pid it
+/// reports back is the app's own and `stop_pid` reaches the app rather than a
+/// wrapper around it. The output goes to a file rather than to the pipe
+/// `sys.exec` reads: otherwise that read would not return until the app exited.
+///
+/// The app is started as a shell *background job*, which means it inherits
+/// `SIGINT` ignored — and a non-interactive shell cannot reset a signal that was
+/// ignored on entry, so the app cannot be made to hear Ctrl-C from here. That is
+/// why `guard_app` exists: the app dies because `serve` did, not because it got
+/// the same signal. Doing better needs a spawn that skips the shell.
+fn launch_app(cmd: string, log: string) -> int {
+    let out = sys.exec(cat(cat(cat(cat(cmd, " >> "), shell_quote(log)), " 2>&1 & echo $!"), ""))
+    let pid = int_of(trim(out))
+    if pid <= 0 {
+        fmt.println("zeli: cannot start {{cmd}}")
+    }
+    return pid
+}
+
+/// Is `pid` still running? `kill -0` asks the kernel without signalling, and
+/// says so through its exit status — the text it returns is not read.
+fn pid_alive(pid: int) -> bool {
+    if pid <= 0 {
+        return false
+    }
+    let out = sys.exec(cat(cat("kill -0 ", int_str(pid)), " 2>/dev/null"))
+    if out.len >= 0 && sys.exec_status() == 0 {
+        return true
+    }
+    return false
+}
+
+/// Stop `pid` and wait for it to go: `SIGTERM` first, `SIGKILL` only if the app
+/// is still there. Returns whether it is gone.
+fn stop_pid(pid: int) -> bool {
+    if pid <= 0 {
+        return true
+    }
+    let out = sys.exec(cat(cat("kill ", int_str(pid)), " 2>/dev/null"))
+    let mut waited = 0
+    while waited < 20 && pid_alive(pid) {
+        async.sleep(50)
+        waited += 1
+    }
+    if pid_alive(pid) {
+        let forced = sys.exec(cat(cat("kill -9 ", int_str(pid)), " 2>/dev/null"))
+        async.sleep(50)
+    }
+    return !pid_alive(pid)
+}
+
+/// `zeli serve <appdir> [--target T] [--port N] [--build-only]`
+///
+/// Builds one target and watches `.loam` sources — the app plus the framework
+/// `std/` trees — so an edit is reflected without a manual rebuild:
+///
+///   web      serves `build/web` on localhost, and every HTML page subscribes to
+///            the live channel, so the browser is *told* about a rebuild
+///   macos    runs the native binary, started again on every rebuild
+///   server   the same, for a service entry
+///   ios      builds the `.app` and installs it on the booted simulator
+///   android  builds the Gradle tree and installs it on the attached device
+///
+/// The device targets are the one place where the packaging is not ours: it is
+/// the compiler's host code, so `serve` runs `loamc --target=T --run <entry>`,
+/// which is also where a missing SDK reports itself, in its own words.
+fn serve(appdir: string, target: string, port: int, build_only: bool) -> int {
+    if sys.exists(loam_path()) == 0 {
+        die("zeli: missing {{loam_path()}} — run `make` in {{repo_root()}} first")
+    }
+    if !known_target(target) {
+        die("zeli: unknown target '{{target}}' (want {{target_list()}})")
+    }
+    let entry = find_entry(appdir)
+    let stem = drop_suffix(base_name(entry), ".loam")
+    fmt.println("zeli: initial build…")
+    if target == "ios" || target == "android" {
+        return serve_device(appdir, target, stem, entry, build_only)
+    }
+    let first = serve_build(appdir, target)
+    if first.routes_changed {
+        fmt.println("zeli: routes -> app_routes.loam")
+    }
+    if !first.ok {
+        return 1
+    }
+    if build_only {
+        fmt.println("zeli: serve build ok (--build-only)")
+        return 0
+    }
+    if target == "web" {
+        return serve_web(appdir, port)
+    }
+    return serve_native(appdir, target, stem)
+}
+
+// --- serve: watching the sources ---
+//
+// `std:sys` gives the kernel half of a watch and holds no state; which paths are
+// held, which id is which path, and what a change means is here. The registry is
+// two parallel vectors rather than a struct, because a helper cannot append to a
+// vector handed to it.
+
+/// Paths a registration is held for, parallel to `watch_ids`.
+let mut watch_paths: []string = []string {}
+
+/// The id `sys.watch_add` returned for `watch_paths[i]`. It is a descriptor, so
+/// closing one is `sys.watch_close`.
+let mut watch_ids: []int = []int {}
+
+/// The path a registration id stands for, or `""` when it is not ours.
+fn watch_path_of(id: int) -> string {
+    for i in 0..watch_ids.len {
+        if watch_ids[i] == id {
+            return watch_paths[i]
+        }
+    }
+    return ""
+}
+
+/// Hold a registration for `p`, and report whether it was new.
+///
+/// Re-arming must never stack a second watch on a path already held: the second
+/// descriptor would report the same edit again, and a rebuild that triggers
+/// itself never settles.
+fn add_watch(h: int, p: string) -> int {
+    for i in 0..watch_paths.len {
+        if watch_paths[i] == p {
+            return 0
+        }
+    }
+    let id = sys.watch_add(h, p)
+    if id == 0 {
+        return 0
+    }
+    push(watch_paths, p)
+    push(watch_ids, id)
+    return 1
+}
+
+/// Register `dir`, everything under it, and report the `.loam` files that were
+/// not held before.
+///
+/// The directories are registered so an *added* entry is seen, and the files so
+/// an *edited* one is; neither watch covers the other's case. A dotted name and
+/// the build/cache/vendor names are never entered, which is what keeps a rebuild
+/// from writing into what it watches.
+fn watch_arm_dir(h: int, dir: string) -> []string {
+    let mut added = []string {}
+    add_watch(h, dir)
+    let entries = sys.list_dir(dir)
+    for i in 0..entries.len {
+        let name = entries[i]
+        if is_dot(name) || skip_dir(name) {
+            continue
+        }
+        let p = join(dir, name)
+        if sys.is_dir(p) == 1 {
+            let sub = watch_arm_dir(h, p)
+            for j in 0..sub.len {
+                push(added, sub[j])
+            }
+        } else {
+            if ends_with(name, ".loam") {
+                if add_watch(h, p) == 1 {
+                    push(added, p)
+                }
+            }
+        }
+    }
+    return added
+}
+
+/// Drop registrations whose path is gone and report them.
+///
+/// A deleted route has to wake the reload as much as an added one, and its
+/// descriptor would otherwise hold a slot for a path that can never fire again.
+fn watch_forget_missing() -> []string {
+    let mut gone = []string {}
+    let mut kept_paths = []string {}
+    let mut kept_ids = []int {}
+    for i in 0..watch_paths.len {
+        if sys.exists(watch_paths[i]) == 0 {
+            push(gone, watch_paths[i])
+            sys.watch_close(watch_ids[i])
+        } else {
+            push(kept_paths, watch_paths[i])
+            push(kept_ids, watch_ids[i])
+        }
+    }
+    watch_paths = kept_paths
+    watch_ids = kept_ids
+    return gone
+}
+
+/// The sources `hits` names, each once, and only the ones a reload reacts to.
+fn watch_keep(hits: []string, roots: []string) -> []string {
+    let mut out = []string {}
+    for i in 0..hits.len {
+        if !is_watched_source(hits[i], roots) {
+            continue
+        }
+        let mut dup = false
+        for j in 0..out.len {
+            if out[j] == hits[i] {
+                dup = true
+            }
+        }
+        if !dup {
+            push(out, hits[i])
+        }
+    }
+    return out
+}
+
+/// The source paths one change touched, or none when nothing happened in
+/// `wait_ms`.
+///
+/// Waits for the first event and then drains the rest at once, because a single
+/// save arrives as several events and reporting them one at a time would start a
+/// rebuild each. A file event names the file; a directory event names only the
+/// directory, so its entries are listed — that is the only way a brand-new route
+/// file can be named at all, and the only way a deleted one can be.
+fn watch_batch(h: int, roots: []string, wait_ms: int) -> []string {
+    let mut hits = []string {}
+    let mut dirs = []string {}
+    let mut ev = sys.watch_next(h, wait_ms)
+    while ev != 0 {
+        let p = watch_path_of(ev)
+        if p != "" {
+            if sys.is_dir(p) == 1 {
+                push(dirs, p)
+            } else {
+                push(hits, p)
+            }
+        }
+        ev = sys.watch_next(h, 0)
+    }
+    if hits.len == 0 && dirs.len == 0 {
+        return hits
+    }
+    for i in 0..dirs.len {
+        let added = watch_arm_dir(h, dirs[i])
+        for j in 0..added.len {
+            push(hits, added[j])
+        }
+    }
+    let gone = watch_forget_missing()
+    for i in 0..gone.len {
+        push(hits, gone[i])
+    }
+    return watch_keep(hits, roots)
+}
+
+/// What a rebuild reacts to: the app, and the framework `std/` trees it imports
+/// from. `is_watched_source` judges a path relative to these, so a checkout that
+/// lives under a dotted directory still reloads.
+fn serve_roots(appdir: string) -> []string {
+    let packages = join(repo_root(), "packages")
+    let mut out = []string { appdir }
+    push(out, join(join(packages, "zeus"), "std"))
+    push(out, join(join(packages, "http"), "std"))
+    push(out, join(join(packages, "loam"), "std"))
+    return out
+}
+
+// --- serve: serving build/web ---
+
+/// One serve reply: what to write back for a request.
+struct HttpReply {
+    status: int,
+    content_type: string,
+    body: string,
+}
+
+/// The content type the build output is served with. `.wasm` and `.js` are the
+/// two that matter: a browser refuses to instantiate a module served with the
+/// wrong one.
+fn serve_content_type(file: string) -> string {
+    if ends_with(file, ".wasm") {
+        return "application/wasm"
+    }
+    if ends_with(file, ".js") {
+        return "text/javascript"
+    }
+    return "application/octet-stream"
+}
+
+/// Resolve one serve request against `web`, the build output directory.
+///
+/// Pure but for reading the file it lands on, so it can be tested without a
+/// socket: a nested path serves its own `index.html`, a missing path falls back
+/// to the root shell (SPA-style), HTML gets the live-reload snippet, and the
+/// module and script types are the ones a browser insists on.
+fn serve_reply(web: string, pathname: string, snippet: string) -> HttpReply {
+    let mut rel = strip_lead_slash(pathname)
+    if rel == "" || ends_with(rel, "/") {
+        rel = cat(rel, "index.html")
+    }
+    let mut file = join(web, rel)
+    /* A directory, or an extensionless route, serves its own index.html. */
+    if !ends_with(file, ".html") {
+        let idx = join(file, "index.html")
+        if sys.exists(idx) == 1 {
+            file = idx
+        }
+    }
+    if sys.exists(file) == 0 {
+        file = join(web, "index.html")
+    }
+    if sys.exists(file) == 0 {
+        return HttpReply { status: 404, content_type: "text/plain", body: "not found" }
+    }
+    let text = sys.read_file(file)
+    if ends_with(file, ".html") {
+        return HttpReply {
+            status: 200,
+            content_type: "text/html; charset=utf-8",
+            body: replace_all(text, "</body>", cat(snippet, "</body>")),
+        }
+    }
+    return HttpReply { status: 200, content_type: serve_content_type(file), body: text }
+}
+
+/// Read one request off `fd`: up to the end of the headers, then however many
+/// body bytes `content-length` asks for. A server reads one request per
+/// connection, so this is allowed to be simple.
+fn read_request(fd: int) -> string {
+    let mut acc = ""
+    let mut head = -1
+    for k in 0..64 {
+        head = find_headers_end(acc)
+        if head >= 0 {
+            break
+        }
+        let chunk = net.tcp_read(fd, 4096)
+        if chunk.len == 0 {
+            return acc
+        }
+        acc = cat(acc, chunk)
+    }
+    if head < 0 {
+        return acc
+    }
+    let want = request_body_len(acc, head)
+    while acc.len - head < want {
+        let chunk = net.tcp_read(fd, 4096)
+        if chunk.len == 0 {
+            break
+        }
+        acc = cat(acc, chunk)
+    }
+    return acc
+}
+
+/// The index just past the `\r\n\r\n` that ends a request's headers, or `-1`
+/// while they are still incomplete.
+fn find_headers_end(s: string) -> int {
+    for i in 0..s.len {
+        if i + 3 < s.len && s[i] == 13 && s[i + 1] == 10 && s[i + 2] == 13 && s[i + 3] == 10 {
+            return i + 4
+        }
+    }
+    return -1
+}
+
+/// The byte `c` as lower case, for a header name compare.
+fn lower_byte(c: int) -> int {
+    if c >= 65 && c <= 90 {
+        return c + 32
+    }
+    return c
+}
+
+/// The `content-length` a request's headers ask for, or `0` when it asks for no
+/// body. `head` is where the headers end, so only they are scanned.
+fn request_body_len(s: string, head: int) -> int {
+    let name = "content-length:"
+    let mut i = 0
+    while i + name.len <= head {
+        let mut same = true
+        for j in 0..name.len {
+            if lower_byte(s[i + j]) != name[j] {
+                same = false
+            }
+        }
+        if same {
+            return int_of(slice(s, i + name.len, head))
+        }
+        i += 1
+    }
+    return 0
+}
+
+/// One HTTP/1.1 reply for the server.
+///
+/// Written here rather than through `http.http_reply` because that one hardens
+/// every reply with `Content-Security-Policy: default-src 'none'`. That is right
+/// for an RPC endpoint and wrong for a page: it would block the app's own
+/// `loader.js` and the live-reload snippet injected into the shell. `no-store`
+/// is the other thing a server wants — a cached `app.wasm` is a rebuild the
+/// browser never sees.
+fn serve_http_reply(status: int, ctype: string, body: string) -> string {
+    let head = "HTTP/1.1 {{status}} {{http.reason_phrase(status)}}\r\nContent-Type: {{ctype}}\r\nContent-Length: {{body.len}}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
+    return cat(head, body)
+}
+
+/// Answer one connection and hang up. A server has no keep-alive to hold,
+/// and a page's own requests are separate connections anyway — *except* a live
+/// channel subscription, which is the one reply that is deliberately left open.
+fn serve_http_one(fd: int, web: string, snippet: string, rev: int) {
+    let raw = read_request(fd)
+    if raw.len == 0 {
+        net.tcp_close(fd)
+        return
+    }
+    let req = http.parse_http11(raw)
+    if req.err != 0 {
+        net.tcp_write(fd, serve_http_reply(400, "text/plain; charset=utf-8", "bad request"))
+        net.tcp_close(fd)
+        return
+    }
+    if req.path == live_path() {
+        live_subscribe(fd, rev)
+        return
+    }
+    /* The app's RPC is same-origin (for wasm `default_addr()` returns ""), so a
+       browser build POSTs its gRPC-Web call here rather than to the backend.
+       Without this it would be answered by the SPA fallback below. */
+    if req.method == "POST" && contains_str(req.ctype, "grpc-web") {
+        serve_proxy_rpc(fd, serve_rpc_addr(), req.path, req.query, req.ctype, req.body)
+        net.tcp_close(fd)
+        return
+    }
+    let reply = serve_reply(web, req.path, snippet)
+    net.tcp_write(fd, serve_http_reply(reply.status, reply.content_type, reply.body))
+    net.tcp_close(fd)
+}
+
+// --- serve: the live-reload channel ---
+//
+// A page subscribes once and is then *told* about a rebuild, so an idle tab
+// holds one open connection and makes no request at all. A subscription is the
+// one reply that is never closed: its descriptor is kept here and written to
+// once per successful rebuild, and a write that fails is the page going away.
+
+/// Descriptors of the pages subscribed to the live channel.
+let mut live_clients: []int = []int {}
+
+/// The headers a subscription is answered with.
+///
+/// No `content-length` and no `connection: close`, because the point is to hold
+/// the connection open — and a reply built by `serve_http_reply` would end it.
+fn live_head() -> string {
+    return "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\nConnection: keep-alive\r\n\r\n"
+}
+
+/// Take one page's subscription. The first frame is the revision the page boots
+/// into: a baseline, not a reload, so only a *later* revision reloads.
+fn live_subscribe(fd: int, rev: int) {
+    if net.tcp_write(fd, cat(live_head(), sse_frame(rev))) < 0 {
+        net.tcp_close(fd)
+        return
+    }
+    push(live_clients, fd)
+}
+
+/// One frame to every subscribed page, dropping the ones that have gone away.
+fn live_push(rev: int) {
+    let mut kept = []int {}
+    for i in 0..live_clients.len {
+        if net.tcp_write(live_clients[i], sse_frame(rev)) >= 0 {
+            push(kept, live_clients[i])
+        } else {
+            net.tcp_close(live_clients[i])
+        }
+    }
+    live_clients = kept
+}
+
+// --- serve: forwarding the app's RPC ---
+
+/// A `host:port` split into its two halves. Named for the RPC address it comes
+/// from rather than for its shape: a struct name is shared across every module
+/// in a build, and `std:http` already has a `HostPort`.
+struct RpcAddr {
+    host: string,
+    port: int,
+}
+
+/// `addr` as a host and a port. A missing port reads as `0`, which no backend
+/// listens on, so a malformed address fails the same way an absent one does.
+fn rpc_addr_of(addr: string) -> RpcAddr {
+    for i in 0..addr.len {
+        if addr[i] == 58 /* : */ {
+            return RpcAddr { host: slice(addr, 0, i), port: int_of(slice(addr, i + 1, addr.len)) }
+        }
+    }
+    return RpcAddr { host: addr, port: 0 }
+}
+
+/// Where the app's own backend listens. The same override `default_addr()` in
+/// `std:http` honours, so both ends agree without configuration.
+fn serve_rpc_addr() -> string {
+    let a = sys.env("LOAM_RPC_ADDR")
+    if a == "" {
+        return "127.0.0.1:8080"
+    }
+    return a
+}
+
+/// Forward one gRPC-Web request to the app's backend, verbatim.
+///
+/// The reply is relayed as the backend framed it rather than rebuilt here: a
+/// gRPC-Web response carries its status in trailers, and a status and body
+/// copied out of it would drop exactly the part the client is waiting for.
+///
+/// No CORS handling is needed — the hop from the browser is same-origin and this
+/// hop is server-to-server. A missing backend is a 502, so it shows up as a
+/// failure rather than as silence.
+fn serve_proxy_rpc(fd: int, addr: string, path: string, query: string, ctype: string, body: string) {
+    let hp = rpc_addr_of(addr)
+    let up = net.tcp_connect(hp.host, hp.port)
+    if up < 0 {
+        serve_rpc_unreachable(fd, addr)
+        return
+    }
+    let mut target = path
+    if query != "" {
+        target = cat(cat(target, "?"), query)
+    }
+    let mut out = "POST {{target}} HTTP/1.1\r\nHost: {{addr}}\r\nContent-Type: {{ctype}}\r\nx-grpc-web: 1\r\nContent-Length: {{body.len}}\r\nConnection: close\r\n\r\n"
+    out = cat(out, body)
+    if net.tcp_write(up, out) < 0 {
+        net.tcp_close(up)
+        serve_rpc_unreachable(fd, addr)
+        return
+    }
+    let resp = http.h1_read_all(up)
+    net.tcp_close(up)
+    if resp.len == 0 {
+        serve_rpc_unreachable(fd, addr)
+        return
+    }
+    net.tcp_write(fd, resp)
+}
+
+/// The reply for a backend that is not there. Named rather than inlined because
+/// both the connect and the send can be the thing that fails.
+fn serve_rpc_unreachable(fd: int, addr: string) {
+    fmt.println("zeli: rpc backend {{addr}} unreachable")
+    net.tcp_write(fd, serve_http_reply(502, "text/plain; charset=utf-8", "rpc backend {{addr}} unreachable\n"))
+}
+
+/// Watch the sources, rebuild on change, and serve `build/web` on localhost.
+///
+/// One loop, no threads: it waits a tick on the watcher, rebuilds if anything
+/// moved, then answers whatever connections are waiting. A change is picked up
+/// within a tick and a request is answered within a tick, and neither can starve
+/// the other.
+fn serve_web(appdir: string, port: int) -> int {
+    let roots = serve_roots(appdir)
+    let h = serve_watch(appdir)
+    let listener = net.tcp_listen(port)
+    if listener < 0 {
+        die("zeli: cannot bind 127.0.0.1:{{port}}")
+    }
+    let web = join(join(appdir, "build"), "web")
+    let snippet = live_snippet()
+    let mut rev = 1
+    fmt.println("zeli: serve on http://127.0.0.1:{{port}}  (Ctrl-C to stop)")
+    while true {
+        let batch = watch_batch(h, roots, 50)
+        if batch.len > 0 {
+            fmt.println("zeli: {{batch.len}} source file(s) changed, rebuilding…")
+            let r = serve_build(appdir, "web")
+            if r.routes_changed {
+                fmt.println("zeli: routes -> app_routes.loam")
+            }
+            if !r.ok {
+                fmt.println("zeli: build failed — still serving rev {{rev}}")
+            } else {
+                rev += 1
+                fmt.println("zeli: rebuilt (rev {{rev}})")
+                live_push(rev)
+            }
+        }
+        let mut waiting = net.tcp_poll(listener, 1, 0)
+        while waiting == 1 {
+            let fd = net.tcp_accept(listener)
+            if fd > 0 {
+                serve_http_one(fd, web, snippet, rev)
+            }
+            waiting = net.tcp_poll(listener, 1, 0)
+        }
+    }
+    return 0
+}
+
+// --- serve: native and device targets ---
+//
+// A native target is a process this CLI starts and stops, so a rebuild is `stop`
+// then `start`; a device target is one the platform starts, so a rebuild is
+// "install and launch" again. Both watch the same sources and go through the same
+// `serve_build`, so a build error is reported once, the same way, whatever the
+// target is.
+
+/// The kernel watcher over the app's sources, or exit. Every target watches the
+/// same set — what differs is what a change does — so opening it lives here.
+fn serve_watch(appdir: string) -> int {
+    let roots = serve_roots(appdir)
+    let h = sys.watch_open()
+    if h == 0 {
+        die("zeli: no kernel watcher on this host — `zeli serve` needs one")
+    }
+    for i in 0..roots.len {
+        watch_arm_dir(h, roots[i])
+    }
+    return h
+}
+
+/// `serve` for a native target: one process, started again on every rebuild.
+///
+/// The app is checked on as well as the sources — a native app that traps leaves
+/// nothing on screen to say why, so that notice and the log are the whole report.
+/// A build that fails does not touch the process that is already up.
+fn serve_native(appdir: string, target: string, stem: string) -> int {
+    let roots = serve_roots(appdir)
+    let h = serve_watch(appdir)
+    let bin = join(join(join(appdir, "build"), target), stem)
+    let log = app_log(appdir, target, stem)
+    let self = self_pid()
+    let mut pid = launch_app(shell_quote(bin), log)
+    if pid <= 0 {
+        return 1
+    }
+    guard_app(self, pid)
+    fmt.println("zeli: serve on {{target}} (pid {{pid}}) — output: {{rel_to(repo_root(), log)}}  (Ctrl-C to stop)")
+    let mut said_exited = false
+    let mut tick = 0
+    while true {
+        let batch = watch_batch(h, roots, 50)
+        if batch.len > 0 {
+            fmt.println("zeli: {{batch.len}} source file(s) changed, rebuilding…")
+            said_exited = false
+            let r = serve_build(appdir, target)
+            if r.routes_changed {
+                fmt.println("zeli: routes -> app_routes.loam")
+            }
+            if !r.ok {
+                if pid_alive(pid) {
+                    fmt.println("zeli: build failed — pid {{pid}} still up")
+                } else {
+                    fmt.println("zeli: build failed — pid {{pid}} is gone")
+                }
+            } else {
+                let gone = stop_pid(pid)
+                pid = launch_app(shell_quote(bin), log)
+                if pid <= 0 {
+                    return 1
+                }
+                guard_app(self, pid)
+                if gone {
+                    fmt.println("zeli: restarted (pid {{pid}})")
+                } else {
+                    fmt.println("zeli: restarted (pid {{pid}}) — the old process would not stop")
+                }
+            }
+        }
+        /* An app that exits on its own — a trap, or a service that returns — is
+           reported once and then left alone: starting it again on its own clock
+           would turn a crash into a spin. */
+        tick += 1
+        if tick % 20 == 0 && !pid_alive(pid) && !said_exited {
+            fmt.println("zeli: app exited (pid {{pid}})")
+            said_exited = true
+        }
+    }
+    return 0
+}
+
+/// The id a platform needs to stop its app, read back out of the artifact the
+/// build just wrote: the `.app`'s `Info.plist` for the simulator, `app/build.gradle`
+/// for the device. Those ids are the compiler's naming rules, so reading them
+/// back is what keeps this from being a second copy of those rules.
+fn ios_bundle_id(appdir: string, stem: string) -> string {
+    let plist = join(join(join(join(appdir, "build"), "ios"), cat(stem, ".app")), "Info.plist")
+    if sys.exists(plist) == 0 {
+        return ""
+    }
+    return between(sys.read_file(plist), "<key>CFBundleIdentifier</key><string>", 60 /* < */)
+}
+
+/// The `applicationId` the Gradle tree was generated with.
+fn android_app_id(appdir: string, stem: string) -> string {
+    let gradle = join(join(join(join(join(appdir, "build"), "android"), stem), "app"), "build.gradle")
+    if sys.exists(gradle) == 0 {
+        return ""
+    }
+    return between(sys.read_file(gradle), "applicationId \"", 34 /* " */)
+}
+
+/// Stop the instance the last install left running, so what the screen shows is
+/// the build just made. Both platforms keep the old process across an install,
+/// so without this an edit would land on disk and never appear.
+///
+/// Best effort: a device that has never run this app has nothing to stop, and the
+/// toolchain is allowed to say no. Either way it is not a failed serve.
+fn stop_device(appdir: string, target: string, stem: string) -> bool {
+    if target == "ios" {
+        let bid = ios_bundle_id(appdir, stem)
+        if bid == "" {
+            return false
+        }
+        let out = sys.exec(cat(cat("xcrun simctl terminate booted ", shell_quote(bid)), " >/dev/null 2>&1"))
+        return sys.exec_status() == 0
+    }
+    let pkg = android_app_id(appdir, stem)
+    if pkg == "" {
+        return false
+    }
+    let out = sys.exec(cat(cat("adb shell am force-stop ", shell_quote(pkg)), " >/dev/null 2>&1"))
+    return sys.exec_status() == 0
+}
+
+/// One device launch: `loamc --target=T --run <entry>` builds the artifact,
+/// installs it, and starts it. It is passed the same `-o` the `build` command
+/// uses so both leave the artifact in one place — which is also where
+/// `stop_device` reads the id back from.
+fn serve_device_run(appdir: string, target: string, stem: string, entry: string) -> bool {
+    stop_device(appdir, target, stem)
+    let out = join(join(join(appdir, "build"), target), stem)
+    let mut args = cat(cat(cat(cat("--target=", target), " --run "), shell_quote(entry)), " -o ")
+    args = cat(args, shell_quote(out))
+    let log = run_loam("", args)
+    if sys.exec_status() != 0 {
+        fmt.println(trim(log))
+        return false
+    }
+    fmt.println("zeli: {{target}} -> {{rel_to(repo_root(), out)}}")
+    return true
+}
+
+/// `serve` for ios / android. The watch and the build are the ones every target
+/// uses; the step is "build, install, launch" rather than a process this CLI
+/// holds, so there is no pid to stop — the platform's runtime owns the app.
+fn serve_device(appdir: string, target: string, stem: string, entry: string, build_only: bool) -> int {
+    if build_only {
+        let r = serve_build(appdir, target)
+        if r.routes_changed {
+            fmt.println("zeli: routes -> app_routes.loam")
+        }
+        if !r.ok {
+            return 1
+        }
+        fmt.println("zeli: serve build ok (--build-only)")
+        return 0
+    }
+    let roots = serve_roots(appdir)
+    let h = serve_watch(appdir)
+    let first = serve_prepare(appdir)
+    if first.routes_changed {
+        fmt.println("zeli: routes -> app_routes.loam")
+    }
+    if !first.ok {
+        return 1
+    }
+    if !serve_device_run(appdir, target, stem, entry) {
+        return 1
+    }
+    fmt.println("zeli: serving {{target}}  (Ctrl-C to stop)")
+    while true {
+        let batch = watch_batch(h, roots, 50)
+        if batch.len > 0 {
+            fmt.println("zeli: {{batch.len}} source file(s) changed, rebuilding…")
+            let r = serve_prepare(appdir)
+            if r.routes_changed {
+                fmt.println("zeli: routes -> app_routes.loam")
+            }
+            if !r.ok {
+                fmt.println("zeli: build failed — the last install is still on the device")
+            } else {
+                if serve_device_run(appdir, target, stem, entry) {
+                    fmt.println("zeli: reinstalled")
+                } else {
+                    fmt.println("zeli: build failed — the last install is still on the device")
+                }
+            }
+        }
+    }
+    return 0
+}
+
+// --- pkg sync: vendored packages and the lockfile ---
+//
+// `import "pkg:name"` resolves to `vendor/name/name.loam`, so a package has to be
+// *materialized* before anything typechecks. `loam.deps` says where each one
+// comes from and `loam.lock` records what was actually used, which is what makes
+// a vendored tree reproducible without the network being up.
+
+/// A `loam.deps` line split into its `name source [rev]` fields.
+struct Dep {
+    name: string,
+    source: string,
+    rev: string,
+}
+
+/// `line` without its comment, trimmed. A `#` anywhere starts one.
+fn dep_line(line: string) -> string {
+    let mut cut = line.len
+    for i in 0..line.len {
+        if line[i] == 35 /* # */ {
+            cut = i
+            break
+        }
+    }
+    return trim(slice(line, 0, cut))
+}
+
+/// `s` split on runs of spaces and tabs, with empty pieces dropped. A dependency
+/// line is written in whitespace, not in one particular byte.
+fn split_ws(s: string) -> []string {
+    let mut out = []string {}
+    let mut i = 0
+    while i < s.len {
+        if s[i] == 32 || s[i] == 9 {
+            i += 1
+            continue
+        }
+        let start = i
+        while i < s.len {
+            if s[i] == 32 || s[i] == 9 {
+                break
+            }
+            i += 1
+        }
+        push(out, slice(s, start, i))
+    }
+    return out
+}
+
+/// The fields of a non-empty `loam.deps` line. A missing `source` or `rev` reads
+/// as empty, which the caller reports in its own words.
+fn dep_of(line: string) -> Dep {
+    let toks = split_ws(line)
+    let mut name = ""
+    let mut source = ""
+    let mut rev = ""
+    if toks.len > 0 {
+        name = toks[0]
+    }
+    if toks.len > 1 {
+        source = toks[1]
+    }
+    if toks.len > 2 {
+        rev = toks[2]
+    }
+    return Dep { name: name, source: source, rev: rev }
+}
+
+/// A package name: an identifier, and unlike an app name a `-` is not allowed in
+/// one, because `import "pkg:name"` has to be spellable as a path segment.
+fn valid_pkg_name(name: string) -> bool {
+    if name.len == 0 {
+        return false
+    }
+    let c0 = name[0]
+    if is_alpha(c0) == 0 && c0 != 95 /* _ */ {
+        return false
+    }
+    for i in 1..name.len {
+        let c = name[i]
+        if is_alpha(c) == 0 && is_digit(c) == 0 && c != 95 {
+            return false
+        }
+    }
+    return true
+}
+
+/// Copy the tree at `src` to `dst`, skipping `.git`. A vendored package should
+/// not carry the clone's history, which would be a second copy of the objects.
+fn copy_tree(src: string, dst: string) {
+    sys.mkdir(dst)
+    let entries = sys.list_dir(src)
+    for i in 0..entries.len {
+        let name = entries[i]
+        if name == ".git" {
+            continue
+        }
+        let from = join(src, name)
+        let to = join(dst, name)
+        if sys.is_dir(from) == 1 {
+            copy_tree(from, to)
+        } else {
+            sys.write_file(to, sys.read_file(from))
+        }
+    }
+}
+
+/// The first twelve characters of `s` — how a commit is shortened for a log
+/// line, long enough to be unmistakable and short enough to read.
+fn short_sha(s: string) -> string {
+    if s.len <= 12 {
+        return s
+    }
+    return slice(s, 0, 12)
+}
+
+/// `git <args>` from the repo root, stderr merged into the captured output. A
+/// clone needs a cwd; a `-C <dir>` call does not, but running both the same way
+/// keeps the exit status handling in one place.
+fn run_git(args: string) -> string {
+    return run_here(cat("git ", args))
+}
+
+/// `zeli pkg sync <appdir>`
+///
+/// Reads `<appdir>/loam.deps` — one `name source [rev]` per line, `#` comments —
+/// and materializes each package under `<appdir>/vendor/<name>/`, writing
+/// `<appdir>/loam.lock`.
+///
+/// A `path:../dir` source is copied locally, so a checkout with no network still
+/// syncs; anything else is a git URL, cloned from the repo root and pinned to its
+/// HEAD (or to `rev`) commit. One package failing does not stop the others — the
+/// lock file is still written and the exit code says something went wrong.
+fn pkg_sync(appdir: string) -> int {
+    let deps = join(appdir, "loam.deps")
+    if sys.exists(deps) == 0 {
+        die("zeli: no loam.deps in {{appdir}}")
+    }
+    let vendor = join(appdir, "vendor")
+    sys.mkdir(vendor)
+    let mut lock = []string { "# Generated by `zeli pkg sync`. Do not edit." }
+    let mut names = []string {}
+    let mut ok = true
+    let lines = split_lines(sys.read_file(deps))
+    for i in 0..lines.len {
+        let line = dep_line(lines[i])
+        if line == "" {
+            continue
+        }
+        let d = dep_of(line)
+        if !valid_pkg_name(d.name) {
+            die("zeli: bad package name '{{d.name}}'")
+        }
+        if index_of(names, d.name) >= 0 {
+            die("zeli: duplicate package '{{d.name}}'")
+        }
+        push(names, d.name)
+        let dest = join(vendor, d.name)
+        if d.source == "" {
+            fmt.println("zeli: {{d.name}}: missing source")
+            ok = false
+            continue
+        }
+        if starts_with(d.source, "path:") {
+            let src = abs_path(join(appdir, slice(d.source, 5, d.source.len)))
+            if sys.exists(src) == 0 {
+                fmt.println("zeli: {{d.name}}: missing {{src}}")
+                ok = false
+                continue
+            }
+            sys.remove_path(dest)
+            copy_tree(src, dest)
+            push(lock, "{{d.name}}\t{{d.source}}\tlocal")
+            fmt.println("zeli: {{d.name}} <- {{rel_to(repo_root(), src)}} (local)")
+        } else {
+            sys.remove_path(dest)
+            let mut clone = "clone --quiet "
+            clone = cat(cat(clone, shell_quote(d.source)), " ")
+            clone = cat(clone, shell_quote(dest))
+            let log = run_git(clone)
+            if sys.exec_status() != 0 {
+                fmt.println(cat(cat(cat("zeli: ", d.name), ": git clone failed\n"), indent_lines(trim(log), "  ")))
+                ok = false
+                continue
+            }
+            if d.rev != "" {
+                let mut co = cat("-C ", shell_quote(dest))
+                co = cat(cat(cat(co, " checkout --quiet "), shell_quote(d.rev)), "")
+                run_git(co)
+                if sys.exec_status() != 0 {
+                    fmt.println("zeli: {{d.name}}: cannot checkout '{{d.rev}}'")
+                    ok = false
+                }
+            }
+            let mut head = cat("-C ", shell_quote(dest))
+            head = cat(head, " rev-parse HEAD")
+            let sha = trim(run_git(head))
+            push(lock, "{{d.name}}\t{{d.source}}\t{{sha}}")
+            fmt.println("zeli: {{d.name}} <- {{d.source}}@{{short_sha(sha)}}")
+        }
+    }
+    sys.write_file(join(appdir, "loam.lock"), join_lines(lock))
+    if ok {
+        return 0
+    }
+    return 1
+}
+
+// --- new: scaffold the app layout ---
+//
+// Byte-for-byte what `zeli new` writes from TypeScript, templates included.
+// Every file that names the app interpolates it.
+
+fn is_alpha(c: int) -> int {
+    if c >= 97 && c <= 122 {
+        return 1 /* a-z */
+    }
+    if c >= 65 && c <= 90 {
+        return 1 /* A-Z */
+    }
+    return 0
+}
+
+fn is_digit(c: int) -> int {
+    if c >= 48 && c <= 57 {
+        return 1 /* 0-9 */
+    }
+    return 0
+}
+
+/// A legal app name: `[A-Za-z_][A-Za-z0-9_-]*`. It becomes a directory, a TOML
+/// value and an identifier, so the rule is the strict one.
+fn valid_name(name: string) -> bool {
+    if name.len == 0 {
+        return false
+    }
+    let c0 = name[0]
+    if is_alpha(c0) == 0 {
+        if c0 != 95 /* _ */ {
+            return false
+        }
+    }
+    for i in 1..name.len {
+        let c = name[i]
+        if is_alpha(c) == 1 || is_digit(c) == 1 {
+            continue
+        }
+        if c == 95 || c == 45 {
+            continue /* _ - */
+        }
+        return false
+    }
+    return true
+}
+
+/// One scaffolded file: where it goes, relative to the app directory, and its
+/// whole contents. A vector of these rather than a map, which Loam has no need
+/// of here — the order is the write order and only the count is reported.
+struct ScaffoldFile {
+    rel: string,
+    body: string,
+}
+
+/// The tree `zeli new` writes: an entry for every host, the `routes/` tree the
+/// router is generated from, a component, an RPC surface and a smoke test.
+///
+/// Every file that names the app interpolates it — `zeus.toml`, `app.loam`, the
+/// root layout's nav and the welcome page. A template used to keep a literal
+/// `myapp` there, which stayed invisible only because the one scaffolded app in
+/// the tree is called `myapp`; the suite now checks the name lands.
+fn scaffold_files(name: string) -> []ScaffoldFile {
+    let mut out = []ScaffoldFile {}
+    push(out, ScaffoldFile {
+        rel: "zeus.toml",
+        body: "name = \"{{name}}\"\ntargets = [\"web\", \"macos\", \"ios\", \"android\", \"server\"]\nroutes = \"routes\"\ntheme = \"theme.loam\"\nrevalidate = 60\n",
+    })
+    push(out, ScaffoldFile {
+        rel: ".gitignore",
+        body: ".zeus/\nbuild/\nvendor/\napp_routes.loam\n",
+    })
+    push(out, ScaffoldFile {
+        rel: "app.loam",
+        body: "//! {{name}} — application entry. One entry, every host.\n//!\n//! `zeli routes` generates app_routes.loam from routes/; this file\n//! mounts it. `zeli build` emits all five targets from here.\n\nimport \"std:zeus\"\nimport \"app_routes.loam\" as approutes\nimport \"server/api.loam\" as api\nimport \"tests/smoke.loam\" as smoketest\n\nfn main() {\n    zeus.App(\"{{name}}\", fn() {\n        approutes.app()\n    })\n}\n",
+    })
+    push(out, ScaffoldFile {
+        rel: "theme.loam",
+        body: "//! Theme tokens: palette roles. `zeus.theme(ROLE.X, light, dark)` sets\n//! both appearances; widgets resolve the role per appearance at paint time.\n\nimport \"std:zeus\"\n\nfn install() {\n    zeus.theme(ROLE.Accent, 0x2563EB, 0x60A5FA)\n    zeus.theme(ROLE.Paper, 0xFFFFFF, 0x111318)\n    zeus.theme(ROLE.Ink, 0x111318, 0xF3F4F6)\n}\n",
+    })
+    push(out, ScaffoldFile {
+        rel: "routes/layout.loam",
+        body: "//! Root shell: theme + nav. Retained across navigation, so its state\n//! survives — only the page slot rebuilds.\n\nimport \"std:zeus\"\nimport \"../theme.loam\" as theme\n\nfn layout(build: fn()) {\n    theme.install()\n    let box = zeus.Box(align_direction = DIRECTION.Column, padding = 12, spacing = 8)\n    zeus.slot(box, fn() {\n        zeus.Text(\"{{name}}\")\n    })\n    zeus.slot(box, build)\n}\n",
+    })
+    push(out, ScaffoldFile {
+        rel: "routes/page.loam",
+        body: "import \"std:zeus\"\nimport \"std:router\"\nimport \"../components/card.loam\" as card\n\nfn page(p: Params) {\n    card.Card(\"Welcome to {{name}}.\")\n}\n\nfn meta(p: Params) -> Meta {\n    return Meta { title: \"{{name}}\", description: \"A Zeus app.\" }\n}\n",
+    })
+    push(out, ScaffoldFile {
+        rel: "routes/loading.loam",
+        body: "//! Shown while a route's loaders are pending.\n\nimport \"std:zeus\"\n\nfn loading() {\n    zeus.Text(\"loading...\")\n}\n",
+    })
+    push(out, ScaffoldFile {
+        rel: "routes/error.loam",
+        body: "//! Route error page. A trap in a page's build lands here (see zeus.Boundary).\n\nimport \"std:zeus\"\n\nfn error(msg: string) {\n    zeus.Text(\"something went wrong\")\n}\n",
+    })
+    push(out, ScaffoldFile {
+        rel: "routes/not-found.loam",
+        body: "import \"std:zeus\"\n\nfn not_found() {\n    zeus.Text(\"not found\")\n}\n",
+    })
+    push(out, ScaffoldFile {
+        rel: "routes/blog/layout.loam",
+        body: "import \"std:zeus\"\n\nfn layout(build: fn()) {\n    let box = zeus.Box(align_direction = DIRECTION.Column, padding = 8, spacing = 4)\n    zeus.slot(box, fn() {\n        zeus.Text(\"blog\")\n    })\n    zeus.slot(box, build)\n}\n",
+    })
+    push(out, ScaffoldFile {
+        rel: "routes/blog/loader.loam",
+        body: "//! Blog list query. Make `posts` a `#[server] fn` to fetch it from the\n//! backend; it stays a plain fn here so the scaffold runs on every host.\n\nfn posts() -> []string {\n    return []string { \"hello world\", \"second post\" }\n}\n",
+    })
+    push(out, ScaffoldFile {
+        rel: "routes/blog/page.loam",
+        body: "import \"std:zeus\"\nimport \"std:router\"\nimport \"loader.loam\" as blog_loader\n\nfn page(p: Params) {\n    let ps = blog_loader.posts()\n    for i in 0..ps.len {\n        zeus.Text(ps[i])\n    }\n}\n\nfn meta(p: Params) -> Meta {\n    return Meta { title: \"Blog\" }\n}\n",
+    })
+    push(out, ScaffoldFile {
+        rel: "routes/blog/[slug]/loader.loam",
+        body: "//! One post by slug. In a real app this is\n//! `#[server] fn get_post(slug: string) -> Post`.\n\nfn get_post(slug: string) -> string {\n    return slug\n}\n",
+    })
+    push(out, ScaffoldFile {
+        rel: "routes/blog/[slug]/page.loam",
+        body: "import \"std:zeus\"\nimport \"std:router\"\nimport \"loader.loam\" as post_loader\n\nfn page(p: Params) {\n    let slug = router.param(p, \"slug\")\n    zeus.Text(post_loader.get_post(slug))\n}\n\n// Static routes are enumerated at build time from `paths()`.\nfn paths() -> []string {\n    return []string { \"/blog/hello-world\", \"/blog/second\" }\n}\n\nfn meta(p: Params) -> Meta {\n    return Meta { title: router.param(p, \"slug\") }\n}\n",
+    })
+    push(out, ScaffoldFile {
+        rel: "routes/blog/[slug]/error.loam",
+        body: "import \"std:zeus\"\n\nfn error(msg: string) {\n    zeus.Text(\"post not available\")\n}\n",
+    })
+    push(out, ScaffoldFile {
+        rel: "routes/(marketing)/about/page.loam",
+        body: "import \"std:zeus\"\nimport \"std:router\"\n\nfn page(p: Params) {\n    zeus.Text(\"about\")\n}\n\nfn meta(p: Params) -> Meta {\n    return Meta { title: \"About\" }\n}\n",
+    })
+    push(out, ScaffoldFile {
+        rel: "routes/(marketing)/pricing/page.loam",
+        body: "import \"std:zeus\"\nimport \"std:router\"\n\nfn page(p: Params) {\n    zeus.Text(\"pricing\")\n}\n\nfn meta(p: Params) -> Meta {\n    return Meta { title: \"Pricing\" }\n}\n",
+    })
+    push(out, ScaffoldFile {
+        rel: "components/card.loam",
+        body: "//! Shared component, no routing knowledge: a fn that builds into the\n//! current host.\n\nimport \"std:zeus\"\n\nfn Card(text: string) {\n    let box = zeus.Box(background = \"#FFFFFF\", padding = 12, spacing = 4)\n    zeus.slot(box, fn() {\n        zeus.Text(text)\n    })\n}\n",
+    })
+    push(out, ScaffoldFile {
+        rel: "server/api.loam",
+        body: "//! RPC surface: `#[proto]` contracts and `#[server]` fns. The entry\n//! imports this, so the same source compiles to a direct call on native\n//! and an RPC boundary on the client.\n\nimport \"std:http\"\n\n#[proto]\nstruct HelloReq {\n    name: string,\n}\n\n#[proto]\nstruct HelloResp {\n    greeting: string,\n}\n\n#[server]\nfn hello(req: HelloReq) -> HelloResp {\n    return HelloResp { greeting: req.name }\n}\n",
+    })
+    push(out, ScaffoldFile {
+        rel: "server/db.loam",
+        body: "//! Database access belongs here, behind `#[server]` fns so handles and\n//! secrets never reach a client binary.\n",
+    })
+    push(out, ScaffoldFile {
+        rel: "assets/README.md",
+        body: "# assets\n\nImages, fonts, and icons live here. `zeli build` will compile them into\ntyped handles (`assets.hero`) once the asset pipeline lands.\n",
+    })
+    push(out, ScaffoldFile {
+        rel: "public/robots.txt",
+        body: "User-agent: *\nAllow: /\n",
+    })
+    push(out, ScaffoldFile {
+        rel: "tests/smoke.loam",
+        body: "//! `#[test]` fns. Import this from the entry and run `loam test app.loam`.\n\nimport \"std:test\"\n\nfn add(a: int, b: int) -> int {\n    return a + b\n}\n\n#[test]\nfn adds() {\n    assert_eq_int(add(1, 2), 3)\n}\n",
+    })
+    return out
+}
+
+/// `zeli new <name> [dir]` — write the scaffold, then generate its route table,
+/// because the entry imports `app_routes.loam` and a fresh app has to typecheck
+/// under `loamc` (and the LSP) before anyone builds it.
+///
+/// Refuses a target that exists and holds anything: `zeli new` never merges
+/// into an app it did not write.
+fn scaffold(appdir: string, name: string) -> int {
+    if !valid_name(name) {
+        fmt.println("zeli: bad app name '{{name}}'")
+        return 2
+    }
+    if sys.exists(appdir) == 1 {
+        if sys.dir_count(appdir) > 0 {
+            fmt.println("zeli: {{appdir}} already exists and is not empty")
+            return 2
+        }
+    }
+    let files = scaffold_files(name)
+    for i in 0..files.len {
+        let p = join(appdir, files[i].rel)
+        let parent = dir_of(p)
+        if parent != "" {
+            sys.mkdir(parent)
+        }
+        sys.write_file(p, files[i].body)
+    }
+    if generate(appdir) == "" {
+        return 2
+    }
+    let n = files.len + 1
+    fmt.println("zeli: created {{name}} ({{n}} files)")
+    fmt.println("  cd {{rel_to(sys.cwd(), appdir)}} && zeli serve")
+    return 0
+}
+
+// --- build: targets, the compiler gate, and the web shell ---
+
+/// The target names, in the order the TypeScript CLI lists them (`ALL_TARGETS`).
+/// `server` is the native binary a backend runs, so five targets come out of one
+/// entry.
+fn all_targets() -> []string {
+    return []string { "web", "macos", "ios", "android", "server" }
+}
+
+/// The same list as one string, for the `want ...` half of an error.
+fn target_list() -> string {
+    let ts = all_targets()
+    let mut r = ""
+    for i in 0..ts.len {
+        if i > 0 {
+            r = cat(r, ", ")
+        }
+        r = cat(r, ts[i])
+    }
+    return r
+}
+
+fn known_target(t: string) -> bool {
+    let ts = all_targets()
+    for i in 0..ts.len {
+        if ts[i] == t {
+            return true
+        }
+    }
+    return false
+}
+
+/// `--targets a,b` as a list. An unknown name is fatal; with no argument at all
+/// every target is built.
+fn parse_targets(arg: string, given: bool) -> []string {
+    if !given {
+        return all_targets()
+    }
+    let parts = split_on(arg, 44 /* , */)
+    let mut out = []string {}
+    for i in 0..parts.len {
+        let t = trim(parts[i])
+        if !known_target(t) {
+            die("zeli: unknown target '{{parts[i]}}' (want {{target_list()}})")
+        }
+        push(out, t)
+    }
+    return out
+}
+
+/// The extra `loamc` flags for a target: wasm for the browser, the two mobile
+/// targets by name, and none at all for macos / server, which are native.
+fn target_flags(t: string) -> string {
+    if t == "web" {
+        return "--target=wasm32"
+    }
+    if t == "ios" {
+        return "--target=ios"
+    }
+    if t == "android" {
+        return "--target=android"
+    }
+    return ""
+}
+
+/// What a target's build artifact is called: a `.wasm` module for the browser,
+/// the entry's stem everywhere else.
+fn out_name(t: string, stem: string) -> string {
+    if t == "web" {
+        return cat(stem, ".wasm")
+    }
+    return stem
+}
+
+/// `<appdir>/app.loam`, else `<appdir>/<dirname>.loam`, else `main.loam`.
+fn find_entry(appdir: string) -> string {
+    let base = base_name(appdir)
+    let first = join(appdir, "app.loam")
+    if sys.exists(first) == 1 {
+        return first
+    }
+    let second = join(appdir, cat(base, ".loam"))
+    if sys.exists(second) == 1 {
+        return second
+    }
+    let third = join(appdir, "main.loam")
+    if sys.exists(third) == 1 {
+        return third
+    }
+    die("zeli: no entry .loam in {{appdir}} (looked for app.loam / {{base}}.loam / main.loam)")
+    return ""
+}
+
+/// `loamc check <entry>` — the frontend only, no codegen.
+///
+/// Every command that runs or emits an app gates on this first, so a type error
+/// fails once, up front, instead of once per target — or not at all when a
+/// target's host toolchain is missing and its failure looks like the same thing.
+fn check_entry(entry: string) -> bool {
+    let out = run_loam("", cat("check ", shell_quote(entry)))
+    if sys.exec_status() == 0 {
+        return true
+    }
+    fmt.println("zeli: {{rel_to(repo_root(), entry)}} failed the compiler check")
+    let body = trim(out)
+    if body != "" {
+        fmt.println(indent_lines(body, "  "))
+    }
+    return false
+}
+
+/// `zeli build <appdir> [--targets web,macos,...] [--base https://host]`
+///
+/// Generates the route table when `routes/` exists, then compiles the app for
+/// each target into `<appdir>/build/<target>/`. After a successful web build it
+/// emits one HTML shell per route plus `sitemap.xml` / `robots.txt`.
+///
+/// Targets whose host toolchain is missing (iOS/Android SDKs) fail individually
+/// and the rest still build, so one missing SDK does not cost you the others.
+/// The exit code is 1 only when nothing built.
+fn build(appdir: string, targets: []string, base: string) -> int {
+    if sys.exists(loam_path()) == 0 {
+        die("zeli: missing {{loam_path()}} — run `make` in {{repo_root()}} first")
+    }
+    if sys.exists(join(appdir, "routes")) == 1 {
+        if generate(appdir) == "" {
+            return 2
+        }
+    }
+    let entry = find_entry(appdir)
+    if !check_entry(entry) {
+        return 1
+    }
+    let stem = drop_suffix(base_name(entry), ".loam")
+    let mut built = 0
+    for i in 0..targets.len {
+        let t = targets[i]
+        let dir = join(join(appdir, "build"), t)
+        sys.mkdir(dir)
+        let out = join(dir, out_name(t, stem))
+        let mut args = cat(cat(shell_quote(entry), " -o "), shell_quote(out))
+        let flags = target_flags(t)
+        if flags != "" {
+            args = cat(cat(flags, " "), args)
+        }
+        let log = run_loam("", args)
+        if sys.exec_status() == 0 {
+            fmt.println("zeli: {{t}} ok -> {{rel_to(repo_root(), out)}}")
+            built += 1
+            if t == "web" && sys.exists(join(appdir, "routes")) == 1 {
+                emit_web_shell(appdir, stem, base)
+            }
+        } else {
+            let body = trim(log)
+            if body == "" {
+                fmt.println("zeli: {{t}} failed")
+            } else {
+                fmt.println(cat("zeli: {{t}} failed\n", indent_lines(body, "  ")))
+            }
+        }
+    }
+    let n = targets.len
+    fmt.println("zeli: built {{built}}/{{n}} target(s)")
+    if built > 0 {
+        return 0
+    }
+    return 1
+}
+
+// --- web shell: one HTML file per route, plus sitemap + robots ---
+
+/// One route's metadata, as the dump prints it. All strings — `collect_meta`
+/// gives a missing or mistyped field the empty string, which is what every use
+/// site here treats as "not set".
+struct MetaRec {
+    path: string,
+    title: string,
+    description: string,
+    canonical: string,
+    og_image: string,
+    og_type: string,
+    robots: string,
+    jsonld: string,
+}
+
+/// The metadata dump: a native Loam program that prints one JSON record per
+/// concrete route URL by calling each route's `meta()` — and `paths()` for a
+/// dynamic route, to find out which URLs it even has.
+fn meta_dump_source() -> string {
+    let mut lines = []string {}
+    push(lines, "// Generated by `zeli build`. Do not edit.")
+    push(lines, "import \"std:fmt\"")
+    push(lines, "import \"std:json\"")
+    push(lines, "import \"std:router\"")
+    push(lines, "import \"../app_routes.loam\" as approutes")
+    push(lines, "")
+    push(lines, "fn emit(path: string, m: Meta) {")
+    push(lines, "    json.enc_obj_begin()")
+    push(lines, "    json.enc_key(\"path\")")
+    push(lines, "    json.enc_str(path)")
+    push(lines, "    json.enc_key(\"title\")")
+    push(lines, "    json.enc_str(m.title)")
+    push(lines, "    json.enc_key(\"description\")")
+    push(lines, "    json.enc_str(m.description)")
+    push(lines, "    json.enc_key(\"canonical\")")
+    push(lines, "    json.enc_str(m.canonical)")
+    push(lines, "    json.enc_key(\"og_image\")")
+    push(lines, "    json.enc_str(m.og_image)")
+    push(lines, "    json.enc_key(\"og_type\")")
+    push(lines, "    json.enc_str(m.og_type)")
+    push(lines, "    json.enc_key(\"robots\")")
+    push(lines, "    json.enc_str(m.robots)")
+    push(lines, "    json.enc_key(\"jsonld\")")
+    push(lines, "    json.enc_str(m.jsonld)")
+    push(lines, "    json.enc_obj_end()")
+    push(lines, "    fmt.println(json.enc_take())")
+    push(lines, "}")
+    push(lines, "")
+    push(lines, "fn main() {")
+    push(lines, "    let rs = approutes.routes()")
+    push(lines, "    let mut i = 0")
+    push(lines, "    while i < rs.len {")
+    push(lines, "        let pat = rs[i].pattern")
+    push(lines, "        if router.is_dynamic(pat) == 1 {")
+    push(lines, "            let ps = rs[i].paths()")
+    push(lines, "            let mut j = 0")
+    push(lines, "            while j < ps.len {")
+    push(lines, "                if router.match_route(pat, ps[j]) == 1 {")
+    push(lines, "                    let p = Params { keys: router.match_keys(), vals: router.match_vals() }")
+    push(lines, "                    emit(ps[j], rs[i].meta(p))")
+    push(lines, "                }")
+    push(lines, "                j = j + 1")
+    push(lines, "            }")
+    push(lines, "        } else {")
+    push(lines, "            let p = Params { keys: []string {}, vals: []string {} }")
+    push(lines, "            emit(pat, rs[i].meta(p))")
+    push(lines, "        }")
+    push(lines, "        i = i + 1")
+    push(lines, "    }")
+    push(lines, "}")
+    return join_lines(lines)
+}
+
+/// A string member of a parsed record, or `""` when the field is absent or is
+/// not a string. `JSON.parse` gives the TypeScript CLI `undefined` for a missing
+/// key, which reads the same way at every use site here.
+fn fld(root: int, key: string) -> string {
+    let v = json.field(root, key, key)
+    if v.ok == 0 {
+        return ""
+    }
+    let s = json.as_str(v.id, key)
+    if s.ok == 0 {
+        return ""
+    }
+    return s.s
+}
+
+/// Compile and run the dump and return the records it printed. Aborts the
+/// command on a compile or run failure, exactly where the TypeScript CLI's
+/// `die` would.
+fn collect_meta(appdir: string) -> []MetaRec {
+    let zdir = join(appdir, ".zeus")
+    let src = join(zdir, "meta_dump.loam")
+    sys.mkdir(zdir)
+    sys.write_file(src, meta_dump_source())
+    let bin = join(zdir, "meta_dump")
+    /* The dump only *calls* meta()/paths(); a DCE edge case can drop a needed
+       std:zeus helper while keeping its call, so compile it with DCE off. */
+    let cc = run_loam("LOAM_NO_DCE=1", cat(cat(shell_quote(src), " -o "), shell_quote(bin)))
+    if sys.exec_status() != 0 {
+        die_extra("zeli: metadata dump failed to compile", trim(cc))
+    }
+    let log = run_here(shell_quote(bin))
+    if sys.exec_status() != 0 {
+        die_extra("zeli: metadata dump failed to run", trim(log))
+    }
+    let mut recs = []MetaRec {}
+    let lines = split_lines(log)
+    for i in 0..lines.len {
+        let t = trim(lines[i])
+        if !starts_with(t, "{") {
+            continue
+        }
+        let doc = json.parse(t)
+        if doc.ok == 0 {
+            fmt.println("zeli: skipping malformed metadata record: {{t}}")
+            continue
+        }
+        push(recs, MetaRec {
+            path: fld(doc.root, "path"),
+            title: fld(doc.root, "title"),
+            description: fld(doc.root, "description"),
+            canonical: fld(doc.root, "canonical"),
+            og_image: fld(doc.root, "og_image"),
+            og_type: fld(doc.root, "og_type"),
+            robots: fld(doc.root, "robots"),
+            jsonld: fld(doc.root, "jsonld"),
+        })
+    }
+    return recs
+}
+
+/// The `<head>` a crawler and a link preview read, then the canvas the wasm
+/// module paints into. `canonical` arrives already resolved against `--base`.
+fn shell_html(r: MetaRec, canonical: string, stem: string) -> string {
+    let title = esc(r.title)
+    let desc = esc(r.description)
+    let canon = esc(canonical)
+    let mut lines = []string {}
+    push(lines, "<!DOCTYPE html>")
+    push(lines, "<html lang=\"en\">")
+    push(lines, "<head>")
+    push(lines, "<meta charset=\"utf-8\" />")
+    push(lines, "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />")
+    push(lines, "<title>{{title}}</title>")
+    push(lines, "<meta name=\"description\" content=\"{{desc}}\" />")
+    push(lines, "<link rel=\"canonical\" href=\"{{canon}}\" />")
+    push(lines, "<meta name=\"robots\" content=\"{{esc(r.robots)}}\" />")
+    push(lines, "<meta property=\"og:type\" content=\"{{esc(r.og_type)}}\" />")
+    push(lines, "<meta property=\"og:title\" content=\"{{title}}\" />")
+    push(lines, "<meta property=\"og:description\" content=\"{{desc}}\" />")
+    push(lines, "<meta property=\"og:url\" content=\"{{canon}}\" />")
+    if r.og_image != "" {
+        /* The TypeScript CLI resolves this against an empty base, which is the
+           identity — the image is used as written. */
+        let img = esc(r.og_image)
+        push(lines, "<meta property=\"og:image\" content=\"{{img}}\" />")
+        push(lines, "<meta name=\"twitter:card\" content=\"summary_large_image\" />")
+        push(lines, "<meta name=\"twitter:title\" content=\"{{title}}\" />")
+        push(lines, "<meta name=\"twitter:description\" content=\"{{desc}}\" />")
+        push(lines, "<meta name=\"twitter:image\" content=\"{{img}}\" />")
+    } else {
+        push(lines, "<meta name=\"twitter:card\" content=\"summary\" />")
+    }
+    if r.jsonld != "" {
+        push(lines, "<script type=\"application/ld+json\">")
+        push(lines, r.jsonld)
+        push(lines, "</script>")
+    }
+    push(lines, "<style>html,body{margin:0;height:100%;background:#fafafa}canvas#zeus{display:block;position:fixed;inset:0;width:100%;height:100%;touch-action:none}</style>")
+    push(lines, "</head>")
+    push(lines, "<body>")
+    push(lines, "<canvas id=\"zeus\" data-wasm=\"/{{stem}}.wasm\"></canvas>")
+    push(lines, "<script src=\"/loader.js\"></script>")
+    push(lines, "</body>")
+    push(lines, "</html>")
+    return join_lines(lines)
+}
+
+/// One HTML file per route, plus `sitemap.xml` and `robots.txt`.
+///
+/// The route table is the source of the URLs: a static route contributes its
+/// pattern, and a dynamic one contributes each entry of its `paths()`. A route
+/// with no `meta()` still gets a shell, from the empty record.
+fn emit_web_shell(appdir: string, stem: string, base: string) {
+    let web = join(join(appdir, "build"), "web")
+    sys.mkdir(web)
+    let recs = collect_meta(appdir)
+    let mut urls = []string {}
+    for i in 0..recs.len {
+        let r = recs[i]
+        let mut clean = r.canonical
+        if clean == "" {
+            clean = r.path
+        }
+        let canon = canonical_url(base, clean)
+        let rel = strip_slash(strip_lead_slash(r.path))
+        let mut dir = web
+        if rel != "" {
+            dir = join(web, rel)
+            sys.mkdir(dir)
+        }
+        sys.write_file(join(dir, "index.html"), shell_html(r, canon, stem))
+        push(urls, canon)
+    }
+    let mut sm = []string {}
+    push(sm, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
+    push(sm, "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">")
+    for i in 0..urls.len {
+        push(sm, "  <url><loc>{{esc(urls[i])}}</loc></url>")
+    }
+    push(sm, "</urlset>")
+    sys.write_file(join(web, "sitemap.xml"), join_lines(sm))
+    let mut robots = []string {}
+    push(robots, "User-agent: *")
+    push(robots, "Allow: /")
+    if base != "" {
+        push(robots, "Sitemap: {{strip_slash(base)}}/sitemap.xml")
+    }
+    sys.write_file(join(web, "robots.txt"), join_lines(robots))
+    let n = recs.len
+    fmt.println("zeli: wrote {{n}} HTML shell(s) + sitemap.xml + robots.txt -> {{rel_to(repo_root(), web)}}")
+}
+
+fn usage() {
+    fmt.println("usage: zeli new <name> [dir] | zeli routes <appdir> | zeli build <appdir> [--targets a,b] [--base https://host] | zeli serve <appdir> [--target {{target_list()}}] [--port N] [--build-only] | zeli fmt [dir] | zeli pkg sync <appdir>")
+}
+
+fn main() {
+    let argv = sys.args()
+    if argv.len < 2 {
+        usage()
+        sys.exit(2)
+    }
+    let cmd = argv[1]
+    if cmd == "new" {
+        if argv.len < 3 {
+            usage()
+            sys.exit(2)
+        }
+        let name = argv[2]
+        let mut dir = name
+        if argv.len > 3 {
+            dir = argv[3]
+        }
+        sys.exit(scaffold(abs_path(dir), name))
+    }
+    if cmd == "serve" {
+        let mut port = 5173
+        let mut build_only = false
+        let mut target = "web"
+        let mut rest = []string {}
+        let mut i = 2
+        while i < argv.len {
+            let a = argv[i]
+            if a == "--port" {
+                if i + 1 >= argv.len {
+                    die("zeli: --port needs a number")
+                }
+                i += 1
+                port = int_of(argv[i])
+                if port < 0 {
+                    die("zeli: --port wants a number, got '{{argv[i]}}'")
+                }
+            } else {
+                if a == "--target" {
+                    if i + 1 >= argv.len {
+                        die("zeli: --target needs a name (want {{target_list()}})")
+                    }
+                    i += 1
+                    target = argv[i]
+                    if !known_target(target) {
+                        die("zeli: unknown target '{{target}}' (want {{target_list()}})")
+                    }
+                } else {
+                    if a == "--build-only" {
+                        build_only = true
+                    } else {
+                        push(rest, a)
+                    }
+                }
+            }
+            i += 1
+        }
+        let mut dir = "."
+        if rest.len > 0 {
+            dir = rest[0]
+        }
+        sys.exit(serve(abs_path(dir), target, port, build_only))
+    }
+    if cmd == "fmt" {
+        let mut dir = "."
+        if argv.len > 2 {
+            dir = argv[2]
+        }
+        sys.exit(fmt(dir))
+    }
+    if cmd == "routes" {
+        if argv.len < 3 {
+            usage()
+            sys.exit(2)
+        }
+        sys.exit(routes(argv[2]))
+    }
+    if cmd == "build" {
+        let mut targets = all_targets()
+        let mut base = ""
+        let mut rest = []string {}
+        let mut i = 2
+        while i < argv.len {
+            let a = argv[i]
+            if a == "--targets" {
+                if i + 1 < argv.len {
+                    i += 1
+                    targets = parse_targets(argv[i], true)
+                } else {
+                    targets = parse_targets("", false)
+                }
+            } else {
+                if a == "--base" {
+                    if i + 1 < argv.len {
+                        i += 1
+                        base = argv[i]
+                    }
+                } else {
+                    push(rest, a)
+                }
+            }
+            i += 1
+        }
+        if rest.len < 1 {
+            die("usage: zeli build <appdir> [--targets a,b] [--base https://host]")
+        }
+        sys.exit(build(abs_path(rest[0]), targets, base))
+    }
+    if cmd == "pkg" {
+        if argv.len < 3 || argv[2] != "sync" {
+            usage()
+            sys.exit(2)
+        }
+        let mut dir = "."
+        if argv.len > 3 {
+            dir = argv[3]
+        }
+        sys.exit(pkg_sync(abs_path(dir)))
+    }
+    fmt.println("zeli: unknown command", cmd)
+    usage()
+    sys.exit(2)
+}

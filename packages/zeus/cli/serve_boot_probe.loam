@@ -1,0 +1,231 @@
+// `zeli serve` over real sockets: a route, the wasm content type, the live-reload
+// channel, a rebuild triggered by an edit, and the gRPC-Web proxy both against a
+// stand-in backend and against one that says nothing.
+//
+// The server and the stand-in backend are started by the caller — a process that
+// has to outlive the assertions cannot be spawned from here — and this does the
+// talking: every request is written by hand over `std:net`, so the whole check
+// is Loam and needs no HTTP client on the host.
+//
+//     serve_boot_probe <port> <rpc-port> <appdir> <backend-request-log>
+//
+// Exit: 0 when every check passed, 1 when one did not.
+import "std:fmt"
+import "std:http"
+import "std:net"
+import "std:sys"
+import "zeli.loam" as zeli
+
+let mut failures = 0
+
+fn check(ok: bool, what: string) {
+    if ok {
+        fmt.println("ok  ", what)
+    } else {
+        fmt.println("FAIL", what)
+        failures += 1
+    }
+}
+
+fn under(dir: string, name: string) -> string {
+    return "{{dir}}/{{name}}"
+}
+
+/// Append `s` to `p`: read, join, write. There is no append in `std:sys`.
+fn append_file(p: string, s: string) {
+    sys.write_file(p, cat(sys.read_file(p), s))
+}
+
+/// One request/response over a fresh connection. Every reply from the serve server
+/// ends with `Connection: close`, so reading until EOF is the whole protocol.
+fn exchange(port: int, method: string, path: string, ctype: string, body: string) -> string {
+    let fd = net.tcp_connect("127.0.0.1", port)
+    if fd < 0 {
+        return ""
+    }
+    let mut req = "{{method}} {{path}} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n"
+    if ctype != "" {
+        req = cat(req, "Content-Type: {{ctype}}\r\n")
+    }
+    if body.len > 0 {
+        req = cat(req, "Content-Length: {{body.len}}\r\n")
+    }
+    req = cat(req, "\r\n")
+    if body.len > 0 {
+        req = cat(req, body)
+    }
+    if net.tcp_write(fd, req) < 0 {
+        net.tcp_close(fd)
+        return ""
+    }
+    let resp = http.h1_read_all(fd)
+    net.tcp_close(fd)
+    return resp
+}
+
+/// Where a response's headers end, or `-1`.
+fn headers_len(resp: string) -> int {
+    for i in 0..resp.len {
+        if i + 3 < resp.len && resp[i] == 13 && resp[i + 1] == 10 && resp[i + 2] == 13 && resp[i + 3] == 10 {
+            return i + 4
+        }
+    }
+    return -1
+}
+
+/// A response's body, or `""` when it never got that far.
+fn body_of(resp: string) -> string {
+    let at = headers_len(resp)
+    if at < 0 {
+        return ""
+    }
+    return slice(resp, at, resp.len)
+}
+
+/// A response's status code, or `0`.
+fn status_of(resp: string) -> int {
+    for i in 0..resp.len {
+        if resp[i] == 32 /* space, before the code */ {
+            return int_of(slice(resp, i + 1, resp.len))
+        }
+    }
+    return 0
+}
+
+/// The value of the header `name`, matched case-insensitively in the header block
+/// only. `""` when it is absent.
+fn header_of(resp: string, name: string) -> string {
+    let head = headers_len(resp)
+    if head < 0 {
+        return ""
+    }
+    let mut i = 0
+    while i + name.len < head {
+        let mut same = true
+        for j in 0..name.len {
+            if zeli.lower_byte(resp[i + j]) != zeli.lower_byte(name[j]) {
+                same = false
+            }
+        }
+        if same && resp[i + name.len] == 58 /* : */ {
+            /* The value is one *line*: `trim_field` trims the ends of the string
+               it is given, so the line has to be cut out of the block first —
+               otherwise the rest of the headers come back with it. */
+            let at = i + name.len + 1
+            let mut e = at
+            while e < head && resp[e] != 13 && resp[e] != 10 {
+                e += 1
+            }
+            return trim_field(slice(resp, at, e))
+        }
+        i += 1
+    }
+    return ""
+}
+
+/// `field` without its leading space or its trailing line ending.
+fn trim_field(field: string) -> string {
+    let mut a = 0
+    while a < field.len && (field[a] == 32 || field[a] == 9) {
+        a += 1
+    }
+    let mut b = field.len
+    while b > a && (field[b - 1] == 13 || field[b - 1] == 10 || field[b - 1] == 32) {
+        b -= 1
+    }
+    return slice(field, a, b)
+}
+
+/// Subscribe to the live channel and return the connection. It is held open
+/// across the edit below, which is the whole point of the channel.
+fn sse_open(port: int) -> int {
+    let fd = net.tcp_connect("127.0.0.1", port)
+    if fd < 0 {
+        return 0
+    }
+    if net.tcp_write(fd, "GET {{zeli.live_path()}} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n") < 0 {
+        net.tcp_close(fd)
+        return 0
+    }
+    return fd
+}
+
+/// Read frames until `want` shows up in what has arrived, or `ms` passes.
+fn sse_wait(fd: int, want: string, ms: int) -> bool {
+    if fd <= 0 {
+        return false
+    }
+    let mut acc = ""
+    let mut waited = 0
+    while waited < ms {
+        if net.tcp_poll(fd, 1, 100) == 1 {
+            let chunk = net.tcp_read(fd, 4096)
+            if chunk.len == 0 {
+                return false
+            }
+            acc = cat(acc, chunk)
+            if zeli.contains_str(acc, want) {
+                return true
+            }
+        }
+        waited += 100
+    }
+    return false
+}
+
+fn main() {
+    let port = zeli.int_of(sys.arg(1))
+    let rpcport = zeli.int_of(sys.arg(2))
+    let app = sys.arg(3)
+    let backend_log = sys.arg(4)
+    if port <= 0 || rpcport <= 0 || app == "" || backend_log == "" {
+        fmt.println("usage: serve_boot_probe <port> <rpc-port> <appdir> <backend-request-log>")
+        sys.exit(2)
+    }
+
+    /* 1. A route serves its own shell, with the reload snippet injected. */
+    let blog = exchange(port, "GET", "/blog", "", "")
+    check(status_of(blog) == 200, "a route serves a shell")
+    check(zeli.contains_str(body_of(blog), "</body>"), "and it is a shell")
+    check(zeli.contains_str(body_of(blog), zeli.live_path()), "the shell subscribes to the live channel")
+
+    /* 2. The module is served with the type a browser insists on. */
+    let wasm = exchange(port, "GET", "/app.wasm", "", "")
+    check(header_of(wasm, "content-type") == "application/wasm", "the wasm module has its content type")
+
+    /* 3. Subscribe before the edit, so the frame that follows is a *push* and not
+          the revision the page booted into. */
+    let sfd = sse_open(port)
+    check(sse_wait(sfd, "data: 1", 4000), "a subscriber gets its boot revision as a baseline")
+
+    /* 4. An edit has to reach the subscriber: that frame is what reloads the
+          browser, and it is the only thing here that exercises the watcher, the
+          rebuild and the channel in one go. */
+    append_file(under(under(app, "routes"), "page.loam"), "\n// touched by the serve boot probe\n")
+    check(sse_wait(sfd, "data: 2", 20000), "an edit rebuilds and pushes the new revision")
+    if sfd > 0 {
+        net.tcp_close(sfd)
+    }
+
+    /* 5. Still serving after the rebuild. */
+    let root = exchange(port, "GET", "/", "", "")
+    check(status_of(root) == 200, "still serving after the rebuild")
+
+    /* 6. The proxy forwards a gRPC-Web call and relays the reply as framed. */
+    let posted = exchange(port, "POST", "/Blog/Posts", "application/grpc-web+proto", "x")
+    check(zeli.contains_str(body_of(posted), "GRPCWEB-BODY"), "the proxy relays the backend's reply")
+    let seen = sys.read_file(backend_log)
+    check(zeli.contains_str(seen, "x-grpc-web: 1"), "the upstream call carries the grpc-web header")
+    check(zeli.contains_str(seen, "POST /Blog/Posts"), "the upstream call keeps the path")
+    check(zeli.contains_str(seen, "Content-Type: application/grpc-web+proto"), "the upstream call keeps the content type")
+
+    /* 7. A backend that says nothing becomes a 502, so a missing one shows up as
+          a failure rather than as silence. */
+    let failed = exchange(port, "POST", "/fail", "application/grpc-web+proto", "x")
+    check(status_of(failed) == 502, "a silent backend becomes a 502")
+
+    if failures > 0 {
+        sys.exit(1)
+    }
+    sys.exit(0)
+}
