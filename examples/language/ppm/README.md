@@ -18,8 +18,8 @@ gist](https://gist.github.com/rexim/ef86bf70918034a5a57881456c0a0ccf):
 From the repository root, after `make`:
 
 ```
-./bin/loam examples/language/ppm/checker.loam --run    # ~2s, 960x540 x 60
-./bin/loam examples/language/ppm/plasma.loam  --run    # ~52s, 960x540 x 120
+./bin/loamc examples/language/ppm/checker.loam --run    # ~2s, 960x540 x 60
+./bin/loamc examples/language/ppm/plasma.loam  --run    # ~52s, 960x540 x 120
 ```
 
 `./run.sh language/ppm/checker` does the same thing (it runs `loam check`
@@ -45,10 +45,10 @@ levers on how long it takes and how much memory it holds.
 
 ```
 # Cheapest useful preview: 1/16 the pixels and 1/8 the frames.
-LOAM_PPM_SCALE=15 LOAM_PPM_FRAMES=15 ./bin/loam examples/language/ppm/plasma.loam --run
+LOAM_PPM_SCALE=15 LOAM_PPM_FRAMES=15 ./bin/loamc examples/language/ppm/plasma.loam --run
 
 # The gist's exact framing, and lossless to boot (~8 MB for 2s).
-LOAM_PPM_FRAMES=240 LOAM_PPM_CRF=0 ./bin/loam examples/language/ppm/plasma.loam --run
+LOAM_PPM_FRAMES=240 LOAM_PPM_CRF=0 ./bin/loamc examples/language/ppm/plasma.loam --run
 ```
 
 ## How it works
@@ -100,7 +100,7 @@ encoder settings yourself, `LOAM_PPM_KEEP=1` leaves the frames in place, and
 any ffmpeg invocation can be pointed at `out/plasma-%03d.ppm`:
 
 ```
-LOAM_PPM_KEEP=1 ./bin/loam examples/language/ppm/plasma.loam --run
+LOAM_PPM_KEEP=1 ./bin/loamc examples/language/ppm/plasma.loam --run
 ffmpeg -framerate 60 -i out/plasma-%03d.ppm -c:v libx264 -crf 12 \
        -preset veryslow -pix_fmt yuv420p out/plasma-hq.mp4
 ```
@@ -143,8 +143,8 @@ rather than hardcoding either one.
 ## Tests
 
 ```
-./bin/loam test examples/language/ppm/mathf_tests.loam
-./bin/loam test examples/language/ppm/frames_tests.loam
+./bin/loamc test examples/language/ppm/mathf_tests.loam
+./bin/loamc test examples/language/ppm/frames_tests.loam
 ```
 
 `mathf_tests.loam` checks the polynomials against reference libm values,

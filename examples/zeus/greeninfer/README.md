@@ -66,7 +66,7 @@ clang -O1 -I packages/loam/runtime -c \
   -o examples/zeus/greeninfer/build/greeninfer_runtime.o
 
 # 2. the native arm64 binary (Loam -> C99 -> cc; seam auto-linked)
-./bin/loam examples/zeus/greeninfer/greeninfer.loam -o greeninfer-macos
+./bin/loamc examples/zeus/greeninfer/greeninfer.loam -o greeninfer-macos
 ./greeninfer-macos
 ```
 
@@ -75,11 +75,11 @@ clang -O1 -I packages/loam/runtime -c \
 ```
 # smoke: engine + chunker + cosine + folder scan assertions
 LOAM_LINK_EXTRA="examples/zeus/greeninfer/runtime/greeninfer_runtime.c" \
-  ./bin/loam --run examples/zeus/greeninfer/smoke.loam
+  ./bin/loamc --run examples/zeus/greeninfer/smoke.loam
 
 # CLI demo: index ./examples/zeus/greeninfer, run 4 prompts, print hits + timing
 LOAM_LINK_EXTRA="examples/zeus/greeninfer/runtime/greeninfer_runtime.c" \
-  ./bin/loam examples/zeus/greeninfer/main.loam -o greeninfer-macos
+  ./bin/loamc examples/zeus/greeninfer/main.loam -o greeninfer-macos
 ./greeninfer-macos
 ```
 

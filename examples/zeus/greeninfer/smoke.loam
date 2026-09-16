@@ -6,7 +6,7 @@
 //! Run from the repo root:
 //!   make
 //!   LOAM_LINK_EXTRA="examples/zeus/greeninfer/runtime/greeninfer_runtime.c" \
-//!     ./bin/loam --run examples/zeus/greeninfer/smoke.loam
+//!     ./bin/loamc --run examples/zeus/greeninfer/smoke.loam
 
 import "std:fmt"
 import "std:sys"

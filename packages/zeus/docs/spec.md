@@ -118,7 +118,7 @@ Browser events → `loader.js` → exported `zeus_pointer_*` / `zeus_key` →
 Native (headless snapshot):
 
 ```
-ZEUS_HEADLESS=1 ./bin/loam packages/loam/tests/compile_pass/zeus_snap.loam -o packages/loam/tests/tmp/zeus_snap
+ZEUS_HEADLESS=1 ./bin/loamc packages/loam/tests/compile_pass/zeus_snap.loam -o packages/loam/tests/tmp/zeus_snap
 ```
 
 WASM (needs a clang that has `wasm32`, e.g. Homebrew `llvm` or wasi-sdk).
@@ -134,7 +134,7 @@ That starts `backend/run.sh` (`http.listen` on `:8080`) then `frontend/run.sh`
 scripts in separate terminals to start them apart.
 
 ```
-./bin/loam build --target=wasm32 examples/zeus/counter/frontend/app.loam
+./bin/loamc build --target=wasm32 examples/zeus/counter/frontend/app.loam
 cd examples/zeus/counter/frontend && npm install && npm run dev
 ./examples/zeus/counter/backend/run.sh
 ```
@@ -154,7 +154,7 @@ Or:
 
 ```
 ./examples/zeus/counter/backend/run.sh
-./bin/loam --target=ios --run examples/zeus/counter/ios/app.loam
+./bin/loamc --target=ios --run examples/zeus/counter/ios/app.loam
 ```
 
 Needs Xcode and an iPhone Simulator. Output is
@@ -176,7 +176,7 @@ Step-by-step: `examples/zeus/counter/android/guide.md`. On macOS with Homebrew:
 
 ```
 ./examples/zeus/counter/backend/run.sh
-./bin/loam --target=android --run examples/zeus/counter/android/app.loam
+./bin/loamc --target=android --run examples/zeus/counter/android/app.loam
 ```
 
 Output is the Gradle tree `examples/zeus/counter/android/build/app`.
@@ -197,7 +197,7 @@ Or:
 
 ```
 ./examples/zeus/counter/backend/run.sh
-./bin/loam --target=native --run examples/zeus/counter/macos/app.loam
+./bin/loamc --target=native --run examples/zeus/counter/macos/app.loam
 ```
 
 Output is `examples/zeus/counter/macos/build/app`.
@@ -238,13 +238,30 @@ checked in at `examples/zeus/myapp/` and built by the test gate, so the tree
 
 ## Formatter
 
-`loam-fmt` is one style with no options: 4-space indentation by bracket depth,
-single spaces between tokens, no space before `,` `;` `)` `]` `:` or after
-`(` `[`, one space around `=` and `->`, one space before `{`, at most one blank
-line, one trailing newline. `loam-fmt <file>` prints to stdout, `loam-fmt -w
-<file>` rewrites in place, `loam-fmt` reads stdin. Comments (`//`, `///`, `//!`,
-block) and string literals are copied verbatim — it scans rather than using the
-parser, because the parser discards comments.
+`loam-fmt` is one style with no options:
+
+- **4 spaces per block (`{`)**, never per call paren. A trailing block passed as
+  an argument indents one level from its statement:
+
+      zeus.App("x", fn() {
+          body
+      })
+
+- **A continuation line aligns under the token after its opener** when the
+  opener's line has content after it (`f(a,\n  b)`), and indents one level from
+  the opener's line when the opener ends its line (`f(` alone). A closer on its
+  own line returns to the opener's level.
+- Single spaces between tokens; none before `,` `;` `)` `]` or after `(` `[`;
+  one space around `=` and `->`; one space before `{`.
+- A one-line `{ ... }` keeps the space its author wrote after the brace on both
+  sides: `{ x, y }`, never `{ x, y}`.
+- At most one blank line; one trailing newline.
+- Comments (`//`, `///`, `//!`, and block comments including every continuation
+  line) and string literals are copied verbatim — it scans rather than using the
+  parser, because the parser discards comments.
+
+`loam-fmt <file>` prints to stdout, `loam-fmt -w <file>` rewrites in place,
+`loam-fmt` reads stdin.
 
 `zeli fmt [dir]` runs that over every `.loam` under a tree (the current
 directory by default, skipping output and cache directories) and writes the

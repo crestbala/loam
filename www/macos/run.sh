@@ -26,7 +26,7 @@ if [ -z "$REPO" ]; then
   echo "run.sh: could not find the loam repo (Makefile + packages/loam/src/)" >&2
   exit 1
 fi
-if [ ! -x "$REPO/bin/loam" ]; then
+if [ ! -x "$REPO/bin/loamc" ]; then
   echo "run.sh: building loam"
   make -C "$REPO" -j4
 fi
@@ -55,4 +55,4 @@ if ! nc -z 127.0.0.1 8082 >/dev/null 2>&1; then
 fi
 
 echo "macos: Cocoa desktop  (RPC http://127.0.0.1:8082)"
-exec "$REPO/bin/loam" --target=native --run "$HERE/app.loam"
+exec "$REPO/bin/loamc" --target=native --run "$HERE/app.loam"

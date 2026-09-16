@@ -83,7 +83,7 @@ loam/
   examples/
     language/     standalone demo .loam programs (not test fixtures)
     zeus/         zeus apps (gallery, dashboard, myapp scaffold) + full-stack counter example
-  bin/loam       the compiler
+  bin/loamc       the compiler
   bin/loam-lsp    editor diagnostics / hover (incl. doc comments) / go-to-def / completion / semantic tokens
   bin/loam-fmt     formatter (one style, no options)
 ```
@@ -135,7 +135,7 @@ fn main() {
 ```
 
 ```
-./bin/loam hello.loam -o hello
+./bin/loamc hello.loam -o hello
 ./hello
 ```
 
@@ -145,13 +145,13 @@ fn main() {
 Useful flags:
 
 ```
-./bin/loam app.loam -o app          # binary
-./bin/loam app.loam --emit-c -o a.c # C99
-./bin/loam app.loam --emit-ir -o a.ir
-./bin/loam app.loam --run           # compile and run
-./bin/loam app.loam --target wasm -o app.wasm  # Canvas2D .wasm (clang wasm32)
-./bin/loam --target=ios --run examples/zeus/dashboard/dashboard.loam  # Simulator
-./bin/loam --target=android examples/zeus/counter/android/app.loam  # Gradle project
+./bin/loamc app.loam -o app          # binary
+./bin/loamc app.loam --emit-c -o a.c # C99
+./bin/loamc app.loam --emit-ir -o a.ir
+./bin/loamc app.loam --run           # compile and run
+./bin/loamc app.loam --target wasm -o app.wasm  # Canvas2D .wasm (clang wasm32)
+./bin/loamc --target=ios --run examples/zeus/dashboard/dashboard.loam  # Simulator
+./bin/loamc --target=android examples/zeus/counter/android/app.loam  # Gradle project
 ```
 
 ### App C seams
@@ -377,7 +377,7 @@ fn addition() {
 ```
 
 ```
-./bin/loam test tests.loam
+./bin/loamc test tests.loam
 # test addition ... ok
 # 1 test(s) passed
 ```
@@ -402,7 +402,7 @@ also compiles the native target with `-g`, so lldb / gdb, profilers, and
 sanitizers report Loam `file:line` for stack frames and non-panic crashes:
 
 ```
-LOAM_DEBUG=1 ./bin/loam app.loam -o app
+LOAM_DEBUG=1 ./bin/loamc app.loam -o app
 ```
 
 `-g` is off by default, because it inflates binaries.

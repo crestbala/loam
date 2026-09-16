@@ -17,7 +17,7 @@ fn NameRow(name: string) -> Node {
 fn LiveList() {
     let n = zeus.signal(2)
     zeus.SectionHeader("Lists", "Growing rows",
-        "Add and remove rows. Extra rows are shown, not rebuilt with zeus.For.")
+                       "Add and remove rows. Extra rows are shown, not rebuilt with zeus.For.")
     zeus.Card() {
         zeus.show_ge(NameRow("Ada"), n, 1)
         zeus.show_ge(NameRow("Bea"), n, 2)
@@ -25,15 +25,15 @@ fn LiveList() {
         zeus.show_ge(NameRow("Row"), n, 4)
         zeus.Row(SPACE.Sm) {
             zeus.Button("Add row", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() {
-                    if n.get() < 4 {
-                        n.set(n.get() + 1)
-                    }
-                })
+                if n.get() < 4 {
+                    n.set(n.get() + 1)
+                }
+            })
             zeus.Button("Remove", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click = fn() {
-                    if n.get() > 0 {
-                        n.set(n.get() - 1)
-                    }
-                })
+                if n.get() > 0 {
+                    n.set(n.get() - 1)
+                }
+            })
         }
     }
 }
@@ -43,15 +43,15 @@ fn Cards() {
     // Responsive: a cell is as wide as the cards want to be, so three fit
     // across a wide window and two or one as it narrows, never more than three.
     zeus.Grid(config = GridConfig(columns = 3, auto_columns = 200, gap = SPACE.Md)) {
-        zeus.Card() { zeus.Pip(zeus.accent(), 8) zeus.Title("Small") zeus.Body("Neutral primary on paper.")}
-        zeus.Card() { zeus.Pip(zeus.ok(), 8) zeus.Title("Medium") zeus.Body("Rounded-xl is the card radius.")}
-        zeus.Card() { zeus.Pip(zeus.danger(), 8) zeus.Title("Large") zeus.Body("Badges and caps mark status.")}
+        zeus.Card() { zeus.Pip(zeus.accent(), 8) zeus.Title("Small") zeus.Body("Neutral primary on paper.") }
+        zeus.Card() { zeus.Pip(zeus.ok(), 8) zeus.Title("Medium") zeus.Body("Rounded-xl is the card radius.") }
+        zeus.Card() { zeus.Pip(zeus.danger(), 8) zeus.Title("Large") zeus.Body("Badges and caps mark status.") }
     }
 }
 
 fn Skeletons() {
     zeus.SectionHeader("Feedback", "Skeleton",
-        "Placeholder fills while content loads. Radius matches the shape it replaces.")
+                       "Placeholder fills while content loads. Radius matches the shape it replaces.")
     zeus.Card() {
         zeus.Row(SPACE.Md) {
             zeus.Skeleton(40, 40, 20)
@@ -132,7 +132,7 @@ fn ChartCards() {
         push(chart_vals, 260)
     }
     zeus.SectionHeader("Data", "Charts",
-        "Hover a column or a point: the floating tooltip lists every series value. The plot re-fits its card on window resize.")
+                       "Hover a column or a point: the floating tooltip lists every series value. The plot re-fits its card on window resize.")
     zeus.Card() {
         zeus.Title("Bar chart · Total visitors")
         zeus.Body("Desktop and mobile sessions by month, grouped per category.")

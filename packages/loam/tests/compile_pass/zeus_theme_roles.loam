@@ -17,7 +17,7 @@ fn surface() -> string {
 fn main() {
     zeus.window("roles", 40, 20)
     let box = zeus.Box(width = 20, height = 10, background = surface())
-    let root = zeus.Column(0) { }
+    let root = zeus.Column(0) {}
     zeus.root(root)
     zeus.engine_layout(40, 20)
 

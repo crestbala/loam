@@ -14,15 +14,15 @@ fn RamChip() {
     let ram = zeus.signal(zeus.memory_kb())
     if ram_armed == 0 {
         ram_armed = 1
-        async.interval(500, fn() { ram.set(zeus.memory_kb())})
+        async.interval(500, fn() { ram.set(zeus.memory_kb()) })
     }
     zeus.Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
-        spacing = SPACE.Exxs, padding_x = 10, padding_y = 4, height = 26,
-        radius = zeus.RAD_FULL, background = zeus.raised()) {
+             spacing = SPACE.Exxs, padding_x = 10, padding_y = 4, height = 26,
+             radius = zeus.RAD_FULL, background = zeus.raised()) {
         zeus.Text(fn() -> string {
-                let mb = ram.get() / 1024
-                return "RAM {{mb}} MB"
-            }, color = zeus.mute(), font = zeus.FONT_CAPTION)
+            let mb = ram.get() / 1024
+            return "RAM {{mb}} MB"
+        }, color = zeus.mute(), font = zeus.FONT_CAPTION)
     }
 }
 
@@ -47,8 +47,8 @@ fn NavLink(label: string, href: string) {
     zeus.ui_push(item.id)
     let text = zeus.Text(label, font = zeus.FONT_BODY)
     zeus.ui_pop()
-    zeus.selected_chrome(item, text, || { path.get() == href},
-        zeus.raised(), "", zeus.ink(), zeus.mute())
+    zeus.selected_chrome(item, text, || { path.get() == href },
+                         zeus.raised(), "", zeus.ink(), zeus.mute())
 }
 
 /// Top bar: brand, route links, live RAM, and the light/dark switch. The
@@ -57,7 +57,7 @@ fn NavLink(label: string, href: string) {
 fn Navbar() {
     zeus.Column(SPACE.None) {
         zeus.Box(align_direction = DIRECTION.Row, spacing = SPACE.Md,
-            align_items = ALIGN.Center, height = zeus.BAR) {
+                 align_items = ALIGN.Center, height = zeus.BAR) {
             zeus.Box(width = 22, height = 22, radius = 6, background = zeus.ink())
             zeus.Text("myapp", color = zeus.ink(), font = zeus.FONT_TITLE)
             NavLink("Foundations", "/")

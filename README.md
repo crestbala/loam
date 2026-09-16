@@ -15,7 +15,7 @@ fn main() {
 
 ```
 make
-./bin/loam hello.loam -o hello
+./bin/loamc hello.loam -o hello
 ./hello
 ```
 
@@ -64,16 +64,16 @@ From the repo root:
 make
 ```
 
-That produces `bin/loam` and `bin/loam-lsp`. Then:
+That produces `bin/loamc` and `bin/loam-lsp`. Then:
 
 ```
-./bin/loam app.loam -o app          # native binary
-./bin/loam app.loam --run           # compile and run
-./bin/loam app.loam --emit-c -o a.c # C99
-./bin/loam app.loam --emit-ir -o a.ir
-./bin/loam --target wasm app.loam -o app.wasm
-./bin/loam --target=ios --run examples/zeus/dashboard/dashboard.loam
-./bin/loam --target=android examples/zeus/counter/android/app.loam
+./bin/loamc app.loam -o app          # native binary
+./bin/loamc app.loam --run           # compile and run
+./bin/loamc app.loam --emit-c -o a.c # C99
+./bin/loamc app.loam --emit-ir -o a.ir
+./bin/loamc --target wasm app.loam -o app.wasm
+./bin/loamc --target=ios --run examples/zeus/dashboard/dashboard.loam
+./bin/loamc --target=android examples/zeus/counter/android/app.loam
 ```
 
 `make test` compiles and runs the language tests, golden programs, and
@@ -200,7 +200,7 @@ language demo is `./run.sh language/counter`. `zeus/counter` is an alias.
 Equivalent without `run.sh`:
 
 ```
-./bin/loam --run examples/language/http_server.loam
+./bin/loamc --run examples/language/http_server.loam
 ```
 
 Golden programs under `packages/loam/tests/golden/` (hello, fib, fizzbuzz,
@@ -277,7 +277,7 @@ www/                   Zeus + gRPC docs (Vite serves wasm, no Svelte)
 docs/                  loam.md (language + architecture), boundary.md (C seam),
                        downsides.md (self-improvement phases),
                        zeus_roadmap.md (phase history)
-bin/loam              compiler
+bin/loamc              compiler
 bin/loam-lsp           diagnostics, hover, go-to-def, completion, semantic tokens
 ```
 

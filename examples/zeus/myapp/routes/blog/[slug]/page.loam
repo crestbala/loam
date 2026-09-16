@@ -9,9 +9,9 @@ fn page(p: Params) {
 
 // Static routes are enumerated at build time from `paths()`.
 fn paths() -> []string {
-    return []string { "/blog/hello-world", "/blog/second"}
+    return []string { "/blog/hello-world", "/blog/second" }
 }
 
 fn meta(p: Params) -> Meta {
-    return Meta { title: router.param(p, "slug")}
+    return Meta { title: router.param(p, "slug") }
 }

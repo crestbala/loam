@@ -184,7 +184,7 @@ fn sha1(msg: string) -> string {
                 k = K3
             }
             let temp = wrapping_and(wrapping_add(wrapping_add(wrapping_add(rotl32(a, 5),
-                        wrapping_and(f, MASK32)), wrapping_add(e, k)), w[t]), MASK32)
+                                                                           wrapping_and(f, MASK32)), wrapping_add(e, k)), w[t]), MASK32)
             e = d
             d = c
             c = rotl32(b, 30)

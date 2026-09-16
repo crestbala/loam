@@ -36,7 +36,7 @@ import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "..", "..", "..");
-const LOAM = path.join(REPO, "bin", "loam");
+const LOAM = path.join(REPO, "bin", "loamc");
 const FMT = path.join(REPO, "bin", "loam-fmt");
 
 type Entry = { parts: string[]; dir: string; files: Set<string> };

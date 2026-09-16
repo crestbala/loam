@@ -21,7 +21,7 @@ LIB_O   := $(patsubst $(SRCDIR)/%.c,$(OBJDIR)/%.o,$(LIB_C))
 LOAM_O := $(LIB_O) $(OBJDIR)/driver.o
 LSP_O   := $(LIB_O) $(OBJDIR)/lsp.o
 
-TARGET  := $(BINDIR)/loam
+TARGET  := $(BINDIR)/loamc
 LSP     := $(BINDIR)/loam-lsp
 FMT     := $(BINDIR)/loam-fmt
 ZELI    := $(BINDIR)/zeli
@@ -205,6 +205,30 @@ test: all
 	    echo "ok   draw golden $$stem"; \
 	  fi; \
 	done; \
+	# Command-line arguments: the emitted entry hands argv to the runtime, so
+	# `sys.argc` / `sys.arg` / `sys.args` see exactly what the shell passed —
+	# including an argument with a space in it, which must stay one argument.
+	if ! ./$(TARGET) packages/loam/tests/argv/args.loam -o $(TESTDIR)/tmp/argv_args >$(TESTDIR)/tmp/argv_build.log 2>&1; then \
+	  echo "FAIL argv (compile)"; cat $(TESTDIR)/tmp/argv_build.log; err=1; \
+	elif ! $(TESTDIR)/tmp/argv_args alpha "beta gamma" >$(TESTDIR)/tmp/argv.out 2>&1; then \
+	  echo "FAIL argv (run)"; err=1; \
+	elif ! diff -u packages/loam/tests/argv/args.txt $(TESTDIR)/tmp/argv.out >$(TESTDIR)/tmp/argv.diff; then \
+	  echo "FAIL argv (output)"; cat $(TESTDIR)/tmp/argv.diff; err=1; \
+	else \
+	  echo "ok   sys args (argc / arg / args, spaces preserved)"; \
+	fi; \
+	# Filesystem queries: a scratch tree is created, listed (sorted, `.`/`..`
+	# excluded), stat-ed, and removed again. The scratch path arrives as argv,
+	# which is the first real use of `sys.arg(1)`.
+	if ! ./$(TARGET) packages/loam/tests/fs/fs.loam -o $(TESTDIR)/tmp/fs_probe >$(TESTDIR)/tmp/fs_build.log 2>&1; then \
+	  echo "FAIL fs (compile)"; cat $(TESTDIR)/tmp/fs_build.log; err=1; \
+	elif ! $(TESTDIR)/tmp/fs_probe $(TESTDIR)/tmp/fsscratch >$(TESTDIR)/tmp/fs.out 2>&1; then \
+	  echo "FAIL fs (run)"; err=1; \
+	elif ! diff -u packages/loam/tests/fs/fs.txt $(TESTDIR)/tmp/fs.out >$(TESTDIR)/tmp/fs.diff; then \
+	  echo "FAIL fs (output)"; cat $(TESTDIR)/tmp/fs.diff; err=1; \
+	else \
+	  echo "ok   sys filesystem (exists / is_dir / list_dir / remove_path)"; \
+	fi; \
 	for f in $(INLANG); do \
 	  stem=$$(basename $$f .loam); \
 	  if ! ./$(TARGET) test $$f >$(TESTDIR)/tmp/inlang_$$stem.log 2>&1; then \
@@ -250,8 +274,12 @@ test: all
 	else \
 	  echo "ok   zeli pkg sync + import pkg:name"; \
 	fi; \
+	# `in.loam` must stay unformatted: it is the messy input the case is about, and
+	# a `zeli fmt` over the repo would quietly make this check vacuous by rewriting
+	# it. The last condition fails loudly if that has happened.
 	if ./$(FMT) packages/loam/tests/fmt/in.loam >$(TESTDIR)/tmp/fmt.out 2>&1 && \
 	   diff -u packages/loam/tests/fmt/want.loam $(TESTDIR)/tmp/fmt.out >/dev/null 2>&1 && \
+	   ! cmp -s packages/loam/tests/fmt/in.loam $(TESTDIR)/tmp/fmt.out && \
 	   ./$(FMT) packages/loam/tests/fmt/want.loam >$(TESTDIR)/tmp/fmt.idem 2>&1 && \
 	   diff -u packages/loam/tests/fmt/want.loam $(TESTDIR)/tmp/fmt.idem >/dev/null 2>&1; then \
 	  echo "ok   loam-fmt (canonical + idempotent)"; \

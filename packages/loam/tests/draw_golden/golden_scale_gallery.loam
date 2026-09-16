@@ -32,12 +32,12 @@ fn main() {
                 zeus.Badge("ok", zeus.TINT.Ok)
                 zeus.Kbd("S")
             }
-            zeus.Tabs(tab, []string{"One", "Two", "Three"})
+            zeus.Tabs(tab, []string {"One", "Two", "Three"})
             zeus.Row(SPACE.Sm) {
-                zeus.Segmented(pick, []string{"A", "B", "C"})
+                zeus.Segmented(pick, []string {"A", "B", "C"})
             }
             zeus.Row(SPACE.Sm) {
-                zeus.RadioGroup(pick, []string{"First", "Second"})
+                zeus.RadioGroup(pick, []string {"First", "Second"})
                 zeus.Column(SPACE.Exs) {
                     zeus.Field("Name", name, "Ada")
                     zeus.Field("Email", note, "ada@zeus.dev")

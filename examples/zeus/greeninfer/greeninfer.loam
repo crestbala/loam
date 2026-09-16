@@ -189,24 +189,24 @@ fn StepWatch(folder: Signal<string>, watch_on: Signal<int>, cap: Signal<string>,
             zeus.Field("Source folder", folder, "repo-relative or absolute path", width = 560)
             zeus.Button("Index folder", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
                         on_click = fn() {
-                            let root = folder.get()
-                            if root.len == 0 {
-                                cap.set("folder path is empty")
-                                return
-                            }
-                            let t0 = engine.engine_now_us()
-                            let n = watcher.watch_scan(root, DEMO_FILE, DEMO_CAP,
-                                                       default_exts())
-                            let ms = (engine.engine_now_us() - t0) / 1000
-                            if n < 0 {
-                                cap.set(watcher.watch_err_msg())
-                                return
-                            }
-                            let m = watcher.watch_last_msg()
-                            chunk_stat.set(engine.engine_rows())
-                            kb_stat.set(engine.engine_bytes() / 1024)
-                            cap.set("{{m}} in {{ms}} ms")
-                        })
+                let root = folder.get()
+                if root.len == 0 {
+                    cap.set("folder path is empty")
+                    return
+                }
+                let t0 = engine.engine_now_us()
+                let n = watcher.watch_scan(root, DEMO_FILE, DEMO_CAP,
+                                           default_exts())
+                let ms = (engine.engine_now_us() - t0) / 1000
+                if n < 0 {
+                    cap.set(watcher.watch_err_msg())
+                    return
+                }
+                let m = watcher.watch_last_msg()
+                chunk_stat.set(engine.engine_rows())
+                kb_stat.set(engine.engine_bytes() / 1024)
+                cap.set("{{m}} in {{ms}} ms")
+            })
         }
         zeus.Row(SPACE.Sm) {
             zeus.Text("Re-index automatically when files change", color = zeus.mute(),
@@ -231,33 +231,33 @@ fn StepAsk(query: Signal<string>, hits: Signal<[]Hit>, qus: Signal<int>,
             zeus.Field("Question", query, "e.g. how does search sweep the rows?", width = 480)
             zeus.Button("Search chunks", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
                         on_click = fn() {
-                            let text = query.get()
-                            if text.len == 0 {
-                                cap.set("type a question first")
-                                return
-                            }
-                            let qv = engine.embed_text(text)
-                            let t0 = engine.engine_now_us()
-                            let res = engine.engine_search(qv, KNN_K)
-                            let us = engine.engine_now_us() - t0
-                            let nrows = engine.engine_rows()
-                            qus.set(us)
-                            let mut items = []Hit {}
-                            let mut i = 0
-                            while i < res.len {
-                                let r = res[i]
-                                let pct = pct_of(r.score)
-                                let lab = watcher.watch_label(r.id)
-                                let snip = watcher.watch_snippet(r.id)
-                                push(items, Hit {
-                                    label: "{{pct}}%  {{lab}}",
-                                    snippet: snip,
-                                })
-                                i = i + 1
-                            }
-                            hits.set(items)
-                            cap.set("swept {{nrows}} chunks in {{us}} us")
-                        })
+                let text = query.get()
+                if text.len == 0 {
+                    cap.set("type a question first")
+                    return
+                }
+                let qv = engine.embed_text(text)
+                let t0 = engine.engine_now_us()
+                let res = engine.engine_search(qv, KNN_K)
+                let us = engine.engine_now_us() - t0
+                let nrows = engine.engine_rows()
+                qus.set(us)
+                let mut items = []Hit {}
+                let mut i = 0
+                while i < res.len {
+                    let r = res[i]
+                    let pct = pct_of(r.score)
+                    let lab = watcher.watch_label(r.id)
+                    let snip = watcher.watch_snippet(r.id)
+                    push(items, Hit {
+                        label: "{{pct}}%  {{lab}}",
+                        snippet: snip,
+                    })
+                    i = i + 1
+                }
+                hits.set(items)
+                cap.set("swept {{nrows}} chunks in {{us}} us")
+            })
         }
         zeus.Box(height = LIST_H, border = 1, border_color = zeus.rule(), radius = 8) {
             zeus.VirtualList(hits, HIT_H, HitRow)
@@ -295,33 +295,33 @@ fn StepModel(prompt: Signal<string>, endpoint: Signal<int>, key_sig: Signal<stri
             zeus.Field("API key", key_sig, "xai-... only for Grok (console.x.ai)", width = 420)
             zeus.Button("Ask model", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
                         on_click = fn() {
-                            let question = prompt.get()
-                            if question.len == 0 {
-                                cap.set("type a question above first")
-                                return
-                            }
-                            let mut p = agent.ollama_pipeline(model_sig.get())
-                            if endpoint.get() == 1 {
-                                let key = key_sig.get()
-                                if key.len == 0 {
-                                    cap.set("paste a Grok API key, or switch to the local endpoint")
-                                    return
-                                }
-                                p = agent.grok_pipeline(key)
-                            }
-                            p.model = model_sig.get()
-                            let a = agent.query_agent(p, question, KNN_K)
-                            let lines = split_lines(a.text)
-                            ans.set(lines)
-                            mus.set(a.us)
-                            let chunks = a.context_chunks
-                            if a.remote == 1 {
-                                cap.set("answered with {{chunks}} local chunks in {{a.us}} us")
-                            } else {
-                                let e = agent.agent_last_error()
-                                cap.set("not answered ({{e}}) — offline context in the box")
-                            }
-                        })
+                let question = prompt.get()
+                if question.len == 0 {
+                    cap.set("type a question above first")
+                    return
+                }
+                let mut p = agent.ollama_pipeline(model_sig.get())
+                if endpoint.get() == 1 {
+                    let key = key_sig.get()
+                    if key.len == 0 {
+                        cap.set("paste a Grok API key, or switch to the local endpoint")
+                        return
+                    }
+                    p = agent.grok_pipeline(key)
+                }
+                p.model = model_sig.get()
+                let a = agent.query_agent(p, question, KNN_K)
+                let lines = split_lines(a.text)
+                ans.set(lines)
+                mus.set(a.us)
+                let chunks = a.context_chunks
+                if a.remote == 1 {
+                    cap.set("answered with {{chunks}} local chunks in {{a.us}} us")
+                } else {
+                    let e = agent.agent_last_error()
+                    cap.set("not answered ({{e}}) — offline context in the box")
+                }
+            })
         }
         zeus.Box(height = 200, border = 1, border_color = zeus.rule(), radius = 8) {
             zeus.VirtualList(ans, 20, AnsRow)

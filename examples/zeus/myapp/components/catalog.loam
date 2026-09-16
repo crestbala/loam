@@ -6,7 +6,7 @@ import "std:kv"
 
 fn ButtonScale() {
     zeus.SectionHeader("Actions", "Buttons",
-        "The six variants across three sizes. Primary is the neutral ink fill; it inverts with appearance.")
+                       "The six variants across three sizes. Primary is the neutral ink fill; it inverts with appearance.")
     zeus.Card() {
         zeus.Overline("Primary · Secondary · Outline · Ghost · Destructive · Link")
         zeus.Note("small")
@@ -77,11 +77,11 @@ fn DisplayRow() {
 
 fn Field(name: Signal<string>, note: Signal<string>, st: Store) {
     zeus.SectionHeader("Forms", "Input",
-        "A label + input pair: 36px tall, rounded, hairline border.")
+                       "A label + input pair: 36px tall, rounded, hairline border.")
     zeus.Card() {
         zeus.Field("Name", name, "Your name")
-        zeus.Text(if name.get().len < 3 { "Name must be at least 3 characters."} else { ""},
-            color = zeus.danger(), font = zeus.FONT_CONTROL)
+        zeus.Text(if name.get().len < 3 { "Name must be at least 3 characters." } else { "" },
+                  color = zeus.danger(), font = zeus.FONT_CONTROL)
         zeus.TextArea(note, "Draft — saved as you type", fn() => kv.set(st, "draft", note.get()))
         zeus.Note("{{note.get().len}} chars · std:kv under Application Support")
         zeus.Button("Submit", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => name.set(name.get()))
@@ -93,7 +93,7 @@ fn DateSection() {
     let month = zeus.signal(10)
     let day = zeus.signal(17)
     zeus.SectionHeader("Forms", "Date picker",
-        "Input-like trigger with a calendar icon; the sheet floats above the page, so the scroller cannot clip it.")
+                       "Input-like trigger with a calendar icon; the sheet floats above the page, so the scroller cannot clip it.")
     zeus.Card() {
         zeus.DatePicker(year, month, day)
     }
@@ -105,16 +105,16 @@ fn Choice() {
     let mode = zeus.signal(1)
     let group = zeus.signal(0)
     zeus.SectionHeader("Choice", "Tabs, select, radio, toggle",
-        "A muted tray for tabs, a dropdown for sizes, radio dots for one pick, and an accent-pressed toggle group.")
+                       "A muted tray for tabs, a dropdown for sizes, radio dots for one pick, and an accent-pressed toggle group.")
     zeus.Card() {
         zeus.Note("tabs — active trigger is the card surface")
-        zeus.Tabs(tab, []string { "One", "Two", "Three"})
+        zeus.Tabs(tab, []string { "One", "Two", "Three" })
         zeus.Note("select — the menu floats below the trigger")
-        zeus.Select(size, []string { "Small", "Medium", "Large"})
+        zeus.Select(size, []string { "Small", "Medium", "Large" })
         zeus.Note("radio group — filled dot on the picked row")
-        zeus.RadioGroup(mode, []string { "Default", "Comfortable", "Compact"})
+        zeus.RadioGroup(mode, []string { "Default", "Comfortable", "Compact" })
         zeus.Note("toggle group — muted fill when pressed")
-        zeus.ToggleGroup(group, []string { "Bold", "Italic", "Underline"})
+        zeus.ToggleGroup(group, []string { "Bold", "Italic", "Underline" })
         zeus.Note("toggle — borderless until pressed")
         let blink = zeus.signal(1)
         zeus.Toggle("Blink cursor", blink)
@@ -126,11 +126,11 @@ fn Controls() {
     let notes = zeus.signal(0)
     let vol = zeus.signal(42)
     zeus.SectionHeader("Controls", "Switch, check, slider, toggle",
-        "The switch eases onto its track; drag the slider thumb or use the arrow keys. Progress echoes the value.")
+                       "The switch eases onto its track; drag the slider thumb or use the arrow keys. Progress echoes the value.")
     zeus.Card() {
         zeus.Row(SPACE.Md) {
             zeus.Switch(on)
-            zeus.Text(if on.get() == 1 { "On"} else { "Off"}, color = zeus.ink(), font = zeus.FONT_BODY)
+            zeus.Text(if on.get() == 1 { "On" } else { "Off" }, color = zeus.ink(), font = zeus.FONT_BODY)
             zeus.Grow()
             zeus.Checkbox("Notify me", notes)
         }
@@ -162,17 +162,17 @@ fn Upload() {
     let pw = zeus.signal(0)
     let ph = zeus.signal(0)
     zeus.SectionHeader("Media", "Upload",
-        "Choose a PNG, JPEG, WebP, or GIF. The preview keeps its aspect and auto-sizes to the device width.")
+                       "Choose a PNG, JPEG, WebP, or GIF. The preview keeps its aspect and auto-sizes to the device width.")
     zeus.Card() {
         zeus.Row(SPACE.Sm) {
             zeus.Button("Choose image", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() {
-                    zeus.pick_image(photo, pw, ph)
-                })
+                zeus.pick_image(photo, pw, ph)
+            })
             zeus.Button("Clear", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click = fn() {
-                    photo.set("")
-                    pw.set(0)
-                    ph.set(0)
-                })
+                photo.set("")
+                pw.set(0)
+                ph.set(0)
+            })
         }
         // `show =` is a plain bool, read once at build (zeus.loam:2146), so
         // it cannot follow the pick. Signal shows win over it and do follow:

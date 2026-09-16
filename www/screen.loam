@@ -9,11 +9,11 @@ fn NavItem(page: Signal<int>, id: int, label: string) {
         padding_y = 6,
         radius = 8,
         background = fn() -> string {
-            if page.get() == id {
-                return zeus.wash()
-            }
-            return ""
-        },
+        if page.get() == id {
+            return zeus.wash()
+        }
+        return ""
+    },
         on_click = fn() => page.set(id)
     ) {
         zeus.Text(label, color = zeus.ink(), font = 13)

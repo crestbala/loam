@@ -37,8 +37,8 @@ fn main() {
             // A pin that must follow a signal is an effect: style props are
             // plain data.
             let s = zeus.Text("slide",
-                position = zeus.pos_absolute(),
-                top = 90, color = "#000000")
+                              position = zeus.pos_absolute(),
+                              top = 90, color = "#000000")
             zeus.styled(s, || { zeus.set_prop_int(s, zeus.SET.Left, slide.get()) })
         }
         return host

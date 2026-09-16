@@ -1,0 +1,16 @@
+mkdir = 0
+write = 0
+write nested = 0
+exists root = 1
+exists missing = 0
+is_dir root = 1
+is_dir file = 0
+entries = 2
+0 a 1
+1 zeta.txt 0
+nested = 2
+not a dir counts 0 = 0
+out of range = [  ]
+remove = 0
+exists after remove = 0
+remove again = 0

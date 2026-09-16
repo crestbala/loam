@@ -81,17 +81,17 @@ fn CountCard(count: Signal<int>, open: Signal<int>) {
         zeus.Title("Count")
         zeus.Note("Buttons write a signal. The starting value came from protobuf.")
         zeus.Row(SPACE.Sm) {
-            zeus.Button("-1", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click =  fn() => count.set(count.get() - 1))
+            zeus.Button("-1", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click = fn() => count.set(count.get() - 1))
             // Fixed-width slot: digits may change, but the buttons beside the
             // value never slide left or right.
             zeus.Box(align_direction = DIRECTION.Row, justify = ALIGN.Center, width = 64) {
                 zeus.Text("{{count.get()}}", color = zeus.ink(), font = 16)
             }
-            zeus.Button("+1", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click =  fn() => count.set(count.get() + 1))
+            zeus.Button("+1", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => count.set(count.get() + 1))
         }
         Bar(count)
         zeus.Divider()
-        zeus.Button("Open Dialog", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click =  fn() => open.set(1))
+        zeus.Button("Open Dialog", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => open.set(1))
     }
 }
 
@@ -103,8 +103,8 @@ fn Load(load: Signal<int>) {
         zeus.Box(align_direction = DIRECTION.Row, justify = ALIGN.End, width = 44) {
             zeus.Text("{{load.get()}}%", color = zeus.mute(), font = zeus.FONT_BODY)
         }
-        zeus.Button("+10", look = zeus.LOOK.Soft, size = zeus.SIZE.Md, on_click =  fn() => load.set(clamp(load.get() + 10)))
-        zeus.Button("-10", look = zeus.LOOK.Soft, size = zeus.SIZE.Md, on_click =  fn() => load.set(clamp(load.get() - 10)))
+        zeus.Button("+10", look = zeus.LOOK.Soft, size = zeus.SIZE.Md, on_click = fn() => load.set(clamp(load.get() + 10)))
+        zeus.Button("-10", look = zeus.LOOK.Soft, size = zeus.SIZE.Md, on_click = fn() => load.set(clamp(load.get() - 10)))
     }
 }
 
@@ -130,18 +130,18 @@ fn FeedCard(feed: Signal<[]string>) {
         zeus.Title("Feed")
         zeus.Note("{{feed.get().len}} windowed rows. Only the visible window is mounted.")
         zeus.Row(SPACE.Sm) {
-            zeus.Button("Append", look = zeus.LOOK.Soft, size = zeus.SIZE.Md, on_click =  fn() {
+            zeus.Button("Append", look = zeus.LOOK.Soft, size = zeus.SIZE.Md, on_click = fn() {
                 let n = feed.get().len
                 zeus.push_item(feed, "msg {{n}}  appended")
             })
-            zeus.Button("Insert", look = zeus.LOOK.Soft, size = zeus.SIZE.Md, on_click =  fn() {
+            zeus.Button("Insert", look = zeus.LOOK.Soft, size = zeus.SIZE.Md, on_click = fn() {
                 zeus.insert_item(feed, 0, "msg inserted at top")
                 zeus.scroll_to_index(Node { id: list_id.get() }, 0)
             })
-            zeus.Button("Mid", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click =  fn() {
+            zeus.Button("Mid", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click = fn() {
                 zeus.scroll_to_index(Node { id: list_id.get() }, FEED_N / 2)
             })
-            zeus.Button("Top", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click =  fn() {
+            zeus.Button("Top", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click = fn() {
                 zeus.scroll_to_index(Node { id: list_id.get() }, 0)
             })
         }
@@ -182,8 +182,8 @@ fn Dialog(open: Signal<int>) {
             zeus.Body("How are you feeling today?")
             zeus.Row(SPACE.Sm) {
                 zeus.Grow()
-                zeus.Button("Close", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click =  fn() => open.set(0))
-                zeus.Button("Save", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click =  fn() => open.set(0))
+                zeus.Button("Close", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click = fn() => open.set(0))
+                zeus.Button("Save", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => open.set(0))
             }
         }
     }

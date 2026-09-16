@@ -32,7 +32,7 @@ fn main() {
             zeus.TextInput(name, "Name")
             zeus.Checkbox("Agree", on)
             zeus.Switch(on)
-            zeus.Tabs(sel, []string{"One", "Two"})
+            zeus.Tabs(sel, []string {"One", "Two"})
             zeus.Button("Save", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
                         on_click = fn() {})
         }

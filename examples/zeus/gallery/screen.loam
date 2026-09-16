@@ -54,8 +54,8 @@ fn ProjectCard() {
         }
         zeus.Body("A card with a title, supporting copy, and a footer of actions. Shadcn chrome: rounded-xl, hairline border, white surface.")
         zeus.Row(SPACE.Sm) {
-            zeus.Button("Cancel", look = zeus.LOOK.Outline, size = zeus.SIZE.Md, on_click =  fn() => ticks.set(ticks.get() + 1))
-            zeus.Button("Save", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click =  fn() => ticks.set(ticks.get() + 1))
+            zeus.Button("Cancel", look = zeus.LOOK.Outline, size = zeus.SIZE.Md, on_click = fn() => ticks.set(ticks.get() + 1))
+            zeus.Button("Save", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => ticks.set(ticks.get() + 1))
             zeus.Grow()
             zeus.Text("{{ticks.get()}}", color = zeus.mute(), font = zeus.FONT_CAPTION)
         }
@@ -63,7 +63,7 @@ fn ProjectCard() {
 }
 
 fn Foundations() {
-    zeus.Breadcrumbs([]string{"Zeus", "Examples", "Gallery"})
+    zeus.Breadcrumbs([]string {"Zeus", "Examples", "Gallery"})
     zeus.Column(SPACE.Exs) {
         zeus.Display("Build interfaces with Zeus")
         zeus.Body("Zinc tokens, neutral primary, and lucide SVG icons. Dark inverts every token that reads appearance.")
@@ -82,7 +82,7 @@ fn Foundations() {
 
 fn Customize() {
     zeus.SectionHeader("Customize", "Style props + slots",
-        "Style props restyle a recipe without copying it. Comp is the primitive for your own widget. Trailing blocks are slots.")
+                       "Style props restyle a recipe without copying it. Comp is the primitive for your own widget. Trailing blocks are slots.")
     zeus.Card() {
         zeus.RowWrap(SPACE.Sm) {
             zeus.Button("Recipe", look = zeus.LOOK.Solid, size = zeus.SIZE.Md)
@@ -109,7 +109,7 @@ fn Customize() {
 
 fn ButtonScale() {
     zeus.SectionHeader("Actions", "Buttons",
-        "The six variants across three sizes. Primary is the neutral ink fill; it inverts with appearance.")
+                       "The six variants across three sizes. Primary is the neutral ink fill; it inverts with appearance.")
     zeus.Card() {
         zeus.Overline("Primary · Secondary · Outline · Ghost · Destructive · Link")
         zeus.Note("small")
@@ -180,14 +180,14 @@ fn DisplayRow() {
 
 fn Field(name: Signal<string>, note: Signal<string>, st: Store) {
     zeus.SectionHeader("Forms", "Input",
-        "A label + input pair: 36px tall, rounded, hairline border.")
+                       "A label + input pair: 36px tall, rounded, hairline border.")
     zeus.Card() {
         zeus.Field("Name", name, "Your name")
         zeus.Text(if name.get().len < 3 { "Name must be at least 3 characters." } else { "" },
                   color = zeus.danger(), font = zeus.FONT_CONTROL)
         zeus.TextArea(note, "Draft — saved as you type", fn() => kv.set(st, "draft", note.get()))
         zeus.Note("{{note.get().len}} chars · std:kv under Application Support")
-        zeus.Button("Submit", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click =  fn() => name.set(name.get()))
+        zeus.Button("Submit", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => name.set(name.get()))
     }
 }
 
@@ -196,7 +196,7 @@ fn DateSection() {
     let month = zeus.signal(10)
     let day = zeus.signal(17)
     zeus.SectionHeader("Forms", "Date picker",
-        "Input-like trigger with a calendar icon; the sheet floats above the page, so the scroller cannot clip it.")
+                       "Input-like trigger with a calendar icon; the sheet floats above the page, so the scroller cannot clip it.")
     zeus.Card() {
         zeus.DatePicker(year, month, day)
     }
@@ -208,7 +208,7 @@ fn Choice() {
     let mode = zeus.signal(1)
     let group = zeus.signal(0)
     zeus.SectionHeader("Choice", "Tabs, select, radio, toggle",
-        "A muted tray for tabs, a dropdown for sizes, radio dots for one pick, and an accent-pressed toggle group.")
+                       "A muted tray for tabs, a dropdown for sizes, radio dots for one pick, and an accent-pressed toggle group.")
     zeus.Card() {
         zeus.Note("tabs — active trigger is the card surface")
         zeus.Tabs(tab, []string { "One", "Two", "Three" })
@@ -229,7 +229,7 @@ fn Controls() {
     let notes = zeus.signal(0)
     let vol = zeus.signal(42)
     zeus.SectionHeader("Controls", "Switch, check, slider, toggle",
-        "The switch eases onto its track; drag the slider thumb or use the arrow keys. Progress echoes the value.")
+                       "The switch eases onto its track; drag the slider thumb or use the arrow keys. Progress echoes the value.")
     zeus.Card() {
         zeus.Row(SPACE.Md) {
             zeus.Switch(on)
@@ -265,13 +265,13 @@ fn Upload() {
     let pw = zeus.signal(0)
     let ph = zeus.signal(0)
     zeus.SectionHeader("Media", "Upload",
-        "Choose a PNG, JPEG, WebP, or GIF. The preview keeps its aspect and auto-sizes to the device width.")
+                       "Choose a PNG, JPEG, WebP, or GIF. The preview keeps its aspect and auto-sizes to the device width.")
     zeus.Card() {
         zeus.Row(SPACE.Sm) {
-            zeus.Button("Choose image", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click =  fn() {
+            zeus.Button("Choose image", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() {
                 zeus.pick_image(photo, pw, ph)
             })
-            zeus.Button("Clear", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click =  fn() {
+            zeus.Button("Clear", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click = fn() {
                 photo.set("")
                 pw.set(0)
                 ph.set(0)
@@ -300,10 +300,10 @@ fn Data() {
     let page = zeus.signal(3)
     zeus.SectionTitle("Data", "Table and pagination")
     zeus.Card() {
-        zeus.TableHead([]string{"Name", "Role", "Status"})
-        zeus.TableRow([]string{"Ada", "Operator", "Active"})
-        zeus.TableRow([]string{"Bea", "Editor", "Away"})
-        zeus.TableRow([]string{"Cal", "Viewer", "Active"})
+        zeus.TableHead([]string {"Name", "Role", "Status"})
+        zeus.TableRow([]string {"Ada", "Operator", "Active"})
+        zeus.TableRow([]string {"Bea", "Editor", "Away"})
+        zeus.TableRow([]string {"Cal", "Viewer", "Active"})
     }
     zeus.Note("Pagination — {{page.get()}} / 5 · ghost pages, outline current")
     zeus.Pagination(page, 5)
@@ -334,19 +334,19 @@ fn NameRow(name: string) -> Node {
 fn LiveList() {
     let n = zeus.signal(2)
     zeus.SectionHeader("Lists", "Growing rows",
-        "Add and remove rows. Extra rows are shown, not rebuilt with zeus.For.")
+                       "Add and remove rows. Extra rows are shown, not rebuilt with zeus.For.")
     zeus.Card() {
         zeus.show_ge(NameRow("Ada"), n, 1)
         zeus.show_ge(NameRow("Bea"), n, 2)
         zeus.show_ge(NameRow("Row"), n, 3)
         zeus.show_ge(NameRow("Row"), n, 4)
         zeus.Row(SPACE.Sm) {
-            zeus.Button("Add row", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click =  fn() {
+            zeus.Button("Add row", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() {
                 if n.get() < 4 {
                     n.set(n.get() + 1)
                 }
             })
-            zeus.Button("Remove", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click =  fn() {
+            zeus.Button("Remove", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click = fn() {
                 if n.get() > 0 {
                     n.set(n.get() - 1)
                 }
@@ -366,7 +366,7 @@ fn Cards() {
 
 fn Skeletons() {
     zeus.SectionHeader("Feedback", "Skeleton",
-        "Placeholder fills while content loads. Radius matches the shape it replaces.")
+                       "Placeholder fills while content loads. Radius matches the shape it replaces.")
     zeus.Card() {
         zeus.Row(SPACE.Md) {
             zeus.Skeleton(40, 40, 20)
@@ -383,24 +383,24 @@ fn Overlays() {
     let ask = zeus.signal(0)
     zeus.SectionTitle("Overlay", "Dialog and alert dialog")
     zeus.Row(SPACE.Sm) {
-        zeus.Button("Dialog", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click =  fn() => open.set(1))
-        zeus.Button("Alert dialog", look = zeus.LOOK.Outline, size = zeus.SIZE.Md, on_click =  fn() => ask.set(1))
+        zeus.Button("Dialog", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => open.set(1))
+        zeus.Button("Alert dialog", look = zeus.LOOK.Outline, size = zeus.SIZE.Md, on_click = fn() => ask.set(1))
     }
     zeus.Body("Dialog has a corner X; alert dialog does not. Cancel is ghost or outline; the destructive action closes.")
     zeus.Dialog(open, title = "Share the link?") {
         zeus.Body("Anyone with the link can view this project. You can revoke access later.")
         zeus.Row(SPACE.Sm) {
             zeus.Grow()
-            zeus.Button("Cancel", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click =  fn() => open.set(0))
-            zeus.Button("Share", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click =  fn() => open.set(0))
+            zeus.Button("Cancel", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click = fn() => open.set(0))
+            zeus.Button("Share", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => open.set(0))
         }
     }
     zeus.AlertDialog(ask, title = "Discard changes?") {
         zeus.Body("This cannot be undone. The working tree keeps whatever you have not saved.")
         zeus.Row(SPACE.Sm) {
             zeus.Grow()
-            zeus.Button("Cancel", look = zeus.LOOK.Outline, size = zeus.SIZE.Md, on_click =  fn() => ask.set(0))
-            zeus.Button("Discard", look = zeus.LOOK.Danger, size = zeus.SIZE.Md, on_click =  fn() => ask.set(0))
+            zeus.Button("Cancel", look = zeus.LOOK.Outline, size = zeus.SIZE.Md, on_click = fn() => ask.set(0))
+            zeus.Button("Discard", look = zeus.LOOK.Danger, size = zeus.SIZE.Md, on_click = fn() => ask.set(0))
         }
     }
 }
@@ -453,7 +453,7 @@ fn ChartCards() {
         push(chart_vals, 260)
     }
     zeus.SectionHeader("Data", "Charts",
-        "Hover a column or a point: the floating tooltip lists every series value, like the recharts cursor. The plot re-fits its card on window resize.")
+                       "Hover a column or a point: the floating tooltip lists every series value, like the recharts cursor. The plot re-fits its card on window resize.")
     zeus.Card() {
         zeus.Title("Bar chart · Total visitors")
         zeus.Body("Desktop and mobile sessions by month, grouped per category.")

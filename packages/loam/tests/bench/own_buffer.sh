@@ -31,7 +31,7 @@ set -u
 APP_DIR="${1:-examples/zeus/myapp}"
 SECS="${2:-8}"
 OUT=packages/loam/tests/tmp/own_buffer
-LOAM=./bin/loam
+LOAM=./bin/loamc
 BENCH=packages/loam/tests/bench
 mkdir -p "$OUT"
 

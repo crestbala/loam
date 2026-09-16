@@ -33,3 +33,49 @@ fn mkdir(path: string) -> int {}
 
 /// Rename `from` to `to`. `0` on success. Native only; wasm returns `1`.
 fn rename(from: string, to: string) -> int {}
+
+/// Command-line argument count, the program path included. `0` on iOS,
+/// Android and wasm, where no command line reaches the program.
+fn argc() -> int {}
+
+/// Argument `i` as the shell gave it: `arg(0)` is the program path. Empty when
+/// `i` is out of range. Native only; wasm returns empty.
+fn arg(i: int) -> string {}
+
+/// Every argument, `arg(0)` first. The convenience form of `argc` / `arg`.
+fn args() -> []string {
+    let mut out = []string {}
+    for i in 0..argc() {
+        push(out, arg(i))
+    }
+    return out
+}
+
+/// `1` if `path` exists, whatever it is. Native only; wasm returns `0`.
+fn exists(path: string) -> int {}
+
+/// `1` if `path` is a directory. Native only; wasm returns `0`.
+fn is_dir(path: string) -> int {}
+
+/// Number of entries in the directory `path`, `.` and `..` excluded. `0` when
+/// `path` is not a readable directory. Native only; wasm returns `0`.
+fn dir_count(path: string) -> int {}
+
+/// Entry `i` of `path`, sorted by name, as a fresh string — a caller that keeps
+/// it keeps its own copy. Empty when `i` is out of range. Native only; wasm
+/// returns empty.
+fn dir_entry(path: string, i: int) -> string {}
+
+/// Every entry of `path`, sorted. The convenience form of `dir_count` /
+/// `dir_entry`.
+fn list_dir(path: string) -> []string {
+    let mut out = []string {}
+    for i in 0..dir_count(path) {
+        push(out, dir_entry(path, i))
+    }
+    return out
+}
+
+/// Remove `path`, recursing into a directory. `0` on success, including when
+/// `path` is already gone. Native only; wasm returns `1`.
+fn remove_path(path: string) -> int {}

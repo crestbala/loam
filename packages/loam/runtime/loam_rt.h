@@ -708,6 +708,41 @@ static inline loam_str loam_sys_env(loam_str name) {
     (void)name;
     return (loam_str){"", 0};
 }
+/* No process and no command line in wasm: the host calls the entry with no
+   arguments, so `sys.argc()` is 0 and `sys.arg(i)` is empty. */
+static inline void loam_argv_set(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+}
+static inline int64_t loam_sys_argc(void) { return 0; }
+static inline loam_str loam_sys_arg(int64_t i) {
+    (void)i;
+    return (loam_str){"", 0};
+}
+/* There is no filesystem in wasm: nothing exists, nothing lists, nothing
+   removes. A host that has one (a worker with a virtual FS) would implement
+   these rather than Loam guessing. */
+static inline int64_t loam_sys_exists(loam_str path) {
+    (void)path;
+    return 0;
+}
+static inline int64_t loam_sys_is_dir(loam_str path) {
+    (void)path;
+    return 0;
+}
+static inline int64_t loam_sys_dir_count(loam_str path) {
+    (void)path;
+    return 0;
+}
+static inline loam_str loam_sys_dir_entry(loam_str path, int64_t i) {
+    (void)path;
+    (void)i;
+    return (loam_str){"", 0};
+}
+static inline int64_t loam_sys_remove_path(loam_str path) {
+    (void)path;
+    return 1;
+}
 static inline int64_t loam_sys_write_file(loam_str path, loam_str body) {
     (void)path;
     (void)body;
@@ -735,6 +770,29 @@ static inline int64_t loam_sys_rename(loam_str from, loam_str to) {
 #include <sys/wait.h>
 
 static int loam_sys_last_status = 1;
+
+/* The process's command line, handed over by the generated entry before any
+   other statement runs (`emit_main_args` in codegen_c.c). Zero on iOS and
+   Android, where the host owns `main` and passes nothing. */
+static int loam_argc;
+static char **loam_argv;
+
+static inline void loam_argv_set(int argc, char **argv) {
+    loam_argc = argc;
+    loam_argv = argv;
+}
+
+static inline int64_t loam_sys_argc(void) { return (int64_t)loam_argc; }
+
+/* Points straight into the process's own argument vector: it lives exactly as
+   long as the process does, so there is nothing to copy and nothing to free. */
+static inline loam_str loam_sys_arg(int64_t i) {
+    if (i < 0 || i >= (int64_t)loam_argc || !loam_argv || !loam_argv[i])
+        return (loam_str){"", 0};
+    return (loam_str){loam_argv[i], (int64_t)strlen(loam_argv[i])};
+}
+
+
 
 static inline int64_t loam_sys_env_set(loam_str name) {
     char buf[256];
@@ -867,6 +925,133 @@ static int loam_sys_cpath(loam_str path, char *buf, size_t cap) {
     return 0;
 }
 
+#include <dirent.h>
+/**
+ * Names in `dirpath`, `.` and `..` excluded, sorted by name so a walk visits
+ * the same tree in the same order every time. Each name and the array belong to
+ * the caller (see `loam_dir_free`); `*out` is NULL when the directory cannot be
+ * read, which is not an error worth reporting — an unreadable directory is an
+ * empty one as far as a walk is concerned.
+ */
+static int64_t loam_dir_names(const char *dirpath, char ***out) {
+    DIR *d = opendir(dirpath);
+    struct dirent *e;
+    char **names = NULL;
+    int64_t n = 0, cap = 0, i;
+    if (!d) {
+        *out = NULL;
+        return 0;
+    }
+    while ((e = readdir(d)) != NULL) {
+        size_t len;
+        if (e->d_name[0] == '.' &&
+            (e->d_name[1] == 0 || (e->d_name[1] == '.' && e->d_name[2] == 0)))
+            continue;
+        if (n == cap) {
+            cap = cap ? cap * 2 : 32;
+            names = (char **)realloc(names, (size_t)cap * sizeof *names);
+            if (!names) {
+                closedir(d);
+                *out = NULL;
+                return 0;
+            }
+        }
+        len = strlen(e->d_name);
+        names[n] = (char *)malloc(len + 1);
+        if (!names[n]) break;
+        memcpy(names[n], e->d_name, len + 1);
+        n++;
+    }
+    closedir(d);
+    /* Insertion sort: a directory here holds tens of entries, and this keeps the
+       runtime free of a second libc dependency for the common case. */
+    for (i = 1; i < n; i++) {
+        char *key = names[i];
+        int64_t j = i - 1;
+        while (j >= 0 && strcmp(names[j], key) > 0) {
+            names[j + 1] = names[j];
+            j--;
+        }
+        names[j + 1] = key;
+    }
+    *out = names;
+    return n;
+}
+
+static void loam_dir_free(char **names, int64_t n) {
+    int64_t i;
+    for (i = 0; i < n; i++) free(names[i]);
+    free(names);
+}
+
+static inline int64_t loam_sys_exists(loam_str path) {
+    char buf[4096];
+    struct stat st;
+    if (loam_sys_cpath(path, buf, sizeof buf)) return 0;
+    return stat(buf, &st) == 0 ? 1 : 0;
+}
+
+static inline int64_t loam_sys_is_dir(loam_str path) {
+    char buf[4096];
+    struct stat st;
+    if (loam_sys_cpath(path, buf, sizeof buf)) return 0;
+    return (stat(buf, &st) == 0 && S_ISDIR(st.st_mode)) ? 1 : 0;
+}
+
+/* Re-reads the directory per call rather than caching a listing: an entry comes
+   back as a fresh `loam_new` string, so a caller that keeps one (a recursive
+   walk keeping the names of the level it is in) keeps its own copy. Directories
+   here are small, so the rescan is not worth the staleness a cache would cost. */
+static inline int64_t loam_sys_dir_count(loam_str path) {
+    char buf[4096];
+    char **names;
+    int64_t n;
+    if (loam_sys_cpath(path, buf, sizeof buf)) return 0;
+    n = loam_dir_names(buf, &names);
+    loam_dir_free(names, n);
+    return n;
+}
+
+static inline loam_str loam_sys_dir_entry(loam_str path, int64_t idx) {
+    char buf[4096];
+    char **names;
+    int64_t n;
+    loam_str out = {"", 0};
+    if (loam_sys_cpath(path, buf, sizeof buf)) return out;
+    n = loam_dir_names(buf, &names);
+    if (idx >= 0 && idx < n) {
+        size_t len = strlen(names[idx]);
+        char *p = (char *)loam_new(len + 1, "sys_dir_entry", 0);
+        memcpy(p, names[idx], len + 1);
+        out = (loam_str){p, (int64_t)len};
+    }
+    loam_dir_free(names, n);
+    return out;
+}
+
+static int loam_rm_path(const char *p) {
+    struct stat st;
+    if (lstat(p, &st) != 0) return 0; /* already gone */
+    if (S_ISDIR(st.st_mode)) {
+        char **names;
+        int64_t n = loam_dir_names(p, &names), i;
+        for (i = 0; i < n; i++) {
+            char child[4096];
+            if (strlen(p) + strlen(names[i]) + 2 > sizeof child) continue;
+            snprintf(child, sizeof child, "%s/%s", p, names[i]);
+            loam_rm_path(child);
+        }
+        loam_dir_free(names, n);
+        return rmdir(p) == 0 ? 0 : 1;
+    }
+    return remove(p) == 0 ? 0 : 1;
+}
+
+static inline int64_t loam_sys_remove_path(loam_str path) {
+    char buf[4096];
+    if (loam_sys_cpath(path, buf, sizeof buf)) return 1;
+    return (int64_t)loam_rm_path(buf);
+}
 static inline int64_t loam_sys_mkdir(loam_str path) {
     char buf[4096];
     size_t i, n;

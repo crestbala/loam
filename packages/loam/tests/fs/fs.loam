@@ -1,0 +1,37 @@
+// Filesystem queries a tool needs to walk a tree: does it exist, is it a
+// directory, what is in it, and remove it again. The scratch directory comes
+// from the command line, so the test does not care where it is run from.
+import "std:fmt"
+import "std:sys"
+
+fn main() {
+    let root = sys.arg(1)
+    if root.len == 0 {
+        fmt.println("usage: fs <scratch-dir>")
+        return
+    }
+
+    sys.remove_path(root)
+    fmt.println("mkdir =", sys.mkdir("{{root}}/a/b"))
+    fmt.println("write =", sys.write_file("{{root}}/zeta.txt", "z"))
+    fmt.println("write nested =", sys.write_file("{{root}}/a/alpha.loam", "a"))
+
+    fmt.println("exists root =", sys.exists(root))
+    fmt.println("exists missing =", sys.exists("{{root}}/nope"))
+    fmt.println("is_dir root =", sys.is_dir(root))
+    fmt.println("is_dir file =", sys.is_dir("{{root}}/zeta.txt"))
+
+    // Sorted by name, `.`/`..` never listed, directory-ness told per entry.
+    let names = sys.list_dir(root)
+    fmt.println("entries =", names.len)
+    for i in 0..names.len {
+        fmt.println(i, names[i], sys.is_dir("{{root}}/{{names[i]}}"))
+    }
+    fmt.println("nested =", sys.list_dir("{{root}}/a").len)
+    fmt.println("not a dir counts 0 =", sys.dir_count("{{root}}/zeta.txt"))
+    fmt.println("out of range = [", sys.dir_entry(root, 99), "]")
+
+    fmt.println("remove =", sys.remove_path(root))
+    fmt.println("exists after remove =", sys.exists(root))
+    fmt.println("remove again =", sys.remove_path(root))
+}

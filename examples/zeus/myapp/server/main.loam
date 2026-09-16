@@ -20,14 +20,14 @@ fn main() {
     let app = http.app()
 
     app.rpc(api.hello_rpc(), |body| {
-            let req = api.decode_HelloReq(body)
-            api.encode_HelloResp(HelloResp { greeting: api.greet(req.name)})
-        })
+        let req = api.decode_HelloReq(body)
+        api.encode_HelloResp(HelloResp { greeting: api.greet(req.name) })
+    })
 
     app.rpc(api.posts_rpc(), |body| {
-            let req = api.decode_PostsReq(body)
-            api.encode_PostsResp(PostsResp { titles: db.posts()})
-        })
+        let req = api.decode_PostsReq(body)
+        api.encode_PostsResp(PostsResp { titles: db.posts() })
+    })
 
     app.listen(8080)
 }

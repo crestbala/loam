@@ -33,7 +33,7 @@ Routes: `/`, `/about`, `/pricing`, `/blog`, `/blog/:slug`, `/components`,
 before building, so a broken route fails before a window opens. Directly:
 
 ```sh
-./bin/loam --run examples/zeus/myapp/app.loam
+./bin/loamc --run examples/zeus/myapp/app.loam
 ```
 
 ## Data
@@ -248,8 +248,8 @@ ZEUS_FRAME_DEBUG=1 ./run.sh myapp
 ## Tests
 
 ```sh
-ZEUS_HEADLESS=1 ./bin/loam test examples/zeus/myapp/app.loam   # tests/smoke.loam
-ZEUS_HEADLESS=1 ./bin/loam examples/zeus/myapp/tests/routes.loam -o /tmp/r && /tmp/r
+ZEUS_HEADLESS=1 ./bin/loamc test examples/zeus/myapp/app.loam   # tests/smoke.loam
+ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/myapp/tests/routes.loam -o /tmp/r && /tmp/r
 ```
 
 `tests/routes.loam` drives the generated route table headlessly: it navigates to

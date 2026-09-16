@@ -15,7 +15,7 @@ import { defineConfig } from "vite";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, "../../../..");
-const loam = resolve(repo, "bin/loam");
+const loam = resolve(repo, "bin/loamc");
 const buildDir = resolve(here, "build");
 const wasmFile = resolve(buildDir, "app.wasm");
 const loader = resolve(repo, "packages/zeus/hosts/web/loader.js");

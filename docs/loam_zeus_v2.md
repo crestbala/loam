@@ -1324,7 +1324,7 @@ Two ways:
 ./examples/zeus/myapp/build/macos/app
 
 # or one step (what the other examples' run.sh use)
-./bin/loam --target=native --run examples/zeus/myapp/app.loam
+./bin/loamc --target=native --run examples/zeus/myapp/app.loam
 ```
 
 One gotcha: `zeus_plat.c:322` gates on `ZEUS_HEADLESS` —

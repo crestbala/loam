@@ -18,7 +18,7 @@
 # exports ZEUS_HEADLESS=1/MAYA_HEADLESS=1 to render one frame and exit; `run.sh`
 # clears those so a value left exported in your shell cannot silently build a
 # window-less binary that exits before anything appears. To render one frame on
-# purpose, invoke `bin/loam` with ZEUS_HEADLESS=1 directly (see the Makefile).
+# purpose, invoke `bin/loamc` with ZEUS_HEADLESS=1 directly (see the Makefile).
 set -e
 
 unset ZEUS_HEADLESS LOAM_HEADLESS MAYA_HEADLESS
@@ -26,7 +26,7 @@ unset ZEUS_HEADLESS LOAM_HEADLESS MAYA_HEADLESS
 HERE=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 LANGDIR=$HERE/examples/language
 ZEUSDIR=$HERE/examples/zeus
-LOAM=$HERE/bin/loam
+LOAM=$HERE/bin/loamc
 
 die() { echo "run.sh: $*" >&2; exit 1; }
 
