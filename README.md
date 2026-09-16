@@ -81,6 +81,29 @@ examples (GUI, Maya, and raygui in headless mode; the raygui example is
 skipped when `pkg-config raylib` is absent). Set `LOAM_TIME=1` to print
 check / codegen / cc timings.
 
+The build and the test plan live in [`nob.loam`](nob.loam), a Loam program. The
+Makefile is only a bootstrap: it compiles a seed `bin/loamc` (the one step a
+Loam program cannot do for itself) and then forwards to `nob`. `make test` is
+`nob test`, which runs the language suites and the host checks that sit next to
+the compiler (wasm entry points, server/client split, LSP):
+
+```
+make test                # each result streams as it finishes
+make test NOB_ARGS=-j8   # run up to eight checks at once
+./bin/nob test -j8       # the same without make
+./bin/nob integration    # the zeli routes/build/pkg/fmt/serve suite (slow, on demand)
+./bin/nob build          # what `make` does
+```
+
+`nob test` prints every check the moment it finishes and ends with a
+`N passed, M failed` summary. `-j N` (default 4, or `NOB_JOBS`) bounds how many
+checks run at once; the parallel pool is `xargs -P`, because Loam's
+`thread.spawn` workers may not call the C seam (`sys.exec`). The `zeli`-driven
+checks are deliberately not part of `test`: they are the slow and most
+environment-sensitive part, so `nob integration` runs them on demand (each
+stanza as its own `bin/nob integration <stanza>` process, in the same pool).
+`./bin/nob help` lists the commands.
+
 ## Libraries
 
 Quoted imports only. `import "std:foo"` loads `packages/loam/std/foo.loam`.
@@ -158,7 +181,7 @@ The Android emulator reaches a Mac backend at `10.0.2.2:8080`, not
 
 `./run.sh` with no arguments lists everything. It builds `loam` if needed.
 GUI examples open a window and servers block until Ctrl-C. For one frame then
-exit (what `make test` does), set `ZEUS_HEADLESS=1`, `MAYA_HEADLESS=1`, or
+exit (what `nob test` does), set `ZEUS_HEADLESS=1`, `MAYA_HEADLESS=1`, or
 `RAYGUI_HEADLESS=1`.
 
 ```
@@ -204,7 +227,7 @@ Equivalent without `run.sh`:
 ```
 
 Golden programs under `packages/loam/tests/golden/` (hello, fib, fizzbuzz,
-…) are compiled by `make test`. They are fixtures, not demos.
+…) are compiled by `nob test` (`make test`). They are fixtures, not demos.
 
 ### Zeus (`examples/zeus/`)
 
@@ -261,7 +284,8 @@ loam/                  the language
   src/                 compiler (C11): lexer, parser, sema, ir, codegen_c
   std/                 language libraries (Loam), incl. zeuscore/httpcore/mayacore
   runtime/             loam_rt (language) + host shims
-  tests/               compile_pass / compile_fail / golden / inlang / bench
+  tests/               compile_pass / compile_fail / golden / draw_golden / inlang / bench
+nob.loam               the build and test tool (run as `bin/nob`; `make` forwards)
 zeus/                  the framework
   hosts/               desktop/ Cocoa, ios/ UIKit, android/ JNI, web/ Canvas2D
   docs/                spec.md = zeus backends and paint model

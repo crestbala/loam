@@ -75,7 +75,8 @@ loam/
     src/          compiler (C11)
     std/          language libraries (Loam)
     runtime/      loam_rt (language) + host shims (not library protocol C)
-    tests/        compile_pass / compile_fail / golden (fixtures w/ .expected)
+    tests/        compile_pass / compile_fail / golden / draw_golden / inlang / bench
+  nob.loam        the build and test tool (`bin/nob`; `make` forwards to it)
   zeus/           the framework: hosts/ (Cocoa, iOS, Android, Canvas2D), docs/
   tooling/
     tree-sitter-loam/  grammar
@@ -121,6 +122,10 @@ Build the compiler once from the repo root:
 ```
 make
 ```
+
+`make` is only a bootstrap: it compiles a seed `bin/loamc`, then runs
+[`nob.loam`](../nob.loam) (`nob build`), which owns the incremental build. The
+same program runs the suite (`./bin/nob test`, or `make test`).
 
 ### 1. Hello
 
@@ -394,6 +399,15 @@ A trap aborts the run (there is no unwinding yet — `Boundary` is a later phase
 so the suite stops at the first failure; the name printed before the panic and
 the `(in test …)` tag on the message identify which test failed.
 
+The repository's own suite is [`nob.loam`](../nob.loam). `nob test` (or `make
+test`) builds the compiler and runs the language suites — `compile_pass`,
+`compile_fail`, the golden programs and DRAW goldens, `inlang`, and the
+`argv`/`fs`/`watch` probes — plus the host checks that sit next to the compiler
+(wasm entry points, server/client split, LSP). The `zeli`-driven suite (routes,
+build, pkg, fmt, serve) is `nob integration`, deliberately not part of `test`:
+it is the slow and most environment-sensitive part. Both take `-j N` (default
+4) and print each result as it finishes.
+
 ### 7. Debug info
 
 Generated C carries `#line` directives pointing at the `.loam` source, so the C
@@ -460,5 +474,5 @@ Corpus you can compile as examples:
 - Failures the checker must reject: `packages/loam/tests/compile_fail/*.loam`
 
 ```
-make && make test
+make && make test        # or: ./bin/nob build && ./bin/nob test
 ```
