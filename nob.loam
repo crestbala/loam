@@ -1,0 +1,1976 @@
+//! nob — the Loam build and test tool.
+//!
+//! This replaces the build and test logic that used to live in the top-level
+//! Makefile. The Makefile is now only a bootstrap: it compiles a seed
+//! `bin/loamc` (the one thing this program cannot do for itself) and then hands
+//! `make` and `make test` to `nob.loam`.
+//!
+//!     nob                  build bin/loamc, bin/loam-lsp, bin/loam-fmt, bin/zeli
+//!     nob test [-j N]      build, then run the language suites and host checks
+//!     nob integration      the zeli/serve/pkg/fmt suite (slow; on demand)
+//!     nob lsp              build the language server (and its objects) only
+//!     nob bench            build, then run packages/loam/tests/bench/run.sh
+//!     nob clean            remove build output
+//!     nob help
+//!
+//! `-j N` (default 4, or `NOB_JOBS` / `LOAM_JOBS`) bounds how many fixture
+//! compiles run at once; each case's result line is streamed as it finishes, so
+//! a parallel run still shows every file immediately. The pool is `xargs -P`,
+//! because Loam's `thread.spawn` workers are deliberately barred from the C seam
+//! (`sys.exec` is not in `worker_seam_ok`), so parallelism is one process per
+//! case rather than one Loam thread per case.
+//!
+//! The per-file fixture suites are generated here and run as a bounded pool.
+//! The long tail of process/port/git-shaped checks lives in
+//! `packages/loam/tests/integration.sh`, which `test` runs and reports.
+
+import "std:fmt"
+import "std:sys"
+
+// --- location and options (set by main) ----------------------------------
+
+let mut ROOT: string = "."
+let mut SRC: string = ""
+let mut OBJ: string = ""
+let mut BIN: string = ""
+let mut TESTS: string = ""
+let mut TMP: string = ""
+let mut EXB: string = ""
+let mut NOB: string = ""
+let mut LOAMC: string = ""
+let mut ZELI: string = ""
+let mut FMT: string = ""
+let mut JOBS: int = 1
+let mut CHANGED: bool = false
+let mut N_PASS: int = 0
+let mut N_FAIL: int = 0
+let mut TSTART: int = 0
+let mut FAILURES: []string = []string {}
+
+// --- small string helpers ------------------------------------------------
+
+/// `s[a..b]` as a new string (empty when the range is empty or backwards).
+fn slice(s: string, a: int, b: int) -> string {
+    let mut x = []int {}
+    if a < b {
+        for i in a..b {
+            push(x, s[i])
+        }
+    }
+    return string_from_bytes(x)
+}
+
+/// `a` with `b` after it. Strings are values here, so building text is a pure
+/// function returning a new string (Loam has no `+` for strings).
+fn cat(a: string, b: string) -> string {
+    let mut x = []int {}
+    for i in 0..a.len {
+        push(x, a[i])
+    }
+    for i in 0..b.len {
+        push(x, b[i])
+    }
+    return string_from_bytes(x)
+}
+
+fn trim(s: string) -> string {
+    let mut a = 0
+    while a < s.len {
+        let c = s[a]
+        if c == 32 || c == 9 || c == 13 || c == 10 {
+            a += 1
+        } else {
+            break
+        }
+    }
+    let mut b = s.len
+    while b > a {
+        let c = s[b - 1]
+        if c == 32 || c == 9 || c == 13 || c == 10 {
+            b -= 1
+        } else {
+            break
+        }
+    }
+    return slice(s, a, b)
+}
+
+fn int_of(s: string) -> int {
+    let t = trim(s)
+    let mut n = 0
+    let mut i = 0
+    while i < t.len {
+        let c = t[i]
+        if c < 48 || c > 57 {
+            break
+        }
+        n = n * 10 + (c - 48)
+        i += 1
+    }
+    return n
+}
+
+/// `s` as one word for the shell: single-quoted, with `'` closed, escaped and
+/// reopened. `sys.exec` runs through `sh`, so every path goes through this.
+fn shq(s: string) -> string {
+    let mut b = []int {}
+    push(b, 39) /* ' */
+    for i in 0..s.len {
+        let c = s[i]
+        if c == 39 {
+            push(b, 39)
+            push(b, 92) /* \ */
+            push(b, 39)
+            push(b, 39)
+        } else {
+            push(b, c)
+        }
+    }
+    push(b, 39)
+    return string_from_bytes(b)
+}
+
+fn starts_with(s: string, prefix: string) -> bool {
+    if prefix.len > s.len {
+        return false
+    }
+    for i in 0..prefix.len {
+        if s[i] != prefix[i] {
+            return false
+        }
+    }
+    return true
+}
+
+fn ends_with(s: string, suffix: string) -> bool {
+    if suffix.len > s.len {
+        return false
+    }
+    let off = s.len - suffix.len
+    for i in 0..suffix.len {
+        if s[i + off] != suffix[i] {
+            return false
+        }
+    }
+    return true
+}
+
+/// `p` without its last path segment ("" when it has none).
+fn dir_of(p: string) -> string {
+    let mut cut = -1
+    for i in 0..p.len {
+        if p[i] == 47 /* / */ {
+            cut = i
+        }
+    }
+    if cut < 0 {
+        return ""
+    }
+    return slice(p, 0, cut)
+}
+
+/// The last path segment of `p`.
+fn base(p: string) -> string {
+    let mut cut = -1
+    for i in 0..p.len {
+        if p[i] == 47 /* / */ {
+            cut = i
+        }
+    }
+    if cut < 0 {
+        return p
+    }
+    return slice(p, cut + 1, p.len)
+}
+
+fn join(dir: string, name: string) -> string {
+    if dir == "" {
+        return name
+    }
+    return "{{dir}}/{{name}}"
+}
+
+/// `p` without this repo's root prefix — how the Makefile used to name a file.
+fn rel_of(p: string) -> string {
+    let pre = "{{ROOT}}/"
+    if starts_with(p, pre) {
+        return slice(p, pre.len, p.len)
+    }
+    return p
+}
+
+fn pad4(i: int) -> string {
+    if i < 10 {
+        return "000{{i}}"
+    }
+    if i < 100 {
+        return "00{{i}}"
+    }
+    if i < 1000 {
+        return "0{{i}}"
+    }
+    return "{{i}}"
+}
+
+/// Ordering on byte strings, so a list of paths can be sorted without a
+/// string `<` operator the language does not have.
+fn str_less(a: string, b: string) -> bool {
+    let mut n = a.len
+    if b.len < n {
+        n = b.len
+    }
+    for i in 0..n {
+        if a[i] < b[i] {
+            return true
+        }
+        if a[i] > b[i] {
+            return false
+        }
+    }
+    return a.len < b.len
+}
+
+/// A new array with `v`'s strings in order (insertion sort).
+fn sorted(v: []string) -> []string {
+    let mut out = []string {}
+    for i in 0..v.len {
+        push(out, v[i])
+    }
+    let mut i = 1
+    while i < out.len {
+        let x = out[i]
+        let mut j = i
+        while j > 0 && str_less(x, out[j - 1]) {
+            out[j] = out[j - 1]
+            j -= 1
+        }
+        out[j] = x
+        i += 1
+    }
+    return out
+}
+
+/// `name` with its last `n` bytes removed.
+fn drop_last(name: string, n: int) -> string {
+    if name.len < n {
+        return name
+    }
+    return slice(name, 0, name.len - n)
+}
+
+/// `p` without a `.loam` extension, as a stem (no directory).
+fn stem_of(p: string) -> string {
+    return drop_last(base(p), 5)
+}
+
+/// `name` without a `.c` extension.
+fn stem_c(name: string) -> string {
+    return drop_last(name, 2)
+}
+
+// --- filesystem listings -------------------------------------------------
+
+/// Every `ext` file directly in `dir`, sorted (`sys.list_dir` sorts entries).
+fn list_ext(dir: string, ext: string) -> []string {
+    let mut out = []string {}
+    if sys.is_dir(dir) == 0 {
+        return out
+    }
+    let entries = sys.list_dir(dir)
+    for i in 0..entries.len {
+        if ends_with(entries[i], ext) {
+            push(out, join(dir, entries[i]))
+        }
+    }
+    return out
+}
+
+fn list_loam(dir: string) -> []string {
+    return list_ext(dir, ".loam")
+}
+
+/// An entry point named after its directory (`examples/zeus/dashboard/
+/// dashboard.loam`). Full-stack examples have no such file and are excluded.
+fn zeus_apps() -> []string {
+    let mut out = []string {}
+    let dir = "{{ROOT}}/examples/zeus"
+    if sys.is_dir(dir) == 0 {
+        return out
+    }
+    let entries = sys.list_dir(dir)
+    for i in 0..entries.len {
+        let name = entries[i]
+        let d = join(dir, name)
+        if sys.is_dir(d) == 1 {
+            let entry = join(d, "{{name}}.loam")
+            if sys.exists(entry) == 1 {
+                push(out, entry)
+            }
+        }
+    }
+    return out
+}
+
+// --- shell plumbing ------------------------------------------------------
+
+/// Run `cmd` from the repo root and return whether it exited 0.
+fn run_ok(cmd: string) -> bool {
+    sys.exec("cd {{shq(ROOT)}} && {{cmd}}")
+    return sys.exec_status() == 0
+}
+
+/// Is `a` strictly newer than `b`? (`test -nt` is true when `b` is missing,
+/// which is the wanted behaviour for "needs building".)
+fn is_newer(a: string, b: string) -> bool {
+    sys.exec("cd {{shq(ROOT)}} && test {{shq(a)}} -nt {{shq(b)}}")
+    return sys.exec_status() == 0
+}
+
+fn pkg_exists(name: string) -> bool {
+    sys.exec("pkg-config --exists {{name}} 2>/dev/null")
+    return sys.exec_status() == 0
+}
+
+fn now_s() -> int {
+    return int_of(sys.exec("date +%s"))
+}
+
+fn contains_str(hay: string, needle: string) -> bool {
+    if needle.len > hay.len {
+        return false
+    }
+    for i in 0..hay.len - needle.len + 1 {
+        let mut same = true
+        for j in 0..needle.len {
+            if hay[i + j] != needle[j] {
+                same = false
+            }
+        }
+        if same {
+            return true
+        }
+    }
+    return false
+}
+
+/// Every line of `text` that starts with `prefix`, trimmed.
+fn lines_with(text: string, prefix: string) -> []string {
+    let mut out = []string {}
+    let all = split_lines(text)
+    for i in 0..all.len {
+        if starts_with(all[i], prefix) {
+            push(out, trim(all[i]))
+        }
+    }
+    return out
+}
+
+fn split_lines(s: string) -> []string {
+    let mut out = []string {}
+    let mut start = 0
+    for i in 0..s.len {
+        if s[i] == 10 {
+            push(out, slice(s, start, i))
+            start = i + 1
+        }
+    }
+    if start < s.len {
+        push(out, slice(s, start, s.len))
+    }
+    return out
+}
+
+// --- compiler build ------------------------------------------------------
+
+/// The flags the compiler is built with. Kept in one place: the Makefile's
+/// bootstrap rule mirrors this, and `build` stamps the value into
+/// `obj/.cflags` so a change here forces a full object rebuild.
+fn cflags() -> string {
+    let mut s = "-std=c11 -Wall -Wextra -Wpedantic -O2 -g"
+    s = cat(s, " -DLOAM_RT_PATH='\"{{ROOT}}/packages/loam/runtime/loam_rt.h\"'")
+    s = cat(s, " -DLOAM_RUNTIME_DIR='\"{{ROOT}}/packages/loam/runtime\"'")
+    s = cat(s, " -DLOAM_STD_DIR='\"{{ROOT}}/packages/loam/std\"'")
+    s = cat(s, " -DLOAM_ZEUS_DIR='\"{{ROOT}}/packages/zeus\"'")
+    s = cat(s, " -DLOAM_RAYGUI_DIR='\"{{ROOT}}/packages/raygui\"'")
+    s = cat(s, " -DLOAM_PATH='\"{{ROOT}}/packages/zeus:{{ROOT}}/packages/http:{{ROOT}}/packages/maya:{{ROOT}}/packages/raygui\"'")
+    return s
+}
+
+struct CSrc {
+    full: string,
+    rel: string,
+    obj: string,
+    lib: bool,
+}
+
+/// Every compiler source, with its object path under `obj/`.
+fn c_sources() -> []CSrc {
+    let mut out = []CSrc {}
+    let top = list_ext(SRC, ".c")
+    for i in 0..top.len {
+        let stem = stem_c(base(top[i]))
+        let lib = stem != "driver" && stem != "lsp" && stem != "fmt"
+        push(out, CSrc {
+            full: top[i],
+            rel: "packages/loam/src/{{stem}}.c",
+            obj: "{{OBJ}}/{{stem}}.o",
+            lib: lib,
+        })
+    }
+    let sema = list_ext("{{SRC}}/sema", ".c")
+    for i in 0..sema.len {
+        let stem = stem_c(base(sema[i]))
+        push(out, CSrc {
+            full: sema[i],
+            rel: "packages/loam/src/sema/{{stem}}.c",
+            obj: "{{OBJ}}/sema/{{stem}}.o",
+            lib: true,
+        })
+    }
+    return out
+}
+
+fn quoted_list(v: []string) -> string {
+    let mut s = ""
+    for i in 0..v.len {
+        if i > 0 {
+            s = cat(s, " ")
+        }
+        s = cat(s, shq(v[i]))
+    }
+    return s
+}
+
+/// The objects that link into a given binary: `loamc` adds `driver.o`, `lsp`
+/// adds `lsp.o`; both take every library object.
+fn objs_of(srcs: []CSrc, what: string) -> []string {
+    let mut out = []string {}
+    for i in 0..srcs.len {
+        let s = srcs[i]
+        let take = s.lib || (what == "loamc" && s.rel == "packages/loam/src/driver.c") || (what == "lsp" && s.rel == "packages/loam/src/lsp.c")
+        if take {
+            push(out, s.obj)
+        }
+    }
+    return out
+}
+
+/// Recompile every object that is missing or older than its source. `full`
+/// rebuilds all of them (a header or the flags changed).
+fn compile_stale(srcs: []CSrc, full: bool) -> bool {
+    for i in 0..srcs.len {
+        let s = srcs[i]
+        let mut need = full
+        if !need {
+            if sys.exists(s.obj) == 0 {
+                need = true
+            } else if is_newer(s.full, s.obj) {
+                need = true
+            }
+        }
+        if need {
+            fmt.println("  cc  {{rel_of(s.full)}}")
+            sys.exec("cd {{shq(ROOT)}} && cc {{cflags()}} -c {{shq(s.rel)}} -o {{shq(rel_of(s.obj))}}")
+            if sys.exec_status() != 0 {
+                fmt.println("nob: cc failed: {{rel_of(s.full)}}")
+                return false
+            }
+            CHANGED = true
+        }
+    }
+    return true
+}
+
+fn link(objs: []string, out: string) -> bool {
+    fmt.println("  cc  {{shq(rel_of(out))}}")
+    sys.exec("cd {{shq(ROOT)}} && cc {{cflags()}} {{quoted_list(objs)}} -o {{shq(rel_of(out))}}")
+    if sys.exec_status() != 0 {
+        fmt.println("nob: link failed: {{rel_of(out)}}")
+        return false
+    }
+    return true
+}
+
+/// `all` builds every binary; `lsp` stops after the language server.
+fn build(what: string) -> int {
+    sys.mkdir(OBJ)
+    sys.mkdir("{{OBJ}}/sema")
+    sys.mkdir(BIN)
+
+    let srcs = c_sources()
+    let mut ref = "{{BIN}}/loamc"
+    if what == "lsp" {
+        ref = "{{BIN}}/loam-lsp"
+    }
+
+    // A full rebuild is needed when the reference binary is missing, when the
+    // flags changed since the last build, or when any header is newer.
+    let mut full = false
+    let stamp = "{{OBJ}}/.cflags"
+    if sys.read_file(stamp) != cflags() {
+        full = true
+    } else if sys.exists(ref) == 0 {
+        full = true
+    } else {
+        let newer = sys.exec("cd {{shq(ROOT)}} && find packages/loam/src -name '*.h' -newer {{shq(rel_of(ref))}} -print -quit")
+        if trim(newer) != "" {
+            full = true
+        }
+    }
+
+    CHANGED = false
+    if !compile_stale(srcs, full) {
+        return 1
+    }
+    sys.write_file(stamp, cflags())
+
+    if what == "lsp" {
+        if CHANGED || sys.exists("{{BIN}}/loam-lsp") == 0 {
+            if !link(objs_of(srcs, "lsp"), "{{BIN}}/loam-lsp") {
+                return 1
+            }
+        }
+        return 0
+    }
+
+    if CHANGED || sys.exists("{{BIN}}/loamc") == 0 {
+        if !link(objs_of(srcs, "loamc"), "{{BIN}}/loamc") {
+            return 1
+        }
+    }
+    if CHANGED || sys.exists("{{BIN}}/loam-lsp") == 0 {
+        if !link(objs_of(srcs, "lsp"), "{{BIN}}/loam-lsp") {
+            return 1
+        }
+    }
+
+    // `loam-fmt` is standalone: its own main and nothing else linked in.
+    if sys.exists("{{BIN}}/loam-fmt") == 0 || is_newer("{{SRC}}/fmt.c", "{{BIN}}/loam-fmt") {
+        fmt.println("  cc  bin/loam-fmt")
+        sys.exec("cd {{shq(ROOT)}} && cc {{cflags()}} packages/loam/src/fmt.c -o bin/loam-fmt")
+        if sys.exec_status() != 0 {
+            fmt.println("nob: cc failed: bin/loam-fmt")
+            return 1
+        }
+    }
+
+    // `zeli` is a Loam program built by the compiler above it in this file.
+    if sys.exists("{{BIN}}/zeli") == 0 || is_newer("{{BIN}}/loamc", "{{BIN}}/zeli") || is_newer("{{ROOT}}/packages/zeus/cli/zeli.loam", "{{BIN}}/zeli") {
+        fmt.println("  loamc packages/zeus/cli/zeli.loam -> bin/zeli")
+        sys.exec("cd {{shq(ROOT)}} && ./bin/loamc packages/zeus/cli/zeli.loam -o bin/zeli")
+        if sys.exec_status() != 0 {
+            fmt.println("nob: zeli build failed")
+            return 1
+        }
+    }
+    return 0
+}
+
+// --- the test plan -------------------------------------------------------
+
+/// One fixture case. `kind` selects the shell body `body` generates; `desc` is
+/// what the suite prints (the Makefile's `$$f`, or a golden's stem).
+struct Job {
+    kind: string,
+    src: string,
+    out: string,
+    want: string,
+    desc: string,
+}
+
+fn run_job(src: string, out: string) -> Job {
+    return Job { kind: "run", src: src, out: out, want: "", desc: rel_of(src) }
+}
+
+fn reject_job(src: string, out: string) -> Job {
+    return Job { kind: "reject", src: src, out: out, want: "", desc: rel_of(src) }
+}
+
+fn ir_job(src: string, out: string) -> Job {
+    return Job { kind: "ir", src: src, out: out, want: "", desc: rel_of(src) }
+}
+
+fn irgold_job(src: string, out: string, want: string, desc: string) -> Job {
+    return Job { kind: "irgold", src: src, out: out, want: want, desc: desc }
+}
+
+fn draw_job(src: string, out: string, want: string, desc: string) -> Job {
+    return Job { kind: "draw", src: src, out: out, want: want, desc: desc }
+}
+
+fn inlang_job(src: string) -> Job {
+    return Job { kind: "inlang", src: src, out: "", want: "", desc: rel_of(src) }
+}
+
+fn ztests_job(src: string) -> Job {
+    return Job { kind: "ztests", src: src, out: "", want: "", desc: rel_of(src) }
+}
+
+fn oob_job(src: string, out: string) -> Job {
+    return Job { kind: "oob", src: src, out: out, want: "", desc: rel_of(src) }
+}
+
+fn argv_job(src: string, out: string, want: string) -> Job {
+    return Job { kind: "argv", src: src, out: out, want: want, desc: rel_of(src) }
+}
+
+fn fs_job(src: string, out: string, want: string) -> Job {
+    return Job { kind: "fs", src: src, out: out, want: want, desc: rel_of(src) }
+}
+
+fn watch_job(src: string, out: string) -> Job {
+    return Job { kind: "watch", src: src, out: out, want: "", desc: rel_of(src) }
+}
+
+fn missing_job(desc: string) -> Job {
+    return Job { kind: "missing", src: "", out: "", want: "", desc: desc }
+}
+
+/// The shell a case runs. Every branch sets `st` to 0 or 1; `pool` writes it to
+/// the status file and the case exits with it. Output goes to `$RES/<id>.log`.
+fn body(j: Job, id: string) -> string {
+    if j.kind == "run" {
+        return "if {{shq(LOAMC)}} {{shq(j.src)}} -o {{shq(j.out)}} >\"$RES/{{id}}.build\" 2>&1; then\n  if {{shq(j.out)}} >/dev/null 2>&1; then\n    echo \"ok   {{j.desc}}\"\n    st=0\n  else\n    echo \"FAIL run {{j.desc}}\"\n    st=1\n  fi\nelse\n  echo \"FAIL compile {{j.desc}}\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nfi\n"
+    }
+    if j.kind == "reject" {
+        return "if {{shq(LOAMC)}} {{shq(j.src)}} -o {{shq(j.out)}} >\"$RES/{{id}}.build\" 2>&1; then\n  echo \"FAIL should-reject {{j.desc}}\"\n  st=1\nelse\n  echo \"ok   {{j.desc}} (rejected)\"\n  st=0\nfi\n"
+    }
+    if j.kind == "ir" {
+        return "if {{shq(LOAMC)}} --emit-ir {{shq(j.src)}} -o {{shq(j.out)}} >\"$RES/{{id}}.build\" 2>&1; then\n  st=0\n  if grep -q PARTIAL {{shq(j.out)}}; then\n    echo \"warn ir {{j.desc}} (partial lowering)\"\n  fi\nelse\n  echo \"FAIL ir {{j.desc}}\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nfi\n"
+    }
+    if j.kind == "irgold" {
+        return "if ! {{shq(LOAMC)}} --emit-ir {{shq(j.src)}} -o {{shq(j.out)}} >\"$RES/{{id}}.build\" 2>&1; then\n  echo \"FAIL ir golden emit {{j.desc}}\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nelif ! diff -u {{shq(j.want)}} {{shq(j.out)}} >\"$RES/{{id}}.diff\" 2>&1; then\n  echo \"FAIL ir golden {{j.desc}}\"\n  cat \"$RES/{{id}}.diff\"\n  st=1\nelse\n  echo \"ok   ir golden {{j.desc}}\"\n  st=0\nfi\n"
+    }
+    if j.kind == "draw" {
+        return "if ! {{shq(LOAMC)}} {{shq(j.src)}} -o {{shq(j.out)}} >\"$RES/{{id}}.build\" 2>&1; then\n  echo \"FAIL compile {{rel_of(j.src)}}\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nelif ! {{shq(j.out)}} >\"$RES/{{id}}.out\" 2>&1; then\n  echo \"FAIL run {{rel_of(j.src)}}\"\n  st=1\nelif ! diff -u {{shq(j.want)}} \"$RES/{{id}}.out\" >\"$RES/{{id}}.diff\" 2>&1; then\n  echo \"FAIL draw golden {{j.desc}}\"\n  cat \"$RES/{{id}}.diff\"\n  st=1\nelse\n  echo \"ok   draw golden {{j.desc}}\"\n  st=0\nfi\n"
+    }
+    if j.kind == "inlang" {
+        return "if {{shq(LOAMC)}} test {{shq(j.src)}} >\"$RES/{{id}}.build\" 2>&1; then\n  echo \"ok   in-language {{j.desc}}\"\n  st=0\nelse\n  echo \"FAIL in-language tests {{j.desc}}\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nfi\n"
+    }
+    if j.kind == "ztests" {
+        return "if {{shq(LOAMC)}} test {{shq(j.src)}} >\"$RES/{{id}}.build\" 2>&1; then\n  echo \"ok   in-language {{j.desc}}\"\n  st=0\nelse\n  echo \"FAIL in-language {{j.desc}}\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nfi\n"
+    }
+    if j.kind == "oob" {
+        return "if ! {{shq(LOAMC)}} {{shq(j.src)}} -o {{shq(j.out)}} >\"$RES/{{id}}.build\" 2>&1; then\n  echo \"FAIL compile {{rel_of(j.src)}}\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nelif {{shq(j.out)}} >\"$RES/{{id}}.out\" 2>\"$RES/{{id}}.err\"; then\n  echo \"FAIL should-trap {{rel_of(j.src)}}\"\n  st=1\nelif ! grep -q \"index out of bounds\" \"$RES/{{id}}.err\"; then\n  echo \"FAIL trap message {{rel_of(j.src)}}\"\n  cat \"$RES/{{id}}.err\"\n  st=1\nelse\n  echo \"ok   {{rel_of(j.src)}} (trapped)\"\n  st=0\nfi\n"
+    }
+    if j.kind == "argv" {
+        return "if ! {{shq(LOAMC)}} {{shq(j.src)}} -o {{shq(j.out)}} >\"$RES/{{id}}.build\" 2>&1; then\n  echo \"FAIL argv (compile)\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nelif ! {{shq(j.out)}} alpha \"beta gamma\" >\"$RES/{{id}}.out\" 2>&1; then\n  echo \"FAIL argv (run)\"\n  st=1\nelif ! diff -u {{shq(j.want)}} \"$RES/{{id}}.out\" >\"$RES/{{id}}.diff\" 2>&1; then\n  echo \"FAIL argv (output)\"\n  cat \"$RES/{{id}}.diff\"\n  st=1\nelse\n  echo \"ok   sys args (argc / arg / args, spaces preserved)\"\n  st=0\nfi\n"
+    }
+    if j.kind == "fs" {
+        return "if ! {{shq(LOAMC)}} {{shq(j.src)}} -o {{shq(j.out)}} >\"$RES/{{id}}.build\" 2>&1; then\n  echo \"FAIL fs (compile)\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nelif ! {{shq(j.out)}} {{shq(TMP)}}/fsscratch >\"$RES/{{id}}.out\" 2>&1; then\n  echo \"FAIL fs (run)\"\n  st=1\nelif ! diff -u {{shq(j.want)}} \"$RES/{{id}}.out\" >\"$RES/{{id}}.diff\" 2>&1; then\n  echo \"FAIL fs (output)\"\n  cat \"$RES/{{id}}.diff\"\n  st=1\nelse\n  echo \"ok   sys filesystem (exists / is_dir / list_dir / remove_path)\"\n  st=0\nfi\n"
+    }
+    if j.kind == "watch" {
+        return "if ! {{shq(LOAMC)}} {{shq(j.src)}} -o {{shq(j.out)}} >\"$RES/{{id}}.build\" 2>&1; then\n  echo \"FAIL sys watcher (compile)\"\n  cat \"$RES/{{id}}.build\"\n  st=1\nelse\n  {{shq(j.out)}} {{shq(TMP)}}/watchscratch >\"$RES/{{id}}.out\" 2>&1\n  wstat=$?\n  if grep -q 'no kernel watcher on this host' \"$RES/{{id}}.out\"; then\n    echo \"skip sys watcher (no kernel watcher on this host)\"\n    st=0\n  elif [ $wstat -ne 0 ]; then\n    echo \"FAIL sys watcher (exit $wstat)\"\n    cat \"$RES/{{id}}.out\"\n    st=1\n  elif ! grep -q '^  hit .*existing[.]loam$' \"$RES/{{id}}.out\"; then\n    echo \"FAIL sys watcher (an in-place edit did not wake it)\"\n    cat \"$RES/{{id}}.out\"\n    st=1\n  elif ! grep -q '^  hit .*new[.]loam$' \"$RES/{{id}}.out\"; then\n    echo \"FAIL sys watcher (a new file did not wake it)\"\n    cat \"$RES/{{id}}.out\"\n    st=1\n  elif ! grep -q '^  (none)$' \"$RES/{{id}}.out\"; then\n    echo \"FAIL sys watcher (a write outside the watch set woke it)\"\n    cat \"$RES/{{id}}.out\"\n    st=1\n  elif grep -qE '/build/|/[.]zeus/' \"$RES/{{id}}.out\"; then\n    echo \"FAIL sys watcher (build output or the cache woke it)\"\n    cat \"$RES/{{id}}.out\"\n    st=1\n  else\n    echo \"ok   sys watcher (in-place edit, new file, build output ignored)\"\n    st=0\n  fi\nfi\n"
+    }
+    if j.kind == "missing" {
+        return "echo \"FAIL ir golden missing source {{j.desc}}\"\nst=1\n"
+    }
+    return "echo \"FAIL unknown job kind {{j.kind}}\"\nst=1\n"
+}
+
+/// One case script per suite: `case "$1"` dispatches by zero-padded index, each
+/// branch redirects to its own log and records its status. The suite is run as
+/// `xargs -P JOBS -n 1 sh <script> < <index-file>`.
+fn pool(suite: string, jobs: []Job) -> int {
+    let n = jobs.len
+    if n == 0 {
+        return 0
+    }
+    let res = "{{NOB}}/{{suite}}"
+    let script = "{{NOB}}/{{suite}}.sh"
+    let idxf = "{{NOB}}/{{suite}}.idx"
+    let outlog = "{{NOB}}/{{suite}}.out"
+    sys.remove_path(res)
+    sys.mkdir(res)
+
+    let mut s = "#!/bin/sh\n"
+    s = cat(s, "RES={{shq(res)}}\n")
+    s = cat(s, "case \"$1\" in\n")
+    let mut ids = ""
+    for i in 0..n {
+        let id = pad4(i)
+        s = cat(s, "{{id}})\n  {\n")
+        s = cat(s, body(jobs[i], id))
+        s = cat(s, "    echo \"$st\" >\"$RES/{{id}}.status\"\n  } 2>&1 | tee \"$RES/{{id}}.log\" >&2\n  ;;\n")
+        ids = cat(ids, "{{id}}\n")
+    }
+    s = cat(s, "esac\nexit 0\n")
+    sys.write_file(script, s)
+    sys.write_file(idxf, ids)
+
+    // Each case streams its result line to stderr as it finishes, so a run
+    // shows every file immediately instead of a silent suite followed by a
+    // dump. stdout is kept only for anything xargs itself prints.
+    let t0 = now_s()
+    sys.exec("cd {{shq(ROOT)}} && { echo \"nob: {{suite}} — {{n}} check(s), -j {{JOBS}}\" >&2; ZEUS_HEADLESS=1 MAYA_HEADLESS=1 xargs -P {{JOBS}} -n 1 sh {{shq(script)}} < {{shq(idxf)}} >{{shq(outlog)}}; }")
+    let el = now_s() - t0
+    sys.exec("echo 'nob: {{suite}} done in {{el}}s' >&2")
+
+    let mut failed = 0
+    for i in 0..n {
+        let id = pad4(i)
+        let st = trim(sys.read_file("{{res}}/{{id}}.status"))
+        if st != "0" {
+            failed += 1
+            push(FAILURES, jobs[i].desc)
+        } else {
+            N_PASS += 1
+        }
+    }
+    N_FAIL += failed
+    return failed
+}
+
+// --- the suites ----------------------------------------------------------
+
+fn pass_files() -> []string {
+    return list_loam("{{TESTS}}/compile_pass")
+}
+
+/// The examples the Makefile compiled: the golden programs, the language demos
+/// (minus the trap fixture, and minus raygui when raylib is absent), and the
+/// Zeus apps whose entry point is named after their directory.
+fn example_files() -> []string {
+    let mut files = []string {}
+    let g = list_loam("{{TESTS}}/golden")
+    for i in 0..g.len {
+        push(files, g[i])
+    }
+    let have_raylib = pkg_exists("raylib")
+    let lang = list_loam("{{ROOT}}/examples/language")
+    for i in 0..lang.len {
+        let b = base(lang[i])
+        if b == "oob.loam" {
+            continue
+        }
+        if b == "raygui.loam" && !have_raylib {
+            continue
+        }
+        push(files, lang[i])
+    }
+    let z = zeus_apps()
+    for i in 0..z.len {
+        push(files, z[i])
+    }
+    return sorted(files)
+}
+
+fn pass_jobs() -> []Job {
+    let mut out = []Job {}
+    let fs = pass_files()
+    for i in 0..fs.len {
+        push(out, run_job(fs[i], "{{TMP}}/{{stem_of(fs[i])}}"))
+    }
+    return out
+}
+
+fn fail_jobs() -> []Job {
+    let mut out = []Job {}
+    let fs = list_loam("{{TESTS}}/compile_fail")
+    for i in 0..fs.len {
+        push(out, reject_job(fs[i], "{{TMP}}/{{stem_of(fs[i])}}"))
+    }
+    return out
+}
+
+fn example_jobs() -> []Job {
+    let mut out = []Job {}
+    let fs = example_files()
+    for i in 0..fs.len {
+        push(out, run_job(fs[i], "{{EXB}}/{{stem_of(fs[i])}}"))
+    }
+    return out
+}
+
+fn ir_jobs() -> []Job {
+    let mut out = []Job {}
+    let pf = pass_files()
+    for i in 0..pf.len {
+        push(out, ir_job(pf[i], "{{TMP}}/ir_{{stem_of(pf[i])}}.ir"))
+    }
+    let ef = example_files()
+    for i in 0..ef.len {
+        push(out, ir_job(ef[i], "{{TMP}}/ir_{{stem_of(ef[i])}}.ir"))
+    }
+    return out
+}
+
+fn irgolden_jobs() -> []Job {
+    let mut out = []Job {}
+    let dir = "{{TESTS}}/ir_golden"
+    if sys.is_dir(dir) == 0 {
+        return out
+    }
+    let gs = list_ext(dir, ".ir")
+    for i in 0..gs.len {
+        let g = gs[i]
+        let stem = drop_last(base(g), 3)
+        let mut src = "{{TESTS}}/compile_pass/{{stem}}.loam"
+        if sys.exists(src) == 0 {
+            src = "{{TESTS}}/golden/{{stem}}.loam"
+        }
+        if sys.exists(src) == 0 {
+            push(out, missing_job(stem))
+        } else {
+            push(out, irgold_job(src, "{{TMP}}/golden_{{stem}}.ir", g, stem))
+        }
+    }
+    return out
+}
+
+fn draw_jobs() -> []Job {
+    let mut out = []Job {}
+    let fs = list_loam("{{TESTS}}/draw_golden")
+    for i in 0..fs.len {
+        let stem = stem_of(fs[i])
+        push(out, draw_job(fs[i], "{{TMP}}/dg_{{stem}}", "{{TESTS}}/draw_golden/{{stem}}.txt", stem))
+    }
+    return out
+}
+
+fn oob_jobs() -> []Job {
+    let mut out = []Job {}
+    push(out, oob_job("{{ROOT}}/examples/language/oob.loam", "{{EXB}}/oob"))
+    return out
+}
+
+fn argv_jobs() -> []Job {
+    let mut out = []Job {}
+    push(out, argv_job("{{TESTS}}/argv/args.loam", "{{TMP}}/argv_args", "{{TESTS}}/argv/args.txt"))
+    return out
+}
+
+fn fs_jobs() -> []Job {
+    let mut out = []Job {}
+    push(out, fs_job("{{TESTS}}/fs/fs.loam", "{{TMP}}/fs_probe", "{{TESTS}}/fs/fs.txt"))
+    return out
+}
+
+fn watch_jobs() -> []Job {
+    let mut out = []Job {}
+    push(out, watch_job("{{TESTS}}/watch/watch.loam", "{{TMP}}/watch_probe"))
+    return out
+}
+
+fn inlang_jobs() -> []Job {
+    let mut out = []Job {}
+    let fs = list_loam("{{TESTS}}/inlang")
+    for i in 0..fs.len {
+        push(out, inlang_job(fs[i]))
+    }
+    return out
+}
+
+fn ztests_jobs() -> []Job {
+    let mut out = []Job {}
+    let fs = list_loam("{{ROOT}}/packages/zeus/cli")
+    for i in 0..fs.len {
+        if ends_with(base(fs[i]), "_tests.loam") {
+            push(out, ztests_job(fs[i]))
+        }
+    }
+    return out
+}
+
+// --- commands ------------------------------------------------------------
+
+fn test() -> int {
+    sys.mkdir(TMP)
+    sys.mkdir(EXB)
+    sys.mkdir(NOB)
+    if build("all") != 0 {
+        fmt.println("nob: build failed; tests not run")
+        return 1
+    }
+    N_PASS = 0
+    N_FAIL = 0
+    FAILURES = []string {}
+    let t0 = now_s()
+    TSTART = t0
+    let mut failed = 0
+
+    fmt.println("nob: test — language suites + host checks (-j {{JOBS}})")
+
+    // Fixtures first, in the Makefile's order; each suite is a bounded pool.
+    let pj = pass_jobs()
+    failed += pool("pass", pj)
+    let fj = fail_jobs()
+    failed += pool("fail", fj)
+    let ej = example_jobs()
+    failed += pool("examples", ej)
+    let oj = oob_jobs()
+    failed += pool("oob", oj)
+    let ij = ir_jobs()
+    failed += pool("ir", ij)
+    fmt.println("ok   ir lowering + verify")
+    let igj = irgolden_jobs()
+    failed += pool("irgolden", igj)
+    let dj = draw_jobs()
+    failed += pool("draw", dj)
+    let aj = argv_jobs()
+    failed += pool("argv", aj)
+    let fsj = fs_jobs()
+    failed += pool("fs", fsj)
+    let wj = watch_jobs()
+    failed += pool("watch", wj)
+    let ilj = inlang_jobs()
+    failed += pool("inlang", ilj)
+    let ztj = ztests_jobs()
+    failed += pool("ztests", ztj)
+
+    // Host checks (wasm entry points, server split, LSP). The `zeli` suite is
+    // deliberately not part of `test`: run `nob integration` for it.
+    failed += host_checks()
+
+    let secs = now_s() - t0
+    fmt.println("")
+    if failed != 0 {
+        fmt.println("{{N_PASS}} passed, {{N_FAIL}} failed in {{secs}}s — failed:")
+        for i in 0..FAILURES.len {
+            fmt.println("  FAIL {{FAILURES[i]}}")
+        }
+        fmt.println("TESTS FAILED")
+        return 1
+    }
+    fmt.println("{{N_PASS}} passed, 0 failed in {{secs}}s")
+    fmt.println("ALL TESTS PASSED")
+    return 0
+}
+
+// --- integration checks --------------------------------------------------
+//
+// The process/port/git-shaped checks: they drive `bin/zeli`, watch processes,
+// bind ports, and compare git-tracked output. Control flow is Loam; the shell
+// is only used for the one-line primitives (background a process, sleep, kill,
+// grep, diff, chmod). They run after the fixture pools, one after another, and
+// report the same ok/FAIL lines the Makefile did.
+
+fn mark(name: string) {
+    let el = now_s() - TSTART
+    sys.exec("echo '[nob] {{name}} (+{{el}}s)' >&2")
+}
+
+fn ok(msg: string) {
+    fmt.println("ok   {{msg}}")
+    N_PASS += 1
+}
+
+fn bad(msg: string, log: string) {
+    fmt.println("FAIL {{msg}}")
+    catlog(log)
+    N_FAIL += 1
+    push(FAILURES, msg)
+}
+
+fn bad2(msg: string, log1: string, log2: string) {
+    fmt.println("FAIL {{msg}}")
+    catlog(log1)
+    catlog(log2)
+    N_FAIL += 1
+    push(FAILURES, msg)
+}
+
+fn skip(msg: string) {
+    fmt.println("skip {{msg}}")
+}
+
+fn catlog(p: string) {
+    if sys.exists(p) == 1 {
+        let t = sys.read_file(p)
+        if t.len > 0 {
+            fmt.write(t)
+        }
+    }
+}
+
+/// A scratch path under `tests/tmp`.
+fn tmpf(name: string) -> string {
+    return "{{TMP}}/{{name}}"
+}
+
+/// Run `cmd` from the repo root; true when it exits 0. The headless variables
+/// match the export the Makefile's `test` recipe used for the whole run.
+fn sh(cmd: string) -> bool {
+    sys.exec("cd {{shq(ROOT)}} && ZEUS_HEADLESS=1 MAYA_HEADLESS=1 {{cmd}}")
+    return sys.exec_status() == 0
+}
+
+/// Run `cmd` from the repo root; its exit code.
+fn rc(cmd: string) -> int {
+    sys.exec("cd {{shq(ROOT)}} && ZEUS_HEADLESS=1 MAYA_HEADLESS=1 {{cmd}}")
+    return sys.exec_status()
+}
+
+fn is_file(p: string) -> bool {
+    return sys.exists(p) == 1
+}
+
+fn is_exec(p: string) -> bool {
+    sys.exec("test -x {{shq(p)}}")
+    return sys.exec_status() == 0
+}
+
+fn is_nonempty(p: string) -> bool {
+    sys.exec("test -s {{shq(p)}}")
+    return sys.exec_status() == 0
+}
+
+fn file_has(p: string, needle: string) -> bool {
+    return contains_str(sys.read_file(p), needle)
+}
+
+/// `grep -qE` over `p`.
+fn file_matches(p: string, re: string) -> bool {
+    sys.exec("grep -qE {{shq(re)}} {{shq(p)}} 2>/dev/null")
+    return sys.exec_status() == 0
+}
+
+fn count_matches(p: string, needle: string) -> int {
+    return int_of(trim(sys.exec("grep -c -- {{shq(needle)}} {{shq(p)}} 2>/dev/null")))
+}
+
+fn line_count(p: string) -> int {
+    if sys.exists(p) == 0 {
+        return 0
+    }
+    return int_of(trim(sys.exec("wc -l < {{shq(p)}} 2>/dev/null")))
+}
+
+fn diff_ok(a: string, b: string) -> bool {
+    sys.exec("diff -q {{shq(a)}} {{shq(b)}} >/dev/null 2>&1")
+    return sys.exec_status() == 0
+}
+
+fn diff_log(a: string, b: string, log: string) -> bool {
+    sys.exec("diff -u {{shq(a)}} {{shq(b)}} >{{shq(log)}} 2>&1")
+    return sys.exec_status() == 0
+}
+
+/// `git diff --exit-code -- p`: git itself is the expectation. The output (the
+/// diff, or nothing) goes to `log` for the failure branch to print.
+fn git_clean(p: string, log: string) -> bool {
+    sys.exec("cd {{shq(ROOT)}} && git --no-optional-locks diff --exit-code -- {{shq(p)}} >{{shq(log)}} 2>&1")
+    return sys.exec_status() == 0
+}
+
+fn write_text(p: string, body: string) -> bool {
+    return sys.write_file(p, body) == 0
+}
+
+fn append_text(p: string, body: string) -> bool {
+    return sys.write_file(p, cat(sys.read_file(p), body)) == 0
+}
+
+fn mkdirp(p: string) -> bool {
+    return sys.mkdir(p) == 0
+}
+
+fn rmrf(p: string) -> bool {
+    return sys.remove_path(p) == 0
+}
+
+/// Remove a scratch tree, retrying: a leftover `zeli serve` can still be writing
+/// into it, which makes `rm -rf` fail with "Directory not empty".
+fn reset_dir(p: string) -> bool {
+    let mut n = 0
+    while n < 6 {
+        if rmrf(p) {
+            return true
+        }
+        sys.exec("sleep 0.2")
+        n += 1
+    }
+    return false
+}
+
+fn cp(from: string, to: string) -> bool {
+    sys.exec("cp {{shq(from)}} {{shq(to)}}")
+    return sys.exec_status() == 0
+}
+
+fn cpR(from: string, to: string) -> bool {
+    sys.exec("cp -R {{shq(from)}} {{shq(to)}}")
+    return sys.exec_status() == 0
+}
+
+fn chmod(spec: string, p: string) -> bool {
+    sys.exec("chmod {{spec}} {{shq(p)}}")
+    return sys.exec_status() == 0
+}
+
+fn pid_alive(pid: int) -> bool {
+    if pid <= 0 {
+        return false
+    }
+    sys.exec("kill -0 {{pid}} 2>/dev/null")
+    return sys.exec_status() == 0
+}
+
+fn kill_pid(pid: int) {
+    if pid <= 0 {
+        return
+    }
+    sys.exec("kill {{pid}} 2>/dev/null")
+}
+
+/// The pid after `needle` in `log`, first or last line that has one.
+fn picked_pid(log: string, needle: string, tail: bool) -> int {
+    let mut sel = "head -1"
+    if tail {
+        sel = "tail -1"
+    }
+    let o = sys.exec("cd {{shq(ROOT)}} && grep -o '{{needle}}[0-9]*' {{shq(log)}} 2>/dev/null | {{sel}} | grep -o '[0-9]*'")
+    return int_of(trim(o))
+}
+
+/// Start `cmd` (absolute paths) as an orphaned background process; its pid.
+/// The whole group's own stdout is `/dev/null`, so no child can inherit — and
+/// hold open — the pipe `sys.exec` reads: otherwise this call would not return
+/// until the server exited, which is the whole stanza.
+fn spawn(cmd: string) -> int {
+    let pf = tmpf("spawn.pid")
+    rmrf(pf)
+    sys.exec("{ ZEUS_HEADLESS=1 MAYA_HEADLESS=1 {{cmd}} & echo $! > {{shq(pf)}}; } >/dev/null 2>&1")
+    return int_of(trim(sys.read_file(pf)))
+}
+
+// --- the stanzas ---------------------------------------------------------
+
+fn ig_routes_table() {
+    mark("zeli routes (routes_app)")
+    let l = tmpf("routes_gen.log")
+    if !sh("{{shq(ZELI)}} routes packages/loam/tests/routes_app > {{shq(l)}} 2>&1") {
+        bad("zeli routes generator", l)
+        return
+    }
+    if !git_clean("packages/loam/tests/routes_app/app_routes.loam", tmpf("routes_diff.log")) {
+        bad("zeli routes (the generated table is not what is committed)", tmpf("routes_diff.log"))
+        return
+    }
+    let appbin = tmpf("routes_app")
+    let clog = tmpf("routes_compile.log")
+    let rlog = tmpf("routes_run.log")
+    if !sh("{{shq(LOAMC)}} packages/loam/tests/routes_app/app.loam -o {{shq(appbin)}} > {{shq(clog)}} 2>&1") {
+        bad("compile packages/loam/tests/routes_app/app.loam", clog)
+        return
+    }
+    if !sh("{{shq(appbin)}} > {{shq(rlog)}} 2>&1") {
+        bad("run packages/loam/tests/routes_app/app.loam", rlog)
+        return
+    }
+    ok("zeli routes (regenerates the committed table, and it runs)")
+
+    mark("zeli build (routes_app, web + macos)")
+    let bl = tmpf("zeus_build.log")
+    if !sh("{{shq(ZELI)}} build packages/loam/tests/routes_app --targets web,macos > {{shq(bl)}} 2>&1") {
+        bad("zeli build", bl)
+        return
+    }
+    let W = "packages/loam/tests/routes_app/build/web"
+    if !is_nonempty("{{W}}/app.wasm") || !is_file("packages/loam/tests/routes_app/build/macos/app") {
+        bad("zeli build artifacts", bl)
+        return
+    }
+    ok("zeli build (web + macos artifacts)")
+
+    mark("zeus web shell")
+    if is_file("{{W}}/index.html") && is_file("{{W}}/blog/index.html") && is_file("{{W}}/blog/hello-world/index.html") && file_has("{{W}}/blog/index.html", "<title>Blog</title>") && file_has("{{W}}/blog/hello-world/index.html", "<title>hello-world</title>") && file_has("{{W}}/sitemap.xml", "/blog/hello-world") && file_has("{{W}}/robots.txt", "User-agent") && count_matches("{{W}}/blog/index.html", "<canvas") == 1 {
+        ok("zeus web shell (per-route head + sitemap + robots)")
+    } else {
+        bad("zeus web shell", "")
+    }
+}
+
+fn ig_pkg_sync() {
+    mark("zeli pkg sync")
+    let l = tmpf("pkg_sync.log")
+    if !sh("{{shq(ZELI)}} pkg sync packages/loam/tests/pkg_app > {{shq(l)}} 2>&1") {
+        bad("zeli pkg sync", l)
+        return
+    }
+    if !git_clean("packages/loam/tests/pkg_app", tmpf("pkg_diff.log")) {
+        bad("zeli pkg sync (the vendored tree or the lock is not what is committed)", tmpf("pkg_diff.log"))
+        return
+    }
+    let pkgbin = tmpf("pkg_app")
+    let pclog = tmpf("pkg_app.log")
+    let prlog = tmpf("pkg_run.log")
+    if !sh("{{shq(LOAMC)}} packages/loam/tests/pkg_app/app.loam -o {{shq(pkgbin)}} > {{shq(pclog)}} 2>&1") {
+        bad("compile pkg app", pclog)
+        return
+    }
+    if !sh("{{shq(pkgbin)}} > {{shq(prlog)}} 2>&1") {
+        bad("run pkg app", prlog)
+        return
+    }
+    ok("zeli pkg sync (vendors, locks, and the import resolves)")
+}
+
+fn ig_fmt() {
+    mark("loam-fmt")
+    let out = tmpf("fmt.out")
+    let idem = tmpf("fmt.idem")
+    let good = sh("{{shq(FMT)}} packages/loam/tests/fmt/in.loam > {{shq(out)}} 2>&1") && diff_ok("packages/loam/tests/fmt/want.loam", out) && !diff_ok("packages/loam/tests/fmt/in.loam", out) && sh("{{shq(FMT)}} packages/loam/tests/fmt/want.loam > {{shq(idem)}} 2>&1") && diff_ok("packages/loam/tests/fmt/want.loam", idem)
+    if good {
+        ok("loam-fmt (canonical + idempotent)")
+    } else {
+        bad("loam-fmt", out)
+    }
+}
+
+fn ig_fmt_tree() {
+    mark("zeli fmt tree")
+    let d = tmpf("fmtapp")
+    if !reset_dir(d) || !mkdirp("{{d}}/nested/deep") || !mkdirp("{{d}}/build") || !mkdirp("{{d}}/.hidden") {
+        bad("zeli fmt (setup)", "")
+        return
+    }
+    cp("packages/loam/tests/fmt/in.loam", "{{d}}/ugly.loam")
+    cp("packages/loam/tests/fmt/in.loam", "{{d}}/nested/deep/inner.loam")
+    write_text("{{d}}/app_routes.loam", "// Generated by `zeli routes`. Do not edit.\nfn x( ){ }\n")
+    write_text("{{d}}/build/skipped.loam", "fn y( ){ }\n")
+    write_text("{{d}}/.hidden/dot.loam", "fn z( ){ }\n")
+    let zlog = tmpf("fmt_cmd.log")
+    let zlog2 = tmpf("fmt_cmd2.log")
+    let z1 = rc("{{shq(ZELI)}} fmt {{shq(d)}} > {{shq(zlog)}} 2>&1")
+    let z2 = rc("{{shq(ZELI)}} fmt {{shq(d)}} > {{shq(zlog2)}} 2>&1")
+    if z1 != 0 || z2 != 0 || !diff_ok("packages/loam/tests/fmt/want.loam", "{{d}}/ugly.loam") || !diff_ok("packages/loam/tests/fmt/want.loam", "{{d}}/nested/deep/inner.loam") {
+        bad("zeli fmt (not canonical, or it failed)", zlog)
+        return
+    }
+    if !file_has("{{d}}/app_routes.loam", "fn x( ){ }") {
+        bad("zeli fmt (rewrote the generated route table)", "")
+        return
+    }
+    if !file_has("{{d}}/build/skipped.loam", "fn y( ){ }") {
+        bad("zeli fmt (rewrote something under build/)", "")
+        return
+    }
+    if !file_has("{{d}}/.hidden/dot.loam", "fn z( ){ }") {
+        bad("zeli fmt (rewrote something in a dotted directory)", "")
+        return
+    }
+    if !file_has(tmpf("fmt_cmd2.log"), "0 formatted") {
+        bad("zeli fmt (the second run is not a no-op)", tmpf("fmt_cmd2.log"))
+        return
+    }
+    ok("zeli fmt (a tree: canonical, idempotent, generated and build output untouched)")
+}
+
+fn ig_myapp_routes() {
+    mark("zeli routes (myapp)")
+    let l = tmpf("myapp_routes_gen.log")
+    if !sh("{{shq(ZELI)}} routes examples/zeus/myapp > {{shq(l)}} 2>&1") {
+        bad("zeli routes (myapp)", l)
+        return
+    }
+    if !git_clean("examples/zeus/myapp/app_routes.loam", tmpf("myapp_routes_diff.log")) {
+        bad("zeli routes (myapp's table is not what is committed)", tmpf("myapp_routes_diff.log"))
+        return
+    }
+    ok("zeli routes (myapp: groups, params, meta and paths)")
+}
+
+fn ig_new() {
+    mark("zeli new")
+    let d = tmpf("newapp")
+    let empty = "{{d}}/empty"
+    if !reset_dir(d) || !mkdirp(empty) {
+        bad("zeli new (setup)", "")
+        return
+    }
+    let l = tmpf("newapp.log")
+    if !sh("{{shq(ZELI)}} new my-app {{shq(empty)}} > {{shq(l)}} 2>&1") {
+        bad("zeli new", l)
+        return
+    }
+    let manifest = tmpf("newapp.manifest")
+    let gen = "cd {{shq(empty)}} && find . -type f -print | sed -e 's|^[.]/||' | LC_ALL=C sort | while IFS= read -r f; do printf '=== %s %s\\n' \"$f\" \"$(wc -c < \"$f\" | tr -d ' ')\"; cat \"$f\"; done > {{shq(manifest)}} 2>&1"
+    if !sh(gen) {
+        bad("zeli new (manifest)", manifest)
+        return
+    }
+    if !diff_log("packages/zeus/tests/scaffold.golden", manifest, tmpf("newapp.diff")) {
+        bad("zeli new (the scaffold is not the frozen one)", tmpf("newapp.diff"))
+        return
+    }
+    let n2 = tmpf("newapp2.log")
+    let nstat = rc("{{shq(ZELI)}} new my-app {{shq(empty)}} > {{shq(n2)}} 2>&1")
+    if nstat != 2 {
+        bad("zeli new (a non-empty target must be refused)", n2)
+        return
+    }
+    if !file_has(n2, "already exists and is not empty") {
+        bad("zeli new (the refusal does not say why)", n2)
+        return
+    }
+    let nblog = tmpf("newapp_build.log")
+    if !sh("{{shq(LOAMC)}} {{shq(empty)}}/app.loam -o {{shq(d)}}/app > {{shq(nblog)}} 2>&1") {
+        bad("zeli new (the scaffold does not compile)", nblog)
+        return
+    }
+    ok("zeli new (matches the frozen scaffold, refuses a non-empty target, compiles)")
+}
+
+fn ig_build_base() {
+    mark("zeli build --base")
+    let d = tmpf("buildapp")
+    if !reset_dir(d) {
+        bad("zeli build (setup)", "")
+        return
+    }
+    mkdirp("{{d}}/app")
+    cpR("packages/loam/tests/routes_app/routes", "{{d}}/app/routes")
+    cp("packages/loam/tests/routes_app/app.loam", "{{d}}/app/app.loam")
+    let out = tmpf("buildapp.out")
+    let bstat = rc("{{shq(ZELI)}} build {{shq(d)}}/app --targets web,macos --base https://example.com/ > {{shq(out)}} 2>&1")
+    let W = "{{d}}/app/build/web"
+    let good = bstat == 0 && is_nonempty("{{W}}/app.wasm") && is_exec("{{d}}/app/build/macos/app") && is_file("{{W}}/blog/index.html") && file_has("{{W}}/blog/index.html", "rel=\"canonical\" href=\"https://example.com/blog\"") && file_has("{{W}}/sitemap.xml", "https://example.com/blog/hello-world") && file_has("{{W}}/robots.txt", "Sitemap: https://example.com/sitemap.xml") && count_matches("{{W}}/blog/index.html", "<canvas") == 1
+    if good {
+        ok("zeli build (--base: canonical URLs, sitemap, robots)")
+    } else {
+        bad("zeli build (--base, shells, sitemap, robots)", out)
+    }
+}
+
+fn ig_build_exits() {
+    mark("zeli build exit codes")
+    let d = tmpf("buildbad")
+    if !reset_dir(d) {
+        bad("zeli build (failure setup)", "")
+        return
+    }
+    mkdirp("{{d}}/bad")
+    write_text("{{d}}/bad/app.loam", "fn main() {\n    let x: int = \"no\"\n}\n")
+    let bt = "{{d}}/bad_target.out"
+    let ty = "{{d}}/type.out"
+    let badstat = rc("{{shq(ZELI)}} build {{shq(d)}}/app --targets nope > {{shq(bt)}} 2>&1")
+    let typestat = rc("{{shq(ZELI)}} build {{shq(d)}}/bad --targets web > {{shq(ty)}} 2>&1")
+    if badstat != 2 || typestat != 1 || !file_has(bt, "unknown target 'nope' (want web, macos, ios, android, server)") || !file_has(ty, "failed the compiler check") {
+        bad2("zeli build (exit codes / messages)", bt, ty)
+        return
+    }
+    ok("zeli build (an unknown target and a type error exit as documented)")
+}
+
+fn ig_build_partial() {
+    mark("zeli build partial")
+    let d = tmpf("buildpart")
+    sh("chmod -R u+w {{shq(d)}} 2>/dev/null")
+    if !reset_dir(d) {
+        bad("zeli build (partial setup)", "")
+        return
+    }
+    mkdirp("{{d}}/build/web")
+    cp("packages/loam/tests/routes_app/app.loam", "{{d}}/app.loam")
+    cpR("packages/loam/tests/routes_app/routes", "{{d}}/routes")
+    chmod("500", "{{d}}/build/web")
+    let po = "{{d}}/part.out"
+    let no = "{{d}}/none.out"
+    let pstat = rc("{{shq(ZELI)}} build {{shq(d)}} --targets web,macos > {{shq(po)}} 2>&1")
+    let nstat = rc("{{shq(ZELI)}} build {{shq(d)}} --targets web > {{shq(no)}} 2>&1")
+    chmod("700", "{{d}}/build/web")
+    if pstat != 0 || nstat != 1 || !file_matches(po, "^zeli: web failed") || !file_matches(po, "^zeli: built 1/2 target[(]s[)]") || !file_matches(no, "^zeli: built 0/1 target[(]s[)]") {
+        bad2("zeli build (a partial build must exit 0, a total failure 1)", po, no)
+        return
+    }
+    ok("zeli build (one target fails, the rest still build)")
+}
+
+fn ig_serve_build() {
+    mark("zeli serve --build-only")
+    let d = tmpf("serveonly")
+    if !reset_dir(d) {
+        bad("zeli serve (setup)", "")
+        return
+    }
+    mkdirp("{{d}}/app")
+    cpR("packages/loam/tests/routes_app/routes", "{{d}}/app/routes")
+    cp("packages/loam/tests/routes_app/app.loam", "{{d}}/app/app.loam")
+    let out = tmpf("serveonly.out")
+    let dstat = rc("{{shq(ZELI)}} serve {{shq(d)}}/app --build-only > {{shq(out)}} 2>&1")
+    let W = "{{d}}/app/build/web"
+    let good = dstat == 0 && is_nonempty("{{W}}/app.wasm") && is_file("{{W}}/index.html") && is_file("{{W}}/sitemap.xml") && file_matches(out, "zeli: serve build ok [(]--build-only[)]$") && file_matches(out, "zeli: routes -> app_routes[.]loam$")
+    if good {
+        ok("zeli serve --build-only (wasm + the web shell, no server bound)")
+    } else {
+        bad("zeli serve (--build-only)", out)
+    }
+}
+
+fn ig_serve_native() {
+    mark("zeli serve native")
+    let d = tmpf("servenative")
+    if !reset_dir(d) {
+        bad("zeli serve native (setup)", "")
+        return
+    }
+    mkdirp(d)
+    let launches = tmpf("serve_launches")
+    let log = tmpf("serve_native.log")
+    rmrf(launches)
+    // Remove the log too: the poll below must not read a pid left by an
+    // earlier run before this run's server has finished starting.
+    rmrf(log)
+    cp("packages/loam/tests/serve/loop.loam", "{{d}}/app.loam")
+    let srvpid = spawn("SERVE_LAUNCHES={{shq(launches)}} {{shq(ZELI)}} serve {{shq(d)}} --target macos > {{shq(log)}} 2>&1")
+    let mut i = 0
+    while i < 300 && !file_has(log, "zeli: serve on macos (pid ") && pid_alive(srvpid) {
+        sys.exec("sleep 0.1")
+        i += 1
+    }
+    if !file_has(log, "zeli: serve on macos (pid ") {
+        bad("zeli serve native (nothing came up)", log)
+        kill_pid(srvpid)
+        return
+    }
+    let first = picked_pid(log, "zeli: serve on macos (pid ", false)
+    // `serve` reports the app's pid before the app has finished starting, and an
+    // edit right then would replace it before it appended its own pid — which
+    // made `ran` hold only the second launch. Wait for the first write first.
+    let mut w = 0
+    while w < 100 && line_count(launches) < 1 {
+        sys.exec("sleep 0.1")
+        w += 1
+    }
+    append_text("{{d}}/app.loam", "\n// touched by the serve gate\n")
+    let mut j = 0
+    while j < 400 && !file_has(log, "zeli: restarted (pid ") {
+        sys.exec("sleep 0.1")
+        j += 1
+    }
+    let mut k = 0
+    while k < 100 && line_count(launches) < 2 {
+        sys.exec("sleep 0.1")
+        k += 1
+    }
+    let second = picked_pid(log, "zeli: restarted (pid ", true)
+    let restarts = count_matches(log, "zeli: restarted (pid ")
+    let ran = sys.exec("cat {{shq(launches)}} 2>/dev/null | tr '\\n' ' '")
+    let printed = count_matches("{{d}}/build/macos/app.log", "serve fixture up")
+    let old_up = pid_alive(first)
+    let new_up = pid_alive(second)
+    kill_pid(srvpid)
+    kill_pid(first)
+    kill_pid(second)
+    catlog(log)
+    fmt.println("   launches ran=[{{ran}}] reported first={{first}} second={{second}} app-log-lines={{printed}}")
+    if first <= 0 || second <= 0 {
+        bad("zeli serve native (a launch did not report a pid)", "")
+        return
+    }
+    if restarts != 1 {
+        bad("zeli serve native (one edit was {{restarts}} restarts - a self-triggered cascade?)", "")
+        return
+    }
+    if old_up {
+        bad("zeli serve native (the replaced process is still running)", "")
+        return
+    }
+    if !new_up {
+        bad("zeli serve native (the replacement is not running)", "")
+        return
+    }
+    if ran != "{{first}} {{second}} " {
+        bad("zeli serve native (the processes that ran were [{{ran}}], serve reported [{{first}} {{second}}])", "")
+        return
+    }
+    if printed == 0 {
+        bad("zeli serve native (the app's output never reached its log)", "")
+        return
+    }
+    ok("zeli serve --target macos (one edit is one restart, old process gone)")
+}
+
+fn ig_watch() {
+    mark("serve watcher probe")
+    let bin = tmpf("serve_watch_probe")
+    let wblog = tmpf("serve_watch_build.log")
+    let scratch = tmpf("servewatch")
+    if !sh("{{shq(LOAMC)}} packages/zeus/cli/serve_watch_probe.loam -o {{shq(bin)}} > {{shq(wblog)}} 2>&1") {
+        bad("serve watcher (compile)", wblog)
+        return
+    }
+    let out = tmpf("serve_watch.out")
+    let stat = rc("{{shq(bin)}} {{shq(scratch)}} > {{shq(out)}} 2>&1")
+    if file_has(out, "no kernel watcher on this host") {
+        skip("serve watcher (no kernel watcher on this host)")
+        return
+    }
+    if stat != 0 {
+        bad("serve watcher (exit {{stat}})", out)
+        return
+    }
+    if !file_matches(out, "^  hit .*edited[.]loam$") {
+        bad("serve watcher (an in-place edit did not wake it)", out)
+        return
+    }
+    if !file_matches(out, "^  hit .*created[.]loam$") {
+        bad("serve watcher (a new file did not wake it)", out)
+        return
+    }
+    if !file_matches(out, "^  hit .*removed[.]loam$") {
+        bad("serve watcher (a deleted file did not wake it)", out)
+        return
+    }
+    if !file_matches(out, "^  [(]none[)]$") {
+        bad("serve watcher (a write outside the watch set woke it)", out)
+        return
+    }
+    if file_matches(out, "/build/|/[.]zeus/") {
+        bad("serve watcher (build output or the cache woke it)", out)
+        return
+    }
+    ok("serve watcher (in-place edit, new file, delete, build output ignored)")
+}
+
+fn ig_serve_boot() {
+    mark("zeli serve boot")
+    let d = tmpf("serveboot")
+    if !reset_dir(d) {
+        bad("zeli serve boot (setup)", "")
+        return
+    }
+    let rpcbin = tmpf("serve_rpc_probe")
+    let bootbin = tmpf("serve_boot_probe")
+    let rblog = tmpf("serve_rpc_build.log")
+    let bblog = tmpf("serve_boot_build.log")
+    if !sh("{{shq(LOAMC)}} packages/zeus/cli/serve_rpc_probe.loam -o {{shq(rpcbin)}} > {{shq(rblog)}} 2>&1") || !sh("{{shq(LOAMC)}} packages/zeus/cli/serve_boot_probe.loam -o {{shq(bootbin)}} > {{shq(bblog)}} 2>&1") {
+        bad2("zeli serve boot (setup)", rblog, bblog)
+        return
+    }
+    mkdirp("{{d}}/app")
+    cpR("packages/loam/tests/routes_app/routes", "{{d}}/app/routes")
+    cp("packages/loam/tests/routes_app/app.loam", "{{d}}/app/app.loam")
+    let rpclog = tmpf("serve_boot_rpc.log")
+    let rpcout = tmpf("serve_boot_rpc.out")
+    let srvlog = tmpf("serve_boot.log")
+    rmrf(rpclog)
+    rmrf(srvlog)
+    let rpcpid = spawn("{{shq(rpcbin)}} 5197 {{shq(rpclog)}} > {{shq(rpcout)}} 2>&1")
+    let srvpid = spawn("LOAM_RPC_ADDR=127.0.0.1:5197 {{shq(ZELI)}} serve {{shq(d)}}/app --port 5199 > {{shq(srvlog)}} 2>&1")
+    let mut i = 0
+    while i < 200 && !file_has(srvlog, "zeli: serve on http") && pid_alive(srvpid) {
+        sys.exec("sleep 0.1")
+        i += 1
+    }
+    if !pid_alive(srvpid) || !file_has(srvlog, "zeli: serve on http") {
+        kill_pid(rpcpid)
+        if file_has(srvlog, "cannot bind") {
+            skip("zeli serve boot (this host cannot bind a listening socket)")
+            catlog(srvlog)
+        } else {
+            bad2("zeli serve boot (the server never came up)", srvlog, rpcout)
+        }
+        return
+    }
+    let probeout = tmpf("serve_boot_probe.out")
+    let dbstat = rc("{{shq(bootbin)}} 5199 5197 {{shq(d)}}/app {{shq(rpclog)}} > {{shq(probeout)}} 2>&1")
+    sys.exec("sleep 3")
+    let rebuilt = count_matches(srvlog, "zeli: rebuilt")
+    kill_pid(srvpid)
+    kill_pid(rpcpid)
+    catlog(probeout)
+    if dbstat != 0 {
+        bad("zeli serve boot", srvlog)
+        return
+    }
+    if rebuilt != 1 {
+        bad("zeli serve boot (one edit was {{rebuilt}} rebuilds - a self-triggered cascade?)", srvlog)
+        return
+    }
+    ok("zeli serve boot (serves, rebuilds, pushes a frame, proxies)")
+}
+
+fn ig_wasm_smoke() {
+    mark("wasm smoke")
+    let wasm = tmpf("wasm_smoke.wasm")
+    let bl = tmpf("wasm_smoke_build.log")
+    let rl = tmpf("wasm_smoke.log")
+    let denodir = tmpf("deno_smoke")
+    let good = sh("{{shq(LOAMC)}} --target=wasm32 packages/loam/tests/wasm_smoke/app.loam -o {{shq(wasm)}} > {{shq(bl)}} 2>&1") && sh("DENO_DIR={{shq(denodir)}} deno run --quiet --allow-read packages/zeus/hosts/web/wasm_smoke.ts {{shq(wasm)}} > {{shq(rl)}} 2>&1")
+    if good {
+        ok("wasm smoke (host entry points)")
+    } else {
+        bad2("wasm smoke", rl, bl)
+    }
+}
+
+fn ig_myapp_build() {
+    mark("myapp build")
+    let l = tmpf("myapp_build.log")
+    let web = "examples/zeus/myapp/build/web"
+    if sh("{{shq(ZELI)}} build examples/zeus/myapp > {{shq(l)}} 2>&1") && is_file("examples/zeus/myapp/build/macos/app") && file_has("{{web}}/blog/index.html", "<title>Blog</title>") && file_has("{{web}}/sitemap.xml", "/blog/hello-world") {
+        ok("zeus example myapp (barebone builds all targets)")
+    } else {
+        bad("zeus example myapp", l)
+    }
+
+    mark("myapp wasm")
+    let wl = tmpf("myapp_wasm.log")
+    let denom = tmpf("deno_myapp")
+    if sh("DENO_DIR={{shq(denom)}} deno run --quiet --allow-read packages/zeus/hosts/web/wasm_smoke.ts {{web}}/app.wasm > {{shq(wl)}} 2>&1") {
+        ok("zeus example myapp (wasm runs)")
+    } else {
+        bad("zeus example myapp wasm", wl)
+    }
+
+    mark("myapp routes")
+    let rl = tmpf("myapp_routes.log")
+    let bin = tmpf("myapp_routes")
+    if sh("{{shq(LOAMC)}} examples/zeus/myapp/tests/routes.loam -o {{shq(bin)}} > {{shq(rl)}} 2>&1 && {{shq(bin)}} >> {{shq(rl)}} 2>&1") {
+        ok("zeus example myapp (every route paints)")
+    } else {
+        bad("zeus example myapp routes", rl)
+    }
+}
+
+fn ig_server_split() {
+    mark("server split")
+    let c = tmpf("server_split.c")
+    if !sh("LOAM_SERVER_SPLIT=1 {{shq(LOAMC)}} --emit-c packages/loam/tests/compile_pass/server_split.loam -o {{shq(c)}} >/dev/null 2>&1") {
+        bad("server split emit", "")
+        return
+    }
+    if file_has(c, "SERVER_SECRET_MARKER") {
+        bad("server body leaked into client build", "")
+        return
+    }
+    ok("server split (body excluded)")
+}
+
+fn ig_lsp() {
+    mark("lsp smoke")
+    let o = sys.exec("cd {{shq(ROOT)}} && python3 packages/loam/tests/lsp_smoke.py 2>&1")
+    let good = sys.exec_status() == 0
+    if o.len > 0 {
+        fmt.write(o)
+    }
+    if good {
+        N_PASS += lines_with(o, "ok   ").len
+    } else {
+        fmt.println("FAIL loam-lsp")
+        N_FAIL += 1
+        push(FAILURES, "loam-lsp")
+    }
+}
+
+fn ig_myapp() {
+    ig_myapp_routes()
+    ig_myapp_build()
+}
+
+/// `nob integration <name>` runs exactly one stanza; unknown names are refused.
+fn stanza_dispatch(name: string) -> bool {
+    if name == "routes_app" {
+        ig_routes_table()
+    } else if name == "pkg_sync" {
+        ig_pkg_sync()
+    } else if name == "fmt" {
+        ig_fmt()
+    } else if name == "fmt_tree" {
+        ig_fmt_tree()
+    } else if name == "myapp" {
+        ig_myapp()
+    } else if name == "new" {
+        ig_new()
+    } else if name == "build_base" {
+        ig_build_base()
+    } else if name == "build_exits" {
+        ig_build_exits()
+    } else if name == "build_partial" {
+        ig_build_partial()
+    } else if name == "serve_build" {
+        ig_serve_build()
+    } else if name == "serve_native" {
+        ig_serve_native()
+    } else if name == "watch" {
+        ig_watch()
+    } else if name == "serve_boot" {
+        ig_serve_boot()
+    } else if name == "wasm_smoke" {
+        ig_wasm_smoke()
+    } else if name == "server_split" {
+        ig_server_split()
+    } else if name == "lsp" {
+        ig_lsp()
+    } else {
+        return false
+    }
+    return true
+}
+
+/// The stanzas the driver runs, in the order the Makefile ran them. A stanza is
+/// the unit of parallelism: `myapp` merges the route-table regeneration with the
+/// build that consumes it, and each of the others owns a scratch tree of its
+/// own, so no two can collide.
+fn stanza_names() -> []string {
+    let mut v = []string {}
+    push(v, "routes_app")
+    push(v, "pkg_sync")
+    push(v, "fmt")
+    push(v, "fmt_tree")
+    push(v, "myapp")
+    push(v, "new")
+    push(v, "build_base")
+    push(v, "build_exits")
+    push(v, "build_partial")
+    push(v, "serve_build")
+    push(v, "serve_native")
+    push(v, "watch")
+    push(v, "serve_boot")
+    push(v, "wasm_smoke")
+    push(v, "server_split")
+    push(v, "lsp")
+    return v
+}
+
+/// Run the stanzas as `bin/nob integration <name>` children, bounded by `JOBS`.
+/// Each child is a fresh process with its own Loam state, so the same pool the
+/// fixtures use works here — and control flow stays in Loam, not in a script.
+fn pool_stanzas(names: []string) -> int {
+    let n = names.len
+    if n == 0 {
+        return 0
+    }
+    let res = tmpf("ig")
+    let script = tmpf("ig.sh")
+    let idxf = tmpf("ig.idx")
+    let outlog = tmpf("ig.out")
+    let self = "{{BIN}}/nob"
+    sys.remove_path(res)
+    sys.mkdir(res)
+    let mut s = "#!/bin/sh\n"
+    s = cat(s, "RES={{shq(res)}}\ncase \"$1\" in\n")
+    let mut ids = ""
+    for i in 0..n {
+        let id = pad4(i)
+        s = cat(s, "{{id}})\n  {\n    {{shq(self)}} integration {{names[i]}} &\n    p=$!\n    ( sleep 300; kill $p 2>/dev/null ) >/dev/null 2>&1 &\n    w=$!\n    wait $p; st=$?\n    kill $w 2>/dev/null\n    echo $st >\"$RES/{{id}}.status\"\n  } 2>&1 | tee \"$RES/{{id}}.log\" >&2\n  ;;\n")
+        ids = cat(ids, "{{id}}\n")
+    }
+    s = cat(s, "esac\nexit 0\n")
+    sys.write_file(script, s)
+    sys.write_file(idxf, ids)
+    let t0 = now_s()
+    sys.exec("cd {{shq(ROOT)}} && { echo \"nob: integration — {{n}} stanza(s), -j {{JOBS}}\" >&2; ZEUS_HEADLESS=1 MAYA_HEADLESS=1 xargs -P {{JOBS}} -n 1 sh {{shq(script)}} < {{shq(idxf)}} >{{shq(outlog)}}; }")
+    let el = now_s() - t0
+    sys.exec("echo 'nob: integration done in {{el}}s' >&2")
+
+    let mut failed = 0
+    for i in 0..n {
+        let id = pad4(i)
+        let st = trim(sys.read_file("{{res}}/{{id}}.status"))
+        let log = sys.read_file("{{res}}/{{id}}.log")
+        let oks = lines_with(log, "ok   ")
+        N_PASS += oks.len
+        let fls = lines_with(log, "FAIL ")
+        for k in 0..fls.len {
+            N_FAIL += 1
+            push(FAILURES, slice(fls[k], 5, fls[k].len))
+        }
+        if st != "0" {
+            failed += 1
+            if fls.len == 0 {
+                N_FAIL += 1
+                push(FAILURES, "integration {{names[i]}} (exit {{st}})")
+            }
+        }
+    }
+    return failed
+}
+
+/// Every integration check, run as a bounded pool of stanza children. This is
+/// the `zeli`/serve/pkg/fmt suite; `nob test` does not run it (see
+/// `host_checks`), because it is slow and the most environment-sensitive part.
+fn integration() -> int {
+    return pool_stanzas(stanza_names())
+}
+
+/// The host checks `test` does run: they need neither `bin/zeli` nor a scratch
+/// app. The wasm module's entry points, the server/client split, and the
+/// language server all sit next to the compiler.
+fn host_checks() -> int {
+    let before = N_FAIL
+    ig_wasm_smoke()
+    ig_server_split()
+    ig_lsp()
+    return N_FAIL - before
+}
+
+/// `nob integration`: the process/port/git checks alone (development). Same
+/// reporting as `test`, without the fixture pools.
+fn run_integration_only() -> int {
+    sys.mkdir(TMP)
+    sys.mkdir(NOB)
+    if build("all") != 0 {
+        fmt.println("nob: build failed; checks not run")
+        return 1
+    }
+    N_PASS = 0
+    N_FAIL = 0
+    FAILURES = []string {}
+    let t0 = now_s()
+    TSTART = t0
+    let failed = integration()
+    let secs = now_s() - t0
+    fmt.println("")
+    if failed != 0 {
+        fmt.println("{{N_PASS}} passed, {{N_FAIL}} failed in {{secs}}s — failed:")
+        for i in 0..FAILURES.len {
+            fmt.println("  FAIL {{FAILURES[i]}}")
+        }
+        return 1
+    }
+    fmt.println("{{N_PASS}} passed, 0 failed in {{secs}}s")
+    return 0
+}
+
+fn bench() -> int {
+    if build("all") != 0 {
+        return 1
+    }
+    sys.exec("cd {{shq(ROOT)}} && sh packages/loam/tests/bench/run.sh")
+    return sys.exec_status()
+}
+
+fn clean() {
+    sys.remove_path(OBJ)
+    sys.remove_path(BIN)
+    sys.remove_path(TMP)
+    sys.remove_path("{{ROOT}}/packages/loam/runtime/.obj")
+    fmt.println("nob: clean")
+}
+
+fn usage() {
+    fmt.println("nob — build and test Loam")
+    fmt.println("")
+    fmt.println("usage: nob [command] [-j N]")
+    fmt.println("")
+    fmt.println("  build   (default) bin/loamc, bin/loam-lsp, bin/loam-fmt, bin/zeli")
+    fmt.println("  test    language suites + host checks (no zeli)")
+    fmt.println("  lsp     bin/loam-lsp and its objects only")
+    fmt.println("  integration  the zeli/serve/pkg/fmt suite (slow; on demand)")
+    fmt.println("  bench   build, then run packages/loam/tests/bench/run.sh")
+    fmt.println("  clean   remove obj/, bin/ and packages/loam/tests/tmp")
+    fmt.println("")
+    fmt.println("  -j N    fixture jobs in flight (default 4; NOB_JOBS / LOAM_JOBS)")
+}
+
+fn main() {
+    // Locate the repo root from argv[0] (bin/nob -> the directory above bin),
+    // falling back to the working directory.
+    let cwd = sys.cwd()
+    let mut root = dir_of(dir_of(sys.arg(0)))
+    if root == "" || sys.exists("{{root}}/packages/loam/src") == 0 {
+        root = cwd
+    }
+    if !starts_with(root, "/") {
+        if root == "." {
+            root = cwd
+        } else {
+            root = "{{cwd}}/{{root}}"
+        }
+    }
+    ROOT = root
+    SRC = "{{ROOT}}/packages/loam/src"
+    OBJ = "{{ROOT}}/obj"
+    BIN = "{{ROOT}}/bin"
+    TESTS = "{{ROOT}}/packages/loam/tests"
+    TMP = "{{TESTS}}/tmp"
+    EXB = "{{TMP}}/build"
+    NOB = "{{TMP}}/nob"
+    LOAMC = "{{BIN}}/loamc"
+    ZELI = "{{BIN}}/zeli"
+    FMT = "{{BIN}}/loam-fmt"
+
+    JOBS = 4
+    let mut ej = sys.env("NOB_JOBS")
+    if ej == "" {
+        ej = sys.env("LOAM_JOBS")
+    }
+    if ej != "" {
+        let k = int_of(ej)
+        if k > 0 {
+            JOBS = k
+        }
+    }
+
+    let argv = sys.args()
+    let mut pos = []string {}
+    let mut i = 1
+    while i < argv.len {
+        let a = argv[i]
+        if a == "-j" || a == "--jobs" {
+            if i + 1 < argv.len {
+                i += 1
+                let k = int_of(argv[i])
+                if k > 0 {
+                    JOBS = k
+                }
+            }
+        } else if starts_with(a, "-j") && a.len > 2 {
+            let k = int_of(slice(a, 2, a.len))
+            if k > 0 {
+                JOBS = k
+            }
+        } else if a == "-h" || a == "--help" {
+            usage()
+            return
+        } else if starts_with(a, "-") {
+            fmt.println("nob: unknown option", a)
+            sys.exit(2)
+        } else {
+            push(pos, a)
+        }
+        i += 1
+    }
+    let mut cmd = "build"
+    if pos.len > 0 {
+        cmd = pos[0]
+    }
+    let mut only = ""
+    if pos.len > 1 {
+        only = pos[1]
+    }
+    if pos.len > 2 || (pos.len > 1 && cmd != "integration") {
+        fmt.println("nob: unexpected argument", only)
+        sys.exit(2)
+    }
+
+    if cmd == "build" || cmd == "all" {
+        sys.exit(build("all"))
+    } else if cmd == "lsp" {
+        sys.exit(build("lsp"))
+    } else if cmd == "test" {
+        sys.exit(test())
+    } else if cmd == "integration" {
+        if only != "" {
+            // One stanza, as a child of the pool above.
+            N_PASS = 0
+            N_FAIL = 0
+            FAILURES = []string {}
+            TSTART = now_s()
+            if !stanza_dispatch(only) {
+                fmt.println("nob: unknown stanza", only)
+                sys.exit(2)
+            }
+            if N_FAIL != 0 {
+                sys.exit(1)
+            }
+            sys.exit(0)
+        }
+        sys.exit(run_integration_only())
+    } else if cmd == "bench" {
+        sys.exit(bench())
+    } else if cmd == "clean" {
+        clean()
+        sys.exit(0)
+    } else if cmd == "help" {
+        usage()
+        sys.exit(0)
+    } else {
+        fmt.println("nob: unknown command", cmd)
+        usage()
+        sys.exit(2)
+    }
+}
