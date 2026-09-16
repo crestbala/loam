@@ -19,7 +19,7 @@ const appDir = resolve(repo, "examples/zeus", name);
 const src = resolve(appDir, name + ".loam");
 const buildDir = resolve(appDir, "build");
 const wasmFile = resolve(buildDir, name + ".wasm");
-const loam = resolve(repo, "bin/loam");
+const loam = resolve(repo, "bin/loamc");
 const loader = resolve(here, "loader.js");
 
 function compileWasm() {

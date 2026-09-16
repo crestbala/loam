@@ -747,4 +747,3 @@ fn step() -> int {
     }
     return dirty
 }
-

@@ -24,12 +24,12 @@ fn ProjectCard() {
 
 fn Customize() {
     zeus.SectionHeader("Customize", "Style props + slots",
-        "Style props restyle a recipe without copying it. Comp is the primitive for your own widget. Trailing blocks are slots.")
+                       "Style props restyle a recipe without copying it. Comp is the primitive for your own widget. Trailing blocks are slots.")
     zeus.Card() {
         zeus.RowWrap(SPACE.Sm) {
             zeus.Button("Recipe", look = zeus.LOOK.Solid, size = zeus.SIZE.Md)
             zeus.Button("Styled", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
-                radius = 999, padding_x = 20, )
+                        radius = 999, padding_x = 20,)
             zeus.IconButton(zeus.IC_CHECK, zeus.LOOK.Soft, zeus.SIZE.Md, "Save")
             zeus.Chip("pill", zeus.TINT.Ok, radius = 6)
         }
@@ -37,15 +37,15 @@ fn Customize() {
             zeus.Body("This card used radius = 6, padding = 12.")
         }
         zeus.Comp(background = zeus.raised(), radius = 10,
-            padding = 12, spacing = 8,
-            align_direction = DIRECTION.Row, align_items = ALIGN.Center) {
+                  padding = 12, spacing = 8,
+                  align_direction = DIRECTION.Row, align_items = ALIGN.Center) {
             zeus.Pip(zeus.accent(), 8)
             zeus.Text("Comp — a function widget, styled by props", font = zeus.FONT_BODY,
-                color = zeus.ink())
+                      color = zeus.ink())
         }
         zeus.Badge("custom", zeus.TINT.Mute, radius = 2, padding_x = 8)
         zeus.Alert("Styled alert", "Same recipe, different radius.",
-            radius = 4, padding = 10)
+                   radius = 4, padding = 10)
     }
 }
 

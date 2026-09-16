@@ -26,8 +26,8 @@ fn Header(title: string, ticks: Signal<int>, open: Signal<int>) {
         zeus.Switch(zeus.appearance())
         zeus.Text("ticks", color = zeus.dim(), font = zeus.FONT_BODY)
         zeus.Text("{{ticks.get()}}", color = zeus.ink(), font = zeus.FONT_BODY)
-        zeus.Button(label = "Ticks", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click =  fn() => ticks.set(ticks.get() + 1))
-        zeus.Button(label = "Dialog", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click =  fn() => open.set(1))
+        zeus.Button(label = "Ticks", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => ticks.set(ticks.get() + 1))
+        zeus.Button(label = "Dialog", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => open.set(1))
     }
 }
 
@@ -53,8 +53,8 @@ fn Load(load: Signal<int>) {
         zeus.Text("Load", color = zeus.dim(), font = zeus.FONT_BODY)
         zeus.Progress(load)
         zeus.Text("{{load.get()}}%", color = zeus.mute(), font = zeus.FONT_BODY)
-        zeus.Button(label = "+10", look = zeus.LOOK.Soft, size = zeus.SIZE.Md, on_click =  fn() => load.set(clamp(load.get() + 10)))
-        zeus.Button(label = "-10", look = zeus.LOOK.Soft, size = zeus.SIZE.Md, on_click =  fn() => load.set(clamp(load.get() - 10)))
+        zeus.Button(label = "+10", look = zeus.LOOK.Soft, size = zeus.SIZE.Md, on_click = fn() => load.set(clamp(load.get() + 10)))
+        zeus.Button(label = "-10", look = zeus.LOOK.Soft, size = zeus.SIZE.Md, on_click = fn() => load.set(clamp(load.get() - 10)))
     }
 }
 
@@ -165,7 +165,7 @@ fn Dashboard() {
 
     zeus.Page() {
         Header("Zeus Dashboard", ticks, open)
-        zeus.Breadcrumbs([]string{"Zeus", "App", "Dashboard"})
+        zeus.Breadcrumbs([]string {"Zeus", "App", "Dashboard"})
         zeus.Body("Rows and cards fill the window. Labels stay left; actions sit on the right.")
         zeus.Alert("Heads up", "Signals update on click. Scroll if the page overflows.")
         zeus.Row(SPACE.Md) {
@@ -184,8 +184,8 @@ fn Dashboard() {
             zeus.Body("This cannot be undone. The working tree keeps whatever you have not saved.")
             zeus.Row(SPACE.Sm) {
                 zeus.Grow()
-                zeus.Button(label = "Cancel", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click =  fn() => open.set(0))
-                zeus.Button(label = "Discard", look = zeus.LOOK.Danger, size = zeus.SIZE.Md, on_click =  fn() => open.set(0))
+                zeus.Button(label = "Cancel", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click = fn() => open.set(0))
+                zeus.Button(label = "Discard", look = zeus.LOOK.Danger, size = zeus.SIZE.Md, on_click = fn() => open.set(0))
             }
         }
     }

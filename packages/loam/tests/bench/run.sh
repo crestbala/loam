@@ -9,7 +9,7 @@
 cd "$(dirname "$0")/../../../.."
 export ZEUS_HEADLESS=1 MAYA_HEADLESS=1
 
-LOAM=./bin/loam
+LOAM=./bin/loamc
 APP_REL=packages/loam/tests/bench/bench.loam
 OUT=packages/loam/tests/tmp/bench
 BASE="$OUT/baseline"
@@ -38,7 +38,7 @@ run_one() {
 }
 
 # Baseline: pristine HEAD, built in a scratch tree.
-if [ ! -x "$BASE/bin/loam" ]; then
+if [ ! -x "$BASE/bin/loamc" ]; then
     mkdir -p "$BASE"
     ( cd . && git archive HEAD ) | tar -x -C "$BASE"
     ( cd "$BASE" && make all >/dev/null 2>&1 ) || {
@@ -47,13 +47,13 @@ fi
 mkdir -p "$BASE/$(dirname "$BASE_APP_REL")"
 # The HEAD std has no `__sizeof` diagnostics, so the baseline app omits them.
 grep -v -E 'node_bytes|arena_bytes|draw_op_bytes|draw_bytes' "$APP_REL" > "$BASE/$BASE_APP_REL"
-run_one "before (HEAD, int=i64)" "$BASE/bin/loam" "$BASE/$BASE_APP_REL" "$OUT/bench_before"
+run_one "before (HEAD, int=i64)" "$BASE/bin/loamc" "$BASE/$BASE_APP_REL" "$OUT/bench_before"
 run_one "after  (default, int=i32)" "$LOAM" "$APP_REL" "$OUT/bench_after"
 
 if [ -n "$LOAM_WASM_CC" ] && command -v "$LOAM_WASM_CC" >/dev/null 2>&1; then
     $LOAM --target=wasm32 "$APP_REL" -o "$OUT/bench_after.wasm" >/dev/null 2>&1 &&
         echo "wasm_bytes_after $(size_of "$OUT/bench_after.wasm")"
-    $BASE/bin/loam --target=wasm32 "$BASE/$BASE_APP_REL" -o "$OUT/bench_before.wasm" >/dev/null 2>&1 &&
+    $BASE/bin/loamc --target=wasm32 "$BASE/$BASE_APP_REL" -o "$OUT/bench_before.wasm" >/dev/null 2>&1 &&
         echo "wasm_bytes_before $(size_of "$OUT/bench_before.wasm")"
 else
     echo "wasm: skipped (set LOAM_WASM_CC to a wasm32 clang to measure)"

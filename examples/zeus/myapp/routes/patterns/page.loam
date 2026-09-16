@@ -11,5 +11,5 @@ fn page(p: Params) {
 }
 
 fn meta(p: Params) -> Meta {
-    return Meta { title: "Patterns", description: "Lists, grids, charts, skeletons, and overlays."}
+    return Meta { title: "Patterns", description: "Lists, grids, charts, skeletons, and overlays." }
 }

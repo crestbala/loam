@@ -838,7 +838,7 @@ int main(int argc, char **argv) {
                     "loam: no clang with wasm32 (Apple /usr/bin/clang cannot).\n"
                     "  ./install.sh          # Homebrew LLVM, puts clang on PATH\n"
                     "  or: brew install llvm\n"
-                    "  LOAM_WASM_CC=/opt/homebrew/opt/llvm/bin/clang ./bin/loam --target=wasm32 "
+                    "  LOAM_WASM_CC=/opt/homebrew/opt/llvm/bin/clang ./bin/loamc --target=wasm32 "
                     "%s -o %s\n"
                     "  generated C kept at %s ; Canvas2D loader at %s\n",
                     in_path, binpath, keep, loader_dst);

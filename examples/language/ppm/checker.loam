@@ -8,7 +8,7 @@
 //! `ffmpeg -i output-%02d.ppm -r 60 output.mp4`; here the encode is the last
 //! step of the program, so one command produces the video:
 //!
-//!     ./bin/loam examples/language/ppm/checker.loam --run
+//!     ./bin/loamc examples/language/ppm/checker.loam --run
 //!
 //! Knobs (all optional): `LOAM_PPM_SCALE` (60), `LOAM_PPM_FRAMES` (60),
 //! `LOAM_PPM_FPS` (60), `LOAM_PPM_OUT` (`out`), `LOAM_PPM_KEEP=1`.

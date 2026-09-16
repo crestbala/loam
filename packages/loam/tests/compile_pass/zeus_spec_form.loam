@@ -25,8 +25,8 @@ fn ProfileForm(config: FormConfig, username: Signal<string>) {
                       color = "#f38ba8")
         }
         zeus.Button("Submit",
-            enabled = username.get().len >= config.min_length,
-            on_click = fn() => fmt.println("Submitted"))
+                    enabled = username.get().len >= config.min_length,
+                    on_click = fn() => fmt.println("Submitted"))
     }
 }
 

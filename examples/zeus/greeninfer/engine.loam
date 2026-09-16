@@ -364,7 +364,7 @@ fn is_digit(b: int) -> bool {
 
 fn is_word_char_raw(raw: int) -> bool {
     return (raw >= 48 && raw <= 57) || (raw >= 65 && raw <= 90) ||
-           (raw >= 97 && raw <= 122) || raw == 95
+    (raw >= 97 && raw <= 122) || raw == 95
 }
 
 /// Stopwords (and any single-letter token) are dropped: they appear in
@@ -374,17 +374,17 @@ fn is_stop_word(w: string) -> bool {
         return true
     }
     return w == "the" || w == "and" || w == "for" || w == "with" ||
-           w == "that" || w == "this" || w == "are" || w == "was" ||
-           w == "were" || w == "you" || w == "your" || w == "what" ||
-           w == "how" || w == "why" || w == "when" || w == "which" ||
-           w == "who" || w == "does" || w == "will" || w == "can" ||
-           w == "not" || w == "but" || w == "have" || w == "has" ||
-           w == "from" || w == "they" || w == "them" || w == "its" ||
-           w == "all" || w == "our" || w == "on" || w == "in" ||
-           w == "of" || w == "to" || w == "at" || w == "is" ||
-           w == "it" || w == "as" || w == "or" || w == "by" ||
-           w == "be" || w == "do" || w == "we" || w == "he" ||
-           w == "she" || w == "an" || w == "if" || w == "up"
+    w == "that" || w == "this" || w == "are" || w == "was" ||
+    w == "were" || w == "you" || w == "your" || w == "what" ||
+    w == "how" || w == "why" || w == "when" || w == "which" ||
+    w == "who" || w == "does" || w == "will" || w == "can" ||
+    w == "not" || w == "but" || w == "have" || w == "has" ||
+    w == "from" || w == "they" || w == "them" || w == "its" ||
+    w == "all" || w == "our" || w == "on" || w == "in" ||
+    w == "of" || w == "to" || w == "at" || w == "is" ||
+    w == "it" || w == "as" || w == "or" || w == "by" ||
+    w == "be" || w == "do" || w == "we" || w == "he" ||
+    w == "she" || w == "an" || w == "if" || w == "up"
 }
 
 /// Hash one lowercase segment (letters or digits, never mixed) into `out`.

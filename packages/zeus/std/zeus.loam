@@ -1826,7 +1826,6 @@ fn snapshot(width: int, height: int, build: fn() -> Node) {
     dump_draw_list()
 }
 
-
 // --- declarative layer ---
 //
 // Components are plain `fn`s, hierarchy comes from trailing blocks, props are
@@ -2317,7 +2316,7 @@ fn apply_int(nid: int, setter: int, v: int) {
         SET.MaxHeight => { set_max_height(n, scaled(v)) }
         SET.Wrap => {
             match v {
-                0 => { }
+                0 => {}
                 _ => { flex_wrap(n) }
             }
         }
@@ -2337,12 +2336,12 @@ fn apply_int(nid: int, setter: int, v: int) {
         SET.ShowOn => {
             match v {
                 0 | 1 => { arena.nodes[nid].show_on = u8(v) }
-                _ => { }
+                _ => {}
             }
         }
         SET.SvgFit => { arena.nodes[nid].font = u16(v) }
         SET.SvgLazy => { arena.nodes[nid].wrap = u8(v) }
-        _ => { }
+        _ => {}
     }
 }
 
@@ -2668,7 +2667,6 @@ fn ui_emit(node: Node) -> Node {
     return Component(node)
 }
 
-
 // --- widgets ---
 // Every prop is optional; an omitted one takes its declared default. A
 // `foo__set` companion records whether the caller passed `foo`.
@@ -2981,10 +2979,10 @@ fn Box(p: BoxProps) -> Node {
 /// `Text("n={{count.get()}}")` — into that thunk, so callers write data.
 fn Text(label: fn() -> string, p: TextProps) -> Node {
     let __n = Component(raw_label(""), text = label, color = p.color, font = p.font,
-        padding = p.padding, opacity = p.opacity, grow = p.grow, shrink = p.shrink,
-        show = p.show, wrap = p.wrap, position = p.position, left = p.left,
-        top = p.top, right = p.right, bottom = p.bottom, z_index = p.z_index,
-        a11y_label = p.a11y_label, a11y_role = p.a11y_role)
+                        padding = p.padding, opacity = p.opacity, grow = p.grow, shrink = p.shrink,
+                        show = p.show, wrap = p.wrap, position = p.position, left = p.left,
+                        top = p.top, right = p.right, bottom = p.bottom, z_index = p.z_index,
+                        a11y_label = p.a11y_label, a11y_role = p.a11y_role)
     return apply_key(__n, p.key, p.key_action, p.on_key, p.on_key__set, p.key_global)
 }
 
@@ -2994,13 +2992,13 @@ fn Button(p: ButtonProps) -> Node {
         return btn_look(p)
     }
     let __n = Component(raw_button(""), text = p.label, color = p.color,
-        background = p.background, font = p.font, padding = p.padding,
-        radius = p.radius, width = p.width, height = p.height,
-        position = p.position, left = p.left, top = p.top, right = p.right,
-        bottom = p.bottom, z_index = p.z_index, show = p.show,
-        enabled = p.enabled, cursor = p.cursor, on_click = p.on_click,
-        hover_off = p.hover_off, a11y_role = "button", a11y_label = p.label(),
-        press = p.on_click__set)
+                        background = p.background, font = p.font, padding = p.padding,
+                        radius = p.radius, width = p.width, height = p.height,
+                        position = p.position, left = p.left, top = p.top, right = p.right,
+                        bottom = p.bottom, z_index = p.z_index, show = p.show,
+                        enabled = p.enabled, cursor = p.cursor, on_click = p.on_click,
+                        hover_off = p.hover_off, a11y_role = "button", a11y_label = p.label(),
+                        press = p.on_click__set)
     if p.hover_off == false {
         hover_fade(__n)
     }
@@ -3051,14 +3049,14 @@ fn btn_look(p: ButtonProps) -> Node {
 /// edit; the store notifies only on a real change.
 fn Input(p: InputProps) -> Node {
     let __n = Component(raw_input(p.placeholder), width = p.width, height = p.height,
-        position = p.position, left = p.left, top = p.top, right = p.right,
-        bottom = p.bottom, z_index = p.z_index, show = p.show, color = p.color,
-        background = p.background, font = p.font, padding = p.padding,
-        grow = p.grow, a11y_label = p.a11y_label, cursor = p.cursor,
-        multiline = p.multiline, a11y_role = "textbox", edit = p.bind,
-        on_key_down = p.on_key_down, on_key_down__set = p.on_key_down__set,
-        on_key_up = p.on_key_up, on_key_up__set = p.on_key_up__set,
-        on_key_press = p.on_key_press, on_key_press__set = p.on_key_press__set)
+                        position = p.position, left = p.left, top = p.top, right = p.right,
+                        bottom = p.bottom, z_index = p.z_index, show = p.show, color = p.color,
+                        background = p.background, font = p.font, padding = p.padding,
+                        grow = p.grow, a11y_label = p.a11y_label, cursor = p.cursor,
+                        multiline = p.multiline, a11y_role = "textbox", edit = p.bind,
+                        on_key_down = p.on_key_down, on_key_down__set = p.on_key_down__set,
+                        on_key_up = p.on_key_up, on_key_up__set = p.on_key_up__set,
+                        on_key_press = p.on_key_press, on_key_press__set = p.on_key_press__set)
     return apply_key(__n, p.key, p.key_action, p.on_key, p.on_key__set, p.key_global)
 }
 
@@ -3080,7 +3078,7 @@ fn Grid(p: GridProps) -> Node {
 /// Full-window floater. Kind 9 is out of flow. Children are centred.
 fn Overlay(p: OverlayProps) -> Node {
     let __n = Component(raw_overlay(), background = p.background, opacity = p.opacity,
-        show = p.show, visible = p.visible, on_click = p.on_click)
+                        show = p.show, visible = p.visible, on_click = p.on_click)
     return apply_key(__n, p.key, p.key_action, p.on_key, p.on_key__set, p.key_global)
 }
 
@@ -3421,7 +3419,7 @@ fn Index<T>(items: Signal<[]T>, build: fn(int, T)) -> Node {
     let nid = n.id
     virt_refresh(nid, items, build, 0)
     return Component(n, align_direction = DIRECTION.Column,
-        rebuild = || { virt_refresh(nid, items, build, 0) })
+                     rebuild = || { virt_refresh(nid, items, build, 0) })
 }
 
 fn kfor_unique<T>(xs: []T, key: fn(T) -> string, m: int) -> int {
@@ -3450,7 +3448,7 @@ fn For<T>(items: Signal<[]T>, key: fn(T) -> string, build: fn(int, T)) -> Node {
     let nid = n.id
     kfor_refresh(nid, items, key, build)
     return Component(n, align_direction = DIRECTION.Column,
-        rebuild = || { kfor_refresh(nid, items, key, build) })
+                     rebuild = || { kfor_refresh(nid, items, key, build) })
 }
 
 fn kfor_refresh<T>(nid: int, items: Signal<[]T>, key: fn(T) -> string, build: fn(int, T)) {
@@ -3513,7 +3511,7 @@ fn Match<T>(on: Signal<T>, build: fn(T)) -> Node {
     let nid = n.id
     match_build(nid, on, build)
     return Component(n, align_direction = DIRECTION.Column,
-        rebuild = || { match_refresh(nid, on, build) })
+                     rebuild = || { match_refresh(nid, on, build) })
 }
 
 /// Tear the subtree down and rebuild it for the current value of `on`.
@@ -3580,7 +3578,7 @@ fn VirtualList<T>(items: Signal<[]T>, row_h: int, build: fn(int, T)) -> Node {
     let nid = n.id
     virt_refresh(nid, items, build, row_h)
     return Component(n, grow = 1, a11y_role = "list", row_h = row_h,
-        rebuild = || { virt_refresh(nid, items, build, row_h) })
+                     rebuild = || { virt_refresh(nid, items, build, row_h) })
 }
 
 /// Windowed list with per-row heights. `heights[i]` is row `i` in points
@@ -3592,7 +3590,7 @@ fn VirtualListVar<T>(items: Signal<[]T>, heights: Signal<[]int>, fallback: int,
     let nid = n.id
     virt_refresh_var(nid, items, build, fallback, heights)
     return Component(n, grow = 1, a11y_role = "list", row_h = fallback,
-        rebuild = || { virt_refresh_var(nid, items, build, fallback, heights) })
+                     rebuild = || { virt_refresh_var(nid, items, build, fallback, heights) })
 }
 
 /// Windowed table. `rows` is `zeus.signal([]T {})` where `T` is a row struct;
@@ -3608,7 +3606,7 @@ fn VirtualTable<T>(rows: Signal<[]T>, cols: []TableCol, row_h: int, build: fn(in
     VirtualList(rows, row_h, build)
     ui_pop()
     return Component(wrap, align_direction = DIRECTION.Column, grow = 1,
-        a11y_role = "table")
+                     a11y_role = "table")
 }
 
 /// Jump `n` (a `Scroll` / `VirtualList`) to vertical offset `y`. Clears
@@ -3690,7 +3688,7 @@ fn refit(host: Node, build: fn()) -> Node {
 /// `bind` is an optional two-way `scroll_y` signal (`scroll_to` writes it).
 fn Scroll(p: ScrollProps) -> Node {
     let __n = Component(raw_scroll(), width = p.width, height = p.height,
-        grow = p.grow, bind = p.bind)
+                        grow = p.grow, bind = p.bind)
     return apply_key(__n, p.key, p.key_action, p.on_key, p.on_key__set, p.key_global)
 }
 
@@ -3699,8 +3697,8 @@ fn Scroll(p: ScrollProps) -> Node {
 /// usual `position` / pins / `z_index` for layered plots.
 fn Svg(markup: string, p: SvgProps) -> Node {
     let __n = Component(raw_svg(markup), width = p.width, height = p.height,
-        position = p.position, left = p.left, top = p.top, right = p.right,
-        bottom = p.bottom, z_index = p.z_index, show = p.show)
+                        position = p.position, left = p.left, top = p.top, right = p.right,
+                        bottom = p.bottom, z_index = p.z_index, show = p.show)
     return apply_key(__n, p.key, p.key_action, p.on_key, p.on_key__set, p.key_global)
 }
 
@@ -3713,12 +3711,12 @@ fn Svg(markup: string, p: SvgProps) -> Node {
 /// decode while off-screen.
 fn Image(src: fn() -> string, p: ImageProps) -> Node {
     return Component(raw_image(""), text = src, width = p.width, height = p.height,
-        radius = p.radius, fit = p.fit, lazy = p.lazy, opacity = p.opacity,
-        grow = p.grow, shrink = p.shrink, min_width = p.min_width,
-        max_width = p.max_width, min_height = p.min_height, max_height = p.max_height,
-        position = p.position, left = p.left, top = p.top, right = p.right,
-        bottom = p.bottom, z_index = p.z_index, show = p.show,
-        a11y_label = p.a11y_label, a11y_role = "img")
+                     radius = p.radius, fit = p.fit, lazy = p.lazy, opacity = p.opacity,
+                     grow = p.grow, shrink = p.shrink, min_width = p.min_width,
+                     max_width = p.max_width, min_height = p.min_height, max_height = p.max_height,
+                     position = p.position, left = p.left, top = p.top, right = p.right,
+                     bottom = p.bottom, z_index = p.z_index, show = p.show,
+                     a11y_label = p.a11y_label, a11y_role = "img")
 }
 
 let mut pick_dest: Signal<string> = Signal { id: 0 }
@@ -3805,7 +3803,6 @@ fn App(title: string, build: fn(), width: int = 0, height: int = 0) {
 // Card / Chip / Badge / Dialog / forms (Field, TextInput, TextArea) / tabs /
 // select / radio / toggle / Pagination / charts / DatePicker / Page.
 // ═══════════════════════════════════════════════════════════════════
-
 
 /// Theme roles. `accent` is the neutral "primary": near-black in light,
 /// near-white in dark. Status tints (ok, danger) stay semantic; the chart
@@ -4119,7 +4116,6 @@ fn ensure_role_colors() {
     theme(ROLE.FocusRing, parse_hex_color(LIGHT.text), parse_hex_color(DARK.text))
 }
 
-
 /// Type scale. Canvas hosts draw one weight, so hierarchy leans on size and
 /// color. 14 is the body workhorse.
 const FONT_DISPLAY: int = 30
@@ -4301,35 +4297,34 @@ fn button_border_color(look: int) -> string {
 // stroke attrs used below. `Icon` tints them with the node's foreground.
 
 const IC_CHECK: string =
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M20 6 9 17l-5-5'/></svg>"
+"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M20 6 9 17l-5-5'/></svg>"
 
 const IC_X: string =
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M18 6 6 18'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 6 12 12'/></svg>"
+"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M18 6 6 18'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 6 12 12'/></svg>"
 
 const IC_CHEV_DOWN: string =
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m19 9-7 6-7-6'/></svg>"
+"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m19 9-7 6-7-6'/></svg>"
 
 const IC_CHEV_LEFT: string =
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m15 18-6-6 6-6'/></svg>"
+"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m15 18-6-6 6-6'/></svg>"
 
 const IC_CHEV_RIGHT: string =
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m9 18 6-6-6-6'/></svg>"
+"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m9 18 6-6-6-6'/></svg>"
 
 const IC_CALENDAR: string =
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M8 2v4'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M16 2v4'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M3 10h18'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M5 4h14v16H5z'/></svg>"
+"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M8 2v4'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M16 2v4'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M3 10h18'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M5 4h14v16H5z'/></svg>"
 
 const IC_INFO: string =
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><circle cx='12' cy='12' r='10' fill='none' stroke='currentColor' stroke-width='1.5'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M12 16v-4'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M12 8h.01'/></svg>"
+"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><circle cx='12' cy='12' r='10' fill='none' stroke='currentColor' stroke-width='1.5'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M12 16v-4'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M12 8h.01'/></svg>"
 
 const IC_ALERT_CIRCLE: string =
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><circle cx='12' cy='12' r='10' fill='none' stroke='currentColor' stroke-width='1.5'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M12 8v4'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M12 16h.01'/></svg>"
+"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><circle cx='12' cy='12' r='10' fill='none' stroke='currentColor' stroke-width='1.5'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M12 8v4'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M12 16h.01'/></svg>"
 
 const IC_PLUS: string =
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M5 12h14'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M12 5v14'/></svg>"
+"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M5 12h14'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M12 5v14'/></svg>"
 
 const IC_MINUS: string =
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M5 12h14'/></svg>"
-
+"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M5 12h14'/></svg>"
 
 /// `markup` painted at `px` square and tinted by `tint`. Returns the node so
 /// callers can bind visibility.
@@ -4348,14 +4343,14 @@ fn Pip(fill: string, size: int) -> Node {
 
 fn Row(spacing: int) -> Node {
     return Box(align_direction = DIRECTION.Row, spacing = spacing,
-                    align_items = ALIGN.Center)
+               align_items = ALIGN.Center)
 }
 
 /// Row that wraps onto the next line when it overflows (`flex-wrap: wrap`).
 /// Use for responsive clusters of chips, buttons, and badges.
 fn RowWrap(spacing: int) -> Node {
     return Box(align_direction = DIRECTION.Row, spacing = spacing,
-                    align_items = ALIGN.Center, wrap = 1)
+               align_items = ALIGN.Center, wrap = 1)
 }
 
 fn Column(spacing: int) -> Node {
@@ -4573,8 +4568,6 @@ fn SectionTitle(overline: fn() -> string, title: fn() -> string) {
     }
 }
 
-
-
 /// Icon-only button: square, 16px glyph in the `look` chrome. `size` picks
 /// a 32 / 36 / 40px box. `on_click` is optional —
 /// omit it for a look-only demo
@@ -4672,16 +4665,16 @@ struct ChipProps {
 
 fn Chip(label: fn() -> string, kind: int, p: ChipProps) -> Node {
     let __n = Box(align_direction = DIRECTION.Row,
-             spacing = px_or_default(p.spacing, SPACE.Exxs),
-             align_items = ALIGN.Center,
-             padding_x = px_or_default(p.padding_x, px_or_default(p.padding, 10)),
-             padding_y = px_or_default(p.padding_y, px_or_default(p.padding, 5)),
-             background = str_or_default(p.background, raised()),
-             radius = px_or_default(p.radius, RAD_FULL),
-             border = px_or_default(p.border, HAIRLINE),
-             border_color = str_or_default(p.border_color, rule()),
-             width = p.width,
-             height = px_or_default(p.height, 26)) {
+                  spacing = px_or_default(p.spacing, SPACE.Exxs),
+                  align_items = ALIGN.Center,
+                  padding_x = px_or_default(p.padding_x, px_or_default(p.padding, 10)),
+                  padding_y = px_or_default(p.padding_y, px_or_default(p.padding, 5)),
+                  background = str_or_default(p.background, raised()),
+                  radius = px_or_default(p.radius, RAD_FULL),
+                  border = px_or_default(p.border, HAIRLINE),
+                  border_color = str_or_default(p.border_color, rule()),
+                  width = p.width,
+                  height = px_or_default(p.height, 26)) {
         Pip(str_or_default(p.color, tint_of(kind)), DOT - 2)
         Text(label, color = str_or_default(p.color, tint_of(kind)), font = px_or_default(p.font, FONT_CAPTION))
     }
@@ -4761,19 +4754,19 @@ struct BadgeProps {
 
 fn Badge(label: fn() -> string, kind: int, p: BadgeProps) -> Node {
     let __n = Box(align_direction = DIRECTION.Row,
-             padding_x = px_or_default(p.padding_x, px_or_default(p.padding, 10)),
-             padding_y = px_or_default(p.padding_y, px_or_default(p.padding, 2)),
-             radius = px_or_default(p.radius, RAD_MD),
-             background = str_or_default(p.background, badge_background(kind)),
-             border = px_or_default(p.border, badge_border_width(kind)),
-             border_color = str_or_default(p.border_color, badge_border_color(kind)),
-             width = p.width,
-             height = p.height,
-             spacing = p.spacing,
-             align_items = ALIGN.Center,
-             justify = ALIGN.Center) {
+                  padding_x = px_or_default(p.padding_x, px_or_default(p.padding, 10)),
+                  padding_y = px_or_default(p.padding_y, px_or_default(p.padding, 2)),
+                  radius = px_or_default(p.radius, RAD_MD),
+                  background = str_or_default(p.background, badge_background(kind)),
+                  border = px_or_default(p.border, badge_border_width(kind)),
+                  border_color = str_or_default(p.border_color, badge_border_color(kind)),
+                  width = p.width,
+                  height = p.height,
+                  spacing = p.spacing,
+                  align_items = ALIGN.Center,
+                  justify = ALIGN.Center) {
         Text(label, color = str_or_default(p.color, badge_color(kind)),
-                  font = px_or_default(p.font, FONT_CAPTION))
+             font = px_or_default(p.font, FONT_CAPTION))
     }
     return apply_key(__n, p.key, p.key_action, p.on_key, p.on_key__set, p.key_global)
 }
@@ -4781,9 +4774,9 @@ fn Badge(label: fn() -> string, kind: int, p: BadgeProps) -> Node {
 /// Key cap: 1px border on muted, mono-ish small text, 20px tall.
 fn Kbd(key: fn() -> string) {
     Box(align_direction = DIRECTION.Row, padding_x = 6, radius = 4,
-             height = 20, background = raised(), border = HAIRLINE,
-             border_color = rule(), align_items = ALIGN.Center,
-             justify = ALIGN.Center) {
+        height = 20, background = raised(), border = HAIRLINE,
+        border_color = rule(), align_items = ALIGN.Center,
+        justify = ALIGN.Center) {
         Text(key, color = mute(), font = 10)
     }
 }
@@ -4792,14 +4785,14 @@ fn Kbd(key: fn() -> string) {
 /// thumb rides on `background`. Pass `appearance()` for Dark mode.
 fn Switch(on: Signal<int>) {
     Component(raw_toggle(), bind = on, width = 36, height = 20,
-        radius = 10, on_click = fn() => on.set(1 - on.get()),
-        a11y_role = "switch", hover_off = true, cursor = "pointer")
+              radius = 10, on_click = fn() => on.set(1 - on.get()),
+              a11y_role = "switch", hover_off = true, cursor = "pointer")
 }
 
 /// Slider. Track is `primary/20`-ish, filled range primary, thumb surface.
 fn Slider(value: Signal<int>) {
     Component(raw_slider(), bind = value, width = 220, height = 20, radius = 10,
-        a11y_role = "slider", hover_off = true, cursor = "pointer")
+              a11y_role = "slider", hover_off = true, cursor = "pointer")
 }
 
 /// Progress: 8px track, rounded, filled with the accent. Value 0..100.
@@ -4892,16 +4885,16 @@ fn alert_body_tint(kind: int) -> string {
 
 fn alert_view(title: fn() -> string, body: fn() -> string, kind: int, p: AlertProps) -> Node {
     return Box(align_direction = DIRECTION.Row,
-             spacing = px_or_default(p.spacing, 12),
-             align_items = ALIGN.Start,
-             background = str_or_default(p.background, plate()),
-             border = px_or_default(p.border, HAIRLINE),
-             border_color = str_or_default(p.border_color, alert_edge(kind)),
-             padding_x = px_or_default(p.padding_x, px_or_default(p.padding, 16)),
-             padding_y = px_or_default(p.padding_y, px_or_default(p.padding, 12)),
-             width = p.width,
-             height = p.height,
-             radius = px_or_default(p.radius, RAD_LG)) {
+               spacing = px_or_default(p.spacing, 12),
+               align_items = ALIGN.Start,
+               background = str_or_default(p.background, plate()),
+               border = px_or_default(p.border, HAIRLINE),
+               border_color = str_or_default(p.border_color, alert_edge(kind)),
+               padding_x = px_or_default(p.padding_x, px_or_default(p.padding, 16)),
+               padding_y = px_or_default(p.padding_y, px_or_default(p.padding, 12)),
+               width = p.width,
+               height = p.height,
+               radius = px_or_default(p.radius, RAD_LG)) {
         match kind {
             ALERT.Danger => { Icon(IC_ALERT_CIRCLE, 16, danger()) }
             ALERT.Warn => { Icon(IC_ALERT_CIRCLE, 16, warn()) }
@@ -4979,9 +4972,9 @@ fn TextInput(value: Signal<string>, placeholder: string, p: TextInputProps) -> N
         cursor = "text"
     ) {
         Input(bind = value, placeholder = placeholder,
-                   background = "", color = str_or_default(p.color, ink()),
-                   font = px_or_default(p.font, FONT_BODY),
-                   padding = 0, a11y_label = placeholder)
+              background = "", color = str_or_default(p.color, ink()),
+              font = px_or_default(p.font, FONT_BODY),
+              padding = 0, a11y_label = placeholder)
     }
     return apply_key(__n, p.key, p.key_action, p.on_key, p.on_key__set, p.key_global)
 }
@@ -5002,9 +4995,9 @@ fn TextArea(value: Signal<string>, placeholder: string, on_edit: fn() = noop,
         cursor = "text"
     ) {
         Input(bind = value, placeholder = placeholder,
-                   background = "", color = ink(), font = FONT_BODY,
-                   padding = 0, multiline = 1, grow = 1, a11y_label = placeholder,
-                   on_key_up = on_edit)
+              background = "", color = ink(), font = FONT_BODY,
+              padding = 0, multiline = 1, grow = 1, a11y_label = placeholder,
+              on_key_up = on_edit)
     }
     if width >= 0 {
         set_width(node, width)
@@ -5062,17 +5055,17 @@ fn Field(label: string, value: Signal<string>, placeholder: string,
 /// with a white 16px SVG check.
 fn Checkbox(label: string, on: Signal<int>) {
     Box(align_direction = DIRECTION.Row, spacing = SPACE.Exs,
-             align_items = ALIGN.Center,
-             on_click = fn() => on.set(1 - on.get()),
-             a11y_role = "checkbox",
-             a11y_label = label,
-             cursor = "pointer") {
+        align_items = ALIGN.Center,
+        on_click = fn() => on.set(1 - on.get()),
+        a11y_role = "checkbox",
+        a11y_label = label,
+        cursor = "pointer") {
         let tick = Box(width = 16, height = 16, radius = RAD_SM,
-                 border = HAIRLINE,
-                 border_color = accent(),
-                 align_items = ALIGN.Center, justify = ALIGN.Center) {
+                       border = HAIRLINE,
+                       border_color = accent(),
+                       align_items = ALIGN.Center, justify = ALIGN.Center) {
             Component(raw_svg(IC_CHECK), width = 16, height = 16,
-                color = on_ink(), visible = on)
+                      color = on_ink(), visible = on)
         }
         selected_chrome(tick, empty_view(), || { on.get() == 1 },
                         accent(), plate(), "", "")
@@ -5080,18 +5073,17 @@ fn Checkbox(label: string, on: Signal<int>) {
     }
 }
 
-
 /// Avatar: full-round with initials on muted. `size` is the diameter in px
 /// (40 is the common one). Pass `src` for a photo; initials remain the fallback
 /// while the host loads. `User` composes it.
 fn Avatar(initials: string, size: int, src: string = "") {
     Box(align_direction = DIRECTION.Row, width = size, height = size,
-             radius = size / 2, background = raised(), align_items = ALIGN.Center,
-             justify = ALIGN.Center) {
+        radius = size / 2, background = raised(), align_items = ALIGN.Center,
+        justify = ALIGN.Center) {
         Text(initials, color = ink(), font = (size + 8) / 4)
         if src.len > 0 {
             Image(src, width = size, height = size, radius = size / 2,
-                       position = pos_absolute(), left = 0, top = 0)
+                  position = pos_absolute(), left = 0, top = 0)
         }
     }
 }
@@ -5235,9 +5227,9 @@ fn SelectRow(value: Signal<int>, open: Signal<int>, index: int, label: string) {
         padding_y = 6,
         radius = RAD_SM,
         on_click = fn() {
-            value.set(index)
-            open.set(0)
-        },
+        value.set(index)
+        open.set(0)
+    },
         a11y_role = "listitem",
         a11y_label = label,
         cursor = "pointer"
@@ -5306,15 +5298,15 @@ fn Select(value: Signal<int>, labels: []string) {
 /// filled primary dot.
 fn Radio(label: string, value: Signal<int>, index: int) {
     Box(align_direction = DIRECTION.Row, spacing = SPACE.Exs,
-             align_items = ALIGN.Center,
-             on_click = fn() => value.set(index),
-             a11y_role = "radio",
-             a11y_label = label,
-             cursor = "pointer") {
+        align_items = ALIGN.Center,
+        on_click = fn() => value.set(index),
+        a11y_role = "radio",
+        a11y_label = label,
+        cursor = "pointer") {
         Box(width = 16, height = 16, radius = 8,
-                 background = plate(), border = HAIRLINE,
-                 border_color = accent(),
-                 align_items = ALIGN.Center, justify = ALIGN.Center) {
+            background = plate(), border = HAIRLINE,
+            border_color = accent(),
+            align_items = ALIGN.Center, justify = ALIGN.Center) {
             let dot = Box(width = 14, height = 14, radius = 7)
             selected_chrome(dot, empty_view(), || { value.get() == index },
                             accent(), plate(), "", "")
@@ -5465,8 +5457,8 @@ fn AlertDialog(open: Signal<int>, p: DialogProps) -> Node {
 fn Navbar(brand: string, dark: int = 1) {
     Column(0) {
         Box(align_direction = DIRECTION.Row, spacing = SPACE.Md,
-                 align_items = ALIGN.Center, height = BAR,
-                 a11y_role = "navigation") {
+            align_items = ALIGN.Center, height = BAR,
+            a11y_role = "navigation") {
             Pip(ink(), 10)
             Text(brand, color = ink(), font = FONT_TITLE)
             Grow()
@@ -5531,7 +5523,7 @@ fn TableCols(cols: []TableCol) {
         // Same gutter as the body rows (`padding_x = SPACE.Exs`), so header
         // and cells share the same column boundaries.
         Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
-                 spacing = SPACE.Sm, padding_x = SPACE.Exs) {
+            spacing = SPACE.Sm, padding_x = SPACE.Exs) {
             Each(cols, fn(i, c) {
                 if c.width > 0 {
                     Box(width = c.width) {
@@ -5546,23 +5538,22 @@ fn TableCols(cols: []TableCol) {
     }
 }
 
-
 /// One page number for `Pagination`: ghost number; the current page is an
 /// outline button. The current page is an effect, not a prop, so the row
 /// repaints when `page` moves.
 fn PageButton(page: Signal<int>, n: int) {
     let btn = Box(align_direction = DIRECTION.Row,
-        width = 36,
-        height = 36,
-        radius = RAD_MD,
-        align_items = ALIGN.Center,
-        justify = ALIGN.Center,
-        border_color = rule(),
-        on_click = fn() => page.set(n),
-        a11y_role = "button",
-        a11y_label = "{{n}}",
-        cursor = "pointer"
-    )
+                  width = 36,
+                  height = 36,
+                  radius = RAD_MD,
+                  align_items = ALIGN.Center,
+                  justify = ALIGN.Center,
+                  border_color = rule(),
+                  on_click = fn() => page.set(n),
+                  a11y_role = "button",
+                  a11y_label = "{{n}}",
+                  cursor = "pointer"
+                 )
     ui_push(btn.id)
     let text = Text("{{n}}", font = FONT_BODY)
     ui_pop()
@@ -5589,10 +5580,10 @@ fn Pagination(cur: Signal<int>, pages: int) {
             align_items = ALIGN.Center,
             justify = ALIGN.Center,
             on_click = fn() {
-                if cur.get() > 1 {
-                    cur.set(cur.get() - 1)
-                }
-            },
+            if cur.get() > 1 {
+                cur.set(cur.get() - 1)
+            }
+        },
             a11y_role = "button",
             a11y_label = "Previous page",
             cursor = "pointer"
@@ -5612,10 +5603,10 @@ fn Pagination(cur: Signal<int>, pages: int) {
             align_items = ALIGN.Center,
             justify = ALIGN.Center,
             on_click = fn() {
-                if cur.get() < pages {
-                    cur.set(cur.get() + 1)
-                }
-            },
+            if cur.get() < pages {
+                cur.set(cur.get() + 1)
+            }
+        },
             a11y_role = "button",
             a11y_label = "Next page",
             cursor = "pointer"
@@ -5831,12 +5822,12 @@ fn chart_svg(d: string, w: int, h: int, fill: string, stroke: string, sw: int) -
 /// Full-size svg node for the plot, layered at 0,0.
 fn chart_layer(markup: string, w: int, h: int) -> Node {
     return Svg(markup, width = w, height = h,
-                    position = pos_absolute(), left = 0, top = 0)
+               position = pos_absolute(), left = 0, top = 0)
 }
 
 /// Polyline for series `j` (straight segments — recharts default linear).
 fn chart_line_d(vals: []int, s: int, j: int, maxv: int, gutter: int, col_w: int,
-              plot_h: int, top: int, n: int) -> string {
+                plot_h: int, top: int, n: int) -> string {
     let mut b = []int {}
     b = bytes_s(b, "M")
     for i in 0..n {
@@ -5854,7 +5845,7 @@ fn chart_line_d(vals: []int, s: int, j: int, maxv: int, gutter: int, col_w: int,
 
 /// Closed polygon under series `j`: the line plus the baseline (area fill).
 fn chart_area_d(vals: []int, s: int, j: int, maxv: int, gutter: int, col_w: int,
-              plot_h: int, top: int, n: int) -> string {
+                plot_h: int, top: int, n: int) -> string {
     let base = top + plot_h
     let first_x = chart_pt_x(gutter, col_w, n, 0)
     let last_x = chart_pt_x(gutter, col_w, n, n - 1)
@@ -5886,27 +5877,27 @@ fn chart_axes(w: int, h: int, maxv: int) {
     // Gridlines above the baseline (top = max value).
     for k in 0..4 {
         let line = Box(width = w - CHART_GUTTER, height = 1,
-                            background = rule(), opacity = 45,
-                            position = pos_absolute(),
-                            left = CHART_GUTTER,
-                            top = CHART_TOP + k * plot_h / 4)
+                       background = rule(), opacity = 45,
+                       position = pos_absolute(),
+                       left = CHART_GUTTER,
+                       top = CHART_TOP + k * plot_h / 4)
     }
     // Y tick labels, max .. 0 (bottom 0 sits above the baseline).
     for k in 0..5 {
         let tv = maxv - k * maxv / 4
         let lab = Box(align_direction = DIRECTION.Row, justify = ALIGN.End,
-                           width = CHART_GUTTER - 6, height = 12,
-                           position = pos_absolute(),
-                           left = 0,
-                           top = CHART_TOP + k * plot_h / 4 - 6) {
+                      width = CHART_GUTTER - 6, height = 12,
+                      position = pos_absolute(),
+                      left = 0,
+                      top = CHART_TOP + k * plot_h / 4 - 6) {
             Text("{{tv}}", color = mute(), font = FONT_CAPTION)
         }
     }
     // Baseline axis.
     let axis = Box(width = w - CHART_GUTTER, height = 1, background = hard(),
-                        position = pos_absolute(),
-                        left = CHART_GUTTER,
-                        top = base_y)
+                   position = pos_absolute(),
+                   left = CHART_GUTTER,
+                   top = base_y)
 }
 
 /// One floating tooltip panel shared by every category: its content and
@@ -5914,7 +5905,7 @@ fn chart_axes(w: int, h: int, maxv: int) {
 /// through an effect, instead of one pre-built panel per category. Style
 /// props are plain data, so a prop that must follow a signal gets `styled`.
 fn chart_tooltip(labels: []string, names: []string, vals: []int, s: int, n: int,
-               w: int, col_w: int, act: Signal<int>, pt: int) {
+                 w: int, col_w: int, act: Signal<int>, pt: int) {
     let panel = Box(
         align_direction = DIRECTION.Column,
         width = 128,
@@ -5953,32 +5944,32 @@ fn chart_tooltip(labels: []string, names: []string, vals: []int, s: int, n: int,
         arena.nodes[panel.id].pin_l = x
     })
     slot(panel, || {
-    Text(fn() -> string {
-        let a = act.get() - 1
-        if a >= 0 {
-            if a < n {
-                return labels[a]
+        Text(fn() -> string {
+            let a = act.get() - 1
+            if a >= 0 {
+                if a < n {
+                    return labels[a]
+                }
+            }
+            return ""
+        }, color = ink(), font = FONT_CAPTION)
+        for j in 0..s {
+            let jj = j
+            Row(SPACE.Exs) {
+                Box(width = 8, height = 8, radius = 2, background = chart_color(jj))
+                Text(names[jj], color = mute(), font = FONT_CAPTION)
+                Grow()
+                Text(fn() -> string {
+                    let a = act.get() - 1
+                    if a >= 0 {
+                        if a < n {
+                            return "{{vals[a * s + jj]}}"
+                        }
+                    }
+                    return ""
+                }, color = ink(), font = FONT_CAPTION)
             }
         }
-        return ""
-    }, color = ink(), font = FONT_CAPTION)
-    for j in 0..s {
-        let jj = j
-        Row(SPACE.Exs) {
-            Box(width = 8, height = 8, radius = 2, background = chart_color(jj))
-            Text(names[jj], color = mute(), font = FONT_CAPTION)
-            Grow()
-            Text(fn() -> string {
-                let a = act.get() - 1
-                if a >= 0 {
-                    if a < n {
-                        return "{{vals[a * s + jj]}}"
-                    }
-                }
-                return ""
-            }, color = ink(), font = FONT_CAPTION)
-        }
-    }
     })
 }
 
@@ -5989,7 +5980,7 @@ fn chart_tooltip(labels: []string, names: []string, vals: []int, s: int, n: int,
 /// edges), so the pointer always lands on the nearest mark; column mode
 /// keeps the full-band coverage of the bar columns.
 fn chart_zone(i: int, hov: Signal<int>, act: Signal<int>, h: int, col_w: int, pt: int,
-            n: int) {
+              n: int) {
     let mut zl = 0
     let mut zw = col_w
     if pt != 0 {
@@ -6014,9 +6005,9 @@ fn chart_zone(i: int, hov: Signal<int>, act: Signal<int>, h: int, col_w: int, pt
         zl = chart_col_x(CHART_GUTTER, col_w, i)
     }
     let zone = Box(width = zw, height = h,
-                        position = pos_absolute(),
-                        left = zl,
-                        top = 0)
+                   position = pos_absolute(),
+                   left = zl,
+                   top = 0)
     hover(zone, hov)
     styled(zone, || {
         if hov.get() > 0 {
@@ -6038,16 +6029,16 @@ fn chart_xlab(label: string, i: int, col_w: int, plot_h: int, pt: int, n: int) {
     // labels sit just left of their mark so the strip stays inside the plot.
     let x = if pt != 0 { chart_pt_x(CHART_GUTTER, col_w, n, i) - 4 } else { chart_col_x(CHART_GUTTER, col_w, i) + 3 }
     let lab = Text(label, color = mute(), font = FONT_CAPTION,
-                        position = pos_absolute(),
-                        left = x,
-                        top = CHART_TOP + plot_h + 8)
+                   position = pos_absolute(),
+                   left = x,
+                   top = CHART_TOP + plot_h + 8)
     text_rot(lab, 45)
 }
 
 /// Bottom-centered legend, 16px between entries.
 fn chart_legend(names: []string) {
     Box(align_direction = DIRECTION.Row, spacing = 16,
-             justify = ALIGN.Center, wrap = 1) {
+        justify = ALIGN.Center, wrap = 1) {
         Each(names, fn(j, name) {
             Row(SPACE.Exxs) {
                 Box(width = 8, height = 8, radius = 2, background = chart_color(j))
@@ -6061,9 +6052,9 @@ fn chart_legend(names: []string) {
 /// `act` = category + 1; the line shows and slides with it.
 fn chart_cursor(act: Signal<int>, n: int, col_w: int, plot_h: int, pt: int) {
     let line = Box(width = 1, height = plot_h, background = hard(),
-                        opacity = 55, radius = 0, a11y_label = "cursor",
-                        position = pos_absolute(),
-                        top = CHART_TOP)
+                   opacity = 55, radius = 0, a11y_label = "cursor",
+                   position = pos_absolute(),
+                   top = CHART_TOP)
     styled(line, || {
         let a = act.get() - 1
         let mut x = -1
@@ -6082,7 +6073,7 @@ fn chart_cursor(act: Signal<int>, n: int, col_w: int, plot_h: int, pt: int) {
 /// dim for the hovered column. `pt` = 1 for plot-spanning line/area charts
 /// (zone strips snap to the nearest mark), 0 for column-mode bar charts.
 fn chart_tooltips(labels: []string, names: []string, vals: []int, s: int, n: int,
-                h: int, w: int, col_w: int, act: Signal<int>, pt: int) {
+                  h: int, w: int, col_w: int, act: Signal<int>, pt: int) {
     for i in 0..n {
         let hov = signal(0)
         chart_zone(i, hov, act, h, col_w, pt, n)
@@ -6139,7 +6130,7 @@ fn BarChart(labels: []string, names: []string, vals: []int, w: int, h: int) {
 }
 
 fn chart_bars(labels: []string, names: []string, vals: []int, n: int, s: int,
-            w: int, h: int, host: Node) {
+              w: int, h: int, host: Node) {
     let gw = chart_w(w, host)
     let plot_h = h - CHART_TOP - CHART_XLAB
     let col_w = (gw - CHART_GUTTER) / n
@@ -6159,10 +6150,10 @@ fn chart_bars(labels: []string, names: []string, vals: []int, n: int, s: int,
                 let bh = geometry.max2(v * plot_h / domain, 1)
                 if v > 0 {
                     let bar = Box(width = bar_w, height = bh, radius = 3,
-                                       background = chart_color(j),
-                                       position = pos_absolute(),
-                                       left = x0 + j * bar_w,
-                                       top = base_y - bh)
+                                  background = chart_color(j),
+                                  position = pos_absolute(),
+                                  left = x0 + j * bar_w,
+                                  top = base_y - bh)
                     styled(bar, || { opacity(bar, chart_dim(act, ii)) })
                 }
             }
@@ -6194,7 +6185,7 @@ fn LineChart(labels: []string, names: []string, vals: []int, w: int, h: int) {
 }
 
 fn chart_lines(labels: []string, names: []string, vals: []int, n: int, s: int,
-             w: int, h: int, host: Node) {
+               w: int, h: int, host: Node) {
     let gw = chart_w(w, host)
     let plot_h = h - CHART_TOP - CHART_XLAB
     let col_w = (gw - CHART_GUTTER) / n
@@ -6206,7 +6197,7 @@ fn chart_lines(labels: []string, names: []string, vals: []int, n: int, s: int,
         chart_axes(gw, h, domain)
         for j in 0..s {
             let d = chart_line_d(vals, s, j, domain, CHART_GUTTER, col_w, plot_h,
-                               CHART_TOP, n)
+                                 CHART_TOP, n)
             let line_l = chart_layer(chart_svg(d, gw, h, "none", chart_stroke_light(j), 2), gw, h)
             let line_d = chart_layer(chart_svg(d, gw, h, "none", chart_stroke_dark(j), 2), gw, h)
             show_eq(line_l, appearance(), 0)
@@ -6215,10 +6206,10 @@ fn chart_lines(labels: []string, names: []string, vals: []int, n: int, s: int,
                 let x = chart_pt_x(CHART_GUTTER, col_w, n, i)
                 let y = chart_y(domain, plot_h, CHART_TOP, chart_val(vals, s, i, j))
                 let dot = Box(width = 6, height = 6, radius = 3,
-                                   background = chart_color(j),
-                                   position = pos_absolute(),
-                                   left = x - 3,
-                                   top = y - 3)
+                              background = chart_color(j),
+                              position = pos_absolute(),
+                              left = x - 3,
+                              top = y - 3)
             }
         }
         for i in 0..n {
@@ -6250,7 +6241,7 @@ fn AreaChart(labels: []string, names: []string, vals: []int, w: int, h: int) {
 }
 
 fn chart_areas(labels: []string, names: []string, vals: []int, n: int, s: int,
-             w: int, h: int, host: Node) {
+               w: int, h: int, host: Node) {
     let gw = chart_w(w, host)
     let plot_h = h - CHART_TOP - CHART_XLAB
     let col_w = (gw - CHART_GUTTER) / n
@@ -6259,38 +6250,38 @@ fn chart_areas(labels: []string, names: []string, vals: []int, n: int, s: int,
     let act = signal(0)
     let plot = Box(width = gw, height = h)
     slot(plot, || {
-    chart_axes(gw, h, domain)
-    for j in 0..s {
-        let d = chart_area_d(vals, s, j, domain, CHART_GUTTER, col_w, plot_h,
-                           CHART_TOP, n)
-        let fd = chart_svg(d, gw, h, chart_fd(j), "none", 0)
-        let fl = chart_svg(d, gw, h, chart_fl(j), "none", 0)
-        let area_l = chart_layer(fl, gw, h)
-        let area_d = chart_layer(fd, gw, h)
-        show_eq(area_l, appearance(), 0)
-        show_eq(area_d, appearance(), 1)
-        let dl = chart_line_d(vals, s, j, domain, CHART_GUTTER, col_w, plot_h,
-                            CHART_TOP, n)
-        let line_l = chart_layer(chart_svg(dl, gw, h, "none", chart_stroke_light(j), 2), gw, h)
-        let line_d = chart_layer(chart_svg(dl, gw, h, "none", chart_stroke_dark(j), 2), gw, h)
-        show_eq(line_l, appearance(), 0)
-        show_eq(line_d, appearance(), 1)
-        for i in 0..n {
-            let x = chart_pt_x(CHART_GUTTER, col_w, n, i)
-            let y = chart_y(domain, plot_h, CHART_TOP, chart_val(vals, s, i, j))
-            let dot = Box(width = 6, height = 6, radius = 3,
-                               background = chart_color(j),
-                               position = pos_absolute(),
-                               left = x - 3,
-                               top = y - 3)
-            let ii = i
-            styled(dot, || { opacity(dot, chart_dim(act, ii)) })
+        chart_axes(gw, h, domain)
+        for j in 0..s {
+            let d = chart_area_d(vals, s, j, domain, CHART_GUTTER, col_w, plot_h,
+                                 CHART_TOP, n)
+            let fd = chart_svg(d, gw, h, chart_fd(j), "none", 0)
+            let fl = chart_svg(d, gw, h, chart_fl(j), "none", 0)
+            let area_l = chart_layer(fl, gw, h)
+            let area_d = chart_layer(fd, gw, h)
+            show_eq(area_l, appearance(), 0)
+            show_eq(area_d, appearance(), 1)
+            let dl = chart_line_d(vals, s, j, domain, CHART_GUTTER, col_w, plot_h,
+                                  CHART_TOP, n)
+            let line_l = chart_layer(chart_svg(dl, gw, h, "none", chart_stroke_light(j), 2), gw, h)
+            let line_d = chart_layer(chart_svg(dl, gw, h, "none", chart_stroke_dark(j), 2), gw, h)
+            show_eq(line_l, appearance(), 0)
+            show_eq(line_d, appearance(), 1)
+            for i in 0..n {
+                let x = chart_pt_x(CHART_GUTTER, col_w, n, i)
+                let y = chart_y(domain, plot_h, CHART_TOP, chart_val(vals, s, i, j))
+                let dot = Box(width = 6, height = 6, radius = 3,
+                              background = chart_color(j),
+                              position = pos_absolute(),
+                              left = x - 3,
+                              top = y - 3)
+                let ii = i
+                styled(dot, || { opacity(dot, chart_dim(act, ii)) })
+            }
         }
-    }
-    for i in 0..n {
-        chart_xlab(labels[i], i, col_w, plot_h, 1, n)
-    }
-    chart_tooltips(labels, names, vals, s, n, h, gw, col_w, act, 1)
+        for i in 0..n {
+            chart_xlab(labels[i], i, col_w, plot_h, 1, n)
+        }
+        chart_tooltips(labels, names, vals, s, n, h, gw, col_w, act, 1)
     })
     chart_legend(names)
 }
@@ -6372,14 +6363,14 @@ fn CalStep(markup: string, label: string, press: fn()) {
         a11y_label = label,
         hover_off = true,
         cursor = "pointer"
-    ) {
+       ) {
         Icon(markup, 16, mute())
     }
 }
 
 fn CalWeekday(s: string) {
     Box(align_direction = DIRECTION.Row, width = CAL_CELL, height = 24,
-             align_items = ALIGN.Center, justify = ALIGN.Center) {
+        align_items = ALIGN.Center, justify = ALIGN.Center) {
         Text(s, color = dim(), font = FONT_CAPTION)
     }
 }
@@ -6438,12 +6429,12 @@ fn CalCell(y: Signal<int>, m: Signal<int>, d: Signal<int>, open: Signal<int>, id
         align_items = ALIGN.Center,
         justify = ALIGN.Center,
         on_click = fn() {
-            let day = cal_day_at(y.get(), m.get(), idx)
-            if day > 0 {
-                d.set(day)
-                open.set(0)
-            }
-        },
+        let day = cal_day_at(y.get(), m.get(), idx)
+        if day > 0 {
+            d.set(day)
+            open.set(0)
+        }
+    },
         a11y_role = "button",
         padding_x = 2,
         cursor = "pointer"
@@ -6536,59 +6527,59 @@ fn DatePicker(y: Signal<int>, m: Signal<int>, d: Signal<int>) {
         }
     }
     slot(anchor, || {
-    let panel = Box(
-        align_direction = DIRECTION.Column,
-        width = 320,
-        padding = 12,
-        spacing = SPACE.Exs,
-        background = plate(),
-        border = HAIRLINE,
-        border_color = rule(),
-        radius = RAD_LG,
-        position = pos_absolute(),
-        top = 68,
-        left = 0,
-        z_index = 20,
-        a11y_role = "dialog",
-        on_click = fn() { return },
-        visible = open
-    )
-    slot(panel, || {
-    Row(4) {
-        CalStep(IC_CHEV_LEFT, "Previous month", fn() {
-            if m.get() <= 1 {
-                m.set(12)
-            } else {
-                m.set(m.get() - 1)
+        let panel = Box(
+            align_direction = DIRECTION.Column,
+            width = 320,
+            padding = 12,
+            spacing = SPACE.Exs,
+            background = plate(),
+            border = HAIRLINE,
+            border_color = rule(),
+            radius = RAD_LG,
+            position = pos_absolute(),
+            top = 68,
+            left = 0,
+            z_index = 20,
+            a11y_role = "dialog",
+            on_click = fn() { return },
+            visible = open
+        )
+        slot(panel, || {
+            Row(4) {
+                CalStep(IC_CHEV_LEFT, "Previous month", fn() {
+                    if m.get() <= 1 {
+                        m.set(12)
+                    } else {
+                        m.set(m.get() - 1)
+                    }
+                })
+                // One text node whose label tracks `m`; the rails are its only
+                // writers, so no pre-built name stack is needed. Centered between
+                // the month steps so long and short names do not jump the arrows.
+                Box(align_direction = DIRECTION.Row,
+                    justify = ALIGN.Center,
+                    align_items = ALIGN.Center,
+                    grow = 1) {
+                    Text(fn() -> string {
+                        return cal_month_name(m.get())
+                    }, color = ink(), font = FONT_BODY)
+                }
+                CalStep(IC_CHEV_RIGHT, "Next month", fn() {
+                    if m.get() >= 12 {
+                        m.set(1)
+                    } else {
+                        m.set(m.get() + 1)
+                    }
+                })
+                Grow()
+                CalStep(IC_CHEV_LEFT, "Previous year", fn() => y.set(y.get() - 1))
+                // Bound text paints the live year — same trick the gauge widgets use.
+                bind(Text("", color = ink(), font = FONT_BODY), y)
+                CalStep(IC_CHEV_RIGHT, "Next year", fn() => y.set(y.get() + 1))
             }
+            CalWeekRow()
+            CalGrid(y, m, d, open)
         })
-        // One text node whose label tracks `m`; the rails are its only
-        // writers, so no pre-built name stack is needed. Centered between
-        // the month steps so long and short names do not jump the arrows.
-        Box(align_direction = DIRECTION.Row,
-                 justify = ALIGN.Center,
-                 align_items = ALIGN.Center,
-                 grow = 1) {
-            Text(fn() -> string {
-                return cal_month_name(m.get())
-            }, color = ink(), font = FONT_BODY)
-        }
-        CalStep(IC_CHEV_RIGHT, "Next month", fn() {
-            if m.get() >= 12 {
-                m.set(1)
-            } else {
-                m.set(m.get() + 1)
-            }
-        })
-        Grow()
-        CalStep(IC_CHEV_LEFT, "Previous year", fn() => y.set(y.get() - 1))
-        // Bound text paints the live year — same trick the gauge widgets use.
-        bind(Text("", color = ink(), font = FONT_BODY), y)
-        CalStep(IC_CHEV_RIGHT, "Next year", fn() => y.set(y.get() + 1))
-    }
-    CalWeekRow()
-    CalGrid(y, m, d, open)
-    })
     })
 }
 
@@ -6597,5 +6588,5 @@ fn DatePicker(y: Signal<int>, m: Signal<int>, d: Signal<int>) {
 fn Page() -> Node {
     ensure_role_colors()
     return Box(align_direction = DIRECTION.Column, spacing = SECTION,
-                    padding = PAGE_PAD, background = paper(), grow = 1)
+               padding = PAGE_PAD, background = paper(), grow = 1)
 }

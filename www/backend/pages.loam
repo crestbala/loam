@@ -11,8 +11,8 @@ fn of(id: int) -> PageResp {
         return pack(
             "Install",
             "Build the compiler from this repo, then compile programs with loam.",
-            "Needs a C11 compiler (cc) and make. macOS for native GUI and Maya. Xcode for iOS Simulator. A wasm32 clang (Homebrew LLVM, not Apple /usr/bin/clang) for web; set LOAM_WASM_CC if needed. Android SDK, NDK, Gradle 8.2+, and adb for --target=android.\n\nmake produces bin/loam and bin/loam-lsp. make test runs language tests (GUI and Maya headless). LOAM_TIME=1 prints check / codegen / cc timings.\n\nThis site: ./run.sh www (UI :5175, RPC :8082).",
-            "make\n./bin/loam hello.loam -o hello\n./hello\n\n./bin/loam app.loam --run\n./bin/loam app.loam --emit-c -o a.c\n./bin/loam --target wasm app.loam -o app.wasm"
+            "Needs a C11 compiler (cc) and make. macOS for native GUI and Maya. Xcode for iOS Simulator. A wasm32 clang (Homebrew LLVM, not Apple /usr/bin/clang) for web; set LOAM_WASM_CC if needed. Android SDK, NDK, Gradle 8.2+, and adb for --target=android.\n\nmake produces bin/loamc and bin/loam-lsp. make test runs language tests (GUI and Maya headless). LOAM_TIME=1 prints check / codegen / cc timings.\n\nThis site: ./run.sh www (UI :5175, RPC :8082).",
+            "make\n./bin/loamc hello.loam -o hello\n./hello\n\n./bin/loamc app.loam --run\n./bin/loamc app.loam --emit-c -o a.c\n./bin/loamc --target wasm app.loam -o app.wasm"
         )
     }
     if id == 2 {
@@ -116,7 +116,7 @@ fn of(id: int) -> PageResp {
             "Platforms",
             "Same Loam source; the host is a --target flag. Zeus paints its own theme everywhere.",
             "native (default) — macOS Cocoa window, not AppKit widgets. wasm / wasm32 — Canvas2D in the browser (no HTML DOM widgets). ios — Simulator, Xcode. android — Gradle + JNI Canvas, density-independent pixels.\n\nCLI and std:http servers are native binaries. ZEUS_HEADLESS=1 / MAYA_HEADLESS=1 for one frame (make test).",
-            "./bin/loam --target=native --run app.loam\n./bin/loam --target=wasm32 -o app.wasm app.loam\n./bin/loam --target=ios --run examples/zeus/dashboard/dashboard.loam"
+            "./bin/loamc --target=native --run app.loam\n./bin/loamc --target=wasm32 -o app.wasm app.loam\n./bin/loamc --target=ios --run examples/zeus/dashboard/dashboard.loam"
         )
     }
     if id == 15 {

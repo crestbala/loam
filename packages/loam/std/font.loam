@@ -50,7 +50,7 @@ fn table_offset(s: string, tag: string) -> int {
     while i < n {
         let rec = 12 + i * 16
         if read_u8(s, rec) == tag[0] && read_u8(s, rec + 1) == tag[1] && read_u8(s, rec + 2) == tag[2] &&
-            read_u8(s, rec + 3) == tag[3]
+        read_u8(s, rec + 3) == tag[3]
         {
             return read_u32_be(s, rec + 8)
         }

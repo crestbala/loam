@@ -3139,7 +3139,7 @@ fn call_async(c: Client, name: string, body: string, cb: fn(string)) {
         if fd >= 0 {
             let req = client_post(hp.host, hp.port, path, framed)
             push(acalls, RpcCall { req: req, sent: 0, fd: fd, stage: 5, acc: "",
-                                   cbid: cbid, at: async.now_ms() + 15000 })
+                cbid: cbid, at: async.now_ms() + 15000 })
             async.io_open()
             return
         }
@@ -3149,7 +3149,7 @@ fn call_async(c: Client, name: string, body: string, cb: fn(string)) {
         if fd >= 0 {
             let req = client_post(hp.host, hp.port, path, framed)
             push(acalls, RpcCall { req: req, sent: 0, fd: fd, stage: 1, acc: "",
-                                   cbid: cbid, at: async.now_ms() + 8000 })
+                cbid: cbid, at: async.now_ms() + 8000 })
             async.io_open()
             return
         }
@@ -3158,7 +3158,7 @@ fn call_async(c: Client, name: string, body: string, cb: fn(string)) {
     // still falls through to the JS fetch slots. Native connect failure is "".
     if net.fetch_issue(path, framed) >= 0 {
         push(acalls, RpcCall { req: "", sent: 0, fd: -1, stage: 4, acc: "",
-                               cbid: cbid, at: async.now_ms() + 8000 })
+            cbid: cbid, at: async.now_ms() + 8000 })
         async.io_open()
         return
     }
@@ -3282,7 +3282,7 @@ fn sse_open(c: Client, path: string, on_event: fn(string), on_done: fn()) {
         return
     }
     push(sse_calls, SseCall { req: string_of(b), sent: 0, fd: fd, stage: 1, acc: "",
-                              on_event: on_event, on_done: on_done, at: async.now_ms() + 8000 })
+        on_event: on_event, on_done: on_done, at: async.now_ms() + 8000 })
     async.io_open()
 }
 
@@ -3494,7 +3494,7 @@ fn ws_open(c: Client, path: string, on_text: fn(string), on_done: fn()) {
             return
         }
         push(ws_calls, WsCall { req: "", sent: 0, fd: slot, stage: 5, acc: "",
-                                on_text: on_text, on_done: on_done, at: 0 })
+            on_text: on_text, on_done: on_done, at: 0 })
         async.io_open()
         return
     }
@@ -3518,7 +3518,7 @@ fn ws_open(c: Client, path: string, on_text: fn(string), on_done: fn()) {
         return
     }
     push(ws_calls, WsCall { req: string_of(b), sent: 0, fd: fd, stage: 1, acc: "",
-                            on_text: on_text, on_done: on_done, at: async.now_ms() + 8000 })
+        on_text: on_text, on_done: on_done, at: async.now_ms() + 8000 })
     async.io_open()
 }
 

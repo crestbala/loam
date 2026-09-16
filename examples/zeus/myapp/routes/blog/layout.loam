@@ -3,7 +3,7 @@ import "std:zeus"
 fn layout(build: fn()) {
     let box = zeus.Box(align_direction = DIRECTION.Column, padding = 8, spacing = 4)
     zeus.slot(box, fn() {
-            zeus.Text("blog")
-        })
+        zeus.Text("blog")
+    })
     zeus.slot(box, build)
 }

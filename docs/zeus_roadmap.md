@@ -22,6 +22,7 @@ definition of done.
 | Data plane | `#[proto]` codecs + unary gRPC-Web / h2c client **and** server, `Result<T>`, async `call_async` client, SSE + WebSocket streams (Phase 1b), bearer-token auth (`set_token` + `app.before`) | no bidirectional streaming; no async TLS |
 | Networking | `std/net`: blocking POSIX sockets + TLS client (`net.tls_connect`, SecureTransport on macOS) + Phase 1 async transport (timers, non-blocking connect/poll/send, `http.call_async`/`sse_open`/`ws_open` steppers); wasm: `fetch_rpc` + async fetch slots | streaming bodies on wasm, async TLS |
 | Storage | `sys.read_file` / `write_file` (whole-file), env | KV/table store, structured persistence, fs tree, app-data paths |
+| Process | command line (`sys.argc` / `sys.arg` / `sys.args`), `sys.exec` + exit status, `sys.exit`, env | directory listing + `stat`, filesystem watch, spawn with streaming stdio (what a native `zeli` needs) |
 | Media | inline SVG + raster `Image` (PNG / JPEG / WebP / GIF, host decode) | gradients |
 | Text | one weight per host; kind 10 multiline + caret/selection; mac IME; wasm paste | rich text spans, emoji metrics |
 | Server | single-threaded Loam accept loop (HTTP/1.1 + h2c + one SSE/ws client per connection) | concurrency model for chat-class servers |

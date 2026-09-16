@@ -1892,4 +1892,3 @@ fn edit_ready(id: int) -> int {
     platform.plat_edit_metrics(slot, input_inner_w(id), font)
     return slot
 }
-

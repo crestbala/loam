@@ -1177,4 +1177,3 @@ fn layout(width: int, height: int) {
     layout_node(arena.root_id, 0, 0, arena.win_w, arena.win_h)
     layout_overlays(arena.root_id)
 }
-

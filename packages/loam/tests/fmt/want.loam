@@ -19,3 +19,31 @@ fn main() {
         fmt.println("nope")
     }
 }
+
+// Blocks, groups, and one-line braces. Each of these was once formatted
+// wrongly: a trailing block indented by the call paren, a nested group
+// flattened, and a one-line `{ x }` closed up on one side only.
+fn shapes() {
+    zeus.App("x", fn() {
+        body(1)
+    })
+    let hreq = http.concat_str(
+        "pre",
+        http.concat_str(
+            http.h2_frame(1),
+            http.h2_frame(2)),
+    )
+    let a = []string {"One", "Two"}
+    let b = Posts { loaded: 0, titles: []string {} }
+    let c = if x { "On" } else { "Off" }
+    let d = g(1, 2,)
+    let e = Foo { a: 1 }
+}
+
+/** A block comment keeps
+ *  its own column, and is
+ *  not code: `{ x }` here.
+ */
+fn after() {
+    return 1
+}

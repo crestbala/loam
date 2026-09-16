@@ -129,9 +129,9 @@ fn test_glyph_run() {
     // px == unitsPerEm, so pen positions equal design units.
     let run = font.glyph_run(s, 1000, "A A")
     test.assert_eq_int(run.len, 3)
-    test.assert_eq_int(run[0].id, 1)   // A
+    test.assert_eq_int(run[0].id, 1) // A
     test.assert_eq_int(run[0].x, 0)
-    test.assert_eq_int(run[1].id, 4)   // space
+    test.assert_eq_int(run[1].id, 4) // space
     test.assert_eq_int(run[1].x, 600)
     test.assert_eq_int(run[2].id, 1)
     test.assert_eq_int(run[2].x, 850)

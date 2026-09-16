@@ -1,0 +1,15 @@
+// The command line as the shell gave it. `arg(0)` is the program path, which
+// this fixture cannot compare — it depends on where the suite builds — so the
+// count and everything after the path is what it prints.
+import "std:fmt"
+import "std:sys"
+
+fn main() {
+    let argv = sys.args()
+    fmt.println("argc =", argv.len)
+    for i in 1..argv.len {
+        fmt.println(i, argv[i])
+    }
+    fmt.println("arg(2) =", sys.arg(2))
+    fmt.println("arg(99) = [", sys.arg(99), "]")
+}

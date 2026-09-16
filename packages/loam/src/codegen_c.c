@@ -1543,9 +1543,19 @@ static void emit_struct(FILE *o, AstNode *st) {
 
 static void emit_fn_sig(FILE *o, AstNode *fn, int is_main) {
     if (is_main) {
-        /* iOS / Android: the host owns process main; Loam entry is loam_app_main. */
+        /* iOS / Android: the host owns process main and passes nothing. wasm has
+           no process and no command line either, and its link is sensitive to
+           the shape of `main` (`-nostdlib`, `--export=main`), so both keep an
+           argument-less entry. Everywhere else the entry takes the process's
+           arguments and hands them to the runtime — a Loam program reads them
+           with `sys.argc()` / `sys.arg(i)`. */
         fprintf(o, "#if defined(LOAM_IOS) || defined(LOAM_ANDROID)\n"
-                   "int loam_app_main(void)\n#else\nint main(void)\n#endif\n");
+                   "int loam_app_main(void)\n"
+                   "#elif defined(__wasm32__)\n"
+                   "int main(void)\n"
+                   "#else\n"
+                   "int main(int argc, char **argv)\n"
+                   "#endif\n");
         return;
     }
     Type *ft = fn->ty;
@@ -2527,9 +2537,18 @@ static IrFn *find_ir_fn(const char *cname) {
     return NULL;
 }
 
+/* The arguments only exist where the entry received them, so the handover is
+   guarded exactly like the signature above — wasm has no process either. */
+static void emit_main_args(FILE *o) {
+    fprintf(o, "#if !defined(LOAM_IOS) && !defined(LOAM_ANDROID) && !defined(__wasm32__)\n"
+               "    loam_argv_set(argc, argv);\n"
+               "#endif\n");
+}
+
 static void emit_ir_fn_body(FILE *o, const IrFn *fn, int is_main) {
     CF = fn;
     fprintf(o, " {\n");
+    if (fn->is_main) emit_main_args(o);
     if (fn->clos_id && fn->ncaps == 0) fprintf(o, "    (void)_env;\n");
     if (fn->is_main && emit_ir_mod) {
         /* Imports first, main module last. Modules are lowered importer-
@@ -2579,6 +2598,7 @@ static void emit_fn(FILE *o, AstNode *fn, int is_main) {
         return;
     }
     fprintf(o, " {\n");
+    if (is_main) emit_main_args(o);
     drop_sp = 1;
     drop_n[1] = 0;
     tmp_id = 0;

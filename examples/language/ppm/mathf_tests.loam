@@ -3,7 +3,7 @@
 //! The expected values are the reference libm results, rounded to 7 decimals.
 //! `loam test` runs them:
 //!
-//!     ./bin/loam test examples/language/ppm/mathf_tests.loam
+//!     ./bin/loamc test examples/language/ppm/mathf_tests.loam
 
 import "std:test"
 import "mathf.loam"

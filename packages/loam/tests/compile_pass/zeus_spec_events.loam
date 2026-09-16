@@ -30,12 +30,12 @@ fn CommandPalette(text: Signal<string>) {
         bind = text,
         placeholder = "type a command",
         on_key_down = fn(e: KeyEvent) {
-            if e.ctrl {
-                if e.key == Key.K {
-                    fmt.println("Shortcut triggered!")
-                }
+        if e.ctrl {
+            if e.key == Key.K {
+                fmt.println("Shortcut triggered!")
             }
-        },
+        }
+    },
         on_key_up = fn(e: KeyEvent) => fmt.println("up", e.key),
         on_key_press = fn(e: KeyEvent) => fmt.println("press", e.key)
     )

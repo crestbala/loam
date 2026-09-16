@@ -8,7 +8,7 @@ import { defineConfig } from "vite";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, "../../../..");
-const loam = resolve(repo, "bin/loam");
+const loam = resolve(repo, "bin/loamc");
 const buildDir = resolve(here, "build");
 const loader = resolve(repo, "packages/zeus/hosts/web/loader.js");
 const app = resolve(here, "app.loam");
