@@ -124,6 +124,13 @@ static int want_headless(void) {
     return env_on("ZEUS_HEADLESS") || env_on("LOAM_HEADLESS");
 }
 
+/* A development build: same host as a GUI one, no optimizer and no dead-strip.
+   `zeli serve` sets this for the target it is watching, because the edit loop
+   recompiles the whole program each time. */
+static int want_dev(void) {
+    return env_on("LOAM_DEV");
+}
+
 static double now_sec(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -149,7 +156,10 @@ static int any_src_newer(const char *dst, const char **srcs, int n) {
 /** Compile `src` to `obj` if it is stale. `extra` is extra cc flags (may be ""). */
 static int ensure_obj(const char *src, const char *obj, const char *extra,
                       const char **deps, int ndeps) {
-    if (!any_src_newer(obj, deps, ndeps)) return 0;
+    /* Rebuild when the object is missing, not only when a source is newer: the
+       freshness test cannot see a file that is not there, and a host build's
+       objects are names nothing has made yet (zeus_plat.host.o). */
+    if (access(obj, F_OK) == 0 && !any_src_newer(obj, deps, ndeps)) return 0;
     if (ensure_parent_dir(obj) != 0) return 1;
     char cmd[2048];
     snprintf(cmd, sizeof cmd, "cc -std=gnu99 -O1 -c -I\"%s\" %s \"%s\" -o \"%s\"",
@@ -792,6 +802,10 @@ int main(int argc, char **argv) {
         if (strcmp(sess.mods[i].name, "net") == 0) uses_net = 1;
         if (strcmp(sess.mods[i].name, "raygui") == 0) uses_raygui = 1;
     }
+    /* A `zeli serve` host is a zeus-linked program even though its own source is
+       a two-line shim: the platform layer and the Cocoa host it carries are what
+       the images it loads call into. */
+    if (env_on("LOAM_HOST")) uses_zeus = 1;
 
     char http_link[768] = "";
     if (uses_http) {
@@ -1029,22 +1043,34 @@ int main(int argc, char **argv) {
 
     /* Generated C is large. -O2 + function-sections on the whole TU dominated
        wall time. Headless tests skip the optimizer and Cocoa; GUI uses -O1.
-       Runtime .c/.m compile once into runtime/.obj/. */
+       Runtime .c/.m compile once into runtime/.obj/.
+
+       LOAM_DEV is the third case: a *development* GUI build. The optimizer and
+       dead-strip exist for the shipped binary, and on a recompile-per-edit loop
+       they are most of what the edit costs, so `zeli serve` asks for neither.
+       Nothing else sets it, so what ships is unchanged. */
     int headless = want_headless();
+    int dev = want_dev();
+    /* A *host* build: this program is a `zeli serve` host, not the app. It defines
+       LOAM_HOST_BUILD, which turns the engine calls in `zeus_plat.c` / `mac.m` into
+       calls through the loaded image's table (zeus_rt.h) and compiles in the
+       loader. Nothing else sets this, so the app binaries are untouched. */
+    int host = env_on("LOAM_HOST");
     /* Generated C carries `#line` directives pointing at `.loam` sources, so
        -g makes lldb/gdb, profilers, and sanitizers report Loam lines. Off by
        default: it inflates binaries and the published size benchmark. */
     static char copt_buf[256];
     snprintf(copt_buf, sizeof copt_buf, "%s%s",
-             headless ? "-std=gnu99 -O0 -fno-asynchronous-unwind-tables -ffp-contract=off"
-                      : "-std=gnu99 -O1 -fno-asynchronous-unwind-tables "
-                        "-fomit-frame-pointer -ffp-contract=off",
+             (headless || dev)
+                 ? "-std=gnu99 -O0 -fno-asynchronous-unwind-tables -ffp-contract=off"
+                 : "-std=gnu99 -O1 -fno-asynchronous-unwind-tables "
+                   "-fomit-frame-pointer -ffp-contract=off",
              env_on("LOAM_DEBUG") ? " -g" : "");
     const char *copt = copt_buf;
 #if defined(__APPLE__)
-    const char *ld = headless ? "" : "-Wl,-dead_strip";
+    const char *ld = (headless || dev) ? "" : "-Wl,-dead_strip";
 #else
-    const char *ld = headless ? "" : "-Wl,--gc-sections";
+    const char *ld = (headless || dev) ? "" : "-Wl,--gc-sections";
 #endif
 
     char cmd[4096];
@@ -1055,16 +1081,56 @@ int main(int argc, char **argv) {
     snprintf(mac_m, sizeof mac_m, "%s/hosts/desktop/mac.m", LOAM_ZEUS_DIR);
     snprintf(rt_h, sizeof rt_h, "%s/zeus_rt.h", LOAM_RUNTIME_DIR);
     snprintf(key_h, sizeof key_h, "%s/zeus_key.h", LOAM_RUNTIME_DIR);
-    snprintf(plat_o, sizeof plat_o, "%s/.obj/zeus_plat.o", LOAM_RUNTIME_DIR);
-    snprintf(key_o, sizeof key_o, "%s/.obj/zeus_key.o", LOAM_RUNTIME_DIR);
-    snprintf(mac_o, sizeof mac_o, "%s/.obj/zeus_mac.o", LOAM_RUNTIME_DIR);
+    /* A host build compiles the platform layer and the Cocoa host against the
+       dispatch table, so `LOAM_HOST_BUILD` has to reach those two translation
+       units — and *only* those: the generated C declares the engine entry points
+       itself, and macro-rewriting its declarations is a syntax error. They also
+       get their own cached objects, or a host build would leave a host-flavoured
+       `zeus_plat.o` behind for the next normal build to link. */
+    const char *host_flags = host ? "-DLOAM_HOST_BUILD" : "";
+    const char *obj_tag = host ? ".host" : "";
+    snprintf(plat_o, sizeof plat_o, "%s/.obj/zeus_plat%s.o", LOAM_RUNTIME_DIR, obj_tag);
+    snprintf(key_o, sizeof key_o, "%s/.obj/zeus_key%s.o", LOAM_RUNTIME_DIR, obj_tag);
+    snprintf(mac_o, sizeof mac_o, "%s/.obj/zeus_mac%s.o", LOAM_RUNTIME_DIR, obj_tag);
+
+    /* `-o <stem>.dylib` compiles the program as a *shared object* rather than an
+       executable: no host objects and no frameworks are linked in, and the
+       symbols those provide — the engine, the platform layer, the key state — are
+       left undefined for whoever loads it to supply. `zeli serve` builds the
+       target it watches this way, so its host can load a new copy after an edit
+       with the window still up. On ELF the equivalent is the default. */
+    {
+        size_t n = binpath[0] ? strlen(binpath) : 0;
+        if (n > 6 && strcmp(binpath + n - 6, ".dylib") == 0) {
+#if defined(__APPLE__)
+            const char *shared = "-dynamiclib -undefined dynamic_lookup";
+#else
+            const char *shared = "-shared";
+#endif
+            snprintf(cmd, sizeof cmd, "cc %s %s -o \"%s\" -I\"%s\" -x c \"%s\"%s", copt,
+                     shared, binpath, LOAM_RUNTIME_DIR, cpath, extra_link);
+            if (env_on("LOAM_TIME")) fprintf(stderr, "loam: dylib cc\n");
+            if (system(cmd) != 0) {
+                fprintf(stderr, "loam: shared object compile failed (temp source: %s)\n",
+                        cpath);
+                free(stem);
+                loam_session_free(&sess);
+                return 1;
+            }
+            printf("loam: %s -> %s (loadable)\n", in_path, binpath);
+            if (cpath_is_temp) unlink(cpath);
+            free(stem);
+            loam_session_free(&sess);
+            return 0;
+        }
+    }
 
     t0 = now_sec();
     if (uses_zeus) {
         const char *plat_deps[] = {plat_c, rt_h, key_h};
         const char *key_deps[] = {key_c, key_h};
-        if (ensure_obj(plat_c, plat_o, "", plat_deps, 3) ||
-            ensure_obj(key_c, key_o, "", key_deps, 2)) {
+        if (ensure_obj(plat_c, plat_o, host_flags, plat_deps, 3) ||
+            ensure_obj(key_c, key_o, host_flags, key_deps, 2)) {
             fprintf(stderr, "loam: failed to compile zeus runtime\n");
             if (cpath_is_temp) unlink(cpath);
             free(stem);
@@ -1074,7 +1140,8 @@ int main(int argc, char **argv) {
 #if defined(__APPLE__)
         if (!headless) {
             const char *mac_deps[] = {mac_m, rt_h, key_h};
-            if (ensure_obj(mac_m, mac_o, "-x objective-c", mac_deps, 3)) {
+            if (ensure_obj(mac_m, mac_o, host ? "-x objective-c -DLOAM_HOST_BUILD" : "-x objective-c",
+                           mac_deps, 3)) {
                 fprintf(stderr, "loam: failed to compile %s\n", mac_m);
                 if (cpath_is_temp) unlink(cpath);
                 free(stem);
@@ -1097,10 +1164,10 @@ int main(int argc, char **argv) {
         if (!headless) {
             char linux_c[512], linux_o[512];
             snprintf(linux_c, sizeof linux_c, "%s/hosts/desktop/linux.c", LOAM_ZEUS_DIR);
-            snprintf(linux_o, sizeof linux_o, "%s/.obj/zeus_linux.o", LOAM_RUNTIME_DIR);
+            snprintf(linux_o, sizeof linux_o, "%s/.obj/zeus_linux%s.o", LOAM_RUNTIME_DIR, obj_tag);
             {
                 const char *linux_deps[] = {linux_c, rt_h, key_h};
-                if (ensure_obj(linux_c, linux_o, "", linux_deps, 3)) {
+                if (ensure_obj(linux_c, linux_o, host_flags, linux_deps, 3)) {
                     fprintf(stderr, "loam: failed to compile %s (need libx11)\n", linux_c);
                     if (cpath_is_temp) unlink(cpath);
                     free(stem);

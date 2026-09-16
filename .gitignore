@@ -1,6 +1,10 @@
 obj/
 bin/
 packages/loam/tests/tmp/
+# Test fixtures are compiled into <fixture-dir>/build/<stem> when no `-o` is
+# given. Ten of those binaries are tracked from earlier sessions; this keeps new
+# ones out (they are build output, not source).
+packages/loam/tests/*/build/
 packages/loam/runtime/.obj/
 packages/loam/tests/routes_app/.zeus/
 packages/loam/tests/routes_app/build/

@@ -488,8 +488,44 @@ void zeus_picked_image(const char *src, int64_t w, int64_t h) {
     if (plat_redraw) plat_redraw();
 }
 
+#ifdef LOAM_HOST_BUILD
+/* The table `zeus_rt.h` routes the host's engine calls through. Zeroed until
+   the loader fills it from the image it just loaded. */
+ZeusAppApi zeus_app_api;
+
+static int host_mode;
+static void (*plat_host_run_fn)(const char *path);
+
+/* Called by a host once it is the one owning the loop, before it loads the
+   app image. */
+void zeus_set_host_mode(void) { host_mode = 1; }
+
+/* The loader (a host provides one; see `mac.m`). */
+void zeus_set_host_hooks(void (*run)(const char *path)) { plat_host_run_fn = run; }
+#endif
+
 void loam_zeus_plat_run(void) {
+#ifdef LOAM_HOST_BUILD
+    /* A host owns the loop: the app has registered its tree by now (`zeus.App`
+       builds and roots it before `raw_run`), so this returns and the host drives
+       the frames. */
+    if (host_mode) return;
+#endif
     if (plat_run) plat_run();
+}
+
+/* `host.run(path)` (std:host) — hand this process to a host that loads the app
+   image at `path`. Only a host build has one; elsewhere this is a no-op, so a
+   program that calls it still links and still runs its own loop. */
+void loam_host_run(loam_str path) {
+#ifdef LOAM_HOST_BUILD
+    if (!plat_host_run_fn) return;
+    char *p = dup_ys(path);
+    plat_host_run_fn(p);
+    free(p);
+#else
+    (void)path;
+#endif
 }
 
 int64_t loam_zeus_plat_headless(void) {

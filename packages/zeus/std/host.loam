@@ -1,0 +1,12 @@
+//! The development-host seam: handing the process to a `zeli serve` host that
+//! loads the app as a shared image and loads a new one on every edit.
+//!
+//! It is deliberately its own module. Reaching this through `std:zeus` would
+//! compile the whole engine into the *host* program — and the engine belongs to
+//! the image the host loads, so the host would carry a second, divergent copy
+//! that any unrouted call could quietly land in. Importing this pulls in nothing
+//! else.
+
+/// Hand the process to the host that loads the app image at `path`. On every
+/// target but a host one this does nothing: the program runs its own loop.
+fn run(path: string) {}

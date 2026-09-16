@@ -1105,9 +1105,10 @@ myapp/
     web/  macos/  ios/  android/  server/
 ```
 
-`zeli new myapp` scaffolds exactly this. `zeli dev` runs the server and the
-current host with hot reload. No four copies of `app.loam` per host — that was
-Phase 1 of the old roadmap and this structure makes the regression impossible.
+`zeli new myapp` scaffolds exactly this. `zeli serve` runs the target you name —
+serving the web build, or starting a native or device one again per rebuild. No
+four copies of `app.loam` per host — that was Phase 1 of the old roadmap and this
+structure makes the regression impossible.
 
 ---
 
@@ -1290,7 +1291,7 @@ right title and image; `<body>` contains the canvas and nothing else.
 ### Phase 19 — Developer experience
 `loam-fmt`. Hot reload preserving the signal arena. Devtools inspector.
 `import "pkg:name"` + vendor lockfile. Animation and transition primitives.
-**Exit:** `zeli dev` reflects a component edit without losing state; the inspector
+**Exit:** `zeli serve` reflects a component edit without losing state; the inspector
 shows tree, layout boxes, and signal values live.
 
 ---
@@ -1338,9 +1339,9 @@ so if that's exported (e.g. left over from `make test`) the binary starts, does 
 ## Wasm
 
 ```bash
-./bin/zeli dev examples/zeus/myapp --port 5173
+./bin/zeli serve examples/zeus/myapp --port 5173
 ```
 
 It's running now at **http://127.0.0.1:5173** — verified serving:
 
-deno run --allow-read --allow-write packages/zeus/cli/zeli.ts routes examples/zeus/myapp
+./bin/zeli routes examples/zeus/myapp

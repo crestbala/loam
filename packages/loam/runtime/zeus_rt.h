@@ -412,4 +412,93 @@ void zeus_window_opened(void);
 #define ZEUS_DEFAULT_WIN_W 640
 #define ZEUS_DEFAULT_WIN_H 480
 
+/* ── the app image, as a host sees it ────────────────────────────────────────
+
+   A normal build is one program: the app *defines* the engine entry points above
+   and `zeus_plat.c` / `mac.m` call them directly. A `zeli serve` host instead
+   keeps the platform layer and the window and loads the app as a shared image,
+   so those entry points belong to whatever image is loaded *now*.
+
+   That is why the calls go through a table in a host build. A plain dlopen is not
+   enough: a direct call binds once (lazy binding caches the address), so after an
+   edit the host would keep painting the tree the *first* image built, with the
+   window still up and nothing to say it had gone stale. The loader re-reads these
+   from the new image on every load.
+
+   Without LOAM_HOST_BUILD this whole section is absent, the calls are the direct
+   ones they have always been, and what ships is unchanged. */
+#ifdef LOAM_HOST_BUILD
+typedef struct {
+    void (*layout)(int32_t width, int32_t height);
+    void (*paint)(void);
+    int32_t (*step)(void);
+    int32_t (*next_ms)(void);
+    int32_t (*click)(int32_t x, int32_t y);
+    int32_t (*scroll)(int32_t x, int32_t y, int32_t dx, int32_t dy);
+    int32_t (*scroll_step)(int32_t x, int32_t y, int32_t dx, int32_t dy);
+    int32_t (*drag)(int32_t x, int32_t y);
+    int32_t (*hover)(int32_t x, int32_t y);
+    void (*mouseup)(void);
+    int32_t (*over_button)(void);
+    loam_str (*cursor)(void);
+    loam_str (*a11y_dump)(void);
+    loam_str (*tree_dump)(void);
+    loam_str (*signals_dump)(void);
+    int32_t (*state_load)(loam_str snapshot);
+    void (*key_apply)(int32_t sig, int32_t mode, int32_t value, int32_t lo, int32_t hi);
+    void (*fill_focus)(void);
+    int32_t (*focus_depth)(void);
+    int32_t (*focus_node)(int32_t i);
+    int32_t (*focus_ctx)(int32_t i);
+    int32_t (*focus_step)(int32_t back);
+    int32_t (*focus_captures_text)(void);
+    int32_t (*key)(int32_t key);
+    int32_t (*key_up)(int32_t key, int32_t mods);
+    void (*set_mods)(int32_t mods);
+    int32_t (*insert)(loam_str text);
+    int32_t (*marked)(loam_str text);
+    void (*picked_image)(loam_str src, int32_t w, int32_t h);
+} ZeusAppApi;
+
+extern ZeusAppApi zeus_app_api;
+
+/* A host: it owns the loop, and loads app images on its own. `zeus_set_host_mode`
+   makes `loam_zeus_plat_run` yield (the app registers and returns);
+   `zeus_set_host_hooks` hands the platform layer the loader that
+   `zeus.host_run(path)` calls. */
+void zeus_set_host_mode(void);
+void zeus_set_host_hooks(void (*run)(const char *path));
+
+/* One line each, so the call sites read as the engine they call. */
+#define loam_zeus_engine_layout zeus_app_api.layout
+#define loam_zeus_engine_paint zeus_app_api.paint
+#define loam_zeus_engine_step zeus_app_api.step
+#define loam_zeus_engine_next_ms zeus_app_api.next_ms
+#define loam_zeus_engine_click zeus_app_api.click
+#define loam_zeus_engine_scroll zeus_app_api.scroll
+#define loam_zeus_engine_scroll_step zeus_app_api.scroll_step
+#define loam_zeus_engine_drag zeus_app_api.drag
+#define loam_zeus_engine_hover zeus_app_api.hover
+#define loam_zeus_engine_mouseup zeus_app_api.mouseup
+#define loam_zeus_engine_over_button zeus_app_api.over_button
+#define loam_zeus_engine_cursor zeus_app_api.cursor
+#define loam_zeus_engine_a11y_dump zeus_app_api.a11y_dump
+#define loam_zeus_engine_tree_dump zeus_app_api.tree_dump
+#define loam_zeus_engine_signals_dump zeus_app_api.signals_dump
+#define loam_zeus_engine_state_load zeus_app_api.state_load
+#define loam_zeus_engine_key_apply zeus_app_api.key_apply
+#define loam_zeus_engine_fill_focus zeus_app_api.fill_focus
+#define loam_zeus_engine_focus_depth zeus_app_api.focus_depth
+#define loam_zeus_engine_focus_node zeus_app_api.focus_node
+#define loam_zeus_engine_focus_ctx zeus_app_api.focus_ctx
+#define loam_zeus_engine_focus_step zeus_app_api.focus_step
+#define loam_zeus_engine_focus_captures_text zeus_app_api.focus_captures_text
+#define loam_zeus_engine_key zeus_app_api.key
+#define loam_zeus_engine_key_up zeus_app_api.key_up
+#define loam_zeus_engine_set_mods zeus_app_api.set_mods
+#define loam_zeus_engine_insert zeus_app_api.insert
+#define loam_zeus_engine_marked zeus_app_api.marked
+#define loam_zeus_engine_picked_image zeus_app_api.picked_image
+#endif /* LOAM_HOST_BUILD */
+
 #endif

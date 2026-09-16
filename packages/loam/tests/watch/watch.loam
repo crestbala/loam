@@ -1,0 +1,225 @@
+// sys.watch_* on a real tree: what a change-driven reload can see from the
+// kernel seam, and what it must not.
+//
+// The probe creates its own tree and makes its own edits, so there is no second
+// process to synchronize with: every write completes before the next read of the
+// queue, and the events it is looking for are already there. The waits are still
+// bounded rather than zero, because a knote is updated by the kernel rather than
+// by the write itself.
+//
+//     watch <scratch-dir>
+//
+// Exit: 0 when it ran to the end, 2 when this host has no kernel watcher — so the
+// caller can skip rather than fail.
+import "std:fmt"
+import "std:sys"
+
+/// A directory no reload watches: build output and caches live inside a watched
+/// root, so watching them would rebuild forever. The same list `zeli fmt` walks
+/// with, which is what keeps "the sources" one idea across the commands.
+fn skip_dir(name: string) -> bool {
+    if name == "build" {
+        return true
+    }
+    if name == "vendor" {
+        return true
+    }
+    if name == "node_modules" {
+        return true
+    }
+    return false
+}
+
+fn is_dot(name: string) -> bool {
+    if name.len == 0 {
+        return false
+    }
+    return name[0] == 46 /* . */
+}
+
+fn ends_with(s: string, suffix: string) -> bool {
+    if suffix.len > s.len {
+        return false
+    }
+    let off = s.len - suffix.len
+    for i in 0..suffix.len {
+        if s[i + off] != suffix[i] {
+            return false
+        }
+    }
+    return true
+}
+
+fn under(dir: string, name: string) -> string {
+    return "{{dir}}/{{name}}"
+}
+
+/// `a` with `b` after it. This probe stands alone — it imports nothing from the
+/// CLI — so it carries the one string join it needs.
+fn cat(a: string, b: string) -> string {
+    let mut x = []int {}
+    for i in 0..a.len {
+        push(x, a[i])
+    }
+    for i in 0..b.len {
+        push(x, b[i])
+    }
+    return string_from_bytes(x)
+}
+
+/// Append `s` to `p`: read, join, write. There is no append in `std:sys`, and a
+/// probe that needs one can afford the copy.
+fn append_file(p: string, s: string) {
+    sys.write_file(p, cat(sys.read_file(p), s))
+}
+
+/// The `.loam` files directly in `dir`, skipping what a walk never enters. A
+/// directory event names only the directory, so this is what turns one back into
+/// the file that appeared or went away — the half a file watch cannot see.
+fn sources_in(dir: string) -> []string {
+    let mut out = []string {}
+    let entries = sys.list_dir(dir)
+    for i in 0..entries.len {
+        let name = entries[i]
+        if is_dot(name) || skip_dir(name) {
+            continue
+        }
+        if sys.is_dir(under(dir, name)) == 1 {
+            continue
+        }
+        if ends_with(name, ".loam") {
+            push(out, under(dir, name))
+        }
+    }
+    return out
+}
+
+/// The path a registration id stands for. The watcher keeps no state, so the
+/// id-to-path table is kept here — which is the point of the seam being four
+/// syscalls and nothing else.
+fn path_of(id: int, paths: []string, ids: []int) -> string {
+    for i in 0..ids.len {
+        if ids[i] == id {
+            return paths[i]
+        }
+    }
+    return ""
+}
+
+fn already(hits: []string, p: string) -> int {
+    for i in 0..hits.len {
+        if hits[i] == p {
+            return 1
+        }
+    }
+    return 0
+}
+
+/// What one event means, as paths: the file itself, or — when the kernel named
+/// the directory it holds a registration for — the sources now in it.
+fn meaning(root_id: int, id: int, paths: []string, ids: []int) -> []string {
+    let mut out = []string {}
+    let p = path_of(id, paths, ids)
+    if p == "" {
+        return out
+    }
+    if id == root_id {
+        let names = sources_in(p)
+        for i in 0..names.len {
+            push(out, names[i])
+        }
+        return out
+    }
+    push(out, p)
+    return out
+}
+
+/// Wait for a burst and print what it named. `wait_ms` is bounded rather than
+/// zero because the kernel updates the knote, not the write.
+fn report(h: int, root_id: int, paths: []string, ids: []int, label: string, wait_ms: int) {
+    let mut hits = []string {}
+    let mut ev = sys.watch_next(h, wait_ms)
+    while ev != 0 {
+        let names = meaning(root_id, ev, paths, ids)
+        for i in 0..names.len {
+            if already(hits, names[i]) == 0 {
+                push(hits, names[i])
+            }
+        }
+        ev = sys.watch_next(h, 0)
+    }
+    fmt.println("case", label)
+    if hits.len == 0 {
+        fmt.println("  (none)")
+    }
+    for i in 0..hits.len {
+        fmt.println("  hit", hits[i])
+    }
+}
+
+fn main() {
+    let root = sys.arg(1)
+    if root.len == 0 {
+        fmt.println("usage: watch <scratch-dir>")
+        sys.exit(2)
+    }
+
+    /* A tree with the two kinds of file a walk never enters, so the "does not
+       wake it" case has something real to be tempted by. */
+    sys.remove_path(root)
+    sys.mkdir(under(root, "build"))
+    sys.mkdir(under(root, ".zeus"))
+    let edited = under(root, "existing.loam")
+    sys.write_file(edited, "// original\n")
+    sys.write_file(under(root, "build/gen.wasm"), "not a source\n")
+    sys.write_file(under(root, ".zeus/cache.loam"), "not a source\n")
+
+    let h = sys.watch_open()
+    if h == 0 {
+        fmt.println("no kernel watcher on this host")
+        sys.exit(2)
+    }
+
+    /* The root itself, so a new file is noticed, and each source in it, so an
+       in-place edit is. Neither watch covers the other's case. */
+    let root_id = sys.watch_add(h, root)
+    if root_id == 0 {
+        fmt.println("could not watch", root)
+        sys.exit(1)
+    }
+    let mut paths = []string { root }
+    let mut ids = []int { root_id }
+    let files = sources_in(root)
+    for i in 0..files.len {
+        let id = sys.watch_add(h, files[i])
+        if id == 0 {
+            fmt.println("could not watch", files[i])
+            sys.exit(1)
+        }
+        push(paths, files[i])
+        push(ids, id)
+    }
+    fmt.println("armed", paths.len)
+
+    /* 1. A content change to a file that already exists, in place. Only a watch
+       on the file itself can see this — the directory does not change. */
+    append_file(edited, "// edited\n")
+    report(h, root_id, paths, ids, "in-place edit", 2000)
+
+    /* 2. A brand-new file. Only a watch on the directory can see this, and it
+       names the directory, which is why the names have to be listed. */
+    sys.write_file(under(root, "new.loam"), "// new\n")
+    report(h, root_id, paths, ids, "new file", 2000)
+
+    /* 3. Writes inside directories no walk enters. Both sit inside a watched
+       root, so if these woke the watcher a rebuild would trigger a rebuild. */
+    sys.write_file(under(root, "build/gen.wasm"), "changed\n")
+    sys.write_file(under(root, ".zeus/cache.loam"), "changed\n")
+    report(h, root_id, paths, ids, "build output and the cache", 500)
+
+    sys.watch_close(h)
+    for i in 0..ids.len {
+        sys.watch_close(ids[i])
+    }
+    fmt.println("done")
+}

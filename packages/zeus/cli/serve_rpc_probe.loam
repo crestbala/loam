@@ -1,0 +1,61 @@
+// A stand-in for the app's backend, for the serve gate.
+//
+// It answers one gRPC-Web-shaped reply and records the request it was sent, so
+// the gate can check that the serve server's proxy frames an upstream call the way
+// the framework's own client does. Asked for `/fail` it hangs up without
+// answering, which is how the proxy's 502 path is reached without a real outage.
+//
+//     serve_rpc_probe <port> <request-log>
+//
+// The log accumulates: every request it was sent, in order, rewritten as each
+// arrives, because the gate reads it after several calls and the last one alone
+// would not say what the earlier ones carried. The idle budget is generous on
+// purpose: the serve server does its first build before it can be asked anything.
+//
+// Exit: 0 when it served what it was asked to, 2 when this host cannot bind,
+// 1 when it gave up waiting.
+import "std:fmt"
+import "std:net"
+import "std:sys"
+import "zeli.loam" as zeli
+
+fn main() {
+    let port = zeli.int_of(sys.arg(1))
+    let log = sys.arg(2)
+    let l = net.tcp_listen(port)
+    if l < 0 {
+        fmt.println("cannot bind")
+        sys.exit(2)
+    }
+    fmt.println("ready")
+
+    let mut served = 0
+    let mut idle = 0
+    let mut all = ""
+    while served < 8 && idle < 600 {
+        if net.tcp_poll(l, 1, 250) != 1 {
+            idle += 1
+            continue
+        }
+        idle = 0
+        let fd = net.tcp_accept(l)
+        if fd <= 0 {
+            continue
+        }
+        served += 1
+        let raw = zeli.read_request(fd)
+        all = cat(all, cat(raw, "\n----\n"))
+        sys.write_file(log, all)
+        if zeli.contains_str(raw, "/fail") {
+            /* Hang up unanswered: the proxy has to turn silence into a 502. */
+            net.tcp_close(fd)
+            continue
+        }
+        let body = "GRPCWEB-BODY"
+        let head = "HTTP/1.1 200 OK\r\nContent-Type: application/grpc-web+proto\r\nContent-Length: {{body.len}}\r\nConnection: close\r\n\r\n"
+        net.tcp_write(fd, cat(head, body))
+        net.tcp_close(fd)
+    }
+    net.tcp_close(l)
+    fmt.println("done")
+}

@@ -152,7 +152,7 @@ EOF
   exec npx vite --config hosts/web/vite.config.js
 }
 
-# Same entry resolution as the zeli CLI's findEntry().
+# Same entry resolution as the zeli CLI's find_entry().
 zeus_entry() {
   d=$1
   for f in app.loam "$(basename "$d").loam" main.loam; do

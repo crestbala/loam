@@ -268,15 +268,18 @@ directory by default, skipping output and cache directories) and writes the
 result back in place: one command, no flags. Files the build generates are left
 alone, since formatting one would only be undone by the next build.
 
-## Dev server
+## Serve
 
-`zeli dev <appdir> [--port N]` builds the web target, serves `build/web` on
-localhost, and watches the app plus the framework `std/` trees for `.loam`
-changes, rebuilding on each. The watch is filesystem-driven (`Deno.watchFs`, not
-a timer), so an edit is noticed as it lands, and a *new* file — a route, say — is
-noticed at all. Served HTML subscribes to `/.zeli-live` over Server-Sent Events:
-the server pushes a frame per rebuild, so an idle page holds one connection and
-does no work. On a new revision the page saves the signal arena
+`zeli serve <appdir> [--target T] [--port N]` builds one target and watches the
+app plus the framework `std/` trees for `.loam` changes, so an edit is reflected
+without a manual rebuild. `T` is `web` (the default), `macos`, `server`, `ios`, or
+`android`.
+
+`web` builds the wasm target, serves `build/web` on localhost, and pushes a frame
+per rebuild down `/.zeli-live` over Server-Sent Events, so an idle page holds one
+connection and does no work. The watch is filesystem-driven (the kernel watcher,
+not a timer), so an edit is noticed as it lands, and a *new* file — a route, say —
+is noticed at all. On a new revision the page saves the signal arena
 (`zeus_state_snapshot` → `sessionStorage`) and reloads, and the loader restores
 it with `zeus_state_load` on boot — a component edit reflects without resetting
 state. Signal ids are positional, so state carries over as long as the signal set
@@ -284,6 +287,19 @@ lines up. `<appdir>/app_routes.loam` is regenerated before every build, so a new
 file under `routes/` needs nothing run by hand. A failed compiler check is not a
 reload: the previous build keeps being served. `--build-only` does the build and
 exits (the test gate uses it).
+
+`macos` and `server` build the native binary, start it with its output appended to
+`build/<target>/<stem>.log`, and start it again on every rebuild: the launcher
+keeps the pid the shell reports, stops that process first (`SIGTERM`, then
+`SIGKILL` if it holds on), and only then starts the replacement. A build that
+fails leaves the process that is up alone, and an app that exits by itself is
+reported once rather than restarted on a timer. `ios` and `android` build, install
+and launch through the compiler's own `--run` path — that packaging is host code,
+and a second copy of it here would be a second thing to keep in step — with the
+previous instance stopped first (`simctl terminate` for the bundle id in the
+`.app`, `adb shell am force-stop` for the id in the Gradle tree), because both
+platforms otherwise leave the old build on the screen. A missing SDK reports
+itself, in the toolchain's own words, and the last install stays on the device.
 
 ## Layout
 

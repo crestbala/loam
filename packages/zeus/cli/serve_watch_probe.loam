@@ -1,0 +1,88 @@
+// The serve watcher's policy on a real tree: which paths get held, and what a
+// change means once the kernel reports one.
+//
+// This is `zeli serve`'s own walk and filter (`watch_arm_dir`, `watch_batch`), not
+// a copy of them, so what it proves is what `zeli serve` does. It makes its own
+// edits, in order, so there is nothing to synchronize with: each write lands
+// before the next read of the queue.
+//
+//     serve_watch_probe <scratch-dir>
+//
+// Exit: 0 when it ran to the end, 2 when this host has no kernel watcher, so the
+// caller can skip rather than fail.
+import "std:fmt"
+import "std:sys"
+import "zeli.loam" as zeli
+
+fn under(dir: string, name: string) -> string {
+    return "{{dir}}/{{name}}"
+}
+
+/// Append `s` to `p`: read, join, write. There is no append in `std:sys`.
+fn append_file(p: string, s: string) {
+    sys.write_file(p, cat(sys.read_file(p), s))
+}
+
+/// Wait for the burst and print what it named, as `hit` lines the caller greps.
+fn report(h: int, roots: []string, label: string, wait_ms: int) {
+    let hits = zeli.watch_batch(h, roots, wait_ms)
+    fmt.println("case", label)
+    if hits.len == 0 {
+        fmt.println("  (none)")
+    }
+    for i in 0..hits.len {
+        fmt.println("  hit", hits[i])
+    }
+}
+
+fn main() {
+    let root = sys.arg(1)
+    if root.len == 0 {
+        fmt.println("usage: serve_watch_probe <scratch-dir>")
+        sys.exit(2)
+    }
+    let h = sys.watch_open()
+    if h == 0 {
+        fmt.println("no kernel watcher on this host")
+        sys.exit(2)
+    }
+
+    /* Two sources: one to edit in place, one to delete, so the two halves of a
+       directory event — something appeared, something went away — are each
+       exercised by the change that produces them. */
+    sys.remove_path(root)
+    sys.mkdir(under(root, "build"))
+    sys.mkdir(under(root, ".zeus"))
+    let edited = under(root, "edited.loam")
+    let doomed = under(root, "removed.loam")
+    sys.write_file(edited, "// original\n")
+    sys.write_file(doomed, "// doomed\n")
+    sys.write_file(under(root, "build/gen.wasm"), "not a source\n")
+    sys.write_file(under(root, ".zeus/cache.loam"), "not a source\n")
+
+    let roots = []string { root }
+    zeli.watch_arm_dir(h, root)
+    fmt.println("armed")
+
+    /* 1. A content change in place. Only a watch on the file itself sees this. */
+    append_file(edited, "// edited\n")
+    report(h, roots, "in-place edit", 2000)
+
+    /* 2. A brand-new file. Only a watch on the directory sees this. */
+    sys.write_file(under(root, "created.loam"), "// new\n")
+    report(h, roots, "new file", 2000)
+
+    /* 3. A deleted file. Neither watch names it — the kernel names the directory
+       — so the registry has to be re-walked for it. */
+    sys.remove_path(doomed)
+    report(h, roots, "deleted file", 2000)
+
+    /* 4. Writes inside directories no walk enters. Both sit inside a watched
+       root, so if these woke the watcher a rebuild would trigger a rebuild. */
+    sys.write_file(under(root, "build/gen.wasm"), "changed\n")
+    sys.write_file(under(root, ".zeus/cache.loam"), "changed\n")
+    report(h, roots, "build output and the cache", 500)
+
+    sys.watch_close(h)
+    fmt.println("done")
+}

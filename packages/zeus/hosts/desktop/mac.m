@@ -1653,6 +1653,203 @@ static void mac_run(void) {
     }
 }
 
+#ifdef LOAM_HOST_BUILD
+/* ── the development host ───────────────────────────────────────────────
+
+   `zeli serve --target macos` builds a host (this file), the app as a shared
+   image, and a shim whose `main` calls `zeus.host_run(<image>)`. The host owns
+   the window and the loop, so a rebuild only swaps the image: the window stays
+   up, and the app is re-registered from the new code by calling its `main`
+   again. The app's `main` returns instead of starting a loop because
+   `loam_zeus_plat_run` yields once the host mode is on.
+
+   The engine entry points are re-read on every load through `zeus_app_api`
+   (zeus_rt.h). A direct call would stay bound to the first image and go on
+   painting a tree that no longer exists — the window would look fine and be
+   stale. Images are never unloaded, so pointers the host holds into the old one
+   stay valid; a dev session grows by one image per edit. */
+
+#include <dlfcn.h>
+#include <sys/stat.h>
+
+@interface ZeusReloader : NSObject
+- (void)tick:(NSTimer *)t;
+@end
+
+static char *g_image_path;
+static struct timespec g_image_stamp;
+static NSString *g_arg0;
+
+/* Bind one entry point out of the image just loaded. */
+#define ZEUS_BIND(field, name) \
+    (*(void **)&zeus_app_api.field = dlsym(handle, name))
+
+static int host_load_image(void) {
+    struct stat st;
+    void *handle;
+    int (*enter)(int, char **);
+    char *argv0 = (char *)[g_arg0 UTF8String];
+    char *argv[2];
+
+    handle = dlopen(g_image_path, RTLD_NOW | RTLD_GLOBAL);
+    if (!handle) {
+        fprintf(stderr, "zeli: host: %s\n", dlerror());
+        return 0;
+    }
+    ZEUS_BIND(layout, "loam_zeus_engine_layout");
+    ZEUS_BIND(paint, "loam_zeus_engine_paint");
+    ZEUS_BIND(step, "loam_zeus_engine_step");
+    ZEUS_BIND(next_ms, "loam_zeus_engine_next_ms");
+    ZEUS_BIND(click, "loam_zeus_engine_click");
+    ZEUS_BIND(scroll, "loam_zeus_engine_scroll");
+    ZEUS_BIND(scroll_step, "loam_zeus_engine_scroll_step");
+    ZEUS_BIND(drag, "loam_zeus_engine_drag");
+    ZEUS_BIND(hover, "loam_zeus_engine_hover");
+    ZEUS_BIND(mouseup, "loam_zeus_engine_mouseup");
+    ZEUS_BIND(over_button, "loam_zeus_engine_over_button");
+    ZEUS_BIND(cursor, "loam_zeus_engine_cursor");
+    ZEUS_BIND(a11y_dump, "loam_zeus_engine_a11y_dump");
+    ZEUS_BIND(tree_dump, "loam_zeus_engine_tree_dump");
+    ZEUS_BIND(signals_dump, "loam_zeus_engine_signals_dump");
+    ZEUS_BIND(state_load, "loam_zeus_engine_state_load");
+    ZEUS_BIND(key_apply, "loam_zeus_engine_key_apply");
+    ZEUS_BIND(fill_focus, "loam_zeus_engine_fill_focus");
+    ZEUS_BIND(focus_depth, "loam_zeus_engine_focus_depth");
+    ZEUS_BIND(focus_node, "loam_zeus_engine_focus_node");
+    ZEUS_BIND(focus_ctx, "loam_zeus_engine_focus_ctx");
+    ZEUS_BIND(focus_step, "loam_zeus_engine_focus_step");
+    ZEUS_BIND(focus_captures_text, "loam_zeus_engine_focus_captures_text");
+    ZEUS_BIND(key, "loam_zeus_engine_key");
+    ZEUS_BIND(key_up, "loam_zeus_engine_key_up");
+    ZEUS_BIND(set_mods, "loam_zeus_engine_set_mods");
+    ZEUS_BIND(insert, "loam_zeus_engine_insert");
+    ZEUS_BIND(marked, "loam_zeus_engine_marked");
+    ZEUS_BIND(picked_image, "loam_zeus_engine_picked_image");
+    if (!zeus_app_api.layout || !zeus_app_api.paint) {
+        fprintf(stderr, "zeli: host: %s is not a Loam app image\n", g_image_path);
+        return 0;
+    }
+    enter = (int (*)(int, char **))dlsym(handle, "main");
+    if (!enter) {
+        fprintf(stderr, "zeli: host: %s has no main\n", g_image_path);
+        return 0;
+    }
+    if (stat(g_image_path, &st) == 0) g_image_stamp = st.st_mtimespec;
+    argv[0] = argv0;
+    argv[1] = NULL;
+    enter(1, argv);
+    return 1;
+}
+
+@implementation ZeusReloader
+- (void)tick:(NSTimer *)t {
+    struct stat st;
+    loam_str snap;
+    char *keep = NULL;
+    (void)t;
+    if (stat(g_image_path, &st) != 0) return;
+    if (st.st_mtime == g_image_stamp.tv_sec &&
+        st.st_mtimespec.tv_nsec == g_image_stamp.tv_nsec)
+        return;
+    /* Carry what the app had. The signal arena is the part worth keeping, and
+       the image knows how to dump and restore it — the same pair the web
+       reload uses. Read it through the *old* table, load, then hand it to the
+       new one. */
+    snap = zeus_app_api.signals_dump ? zeus_app_api.signals_dump() : (loam_str){"", 0};
+    if (snap.ptr && snap.len > 0) {
+        keep = (char *)malloc((size_t)snap.len + 1);
+        if (keep) {
+            memcpy(keep, snap.ptr, (size_t)snap.len);
+            keep[snap.len] = 0;
+        }
+    }
+    if (!host_load_image()) {
+        free(keep);
+        return;
+    }
+    if (keep && zeus_app_api.state_load)
+        zeus_app_api.state_load((loam_str){keep, (int64_t)strlen(keep)});
+    free(keep);
+    fprintf(stderr, "zeli: host: reloaded %s\n", g_image_path);
+    mac_redraw();
+}
+@end
+
+/* `zeus.host_run(path)`: take the process over. Called from the shim's `main`. */
+void loam_mac_host_run(const char *path) {
+    @autoreleasepool {
+        ZeusReloader *rel;
+        g_image_path = strdup(path);
+        g_arg0 = [[NSString alloc] initWithUTF8String:path];
+        zeus_set_host_mode();
+        if (!host_load_image()) exit(1);
+        /* Headless: no window, but the same loop and the same reload poll, so the
+           mechanism can be exercised (and gated) without a screen. */
+        if (loam_zeus_plat_headless()) {
+            [NSApplication sharedApplication];
+            zeus_window_opened();
+            rel = [ZeusReloader new];
+            [NSTimer scheduledTimerWithTimeInterval:0.25
+                                             target:rel
+                                           selector:@selector(tick:)
+                                           userInfo:nil
+                                            repeats:YES];
+            [NSApp run];
+            return;
+        }
+        /* The window, exactly as `mac_run` opens it: the app has registered its
+           size and title by now. */
+        [NSApplication sharedApplication];
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+        ZeusAppDelegate *del = [ZeusAppDelegate new];
+        [NSApp setDelegate:del];
+        {
+            NSRect frame = NSMakeRect(0, 0, (CGFloat)zeus_window_width(),
+                                      (CGFloat)zeus_window_height());
+            NSUInteger style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+                               NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
+            NSWindow *win = [[NSWindow alloc] initWithContentRect:frame
+                                                        styleMask:style
+                                                          backing:NSBackingStoreBuffered
+                                                            defer:NO];
+            const char *t = zeus_window_title();
+            [win setTitle:t ? [NSString stringWithUTF8String:t] : @"Zeus"];
+            g_win = win;
+            zeus_set_title_hook(mac_apply_title);
+            [win setBackgroundColor:[NSColor whiteColor]];
+            ZeusView *view = [[ZeusView alloc] initWithFrame:frame];
+            g_view = view;
+            [win setReleasedWhenClosed:YES];
+            [win setRestorable:NO];
+            if (!env_truthy("ZEUS_WIDE_GAMUT"))
+                [win setColorSpace:[NSColorSpace sRGBColorSpace]];
+            [view setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+            [win setContentView:view];
+            if (mac_window_fills_screen()) {
+                [win setFrame:mac_screen_visible() display:YES];
+            } else {
+                [win center];
+            }
+            if (own_buffer_on()) [view setWantsLayer:YES];
+            mac_link_arm();
+            zeus_window_opened();
+            [win makeFirstResponder:view];
+            [win makeKeyAndOrderFront:nil];
+        }
+        /* Watch the image. A quarter second is under a human's impatience and
+           well over a rebuild. */
+        rel = [ZeusReloader new];
+        [NSTimer scheduledTimerWithTimeInterval:0.25
+                                         target:rel
+                                       selector:@selector(tick:)
+                                       userInfo:nil
+                                        repeats:YES];
+        [NSApp activateIgnoringOtherApps:YES];
+        [NSApp run];
+    }
+}
+#endif /* LOAM_HOST_BUILD */
+
 /* ── screen-size plumbing ────────────────────────────────────────────
    The engine's pre-window window_size() and the native default window both
    come from the main screen's work area (points, like the whole engine). */
@@ -1729,6 +1926,11 @@ static void mac_pick_image(char *out, int cap, int64_t *w, int64_t *h) {
 __attribute__((constructor))
 static void zeus_mac_register(void) {
     zeus_set_platform(mac_run, mac_measure, mac_redraw);
+#ifdef LOAM_HOST_BUILD
+    /* A dev host loads the app as an image and owns the loop; the shim's
+       `zeus.host_run` reaches the loader through this hook. */
+    zeus_set_host_hooks(loam_mac_host_run);
+#endif
     zeus_set_pick_image(mac_pick_image);
     zeus_set_image_size(mac_image_size);
     zeus_set_font_hooks(mac_load_font, NULL);

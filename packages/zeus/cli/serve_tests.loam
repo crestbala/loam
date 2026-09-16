@@ -1,0 +1,256 @@
+// In-language tests for the pieces `zeli serve` is built from: the source filter a
+// change-driven reload applies, the SSE frame the server pushes, and the snippet
+// that waits for one instead of asking.
+//
+// No port is bound here — the request handler is exercised once the server
+// lands, and `zeli serve --build-only` has its own differential gate against the
+// TypeScript CLI.
+//
+//     loamc test packages/zeus/cli/serve_tests.loam
+
+import "std:sys"
+import "std:test"
+import "zeli.loam" as zeli
+
+/// Shorthand, so the assertions below read as the behaviour they check.
+fn has(hay: string, needle: string) -> bool {
+    return zeli.contains_str(hay, needle)
+}
+
+#[test]
+fn watches_app_and_framework_sources() {
+    let none = []string {}
+    test.assert(zeli.is_watched_source("examples/zeus/myapp/app.loam", none))
+    test.assert(zeli.is_watched_source("examples/zeus/myapp/routes/blog/page.loam", none))
+    test.assert(zeli.is_watched_source("examples/zeus/myapp/routes/pricing/page.loam", none))
+    test.assert(zeli.is_watched_source("packages/zeus/std/zeus.loam", none))
+}
+
+#[test]
+fn ignores_output_caches_and_non_sources() {
+    let none = []string {}
+    /* The build output lives inside a watched root, so this filter is the only
+       thing standing between an edit and a rebuild loop. */
+    test.assert(!zeli.is_watched_source("examples/zeus/myapp/build/web/app.wasm", none))
+    test.assert(!zeli.is_watched_source("examples/zeus/myapp/build/web/index.html", none))
+    test.assert(!zeli.is_watched_source("examples/zeus/myapp/build/web/x.loam", none))
+    test.assert(!zeli.is_watched_source("examples/zeus/myapp/.zeus/meta_dump.loam", none))
+    test.assert(!zeli.is_watched_source("examples/zeus/myapp/.git/x.loam", none))
+    test.assert(!zeli.is_watched_source("packages/zeus/node_modules/p/x.loam", none))
+    test.assert(!zeli.is_watched_source("examples/zeus/myapp/app_routes.loam.bak", none))
+}
+
+#[test]
+fn the_generated_route_table_is_not_a_source() {
+    /* serve regenerates this before every build, so watching it would rebuild on
+       every rebuild, forever. The check is by name, and holds under a root. */
+    let none = []string {}
+    let roots = []string { "/app" }
+    test.assert(!zeli.is_watched_source("examples/zeus/myapp/app_routes.loam", none))
+    test.assert(!zeli.is_watched_source("/app/app_routes.loam", roots))
+    test.assert(zeli.is_watched_source("/app/routes/page.loam", roots))
+}
+
+#[test]
+fn judges_a_path_relative_to_its_root() {
+    let roots = []string { "/home/u/.src/loam/app" }
+    test.assert(zeli.is_watched_source("/home/u/.src/loam/app/routes/page.loam", roots))
+    test.assert(!zeli.is_watched_source("/home/u/.src/loam/app/build/web/x.loam", roots))
+}
+
+#[test]
+fn sse_frame_carries_the_revision() {
+    test.assert_eq_str(zeli.sse_frame(7), "data: 7\n\n")
+}
+
+#[test]
+fn snippet_subscribes_and_waits() {
+    let s = zeli.live_snippet()
+    test.assert(has(s, zeli.live_path()))
+    test.assert(has(s, "EventSource"))
+    test.assert(!has(s, "setInterval"))
+    test.assert(!has(s, "fetch("))
+}
+
+// --- the live channel ---
+
+#[test]
+fn a_subscription_is_left_open() {
+    let head = zeli.live_head()
+    test.assert(has(head, "200 OK"))
+    test.assert(has(head, "Content-Type: text/event-stream"))
+    /* No length and no close: the reply's whole purpose is to keep the
+       connection, and a length would tell the page it is complete. */
+    test.assert(!has(head, "Content-Length"))
+    test.assert(!has(head, "Connection: close"))
+}
+
+// --- the reply the serve server frames ---
+
+#[test]
+fn a_reply_carries_a_length_and_no_policy() {
+    let r = zeli.serve_http_reply(200, "text/html; charset=utf-8", "<p>hi</p>")
+    test.assert(has(r, "HTTP/1.1 200 OK"))
+    test.assert(has(r, "Content-Length: 9"))
+    test.assert(has(r, "Cache-Control: no-store"))
+    /* `http.http_reply` hardens every reply with `Content-Security-Policy:
+       default-src 'none'`, which would block the app's own loader.js and the
+       injected snippet. This reply must not. */
+    test.assert(!has(r, "Content-Security-Policy"))
+}
+
+// --- the upstream RPC address ---
+
+#[test]
+fn an_rpc_address_splits_into_host_and_port() {
+    let a = zeli.rpc_addr_of("127.0.0.1:8080")
+    test.assert_eq_str(a.host, "127.0.0.1")
+    test.assert_eq_int(a.port, 8080)
+    /* A malformed address reads as port 0, which nothing listens on, so it fails
+       the way an absent backend does rather than by connecting somewhere. */
+    test.assert_eq_int(zeli.rpc_addr_of("nonsense").port, 0)
+}
+
+#[test]
+fn the_backend_address_follows_the_environment() {
+    let set = sys.env("LOAM_RPC_ADDR")
+    if set == "" {
+        test.assert_eq_str(zeli.serve_rpc_addr(), "127.0.0.1:8080")
+    } else {
+        test.assert_eq_str(zeli.serve_rpc_addr(), set)
+    }
+}
+
+// --- the request handler, over a scratch build output ---
+//
+// The same build output the live server is given, for the same cases: no port is
+// bound, so the routing, content types, injection and SPA fallback are exercised
+// through `serve_reply`, which is where the live server delegates them.
+
+let snip = "<!--LIVE-->"
+
+fn fixture(root: string) {
+    sys.remove_path(root)
+    sys.mkdir(cat(root, "/blog"))
+    sys.write_file(cat(root, "/index.html"), "<html><body><canvas id=\"zeus\"></canvas></body></html>")
+    sys.write_file(cat(root, "/blog/index.html"), "<html><body><h1>blog</h1></body></html>")
+    /* `.wasm` and `.js` are told apart by suffix, so the bytes only have to be
+       something the suffix does not explain away. */
+    sys.write_file(cat(root, "/app.wasm"), "asm")
+    sys.write_file(cat(root, "/loader.js"), "// loader")
+}
+
+#[test]
+fn serves_the_root_shell_with_the_snippet() {
+    let root = "packages/loam/tests/tmp/serveweb"
+    fixture(root)
+    let r = zeli.serve_reply(root, "/", snip)
+    test.assert_eq_int(r.status, 200)
+    test.assert(has(r.content_type, "text/html"))
+    test.assert(has(r.body, snip))
+    test.assert(has(r.body, "canvas id=\"zeus\""))
+}
+
+#[test]
+fn a_nested_path_serves_its_own_index() {
+    let root = "packages/loam/tests/tmp/serveweb"
+    fixture(root)
+    test.assert(has(zeli.serve_reply(root, "/blog", snip).body, "<h1>blog</h1>"))
+    test.assert(has(zeli.serve_reply(root, "/blog/", snip).body, "<h1>blog</h1>"))
+}
+
+#[test]
+fn module_and_script_types_are_the_ones_a_browser_insists_on() {
+    let root = "packages/loam/tests/tmp/serveweb"
+    fixture(root)
+    let wasm = zeli.serve_reply(root, "/app.wasm", snip)
+    test.assert_eq_str(wasm.content_type, "application/wasm")
+    test.assert_eq_str(wasm.body, "asm")
+    test.assert_eq_str(zeli.serve_reply(root, "/loader.js", snip).content_type, "text/javascript")
+}
+
+#[test]
+fn an_unknown_path_falls_back_to_the_shell() {
+    let root = "packages/loam/tests/tmp/serveweb"
+    fixture(root)
+    let r = zeli.serve_reply(root, "/does-not-exist", snip)
+    test.assert_eq_int(r.status, 200)
+    test.assert(has(r.body, snip))
+}
+
+#[test]
+fn the_snippet_lands_before_the_closing_body() {
+    let root = "packages/loam/tests/tmp/serveweb"
+    fixture(root)
+    let body = zeli.serve_reply(root, "/blog/", snip).body
+    test.assert(has(body, "<!--LIVE--></body>"))
+}
+
+// --- numbers, substring ids, and the processes a native target lives in ---
+
+#[test]
+fn ints_round_trip_through_text() {
+    /* `int_str` exists for the pid and count a shell command carries, so the
+       round trip with `int_of` is the whole contract. */
+    test.assert_eq_str(zeli.int_str(0), "0")
+    test.assert_eq_str(zeli.int_str(7), "7")
+    test.assert_eq_str(zeli.int_str(5173), "5173")
+    test.assert_eq_int(zeli.int_of(zeli.int_str(98765)), 98765)
+    /* A negative has no meaning here — no pid, no port — and clamps to 0 rather
+       than emitting a minus the callers would have to think about. */
+    test.assert_eq_str(zeli.int_str(-4), "0")
+}
+
+#[test]
+fn an_id_is_read_out_of_a_tagged_text() {
+    let plist = "<key>CFBundleExecutable</key><string>app</string>\n<key>CFBundleIdentifier</key><string>com.loam.demo</string>\n"
+    test.assert(zeli.idx_of(plist, "CFBundleIdentifier") > 0)
+    test.assert_eq_int(zeli.idx_of(plist, "nope"), -1)
+    test.assert_eq_str(zeli.between(plist, "<key>CFBundleIdentifier</key><string>", 60 /* < */), "com.loam.demo")
+    test.assert_eq_str(zeli.between(plist, "<key>NotThere</key><string>", 60), "")
+    let gradle = "android {\n    namespace 'com.loam.zeus'\n    defaultConfig {\n        applicationId \"com.loam.myapp\"\n"
+    test.assert_eq_str(zeli.between(gradle, "applicationId \"", 34 /* " */), "com.loam.myapp")
+}
+
+#[test]
+fn the_simulator_id_comes_from_the_bundle() {
+    /* The id belongs to the compiler's naming rules, so `serve` reads it back
+       out of the `.app` it just built rather than re-deriving it. */
+    let root = "packages/loam/tests/tmp/servebundle"
+    sys.remove_path(root)
+    sys.mkdir(cat(root, "/build/ios/app.app"))
+    test.assert_eq_str(zeli.ios_bundle_id(root, "app"), "")
+    sys.write_file(cat(root, "/build/ios/app.app/Info.plist"),
+                   "<key>CFBundleIdentifier</key><string>com.loam.app</string>")
+    test.assert_eq_str(zeli.ios_bundle_id(root, "app"), "com.loam.app")
+}
+
+#[test]
+fn the_device_id_comes_from_the_gradle_tree() {
+    let root = "packages/loam/tests/tmp/servegradle"
+    sys.remove_path(root)
+    sys.mkdir(cat(root, "/build/android/app/app"))
+    test.assert_eq_str(zeli.android_app_id(root, "app"), "")
+    sys.write_file(cat(root, "/build/android/app/app/build.gradle"),
+                   "    defaultConfig {\n        applicationId \"com.loam.app\"\n    }\n")
+    test.assert_eq_str(zeli.android_app_id(root, "app"), "com.loam.app")
+}
+
+#[test]
+fn a_launched_process_is_stoppable() {
+    /* The mechanism a native target rests on, with a process that cannot be
+       confused with the app: `$!` has to be the command itself, or `stop_pid`
+       signals a wrapper and leaves the app running. */
+    let log = "packages/loam/tests/tmp/serve_spawn.log"
+    sys.remove_path(log)
+    let pid = zeli.launch_app("/bin/sleep 30", log)
+    test.assert(pid > 0)
+    test.assert(zeli.pid_alive(pid))
+    test.assert(zeli.stop_pid(pid))
+    test.assert(!zeli.pid_alive(pid))
+    /* A pid that is already gone is not an error: stopping what is not there is
+       the state a stop is trying to reach. */
+    test.assert(zeli.stop_pid(pid))
+    test.assert(!zeli.pid_alive(0))
+    test.assert(!zeli.pid_alive(-1))
+}
