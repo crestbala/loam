@@ -379,7 +379,7 @@ answers depending on how you arrived.
 | 1 | Audit | **done** | `8289306` |
 | 2 | Tokens + paint primitives | **done** | `2184563` |
 | 3 | Dirty-channel split + animation subsystem + state layer | **done** | `feat(zeus): dirty-channel split + animation track pool (phase 3)` |
-| 4 | Components, in batches | **in progress — batches 1–5** | `feat: paint-only motion + feedback primitives` / `feat: Accordion` / `feat: overlay family` / `feat: elevation + stroked borders` / `feat: Menu` |
+| 4 | Components, in batches | **in progress — batches 1–6** | `feat: paint-only motion + feedback primitives` / `feat: Accordion` / `feat: overlay family` / `feat: elevation + stroked borders` / `feat: Menu` / `feat: Collapsible + Drawer` |
 | 5 | Gallery + docs (`spec.md`, a `www/` design-system page) | not started | — |
 
 `make test` at the end of phase 3: **361 passed, 0 failed** (the six network
@@ -687,20 +687,48 @@ activation is a no-op (click and Enter are gated on `disabled`), but Up / Down d
 not skip over it. No typeahead yet, and the trigger is not a real toggle button
 (it has no `aria-expanded`-style state beyond `active`).
 
+### Phase 4 batch 6 outcome — Collapsible + Drawer / Sheet
+
+Both are containers; both keep the one-signal rule and reuse existing
+mechanisms rather than adding any.
+
+- **`Collapsible(open, title)`.** One 0/1 `open` signal is the only state. The
+  header toggles it; the chevron rotates on a paint-only `RotDeg` track and the
+  body fades in through the enter-fade track, so the settling frames run no
+  component and no effect (the test asserts both counters flat, then idle).
+  No card chrome unless the caller passes `background` / `border_color`.
+- **`Drawer(open, side, size)`.** An edge panel over a scrim: the panel pins to
+  the chosen edge of a full-window `Overlay` (the scrim doubles as the host, as
+  in `Dialog`), slides on a paint-only `XlateX` / `XlateY` track, swallows clicks
+  inside, and closes on outside click or Escape. `SIDE.SideStart / SideEnd /
+  SideTop / SideBottom`; the top / bottom edges are the sheet shape.
+- Both follow the `Toast` shape for a container whose trailing block must land in
+  a specific child: build a wrapper, push the fixed chrome and a hideable body
+  into it, and **return the body**, so `f(…) { … }` attaches the block where it
+  belongs. (This is the trick `Collapsible` needs and `Toast` already uses.)
+- New `zeus_collapsible.loam` and `zeus_drawer.loam`; new golden `golden_drawer`
+  (scrim, elevation-4 shadow, panel, content) — settled on the first frame,
+  because the slide jumps to its final value at boot. The thirteen earlier
+  goldens are unchanged.
+
+Deliberately open: no exit animation (closing hides immediately, as with the
+overlays); the drawer claims focus on open but does not trap `Tab`, and returns
+focus nowhere on close.
+
 ### Remaining work (living list)
 
 The single maintained tracker of what is still open. Update it in the same commit
 that closes an item, and tick a box rather than deleting the line, so the record
 of what was deferred stays readable. Landed so far: phases 1–3; phase 4 batches
-1–5.
+1–6.
 
 **Phase 4 — components still to build**
 
 Absent entirely:
 
 - [x] `Menu` / `DropdownMenu` — anchored command list; keyboard nav + roving focus. **(batch 5)**
-- [ ] `Drawer` / `Sheet` — edge-anchored panel (reuses the overlay floater + scrim).
-- [ ] `Collapsible` — single-open disclosure: the Accordion model without the card.
+- [x] `Drawer` / `Sheet` — edge-anchored panel (reuses the overlay floater + scrim). **(batch 6)**
+- [x] `Collapsible` — single-open disclosure: the Accordion model without the card. **(batch 6)**
 - [ ] `Combobox` — input + filtered list; needs the anchored floater and typeahead.
 
 Rework, not new construction:
