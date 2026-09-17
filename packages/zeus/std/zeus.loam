@@ -6605,6 +6605,187 @@ fn Popover(trigger: Node, p: PopoverProps) -> Node {
     return panel
 }
 
+// --- menu ------------------------------------------------------------------
+//
+// A dropdown of commands, on the same anchored-floater mechanism as the
+// overlays above. Like `Accordion`, the whole menu is ONE signal: `active`,
+// the highlighted item's index, where `-1` means closed. Items take that
+// signal, their own `index`, and the item `count` (for arrow clamping) — no
+// item owns state, and "open" and "highlighted" cannot disagree, because they
+// are the same number.
+//
+// The active row owns the keyboard: it is the one focusable row, binds Up / Down
+// to move `active`, and Enter to run its own handler. Every handler is gated on
+// `active`, so a hidden row that still holds focus cannot act.
+
+struct MenuProps {
+    /// Open at this item index; `-1` is closed. The menu's only state.
+    active: Signal<int> = Signal { id: 0 },
+    active__set: bool = false,
+    /// Preferred side (`PLACE.*`); flips when it would overflow.
+    place: int = 0,
+    gap: int = 4,
+    width: int = -1,
+    padding: int = -1,
+    radius: int = -1,
+    background: string = "",
+    border_color: string = "",
+    /// Chord that dismisses the open menu.
+    key: string = "escape",
+}
+
+/// A dropdown menu anchored to `trigger`. Clicking the trigger toggles it;
+/// outside click and Escape close it; `place` is preferred and flips near the
+/// viewport edge. The trailing block is the item list (`MenuItem` /
+/// `MenuLabel` / `MenuSeparator`).
+fn Menu(trigger: Node, p: MenuProps) -> Node {
+    let active = p.active
+    // The trigger owns the toggle; opening lands on the first item.
+    on_click(trigger, fn() {
+        if active.get() >= 0 {
+            active.set(-1)
+        } else {
+            active.set(0)
+        }
+    })
+    // A transparent scrim: outside click closes. Children are tried first, so a
+    // click on the panel or an item never reaches it.
+    let scrim = Overlay(on_click = fn() { active.set(-1) })
+    show_ge(scrim, active, 0)
+    let panel = Box(align_direction = DIRECTION.Column,
+                    position = pos_absolute(),
+                    z_index = 60,
+                    elevation = 3,
+                    spacing = 2,
+                    background = str_or_default(p.background, plate()),
+                    border = HAIRLINE,
+                    border_color = str_or_default(p.border_color, rule()),
+                    radius = px_or_default(p.radius, RAD_LG),
+                    padding = px_or_default(p.padding, 4),
+                    width = p.width,
+                    a11y_role = "menu")
+    show_ge(panel, active, 0)
+    arena.anchor_to(panel.id, trigger.id, p.place, p.gap)
+    enter_fade(panel)
+    // Escape closes while focus is inside the menu: a row, or the panel itself.
+    apply_key(panel, p.key, "menu.dismiss", fn() { active.set(-1) }, true, false)
+    return panel
+}
+
+struct MenuItemProps {
+    /// The menu's one signal; the item compares it to `index`.
+    active: Signal<int> = Signal { id: 0 },
+    active__set: bool = false,
+    /// This item's position within its menu.
+    index: int = 0,
+    /// How many items the menu has, so Up / Down clamp at the ends. Pass the
+    /// same number to every item.
+    count: int = 0,
+    label: fn() -> string = empty_text,
+    /// Optional leading icon markup.
+    icon: string = "",
+    on_click: fn() = noop,
+    on_click__set: bool = false,
+    disabled: bool = false,
+    /// Destructive command: painted in the danger ink.
+    danger: bool = false,
+}
+
+/// One command row. Highlights while `active == index`; the pointer moves
+/// `active` on hover, so pointer and keyboard share one highlight. Owns no
+/// state — the menu's `active` is the only signal.
+fn MenuItem(p: MenuItemProps) {
+    let active = p.active
+    let idx = p.index
+    let n = p.count
+    let off = p.disabled
+    let mut row_ink = ink()
+    if p.danger {
+        row_ink = danger_ink()
+    }
+    let row = Box(align_direction = DIRECTION.Row,
+                  align_items = ALIGN.Center,
+                  spacing = SPACE.Xs,
+                  padding_x = 10,
+                  padding_y = 7,
+                  radius = RAD_SM,
+                  on_click = fn() {
+                      if !off {
+                          p.on_click()
+                          active.set(-1)
+                      }
+                  },
+                  a11y_role = "menuitem",
+                  a11y_label = p.label(),
+                  enabled = !off,
+                  cursor = "pointer",
+                  press = true)
+    ui_push(row.id)
+    if p.icon.len > 0 {
+        Icon(p.icon, 16, dim())
+    }
+    Text(p.label, color = row_ink, font = FONT_BODY, grow = 1)
+    ui_pop()
+    selected_chrome(row, empty_view(), || { active.get() == idx },
+                    raised(), "", "", "")
+    // Hover moves the highlight, so the pointer and the keyboard agree.
+    let hs = signal(0)
+    hover(row, hs)
+    styled(row, || {
+        if hs.get() != 0 {
+            active.set(idx)
+        }
+    })
+    // Up / Down move the highlight; Enter runs this row. Every handler is gated
+    // on `active`, so keys pressed after a close are inert even if this (now
+    // hidden) row is still the focused one.
+    apply_key(row, "down", "menu.next", fn() {
+        if active.get() >= 0 {
+            if active.get() + 1 < n {
+                active.set(active.get() + 1)
+            }
+        }
+    }, true, false)
+    apply_key(row, "up", "menu.prev", fn() {
+        if active.get() > 0 {
+            active.set(active.get() - 1)
+        }
+    }, true, false)
+    apply_key(row, "enter", "menu.activate", fn() {
+        if active.get() == idx {
+            if !off {
+                p.on_click()
+                active.set(-1)
+            }
+        }
+    }, true, false)
+    // Roving: only the active row can take focus, and it takes it the moment it
+    // becomes active. Runs after the key bindings, which make a row focusable.
+    let rid = row.id
+    effect(|| {
+        if active.get() == idx {
+            arena.nodes[rid].focusable = 1
+            arena.claim_focus(rid)
+        } else {
+            arena.nodes[rid].focusable = 0
+        }
+    })
+}
+
+/// A non-interactive group heading inside a `Menu`.
+fn MenuLabel(text: fn() -> string) {
+    Box(padding_x = 10, padding_y = 6) {
+        Text(text, color = dim(), font = FONT_CAPTION)
+    }
+}
+
+/// A hairline between menu groups.
+fn MenuSeparator() {
+    Box(padding_y = 3) {
+        Separator()
+    }
+}
+
 struct TooltipProps {
     text: fn() -> string = empty_text,
     place: int = 1,

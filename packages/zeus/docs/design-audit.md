@@ -379,7 +379,7 @@ answers depending on how you arrived.
 | 1 | Audit | **done** | `8289306` |
 | 2 | Tokens + paint primitives | **done** | `2184563` |
 | 3 | Dirty-channel split + animation subsystem + state layer | **done** | `feat(zeus): dirty-channel split + animation track pool (phase 3)` |
-| 4 | Components, in batches | **in progress — batches 1–4** | `feat: paint-only motion + feedback primitives` / `feat: Accordion` / `feat: overlay family` / `feat: elevation + stroked borders` |
+| 4 | Components, in batches | **in progress — batches 1–5** | `feat: paint-only motion + feedback primitives` / `feat: Accordion` / `feat: overlay family` / `feat: elevation + stroked borders` / `feat: Menu` |
 | 5 | Gallery + docs (`spec.md`, a `www/` design-system page) | not started | — |
 
 `make test` at the end of phase 3: **361 passed, 0 failed** (the six network
@@ -657,18 +657,48 @@ Left open, deliberately: `UiNode.radius` is still one `u16` (nothing emits
 listed above elevate — `Alert`, `Table`, and the `Select` panel stay flat until a
 component pass asks for depth; and there is still no line / polyline / dashed op.
 
+### Phase 4 batch 5 outcome — Menu (one active index)
+
+`Menu(trigger, active)` is a dropdown of commands on the batch-3 anchored
+floater. As with `Accordion`, the whole menu is **one** signal: `active`, the
+highlighted item's index, where `-1` means closed — so "open" and "highlighted"
+cannot disagree. `MenuItem(active, index, count, label, icon, on_click, danger)`
+reads that signal plus its own index and owns no open/selection state;
+`MenuLabel` / `MenuSeparator` are the group heading and hairline.
+
+- **Keyboard.** The active row is the only focusable row (roving), claims focus
+  the moment it becomes active, and owns Up / Down (move, clamped to `count`)
+  and Enter (run its handler, then close). Every handler is gated on `active`, so
+  a row that keeps focus after a close is inert — the test presses Enter and Down
+  after a close and asserts both do nothing.
+- **One highlight.** Hover writes `active` through the item's hover signal, so
+  the pointer and the keyboard share one highlight instead of showing two.
+- **Dismissal.** The trigger toggles; a transparent scrim closes on outside
+  click; Escape closes while focus is inside the menu. Opening lands on item 0.
+- **No new host op, no per-frame signal.** `active` is set once per interaction;
+  the settle-and-close path writes no signal at all.
+- New `zeus_menu.loam` checks open / navigate / clamp / activate / close /
+  outside-click / Escape and that toggling allocates no signal; new golden
+  `golden_menu` captures the panel, shadow, group label, highlighted row,
+  separator, and danger ink. The twelve earlier goldens are unchanged.
+
+Deliberately open: a disabled item is shown dimmed and can still be highlighted —
+activation is a no-op (click and Enter are gated on `disabled`), but Up / Down do
+not skip over it. No typeahead yet, and the trigger is not a real toggle button
+(it has no `aria-expanded`-style state beyond `active`).
+
 ### Remaining work (living list)
 
 The single maintained tracker of what is still open. Update it in the same commit
 that closes an item, and tick a box rather than deleting the line, so the record
 of what was deferred stays readable. Landed so far: phases 1–3; phase 4 batches
-1–4.
+1–5.
 
 **Phase 4 — components still to build**
 
 Absent entirely:
 
-- [ ] `Menu` / `DropdownMenu` — anchored command list; keyboard nav + roving focus.
+- [x] `Menu` / `DropdownMenu` — anchored command list; keyboard nav + roving focus. **(batch 5)**
 - [ ] `Drawer` / `Sheet` — edge-anchored panel (reuses the overlay floater + scrim).
 - [ ] `Collapsible` — single-open disclosure: the Accordion model without the card.
 - [ ] `Combobox` — input + filtered list; needs the anchored floater and typeahead.
@@ -733,9 +763,10 @@ scope**:
 
 **Accessibility / input (§7)**
 
-- [ ] Arrow-key nav inside `Tabs`, `RadioGroup`, `Select`, and menus. Only
-  `Slider` and `Pagination` bind arrows today.
-- [ ] Roving tabindex — every radio in a group is its own tab stop.
+- [ ] Arrow-key nav inside `Tabs`, `RadioGroup`, and `Select` (menus gained it in
+  batch 5). Only `Slider` and `Pagination` otherwise bind arrows today.
+- [ ] Roving tabindex for radio / tab groups — every radio in a group is its own
+  tab stop today. (Menu rows rove; only the active row is focusable.)
 - [ ] Focus trap in `Dialog`; Esc to dismiss `Dialog` and `Select`.
 - [ ] A 44dp minimum hit target on touch hosts; iOS and Android get the desktop
   geometry verbatim (`SIZE.Sm` 32dp, dialog close 28dp, `Checkbox` / `Radio`

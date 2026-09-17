@@ -281,6 +281,13 @@ show on hover after a hover-intent delay; `Toast(open, ms)` pins to the window
 edge, rises and fades in, and auto-dismisses. None of them rebuilds a tree or
 runs a component while animating.
 
+**Menu** is a dropdown of commands on the same anchored floater:
+`Menu(trigger, active)` anchors to the trigger, and
+`MenuItem(active = active, index = i, count = n, …)` reads the menu's one signal
+— the highlighted index, where `-1` is closed — so items own no state. The
+active row is the only focusable one and handles Up / Down / Enter; hover moves
+the same index, so the pointer and the keyboard share one highlight.
+
 ## Depth
 
 `elevation` is a `Box` / `Card` prop (0–4) that paints a soft shadow under the
