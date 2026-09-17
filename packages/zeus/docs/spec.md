@@ -265,7 +265,12 @@ frame.
 
 **Feedback components:** `Spinner(size, color, period, label)` is an
 indeterminate `progressbar`; `Empty(icon, title, body)` is a centred empty state
-whose trailing block is its action.
+whose trailing block is its action. `Accordion(open)` is a single-open
+disclosure: `open` is one signal holding the open item's index (`-1` = closed),
+and `AccordionItem(open = open, index = i, title, body)` carries only its index —
+the item has no state, so opening one closes the rest with no coordination code.
+The chevron rotation and body fade are paint-only; the body is currently
+shown/hidden with a fade rather than an animated height.
 
 ## Scaffold
 

@@ -1849,6 +1849,27 @@ fn want_show(id: int) -> int {
     return 1
 }
 
+/// 1 when `id` and every ancestor is visible. `want_show` is per-node; a hidden
+/// container hides its subtree for paint, so a visibility check must walk up.
+fn shown_in_tree(id: int) -> int {
+    if id <= 0 {
+        return 0
+    }
+    let mut cur = id
+    let mut guard = 0
+    while cur > 0 {
+        if want_show(cur) == 0 {
+            return 0
+        }
+        cur = nodes[cur].parent
+        guard = guard + 1
+        if guard > 64 {
+            break
+        }
+    }
+    return 1
+}
+
 fn ease_out(t: int) -> int {
     if t <= 0 {
         return 0

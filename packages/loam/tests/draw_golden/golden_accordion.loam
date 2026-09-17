@@ -1,0 +1,21 @@
+// DRAW-list golden: a three-row Accordion with the middle item open. One
+// `open` index signal drives every row, so exactly one body paints. Keep this
+// file free of prints: stdout is the golden.
+
+import "std:zeus"
+
+fn main() {
+    let open = zeus.signal(1)
+    zeus.snapshot(360, 220, fn() -> Node {
+        zeus.Page() {
+            zeus.Accordion(open) {
+                zeus.AccordionItem(open = open, index = 0,
+                                   title = "Shipping", body = "Ships in 2-3 days.")
+                zeus.AccordionItem(open = open, index = 1,
+                                   title = "Returns", body = "30-day return window.")
+                zeus.AccordionItem(open = open, index = 2,
+                                   title = "Warranty", body = "Two years, parts and labor.")
+            }
+        }
+    })
+}

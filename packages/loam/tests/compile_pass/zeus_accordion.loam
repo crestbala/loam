@@ -1,0 +1,72 @@
+// Phase 4 batch 2: Accordion holds ONE `open` index signal; items carry only
+// their `index` and read that signal, so opening one closes the rest by
+// construction and no item allocates state. Toggling is a discrete state
+// change; the entrance and chevron are paint-only.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("accordion", 360, 260)
+    let open = zeus.signal(-1)
+    let tree = zeus.Accordion(open) {
+        zeus.AccordionItem(open = open, index = 0, title = "One", body = "alpha")
+        zeus.AccordionItem(open = open, index = 1, title = "Two", body = "beta")
+        zeus.AccordionItem(open = open, index = 2, title = "Three", body = "gamma")
+    }
+    zeus.root(tree)
+    zeus.pump_frame()
+
+    let sigs0 = zeus.arena_sigs()
+    must(!zeus.text_visible("alpha"), "all closed at -1")
+    must(!zeus.text_visible("beta"), "all closed at -1")
+
+    open.set(0)
+    zeus.engine_layout(360, 260)
+    must(zeus.text_visible("alpha"), "item 0 open")
+    must(!zeus.text_visible("beta"), "item 1 closed")
+    must(!zeus.text_visible("gamma"), "item 2 closed")
+
+    // Opening another closes the first: one index, so only one can match.
+    open.set(2)
+    zeus.engine_layout(360, 260)
+    must(!zeus.text_visible("alpha"), "opening 2 closed 0")
+    must(!zeus.text_visible("beta"), "item 1 closed")
+    must(zeus.text_visible("gamma"), "item 2 open")
+
+    // Toggling the open item closes it.
+    open.set(-1)
+    zeus.engine_layout(360, 260)
+    must(!zeus.text_visible("gamma"), "closed again")
+
+    // Items never allocate state: the signal arena does not grow on toggles.
+    must(zeus.arena_sigs() == sigs0, "no per-item signal")
+
+    // The toggle is a discrete state change; the entrance and chevron rotation
+    // are paint-only, so no component or effect re-runs while they animate.
+    open.set(1)
+    zeus.engine_layout(360, 260)
+    let c0 = zeus.proof_components()
+    let e0 = zeus.proof_effects()
+    let mut i = 0
+    while i < 24 {
+        zeus.engine_layout(360, 260)
+        zeus.engine_step_dt(16)
+        zeus.engine_paint()
+        i = i + 1
+    }
+    must(zeus.text_visible("beta"), "item 1 open after settling")
+    must(zeus.proof_components() == c0, "accordion ran no component")
+    must(zeus.proof_effects() == e0, "accordion ran no effect")
+    must(zeus.engine_step_dt(16) == 0, "idle after the entrance")
+
+    fmt.println("accordion ok")
+}
