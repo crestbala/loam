@@ -55,12 +55,12 @@ Present (`fn` in `zeus.loam`), with what each actually paints today.
 | `Toggle` / `ToggleGroup` | pressed | Instant swap. |
 | `Separator` / `Divider` / `Icon` / `Pip` / `Row` / `Column` / `Grow` | — | Primitives, fine. |
 
-**Absent entirely** (grep returns zero definitions): `Accordion`, `Toast`,
-`Tooltip`, `HoverCard`, `Popover`, `Menu`/`DropdownMenu`, `Drawer`/`Sheet`,
-`Collapsible`, `Combobox`. Six of the eleven transitions §3.5 requires belong to
-components that do not exist yet. `Spinner`/`Loader` and `Empty` landed in
-phase 4 batch 1 (on the clock-driven indicator and the paint-only transform
-set).
+**Absent entirely** (grep returns zero definitions): `Toast`, `Tooltip`,
+`HoverCard`, `Popover`, `Menu`/`DropdownMenu`, `Drawer`/`Sheet`, `Collapsible`,
+`Combobox`. Five of the eleven transitions §3.5 requires belong to components
+that do not exist yet. `Spinner`/`Loader`, `Empty`, and `Accordion` landed in
+phase 4 (on the clock-driven indicator, the paint-only transform set, and the
+single-signal single-open model).
 
 **Icon set** is 10 constants (`IC_CHECK`, `IC_X`, `IC_CHEV_DOWN/LEFT/RIGHT`,
 `IC_CALENDAR`, `IC_INFO`, `IC_ALERT_CIRCLE`, `IC_PLUS`, `IC_MINUS`), stored as
@@ -380,7 +380,7 @@ answers depending on how you arrived.
 | 1 | Audit | **done** | `8289306` |
 | 2 | Tokens + paint primitives | **done** | `2184563` |
 | 3 | Dirty-channel split + animation subsystem + state layer | **done** | `feat(zeus): dirty-channel split + animation track pool (phase 3)` |
-| 4 | Components, in batches | **in progress — batch 1** | `feat: paint-only motion + feedback primitives` |
+| 4 | Components, in batches | **in progress — batches 1–2** | `feat: paint-only motion + feedback primitives` / `feat: Accordion (single open signal)` |
 | 5 | Gallery + docs (`spec.md`, a `www/` design-system page) | not started | — |
 
 `make test` at the end of phase 3: **361 passed, 0 failed** (the six network
@@ -560,5 +560,25 @@ component work; batch 1 lands them:
   idles.
 
 Still open for later batches: the four overlay components (`Popover` /
-`Tooltip` / `HoverCard` / `Toast`), `Accordion`, elevation (`shadow` emission),
-and switching the border paint path to `plat_stroke`.
+`Tooltip` / `HoverCard` / `Toast`), elevation (`shadow` emission), and switching
+the border paint path to `plat_stroke`.
+
+### Phase 4 batch 2 outcome — Accordion (single open signal)
+
+**The container owns the only state.** `Accordion(open)` takes one signal: the
+open item's index, or `-1` for all closed. `AccordionItem(open = …, index = …)`
+carries only its index and reads that shared signal — it has no signal of its
+own and allocates no state. Opening one item closes the rest by construction:
+there is one index, so two bodies can never both match it. `zeus_accordion.loam`
+asserts the arena's signal count does not grow across toggles.
+
+The header toggle is a discrete state change (allowed to run the one chevron
+effect); the chevron rotation is a paint-only `RotDeg` track and the body fades
+in through the enter-fade track, so the settling frames re-run no component and
+no effect. The run is checked in as `golden_accordion`; the nine earlier goldens
+are unchanged.
+
+Deliberately open for this component: the body is shown/hidden discretely with a
+fade (no animated height). The audit's clip-height animation needs an animated
+clip rect (a paint-only clip prop) that does not exist yet; the fade is the
+correct fallback until it does.

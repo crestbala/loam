@@ -1666,6 +1666,25 @@ fn engine_find_text(label: string) -> int {
     return 0
 }
 
+/// Ancestor-aware text presence for tests: 1 when a node whose ancestors are
+/// all visible carries `label`. `engine_find_text` only checks the node's own
+/// visibility, so it cannot see a child of a hidden container.
+fn text_visible(label: string) -> bool {
+    let n = arena.nodes.len
+    for i in 1..n {
+        if arena.shown_in_tree(i) == 0 {
+            continue
+        }
+        if fmt.eq(arena.nodes[i].text, label) {
+            return true
+        }
+        if fmt.eq(arena.nodes[i].a11y_label, label) {
+            return true
+        }
+    }
+    return false
+}
+
 /// Node id whose `a11y_role` equals `role` (tests, headless hosts); the
 /// first match in tree order, 0 when none is visible.
 fn engine_find_role(role: string) -> int {
@@ -6415,6 +6434,95 @@ fn Empty(p: EmptyProps) -> Node {
     Text(p.body, color = mute(), font = FONT_BODY)
     ui_pop()
     return n
+}
+
+/// A single-open accordion. `open` is the *only* state: the open item's index,
+/// or `-1` for all closed. Items take the shared signal and their own `index`;
+/// no item owns state. Opening one closes the rest by construction — there is
+/// one index, so two items can never both match it.
+fn Accordion(open: Signal<int>, p: AccordionProps) -> Node {
+    let n = Box(align_direction = DIRECTION.Column,
+                background = str_or_default(p.background, plate()),
+                border = px_or_default(p.border, HAIRLINE),
+                border_color = str_or_default(p.border_color, rule()),
+                radius = px_or_default(p.radius, RAD_LG),
+                width = p.width,
+                bind = p.bind, bind__set = p.bind__set)
+    // Clip the rounded corners, so a body cannot spill past the card edge.
+    return overflow(n, overflow_hidden())
+}
+
+struct AccordionProps {
+    width: int = -1,
+    radius: int = -1,
+    border: int = -1,
+    background: string = "",
+    border_color: string = "",
+    bind: Signal<int> = Signal { id: 0 },
+    bind__set: bool = false,
+}
+
+struct AccordionItemProps {
+    /// The accordion's single open-index signal (`-1` = all closed).
+    open: Signal<int> = Signal { id: 0 },
+    open__set: bool = false,
+    /// This item's index within its accordion.
+    index: int = 0,
+    /// Header label.
+    title: fn() -> string = empty_text,
+    /// Body copy, shown while this item is open.
+    body: fn() -> string = empty_text,
+    /// Optional leading icon markup.
+    icon: string = "",
+}
+
+/// One row of an `Accordion`. Reads the shared `open` signal and compares it to
+/// `index`, so it holds no state of its own: the chevron rotates on a paint-only
+/// track and the body fades in, both driven by the container's one signal.
+fn AccordionItem(p: AccordionItemProps) {
+    let open = p.open
+    let idx = p.index
+    let head = Box(align_direction = DIRECTION.Row,
+                   align_items = ALIGN.Center,
+                   spacing = SPACE.Xs,
+                   padding_x = 16,
+                   padding_y = 12,
+                   on_click = fn() {
+                       if open.get() == idx {
+                           open.set(-1)
+                       } else {
+                           open.set(idx)
+                       }
+                   },
+                   a11y_role = "button",
+                   a11y_label = p.title(),
+                   cursor = "pointer",
+                   hover_off = false,
+                   press = true)
+    ui_push(head.id)
+    if p.icon.len > 0 {
+        Icon(p.icon, 16, dim())
+    }
+    Text(p.title, color = ink(), font = FONT_CONTROL, grow = 1)
+    let chev = Icon(IC_CHEV_DOWN, 16, dim())
+    styled(chev, || {
+        if open.get() == idx {
+            animate_rotate(chev, 180, MOTION.Fast)
+        } else {
+            animate_rotate(chev, 0, MOTION.Fast)
+        }
+    })
+    ui_pop()
+    let content = Box(align_direction = DIRECTION.Column,
+                      padding_x = 16,
+                      padding_y = 12)
+    // No gap above the body: the header already carries the top inset.
+    set_padding_top(content, 0)
+    show_eq(content, open, idx)
+    enter_fade(content)
+    ui_push(content.id)
+    Text(p.body, color = mute(), font = FONT_BODY, wrap = 1)
+    ui_pop()
 }
 
 /// Named extras for `Dialog` / `AlertDialog`. `title` shares the header
