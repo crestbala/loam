@@ -152,6 +152,15 @@ struct UiNode {
     /// deterministic at `now_ms == 0`.
     spin_ms: u16,
     spin: u8,
+    /// Anchor-based floating placement (popover / tooltip / hover card). When
+    /// `anchor` > 0 the node is positioned at layout time against that node's
+    /// screen rect: `place` is the preferred side, `anchor_gap` the offset in
+    /// dp, and `flip` allows the opposite side when the preferred one would
+    /// overflow.
+    anchor: int,
+    anchor_gap: u16,
+    place: u8,
+    flip: u8,
     /// Interaction-state overlay flags (see `UISTATE` / `interaction_state`).
     /// Components do not reimplement these; one shared model reads them.
     disabled: u8,
@@ -292,6 +301,7 @@ fn blank_node() -> UiNode {
         dirty: 0, bar_amt: 0,
         an_scale: 100, an_tx: 0, an_ty: 0, an_rot: 0,
         spin_ms: 900, spin: 0,
+        anchor: 0, anchor_gap: 6, place: 0, flip: 1,
         disabled: 0, loading: 0, invalid: 0,
         click_fn: 0, ui_size: 1, ui_look: 1, restyle_fn: 0,
         hover_fade: 0, hover_amt: 0, tween: -1, enter_fade: 0, show_amt: 0,
@@ -1847,6 +1857,37 @@ fn want_show(id: int) -> int {
         return 0
     }
     return 1
+}
+
+/// Anchor a floating node (popover / tooltip / hover card) to `target`'s
+/// screen rect. `side` is the preferred placement, `gap` the offset in dp.
+fn anchor_to(id: int, target: int, side: int, gap: int) {
+    if id <= 0 {
+        return
+    }
+    if id >= nodes.len {
+        return
+    }
+    nodes[id].anchor = target
+    nodes[id].place = u8(side)
+    let mut g = gap
+    if g < 0 {
+        g = 0
+    }
+    nodes[id].anchor_gap = u16(g)
+    nodes[id].flip = u8(1)
+    mark_layout()
+}
+
+fn set_anchor_flip(id: int, on: int) {
+    if id <= 0 {
+        return
+    }
+    if id >= nodes.len {
+        return
+    }
+    nodes[id].flip = u8(on)
+    mark_layout()
 }
 
 /// 1 when `id` and every ancestor is visible. `want_show` is per-node; a hidden

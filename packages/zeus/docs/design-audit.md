@@ -55,12 +55,11 @@ Present (`fn` in `zeus.loam`), with what each actually paints today.
 | `Toggle` / `ToggleGroup` | pressed | Instant swap. |
 | `Separator` / `Divider` / `Icon` / `Pip` / `Row` / `Column` / `Grow` | — | Primitives, fine. |
 
-**Absent entirely** (grep returns zero definitions): `Toast`, `Tooltip`,
-`HoverCard`, `Popover`, `Menu`/`DropdownMenu`, `Drawer`/`Sheet`, `Collapsible`,
-`Combobox`. Five of the eleven transitions §3.5 requires belong to components
-that do not exist yet. `Spinner`/`Loader`, `Empty`, and `Accordion` landed in
-phase 4 (on the clock-driven indicator, the paint-only transform set, and the
-single-signal single-open model).
+**Absent entirely** (grep returns zero definitions): `Menu`/`DropdownMenu`,
+`Drawer`/`Sheet`, `Collapsible`, `Combobox`. `Spinner`/`Loader`, `Empty`,
+`Accordion`, and the overlay family (`Popover` / `Tooltip` / `HoverCard` /
+`Toast`) landed in phase 4, built on the clock-driven indicator, the paint-only
+transform set, the single-signal single-open model, and anchored floaters.
 
 **Icon set** is 10 constants (`IC_CHECK`, `IC_X`, `IC_CHEV_DOWN/LEFT/RIGHT`,
 `IC_CALENDAR`, `IC_INFO`, `IC_ALERT_CIRCLE`, `IC_PLUS`, `IC_MINUS`), stored as
@@ -380,7 +379,7 @@ answers depending on how you arrived.
 | 1 | Audit | **done** | `8289306` |
 | 2 | Tokens + paint primitives | **done** | `2184563` |
 | 3 | Dirty-channel split + animation subsystem + state layer | **done** | `feat(zeus): dirty-channel split + animation track pool (phase 3)` |
-| 4 | Components, in batches | **in progress — batches 1–2** | `feat: paint-only motion + feedback primitives` / `feat: Accordion (single open signal)` |
+| 4 | Components, in batches | **in progress — batches 1–3** | `feat: paint-only motion + feedback primitives` / `feat: Accordion` / `feat: overlay family` |
 | 5 | Gallery + docs (`spec.md`, a `www/` design-system page) | not started | — |
 
 `make test` at the end of phase 3: **361 passed, 0 failed** (the six network
@@ -582,3 +581,32 @@ Deliberately open for this component: the body is shown/hidden discretely with a
 fade (no animated height). The audit's clip-height animation needs an animated
 clip rect (a paint-only clip prop) that does not exist yet; the fade is the
 correct fallback until it does.
+
+### Phase 4 batch 3 outcome — overlay family (anchored floaters)
+
+`Popover`, `Tooltip`, `HoverCard`, and `Toast` share one mechanism: an
+out-of-flow floater (`position = pos_absolute`, `z_index`) whose `anchor` is a
+node id. `arena.anchor_to` records the anchor; the layout pass
+(`place_anchored` / `place_node` in `layout.loam`) places the floater against
+the anchor's *screen* rect, flipping to the opposite side when the preferred
+one would leave the viewport. `PLACE` names the four sides.
+
+- `Popover(trigger, open, place, gap, width)` — a transparent full-window scrim
+  closes on outside click; the panel claims focus on open and closes on Escape
+  (`popover.close`). Trailing block is the body.
+- `Tooltip(trigger, text, place, delay)` — non-interactive, hover-triggered
+  after a delay (hover intent via the engine's `hover_sig` + `async.after`).
+- `HoverCard(trigger, place, delay, width)` — the interactive variant.
+- `Toast(open, ms, place)` — pinned bottom (or top) by a full-window overlay,
+  rises 12dp and fades in via paint-only tracks, and auto-dismisses.
+
+Known limits, recorded rather than hidden: no exit animation (closing hides
+immediately); the anchored panel does not reposition during a scroll (scroll is
+paint-only, so no layout pass runs); anchored placement assumes the desktop
+inset origin (safe insets 0) — on a notched mobile host a popover would be off
+by the safe-area origin. All three are follow-ups, not regressions: the previous
+`Select` was a hardcoded offset with no flip at all.
+
+New golden `golden_overlays`; `zeus_overlays.loam` checks open/close, the
+bottom-edge flip, outside-click dismissal, tooltip show/hide on hover, and toast
+auto-dismiss.

@@ -1176,4 +1176,120 @@ fn layout(width: int, height: int) {
     measure_node(arena.root_id)
     layout_node(arena.root_id, 0, 0, arena.win_w, arena.win_h)
     layout_overlays(arena.root_id)
+    place_anchored(arena.root_id)
+}
+
+/// Screen origin of `id` in window points: its content-space x/y less every
+/// scroller offset above it (the inverse of `ptr_in`'s screen-to-content walk).
+struct Pt {
+    x: int,
+    y: int,
+}
+
+fn screen_origin(id: int) -> Pt {
+    let mut sx = 0
+    let mut sy = 0
+    let mut p = arena.nodes[id].parent
+    let mut guard = 0
+    while p > 0 {
+        if int(arena.nodes[p].kind) == 11 {
+            sx = sx + arena.nodes[p].scroll_x
+            sy = sy + arena.nodes[p].scroll_y
+        }
+        p = arena.nodes[p].parent
+        guard = guard + 1
+        if guard > 64 {
+            break
+        }
+    }
+    return Pt { x: arena.nodes[id].x - sx, y: arena.nodes[id].y - sy }
+}
+
+/// Position one anchored floater against its anchor's screen rect, flipping to
+/// the opposite side when the preferred one would leave the viewport. Runs
+/// after the normal layout and re-lays-out the moved subtree.
+fn place_node(id: int) {
+    let a = arena.nodes[id].anchor
+    if a <= 0 {
+        return
+    }
+    if a >= arena.nodes.len {
+        return
+    }
+    if arena.want_show(id) == 0 {
+        return
+    }
+    let o = screen_origin(a)
+    let ax = o.x
+    let ay = o.y
+    let aw = arena.nodes[a].w
+    let ah = arena.nodes[a].h
+    let w = arena.nodes[id].w
+    let h = arena.nodes[id].h
+    let gap = int(arena.nodes[id].anchor_gap)
+    let top = arena.safe_t
+    let bottom = arena.win_h - arena.safe_b
+    let left = arena.safe_l
+    let right = arena.win_w - arena.safe_r
+    let side = int(arena.nodes[id].place)
+    // 0 below, 1 above, 2 end (right), 3 start (left)
+    let mut x = ax
+    let mut y = ay + ah + gap
+    if side == 1 {
+        y = ay - h - gap
+    } else if side == 2 {
+        x = ax + aw + gap
+        y = ay
+    } else if side == 3 {
+        x = ax - w - gap
+        y = ay
+    }
+    if int(arena.nodes[id].flip) != 0 {
+        if y + h > bottom {
+            let alt = ay - h - gap
+            if alt >= top {
+                y = alt
+            }
+        }
+        if y < top {
+            let alt = ay + ah + gap
+            if alt + h <= bottom {
+                y = alt
+            }
+        }
+        if x + w > right {
+            let altx = ax + aw - w
+            if altx >= left {
+                x = altx
+            }
+        }
+        if x < left {
+            x = left
+        }
+    }
+    if x < 0 {
+        x = 0
+    }
+    if y < 0 {
+        y = 0
+    }
+    arena.nodes[id].x = x
+    arena.nodes[id].y = y
+    layout_node(id, x, y, w, h)
+}
+
+fn place_anchored(id: int) {
+    if id <= 0 {
+        return
+    }
+    let nk = arena.nodes[id].kids.len
+    for i in 0..nk {
+        let c = arena.nodes[id].kids[i]
+        if c > 0 {
+            if arena.nodes[c].anchor > 0 {
+                place_node(c)
+            }
+            place_anchored(c)
+        }
+    }
 }

@@ -1,0 +1,23 @@
+// DRAW-list golden: the overlay family. An open Popover anchored below its
+// trigger (edge-aware placement), and a Toast pinned to the window bottom.
+// Tooltips / hover cards are hover-triggered, so they are closed on this
+// settled first frame. Keep this file free of prints: stdout is the golden.
+
+import "std:zeus"
+
+fn main() {
+    let open = zeus.signal(1)
+    let toast = zeus.signal(1)
+    zeus.snapshot(420, 320, fn() -> Node {
+        zeus.Page() {
+            let trigger = zeus.Button("Menu", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
+            zeus.Popover(trigger, open = open, place = zeus.PLACE.PlaceBelow, width = 200) {
+                zeus.Text("Rename", color = zeus.ink(), font = zeus.FONT_BODY)
+                zeus.Text("Duplicate", color = zeus.ink(), font = zeus.FONT_BODY)
+            }
+            zeus.Toast(toast, width = 180) {
+                zeus.Text("Saved", color = zeus.on_ink(), font = zeus.FONT_BODY)
+            }
+        }
+    })
+}
