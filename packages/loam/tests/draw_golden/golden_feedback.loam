@@ -13,6 +13,9 @@ fn main() {
                 zeus.Spinner(size = 24, color = zeus.ink())
                 zeus.Empty(icon = zeus.IC_INFO, title = "No projects",
                            body = "Create one to get started.")
+                zeus.Card(width = 120) {
+                    zeus.Title("Elevated")
+                }
                 let scaled = zeus.Box(width = 40, height = 40, radius = 8,
                                       background = zeus.accent())
                 zeus.animate_scale(scaled, 50, 0)

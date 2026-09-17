@@ -281,6 +281,23 @@ show on hover after a hover-intent delay; `Toast(open, ms)` pins to the window
 edge, rises and fades in, and auto-dismisses. None of them rebuilds a tree or
 runs a component while animating.
 
+## Depth
+
+`elevation` is a `Box` / `Card` prop (0–4) that paints a soft shadow under the
+surface. The curves live in the core (`arena.elevation` / `elevation_dark`) and
+`elev_now` picks one from the appearance signal, so a theme switch repaints the
+shadow with no effect run. The paint pass emits the shadow **first**, then the
+fill, then the border, so the surface sits on its shadow; `Card` defaults to 1,
+`Popover` / `Tooltip` / `HoverCard` / `Toast` to 2–3, and a dialog panel to 4.
+`elevation` is paint-only, so changing it never runs layout.
+
+Borders are an anti-aliased `stroke` ring on the outline, not a filled rect
+underneath. `paint_fill_box` fills at the **full** node radius and then strokes
+the border, so a bordered surface may be translucent or carry a gradient and
+still keep a correct border — the old under-fill forced an opaque background and
+inset the fill by `border_w`, which also shifted the hover wash and press
+overlay inward. Both now use the full radius. (Phase 4 batch 4.)
+
 ## Scaffold
 
 `zeli new <name> [dir]` writes the §6.2 app tree: `zeus.toml`, a single

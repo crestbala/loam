@@ -2090,6 +2090,13 @@ fn dump_draw_list() {
             fmt.println("image", d.x, d.y, d.w, d.h, d.alpha, d.radius, d.value)
         } else if d.kind == 11 {
             fmt.println("grad", d.x, d.y, d.w, d.h, d.rgb, d.value, d.radius)
+        } else if d.kind == 12 {
+            fmt.println("shadow", d.x, d.y, d.w, d.h, d.rgb, d.radius, d.alpha, d.font,
+                         d.value % 256 - 128, d.value / 256 - 128)
+        } else if d.kind == 13 {
+            fmt.println("stroke", d.x, d.y, d.w, d.h, d.rgb, d.radius, d.font, d.alpha)
+        } else if d.kind == 14 {
+            fmt.println("fill4", d.x, d.y, d.w, d.h, d.rgb, d.alpha)
         } else if d.kind == 15 {
             fmt.println("xform", d.x, d.y, d.w, d.h, d.radius, d.font)
         }
@@ -2305,6 +2312,8 @@ struct BoxProps {
     radius: int = -1,
     border: int = -1,
     border_color: string = "",
+    /// Elevation 0..4: paints a soft shadow under the surface. `-1` = none.
+    elevation: int = -1,
     background: string = "",
     color: string = "",
     font: int = -1,
@@ -2540,6 +2549,7 @@ enum SET {
     ShowOn = 31,
     SvgFit = 32,
     SvgLazy = 33,
+    Elevation = 34,
     Text = 100,
     A11yLabel = 101,
     A11yRole = 102,
@@ -2625,6 +2635,18 @@ fn apply_int(nid: int, setter: int, v: int) {
         }
         SET.SvgFit => { arena.nodes[nid].font = u16(v) }
         SET.SvgLazy => { arena.nodes[nid].wrap = u8(v) }
+        SET.Elevation => {
+            if v <= 0 {
+                arena.nodes[nid].elev = u8(0)
+            } else {
+                let mut lv = v
+                if lv > 4 {
+                    lv = 4
+                }
+                arena.nodes[nid].elev = u8(lv)
+                arena.nodes[nid].elev_c = role_color(ROLE.Shadow)
+            }
+        }
         _ => {}
     }
     if setter_is_paint_only(setter) {
@@ -2640,7 +2662,7 @@ fn apply_int(nid: int, setter: int, v: int) {
 fn setter_is_paint_only(setter: int) -> bool {
     match setter {
         SET.Radius | SET.Opacity | SET.Background | SET.Color | SET.BorderColor |
-        SET.ZIndex | SET.SvgFit | SET.SvgLazy => { return true }
+        SET.ZIndex | SET.SvgFit | SET.SvgLazy | SET.Elevation => { return true }
         _ => { return false }
     }
 }
@@ -2801,6 +2823,7 @@ fn Component(node: Node, p: BoxProps) -> Node {
     set_prop_int(node, SET.PaddingY, p.padding_y)
     set_prop_int(node, SET.Spacing, p.spacing)
     set_prop_int(node, SET.Radius, p.radius)
+    set_prop_int(node, SET.Elevation, p.elevation)
     set_prop_int(node, SET.Grow, p.grow)
     let sw = shrink_weight(p.grow, p.shrink)
     set_prop_int(node, SET.Shrink, sw)
@@ -4701,42 +4724,25 @@ fn best_on(bg: int) -> int {
 }
 
 // --- elevation ------------------------------------------------------------
-/// One elevation level: a shadow color role, its alpha, blur, and offset.
-/// Levels are additive in the usual way — 0 flat, 1 a resting card, 2 a
-/// raised control, 3 a popover or menu, 4 a modal.
-struct Elev {
-    alpha: int,
-    blur: int,
-    dx: int,
-    dy: int,
-}
+// The curves and the `Elev` record live in the core (`arena`), because the
+// paint pass resolves a node's shadow and cannot import this module. These are
+// the public spellings; they delegate so there is one home for the numbers.
 
 /// Elevation for `level` 0..4, light appearance.
 fn elevation(level: int) -> Elev {
-    if level <= 0 { return Elev(alpha = 0, blur = 0, dx = 0, dy = 0) }
-    if level == 1 { return Elev(alpha = 18, blur = 3, dx = 0, dy = 1) }
-    if level == 2 { return Elev(alpha = 24, blur = 8, dx = 0, dy = 2) }
-    if level == 3 { return Elev(alpha = 34, blur = 18, dx = 0, dy = 6) }
-    return Elev(alpha = 48, blur = 36, dx = 0, dy = 12)
+    return arena.elevation(level)
 }
 
 /// Elevation for `level` 0..4, dark appearance. A dark UI needs a darker,
 /// tighter shadow: the same alpha over a near-black surface is invisible, so
 /// every level roughly doubles its opacity and pulls the blur in.
 fn elevation_dark(level: int) -> Elev {
-    if level <= 0 { return Elev(alpha = 0, blur = 0, dx = 0, dy = 0) }
-    if level == 1 { return Elev(alpha = 60, blur = 3, dx = 0, dy = 1) }
-    if level == 2 { return Elev(alpha = 78, blur = 7, dx = 0, dy = 2) }
-    if level == 3 { return Elev(alpha = 105, blur = 15, dx = 0, dy = 5) }
-    return Elev(alpha = 140, blur = 30, dx = 0, dy = 10)
+    return arena.elevation_dark(level)
 }
 
 /// Elevation resolved for the current appearance.
 fn elev_now(level: int) -> Elev {
-    if appearance().get() == 1 {
-        return elevation_dark(level)
-    }
-    return elevation(level)
+    return arena.elev_now(level)
 }
 
 // --- motion ---------------------------------------------------------------
@@ -5375,6 +5381,8 @@ struct CardProps {
     /// a theme switch. `-1` / `""` keep the recipe's own value.
     background: string = "",
     color: string = "",
+    /// Elevation 0..4; defaults to 1 (a resting card).
+    elevation: int = -1,
     radius: int = -1,
     padding: int = -1,
     padding_x: int = -1,
@@ -5420,6 +5428,7 @@ fn Card(p: CardProps) -> Node {
         radius = px_or_default(p.radius, RAD_XL),
         border = px_or_default(p.border, HAIRLINE),
         border_color = str_or_default(p.border_color, rule()),
+        elevation = px_or_default(p.elevation, 1),
         color = p.color,
         font = p.font,
         width = p.width,
@@ -6573,6 +6582,7 @@ fn Popover(trigger: Node, p: PopoverProps) -> Node {
     let panel = Box(align_direction = DIRECTION.Column,
                     position = pos_absolute(),
                     z_index = 60,
+                    elevation = 3,
                     spacing = SPACE.Xs,
                     background = str_or_default(p.background, plate()),
                     border = HAIRLINE,
@@ -6624,6 +6634,7 @@ fn Tooltip(trigger: Node, p: TooltipProps) -> Node {
                     position = pos_absolute(),
                     z_index = 70,
                     background = ink(),
+                    elevation = 2,
                     padding_x = 8,
                     padding_y = 4,
                     radius = RAD_SM,
@@ -6676,6 +6687,7 @@ fn HoverCard(trigger: Node, p: HoverCardProps) -> Node {
                     radius = RAD_LG,
                     padding = px_or_default(p.padding, SPACE.Sm),
                     width = p.width,
+                    elevation = 2,
                     visible = shown)
     arena.anchor_to(panel.id, trigger.id, p.place, p.gap)
     enter_fade(panel)
@@ -6714,6 +6726,7 @@ fn Toast(open: Signal<int>, p: ToastProps) -> Node {
                    padding_x = 16,
                    padding_y = 12,
                    radius = px_or_default(p.radius, RAD_MD),
+                   elevation = 2,
                    width = p.width,
                    on_click = fn() { open.set(0) },
                    cursor = "pointer")
@@ -6757,6 +6770,7 @@ fn dialog_shell(open: Signal<int>, close_x: int, title: string) -> Node {
         border = HAIRLINE,
         border_color = rule(),
         radius = RAD_LG,
+        elevation = 4,
         a11y_role = "dialog",
         on_click = fn() { return }
     )

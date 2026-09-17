@@ -161,6 +161,10 @@ struct UiNode {
     anchor_gap: u16,
     place: u8,
     flip: u8,
+    /// Elevation 0..4. `elev_c` holds the shadow color's role sentinel so the
+    /// paint pass resolves it per appearance (like every other role).
+    elev: u8,
+    elev_c: int,
     /// Interaction-state overlay flags (see `UISTATE` / `interaction_state`).
     /// Components do not reimplement these; one shared model reads them.
     disabled: u8,
@@ -302,6 +306,7 @@ fn blank_node() -> UiNode {
         an_scale: 100, an_tx: 0, an_ty: 0, an_rot: 0,
         spin_ms: 900, spin: 0,
         anchor: 0, anchor_gap: 6, place: 0, flip: 1,
+        elev: 0, elev_c: -1,
         disabled: 0, loading: 0, invalid: 0,
         click_fn: 0, ui_size: 1, ui_look: 1, restyle_fn: 0,
         hover_fade: 0, hover_amt: 0, tween: -1, enter_fade: 0, show_amt: 0,
@@ -1522,6 +1527,46 @@ fn paint_rgb(c: int) -> int {
         return theme_l[slot]
     }
     return 0
+}
+
+// --- elevation --------------------------------------------------------------
+// Pure data, in the core so the paint pass can resolve a node's shadow without
+// depending on the component module. `zeus.elevation` / `elev_now` delegate
+// here, so the tokens have one home.
+struct Elev {
+    alpha: int,
+    blur: int,
+    dx: int,
+    dy: int,
+}
+
+fn elevation(level: int) -> Elev {
+    if level <= 0 { return Elev(alpha = 0, blur = 0, dx = 0, dy = 0) }
+    if level == 1 { return Elev(alpha = 18, blur = 3, dx = 0, dy = 1) }
+    if level == 2 { return Elev(alpha = 24, blur = 8, dx = 0, dy = 2) }
+    if level == 3 { return Elev(alpha = 34, blur = 18, dx = 0, dy = 6) }
+    return Elev(alpha = 48, blur = 36, dx = 0, dy = 12)
+}
+
+fn elevation_dark(level: int) -> Elev {
+    if level <= 0 { return Elev(alpha = 0, blur = 0, dx = 0, dy = 0) }
+    if level == 1 { return Elev(alpha = 60, blur = 3, dx = 0, dy = 1) }
+    if level == 2 { return Elev(alpha = 78, blur = 7, dx = 0, dy = 2) }
+    if level == 3 { return Elev(alpha = 105, blur = 15, dx = 0, dy = 5) }
+    return Elev(alpha = 140, blur = 30, dx = 0, dy = 10)
+}
+
+fn elev_now(level: int) -> Elev {
+    let mut dark = 0
+    if appearance_sid > 0 {
+        if appearance_sid < sigs.len {
+            dark = sigs[appearance_sid]
+        }
+    }
+    if dark != 0 {
+        return elevation_dark(level)
+    }
+    return elevation(level)
 }
 
 fn sig_val(id: int) -> int {
