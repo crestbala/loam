@@ -360,6 +360,7 @@ fn raw_overlay() -> Node {
     let id = arena.alloc_node(9)
     arena.nodes[id].pos = 1
     arena.nodes[id].enter_fade = 1
+    arena.mark_chrome()
     return node_handle(id)
 }
 fn raw_input(placeholder: string) -> Node {
@@ -449,6 +450,7 @@ fn child(parent: Node, node: Node) -> Node {
     arena.ensure()
     push(arena.nodes[parent.id].kids, node.id)
     arena.nodes[node.id].parent = parent.id
+    arena.mark_tree()
     return parent
 }
 
@@ -815,6 +817,7 @@ fn text_rot(node: Node, deg: int) -> Node {
 
 fn bind(label: Node, sig: Signal<int>) -> Node {
     arena.nodes[label.id].bind_sig = sig.id
+    arena.mark_chrome()
     return label
 }
 
@@ -839,18 +842,21 @@ fn on_click(node: Node, handler: fn()) -> Node {
 fn show(node: Node, sig: Signal<int>) -> Node {
     arena.nodes[node.id].show_sig = sig.id
     arena.nodes[node.id].show_mode = 0
+    arena.mark_chrome()
     return node
 }
 fn show_eq(node: Node, sig: Signal<int>, value: int) -> Node {
     arena.nodes[node.id].show_sig = sig.id
     arena.nodes[node.id].show_mode = 1
     arena.nodes[node.id].show_val = value
+    arena.mark_chrome()
     return node
 }
 fn show_ne(node: Node, sig: Signal<int>, value: int) -> Node {
     arena.nodes[node.id].show_sig = sig.id
     arena.nodes[node.id].show_mode = 2
     arena.nodes[node.id].show_val = value
+    arena.mark_chrome()
     return node
 }
 // --- keyboard ---
@@ -1006,12 +1012,14 @@ fn show_ge(node: Node, sig: Signal<int>, value: int) -> Node {
     arena.nodes[node.id].show_sig = sig.id
     arena.nodes[node.id].show_mode = 3
     arena.nodes[node.id].show_val = value
+    arena.mark_chrome()
     return node
 }
 fn show_le(node: Node, sig: Signal<int>, value: int) -> Node {
     arena.nodes[node.id].show_sig = sig.id
     arena.nodes[node.id].show_mode = 4
     arena.nodes[node.id].show_val = value
+    arena.mark_chrome()
     return node
 }
 
@@ -1020,7 +1028,7 @@ fn hover(node: Node, sig: Signal<int>) -> Node {
 }
 
 fn pulse(node: Node) -> Node {
-    arena.nodes[node.id].pulse = 1
+    arena.note_pulse(node.id)
     return node
 }
 
@@ -1036,7 +1044,66 @@ fn hover_off(node: Node) -> Node {
 
 fn enter_fade(node: Node) -> Node {
     arena.nodes[node.id].enter_fade = 1
+    arena.mark_chrome()
     return node
+}
+
+// --- shared interaction state ---------------------------------------------
+// One model for hover / pressed / focus-visible / disabled / loading /
+// selected / invalid. Components set these once; the engine's paint and hit
+// test consult the same overlay instead of each recipe re-deriving them.
+
+/// Disabled: dimmed, no hover, no press. (`enabled` on a component already
+/// sets this; `disabled` is for plain nodes and reactive overrides.)
+fn disabled(node: Node, on: bool) -> Node {
+    if on {
+        arena.set_disabled(node.id, 1)
+    } else {
+        arena.set_disabled(node.id, 0)
+    }
+    return node
+}
+
+/// Loading: dimmed and non-interactive while work is in flight.
+fn loading(node: Node, on: bool) -> Node {
+    if on {
+        arena.set_loading(node.id, 1)
+    } else {
+        arena.set_loading(node.id, 0)
+    }
+    return node
+}
+
+/// Invalid: validation failed (paint chrome reads the shared overlay).
+fn invalid(node: Node, on: bool) -> Node {
+    if on {
+        arena.set_invalid(node.id, 1)
+    } else {
+        arena.set_invalid(node.id, 0)
+    }
+    return node
+}
+
+fn state_disabled(node: Node) -> bool {
+    return arena.state_disabled_of(node.id) != 0
+}
+fn state_loading(node: Node) -> bool {
+    return arena.state_loading_of(node.id) != 0
+}
+fn state_invalid(node: Node) -> bool {
+    return arena.state_invalid_of(node.id) != 0
+}
+fn state_hovered(node: Node) -> bool {
+    return arena.state_hovered_of(node.id) != 0
+}
+fn state_pressed(node: Node) -> bool {
+    return arena.state_pressed_of(node.id) != 0
+}
+fn state_focus_visible(node: Node) -> bool {
+    return arena.state_focus_visible_of(node.id) != 0
+}
+fn state_selected(node: Node) -> bool {
+    return arena.state_selected_of(node.id) != 0
 }
 fn keys(node: Node, sig: Signal<int>, lo: int, hi: int) -> Node {
     return node.key("right", "slider.inc").key("left", "slider.dec").focusable().on_range("slider.inc", sig, 1, lo, hi).on_range("slider.dec", sig, -1, lo, hi)
@@ -1219,7 +1286,16 @@ fn engine_layout(width: int, height: int) {
     // the rebuild and layout below paint their effect this very frame. Hosts
     // call this per frame (mac drawRect, web rAF, headless pump).
     async.tick()
-    arena.physics_step()
+    if arena.physics_step() != 0 {
+        arena.mark_paint()
+    }
+    let mut resized = 0
+    if width != arena.win_w {
+        resized = 1
+    }
+    if height != arena.win_h {
+        resized = 1
+    }
     if has_view != 0 {
         arena.snapshot_focus()
         arena.snapshot_scroll()
@@ -1230,18 +1306,49 @@ fn engine_layout(width: int, height: int) {
         arena.root_id = n.id
         arena.restore_scroll()
         arena.restore_focus()
-        arena.stamp_edits()
-    } else {
-        arena.stamp_edits()
+        arena.mark_tree()
     }
-    layout.layout(width, height)
-    // Windowed lists size their window from the scroller's laid-out height,
-    // and refit hosts (charts) rebuild when this frame's layout moved their
-    // width. One refresh pass after layout covers both; the second pass
-    // re-lays-out with the new rows / fresh chart width.
-    if (virt_stale() != 0) || (refit_stale() != 0) {
-        refresh_lists()
+    // A non-int signal write (array / string / bool) never passes through
+    // `store_sig`, so its dirt is noted on the tracking module and drained here.
+    if track.take_wrote() != 0 {
+        arena.mark_layout()
+        arena.mark_chrome()
+    }
+    // Layout runs only when the box model can have moved: a resize, a tree
+    // build, or a discrete write that touched a layout prop. A frame whose
+    // only dirt is PAINT — every animation frame — skips it entirely.
+    let mut lay = 0
+    if resized != 0 || arena.layout_dirty != 0 {
+        lay = 1
+    }
+    if lay != 0 {
+        arena.stamp_edits()
         layout.layout(width, height)
+        arena.layout_dirty = 0
+        arena.mark_paint()
+    }
+    // Windowed lists size their window from the scroller's laid-out height and
+    // its scroll, and refit hosts (charts) rebuild when this frame's layout
+    // moved their width. One refresh pass covers both; a second layout applies
+    // the new rows / fresh chart width. A pure scroll frame that stays inside
+    // the mounted window skips both.
+    if lay != 0 || arena.virt_dirty != 0 {
+        if (virt_stale() != 0) || (refit_stale() != 0) {
+            refresh_lists()
+            layout.layout(width, height)
+            arena.layout_dirty = 0
+        }
+        arena.virt_dirty = 0
+    }
+    if lay != 0 {
+        // Positions moved, so pointer-over targets may have changed.
+        arena.mark_chrome()
+    }
+    // The shared interaction-state pass: recompute hover/press/tween/fade
+    // targets and (re)target their paint tracks. Event-driven, never per frame.
+    if arena.chrome_dirty != 0 {
+        arena.sync_chrome()
+        arena.chrome_dirty = 0
     }
 }
 
@@ -1327,8 +1434,18 @@ fn engine_paint() {
     scene.paint()
 }
 
-fn engine_step() -> int {
-    let d = scene.step()
+/// One host frame with its own delta. `zeus_step(dt)` in the runtime passes the
+/// delta here; the cap keeps a backgrounded app from jumping when it wakes.
+/// Tests and headless pumps call `engine_step()` (a nominal 16 ms).
+fn engine_step_dt(dt_ms: int) -> int {
+    let mut dt = dt_ms
+    if dt <= 0 {
+        dt = 16
+    }
+    if dt > 64 {
+        dt = 64
+    }
+    let d = scene.step(dt)
     // While an async op is in flight or a spawn waits, hosts must keep
     // drawing frames: only a frame's tick advances them. Coasting scroll
     // is the same: keep frames until velocity and overscroll settle.
@@ -1338,10 +1455,14 @@ fn engine_step() -> int {
     if arena.phys_live() != 0 {
         return 1
     }
-    if arena.anim_step() != 0 {
+    if arena.anim_live() != 0 {
         return 1
     }
     return d
+}
+
+fn engine_step() -> int {
+    return engine_step_dt(16)
 }
 
 /// Milliseconds until the next async timer is due (0 = none; -1 = a spawn
@@ -1358,11 +1479,61 @@ fn engine_next_ms() -> int {
     return async.next_due()
 }
 
-/// Tween `sig` toward `to` over `ms` (60 fps steps). Anything bound to the
-/// signal repaints each frame; `ms == 0` jumps. A new call retargets an
-/// in-flight tween. While it runs the engine keeps producing frames (§2.8).
+/// Move `sig` toward `to` over `ms` milliseconds.
+///
+/// **Behaviour change (Phase 3):** the signal's *state* moves to `to` once —
+/// every effect bound to `sig` re-runs once — and the moving value is a
+/// paint-only overlay interpolated on the animation track pool. Effects no
+/// longer re-run per frame, and nothing re-runs inside the tick at all. A new
+/// call retargets an in-flight animation from its current value. `ms == 0`
+/// jumps; before the first frame it jumps too (nothing animates at boot).
 fn animate(sig: Signal<int>, to: int, ms: int) {
-    arena.anim_to(sig.id, to, ms)
+    arena.anim_signal(sig.id, to, ms)
+}
+
+// --- Phase 3 proof harness ------------------------------------------------
+/// Component-function runs since boot. Flat across an animation.
+fn proof_components() -> int {
+    return arena.component_runs
+}
+/// Reactive-effect runs since boot. Flat across an animation.
+fn proof_effects() -> int {
+    return track.runs
+}
+/// Signal setters fired from inside the animation tick. Must stay 0.
+fn proof_signal_writes() -> int {
+    return arena.anim_signal_writes
+}
+/// Active animation tracks.
+fn proof_anim_live() -> int {
+    return arena.anim_live_count()
+}
+/// Allocations since boot (runtime allocator). A frame that only animates
+/// allocates nothing, so this must not move while a track is running.
+fn proof_allocs() -> int {
+    return platform.plat_alloc_count()
+}
+/// The paint value a bound signal currently resolves to: the interpolated
+/// overlay while `animate` runs, else the signal's state. Tests use it to see
+/// the animation without a component thunk re-running.
+fn anim_paint(sig: Signal<int>) -> int {
+    return arena.sig_val(sig.id)
+}
+/// Host / app reduced-motion preference: animations jump to their final value.
+fn set_reduced_motion(on: bool) {
+    arena.ensure()
+    if on {
+        arena.reduced = 1
+    } else {
+        arena.reduced = 0
+    }
+}
+
+/// Host trampoline: the OS reports a reduced-motion preference (Cocoa, iOS,
+/// web `prefers-reduced-motion`, Android animator scale).
+fn engine_set_reduced_motion(on: int) {
+    arena.ensure()
+    arena.reduced = on
 }
 
 /// One headless host frame: async tick, rebuild + layout, then paint. Tests
@@ -2349,11 +2520,30 @@ fn apply_int(nid: int, setter: int, v: int) {
         SET.SvgLazy => { arena.nodes[nid].wrap = u8(v) }
         _ => {}
     }
+    if setter_is_paint_only(setter) {
+        arena.mark_paint()
+    } else {
+        arena.mark_layout()
+    }
+}
+
+/// Setters that change only paint state: geometry is untouched, so a frame
+/// that writes one skips `layout.layout()`. Everything else (sizes, padding,
+/// border, text, font, position, show) can move the box model.
+fn setter_is_paint_only(setter: int) -> bool {
+    match setter {
+        SET.Radius | SET.Opacity | SET.Background | SET.Color | SET.BorderColor |
+        SET.ZIndex | SET.SvgFit | SET.SvgLazy => { return true }
+        _ => { return false }
+    }
 }
 
 fn apply_str(nid: int, setter: int, v: string) {
     match setter {
-        SET.Text => { arena.nodes[nid].text = v }
+        SET.Text => {
+            arena.nodes[nid].text = v
+            arena.mark_layout()
+        }
         SET.A11yLabel => { arena.nodes[nid].a11y_label = v }
         SET.A11yRole => { arena.nodes[nid].a11y_role = v }
         SET.Cursor => { arena.nodes[nid].cursor = v }
@@ -2463,6 +2653,7 @@ fn computed_bool(calc: fn() -> bool) -> Signal<bool> {
 /// so widgets stay data.
 fn Component(node: Node, p: BoxProps) -> Node {
     arena.ensure()
+    arena.component_runs = arena.component_runs + 1
     shrink(node, 0)
     let k = int(arena.nodes[node.id].kind)
     if p.style__set {
@@ -2530,6 +2721,13 @@ fn Component(node: Node, p: BoxProps) -> Node {
     }
     let dim = enabled_opacity(p.enabled, p.opacity)
     set_prop_int(node, SET.Opacity, dim)
+    // The shared state overlay records disabled once, so hover / press and any
+    // future invalid / loading chrome read one model instead of re-deriving it.
+    if p.enabled {
+        arena.set_disabled(node.id, 0)
+    } else {
+        arena.set_disabled(node.id, 1)
+    }
     if k == 10 {
         set_prop_int(node, SET.Wrap, p.multiline)
     }

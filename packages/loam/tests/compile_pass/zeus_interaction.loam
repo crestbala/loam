@@ -1,0 +1,67 @@
+// Phase 3: the chrome animations are tracks retargeted from discrete state.
+// Hovering a button starts a track (no component or effect re-run) and the
+// shared interaction overlay reports the state; disabling it suppresses hover.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("hover", 320, 120)
+    let btn = zeus.Button("Hover me", on_click = fn() {})
+    let tree = zeus.Box(padding = 20) {
+        zeus.child(zeus.Box(), btn)
+    }
+    zeus.root(tree)
+    zeus.pump_frame()
+
+    let cx = zeus.node_x(btn.id) + zeus.node_width(btn.id) / 2
+    let cy = zeus.node_y(btn.id) + zeus.node_height(btn.id) / 2
+
+    let c0 = zeus.proof_components()
+    let e0 = zeus.proof_effects()
+    zeus.engine_hover(cx, cy)
+    zeus.engine_layout(320, 120)
+    must(zeus.state_hovered(btn), "hovered")
+    must(zeus.proof_anim_live() > 0, "hover started a track")
+    let mut i = 0
+    while i < 4 {
+        zeus.engine_layout(320, 120)
+        zeus.engine_step_dt(16)
+        zeus.engine_paint()
+        i = i + 1
+    }
+    must(zeus.proof_components() == c0, "hover ran no component")
+    must(zeus.proof_effects() == e0, "hover ran no effect")
+
+    // Disabled suppresses hover through the same overlay.
+    zeus.disabled(btn, true)
+    zeus.engine_layout(320, 120)
+    must(zeus.state_disabled(btn), "disabled")
+    must(!zeus.state_hovered(btn), "no hover while disabled")
+    zeus.disabled(btn, false)
+    zeus.engine_layout(320, 120)
+
+    // Leave: the hover fades out on a track and then the loop can idle.
+    zeus.engine_hover(cx, cy + 400)
+    zeus.engine_layout(320, 120)
+    i = 0
+    while i < 20 {
+        zeus.engine_layout(320, 120)
+        zeus.engine_step_dt(16)
+        zeus.engine_paint()
+        i = i + 1
+    }
+    must(!zeus.state_hovered(btn), "unhovered")
+    must(zeus.proof_components() == c0, "unhover ran no component")
+    must(zeus.engine_step_dt(16) == 0, "idle after the fade")
+
+    fmt.println("hover ok")
+}

@@ -201,6 +201,7 @@ fn click(px: int, py: int) -> int {
     // Pointer interaction dismisses the keyboard focus ring; tab/shift-tab
     // brings it back (desktop convention).
     arena.kb_focus = 0
+    arena.mark_paint()
     if arena.root_id <= 0 {
         return 0
     }
@@ -260,7 +261,7 @@ fn click(px: int, py: int) -> int {
             }
             let v = (rel * 100 + travel / 2) / travel
             let sid = arena.nodes[id].bind_sig
-            arena.store_sig(sid, v)
+            arena.store_sig_paint(sid, v)
             arena.drag_id = id
             return 1
         }
@@ -279,6 +280,7 @@ fn click(px: int, py: int) -> int {
     if arena.nodes[id].down_fn > 0 {
         platform.plat_invoke_fn(arena.nodes[id].down_fn)
     }
+    arena.mark_chrome()
     return 1
 }
 
@@ -492,7 +494,7 @@ fn drag(px: int, py: int) -> int {
         }
         let v = (rel * 100 + travel / 2) / travel
         let sid = arena.nodes[arena.drag_id].bind_sig
-        arena.store_sig(sid, v)
+        arena.store_sig_paint(sid, v)
         return 1
     }
     if kind != 11 {
@@ -516,6 +518,7 @@ fn drag(px: int, py: int) -> int {
         }
         arena.nodes[arena.drag_id].scroll_x = nx
         arena.bar_on(arena.drag_id)
+        arena.mark_scroll()
         return 1
     }
     let maxs = arena.scroll_max(arena.drag_id)
@@ -531,6 +534,7 @@ fn drag(px: int, py: int) -> int {
     }
     arena.nodes[arena.drag_id].scroll_y = ny
     arena.bar_on(arena.drag_id)
+    arena.mark_scroll()
     return 1
 }
 
@@ -539,6 +543,7 @@ fn mouseup() {
     arena.drag_bar = 0
     let id = arena.down_id
     arena.down_id = 0
+    arena.mark_chrome()
     if id <= 0 {
         return
     }
@@ -698,6 +703,11 @@ fn hover(px: int, py: int) -> int {
             }
         }
     }
+    if dirty != 0 {
+        // Retarget the shared chrome tracks once the pointer settles; the
+        // per-frame path only ticks them.
+        arena.mark_chrome()
+    }
     return dirty
 }
 
@@ -828,6 +838,7 @@ fn key(k: int) -> int {
             arena.focus_id = 0
             arena.kb_focus = 0
             changed = 1
+            arena.mark_paint()
         }
         let n = arena.nodes.len
         for i in 1..n {

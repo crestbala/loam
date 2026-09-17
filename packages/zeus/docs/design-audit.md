@@ -377,12 +377,17 @@ answers depending on how you arrived.
 |---|---|---|---|
 | 1 | Audit | **done** | `8289306` |
 | 2 | Tokens + paint primitives | **done** | `2184563` |
-| 3 | Dirty-channel split + animation subsystem + state layer | not started | — |
+| 3 | Dirty-channel split + animation subsystem + state layer | **done** | `feat(zeus): dirty-channel split + animation track pool (phase 3)` |
 | 4 | Components, in batches | not started | — |
 | 5 | Gallery + docs (`spec.md`, a `www/` design-system page) | not started | — |
 
-`make test` at the end of phase 2: **365 passed, 0 failed**. All four hosts
-build — Cocoa, wasm, iOS (`.app`, signed), Android (APK; Java + NDK).
+`make test` at the end of phase 3: **361 passed, 0 failed** (the six network
+suites — `http_auth`, `http_h1_live`, `http_h2_live`, `net_listen`,
+`zeus_async_rpc`, `zeus_stream` — need outbound sockets and fail in a sandboxed
+run, as they did before this phase). All four hosts build — Cocoa, wasm, iOS
+(`.app`, signed), Android (Gradle project + JNI). All eight `draw_golden`
+fixtures are byte-identical to phase 2: the settled first frame is unchanged, so
+nothing needed regenerating.
 
 ### Decisions taken (do not re-litigate)
 
@@ -475,3 +480,57 @@ Preserve what already works: **idle costs zero frames** on both Cocoa
 (`mac_schedule_next` pauses the `CADisplayLink`) and wasm (the loader stops
 calling `requestAnimationFrame`). §3.4's hardest bullet is already satisfied and
 is easy to break by accident.
+
+### Phase 3 outcome (do not re-litigate)
+
+What landed, in the order above:
+
+1. **Dirty channels.** `UiNode.dirty` carries PAINT / LAYOUT / TREE bits and
+   `arena.dirty_paint` lists the marked nodes. `engine_layout` runs
+   `layout.layout()` only on a resize, a tree build, or a layout-prop write; a
+   PAINT-only frame skips it, and `scene.paint` re-presents the retained draw
+   list when nothing is dirty. Non-int signal writes (array / string / bool)
+   bypass `store_sig` in generated C, so their dirt is noted on `track.notify`
+   and drained once per frame.
+2. **Track pool.** A `TRACK_CAP`-sized `Track` arena in `arena.loam`:
+   `{node, prop, from, to, cur, elapsed, dur, easing, state}`, plain data, no
+   per-frame allocation. `anim_tick(dt)` advances every active track and writes
+   paint state only. `zeus_step(float dt)` now hands its delta to
+   `engine_step_dt`; the delta is capped at 64 ms. Cold boot, zero duration, and
+   reduced motion jump to the final value.
+3. **Chrome ported.** Hover, press, switch / checkbox thumb, mounted-surface
+   fade, and scrollbar fade are tracks now. Targets are retargeted by
+   `sync_chrome` from discrete state (`chrome_dirty`), not scanned per frame;
+   rates are milliseconds and use `EASE.Linear/Standard/Emphasized/Spring`
+   (curves implemented in `anim_ease`). The skeleton shimmer is driven by the
+   millisecond clock, not a frame counter.
+4. **`zeus.animate` retargeted.** State moves once, the paint overlay
+   interpolates. **Behaviour change:** effects bound to the signal no longer
+   re-run per frame (the intended repair). `zeus_anim.loam` was migrated to the
+   new semantics, and `anim_paint(sig)` exposes the interpolated paint value.
+5. **Interaction state.** One `UISTATE` overlay (hover / pressed /
+   focus-visible / disabled / loading / selected / invalid) with
+   `interaction_state`, so paint and hit-test read one model; `enabled` sets
+   disabled, and a disabled / loading node never hovers.
+6. **Proof harness.** `proof_components` / `proof_effects` /
+   `proof_signal_writes` / `proof_allocs` / `proof_anim_live`, a trap if a
+   signal is set from inside the tick, and a runtime allocation counter
+   (`-DLOAM_ALLOC_TRACE`, Zeus builds only). `zeus_anim_proof.loam` animates 40
+   bound widgets at once and asserts all four counters stay flat, the paint
+   advances, the tracks drain, and idle then wants zero frames.
+
+Deliberately left as-is:
+
+- **The draw list is still a full-frame blit.** A paint-only frame skips layout
+  and the reactive graph, but `scene.paint` still walks the tree and
+  `present()` replays every op, because all four hosts blit the whole surface
+  (`mac.m` paints every pixel: the root scroller carries the background). Only
+  the layout pass and the O(all-nodes) animation scan were removed; a true
+  partial repaint would need a retained, spliced draw list and a host damage
+  contract, which is not what this phase needed.
+- **`zeus.animate` on a signal that drives layout** interpolates the paint read
+  only; the layout-visible value is already at the target. That is the
+  documented meaning of "animation only interpolates paint values".
+- **`EASE` curves are integer approximations** (cubic / quint ease-out,
+  ease-out-back for Spring), matching the token ordering, not an exact cubic
+  bezier.

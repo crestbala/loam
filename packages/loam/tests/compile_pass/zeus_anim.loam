@@ -1,5 +1,8 @@
-// Phase 19 animation: `zeus.animate` tweens a signal per frame and keeps the
-// frame loop alive until it settles (§2.8).
+// Phase 3 animation: `zeus.animate` moves a signal's *state* once and then
+// interpolates a paint-only overlay on the track pool. Effects no longer re-run
+// per frame; the animation tick never touches the reactive graph. The overlay
+// is observable through `anim_paint` (what a bound widget paints) while
+// `sig.get()` already reads the final state.
 
 import "std:fmt"
 import "std:sys"
@@ -13,32 +16,59 @@ fn must(ok: bool, what: string) {
 }
 
 fn main() {
+    zeus.window("anim", 200, 100)
     let s = zeus.signal(0)
-    zeus.animate(s, 100, 160) // 10 frames
-    must(s.get() == 0, "starts at the from value")
+    let seen = zeus.signal(-1)
+    let tree = zeus.Box() {
+        zeus.Progress(s)
+    }
+    zeus.root(tree)
+    // Complete one frame first: before it, tracks settle (nothing animates at
+    // boot), which is what keeps the draw goldens deterministic.
+    zeus.pump_frame()
+
+    // An effect bound to `s` must run once for the state change, then stay put
+    // for the whole animation.
+    zeus.effect(|| { seen.set(s.get()) })
+
+    zeus.animate(s, 100, 160)
+    must(s.get() == 100, "state moves to the target once")
+    must(seen.get() == 100, "bound effect ran once")
+    must(zeus.anim_paint(s) == 0, "paint starts at the from value")
+    // Count from after the one legitimate state-change run.
+    let effects0 = zeus.proof_effects()
 
     let mut i = 0
     while i < 5 {
         zeus.engine_step()
         i = i + 1
     }
-    let mid = s.get()
-    must(mid > 0, "moves off the floor")
-    must(mid < 100, "not there yet")
+    let mid = zeus.anim_paint(s)
+    must(mid > 0, "paint moves off the floor")
+    must(mid < 100, "paint not there yet")
+    must(s.get() == 100, "state stays at the target")
+    must(zeus.proof_effects() == effects0, "no effect ran during animation")
+    must(zeus.proof_signal_writes() == 0, "tick wrote no signal")
 
     i = 0
     while i < 8 {
         zeus.engine_step()
         i = i + 1
     }
-    must(s.get() == 100, "settles exactly on the target")
+    must(zeus.anim_paint(s) == 100, "paint settles exactly on the target")
+    must(zeus.proof_effects() == effects0, "no effect ran while settling")
 
-    // Retarget mid-flight, then a zero-duration jump.
+    // Retarget mid-flight keeps the current paint value as the new from.
     zeus.animate(s, 0, 160)
     zeus.engine_step()
-    must(s.get() > 0 && s.get() < 100, "retargets in flight")
+    let c = zeus.anim_paint(s)
+    must(c > 0 && c < 100, "retargets from the current value")
+    must(s.get() == 0, "retarget moved the state once")
+
+    // Zero duration jumps both state and paint.
     zeus.animate(s, 7, 0)
-    must(s.get() == 7, "zero ms jumps")
+    must(s.get() == 7, "zero ms jumps state")
+    must(zeus.anim_paint(s) == 7, "zero ms jumps paint")
 
     fmt.println("anim ok")
 }

@@ -474,9 +474,24 @@ static inline int64_t loam_idx(int64_t i, int64_t n, const char *f, int l) {
     return i;
 }
 
+/* Allocation accounting for the animation proof harness (phase 3). Only a Zeus
+   program turns this on (`-DLOAM_ALLOC_TRACE`): the counter lives in the Zeus
+   runtime, which is what `plat_alloc_count` reads. Every other program keeps
+   the no-op inline. */
+#ifdef LOAM_ALLOC_TRACE
+extern int64_t loam_alloc_count;
+static inline void loam_alloc_note(size_t sz) {
+    (void)sz;
+    loam_alloc_count++;
+}
+#else
+static inline void loam_alloc_note(size_t sz) { (void)sz; }
+#endif
+
 static inline void *loam_new(size_t sz, const char *f, int l) {
     void *p = malloc(sz ? sz : 1);
     if (!p) loam_panic(f, l, "out of memory");
+    loam_alloc_note(sz);
     return p;
 }
 
@@ -540,6 +555,7 @@ static inline void loam_vec_unique(loam_vec *v, size_t esz, const char *f, int l
     bytes = sizeof(int64_t) + (esz ? (size_t)v->cap * esz : 1);
     raw = malloc(bytes);
     if (!raw) loam_panic(f, l, "out of memory");
+    loam_alloc_note(bytes);
     *(int64_t *)raw = 1;
     if (v->len > 0 && esz)
         memcpy((char *)raw + sizeof(int64_t), v->ptr, (size_t)v->len * esz);
@@ -560,6 +576,7 @@ static inline void loam_vec_reserve(loam_vec *v, int64_t n, size_t esz, const ch
     if (!v->ptr) {
         raw = malloc(sizeof(int64_t) + (esz ? (size_t)cap * esz : 1));
         if (!raw) loam_panic(f, l, "out of memory");
+        loam_alloc_note((size_t)cap * esz);
         *(int64_t *)raw = 1;
         v->ptr = (char *)raw + sizeof(int64_t);
         v->cap = cap;
@@ -568,6 +585,7 @@ static inline void loam_vec_reserve(loam_vec *v, int64_t n, size_t esz, const ch
     raw = realloc((char *)v->ptr - sizeof(int64_t),
                   sizeof(int64_t) + (esz ? (size_t)cap * esz : 1));
     if (!raw) loam_panic(f, l, "out of memory");
+    loam_alloc_note((size_t)cap * esz);
     v->ptr = (char *)raw + sizeof(int64_t);
     v->cap = cap;
 }

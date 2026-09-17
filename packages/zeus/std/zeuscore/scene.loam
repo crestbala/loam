@@ -619,6 +619,16 @@ fn paint_floaters(id: int) {
 
 fn paint() {
     arena.ensure()
+    // The first paint completes the first frame: tracks scheduled before it have
+    // already settled to their final value (cold boot, audit §10).
+    arena.anim_booted = 1
+    if arena.paint_dirty == 0 {
+        // Nothing changed since the last frame: the retained draw list is still
+        // correct. Re-present it — every host blits the whole surface — but
+        // skip the tree walk and all the resolution it would redo.
+        present()
+        return
+    }
     let n = draws.len
     for i in 0..n {
         pop(draws)
@@ -633,160 +643,16 @@ fn paint() {
         }
     }
     present()
+    arena.clear_dirty()
 }
 
-fn step() -> int {
+fn step(dt: int) -> int {
     arena.ensure()
-    arena.pulse_t = arena.pulse_t + 1
-    if arena.pulse_t > 100000 {
-        arena.pulse_t = 0
+    arena.now_ms = arena.now_ms + dt
+    let mut live = arena.anim_tick(dt)
+    if arena.pulse_live() != 0 {
+        arena.paint_dirty = 1
+        live = 1
     }
-    let n = arena.nodes.len
-    let mut dirty = 0
-    for i in 1..n {
-        if int(arena.nodes[i].pulse) != 0 {
-            dirty = 1
-        }
-        if arena.is_hot(i) != 0 {
-            let mut target = 0
-            if arena.ptr_in(i) != 0 {
-                target = 100
-            }
-            let mut a = int(arena.nodes[i].hover_amt)
-            let d = target - a
-            let mut step = d / 5
-            if step == 0 {
-                if d > 0 {
-                    step = 1
-                }
-                if d < 0 {
-                    step = -1
-                }
-            }
-            if step != 0 {
-                a = a + step
-                if a < 0 {
-                    a = 0
-                }
-                if a > 100 {
-                    a = 100
-                }
-                dirty = 1
-            }
-            arena.nodes[i].hover_amt = u8(a)
-        }
-        if arena.nodes[i].press != 0 {
-            let mut target = 0
-            if arena.down_id == i {
-                target = 100
-            }
-            let mut a = int(arena.nodes[i].press_amt)
-            let d = target - a
-            let mut step = d / 4
-            if step == 0 {
-                if d > 0 {
-                    step = 1
-                }
-                if d < 0 {
-                    step = -1
-                }
-            }
-            if step != 0 {
-                a = a + step
-                if a < 0 {
-                    a = 0
-                }
-                if a > 100 {
-                    a = 100
-                }
-                dirty = 1
-            }
-            arena.nodes[i].press_amt = u8(a)
-        }
-        let k = int(arena.nodes[i].kind)
-        if k == 7 {
-            let mut target = 0
-            if arena.bind_pct(i) > 0 {
-                target = 100
-            }
-            let mut t = arena.nodes[i].tween
-            if t < 0 {
-                t = target
-            }
-            if t < target {
-                t = t + 9
-                if t > 100 {
-                    t = 100
-                }
-                dirty = 1
-            }
-            if t > target {
-                t = t - 9
-                if t < 0 {
-                    t = 0
-                }
-                dirty = 1
-            }
-            arena.nodes[i].tween = t
-        }
-        if k == 8 {
-            let mut target = 0
-            if arena.sig_val(arena.nodes[i].bind_sig) != 0 {
-                target = 100
-            }
-            let mut t = arena.nodes[i].tween
-            if t < 0 {
-                t = target
-            }
-            if t < target {
-                t = t + 10
-                if t > 100 {
-                    t = 100
-                }
-                dirty = 1
-            }
-            if t > target {
-                t = t - 10
-                if t < 0 {
-                    t = 0
-                }
-                dirty = 1
-            }
-            arena.nodes[i].tween = t
-        }
-        if k == 11 {
-            if arena.nodes[i].bar_t != 0 {
-                let dt = arena.pulse_t - arena.nodes[i].bar_t
-                if dt < 0 {
-                    dirty = 1
-                } else if dt <= arena.bar_hide() {
-                    dirty = 1
-                } else {
-                    arena.nodes[i].bar_t = 0
-                }
-            }
-        }
-        if int(arena.nodes[i].enter_fade) != 0 {
-            if arena.want_show(i) != 0 {
-                let mut s = int(arena.nodes[i].show_amt)
-                if s < 100 {
-                    let step = (100 - s) / 5
-                    if step < 1 {
-                        s = 100
-                    } else {
-                        s = s + step
-                    }
-                    if s > 100 {
-                        s = 100
-                    }
-                    dirty = 1
-                }
-                arena.nodes[i].show_amt = u8(s)
-            }
-            if arena.want_show(i) == 0 {
-                arena.nodes[i].show_amt = 0
-            }
-        }
-    }
-    return dirty
+    return live
 }

@@ -219,11 +219,37 @@ parses both into display lines (`tree_lines`, `signal_lines`) and `Panel()`
 renders them as a scrollable list you drop into a dev build. It is a Zeus app
 reading the same arena everything else uses, so it needs no second renderer.
 
-Animation is a signal tween: `zeus.animate(sig, to, ms)` steps the signal
-toward `to` one frame at a time. `engine_step` reports the frame as live until
-it settles, so the host keeps drawing, and everything bound to the signal
-repaints through the normal signal path. `ms == 0` jumps; a second call
-retargets mid-flight.
+Animation is a paint-only track pool, not a signal tween. `zeus.animate(sig, to,
+ms)` moves the signal's *state* to `to` once (every effect bound to it re-runs
+once), then interpolates a paint-only overlay over `ms` on a fixed-capacity
+arena of tracks. The tick writes the overlay value into paint state and marks
+that node's PAINT bit: it never calls a signal setter, so no effect re-runs and
+no component rebuilds while an animation plays. `engine_step(dt)` advances every
+track by the host-supplied delta (read once per frame, capped at 64 ms), so 60 Hz
+and 120 Hz hosts move at the same speed; `engine_step` reports the frame as live
+until the tracks settle, then the host idles.
+
+Tracks are keyed by `(node, prop)` and retarget in place: a second call keeps
+the current value as the new `from`, so an interrupted transition never pops or
+restarts. Before the first frame completes, a scheduled track jumps to its final
+value — nothing animates at boot, which also keeps the DRAW goldens
+deterministic. `zeus.set_reduced_motion(true)` (and each host's OS preference)
+skips to the final value as well. The chrome animations — hover, press, the
+switch / checkbox thumb, mounted-surface fade, scrollbar fade — are the same
+track pool; they are retargeted from discrete state by the shared interaction
+overlay, not scanned per frame.
+
+`zeus.proof_components()`, `proof_effects()`, `proof_signal_writes()`,
+`proof_allocs()`, and `proof_anim_live()` are the Phase 3 harness: across an
+animation the first four must stay flat.
+
+## Interaction state
+
+One shared overlay (`UISTATE`) carries hover, pressed, focus-visible, disabled,
+loading, selected, and invalid. Components set it (`enabled`, `visible`,
+`disabled()`, `loading()`, `invalid()`); paint and hit-test read it through
+`interaction_state`, so no recipe re-derives it. The states are discrete, so a
+change may use a signal; the *transition* between them is a track.
 
 ## Scaffold
 

@@ -134,6 +134,17 @@ struct UiNode {
     show_amt: u8,
     enter_fade: u8,
     safe: u8,
+    /// Dirty-channel bits (see `mark_paint` / `mark_layout`). Bit 0 PAINT,
+    /// bit 1 LAYOUT, bit 2 TREE. A node is marked when a discrete write or an
+    /// animation tick changes it; paint drains the marks.
+    dirty: u8,
+    /// Animated scrollbar alpha 0..180 (a `BarFade` track). 0 = hidden.
+    bar_amt: u8,
+    /// Interaction-state overlay flags (see `UISTATE` / `interaction_state`).
+    /// Components do not reimplement these; one shared model reads them.
+    disabled: u8,
+    loading: u8,
+    invalid: u8,
     w_pct: i8,
     h_pct: i8,
     align_self: i8,
@@ -215,6 +226,38 @@ let mut free_nodes: []int = []int {}
    table sweeps made every chart refit ~25 ms. */
 let mut drop_pool: []int = []int {}
 
+// --- dirty channels + frame clock (Phase 3) --------------------------------
+//
+// `paint_dirty` gates the draw pass, `layout_dirty` the layout pass. A frame
+// with only PAINT dirt skips `layout.layout()` and every reactive scope: the
+// value that changed was written straight into node paint state by an
+// animation track, which never touches the signal graph. `chrome_dirty` asks
+// the shared interaction-state pass to recompute hover/press/tween/fade tracks
+// from discrete state; it is driven by events, not by the frame clock.
+let mut paint_dirty: int = 1
+let mut layout_dirty: int = 1
+let mut tree_dirty: int = 1
+let mut chrome_dirty: int = 1
+/// A scroller moved: paint-only, but a windowed list's visible window may have
+/// shifted, so the virtual refresh pass must run before paint.
+let mut virt_dirty: int = 0
+/// Node ids whose PAINT bit was set since the last paint. The animation tick
+/// appends here; `scene.paint` drains it. Ids are deduped by the PAINT bit.
+let mut dirty_paint: []int = []int {}
+/// Monotonic frame clock in ms, advanced by the host-supplied delta.
+let mut now_ms: int = 0
+/// Tracks with `pulse` (skeleton shimmer) currently alive.
+let mut pulse_count: int = 0
+/// Component-function runs (`Component`) and reactive-effect runs (`track.run`)
+/// since boot. Animation must leave both flat (Phase 3 proof harness).
+let mut component_runs: int = 0
+/// 1 = reduced motion from the host. Animations jump to their final value.
+let mut reduced: int = 0
+/// 1 = a signal setter fired inside the animation tick (a hard invariant
+/// violation). `store_sig` records it and, while `anim_assert != 0`, traps.
+let mut anim_signal_writes: int = 0
+let mut anim_assert: int = 1
+
 fn blank_node() -> UiNode {
     return UiNode {
         kind: 0, dir: 0, kids: []int {}, pad: 0, padx: 0, pady: 0,
@@ -232,6 +275,8 @@ fn blank_node() -> UiNode {
         pin_t: -1, pin_r: -1, pin_b: -1, pin_l: -1,
         z_index: 0, grid_auto: 0, scroll_x: 0, scroll_y: 0, tw: 0, th: 0, pulse: 0, press: 0, press_amt: 0,
         aw: 0, ah: 0, bar_t: 0, parent: 0, key_ctx: 0, focusable: 0, capture_text: 0, edit_slot: -1,
+        dirty: 0, bar_amt: 0,
+        disabled: 0, loading: 0, invalid: 0,
         click_fn: 0, ui_size: 1, ui_look: 1, restyle_fn: 0,
         hover_fade: 0, hover_amt: 0, tween: -1, enter_fade: 0, show_amt: 0,
         down_fn: 0, up_fn: 0, kdown_fn: 0, kup_fn: 0, kpress_fn: 0, edit_sig: 0, bind_fn: 0,
@@ -252,6 +297,7 @@ fn ensure() {
     if sigs.len == 0 {
         push(sigs, 0)
     }
+    anim_ensure()
 }
 
 /// Enter a rebuild scope: allocations from now on are owned by `nid`.
@@ -299,6 +345,7 @@ fn release_sigs(nid: int) {
             pop(rec_sid)
             platform.plat_sig_free(sid)
             track.drop_sig(sid)
+            anim_drop_sig(sid)
         } else {
             i = i + 1
         }
@@ -435,6 +482,11 @@ fn free_node(id: int) {
             platform.plat_edit_reset(nodes[id].edit_slot)
         }
     }
+    if int(nodes[id].pulse) != 0 {
+        if pulse_count > 0 {
+            pulse_count = pulse_count - 1
+        }
+    }
     push(drop_pool, id)
     nodes[id].kids = []int {}
     nodes[id] = blank_node()
@@ -463,6 +515,8 @@ fn reset_tree() {
     kh_host = []int {}
     kh_key = []string {}
     kh_node = []int {}
+    anim_reset()
+    mark_tree()
 }
 
 let mut scroll_save: []int = []int {}
@@ -507,7 +561,10 @@ fn drop_children(id: int) {
     // One effect-table sweep for the whole freed subtree: per-node sweeps
     // made refit drops ~25 ms once the table had accumulated records.
     track.free_nodes_effects(drop_pool)
+    // Tracks owned by the freed nodes return to the pool in the same sweep.
+    anim_free_pool(drop_pool)
     drop_pool = []int {}
+    mark_tree()
 }
 
 /// Start a host rebuild: free everything the host's previous build owned
@@ -573,6 +630,7 @@ fn release(m: ArenaMark) {
         s = s - 1
         platform.plat_sig_free(s)
         track.drop_sig(s)
+        anim_drop_sig(s)
     }
     while rec_sid.len > m.rec_s { pop(rec_sid) }
     while rec_owner.len > m.rec_o { pop(rec_owner) }
@@ -584,6 +642,7 @@ fn release(m: ArenaMark) {
     while sigs.len > m.sigs { pop(sigs) }
     while free_nodes.len > m.free { pop(free_nodes) }
     while nodes.len > m.nodes { pop(nodes) }
+    anim_drop_above(m.nodes)
     scope_node = m.scope
     root_id = m.root
     focus_id = m.focus
@@ -609,102 +668,652 @@ fn store_sig(id: int, value: int) {
     if sigs[id] == value {
         return
     }
+    if in_anim_tick != 0 {
+        // Hard invariant: the animation tick writes paint values, never state.
+        anim_signal_writes = anim_signal_writes + 1
+        if anim_assert != 0 {
+            panic("zeus: signal set from the animation tick")
+        }
+    }
     sigs[id] = value
     platform.plat_sig_bind_int(id, value)
     track.notify(id)
+    // A discrete state change: layout may follow (a width/show signal feeds
+    // layout), and the shared chrome pass may need to retarget a track.
+    mark_layout()
+    mark_chrome()
 }
 
-// --- animations (Phase 19): tween int signals toward a target -------------
-//
-// A tween steps one fixed frame at a time, like scroll physics, so it needs no
-// clock of its own: `engine_step` advances it and reports the frame as live
-// until it settles. Interpolating the *signal* means anything bound to it
-// repaints, the same path a discrete `set` takes.
+/// A paint-only signal write: the value moved but nothing about the tree's
+/// geometry did (scroll offsets, drag positions). Effects still run — one that
+/// changes a layout prop marks layout itself, through `apply_int`.
+fn store_sig_paint(id: int, value: int) {
+    if id <= 0 {
+        return
+    }
+    if id >= sigs.len {
+        return
+    }
+    if sigs[id] == value {
+        return
+    }
+    sigs[id] = value
+    platform.plat_sig_bind_int(id, value)
+    track.notify_paint(id)
+    paint_dirty = 1
+}
 
-struct Anim {
-    sid: int,
+// --- animation track pool (Phase 3) ---------------------------------------
+//
+// One fixed-capacity arena of tracks; every animation in the system is a row
+// here. A track is plain data — no signal, no closure, no per-frame allocation.
+// `anim_tick(dt_ms)` advances all active tracks from the host-supplied delta
+// (read once per frame, not once per track) and writes the current value into
+// the node's paint state, setting that node's PAINT bit. It never calls
+// `store_sig`: no effect re-runs and no component rebuilds while an animation
+// plays. A state change schedules or retargets a track once, then the graph is
+// idle until the next state change.
+//
+// `sig_paint` is the one overlay: a `SigVal` track interpolates a signal's
+// *paint* value while the signal's logical value (and so every effect bound to
+// it) has already moved to the target. That is what lets `zeus.animate` stop
+// re-running effects per frame without changing its signature.
+
+// Which paint value a track drives. All are paint-only, so a frame that only
+// ticks tracks skips layout entirely. `SigVal` keys `sig_paint` by signal id
+// instead of node id.
+enum APROP {
+    // Hover wash 0..100 (UiNode.hover_amt).
+    HoverAmt = 1,
+    // Press overlay 0..100 (UiNode.press_amt).
+    PressAmt = 2,
+    // Switch / checkbox thumb travel 0..100 (UiNode.tween).
+    SwitchTween = 3,
+    // Mounted-surface fade 0..100 (UiNode.show_amt).
+    EnterFade = 4,
+    // Scrollbar alpha 0..180 (UiNode.bar_amt).
+    BarFade = 5,
+    // Signal paint overlay (sig_paint[sid]).
+    SigVal = 6,
+}
+
+let TRACK_CAP = 512
+
+struct Track {
+    node: int,
+    prop: int,
     from: int,
     to: int,
-    done: int,
-    total: int,
+    cur: int,
+    elapsed: int,
+    dur: int,
+    easing: int,
+    state: int,
 }
 
-let mut anims: []Anim = []Anim {}
+let mut tracks: []Track = []Track {}
+let mut track_free: []int = []int {}
+let mut anim_active: int = 0
+let mut sig_paint: []int = []int {}
+let mut sig_anim: []int = []int {}
+let mut anim_booted: int = 0
+let mut in_anim_tick: int = 0
 
-/// Drop any tween already running on `sid`.
-fn anim_cancel(sid: int) {
-    let mut keep = []Anim {}
+fn anim_ensure() {
+    if tracks.len != 0 {
+        return
+    }
+    for i in 0..TRACK_CAP {
+        push(tracks, Track { node: 0, prop: 0, from: 0, to: 0, cur: 0, elapsed: 0, dur: 0, easing: 0, state: 0 })
+    }
     let mut i = 0
-    while i < anims.len {
-        if anims[i].sid != sid {
-            push(keep, anims[i])
+    while i < TRACK_CAP {
+        push(track_free, TRACK_CAP - 1 - i)
+        i = i + 1
+    }
+}
+
+// Easing codes, kept in step with `zeus.EASE`. arena cannot import zeus (the
+// dependency runs the other way), so the values are repeated here as the
+// numbers the shaper matches on.
+fn ease_linear() -> int { return 0 }
+fn ease_standard() -> int { return 1 }
+fn ease_emphasized() -> int { return 2 }
+fn ease_spring() -> int { return 3 }
+// Durations in ms, in step with `zeus.MOTION`.
+fn motion_fast() -> int { return 120 }
+fn motion_base() -> int { return 200 }
+fn motion_slow() -> int { return 320 }
+
+/// Shape a linear 0..1000 progress into an eased 0..1000 (Spring may overshoot).
+fn anim_ease(easing: int, t: int) -> int {
+    if t <= 0 {
+        return 0
+    }
+    if t >= 1000 {
+        return 1000
+    }
+    if easing == ease_linear() {
+        return t
+    }
+    let u = 1000 - t
+    if easing == ease_emphasized() {
+        // ease-out quint: more pronounced deceleration than Standard.
+        return 1000 - u * u / 1000 * u / 1000 * u / 1000
+    }
+    if easing == ease_spring() {
+        // ease-out-back: overshoots past the target, then settles on it.
+        let u2 = u * u / 1000
+        let u3 = u2 * u / 1000
+        return 1000 + 2701 * u3 / 1000 + 1701 * u2 / 1000
+    }
+    // Standard: ease-out cubic.
+    return 1000 - u * u / 1000 * u / 1000
+}
+
+fn anim_find(node: int, prop: int) -> int {
+    let mut i = 0
+    while i < tracks.len {
+        if tracks[i].state == 1 {
+            if tracks[i].node == node {
+                if tracks[i].prop == prop {
+                    return i
+                }
+            }
         }
         i = i + 1
     }
-    anims = keep
+    return -1
 }
 
-/// Tween signal `sid` from its current value toward `to` over `ms` (60 fps
-/// steps). A `ms` of 0 jumps straight to `to`. Restarts any tween on `sid`.
-fn anim_to(sid: int, to: int, ms: int) {
+fn anim_alloc() -> int {
+    if track_free.len == 0 {
+        return -1
+    }
+    let slot = track_free[track_free.len - 1]
+    pop(track_free)
+    return slot
+}
+
+fn anim_clamp100(v: int) -> int {
+    if v < 0 {
+        return 0
+    }
+    if v > 100 {
+        return 100
+    }
+    return v
+}
+
+/// Current paint value a track on (`node`, `prop`) is at.
+fn anim_read(node: int, prop: int) -> int {
+    if prop == APROP.HoverAmt {
+        return int(nodes[node].hover_amt)
+    }
+    if prop == APROP.PressAmt {
+        return int(nodes[node].press_amt)
+    }
+    if prop == APROP.SwitchTween {
+        if nodes[node].tween < 0 {
+            return 0
+        }
+        return nodes[node].tween
+    }
+    if prop == APROP.EnterFade {
+        return int(nodes[node].show_amt)
+    }
+    if prop == APROP.BarFade {
+        return int(nodes[node].bar_amt)
+    }
+    if prop == APROP.SigVal {
+        if node < sig_paint.len {
+            return sig_paint[node]
+        }
+        return 0
+    }
+    return 0
+}
+
+/// Write a paint value (the track tick's only side effect on the tree).
+fn anim_store(node: int, prop: int, v: int) {
+    if prop == APROP.HoverAmt {
+        nodes[node].hover_amt = u8(anim_clamp100(v))
+    } else if prop == APROP.PressAmt {
+        nodes[node].press_amt = u8(anim_clamp100(v))
+    } else if prop == APROP.SwitchTween {
+        nodes[node].tween = v
+    } else if prop == APROP.EnterFade {
+        nodes[node].show_amt = u8(anim_clamp100(v))
+    } else if prop == APROP.BarFade {
+        let mut a = v
+        if a < 0 {
+            a = 0
+        }
+        if a > 180 {
+            a = 180
+        }
+        nodes[node].bar_amt = u8(a)
+    } else if prop == APROP.SigVal {
+        sig_paint_fit()
+        if node < sig_paint.len {
+            sig_paint[node] = v
+            if node < sigs.len {
+                if v == sigs[node] {
+                    sig_anim[node] = 0
+                } else {
+                    sig_anim[node] = 1
+                }
+            }
+        }
+    }
+}
+
+fn sig_paint_fit() {
+    while sig_paint.len < sigs.len {
+        push(sig_paint, 0)
+        push(sig_anim, 0)
+    }
+}
+
+fn anim_reduced() -> int {
+    return reduced
+}
+
+/// Retarget or start a track toward `to`. Retargeting keeps the current value
+/// as the new `from`, so an interrupted transition never pops or restarts.
+/// Before the first frame, and under reduced motion, the final value is written
+/// once instead.
+fn anim_schedule(node: int, prop: int, to: int, dur: int, easing: int) {
+    anim_ensure()
+    let cur = anim_read(node, prop)
+    let i = anim_find(node, prop)
+    // Jump instead of animating before the first frame completes (cold boot),
+    // for a zero duration, or under reduced motion (except the scrollbar fade,
+    // which is an opacity fade, not travel).
+    let mut jump = 0
+    if anim_booted == 0 {
+        jump = 1
+    }
+    if dur <= 0 {
+        jump = 1
+    }
+    if anim_reduced() != 0 {
+        if prop != APROP.BarFade {
+            jump = 1
+        }
+    }
+    if jump != 0 {
+        if i >= 0 {
+            tracks[i].state = 0
+            anim_active = anim_active - 1
+            push(track_free, i)
+        }
+        anim_store(node, prop, to)
+        if prop == APROP.SigVal {
+            if node < sig_anim.len {
+                sig_anim[node] = 0
+            }
+        }
+        mark_paint_id(node)
+        return
+    }
+    if i >= 0 {
+        if tracks[i].to == to {
+            return
+        }
+        tracks[i].from = cur
+        tracks[i].cur = cur
+        tracks[i].to = to
+        tracks[i].elapsed = 0
+        tracks[i].dur = dur
+        tracks[i].easing = easing
+        return
+    }
+    if cur == to {
+        return
+    }
+    let slot = anim_alloc()
+    if slot < 0 {
+        anim_store(node, prop, to)
+        mark_paint_id(node)
+        return
+    }
+    tracks[slot].node = node
+    tracks[slot].prop = prop
+    tracks[slot].from = cur
+    tracks[slot].cur = cur
+    tracks[slot].to = to
+    tracks[slot].elapsed = 0
+    tracks[slot].dur = dur
+    tracks[slot].easing = easing
+    tracks[slot].state = 1
+    anim_active = anim_active + 1
+}
+
+/// Start a fade from an explicit `from` (scrollbar re-show). Reduced motion
+/// does not collapse this one: an opacity fade is not travel.
+fn anim_fade_from(node: int, prop: int, from: int, to: int, dur: int, easing: int) {
+    anim_store(node, prop, from)
+    mark_paint_id(node)
+    anim_schedule(node, prop, to, dur, easing)
+}
+
+/// `zeus.animate`: move a signal's *state* to `to` once (effects run once),
+/// then interpolate its paint value on the track pool.
+fn anim_signal(sid: int, to: int, ms: int) {
     if sid <= 0 {
         return
     }
     if sid >= sigs.len {
         return
     }
-    anim_cancel(sid)
-    let frames = ms / 16
-    if frames <= 0 {
-        store_sig(sid, to)
+    let from = sig_val(sid)
+    store_sig(sid, to)
+    if from == to {
         return
     }
-    push(anims, Anim { sid: sid, from: sigs[sid], to: to, done: 0, total: frames })
-}
-
-/// 1 while any tween is still running (keeps the frame loop alive).
-fn anim_live() -> int {
-    if anims.len > 0 {
-        return 1
+    sig_paint_fit()
+    if sid < sig_paint.len {
+        sig_paint[sid] = from
+        sig_anim[sid] = 1
     }
-    return 0
+    anim_schedule(sid, APROP.SigVal, to, ms, ease_standard())
 }
 
-/// Advance every tween one frame. Returns 1 while any remains.
-fn anim_step() -> int {
-    if anims.len == 0 {
+/// 1 while any track is active (keeps the frame loop alive).
+fn anim_live() -> int {
+    return anim_active
+}
+
+fn anim_live_count() -> int {
+    return anim_active
+}
+
+/// Advance every active track by `dt` ms. Returns 1 when any track ran this
+/// frame (including the frame a track settles on, so its final value is drawn).
+fn anim_tick(dt: int) -> int {
+    anim_ensure()
+    if anim_active == 0 {
         return 0
     }
+    in_anim_tick = 1
     let mut i = 0
-    while i < anims.len {
-        let a = anims[i]
-        let done = a.done + 1
-        if done >= a.total {
-            store_sig(a.sid, a.to)
-            anims[i].done = a.total
-        } else {
-            store_sig(a.sid, a.from + (a.to - a.from) * done / a.total)
-            anims[i].done = done
+    while i < tracks.len {
+        if tracks[i].state == 1 {
+            let a = tracks[i]
+            let mut dur = a.dur
+            if dur <= 0 {
+                dur = 1
+            }
+            let e = a.elapsed + dt
+            let is_sig = a.prop == APROP.SigVal
+            if e >= dur {
+                tracks[i].cur = a.to
+                tracks[i].elapsed = dur
+                tracks[i].state = 0
+                anim_active = anim_active - 1
+                push(track_free, i)
+                anim_store(a.node, a.prop, a.to)
+            } else {
+                tracks[i].elapsed = e
+                let shaped = anim_ease(a.easing, e * 1000 / dur)
+                tracks[i].cur = a.from + (a.to - a.from) * shaped / 1000
+                anim_store(a.node, a.prop, tracks[i].cur)
+            }
+            if is_sig {
+                paint_dirty = 1
+            } else {
+                mark_paint_id(a.node)
+            }
         }
         i = i + 1
     }
-    let mut keep = []Anim {}
+    in_anim_tick = 0
+    return 1
+}
+
+/// Drop tracks owned by a batched set of freed nodes (one sweep per subtree).
+fn anim_free_pool(ids: []int) {
+    if ids.len == 0 {
+        return
+    }
+    let mut i = 0
+    while i < tracks.len {
+        if tracks[i].state == 1 {
+            if tracks[i].prop != APROP.SigVal {
+                if member(tracks[i].node, ids) != 0 {
+                    tracks[i].state = 0
+                    anim_active = anim_active - 1
+                    push(track_free, i)
+                }
+            }
+        }
+        i = i + 1
+    }
+}
+
+/// Drop the paint overlay for a signal that is being freed.
+fn anim_drop_sig(sid: int) {
+    if sid <= 0 {
+        return
+    }
+    if sid < sig_anim.len {
+        sig_anim[sid] = 0
+        sig_paint[sid] = 0
+    }
+    let mut i = 0
+    while i < tracks.len {
+        if tracks[i].state == 1 {
+            if tracks[i].prop == APROP.SigVal {
+                if tracks[i].node == sid {
+                    tracks[i].state = 0
+                    anim_active = anim_active - 1
+                    push(track_free, i)
+                }
+            }
+        }
+        i = i + 1
+    }
+}
+
+/// Drop tracks for nodes at or above `n` (Boundary rollback trims the arena).
+fn anim_drop_above(n: int) {
+    let mut i = 0
+    while i < tracks.len {
+        if tracks[i].state == 1 {
+            if tracks[i].prop != APROP.SigVal {
+                if tracks[i].node >= n {
+                    tracks[i].state = 0
+                    anim_active = anim_active - 1
+                    push(track_free, i)
+                }
+            }
+        }
+        i = i + 1
+    }
+}
+
+/// Reset all tracks (view-mode rebuild drops the whole tree). Buffers are
+/// reused, not dropped, so a per-frame rebuild does not reallocate them.
+fn anim_reset() {
+    anim_ensure()
+    let mut i = 0
+    while i < tracks.len {
+        tracks[i].state = 0
+        i = i + 1
+    }
+    while track_free.len > 0 {
+        pop(track_free)
+    }
     i = 0
-    while i < anims.len {
-        if anims[i].done < anims[i].total {
-            push(keep, anims[i])
-        }
+    while i < TRACK_CAP {
+        push(track_free, TRACK_CAP - 1 - i)
         i = i + 1
     }
-    anims = keep
-    if anims.len > 0 {
+    anim_active = 0
+    while sig_paint.len > 0 {
+        pop(sig_paint)
+    }
+    while sig_anim.len > 0 {
+        pop(sig_anim)
+    }
+    while dirty_paint.len > 0 {
+        pop(dirty_paint)
+    }
+    in_anim_tick = 0
+}
+
+/// Recompute every chrome target from discrete state and schedule the tracks.
+/// Event-driven (pointer, signal, show change), never the per-frame path.
+fn sync_chrome() {
+    let n = nodes.len
+    for i in 1..n {
+        if int(nodes[i].kind) == 0 {
+            continue
+        }
+        if is_hot(i) != 0 {
+            let mut over = 0
+            if ptr_in(i) != 0 {
+                over = 100
+            }
+            anim_schedule(i, APROP.HoverAmt, over, motion_fast(), ease_standard())
+        }
+        if int(nodes[i].press) != 0 {
+            let mut tgt = 0
+            if down_id == i {
+                tgt = 100
+            }
+            anim_schedule(i, APROP.PressAmt, tgt, motion_fast(), ease_standard())
+        }
+        let k = int(nodes[i].kind)
+        if k == 7 {
+            let mut tgt = 0
+            if bind_pct(i) > 0 {
+                tgt = 100
+            }
+            if nodes[i].tween < 0 {
+                nodes[i].tween = tgt
+            } else {
+                anim_schedule(i, APROP.SwitchTween, tgt, motion_base(), ease_spring())
+            }
+        }
+        if k == 8 {
+            let mut tgt = 0
+            if sig_val(nodes[i].bind_sig) != 0 {
+                tgt = 100
+            }
+            if nodes[i].tween < 0 {
+                nodes[i].tween = tgt
+            } else {
+                anim_schedule(i, APROP.SwitchTween, tgt, motion_base(), ease_spring())
+            }
+        }
+        if int(nodes[i].enter_fade) != 0 {
+            let w = want_show(i)
+            if int(nodes[i].enter_fade) == 1 {
+                // First observation after a build: settle. Cold boot writes the
+                // final value and nothing animates (audit §10).
+                if w != 0 {
+                    nodes[i].show_amt = u8(100)
+                } else {
+                    nodes[i].show_amt = u8(0)
+                }
+                nodes[i].enter_fade = u8(2)
+            } else if w != 0 {
+                anim_schedule(i, APROP.EnterFade, 100, motion_slow(), ease_emphasized())
+            } else {
+                nodes[i].show_amt = u8(0)
+            }
+        }
+    }
+}
+
+fn mark_paint_id(id: int) {
+    paint_dirty = 1
+    if id <= 0 {
+        return
+    }
+    if id >= nodes.len {
+        return
+    }
+    if (int(nodes[id].dirty) & 1) != 0 {
+        return
+    }
+    nodes[id].dirty = u8(int(nodes[id].dirty) | 1)
+    push(dirty_paint, id)
+}
+
+fn mark_chrome() {
+    chrome_dirty = 1
+}
+
+/// Mark a node's skeleton shimmer alive so the frame loop keeps running while
+/// it is visible (the case that reaches `paint_alpha`).
+fn note_pulse(id: int) {
+    if id <= 0 {
+        return
+    }
+    if id >= nodes.len {
+        return
+    }
+    if int(nodes[id].pulse) == 0 {
+        pulse_count = pulse_count + 1
+    }
+    nodes[id].pulse = u8(1)
+    paint_dirty = 1
+}
+
+fn pulse_live() -> int {
+    if pulse_count > 0 {
         return 1
     }
     return 0
+}
+
+fn mark_paint() {
+    paint_dirty = 1
+}
+
+/// Scroll moved: repaint now, and let the virtual-list window pass run.
+fn mark_scroll() {
+    paint_dirty = 1
+    virt_dirty = 1
+}
+
+fn mark_layout() {
+    layout_dirty = 1
+    paint_dirty = 1
+}
+
+fn mark_tree() {
+    tree_dirty = 1
+    layout_dirty = 1
+    paint_dirty = 1
+    chrome_dirty = 1
+}
+
+/// Drain the PAINT marks at the end of a paint pass. The buffer is popped, not
+/// dropped, so a steady animation allocates nothing frame to frame.
+fn clear_dirty() {
+    let n = dirty_paint.len
+    for i in 0..n {
+        let id = dirty_paint[i]
+        if id > 0 {
+            if id < nodes.len {
+                nodes[id].dirty = u8(int(nodes[id].dirty) & 254)
+            }
+        }
+    }
+    while dirty_paint.len > 0 {
+        pop(dirty_paint)
+    }
+    paint_dirty = 0
+    tree_dirty = 0
 }
 
 fn alloc_node(kind: int) -> int {
     ensure()
+    mark_tree()
     if free_nodes.len > 0 {
         let id = free_nodes[free_nodes.len - 1]
         pop(free_nodes)
@@ -774,6 +1383,11 @@ fn sig_val(id: int) -> int {
     }
     if id >= sigs.len {
         return 0
+    }
+    if id < sig_anim.len {
+        if sig_anim[id] != 0 {
+            return sig_paint[id]
+        }
     }
     return sigs[id]
 }
@@ -1113,6 +1727,163 @@ fn hover_paint(id: int) -> int {
     return ease_out(int(nodes[id].hover_amt))
 }
 
+// --- shared interaction state (Phase 3) -----------------------------------
+//
+// One model for the discrete states every interactive widget shares. Components
+// set the flags through `set_interaction_state` (or the convenience setters),
+// and paint / hit-test consult `interaction_state` instead of each recipe
+// growing its own copy. The states are discrete, so changing one may use a
+// signal; the *animation* of a state (the fade between them) still goes through
+// the track pool.
+enum UISTATE {
+    // Pointer is over the node and it is not disabled.
+    StHovered = 1,
+    // Primary button is down on the node.
+    StPressed = 2,
+    // Focus arrived by keyboard (the painted ring is keyboard-only).
+    StFocusVisible = 3,
+    // Not available: no hover, no press, dimmed.
+    StDisabled = 4,
+    // Work in flight: dimmed and non-interactive.
+    StLoading = 5,
+    // Toggled on (tab / radio / switch / selected row).
+    StSelected = 6,
+    // Validation failed.
+    StInvalid = 7,
+}
+
+fn state_bit(s: int) -> int {
+    return 1 << (s - 1)
+}
+
+/// Bitmask of the shared interaction states for `id`.
+fn interaction_state(id: int) -> int {
+    if id <= 0 {
+        return 0
+    }
+    if id >= nodes.len {
+        return 0
+    }
+    let mut m = 0
+    if int(nodes[id].disabled) != 0 {
+        m = m | state_bit(UISTATE.StDisabled)
+    }
+    if int(nodes[id].loading) != 0 {
+        m = m | state_bit(UISTATE.StLoading)
+    }
+    if int(nodes[id].invalid) != 0 {
+        m = m | state_bit(UISTATE.StInvalid)
+    }
+    if (m & (state_bit(UISTATE.StDisabled) | state_bit(UISTATE.StLoading))) == 0 {
+        if is_hot(id) != 0 {
+            if ptr_in(id) != 0 {
+                m = m | state_bit(UISTATE.StHovered)
+            }
+        }
+        if int(nodes[id].press) != 0 {
+            if down_id == id {
+                m = m | state_bit(UISTATE.StPressed)
+            }
+        }
+    }
+    if kb_focus != 0 {
+        if focus_id == id {
+            m = m | state_bit(UISTATE.StFocusVisible)
+        }
+    }
+    if nodes[id].bind_sig > 0 {
+        if sig_val(nodes[id].bind_sig) != 0 {
+            m = m | state_bit(UISTATE.StSelected)
+        }
+    }
+    return m
+}
+
+fn state_has(m: int, s: int) -> bool {
+    if (m & state_bit(s)) != 0 {
+        return true
+    }
+    return false
+}
+
+fn set_interaction_state(id: int, s: int, on: int) {
+    if id <= 0 {
+        return
+    }
+    if id >= nodes.len {
+        return
+    }
+    let mut v = 0
+    if on != 0 {
+        v = 1
+    }
+    if s == UISTATE.StDisabled {
+        nodes[id].disabled = u8(v)
+    } else if s == UISTATE.StLoading {
+        nodes[id].loading = u8(v)
+    } else if s == UISTATE.StInvalid {
+        nodes[id].invalid = u8(v)
+    }
+    mark_paint()
+    mark_chrome()
+}
+
+fn set_disabled(id: int, on: int) {
+    set_interaction_state(id, UISTATE.StDisabled, on)
+}
+
+fn set_loading(id: int, on: int) {
+    set_interaction_state(id, UISTATE.StLoading, on)
+}
+
+fn set_invalid(id: int, on: int) {
+    set_interaction_state(id, UISTATE.StInvalid, on)
+}
+
+/// One shared-state predicate per bit, so a caller never needs the bit number.
+fn state_disabled_of(id: int) -> int {
+    if state_has(interaction_state(id), UISTATE.StDisabled) {
+        return 1
+    }
+    return 0
+}
+fn state_loading_of(id: int) -> int {
+    if state_has(interaction_state(id), UISTATE.StLoading) {
+        return 1
+    }
+    return 0
+}
+fn state_invalid_of(id: int) -> int {
+    if state_has(interaction_state(id), UISTATE.StInvalid) {
+        return 1
+    }
+    return 0
+}
+fn state_hovered_of(id: int) -> int {
+    if state_has(interaction_state(id), UISTATE.StHovered) {
+        return 1
+    }
+    return 0
+}
+fn state_pressed_of(id: int) -> int {
+    if state_has(interaction_state(id), UISTATE.StPressed) {
+        return 1
+    }
+    return 0
+}
+fn state_focus_visible_of(id: int) -> int {
+    if state_has(interaction_state(id), UISTATE.StFocusVisible) {
+        return 1
+    }
+    return 0
+}
+fn state_selected_of(id: int) -> int {
+    if state_has(interaction_state(id), UISTATE.StSelected) {
+        return 1
+    }
+    return 0
+}
+
 fn hover_rgb() -> int {
     let mut dark = 0
     if appearance_sid > 0 {
@@ -1128,6 +1899,13 @@ fn hover_rgb() -> int {
 
 fn is_hot(id: int) -> int {
     if want_show(id) == 0 {
+        return 0
+    }
+    // The shared overlay: a disabled or loading node never hovers.
+    if int(nodes[id].disabled) != 0 {
+        return 0
+    }
+    if int(nodes[id].loading) != 0 {
         return 0
     }
     if int(nodes[id].hover_fade) < 0 {
@@ -1195,11 +1973,14 @@ fn ptr_in(id: int) -> int {
 fn paint_alpha(id: int) -> int {
     let mut a = int(nodes[id].opacity)
     if int(nodes[id].pulse) != 0 {
-        let mut p = (pulse_t + nodes[id].nid * 5) % 144
-        if p > 72 {
-            p = 144 - p
+        // Skeleton shimmer, driven by the frame clock: a 2.4 s triangle wave
+        // (the old frame-count period at 60 fps), phase-offset per node so a
+        // run of skeletons does not pulse in lockstep.
+        let mut p = (now_ms + nodes[id].nid * 80) % 2400
+        if p > 1200 {
+            p = 2400 - p
         }
-        a = 8 + p * 92 / 72
+        a = 8 + p * 92 / 1200
     }
     if int(nodes[id].enter_fade) != 0 {
         a = a * int(nodes[id].show_amt) / 100
@@ -1340,7 +2121,7 @@ fn physics_step() -> int {
                 dirty = 1
                 bar_on(i)
                 if nodes[i].bind_sig > 0 {
-                    store_sig(nodes[i].bind_sig, ay.pos)
+                    store_sig_paint(nodes[i].bind_sig, ay.pos)
                 }
             }
             if ax.dirty != 0 {
@@ -1348,6 +2129,9 @@ fn physics_step() -> int {
                 bar_on(i)
             }
         }
+    }
+    if dirty != 0 {
+        mark_scroll()
     }
     return dirty
 }
@@ -1384,8 +2168,9 @@ fn apply_delta_y(id: int, dy: int, momentum: int) -> int {
     }
     nodes[id].scroll_y = ny
     bar_on(id)
+    mark_scroll()
     if nodes[id].bind_sig > 0 {
-        store_sig(nodes[id].bind_sig, ny)
+        store_sig_paint(nodes[id].bind_sig, ny)
     }
     return 1
 }
@@ -1417,6 +2202,7 @@ fn apply_delta_x(id: int, dx: int, momentum: int) -> int {
     }
     nodes[id].scroll_x = nx
     bar_on(id)
+    mark_scroll()
     return 1
 }
 
@@ -1441,12 +2227,16 @@ fn clamp_scroll(id: int) {
     if nodes[id].scroll_y > my {
         nodes[id].scroll_y = my
     }
+    mark_scroll()
 }
 
+/// Time the bar stays fully opaque after the last scroll before it fades.
 fn bar_hide() -> int {
-    return 54
+    return 900
 }
 
+/// Scroll / drag bumped the bar: show it now, then fade to hidden. Retargeting
+/// keeps it at full alpha while the user keeps scrolling.
 fn bar_on(id: int) {
     if id <= 0 {
         return
@@ -1454,37 +2244,20 @@ fn bar_on(id: int) {
     if id >= nodes.len {
         return
     }
-    nodes[id].bar_t = pulse_t
-    if nodes[id].bar_t == 0 {
-        nodes[id].bar_t = 1
-    }
+    anim_fade_from(id, APROP.BarFade, 180, 0, bar_hide(), ease_linear())
 }
 
-/// Ticks since the last scroll on this pane. Huge when the bar has never
-/// been shown (`bar_t` 0).
-fn bar_dt(id: int) -> int {
-    let t = nodes[id].bar_t
-    if t == 0 {
-        return 100000
-    }
-    let dt = pulse_t - t
-    if dt < 0 {
-        return 0
-    }
-    return dt
-}
-
-/// 1 while this pane is scrolling, coasting, or the thumb is dragged.
+/// 1 while the bar should be visible: mid-drag or still fading.
 fn bar_active(id: int) -> int {
     if drag_id == id {
         if drag_bar != 0 {
             return 1
         }
     }
-    if bar_dt(id) > bar_hide() {
-        return 0
+    if int(nodes[id].bar_amt) > 0 {
+        return 1
     }
-    return 1
+    return 0
 }
 
 fn bar_visible(id: int) -> int {
@@ -1520,25 +2293,12 @@ fn bar_visible_x(id: int) -> int {
 }
 
 fn bar_alpha(id: int) -> int {
-    if bar_active(id) == 0 {
-        return 0
-    }
     if drag_id == id {
         if drag_bar != 0 {
             return 180
         }
     }
-    let hide = bar_hide()
-    let dt = bar_dt(id)
-    let fade = 16
-    if dt + fade >= hide {
-        let left = hide - dt
-        if left <= 0 {
-            return 0
-        }
-        return 180 * left / fade
-    }
-    return 180
+    return int(nodes[id].bar_amt)
 }
 
 fn bar_w() -> int {
@@ -1728,6 +2488,9 @@ fn claim_focus(id: int) {
         return
     }
     if is_focusable(id) != 0 {
+        if focus_id != id {
+            mark_paint()
+        }
         focus_id = id
         return
     }
@@ -1823,6 +2586,7 @@ fn focus_step(back: int) -> int {
     }
     focus_id = focus_ring[next]
     kb_focus = 1
+    mark_paint()
     return 1
 }
 
