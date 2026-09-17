@@ -1,9 +1,9 @@
 # Zeus design audit
 
-> **Status.** Phase 1 (this audit) and Phase 2 (tokens + paint primitives) are
-> landed — see §11 for what changed, what is still open, and the two traps that
-> cost real time. Sections 1–10 are the *original* baseline and are left as
-> written except where marked **[CLOSED — phase 2]**, so the record of what the
+> **Status.** Phases 1–3 and Phase 4 batches 1–4 are landed — see §11 for what
+> changed, what is still open, and the two traps that cost real time. Sections
+> 1–10 are the *original* baseline and are left as written except where marked
+> **[CLOSED — phase 2]** or **[CLOSED — phase 4]**, so the record of what the
 > kit looked like before the upgrade stays readable.
 
 Baseline for the design-system upgrade. Everything below is read off the tree at
@@ -84,9 +84,9 @@ Twelve scene op kinds (`scene.loam`) over fourteen host ops
 
 | Primitive | Status | Consequence |
 |---|---|---|
-| **Soft shadow** | **[CLOSED — phase 2]** `plat_shadow` | No elevation is expressible at all. Cards, dialogs, popovers, switch thumbs, and menus are flat by construction. This is the single biggest reason the kit reads plain. Requires a new host op on all four backends. |
+| **Soft shadow** | **[CLOSED — phase 2 op; paint emits since phase 4 batch 4]** `plat_shadow`, `Box` / `Card.elevation` | No elevation is expressible at all. Cards, dialogs, popovers, switch thumbs, and menus are flat by construction. This is the single biggest reason the kit reads plain. Requires a new host op on all four backends. |
 | **Per-corner radius** | **[CLOSED — phase 2]** `plat_fill4` (the node field is still one `u16`; see §11) | No top-only rounded sheets, no tab-shaped triggers, no grouped button runs, no rounded-top table headers. |
-| **Anti-aliased strokes** | **[CLOSED — phase 2]** `plat_stroke` (paint path still to be switched over; see §11) | `border_w` is faked: `paint_fill_box` draws a **full-bleed filled rect in the border color underneath**, then insets the background fill by `border_w`. Consequences: a bordered node cannot have a translucent background (the border color shows through), a bordered node cannot have a gradient background *and* a correct border, and a border cannot be drawn without a background. There is no line/polyline op, so charts draw strokes as thin rects or hand-written SVG. No dashed lines. |
+| **Anti-aliased strokes** | **[CLOSED — phase 2 op; paint path switched over in phase 4 batch 4]** `plat_stroke` | `border_w` is faked: `paint_fill_box` draws a **full-bleed filled rect in the border color underneath**, then insets the background fill by `border_w`. Consequences: a bordered node cannot have a translucent background (the border color shows through), a bordered node cannot have a gradient background *and* a correct border, and a border cannot be drawn without a background. There is no line/polyline op, so charts draw strokes as thin rects or hand-written SVG. No dashed lines. |
 | **Gradients** | **[PARTLY CLOSED — phase 2]** radius + alpha added; still 2 stops, 2 axes | `paint_fill_box` calls `fill_g(x, y, w, h, rgb, c1, 0)` — it drops `inner_r` entirely, so **any gradient background renders with square corners**. No radial, no conic, no >2 stops, no angle. |
 | **Clipping** | **[CLOSED — phase 2]** `plat_clip` takes a radius | Cannot clip to a rounded rect, so an image or gradient inside a rounded card has square corners. §3.3's accordion plan (animate a clip rect) works, but a rounded accordion body will not. |
 | **Opacity layers** | per-node only | `paint_alpha` multiplies a node's own alpha; there is **no group/layer opacity**, so fading a subtree fades each node independently and overlapping children double-darken. Dialog enter/exit and toast fades both need this. |
@@ -379,7 +379,7 @@ answers depending on how you arrived.
 | 1 | Audit | **done** | `8289306` |
 | 2 | Tokens + paint primitives | **done** | `2184563` |
 | 3 | Dirty-channel split + animation subsystem + state layer | **done** | `feat(zeus): dirty-channel split + animation track pool (phase 3)` |
-| 4 | Components, in batches | **in progress — batches 1–3** | `feat: paint-only motion + feedback primitives` / `feat: Accordion` / `feat: overlay family` |
+| 4 | Components, in batches | **in progress — batches 1–4** | `feat: paint-only motion + feedback primitives` / `feat: Accordion` / `feat: overlay family` / `feat: elevation + stroked borders` |
 | 5 | Gallery + docs (`spec.md`, a `www/` design-system page) | not started | — |
 
 `make test` at the end of phase 3: **361 passed, 0 failed** (the six network
@@ -432,17 +432,18 @@ nothing needed regenerating.
 
 These are known-open and are the natural first moves in phases 3–4:
 
-- **The paint path still draws borders the old way.** `plat_stroke` exists and
-  every host implements it, but `scene.paint_fill_box` still fakes a border by
-  drawing a larger filled rect underneath. Switching it over is a visual change
-  to every bordered node, so it belongs with the component work, not with the
-  primitive that enables it.
+- **[CLOSED — phase 4 batch 4]** *The paint path still draws borders the old
+  way.* `plat_stroke` exists and every host implements it, but
+  `scene.paint_fill_box` still fakes a border by drawing a larger filled rect
+  underneath. Switching it over is a visual change to every bordered node, so
+  it belongs with the component work, not with the primitive that enables it.
 - **`UiNode.radius` is still a single `u16`.** `plat_fill4` exists; nothing
   emits it yet. Per-corner radii need either three more node fields or a packed
   one.
-- **Nothing emits `shadow` or `xform` yet.** They are wired end-to-end and
-  unused — deliberately, because both need the dirty-channel split to be
-  animated without dragging layout along.
+- **[CLOSED — phase 4 batch 4 for `shadow`; phase 3 for `xform`]** *Nothing
+  emits `shadow` or `xform` yet.* They were wired end-to-end and unused —
+  deliberately, because both need the dirty-channel split to be animated
+  without dragging layout along.
 - **`RAD_*` values are unchanged** (6/8/10/14). `RAD_NONE` was added. Retuning
   the ramp is component work.
 - **Type weights and tabular figures are not done and are host-blocked.**
@@ -560,7 +561,8 @@ component work; batch 1 lands them:
 
 Still open for later batches: the four overlay components (`Popover` /
 `Tooltip` / `HoverCard` / `Toast`), elevation (`shadow` emission), and switching
-the border paint path to `plat_stroke`.
+the border paint path to `plat_stroke`. **[RESOLVED]** — overlays landed in
+batch 3; elevation and the stroke path in batch 4.
 
 ### Phase 4 batch 2 outcome — Accordion (single open signal)
 
@@ -610,3 +612,44 @@ by the safe-area origin. All three are follow-ups, not regressions: the previous
 New golden `golden_overlays`; `zeus_overlays.loam` checks open/close, the
 bottom-edge flip, outside-click dismissal, tooltip show/hide on hover, and toast
 auto-dismiss.
+
+### Phase 4 batch 4 outcome — elevation + stroked borders (visual)
+
+This batch closes the two paint-path items phase 2 deliberately deferred: the
+`shadow` op is now emitted, and `border_w` is a real stroke instead of an
+under-fill. It is intentionally a visual change to every bordered surface.
+
+- **Elevation is a prop.** `Box` (and `Card`) take `elevation` 0–4; `UiNode`
+  carries `elev` + a shadow-role sentinel (`elev_c`), and `SET.Elevation` writes
+  them. The light / dark curves and the `Elev` record moved from `zeus.loam` into
+  `zeuscore/arena.loam` as `arena.elevation` / `elevation_dark` / `elev_now`,
+  because the paint pass resolves a node's shadow and `scene` cannot import the
+  component module. `zeus.elevation` / `elev_now` now delegate there, so the
+  numbers still have one home. `elevation` is in `setter_is_paint_only`, so
+  changing it never runs layout. Defaults: `Card` 1; `Popover` 3; `Tooltip` /
+  `HoverCard` / `Toast` 2; a dialog panel 4.
+- **Paint emits the shadow first.** `paint_fill_box` draws the shadow (via
+  `arena.elev_now` + `shadow`), then the fill at the **full** node radius, then
+  the border. Painting the shadow after the fill would hide it.
+- **Borders are a stroke.** The old path drew a full-bleed filled rect in the
+  border color and inset the background by `border_w`; a bordered node could
+  therefore not be translucent or carry a gradient, and could not be drawn
+  without a background. `paint_fill_box` now fills at the full radius and emits
+  `stroke(x, y, w, h, border_color, r, border_w, alpha)` on the outline. The
+  hover wash and press overlay also use the full radius again, since there is no
+  inset fill to align to.
+- `dump_draw_list` now prints kinds 12–14 (`shadow`, `stroke`, `fill4`), which it
+  had silently skipped.
+- **Goldens.** Seven of the twelve were regenerated — `golden_accordion`,
+  `golden_controls`, `golden_feedback`, `golden_overlays`, `golden_picker`,
+  `golden_scale_gallery`, `golden_textarea`. The border diff is mechanical
+  (`fill A B W H border r` + inset `fill` becomes one `fill A B W H bg r` + one
+  `stroke …`); `golden_overlays` / `golden_feedback` also gain `shadow` lines,
+  and `golden_feedback` now includes a `Card` so a level-1 shadow is covered.
+  Each was compiled and run with the §11 headless incantation, generated twice,
+  diffed for run-to-run stability, and only then committed.
+
+Left open, deliberately: `UiNode.radius` is still one `u16` (nothing emits
+`plat_fill4`), so per-corner radii are still not possible; only the surfaces
+listed above elevate — `Alert`, `Table`, and the `Select` panel stay flat until a
+component pass asks for depth; and there is still no line / polyline / dashed op.

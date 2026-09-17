@@ -181,41 +181,39 @@ fn paint_hover_wash(id: int) {
 }
 
 fn paint_fill_box(id: int, wash: int) {
-    let mut x = arena.draw_x(id)
-    let mut y = arena.draw_y(id)
-    let mut w = arena.nodes[id].w
-    let mut h = arena.nodes[id].h
+    let x = arena.draw_x(id)
+    let y = arena.draw_y(id)
+    let w = arena.nodes[id].w
+    let h = arena.nodes[id].h
     let a = arena.paint_alpha(id)
-    if arena.nodes[id].bg < 0 {
-        if wash != 0 {
-            paint_hover_wash(id)
-        }
-        return
-    }
-    let mut inner_r = i32(arena.nodes[id].radius)
-    if arena.nodes[id].border_w > 0 {
-        if arena.nodes[id].border_c >= 0 {
-            let bc = arena.paint_rgb(arena.nodes[id].border_c)
-            if a < 255 {
-                fill_a(x, y, w, h, bc, i32(arena.nodes[id].radius), a)
-            } else {
-                fill(x, y, w, h, bc, i32(arena.nodes[id].radius))
-            }
-            x = x + i32(arena.nodes[id].border_w)
-            y = y + i32(arena.nodes[id].border_w)
-            w = geometry.max2(w - i32(arena.nodes[id].border_w) * 2, 0)
-            h = geometry.max2(h - i32(arena.nodes[id].border_w) * 2, 0)
-            inner_r = geometry.max2(i32(arena.nodes[id].radius) - i32(arena.nodes[id].border_w), 0)
+    let r = i32(arena.nodes[id].radius)
+    // Elevation paints under the surface, so the fill and its border sit on it.
+    let elev = int(arena.nodes[id].elev)
+    if elev > 0 {
+        let e = arena.elev_now(elev)
+        if e.alpha > 0 {
+            shadow(x, y, w, h, r, arena.paint_rgb(arena.nodes[id].elev_c),
+                   e.alpha, e.blur, e.dx, e.dy)
         }
     }
     let rgb = arena.paint_rgb(arena.nodes[id].bg)
-    if arena.nodes[id].bg2 >= 0 {
-        let c1 = arena.paint_rgb(arena.nodes[id].bg2)
-        fill_g(x, y, w, h, rgb, c1, 0, inner_r, a)
-    } else if a < 255 {
-        fill_a(x, y, w, h, rgb, inner_r, a)
-    } else {
-        fill(x, y, w, h, rgb, inner_r)
+    if arena.nodes[id].bg >= 0 {
+        if arena.nodes[id].bg2 >= 0 {
+            let c1 = arena.paint_rgb(arena.nodes[id].bg2)
+            fill_g(x, y, w, h, rgb, c1, 0, r, a)
+        } else if a < 255 {
+            fill_a(x, y, w, h, rgb, r, a)
+        } else {
+            fill(x, y, w, h, rgb, r)
+        }
+    }
+    // Border: an anti-aliased ring inside the rect, not a full-bleed under-fill.
+    // This is what lets a bordered surface be translucent or carry a gradient.
+    if arena.nodes[id].border_w > 0 {
+        if arena.nodes[id].border_c >= 0 {
+            stroke(x, y, w, h, arena.paint_rgb(arena.nodes[id].border_c), r,
+                   i32(arena.nodes[id].border_w), a)
+        }
     }
     if wash != 0 {
         paint_hover_wash(id)
@@ -223,7 +221,7 @@ fn paint_fill_box(id: int, wash: int) {
     if arena.nodes[id].press != 0 {
         let pa = int(arena.nodes[id].press_amt)
         if pa > 0 {
-            fill_a(x, y, w, h, 0, inner_r, pa * 36 / 100)
+            fill_a(x, y, w, h, 0, r, pa * 36 / 100)
         }
     }
 }
