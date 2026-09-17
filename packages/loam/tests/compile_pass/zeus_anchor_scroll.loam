@@ -1,0 +1,65 @@
+// An anchored popup is glued to its trigger: it opens beside it (flipping when
+// the preferred side has no room), follows it while the page scrolls, and goes
+// off screen with it rather than pinning itself to a window edge.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("anchor", 320, 260)
+    let open = zeus.signal(-1)
+    let mut panel = 0
+    let mut trig = 0
+    let top = zeus.raw_scroll()
+    zeus.slot(top, fn() {
+        zeus.Box(align_direction = zeus.DIRECTION.Column) {
+            zeus.Box(height = 400)
+            let trigger = zeus.Box(width = 120, height = 32, background = zeus.plate())
+            trig = trigger.id
+            let m = zeus.Menu(trigger, active = open, width = 160)
+            panel = m.id
+            zeus.slot(m, fn() {
+                zeus.MenuItem(active = open, index = 0, count = 1, label = "Rename")
+            })
+            zeus.Box(height = 800)
+        }
+    })
+    zeus.root(top)
+    zeus.pump_frame()
+    zeus.engine_layout(320, 260)
+
+    // Closed: nothing is shown, and no floater is on screen, so a scroll stays
+    // paint-only.
+    must(!zeus.text_visible("Rename"), "closed menu is not shown")
+
+    // The trigger sits at content y 400 and the window is 260 tall, so the panel
+    // must flip above it.
+    open.set(0)
+    zeus.engine_layout(320, 260)
+    let t0 = zeus.node_y(trig) - zeus.scroll_y(top)
+    let p0 = zeus.node_y(panel)
+    must(p0 < t0, "panel opened above the trigger (no room below)")
+
+    // Scroll: the panel follows the trigger exactly.
+    zeus.scroll_to(top, 100)
+    zeus.engine_layout(320, 260)
+    let t1 = zeus.node_y(trig) - zeus.scroll_y(top)
+    let p1 = zeus.node_y(panel)
+    must(t0 - t1 == 100, "trigger moved with the scroll")
+    must(p0 - p1 == 100, "panel followed the trigger")
+
+    // Scroll the trigger away: the panel goes with it, negative, not pinned to 0.
+    zeus.scroll_to(top, 700)
+    zeus.engine_layout(320, 260)
+    must(zeus.node_y(trig) - zeus.scroll_y(top) < 0, "trigger is above the viewport")
+    must(zeus.node_y(panel) < 0, "panel followed the trigger off screen")
+
+    fmt.println("anchor ok")
+}
