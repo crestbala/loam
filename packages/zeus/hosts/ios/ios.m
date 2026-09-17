@@ -968,6 +968,14 @@ static void zeus_sync_keyboard(UIView *v) {
         zeus_set_insets((int64_t)in.top, (int64_t)in.right,
                         (int64_t)in.bottom, (int64_t)in.left);
     }
+    {
+        /* Report the OS reduced-motion preference once (§3.2). */
+        static int rm_done = 0;
+        if (!rm_done) {
+            rm_done = 1;
+            loam_zeus_engine_set_reduced_motion(UIAccessibilityIsReduceMotionEnabled() ? 1 : 0);
+        }
+    }
     dt = (float)link.duration;
     if (dt <= 0.f || dt > 0.05f) dt = 1.f / 60.f;
     zeus_layout((int64_t)b.size.width, (int64_t)b.size.height);

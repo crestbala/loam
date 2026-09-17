@@ -379,12 +379,16 @@ int64_t loam_platform_plat_overlay_scroll(void);
 int64_t loam_platform_plat_inset_top(void);
 int64_t loam_platform_plat_inset_right(void);
 int64_t loam_platform_plat_inset_bottom(void);
+int64_t loam_platform_plat_alloc_count(void);
 int64_t loam_platform_plat_inset_left(void);
 
 /* Loam engine entry points (packages/zeus/std/zeus.loam). Cocoa trampolines through these. */
 void loam_zeus_engine_layout(int32_t width, int32_t height);
 void loam_zeus_engine_paint(void);
 int32_t loam_zeus_engine_step(void);
+/* One host frame with the host-supplied delta (ms). `zeus_step(dt)` calls this. */
+int32_t loam_zeus_engine_step_dt(int32_t dt_ms);
+void loam_zeus_engine_set_reduced_motion(int32_t on);
 /* ms until the next async timer is due (0 = none; -1 = a spawn waits). */
 int32_t loam_zeus_engine_next_ms(void);
 int32_t loam_zeus_engine_click(int32_t x, int32_t y);
@@ -486,6 +490,8 @@ typedef struct {
     void (*layout)(int32_t width, int32_t height);
     void (*paint)(void);
     int32_t (*step)(void);
+    int32_t (*step_dt)(int32_t dt_ms);
+    void (*set_reduced_motion)(int32_t on);
     int32_t (*next_ms)(void);
     int32_t (*click)(int32_t x, int32_t y);
     int32_t (*scroll)(int32_t x, int32_t y, int32_t dx, int32_t dy);
@@ -527,6 +533,8 @@ void zeus_set_host_hooks(void (*run)(const char *path));
 #define loam_zeus_engine_layout zeus_app_api.layout
 #define loam_zeus_engine_paint zeus_app_api.paint
 #define loam_zeus_engine_step zeus_app_api.step
+#define loam_zeus_engine_step_dt zeus_app_api.step_dt
+#define loam_zeus_engine_set_reduced_motion zeus_app_api.set_reduced_motion
 #define loam_zeus_engine_next_ms zeus_app_api.next_ms
 #define loam_zeus_engine_click zeus_app_api.click
 #define loam_zeus_engine_scroll zeus_app_api.scroll

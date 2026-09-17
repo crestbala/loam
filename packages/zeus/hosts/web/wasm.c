@@ -240,6 +240,12 @@ static void wasm_measure(const char *s, int64_t px, int64_t *w, int64_t *h) {
 __attribute__((import_module("zeus"), import_name("request_frame")))
 void zeus_js_request_frame(void);
 
+/* Monotonic milliseconds from the browser (`performance.now`). The delta
+   between frames drives the animation tracks, so 60 Hz and 120 Hz hosts move
+   at the same speed. */
+__attribute__((import_module("zeus"), import_name("now_ms")))
+int64_t zeus_js_now_ms(void);
+
 static void wasm_run(void) {
     /* Browser owns the loop. `zeus_paint` layouts; do not block `zeus_start`. */
 }
@@ -301,16 +307,29 @@ void zeus_resize(int32_t w, int32_t h) {
 /* 0 = idle (stop rAF). 1 = paint next frame. >1 = ms until the next timer. */
 __attribute__((export_name("zeus_paint")))
 int32_t zeus_wasm_paint(void) {
+    static int64_t last_ms;
     int more;
     int64_t due;
+    int64_t now = zeus_js_now_ms();
+    float dt = 1.f / 60.f;
+    if (last_ms > 0) dt = (float)((double)(now - last_ms) / 1000.0);
+    last_ms = now;
+    if (dt < 0.001f) dt = 1.f / 60.f;
+    if (dt > 0.064f) dt = 0.064f;
     zeus_layout(zeus_window_width(), zeus_window_height());
-    more = zeus_step(1.f / 60.f);
+    more = zeus_step(dt);
     loam_zeus_engine_paint();
     if (more) return 1;
     due = loam_zeus_engine_next_ms();
     if (due < 0) return 1;
     if (due > 2147483647) return 2147483647;
     return (int32_t)due;
+}
+
+/* The loader reports `prefers-reduced-motion` (and re-reports on change). */
+__attribute__((export_name("zeus_reduced_motion")))
+void zeus_reduced_motion(int32_t on) {
+    loam_zeus_engine_set_reduced_motion(on);
 }
 
 __attribute__((export_name("zeus_pointer_down")))

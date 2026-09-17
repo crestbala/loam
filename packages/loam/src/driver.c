@@ -382,7 +382,7 @@ static int android_write_cmake(const char *path, int uses_http) {
     fprintf(f,
             ")\n"
             "target_include_directories(zeus PRIVATE \"%s\")\n"
-            "target_compile_definitions(zeus PRIVATE LOAM_ANDROID)\n"
+            "target_compile_definitions(zeus PRIVATE LOAM_ANDROID LOAM_ALLOC_TRACE)\n"
             "target_compile_options(zeus PRIVATE -std=gnu99 -O1 -ffp-contract=off "
             "-fno-asynchronous-unwind-tables)\n"
             "target_link_libraries(zeus android log)\n",
@@ -873,7 +873,7 @@ int main(int argc, char **argv) {
             if (uses_zeus) {
                 snprintf(cmdw, sizeof cmdw,
                          "\"%s\" --target=wasm32 -nostdlib -ffreestanding "
-                         "-fno-stack-protector -O2 -ffp-contract=off -I\"%s/wasm_inc\" -I\"%s\" "
+                         "-fno-stack-protector -O2 -ffp-contract=off -DLOAM_ALLOC_TRACE -I\"%s/wasm_inc\" -I\"%s\" "
                          "-Wl,--no-entry -Wl,--export-dynamic -Wl,--fatal-warnings "
                          "-x c \"%s\" -x none "
                          "\"%s/zeus_wasm_libc.c\" \"%s/hosts/web/wasm.c\" "
@@ -966,7 +966,7 @@ int main(int argc, char **argv) {
             snprintf(http_ios, sizeof http_ios, " \"%s/net.c\"", LOAM_RUNTIME_DIR);
         snprintf(cmdios, sizeof cmdios,
                  "xcrun clang -isysroot \"%s\" -target %s-apple-ios16.0-simulator "
-                 "-O1 -ffp-contract=off -fno-asynchronous-unwind-tables -DLOAM_IOS -I\"%s\" "
+                 "-O1 -ffp-contract=off -DLOAM_ALLOC_TRACE -fno-asynchronous-unwind-tables -DLOAM_IOS -I\"%s\" "
                  "-x c -std=gnu99 \"%s\" \"%s/zeus_plat.c\" \"%s/zeus_key.c\"%s "
                  "-x objective-c -fno-objc-arc \"%s/hosts/ios/ios.m\" "
                  "-framework UIKit -framework Foundation -framework CoreGraphics "
@@ -1060,12 +1060,13 @@ int main(int argc, char **argv) {
        -g makes lldb/gdb, profilers, and sanitizers report Loam lines. Off by
        default: it inflates binaries and the published size benchmark. */
     static char copt_buf[256];
-    snprintf(copt_buf, sizeof copt_buf, "%s%s",
+    snprintf(copt_buf, sizeof copt_buf, "%s%s%s",
              (headless || dev)
                  ? "-std=gnu99 -O0 -fno-asynchronous-unwind-tables -ffp-contract=off"
                  : "-std=gnu99 -O1 -fno-asynchronous-unwind-tables "
                    "-fomit-frame-pointer -ffp-contract=off",
-             env_on("LOAM_DEBUG") ? " -g" : "");
+             env_on("LOAM_DEBUG") ? " -g" : "",
+             uses_zeus ? " -DLOAM_ALLOC_TRACE" : "");
     const char *copt = copt_buf;
 #if defined(__APPLE__)
     const char *ld = (headless || dev) ? "" : "-Wl,-dead_strip";
@@ -1087,7 +1088,7 @@ int main(int argc, char **argv) {
        itself, and macro-rewriting its declarations is a syntax error. They also
        get their own cached objects, or a host build would leave a host-flavoured
        `zeus_plat.o` behind for the next normal build to link. */
-    const char *host_flags = host ? "-DLOAM_HOST_BUILD" : "";
+    const char *host_flags = host ? "-DLOAM_HOST_BUILD -DLOAM_ALLOC_TRACE" : "-DLOAM_ALLOC_TRACE";
     const char *obj_tag = host ? ".host" : "";
     snprintf(plat_o, sizeof plat_o, "%s/.obj/zeus_plat%s.o", LOAM_RUNTIME_DIR, obj_tag);
     snprintf(key_o, sizeof key_o, "%s/.obj/zeus_key%s.o", LOAM_RUNTIME_DIR, obj_tag);

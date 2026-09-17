@@ -11,6 +11,7 @@ import android.graphics.Path;
 import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.os.Build;
+import android.provider.Settings;
 import android.util.Base64;
 import android.view.Choreographer;
 import android.view.MotionEvent;
@@ -69,6 +70,7 @@ public class ZeusView extends View implements Choreographer.FrameCallback {
     native void nativePointerUp();
     native void nativeKey(int key, int mods);
     native void nativePicked(String src, int w, int h);
+    native void nativeReducedMotion(int on);
 
     static final int PICK_IMAGE = 1;
 
@@ -115,6 +117,14 @@ public class ZeusView extends View implements Choreographer.FrameCallback {
         if (!framed) {
             framed = true;
             choreographer.postFrameCallback(this);
+        }
+        /* Reduced motion (§3.2): the system's animator duration scale of 0
+           means "no animation"; report it once. */
+        try {
+            float scale = Settings.Global.getFloat(getContext().getContentResolver(),
+                                                   Settings.Global.ANIMATOR_DURATION_SCALE, 1f);
+            nativeReducedMotion(scale == 0f ? 1 : 0);
+        } catch (Exception e) {
         }
     }
 

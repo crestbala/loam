@@ -67,7 +67,8 @@ static void add_set(DceSet *s, AstNode *d) {
  *  maya_rt.h/maya_plat.c/maya_mac.m). Entries that no longer exist in the
  *  module are ignored. Keep in sync when hosts grow new entry points. */
 static const char *const c_roots_zeus[] = {
-    "engine_layout", "engine_paint", "engine_step", "engine_next_ms",
+    "engine_layout", "engine_paint", "engine_step", "engine_step_dt",
+    "engine_set_reduced_motion", "engine_next_ms",
     "engine_click", "engine_scroll", "engine_scroll_step", "engine_drag",
     "engine_hover", "engine_mouseup", "engine_over_button", "engine_cursor",
     "engine_a11y_dump", "engine_signals_dump", "engine_state_load",

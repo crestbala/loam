@@ -16,6 +16,13 @@ let mut ready: int = 0
    reactive scope do not become dependency edges — a setter that reads the
    value it is about to overwrite must not subscribe the effect to itself. */
 let mut mute: int = 0
+/* Effects run, for the Phase 3 proof harness: an animating frame must not run
+   a reactive scope, so this stays flat for the whole of an animation. */
+let mut runs: int = 0
+/* Set by `notify` (every signal write). A non-int signal is written straight
+   from generated C (`loam_track_notify`), bypassing `arena.store_sig`, so the
+   dirty channels are noted here and drained once per frame. */
+let mut wrote: int = 0
 
 fn boot() {
     if ready != 0 {
@@ -211,6 +218,7 @@ fn run(eid: int) {
     if eid >= fn_ids.len {
         return
     }
+    runs = runs + 1
     drop_eid_deps(eid)
     push(stack, eid)
     platform.plat_invoke_fn(fn_ids[eid])
@@ -230,8 +238,21 @@ fn run_node(nid: int) {
 }
 
 fn notify(sid: int) {
+    notify_at(sid, 1)
+}
+
+/// Paint-only notify: the write must not force a layout pass (scroll/drag
+/// positions, which an app may mirror into a signal).
+fn notify_paint(sid: int) {
+    notify_at(sid, 0)
+}
+
+fn notify_at(sid: int, mark: int) {
     if sid <= 0 {
         return
+    }
+    if mark != 0 {
+        wrote = 1
     }
     let mut hit = []int {}
     let n = dep_sig.len
@@ -254,4 +275,13 @@ fn notify(sid: int) {
     for i in 0..h {
         run(hit[i])
     }
+}
+
+/// 1 once if any signal was written since the last call.
+fn take_wrote() -> int {
+    if wrote == 0 {
+        return 0
+    }
+    wrote = 0
+    return 1
 }

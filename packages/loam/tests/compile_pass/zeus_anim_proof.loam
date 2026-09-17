@@ -1,0 +1,98 @@
+// Phase 3 proof: an animating frame must not touch the reactive graph and must
+// not allocate. Every bound widget is animated at once; component-run and
+// effect-run counters stay flat, no signal is written from the tick, and the
+// runtime allocation count does not move once the tracks are warm.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+const N: int = 40
+
+fn main() {
+    zeus.window("proof", 480, 320)
+    let mut sigs = []Signal<int> {}
+    let mut i = 0
+    while i < N {
+        push(sigs, zeus.signal(0))
+        i = i + 1
+    }
+    let tree = zeus.Box(align_direction = DIRECTION.Column) {
+        let mut j = 0
+        while j < N {
+            zeus.Progress(sigs[j])
+            j = j + 1
+        }
+    }
+    zeus.root(tree)
+    zeus.pump_frame()
+
+    // An effect subscribed to one bound signal, to watch effect runs.
+    let watch = zeus.signal(0)
+    zeus.effect(|| { watch.set(sigs[0].get()) })
+
+    // Animate every component at once.
+    i = 0
+    while i < N {
+        zeus.animate(sigs[i], 100, 400)
+        i = i + 1
+    }
+    must(zeus.proof_anim_live() == N, "a track per component")
+
+    // Two warm frames: the paint-dirty buffer grows to its steady size here.
+    zeus.pump_frame()
+    zeus.engine_step_dt(16)
+    zeus.pump_frame()
+    zeus.engine_step_dt(16)
+
+    let c0 = zeus.proof_components()
+    let e0 = zeus.proof_effects()
+    let a0 = zeus.proof_allocs()
+    let w0 = zeus.proof_signal_writes()
+    must(a0 > 0, "the allocation counter is instrumented")
+    must(c0 > 0, "the component counter is live")
+    must(e0 > 0, "the effect counter is live")
+    let mid = zeus.anim_paint(sigs[0])
+    must(mid > 0 && mid < 100, "animation is in flight")
+
+    // Keep animating with full host frames: layout + step + paint.
+    i = 0
+    while i < 10 {
+        zeus.engine_layout(480, 320)
+        zeus.engine_step_dt(16)
+        zeus.engine_paint()
+        i = i + 1
+    }
+
+    must(zeus.proof_components() == c0, "no component ran while animating")
+    must(zeus.proof_effects() == e0, "no effect ran while animating")
+    must(zeus.proof_signal_writes() == w0, "no signal written from the tick")
+    must(zeus.proof_allocs() == a0, "no allocation while animating")
+    must(zeus.anim_paint(sigs[0]) > mid, "paint advanced")
+
+    // Settle: the counts hold all the way to the end, then the loop can idle.
+    i = 0
+    while i < 20 {
+        zeus.engine_layout(480, 320)
+        zeus.engine_step_dt(16)
+        zeus.engine_paint()
+        i = i + 1
+    }
+    must(zeus.proof_allocs() == a0, "no allocation while settling")
+    must(zeus.proof_components() == c0, "no component ran while settling")
+    must(zeus.anim_paint(sigs[0]) == 100, "settles on the target")
+    must(zeus.proof_anim_live() == 0, "tracks return to the pool")
+
+    // Idle: nothing pending, so a frame reports no more work.
+    must(zeus.engine_step_dt(16) == 0, "idle wants zero frames")
+    must(zeus.engine_next_ms() == 0, "idle has no deadline")
+
+    fmt.println("anim proof ok", N)
+}

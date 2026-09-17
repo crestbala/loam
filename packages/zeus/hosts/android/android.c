@@ -8,6 +8,7 @@
 #include <jni.h>
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
 
 int loam_app_main(void);
 
@@ -296,10 +297,21 @@ JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativeResize(JNIEnv *env, job
     if (w > 0 && h > 0) zeus_layout(w, h);
 }
 
+JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativeReducedMotion(JNIEnv *env, jobject thiz,
+                                                                       jint on) {
+    (void)env;
+    (void)thiz;
+    loam_zeus_engine_set_reduced_motion(on);
+}
+
 JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativePaint(JNIEnv *env, jobject thiz,
                                                                jobject canvas) {
     ZeusDraw d;
     int w, h;
+    static double last_ms;
+    double now_ms;
+    float dt;
+    struct timespec ts;
     (void)thiz;
     if (!g_ready) return;
     g_env = env;
@@ -307,8 +319,17 @@ JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativePaint(JNIEnv *env, jobj
     /* Same as iOS: layout to the view, not theme.Page's 560×520. */
     w = g_view_w > 0 ? g_view_w : (int)zeus_window_width();
     h = g_view_h > 0 ? g_view_h : (int)zeus_window_height();
+    /* Drive animations by elapsed time, not frame count, so a 60 Hz and a
+       120 Hz device look the same. */
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    now_ms = (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1000000.0;
+    dt = 1.f / 60.f;
+    if (last_ms > 0.0) dt = (float)((now_ms - last_ms) / 1000.0);
+    last_ms = now_ms;
+    if (dt < 0.001f) dt = 1.f / 60.f;
+    if (dt > 0.064f) dt = 0.064f;
     zeus_layout(w, h);
-    (void)zeus_step(1.f / 60.f);
+    (void)zeus_step(dt);
     memset(&d, 0, sizeof d);
     d.fill = draw_fill;
     d.fill_a = draw_fill_a;

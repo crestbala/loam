@@ -1141,6 +1141,23 @@ static void frame_trace(double t0, FramePhases p) {
             (int)loam_zeus_engine_next_ms());
 }
 
+/* Reduced-motion preference (§3.2): reported once to the engine, which makes
+   animations jump to their final value. */
+static void mac_sync_reduced_motion(void) {
+    static int done = 0;
+    int on = 0;
+    if (done) return;
+    done = 1;
+    if (@available(macOS 10.12, *)) {
+        on = [NSWorkspace sharedWorkspace].accessibilityDisplayShouldReduceMotion ? 1 : 0;
+    }
+#ifdef LOAM_HOST_BUILD
+    if (zeus_app_api.set_reduced_motion) zeus_app_api.set_reduced_motion(on);
+#else
+    loam_zeus_engine_set_reduced_motion(on);
+#endif
+}
+
 /* One engine frame: layout, step, and paint through the host's draw callbacks.
    Both display paths share it so they stay frame-for-frame identical. Returns 1
    when the engine wants another frame (animation running, async work pending). */
@@ -1153,6 +1170,7 @@ static int mac_frame(int64_t vw, int64_t vh) {
     last = now;
     if (dt > 0.05f) dt = 0.05f;
     if (dt < 0.001f) dt = 1.f / 60.f;
+    mac_sync_reduced_motion();
     mac_mem_debug();
     zeus_layout(vw, vh);
     more = zeus_step(dt);
@@ -1843,6 +1861,8 @@ static int host_load_image(void) {
     ZEUS_BIND(layout, "loam_zeus_engine_layout");
     ZEUS_BIND(paint, "loam_zeus_engine_paint");
     ZEUS_BIND(step, "loam_zeus_engine_step");
+    ZEUS_BIND(step_dt, "loam_zeus_engine_step_dt");
+    ZEUS_BIND(set_reduced_motion, "loam_zeus_engine_set_reduced_motion");
     ZEUS_BIND(next_ms, "loam_zeus_engine_next_ms");
     ZEUS_BIND(click, "loam_zeus_engine_click");
     ZEUS_BIND(scroll, "loam_zeus_engine_scroll");

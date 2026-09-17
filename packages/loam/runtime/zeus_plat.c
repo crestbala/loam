@@ -220,6 +220,21 @@ void loam_platform_plat_sig_free(int64_t id) {
     loam_zeus_sig_free(id);
 }
 
+/* Allocation accounting (phase 3 proof harness). `loam_rt.h` increments this
+   from `loam_new` / array growth when the program was compiled with
+   `-DLOAM_ALLOC_TRACE` (all Zeus programs are); `zeus.proof_allocs()` reads it. */
+#ifdef LOAM_ALLOC_TRACE
+int64_t loam_alloc_count = 0;
+#endif
+
+int64_t loam_platform_plat_alloc_count(void) {
+#ifdef LOAM_ALLOC_TRACE
+    return loam_alloc_count;
+#else
+    return 0;
+#endif
+}
+
 static void (*plat_run)(void);
 static void (*plat_measure)(const char *s, int64_t px, int64_t *w, int64_t *h);
 
@@ -1677,8 +1692,9 @@ void zeus_layout(int64_t width, int64_t height) {
 }
 
 int zeus_step(float dt) {
-    (void)dt;
-    return (int)loam_zeus_engine_step();
+    int32_t ms = (int32_t)(dt * 1000.0f + 0.5f);
+    if (ms <= 0) ms = 16;
+    return (int)loam_zeus_engine_step_dt(ms);
 }
 
 void zeus_bind_draw(ZeusDraw draw) {

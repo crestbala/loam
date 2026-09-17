@@ -850,6 +850,18 @@
            finish loading and input listeners can attach. */
         exp.zeus_start();
         if (exp.zeus_resize) exp.zeus_resize(sz.w, sz.h);
+        /* Reduced motion (§3.2): animations jump to their final value, and a
+           change of preference takes effect immediately. */
+        if (exp.zeus_reduced_motion && window.matchMedia) {
+          const rm = window.matchMedia("(prefers-reduced-motion: reduce)");
+          exp.zeus_reduced_motion(rm.matches ? 1 : 0);
+          if (rm.addEventListener) {
+            rm.addEventListener("change", (e) => {
+              exp.zeus_reduced_motion(e.matches ? 1 : 0);
+              schedule(0);
+            });
+          }
+        }
         /* Hot reload: the dev server's reload script stashes a signal snapshot
            in sessionStorage before reloading; restore it into the fresh arena
            so state survives a component edit. */
