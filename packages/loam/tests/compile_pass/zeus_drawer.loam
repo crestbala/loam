@@ -1,0 +1,57 @@
+// Phase 4 batch 6: Drawer is one 0/1 `open` signal. The panel pins to a window
+// edge inside a full-window scrim, slides in on a paint-only transform, closes
+// on outside click and on Escape, and swallows clicks inside itself.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("drawer", 360, 260)
+    let open = zeus.signal(0)
+    let tree = zeus.Page() {
+        zeus.Text("Under", color = zeus.ink(), font = zeus.FONT_BODY)
+        zeus.Drawer(open, side = zeus.SIDE.SideEnd, size = 240) {
+            zeus.Text("Panel body", color = zeus.ink(), font = zeus.FONT_BODY)
+        }
+    }
+    zeus.root(tree)
+    zeus.pump_frame()
+
+    must(!zeus.text_visible("Panel body"), "drawer starts closed")
+
+    open.set(1)
+    zeus.engine_layout(360, 260)
+    must(zeus.text_visible("Panel body"), "drawer open")
+
+    // Escape closes it while focus is inside the panel.
+    zeus.engine_key_ev(27, 0)
+    must(open.get() == 0, "escape closed the drawer")
+    zeus.engine_layout(360, 260)
+    must(!zeus.text_visible("Panel body"), "hidden after escape")
+
+    // Outside click closes it through the scrim.
+    open.set(1)
+    zeus.engine_layout(360, 260)
+    zeus.engine_click(5, 5)
+    zeus.engine_mouseup()
+    zeus.engine_layout(360, 260)
+    must(open.get() == 0, "outside click closed the drawer")
+
+    // A click inside the panel does not close it.
+    open.set(1)
+    zeus.engine_layout(360, 260)
+    zeus.engine_click(300, 130)
+    zeus.engine_mouseup()
+    zeus.engine_layout(360, 260)
+    must(open.get() == 1, "click inside kept the drawer open")
+
+    fmt.println("drawer ok")
+}

@@ -288,6 +288,12 @@ runs a component while animating.
 active row is the only focusable one and handles Up / Down / Enter; hover moves
 the same index, so the pointer and the keyboard share one highlight.
 
+**Collapsible(open, title)** is one 0/1 signal: the header toggles it, the
+chevron rotates and the body fades on paint-only tracks (no card chrome unless
+asked for). **Drawer(open, side, size)** pins an edge panel into a full-window
+scrim and slides it on a paint-only transform; `SIDE.SideTop` / `SideBottom` are
+the sheet shape. Both close on outside click and Escape.
+
 ## Depth
 
 `elevation` is a `Box` / `Card` prop (0–4) that paints a soft shadow under the

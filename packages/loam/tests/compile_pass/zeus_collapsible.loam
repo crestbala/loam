@@ -1,0 +1,62 @@
+// Phase 4 batch 6: Collapsible is one 0/1 `open` signal; the header toggles it
+// and the body fades in. The toggle is discrete, the chevron rotation and body
+// fade are paint-only, so the settling frames run no component and no effect.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("collapsible", 360, 260)
+    let open = zeus.signal(0)
+    let tree = zeus.Page() {
+        zeus.Collapsible(open = open, title = "Details", border_color = zeus.rule()) {
+            zeus.Text("Hidden body", color = zeus.ink(), font = zeus.FONT_BODY)
+        }
+    }
+    zeus.root(tree)
+    zeus.pump_frame()
+    let sigs0 = zeus.arena_sigs()
+
+    must(!zeus.text_visible("Hidden body"), "body starts closed")
+    must(zeus.text_visible("Details"), "header is always visible")
+
+    open.set(1)
+    zeus.engine_layout(360, 260)
+    must(zeus.text_visible("Hidden body"), "body open")
+
+    // The header toggles it, both ways.
+    zeus.engine_click_text("Details")
+    zeus.engine_mouseup()
+    zeus.engine_layout(360, 260)
+    must(!zeus.text_visible("Hidden body"), "header click closed it")
+    zeus.engine_click_text("Details")
+    zeus.engine_mouseup()
+    zeus.engine_layout(360, 260)
+    must(zeus.text_visible("Hidden body"), "header click opened it")
+
+    // The chevron rotation and the body fade are paint-only: no component and
+    // no effect re-runs while they settle, and the frame then goes idle.
+    let c0 = zeus.proof_components()
+    let e0 = zeus.proof_effects()
+    let mut i = 0
+    while i < 24 {
+        zeus.engine_layout(360, 260)
+        zeus.engine_step_dt(16)
+        zeus.engine_paint()
+        i = i + 1
+    }
+    must(zeus.proof_components() == c0, "no component ran while settling")
+    must(zeus.proof_effects() == e0, "no effect ran while settling")
+    must(zeus.engine_step_dt(16) == 0, "idle after settling")
+    must(zeus.arena_sigs() == sigs0, "no per-toggle signal")
+
+    fmt.println("collapsible ok")
+}

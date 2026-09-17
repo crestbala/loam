@@ -6534,6 +6534,82 @@ fn AccordionItem(p: AccordionItemProps) {
     ui_pop()
 }
 
+struct CollapsibleProps {
+    /// 0 = closed, anything else = open.
+    open: Signal<int> = Signal { id: 0 },
+    open__set: bool = false,
+    title: fn() -> string = empty_text,
+    /// Optional leading icon markup.
+    icon: string = "",
+    width: int = -1,
+    /// Optional surface. Leave both empty for a bare disclosure (no card).
+    background: string = "",
+    border_color: string = "",
+    radius: int = -1,
+}
+
+/// One disclosure: a header row that toggles, and a body that fades in while
+/// `open`. `open` is a 0/1 signal and the *only* state; the chevron rotation and
+/// the body fade are paint-only tracks. Trailing block is the body.
+///
+/// Self-contained like `Toast`: the header and a hideable body go into a
+/// wrapper, and the wrapper's body is what is returned, so the trailing block
+/// lands inside the part that hides.
+fn Collapsible(p: CollapsibleProps) -> Node {
+    let open = p.open
+    let mut bw = -1
+    if p.border_color.len > 0 {
+        bw = HAIRLINE
+    }
+    let outer = Box(align_direction = DIRECTION.Column,
+                    width = p.width,
+                    background = p.background,
+                    border = bw,
+                    border_color = p.border_color,
+                    radius = px_or_default(p.radius, RAD_LG))
+    ui_push(outer.id)
+    let head = Box(align_direction = DIRECTION.Row,
+                   align_items = ALIGN.Center,
+                   spacing = SPACE.Xs,
+                   padding_x = 16,
+                   padding_y = 12,
+                   on_click = fn() {
+                       if open.get() != 0 {
+                           open.set(0)
+                       } else {
+                           open.set(1)
+                       }
+                   },
+                   a11y_role = "button",
+                   a11y_label = p.title(),
+                   cursor = "pointer",
+                   hover_off = false,
+                   press = true)
+    ui_push(head.id)
+    if p.icon.len > 0 {
+        Icon(p.icon, 16, dim())
+    }
+    Text(p.title, color = ink(), font = FONT_CONTROL, grow = 1)
+    let chev = Icon(IC_CHEV_DOWN, 16, dim())
+    styled(chev, || {
+        if open.get() != 0 {
+            animate_rotate(chev, 180, MOTION.Fast)
+        } else {
+            animate_rotate(chev, 0, MOTION.Fast)
+        }
+    })
+    ui_pop()
+    let body = Box(align_direction = DIRECTION.Column,
+                   padding_x = 16,
+                   padding_y = 12)
+    // No gap above the body: the header already carries the top inset.
+    set_padding_top(body, 0)
+    show(body, open)
+    enter_fade(body)
+    ui_pop()
+    return body
+}
+
 // --- overlays: anchored floaters ------------------------------------------
 //
 // A floating panel is an out-of-flow node (`position = pos_absolute`, `z_index`)
@@ -6783,6 +6859,110 @@ fn MenuLabel(text: fn() -> string) {
 fn MenuSeparator() {
     Box(padding_y = 3) {
         Separator()
+    }
+}
+
+/// Which window edge a `Drawer` slides from.
+enum SIDE {
+    // Slide in from the start (left) edge.
+    SideStart = 0,
+    // Slide in from the end (right) edge.
+    SideEnd = 1,
+    // Slide down from the top edge.
+    SideTop = 2,
+    // Slide up from the bottom edge (a sheet).
+    SideBottom = 3,
+}
+
+struct DrawerProps {
+    /// Edge to slide from (`SIDE.*`). The top / bottom edges are the sheet shape.
+    side: int = 1,
+    /// Panel extent: width for the start / end edges, height for top / bottom.
+    size: int = 320,
+    background: string = "",
+    border_color: string = "",
+    padding: int = -1,
+    /// Chord that closes the drawer.
+    key: string = "escape",
+}
+
+/// An edge panel over a scrim. `open` is a 0/1 signal; the scrim closes it on
+/// outside click and Escape closes it while focus is inside. `side` picks the
+/// edge and `size` the extent. Like the Dialog, the panel swallows clicks so a
+/// press inside does not close it. Trailing block is the panel content.
+fn Drawer(open: Signal<int>, p: DrawerProps) -> Node {
+    let dim = Overlay(background = scrim(), opacity = 80, visible = open,
+                      on_click = fn() { open.set(0) })
+    // Pin the panel to the chosen edge of the full-window overlay. The overlay
+    // is a centred column by default; the side edges need a row.
+    if p.side == SIDE.SideStart {
+        arena.nodes[dim.id].dir = 0
+        justify(dim, ALIGN.Start)
+        align(dim, ALIGN.Stretch)
+    } else if p.side == SIDE.SideEnd {
+        arena.nodes[dim.id].dir = 0
+        justify(dim, ALIGN.End)
+        align(dim, ALIGN.Stretch)
+    } else if p.side == SIDE.SideTop {
+        justify(dim, ALIGN.Start)
+        align(dim, ALIGN.Stretch)
+    } else {
+        justify(dim, ALIGN.End)
+        align(dim, ALIGN.Stretch)
+    }
+    let mut ww = -1
+    let mut hh = -1
+    if p.side == SIDE.SideStart || p.side == SIDE.SideEnd {
+        ww = p.size
+    } else {
+        hh = p.size
+    }
+    ui_push(dim.id)
+    let panel = Box(align_direction = DIRECTION.Column,
+                    width = ww,
+                    height = hh,
+                    background = str_or_default(p.background, plate()),
+                    border = HAIRLINE,
+                    border_color = str_or_default(p.border_color, rule()),
+                    padding = px_or_default(p.padding, SPACE.Md),
+                    spacing = SPACE.Sm,
+                    elevation = 4,
+                    a11y_role = "dialog",
+                    on_click = fn() { return })
+    ui_pop()
+    enter_fade(panel)
+    // Rest off the edge, then slide on. Paint-only: a transform never runs the
+    // layout pass, and at boot the track jumps straight to its final value.
+    drawer_slide(panel, p.side, p.size, 0)
+    let side = p.side
+    let size = p.size
+    effect(|| {
+        if open.get() != 0 {
+            drawer_slide(panel, side, 0, MOTION.Base)
+        } else {
+            drawer_slide(panel, side, size, 0)
+        }
+    })
+    apply_key(panel, p.key, "drawer.close", fn() { open.set(0) }, true, false)
+    let pid = panel.id
+    effect(|| {
+        if open.get() != 0 {
+            arena.claim_focus(pid)
+        }
+    })
+    return panel
+}
+
+/// Slide `panel` to `to` points along its edge's axis (positive is out).
+fn drawer_slide(panel: Node, side: int, to: int, ms: int) {
+    if side == SIDE.SideStart {
+        animate_x(panel, -to, ms)
+    } else if side == SIDE.SideEnd {
+        animate_x(panel, to, ms)
+    } else if side == SIDE.SideTop {
+        animate_y(panel, -to, ms)
+    } else {
+        animate_y(panel, to, ms)
     }
 }
 
