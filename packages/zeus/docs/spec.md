@@ -286,9 +286,10 @@ runs a component while animating.
 `MenuItem(active = active, index = i, count = n, …)` reads the menu's one signal
 — the highlighted index, where `-1` is closed — so items own no state. The
 active row is the only focusable one and handles Up / Down / Enter; hover moves
-the same index, so the pointer and the keyboard share one highlight. Anchored
-floaters are painted in window space, so one nested in a scroller never moves
-with the scroll (and never adds to the scrollable height).
+the same index, so the pointer and the keyboard share one highlight. An anchored
+floater is painted in window space, so it never adds to the scrollable height,
+and it re-places when the scroll moves its trigger: the popup stays beside its
+button, and goes off screen with it rather than pinning to a window edge.
 
 **Collapsible(open, title)** is one 0/1 signal: the header toggles it, the
 chevron rotates and the body fades on paint-only tracks (no card chrome unless

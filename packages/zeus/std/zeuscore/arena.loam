@@ -273,6 +273,10 @@ let mut dirty_paint: []int = []int {}
 let mut now_ms: int = 0
 /// Tracks with `pulse` (skeleton shimmer) currently alive.
 let mut pulse_count: int = 0
+/// Anchored floaters placed by the last layout (0 when none are on screen). A
+/// scroll must re-place them so a popup stays next to its trigger; when there
+/// are none, a scroll stays paint-only (`mark_scroll`).
+let mut live_anchors: int = 0
 /// Nodes with an indeterminate spin (`Spinner`) currently alive.
 let mut spin_count: int = 0
 /// Component-function runs (`Component`) and reactive-effect runs (`track.run`)
@@ -1430,6 +1434,13 @@ fn mark_paint() {
 fn mark_scroll() {
     paint_dirty = 1
     virt_dirty = 1
+    // An open popup is anchored to its trigger's *screen* rect, so a scroll
+    // moves it. Re-place the floaters (a layout pass) rather than let the popup
+    // drift away from its button; with none on screen, a scroll stays
+    // paint-only.
+    if live_anchors != 0 {
+        layout_dirty = 1
+    }
 }
 
 fn mark_layout() {

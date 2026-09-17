@@ -1176,6 +1176,9 @@ fn layout(width: int, height: int) {
     measure_node(arena.root_id)
     layout_node(arena.root_id, 0, 0, arena.win_w, arena.win_h)
     layout_overlays(arena.root_id)
+    // Floaters are re-placed every layout, and a scroll re-runs layout while any
+    // are on screen (`arena.mark_scroll`), so a popup stays next to its trigger.
+    arena.live_anchors = 0
     place_anchored(arena.root_id)
 }
 
@@ -1275,34 +1278,24 @@ fn place_node(id: int) {
             x = left
         }
     }
-    if x < 0 {
-        x = 0
-    }
-    if y < 0 {
-        y = 0
-    }
-    // Last resort when neither side has room: keep the panel on screen by
-    // clamping it into the safe window rect. Without this it would be placed
-    // past the edge and simply not be visible.
-    if y + h > bottom {
-        y = bottom - h
-    }
-    if y < top {
-        y = top
-    }
-    if x + w > right {
-        x = right - w
-    }
-    if x < left {
-        x = left
+    // A floater stays next to its trigger, so it is only kept inside the window
+    // while the trigger is on screen; once the trigger scrolls away the floater
+    // goes with it rather than pinning itself to the top or bottom edge.
+    if (ay + ah > top) && (ay < bottom) {
+        if x < 0 {
+            x = 0
+        }
+        if y < 0 {
+            y = 0
+        }
     }
     // `x` / `y` are *window* coordinates, which is what the flip test above
-    // needs and what the paint pass expects: every floater (kind 9, or any
-    // node with a `z_index`) is painted with the scrollers' offsets reset, so a
-    // floater nested in a scroller does not drift by the scroll amount.
+    // needs and what the paint pass expects: an anchored floater is painted with
+    // the scrollers' offsets reset, so it does not drift by the scroll amount.
     arena.nodes[id].x = x
     arena.nodes[id].y = y
     layout_node(id, x, y, w, h)
+    arena.live_anchors = arena.live_anchors + 1
 }
 
 fn place_anchored(id: int) {

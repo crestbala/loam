@@ -732,9 +732,12 @@ and `want_show` are tree predicates that never look at paint coordinates.
   coordinates and the offsets, so they are unchanged.
 - **Hit test.** `hit_floaters` had the matching inconsistency (window `x`, content
   `y`); it now tests anchored floaters against the window pointer.
-- **On-screen clamp.** After the flip, the panel is clamped into the safe window
-  rect, so a trigger with no room on either side still shows its panel instead
-  of placing it past the edge.
+- **On-screen behaviour.** A floater stays next to its trigger: it is only kept
+  inside the window while the trigger is on screen, and it re-places whenever the
+  scroll moves the trigger (`arena.mark_scroll` marks layout while a floater is
+  live — `arena.live_anchors`). When no floater is on screen, a scroll is still
+  paint-only. Scrolling the trigger out of the viewport takes the floater with it
+  instead of pinning it to a window edge.
 - **Test helper.** `click_id` (behind `engine_click_text`) used content
   coordinates, so it missed a scrolled control; it now converts through
   `layout.screen_origin`.
@@ -743,13 +746,17 @@ and `want_show` are tree predicates that never look at paint coordinates.
   thing to click was inert and the trigger had no dropdown affordance. It is now
   a row with a chevron and an accessibility label ("Open menu"), and the section
   copy says to click the trigger.
-- New golden `golden_anchor_scroll` locks the behaviour: an open Menu inside a
-  scroller scrolled by 152 is painted at window y 102 (before the fix: -50).
+- New golden `golden_anchor_scroll` locks the paint side (an open Menu inside a
+  scroller scrolled by 152 is painted at window y 102; it was -50), and
+  `zeus_anchor_scroll.loam` locks the follow side: the panel opens beside the
+  trigger, tracks it exactly while the page scrolls, and goes off screen with it
+  once the trigger leaves the viewport.
 
-Deliberately open: an anchored floater still does not *follow* its trigger while
-scroll is paint-only — it now stays where it was placed instead of drifting off
-screen. Repositioning it on scroll would need `place_anchored` to re-run, which
-is the audit's original "scroll is paint-only" trade-off.
+Still open: an open floater does not close itself on scroll — it follows its
+trigger, so a trigger scrolled out of view takes the popup with it. If the
+"dismiss on scroll" convention is wanted instead, the floater's open signal must
+be written back to its closed value, which differs per component (`-1` for the
+Menu's active index, `0` for the Popover's open flag).
 
 ### Remaining work (living list)
 
@@ -812,12 +819,10 @@ scope**:
 
 **Limits recorded when earlier batches landed**
 
-- [ ] Overlays (batch 3): no exit animation (close hides immediately); an
-  anchored panel does not *follow* its trigger while the page scrolls (scroll is
-  paint-only, so `place_anchored` does not re-run) — it now stays at its placed
-  position, rather than drifting off screen (batch 6.1); anchored placement
-  assumes the desktop inset origin, so it is off by the safe area on a notched
-  mobile host.
+- [ ] Overlays (batch 3): no exit animation (close hides immediately); anchored
+  placement assumes the desktop inset origin, so it is off by the safe area on a
+  notched mobile host. (Batch 6.1 fixed the paint space and made a floater follow
+  its trigger on scroll.)
 - [ ] Accordion (batch 2): the body fades; there is no animated height, because
   that needs a paint-only clip prop that does not exist yet.
 - [ ] Phase 3: the draw list is still a full-frame blit — no partial repaint /
