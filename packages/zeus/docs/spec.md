@@ -251,6 +251,22 @@ loading, selected, and invalid. Components set it (`enabled`, `visible`,
 `interaction_state`, so no recipe re-derives it. The states are discrete, so a
 change may use a signal; the *transition* between them is a track.
 
+## Paint-only motion
+
+Scale, translate, rotate, opacity, and corner radius are animatable on the same
+track pool: `animate_scale` / `animate_x` / `animate_y` / `animate_rotate` /
+`animate_opacity` / `animate_radius` (`node`, target, ms). They write paint
+state only — `paint_node` wraps the node in a `save` / `xform` / `restore` — so a
+transform never runs the layout pass. `motion_scale` / `motion_rot` / … read the
+current value for tests. Continuous indicators are clock-driven, not tracks: a
+`Spinner` paints its rotation from the frame clock (deterministic on the first
+frame, settled under reduced motion), so nothing is scheduled or allocated per
+frame.
+
+**Feedback components:** `Spinner(size, color, period, label)` is an
+indeterminate `progressbar`; `Empty(icon, title, body)` is a centred empty state
+whose trailing block is its action.
+
 ## Scaffold
 
 `zeli new <name> [dir]` writes the §6.2 app tree: `zeus.toml`, a single

@@ -1105,6 +1105,85 @@ fn state_focus_visible(node: Node) -> bool {
 fn state_selected(node: Node) -> bool {
     return arena.state_selected_of(node.id) != 0
 }
+
+// --- paint-only motion -----------------------------------------------------
+// Transforms and appearance are interpolated on the animation track pool and
+// written into paint state only — no layout pass reads them, so an animation
+// never re-runs a component or a signal effect. Retargeting keeps the current
+// value as the new `from`.
+
+/// Animate `node`'s scale to `to` percent (100 = identity) over `ms`.
+fn animate_scale(node: Node, to: int, ms: int) -> Node {
+    arena.anim_scale(node.id, to, ms)
+    return node
+}
+
+/// Animate a horizontal paint translation (dp).
+fn animate_x(node: Node, to: int, ms: int) -> Node {
+    arena.anim_translate_x(node.id, to, ms)
+    return node
+}
+
+/// Animate a vertical paint translation (dp).
+fn animate_y(node: Node, to: int, ms: int) -> Node {
+    arena.anim_translate_y(node.id, to, ms)
+    return node
+}
+
+/// Animate a clockwise rotation in degrees about the node's centre.
+fn animate_rotate(node: Node, to: int, ms: int) -> Node {
+    arena.anim_rotate(node.id, to, ms)
+    return node
+}
+
+/// Animate node opacity 0..100.
+fn animate_opacity(node: Node, to: int, ms: int) -> Node {
+    arena.anim_opacity(node.id, to, ms)
+    return node
+}
+
+/// Animate the corner radius in dp.
+fn animate_radius(node: Node, to: int, ms: int) -> Node {
+    arena.anim_radius(node.id, to, ms)
+    return node
+}
+
+/// Indeterminate rotation, `period` ms per turn, for a spinner. Paint rotates
+/// it from the frame clock, so it keeps a frame live while visible and stays
+/// deterministic on the first frame. Reduced motion settles it static.
+fn spin(node: Node, period: int) -> Node {
+    arena.note_spin(node.id, period)
+    return node
+}
+
+/// Current animated paint values (tests / the inspector). Layout never reads
+/// these, so reading one cannot cause a layout change.
+fn motion_scale(node: Node) -> int {
+    return int(arena.nodes[node.id].an_scale)
+}
+fn motion_x(node: Node) -> int {
+    return int(arena.nodes[node.id].an_tx)
+}
+fn motion_y(node: Node) -> int {
+    return int(arena.nodes[node.id].an_ty)
+}
+fn motion_rot(node: Node) -> int {
+    return int(arena.nodes[node.id].an_rot)
+}
+/// The rotation a spinner paints right now (frame-clock phase).
+fn motion_spin(node: Node) -> int {
+    let per = int(arena.nodes[node.id].spin_ms)
+    if per <= 0 {
+        return 0
+    }
+    return (arena.now_ms % per) * 360 / per
+}
+fn motion_opacity(node: Node) -> int {
+    return int(arena.nodes[node.id].opacity)
+}
+fn motion_radius(node: Node) -> int {
+    return int(arena.nodes[node.id].radius)
+}
 fn keys(node: Node, sig: Signal<int>, lo: int, hi: int) -> Node {
     return node.key("right", "slider.inc").key("left", "slider.dec").focusable().on_range("slider.inc", sig, 1, lo, hi).on_range("slider.dec", sig, -1, lo, hi)
 }
@@ -1476,6 +1555,9 @@ fn engine_next_ms() -> int {
     if arena.anim_live() != 0 {
         return 16
     }
+    if arena.spin_live() != 0 {
+        return 16
+    }
     return async.next_due()
 }
 
@@ -1507,6 +1589,10 @@ fn proof_signal_writes() -> int {
 /// Active animation tracks.
 fn proof_anim_live() -> int {
     return arena.anim_live_count()
+}
+/// 1 while an indeterminate spinner is visible and not reduced-motion-suppressed.
+fn proof_spin_live() -> int {
+    return arena.spin_live()
 }
 /// Allocations since boot (runtime allocator). A frame that only animates
 /// allocates nothing, so this must not move while a track is running.
@@ -1985,6 +2071,8 @@ fn dump_draw_list() {
             fmt.println("image", d.x, d.y, d.w, d.h, d.alpha, d.radius, d.value)
         } else if d.kind == 11 {
             fmt.println("grad", d.x, d.y, d.w, d.h, d.rgb, d.value, d.radius)
+        } else if d.kind == 15 {
+            fmt.println("xform", d.x, d.y, d.w, d.h, d.radius, d.font)
         }
     }
 }
@@ -5220,6 +5308,10 @@ const IC_PLUS: string =
 const IC_MINUS: string =
 "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M5 12h14'/></svg>"
 
+/// A gap-arc loader ring (used by `Spinner`).
+const IC_LOADER: string =
+"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M21 12a9 9 0 1 1-6.219-8.56'/></svg>"
+
 /// `markup` painted at `px` square and tinted by `tint`. Returns the node so
 /// callers can bind visibility.
 ///
@@ -6273,6 +6365,56 @@ fn ToggleGroup(value: Signal<int>, labels: []string) {
 /// wrap in a card to demo.
 fn Skeleton(w: int, h: int, radius: int) {
     Box(width = w, height = h, radius = radius, background = bone())
+}
+
+struct SpinnerProps {
+    /// Ring diameter in dp.
+    size: int = 16,
+    /// Ring color; defaults to `dim()`.
+    color: string = "",
+    /// Milliseconds per full turn.
+    period: int = 900,
+    /// Accessible label (role `progressbar`).
+    label: string = "Loading",
+}
+
+/// Indeterminate loader. The rotation is a paint-only loop track: it never
+/// re-runs a component or effect and skips layout, and it keeps a frame live
+/// while it is visible. Under reduced motion it settles static.
+fn Spinner(p: SpinnerProps) -> Node {
+    let n = Icon(IC_LOADER, px_or_default(p.size, 16), str_or_default(p.color, dim()))
+    arena.nodes[n.id].a11y_role = "progressbar"
+    arena.nodes[n.id].a11y_label = p.label
+    return spin(n, px_or_default(p.period, 900))
+}
+
+struct EmptyProps {
+    /// Icon markup, e.g. `IC_INFO`. Empty for none.
+    icon: string = "",
+    title: fn() -> string = empty_text,
+    body: fn() -> string = empty_text,
+    width: int = -1,
+    height: int = -1,
+    padding: int = -1,
+}
+
+/// Centred empty state: optional icon, title, supporting copy, then an action
+/// supplied as the trailing block.
+fn Empty(p: EmptyProps) -> Node {
+    let n = Box(align_direction = DIRECTION.Column,
+                align_items = ALIGN.Center,
+                justify = ALIGN.Center,
+                spacing = SPACE.Xs,
+                padding = px_or_default(p.padding, SPACE.Xl),
+                width = p.width, height = p.height)
+    ui_push(n.id)
+    if p.icon.len > 0 {
+        Icon(p.icon, 28, dim())
+    }
+    Text(p.title, color = ink(), font = FONT_TITLE)
+    Text(p.body, color = mute(), font = FONT_BODY)
+    ui_pop()
+    return n
 }
 
 /// Named extras for `Dialog` / `AlertDialog`. `title` shares the header

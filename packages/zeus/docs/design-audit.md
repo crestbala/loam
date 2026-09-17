@@ -56,9 +56,11 @@ Present (`fn` in `zeus.loam`), with what each actually paints today.
 | `Separator` / `Divider` / `Icon` / `Pip` / `Row` / `Column` / `Grow` | — | Primitives, fine. |
 
 **Absent entirely** (grep returns zero definitions): `Accordion`, `Toast`,
-`Tooltip`, `HoverCard`, `Popover`, `Menu`/`DropdownMenu`, `Empty` state,
-`Spinner`/`Loader`, `Drawer`/`Sheet`, `Collapsible`, `Combobox`. Six of the
-eleven transitions §3.5 requires belong to components that do not exist yet.
+`Tooltip`, `HoverCard`, `Popover`, `Menu`/`DropdownMenu`, `Drawer`/`Sheet`,
+`Collapsible`, `Combobox`. Six of the eleven transitions §3.5 requires belong to
+components that do not exist yet. `Spinner`/`Loader` and `Empty` landed in
+phase 4 batch 1 (on the clock-driven indicator and the paint-only transform
+set).
 
 **Icon set** is 10 constants (`IC_CHECK`, `IC_X`, `IC_CHEV_DOWN/LEFT/RIGHT`,
 `IC_CALENDAR`, `IC_INFO`, `IC_ALERT_CIRCLE`, `IC_PLUS`, `IC_MINUS`), stored as
@@ -378,7 +380,7 @@ answers depending on how you arrived.
 | 1 | Audit | **done** | `8289306` |
 | 2 | Tokens + paint primitives | **done** | `2184563` |
 | 3 | Dirty-channel split + animation subsystem + state layer | **done** | `feat(zeus): dirty-channel split + animation track pool (phase 3)` |
-| 4 | Components, in batches | not started | — |
+| 4 | Components, in batches | **in progress — batch 1** | `feat: paint-only motion + feedback primitives` |
 | 5 | Gallery + docs (`spec.md`, a `www/` design-system page) | not started | — |
 
 `make test` at the end of phase 3: **361 passed, 0 failed** (the six network
@@ -534,3 +536,29 @@ Deliberately left as-is:
 - **`EASE` curves are integer approximations** (cubic / quint ease-out,
   ease-out-back for Spring), matching the token ordering, not an exact cubic
   bezier.
+
+### Phase 4 batch 1 outcome — feedback primitives (additive)
+
+Phase 3 deferred the generic "animatable-by-default" paint props to the
+component work; batch 1 lands them:
+
+- `UiNode` gains paint-only `an_scale` / `an_tx` / `an_ty` / `an_rot`, written by
+  `APROP.ScalePct` / `XlateX` / `XlateY` / `RotDeg` / `OpacityAmt` / `RadiusPx`
+  tracks. `paint_node` wraps a transformed node in `save` / `xform` / `restore`;
+  identity emits nothing, so every existing golden is byte-identical.
+- Public `animate_scale` / `animate_x` / `animate_y` / `animate_rotate` /
+  `animate_opacity` / `animate_radius`, plus `motion_*` readers.
+- `Spinner` is a **clock-driven** indicator, not a track: paint derives the
+  rotation from `now_ms`, so it is phase 0 (settled) on the first frame —
+  goldens stay deterministic — and needs no schedule, no allocation, and no
+  signal. `spin_live` keeps frames flowing; reduced motion stops it. This is the
+  same treatment as the `pulse` shimmer: continuous indication is clock-driven,
+  finite transitions are tracks.
+- `Empty` is a centred icon/title/body with a trailing-block action.
+- New golden `golden_feedback`; `zeus_motion.loam` proves scale and spinner run
+  with flat component / effect / allocation counters and that reduced motion
+  idles.
+
+Still open for later batches: the four overlay components (`Popover` /
+`Tooltip` / `HoverCard` / `Toast`), `Accordion`, elevation (`shadow` emission),
+and switching the border paint path to `plat_stroke`.
