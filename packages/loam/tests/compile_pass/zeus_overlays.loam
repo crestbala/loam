@@ -1,0 +1,72 @@
+// Phase 4 batch 3: the overlay family. Popover anchors below its trigger and
+// flips above when it would leave the viewport; outside click and Escape close
+// it. Tooltip shows on hover after a delay and hides on leave. Toast rises and
+// auto-dismisses. All are out-of-flow floaters.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("overlays", 360, 300)
+    let open = zeus.signal(0)
+    let toast = zeus.signal(0)
+    let mut pop_id = 0
+    let mut trig_id = 0
+    let tree = zeus.Page() {
+        // Push the trigger near the bottom so the popover must flip above.
+        zeus.Box(height = 220)
+        let trigger = zeus.Button("Menu", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
+        trig_id = trigger.id
+        let pop = zeus.Popover(trigger, open = open, place = zeus.PLACE.PlaceBelow, width = 180) {
+            zeus.Text("Rename", color = zeus.ink(), font = zeus.FONT_BODY)
+        }
+        pop_id = pop.id
+        zeus.Tooltip(trigger, text = "Open the menu", delay = 0)
+        zeus.Toast(toast, width = 160, ms = 0) {
+            zeus.Text("Saved", color = zeus.on_ink(), font = zeus.FONT_BODY)
+        }
+    }
+    zeus.root(tree)
+    zeus.pump_frame()
+
+    must(!zeus.text_visible("Rename"), "popover starts closed")
+
+    // Open: the panel flips above a bottom-edge trigger.
+    open.set(1)
+    zeus.engine_layout(360, 300)
+    must(zeus.text_visible("Rename"), "popover open")
+    must(zeus.node_y(pop_id) < zeus.node_y(trig_id), "popover flipped above the trigger")
+
+    // Outside click closes through the scrim.
+    zeus.engine_click(5, 5)
+    zeus.engine_layout(360, 300)
+    must(!zeus.text_visible("Rename"), "outside click closed the popover")
+
+    // Tooltip shows after hover (delay 0 -> next frame) and hides on leave.
+    let cx = zeus.node_x(trig_id) + zeus.node_width(trig_id) / 2
+    let cy = zeus.node_y(trig_id) + zeus.node_height(trig_id) / 2
+    zeus.engine_hover(cx, cy)
+    zeus.engine_layout(360, 300)
+    zeus.engine_layout(360, 300)
+    must(zeus.text_visible("Open the menu"), "tooltip shown on hover")
+    zeus.engine_hover(cx, cy + 1000)
+    zeus.engine_layout(360, 300)
+    must(!zeus.text_visible("Open the menu"), "tooltip hidden on leave")
+
+    // Toast is visible immediately when open, then auto-dismisses on its timer.
+    toast.set(1)
+    must(zeus.text_visible("Saved"), "toast visible")
+    zeus.engine_layout(360, 300)
+    zeus.engine_layout(360, 300)
+    must(!zeus.text_visible("Saved"), "toast auto-dismissed")
+
+    fmt.println("overlays ok")
+}

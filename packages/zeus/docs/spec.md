@@ -272,6 +272,15 @@ the item has no state, so opening one closes the rest with no coordination code.
 The chevron rotation and body fade are paint-only; the body is currently
 shown/hidden with a fade rather than an animated height.
 
+**Overlays** are anchored out-of-flow floaters. `arena.anchor_to(panel, trigger,
+side, gap)` records a node id and the layout pass places the panel against the
+trigger's screen rect, flipping when the preferred `PLACE` side would leave the
+viewport. `Popover(trigger, open, …)` adds a transparent outside-click scrim and
+closes on Escape; `Tooltip(trigger, text, delay)` and `HoverCard(trigger, …, delay)`
+show on hover after a hover-intent delay; `Toast(open, ms)` pins to the window
+edge, rises and fades in, and auto-dismisses. None of them rebuilds a tree or
+runs a component while animating.
+
 ## Scaffold
 
 `zeli new <name> [dir]` writes the §6.2 app tree: `zeus.toml`, a single

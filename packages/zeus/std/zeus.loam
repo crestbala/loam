@@ -6525,6 +6525,213 @@ fn AccordionItem(p: AccordionItemProps) {
     ui_pop()
 }
 
+// --- overlays: anchored floaters ------------------------------------------
+//
+// A floating panel is an out-of-flow node (`position = pos_absolute`, `z_index`)
+// anchored to a trigger's screen rect. `arena.anchor_to` records the anchor and
+// the layout pass places the node (`place_anchored` in `layout.loam`), flipping
+// to the opposite side when the preferred one would leave the viewport. The
+// placement matches the trigger's *screen* rect, so a panel nested in a scroller
+// follows its trigger without any layout change on scroll.
+
+/// Preferred side for an anchored floater. `flip` (default on) switches to the
+/// opposite side when the preferred one overflows.
+enum PLACE {
+    // Below the trigger (menus, select).
+    PlaceBelow = 0,
+    // Above the trigger (tooltips, hover cards).
+    PlaceAbove = 1,
+    // To the trigger's end (inline end on a row).
+    PlaceEnd = 2,
+    // To the trigger's start.
+    PlaceStart = 3,
+}
+
+struct PopoverProps {
+    /// 0 = closed, anything else = open.
+    open: Signal<int> = Signal { id: 0 },
+    open__set: bool = false,
+    /// Preferred side (`PLACE.*`); flips when it would overflow.
+    place: int = 0,
+    gap: int = 6,
+    width: int = -1,
+    padding: int = -1,
+    radius: int = -1,
+    background: string = "",
+    border_color: string = "",
+    key: string = "escape",
+}
+
+/// A floating panel anchored to `trigger`. `open` is a 0/1 signal; outside
+/// click and Escape close it. Edge-aware: `place` is preferred, flipped when
+/// it would leave the viewport. Trailing block is the panel body.
+fn Popover(trigger: Node, p: PopoverProps) -> Node {
+    let open = p.open
+    // A transparent scrim: outside click closes; children are tried first, so
+    // clicks on the panel itself never reach it.
+    Overlay(visible = open, on_click = fn() { open.set(0) })
+    let panel = Box(align_direction = DIRECTION.Column,
+                    position = pos_absolute(),
+                    z_index = 60,
+                    spacing = SPACE.Xs,
+                    background = str_or_default(p.background, plate()),
+                    border = HAIRLINE,
+                    border_color = str_or_default(p.border_color, rule()),
+                    radius = px_or_default(p.radius, RAD_LG),
+                    padding = px_or_default(p.padding, SPACE.Sm),
+                    width = p.width,
+                    visible = open)
+    arena.anchor_to(panel.id, trigger.id, p.place, p.gap)
+    enter_fade(panel)
+    // Escape closes while the panel holds focus; focus arrives when it opens.
+    let closer = fn() { open.set(0) }
+    apply_key(panel, p.key, "popover.close", closer, true, false)
+    let pid = panel.id
+    effect(|| {
+        if open.get() != 0 {
+            arena.claim_focus(pid)
+        }
+    })
+    return panel
+}
+
+struct TooltipProps {
+    text: fn() -> string = empty_text,
+    place: int = 1,
+    gap: int = 6,
+    /// Delay before showing, in ms (hover intent).
+    delay: int = 400,
+}
+
+/// A small non-interactive label shown while the pointer rests on `trigger`.
+fn Tooltip(trigger: Node, p: TooltipProps) -> Node {
+    let hovered = signal(0)
+    hover(trigger, hovered)
+    let shown = signal(0)
+    let delay = p.delay
+    effect(|| {
+        if hovered.get() != 0 {
+            async.after(delay, fn() {
+                if hovered.get() != 0 {
+                    shown.set(1)
+                }
+            })
+        } else {
+            shown.set(0)
+        }
+    })
+    let panel = Box(align_direction = DIRECTION.Column,
+                    position = pos_absolute(),
+                    z_index = 70,
+                    background = ink(),
+                    padding_x = 8,
+                    padding_y = 4,
+                    radius = RAD_SM,
+                    visible = shown,
+                    a11y_role = "tooltip",
+                    a11y_label = p.text())
+    arena.anchor_to(panel.id, trigger.id, p.place, p.gap)
+    enter_fade(panel)
+    ui_push(panel.id)
+    Text(p.text, color = on_ink(), font = FONT_CAPTION)
+    ui_pop()
+    return panel
+}
+
+struct HoverCardProps {
+    place: int = 1,
+    gap: int = 8,
+    /// Delay before showing, in ms. Longer than a tooltip: a hover card is
+    /// larger and should not appear under a passing pointer.
+    delay: int = 300,
+    width: int = 280,
+    padding: int = -1,
+}
+
+/// A hover-triggered panel, larger and interactive where a `Tooltip` is not.
+/// Trailing block is the card body.
+fn HoverCard(trigger: Node, p: HoverCardProps) -> Node {
+    let hovered = signal(0)
+    hover(trigger, hovered)
+    let shown = signal(0)
+    let delay = p.delay
+    effect(|| {
+        if hovered.get() != 0 {
+            async.after(delay, fn() {
+                if hovered.get() != 0 {
+                    shown.set(1)
+                }
+            })
+        } else {
+            shown.set(0)
+        }
+    })
+    let panel = Box(align_direction = DIRECTION.Column,
+                    position = pos_absolute(),
+                    z_index = 70,
+                    spacing = SPACE.Xs,
+                    background = plate(),
+                    border = HAIRLINE,
+                    border_color = rule(),
+                    radius = RAD_LG,
+                    padding = px_or_default(p.padding, SPACE.Sm),
+                    width = p.width,
+                    visible = shown)
+    arena.anchor_to(panel.id, trigger.id, p.place, p.gap)
+    enter_fade(panel)
+    return panel
+}
+
+struct ToastProps {
+    /// Auto-dismiss after this many ms.
+    ms: int = 3200,
+    /// 0 = bottom, 1 = top.
+    place: int = 0,
+    width: int = -1,
+    padding: int = -1,
+    radius: int = -1,
+    background: string = "",
+    color: string = "",
+}
+
+/// A transient message pinned to the bottom (or top) of the window. `open` is a
+/// 0/1 signal; it dismisses itself after `ms`, or on click. It rises and fades
+/// in on open (no exit animation yet). Trailing block is the message.
+fn Toast(open: Signal<int>, p: ToastProps) -> Node {
+    let ov = Overlay(visible = open, on_click = fn() { open.set(0) })
+    if p.place == 1 {
+        justify(ov, ALIGN.Start)
+        set_padding_top(ov, 24)
+    } else {
+        justify(ov, ALIGN.End)
+        set_padding_bottom(ov, 24)
+    }
+    ui_push(ov.id)
+    let card = Box(align_direction = DIRECTION.Row,
+                   align_items = ALIGN.Center,
+                   spacing = SPACE.Xs,
+                   background = str_or_default(p.background, ink()),
+                   padding_x = 16,
+                   padding_y = 12,
+                   radius = px_or_default(p.radius, RAD_MD),
+                   width = p.width,
+                   on_click = fn() { open.set(0) },
+                   cursor = "pointer")
+    ui_pop()
+    // Rest 12dp low, then rise to 0 while opening (jumps instantly at boot).
+    animate_y(card, 12, 0)
+    let ms = p.ms
+    effect(|| {
+        if open.get() != 0 {
+            animate_y(card, 0, MOTION.Base)
+            async.after(ms, fn() { open.set(0) })
+        } else {
+            animate_y(card, 12, 0)
+        }
+    })
+    return card
+}
+
 /// Named extras for `Dialog` / `AlertDialog`. `title` shares the header
 /// row with the close control (Dialog) or stands alone (AlertDialog).
 struct DialogProps {
