@@ -1,0 +1,79 @@
+// Phase 4 Batch 1 proof: paint-only motion (scale / rotate) is decoupled from
+// the reactive graph exactly like the chrome tracks — no component runs, no
+// effect runs, no allocation while animating — and the indeterminate spinner is
+// a looping track that keeps a frame live and settles under reduced motion.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("motion", 240, 160)
+    let box = zeus.Box(width = 60, height = 60, background = zeus.raised())
+    let sp = zeus.Spinner(size = 20)
+    let tree = zeus.Box(align_direction = DIRECTION.Column) {
+        zeus.child(zeus.Box(), box)
+        zeus.child(zeus.Box(), sp)
+    }
+    zeus.root(tree)
+    zeus.pump_frame()
+
+    // Scale: paint-only, no reactive work.
+    let c0 = zeus.proof_components()
+    let e0 = zeus.proof_effects()
+    zeus.animate_scale(box, 50, 200)
+    must(zeus.motion_scale(box) == 100, "scale starts at identity")
+    // Two warm frames: the paint-dirty buffer grows to its steady size here.
+    zeus.engine_step_dt(16)
+    zeus.engine_step_dt(16)
+    let a0 = zeus.proof_allocs()
+    let mut i = 0
+    while i < 8 {
+        zeus.engine_step_dt(16)
+        i = i + 1
+    }
+    must(zeus.motion_scale(box) > 50, "scale in flight")
+    must(zeus.proof_components() == c0, "scale ran no component")
+    must(zeus.proof_effects() == e0, "scale ran no effect")
+    must(zeus.proof_allocs() == a0, "scale allocated nothing")
+    i = 0
+    while i < 8 {
+        zeus.engine_step_dt(16)
+        i = i + 1
+    }
+    must(zeus.motion_scale(box) == 50, "scale settles on target")
+
+    // The spinner is clock-driven like `pulse` (a looping indication, not a
+    // transition): frames stay live, the rotation advances, and no reactive
+    // scope runs. Its first frame is phase 0, so goldens stay settled.
+    let a1 = zeus.proof_allocs()
+    must(zeus.proof_spin_live() != 0, "spinner is live")
+    must(zeus.proof_anim_live() == 0, "spinner uses no track")
+    must(zeus.proof_components() == c0, "spinner ran no component")
+    must(zeus.proof_allocs() == a1, "spinner allocated nothing")
+    let r0 = zeus.motion_spin(sp)
+    i = 0
+    while i < 20 {
+        zeus.engine_step_dt(16)
+        i = i + 1
+    }
+    must(zeus.motion_spin(sp) != r0, "spinner rotates")
+    must(zeus.proof_spin_live() != 0, "spinner keeps running")
+    must(zeus.proof_components() == c0, "spinner ran no component")
+    must(zeus.proof_effects() == e0, "spinner ran no effect")
+    must(zeus.proof_allocs() == a1, "spinner allocated nothing")
+
+    // Reduced motion stops the spinner and lets the loop idle.
+    zeus.set_reduced_motion(true)
+    must(zeus.proof_spin_live() == 0, "reduced motion stops the spinner")
+    must(zeus.engine_step_dt(16) == 0, "idle once the spinner stops")
+
+    fmt.println("motion ok")
+}

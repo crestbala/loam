@@ -140,6 +140,18 @@ struct UiNode {
     dirty: u8,
     /// Animated scrollbar alpha 0..180 (a `BarFade` track). 0 = hidden.
     bar_amt: u8,
+    /// Animated paint transform: scale percent (100 = identity), translate in
+    /// dp, and rotation in degrees. Written only by paint-only tracks; the
+    /// layout pass never reads them, so a transform never forces a layout.
+    an_scale: u16,
+    an_tx: i16,
+    an_ty: i16,
+    an_rot: u16,
+    /// Indeterminate rotation (a `Spinner`): 1 = spin, period in ms. Driven by
+    /// the frame clock in paint, like `pulse`, so it needs no track and is
+    /// deterministic at `now_ms == 0`.
+    spin_ms: u16,
+    spin: u8,
     /// Interaction-state overlay flags (see `UISTATE` / `interaction_state`).
     /// Components do not reimplement these; one shared model reads them.
     disabled: u8,
@@ -248,6 +260,8 @@ let mut dirty_paint: []int = []int {}
 let mut now_ms: int = 0
 /// Tracks with `pulse` (skeleton shimmer) currently alive.
 let mut pulse_count: int = 0
+/// Nodes with an indeterminate spin (`Spinner`) currently alive.
+let mut spin_count: int = 0
 /// Component-function runs (`Component`) and reactive-effect runs (`track.run`)
 /// since boot. Animation must leave both flat (Phase 3 proof harness).
 let mut component_runs: int = 0
@@ -276,6 +290,8 @@ fn blank_node() -> UiNode {
         z_index: 0, grid_auto: 0, scroll_x: 0, scroll_y: 0, tw: 0, th: 0, pulse: 0, press: 0, press_amt: 0,
         aw: 0, ah: 0, bar_t: 0, parent: 0, key_ctx: 0, focusable: 0, capture_text: 0, edit_slot: -1,
         dirty: 0, bar_amt: 0,
+        an_scale: 100, an_tx: 0, an_ty: 0, an_rot: 0,
+        spin_ms: 900, spin: 0,
         disabled: 0, loading: 0, invalid: 0,
         click_fn: 0, ui_size: 1, ui_look: 1, restyle_fn: 0,
         hover_fade: 0, hover_amt: 0, tween: -1, enter_fade: 0, show_amt: 0,
@@ -485,6 +501,11 @@ fn free_node(id: int) {
     if int(nodes[id].pulse) != 0 {
         if pulse_count > 0 {
             pulse_count = pulse_count - 1
+        }
+    }
+    if int(nodes[id].spin) != 0 {
+        if spin_count > 0 {
+            spin_count = spin_count - 1
         }
     }
     push(drop_pool, id)
@@ -735,6 +756,18 @@ enum APROP {
     BarFade = 5,
     // Signal paint overlay (sig_paint[sid]).
     SigVal = 6,
+    // Paint transform / appearance, all paint-only (no layout pass reads them):
+    // scale percent (100 = identity).
+    ScalePct = 7,
+    // Translate in dp (x / y).
+    XlateX = 8,
+    XlateY = 9,
+    // Rotation in degrees.
+    RotDeg = 10,
+    // Node opacity 0..100.
+    OpacityAmt = 11,
+    // Corner radius in dp.
+    RadiusPx = 12,
 }
 
 let TRACK_CAP = 512
@@ -871,6 +904,24 @@ fn anim_read(node: int, prop: int) -> int {
         }
         return 0
     }
+    if prop == APROP.ScalePct {
+        return int(nodes[node].an_scale)
+    }
+    if prop == APROP.XlateX {
+        return int(nodes[node].an_tx)
+    }
+    if prop == APROP.XlateY {
+        return int(nodes[node].an_ty)
+    }
+    if prop == APROP.RotDeg {
+        return int(nodes[node].an_rot)
+    }
+    if prop == APROP.OpacityAmt {
+        return int(nodes[node].opacity)
+    }
+    if prop == APROP.RadiusPx {
+        return int(nodes[node].radius)
+    }
     return 0
 }
 
@@ -905,6 +956,33 @@ fn anim_store(node: int, prop: int, v: int) {
                 }
             }
         }
+    } else if prop == APROP.ScalePct {
+        let mut s = v
+        if s < 1 {
+            s = 1
+        }
+        if s > 1000 {
+            s = 1000
+        }
+        nodes[node].an_scale = u16(s)
+    } else if prop == APROP.XlateX {
+        nodes[node].an_tx = i16(v)
+    } else if prop == APROP.XlateY {
+        nodes[node].an_ty = i16(v)
+    } else if prop == APROP.RotDeg {
+        let mut r = v % 360
+        if r < 0 {
+            r = r + 360
+        }
+        nodes[node].an_rot = u16(r)
+    } else if prop == APROP.OpacityAmt {
+        nodes[node].opacity = i16(anim_clamp100(v))
+    } else if prop == APROP.RadiusPx {
+        let mut r = v
+        if r < 0 {
+            r = 0
+        }
+        nodes[node].radius = u16(r)
     }
 }
 
@@ -988,6 +1066,31 @@ fn anim_schedule(node: int, prop: int, to: int, dur: int, easing: int) {
     tracks[slot].easing = easing
     tracks[slot].state = 1
     anim_active = anim_active + 1
+}
+
+/// A paint transform: scale percent toward `to` (100 = identity).
+fn anim_scale(node: int, to: int, ms: int) {
+    anim_schedule(node, APROP.ScalePct, to, ms, ease_standard())
+}
+
+fn anim_translate_x(node: int, to: int, ms: int) {
+    anim_schedule(node, APROP.XlateX, to, ms, ease_standard())
+}
+
+fn anim_translate_y(node: int, to: int, ms: int) {
+    anim_schedule(node, APROP.XlateY, to, ms, ease_standard())
+}
+
+fn anim_rotate(node: int, to: int, ms: int) {
+    anim_schedule(node, APROP.RotDeg, to, ms, ease_standard())
+}
+
+fn anim_opacity(node: int, to: int, ms: int) {
+    anim_schedule(node, APROP.OpacityAmt, to, ms, ease_standard())
+}
+
+fn anim_radius(node: int, to: int, ms: int) {
+    anim_schedule(node, APROP.RadiusPx, to, ms, ease_standard())
 }
 
 /// Start a fade from an explicit `from` (scrollbar re-show). Reduced motion
@@ -1265,6 +1368,40 @@ fn note_pulse(id: int) {
 
 fn pulse_live() -> int {
     if pulse_count > 0 {
+        return 1
+    }
+    return 0
+}
+
+/// Mark a node's spinner alive: paint rotates it from the frame clock, and the
+/// frame loop keeps running while it is visible. Reduced motion stops it.
+fn note_spin(id: int, period: int) {
+    if id <= 0 {
+        return
+    }
+    if id >= nodes.len {
+        return
+    }
+    if int(nodes[id].spin) == 0 {
+        spin_count = spin_count + 1
+    }
+    nodes[id].spin = u8(1)
+    let mut d = period
+    if d < 60 {
+        d = 60
+    }
+    if d > 65535 {
+        d = 65535
+    }
+    nodes[id].spin_ms = u16(d)
+    paint_dirty = 1
+}
+
+fn spin_live() -> int {
+    if reduced != 0 {
+        return 0
+    }
+    if spin_count > 0 {
         return 1
     }
     return 0

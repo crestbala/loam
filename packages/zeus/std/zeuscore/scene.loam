@@ -352,7 +352,43 @@ fn paint_scrollbar(id: int) {
     }
 }
 
+/// Paint a node, applying its animated paint transform first. The transform
+/// comes from paint-only tracks, so nothing here can move the layout box.
 fn paint_node(id: int) {
+    if id <= 0 {
+        return
+    }
+    let sc = int(arena.nodes[id].an_scale)
+    let tx = int(arena.nodes[id].an_tx)
+    let ty = int(arena.nodes[id].an_ty)
+    let mut rot = int(arena.nodes[id].an_rot)
+    if int(arena.nodes[id].spin) != 0 {
+        if arena.spin_live() != 0 {
+            let per = int(arena.nodes[id].spin_ms)
+            if per > 0 {
+                rot = (arena.now_ms % per) * 360 / per
+            }
+        }
+    }
+    if sc == 100 {
+        if tx == 0 {
+            if ty == 0 {
+                if rot == 0 {
+                    paint_node_body(id)
+                    return
+                }
+            }
+        }
+    }
+    let cx = arena.draw_x(id) + arena.nodes[id].w / 2
+    let cy = arena.draw_y(id) + arena.nodes[id].h / 2
+    save()
+    xform(tx, ty, sc, rot, cx, cy)
+    paint_node_body(id)
+    restore()
+}
+
+fn paint_node_body(id: int) {
     if id <= 0 {
         return
     }
@@ -651,6 +687,10 @@ fn step(dt: int) -> int {
     arena.now_ms = arena.now_ms + dt
     let mut live = arena.anim_tick(dt)
     if arena.pulse_live() != 0 {
+        arena.paint_dirty = 1
+        live = 1
+    }
+    if arena.spin_live() != 0 {
         arena.paint_dirty = 1
         live = 1
     }

@@ -1,0 +1,11 @@
+DRAW 10
+fill 0 0 420 278 16777215 0
+svg 32 101 16 16 6447723
+svg 68 97 24 24 1579035
+svg 234 64 28 28 6447723
+text 144 104 1579035 16 No projects
+text 144 136 5395035 14 Create one to get started.
+save
+xform 0 0 52 226 50 0
+fill 32 206 40 40 2450411 8
+restore
