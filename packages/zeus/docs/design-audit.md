@@ -379,7 +379,7 @@ answers depending on how you arrived.
 | 1 | Audit | **done** | `8289306` |
 | 2 | Tokens + paint primitives | **done** | `2184563` |
 | 3 | Dirty-channel split + animation subsystem + state layer | **done** | `feat(zeus): dirty-channel split + animation track pool (phase 3)` |
-| 4 | Components, in batches | **in progress — batches 1–6** | `feat: paint-only motion + feedback primitives` / `feat: Accordion` / `feat: overlay family` / `feat: elevation + stroked borders` / `feat: Menu` / `feat: Collapsible + Drawer` |
+| 4 | Components, in batches | **in progress — batches 1–6** | `feat: paint-only motion + feedback primitives` / `feat: Accordion` / `feat: overlay family` / `feat: elevation + stroked borders` / `feat: Menu` / `feat: Collapsible + Drawer` / `fix: anchored floaters in a scroller` |
 | 5 | Gallery + docs (`spec.md`, a `www/` design-system page) | not started | — |
 
 `make test` at the end of phase 3: **361 passed, 0 failed** (the six network
@@ -715,6 +715,42 @@ Deliberately open: no exit animation (closing hides immediately, as with the
 overlays); the drawer claims focus on open but does not trap `Tab`, and returns
 focus nowhere on close.
 
+### Phase 4 fix — anchored floaters inside a scroller (batch 6.1)
+
+The gallery's Menu did not open past the fold. The cause was a coordinate-space
+bug, not the component: `paint_node` accumulates a scroller's offset
+(`draw_y` = `y` - `paint_sy`), while `place_node` stores an anchored floater in
+*window* coordinates. Nested in a scroller the panel was therefore painted
+`scroll_y` too high — 3183 px above the viewport for the gallery's menu, i.e.
+invisible — while every headless assertion still passed, because `text_visible`
+and `want_show` are tree predicates that never look at paint coordinates.
+
+- **Paint.** An anchored floater (kind 9, or any node with `anchor > 0`) is now
+  painted with the scrollers' offsets reset, matching the window coordinates
+  `place_node` writes. Relative absolute floaters (`layout_abs`, e.g. the
+  DatePicker panel and the chart tooltip) keep their parent's content
+  coordinates and the offsets, so they are unchanged.
+- **Hit test.** `hit_floaters` had the matching inconsistency (window `x`, content
+  `y`); it now tests anchored floaters against the window pointer.
+- **On-screen clamp.** After the flip, the panel is clamped into the safe window
+  rect, so a trigger with no room on either side still shows its panel instead
+  of placing it past the edge.
+- **Test helper.** `click_id` (behind `engine_click_text`) used content
+  coordinates, so it missed a scrolled control; it now converts through
+  `layout.screen_origin`.
+- **Gallery.** The Menu demo's trigger was a plain button labelled "Actions" —
+  which is also the overline of the Buttons section above it, so the obvious
+  thing to click was inert and the trigger had no dropdown affordance. It is now
+  a row with a chevron and an accessibility label ("Open menu"), and the section
+  copy says to click the trigger.
+- New golden `golden_anchor_scroll` locks the behaviour: an open Menu inside a
+  scroller scrolled by 152 is painted at window y 102 (before the fix: -50).
+
+Deliberately open: an anchored floater still does not *follow* its trigger while
+scroll is paint-only — it now stays where it was placed instead of drifting off
+screen. Repositioning it on scroll would need `place_anchored` to re-run, which
+is the audit's original "scroll is paint-only" trade-off.
+
 ### Remaining work (living list)
 
 The single maintained tracker of what is still open. Update it in the same commit
@@ -776,10 +812,12 @@ scope**:
 
 **Limits recorded when earlier batches landed**
 
-- [ ] Overlays (batch 3): no exit animation (close hides immediately); the
-  anchored panel does not reposition during a scroll (scroll is paint-only, so
-  no layout pass runs); anchored placement assumes the desktop inset origin, so
-  it is off by the safe area on a notched mobile host.
+- [ ] Overlays (batch 3): no exit animation (close hides immediately); an
+  anchored panel does not *follow* its trigger while the page scrolls (scroll is
+  paint-only, so `place_anchored` does not re-run) — it now stays at its placed
+  position, rather than drifting off screen (batch 6.1); anchored placement
+  assumes the desktop inset origin, so it is off by the safe area on a notched
+  mobile host.
 - [ ] Accordion (batch 2): the body fades; there is no animated height, because
   that needs a paint-only clip prop that does not exist yet.
 - [ ] Phase 3: the draw list is still a full-frame blit — no partial repaint /

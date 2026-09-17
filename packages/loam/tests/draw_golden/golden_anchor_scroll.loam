@@ -1,0 +1,37 @@
+// DRAW-list golden: an anchored floater inside a *scrolled* scroller must be
+// painted in window coordinates. Open the menu *after* scrolling — the real
+// sequence — so the placement is computed against the live scroll. Painting the
+// floater through the scroller's offset would put it at 102 - 152 = -50 here.
+import "std:zeus"
+
+fn main() {
+    zeus.window("anchor-scroll", 320, 180)
+    let open = zeus.signal(-1)
+    let top = zeus.raw_scroll()
+    zeus.slot(top, fn() {
+        zeus.Box(align_direction = zeus.DIRECTION.Column) {
+            zeus.Box(height = 300)
+            let trigger = zeus.Box(width = 120, height = 32, background = zeus.plate(),
+                                   border = zeus.HAIRLINE, border_color = zeus.rule())
+            zeus.Menu(trigger, active = open, width = 160) {
+                zeus.MenuItem(active = open, index = 0, count = 1, label = "Rename")
+            }
+        }
+    })
+    zeus.root(top)
+    zeus.pump_frame()
+    zeus.engine_layout(320, 180)
+    zeus.scroll_to(top, 200)
+    // Opening is a discrete state change, so it re-lays-out at the live scroll.
+    open.set(0)
+    zeus.engine_layout(320, 180)
+    // Let the enter-fade settle (the step delta is capped at 64 ms).
+    let mut i = 0
+    while i < 8 {
+        zeus.engine_step_dt(64)
+        i = i + 1
+    }
+    zeus.engine_layout(320, 180)
+    zeus.engine_paint()
+    zeus.dump_draw_list()
+}

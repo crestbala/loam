@@ -1187,6 +1187,14 @@ struct Pt {
 }
 
 fn screen_origin(id: int) -> Pt {
+    let sc = screen_scroll(id)
+    return Pt { x: arena.nodes[id].x - sc.x, y: arena.nodes[id].y - sc.y }
+}
+
+/// Sum of the scroll offsets of `id`'s kind-11 ancestors. `screen_origin`
+/// removes these to reach window coordinates; a floater positioned in window
+/// coordinates adds them back to store content coordinates (see `place_node`).
+fn screen_scroll(id: int) -> Pt {
     let mut sx = 0
     let mut sy = 0
     let mut p = arena.nodes[id].parent
@@ -1202,7 +1210,7 @@ fn screen_origin(id: int) -> Pt {
             break
         }
     }
-    return Pt { x: arena.nodes[id].x - sx, y: arena.nodes[id].y - sy }
+    return Pt { x: sx, y: sy }
 }
 
 /// Position one anchored floater against its anchor's screen rect, flipping to
@@ -1273,6 +1281,25 @@ fn place_node(id: int) {
     if y < 0 {
         y = 0
     }
+    // Last resort when neither side has room: keep the panel on screen by
+    // clamping it into the safe window rect. Without this it would be placed
+    // past the edge and simply not be visible.
+    if y + h > bottom {
+        y = bottom - h
+    }
+    if y < top {
+        y = top
+    }
+    if x + w > right {
+        x = right - w
+    }
+    if x < left {
+        x = left
+    }
+    // `x` / `y` are *window* coordinates, which is what the flip test above
+    // needs and what the paint pass expects: every floater (kind 9, or any
+    // node with a `z_index`) is painted with the scrollers' offsets reset, so a
+    // floater nested in a scroller does not drift by the scroll amount.
     arena.nodes[id].x = x
     arena.nodes[id].y = y
     layout_node(id, x, y, w, h)

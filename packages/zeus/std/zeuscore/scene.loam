@@ -632,7 +632,12 @@ fn paint_floaters(id: int) {
         return
     }
     if arena.is_floater(id) != 0 {
-        if int(arena.nodes[id].kind) == 9 {
+        // An *anchored* floater is positioned in window coordinates
+        // (`place_node`), so it must be painted without the scrollers' offsets —
+        // otherwise it drifts by the scroll amount and can end up off screen.
+        // A relative absolute floater (`layout_abs`) stays in its parent's
+        // content coordinates and keeps the offsets.
+        if int(arena.nodes[id].kind) == 9 || arena.nodes[id].anchor > 0 {
             let prev_y = arena.paint_sy
             let prev_x = arena.paint_sx
             arena.paint_sy = 0
