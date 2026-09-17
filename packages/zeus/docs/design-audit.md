@@ -1,5 +1,11 @@
 # Zeus design audit
 
+> **Status.** Phase 1 (this audit) and Phase 2 (tokens + paint primitives) are
+> landed — see §11 for what changed, what is still open, and the two traps that
+> cost real time. Sections 1–10 are the *original* baseline and are left as
+> written except where marked **[CLOSED — phase 2]**, so the record of what the
+> kit looked like before the upgrade stays readable.
+
 Baseline for the design-system upgrade. Everything below is read off the tree at
 `feat/zeus-ui-upgrade` (`8a61fc3`): `packages/zeus/std/zeus.loam` (6592 lines),
 `packages/zeus/std/zeuscore/{arena,layout,scene,input,track,metrics,geometry,platform}.loam`,
@@ -77,13 +83,13 @@ Twelve scene op kinds (`scene.loam`) over fourteen host ops
 
 | Primitive | Status | Consequence |
 |---|---|---|
-| **Soft shadow** | absent | No elevation is expressible at all. Cards, dialogs, popovers, switch thumbs, and menus are flat by construction. This is the single biggest reason the kit reads plain. Requires a new host op on all four backends. |
-| **Per-corner radius** | absent — `radius` is one `u16` | No top-only rounded sheets, no tab-shaped triggers, no grouped button runs, no rounded-top table headers. |
-| **Anti-aliased strokes** | absent | `border_w` is faked: `paint_fill_box` draws a **full-bleed filled rect in the border color underneath**, then insets the background fill by `border_w`. Consequences: a bordered node cannot have a translucent background (the border color shows through), a bordered node cannot have a gradient background *and* a correct border, and a border cannot be drawn without a background. There is no line/polyline op, so charts draw strokes as thin rects or hand-written SVG. No dashed lines. |
-| **Gradients** | 2 stops, 2 axes, **no radius** | `paint_fill_box` calls `fill_g(x, y, w, h, rgb, c1, 0)` — it drops `inner_r` entirely, so **any gradient background renders with square corners**. No radial, no conic, no >2 stops, no angle. |
-| **Clipping** | axis-aligned rect only | Cannot clip to a rounded rect, so an image or gradient inside a rounded card has square corners. §3.3's accordion plan (animate a clip rect) works, but a rounded accordion body will not. |
+| **Soft shadow** | **[CLOSED — phase 2]** `plat_shadow` | No elevation is expressible at all. Cards, dialogs, popovers, switch thumbs, and menus are flat by construction. This is the single biggest reason the kit reads plain. Requires a new host op on all four backends. |
+| **Per-corner radius** | **[CLOSED — phase 2]** `plat_fill4` (the node field is still one `u16`; see §11) | No top-only rounded sheets, no tab-shaped triggers, no grouped button runs, no rounded-top table headers. |
+| **Anti-aliased strokes** | **[CLOSED — phase 2]** `plat_stroke` (paint path still to be switched over; see §11) | `border_w` is faked: `paint_fill_box` draws a **full-bleed filled rect in the border color underneath**, then insets the background fill by `border_w`. Consequences: a bordered node cannot have a translucent background (the border color shows through), a bordered node cannot have a gradient background *and* a correct border, and a border cannot be drawn without a background. There is no line/polyline op, so charts draw strokes as thin rects or hand-written SVG. No dashed lines. |
+| **Gradients** | **[PARTLY CLOSED — phase 2]** radius + alpha added; still 2 stops, 2 axes | `paint_fill_box` calls `fill_g(x, y, w, h, rgb, c1, 0)` — it drops `inner_r` entirely, so **any gradient background renders with square corners**. No radial, no conic, no >2 stops, no angle. |
+| **Clipping** | **[CLOSED — phase 2]** `plat_clip` takes a radius | Cannot clip to a rounded rect, so an image or gradient inside a rounded card has square corners. §3.3's accordion plan (animate a clip rect) works, but a rounded accordion body will not. |
 | **Opacity layers** | per-node only | `paint_alpha` multiplies a node's own alpha; there is **no group/layer opacity**, so fading a subtree fades each node independently and overlapping children double-darken. Dialog enter/exit and toast fades both need this. |
-| **Transforms** | none except `text_rot` | No scale, translate, or rotate for boxes. §3.5's press-scale (0.98), dialog scale-in, tabs-indicator slide/scale, toast translate, and switch-thumb spring **all require this**. Today the only way to move something is to change `x`/`y`/`w`/`h`, which is a *layout* change — exactly what §3.3 forbids. |
+| **Transforms** | **[CLOSED — phase 2]** `plat_xform` | No scale, translate, or rotate for boxes. §3.5's press-scale (0.98), dialog scale-in, tabs-indicator slide/scale, toast translate, and switch-thumb spring **all require this**. Today the only way to move something is to change `x`/`y`/`w`/`h`, which is a *layout* change — exactly what §3.3 forbids. |
 | **Text measure / ellipsis** | measure yes, ellipsis **no** | `metrics.measure` / `measure_wrap` are solid (in-tree via `std:font` when bound, host otherwise). But grep for `ellips`/`truncate` across zeus returns nothing. Overflowing text either wraps or overflows its box. Every table cell, select trigger, chip, and nav label is at risk. |
 | **Baseline alignment** | absent | `plat_text` anchors at the top-left of the line box; `paint_label` centers vertically by arithmetic (`(h - pad - th) / 2`). Mixed-size text on one row does not sit on a shared baseline — visible in `Stat`, `Badge`+`Text` rows, and chart axis labels. |
 | **Icon rendering** | SVG string re-parsed per draw | Each `Icon` ships a ~200-byte markup string through the draw list every frame, parsed by the host. No path cache, no stroke-width scaling with size, no two-tone icons. |
@@ -226,26 +232,30 @@ the only existing instrumentation hook.
 
 ## 6. Tokens
 
-`Palette` is 34 named roles × 2 appearances (`LIGHT` / `DARK`, xAI-derived),
-mirrored into `ROLE` slots 1–36 and resolved at paint. Good bones; wrong shape
-for a design system.
+**[CLOSED — phase 2.]** Recorded as found, for the record.
 
-| §2 requirement | Today |
-|---|---|
-| 12-step neutral scale | **No scale.** Nine flat neutrals (`bg`, `card`, `raised`, `wash`, `line`, `line_strong`, `text`, `muted`, `faint`). No way to ask for "zinc-700". |
-| Accent scale | **No accent at all** in the design sense — `accent` is `#0a0a0a` light / `#ffffff` dark, i.e. neutral ink. The brand hues (`sunset`, `dusk`, `twilight`, `breeze`, `midnight`) are loose `fn`s outside the role system, usable only for charts. An accent *picker* is not expressible. |
-| success / warning / danger | Present (`success`, `warn`, `danger` + `_fill` / `_edge` / `_solid` variants). |
-| **info** | **Missing.** |
-| Live theme switch | ✅ Already ideal — `appearance()` signal + paint-time role resolution. Keep this. |
-| Radius none/sm/md/lg/xl/full | `RAD_SM 6 / MD 8 / LG 10 / XL 14 / FULL 999`. **No `RAD_NONE`**, and the ramp is 6→8→10→14 (compressed at the low end). |
-| 4pt spacing grid | `SPACE` is `0, 2, 6, 8, 12, 16, 20, 24, 32, 48, 62, 72`. **`6`, `2`, and `62` are off-grid.** |
-| Type: sizes, weights, line heights, tabular numerals | Sizes only (`FONT_DISPLAY 30`…`FONT_OVERLINE 11`). **No weights** — `plat_text` carries a pixel size and nothing else, and `plat_set_font_family` is explicitly documented as one global family. **No line heights**, **no tabular numerals** for the data components. |
-| Elevation 0–4 | **Absent**, and not expressible without a shadow op. |
-| Motion fast/base/slow + easings | **Absent.** Durations are per-site integer literals in `scene.step`. |
-| Focus ring color/width/offset | `ROLE.FocusRing` exists (= foreground, both appearances) and `kb_focus` correctly gates it to keyboard focus. **No width token, no offset token** — the ring is drawn inline in `paint_node` at a fixed inset. |
-| WCAG AA on every pair | Unverified; no contrast checker in tree. `faint #a9b2bc` on `bg #ffffff` is ≈2.2:1 — **fails AA for text** and is used for captions, overlines, and placeholders. |
+`Palette` was 34 named roles × 2 appearances (xAI-derived), mirrored into `ROLE`
+slots 1–36 and resolved at paint. Good bones; wrong shape for a design system.
 
----
+| §2 requirement | As found | Now |
+|---|---|---|
+| 12-step neutral scale | **No scale** — nine flat neutrals | `NEUTRAL_L` / `NEUTRAL_D`, `zeus.n(1..12)` |
+| Accent scale | **No accent at all** — `accent` was `#0a0a0a` / `#ffffff`, i.e. neutral ink, so a picker was not expressible | Five 12-step ramps, `zeus.ac(1..12)`, `set_accent`. Default **blue** `#2563eb` |
+| success / warning / danger | Present, ad hoc | Four tiers × 5 steps (`OkS3/S6/S9/S10/S11`, …) |
+| **info** | **Missing** | `InfoS3…S11`, `TINT.Info` |
+| Live theme switch | Already ideal | Unchanged — still zero effects, zero rebuilds |
+| Radius none/sm/md/lg/xl/full | No `RAD_NONE`; ramp compressed at the low end | `RAD_NONE` added; ramp otherwise unchanged (see §11) |
+| 4pt spacing grid | `2, 6, 62` were off-grid | Snapped; enforced by `spacing_is_on_a_four_point_grid` |
+| Type: sizes, weights, line heights, tabular | Sizes only | `LEAD_TIGHT/SNUG/NORMAL/RELAXED` + `line_height()`. **Weights and tabular figures remain open** — `plat_text` carries a pixel size only |
+| Elevation 0–4 | **Absent**, inexpressible | `Elev` + `elevation` / `elevation_dark` / `elev_now`; dark roughly doubles alpha and tightens blur |
+| Motion fast/base/slow + easings | **Absent** | `MOTION.Fast/Base/Slow` = 120/200/320, `EASE.Linear/Standard/Emphasized/Spring` (curves land in phase 3) |
+| Focus ring color/width/offset | Colour only | `FOCUS_WIDTH` 2, `FOCUS_OFFSET` 2 |
+| WCAG AA on every pair | Unverified; `faint` on `bg` was **2.14:1** | 260 pairs checked in CI across 5 accents × 2 appearances |
+
+The contrast work is the part worth keeping in mind: it is executable, not
+prose, and the ratio math is itself validated against hand-checkable references
+first, so the suite cannot pass by being uniformly wrong. It found four real
+defects — see §11.
 
 ## 7. Accessibility and input
 
@@ -356,3 +366,112 @@ Accepted consequence: a chart on the gallery's first page will not animate at
 launch but will after navigating away and back. That is the correct behavior and
 matches every mature kit, but it means "does the chart animate?" has two right
 answers depending on how you arrived.
+
+---
+
+## 11. Progress, decisions, and handoff
+
+### Phases
+
+| # | Phase | State | Commit |
+|---|---|---|---|
+| 1 | Audit | **done** | `8289306` |
+| 2 | Tokens + paint primitives | **done** | `2184563` |
+| 3 | Dirty-channel split + animation subsystem + state layer | not started | — |
+| 4 | Components, in batches | not started | — |
+| 5 | Gallery + docs (`spec.md`, a `www/` design-system page) | not started | — |
+
+`make test` at the end of phase 2: **365 passed, 0 failed**. All four hosts
+build — Cocoa, wasm, iOS (`.app`, signed), Android (APK; Java + NDK).
+
+### Decisions taken (do not re-litigate)
+
+1. **Entry motion is mount-into-a-live-tree, never cold boot.** Full reasoning
+   in §10. One flag on the animation subsystem, not a case per component.
+2. **Charts keep `refit` for width** (responsiveness is the point; a width
+   change is a discrete layout event). Value changes interpolate paint-only
+   against the cached post-refit rect at `MOTION.base`. No staggered series
+   entry, no left-to-right line draw.
+3. **Nothing animates on first paint** — this also keeps the draw goldens
+   deterministic, which matters more than it sounds (see the traps below).
+4. **The accent is blue** (`#2563eb`) with white ink, by request. Indigo, teal,
+   rose, and the original sunset orange are selectable via `set_accent`.
+5. **Flat role names are kept and remapped** onto the new ramps rather than
+   replaced, so no call site in `examples/` or `www/` had to move.
+
+### Two traps that cost real time
+
+- **`ZEUS_HEADLESS=1` must be set for the golden *compile*, not just the run.**
+  With it set the binary links a deterministic measurement stub; without it,
+  real Cocoa text metrics, and text wraps differently. Regenerating with the
+  variable on the run alone produces fixtures that fail in `nob`, with a diff
+  that looks like a genuine layout regression. The correct incantation:
+
+      ZEUS_HEADLESS=1 MAYA_HEADLESS=1 ./bin/loamc <src> -o <bin>
+      ZEUS_HEADLESS=1 MAYA_HEADLESS=1 <bin> > <stem>.txt
+
+  Generate each twice and diff before overwriting — a fixture that is not
+  reproducible run-to-run should never be committed.
+
+- **Loam accepts duplicate `enum` variant names without any diagnostic.** Two
+  new `ROLE` members collided with existing ones (`OkFill`, `WarnFill`) and
+  silently bound white text against a pale wash. Nothing errored; only the
+  contrast test caught it. New `ROLE` members are now named by step
+  (`OkS3`, `OkS9`, …) partly to make collisions structurally unlikely. Grep
+  the enum before adding to it.
+
+  Related: doc comments (`///`) are rejected *inside* an enum body. Use `//`.
+
+### What phase 2 deliberately did **not** do
+
+These are known-open and are the natural first moves in phases 3–4:
+
+- **The paint path still draws borders the old way.** `plat_stroke` exists and
+  every host implements it, but `scene.paint_fill_box` still fakes a border by
+  drawing a larger filled rect underneath. Switching it over is a visual change
+  to every bordered node, so it belongs with the component work, not with the
+  primitive that enables it.
+- **`UiNode.radius` is still a single `u16`.** `plat_fill4` exists; nothing
+  emits it yet. Per-corner radii need either three more node fields or a packed
+  one.
+- **Nothing emits `shadow` or `xform` yet.** They are wired end-to-end and
+  unused — deliberately, because both need the dirty-channel split to be
+  animated without dragging layout along.
+- **`RAD_*` values are unchanged** (6/8/10/14). `RAD_NONE` was added. Retuning
+  the ramp is component work.
+- **Type weights and tabular figures are not done and are host-blocked.**
+  `plat_text` carries a pixel size only and `plat_set_font_family` is explicitly
+  one global family. Tabular numerals for data components will need either a
+  host op or an app-supplied font with tabular figures; the `LEAD_*` tokens
+  landed, the weight axis did not.
+- **`zeus.animate` still tweens signals** and therefore still re-runs every
+  subscribed effect once per frame. This is the headline fix of phase 3 and a
+  behavioural change to public API — bound effects will stop re-running per
+  frame, which is the intended repair, not a regression. Call it out in that
+  commit and migrate call sites in the same one.
+
+### Where to start phase 3
+
+The order matters, because each step makes the next observable:
+
+1. Split invalidation into `PAINT` / `LAYOUT` / `TREE`. The obstacles are
+   `engine_step`'s single `int` return and `engine_layout`'s unconditional
+   `layout.layout()` — today every frame lays out and paints the whole tree
+   regardless of what changed (§4). Add dirty bits to `UiNode`; there are none
+   today.
+2. Build the track pool (§3.2) — fixed-capacity arena, `{node_id, prop, from,
+   to, current, elapsed, duration, easing, state}`, one clock read per frame.
+   `zeus_step(float dt)` in `packages/loam/runtime/zeus_plat.c` already receives
+   a delta and currently reads `(void)dt;` — that is the hook.
+3. Port the existing per-node chrome animations out of `scene.step()`. They are
+   already signal-free, which makes them the right first tenants; what they lack
+   is a track list (today it is an O(all-nodes) scan), time-based rates (today
+   fixed integer steps per frame, so 120 Hz runs 2× fast), and easing.
+4. Only then the §3.6 proof harness: component-run and effect-run counters, the
+   debug assertion against signal writes inside the tick, frame timings on
+   Cocoa and wasm, and zero allocations per animated frame.
+
+Preserve what already works: **idle costs zero frames** on both Cocoa
+(`mac_schedule_next` pauses the `CADisplayLink`) and wasm (the loader stops
+calling `requestAnimationFrame`). §3.4's hardest bullet is already satisfied and
+is easy to break by accident.
