@@ -21,7 +21,23 @@ void zeus_js_fill_a(int32_t x, int32_t y, int32_t w, int32_t h, int32_t rgb, int
 
 __attribute__((import_module("zeus"), import_name("fill_g")))
 void zeus_js_fill_g(int32_t x, int32_t y, int32_t w, int32_t h, int32_t c0, int32_t c1,
-                    int32_t axis);
+                    int32_t axis, int32_t radius, int32_t alpha);
+
+__attribute__((import_module("zeus"), import_name("shadow")))
+void zeus_js_shadow(int32_t x, int32_t y, int32_t w, int32_t h, int32_t radius,
+                    int32_t rgb, int32_t alpha, int32_t blur, int32_t dx, int32_t dy);
+
+__attribute__((import_module("zeus"), import_name("stroke")))
+void zeus_js_stroke(int32_t x, int32_t y, int32_t w, int32_t h, int32_t rgb,
+                    int32_t radius, int32_t width, int32_t alpha);
+
+__attribute__((import_module("zeus"), import_name("fill4")))
+void zeus_js_fill4(int32_t x, int32_t y, int32_t w, int32_t h, int32_t rgb, int32_t alpha,
+                   int32_t tl, int32_t tr, int32_t br, int32_t bl);
+
+__attribute__((import_module("zeus"), import_name("xform")))
+void zeus_js_xform(int32_t dx, int32_t dy, int32_t scale, int32_t rot,
+                   int32_t ox, int32_t oy);
 
 __attribute__((import_module("zeus"), import_name("text")))
 void zeus_js_text(int32_t x, int32_t y, const char *s, int32_t rgb, int32_t font);
@@ -46,7 +62,7 @@ __attribute__((import_module("zeus"), import_name("save")))
 void zeus_js_save(void);
 
 __attribute__((import_module("zeus"), import_name("clip")))
-void zeus_js_clip(int32_t x, int32_t y, int32_t w, int32_t h);
+void zeus_js_clip(int32_t x, int32_t y, int32_t w, int32_t h, int32_t radius);
 
 __attribute__((import_module("zeus"), import_name("restore")))
 void zeus_js_restore(void);
@@ -80,10 +96,42 @@ static void draw_fill_a(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h, i
 }
 
 static void draw_fill_g(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h, int64_t c0,
-                        int64_t c1, int64_t axis) {
+                        int64_t c1, int64_t axis, int64_t radius, int64_t alpha) {
     (void)ctx;
     zeus_js_fill_g((int32_t)x, (int32_t)y, (int32_t)w, (int32_t)h, (int32_t)(c0 & 0xFFFFFF),
-                   (int32_t)(c1 & 0xFFFFFF), (int32_t)axis);
+                   (int32_t)(c1 & 0xFFFFFF), (int32_t)axis, (int32_t)radius, (int32_t)alpha);
+}
+
+static void draw_shadow(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
+                        int64_t radius, int64_t rgb, int64_t alpha, int64_t blur,
+                        int64_t dx, int64_t dy) {
+    (void)ctx;
+    zeus_js_shadow((int32_t)x, (int32_t)y, (int32_t)w, (int32_t)h, (int32_t)radius,
+                   (int32_t)(rgb & 0xFFFFFF), (int32_t)alpha, (int32_t)blur,
+                   (int32_t)dx, (int32_t)dy);
+}
+
+static void draw_stroke(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
+                        int64_t rgb, int64_t radius, int64_t width, int64_t alpha) {
+    (void)ctx;
+    zeus_js_stroke((int32_t)x, (int32_t)y, (int32_t)w, (int32_t)h,
+                   (int32_t)(rgb & 0xFFFFFF), (int32_t)radius, (int32_t)width,
+                   (int32_t)alpha);
+}
+
+static void draw_fill4(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
+                       int64_t alpha, int64_t tl, int64_t tr, int64_t br, int64_t bl) {
+    (void)ctx;
+    zeus_js_fill4((int32_t)x, (int32_t)y, (int32_t)w, (int32_t)h,
+                  (int32_t)(rgb & 0xFFFFFF), (int32_t)alpha,
+                  (int32_t)tl, (int32_t)tr, (int32_t)br, (int32_t)bl);
+}
+
+static void draw_xform(void *ctx, int64_t dx, int64_t dy, int64_t scale, int64_t rot,
+                       int64_t ox, int64_t oy) {
+    (void)ctx;
+    zeus_js_xform((int32_t)dx, (int32_t)dy, (int32_t)scale, (int32_t)rot,
+                  (int32_t)ox, (int32_t)oy);
 }
 
 static void draw_text(void *ctx, int64_t x, int64_t y, const char *s, int64_t rgb, int64_t font) {
@@ -103,9 +151,10 @@ static void draw_save(void *ctx) {
     zeus_js_save();
 }
 
-static void draw_clip(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h) {
+static void draw_clip(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
+                     int64_t radius) {
     (void)ctx;
-    zeus_js_clip((int32_t)x, (int32_t)y, (int32_t)w, (int32_t)h);
+    zeus_js_clip((int32_t)x, (int32_t)y, (int32_t)w, (int32_t)h, (int32_t)radius);
 }
 
 static void draw_restore(void *ctx) {
@@ -219,6 +268,10 @@ static void bind_canvas(void) {
     d.fill = draw_fill;
     d.fill_a = draw_fill_a;
     d.fill_g = draw_fill_g;
+    d.shadow = draw_shadow;
+    d.stroke = draw_stroke;
+    d.fill4 = draw_fill4;
+    d.xform = draw_xform;
     d.text = draw_text;
     d.text_rot = draw_text_rot;
     d.save = draw_save;

@@ -549,12 +549,76 @@ void loam_zeus_plat_fill_a(int64_t x, int64_t y, int64_t w, int64_t h, int64_t r
 }
 
 void loam_zeus_plat_fill_g(int64_t x, int64_t y, int64_t w, int64_t h, int64_t c0,
-                          int64_t c1, int64_t axis) {
+                          int64_t c1, int64_t axis, int64_t radius, int64_t alpha) {
     if (!have_draw) return;
     if (paint_draw.fill_g)
-        paint_draw.fill_g(paint_ctx, x, y, w, h, c0 & 0xFFFFFF, c1 & 0xFFFFFF, axis);
+        paint_draw.fill_g(paint_ctx, x, y, w, h, c0 & 0xFFFFFF, c1 & 0xFFFFFF, axis,
+                          radius, alpha);
+    else if (paint_draw.fill_a)
+        paint_draw.fill_a(paint_ctx, x, y, w, h, c0 & 0xFFFFFF, radius, alpha);
     else if (paint_draw.fill)
-        paint_draw.fill(paint_ctx, x, y, w, h, c0 & 0xFFFFFF, 0);
+        paint_draw.fill(paint_ctx, x, y, w, h, c0 & 0xFFFFFF, radius);
+}
+
+/* Elevation. A host without a blur skips the shadow outright rather than
+   approximating it: a hard-edged rectangle under every card reads far worse
+   than no shadow at all, and the design system's flat level (0) is a real
+   level, so "no shadow" is always a valid rendering. */
+void loam_zeus_plat_shadow(int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius,
+                          int64_t rgb, int64_t alpha, int64_t blur, int64_t dx,
+                          int64_t dy) {
+    if (!have_draw || !paint_draw.shadow) return;
+    if (alpha <= 0 || w <= 0 || h <= 0) return;
+    paint_draw.shadow(paint_ctx, x, y, w, h, radius, rgb & 0xFFFFFF, alpha, blur, dx, dy);
+}
+
+/* Ring stroke. The fallback paints four edges with `fill_a`, which is square
+   at the corners but keeps the border visible and — unlike the old underlay
+   fill it replaces — does not require the node to have a background. */
+void loam_zeus_plat_stroke(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
+                          int64_t radius, int64_t width, int64_t alpha) {
+    if (!have_draw) return;
+    if (width <= 0 || w <= 0 || h <= 0) return;
+    if (paint_draw.stroke) {
+        paint_draw.stroke(paint_ctx, x, y, w, h, rgb & 0xFFFFFF, radius, width, alpha);
+        return;
+    }
+    if (!paint_draw.fill_a) return;
+    if (width * 2 > w) width = w / 2 > 0 ? w / 2 : 1;
+    if (width * 2 > h) width = h / 2 > 0 ? h / 2 : 1;
+    paint_draw.fill_a(paint_ctx, x, y, w, width, rgb & 0xFFFFFF, 0, alpha);
+    paint_draw.fill_a(paint_ctx, x, y + h - width, w, width, rgb & 0xFFFFFF, 0, alpha);
+    paint_draw.fill_a(paint_ctx, x, y + width, width, h - width * 2, rgb & 0xFFFFFF, 0, alpha);
+    paint_draw.fill_a(paint_ctx, x + w - width, y + width, width, h - width * 2,
+                      rgb & 0xFFFFFF, 0, alpha);
+}
+
+void loam_zeus_plat_fill4(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
+                         int64_t alpha, int64_t tl, int64_t tr, int64_t br, int64_t bl) {
+    if (!have_draw) return;
+    if (paint_draw.fill4) {
+        paint_draw.fill4(paint_ctx, x, y, w, h, rgb & 0xFFFFFF, alpha, tl, tr, br, bl);
+        return;
+    }
+    {
+        int64_t r = tl;
+        if (tr > r) r = tr;
+        if (br > r) r = br;
+        if (bl > r) r = bl;
+        if (paint_draw.fill_a)
+            paint_draw.fill_a(paint_ctx, x, y, w, h, rgb & 0xFFFFFF, r, alpha);
+        else if (paint_draw.fill)
+            paint_draw.fill(paint_ctx, x, y, w, h, rgb & 0xFFFFFF, r);
+    }
+}
+
+/* Paint-space transform. A NULL host leaves the widget at its settled
+   position, which is the correct degradation: the transition is skipped,
+   not half-applied. */
+void loam_zeus_plat_xform(int64_t dx, int64_t dy, int64_t scale, int64_t rot,
+                         int64_t ox, int64_t oy) {
+    if (!have_draw || !paint_draw.xform) return;
+    paint_draw.xform(paint_ctx, dx, dy, scale, rot, ox, oy);
 }
 
 void loam_zeus_plat_text(int64_t x, int64_t y, loam_str s, int64_t rgb, int64_t font) {
@@ -607,8 +671,8 @@ void loam_zeus_plat_save(void) {
     if (have_draw && paint_draw.save) paint_draw.save(paint_ctx);
 }
 
-void loam_zeus_plat_clip(int64_t x, int64_t y, int64_t w, int64_t h) {
-    if (have_draw && paint_draw.clip) paint_draw.clip(paint_ctx, x, y, w, h);
+void loam_zeus_plat_clip(int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius) {
+    if (have_draw && paint_draw.clip) paint_draw.clip(paint_ctx, x, y, w, h, radius);
 }
 
 void loam_zeus_plat_restore(void) {
@@ -882,8 +946,26 @@ void loam_platform_plat_fill_a(int64_t x, int64_t y, int64_t w, int64_t h, int64
     loam_zeus_plat_fill_a(x, y, w, h, rgb, radius, alpha);
 }
 void loam_platform_plat_fill_g(int64_t x, int64_t y, int64_t w, int64_t h, int64_t c0,
-                               int64_t c1, int64_t axis) {
-    loam_zeus_plat_fill_g(x, y, w, h, c0, c1, axis);
+                               int64_t c1, int64_t axis, int64_t radius, int64_t alpha) {
+    loam_zeus_plat_fill_g(x, y, w, h, c0, c1, axis, radius, alpha);
+}
+void loam_platform_plat_shadow(int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius,
+                               int64_t rgb, int64_t alpha, int64_t blur, int64_t dx,
+                               int64_t dy) {
+    loam_zeus_plat_shadow(x, y, w, h, radius, rgb, alpha, blur, dx, dy);
+}
+void loam_platform_plat_stroke(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
+                               int64_t radius, int64_t width, int64_t alpha) {
+    loam_zeus_plat_stroke(x, y, w, h, rgb, radius, width, alpha);
+}
+void loam_platform_plat_fill4(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
+                              int64_t alpha, int64_t tl, int64_t tr, int64_t br,
+                              int64_t bl) {
+    loam_zeus_plat_fill4(x, y, w, h, rgb, alpha, tl, tr, br, bl);
+}
+void loam_platform_plat_xform(int64_t dx, int64_t dy, int64_t scale, int64_t rot,
+                              int64_t ox, int64_t oy) {
+    loam_zeus_plat_xform(dx, dy, scale, rot, ox, oy);
 }
 void loam_platform_plat_text(int64_t x, int64_t y, loam_str s, int64_t rgb, int64_t font) {
     loam_zeus_plat_text(x, y, s, rgb, font);
@@ -943,8 +1025,8 @@ int64_t loam_platform_plat_mem_kb(void) {
     return 0;
 #endif
 }
-void loam_platform_plat_clip(int64_t x, int64_t y, int64_t w, int64_t h) {
-    loam_zeus_plat_clip(x, y, w, h);
+void loam_platform_plat_clip(int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius) {
+    loam_zeus_plat_clip(x, y, w, h, radius);
 }
 void loam_platform_plat_restore(void) { loam_zeus_plat_restore(); }
 int64_t loam_platform_plat_key_intern(loam_str name) {

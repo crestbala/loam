@@ -127,14 +127,153 @@ static void ios_text_rot(void *ctx, int64_t x, int64_t y, const char *s,
     CGContextRestoreGState(c);
 }
 
+/* Clamp a corner radius to what the rect can hold, so a RAD_FULL pill on a
+   short box is a capsule rather than a degenerate path. Same rule as Cocoa. */
+static CGFloat ios_rad(CGFloat rad, CGRect r) {
+    if (rad < 0) rad = 0;
+    if (rad > r.size.width / 2) rad = r.size.width / 2;
+    if (rad > r.size.height / 2) rad = r.size.height / 2;
+    return rad;
+}
+
+static UIBezierPath *ios_rrect(CGRect r, CGFloat rad) {
+    rad = ios_rad(rad, r);
+    if (rad <= 0) return [UIBezierPath bezierPathWithRect:r];
+    return [UIBezierPath bezierPathWithRoundedRect:r cornerRadius:rad];
+}
+
+static void ios_fill_g(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
+                       int64_t c0, int64_t c1, int64_t axis, int64_t radius,
+                       int64_t alpha) {
+    CGContextRef c = UIGraphicsGetCurrentContext();
+    CGRect r = CGRectMake((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h);
+    CGFloat a = alpha < 0 ? 0 : (alpha > 255 ? 1.0 : (CGFloat)alpha / 255.0);
+    CGFloat comps[8];
+    CGColorSpaceRef sp;
+    CGGradientRef g;
+    const CGFloat locs[2] = {0.0, 1.0};
+    (void)ctx;
+    if (w <= 0 || h <= 0) return;
+    comps[0] = ((c0 >> 16) & 255) / 255.0; comps[1] = ((c0 >> 8) & 255) / 255.0;
+    comps[2] = (c0 & 255) / 255.0;         comps[3] = 1.0;
+    comps[4] = ((c1 >> 16) & 255) / 255.0; comps[5] = ((c1 >> 8) & 255) / 255.0;
+    comps[6] = (c1 & 255) / 255.0;         comps[7] = 1.0;
+    sp = CGColorSpaceCreateDeviceRGB();
+    g = CGGradientCreateWithColorComponents(sp, comps, locs, 2);
+    CGContextSaveGState(c);
+    CGContextSetAlpha(c, a);
+    [ios_rrect(r, (CGFloat)radius) addClip];
+    CGContextDrawLinearGradient(c, g, r.origin,
+        axis ? CGPointMake(r.origin.x + r.size.width, r.origin.y)
+             : CGPointMake(r.origin.x, r.origin.y + r.size.height), 0);
+    CGContextRestoreGState(c);
+    CGGradientRelease(g);
+    CGColorSpaceRelease(sp);
+}
+
+/* Soft drop shadow. Same construction as the Cocoa host: an even-odd clip
+   excludes the rect's own area, so the opaque path that generates the blur
+   never paints over the surface the card sits on. UIKit is y-down, so dy
+   needs no sign flip (unlike Cocoa). */
+static void ios_shadow(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
+                       int64_t radius, int64_t rgb, int64_t alpha, int64_t blur,
+                       int64_t dx, int64_t dy) {
+    CGContextRef c = UIGraphicsGetCurrentContext();
+    CGRect r = CGRectMake((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h);
+    CGFloat a = alpha < 0 ? 0 : (alpha > 255 ? 1.0 : (CGFloat)alpha / 255.0);
+    CGFloat pad = (CGFloat)(blur * 3 + (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy) + 8);
+    UIColor *col = [zeus_color(rgb) colorWithAlphaComponent:a];
+    UIBezierPath *hole = [UIBezierPath bezierPathWithRect:CGRectInset(r, -pad, -pad)];
+    (void)ctx;
+    CGContextSaveGState(c);
+    [hole appendPath:ios_rrect(r, (CGFloat)radius)];
+    [hole setUsesEvenOddFillRule:YES];
+    [hole addClip];
+    CGContextSetShadowWithColor(c, CGSizeMake((CGFloat)dx, (CGFloat)dy),
+                                (CGFloat)blur, col.CGColor);
+    [[UIColor blackColor] setFill];
+    [ios_rrect(r, (CGFloat)radius) fill];
+    CGContextRestoreGState(c);
+}
+
+static void ios_stroke(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
+                       int64_t rgb, int64_t radius, int64_t width, int64_t alpha) {
+    CGFloat lw = (CGFloat)width;
+    CGRect r = CGRectMake((CGFloat)x + lw / 2, (CGFloat)y + lw / 2,
+                          (CGFloat)w - lw, (CGFloat)h - lw);
+    CGFloat a = alpha < 0 ? 0 : (alpha > 255 ? 1.0 : (CGFloat)alpha / 255.0);
+    UIBezierPath *p;
+    (void)ctx;
+    if (r.size.width <= 0 || r.size.height <= 0) return;
+    p = ios_rrect(r, (CGFloat)radius - lw / 2);
+    [p setLineWidth:lw];
+    [[zeus_color(rgb) colorWithAlphaComponent:a] setStroke];
+    [p stroke];
+}
+
+static void ios_fill4(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
+                      int64_t rgb, int64_t alpha, int64_t tl, int64_t tr,
+                      int64_t br, int64_t bl) {
+    CGFloat a = alpha < 0 ? 0 : (alpha > 255 ? 1.0 : (CGFloat)alpha / 255.0);
+    CGFloat X = (CGFloat)x, Y = (CGFloat)y, W = (CGFloat)w, H = (CGFloat)h;
+    CGFloat lim = (W < H ? W : H) / 2;
+    CGFloat a1 = (CGFloat)tl, a2 = (CGFloat)tr, a3 = (CGFloat)br, a4 = (CGFloat)bl;
+    UIBezierPath *p = [UIBezierPath bezierPath];
+    (void)ctx;
+    if (W <= 0 || H <= 0) return;
+    if (a1 > lim) a1 = lim;
+    if (a2 > lim) a2 = lim;
+    if (a3 > lim) a3 = lim;
+    if (a4 > lim) a4 = lim;
+    [p moveToPoint:CGPointMake(X + a1, Y)];
+    [p addLineToPoint:CGPointMake(X + W - a2, Y)];
+    if (a2 > 0)
+        [p addArcWithCenter:CGPointMake(X + W - a2, Y + a2) radius:a2
+                 startAngle:(CGFloat)-M_PI_2 endAngle:0 clockwise:YES];
+    [p addLineToPoint:CGPointMake(X + W, Y + H - a3)];
+    if (a3 > 0)
+        [p addArcWithCenter:CGPointMake(X + W - a3, Y + H - a3) radius:a3
+                 startAngle:0 endAngle:(CGFloat)M_PI_2 clockwise:YES];
+    [p addLineToPoint:CGPointMake(X + a4, Y + H)];
+    if (a4 > 0)
+        [p addArcWithCenter:CGPointMake(X + a4, Y + H - a4) radius:a4
+                 startAngle:(CGFloat)M_PI_2 endAngle:(CGFloat)M_PI clockwise:YES];
+    [p addLineToPoint:CGPointMake(X, Y + a1)];
+    if (a1 > 0)
+        [p addArcWithCenter:CGPointMake(X + a1, Y + a1) radius:a1
+                 startAngle:(CGFloat)M_PI endAngle:(CGFloat)(3 * M_PI_2) clockwise:YES];
+    [p closePath];
+    [[zeus_color(rgb) colorWithAlphaComponent:a] setFill];
+    [p fill];
+}
+
+static void ios_xform(void *ctx, int64_t dx, int64_t dy, int64_t scale,
+                      int64_t rot, int64_t ox, int64_t oy) {
+    CGContextRef c = UIGraphicsGetCurrentContext();
+    (void)ctx;
+    CGContextTranslateCTM(c, (CGFloat)(ox + dx), (CGFloat)(oy + dy));
+    if (rot) CGContextRotateCTM(c, (CGFloat)rot * (CGFloat)0.017453292519943295);
+    if (scale != 100) {
+        CGFloat k = (CGFloat)scale / 100.0;
+        CGContextScaleCTM(c, k, k);
+    }
+    CGContextTranslateCTM(c, (CGFloat)-ox, (CGFloat)-oy);
+}
+
 static void ios_save(void *ctx) {
     (void)ctx;
     CGContextSaveGState(UIGraphicsGetCurrentContext());
 }
 
-static void ios_clip(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h) {
+static void ios_clip(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
+                     int64_t radius) {
+    CGRect r = CGRectMake((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h);
     (void)ctx;
-    UIRectClip(CGRectMake((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h));
+    if (radius > 0) {
+        [ios_rrect(r, (CGFloat)radius) addClip];
+        return;
+    }
+    UIRectClip(r);
 }
 
 static void ios_restore(void *ctx) {
@@ -838,6 +977,11 @@ static void zeus_sync_keyboard(UIView *v) {
     d.fill_a = ios_fill_a;
     d.text = ios_text;
     d.text_rot = ios_text_rot;
+    d.fill_g = ios_fill_g;
+    d.shadow = ios_shadow;
+    d.stroke = ios_stroke;
+    d.fill4 = ios_fill4;
+    d.xform = ios_xform;
     d.save = ios_save;
     d.clip = ios_clip;
     d.restore = ios_restore;

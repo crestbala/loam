@@ -13,7 +13,7 @@ int loam_app_main(void);
 
 static JavaVM *g_jvm;
 static jobject g_view;
-static jmethodID m_fill, m_fill_a, m_text, m_text_rot, m_save, m_clip, m_restore, m_svg, m_image, m_image_size, m_pick, m_measure, m_invalidate;
+static jmethodID m_fill, m_fill_a, m_fill_g, m_shadow, m_stroke, m_fill4, m_xform, m_text, m_text_rot, m_save, m_clip, m_restore, m_svg, m_image, m_image_size, m_pick, m_measure, m_invalidate;
 static JNIEnv *g_env;
 static jobject g_canvas;
 static int g_started;
@@ -46,6 +46,54 @@ static void draw_fill_a(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h, i
                            (jint)(rgb & 0xFFFFFF), (jint)radius, (jint)alpha);
 }
 
+static void draw_fill_g(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h, int64_t c0,
+                        int64_t c1, int64_t axis, int64_t radius, int64_t alpha) {
+    JNIEnv *env = g_env;
+    (void)ctx;
+    if (!env || !g_view || !g_canvas || !m_fill_g) return;
+    (*env)->CallVoidMethod(env, g_view, m_fill_g, g_canvas, (jint)x, (jint)y, (jint)w, (jint)h,
+                           (jint)(c0 & 0xFFFFFF), (jint)(c1 & 0xFFFFFF), (jint)axis,
+                           (jint)radius, (jint)alpha);
+}
+
+static void draw_shadow(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius,
+                        int64_t rgb, int64_t alpha, int64_t blur, int64_t dx, int64_t dy) {
+    JNIEnv *env = g_env;
+    (void)ctx;
+    if (!env || !g_view || !g_canvas || !m_shadow) return;
+    (*env)->CallVoidMethod(env, g_view, m_shadow, g_canvas, (jint)x, (jint)y, (jint)w, (jint)h,
+                           (jint)radius, (jint)(rgb & 0xFFFFFF), (jint)alpha, (jint)blur,
+                           (jint)dx, (jint)dy);
+}
+
+static void draw_stroke(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
+                        int64_t radius, int64_t width, int64_t alpha) {
+    JNIEnv *env = g_env;
+    (void)ctx;
+    if (!env || !g_view || !g_canvas || !m_stroke) return;
+    (*env)->CallVoidMethod(env, g_view, m_stroke, g_canvas, (jint)x, (jint)y, (jint)w, (jint)h,
+                           (jint)(rgb & 0xFFFFFF), (jint)radius, (jint)width, (jint)alpha);
+}
+
+static void draw_fill4(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
+                       int64_t alpha, int64_t tl, int64_t tr, int64_t br, int64_t bl) {
+    JNIEnv *env = g_env;
+    (void)ctx;
+    if (!env || !g_view || !g_canvas || !m_fill4) return;
+    (*env)->CallVoidMethod(env, g_view, m_fill4, g_canvas, (jint)x, (jint)y, (jint)w, (jint)h,
+                           (jint)(rgb & 0xFFFFFF), (jint)alpha, (jint)tl, (jint)tr, (jint)br,
+                           (jint)bl);
+}
+
+static void draw_xform(void *ctx, int64_t dx, int64_t dy, int64_t scale, int64_t rot,
+                       int64_t ox, int64_t oy) {
+    JNIEnv *env = g_env;
+    (void)ctx;
+    if (!env || !g_view || !g_canvas || !m_xform) return;
+    (*env)->CallVoidMethod(env, g_view, m_xform, g_canvas, (jint)dx, (jint)dy, (jint)scale,
+                           (jint)rot, (jint)ox, (jint)oy);
+}
+
 static void draw_text(void *ctx, int64_t x, int64_t y, const char *s, int64_t rgb, int64_t font) {
     JNIEnv *env = g_env;
     jstring js;
@@ -76,11 +124,12 @@ static void draw_save(void *ctx) {
     (*env)->CallVoidMethod(env, g_view, m_save, g_canvas);
 }
 
-static void draw_clip(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h) {
+static void draw_clip(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius) {
     JNIEnv *env = g_env;
     (void)ctx;
     if (!env || !g_view || !g_canvas || !m_clip) return;
-    (*env)->CallVoidMethod(env, g_view, m_clip, g_canvas, (jint)x, (jint)y, (jint)w, (jint)h);
+    (*env)->CallVoidMethod(env, g_view, m_clip, g_canvas, (jint)x, (jint)y, (jint)w, (jint)h,
+                           (jint)radius);
 }
 
 static void draw_restore(void *ctx) {
@@ -170,6 +219,11 @@ static void bind_canvas(void) {
     memset(&d, 0, sizeof d);
     d.fill = draw_fill;
     d.fill_a = draw_fill_a;
+    d.fill_g = draw_fill_g;
+    d.shadow = draw_shadow;
+    d.stroke = draw_stroke;
+    d.fill4 = draw_fill4;
+    d.xform = draw_xform;
     d.text = draw_text;
     d.save = draw_save;
     d.clip = draw_clip;
@@ -188,7 +242,12 @@ static void cache_methods(JNIEnv *env, jobject thiz) {
     m_text_rot = (*env)->GetMethodID(env, cls, "jniTextRot",
                                      "(Landroid/graphics/Canvas;IILjava/lang/String;III)V");
     m_save = (*env)->GetMethodID(env, cls, "jniSave", "(Landroid/graphics/Canvas;)V");
-    m_clip = (*env)->GetMethodID(env, cls, "jniClip", "(Landroid/graphics/Canvas;IIII)V");
+    m_fill_g = (*env)->GetMethodID(env, cls, "jniFillG", "(Landroid/graphics/Canvas;IIIIIIIII)V");
+    m_shadow = (*env)->GetMethodID(env, cls, "jniShadow", "(Landroid/graphics/Canvas;IIIIIIIIII)V");
+    m_stroke = (*env)->GetMethodID(env, cls, "jniStroke", "(Landroid/graphics/Canvas;IIIIIIII)V");
+    m_fill4 = (*env)->GetMethodID(env, cls, "jniFill4", "(Landroid/graphics/Canvas;IIIIIIIIII)V");
+    m_xform = (*env)->GetMethodID(env, cls, "jniXform", "(Landroid/graphics/Canvas;IIIIII)V");
+    m_clip = (*env)->GetMethodID(env, cls, "jniClip", "(Landroid/graphics/Canvas;IIIII)V");
     m_restore = (*env)->GetMethodID(env, cls, "jniRestore", "(Landroid/graphics/Canvas;)V");
     m_svg = (*env)->GetMethodID(env, cls, "jniSvg",
                                 "(Landroid/graphics/Canvas;IIIILjava/lang/String;II)V");
@@ -253,6 +312,11 @@ JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativePaint(JNIEnv *env, jobj
     memset(&d, 0, sizeof d);
     d.fill = draw_fill;
     d.fill_a = draw_fill_a;
+    d.fill_g = draw_fill_g;
+    d.shadow = draw_shadow;
+    d.stroke = draw_stroke;
+    d.fill4 = draw_fill4;
+    d.xform = draw_xform;
     d.text = draw_text;
     d.text_rot = draw_text_rot;
     d.save = draw_save;

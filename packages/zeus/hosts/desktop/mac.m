@@ -122,14 +122,148 @@ static void mac_fill_a(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
     }
 }
 
+/* Clamp a corner radius to what the rect can actually hold, so a `RAD_FULL`
+   (999) pill on a short box is a capsule rather than a degenerate path. */
+static CGFloat mac_rad(CGFloat rad, NSRect r) {
+    if (rad < 0) rad = 0;
+    if (rad > r.size.width / 2) rad = r.size.width / 2;
+    if (rad > r.size.height / 2) rad = r.size.height / 2;
+    return rad;
+}
+
+static NSBezierPath *mac_rrect(NSRect r, CGFloat rad) {
+    rad = mac_rad(rad, r);
+    if (rad <= 0) return [NSBezierPath bezierPathWithRect:r];
+    return [NSBezierPath bezierPathWithRoundedRect:r xRadius:rad yRadius:rad];
+}
+
 static void mac_fill_g(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
-                       int64_t c0, int64_t c1, int64_t axis) {
+                       int64_t c0, int64_t c1, int64_t axis, int64_t radius,
+                       int64_t alpha) {
     (void)ctx;
     NSRect r = NSMakeRect((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h);
+    CGFloat a = alpha < 0 ? 0 : (alpha > 255 ? 1.0 : (CGFloat)alpha / 255.0);
     NSGradient *g = [[NSGradient alloc] initWithStartingColor:zeus_color(c0)
                                                  endingColor:zeus_color(c1)];
+    [NSGraphicsContext saveGraphicsState];
+    if (a < 1.0) [[NSGraphicsContext currentContext] setCompositingOperation:NSCompositingOperationSourceOver];
+    /* The radius used to be dropped here, which is why every gradient
+       background painted with square corners. Clipping to the rounded path
+       is what NSGradient offers in place of a rounded-rect gradient fill. */
+    if (radius > 0) [mac_rrect(r, (CGFloat)radius) addClip];
+    if (a < 1.0) {
+        CGContextSetAlpha([[NSGraphicsContext currentContext] CGContext], a);
+    }
     [g drawInRect:r angle:(axis ? 0.0 : 90.0)];
+    [NSGraphicsContext restoreGraphicsState];
     [g release];
+}
+
+/* Soft drop shadow under a rounded rect.
+ *
+ * The shadow is the blur of an opaque path, so that path has to be drawn —
+ * but drawing it would paint over whatever sits under the card. The fix is
+ * an even-odd clip that excludes the rect's own area: the solid fill lands
+ * entirely outside the clip and only its blur survives. Painting the shape
+ * and letting the caller's fill cover it would look identical on an opaque
+ * surface and wrong on a translucent one, which is exactly the case
+ * elevation-on-glass needs. */
+static void mac_shadow(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
+                       int64_t radius, int64_t rgb, int64_t alpha, int64_t blur,
+                       int64_t dx, int64_t dy) {
+    (void)ctx;
+    NSRect r = NSMakeRect((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h);
+    CGFloat a = alpha < 0 ? 0 : (alpha > 255 ? 1.0 : (CGFloat)alpha / 255.0);
+    CGFloat pad = (CGFloat)(blur * 3 + (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy) + 8);
+    NSShadow *sh = [[NSShadow alloc] init];
+    NSBezierPath *hole = [NSBezierPath bezierPathWithRect:NSInsetRect(r, -pad, -pad)];
+    [NSGraphicsContext saveGraphicsState];
+    [hole appendBezierPath:mac_rrect(r, (CGFloat)radius)];
+    [hole setWindingRule:NSWindingRuleEvenOdd];
+    [hole addClip];
+    /* The view is flipped (y grows down), so a positive dy must read as
+       "downward" here too — AppKit shadow offsets are in unflipped space. */
+    [sh setShadowOffset:NSMakeSize((CGFloat)dx, (CGFloat)-dy)];
+    [sh setShadowBlurRadius:(CGFloat)blur];
+    [sh setShadowColor:[zeus_color(rgb) colorWithAlphaComponent:a]];
+    [sh set];
+    [[NSColor blackColor] setFill];
+    [mac_rrect(r, (CGFloat)radius) fill];
+    [NSGraphicsContext restoreGraphicsState];
+    [sh release];
+}
+
+/* Ring stroke, inset by half the width so the line paints inside the rect —
+   the same box model CSS `border` uses, and what the engine's layout assumes
+   when it insets content by `border_w`. */
+static void mac_stroke(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
+                       int64_t rgb, int64_t radius, int64_t width, int64_t alpha) {
+    (void)ctx;
+    CGFloat lw = (CGFloat)width;
+    NSRect r = NSMakeRect((CGFloat)x + lw / 2, (CGFloat)y + lw / 2,
+                          (CGFloat)w - lw, (CGFloat)h - lw);
+    CGFloat a = alpha < 0 ? 0 : (alpha > 255 ? 1.0 : (CGFloat)alpha / 255.0);
+    NSBezierPath *p;
+    if (r.size.width <= 0 || r.size.height <= 0) return;
+    p = mac_rrect(r, (CGFloat)radius - lw / 2);
+    [p setLineWidth:lw];
+    [[zeus_color(rgb) colorWithAlphaComponent:a] setStroke];
+    [p stroke];
+}
+
+static void mac_fill4(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
+                      int64_t rgb, int64_t alpha, int64_t tl, int64_t tr,
+                      int64_t br, int64_t bl) {
+    (void)ctx;
+    CGFloat a = alpha < 0 ? 0 : (alpha > 255 ? 1.0 : (CGFloat)alpha / 255.0);
+    CGFloat X = (CGFloat)x, Y = (CGFloat)y, W = (CGFloat)w, H = (CGFloat)h;
+    CGFloat lim = (W < H ? W : H) / 2;
+    CGFloat a1 = (CGFloat)tl, a2 = (CGFloat)tr, a3 = (CGFloat)br, a4 = (CGFloat)bl;
+    NSBezierPath *p = [NSBezierPath bezierPath];
+    if (W <= 0 || H <= 0) return;
+    if (a1 > lim) a1 = lim;
+    if (a2 > lim) a2 = lim;
+    if (a3 > lim) a3 = lim;
+    if (a4 > lim) a4 = lim;
+    /* Clockwise from the top-left, arcs tangent to each corner. The view is
+       flipped, so this traversal is visually clockwise on screen. */
+    [p moveToPoint:NSMakePoint(X + a1, Y)];
+    [p lineToPoint:NSMakePoint(X + W - a2, Y)];
+    if (a2 > 0)
+        [p appendBezierPathWithArcFromPoint:NSMakePoint(X + W, Y)
+                                    toPoint:NSMakePoint(X + W, Y + a2) radius:a2];
+    [p lineToPoint:NSMakePoint(X + W, Y + H - a3)];
+    if (a3 > 0)
+        [p appendBezierPathWithArcFromPoint:NSMakePoint(X + W, Y + H)
+                                    toPoint:NSMakePoint(X + W - a3, Y + H) radius:a3];
+    [p lineToPoint:NSMakePoint(X + a4, Y + H)];
+    if (a4 > 0)
+        [p appendBezierPathWithArcFromPoint:NSMakePoint(X, Y + H)
+                                    toPoint:NSMakePoint(X, Y + H - a4) radius:a4];
+    [p lineToPoint:NSMakePoint(X, Y + a1)];
+    if (a1 > 0)
+        [p appendBezierPathWithArcFromPoint:NSMakePoint(X, Y)
+                                    toPoint:NSMakePoint(X + a1, Y) radius:a1];
+    [p closePath];
+    [[zeus_color(rgb) colorWithAlphaComponent:a] setFill];
+    [p fill];
+}
+
+/* Translate, then scale and rotate about (ox, oy). Concatenated onto the
+   current CTM, so it composes with an enclosing clip and unwinds with the
+   enclosing `restore`. */
+static void mac_xform(void *ctx, int64_t dx, int64_t dy, int64_t scale,
+                      int64_t rot, int64_t ox, int64_t oy) {
+    (void)ctx;
+    NSAffineTransform *t = [NSAffineTransform transform];
+    [t translateXBy:(CGFloat)(ox + dx) yBy:(CGFloat)(oy + dy)];
+    if (rot) [t rotateByDegrees:(CGFloat)rot];
+    if (scale != 100) {
+        CGFloat k = (CGFloat)scale / 100.0;
+        [t scaleXBy:k yBy:k];
+    }
+    [t translateXBy:(CGFloat)-ox yBy:(CGFloat)-oy];
+    [t concat];
 }
 
 static void mac_fill(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
@@ -177,9 +311,15 @@ static void mac_save(void *ctx) {
     [NSGraphicsContext saveGraphicsState];
 }
 
-static void mac_clip(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h) {
+static void mac_clip(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
+                     int64_t radius) {
+    NSRect r = NSMakeRect((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h);
     (void)ctx;
-    NSRectClip(NSMakeRect((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h));
+    if (radius > 0) {
+        [mac_rrect(r, (CGFloat)radius) addClip];
+        return;
+    }
+    NSRectClip(r);
 }
 
 static void mac_restore(void *ctx) {
@@ -1020,6 +1160,10 @@ static int mac_frame(int64_t vw, int64_t vh) {
     d.fill = mac_fill;
     d.fill_a = mac_fill_a;
     d.fill_g = mac_fill_g;
+    d.shadow = mac_shadow;
+    d.stroke = mac_stroke;
+    d.fill4 = mac_fill4;
+    d.xform = mac_xform;
     d.text = mac_text;
     d.text_rot = mac_text_rot;
     d.save = mac_save;

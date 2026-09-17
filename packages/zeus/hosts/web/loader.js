@@ -133,29 +133,56 @@
     return m;
   }
 
-  function roundRect(x, y, w, h, r) {
-    const p = snapRect(x, y, w, h);
-    x = p.x;
-    y = p.y;
-    w = p.w;
-    h = p.h;
-    r = Math.round(r * sx) / sx;
-    if (r <= 0) {
-      ctx.fillRect(x, y, w, h);
-      return;
-    }
+  /* Trace a rounded rect as the current path, in already-snapped device
+     space. Kept separate from the fill so clip, stroke, shadow, and the
+     per-corner fill can all reuse one corner geometry — four traversals
+     that disagreed by a fraction of a pixel would show up as seams where a
+     border meets its fill. */
+  function traceRoundRect(x, y, w, h, r) {
     if (w < 0) w = 0;
     if (h < 0) h = 0;
     if (r > w / 2) r = w / 2;
     if (r > h / 2) r = h / 2;
     ctx.beginPath();
+    if (r <= 0) {
+      ctx.rect(x, y, w, h);
+      return;
+    }
     ctx.moveTo(x + r, y);
     ctx.arcTo(x + w, y, x + w, y + h, r);
     ctx.arcTo(x + w, y + h, x, y + h, r);
     ctx.arcTo(x, y + h, x, y, r);
     ctx.arcTo(x, y, x + w, y, r);
     ctx.closePath();
+  }
+
+  function roundRect(x, y, w, h, r) {
+    const p = snapRect(x, y, w, h);
+    r = Math.round(r * sx) / sx;
+    if (r <= 0) {
+      ctx.fillRect(p.x, p.y, p.w, p.h);
+      return;
+    }
+    traceRoundRect(p.x, p.y, p.w, p.h, r);
     ctx.fill();
+  }
+
+  /* Per-corner rounded rect, clockwise from the top-left. */
+  function traceRect4(x, y, w, h, tl, tr, br, bl) {
+    const lim = Math.min(w, h) / 2;
+    if (w < 0) w = 0;
+    if (h < 0) h = 0;
+    tl = Math.min(tl, lim);
+    tr = Math.min(tr, lim);
+    br = Math.min(br, lim);
+    bl = Math.min(bl, lim);
+    ctx.beginPath();
+    ctx.moveTo(x + tl, y);
+    ctx.arcTo(x + w, y, x + w, y + h, tr);
+    ctx.arcTo(x + w, y + h, x, y + h, br);
+    ctx.arcTo(x, y + h, x, y, bl);
+    ctx.arcTo(x, y, x + w, y, tl);
+    ctx.closePath();
   }
 
   function svgAttr(tag, name) {
@@ -373,15 +400,70 @@
         ctx.fillStyle = rgba(color, a);
         roundRect(x, y, w, h, r);
       },
-      fill_g: (x, y, w, h, c0, c1, axis) => {
+      fill_g: (x, y, w, h, c0, c1, axis, radius, a) => {
         const p = snapRect(x, y, w, h);
         const g = axis
           ? ctx.createLinearGradient(p.x, p.y, p.x + p.w, p.y)
           : ctx.createLinearGradient(p.x, p.y, p.x, p.y + p.h);
         g.addColorStop(0, rgb(c0));
         g.addColorStop(1, rgb(c1));
+        ctx.save();
+        if (a < 255) ctx.globalAlpha = Math.max(0, a) / 255;
         ctx.fillStyle = g;
-        ctx.fillRect(p.x, p.y, p.w, p.h);
+        /* The radius used to be dropped, which is why every gradient
+           background painted square-cornered. */
+        traceRoundRect(p.x, p.y, p.w, p.h, Math.round(radius * sx) / sx);
+        ctx.fill();
+        ctx.restore();
+      },
+      /* Soft drop shadow. Canvas2D's shadow applies to the next fill, so the
+         rounded path is filled offscreen-left and only its blur lands inside
+         the real rect — filling in place would paint over whatever the
+         shadow is meant to sit under. */
+      shadow: (x, y, w, h, radius, color, a, blur, dx, dy) => {
+        const p = snapRect(x, y, w, h);
+        const off = p.w + 2 * blur + 64;
+        ctx.save();
+        ctx.shadowColor = rgba(color, a);
+        ctx.shadowBlur = blur * sx;
+        ctx.shadowOffsetX = (dx + off) * sx;
+        ctx.shadowOffsetY = dy * sy;
+        ctx.fillStyle = "#000";
+        traceRoundRect(p.x - off * sx, p.y, p.w, p.h,
+                       Math.round(radius * sx) / sx);
+        ctx.fill();
+        ctx.restore();
+      },
+      /* Ring stroke inset by half the width, so the line paints inside the
+         rect — the box model layout already assumes when it insets content
+         by `border_w`. */
+      stroke: (x, y, w, h, color, radius, width, a) => {
+        const p = snapRect(x, y, w, h);
+        const lw = Math.max(1, Math.round(width * sx));
+        if (p.w - lw <= 0 || p.h - lw <= 0) return;
+        ctx.save();
+        ctx.lineWidth = lw;
+        ctx.strokeStyle = rgba(color, a);
+        traceRoundRect(p.x + lw / 2, p.y + lw / 2, p.w - lw, p.h - lw,
+                       Math.max(0, Math.round(radius * sx) / sx - lw / 2));
+        ctx.stroke();
+        ctx.restore();
+      },
+      fill4: (x, y, w, h, color, a, tl, tr, br, bl) => {
+        const p = snapRect(x, y, w, h);
+        const k = (v) => Math.round(v * sx) / sx;
+        ctx.fillStyle = rgba(color, a);
+        traceRect4(p.x, p.y, p.w, p.h, k(tl), k(tr), k(br), k(bl));
+        ctx.fill();
+      },
+      /* Paint-space transform: translate, then scale and rotate about
+         (ox, oy). Composes with the enclosing clip and unwinds with the
+         enclosing restore, so it never escapes its save level. */
+      xform: (dx, dy, scale, rot, ox, oy) => {
+        ctx.translate((ox + dx) * sx, (oy + dy) * sy);
+        if (rot) ctx.rotate((rot * Math.PI) / 180);
+        if (scale !== 100) ctx.scale(scale / 100, scale / 100);
+        ctx.translate(-ox * sx, -oy * sy);
       },
       text: (x, y, ptr, color, font) => {
         const s = cstr(ptr);
@@ -474,10 +556,10 @@
         view.setInt32(hPtr, box.height, true);
       },
       save: () => ctx.save(),
-      clip: (x, y, w, h) => {
-        ctx.beginPath();
+      clip: (x, y, w, h, radius) => {
         const box = snapRect(x, y, w, h);
-        ctx.rect(box.x, box.y, box.w, box.h);
+        traceRoundRect(box.x, box.y, box.w, box.h,
+                       radius > 0 ? Math.round(radius * sx) / sx : 0);
         ctx.clip();
       },
       restore: () => ctx.restore(),

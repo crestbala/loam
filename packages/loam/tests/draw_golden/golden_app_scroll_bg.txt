@@ -3,7 +3,7 @@ fill 0 0 420 320 16777215 0
 save
 clip 0 0 420 320
 fill 0 0 420 320 16777215 0
-text 32 32 657930 30 Short page
+text 32 32 1579035 30 Short page
 text_wrap 32 90 356 Content ends here; the area below stays paper,
 text_wrap 32 150 356 and edge overscroll reveals paper, not black.
 restore
