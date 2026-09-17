@@ -47,7 +47,10 @@ fn hit_floaters(id: int, px: int, py: int) -> int {
         }
     }
     if arena.is_floater(id) != 0 {
-        if int(arena.nodes[id].kind) == 9 {
+        // Anchored floaters and kind-9 overlays live in window space, so test
+        // them against the window pointer; a relative absolute floater keeps
+        // its parent's content coordinates and uses the scrolled point.
+        if int(arena.nodes[id].kind) == 9 || arena.nodes[id].anchor > 0 {
             return hit_node(id, arena.ptr_x, arena.ptr_y)
         }
         return hit_node(id, px, hy)

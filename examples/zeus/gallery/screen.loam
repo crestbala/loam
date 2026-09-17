@@ -428,9 +428,29 @@ fn Menus() {
     let act = zeus.signal(-1)
     let picked = zeus.signal(0)
     zeus.SectionHeader("Menus", "Dropdown menu",
-                       "Arrows move the highlight, Enter runs the active command, and Escape or an outside click closes.")
+                       "Click the trigger to open it. Arrows move the highlight, Enter runs the active command, and Escape or an outside click closes.")
     zeus.Row(SPACE.Sm) {
-        let trigger = zeus.Button("Actions", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
+        // A menu trigger is any node: this one is a row with a chevron, so it
+        // reads as a dropdown rather than a plain action button.
+        let trigger = zeus.Box(
+            align_direction = zeus.DIRECTION.Row,
+            align_items = zeus.ALIGN.Center,
+            spacing = 4,
+            padding_x = 12,
+            padding_y = 8,
+            background = zeus.plate(),
+            border = zeus.HAIRLINE,
+            border_color = zeus.rule(),
+            radius = zeus.RAD_MD,
+            cursor = "pointer",
+            hover_off = false,
+            press = true,
+            a11y_role = "button",
+            a11y_label = "Open menu"
+        ) {
+            zeus.Text("Open menu", color = zeus.ink(), font = zeus.FONT_CONTROL)
+            zeus.Icon(zeus.IC_CHEV_DOWN, 16, zeus.dim())
+        }
         zeus.Menu(trigger, active = act, width = 200) {
             zeus.MenuLabel("File")
             zeus.MenuItem(active = act, index = 0, count = 3, label = "Rename",

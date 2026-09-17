@@ -1637,14 +1637,26 @@ fn click_id(id: int) -> int {
     let mut i = id
     while i > 0 {
         if arena.nodes[i].click_fn > 0 {
-            let x = arena.nodes[i].x + arena.nodes[i].w / 2
-            let y = arena.nodes[i].y + arena.nodes[i].h / 2
-            return input.click(x, y)
+            return click_node(i)
         }
         i = arena.nodes[i].parent
     }
-    let x = arena.nodes[id].x + arena.nodes[id].w / 2
-    let y = arena.nodes[id].y + arena.nodes[id].h / 2
+    return click_node(id)
+}
+
+/// Click the centre of `id`, in *window* coordinates: `nodes[id].x/y` are
+/// content coordinates, so a scrolled node needs its scrollers' offsets
+/// removed or the point lands off screen.
+fn click_node(id: int) -> int {
+    if id <= 0 {
+        return 0
+    }
+    if id >= arena.nodes.len {
+        return 0
+    }
+    let o = layout.screen_origin(id)
+    let x = o.x + arena.nodes[id].w / 2
+    let y = o.y + arena.nodes[id].h / 2
     return input.click(x, y)
 }
 
