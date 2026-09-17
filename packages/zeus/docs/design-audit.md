@@ -390,6 +390,9 @@ run, as they did before this phase). All four hosts build — Cocoa, wasm, iOS
 fixtures are byte-identical to phase 2: the settled first frame is unchanged, so
 nothing needed regenerating.
 
+Everything still open is tracked as a living list in **Remaining work** at the
+end of this section — update it in the same commit that closes an item.
+
 ### Decisions taken (do not re-litigate)
 
 1. **Entry motion is mount-into-a-live-tree, never cold boot.** Full reasoning
@@ -653,3 +656,97 @@ Left open, deliberately: `UiNode.radius` is still one `u16` (nothing emits
 `plat_fill4`), so per-corner radii are still not possible; only the surfaces
 listed above elevate — `Alert`, `Table`, and the `Select` panel stay flat until a
 component pass asks for depth; and there is still no line / polyline / dashed op.
+
+### Remaining work (living list)
+
+The single maintained tracker of what is still open. Update it in the same commit
+that closes an item, and tick a box rather than deleting the line, so the record
+of what was deferred stays readable. Landed so far: phases 1–3; phase 4 batches
+1–4.
+
+**Phase 4 — components still to build**
+
+Absent entirely:
+
+- [ ] `Menu` / `DropdownMenu` — anchored command list; keyboard nav + roving focus.
+- [ ] `Drawer` / `Sheet` — edge-anchored panel (reuses the overlay floater + scrim).
+- [ ] `Collapsible` — single-open disclosure: the Accordion model without the card.
+- [ ] `Combobox` — input + filtered list; needs the anchored floater and typeahead.
+
+Rework, not new construction:
+
+- [ ] Rebuild `Select` on `Popover`. It is still hardcoded (`top = SELECT_DROP`,
+  `width = SELECT_W`, `z_index = 10`), not edge-aware, and has no keyboard nav,
+  typeahead, or Esc.
+
+Component upgrades the audit calls out in §1 — noted, but **not yet committed
+scope**:
+
+- [ ] `Button`: press-scale, loading state, icon slot, disabled *styling*.
+- [ ] `Card`: hover lift, interactive variant, header / footer / media slots.
+- [ ] `Dialog`: scale-in + scrim fade, focus trap, Esc, responsive width.
+- [ ] `Tabs`: an indicator element + arrow-key nav.
+- [ ] `RadioGroup`: roving focus; `Slider`: knob shadow / hover / focus.
+- [ ] `Progress`: easing + indeterminate mode.
+- [ ] `Table`: zebra, row hover, sort affordance, per-cell alignment, truncation.
+- [ ] Charts: gridlines, axis labels, crosshair, tooltip, legend.
+- [ ] `Alert`: info / success tier, dismiss, action slot; `Badge` / `Chip`:
+  dot / removable / count.
+- [ ] `Avatar`: status dot / group stack; `Stat`: delta / sparkline;
+  `Pagination`: ellipsis.
+- [ ] `Skeleton` shimmer is a global frame-counter sawtooth, not directional.
+
+**Paint primitives / host ops**
+
+- [ ] Per-corner radius. `plat_fill4` is implemented on all four hosts but
+  *nothing emits it*; `UiNode.radius` is a single `u16`. Needs packed node
+  fields (three more, or one packed value) — no new host op.
+- [ ] Group / layer opacity. Fading a subtree fades each node independently and
+  overlapping children double-darken; blocks a clean Dialog / Toast exit.
+- [ ] Text ellipsis / truncation. None exists, so table cells, select triggers,
+  chips, and nav labels overflow. Needs an ellipsis measure.
+- [ ] Baseline alignment. `plat_text` anchors at the top-left of the line box, so
+  mixed-size text on one row does not share a baseline.
+- [ ] Line / polyline / dashed op. Charts hand-roll strokes as thin rects; no
+  dashed lines.
+- [ ] Gradients: only 2 stops and 2 axes; no radial, conic, angle, or >2 stops.
+- [ ] Icon rendering: the SVG string is re-parsed per draw; no path cache, no
+  stroke-width scaling, no two-tone. The set is 10 constants.
+- [ ] **Host-blocked:** type weights + tabular figures. `plat_text` carries a
+  pixel size only and `plat_set_font_family` is one global family; needs a host
+  op or an app-supplied tabular font.
+
+**Limits recorded when earlier batches landed**
+
+- [ ] Overlays (batch 3): no exit animation (close hides immediately); the
+  anchored panel does not reposition during a scroll (scroll is paint-only, so
+  no layout pass runs); anchored placement assumes the desktop inset origin, so
+  it is off by the safe area on a notched mobile host.
+- [ ] Accordion (batch 2): the body fades; there is no animated height, because
+  that needs a paint-only clip prop that does not exist yet.
+- [ ] Phase 3: the draw list is still a full-frame blit — no partial repaint /
+  host damage contract.
+- [ ] `EASE` curves are integer approximations (cubic / quint ease-out,
+  ease-out-back for Spring), not exact cubic béziers.
+- [ ] `zeus.animate` on a signal that drives layout interpolates the paint read
+  only; the layout-visible value is already at the target.
+
+**Accessibility / input (§7)**
+
+- [ ] Arrow-key nav inside `Tabs`, `RadioGroup`, `Select`, and menus. Only
+  `Slider` and `Pagination` bind arrows today.
+- [ ] Roving tabindex — every radio in a group is its own tab stop.
+- [ ] Focus trap in `Dialog`; Esc to dismiss `Dialog` and `Select`.
+- [ ] A 44dp minimum hit target on touch hosts; iOS and Android get the desktop
+  geometry verbatim (`SIZE.Sm` 32dp, dialog close 28dp, `Checkbox` / `Radio`
+  16dp, `Pip` 8–10dp).
+- [ ] `is_hot` still runs the hover-fade math for every node each frame on
+  overlay-scroll hosts (hover is correctly suppressed, but the math is not).
+
+**Phase 5 — gallery + docs**
+
+- [ ] The gallery shows components, not *matrices*: no side-by-side
+  hover / pressed / focused / disabled / loading / invalid states, and no accent
+  picker.
+- [ ] A `www/` design-system page.
+- [ ] The remaining `spec.md` design-system coverage.
