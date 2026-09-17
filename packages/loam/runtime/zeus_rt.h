@@ -169,7 +169,12 @@ typedef struct {
     void (*text_rot)(void *ctx, int64_t x, int64_t y, const char *s,
                      int64_t rgb, int64_t font, int64_t deg);
     void (*save)(void *ctx);
-    void (*clip)(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h);
+    /* Rounded clip. `radius` 0 is the plain rect clip this used to be; a
+       positive radius is what lets an image or a gradient inside a rounded
+       card stop having square corners. Hosts that cannot clip to a path
+       ignore the radius rather than dropping the clip. */
+    void (*clip)(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
+                 int64_t radius);
     void (*restore)(void *ctx);
     /* SVG markup in `markup`; `currentColor` paints as `rgb`. alpha is 0..255. */
     void (*svg)(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
@@ -180,9 +185,41 @@ typedef struct {
     void (*image)(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
                   const char *src, int64_t radius, int64_t alpha, int64_t fit);
     /* Linear gradient. axis 0 = top c0 → bottom c1, 1 = left → right.
+       `radius` rounds the corners (it used to be dropped, which is why every
+       gradient background painted square); alpha is 0..255.
        NULL hosts fall back to a solid `c0` fill. */
     void (*fill_g)(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
-                   int64_t c0, int64_t c1, int64_t axis);
+                   int64_t c0, int64_t c1, int64_t axis, int64_t radius,
+                   int64_t alpha);
+    /* --- depth, stroke, and transform (design-system phase 2) --- */
+    /* Soft drop shadow of a rounded rect, painted under the fill it belongs
+       to. `blur` is the blur radius in dp, `dx`/`dy` the offset, alpha
+       0..255. This is the one primitive elevation cannot be faked without.
+       NULL hosts skip it: a card goes flat, never hard-edged black. */
+    void (*shadow)(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
+                   int64_t radius, int64_t rgb, int64_t alpha,
+                   int64_t blur, int64_t dx, int64_t dy);
+    /* Anti-aliased ring stroke, inset by width/2 so it paints inside the
+       rect. Replaces the old "draw a bigger filled rect underneath" border,
+       which made a translucent bordered surface impossible and forced every
+       bordered node to carry a background. NULL hosts fall back to four
+       `fill_a` edges (square corners). */
+    void (*stroke)(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
+                   int64_t rgb, int64_t radius, int64_t width, int64_t alpha);
+    /* Per-corner radius fill, clockwise from the top-left. Grouped button
+       runs, top-rounded sheets, and rounded table headers need it.
+       NULL hosts fall back to `fill_a` with the largest of the four. */
+    void (*fill4)(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
+                  int64_t rgb, int64_t alpha,
+                  int64_t tl, int64_t tr, int64_t br, int64_t bl);
+    /* Translate by (dx, dy), then scale and rotate about (ox, oy). `scale`
+       is a percent (100 = identity), `rot` is clockwise degrees. Applies
+       within the current save/restore level. Every transition that moves or
+       scales a box rather than re-laying it out goes through this — press
+       scale, dialog scale-in, the tabs indicator, toast slide.
+       NULL hosts no-op, so the widget lands at its settled position. */
+    void (*xform)(void *ctx, int64_t dx, int64_t dy, int64_t scale,
+                  int64_t rot, int64_t ox, int64_t oy);
 } ZeusDraw;
 
 void zeus_set_platform(void (*run)(void),
@@ -201,7 +238,15 @@ void loam_zeus_plat_fill(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb
 void loam_zeus_plat_fill_a(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
                           int64_t radius, int64_t alpha);
 void loam_zeus_plat_fill_g(int64_t x, int64_t y, int64_t w, int64_t h, int64_t c0,
-                          int64_t c1, int64_t axis);
+                          int64_t c1, int64_t axis, int64_t radius, int64_t alpha);
+void loam_zeus_plat_shadow(int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius,
+                          int64_t rgb, int64_t alpha, int64_t blur, int64_t dx, int64_t dy);
+void loam_zeus_plat_stroke(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
+                          int64_t radius, int64_t width, int64_t alpha);
+void loam_zeus_plat_fill4(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
+                         int64_t alpha, int64_t tl, int64_t tr, int64_t br, int64_t bl);
+void loam_zeus_plat_xform(int64_t dx, int64_t dy, int64_t scale, int64_t rot,
+                         int64_t ox, int64_t oy);
 void loam_zeus_plat_text(int64_t x, int64_t y, loam_str s, int64_t rgb, int64_t font);
 /* Current global font family ("" = host default) and the hook a host
    registers to load one. See zeus_plat.c for why the family is global. */
@@ -232,7 +277,7 @@ void loam_zeus_plat_image(int64_t x, int64_t y, int64_t w, int64_t h, loam_str s
 void loam_zeus_plat_image_size(loam_str src, int32_t *w, int32_t *h);
 loam_str loam_zeus_plat_pick_image(int32_t *w, int32_t *h);
 void loam_zeus_plat_save(void);
-void loam_zeus_plat_clip(int64_t x, int64_t y, int64_t w, int64_t h);
+void loam_zeus_plat_clip(int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius);
 void loam_zeus_plat_restore(void);
 
 void zeus_set_insets(int64_t top, int64_t right, int64_t bottom, int64_t left);
@@ -250,7 +295,16 @@ void loam_platform_plat_fill(int64_t x, int64_t y, int64_t w, int64_t h, int64_t
 void loam_platform_plat_fill_a(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
                                int64_t radius, int64_t alpha);
 void loam_platform_plat_fill_g(int64_t x, int64_t y, int64_t w, int64_t h, int64_t c0,
-                               int64_t c1, int64_t axis);
+                               int64_t c1, int64_t axis, int64_t radius, int64_t alpha);
+void loam_platform_plat_shadow(int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius,
+                               int64_t rgb, int64_t alpha, int64_t blur,
+                               int64_t dx, int64_t dy);
+void loam_platform_plat_stroke(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
+                               int64_t radius, int64_t width, int64_t alpha);
+void loam_platform_plat_fill4(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
+                              int64_t alpha, int64_t tl, int64_t tr, int64_t br, int64_t bl);
+void loam_platform_plat_xform(int64_t dx, int64_t dy, int64_t scale, int64_t rot,
+                              int64_t ox, int64_t oy);
 void loam_platform_plat_text(int64_t x, int64_t y, loam_str s, int64_t rgb, int64_t font);
 void loam_platform_plat_text_rot(int64_t x, int64_t y, loam_str s, int64_t rgb, int64_t font,
                                  int64_t deg);
@@ -274,7 +328,7 @@ void loam_platform_plat_image_size(loam_str src, int32_t *w, int32_t *h);
 loam_str loam_platform_plat_pick_image(int32_t *w, int32_t *h);
 void loam_platform_plat_save(void);
 int64_t loam_platform_plat_mem_kb(void);
-void loam_platform_plat_clip(int64_t x, int64_t y, int64_t w, int64_t h);
+void loam_platform_plat_clip(int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius);
 void loam_platform_plat_restore(void);
 int64_t loam_platform_plat_key_intern(loam_str name);
 int64_t loam_platform_plat_key_intern_action(loam_str action);

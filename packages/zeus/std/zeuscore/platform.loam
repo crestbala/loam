@@ -7,7 +7,32 @@ fn plat_headless() -> int {}
 fn plat_fill(x: int, y: int, w: int, h: int, rgb: int, radius: int) {}
 fn plat_fill_a(x: int, y: int, w: int, h: int, rgb: int, radius: int, alpha: int) {}
 /// Linear gradient. `axis` 0 = top `c0` → bottom `c1`, 1 = left → right.
-fn plat_fill_g(x: int, y: int, w: int, h: int, c0: int, c1: int, axis: int) {}
+/// `radius` rounds the corners and `alpha` is 0..255 — before both existed
+/// every gradient background painted square-cornered and fully opaque.
+fn plat_fill_g(x: int, y: int, w: int, h: int, c0: int, c1: int, axis: int, radius: int, alpha: int) {}
+/// Soft drop shadow of a rounded rect, painted under the fill it belongs to.
+/// `blur` is the blur radius in dp, `dx`/`dy` the offset, `alpha` 0..255.
+/// Elevation cannot be expressed without it: every other primitive here has
+/// a hard edge. Hosts that cannot blur skip it, so a surface reads flat
+/// rather than gaining a hard black rectangle.
+fn plat_shadow(x: int, y: int, w: int, h: int, radius: int, rgb: int, alpha: int, blur: int, dx: int, dy: int) {}
+/// Anti-aliased ring stroke, inset by `width`/2 so it paints inside the rect
+/// — the box model layout already assumes when it insets content by the
+/// border width. Replaces drawing a larger filled rect underneath, which
+/// made a translucent bordered surface impossible and forced every bordered
+/// node to carry a background.
+fn plat_stroke(x: int, y: int, w: int, h: int, rgb: int, radius: int, width: int, alpha: int) {}
+/// Per-corner radius fill, clockwise from the top-left. Grouped button runs,
+/// top-rounded sheets, and rounded table headers need corners to differ.
+fn plat_fill4(x: int, y: int, w: int, h: int, rgb: int, alpha: int, tl: int, tr: int, br: int, bl: int) {}
+/// Translate by (`dx`, `dy`), then scale and rotate about (`ox`, `oy`).
+/// `scale` is a percent (100 = identity), `rot` clockwise degrees. Applies
+/// within the current `plat_save` / `plat_restore` level.
+///
+/// This is what lets a transition move or scale a box **without** changing
+/// its layout: press scale, dialog scale-in, the tabs indicator, and the
+/// toast stack all animate through here, so the layout pass never runs.
+fn plat_xform(dx: int, dy: int, scale: int, rot: int, ox: int, oy: int) {}
 fn plat_text(x: int, y: int, s: string, rgb: int, font: int) {}
 fn plat_text_rot(x: int, y: int, s: string, rgb: int, font: int, deg: int) {}
 fn plat_text_int(x: int, y: int, v: int, rgb: int, font: int) {}
@@ -57,7 +82,10 @@ fn plat_save() {}
 /// number), Linux/Android resident set, or the live wasm heap on the web
 /// host. 0 when the host reports nothing.
 fn plat_mem_kb() -> int {}
-fn plat_clip(x: int, y: int, w: int, h: int) {}
+/// Clip to a rect, rounded when `radius` > 0. The rounded form is what stops
+/// an image or a gradient inside a rounded card from having square corners,
+/// and it is how the accordion animates its open height (clip, not layout).
+fn plat_clip(x: int, y: int, w: int, h: int, radius: int) {}
 fn plat_restore() {}
 fn plat_key_intern(name: string) -> int {}
 fn plat_key_intern_action(action: string) -> int {}

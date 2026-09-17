@@ -41,9 +41,40 @@ fn fill_a(x: int, y: int, w: int, h: int, rgb: int, radius: int, alpha: int) {
     emit(1, x, y, w, h, rgb, radius, alpha, 0, "", 0)
 }
 
-/// Vertical (`axis` 0) or horizontal (`axis` 1) linear gradient.
-fn fill_g(x: int, y: int, w: int, h: int, c0: int, c1: int, axis: int) {
-    emit(11, x, y, w, h, c0, axis, 255, 0, "", c1)
+/// Vertical (`axis` 0) or horizontal (`axis` 1) linear gradient, rounded by
+/// `radius`. `axis` rides in `font` and the second color in `value`, so the
+/// record keeps one shape for every primitive.
+fn fill_g(x: int, y: int, w: int, h: int, c0: int, c1: int, axis: int, radius: int, alpha: int) {
+    emit(11, x, y, w, h, c0, radius, alpha, axis, "", c1)
+}
+
+/// Soft drop shadow under a rounded rect. `blur`, `dx`, and `dy` ride in
+/// `font`, `value`, and `radius`'s high bits would be ambiguous, so the
+/// offsets are packed into `value` as `(dy + 128) * 256 + (dx + 128)` —
+/// both are small signed dp offsets, and packing keeps `Draw` at one shape.
+fn shadow(x: int, y: int, w: int, h: int, radius: int, rgb: int, alpha: int, blur: int, dx: int, dy: int) {
+    emit(12, x, y, w, h, rgb, radius, alpha, blur, "", (dy + 128) * 256 + (dx + 128))
+}
+
+/// Anti-aliased ring stroke inside the rect. Stroke width rides in `font`.
+fn stroke(x: int, y: int, w: int, h: int, rgb: int, radius: int, width: int, alpha: int) {
+    emit(13, x, y, w, h, rgb, radius, alpha, width, "", 0)
+}
+
+/// Per-corner radius fill, clockwise from the top-left. The four radii are
+/// packed one per byte into `value`; a corner radius over 255 dp is beyond
+/// anything the design system asks for (`RAD_FULL` resolves to the smaller
+/// half-extent at paint), so a byte each is enough.
+fn fill4(x: int, y: int, w: int, h: int, rgb: int, alpha: int, tl: int, tr: int, br: int, bl: int) {
+    emit(14, x, y, w, h, rgb, 0, alpha, 0, "",
+         ((bl * 256 + br) * 256 + tr) * 256 + tl)
+}
+
+/// Translate, then scale and rotate about an origin. Paint-space only: this
+/// never touches layout, which is what makes a move or a scale a PAINT-dirty
+/// change rather than a LAYOUT-dirty one.
+fn xform(dx: int, dy: int, scale: int, rot: int, ox: int, oy: int) {
+    emit(15, dx, dy, ox, oy, 0, scale, 255, rot, "", 0)
 }
 
 fn text(x: int, y: int, s: string, rgb: int, font: int) {
@@ -76,8 +107,9 @@ fn save() {
     emit(6, 0, 0, 0, 0, 0, 0, 0, 0, "", 0)
 }
 
-fn clip(x: int, y: int, w: int, h: int) {
-    emit(7, x, y, w, h, 0, 0, 0, 0, "", 0)
+/// Clip to a rect, rounded when `radius` > 0.
+fn clip(x: int, y: int, w: int, h: int, radius: int) {
+    emit(7, x, y, w, h, 0, radius, 0, 0, "", 0)
 }
 
 fn restore() {
@@ -103,7 +135,7 @@ fn present() {
         } else if d.kind == 6 {
             platform.plat_save()
         } else if d.kind == 7 {
-            platform.plat_clip(d.x, d.y, d.w, d.h)
+            platform.plat_clip(d.x, d.y, d.w, d.h, d.radius)
         } else if d.kind == 8 {
             platform.plat_restore()
         } else if d.kind == 9 {
@@ -111,7 +143,18 @@ fn present() {
         } else if d.kind == 10 {
             platform.plat_image(d.x, d.y, d.w, d.h, d.text, d.radius, d.alpha, d.value)
         } else if d.kind == 11 {
-            platform.plat_fill_g(d.x, d.y, d.w, d.h, d.rgb, d.value, d.radius)
+            platform.plat_fill_g(d.x, d.y, d.w, d.h, d.rgb, d.value, d.font, d.radius, d.alpha)
+        } else if d.kind == 12 {
+            platform.plat_shadow(d.x, d.y, d.w, d.h, d.radius, d.rgb, d.alpha, d.font,
+                                 d.value % 256 - 128, d.value / 256 - 128)
+        } else if d.kind == 13 {
+            platform.plat_stroke(d.x, d.y, d.w, d.h, d.rgb, d.radius, d.font, d.alpha)
+        } else if d.kind == 14 {
+            platform.plat_fill4(d.x, d.y, d.w, d.h, d.rgb, d.alpha,
+                                d.value % 256, d.value / 256 % 256,
+                                d.value / 65536 % 256, d.value / 16777216 % 256)
+        } else if d.kind == 15 {
+            platform.plat_xform(d.x, d.y, d.radius, d.font, d.w, d.h)
         }
     }
 }
@@ -168,7 +211,7 @@ fn paint_fill_box(id: int, wash: int) {
     let rgb = arena.paint_rgb(arena.nodes[id].bg)
     if arena.nodes[id].bg2 >= 0 {
         let c1 = arena.paint_rgb(arena.nodes[id].bg2)
-        fill_g(x, y, w, h, rgb, c1, 0)
+        fill_g(x, y, w, h, rgb, c1, 0, inner_r, a)
     } else if a < 255 {
         fill_a(x, y, w, h, rgb, inner_r, a)
     } else {
@@ -197,7 +240,7 @@ fn paint_input(id: int) {
     let inner = arena.inner_w(id)
     let slot = arena.nodes[id].edit_slot
     save()
-    clip(x, y, w, h)
+    clip(x, y, w, h, 0)
     if slot >= 0 {
         let mut font = i32(arena.nodes[id].font)
         if font < 8 {
@@ -341,7 +384,7 @@ fn paint_node(id: int) {
             fill(x, y, w, h, arena.paint_rgb(arena.nodes[id].bg), i32(arena.nodes[id].radius))
         }
         save()
-        clip(x, y, w, h)
+        clip(x, y, w, h, 0)
         let prev_y = arena.paint_sy
         let prev_x = arena.paint_sx
         arena.paint_sy = arena.paint_sy + arena.nodes[id].scroll_y
@@ -502,7 +545,7 @@ fn paint_node(id: int) {
             if arena.nodes[id].overflow == 1 {
                 clip = 1
                 save()
-                clip(x, y, w, h)
+                clip(x, y, w, h, 0)
             }
             let nk = arena.nodes[id].kids.len
             for i in 0..nk {

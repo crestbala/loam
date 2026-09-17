@@ -36,6 +36,13 @@ public class ZeusView extends View implements Choreographer.FrameCallback {
     private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint text = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint bitmapPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+    /* Shadow needs its own Paint: setShadowLayer is sticky on the Paint, and
+       sharing `fill` would leave a blur on every later fill. */
+    private final Paint shadowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Path clipPath = new Path();
+    private final Path shadowPath = new Path();
+    private final Path rect4 = new Path();
+    private final float[] corners = new float[8];
     private final HashMap<String, Bitmap> imgCache = new HashMap<String, Bitmap>();
     private final HashSet<String> imgLoading = new HashSet<String>();
     private static final Bitmap IMG_FAIL = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888);
@@ -224,11 +231,114 @@ public class ZeusView extends View implements Choreographer.FrameCallback {
         c.restore();
     }
 
+    void jniFillG(Canvas c, int x, int y, int w, int h, int c0, int c1, int axis,
+                  int radius, int alpha) {
+        if (w <= 0 || h <= 0) return;
+        int a = alpha < 0 ? 0 : (alpha > 255 ? 255 : alpha);
+        int col0 = ((a & 0xFF) << 24) | (c0 & 0xFFFFFF);
+        int col1 = ((a & 0xFF) << 24) | (c1 & 0xFFFFFF);
+        fill.setShader(new android.graphics.LinearGradient(
+                x, y, axis != 0 ? x + w : x, axis != 0 ? y : y + h,
+                col0, col1, android.graphics.Shader.TileMode.CLAMP));
+        fill.setColor(col0);
+        // The radius used to be dropped on every host, which is why gradient
+        // backgrounds painted square-cornered.
+        fillRound(c, x, y, w, h, radius, fill);
+        fill.setShader(null);
+    }
+
+    /** Soft drop shadow.
+     *
+     *  setShadowLayer blurs the shape that is drawn, so the shape itself has
+     *  to be drawn — and would paint over whatever the card sits on. The
+     *  rect's own area is clipped out first (clipOutPath, API 26+), so the
+     *  opaque path lands entirely outside the clip and only its blur
+     *  survives. Same construction as the Cocoa and iOS hosts.
+     *
+     *  Shape shadow layers are honoured on a hardware canvas from API 28. On
+     *  26/27 the blur is dropped and the surface simply reads flat, which is
+     *  the documented degradation for a host that cannot blur — never a
+     *  hard-edged rectangle. */
+    void jniShadow(Canvas c, int x, int y, int w, int h, int radius, int rgb, int alpha,
+                   int blur, int dx, int dy) {
+        if (w <= 0 || h <= 0 || alpha <= 0) return;
+        int a = alpha > 255 ? 255 : alpha;
+        float rad = radius;
+        if (rad > w / 2f) rad = w / 2f;
+        if (rad > h / 2f) rad = h / 2f;
+        if (rad < 0) rad = 0;
+        shadowPath.reset();
+        shadowPath.addRoundRect(new RectF(x, y, x + w, y + h), rad, rad, Path.Direction.CW);
+        c.save();
+        c.clipOutPath(shadowPath);
+        shadowPaint.setColor(0xFF000000);
+        shadowPaint.setShadowLayer(blur <= 0 ? 0.01f : blur, dx, dy,
+                                   ((a & 0xFF) << 24) | (rgb & 0xFFFFFF));
+        c.drawPath(shadowPath, shadowPaint);
+        shadowPaint.clearShadowLayer();
+        c.restore();
+    }
+
+    /** Ring stroke inset by half the width, so the line paints inside the
+     *  rect — the box model layout assumes when it insets content by the
+     *  border width. */
+    void jniStroke(Canvas c, int x, int y, int w, int h, int rgb, int radius, int width,
+                   int alpha) {
+        if (width <= 0 || w - width <= 0 || h - width <= 0) return;
+        int a = alpha < 0 ? 0 : (alpha > 255 ? 255 : alpha);
+        float lw = width;
+        stroke.setColor(((a & 0xFF) << 24) | (rgb & 0xFFFFFF));
+        stroke.setStrokeWidth(lw);
+        float rad = radius - lw / 2f;
+        if (rad < 0) rad = 0;
+        RectF r = new RectF(x + lw / 2f, y + lw / 2f, x + w - lw / 2f, y + h - lw / 2f);
+        if (rad > r.width() / 2f) rad = r.width() / 2f;
+        if (rad > r.height() / 2f) rad = r.height() / 2f;
+        if (rad <= 0) c.drawRect(r, stroke);
+        else c.drawRoundRect(r, rad, rad, stroke);
+    }
+
+    void jniFill4(Canvas c, int x, int y, int w, int h, int rgb, int alpha,
+                  int tl, int tr, int br, int bl) {
+        if (w <= 0 || h <= 0) return;
+        int a = alpha < 0 ? 0 : (alpha > 255 ? 255 : alpha);
+        float lim = Math.min(w, h) / 2f;
+        float a1 = Math.min(tl, lim), a2 = Math.min(tr, lim);
+        float a3 = Math.min(br, lim), a4 = Math.min(bl, lim);
+        fill.setColor(((a & 0xFF) << 24) | (rgb & 0xFFFFFF));
+        rect4.reset();
+        // Android takes (rx, ry) per corner, clockwise from the top-left.
+        corners[0] = a1; corners[1] = a1;
+        corners[2] = a2; corners[3] = a2;
+        corners[4] = a3; corners[5] = a3;
+        corners[6] = a4; corners[7] = a4;
+        rect4.addRoundRect(new RectF(x, y, x + w, y + h), corners, Path.Direction.CW);
+        c.drawPath(rect4, fill);
+    }
+
+    /** Translate, then scale and rotate about (ox, oy). Composes with the
+     *  enclosing clip and unwinds with the enclosing restore. */
+    void jniXform(Canvas c, int dx, int dy, int scale, int rot, int ox, int oy) {
+        c.translate(ox + dx, oy + dy);
+        if (rot != 0) c.rotate(rot);
+        if (scale != 100) c.scale(scale / 100f, scale / 100f);
+        c.translate(-ox, -oy);
+    }
+
     void jniSave(Canvas c) {
         c.save();
     }
 
-    void jniClip(Canvas c, int x, int y, int w, int h) {
+    void jniClip(Canvas c, int x, int y, int w, int h, int radius) {
+        if (radius > 0) {
+            float rad = radius;
+            if (rad > w / 2f) rad = w / 2f;
+            if (rad > h / 2f) rad = h / 2f;
+            clipPath.reset();
+            clipPath.addRoundRect(new RectF(x, y, x + w, y + h), rad, rad, Path.Direction.CW);
+            c.clipPath(clipPath);
+            return;
+        }
         c.clipRect(x, y, x + w, y + h);
     }
 
