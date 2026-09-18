@@ -1,0 +1,70 @@
+// Mouse-wheel notches ease to their target (browser feel): the position moves
+// a fraction of the gap each frame and lands exactly, a second notch retargets
+// from the pending target (they add up), the ease is bounded (idle wants no
+// frames once landed), a notch at the edge clamps, and reduced motion steps.
+// Trackpad deltas keep using `scroll_step` — no engine coast at all.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn frames(n: int) {
+    let mut i = 0
+    while i < n {
+        zeus.engine_step_dt(16)
+        zeus.pump_frame()
+        i = i + 1
+    }
+}
+
+fn main() {
+    zeus.window("smooth", 320, 180)
+    let top = zeus.raw_scroll()
+    zeus.slot(top, fn() {
+        zeus.Box(align_direction = DIRECTION.Column) {
+            zeus.Box(height = 600)
+        }
+    })
+    zeus.root(top)
+    zeus.pump_frame()
+    let id = top.id
+
+    // One notch: moves part-way this frame, lands exactly later.
+    zeus.engine_scroll_smooth(100, 100, 0, 100)
+    zeus.pump_frame()
+    let y1 = zeus.node_scroll_y(id)
+    must(y1 > 0 && y1 < 100, "first frame moves part of the way")
+    must(zeus.engine_step_dt(16) == 1, "frames requested while easing")
+    frames(30)
+    must(zeus.node_scroll_y(id) == 100, "lands exactly on the notch target")
+    must(zeus.engine_step_dt(16) == 0, "idle once landed")
+
+    // Two notches back to back add up.
+    zeus.engine_scroll_smooth(100, 100, 0, 100)
+    zeus.pump_frame()
+    zeus.engine_scroll_smooth(100, 100, 0, 100)
+    frames(30)
+    must(zeus.node_scroll_y(id) == 300, "notches retarget from the pending target")
+
+    // A notch past the end clamps to the content.
+    zeus.engine_scroll_smooth(100, 100, 0, 1000)
+    frames(40)
+    must(zeus.node_scroll_y(id) == zeus.node_scroll_max(id), "clamped at the end")
+    must(zeus.engine_step_dt(16) == 0, "idle at the end")
+
+    // Reduced motion: a notch is a plain step.
+    zeus.set_reduced_motion(true)
+    zeus.engine_scroll_smooth(100, 100, 0, -100)
+    zeus.pump_frame()
+    must(zeus.node_scroll_y(id) == zeus.node_scroll_max(id) - 100, "reduced: stepped at once")
+    must(zeus.engine_step_dt(16) == 0, "reduced: nothing easing")
+
+    fmt.println("scroll smooth ok")
+}

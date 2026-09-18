@@ -447,6 +447,11 @@ void zeus_scroll_step(int32_t x, int32_t y, int32_t dx, int32_t dy) {
     zeus_handle_scroll_step(x, y, dx, dy);
 }
 
+__attribute__((export_name("zeus_scroll_smooth")))
+void zeus_scroll_smooth(int32_t x, int32_t y, int32_t dx, int32_t dy) {
+    zeus_handle_scroll_smooth(x, y, dx, dy);
+}
+
 __attribute__((export_name("zeus_key_up")))
 void zeus_key_up(int32_t key, int32_t mods) {
     zeus_handle_key_up((int)key, (int)mods);

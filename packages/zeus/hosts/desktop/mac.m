@@ -1513,10 +1513,15 @@ static void mac_schedule_next(int more) {
         dx = dy;
         dy = 0.0;
     }
-    /* Step for both: a trackpad's inertia already arrives from AppKit as a
-       stream of momentum-phase events, so an engine coast on top of it ran
-       the scroll twice and kept painting after the finger lifted. */
-    int dirty = zeus_handle_scroll_step((int64_t)p.x, (int64_t)p.y, (int64_t)(-dx), (int64_t)(-dy));
+    /* No engine coast: a trackpad's inertia already arrives from AppKit as a
+       stream of momentum-phase events, so precise deltas step exactly where
+       they land. A mouse notch eases to its target instead, like a browser's
+       smooth wheel scroll — bounded, and retargeted by the next notch. */
+    int dirty;
+    if (precise)
+        dirty = zeus_handle_scroll_step((int64_t)p.x, (int64_t)p.y, (int64_t)(-dx), (int64_t)(-dy));
+    else
+        dirty = zeus_handle_scroll_smooth((int64_t)p.x, (int64_t)p.y, (int64_t)(-dx), (int64_t)(-dy));
     if (dirty) [self setNeedsDisplay:YES];
 }
 
@@ -1866,6 +1871,7 @@ static int host_load_image(void) {
     ZEUS_BIND(click, "loam_zeus_engine_click");
     ZEUS_BIND(scroll, "loam_zeus_engine_scroll");
     ZEUS_BIND(scroll_step, "loam_zeus_engine_scroll_step");
+    ZEUS_BIND(scroll_smooth, "loam_zeus_engine_scroll_smooth");
     ZEUS_BIND(drag, "loam_zeus_engine_drag");
     ZEUS_BIND(hover, "loam_zeus_engine_hover");
     ZEUS_BIND(mouseup, "loam_zeus_engine_mouseup");

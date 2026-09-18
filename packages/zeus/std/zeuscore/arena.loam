@@ -62,6 +62,13 @@ struct UiNode {
     /// 0..100 ease of the press overlay. Rest is 0, so DRAW goldens hold.
     aw: int,
     ah: int,
+    /// Smooth wheel scroll: the position eases toward `tgt_x` / `tgt_y` each
+    /// frame while the matching `smooth` bit (1 = y, 2 = x) is set. Bounded —
+    /// a notch converges in ~150 ms and retargets on the next notch — unlike
+    /// the momentum coast, which decays from a velocity.
+    tgt_x: int,
+    tgt_y: int,
+    smooth: u8,
     /// Wall-clock deadline (ms) until which the scrollbar thumb is shown;
     /// 0 = hidden. Set on every scroll, no track: the thumb appears and
     /// disappears in one frame each, and `bar_next_ms` wakes the host once.
@@ -313,7 +320,7 @@ fn blank_node() -> UiNode {
         wrap: 0, reverse: 0, align_self: -1,
         pin_t: -1, pin_r: -1, pin_b: -1, pin_l: -1,
         z_index: 0, grid_auto: 0, scroll_x: 0, scroll_y: 0, tw: 0, th: 0, pulse: 0, press: 0, press_amt: 0,
-        aw: 0, ah: 0, bar_t: 0, parent: 0, key_ctx: 0, focusable: 0, capture_text: 0, edit_slot: -1,
+        aw: 0, ah: 0, bar_t: 0, tgt_x: 0, tgt_y: 0, smooth: 0, parent: 0, key_ctx: 0, focusable: 0, capture_text: 0, edit_slot: -1,
         dirty: 0,
         an_scale: 100, an_tx: 0, an_ty: 0, an_rot: 0, reveal: 0, an_reveal: 100,
         spin_ms: 900, spin: 0,
@@ -2352,11 +2359,15 @@ fn phys_axis_live(pos: int, vel: int, maxs: int) -> int {
     return 0
 }
 
-/// 1 if any scroller is coasting or overscrolled — hosts should keep frames.
+/// 1 if any scroller is coasting, easing to a wheel target, or overscrolled —
+/// hosts should keep frames.
 fn phys_live() -> int {
     let n = nodes.len
     for i in 1..n {
         if int(nodes[i].kind) == 11 {
+            if int(nodes[i].smooth) != 0 {
+                return 1
+            }
             if phys_axis_live(nodes[i].scroll_x, nodes[i].vel_x, scroll_max_x(i)) != 0 {
                 return 1
             }
@@ -2396,8 +2407,27 @@ fn physics_axis(pos: int, vel: int, maxs: int) -> Axis {
     return Axis { pos: y, vel: v, dirty: dirty }
 }
 
-/// One frame of momentum + rubber-band. Returns 1 if anything moved.
-/// Thumb drag (`drag_bar`) owns the position until mouseup.
+/// One frame toward a wheel target: 35 % of the gap, at least 1 px, so a
+/// 100 px notch lands in ~11 frames and never stalls short. Returns the new
+/// position; the caller clears the bit when it equals the target.
+fn smooth_axis(pos: int, tgt: int) -> int {
+    let d = tgt - pos
+    if d == 0 {
+        return pos
+    }
+    let mut step = d * 35 / 100
+    if step == 0 {
+        if d > 0 {
+            step = 1
+        } else {
+            step = -1
+        }
+    }
+    return pos + step
+}
+
+/// One frame of momentum + rubber-band + wheel easing. Returns 1 if anything
+/// moved. Thumb drag (`drag_bar`) owns the position until mouseup.
 fn physics_step() -> int {
     if drag_id > 0 {
         if drag_bar != 0 {
@@ -2408,6 +2438,32 @@ fn physics_step() -> int {
     let mut dirty = 0
     for i in 1..n {
         if int(nodes[i].kind) == 11 {
+            let sm = int(nodes[i].smooth)
+            if (sm & 1) != 0 {
+                let ny = smooth_axis(nodes[i].scroll_y, nodes[i].tgt_y)
+                if ny != nodes[i].scroll_y {
+                    nodes[i].scroll_y = ny
+                    dirty = 1
+                    bar_on(i)
+                    if nodes[i].bind_sig > 0 {
+                        store_sig_paint(nodes[i].bind_sig, ny)
+                    }
+                }
+                if ny == nodes[i].tgt_y {
+                    nodes[i].smooth = u8(sm & 2)
+                }
+            }
+            if (sm & 2) != 0 {
+                let nx = smooth_axis(nodes[i].scroll_x, nodes[i].tgt_x)
+                if nx != nodes[i].scroll_x {
+                    nodes[i].scroll_x = nx
+                    dirty = 1
+                    bar_on(i)
+                }
+                if nx == nodes[i].tgt_x {
+                    nodes[i].smooth = u8(int(nodes[i].smooth) & 1)
+                }
+            }
             let ay = physics_axis(nodes[i].scroll_y, nodes[i].vel_y, scroll_max(i))
             let ax = physics_axis(nodes[i].scroll_x, nodes[i].vel_x, scroll_max_x(i))
             nodes[i].scroll_y = ay.pos
@@ -2431,6 +2487,69 @@ fn physics_step() -> int {
         mark_scroll()
     }
     return dirty
+}
+
+/// Move a wheel target by `d` (clamped to the content). Starts from the live
+/// target when one is pending, so back-to-back notches add up instead of
+/// restarting. Returns how much of `d` the scroller could take.
+fn apply_smooth_y(id: int, d: int) -> int {
+    if id <= 0 {
+        return 0
+    }
+    if id >= nodes.len {
+        return 0
+    }
+    let mut from = nodes[id].scroll_y
+    if (int(nodes[id].smooth) & 1) != 0 {
+        from = nodes[id].tgt_y
+    }
+    let my = scroll_max(id)
+    let mut t = from + d
+    if t < 0 {
+        t = 0
+    }
+    if t > my {
+        t = my
+    }
+    if t == from {
+        return 0
+    }
+    nodes[id].vel_y = 0
+    nodes[id].tgt_y = t
+    nodes[id].smooth = u8(int(nodes[id].smooth) | 1)
+    bar_on(id)
+    mark_paint()
+    return t - from
+}
+
+fn apply_smooth_x(id: int, d: int) -> int {
+    if id <= 0 {
+        return 0
+    }
+    if id >= nodes.len {
+        return 0
+    }
+    let mut from = nodes[id].scroll_x
+    if (int(nodes[id].smooth) & 2) != 0 {
+        from = nodes[id].tgt_x
+    }
+    let mx = scroll_max_x(id)
+    let mut t = from + d
+    if t < 0 {
+        t = 0
+    }
+    if t > mx {
+        t = mx
+    }
+    if t == from {
+        return 0
+    }
+    nodes[id].vel_x = 0
+    nodes[id].tgt_x = t
+    nodes[id].smooth = u8(int(nodes[id].smooth) | 2)
+    bar_on(id)
+    mark_paint()
+    return t - from
 }
 
 /// Apply a pan delta. `momentum` 1 arms the coast (touch pans, precise
