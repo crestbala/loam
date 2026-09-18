@@ -1,0 +1,38 @@
+// Overlay-scroll (touch) hosts suppress hover at is_hot, so a pointer move
+// does not schedule HoverAmt tracks or set StHovered. Desktop still does.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("touch-hover", 320, 120)
+    let btn = zeus.Button("Hover me", on_click = fn() {})
+    zeus.root(zeus.Box(padding = 20) {
+        zeus.child(zeus.Box(), btn)
+    })
+    zeus.pump_frame()
+    let cx = zeus.node_x(btn.id) + zeus.node_width(btn.id) / 2
+    let cy = zeus.node_y(btn.id) + zeus.node_height(btn.id) / 2
+
+    zeus.engine_set_overlay_scroll(1)
+    zeus.engine_hover(cx, cy)
+    zeus.engine_layout(320, 120)
+    must(!zeus.state_hovered(btn), "touch has no hover state")
+    must(zeus.proof_anim_live() == 0, "touch scheduled no hover track")
+    must(zeus.engine_step_dt(16) == 0, "touch hover does not keep frames live")
+
+    zeus.engine_set_overlay_scroll(0)
+    zeus.engine_hover(cx, cy)
+    zeus.engine_layout(320, 120)
+    must(zeus.state_hovered(btn), "desktop hover state")
+    must(zeus.proof_anim_live() > 0, "desktop hover started a track")
+
+    fmt.println("touch-hover ok")
+}

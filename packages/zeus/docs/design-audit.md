@@ -277,10 +277,9 @@ Gaps against §5:
 - **[CLOSED — phase 4 batch 12]** *No 44dp minimum hit target* on touch hosts.
   Hit-testing inflates tappable nodes to 44dp; paint/layout stay authored.
   `Pip` without a click handler is not a target.
-- Hover is already correctly suppressed on overlay-scroll hosts
-  (`paint_hover_wash` early-returns), so "pointer hover only where there is a
-  pointer" is half-solved — but `is_hot` still runs the fade math for every node
-  on those hosts each frame.
+- **[CLOSED — phase 4 batch 13]** Hover wash is skipped on overlay-scroll
+  hosts, and `is_hot` now returns 0 there so pointer moves do not schedule
+  HoverAmt tracks.
 
 ---
 
@@ -379,7 +378,7 @@ answers depending on how you arrived.
 | 1 | Audit | **done** | `8289306` |
 | 2 | Tokens + paint primitives | **done** | `2184563` |
 | 3 | Dirty-channel split + animation subsystem + state layer | **done** | `feat(zeus): dirty-channel split + animation track pool (phase 3)` |
-| 4 | Components, in batches | **in progress — batches 1–12** | `feat: paint-only motion + feedback primitives` / `feat: Accordion` / `feat: overlay family` / `feat: elevation + stroked borders` / `feat: Menu` / `feat: Collapsible + Drawer` / `fix: anchored floaters in a scroller` / `feat: Select + Combobox` / `feat: exit motion + reveal` / `fix: web host paint/a11y/wheel` / `fix: anchored placement, EASE béziers, layout-driving animate` / `feat: Tabs/RadioGroup arrows + roving tabindex` / `feat: Dialog focus trap + Esc` / `feat: 44dp touch hit target` |
+| 4 | Components, in batches | **in progress — batches 1–13** | `feat: paint-only motion + feedback primitives` / `feat: Accordion` / `feat: overlay family` / `feat: elevation + stroked borders` / `feat: Menu` / `feat: Collapsible + Drawer` / `fix: anchored floaters in a scroller` / `feat: Select + Combobox` / `feat: exit motion + reveal` / `fix: web host paint/a11y/wheel` / `fix: anchored placement, EASE béziers, layout-driving animate` / `feat: Tabs/RadioGroup arrows + roving tabindex` / `feat: Dialog focus trap + Esc` / `feat: 44dp touch hit target` / `perf: skip hover-fade math on touch` |
 | 5 | Gallery + docs (`spec.md`, a `www/` design-system page) | not started | — |
 
 `make test` at the end of phase 3: **361 passed, 0 failed** (the six network
@@ -1040,12 +1039,21 @@ Overlays and scrollers are not inflated. Desktop is unchanged.
 hits on touch, still misses 20dp above, and stays 32² in layout. No
 golden moved.
 
+### Phase 4 — skip hover-fade math on touch (batch 13)
+
+`paint_hover_wash` already returned on overlay-scroll hosts, but `is_hot`
+still ran `ptr_in` and compared `hover_amt` for every tappable node on
+each pointer move, then `sync_chrome` scheduled HoverAmt tracks that
+never painted. `is_hot` now returns 0 on those hosts, so there is no
+hover state, no hover track, and no extra frames. Desktop is unchanged.
+`zeus_touch_hover.loam` locks it.
+
 ### Remaining work (living list)
 
 The single maintained tracker of what is still open. Update it in the same commit
 that closes an item, and tick a box rather than deleting the line, so the record
 of what was deferred stays readable. Landed so far: phases 1–3; phase 4 batches
-1–12.
+1–13.
 
 **Phase 4 — components still to build**
 
@@ -1130,8 +1138,9 @@ scope**:
 - [x] A 44dp minimum hit target on touch hosts; iOS and Android get the desktop
   geometry verbatim (`SIZE.Sm` 32dp, dialog close 28dp, `Checkbox` / `Radio`
   16dp, `Pip` 8–10dp). **(batch 12: hit rect only; paint stays authored)**
-- [ ] `is_hot` still runs the hover-fade math for every node each frame on
+- [x] `is_hot` still runs the hover-fade math for every node each frame on
   overlay-scroll hosts (hover is correctly suppressed, but the math is not).
+  **(batch 13)**
 - [ ] Strings are never freed (`loam_rt.h`). A `{{ }}` interpolation on a
   timer tick (the gallery's RAM chip, every 500 ms) leaks a few bytes per
   tick for the process lifetime; harmless at that rate, but a per-frame one

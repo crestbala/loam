@@ -2430,6 +2430,11 @@ fn is_hot(id: int) -> int {
     if want_show(id) == 0 {
         return 0
     }
+    // Touch hosts have no hover: paint already skips the wash, and this
+    // early-out skips ptr_in / hover_amt / HoverAmt tracks per pointer move.
+    if platform.plat_overlay_scroll() != 0 {
+        return 0
+    }
     // The shared overlay: a disabled or loading node never hovers.
     if int(nodes[id].disabled) != 0 {
         return 0

@@ -303,7 +303,8 @@ at the ends, and only the selected item is a tab stop.
 
 On iOS / Android a tappable node smaller than 44dp still receives the
 pointer in a 44×44 box centered on its layout rect; paint and layout stay
-the authored size.
+the authored size. Those hosts have no hover: `is_hot` is false, so a
+finger move does not schedule a hover wash.
 
 **Collapsible(open, title)** is one 0/1 signal: the header toggles it, the
 chevron rotates and the body fades on paint-only tracks (no card chrome unless
