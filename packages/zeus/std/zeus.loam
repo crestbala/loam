@@ -6112,9 +6112,9 @@ fn Meter(value: Signal<int>) {
 }
 
 /// Alert: rounded bordered panel, leading icon, title + description.
-/// The default variant is background + foreground; destructive is a red
-/// border with red text. Body sits at 13px. Pass any style prop to restyle
-/// the chrome.
+/// Default is the info tier; `AlertDestructive` / `AlertWarning` /
+/// `AlertSuccess` pick the others. `dismiss` is a 0/1 signal (X sets 0).
+/// Trailing block is the action slot, under the body.
 struct AlertProps {
     /// Style props. Plain data — `radius = 4`, `background = paper()`. Each
     /// is re-evaluated by the effect that owns that attribute, so it follows
@@ -6131,6 +6131,11 @@ struct AlertProps {
     border: int = -1,
     border_color: string = "",
     spacing: int = -1,
+    /// Override the function's tier (`ALERT.*`). `-1` keeps the function's.
+    kind: int = -1,
+    /// 0/1 show signal. When passed, an X in the title row sets it to 0.
+    dismiss: Signal<int> = Signal { id: 0 },
+    dismiss__set: bool = false,
     /// Chord that activates this node: `"cmd+s"`, `"ctrl+shift+p"`, or a
     /// sequence like `"g d"`. Every widget takes it — key binding is a prop,
     /// not something a particular widget hard-codes.
@@ -6146,17 +6151,43 @@ struct AlertProps {
 }
 
 fn Alert(title: fn() -> string, body: fn() -> string, p: AlertProps) -> Node {
-    return alert_view(title, body, ALERT.Info, p)
+    let mut k = ALERT.Info
+    if p.kind >= 0 {
+        k = p.kind
+    }
+    return alert_view(title, body, k, p)
 }
 
 /// Destructive variant of `Alert`.
 fn AlertDestructive(title: fn() -> string, body: fn() -> string, p: AlertProps) -> Node {
-    return alert_view(title, body, ALERT.Danger, p)
+    let mut k = ALERT.Danger
+    if p.kind >= 0 {
+        k = p.kind
+    }
+    return alert_view(title, body, k, p)
 }
 
 /// Warning variant of `Alert`: amber edge and icon.
 fn AlertWarning(title: fn() -> string, body: fn() -> string, p: AlertProps) -> Node {
-    return alert_view(title, body, ALERT.Warn, p)
+    let mut k = ALERT.Warn
+    if p.kind >= 0 {
+        k = p.kind
+    }
+    return alert_view(title, body, k, p)
+}
+
+/// Success variant of `Alert`: green edge and check icon.
+fn AlertSuccess(title: fn() -> string, body: fn() -> string, p: AlertProps) -> Node {
+    let mut k = ALERT.Ok
+    if p.kind >= 0 {
+        k = p.kind
+    }
+    return alert_view(title, body, k, p)
+}
+
+/// Explicit info variant; same as `Alert`.
+fn AlertInfo(title: fn() -> string, body: fn() -> string, p: AlertProps) -> Node {
+    return Alert(title, body, p)
 }
 
 /// Which `Alert` variant is painting.
@@ -6164,13 +6195,15 @@ enum ALERT {
     Info = 0,
     Danger = 1,
     Warn = 2,
+    Ok = 3,
 }
 
 fn alert_edge(kind: int) -> string {
     match kind {
         ALERT.Danger => { return danger_edge() }
         ALERT.Warn => { return warn_edge() }
-        _ => { return rule() }
+        ALERT.Ok => { return ok() }
+        _ => { return info_line() }
     }
 }
 
@@ -6178,19 +6211,30 @@ fn alert_title_tint(kind: int) -> string {
     match kind {
         ALERT.Danger => { return danger() }
         ALERT.Warn => { return warn() }
-        _ => { return ink() }
+        ALERT.Ok => { return ok() }
+        _ => { return info_ink() }
     }
 }
 
 fn alert_body_tint(kind: int) -> string {
     match kind {
         ALERT.Danger => { return danger() }
+        ALERT.Ok => { return ok() }
         _ => { return mute() }
     }
 }
 
+fn alert_icon(kind: int) {
+    match kind {
+        ALERT.Danger => { Icon(IC_ALERT_CIRCLE, 16, danger()) }
+        ALERT.Warn => { Icon(IC_ALERT_CIRCLE, 16, warn()) }
+        ALERT.Ok => { Icon(IC_CHECK, 16, ok()) }
+        _ => { Icon(IC_INFO, 16, info_ink()) }
+    }
+}
+
 fn alert_view(title: fn() -> string, body: fn() -> string, kind: int, p: AlertProps) -> Node {
-    return Box(align_direction = DIRECTION.Row,
+    let shell = Box(align_direction = DIRECTION.Row,
                spacing = px_or_default(p.spacing, 12),
                align_items = ALIGN.Start,
                background = str_or_default(p.background, plate()),
@@ -6200,17 +6244,31 @@ fn alert_view(title: fn() -> string, body: fn() -> string, kind: int, p: AlertPr
                padding_y = px_or_default(p.padding_y, px_or_default(p.padding, 12)),
                width = p.width,
                height = p.height,
-               radius = px_or_default(p.radius, RAD_LG)) {
-        match kind {
-            ALERT.Danger => { Icon(IC_ALERT_CIRCLE, 16, danger()) }
-            ALERT.Warn => { Icon(IC_ALERT_CIRCLE, 16, warn()) }
-            _ => { Icon(IC_INFO, 16, ink()) }
-        }
+               radius = px_or_default(p.radius, RAD_LG),
+               a11y_role = "alert",
+               visible = p.dismiss,
+               visible__set = p.dismiss__set) {
+        alert_icon(kind)
         Column(4) {
-            Text(title, color = alert_title_tint(kind), font = FONT_BODY)
+            if p.dismiss__set {
+                Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center, spacing = SPACE.Exs) {
+                    Text(title, color = alert_title_tint(kind), font = FONT_BODY, grow = 1)
+                    let x = Box(width = 28, height = 28, radius = RAD_MD,
+                                align_items = ALIGN.Center, justify = ALIGN.Center,
+                                on_click = fn() { p.dismiss.set(0) },
+                                a11y_role = "button", a11y_label = "Dismiss",
+                                cursor = "pointer") {
+                        Icon(IC_X, 16, mute())
+                    }
+                    focusable(x)
+                }
+            } else {
+                Text(title, color = alert_title_tint(kind), font = FONT_BODY)
+            }
             Text(body, color = alert_body_tint(kind), font = FONT_CONTROL, wrap = 1)
         }
     }
+    return apply_key(shell, p.key, p.key_action, p.on_key, p.on_key__set, p.key_global)
 }
 
 /// Raised panel (no border). Prefer `Card` for the bordered look.

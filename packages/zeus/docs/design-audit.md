@@ -378,7 +378,7 @@ answers depending on how you arrived.
 | 1 | Audit | **done** | `8289306` |
 | 2 | Tokens + paint primitives | **done** | `2184563` |
 | 3 | Dirty-channel split + animation subsystem + state layer | **done** | `feat(zeus): dirty-channel split + animation track pool (phase 3)` |
-| 4 | Components, in batches | **in progress — batches 1–13** | `feat: paint-only motion + feedback primitives` / `feat: Accordion` / `feat: overlay family` / `feat: elevation + stroked borders` / `feat: Menu` / `feat: Collapsible + Drawer` / `fix: anchored floaters in a scroller` / `feat: Select + Combobox` / `feat: exit motion + reveal` / `fix: web host paint/a11y/wheel` / `fix: anchored placement, EASE béziers, layout-driving animate` / `feat: Tabs/RadioGroup arrows + roving tabindex` / `feat: Dialog focus trap + Esc` / `feat: 44dp touch hit target` / `perf: skip hover-fade math on touch` |
+| 4 | Components, in batches | **in progress — batches 1–14** | `feat: paint-only motion + feedback primitives` / `feat: Accordion` / `feat: overlay family` / `feat: elevation + stroked borders` / `feat: Menu` / `feat: Collapsible + Drawer` / `fix: anchored floaters in a scroller` / `feat: Select + Combobox` / `feat: exit motion + reveal` / `fix: web host paint/a11y/wheel` / `fix: anchored placement, EASE béziers, layout-driving animate` / `feat: Tabs/RadioGroup arrows + roving tabindex` / `feat: Dialog focus trap + Esc` / `feat: 44dp touch hit target` / `perf: skip hover-fade math on touch` |
 | 5 | Gallery + docs (`spec.md`, a `www/` design-system page) | not started | — |
 
 `make test` at the end of phase 3: **361 passed, 0 failed** (the six network
@@ -1048,12 +1048,23 @@ never painted. `is_hot` now returns 0 on those hosts, so there is no
 hover state, no hover track, and no extra frames. Desktop is unchanged.
 `zeus_touch_hover.loam` locks it.
 
+### Phase 4 — Alert info/success, dismiss, action slot (batch 14)
+
+`Alert` is the info tier (info line + ink, `IC_INFO`). `AlertSuccess` is
+the missing success tier (`ok` edge, `IC_CHECK`). `dismiss` is a 0/1
+signal: an X in the title row sets it to 0 and `visible` hides the card.
+Trailing block is the action slot (end of the row).
+`AlertDestructive` / `AlertWarning` are unchanged in structure.
+`zeus_alert.loam` locks success, dismiss, and a Retry action.
+`golden_scale_gallery` moved only the default Alert's stroke/icon/title
+to the info tokens.
+
 ### Remaining work (living list)
 
 The single maintained tracker of what is still open. Update it in the same commit
 that closes an item, and tick a box rather than deleting the line, so the record
 of what was deferred stays readable. Landed so far: phases 1–3; phase 4 batches
-1–13.
+1–14.
 
 **Phase 4 — components still to build**
 
@@ -1082,8 +1093,8 @@ scope**:
 - [ ] `Progress`: easing + indeterminate mode.
 - [ ] `Table`: zebra, row hover, sort affordance, per-cell alignment, truncation.
 - [ ] Charts: gridlines, axis labels, crosshair, tooltip, legend.
-- [ ] `Alert`: info / success tier, dismiss, action slot; `Badge` / `Chip`:
-  dot / removable / count.
+- [x] `Alert`: info / success tier, dismiss, action slot; `Badge` / `Chip`:
+  dot / removable / count. **(batch 14: Alert only; Badge/Chip still open)**
 - [ ] `Avatar`: status dot / group stack; `Stat`: delta / sparkline;
   `Pagination`: ellipsis.
 - [ ] `Skeleton` shimmer is a global frame-counter sawtooth, not directional.

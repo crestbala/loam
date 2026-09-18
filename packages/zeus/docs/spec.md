@@ -301,6 +301,10 @@ at the ends, and only the selected item is a tab stop.
 (a focus trap), Escape closes it, and focus returns to the opener on close.
 `Select` also closes on Escape.
 
+**Alert** has four tiers (`Alert` / `AlertInfo` = info, `AlertSuccess`,
+`AlertWarning`, `AlertDestructive`). `dismiss` is a 0/1 signal the X sets
+to 0. Trailing block is the action slot.
+
 On iOS / Android a tappable node smaller than 44dp still receives the
 pointer in a 44×44 box centered on its layout rect; paint and layout stay
 the authored size. Those hosts have no hover: `is_hot` is false, so a

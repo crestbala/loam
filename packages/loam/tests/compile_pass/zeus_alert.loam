@@ -1,0 +1,47 @@
+// Alert info/success tiers, dismiss (X sets the signal to 0), and a trailing
+// action slot under the body.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("alert", 480, 360)
+    let shown = zeus.signal(1)
+    let hits = zeus.signal(0)
+    zeus.root(zeus.Box(align_direction = zeus.DIRECTION.Column, spacing = 8, padding = 16) {
+        zeus.Alert("Heads up", "Default is info.")
+        zeus.AlertSuccess("Saved", "Draft is on disk.")
+        zeus.Alert("Note", "You can dismiss this.", dismiss = shown)
+        zeus.AlertDestructive("Failed", "Try again.") {
+            zeus.Button("Retry", look = zeus.LOOK.Outline, size = zeus.SIZE.Sm,
+                        on_click = fn() { hits.set(hits.get() + 1) })
+        }
+    })
+    zeus.pump_frame()
+    must(zeus.text_visible("Heads up"), "info title")
+    must(zeus.text_visible("Saved"), "success title")
+    must(zeus.text_visible("Draft is on disk."), "success body")
+    must(zeus.engine_find_role("alert") != 0, "alert role")
+    must(zeus.text_visible("Note"), "dismissible shown")
+    must(zeus.engine_find_text("Dismiss") != 0, "dismiss control")
+    must(zeus.text_visible("Retry"), "action slot")
+
+    zeus.engine_click_text("Dismiss")
+    zeus.engine_mouseup()
+    zeus.engine_layout(480, 360)
+    must(shown.get() == 0, "dismiss set the signal to 0")
+    must(!zeus.text_visible("Note"), "dismissed alert is hidden")
+
+    zeus.engine_click_text("Retry")
+    zeus.engine_mouseup()
+    must(hits.get() == 1, "action slot ran")
+
+    fmt.println("alert ok")
+}
