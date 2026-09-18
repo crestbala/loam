@@ -297,6 +297,13 @@ asked for). **Drawer(open, side, size)** pins an edge panel into a full-window
 scrim and slides it on a paint-only transform; `SIDE.SideTop` / `SideBottom` are
 the sheet shape. Both close on outside click and Escape.
 
+`Select(value, labels)` and `Combobox(text, options)` share the same anchored
+floater: the menu sits under the trigger, flips when there is no room, and
+tracks it on scroll. `Select`'s Up / Down / Enter / Escape are bound on the menu,
+which takes focus on open; `Combobox` filters its options case-insensitively as
+you type and handles its keys in the field's `on_key_down`, because a focused
+text field consumes Enter before any keymap chord can see it.
+
 ## Depth
 
 `elevation` is a `Box` / `Card` prop (0–4) that paints a soft shadow under the
