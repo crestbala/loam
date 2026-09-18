@@ -352,17 +352,6 @@ void loam_dce_run(LoamModule *mods, int nmods) {
         }
     }
 
-    /* Worklist: process each kept decl's body once. */
-    for (size_t i = 0; i < todo.n; i++) {
-        AstNode *fn = todo.items[i];
-        if (in_set(&done, fn)) continue;
-        add_set(&done, fn);
-        if (fn->kind == AST_FN_DECL) {
-            walk(fn->as.fn.body);
-            walk_params(fn);
-        }
-    }
-
     /* Generic decls pruned but instantiated: their substituted bodies are
      * emitted from the IR, not walked above (a generic call resolves to the
      * instance, not the decl), so mark every callee of every instantiated
@@ -377,6 +366,21 @@ void loam_dce_run(LoamModule *mods, int nmods) {
             if (!has_mono_instance(d)) continue;
             walk(d->as.fn.body);
             walk_params(d);
+        }
+    }
+
+    /* Worklist: process each kept decl's body once, to a fixed point (the set
+     * grows while it is walked). Runs *after* the instantiated-generic pass so
+     * the callees that pass marks are walked too: a pruned generic's body can
+     * call a non-generic (`arena.key_count` from `kfor_refresh`) which itself
+     * calls others, and the emitted instance needs all of them. */
+    for (size_t i = 0; i < todo.n; i++) {
+        AstNode *fn = todo.items[i];
+        if (in_set(&done, fn)) continue;
+        add_set(&done, fn);
+        if (fn->kind == AST_FN_DECL) {
+            walk(fn->as.fn.body);
+            walk_params(fn);
         }
     }
 }
