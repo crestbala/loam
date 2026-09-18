@@ -138,8 +138,6 @@ struct UiNode {
     /// bit 1 LAYOUT, bit 2 TREE. A node is marked when a discrete write or an
     /// animation tick changes it; paint drains the marks.
     dirty: u8,
-    /// Animated scrollbar alpha 0..180 (a `BarFade` track). 0 = hidden.
-    bar_amt: u8,
     /// Animated paint transform: scale percent (100 = identity), translate in
     /// dp, and rotation in degrees. Written only by paint-only tracks; the
     /// layout pass never reads them, so a transform never forces a layout.
@@ -313,7 +311,7 @@ fn blank_node() -> UiNode {
         pin_t: -1, pin_r: -1, pin_b: -1, pin_l: -1,
         z_index: 0, grid_auto: 0, scroll_x: 0, scroll_y: 0, tw: 0, th: 0, pulse: 0, press: 0, press_amt: 0,
         aw: 0, ah: 0, bar_t: 0, parent: 0, key_ctx: 0, focusable: 0, capture_text: 0, edit_slot: -1,
-        dirty: 0, bar_amt: 0,
+        dirty: 0,
         an_scale: 100, an_tx: 0, an_ty: 0, an_rot: 0, reveal: 0, an_reveal: 100,
         spin_ms: 900, spin: 0,
         anchor: 0, anchor_gap: 6, place: 0, flip: 1,
@@ -778,8 +776,7 @@ enum APROP {
     SwitchTween = 3,
     // Mounted-surface fade 0..100 (UiNode.show_amt).
     EnterFade = 4,
-    // Scrollbar alpha 0..180 (UiNode.bar_amt).
-    BarFade = 5,
+    // 5 was the scrollbar fade; the thumb is static now (no track).
     // Signal paint overlay (sig_paint[sid]).
     SigVal = 6,
     // Paint transform / appearance, all paint-only (no layout pass reads them):
@@ -923,9 +920,6 @@ fn anim_read(node: int, prop: int) -> int {
     if prop == APROP.EnterFade {
         return int(nodes[node].show_amt)
     }
-    if prop == APROP.BarFade {
-        return int(nodes[node].bar_amt)
-    }
     if prop == APROP.SigVal {
         if node < sig_paint.len {
             return sig_paint[node]
@@ -966,15 +960,6 @@ fn anim_store(node: int, prop: int, v: int) {
         nodes[node].tween = v
     } else if prop == APROP.EnterFade {
         nodes[node].show_amt = u8(anim_clamp100(v))
-    } else if prop == APROP.BarFade {
-        let mut a = v
-        if a < 0 {
-            a = 0
-        }
-        if a > 180 {
-            a = 180
-        }
-        nodes[node].bar_amt = u8(a)
     } else if prop == APROP.SigVal {
         sig_paint_fit()
         if node < sig_paint.len {
@@ -1039,8 +1024,7 @@ fn anim_schedule(node: int, prop: int, to: int, dur: int, easing: int) {
     let cur = anim_read(node, prop)
     let i = anim_find(node, prop)
     // Jump instead of animating before the first frame completes (cold boot),
-    // for a zero duration, or under reduced motion (except the scrollbar fade,
-    // which is an opacity fade, not travel).
+    // for a zero duration, or under reduced motion.
     let mut jump = 0
     if anim_booted == 0 {
         jump = 1
@@ -1049,9 +1033,7 @@ fn anim_schedule(node: int, prop: int, to: int, dur: int, easing: int) {
         jump = 1
     }
     if anim_reduced() != 0 {
-        if prop != APROP.BarFade {
-            jump = 1
-        }
+        jump = 1
     }
     if jump != 0 {
         if i >= 0 {
@@ -1126,13 +1108,6 @@ fn anim_radius(node: int, to: int, ms: int) {
     anim_schedule(node, APROP.RadiusPx, to, ms, ease_standard())
 }
 
-/// Start a fade from an explicit `from` (scrollbar re-show). Reduced motion
-/// does not collapse this one: an opacity fade is not travel.
-fn anim_fade_from(node: int, prop: int, from: int, to: int, dur: int, easing: int) {
-    anim_store(node, prop, from)
-    mark_paint_id(node)
-    anim_schedule(node, prop, to, dur, easing)
-}
 
 /// `zeus.animate`: move a signal's *state* to `to` once (effects run once),
 /// then interpolate its paint value on the track pool.
@@ -2438,14 +2413,12 @@ fn physics_step() -> int {
             nodes[i].vel_x = ax.vel
             if ay.dirty != 0 {
                 dirty = 1
-                bar_on(i)
                 if nodes[i].bind_sig > 0 {
                     store_sig_paint(nodes[i].bind_sig, ay.pos)
                 }
             }
             if ax.dirty != 0 {
                 dirty = 1
-                bar_on(i)
             }
         }
     }
@@ -2486,7 +2459,6 @@ fn apply_delta_y(id: int, dy: int, momentum: int) -> int {
         return 0
     }
     nodes[id].scroll_y = ny
-    bar_on(id)
     mark_scroll()
     if nodes[id].bind_sig > 0 {
         store_sig_paint(nodes[id].bind_sig, ny)
@@ -2520,7 +2492,6 @@ fn apply_delta_x(id: int, dx: int, momentum: int) -> int {
         return 0
     }
     nodes[id].scroll_x = nx
-    bar_on(id)
     mark_scroll()
     return 1
 }
@@ -2549,34 +2520,11 @@ fn clamp_scroll(id: int) {
     mark_scroll()
 }
 
-/// Time the bar stays fully opaque after the last scroll before it fades.
-fn bar_hide() -> int {
-    return 900
-}
-
-/// Scroll / drag bumped the bar: show it now, then fade to hidden. Retargeting
-/// keeps it at full alpha while the user keeps scrolling.
-fn bar_on(id: int) {
-    if id <= 0 {
-        return
-    }
-    if id >= nodes.len {
-        return
-    }
-    anim_fade_from(id, APROP.BarFade, 180, 0, bar_hide(), ease_linear())
-}
-
-/// 1 while the bar should be visible: mid-drag or still fading.
+/// The thumb is static: painted whenever the content overflows, never faded.
+/// It used to show on scroll and fade out over 900 ms, which kept a track —
+/// and a paint frame every 16 ms — alive after every wheel tick.
 fn bar_active(id: int) -> int {
-    if drag_id == id {
-        if drag_bar != 0 {
-            return 1
-        }
-    }
-    if int(nodes[id].bar_amt) > 0 {
-        return 1
-    }
-    return 0
+    return 1
 }
 
 fn bar_visible(id: int) -> int {
@@ -2611,13 +2559,14 @@ fn bar_visible_x(id: int) -> int {
     return bar_active(id)
 }
 
+/// Thumb alpha: resting, or full while it is being dragged.
 fn bar_alpha(id: int) -> int {
     if drag_id == id {
         if drag_bar != 0 {
             return 180
         }
     }
-    return int(nodes[id].bar_amt)
+    return 110
 }
 
 fn bar_w() -> int {

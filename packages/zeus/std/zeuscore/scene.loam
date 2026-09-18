@@ -317,8 +317,8 @@ fn paint_button(id: int) {
 
 fn paint_scrollbar(id: int) {
     // Overlay hosts (iOS/Android) never paint a desktop thumb. On desktop
-    // the bar appears only while scrolling (wheel / pan / thumb drag) and
-    // fades out after `bar_hide` ticks — idle panes stay clean.
+    // the thumb is static: shown whenever the content overflows, brighter
+    // while dragged, never animated.
     if platform.plat_overlay_scroll() != 0 {
         return
     }
