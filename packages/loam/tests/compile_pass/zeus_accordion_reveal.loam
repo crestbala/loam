@@ -1,0 +1,86 @@
+// Bucket B, item 2: an opening Accordion body reveals top-down. Layout gives
+// the body its full height at once (a discrete state change); paint clips to
+// `an_reveal` percent of it and slides the content up by the rest, driven by a
+// paint-only track (`APROP.RevealAmt`). While the reveal is in flight the draw
+// list carries one save / clip / restore triple for the body; once it lands
+// the list is the settled shape again. Cold boot and reduced motion settle at
+// once, and a close snaps (layout already collapsed the row).
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn run_ms(ms: int) {
+    let mut t = 0
+    while t < ms {
+        zeus.engine_step_dt(16)
+        zeus.pump_frame()
+        t = t + 16
+    }
+}
+
+fn main() {
+    zeus.window("accordion reveal", 360, 260)
+    let open = zeus.signal(-1)
+    let rows = []AccordionRow {
+        AccordionRow { title: "One", body: "alpha" },
+        AccordionRow { title: "Two", body: "beta" },
+    }
+    zeus.root(zeus.Accordion(open, items = rows))
+    zeus.pump_frame()
+    zeus.engine_step_dt(16)
+    zeus.pump_frame()
+    let closed = zeus.draw_count()
+    must(zeus.proof_anim_live() == 0, "settled at boot")
+
+    // Open: the body is laid out and shown at once, painted clipped.
+    open.set(0)
+    zeus.pump_frame()
+    must(zeus.text_visible("alpha"), "open for the tree the same frame")
+    let opening = zeus.draw_count()
+    must(zeus.proof_anim_live() > 0, "a reveal track is live")
+    run_ms(400)
+    let settled = zeus.draw_count()
+    must(zeus.proof_anim_live() == 0, "reveal landed")
+    // Settled: the body text and the chevron's rotated xform (save / xform /
+    // restore). First frame: the reveal shell is six ops (save / clip, then
+    // save / xform for the slide, and two restores) and the chevron's rotation
+    // has not left zero yet, so its three are absent: settled + 6 - 3.
+    must(settled == closed + 1 + 3, "settled: body text + rotated chevron")
+    must(opening == settled + 3, "in flight: reveal shell on, chevron xform not yet")
+    must(zeus.engine_step_dt(16) == 0, "idle after the reveal")
+
+    // Close snaps the body. The header chevron is still rotating back (its own
+    // save / xform / restore triple), so the list is `closed + 3` this frame
+    // and `closed` once the chevron lands — never anything for the body.
+    open.set(-1)
+    zeus.pump_frame()
+    must(!zeus.text_visible("alpha"), "closed")
+    must(zeus.draw_count() == closed + 3, "close: body gone at once, only the chevron in flight")
+    run_ms(200)
+    must(zeus.draw_count() == closed, "chevron landed")
+    must(zeus.proof_anim_live() == 0, "nothing in flight after close")
+
+    // Opening the other row starts from the top again, not from the last value.
+    open.set(1)
+    zeus.pump_frame()
+    must(zeus.draw_count() == settled + 3, "second row reveals from zero (same shell)")
+    run_ms(400)
+    must(zeus.draw_count() == settled, "second row landed")
+
+    // Reduced motion: shown at full height on the first frame.
+    zeus.set_reduced_motion(true)
+    open.set(0)
+    zeus.pump_frame()
+    must(zeus.draw_count() == settled, "reduced: no clip, no track")
+    must(zeus.proof_anim_live() == 0, "reduced: nothing in flight")
+
+    fmt.println("accordion reveal ok")
+}

@@ -419,17 +419,24 @@
       /* Soft drop shadow. Canvas2D's shadow applies to the next fill, so the
          rounded path is filled offscreen-left and only its blur lands inside
          the real rect — filling in place would paint over whatever the
-         shadow is meant to sit under. */
+         shadow is meant to sit under.
+         Units: the path is in layout (CSS) space under the scaled CTM, but
+         `shadowOffset*` / `shadowBlur` are device pixels and ignore the CTM.
+         So the path moves by `off` and the shadow by `off * sx`; mixing the
+         two put the fill on screen at 2x (a black card-sized block). `off`
+         also has to clear the canvas' left edge from wherever the rect is,
+         so it includes `p.x` — a rect at x = 1000 needs more than its own
+         width to leave the screen. */
       shadow: (x, y, w, h, radius, color, a, blur, dx, dy) => {
         const p = snapRect(x, y, w, h);
-        const off = p.w + 2 * blur + 64;
+        const off = p.x + p.w + 2 * blur + 64;
         ctx.save();
         ctx.shadowColor = rgba(color, a);
         ctx.shadowBlur = blur * sx;
         ctx.shadowOffsetX = (dx + off) * sx;
         ctx.shadowOffsetY = dy * sy;
         ctx.fillStyle = "#000";
-        traceRoundRect(p.x - off * sx, p.y, p.w, p.h,
+        traceRoundRect(p.x - off, p.y, p.w, p.h,
                        Math.round(radius * sx) / sx);
         ctx.fill();
         ctx.restore();
@@ -439,7 +446,10 @@
          by `border_w`. */
       stroke: (x, y, w, h, color, radius, width, a) => {
         const p = snapRect(x, y, w, h);
-        const lw = Math.max(1, Math.round(width * sx));
+        /* Whole device pixels, expressed in layout units: `lineWidth` is in
+           user space under the scaled CTM, so a device-pixel count here drew
+           a 1dp border 2dp wide at 2x. */
+        const lw = Math.max(1, Math.round(width * sx)) / sx;
         if (p.w - lw <= 0 || p.h - lw <= 0) return;
         ctx.save();
         ctx.lineWidth = lw;
@@ -1031,19 +1041,20 @@
           "wheel",
           (e) => {
             e.preventDefault();
-            /* Trackpads report pixel deltas per frame (deltaMode 0) and carry
-               the momentum feel; mouse wheels report lines/pages (deltaMode
-               1/2) as discrete clicks. Scale the latter to points and step
-               without momentum, so a notch stops where it lands. */
+            /* Every wheel delta steps exactly where it lands: no engine
+               coast. A trackpad's inertia already arrives as a stream of
+               wheel events from the OS, so an engine coast on top of it ran
+               the scroll twice (and painted a frame per coast step). Mouse
+               wheels report lines / pages (deltaMode 1 / 2); scale those to
+               points. */
             const p = layoutPoint(e.clientX, e.clientY);
+            const fn = exp.zeus_scroll_step || exp.zeus_scroll;
             if (e.deltaMode === 1) {
-              const fn = exp.zeus_scroll_step || exp.zeus_scroll;
               fn(p.x, p.y, e.deltaX * 16, e.deltaY * 16);
             } else if (e.deltaMode === 2) {
-              const fn = exp.zeus_scroll_step || exp.zeus_scroll;
               fn(p.x, p.y, e.deltaX * layoutW, e.deltaY * layoutH);
             } else {
-              exp.zeus_scroll(p.x, p.y, e.deltaX, e.deltaY);
+              fn(p.x, p.y, e.deltaX, e.deltaY);
             }
             schedule(0);
           },

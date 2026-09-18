@@ -83,5 +83,27 @@ must(snap.length > 0, "state snapshot is non-empty");
 const applied = exp.zeus_state_restore(snapPtr) as number;
 must(applied > 0, "state restore applies slots");
 
+// Steady state must not leak: the loader paints and syncs the a11y mirror
+// every frame, and runtime strings are never freed, so any per-frame string
+// shows up here as monotonic heap growth (the dump used to cost ~16 KB a
+// frame). Warm up, then hold the live heap flat over 600 frames with the
+// clock advancing so timers fire.
+let clock = 0;
+special.now_ms = () => BigInt(clock);
+const heapKb = () => (exp.zeus_heap_kb ? (exp.zeus_heap_kb() as number) : 0);
+for (let f = 0; f < 120; f++) {
+  clock += 16;
+  exp.zeus_paint();
+  exp.zeus_a11y_sync();
+}
+const warm = heapKb();
+for (let f = 0; f < 600; f++) {
+  clock += 16;
+  exp.zeus_paint();
+  exp.zeus_a11y_sync();
+}
+const grown = heapKb() - warm;
+must(grown <= 8, "live heap flat over 600 frames (grew " + grown + " KB)");
+
 if (failures) Deno.exit(1);
 console.log("wasm smoke ok");

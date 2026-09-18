@@ -356,9 +356,14 @@ fn paint_node(id: int) {
     if id <= 0 {
         return
     }
+    // Decide visibility before the transform / reveal shell, so a hidden node
+    // never emits an empty save / restore pair.
+    if arena.want_paint(id) == 0 {
+        return
+    }
     let sc = int(arena.nodes[id].an_scale)
     let tx = int(arena.nodes[id].an_tx)
-    let ty = int(arena.nodes[id].an_ty)
+    let mut ty = int(arena.nodes[id].an_ty)
     let mut rot = int(arena.nodes[id].an_rot)
     if int(arena.nodes[id].spin) != 0 {
         if arena.spin_live() != 0 {
@@ -368,11 +373,26 @@ fn paint_node(id: int) {
             }
         }
     }
+    // Reveal: clip to the shown share of the box and slide the content up by
+    // the rest, so it comes down from under whatever sits above it.
+    let rv = int(arena.nodes[id].an_reveal)
+    let mut clipped = 0
+    if rv < 100 {
+        let h = arena.nodes[id].h
+        let shown = h * rv / 100
+        clipped = 1
+        save()
+        clip(arena.draw_x(id), arena.draw_y(id), arena.nodes[id].w, shown, 0)
+        ty = ty + shown - h
+    }
     if sc == 100 {
         if tx == 0 {
             if ty == 0 {
                 if rot == 0 {
                     paint_node_body(id)
+                    if clipped != 0 {
+                        restore()
+                    }
                     return
                 }
             }
@@ -384,6 +404,9 @@ fn paint_node(id: int) {
     xform(tx, ty, sc, rot, cx, cy)
     paint_node_body(id)
     restore()
+    if clipped != 0 {
+        restore()
+    }
 }
 
 fn paint_node_body(id: int) {
@@ -395,7 +418,7 @@ fn paint_node_body(id: int) {
             return
         }
     }
-    if arena.want_show(id) == 0 {
+    if arena.want_paint(id) == 0 {
         return
     }
     let k = int(arena.nodes[id].kind)
@@ -628,7 +651,7 @@ fn paint_floaters(id: int) {
     if id <= 0 {
         return
     }
-    if arena.want_show(id) == 0 {
+    if arena.want_paint(id) == 0 {
         return
     }
     if arena.is_floater(id) != 0 {

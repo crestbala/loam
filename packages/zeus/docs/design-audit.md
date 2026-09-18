@@ -798,12 +798,122 @@ mounted row, so a very long option list is built whole), and it has no
 "this option" affordance beyond the highlight. `Select` still hardcodes its
 trigger width at `SELECT_W`.
 
+### Phase 4 batch 8 outcome — exit motion for overlays
+
+Closing a floater used to drop it from paint in the same frame, because paint,
+layout, hit-test, and the tree predicates all gated on one `want_show`. Paint
+now has its own gate, `arena.want_paint`: `want_show`, *or* an `enter_fade`
+node whose `show_amt` is still above zero. `sync_chrome` retargets the
+`EnterFade` track to 0 (`MOTION.Fast`, standard ease) instead of snapping it,
+so a closing panel fades out over the frames it takes the track to land;
+everything that is not paint keeps reading `want_show`, so the panel is inert
+from the first frame (a click passes through the transparent scrim at once,
+`text_visible` says hidden, focus does not land). Reduced motion and cold boot
+still jump. A floater re-opened mid-exit retargets from its current alpha.
+
+- The enter-fade target is now `shown_in_tree`, not the node's own `want_show`.
+  A Dialog / Drawer / Toast panel is hidden by its scrim's signal, never its
+  own, so before this it faded in on the first open only; now every open fades
+  in and every close fades out, scrim and panel together.
+- An in-flow node hidden by its *own* signal (an Accordion body) still snaps:
+  layout collapsed it this frame, and a fade painted over the neighbour that
+  moved into its rect would read as a glitch. Only floaters, and nodes hidden
+  by an ancestor, exit-fade.
+- `Toast` now carries `enter_fade` on the card and sinks 12dp while fading
+  out; `Drawer` slides off over `MOTION.Fast` instead of jumping to the edge.
+- Known limit, unchanged: there is no group opacity, so only the surface (fill /
+  svg / image) fades — text inside it stays opaque until the node is gone. That
+  is the same on entry and is the "Group / layer opacity" item below.
+- Also in this batch: `Accordion` and `Menu` take their rows as data
+  (`items = []AccordionRow` / `[]MenuRow`) with one `on_select(index)` callback
+  on the Menu, instead of a trailing block of items. `Menu.active` is optional
+  (`active__set`): pass one to observe or drive the menu; omitted, the menu
+  owns it.
+- `zeus_overlay_exit.loam` locks the draw-count shape across close, mid-fade,
+  landed, reopen-mid-exit, dialog scrim, and reduced motion; the three
+  Accordion / Menu fixtures were migrated to the data API.
+
+### Phase 4 batch 9 outcome — reveal (the paint-only "animated height")
+
+Animating a layout height per frame is exactly what the model forbids, so the
+Accordion body did not move: it appeared at full height and faded. The deferred
+piece was a paint-only clip, and that is what landed: `UiNode.reveal` opts a
+node in (`zeus.enter_reveal`), `an_reveal` is the share of its laid-out height
+paint shows (0..100, `APROP.RevealAmt`), and `paint_node` clips the box to that
+share from the top and slides the content up by the rest, so a body comes down
+from under its header. Layout gives the box its full height on the frame it is
+shown — one discrete layout, as before — and only paint catches up, over
+`MOTION.Base` with the emphasized ease.
+
+- `sync_chrome` drives it beside `enter_fade`: settle on first sight (cold boot
+  is full height), reveal on show, snap to 0 on hide so the next open starts at
+  the top. There is no reveal-out: layout has already collapsed an in-flow node
+  by the time paint could animate it, the same reason the exit fade skips them.
+- `Accordion` bodies and `Collapsible` opt in. The clip is a plain rect; the
+  card's own `overflow_hidden` still rounds the corners.
+- Fixed on the way: `paint_node` wrapped its transform shell *before* the
+  visibility check in `paint_node_body`, so a hidden node carrying a paint
+  transform (a rotated chevron in a hidden row, a translated card in a closed
+  Toast) emitted an empty save / xform / restore triple every frame. The check
+  is now first, so a hidden node costs nothing. No golden moved: they are the
+  settled first frame, where no such node exists.
+- `zeus_accordion_reveal.loam` locks the draw-list shape at open (reveal shell
+  present), settled (gone), close (body snaps; only the chevron in flight),
+  re-open of another row (starts from zero), and reduced motion (no shell).
+
+### Phase 4 fix — web host: paint units, a11y leak, wheel coast (batch 9.1)
+
+Three gallery-on-wasm defects, all host-side; the headless draw list for the
+same frames was correct throughout, which is why no golden caught them.
+
+- **Shadows at 2x painted a black card-sized block.** `loader.js` draws a
+  shadow by filling the rounded rect off-canvas to the left and letting only
+  its blur land in place. Under the dpr-scaled CTM the path is in layout px
+  but `shadowOffsetX` / `shadowBlur` are device px and ignore the CTM; the
+  code moved the path by `off * sx` (layout space, so 2·off at 2x) and the
+  shadow by `off * sx` (device, so off). The fill and its shadow disagreed by
+  `off`, the Large card's solid `#000` fill landed on screen at x ≈ −68..417,
+  and its shadow washed the Medium card grey. The offset also had to include
+  `p.x`: `w + 2·blur + 64` does not clear the canvas edge for a rect that is
+  not at the left margin. Now: path moves by `off`, shadow by `off * sx`,
+  `off = p.x + p.w + 2·blur + 64`.
+- **Borders were double width at 2x.** `stroke()` computed `lineWidth` as a
+  device-pixel count, but `lineWidth` is in user space under the scaled CTM,
+  so a 1dp hairline drew 2dp (4 device px). Now snapped to whole device pixels
+  and expressed in layout units (`round(w·sx) / sx`). This also ate the inner
+  radius of small outlined controls (icon buttons, chips).
+- **The wasm heap grew without bound (~2 MB/min idle).** `zeus_a11y_sync`
+  ran after every paint and called `engine_a11y_dump`, which builds a fresh
+  ~16 KB string — and the runtime never frees strings (`loam_rt.h`: "no
+  string ownership story"). The RAM chip's 500 ms tick forced a frame, so it
+  leaked while idle. Two changes: `engine_a11y_bytes` returns the refcounted
+  `[]int` the dump is built from, and the shim copies it out and
+  `loam_vec_drop`s it (no string exists); and `engine_layout_gen` counts
+  layout passes, so the shim re-dumps only when the tree could have changed
+  (`NULL` = unchanged; the loader keeps its mirror). `zeus_heap_kb` is
+  exported for the RAM chip and harnesses. Measured in the Deno harness on the
+  gallery: 910 → 2250 KB over 1800 frames before; flat at 886 KB after,
+  scrolling included. `wasm_smoke.ts` now asserts the live heap moves ≤ 8 KB
+  over 600 frames with timers firing.
+- **Wheel scrolling coasted twice.** Web and mac armed the engine's momentum
+  for precise (trackpad) deltas, but the OS already delivers a trackpad's
+  inertia as a stream of wheel events, so the engine coasted on top of it and
+  painted a frame per coast step after the fingers lifted. Wheel input now
+  steps exactly where it lands on both hosts (`scroll_step`). Touch pans on
+  iOS / Android keep the engine coast: a canvas gets no OS inertia there.
+
+Recorded, not fixed: any `{{ }}` interpolation or `string_from_bytes` that
+runs per frame or per timer tick leaks for the process lifetime. That is a
+language limit (strings have no drop), and the rule for Zeus code is the one
+`engine_a11y_bytes` follows — build bytes into a `[]int`, hand the vec out,
+never mint a string on a hot path.
+
 ### Remaining work (living list)
 
 The single maintained tracker of what is still open. Update it in the same commit
 that closes an item, and tick a box rather than deleting the line, so the record
 of what was deferred stays readable. Landed so far: phases 1–3; phase 4 batches
-1–6.
+1–9.
 
 **Phase 4 — components still to build**
 
@@ -860,12 +970,13 @@ scope**:
 
 **Limits recorded when earlier batches landed**
 
-- [ ] Overlays (batch 3): no exit animation (close hides immediately); anchored
-  placement assumes the desktop inset origin, so it is off by the safe area on a
-  notched mobile host. (Batch 6.1 fixed the paint space and made a floater follow
-  its trigger on scroll.)
-- [ ] Accordion (batch 2): the body fades; there is no animated height, because
-  that needs a paint-only clip prop that does not exist yet.
+- [x] Overlays (batch 3): no exit animation (close hides immediately). **(batch 8)**
+- [ ] Overlays (batch 3): anchored placement assumes the desktop inset origin, so
+  it is off by the safe area on a notched mobile host. (Batch 6.1 fixed the paint
+  space and made a floater follow its trigger on scroll.)
+- [x] Accordion (batch 2): the body fades; there is no animated height, because
+  that needs a paint-only clip prop that does not exist yet. **(batch 9:
+  `enter_reveal`)**
 - [ ] Phase 3: the draw list is still a full-frame blit — no partial repaint /
   host damage contract.
 - [ ] `EASE` curves are integer approximations (cubic / quint ease-out,
@@ -886,6 +997,11 @@ scope**:
   16dp, `Pip` 8–10dp).
 - [ ] `is_hot` still runs the hover-fade math for every node each frame on
   overlay-scroll hosts (hover is correctly suppressed, but the math is not).
+- [ ] Strings are never freed (`loam_rt.h`). A `{{ }}` interpolation on a
+  timer tick (the gallery's RAM chip, every 500 ms) leaks a few bytes per
+  tick for the process lifetime; harmless at that rate, but a per-frame one
+  is a real leak (batch 9.1 removed the one the web host had). Needs a string
+  drop in the language; until then, hot paths build `[]int`, not strings.
 
 **Phase 5 — gallery + docs**
 

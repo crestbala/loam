@@ -1513,11 +1513,10 @@ static void mac_schedule_next(int more) {
         dx = dy;
         dy = 0.0;
     }
-    int dirty;
-    if (precise)
-        dirty = zeus_handle_scroll((int64_t)p.x, (int64_t)p.y, (int64_t)(-dx), (int64_t)(-dy));
-    else
-        dirty = zeus_handle_scroll_step((int64_t)p.x, (int64_t)p.y, (int64_t)(-dx), (int64_t)(-dy));
+    /* Step for both: a trackpad's inertia already arrives from AppKit as a
+       stream of momentum-phase events, so an engine coast on top of it ran
+       the scroll twice and kept painting after the finger lifted. */
+    int dirty = zeus_handle_scroll_step((int64_t)p.x, (int64_t)p.y, (int64_t)(-dx), (int64_t)(-dy));
     if (dirty) [self setNeedsDisplay:YES];
 }
 

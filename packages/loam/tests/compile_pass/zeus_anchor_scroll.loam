@@ -23,11 +23,9 @@ fn main() {
             zeus.Box(height = 400)
             let trigger = zeus.Box(width = 120, height = 32, background = zeus.plate())
             trig = trigger.id
-            let m = zeus.Menu(trigger, active = open, width = 160)
+            let rows = []MenuRow { MenuRow(label = "Rename") }
+            let m = zeus.Menu(trigger, active = open, items = rows, width = 160)
             panel = m.id
-            zeus.slot(m, fn() {
-                zeus.MenuItem(active = open, index = 0, count = 1, label = "Rename")
-            })
             zeus.Box(height = 800)
         }
     })

@@ -71,7 +71,7 @@ static const char *const c_roots_zeus[] = {
     "engine_set_reduced_motion", "engine_next_ms",
     "engine_click", "engine_scroll", "engine_scroll_step", "engine_drag",
     "engine_hover", "engine_mouseup", "engine_over_button", "engine_cursor",
-    "engine_a11y_dump", "engine_signals_dump", "engine_state_load",
+    "engine_a11y_dump", "engine_a11y_bytes", "engine_layout_gen", "engine_signals_dump", "engine_state_load",
     "engine_key_apply", "engine_fill_focus", "engine_focus_depth",
     "engine_focus_node", "engine_focus_ctx", "engine_focus_step",
     "engine_focus_captures_text", "engine_key", "engine_key_up",

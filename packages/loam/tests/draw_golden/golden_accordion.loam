@@ -8,14 +8,12 @@ fn main() {
     let open = zeus.signal(1)
     zeus.snapshot(360, 220, fn() -> Node {
         zeus.Page() {
-            zeus.Accordion(open) {
-                zeus.AccordionItem(open = open, index = 0,
-                                   title = "Shipping", body = "Ships in 2-3 days.")
-                zeus.AccordionItem(open = open, index = 1,
-                                   title = "Returns", body = "30-day return window.")
-                zeus.AccordionItem(open = open, index = 2,
-                                   title = "Warranty", body = "Two years, parts and labor.")
+            let rows = []AccordionRow {
+                AccordionRow { title: "Shipping", body: "Ships in 2-3 days." },
+                AccordionRow { title: "Returns", body: "30-day return window." },
+                AccordionRow { title: "Warranty", body: "Two years, parts and labor." },
             }
+            zeus.Accordion(open, items = rows)
         }
     })
 }
