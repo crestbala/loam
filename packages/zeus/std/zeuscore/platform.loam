@@ -82,6 +82,10 @@ fn plat_save() {}
 /// number), Linux/Android resident set, or the live wasm heap on the web
 /// host. 0 when the host reports nothing.
 fn plat_mem_kb() -> int {}
+/// Wall clock in ms (the async timer clock). For deadlines that must hold
+/// across an idle host sleep: the engine's own `now_ms` advances by a capped
+/// frame delta, so it lags wall time after a wake.
+fn plat_now_ms() -> int {}
 /// Clip to a rect, rounded when `radius` > 0. The rounded form is what stops
 /// an image or a gradient inside a rounded card from having square corners,
 /// and it is how the accordion animates its open height (clip, not layout).

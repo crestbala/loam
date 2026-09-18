@@ -1569,7 +1569,15 @@ fn engine_next_ms() -> int {
     if arena.spin_live() != 0 {
         return 16
     }
-    return async.next_due()
+    // A shown scrollbar thumb needs one wake at its hide deadline.
+    let bar = arena.bar_next_ms()
+    let due = async.next_due()
+    if bar > 0 {
+        if due <= 0 || bar < due {
+            return bar
+        }
+    }
+    return due
 }
 
 /// Move `sig` toward `to` over `ms` milliseconds.

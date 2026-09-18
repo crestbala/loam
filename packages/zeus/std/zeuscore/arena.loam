@@ -62,6 +62,9 @@ struct UiNode {
     /// 0..100 ease of the press overlay. Rest is 0, so DRAW goldens hold.
     aw: int,
     ah: int,
+    /// Wall-clock deadline (ms) until which the scrollbar thumb is shown;
+    /// 0 = hidden. Set on every scroll, no track: the thumb appears and
+    /// disappears in one frame each, and `bar_next_ms` wakes the host once.
     bar_t: int,
     parent: int,
     key_ctx: int,
@@ -776,7 +779,7 @@ enum APROP {
     SwitchTween = 3,
     // Mounted-surface fade 0..100 (UiNode.show_amt).
     EnterFade = 4,
-    // 5 was the scrollbar fade; the thumb is static now (no track).
+    // 5 was the scrollbar fade; the thumb shows and hides in one frame now.
     // Signal paint overlay (sig_paint[sid]).
     SigVal = 6,
     // Paint transform / appearance, all paint-only (no layout pass reads them):
@@ -2413,12 +2416,14 @@ fn physics_step() -> int {
             nodes[i].vel_x = ax.vel
             if ay.dirty != 0 {
                 dirty = 1
+                bar_on(i)
                 if nodes[i].bind_sig > 0 {
                     store_sig_paint(nodes[i].bind_sig, ay.pos)
                 }
             }
             if ax.dirty != 0 {
                 dirty = 1
+                bar_on(i)
             }
         }
     }
@@ -2459,6 +2464,7 @@ fn apply_delta_y(id: int, dy: int, momentum: int) -> int {
         return 0
     }
     nodes[id].scroll_y = ny
+    bar_on(id)
     mark_scroll()
     if nodes[id].bind_sig > 0 {
         store_sig_paint(nodes[id].bind_sig, ny)
@@ -2492,6 +2498,7 @@ fn apply_delta_x(id: int, dx: int, momentum: int) -> int {
         return 0
     }
     nodes[id].scroll_x = nx
+    bar_on(id)
     mark_scroll()
     return 1
 }
@@ -2520,11 +2527,71 @@ fn clamp_scroll(id: int) {
     mark_scroll()
 }
 
-/// The thumb is static: painted whenever the content overflows, never faded.
-/// It used to show on scroll and fade out over 900 ms, which kept a track —
-/// and a paint frame every 16 ms — alive after every wheel tick.
+/// How long the thumb stays after the last scroll before it hides.
+fn bar_hide() -> int {
+    return 900
+}
+
+/// Scroll / drag bumped the bar: show it now and push the hide deadline out.
+/// No track and no fade — it appears this frame and vanishes at the deadline
+/// (`bar_expire`), so an idle pane costs no frames.
+fn bar_on(id: int) {
+    if id <= 0 {
+        return
+    }
+    if id >= nodes.len {
+        return
+    }
+    nodes[id].bar_t = platform.plat_now_ms() + bar_hide()
+    mark_paint_id(id)
+}
+
+/// 1 while the bar should be visible: mid-drag or before its deadline.
 fn bar_active(id: int) -> int {
-    return 1
+    if drag_id == id {
+        if drag_bar != 0 {
+            return 1
+        }
+    }
+    if nodes[id].bar_t > platform.plat_now_ms() {
+        return 1
+    }
+    return 0
+}
+
+/// Per-frame: clear deadlines that passed and ask for one paint to hide the
+/// thumb. Returns 1 if any bar just hid.
+fn bar_expire() -> int {
+    let n = nodes.len
+    let mut hid = 0
+    let now = platform.plat_now_ms()
+    for i in 1..n {
+        if nodes[i].bar_t != 0 {
+            if nodes[i].bar_t <= now {
+                nodes[i].bar_t = 0
+                mark_paint_id(i)
+                hid = 1
+            }
+        }
+    }
+    return hid
+}
+
+/// Milliseconds until the soonest thumb hides; 0 when none is shown. Lets an
+/// idle host wake exactly once to paint the hide instead of polling.
+fn bar_next_ms() -> int {
+    let n = nodes.len
+    let mut soon = 0
+    let now = platform.plat_now_ms()
+    for i in 1..n {
+        if nodes[i].bar_t > now {
+            let d = nodes[i].bar_t - now
+            if soon == 0 || d < soon {
+                soon = d
+            }
+        }
+    }
+    return soon
 }
 
 fn bar_visible(id: int) -> int {
@@ -2559,14 +2626,8 @@ fn bar_visible_x(id: int) -> int {
     return bar_active(id)
 }
 
-/// Thumb alpha: resting, or full while it is being dragged.
 fn bar_alpha(id: int) -> int {
-    if drag_id == id {
-        if drag_bar != 0 {
-            return 180
-        }
-    }
-    return 110
+    return 180
 }
 
 fn bar_w() -> int {
