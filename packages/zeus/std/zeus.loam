@@ -6334,8 +6334,40 @@ fn Breadcrumbs(items: []string) {
     }
 }
 
-/// One tab trigger. Active: card background, foreground text.
-fn Tab(label: string, selected: Signal<int>, index: int) {
+/// Step an exclusive-pick signal by `delta` if this row is the one that
+/// currently holds it. Clamps at both ends (same as Menu / Select).
+fn roving_step(value: Signal<int>, index: int, count: int, delta: int) {
+    if value.get() != index {
+        return
+    }
+    let n = value.get() + delta
+    if n < 0 {
+        return
+    }
+    if n >= count {
+        return
+    }
+    value.set(n)
+}
+
+/// Roving tabindex for one exclusive-pick row: only the selected item is
+/// focusable, and it takes focus when it becomes selected so the next
+/// arrow lands on it. Menu rows do the same.
+fn roving_focus(node: Node, value: Signal<int>, index: int) {
+    let nid = node.id
+    effect(|| {
+        if value.get() == index {
+            arena.nodes[nid].focusable = 1
+            arena.claim_focus(nid)
+        } else {
+            arena.nodes[nid].focusable = 0
+        }
+    })
+}
+
+/// One tab trigger. Active: card background, foreground text. Left / Right
+/// move the selection; only the selected tab is a tab stop.
+fn Tab(label: string, selected: Signal<int>, index: int, count: int = 0) {
     let tab = Box(
         align_direction = DIRECTION.Row,
         align_items = ALIGN.Center,
@@ -6353,6 +6385,9 @@ fn Tab(label: string, selected: Signal<int>, index: int) {
     ui_pop()
     selected_chrome(tab, text, || { selected.get() == index },
                     plate(), raised(), ink(), mute())
+    apply_key(tab, "right", "tab.next", fn() { roving_step(selected, index, count, 1) }, true, false)
+    apply_key(tab, "left", "tab.prev", fn() { roving_step(selected, index, count, -1) }, true, false)
+    roving_focus(tab, selected, index)
 }
 
 /// Tabs: 36px muted tray, rounded, 4px inset, with a card-coloured trigger.
@@ -6368,15 +6403,16 @@ fn Tabs(selected: Signal<int>, labels: []string) {
             radius = RAD_LG,
             align_items = ALIGN.Center
         ) {
+            let n = labels.len
             Each(labels, fn(i, lab) {
-                Tab(lab, selected, i)
+                Tab(lab, selected, i, n)
             })
         }
     }
 }
 
 /// One toggle-style choice row inside `Segmented` / `ToggleGroup`.
-fn Choice(label: string, value: Signal<int>, index: int) {
+fn Choice(label: string, value: Signal<int>, index: int, count: int = 0) {
     let row = Box(
         align_direction = DIRECTION.Row,
         align_items = ALIGN.Center,
@@ -6394,6 +6430,9 @@ fn Choice(label: string, value: Signal<int>, index: int) {
     ui_pop()
     selected_chrome(row, text, || { value.get() == index },
                     plate(), raised(), ink(), mute())
+    apply_key(row, "right", "choice.next", fn() { roving_step(value, index, count, 1) }, true, false)
+    apply_key(row, "left", "choice.prev", fn() { roving_step(value, index, count, -1) }, true, false)
+    roving_focus(row, value, index)
 }
 
 /// Exclusive pick from `labels` as a Tabs-style tray. Same chrome as
@@ -6408,8 +6447,9 @@ fn Segmented(value: Signal<int>, labels: []string) {
             radius = RAD_LG,
             align_items = ALIGN.Center
         ) {
+            let n = labels.len
             Each(labels, fn(i, lab) {
-                Choice(lab, value, i)
+                Choice(lab, value, i, n)
             })
         }
     }
@@ -6741,9 +6781,9 @@ fn ComboRow(text: Signal<string>, active: Signal<int>, fin: Node, index: int, la
 }
 
 /// Radio group: vertical stack of `Radio` rows, 8px apart. The picked row gets a
-/// filled primary dot.
-fn Radio(label: string, value: Signal<int>, index: int) {
-    Box(align_direction = DIRECTION.Row, spacing = SPACE.Exs,
+/// filled primary dot. Arrows move the pick; only the selected row is a tab stop.
+fn Radio(label: string, value: Signal<int>, index: int, count: int = 0) {
+    let row = Box(align_direction = DIRECTION.Row, spacing = SPACE.Exs,
         align_items = ALIGN.Center,
         on_click = fn() => value.set(index),
         a11y_role = "radio",
@@ -6759,13 +6799,19 @@ fn Radio(label: string, value: Signal<int>, index: int) {
         }
         Text(label, color = ink(), font = FONT_BODY)
     }
+    apply_key(row, "down", "radio.next", fn() { roving_step(value, index, count, 1) }, true, false)
+    apply_key(row, "up", "radio.prev", fn() { roving_step(value, index, count, -1) }, true, false)
+    apply_key(row, "right", "radio.next", fn() { roving_step(value, index, count, 1) }, true, false)
+    apply_key(row, "left", "radio.prev", fn() { roving_step(value, index, count, -1) }, true, false)
+    roving_focus(row, value, index)
 }
 
 /// `RadioGroup(value, labels)`: one circle per option.
 fn RadioGroup(value: Signal<int>, labels: []string) {
+    let n = labels.len
     Column(SPACE.Exs) {
         Each(labels, fn(i, lab) {
-            Radio(lab, value, i)
+            Radio(lab, value, i, n)
         })
     }
 }
