@@ -1,0 +1,47 @@
+// Combobox: a text field with a case-insensitively filtered option list. Typing
+// opens it, arrows move the highlight, Enter picks into the field, Escape or an
+// outside click closes.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("combobox", 360, 300)
+    let query = zeus.signal("")
+    let tree = zeus.Page() {
+        zeus.Combobox(query, []string { "Apple", "Apricot", "Banana", "Cherry" },
+                      width = 220)
+    }
+    zeus.root(tree)
+    zeus.pump_frame()
+    zeus.engine_layout(360, 300)
+
+    must(!zeus.text_visible("Apple"), "list starts closed")
+
+    // Focus the field (found by its placeholder label) and type "ap".
+    zeus.engine_click_text("Search")
+    zeus.engine_mouseup()
+    zeus.engine_layout(360, 300)
+    zeus.engine_key_ev(97, 0)
+    zeus.engine_key_ev(112, 0)
+    zeus.engine_layout(360, 300)
+    must(query.get() == "ap", "typing wrote the query")
+    must(zeus.text_visible("Apple"), "list opened and matched Apple")
+    must(zeus.text_visible("Apricot"), "matched Apricot")
+    must(!zeus.text_visible("Banana"), "Banana filtered out")
+
+    // Enter picks the highlighted option into the field.
+    zeus.engine_key_ev(13, 0)
+    must(query.get() == "Apple", "enter picked the highlight")
+    zeus.engine_layout(360, 300)
+    must(!zeus.text_visible("Apricot"), "list closed after picking")
+
+    fmt.println("combobox ok")
+}

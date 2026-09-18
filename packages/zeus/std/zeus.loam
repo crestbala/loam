@@ -6240,12 +6240,11 @@ fn Segmented(value: Signal<int>, labels: []string) {
 }
 
 const SELECT_W: int = 200
-/// Trigger height 36 + 6pt of air.
-const SELECT_DROP: int = 42
 
-/// One row of a `Select` menu: hover wash, check icon on the picked row.
-fn SelectRow(value: Signal<int>, open: Signal<int>, index: int, label: string) {
-    Box(
+/// One row of a `Select` menu: a check icon on the picked row and a raised fill
+/// on the active row (the keyboard highlight).
+fn SelectRow(value: Signal<int>, active: Signal<int>, index: int, label: string) {
+    let row = Box(
         align_direction = DIRECTION.Row,
         align_items = ALIGN.Center,
         spacing = 4,
@@ -6253,71 +6252,316 @@ fn SelectRow(value: Signal<int>, open: Signal<int>, index: int, label: string) {
         padding_y = 6,
         radius = RAD_SM,
         on_click = fn() {
-        value.set(index)
-        open.set(0)
-    },
+            value.set(index)
+            active.set(-1)
+        },
         a11y_role = "listitem",
         a11y_label = label,
-        cursor = "pointer"
-    ) {
-        Text(label, color = ink(), font = FONT_BODY)
-        Grow()
-        let mark = Icon(IC_CHECK, 16, ink())
-        show_eq(mark, value, index)
-    }
+        cursor = "pointer",
+        hover_off = false
+    )
+    ui_push(row.id)
+    Text(label, color = ink(), font = FONT_BODY)
+    Grow()
+    let mark = Icon(IC_CHECK, 16, ink())
+    show_eq(mark, value, index)
+    ui_pop()
+    selected_chrome(row, empty_view(), || { active.get() == index },
+                    raised(), "", "", "")
 }
 
-/// Dropdown. The trigger shows the current label; the menu is a floater
-/// pinned under it (card surface, p-1 viewport, hairline border).
+/// Dropdown. The trigger shows the current label; the menu is an anchored
+/// floater (card surface, p-1 viewport, hairline border) that stays beside the
+/// trigger and follows it on scroll. Arrows move the highlight, Enter picks,
+/// Escape or an outside click closes. `active` (-1 = closed) is the menu's only
+/// extra state; the picked value stays in the caller's `value` signal.
 fn Select(value: Signal<int>, labels: []string) {
-    let open = signal(0)
+    let active = signal(-1)
+    let n = labels.len
+    // Outside click closes. Created first so the trigger and menu draw over it.
+    let scrim = Overlay(on_click = fn() { active.set(-1) })
+    show_ge(scrim, active, 0)
     let host = Box(align_direction = DIRECTION.Column)
-    slot(host, || {
-        Box(
-            align_direction = DIRECTION.Row,
-            align_items = ALIGN.Center,
-            spacing = 4,
-            width = SELECT_W,
-            padding_x = 12,
-            padding_y = 8,
-            background = plate(),
-            border = HAIRLINE,
-            border_color = rule(),
-            radius = RAD_MD,
-            on_click = fn() => open.set(1 - open.get()),
-            a11y_role = "combobox",
-            cursor = "pointer"
-        ) {
-            Each(labels, fn(i, lab) {
-                let t = Text(lab, color = ink(), font = FONT_BODY)
-                show_eq(t, value, i)
-            })
-            Grow()
-            Icon(IC_CHEV_DOWN, 16, dim())
-        }
-        let menu = Box(
-            align_direction = DIRECTION.Column,
-            width = SELECT_W,
-            padding = 4,
-            spacing = 2,
-            background = plate(),
-            border = HAIRLINE,
-            border_color = rule(),
-            radius = RAD_MD,
-            position = pos_absolute(),
-            top = SELECT_DROP,
-            left = 0,
-            z_index = 10,
-            visible = open
-        )
-        enter_fade(menu)
-        slot(menu, || {
-            Each(labels, fn(i, lab) {
-                SelectRow(value, open, i, lab)
-            })
-        })
+    ui_push(host.id)
+    let trigger = Box(
+        align_direction = DIRECTION.Row,
+        align_items = ALIGN.Center,
+        spacing = 4,
+        width = SELECT_W,
+        padding_x = 12,
+        padding_y = 8,
+        background = plate(),
+        border = HAIRLINE,
+        border_color = rule(),
+        radius = RAD_MD,
+        on_click = fn() {
+            if active.get() >= 0 {
+                active.set(-1)
+            } else {
+                active.set(0)
+            }
+        },
+        a11y_role = "combobox",
+        cursor = "pointer",
+        hover_off = false,
+        press = true
+    )
+    ui_push(trigger.id)
+    Each(labels, fn(i, lab) {
+        let t = Text(lab, color = ink(), font = FONT_BODY)
+        show_eq(t, value, i)
     })
+    Grow()
+    Icon(IC_CHEV_DOWN, 16, dim())
+    ui_pop()
+    let menu = Box(
+        align_direction = DIRECTION.Column,
+        width = SELECT_W,
+        padding = 4,
+        spacing = 2,
+        background = plate(),
+        border = HAIRLINE,
+        border_color = rule(),
+        radius = RAD_MD,
+        position = pos_absolute(),
+        z_index = 60,
+        elevation = 2
+    )
+    show_ge(menu, active, 0)
+    arena.anchor_to(menu.id, trigger.id, PLACE.PlaceBelow, 6)
+    enter_fade(menu)
+    apply_key(menu, "escape", "select.close", fn() { active.set(-1) }, true, false)
+    apply_key(menu, "down", "select.next", fn() {
+        if active.get() >= 0 {
+            if active.get() + 1 < n {
+                active.set(active.get() + 1)
+            }
+        }
+    }, true, false)
+    apply_key(menu, "up", "select.prev", fn() {
+        if active.get() > 0 {
+            active.set(active.get() - 1)
+        }
+    }, true, false)
+    apply_key(menu, "enter", "select.pick", fn() {
+        if active.get() >= 0 {
+            value.set(active.get())
+            active.set(-1)
+        }
+    }, true, false)
+    // The menu holds focus, so the arrows and Enter above reach it.
+    let mid = menu.id
+    effect(|| {
+        if active.get() >= 0 {
+            arena.claim_focus(mid)
+        }
+    })
+    ui_push(menu.id)
+    Each(labels, fn(i, lab) {
+        SelectRow(value, active, i, lab)
+    })
+    ui_pop()
+    ui_pop()
     align_self(host, ALIGN.Start)
+}
+
+// --- combobox --------------------------------------------------------------
+
+/// Case-insensitive ASCII substring test, used to filter combobox options.
+fn ci_has(hay: string, needle: string) -> bool {
+    let hn = hay.len
+    let nn = needle.len
+    if nn == 0 {
+        return true
+    }
+    if nn > hn {
+        return false
+    }
+    let mut i = 0
+    while i + nn <= hn {
+        let mut j = 0
+        let mut ok = 1
+        while j < nn {
+            if lower_byte(hay[i + j]) != lower_byte(needle[j]) {
+                ok = 0
+            }
+            j = j + 1
+        }
+        if ok != 0 {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+fn lower_byte(c: int) -> int {
+    if c >= 65 {
+        if c <= 90 {
+            return c + 32
+        }
+    }
+    return c
+}
+
+fn combo_filter(options: []string, q: string) -> []string {
+    let mut out = []string {}
+    let n = options.len
+    for i in 0..n {
+        if ci_has(options[i], q) {
+            push(out, options[i])
+        }
+    }
+    return out
+}
+
+struct ComboboxProps {
+    placeholder: string = "Search",
+    width: int = -1,
+    radius: int = -1,
+}
+
+/// A text field with a filtered option list below it. Typing (or Down) opens
+/// the list, showing the options that contain the query case-insensitively.
+/// Up / Down move the highlight, Enter picks the highlighted option into the
+/// field, Escape or an outside click closes. `text` is the one piece of state
+/// and belongs to the caller. Options should be unique: the list is keyed by
+/// label (`zeus.For`).
+fn Combobox(text: Signal<string>, options: []string, p: ComboboxProps) {
+    let active = signal(-1)
+    let matches = signal([]string {})
+    let opts = options
+    effect(|| {
+        matches.set(combo_filter(opts, text.get()))
+    })
+    let w = px_or_default(p.width, 240)
+    // Outside click closes. Created first so the field and list draw over it.
+    let scrim = Overlay(on_click = fn() { active.set(-1) })
+    show_ge(scrim, active, 0)
+    let host = Box(align_direction = DIRECTION.Column)
+    ui_push(host.id)
+    let field = Box(
+        align_direction = DIRECTION.Row,
+        align_items = ALIGN.Center,
+        spacing = 4,
+        width = w,
+        padding_x = 12,
+        padding_y = 8,
+        background = plate(),
+        border = HAIRLINE,
+        border_color = rule(),
+        radius = px_or_default(p.radius, RAD_MD),
+        cursor = "text"
+    )
+    ui_push(field.id)
+    // A focused text field consumes Enter before any keymap chord sees it, so
+    // the list keys are handled in `on_key_down` via `current_key()`. The
+    // handler is installed after the node exists (it writes back into the field;
+    // the local is `fin` because `input` is the input module).
+    let fin = Input(bind = text, placeholder = p.placeholder,
+                    background = "", color = ink(), font = FONT_BODY,
+                    padding = 0, grow = 1, a11y_label = p.placeholder)
+    let iid = fin.id
+    arena.nodes[iid].kdown_fn = intern_fn(fn() {
+        let picked = combo_key(active, matches)
+        if picked >= 0 {
+            let ms = matches.get()
+            if picked < ms.len {
+                text.set(ms[picked])
+                set_input(node_handle(iid), ms[picked])
+            }
+            active.set(-1)
+        }
+    })
+    Icon(IC_CHEV_DOWN, 16, dim())
+    ui_pop()
+    let list = Box(
+        align_direction = DIRECTION.Column,
+        width = w,
+        padding = 4,
+        spacing = 2,
+        background = plate(),
+        border = HAIRLINE,
+        border_color = rule(),
+        radius = px_or_default(p.radius, RAD_MD),
+        position = pos_absolute(),
+        z_index = 60,
+        elevation = 2
+    )
+    show_ge(list, active, 0)
+    arena.anchor_to(list.id, field.id, PLACE.PlaceBelow, 4)
+    enter_fade(list)
+    ui_push(list.id)
+    For(matches, fn(s) => s, fn(i, s) {
+        ComboRow(text, active, fin, i, s)
+    })
+    ui_pop()
+    ui_pop()
+    align_self(host, ALIGN.Start)
+}
+
+/// Read the pending key and move the combobox highlight. Returns the index to
+/// pick, or -1.
+fn combo_key(active: Signal<int>, matches: Signal<[]string>) -> int {
+    let k = current_key().key
+    let n = matches.get().len
+    if k == Key.Down {
+        if active.get() < 0 {
+            active.set(0)
+        } else if active.get() + 1 < n {
+            active.set(active.get() + 1)
+        }
+        return -1
+    }
+    if k == Key.Up {
+        if active.get() > 0 {
+            active.set(active.get() - 1)
+        }
+        return -1
+    }
+    if k == Key.Enter {
+        if active.get() >= 0 {
+            return active.get()
+        }
+        return -1
+    }
+    if k == Key.Escape {
+        active.set(-1)
+        return -1
+    }
+    if k >= 32 {
+        if k < 127 {
+            // Typing filters the list; open it on the first character.
+            active.set(0)
+        }
+    }
+    return -1
+}
+
+/// One option row of a `Combobox`. Picking writes the label into the field.
+fn ComboRow(text: Signal<string>, active: Signal<int>, fin: Node, index: int, label: string) {
+    let row = Box(
+        align_direction = DIRECTION.Row,
+        align_items = ALIGN.Center,
+        spacing = 4,
+        padding_x = 8,
+        padding_y = 6,
+        radius = RAD_SM,
+        on_click = fn() {
+            text.set(label)
+            set_input(fin, label)
+            active.set(-1)
+        },
+        a11y_role = "option",
+        a11y_label = label,
+        cursor = "pointer",
+        hover_off = false
+    )
+    ui_push(row.id)
+    Text(label, color = ink(), font = FONT_BODY)
+    ui_pop()
+    selected_chrome(row, empty_view(), || { active.get() == index },
+                    raised(), "", "", "")
 }
 
 /// Radio group: vertical stack of `Radio` rows, 8px apart. The picked row gets a

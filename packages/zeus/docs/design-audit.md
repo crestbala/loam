@@ -379,7 +379,7 @@ answers depending on how you arrived.
 | 1 | Audit | **done** | `8289306` |
 | 2 | Tokens + paint primitives | **done** | `2184563` |
 | 3 | Dirty-channel split + animation subsystem + state layer | **done** | `feat(zeus): dirty-channel split + animation track pool (phase 3)` |
-| 4 | Components, in batches | **in progress — batches 1–6** | `feat: paint-only motion + feedback primitives` / `feat: Accordion` / `feat: overlay family` / `feat: elevation + stroked borders` / `feat: Menu` / `feat: Collapsible + Drawer` / `fix: anchored floaters in a scroller` |
+| 4 | Components, in batches | **in progress — batches 1–7** | `feat: paint-only motion + feedback primitives` / `feat: Accordion` / `feat: overlay family` / `feat: elevation + stroked borders` / `feat: Menu` / `feat: Collapsible + Drawer` / `fix: anchored floaters in a scroller` / `feat: Select + Combobox` |
 | 5 | Gallery + docs (`spec.md`, a `www/` design-system page) | not started | — |
 
 `make test` at the end of phase 3: **361 passed, 0 failed** (the six network
@@ -758,6 +758,46 @@ trigger, so a trigger scrolled out of view takes the popup with it. If the
 be written back to its closed value, which differs per component (`-1` for the
 Menu's active index, `0` for the Popover's open flag).
 
+### Phase 4 batch 7 outcome — Select + Combobox
+
+Both are selection widgets, and both use the anchored floater the overlays and
+the Menu already share.
+
+- **`Select(value, labels)` rebuilt.** The signature is unchanged, so every call
+  site (gallery, `myapp`, `greeninfer`) kept working. The menu is no longer a
+  hardcoded `top = SELECT_DROP, left = 0` relative panel: it anchors below the
+  trigger, flips when there is no room, follows the trigger on scroll, and has
+  keyboard navigation (Up / Down move the highlight, Enter picks, Escape or an
+  outside click closes). One internal `active` index (-1 = closed) is the only
+  added state; the picked value stays in the caller's signal. `SELECT_DROP` is
+  gone.
+- **`Combobox(text, options)`.** A text field with a filtered option list below
+  it, on the same floater. The options are filtered by a case-insensitive ASCII
+  substring match (`ci_has`) into a `Signal<[]string>`, and the list is rendered
+  with `zeus.For` keyed by label (so options should be unique). Typing filters
+  and opens; Up / Down move the highlight; Enter writes the highlighted option
+  back into the field; Escape or an outside click closes.
+- **Why the keys are not in the keymap.** A focused text field consumes Enter
+  before any chord resolves (`zeus_key_dispatch`'s text-capture check), so the
+  list keys are handled in the field's `on_key_down` and read through the
+  engine's staged `current_key()`.
+- **`For` reachability (compiler fix, separate commit).** Landing `Combobox`
+  exposed a DCE bug: `kfor_refresh<T>`'s instantiated body was emitted while its
+  non-generic callees (`arena.key_count`, `key_node`, `key_set`, `key_clear`)
+  were pruned, because the pass that walks pruned-but-instantiated generics ran
+  *after* the reachability worklist had already finished. A test using `For`
+  compiled, but a test merely *importing* a module that defines an
+  `For`-using function did not. The worklist now runs last, to a fixed point.
+- New `zeus_select.loam` (open / arrow / pick / Escape / outside click) and
+  `zeus_combobox.loam` (filter, open on type, pick into the field). The gallery
+  shows both. No draw golden changed: a closed `Select` paints identically, and
+  the menu is hidden.
+
+Deliberately open: the `Combobox` list is not virtualized (every match is a
+mounted row, so a very long option list is built whole), and it has no
+"this option" affordance beyond the highlight. `Select` still hardcodes its
+trigger width at `SELECT_W`.
+
 ### Remaining work (living list)
 
 The single maintained tracker of what is still open. Update it in the same commit
@@ -772,13 +812,14 @@ Absent entirely:
 - [x] `Menu` / `DropdownMenu` — anchored command list; keyboard nav + roving focus. **(batch 5)**
 - [x] `Drawer` / `Sheet` — edge-anchored panel (reuses the overlay floater + scrim). **(batch 6)**
 - [x] `Collapsible` — single-open disclosure: the Accordion model without the card. **(batch 6)**
-- [ ] `Combobox` — input + filtered list; needs the anchored floater and typeahead.
+- [x] `Combobox` — a text field with a case-insensitively filtered option list;
+  type to filter, Enter picks. **(batch 7)**
 
 Rework, not new construction:
 
-- [ ] Rebuild `Select` on `Popover`. It is still hardcoded (`top = SELECT_DROP`,
-  `width = SELECT_W`, `z_index = 10`), not edge-aware, and has no keyboard nav,
-  typeahead, or Esc.
+- [x] Rebuilt `Select` on the anchored floater (the `Popover` mechanism). It was
+  hardcoded (`top = SELECT_DROP`), not edge-aware, and had no keyboard nav,
+  typeahead, or Esc. **(batch 7)**
 
 Component upgrades the audit calls out in §1 — noted, but **not yet committed
 scope**:
@@ -834,8 +875,9 @@ scope**:
 
 **Accessibility / input (§7)**
 
-- [ ] Arrow-key nav inside `Tabs`, `RadioGroup`, and `Select` (menus gained it in
-  batch 5). Only `Slider` and `Pagination` otherwise bind arrows today.
+- [ ] Arrow-key nav inside `Tabs` and `RadioGroup` (menus gained it in batch 5,
+  `Select` in batch 7). Only `Slider` and `Pagination` otherwise bind arrows
+  today.
 - [ ] Roving tabindex for radio / tab groups — every radio in a group is its own
   tab stop today. (Menu rows rove; only the active row is focusable.)
 - [ ] Focus trap in `Dialog`; Esc to dismiss `Dialog` and `Select`.
