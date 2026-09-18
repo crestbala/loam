@@ -1,0 +1,56 @@
+// On overlay-scroll (touch) hosts a tappable node smaller than 44dp still
+// receives the pointer in a 44dp box centered on its layout rect. Paint and
+// layout stay at the authored size. Desktop overlay-scroll=0 is unchanged.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("touch-hit", 200, 120)
+    let hits = zeus.signal(0)
+    let mut id = 0
+    let tree = zeus.Box(padding = 40) {
+        let b = zeus.Box(width = 32, height = 32, background = zeus.accent(),
+                         on_click = fn() { hits.set(hits.get() + 1) })
+        id = b.id
+    }
+    zeus.root(tree)
+    zeus.pump_frame()
+    must(zeus.node_width(id) == 32, "layout width stays 32")
+    must(zeus.node_height(id) == 32, "layout height stays 32")
+    let cx = zeus.node_x(id) + 16
+    let cy = zeus.node_y(id) + 16
+    let above = zeus.node_y(id) - 4
+
+    // Desktop: 4dp above the box misses.
+    zeus.engine_set_overlay_scroll(0)
+    must(zeus.engine_click(cx, above) == 0, "desktop misses 4dp above")
+    must(hits.get() == 0, "desktop click did not fire")
+    zeus.engine_mouseup()
+
+    // Touch: the same point is inside the 44dp hit box ((44-32)/2 = 6).
+    zeus.engine_set_overlay_scroll(1)
+    must(zeus.engine_click(cx, above) != 0, "touch hits 4dp above")
+    zeus.engine_mouseup()
+    must(hits.get() == 1, "touch click fired")
+
+    // Still a miss well outside 44dp.
+    must(zeus.engine_click(cx, zeus.node_y(id) - 20) == 0, "touch misses 20dp above")
+    zeus.engine_mouseup()
+    must(hits.get() == 1, "far click did not fire")
+
+    // Center still works, and the laid-out size did not grow.
+    must(zeus.engine_click(cx, cy) != 0, "touch hits the visual box")
+    zeus.engine_mouseup()
+    must(hits.get() == 2, "center click fired")
+    must(zeus.node_width(id) == 32 && zeus.node_height(id) == 32, "still 32 after clicks")
+
+    fmt.println("touch-hit ok")
+}

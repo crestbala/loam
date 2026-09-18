@@ -2530,17 +2530,85 @@ fn draw_y(id: int) -> int {
     return nodes[id].y - paint_sy
 }
 
+/// Apple HIG 44pt minimum tappable area. Applied only on overlay-scroll
+/// (iOS / Android) hosts, and only to nodes that already take a pointer.
+const HIT_MIN: int = 44
+
+fn hit_expand(id: int) -> int {
+    if platform.plat_overlay_scroll() == 0 {
+        return 0
+    }
+    if id <= 0 {
+        return 0
+    }
+    if id >= nodes.len {
+        return 0
+    }
+    let k = int(nodes[id].kind)
+    if k == 9 {
+        return 0
+    }
+    if k == 11 {
+        return 0
+    }
+    if nodes[id].click_fn > 0 {
+        return 1
+    }
+    if nodes[id].click_sig > 0 {
+        return 1
+    }
+    if nodes[id].down_fn > 0 {
+        return 1
+    }
+    if nodes[id].up_fn > 0 {
+        return 1
+    }
+    if int(nodes[id].focusable) != 0 {
+        return 1
+    }
+    if k == 4 {
+        return 1
+    }
+    if k == 7 {
+        return 1
+    }
+    if k == 8 {
+        return 1
+    }
+    if k == 10 {
+        return 1
+    }
+    if k == 13 {
+        return 1
+    }
+    return 0
+}
+
 fn in_box(id: int, px: int, py: int) -> int {
-    if px < nodes[id].x {
+    let mut x = nodes[id].x
+    let mut y = nodes[id].y
+    let mut w = nodes[id].w
+    let mut h = nodes[id].h
+    if hit_expand(id) != 0 {
+        if w < HIT_MIN {
+            x = x - (HIT_MIN - w) / 2
+            w = HIT_MIN
+        }
+        if h < HIT_MIN {
+            y = y - (HIT_MIN - h) / 2
+            h = HIT_MIN
+        }
+    }
+    if px < x {
         return 0
     }
-    if py < nodes[id].y {
+    if py < y {
         return 0
     }
-    if px >= nodes[id].x + nodes[id].w {
+    if px >= x + w {
         return 0
     }
-    if py >= nodes[id].y + nodes[id].h {
+    if py >= y + h {
         return 0
     }
     return 1

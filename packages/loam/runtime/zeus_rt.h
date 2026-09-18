@@ -281,6 +281,7 @@ void loam_zeus_plat_clip(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rad
 void loam_zeus_plat_restore(void);
 
 void zeus_set_insets(int64_t top, int64_t right, int64_t bottom, int64_t left);
+void zeus_set_overlay_scroll(int64_t on);
 int64_t loam_zeus_plat_overlay_scroll(void);
 int64_t loam_zeus_plat_inset_top(void);
 int64_t loam_zeus_plat_inset_right(void);
@@ -377,6 +378,7 @@ void loam_platform_plat_history_push(loam_str path);
 void loam_platform_plat_history_replace(loam_str path);
 void loam_platform_plat_history_back(void);
 int64_t loam_platform_plat_overlay_scroll(void);
+void loam_platform_plat_set_overlay_scroll(int64_t on);
 int64_t loam_platform_plat_inset_top(void);
 int64_t loam_platform_plat_inset_right(void);
 int64_t loam_platform_plat_inset_bottom(void);

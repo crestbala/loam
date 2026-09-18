@@ -151,6 +151,8 @@ fn plat_history_back() {}
 /// 1 = overlay scroll hosts (iOS/Android): thumb drag is disabled in input
 /// and the track/thumb is not painted — panes scroll by touch only.
 fn plat_overlay_scroll() -> int {}
+/// Test / host override for `plat_overlay_scroll` (1 = iOS/Android-like).
+fn plat_set_overlay_scroll(on: int) {}
 fn plat_inset_top() -> int {}
 fn plat_inset_right() -> int {}
 fn plat_inset_bottom() -> int {}
