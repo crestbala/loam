@@ -7663,7 +7663,7 @@ fn dialog_shell(open: Signal<int>, close_x: int, title: string) -> Node {
             Title(title)
             Grow()
             if close_x == 1 {
-                Box(
+                let close = Box(
                     align_direction = DIRECTION.Row,
                     width = 28,
                     height = 28,
@@ -7678,10 +7678,21 @@ fn dialog_shell(open: Signal<int>, close_x: int, title: string) -> Node {
                 ) {
                     Icon(IC_X, 16, mute())
                 }
+                focusable(close)
             }
         }
     })
     ui_pop()
+    apply_key(panel, "escape", "dialog.close", fn() { open.set(0) }, true, false)
+    focusable(panel)
+    let pid = panel.id
+    effect(|| {
+        if open.get() != 0 {
+            arena.claim_trap(pid)
+        } else {
+            arena.release_trap(pid)
+        }
+    })
     return panel
 }
 

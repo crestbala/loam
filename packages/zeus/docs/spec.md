@@ -297,6 +297,10 @@ button, and goes off screen with it rather than pinning to a window edge.
 selected index (Left/Right on tabs, Up/Down and Left/Right on radios), clamp
 at the ends, and only the selected item is a tab stop.
 
+**Dialog** is a modal: while it is open, Tab cycles only inside the card
+(a focus trap), Escape closes it, and focus returns to the opener on close.
+`Select` also closes on Escape.
+
 **Collapsible(open, title)** is one 0/1 signal: the header toggles it, the
 chevron rotates and the body fades on paint-only tracks (no card chrome unless
 asked for). **Drawer(open, side, size)** pins an edge panel into a full-window

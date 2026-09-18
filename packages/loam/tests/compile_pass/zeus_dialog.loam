@@ -1,0 +1,98 @@
+// Dialog traps Tab inside the card and closes on Escape. Select already
+// closes on Escape (batch 7); this file re-checks that and adds the trap.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn in_cycle(id: int) -> int {
+    zeus.engine_focus_step(0)
+    zeus.engine_fill_focus()
+    let start = zeus.engine_focus_node(0)
+    if start == id {
+        return 1
+    }
+    let mut at = start
+    let mut guard = 0
+    while guard < 16 {
+        zeus.engine_focus_step(0)
+        zeus.engine_fill_focus()
+        at = zeus.engine_focus_node(0)
+        if at == id {
+            return 1
+        }
+        if at == start {
+            return 0
+        }
+        guard = guard + 1
+    }
+    return 0
+}
+
+fn main() {
+    zeus.window("dialog", 480, 320)
+    let open = zeus.signal(0)
+    let value = zeus.signal(0)
+    let tree = zeus.Page() {
+        zeus.Button("Open", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
+                    on_click = fn() => open.set(1))
+        zeus.Button("Outside", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
+        zeus.Dialog(open, title = "Confirm") {
+            zeus.Button("Inside", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
+        }
+        zeus.Select(value, []string { "Small", "Medium", "Large" })
+    }
+    zeus.root(tree)
+    zeus.pump_frame()
+
+    let opener = zeus.engine_find_text("Open")
+    let outside = zeus.engine_find_text("Outside")
+    must(opener != 0 && outside != 0, "page controls exist")
+    must(!zeus.text_visible("Inside"), "dialog starts closed")
+
+    // Open: Esc closes. Focus starts inside the card (Close, not the opener).
+    zeus.engine_click_text("Open")
+    zeus.engine_mouseup()
+    zeus.engine_layout(480, 320)
+    must(zeus.text_visible("Inside"), "dialog open")
+    let close = zeus.engine_find_text("Close")
+    let inside = zeus.node_parent(zeus.engine_find_text("Inside"))
+    must(close != 0 && inside != 0, "dialog chrome exists")
+    zeus.engine_fill_focus()
+    let focused = zeus.engine_focus_node(0)
+    must(focused != opener, "open does not leave focus on the opener")
+    must(focused == close || focused == inside, "focus moved into the dialog")
+
+    zeus.engine_key_ev(27, 0)
+    must(open.get() == 0, "escape closed the dialog")
+    zeus.engine_layout(480, 320)
+    must(!zeus.text_visible("Inside"), "dialog hidden after escape")
+
+    // Re-open: Tab stays inside. Open / Outside are not stops.
+    open.set(1)
+    zeus.engine_layout(480, 320)
+    must(in_cycle(close) != 0, "close is in the trap")
+    must(in_cycle(inside) != 0, "inside button is in the trap")
+    must(in_cycle(opener) == 0, "opener is not in the trap")
+    must(in_cycle(outside) == 0, "outside button is not in the trap")
+
+    // Select still closes on Escape without picking.
+    open.set(0)
+    zeus.engine_layout(480, 320)
+    zeus.engine_click_text("Small")
+    zeus.engine_mouseup()
+    zeus.engine_layout(480, 320)
+    must(zeus.text_visible("Medium"), "select opened")
+    zeus.engine_key_ev(27, 0)
+    must(value.get() == 0, "escape did not pick")
+    zeus.engine_layout(480, 320)
+    must(!zeus.text_visible("Medium"), "escape closed the select")
+
+    fmt.println("dialog ok")
+}
