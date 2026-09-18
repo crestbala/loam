@@ -382,6 +382,8 @@ int64_t loam_platform_plat_inset_right(void);
 int64_t loam_platform_plat_inset_bottom(void);
 int64_t loam_platform_plat_alloc_count(void);
 int64_t loam_platform_plat_inset_left(void);
+void loam_platform_plat_set_insets(int64_t top, int64_t right, int64_t bottom,
+                                  int64_t left);
 
 /* Loam engine entry points (packages/zeus/std/zeus.loam). Cocoa trampolines through these. */
 void loam_zeus_engine_layout(int32_t width, int32_t height);

@@ -827,6 +827,29 @@ let mut sig_anim: []int = []int {}
 let mut anim_booted: int = 0
 let mut in_anim_tick: int = 0
 
+// Layout-driving `zeus.animate`: a signal write that lands on Width / Height /
+// a pin is recorded here so the tick can tween the node field and reflow.
+// Hover still skips layout; only these bindings mark it (same idea as
+// `live_anchors`). Cap is fixed, no per-frame allocation.
+const LAYOUT_ANIM_CAP: int = 64
+
+struct LayoutAnim {
+    nid: int,
+    setter: int,
+    from: int,
+    to: int,
+    cur: int,
+    sid: int,
+    live: int,
+    done: int,
+}
+
+let mut layout_anims: []LayoutAnim = []LayoutAnim {}
+let mut live_layout_anims: int = 0
+let mut in_anim_bind: int = 0
+let mut anim_bind_sid: int = 0
+let mut layout_anim_moved: int = 0
+
 fn anim_ensure() {
     if tracks.len != 0 {
         return
@@ -853,7 +876,40 @@ fn motion_fast() -> int { return 120 }
 fn motion_base() -> int { return 200 }
 fn motion_slow() -> int { return 320 }
 
-/// Shape a linear 0..1000 progress into an eased 0..1000 (Spring may overshoot).
+/// Cubic Bézier component at parameter `u` (0..1000): P0 = 0, P3 = 1000,
+/// P1 = `c1`, P2 = `c2` (all permille; `c1`/`c2` may exceed 1000 for Spring).
+/// i64 intermediates: 3 · 1000³ · ~2000 overflows i32.
+fn bezier_comp(u: int, c1: int, c2: int) -> int {
+    let s = 1000 - u
+    let uu = i64(u)
+    let ss = i64(s)
+    let a = i64(3) * ss * ss * uu * i64(c1)
+    let b = i64(3) * ss * uu * uu * i64(c2)
+    let c = uu * uu * uu * i64(1000)
+    return i32((a + b + c) / i64(1000000000))
+}
+
+/// `y` of cubic-bezier(x1, y1, x2, y2) at linear time `t`. Control points
+/// and `t`/`y` are permille. Binary-searches the parameter so x(u) ≈ t.
+fn bezier_at(t: int, x1: int, y1: int, x2: int, y2: int) -> int {
+    let mut lo = 0
+    let mut hi = 1000
+    let mut i = 0
+    while i < 16 {
+        let mid = (lo + hi) / 2
+        if bezier_comp(mid, x1, x2) < t {
+            lo = mid
+        } else {
+            hi = mid
+        }
+        i = i + 1
+    }
+    return bezier_comp(hi, y1, y2)
+}
+
+/// Shape a linear 0..1000 progress into an eased 0..1000 (Spring may overshoot
+/// mid-curve; the settled frame is always 1000). The four `EASE` tokens are
+/// CSS cubic-béziers of the named curves they stood for as polynomials.
 fn anim_ease(easing: int, t: int) -> int {
     if t <= 0 {
         return 0
@@ -864,19 +920,16 @@ fn anim_ease(easing: int, t: int) -> int {
     if easing == ease_linear() {
         return t
     }
-    let u = 1000 - t
     if easing == ease_emphasized() {
-        // ease-out quint: more pronounced deceleration than Standard.
-        return 1000 - u * u / 1000 * u / 1000 * u / 1000
+        // cubic-bezier(0.23, 1.00, 0.32, 1.00) — ease-out quint
+        return bezier_at(t, 230, 1000, 320, 1000)
     }
     if easing == ease_spring() {
-        // ease-out-back: overshoots past the target, then settles on it.
-        let u2 = u * u / 1000
-        let u3 = u2 * u / 1000
-        return 1000 + 2701 * u3 / 1000 + 1701 * u2 / 1000
+        // cubic-bezier(0.34, 1.56, 0.64, 1.00) — ease-out-back
+        return bezier_at(t, 340, 1560, 640, 1000)
     }
-    // Standard: ease-out cubic.
-    return 1000 - u * u / 1000 * u / 1000
+    // Standard: cubic-bezier(0.215, 0.61, 0.355, 1.00) — ease-out cubic
+    return bezier_at(t, 215, 610, 355, 1000)
 }
 
 fn anim_find(node: int, prop: int) -> int {
@@ -1119,8 +1172,139 @@ fn anim_radius(node: int, to: int, ms: int) {
 }
 
 
+fn anim_bind_begin(sid: int) {
+    in_anim_bind = 1
+    anim_bind_sid = sid
+}
+
+fn anim_bind_end() {
+    in_anim_bind = 0
+    anim_bind_sid = 0
+}
+
+fn anim_bind_on() -> int {
+    return in_anim_bind
+}
+
+fn layout_anim_ensure() {
+    if layout_anims.len != 0 {
+        return
+    }
+    let mut i = 0
+    while i < LAYOUT_ANIM_CAP {
+        push(layout_anims, LayoutAnim {
+            nid: 0, setter: 0, from: 0, to: 0, cur: 0, sid: 0, live: 0, done: 0,
+        })
+        i = i + 1
+    }
+}
+
+/// Record a layout prop that an in-flight `animate` just wrote. Keeps the
+/// node at `from` and tweens toward `to` on the signal's track. Returns 1
+/// when the write was intercepted (caller must not apply `to` this frame).
+fn layout_anim_push(nid: int, setter: int, from: int, to: int) -> int {
+    if in_anim_bind == 0 {
+        return 0
+    }
+    if from == to {
+        return 0
+    }
+    layout_anim_ensure()
+    let sid = anim_bind_sid
+    let mut i = 0
+    while i < layout_anims.len {
+        if layout_anims[i].live != 0 {
+            if layout_anims[i].nid == nid {
+                if layout_anims[i].setter == setter {
+                    layout_anims[i].from = layout_anims[i].cur
+                    layout_anims[i].to = to
+                    layout_anims[i].sid = sid
+                    layout_anims[i].done = 0
+                    return 1
+                }
+            }
+        }
+        i = i + 1
+    }
+    i = 0
+    while i < layout_anims.len {
+        if layout_anims[i].live == 0 {
+            layout_anims[i].nid = nid
+            layout_anims[i].setter = setter
+            layout_anims[i].from = from
+            layout_anims[i].to = to
+            layout_anims[i].cur = from
+            layout_anims[i].sid = sid
+            layout_anims[i].live = 1
+            layout_anims[i].done = 0
+            live_layout_anims = live_layout_anims + 1
+            return 1
+        }
+        i = i + 1
+    }
+    return 0
+}
+
+fn layout_anim_advance(sid: int, shaped: int) {
+    if live_layout_anims == 0 {
+        return
+    }
+    let mut i = 0
+    while i < layout_anims.len {
+        if layout_anims[i].live != 0 {
+            if layout_anims[i].sid == sid {
+                let a = layout_anims[i]
+                let mut cur = a.from + (a.to - a.from) * shaped / 1000
+                let mut done = 0
+                if shaped >= 1000 {
+                    cur = a.to
+                    done = 1
+                }
+                layout_anims[i].cur = cur
+                layout_anims[i].done = done
+                layout_anim_moved = 1
+                mark_layout()
+            }
+        }
+        i = i + 1
+    }
+}
+
+fn layout_anim_len() -> int {
+    return layout_anims.len
+}
+
+fn layout_anim_get(i: int) -> LayoutAnim {
+    return layout_anims[i]
+}
+
+fn layout_anim_reap() {
+    let mut i = 0
+    while i < layout_anims.len {
+        if layout_anims[i].live != 0 {
+            if layout_anims[i].done != 0 {
+                layout_anims[i].live = 0
+                live_layout_anims = live_layout_anims - 1
+            }
+        }
+        i = i + 1
+    }
+}
+
+fn take_layout_anim_moved() -> int {
+    let v = layout_anim_moved
+    layout_anim_moved = 0
+    return v
+}
+
+fn live_layout_anims_count() -> int {
+    return live_layout_anims
+}
+
 /// `zeus.animate`: move a signal's *state* to `to` once (effects run once),
-/// then interpolate its paint value on the track pool.
+/// then interpolate its paint value on the track pool. A layout prop that
+/// the same write lands on (width / height / a pin) stays at `from` and
+/// tweens toward `to` on this track, reflowing each frame until it lands.
 fn anim_signal(sid: int, to: int, ms: int) {
     if sid <= 0 {
         return
@@ -1129,7 +1313,21 @@ fn anim_signal(sid: int, to: int, ms: int) {
         return
     }
     let from = sig_val(sid)
+    let mut jump = 0
+    if anim_booted == 0 {
+        jump = 1
+    }
+    if ms <= 0 {
+        jump = 1
+    }
+    if anim_reduced() != 0 {
+        jump = 1
+    }
+    if jump == 0 {
+        anim_bind_begin(sid)
+    }
     store_sig(sid, to)
+    anim_bind_end()
     if from == to {
         return
     }
@@ -1139,6 +1337,10 @@ fn anim_signal(sid: int, to: int, ms: int) {
         sig_anim[sid] = 1
     }
     anim_schedule(sid, APROP.SigVal, to, ms, ease_standard())
+    // Pool full or a jump inside `anim_schedule`: land layout props now.
+    if anim_find(sid, APROP.SigVal) < 0 {
+        layout_anim_advance(sid, 1000)
+    }
 }
 
 /// 1 while any track is active (keeps the frame loop alive).
@@ -1175,11 +1377,17 @@ fn anim_tick(dt: int) -> int {
                 anim_active = anim_active - 1
                 push(track_free, i)
                 anim_store(a.node, a.prop, a.to)
+                if is_sig {
+                    layout_anim_advance(a.node, 1000)
+                }
             } else {
                 tracks[i].elapsed = e
                 let shaped = anim_ease(a.easing, e * 1000 / dur)
                 tracks[i].cur = a.from + (a.to - a.from) * shaped / 1000
                 anim_store(a.node, a.prop, tracks[i].cur)
+                if is_sig {
+                    layout_anim_advance(a.node, shaped)
+                }
             }
             if is_sig {
                 paint_dirty = 1
@@ -1207,6 +1415,16 @@ fn anim_free_pool(ids: []int) {
                     anim_active = anim_active - 1
                     push(track_free, i)
                 }
+            }
+        }
+        i = i + 1
+    }
+    i = 0
+    while i < layout_anims.len {
+        if layout_anims[i].live != 0 {
+            if member(layout_anims[i].nid, ids) != 0 {
+                layout_anims[i].live = 0
+                live_layout_anims = live_layout_anims - 1
             }
         }
         i = i + 1

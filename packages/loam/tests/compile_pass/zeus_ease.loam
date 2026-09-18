@@ -1,0 +1,57 @@
+// EASE tokens are CSS cubic-béziers, not the integer polynomials they
+// replaced. Samples are the solver's own permille values; Standard is
+// ease-out cubic, Emphasized ease-out quint (more deceleration), Spring
+// ease-out-back (overshoots, then 1000 at the end). The track pool uses
+// the same helper.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    must(zeus.anim_ease(zeus.EASE.Linear, 0) == 0, "linear 0")
+    must(zeus.anim_ease(zeus.EASE.Linear, 400) == 400, "linear is identity")
+    must(zeus.anim_ease(zeus.EASE.Linear, 1000) == 1000, "linear 1000")
+
+    // cubic-bezier(0.215, 0.61, 0.355, 1)
+    must(zeus.anim_ease(zeus.EASE.Standard, 0) == 0, "standard 0")
+    must(zeus.anim_ease(zeus.EASE.Standard, 250) == 600, "standard 250")
+    must(zeus.anim_ease(zeus.EASE.Standard, 500) == 875, "standard 500")
+    must(zeus.anim_ease(zeus.EASE.Standard, 750) == 976, "standard 750")
+    must(zeus.anim_ease(zeus.EASE.Standard, 1000) == 1000, "standard 1000")
+
+    // cubic-bezier(0.23, 1, 0.32, 1) — ahead of Standard at the same t.
+    must(zeus.anim_ease(zeus.EASE.Emphasized, 250) == 776, "emphasized 250")
+    must(zeus.anim_ease(zeus.EASE.Emphasized, 500) == 965, "emphasized 500")
+    must(zeus.anim_ease(zeus.EASE.Emphasized, 250) > zeus.anim_ease(zeus.EASE.Standard, 250),
+         "emphasized decelerates harder than standard")
+
+    // cubic-bezier(0.34, 1.56, 0.64, 1) — overshoots, lands on 1000.
+    must(zeus.anim_ease(zeus.EASE.Spring, 500) == 1087, "spring overshoots at half")
+    must(zeus.anim_ease(zeus.EASE.Spring, 500) > 1000, "spring is above the target mid-curve")
+    must(zeus.anim_ease(zeus.EASE.Spring, 1000) == 1000, "spring settles")
+
+    // The track pool reads the same helper: 4 × 16 ms of a 200 ms Standard
+    // tween is t = 320, and the paint value is the bezier at that t.
+    zeus.window("ease", 200, 80)
+    let s = zeus.signal(0)
+    zeus.root(zeus.Box())
+    zeus.pump_frame()
+    zeus.animate(s, 1000, 200)
+    let mut i = 0
+    while i < 4 {
+        zeus.engine_step_dt(16)
+        i = i + 1
+    }
+    let shaped = zeus.anim_ease(zeus.EASE.Standard, 320)
+    must(zeus.anim_paint(s) == shaped, "the track paints the bezier")
+    must(s.get() == 1000, "state is already at the target")
+
+    fmt.println("ease ok")
+}

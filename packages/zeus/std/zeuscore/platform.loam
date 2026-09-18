@@ -155,6 +155,10 @@ fn plat_inset_top() -> int {}
 fn plat_inset_right() -> int {}
 fn plat_inset_bottom() -> int {}
 fn plat_inset_left() -> int {}
+/// Host safe-area insets in layout points (notch / home indicator / landscape
+/// inset). iOS and Android write these every frame; tests set them through
+/// `zeus.engine_set_insets` so a layout pass sees a notched viewport.
+fn plat_set_insets(top: int, right: int, bottom: int, left: int) {}
 /// Runtime allocation count since boot, for the animation proof harness. The
 /// runtime counts `loam_new` and array growth; an animated frame must not move
 /// it. 0 when the host/runtime does not track it.

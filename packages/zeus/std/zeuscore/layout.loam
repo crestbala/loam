@@ -1217,8 +1217,8 @@ fn screen_scroll(id: int) -> Pt {
 }
 
 /// Position one anchored floater against its anchor's screen rect, flipping to
-/// the opposite side when the preferred one would leave the viewport. Runs
-/// after the normal layout and re-lays-out the moved subtree.
+/// the opposite side when the preferred one would leave the safe-area rect.
+/// Runs after the normal layout and re-lays-out the moved subtree.
 fn place_node(id: int) {
     let a = arena.nodes[id].anchor
     if a <= 0 {
@@ -1278,15 +1278,18 @@ fn place_node(id: int) {
             x = left
         }
     }
-    // A floater stays next to its trigger, so it is only kept inside the window
-    // while the trigger is on screen; once the trigger scrolls away the floater
-    // goes with it rather than pinning itself to the top or bottom edge.
+    // Keep the panel inside the *safe* rect on each axis where the trigger is
+    // still visible. (0, 0) is the desktop origin; on a notched host the
+    // usable origin is (left, top). A trigger scrolled out of the safe area
+    // takes the floater with it rather than pinning it to an edge.
     if (ay + ah > top) && (ay < bottom) {
-        if x < 0 {
-            x = 0
+        if y < top {
+            y = top
         }
-        if y < 0 {
-            y = 0
+    }
+    if (ax + aw > left) && (ax < right) {
+        if x < left {
+            x = left
         }
     }
     // `x` / `y` are *window* coordinates, which is what the flip test above

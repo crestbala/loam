@@ -1,0 +1,93 @@
+// Anchored placement uses the host safe-area origin, not the desktop (0, 0)
+// inset origin. On a notched mobile viewport a popup stays next to its
+// trigger, flips against the home-indicator edge, and is kept out of the
+// notch while the trigger is on screen; a trigger scrolled away still takes
+// the popup with it.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("anchor-safe", 360, 280)
+    // iPhone-style portrait insets: 47pt notch, 34pt home indicator.
+    zeus.engine_set_insets(47, 0, 34, 0)
+    let open = zeus.signal(-1)
+    let tall = zeus.signal(0)
+    let mut panel = 0
+    let mut pop = 0
+    let mut trig = 0
+    let top = zeus.raw_scroll()
+    zeus.slot(top, fn() {
+        zeus.Box(align_direction = zeus.DIRECTION.Column) {
+            zeus.Box(height = 140)
+            let trigger = zeus.Box(width = 120, height = 32, background = zeus.plate())
+            trig = trigger.id
+            let rows = []MenuRow { MenuRow(label = "Rename") }
+            let m = zeus.Menu(trigger, active = open, items = rows, width = 160)
+            panel = m.id
+            let p = zeus.Popover(trigger, open = tall, place = zeus.PLACE.PlaceAbove, width = 160) {
+                zeus.Box(height = 140)
+            }
+            pop = p.id
+            zeus.Box(height = 800)
+        }
+    })
+    zeus.root(top)
+    zeus.pump_frame()
+
+    // Trigger sits in the content box, which is already inset by safe_t.
+    zeus.engine_layout(360, 280)
+    must(zeus.node_y(trig) == 187, "trigger y is content origin + spacer (47 + 140)")
+    must(zeus.node_x(trig) == 0, "portrait left inset is 0")
+
+    // PlaceBelow would overlap the home indicator (safe bottom = 246), so the
+    // menu flips above and stays glued to the trigger — not shifted by an
+    // extra safe_t.
+    open.set(0)
+    zeus.engine_layout(360, 280)
+    must(zeus.text_visible("Rename"), "menu opened")
+    must(zeus.node_y(panel) < zeus.node_y(trig), "menu flipped above the home indicator")
+    must(zeus.node_y(panel) + zeus.node_height(panel) + 4 == zeus.node_y(trig),
+         "flipped menu is glued to the trigger, not offset by the notch")
+    must(zeus.node_x(panel) == zeus.node_x(trig), "menu x matches the trigger")
+    must(zeus.node_y(panel) >= 47, "flipped menu stays out of the notch")
+
+    // PlaceAbove of a tall panel lands at y = 7 with the old 0-origin clamp,
+    // which is inside the notch. It must rest on the safe top instead.
+    open.set(-1)
+    tall.set(1)
+    zeus.engine_layout(360, 280)
+    must(zeus.node_y(pop) == 47, "tall panel is clamped to the safe top, not the window top")
+    must(zeus.node_y(pop) + zeus.node_height(pop) > zeus.node_y(trig),
+         "clamped panel still covers the trigger (neither side had room)")
+
+    // Scroll the trigger out of the safe viewport: the panel goes with it
+    // rather than pinning itself to the notch edge.
+    tall.set(0)
+    open.set(0)
+    zeus.engine_layout(360, 280)
+    zeus.scroll_to(top, 400)
+    zeus.engine_layout(360, 280)
+    must(zeus.node_y(trig) - zeus.scroll_y(top) < 47, "trigger is above the safe viewport")
+    must(zeus.node_y(panel) < 0, "panel followed the trigger off screen, not pinned to safe_t")
+
+    // Landscape: left inset is the notch. The trigger and a below-menu share it.
+    zeus.scroll_to(top, 0)
+    zeus.engine_set_insets(0, 34, 0, 47)
+    open.set(0)
+    tall.set(0)
+    zeus.engine_layout(360, 280)
+    must(zeus.node_x(trig) == 47, "trigger x is the landscape safe origin")
+    must(zeus.node_x(panel) == 47, "menu is not off by the left inset")
+    must(zeus.node_y(panel) == zeus.node_y(trig) + zeus.node_height(trig) + 4,
+         "with no top inset the menu sits below the trigger")
+
+    fmt.println("anchor-safe ok")
+}

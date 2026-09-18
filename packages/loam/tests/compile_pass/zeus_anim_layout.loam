@@ -1,0 +1,77 @@
+// `zeus.animate` on a layout-driving signal: state still jumps once (effects
+// run once, `get()` is the target) but the node's box tweens from its current
+// length to the target and reflows each frame. Paint-only `Progress` is
+// unchanged. Reduced motion and zero-ms still jump.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("anim-layout", 400, 120)
+    let w = zeus.signal(100)
+    let seen = zeus.signal(-1)
+    let mut box_id = 0
+    let tree = zeus.Box(align_direction = zeus.DIRECTION.Row) {
+        let box = zeus.Box(width = 100, height = 20, background = zeus.plate())
+        box_id = box.id
+        zeus.styled(box, || { zeus.set_prop_int(box, zeus.SET.Width, w.get()) })
+        zeus.Box(width = 40, height = 20, background = zeus.raised())
+    }
+    zeus.root(tree)
+    zeus.pump_frame()
+    must(zeus.node_width(box_id) == 100, "starts at 100")
+
+    zeus.effect(|| { seen.set(w.get()) })
+    zeus.animate(w, 200, 200)
+    must(w.get() == 200, "state is the target")
+    must(seen.get() == 200, "bound effect ran once")
+    must(zeus.node_width(box_id) == 100, "layout is still at from")
+    must(zeus.anim_paint(w) == 100, "paint overlay starts at from")
+    let e0 = zeus.proof_effects()
+
+    zeus.engine_step_dt(16)
+    let mid = zeus.node_width(box_id)
+    must(mid > 100, "width moved off from")
+    must(mid < 200, "width not at the target yet")
+    must(zeus.proof_effects() == e0, "no effect ran while tweening layout")
+    must(zeus.proof_signal_writes() == 0, "tick wrote no signal")
+
+    let mut i = 0
+    while i < 16 {
+        zeus.engine_step_dt(16)
+        i = i + 1
+    }
+    must(zeus.node_width(box_id) == 200, "width lands on the target")
+    must(zeus.anim_paint(w) == 200, "paint overlay lands")
+    must(zeus.proof_effects() == e0, "no effect ran while settling")
+    must(zeus.engine_step_dt(16) == 0, "idle once the track lands")
+
+    // Retarget mid-flight from the current box size.
+    zeus.animate(w, 100, 200)
+    zeus.engine_step_dt(16)
+    let c = zeus.node_width(box_id)
+    must(c > 100 && c < 200, "retargets from the current width")
+    must(w.get() == 100, "retarget moved state once")
+
+    // Zero ms jumps layout too.
+    zeus.animate(w, 160, 0)
+    zeus.engine_layout(400, 120)
+    must(zeus.node_width(box_id) == 160, "zero ms jumps layout")
+    must(zeus.anim_paint(w) == 160, "zero ms jumps paint")
+
+    // Reduced motion jumps.
+    zeus.set_reduced_motion(true)
+    zeus.animate(w, 80, 200)
+    zeus.engine_layout(400, 120)
+    must(zeus.node_width(box_id) == 80, "reduced motion jumps layout")
+    zeus.set_reduced_motion(false)
+
+    fmt.println("anim-layout ok")
+}

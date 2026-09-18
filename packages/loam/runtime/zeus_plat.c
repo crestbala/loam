@@ -1554,6 +1554,10 @@ int64_t loam_platform_plat_inset_top(void) { return loam_zeus_plat_inset_top(); 
 int64_t loam_platform_plat_inset_right(void) { return loam_zeus_plat_inset_right(); }
 int64_t loam_platform_plat_inset_bottom(void) { return loam_zeus_plat_inset_bottom(); }
 int64_t loam_platform_plat_inset_left(void) { return loam_zeus_plat_inset_left(); }
+void loam_platform_plat_set_insets(int64_t top, int64_t right, int64_t bottom,
+                                  int64_t left) {
+    zeus_set_insets(top, right, bottom, left);
+}
 
 /* Interned handlers and reactive prop thunks share this table. A page of
    declarative widgets interns one entry per prop, so it grows rather than
