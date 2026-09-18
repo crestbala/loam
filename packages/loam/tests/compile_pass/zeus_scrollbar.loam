@@ -1,0 +1,57 @@
+// Scrollbar thumb: shown by a scroll, hidden `bar_hide` ms after the last one,
+// in one frame each — no fade, no track. The deadline is on the wall clock so
+// it holds across an idle host sleep (the engine clock lags after a wake), and
+// `engine_next_ms` reports it so an idle host wakes exactly once to hide it.
+
+import "std:fmt"
+import "std:sys"
+import "std:async"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("scrollbar", 320, 180)
+    let top = zeus.raw_scroll()
+    zeus.slot(top, fn() {
+        zeus.Box(align_direction = DIRECTION.Column) {
+            zeus.Box(height = 900)
+        }
+    })
+    zeus.root(top)
+    zeus.pump_frame()
+    zeus.engine_step_dt(16)
+    zeus.pump_frame()
+    let idle = zeus.draw_count()
+    must(zeus.proof_anim_live() == 0, "settled")
+    must(zeus.engine_next_ms() == 0, "idle wants no wake")
+
+    // A wheel step shows the thumb this frame, with no track.
+    zeus.engine_scroll_step(100, 100, 0, 40)
+    zeus.pump_frame()
+    let shown = zeus.draw_count()
+    must(shown == idle + 2, "thumb + track painted on scroll")
+    must(zeus.proof_anim_live() == 0, "no fade track")
+    let wake = zeus.engine_next_ms()
+    must(wake > 0 && wake <= 900, "host asked to wake at the hide deadline")
+
+    // Still shown before the deadline; frames are not forced.
+    zeus.engine_step_dt(16)
+    zeus.pump_frame()
+    must(zeus.draw_count() == shown, "still shown")
+    must(zeus.engine_step_dt(16) == 0, "no continuous frames while shown")
+
+    // After the deadline (wall clock), one frame hides it.
+    async.sleep(950)
+    zeus.engine_step_dt(16)
+    zeus.pump_frame()
+    must(zeus.draw_count() == idle, "thumb hidden after the deadline")
+    must(zeus.engine_next_ms() == 0, "nothing pending once hidden")
+
+    fmt.println("scrollbar ok")
+}

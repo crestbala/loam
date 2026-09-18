@@ -317,8 +317,8 @@ fn paint_button(id: int) {
 
 fn paint_scrollbar(id: int) {
     // Overlay hosts (iOS/Android) never paint a desktop thumb. On desktop
-    // the thumb is static: shown whenever the content overflows, brighter
-    // while dragged, never animated.
+    // the bar shows while scrolling (wheel / pan / thumb drag) and hides
+    // `bar_hide` ms after the last one — in one frame each, no fade.
     if platform.plat_overlay_scroll() != 0 {
         return
     }
@@ -712,6 +712,9 @@ fn step(dt: int) -> int {
     arena.ensure()
     arena.now_ms = arena.now_ms + dt
     let mut live = arena.anim_tick(dt)
+    if arena.bar_expire() != 0 {
+        arena.paint_dirty = 1
+    }
     if arena.pulse_live() != 0 {
         arena.paint_dirty = 1
         live = 1

@@ -328,6 +328,7 @@ void loam_platform_plat_image_size(loam_str src, int32_t *w, int32_t *h);
 loam_str loam_platform_plat_pick_image(int32_t *w, int32_t *h);
 void loam_platform_plat_save(void);
 int64_t loam_platform_plat_mem_kb(void);
+int64_t loam_platform_plat_now_ms(void);
 void loam_platform_plat_clip(int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius);
 void loam_platform_plat_restore(void);
 int64_t loam_platform_plat_key_intern(loam_str name);

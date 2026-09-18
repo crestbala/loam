@@ -1009,6 +1009,9 @@ void loam_platform_plat_image_size(loam_str src, int32_t *w, int32_t *h) {
 }
 void loam_platform_plat_save(void) { loam_zeus_plat_save(); }
 
+/* Wall clock for host-sleep-safe deadlines (scrollbar hide). */
+int64_t loam_platform_plat_now_ms(void) { return loam_async_now_ms(); }
+
 /* Host process memory in KB for the gallery RAM chip: Apple phys_footprint
    (the number Xcode's memory gauge shows — RSS overstates iOS processes),
    Linux/Android resident set, wasm live heap on the web host. */
