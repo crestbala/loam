@@ -232,7 +232,6 @@ fn click(px: int, py: int) -> int {
         if hit_h_scrollbar(id, px, py) != 0 {
             // Grab the thumb where it is: the drag moves it from its current
             // scroll, so the content never jumps under the pointer.
-            arena.bar_on(id)
             arena.drag_id = id
             arena.drag_bar = 2
             arena.drag_ay = px
@@ -243,7 +242,6 @@ fn click(px: int, py: int) -> int {
             // Grab the thumb where it is: the drag moves it from its current
             // scroll, so the content never jumps under the pointer.
             let maxs = arena.scroll_max(id)
-            arena.bar_on(id)
             arena.drag_id = id
             arena.drag_bar = 1
             arena.drag_ay = py
@@ -410,7 +408,6 @@ fn chain_axis(px: int, py: int, delta: int, horiz: int, momentum: int) -> int {
             let used = arena.nodes[s].scroll_x - before
             if used != 0 {
                 changed = 1
-                arena.bar_on(s)
             }
             rem = rem - used
         } else {
@@ -419,7 +416,6 @@ fn chain_axis(px: int, py: int, delta: int, horiz: int, momentum: int) -> int {
             let used = arena.nodes[s].scroll_y - before
             if used != 0 {
                 changed = 1
-                arena.bar_on(s)
             }
             rem = rem - used
         }
@@ -520,7 +516,6 @@ fn drag(px: int, py: int) -> int {
             nx = maxs
         }
         arena.nodes[arena.drag_id].scroll_x = nx
-        arena.bar_on(arena.drag_id)
         arena.mark_scroll()
         return 1
     }
@@ -536,7 +531,6 @@ fn drag(px: int, py: int) -> int {
         ny = maxs
     }
     arena.nodes[arena.drag_id].scroll_y = ny
-    arena.bar_on(arena.drag_id)
     arena.mark_scroll()
     return 1
 }

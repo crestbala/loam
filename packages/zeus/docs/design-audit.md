@@ -902,6 +902,13 @@ same frames was correct throughout, which is why no golden caught them.
   steps exactly where it lands on both hosts (`scroll_step`). Touch pans on
   iOS / Android keep the engine coast: a canvas gets no OS inertia there.
 
+- **Scrollbar thumb is static.** It showed at full alpha on every wheel tick
+  and faded to hidden over 900 ms — a `BarFade` track that kept a paint frame
+  every 16 ms running after each scroll. The thumb is now painted whenever the
+  content overflows (alpha 110, 180 while dragged) and never animates; the
+  track, `bar_amt`, `bar_on`, and `anim_fade_from` are gone. Reduced motion no
+  longer needs its scrollbar exception.
+
 Recorded, not fixed: any `{{ }}` interpolation or `string_from_bytes` that
 runs per frame or per timer tick leaks for the process lifetime. That is a
 language limit (strings have no drop), and the rule for Zeus code is the one
