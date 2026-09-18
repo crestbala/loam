@@ -1048,6 +1048,16 @@ fn enter_fade(node: Node) -> Node {
     return node
 }
 
+/// Reveal the node top-down when it is shown: paint clips to an animated share
+/// of its height and slides the content up by the rest. Paint-only — layout
+/// gives the box its full height at once, so an opening disclosure never runs
+/// the layout pass per frame. Hiding snaps (there is no reveal-out).
+fn enter_reveal(node: Node) -> Node {
+    arena.nodes[node.id].reveal = 1
+    arena.mark_chrome()
+    return node
+}
+
 // --- shared interaction state ---------------------------------------------
 // One model for hover / pressed / focus-visible / disabled / loading /
 // selected / invalid. Components set these once; the engine's paint and hit
@@ -1405,6 +1415,7 @@ fn engine_layout(width: int, height: int) {
         layout.layout(width, height)
         arena.layout_dirty = 0
         arena.mark_paint()
+        layout_gen = layout_gen + 1
     }
     // Windowed lists size their window from the scroller's laid-out height and
     // its scroll, and refit hosts (charts) rebuild when this frame's layout
@@ -1744,6 +1755,16 @@ fn a11y_num(v: int) {
     }
 }
 
+/// Counts layout passes. A host that mirrors the semantic tree (`engine_a11y_dump`)
+/// polls this and only re-dumps when it moved: the dump builds a fresh string
+/// every call and strings are never freed, so dumping per paint frame leaked
+/// ~16 KB a frame on the web host.
+let mut layout_gen: int = 0
+
+fn engine_layout_gen() -> int {
+    return layout_gen
+}
+
 /// Serialize the visible **semantic tree** for an accessibility mirror (§2.3):
 /// one `depth<TAB>role<TAB>label<TAB>x<TAB>y<TAB>w<TAB>h` line per node
 /// carrying a role, a label, or visible text. Geometry lets a native host
@@ -1751,7 +1772,23 @@ fn a11y_num(v: int) {
 /// stays canvas — hosts relay this to a visually-hidden DOM on web, or to
 /// `NSAccessibility` on native. A node with a label but no role is a `text`
 /// node; the label falls back to its visible text.
+///
+/// Builds a fresh string, and strings are never freed: a host that polls
+/// (the web mirror) reads `engine_a11y_bytes` instead, which hands back the
+/// refcounted byte buffer to copy and drop.
 fn engine_a11y_dump() -> string {
+    a11y_build()
+    return string_from_bytes(A11Y_out)
+}
+
+/// The semantic-tree lines as bytes (same content as `engine_a11y_dump`), in
+/// a `[]int` the host copies out and drops — no string, nothing leaks.
+fn engine_a11y_bytes() -> []int {
+    a11y_build()
+    return A11Y_out
+}
+
+fn a11y_build() {
     A11Y_out = []int {}
     let n = arena.nodes.len
     let mut i = 1
@@ -1793,7 +1830,6 @@ fn engine_a11y_dump() -> string {
         }
         i = i + 1
     }
-    return string_from_bytes(A11Y_out)
 }
 
 /// Inspector dump of the retained tree (devtools §2.4): one
@@ -2310,6 +2346,11 @@ fn empty_text() -> string {
 /// Default for an unset handler prop. Never installed: `on_x__set` says
 /// whether the caller passed one.
 fn noop() {
+    return
+}
+
+/// `noop` for `fn(int)` handler props (`Menu.on_select`).
+fn noop_int(i: int) {
     return
 }
 
@@ -6712,9 +6753,18 @@ fn Accordion(open: Signal<int>, p: AccordionProps) -> Node {
                 border_color = str_or_default(p.border_color, rule()),
                 radius = px_or_default(p.radius, RAD_LG),
                 width = p.width,
-                bind = p.bind, bind__set = p.bind__set)
+                bind = p.bind, bind__set = p.bind__set) {
+                    Each(p.items, (index, item) => {
+                        AccordionItem(open = open, index = index, title = item.title, body = item.body)
+                    })
+                }
     // Clip the rounded corners, so a body cannot spill past the card edge.
     return overflow(n, overflow_hidden())
+}
+
+struct AccordionRow {
+    title: string,
+    body: string,
 }
 
 struct AccordionProps {
@@ -6725,12 +6775,12 @@ struct AccordionProps {
     border_color: string = "",
     bind: Signal<int> = Signal { id: 0 },
     bind__set: bool = false,
+    items: []AccordionRow,
 }
 
 struct AccordionItemProps {
     /// The accordion's single open-index signal (`-1` = all closed).
     open: Signal<int> = Signal { id: 0 },
-    open__set: bool = false,
     /// This item's index within its accordion.
     index: int = 0,
     /// Header label.
@@ -6785,6 +6835,7 @@ fn AccordionItem(p: AccordionItemProps) {
     set_padding_top(content, 0)
     show_eq(content, open, idx)
     enter_fade(content)
+    enter_reveal(content)
     ui_push(content.id)
     Text(p.body, color = mute(), font = FONT_BODY, wrap = 1)
     ui_pop()
@@ -6793,7 +6844,6 @@ fn AccordionItem(p: AccordionItemProps) {
 struct CollapsibleProps {
     /// 0 = closed, anything else = open.
     open: Signal<int> = Signal { id: 0 },
-    open__set: bool = false,
     title: fn() -> string = empty_text,
     /// Optional leading icon markup.
     icon: string = "",
@@ -6862,6 +6912,7 @@ fn Collapsible(p: CollapsibleProps) -> Node {
     set_padding_top(body, 0)
     show(body, open)
     enter_fade(body)
+    enter_reveal(body)
     ui_pop()
     return body
 }
@@ -6891,7 +6942,6 @@ enum PLACE {
 struct PopoverProps {
     /// 0 = closed, anything else = open.
     open: Signal<int> = Signal { id: 0 },
-    open__set: bool = false,
     /// Preferred side (`PLACE.*`); flips when it would overflow.
     place: int = 0,
     gap: int = 6,
@@ -6951,9 +7001,15 @@ fn Popover(trigger: Node, p: PopoverProps) -> Node {
 // `active`, so a hidden row that still holds focus cannot act.
 
 struct MenuProps {
-    /// Open at this item index; `-1` is closed. The menu's only state.
+    /// Open at this item index; `-1` is closed. The menu's only state. Pass
+    /// one to observe or drive the menu from outside; omitted, the menu owns it.
     active: Signal<int> = Signal { id: 0 },
     active__set: bool = false,
+    items: []MenuRow,
+    /// Runs with the picked row's index. Rows are plain data; this is the one
+    /// callback for the whole menu.
+    on_select: fn(int) = noop_int,
+    label: string = "",
     /// Preferred side (`PLACE.*`); flips when it would overflow.
     place: int = 0,
     gap: int = 4,
@@ -6966,12 +7022,23 @@ struct MenuProps {
     key: string = "escape",
 }
 
+struct MenuRow {
+    label: string = "",
+    /// Paint a separator above this row.
+    is_separated: bool = false,
+    /// Destructive command: painted in the danger ink.
+    danger: bool = false,
+}
+
 /// A dropdown menu anchored to `trigger`. Clicking the trigger toggles it;
 /// outside click and Escape close it; `place` is preferred and flips near the
 /// viewport edge. The trailing block is the item list (`MenuItem` /
 /// `MenuLabel` / `MenuSeparator`).
 fn Menu(trigger: Node, p: MenuProps) -> Node {
-    let active = p.active
+    let mut active = p.active
+    if !p.active__set {
+        active = signal(-1)
+    }
     // The trigger owns the toggle; opening lands on the first item.
     on_click(trigger, fn() {
         if active.get() >= 0 {
@@ -6995,7 +7062,20 @@ fn Menu(trigger: Node, p: MenuProps) -> Node {
                     radius = px_or_default(p.radius, RAD_LG),
                     padding = px_or_default(p.padding, 4),
                     width = p.width,
-                    a11y_role = "menu")
+                    cursor = "pointer",
+                    a11y_role = "menu") {
+                        if p.label.len > 0 {
+                            MenuLabel(p.label)
+                        }
+                        Each(p.items, fn(index, item) {
+                            if item.is_separated {
+                                MenuSeparator()
+                            }
+                            MenuItem(active = active, index = index, count = p.items.len,
+                                     label = item.label, danger = item.danger,
+                                     on_click = fn() => p.on_select(index))
+                        })
+                    }
     show_ge(panel, active, 0)
     arena.anchor_to(panel.id, trigger.id, p.place, p.gap)
     enter_fade(panel)
@@ -7196,7 +7276,7 @@ fn Drawer(open: Signal<int>, p: DrawerProps) -> Node {
         if open.get() != 0 {
             drawer_slide(panel, side, 0, MOTION.Base)
         } else {
-            drawer_slide(panel, side, size, 0)
+            drawer_slide(panel, side, size, MOTION.Fast)
         }
     })
     apply_key(panel, p.key, "drawer.close", fn() { open.set(0) }, true, false)
@@ -7325,7 +7405,7 @@ struct ToastProps {
 
 /// A transient message pinned to the bottom (or top) of the window. `open` is a
 /// 0/1 signal; it dismisses itself after `ms`, or on click. It rises and fades
-/// in on open (no exit animation yet). Trailing block is the message.
+/// in on open, and sinks and fades out on close. Trailing block is the message.
 fn Toast(open: Signal<int>, p: ToastProps) -> Node {
     let ov = Overlay(visible = open, on_click = fn() { open.set(0) })
     if p.place == 1 {
@@ -7348,6 +7428,7 @@ fn Toast(open: Signal<int>, p: ToastProps) -> Node {
                    on_click = fn() { open.set(0) },
                    cursor = "pointer")
     ui_pop()
+    enter_fade(card)
     // Rest 12dp low, then rise to 0 while opening (jumps instantly at boot).
     animate_y(card, 12, 0)
     let ms = p.ms
@@ -7356,7 +7437,7 @@ fn Toast(open: Signal<int>, p: ToastProps) -> Node {
             animate_y(card, 0, MOTION.Base)
             async.after(ms, fn() { open.set(0) })
         } else {
-            animate_y(card, 12, 0)
+            animate_y(card, 12, MOTION.Fast)
         }
     })
     return card

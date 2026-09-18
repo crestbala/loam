@@ -147,6 +147,13 @@ struct UiNode {
     an_tx: i16,
     an_ty: i16,
     an_rot: u16,
+    /// Paint-only reveal: 1 opts in (`enter_reveal`), `an_reveal` is the share
+    /// of the laid-out height paint shows, 0..100, clipped from the top with
+    /// the content slid up by the hidden part. Layout sees the full box at
+    /// once; only paint catches up, so an opening disclosure never re-lays
+    /// out per frame (the "animated height" the audit deferred).
+    reveal: u8,
+    an_reveal: u8,
     /// Indeterminate rotation (a `Spinner`): 1 = spin, period in ms. Driven by
     /// the frame clock in paint, like `pulse`, so it needs no track and is
     /// deterministic at `now_ms == 0`.
@@ -307,7 +314,7 @@ fn blank_node() -> UiNode {
         z_index: 0, grid_auto: 0, scroll_x: 0, scroll_y: 0, tw: 0, th: 0, pulse: 0, press: 0, press_amt: 0,
         aw: 0, ah: 0, bar_t: 0, parent: 0, key_ctx: 0, focusable: 0, capture_text: 0, edit_slot: -1,
         dirty: 0, bar_amt: 0,
-        an_scale: 100, an_tx: 0, an_ty: 0, an_rot: 0,
+        an_scale: 100, an_tx: 0, an_ty: 0, an_rot: 0, reveal: 0, an_reveal: 100,
         spin_ms: 900, spin: 0,
         anchor: 0, anchor_gap: 6, place: 0, flip: 1,
         elev: 0, elev_c: -1,
@@ -787,6 +794,8 @@ enum APROP {
     OpacityAmt = 11,
     // Corner radius in dp.
     RadiusPx = 12,
+    // Reveal share 0..100 (UiNode.an_reveal).
+    RevealAmt = 13,
 }
 
 let TRACK_CAP = 512
@@ -941,6 +950,9 @@ fn anim_read(node: int, prop: int) -> int {
     if prop == APROP.RadiusPx {
         return int(nodes[node].radius)
     }
+    if prop == APROP.RevealAmt {
+        return int(nodes[node].an_reveal)
+    }
     return 0
 }
 
@@ -1002,6 +1014,8 @@ fn anim_store(node: int, prop: int, v: int) {
             r = 0
         }
         nodes[node].radius = u16(r)
+    } else if prop == APROP.RevealAmt {
+        nodes[node].an_reveal = u8(anim_clamp100(v))
     }
 }
 
@@ -1331,7 +1345,10 @@ fn sync_chrome() {
             }
         }
         if int(nodes[i].enter_fade) != 0 {
-            let w = want_show(i)
+            // Shown means shown on screen: a Dialog panel is hidden by its
+            // scrim's signal, not its own, so the walk up is what makes it
+            // fade on every open (and out on every close), not just the first.
+            let w = shown_in_tree(i)
             if int(nodes[i].enter_fade) == 1 {
                 // First observation after a build: settle. Cold boot writes the
                 // final value and nothing animates (audit §10).
@@ -1343,8 +1360,34 @@ fn sync_chrome() {
                 nodes[i].enter_fade = u8(2)
             } else if w != 0 {
                 anim_schedule(i, APROP.EnterFade, 100, motion_slow(), ease_emphasized())
+            } else if is_floater(i) != 0 || want_show(i) != 0 {
+                // Exit: fade out. Paint keeps the node while `show_amt` > 0
+                // (`want_paint`); the tree predicates already say hidden, so it
+                // is inert. An in-flow node hidden by its *own* signal snaps
+                // instead: layout collapsed it this frame, and a fade painted
+                // over the neighbour that moved into its rect would look wrong.
+                anim_schedule(i, APROP.EnterFade, 0, motion_fast(), ease_standard())
             } else {
                 nodes[i].show_amt = u8(0)
+            }
+        }
+        if int(nodes[i].reveal) != 0 {
+            // Same shape as the fade: settle on first sight, then reveal on
+            // show. Hidden snaps to 0 so the next open starts from the top;
+            // there is no reveal-out, because layout has already collapsed an
+            // in-flow node by the time paint could animate it.
+            let w = shown_in_tree(i)
+            if int(nodes[i].reveal) == 1 {
+                if w != 0 {
+                    nodes[i].an_reveal = u8(100)
+                } else {
+                    nodes[i].an_reveal = u8(0)
+                }
+                nodes[i].reveal = u8(2)
+            } else if w != 0 {
+                anim_schedule(i, APROP.RevealAmt, 100, motion_base(), ease_emphasized())
+            } else {
+                nodes[i].an_reveal = u8(0)
             }
         }
     }
@@ -1944,6 +1987,27 @@ fn set_anchor_flip(id: int, on: int) {
     }
     nodes[id].flip = u8(on)
     mark_layout()
+}
+
+/// Paint visibility: `want_show`, or a hidden node whose exit fade has not
+/// landed yet. Paint alone reads this; layout, hit-test, focus, and the tree
+/// predicates keep `want_show`, so a closing floater is already inert.
+fn want_paint(id: int) -> int {
+    if want_show(id) != 0 {
+        return 1
+    }
+    if id <= 0 {
+        return 0
+    }
+    if id >= nodes.len {
+        return 0
+    }
+    if int(nodes[id].enter_fade) == 2 {
+        if int(nodes[id].show_amt) > 0 {
+            return 1
+        }
+    }
+    return 0
 }
 
 /// 1 when `id` and every ancestor is visible. `want_show` is per-node; a hidden

@@ -415,21 +415,28 @@ fn Overlays() {
 fn Disclosure() {
     let open = zeus.signal(-1)
     let more = zeus.signal(0)
+    let rows = []AccordionRow {
+        AccordionRow { title: "Shipping", body: "Ships in 2-4 business days." },
+        AccordionRow { title: "Returns", body: "30 days, no questions asked." },
+        AccordionRow { title: "Warranty", body: "Two years, parts and labour." },
+    }
     zeus.SectionHeader("Disclosure", "Accordion and collapsible",
                        "One open index closes the rest by construction; the collapsible is the same model without the card. Chevron and body fade are paint-only.")
-    zeus.Accordion(open) {
-        zeus.AccordionItem(open = open, index = 0, title = "Shipping", body = "Ships in 2-4 business days.")
-        zeus.AccordionItem(open = open, index = 1, title = "Returns", body = "30 days, no questions asked.")
-        zeus.AccordionItem(open = open, index = 2, title = "Warranty", body = "Two years, parts and labour.")
-    }
+    zeus.Accordion(open, items = rows)
     zeus.Collapsible(open = more, title = "Advanced options", border_color = zeus.rule()) {
         zeus.Body("A bare disclosure: a header row, a chevron, and a body that fades in.")
     }
 }
 
 fn Menus() {
-    let act = zeus.signal(-1)
     let picked = zeus.signal(0)
+    let active_label = zeus.signal("Rename")
+
+    let menu_items = []MenuRow {
+        MenuRow(label = "Rename"),
+        MenuRow(label = "Duplicate", is_separated = true),
+        MenuRow(label = "Delete"),
+    }
     zeus.SectionHeader("Menus", "Dropdown menu",
                        "Click the trigger to open it. Arrows move the highlight, Enter runs the active command, and Escape or an outside click closes.")
     zeus.Row(SPACE.Sm) {
@@ -451,20 +458,12 @@ fn Menus() {
             a11y_role = "button",
             a11y_label = "Open menu"
         ) {
-            zeus.Text("Open menu", color = zeus.ink(), font = zeus.FONT_CONTROL)
+            zeus.Text(active_label.get(), color = zeus.ink(), font = zeus.FONT_CONTROL)
             zeus.Icon(zeus.IC_CHEV_DOWN, 16, zeus.dim())
         }
-        zeus.Menu(trigger, active = act, width = 200) {
-            zeus.MenuLabel("File")
-            zeus.MenuItem(active = act, index = 0, count = 3, label = "Rename",
-                          on_click = fn() => picked.set(1))
-            zeus.MenuItem(active = act, index = 1, count = 3, label = "Duplicate",
-                          on_click = fn() => picked.set(2))
-            zeus.MenuSeparator()
-            zeus.MenuItem(active = act, index = 2, count = 3, label = "Delete", danger = true,
-                          on_click = fn() => picked.set(3))
-        }
-        zeus.Text("last command: {{picked.get()}}", color = zeus.mute(), font = zeus.FONT_BODY)
+        zeus.Menu(trigger, width = 200, label = "File", items = menu_items,
+                  on_select = fn(i: int) => active_label.set(menu_items[i].label))
+        zeus.Text("last command: {{active_label.get()}}", color = zeus.mute(), font = zeus.FONT_BODY)
     }
 }
 

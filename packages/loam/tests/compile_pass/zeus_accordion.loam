@@ -1,6 +1,6 @@
-// Phase 4 batch 2: Accordion holds ONE `open` index signal; items carry only
-// their `index` and read that signal, so opening one closes the rest by
-// construction and no item allocates state. Toggling is a discrete state
+// Phase 4 batch 2: Accordion holds ONE `open` index signal; rows are plain
+// data (`AccordionRow`) and the accordion hands each item its `index`, so
+// opening one closes the rest by construction and no item allocates state. Toggling is a discrete state
 // change; the entrance and chevron are paint-only.
 
 import "std:fmt"
@@ -17,11 +17,12 @@ fn must(ok: bool, what: string) {
 fn main() {
     zeus.window("accordion", 360, 260)
     let open = zeus.signal(-1)
-    let tree = zeus.Accordion(open) {
-        zeus.AccordionItem(open = open, index = 0, title = "One", body = "alpha")
-        zeus.AccordionItem(open = open, index = 1, title = "Two", body = "beta")
-        zeus.AccordionItem(open = open, index = 2, title = "Three", body = "gamma")
+    let rows = []AccordionRow {
+        AccordionRow { title: "One", body: "alpha" },
+        AccordionRow { title: "Two", body: "beta" },
+        AccordionRow { title: "Three", body: "gamma" },
     }
+    let tree = zeus.Accordion(open, items = rows)
     zeus.root(tree)
     zeus.pump_frame()
 

@@ -1,0 +1,123 @@
+// Bucket B, item 1: overlays animate out. Closing a floater used to hide it in
+// the same frame; now `sync_chrome` runs its enter fade to 0 and paint keeps
+// the node while `show_amt` > 0 (`arena.want_paint`). Everything that is not
+// paint — hit test, focus, `text_visible` — reads `want_show` as before, so a
+// closing panel is inert from the first frame. Reduced motion collapses the
+// exit to a jump, and a floater re-opened mid-exit retargets instead of
+// popping. The Dialog panel is hidden by its scrim's signal, not its own, so
+// the walk-up (`shown_in_tree`) is what lets it fade on every open.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+/// Step the clock by `ms` in 16 ms frames, painting each one.
+fn run_ms(ms: int) {
+    let mut t = 0
+    while t < ms {
+        zeus.engine_step_dt(16)
+        zeus.pump_frame()
+        t = t + 16
+    }
+}
+
+fn main() {
+    zeus.window("overlay exit", 360, 300)
+    let open = zeus.signal(0)
+    let dlg = zeus.signal(0)
+    let tree = zeus.Page() {
+        let trigger = zeus.Button("Menu", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
+        zeus.Popover(trigger, open = open, place = zeus.PLACE.PlaceBelow, width = 180) {
+            zeus.Text("Rename", color = zeus.ink(), font = zeus.FONT_BODY)
+        }
+        zeus.Dialog(dlg, title = "Confirm") {
+            zeus.Text("Body", color = zeus.ink(), font = zeus.FONT_BODY)
+        }
+    }
+    zeus.root(tree)
+    zeus.pump_frame()
+    // Warm: the first frame is the settled frame (audit §10), so nothing is
+    // in flight before anything opens.
+    zeus.engine_step_dt(16)
+    zeus.pump_frame()
+    let closed_draws = zeus.draw_count()
+    must(zeus.proof_anim_live() == 0, "settled before open")
+
+    // --- popover: close fades out ---
+    open.set(1)
+    run_ms(400)
+    must(zeus.text_visible("Rename"), "popover open")
+    let open_draws = zeus.draw_count()
+    must(open_draws > closed_draws, "open panel adds draw ops")
+    must(zeus.proof_anim_live() == 0, "enter fade landed")
+
+    open.set(0)
+    zeus.pump_frame()
+    must(!zeus.text_visible("Rename"), "closed for the tree the same frame")
+    must(zeus.draw_count() == open_draws, "closed panel still painted this frame")
+    must(zeus.proof_anim_live() > 0, "an exit track is live")
+
+    run_ms(48)
+    must(zeus.draw_count() == open_draws, "still painting mid-fade")
+    run_ms(200)
+    must(zeus.draw_count() == closed_draws, "panel gone once the fade lands")
+    must(zeus.proof_anim_live() == 0, "exit track returned to the pool")
+    must(zeus.engine_step_dt(16) == 0, "idle wants zero frames after the exit")
+
+    // --- reopen mid-exit retargets: no gap, no pop ---
+    open.set(1)
+    run_ms(400)
+    open.set(0)
+    run_ms(32)
+    must(zeus.draw_count() == open_draws, "mid-exit: still painted")
+    open.set(1)
+    zeus.pump_frame()
+    must(zeus.text_visible("Rename"), "reopened mid-exit")
+    must(zeus.draw_count() == open_draws, "reopened: painted without a gap")
+    run_ms(400)
+    must(zeus.proof_anim_live() == 0, "re-entry landed")
+    open.set(0)
+    run_ms(400)
+    must(zeus.draw_count() == closed_draws, "closed again")
+
+    // --- dialog: hidden by the scrim, fades on every open and close ---
+    dlg.set(1)
+    run_ms(400)
+    must(zeus.text_visible("Body"), "dialog open")
+    let dlg_draws = zeus.draw_count()
+    must(dlg_draws > closed_draws, "dialog adds draw ops")
+    dlg.set(0)
+    zeus.pump_frame()
+    must(!zeus.text_visible("Body"), "dialog closed for the tree")
+    must(zeus.draw_count() == dlg_draws, "dialog still painted during exit")
+    must(zeus.proof_anim_live() > 0, "dialog exit tracks live")
+    run_ms(400)
+    must(zeus.draw_count() == closed_draws, "dialog gone after the fade")
+    // Second open must animate too (the panel's own show never changes).
+    dlg.set(1)
+    zeus.pump_frame()
+    must(zeus.proof_anim_live() > 0, "second open animates in")
+    run_ms(400)
+    dlg.set(0)
+    run_ms(400)
+    must(zeus.draw_count() == closed_draws, "dialog closed")
+
+    // --- reduced motion: the exit is a jump ---
+    zeus.set_reduced_motion(true)
+    open.set(1)
+    zeus.pump_frame()
+    must(zeus.draw_count() == open_draws, "reduced: open jumps")
+    open.set(0)
+    zeus.pump_frame()
+    must(zeus.draw_count() == closed_draws, "reduced: close jumps")
+    must(zeus.proof_anim_live() == 0, "reduced: no exit track")
+
+    fmt.println("overlay exit ok")
+}

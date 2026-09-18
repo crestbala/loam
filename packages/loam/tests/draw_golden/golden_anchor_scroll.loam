@@ -13,9 +13,8 @@ fn main() {
             zeus.Box(height = 300)
             let trigger = zeus.Box(width = 120, height = 32, background = zeus.plate(),
                                    border = zeus.HAIRLINE, border_color = zeus.rule())
-            zeus.Menu(trigger, active = open, width = 160) {
-                zeus.MenuItem(active = open, index = 0, count = 1, label = "Rename")
-            }
+            let rows = []MenuRow { MenuRow(label = "Rename") }
+            zeus.Menu(trigger, active = open, items = rows, width = 160)
         }
     })
     zeus.root(top)
