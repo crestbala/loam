@@ -222,6 +222,11 @@ let mut focus_ring: []int = []int {}
 /// 1 = focus arrived by keyboard (tab/shift-tab); the painted focus ring
 /// shows only then, and a pointer click clears it (desktop convention).
 let mut kb_focus: int = 0
+/// Modal focus trap (`Dialog`). Tab / shift-tab cycle inside this subtree
+/// while it is shown; 0 = no trap. `trap_restore` is the focus to return
+/// to when the trap releases.
+let mut trap_id: int = 0
+let mut trap_restore: int = 0
 let mut paint_sy: int = 0
 let mut paint_sx: int = 0
 let mut drag_id: int = 0
@@ -553,6 +558,8 @@ fn reset_tree() {
     push(nodes, blank_node())
     root_id = 0
     focus_id = 0
+    trap_id = 0
+    trap_restore = 0
     paint_sy = 0
     paint_sx = 0
     // drag_id / drag_bar survive the rebuild on purpose: an active scrollbar
@@ -3101,6 +3108,60 @@ fn is_focusable(id: int) -> int {
     return 0
 }
 
+/// Subtree Tab walks while a modal is open: the trapped node if it is still
+/// shown in the tree, otherwise the window root.
+fn focus_walk_root() -> int {
+    if trap_id > 0 {
+        if shown_in_tree(trap_id) != 0 {
+            return trap_id
+        }
+    }
+    return root_id
+}
+
+/// Install a modal trap on `id`. Saves the current focus and moves into the
+/// first focusable descendant (or `id` itself).
+fn claim_trap(id: int) {
+    if id <= 0 {
+        return
+    }
+    if trap_id != id {
+        trap_restore = focus_id
+        trap_id = id
+    }
+    let keep = focus_ring
+    focus_ring = []int {}
+    collect_focus(id)
+    let mut first = 0
+    let n = focus_ring.len
+    let mut i = 0
+    while i < n {
+        if focus_ring[i] != id {
+            first = focus_ring[i]
+            break
+        }
+        i = i + 1
+    }
+    focus_ring = keep
+    if first == 0 {
+        first = id
+    }
+    claim_focus(first)
+}
+
+/// Release the trap if it is still `id`, and put focus back where it was.
+fn release_trap(id: int) {
+    if trap_id != id {
+        return
+    }
+    trap_id = 0
+    let back = trap_restore
+    trap_restore = 0
+    if back > 0 {
+        claim_focus(back)
+    }
+}
+
 fn collect_focus(id: int) {
     if id <= 0 {
         return
@@ -3122,7 +3183,7 @@ fn collect_focus(id: int) {
 
 fn snapshot_focus() {
     focus_ring = []int {}
-    collect_focus(root_id)
+    collect_focus(focus_walk_root())
     focus_at = -1
     let n = focus_ring.len
     for i in 0..n {
@@ -3134,7 +3195,7 @@ fn snapshot_focus() {
 
 fn restore_focus() {
     focus_ring = []int {}
-    collect_focus(root_id)
+    collect_focus(focus_walk_root())
     if focus_at < 0 {
         focus_id = 0
         return
@@ -3218,7 +3279,7 @@ fn focus_captures_text() -> int {
 
 fn focus_step(back: int) -> int {
     focus_ring = []int {}
-    collect_focus(root_id)
+    collect_focus(focus_walk_root())
     let count = focus_ring.len
     if count == 0 {
         return 0

@@ -272,8 +272,8 @@ Gaps against §5:
 - **No arrow-key navigation** inside `Tabs`, `RadioGroup`, `Select`, or any
   menu. Only `Slider` (`keys()`) and `Pagination` (`keys_page()`) bind arrows.
 - **No roving tabindex** — every radio in a group is its own tab stop.
-- **No focus trap** in `Dialog`, and **no Esc to dismiss** on `Dialog` or
-  `Select`.
+- **[CLOSED — phase 4 batch 11]** *No focus trap* in `Dialog`, and *no Esc
+  to dismiss* on `Dialog` or `Select`.
 - **No 44dp minimum hit target** on touch hosts. `SIZE.Sm` is 32dp,
   `SIZE.Md` 36dp, the dialog close button is 28dp, `Checkbox`/`Radio` boxes are
   16dp, and `Pip` is 8–10dp. iOS and Android get the desktop geometry verbatim.
@@ -379,7 +379,7 @@ answers depending on how you arrived.
 | 1 | Audit | **done** | `8289306` |
 | 2 | Tokens + paint primitives | **done** | `2184563` |
 | 3 | Dirty-channel split + animation subsystem + state layer | **done** | `feat(zeus): dirty-channel split + animation track pool (phase 3)` |
-| 4 | Components, in batches | **in progress — batches 1–10** | `feat: paint-only motion + feedback primitives` / `feat: Accordion` / `feat: overlay family` / `feat: elevation + stroked borders` / `feat: Menu` / `feat: Collapsible + Drawer` / `fix: anchored floaters in a scroller` / `feat: Select + Combobox` / `feat: exit motion + reveal` / `fix: web host paint/a11y/wheel` / `fix: anchored placement, EASE béziers, layout-driving animate` / `feat: Tabs/RadioGroup arrows + roving tabindex` |
+| 4 | Components, in batches | **in progress — batches 1–11** | `feat: paint-only motion + feedback primitives` / `feat: Accordion` / `feat: overlay family` / `feat: elevation + stroked borders` / `feat: Menu` / `feat: Collapsible + Drawer` / `fix: anchored floaters in a scroller` / `feat: Select + Combobox` / `feat: exit motion + reveal` / `fix: web host paint/a11y/wheel` / `fix: anchored placement, EASE béziers, layout-driving animate` / `feat: Tabs/RadioGroup arrows + roving tabindex` / `feat: Dialog focus trap + Esc` |
 | 5 | Gallery + docs (`spec.md`, a `www/` design-system page) | not started | — |
 
 `make test` at the end of phase 3: **361 passed, 0 failed** (the six network
@@ -1014,12 +1014,25 @@ helpers. `NavTab` and `ToggleGroup` are unchanged (not in this item).
 `zeus_tabs_keys.loam` locks: arrows move and clamp on both widgets; of three
 tabs only the selected one is a tab stop. No golden moved.
 
+### Phase 4 — Dialog focus trap and Esc (batch 11)
+
+`Dialog` / `AlertDialog` now bind Escape (`dialog.close`) and install a
+modal focus trap on the card while `open != 0`. Tab / shift-tab collect
+only that subtree (`arena.trap_id` / `focus_walk_root`), so page controls
+behind the scrim are not stops. Opening moves focus to the first
+focusable descendant (the Close control, or a body widget); closing
+releases the trap and restores the previous focus. Select already closed
+on Escape from batch 7 (`select.close` on the menu, which holds focus);
+`zeus_dialog.loam` re-checks that and locks the trap.
+
+No golden moved: the first frame is still settled and closed.
+
 ### Remaining work (living list)
 
 The single maintained tracker of what is still open. Update it in the same commit
 that closes an item, and tick a box rather than deleting the line, so the record
 of what was deferred stays readable. Landed so far: phases 1–3; phase 4 batches
-1–10.
+1–11.
 
 **Phase 4 — components still to build**
 
@@ -1099,7 +1112,8 @@ scope**:
   today. **(batch 10)**
 - [x] Roving tabindex for radio / tab groups — every radio in a group is its own
   tab stop today. (Menu rows rove; only the active row is focusable.) **(batch 10)**
-- [ ] Focus trap in `Dialog`; Esc to dismiss `Dialog` and `Select`.
+- [x] Focus trap in `Dialog`; Esc to dismiss `Dialog` and `Select`.
+  **(batch 11; Select Esc was batch 7)**
 - [ ] A 44dp minimum hit target on touch hosts; iOS and Android get the desktop
   geometry verbatim (`SIZE.Sm` 32dp, dialog close 28dp, `Checkbox` / `Radio`
   16dp, `Pip` 8–10dp).
