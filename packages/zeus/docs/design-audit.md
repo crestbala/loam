@@ -379,7 +379,7 @@ answers depending on how you arrived.
 | 1 | Audit | **done** | `8289306` |
 | 2 | Tokens + paint primitives | **done** | `2184563` |
 | 3 | Dirty-channel split + animation subsystem + state layer | **done** | `feat(zeus): dirty-channel split + animation track pool (phase 3)` |
-| 4 | Components, in batches | **in progress — batches 1–9.4** | `feat: paint-only motion + feedback primitives` / `feat: Accordion` / `feat: overlay family` / `feat: elevation + stroked borders` / `feat: Menu` / `feat: Collapsible + Drawer` / `fix: anchored floaters in a scroller` / `feat: Select + Combobox` / `feat: exit motion + reveal` / `fix: web host paint/a11y/wheel` / `fix: anchored placement uses the safe-area origin` / `fix: EASE tokens are CSS cubic-béziers` / `fix: layout-driving animate tweens the box` |
+| 4 | Components, in batches | **in progress — batches 1–10** | `feat: paint-only motion + feedback primitives` / `feat: Accordion` / `feat: overlay family` / `feat: elevation + stroked borders` / `feat: Menu` / `feat: Collapsible + Drawer` / `fix: anchored floaters in a scroller` / `feat: Select + Combobox` / `feat: exit motion + reveal` / `fix: web host paint/a11y/wheel` / `fix: anchored placement, EASE béziers, layout-driving animate` / `feat: Tabs/RadioGroup arrows + roving tabindex` |
 | 5 | Gallery + docs (`spec.md`, a `www/` design-system page) | not started | — |
 
 `make test` at the end of phase 3: **361 passed, 0 failed** (the six network
@@ -999,12 +999,27 @@ Deliberately open: padding / font / spacing still jump (not a continuous
 length we committed to tween). A layout-driving animate is a layout frame,
 unlike a hover fade.
 
+### Phase 4 — arrow keys + roving tabindex on Tabs / RadioGroup (batch 10)
+
+Menus (batch 5) and Select (batch 7) already moved a highlight with arrows
+and roved focus onto the active row. Tabs and RadioGroup did not: every
+tab / radio was its own tab stop, and arrows did nothing.
+
+`Tab` / `Choice` / `Radio` now bind Left/Right (tabs, segmented) or
+Up/Down + Left/Right (radios), clamp at both ends, and keep `focusable` only
+on the selected item — which takes focus when it becomes selected, so the
+next arrow lands on it. `roving_step` / `roving_focus` are the shared
+helpers. `NavTab` and `ToggleGroup` are unchanged (not in this item).
+
+`zeus_tabs_keys.loam` locks: arrows move and clamp on both widgets; of three
+tabs only the selected one is a tab stop. No golden moved.
+
 ### Remaining work (living list)
 
 The single maintained tracker of what is still open. Update it in the same commit
 that closes an item, and tick a box rather than deleting the line, so the record
 of what was deferred stays readable. Landed so far: phases 1–3; phase 4 batches
-1–9.4.
+1–10.
 
 **Phase 4 — components still to build**
 
@@ -1079,11 +1094,11 @@ scope**:
 
 **Accessibility / input (§7)**
 
-- [ ] Arrow-key nav inside `Tabs` and `RadioGroup` (menus gained it in batch 5,
+- [x] Arrow-key nav inside `Tabs` and `RadioGroup` (menus gained it in batch 5,
   `Select` in batch 7). Only `Slider` and `Pagination` otherwise bind arrows
-  today.
-- [ ] Roving tabindex for radio / tab groups — every radio in a group is its own
-  tab stop today. (Menu rows rove; only the active row is focusable.)
+  today. **(batch 10)**
+- [x] Roving tabindex for radio / tab groups — every radio in a group is its own
+  tab stop today. (Menu rows rove; only the active row is focusable.) **(batch 10)**
 - [ ] Focus trap in `Dialog`; Esc to dismiss `Dialog` and `Select`.
 - [ ] A 44dp minimum hit target on touch hosts; iOS and Android get the desktop
   geometry verbatim (`SIZE.Sm` 32dp, dialog close 28dp, `Checkbox` / `Radio`
