@@ -395,6 +395,7 @@ int32_t loam_zeus_engine_next_ms(void);
 int32_t loam_zeus_engine_click(int32_t x, int32_t y);
 int32_t loam_zeus_engine_scroll(int32_t x, int32_t y, int32_t dx, int32_t dy);
 int32_t loam_zeus_engine_scroll_step(int32_t x, int32_t y, int32_t dx, int32_t dy);
+int32_t loam_zeus_engine_scroll_smooth(int32_t x, int32_t y, int32_t dx, int32_t dy);
 int32_t loam_zeus_engine_drag(int32_t x, int32_t y);
 int32_t loam_zeus_engine_hover(int32_t x, int32_t y);
 void loam_zeus_engine_mouseup(void);
@@ -446,6 +447,8 @@ int zeus_handle_marked(const char *utf8, int n);
 int zeus_handle_scroll(int64_t x, int64_t y, int64_t dx, int64_t dy);
 /** Discrete scroll (mouse notch / web line wheel): delta only, no momentum. */
 int zeus_handle_scroll_step(int64_t x, int64_t y, int64_t dx, int64_t dy);
+/* Mouse-wheel notch eased to its target (browser feel). */
+int zeus_handle_scroll_smooth(int64_t x, int64_t y, int64_t dx, int64_t dy);
 int zeus_handle_drag(int64_t x, int64_t y);
 void zeus_handle_mouseup(void);
 const char *zeus_window_title(void);
@@ -497,6 +500,7 @@ typedef struct {
     int32_t (*click)(int32_t x, int32_t y);
     int32_t (*scroll)(int32_t x, int32_t y, int32_t dx, int32_t dy);
     int32_t (*scroll_step)(int32_t x, int32_t y, int32_t dx, int32_t dy);
+    int32_t (*scroll_smooth)(int32_t x, int32_t y, int32_t dx, int32_t dy);
     int32_t (*drag)(int32_t x, int32_t y);
     int32_t (*hover)(int32_t x, int32_t y);
     void (*mouseup)(void);
@@ -540,6 +544,7 @@ void zeus_set_host_hooks(void (*run)(const char *path));
 #define loam_zeus_engine_click zeus_app_api.click
 #define loam_zeus_engine_scroll zeus_app_api.scroll
 #define loam_zeus_engine_scroll_step zeus_app_api.scroll_step
+#define loam_zeus_engine_scroll_smooth zeus_app_api.scroll_smooth
 #define loam_zeus_engine_drag zeus_app_api.drag
 #define loam_zeus_engine_hover zeus_app_api.hover
 #define loam_zeus_engine_mouseup zeus_app_api.mouseup

@@ -898,9 +898,18 @@ same frames was correct throughout, which is why no golden caught them.
 - **Wheel scrolling coasted twice.** Web and mac armed the engine's momentum
   for precise (trackpad) deltas, but the OS already delivers a trackpad's
   inertia as a stream of wheel events, so the engine coasted on top of it and
-  painted a frame per coast step after the fingers lifted. Wheel input now
-  steps exactly where it lands on both hosts (`scroll_step`). Touch pans on
+  painted a frame per coast step after the fingers lifted. Precise deltas now
+  step exactly where they land (`scroll_step`). A **mouse notch** gets the
+  browser's own feel instead: `scroll_smooth` moves a per-scroller target and
+  `physics_step` eases the position 35 % of the gap per frame (~150 ms for
+  a 100 px notch, lands exactly, retargets from the pending target so notches
+  add up, clamps at the content, chains to the parent scroller at an edge,
+  plain step under reduced motion). Bounded, unlike the coast: idle wants no
+  frames once it lands. Web tells a notch by `wheelDeltaY % 120 == 0` (or
+  line / page `deltaMode`); mac by `!hasPreciseScrollingDeltas`. Touch pans on
   iOS / Android keep the engine coast: a canvas gets no OS inertia there.
+  `zeus_scroll_smooth.loam` locks the ease, landing, retarget, clamp, idle,
+  and reduced-motion paths.
 
 - **Scrollbar thumb shows and hides in one frame each.** It faded to hidden
   over 900 ms on a `BarFade` track that kept a paint frame every 16 ms running

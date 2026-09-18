@@ -1041,14 +1041,24 @@
           "wheel",
           (e) => {
             e.preventDefault();
-            /* Every wheel delta steps exactly where it lands: no engine
-               coast. A trackpad's inertia already arrives as a stream of
-               wheel events from the OS, so an engine coast on top of it ran
-               the scroll twice (and painted a frame per coast step). Mouse
-               wheels report lines / pages (deltaMode 1 / 2); scale those to
-               points. */
+            /* No engine coast: a trackpad's inertia already arrives as a
+               stream of wheel events from the OS, so precise deltas step
+               exactly where they land. A mouse notch eases to its target
+               instead (the browser's own smooth wheel scroll; bounded, and
+               retargeted by the next notch). Chromium reports a notch as a
+               `wheelDeltaY` multiple of 120; line / page modes (1 / 2) are
+               notches too, scaled to points. */
             const p = layoutPoint(e.clientX, e.clientY);
-            const fn = exp.zeus_scroll_step || exp.zeus_scroll;
+            let notch = e.deltaMode !== 0;
+            if (!notch) {
+              if (typeof e.wheelDeltaY === "number" && e.wheelDeltaY !== 0) {
+                notch = e.wheelDeltaY % 120 === 0;
+              } else {
+                notch = Number.isInteger(e.deltaY) && Math.abs(e.deltaY) >= 48;
+              }
+            }
+            const step = exp.zeus_scroll_step || exp.zeus_scroll;
+            const fn = notch ? (exp.zeus_scroll_smooth || step) : step;
             if (e.deltaMode === 1) {
               fn(p.x, p.y, e.deltaX * 16, e.deltaY * 16);
             } else if (e.deltaMode === 2) {

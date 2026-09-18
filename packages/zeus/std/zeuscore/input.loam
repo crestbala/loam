@@ -452,6 +452,46 @@ fn scroll(px: int, py: int, dx: int, dy: int) -> int {
     return changed
 }
 
+/// Mouse-wheel notch with the browser feel: the delta moves a target and the
+/// position eases to it over ~150 ms (`physics_step`), retargeting on the
+/// next notch. Chains to the parent scroller when this one is at its edge.
+/// Under reduced motion it is a plain step.
+fn scroll_smooth(px: int, py: int, dx: int, dy: int) -> int {
+    arena.ensure()
+    if arena.root_id <= 0 {
+        return 0
+    }
+    if arena.anim_reduced() != 0 {
+        return scroll_step(px, py, dx, dy)
+    }
+    let mut changed = 0
+    if dy != 0 {
+        let mut s = find_scroll_axis(arena.root_id, px, py, 0)
+        let mut rem = dy
+        while s > 0 && rem != 0 {
+            let used = arena.apply_smooth_y(s, rem)
+            if used != 0 {
+                changed = 1
+            }
+            rem = rem - used
+            s = parent_scroll(s, 0)
+        }
+    }
+    if dx != 0 {
+        let mut s = find_scroll_axis(arena.root_id, px, py, 1)
+        let mut rem = dx
+        while s > 0 && rem != 0 {
+            let used = arena.apply_smooth_x(s, rem)
+            if used != 0 {
+                changed = 1
+            }
+            rem = rem - used
+            s = parent_scroll(s, 1)
+        }
+    }
+    return changed
+}
+
 /// Discrete wheel click (mouse notches, web line/page wheels): the delta is
 /// applied exactly and no velocity is stored, so the scroller never coasts
 /// past where the user clicked.

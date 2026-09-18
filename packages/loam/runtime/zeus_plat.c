@@ -1741,6 +1741,10 @@ int zeus_handle_scroll(int64_t x, int64_t y, int64_t dx, int64_t dy) {
 
 /* Discrete scroll step (mouse wheel notch, web line/page wheel): applies the
  * delta without velocity, so the scroller never coasts past the click. */
+int zeus_handle_scroll_smooth(int64_t x, int64_t y, int64_t dx, int64_t dy) {
+    return (int)loam_zeus_engine_scroll_smooth(x, y, dx, dy);
+}
+
 int zeus_handle_scroll_step(int64_t x, int64_t y, int64_t dx, int64_t dy) {
     return (int)loam_zeus_engine_scroll_step(x, y, dx, dy);
 }

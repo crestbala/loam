@@ -1983,6 +1983,11 @@ fn engine_scroll_step(px: int, py: int, dx: int, dy: int) -> int {
     return input.scroll_step(px, py, dx, dy)
 }
 
+/// Mouse-wheel notch: eases to the target over ~150 ms (browser feel).
+fn engine_scroll_smooth(px: int, py: int, dx: int, dy: int) -> int {
+    return input.scroll_smooth(px, py, dx, dy)
+}
+
 fn engine_drag(px: int, py: int) -> int {
     return input.drag(px, py)
 }
