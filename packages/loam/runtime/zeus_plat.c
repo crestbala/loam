@@ -934,7 +934,16 @@ void zeus_set_insets(int64_t top, int64_t right, int64_t bottom, int64_t left) {
     g_inset_l = left < 0 ? 0 : left;
 }
 
+static int64_t g_overlay_scroll = -1;
+
+void zeus_set_overlay_scroll(int64_t on) {
+    g_overlay_scroll = on <= 0 ? 0 : 1;
+}
+
 int64_t loam_zeus_plat_overlay_scroll(void) {
+    if (g_overlay_scroll >= 0) {
+        return g_overlay_scroll;
+    }
 #if defined(LOAM_IOS) || defined(LOAM_ANDROID)
     return 1;
 #else
@@ -1549,6 +1558,9 @@ int64_t loam_platform_plat_view_height(void) { return loam_zeus_plat_view_height
 
 int64_t loam_platform_plat_overlay_scroll(void) {
     return loam_zeus_plat_overlay_scroll();
+}
+void loam_platform_plat_set_overlay_scroll(int64_t on) {
+    zeus_set_overlay_scroll(on);
 }
 int64_t loam_platform_plat_inset_top(void) { return loam_zeus_plat_inset_top(); }
 int64_t loam_platform_plat_inset_right(void) { return loam_zeus_plat_inset_right(); }

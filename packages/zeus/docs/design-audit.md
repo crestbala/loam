@@ -274,9 +274,9 @@ Gaps against §5:
 - **No roving tabindex** — every radio in a group is its own tab stop.
 - **[CLOSED — phase 4 batch 11]** *No focus trap* in `Dialog`, and *no Esc
   to dismiss* on `Dialog` or `Select`.
-- **No 44dp minimum hit target** on touch hosts. `SIZE.Sm` is 32dp,
-  `SIZE.Md` 36dp, the dialog close button is 28dp, `Checkbox`/`Radio` boxes are
-  16dp, and `Pip` is 8–10dp. iOS and Android get the desktop geometry verbatim.
+- **[CLOSED — phase 4 batch 12]** *No 44dp minimum hit target* on touch hosts.
+  Hit-testing inflates tappable nodes to 44dp; paint/layout stay authored.
+  `Pip` without a click handler is not a target.
 - Hover is already correctly suppressed on overlay-scroll hosts
   (`paint_hover_wash` early-returns), so "pointer hover only where there is a
   pointer" is half-solved — but `is_hot` still runs the fade math for every node
@@ -379,7 +379,7 @@ answers depending on how you arrived.
 | 1 | Audit | **done** | `8289306` |
 | 2 | Tokens + paint primitives | **done** | `2184563` |
 | 3 | Dirty-channel split + animation subsystem + state layer | **done** | `feat(zeus): dirty-channel split + animation track pool (phase 3)` |
-| 4 | Components, in batches | **in progress — batches 1–11** | `feat: paint-only motion + feedback primitives` / `feat: Accordion` / `feat: overlay family` / `feat: elevation + stroked borders` / `feat: Menu` / `feat: Collapsible + Drawer` / `fix: anchored floaters in a scroller` / `feat: Select + Combobox` / `feat: exit motion + reveal` / `fix: web host paint/a11y/wheel` / `fix: anchored placement, EASE béziers, layout-driving animate` / `feat: Tabs/RadioGroup arrows + roving tabindex` / `feat: Dialog focus trap + Esc` |
+| 4 | Components, in batches | **in progress — batches 1–12** | `feat: paint-only motion + feedback primitives` / `feat: Accordion` / `feat: overlay family` / `feat: elevation + stroked borders` / `feat: Menu` / `feat: Collapsible + Drawer` / `fix: anchored floaters in a scroller` / `feat: Select + Combobox` / `feat: exit motion + reveal` / `fix: web host paint/a11y/wheel` / `fix: anchored placement, EASE béziers, layout-driving animate` / `feat: Tabs/RadioGroup arrows + roving tabindex` / `feat: Dialog focus trap + Esc` / `feat: 44dp touch hit target` |
 | 5 | Gallery + docs (`spec.md`, a `www/` design-system page) | not started | — |
 
 `make test` at the end of phase 3: **361 passed, 0 failed** (the six network
@@ -1027,12 +1027,25 @@ on Escape from batch 7 (`select.close` on the menu, which holds focus);
 
 No golden moved: the first frame is still settled and closed.
 
+### Phase 4 — 44dp touch hit target (batch 12)
+
+iOS / Android (`plat_overlay_scroll`) keep the authored layout and paint
+size. `in_box` inflates the hit rect of a tappable node to 44×44 dp,
+centered on the layout box, so `SIZE.Sm` (32), the dialog Close (28),
+Switch (20 tall), and a 16dp checkbox row still receive the pointer.
+Overlays and scrollers are not inflated. Desktop is unchanged.
+
+`engine_set_overlay_scroll` is the test hook (same idea as insets).
+`zeus_touch_hit.loam` locks: a 32² control misses 4dp above on desktop,
+hits on touch, still misses 20dp above, and stays 32² in layout. No
+golden moved.
+
 ### Remaining work (living list)
 
 The single maintained tracker of what is still open. Update it in the same commit
 that closes an item, and tick a box rather than deleting the line, so the record
 of what was deferred stays readable. Landed so far: phases 1–3; phase 4 batches
-1–11.
+1–12.
 
 **Phase 4 — components still to build**
 
@@ -1114,9 +1127,9 @@ scope**:
   tab stop today. (Menu rows rove; only the active row is focusable.) **(batch 10)**
 - [x] Focus trap in `Dialog`; Esc to dismiss `Dialog` and `Select`.
   **(batch 11; Select Esc was batch 7)**
-- [ ] A 44dp minimum hit target on touch hosts; iOS and Android get the desktop
+- [x] A 44dp minimum hit target on touch hosts; iOS and Android get the desktop
   geometry verbatim (`SIZE.Sm` 32dp, dialog close 28dp, `Checkbox` / `Radio`
-  16dp, `Pip` 8–10dp).
+  16dp, `Pip` 8–10dp). **(batch 12: hit rect only; paint stays authored)**
 - [ ] `is_hot` still runs the hover-fade math for every node each frame on
   overlay-scroll hosts (hover is correctly suppressed, but the math is not).
 - [ ] Strings are never freed (`loam_rt.h`). A `{{ }}` interpolation on a

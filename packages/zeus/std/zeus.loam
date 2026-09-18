@@ -1674,6 +1674,14 @@ fn engine_set_insets(top: int, right: int, bottom: int, left: int) {
     arena.mark_layout()
 }
 
+/// Test hook: 1 = treat this process as an overlay-scroll (touch) host.
+/// iOS / Android already compile that way; desktop tests use this so a
+/// 44dp hit target can be asserted without a device.
+fn engine_set_overlay_scroll(on: int) {
+    arena.ensure()
+    platform.plat_set_overlay_scroll(on)
+}
+
 /// One headless host frame: async tick, rebuild + layout, then paint. Tests
 /// use this instead of calling `engine_layout` by hand.
 fn pump_frame() {
