@@ -1536,6 +1536,17 @@ fn engine_step_dt(dt_ms: int) -> int {
         dt = 64
     }
     let d = scene.step(dt)
+    // A layout-driving `animate` reflows in this same frame so paint sees
+    // the new box. Hover / press still skip layout: they never push a
+    // layout-anim binding.
+    if arena.take_layout_anim_moved() != 0 {
+        apply_layout_anims()
+        if arena.root_id > 0 {
+            layout.layout(arena.win_w, arena.win_h)
+            arena.layout_dirty = 0
+            layout_gen = layout_gen + 1
+        }
+    }
     // While an async op is in flight or a spawn waits, hosts must keep
     // drawing frames: only a frame's tick advances them. Coasting scroll
     // is the same: keep frames until velocity and overscroll settle.
@@ -1588,6 +1599,11 @@ fn engine_next_ms() -> int {
 /// longer re-run per frame, and nothing re-runs inside the tick at all. A new
 /// call retargets an in-flight animation from its current value. `ms == 0`
 /// jumps; before the first frame it jumps too (nothing animates at boot).
+///
+/// A layout prop the write lands on (width / height / a pin) does not jump
+/// to `to`: it stays at its current length and tweens on the same track,
+/// reflowing each frame. Paint-only readers (`Progress`, `anim_paint`) still
+/// use the overlay. Hover / press never reflow.
 fn animate(sig: Signal<int>, to: int, ms: int) {
     arena.anim_signal(sig.id, to, ms)
 }
@@ -1624,6 +1640,13 @@ fn proof_allocs() -> int {
 fn anim_paint(sig: Signal<int>) -> int {
     return arena.sig_val(sig.id)
 }
+
+/// Shape a 0..1000 linear progress into the named `EASE` curve. Same helper
+/// the track pool uses; tests lock samples so a control-point or solver
+/// change is visible.
+fn anim_ease(easing: int, t: int) -> int {
+    return arena.anim_ease(easing, t)
+}
 /// Host / app reduced-motion preference: animations jump to their final value.
 fn set_reduced_motion(on: bool) {
     arena.ensure()
@@ -1639,6 +1662,15 @@ fn set_reduced_motion(on: bool) {
 fn engine_set_reduced_motion(on: int) {
     arena.ensure()
     arena.reduced = on
+}
+
+/// Host trampoline and test hook: set the safe-area insets the next layout
+/// pass will read (`plat_inset_*`). iOS / Android already call the C setter
+/// from the view; tests use this so a notched viewport is deterministic.
+fn engine_set_insets(top: int, right: int, bottom: int, left: int) {
+    arena.ensure()
+    platform.plat_set_insets(top, right, bottom, left)
+    arena.mark_layout()
 }
 
 /// One headless host frame: async tick, rebuild + layout, then paint. Tests
@@ -2637,9 +2669,95 @@ fn skip_unset(setter: int, v: int) -> bool {
     }
 }
 
+/// Geometry a layout-driving `animate` may tween. Flags (direction, wrap,
+/// show) still jump: they are not a continuous length.
+fn setter_tweens_layout(setter: int) -> bool {
+    match setter {
+        SET.Width | SET.Height | SET.MinWidth | SET.MaxWidth |
+        SET.MinHeight | SET.MaxHeight | SET.Left | SET.Top | SET.Right |
+        SET.Bottom => { return true }
+        _ => { return false }
+    }
+}
+
+fn layout_target_px(setter: int, v: int) -> int {
+    match setter {
+        SET.Width | SET.Height | SET.MinWidth | SET.MaxWidth |
+        SET.MinHeight | SET.MaxHeight | SET.Left | SET.Top | SET.Right |
+        SET.Bottom => { return scaled(v) }
+        _ => { return v }
+    }
+}
+
+fn layout_read(nid: int, setter: int) -> int {
+    match setter {
+        SET.Width => {
+            if arena.nodes[nid].ew >= 0 {
+                return arena.nodes[nid].ew
+            }
+            return arena.nodes[nid].w
+        }
+        SET.Height => {
+            if arena.nodes[nid].eh >= 0 {
+                return arena.nodes[nid].eh
+            }
+            return arena.nodes[nid].h
+        }
+        SET.MinWidth => { return arena.nodes[nid].min_w }
+        SET.MaxWidth => { return arena.nodes[nid].max_w }
+        SET.MinHeight => { return arena.nodes[nid].min_h }
+        SET.MaxHeight => { return arena.nodes[nid].max_h }
+        SET.Left => { return arena.nodes[nid].pin_l }
+        SET.Top => { return arena.nodes[nid].pin_t }
+        SET.Right => { return arena.nodes[nid].pin_r }
+        SET.Bottom => { return arena.nodes[nid].pin_b }
+        _ => { return 0 }
+    }
+}
+
+fn apply_int_px(nid: int, setter: int, v: int) {
+    let n = node_handle(nid)
+    match setter {
+        SET.Width => { set_width(n, v) }
+        SET.Height => { set_height(n, v) }
+        SET.MinWidth => { set_min_width(n, v) }
+        SET.MaxWidth => { set_max_width(n, v) }
+        SET.MinHeight => { set_min_height(n, v) }
+        SET.MaxHeight => { set_max_height(n, v) }
+        SET.Left => { arena.nodes[nid].pin_l = v }
+        SET.Top => { arena.nodes[nid].pin_t = v }
+        SET.Right => { arena.nodes[nid].pin_r = v }
+        SET.Bottom => { arena.nodes[nid].pin_b = v }
+        _ => {}
+    }
+}
+
+fn apply_layout_anims() {
+    let n = arena.layout_anim_len()
+    let mut i = 0
+    while i < n {
+        let a = arena.layout_anim_get(i)
+        if a.live != 0 {
+            apply_int_px(a.nid, a.setter, a.cur)
+        }
+        i = i + 1
+    }
+    arena.layout_anim_reap()
+    arena.mark_layout()
+}
+
 fn apply_int(nid: int, setter: int, v: int) {
     if skip_unset(setter, v) {
         return
+    }
+    if arena.anim_bind_on() != 0 {
+        if setter_tweens_layout(setter) {
+            let from = layout_read(nid, setter)
+            let to = layout_target_px(setter, v)
+            if arena.layout_anim_push(nid, setter, from, to) != 0 {
+                return
+            }
+        }
     }
     let n = node_handle(nid)
     // The UI-scale knob is applied here, once, so recipes and callers both
@@ -4824,15 +4942,19 @@ enum MOTION {
 }
 
 /// Easing curves. Integer ids — the curve itself lives in the animation
-/// subsystem, which evaluates it per track without allocating.
+/// subsystem (`arena.anim_ease`), which evaluates a CSS cubic-bezier per
+/// track without allocating. Control points are documented there.
 enum EASE {
     // No shaping. Progress bars and crossfades of colour only.
     Linear = 0,
-    // The workhorse: fast out, slow in. Everything unspecified uses it.
+    // The workhorse: fast out, slow in. cubic-bezier(0.215, 0.61, 0.355, 1)
+    // (ease-out cubic). Everything unspecified uses it.
     Standard = 1,
     // More pronounced deceleration, for entrances that should feel arrived.
+    // cubic-bezier(0.23, 1, 0.32, 1) (ease-out quint).
     Emphasized = 2,
     // Overshoots and settles. Switch thumbs and anything that "snaps".
+    // cubic-bezier(0.34, 1.56, 0.64, 1) (ease-out-back).
     Spring = 3,
 }
 
@@ -6935,9 +7057,9 @@ fn Collapsible(p: CollapsibleProps) -> Node {
 // A floating panel is an out-of-flow node (`position = pos_absolute`, `z_index`)
 // anchored to a trigger's screen rect. `arena.anchor_to` records the anchor and
 // the layout pass places the node (`place_anchored` in `layout.loam`), flipping
-// to the opposite side when the preferred one would leave the viewport. The
-// placement matches the trigger's *screen* rect, so a panel nested in a scroller
-// follows its trigger without any layout change on scroll.
+// to the opposite side when the preferred one would leave the safe-area rect.
+// The placement matches the trigger's *screen* rect, so a panel nested in a
+// scroller follows its trigger without any layout change on scroll.
 
 /// Preferred side for an anchored floater. `flip` (default on) switches to the
 /// opposite side when the preferred one overflows.
@@ -6968,7 +7090,7 @@ struct PopoverProps {
 
 /// A floating panel anchored to `trigger`. `open` is a 0/1 signal; outside
 /// click and Escape close it. Edge-aware: `place` is preferred, flipped when
-/// it would leave the viewport. Trailing block is the panel body.
+/// it would leave the safe-area rect. Trailing block is the panel body.
 fn Popover(trigger: Node, p: PopoverProps) -> Node {
     let open = p.open
     // A transparent scrim: outside click closes; children are tried first, so

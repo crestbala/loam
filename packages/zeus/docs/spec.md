@@ -224,7 +224,9 @@ ms)` moves the signal's *state* to `to` once (every effect bound to it re-runs
 once), then interpolates a paint-only overlay over `ms` on a fixed-capacity
 arena of tracks. The tick writes the overlay value into paint state and marks
 that node's PAINT bit: it never calls a signal setter, so no effect re-runs and
-no component rebuilds while an animation plays. `engine_step(dt)` advances every
+no component rebuilds while an animation plays. A layout prop the same write
+lands on (width, height, a pin) stays at its current length and tweens on that
+track, reflowing each frame; hover / press never reflow. `engine_step(dt)` advances every
 track by the host-supplied delta (read once per frame, capped at 64 ms), so 60 Hz
 and 120 Hz hosts move at the same speed; `engine_step` reports the frame as live
 until the tracks settle, then the host idles.
@@ -275,7 +277,7 @@ shown/hidden with a fade rather than an animated height.
 **Overlays** are anchored out-of-flow floaters. `arena.anchor_to(panel, trigger,
 side, gap)` records a node id and the layout pass places the panel against the
 trigger's screen rect, flipping when the preferred `PLACE` side would leave the
-viewport. `Popover(trigger, open, …)` adds a transparent outside-click scrim and
+safe-area rect (host notch / home-indicator insets; on desktop those are 0). `Popover(trigger, open, …)` adds a transparent outside-click scrim and
 closes on Escape; `Tooltip(trigger, text, delay)` and `HoverCard(trigger, …, delay)`
 show on hover after a hover-intent delay; `Toast(open, ms)` pins to the window
 edge, rises and fades in, and auto-dismisses. None of them rebuilds a tree or

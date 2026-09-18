@@ -379,7 +379,7 @@ answers depending on how you arrived.
 | 1 | Audit | **done** | `8289306` |
 | 2 | Tokens + paint primitives | **done** | `2184563` |
 | 3 | Dirty-channel split + animation subsystem + state layer | **done** | `feat(zeus): dirty-channel split + animation track pool (phase 3)` |
-| 4 | Components, in batches | **in progress — batches 1–7** | `feat: paint-only motion + feedback primitives` / `feat: Accordion` / `feat: overlay family` / `feat: elevation + stroked borders` / `feat: Menu` / `feat: Collapsible + Drawer` / `fix: anchored floaters in a scroller` / `feat: Select + Combobox` |
+| 4 | Components, in batches | **in progress — batches 1–9.4** | `feat: paint-only motion + feedback primitives` / `feat: Accordion` / `feat: overlay family` / `feat: elevation + stroked borders` / `feat: Menu` / `feat: Collapsible + Drawer` / `fix: anchored floaters in a scroller` / `feat: Select + Combobox` / `feat: exit motion + reveal` / `fix: web host paint/a11y/wheel` / `fix: anchored placement uses the safe-area origin` / `fix: EASE tokens are CSS cubic-béziers` / `fix: layout-driving animate tweens the box` |
 | 5 | Gallery + docs (`spec.md`, a `www/` design-system page) | not started | — |
 
 `make test` at the end of phase 3: **361 passed, 0 failed** (the six network
@@ -533,12 +533,13 @@ Deliberately left as-is:
   the layout pass and the O(all-nodes) animation scan were removed; a true
   partial repaint would need a retained, spliced draw list and a host damage
   contract, which is not what this phase needed.
-- **`zeus.animate` on a signal that drives layout** interpolates the paint read
-  only; the layout-visible value is already at the target. That is the
-  documented meaning of "animation only interpolates paint values".
-- **`EASE` curves are integer approximations** (cubic / quint ease-out,
-  ease-out-back for Spring), matching the token ordering, not an exact cubic
-  bezier.
+- **[CLOSED — phase 4 batch 9.4]** *`zeus.animate` on a signal that drives
+  layout interpolates the paint read only; the layout-visible value is already
+  at the target.* Width / height / pins now tween and reflow on the same
+  track; `get()` is still the target and effects still run once.
+- **[CLOSED — phase 4 batch 9.3]** *`EASE` curves are integer approximations*
+  (cubic / quint ease-out, ease-out-back for Spring), matching the token
+  ordering, not an exact cubic bezier.
 
 ### Phase 4 batch 1 outcome — feedback primitives (additive)
 
@@ -927,12 +928,83 @@ language limit (strings have no drop), and the rule for Zeus code is the one
 `engine_a11y_bytes` follows — build bytes into a `[]int`, hand the vec out,
 never mint a string on a hot path.
 
+### Phase 4 fix — anchored placement uses the safe-area origin (batch 9.2)
+
+`place_node` already flipped against `arena.safe_t/l/r/b`, but the last-resort
+clamp that keeps a panel on screen while its trigger is visible still used the
+desktop origin `(0, 0)`. On a notched phone a `PlaceAbove` panel that fitted
+neither side landed at `y = 7`, inside the 47pt notch. The clamp is now the
+safe origin `(left, top)`, per axis, and only while the trigger is still in
+that rect — a trigger scrolled away still takes the popup with it (batch
+6.1b).
+
+- `engine_set_insets` is the test hook that writes `plat_set_insets` so a
+  layout pass sees a notched viewport. iOS and Android already called
+  `zeus_set_insets` from the view; tests had no way to set them.
+- `zeus_anchor_safe.loam` locks: a below-menu flips above the home indicator
+  and stays glued to the trigger (not shifted by an extra `safe_t`); a tall
+  `PlaceAbove` panel clamps to the notch edge (`y = 47`, not `0`); a
+  scrolled-away trigger still takes the panel off screen; landscape left-inset
+  is the menu's `x`.
+
+Deliberately open: a too-tall panel can still extend into the home indicator
+(the far edge is not clamped, the same as 6.1b on desktop). Overlay / Drawer /
+Toast were already laid out in the safe rect (`layout_overlays`). No golden
+moved: goldens have insets 0, so the clamp is the same `(0, 0)`.
+
+### Phase 4 fix — EASE tokens are CSS cubic-béziers (batch 9.3)
+
+Phase 3 shaped `EASE.Standard / Emphasized / Spring` with integer polynomials
+(ease-out cubic, ease-out quint, a broken ease-out-back that overshot 4× at
+the start). Those were stand-ins for the named curves. `anim_ease` now
+evaluates the CSS cubic-bezier of each, in permille, with a 16-step binary
+search on the parameter so `x(u) ≈ t` and then `y(u)` — no allocation, i64
+only for the 1000³ product.
+
+| Token | Curve | `cubic-bezier` |
+|---|---|---|
+| Linear | identity | — |
+| Standard | ease-out cubic | `(0.215, 0.61, 0.355, 1)` |
+| Emphasized | ease-out quint | `(0.23, 1, 0.32, 1)` |
+| Spring | ease-out-back | `(0.34, 1.56, 0.64, 1)` |
+
+Spring now overshoots ~9 % and settles; the old polynomial jumped to ~4× on
+the first millisecond (a sign error on the cubic term) and was saved only by
+the `t <= 0 → 0` clamp. Endpoints are still exact (`t <= 0` → 0, `t >= 1000`
+→ 1000), so a settled track and a cold-boot golden are unchanged.
+
+`zeus_ease.loam` locks the permille samples and that a live Standard track
+paints the same helper. No golden moved.
+
+### Phase 4 fix — layout-driving `animate` tweens the box (batch 9.4)
+
+`zeus.animate` still moves the signal's *state* once (`get()` is the target,
+effects run once, the tick writes no signal). The paint overlay is unchanged
+(`Progress`, `anim_paint`). What changed: a layout prop the same write lands
+on — width, height, min/max, or a pin — no longer jumps to the target on that
+first effect. The node keeps `from`, and the SigVal track tweens the field
+with the same ease, reflowing each frame until it lands (then idle wants no
+frames). Hover / press still skip layout: they never push a layout-anim
+binding. The table is a fixed 64-slot arena, filled once, no per-frame
+allocation.
+
+Zero duration, reduced motion, and cold boot still jump, so DRAW goldens
+are the settled first frame. `zeus_anim_layout.loam` locks: layout stays at
+`from` when `animate` is called, moves off it on the first tick, lands on
+`to`, retargets from the current width, and jumps under zero-ms / reduced
+motion. `zeus_anim.loam` / `zeus_anim_proof.loam` are unchanged (they drive
+`Progress`, not a box size).
+
+Deliberately open: padding / font / spacing still jump (not a continuous
+length we committed to tween). A layout-driving animate is a layout frame,
+unlike a hover fade.
+
 ### Remaining work (living list)
 
 The single maintained tracker of what is still open. Update it in the same commit
 that closes an item, and tick a box rather than deleting the line, so the record
 of what was deferred stays readable. Landed so far: phases 1–3; phase 4 batches
-1–9.
+1–9.4.
 
 **Phase 4 — components still to build**
 
@@ -990,18 +1062,20 @@ scope**:
 **Limits recorded when earlier batches landed**
 
 - [x] Overlays (batch 3): no exit animation (close hides immediately). **(batch 8)**
-- [ ] Overlays (batch 3): anchored placement assumes the desktop inset origin, so
+- [x] Overlays (batch 3): anchored placement assumes the desktop inset origin, so
   it is off by the safe area on a notched mobile host. (Batch 6.1 fixed the paint
-  space and made a floater follow its trigger on scroll.)
+  space and made a floater follow its trigger on scroll.) **(batch 9.2:
+  clamp to `safe_t/l`, not `(0, 0)`)**
 - [x] Accordion (batch 2): the body fades; there is no animated height, because
   that needs a paint-only clip prop that does not exist yet. **(batch 9:
   `enter_reveal`)**
 - [ ] Phase 3: the draw list is still a full-frame blit — no partial repaint /
   host damage contract.
-- [ ] `EASE` curves are integer approximations (cubic / quint ease-out,
-  ease-out-back for Spring), not exact cubic béziers.
-- [ ] `zeus.animate` on a signal that drives layout interpolates the paint read
-  only; the layout-visible value is already at the target.
+- [x] `EASE` curves are integer approximations (cubic / quint ease-out,
+  ease-out-back for Spring), not exact cubic béziers. **(batch 9.3)**
+- [x] `zeus.animate` on a signal that drives layout interpolates the paint read
+  only; the layout-visible value is already at the target. **(batch 9.4:
+  width / height / pins tween and reflow)**
 
 **Accessibility / input (§7)**
 
