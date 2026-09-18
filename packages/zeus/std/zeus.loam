@@ -34,7 +34,8 @@
 //! `Card(padding = 12)`, `Chip("pill", TINT.Ok, radius = 6)`. `Button` /
 //! `Card` / `Chip` / `Comp` / `IconButton` / `Badge` / `Alert` / `Field` /
 //! `TextInput` all take the same twelve: `background`, `color`, `radius`,
-//! `padding`, `padding_x`, `padding_y`, `width`, `height`, `font`, `border`,
+//! `padding`, `padding_x`, `padding_y`, `padding_top` / `_right` / `_bottom` /
+//! `_left`, `margin_*`, `gap` / `gap_row` / `gap_col`, `width`, `height`, `font`, `border`,
 //! `border_color`, `spacing`. Write them as plain data — `radius = 4`,
 //! `background = paper()`. Text is a thunk: write `Text("n = {{n.get()}}")`
 //! and the compiler lifts the expression, so a signal read inside it
@@ -2406,7 +2407,31 @@ struct BoxProps {
     padding: int = -1,
     padding_x: int = -1,
     padding_y: int = -1,
+    /// Per-edge insets. Applied after `padding` / `padding_x` / `padding_y`.
+    /// Pass a `SPACE.*` step (`SPACE.Sm` = 16). `-1` = unset (the node stays
+    /// at `SPACE.None` = 0 unless a shorthand set it).
+    padding_top: int = -1,
+    padding_right: int = -1,
+    padding_bottom: int = -1,
+    padding_left: int = -1,
+    /// Outer gap around this node in the parent's packing. Same cascade as
+    /// padding: `margin`, then `margin_x` / `margin_y`, then per-edge.
+    /// `SPACE.*` values; `-1` = unset (`SPACE.None`).
+    margin: int = -1,
+    margin_x: int = -1,
+    margin_y: int = -1,
+    margin_top: int = -1,
+    margin_right: int = -1,
+    margin_bottom: int = -1,
+    margin_left: int = -1,
     spacing: int = -1,
+    /// Space between children. Same field as `spacing`; `gap` wins if both
+    /// are set. Layout uses it on the main axis: a row gaps horizontally, a
+    /// column vertically. `gap_row` / `gap_col` override one axis (CSS
+    /// row-gap / column-gap). `SPACE.*`; `-1` = unset.
+    gap: int = -1,
+    gap_row: int = -1,
+    gap_col: int = -1,
     radius: int = -1,
     border: int = -1,
     border_color: string = "",
@@ -2648,6 +2673,19 @@ enum SET {
     SvgFit = 32,
     SvgLazy = 33,
     Elevation = 34,
+    PaddingTop = 35,
+    PaddingRight = 36,
+    PaddingBottom = 37,
+    PaddingLeft = 38,
+    Margin = 39,
+    MarginX = 40,
+    MarginY = 41,
+    MarginTop = 42,
+    MarginRight = 43,
+    MarginBottom = 44,
+    MarginLeft = 45,
+    GapRow = 46,
+    GapCol = 47,
     Text = 100,
     A11yLabel = 101,
     A11yRole = 102,
@@ -2771,7 +2809,20 @@ fn apply_int(nid: int, setter: int, v: int) {
         SET.Padding => { set_padding(n, scaled(v)) }
         SET.PaddingX => { set_padding_x(n, scaled(v)) }
         SET.PaddingY => { set_padding_y(n, scaled(v)) }
+        SET.PaddingTop => { set_padding_top(n, scaled(v)) }
+        SET.PaddingRight => { set_padding_right(n, scaled(v)) }
+        SET.PaddingBottom => { set_padding_bottom(n, scaled(v)) }
+        SET.PaddingLeft => { set_padding_left(n, scaled(v)) }
+        SET.Margin => { margin(n, scaled(v)) }
+        SET.MarginX => { marginX(n, scaled(v)) }
+        SET.MarginY => { marginY(n, scaled(v)) }
+        SET.MarginTop => { marginTop(n, scaled(v)) }
+        SET.MarginRight => { marginRight(n, scaled(v)) }
+        SET.MarginBottom => { marginBottom(n, scaled(v)) }
+        SET.MarginLeft => { marginLeft(n, scaled(v)) }
         SET.Spacing => { set_spacing(n, scaled(v)) }
+        SET.GapRow => { set_spacing_row(n, scaled(v)) }
+        SET.GapCol => { set_spacing_col(n, scaled(v)) }
         SET.Radius => { radius(n, scaled(v)) }
         SET.Border => { arena.nodes[nid].border_w = u16(v) }
         SET.Grow => { grow(n, v) }
@@ -3005,7 +3056,24 @@ fn Component(node: Node, p: BoxProps) -> Node {
     set_prop_int(node, SET.Padding, p.padding)
     set_prop_int(node, SET.PaddingX, p.padding_x)
     set_prop_int(node, SET.PaddingY, p.padding_y)
-    set_prop_int(node, SET.Spacing, p.spacing)
+    set_prop_int(node, SET.PaddingTop, p.padding_top)
+    set_prop_int(node, SET.PaddingRight, p.padding_right)
+    set_prop_int(node, SET.PaddingBottom, p.padding_bottom)
+    set_prop_int(node, SET.PaddingLeft, p.padding_left)
+    set_prop_int(node, SET.Margin, p.margin)
+    set_prop_int(node, SET.MarginX, p.margin_x)
+    set_prop_int(node, SET.MarginY, p.margin_y)
+    set_prop_int(node, SET.MarginTop, p.margin_top)
+    set_prop_int(node, SET.MarginRight, p.margin_right)
+    set_prop_int(node, SET.MarginBottom, p.margin_bottom)
+    set_prop_int(node, SET.MarginLeft, p.margin_left)
+    let mut gap = p.spacing
+    if p.gap >= 0 {
+        gap = p.gap
+    }
+    set_prop_int(node, SET.Spacing, gap)
+    set_prop_int(node, SET.GapRow, p.gap_row)
+    set_prop_int(node, SET.GapCol, p.gap_col)
     set_prop_int(node, SET.Radius, p.radius)
     set_prop_int(node, SET.Elevation, p.elevation)
     set_prop_int(node, SET.Grow, p.grow)
@@ -5644,6 +5712,17 @@ struct CompProps {
     padding: int = -1,
     padding_x: int = -1,
     padding_y: int = -1,
+    padding_top: int = -1,
+    padding_right: int = -1,
+    padding_bottom: int = -1,
+    padding_left: int = -1,
+    margin: int = -1,
+    margin_x: int = -1,
+    margin_y: int = -1,
+    margin_top: int = -1,
+    margin_right: int = -1,
+    margin_bottom: int = -1,
+    margin_left: int = -1,
     width: int = -1,
     height: int = -1,
     /// Bounds for a custom widget; `Box` has always had these.
@@ -5655,6 +5734,9 @@ struct CompProps {
     border: int = -1,
     border_color: string = "",
     spacing: int = -1,
+    gap: int = -1,
+    gap_row: int = -1,
+    gap_col: int = -1,
     align_direction: int = 1,
     align_items: int = -1,
     justify: int = -1,
@@ -5695,6 +5777,17 @@ fn Comp(p: CompProps) -> Node {
         padding = p.padding,
         padding_x = p.padding_x,
         padding_y = p.padding_y,
+        padding_top = p.padding_top,
+        padding_right = p.padding_right,
+        padding_bottom = p.padding_bottom,
+        padding_left = p.padding_left,
+        margin = p.margin,
+        margin_x = p.margin_x,
+        margin_y = p.margin_y,
+        margin_top = p.margin_top,
+        margin_right = p.margin_right,
+        margin_bottom = p.margin_bottom,
+        margin_left = p.margin_left,
         width = p.width,
         height = p.height,
         min_width = p.min_width,
@@ -5705,6 +5798,9 @@ fn Comp(p: CompProps) -> Node {
         border = p.border,
         border_color = p.border_color,
         spacing = p.spacing,
+        gap = p.gap,
+        gap_row = p.gap_row,
+        gap_col = p.gap_col,
         on_click = p.on_click,
         on_click__set = p.on_click__set,
         a11y_role = p.a11y_role,
