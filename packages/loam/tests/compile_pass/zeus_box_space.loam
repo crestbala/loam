@@ -1,0 +1,98 @@
+// Box / Component: per-edge padding and margin take SPACE.* steps, and
+// `gap` is the space between children on the main axis (row → x, column → y).
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("box-space", 480, 360)
+    let mut pad_host = 0
+    let mut pad_kid = 0
+    let mut cas_host = 0
+    let mut cas_kid = 0
+    let mut mar_host = 0
+    let mut mar_kid = 0
+    let mut row_a = 0
+    let mut row_b = 0
+    let mut col_a = 0
+    let mut col_b = 0
+    let mut axis_a = 0
+    let mut axis_b = 0
+    let mut comp_host = 0
+    let mut comp_kid = 0
+    let tree = zeus.Box(align_direction = zeus.DIRECTION.Column) {
+        let host = zeus.Box(width = 200, height = 80,
+                            padding_top = zeus.SPACE.Sm,
+                            padding_left = zeus.SPACE.Xs) {
+            let kid = zeus.Box(width = 10, height = 10)
+            pad_kid = kid.id
+        }
+        pad_host = host.id
+        let ch = zeus.Box(width = 80, height = 40,
+                          padding = zeus.SPACE.Md,
+                          padding_top = zeus.SPACE.Exs) {
+            let kid = zeus.Box(width = 4, height = 4)
+            cas_kid = kid.id
+        }
+        cas_host = ch.id
+        let mh = zeus.Box(width = 200, height = 40) {
+            let kid = zeus.Box(width = 10, height = 10, margin_left = zeus.SPACE.Sm)
+            mar_kid = kid.id
+        }
+        mar_host = mh.id
+        zeus.Box(align_direction = zeus.DIRECTION.Row, gap = zeus.SPACE.Sm, height = 20) {
+            let a = zeus.Box(width = 20, height = 10)
+            let b = zeus.Box(width = 20, height = 10)
+            row_a = a.id
+            row_b = b.id
+        }
+        zeus.Box(align_direction = zeus.DIRECTION.Column, gap = zeus.SPACE.Xs, width = 40) {
+            let a = zeus.Box(width = 10, height = 10)
+            let b = zeus.Box(width = 10, height = 10)
+            col_a = a.id
+            col_b = b.id
+        }
+        zeus.Box(align_direction = zeus.DIRECTION.Column, gap = zeus.SPACE.Xs,
+                 gap_row = zeus.SPACE.Lg, width = 40) {
+            let a = zeus.Box(width = 10, height = 10)
+            let b = zeus.Box(width = 10, height = 10)
+            axis_a = a.id
+            axis_b = b.id
+        }
+        let cp = zeus.Comp(padding_left = zeus.SPACE.Sm, width = 80, height = 30) {
+            let kid = zeus.Box(width = 8, height = 8)
+            comp_kid = kid.id
+        }
+        comp_host = cp.id
+    }
+    zeus.root(tree)
+    zeus.pump_frame()
+
+    must(zeus.node_x(pad_kid) - zeus.node_x(pad_host) == zeus.SPACE.Xs,
+         "padding_left = SPACE.Xs")
+    must(zeus.node_y(pad_kid) - zeus.node_y(pad_host) == zeus.SPACE.Sm,
+         "padding_top = SPACE.Sm")
+    must(zeus.node_x(cas_kid) - zeus.node_x(cas_host) == zeus.SPACE.Md,
+         "padding shorthand sets left")
+    must(zeus.node_y(cas_kid) - zeus.node_y(cas_host) == zeus.SPACE.Exs,
+         "padding_top overrides the shorthand")
+    must(zeus.node_x(mar_kid) - zeus.node_x(mar_host) == zeus.SPACE.Sm,
+         "margin_left = SPACE.Sm")
+    must(zeus.node_x(row_b) - zeus.node_x(row_a) == 20 + zeus.SPACE.Sm,
+         "row gap is horizontal")
+    must(zeus.node_y(col_b) - zeus.node_y(col_a) == 10 + zeus.SPACE.Xs,
+         "column gap is vertical")
+    must(zeus.node_y(axis_b) - zeus.node_y(axis_a) == 10 + zeus.SPACE.Lg,
+         "gap_row overrides column gap")
+    must(zeus.node_x(comp_kid) - zeus.node_x(comp_host) == zeus.SPACE.Sm,
+         "Comp forwards padding_left")
+
+    fmt.println("box-space ok")
+}
