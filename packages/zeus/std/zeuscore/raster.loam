@@ -1,0 +1,379 @@
+//! raster — the software rasterizer's foundation.
+//!
+//! Zeus rasterizes every pixel itself, in Loam, into one buffer it owns. This
+//! module is the bottom of that stack: the framebuffer, the color pipeline, and
+//! the tables every fill and glyph composite reads.
+//!
+//! What lives here (Phase 4, first step):
+//!   * ONE framebuffer we own — `physical_w * physical_h * 4`, BGRA8,
+//!     premultiplied, reallocated only when the logical size or the backing
+//!     scale actually changes. No second full-size buffer anywhere.
+//!   * sRGB↔linear 256-entry tables, and a compositor that blends in linear
+//!     space so light-on-dark and dark-on-light text keep the same weight. The
+//!     framebuffer stays 8-bit; the tables are what make that correct.
+//!   * Ordered 8×8 (Bayer) dithering, so a gradient written to 8-bit does not
+//!     band.
+//!
+//! Geometry (analytic coverage, tiles, rounded rects, strokes), shadows, the
+//! glyph atlas, and image decode build on this and land next. Nothing here
+//! talks to a graphics API: the buffer is plain memory until a host blits it.
+
+/// Rasterization tile edge, in device pixels. Coverage is always computed
+/// against global geometry and only the *write* is clipped to the tile — this
+/// constant is the size of that clip, not of the geometry.
+const RASTER_TILE: int = 256
+
+/// Ordered 8×8 Bayer matrix (values 0..63). Hardcoded: it is a fixed, tiny
+/// pattern, and generating it from bit interleaves at init is more code than
+/// the table is worth.
+let mut bayer8: []int = []int {
+    0, 32, 8, 40, 2, 34, 10, 42,
+    48, 16, 56, 24, 50, 18, 58, 26,
+    12, 44, 4, 36, 14, 46, 6, 38,
+    60, 28, 52, 20, 62, 30, 54, 22,
+    3, 35, 11, 43, 1, 33, 9, 41,
+    51, 19, 59, 27, 49, 17, 57, 25,
+    15, 47, 7, 39, 13, 45, 5, 37,
+    63, 31, 55, 23, 61, 29, 53, 21,
+}
+
+/// sRGB byte → linear, scaled to 0..4095 (12-bit). 12 bits, not 8, because an
+/// 8-bit linear domain cannot represent the dark end: sRGB bytes 1..12 all
+/// collapse to linear 0, which crushes shadow detail and makes the tables
+/// non-invertible. `lin_to_srgb` is indexed by that same 12-bit domain, so both
+/// directions stay exact within one byte. Blending happens in this domain.
+const RASTER_LIN_MAX: int = 4095
+let mut srgb_to_lin: []int = []int {}
+let mut lin_to_srgb: []int = []int {}
+let mut raster_tables_ready: int = 0
+
+/// The one framebuffer. `fb_w`/`fb_h` are physical pixels; `fb_scale` is the
+/// backing scale it was allocated for (2 on retina).
+let mut fb: []u8 = []u8 {}
+let mut fb_w: int = 0
+let mut fb_h: int = 0
+let mut fb_scale: int = 0
+let mut fb_logical_w: int = 0
+let mut fb_logical_h: int = 0
+/// Bumped on every reallocation, so a test can prove the buffer is reused
+/// across frames and only reallocated on a real size/scale change.
+let mut fb_gen: int = 0
+let mut fb_reallocs: int = 0
+
+const RASTER_LN2: float = 0.6931471805599453
+
+/// Round to nearest, ties away from zero. The language has no `round` builtin.
+fn raster_round(x: float) -> float {
+    if x >= 0.0 {
+        return float(i32(x + 0.5))
+    }
+    return float(i32(x - 0.5))
+}
+
+/// Natural log, range-reduced to [1,2) and summed with the atanh series.
+fn raster_ln(x: float) -> float {
+    if x <= 0.0 {
+        return -1.0e30
+    }
+    let mut m = x
+    let mut k = 0
+    while m >= 2.0 {
+        m = m * 0.5
+        k = k + 1
+    }
+    while m < 1.0 {
+        m = m * 2.0
+        k = k - 1
+    }
+    let z = (m - 1.0) / (m + 1.0)
+    let z2 = z * z
+    let mut term = z
+    let mut sum = 0.0
+    let mut i = 1
+    while i <= 27 {
+        sum = sum + term / float(i)
+        term = term * z2
+        i = i + 2
+    }
+    return 2.0 * sum + float(k) * RASTER_LN2
+}
+
+/// Exponential, |r| reduced to ±ln2/2 and summed with a Taylor series.
+fn raster_exp(x: float) -> float {
+    if x > 300.0 {
+        return 1.0e30
+    }
+    if x < 0.0 - 300.0 {
+        return 0.0
+    }
+    let k = i32(raster_round(x / RASTER_LN2))
+    let r = x - float(k) * RASTER_LN2
+    let mut term = 1.0
+    let mut sum = 1.0
+    let mut i = 1
+    while i <= 14 {
+        term = term * r / float(i)
+        sum = sum + term
+        i = i + 1
+    }
+    let mut scale = 1.0
+    let mut j = 0
+    if k >= 0 {
+        while j < k {
+            scale = scale * 2.0
+            j = j + 1
+        }
+    } else {
+        while j < 0 - k {
+            scale = scale * 0.5
+            j = j + 1
+        }
+    }
+    return sum * scale
+}
+
+/// a^b for a > 0. Only used to build the sRGB tables at init.
+fn raster_pow(a: float, b: float) -> float {
+    if a <= 0.0 {
+        return 0.0
+    }
+    return raster_exp(b * raster_ln(a))
+}
+
+/// IEC 61966-2-1 sRGB transfer, encode side: linear 0..1 → sRGB 0..1.
+fn raster_lin_to_srgb01(c: float) -> float {
+    if c <= 0.0031308 {
+        return c * 12.92
+    }
+    return 1.055 * raster_pow(c, 1.0 / 2.4) - 0.055
+}
+
+/// sRGB 0..1 → linear 0..1.
+fn raster_srgb_to_lin01(c: float) -> float {
+    if c <= 0.04045 {
+        return c / 12.92
+    }
+    return raster_pow((c + 0.055) / 1.055, 2.4)
+}
+
+fn raster_clamp_byte(v: int) -> int {
+    if v < 0 {
+        return 0
+    }
+    if v > 255 {
+        return 255
+    }
+    return v
+}
+
+fn raster_clamp_lin(v: int) -> int {
+    if v < 0 {
+        return 0
+    }
+    if v > RASTER_LIN_MAX {
+        return RASTER_LIN_MAX
+    }
+    return v
+}
+
+/// Build the color tables once. Idempotent; safe to call from any entry point.
+fn raster_build() {
+    if raster_tables_ready != 0 {
+        return
+    }
+    raster_tables_ready = 1
+    let mut i = 0
+    while i < 256 {
+        let c = float(i) / 255.0
+        push(srgb_to_lin, raster_clamp_lin(i32(raster_srgb_to_lin01(c) * float(RASTER_LIN_MAX) + 0.5)))
+        i = i + 1
+    }
+    i = 0
+    while i <= RASTER_LIN_MAX {
+        let l = float(i) / float(RASTER_LIN_MAX)
+        push(lin_to_srgb, raster_clamp_byte(i32(raster_lin_to_srgb01(l) * 255.0 + 0.5)))
+        i = i + 1
+    }
+}
+
+/// Allocate (or reuse) the framebuffer for a logical size at a backing scale.
+///
+/// Reallocates ONLY when the physical size or the scale changed — a frame at
+/// the same size is a no-op, and dragging between a retina and a non-retina
+/// screen (scale 2 → 1) reallocates and re-renders at the new scale.
+fn raster_ensure(lw: int, lh: int, scale: int) {
+    raster_build()
+    let mut s = scale
+    if s < 1 {
+        s = 1
+    }
+    let pw = lw * s
+    let ph = lh * s
+    fb_logical_w = lw
+    fb_logical_h = lh
+    if fb_w == pw {
+        if fb_h == ph {
+            if fb_scale == s {
+                if fb.len == pw * ph * 4 {
+                    return
+                }
+            }
+        }
+    }
+    fb_gen = fb_gen + 1
+    fb_reallocs = fb_reallocs + 1
+    fb_w = pw
+    fb_h = ph
+    fb_scale = s
+    fb = []u8 {}
+    let total = pw * ph * 4
+    let mut n = 0
+    while n < total {
+        push(fb, u8(0))
+        n = n + 1
+    }
+}
+
+fn raster_ready() -> int {
+    raster_build()
+    return 1
+}
+
+/// Table accessors so callers never touch the vectors directly. `raster_srgb_to_lin`
+/// returns the 12-bit linear value; `raster_lin_to_srgb` takes one.
+fn raster_srgb_to_lin(b: int) -> int {
+    raster_build()
+    return srgb_to_lin[raster_clamp_byte(b)]
+}
+
+fn raster_lin_to_srgb(b: int) -> int {
+    raster_build()
+    return lin_to_srgb[raster_clamp_lin(b)]
+}
+
+fn raster_width() -> int {
+    return fb_w
+}
+
+fn raster_height() -> int {
+    return fb_h
+}
+
+fn raster_scale() -> int {
+    return fb_scale
+}
+
+fn raster_bytes() -> int {
+    return fb.len
+}
+
+fn raster_generation() -> int {
+    return fb_gen
+}
+
+fn raster_realloc_count() -> int {
+    return fb_reallocs
+}
+
+fn raster_pixel_index(x: int, y: int) -> int {
+    return (y * fb_w + x) * 4
+}
+
+/// Channel `c` (0 B, 1 G, 2 R, 3 A) of the pixel at (x, y).
+fn raster_get(x: int, y: int, c: int) -> int {
+    if x < 0 {
+        return 0
+    }
+    if y < 0 {
+        return 0
+    }
+    if x >= fb_w {
+        return 0
+    }
+    if y >= fb_h {
+        return 0
+    }
+    return int(fb[raster_pixel_index(x, y) + c])
+}
+
+/// Premultiplied opaque write.
+fn raster_set(x: int, y: int, r: int, g: int, b: int) {
+    if x < 0 {
+        return
+    }
+    if y < 0 {
+        return
+    }
+    if x >= fb_w {
+        return
+    }
+    if y >= fb_h {
+        return
+    }
+    let i = raster_pixel_index(x, y)
+    fb[i] = u8(raster_clamp_byte(b))
+    fb[i + 1] = u8(raster_clamp_byte(g))
+    fb[i + 2] = u8(raster_clamp_byte(r))
+    fb[i + 3] = u8(255)
+}
+
+/// Gamma-correct source-over of a straight (non-premultiplied) color with
+/// alpha `a` (0..255) onto the premultiplied framebuffer.
+///
+/// Both colors go through the sRGB→linear table, are composited in linear
+/// space, and come back through the linear→sRGB table. That is what keeps
+/// light-on-dark and dark-on-light glyphs the same apparent weight; naive
+/// byte blending in sRGB does not.
+fn raster_blend(x: int, y: int, r: int, g: int, b: int, a: int) {
+    if x < 0 {
+        return
+    }
+    if y < 0 {
+        return
+    }
+    if x >= fb_w {
+        return
+    }
+    if y >= fb_h {
+        return
+    }
+    if a <= 0 {
+        return
+    }
+    if a >= 255 {
+        raster_set(x, y, r, g, b)
+        return
+    }
+    let i = raster_pixel_index(x, y)
+    let sa = float(a) / 255.0
+    let inv = 1.0 - sa
+    let sl_r = float(srgb_to_lin[raster_clamp_byte(r)])
+    let sl_g = float(srgb_to_lin[raster_clamp_byte(g)])
+    let sl_b = float(srgb_to_lin[raster_clamp_byte(b)])
+    let dl_r = float(srgb_to_lin[int(fb[i + 2])])
+    let dl_g = float(srgb_to_lin[int(fb[i + 1])])
+    let dl_b = float(srgb_to_lin[int(fb[i])])
+    let ol_r = raster_clamp_lin(i32(sl_r * sa + dl_r * inv + 0.5))
+    let ol_g = raster_clamp_lin(i32(sl_g * sa + dl_g * inv + 0.5))
+    let ol_b = raster_clamp_lin(i32(sl_b * sa + dl_b * inv + 0.5))
+    fb[i] = u8(lin_to_srgb[ol_b])
+    fb[i + 1] = u8(lin_to_srgb[ol_g])
+    fb[i + 2] = u8(lin_to_srgb[ol_r])
+    let oa = raster_clamp_byte(i32(float(a) + float(int(fb[i + 3])) * inv + 0.5))
+    fb[i + 3] = u8(oa)
+}
+
+/// Ordered-dither threshold for (x, y), 0..63. A gradient writer adds
+/// `(dither(x,y) - 31) / 64` to its 0..255 value before rounding to a byte,
+/// which removes visible banding for free.
+fn raster_dither(x: int, y: int) -> int {
+    let xi = x & 7
+    let yi = y & 7
+    return bayer8[yi * 8 + xi]
+}
+
+/// Quantize a 0..255 float channel to a byte with ordered dithering.
+fn raster_quantize(x: int, y: int, v: float) -> int {
+    let d = float(raster_dither(x, y) - 31) / 64.0
+    return raster_clamp_byte(i32(v + d + 0.5))
+}
