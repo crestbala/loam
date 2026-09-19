@@ -951,6 +951,140 @@ fn raster_fill_tiled(cr: int, cg: int, cb: int, alpha: int) {
     }
 }
 
+// --- multi-contour fills: holes and glyph outlines (Phase 4) ---------------
+//
+// A glyph is several contours — an outer shape plus its counters (holes) — and
+// a ring is two concentric circles. Each contour is accumulated with its
+// winding sign into the same tile-sized buffer and composited once, so a hole
+// subtracts from the outer shape. A single contour may also be CONCAVE: the
+// pixel clip is Sutherland-Hodgman against the pixel square, which does not
+// require the subject to be convex, so an L-shape fills correctly. Together
+// these are what glyph outlines need.
+
+let mut mc_x: []float = []float {}
+let mut mc_y: []float = []float {}
+let mut mc_off: []int = []int {}
+let mut mc_len: []int = []int {}
+let mut mc_sign: []int = []int {}
+
+fn raster_multi_begin() {
+    raster_cov_ensure()
+    while mc_x.len > 0 {
+        pop(mc_x)
+    }
+    while mc_y.len > 0 {
+        pop(mc_y)
+    }
+    while mc_off.len > 0 {
+        pop(mc_off)
+    }
+    while mc_len.len > 0 {
+        pop(mc_len)
+    }
+    while mc_sign.len > 0 {
+        pop(mc_sign)
+    }
+}
+
+/// Add a contour given as parallel coordinate arrays. `sign` +1 outer, -1 hole.
+fn raster_multi_add_poly(xs: []float, ys: []float, sign: int) {
+    if xs.len < 3 {
+        return
+    }
+    if ys.len != xs.len {
+        return
+    }
+    push(mc_off, mc_x.len)
+    push(mc_len, xs.len)
+    push(mc_sign, sign)
+    let mut i = 0
+    while i < xs.len {
+        push(mc_x, xs[i])
+        push(mc_y, ys[i])
+        i = i + 1
+    }
+}
+
+/// Add a circle contour, flattened to the device tolerance.
+fn raster_multi_add_circle(cx: float, cy: float, r: float, sign: int) {
+    if r <= 0.0 {
+        return
+    }
+    let mut theta = raster_sqrt(8.0 * RASTER_FLAT_TOL / r)
+    if theta < 0.05 {
+        theta = 0.05
+    }
+    let mut nseg = i32(RASTER_TAU / theta) + 1
+    if nseg < 8 {
+        nseg = 8
+    }
+    push(mc_off, mc_x.len)
+    push(mc_len, nseg)
+    push(mc_sign, sign)
+    let mut k = 0
+    while k < nseg {
+        let ang = RASTER_TAU * float(k) / float(nseg)
+        push(mc_x, cx + r * raster_cos(ang))
+        push(mc_y, cy + r * raster_sin(ang))
+        k = k + 1
+    }
+}
+
+fn raster_multi_count() -> int {
+    return mc_off.len
+}
+
+fn raster_mc_load(c: int) {
+    while rp_path.len > 0 {
+        pop(rp_path)
+    }
+    let s = mc_off[c]
+    let l = mc_len[c]
+    let mut k = 0
+    while k < l {
+        push(rp_path, RPoint { x: mc_x[s + k], y: mc_y[s + k] })
+        k = k + 1
+    }
+}
+
+/// Fill every contour with its winding sign, tiled, honoring the damage clip.
+fn raster_fill_multi(cr: int, cg: int, cb: int, alpha: int) {
+    raster_build()
+    let nc = mc_off.len
+    if nc == 0 {
+        return
+    }
+    let mut ty = 0
+    while ty < fb_h {
+        let th = raster_min_i(ty + RASTER_TILE, fb_h) - ty
+        let mut tx = 0
+        while tx < fb_w {
+            let tw = raster_min_i(tx + RASTER_TILE, fb_w) - tx
+            raster_tile_region(tx, ty, tw, th)
+            let rx0 = reg_x0
+            let ry0 = reg_y0
+            let rx1 = reg_x1
+            let ry1 = reg_y1
+            if rx1 > rx0 {
+                if ry1 > ry0 {
+                    let rw = rx1 - rx0
+                    let rh = ry1 - ry0
+                    raster_cov_zero(rw, rh)
+                    let mut c = 0
+                    while c < nc {
+                        raster_mc_load(c)
+                        raster_accum_path(rx0, ry0, rw, rh, mc_sign[c])
+                        c = c + 1
+                    }
+                    raster_composite_cov(rx0, ry0, rw, rh, cr, cg, cb, alpha)
+                }
+            }
+            tx = tx + RASTER_TILE
+        }
+        ty = ty + RASTER_TILE
+    }
+}
+
 /// Set every pixel opaque. Test/probe helper and the frame's first clear.
 fn raster_clear(r: int, g: int, b: int) {
     raster_build()
@@ -1047,7 +1181,10 @@ fn raster_set_quad(ax: float, ay: float, bx: float, by: float,
 /// Add the current path's coverage, clipped to the region [tx,tx+tw) x
 /// [ty,ty+th), into the coverage buffer at stride RASTER_TILE. Same global-
 /// geometry rule as `raster_fill_path`: the region limits the write only.
-fn raster_accum_path(tx: int, ty: int, tw: int, th: int) {
+/// `sign` is the contour's winding direction: +1 for an outer contour, -1 for a
+/// hole. Summing signed coverage across contours is what turns a ring (and a
+/// glyph's outer + counter contours) into the right shape.
+fn raster_accum_path(tx: int, ty: int, tw: int, th: int, sign: int) {
     let n = rp_path.len
     if n < 3 {
         return
@@ -1096,7 +1233,7 @@ fn raster_accum_path(tx: int, ty: int, tw: int, th: int) {
             }
             if c != 0 {
                 let idx = (py - ty) * RASTER_TILE + (px - tx)
-                cov[idx] = cov[idx] + c
+                cov[idx] = cov[idx] + sign * c
             }
             px = px + 1
         }
@@ -1158,7 +1295,7 @@ fn raster_accum_corner(ccx: float, ccy: float, ro: float, ri: float,
         let ix1 = ccx + ri * raster_cos(g1)
         let iy1 = ccy + ri * raster_sin(g1)
         raster_set_quad(ox0, oy0, ox1, oy1, ix1, iy1, ix0, iy0)
-        raster_accum_path(tx, ty, tw, th)
+        raster_accum_path(tx, ty, tw, th, 1)
         k = k + 1
     }
 }
@@ -1187,15 +1324,15 @@ fn raster_accum_ring(x: float, y: float, w: float, h: float, rad: float, bw: flo
     // straight runs (full thickness, between the corner arcs)
     if w - ro - ro > 0.0 {
         raster_set_rect(x + ro, y, w - ro - ro, t)
-        raster_accum_path(tx, ty, tw, th)
+        raster_accum_path(tx, ty, tw, th, 1)
         raster_set_rect(x + ro, y + h - t, w - ro - ro, t)
-        raster_accum_path(tx, ty, tw, th)
+        raster_accum_path(tx, ty, tw, th, 1)
     }
     if h - ro - ro > 0.0 {
         raster_set_rect(x, y + ro, t, h - ro - ro)
-        raster_accum_path(tx, ty, tw, th)
+        raster_accum_path(tx, ty, tw, th, 1)
         raster_set_rect(x + w - t, y + ro, t, h - ro - ro)
-        raster_accum_path(tx, ty, tw, th)
+        raster_accum_path(tx, ty, tw, th, 1)
     }
     if ro > 0.0 {
         raster_accum_corner(x + w - ro, y + ro, ro, ri, 0.0 - RASTER_HALF_PI, 0.0, tx, ty, tw, th)
