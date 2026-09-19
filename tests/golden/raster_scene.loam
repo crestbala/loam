@@ -29,8 +29,8 @@ fn main() {
         sys.exit(5)
     }
 
-    // 160x150 logical at scale 2 -> a 320x300 physical image.
-    zeus.window("zeus-golden", 160, 150)
+    // 160x196 logical at scale 2 -> a 320x392 physical image.
+    zeus.window("zeus-golden", 160, 196)
     zeus.root(zeus.Box(align_direction = DIRECTION.Column, padding = 8, spacing = 6,
                        background = "#ffffff") {
         // Body text at the three sizes the baseline calls out, at 2x.
@@ -38,6 +38,16 @@ fn main() {
             zeus.Text("AC", font = 11, color = "#111111")
             zeus.Text("AC", font = 13, color = "#111111")
             zeus.Text("AC", font = 17, color = "#111111")
+        }
+        // A stroke-only SVG icon: parsed and rasterized in Loam from the
+        // markup, no host svg reader. `currentColor` is the op's fg here.
+        zeus.Box(align_direction = DIRECTION.Row, spacing = 6) {
+            zeus.Icon("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><circle cx='12' cy='12' r='10' fill='none' stroke='currentColor' stroke-width='1.5'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M12 16v-4'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M12 8h.01'/></svg>",
+                      16, "#111111")
+            // Greedy word wrap, three lines at this width.
+            zeus.Box(width = 100) {
+                zeus.Text("AC AC AC AC AC", font = 11, color = "#111111", wrap = 1)
+            }
         }
         // A 1px hairline border: it must land on exactly two device rows.
         zeus.Box(width = 144, height = 20, border = 1, border_color = "#cccccc")
@@ -49,10 +59,10 @@ fn main() {
             zeus.Box(width = 144, height = 40, radius = 6, background = "#4f46e5"),
             zeus.rgb(14, 165, 233))
     })
-    zeus.engine_layout(160, 150)
+    zeus.engine_layout(160, 196)
     zeus.engine_paint()
 
-    zeus.raster_ensure(160, 150, 2)
+    zeus.raster_ensure(160, 196, 2)
     zeus.scene_rasterize(2, 255, 255, 255)
 
     // The pass must not be silently dropping the elements this screen is made

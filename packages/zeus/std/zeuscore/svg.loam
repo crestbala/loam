@@ -1,0 +1,1377 @@
+//! svg — the small inline-SVG subset Zeus draws, parsed and rasterized
+//! directly into the Loam software rasterizer's framebuffer.
+//!
+//! Semantics mirror the CoreGraphics host parser (`hosts/desktop/mac.m`,
+//! `svg_skip` / `svg_num` / `svg_attr` / `svg_color` / `svg_style_from` /
+//! `svg_parse_d` / `svg_draw_tree` / `mac_svg`), so the same markup paints the
+//! same shape on both paths. Geometry is flattened in DEVICE pixels and handed
+//! to `raster.loam`'s multi-contour fill, which accumulates coverage and
+//! composites a group exactly once — that is what lets a stroke's segment
+//! quads, joins, and caps union cleanly instead of double-blending.
+//!
+//! The public entry point is `svg_add(markup, x, y, w, h, rgb)`.
+
+import "raster.loam"
+
+const SVG_TAU: float = 6.28318530717959
+const SVG_PI: float = 3.14159265358979
+const SVG_HALF_PI: float = 1.5707963267949
+const SVG_TWO_THIRDS: float = 0.666666666666667
+
+// Byte constants — Loam has no character literals.
+const SVG_LT: int = 60
+const SVG_GT: int = 62
+const SVG_SLASH: int = 47
+const SVG_DQUOTE: int = 34
+const SVG_SQUOTE: int = 39
+const SVG_EQ: int = 61
+const SVG_HASH: int = 35
+const SVG_SP: int = 32
+const SVG_TAB: int = 9
+const SVG_LF: int = 10
+const SVG_CR: int = 13
+const SVG_COMMA: int = 44
+const SVG_MINUS: int = 45
+const SVG_PLUS: int = 43
+const SVG_DOT: int = 46
+const SVG_E_LOWER: int = 101
+const SVG_E_UPPER: int = 69
+const SVG_LOWER_A: int = 97
+
+// Path commands (uppercase codes; `rel` is `cmd >= 'a'`).
+const SVG_CMD_M: int = 77
+const SVG_CMD_L: int = 76
+const SVG_CMD_H: int = 72
+const SVG_CMD_V: int = 86
+const SVG_CMD_C: int = 67
+const SVG_CMD_S: int = 83
+const SVG_CMD_Q: int = 81
+const SVG_CMD_T: int = 84
+const SVG_CMD_Z: int = 90
+const SVG_CMD_A: int = 65
+
+struct SvgAttr {
+    found: int,
+    val: string,
+}
+
+struct SvgNum {
+    ok: int,
+    val: float,
+    next: int,
+}
+
+struct SvgColor {
+    has: int,
+    rgb: int,
+}
+
+struct SvgTagEnd {
+    end: int,
+    self_close: int,
+}
+
+struct SvgStyle {
+    has_fill: int,
+    fill: int,
+    has_stroke: int,
+    stroke: int,
+    sw: float,
+    cap: int,
+    join: int,
+}
+
+// --- per-svg_add state ---
+
+let mut svg_current: int = 0
+let mut svg_painted: int = 0
+let mut svg_alpha: int = 255
+let mut svg_scale: float = 1.0
+let mut svg_ox: float = 0.0
+let mut svg_oy: float = 0.0
+
+// Current element's flattened subpaths: all device-space points concatenated,
+// plus one (start, count, closed) record per subpath.
+let mut sg_x: []float = []float {}
+let mut sg_y: []float = []float {}
+let mut sg_off: []int = []int {}
+let mut sg_cnt: []int = []int {}
+let mut sg_closed: []int = []int {}
+let mut sg_cur: int = 0
+let mut sg_sp: int = 0
+let mut sg_sx: float = 0.0
+let mut sg_sy: float = 0.0
+let mut sg_cx: float = 0.0
+let mut sg_cy: float = 0.0
+
+// --- string helpers -------------------------------------------------------
+
+fn svg_sub(s: string, a: int, b: int) -> string {
+    let mut out = []int {}
+    let mut i = a
+    let mut e = b
+    if e > s.len {
+        e = s.len
+    }
+    while i < e {
+        push(out, s[i])
+        i = i + 1
+    }
+    return string_from_bytes(out)
+}
+
+fn svg_eq_at(hay: string, at: int, needle: string) -> int {
+    if at < 0 {
+        return 0
+    }
+    if at + needle.len > hay.len {
+        return 0
+    }
+    let mut k = 0
+    while k < needle.len {
+        if hay[at + k] != needle[k] {
+            return 0
+        }
+        k = k + 1
+    }
+    return 1
+}
+
+fn svg_find(hay: string, needle: string, from: int) -> int {
+    let mut i = from
+    if i < 0 {
+        i = 0
+    }
+    while i + needle.len <= hay.len {
+        if svg_eq_at(hay, i, needle) == 1 {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+fn svg_is_digit(c: int) -> int {
+    if c >= 48 {
+        if c <= 57 {
+            return 1
+        }
+    }
+    return 0
+}
+
+fn svg_is_cmd(c: int) -> int {
+    if c >= 65 {
+        if c <= 90 {
+            return 1
+        }
+    }
+    if c >= 97 {
+        if c <= 122 {
+            return 1
+        }
+    }
+    return 0
+}
+
+/// Whitespace and commas, exactly as the host's `svg_skip`.
+fn svg_skip(s: string, pos: int) -> int {
+    let mut i = pos
+    while i < s.len {
+        let c = s[i]
+        if c == SVG_SP {
+            i = i + 1
+        } else if c == SVG_TAB {
+            i = i + 1
+        } else if c == SVG_LF {
+            i = i + 1
+        } else if c == SVG_CR {
+            i = i + 1
+        } else if c == SVG_COMMA {
+            i = i + 1
+        } else {
+            break
+        }
+    }
+    return i
+}
+
+/// `strtof` for the subset SVG uses. Advances `next` past the number, or leaves
+/// it at `pos` on failure (so a malformed coordinate stops the element).
+fn svg_num(s: string, pos: int) -> SvgNum {
+    let mut i = svg_skip(s, pos)
+    let mut neg = 0
+    if i < s.len {
+        if s[i] == SVG_MINUS {
+            neg = 1
+            i = i + 1
+        } else if s[i] == SVG_PLUS {
+            i = i + 1
+        }
+    }
+    let mut val = 0.0
+    let mut any = 0
+    while i < s.len {
+        if svg_is_digit(s[i]) == 1 {
+            val = val * 10.0 + float(s[i] - 48)
+            i = i + 1
+            any = 1
+        } else {
+            break
+        }
+    }
+    if i < s.len {
+        if s[i] == SVG_DOT {
+            i = i + 1
+            let mut scale = 0.1
+            while i < s.len {
+                if svg_is_digit(s[i]) == 1 {
+                    val = val + float(s[i] - 48) * scale
+                    scale = scale * 0.1
+                    i = i + 1
+                    any = 1
+                } else {
+                    break
+                }
+            }
+        }
+    }
+    if any == 0 {
+        return SvgNum { ok: 0, val: 0.0, next: pos }
+    }
+    if i < s.len {
+        if s[i] == SVG_E_LOWER || s[i] == SVG_E_UPPER {
+            let save = i
+            let mut j = i + 1
+            let mut eneg = 0
+            if j < s.len {
+                if s[j] == SVG_MINUS {
+                    eneg = 1
+                    j = j + 1
+                } else if s[j] == SVG_PLUS {
+                    j = j + 1
+                }
+            }
+            let mut e = 0
+            let mut edig = 0
+            while j < s.len {
+                if svg_is_digit(s[j]) == 1 {
+                    if e < 100 {
+                        e = e * 10 + (s[j] - 48)
+                    }
+                    j = j + 1
+                    edig = 1
+                } else {
+                    break
+                }
+            }
+            if edig == 1 {
+                let mut m = 1.0
+                let mut k = 0
+                while k < e {
+                    m = m * 10.0
+                    k = k + 1
+                }
+                if eneg == 1 {
+                    val = val / m
+                } else {
+                    val = val * m
+                }
+                i = j
+            } else {
+                i = save
+            }
+        }
+    }
+    if neg == 1 {
+        val = 0.0 - val
+    }
+    return SvgNum { ok: 1, val: val, next: i }
+}
+
+/// Numeric attribute value, or `def` when absent/malformed.
+fn svg_attr_num(tag: string, name: string, def: float) -> float {
+    let a = svg_attr(tag, name)
+    if a.found == 1 {
+        let n = svg_num(a.val, 0)
+        if n.ok == 1 {
+            return n.val
+        }
+    }
+    return def
+}
+
+/// Quoted attribute lookup, exactly as the host's `svg_attr`.
+fn svg_attr(tag: string, name: string) -> SvgAttr {
+    let mut p = 0
+    while p < tag.len {
+        let mut prev_ok = 0
+        if p == 0 {
+            prev_ok = 1
+        } else {
+            let c = tag[p - 1]
+            if c == SVG_SP || c == SVG_TAB || c == SVG_LF {
+                prev_ok = 1
+            }
+        }
+        if prev_ok == 1 {
+            if svg_eq_at(tag, p, name) == 1 {
+                let q = p + name.len
+                if q < tag.len {
+                    if tag[q] == SVG_EQ {
+                        let r = q + 1
+                        if r < tag.len {
+                            let quote = tag[r]
+                            if quote == SVG_DQUOTE || quote == SVG_SQUOTE {
+                                let start = r + 1
+                                let mut e = start
+                                while e < tag.len {
+                                    if tag[e] == quote {
+                                        break
+                                    }
+                                    e = e + 1
+                                }
+                                return SvgAttr { found: 1, val: svg_sub(tag, start, e) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        p = p + 1
+    }
+    return SvgAttr { found: 0, val: "" }
+}
+
+/// Position after a tag's `>`, handling `/` self-close and quoted `>`.
+fn svg_tag_end(s: string, pos: int) -> SvgTagEnd {
+    let mut i = pos
+    let mut self_close = 0
+    while i < s.len {
+        let c = s[i]
+        if c == SVG_GT {
+            return SvgTagEnd { end: i + 1, self_close: self_close }
+        }
+        if c == SVG_SLASH {
+            if i + 1 < s.len {
+                if s[i + 1] == SVG_GT {
+                    return SvgTagEnd { end: i + 2, self_close: 1 }
+                }
+            }
+        }
+        if c == SVG_DQUOTE || c == SVG_SQUOTE {
+            let q = c
+            i = i + 1
+            while i < s.len {
+                if s[i] == q {
+                    break
+                }
+                i = i + 1
+            }
+            i = i + 1
+        } else {
+            i = i + 1
+        }
+    }
+    return SvgTagEnd { end: s.len, self_close: self_close }
+}
+
+fn svg_hex_val(c: int) -> int {
+    if c >= 48 {
+        if c <= 57 {
+            return c - 48
+        }
+    }
+    if c >= 97 {
+        if c <= 102 {
+            return c - 97 + 10
+        }
+    }
+    if c >= 65 {
+        if c <= 70 {
+            return c - 65 + 10
+        }
+    }
+    return -1
+}
+
+/// `none` / `transparent` → off; `currentColor` → `current`; `#rgb` / `#rrggbb`.
+fn svg_color(s: string, current: int) -> SvgColor {
+    if s == "none" || s == "transparent" {
+        return SvgColor { has: 0, rgb: 0 }
+    }
+    if s == "currentColor" || s == "currentcolor" {
+        return SvgColor { has: 1, rgb: current }
+    }
+    if s.len == 0 {
+        return SvgColor { has: 0, rgb: 0 }
+    }
+    if s[0] != SVG_HASH {
+        return SvgColor { has: 0, rgb: 0 }
+    }
+    let mut v = 0
+    let mut n = 0
+    let mut i = 1
+    while i < s.len {
+        if n >= 8 {
+            break
+        }
+        let d = svg_hex_val(s[i])
+        if d < 0 {
+            break
+        }
+        v = v * 16 + d
+        i = i + 1
+        n = n + 1
+    }
+    if n == 3 {
+        let r = (v / 256) % 16
+        let g = (v / 16) % 16
+        let b = v % 16
+        return SvgColor { has: 1, rgb: r * 0x110000 + g * 0x1100 + b * 0x11 }
+    }
+    if n == 6 {
+        return SvgColor { has: 1, rgb: v }
+    }
+    return SvgColor { has: 0, rgb: 0 }
+}
+
+fn svg_style_default() -> SvgStyle {
+    return SvgStyle { has_fill: 0, fill: 0, has_stroke: 0, stroke: 0, sw: 1.0, cap: 1, join: 1 }
+}
+
+/// Inherit `st`, overridden by this tag's presentation attributes.
+fn svg_style_from(tag: string, st: SvgStyle, current: int) -> SvgStyle {
+    let mut r = st
+    let fa = svg_attr(tag, "fill")
+    if fa.found == 1 {
+        let c = svg_color(fa.val, current)
+        if c.has == 1 {
+            r.has_fill = 1
+            r.fill = c.rgb
+        } else {
+            r.has_fill = 0
+        }
+    }
+    let sa = svg_attr(tag, "stroke")
+    if sa.found == 1 {
+        let c = svg_color(sa.val, current)
+        if c.has == 1 {
+            r.has_stroke = 1
+            r.stroke = c.rgb
+        } else {
+            r.has_stroke = 0
+        }
+    }
+    let wa = svg_attr(tag, "stroke-width")
+    if wa.found == 1 {
+        let n = svg_num(wa.val, 0)
+        if n.ok == 1 {
+            if n.val > 0.0 {
+                r.sw = n.val
+            }
+        }
+    }
+    let ca = svg_attr(tag, "stroke-linecap")
+    if ca.found == 1 {
+        if ca.val == "round" {
+            r.cap = 1
+        } else if ca.val == "square" {
+            r.cap = 2
+        } else {
+            r.cap = 0
+        }
+    }
+    let ja = svg_attr(tag, "stroke-linejoin")
+    if ja.found == 1 {
+        if ja.val == "round" {
+            r.join = 1
+        } else if ja.val == "bevel" {
+            r.join = 2
+        } else {
+            r.join = 0
+        }
+    }
+    return r
+}
+
+// --- geometry builder -----------------------------------------------------
+
+fn svg_dist(ax: float, ay: float, bx: float, by: float) -> float {
+    let dx = bx - ax
+    let dy = by - ay
+    return raster.raster_sqrt(dx * dx + dy * dy)
+}
+
+fn svg_geom_begin() {
+    while sg_x.len > 0 {
+        pop(sg_x)
+    }
+    while sg_y.len > 0 {
+        pop(sg_y)
+    }
+    while sg_off.len > 0 {
+        pop(sg_off)
+    }
+    while sg_cnt.len > 0 {
+        pop(sg_cnt)
+    }
+    while sg_closed.len > 0 {
+        pop(sg_closed)
+    }
+    sg_cur = 0
+    sg_sp = 0
+    sg_sx = 0.0
+    sg_sy = 0.0
+    sg_cx = 0.0
+    sg_cy = 0.0
+}
+
+/// Record the open subpath (0 open / 1 closed) and stop building it.
+fn svg_sub_flush(closed_flag: int) {
+    if sg_cur == 1 {
+        push(sg_off, sg_sp)
+        push(sg_cnt, sg_x.len - sg_sp)
+        push(sg_closed, closed_flag)
+        sg_cur = 0
+    }
+}
+
+/// Flush any open subpath and begin a new one at a user-space point.
+fn svg_sub_start(ux: float, uy: float) {
+    svg_sub_flush(0)
+    sg_cur = 1
+    sg_sp = sg_x.len
+    sg_sx = ux
+    sg_sy = uy
+    push(sg_x, svg_ox + ux * svg_scale)
+    push(sg_y, svg_oy + uy * svg_scale)
+    sg_cx = ux
+    sg_cy = uy
+}
+
+fn svg_sub_pt(ux: float, uy: float) {
+    push(sg_x, svg_ox + ux * svg_scale)
+    push(sg_y, svg_oy + uy * svg_scale)
+    sg_cx = ux
+    sg_cy = uy
+}
+
+fn svg_sub_close() {
+    svg_sub_flush(1)
+    sg_cx = sg_sx
+    sg_cy = sg_sy
+}
+
+/// Adaptive cubic flattening; appends device points t = 1/n..1 (the start point
+/// is already in the subpath). `n = clamp(ceil(sqrt(len/(8*tol))), 1, 64)`.
+fn svg_flat_cubic(ux0: float, uy0: float, ux1: float, uy1: float,
+                  ux2: float, uy2: float, ux3: float, uy3: float) {
+    let x0 = svg_ox + ux0 * svg_scale
+    let y0 = svg_oy + uy0 * svg_scale
+    let x1 = svg_ox + ux1 * svg_scale
+    let y1 = svg_oy + uy1 * svg_scale
+    let x2 = svg_ox + ux2 * svg_scale
+    let y2 = svg_oy + uy2 * svg_scale
+    let x3 = svg_ox + ux3 * svg_scale
+    let y3 = svg_oy + uy3 * svg_scale
+    let tol = raster.raster_flat_tol()
+    let l = svg_dist(x0, y0, x1, y1) + svg_dist(x1, y1, x2, y2) + svg_dist(x2, y2, x3, y3)
+    let mut n = i32(raster.raster_ceil(raster.raster_sqrt(l / (8.0 * tol))))
+    if n < 1 {
+        n = 1
+    }
+    if n > 64 {
+        n = 64
+    }
+    let mut k = 1
+    while k <= n {
+        let t = float(k) / float(n)
+        let mt = 1.0 - t
+        let a = mt * mt * mt
+        let b = 3.0 * mt * mt * t
+        let c = 3.0 * mt * t * t
+        let d = t * t * t
+        push(sg_x, a * x0 + b * x1 + c * x2 + d * x3)
+        push(sg_y, a * y0 + b * y1 + c * y2 + d * y3)
+        k = k + 1
+    }
+}
+
+/// Emit `t = t0..t1` of a circular arc, endpoint included.
+fn svg_arc_pts(cx: float, cy: float, r: float, a0: float, a1: float) {
+    let tol = raster.raster_flat_tol()
+    let rdev = r * svg_scale
+    let mut n = 2
+    if rdev > 0.0 {
+        let mut theta = raster.raster_sqrt(8.0 * tol / rdev)
+        if theta < 0.05 {
+            theta = 0.05
+        }
+        n = i32(raster.raster_ceil((a1 - a0) / theta))
+    }
+    if n < 2 {
+        n = 2
+    }
+    if n > 64 {
+        n = 64
+    }
+    let mut k = 1
+    while k <= n {
+        let t = a0 + (a1 - a0) * float(k) / float(n)
+        svg_sub_pt(cx + r * raster.raster_cos(t), cy + r * raster.raster_sin(t))
+        k = k + 1
+    }
+}
+
+fn svg_circle_sub(cx: float, cy: float, r: float) {
+    let tol = raster.raster_flat_tol()
+    let rdev = r * svg_scale
+    let mut theta = raster.raster_sqrt(8.0 * tol / rdev)
+    if theta < 0.05 {
+        theta = 0.05
+    }
+    let mut n = i32(SVG_TAU / theta) + 1
+    if n < 8 {
+        n = 8
+    }
+    svg_sub_start(cx + r, cy)
+    let mut k = 1
+    while k < n {
+        let t = SVG_TAU * float(k) / float(n)
+        svg_sub_pt(cx + r * raster.raster_cos(t), cy + r * raster.raster_sin(t))
+        k = k + 1
+    }
+    svg_sub_close()
+}
+
+fn svg_rect_sub(x: float, y: float, w: float, h: float, rx: float) {
+    if rx <= 0.0 {
+        svg_sub_start(x, y)
+        svg_sub_pt(x + w, y)
+        svg_sub_pt(x + w, y + h)
+        svg_sub_pt(x, y + h)
+        svg_sub_close()
+        return
+    }
+    svg_sub_start(x + rx, y)
+    svg_sub_pt(x + w - rx, y)
+    svg_arc_pts(x + w - rx, y + rx, rx, 0.0 - SVG_HALF_PI, 0.0)
+    svg_sub_pt(x + w, y + h - rx)
+    svg_arc_pts(x + w - rx, y + h - rx, rx, 0.0, SVG_HALF_PI)
+    svg_sub_pt(x + rx, y + h)
+    svg_arc_pts(x + rx, y + h - rx, rx, SVG_HALF_PI, SVG_PI)
+    svg_sub_pt(x, y + rx)
+    svg_arc_pts(x + rx, y + rx, rx, SVG_PI, SVG_PI + SVG_HALF_PI)
+    svg_sub_close()
+}
+
+/// Parse an SVG `d` string (user space) into flattened device subpaths.
+fn svg_parse_d(d: string) {
+    let mut cx = 0.0
+    let mut cy = 0.0
+    let mut sx = 0.0
+    let mut sy = 0.0
+    let mut pcx = 0.0
+    let mut pcy = 0.0
+    let mut prev = 0
+    let mut started = 0
+    let mut p = 0
+    while 1 == 1 {
+        p = svg_skip(d, p)
+        if p >= d.len {
+            break
+        }
+        let mut cmd = d[p]
+        if svg_is_cmd(cmd) == 1 {
+            p = p + 1
+        } else {
+            if prev == 0 {
+                break
+            }
+            if prev == SVG_CMD_M {
+                cmd = SVG_CMD_L
+            } else if prev == SVG_CMD_M + 32 {
+                cmd = SVG_CMD_L + 32
+            } else {
+                cmd = prev
+            }
+        }
+        let mut rel = 0
+        if cmd >= SVG_LOWER_A {
+            rel = 1
+        }
+        let mut op = cmd
+        if rel == 1 {
+            op = cmd - 32
+        }
+        if op == SVG_CMD_M {
+            let n1 = svg_num(d, p)
+            if n1.ok == 0 {
+                break
+            }
+            let n2 = svg_num(d, n1.next)
+            if n2.ok == 0 {
+                break
+            }
+            p = n2.next
+            let mut nx = n1.val
+            let mut ny = n2.val
+            if rel == 1 {
+                nx = nx + cx
+                ny = ny + cy
+            }
+            cx = nx
+            cy = ny
+            sx = cx
+            sy = cy
+            svg_sub_start(cx, cy)
+            started = 1
+            prev = cmd
+            continue
+        }
+        if started == 0 {
+            prev = cmd
+            continue
+        }
+        // After a Z a new subpath begins at the current point.
+        if sg_cur == 0 {
+            svg_sub_start(cx, cy)
+        }
+        let mut pu = prev
+        if pu >= SVG_LOWER_A {
+            pu = pu - 32
+        }
+        if op == SVG_CMD_L {
+            let n1 = svg_num(d, p)
+            if n1.ok == 0 {
+                break
+            }
+            let n2 = svg_num(d, n1.next)
+            if n2.ok == 0 {
+                break
+            }
+            p = n2.next
+            let mut nx = n1.val
+            let mut ny = n2.val
+            if rel == 1 {
+                nx = nx + cx
+                ny = ny + cy
+            }
+            cx = nx
+            cy = ny
+            svg_sub_pt(cx, cy)
+        } else if op == SVG_CMD_H {
+            let n1 = svg_num(d, p)
+            if n1.ok == 0 {
+                break
+            }
+            p = n1.next
+            let mut nx = n1.val
+            if rel == 1 {
+                nx = nx + cx
+            }
+            cx = nx
+            svg_sub_pt(cx, cy)
+        } else if op == SVG_CMD_V {
+            let n1 = svg_num(d, p)
+            if n1.ok == 0 {
+                break
+            }
+            p = n1.next
+            let mut ny = n1.val
+            if rel == 1 {
+                ny = ny + cy
+            }
+            cy = ny
+            svg_sub_pt(cx, cy)
+        } else if op == SVG_CMD_C {
+            let n1 = svg_num(d, p)
+            if n1.ok == 0 {
+                break
+            }
+            let n2 = svg_num(d, n1.next)
+            if n2.ok == 0 {
+                break
+            }
+            let n3 = svg_num(d, n2.next)
+            if n3.ok == 0 {
+                break
+            }
+            let n4 = svg_num(d, n3.next)
+            if n4.ok == 0 {
+                break
+            }
+            let n5 = svg_num(d, n4.next)
+            if n5.ok == 0 {
+                break
+            }
+            let n6 = svg_num(d, n5.next)
+            if n6.ok == 0 {
+                break
+            }
+            p = n6.next
+            let mut x1 = n1.val
+            let mut y1 = n2.val
+            let mut x2 = n3.val
+            let mut y2 = n4.val
+            let mut x = n5.val
+            let mut y = n6.val
+            if rel == 1 {
+                x1 = x1 + cx
+                y1 = y1 + cy
+                x2 = x2 + cx
+                y2 = y2 + cy
+                x = x + cx
+                y = y + cy
+            }
+            svg_flat_cubic(cx, cy, x1, y1, x2, y2, x, y)
+            pcx = x2
+            pcy = y2
+            cx = x
+            cy = y
+        } else if op == SVG_CMD_S {
+            let n1 = svg_num(d, p)
+            if n1.ok == 0 {
+                break
+            }
+            let n2 = svg_num(d, n1.next)
+            if n2.ok == 0 {
+                break
+            }
+            let n3 = svg_num(d, n2.next)
+            if n3.ok == 0 {
+                break
+            }
+            let n4 = svg_num(d, n3.next)
+            if n4.ok == 0 {
+                break
+            }
+            p = n4.next
+            let mut x2 = n1.val
+            let mut y2 = n2.val
+            let mut x = n3.val
+            let mut y = n4.val
+            if rel == 1 {
+                x2 = x2 + cx
+                y2 = y2 + cy
+                x = x + cx
+                y = y + cy
+            }
+            let mut x1 = cx
+            let mut y1 = cy
+            if pu == SVG_CMD_C || pu == SVG_CMD_S {
+                x1 = 2.0 * cx - pcx
+                y1 = 2.0 * cy - pcy
+            }
+            svg_flat_cubic(cx, cy, x1, y1, x2, y2, x, y)
+            pcx = x2
+            pcy = y2
+            cx = x
+            cy = y
+        } else if op == SVG_CMD_Q {
+            let n1 = svg_num(d, p)
+            if n1.ok == 0 {
+                break
+            }
+            let n2 = svg_num(d, n1.next)
+            if n2.ok == 0 {
+                break
+            }
+            let n3 = svg_num(d, n2.next)
+            if n3.ok == 0 {
+                break
+            }
+            let n4 = svg_num(d, n3.next)
+            if n4.ok == 0 {
+                break
+            }
+            p = n4.next
+            let mut qx = n1.val
+            let mut qy = n2.val
+            let mut x = n3.val
+            let mut y = n4.val
+            if rel == 1 {
+                qx = qx + cx
+                qy = qy + cy
+                x = x + cx
+                y = y + cy
+            }
+            let c1x = cx + SVG_TWO_THIRDS * (qx - cx)
+            let c1y = cy + SVG_TWO_THIRDS * (qy - cy)
+            let c2x = x + SVG_TWO_THIRDS * (qx - x)
+            let c2y = y + SVG_TWO_THIRDS * (qy - y)
+            svg_flat_cubic(cx, cy, c1x, c1y, c2x, c2y, x, y)
+            pcx = qx
+            pcy = qy
+            cx = x
+            cy = y
+        } else if op == SVG_CMD_T {
+            let n1 = svg_num(d, p)
+            if n1.ok == 0 {
+                break
+            }
+            let n2 = svg_num(d, n1.next)
+            if n2.ok == 0 {
+                break
+            }
+            p = n2.next
+            let mut x = n1.val
+            let mut y = n2.val
+            if rel == 1 {
+                x = x + cx
+                y = y + cy
+            }
+            let mut qx = cx
+            let mut qy = cy
+            if pu == SVG_CMD_Q || pu == SVG_CMD_T {
+                qx = 2.0 * cx - pcx
+                qy = 2.0 * cy - pcy
+            }
+            let c1x = cx + SVG_TWO_THIRDS * (qx - cx)
+            let c1y = cy + SVG_TWO_THIRDS * (qy - cy)
+            let c2x = x + SVG_TWO_THIRDS * (qx - x)
+            let c2y = y + SVG_TWO_THIRDS * (qy - y)
+            svg_flat_cubic(cx, cy, c1x, c1y, c2x, c2y, x, y)
+            pcx = qx
+            pcy = qy
+            cx = x
+            cy = y
+        } else if op == SVG_CMD_Z {
+            svg_sub_close()
+            cx = sx
+            cy = sy
+        } else if op == SVG_CMD_A {
+            // Arc: consume the 7 parameters without drawing (host parity).
+            let mut j = 0
+            while j < 7 {
+                let n = svg_num(d, p)
+                if n.ok == 0 {
+                    break
+                }
+                p = n.next
+                j = j + 1
+            }
+        } else {
+            break
+        }
+        prev = cmd
+    }
+    svg_sub_flush(0)
+}
+
+// --- stroke pieces --------------------------------------------------------
+
+fn svg_stroke_seg(ax: float, ay: float, bx: float, by: float, half: float) {
+    let l = svg_dist(ax, ay, bx, by)
+    if l < 1e-6 {
+        return
+    }
+    let dx = (bx - ax) / l
+    let dy = (by - ay) / l
+    let nx = 0.0 - dy * half
+    let ny = dx * half
+    let mut xs: []float = []float {}
+    let mut ys: []float = []float {}
+    push(xs, ax + nx)
+    push(ys, ay + ny)
+    push(xs, bx + nx)
+    push(ys, by + ny)
+    push(xs, bx - nx)
+    push(ys, by - ny)
+    push(xs, ax - nx)
+    push(ys, ay - ny)
+    raster.raster_multi_add_poly(xs, ys, 1)
+}
+
+fn svg_add_tri(ax: float, ay: float, bx: float, by: float, cx: float, cy: float) {
+    let mut xs: []float = []float {}
+    let mut ys: []float = []float {}
+    push(xs, ax)
+    push(ys, ay)
+    push(xs, bx)
+    push(ys, by)
+    push(xs, cx)
+    push(ys, cy)
+    raster.raster_multi_add_poly(xs, ys, 1)
+}
+
+/// Join at vertex `v`, between the incoming (p→v) and outgoing (v→n) segments.
+/// Round and miter use a disc; bevel fills the outer wedge with two triangles
+/// (each stays inside the disc, so the union is well formed).
+fn svg_join(join: int, px: float, py: float, vx: float, vy: float,
+            nx: float, ny: float, half: float) {
+    if join == 2 {
+        let l0 = svg_dist(px, py, vx, vy)
+        let l1 = svg_dist(vx, vy, nx, ny)
+        if l0 > 1e-6 {
+            if l1 > 1e-6 {
+                let d0x = (vx - px) / l0
+                let d0y = (vy - py) / l0
+                let d1x = (nx - vx) / l1
+                let d1y = (ny - vy) / l1
+                let a0x = 0.0 - d0y
+                let a0y = d0x
+                let a1x = 0.0 - d1y
+                let a1y = d1x
+                svg_add_tri(vx, vy, vx + a0x * half, vy + a0y * half, vx + a1x * half, vy + a1y * half)
+                svg_add_tri(vx, vy, vx - a0x * half, vy - a0y * half, vx - a1x * half, vy - a1y * half)
+                return
+            }
+        }
+    }
+    raster.raster_multi_add_circle(vx, vy, half, 1)
+}
+
+/// Cap at an open end. `dx,dy` points outward; 0,0 means no direction.
+fn svg_cap(cap: int, px: float, py: float, dx: float, dy: float, half: float) {
+    if cap == 1 {
+        raster.raster_multi_add_circle(px, py, half, 1)
+        return
+    }
+    if cap == 2 {
+        let l = svg_dist(0.0, 0.0, dx, dy)
+        if l < 1e-6 {
+            let mut xs: []float = []float {}
+            let mut ys: []float = []float {}
+            push(xs, px - half)
+            push(ys, py - half)
+            push(xs, px + half)
+            push(ys, py - half)
+            push(xs, px + half)
+            push(ys, py + half)
+            push(xs, px - half)
+            push(ys, py + half)
+            raster.raster_multi_add_poly(xs, ys, 1)
+            return
+        }
+        let ux = dx / l
+        let uy = dy / l
+        let nx = 0.0 - uy
+        let ny = ux
+        let mut xs: []float = []float {}
+        let mut ys: []float = []float {}
+        push(xs, px + nx * half)
+        push(ys, py + ny * half)
+        push(xs, px + ux * half + nx * half)
+        push(ys, py + uy * half + ny * half)
+        push(xs, px + ux * half - nx * half)
+        push(ys, py + uy * half - ny * half)
+        push(xs, px - nx * half)
+        push(ys, py - ny * half)
+        raster.raster_multi_add_poly(xs, ys, 1)
+    }
+}
+
+// --- emit -----------------------------------------------------------------
+
+fn svg_emit_fill() {
+    let ns = sg_off.len
+    let mut k = 0
+    while k < ns {
+        let off = sg_off[k]
+        let cnt = sg_cnt[k]
+        if cnt >= 3 {
+            let mut xs: []float = []float {}
+            let mut ys: []float = []float {}
+            let mut j = 0
+            while j < cnt {
+                push(xs, sg_x[off + j])
+                push(ys, sg_y[off + j])
+                j = j + 1
+            }
+            raster.raster_multi_add_poly(xs, ys, 1)
+        }
+        k = k + 1
+    }
+}
+
+fn svg_emit_stroke(sw_dev: float, cap: int, join: int) {
+    let half = sw_dev / 2.0
+    let ns = sg_off.len
+    let mut k = 0
+    while k < ns {
+        let off = sg_off[k]
+        let cnt = sg_cnt[k]
+        let closed = sg_closed[k]
+        if cnt >= 2 {
+            if closed == 1 {
+                let mut s = 0
+                while s < cnt {
+                    let i0 = off + s
+                    let i1 = off + ((s + 1) % cnt)
+                    svg_stroke_seg(sg_x[i0], sg_y[i0], sg_x[i1], sg_y[i1], half)
+                    s = s + 1
+                }
+                let mut v = 0
+                while v < cnt {
+                    let ip = off + ((v + cnt - 1) % cnt)
+                    let ic = off + v
+                    let iq = off + ((v + 1) % cnt)
+                    svg_join(join, sg_x[ip], sg_y[ip], sg_x[ic], sg_y[ic], sg_x[iq], sg_y[iq], half)
+                    v = v + 1
+                }
+            } else {
+                let mut s = 0
+                while s + 1 < cnt {
+                    let i0 = off + s
+                    let i1 = off + s + 1
+                    svg_stroke_seg(sg_x[i0], sg_y[i0], sg_x[i1], sg_y[i1], half)
+                    s = s + 1
+                }
+                let mut v = 1
+                while v < cnt - 1 {
+                    let ip = off + v - 1
+                    let ic = off + v
+                    let iq = off + v + 1
+                    svg_join(join, sg_x[ip], sg_y[ip], sg_x[ic], sg_y[ic], sg_x[iq], sg_y[iq], half)
+                    v = v + 1
+                }
+                svg_cap(cap, sg_x[off], sg_y[off], sg_x[off] - sg_x[off + 1], sg_y[off] - sg_y[off + 1], half)
+                let last = off + cnt - 1
+                svg_cap(cap, sg_x[last], sg_y[last], sg_x[last] - sg_x[last - 1], sg_y[last] - sg_y[last - 1], half)
+            }
+        } else if cnt == 1 {
+            svg_cap(cap, sg_x[off], sg_y[off], 0.0, 0.0, half)
+        }
+        k = k + 1
+    }
+}
+
+/// Fill then stroke as two separate groups, each composited once.
+fn svg_emit(style: SvgStyle) -> int {
+    let mut painted = 0
+    if style.has_fill == 1 {
+        raster.raster_multi_begin()
+        svg_emit_fill()
+        if raster.raster_multi_count() > 0 {
+            raster.raster_fill_multi(style.fill / 65536 % 256, style.fill / 256 % 256, style.fill % 256, svg_alpha)
+            painted = 1
+        }
+    }
+    if style.has_stroke == 1 {
+        if style.sw > 0.0 {
+            raster.raster_multi_begin()
+            svg_emit_stroke(style.sw * svg_scale, style.cap, style.join)
+            if raster.raster_multi_count() > 0 {
+                raster.raster_fill_multi(style.stroke / 65536 % 256, style.stroke / 256 % 256, style.stroke % 256, svg_alpha)
+                painted = 1
+            }
+        }
+    }
+    return painted
+}
+
+// --- elements -------------------------------------------------------------
+
+fn svg_paint_path(tag: string, style: SvgStyle) {
+    let da = svg_attr(tag, "d")
+    if da.found == 0 {
+        return
+    }
+    svg_geom_begin()
+    svg_parse_d(da.val)
+    svg_painted = svg_painted + svg_emit(style)
+}
+
+fn svg_paint_circle(tag: string, style: SvgStyle) {
+    let cx = svg_attr_num(tag, "cx", 0.0)
+    let cy = svg_attr_num(tag, "cy", 0.0)
+    let r = svg_attr_num(tag, "r", 0.0)
+    if r <= 0.0 {
+        return
+    }
+    svg_geom_begin()
+    svg_circle_sub(cx, cy, r)
+    svg_painted = svg_painted + svg_emit(style)
+}
+
+fn svg_paint_rect(tag: string, style: SvgStyle) {
+    let x = svg_attr_num(tag, "x", 0.0)
+    let y = svg_attr_num(tag, "y", 0.0)
+    let w = svg_attr_num(tag, "width", 0.0)
+    let h = svg_attr_num(tag, "height", 0.0)
+    if w <= 0.0 {
+        return
+    }
+    if h <= 0.0 {
+        return
+    }
+    let mut rx = svg_attr_num(tag, "rx", 0.0)
+    let lim = raster.raster_min_f(w, h) / 2.0
+    if rx > lim {
+        rx = lim
+    }
+    if rx < 0.0 {
+        rx = 0.0
+    }
+    svg_geom_begin()
+    svg_rect_sub(x, y, w, h, rx)
+    svg_painted = svg_painted + svg_emit(style)
+}
+
+// --- tree walk ------------------------------------------------------------
+
+/// Walk tags from `pos`. Mirrors the host's `svg_draw_tree`: comments and
+/// self-close are handled, any closing tag returns to the caller (or a
+/// matching `stop` recurses out of `g`/`svg`), everything but path/circle/rect
+/// is skipped.
+fn svg_walk(s: string, pos: int, style: SvgStyle, stop: string, depth: int) -> int {
+    if depth > 24 {
+        return pos
+    }
+    let mut p = pos
+    while p < s.len {
+        if stop.len > 0 {
+            if svg_eq_at(s, p, stop) == 1 {
+                p = p + stop.len
+                return p
+            }
+        }
+        if s[p] == SVG_LT {
+            if p + 1 < s.len {
+                if s[p + 1] == SVG_SLASH {
+                    while p < s.len {
+                        if s[p] == SVG_GT {
+                            break
+                        }
+                        p = p + 1
+                    }
+                    if p < s.len {
+                        p = p + 1
+                    }
+                    return p
+                }
+            }
+            if svg_eq_at(s, p, "<!--") == 1 {
+                let e = svg_find(s, "-->", p)
+                if e < 0 {
+                    return s.len
+                }
+                p = e + 3
+                continue
+            }
+            p = p + 1
+            while p < s.len {
+                if s[p] == SVG_SP || s[p] == SVG_TAB || s[p] == SVG_LF {
+                    p = p + 1
+                } else {
+                    break
+                }
+            }
+            let name_start = p
+            while p < s.len {
+                let c = s[p]
+                if c == SVG_SP || c == SVG_TAB || c == SVG_LF || c == SVG_SLASH || c == SVG_GT {
+                    break
+                }
+                p = p + 1
+            }
+            let name = svg_sub(s, name_start, p)
+            let te = svg_tag_end(s, p)
+            let tag = svg_sub(s, name_start, te.end)
+            p = te.end
+            let kid = svg_style_from(tag, style, svg_current)
+            if name == "g" {
+                if te.self_close == 0 {
+                    p = svg_walk(s, p, kid, "</g>", depth + 1)
+                }
+            } else if name == "svg" {
+                if te.self_close == 0 {
+                    p = svg_walk(s, p, kid, "</svg>", depth + 1)
+                }
+            } else if name == "path" {
+                svg_paint_path(tag, kid)
+            } else if name == "circle" {
+                svg_paint_circle(tag, kid)
+            } else if name == "rect" {
+                svg_paint_rect(tag, kid)
+            }
+        } else {
+            p = p + 1
+        }
+    }
+    return p
+}
+
+// --- entry point ----------------------------------------------------------
+
+/// Rasterize every fill and stroke of the inline SVG `markup` into the
+/// framebuffer, inside the DEVICE-pixel box `(x, y, w, h)`. `rgb` is
+/// `currentColor`. `alpha` is the op's composite alpha (0..255). Returns the
+/// number of `<path>` / `<circle>` / `<rect>` elements painted, or -1 when the
+/// string holds no `<svg`.
+fn svg_add(markup: string, x: int, y: int, w: int, h: int, rgb: int, alpha: int) -> int {
+    let at = svg_find(markup, "<svg", 0)
+    if at < 0 {
+        return -1
+    }
+    if w <= 0 {
+        return 0
+    }
+    if h <= 0 {
+        return 0
+    }
+    svg_current = rgb
+    svg_alpha = alpha
+    svg_painted = 0
+    let mut name = at + 1
+    while name < markup.len {
+        if markup[name] == SVG_SP {
+            name = name + 1
+        } else {
+            break
+        }
+    }
+    let te = svg_tag_end(markup, name)
+    let tag = svg_sub(markup, name, te.end)
+    let mut vb_x = 0.0
+    let mut vb_y = 0.0
+    let mut vb_w = 24.0
+    let mut vb_h = 24.0
+    let mut vb = svg_attr(tag, "viewBox")
+    if vb.found == 0 {
+        vb = svg_attr(tag, "viewbox")
+    }
+    if vb.found == 1 {
+        let mut p = 0
+        let n1 = svg_num(vb.val, p)
+        if n1.ok == 1 {
+            vb_x = n1.val
+            p = n1.next
+        }
+        let n2 = svg_num(vb.val, p)
+        if n2.ok == 1 {
+            vb_y = n2.val
+            p = n2.next
+        }
+        let n3 = svg_num(vb.val, p)
+        if n3.ok == 1 {
+            vb_w = n3.val
+            p = n3.next
+        }
+        let n4 = svg_num(vb.val, p)
+        if n4.ok == 1 {
+            vb_h = n4.val
+            p = n4.next
+        }
+        if vb_w < 1.0 {
+            vb_w = 24.0
+        }
+        if vb_h < 1.0 {
+            vb_h = 24.0
+        }
+    }
+    let sxf = float(w) / vb_w
+    let syf = float(h) / vb_h
+    let mut scale = sxf
+    if syf < scale {
+        scale = syf
+    }
+    svg_scale = scale
+    svg_ox = float(x) + (float(w) - vb_w * scale) * 0.5 - vb_x * scale
+    svg_oy = float(y) + (float(h) - vb_h * scale) * 0.5 - vb_y * scale
+    let st = svg_style_from(tag, svg_style_default(), rgb)
+    svg_walk(markup, te.end, st, "", 0)
+    return svg_painted
+}

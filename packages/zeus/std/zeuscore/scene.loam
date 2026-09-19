@@ -12,6 +12,7 @@ import "raster.loam"
 import "std:font"
 import "std:sys"
 import "std:unicode"
+import "svg.loam"
 
 // Fields grouped by width, widest first, so the 8-byte-aligned `text` slice
 // does not force padding between 4-byte ints (Phase 11). `text` is empty for
@@ -288,24 +289,24 @@ fn raster_glyphs_missing() -> int {
 /// small text gets subpixel positioning, compositing with the same
 /// gamma-correct blend as everything else.
 ///
-/// The op's `y` is the TOP of the line box (that is what the hosts treat it as —
-/// the web host draws at `y + ascent` with `textBaseline = "alphabetic"`), so the
-/// baseline is derived here from the font's own ascent.
-fn rs_text(d: Draw, s: int) {
+/// `xd`/`yd` are DEVICE pixels of the line box's top-left (the convention every
+/// host uses — the web host draws at `y + ascent` with an alphabetic baseline),
+/// so the baseline is derived here from the font's own ascent. `kind` is the
+/// draw op's kind, so a pass with no font loaded reports the gap on the right
+/// counter rather than dropping pixels silently.
+fn rs_text_dev(xd: int, yd: int, logical: int, alpha: int, text: string, s: int, kind: int) {
     if rs_font_ok == 0 {
-        rs_note_unhandled(d.kind)
+        rs_note_unhandled(kind)
         return
     }
-    let logical = d.font
     if logical <= 0 {
         return
     }
     let px = logical * s
-    let baseline = d.y * s + raster_font_ascender_px(px)
+    let baseline = yd + raster_font_ascender_px(px)
     // Quarter-pixel pen: an advance of 7.5px must not lose its half pixel, or
     // small text comes out visibly uneven.
-    let mut pen = d.x * s * 4
-    let text = d.text
+    let mut pen = xd * 4
     let mut i = 0
     while i < text.len {
         let cp = unicode.codepoint(text, i)
@@ -327,11 +328,14 @@ fn rs_text(d: Draw, s: int) {
                 }
             }
             if slot >= 0 {
-                atlas.atlas_blit(slot, ix, baseline, rs_r, rs_g, rs_b, d.alpha)
+                atlas.atlas_blit(slot, ix, baseline, rs_r, rs_g, rs_b, alpha)
                 rs_glyphs_drawn = rs_glyphs_drawn + 1
             } else {
-                // A space has no outline; that is not a missing glyph.
-                if gid > 0 {
+                // A space (or any whitespace) has no outline; that is not a
+                // missing glyph, so it must not be counted as one — a wrapped
+                // paragraph is full of them. A glyph whose outline really could
+                // not be parsed (a composite, so far) still counts.
+                if cp != 32 && cp != 9 && cp != 10 && cp != 13 {
                     rs_glyphs_missing = rs_glyphs_missing + 1
                 }
             }
@@ -342,6 +346,157 @@ fn rs_text(d: Draw, s: int) {
         i = unicode.next_cp(text, i)
     }
     rs_drawn = rs_drawn + 1
+}
+
+fn rs_text(d: Draw, s: int) {
+    rs_text_dev(d.x * s, d.y * s, d.font, d.alpha, d.text, s, d.kind)
+}
+
+fn rs_int_str(v: int) -> string {
+    let mut b: []int = []int {}
+    let mut w = v
+    if w < 0 {
+        push(b, 45)
+        w = 0 - w
+    }
+    if w == 0 {
+        push(b, 48)
+        return string_from_bytes(b)
+    }
+    let mut dg: []int = []int {}
+    let mut t = w
+    while t > 0 {
+        push(dg, 48 + t % 10)
+        t = t / 10
+    }
+    let m = dg.len
+    let mut i = 0
+    while i < m {
+        push(b, dg[m - 1 - i])
+        i = i + 1
+    }
+    return string_from_bytes(b)
+}
+
+fn rs_text_int(d: Draw, s: int) {
+    rs_text_dev(d.x * s, d.y * s, d.font, d.alpha, rs_int_str(d.value), s, d.kind)
+}
+
+/// Advance width, in device pixels, of `text[a..b)`.
+fn rs_span_w(px: int, text: string, a: int, b: int) -> int {
+    let mut w = 0
+    let mut i = a
+    while i < b {
+        let cp = unicode.codepoint(text, i)
+        w = w + font.advance_px(rs_font, font.glyph_index(rs_font, cp), px)
+        i = unicode.next_grapheme(text, i)
+    }
+    return w
+}
+
+fn rs_slice(text: string, a: int, b: int) -> string {
+    let mut out: []int = []int {}
+    let mut i = a
+    while i < b {
+        push(out, text[i])
+        i = i + 1
+    }
+    return string_from_bytes(out)
+}
+
+// --- wrapped text ---------------------------------------------------------
+//
+// The same greedy word wrap the host does: break at spaces and tabs, `\n` is a
+// hard break, a space that would push the line past `max_w` is consumed by the
+// break. Lines are drawn as whole strings so the pen can carry subpixel
+// positions across a line (the host restarts each word on an integer).
+
+let mut rw_start: []int = []int {}
+let mut rw_end: []int = []int {}
+
+fn rs_text_wrap(d: Draw, s: int) {
+    if rs_font_ok == 0 {
+        rs_note_unhandled(d.kind)
+        return
+    }
+    let logical = d.font
+    if logical <= 0 {
+        return
+    }
+    let px = logical * s
+    let max_w = d.w * s
+    let text = d.text
+    while rw_start.len > 0 {
+        pop(rw_start)
+        pop(rw_end)
+    }
+    let sw = font.advance_px(rs_font, font.glyph_index(rs_font, 32), px)
+    let mut line_start = 0
+    let mut line_end = 0
+    let mut line_w = 0
+    let mut i = 0
+    while i < text.len {
+        let c = text[i]
+        if c == 10 {
+            push(rw_start, line_start)
+            push(rw_end, line_end)
+            line_start = i + 1
+            line_end = line_start
+            line_w = 0
+            i = i + 1
+            continue
+        }
+        if c == 32 || c == 9 {
+            if line_w > 0 {
+                if line_w + sw > max_w {
+                    push(rw_start, line_start)
+                    push(rw_end, line_end)
+                    // Do not start the next line with the space we broke at.
+                    line_start = i + 1
+                    line_end = line_start
+                    line_w = 0
+                } else {
+                    line_w = line_w + sw
+                    line_end = i + 1
+                }
+            }
+            i = i + 1
+            continue
+        }
+        let mut j = i
+        while j < text.len {
+            let cj = text[j]
+            if cj == 32 || cj == 9 || cj == 10 {
+                break
+            }
+            j = j + 1
+        }
+        let ww = rs_span_w(px, text, i, j)
+        if line_w > 0 {
+            if line_w + ww > max_w {
+                push(rw_start, line_start)
+                push(rw_end, line_end)
+                line_start = i
+                line_end = i
+                line_w = 0
+            }
+        }
+        line_w = line_w + ww
+        line_end = j
+        i = j
+    }
+    if line_end > line_start {
+        push(rw_start, line_start)
+        push(rw_end, line_end)
+    }
+    let lh = font.line_height(rs_font, px)
+    let n = rw_start.len
+    let mut k = 0
+    while k < n {
+        let line = rs_slice(text, rw_start[k], rw_end[k])
+        rs_text_dev(d.x * s, d.y * s + k * lh, logical, d.alpha, line, s, d.kind)
+        k = k + 1
+    }
 }
 
 fn rs_init() {
@@ -575,6 +730,19 @@ fn rasterize(scale: int, br: int, bg: int, bb: int) -> int {
             rs_drawn = rs_drawn + 1
         } else if d.kind == 2 {
             rs_text(d, s)
+        } else if d.kind == 3 {
+            rs_text_int(d, s)
+        } else if d.kind == 4 {
+            rs_text_wrap(d, s)
+        } else if d.kind == 5 {
+            // SVG: parsed and rasterized here, in Loam, from the markup the op
+            // carries — no host SVG reader, no NSBezierPath, no CGPath.
+            let added = svg.svg_add(d.text, d.x * s, d.y * s, d.w * s, d.h * s, d.rgb, d.alpha)
+            if added >= 0 {
+                rs_drawn = rs_drawn + 1
+            } else {
+                rs_note_unhandled(d.kind)
+            }
         } else if d.kind == 14 {
             raster.raster_multi_begin()
             rs_quarter_rect(float(d.x * s), float(d.y * s), float(d.w * s), float(d.h * s),
