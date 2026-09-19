@@ -178,6 +178,10 @@ run on a real display to confirm the two-surface swap holds under live scroll.
 
 `docs/mem/regions.md` and `tools/mem-baseline.sh` still produce the full
 automated split; the table above is the manual measurement from this session.
+The per-path frame times, the peak-vs-now distinction and the 5–9.6 MB / 32–60
+region `IOAccelerator (graphics)` figure are independently recorded in
+`examples/zeus/myapp/readme.md`, which is where the 51–55 MB and 103–137 MB
+numbers come from.
 
 ## 5. Golden result
 
