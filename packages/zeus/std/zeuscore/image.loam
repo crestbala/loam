@@ -184,6 +184,9 @@ fn src_format_is_decodable(f: int) -> int {
     if f == FMT_BMP {
         return 1
     }
+    if f == FMT_GIF {
+        return 1
+    }
     return 0
 }
 
@@ -1483,6 +1486,403 @@ fn bmp_decode(s: string) -> int {
     return 1
 }
 
+// --- GIF (Phase 4, third format) -------------------------------------------
+//
+// Palette + LZW, with the transparent index from a graphic control extension.
+// The first frame is decoded onto a fully transparent canvas: the engine has no
+// image animation loop, so an animated GIF shows its first frame rather than
+// being refused (and a UI that wants the animation can use the platform path).
+//
+// The fixtures are written by **Pillow**, not by hand, and the tests compare
+// against Pillow's own decode: a hand-written GIF fixture would share an
+// implementation with the decoder under test, which is exactly what the PNG
+// fixtures could get away with (their container is the spec) and this one
+// cannot.
+
+const GIF_MAX_CODES: int = 4096
+
+let mut gif_prefix: []int = []int {}
+let mut gif_suffix: []int = []int {}
+let mut gif_stack: []int = []int {}
+let mut gif_rowmap: []int = []int {}
+let mut gif_idx: []u8 = []u8 {}
+let mut gif_pal: []u8 = []u8 {}
+let mut gif_pal_n: int = 0
+let mut gif_work: []u8 = []u8 {}
+let mut gif_ready: int = 0
+let mut gbit: int = 0
+
+fn gif_tables_init() {
+    if gif_ready != 0 {
+        return
+    }
+    gif_ready = 1
+    let mut i = 0
+    while i < GIF_MAX_CODES {
+        push(gif_prefix, -1)
+        push(gif_suffix, 0)
+        i = i + 1
+    }
+}
+
+/// Read `n` bits, LSB-first (GIF's code order), or -1 past the end of the data.
+fn gif_bits(n: int) -> int {
+    let mut v = 0
+    let mut k = 0
+    while k < n {
+        let bi = gbit / 8
+        if bi >= gif_work.len {
+            return -1
+        }
+        let bit = (int(gif_work[bi]) / bit_pow2(gbit % 8)) % 2
+        v = v + bit * bit_pow2(k)
+        gbit = gbit + 1
+        k = k + 1
+    }
+    return v
+}
+
+/// Walk a code's chain back to its root, appending the string to `gif_idx` in
+/// forward order, and return its FIRST byte (the root).
+fn gif_emit(code: int) -> int {
+    while gif_stack.len > 0 {
+        pop(gif_stack)
+    }
+    let mut c = code
+    let mut guard = 0
+    while c >= 0 {
+        guard = guard + 1
+        if guard > GIF_MAX_CODES {
+            return -1
+        }
+        push(gif_stack, gif_suffix[c])
+        c = gif_prefix[c]
+    }
+    let first = gif_stack[gif_stack.len - 1]
+    while gif_stack.len > 0 {
+        push(gif_idx, u8(pop(gif_stack)))
+    }
+    return first
+}
+
+/// LZW-decode `gif_work` into `gif_idx` (`fw` x `fh` palette indices).
+fn gif_lzw(fw: int, fh: int, min_size: int) -> int {
+    if min_size < 2 || min_size > 8 {
+        return 0
+    }
+    gif_tables_init()
+    let npix = fw * fh
+    while gif_idx.len > 0 {
+        pop(gif_idx)
+    }
+    let clear = bit_pow2(min_size)
+    let end = clear + 1
+    let mut next = clear + 2
+    let mut size = min_size + 1
+    let mut prev = -1
+    gbit = 0
+    let mut i = 0
+    while i < clear {
+        gif_prefix[i] = -1
+        gif_suffix[i] = i
+        i = i + 1
+    }
+    while 1 == 1 {
+        let code = gif_bits(size)
+        if code < 0 {
+            return 0
+        }
+        if code == clear {
+            next = clear + 2
+            size = min_size + 1
+            prev = -1
+        } else if code == end {
+            break
+        } else {
+            let mut first = 0
+            if code < next {
+                first = gif_emit(code)
+            } else if code == next {
+                // The KwKwK case: the code names the entry being built.
+                if prev < 0 {
+                    return 0
+                }
+                first = gif_emit(prev)
+                push(gif_idx, u8(first))
+            } else {
+                return 0
+            }
+            if prev >= 0 {
+                if next < GIF_MAX_CODES {
+                    gif_prefix[next] = prev
+                    gif_suffix[next] = first
+                    next = next + 1
+                    // The code width grows when the next code no longer fits.
+                    if next == bit_pow2(size) {
+                        if size < 12 {
+                            size = size + 1
+                        }
+                    }
+                }
+            }
+            prev = code
+        }
+        if gif_idx.len > npix {
+            return 0
+        }
+    }
+    if gif_idx.len != npix {
+        return 0
+    }
+    return 1
+}
+
+/// Skip a chain of sub-blocks starting at `p`, returning the offset after the
+/// terminating zero-length block, or -1.
+fn gif_skip_blocks(s: string, p: int) -> int {
+    let mut q = p
+    while q < s.len {
+        let n = int(s[q])
+        q = q + 1
+        if n == 0 {
+            return q
+        }
+        q = q + n
+    }
+    return -1
+}
+
+/// Build the order in which stored rows map to image rows. GIF interlaces in
+/// four passes; a plain image is identity.
+fn gif_build_rowmap(fh: int, interlace: int) -> int {
+    while gif_rowmap.len > 0 {
+        pop(gif_rowmap)
+    }
+    if interlace == 0 {
+        let mut y = 0
+        while y < fh {
+            push(gif_rowmap, y)
+            y = y + 1
+        }
+    } else {
+        let mut y = 0
+        while y < fh {
+            push(gif_rowmap, y)
+            y = y + 8
+        }
+        y = 4
+        while y < fh {
+            push(gif_rowmap, y)
+            y = y + 8
+        }
+        y = 2
+        while y < fh {
+            push(gif_rowmap, y)
+            y = y + 4
+        }
+        y = 1
+        while y < fh {
+            push(gif_rowmap, y)
+            y = y + 2
+        }
+    }
+    if gif_rowmap.len != fh {
+        return 0
+    }
+    return 1
+}
+
+/// Decode a GIF's first frame into `src_px` (RGBA8, premultiplied).
+fn gif_decode(s: string) -> int {
+    src_status = 0
+    src_w = 0
+    src_h = 0
+    while src_px.len > 0 {
+        pop(src_px)
+    }
+    if s.len < 14 {
+        return src_fail("gif too short")
+    }
+    if s[0] != 71 || s[1] != 73 || s[2] != 70 {
+        return src_fail("not a gif")
+    }
+    let cw = le16(s, 6)
+    let ch = le16(s, 8)
+    if cw <= 0 || ch <= 0 {
+        return src_fail("gif dimensions")
+    }
+    if i64(cw) * i64(ch) > 16777216 {
+        return src_fail("image too large")
+    }
+    let lsd = int(s[10])
+    let gct_flag = (lsd / 128) % 2
+    let gct_size = bit_pow2(lsd % 8 + 1)
+    let mut off = 13
+    while gif_pal.len > 0 {
+        pop(gif_pal)
+    }
+    gif_pal_n = 0
+    if gct_flag == 1 {
+        if off + gct_size * 3 > s.len {
+            return src_fail("gif colour table truncated")
+        }
+        let mut i = 0
+        while i < gct_size * 3 {
+            push(gif_pal, u8(s[off + i]))
+            i = i + 1
+        }
+        gif_pal_n = gct_size
+        off = off + gct_size * 3
+    }
+    let mut trans = -1
+    let mut have_frame = 0
+    while off < s.len {
+        let blk = int(s[off])
+        if blk == 59 {
+            // Trailer.
+            break
+        }
+        if blk == 33 {
+            // Extension: a graphic control extension may carry the transparent
+            // index; every extension is skipped the same way afterwards.
+            if off + 2 >= s.len {
+                return src_fail("gif extension truncated")
+            }
+            if int(s[off + 1]) == 249 {
+                if off + 7 < s.len {
+                    let gp = int(s[off + 3])
+                    if gp % 2 == 1 {
+                        trans = int(s[off + 6])
+                    }
+                }
+            }
+            let nx = gif_skip_blocks(s, off + 2)
+            if nx < 0 {
+                return src_fail("gif extension truncated")
+            }
+            off = nx
+        } else if blk == 44 {
+            // Image descriptor: the first frame is the one we want.
+            if off + 10 > s.len {
+                return src_fail("gif frame truncated")
+            }
+            let fx0 = le16(s, off + 1)
+            let fy0 = le16(s, off + 3)
+            let fw = le16(s, off + 5)
+            let fh = le16(s, off + 7)
+            let ip = int(s[off + 9])
+            let lct_flag = (ip / 128) % 2
+            let lct_size = bit_pow2(ip % 8 + 1)
+            let interlace = (ip / 64) % 2
+            if fw <= 0 || fh <= 0 {
+                return src_fail("gif frame dimensions")
+            }
+            if fx0 + fw > cw || fy0 + fh > ch {
+                return src_fail("gif frame outside the screen")
+            }
+            if i64(fw) * i64(fh) > 16777216 {
+                return src_fail("image too large")
+            }
+            let mut p = off + 10
+            if lct_flag == 1 {
+                if p + lct_size * 3 > s.len {
+                    return src_fail("gif local colour table truncated")
+                }
+                while gif_pal.len > 0 {
+                    pop(gif_pal)
+                }
+                let mut i = 0
+                while i < lct_size * 3 {
+                    push(gif_pal, u8(s[p + i]))
+                    i = i + 1
+                }
+                gif_pal_n = lct_size
+                p = p + lct_size * 3
+            }
+            if gif_pal_n == 0 {
+                return src_fail("gif without a colour table")
+            }
+            if p >= s.len {
+                return src_fail("gif frame truncated")
+            }
+            let min_size = int(s[p])
+            p = p + 1
+            // Gather the frame's sub-blocks, then decode them.
+            while gif_work.len > 0 {
+                pop(gif_work)
+            }
+            let end_blk = gif_skip_blocks(s, p)
+            if end_blk < 0 {
+                return src_fail("gif data truncated")
+            }
+            let mut q = p
+            while q < end_blk - 1 {
+                let n = int(s[q])
+                q = q + 1
+                if n == 0 {
+                    break
+                }
+                let mut i = 0
+                while i < n {
+                    push(gif_work, u8(s[q + i]))
+                    i = i + 1
+                }
+                q = q + n
+            }
+            if gif_lzw(fw, fh, min_size) != 1 {
+                return src_fail("malformed gif lzw stream")
+            }
+            if gif_build_rowmap(fh, interlace) != 1 {
+                return src_fail("gif row map")
+            }
+            // Canvas: fully transparent, then the frame's pixels onto it.
+            let npix = cw * ch
+            let mut z = 0
+            while z < npix * 4 {
+                push(src_px, u8(0))
+                z = z + 1
+            }
+            let mut r = 0
+            while r < fh {
+                let oy = fy0 + gif_rowmap[r]
+                let mut x = 0
+                while x < fw {
+                    let idx = int(gif_idx[r * fw + x])
+                    // Palettes are a power of two long, so masking is the
+                    // standard treatment for an index past the table.
+                    let oi = idx % gif_pal_n * 3
+                    let cr = int(gif_pal[oi])
+                    let cg = int(gif_pal[oi + 1])
+                    let cb = int(gif_pal[oi + 2])
+                    let mut a = 255
+                    if idx == trans {
+                        a = 0
+                    }
+                    let pi = (oy * cw + fx0 + x) * 4
+                    src_px[pi] = u8((cr * a + 127) / 255)
+                    src_px[pi + 1] = u8((cg * a + 127) / 255)
+                    src_px[pi + 2] = u8((cb * a + 127) / 255)
+                    src_px[pi + 3] = u8(a)
+                    x = x + 1
+                }
+                r = r + 1
+            }
+            have_frame = 1
+            off = s.len
+        } else {
+            return src_fail("unexpected gif block")
+        }
+    }
+    if have_frame == 0 {
+        return src_fail("gif without an image frame")
+    }
+    src_w = cw
+    src_h = ch
+    src_decodes = src_decodes + 1
+    src_status = SRC_OK
+    return 1
+}
+
 /// Decode any format the in-Loam decoders cover, choosing by magic bytes. On a
 /// recognised format we do not decode, `src_status` is SRC_UNSUPPORTED and the
 /// caller should use the platform image path.
@@ -1493,6 +1893,9 @@ fn src_decode_any(s: string) -> int {
     }
     if f == FMT_BMP {
         return bmp_decode(s)
+    }
+    if f == FMT_GIF {
+        return gif_decode(s)
     }
     src_w = 0
     src_h = 0

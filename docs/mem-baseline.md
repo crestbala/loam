@@ -706,7 +706,28 @@ samples plus a palette and tRNS.
   suites this sandbox blocks), all 15 draw goldens byte-identical, structural
   golden pass.
 
-**Remaining Phase 4** (not done, and each is substantial): GIF/JPEG/WebP, the
+**GIF (eighteenth step).** Palette + LZW, the transparent index from a graphic
+control extension, GIF's four-pass interlacing, and the first frame of an
+animation (the engine has no image animation loop, so a still frame is the
+documented behaviour rather than a silent pick; a UI that wants the animation can
+use the platform path).
+
+The fixtures are written by **Pillow**, and that is deliberate. The PNG and BMP
+fixtures are hand-built because their container *is* the spec, so agreeing with
+them proves something; a hand-built GIF fixture would share an LZW implementation
+with the decoder under test and prove nothing at all. So each GIF fixture ships a
+`.rgba` file holding Pillow's own decode in exactly the form this decoder
+produces — premultiplied RGBA8, a transparent pixel's colour zeroed — and
+`zeus_image_gif.loam` compares **every byte** of four real GIFs: a flat paletted
+image, one with a transparent index, an interlaced one, and a 3-frame animation
+(the last also pinning that frame 0 is what comes out).
+
+- bytes/node: **476.0 — unchanged**; membench reports `images= 0`.
+- validation: 106 zeus `compile_pass` tests pass (the 2 failures are the network
+  suites this sandbox blocks), all 15 draw goldens byte-identical, structural
+  golden pass.
+
+**Remaining Phase 4** (not done, and each is substantial): ICO/CUR and JPEG, the
 host half of the blit (a no-copy `CGImage` provider on native, a typed-array view
 on web), and driving `scene.paint` through the rasterizer (which changes every
 draw golden and so needs its own decision).
@@ -714,8 +735,10 @@ draw golden and so needs its own decision).
 **Image formats — status and roadmap.** Landed in Loam: **PNG** — colour types
 0/2/3/4/6, depths 1/2/4/8/16, all five scanline filters, multiple IDAT chunks,
 stored/fixed/dynamic DEFLATE, PLTE and all three forms of tRNS, **Adam7
-interlaced** — and **BMP** (uncompressed 1/4/8/24/32-bit, both scan orders).
-There is no longer any PNG a real encoder produces that we cannot decode.
+interlaced** — **BMP** (uncompressed 1/4/8/24/32-bit, both scan orders), and
+**GIF** (palette, LZW, transparent index, interlacing, first frame of an
+animation). There is no longer any PNG a real encoder produces that we cannot
+decode.
 
 Still handled by the platform path, and therefore still working: **everything
 else** — JPEG, GIF, WebP, TIFF, ICO, HEIC and any PNG variant the Loam decoder
@@ -725,16 +748,15 @@ is a routing decision rather than a capability cliff.
 
 The order that buys the most next:
 
-1. **GIF** (LZW, palette, frame disposal) — small UI assets and animations, and
-   the next-cheapest decoder after BMP.
-2. **ICO/CUR**: a container of PNG or BMP, so it is nearly free once it can
-   recurse into the two decoders we have — and an app icon is an ICO.
-3. **JPEG** baseline sequential: Huffman tables, dequantize, IDCT, YCbCr,
+1. **ICO/CUR**: a container of PNG or BMP, so it is nearly free once it can
+   recurse into the two decoders we have — and an app icon is an ICO, so this is
+   the cheapest remaining win.
+2. **JPEG** baseline sequential: Huffman tables, dequantize, IDCT, YCbCr,
    chroma upsampling. The largest remaining decoder, and what photos and
    avatars need; progressive is a second pass.
-4. **WebP**: lossless/VP8L is a moderate job (LZ77 with transforms); lossy VP8
+3. **WebP**: lossless/VP8L is a moderate job (LZ77 with transforms); lossy VP8
    is a different order of magnitude and should be its own project.
-5. **SVG** is not a pixel format: it routes through the rasterizer we already
+4. **SVG** is not a pixel format: it routes through the rasterizer we already
    have (paths, fills, strokes), so it belongs with the paint work, not here.
 
 Not planned and not pretended: **AVIF** and **HEIC**, which are AV1 and H.265

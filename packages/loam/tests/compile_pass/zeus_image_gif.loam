@@ -1,0 +1,118 @@
+// Phase 4: GIF — palette, LZW, the transparent index, interlacing, and the
+// first frame of an animation.
+//
+// The oracle here is **Pillow**, not a formula. The PNG and BMP fixtures are
+// hand-built because their container is the spec, so agreeing with them proves
+// something; a hand-built GIF fixture would share an implementation with the
+// decoder under test and prove nothing. So each fixture ships a `.rgba` file
+// holding Pillow's own decode in exactly the form this decoder produces
+// (premultiplied RGBA8, transparent pixels zeroed), and every byte is compared.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn load(name: string) -> string {
+    let s = sys.read_file("packages/loam/tests/images/{{name}}")
+    must(s.len > 0, "fixture not loaded")
+    return s
+}
+
+/// Decode a GIF and compare every channel against Pillow's expectation.
+/// Returns the number of mismatched bytes.
+fn diff_against_oracle(name: string) -> int {
+    must(zeus.image_decode_any(load(name)) == 1, "gif decodes")
+    let w = zeus.image_src_width()
+    let h = zeus.image_src_height()
+    let want = load("{{name}}.rgba")
+    must(want.len == w * h * 4, "oracle size matches the decoded size")
+    let mut bad = 0
+    let mut y = 0
+    while y < h {
+        let mut x = 0
+        while x < w {
+            let mut c = 0
+            while c < 4 {
+                let got = zeus.image_src_get(x, y, c)
+                let exp = int(want[(y * w + x) * 4 + c])
+                if got != exp {
+                    bad = bad + 1
+                }
+                c = c + 1
+            }
+            x = x + 1
+        }
+        y = y + 1
+    }
+    return bad
+}
+
+fn main() {
+    // --- GIF is now decoded in Loam, so routing says so -------------------
+    let gif = load("gif_flat.gif")
+    must(zeus.image_format_name(zeus.image_format_of(gif)) == "gif", "gif sniffed")
+    must(zeus.image_format_is_decodable(zeus.image_format_of(gif)) == 1,
+         "gif is decoded in Loam, not routed to the platform")
+
+    // --- a flat paletted image: the whole 32x24 against Pillow ------------
+    must(diff_against_oracle("gif_flat.gif") == 0, "flat gif matches Pillow exactly")
+    must(zeus.image_src_width() == 32, "flat: 32 wide")
+    must(zeus.image_src_height() == 24, "flat: 24 tall")
+    must(zeus.image_src_get(0, 0, 3) == 255, "flat: opaque")
+
+    // --- transparency: GIF stores one transparent index, not an alpha -----
+    must(diff_against_oracle("gif_trans.gif") == 0, "transparent gif matches Pillow")
+    must(zeus.image_src_get(0, 0, 3) == 0, "corner is transparent")
+    must(zeus.image_src_get(0, 0, 0) == 0, "and premultiplies to nothing")
+    must(zeus.image_src_get(8, 8, 3) == 255, "the middle is opaque")
+    must(zeus.image_src_get(8, 8, 0) == 255, "and is red")
+    must(zeus.image_src_get(8, 8, 1) == 0, "red has no green")
+    must(zeus.image_src_get(3, 8, 3) == 0, "just outside the square is clear")
+    must(zeus.image_src_get(12, 8, 3) == 0, "so is the other side")
+
+    // --- interlaced rows -------------------------------------------------
+    must(diff_against_oracle("gif_interlaced.gif") == 0, "interlaced gif matches Pillow")
+    must(zeus.image_src_width() == 24, "interlaced: 24 wide")
+    must(zeus.image_src_height() == 20, "interlaced: 20 tall")
+
+    // --- an animation yields its FIRST frame ------------------------------
+    // The engine has no image animation loop, so this is the documented
+    // behaviour rather than a silent pick of whichever frame came last.
+    must(diff_against_oracle("gif_anim.gif") == 0, "animated gif yields frame 0")
+    must(zeus.image_src_width() == 12, "anim: 12 wide")
+    // Frame 0 is red with a black dot on the diagonal; frames 1 and 2 are green
+    // and blue, so a decoder that returned the wrong frame fails here.
+    must(zeus.image_src_get(6, 6, 0) == 255, "anim frame 0 is red")
+    must(zeus.image_src_get(6, 6, 1) == 0, "not green (which is frame 1)")
+    must(zeus.image_src_get(6, 6, 2) == 0, "not blue (which is frame 2)")
+    must(zeus.image_src_get(0, 0, 0) == 0, "and its diagonal dot is black")
+
+    // --- malformed input fails with a reason ------------------------------
+    let fails = zeus.image_decode_failure_count()
+    must(zeus.image_decode_any("GIF89a") == 0, "a truncated gif is refused")
+    must(zeus.image_decode_failure_count() == fails + 1, "and counted")
+    must(zeus.image_decode_any(load("magic_gif.bin")) == 0, "a magic-only file too")
+
+    // --- and GIF goes through the same cache/resample pipeline ------------
+    zeus.image_cache_clear()
+    zeus.image_set_budget(8 * 1024 * 1024)
+    let slot = zeus.image_get(1, load("gif_flat.gif"), 32, 24)
+    must(slot >= 0, "gif caches")
+    must(zeus.image_get_px(slot, 0, 0, 3) == 255, "cached gif is opaque")
+    // A 4x downscale of the same file lands inside the image, and is exact.
+    let small = zeus.image_get(2, load("gif_flat.gif"), 8, 6)
+    must(small >= 0, "gif downscales")
+    must(zeus.image_w(small) == 8, "8 wide")
+    must(zeus.image_h(small) == 6, "6 tall")
+
+    fmt.println("image gif ok", zeus.image_decode_count(),
+                zeus.image_decode_failure_count(), zeus.image_scratch_bytes())
+}
