@@ -1,6 +1,7 @@
 /* mac.m — Cocoa window + Core Text paint for Zeus (zeus/desktop). */
 #import <Cocoa/Cocoa.h>
 #import <QuartzCore/QuartzCore.h>
+#import <IOSurface/IOSurface.h>
 #include "zeus_rt.h"
 #include "zeus_key.h"
 #include <string.h>
@@ -1283,6 +1284,131 @@ static void mac_schedule_next(int more) {
     if (g_link) g_link.paused = YES;
 }
 
+/* --- owned IOSurface display path -------------------------------------------
+ *
+ * The bitmap path hands CoreAnimation a CGImage, and CA then builds a texture
+ * of its own from it: a second full-size buffer, plus a full-frame copy every
+ * frame. Backing the bitmap with an IOSurface and handing the layer the
+ * SURFACE removes both — the memory we draw into IS the layer's texture, so a
+ * finished frame never moves, and the compositor keeps no store of its own for
+ * the view. That is the difference between three full-window buffers and one.
+ *
+ * One surface is not enough. CoreAnimation holds the surface as the layer's
+ * texture while compositing, so locking it to draw the next frame deadlocks the
+ * app after a few frames. Two surfaces used alternately, with a NON-BLOCKING
+ * lock, mean a frame is skipped rather than blocked when the compositor is
+ * still reading it.
+ *
+ * `ZEUS_OWN_SURFACE=1` selects it. The pixels are identical to the other two
+ * paths by construction: `own_draw` runs the same engine the same way, in the
+ * same format, at the same physical size — only the memory differs. */
+#define OWN_SURFACES 2
+/* 'BGRA' — the same 4-byte premultiplied layout `CGBitmapContextCreate` and the
+   layer already use, so nothing converts on the way out. */
+#define OWN_SURF_BGRA 0x42475241u
+
+static IOSurfaceRef own_surf[OWN_SURFACES];
+static CGContextRef own_surf_ctx[OWN_SURFACES];
+static NSGraphicsContext *own_surf_gc[OWN_SURFACES];
+static int own_surf_cur;
+static int own_surf_w, own_surf_h;
+static int own_surface = -1;
+
+static int own_surface_on(void) {
+    if (own_surface < 0) own_surface = env_truthy("ZEUS_OWN_SURFACE") ? 1 : 0;
+    return own_surface;
+}
+
+static void own_surf_free(void) {
+    int i;
+    for (i = 0; i < OWN_SURFACES; i++) {
+        [own_surf_gc[i] release];
+        own_surf_gc[i] = nil;
+        if (own_surf_ctx[i]) {
+            CGContextRelease(own_surf_ctx[i]);
+            own_surf_ctx[i] = NULL;
+        }
+        if (own_surf[i]) {
+            CFRelease(own_surf[i]);
+            own_surf[i] = NULL;
+        }
+    }
+    own_surf_w = 0;
+    own_surf_h = 0;
+    own_surf_cur = 0;
+}
+
+/* (Re)create the pair at physical size: 1 on success. On failure everything is
+   released and the caller falls back to the bitmap path — a display path that
+   cannot be allocated must cost memory, not the window. */
+static int own_surf_ensure(int px_w, int px_h) {
+    NSDictionary *props;
+    int i;
+    if (own_surf[0] && own_surf_w == px_w && own_surf_h == px_h) return 1;
+    own_surf_free();
+    props = @{ (id)kIOSurfaceWidth : @(px_w),
+               (id)kIOSurfaceHeight : @(px_h),
+               (id)kIOSurfaceBytesPerElement : @4,
+               (id)kIOSurfaceBytesPerRow : @(px_w * 4),
+               (id)kIOSurfacePixelFormat : @(OWN_SURF_BGRA) };
+    for (i = 0; i < OWN_SURFACES; i++) {
+        void *base;
+        size_t bpr;
+        own_surf[i] = IOSurfaceCreate((CFDictionaryRef)props);
+        if (!own_surf[i]) {
+            own_surf_free();
+            return 0;
+        }
+        /* The stride is the surface's, not necessarily `px_w * 4`: IOSurface is
+           free to pad rows. Read it rather than assume it, and build the
+           context over what it really is. */
+        if (IOSurfaceLock(own_surf[i], 0, NULL) != 0) {
+            own_surf_free();
+            return 0;
+        }
+        base = IOSurfaceGetBaseAddress(own_surf[i]);
+        bpr = IOSurfaceGetBytesPerRow(own_surf[i]);
+        own_surf_ctx[i] = CGBitmapContextCreate(base, (size_t)px_w, (size_t)px_h, 8,
+                                                bpr, own_colorspace(),
+                                                kCGImageAlphaPremultipliedFirst |
+                                                    kCGBitmapByteOrder32Little);
+        if (!own_surf_ctx[i]) {
+            IOSurfaceUnlock(own_surf[i], 0, NULL);
+            own_surf_free();
+            return 0;
+        }
+        own_surf_gc[i] =
+            [[NSGraphicsContext graphicsContextWithCGContext:own_surf_ctx[i]
+                                                    flipped:YES] retain];
+        IOSurfaceUnlock(own_surf[i], 0, NULL);
+    }
+    own_surf_w = px_w;
+    own_surf_h = px_h;
+    own_surf_cur = 0;
+    return 1;
+}
+
+/* Draw one frame into `ctx`: physical pixels, `scale` pixels per point, y down
+   (the view is flipped). BOTH display paths go through here, which is what
+   keeps their pixels from drifting apart — the memory being drawn into is the
+   only thing that differs between them. */
+static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int px_h, CGFloat scale,
+                    int64_t lw, int64_t lh, double *engine_ms) {
+    double t0;
+    int more;
+    CGContextSaveGState(ctx);
+    CGContextTranslateCTM(ctx, 0, (CGFloat)px_h);
+    CGContextScaleCTM(ctx, scale, -scale);
+    [NSGraphicsContext saveGraphicsState];
+    [NSGraphicsContext setCurrentContext:gc];
+    t0 = frame_now_ms();
+    more = mac_frame(lw, lh);
+    if (engine_ms) *engine_ms = frame_now_ms() - t0;
+    [NSGraphicsContext restoreGraphicsState];
+    CGContextRestoreGState(ctx);
+    return more;
+}
+
 @implementation ZeusView
 - (BOOL)isFlipped { return YES; }
 /* The engine paints every pixel of the viewport — the root scroller carries the
@@ -1377,7 +1503,9 @@ static void mac_schedule_next(int more) {
 /* Default display path: AppKit calls these instead of `drawRect:` and allocates
    no store for the view, so the layer's pixels are the bitmap we hand it. */
 - (BOOL)wantsUpdateLayer {
-    return own_buffer_on() ? YES : NO;
+    /* Both owned paths paint into memory they hand the layer, so AppKit must
+       not allocate a store for the view. */
+    return (own_buffer_on() || own_surface_on()) ? YES : NO;
 }
 
 - (void)linkTick:(id)link {
@@ -1403,6 +1531,12 @@ static void mac_schedule_next(int more) {
     px_w = (int)(b.size.width * own_ctx_scale + 0.5);
     px_h = (int)(b.size.height * own_ctx_scale + 0.5);
     if (px_w < 1 || px_h < 1) return;
+    /* The owned-IOSurface path, when asked for: one buffer and no copy, instead
+       of a bitmap plus CoreAnimation's own texture. Falling through (0) means
+       the surfaces could not be allocated, and the bitmap path below runs. */
+    if (own_surface_on()) {
+        if ([self zeusRenderSurface:b pxw:px_w pxh:px_h]) return;
+    }
     if (!own_ctx || own_ctx_w != px_w || own_ctx_h != px_h) {
         if (own_ctx) {
             CGContextRelease(own_ctx);
@@ -1434,20 +1568,12 @@ static void mac_schedule_next(int more) {
     if (!own_ctx) return;
     /* Draw in layout points, y down (the view is flipped), with `own_ctx_scale`
        pixels per point. */
-    CGContextSaveGState(own_ctx);
-    CGContextTranslateCTM(own_ctx, 0, (CGFloat)px_h);
-    CGContextScaleCTM(own_ctx, own_ctx_scale, -own_ctx_scale);
-    [NSGraphicsContext saveGraphicsState];
-    [NSGraphicsContext setCurrentContext:own_gc];
     tnow = frame_now_ms();
     p.setup_ms = tnow - tprev;
     tprev = tnow;
-    p.more = mac_frame((int64_t)b.size.width, (int64_t)b.size.height);
-    tnow = frame_now_ms();
-    p.engine_ms = tnow - tprev;
-    tprev = tnow;
-    [NSGraphicsContext restoreGraphicsState];
-    CGContextRestoreGState(own_ctx);
+    p.more = own_draw(own_ctx, own_gc, px_h, own_ctx_scale,
+                      (int64_t)b.size.width, (int64_t)b.size.height, &p.engine_ms);
+    tprev = frame_now_ms();
     img = own_image();
     tnow = frame_now_ms();
     p.image_ms = tnow - tprev;
@@ -1467,6 +1593,66 @@ static void mac_schedule_next(int more) {
     p.set_ms = frame_now_ms() - tprev;
     frame_trace(t0, p);
     mac_schedule_next(p.more);
+}
+
+/* The owned-IOSurface frame. Returns 1 when it drew (or deliberately skipped)
+   the frame and 0 when the path is unavailable, in which case the caller draws
+   the bitmap path instead. */
+- (int)zeusRenderSurface:(NSRect)b pxw:(int)px_w pxh:(int)px_h {
+    FramePhases p;
+    double t0, tprev;
+    int i, more, resized;
+    resized = (!own_surf[0] || own_surf_w != px_w || own_surf_h != px_h) ? 1 : 0;
+    if (!own_surf_ensure(px_w, px_h)) {
+        /* No surface: fall back to the bitmap, not to AppKit's store — the view
+           is already layer-backed, so AppKit's drawn path is not available. */
+        own_surface = 0;
+        own_buffer = 1;
+        self.layer.contents = nil;
+        return 0;
+    }
+    if (resized) {
+        self.layer.contents = nil; /* the old surface is not this size */
+        /* Static layer properties: set them when the backing changes, never per
+           frame. Writing `contentsScale` every frame marks the layer dirty and
+           can force a texture reallocation. */
+        self.layer.contentsGravity = kCAGravityResize;
+        self.layer.contentsScale = own_ctx_scale;
+        self.layer.magnificationFilter = kCAFilterLinear;
+        self.layer.opaque = YES;
+        /* Say the surface is 8-bit RGBA — the same thing the bitmap path's
+           CGImage says. Without it CoreAnimation has to guess the format. */
+        if ([self.layer respondsToSelector:@selector(setContentsFormat:)])
+            self.layer.contentsFormat = kCAContentsFormatRGBA8Uint;
+    }
+    i = own_surf_cur;
+    /* NON-BLOCKING: if the compositor is still reading this surface, skip the
+       frame rather than wait for it. A skipped frame is one frame of animation;
+       blocking here is the deadlock the second surface exists to avoid. */
+    if (IOSurfaceLock(own_surf[i], kIOSurfaceLockAvoidSync, NULL) != 0) {
+        mac_schedule_next(1);
+        return 1;
+    }
+    memset(&p, 0, sizeof p);
+    t0 = tprev = frame_now_ms();
+    more = own_draw(own_surf_ctx[i], own_surf_gc[i], px_h, own_ctx_scale,
+                    (int64_t)b.size.width, (int64_t)b.size.height, &p.engine_ms);
+    IOSurfaceUnlock(own_surf[i], 0, NULL);
+    tprev = frame_now_ms();
+    p.setup_ms = 0.0;
+    p.image_ms = 0.0; /* there is no image step on this path by definition */
+    /* Assigning `contents` is not a plain write: outside a transaction with
+       actions disabled, CoreAnimation cross-fades between frames. */
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    self.layer.contents = (id)own_surf[i];
+    [CATransaction commit];
+    p.more = more;
+    p.set_ms = frame_now_ms() - tprev;
+    own_surf_cur = 1 - own_surf_cur; /* the next frame draws the other one */
+    frame_trace(t0, p);
+    mac_schedule_next(more);
+    return 1;
 }
 
 /* AppKit's entry: input, resize, or a forced display. */
@@ -1814,10 +2000,10 @@ static void mac_run(void) {
         } else {
             [win center];
         }
-        /* The owned-bitmap path supplies the layer's content itself, so the view
+        /* The owned paths supply the layer's content themselves, so the view
            must be layer-backed; with `APP_KIT=true` AppKit manages the store as
            usual. */
-        if (own_buffer_on()) [view setWantsLayer:YES];
+        if (own_buffer_on() || own_surface_on()) [view setWantsLayer:YES];
         mac_link_arm();
         zeus_window_opened();
         [win makeFirstResponder:view];
@@ -2007,7 +2193,7 @@ void loam_mac_host_run(const char *path) {
             } else {
                 [win center];
             }
-            if (own_buffer_on()) [view setWantsLayer:YES];
+            if (own_buffer_on() || own_surface_on()) [view setWantsLayer:YES];
             mac_link_arm();
             zeus_window_opened();
             [win makeFirstResponder:view];
