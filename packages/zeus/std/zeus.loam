@@ -8271,10 +8271,10 @@ struct ComboboxProps {
     radius: int = -1,
 }
 
-/// A text field with a filtered option list below it. Typing (or Down) opens
-/// the list, showing the options that contain the query case-insensitively.
-/// Up / Down move the highlight, Enter picks the highlighted option into the
-/// field, Escape or an outside click closes. `text` is the one piece of state
+/// A text field with a filtered option list below it. Clicking the field (or
+/// its chevron), typing, or Down opens the list; an empty query shows every
+/// option. Up / Down move the highlight, Enter picks the highlighted option into
+/// the field, Escape or an outside click closes. `text` is the one piece of state
 /// and belongs to the caller. Options should be unique: the list is keyed by
 /// label (`zeus.For`).
 fn Combobox(text: Signal<string>, options: []string, p: ComboboxProps) {
@@ -8314,14 +8314,20 @@ fn Combobox(text: Signal<string>, options: []string, p: ComboboxProps) {
                     background = "", color = ink(), font = FONT_BODY,
                     padding = 0, grow = 1, a11y_label = p.placeholder)
     let iid = fin.id
-    on_click(field, fn() {
+    // Open on click whether the pointer lands on the field frame, the chevron,
+    // or the text area itself. The inner input CONSUMES its click — it is
+    // focusable, so the engine stops walking up the tree there and a handler on
+    // the frame alone never fires for the most obvious target of all. Both
+    // nodes get the same handler; it is idempotent, so double delivery is
+    // harmless.
+    let open_list = fn() {
         arena.claim_focus(iid)
-        if text.get().len > 0 {
-            if active.get() < 0 {
-                active.set(0)
-            }
+        if active.get() < 0 {
+            active.set(0)
         }
-    })
+    }
+    on_click(field, open_list)
+    on_click(node_handle(iid), open_list)
     input_clear(text, fin)
     Icon(IC_CHEV_DOWN, 16, dim())
     ui_pop()
