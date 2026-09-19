@@ -1165,7 +1165,7 @@ int main(int argc, char **argv) {
             }
             snprintf(cmd, sizeof cmd,
                      "cc %s %s -o \"%s\" -I\"%s\" -x c \"%s\" -x none \"%s\" \"%s\" \"%s\"%s%s "
-                     "-framework Cocoa -framework QuartzCore -framework Security "
+                     "-framework Cocoa -framework QuartzCore -framework IOSurface -framework Security "
                      "-framework CoreFoundation -lm",
                      copt, ld, binpath, LOAM_RUNTIME_DIR, cpath, plat_o, key_o, mac_o, http_link,
                      extra_link);

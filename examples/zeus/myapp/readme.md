@@ -90,6 +90,7 @@ trade in the native host.
 ./run.sh myapp                          # default: AppKit's store
 ZEUS_WIDE_GAMUT=1 ./run.sh myapp        # the same, with the display profile (2x the store)
 ZEUS_OWN_BUFFER=1 ./run.sh myapp        # owned bitmap
+ZEUS_OWN_SURFACE=1 ./run.sh myapp       # owned IOSurface (the lean one)
 APP_KIT=true ./run.sh myapp             # explicit spelling of the default
 ```
 
@@ -98,6 +99,22 @@ APP_KIT=true ./run.sh myapp             # explicit spelling of the default
 | **default** (AppKit) | `drawRect:` paints straight into the window's backing store, which the compositor reads | **0** | 3 buffers, 54 MB reserved | **60 fps** (16.7 ms); peak 103–137 MB |
 | `ZEUS_WIDE_GAMUT=1` | the same, but the window keeps the display's ICC profile | **0** | 3 buffers, 109 MB reserved | **60 fps** (16.6–16.7 ms); peak 176–219 MB |
 | `ZEUS_OWN_BUFFER=1` | paints into a bitmap handed to the layer as `contents` | **1** — CoreAnimation materialises the whole frame into its own texture | 1 (~18 MB) plus that texture | **60 fps** (16.6 ms) with the sRGB window, 39 fps (25.4 ms) with `ZEUS_WIDE_GAMUT=1`; 51–55 MB |
+| `ZEUS_OWN_SURFACE=1` | draws into an IOSurface and hands the layer the SURFACE, so our memory *is* the texture | **0** | 2 surfaces, reused (one is the layer's texture) | *to be measured* — see below |
+
+The `ZEUS_OWN_SURFACE=1` row is deliberately blank: it is implemented and the
+harness measures it, but no windowed run has been taken on the machine that
+writes this file, so there is no number to copy. The expectation is the ~35 MB
+recorded beside the IOSurface experiment in `hosts/desktop/mac.m`: it removes the
+bitmap path's per-frame copy AND the compositor's own store, so it should be the
+leanest of the four — and, unlike `ZEUS_OWN_BUFFER=1`, it should not cost a
+full-frame copy. `sh packages/loam/tests/bench/own_buffer.sh` runs all four and
+byte-compares their window crops.
+
+The **two surfaces** are not an optimisation: CoreAnimation holds a surface as the
+layer's texture while compositing, so locking it to draw the next frame deadlocks
+the app after a few frames (this is the measured reason the earlier IOSurface
+experiment was not shipped). They are used alternately with a NON-BLOCKING lock,
+so a frame the compositor is still reading is **skipped** rather than waited on.
 
 **Where the frames go.** Both paths run the same `ZeusDraw` callbacks. The engine's
 own work (layout + step + paint) is 1.4–2.5 ms on the AppKit path and 5.0–6.6 ms on

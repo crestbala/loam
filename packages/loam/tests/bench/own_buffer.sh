@@ -2,11 +2,13 @@
 # own_buffer.sh — the macOS desktop display paths, measured side by side.
 #
 # AppKit's window store (default) vs `ZEUS_OWN_BUFFER=1` (owned bitmap) vs
-# `ZEUS_WIDE_GAMUT=1` (the display profile, which doubles the store's depth —
-# see the colour-space note in hosts/desktop/mac.m). For each run this reports
-# the physical footprint (now and peak) and the IOSurface / IOAccelerator
-# regions, so the numbers in examples/zeus/myapp/readme.md can be reproduced
-# instead of hand-copied.
+# `ZEUS_OWN_SURFACE=1` (owned IOSurface, the lean one) vs `ZEUS_WIDE_GAMUT=1`
+# (the display profile, which doubles the store's depth — see the colour-space
+# note in hosts/desktop/mac.m). For each run this reports the physical footprint
+# (now and peak) and the IOSurface / IOAccelerator regions, so the numbers in
+# examples/zeus/myapp/readme.md can be reproduced instead of hand-copied. It also
+# byte-compares the window crops, which is how "the paths draw the same pixels"
+# is checked rather than asserted.
 #
 #   sh packages/loam/tests/bench/own_buffer.sh [app-dir] [seconds]
 #
@@ -175,6 +177,8 @@ run_one appkit ""
 echo
 run_one owned "ZEUS_OWN_BUFFER=1"
 echo
+run_one surf "ZEUS_OWN_SURFACE=1"
+echo
 run_one wide "ZEUS_WIDE_GAMUT=1"
 
 # Peak is the comparable number; `now` swings by tens of MB between runs.
@@ -185,18 +189,38 @@ if [ -s "$OUT/appkit.foot" ] && [ -s "$OUT/owned.foot" ]; then
     o_pk=$(to_mb "$(cut -d' ' -f2 "$OUT/owned.foot")")
     w_now=$(to_mb "$(cut -d' ' -f1 "$OUT/wide.foot" 2>/dev/null)")
     w_pk=$(to_mb "$(cut -d' ' -f2 "$OUT/wide.foot" 2>/dev/null)")
+    s_now=$(to_mb "$(cut -d' ' -f1 "$OUT/surf.foot" 2>/dev/null)")
+    s_pk=$(to_mb "$(cut -d' ' -f2 "$OUT/surf.foot" 2>/dev/null)")
     echo
     echo "comparison (MB)"
     printf '  %-14s %8s %10s\n' "" now peak
     printf '  %-14s %8.1f %10.1f\n' appkit "$a_now" "$a_pk"
     printf '  %-14s %8.1f %10.1f\n' owned "$o_now" "$o_pk"
+    printf '  %-14s %8.1f %10.1f\n' surf "$s_now" "$s_pk"
     printf '  %-14s %8.1f %10.1f\n' wide "$w_now" "$w_pk"
     printf '  %-14s %8.1f %10.1f\n' "owned saves" \
         "$(awk -v a="$a_now" -v b="$o_now" 'BEGIN{printf "%.1f", a-b}')" \
         "$(awk -v a="$a_pk" -v b="$o_pk" 'BEGIN{printf "%.1f", a-b}')"
+    printf '  %-14s %8.1f %10.1f\n' "surf saves" \
+        "$(awk -v a="$a_now" -v b="$s_now" 'BEGIN{printf "%.1f", a-b}')" \
+        "$(awk -v a="$a_pk" -v b="$s_pk" 'BEGIN{printf "%.1f", a-b}')"
     printf '  %-14s %8.1f %10.1f\n' "sRGB saves" \
         "$(awk -v a="$w_now" -v b="$a_now" 'BEGIN{printf "%.1f", a-b}')" \
         "$(awk -v a="$w_pk" -v b="$a_pk" 'BEGIN{printf "%.1f", a-b}')"
+fi
+
+if [ -s "$OUT/appkit.png" ] && [ -s "$OUT/surf.png" ]; then
+    if cmp -s "$OUT/appkit.png" "$OUT/surf.png"; then
+        echo
+        echo "render: appkit and surf produced byte-identical crops — the IOSurface"
+        echo "        path draws the same pixels as AppKit's store."
+    else
+        echo
+        echo "render: appkit and surf crops differ — compare $OUT/appkit.png and"
+        echo "        $OUT/surf.png by eye before reading it as a fault (the system"
+        echo "        appearance can flip between runs, and screencapture needs"
+        echo "        screen-recording permission or the crop is only a few KB)."
+    fi
 fi
 
 if [ -s "$OUT/appkit.png" ] && [ -s "$OUT/owned.png" ]; then
@@ -217,8 +241,9 @@ if [ -s "$OUT/appkit.png" ] && [ -s "$OUT/owned.png" ]; then
 fi
 
 echo
-echo "appkit = AppKit's window store, sRGB window (default)"
-echo "owned  = ZEUS_OWN_BUFFER=1      wide = ZEUS_WIDE_GAMUT=1 (display profile)"
+ echo "appkit = AppKit's window store, sRGB window (default)"
+echo "owned  = ZEUS_OWN_BUFFER=1      surf = ZEUS_OWN_SURFACE=1 (owned IOSurface)"
+echo "wide   = ZEUS_WIDE_GAMUT=1 (display profile)"
 echo "raw: $OUT/<mode>.log and $OUT/<mode>.vmmap"
 echo
 echo "Reading it:"

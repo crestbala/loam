@@ -1081,6 +1081,65 @@ node with a stub canvas: the pivot landed at (589, 390) instead of (224, 424)
 before, and exactly (224, 424) after, with the 45° rotation and the translate
 both landing on their layout-space targets.
 
+**Why the macOS app is ~100 MB, and the owned-IOSurface path that fixes it.**
+Reported from the field: the gallery on macOS uses ~100 MB, against the 30–60 MB
+target. Measured, the engine is not the reason — the gallery is **1186 nodes,
+tree 565 004 B, draw list 452 ops / 25 312 B, arena total 587 540 B, and a
+4 961 KB process headless**. The memory is the host's display path.
+
+Region attribution, from a real windowed `vmmap` (1470 x 837 logical @2x) already
+on disk in `out/ab/`:
+
+| region | DIRTY | note |
+|---|---|---|
+| **IOSurface** | **54.6 MB** | **3** regions of 18.2 MB, `2940x1618 BGRA`, each `'CA Whippet Drawable'`, shared with WindowServer |
+| MALLOC_* (engine + AppKit) | ~10 MB | NANO 3.8 + SMALL 3.1 + TINY 1.8 + MEDIUM 1.3 |
+| `__DATA` / `__AUTH` / `__DATA_DIRTY` | ~2.5 MB | |
+| ColorSync / CoreAnimation / IOAccelerator | ~0.8 MB | no GPU path: IOAccelerator is 0.1 MB |
+| read-only dyld / AppKit | ~10.7 MB | shared, not ours |
+
+So **three full-window buffers owned by the compositor** are the whole story. The
+brief's "there must never be a second full-size buffer" is being violated by the
+compositor's 2nd and 3rd drawables, not by the rasterizer. `myapp`'s readme
+records the same x3 relationship (one buffer 18.1 MB, three reserved = 54 MB) and
+the measured peaks: **default 103–137 MB**, `ZEUS_OWN_BUFFER=1` **51–55 MB**, and
+— for the earlier IOSurface experiment, which was not shipped — **~35 MB**.
+
+**Landed: an owned-IOSurface display path** (`ZEUS_OWN_SURFACE=1`). Instead of
+drawing into a bitmap and handing CoreAnimation a `CGImage` (which CA then
+materialises into a texture of its own — a second full-size buffer and a
+full-frame copy every frame), the frame is drawn into an **IOSurface** and the
+layer is given the SURFACE, so the memory we draw into *is* the layer's texture.
+That removes both the copy and the compositor's own store.
+
+The blocker recorded beside the original experiment was a deadlock: CoreAnimation
+holds the surface as the layer's texture while compositing, so locking it to draw
+the next frame hangs the app after a few frames. Resolved as the note proposed —
+**two surfaces used alternately, with a NON-BLOCKING lock**, so a frame the
+compositor is still reading is SKIPPED rather than waited on.
+
+Pixels are identical **by construction, not by hope**: both owned paths now call
+one `own_draw`, so the same engine draws the same way, in the same
+(`BGRA` premultiplied, 8-bit) format, at the same physical size — only the memory
+differs. The path is gated off by default and falls back to the bitmap path (then
+`own_buffer`) if a surface cannot be allocated, so it cannot take a window down.
+
+- **Not measured here**: this sandbox has no display, so the surface path's
+  footprint, frame rate, deadlock behaviour and pixel equality are unverified. The
+  bench to run is `sh packages/loam/tests/bench/own_buffer.sh`, which now measures
+  all four paths and **byte-compares their window crops**; it prints the per-buffer
+  IOSurface lines so "2 reused surfaces" and "3 reserved" are visible rather than
+  inferred. `examples/zeus/myapp/readme.md`'s new row is deliberately left blank
+  until that run exists.
+- What to watch on that run: if the non-blocking lock fails most frames, the
+  window will visibly run at half rate — that would mean two surfaces are not
+  enough and the design needs the swap-back the note anticipated, not more
+  surfaces.
+- Target status: `ZEUS_OWN_BUFFER=1` already measures **51–55 MB**, inside the
+  30–60 MB band; the surface path is expected to be the leanest of the four.
+- bytes/node **476.0** and the arena high-water **986 628 B** are untouched: this
+  is host-side storage, and no `UiNode` field was added.
+
 **Remaining Phase 4** (not done): SVG and `xform` in the raster pass (`text_int`,
 `text_wrap` and rotated text too), WebP, and the **web** blit (a typed-array view
 over the same BGRA8 buffer plus one `putImageData` per frame; the buffer is ours,
