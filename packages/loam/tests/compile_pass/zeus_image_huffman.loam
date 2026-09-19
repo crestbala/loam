@@ -1,0 +1,193 @@
+// Phase 4: the DEFLATE inflater — fixed AND dynamic Huffman, LZ77 matches, and
+// the guards that keep a malformed stream from becoming a memory problem.
+//
+// Four compressed fixtures, each chosen for a different code path:
+//   huff_fixed.png     DEFLATE block type 1 (zlib Z_FIXED)
+//   huff_dynamic.png   DEFLATE block type 2 (dynamic Huffman tables)
+//   huff_literals.png  a ramp across all 256 literal values, no long matches
+//   huff_runs.png      16px runs -> LZ77 length codes and distances over 512
+// The fixture script prints each block type, so the coverage is not a guess.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn load(name: string) -> string {
+    let s = sys.read_file("packages/loam/tests/images/{{name}}")
+    must(s.len > 0, "fixture not loaded")
+    return s
+}
+
+fn main() {
+    zeus.image_cache_clear()
+    zeus.image_set_budget(8 * 1024 * 1024)
+
+    // --- fixed Huffman (block type 1) -------------------------------------
+    must(zeus.image_decode_any(load("huff_fixed.png")) == 1, "fixed-Huffman PNG decodes")
+    must(zeus.image_src_width() == 64, "fixed: 64 wide")
+    must(zeus.image_src_height() == 64, "fixed: 64 tall")
+    let mut bad = 0
+    let mut y = 0
+    while y < 64 {
+        let mut x = 0
+        while x < 64 {
+            let got = zeus.image_src_get(x, y, 0)
+            let mut want = 0
+            if (x + y) % 2 == 0 {
+                want = 255
+            }
+            if got != want {
+                bad = bad + 1
+            }
+            x = x + 1
+        }
+        y = y + 1
+    }
+    must(bad == 0, "fixed-Huffman pixels are exact")
+    must(zeus.image_src_get(0, 0, 3) == 255, "fixed: opaque")
+
+    // --- dynamic Huffman (block type 2) -----------------------------------
+    must(zeus.image_decode_any(load("huff_dynamic.png")) == 1, "dynamic-Huffman PNG decodes")
+    bad = 0
+    y = 0
+    while y < 64 {
+        let mut x = 0
+        while x < 64 {
+            let got = zeus.image_src_get(x, y, 0)
+            let mut want = 0
+            if (x + y) % 2 == 0 {
+                want = 255
+            }
+            if got != want {
+                bad = bad + 1
+            }
+            x = x + 1
+        }
+        y = y + 1
+    }
+    must(bad == 0, "dynamic-Huffman pixels are exact")
+
+    // --- the whole literal alphabet ---------------------------------------
+    must(zeus.image_decode_any(load("huff_literals.png")) == 1, "ramp PNG decodes")
+    must(zeus.image_src_width() == 256, "ramp: 256 wide")
+    must(zeus.image_src_height() == 64, "ramp: 64 tall")
+    bad = 0
+    let mut checked = 0
+    y = 0
+    while y < 64 {
+        let mut x = 0
+        while x < 256 {
+            let want = (x * 7 + y * 13) % 256
+            if zeus.image_src_get(x, y, 0) != want {
+                bad = bad + 1
+            }
+            if zeus.image_src_get(x, y, 1) != want {
+                bad = bad + 1
+            }
+            checked = checked + 1
+            x = x + 1
+        }
+        y = y + 1
+    }
+    must(bad == 0, "every literal decoded exactly")
+    must(checked == 16384, "and all of them were checked")
+
+    // --- LZ77: long runs at a distance of a whole row stride ---------------
+    must(zeus.image_decode_any(load("huff_runs.png")) == 1, "runs PNG decodes")
+    must(zeus.image_src_width() == 256, "runs: 256 wide")
+    must(zeus.image_src_height() == 128, "runs: 128 tall")
+    bad = 0
+    y = 0
+    while y < 128 {
+        let mut x = 0
+        while x < 256 {
+            let got = zeus.image_src_get(x, y, 0)
+            let mut want = 0
+            if (x / 16 + y / 2) % 2 == 0 {
+                want = 255
+            }
+            if got != want {
+                bad = bad + 1
+            }
+            x = x + 1
+        }
+        y = y + 1
+    }
+    must(bad == 0, "LZ77 matches decoded exactly (lengths and distances)")
+
+    // --- and through the cache/blit pipeline, byte-exact at native size ---
+    let slot = zeus.image_get(1, load("huff_runs.png"), 256, 128)
+    must(slot >= 0, "compressed PNG goes through the image cache")
+    must(zeus.image_get_px(slot, 0, 0, 0) == 255, "cached: first run is white")
+    must(zeus.image_get_px(slot, 16, 0, 0) == 0, "cached: next run is black")
+    must(zeus.image_get_px(slot, 0, 2, 0) == 0, "cached: rows alternate every two")
+
+    // --- a file shaped like a real encoder's output ------------------------
+    // Dynamic Huffman, a different filter per row (0,1,2,3,4 cycling), and the
+    // IDAT split across 29 chunks. None of the hand-built fixtures cover any of
+    // those three, and all three are what real files do.
+    must(zeus.image_decode_any(load("real.png")) == 1, "real-shaped PNG decodes")
+    must(zeus.image_src_width() == 200, "real: 200 wide")
+    must(zeus.image_src_height() == 150, "real: 150 tall")
+    let mut mism = 0
+    let mut cx = 100
+    let mut cy = 75
+    let mut rad = 50
+    let mut ry = 0
+    while ry < 150 {
+        let mut rx = 0
+        while rx < 200 {
+            let want_r = (rx * 3 + ry) % 256
+            let dx = rx - cx
+            let dy = ry - cy
+            let mut want_g = 0
+            if dx * dx + dy * dy < rad * rad {
+                want_g = 255
+            } else {
+                want_g = (ry % 32) * 8
+            }
+            let mut want_b = 0
+            if (rx / 8 + ry / 8) % 2 == 0 {
+                want_b = 255
+            }
+            if zeus.image_src_get(rx, ry, 0) != want_r {
+                mism = mism + 1
+            }
+            if zeus.image_src_get(rx, ry, 1) != want_g {
+                mism = mism + 1
+            }
+            if zeus.image_src_get(rx, ry, 2) != want_b {
+                mism = mism + 1
+            }
+            rx = rx + 1
+        }
+        ry = ry + 1
+    }
+    must(mism == 0, "all 90000 channels of the real-shaped file are exact")
+
+    // --- guards: a valid container with the wrong content -----------------
+    let fails = zeus.image_decode_failure_count()
+    must(zeus.image_decode_any(load("bad_length.png")) == 0,
+         "the wrong scanline count is refused")
+    must(zeus.image_decode_failure_reason() == "wrong inflated length", "and named")
+    must(zeus.image_decode_failure_count() == fails + 1, "and counted")
+
+    // A 4x4 image carrying 200000 inflated bytes: the inflate limit must stop
+    // it, so the failure is cheap rather than a 200 KB allocation.
+    let scratch = zeus.image_scratch_bytes()
+    must(zeus.image_decode_any(load("bomb.png")) == 0, "the zip-bomb fixture is refused")
+    must(zeus.image_src_width() == 0, "no dimensions from it")
+    let scratch_after = zeus.image_scratch_bytes()
+    must(scratch_after < scratch + 4096, "and it did not inflate 200 KB to find out")
+
+    fmt.println("image huffman ok", zeus.image_decode_count(),
+                zeus.image_decode_failure_count(), scratch_after)
+}

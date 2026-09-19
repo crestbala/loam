@@ -192,6 +192,108 @@ def magic_files():
     }
 
 
+def deflate_btype(z):
+    """Which DEFLATE block type the stream starts with: 0 stored, 1 fixed, 2 dynamic."""
+    b0 = z[2]  # first byte after the 2-byte zlib header
+    return (b0 >> 1) & 3
+
+
+def png_compressed(w, h, ct, rows, level=6, strategy=0):
+    """A PNG whose IDAT is compressed by zlib itself, so the Loam inflater sees
+    real fixed/dynamic Huffman blocks instead of our stored-block fixtures."""
+    ihdr = struct.pack(">IIBBBBB", w, h, 8, ct, 0, 0, 0)
+    raw = filter_rows(rows, 0)
+    co = zlib.compressobj(level, zlib.DEFLATED, 15, 9, strategy)
+    z = co.compress(raw) + co.flush()
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) +
+            chunk(b"IDAT", z) + chunk(b"IEND", b""), deflate_btype(z))
+
+
+def ramp(w, h):
+    """v = (x*7 + y*13) % 256: no long matches, so the literal alphabet gets
+    exercised across its whole range."""
+    return [[bytes([(x * 7 + y * 13) % 256] * 3) for x in range(w)]
+            for y in range(h)]
+
+
+def runs(w, h):
+    """16px runs alternating every 2 rows: long LZ77 matches at a distance of a
+    whole row stride, which is what exercises the length and distance codes."""
+    return [[bytes([255, 255, 255] if ((x // 16 + y // 2) % 2 == 0)
+                   else [0, 0, 0]) for x in range(w)] for y in range(h)]
+
+
+def png_from_raw(w, h, ct, raw, level=6):
+    """IHDR for one size, scanlines for whatever the caller passes. Lets a
+    fixture have valid CRCs and a valid zlib stream but the wrong content."""
+    ihdr = struct.pack(">IIBBBBB", w, h, 8, ct, 0, 0, 0)
+    co = zlib.compressobj(level, zlib.DEFLATED, 15, 9, 0)
+    z = co.compress(raw) + co.flush()
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) +
+            chunk(b"IDAT", z) + chunk(b"IEND", b""))
+
+
+def filter_rows_mixed(rows, pattern):
+    """Apply a different filter per row, the way a real encoder picks one per
+    scanline (there is no reason a file uses only one)."""
+    bpp = len(rows[0][0])
+    out = bytearray()
+    for y, row in enumerate(rows):
+        ft = pattern[y % len(pattern)]
+        raw = bytearray()
+        for x, px in enumerate(row):
+            for k in range(bpp):
+                v = px[k]
+                left = row[x - 1][k] if x > 0 else 0
+                up = rows[y - 1][x][k] if y > 0 else 0
+                ul = rows[y - 1][x - 1][k] if (y > 0 and x > 0) else 0
+                if ft == 0:
+                    f = 0
+                elif ft == 1:
+                    f = left
+                elif ft == 2:
+                    f = up
+                elif ft == 3:
+                    f = (left + up) // 2
+                else:
+                    f = paeth(left, up, ul)
+                raw.append((v - f) & 0xFF)
+        out.append(ft)
+        out += raw
+    return bytes(out)
+
+
+def png_multi_idat(w, h, ct, rows, pattern, chunk_size):
+    """Dynamic Huffman, a filter per row, and the IDAT split across several
+    chunks -- all three of which real encoders do and none of which a single
+    hand-built fixture would cover."""
+    ihdr = struct.pack(">IIBBBBB", w, h, 8, ct, 0, 0, 0)
+    raw = filter_rows_mixed(rows, pattern)
+    co = zlib.compressobj(6, zlib.DEFLATED, 15, 9, 0)
+    z = co.compress(raw) + co.flush()
+    out = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr)
+    for i in range(0, len(z), chunk_size):
+        out += chunk(b"IDAT", z[i:i + chunk_size])
+    return out + chunk(b"IEND", b"")
+
+
+def real_image(w, h):
+    """Structured content: a gradient, a disc, and a block pattern. Real bytes
+    rather than a synthetic constant, so every filter has something to do."""
+    rows = []
+    cx, cy, rad = w // 2, h // 2, h // 3
+    for y in range(h):
+        row = []
+        for x in range(w):
+            r = (x * 3 + y) % 256
+            dx, dy = x - cx, y - cy
+            g = 255 if dx * dx + dy * dy < rad * rad else (y % 32) * 8
+            b = 255 if (x // 8 + y // 8) % 2 == 0 else 0
+            row.append(bytes([r, g, b]))
+        rows.append(row)
+    return rows
+
+
 def main():
     out = os.path.dirname(os.path.abspath(__file__))
     rows = checker(64, 64, 2)
@@ -220,6 +322,32 @@ def main():
         "rle8.bmp": bmp(64, 64, rows, 24, comp=1),
     }
     files.update(magic_files())
+    # Real Huffman-coded PNGs. Z_FIXED forces block type 1; the default level
+    # produces block type 2. Both are reported so the fixtures provably cover
+    # both paths (a decoder that only handles one would still pass a single
+    # compressed fixture).
+    for name, (blob, bt) in {
+        "huff_fixed.png": png_compressed(64, 64, 2, checker(64, 64, 2),
+                                         level=6, strategy=zlib.Z_FIXED),
+        "huff_dynamic.png": png_compressed(64, 64, 2, checker(64, 64, 2)),
+        "huff_literals.png": png_compressed(256, 64, 2, ramp(256, 64)),
+        "huff_runs.png": png_compressed(256, 128, 2, runs(256, 128)),
+    }.items():
+        files[name] = blob
+        kind = {0: "stored", 1: "fixed", 2: "dynamic"}.get(bt, f"btype {bt}")
+        print(f"  {name}: deflate block type {bt} ({kind})")
+
+    # Robustness fixtures: valid container, valid CRCs, valid zlib, wrong content.
+    # bad_length declares 64x64 but carries 32x32 scanlines.
+    files["bad_length.png"] = png_from_raw(64, 64, 2, filter_rows(checker(32, 32, 2), 0))
+    # bomb declares 4x4 (52 inflated bytes) but carries 200000. A decoder that
+    # inflates first and checks later allocates 200 KB here; the limit must stop
+    # it before that.
+    files["bomb.png"] = png_from_raw(4, 4, 2, b"\x00" * 200000)
+    # A file shaped like a real encoder's output: dynamic Huffman, a different
+    # filter per row, IDAT split into 500-byte chunks.
+    files["real.png"] = png_multi_idat(200, 150, 2, real_image(200, 150),
+                                       [0, 1, 2, 3, 4], 500)
     for name, data in files.items():
         with open(os.path.join(out, name), "wb") as f:
             f.write(data)

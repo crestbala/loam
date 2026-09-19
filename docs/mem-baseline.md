@@ -627,14 +627,59 @@ bytes (a 3-pixel row silently lost its pad byte).
   suites this sandbox blocks), all 15 draw goldens byte-identical, structural
   golden pass, `tools/mem-baseline.sh --headless` unchanged.
 
+**A real DEFLATE inflater (fifteenth step).** Stored blocks alone would only
+decode fixtures we generate ourselves; real PNGs are Huffman-coded, so this is
+what turns the in-Loam decoder from a demonstration into a decoder. `png_inflate`
+now implements RFC 1951 in full: stored blocks, **fixed** Huffman (type 1) and
+**dynamic** Huffman (type 2), with the canonical code construction, symbol
+decoding, and LZ77 back-references (byte-by-byte copy, so an overlapping
+match is correct). Canonical Huffman is held **flat** — three tables side by
+side as parallel arrays — so there is no per-block or per-node allocation, and
+the bit reader is just a bit position over the IDAT bytes.
+
+Three bugs, each caught by a fixture chosen for one code path:
+
+- Dynamic blocks failed while fixed blocks worked. The canonical-code builder
+  was counting **zero-length (unused) symbols** into `count[0]`, and `count[0]`
+  feeds the first-code of length 1, so every code in the table was shifted. The
+  fixed table has no zero lengths, which is exactly why only the dynamic path
+  was broken — a single compressed fixture would have hidden this.
+- The repeat codes in a dynamic header (16/17/18) read their extra bits
+  unconditionally, so 17 and 18 consumed 2 bits too many and desynchronized the
+  stream.
+- `hl_lens[idx - 1]` for a leading repeat code indexed before the array.
+
+`zeus_image_huffman.loam` decodes four compressed fixtures chosen for different
+paths — `Z_FIXED` (block type 1), the default level (block type 2), a ramp
+across all 256 literal values, and 16px runs whose LZ77 matches sit at a
+distance of a whole row stride (so long length codes and 8+-bit distance codes
+are exercised) — and checks every one of the 16384 ramp pixels and the whole
+256x128 runs image. The fixture script prints each file's DEFLATE block type, so
+the coverage is a fact rather than an assumption. Then `real.png`, shaped like a
+real encoder's output — dynamic Huffman, a **different filter per row** cycling
+through all five, and the **IDAT split across 29 chunks** — verifies all 90000
+channels exactly. None of those three things appears in any hand-built fixture.
+Two guards are pinned too: a container that declares 64x64 but carries 32x32
+scanlines is refused by name (`wrong inflated length`), and `bomb.png` (4x4
+declaring 200000 inflated bytes) is refused **without inflating them** — the
+scratch stays at 219 bytes, where an inflate-then-check decoder would have
+allocated 200 KB to find out.
+
+- bytes/node: **476.0 — unchanged**; membench reports `images= 0`.
+- validation: 104 zeus `compile_pass` tests pass (the 2 failures are the network
+  suites this sandbox blocks), all 15 draw goldens byte-identical, structural
+  golden pass, `tools/mem-baseline.sh --headless` unchanged.
+
 **Remaining Phase 4** (not done, and each is substantial): the rest of the image
 formats, the host half of the blit (a no-copy `CGImage` provider on native, a
 typed-array view on web), and driving `scene.paint` through the rasterizer (which
 changes every draw golden and so needs its own decision).
 
 **Image formats — status and roadmap.** Landed in Loam: **PNG** (8-bit
-RGB/RGBA, non-interlaced, stored-block DEFLATE) and **BMP** (uncompressed
-1/4/8/24/32-bit, both scan orders).
+RGB/RGBA, non-interlaced, all five scanline filters, multiple IDAT chunks, and
+stored/fixed/dynamic DEFLATE) and **BMP** (uncompressed 1/4/8/24/32-bit, both
+scan orders). A PNG produced by a real encoder — dynamic Huffman, a filter
+chosen per row, IDAT split into chunks — is now decoded entirely in Loam.
 
 Still handled by the platform path, and therefore still working: **everything
 else** — JPEG, GIF, WebP, TIFF, ICO, HEIC and any PNG variant the Loam decoder
@@ -644,12 +689,10 @@ is a routing decision rather than a capability cliff.
 
 The order that buys the most next:
 
-1. **PNG, the rest of it**: a real inflate (fixed and dynamic Huffman — the one
-   piece that turns "stored blocks only" into "every PNG"), then Adam7
-   interlacing, 16-bit depth, palette/grayscale/`tRNS`, and `gAMA`/`sRGB`. This
-   is the highest-value item by a wide margin: it is what almost every UI asset
-   is, and it is the only format where we currently have a decoder that real
-   files routinely miss.
+1. **PNG, the rest of it**: Adam7 interlacing, 16-bit depth, palette/grayscale/
+   `tRNS`, and `gAMA`/`sRGB` chunk handling. With inflate landed these are
+   parsing work rather than algorithmic work, and each one is a format real
+   files actually use — palette PNGs in particular are common in older assets.
 2. **ICO/CUR**: a container of PNG or BMP, so it is nearly free once it can
    recurse into the two decoders we have — and an app icon is an ICO.
 3. **GIF**: LZW, palette, frame disposal. Small assets and animations.
