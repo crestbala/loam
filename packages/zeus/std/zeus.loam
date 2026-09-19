@@ -471,6 +471,17 @@ fn intern_str(h: fn() -> string) -> int {
     return id
 }
 
+/// How many handler invokes were refused because the interned slot held a
+/// closure of another signature. Zero is the contract. The intern table is
+/// shared by the void / int / bool / string kinds, so a non-zero count means a
+/// handler was interned as one kind and invoked as another — which used to be
+/// undefined behaviour: a garbage return value on native (it landed in a signal
+/// and read as a jittering UI) and a hard trap on wasm, which type-checks the
+/// call. Exposed so a test can pin it at zero rather than hope.
+fn intern_kind_mismatch_count() -> int {
+    return platform.plat_intern_kind_mismatch_count()
+}
+
 /// Attach `node` under `parent`. Used by `ui_emit` for trailing blocks.
 fn child(parent: Node, node: Node) -> Node {
     arena.ensure()

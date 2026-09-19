@@ -405,6 +405,9 @@ int64_t loam_platform_plat_intern_bool_fn(loam_fn thunk);
 int64_t loam_platform_plat_invoke_bool_fn(int64_t id);
 int64_t loam_platform_plat_intern_str_fn(loam_fn thunk);
 loam_str loam_platform_plat_invoke_str_fn(int64_t id);
+/* Calls refused because the slot held a handler interned under another
+   signature. Zero is the contract; see the kind guard in zeus_plat.c. */
+int32_t loam_platform_plat_intern_kind_mismatch_count(void);
 void loam_platform_plat_sig_bind_int(int64_t id, int64_t value);
 int64_t loam_platform_plat_sig_gen(int64_t id);
 void loam_platform_plat_sig_free(int64_t id);

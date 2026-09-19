@@ -142,6 +142,11 @@ fn plat_intern_bool_fn(thunk: fn() -> bool) -> int {}
 fn plat_invoke_bool_fn(id: int) -> int {}
 fn plat_intern_str_fn(thunk: fn() -> string) -> int {}
 fn plat_invoke_str_fn(id: int) -> string {}
+/// Calls refused because the interned slot held a handler of another signature.
+/// Zero is the contract: the intern table is shared by the void / int / bool /
+/// string kinds, so an invoke that reaches a slot of the wrong kind is a bug
+/// (it was undefined behaviour before, garbage on native and a trap on wasm).
+fn plat_intern_kind_mismatch_count() -> int {}
 fn plat_sig_bind_int(id: int, value: int) {}
 fn plat_sig_gen(id: int) -> int {}
 /// Free a signal slot: release its cell, zero its int mirror, and make the
