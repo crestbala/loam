@@ -41,11 +41,42 @@ fn Navbar(page: Signal<int>) {
             zeus.NavTab("Components", page, 1)
             zeus.NavTab("Patterns", page, 2)
             zeus.Grow()
+            AccentDots()
             RamChip()
             zeus.Text("Dark", color = zeus.mute(), font = zeus.FONT_CONTROL)
             zeus.Switch(zeus.appearance())
         }
         zeus.Separator()
+    }
+}
+
+/// Accent picker: the five brand ramps as swatches. `set_accent` re-registers
+/// the twelve A-slots in place, so every themed control follows on the next
+/// paint with no rebuild and no effect runs — the same trick that makes the
+/// light / dark switch free. The ring marks the ramp in effect.
+fn AccentDots() {
+    let which = zeus.signal(zeus.accent_choice())
+    let mut idx = []int {}
+    for i in 0..zeus.accent_count() {
+        push(idx, i)
+    }
+    zeus.Row(SPACE.Exxs) {
+        zeus.Each(idx, fn(i, k) {
+            let dot = zeus.Box(width = 16, height = 16, radius = zeus.RAD_FULL,
+                               background = zeus.accent_scale_light(i).s9,
+                               cursor = "pointer",
+                               a11y_role = "button",
+                               a11y_label = zeus.accent_name(i),
+                               on_click = fn() {
+                                   which.set(i)
+                                   zeus.set_accent(i)
+                               }) {
+                let ring = zeus.Box(width = 22, height = 22, radius = zeus.RAD_FULL,
+                                    border = 2, border_color = zeus.ink(),
+                                    position = zeus.pos_absolute(), left = -3, top = -3)
+                zeus.show_eq(ring, which, i)
+            }
+        })
     }
 }
 
@@ -382,6 +413,7 @@ fn Components() {
     Data()
     Disclosure()
     Menus()
+    States()
 }
 
 fn NameRow(name: string) -> Node {
@@ -566,6 +598,67 @@ fn Feedback() {
         zeus.Empty(icon = zeus.IC_INFO, title = "No projects",
                    body = "Create one to get started.") {
             zeus.Button("New project", look = zeus.LOOK.Solid, size = zeus.SIZE.Sm)
+        }
+    }
+}
+
+/// One field in the state matrix. `edge` is the border token, `off` dims and
+/// inerts it through the shared disabled overlay, `bad` records the shared
+/// `invalid` state (the border color is how the chrome shows it).
+fn StateField(text: string, edge: string, off: int, bad: int) -> Node {
+    let f = zeus.Box(
+        align_direction = DIRECTION.Row,
+        align_items = ALIGN.Center,
+        width = 200,
+        padding_x = 12,
+        padding_y = 8,
+        background = zeus.plate(),
+        border = zeus.HAIRLINE,
+        border_color = edge,
+        radius = zeus.RAD_MD,
+        enabled = off == 0
+    ) {
+        zeus.Text(text, color = zeus.ink(), font = zeus.FONT_CONTROL)
+    }
+    if bad != 0 {
+        zeus.invalid(f, true)
+    }
+    return f
+}
+
+/// Capstone: each control resting beside the states it can be posed in.
+/// Disabled and loading are static props; invalid is the shared state model
+/// (`invalid`), which an app's own chrome reads through `state_invalid`.
+/// Hover, press and focus are live — the engine drives them from the pointer
+/// and the keyboard, so they are shown by using the control, not posed.
+fn States() {
+    zeus.SectionHeader("States", "Interaction matrix",
+                       "Resting beside disabled, loading and invalid. Hover, press and focus are live: hover a control, press it, or Tab to it.")
+    zeus.Card() {
+        zeus.Note("Button — resting · disabled · loading · icon")
+        let busy = zeus.signal(1)
+        zeus.RowWrap(SPACE.Sm) {
+            zeus.Button("Resting", look = zeus.LOOK.Solid, size = zeus.SIZE.Md)
+            zeus.Button("Disabled", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, enabled = false)
+            zeus.Button("Loading", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, loading = busy)
+            zeus.Button("Icon", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, icon = zeus.IC_PLUS)
+        }
+        zeus.Note("Outline · ghost · link — resting beside disabled")
+        zeus.RowWrap(SPACE.Sm) {
+            zeus.Button("Outline", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
+            zeus.Button("Outline", look = zeus.LOOK.Outline, size = zeus.SIZE.Md, enabled = false)
+            zeus.Button("Ghost", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md)
+            zeus.Button("Ghost", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, enabled = false)
+            zeus.Button("Link", look = zeus.LOOK.Link, size = zeus.SIZE.Md)
+            zeus.Button("Link", look = zeus.LOOK.Link, size = zeus.SIZE.Md, enabled = false)
+        }
+    }
+    zeus.Card() {
+        zeus.Note("Field — resting · disabled · invalid")
+        zeus.Row(SPACE.Sm) {
+            StateField("ada@lovelace.dev", zeus.rule(), 0, 0)
+            StateField("ada@lovelace.dev", zeus.rule(), 1, 0)
+            StateField("not-an-email", zeus.danger(), 0, 1)
         }
     }
 }

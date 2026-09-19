@@ -115,6 +115,10 @@ fn apply_label_wrap(id: int) {
     if int(arena.nodes[id].kind) != 3 {
         return
     }
+    if int(arena.nodes[id].ellipsis) != 0 {
+        // A truncating label stays on one line; paint ellipsizes it.
+        return
+    }
     if arena.has_bound_num(id) != 0 {
         return
     }
@@ -559,6 +563,12 @@ fn row_child_w(id: int, c: int, iw: int) -> int {
 fn row_can_absorb(c: int) -> int {
     if arena.axis_frozen(c, 1) != 0 {
         return 0
+    }
+    // A truncating label narrows to whatever the row has left instead of
+    // overflowing or pushing its siblings onto a second line; paint then
+    // draws the ellipsis.
+    if int(arena.nodes[c].ellipsis) != 0 {
+        return 1
     }
     if arena.nodes[c].grow <= 0 {
         return 0

@@ -792,6 +792,35 @@ fn radius(node: Node, px: int) -> Node {
     arena.nodes[node.id].radius = u16(px)
     return node
 }
+
+/// All four corners at once, clockwise from the top-left. `radius` stays the
+/// uniform fallback for anything not set here.
+fn radius4(node: Node, tl: int, tr: int, br: int, bl: int) -> Node {
+    arena.set_corners(node.id, tl, tr, br, bl)
+    return node
+}
+
+/// One corner: 0 top-left, 1 top-right, 2 bottom-right, 3 bottom-left.
+fn radius_corner(node: Node, corner: int, px: int) -> Node {
+    arena.set_corner(node.id, corner, px)
+    return node
+}
+
+/// Round the top pair of corners, near `radius`'s bookkeeping: a top-rounded
+/// sheet / tab header, with the bottom left square or whatever `radius` says.
+fn radius_top(node: Node, px: int) -> Node {
+    arena.set_corner(node.id, 0, px)
+    arena.set_corner(node.id, 1, px)
+    return node
+}
+
+/// Round the bottom pair of corners.
+fn radius_bottom(node: Node, px: int) -> Node {
+    arena.set_corner(node.id, 2, px)
+    arena.set_corner(node.id, 3, px)
+    return node
+}
+
 fn opacity(node: Node, pct: int) -> Node {
     arena.nodes[node.id].opacity = i16(pct)
     return node
@@ -809,6 +838,16 @@ fn font(node: Node, px: int) -> Node {
 /// (0 = horizontal). Used for chart axis labels that must not collide.
 fn text_rot(node: Node, deg: int) -> Node {
     arena.nodes[node.id].text_rot = u16(deg)
+    return node
+}
+
+/// Truncate this label with a trailing `…` when it is wider than its box,
+/// instead of overflowing. Opt-in because overflow is the right default for
+/// pinned and rotated chart text. Layout also lets a truncating label absorb
+/// a row deficit, so `Table` cells, `Select` triggers, chips, and tabs
+/// narrow rather than pushing siblings onto a second line.
+fn text_ellipsis(node: Node) -> Node {
+    arena.nodes[node.id].ellipsis = 1
     return node
 }
 
@@ -2229,7 +2268,9 @@ fn dump_draw_list() {
         } else if d.kind == 13 {
             fmt.println("stroke", d.x, d.y, d.w, d.h, d.rgb, d.radius, d.font, d.alpha)
         } else if d.kind == 14 {
-            fmt.println("fill4", d.x, d.y, d.w, d.h, d.rgb, d.alpha)
+            fmt.println("fill4", d.x, d.y, d.w, d.h, d.rgb, d.alpha,
+                         d.radius % 65536, d.radius / 65536,
+                         d.value % 65536, d.value / 65536)
         } else if d.kind == 15 {
             fmt.println("xform", d.x, d.y, d.w, d.h, d.radius, d.font)
         }
@@ -2472,6 +2513,11 @@ struct BoxProps {
     gap_row: int = -1,
     gap_col: int = -1,
     radius: int = -1,
+    /// Round only the top / bottom pair of corners (both corners on that
+    /// edge), overriding the matching corners of `radius`; `-1` leaves them
+    /// to it. `radius = 8, radius_bottom = 0` is a top-rounded sheet.
+    radius_top: int = -1,
+    radius_bottom: int = -1,
     border: int = -1,
     border_color: string = "",
     /// Elevation 0..4: paints a soft shadow under the surface. `-1` = none.
@@ -2733,6 +2779,8 @@ enum SET {
     MarginLeft = 45,
     GapRow = 46,
     GapCol = 47,
+    RadiusTop = 48,
+    RadiusBottom = 49,
     Text = 100,
     A11yLabel = 101,
     A11yRole = 102,
@@ -2871,6 +2919,8 @@ fn apply_int(nid: int, setter: int, v: int) {
         SET.GapRow => { set_spacing_row(n, scaled(v)) }
         SET.GapCol => { set_spacing_col(n, scaled(v)) }
         SET.Radius => { radius(n, scaled(v)) }
+        SET.RadiusTop => { radius_top(n, scaled(v)) }
+        SET.RadiusBottom => { radius_bottom(n, scaled(v)) }
         SET.Border => { arena.nodes[nid].border_w = u16(v) }
         SET.Grow => { grow(n, v) }
         SET.AlignItems => { align(n, v) }
@@ -2943,7 +2993,7 @@ fn apply_int(nid: int, setter: int, v: int) {
 /// border, text, font, position, show) can move the box model.
 fn setter_is_paint_only(setter: int) -> bool {
     match setter {
-        SET.Radius | SET.Opacity | SET.Background | SET.Color | SET.BorderColor |
+        SET.Radius | SET.RadiusTop | SET.RadiusBottom | SET.Opacity | SET.Background | SET.Color | SET.BorderColor |
         SET.ZIndex | SET.SvgFit | SET.SvgLazy | SET.Elevation => { return true }
         _ => { return false }
     }
@@ -3122,6 +3172,8 @@ fn Component(node: Node, p: BoxProps) -> Node {
     set_prop_int(node, SET.GapRow, p.gap_row)
     set_prop_int(node, SET.GapCol, p.gap_col)
     set_prop_int(node, SET.Radius, p.radius)
+    set_prop_int(node, SET.RadiusTop, p.radius_top)
+    set_prop_int(node, SET.RadiusBottom, p.radius_bottom)
     set_prop_int(node, SET.Elevation, p.elevation)
     set_prop_int(node, SET.Grow, p.grow)
     let sw = shrink_weight(p.grow, p.shrink)
@@ -3316,6 +3368,10 @@ struct TextProps {
     shrink: int = -1,
     show: bool = true,
     wrap: int = 0,
+    /// Truncate with a trailing `…` when the label is wider than its box.
+    /// Off by default: overflow (and `wrap`) stay the right answer for
+    /// pinned and rotated chart text.
+    ellipsis: bool = false,
     // position / left / top / right / bottom / z_index: as BoxProps. Pinned
     // labels are how axis ticks and rotated chart text place themselves.
     position: int = -1,
@@ -3649,6 +3705,9 @@ fn Text(label: fn() -> string, p: TextProps) -> Node {
                         show = p.show, wrap = p.wrap, position = p.position, left = p.left,
                         top = p.top, right = p.right, bottom = p.bottom, z_index = p.z_index,
                         a11y_label = p.a11y_label, a11y_role = p.a11y_role)
+    if p.ellipsis {
+        text_ellipsis(__n)
+    }
     return apply_key(__n, p.key, p.key_action, p.on_key, p.on_key__set, p.key_global)
 }
 
@@ -4535,9 +4594,10 @@ fn App(title: string, build: fn(), width: int = 0, height: int = 0) {
 // select / radio / toggle / Pagination / charts / DatePicker / Page.
 // ═══════════════════════════════════════════════════════════════════
 
-/// Theme roles. `accent` is the neutral "primary": near-black in light,
-/// near-white in dark. Status tints (ok, danger) stay semantic; the chart
-/// fields are the data-viz layer every chart reads (stroke + area wash).
+/// Theme roles. `accent` is the live brand ramp's solid step — blue by
+/// default, and whatever `set_accent` picks after that. Status tints (ok,
+/// danger) stay semantic; the chart fields are the data-viz layer every chart
+/// reads (stroke + area wash).
 struct Palette {
     bg: string,
     card: string,
@@ -4806,7 +4866,8 @@ fn hard() -> string { return role_token(ROLE.Hard) }
 fn wash() -> string { return role_token(ROLE.Wash) }
 /// Text on `accent` (primary-foreground).
 fn on_ink() -> string { return role_token(ROLE.OnInk) }
-/// Primary: fills for default buttons, switches, selection. Neutral.
+/// Primary: fills for default buttons, switches, selection. The accent ramp's
+/// solid step (`register_accent`), blue by default.
 fn accent() -> string { return role_token(ROLE.Accent) }
 /// Soft accent surface (`secondary`): soft buttons, pressed toggles.
 fn accent_soft() -> string { return role_token(ROLE.AccentSoft) }
@@ -5746,9 +5807,12 @@ const IC_TREND_UP: string =
 const IC_TREND_DOWN: string =
 "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m7 7 10 10'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M17 7v10H7'/></svg>"
 
-/// A gap-arc loader ring (used by `Spinner`).
+/// A gap-arc loader ring (used by `Spinner`). Drawn as a 270° polyline: the
+/// host SVG parsers are a line-only lucide subset (they skip `A`/`a` arcs), so
+/// an arc motif would emit an `svg` op that draws nothing. At 16px the 19
+/// chords are under a tenth of a pixel from a true arc.
 const IC_LOADER: string =
-"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M21 12a9 9 0 1 1-6.219-8.56'/></svg>"
+"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M21 12L20.69 14.33L19.79 16.5L18.36 18.36L16.5 19.79L14.33 20.69L12 21L9.67 20.69L7.5 19.79L5.64 18.36L4.21 16.5L3.31 14.33L3 12L3.31 9.67L4.21 7.5L5.64 5.64L7.5 4.21L9.67 3.31L12 3'/></svg>"
 
 /// `markup` painted at `px` square and tinted by `tint`. Returns the node so
 /// callers can bind visibility.
@@ -6258,7 +6322,7 @@ fn Chip(label: fn() -> string, kind: int, p: ChipProps) -> Node {
     if p.dot {
         Pip(tint, DOT - 2)
     }
-    Text(label, color = tint, font = px_or_default(p.font, FONT_CAPTION))
+    Text(label, color = tint, font = px_or_default(p.font, FONT_CAPTION), ellipsis = true)
     if p.on_remove__set {
         let x = Box(width = 18, height = 18, radius = RAD_FULL,
                     align_items = ALIGN.Center, justify = ALIGN.Center,
@@ -7068,7 +7132,7 @@ fn Tab(label: string, selected: Signal<int>, index: int, count: int = 0, plain: 
         cursor = "pointer"
     )
     ui_push(tab.id)
-    let text = Text(label, font = FONT_BODY)
+    let text = Text(label, font = FONT_BODY, ellipsis = true)
     ui_pop()
     // `plain` = the tray's sliding indicator carries the fill; the trigger
     // only swaps its label colour.
@@ -7238,7 +7302,7 @@ fn SelectRow(value: Signal<int>, active: Signal<int>, index: int, label: string)
         hover_off = false
     )
     ui_push(row.id)
-    Text(label, color = ink(), font = FONT_BODY)
+    Text(label, color = ink(), font = FONT_BODY, ellipsis = true)
     Grow()
     let mark = Icon(IC_CHECK, 16, ink())
     show_eq(mark, value, index)
@@ -7287,7 +7351,7 @@ fn Select(value: Signal<int>, labels: []string) {
     )
     ui_push(trigger.id)
     Each(labels, fn(i, lab) {
-        let t = Text(lab, color = ink(), font = FONT_BODY)
+        let t = Text(lab, color = ink(), font = FONT_BODY, ellipsis = true)
         show_eq(t, value, i)
     })
     Grow()
@@ -8119,7 +8183,7 @@ fn MenuItem(p: MenuItemProps) {
     if p.icon.len > 0 {
         Icon(p.icon, 16, dim())
     }
-    Text(p.label, color = row_ink, font = FONT_BODY, grow = 1)
+    Text(p.label, color = row_ink, font = FONT_BODY, grow = 1, ellipsis = true)
     ui_pop()
     selected_chrome(row, empty_view(), || { active.get() == idx },
                     raised(), "", "", "")
@@ -8200,6 +8264,10 @@ struct DrawerProps {
     side: int = 1,
     /// Panel extent: width for the start / end edges, height for top / bottom.
     size: int = 320,
+    /// Radius of the edge that faces the content (the inner edge). `-1` uses
+    /// the sheet default (`RAD_XL`), `0` is square. The outer edge stays square
+    /// so the panel meets the window edge cleanly.
+    radius: int = -1,
     background: string = "",
     border_color: string = "",
     padding: int = -1,
@@ -8250,6 +8318,20 @@ fn Drawer(open: Signal<int>, p: DrawerProps) -> Node {
                     elevation = 4,
                     a11y_role = "dialog",
                     on_click = fn() { return })
+    // The sheet shape: only the inner edge rounds, so the panel still meets
+    // the window edge square. Per-corner fill is what makes this expressible.
+    let corner = px_or_default(p.radius, RAD_XL)
+    if corner > 0 {
+        if p.side == SIDE.SideBottom {
+            radius4(panel, corner, corner, 0, 0)
+        } else if p.side == SIDE.SideTop {
+            radius4(panel, 0, 0, corner, corner)
+        } else if p.side == SIDE.SideStart {
+            radius4(panel, 0, corner, corner, 0)
+        } else {
+            radius4(panel, corner, 0, 0, corner)
+        }
+    }
     ui_pop()
     enter_fade(panel)
     // Rest off the edge, then slide on. Paint-only: a transform never runs the
@@ -8564,7 +8646,7 @@ fn NavTab(label: string, page: Signal<int>, index: int) {
         cursor = "pointer"
     )
     ui_push(item.id)
-    let text = Text(label, font = FONT_BODY)
+    let text = Text(label, font = FONT_BODY, ellipsis = true)
     ui_pop()
     selected_chrome(item, text, || { page.get() == index },
                     raised(), paper(), ink(), mute())
@@ -8644,7 +8726,7 @@ fn table_cell(text: string, width: int, align: int, tint: string) {
         set_flex_basis_zero(grow(cell, 1))
     }
     slot(cell, || {
-        Text(text, color = tint, font = FONT_BODY)
+        Text(text, color = tint, font = FONT_BODY, ellipsis = true)
     })
 }
 

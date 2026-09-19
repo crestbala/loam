@@ -3,6 +3,7 @@
 
 import "arena.loam"
 import "geometry.loam"
+import "metrics.loam"
 import "platform.loam"
 
 // Fields grouped by width, widest first, so the 8-byte-aligned `text` slice
@@ -69,13 +70,13 @@ fn stroke(x: int, y: int, w: int, h: int, rgb: int, radius: int, width: int, alp
     emit(13, x, y, w, h, rgb, radius, alpha, width, "", 0)
 }
 
-/// Per-corner radius fill, clockwise from the top-left. The four radii are
-/// packed one per byte into `value`; a corner radius over 255 dp is beyond
-/// anything the design system asks for (`RAD_FULL` resolves to the smaller
-/// half-extent at paint), so a byte each is enough.
+/// Per-corner radius fill, clockwise from the top-left. The four radii ride
+/// in two fields as 16-bit lanes — `tl | tr << 16` and `br | bl << 16` — so a
+/// `RAD_FULL` (999) pill corner survives the trip (hosts clamp each to half
+/// the smaller extent). `radius` carries the first pair and `value` the
+/// second; both are free for this kind.
 fn fill4(x: int, y: int, w: int, h: int, rgb: int, alpha: int, tl: int, tr: int, br: int, bl: int) {
-    emit(14, x, y, w, h, rgb, 0, alpha, 0, "",
-         ((bl * 256 + br) * 256 + tr) * 256 + tl)
+    emit(14, x, y, w, h, rgb, tl | (tr << 16), alpha, 0, "", br | (bl << 16))
 }
 
 /// Translate, then scale and rotate about an origin. Paint-space only: this
@@ -186,8 +187,8 @@ fn present() {
             platform.plat_stroke(d.x, d.y, d.w, d.h, d.rgb, d.radius, d.font, d.alpha)
         } else if d.kind == 14 {
             platform.plat_fill4(d.x, d.y, d.w, d.h, d.rgb, d.alpha,
-                                d.value % 256, d.value / 256 % 256,
-                                d.value / 65536 % 256, d.value / 16777216 % 256)
+                                d.radius % 65536, d.radius / 65536,
+                                d.value % 65536, d.value / 65536)
         } else if d.kind == 15 {
             platform.plat_xform(d.x, d.y, d.radius, d.font, d.w, d.h)
         }
@@ -246,7 +247,15 @@ fn paint_fill_box(id: int, wash: int) {
     let w = arena.nodes[id].w
     let h = arena.nodes[id].h
     let a = arena.paint_alpha(id)
-    let r = i32(arena.nodes[id].radius)
+    // Per-corner radii. An untouched node resolves all four to its uniform
+    // `radius`, so `uniform` is true and every op below is the one it always
+    // was — the per-corner path only opens when a corner actually differs.
+    let tl = arena.radius_at(id, 0)
+    let tr = arena.radius_at(id, 1)
+    let br = arena.radius_at(id, 2)
+    let bl = arena.radius_at(id, 3)
+    let uniform = tl == tr && tr == br && br == bl
+    let r = i32(if uniform { tl } else { arena.radius_max(id) })
     // Elevation paints under the surface, so the fill and its border sit on it.
     let elev = int(arena.nodes[id].elev)
     if elev > 0 || int(arena.nodes[id].lift) > 0 {
@@ -257,10 +266,30 @@ fn paint_fill_box(id: int, wash: int) {
         }
     }
     let rgb = arena.paint_rgb(arena.nodes[id].bg)
+    let has_border = arena.nodes[id].border_w > 0 && arena.nodes[id].border_c >= 0
+    let mut ring_done = 0
     if arena.nodes[id].bg >= 0 {
         if arena.nodes[id].bg2 >= 0 {
+            // Gradients have no per-corner form, so a rounded gradient uses the
+            // largest corner; per-corner surfaces are flat fills.
             let c1 = arena.paint_rgb(arena.nodes[id].bg2)
             fill_g(x, y, w, h, rgb, c1, 0, r, a)
+        } else if !uniform {
+            // Per-corner surface. There is no per-corner stroke op, so a border
+            // is painted as an outer ring with the background inset by it —
+            // exact for the opaque surfaces that carry per-corner radii at all
+            // (a translucent per-corner bordered surface stays square-bordered
+            // under the uniform path, which keeps its anti-aliased ring).
+            if has_border {
+                let b = i32(arena.nodes[id].border_w)
+                fill4(x, y, w, h, arena.paint_rgb(arena.nodes[id].border_c), a, tl, tr, br, bl)
+                fill4(x + b, y + b, w - b * 2, h - b * 2, rgb, a,
+                      geometry.max2(tl - b, 0), geometry.max2(tr - b, 0),
+                      geometry.max2(br - b, 0), geometry.max2(bl - b, 0))
+                ring_done = 1
+            } else {
+                fill4(x, y, w, h, rgb, a, tl, tr, br, bl)
+            }
         } else if a < 255 {
             fill_a(x, y, w, h, rgb, r, a)
         } else {
@@ -269,11 +298,10 @@ fn paint_fill_box(id: int, wash: int) {
     }
     // Border: an anti-aliased ring inside the rect, not a full-bleed under-fill.
     // This is what lets a bordered surface be translucent or carry a gradient.
-    if arena.nodes[id].border_w > 0 {
-        if arena.nodes[id].border_c >= 0 {
-            stroke(x, y, w, h, arena.paint_rgb(arena.nodes[id].border_c), r,
-                   i32(arena.nodes[id].border_w), a)
-        }
+    // The per-corner branch above paints its own ring.
+    if has_border && ring_done == 0 {
+        stroke(x, y, w, h, arena.paint_rgb(arena.nodes[id].border_c), r,
+               i32(arena.nodes[id].border_w), a)
     }
     if int(arena.nodes[id].pulse) != 0 {
         paint_shimmer(id, x, y, w, h, r, a)
@@ -352,6 +380,21 @@ fn paint_label(id: int) {
         return
     }
     let inner = arena.inner_w(id)
+    if int(arena.nodes[id].ellipsis) != 0 {
+        // Truncate rather than overflow: the longest prefix plus `…` that
+        // still fits the content box. `tw` is the full measured width, so
+        // the measure is skipped when the label already fits.
+        if inner > 0 {
+            if inner < arena.nodes[id].tw {
+                let mut ew = 0
+                let mut eh = 0
+                let shown = metrics.ellipsize(arena.nodes[id].text, i32(arena.nodes[id].font), inner, arena.nodes[id].tw, &mut ew, &mut eh)
+                let ey = arena.draw_y(id) + i32(arena.nodes[id].pad_t) + i32(arena.nodes[id].border_w) + geometry.max2(arena.nodes[id].h - i32(arena.nodes[id].pad_t) - i32(arena.nodes[id].pad_b) - arena.nodes[id].th, 0) / 2
+                text(x, ey, shown, fg, i32(arena.nodes[id].font), a)
+                return
+            }
+        }
+    }
     if int(arena.nodes[id].wrap) != 0 {
         if inner > 0 {
             if inner < arena.nodes[id].tw {

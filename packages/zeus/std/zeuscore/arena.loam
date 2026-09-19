@@ -117,6 +117,13 @@ struct UiNode {
     gap_row: u16,
     gap_col: u16,
     radius: u16,
+    /// Per-corner radius overrides, clockwise from the top-left. `0xFFFF`
+    /// means "use the uniform `radius`", so the all-unset default paints
+    /// exactly as before. See `set_corner` / `radius_at`.
+    rad_tl: u16,
+    rad_tr: u16,
+    rad_br: u16,
+    rad_bl: u16,
     /// Border width in dp. `-1` at the props layer is "unset" and maps to 0, so
     /// `content_x`/`content_y` never add a negative inset.
     border_w: u16,
@@ -134,6 +141,12 @@ struct UiNode {
     justify: u8,
     pos: u8,
     wrap: u8,
+    /// Opt-in paint truncation: when the label is wider than its box, draw a
+    /// trailing `…` at a grapheme boundary instead of overflowing. Table
+    /// cells, select triggers, chips, and tabs opt in. Layout also lets such
+    /// a node absorb a row deficit, so it narrows rather than wrapping its
+    /// siblings (`row_can_absorb`).
+    ellipsis: u8,
     reverse: u8,
     click_mode: u8,
     click2_mode: u8,
@@ -333,7 +346,7 @@ fn blank_node() -> UiNode {
     return UiNode {
         kind: 0, dir: 0, kids: []int {}, pad: 0, padx: 0, pady: 0,
         pad_t: 0, pad_r: 0, pad_b: 0, pad_l: 0, gap: 0, grow: 0, shrink: 1,
-        bg: -1, bg2: -1, fg: -1, radius: 0, ew: -1, eh: -1, font: 0, justify: 0, align: 0,
+        bg: -1, bg2: -1, fg: -1, radius: 0, rad_tl: 65535, rad_tr: 65535, rad_br: 65535, rad_bl: 65535, ew: -1, eh: -1, font: 0, justify: 0, align: 0,
         min_w: -1, max_w: -1, min_h: -1, max_h: -1, w_pct: 100, h_pct: -1,
         text: "", bind_sig: 0, click_sig: 0, click_mode: 0, click_set: 0,
         click2_sig: 0, click2_mode: 0, click2_set: 0,
@@ -342,7 +355,7 @@ fn blank_node() -> UiNode {
         opacity: 100, span: 1, grid_cols: 0, grid_min: 0,
         m_t: 0, m_r: 0, m_b: 0, m_l: 0, border_w: 0, border_c: -1,
         gap_row: 0, gap_col: 0, aspect_w: 0, aspect_h: 0,
-        wrap: 0, reverse: 0, align_self: -1,
+        wrap: 0, ellipsis: 0, reverse: 0, align_self: -1,
         pin_t: -1, pin_r: -1, pin_b: -1, pin_l: -1,
         z_index: 0, grid_auto: 0, scroll_x: 0, scroll_y: 0, tw: 0, th: 0, pulse: 0, press: 0, press_scale: 0, lift: 0, slot_into: 0, press_amt: 0,
         aw: 0, ah: 0, bar_t: 0, tgt_x: 0, tgt_y: 0, smooth: 0, parent: 0, key_ctx: 0, focusable: 0, capture_text: 0, edit_slot: -1,
@@ -359,6 +372,107 @@ fn blank_node() -> UiNode {
         list_lo: 0, list_hi: 0, list_n: 0, row_h: 0, vel_x: 0, vel_y: 0,
         a11y_label: "", a11y_role: "", cursor: "", text_rot: 0,
     }
+}
+
+// --- per-corner radius ----------------------------------------------------
+// Four `u16` overrides, one per corner, plus the uniform `radius` as the
+// fallback. A lane of `0xFFFF` is "unset", the all-unset default, so an
+// untouched node resolves every corner to `radius` and `paint_fill_box` keeps
+// its old op. (`int` is 32-bit here, so a packed four-corner value would need
+// `i64`; four `u16` fields cost the same and need no shifts.)
+
+const RAD_UNSET: int = 65535
+
+/// Set corner `c` (0 tl, 1 tr, 2 br, 3 bl) to `r`, or clear it to the
+/// uniform radius when `r` is negative.
+fn set_corner(id: int, c: int, r: int) {
+    if id <= 0 {
+        return
+    }
+    if id >= nodes.len {
+        return
+    }
+    let mut v = RAD_UNSET
+    if r >= 0 {
+        if r < RAD_UNSET {
+            v = r
+        }
+    }
+    let b = u16(v)
+    if c == 0 {
+        nodes[id].rad_tl = b
+    } else if c == 1 {
+        nodes[id].rad_tr = b
+    } else if c == 2 {
+        nodes[id].rad_br = b
+    } else if c == 3 {
+        nodes[id].rad_bl = b
+    }
+}
+
+/// All four corners at once, clockwise from the top-left.
+fn set_corners(id: int, tl: int, tr: int, br: int, bl: int) {
+    set_corner(id, 0, tl)
+    set_corner(id, 1, tr)
+    set_corner(id, 2, br)
+    set_corner(id, 3, bl)
+}
+
+/// Resolved radius of corner `c`: its override, or the uniform `radius`.
+fn radius_at(id: int, c: int) -> int {
+    if id <= 0 {
+        return 0
+    }
+    if id >= nodes.len {
+        return 0
+    }
+    let mut v = int(nodes[id].rad_tl)
+    if c == 1 {
+        v = int(nodes[id].rad_tr)
+    } else if c == 2 {
+        v = int(nodes[id].rad_br)
+    } else if c == 3 {
+        v = int(nodes[id].rad_bl)
+    }
+    if v == RAD_UNSET {
+        return int(nodes[id].radius)
+    }
+    return v
+}
+
+/// 1 when any corner carries an override. An untouched node is 0, which is
+/// what keeps the uniform paint path byte-identical.
+fn corners_set(id: int) -> int {
+    if id <= 0 {
+        return 0
+    }
+    if id >= nodes.len {
+        return 0
+    }
+    if nodes[id].rad_tl == u16(65535) {
+        if nodes[id].rad_tr == u16(65535) {
+            if nodes[id].rad_br == u16(65535) {
+                if nodes[id].rad_bl == u16(65535) {
+                    return 0
+                }
+            }
+        }
+    }
+    return 1
+}
+
+/// Largest resolved corner. The ops that take one radius and no per-corner
+/// form (shadow, stroke, the press overlay) use this, so a rounded box gets a
+/// rounded shadow instead of a square one.
+fn radius_max(id: int) -> int {
+    let mut m = radius_at(id, 0)
+    for c in 1..4 {
+        let v = radius_at(id, c)
+        if v > m {
+            m = v
+        }
+    }
+    return m
 }
 
 fn ensure() {
