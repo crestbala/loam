@@ -1,0 +1,188 @@
+// Phase 4: the glyph atlas — cache hits, subpixel keys, bounded LRU, coverage
+// gamma, and the measurement cache. All headless, no display, no font API.
+
+import "std:fmt"
+import "std:sys"
+import "std:font"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn main() {
+    // --- coverage gamma ----------------------------------------------------
+    // Monotone, endpoints exact, and mildly heavier in the midtones (which is
+    // the point: linear compositing thins glyphs against the designers' intent).
+    must(zeus.atlas_gamma(0) == 0, "gamma(0) = 0")
+    must(zeus.atlas_gamma(255) == 255, "gamma(255) = 255")
+    must(zeus.atlas_gamma(128) > 128, "gamma lifts the midtones")
+    must(zeus.atlas_gamma(128) < 160, "gamma is modest, not a shift")
+    let mut i = 1
+    let mut mono = 1
+    while i < 256 {
+        if zeus.atlas_gamma(i) < zeus.atlas_gamma(i - 1) {
+            mono = 0
+        }
+        i = i + 1
+    }
+    must(mono == 1, "gamma is monotone over 0..255")
+
+    // --- subpixel buckets --------------------------------------------------
+    must(zeus.atlas_subx_bucket(11, 0.0) == 0, "11px frac 0.00 -> bucket 0")
+    must(zeus.atlas_subx_bucket(11, 0.3) == 1, "11px frac 0.30 -> bucket 1")
+    must(zeus.atlas_subx_bucket(11, 0.6) == 2, "11px frac 0.60 -> bucket 2")
+    must(zeus.atlas_subx_bucket(11, 0.9) == 3, "11px frac 0.90 -> bucket 3")
+    must(zeus.atlas_subx_bucket(13, 0.99) == 3, "13px is still subpixel")
+    must(zeus.atlas_subx_bucket(16, 0.5) == 2, "16px is the last subpixel size")
+    must(zeus.atlas_subx_bucket(17, 0.5) == 0, "17px positions on integers")
+    must(zeus.atlas_subx_bucket(32, 0.75) == 0, "large sizes ignore the fraction")
+    must(zeus.atlas_subx_offset(3) == 0.75, "bucket 3 is 3/4 px")
+
+    // --- interning the fixture font's glyphs -------------------------------
+    let s = sys.read_file("packages/loam/tests/fonts/tiny.ttf")
+    must(s.len > 0, "font loaded")
+    let upm = font.units_per_em(s)
+    let a = font.glyph_outline(s, font.glyph_index(s, 65))
+    let c = font.glyph_outline(s, font.glyph_index(s, 67))
+    must(a.ok == 1, "A outline")
+    must(c.ok == 1, "C outline")
+
+    zeus.atlas_reset(128)
+    must(zeus.atlas_dim() == 128, "atlas dim honoured")
+
+    // 'A' at 64 device px is ~54x47 with the padding, so a 128x128 atlas holds
+    // exactly four of them: two per shelf row, two rows.
+    let s0 = zeus.atlas_intern(0, 1, 64, 0, a.xs, a.ys, a.on, a.ends, upm)
+    must(s0 >= 0, "A interned")
+    must(zeus.atlas_raster_count() == 1, "one rasterization")
+    must(zeus.atlas_glyph_w(s0) == 54, "mask width 54")
+    must(zeus.atlas_glyph_h(s0) == 47, "mask height 47")
+    // Interior is opaque, the corners are empty, and the stored value is the
+    // GAMMA-corrected coverage (interior 255 -> 255).
+    must(zeus.atlas_cov(s0, 26, 25) == 255, "glyph interior opaque")
+    must(zeus.atlas_cov(s0, 0, 0) == 0, "glyph corner empty")
+    must(zeus.atlas_cov(s0, 53, 46) == 0, "far corner empty")
+
+    // A repeat request is a pure cache hit: same slot, no new rasterization.
+    let again = zeus.atlas_intern(0, 1, 64, 0, a.xs, a.ys, a.on, a.ends, upm)
+    must(again == s0, "a repeat intern returns the same slot")
+    must(zeus.atlas_raster_count() == 1, "a repeat intern does not re-rasterize")
+    must(zeus.atlas_lookup(0, 1, 64, 0) == s0, "lookup finds the entry")
+
+    // --- the key includes the subpixel bucket ------------------------------
+    let s1 = zeus.atlas_intern(0, 1, 64, 1, a.xs, a.ys, a.on, a.ends, upm)
+    must(s1 >= 0, "A at subpixel bucket 1 is a distinct entry")
+    must(s1 != s0, "a different bucket is a different slot")
+    must(zeus.atlas_raster_count() == 2, "and it was rasterized")
+    // A different font id is a different entry too.
+    let s2 = zeus.atlas_intern(1, 1, 64, 0, a.xs, a.ys, a.on, a.ends, upm)
+    must(s2 >= 0, "A in another font is a distinct entry")
+    must(s2 != s0, "font id is part of the key")
+    // A different size likewise.
+    let s3 = zeus.atlas_intern(0, 1, 32, 0, a.xs, a.ys, a.on, a.ends, upm)
+    must(s3 >= 0, "A at another size is a distinct entry")
+    must(s3 != s0, "size is part of the key")
+    must(zeus.atlas_entry_count() == 4, "four entries live")
+
+    // --- bounded LRU -------------------------------------------------------
+    // Touch the oldest so it is no longer the eviction victim, then demand a
+    // fifth entry. Exactly one entry must go, and it must be the least recently
+    // used one -- not the one we just used.
+    must(zeus.atlas_lookup(0, 1, 64, 0) == s0, "touch the first entry")
+    let before_evict = zeus.atlas_eviction_count()
+    let s4 = zeus.atlas_intern(0, 3, 64, 0, c.xs, c.ys, c.on, c.ends, upm)
+    must(s4 >= 0, "a fifth entry is seated")
+    must(zeus.atlas_eviction_count() == before_evict + 1, "exactly one entry was evicted")
+    must(zeus.atlas_lookup(0, 1, 64, 1) < 0, "the least recently used entry went")
+    must(zeus.atlas_lookup(0, 1, 64, 0) == s0, "the touched entry survived")
+    must(zeus.atlas_lookup(1, 1, 64, 0) >= 0, "a newer entry survived")
+    must(zeus.atlas_lookup(0, 3, 64, 0) == s4, "the new entry is present")
+    must(zeus.atlas_entry_count() == 4, "four entries live")
+
+    // An evicted key is re-rasterized rather than lost: nothing about a miss is
+    // fatal, which is what makes eviction safe for a pure cache.
+    let rasters_before = zeus.atlas_raster_count()
+    let redo = zeus.atlas_intern(0, 1, 64, 1, a.xs, a.ys, a.on, a.ends, upm)
+    must(redo >= 0, "an evicted key re-interns cleanly")
+    must(zeus.atlas_raster_count() == rasters_before + 1, "and it was re-rasterized")
+
+    // --- growth is a last resort, not a per-glyph event --------------------
+    // 128x128 seats four; a fifth prefers eviction over growth, so the dim is
+    // unchanged and the atlas stays a fixed budget.
+    must(zeus.atlas_dim() == 128, "eviction, not growth, reclaimed space")
+    must(zeus.atlas_grow_count() == 0, "no growth while eviction works")
+    must(zeus.atlas_bytes() < 65536, "atlas stays small here")
+
+    // A glyph larger than a raster tile cannot be atlased: reported, not wrong.
+    must(zeus.atlas_intern(0, 1, 4000, 0, a.xs, a.ys, a.on, a.ends, upm) < 0,
+         "an over-tile glyph is refused")
+
+    // --- glyphs composite onto the framebuffer -----------------------------
+    zeus.raster_ensure(120, 120, 1)
+    zeus.raster_clear(255, 255, 255)
+    let g = zeus.atlas_lookup(0, 1, 64, 0)
+    must(g >= 0, "the glyph is still cached")
+    // The mask is anchored at (ox, oy) from the pen: above the baseline (so a
+    // negative y origin) and a pixel of left padding.
+    must(zeus.atlas_glyph_origin_y(g) < 0, "the glyph sits above the baseline")
+    must(zeus.atlas_glyph_origin_x(g) >= 0, "a pixel of left padding")
+    zeus.atlas_blit(g, 20, 60, 0, 0, 0, 255)
+    let bx = 20 + zeus.atlas_glyph_origin_x(g)
+    let by = 60 + zeus.atlas_glyph_origin_y(g)
+    // Dark ink landed where the glyph is, and the corner is untouched.
+    must(zeus.raster_get(bx + 26, by + 25, 2) < 64, "ink composited (dark)")
+    must(zeus.raster_get(bx, by, 2) == 255, "background outside the glyph")
+
+    // --- the measurement cache is bounded and keyed properly ---------------
+    zeus.measure_cache_clear()
+    let sid = zeus.string_intern("Hello, Zeus")
+    must(sid >= 0, "string interned")
+    must(zeus.string_intern("Hello, Zeus") == sid, "interning is stable")
+    must(zeus.string_intern("Hello, Zeus!") != sid, "different strings differ")
+
+    let mut mw = 0
+    let mut mh = 0
+    must(zeus.measure_cached(sid, 0, 13, &mut mw, &mut mh) == 0, "cold miss")
+    zeus.measure_store(sid, 0, 13, 77, 16)
+    must(zeus.measure_cached(sid, 0, 13, &mut mw, &mut mh) == 1, "warm hit")
+    must(mw == 77, "cached width")
+    must(mh == 16, "cached height")
+    // Font and size are part of the key.
+    must(zeus.measure_cached(sid, 1, 13, &mut mw, &mut mh) == 0, "font is keyed")
+    must(zeus.measure_cached(sid, 0, 17, &mut mw, &mut mh) == 0, "size is keyed")
+
+    // Fill past capacity: the cache evicts instead of growing.
+    let cap = zeus.measure_cache_capacity()
+    let mut k = 0
+    while k < cap * 2 {
+        let id = zeus.string_intern("m-{{k}}")
+        zeus.measure_store(id, 0, 13, k, 1)
+        k = k + 1
+    }
+    must(zeus.measure_cache_count() == cap, "measurement cache stays at capacity")
+    must(zeus.measure_cache_eviction_count() > 0, "and it evicted")
+
+    // --- the atlas grows only when a glyph cannot fit at all ---------------
+    // A 64x64 atlas cannot hold a 128-device-px glyph even when empty, so the
+    // one legitimate growth path is exercised; below that, eviction wins.
+    zeus.atlas_reset(64)
+    must(zeus.atlas_dim() == 64, "small atlas")
+    let small = zeus.atlas_intern(0, 1, 64, 0, a.xs, a.ys, a.on, a.ends, upm)
+    must(small >= 0, "a small glyph fits the small atlas")
+    must(zeus.atlas_grow_count() == 0, "and does not grow it")
+    let big = zeus.atlas_intern(0, 1, 128, 0, a.xs, a.ys, a.on, a.ends, upm)
+    must(big >= 0, "a glyph larger than the atlas triggers growth")
+    must(zeus.atlas_grow_count() == 1, "grown once")
+    must(zeus.atlas_dim() == 128, "and the atlas is bigger")
+    must(zeus.atlas_glyph_w(big) > 64, "the grown atlas seats the glyph")
+    must(zeus.atlas_glyph_h(big) > 64, "and its height")
+    must(zeus.atlas_entry_count() == 1, "growth dropped the cache, not the request")
+
+    fmt.println("atlas ok", zeus.atlas_entry_count(), zeus.atlas_raster_count(),
+                zeus.atlas_eviction_count(), zeus.measure_cache_count())
+}

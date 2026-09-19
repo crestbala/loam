@@ -8,6 +8,7 @@
 import "geometry.loam"
 import "platform.loam"
 import "track.loam"
+import "atlas.loam"
 import "std:fmt"
 
 struct UiNode {
@@ -2253,9 +2254,10 @@ fn mem_misc_bytes() -> i64 {
     return i64(ints) * sz + i64(damage.len) * i64(__sizeof(damage[0]))
 }
 
-/// Arena bytes across every bucket above (the draw list lives in `scene`).
+/// Arena bytes across every bucket above, plus the glyph atlas and its caches
+/// (the draw list lives in `scene`).
 fn mem_total_bytes() -> i64 {
-    return mem_tree_bytes() + mem_sig_bytes() + mem_intern_bytes() + mem_anim_bytes() + mem_misc_bytes()
+    return mem_tree_bytes() + mem_sig_bytes() + mem_intern_bytes() + mem_anim_bytes() + mem_misc_bytes() + atlas.atlas_mem_bytes()
 }
 
 /// Update the high-water marks. Called once per layout while stats are on.
@@ -2278,6 +2280,7 @@ fn mem_report() {
     fmt.println("ZEUS_MEM live_nodes=", mem_live_nodes(), " node_slots=", nodes.len, " frames=", mem_frames)
     fmt.println("ZEUS_MEM bytes tree=", mem_tree_bytes(), " signals=", mem_sig_bytes(), " interning=", mem_intern_bytes(), " animation=", mem_anim_bytes(), " misc=", mem_misc_bytes())
     fmt.println("ZEUS_MEM bytes total=", mem_total_bytes())
+    fmt.println("ZEUS_MEM bytes glyphs=", atlas.atlas_mem_bytes(), " atlas_entries=", atlas.atlas_entry_count(), " glyph_rasters=", atlas.atlas_raster_count())
     fmt.println("ZEUS_MEM peak_nodes=", mem_peak_nodes, " peak_bytes=", mem_peak_bytes)
     fmt.println("ZEUS_MEM node_record_bytes=", __sizeof(nodes[0]))
 }
