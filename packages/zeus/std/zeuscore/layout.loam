@@ -1070,29 +1070,34 @@ fn layout_abs(p: int) {
                         let mut h = arena.sized_h(c, ih, w)
                         let mut x = ox
                         let mut y = oy
-                        if arena.nodes[c].pin_l >= 0 {
+                        /* `-1` is "unset", not "zero" — the guard used to be
+                           `>= 0`, which also swallowed every real NEGATIVE
+                           offset. That is why `left = -3, top = -3` (the ring
+                           around the accent dot) sat still: the ring drew at the
+                           parent's origin and hung 3px down-right of the dot. */
+                        if arena.nodes[c].pin_l != -1 {
                             x = ox + arena.nodes[c].pin_l
                         }
-                        if arena.nodes[c].pin_t >= 0 {
+                        if arena.nodes[c].pin_t != -1 {
                             y = oy + arena.nodes[c].pin_t
                         }
-                        if arena.nodes[c].pin_l >= 0 {
-                            if arena.nodes[c].pin_r >= 0 {
+                        if arena.nodes[c].pin_l != -1 {
+                            if arena.nodes[c].pin_r != -1 {
                                 w = arena.clamp_w(c, iw - arena.nodes[c].pin_l - arena.nodes[c].pin_r)
                             }
                         }
-                        if arena.nodes[c].pin_t >= 0 {
-                            if arena.nodes[c].pin_b >= 0 {
+                        if arena.nodes[c].pin_t != -1 {
+                            if arena.nodes[c].pin_b != -1 {
                                 h = arena.clamp_h(c, ih - arena.nodes[c].pin_t - arena.nodes[c].pin_b)
                             }
                         }
-                        if arena.nodes[c].pin_r >= 0 {
-                            if arena.nodes[c].pin_l < 0 {
+                        if arena.nodes[c].pin_r != -1 {
+                            if arena.nodes[c].pin_l == -1 {
                                 x = ox + iw - w - arena.nodes[c].pin_r
                             }
                         }
-                        if arena.nodes[c].pin_b >= 0 {
-                            if arena.nodes[c].pin_t < 0 {
+                        if arena.nodes[c].pin_b != -1 {
+                            if arena.nodes[c].pin_t == -1 {
                                 y = oy + ih - h - arena.nodes[c].pin_b
                             }
                         }

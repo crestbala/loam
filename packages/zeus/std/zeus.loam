@@ -3597,6 +3597,12 @@ enum SET {
 fn skip_unset(setter: int, v: int) -> bool {
     match setter {
         SET.Direction | SET.Wrap | SET.Safe | SET.ShowOn => { return false }
+        /* The four pin offsets are the one geometry prop where a negative is a
+           real value: `left = -3, top = -3` is how a 22px ring is centred on a
+           16px dot. `v < 0` here silently dropped those, so the ring drew at the
+           parent's origin and hung 3px down-right of the dot it was meant to
+           circle. `-1` still means "unset" in the layout guards. */
+        SET.Left | SET.Top | SET.Right | SET.Bottom => { return false }
         // A 0px glyph is not a size, so font rejects 0 as well.
         SET.Font => { return v <= 0 }
         _ => { return v < 0 }
