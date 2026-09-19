@@ -5,6 +5,7 @@ import "arena.loam"
 import "geometry.loam"
 import "metrics.loam"
 import "platform.loam"
+import "raster.loam"
 
 // Fields grouped by width, widest first, so the 8-byte-aligned `text` slice
 // does not force padding between 4-byte ints (Phase 11). `text` is empty for
@@ -901,4 +902,122 @@ fn step(dt: int) -> int {
         live = 1
     }
     return live
+}
+
+// --- damage -> tile selection (Phase 4) ------------------------------------
+//
+// The rasterizer should visit only the tiles a frame's damage touches. This
+// turns the Phase 1 damage list into that tile set: one flag per tile, reset
+// per frame, so nothing is built on the graph — just a list of tile origins.
+// A full-damage frame selects every tile. Deduping means overlapping or nested
+// damage rects (a dirty container damages its subtree) never rasterize a tile
+// twice.
+
+let mut dt_flag: []int = []int {}
+let mut dt_x: []int = []int {}
+let mut dt_y: []int = []int {}
+let mut dt_cols: int = 0
+let mut dt_rows: int = 0
+
+/// Build the frame's tile list from `arena.damage`. Returns the tile count.
+fn damage_tiles_build() -> int {
+    let w = raster.raster_width()
+    let h = raster.raster_height()
+    let ts = raster.raster_tile_size()
+    while dt_x.len > 0 {
+        pop(dt_x)
+    }
+    while dt_y.len > 0 {
+        pop(dt_y)
+    }
+    if w <= 0 {
+        return 0
+    }
+    if h <= 0 {
+        return 0
+    }
+    dt_cols = (w + ts - 1) / ts
+    dt_rows = (h + ts - 1) / ts
+    let total = dt_cols * dt_rows
+    while dt_flag.len < total {
+        push(dt_flag, 0)
+    }
+    while dt_flag.len > total {
+        pop(dt_flag)
+    }
+    let mut i = 0
+    while i < total {
+        dt_flag[i] = 0
+        i = i + 1
+    }
+    if arena.damage_full != 0 {
+        let mut ty = 0
+        while ty < h {
+            let mut tx = 0
+            while tx < w {
+                push(dt_x, tx)
+                push(dt_y, ty)
+                tx = tx + ts
+            }
+            ty = ty + ts
+        }
+        return dt_x.len
+    }
+    let n = arena.damage.len
+    let mut k = 0
+    while k < n {
+        let d = arena.damage[k]
+        let mut cx0 = d.x
+        let mut cy0 = d.y
+        let mut cx1 = d.x + d.w
+        let mut cy1 = d.y + d.h
+        if cx0 < 0 {
+            cx0 = 0
+        }
+        if cy0 < 0 {
+            cy0 = 0
+        }
+        if cx1 > w {
+            cx1 = w
+        }
+        if cy1 > h {
+            cy1 = h
+        }
+        if cx1 > cx0 {
+            if cy1 > cy0 {
+                let tcx0 = cx0 / ts
+                let tcy0 = cy0 / ts
+                let tcx1 = (cx1 - 1) / ts
+                let tcy1 = (cy1 - 1) / ts
+                let mut tcy = tcy0
+                while tcy <= tcy1 {
+                    let mut tcx = tcx0
+                    while tcx <= tcx1 {
+                        let idx = tcy * dt_cols + tcx
+                        if dt_flag[idx] == 0 {
+                            dt_flag[idx] = 1
+                            push(dt_x, tcx * ts)
+                            push(dt_y, tcy * ts)
+                        }
+                        tcx = tcx + 1
+                    }
+                    tcy = tcy + 1
+                }
+            }
+        }
+        k = k + 1
+    }
+    return dt_x.len
+}
+
+fn damage_tiles_count() -> int {
+    return dt_x.len
+}
+
+fn damage_tiles_x(i: int) -> int {
+    return dt_x[i]
+}
+
+fn damage_tiles_y(i: int) -> int {
+    return dt_y[i]
 }

@@ -326,7 +326,7 @@ step; doing them half-way is how a UI engine regresses silently):
 Net: Phase 3's free/ordering step is done and measured; its structural items
 (1-3) and the `f32` geometry requirement (4) remain open.
 
-### Phase 4 — software rasterizer (framebuffer, color, coverage, borders, shadows)
+### Phase 4 — software rasterizer (framebuffer, color, coverage, borders, shadows, tiles)
 
 - bytes/node: **476.0 — unchanged.** No tree/geometry code was touched.
 - New module `packages/zeus/std/zeuscore/raster.loam`:
@@ -393,6 +393,16 @@ support (well outside the blur is untouched), the `dy` offset makes it heavier
 below than above, the falloff is monotone (not a hard edge), and painting the
 card over the shadow restores the interior while the surround stays tinted.
 
+**Damage-limited tiles (fifth step).** The Phase 1 damage list now drives tile
+selection: `scene.damage_tiles_build` turns it into the set of 256x256 tiles a
+frame must visit — every tile on a full-damage frame, only the touched tiles on
+a paint-only frame — deduped so overlapping damage rects (a dirty container
+damages its subtree) never rasterize a tile twice. One flag per tile, reset per
+frame; nothing is built on the graph. `zeus_damage_tiles.loam`: a layout frame
+over a 600x600 surface selects all 9 tiles; a paint-only node at (300,300)
+selects exactly one, at (256,256). This is the set the renderer will iterate in
+place of tiling the whole surface.
+
 **Compiler bug this work surfaced.** Adding the raster module's ~40 globals and
 constants tipped four large programs (zeus_components / key_prop / reactive /
 spec_props) past a **silent 256-entry cap** in `typecheck.c`: `gvars[256]`,
@@ -403,7 +413,8 @@ now a compile error instead of a silent drop. It is a latent compiler bug any
 large app could hit; Phase 4 is simply what surfaced it. (The full `nob test`
 run: 449 passed; the 6 failures are the network suites this sandbox blocks.)
 
-**Remaining Phase 4** (not done, and each is substantial): damage-limited tile
-selection, the glyph atlas with in-tree TrueType/GPOS metrics, image decode with
-Mitchell/Lanczos2 downsampling and an LRU byte budget, the zero-copy blit, and
-the web (devicePixelRatio) path.
+**Remaining Phase 4** (not done, and each is substantial): the glyph atlas with
+in-tree TrueType/GPOS metrics, image decode with Mitchell/Lanczos2 downsampling
+and an LRU byte budget, the zero-copy blit, and the web (devicePixelRatio) path.
+Rasterizing through the tile set (calling the fills per selected tile) is wired
+next, together with the blit.

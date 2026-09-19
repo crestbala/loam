@@ -275,6 +275,11 @@ fn raster_realloc_count() -> int {
     return fb_reallocs
 }
 
+/// Tile edge in device pixels; the one source of truth for the tile grid.
+fn raster_tile_size() -> int {
+    return RASTER_TILE
+}
+
 fn raster_pixel_index(x: int, y: int) -> int {
     return (y * fb_w + x) * 4
 }

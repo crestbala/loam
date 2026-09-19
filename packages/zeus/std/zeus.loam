@@ -2415,6 +2415,24 @@ fn damage_h(i: int) -> int {
     return arena.damage[i].h
 }
 
+/// Phase 4 diagnostics: build the frame's raster tile list from the damage list
+/// (Phase 1) and return how many tiles it touches. Additive.
+fn damage_tiles_build() -> int {
+    return scene.damage_tiles_build()
+}
+
+fn damage_tiles_count() -> int {
+    return scene.damage_tiles_count()
+}
+
+fn damage_tiles_x(i: int) -> int {
+    return scene.damage_tiles_x(i)
+}
+
+fn damage_tiles_y(i: int) -> int {
+    return scene.damage_tiles_y(i)
+}
+
 /// Byte size of one draw-list record (diagnostics for the Phase 11 layout
 /// steps).
 fn draw_op_bytes() -> int {
