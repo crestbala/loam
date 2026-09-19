@@ -2492,6 +2492,26 @@ fn scene_register_image(src: string, slot: int) -> int {
     return scene.raster_register_image(src, slot)
 }
 
+/// Load the font the raster pass draws text with (a file path). Until this is
+/// called, text ops are counted as unhandled rather than dropped silently.
+fn scene_load_font(src: string) -> int {
+    return scene.raster_load_font(src)
+}
+
+fn scene_font_is_ready() -> int {
+    return scene.raster_font_is_ready()
+}
+
+/// Glyphs the pass has composited from the atlas, and glyphs it wanted but
+/// could not get.
+fn scene_glyphs_drawn() -> int {
+    return scene.raster_glyphs_drawn_count()
+}
+
+fn scene_glyphs_missing() -> int {
+    return scene.raster_glyphs_missing_count()
+}
+
 // --- multi-contour fills (holes / winding) --------------------------------
 
 fn raster_multi_begin() {
