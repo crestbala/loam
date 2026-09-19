@@ -164,17 +164,16 @@ was never the bulk of it.
 | path | footprint | frame |
 |---|---|---|
 | AppKit store (`APP_KIT=1` / `ZEUS_OWN_BUFFER=0`) | 103–137 MB | 60 fps, zero copy |
-| **owned bitmap (default since `0440f3e`)** | **51–55 MB** | 60 fps @16.6 ms of a 16.7 budget |
-| owned IOSurface (`ZEUS_OWN_SURFACE=1`) | ~35 MB | should be faster (no copy) |
+| owned bitmap (`ZEUS_OWN_SURFACE=0`) | 51–55 MB | 60 fps @16.6 ms of a 16.7 budget; single buffer + a full-frame copy |
+| **owned IOSurface pair — the default** | ~35 MB expected | zero copy, double buffered |
 | AppKit store, wide gamut (`ZEUS_WIDE_GAMUT=1`) | 176–219 MB | — |
 
-The default was flipped to the owned bitmap, the change that takes the gallery
-from ~100 MB to ~51 MB for pixel-identical output. `APP_KIT=1` is the opt-in
-escape hatch for a host that wants the zero-copy `drawRect:` paint. The
-`ZEUS_OWN_SURFACE=1` path (~35 MB — one buffer instead of our buffer plus the
-compositor's texture) is implemented and byte-compared by
-`packages/loam/tests/bench/own_buffer.sh`, but is not the default yet: it needs a
-run on a real display to confirm the two-surface swap holds under live scroll.
+`0440f3e` moved the default off AppKit's store, and a later field report (fast
+scroll shimmered and lagged on the single-buffer bitmap path, and did not on the
+IOSurface pair) moved it onto the pair. Both owned paths are two full-window
+buffers' worth of pixels; the pair is the one that never copies between them.
+`APP_KIT=1` remains the opt-in for AppKit's zero-copy `drawRect:` draw at ~54 MB
+of IOSurface, and `ZEUS_OWN_SURFACE=0` still selects the bitmap.
 
 `docs/mem/regions.md` and `tools/mem-baseline.sh` still produce the full
 automated split; the table above is the manual measurement from this session.
