@@ -1030,26 +1030,32 @@ static NSAccessibilityRole mac_a11y_role(NSString *r) {
 
    Display paths:
 
-     default              AppKit's store, window pinned to sRGB. `drawRect:`
+     default              the owned bitmap below: one buffer (~18 MB) instead of
+                          three, which is what keeps a screen-filling window at
+                          51-55 MB rather than 103-137 MB, for identical pixels.
+                          CoreAnimation still materialises each frame into a
+                          texture of its own, so the frame carries one copy.
+     ZEUS_OWN_SURFACE=1   the IOSurface path: our memory IS the layer's texture,
+                          so there is no copy and no store of the compositor's
+                          own. The leanest of the four, and the only one with
+                          neither cost.
+     APP_KIT=1            AppKit's own store, window pinned to sRGB. `drawRect:`
                           paints straight into the surface the compositor reads,
                           so nothing is ever copied and a screen-filling window
                           holds 60 fps — at the cost of ~54 MB of IOSurface.
-     ZEUS_WIDE_GAMUT=1    the same, but the window keeps the display's ICC
-                          profile, which doubles each buffer's depth to 8 bytes
-                          per pixel: ~109 MB for identical pixels.
-     ZEUS_OWN_BUFFER=1    the bitmap below: one buffer (~18 MB) instead of three,
-                          but CoreAnimation must materialise every frame into a
-                          texture of its own — 16.6 ms against the sRGB window,
-                          25.4 ms against a half-float one, since the copy also
-                          converts. That copy is the whole difference between the
-                          paths.
+     ZEUS_WIDE_GAMUT=1    AppKit's store with the window keeping the display's
+                          ICC profile, which doubles each buffer's depth to 8
+                          bytes per pixel: ~109 MB for identical pixels.
+
+   `ZEUS_OWN_BUFFER=0` is the same choice as `APP_KIT=1`, spelled as a value.
 
    Measured, handing the layer the IOSurface itself (rather than a CGImage over
    the bitmap) does remove that copy: `other` fell from 32 ms to 9.5 ms, the frame
-   held 60 fps and the footprint dropped to ~35 MB. It is not shipped because
+   held 60 fps and the footprint dropped to ~35 MB. It was held back because
    CoreAnimation then holds the surface as the layer's texture, so locking it to
-   write the next frame deadlocks the app after a few frames. The untried fix is a
-   two-buffer swap with a non-blocking `kIOSurfaceLockAvoidSync` lock.
+   write the next frame deadlocks the app after a few frames; that is fixed by the
+   two-buffer swap with a non-blocking `kIOSurfaceLockAvoidSync` lock below, which
+   is why `ZEUS_OWN_SURFACE=1` now exists.
 
    No scale knob: the bitmap is always the display's own resolution. */
 static int own_buffer = -1;
@@ -1074,14 +1080,20 @@ static int env_truthy(const char *name) {
 
 static int own_buffer_on(void) {
     if (own_buffer < 0) {
-        /* AppKit's store is the default; `ZEUS_OWN_BUFFER=1` asks for the owned
-           bitmap. `APP_KIT` is still accepted as an explicit spelling of the
-           default, so an older command line keeps its meaning. */
-        const char *e = getenv("ZEUS_OWN_BUFFER");
+        /* The owned bitmap is the DEFAULT. AppKit's store is three full-window
+           buffers the compositor owns (~54 MB at Retina, and double that under a
+           display profile) against one buffer we own, and that is the whole of
+           the difference between ~100 MB and ~51 MB for identical pixels.
+           `APP_KIT=1` asks for AppKit's store instead — the escape hatch for a
+           host that wants the zero-copy `drawRect:` draw and its larger
+           frame-time headroom; `ZEUS_OWN_BUFFER=0` is the same choice spelled as
+           a value. */
         if (env_truthy("APP_KIT")) {
             own_buffer = 0;
+        } else if (getenv("ZEUS_OWN_BUFFER")) {
+            own_buffer = env_truthy("ZEUS_OWN_BUFFER") ? 1 : 0;
         } else {
-            own_buffer = (e && e[0] && e[0] != '0') ? 1 : 0;
+            own_buffer = 1;
         }
     }
     return own_buffer;

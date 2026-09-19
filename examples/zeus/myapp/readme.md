@@ -87,27 +87,33 @@ Three of them, chosen by environment variable. This is the whole memory/frame-ra
 trade in the native host.
 
 ```sh
-./run.sh myapp                          # default: AppKit's store
-ZEUS_WIDE_GAMUT=1 ./run.sh myapp        # the same, with the display profile (2x the store)
-ZEUS_OWN_BUFFER=1 ./run.sh myapp        # owned bitmap
+./run.sh myapp                          # default: the owned bitmap (~51-55 MB)
+APP_KIT=1 ./run.sh myapp                # AppKit's store instead
+ZEUS_OWN_BUFFER=0 ./run.sh myapp        # the same, spelled as a value
 ZEUS_OWN_SURFACE=1 ./run.sh myapp       # owned IOSurface (the lean one)
-APP_KIT=true ./run.sh myapp             # explicit spelling of the default
+ZEUS_WIDE_GAMUT=1 ./run.sh myapp        # AppKit's store, display profile (2x depth)
 ```
+
+The **owned bitmap is the default** because AppKit's store is three full-window
+buffers the compositor owns — ~54 MB at Retina, ~109 MB under a display profile —
+against one buffer we own, for identical pixels. `APP_KIT=1` is the escape hatch
+for a host that would rather have the zero-copy `drawRect:` draw and its larger
+frame-time headroom.
 
 | path | how it draws | copies per frame | IOSurface | measured (screen-filling) |
 |---|---|---|---|---|
-| **default** (AppKit) | `drawRect:` paints straight into the window's backing store, which the compositor reads | **0** | 3 buffers, 54 MB reserved | **60 fps** (16.7 ms); peak 103–137 MB |
-| `ZEUS_WIDE_GAMUT=1` | the same, but the window keeps the display's ICC profile | **0** | 3 buffers, 109 MB reserved | **60 fps** (16.6–16.7 ms); peak 176–219 MB |
-| `ZEUS_OWN_BUFFER=1` | paints into a bitmap handed to the layer as `contents` | **1** — CoreAnimation materialises the whole frame into its own texture | 1 (~18 MB) plus that texture | **60 fps** (16.6 ms) with the sRGB window, 39 fps (25.4 ms) with `ZEUS_WIDE_GAMUT=1`; 51–55 MB |
+| **default** (`ZEUS_OWN_BUFFER`) | paints into a bitmap handed to the layer as `contents` | **1** — CoreAnimation materialises the whole frame into its own texture | 1 (~18 MB) plus that texture | **60 fps** (16.6 ms) with the sRGB window, 39 fps (25.4 ms) with `ZEUS_WIDE_GAMUT=1`; 51–55 MB |
 | `ZEUS_OWN_SURFACE=1` | draws into an IOSurface and hands the layer the SURFACE, so our memory *is* the texture | **0** | 2 surfaces, reused (one is the layer's texture) | *to be measured* — see below |
+| `APP_KIT=1` | `drawRect:` paints straight into the window's backing store, which the compositor reads | **0** | 3 buffers, 54 MB reserved | **60 fps** (16.7 ms); peak 103–137 MB |
+| `ZEUS_WIDE_GAMUT=1` | the same, but the window keeps the display's ICC profile | **0** | 3 buffers, 109 MB reserved | **60 fps** (16.6–16.7 ms); peak 176–219 MB |
 
 The `ZEUS_OWN_SURFACE=1` row is deliberately blank: it is implemented and the
 harness measures it, but no windowed run has been taken on the machine that
 writes this file, so there is no number to copy. The expectation is the ~35 MB
 recorded beside the IOSurface experiment in `hosts/desktop/mac.m`: it removes the
 bitmap path's per-frame copy AND the compositor's own store, so it should be the
-leanest of the four — and, unlike `ZEUS_OWN_BUFFER=1`, it should not cost a
-full-frame copy. `sh packages/loam/tests/bench/own_buffer.sh` runs all four and
+leanest of the four — and, unlike the default, it should not cost a full-frame
+copy. `sh packages/loam/tests/bench/own_buffer.sh` runs all four and
 byte-compares their window crops.
 
 The **two surfaces** are not an optimisation: CoreAnimation holds a surface as the
@@ -227,10 +233,13 @@ when any app opens a window and no app can shrink it.
 sh packages/loam/tests/bench/own_buffer.sh examples/zeus/myapp 10
 ```
 
-Runs the app three times — default, `ZEUS_OWN_BUFFER=1`, then `ZEUS_WIDE_GAMUT=1` —
+Runs the app four times — the default (owned bitmap), `ZEUS_OWN_SURFACE=1`,
+`APP_KIT=1`, then `ZEUS_WIDE_GAMUT=1` —
 and prints each one's footprint, peak, per-buffer IOSurface lines and frame-time
 medians, with a crop of each run's own window (by window id, via `bench/winid.m`)
 so a hand-off that blanks or glitches the window cannot pass by logging frames. It
+also byte-compares the crops, which is how "the paths draw the same pixels" is
+checked rather than asserted. It
 sets `ZEUS_FRAME_BENCH=1`, which keeps the frame clock running: an idle window has
 nothing pending and draws nothing, so without it the paths get sampled at
 different workloads, or not at all.

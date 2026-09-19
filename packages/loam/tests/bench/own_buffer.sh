@@ -1,11 +1,18 @@
 #!/bin/sh
 # own_buffer.sh — the macOS desktop display paths, measured side by side.
 #
-# AppKit's window store (default) vs `ZEUS_OWN_BUFFER=1` (owned bitmap) vs
-# `ZEUS_OWN_SURFACE=1` (owned IOSurface, the lean one) vs `ZEUS_WIDE_GAMUT=1`
-# (the display profile, which doubles the store's depth — see the colour-space
-# note in hosts/desktop/mac.m). For each run this reports the physical footprint
-# (now and peak) and the IOSurface / IOAccelerator regions, so the numbers in
+# The macOS desktop display paths, measured side by side. The DEFAULT is the
+# owned bitmap (see mac.m: AppKit's store is three full-window buffers the
+# compositor owns, this is one buffer we own, for identical pixels), so the
+# first run sets no variable and the AppKit store is the one that has to ask:
+#
+#   default (owned bitmap) | `ZEUS_OWN_SURFACE=1` (owned IOSurface, the lean one)
+#   | `APP_KIT=1` (AppKit's store) | `ZEUS_WIDE_GAMUT=1` (that store, display
+#   profile, which doubles its depth — see the colour-space note in
+#   hosts/desktop/mac.m)
+#
+# For each run this reports the physical footprint (now and peak) and the
+# IOSurface / IOAccelerator regions, so the numbers in
 # examples/zeus/myapp/readme.md can be reproduced instead of hand-copied. It also
 # byte-compares the window crops, which is how "the paths draw the same pixels"
 # is checked rather than asserted.
@@ -173,11 +180,11 @@ run_one() {
 echo "own_buffer: $entry   ($SECS s per path)"
 echo "  binary $bin"
 echo
-run_one appkit ""
-echo
-run_one owned "ZEUS_OWN_BUFFER=1"
+run_one owned ""
 echo
 run_one surf "ZEUS_OWN_SURFACE=1"
+echo
+run_one appkit "APP_KIT=1"
 echo
 run_one wide "ZEUS_WIDE_GAMUT=1"
 
@@ -241,9 +248,9 @@ if [ -s "$OUT/appkit.png" ] && [ -s "$OUT/owned.png" ]; then
 fi
 
 echo
- echo "appkit = AppKit's window store, sRGB window (default)"
-echo "owned  = ZEUS_OWN_BUFFER=1      surf = ZEUS_OWN_SURFACE=1 (owned IOSurface)"
-echo "wide   = ZEUS_WIDE_GAMUT=1 (display profile)"
+ echo "owned  = the owned bitmap, the DEFAULT (no variable)"
+echo "surf   = ZEUS_OWN_SURFACE=1 (owned IOSurface, the lean one)"
+echo "appkit = APP_KIT=1            wide = ZEUS_WIDE_GAMUT=1 (display profile)"
 echo "raw: $OUT/<mode>.log and $OUT/<mode>.vmmap"
 echo
 echo "Reading it:"
