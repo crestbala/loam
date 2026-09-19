@@ -470,10 +470,16 @@
          (ox, oy). Composes with the enclosing clip and unwinds with the
          enclosing restore, so it never escapes its save level. */
       xform: (dx, dy, scale, rot, ox, oy) => {
-        ctx.translate((ox + dx) * sx, (oy + dy) * sy);
+        /* LAYOUT units, like every other callback here: `applyLayoutTransform`
+           has already put `sx, sy` on the CTM, so scaling these translates
+           again moved the content by sx^2 (4x at dpr 2 — the spinner lands far
+           from its box) and swung the rotation about a pivot that no longer
+           coincided with the node's centre (so it "rotates differently").
+           Translate in user space and let the CTM do the device mapping. */
+        ctx.translate(ox + dx, oy + dy);
         if (rot) ctx.rotate((rot * Math.PI) / 180);
         if (scale !== 100) ctx.scale(scale / 100, scale / 100);
-        ctx.translate(-ox * sx, -oy * sy);
+        ctx.translate(-ox, -oy);
       },
       text: (x, y, ptr, color, font) => {
         const s = cstr(ptr);
