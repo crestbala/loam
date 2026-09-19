@@ -1,0 +1,111 @@
+// Scroll DIRECTION and speed. Two bugs lived here, both felt as "the UI
+// vibrates while scrolling" and "it goes up and down when I scroll down", and
+// both were in the shared engine (so every host showed them):
+//
+//   1. A pan's delta was applied by the finger AND again by the momentum
+//      integrator in the same frame, so a drag moved the content at twice the
+//      finger's speed.
+//   2. A direct scroll (pan / precise wheel step) did not cancel a pending
+//      wheel easing, so the frames after it kept gliding toward the notch's
+//      now-stale target — a downward scroll went down and then back up.
+//
+// Every delta below is DOWNWARD, so the content must move down and never up.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn scrollable() -> int {
+    zeus.window("scroll-dir", 320, 180)
+    let top = zeus.raw_scroll()
+    zeus.slot(top, fn() {
+        zeus.Box(align_direction = DIRECTION.Column) {
+            zeus.Box(height = 3000)
+        }
+    })
+    zeus.root(top)
+    zeus.pump_frame()
+    return top.id
+}
+
+fn main() {
+    // --- a pan tracks the finger 1:1, then coasts --------------------------
+    let id = scrollable()
+    let maxs = zeus.node_scroll_max(id)
+    must(maxs > 1000, "the content is tall enough to scroll")
+
+    let mut prev = 0
+    let mut i = 0
+    while i < 8 {
+        zeus.engine_scroll(100, 100, 0, 20)
+        zeus.engine_step_dt(16)
+        zeus.pump_frame()
+        let y = zeus.node_scroll_y(id)
+        must(y == prev + 20, "a pan advances by exactly the finger's delta")
+        prev = y
+        i = i + 1
+    }
+    must(zeus.node_scroll_y(id) == 160, "eight 20px pans land at 160")
+
+    // The coast runs on the frames AFTER the finger stops: same direction,
+    // decaying, and it does move (the finger's speed becomes the launch speed).
+    let before = zeus.node_scroll_y(id)
+    zeus.engine_step_dt(16)
+    zeus.pump_frame()
+    let c1 = zeus.node_scroll_y(id)
+    must(c1 > before, "the coast continues past the last pan")
+    zeus.engine_step_dt(16)
+    zeus.pump_frame()
+    let c2 = zeus.node_scroll_y(id)
+    must(c2 > c1, "and keeps going")
+    must(c2 - c1 < c1 - before, "while decaying")
+
+    // --- a direct scroll cancels a pending wheel easing --------------------
+    // A mouse notch arms the ease toward +100; the trackpad then takes over
+    // with a precise +200. From that point the content must not move up.
+    let id2 = scrollable()
+    zeus.engine_scroll_smooth(100, 100, 0, 100)
+    zeus.engine_step_dt(16)
+    zeus.pump_frame()
+    let after_notch = zeus.node_scroll_y(id2)
+    must(after_notch > 0 && after_notch < 100, "the notch moved part-way")
+
+    zeus.engine_scroll_step(100, 100, 0, 200)
+    let mut p = 0
+    let mut up = 0
+    let mut f = 0
+    while f < 20 {
+        zeus.engine_step_dt(16)
+        zeus.pump_frame()
+        let y = zeus.node_scroll_y(id2)
+        if y < p {
+            up = up + 1
+        }
+        p = y
+        f = f + 1
+    }
+    must(up == 0, "a downward scroll never moves the content up")
+    must(zeus.node_scroll_y(id2) == after_notch + 200,
+         "the precise delta lands exactly, with the stale ease cancelled")
+
+    // --- and the ease still works when nothing else intervenes -------------
+    let id3 = scrollable()
+    zeus.engine_scroll_smooth(100, 100, 0, 100)
+    let mut m = 0
+    while m < 40 {
+        zeus.engine_step_dt(16)
+        zeus.pump_frame()
+        m = m + 1
+    }
+    must(zeus.node_scroll_y(id3) == 100, "an undisturbed notch still eases and lands")
+    must(zeus.engine_step_dt(16) == 0, "and then goes idle")
+
+    fmt.println("scroll dir ok", maxs)
+}
