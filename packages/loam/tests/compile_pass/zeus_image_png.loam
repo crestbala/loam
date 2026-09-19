@@ -1,0 +1,114 @@
+// Phase 4: the PNG decoder, in Loam, against spec-valid fixtures.
+//
+// The important assertion is the five-filter agreement: `checker.png` and the
+// four filtered variants hold the SAME pixels, so if the decoder's Sub / Up /
+// Average / Paeth reconstruction is wrong the images disagree. A decoder that
+// ignores the filter byte still passes a single fixture, which is exactly the
+// kind of test that hides the bug; this one cannot.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn load(name: string) -> string {
+    let s = sys.read_file("packages/loam/tests/images/{{name}}")
+    must(s.len > 0, "fixture not loaded")
+    return s
+}
+
+fn main() {
+    // --- the five scanline filters must agree ------------------------------
+    let plain = load("checker.png")
+    must(zeus.image_decode_png(plain) == 1, "checker.png decodes")
+    must(zeus.image_src_width() == 64, "64 wide")
+    must(zeus.image_src_height() == 64, "64 tall")
+    // 1px checkerboard, un-premultiplied only in name: alpha is 255.
+    must(zeus.image_src_get(0, 0, 0) == 255, "(0,0) is white")
+    must(zeus.image_src_get(1, 0, 0) == 0, "(1,0) is black")
+    must(zeus.image_src_get(1, 1, 0) == 255, "(1,1) is white again")
+    must(zeus.image_src_get(0, 0, 3) == 255, "RGB decodes as opaque")
+
+    let names: []string = []string { "checker_sub.png", "checker_up.png",
+                                     "checker_avg.png", "checker_paeth.png" }
+    let mut k = 0
+    while k < names.len {
+        let s = load(names[k])
+        must(zeus.image_decode_png(s) == 1, "filtered variant decodes")
+        let mut bad = 0
+        let mut y = 0
+        while y < 64 {
+            let mut x = 0
+            while x < 64 {
+                let got = zeus.image_src_get(x, y, 0)
+                let mut want = 0
+                if (x + y) % 2 == 0 {
+                    want = 255
+                }
+                if got != want {
+                    bad = bad + 1
+                }
+                x = x + 1
+            }
+            y = y + 1
+        }
+        must(bad == 0, "a filtered variant matches the unfiltered pattern")
+        k = k + 1
+    }
+
+    // --- a gradient decodes monotonically ----------------------------------
+    must(zeus.image_decode_png(load("grad.png")) == 1, "grad.png decodes")
+    must(zeus.image_src_width() == 64, "gradient is 64 wide")
+    must(zeus.image_src_height() == 48, "gradient is 48 tall")
+    must(zeus.image_src_get(0, 0, 0) == 0, "gradient starts black")
+    must(zeus.image_src_get(63, 0, 0) == 255, "gradient ends white")
+    let mut mono = 1
+    let mut x = 1
+    while x < 64 {
+        if zeus.image_src_get(x, 0, 0) < zeus.image_src_get(x - 1, 0, 0) {
+            mono = 0
+        }
+        x = x + 1
+    }
+    must(mono == 1, "gradient is monotone")
+    must(zeus.image_src_get(20, 30, 0) == zeus.image_src_get(20, 0, 0), "rows agree")
+
+    // --- alpha is premultiplied at decode ----------------------------------
+    // The right half is (0,255,0,0): a fully transparent GREEN pixel. Straight
+    // RGBA would keep the green and fringe every filtered edge with it.
+    must(zeus.image_decode_png(load("alpha.png")) == 1, "alpha.png decodes")
+    must(zeus.image_src_width() == 8, "8 wide")
+    must(zeus.image_src_get(0, 0, 0) == 128, "50% red premultiplies to 128")
+    must(zeus.image_src_get(0, 0, 3) == 128, "alpha preserved")
+    must(zeus.image_src_get(7, 0, 0) == 0, "transparent: no red")
+    must(zeus.image_src_get(7, 0, 1) == 0, "transparent: the green is gone")
+    must(zeus.image_src_get(7, 0, 2) == 0, "transparent: no blue")
+    must(zeus.image_src_get(7, 0, 3) == 0, "transparent: alpha 0")
+
+    // --- malformed input fails cleanly, with a reason ----------------------
+    let before = zeus.image_decode_failure_count()
+    must(zeus.image_decode_png(load("bad_sig.png")) == 0, "bad signature refused")
+    must(zeus.image_decode_failure_count() == before + 1, "the failure is counted")
+    must(zeus.image_decode_failure_reason() == "bad signature", "and named")
+    must(zeus.image_src_width() == 0, "no dimensions from a refused file")
+    must(zeus.image_decode_png("not a png at all") == 0, "junk refused")
+    must(zeus.image_decode_png("") == 0, "empty input refused")
+
+    // --- the decode scratch is reused, not accumulated ---------------------
+    must(zeus.image_decode_png(load("checker.png")) == 1, "decode for a baseline")
+    let a = zeus.image_scratch_bytes()
+    must(a < 200000, "scratch is one image, not a pile of them")
+    must(zeus.image_decode_png(load("grad.png")) == 1, "decode a different image")
+    must(zeus.image_decode_png(load("checker.png")) == 1, "and the first one again")
+    must(zeus.image_scratch_bytes() == a, "the same image reuses the same scratch")
+
+    fmt.println("image png ok", zeus.image_decode_count(),
+                zeus.image_decode_failure_count(), zeus.image_scratch_bytes())
+}

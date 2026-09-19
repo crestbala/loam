@@ -90,6 +90,7 @@ import "zeuscore/platform.loam"
 import "zeuscore/arena.loam"
 import "zeuscore/raster.loam"
 import "zeuscore/atlas.loam"
+import "zeuscore/image.loam"
 import "zeuscore/layout.loam"
 import "zeuscore/metrics.loam"
 import "zeuscore/scene.loam"
@@ -2607,6 +2608,45 @@ fn measure_cache_eviction_count() -> int {
 
 fn measure_cache_clear() {
     atlas.meas_clear()
+}
+
+// --- images: decode (Phase 4) ---------------------------------------------
+
+/// Decode a PNG into the reusable source buffers (RGBA8, premultiplied).
+/// Returns 1 on success. See `image.loam` for exactly what is supported.
+fn image_decode_png(src: string) -> int {
+    return image.png_decode(src)
+}
+
+fn image_src_width() -> int {
+    return image.png_width()
+}
+
+fn image_src_height() -> int {
+    return image.png_height()
+}
+
+/// Channel `c` (0 R, 1 G, 2 B, 3 A) of the decoded source at (x, y).
+fn image_src_get(x: int, y: int, c: int) -> int {
+    return image.png_get(x, y, c)
+}
+
+/// Bytes held by the decode scratch. Bounded by the largest image decoded, not
+/// by how many have been decoded.
+fn image_scratch_bytes() -> int {
+    return image.png_scratch_bytes()
+}
+
+fn image_decode_count() -> int {
+    return image.png_decode_count()
+}
+
+fn image_decode_failure_count() -> int {
+    return image.png_failure_count()
+}
+
+fn image_decode_failure_reason() -> string {
+    return image.png_failure_reason()
 }
 
 fn raster_push_str(b: &mut []int, s: string) {

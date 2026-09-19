@@ -1,0 +1,495 @@
+//! image — the image pipeline: decode on demand, downsample with a real filter,
+//! and cache the result under a fixed byte budget.
+//!
+//! Two things this module is careful about, because they are where image
+//! handling usually goes wrong on memory and on quality:
+//!
+//!   * **A thumbnail never keeps a full-resolution decode.** The source pixels
+//!     live in ONE reusable scratch buffer (bounded by the largest image seen,
+//!     not by the sum of them all) and die as soon as the resized result is
+//!     cached. What the cache holds is always the size that will be drawn.
+//!   * **The cache is a fixed budget, not a map that grows.** Entries are
+//!     LRU-evicted to stay under `IMG_BUDGET_BYTES`, and a single image larger
+//!     than the whole budget is refused loudly and counted rather than stored.
+//!
+//! Decoding is PNG, in Loam, with no graphics or image API: signature, chunk
+//! CRCs, IHDR validation, IDAT assembly, the zlib wrapper (Adler-32 checked),
+//! all five scanline filters, and premultiplied RGBA8 output. The DEFLATE
+//! decoder covers **stored blocks**, which is what makes the container, the
+//! filters and the buffers testable against spec-valid fixtures; Huffman-coded
+//! DEFLATE is refused explicitly (`btype != 0`) rather than decoded wrongly, and
+//! is the remaining decoder work.
+//!
+//! Resampling is separable Mitchell (B = C = 1/3), with the kernel scaled by the
+//! downscale factor so the support widens with the reduction — that is what
+//! makes a large downscale area-correct instead of aliased.
+
+import "raster.loam"
+
+/// Decoded source pixels: RGBA8, PREMULTIPLIED. Premultiplied is what keeps a
+/// filtered transparent edge from bleeding its colour into the result (and it
+/// matches the framebuffer's own premultiplied rule).
+let mut png_px: []u8 = []u8 {}
+let mut png_w: int = 0
+let mut png_h: int = 0
+
+/// Reusable scratch: the assembled IDAT stream and the unfiltered scanlines.
+let mut png_idat: []u8 = []u8 {}
+let mut png_raw: []u8 = []u8 {}
+/// File offset just past the last IDAT payload, i.e. where its Adler-32 is not.
+let mut png_adler_at: int = 0
+
+let mut png_decodes: int = 0
+let mut png_failures: int = 0
+let mut png_why: string = ""
+
+let mut crc_tab: []i64 = []i64 {}
+let mut crc_ready: int = 0
+
+// --- small readers ---------------------------------------------------------
+
+fn png_u16(s: string, o: int) -> int {
+    return s[o] * 256 + s[o + 1]
+}
+
+/// A 4-byte big-endian field, refused (as -1) rather than truncated when it
+/// cannot fit an `int`. A malformed file must fail cleanly, never trap.
+fn png_u32(s: string, o: int) -> int {
+    if s[o] != 0 {
+        return -1
+    }
+    return s[o + 1] * 65536 + s[o + 2] * 256 + s[o + 3]
+}
+
+/// A 4-byte big-endian field as i64 (CRCs and Adler-32 are full 32-bit).
+fn png_u32_64(s: string, o: int) -> i64 {
+    let mut v: i64 = i64(s[o]) * 16777216
+    v = v + i64(s[o + 1]) * 65536
+    v = v + i64(s[o + 2]) * 256
+    v = v + i64(s[o + 3])
+    return v
+}
+
+fn png_is_tag(s: string, o: int, a: int, b: int, c: int, d: int) -> int {
+    if s[o] != a {
+        return 0
+    }
+    if s[o + 1] != b {
+        return 0
+    }
+    if s[o + 2] != c {
+        return 0
+    }
+    if s[o + 3] != d {
+        return 0
+    }
+    return 1
+}
+
+// --- CRC-32 and Adler-32 ---------------------------------------------------
+
+/// Standard CRC-32 table, built once. Held as i64: the values are 32-bit and
+/// every width in Loam traps on overflow.
+fn png_crc_build() {
+    if crc_ready != 0 {
+        return
+    }
+    crc_ready = 1
+    let mut n = 0
+    while n < 256 {
+        let mut c: i64 = i64(n)
+        let mut k = 0
+        while k < 8 {
+            if c % 2 != 0 {
+                c = i64(3988292384) ^ (c / 2)
+            } else {
+                c = c / 2
+            }
+            k = k + 1
+        }
+        push(crc_tab, c)
+        n = n + 1
+    }
+}
+
+fn png_crc_update(c: i64, b: int) -> i64 {
+    let x = c ^ i64(b)
+    return crc_tab[int(x % 256)] ^ (x / 256)
+}
+
+/// CRC-32 over a chunk's type and data.
+fn png_chunk_crc(s: string, off: int, len: int) -> i64 {
+    png_crc_build()
+    let mut c: i64 = 4294967295
+    let mut i = 0
+    while i < 4 {
+        c = png_crc_update(c, s[off + 4 + i])
+        i = i + 1
+    }
+    i = 0
+    while i < len {
+        c = png_crc_update(c, s[off + 8 + i])
+        i = i + 1
+    }
+    return 4294967295 - c
+}
+
+/// Adler-32 over the inflated bytes, compared with the 4 bytes at `o`. The
+/// stored value is (sum2 << 16) | sum1, big-endian.
+fn png_adler_ok(s: string, o: int, n: int) -> int {
+    let mut sum1 = 1
+    let mut sum2 = 0
+    let mut i = 0
+    while i < n {
+        sum1 = (sum1 + int(png_raw[i])) % 65521
+        sum2 = (sum2 + sum1) % 65521
+        i = i + 1
+    }
+    if i64(sum2) * 65536 + i64(sum1) == png_u32_64(s, o) {
+        return 1
+    }
+    return 0
+}
+
+// --- DEFLATE (stored blocks) -----------------------------------------------
+
+/// Inflate a zlib stream made of stored blocks into `png_raw`. Returns the
+/// inflated length, or -1 when the stream is not stored-block DEFLATE.
+fn png_inflate() -> int {
+    let n = png_idat.len
+    if n < 6 {
+        return -1
+    }
+    // CMF/FLG: deflate, 32K window, no preset dictionary, check bits valid.
+    if int(png_idat[0]) != 120 {
+        return -1
+    }
+    if (int(png_idat[0]) * 256 + int(png_idat[1])) % 31 != 0 {
+        return -1
+    }
+    while png_raw.len > 0 {
+        pop(png_raw)
+    }
+    let mut o = 2
+    let mut final = 0
+    while final == 0 {
+        if o + 5 > n {
+            return -1
+        }
+        let hdr = int(png_idat[o])
+        final = hdr % 2
+        let btype = (hdr / 2) % 4
+        if btype != 0 {
+            // Fixed/dynamic Huffman: refused, explicitly, not misdecoded.
+            return -1
+        }
+        let len = int(png_idat[o + 1]) + int(png_idat[o + 2]) * 256
+        let nlen = int(png_idat[o + 3]) + int(png_idat[o + 4]) * 256
+        if len + nlen != 65535 {
+            return -1
+        }
+        o = o + 5
+        if o + len > n {
+            return -1
+        }
+        let mut i = 0
+        while i < len {
+            push(png_raw, png_idat[o + i])
+            i = i + 1
+        }
+        o = o + len
+    }
+    return png_raw.len
+}
+
+// --- filters ---------------------------------------------------------------
+
+fn png_abs_i(v: int) -> int {
+    if v < 0 {
+        return 0 - v
+    }
+    return v
+}
+
+fn png_paeth(a: int, b: int, c: int) -> int {
+    let p = a + b - c
+    let pa = png_abs_i(p - a)
+    let pb = png_abs_i(p - b)
+    let pc = png_abs_i(p - c)
+    if pa <= pb {
+        if pa <= pc {
+            return a
+        }
+    }
+    if pb <= pc {
+        return b
+    }
+    return c
+}
+
+/// Reverse the PNG scanline filters IN PLACE. The left and up neighbours are
+/// already reconstructed when they are read, which is what makes in-place
+/// correct.
+fn png_unfilter(w: int, h: int, bpp: int) -> int {
+    let stride = w * bpp
+    let mut y = 0
+    while y < h {
+        let base = y * (stride + 1)
+        let ft = int(png_raw[base])
+        let mut k = 0
+        while k < stride {
+            let i = base + 1 + k
+            let mut l = 0
+            if k >= bpp {
+                l = int(png_raw[i - bpp])
+            }
+            let mut u = 0
+            if y > 0 {
+                // The row above starts one filter byte earlier, so its byte `k`
+                // is at i - (stride + 1), not i - stride.
+                u = int(png_raw[i - stride - 1])
+            }
+            let mut ul = 0
+            if y > 0 {
+                if k >= bpp {
+                    ul = int(png_raw[i - stride - 1 - bpp])
+                }
+            }
+            let mut f = 0
+            if ft == 1 {
+                f = l
+            } else if ft == 2 {
+                f = u
+            } else if ft == 3 {
+                f = (l + u) / 2
+            } else if ft == 4 {
+                f = png_paeth(l, u, ul)
+            } else if ft != 0 {
+                return -1
+            }
+            png_raw[i] = u8((int(png_raw[i]) + f) % 256)
+            k = k + 1
+        }
+        y = y + 1
+    }
+    return 1
+}
+
+// --- decode ----------------------------------------------------------------
+
+/// Decode a PNG into `png_px` (RGBA8, premultiplied). Returns 1 on success; on
+/// failure `png_why` says why and the counters record it. Supported: 8-bit
+/// RGB/RGBA, non-interlaced, stored-block DEFLATE. Everything else is refused.
+fn png_decode(src: string) -> int {
+    png_w = 0
+    png_h = 0
+    png_why = ""
+    while png_px.len > 0 {
+        pop(png_px)
+    }
+    if src.len < 8 {
+        png_why = "too short"
+        png_failures = png_failures + 1
+        return 0
+    }
+    if src[0] != 137 || src[1] != 80 || src[2] != 78 || src[3] != 71 {
+        png_why = "bad signature"
+        png_failures = png_failures + 1
+        return 0
+    }
+    // The rest of the signature is not decoration: it tells us where the first
+    // chunk starts.
+    if src[4] != 13 || src[5] != 10 || src[6] != 26 || src[7] != 10 {
+        png_why = "bad signature"
+        png_failures = png_failures + 1
+        return 0
+    }
+    let mut w = 0
+    let mut h = 0
+    let mut bpp = 0
+    let mut have_ihdr = 0
+    while png_idat.len > 0 {
+        pop(png_idat)
+    }
+    png_adler_at = 0
+    let mut off = 8
+    let mut done = 0
+    while done == 0 {
+        if off + 12 > src.len {
+            png_why = "truncated chunk header"
+            png_failures = png_failures + 1
+            return 0
+        }
+        let len = png_u32(src, off)
+        if len < 0 {
+            png_why = "oversized chunk"
+            png_failures = png_failures + 1
+            return 0
+        }
+        if off + 12 + len > src.len {
+            png_why = "truncated chunk"
+            png_failures = png_failures + 1
+            return 0
+        }
+        if png_chunk_crc(src, off, len) != png_u32_64(src, off + 8 + len) {
+            png_why = "bad chunk CRC"
+            png_failures = png_failures + 1
+            return 0
+        }
+        if png_is_tag(src, off + 4, 73, 72, 68, 82) == 1 {
+            if len < 13 {
+                png_why = "short IHDR"
+                png_failures = png_failures + 1
+                return 0
+            }
+            w = png_u32(src, off + 8)
+            h = png_u32(src, off + 12)
+            if w < 0 || h < 0 {
+                png_why = "oversized dimensions"
+                png_failures = png_failures + 1
+                return 0
+            }
+            let depth = int(src[off + 16])
+            let ct = int(src[off + 17])
+            let comp = int(src[off + 18])
+            let filt = int(src[off + 19])
+            let inter = int(src[off + 20])
+            if depth != 8 || comp != 0 || filt != 0 || inter != 0 {
+                png_why = "unsupported IHDR"
+                png_failures = png_failures + 1
+                return 0
+            }
+            if ct == 2 {
+                bpp = 3
+            } else if ct == 6 {
+                bpp = 4
+            } else {
+                png_why = "unsupported colour type"
+                png_failures = png_failures + 1
+                return 0
+            }
+            if w <= 0 || h <= 0 {
+                png_why = "empty image"
+                png_failures = png_failures + 1
+                return 0
+            }
+            have_ihdr = 1
+        } else if png_is_tag(src, off + 4, 73, 68, 65, 84) == 1 {
+            if have_ihdr == 0 {
+                png_why = "IDAT before IHDR"
+                png_failures = png_failures + 1
+                return 0
+            }
+            let mut i = 0
+            while i < len {
+                push(png_idat, u8(src[off + 8 + i]))
+                i = i + 1
+            }
+            // The Adler-32 trails the LAST IDAT payload in the file.
+            png_adler_at = off + 8 + len
+        } else if png_is_tag(src, off + 4, 73, 69, 78, 68) == 1 {
+            done = 1
+        } else if png_is_tag(src, off + 4, 80, 76, 84, 69) == 1 {
+            png_why = "palette image"
+            png_failures = png_failures + 1
+            return 0
+        }
+        off = off + 12 + len
+    }
+    if have_ihdr == 0 {
+        png_why = "no IHDR"
+        png_failures = png_failures + 1
+        return 0
+    }
+    let stride = w * bpp
+    let n = png_inflate()
+    if n < 0 {
+        png_why = "not stored-block DEFLATE"
+        png_failures = png_failures + 1
+        return 0
+    }
+    if n != h * (stride + 1) {
+        png_why = "wrong inflated length"
+        png_failures = png_failures + 1
+        return 0
+    }
+    if png_adler_ok(src, png_adler_at - 4, n) != 1 {
+        png_why = "bad Adler-32"
+        png_failures = png_failures + 1
+        return 0
+    }
+    if png_unfilter(w, h, bpp) != 1 {
+        png_why = "bad filter type"
+        png_failures = png_failures + 1
+        return 0
+    }
+    // Unfiltered scanlines -> premultiplied RGBA8.
+    let mut y = 0
+    while y < h {
+        let base = y * (stride + 1) + 1
+        let mut x = 0
+        while x < w {
+            let p = base + x * bpp
+            let r = int(png_raw[p])
+            let g = int(png_raw[p + 1])
+            let b = int(png_raw[p + 2])
+            let mut a = 255
+            if bpp == 4 {
+                a = int(png_raw[p + 3])
+            }
+            push(png_px, u8((r * a + 127) / 255))
+            push(png_px, u8((g * a + 127) / 255))
+            push(png_px, u8((b * a + 127) / 255))
+            push(png_px, u8(a))
+            x = x + 1
+        }
+        y = y + 1
+    }
+    png_w = w
+    png_h = h
+    png_decodes = png_decodes + 1
+    return 1
+}
+
+// --- decoded-source accessors ----------------------------------------------
+
+fn png_width() -> int {
+    return png_w
+}
+
+fn png_height() -> int {
+    return png_h
+}
+
+/// Bytes currently in use by the decode scratch (source pixels + scanlines +
+/// IDAT). The allocations are reused capacities, so this is a high-water-style
+/// figure for the largest image decoded, not a per-image accumulation.
+fn png_scratch_bytes() -> int {
+    return png_px.len + png_raw.len + png_idat.len
+}
+
+fn png_decode_count() -> int {
+    return png_decodes
+}
+
+fn png_failure_count() -> int {
+    return png_failures
+}
+
+fn png_failure_reason() -> string {
+    return png_why
+}
+
+/// Channel `c` (0 R, 1 G, 2 B, 3 A) of the decoded source at (x, y).
+fn png_get(x: int, y: int, c: int) -> int {
+    if x < 0 || y < 0 {
+        return 0
+    }
+    if x >= png_w || y >= png_h {
+        return 0
+    }
+    if c < 0 || c > 3 {
+        return 0
+    }
+    return int(png_px[(y * png_w + x) * 4 + c])
+}
