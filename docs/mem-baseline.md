@@ -17,6 +17,7 @@ Everything in this file was produced by commands in
 | `membench` app, three modes | `examples/zeus/membench/membench.loam` |
 | Structural golden scene | `tests/golden/ref_scene.loam` |
 | Frame damage list (Phase 1) | `packages/zeus/std/zeuscore/arena.loam`, `scene.loam` |
+| Node-arena ceiling (Phase 2) | `packages/zeus/std/zeuscore/arena.loam` (`node_cap`) |
 
 The gate is a no-op when off: `mem_stats_report` calls one host function that
 returns 0, and `mem_sample()` (the only per-frame cost) is skipped entirely.
@@ -250,3 +251,38 @@ regression.
 - **The scroll leak from §5.1 is not fixed by this phase.** Damage makes the
   repaint correct and local; the footprint growth is closure lifetime and still
   needs keyed row identity (Phase 5) / §1.3 closure work (Phase 14).
+
+### Phase 2 — arena discipline (scoped)
+
+- bytes/node: **492.0 — unchanged.** No per-node cost was touched.
+- arena high-water (1000 buttons): 1 018 672 B (unchanged)
+- process footprint: 1 904 / 3 889 / 5 105 KB (empty / one / thousand)
+- golden: structural pass; draw goldens unchanged; pixel @2x still *pending*.
+
+**New invariant.** The node arena has a stated maximum (`node_cap`, default
+65535 = the `u16` id maximum). `alloc_node` refuses to grow past it, prints
+once, sets `node_overflow`, and returns the null handle (id 0) instead of
+growing without bound. Non-fatal and covered by `zeus_node_cap.loam`.
+
+**Already satisfied by the existing design** (verified, not rewritten):
+
+- Item 2, free list for node ids: `free_nodes` is recycled by `alloc_node`;
+  `zeus_for_recycle` / `zeus_for_leak` already pin it.
+- Item 1's substance, scratch buffers that reset rather than realloc: the
+  per-frame buffers already pop to zero and keep their capacity (`damage`,
+  `dirty_paint`, `zf_*`), which is the realizable form of "reset to offset 0"
+  here — Loam has no raw-pointer bump allocator (no deref sigil, by rule).
+  `zeus_anim_proof` / `zeus_motion` already assert flat allocation counts.
+- Item 4, one flat render command list: `scene.draws` is that single array.
+  Culling it to the damage region is deferred to Phase 4: the list is
+  *retained* and re-presented when nothing changed, so culling now would leave
+  the next present incomplete. It belongs where the rasterizer owns the pass.
+
+**Reported conflict — item 3 preallocation not forced.** At today's 488-byte
+`UiNode`, preallocating the 65535-node `u16` maximum reserves ~32 MB in every
+process, against a 30-60 MB total budget. A smaller fixed cap contradicts "the
+stated maximum" and would silently reject legitimate apps. The invariant item 3
+exists for — never silently grow, never realloc-double — is enforced by the cap;
+the up-front reservation should follow the Phase 3 record shrink, at which
+point the maximum can be reserved cheaply or the cap raised. This matches the
+Phase 3-before-narrowing ordering `docs/loam_zeus_v2.md` §3.8 argues for.
