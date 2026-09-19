@@ -531,15 +531,35 @@
          width to leave the screen. */
       shadow: (x, y, w, h, radius, color, a, blur, dx, dy) => {
         const p = snapRect(x, y, w, h);
-        const off = p.x + p.w + 2 * blur + 64;
+        /* Canvas2D's shadow applies to the next fill, so the rounded path is
+           filled past the LEFT edge of the canvas and only its blur lands where
+           the rect is — filling in place would paint over whatever the shadow
+           sits under.
+
+           How far "past the left edge" depends on the CURRENT transform, which
+           is why this reads the matrix instead of assuming the layout origin is
+           the device origin. A paint transform (the drawer sliding out) moves
+           that origin, so the old fixed margin stopped clearing the canvas and
+           the black fill itself showed up as a block on the left — the bug you
+           saw while a drawer closed. In device terms the path must end before
+           device x = 0: `end = sc * (p.x + p.w - off) + originDev <= 0`. */
+        const m = ctx.getTransform();
+        const sc = m.a || 1; /* device pixels per layout unit */
+        const originX = m.e / sc; /* device origin, in layout units */
+        const originY = m.f / (m.d || sc);
+        const offX = p.x + p.w + originX + 2 * blur + 64;
+        const offY = p.y + p.h + originY + 2 * blur + 64;
         ctx.save();
         ctx.shadowColor = rgba(color, a);
-        ctx.shadowBlur = blur * sx;
-        ctx.shadowOffsetX = (dx + off) * sx;
-        ctx.shadowOffsetY = dy * sy;
+        /* shadow* values are DEVICE pixels and ignore the CTM, so the path's
+           leftward shift has to be cancelled out in device terms and the blur
+           scales with the device-per-layout factor. */
+        ctx.shadowBlur = blur * sc;
+        ctx.shadowOffsetX = sc * offX + dx * sc;
+        ctx.shadowOffsetY = sc * offY + dy * (m.d || sc);
         ctx.fillStyle = "#000";
-        traceRoundRect(p.x - off, p.y, p.w, p.h,
-                       Math.round(radius * sx) / sx);
+        traceRoundRect(p.x - offX, p.y - offY, p.w, p.h,
+                       Math.round(radius * sc) / sc);
         ctx.fill();
         popState();
       },
