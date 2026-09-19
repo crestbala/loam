@@ -1,0 +1,197 @@
+// Phase 4: formats. The in-Loam decoders cover PNG and BMP; every other format
+// the UI can already display stays supported through the platform image path.
+//
+// So this test pins BOTH halves of that contract:
+//   1. the format sniffer classifies real containers by magic bytes (not by a
+//      file extension, which lies), and reports which ones the Loam decoders
+//      handle and which the platform should load;
+//   2. BMP decodes pixel-exactly through the same premultiply -> resample ->
+//      byte-budgeted cache pipeline as PNG, so adding a format moves nothing
+//      downstream.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn load(name: string) -> string {
+    let s = sys.read_file("packages/loam/tests/images/{{name}}")
+    must(s.len > 0, "fixture not loaded")
+    return s
+}
+
+/// Cached slot for a fixture at its own size, so `image_get_px` can be used.
+fn slot_of(id: int, name: string, w: int, h: int) -> int {
+    let s = zeus.image_get(id, load(name), w, h)
+    must(s >= 0, "image cached")
+    return s
+}
+
+fn check_checker(s: int, n: int) -> int {
+    let mut bad = 0
+    let mut y = 0
+    while y < n {
+        let mut x = 0
+        while x < n {
+            let got = zeus.image_get_px(s, x, y, 0)
+            let mut want = 0
+            if (x + y) % 2 == 0 {
+                want = 255
+            }
+            if got != want {
+                bad = bad + 1
+            }
+            x = x + 1
+        }
+        y = y + 1
+    }
+    return bad
+}
+
+fn main() {
+    // --- the sniffer classifies real containers ---------------------------
+    let jpeg = load("magic_jpeg.bin")
+    let gif = load("magic_gif.bin")
+    let webp = load("magic_webp.bin")
+    let avif = load("magic_avif.bin")
+    let tiff = load("magic_tiff.bin")
+    let ico = load("magic_ico.bin")
+    let svg = load("magic_svg.txt")
+    let junk = load("magic_unknown.bin")
+    let pngb = load("checker.png")
+    let bmpb = load("checker24.bmp")
+
+    must(zeus.image_format_name(zeus.image_format_of(pngb)) == "png", "png sniffed")
+    must(zeus.image_format_name(zeus.image_format_of(bmpb)) == "bmp", "bmp sniffed")
+    must(zeus.image_format_name(zeus.image_format_of(jpeg)) == "jpeg", "jpeg sniffed")
+    must(zeus.image_format_name(zeus.image_format_of(gif)) == "gif", "gif sniffed")
+    must(zeus.image_format_name(zeus.image_format_of(webp)) == "webp", "webp sniffed")
+    must(zeus.image_format_name(zeus.image_format_of(avif)) == "avif", "avif sniffed")
+    must(zeus.image_format_name(zeus.image_format_of(tiff)) == "tiff", "tiff sniffed")
+    must(zeus.image_format_name(zeus.image_format_of(ico)) == "ico", "ico sniffed")
+    // SVG leads with whitespace then '<'; it is text, not a pixel format.
+    must(zeus.image_format_name(zeus.image_format_of(svg)) == "svg", "svg sniffed")
+    must(zeus.image_format_name(zeus.image_format_of(junk)) == "unknown", "junk unknown")
+
+    // Which of those the in-Loam decoders cover today. Everything else is still
+    // displayed: the platform image path loads it, which is what has always
+    // handled these formats.
+    must(zeus.image_format_is_decodable(zeus.image_format_of(pngb)) == 1, "png in Loam")
+    must(zeus.image_format_is_decodable(zeus.image_format_of(bmpb)) == 1, "bmp in Loam")
+    must(zeus.image_format_is_decodable(zeus.image_format_of(jpeg)) == 0, "jpeg via platform")
+    must(zeus.image_format_is_decodable(zeus.image_format_of(gif)) == 0, "gif via platform")
+    must(zeus.image_format_is_decodable(zeus.image_format_of(webp)) == 0, "webp via platform")
+    must(zeus.image_format_is_decodable(zeus.image_format_of(avif)) == 0, "avif via platform")
+    must(zeus.image_format_is_decodable(zeus.image_format_of(tiff)) == 0, "tiff via platform")
+    must(zeus.image_format_is_decodable(zeus.image_format_of(ico)) == 0, "ico via platform")
+    must(zeus.image_format_is_decodable(zeus.image_format_of(junk)) == 0, "junk via platform")
+
+    // --- decoding a recognisable format we do not cover says so -----------
+    must(zeus.image_decode_any(jpeg) == 0, "jpeg is not decoded in Loam")
+    must(zeus.image_last_status() == zeus.image_status_unsupported(),
+         "and it reports 'use the platform', not 'corrupt'")
+    must(zeus.image_decode_any(load("bad_sig.png")) == 0, "corrupt png not decoded")
+    must(zeus.image_last_status() == zeus.image_status_malformed(),
+         "and that one reports malformed")
+
+    // --- BMP: the checkerboard, pixel for pixel ---------------------------
+    zeus.image_cache_clear()
+    zeus.image_set_budget(8 * 1024 * 1024)
+    let b24 = slot_of(1, "checker24.bmp", 64, 64)
+    must(zeus.image_w(b24) == 64, "bmp 24-bit is 64 wide")
+    must(zeus.image_h(b24) == 64, "bmp 24-bit is 64 tall")
+    must(check_checker(b24, 64) == 0, "bmp 24-bit matches the checker pattern")
+    must(zeus.image_get_px(b24, 0, 0, 3) == 255, "24-bit bmp decodes opaque")
+
+    // Top-down rows (a negative height) must give the same image.
+    let btd = slot_of(2, "checker24_td.bmp", 64, 64)
+    let mut same = 1
+    let mut y = 0
+    while y < 64 {
+        let mut x = 0
+        while x < 64 {
+            if zeus.image_get_px(btd, x, y, 0) != zeus.image_get_px(b24, x, y, 0) {
+                same = 0
+            }
+            x = x + 1
+        }
+        y = y + 1
+    }
+    must(same == 1, "top-down and bottom-up agree")
+
+    let b32 = slot_of(3, "checker32.bmp", 64, 64)
+    must(check_checker(b32, 64) == 0, "bmp 32-bit matches the checker pattern")
+    must(zeus.image_get_px(b32, 0, 0, 3) == 255, "32-bit bmp alpha honoured")
+
+    // Channel order: BMP stores BGR, so a colour image is the only way to catch
+    // an R/B swap (a greyscale checkerboard cannot).
+    let c24 = slot_of(4, "colors24.bmp", 4, 1)
+    must(zeus.image_get_px(c24, 0, 0, 0) == 255, "red: r")
+    must(zeus.image_get_px(c24, 0, 0, 1) == 0, "red: g")
+    must(zeus.image_get_px(c24, 0, 0, 2) == 0, "red: b")
+    must(zeus.image_get_px(c24, 1, 0, 1) == 255, "green: g")
+    must(zeus.image_get_px(c24, 1, 0, 0) == 0, "green: r")
+    must(zeus.image_get_px(c24, 2, 0, 2) == 255, "blue: b")
+    must(zeus.image_get_px(c24, 3, 0, 0) == 255, "white stays white")
+
+    // An 8-bit paletted image, with a non-grey palette for the same reason.
+    let c8 = slot_of(5, "colors8.bmp", 3, 1)
+    must(zeus.image_get_px(c8, 0, 0, 0) == 255, "palette red")
+    must(zeus.image_get_px(c8, 1, 0, 1) == 255, "palette green")
+    must(zeus.image_get_px(c8, 2, 0, 2) == 255, "palette blue")
+
+    // And a paletted gradient, for the row stride and index decode at scale.
+    let g8 = slot_of(6, "grad8.bmp", 64, 48)
+    must(zeus.image_get_px(g8, 0, 0, 0) == 0, "paletted gradient starts black")
+    must(zeus.image_get_px(g8, 63, 0, 0) == 255, "paletted gradient ends white")
+    must(zeus.image_get_px(g8, 20, 0, 0) == zeus.image_get_px(g8, 20, 47, 0),
+         "paletted rows agree")
+
+    // --- a BMP we deliberately do not decode is refused, with a reason ----
+    let fails = zeus.image_decode_failure_count()
+    must(zeus.image_get(7, load("rle8.bmp"), 64, 64) < 0, "RLE bmp refused")
+    must(zeus.image_decode_failure_count() == fails + 1, "and counted")
+    must(zeus.image_decode_failure_reason() == "compressed bmp", "and named")
+
+    // --- an unsupported format leaves the cache alone, and says why -------
+    let bytes_before = zeus.image_cache_bytes()
+    must(zeus.image_get(8, jpeg, 16, 16) < 0, "jpeg is not cached here")
+    must(zeus.image_last_status() == zeus.image_status_unsupported(),
+         "and the caller is told to use the platform path")
+    must(zeus.image_cache_bytes() == bytes_before, "cache untouched")
+
+    // --- BMP feeds the same resample + cache pipeline as PNG --------------
+    // The identical aliasing property must hold, which is what proves the
+    // pipeline really is format-agnostic.
+    let small = zeus.image_get(9, load("checker24.bmp"), 16, 16)
+    must(small >= 0, "bmp downscaled")
+    let mut lo = 255
+    let mut hi = 0
+    let mut sy = 2
+    while sy < 14 {
+        let mut x = 2
+        while x < 14 {
+            let v = zeus.image_get_px(small, x, sy, 0)
+            if v < lo {
+                lo = v
+            }
+            if v > hi {
+                hi = v
+            }
+            x = x + 1
+        }
+        sy = sy + 1
+    }
+    must(hi - lo <= 2, "a downscaled bmp is flat, not aliased")
+    must(lo >= 120 && hi <= 136, "and lands at mid grey")
+
+    fmt.println("image formats ok", zeus.image_cache_count(),
+                zeus.image_decode_count(), zeus.image_decode_failure_count())
+}

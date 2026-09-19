@@ -29,9 +29,9 @@ import "raster.loam"
 /// Decoded source pixels: RGBA8, PREMULTIPLIED. Premultiplied is what keeps a
 /// filtered transparent edge from bleeding its colour into the result (and it
 /// matches the framebuffer's own premultiplied rule).
-let mut png_px: []u8 = []u8 {}
-let mut png_w: int = 0
-let mut png_h: int = 0
+let mut src_px: []u8 = []u8 {}
+let mut src_w: int = 0
+let mut src_h: int = 0
 
 /// Reusable scratch: the assembled IDAT stream and the unfiltered scanlines.
 let mut png_idat: []u8 = []u8 {}
@@ -39,17 +39,205 @@ let mut png_raw: []u8 = []u8 {}
 /// File offset just past the last IDAT payload, i.e. where its Adler-32 is not.
 let mut png_adler_at: int = 0
 
-let mut png_decodes: int = 0
-let mut png_failures: int = 0
-let mut png_why: string = ""
+let mut src_decodes: int = 0
+let mut src_failures: int = 0
+let mut src_why: string = ""
+let mut src_status: int = 0
 
 let mut crc_tab: []i64 = []i64 {}
 let mut crc_ready: int = 0
+
+// --- which formats we decode, and which the platform still does -------------
+//
+// The pixel pipeline below is format-agnostic: decode -> premultiply ->
+// resample -> byte-budgeted cache. So "supporting a format" means "produce
+// premultiplied RGBA8 here", and nothing else in the engine moves.
+//
+// Formats this module does NOT decode are not unsupported by the UI: the engine
+// still has the platform image path (`plat_image`, reached through
+// platform.loam: ImageIO/AppKit on native, the host's own loader on web), which
+// is what has handled every format until now. `src_format_of` exists so the
+// renderer can pick the in-Loam path where it applies and hand everything else
+// to the platform, instead of silently failing.
+
+const FMT_UNKNOWN: int = 0
+const FMT_PNG: int = 1
+const FMT_BMP: int = 2
+const FMT_JPEG: int = 3
+const FMT_GIF: int = 4
+const FMT_WEBP: int = 5
+const FMT_TIFF: int = 6
+const FMT_ICO: int = 7
+const FMT_AVIF: int = 8
+const FMT_SVG: int = 9
+
+/// Status codes: what a decode attempt did.
+const SRC_OK: int = 1
+/// The bytes are not a valid image of a format we decode.
+const SRC_MALFORMED: int = -1
+/// A real, recognised format that the In-Loam decoders do not cover: the
+/// caller should use the platform image path, which is what has always loaded
+/// these.
+const SRC_UNSUPPORTED: int = -2
+
+/// Sniff the container by magic bytes (not by file extension, which lies).
+fn src_format_of(s: string) -> int {
+    if s.len >= 8 {
+        if s[0] == 137 && s[1] == 80 && s[2] == 78 && s[3] == 71 {
+            return FMT_PNG
+        }
+    }
+    if s.len >= 2 {
+        if s[0] == 66 && s[1] == 77 {
+            return FMT_BMP
+        }
+    }
+    if s.len >= 3 {
+        if s[0] == 255 && s[1] == 216 && s[2] == 255 {
+            return FMT_JPEG
+        }
+    }
+    if s.len >= 6 {
+        if s[0] == 71 && s[1] == 73 && s[2] == 70 && s[3] == 56 {
+            return FMT_GIF
+        }
+    }
+    if s.len >= 12 {
+        if s[0] == 82 && s[1] == 73 && s[2] == 70 && s[3] == 70 {
+            if s[8] == 87 && s[9] == 69 && s[10] == 66 && s[11] == 80 {
+                return FMT_WEBP
+            }
+        }
+        if s[4] == 102 && s[5] == 116 && s[6] == 121 && s[7] == 112 {
+            return FMT_AVIF
+        }
+    }
+    if s.len >= 4 {
+        if s[0] == 73 && s[1] == 73 && s[2] == 42 {
+            return FMT_TIFF
+        }
+        if s[0] == 77 && s[1] == 77 && s[3] == 42 {
+            return FMT_TIFF
+        }
+        if s[0] == 0 && s[1] == 0 && s[2] == 1 && s[3] == 0 {
+            return FMT_ICO
+        }
+    }
+    // SVG is text, not a pixel format: the engine has a separate SVG op that
+    // goes through the vector path, not through this decoder.
+    let mut i = 0
+    while i < s.len {
+        let c = s[i]
+        if c == 32 || c == 9 || c == 10 || c == 13 || c == 12 {
+            i = i + 1
+        } else {
+            if c == 60 {
+                return FMT_SVG
+            }
+            i = s.len
+        }
+    }
+    return FMT_UNKNOWN
+}
+
+fn src_format_name(f: int) -> string {
+    if f == FMT_PNG {
+        return "png"
+    }
+    if f == FMT_BMP {
+        return "bmp"
+    }
+    if f == FMT_JPEG {
+        return "jpeg"
+    }
+    if f == FMT_GIF {
+        return "gif"
+    }
+    if f == FMT_WEBP {
+        return "webp"
+    }
+    if f == FMT_TIFF {
+        return "tiff"
+    }
+    if f == FMT_ICO {
+        return "ico"
+    }
+    if f == FMT_AVIF {
+        return "avif"
+    }
+    if f == FMT_SVG {
+        return "svg"
+    }
+    return "unknown"
+}
+
+/// Formats the in-Loam decoders cover today.
+fn src_format_is_decodable(f: int) -> int {
+    if f == FMT_PNG {
+        return 1
+    }
+    if f == FMT_BMP {
+        return 1
+    }
+    return 0
+}
+
+/// Status of the most recent decode attempt (SRC_OK / SRC_MALFORMED /
+/// SRC_UNSUPPORTED) — this is how a caller knows whether to fall back to the
+/// platform image path rather than showing nothing.
+fn src_last_status() -> int {
+    return src_status
+}
 
 // --- small readers ---------------------------------------------------------
 
 fn png_u16(s: string, o: int) -> int {
     return s[o] * 256 + s[o + 1]
+}
+
+// --- BMP readers: little-endian, and width/height are signed -----------------
+
+fn le16(s: string, o: int) -> int {
+    return s[o] + s[o + 1] * 256
+}
+
+/// Little-endian u32, refused (as -1) when it cannot fit an `int`.
+fn le32_u(s: string, o: int) -> int {
+    if s[o + 3] != 0 {
+        return -1
+    }
+    return s[o] + s[o + 1] * 256 + s[o + 2] * 65536
+}
+
+/// Little-endian i32 (BMP stores a NEGATIVE height for top-down rows).
+fn le32_i(s: string, o: int) -> int {
+    let mut v: i64 = i64(s[o]) + i64(s[o + 1]) * 256 + i64(s[o + 2]) * 65536
+    v = v + i64(s[o + 3]) * 16777216
+    if v >= 2147483648 {
+        v = v - 4294967296
+    }
+    return i32(v)
+}
+
+fn bit_pow2(n: int) -> int {
+    let mut v = 1
+    let mut i = 0
+    while i < n {
+        v = v * 2
+        i = i + 1
+    }
+    return v
+}
+
+/// Record a decode failure with a reason, and return 0 so a caller can
+/// `return src_fail("...")`.
+fn src_fail(msg: string) -> int {
+    src_w = 0
+    src_h = 0
+    src_why = msg
+    src_status = SRC_MALFORMED
+    src_failures = src_failures + 1
+    return 0
 }
 
 /// A 4-byte big-endian field, refused (as -1) rather than truncated when it
@@ -277,31 +465,42 @@ fn png_unfilter(w: int, h: int, bpp: int) -> int {
 
 // --- decode ----------------------------------------------------------------
 
-/// Decode a PNG into `png_px` (RGBA8, premultiplied). Returns 1 on success; on
-/// failure `png_why` says why and the counters record it. Supported: 8-bit
+/// Decode a PNG into `src_px` (RGBA8, premultiplied). Returns 1 on success; on
+/// failure `src_why` says why and the counters record it. Supported: 8-bit
 /// RGB/RGBA, non-interlaced, stored-block DEFLATE. Everything else is refused.
-fn png_decode(src: string) -> int {
-    png_w = 0
-    png_h = 0
-    png_why = ""
-    while png_px.len > 0 {
-        pop(png_px)
+fn png_decode(s: string) -> int {
+    src_status = 0
+    let ok = png_decode_inner(s)
+    if ok == 1 {
+        src_status = SRC_OK
+    } else {
+        src_status = SRC_MALFORMED
+    }
+    return ok
+}
+
+fn png_decode_inner(src: string) -> int {
+    src_w = 0
+    src_h = 0
+    src_why = ""
+    while src_px.len > 0 {
+        pop(src_px)
     }
     if src.len < 8 {
-        png_why = "too short"
-        png_failures = png_failures + 1
+        src_why = "too short"
+        src_failures = src_failures + 1
         return 0
     }
     if src[0] != 137 || src[1] != 80 || src[2] != 78 || src[3] != 71 {
-        png_why = "bad signature"
-        png_failures = png_failures + 1
+        src_why = "bad signature"
+        src_failures = src_failures + 1
         return 0
     }
     // The rest of the signature is not decoration: it tells us where the first
     // chunk starts.
     if src[4] != 13 || src[5] != 10 || src[6] != 26 || src[7] != 10 {
-        png_why = "bad signature"
-        png_failures = png_failures + 1
+        src_why = "bad signature"
+        src_failures = src_failures + 1
         return 0
     }
     let mut w = 0
@@ -316,37 +515,37 @@ fn png_decode(src: string) -> int {
     let mut done = 0
     while done == 0 {
         if off + 12 > src.len {
-            png_why = "truncated chunk header"
-            png_failures = png_failures + 1
+            src_why = "truncated chunk header"
+            src_failures = src_failures + 1
             return 0
         }
         let len = png_u32(src, off)
         if len < 0 {
-            png_why = "oversized chunk"
-            png_failures = png_failures + 1
+            src_why = "oversized chunk"
+            src_failures = src_failures + 1
             return 0
         }
         if off + 12 + len > src.len {
-            png_why = "truncated chunk"
-            png_failures = png_failures + 1
+            src_why = "truncated chunk"
+            src_failures = src_failures + 1
             return 0
         }
         if png_chunk_crc(src, off, len) != png_u32_64(src, off + 8 + len) {
-            png_why = "bad chunk CRC"
-            png_failures = png_failures + 1
+            src_why = "bad chunk CRC"
+            src_failures = src_failures + 1
             return 0
         }
         if png_is_tag(src, off + 4, 73, 72, 68, 82) == 1 {
             if len < 13 {
-                png_why = "short IHDR"
-                png_failures = png_failures + 1
+                src_why = "short IHDR"
+                src_failures = src_failures + 1
                 return 0
             }
             w = png_u32(src, off + 8)
             h = png_u32(src, off + 12)
             if w < 0 || h < 0 {
-                png_why = "oversized dimensions"
-                png_failures = png_failures + 1
+                src_why = "oversized dimensions"
+                src_failures = src_failures + 1
                 return 0
             }
             let depth = int(src[off + 16])
@@ -355,8 +554,8 @@ fn png_decode(src: string) -> int {
             let filt = int(src[off + 19])
             let inter = int(src[off + 20])
             if depth != 8 || comp != 0 || filt != 0 || inter != 0 {
-                png_why = "unsupported IHDR"
-                png_failures = png_failures + 1
+                src_why = "unsupported IHDR"
+                src_failures = src_failures + 1
                 return 0
             }
             if ct == 2 {
@@ -364,20 +563,20 @@ fn png_decode(src: string) -> int {
             } else if ct == 6 {
                 bpp = 4
             } else {
-                png_why = "unsupported colour type"
-                png_failures = png_failures + 1
+                src_why = "unsupported colour type"
+                src_failures = src_failures + 1
                 return 0
             }
             if w <= 0 || h <= 0 {
-                png_why = "empty image"
-                png_failures = png_failures + 1
+                src_why = "empty image"
+                src_failures = src_failures + 1
                 return 0
             }
             have_ihdr = 1
         } else if png_is_tag(src, off + 4, 73, 68, 65, 84) == 1 {
             if have_ihdr == 0 {
-                png_why = "IDAT before IHDR"
-                png_failures = png_failures + 1
+                src_why = "IDAT before IHDR"
+                src_failures = src_failures + 1
                 return 0
             }
             let mut i = 0
@@ -390,37 +589,42 @@ fn png_decode(src: string) -> int {
         } else if png_is_tag(src, off + 4, 73, 69, 78, 68) == 1 {
             done = 1
         } else if png_is_tag(src, off + 4, 80, 76, 84, 69) == 1 {
-            png_why = "palette image"
-            png_failures = png_failures + 1
+            src_why = "palette image"
+            src_failures = src_failures + 1
             return 0
         }
         off = off + 12 + len
     }
     if have_ihdr == 0 {
-        png_why = "no IHDR"
-        png_failures = png_failures + 1
+        src_why = "no IHDR"
+        src_failures = src_failures + 1
+        return 0
+    }
+    if i64(w) * i64(h) > 16777216 {
+        src_why = "image too large"
+        src_failures = src_failures + 1
         return 0
     }
     let stride = w * bpp
     let n = png_inflate()
     if n < 0 {
-        png_why = "not stored-block DEFLATE"
-        png_failures = png_failures + 1
+        src_why = "not stored-block DEFLATE"
+        src_failures = src_failures + 1
         return 0
     }
     if n != h * (stride + 1) {
-        png_why = "wrong inflated length"
-        png_failures = png_failures + 1
+        src_why = "wrong inflated length"
+        src_failures = src_failures + 1
         return 0
     }
     if png_adler_ok(src, png_adler_at - 4, n) != 1 {
-        png_why = "bad Adler-32"
-        png_failures = png_failures + 1
+        src_why = "bad Adler-32"
+        src_failures = src_failures + 1
         return 0
     }
     if png_unfilter(w, h, bpp) != 1 {
-        png_why = "bad filter type"
-        png_failures = png_failures + 1
+        src_why = "bad filter type"
+        src_failures = src_failures + 1
         return 0
     }
     // Unfiltered scanlines -> premultiplied RGBA8.
@@ -437,61 +641,231 @@ fn png_decode(src: string) -> int {
             if bpp == 4 {
                 a = int(png_raw[p + 3])
             }
-            push(png_px, u8((r * a + 127) / 255))
-            push(png_px, u8((g * a + 127) / 255))
-            push(png_px, u8((b * a + 127) / 255))
-            push(png_px, u8(a))
+            push(src_px, u8((r * a + 127) / 255))
+            push(src_px, u8((g * a + 127) / 255))
+            push(src_px, u8((b * a + 127) / 255))
+            push(src_px, u8(a))
             x = x + 1
         }
         y = y + 1
     }
-    png_w = w
-    png_h = h
-    png_decodes = png_decodes + 1
+    src_w = w
+    src_h = h
+    src_decodes = src_decodes + 1
     return 1
+}
+
+// --- BMP (Phase 4, second format) -------------------------------------------
+//
+// Uncompressed BMP only (BI_RGB): 1/4/8-bit palettised, 24-bit and 32-bit,
+// bottom-up or top-down. RLE and BITFIELDS are refused with a reason rather than
+// misdecoded, and the caller falls back to the platform loader for them — which
+// is also exactly what keeps every format this engine already displayed working.
+
+/// Decode a BMP into `src_px` (RGBA8, premultiplied).
+fn bmp_decode(s: string) -> int {
+    src_status = 0
+    src_w = 0
+    src_h = 0
+    while src_px.len > 0 {
+        pop(src_px)
+    }
+    if s.len < 54 {
+        return src_fail("bmp too short")
+    }
+    if s[0] != 66 || s[1] != 77 {
+        return src_fail("not a bmp")
+    }
+    let dib = le32_u(s, 14)
+    if dib < 40 || dib > 124 {
+        return src_fail("unsupported bmp header")
+    }
+    let w = le32_i(s, 18)
+    let hraw = le32_i(s, 22)
+    let planes = le16(s, 26)
+    let bpp = le16(s, 28)
+    let comp = le32_u(s, 30)
+    let data_off = le32_u(s, 10)
+    if planes != 1 {
+        return src_fail("bmp planes")
+    }
+    if comp < 0 {
+        return src_fail("bmp compression")
+    }
+    if comp != 0 {
+        return src_fail("compressed bmp")
+    }
+    if data_off < 0 {
+        return src_fail("bmp data offset")
+    }
+    // A negative height means the rows are stored top-down.
+    let mut top_down = 0
+    let mut h = hraw
+    if hraw < 0 {
+        top_down = 1
+        h = 0 - hraw
+    }
+    if w <= 0 || h <= 0 {
+        return src_fail("bmp dimensions")
+    }
+    if w > 65535 || h > 65535 {
+        return src_fail("bmp too large")
+    }
+    if i64(w) * i64(h) > 16777216 {
+        return src_fail("image too large")
+    }
+    if bpp != 1 && bpp != 4 && bpp != 8 && bpp != 24 && bpp != 32 {
+        return src_fail("bmp bit depth")
+    }
+    let pal_off = 14 + dib
+    let mut pal_n = 0
+    if bpp <= 8 {
+        let used = le32_u(s, 46)
+        if used < 0 {
+            return src_fail("bmp palette")
+        }
+        pal_n = used
+        if pal_n == 0 {
+            pal_n = bit_pow2(bpp)
+        }
+        if pal_off + pal_n * 4 > s.len {
+            return src_fail("bmp palette truncated")
+        }
+    }
+    // Rows are padded to a 4-byte boundary.
+    let row_bytes = ((w * bpp + 31) / 32) * 4
+    if i64(data_off) + i64(row_bytes) * i64(h) > i64(s.len) {
+        return src_fail("bmp pixels truncated")
+    }
+    let mut y = 0
+    while y < h {
+        let mut srow = h - 1 - y
+        if top_down == 1 {
+            srow = y
+        }
+        let row = data_off + srow * row_bytes
+        let mut x = 0
+        while x < w {
+            let mut r = 0
+            let mut g = 0
+            let mut b = 0
+            let mut a = 255
+            if bpp == 24 {
+                let p = row + x * 3
+                b = int(s[p])
+                g = int(s[p + 1])
+                r = int(s[p + 2])
+            } else if bpp == 32 {
+                // BI_RGB 32-bit: the fourth byte is a real alpha channel for
+                // every tool that writes one, and 0 in the files that predate
+                // it. Honouring it is what viewers do; a legacy file simply
+                // comes out fully transparent, which is visible immediately
+                // rather than subtle.
+                let p = row + x * 4
+                b = int(s[p])
+                g = int(s[p + 1])
+                r = int(s[p + 2])
+                a = int(s[p + 3])
+            } else {
+                let mut idx = 0
+                if bpp == 8 {
+                    idx = int(s[row + x])
+                } else if bpp == 4 {
+                    let byte = int(s[row + x / 2])
+                    if x % 2 == 0 {
+                        idx = byte / 16
+                    } else {
+                        idx = byte % 16
+                    }
+                } else {
+                    // The leftmost pixel of a 1-bit row is the high bit.
+                    let byte = int(s[row + x / 8])
+                    idx = (byte / bit_pow2(7 - x % 8)) % 2
+                }
+                if idx >= pal_n {
+                    return src_fail("bmp palette index")
+                }
+                let p = pal_off + idx * 4
+                b = int(s[p])
+                g = int(s[p + 1])
+                r = int(s[p + 2])
+            }
+            push(src_px, u8((r * a + 127) / 255))
+            push(src_px, u8((g * a + 127) / 255))
+            push(src_px, u8((b * a + 127) / 255))
+            push(src_px, u8(a))
+            x = x + 1
+        }
+        y = y + 1
+    }
+    src_w = w
+    src_h = h
+    src_decodes = src_decodes + 1
+    src_status = SRC_OK
+    return 1
+}
+
+/// Decode any format the in-Loam decoders cover, choosing by magic bytes. On a
+/// recognised format we do not decode, `src_status` is SRC_UNSUPPORTED and the
+/// caller should use the platform image path.
+fn src_decode_any(s: string) -> int {
+    let f = src_format_of(s)
+    if f == FMT_PNG {
+        return png_decode(s)
+    }
+    if f == FMT_BMP {
+        return bmp_decode(s)
+    }
+    src_w = 0
+    src_h = 0
+    while src_px.len > 0 {
+        pop(src_px)
+    }
+    src_why = "not decoded in Loam"
+    src_status = SRC_UNSUPPORTED
+    return 0
 }
 
 // --- decoded-source accessors ----------------------------------------------
 
-fn png_width() -> int {
-    return png_w
+fn src_width() -> int {
+    return src_w
 }
 
-fn png_height() -> int {
-    return png_h
+fn src_height() -> int {
+    return src_h
 }
 
 /// Bytes currently in use by the decode scratch (source pixels + scanlines +
 /// IDAT). The allocations are reused capacities, so this is a high-water-style
 /// figure for the largest image decoded, not a per-image accumulation.
-fn png_scratch_bytes() -> int {
-    return png_px.len + png_raw.len + png_idat.len
+fn src_scratch_bytes() -> int {
+    return src_px.len + png_raw.len + png_idat.len
+}
+fn src_decode_count() -> int {
+    return src_decodes
 }
 
-fn png_decode_count() -> int {
-    return png_decodes
+fn src_failure_count() -> int {
+    return src_failures
 }
 
-fn png_failure_count() -> int {
-    return png_failures
-}
-
-fn png_failure_reason() -> string {
-    return png_why
+fn src_failure_reason() -> string {
+    return src_why
 }
 
 /// Channel `c` (0 R, 1 G, 2 B, 3 A) of the decoded source at (x, y).
-fn png_get(x: int, y: int, c: int) -> int {
+fn src_get(x: int, y: int, c: int) -> int {
     if x < 0 || y < 0 {
         return 0
     }
-    if x >= png_w || y >= png_h {
+    if x >= src_w || y >= src_h {
         return 0
     }
     if c < 0 || c > 3 {
         return 0
     }
-    return int(png_px[(y * png_w + x) * 4 + c])
+    return int(src_px[(y * src_w + x) * 4 + c])
 }
 
 // --- resampling: separable Mitchell (Phase 4) -------------------------------
@@ -641,18 +1015,30 @@ fn mitchell_y(tp: []u8, dw: int, sh: int, dh: int, out: &mut []u8) {
     }
 }
 
-/// Resample `png_px` (`sw`x`sh`, premultiplied) into `dst` (`dw`x`dh`,
-/// UNPREMULTIPLIED, the form the framebuffer blend wants).
+/// Resample `src_px` (`sw`x`sh`, premultiplied) into `dst` (`dw`x`dh`,
+/// UNPREMULTIPLIED, the form the framebuffer blend wants). A request for the
+/// source's own size is a byte-exact copy, not a filtered one.
 fn mitchell_resize(sw: int, sh: int, dw: int, dh: int, dst: &mut []u8) {
     img_resizes = img_resizes + 1
-    // Horizontal pass into the scratch, sized sh x dw.
-    let need = sh * dw * 4
-    while img_tmp.len < need {
-        push(img_tmp, u8(0))
+    if sw == dw && sh == dh {
+        // Native size: no filtering at all. Running a scale-1 Mitchell over a
+        // pixel-exact image would blur it for no reason, and "show this image
+        // at its real size" is the common case, not an edge case.
+        let mut i = 0
+        while i < dst.len {
+            dst[i] = src_px[i]
+            i = i + 1
+        }
+    } else {
+        // Horizontal pass into the scratch, sized sh x dw, then vertical.
+        let need = sh * dw * 4
+        while img_tmp.len < need {
+            push(img_tmp, u8(0))
+        }
+        mitchell_x(src_px, sw, sh, dw, &mut img_tmp)
+        mitchell_y(img_tmp, dw, sh, dh, dst)
     }
-    mitchell_x(png_px, sw, sh, dw, &mut img_tmp)
-    // Vertical pass, then unpremultiply into the destination.
-    mitchell_y(img_tmp, dw, sh, dh, dst)
+    // Unpremultiply into the straight form the framebuffer blend wants.
     let mut p = 0
     while p < dst.len {
         let a = int(dst[p + 3])
@@ -795,6 +1181,8 @@ fn img_evict_one() -> int {
 
 /// Resized image for (id, dw, dh), decoding and resampling on a miss. Returns
 /// the slot, or -1 when the image cannot be decoded or does not fit the budget.
+/// `src_last_status()` then distinguishes a malformed file (SRC_MALFORMED) from
+/// a format the platform should load instead (SRC_UNSUPPORTED).
 fn img_get(id: int, encoded: string, dw: int, dh: int) -> int {
     img_init()
     if dw <= 0 || dh <= 0 {
@@ -815,7 +1203,7 @@ fn img_get(id: int, encoded: string, dw: int, dh: int) -> int {
         img_refusals = img_refusals + 1
         return -1
     }
-    if png_decode(encoded) != 1 {
+    if src_decode_any(encoded) != 1 {
         return -1
     }
     while img_bytes + need > img_budget {
@@ -843,7 +1231,7 @@ fn img_get(id: int, encoded: string, dw: int, dh: int) -> int {
         push(img_px[s], u8(0))
         n = n + 1
     }
-    mitchell_resize(png_w, png_h, dw, dh, &mut img_px[s])
+    mitchell_resize(src_w, src_h, dw, dh, &mut img_px[s])
     img_live[s] = 1
     img_prev[s] = -1
     img_next[s] = img_head

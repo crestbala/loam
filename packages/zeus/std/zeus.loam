@@ -2618,35 +2618,75 @@ fn image_decode_png(src: string) -> int {
     return image.png_decode(src)
 }
 
+/// Decode any format the in-Loam decoders cover, choosing by magic bytes. When
+/// it returns 0, `image_last_status()` says whether the file was malformed or
+/// simply a format that the platform image path (`plat_image`) should load.
+fn image_decode_any(src: string) -> int {
+    return image.src_decode_any(src)
+}
+
+/// FMT_PNG / FMT_BMP / FMT_JPEG / ... for the given encoded bytes; 0 for
+/// unknown. Decided by magic bytes, because a file extension lies.
+fn image_format_of(src: string) -> int {
+    return image.src_format_of(src)
+}
+
+fn image_format_name(f: int) -> string {
+    return image.src_format_name(f)
+}
+
+/// 1 when the in-Loam decoders cover this format today, 0 when the platform
+/// loader is what handles it.
+fn image_format_is_decodable(f: int) -> int {
+    return image.src_format_is_decodable(f)
+}
+
+/// 1 = decoded, -1 = malformed, -2 = a real format the platform should load.
+fn image_last_status() -> int {
+    return image.src_last_status()
+}
+
+fn image_status_ok() -> int {
+    return 1
+}
+
+fn image_status_malformed() -> int {
+    return -1
+}
+
+fn image_status_unsupported() -> int {
+    return -2
+}
+
 fn image_src_width() -> int {
-    return image.png_width()
+    return image.src_width()
 }
 
 fn image_src_height() -> int {
-    return image.png_height()
+    return image.src_height()
 }
 
 /// Channel `c` (0 R, 1 G, 2 B, 3 A) of the decoded source at (x, y).
 fn image_src_get(x: int, y: int, c: int) -> int {
-    return image.png_get(x, y, c)
+    return image.src_get(x, y, c)
 }
 
 /// Bytes held by the decode scratch. Bounded by the largest image decoded, not
 /// by how many have been decoded.
 fn image_scratch_bytes() -> int {
-    return image.png_scratch_bytes()
+    return image.src_scratch_bytes()
 }
 
 fn image_decode_count() -> int {
-    return image.png_decode_count()
+    return image.src_decode_count()
 }
 
 fn image_decode_failure_count() -> int {
-    return image.png_failure_count()
+    return image.src_failure_count()
 }
 
 fn image_decode_failure_reason() -> string {
-    return image.png_failure_reason()
+    return image.src_failure_reason()
 }
 
 // --- images: resized cache (Phase 4) ---------------------------------------
