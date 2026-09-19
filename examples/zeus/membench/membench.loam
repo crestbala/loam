@@ -1,0 +1,59 @@
+//! membench — the Phase 0 Zeus memory baseline (`docs/mem-baseline.md`).
+//!
+//! Three fixed modes so bytes-per-node can be derived from a slope:
+//!
+//!   membench empty      an empty root box
+//!   membench one        one Ghost button
+//!   membench thousand   1000 Ghost buttons
+//!
+//! Run headless (one layout, then the stats report on exit):
+//!
+//!   make bin/loamc
+//!   ZEUS_MEM_STATS=1 ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/membench/membench.loam -o out/membench
+//!   ZEUS_MEM_STATS=1 ZEUS_HEADLESS=1 ./out/membench thousand
+//!
+//! The window is a fixed 320x240 so the baseline does not move with the host
+//! screen, and every mode is the same tree plus N buttons. `empty` still builds
+//! the root box, so the slope (not an absolute) is what carries bytes-per-node.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+/// Button count for a mode name. Unknown modes are a hard error: a typo that
+/// silently benches the wrong tree makes the whole baseline meaningless.
+fn count_for(mode: string) -> int {
+    if mode == "empty" {
+        return 0
+    }
+    if mode == "one" {
+        return 1
+    }
+    if mode == "thousand" {
+        return 1000
+    }
+    fmt.println("membench: unknown mode '{{mode}}' (empty | one | thousand)")
+    sys.exit(2)
+    return 0
+}
+
+fn Screen(n: int) {
+    zeus.Box(align_direction = DIRECTION.Column, padding = 8, spacing = 4) {
+        let mut i = 0
+        while i < n {
+            zeus.Button(label = "b", look = zeus.LOOK.Ghost, size = zeus.SIZE.Sm)
+            i = i + 1
+        }
+    }
+}
+
+fn main() {
+    let a = sys.args()
+    let mut mode = "empty"
+    if a.len > 1 {
+        mode = a[1]
+    }
+    let n = count_for(mode)
+    fmt.println("MEMBENCH mode=", mode, " buttons=", n)
+    zeus.App("membench", fn() { Screen(n) }, 320, 240)
+}

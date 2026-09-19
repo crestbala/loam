@@ -190,9 +190,30 @@ fn raw_run() {
     arena.ensure()
     if platform.plat_headless() != 0 {
         engine_layout(arena.win_w, arena.win_h)
+        // With stats on, paint once so the draw list is part of the baseline.
+        // With stats off this is exactly the old one-layout-and-exit path, so
+        // no existing headless test changes.
+        if arena.mem_stats_on() != 0 {
+            engine_paint()
+        }
+        mem_stats_report()
         return
     }
     platform.plat_run()
+    mem_stats_report()
+}
+
+/// Phase 0 memory report: arena buckets (arena side), the retained draw list,
+/// and the host's process footprint. Printed once, on exit, and only when
+/// `ZEUS_MEM_STATS` is on (build `-DZEUS_MEM_STATS`, or the env var). With
+/// stats off this is a single host call that returns 0.
+fn mem_stats_report() {
+    if arena.mem_stats_on() == 0 {
+        return
+    }
+    arena.mem_report()
+    fmt.println("ZEUS_MEM draw_ops=", scene.draws.len, " draw_bytes=", draw_bytes())
+    fmt.println("ZEUS_MEM process_kb=", memory_kb())
 }
 
 fn init() {
@@ -1488,6 +1509,9 @@ fn engine_layout(width: int, height: int) {
         arena.sync_chrome()
         arena.chrome_dirty = 0
     }
+    if arena.mem_stats_on() != 0 {
+        arena.mem_sample()
+    }
 }
 
 fn engine_fill_focus() {
@@ -2212,6 +2236,25 @@ fn arena_bytes() -> i64 {
         return 0
     }
     return i64(arena.nodes.len) * i64(__sizeof(arena.nodes[0]))
+}
+
+/// Phase 0 diagnostics: live (non-recycled) node count. Additive; no
+/// allocation behavior reads it. See `docs/mem-baseline.md`.
+fn mem_live_nodes() -> int {
+    return arena.mem_live_nodes()
+}
+
+/// Phase 0 diagnostics: total arena bytes across every bucket (nodes, signals,
+/// interning, animation, misc). Additive; no allocation behavior reads it.
+fn mem_bytes() -> i64 {
+    return arena.mem_total_bytes()
+}
+
+/// Phase 0 diagnostics: print the full arena bucket report on demand. Same
+/// lines the on-exit report prints; for tests and probes that need to see which
+/// bucket moved between frames.
+fn mem_dump() {
+    arena.mem_report()
 }
 
 /// Byte size of one draw-list record (diagnostics for the Phase 11 layout

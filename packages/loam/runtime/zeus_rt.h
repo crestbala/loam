@@ -336,6 +336,8 @@ loam_str loam_platform_plat_pick_image(int32_t *w, int32_t *h);
 void loam_platform_plat_save(void);
 void loam_platform_plat_alpha(int64_t a);
 int64_t loam_platform_plat_mem_kb(void);
+/* 1 when built `-DZEUS_MEM_STATS` or run with `ZEUS_MEM_STATS=1` (Phase 0). */
+int64_t loam_platform_plat_mem_stats(void);
 int64_t loam_platform_plat_now_ms(void);
 void loam_platform_plat_clip(int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius);
 void loam_platform_plat_restore(void);

@@ -1057,6 +1057,19 @@ int64_t loam_platform_plat_mem_kb(void) {
     return 0;
 #endif
 }
+
+/* Phase 0 arena-stats gate (`platform.plat_mem_stats`). A build flag turns it on
+   for good; the env var turns it on for one run; neither changes allocation. */
+int64_t loam_platform_plat_mem_stats(void) {
+#if defined(ZEUS_MEM_STATS)
+    return 1;
+#else
+    const char *v = getenv("ZEUS_MEM_STATS");
+    if (!v || !v[0] || strcmp(v, "0") == 0) return 0;
+    return 1;
+#endif
+}
+
 void loam_platform_plat_clip(int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius) {
     loam_zeus_plat_clip(x, y, w, h, radius);
 }
