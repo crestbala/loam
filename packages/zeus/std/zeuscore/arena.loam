@@ -33,8 +33,8 @@ struct UiNode {
     /// Second fill color for a vertical gradient (`bg` → `bg2`). `-1` = solid `bg`.
     bg2: int,
     fg: int,
-    ew: int,
-    eh: int,
+    explicit_width: int,
+    explicit_height: int,
     min_w: int,
     max_w: int,
     min_h: int,
@@ -51,8 +51,8 @@ struct UiNode {
     y: int,
     w: int,
     h: int,
-    iw: int,
-    ih: int,
+    inner_width: int,
+    inner_height: int,
     node_id: int,
     m_t: int,
     m_r: int,
@@ -67,8 +67,8 @@ struct UiNode {
     pin_l: int,
     scroll_x: int,
     scroll_y: int,
-    tw: int,
-    th: int,
+    text_width: int,
+    text_height: int,
     /// 0..100 ease of the press overlay. Rest is 0, so DRAW goldens hold.
     aw: int,
     ah: int,
@@ -353,7 +353,7 @@ let mut tree_dirty: int = 1
 let mut chrome_dirty: int = 1
 /// A scroller moved: paint-only, but a windowed list's visible window may have
 /// shifted, so the virtual refresh pass must run before paint.
-let mut virt_dirty: int = 0
+let mut virtual_dirty: int = 0
 /// Node ids whose PAINT bit was set since the last paint. The animation tick
 /// appends here; `scene.paint` drains it. Ids are deduped by the PAINT bit.
 let mut dirty_paint: []int = []int {}
@@ -405,18 +405,18 @@ fn blank_node() -> UiNode {
     return UiNode {
         kind: 0, dir: 0, kids: []int {}, pad: 0, padx: 0, pady: 0,
         pad_t: 0, pad_r: 0, pad_b: 0, pad_l: 0, gap: 0, grow: 0, shrink: 1,
-        bg: -1, bg2: -1, fg: -1, radius: 0, rad_tl: 65535, rad_tr: 65535, rad_br: 65535, rad_bl: 65535, ew: -1, eh: -1, font: 0, justify: 0, align: 0,
+        bg: -1, bg2: -1, fg: -1, radius: 0, rad_tl: 65535, rad_tr: 65535, rad_br: 65535, rad_bl: 65535, explicit_width: -1, explicit_height: -1, font: 0, justify: 0, align: 0,
         min_w: -1, max_w: -1, min_h: -1, max_h: -1, w_pct: 100, h_pct: -1,
         text: "", bind_sig: 0, click_sig: 0, click_mode: 0, click_set: 0,
         click2_sig: 0, click2_mode: 0, click2_set: 0,
         show_sig: 0, show_mode: 0, show_val: 0, show_on: 1, hover_sig: 0,
-        x: 0, y: 0, w: 0, h: 0, iw: 0, ih: 0, node_id: 0, pos: 0, overflow: 0,
+        x: 0, y: 0, w: 0, h: 0, inner_width: 0, inner_height: 0, node_id: 0, pos: 0, overflow: 0,
         opacity: 100, span: 1, grid_cols: 0, grid_min: 0,
         m_t: 0, m_r: 0, m_b: 0, m_l: 0, border_w: 0, border_c: -1,
         gap_row: 0, gap_col: 0, aspect_w: 0, aspect_h: 0,
         wrap: 0, ellipsis: 0, reverse: 0, align_self: -1,
         pin_t: -1, pin_r: -1, pin_b: -1, pin_l: -1,
-        z_index: 0, grid_auto: 0, scroll_x: 0, scroll_y: 0, tw: 0, th: 0, pulse: 0, press: 0, press_scale: 0, lift: 0, slot_into: 0, press_amt: 0,
+        z_index: 0, grid_auto: 0, scroll_x: 0, scroll_y: 0, text_width: 0, text_height: 0, pulse: 0, press: 0, press_scale: 0, lift: 0, slot_into: 0, press_amt: 0,
         aw: 0, ah: 0, bar_t: 0, bar_s: 0, tgt_x: 0, tgt_y: 0, smooth: 0, parent: 0, key_ctx: 0, focusable: 0, capture_text: 0, edit_slot: -1,
         dirty: 0,
         an_scale: 100, an_tx: 0, an_ty: 0, an_rot: 0, reveal: 0, an_reveal: 100,
@@ -551,13 +551,13 @@ fn ensure() {
 /// Enter a rebuild scope: allocations from now on are owned by `node_id`.
 /// Returns the previous scope so the caller can restore it after the build.
 fn scope_begin(node_id: int) -> int {
-    let prev = scope_node
+    let previous = scope_node
     scope_node = node_id
-    return prev
+    return previous
 }
 
-fn scope_end(prev: int) {
-    scope_node = prev
+fn scope_end(previous: int) {
+    scope_node = previous
 }
 
 /// An interned handler was created under a rebuild scope (or for `owner`):
@@ -828,15 +828,15 @@ fn drop_children(id: int) {
 /// `id`. Pair with `rebuild_end`. This is the only entry point that tears a
 /// subtree down, so callers outside the core never touch `drop_children`.
 fn rebuild_begin(id: int) -> int {
-    let prev = scope_begin(id)
+    let previous = scope_begin(id)
     release_sigs(id)
     release_fns(id)
     drop_children(id)
-    return prev
+    return previous
 }
 
-fn rebuild_end(prev: int) {
-    scope_end(prev)
+fn rebuild_end(previous: int) {
+    scope_end(previous)
 }
 
 /// Snapshot of the allocator for `zeus.Boundary`: everything allocated after
@@ -1591,9 +1591,9 @@ fn anim_live_count() -> int {
     return anim_active
 }
 
-/// Advance every active track by `dt` ms. Returns 1 when any track ran this
+/// Advance every active track by `delta_ms` ms. Returns 1 when any track ran this
 /// frame (including the frame a track settles on, so its final value is drawn).
-fn anim_tick(dt: int) -> int {
+fn anim_tick(delta_ms: int) -> int {
     anim_ensure()
     if anim_active == 0 {
         return 0
@@ -1607,7 +1607,7 @@ fn anim_tick(dt: int) -> int {
             if dur <= 0 {
                 dur = 1
             }
-            let e = a.elapsed + dt
+            let e = a.elapsed + delta_ms
             let is_sig = a.prop == APROP.SigVal
             if e >= dur {
                 tracks[i].current_value = a.to
@@ -2140,7 +2140,7 @@ fn mark_paint() {
 /// Scroll moved: repaint now, and let the virtual-list window pass run.
 fn mark_scroll() {
     paint_dirty = 1
-    virt_dirty = 1
+    virtual_dirty = 1
     // An open popup is anchored to its trigger's *screen* rect, so a scroll
     // moves it. Re-place the floaters (a layout pass) rather than let the popup
     // drift away from its button; with none on screen, a scroll stays
@@ -2573,7 +2573,7 @@ fn child_align(p: int, c: int) -> int {
 }
 
 fn has_w(id: int) -> int {
-    if nodes[id].ew >= 0 {
+    if nodes[id].explicit_width >= 0 {
         return 1
     }
     if int(nodes[id].w_pct) >= 0 {
@@ -2582,7 +2582,7 @@ fn has_w(id: int) -> int {
     return 0
 }
 fn has_h(id: int) -> int {
-    if nodes[id].eh >= 0 {
+    if nodes[id].explicit_height >= 0 {
         return 1
     }
     if int(nodes[id].h_pct) >= 0 {
@@ -2598,22 +2598,22 @@ fn has_h(id: int) -> int {
 /// the source width (web `max-width: 100%`) — that is how an uploaded photo
 /// resizes to the device width without a caller-set `max_width`.
 fn sized_w(c: int, avail: int, row: int) -> int {
-    let mut w = nodes[c].iw
-    if nodes[c].ew >= 0 {
-        w = nodes[c].ew
+    let mut w = nodes[c].inner_width
+    if nodes[c].explicit_width >= 0 {
+        w = nodes[c].explicit_width
     } else if int(nodes[c].w_pct) >= 0 {
         if row != 0 {
             if int(nodes[c].w_pct) == 100 {
-                w = nodes[c].iw
+                w = nodes[c].inner_width
             } else {
                 w = avail * int(nodes[c].w_pct) / 100
             }
         } else {
             w = avail * int(nodes[c].w_pct) / 100
             if int(nodes[c].kind) == 14 {
-                if nodes[c].iw > 0 {
-                    if w > nodes[c].iw {
-                        w = nodes[c].iw
+                if nodes[c].inner_width > 0 {
+                    if w > nodes[c].inner_width {
+                        w = nodes[c].inner_width
                     }
                 }
             }
@@ -2622,18 +2622,18 @@ fn sized_w(c: int, avail: int, row: int) -> int {
     return clamp_w(c, w)
 }
 fn sized_h(c: int, avail: int, w: int) -> int {
-    let mut h = nodes[c].ih
+    let mut h = nodes[c].inner_height
     if nodes[c].aspect_w > 0 {
         if nodes[c].aspect_h > 0 {
-            if nodes[c].eh < 0 {
+            if nodes[c].explicit_height < 0 {
                 h = w * nodes[c].aspect_h / nodes[c].aspect_w
             }
         }
     }
     if int(nodes[c].h_pct) >= 0 {
         h = avail * int(nodes[c].h_pct) / 100
-    } else if nodes[c].eh >= 0 {
-        h = nodes[c].eh
+    } else if nodes[c].explicit_height >= 0 {
+        h = nodes[c].explicit_height
     }
     return clamp_h(c, h)
 }
@@ -2720,12 +2720,12 @@ fn size_commit(n: int) {
 
 fn axis_frozen(c: int, row: int) -> int {
     if row != 0 {
-        if nodes[c].ew >= 0 {
+        if nodes[c].explicit_width >= 0 {
             return 1
         }
         return 0
     }
-    if nodes[c].eh >= 0 {
+    if nodes[c].explicit_height >= 0 {
         return 1
     }
     return 0
@@ -3312,11 +3312,11 @@ fn in_box(id: int, px: int, py: int) -> int {
 }
 
 fn scroll_max(id: int) -> int {
-    return geometry.max2(nodes[id].ih - nodes[id].h, 0)
+    return geometry.max2(nodes[id].inner_height - nodes[id].h, 0)
 }
 
 fn scroll_max_x(id: int) -> int {
-    return geometry.max2(nodes[id].iw - nodes[id].w, 0)
+    return geometry.max2(nodes[id].inner_width - nodes[id].w, 0)
 }
 
 /// 1 if this scroll node may overflow horizontally (`scroll_xy` / overflow 3).
@@ -3336,7 +3336,7 @@ fn scrolls_x(id: int) -> int {
     return 0
 }
 
-fn phys_axis_live(pos: int, vel: int, maxs: int) -> int {
+fn physics_axis_live(pos: int, vel: int, maxs: int) -> int {
     if vel != 0 {
         return 1
     }
@@ -3351,17 +3351,17 @@ fn phys_axis_live(pos: int, vel: int, maxs: int) -> int {
 
 /// 1 if any scroller is coasting, easing to a wheel target, or overscrolled —
 /// hosts should keep frames.
-fn phys_live() -> int {
+fn physics_live() -> int {
     let n = nodes.len
     for i in 1..n {
         if int(nodes[i].kind) == 11 {
             if int(nodes[i].smooth) != 0 {
                 return 1
             }
-            if phys_axis_live(nodes[i].scroll_x, nodes[i].vel_x, scroll_max_x(i)) != 0 {
+            if physics_axis_live(nodes[i].scroll_x, nodes[i].vel_x, scroll_max_x(i)) != 0 {
                 return 1
             }
-            if phys_axis_live(nodes[i].scroll_y, nodes[i].vel_y, scroll_max(i)) != 0 {
+            if physics_axis_live(nodes[i].scroll_y, nodes[i].vel_y, scroll_max(i)) != 0 {
                 return 1
             }
         }
@@ -3859,33 +3859,33 @@ fn bar_y(id: int, oy: int) -> int {
 }
 
 fn bar_track_h(id: int) -> int {
-    let mut th = nodes[id].h - 8
+    let mut text_height = nodes[id].h - 8
     if bar_visible_x(id) != 0 {
-        th = th - bar_w() - 2
+        text_height = text_height - bar_w() - 2
     }
-    return geometry.max2(th, 8)
+    return geometry.max2(text_height, 8)
 }
 
 fn bar_thumb_h(id: int) -> int {
-    let th = bar_track_h(id)
+    let text_height = bar_track_h(id)
     let mut thh = 32
-    if nodes[id].ih > 0 {
-        thh = geometry.max2(th * nodes[id].h / nodes[id].ih, 32)
+    if nodes[id].inner_height > 0 {
+        thh = geometry.max2(text_height * nodes[id].h / nodes[id].inner_height, 32)
     }
-    if thh > th {
-        thh = th
+    if thh > text_height {
+        thh = text_height
     }
     return thh
 }
 
 fn bar_thumb_y(id: int, oy: int) -> int {
     let maxs = scroll_max(id)
-    let th = bar_track_h(id)
+    let text_height = bar_track_h(id)
     let thh = bar_thumb_h(id)
     if maxs <= 0 {
         return bar_y(id, oy)
     }
-    return bar_y(id, oy) + (th - thh) * nodes[id].scroll_y / maxs
+    return bar_y(id, oy) + (text_height - thh) * nodes[id].scroll_y / maxs
 }
 
 fn bar_hx(id: int, ox: int) -> int {
@@ -3897,33 +3897,33 @@ fn bar_hy(id: int, oy: int) -> int {
 }
 
 fn bar_track_w(id: int) -> int {
-    let mut tw = nodes[id].w - 8
+    let mut text_width = nodes[id].w - 8
     if bar_visible(id) != 0 {
-        tw = tw - bar_w() - 2
+        text_width = text_width - bar_w() - 2
     }
-    return geometry.max2(tw, 8)
+    return geometry.max2(text_width, 8)
 }
 
 fn bar_thumb_w(id: int) -> int {
-    let tw = bar_track_w(id)
+    let text_width = bar_track_w(id)
     let mut thw = 32
-    if nodes[id].iw > 0 {
-        thw = geometry.max2(tw * nodes[id].w / nodes[id].iw, 32)
+    if nodes[id].inner_width > 0 {
+        thw = geometry.max2(text_width * nodes[id].w / nodes[id].inner_width, 32)
     }
-    if thw > tw {
-        thw = tw
+    if thw > text_width {
+        thw = text_width
     }
     return thw
 }
 
 fn bar_thumb_x(id: int, ox: int) -> int {
     let maxs = scroll_max_x(id)
-    let tw = bar_track_w(id)
+    let text_width = bar_track_w(id)
     let thw = bar_thumb_w(id)
     if maxs <= 0 {
         return bar_hx(id, ox)
     }
-    return bar_hx(id, ox) + (tw - thw) * nodes[id].scroll_x / maxs
+    return bar_hx(id, ox) + (text_width - thw) * nodes[id].scroll_x / maxs
 }
 
 fn fg_of(id: int) -> int {

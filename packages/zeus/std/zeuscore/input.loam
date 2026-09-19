@@ -48,19 +48,19 @@ fn hit_scrollbar(id: int, px: int, py: int) -> int {
         return 0
     }
     let tx = arena.bar_x(id, arena.nodes[id].x)
-    let tw = arena.bar_w()
+    let text_width = arena.bar_w()
     let ty = arena.bar_thumb_y(id, arena.nodes[id].y)
-    let th = arena.bar_thumb_h(id)
+    let text_height = arena.bar_thumb_h(id)
     if px < tx {
         return 0
     }
-    if px >= tx + tw {
+    if px >= tx + text_width {
         return 0
     }
     if py < ty {
         return 0
     }
-    if py >= ty + th {
+    if py >= ty + text_height {
         return 0
     }
     return 1
@@ -74,19 +74,19 @@ fn hit_h_scrollbar(id: int, px: int, py: int) -> int {
         return 0
     }
     let tx = arena.bar_thumb_x(id, arena.nodes[id].x)
-    let tw = arena.bar_thumb_w(id)
+    let text_width = arena.bar_thumb_w(id)
     let ty = arena.bar_hy(id, arena.nodes[id].y)
-    let th = arena.bar_w()
+    let text_height = arena.bar_w()
     if px < tx {
         return 0
     }
-    if px >= tx + tw {
+    if px >= tx + text_width {
         return 0
     }
     if py < ty {
         return 0
     }
-    if py >= ty + th {
+    if py >= ty + text_height {
         return 0
     }
     return 1
@@ -537,9 +537,9 @@ fn drag(px: int, py: int) -> int {
     }
     if arena.drag_bar == 2 {
         let maxs = arena.scroll_max_x(arena.drag_id)
-        let tw = arena.bar_track_w(arena.drag_id)
+        let text_width = arena.bar_track_w(arena.drag_id)
         let thw = arena.bar_thumb_w(arena.drag_id)
-        let range = geometry.max2(tw - thw, 1)
+        let range = geometry.max2(text_width - thw, 1)
         let mut nx = arena.drag_as + (px - arena.drag_ay) * maxs / range
         if nx < 0 {
             nx = 0
@@ -553,9 +553,9 @@ fn drag(px: int, py: int) -> int {
         return 1
     }
     let maxs = arena.scroll_max(arena.drag_id)
-    let th = arena.bar_track_h(arena.drag_id)
+    let text_height = arena.bar_track_h(arena.drag_id)
     let thh = arena.bar_thumb_h(arena.drag_id)
-    let range = geometry.max2(th - thh, 1)
+    let range = geometry.max2(text_height - thh, 1)
     let mut ny = arena.drag_as + (py - arena.drag_ay) * maxs / range
     if ny < 0 {
         ny = 0

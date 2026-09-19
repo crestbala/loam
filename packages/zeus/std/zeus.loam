@@ -633,10 +633,10 @@ fn set_spacing_col(node: Node, g: int) -> Node {
 /// and clears the percentage. `.set_width(-1)` restores the 100% default.
 fn set_width(node: Node, px: int) -> Node {
     if px < 0 {
-        arena.nodes[node.id].ew = -1
+        arena.nodes[node.id].explicit_width = -1
         arena.nodes[node.id].w_pct = 100
     } else {
-        arena.nodes[node.id].ew = px
+        arena.nodes[node.id].explicit_width = px
         arena.nodes[node.id].w_pct = -1
     }
     return node
@@ -645,7 +645,7 @@ fn set_width(node: Node, px: int) -> Node {
 /// `height` prop, for code that already holds a `Node` (recipes, engine
 /// paths) and cannot go back through a props struct.
 fn set_height(node: Node, px: int) -> Node {
-    arena.nodes[node.id].eh = px
+    arena.nodes[node.id].explicit_height = px
     return node
 }
 
@@ -667,7 +667,7 @@ fn size_px(node: Node, px: int) -> Node {
     return node.set_width(px).set_height(px)
 }
 fn width_pct(node: Node, percent_value: int) -> Node {
-    arena.nodes[node.id].ew = -1
+    arena.nodes[node.id].explicit_width = -1
     arena.nodes[node.id].w_pct = i8(percent_value)
     return node
 }
@@ -1430,12 +1430,12 @@ fn refresh_lists() {
     }
 }
 
-fn virt_stale() -> int {
+fn virtual_stale() -> int {
     let n = arena.nodes.len
     for i in 1..n {
         if arena.nodes[i].row_h > 0 {
             if arena.nodes[i].list_fn > 0 {
-                let w = virt_window(i, arena.nodes[i].list_n, arena.nodes[i].row_h)
+                let w = virtual_window(i, arena.nodes[i].list_n, arena.nodes[i].row_h)
                 if w.first != arena.nodes[i].list_lo {
                     return 1
                 }
@@ -1524,13 +1524,13 @@ fn engine_layout(width: int, height: int) {
     // moved their width. One refresh pass covers both; a second layout applies
     // the new rows / fresh chart width. A pure scroll frame that stays inside
     // the mounted window skips both.
-    if lay != 0 || arena.virt_dirty != 0 {
-        if (virt_stale() != 0) || (refit_stale() != 0) {
+    if lay != 0 || arena.virtual_dirty != 0 {
+        if (virtual_stale() != 0) || (refit_stale() != 0) {
             refresh_lists()
             layout.layout(width, height)
             arena.layout_dirty = 0
         }
-        arena.virt_dirty = 0
+        arena.virtual_dirty = 0
     }
     if lay != 0 {
         // Positions moved, so pointer-over targets may have changed.
@@ -1630,18 +1630,18 @@ fn engine_paint() {
     scene.paint()
 }
 
-/// One host frame with its own delta. `zeus_step(dt)` in the runtime passes the
+/// One host frame with its own delta. `zeus_step(delta_ms)` in the runtime passes the
 /// delta here; the cap keeps a backgrounded app from jumping when it wakes.
 /// Tests and headless pumps call `engine_step()` (a nominal 16 ms).
 fn engine_step_dt(dt_ms: int) -> int {
-    let mut dt = dt_ms
-    if dt <= 0 {
-        dt = 16
+    let mut delta_ms = dt_ms
+    if delta_ms <= 0 {
+        delta_ms = 16
     }
-    if dt > 64 {
-        dt = 64
+    if delta_ms > 64 {
+        delta_ms = 64
     }
-    let d = scene.step(dt)
+    let d = scene.step(delta_ms)
     // A layout-driving `animate` reflows in this same frame so paint sees
     // the new box. Hover / press still skip layout: they never push a
     // layout-anim binding.
@@ -1659,7 +1659,7 @@ fn engine_step_dt(dt_ms: int) -> int {
     if async.busy() != 0 {
         return 1
     }
-    if arena.phys_live() != 0 {
+    if arena.physics_live() != 0 {
         return 1
     }
     if arena.anim_live() != 0 {
@@ -1677,7 +1677,7 @@ fn engine_step() -> int {
 /// next frame exactly at the deadline. Coasts at ~60 fps while a scroller
 /// is in motion.
 fn engine_next_ms() -> int {
-    if arena.phys_live() != 0 {
+    if arena.physics_live() != 0 {
         return 16
     }
     if arena.anim_live() != 0 {
@@ -3644,14 +3644,14 @@ fn layout_target_px(setter: int, v: int) -> int {
 fn layout_read(node_id: int, setter: int) -> int {
     match setter {
         SET.Width => {
-            if arena.nodes[node_id].ew >= 0 {
-                return arena.nodes[node_id].ew
+            if arena.nodes[node_id].explicit_width >= 0 {
+                return arena.nodes[node_id].explicit_width
             }
             return arena.nodes[node_id].w
         }
         SET.Height => {
-            if arena.nodes[node_id].eh >= 0 {
-                return arena.nodes[node_id].eh
+            if arena.nodes[node_id].explicit_height >= 0 {
+                return arena.nodes[node_id].explicit_height
             }
             return arena.nodes[node_id].h
         }
@@ -4929,7 +4929,7 @@ fn find_scroller(id: int) -> int {
 /// Visible index window for a windowed list. `row_h` is the fixed row height
 /// used to turn `scroll_y` into indices; overscan keeps a few extra rows
 /// mounted so a small flick does not rebuild.
-fn virt_window(node_id: int, n: int, row_h: int) -> VirtWin {
+fn virtual_window(node_id: int, n: int, row_h: int) -> VirtWin {
     let mut first = 0
     let mut last = n
     if row_h <= 0 {
@@ -4967,14 +4967,14 @@ fn virt_window(node_id: int, n: int, row_h: int) -> VirtWin {
     return VirtWin { first: first, last: last }
 }
 
-fn virt_refresh<T>(node_id: int, items: Signal<[]T>, build: fn(int, T), row_h: int) {
+fn virtual_refresh<T>(node_id: int, items: Signal<[]T>, build: fn(int, T), row_h: int) {
     let xs = items.get()
     let m = xs.len
     let gen = platform.plat_sig_gen(items.id)
     let mut first = 0
     let mut last = m
     if row_h > 0 {
-        let w = virt_window(node_id, m, row_h)
+        let w = virtual_window(node_id, m, row_h)
         first = w.first
         last = w.last
     }
@@ -5001,7 +5001,7 @@ fn virt_refresh<T>(node_id: int, items: Signal<[]T>, build: fn(int, T), row_h: i
     // the next rebuild, so streaming data does not grow the arena. A
     // windowed list only (re)builds the visible rows — append / insert
     // outside the window is a spacer resize, not O(n) widgets.
-    let prev = arena.rebuild_begin(node_id)
+    let previous = arena.rebuild_begin(node_id)
     ui_push(node_id)
     if row_h > 0 {
         if first > 0 {
@@ -5023,10 +5023,10 @@ fn virt_refresh<T>(node_id: int, items: Signal<[]T>, build: fn(int, T), row_h: i
         }
     }
     ui_pop()
-    arena.rebuild_end(prev)
+    arena.rebuild_end(previous)
 }
 
-fn virt_row_h(heights: []int, i: int, fallback: int) -> int {
+fn virtual_row_h(heights: []int, i: int, fallback: int) -> int {
     if i >= 0 {
         if i < heights.len {
             if heights[i] > 0 {
@@ -5037,11 +5037,11 @@ fn virt_row_h(heights: []int, i: int, fallback: int) -> int {
     return fallback
 }
 
-fn virt_prefix(heights: []int, n: int, fallback: int) -> int {
+fn virtual_prefix(heights: []int, n: int, fallback: int) -> int {
     let mut y = 0
     let mut i = 0
     while i < n {
-        y = y + virt_row_h(heights, i, fallback)
+        y = y + virtual_row_h(heights, i, fallback)
         i = i + 1
     }
     return y
@@ -5049,7 +5049,7 @@ fn virt_prefix(heights: []int, n: int, fallback: int) -> int {
 
 fn virt_window_var(node_id: int, n: int, heights: []int, fallback: int) -> VirtWin {
     if heights.len == 0 {
-        return virt_window(node_id, n, fallback)
+        return virtual_window(node_id, n, fallback)
     }
     let signal_id = find_scroller(node_id)
     let mut view_h = 240
@@ -5074,7 +5074,7 @@ fn virt_window_var(node_id: int, n: int, heights: []int, fallback: int) -> VirtW
     let mut last = n
     let mut i = 0
     while i < n {
-        let rh = virt_row_h(heights, i, fallback)
+        let rh = virtual_row_h(heights, i, fallback)
         if acc + rh > local {
             first = i
             break
@@ -5086,7 +5086,7 @@ fn virt_window_var(node_id: int, n: int, heights: []int, fallback: int) -> VirtW
     if first < 0 {
         first = 0
     }
-    acc = virt_prefix(heights, first, fallback)
+    acc = virtual_prefix(heights, first, fallback)
     last = first
     while last < n {
         if acc >= local + view_h {
@@ -5096,7 +5096,7 @@ fn virt_window_var(node_id: int, n: int, heights: []int, fallback: int) -> VirtW
             }
             return VirtWin { first: first, last: last }
         }
-        acc = acc + virt_row_h(heights, last, fallback)
+        acc = acc + virtual_row_h(heights, last, fallback)
         last = last + 1
     }
     return VirtWin { first: first, last: last }
@@ -5129,11 +5129,11 @@ fn virt_refresh_var<T>(node_id: int, items: Signal<[]T>, build: fn(int, T), fall
     arena.nodes[node_id].list_hi = last
     arena.nodes[node_id].list_n = m
     arena.nodes[node_id].row_h = fallback
-    let prev = arena.rebuild_begin(node_id)
+    let previous = arena.rebuild_begin(node_id)
     ui_push(node_id)
     if first > 0 {
         let top = raw_spacer()
-        set_height(top, virt_prefix(hs, first, fallback))
+        set_height(top, virtual_prefix(hs, first, fallback))
         Component(top)
     }
     let mut i = first
@@ -5143,11 +5143,11 @@ fn virt_refresh_var<T>(node_id: int, items: Signal<[]T>, build: fn(int, T), fall
     }
     if last < m {
         let bot = raw_spacer()
-        set_height(bot, virt_prefix(hs, m, fallback) - virt_prefix(hs, last, fallback))
+        set_height(bot, virtual_prefix(hs, m, fallback) - virtual_prefix(hs, last, fallback))
         Component(bot)
     }
     ui_pop()
-    arena.rebuild_end(prev)
+    arena.rebuild_end(previous)
 }
 
 /// Positional list. `items` is `zeus.signal([]T {})` (`T` Copy). Rows are
@@ -5156,9 +5156,9 @@ fn virt_refresh_var<T>(node_id: int, items: Signal<[]T>, build: fn(int, T), fall
 fn Index<T>(items: Signal<[]T>, build: fn(int, T)) -> Node {
     let n = raw_box()
     let node_id = n.id
-    virt_refresh(node_id, items, build, 0)
+    virtual_refresh(node_id, items, build, 0)
     return Component(n, align_direction = DIRECTION.Column,
-                     rebuild = || { virt_refresh(node_id, items, build, 0) })
+                     rebuild = || { virtual_refresh(node_id, items, build, 0) })
 }
 
 fn kfor_unique<T>(xs: []T, key: fn(T) -> string, m: int) -> int {
@@ -5221,7 +5221,7 @@ fn kfor_refresh<T>(node_id: int, items: Signal<[]T>, key: fn(T) -> string, build
     }
     // Slow path: rebuild the host; every row is re-created and recycled.
     arena.key_clear(node_id)
-    let prev = arena.rebuild_begin(node_id)
+    let previous = arena.rebuild_begin(node_id)
     ui_push(node_id)
     let mut i = 0
     while i < m {
@@ -5239,7 +5239,7 @@ fn kfor_refresh<T>(node_id: int, items: Signal<[]T>, key: fn(T) -> string, build
         i = i + 1
     }
     ui_pop()
-    arena.rebuild_end(prev)
+    arena.rebuild_end(previous)
 }
 
 /// One arm mounted at a time. `on` is a live signal; `build(value)` rebuilds
@@ -5258,11 +5258,11 @@ fn Match<T>(on: Signal<T>, build: fn(T)) -> Node {
 /// a real change from a bare refresh sweep.
 fn match_build<T>(node_id: int, on: Signal<T>, build: fn(T)) {
     arena.nodes[node_id].list_gen = platform.plat_sig_gen(on.id)
-    let prev = arena.rebuild_begin(node_id)
+    let previous = arena.rebuild_begin(node_id)
     ui_push(node_id)
     build(on.get())
     ui_pop()
-    arena.rebuild_end(prev)
+    arena.rebuild_end(previous)
 }
 
 /// `refresh_lists` invokes every node that has a `list_fn`, on every layout.
@@ -5288,11 +5288,11 @@ fn Boundary(build: fn(), fallback: fn(string)) -> Node {
     let host = raw_box()
     let hid = host.id
     let m = arena.mark()
-    let prev = arena.scope_begin(hid)
+    let previous = arena.scope_begin(hid)
     ui_push(hid)
     let stack0 = ui_parents.len
     let msg = platform.plat_boundary(build)
-    arena.scope_end(prev)
+    arena.scope_end(previous)
     if msg.len == 0 {
         ui_pop()
     } else {
@@ -5315,9 +5315,9 @@ fn Boundary(build: fn(), fallback: fn(string)) -> Node {
 fn VirtualList<T>(items: Signal<[]T>, row_h: int, build: fn(int, T)) -> Node {
     let n = raw_scroll()
     let node_id = n.id
-    virt_refresh(node_id, items, build, row_h)
+    virtual_refresh(node_id, items, build, row_h)
     return Component(n, grow = 1, a11y_role = "list", row_h = row_h,
-                     rebuild = || { virt_refresh(node_id, items, build, row_h) })
+                     rebuild = || { virtual_refresh(node_id, items, build, row_h) })
 }
 
 /// Windowed list with per-row heights. `heights[i]` is row `i` in points
@@ -5418,9 +5418,9 @@ fn refit_refresh(node_id: int, build: fn()) {
         return
     }
     arena.nodes[node_id].list_gen = w
-    let prev = arena.rebuild_begin(node_id)
+    let previous = arena.rebuild_begin(node_id)
     slot(node_handle(node_id), build)
-    arena.rebuild_end(prev)
+    arena.rebuild_end(previous)
 }
 
 fn refit(host: Node, build: fn()) -> Node {
@@ -10194,7 +10194,7 @@ fn PageSlot(current_value: Signal<int>, pages: int, slot: int) {
 /// pages the row collapses to `1 … c-1 c c+1 … N` (see `page_at`).
 fn Pagination(current_value: Signal<int>, pages: int) {
     Row(4) {
-        let prev = Box(
+        let previous = Box(
             align_direction = DIRECTION.Row,
             width = 36,
             height = 36,
