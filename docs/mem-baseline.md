@@ -97,36 +97,99 @@ Two fixed costs worth naming so later phases do not chase them:
   CoreText font machinery. Our own arena is ~3% of the process at 1000 nodes.
   Phase 4's in-tree font stack is what makes this region disappear.
 
-## 4. vmmap / footprint by region — *pending*
+## 4. vmmap / footprint by region — measured on the gallery, macOS
 
 The task asks for `vmmap --summary <pid>` split by region (`MALLOC_*`, our
 framebuffer, CG backing stores, CoreText/font caches, everything else) and
 `footprint -p <pid>`, and a check that no `IOAccelerator` / Metal regions exist.
 
-**This cannot be run in the current environment**: it needs a process with a
-live window on a real Aqua session, and there is no display here. It is not
-skipped silently — `tools/mem-baseline.sh` performs it and writes the raw dumps
-the moment it runs on a desktop session. The placeholders that script fills are:
+Run against a real windowed `examples/zeus/gallery` this session (raw dump kept
+at `out/ab/a.vmmap`, `vmmap --summary` of pid 32844). The summary line reads:
 
 ```
-docs/mem/vmmap-thousand.txt     # vmmap --summary, DIRTY column by region
-docs/mem/footprint-thousand.txt # footprint -p
-docs/mem/regions.md             # the split table + the IOAccelerator check
+TOTAL   3.6G virtual   628.2M resident   85.2M DIRTY
 ```
 
-Until that runs, treat the per-region split as **unmeasured**. `process_kb`
-above is the only real process number this environment can produce.
+DIRTY, by region:
+
+| region | DIRTY | owner |
+|---|---|---|
+| **IOSurface** — `2940x1618 BGRA` `'CA Whippet Drawable'` **× 3**, shared with WindowServer | **54.5 MB** | compositor |
+| `MALLOC_*` (all zones: NANO / SMALL / MEDIUM / TINY + QuartzCore) | **10.7 MB** | **ours** |
+| `IOAccelerator (graphics)` (60 regions) | **7.4 MB** | compositor |
+| `owned unmapped memory` | 5.25 MB | AppKit |
+| `__DATA` / `__AUTH` / `__DATA_CONST` / `__DATA_DIRTY` | 3.0 MB | dyld + ours |
+| `CoreUI image data` / `ColorSync` / `CoreAnimation` / `CG image` / `CoreGraphics` | 1.9 MB | compositor |
+| shared memory, page tables, stack, misc | ~1.5 MB | system |
+
+`__TEXT`, `__LINKEDIT`, `__OBJC_RO` and the mapped framework files are large in
+RESIDENT terms (628 MB) but **0 K DIRTY** — they are shared read-only pages, not
+memory this process owns.
+
+### The literal GPU check, stated precisely
+
+The brief says: *there must be NO `IOAccelerator` or Metal regions; if any appear,
+a GPU path is being pulled in*. Taken literally, this run **fails that check**, and
+it is worth saying exactly why rather than glossing it:
+
+* `IOAccelerator`, `IOAccelerator (graphics)`, `Metal`, `MetalTools` and
+  `AGXMetalG14G` all appear — as dyld-mapped framework **text** (`__TEXT`, DIRTY
+  0 K) plus **7.4 MB DIRTY of `IOAccelerator (graphics)`** across 60 regions, and
+  0.8 MB of ColorSync / CoreAnimation / CoreGraphics bookkeeping.
+* **None of it is a path in our code.** `mac.m` contains no Metal, no
+  `MTLDevice`, no shader, no `CAMetalLayer`; grep confirms it. AppKit links
+  CoreAnimation, CoreAnimation links Metal, and on macOS that is true of every
+  windowed process including TextEdit. The 7.4 MB is compositor-owned shared
+  memory (it is the pairing of the same `CA Whippet Drawable` surfaces), not a
+  renderer we invoke.
+* So the honest reading is: **Zeus has no GPU render path; the framework is
+  loaded because that is unavoidable for an AppKit window on macOS.** The check
+  to act on is "does the DIRTY column contain memory we allocated for a GPU
+  path" — and it does not.
+
+`CoreText` is a separate and more interesting case: `CoreText.framework`,
+`libFontParser.dylib` and the mapped faces `SFNS.ttf` and `Helvetica.ttc` are all
+present (0 K DIRTY, but resident and loaded). That is the brief's item 7
+("confirm vmmap shows no CoreText font cache regions at all") and it **is not met
+today** — because the live loop calls `present()`, and the host draws text with
+CoreText. The fix is the loop switch, not a deletion: with `rasterize()` +
+`std:font` the text path is our own TrueType parser and glyph atlas (§7).
+
+### What the display-path work achieved
+
+The ~100 MB report decomposes as above: ~54.5 MB of compositor IOSurface plus a
+smaller compositor/GPU share, on top of ~10.7 MB of our own malloc. The engine
+was never the bulk of it.
+
+| path | footprint | frame |
+|---|---|---|
+| AppKit store (`APP_KIT=1` / `ZEUS_OWN_BUFFER=0`) | 103–137 MB | 60 fps, zero copy |
+| **owned bitmap (default since `0440f3e`)** | **51–55 MB** | 60 fps @16.6 ms of a 16.7 budget |
+| owned IOSurface (`ZEUS_OWN_SURFACE=1`) | ~35 MB | should be faster (no copy) |
+| AppKit store, wide gamut (`ZEUS_WIDE_GAMUT=1`) | 176–219 MB | — |
+
+The default was flipped to the owned bitmap, the change that takes the gallery
+from ~100 MB to ~51 MB for pixel-identical output. `APP_KIT=1` is the opt-in
+escape hatch for a host that wants the zero-copy `drawRect:` paint. The
+`ZEUS_OWN_SURFACE=1` path (~35 MB — one buffer instead of our buffer plus the
+compositor's texture) is implemented and byte-compared by
+`packages/loam/tests/bench/own_buffer.sh`, but is not the default yet: it needs a
+run on a real display to confirm the two-surface swap holds under live scroll.
+
+`docs/mem/regions.md` and `tools/mem-baseline.sh` still produce the full
+automated split; the table above is the manual measurement from this session.
 
 ## 5. Golden result
 
 * Structural golden: **pass**, logical 1x, `tests/golden/ref_scene.draw.txt`.
   Covers body text at 11/13/17 px, a 1px border, a rounded card with a drop
   shadow, a gradient, and an image op. Runner: `tests/golden/run.sh`.
-* Pixel golden at 2x: **pass**. `tests/golden/raster_scene.ppm` (320x300,
-  288 015 bytes) is rasterized by the Loam rasterizer itself — no graphics API,
+* Pixel golden at 2x: **pass**. `tests/golden/raster_scene.ppm` (320x392,
+  376 335 bytes) is rasterized by the Loam rasterizer itself — no graphics API,
   just the bytes we own — and `tests/golden/run.sh` diffs it byte-for-byte. It
-  covers body text at 11/13/17px, the 1px border, the rounded card with its
-  shadow, the gradient, and image ops.
+  covers body text at 11/13/17px, a stroke-only **SVG** icon, a three-line
+  **wrapped** paragraph, the 1px border, the rounded card with its shadow, the
+  gradient, and image ops.
 * Regression check: all existing draw goldens pass unchanged
   (`golden_accordion`, `golden_controls`, `golden_overlays`,
   `golden_scale_gallery`, `golden_feedback`, `golden_menu`, `golden_picker`),
@@ -1149,13 +1212,13 @@ differs. The path is gated off by default and falls back to the bitmap path (the
 - bytes/node **476.0** and the arena high-water **986 628 B** are untouched: this
   is host-side storage, and no `UiNode` field was added.
 
-**Remaining Phase 4** (not done): SVG and `xform` in the raster pass (`text_int`,
-`text_wrap` and rotated text too), WebP, and the **web** blit (a typed-array view
-over the same BGRA8 buffer plus one `putImageData` per frame; the buffer is ours,
-so the canvas never sees a Canvas2D draw call). Note also that the live frame loop
-still uses `present()` — the host's 2D API. The rasterizer is now independently
-able to drive a frame (`scene_rasterize` + `raster_blit`), and switching the loop
-over is a separate step.
+**Remaining Phase 4** (not done): `xform` and rotated text in the raster pass,
+WebP, and the **web** blit (a typed-array view over the same BGRA8 buffer plus one
+`putImageData` per frame; the buffer is ours, so the canvas never sees a Canvas2D
+draw call). SVG, `text_int` and `text_wrap` landed this session (§7). The live
+frame loop still uses `present()` — the host's 2D API — because the raster pass,
+though complete for the reference app, is currently far too slow per pixel to
+drive a frame; the measured cost and the fix are in §7.
 
 **Image formats — status and roadmap.** Landed in Loam: **PNG** — colour types
 0/2/3/4/6, depths 1/2/4/8/16, all five scanline filters, multiple IDAT chunks,
@@ -1185,3 +1248,108 @@ Not planned and not pretended: **AVIF** and **HEIC**, which are AV1 and H.265
 bitstreams. Those go to the platform (which is also what every other desktop
 toolkit does), and a UI that needs them should ask the platform for the pixels
 rather than grow a video decoder here.
+
+## 7. Is Cocoa needed for the UI? (the question this session turned on)
+
+Short answer: **the widgets never used Cocoa, and Cocoa does not create a single
+UI component. But Cocoa still *draws* the pixels, and today it has to.**
+
+`platform.loam` has 85 seams. Classified by what they actually are:
+
+| count | category | who replaces it |
+|---|---|---|
+| **22** | **paint** — `fill`, `fill_a`, `fill_g`, `fill4`, `shadow`, `stroke`, `xform`, `text*`, `measure*`, `svg`, `image*`, `save`, `clip`, `restore`, `alpha`, `blit` | the Loam rasterizer (this file, §6 Phase 4) |
+| 3 | font access — `set_font_family`, `load_font`, `font_bytes` | `std:font` (TrueType in Loam) |
+| 37 | engine **state**, not OS calls — `edit_*`, `key_*`, `intern_*`, `invoke_*`, `sig_*` | nothing OS-shaped; could move into Loam |
+| 16 | OS service/syscall — `now_ms`, `mem_kb`, `pick_image`, `history_*`, `insets`, `boundary`, `overlay_scroll` | irreducible, small |
+| **6** | **window + event loop** — `run`, `headless`, `set_window`, `set_title`, `view_width`, `view_height` | genuinely irreducible |
+
+So the tree, layout, diff, signals and now the **rasterizer** are all Loam. What
+Cocoa supplies is a window, a run loop, input, and the final blit — the four
+things the brief itself carves out. The parts of `mac.m` that draw with
+`NSBezierPath` / `CGContext` / `CTFont` (and its in-host SVG parser) exist only
+because the live loop still calls `present()` instead of `rasterize()` +
+`raster_blit()`.
+
+### The raster pass now covers the whole gallery
+
+This session closed the gaps that `present()` was still covering for the
+reference app. The gallery's draw list, rasterized by the Loam pass, before and
+after:
+
+| | before | after |
+|---|---|---|
+| ops rasterized | 419 | **450** |
+| unhandled | **30** (24 `svg`, 6 `text_wrap`) | **0** |
+| rounded clips treated as square | 0 | 0 |
+
+Landed in Loam, in `std/zeuscore`:
+
+* **`text_int`** — integer → decimal string, then the glyph path.
+* **`text_wrap`** — the same greedy word wrap the host does (break at spaces and
+tabs, `\n` a hard break, a space that would overrun is consumed by the break),
+but each line is drawn as one string so the pen carries subpixel positions across
+a line. The host restarted every word on an integer.
+* **`svg`** — a new `svg.loam` (1374 lines): `viewBox`, `g`/`svg` walk, `path`
+  (`M L H V C S Q T Z`, `A` skipped for host parity), `circle`, `rect`,
+  `fill`/`stroke`/`stroke-width`/`linecap`/`linejoin`, `#rgb`/`#rrggbb`/`none`/
+  `currentColor`. Fills are flattened to the 0.25 device-px tolerance and
+  accumulated as multi-contours; a stroke is the union of per-segment quads plus
+  round joins and caps, added to one coverage group so overlaps composite once.
+  Rasterized by our own rasterizer — no NSBezierPath, no CGPath.
+
+Both halves of the golden still pass, and `tests/golden/raster_scene.loam` now
+includes a stroke-only SVG icon and a three-line wrapped paragraph, so the new
+ops are pinned by an exact byte diff, not just by a counter.
+
+One diagnostic fix that fell out: `rs_glyphs_missing` was counting every **space**
+as a missing glyph (gid > 0, no outline). A wrapped paragraph would have reported
+thousands. Whitespace is now excluded; a glyph whose outline genuinely could not
+be parsed still counts.
+
+### Why the live loop is still on `present()` — measured, not assumed
+
+The obvious next step is to point `paint()` at `rasterize()` + `raster_blit()`.
+It is not wired because it is currently far too slow, and the numbers say so.
+
+Averaged over a full-surface fill, headless, at scale 2 (`out/rastsize.loam`):
+
+| logical | physical px | raster ms | ns/px |
+|---|---|---|---|
+| 100×80 | 32 000 | 27 | 840 |
+| 200×160 | 128 000 | 156 | 1220 |
+| 400×320 | 512 000 | 717 | 1400 |
+| 1000×800 | 3 200 000 | ~4 000 | ~1250 |
+
+Cost is linear in area at **~1.2–1.4 µs per pixel**. A 2880×1800 window is
+5.18 Mpx, so one full-surface fill is ~7 s; the gallery's 450-op list at
+2000×1600 measured **60 s for a single pass** (`out/rasttime.loam`).
+
+The cause is the per-pixel coverage test in `raster_accum_path`: for every
+interior pixel it walks the path for even-odd point-inside (`raster_point_inside`,
+O(n) with a division per edge) *and* tests every active edge through
+`raster_edge_hits_square` (four more Liang-Barsky divisons). That is ~8 divisions
+and several by-value struct round-trips per pixel — roughly 50× the cost of a
+scanline span fill.
+
+Switching the loop now would take the app from 60 fps to seconds per frame. The
+brief's rule is explicit — never trade quality or correctness for a number, and
+don't claim a win that is not one — so the loop stays on `present()` until the
+coverage loop is fixed. The fix is well-defined and is exactly what the brief
+asks for in Phase 4.3:
+
+1. **Active edge table with spans.** Per scanline, compute the sorted crossing
+   x-positions once (O(n log n) per row), fill the interior spans at coverage
+   255 with no per-pixel divisions, and run the exact area test
+   (`raster_pixel_area`) only for the pixels an active edge actually touches.
+2. **Op bounding-box culling before the tile sweep.** `raster_fill_multi`
+   currently visits every tile of the surface per op; a 40×8 box should visit
+   one. The bbox is already computed inside `raster_accum_path` — use it to pick
+   the tile range.
+3. **Damage-tile culling** (Phase 4.6). `damage_tiles_build` already exists; the
+   raster pass needs to clear and composite only those tiles, which is what makes
+   a scroll frame cheap instead of full-surface.
+
+Until those land, the Loam rasterizer remains the pixel author for the goldens
+and the image/atlas tests, and Cocoa's 2D API remains the frame's pixel author in
+the live app.
