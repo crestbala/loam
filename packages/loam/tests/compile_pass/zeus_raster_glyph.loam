@@ -1,0 +1,98 @@
+// Phase 4: outline -> coverage, end to end. A TrueType glyph's contours come
+// out of std:font in font units, get converted to device pixels with a
+// y-flip, and rasterize into an offscreen R8 mask -- no display, no font API.
+//
+// The headline check is 'B': its counter (an opposite-winding inner contour)
+// must come out EMPTY. That is the whole glyph-shape problem in one assertion,
+// and it can only pass if loca/glyf parsing, implied-on-curve resolution,
+// quadratic flattening, and signed winding all work together.
+
+import "std:fmt"
+import "std:sys"
+import "std:font"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn main() {
+    let s = sys.read_file("packages/loam/tests/fonts/tiny.ttf")
+    must(s.len > 0, "font loaded")
+    let upm = font.units_per_em(s)
+    must(upm == 1000, "unitsPerEm is 1000")
+
+    // 64 device px em: sc = 64/1000, so 'A' (800 units wide) is ~51px wide and
+    // every expected coordinate below is exact.
+    let sc = 64.0 / float(upm)
+
+    // --- 'A': a triangle ---------------------------------------------------
+    let oa = font.glyph_outline(s, font.glyph_index(s, 65))
+    must(oa.ok == 1, "A outline parsed")
+    zeus.raster_multi_begin()
+    // Baseline at device y=96, pen at x=32: points (100,0),(500,700),(900,0)
+    // become (38.4,96),(64,51.2),(89.6,96) -- the y-flip stands it up.
+    zeus.raster_multi_add_glyph(oa.xs, oa.ys, oa.on, oa.ends, 32.0, 96.0, sc)
+    must(zeus.raster_multi_count() == 1, "A contributes one contour")
+    must(zeus.raster_multi_to_mask(32, 48, 96, 104) == 1, "A rasterized to a mask")
+    must(zeus.raster_mask_w() == 64, "mask width")
+    must(zeus.raster_mask_h() == 56, "mask height")
+
+    // Centroid (64, 81.1) -> mask (32, 33): solidly inside.
+    must(zeus.raster_mask_get(32, 33) == 255, "A interior is opaque")
+    // Mask (0,0) is device (32,48), above the apex and left of the base: empty.
+    must(zeus.raster_mask_get(0, 0) == 0, "A top-left corner is empty")
+    must(zeus.raster_mask_get(63, 55) == 0, "A bottom-right corner is empty")
+
+    // Find at least one partially covered pixel: the slanted edges must be
+    // antialiased, not hard. (An all-or-nothing mask means no AA at all.)
+    let mut graded = 0
+    let mut y = 0
+    while y < zeus.raster_mask_h() {
+        let mut x = 0
+        while x < zeus.raster_mask_w() {
+            let v = zeus.raster_mask_get(x, y)
+            if v > 0 {
+                if v < 255 {
+                    graded = graded + 1
+                }
+            }
+            x = x + 1
+        }
+        y = y + 1
+    }
+    must(graded > 4, "A slanted edges are antialiased (graded coverage)")
+
+    // --- 'B': an outer box with a counter ----------------------------------
+    let ob = font.glyph_outline(s, font.glyph_index(s, 66))
+    must(ob.ok == 1, "B outline parsed")
+    must(font.outline_contours(ob) == 2, "B has two contours")
+    zeus.raster_multi_begin()
+    zeus.raster_multi_add_glyph(ob.xs, ob.ys, ob.on, ob.ends, 32.0, 96.0, sc)
+    must(zeus.raster_multi_count() == 2, "B contributes two contours")
+    must(zeus.raster_multi_to_mask(32, 40, 96, 104) == 1, "B rasterized to a mask")
+    must(zeus.raster_mask_w() == 64, "B mask width")
+    must(zeus.raster_mask_h() == 64, "B mask height")
+
+    // Outer box is device x(38.4,89.6) y(44.8,96); counter is x(51.2,76.8)
+    // y(57.6,83.2). Mask is offset (32,40).
+    must(zeus.raster_mask_get(4, 30) == 0, "B left of the box is empty")
+    must(zeus.raster_mask_get(12, 30) == 255, "B left band (outer - counter) is filled")
+    must(zeus.raster_mask_get(32, 30) == 0, "B counter is EMPTY (winding subtracted)")
+    must(zeus.raster_mask_get(52, 30) == 255, "B right band is filled")
+    must(zeus.raster_mask_get(60, 30) == 0, "B right of the box is empty")
+    must(zeus.raster_mask_get(12, 4) == 0, "B above the box is empty")
+    must(zeus.raster_mask_get(12, 60) == 0, "B below the box is empty")
+
+    // --- an empty glyph is not an error ------------------------------------
+    let osp = font.glyph_outline(s, font.glyph_index(s, 32))
+    zeus.raster_multi_begin()
+    zeus.raster_multi_add_glyph(osp.xs, osp.ys, osp.on, osp.ends, 0.0, 0.0, sc)
+    must(zeus.raster_multi_count() == 0, "space adds no contours")
+
+    fmt.println("raster glyph ok", graded)
+}

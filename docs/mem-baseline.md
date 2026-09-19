@@ -326,7 +326,7 @@ step; doing them half-way is how a UI engine regresses silently):
 Net: Phase 3's free/ordering step is done and measured; its structural items
 (1-3) and the `f32` geometry requirement (4) remain open.
 
-### Phase 4 — software rasterizer (framebuffer, color, coverage, borders, shadows, tiles, damage clip, blit contract, multi-contour, glyph outlines)
+### Phase 4 — software rasterizer (framebuffer, color, coverage, borders, shadows, tiles, damage clip, blit contract, multi-contour, glyph outlines, glyph bitmaps)
 
 - bytes/node: **476.0 — unchanged.** No tree/geometry code was touched.
 - New module `packages/zeus/std/zeuscore/raster.loam`:
@@ -349,7 +349,7 @@ Net: Phase 3's free/ordering step is done and measured; its structural items
     50% white over black lands at **188**, not the naive sRGB byte blend's 128.
   - **Ordered 8x8 Bayer dither**, asserted to be a permutation of 0..63, and a
     `raster_quantize` that applies it when a gradient writer rounds to a byte.
-- golden: structural pass; all 20 draw goldens byte-identical; pixel @2x still
+- golden: structural pass; all 15 draw goldens byte-identical; pixel @2x still
   *pending* — it needs geometry rasterization + the blit, which is the rest of
   this phase.
 
@@ -461,10 +461,44 @@ now a compile error instead of a silent drop. It is a latent compiler bug any
 large app could hit; Phase 4 is simply what surfaced it. (The full `nob test`
 run: 449 passed; the 6 failures are the network suites this sandbox blocks.)
 
-**Remaining Phase 4** (not done, and each is substantial): the atlas — turn the
-parsed outlines into R8 glyph bitmaps (resolve implied on-curve points, flatten
-the quadratics, rasterize through the multi-contour core), pack them into a
-1024x1024 atlas keyed by (font, glyph, size, subpixel-x), apply coverage gamma,
-and bound the atlas and measurement caches with LRU — plus image decode with
-Mitchell/Lanczos2, the host half of the blit, and driving the paint pass through
-the rasterizer.
+**Glyph bitmaps (tenth step).** The parsed outline now becomes pixels, still
+with no font API. `raster_tt_contour` walks a glyph's on/off-curve points,
+resolving implied on-curve midpoints between consecutive control points, and
+flattens every quadratic to the same **0.25 device-pixel** tolerance the rest of
+the rasterizer uses. `raster_multi_add_tt` derives each contour's winding sign
+from its orientation relative to the first contour, so the caller passes no sign
+and a counter subtracts; `raster_multi_add_glyph` converts font units to device
+pixels (y-flip on the baseline) first, so the flip happens before orientation is
+measured and the sign stays correct. `raster_multi_to_mask` rasterizes the set
+into an offscreen **single-channel R8** mask over a device box at most one tile
+a side — scratch, read back with `raster_mask_*`.
+
+`zeus_raster_glyph.loam` is the end-to-end check, headless:
+
+- `A` (a triangle) lands interior-opaque, corner-empty, with **126 graded
+  pixels** — the slanted edges are antialiased, not hard.
+- `B`'s **counter is empty** while both bands are filled. That single assertion
+  can only pass if `loca`/`glyf` parsing, implied-on-curve resolution, quadratic
+  flattening, and signed winding all work together — it is the whole glyph-shape
+  problem in one check.
+- an empty glyph (space) contributes no contours, and is not an error.
+
+(That test failed on first run because *I* picked sc = 16/1000 when I meant
+64/1000 — the glyph came out 12px wide and every sample point was outside it. A
+probe with `raster_multi_add_poly` at the intended coordinates rendered the
+triangle exactly as expected, which pointed at the scale, not the rasterizer.)
+
+- bytes/node: **476.0 — unchanged.** The glyph path allocates only scratch
+  (tile-sized coverage, one mask, two point vectors), all reset per call; the
+  headless `membench` numbers are identical to the Phase 3 column
+  (tree @1000 = 953 420, total 982 624, `node_record_bytes` 472).
+- validation: 99 zeus `compile_pass` tests pass (the 2 failures are the
+  network suites this sandbox blocks), all 15 draw goldens byte-identical,
+  structural golden pass, `tools/mem-baseline.sh --headless` unchanged.
+
+**Remaining Phase 4** (not done, and each is substantial): the atlas — pack
+these masks into a 1024x1024 R8 atlas keyed by (font, glyph, size, subpixel-x),
+apply coverage gamma, bound the atlas and measurement caches with LRU (no
+unbounded map anywhere), and quantize subpixel-x to 1/4 px at sizes <= 16 logical
+px — plus image decode with Mitchell/Lanczos2 + an LRU byte budget, the host half
+of the blit, and driving the paint pass through the rasterizer.
