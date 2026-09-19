@@ -96,6 +96,7 @@ import "zeuscore/input.loam"
 import "zeuscore/track.loam"
 import "std:async"
 import "std:fmt"
+import "std:sys"
 
 /// Button variants, named after the fill they carry. `Solid` is the
 /// `default` (primary) variant, `Soft` is `secondary`, `Danger` is
@@ -2407,6 +2408,46 @@ fn raster_clip_reset() {
 /// Restrict the next tiled draws to a device-space box.
 fn raster_clip_box(x0: int, y0: int, x1: int, y1: int) {
     raster.raster_clip_box(x0, y0, x1, y1)
+}
+
+fn raster_push_str(b: &mut []int, s: string) {
+    let mut i = 0
+    while i < s.len {
+        b.push(s[i])
+        i = i + 1
+    }
+}
+
+/// The zero-copy blit contract, Loam side: the framebuffer's generation. A host
+/// wraps the buffer once with a no-copy data provider (CGImage on native, a
+/// typed-array view on web) and rebuilds that wrapper ONLY when this number
+/// changes — which is reallocation, on a size or backing-scale change, not per
+/// frame. Between changes the same bytes are handed over untouched, so there is
+/// no per-frame full-buffer copy.
+fn raster_blit_generation() -> int {
+    return raster.raster_generation()
+}
+
+/// Write the framebuffer as a binary PPM (P6). This is the headless capture
+/// path: no graphics API, just the bytes we own, which is what lets a pixel
+/// golden exist without a display. Returns 0 on success.
+fn raster_dump_ppm(path: string) -> int {
+    let w = raster.raster_width()
+    let h = raster.raster_height()
+    let mut b: []int = []int {}
+    raster_push_str(&mut b, "P6\n{{w}} {{h}}\n255\n")
+    let mut y = 0
+    while y < h {
+        let mut x = 0
+        while x < w {
+            b.push(raster.raster_get(x, y, 2))
+            b.push(raster.raster_get(x, y, 1))
+            b.push(raster.raster_get(x, y, 0))
+            x = x + 1
+        }
+        y = y + 1
+    }
+    return sys.write_file(path, string_from_bytes(b))
 }
 
 /// Set the damage clip from this frame's damage list: the bounding box of the

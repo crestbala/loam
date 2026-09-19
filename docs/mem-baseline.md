@@ -326,7 +326,7 @@ step; doing them half-way is how a UI engine regresses silently):
 Net: Phase 3's free/ordering step is done and measured; its structural items
 (1-3) and the `f32` geometry requirement (4) remain open.
 
-### Phase 4 — software rasterizer (framebuffer, color, coverage, borders, shadows, tiles, damage clip)
+### Phase 4 — software rasterizer (framebuffer, color, coverage, borders, shadows, tiles, damage clip, blit contract)
 
 - bytes/node: **476.0 — unchanged.** No tree/geometry code was touched.
 - New module `packages/zeus/std/zeuscore/raster.loam`:
@@ -414,6 +414,18 @@ clears it on a full-damage frame. `zeus_raster_clip.loam` asserts the identity
 inside the clip, a clean background outside it, and a full repaint once the clip
 is reset.
 
+**Blit (seventh step).** The zero-copy contract has two halves. The Loam half
+is a **generation**: `raster_blit_generation()` changes only on reallocation
+(size or backing-scale change), not per frame, so a host wraps the buffer once
+and rebuilds its wrapper only when that number moves. Verified in
+`zeus_raster_blit.loam`: a redraw keeps the generation (wrapper reused), a scale
+change bumps it (wrapper invalidated). The **host half** — wrapping the bytes
+with a no-copy `CGImage` data provider on native, a typed-array view on web — is
+host FFI that needs a display and `devicePixelRatio`, so it is not landed here
+and remains open. The same test lands the **headless PPM dump**
+(`raster_dump_ppm`): a golden can now be captured from our own bytes with no
+graphics API, which is what Phase 5 needs.
+
 **Compiler bug this work surfaced.** Adding the raster module's ~40 globals and
 constants tipped four large programs (zeus_components / key_prop / reactive /
 spec_props) past a **silent 256-entry cap** in `typecheck.c`: `gvars[256]`,
@@ -426,6 +438,7 @@ run: 449 passed; the 6 failures are the network suites this sandbox blocks.)
 
 **Remaining Phase 4** (not done, and each is substantial): the glyph atlas with
 in-tree TrueType/GPOS metrics, image decode with Mitchell/Lanczos2 downsampling
-and an LRU byte budget, the zero-copy blit, and the web (devicePixelRatio) path.
-The tiles and the damage clip are in place; driving the actual paint pass
-(draw-list ops) through them comes with the blit.
+and an LRU byte budget, and the host half of the blit (the no-copy CGImage /
+typed-array wrapper, native + web). The tiles, damage clip, and the Loam-side
+blit generation are in place; driving the paint pass (draw-list ops) through the
+rasterizer lands with the glyph atlas, since text is the last primitive missing.

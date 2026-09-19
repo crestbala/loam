@@ -1,0 +1,42 @@
+// Phase 4: the blit. The host wraps our buffer with a no-copy provider and
+// rebuilds it only when the generation changes (reallocation), never per frame.
+// And the headless PPM dump, which is what lets a pixel golden exist without a
+// display.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn main() {
+    zeus.raster_ensure(8, 8, 1)
+    zeus.raster_clear(10, 20, 30)
+
+    // --- PPM dump: header + w*h*3 bytes, channels in R,G,B order -----------
+    let path = "out/raster_dump_test.ppm"
+    must(zeus.raster_dump_ppm(path) == 0, "dump wrote the file")
+    let s = sys.read_file(path)
+    // "P6\n" (3) + "8 8\n" (4) + "255\n" (4) = 11 bytes of header.
+    must(s.len == 11 + 8 * 8 * 3, "ppm is header + w*h*3 bytes")
+    must(s[11] == 10, "first pixel R")
+    must(s[12] == 20, "first pixel G")
+    must(s[13] == 30, "first pixel B")
+
+    // --- blit generation: stable across redraws, changes on realloc -------
+    let g = zeus.raster_blit_generation()
+    must(g == zeus.raster_generation(), "blit generation is the buffer generation")
+    zeus.raster_clear(1, 2, 3)
+    zeus.raster_ensure(8, 8, 1)
+    must(zeus.raster_blit_generation() == g, "redraw does not reallocate, so the wrapper is reused")
+    zeus.raster_ensure(8, 8, 2)
+    must(zeus.raster_blit_generation() != g, "a scale change reallocates and invalidates the wrapper")
+
+    fmt.println("raster blit ok", s.len, g)
+}
