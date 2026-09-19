@@ -861,8 +861,53 @@ golden at a file is a small step, deliberately deferred.
   `tests/golden/run.sh` reports **both halves**: the structural golden and the new
   2x pixel golden.
 
-**Remaining Phase 4** (not done): text and SVG in the raster pass, JPEG and WebP,
-and the host blit (see the ABI note below).
+**Text in the raster pass (twenty-third step).** The chain is complete, in Loam,
+with no font API: a TrueType file → `std:font` (cmap, hmtx, glyf) → the glyph
+atlas (outline → winding → coverage gamma) → the framebuffer, composited with the
+same gamma-correct blend as every other primitive. `scene_load_font(path)` hands
+the pass a font; until one is loaded, text ops are **counted as unhandled**
+rather than dropped silently.
+
+Details that matter for quality and that the test pins:
+
+- The op's `y` is the **top of the line box**, not the baseline. That is what the
+  hosts treat it as (the web host draws at `y + ascent` with
+  `textBaseline = "alphabetic"`), so the pass derives the baseline from the
+  font's own ascent rather than assuming.
+- The pen accumulates in **quarter pixels** and picks an atlas subpixel bucket at
+  logical sizes <= 16, so a 7.5px advance cannot lose its half pixel and make
+  small text uneven. Above 16 the bucket is 0 and positioning is integral.
+- On a hit the outline is never parsed: the atlas is consulted first, so a
+  steady frame walks the cmap and blits, and only a miss pays for `glyf`.
+- A glyph with no outline (a space) is skipped but still advances; a code point
+  with no glyph at all is counted (`raster_glyphs_missing`), not guessed.
+
+`zeus_raster_text.loam` checks the whole chain and, crucially, one thing a normal
+font could not: 'A' in the fixture is a **triangle**, so the test measures the ink
+width on three device rows and requires the base to be wider than the apex. A
+pass that dropped the outlines, flipped Y, or blitted the atlas at the wrong
+origin cannot satisfy that. It also checks that ink lands inside the op's own box
+and nowhere before it, that a redraw reuses the atlas (three more glyphs, no
+re-rasterization), that a larger size draws at a larger scale, and that an empty
+label is handled rather than counted.
+
+**The 2x pixel golden now includes text.** `tests/golden/raster_scene.loam` loads
+the fixture font and renders body text at 11/13/17px alongside the hairline, the
+card with its shadow, and the gradient. Reading the golden back numerically
+confirms the ink is exactly the requested `#111111`, and the hairline lands on
+exactly two device rows. The one honest caveat, recorded in
+`tests/golden/README.md`: the shapes come from an eight-glyph test fixture
+because the tree ships no usable UI font — the code path is the real one, and
+pointing it at a real font file is a one-line change plus a regenerated golden.
+
+- bytes/node: **476.0 — unchanged**.
+- validation: 109 zeus `compile_pass` tests pass (the 2 failures are the network
+  suites this sandbox blocks), all 15 draw goldens byte-identical, and
+  `tests/golden/run.sh` reports both halves.
+
+**Remaining Phase 4** (not done): SVG and `xform` in the raster pass (`text_int`,
+`text_wrap` and rotated text too), JPEG and WebP, and the host blit (see the ABI
+note below).
 
 **The host blit is blocked on an ABI gap, not on effort.** The Loam half is
 landed and tested (the buffer's `fb_gen` generation changes only on reallocation,

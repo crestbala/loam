@@ -24,13 +24,15 @@ the physical backing scale, and dumps a PPM. **No graphics API is in that chain*
 this project produced. That was the point of the whole exercise, and it is why
 this half is now a real check instead of the loud-failure stub it started as.
 
-It is 160x120 logical at scale 2 → a 320x240 image. Small on purpose: a PPM is
+It is 160x150 logical at scale 2 → a 320x300 image. Small on purpose: a PPM is
 uncompressed, and one that is a few hundred KB is reviewable in a commit. It
 covers what the raster pass can do today:
 
+* **body text at 11, 13 and 17 px**, drawn through `std:font` and the glyph atlas
+  — no CoreText, no font API, the outlines and coverage computed in Loam;
 * the surface fill;
 * a **1px hairline border**, which lands on exactly two device rows (verified:
-  rows 16 and 17 are `#cccccc` and nothing else) — quality rule 8;
+  rows 70 and 71 are `#cccccc` and nothing else) — quality rule 8;
 * a rounded card with a 1px border, both on crisp device rows;
 * a soft **drop shadow** grading from the card outward;
 * a vertical **gradient** whose interpolation is done in linear space.
@@ -39,21 +41,21 @@ Make a copy of `raster_scene.ppm` into any viewer to look at it; `python3 -c
 "from PIL import Image; Image.open('...').show()"` works, as does converting it
 with `sips`.
 
+The text uses `packages/loam/tests/fonts/tiny.ttf`, the eight-glyph test fixture,
+because the tree ships no usable UI font. That is the one honest caveat here: the
+CODE path is the real one (a real app points `scene_load_font` at a real font
+file), but the shapes on show are a fixture's. Swapping in a real font is a
+one-line change to the program plus a regenerated golden.
+
 ## What is still missing, and why
 
-Text and the image op are **absent on purpose**, and the program fails (exit 2)
-if the pass ever counts an op it cannot rasterize while producing this screen —
-so the gap is a number, not a quietly emptier picture.
-
-* **Text** needs a font file. The tree ships only `tiny.ttf`, an 8-glyph fixture
-  for the font and atlas tests; there is no usable UI font to render a body-text
-  baseline with. The chain that would consume it (parse -> atlas -> blit) is
-  landed and tested; what is missing is a real font to point it at.
-* **The image op** carries a `src` string (a path or URL), and this program has
-  no decode in it. The pass blits images the app has decoded and registered
-  (`scene_register_image`); wiring an actual file into the golden is a small
-  step, deliberately deferred so the golden does not depend on a fixture whose
-  bytes could change.
+The **image op** is absent on purpose, and the program fails (exit 2) if the pass
+ever counts an op it cannot rasterize while producing this screen — so the gap is
+a number, not a quietly emptier picture. The op carries a `src` string (a path or
+URL) and the pass blits images the app has decoded and registered
+(`scene_register_image`); wiring an actual file into the golden is a small step,
+deliberately deferred so the golden does not depend on a fixture whose bytes
+could change.
 
 ## Notes for whoever regenerates this
 

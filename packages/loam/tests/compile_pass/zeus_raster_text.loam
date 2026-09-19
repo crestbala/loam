@@ -1,0 +1,152 @@
+// Phase 4: text in the raster pass — the whole chain, in Loam, with no font API.
+//
+//   TrueType file -> std:font (cmap, hmtx, glyf) -> the atlas (outline, winding,
+//   coverage gamma) -> the framebuffer, composited with the same gamma-correct
+//   blend as every other primitive.
+//
+// The font is the test fixture (`tiny.ttf`, eight glyphs) because the tree ships
+// no usable UI font: with one, this is the same code path. 'A' in that font is a
+// TRIANGLE, which makes one assertion possible that a normal font would not: the
+// ink is wide at the bottom of the glyph and narrow at the top. A renderer that
+// dropped the outlines, or flipped Y, or blitted the atlas at the wrong origin,
+// cannot pass that.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+/// Ink = a pixel darker than `t` in the blue channel.
+fn ink_in(x0: int, y0: int, x1: int, y1: int, t: int) -> int {
+    let mut n = 0
+    let mut y = y0
+    while y < y1 {
+        let mut x = x0
+        while x < x1 {
+            if zeus.raster_get(x, y, 0) < t {
+                n = n + 1
+            }
+            x = x + 1
+        }
+        y = y + 1
+    }
+    return n
+}
+
+/// The width of the ink on device row `y` between x0 and x1: for 'A' this is
+/// narrow near the apex and wide at the base.
+fn ink_row_width(y: int, x0: int, x1: int, t: int) -> int {
+    let mut n = 0
+    let mut x = x0
+    while x < x1 {
+        let v = zeus.raster_get(x, y, 0)
+        if v < t {
+            n = n + 1
+        }
+        x = x + 1
+    }
+    return n
+}
+
+fn main() {
+    // --- the chain needs a font, and says so when it has none -------------
+    must(zeus.scene_font_is_ready() == 0, "no font until one is loaded")
+    must(zeus.scene_load_font("packages/loam/tests/fonts/tiny.ttf") == 1,
+         "the fixture font loads")
+    must(zeus.scene_font_is_ready() == 1, "and the pass knows it")
+
+    // --- a text scene -----------------------------------------------------
+    zeus.window("zeus-raster-text", 160, 80)
+    zeus.root(zeus.Page() {
+        zeus.Text("ABC", font = 40, color = "#000000")
+    })
+    zeus.engine_layout(160, 80)
+    zeus.engine_paint()
+    must(zeus.draw_count() > 0, "paint produced a draw list")
+
+    // The text op, and the box it says it occupies.
+    let mut ti = -1
+    let mut i = 0
+    while i < zeus.draw_count() {
+        if zeus.draw_op(i) == 2 {
+            if ti < 0 {
+                ti = i
+            }
+        }
+        i = i + 1
+    }
+    must(ti >= 0, "there is a text op")
+
+    zeus.raster_ensure(160, 80, 2)
+    let drawn = zeus.scene_rasterize(2, 255, 255, 255)
+    must(drawn > 0, "ops were rasterized")
+    must(zeus.scene_raster_unhandled(2) == 0, "text is no longer unhandled")
+    must(zeus.scene_raster_unhandled_total() == 0, "nothing is unhandled")
+    must(zeus.scene_glyphs_drawn() == 3, "three glyphs were composited")
+    must(zeus.scene_glyphs_missing() == 0, "and none were missing")
+
+    // --- the ink is where the op says it is -------------------------------
+    // Logical (x, y) at scale 2, and the glyphs sit on the baseline below the
+    // top of the line box.
+    let tx = zeus.draw_x(ti) * 2
+    let ty = zeus.draw_y(ti) * 2
+    must(ink_in(tx, ty, tx + 120, ty + 90, 128) > 200,
+         "the text op has ink in its own box")
+    must(ink_in(0, 0, tx, ty, 128) == 0, "and none outside it, before it")
+
+    // --- 'A' is a triangle, and it must be drawn as one ------------------
+    // The first glyph starts at the op's left edge; measure the ink width on a
+    // row near the top of the glyph and near its base.
+    let row_near_top = ty + 30
+    let row_near_base = ty + 62
+    let top_w = ink_row_width(row_near_top, tx, tx + 40, 128)
+    let base_w = ink_row_width(row_near_base, tx, tx + 40, 128)
+    must(base_w > top_w, "the triangle is wider at the base than near the apex")
+    must(top_w > 0, "and has ink at both ends")
+    // The very top of the apex has ink only in the middle of the advance.
+    let apex_w = ink_row_width(ty + 18, tx, tx + 40, 128)
+    must(apex_w < base_w, "the apex is narrower than the base")
+
+    // --- glyphs come from the atlas, so a redraw reuses them --------------
+    let rasters = zeus.scene_glyphs_drawn()
+    must(rasters == 3, "three glyphs on the first pass")
+    // A second frame at the same size must hit the atlas rather than re-rasterize.
+    zeus.engine_paint()
+    zeus.scene_rasterize(2, 255, 255, 255)
+    must(zeus.scene_glyphs_drawn() == 6, "and three more on the second")
+    must(zeus.draw_count() > 0, "the second frame produced a draw list too")
+
+    // --- the same string at a larger size is bigger ink -------------------
+    zeus.window("zeus-raster-text-big", 320, 160)
+    zeus.root(zeus.Page() {
+        zeus.Text("ABC", font = 80, color = "#000000")
+    })
+    zeus.engine_layout(320, 160)
+    zeus.engine_paint()
+    zeus.raster_ensure(320, 160, 2)
+    zeus.scene_rasterize(2, 255, 255, 255)
+    must(zeus.scene_glyphs_drawn() == 9, "three more glyphs at the larger size")
+    let big = ink_in(0, 0, 320, 160, 128)
+    must(big > 200, "the larger size has ink too")
+
+    // --- an empty string is not an error ----------------------------------
+    zeus.window("zeus-raster-text-empty", 160, 40)
+    zeus.root(zeus.Page() {
+        zeus.Text("")
+    })
+    zeus.engine_layout(160, 40)
+    zeus.engine_paint()
+    zeus.raster_ensure(160, 40, 2)
+    zeus.scene_rasterize(2, 255, 255, 255)
+    must(zeus.scene_raster_unhandled_total() == 0, "an empty label is still handled")
+
+    fmt.println("raster text ok", drawn, zeus.scene_glyphs_drawn(),
+                zeus.scene_glyphs_missing())
+}

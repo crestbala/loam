@@ -3,11 +3,15 @@
 //! other consumer of the same list: the Loam rasterizer, into the buffer we own.
 
 import "arena.loam"
+import "atlas.loam"
 import "geometry.loam"
 import "image.loam"
 import "metrics.loam"
 import "platform.loam"
 import "raster.loam"
+import "std:font"
+import "std:sys"
+import "std:unicode"
 
 // Fields grouped by width, widest first, so the 8-byte-aligned `text` slice
 // does not force padding between 4-byte ints (Phase 11). `text` is empty for
@@ -229,6 +233,116 @@ let mut rs_b: int = 0
 /// rasterized from the cache instead of the host.
 let mut rs_img_src: []string = []string {}
 let mut rs_img_slot: []int = []int {}
+
+/// The font the pass draws with. The engine has one global family (the host
+/// holds it for its own text), so the raster pass holds one font too — the one
+/// the app hands it, parsed and rasterized in Loam, no CoreText anywhere.
+let mut rs_font: string = ""
+let mut rs_font_id: int = 1
+let mut rs_font_upm: int = 0
+let mut rs_font_asc: int = 0
+let mut rs_font_desc: int = 0
+let mut rs_font_ok: int = 0
+let mut rs_glyphs_drawn: int = 0
+let mut rs_glyphs_missing: int = 0
+
+/// Load the font the raster pass draws text with. `src` is a file path. Returns
+/// 1 when the file parsed as a TrueType/OpenType font.
+fn raster_font_load(src: string) -> int {
+    let s = sys.read_file(src)
+    if s.len == 0 {
+        return 0
+    }
+    let upm = font.units_per_em(s)
+    if upm <= 0 {
+        return 0
+    }
+    rs_font = s
+    rs_font_upm = upm
+    rs_font_asc = font.ascender(s)
+    rs_font_desc = font.descender(s)
+    rs_font_ok = 1
+    return 1
+}
+
+fn raster_font_ready() -> int {
+    return rs_font_ok
+}
+
+fn raster_font_ascender_px(px: int) -> int {
+    if rs_font_upm <= 0 {
+        return 0
+    }
+    return i32(i64(rs_font_asc) * i64(px) / i64(rs_font_upm))
+}
+
+fn raster_glyphs_drawn() -> int {
+    return rs_glyphs_drawn
+}
+
+fn raster_glyphs_missing() -> int {
+    return rs_glyphs_missing
+}
+
+/// Draw one text op: glyph by glyph through the atlas, at a quarter-pixel pen so
+/// small text gets subpixel positioning, compositing with the same
+/// gamma-correct blend as everything else.
+///
+/// The op's `y` is the TOP of the line box (that is what the hosts treat it as —
+/// the web host draws at `y + ascent` with `textBaseline = "alphabetic"`), so the
+/// baseline is derived here from the font's own ascent.
+fn rs_text(d: Draw, s: int) {
+    if rs_font_ok == 0 {
+        rs_note_unhandled(d.kind)
+        return
+    }
+    let logical = d.font
+    if logical <= 0 {
+        return
+    }
+    let px = logical * s
+    let baseline = d.y * s + raster_font_ascender_px(px)
+    // Quarter-pixel pen: an advance of 7.5px must not lose its half pixel, or
+    // small text comes out visibly uneven.
+    let mut pen = d.x * s * 4
+    let text = d.text
+    let mut i = 0
+    while i < text.len {
+        let cp = unicode.codepoint(text, i)
+        let gid = font.glyph_index(rs_font, cp)
+        let mut adv = 0
+        if gid > 0 {
+            adv = font.advance_px(rs_font, gid, px)
+            let ix = pen / 4
+            let mut bucket = 0
+            if logical <= 16 {
+                bucket = pen % 4
+            }
+            let mut slot = atlas.atlas_lookup(rs_font_id, gid, px, bucket)
+            if slot < 0 {
+                let o = font.glyph_outline(rs_font, gid)
+                if o.ok == 1 {
+                    slot = atlas.atlas_intern(rs_font_id, gid, px, bucket,
+                                              o.xs, o.ys, o.on, o.ends, rs_font_upm)
+                }
+            }
+            if slot >= 0 {
+                atlas.atlas_blit(slot, ix, baseline, rs_r, rs_g, rs_b, d.alpha)
+                rs_glyphs_drawn = rs_glyphs_drawn + 1
+            } else {
+                // A space has no outline; that is not a missing glyph.
+                if gid > 0 {
+                    rs_glyphs_missing = rs_glyphs_missing + 1
+                }
+            }
+        } else {
+            rs_glyphs_missing = rs_glyphs_missing + 1
+        }
+        pen = pen + adv * 4
+        i = unicode.next_cp(text, i)
+    }
+    rs_drawn = rs_drawn + 1
+}
 
 fn rs_init() {
     if rs_unhandled.len > 0 {
@@ -459,6 +573,8 @@ fn rasterize(scale: int, br: int, bg: int, bb: int) -> int {
             raster.raster_round_rect(float(d.x * s), float(d.y * s), float(d.w * s), float(d.h * s), float(d.radius * s))
             raster.raster_fill_tiled(rs_r, rs_g, rs_b, d.alpha)
             rs_drawn = rs_drawn + 1
+        } else if d.kind == 2 {
+            rs_text(d, s)
         } else if d.kind == 14 {
             raster.raster_multi_begin()
             rs_quarter_rect(float(d.x * s), float(d.y * s), float(d.w * s), float(d.h * s),
@@ -524,6 +640,25 @@ fn rasterize(scale: int, br: int, bg: int, bb: int) -> int {
 
 fn raster_scene_count() -> int {
     return rs_drawn
+}
+
+/// Load the font the raster pass draws text with (a file path). Returns 1 on
+/// success. Until this is called, text ops are COUNTED as unhandled rather than
+/// dropped silently.
+fn raster_load_font(src: string) -> int {
+    return raster_font_load(src)
+}
+
+fn raster_font_is_ready() -> int {
+    return raster_font_ready()
+}
+
+fn raster_glyphs_drawn_count() -> int {
+    return rs_glyphs_drawn
+}
+
+fn raster_glyphs_missing_count() -> int {
+    return rs_glyphs_missing
 }
 
 /// How many ops of `kind` this pass could not rasterize.
