@@ -1627,10 +1627,34 @@ void loam_platform_plat_set_insets(int64_t top, int64_t right, int64_t bottom,
 /* Interned handlers and reactive prop thunks share this table. A page of
    declarative widgets interns one entry per prop, so it grows rather than
    capping — a full table used to return 0 and silently drop every prop past
-   the limit. */
-static loam_fn *click_fns;
+   the limit.
+
+   Each slot also carries the SIGNATURE it was interned under, which is the
+   difference between a defined refusal and undefined behaviour. The four
+   `intern_*` entry points all land in this one table and all look like a bare
+   `loam_fn` to C, so nothing in the value says which kind it is; the four
+   `invoke_*` entry points used to call whatever `fn` they found as their own
+   type. A slot holding another kind then returned garbage on native — a silent
+   bug that surfaced as a jittering UI, because the garbage was written straight
+   back into a signal — and trapped outright on wasm, which type-checks indirect
+   calls ("null function or function signature mismatch"). The kind makes that a
+   counted, loud refusal instead. */
+typedef struct {
+    loam_fn h;
+    unsigned char kind;
+} ZeusInterned;
+
+#define ZEUS_FN_VOID 1
+#define ZEUS_FN_INT 2
+#define ZEUS_FN_BOOL 3
+#define ZEUS_FN_STR 4
+
+static ZeusInterned *click_fns;
 static int nclick_fns = 1;
 static int click_fns_cap;
+/* Refusals to call a slot through the wrong signature. Zero is the contract. */
+static int64_t intern_kind_mismatches;
+static int intern_kind_reported;
 
 /* Freed interned-handler slots, recycled by plat_intern_fn. A slot is freed
    only when the subtree that interned it is torn down, so recycling never
@@ -1661,9 +1685,9 @@ static int free_fn_pop(void) {
 static int intern_fn_grow(void) {
     if (nclick_fns < click_fns_cap) return 1;
     int cap = click_fns_cap ? click_fns_cap * 2 : 2048;
-    loam_fn *next = (loam_fn *)realloc(click_fns, (size_t)cap * sizeof(loam_fn));
+    ZeusInterned *next = (ZeusInterned *)realloc(click_fns, (size_t)cap * sizeof(ZeusInterned));
     if (!next) return 0;
-    memset(next + click_fns_cap, 0, (size_t)(cap - click_fns_cap) * sizeof(loam_fn));
+    memset(next + click_fns_cap, 0, (size_t)(cap - click_fns_cap) * sizeof(ZeusInterned));
     click_fns = next;
     click_fns_cap = cap;
     return 1;
@@ -1672,23 +1696,43 @@ static int intern_fn_grow(void) {
 static void intern_fn_reset(void) {
     int i;
     for (i = 1; i < nclick_fns; i++) {
-        free(click_fns[i].env);
-        click_fns[i].fn = NULL;
-        click_fns[i].env = NULL;
-        click_fns[i].env_size = 0;
+        free(click_fns[i].h.env);
+        click_fns[i].h.fn = NULL;
+        click_fns[i].h.env = NULL;
+        click_fns[i].h.env_size = 0;
+        click_fns[i].kind = 0;
     }
     nclick_fns = 1;
     nfree_fns = 0;
 }
 
+/* Refuse a call through a signature the slot was not interned with. Counted,
+   and said out loud the first few times: a guard that hides a real aliasing
+   bug is worse than the bug, and silence here would be easy to miss. */
+static int intern_kind_matches(int id, int want) {
+    if ((int)click_fns[id].kind == want) return 1;
+    intern_kind_mismatches++;
+    if (intern_kind_reported < 8) {
+        intern_kind_reported++;
+        fprintf(stderr,
+                "zeus: interned handler %d invoked as kind %d but interned as kind %d"
+                " — refusing the call\n",
+                id, want, (int)click_fns[id].kind);
+    }
+    return 0;
+}
+
 /* Free one interned handler; its id becomes recyclable. */
 void loam_platform_plat_intern_free(int64_t id) {
     if (id <= 0 || id >= nclick_fns) return;
-    if (!click_fns[id].fn && !click_fns[id].env) return;
-    free(click_fns[id].env);
-    click_fns[id].fn = NULL;
-    click_fns[id].env = NULL;
-    click_fns[id].env_size = 0;
+    if (!click_fns[id].h.fn && !click_fns[id].h.env) return;
+    free(click_fns[id].h.env);
+    click_fns[id].h.fn = NULL;
+    click_fns[id].h.env = NULL;
+    click_fns[id].h.env_size = 0;
+    /* Clear the kind with the slot: a recycled slot must not answer to the
+       signature the previous occupant was interned under. */
+    click_fns[id].kind = 0;
     free_fn_push((int)id);
 }
 
@@ -1710,49 +1754,74 @@ int64_t loam_platform_plat_intern_fn(loam_fn handler) {
             kept.env = copy;
         }
     }
-    click_fns[id] = kept;
+    click_fns[id].h = kept;
+    click_fns[id].kind = ZEUS_FN_VOID;
     return id;
 }
 
 /* Reactive prop thunks share the interned-handler table; only the call
-   signature differs. Interning yields an int a `||` closure can capture. */
+   signature differs. Interning yields an int a `||` closure can capture.
+   The kind is recorded with the slot, so the matching `invoke_*` can tell its
+   own thunks from the other three kinds. */
+static int64_t intern_fn_as(loam_fn thunk, int kind) {
+    int64_t id = loam_platform_plat_intern_fn(thunk);
+    if (id > 0 && id < nclick_fns) click_fns[id].kind = (unsigned char)kind;
+    return id;
+}
+
 int64_t loam_platform_plat_intern_int_fn(loam_fn thunk) {
-    return loam_platform_plat_intern_fn(thunk);
+    return intern_fn_as(thunk, ZEUS_FN_INT);
 }
 
 int64_t loam_platform_plat_invoke_int_fn(int64_t id) {
     if (id <= 0 || id >= nclick_fns) return 0;
-    loam_fn h = click_fns[id];
-    if (!h.fn) return 0;
-    return ((int64_t (*)(void *))h.fn)(h.env);
+    if (!click_fns[id].h.fn) return 0;
+    if (!intern_kind_matches((int)id, ZEUS_FN_INT)) return 0;
+    /* The thunk is a Loam `fn() -> int`, and Loam's `int` is i32 — so the
+       closure RETURNS int32_t. Casting it to an `int64_t (*)(void *)` is the
+       bug this comment exists to prevent: it is undefined behaviour that hands
+       back the callee's stale high bits on native (a garbage prop value, which
+       is how the UI came to jitter while scrolling or dragging) and traps
+       outright on wasm, which type-checks indirect calls ("null function or
+       function signature mismatch"). Cast to the signature the closure really
+       has, and widen the result afterwards. */
+    return (int64_t)((int32_t (*)(void *))click_fns[id].h.fn)(click_fns[id].h.env);
 }
 
 int64_t loam_platform_plat_intern_bool_fn(loam_fn thunk) {
-    return loam_platform_plat_intern_fn(thunk);
+    return intern_fn_as(thunk, ZEUS_FN_BOOL);
 }
 
 int64_t loam_platform_plat_invoke_bool_fn(int64_t id) {
     if (id <= 0 || id >= nclick_fns) return 0;
-    loam_fn h = click_fns[id];
-    if (!h.fn) return 0;
-    return ((bool (*)(void *))h.fn)(h.env) ? 1 : 0;
+    if (!click_fns[id].h.fn) return 0;
+    if (!intern_kind_matches((int)id, ZEUS_FN_BOOL)) return 0;
+    return ((bool (*)(void *))click_fns[id].h.fn)(click_fns[id].h.env) ? 1 : 0;
 }
 
 int64_t loam_platform_plat_intern_str_fn(loam_fn thunk) {
-    return loam_platform_plat_intern_fn(thunk);
+    return intern_fn_as(thunk, ZEUS_FN_STR);
 }
 
 loam_str loam_platform_plat_invoke_str_fn(int64_t id) {
     if (id <= 0 || id >= nclick_fns) return (loam_str){ "", 0 };
-    loam_fn h = click_fns[id];
-    if (!h.fn) return (loam_str){ "", 0 };
-    return ((loam_str (*)(void *))h.fn)(h.env);
+    if (!click_fns[id].h.fn) return (loam_str){ "", 0 };
+    if (!intern_kind_matches((int)id, ZEUS_FN_STR)) return (loam_str){ "", 0 };
+    return ((loam_str (*)(void *))click_fns[id].h.fn)(click_fns[id].h.env);
 }
 
 void loam_platform_plat_invoke_fn(int64_t id) {
     if (id <= 0 || id >= nclick_fns) return;
-    loam_fn h = click_fns[id];
-    if (h.fn) ((void (*)(void *))h.fn)(h.env);
+    if (!click_fns[id].h.fn) return;
+    if (!intern_kind_matches((int)id, ZEUS_FN_VOID)) return;
+    ((void (*)(void *))click_fns[id].h.fn)(click_fns[id].h.env);
+}
+
+/* How many calls were refused because the slot held another signature. Zero is
+   the contract: a non-zero count means a handler was interned as one kind and
+   invoked as another, which is the bug this guard exists to make visible. */
+int32_t loam_platform_plat_intern_kind_mismatch_count(void) {
+    return (int32_t)intern_kind_mismatches;
 }
 
 const char *zeus_window_title(void) { return win_title ? win_title : ""; }
