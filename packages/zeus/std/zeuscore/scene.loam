@@ -1,8 +1,10 @@
 //! scene — GPUI-style draw list. Paint records primitives; present() submits
-//! them through platform (Cocoa 2D fill/text, not a GPU).
+//! them through platform (Cocoa 2D fill/text, not a GPU). `rasterize()` is the
+//! other consumer of the same list: the Loam rasterizer, into the buffer we own.
 
 import "arena.loam"
 import "geometry.loam"
+import "image.loam"
 import "metrics.loam"
 import "platform.loam"
 import "raster.loam"
@@ -194,6 +196,351 @@ fn present() {
             platform.plat_xform(d.x, d.y, d.radius, d.font, d.w, d.h)
         }
     }
+}
+
+// --- rasterize: the same draw list, rasterized by US (Phase 4) -------------
+//
+// `present()` hands the list to the host, which draws it with a 2D API. This is
+// the other consumer of the SAME list: the Loam rasterizer, into the one buffer
+// we own, at the backing scale. Nothing about paint changes; a frame simply has
+// two possible consumers, and this one needs no drawing API at all.
+//
+// Ground rules:
+//   * Every op is emitted in LOGICAL units and scaled here, so the list stays
+//     resolution-independent (quality rule 1: rasterize at physical pixels).
+//   * An op this pass cannot yet rasterize is COUNTED per kind, never skipped
+//     silently: a gap has to show up as a number, not as a missing thing in a
+//     screenshot someone has to notice.
+//   * The device clip box is the only clip state. `save` duplicates it and
+//     `restore` pops, which is exactly the nesting the list uses.
+
+let mut rs_scale: int = 1
+let mut rs_drawn: int = 0
+let mut rs_unhandled: []int = []int {}
+/// Clips whose radius > 0, which this pass currently treats as square.
+let mut rs_rounded_clips: int = 0
+let mut rs_clip_depth: int = 0
+/// Four ints per clip level: x0, y0, x1, y1 in device pixels.
+let mut rs_clip: []int = []int {}
+let mut rs_r: int = 0
+let mut rs_g: int = 0
+let mut rs_b: int = 0
+/// Images the app has decoded and registered, so a draw op's `src` can be
+/// rasterized from the cache instead of the host.
+let mut rs_img_src: []string = []string {}
+let mut rs_img_slot: []int = []int {}
+
+fn rs_init() {
+    if rs_unhandled.len > 0 {
+        return
+    }
+    let mut i = 0
+    while i < 16 {
+        push(rs_unhandled, 0)
+        i = i + 1
+    }
+    i = 0
+    while i < 65 * 4 {
+        push(rs_clip, 0)
+        i = i + 1
+    }
+}
+
+/// Split a 0xRRGGBB op colour into the channels the rasterizer takes.
+fn rs_split(rgb: int) {
+    rs_r = rgb / 65536 % 256
+    rs_g = rgb / 256 % 256
+    rs_b = rgb % 256
+}
+
+fn rs_note_unhandled(kind: int) {
+    if kind >= 0 {
+        if kind < 16 {
+            rs_unhandled[kind] = rs_unhandled[kind] + 1
+        }
+    }
+}
+
+/// Set the rasterizer's clip box to the top of the stack.
+fn rs_apply_clip() {
+    let o = (rs_clip_depth - 1) * 4
+    raster.raster_clip_box(rs_clip[o], rs_clip[o + 1], rs_clip[o + 2], rs_clip[o + 3])
+}
+
+/// Intersect the top clip with a logical rect at the current scale.
+fn rs_clip_push(x: int, y: int, w: int, h: int, radius: int, scale: int) {
+    let o = (rs_clip_depth - 1) * 4
+    let nx0 = rs_clip[o]
+    let ny0 = rs_clip[o + 1]
+    let nx1 = rs_clip[o + 2]
+    let ny1 = rs_clip[o + 3]
+    let cx0 = x * scale
+    let cy0 = y * scale
+    let cx1 = (x + w) * scale
+    let cy1 = (y + h) * scale
+    let mut d = rs_clip_depth
+    if d > 63 {
+        d = 63
+    }
+    let no = d * 4
+    let mut ax0 = nx0
+    if cx0 > ax0 {
+        ax0 = cx0
+    }
+    let mut ay0 = ny0
+    if cy0 > ay0 {
+        ay0 = cy0
+    }
+    let mut ax1 = nx1
+    if cx1 < ax1 {
+        ax1 = cx1
+    }
+    let mut ay1 = ny1
+    if cy1 < ay1 {
+        ay1 = cy1
+    }
+    if ax1 < ax0 {
+        ax1 = ax0
+    }
+    if ay1 < ay0 {
+        ay1 = ay0
+    }
+    rs_clip[no] = ax0
+    rs_clip[no + 1] = ay0
+    rs_clip[no + 2] = ax1
+    rs_clip[no + 3] = ay1
+    rs_clip_depth = d + 1
+    if radius > 0 {
+        rs_rounded_clips = rs_rounded_clips + 1
+    }
+    rs_apply_clip()
+}
+
+/// One quarter-disc as a convex wedge polygon: centre, then the arc. Four of
+/// these plus the cross make a rect with four independent corner radii, which
+/// is what a per-corner `fill4` is.
+fn rs_quarter(cx: float, cy: float, rad: float, a0: float, a1: float) {
+    let mut xs: []float = []float {}
+    let mut ys: []float = []float {}
+    push(xs, cx)
+    push(ys, cy)
+    let mut n = i32(raster.raster_sqrt(8.0 * raster.raster_flat_tol() / rad))
+    if n < 2 {
+        n = 2
+    }
+    if n > 64 {
+        n = 64
+    }
+    let mut k = 0
+    while k <= n {
+        let t = a0 + (a1 - a0) * float(k) / float(n)
+        push(xs, cx + rad * raster.raster_cos(t))
+        push(ys, cy + rad * raster.raster_sin(t))
+        k = k + 1
+    }
+    raster.raster_multi_add_poly(xs, ys, 1)
+}
+
+fn rs_quarter_rect(x: float, y: float, w: float, h: float,
+                   tl: float, tr: float, br: float, bl: float) {
+    // Clamp each radius to half the smaller extent, exactly as the host paths
+    // do, so a 999 "pill" corner behaves the same here.
+    let mut half = w
+    if h < half {
+        half = h
+    }
+    let lim = half / 2.0
+    let mut rtl = tl
+    let mut rtr = tr
+    let mut rbr = br
+    let mut rbl = bl
+    if rtl > lim {
+        rtl = lim
+    }
+    if rtr > lim {
+        rtr = lim
+    }
+    if rbr > lim {
+        rbr = lim
+    }
+    if rbl > lim {
+        rbl = lim
+    }
+    // Five convex bands between the corners, then one wedge per corner. Every
+    // piece is convex and they accumulate with the same sign into the coverage
+    // buffer, so the overlaps composite once instead of double-blending.
+    rs_rect(x + rtl, y, w - rtl - rtr, rtl)
+    rs_rect(x + rbl, y + h - rbl, w - rbl - rbr, rbl)
+    rs_rect(x, y + rtl, rtl, h - rtl - rbl)
+    rs_rect(x + w - rtr, y + rtr, rtr, h - rtr - rbr)
+    rs_rect(x + rtl, y + rtl, w - rtl - rtr, h - rtl - rbl)
+    let pi = 3.141592653589793
+    if rtl > 0.0 {
+        rs_quarter(x + rtl, y + rtl, rtl, pi, pi + pi / 2.0)
+    }
+    if rtr > 0.0 {
+        rs_quarter(x + w - rtr, y + rtr, rtr, pi + pi / 2.0, 2.0 * pi)
+    }
+    if rbr > 0.0 {
+        rs_quarter(x + w - rbr, y + h - rbr, rbr, 0.0, pi / 2.0)
+    }
+    if rbl > 0.0 {
+        rs_quarter(x + rbl, y + h - rbl, rbl, pi / 2.0, pi)
+    }
+}
+
+fn rs_rect(x: float, y: float, w: float, h: float) {
+    if w <= 0.0 || h <= 0.0 {
+        return
+    }
+    let mut xs: []float = []float {}
+    let mut ys: []float = []float {}
+    push(xs, x)
+    push(xs, x + w)
+    push(xs, x + w)
+    push(xs, x)
+    push(ys, y)
+    push(ys, y)
+    push(ys, y + h)
+    push(ys, y + h)
+    raster.raster_multi_add_poly(xs, ys, 1)
+}
+
+/// Register a decoded image slot under the `src` string a draw op carries, so
+/// `rasterize()` can blit it from the cache. Returns the number registered.
+fn raster_register_image(src: string, slot: int) -> int {
+    rs_init()
+    push(rs_img_src, src)
+    push(rs_img_slot, slot)
+    return rs_img_src.len
+}
+
+fn rs_image_slot(src: string) -> int {
+    let mut i = rs_img_src.len - 1
+    while i >= 0 {
+        if rs_img_src[i] == src {
+            return rs_img_slot[i]
+        }
+        i = i - 1
+    }
+    return -1
+}
+
+/// Rasterize the current draw list into the framebuffer at `scale`, on a
+/// background colour. Returns the number of ops rasterized; per-kind counts of
+/// what was not are available through `raster_unhandled`.
+fn rasterize(scale: int, br: int, bg: int, bb: int) -> int {
+    rs_init()
+    rs_scale = scale
+    if rs_scale < 1 {
+        rs_scale = 1
+    }
+    let s = rs_scale
+    let fw = raster.raster_width()
+    let fh = raster.raster_height()
+    rs_clip_depth = 1
+    rs_clip[0] = 0
+    rs_clip[1] = 0
+    rs_clip[2] = fw
+    rs_clip[3] = fh
+    rs_apply_clip()
+    raster.raster_clear(br, bg, bb)
+    rs_drawn = 0
+    rs_rounded_clips = 0
+    let n = draws.len
+    for i in 0..n {
+        let d = draws[i]
+        rs_split(d.rgb)
+        if d.kind == 0 {
+            raster.raster_round_rect(float(d.x * s), float(d.y * s), float(d.w * s), float(d.h * s), float(d.radius * s))
+            raster.raster_fill_tiled(rs_r, rs_g, rs_b, 255)
+            rs_drawn = rs_drawn + 1
+        } else if d.kind == 1 {
+            raster.raster_round_rect(float(d.x * s), float(d.y * s), float(d.w * s), float(d.h * s), float(d.radius * s))
+            raster.raster_fill_tiled(rs_r, rs_g, rs_b, d.alpha)
+            rs_drawn = rs_drawn + 1
+        } else if d.kind == 14 {
+            raster.raster_multi_begin()
+            rs_quarter_rect(float(d.x * s), float(d.y * s), float(d.w * s), float(d.h * s),
+                            float(d.radius % 65536 * s), float(d.radius / 65536 * s),
+                            float(d.value % 65536 * s), float(d.value / 65536 * s))
+            raster.raster_fill_multi(rs_r, rs_g, rs_b, d.alpha)
+            rs_drawn = rs_drawn + 1
+        } else if d.kind == 13 {
+            raster.raster_stroke_round_rect(float(d.x * s), float(d.y * s), float(d.w * s), float(d.h * s),
+                                            float(d.radius * s), float(d.font * s),
+                                            rs_r, rs_g, rs_b, d.alpha)
+            rs_drawn = rs_drawn + 1
+        } else if d.kind == 12 {
+            raster.raster_shadow_rect(float(d.x * s), float(d.y * s), float(d.w * s), float(d.h * s),
+                                      float(d.radius * s), float((d.value % 256 - 128) * s),
+                                      float((d.value / 256 - 128) * s), float(d.font * s),
+                                      d.alpha, rs_r, rs_g, rs_b)
+            rs_drawn = rs_drawn + 1
+        } else if d.kind == 6 {
+            // save: duplicate the clip box
+            let o = (rs_clip_depth - 1) * 4
+            let mut dd = rs_clip_depth
+            if dd > 63 {
+                dd = 63
+            }
+            let no = dd * 4
+            rs_clip[no] = rs_clip[o]
+            rs_clip[no + 1] = rs_clip[o + 1]
+            rs_clip[no + 2] = rs_clip[o + 2]
+            rs_clip[no + 3] = rs_clip[o + 3]
+            rs_clip_depth = dd + 1
+            rs_drawn = rs_drawn + 1
+        } else if d.kind == 7 {
+            rs_clip_push(d.x, d.y, d.w, d.h, d.radius, s)
+            rs_drawn = rs_drawn + 1
+        } else if d.kind == 8 {
+            if rs_clip_depth > 1 {
+                rs_clip_depth = rs_clip_depth - 1
+            }
+            rs_apply_clip()
+            rs_drawn = rs_drawn + 1
+        } else if d.kind == 10 {
+            let slot = rs_image_slot(d.text)
+            if slot >= 0 {
+                image.img_blit(slot, d.x * s, d.y * s, d.alpha)
+                rs_drawn = rs_drawn + 1
+            } else {
+                rs_note_unhandled(d.kind)
+            }
+        } else {
+            rs_note_unhandled(d.kind)
+        }
+    }
+    return rs_drawn
+}
+
+fn raster_scene_count() -> int {
+    return rs_drawn
+}
+
+/// How many ops of `kind` this pass could not rasterize.
+fn raster_unhandled(kind: int) -> int {
+    rs_init()
+    if kind < 0 || kind > 15 {
+        return 0
+    }
+    return rs_unhandled[kind]
+}
+
+fn raster_unhandled_total() -> int {
+    rs_init()
+    let mut t = 0
+    let mut i = 0
+    while i < 16 {
+        t = t + rs_unhandled[i]
+        i = i + 1
+    }
+    return t
+}
+
+fn raster_rounded_clip_count() -> int {
+    return rs_rounded_clips
 }
 
 fn prepaint() {

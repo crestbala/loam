@@ -275,6 +275,12 @@ fn raster_realloc_count() -> int {
     return fb_reallocs
 }
 
+/// Curve flattening tolerance in DEVICE pixels; the one source of truth for
+/// every arc and rounded corner (quality rule 7).
+fn raster_flat_tol() -> float {
+    return RASTER_FLAT_TOL
+}
+
 /// Tile edge in device pixels; the one source of truth for the tile grid.
 fn raster_tile_size() -> int {
     return RASTER_TILE
