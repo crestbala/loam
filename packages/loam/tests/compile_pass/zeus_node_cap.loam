@@ -1,0 +1,39 @@
+// Phase 2: the node arena has a stated maximum and never silently grows past
+// it. Overflow is loud (flagged + reported) and non-fatal: the app keeps
+// running, the widget that asked for the failed slot simply does not render.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn main() {
+    zeus.window("node-cap", 240, 160)
+    must(zeus.node_cap() == 65535, "default cap is the u16 maximum")
+    zeus.engine_set_node_cap(40)
+    must(zeus.node_cap() == 40, "cap is tunable")
+
+    zeus.root(zeus.Box(align_direction = DIRECTION.Column) {
+        let mut i = 0
+        while i < 100 {
+            zeus.Button("b", width = 60)
+            i = i + 1
+        }
+    })
+    zeus.pump_frame()
+    must(zeus.node_overflow() == 1, "overflow is flagged loudly")
+    must(zeus.arena_nodes() <= 41, "the arena did not grow past the cap")
+
+    // Non-fatal: the app keeps running and the flag stays set.
+    zeus.pump_frame()
+    must(zeus.node_overflow() == 1, "overflow stays flagged")
+
+    fmt.println("node cap ok", zeus.arena_nodes())
+}

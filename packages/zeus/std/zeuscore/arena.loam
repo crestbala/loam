@@ -305,6 +305,15 @@ let mut free_nodes: []int = []int {}
    table sweeps made every chart refit ~25 ms. */
 let mut drop_pool: []int = []int {}
 
+/// Hard ceiling on node slots: the arena never grows past this and never
+/// silently appends. `u16` node ids (Phase 3) make 65535 the structural
+/// maximum, so the cap is stated once, here. Raising it is a deliberate act;
+/// hitting it is loud (see `alloc_node`) rather than a silent realloc-double.
+let mut node_cap: int = 65535
+/// 1 once `alloc_node` hit `node_cap`. The app keeps running; the widget that
+/// asked for the failed slot gets the null handle (id 0) and does not render.
+let mut node_overflow: int = 0
+
 // --- dirty channels + frame clock (Phase 3) --------------------------------
 //
 // `paint_dirty` gates the draw pass, `layout_dirty` the layout pass. A frame
@@ -2129,11 +2138,38 @@ fn alloc_node(kind: int) -> int {
         nodes[id].nid = id
         return id
     }
+    // Hard ceiling (Phase 2): refuse to grow past `node_cap`. Loud, once, and
+    // non-fatal — the alternative (silent growth) is the failure mode this
+    // guards. A caller that must build more virtualizes with `each` / `show`,
+    // or raises the cap on purpose.
+    if nodes.len >= node_cap {
+        if node_overflow == 0 {
+            fmt.println("zeus: node arena exhausted at", node_cap, "nodes — virtualize the list (each / For / VirtualList) or raise node_cap")
+        }
+        node_overflow = 1
+        return 0
+    }
     let mut n = blank_node()
     n.kind = u8(kind)
     n.nid = nodes.len
     push(nodes, n)
     return nodes.len - 1
+}
+
+/// Lower or raise the node cap. Test hook and deliberate tuning; 0 is ignored
+/// so a stray call cannot lock the arena shut.
+fn set_node_cap(n: int) {
+    if n > 0 {
+        node_cap = n
+    }
+}
+
+fn node_cap_get() -> int {
+    return node_cap
+}
+
+fn node_overflow_get() -> int {
+    return node_overflow
 }
 
 // --- Phase 0 memory instrumentation (arena side) ---------------------------

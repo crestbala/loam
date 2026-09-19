@@ -2277,6 +2277,21 @@ fn damage_count() -> int {
     return arena.damage.len
 }
 
+/// Phase 2 node-arena ceiling (see `arena.alloc_node`). Default 65535, the
+/// `u16` id maximum. Additive diagnostics; `engine_set_node_cap` is a tuning /
+/// test hook.
+fn node_cap() -> int {
+    return arena.node_cap_get()
+}
+
+fn node_overflow() -> int {
+    return arena.node_overflow_get()
+}
+
+fn engine_set_node_cap(n: int) {
+    arena.set_node_cap(n)
+}
+
 fn damage_x(i: int) -> int {
     return arena.damage[i].x
 }
