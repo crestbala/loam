@@ -2729,6 +2729,14 @@ fn image_decode_png(src: string) -> int {
     return image.png_decode(src)
 }
 
+/// Decode a baseline JPEG into the reusable source buffers (RGBA8,
+/// premultiplied — JPEG is opaque). Returns 1 on success; a recognised variant
+/// this decoder does not cover (progressive, CMYK) sets the status to
+/// UNSUPPORTED instead, so the platform image path keeps loading it.
+fn image_decode_jpeg(src: string) -> int {
+    return image.jpg_decode(src)
+}
+
 /// Decode any format the in-Loam decoders cover, choosing by magic bytes. When
 /// it returns 0, `image_last_status()` says whether the file was malformed or
 /// simply a format that the platform image path (`plat_image`) should load.

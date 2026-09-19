@@ -12,13 +12,17 @@
 //!     LRU-evicted to stay under `IMG_BUDGET_BYTES`, and a single image larger
 //!     than the whole budget is refused loudly and counted rather than stored.
 //!
-//! Decoding is PNG, in Loam, with no graphics or image API: signature, chunk
-//! CRCs, IHDR validation, IDAT assembly, the zlib wrapper (Adler-32 checked),
-//! all five scanline filters, and premultiplied RGBA8 output. The DEFLATE
-//! decoder covers **stored blocks**, which is what makes the container, the
-//! filters and the buffers testable against spec-valid fixtures; Huffman-coded
-//! DEFLATE is refused explicitly (`btype != 0`) rather than decoded wrongly, and
-//! is the remaining decoder work.
+//! Decoding is in Loam, with no graphics or image API: **PNG** (signature, chunk
+//! CRCs, IHDR, IDAT, the zlib wrapper with Adler-32, all five filters, Adam7,
+//! every colour type and depth, and a real DEFLATE — stored, fixed and dynamic
+//! Huffman, full LZ77), **BMP**, **GIF** (LZW, palette, transparency,
+//! interlace), **ICO/CUR** (embedded PNG or BMP DIB), and **baseline JPEG**
+//! (quant/canonical-Huffman tables, MCU-interleaved entropy decoding, restarts,
+//! dequant + IDCT, libjpeg-compatible chroma upsampling, YCbCr). Everything else
+//! — WebP, TIFF, HEIC, progressive JPEG, and any PNG variant not covered — is
+//! recognised and handed to the platform image path, which is what has always
+//! loaded it; `src_format_of` + `src_last_status` are what make that a routing
+//! decision rather than a capability cliff.
 //!
 //! Resampling is separable Mitchell (B = C = 1/3), with the kernel scaled by the
 //! downscale factor so the support widens with the reduction — that is what
@@ -182,6 +186,9 @@ fn src_format_is_decodable(f: int) -> int {
         return 1
     }
     if f == FMT_BMP {
+        return 1
+    }
+    if f == FMT_JPEG {
         return 1
     }
     if f == FMT_GIF {
@@ -2095,6 +2102,1014 @@ fn ico_dib(s: string, off: int, w: int, h: int) -> int {
     return 1
 }
 
+// --- JPEG baseline (Phase 4, fifth format) ---------------------------------
+//
+// Photos are most of what an app actually shows, and JPEG is what they arrive
+// in, so this is the decoder that matters most for "images just work". It is a
+// baseline sequential decoder (SOF0/SOF1, 8-bit precision): the marker stream,
+// quantisation and canonical Huffman tables, MCU-interleaved entropy decoding
+// with restart markers, real dequant + IDCT, chroma upsampling, and the YCbCr
+// colour transform. Every step in Loam, reading the file's own bytes.
+//
+// Two boundaries are drawn honestly rather than half-crossed:
+//   * Progressive (SOF2) and 4-component CMYK/YCCK are RECOGNISED but returned
+//     as SRC_UNSUPPORTED, so the platform image path — which has always loaded
+//     them — keeps doing so. A format we do not decode falls back; it does not
+//     fail.
+//   * A single-component scan inside a multi-component image is likewise left
+//     to the platform: it is a CMYK/rare-encoder shape, and guessing at it
+//     would be worse than falling back.
+//
+// Memory: the decoder never holds the image as coefficients OR as a whole
+// sample plane. It decodes ONE MCU row at a time into small reusable row
+// buffers (a few tens of KB for a large photo) and writes finished output rows
+// straight into `src_px`. Peak decode memory is the output plus a band, not the
+// output plus a plane — which is the same rule the PNG and GIF paths follow.
+
+/// Zigzag position -> natural (raster) index in an 8x8 block.
+let mut jpg_zigzag: []int = []int {
+    0, 1, 8, 16, 9, 2, 3, 10,
+    17, 24, 32, 25, 18, 11, 4, 5,
+    12, 19, 26, 33, 40, 48, 41, 34,
+    27, 20, 13, 6, 7, 14, 21, 28,
+    35, 42, 49, 56, 57, 50, 43, 36,
+    29, 22, 15, 23, 30, 37, 44, 51,
+    58, 59, 52, 45, 38, 31, 39, 46,
+    53, 60, 61, 54, 47, 55, 62, 63,
+}
+
+/// The separable IDCT basis: `jpg_cos[x*8 + u]` is `0.5 * C(u) * cos((2x+1) u
+/// pi/16)`. The 0.5 is folded in so the row pass times the column pass carries
+/// the exact 1/4 the transform needs, and hardcoding the 64 values keeps a
+/// `cos` out of the decoder entirely.
+let mut jpg_cos: []float = []float {
+    0.353553391, 0.490392640, 0.461939766, 0.415734806, 0.353553391, 0.277785117, 0.191341716, 0.097545161,
+    0.353553391, 0.415734806, 0.191341716, -0.097545161, -0.353553391, -0.490392640, -0.461939766, -0.277785117,
+    0.353553391, 0.277785117, -0.191341716, -0.490392640, -0.353553391, 0.097545161, 0.461939766, 0.415734806,
+    0.353553391, 0.097545161, -0.461939766, -0.277785117, 0.353553391, 0.415734806, -0.191341716, -0.490392640,
+    0.353553391, -0.097545161, -0.461939766, 0.277785117, 0.353553391, -0.415734806, -0.191341716, 0.490392640,
+    0.353553391, -0.277785117, -0.191341716, 0.490392640, -0.353553391, -0.097545161, 0.461939766, -0.415734806,
+    0.353553391, -0.415734806, 0.191341716, 0.097545161, -0.353553391, 0.490392640, -0.461939766, 0.277785117,
+    0.353553391, -0.490392640, 0.461939766, -0.415734806, 0.353553391, -0.277785117, 0.191341716, -0.097545161,
+}
+
+/// Quantisation tables (4 x 64, NATURAL order — the file's zigzag order is
+/// undone as the table is read, so a coefficient lookup is a plain index).
+let mut jpg_q: []int = []int {}
+/// Canonical Huffman decode tables. Slots 0..3 are DC and 4..7 are AC, keyed by
+/// the table id in the stream. Values for a slot live at `slot * 256`, so a
+/// redefined table needs no shifting.
+let mut jpg_hmin: []int = []int {}
+let mut jpg_hmax: []int = []int {}
+let mut jpg_hptr: []int = []int {}
+let mut jpg_hval: []int = []int {}
+let mut jpg_tables_ready: int = 0
+
+/// Frame components, index 0..ncomp-1 in the order the frame header declares
+/// them (which is also the order that matters for the colour transform).
+let mut jpg_ncomp: int = 0
+let mut jpg_cid: []int = []int {}
+let mut jpg_ch: []int = []int {}
+let mut jpg_cv: []int = []int {}
+let mut jpg_ctq: []int = []int {}
+let mut jpg_cdc: []int = []int {}
+let mut jpg_cbw: []int = []int {}
+let mut jpg_rw: []int = []int {}
+/// Row-buffer offsets: `jpg_roff[c*3 + band % 3]`. THREE slots, not two: at 2x a
+/// vertical triangle tap reaches one component row past its band on BOTH sides,
+/// so emitting a band needs the band below, the band itself, and the band above
+/// — and the band above is the one just decoded.
+let mut jpg_roff: []int = []int {}
+let mut jpg_rows: []u8 = []u8 {}
+
+/// The scan: its components in scan order, with their DC/AC table ids.
+let mut jpg_ns: int = 0
+let mut jpg_so: []int = []int {}
+let mut jpg_sdc: []int = []int {}
+let mut jpg_sac: []int = []int {}
+
+let mut jpg_w: int = 0
+let mut jpg_h: int = 0
+let mut jpg_smaxh: int = 1
+let mut jpg_smaxv: int = 1
+let mut jpg_mcus_x: int = 0
+let mut jpg_mcus_y: int = 0
+/// The MCU row (band) currently being decoded into its row buffers.
+let mut jpg_cur_band: int = 0
+let mut jpg_ri: int = 0
+/// Adobe APP14 colour transform (-1 none): 0 means the components are RGB.
+let mut jpg_adobe: int = -1
+let mut jpg_rgb: int = 0
+
+/// The file bytes and the entropy reader's position within them.
+let mut jpg_src: string = ""
+let mut jpg_len: int = 0
+let mut jpg_scan_start: int = 0
+let mut jpg_pos: int = 0
+let mut jpg_bitbuf: i64 = 0
+let mut jpg_bitcnt: int = 0
+let mut jpg_eof: int = 0
+let mut jpg_bad: int = 0
+
+/// Per-block scratch: coefficients in natural order, the row-pass output, and
+/// the final 8x8 samples.
+let mut jpg_coef: []float = []float {}
+let mut jpg_t1: []float = []float {}
+let mut jpg_t2: []float = []float {}
+
+/// A recognised JPEG variant this decoder does not cover: fall back, do not
+/// fail. Not counted as a failure, because nothing is malformed.
+fn jpg_unsupported() -> int {
+    src_w = 0
+    src_h = 0
+    while src_px.len > 0 {
+        pop(src_px)
+    }
+    src_why = "jpeg variant not decoded in Loam"
+    src_status = SRC_UNSUPPORTED
+    return 0
+}
+
+fn jpg_reset() {
+    if jpg_tables_ready == 0 {
+        let mut i = 0
+        while i < 4 * 64 {
+            push(jpg_q, 1)
+            i = i + 1
+        }
+        i = 0
+        while i < 8 * 17 {
+            push(jpg_hmin, 0)
+            push(jpg_hptr, 0)
+            i = i + 1
+        }
+        i = 0
+        while i < 8 * 18 {
+            push(jpg_hmax, -1)
+            i = i + 1
+        }
+        i = 0
+        while i < 8 * 256 {
+            push(jpg_hval, 0)
+            i = i + 1
+        }
+        i = 0
+        while i < 64 {
+            push(jpg_coef, 0.0)
+            push(jpg_t1, 0.0)
+            push(jpg_t2, 0.0)
+            i = i + 1
+        }
+        jpg_tables_ready = 1
+    }
+    // Defaults: a quantiser of 1 (dequantise = identity) so a missing DQT
+    // cannot divide or scale by zero, and "no Huffman table" for every slot so
+    // a component that references an undefined table fails cleanly.
+    let mut i = 0
+    while i < 4 * 64 {
+        jpg_q[i] = 1
+        i = i + 1
+    }
+    i = 0
+    while i < 8 * 18 {
+        jpg_hmax[i] = -1
+        i = i + 1
+    }
+    i = 0
+    while i < 8 * 17 {
+        jpg_hmin[i] = 0
+        i = i + 1
+    }
+    i = 0
+    while i < 8 * 256 {
+        jpg_hval[i] = 0
+        i = i + 1
+    }
+}
+
+/// Byte at `o` of the file, or 0 past the end (a truncated file must fail, not
+/// read past its buffer).
+fn jpg_at(s: string, o: int) -> int {
+    if o < 0 || o >= s.len {
+        return 0
+    }
+    return int(s[o])
+}
+
+/// DQT: `L` bytes of payload at `o`. Handles both 8- and 16-bit precision and
+/// multiple tables in one segment, and stores each in natural order.
+fn jpg_dqt(s: string, o: int, L: int) -> int {
+    let mut p = o
+    let end = o + L
+    while p < end {
+        let pq = jpg_at(s, p) / 16
+        let tq = jpg_at(s, p) % 16
+        if pq > 1 || tq > 3 {
+            return -1
+        }
+        p = p + 1
+        let mut i = 0
+        while i < 64 {
+            let mut v = 0
+            if pq == 1 {
+                if p + 2 > end {
+                    return -1
+                }
+                v = png_u16(s, p)
+                p = p + 2
+            } else {
+                if p + 1 > end {
+                    return -1
+                }
+                v = jpg_at(s, p)
+                p = p + 1
+            }
+            jpg_q[tq * 64 + jpg_zigzag[i]] = v
+            i = i + 1
+        }
+    }
+    return 1
+}
+
+/// DHT: `L` bytes of payload at `o`. Builds canonical decode tables directly:
+/// for each code length, the first code and the index of its first value.
+fn jpg_dht(s: string, o: int, L: int) -> int {
+    let mut p = o
+    let end = o + L
+    while p + 17 <= end {
+        let tc = jpg_at(s, p) / 16
+        let th = jpg_at(s, p) % 16
+        if tc > 1 || th > 3 {
+            return -1
+        }
+        let slot = th + 4 * tc
+        let mut counts: []int = []int {}
+        let mut total = 0
+        let mut i = 0
+        while i < 16 {
+            let n = jpg_at(s, p + 1 + i)
+            push(counts, n)
+            total = total + n
+            i = i + 1
+        }
+        if p + 17 + total > end {
+            return -1
+        }
+        let base = slot * 256
+        let mut code = 0
+        let mut k = 0
+        let mut l = 1
+        while l <= 16 {
+            let n = counts[l - 1]
+            jpg_hmin[slot * 17 + l] = code
+            jpg_hmax[slot * 18 + l] = code + n - 1
+            jpg_hptr[slot * 17 + l] = k
+            let mut j = 0
+            while j < n {
+                jpg_hval[base + k + j] = jpg_at(s, p + 17 + k + j)
+                j = j + 1
+            }
+            k = k + n
+            code = (code + n) * 2
+            l = l + 1
+        }
+        p = p + 17 + total
+    }
+    return 1
+}
+
+/// SOF0/SOF1: precision, size, and each component's sampling factors and
+/// quantiser id. Anything other than 8-bit precision is not ours.
+fn jpg_sof(s: string, o: int, L: int) -> int {
+    if jpg_at(s, o) != 8 {
+        return -1
+    }
+    jpg_h = png_u16(s, o + 1)
+    jpg_w = png_u16(s, o + 3)
+    let n = jpg_at(s, o + 5)
+    if n < 1 || n > 4 {
+        return -1
+    }
+    if jpg_w <= 0 || jpg_h <= 0 {
+        return -1
+    }
+    if i64(jpg_w) * i64(jpg_h) > 16777216 {
+        return -1
+    }
+    jpg_ncomp = n
+    jpg_smaxh = 1
+    jpg_smaxv = 1
+    let mut i = 0
+    while i < n {
+        let b = o + 6 + i * 3
+        if b + 3 > o + L {
+            return -1
+        }
+        let hv = jpg_at(s, b + 1)
+        let chh = hv / 16
+        let cvv = hv % 16
+        let tq = jpg_at(s, b + 2)
+        if chh < 1 || chh > 4 || cvv < 1 || cvv > 4 || tq > 3 {
+            return -1
+        }
+        push(jpg_cid, jpg_at(s, b))
+        push(jpg_ch, chh)
+        push(jpg_cv, cvv)
+        push(jpg_ctq, tq)
+        if chh > jpg_smaxh {
+            jpg_smaxh = chh
+        }
+        if cvv > jpg_smaxv {
+            jpg_smaxv = cvv
+        }
+        i = i + 1
+    }
+    // A component's sampling factor must divide the maximum for the row buffers
+    // to be a fixed size, which every real encoder guarantees.
+    i = 0
+    while i < n {
+        if jpg_smaxh % jpg_ch[i] != 0 {
+            return -1
+        }
+        if jpg_smaxv % jpg_cv[i] != 0 {
+            return -1
+        }
+        i = i + 1
+    }
+    return 1
+}
+
+fn jpg_comp_of(cid: int) -> int {
+    let mut i = 0
+    while i < jpg_ncomp {
+        if jpg_cid[i] == cid {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+/// SOS: the scan's component order and their Huffman table ids. Baseline only —
+/// Ss/Se/AhAl must be exactly the full-band, no-refinement values.
+fn jpg_sos(s: string, o: int, L: int) -> int {
+    let ns = jpg_at(s, o)
+    if ns < 1 || ns > jpg_ncomp {
+        return -1
+    }
+    if ns == 1 && jpg_ncomp > 1 {
+        return -2
+    }
+    if 1 + ns * 2 + 3 > L {
+        return -1
+    }
+    if jpg_at(s, o + 1 + ns * 2) != 0 {
+        return -1
+    }
+    if jpg_at(s, o + 2 + ns * 2) != 63 {
+        return -1
+    }
+    if jpg_at(s, o + 3 + ns * 2) != 0 {
+        return -1
+    }
+    jpg_ns = ns
+    while jpg_so.len > 0 {
+        pop(jpg_so)
+    }
+    while jpg_sdc.len > 0 {
+        pop(jpg_sdc)
+    }
+    while jpg_sac.len > 0 {
+        pop(jpg_sac)
+    }
+    let mut i = 0
+    while i < ns {
+        let ci = jpg_comp_of(jpg_at(s, o + 1 + i * 2))
+        if ci < 0 {
+            return -1
+        }
+        let t = jpg_at(s, o + 2 + i * 2)
+        if t / 16 > 3 || t % 16 > 3 {
+            return -1
+        }
+        push(jpg_so, ci)
+        push(jpg_sdc, t / 16)
+        push(jpg_sac, t % 16)
+        i = i + 1
+    }
+    return 1
+}
+
+/// Size the row buffers and the output for the frame, then clear them. One
+/// component's row buffer is `ch*8` samples tall (its own rows within an MCU)
+/// and `blocks_across*8` wide, so an MCU row is all of it — times three slots.
+fn jpg_setup() -> int {
+    jpg_mcus_x = (jpg_w + jpg_smaxh * 8 - 1) / (jpg_smaxh * 8)
+    jpg_mcus_y = (jpg_h + jpg_smaxv * 8 - 1) / (jpg_smaxv * 8)
+    while jpg_cbw.len > 0 {
+        pop(jpg_cbw)
+    }
+    while jpg_rw.len > 0 {
+        pop(jpg_rw)
+    }
+    while jpg_roff.len > 0 {
+        pop(jpg_roff)
+    }
+    while jpg_cdc.len > 0 {
+        pop(jpg_cdc)
+    }
+    let mut total = 0
+    let mut c = 0
+    while c < jpg_ncomp {
+        let mut bw = (jpg_w * jpg_ch[c] + jpg_smaxh * 8 - 1) / (jpg_smaxh * 8)
+        let need = jpg_mcus_x * jpg_ch[c]
+        if need > bw {
+            bw = need
+        }
+        push(jpg_cbw, bw)
+        push(jpg_rw, bw * 8)
+        let band = bw * 8 * jpg_cv[c] * 8
+        let mut s = 0
+        while s < 3 {
+            push(jpg_roff, total)
+            total = total + band
+            s = s + 1
+        }
+        push(jpg_cdc, 0)
+        c = c + 1
+    }
+    while jpg_rows.len > 0 {
+        pop(jpg_rows)
+    }
+    let mut i = 0
+    while i < total {
+        push(jpg_rows, u8(0))
+        i = i + 1
+    }
+    while src_px.len > 0 {
+        pop(src_px)
+    }
+    let np = jpg_w * jpg_h
+    let mut z = 0
+    while z < np * 4 {
+        push(src_px, u8(0))
+        z = z + 1
+    }
+    return 1
+}
+
+/// One entropy-coded byte, undoing 0xFF00 stuffing. A real marker stops the
+/// reader WITHOUT consuming it and sets `jpg_eof`, so a restart marker or the
+/// end of the scan is found by the caller rather than stepped over.
+fn jpg_byte() -> int {
+    if jpg_pos >= jpg_len {
+        jpg_eof = 1
+        return 0
+    }
+    let b = int(jpg_src[jpg_pos])
+    if b == 255 {
+        if jpg_pos + 1 >= jpg_len {
+            jpg_eof = 1
+            return 0
+        }
+        let n = int(jpg_src[jpg_pos + 1])
+        if n == 0 {
+            jpg_pos = jpg_pos + 2
+            return 255
+        }
+        jpg_eof = 1
+        return 0
+    }
+    jpg_pos = jpg_pos + 1
+    return b
+}
+
+/// `n` bits (n <= 16) from the entropy stream, MSB first.
+fn jpg_bits(n: int) -> int {
+    if n <= 0 {
+        return 0
+    }
+    while jpg_bitcnt < n {
+        jpg_bitbuf = jpg_bitbuf * 256 + i64(jpg_byte())
+        jpg_bitcnt = jpg_bitcnt + 8
+    }
+    jpg_bitcnt = jpg_bitcnt - n
+    let div = i64(bit_pow2(jpg_bitcnt))
+    let v = (jpg_bitbuf / div) % i64(bit_pow2(n))
+    jpg_bitbuf = jpg_bitbuf % div
+    return i32(v)
+}
+
+/// The value a JPEG magnitude code stands for: a code of `n` bits is a signed
+/// value in `-(2^n - 1) .. 2^n - 1`, centered so the top half is positive.
+fn jpg_extend(v: int, n: int) -> int {
+    if n == 0 {
+        return 0
+    }
+    if v < bit_pow2(n - 1) {
+        return v - bit_pow2(n) + 1
+    }
+    return v
+}
+
+/// Decode one canonical Huffman symbol from table `slot`.
+fn jpg_huff(slot: int) -> int {
+    let mut code = 0
+    let mut l = 1
+    while l <= 16 {
+        code = code * 2 + jpg_bits(1)
+        let mx = jpg_hmax[slot * 18 + l]
+        if mx >= 0 {
+            if code <= mx {
+                return jpg_hval[slot * 256 + jpg_hptr[slot * 17 + l] + code - jpg_hmin[slot * 17 + l]]
+            }
+        }
+        l = l + 1
+    }
+    jpg_bad = 1
+    return 0
+}
+
+/// Dequantise one block of component `c` into `jpg_coef` (natural order).
+fn jpg_block(c: int, td: int, ta: int) {
+    let mut i = 0
+    while i < 64 {
+        jpg_coef[i] = 0.0
+        i = i + 1
+    }
+    if jpg_eof != 0 {
+        jpg_bad = 1
+    }
+    let qbase = jpg_ctq[c] * 64
+    let t = jpg_huff(td)
+    let diff = jpg_extend(jpg_bits(t), t)
+    jpg_cdc[c] = jpg_cdc[c] + diff
+    jpg_coef[0] = float(jpg_cdc[c] * jpg_q[qbase])
+    let mut k = 1
+    while k < 64 {
+        let rs = jpg_huff(4 + ta)
+        let r = rs / 16
+        let sz = rs % 16
+        if sz == 0 {
+            if r != 15 {
+                // EOB: the rest of the block is zero.
+                k = 64
+            } else {
+                k = k + 16
+            }
+        } else {
+            k = k + r
+            if k > 63 {
+                jpg_bad = 1
+                k = 64
+            } else {
+                let nat = jpg_zigzag[k]
+                let v = jpg_extend(jpg_bits(sz), sz)
+                jpg_coef[nat] = float(v * jpg_q[qbase + nat])
+                k = k + 1
+            }
+        }
+    }
+}
+
+/// Separable inverse DCT: rows then columns, with the +128 level shift. `jpg_t2`
+/// holds the finished 8x8 samples in row-major natural order.
+///
+/// `jpg_coef[v*8 + u]` is F(u, v) — u the horizontal frequency, v the vertical —
+/// which is the natural (row-major) order the zigzag table maps into. So the row
+/// pass runs over `u` at a fixed `v`, and the column pass over `v` at a fixed
+/// `x`; indexing either the other way transposes the block's frequencies.
+fn jpg_idct() {
+    let mut v = 0
+    while v < 8 {
+        let mut x = 0
+        while x < 8 {
+            let mut s = 0.0
+            let mut u = 0
+            while u < 8 {
+                s = s + jpg_cos[x * 8 + u] * jpg_coef[v * 8 + u]
+                u = u + 1
+            }
+            jpg_t1[x * 8 + v] = s
+            x = x + 1
+        }
+        v = v + 1
+    }
+    let mut y = 0
+    while y < 8 {
+        let mut x = 0
+        while x < 8 {
+            let mut s = 0.0
+            let mut vv = 0
+            while vv < 8 {
+                s = s + jpg_cos[y * 8 + vv] * jpg_t1[x * 8 + vv]
+                vv = vv + 1
+            }
+            jpg_t2[y * 8 + x] = s + 128.0
+            x = x + 1
+        }
+        y = y + 1
+    }
+}
+
+fn jpg_clamp(v: float) -> int {
+    return raster.raster_clamp_byte(i32(raster.raster_round(v)))
+}
+
+/// IDCT the current block and write it into component `c`'s row buffer for the
+/// band being decoded, at block (`bx`, `by`).
+fn jpg_place(c: int, bx: int, by: int) {
+    jpg_idct()
+    let w = jpg_rw[c]
+    let base = jpg_roff[c * 3 + jpg_cur_band % 3] + by * 8 * w + bx * 8
+    let mut y = 0
+    while y < 8 {
+        let mut x = 0
+        while x < 8 {
+            jpg_rows[base + y * w + x] = u8(jpg_clamp(jpg_t2[y * 8 + x]))
+            x = x + 1
+        }
+        y = y + 1
+    }
+}
+
+/// One component sample at column `x` and GLOBAL component row `gy` (0-based
+/// over the whole padded plane). The band a row belongs to selects its buffer
+/// slot; a row past the plane's end clamps to its last row, which is libjpeg's
+/// edge replication.
+fn jpg_samp(c: int, x: int, gy: int) -> int {
+    let band_rows = jpg_cv[c] * 8
+    let maxrow = band_rows * jpg_mcus_y
+    let mut yy = gy
+    if yy < 0 {
+        yy = 0
+    }
+    if yy >= maxrow {
+        yy = maxrow - 1
+    }
+    let mut xx = x
+    if xx < 0 {
+        xx = 0
+    }
+    if xx >= jpg_rw[c] {
+        xx = jpg_rw[c] - 1
+    }
+    return int(jpg_rows[jpg_roff[c * 3 + (yy / band_rows) % 3] + (yy % band_rows) * jpg_rw[c] + xx])
+}
+
+/// A full-resolution sample for component `c` at output position (`ox`, `oy`),
+/// upsampled with a triangle filter, separably.
+///
+/// The sampling POSITION is the one that matters and is easy to get subtly
+/// wrong: an output pixel's centre maps to source coordinate
+/// `(ox + 0.5) * ch / smaxh - 0.5`, which at 2x puts the two output samples a
+/// source sample produces at +/- 0.25 of it, not at +/- 0.5. That is exactly
+/// libjpeg's "fancy" upsampling (a 3/4, 1/4 tap), and using the sample-centred
+/// 0.5 phase instead doubles the error at a sharp chroma edge. At 1x the same
+/// formula collapses to an exact copy, so there is only one path.
+fn jpg_sample_at(c: int, ox: int, oy: int) -> int {
+    let hd = 2 * jpg_smaxh
+    let vd = 2 * jpg_smaxv
+    let hp = (2 * ox + 1) * jpg_ch[c] - jpg_smaxh
+    let mut hb = 0
+    let mut hf = 0
+    if hp >= 0 {
+        hb = hp / hd
+        hf = hp % hd
+    }
+    let vp = (2 * oy + 1) * jpg_cv[c] - jpg_smaxv
+    let mut vb = 0
+    let mut vf = 0
+    if vp >= 0 {
+        vb = vp / vd
+        vf = vp % vd
+    }
+    let a = jpg_samp(c, hb, vb)
+    let b = jpg_samp(c, hb + 1, vb)
+    let e = jpg_samp(c, hb, vb + 1)
+    let f = jpg_samp(c, hb + 1, vb + 1)
+    let w00 = (hd - hf) * (vd - vf)
+    let w10 = hf * (vd - vf)
+    let w01 = (hd - hf) * vf
+    let w11 = hf * vf
+    let den = hd * vd
+    return (a * w00 + b * w10 + e * w01 + f * w11 + den / 2) / den
+}
+
+/// Turn band `e`'s component samples into output rows: grayscale copies, an RGB
+/// pass-through when the file says so, otherwise the YCbCr transform.
+fn jpg_emit_band(e: int) {
+    let rows = jpg_smaxv * 8
+    let mut ry = 0
+    while ry < rows {
+        let oy = e * rows + ry
+        if oy < jpg_h {
+            let mut ox = 0
+            while ox < jpg_w {
+                let pi = (oy * jpg_w + ox) * 4
+                if jpg_ncomp == 1 {
+                    let g = jpg_sample_at(0, ox, oy)
+                    src_px[pi] = u8(g)
+                    src_px[pi + 1] = u8(g)
+                    src_px[pi + 2] = u8(g)
+                } else {
+                    let c0 = jpg_sample_at(0, ox, oy)
+                    let c1 = jpg_sample_at(1, ox, oy)
+                    let c2 = jpg_sample_at(2, ox, oy)
+                    if jpg_rgb != 0 {
+                        src_px[pi] = u8(c0)
+                        src_px[pi + 1] = u8(c1)
+                        src_px[pi + 2] = u8(c2)
+                    } else {
+                        let cb = float(c1) - 128.0
+                        let cr = float(c2) - 128.0
+                        src_px[pi] = u8(jpg_clamp(float(c0) + 1.402 * cr))
+                        src_px[pi + 1] = u8(jpg_clamp(float(c0) - 0.344136 * cb - 0.714136 * cr))
+                        src_px[pi + 2] = u8(jpg_clamp(float(c0) + 1.772 * cb))
+                    }
+                }
+                // JPEG is opaque; premultiplied and straight are the same here.
+                src_px[pi + 3] = u8(255)
+                ox = ox + 1
+            }
+        }
+        ry = ry + 1
+    }
+}
+
+/// The next real marker at or after `from`, skipping 0xFF00 stuff pairs.
+fn jpg_next_marker(from: int) -> int {
+    let mut p = from
+    while p + 1 < jpg_len {
+        if int(jpg_src[p]) == 255 {
+            let m = int(jpg_src[p + 1])
+            if m == 0 {
+                p = p + 2
+                continue
+            }
+            if m != 255 {
+                return p
+            }
+        }
+        p = p + 1
+    }
+    return -1
+}
+
+/// At a restart boundary: discard the bit buffer's padding and consume the
+/// RSTn marker, then reset the DC predictors (which is what the marker means).
+fn jpg_restart() -> int {
+    jpg_bitbuf = 0
+    jpg_bitcnt = 0
+    jpg_eof = 0
+    let p = jpg_next_marker(jpg_pos)
+    if p < 0 {
+        return -1
+    }
+    let m = int(jpg_src[p + 1])
+    if m < 208 || m > 215 {
+        jpg_bad = 1
+        return -1
+    }
+    jpg_pos = p + 2
+    let mut c = 0
+    while c < jpg_ncomp {
+        jpg_cdc[c] = 0
+        c = c + 1
+    }
+    return 1
+}
+
+/// Decode the scan's entropy data, one MCU row at a time. Interleaved scans
+/// place a full MCU's blocks; a single-component scan places one block per MCU
+/// and reuses the same row-buffer and emit path.
+///
+/// A band is EMITTED BEFORE the next one is decoded, and that ordering is what
+/// the three buffer slots buy: emitting band `k-2` needs bands `k-3`, `k-2` and
+/// `k-1`, which are exactly the three slots a mod-3 rotation keeps live. Decode
+/// first and band `k-3` would already have been overwritten.
+fn jpg_scan() -> int {
+    jpg_pos = jpg_scan_start
+    jpg_bitbuf = 0
+    jpg_bitcnt = 0
+    jpg_eof = 0
+    jpg_bad = 0
+    let mut c = 0
+    while c < jpg_ncomp {
+        jpg_cdc[c] = 0
+        c = c + 1
+    }
+    let total = jpg_mcus_x * jpg_mcus_y
+    let mut mcu = 0
+    while mcu < total {
+        if jpg_ri > 0 && mcu > 0 {
+            if mcu % jpg_ri == 0 {
+                if jpg_restart() != 1 {
+                    return 0
+                }
+            }
+        }
+        let mx = mcu % jpg_mcus_x
+        let my = mcu / jpg_mcus_x
+        if mx == 0 {
+            // A new band starts: emit the one whose neighbour row just arrived.
+            jpg_cur_band = my
+            if my >= 2 {
+                jpg_emit_band(my - 2)
+            }
+        }
+        if jpg_ns > 1 {
+            let mut si = 0
+            while si < jpg_ns {
+                let ci = jpg_so[si]
+                let hc = jpg_ch[ci]
+                let vc = jpg_cv[ci]
+                let mut j = 0
+                while j < vc {
+                    let mut i = 0
+                    while i < hc {
+                        jpg_block(ci, jpg_sdc[si], jpg_sac[si])
+                        jpg_place(ci, mx * hc + i, j)
+                        i = i + 1
+                    }
+                    j = j + 1
+                }
+                si = si + 1
+            }
+        } else {
+            let ci = jpg_so[0]
+            jpg_block(ci, jpg_sdc[0], jpg_sac[0])
+            jpg_place(ci, mx, 0)
+        }
+        if jpg_bad != 0 {
+            return 0
+        }
+        mcu = mcu + 1
+    }
+    // The last two bands have no successor to wait for; their edge rows clamp.
+    if jpg_mcus_y >= 2 {
+        jpg_emit_band(jpg_mcus_y - 2)
+    }
+    jpg_emit_band(jpg_mcus_y - 1)
+    return 1
+}
+
+/// Decode a baseline JPEG into `src_px` (RGBA8, premultiplied — opaque, so the
+/// two are identical). Returns 1 on success, and SRC_UNSUPPORTED (not a
+/// failure) for a recognised variant that belongs to the platform path.
+fn jpg_decode(s: string) -> int {
+    src_status = 0
+    src_w = 0
+    src_h = 0
+    while src_px.len > 0 {
+        pop(src_px)
+    }
+    if s.len < 4 {
+        return src_fail("jpeg too short")
+    }
+    if int(s[0]) != 255 || int(s[1]) != 216 {
+        return src_fail("not a jpeg")
+    }
+    jpg_src = s
+    jpg_len = s.len
+    jpg_reset()
+    jpg_ncomp = 0
+    jpg_ns = 0
+    jpg_ri = 0
+    jpg_adobe = -1
+    jpg_rgb = 0
+    jpg_smaxh = 1
+    jpg_smaxv = 1
+    while jpg_cid.len > 0 {
+        pop(jpg_cid)
+    }
+    while jpg_ch.len > 0 {
+        pop(jpg_ch)
+    }
+    while jpg_cv.len > 0 {
+        pop(jpg_cv)
+    }
+    while jpg_ctq.len > 0 {
+        pop(jpg_ctq)
+    }
+    let mut p = 2
+    while p + 1 < s.len {
+        if int(s[p]) != 255 {
+            p = p + 1
+            continue
+        }
+        let m = int(s[p + 1])
+        if m == 216 {
+            p = p + 2
+            continue
+        }
+        if m == 217 {
+            // EOI: the image is complete iff a scan produced it.
+            break
+        }
+        if m == 255 {
+            p = p + 1
+            continue
+        }
+        if m >= 208 && m <= 215 {
+            p = p + 2
+            continue
+        }
+        if m == 1 {
+            // TEM: a standalone marker with no length field.
+            p = p + 2
+            continue
+        }
+        if p + 4 > s.len {
+            break
+        }
+        let L = png_u16(s, p + 2)
+        if L < 2 || p + 2 + L > s.len {
+            return src_fail("truncated jpeg segment")
+        }
+        let o = p + 4
+        let payload = L - 2
+        if m == 238 {
+            // APP14 Adobe: byte 11 is the colour transform.
+            if payload >= 12 {
+                jpg_adobe = png_u16(s, o + 11)
+            }
+        } else if m == 219 {
+            if jpg_dqt(s, o, payload) != 1 {
+                return src_fail("bad jpeg quantisation table")
+            }
+        } else if m == 196 {
+            if jpg_dht(s, o, payload) != 1 {
+                return src_fail("bad jpeg huffman table")
+            }
+        } else if m == 221 {
+            if payload < 2 {
+                return src_fail("bad jpeg restart interval")
+            }
+            jpg_ri = png_u16(s, o)
+        } else if m == 192 || m == 193 {
+            // SOF0 baseline, SOF1 extended sequential: both decode here.
+            if jpg_sof(s, o, payload) != 1 {
+                return src_fail("bad jpeg frame header")
+            }
+        } else if m == 200 {
+            // JPG (reserved): no length semantics worth guessing at; skip.
+        } else if m >= 192 && m <= 207 {
+            // Every other SOF: progressive, lossless, differential, arithmetic.
+            return jpg_unsupported()
+        } else if m == 218 {
+            if jpg_ncomp == 0 {
+                return src_fail("jpeg scan before frame header")
+            }
+            let sc = jpg_sos(s, o, payload)
+            if sc == -2 {
+                return jpg_unsupported()
+            }
+            if sc != 1 {
+                return src_fail("bad jpeg scan header")
+            }
+            // RGB components ('R','G','B') mean no colour transform, the same as
+            // an Adobe marker saying transform 0.
+            if jpg_ncomp == 3 {
+                if jpg_cid[0] == 82 && jpg_cid[1] == 71 && jpg_cid[2] == 66 {
+                    jpg_rgb = 1
+                }
+            }
+            if jpg_adobe == 0 {
+                jpg_rgb = 1
+            }
+            if jpg_ncomp == 4 {
+                return jpg_unsupported()
+            }
+            if jpg_setup() != 1 {
+                return src_fail("jpeg buffers")
+            }
+            jpg_scan_start = o + payload
+            if jpg_scan() != 1 {
+                return src_fail("malformed jpeg entropy data")
+            }
+            let nm = jpg_next_marker(jpg_pos)
+            if nm < 0 {
+                break
+            }
+            p = nm
+            continue
+        }
+        p = p + 2 + L
+    }
+    if jpg_ncomp == 0 {
+        return src_fail("jpeg without a frame")
+    }
+    if src_px.len != jpg_w * jpg_h * 4 {
+        return src_fail("jpeg without a decodable scan")
+    }
+    src_w = jpg_w
+    src_h = jpg_h
+    src_decodes = src_decodes + 1
+    src_status = SRC_OK
+    return 1
+}
+
 /// Decode any format the in-Loam decoders cover, choosing by magic bytes. On a
 /// recognised format we do not decode, `src_status` is SRC_UNSUPPORTED and the
 /// caller should use the platform image path.
@@ -2105,6 +3120,9 @@ fn src_decode_any(s: string) -> int {
     }
     if f == FMT_BMP {
         return bmp_decode(s)
+    }
+    if f == FMT_JPEG {
+        return jpg_decode(s)
     }
     if f == FMT_GIF {
         return gif_decode(s)

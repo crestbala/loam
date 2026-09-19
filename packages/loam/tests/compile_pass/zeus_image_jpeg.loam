@@ -1,0 +1,144 @@
+// Phase 4: the JPEG decoder (baseline sequential), checked against libjpeg.
+//
+// The fixtures are written by Pillow, so the oracle is an INDEPENDENT decoder's
+// answer, not a re-run of ours. JPEG is lossy and the two IDCTs differ in their
+// last bit or two, so the comparison carries a tolerance — what the oracle pins
+// is that our dequant, IDCT, chroma upsampling and colour transform make the
+// same decisions as libjpeg, not that we reproduce its rounding.
+//
+// The four fixtures deliberately span the sampling modes real encoders emit
+// (4:4:4, 4:2:2, 4:2:0) plus grayscale, and a progressive file asserts the
+// documented boundary: a recognised variant we do not decode is reported as
+// UNSUPPORTED so the platform image path keeps loading it — never a failure.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn abs_i(v: int) -> int {
+    if v < 0 {
+        return 0 - v
+    }
+    return v
+}
+
+fn load(name: string) -> string {
+    return sys.read_file("packages/loam/tests/images/{{name}}")
+}
+
+/// Decode `name`, compare every channel against its Pillow oracle, and report
+/// the worst and mean absolute differences. `label` names it in the output.
+fn compare(name: string, label: string, ew: int, eh: int) {
+    let s = load(name)
+    let f = zeus.image_format_of(s)
+    must(zeus.image_format_name(f) == "jpeg", "{{label}} sniffs as jpeg")
+    must(zeus.image_format_is_decodable(f) == 1, "jpeg is decodable in Loam")
+    must(zeus.image_decode_jpeg(s) == 1, "{{label}} decodes")
+    must(zeus.image_last_status() == zeus.image_status_ok(), "{{label}} status ok")
+    let w = zeus.image_src_width()
+    let h = zeus.image_src_height()
+    must(w == ew, "{{label}} width")
+    must(h == eh, "{{label}} height")
+
+    let orc = load("{{name}}.rgba")
+    must(orc.len == w * h * 4, "{{label}} oracle size")
+    let mut mx = 0
+    let mut sum = 0
+    let mut n = 0
+    let mut y = 0
+    while y < h {
+        let mut x = 0
+        while x < w {
+            let mut c = 0
+            while c < 4 {
+                let got = zeus.image_src_get(x, y, c)
+                let want = int(orc[(y * w + x) * 4 + c])
+                let d = abs_i(got - want)
+                if d > mx {
+                    mx = d
+                }
+                sum = sum + d
+                n = n + 1
+                c = c + 1
+            }
+            x = x + 1
+        }
+        y = y + 1
+    }
+    let mean = sum / n
+    fmt.println("  jpeg", label, "max", mx, "mean", mean, "of", n)
+    // The colours are right: an image that decoded to the wrong plane, the wrong
+    // colour transform, the wrong chroma sample phase or the wrong IDCT basis
+    // blows far past this. A transposed IDCT read max 235 / mean 29; a
+    // sample-centred chroma phase read max 43. What is left is the two IDCTs
+    // rounding differently in the last bit or two.
+    must(mx <= 16, "{{label}} worst channel within tolerance")
+    must(mean <= 2, "{{label}} mean channel within tolerance")
+}
+
+fn main() {
+    // --- a real scene through the in-Loam path, per sampling mode ----------
+    compare("jpg_444.jpg", "4:4:4", 32, 24)
+    compare("jpg_422.jpg", "4:2:2", 32, 24)
+    compare("jpg_420.jpg", "4:2:0", 32, 24)
+    // Restart markers: an image wide enough that the interval lands mid-band, so
+    // ignoring the RSTn markers (or failing to reset the DC predictors at them)
+    // drifts visibly instead of accidentally passing.
+    compare("jpg_restart.jpg", "restart", 64, 32)
+
+    // --- grayscale: one component, so no colour transform at all -----------
+    let gs = load("jpg_gray.jpg")
+    must(zeus.image_decode_any(gs) == 1, "grayscale decodes")
+    let gw = zeus.image_src_width()
+    let gh = zeus.image_src_height()
+    let gorc = load("jpg_gray.jpg.rgba")
+    let mut gmx = 0
+    let mut gy = 0
+    while gy < gh {
+        let mut gx = 0
+        while gx < gw {
+            let got = zeus.image_src_get(gx, gy, 0)
+            // A gray JPEG must come out gray: R == G == B.
+            must(zeus.image_src_get(gx, gy, 1) == got, "gray G == R")
+            must(zeus.image_src_get(gx, gy, 2) == got, "gray B == R")
+            let d = abs_i(got - int(gorc[(gy * gw + gx) * 4]))
+            if d > gmx {
+                gmx = d
+            }
+            gx = gx + 1
+        }
+        gy = gy + 1
+    }
+    fmt.println("  jpeg gray max", gmx)
+    must(gmx <= 16, "grayscale within tolerance")
+
+    // --- progressive: recognised, reported, NOT a failure -------------------
+    let pr = load("jpg_progressive.jpg")
+    must(zeus.image_format_name(zeus.image_format_of(pr)) == "jpeg",
+         "progressive still sniffs as jpeg")
+    must(zeus.image_decode_any(pr) == 0, "progressive is not decoded in Loam")
+    must(zeus.image_last_status() == zeus.image_status_unsupported(),
+         "and it says UNSUPPORTED, so the platform path loads it")
+    must(zeus.image_last_status() != zeus.image_status_malformed(),
+         "it is not reported as malformed")
+
+    // --- a truncated file fails cleanly, never traps ------------------------
+    let mut cutb: []int = []int {}
+    let mut k = 0
+    while k < 400 {
+        cutb.push(int(pr[k]))
+        k = k + 1
+    }
+    let cut = string_from_bytes(cutb)
+    must(zeus.image_decode_any(cut) == 0, "a truncated jpeg does not decode")
+
+    fmt.println("jpeg ok")
+}
