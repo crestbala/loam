@@ -56,6 +56,19 @@ fn count_kind(kind: int) -> int {
     return c
 }
 
+/// Index of the first op of `kind`, or -1.
+fn find_kind(kind: int) -> int {
+    let n = zeus.draw_count()
+    let mut i = 0
+    while i < n {
+        if zeus.draw_op(i) == kind {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
 fn red_of(rgb: int) -> int {
     return rgb / 65536 % 256
 }
@@ -145,6 +158,81 @@ fn main() {
 
     // --- nothing in this scene was skipped --------------------------------
     must(zeus.scene_raster_unhandled_total() == 0, "a shapes-only scene skips nothing")
+
+    // --- gradients: linear-space, even, and seam-free across tiles ---------
+    // A gradient from black to white: lerping in the LINEAR domain puts the
+    // perceptual midpoint at sRGB 188, where lerping the sRGB bytes would put
+    // it at 128 -- the same gamma rule the compositor follows, applied to a
+    // gradient instead of an alpha blend.
+    zeus.raster_ensure(64, 512, 1)
+    // The scene pass's clip is still in force; a direct fill wants the whole
+    // surface. (The pass itself always sets its clip deterministically, so this
+    // is a test-harness concern, not a renderer one.)
+    zeus.raster_clip_reset()
+    zeus.raster_fill_round_rect_gradient(0, 0, 64, 512, 0, 0x000000, 0xFFFFFF, 0, 255)
+    must(zeus.raster_get(32, 0, 0) == 0, "the gradient starts at the first stop")
+    // The second stop is reached at the bottom EDGE, so the last pixel centre is
+    // t = 511/512 of the way there rather than exactly on it.
+    must(zeus.raster_get(32, 511, 0) >= 250, "and ends at the second")
+    must(zeus.raster_get(32, 256, 0) > 170, "the midpoint is even, not sRGB-lerped")
+    must(zeus.raster_get(32, 256, 0) < 210, "and it is a gradient, not a jump")
+    // Sampled every 32 pixels the trend must be strictly increasing; the dither
+    // only moves a value by half a step, so it cannot invert a real climb.
+    let mut mono = 1
+    let mut py2 = 32
+    while py2 < 512 {
+        if zeus.raster_get(32, py2, 0) <= zeus.raster_get(32, py2 - 32, 0) {
+            mono = 0
+        }
+        py2 = py2 + 32
+    }
+    must(mono == 1, "the gradient climbs monotonically")
+    // 512 tall spans three 256px tiles. A gradient computed per tile instead of
+    // against global geometry would RESTART at each tile edge — a jump of about
+    // half the range at y=256. So the step across the boundary must be no larger
+    // than the steps just around it. (Near black the sRGB curve is steep, so a
+    // step of ~10 is normal there; mid-range it is under 2.)
+    let mut max_local = 0
+    let mut py3 = 224
+    while py3 < 288 {
+        if py3 != 256 {
+            let d = zeus.raster_get(32, py3, 0) - zeus.raster_get(32, py3 - 1, 0)
+            if d > max_local {
+                max_local = d
+            }
+        }
+        py3 = py3 + 1
+    }
+    let seam = zeus.raster_get(32, 256, 0) - zeus.raster_get(32, 255, 0)
+    must(seam <= max_local + 2, "no seam at the tile boundary")
+    must(0 - seam <= 2, "and no backward jump there")
+    must(zeus.raster_get(32, 128, 0) < zeus.raster_get(32, 384, 0),
+         "the gradient still climbs across the whole span")
+
+    // --- and the pass rasterizes a gradient op ----------------------------
+    // A node with both stops set paints a gradient (kind 11). Built with
+    // `child()` rather than a trailing block so the second stop can be set on
+    // the node before it is added.
+    let grad = zeus.Box(width = 60, height = 30, radius = 0, background = "#000000")
+    zeus.set_background_end(grad, 0xFFFFFF)
+    let page = zeus.Page()
+    zeus.child(page, grad)
+    zeus.window("zeus-raster-scene-grad", 120, 160)
+    zeus.root(page)
+    zeus.engine_layout(120, 160)
+    zeus.engine_paint()
+    must(count_kind(11) > 0, "the scene has a gradient op")
+    zeus.raster_ensure(120, 160, 2)
+    zeus.scene_rasterize(2, 255, 255, 255)
+    must(zeus.scene_raster_unhandled(11) == 0, "and the pass rasterized it")
+    // The op's own box, in device pixels: dark at the top, light at the bottom.
+    let gi = find_kind(11)
+    must(gi >= 0, "the gradient op is in the list")
+    let gx = (zeus.draw_x(gi) + 10) * 2
+    let gtop = zeus.raster_get(gx, zeus.draw_y(gi) * 2 + 1, 0)
+    let gbot = zeus.raster_get(gx, (zeus.draw_y(gi) + zeus.draw_h(gi)) * 2 - 2, 0)
+    must(gtop < 40, "the gradient op starts dark")
+    must(gbot > 215, "and ends light")
 
     // --- ops the pass cannot rasterize are counted, not silent ------------
     // Text is the kind this pass does not do yet. A scene WITH text must report

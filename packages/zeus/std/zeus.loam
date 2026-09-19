@@ -2412,6 +2412,14 @@ fn raster_fill_round_rect_tiled(x: int, y: int, w: int, h: int, rad: int,
     raster.raster_fill_tiled(cr, cg, cb, alpha)
 }
 
+/// Fill a rounded rectangle with a linear gradient from `c0` to `c1`.
+/// `axis` 0 is top-to-bottom, 1 is left-to-right.
+fn raster_fill_round_rect_gradient(x: int, y: int, w: int, h: int, rad: int,
+                                   c0: int, c1: int, axis: int, alpha: int) {
+    raster.raster_round_rect(float(x), float(y), float(w), float(h), float(rad))
+    raster.raster_fill_gradient_tiled(c0, c1, axis, alpha, x, y, x + w, y + h)
+}
+
 /// Draw a rounded-rect border. `bw` is the device-pixel thickness; a hairline
 /// (<= 1px) snaps to the pixel grid.
 fn raster_stroke_round_rect(x: int, y: int, w: int, h: int, rad: int, bw: int,

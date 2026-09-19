@@ -795,10 +795,37 @@ exactly those ops as unhandled.
   suites this sandbox blocks), all 15 draw goldens byte-identical, structural
   golden pass, `tools/mem-baseline.sh --headless` unchanged.
 
-**Remaining Phase 4** (not done, and each is substantial): text and gradients in
-the raster pass (text needs a font file the app supplies — the repo ships only an
-8-glyph test fixture, so a text pixel golden needs one), JPEG and WebP, and the
-host blit.
+**Gradients, in the raster pass (twenty-first step).** `raster_fill_path` gained
+one branch: when a gradient is armed, the per-pixel composite takes its colour
+from a lerp instead of the op's flat colour. Everything else about the fill is
+unchanged — same coverage, same tiling, same clip — which is why the existing
+raster tests still pass byte for byte.
+
+Two things make it correct rather than merely present:
+
+- **The lerp is in the 12-bit LINEAR domain**, so a black-to-white gradient has
+  its perceptual midpoint at sRGB **188**. Lerping the sRGB bytes would put it
+  at 128 and make every gradient look washed out — the same gamma rule the
+  compositor already follows, applied to a gradient instead of an alpha blend.
+  The test asserts the midpoint lands in 170..210, so an sRGB lerp fails it.
+- **The result is dithered by half an 8-bit step** before quantization, which is
+  quality rule 10 ("costs nothing, removes visible banding"). A consequence is
+  that a gradient is no longer strictly monotone pixel to pixel, which is what
+  dithering IS; the test therefore bounds the step (<= 2 in the mid-range)
+  rather than demanding monotonicity, and checks the tile seam by requiring the
+  step across a 256px boundary to be no larger than the steps around it — a
+  gradient computed per tile would restart there, a jump of half the range.
+
+The gradient's span is the SHAPE's device box, not the surface: a gradient runs
+corner to corner of the thing it fills.
+
+- bytes/node: **476.0 — unchanged**.
+- validation: 108 zeus `compile_pass` tests pass (the 2 failures are the network
+  suites this sandbox blocks), all 15 draw goldens byte-identical, structural
+  golden pass.
+
+**Remaining Phase 4** (not done): text and SVG in the raster pass, JPEG and WebP,
+and the host blit (see the ABI note below).
 
 **The host blit is blocked on an ABI gap, not on effort.** The Loam half is
 landed and tested (the buffer's `fb_gen` generation changes only on reallocation,

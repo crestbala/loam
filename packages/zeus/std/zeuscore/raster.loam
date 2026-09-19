@@ -861,13 +861,133 @@ fn raster_fill_path(x0: int, y0: int, x1: int, y1: int, cr: int, cg: int, cb: in
             if cov > 0 {
                 let a = cov * alpha / 255
                 if a > 0 {
-                    raster_blend(px, py, cr, cg, cb, a)
+                    if raster_grad_on == 0 {
+                        raster_blend(px, py, cr, cg, cb, a)
+                    } else {
+                        raster_blend_grad(px, py, a)
+                    }
                 }
             }
             px = px + 1
         }
         py = py + 1
     }
+}
+
+// --- gradients (Phase 4) ----------------------------------------------------
+//
+// A gradient is the same path fill with a colour that varies per pixel. The two
+// stops are converted to the 12-bit LINEAR domain once and lerped there, which
+// is what keeps a gradient perceptually even (lerping sRGB bytes makes the
+// middle too light), and the result is dithered by HALF AN 8-BIT STEP before it
+// is quantized back, which is what removes banding without widening the
+// framebuffer.
+
+let mut raster_grad_on: int = 0
+let mut raster_g0r: int = 0
+let mut raster_g0g: int = 0
+let mut raster_g0b: int = 0
+let mut raster_g1r: int = 0
+let mut raster_g1g: int = 0
+let mut raster_g1b: int = 0
+/// 0 = vertical (top to bottom), 1 = horizontal (left to right).
+let mut raster_grad_axis: int = 0
+let mut raster_grad_start: int = 0
+let mut raster_grad_len: int = 1
+
+fn raster_grad_arm(c0: int, c1: int, axis: int, x0: int, y0: int, x1: int, y1: int) {
+    raster_g0r = srgb_to_lin[raster_clamp_byte(c0 / 65536 % 256)]
+    raster_g0g = srgb_to_lin[raster_clamp_byte(c0 / 256 % 256)]
+    raster_g0b = srgb_to_lin[raster_clamp_byte(c0 % 256)]
+    raster_g1r = srgb_to_lin[raster_clamp_byte(c1 / 65536 % 256)]
+    raster_g1g = srgb_to_lin[raster_clamp_byte(c1 / 256 % 256)]
+    raster_g1b = srgb_to_lin[raster_clamp_byte(c1 % 256)]
+    raster_grad_axis = axis
+    if axis == 1 {
+        raster_grad_start = x0
+        raster_grad_len = x1 - x0
+    } else {
+        raster_grad_start = y0
+        raster_grad_len = y1 - y0
+    }
+    if raster_grad_len < 1 {
+        raster_grad_len = 1
+    }
+    raster_grad_on = 1
+}
+
+fn raster_grad_disarm() {
+    raster_grad_on = 0
+}
+
+/// Blend the gradient's colour at (x, y) over the framebuffer with coverage `a`.
+fn raster_blend_grad(x: int, y: int, a: int) {
+    let mut p = x
+    if raster_grad_axis == 0 {
+        p = y
+    }
+    let mut t = float(p - raster_grad_start) / float(raster_grad_len)
+    if t < 0.0 {
+        t = 0.0
+    }
+    if t > 1.0 {
+        t = 1.0
+    }
+    let lr = i32(float(raster_g0r) + (float(raster_g1r) - float(raster_g0r)) * t + 0.5)
+    let lg = i32(float(raster_g0g) + (float(raster_g1g) - float(raster_g0g)) * t + 0.5)
+    let lb = i32(float(raster_g0b) + (float(raster_g1b) - float(raster_g0b)) * t + 0.5)
+    // Half an 8-bit step of ordered dither, in the linear domain: one sRGB step
+    // is about 16 linear units, so +/-8 straddles the boundary and the band
+    // becomes a dithered blend instead of a visible edge.
+    let d = (raster_dither(x, y) - 31) * 16 / 64
+    raster_blend_lin(x, y, raster_clamp_lin(lr + d), raster_clamp_lin(lg + d),
+                     raster_clamp_lin(lb + d), a)
+}
+
+/// Composite a colour already in the 12-bit linear domain.
+fn raster_blend_lin(x: int, y: int, lr: int, lg: int, lb: int, a: int) {
+    if x < 0 || y < 0 || x >= fb_w || y >= fb_h {
+        return
+    }
+    if a <= 0 {
+        return
+    }
+    let i = raster_pixel_index(x, y)
+    let sa = float(a) / 255.0
+    let inv = 1.0 - sa
+    let ol_r = raster_clamp_lin(i32(float(lr) * sa + float(srgb_to_lin[int(fb[i + 2])]) * inv + 0.5))
+    let ol_g = raster_clamp_lin(i32(float(lg) * sa + float(srgb_to_lin[int(fb[i + 1])]) * inv + 0.5))
+    let ol_b = raster_clamp_lin(i32(float(lb) * sa + float(srgb_to_lin[int(fb[i])]) * inv + 0.5))
+    fb[i] = u8(lin_to_srgb[ol_b])
+    fb[i + 1] = u8(lin_to_srgb[ol_g])
+    fb[i + 2] = u8(lin_to_srgb[ol_r])
+    fb[i + 3] = u8(raster_clamp_byte(i32(float(a) + float(int(fb[i + 3])) * inv + 0.5)))
+}
+
+/// Fill the current path with a gradient, tiled and damage-clipped like any
+/// other fill. The gradient's span is the SHAPE's box (device pixels), not the
+/// surface: a gradient runs corner to corner of the thing it fills.
+fn raster_fill_gradient_tiled(c0: int, c1: int, axis: int, alpha: int,
+                              gx0: int, gy0: int, gx1: int, gy1: int) {
+    raster_build()
+    raster_grad_arm(c0, c1, axis, gx0, gy0, gx1, gy1)
+    let mut ty = 0
+    while ty < fb_h {
+        let th = raster_min_i(ty + RASTER_TILE, fb_h) - ty
+        let mut tx = 0
+        while tx < fb_w {
+            let tw = raster_min_i(tx + RASTER_TILE, fb_w) - tx
+            raster_tile_region(tx, ty, tw, th)
+            if reg_x1 > reg_x0 {
+                if reg_y1 > reg_y0 {
+                    raster_fill_path(reg_x0, reg_y0, reg_x1, reg_y1, 0, 0, 0, alpha)
+                }
+            }
+            tx = tx + RASTER_TILE
+        }
+        ty = ty + RASTER_TILE
+    }
+    raster_grad_disarm()
 }
 
 /// Fill the current path as ONE region (whole surface).
