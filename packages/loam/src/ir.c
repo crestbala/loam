@@ -246,6 +246,13 @@ static IrPlace *lower_place_mode(AstNode *n, int allow_temp) {
     switch (n->kind) {
         case AST_IDENT: {
             int id = scope_find(n->as.ident.name);
+            /* A global reached through an import is not bound in this
+               function's scope (only this module's globals are), but typecheck
+               resolved the name to its declaration: reference the static C
+               symbol directly. */
+            if (id < 0 && n->as.ident.resolved &&
+                n->as.ident.resolved->kind == AST_VAR_DECL)
+                id = local_for_global(n->as.ident.resolved);
             if (id < 0) return NULL;
             return place_local(id, id >= 0 && id < F->nlocals ? F->locals[id].ty : ir_subst(n->ty));
         }

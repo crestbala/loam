@@ -24,7 +24,7 @@ CFLAGS  += -DLOAM_RUNTIME_DIR='"$(CURDIR)/packages/loam/runtime"'
 CFLAGS  += -DLOAM_STD_DIR='"$(CURDIR)/packages/loam/std"'
 CFLAGS  += -DLOAM_ZEUS_DIR='"$(CURDIR)/packages/zeus"'
 CFLAGS  += -DLOAM_RAYGUI_DIR='"$(CURDIR)/packages/raygui"'
-CFLAGS  += -DLOAM_PATH='"$(CURDIR)/packages/zeus:$(CURDIR)/packages/http:$(CURDIR)/packages/maya:$(CURDIR)/packages/raygui"'
+CFLAGS  += -DLOAM_PATH='"$(CURDIR)/packages/zeus:$(CURDIR)/packages/zeus-components:$(CURDIR)/packages/http:$(CURDIR)/packages/maya:$(CURDIR)/packages/raygui"'
 
 # driver.c is loamc's main; lsp.c and fmt.c carry their own and are built apart.
 LOAMC_SRC := $(filter-out packages/loam/src/lsp.c packages/loam/src/fmt.c,\

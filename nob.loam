@@ -392,7 +392,7 @@ fn cflags() -> string {
     s = cat(s, " -DLOAM_STD_DIR='\"{{ROOT}}/packages/loam/std\"'")
     s = cat(s, " -DLOAM_ZEUS_DIR='\"{{ROOT}}/packages/zeus\"'")
     s = cat(s, " -DLOAM_RAYGUI_DIR='\"{{ROOT}}/packages/raygui\"'")
-    s = cat(s, " -DLOAM_PATH='\"{{ROOT}}/packages/zeus:{{ROOT}}/packages/http:{{ROOT}}/packages/maya:{{ROOT}}/packages/raygui\"'")
+    s = cat(s, " -DLOAM_PATH='\"{{ROOT}}/packages/zeus:{{ROOT}}/packages/zeus-components:{{ROOT}}/packages/http:{{ROOT}}/packages/maya:{{ROOT}}/packages/raygui\"'")
     return s
 }
 

@@ -1,0 +1,10 @@
+//! atoms — one visual unit each; no other component inside.
+//!
+//! Type scale (`Overline`, `Display`, `Heading`, `Title`, `Body`, `Note`,
+//! `SectionHeader`, `SectionTitle`, `Label`), `Icon`, `Kbd`, `Pip`,
+//! `Separator` / `Divider`, `Badge` / `BadgeCount`, `Chip`, `Avatar` /
+//! `AvatarGroup`, `Skeleton`, `Spinner`, and the single-control inputs
+//! (`Switch`, `Slider`, `Progress` / `Meter`).
+//!
+//! Populated by the extraction from `zeus.loam`; see
+//! `../README.md` for the re-export/facade model.

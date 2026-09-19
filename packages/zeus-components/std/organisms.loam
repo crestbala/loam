@@ -1,0 +1,9 @@
+//! organisms — a whole section of a screen.
+//!
+//! `Card`, `Comp`, `Menu` / `MenuItem` / `MenuLabel` / `MenuSeparator`,
+//! `Dialog` / `AlertDialog`, `Drawer`, `Popover`, `Navbar` / `NavTab`,
+//! `Table` / `TableHead` / `TableRow` / `TableCols`, the chart shell
+//! (`BarChart`, `LineChart`, `AreaChart` and their `chart_*` helpers),
+//! `DatePicker`, and `Page`.
+//!
+//! Populated by the extraction from `zeus.loam`; see `../README.md`.
