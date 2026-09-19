@@ -1,0 +1,58 @@
+// Phase 4: TrueType outline extraction (`loca` + `glyf`) in std:font, tested
+// against the generated tiny.ttf fixture. Metrics only need advance widths;
+// drawing needs contours, including a two-contour glyph with a hole.
+
+import "std:fmt"
+import "std:sys"
+import "std:font"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn main() {
+    let s = sys.read_file("packages/loam/tests/fonts/tiny.ttf")
+    must(s.len > 0, "font loaded")
+    must(font.num_glyphs(s) == 8, "8 glyphs")
+    must(font.loca_format(s) == 0, "short loca")
+
+    // 'A' is gid 1: one contour, three on-curve points.
+    let a = font.glyph_index(s, 65)
+    must(a == 1, "A maps to gid 1")
+    let oa = font.glyph_outline(s, a)
+    must(oa.ok == 1, "A outline parsed")
+    must(font.outline_contours(oa) == 1, "A has one contour")
+    must(font.outline_points(oa) == 3, "A has three points")
+    must(oa.ends[0] == 2, "A contour ends at point 2")
+    must(oa.xs[0] == 100, "A point 0 x")
+    must(oa.ys[0] == 0, "A point 0 y")
+    must(oa.xs[1] == 500, "A apex x")
+    must(oa.ys[1] == 700, "A apex y")
+    must(oa.xs[2] == 900, "A point 2 x")
+    must(oa.on[0] == 1, "A point 0 is on-curve")
+
+    // 'B' is gid 2: two contours (an outer box and its counter/hole), 8 points.
+    let b = font.glyph_index(s, 66)
+    must(b == 2, "B maps to gid 2")
+    let ob = font.glyph_outline(s, b)
+    must(ob.ok == 1, "B outline parsed")
+    must(font.outline_contours(ob) == 2, "B has two contours (a hole)")
+    must(font.outline_points(ob) == 8, "B has eight points")
+    must(ob.ends[0] == 3, "B outer contour ends at point 3")
+    must(ob.ends[1] == 7, "B inner contour ends at point 7")
+    // The counter is a distinct, smaller box: its x range is inside the outer.
+    must(ob.xs[4] == 300, "B counter starts at x=300")
+    must(ob.xs[2] == 900, "B outer reaches x=900")
+
+    // Space (gid 4) has no outline: empty entry in loca, not an error.
+    let sp = font.glyph_index(s, 32)
+    must(sp == 4, "space maps to gid 4")
+    let osp = font.glyph_outline(s, sp)
+    must(font.outline_points(osp) == 0, "space has no outline")
+
+    fmt.println("font outline ok", font.outline_points(oa), font.outline_points(ob))
+}

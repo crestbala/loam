@@ -363,3 +363,155 @@ fn measure_wrap(s: string, px: int, text: string, max_w: int, w: &mut int, h: &m
     *w = best
     *h = lines * lh
 }
+
+// --- outlines: `loca` + `glyf` (Phase 4) ----------------------------------
+//
+// Metrics only need advance widths; drawing a glyph needs its outline. These
+// read the glyph contours in FONT UNITS (caller scales by px/unitsPerEm).
+// Simple glyphs are parsed; composite glyphs (negative numberOfContours) report
+// `ok = 0` for now. Points keep their on/off-curve flag: a quadratic contour may
+// have consecutive off-curve control points, which the rasterizer resolves.
+
+struct GlyphOutline {
+    xs: []int,
+    ys: []int,
+    /// 1 = on-curve, 0 = quadratic control point.
+    on: []int,
+    /// Last point index of each contour (TrueType `endPtsOfContours`).
+    ends: []int,
+    /// 1 when the outline was parsed; 0 for an empty or composite glyph.
+    ok: int,
+}
+
+/// `head.indexToLocFormat`: 0 = short offsets, 1 = long.
+fn loca_format(s: string) -> int {
+    let h = table_offset(s, "head")
+    if h < 0 {
+        return 0
+    }
+    return read_i16_be(s, h + 50)
+}
+
+/// File offset of glyph `gid`'s outline start, or -1 when absent.
+fn glyph_start(s: string, gid: int) -> int {
+    if gid < 0 || gid >= num_glyphs(s) {
+        return -1
+    }
+    let l = table_offset(s, "loca")
+    let g = table_offset(s, "glyf")
+    if l < 0 || g < 0 {
+        return -1
+    }
+    if loca_format(s) == 0 {
+        return g + 2 * read_u16_be(s, l + 2 * gid)
+    }
+    return g + read_u32_be(s, l + 4 * gid)
+}
+
+/// File offset just past glyph `gid`'s outline (== start for an empty glyph).
+fn glyph_end(s: string, gid: int) -> int {
+    let l = table_offset(s, "loca")
+    let g = table_offset(s, "glyf")
+    if l < 0 || g < 0 {
+        return -1
+    }
+    if loca_format(s) == 0 {
+        return g + 2 * read_u16_be(s, l + 2 * (gid + 1))
+    }
+    return g + read_u32_be(s, l + 4 * (gid + 1))
+}
+
+fn outline_points(o: GlyphOutline) -> int {
+    return o.xs.len
+}
+
+fn outline_contours(o: GlyphOutline) -> int {
+    return o.ends.len
+}
+
+/// Parse a simple glyph's outline in font units.
+fn glyph_outline(s: string, gid: int) -> GlyphOutline {
+    let mut o = GlyphOutline { xs: []int {}, ys: []int {}, on: []int {}, ends: []int {}, ok: 0 }
+    let p = glyph_start(s, gid)
+    let e = glyph_end(s, gid)
+    let nc = read_i16_be(s, p)
+    if p < 0 || e <= p || nc <= 0 {
+        return o
+    }
+    let base = p + 10
+    let mut numpts = 0
+    let mut i = 0
+    while i < nc {
+        let endpt = read_u16_be(s, base + 2 * i)
+        o.ends.push(endpt)
+        numpts = endpt + 1
+        i = i + 1
+    }
+    let mut q = base + 2 * nc
+    let ilen = read_u16_be(s, q)
+    q = q + 2 + ilen
+    let mut flags: []int = []int {}
+    while flags.len < numpts {
+        let f = read_u8(s, q)
+        q = q + 1
+        flags.push(f)
+        if (f & 8) != 0 {
+            let rep = read_u8(s, q)
+            q = q + 1
+            let mut r = 0
+            while r < rep {
+                flags.push(f)
+                r = r + 1
+            }
+        }
+    }
+    let mut x = 0
+    i = 0
+    while i < numpts {
+        let f = flags[i]
+        if (f & 2) != 0 {
+            let d = read_u8(s, q)
+            q = q + 1
+            if (f & 16) != 0 {
+                x = x + d
+            } else {
+                x = x - d
+            }
+        } else if (f & 16) == 0 {
+            x = x + read_i16_be(s, q)
+            q = q + 2
+        }
+        o.xs.push(x)
+        i = i + 1
+    }
+    let mut y = 0
+    i = 0
+    while i < numpts {
+        let f = flags[i]
+        if (f & 4) != 0 {
+            let d = read_u8(s, q)
+            q = q + 1
+            if (f & 32) != 0 {
+                y = y + d
+            } else {
+                y = y - d
+            }
+        } else if (f & 32) == 0 {
+            y = y + read_i16_be(s, q)
+            q = q + 2
+        }
+        o.ys.push(y)
+        i = i + 1
+    }
+    i = 0
+    while i < numpts {
+        if (flags[i] & 1) != 0 {
+            o.on.push(1)
+        } else {
+            o.on.push(0)
+        }
+        i = i + 1
+    }
+    o.ok = 1
+    return o
+}
