@@ -686,31 +686,36 @@ triple, and a per-palette-entry alpha list.
   so an image declaring a different transfer curve is composited as sRGB, and a
   counter (`src_gamma_assumed`) makes that assumption visible instead of silent.
   Real colour management needs a per-image transform and is not pretended here.
-- **Adam7 interlacing is refused by name** (`interlaced png`) rather than
-decoded wrongly. That is a stated limitation, not a silent wrong image.
+- **Adam7 interlacing**, in full. This was the last PNG feature that would send a
+  real file to the platform. Each of the seven passes is unfiltered with ITS OWN
+  scanline stride and row count, then scattered into the output — which is why
+  the output buffer is pre-sized and written by index rather than appended, and
+  why the pass table's row steps matter (a `0` there is an immediate division by
+  zero). A pass with a zero dimension contributes no scanlines at all, so the
+  expected inflated length is summed over the passes that exist and the pass
+  offsets are computed from that, not from a running seven-pass guess.
 
-`zeus_image_png_variants.loam` checks every one of those against exact expected
-pixels, including the packed depths (1-bit and 4-bit rows where two or eight
-pixels share a byte), the premultiplied results of each tRNS form, and the
-round trip through the image cache. One subtlety it pins down: the decode buffer
-is **premultiplied** and the cache is **straight**, so the same pixel read from
-each differs wherever alpha < 255 — deliberately, because `raster_blend` wants
-the straight form. Both accessors now say so.
+`zeus_image_png_variants.loam` verifies Adam7 at dimensions that are *not*
+multiples of 8 (13x11, 9x9, 5x3) so several passes are partial, checks all 429
+channels of the interlaced truecolour file against the formula that generated it,
+cross-checks the same image written flat, and covers Adam7 with packed sub-byte
+samples plus a palette and tRNS.
 
 - bytes/node: **476.0 — unchanged**; membench reports `images= 0`.
 - validation: 105 zeus `compile_pass` tests pass (the 2 failures are the network
   suites this sandbox blocks), all 15 draw goldens byte-identical, structural
   golden pass.
 
-**Remaining Phase 4** (not done, and each is substantial): Adam7, the remaining
-image formats, the host half of the blit (a no-copy `CGImage` provider on
-native, a typed-array view on web), and driving `scene.paint` through the
-rasterizer (which changes every draw golden and so needs its own decision).
+**Remaining Phase 4** (not done, and each is substantial): GIF/JPEG/WebP, the
+host half of the blit (a no-copy `CGImage` provider on native, a typed-array view
+on web), and driving `scene.paint` through the rasterizer (which changes every
+draw golden and so needs its own decision).
 
 **Image formats — status and roadmap.** Landed in Loam: **PNG** — colour types
 0/2/3/4/6, depths 1/2/4/8/16, all five scanline filters, multiple IDAT chunks,
-stored/fixed/dynamic DEFLATE, PLTE and all three forms of tRNS, non-interlaced —
-and **BMP** (uncompressed 1/4/8/24/32-bit, both scan orders).
+stored/fixed/dynamic DEFLATE, PLTE and all three forms of tRNS, **Adam7
+interlaced** — and **BMP** (uncompressed 1/4/8/24/32-bit, both scan orders).
+There is no longer any PNG a real encoder produces that we cannot decode.
 
 Still handled by the platform path, and therefore still working: **everything
 else** — JPEG, GIF, WebP, TIFF, ICO, HEIC and any PNG variant the Loam decoder
@@ -720,17 +725,16 @@ is a routing decision rather than a capability cliff.
 
 The order that buys the most next:
 
-1. **Adam7 interlacing**, the last PNG feature we do not decode. It is the
-   remaining reason a real PNG could still fall back to the platform.
+1. **GIF** (LZW, palette, frame disposal) — small UI assets and animations, and
+   the next-cheapest decoder after BMP.
 2. **ICO/CUR**: a container of PNG or BMP, so it is nearly free once it can
    recurse into the two decoders we have — and an app icon is an ICO.
-3. **GIF**: LZW, palette, frame disposal. Small assets and animations.
-4. **JPEG** baseline sequential: Huffman tables, dequantize, IDCT, YCbCr,
+3. **JPEG** baseline sequential: Huffman tables, dequantize, IDCT, YCbCr,
    chroma upsampling. The largest remaining decoder, and what photos and
    avatars need; progressive is a second pass.
-5. **WebP**: lossless/VP8L is a moderate job (LZ77 with transforms); lossy VP8
+4. **WebP**: lossless/VP8L is a moderate job (LZ77 with transforms); lossy VP8
    is a different order of magnitude and should be its own project.
-6. **SVG** is not a pixel format: it routes through the rasterizer we already
+5. **SVG** is not a pixel format: it routes through the rasterizer we already
    have (paths, fills, strokes), so it belongs with the paint work, not here.
 
 Not planned and not pretended: **AVIF** and **HEIC**, which are AV1 and H.265

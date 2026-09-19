@@ -111,11 +111,56 @@ fn main() {
     must(zeus.image_gamma_assumed_count() == gamma_before + 1,
          "the sRGB assumption is counted, not silent")
 
-    // --- Adam7 is refused by name, not decoded wrongly --------------------
-    let fails = zeus.image_decode_failure_count()
-    must(zeus.image_decode_any(load("interlaced.png")) == 0, "interlaced refused")
-    must(zeus.image_decode_failure_reason() == "interlaced png", "and named")
-    must(zeus.image_decode_failure_count() == fails + 1, "and counted")
+    // --- Adam7: every pass lands where it belongs --------------------------
+    // Dimensions are deliberately not multiples of 8, so several of the seven
+    // passes are partial -- the case where pass geometry goes wrong.
+    must(zeus.image_decode_any(load("adam7_rgb.png")) == 1, "adam7 rgb decodes")
+    must(zeus.image_src_width() == 13, "adam7 rgb: 13 wide")
+    must(zeus.image_src_height() == 11, "adam7 rgb: 11 tall")
+    let mut bad = 0
+    let mut y = 0
+    while y < 11 {
+        let mut x = 0
+        while x < 13 {
+            if zeus.image_src_get(x, y, 0) != x * 17 % 256 {
+                bad = bad + 1
+            }
+            if zeus.image_src_get(x, y, 1) != y * 23 % 256 {
+                bad = bad + 1
+            }
+            if zeus.image_src_get(x, y, 2) != (x + y) * 11 % 256 {
+                bad = bad + 1
+            }
+            x = x + 1
+        }
+        y = y + 1
+    }
+    must(bad == 0, "every Adam7 pixel is in the right place")
+
+    // The same pixels written non-interlaced, checked at both ends. The full
+    // formula check above is what pins pass placement; this is the cross-check
+    // that the two encodings of one image agree.
+    must(zeus.image_decode_any(load("adam7_rgb_flat.png")) == 1, "flat twin decodes")
+    must(zeus.image_src_get(0, 0, 0) == 0, "flat twin first pixel")
+    must(zeus.image_src_get(12, 10, 2) == 242, "flat twin last pixel blue")
+
+    // Adam7 with packed sub-byte samples and a palette + tRNS.
+    must(zeus.image_decode_any(load("adam7_pal.png")) == 1, "adam7 palette decodes")
+    must(zeus.image_src_width() == 9, "adam7 palette: 9 wide")
+    // Index (x+y)%4, and entry 0 carries tRNS alpha 200.
+    must(zeus.image_src_get(0, 0, 0) == 200, "adam7 palette: entry 0 red, premultiplied")
+    must(zeus.image_src_get(0, 0, 3) == 200, "adam7 palette: tRNS alpha")
+    must(zeus.image_src_get(1, 1, 2) == 255, "adam7 palette: entry 2 is blue")
+    must(zeus.image_src_get(1, 1, 3) == 255, "adam7 palette: no tRNS on entry 2")
+    must(zeus.image_src_get(8, 8, 2) == 0, "adam7 palette: entry 0 has no blue")
+    must(zeus.image_src_get(2, 3, 1) == 255, "adam7 palette: entry 1 is green")
+
+    must(zeus.image_decode_any(load("adam7_gray.png")) == 1, "adam7 1-bit gray decodes")
+    must(zeus.image_src_width() == 5, "adam7 gray: 5 wide")
+    must(zeus.image_src_get(0, 0, 0) == 0, "adam7 gray: (0,0)")
+    must(zeus.image_src_get(1, 0, 0) == 255, "adam7 gray: (1,0)")
+    must(zeus.image_src_get(0, 1, 0) == 255, "adam7 gray: (0,1)")
+    must(zeus.image_src_get(4, 2, 0) == 0, "adam7 gray: (4,2)")
 
     // --- and the variants work through the cache/blit pipeline ------------
     zeus.image_cache_clear()

@@ -294,27 +294,51 @@ def real_image(w, h):
     return rows
 
 
+def pack_row(pxs, depth, channels, ft=0):
+    """One filtered scanline: the filter byte then the packed samples."""
+    line = bytearray()
+    acc = 0
+    nbits = 0
+    for px in pxs:
+        for s in px:
+            acc = (acc << depth) | (s & ((1 << depth) - 1))
+            nbits += depth
+            while nbits >= 8:
+                nbits -= 8
+                line.append((acc >> nbits) & 0xFF)
+                acc &= (1 << nbits) - 1
+    if nbits:
+        line.append((acc << (8 - nbits)) & 0xFF)
+    return bytes([ft]) + bytes(line)
+
+
 def pack_samples(rows, depth, channels):
     """Pack samples MSB-first into filtered scanlines (filter 0 throughout).
     Several pixels share a byte at depths 1/2/4, and 16-bit samples are
     big-endian, which is what the shift-based packer gives us for free."""
     out = bytearray()
     for row in rows:
-        line = bytearray()
-        acc = 0
-        nbits = 0
-        for px in row:
-            for s in px:
-                acc = (acc << depth) | (s & ((1 << depth) - 1))
-                nbits += depth
-                while nbits >= 8:
-                    nbits -= 8
-                    line.append((acc >> nbits) & 0xFF)
-                    acc &= (1 << nbits) - 1
-        if nbits:
-            line.append((acc << (8 - nbits)) & 0xFF)
-        out.append(0)
-        out += line
+        out += pack_row(row, depth, channels)
+    return bytes(out)
+
+
+def adam7_raw(w, h, rows, depth, channels):
+    """The Adam7 pass stream: seven sub-images in pass order, each row filtered.
+    The pass geometry is the spec's, and a pass with a zero dimension has no
+    scanlines at all -- which is why a decoder that iterates all seven passes
+    blindly gets the offsets wrong."""
+    x0s = [0, 4, 0, 2, 0, 1, 0]
+    y0s = [0, 0, 4, 0, 2, 0, 1]
+    dxs = [8, 8, 4, 4, 2, 2, 1]
+    dys = [8, 8, 8, 4, 4, 2, 2]
+    out = bytearray()
+    for p in range(7):
+        xs = list(range(x0s[p], w, dxs[p]))
+        ys = list(range(y0s[p], h, dys[p]))
+        if not xs or not ys:
+            continue
+        for y in ys:
+            out += pack_row([rows[y][x] for x in xs], depth, channels)
     return bytes(out)
 
 
@@ -333,6 +357,20 @@ def png_ex(w, h, ct, depth, rows, palette=None, trns=None, gama=None,
         out += chunk(b"tRNS", trns)
     co = zlib.compressobj(level, zlib.DEFLATED, 15, 9, 0)
     z = co.compress(pack_samples(rows, depth, channels)) + co.flush()
+    return out + chunk(b"IDAT", z) + chunk(b"IEND", b"")
+
+
+def png_adam7(w, h, ct, depth, rows, palette=None, trns=None, level=6):
+    """An interlaced PNG, encoded the way the spec says."""
+    channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}[ct]
+    ihdr = struct.pack(">IIBBBBB", w, h, depth, ct, 0, 0, 1)
+    out = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr)
+    if palette is not None:
+        out += chunk(b"PLTE", bytes(v for e in palette for v in e))
+    if trns is not None:
+        out += chunk(b"tRNS", trns)
+    co = zlib.compressobj(level, zlib.DEFLATED, 15, 9, 0)
+    z = co.compress(adam7_raw(w, h, rows, depth, channels)) + co.flush()
     return out + chunk(b"IDAT", z) + chunk(b"IEND", b"")
 
 
@@ -419,10 +457,22 @@ def main():
     files["gama_odd.png"] = png_ex(4, 1, 2, 8, [[(1, 2, 3), (4, 5, 6),
                                                 (7, 8, 9), (10, 11, 12)]],
                                    gama=100000)
-    # Adam7 is not implemented: the refusal must be explicit, not a wrong image.
-    files["interlaced.png"] = png_ex(8, 8, 2, 8, [[(x, y, 0) for x in range(8)]
-                                                  for y in range(8)],
-                                     interlace=1)
+    # Adam7: dimensions chosen so several passes are partial (13x11 and 9x9
+    # rather than a multiple of 8), which is where pass geometry goes wrong.
+    files["adam7_rgb.png"] = png_adam7(13, 11, 2, 8,
+                                       [[(x * 17 % 256, y * 23 % 256, (x + y) * 11 % 256)
+                                         for x in range(13)] for y in range(11)])
+    files["adam7_pal.png"] = png_adam7(9, 9, 3, 4,
+                                       [[((x + y) % 4,) for x in range(9)]
+                                        for y in range(9)],
+                                       palette=pal4, trns=bytes([200]))
+    files["adam7_gray.png"] = png_adam7(5, 3, 0, 1,
+                                        [[((x + y) % 2,) for x in range(5)]
+                                         for y in range(3)])
+    # And the same pixels non-interlaced, which must decode identically.
+    files["adam7_rgb_flat.png"] = png_ex(13, 11, 2, 8,
+                                         [[(x * 17 % 256, y * 23 % 256, (x + y) * 11 % 256)
+                                           for x in range(13)] for y in range(11)])
     for name, data in files.items():
         with open(os.path.join(out, name), "wb") as f:
             f.write(data)
