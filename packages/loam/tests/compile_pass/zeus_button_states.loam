@@ -1,0 +1,90 @@
+// Button chrome states: the icon slot, the loading signal (spinner takes the
+// slot, the click is swallowed, the shared overlay reports loading), the
+// disabled fill swap (a disabled button never fires), and press-scale on the
+// paint-only track (no component or effect re-run).
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("button", 400, 200)
+    let clicks = zeus.signal(0)
+    let busy = zeus.signal(0)
+    let off_clicks = zeus.signal(0)
+    zeus.root(zeus.Row(8) {
+        zeus.Button("Save", icon = zeus.IC_CHECK, loading = busy,
+                    on_click = fn() => clicks.set(clicks.get() + 1))
+        zeus.Button("Off", enabled = false,
+                    on_click = fn() => off_clicks.set(off_clicks.get() + 1))
+    })
+    zeus.pump_frame()
+    let save = zeus.node_handle(zeus.engine_find_text("Save"))
+    let off = zeus.node_handle(zeus.engine_find_text("Off"))
+
+    // Icon slot: an svg (kind 12) child sits before the label; the spinner
+    // is hidden while idle.
+    let sid = save.id
+    must(sid > 0, "button labelled")
+    must(zeus.node_kind(sid + 1) == 12 && zeus.node_parent(sid + 1) == sid, "spinner slot")
+    must(zeus.node_kind(sid + 2) == 12 && zeus.node_parent(sid + 2) == sid, "icon slot")
+    must(zeus.node_kind(sid + 3) == 3 && zeus.node_parent(sid + 3) == sid, "label after the icon")
+    must(zeus.node_visible(sid + 2) != 0, "icon shown while idle")
+    must(zeus.engine_find_role("progressbar") == 0, "spinner hidden while idle")
+
+    // Click fires while idle.
+    must(zeus.engine_click_text("Save") != 0, "hit")
+    must(clicks.get() == 1, "idle click fires")
+
+    // Press-scale: pointer down scales on a track; release returns to 100.
+    zeus.engine_layout(400, 200)
+    must(zeus.proof_anim_live() > 0, "press started a track")
+    let c0 = zeus.proof_components()
+    let mut i = 0
+    while i < 12 {
+        zeus.engine_layout(400, 200)
+        zeus.engine_step_dt(16)
+        zeus.engine_paint()
+        i = i + 1
+    }
+    must(zeus.motion_scale(save) < 100, "pressed scale below 100")
+    must(zeus.proof_components() == c0, "press ran no component")
+    zeus.engine_mouseup()
+    zeus.engine_layout(400, 200)
+    i = 0
+    while i < 20 {
+        zeus.engine_layout(400, 200)
+        zeus.engine_step_dt(16)
+        zeus.engine_paint()
+        i = i + 1
+    }
+    must(zeus.motion_scale(save) == 100, "released scale back to 100")
+
+    // Loading: the spinner shows, the overlay reports loading, the click
+    // is swallowed, and Enter on the focused button is too.
+    busy.set(1)
+    zeus.engine_layout(400, 200)
+    must(zeus.state_loading(save), "loading state")
+    let sp = zeus.engine_find_role("progressbar")
+    must(sp != 0, "spinner shown while loading")
+    must(zeus.engine_click_text("Save") != 0, "hit while loading")
+    must(clicks.get() == 1, "loading click swallowed")
+    busy.set(0)
+    zeus.engine_layout(400, 200)
+    must(!zeus.state_loading(save), "loading cleared")
+    must(zeus.engine_click_text("Save") != 0, "hit after loading")
+    must(clicks.get() == 2, "click fires again")
+
+    // Disabled: styled, inert.
+    must(zeus.state_disabled(off), "disabled state")
+    must(zeus.node_background_rgb(off.id) != zeus.node_background_rgb(sid), "disabled fill swapped")
+    must(zeus.engine_click_text("Off") != 0, "hit disabled")
+    must(off_clicks.get() == 0, "disabled click swallowed")
+    fmt.println("button states ok")
+}

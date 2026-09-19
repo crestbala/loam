@@ -288,18 +288,85 @@ runs a component while animating.
 `MenuItem(active = active, index = i, count = n, …)` reads the menu's one signal
 — the highlighted index, where `-1` is closed — so items own no state. The
 active row is the only focusable one and handles Up / Down / Enter; hover moves
-the same index, so the pointer and the keyboard share one highlight. An anchored
+the same index, so the pointer and the keyboard share one highlight. Picking a
+row (`on_select` / Enter) snaps the panel away in the same frame; Escape and
+an outside click still fade. Child labels inherit the panel's fade alpha, so
+they never sit on the heading after the fill is gone. An anchored
 floater is painted in window space, so it never adds to the scrollable height,
 and it re-places when the scroll moves its trigger: the popup stays beside its
 button, and goes off screen with it rather than pinning to a window edge.
 
+**Avatar** is a round initials (or `src`) face. `status` is a `TINT` corner
+pip (`-1` = none). `AvatarGroup(labels, size)` overlaps faces. `User`
+forwards `status`.
+
 **Tabs** and **RadioGroup** use the same roving model: arrows move the
 selected index (Left/Right on tabs, Up/Down and Left/Right on radios), clamp
-at the ends, and only the selected item is a tab stop.
+at the ends, and only the selected item is a tab stop. `Tabs` paints one
+sliding indicator under the selected trigger: an absolute box whose
+`left` / `width` pins are signals, `animate`d on a selection change (the
+pins tween and reflow) and re-placed instantly by the tray's refit hook after
+the first layout or a resize. Triggers only swap their label colour.
 
 **Dialog** is a modal: while it is open, Tab cycles only inside the card
 (a focus trap), Escape closes it, and focus returns to the opener on close.
-`Select` also closes on Escape.
+`Select` also closes on Escape. The card scales in from 96% on a paint track
+while the scrim fades, and its width is 92% of the window capped at 440dp.
+
+**Button** chrome takes `icon` (leading lucide markup), `loading` (a 0/1
+signal: the spinner takes the icon slot, the button dims to 70% and goes
+inert), and a disabled fill swap (`enabled = false` paints a muted plate and
+ink instead of the accent at 40%). A pressed button scales to 97% on the
+paint-only `ScalePct` track (`press_scale`); the wash still paints. Disabled
+and loading nodes swallow pointer clicks and Enter / Space in the engine
+(`is_inert`), so no handler has to guard itself.
+
+**Badge** takes `dot = true` for a leading pip; `BadgeCount(sig, kind, max)`
+is a round numeric pill hidden at 0 and capped at `max+`. **Chip** takes
+`dot = false` and `on_remove` (a trailing X, role `button`, label
+`Remove <label>`; hiding the chip is the caller's `show`).
+
+**Stat** takes `delta` + `trend` (`TREND.Up` / `Down` / `Flat`: arrow and
+tint) and `spark`, a `Signal<[]int>` drawn as a 64×24 sparkline path that
+repaints on push without a rebuild. **Pagination** past seven pages
+collapses to `1 … c-1 c c+1 … N`: seven fixed slots whose labels are thunks
+of the page signal, so the row never rebuilds; ellipsis slots are inert.
+
+**Progress** eases a plain `set` on the signal's paint overlay
+(`anim_paint_from`: state lands at once, the fill tweens over
+`MOTION.Base`); a `zeus.animate` write keeps its own duration. A negative
+value is indeterminate: a 30% segment sweeps the track on the frame clock
+and keeps the loop live until a value returns. **Slider**'s knob sits on a
+soft shadow and grows 2dp on the hover track.
+
+**Table**: `TableRow` / `TableRowCols` take `zebra` (every second body row,
+counted among `row` siblings), `hover`, and `on_click`; `TableRowCols`
+lays cells out by the same `[]TableCol` spec as `TableCols`, so fixed widths
+and `align` (`ALIGN.End` for numbers) match the header. `TableCols(cols,
+sort = sig)` makes `sortable` columns buttons that cycle none → asc → desc
+(`i + 1` / `-(i + 1)` / 0) and marks the sorted one with an arrow. The
+header only writes the signal; the rows follow it in one of two ways.
+`Table(spec, rows, cells, sort = sig)` takes a `Signal<[]T>` and a `cells`
+mapper (`fn(T) -> []string`), derives the shown order with `sort_cells`
+(numeric when the cells parse as numbers, stable), and renders through a
+keyed `For`, so a sort moves the existing row nodes; `on_pick` gets the
+index into the caller's `rows`. `VirtualTable(rows, cols, row_h, build,
+sort = sig)` wires the header the same way, and the app reorders its own
+signal in an effect (`rows.set(sort_cells(base, cells, sort.get()))`, or
+`sort_by` with a key fn) because the windowed list owns the row builder.
+Text truncation is still open (no ellipsis measure).
+
+**Card** takes `interactive` / `on_click` (role `button`, hover lift to
+elevation 3 and press scale — both paint-only, the lift replaces the wash),
+`lift` on any card, a `title` / `subtitle` header, a `media` image strip
+that bleeds to the card edge, and a `footer` thunk under a hairline. A card
+with a footer sets `slot_into` so the caller's trailing block lands in an
+inner body column above the footer while the returned node is still the
+shell (`grow(card, 1)` keeps working).
+
+**Skeleton** shimmers with a directional band: two gradient halves (fill →
+plate → fill) sweep left to right on the frame clock, clipped to the box,
+phase-offset per node; reduced motion parks the band and idles the loop.
 
 **Alert** has four tiers (`Alert` / `AlertInfo` = info, `AlertSuccess`,
 `AlertWarning`, `AlertDestructive`). `dismiss` is a 0/1 signal the X sets
@@ -318,10 +385,15 @@ the sheet shape. Both close on outside click and Escape.
 
 `Select(value, labels)` and `Combobox(text, options)` share the same anchored
 floater: the menu sits under the trigger, flips when there is no room, and
-tracks it on scroll. `Select`'s Up / Down / Enter / Escape are bound on the menu,
+tracks it on scroll. Popups stack at z-index 80, above the field (50) and the
+outside-click scrim (40), so an open Select is not covered by a Combobox later
+in the same card. `Select`'s Up / Down / Enter / Escape are bound on the menu,
 which takes focus on open; `Combobox` filters its options case-insensitively as
-you type and handles its keys in the field's `on_key_down`, because a focused
-text field consumes Enter before any keymap chord can see it.
+you type (including Mac/iOS `insertText`) and handles its keys in the field's
+`on_key_down`, because a focused text field consumes Enter before any keymap
+chord can see it. Clicking a match writes it into the field. `TextInput` /
+`TextArea` / `Field` / `Combobox` show a Clear control while the value is
+non-empty; Cmd/Ctrl+A selects all so Backspace can clear.
 
 ## Depth
 

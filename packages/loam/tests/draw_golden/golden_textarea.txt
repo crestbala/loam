@@ -1,10 +1,11 @@
-DRAW 8
+DRAW 9
 fill 0 0 400 220 16777215 0
 fill 20 20 360 96 16448250 8
 stroke 20 20 360 96 14474464 8 1 255
 save
-clip 33 29 334 78
-text_wrap 33 29 334 hi
+clip 33 29 310 36
+text_wrap 33 29 310 hi
 t
 fill 41 47 1 18 1579035 0
 restore
+svg 351 33 12 12 5395035

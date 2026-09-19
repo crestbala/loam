@@ -1,0 +1,75 @@
+// Stat delta row + sparkline, and the collapsed Pagination row: past seven
+// pages the row keeps 1 and N and slides a window around the current page,
+// with inert ellipsis slots, without rebuilding.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("stat", 640, 300)
+    let page = zeus.signal(1)
+    let series = zeus.signal([]int { 3, 5, 4, 8, 7, 9 })
+    zeus.root(zeus.Column(8) {
+        zeus.Stat("Revenue", "$12.4k", zeus.TINT.Ink, delta = "+12%",
+                  trend = zeus.TREND.Up, spark = series)
+        zeus.Stat("Errors", "2", zeus.TINT.Danger)
+        zeus.Pagination(page, 20)
+    })
+    zeus.pump_frame()
+
+    // Delta row: caption in the trend tint, arrow icon before it.
+    must(zeus.text_visible("+12%"), "delta caption")
+    must(zeus.engine_find_role("status") != 0, "delta row role")
+    let d = zeus.engine_find_text("+12%")
+    must(zeus.node_kind(d - 1) == 12, "trend arrow before the caption")
+    must(zeus.engine_find_role("img") != 0, "sparkline")
+    must(zeus.node_width(zeus.engine_find_role("img")) == 64, "sparkline width")
+    let n_before = zeus.arena_nodes()
+    zeus.push_item(series, 12)
+    zeus.engine_layout(640, 300)
+    must(zeus.arena_nodes() == n_before, "sparkline push did not rebuild")
+
+    // Collapsed row at page 1: 1 2 3 4 5 … 20.
+    must(zeus.text_visible("1"), "page 1")
+    must(zeus.text_visible("5"), "page 5")
+    must(zeus.text_visible("…"), "ellipsis")
+    must(zeus.text_visible("20"), "last page")
+    must(!zeus.text_visible("6"), "page 6 hidden behind the ellipsis")
+    let n0 = zeus.arena_nodes()
+
+    // Jump to 10: 1 … 9 10 11 … 20, same nodes.
+    must(zeus.engine_click_text("More pages") != 0, "ellipsis hit")
+    must(page.get() == 1, "ellipsis is inert")
+    page.set(10)
+    zeus.engine_layout(640, 300)
+    must(zeus.text_visible("9"), "window before")
+    must(zeus.text_visible("10"), "current")
+    must(zeus.text_visible("11"), "window after")
+    must(!zeus.text_visible("5"), "page 5 gone")
+    must(zeus.arena_nodes() == n0, "no rebuild on page change")
+
+    // Click a slot: its live number is what gets picked.
+    must(zeus.engine_click_text("11") != 0, "click 11")
+    must(page.get() == 11, "slot picks its live page")
+
+    // Tail: 1 … 16 17 18 19 20.
+    page.set(19)
+    zeus.engine_layout(640, 300)
+    must(zeus.text_visible("16"), "tail window start")
+    must(zeus.text_visible("20"), "tail last")
+    must(!zeus.text_visible("4"), "page 4 collapsed at the tail")
+
+    // Next page from 20 stays at 20.
+    page.set(20)
+    zeus.engine_layout(640, 300)
+    must(zeus.engine_click_text("Next page") != 0, "next hit")
+    must(page.get() == 20, "clamped at the last page")
+    fmt.println("stat pagination ok")
+}

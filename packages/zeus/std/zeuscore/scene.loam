@@ -41,6 +41,14 @@ fn fill_a(x: int, y: int, w: int, h: int, rgb: int, radius: int, alpha: int) {
     emit(1, x, y, w, h, rgb, radius, alpha, 0, "", 0)
 }
 
+fn fill_alpha(x: int, y: int, w: int, h: int, rgb: int, radius: int, alpha: int) {
+    if alpha < 255 {
+        fill_a(x, y, w, h, rgb, radius, alpha)
+    } else {
+        fill(x, y, w, h, rgb, radius)
+    }
+}
+
 /// Vertical (`axis` 0) or horizontal (`axis` 1) linear gradient, rounded by
 /// `radius`. `axis` rides in `font` and the second color in `value`, so the
 /// record keeps one shape for every primitive.
@@ -77,22 +85,22 @@ fn xform(dx: int, dy: int, scale: int, rot: int, ox: int, oy: int) {
     emit(15, dx, dy, ox, oy, 0, scale, 255, rot, "", 0)
 }
 
-fn text(x: int, y: int, s: string, rgb: int, font: int) {
-    emit(2, x, y, 0, 0, rgb, 0, 255, font, s, 0)
+fn text(x: int, y: int, s: string, rgb: int, font: int, alpha: int) {
+    emit(2, x, y, 0, 0, rgb, 0, alpha, font, s, 0)
 }
 
 /// Rotated text: `deg` is clockwise on screen, pivoted around the top-left
 /// of the (unrotated) line box — the same anchor as `text`.
-fn text_rot(x: int, y: int, s: string, rgb: int, font: int, deg: int) {
-    emit(9, x, y, deg, 0, rgb, 0, 255, font, s, 0)
+fn text_rot(x: int, y: int, s: string, rgb: int, font: int, deg: int, alpha: int) {
+    emit(9, x, y, deg, 0, rgb, 0, alpha, font, s, 0)
 }
 
-fn text_int(x: int, y: int, v: int, rgb: int, font: int) {
-    emit(3, x, y, 0, 0, rgb, 0, 255, font, "", v)
+fn text_int(x: int, y: int, v: int, rgb: int, font: int, alpha: int) {
+    emit(3, x, y, 0, 0, rgb, 0, alpha, font, "", v)
 }
 
-fn text_wrap(x: int, y: int, s: string, rgb: int, font: int, max_w: int) {
-    emit(4, x, y, max_w, 0, rgb, 0, 255, font, s, 0)
+fn text_wrap(x: int, y: int, s: string, rgb: int, font: int, max_w: int, alpha: int) {
+    emit(4, x, y, max_w, 0, rgb, 0, alpha, font, s, 0)
 }
 
 fn svg(x: int, y: int, w: int, h: int, markup: string, rgb: int, alpha: int) {
@@ -116,6 +124,17 @@ fn restore() {
     emit(8, 0, 0, 0, 0, 0, 0, 0, 0, "", 0)
 }
 
+/// 1 when this op needs a host alpha layer. Text has no alpha argument, so
+/// present() wraps it in `plat_alpha` / `plat_restore` — extra host calls,
+/// not extra draw-list ops (`draw_count` stays the open-panel count).
+fn text_needs_alpha(alpha: int) -> int {
+    if alpha < 255 {
+        platform.plat_alpha(alpha)
+        return 1
+    }
+    return 0
+}
+
 fn present() {
     let n = draws.len
     for i in 0..n {
@@ -125,11 +144,23 @@ fn present() {
         } else if d.kind == 1 {
             platform.plat_fill_a(d.x, d.y, d.w, d.h, d.rgb, d.radius, d.alpha)
         } else if d.kind == 2 {
+            let wrap = text_needs_alpha(d.alpha)
             platform.plat_text(d.x, d.y, d.text, d.rgb, d.font)
+            if wrap != 0 {
+                platform.plat_restore()
+            }
         } else if d.kind == 3 {
+            let wrap = text_needs_alpha(d.alpha)
             platform.plat_text_int(d.x, d.y, d.value, d.rgb, d.font)
+            if wrap != 0 {
+                platform.plat_restore()
+            }
         } else if d.kind == 4 {
+            let wrap = text_needs_alpha(d.alpha)
             platform.plat_text_wrap(d.x, d.y, d.text, d.rgb, d.font, d.w)
+            if wrap != 0 {
+                platform.plat_restore()
+            }
         } else if d.kind == 5 {
             platform.plat_svg(d.x, d.y, d.w, d.h, d.text, d.rgb, d.alpha)
         } else if d.kind == 6 {
@@ -139,7 +170,11 @@ fn present() {
         } else if d.kind == 8 {
             platform.plat_restore()
         } else if d.kind == 9 {
+            let wrap = text_needs_alpha(d.alpha)
             platform.plat_text_rot(d.x, d.y, d.text, d.rgb, d.font, d.w)
+            if wrap != 0 {
+                platform.plat_restore()
+            }
         } else if d.kind == 10 {
             platform.plat_image(d.x, d.y, d.w, d.h, d.text, d.radius, d.alpha, d.value)
         } else if d.kind == 11 {
@@ -176,8 +211,33 @@ fn paint_hover_wash(id: int) {
         if arena.hover_rgb() == 0 {
             a = t * 8 / 100
         }
+        a = a * arena.paint_alpha(id) / 255
         fill_a(arena.draw_x(id), arena.draw_y(id), arena.nodes[id].w, arena.nodes[id].h, arena.hover_rgb(), i32(arena.nodes[id].radius), a)
     }
+}
+
+/// Skeleton shimmer: a highlight band (fill → plate → fill, two gradient
+/// halves) 40% of the box wide, sweeping left to right on the frame clock,
+/// clipped to the rounded box. Directional, unlike the old alpha sawtooth.
+fn paint_shimmer(id: int, x: int, y: int, w: int, h: int, r: int, a: int) {
+    if w <= 0 {
+        return
+    }
+    let base = arena.paint_rgb(arena.nodes[id].bg)
+    // Theme slot 2 is Plate (the card surface): a hair lighter than Bone in
+    // light, a hair lighter in dark too.
+    let hi = arena.paint_rgb(2130706432 + 2)
+    let band = w * 2 / 5
+    let half = band / 2
+    if half <= 0 {
+        return
+    }
+    let bx = x - band + (w + band) * arena.shimmer_phase(id) / 1000
+    save()
+    clip(x, y, w, h, r)
+    fill_g(bx, y, half, h, base, hi, 1, 0, a)
+    fill_g(bx + half, y, half, h, hi, base, 1, 0, a)
+    restore()
 }
 
 fn paint_fill_box(id: int, wash: int) {
@@ -189,8 +249,8 @@ fn paint_fill_box(id: int, wash: int) {
     let r = i32(arena.nodes[id].radius)
     // Elevation paints under the surface, so the fill and its border sit on it.
     let elev = int(arena.nodes[id].elev)
-    if elev > 0 {
-        let e = arena.elev_now(elev)
+    if elev > 0 || int(arena.nodes[id].lift) > 0 {
+        let e = arena.elev_hover(id)
         if e.alpha > 0 {
             shadow(x, y, w, h, r, arena.paint_rgb(arena.nodes[id].elev_c),
                    e.alpha, e.blur, e.dx, e.dy)
@@ -215,13 +275,16 @@ fn paint_fill_box(id: int, wash: int) {
                    i32(arena.nodes[id].border_w), a)
         }
     }
-    if wash != 0 {
+    if int(arena.nodes[id].pulse) != 0 {
+        paint_shimmer(id, x, y, w, h, r, a)
+    }
+    if wash != 0 && int(arena.nodes[id].lift) == 0 {
         paint_hover_wash(id)
     }
     if arena.nodes[id].press != 0 {
         let pa = int(arena.nodes[id].press_amt)
         if pa > 0 {
-            fill_a(x, y, w, h, 0, r, pa * 36 / 100)
+            fill_a(x, y, w, h, 0, r, pa * 36 / 100 * a / 255)
         }
     }
 }
@@ -256,10 +319,11 @@ fn paint_input(id: int) {
             fill(cx, cy, 1, lh, sel, 0)
         }
     }
+    let ta = arena.paint_alpha(id)
     if inner > 0 {
-        text_wrap(tx, ty, shown, fg, i32(arena.nodes[id].font), inner)
+        text_wrap(tx, ty, shown, fg, i32(arena.nodes[id].font), inner, ta)
     } else {
-        text(tx, ty, shown, fg, i32(arena.nodes[id].font))
+        text(tx, ty, shown, fg, i32(arena.nodes[id].font), ta)
     }
     if arena.focus_id == id {
         if slot >= 0 {
@@ -275,42 +339,44 @@ fn paint_input(id: int) {
 fn paint_label(id: int) {
     let x = arena.draw_x(id) + i32(arena.nodes[id].pad_l) + i32(arena.nodes[id].border_w)
     let fg = arena.fg_of(id)
+    let a = arena.paint_alpha(id)
     let rot = int(arena.nodes[id].text_rot)
     if rot != 0 {
         text_rot(x, arena.draw_y(id) + i32(arena.nodes[id].pad_t) + i32(arena.nodes[id].border_w),
-                 arena.nodes[id].text, fg, i32(arena.nodes[id].font), rot)
+                 arena.nodes[id].text, fg, i32(arena.nodes[id].font), rot, a)
         return
     }
     if arena.has_bound_num(id) != 0 {
         let y = arena.draw_y(id) + i32(arena.nodes[id].pad_t) + geometry.max2(arena.nodes[id].h - i32(arena.nodes[id].pad_t) - i32(arena.nodes[id].pad_b) - arena.nodes[id].th, 0) / 2
-        text_int(x, y, arena.bound_num(id), fg, i32(arena.nodes[id].font))
+        text_int(x, y, arena.bound_num(id), fg, i32(arena.nodes[id].font), a)
         return
     }
     let inner = arena.inner_w(id)
     if int(arena.nodes[id].wrap) != 0 {
         if inner > 0 {
             if inner < arena.nodes[id].tw {
-                text_wrap(x, arena.draw_y(id) + i32(arena.nodes[id].pad_t) + i32(arena.nodes[id].border_w), arena.nodes[id].text, fg, i32(arena.nodes[id].font), inner)
+                text_wrap(x, arena.draw_y(id) + i32(arena.nodes[id].pad_t) + i32(arena.nodes[id].border_w), arena.nodes[id].text, fg, i32(arena.nodes[id].font), inner, a)
                 return
             }
         }
     }
     let y = arena.draw_y(id) + i32(arena.nodes[id].pad_t) + geometry.max2(arena.nodes[id].h - i32(arena.nodes[id].pad_t) - i32(arena.nodes[id].pad_b) - arena.nodes[id].th, 0) / 2
-    text(x, y, arena.nodes[id].text, fg, i32(arena.nodes[id].font))
+    text(x, y, arena.nodes[id].text, fg, i32(arena.nodes[id].font), a)
 }
 
 fn paint_button(id: int) {
+    let a = arena.paint_alpha(id)
     if arena.nodes[id].bg >= 0 {
-        fill(arena.draw_x(id), arena.draw_y(id), arena.nodes[id].w, arena.nodes[id].h, arena.paint_rgb(arena.nodes[id].bg), i32(arena.nodes[id].radius))
+        fill_alpha(arena.draw_x(id), arena.draw_y(id), arena.nodes[id].w, arena.nodes[id].h, arena.paint_rgb(arena.nodes[id].bg), i32(arena.nodes[id].radius), a)
     }
     let tw = arena.nodes[id].tw
     let th = arena.nodes[id].th
     let tx = arena.draw_x(id) + geometry.max2(arena.nodes[id].w - tw, 0) / 2
     let ty = arena.draw_y(id) + geometry.max2(arena.nodes[id].h - th, 0) / 2
     if arena.has_bound_num(id) != 0 {
-        text_int(tx, ty, arena.bound_num(id), arena.fg_of(id), i32(arena.nodes[id].font))
+        text_int(tx, ty, arena.bound_num(id), arena.fg_of(id), i32(arena.nodes[id].font), a)
     } else {
-        text(tx, ty, arena.nodes[id].text, arena.fg_of(id), i32(arena.nodes[id].font))
+        text(tx, ty, arena.nodes[id].text, arena.fg_of(id), i32(arena.nodes[id].font), a)
     }
     paint_hover_wash(id)
 }
@@ -365,7 +431,9 @@ fn paint_node(id: int) {
     let tx = int(arena.nodes[id].an_tx)
     let mut ty = int(arena.nodes[id].an_ty)
     let mut rot = int(arena.nodes[id].an_rot)
-    if int(arena.nodes[id].spin) != 0 {
+    // A spinning progress bar (kind 6) sweeps instead of rotating: the
+    // flag only keeps the frame loop alive for it.
+    if int(arena.nodes[id].spin) != 0 && int(arena.nodes[id].kind) != 6 {
         if arena.spin_live() != 0 {
             let per = int(arena.nodes[id].spin_ms)
             if per > 0 {
@@ -475,9 +543,27 @@ fn paint_node_body(id: int) {
             track = arena.paint_rgb(arena.nodes[id].bg)
         }
         fill(x, y, w, h, track, i32(arena.nodes[id].radius))
-        let fw = w * arena.bind_pct(id) / 100
-        if fw > 0 {
-            fill(x, y, fw, h, arena.fg_of(id), i32(arena.nodes[id].radius))
+        if int(arena.nodes[id].spin) != 0 {
+            // Indeterminate: a 30% segment sweeps left to right on the
+            // frame clock (`spin_ms` per pass), clipped to the track. Reduced
+            // motion parks it a third of the way in.
+            let seg = w * 3 / 10
+            let mut sx = x + (w - seg) / 3
+            if arena.spin_live() != 0 {
+                let per = int(arena.nodes[id].spin_ms)
+                if per > 0 {
+                    sx = x - seg + (w + seg) * (arena.now_ms % per) / per
+                }
+            }
+            save()
+            clip(x, y, w, h, i32(arena.nodes[id].radius))
+            fill(sx, y, seg, h, arena.fg_of(id), i32(arena.nodes[id].radius))
+            restore()
+        } else {
+            let fw = w * arena.bind_pct(id) / 100
+            if fw > 0 {
+                fill(x, y, fw, h, arena.fg_of(id), i32(arena.nodes[id].radius))
+            }
         }
         paint_hover_wash(id)
     } else if k == 13 {
@@ -505,8 +591,19 @@ fn paint_node_body(id: int) {
         if arena.nodes[id].border_c >= 0 {
             knob = arena.paint_rgb(arena.nodes[id].border_c)
         }
-        fill(kx, y + (h - kd) / 2, kd, kd, knob, kd / 2)
-        paint_hover_wash(id)
+        // The knob grows 2dp on hover (hover_amt track) and sits on a soft
+        // shadow so it reads as a thumb above the track, not a dot on it.
+        let grow = int(arena.nodes[id].hover_amt) * 2 / 100
+        let kw = kd + grow
+        let kxx = kx - grow / 2
+        let kyy = y + (h - kw) / 2
+        shadow(kxx, kyy, kw, kw, kw / 2, 0, 40, 4, 0, 1)
+        fill(kxx, kyy, kw, kw, knob, kw / 2)
+        // Hover wash on the knob only, not the whole track.
+        let ha = int(arena.nodes[id].hover_amt)
+        if ha > 0 {
+            fill_a(kxx, kyy, kw, kw, arena.hover_rgb(), kw / 2, ha * 16 / 100)
+        }
     } else if k == 7 {
         let mut on = arena.nodes[id].tween
         if on < 0 {
@@ -638,44 +735,42 @@ fn paint_node_body(id: int) {
             }
             if ring != 0 {
                 let c = arena.focus_ring_rgb()
-                fill(x - 2, y - 2, w + 4, 2, c, 0)
-                fill(x - 2, y + h, w + 4, 2, c, 0)
-                fill(x - 2, y, 2, h, c, 0)
-                fill(x + w, y, 2, h, c, 0)
+                let a = arena.paint_alpha(id)
+                fill_alpha(x - 2, y - 2, w + 4, 2, c, 0, a)
+                fill_alpha(x - 2, y + h, w + 4, 2, c, 0, a)
+                fill_alpha(x - 2, y, 2, h, c, 0, a)
+                fill_alpha(x + w, y, 2, h, c, 0, a)
             }
         }
     }
+}
+
+fn paint_one_floater(id: int, sx: int, sy: int) {
+    let prev_y = arena.paint_sy
+    let prev_x = arena.paint_sx
+    if int(arena.nodes[id].kind) == 9 || arena.nodes[id].anchor > 0 {
+        // Anchored floaters and overlays are in window coordinates.
+        arena.paint_sy = 0
+        arena.paint_sx = 0
+    } else {
+        arena.paint_sy = sy
+        arena.paint_sx = sx
+    }
+    paint_node(id)
+    arena.paint_sy = prev_y
+    arena.paint_sx = prev_x
 }
 
 fn paint_floaters(id: int) {
     if id <= 0 {
         return
     }
-    if arena.want_paint(id) == 0 {
-        return
-    }
-    if arena.is_floater(id) != 0 {
-        // An *anchored* floater is positioned in window coordinates
-        // (`place_node`), so it must be painted without the scrollers' offsets —
-        // otherwise it drifts by the scroll amount and can end up off screen.
-        // A relative absolute floater (`layout_abs`) stays in its parent's
-        // content coordinates and keeps the offsets.
-        if int(arena.nodes[id].kind) == 9 || arena.nodes[id].anchor > 0 {
-            let prev_y = arena.paint_sy
-            let prev_x = arena.paint_sx
-            arena.paint_sy = 0
-            arena.paint_sx = 0
-            paint_node(id)
-            arena.paint_sy = prev_y
-            arena.paint_sx = prev_x
-            return
-        }
-        paint_node(id)
-        return
-    }
-    let nk = arena.nodes[id].kids.len
-    for i in 0..nk {
-        paint_floaters(arena.nodes[id].kids[i])
+    arena.zf_clear()
+    arena.zf_collect(id, arena.paint_sx, arena.paint_sy, 1)
+    arena.zf_sort(0)
+    let n = arena.zf_id.len
+    for i in 0..n {
+        paint_one_floater(arena.zf_id[i], arena.zf_sx[i], arena.zf_sy[i])
     }
 }
 

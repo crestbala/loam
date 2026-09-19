@@ -1994,14 +1994,13 @@ static Type *check_call(AstNode *n, Type *expect) {
     } else if (cal && cal->kind == AST_IDENT) {
         Type *lt = NULL;
         if (scope_find(cal->as.ident.name, &lt, NULL) && lt && lt->kind == TY_PROC) {
-            SourceLoc dloc = {0};
-            AstNode *dnode = NULL;
-            scope_find_s(cal->as.ident.name, NULL, NULL, NULL, &dloc, &dnode);
-            cal->ty = lt;
-            cal->as.ident.resolved = dnode;
-            cal->as.ident.def_loc = dloc;
+            /* A local fn value. Check it as an identifier expression so a
+               closure that calls a captured `key(t)` records `key` as a
+               capture — resolving the name here directly skipped that, and
+               the closure body then referenced an undeclared C variable. */
+            Type *ct = check_expr(cal);
             n->as.call.is_fn_val = 1;
-            return finish_proc_call(n, lt, NULL);
+            return finish_proc_call(n, ct, NULL);
         }
         fn = lookup_unqualified(cal->as.ident.name, find_fn_in);
         if (!fn) {

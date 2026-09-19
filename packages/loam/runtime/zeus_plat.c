@@ -686,6 +686,10 @@ void loam_zeus_plat_save(void) {
     if (have_draw && paint_draw.save) paint_draw.save(paint_ctx);
 }
 
+void loam_zeus_plat_alpha(int64_t a) {
+    if (have_draw && paint_draw.alpha) paint_draw.alpha(paint_ctx, a);
+}
+
 void loam_zeus_plat_clip(int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius) {
     if (have_draw && paint_draw.clip) paint_draw.clip(paint_ctx, x, y, w, h, radius);
 }
@@ -1017,6 +1021,7 @@ void loam_platform_plat_image_size(loam_str src, int32_t *w, int32_t *h) {
     loam_zeus_plat_image_size(src, w, h);
 }
 void loam_platform_plat_save(void) { loam_zeus_plat_save(); }
+void loam_platform_plat_alpha(int64_t a) { loam_zeus_plat_alpha(a); }
 
 /* Wall clock for host-sleep-safe deadlines (scrollbar hide). */
 int64_t loam_platform_plat_now_ms(void) { return loam_async_now_ms(); }
@@ -1805,7 +1810,13 @@ int zeus_handle_key_ev(int key, int mods) {
        step focus like the web). Keymaps win via dispatch above. */
     if (key == ZEUS_K_TAB && !(mods & ~ZEUS_MOD_SHIFT))
         return zeus_handle_key(key);
-    if (mods & ~ZEUS_MOD_SHIFT) return 0;
+    /* Cmd/Ctrl chords usually belong to the host (menus, reload). A focused
+       text field still needs Cmd/Ctrl+A to select all so Backspace can clear. */
+    if (mods & ~ZEUS_MOD_SHIFT) {
+        if (zeus_focus_captures_text())
+            return zeus_handle_key(key);
+        return 0;
+    }
     return zeus_handle_key(key);
 }
 

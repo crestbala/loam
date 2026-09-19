@@ -1038,6 +1038,14 @@ fn hover_fade(node: Node) -> Node {
     return node
 }
 
+/// Press feedback as a paint-only scale (97% while the pointer is down) on
+/// top of the press wash. Needs `press = true` on the node; `Button` sets
+/// both. No layout pass reads the scale, so pressing never reflows.
+fn press_scale(node: Node) -> Node {
+    arena.nodes[node.id].press_scale = 1
+    return node
+}
+
 fn hover_off(node: Node) -> Node {
     arena.nodes[node.id].hover_fade = -1
     return node
@@ -1254,7 +1262,7 @@ fn center(node: Node) -> Node {
 fn appearance() -> Signal<int> {
     arena.ensure()
     if arena.appearance_sid == 0 {
-        let s = signal(0)
+        let s = signal(1)
         arena.appearance_sid = s.id
     }
     return signal_handle(arena.appearance_sid)
@@ -2061,6 +2069,15 @@ fn draw_count() -> int {
     return scene.draws.len
 }
 
+/// Op kind of draw `i` (tests): 1 fill, 2 text, 7 clip, 11 gradient, 12 shadow.
+fn draw_op(i: int) -> int {
+    return scene.draws[i].kind
+}
+/// Left edge of draw `i` (tests).
+fn draw_x(i: int) -> int {
+    return scene.draws[i].x
+}
+
 /// Layout results for tests: the box of the node that matched
 /// `engine_find_text`. Positions are window-space after the last layout.
 fn node_x(id: int) -> int {
@@ -2073,6 +2090,20 @@ fn node_x(id: int) -> int {
 fn node_background_rgb(id: int) -> int {
     arena.ensure()
     return arena.paint_rgb(arena.nodes[id].bg)
+}
+
+/// A node's accessible label (or its text when it has none), for tests.
+fn node_label(id: int) -> string {
+    if arena.nodes[id].a11y_label.len > 0 {
+        return arena.nodes[id].a11y_label
+    }
+    return arena.nodes[id].text
+}
+
+/// Resolved foreground (text / icon tint) of a node id, as `node_background_rgb`.
+fn node_color_rgb(id: int) -> int {
+    arena.ensure()
+    return arena.fg_of(id)
 }
 
 /// Laid-out top edge of a node id. The id-based accessors exist for tests
@@ -2598,7 +2629,15 @@ fn hex_digit_value(c: int) -> int {
 let mut ui_parents: []int = []int {}
 
 fn ui_push(id: int) {
-    push(ui_parents, id)
+    let mut target = id
+    if id > 0 {
+        if id < arena.nodes.len {
+            if arena.nodes[id].slot_into > 0 {
+                target = arena.nodes[id].slot_into
+            }
+        }
+    }
+    push(ui_parents, target)
 }
 
 fn ui_pop() {
@@ -3344,6 +3383,13 @@ struct ButtonProps {
     hover_off: bool = false,
     /// CSS cursor under the pointer (default `""` = arrow).
     cursor: string = "",
+    /// Leading icon markup (`IC_PLUS`, ...). Sized to the `SIZE` token and
+    /// tinted like the label. Themed chrome only.
+    icon: string = "",
+    /// 0/1 signal. While 1 the button is inert (no click, hover, or press),
+    /// dims, and a spinner takes the icon slot. Themed chrome only.
+    loading: Signal<int> = Signal { id: 0 },
+    loading__set: bool = false,
     on_click: fn() = noop,
     on_click__set: bool = false,
     /// Chord that activates this node: `"cmd+s"`, `"ctrl+shift+p"`, or a
@@ -3486,6 +3532,32 @@ struct ScrollProps {
 struct TableCol {
     title: string,
     width: int,
+    /// Cell alignment for this column: `ALIGN.Start` (default), `Center`,
+    /// or `End` — numbers go `End`. `TableCols` aligns the header and
+    /// `TableRowCols` the body cells.
+    align: int = 0,
+    /// true = the header is a sort trigger (see `TableCols`' `sort`).
+    sortable: bool = false,
+}
+
+/// Extras for `TableCols`: `sort` is the sort state. `0` = none; `i + 1` =
+/// column `i` ascending; `-(i + 1)` = descending. Clicking a sortable header
+/// cycles none → asc → desc → none on its column and clears the others; the
+/// app orders its rows from the signal. An arrow marks the sorted column.
+struct TableColsProps {
+    sort: Signal<int> = Signal { id: 0 },
+    sort__set: bool = false,
+}
+
+/// Extras for `TableRow` / `TableRowCols`. `zebra` shades every second body
+/// row (counted among the row's siblings, so a header does not count);
+/// `hover` washes the row under the pointer; `on_click` makes the row a
+/// pointer target (hover implied).
+struct TableRowProps {
+    zebra: bool = false,
+    hover: bool = false,
+    on_click: fn() = noop,
+    on_click__set: bool = false,
 }
 
 /// Geometry for `Svg` layers: explicit size plus absolute placement
@@ -3596,45 +3668,101 @@ fn Button(p: ButtonProps) -> Node {
     if p.hover_off == false {
         hover_fade(__n)
     }
+    press_scale(__n)
     return apply_key(__n, p.key, p.key_action, p.on_key, p.on_key__set, p.key_global)
+}
+
+/// Disabled fill for themed chrome: a muted plate instead of the accent at
+/// 40% alpha, so a disabled Solid button reads as a control that is off
+/// rather than a washed-out one. Outline keeps its ring on `rule()`.
+fn button_disabled_background(look: int) -> string {
+    match look {
+        LOOK.Ghost | LOOK.Link => { return "" }
+        _ => { return raised() }
+    }
+}
+
+/// Icon size for a `SIZE` token; see `button_padding_x`.
+fn button_icon(size: int) -> int {
+    if size == SIZE.Sm { 14 } else { 16 }
 }
 
 /// Themed chrome branch of `Button`.
 fn btn_look(p: ButtonProps) -> Node {
     let look = p.look
     let size = p.size
+    let mut fill = str_or_default(p.background, button_background(look))
+    let mut ink_c = str_or_default(p.color, button_color(look))
+    let mut edge = str_or_default(p.border_color, button_border_color(look))
+    if p.enabled == false {
+        fill = str_or_default(p.background, button_disabled_background(look))
+        ink_c = str_or_default(p.color, mute())
+        edge = str_or_default(p.border_color, rule())
+    }
     let n = Box(
         align_direction = DIRECTION.Row,
         align_items = ALIGN.Center,
         justify = ALIGN.Center,
         spacing = px_or_default(p.spacing, SPACE.Exs),
-        background = str_or_default(p.background, button_background(look)),
-        color = str_or_default(p.color, button_color(look)),
+        background = fill,
+        color = ink_c,
         width = p.width,
         height = px_or_default(p.height, button_height(size)),
         padding_x = px_or_default(p.padding_x, px_or_default(p.padding, button_padding_x(size))),
         radius = px_or_default(p.radius, button_radius(size)),
         border = px_or_default(p.border, button_border_width(look)),
-        border_color = str_or_default(p.border_color, button_border_color(look)),
+        border_color = edge,
         on_click = p.on_click,
         on_click__set = p.on_click__set,
         a11y_role = "button",
         a11y_label = p.label(),
         show = p.show,
-        enabled = p.enabled,
         padding_y = p.padding_y,
         hover_off = p.hover_off,
         cursor = "pointer",
         press = true
-    ) {
-        Text(p.label, color = str_or_default(p.color, button_color(look)),
-             font = px_or_default(p.font, button_font(size)))
+    )
+    // Disabled: the muted fill above is the styling; the shared overlay
+    // still turns hover / press / activation off. The 40% dim `enabled`
+    // would apply through `Component` is replaced by a lighter 70%, since
+    // the fill swap already carries the state.
+    if p.enabled == false {
+        disabled(n, true)
+        set_prop_int(n, SET.Opacity, 70)
+    }
+    ui_push(n.id)
+    if p.loading__set {
+        let sp = Spinner(size = button_icon(size), color = ink_c)
+        show(sp, p.loading)
+    }
+    if p.icon.len > 0 {
+        let ic = Icon(p.icon, button_icon(size), ink_c)
+        if p.loading__set {
+            // The spinner takes the icon slot while loading.
+            show_eq(ic, p.loading, 0)
+        }
+    }
+    Text(p.label, color = ink_c, font = px_or_default(p.font, button_font(size)))
+    ui_pop()
+    if p.loading__set {
+        let nid = n.id
+        let ls = p.loading
+        effect(|| {
+            if ls.get() != 0 {
+                arena.set_loading(nid, 1)
+                arena.nodes[nid].opacity = i16(70)
+            } else {
+                arena.set_loading(nid, 0)
+                arena.nodes[nid].opacity = i16(100)
+            }
+        })
     }
     // Chrome hover is explicit: a themed button stays a hover target even
     // when it has no click handler (`is_hot` would otherwise require one).
     if p.hover_off == false {
         hover_fade(n)
     }
+    press_scale(n)
     return n
 }
 
@@ -4193,10 +4321,19 @@ fn VirtualListVar<T>(items: Signal<[]T>, heights: Signal<[]int>, fallback: int,
 /// themed header (`TableCols`) shares its gutter with body rows; build every
 /// cell with `set_flex_basis_zero(...).grow(1)` (or a fixed `.set_width(px)` matching the column)
 /// so body columns line up under the header.
-fn VirtualTable<T>(rows: Signal<[]T>, cols: []TableCol, row_h: int, build: fn(int, T)) -> Node {
+/// Extras for `VirtualTable`: `sort` wires the header's sortable columns
+/// (see `TableColsProps`). Rows are the app's `Signal<[]T>`, so the app
+/// reorders them — `sort_by` with a key per column — in an effect on `sort`.
+struct VirtualTableProps {
+    sort: Signal<int> = Signal { id: 0 },
+    sort__set: bool = false,
+}
+
+fn VirtualTable<T>(rows: Signal<[]T>, cols: []TableCol, row_h: int, build: fn(int, T),
+                   p: VirtualTableProps) -> Node {
     let wrap = raw_box()
     ui_push(wrap.id)
-    TableCols(cols)
+    TableCols(cols, sort = p.sort, sort__set = p.sort__set)
     VirtualList(rows, row_h, build)
     ui_pop()
     return Component(wrap, align_direction = DIRECTION.Column, grow = 1,
@@ -5597,6 +5734,18 @@ const IC_PLUS: string =
 const IC_MINUS: string =
 "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M5 12h14'/></svg>"
 
+/// Sort arrows for `TableCols` headers (lucide arrow-up / arrow-down).
+const IC_SORT_ASC: string =
+"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m5 12 7-7 7 7'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M12 19V5'/></svg>"
+const IC_SORT_DESC: string =
+"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M12 5v14'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m19 12-7 7-7-7'/></svg>"
+
+/// Trend arrows for `Stat` deltas (lucide arrow-up-right / arrow-down-right).
+const IC_TREND_UP: string =
+"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M7 17 17 7'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M7 7h10v10'/></svg>"
+const IC_TREND_DOWN: string =
+"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m7 7 10 10'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M17 7v10H7'/></svg>"
+
 /// A gap-arc loader ring (used by `Spinner`).
 const IC_LOADER: string =
 "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M21 12a9 9 0 1 1-6.219-8.56'/></svg>"
@@ -5668,6 +5817,26 @@ struct CardProps {
     visible__set: bool = false,
     bind: Signal<int> = Signal { id: 0 },
     bind__set: bool = false,
+    /// Interactive card: a pointer target with a hover lift and `on_click`
+    /// (role `button`). `on_click` alone implies it.
+    interactive: bool = false,
+    on_click: fn() = noop,
+    on_click__set: bool = false,
+    /// Elevation the card lifts to on hover (default 3 when interactive,
+    /// 0 = no lift). Paint-only: the shadow blends on the hover track.
+    lift: int = -1,
+    /// Header row above the body: `title` (heading type) and `subtitle`
+    /// (muted caption). Either empty = no header.
+    title: string = "",
+    subtitle: string = "",
+    /// Media strip above everything: an image `src` at `media_height` dp,
+    /// bleeding to the card edge under the top corners.
+    media: string = "",
+    media_height: int = 160,
+    /// Footer row under the body, separated by a hairline; built by this
+    /// thunk (actions, a caption). Omit for none.
+    footer: fn() = noop,
+    footer__set: bool = false,
     /// Chord that activates this node: `"cmd+s"`, `"ctrl+shift+p"`, or a
     /// sequence like `"g d"`. Every widget takes it — key binding is a prop,
     /// not something a particular widget hard-codes.
@@ -5682,13 +5851,43 @@ struct CardProps {
     key_global: bool = false,
 }
 
+/// Lift a node's shadow to elevation `level` while hovered (paint-only; the
+/// hover wash is dropped in favour of the lift). `Card(interactive = true)`
+/// sets it; any surface can take it.
+fn hover_lift(node: Node, level: int) -> Node {
+    let mut l = level
+    if l < 0 {
+        l = 0
+    }
+    if l > 4 {
+        l = 4
+    }
+    arena.nodes[node.id].lift = u8(l)
+    hover_fade(node)
+    return node
+}
+
+/// Card body slot. The trailing block lands here — after the media and
+/// header, before the footer — so `Card(title = "…") { … }` reads top-down.
 fn Card(p: CardProps) -> Node {
+    let interactive = p.interactive || p.on_click__set
+    let mut cursor = ""
+    let mut role = ""
+    if interactive {
+        cursor = "pointer"
+        role = "button"
+    }
+    let mut pad_top = px_or_default(p.padding_y, px_or_default(p.padding, 16))
+    if p.media.len > 0 {
+        pad_top = 0
+    }
     let n = Box(
         align_direction = DIRECTION.Column,
         spacing = px_or_default(p.spacing, SPACE.Xs),
         background = str_or_default(p.background, plate()),
         padding_x = px_or_default(p.padding_x, px_or_default(p.padding, 20)),
-        padding_y = px_or_default(p.padding_y, px_or_default(p.padding, 16)),
+        padding_top = pad_top,
+        padding_bottom = px_or_default(p.padding_y, px_or_default(p.padding, 16)),
         radius = px_or_default(p.radius, RAD_XL),
         border = px_or_default(p.border, HAIRLINE),
         border_color = str_or_default(p.border_color, rule()),
@@ -5702,8 +5901,66 @@ fn Card(p: CardProps) -> Node {
         min_height = p.min_height,
         max_height = p.max_height,
         visible = p.visible,
-        bind = p.bind
+        bind = p.bind,
+        on_click = p.on_click,
+        on_click__set = p.on_click__set,
+        cursor = cursor,
+        a11y_role = role
     )
+    if interactive {
+        hover_lift(n, px_or_default(p.lift, 3))
+        press_scale(n)
+        arena.nodes[n.id].press = u8(1)
+    } else if p.lift > 0 {
+        hover_lift(n, p.lift)
+    }
+    let has_header = p.title.len > 0 || p.subtitle.len > 0
+    if p.media.len > 0 || has_header {
+        ui_push(n.id)
+        if p.media.len > 0 {
+            // Negative side margins pull the strip out to the card edge;
+            // the top corners follow the card radius.
+            let r = px_or_default(p.radius, RAD_XL)
+            let px = px_or_default(p.padding_x, px_or_default(p.padding, 20))
+            let strip = Box(height = p.media_height, radius = r)
+            // Props drop negatives (-1 = unset), so the bleed is set directly.
+            marginLeft(strip, -px)
+            marginRight(strip, -px)
+            overflow(strip, overflow_hidden())
+            slot(strip, || {
+                Image(p.media, height = p.media_height, fit = IMAGE_FIT.Cover, grow = 1)
+            })
+            let sid = strip.id
+            arena.nodes[sid].a11y_role = "img"
+        }
+        if has_header {
+            let hd = Column(2)
+            arena.nodes[hd.id].a11y_role = "heading"
+            slot(hd, || {
+                if p.title.len > 0 {
+                    Text(p.title, color = ink(), font = FONT_TITLE)
+                }
+                if p.subtitle.len > 0 {
+                    Text(p.subtitle, color = mute(), font = FONT_CAPTION)
+                }
+            })
+        }
+        ui_pop()
+    }
+    if p.footer__set {
+        // The caller's trailing block is emitted after this returns, so the
+        // footer built here would sit above it. An inner body column takes
+        // the block (`slot_into`), and the footer follows that column.
+        ui_push(n.id)
+        let body = Column(px_or_default(p.spacing, SPACE.Xs))
+        Separator()
+        let f = Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
+                    spacing = SPACE.Exs)
+        arena.nodes[f.id].a11y_role = "contentinfo"
+        slot(f, p.footer)
+        ui_pop()
+        arena.nodes[n.id].slot_into = body.id
+    }
     return n
 }
 
@@ -5955,6 +6212,13 @@ struct ChipProps {
     border: int = -1,
     border_color: string = "",
     spacing: int = -1,
+    /// false hides the leading tint dot.
+    dot: bool = true,
+    /// Removable chip: a trailing X runs this (role `button`, label
+    /// `Remove <label>`). Hiding the chip is the caller's job — usually
+    /// `show` on a signal the handler clears.
+    on_remove: fn() = noop,
+    on_remove__set: bool = false,
     /// Chord that activates this node: `"cmd+s"`, `"ctrl+shift+p"`, or a
     /// sequence like `"g d"`. Every widget takes it — key binding is a prop,
     /// not something a particular widget hard-codes.
@@ -5969,21 +6233,45 @@ struct ChipProps {
     key_global: bool = false,
 }
 
+/// Chip: rounded tag with a tint dot and caption text. `dot = false` drops
+/// the pip; `on_remove` adds a trailing X.
 fn Chip(label: fn() -> string, kind: int, p: ChipProps) -> Node {
+    let tint = str_or_default(p.color, tint_of(kind))
+    let mut pad_r = px_or_default(p.padding_x, px_or_default(p.padding, 10))
+    if p.on_remove__set {
+        // The X carries its own hit box, so the trailing gutter shrinks.
+        pad_r = 4
+    }
     let __n = Box(align_direction = DIRECTION.Row,
                   spacing = px_or_default(p.spacing, SPACE.Exxs),
                   align_items = ALIGN.Center,
-                  padding_x = px_or_default(p.padding_x, px_or_default(p.padding, 10)),
+                  padding_left = px_or_default(p.padding_x, px_or_default(p.padding, 10)),
+                  padding_right = pad_r,
                   padding_y = px_or_default(p.padding_y, px_or_default(p.padding, 5)),
                   background = str_or_default(p.background, raised()),
                   radius = px_or_default(p.radius, RAD_FULL),
                   border = px_or_default(p.border, HAIRLINE),
                   border_color = str_or_default(p.border_color, rule()),
                   width = p.width,
-                  height = px_or_default(p.height, 26)) {
-        Pip(str_or_default(p.color, tint_of(kind)), DOT - 2)
-        Text(label, color = str_or_default(p.color, tint_of(kind)), font = px_or_default(p.font, FONT_CAPTION))
+                  height = px_or_default(p.height, 26))
+    ui_push(__n.id)
+    if p.dot {
+        Pip(tint, DOT - 2)
     }
+    Text(label, color = tint, font = px_or_default(p.font, FONT_CAPTION))
+    if p.on_remove__set {
+        let x = Box(width = 18, height = 18, radius = RAD_FULL,
+                    align_items = ALIGN.Center, justify = ALIGN.Center,
+                    shrink = 0,
+                    on_click = p.on_remove,
+                    a11y_role = "button",
+                    a11y_label = "Remove {{label()}}",
+                    cursor = "pointer") {
+            Icon(IC_X, 12, mute())
+        }
+        hover_fade(x)
+    }
+    ui_pop()
     return apply_key(__n, p.key, p.key_action, p.on_key, p.on_key__set, p.key_global)
 }
 
@@ -6027,7 +6315,8 @@ fn badge_border_color(kind: int) -> string {
 
 /// Badge: small bordered pill, 10px side padding, caption type.
 /// Kinds: Ink default, Mute secondary, Dim outline, Danger destructive;
-/// Ok is a filled success badge.
+/// Ok is a filled success badge. `dot = true` adds a leading status pip
+/// in the label colour; `BadgeCount` is the numeric variant.
 struct BadgeProps {
     /// Style props. Plain data — `radius = 4`, `background = paper()`. Each
     /// is re-evaluated by the effect that owns that attribute, so it follows
@@ -6044,6 +6333,8 @@ struct BadgeProps {
     border: int = -1,
     border_color: string = "",
     spacing: int = -1,
+    /// Leading status pip in the label colour.
+    dot: bool = false,
     /// Chord that activates this node: `"cmd+s"`, `"ctrl+shift+p"`, or a
     /// sequence like `"g d"`. Every widget takes it — key binding is a prop,
     /// not something a particular widget hard-codes.
@@ -6059,6 +6350,7 @@ struct BadgeProps {
 }
 
 fn Badge(label: fn() -> string, kind: int, p: BadgeProps) -> Node {
+    let tint = str_or_default(p.color, badge_color(kind))
     let __n = Box(align_direction = DIRECTION.Row,
                   padding_x = px_or_default(p.padding_x, px_or_default(p.padding, 10)),
                   padding_y = px_or_default(p.padding_y, px_or_default(p.padding, 2)),
@@ -6068,13 +6360,39 @@ fn Badge(label: fn() -> string, kind: int, p: BadgeProps) -> Node {
                   border_color = str_or_default(p.border_color, badge_border_color(kind)),
                   width = p.width,
                   height = p.height,
-                  spacing = p.spacing,
+                  spacing = px_or_default(p.spacing, SPACE.Exxs),
                   align_items = ALIGN.Center,
-                  justify = ALIGN.Center) {
-        Text(label, color = str_or_default(p.color, badge_color(kind)),
-             font = px_or_default(p.font, FONT_CAPTION))
+                  justify = ALIGN.Center)
+    ui_push(__n.id)
+    if p.dot {
+        Pip(tint, DOT - 2)
     }
+    Text(label, color = tint, font = px_or_default(p.font, FONT_CAPTION))
+    ui_pop()
     return apply_key(__n, p.key, p.key_action, p.on_key, p.on_key__set, p.key_global)
+}
+
+/// Count badge: a round pill bound to a number, hidden while it is 0 and
+/// capped at `max` ("99+"). Sits over an icon or after a nav label.
+fn BadgeCount(count: Signal<int>, kind: int, max: int = 99) -> Node {
+    let n = Box(align_direction = DIRECTION.Row,
+                min_width = 18,
+                height = 18,
+                padding_x = 5,
+                radius = RAD_FULL,
+                background = badge_background(kind),
+                align_items = ALIGN.Center,
+                justify = ALIGN.Center,
+                a11y_role = "status") {
+        Text(fn() -> string {
+            let v = count.get()
+            if v > max {
+                return "{{max}}+"
+            }
+            return "{{v}}"
+        }, color = badge_color(kind), font = 11)
+    }
+    return show_ne(n, count, 0)
 }
 
 /// Key cap: 1px border on muted, mono-ish small text, 20px tall.
@@ -6101,9 +6419,33 @@ fn Slider(value: Signal<int>) {
               a11y_role = "slider", hover_off = true, cursor = "pointer")
 }
 
-/// Progress: 8px track, rounded, filled with the accent. Value 0..100.
-fn Progress(value: Signal<int>) {
-    Component(raw_progress(), bind = value, width = 220, height = 8, radius = 4)
+/// Progress: 8px track, rounded, filled with the accent. Value 0..100; a
+/// plain `set` eases the fill over `MOTION.Base` on the paint overlay (no
+/// effect re-runs per frame). A negative value is indeterminate: a segment
+/// sweeps the track on the frame clock until the value is 0..100 again.
+fn Progress(value: Signal<int>) -> Node {
+    let n = Component(raw_progress(), bind = value, width = 220, height = 8, radius = 4)
+    arena.nodes[n.id].a11y_role = "progressbar"
+    let nid = n.id
+    let sid = value.id
+    // `tween` holds the last state this bar was asked to show (-1 at build),
+    // so the next write can ease from it.
+    effect(|| {
+        let v = value.get()
+        let last = arena.nodes[nid].tween
+        if v < 0 {
+            arena.note_spin(nid, 1400)
+        } else {
+            arena.clear_spin(nid)
+            // A write from `zeus.animate` brings its own track and duration;
+            // only a plain `set` gets the default ease.
+            if last >= 0 && arena.anim_bind_on() == 0 {
+                arena.anim_paint_from(sid, last, MOTION.Base)
+            }
+        }
+        arena.nodes[nid].tween = v
+    })
+    return n
 }
 
 /// Legacy name for `Progress`.
@@ -6322,8 +6664,40 @@ struct TextInputProps {
     key_global: bool = false,
 }
 
+/// X control that appears while `value` is non-empty and clears the bound
+/// field. Shared by `TextInput` / `TextArea` / `Combobox`.
+fn input_clear(value: Signal<string>, field: Node) {
+    let on = signal(0)
+    effect(|| {
+        if value.get().len > 0 {
+            on.set(1)
+        } else {
+            on.set(0)
+        }
+    })
+    let btn = Box(width = 20, height = 20, radius = RAD_SM,
+                  align_items = ALIGN.Center, justify = ALIGN.Center,
+                  shrink = 0,
+                  on_click = fn() {
+                      value.set("")
+                      set_input(field, "")
+                      arena.claim_focus(field.id)
+                  },
+                  a11y_role = "button",
+                  a11y_label = "Clear",
+                  cursor = "pointer") {
+        Icon(IC_X, 12, mute())
+    }
+    // Pointer-only: keyboard users clear with Cmd/Ctrl+A then Backspace, so
+    // the X is not a tab stop between the field and the next control.
+    arena.nodes[btn.id].focusable = 0
+    show(btn, on)
+}
+
 fn TextInput(value: Signal<string>, placeholder: string, p: TextInputProps) -> Node {
     let __n = Box(
+        align_direction = DIRECTION.Row,
+        align_items = ALIGN.Center,
         background = str_or_default(p.background, plate()),
         border = px_or_default(p.border, HAIRLINE),
         border_color = str_or_default(p.border_color, rule()),
@@ -6332,14 +6706,18 @@ fn TextInput(value: Signal<string>, placeholder: string, p: TextInputProps) -> N
         padding_y = px_or_default(p.padding_y, px_or_default(p.padding, 8)),
         width = p.width,
         height = p.height,
-        spacing = p.spacing,
+        spacing = px_or_default(p.spacing, 4),
         cursor = "text"
-    ) {
-        Input(bind = value, placeholder = placeholder,
-              background = "", color = str_or_default(p.color, ink()),
-              font = px_or_default(p.font, FONT_BODY),
-              padding = 0, a11y_label = placeholder)
-    }
+    )
+    ui_push(__n.id)
+    let fin = Input(bind = value, placeholder = placeholder,
+                    background = "", color = str_or_default(p.color, ink()),
+                    font = px_or_default(p.font, FONT_BODY),
+                    padding = 0, grow = 1, a11y_label = placeholder)
+    shrink(fin, 1)
+    on_click(__n, fn() { arena.claim_focus(fin.id) })
+    input_clear(value, fin)
+    ui_pop()
     return apply_key(__n, p.key, p.key_action, p.on_key, p.on_key__set, p.key_global)
 }
 
@@ -6349,6 +6727,8 @@ fn TextInput(value: Signal<string>, placeholder: string, p: TextInputProps) -> N
 fn TextArea(value: Signal<string>, placeholder: string, on_edit: fn() = noop,
             width: int = -1) {
     let node = Box(
+        align_direction = DIRECTION.Row,
+        align_items = ALIGN.Start,
         background = plate(),
         border = HAIRLINE,
         border_color = rule(),
@@ -6356,13 +6736,17 @@ fn TextArea(value: Signal<string>, placeholder: string, on_edit: fn() = noop,
         padding_x = 12,
         padding_y = 8,
         min_height = 96,
+        spacing = 4,
         cursor = "text"
-    ) {
-        Input(bind = value, placeholder = placeholder,
-              background = "", color = ink(), font = FONT_BODY,
-              padding = 0, multiline = 1, grow = 1, a11y_label = placeholder,
-              on_key_up = on_edit)
-    }
+    )
+    ui_push(node.id)
+    let fin = Input(bind = value, placeholder = placeholder,
+                    background = "", color = ink(), font = FONT_BODY,
+                    padding = 0, multiline = 1, grow = 1, a11y_label = placeholder,
+                    on_key_up = on_edit)
+    on_click(node, fn() { arena.claim_focus(fin.id) })
+    input_clear(value, fin)
+    ui_pop()
     if width >= 0 {
         set_width(node, width)
     }
@@ -6437,25 +6821,75 @@ fn Checkbox(label: string, on: Signal<int>) {
     }
 }
 
+fn avatar_dot(size: int) -> int {
+    let d = size / 4
+    if d < 8 {
+        return 8
+    }
+    if d > 14 {
+        return 14
+    }
+    return d
+}
+
+struct AvatarProps {
+    src: string = ""
+    /// `TINT` for the corner presence pip. `-1` = none.
+    status: int = -1
+}
+
 /// Avatar: full-round with initials on muted. `size` is the diameter in px
 /// (40 is the common one). Pass `src` for a photo; initials remain the fallback
-/// while the host loads. `User` composes it.
-fn Avatar(initials: string, size: int, src: string = "") {
-    Box(align_direction = DIRECTION.Row, width = size, height = size,
-        radius = size / 2, background = raised(), align_items = ALIGN.Center,
-        justify = ALIGN.Center) {
-        Text(initials, color = ink(), font = (size + 8) / 4)
-        if src.len > 0 {
-            Image(src, width = size, height = size, radius = size / 2,
-                  position = pos_absolute(), left = 0, top = 0)
-        }
+/// while the host loads. `status` is a `TINT` for the corner presence pip
+/// (`-1` = none). `User` composes it; `AvatarGroup` stacks several.
+fn Avatar(initials: string, size: int, p: AvatarProps) -> Node {
+    let host = Box(align_direction = DIRECTION.Row, width = size, height = size,
+                   radius = size / 2, background = raised(),
+                   align_items = ALIGN.Center, justify = ALIGN.Center)
+    ui_push(host.id)
+    Text(initials, color = ink(), font = (size + 8) / 4)
+    if p.src.len > 0 {
+        Image(p.src, width = size, height = size, radius = size / 2,
+              position = pos_absolute(), left = 0, top = 0)
     }
+    if p.status >= 0 {
+        Box(width = avatar_dot(size), height = avatar_dot(size),
+            radius = avatar_dot(size) / 2,
+            background = tint_of(p.status),
+            border = 2, border_color = plate(),
+            position = pos_absolute(), right = 0, bottom = 0,
+            a11y_role = "status")
+    }
+    ui_pop()
+    return host
+}
+
+/// Overlapping row of avatars. Later faces sit on top; each one after the
+/// first pulls left by a third of `size`.
+fn AvatarGroup(labels: []string, size: int = 32) -> Node {
+    let row = Row(0)
+    ui_push(row.id)
+    let n = labels.len
+    for i in 0..n {
+        let av = Avatar(labels[i], size)
+        if i > 0 {
+            marginLeft(av, -(size / 3))
+        }
+        z_index(av, i + 1)
+    }
+    ui_pop()
+    return row
+}
+
+struct UserProps {
+    src: string = ""
+    status: int = -1
 }
 
 /// Avatar + name + role column, the "user card" pattern.
-fn User(initials: string, name: string, role: string, src: string = "") {
+fn User(initials: string, name: string, role: string, p: UserProps) {
     Row(SPACE.Xs) {
-        Avatar(initials, 40, src)
+        Avatar(initials, 40, src = p.src, status = p.status)
         Column(2) {
             Text(name, color = ink(), font = FONT_BODY)
             Text(role, color = mute(), font = FONT_CAPTION)
@@ -6463,11 +6897,102 @@ fn User(initials: string, name: string, role: string, src: string = "") {
     }
 }
 
-/// Stat card: small muted label over a big tinted value.
-fn Stat(label: fn() -> string, value: fn() -> string, kind: int) {
+/// Trend direction for `Stat`'s delta row.
+enum TREND {
+    Flat = 0,
+    Up = 1,
+    Down = 2,
+}
+
+struct StatProps {
+    /// Change caption under the value ("+12%"). Empty = no delta row.
+    delta: fn() -> string = empty_text,
+    /// `TREND` for the arrow and tint: Up is ok, Down is danger, Flat is
+    /// muted with no arrow.
+    trend: int = 0,
+    /// Series for a trailing sparkline. A signal, so a dashboard can push
+    /// points and the line redraws without a rebuild.
+    spark: Signal<[]int> = Signal { id: 0 },
+    spark__set: bool = false,
+}
+
+fn trend_tint(trend: int) -> string {
+    match trend {
+        TREND.Up => { return ok() }
+        TREND.Down => { return danger() }
+        _ => { return mute() }
+    }
+}
+
+/// Sparkline path: `vals` fit to a `w`×`h` box, stroked in `currentColor`
+/// so `Icon`-style tinting applies. Flat series draw a midline.
+fn spark_markup(vals: []int, w: int, h: int) -> string {
+    let n = vals.len
+    if n < 2 {
+        return ""
+    }
+    let mut lo = vals[0]
+    let mut hi = vals[0]
+    for i in 1..n {
+        if vals[i] < lo {
+            lo = vals[i]
+        }
+        if vals[i] > hi {
+            hi = vals[i]
+        }
+    }
+    let mut span = hi - lo
+    if span <= 0 {
+        span = 1
+    }
+    let pad = 2
+    let mut d = ""
+    for i in 0..n {
+        let x = pad + (w - pad * 2) * i / (n - 1)
+        let y = pad + (h - pad * 2) * (hi - vals[i]) / span
+        if i == 0 {
+            d = "M{{x}} {{y}}"
+        } else {
+            d = "{{d}} L{{x}} {{y}}"
+        }
+    }
+    return "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 {{w}} {{h}}'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='{{d}}'/></svg>"
+}
+
+/// Inline trend line, `w`×`h` dp, stroked in `tint`. The markup is a text
+/// thunk over `vals`, so pushing a point repaints only this node.
+fn Sparkline(vals: Signal<[]int>, w: int, h: int, tint: string) -> Node {
+    let n = Component(raw_svg(""), width = w, height = h, color = tint,
+                      text = fn() -> string { return spark_markup(vals.get(), w, h) })
+    arena.nodes[n.id].a11y_role = "img"
+    arena.nodes[n.id].a11y_label = "sparkline"
+    return n
+}
+
+/// Stat card: small muted label over a big tinted value. `delta` + `trend`
+/// add an arrow-and-caption row; `spark` a sparkline beside the value.
+fn Stat(label: fn() -> string, value: fn() -> string, kind: int, p: StatProps) {
     let c = Card() {
         Text(label, color = mute(), font = FONT_CONTROL)
-        Text(value, color = tint_of(kind), font = 26)
+        Row(SPACE.Xs) {
+            Text(value, color = tint_of(kind), font = 26)
+            if p.spark__set {
+                Grow()
+                Sparkline(p.spark, 64, 24, trend_tint(p.trend))
+            }
+        }
+        if p.delta().len > 0 {
+            let r = Row(2) {
+                if p.trend == TREND.Up {
+                    Icon(IC_TREND_UP, 14, trend_tint(p.trend))
+                }
+                if p.trend == TREND.Down {
+                    Icon(IC_TREND_DOWN, 14, trend_tint(p.trend))
+                }
+                Text(p.delta, color = trend_tint(p.trend), font = FONT_CAPTION)
+            }
+            arena.nodes[r.id].a11y_role = "status"
+        }
     }
     grow(c, 1)
 }
@@ -6529,7 +7054,7 @@ fn roving_focus(node: Node, value: Signal<int>, index: int) {
 
 /// One tab trigger. Active: card background, foreground text. Left / Right
 /// move the selection; only the selected tab is a tab stop.
-fn Tab(label: string, selected: Signal<int>, index: int, count: int = 0) {
+fn Tab(label: string, selected: Signal<int>, index: int, count: int = 0, plain: int = 0) {
     let tab = Box(
         align_direction = DIRECTION.Row,
         align_items = ALIGN.Center,
@@ -6545,8 +7070,15 @@ fn Tab(label: string, selected: Signal<int>, index: int, count: int = 0) {
     ui_push(tab.id)
     let text = Text(label, font = FONT_BODY)
     ui_pop()
-    selected_chrome(tab, text, || { selected.get() == index },
-                    plate(), raised(), ink(), mute())
+    // `plain` = the tray's sliding indicator carries the fill; the trigger
+    // only swaps its label colour.
+    if plain != 0 {
+        selected_chrome(tab, text, || { selected.get() == index },
+                        "", "", ink(), mute())
+    } else {
+        selected_chrome(tab, text, || { selected.get() == index },
+                        plate(), raised(), ink(), mute())
+    }
     apply_key(tab, "right", "tab.next", fn() { roving_step(selected, index, count, 1) }, true, false)
     apply_key(tab, "left", "tab.prev", fn() { roving_step(selected, index, count, -1) }, true, false)
     roving_focus(tab, selected, index)
@@ -6555,22 +7087,84 @@ fn Tab(label: string, selected: Signal<int>, index: int, count: int = 0) {
 /// Tabs: 36px muted tray, rounded, 4px inset, with a card-coloured trigger.
 /// The tray sits in a row wrapper so it hugs its triggers instead of
 /// stretching to the column width (columns stretch children cross-axis).
+/// Tabs: 36px muted tray, rounded, 4px inset, with a card-coloured
+/// indicator that slides under the selected trigger. The indicator is an
+/// absolute box whose `left` / `width` pins are signals: a selection change
+/// `animate`s them (layout tweens the pins, batch 9.4), and the tray's refit
+/// hook re-places it instantly after the first layout or a resize, when the
+/// triggers' measured geometry moves.
 fn Tabs(selected: Signal<int>, labels: []string) {
     Row(0) {
-        Box(
+        let tray = Box(
             align_direction = DIRECTION.Row,
             spacing = 2,
             padding = 4,
             background = raised(),
             radius = RAD_LG,
             align_items = ALIGN.Center
-        ) {
-            let n = labels.len
+        )
+        let ind_l = signal(0)
+        let ind_w = signal(0)
+        let ind_h = signal(0)
+        let n = labels.len
+        slot(tray, || {
+            // First child, so it paints under the triggers.
+            let ind = Box(position = pos_absolute(), top = 0,
+                          background = plate(), radius = RAD_MD)
+            arena.nodes[ind.id].a11y_role = "presentation"
+            prop_int(ind, SET.Left, fn() -> int { return ind_l.get() })
+            prop_int(ind, SET.Width, fn() -> int { return ind_w.get() })
+            prop_int(ind, SET.Height, fn() -> int { return ind_h.get() })
+            set_prop_int(ind, SET.Elevation, 1)
             Each(labels, fn(i, lab) {
-                Tab(lab, selected, i, n)
+                Tab(lab, selected, i, n, 1)
             })
+        })
+        let tid = tray.id
+        // Trigger ids: every tray kid after the indicator.
+        let mut ids = []int {}
+        let kids = arena.nodes[tid].kids
+        for i in 1..kids.len {
+            push(ids, kids[i])
         }
+        // Refit: runs after any layout that changed the tray's width (the
+        // first one included), then a second layout applies the pins.
+        arena.nodes[tid].list_fn = intern_fn(|| {
+            let w = arena.nodes[tid].w
+            if w == arena.nodes[tid].list_gen {
+                return
+            }
+            arena.nodes[tid].list_gen = w
+            tabs_place(tid, ids, selected, ind_l, ind_w, ind_h, 0)
+        })
+        effect(|| {
+            tabs_place(tid, ids, selected, ind_l, ind_w, ind_h, MOTION.Base)
+        })
     }
+}
+
+/// Move the `Tabs` indicator to the selected trigger: pins in the tray's
+/// content box, tweened over `ms` (0 = jump). Skipped before the first
+/// layout, when the triggers have no width yet.
+fn tabs_place(tid: int, ids: []int, selected: Signal<int>,
+              ind_l: Signal<int>, ind_w: Signal<int>, ind_h: Signal<int>, ms: int) {
+    let sel = selected.get()
+    if sel < 0 || sel >= ids.len {
+        return
+    }
+    let t = ids[sel]
+    if arena.nodes[t].w <= 0 {
+        return
+    }
+    let l = arena.nodes[t].x - arena.content_x(tid)
+    if ms > 0 {
+        animate(ind_l, l, ms)
+        animate(ind_w, arena.nodes[t].w, ms)
+    } else {
+        ind_l.set(l)
+        ind_w.set(arena.nodes[t].w)
+    }
+    ind_h.set(arena.nodes[t].h)
 }
 
 /// One toggle-style choice row inside `Segmented` / `ToggleGroup`.
@@ -6618,6 +7212,11 @@ fn Segmented(value: Signal<int>, labels: []string) {
 }
 
 const SELECT_W: int = 200
+/// Stacking: scrim under the trigger/field, popup above both — so a Select
+/// menu is not covered by a Combobox later in the same card.
+const Z_SCRIM: int = 40
+const Z_FIELD: int = 50
+const Z_POPUP: int = 80
 
 /// One row of a `Select` menu: a check icon on the picked row and a raised fill
 /// on the active row (the keyboard highlight).
@@ -6659,6 +7258,7 @@ fn Select(value: Signal<int>, labels: []string) {
     // Outside click closes. Created first so the trigger and menu draw over it.
     let scrim = Overlay(on_click = fn() { active.set(-1) })
     show_ge(scrim, active, 0)
+    z_index(scrim, Z_SCRIM)
     let host = Box(align_direction = DIRECTION.Column)
     ui_push(host.id)
     let trigger = Box(
@@ -6672,6 +7272,7 @@ fn Select(value: Signal<int>, labels: []string) {
         border = HAIRLINE,
         border_color = rule(),
         radius = RAD_MD,
+        z_index = Z_FIELD,
         on_click = fn() {
             if active.get() >= 0 {
                 active.set(-1)
@@ -6702,7 +7303,7 @@ fn Select(value: Signal<int>, labels: []string) {
         border_color = rule(),
         radius = RAD_MD,
         position = pos_absolute(),
-        z_index = 60,
+        z_index = Z_POPUP,
         elevation = 2
     )
     show_ge(menu, active, 0)
@@ -6816,6 +7417,7 @@ fn Combobox(text: Signal<string>, options: []string, p: ComboboxProps) {
     // Outside click closes. Created first so the field and list draw over it.
     let scrim = Overlay(on_click = fn() { active.set(-1) })
     show_ge(scrim, active, 0)
+    z_index(scrim, Z_SCRIM)
     let host = Box(align_direction = DIRECTION.Column)
     ui_push(host.id)
     let field = Box(
@@ -6829,6 +7431,7 @@ fn Combobox(text: Signal<string>, options: []string, p: ComboboxProps) {
         border = HAIRLINE,
         border_color = rule(),
         radius = px_or_default(p.radius, RAD_MD),
+        z_index = Z_FIELD,
         cursor = "text"
     )
     ui_push(field.id)
@@ -6840,17 +7443,15 @@ fn Combobox(text: Signal<string>, options: []string, p: ComboboxProps) {
                     background = "", color = ink(), font = FONT_BODY,
                     padding = 0, grow = 1, a11y_label = p.placeholder)
     let iid = fin.id
-    arena.nodes[iid].kdown_fn = intern_fn(fn() {
-        let picked = combo_key(active, matches)
-        if picked >= 0 {
-            let ms = matches.get()
-            if picked < ms.len {
-                text.set(ms[picked])
-                set_input(node_handle(iid), ms[picked])
+    on_click(field, fn() {
+        arena.claim_focus(iid)
+        if text.get().len > 0 {
+            if active.get() < 0 {
+                active.set(0)
             }
-            active.set(-1)
         }
     })
+    input_clear(text, fin)
     Icon(IC_CHEV_DOWN, 16, dim())
     ui_pop()
     let list = Box(
@@ -6863,15 +7464,30 @@ fn Combobox(text: Signal<string>, options: []string, p: ComboboxProps) {
         border_color = rule(),
         radius = px_or_default(p.radius, RAD_MD),
         position = pos_absolute(),
-        z_index = 60,
+        z_index = Z_POPUP,
         elevation = 2
     )
     show_ge(list, active, 0)
     arena.anchor_to(list.id, field.id, PLACE.PlaceBelow, 4)
     enter_fade(list)
+    let lid = list.id
+    let sid = scrim.id
+    arena.nodes[iid].kdown_fn = intern_fn(fn() {
+        let picked = combo_key(active, matches)
+        if picked >= 0 {
+            let ms = matches.get()
+            if picked < ms.len {
+                text.set(ms[picked])
+                set_input(node_handle(iid), ms[picked])
+            }
+            arena.snap_exit(lid)
+            arena.snap_exit(sid)
+            active.set(-1)
+        }
+    })
     ui_push(list.id)
     For(matches, fn(s) => s, fn(i, s) {
-        ComboRow(text, active, fin, i, s)
+        ComboRow(text, active, fin, i, s, sid)
     })
     ui_pop()
     ui_pop()
@@ -6907,6 +7523,14 @@ fn combo_key(active: Signal<int>, matches: Signal<[]string>) -> int {
         active.set(-1)
         return -1
     }
+    if k == Key.Backspace {
+        if n > 0 {
+            if active.get() < 0 {
+                active.set(0)
+            }
+        }
+        return -1
+    }
     if k >= 32 {
         if k < 127 {
             // Typing filters the list; open it on the first character.
@@ -6917,7 +7541,7 @@ fn combo_key(active: Signal<int>, matches: Signal<[]string>) -> int {
 }
 
 /// One option row of a `Combobox`. Picking writes the label into the field.
-fn ComboRow(text: Signal<string>, active: Signal<int>, fin: Node, index: int, label: string) {
+fn ComboRow(text: Signal<string>, active: Signal<int>, fin: Node, index: int, label: string, scrim: int) {
     let row = Box(
         align_direction = DIRECTION.Row,
         align_items = ALIGN.Center,
@@ -6925,16 +7549,18 @@ fn ComboRow(text: Signal<string>, active: Signal<int>, fin: Node, index: int, la
         padding_x = 8,
         padding_y = 6,
         radius = RAD_SM,
-        on_click = fn() {
-            text.set(label)
-            set_input(fin, label)
-            active.set(-1)
-        },
         a11y_role = "option",
         a11y_label = label,
         cursor = "pointer",
         hover_off = false
     )
+    on_click(row, fn() {
+        text.set(label)
+        set_input(fin, label)
+        arena.snap_exit(row.id)
+        arena.snap_exit(scrim)
+        active.set(-1)
+    })
     ui_push(row.id)
     Text(label, color = ink(), font = FONT_BODY)
     ui_pop()
@@ -7029,10 +7655,14 @@ fn ToggleGroup(value: Signal<int>, labels: []string) {
     }
 }
 
-/// Placeholder surface: rounded, faint accent fill. Width/height explicit;
-/// wrap in a card to demo.
-fn Skeleton(w: int, h: int, radius: int) {
-    Box(width = w, height = h, radius = radius, background = bone())
+/// Placeholder surface: rounded, faint accent fill with a left-to-right
+/// shimmer band on the frame clock (static under reduced motion). Width /
+/// height explicit; wrap in a card to demo.
+fn Skeleton(w: int, h: int, radius: int) -> Node {
+    let n = Box(width = w, height = h, radius = radius, background = bone())
+    arena.nodes[n.id].a11y_role = "progressbar"
+    arena.nodes[n.id].a11y_label = "Loading"
+    return pulse(n)
 }
 
 struct SpinnerProps {
@@ -7303,10 +7933,11 @@ fn Popover(trigger: Node, p: PopoverProps) -> Node {
     let open = p.open
     // A transparent scrim: outside click closes; children are tried first, so
     // clicks on the panel itself never reach it.
-    Overlay(visible = open, on_click = fn() { open.set(0) })
+    let scrim = Overlay(visible = open, on_click = fn() { open.set(0) })
+    z_index(scrim, Z_SCRIM)
     let panel = Box(align_direction = DIRECTION.Column,
                     position = pos_absolute(),
-                    z_index = 60,
+                    z_index = Z_POPUP,
                     elevation = 3,
                     spacing = SPACE.Xs,
                     background = str_or_default(p.background, plate()),
@@ -7394,9 +8025,10 @@ fn Menu(trigger: Node, p: MenuProps) -> Node {
     // click on the panel or an item never reaches it.
     let scrim = Overlay(on_click = fn() { active.set(-1) })
     show_ge(scrim, active, 0)
+    z_index(scrim, Z_SCRIM)
     let panel = Box(align_direction = DIRECTION.Column,
                     position = pos_absolute(),
-                    z_index = 60,
+                    z_index = Z_POPUP,
                     elevation = 3,
                     spacing = 2,
                     background = str_or_default(p.background, plate()),
@@ -7416,6 +8048,7 @@ fn Menu(trigger: Node, p: MenuProps) -> Node {
                             }
                             MenuItem(active = active, index = index, count = p.items.len,
                                      label = item.label, danger = item.danger,
+                                     scrim = scrim.id,
                                      on_click = fn() => p.on_select(index))
                         })
                     }
@@ -7444,6 +8077,9 @@ struct MenuItemProps {
     disabled: bool = false,
     /// Destructive command: painted in the danger ink.
     danger: bool = false,
+    /// The menu scrim. Snapped on pick so its exit track does not keep frames
+    /// live after the panel is already gone.
+    scrim: int = 0,
 }
 
 /// One command row. Highlights while `active == index`; the pointer moves
@@ -7464,17 +8100,21 @@ fn MenuItem(p: MenuItemProps) {
                   padding_x = 10,
                   padding_y = 7,
                   radius = RAD_SM,
-                  on_click = fn() {
-                      if !off {
-                          p.on_click()
-                          active.set(-1)
-                      }
-                  },
                   a11y_role = "menuitem",
                   a11y_label = p.label(),
                   enabled = !off,
                   cursor = "pointer",
                   press = true)
+    // Pick runs `on_select` then jumps the exit fade so the panel is gone
+    // this frame — a Fast fade left item labels over the heading.
+    on_click(row, fn() {
+        if !off {
+            p.on_click()
+            arena.snap_exit(row.id)
+            arena.snap_exit(p.scrim)
+            active.set(-1)
+        }
+    })
     ui_push(row.id)
     if p.icon.len > 0 {
         Icon(p.icon, 16, dim())
@@ -7510,6 +8150,8 @@ fn MenuItem(p: MenuItemProps) {
         if active.get() == idx {
             if !off {
                 p.on_click()
+                arena.snap_exit(row.id)
+                arena.snap_exit(p.scrim)
                 active.set(-1)
             }
         }
@@ -7792,6 +8434,11 @@ struct DialogProps {
     title: string = "",
 }
 
+/// Desktop dialog width; narrower windows get 92% of their width.
+const DIALOG_W: int = 440
+/// Scale the dialog card rests at while closed (percent).
+const DIALOG_REST: int = 96
+
 /// Dialog + AlertDialog chrome. Header is a row: title, then `Grow()`, then
 /// a fixed 28px close slot (Dialog only). No `position` / `top` / `left`.
 fn dialog_shell(open: Signal<int>, close_x: int, title: string) -> Node {
@@ -7802,9 +8449,11 @@ fn dialog_shell(open: Signal<int>, close_x: int, title: string) -> Node {
         on_click = fn() => open.set(0)
     )
     ui_push(dim.id)
+    // Responsive: 92% of the window, capped at the desktop 440dp, so a phone
+    // keeps a gutter instead of clipping the card.
     let panel = Box(
         align_direction = DIRECTION.Column,
-        width = 440,
+        max_width = DIALOG_W,
         padding = 24,
         spacing = 16,
         background = plate(),
@@ -7815,7 +8464,19 @@ fn dialog_shell(open: Signal<int>, close_x: int, title: string) -> Node {
         a11y_role = "dialog",
         on_click = fn() { return }
     )
+    width_pct(panel, 92)
     enter_fade(panel)
+    // Scale-in: rest at 96%, grow to 100% while opening; shrink back on
+    // close under the exit fade (paint-only, as the scrim's fade).
+    animate_scale(panel, DIALOG_REST, 0)
+    let pid0 = panel.id
+    effect(|| {
+        if open.get() != 0 {
+            arena.anim_scale(pid0, 100, MOTION.Base)
+        } else {
+            arena.anim_scale(pid0, DIALOG_REST, MOTION.Fast)
+        }
+    })
     slot(panel, || {
         Box(
             align_direction = DIRECTION.Row,
@@ -7913,41 +8574,366 @@ fn NavTab(label: string, page: Signal<int>, index: int) {
 /// grow so columns split the row evenly and line up with `TableRow`.
 fn TableHead(cols: []string) {
     Column(SPACE.Exs) {
-        Row(SPACE.Sm) {
+        // Same gutter as `TableRow`, so header and cells share column edges.
+        Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
+            spacing = SPACE.Sm, padding_x = SPACE.Exs) {
             Each(cols, fn(i, t) {
-                set_flex_basis_zero(Text(t, color = mute(), font = FONT_BODY, grow = 1))
+                table_cell(t, 0, ALIGN.Start, mute())
             })
         }
         Separator()
     }
+}
+
+/// Is the node about to be built an odd-numbered body row? Counts the
+/// current slot parent's `TableRow` kids so far (role `row`), so a header
+/// or separator sibling does not shift the stripe.
+fn table_row_odd() -> bool {
+    let pid = effect_owner()
+    if pid <= 0 {
+        return false
+    }
+    let mut n = 0
+    let kids = arena.nodes[pid].kids
+    let k = kids.len
+    for i in 0..k {
+        if fmt.eq(arena.nodes[kids[i]].a11y_role, "row") {
+            n = n + 1
+        }
+    }
+    return n % 2 == 1
+}
+
+/// Shell every body row shares: stripe, hover, click, role `row`.
+fn table_row_shell(p: TableRowProps) -> Node {
+    let mut fill = ""
+    if p.zebra {
+        if table_row_odd() {
+            fill = raised()
+        }
+    }
+    let mut cursor = ""
+    if p.on_click__set {
+        cursor = "pointer"
+    }
+    let row = Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
+                  spacing = SPACE.Sm, padding_x = SPACE.Exs, padding_y = SPACE.Exs,
+                  background = fill, radius = RAD_SM,
+                  on_click = p.on_click, on_click__set = p.on_click__set,
+                  cursor = cursor, a11y_role = "row")
+    if p.hover || p.on_click__set {
+        hover_fade(row)
+    }
+    return row
+}
+
+/// A `TableCol.width` as a `Box` width prop: 0 (share the row) is -1 (unset).
+fn table_col_width(w: int) -> int {
+    if w <= 0 {
+        return -1
+    }
+    return w
+}
+
+/// One cell: `width` 0 shares the row, `align` is `ALIGN.*`.
+fn table_cell(text: string, width: int, align: int, tint: string) {
+    // `width = 0` would pin a zero box; -1 leaves it to grow.
+    let cell = Box(align_direction = DIRECTION.Row, justify = align,
+                   width = table_col_width(width))
+    if width <= 0 {
+        set_flex_basis_zero(grow(cell, 1))
+    }
+    slot(cell, || {
+        Text(text, color = tint, font = FONT_BODY)
+    })
 }
 
 /// Body row: cells under a hairline, foreground text. Pair with `TableHead`.
-fn TableRow(cols: []string) {
-    Column(SPACE.Exs) {
-        Row(SPACE.Sm) {
-            Each(cols, fn(i, t) {
-                set_flex_basis_zero(Text(t, color = ink(), font = FONT_BODY, grow = 1))
-            })
-        }
-        Separator()
+/// `zebra` / `hover` / `on_click` are `TableRowProps`.
+fn TableRow(cols: []string, p: TableRowProps) {
+    let row = table_row_shell(p)
+    slot(row, || {
+        Each(cols, fn(i, t) {
+            table_cell(t, 0, ALIGN.Start, ink())
+        })
+    })
+    Separator()
+}
+
+/// Body row laid out by a `[]TableCol` spec: fixed widths and per-column
+/// alignment match the `TableCols` header. `cols` beyond `spec` share the
+/// row, start-aligned.
+fn TableRowCols(cols: []string, spec: []TableCol, p: TableRowProps) {
+    let row = table_row_shell(p)
+    slot(row, || {
+        Each(cols, fn(i, t) {
+            let mut w = 0
+            let mut al = ALIGN.Start
+            if i < spec.len {
+                w = spec[i].width
+                al = spec[i].align
+            }
+            table_cell(t, w, al, ink())
+        })
+    })
+    Separator()
+}
+
+/// Column a `TableColsProps.sort` value points at (-1 = unsorted).
+fn sort_col(sort: int) -> int {
+    if sort > 0 {
+        return sort - 1
     }
+    if sort < 0 {
+        return -sort - 1
+    }
+    return -1
+}
+
+/// true when a `sort` value is descending.
+fn sort_desc(sort: int) -> bool {
+    return sort < 0
+}
+
+/// Byte-wise string order: negative, 0, positive.
+fn str_cmp(a: string, b: string) -> int {
+    let n = if a.len < b.len { a.len } else { b.len }
+    for i in 0..n {
+        if a[i] != b[i] {
+            return a[i] - b[i]
+        }
+    }
+    return a.len - b.len
+}
+
+/// Parse a cell as an integer (optional sign, digits, then anything —
+/// "12", "-3", "30 kg" all count; "" and "abc" do not). Returns the value
+/// and whether it parsed, so numeric columns sort by value.
+struct CellNum {
+    ok: bool,
+    v: int,
+}
+
+fn cell_num(s: string) -> CellNum {
+    let mut i = 0
+    let mut neg = false
+    if s.len > 0 {
+        if s[0] == 45 {
+            neg = true
+            i = 1
+        } else if s[0] == 43 {
+            i = 1
+        }
+    }
+    let mut v = 0
+    let mut digits = 0
+    while i < s.len {
+        let c = s[i]
+        if c < 48 || c > 57 {
+            break
+        }
+        v = v * 10 + (c - 48)
+        digits = digits + 1
+        i = i + 1
+    }
+    if digits == 0 {
+        return CellNum(ok = false, v = 0)
+    }
+    if neg {
+        v = -v
+    }
+    return CellNum(ok = true, v = v)
+}
+
+/// Order two cells: numerically when both parse, else by bytes.
+fn cell_cmp(a: string, b: string) -> int {
+    let na = cell_num(a)
+    let nb = cell_num(b)
+    if na.ok && nb.ok {
+        return na.v - nb.v
+    }
+    return str_cmp(a, b)
+}
+
+/// Stable sort of any items by a string key (numeric when the keys are
+/// numbers), for a `VirtualTable`'s `Signal<[]T>`:
+/// `rows.set(zeus.sort_by(base, fn(j) => j.name, zeus.sort_desc(sort.get())))`.
+/// `sort_cells` does the same from a `cells` mapper and a `sort` value.
+fn sort_by<T>(items: []T, key: fn(T) -> string, desc: bool) -> []T {
+    let mut out = []T {}
+    let n = items.len
+    for i in 0..n {
+        push(out, items[i])
+    }
+    for i in 1..n {
+        let mut j = i
+        while j > 0 {
+            let a = out[j - 1]
+            let b = out[j]
+            let mut c = cell_cmp(key(a), key(b))
+            if desc {
+                c = -c
+            }
+            if c <= 0 {
+                break
+            }
+            out[j - 1] = b
+            out[j] = a
+            j = j - 1
+        }
+    }
+    return out
+}
+
+/// Items ordered by a `sort` value (`TableColsProps`) over their `cells`:
+/// 0 returns them as given; otherwise a stable sort on that column, by
+/// value when the cells are numbers. `Table` derives its shown order with
+/// this; a `VirtualTable` app calls it in an effect on its sort signal.
+fn sort_cells<T>(items: []T, cells: fn(T) -> []string, sort: int) -> []T {
+    let col = sort_col(sort)
+    if col < 0 {
+        let mut out = []T {}
+        for i in 0..items.len {
+            push(out, items[i])
+        }
+        return out
+    }
+    return sort_by(items, fn(t: T) -> string {
+        let c = cells(t)
+        if col < c.len {
+            return c[col]
+        }
+        return ""
+    }, sort_desc(sort))
+}
+
+/// Position of the row whose cells key is `k` in the caller's data
+/// (-1 when it is gone).
+fn table_index_of<T>(rows: Signal<[]T>, cells: fn(T) -> []string, k: string) -> int {
+    let xs = rows.get()
+    for i in 0..xs.len {
+        if fmt.eq(cells_key(cells(xs[i])), k) {
+            return i
+        }
+    }
+    return -1
+}
+
+/// Cells joined by tabs: `Table`'s row key.
+fn cells_key(cells: []string) -> string {
+    let mut k = ""
+    for i in 0..cells.len {
+        if i > 0 {
+            k = "{{k}}\t{{cells[i]}}"
+        } else {
+            k = cells[i]
+        }
+    }
+    return k
+}
+
+/// Extras for `Table`.
+struct TableProps {
+    /// Sort state (see `TableColsProps`); rows reorder when it changes.
+    sort: Signal<int> = Signal { id: 0 },
+    sort__set: bool = false,
+    zebra: bool = false,
+    hover: bool = false,
+    /// Row click: receives the row's index in the caller's `rows` (not the
+    /// sorted order), so `rows.get()[i]` is the item.
+    on_pick: fn(int) = noop_int,
+    on_pick__set: bool = false,
+}
+
+/// Data table: a `TableCols` header over rows from a `Signal<[]T>`, each
+/// row's text from `cells(t)` (one string per column). Rows are keyed by
+/// their cells, so a sort moves the existing nodes instead of rebuilding
+/// them. Pass `sort` and the shown order follows it (`sort_cells`) without
+/// touching the caller's data; `zebra` / `hover` / `on_pick` go to every
+/// row. A long list wants `VirtualTable` (windowed) instead.
+fn Table<T>(spec: []TableCol, rows: Signal<[]T>, cells: fn(T) -> []string,
+            p: TableProps) -> Node {
+    let host = Column(0)
+    arena.nodes[host.id].a11y_role = "table"
+    let shown = signal(rows.get())
+    let sort = p.sort
+    let sort_set = p.sort__set
+    effect(|| {
+        let mut s = 0
+        if sort_set {
+            s = sort.get()
+        }
+        shown.set(sort_cells(rows.get(), cells, s))
+    })
+    slot(host, || {
+        TableCols(spec, sort = p.sort, sort__set = p.sort__set)
+        For(shown, fn(t: T) -> string { return cells_key(cells(t)) }, fn(i: int, t: T) {
+            // One top-level child per item, so `For` can reorder rows.
+            let wrap = Column(0)
+            slot(wrap, || {
+                if p.on_pick__set {
+                    TableRowCols(cells(t), spec, zebra = p.zebra, hover = p.hover,
+                                 on_click = fn() {
+                                     p.on_pick(table_index_of(rows, cells, cells_key(cells(t))))
+                                 })
+                } else {
+                    TableRowCols(cells(t), spec, zebra = p.zebra, hover = p.hover)
+                }
+            })
+            return
+        })
+    })
+    return host
+}
+
+/// Next sort state after clicking column `i`: none → asc → desc → none.
+fn sort_cycle(cur: int, i: int) -> int {
+    if cur == i + 1 {
+        return -(i + 1)
+    }
+    if cur == -(i + 1) {
+        return 0
+    }
+    return i + 1
 }
 
 /// Header from `[]TableCol` (`title` + `width`; 0 = equal share of the row).
-fn TableCols(cols: []TableCol) {
+/// A `sortable` column is a button that cycles `sort`; the sorted column
+/// shows a direction arrow (see `TableColsProps`).
+fn TableCols(cols: []TableCol, p: TableColsProps) {
     Column(SPACE.Exs) {
         // Same gutter as the body rows (`padding_x = SPACE.Exs`), so header
         // and cells share the same column boundaries.
         Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
             spacing = SPACE.Sm, padding_x = SPACE.Exs) {
             Each(cols, fn(i, c) {
-                if c.width > 0 {
-                    Box(width = c.width) {
-                        Text(c.title, color = mute(), font = FONT_BODY)
+                let sortable = c.sortable && p.sort__set
+                let mut cursor = ""
+                if sortable {
+                    cursor = "pointer"
+                }
+                let cell = Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
+                               justify = c.align, spacing = 2,
+                               width = table_col_width(c.width), cursor = cursor)
+                if c.width <= 0 {
+                    set_flex_basis_zero(grow(cell, 1))
+                }
+                slot(cell, || {
+                    Text(c.title, color = mute(), font = FONT_BODY)
+                    if sortable {
+                        show_eq(Icon(IC_SORT_ASC, 12, ink()), p.sort, i + 1)
+                        show_eq(Icon(IC_SORT_DESC, 12, ink()), p.sort, -(i + 1))
                     }
-                } else {
-                    set_flex_basis_zero(Text(c.title, color = mute(), font = FONT_BODY, grow = 1))
+                })
+                if sortable {
+                    let sig = p.sort
+                    arena.nodes[cell.id].click_fn = intern_fn(fn() {
+                        sig.set(sort_cycle(sig.get(), i))
+                    })
+                    arena.nodes[cell.id].focusable = 1
+                    arena.nodes[cell.id].a11y_role = "button"
+                    arena.nodes[cell.id].a11y_label = "Sort by {{c.title}}"
+                    hover_fade(cell)
                 }
             })
         }
@@ -7986,7 +8972,96 @@ fn PageButton(page: Signal<int>, n: int) {
     })
 }
 
-/// `Pagination(cur, pages)`: `pages` is the 1-based page count.
+/// Slots in a collapsed pagination row: first, last, and a five-wide window.
+const PAGE_SLOTS: int = 7
+
+/// Page number shown in `slot` (0-based) of a `PAGE_SLOTS`-wide row, or 0
+/// for an ellipsis. Seven or fewer pages list every number; past that the
+/// row keeps 1 and `pages` fixed and slides a window around `cur`
+/// (`1 … 4 5 6 … 20`), collapsing the ellipsis at either end.
+fn page_at(cur: int, pages: int, slot: int) -> int {
+    if pages <= PAGE_SLOTS {
+        return slot + 1
+    }
+    if slot == 0 {
+        return 1
+    }
+    if slot == PAGE_SLOTS - 1 {
+        return pages
+    }
+    if cur <= 4 {
+        // 1 2 3 4 5 … N
+        if slot == PAGE_SLOTS - 2 {
+            return 0
+        }
+        return slot + 1
+    }
+    if cur >= pages - 3 {
+        // 1 … N-4 N-3 N-2 N-1 N
+        if slot == 1 {
+            return 0
+        }
+        return pages - (PAGE_SLOTS - 1 - slot)
+    }
+    // 1 … c-1 c c+1 … N
+    if slot == 1 {
+        return 0
+    }
+    if slot == PAGE_SLOTS - 2 {
+        return 0
+    }
+    return cur + slot - 3
+}
+
+/// One slot of a collapsed `Pagination` row: the number it shows follows
+/// `cur`, so the row never rebuilds; an ellipsis slot is inert.
+fn PageSlot(cur: Signal<int>, pages: int, slot: int) {
+    let btn = Box(align_direction = DIRECTION.Row,
+                  width = 36,
+                  height = 36,
+                  radius = RAD_MD,
+                  align_items = ALIGN.Center,
+                  justify = ALIGN.Center,
+                  border_color = rule(),
+                  on_click = fn() {
+                      let n = page_at(cur.get(), pages, slot)
+                      if n > 0 {
+                          cur.set(n)
+                      }
+                  },
+                  a11y_role = "button",
+                  cursor = "pointer"
+                 )
+    ui_push(btn.id)
+    let text = Text(fn() -> string {
+        let n = page_at(cur.get(), pages, slot)
+        if n == 0 {
+            return "…"
+        }
+        return "{{n}}"
+    }, font = FONT_BODY)
+    ui_pop()
+    selected_chrome(btn, text, || { page_at(cur.get(), pages, slot) == cur.get() },
+                    plate(), paper(), ink(), mute())
+    styled(btn, || {
+        let n = page_at(cur.get(), pages, slot)
+        let mut bw = 0
+        if n == cur.get() {
+            bw = HAIRLINE
+        }
+        arena.nodes[btn.id].border_w = u16(bw)
+        if n == 0 {
+            arena.nodes[btn.id].a11y_label = "More pages"
+            arena.nodes[btn.id].cursor = ""
+        } else {
+            arena.nodes[btn.id].a11y_label = "{{n}}"
+            arena.nodes[btn.id].cursor = "pointer"
+        }
+    })
+}
+
+/// `Pagination(cur, pages)`: `pages` is the 1-based page count. Past seven
+/// pages the row collapses to `1 … c-1 c c+1 … N` (see `page_at`).
 fn Pagination(cur: Signal<int>, pages: int) {
     Row(4) {
         let prev = Box(
@@ -8007,10 +9082,16 @@ fn Pagination(cur: Signal<int>, pages: int) {
         ) {
             Icon(IC_CHEV_LEFT, 16, mute())
         }
-        let mut i = 1
-        while i <= pages {
-            PageButton(cur, i)
-            i = i + 1
+        if pages <= PAGE_SLOTS {
+            let mut i = 1
+            while i <= pages {
+                PageButton(cur, i)
+                i = i + 1
+            }
+        } else {
+            for slot in 0..PAGE_SLOTS {
+                PageSlot(cur, pages, slot)
+            }
         }
         let next = Box(
             align_direction = DIRECTION.Row,
@@ -8917,6 +9998,9 @@ fn DatePicker(y: Signal<int>, m: Signal<int>, d: Signal<int>) {
         visible = open,
         on_click = fn() => open.set(0)
     )
+    // Floaters hit-test in z order, not tree order (batch 17): the scrim
+    // takes the Z_SCRIM tier and the sheet Z_POPUP, as Select / Menu do.
+    z_index(scrim, Z_SCRIM)
     let anchor = Column(SPACE.Exs) {
         Label("Date")
         Box(
@@ -8956,7 +10040,7 @@ fn DatePicker(y: Signal<int>, m: Signal<int>, d: Signal<int>) {
             position = pos_absolute(),
             top = 68,
             left = 0,
-            z_index = 20,
+            z_index = Z_POPUP,
             a11y_role = "dialog",
             on_click = fn() { return },
             visible = open

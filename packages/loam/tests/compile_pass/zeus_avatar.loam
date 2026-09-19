@@ -1,0 +1,31 @@
+// Avatar status pip and overlapping group stack.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("avatar", 400, 200)
+    zeus.root(zeus.Row(8) {
+        zeus.Avatar("ZX", 40, status = zeus.TINT.Ok)
+        zeus.AvatarGroup([]string { "AA", "BB", "CC" }, 32)
+    })
+    zeus.pump_frame()
+    must(zeus.text_visible("ZX"), "initials")
+    must(zeus.engine_find_role("status") != 0, "status pip")
+    must(zeus.text_visible("AA"), "group first")
+    must(zeus.text_visible("BB"), "group second")
+    must(zeus.text_visible("CC"), "group third")
+    let aa = zeus.engine_find_text("AA")
+    let bb = zeus.engine_find_text("BB")
+    must(aa > 0 && bb > 0, "group labels found")
+    must(zeus.node_x(bb) > zeus.node_x(aa), "later face sits to the right")
+    must(zeus.node_x(bb) < zeus.node_x(aa) + 32, "faces overlap")
+    fmt.println("avatar ok")
+}

@@ -198,6 +198,19 @@ struct UiNode {
     grid_auto: u8,
     /// 1 = press overlay while this node is `down_id` (buttons).
     press: u8,
+    /// 1 = the press also scales the node to `PRESS_SCALE` percent on the
+    /// paint-only ScalePct track (themed buttons). Off for plain `press`
+    /// nodes so a checkbox / row does not shrink.
+    press_scale: u8,
+    /// Elevation level the node lifts to while hovered (0 = no lift). Paint
+    /// blends the resting `elev` shadow toward it on the hover track; the
+    /// hover wash is skipped, since the lift is the feedback.
+    lift: u8,
+    /// When > 0, `ui_push(id)` pushes this node instead: a recipe that
+    /// builds chrome after the caller's trailing block (a Card footer) sends
+    /// the block into an inner body column while callers still hold the
+    /// shell.
+    slot_into: int,
     capture_text: u8,
     ui_size: u8,
     ui_look: u8,
@@ -297,6 +310,13 @@ let mut pulse_count: int = 0
 /// scroll must re-place them so a popup stays next to its trigger; when there
 /// are none, a scroll stays paint-only (`mark_scroll`).
 let mut live_anchors: int = 0
+/// Floater stack for one paint / hit pass. `z_index` is only a boolean in
+/// `is_floater`; these lists sort by the numeric value so a Select menu
+/// (80) paints over a later Combobox field (50).
+let mut zf_id: []int = []int {}
+let mut zf_z: []int = []int {}
+let mut zf_sx: []int = []int {}
+let mut zf_sy: []int = []int {}
 /// Nodes with an indeterminate spin (`Spinner`) currently alive.
 let mut spin_count: int = 0
 /// Component-function runs (`Component`) and reactive-effect runs (`track.run`)
@@ -324,7 +344,7 @@ fn blank_node() -> UiNode {
         gap_row: 0, gap_col: 0, aspect_w: 0, aspect_h: 0,
         wrap: 0, reverse: 0, align_self: -1,
         pin_t: -1, pin_r: -1, pin_b: -1, pin_l: -1,
-        z_index: 0, grid_auto: 0, scroll_x: 0, scroll_y: 0, tw: 0, th: 0, pulse: 0, press: 0, press_amt: 0,
+        z_index: 0, grid_auto: 0, scroll_x: 0, scroll_y: 0, tw: 0, th: 0, pulse: 0, press: 0, press_scale: 0, lift: 0, slot_into: 0, press_amt: 0,
         aw: 0, ah: 0, bar_t: 0, tgt_x: 0, tgt_y: 0, smooth: 0, parent: 0, key_ctx: 0, focusable: 0, capture_text: 0, edit_slot: -1,
         dirty: 0,
         an_scale: 100, an_tx: 0, an_ty: 0, an_rot: 0, reveal: 0, an_reveal: 100,
@@ -1530,6 +1550,13 @@ fn sync_chrome() {
                 tgt = 100
             }
             anim_schedule(i, APROP.PressAmt, tgt, motion_fast(), ease_standard())
+            if int(nodes[i].press_scale) != 0 {
+                let mut sc = 100
+                if down_id == i {
+                    sc = PRESS_SCALE
+                }
+                anim_schedule(i, APROP.ScalePct, sc, motion_fast(), ease_standard())
+            }
         }
         let k = int(nodes[i].kind)
         if k == 7 {
@@ -1638,7 +1665,22 @@ fn note_pulse(id: int) {
     paint_dirty = 1
 }
 
+/// Shimmer phase 0..1000 for a pulsing node: a 1.6 s left-to-right sweep
+/// on the frame clock, offset per node so a stack does not move in lockstep.
+/// Reduced motion parks it a third of the way in.
+const SHIMMER_MS: int = 1600
+
+fn shimmer_phase(id: int) -> int {
+    if reduced != 0 {
+        return 333
+    }
+    return ((now_ms + nodes[id].nid * 120) % SHIMMER_MS) * 1000 / SHIMMER_MS
+}
+
 fn pulse_live() -> int {
+    if reduced != 0 {
+        return 0
+    }
     if pulse_count > 0 {
         return 1
     }
@@ -1667,6 +1709,64 @@ fn note_spin(id: int, period: int) {
     }
     nodes[id].spin_ms = u16(d)
     paint_dirty = 1
+}
+
+/// Undo `note_spin`: the node stops keeping the frame loop alive.
+fn clear_spin(id: int) {
+    if id <= 0 {
+        return
+    }
+    if id >= nodes.len {
+        return
+    }
+    if int(nodes[id].spin) != 0 {
+        if spin_count > 0 {
+            spin_count = spin_count - 1
+        }
+    }
+    nodes[id].spin = u8(0)
+    paint_dirty = 1
+}
+
+/// Tween a bound signal's *paint* value from `from` to its current state
+/// over `ms`, without writing the signal. `Progress` uses it so a plain
+/// `value.set(80)` eases instead of jumping; an in-flight tween retargets
+/// from where it is.
+fn anim_paint_from(sid: int, from: int, ms: int) {
+    if sid <= 0 {
+        return
+    }
+    if sid >= sigs.len {
+        return
+    }
+    let to = sigs[sid]
+    let mut jump = 0
+    if anim_booted == 0 {
+        jump = 1
+    }
+    if ms <= 0 {
+        jump = 1
+    }
+    if anim_reduced() != 0 {
+        jump = 1
+    }
+    if jump != 0 {
+        return
+    }
+    sig_paint_fit()
+    if sid >= sig_paint.len {
+        return
+    }
+    let mut f = from
+    if sig_anim[sid] != 0 {
+        f = sig_paint[sid]
+    }
+    if f == to {
+        return
+    }
+    sig_paint[sid] = f
+    sig_anim[sid] = 1
+    anim_schedule(sid, APROP.SigVal, to, ms, ease_standard())
 }
 
 fn spin_live() -> int {
@@ -1818,6 +1918,25 @@ fn elevation_dark(level: int) -> Elev {
     if level == 2 { return Elev(alpha = 78, blur = 7, dx = 0, dy = 2) }
     if level == 3 { return Elev(alpha = 105, blur = 15, dx = 0, dy = 5) }
     return Elev(alpha = 140, blur = 30, dx = 0, dy = 10)
+}
+
+/// Shadow for a node right now: its resting level, blended toward `lift`
+/// by the eased hover amount.
+fn elev_hover(id: int) -> Elev {
+    let base = elev_now(int(nodes[id].elev))
+    let lift = int(nodes[id].lift)
+    if lift <= int(nodes[id].elev) {
+        return base
+    }
+    let t = hover_paint(id)
+    if t <= 0 {
+        return base
+    }
+    let top = elev_now(lift)
+    return Elev(alpha = base.alpha + (top.alpha - base.alpha) * t / 100,
+                blur = base.blur + (top.blur - base.blur) * t / 100,
+                dx = base.dx + (top.dx - base.dx) * t / 100,
+                dy = base.dy + (top.dy - base.dy) * t / 100)
 }
 
 fn elev_now(level: int) -> Elev {
@@ -2199,6 +2318,49 @@ fn set_anchor_flip(id: int, on: int) {
     mark_layout()
 }
 
+/// Jump this node's exit fade — and every other enter_fade node that shares
+/// its hide signal — to 0. A Menu pick must drop the panel in the same frame
+/// (`on_select`); a scheduled Fast fade would leave labels over the heading.
+fn snap_exit(id: int) {
+    if id <= 0 {
+        return
+    }
+    let mut cur = id
+    let mut host = 0
+    let mut guard = 0
+    while cur > 0 {
+        if cur >= nodes.len {
+            break
+        }
+        if int(nodes[cur].enter_fade) != 0 {
+            host = cur
+            break
+        }
+        cur = nodes[cur].parent
+        guard = guard + 1
+        if guard > 64 {
+            break
+        }
+    }
+    if host == 0 {
+        return
+    }
+    anim_schedule(host, APROP.EnterFade, 0, 0, 0)
+    // The Menu scrim is a sibling Overlay, not an ancestor. Snap every
+    // enter_fade sibling so a pick does not leave a fading scrim running.
+    let par = nodes[host].parent
+    let n = nodes.len
+    for i in 1..n {
+        if i != host {
+            if nodes[i].parent == par {
+                if int(nodes[i].enter_fade) != 0 {
+                    anim_schedule(i, APROP.EnterFade, 0, 0, 0)
+                }
+            }
+        }
+    }
+}
+
 /// Paint visibility: `want_show`, or a hidden node whose exit fade has not
 /// landed yet. Paint alone reads this; layout, hit-test, focus, and the tree
 /// predicates keep `want_show`, so a closing floater is already inert.
@@ -2426,6 +2588,28 @@ fn hover_rgb() -> int {
     return 0
 }
 
+/// Scale a pressed `press_scale` node settles at (percent).
+const PRESS_SCALE: int = 97
+
+/// 1 when the shared overlay says the node takes no activation: disabled or
+/// loading. Pointer clicks and Enter / Space consult this, so a component
+/// never has to guard its own handler.
+fn is_inert(id: int) -> int {
+    if id <= 0 {
+        return 0
+    }
+    if id >= nodes.len {
+        return 0
+    }
+    if int(nodes[id].disabled) != 0 {
+        return 1
+    }
+    if int(nodes[id].loading) != 0 {
+        return 1
+    }
+    return 0
+}
+
 fn is_hot(id: int) -> int {
     if want_show(id) == 0 {
         return 0
@@ -2506,18 +2690,34 @@ fn ptr_in(id: int) -> int {
 
 fn paint_alpha(id: int) -> int {
     let mut a = int(nodes[id].opacity)
-    if int(nodes[id].pulse) != 0 {
-        // Skeleton shimmer, driven by the frame clock: a 2.4 s triangle wave
-        // (the old frame-count period at 60 fps), phase-offset per node so a
-        // run of skeletons does not pulse in lockstep.
-        let mut p = (now_ms + nodes[id].nid * 80) % 2400
-        if p > 1200 {
-            p = 2400 - p
-        }
-        a = 8 + p * 92 / 1200
-    }
+    // `pulse` used to be an alpha sawtooth here; the shimmer is now a
+    // directional band painted over the fill (`scene.paint_shimmer`), so a
+    // skeleton keeps its opacity.
     if int(nodes[id].enter_fade) != 0 {
         a = a * int(nodes[id].show_amt) / 100
+    }
+    // A fading floater only used to dim its own fill; child Text stayed at
+    // 255 until the node dropped, so labels hung over the heading after the
+    // panel was gone. Walk enter_fade ancestors so the subtree shares that
+    // alpha. Kind 9 is the scrim: it fades its own fill, and the panel it
+    // hosts carries enter_fade for the content — multiplying both would
+    // square the Dialog / Drawer / Toast exit.
+    let mut p = nodes[id].parent
+    let mut guard = 0
+    while p > 0 {
+        if p >= nodes.len {
+            break
+        }
+        if int(nodes[p].kind) != 9 {
+            if int(nodes[p].enter_fade) != 0 {
+                a = a * int(nodes[p].show_amt) / 100
+            }
+        }
+        p = nodes[p].parent
+        guard = guard + 1
+        if guard > 64 {
+            break
+        }
     }
     if a < 0 {
         a = 0
@@ -3156,6 +3356,101 @@ fn is_floater(id: int) -> int {
         return 1
     }
     return 0
+}
+
+fn zf_clear() {
+    let n = zf_id.len
+    for i in 0..n {
+        pop(zf_id)
+        pop(zf_z)
+        pop(zf_sx)
+        pop(zf_sy)
+    }
+}
+
+fn zf_push(id: int, sx: int, sy: int) {
+    push(zf_id, id)
+    push(zf_z, int(nodes[id].z_index))
+    push(zf_sx, sx)
+    push(zf_sy, sy)
+}
+
+fn zf_collect(id: int, sx: int, sy: int, paint: int) {
+    if id <= 0 {
+        return
+    }
+    if paint != 0 {
+        if want_paint(id) == 0 {
+            return
+        }
+    } else {
+        if want_show(id) == 0 {
+            return
+        }
+    }
+    if is_floater(id) != 0 {
+        zf_push(id, sx, sy)
+        return
+    }
+    let mut cx = sx
+    let mut cy = sy
+    if paint == 0 {
+        if int(nodes[id].kind) == 11 {
+            // Hit pass: a relative floater inside a scroller keeps its
+            // parent's content coordinates, so carry the scroll down and
+            // skip the scroller when the pointer is outside its viewport
+            // (the old tree-order walk did both).
+            if in_box(id, ptr_x + sx, ptr_y + sy) == 0 {
+                return
+            }
+            cx = sx + nodes[id].scroll_x
+            cy = sy + nodes[id].scroll_y
+        }
+    }
+    let nk = nodes[id].kids.len
+    for i in 0..nk {
+        zf_collect(nodes[id].kids[i], cx, cy, paint)
+    }
+}
+
+fn zf_swap(i: int, j: int) {
+    let id = zf_id[i]
+    let z = zf_z[i]
+    let sx = zf_sx[i]
+    let sy = zf_sy[i]
+    zf_id[i] = zf_id[j]
+    zf_z[i] = zf_z[j]
+    zf_sx[i] = zf_sx[j]
+    zf_sy[i] = zf_sy[j]
+    zf_id[j] = id
+    zf_z[j] = z
+    zf_sx[j] = sx
+    zf_sy[j] = sy
+}
+
+/// Insertion sort. `desc` 1 = high z first (hit-test), 0 = low z first (paint).
+fn zf_sort(desc: int) {
+    let n = zf_id.len
+    for i in 1..n {
+        let mut j = i
+        while j > 0 {
+            let mut swap = 0
+            if desc != 0 {
+                if zf_z[j - 1] < zf_z[j] {
+                    swap = 1
+                }
+            } else {
+                if zf_z[j - 1] > zf_z[j] {
+                    swap = 1
+                }
+            }
+            if swap == 0 {
+                break
+            }
+            zf_swap(j - 1, j)
+            j = j - 1
+        }
+    }
 }
 
 /// Paint-time ring color for the keyboard-focused node. Theme slot 36 is

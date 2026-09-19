@@ -16,44 +16,26 @@ struct Click {
     setv: int,
 }
 
+fn hit_one_floater(id: int, sx: int, sy: int) -> int {
+    if int(arena.nodes[id].kind) == 9 || arena.nodes[id].anchor > 0 {
+        return hit_node(id, arena.ptr_x, arena.ptr_y)
+    }
+    return hit_node(id, arena.ptr_x + sx, arena.ptr_y + sy)
+}
+
 fn hit_floaters(id: int, px: int, py: int) -> int {
     if id <= 0 {
         return 0
     }
-    if arena.want_show(id) == 0 {
-        return 0
-    }
-    let mut hy = py
-    let mut hx = px
-    if int(arena.nodes[id].kind) == 11 {
-        if arena.in_box(id, px, py) == 0 {
-            return 0
-        }
-        hy = py + arena.nodes[id].scroll_y
-        hx = px + arena.nodes[id].scroll_x
-    }
-    let nk = arena.nodes[id].kids.len
-    for j in 0..nk {
-        let c = arena.nodes[id].kids[nk - 1 - j]
-        let mut h = 0
-        if int(arena.nodes[c].kind) == 9 {
-            h = hit_floaters(c, arena.ptr_x, arena.ptr_y)
-        }
-        if int(arena.nodes[c].kind) != 9 {
-            h = hit_floaters(c, hx, hy)
-        }
+    arena.zf_clear()
+    arena.zf_collect(id, 0, 0, 0)
+    arena.zf_sort(1)
+    let n = arena.zf_id.len
+    for i in 0..n {
+        let h = hit_one_floater(arena.zf_id[i], arena.zf_sx[i], arena.zf_sy[i])
         if h != 0 {
             return h
         }
-    }
-    if arena.is_floater(id) != 0 {
-        // Anchored floaters and kind-9 overlays live in window space, so test
-        // them against the window pointer; a relative absolute floater keeps
-        // its parent's content coordinates and uses the scrolled point.
-        if int(arena.nodes[id].kind) == 9 || arena.nodes[id].anchor > 0 {
-            return hit_node(id, arena.ptr_x, arena.ptr_y)
-        }
-        return hit_node(id, px, hy)
     }
     return 0
 }
@@ -214,6 +196,12 @@ fn click(px: int, py: int) -> int {
     }
     if id <= 0 {
         return 0
+    }
+    // A disabled / loading control swallows the click: nothing fires, no
+    // press track starts, and the pointer does not fall through to what
+    // sits under it.
+    if arena.is_inert(id) != 0 {
+        return 1
     }
     arena.claim_focus(id)
     if int(arena.nodes[id].kind) == 10 {
@@ -616,6 +604,9 @@ fn press_focused() -> int {
     if arena.want_show(id) == 0 {
         return 0
     }
+    if arena.is_inert(id) != 0 {
+        return 1
+    }
     if int(arena.nodes[id].kind) == 10 {
         return 0
     }
@@ -947,6 +938,29 @@ fn key(k: int) -> int {
     if slot < 0 {
         return handled
     }
+    // Cmd/Ctrl/Alt chords must not insert the letter. Cmd/Ctrl+A selects all
+    // so the next Backspace clears the field (Input / TextArea / Combobox).
+    let mods = arena.ev_mods
+    let mut chord = 0
+    if mods % 4 >= 2 {
+        chord = 1
+    }
+    if mods % 8 >= 4 {
+        chord = 1
+    }
+    if mods % 16 >= 8 {
+        chord = 1
+    }
+    if chord != 0 {
+        if k == 97 {
+            let n = platform.plat_edit_len(slot)
+            platform.plat_edit_set_anchor(slot, 0)
+            platform.plat_edit_set_caret(slot, n)
+            arena.mark_paint()
+            return 1
+        }
+        return handled
+    }
     let extend = arena.ev_mods % 2
     let mut edited = 0
     if k == 8 {
@@ -1014,6 +1028,16 @@ fn insert_text(s: string) -> int {
     }
     if arena.nodes[id].bind_fn > 0 {
         platform.plat_invoke_fn(arena.nodes[id].bind_fn)
+    }
+    // Mac/iOS type through insertText, not key_ev. Combobox opens on its
+    // kdown handler, so replay a printable key after the insert.
+    if arena.nodes[id].kdown_fn > 0 {
+        let mut k = 32
+        if s.len > 0 {
+            k = s[0]
+        }
+        arena.ev_key = k
+        platform.plat_invoke_fn(arena.nodes[id].kdown_fn)
     }
     return 1
 }

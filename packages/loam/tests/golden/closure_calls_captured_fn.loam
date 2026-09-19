@@ -1,0 +1,25 @@
+// A closure that *calls* a captured fn-typed local must capture it. The
+// call typechecker used to resolve the callee name directly and skip the
+// capture pass, so the emitted closure referenced an undeclared variable —
+// in a plain fn and, through monomorphization, in a generic one.
+import "std:fmt"
+
+fn apply<T>(xs: []T, f: fn(T) -> int) -> int {
+    return f(xs[0])
+}
+
+fn plain(xs: []string, key: fn(int) -> int) -> int {
+    let k = fn(t: string) -> int { return key(t.len) }
+    return apply(xs, k)
+}
+
+fn generic<T>(xs: []T, key: fn(T) -> int) -> int {
+    let k = fn(t: T) -> int { return key(t) + 1 }
+    return apply(xs, k)
+}
+
+fn main() {
+    let xs = []string { "abc" }
+    fmt.println(plain(xs, fn(i: int) -> int { return i * 10 }))
+    fmt.println(generic(xs, fn(s: string) -> int { return s.len }))
+}

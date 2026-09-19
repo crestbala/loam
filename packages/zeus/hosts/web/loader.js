@@ -566,6 +566,10 @@
         view.setInt32(hPtr, box.height, true);
       },
       save: () => ctx.save(),
+      alpha: (a) => {
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, Math.min(255, a)) / 255;
+      },
       clip: (x, y, w, h, radius) => {
         const box = snapRect(x, y, w, h);
         traceRoundRect(box.x, box.y, box.w, box.h,

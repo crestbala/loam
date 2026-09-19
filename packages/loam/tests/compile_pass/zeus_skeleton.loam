@@ -1,0 +1,52 @@
+// Skeleton shimmer is a directional band: it moves right between frames,
+// keeps the loop live, paints as clip + two gradients, and stops under
+// reduced motion.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn band_x() -> int {
+    // The first gradient op after the skeleton's fill is the band's left half.
+    let n = zeus.draw_count()
+    let mut i = 0
+    while i < n {
+        if zeus.draw_op(i) == 11 {
+            return zeus.draw_x(i)
+        }
+        i = i + 1
+    }
+    return -100000
+}
+
+fn main() {
+    zeus.window("skeleton", 320, 120)
+    zeus.root(zeus.Box(padding = 20) {
+        zeus.Skeleton(200, 14, 7)
+    })
+    zeus.pump_frame()
+    must(zeus.engine_find_role("progressbar") != 0, "role")
+    zeus.engine_paint()
+    let x0 = band_x()
+    must(x0 != -100000, "band painted")
+    must(zeus.engine_step_dt(200) != 0, "shimmer keeps the frame live")
+    zeus.engine_paint()
+    let x1 = band_x()
+    must(x1 > x0, "band moved right")
+    must(zeus.node_visible(zeus.engine_find_role("progressbar")) != 0, "opacity untouched")
+
+    zeus.engine_set_reduced_motion(1)
+    must(zeus.engine_step_dt(200) == 0, "reduced motion idles")
+    zeus.engine_paint()
+    let xr = band_x()
+    zeus.engine_step_dt(200)
+    zeus.engine_paint()
+    must(band_x() == xr, "band parked under reduced motion")
+    fmt.println("skeleton ok")
+}

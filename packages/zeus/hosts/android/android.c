@@ -14,7 +14,7 @@ int loam_app_main(void);
 
 static JavaVM *g_jvm;
 static jobject g_view;
-static jmethodID m_fill, m_fill_a, m_fill_g, m_shadow, m_stroke, m_fill4, m_xform, m_text, m_text_rot, m_save, m_clip, m_restore, m_svg, m_image, m_image_size, m_pick, m_measure, m_invalidate;
+static jmethodID m_fill, m_fill_a, m_fill_g, m_shadow, m_stroke, m_fill4, m_xform, m_text, m_text_rot, m_save, m_alpha, m_clip, m_restore, m_svg, m_image, m_image_size, m_pick, m_measure, m_invalidate;
 static JNIEnv *g_env;
 static jobject g_canvas;
 static int g_started;
@@ -125,6 +125,13 @@ static void draw_save(void *ctx) {
     (*env)->CallVoidMethod(env, g_view, m_save, g_canvas);
 }
 
+static void draw_alpha(void *ctx, int64_t a) {
+    JNIEnv *env = g_env;
+    (void)ctx;
+    if (!env || !g_view || !g_canvas || !m_alpha) return;
+    (*env)->CallVoidMethod(env, g_view, m_alpha, g_canvas, (jint)a);
+}
+
 static void draw_clip(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius) {
     JNIEnv *env = g_env;
     (void)ctx;
@@ -227,6 +234,7 @@ static void bind_canvas(void) {
     d.xform = draw_xform;
     d.text = draw_text;
     d.save = draw_save;
+    d.alpha = draw_alpha;
     d.clip = draw_clip;
     d.restore = draw_restore;
     d.svg = draw_svg;
@@ -243,6 +251,7 @@ static void cache_methods(JNIEnv *env, jobject thiz) {
     m_text_rot = (*env)->GetMethodID(env, cls, "jniTextRot",
                                      "(Landroid/graphics/Canvas;IILjava/lang/String;III)V");
     m_save = (*env)->GetMethodID(env, cls, "jniSave", "(Landroid/graphics/Canvas;)V");
+    m_alpha = (*env)->GetMethodID(env, cls, "jniAlpha", "(Landroid/graphics/Canvas;I)V");
     m_fill_g = (*env)->GetMethodID(env, cls, "jniFillG", "(Landroid/graphics/Canvas;IIIIIIIII)V");
     m_shadow = (*env)->GetMethodID(env, cls, "jniShadow", "(Landroid/graphics/Canvas;IIIIIIIIII)V");
     m_stroke = (*env)->GetMethodID(env, cls, "jniStroke", "(Landroid/graphics/Canvas;IIIIIIII)V");
@@ -341,6 +350,7 @@ JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativePaint(JNIEnv *env, jobj
     d.text = draw_text;
     d.text_rot = draw_text_rot;
     d.save = draw_save;
+    d.alpha = draw_alpha;
     d.clip = draw_clip;
     d.restore = draw_restore;
     d.svg = draw_svg;

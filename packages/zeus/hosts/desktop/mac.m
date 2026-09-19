@@ -311,6 +311,13 @@ static void mac_save(void *ctx) {
     [NSGraphicsContext saveGraphicsState];
 }
 
+static void mac_alpha(void *ctx, int64_t alpha) {
+    CGFloat a = alpha < 0 ? 0 : (alpha > 255 ? 1.0 : (CGFloat)alpha / 255.0);
+    (void)ctx;
+    [NSGraphicsContext saveGraphicsState];
+    CGContextSetAlpha([[NSGraphicsContext currentContext] CGContext], a);
+}
+
 static void mac_clip(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
                      int64_t radius) {
     NSRect r = NSMakeRect((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h);
@@ -1185,6 +1192,7 @@ static int mac_frame(int64_t vw, int64_t vh) {
     d.text = mac_text;
     d.text_rot = mac_text_rot;
     d.save = mac_save;
+    d.alpha = mac_alpha;
     d.clip = mac_clip;
     d.restore = mac_restore;
     d.svg = mac_svg;

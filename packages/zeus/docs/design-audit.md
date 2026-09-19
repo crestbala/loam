@@ -36,7 +36,7 @@ Present (`fn` in `zeus.loam`), with what each actually paints today.
 | `Dialog` / `AlertDialog` | `enter_fade` (opacity only) | Scrim is `Overlay` at opacity 80 with **no fade** — it pops. Panel fades but never scales in. Fixed `width = 440` (no responsive/small-screen path). No focus trap, no Esc, no edge-awareness. Outside-click works. |
 | `Tabs` / `Tab` / `Segmented` / `Choice` | selected via `selected_chrome` | Selection is an instant background swap on the trigger. **No indicator element at all**, so §3.5's "tabs indicator slide" has nothing to animate. No arrow-key navigation. |
 | `Navbar` / `NavTab` | selected pill | Fine structurally; no elevation on scroll, no mobile collapse. |
-| `TextInput` / `TextArea` / `Field` / `Input` | focus ring, caret, selection highlight | Caret is a 1px rect that **never blinks**. Selection highlight is a hardcoded `11053224` literal, not a theme role — wrong in dark. Placeholder exists via `raw_input`. No error/invalid state, no help text, no prefix/suffix slots, no clear button, no character count. |
+| `TextInput` / `TextArea` / `Field` / `Input` | focus ring, caret, selection highlight | Caret is a 1px rect that **never blinks**. Selection highlight is a hardcoded `11053224` literal, not a theme role — wrong in dark. Placeholder exists via `raw_input`. No error/invalid state, no help text, no prefix/suffix slots, no character count. **[clear button: batch 17]** |
 | `Select` / `SelectRow` | open/closed via `visible`, `enter_fade` | Menu is absolutely positioned at a hardcoded `top = SELECT_DROP (42)`, `width = SELECT_W (200)`, `z_index = 10`. **Not edge-aware** — near the viewport bottom it clips. No keyboard navigation, no typeahead, no Esc. |
 | `Checkbox` (kind 8) | `tween` 0..100 on the check mark | Tween is frame-count stepped `±10`/frame in `scene.step`. No indeterminate state, no invalid state. |
 | `Radio` / `RadioGroup` | selected dot | Dot swaps instantly (`selected_chrome`), no scale-in. No arrow-key roving focus. |
@@ -821,9 +821,10 @@ still jump. A floater re-opened mid-exit retargets from its current alpha.
   by an ancestor, exit-fade.
 - `Toast` now carries `enter_fade` on the card and sinks 12dp while fading
   out; `Drawer` slides off over `MOTION.Fast` instead of jumping to the edge.
-- Known limit, unchanged: there is no group opacity, so only the surface (fill /
-  svg / image) fades — text inside it stays opaque until the node is gone. That
-  is the same on entry and is the "Group / layer opacity" item below.
+- Known limit, later narrowed: there is no group opacity, so overlapping
+  translucent fills still double-darken. Descendant text/svg/image now inherit
+  `enter_fade` `show_amt` (batch 15). A Menu `on_select` snaps the exit so the
+  panel is gone the same frame.
 - Also in this batch: `Accordion` and `Menu` take their rows as data
   (`items = []AccordionRow` / `[]MenuRow`) with one `on_select(index)` callback
   on the Menu, instead of a trailing block of items. `Menu.active` is optional
@@ -1059,12 +1060,164 @@ Trailing block is the action slot (end of the row).
 `golden_scale_gallery` moved only the default Alert's stroke/icon/title
 to the info tokens.
 
+### Phase 4 — overlay exit: inherited fade + Menu pick snaps (batch 15)
+
+Closing a floater faded only the panel fill; child `Text` stayed at alpha 255
+until `show_amt` landed, so Menu / Popover labels sat on the heading after the
+white box was gone. `paint_alpha` now multiplies ancestor `enter_fade`
+`show_amt` (skipping the kind-9 scrim so Dialog does not square the fade),
+and text ops carry that alpha. Hosts apply it through `plat_alpha` at
+present-time — extra host calls, not extra draw-list ops, so
+`zeus_overlay_exit.loam`'s `draw_count` still holds.
+
+A Menu pick (`on_select` / Enter) jumps the exit instead: `snap_exit` writes
+`show_amt` 0 on the panel and every enter_fade node that shares its hide
+signal (the scrim). Escape and outside click still fade. `zeus_menu.loam`
+locks that the pick frame matches the closed draw count and leaves no track.
+
+### Phase 4 — Avatar status dot / group stack (batch 16)
+
+`Avatar` takes `status` (`TINT`, `-1` = none): a corner pip with a plate
+ring. `AvatarGroup(labels, size)` overlaps faces by a third of the diameter.
+`User` forwards `status`. `zeus_avatar.loam` locks the pip role and the
+overlap. Stat delta / Pagination ellipsis stay open.
+
+### Phase 4 — Input clear + Combobox type-to-select (batch 17)
+
+Mac/iOS type through `insertText`, not `key_ev`, so Combobox never opened on
+real typing (the test used `engine_key_ev`). `insert_text` now replays the
+field's `kdown` handler so the list opens and filters. The field is `z_index`
+61 so clicks on the box and on a match hit the combobox, not the outside-click
+scrim. Clicking a match writes it into the field.
+
+`TextInput` / `TextArea` / `Field` / `Combobox` show a Clear (X) while the
+value is non-empty. Cmd/Ctrl+A selects all (and no longer inserts "a") so
+Backspace clears. `zeus_combobox.loam` locks insert-to-open, click-to-pick,
+and Clear; `zeus_textarea.loam` locks Cmd+A and Field Clear.
+
+Floaters now paint and hit-test in `z_index` order (not tree order). Select /
+Combobox / Menu / Popover popups use 80, the trigger/field 50, the scrim 40,
+so a Select menu is not covered by a Combobox field that comes later in the
+card. `zeus_select.loam` clicks Medium through that overlap.
+
+### Phase 4 fix — z-ordered hit test regressions (batch 17.1)
+
+Two tests broke under batch 17: `zeus_focus` because the new Clear X was a
+tab stop between a non-empty field and the next control (it is pointer-only
+now; keyboard users clear with Cmd/Ctrl+A + Backspace), and
+`zeus_picker_lazy` because `Overlay` defaults to z 50 while the DatePicker
+sheet sat at z 20, so the z-sorted hit pass gave the scrim the day click.
+The picker now uses `Z_SCRIM` / `Z_POPUP` like Select. `zf_collect` also
+lost the scroll-offset accumulation and viewport gate the old tree walk did
+for kind-11 ancestors; the hit pass carries both again.
+
+### Phase 4 — Button states (batch 18)
+
+`icon` slot, `loading` signal (spinner takes the slot, 70% dim, inert),
+disabled fill swap, and press-scale: `press_scale` on the node schedules
+`ScalePct` to 97 from `sync_chrome` beside the press wash. The engine now
+swallows clicks and Enter / Space on disabled / loading nodes (`is_inert`);
+before, `enabled = false` only dimmed and still fired `on_click`.
+`zeus_button_states.loam` locks all four.
+
+### Phase 4 — Badge / Chip (batch 19)
+
+`Badge(dot = true)`, `BadgeCount(sig, kind, max)` (hidden at 0, `99+`),
+`Chip(dot = false, on_remove = …)`. `zeus_badge_chip.loam`.
+
+### Phase 4 — Stat delta / sparkline, Pagination ellipsis (batch 20)
+
+`Stat(delta, trend, spark)`: `TREND` arrow + tint row, `Sparkline` is an
+svg path built from a `Signal<[]int]` text thunk (a push repaints one node).
+`Pagination` past seven pages is seven fixed slots reading `page_at(cur,
+pages, slot)` — labels, chrome, and the click target are thunks of the page
+signal, so the row never rebuilds; ellipsis slots are inert
+(`More pages`). `zeus_stat_pagination.loam`.
+
+### Phase 4 — Progress easing + indeterminate, Slider knob (batch 21)
+
+`Progress` keeps the last state in `tween` and on a plain `set` calls
+`arena.anim_paint_from(sid, last, MOTION.Base)`: the signal's state lands at
+once (effects run once), the paint overlay tweens. A write made by
+`zeus.animate` is detected through `anim_bind_on()` and left to its own
+track (the anim bench relies on a 1,000,000 ms track surviving). A negative
+value marks the node `spin` (frame-loop liveness, reduced-motion aware)
+and kind 6 paints a sweeping 30% segment instead of rotating. Slider knob:
+shadow + 2dp hover grow, wash confined to the knob. `zeus_progress.loam`.
+
+### Phase 4 — Table (batch 22)
+
+`TableRowProps` (`zebra`, `hover`, `on_click`), `TableRowCols(cols, spec)`
+for per-column width + `align`, `TableCols(cols, sort = sig)` with
+`sortable` columns cycling none → asc → desc and an arrow on the sorted
+one. Zebra counts `row`-role siblings so a header does not shift the
+stripe. `TableHead` now shares the row gutter so header and cells line up.
+Truncation stays host-blocked. `zeus_table.loam`.
+
+### Phase 4 fix — sorting actually reorders rows (batch 22.1)
+
+Batch 22's header cycled the sort signal and nothing moved: the demo rows
+were static. Now `Table(spec, rows, cells, sort = …)` derives the shown
+order (`sort_cells`, numeric-aware, stable) and renders through a keyed
+`For`, so a sort moves nodes; `VirtualTable` takes `sort` for its header
+and the app sorts its `Signal<[]T>` (`sort_cells` / `sort_by`). Rows are
+structs with a `cells` mapper, not `[][]string`: pushing an inner array
+moves it out of the outer one in Loam, so nested arrays hollow out.
+
+Two compiler findings on the way. (1) A closure that *calls* a captured
+fn-typed local (`key(t)`) never recorded the capture — the call checker
+resolved the callee name without the ident path's capture pass — so the C
+body referenced an undeclared variable, in plain and generic fns alike.
+Fixed in `typecheck.c` (`closure_calls_captured_fn` golden). (2) A struct
+default that names a fn declared *later* in the file fails codegen with a
+missing `__as_fn` trampoline; declare handler defaults before the struct.
+`zeus_table_sort.loam`.
+
+### Phase 4 — Card (batch 23)
+
+`interactive` / `on_click` (role `button`, hover lift, press scale),
+`lift`, `title` / `subtitle` header, `media` strip (negative side margins
+bleed it to the edge), `footer` thunk. Hover lift is a node field: paint
+blends the resting `elev` shadow toward `lift` on the eased hover amount
+and skips the wash. Footer ordering needed a small engine addition: a
+node's `slot_into` redirects `ui_push` so the caller's trailing block lands
+in an inner body column while the returned node stays the shell.
+`zeus_card.loam`.
+
+### Phase 4 — Tabs indicator (batch 24)
+
+One plate box under the selected trigger, first child of the tray. Its
+`left` / `width` / `height` pins are signals bound through `prop_int`; a
+selection change `animate`s left and width (layout-tweened pins, batch 9.4)
+and the tray's `list_fn` refit hook re-places it with `ms = 0` after the
+first layout and on resize (the second layout in `engine_layout` applies
+it). Triggers pass `plain = 1` so `selected_chrome` only swaps the label
+colour. `zeus_tabs_indicator.loam`; `zeus_selection.loam` now tracks the
+label colour; `golden_scale_gallery` shows one indicator + shadow instead
+of three tab fills.
+
+### Phase 4 — Dialog scale-in + responsive width (batch 25)
+
+The card rests at 96% (`animate_scale`, jump at boot) and an effect on
+`open` scales it to 100 over `MOTION.Base` / back over `MOTION.Fast` under
+the exit fade; the scrim's fade was already there. Width is `width_pct(92)`
+capped by `max_width = 440`. `zeus_dialog_motion.loam`.
+
+### Phase 4 — Skeleton directional shimmer (batch 26)
+
+`Skeleton` now calls `pulse` (it never did — the gallery skeletons were
+static). `paint_alpha` no longer runs the alpha sawtooth; `paint_shimmer`
+clips to the box and sweeps two gradient halves (fill → plate → fill) 40%
+wide on `shimmer_phase` (1.6 s, per-node offset). Reduced motion parks the
+band and `pulse_live` idles. `zeus_skeleton.loam`; `golden_controls` gains
+the five band ops.
+
 ### Remaining work (living list)
 
 The single maintained tracker of what is still open. Update it in the same commit
 that closes an item, and tick a box rather than deleting the line, so the record
 of what was deferred stays readable. Landed so far: phases 1–3; phase 4 batches
-1–14.
+1–26.
 
 **Phase 4 — components still to build**
 
@@ -1082,30 +1235,37 @@ Rework, not new construction:
   hardcoded (`top = SELECT_DROP`), not edge-aware, and had no keyboard nav,
   typeahead, or Esc. **(batch 7)**
 
-Component upgrades the audit calls out in §1 — noted, but **not yet committed
-scope**:
+Component upgrades the audit calls out in §1 (all landed as of batch 26):
 
-- [ ] `Button`: press-scale, loading state, icon slot, disabled *styling*.
-- [ ] `Card`: hover lift, interactive variant, header / footer / media slots.
-- [ ] `Dialog`: scale-in + scrim fade, focus trap, Esc, responsive width.
-- [ ] `Tabs`: an indicator element + arrow-key nav.
-- [ ] `RadioGroup`: roving focus; `Slider`: knob shadow / hover / focus.
-- [ ] `Progress`: easing + indeterminate mode.
-- [ ] `Table`: zebra, row hover, sort affordance, per-cell alignment, truncation.
-- [ ] Charts: gridlines, axis labels, crosshair, tooltip, legend.
-- [x] `Alert`: info / success tier, dismiss, action slot; `Badge` / `Chip`:
-  dot / removable / count. **(batch 14: Alert only; Badge/Chip still open)**
-- [ ] `Avatar`: status dot / group stack; `Stat`: delta / sparkline;
-  `Pagination`: ellipsis.
-- [ ] `Skeleton` shimmer is a global frame-counter sawtooth, not directional.
+- [x] `Button`: press-scale, loading state, icon slot, disabled *styling*. **(batch 18)**
+- [x] `Card`: hover lift, interactive variant, header / footer / media slots. **(batch 23)**
+- [x] `Dialog`: scale-in + scrim fade, focus trap, Esc, responsive width.
+  **(batches 8, 11, 25)**
+- [x] `Tabs`: an indicator element + arrow-key nav. **(batches 10, 24)**
+- [x] `RadioGroup`: roving focus **(batch 10)**; `Slider`: knob shadow / hover
+  **(batch 21)**. The slider still uses the generic focus ring, not one on
+  the knob.
+- [x] `Progress`: easing + indeterminate mode. **(batch 21)**
+- [x] `Table`: zebra, row hover, sort affordance, per-cell alignment
+  **(batch 22)**. Truncation stays open under "Paint primitives" (no
+  ellipsis measure).
+- [x] Charts: gridlines, axis labels, crosshair, tooltip, legend. **(already
+  landed in the chart rework; the line was stale)**
+- [x] `Alert`: info / success tier, dismiss, action slot **(batch 14)**;
+  `Badge` / `Chip`: dot / removable / count **(batch 19)**.
+- [x] `Avatar`: status dot / group stack **(batch 16)**; `Stat`: delta /
+  sparkline; `Pagination`: ellipsis **(batch 20)**.
+- [x] `Skeleton` shimmer is a global frame-counter sawtooth, not directional.
+  **(batch 26)**
 
 **Paint primitives / host ops**
 
 - [ ] Per-corner radius. `plat_fill4` is implemented on all four hosts but
   *nothing emits it*; `UiNode.radius` is a single `u16`. Needs packed node
   fields (three more, or one packed value) — no new host op.
-- [ ] Group / layer opacity. Fading a subtree fades each node independently and
-  overlapping children double-darken; blocks a clean Dialog / Toast exit.
+- [ ] Group / layer opacity. Descendant fills and text inherit `enter_fade`
+  `show_amt` (batch 15), so overlay labels fade with the panel; overlapping
+  translucent fills still double-darken. A true save-layer is still open.
 - [ ] Text ellipsis / truncation. None exists, so table cells, select triggers,
   chips, and nav labels overflow. Needs an ellipsis measure.
 - [ ] Baseline alignment. `plat_text` anchors at the top-left of the line box, so
