@@ -85,15 +85,15 @@ Twelve scene op kinds (`scene.loam`) over fourteen host ops
 | Primitive | Status | Consequence |
 |---|---|---|
 | **Soft shadow** | **[CLOSED — phase 2 op; paint emits since phase 4 batch 4]** `plat_shadow`, `Box` / `Card.elevation` | No elevation is expressible at all. Cards, dialogs, popovers, switch thumbs, and menus are flat by construction. This is the single biggest reason the kit reads plain. Requires a new host op on all four backends. |
-| **Per-corner radius** | **[CLOSED — phase 2]** `plat_fill4` (the node field is still one `u16`; see §11) | No top-only rounded sheets, no tab-shaped triggers, no grouped button runs, no rounded-top table headers. |
+| **Per-corner radius** | **[CLOSED — phase 2 op; paint emits since batch 29]** `plat_fill4`, `Box.radius_top` / `radius_bottom`, `radius4` | No top-only rounded sheets, no tab-shaped triggers, no grouped button runs, no rounded-top table headers. Batch 29 gave `UiNode` four `u16` corner overrides (`radius` stays the uniform fallback), made `paint_fill_box` emit `plat_fill4` only when the resolved corners differ, and put the sheet shape on `Drawer`. |
 | **Anti-aliased strokes** | **[CLOSED — phase 2 op; paint path switched over in phase 4 batch 4]** `plat_stroke` | `border_w` is faked: `paint_fill_box` draws a **full-bleed filled rect in the border color underneath**, then insets the background fill by `border_w`. Consequences: a bordered node cannot have a translucent background (the border color shows through), a bordered node cannot have a gradient background *and* a correct border, and a border cannot be drawn without a background. There is no line/polyline op, so charts draw strokes as thin rects or hand-written SVG. No dashed lines. |
 | **Gradients** | **[PARTLY CLOSED — phase 2]** radius + alpha added; still 2 stops, 2 axes | `paint_fill_box` calls `fill_g(x, y, w, h, rgb, c1, 0)` — it drops `inner_r` entirely, so **any gradient background renders with square corners**. No radial, no conic, no >2 stops, no angle. |
 | **Clipping** | **[CLOSED — phase 2]** `plat_clip` takes a radius | Cannot clip to a rounded rect, so an image or gradient inside a rounded card has square corners. §3.3's accordion plan (animate a clip rect) works, but a rounded accordion body will not. |
 | **Opacity layers** | per-node only | `paint_alpha` multiplies a node's own alpha; there is **no group/layer opacity**, so fading a subtree fades each node independently and overlapping children double-darken. Dialog enter/exit and toast fades both need this. |
 | **Transforms** | **[CLOSED — phase 2]** `plat_xform` | No scale, translate, or rotate for boxes. §3.5's press-scale (0.98), dialog scale-in, tabs-indicator slide/scale, toast translate, and switch-thumb spring **all require this**. Today the only way to move something is to change `x`/`y`/`w`/`h`, which is a *layout* change — exactly what §3.3 forbids. |
-| **Text measure / ellipsis** | measure yes, ellipsis **no** | `metrics.measure` / `measure_wrap` are solid (in-tree via `std:font` when bound, host otherwise). But grep for `ellips`/`truncate` across zeus returns nothing. Overflowing text either wraps or overflows its box. Every table cell, select trigger, chip, and nav label is at risk. |
+| **Text measure / ellipsis** | measure yes, ellipsis **[CLOSED — batch 27]** | `metrics.measure` / `measure_wrap` are solid (in-tree via `std:font` when bound, host otherwise). `metrics.ellipsize` binary-searches the longest grapheme prefix plus `…` that fits, so an overflowing label truncates instead of running out its box. `Table` cells, `Select` triggers, `Chip`, `Tab`, and `NavTab` opt in with `Text(ellipsis = true)`. |
 | **Baseline alignment** | absent | `plat_text` anchors at the top-left of the line box; `paint_label` centers vertically by arithmetic (`(h - pad - th) / 2`). Mixed-size text on one row does not sit on a shared baseline — visible in `Stat`, `Badge`+`Text` rows, and chart axis labels. |
-| **Icon rendering** | SVG string re-parsed per draw | Each `Icon` ships a ~200-byte markup string through the draw list every frame, parsed by the host. No path cache, no stroke-width scaling with size, no two-tone icons. |
+| **Icon rendering** | SVG string re-parsed per draw | Each `Icon` ships a ~200-byte markup string through the draw list every frame, parsed by the host. No path cache, no stroke-width scaling with size, no two-tone icons. The host parsers are a line-only lucide subset — they **skip `A`/`a` arc commands** — so `IC_LOADER` is a 270° polyline, not an arc (batch 29); any future arc motif must be converted the same way until the parsers grow arc support. |
 
 ---
 
@@ -291,8 +291,10 @@ dark mode and a live RAM chip. It demonstrates components but not *matrices*:
 `Button` shows 6 looks × 3 sizes, but nothing else shows more than one size, and
 **no component shows its hover / pressed / focused / disabled / loading /
 invalid states side by side**. There is no accent picker (there is no accent to
-pick). Five per-host launchers exist (`macos`, `ios`, `android`, `frontend`,
-`backend`) plus `ZEUS_HEADLESS=1`.
+pick). Batch 28 added a **States** matrix and the **accent picker**; hover /
+pressed / focused states are still only reachable by using the control, not
+posed side by side. Five per-host launchers exist (`macos`, `ios`, `android`,
+`frontend`, `backend`) plus `ZEUS_HEADLESS=1`.
 
 Eight `draw_golden` fixtures: `golden_controls`, `golden_focus_ring`,
 `golden_app_scroll_bg`, `golden_textarea`, `golden_picker`, `golden_image`,
@@ -310,7 +312,8 @@ Ordered by what unblocks what:
    dialog scale-in, tabs-indicator slide, toast translate, and switch spring all
    need a paint-level transform; rounded gradients and rounded image clipping
    need radius plumbed into `fill_g` and a rounded-clip op; text overflow needs
-   an ellipsis measure. None of §3.5 or §4 can land first. Four new host ops,
+   an ellipsis measure. **(the ellipsis measure landed without a host op —
+   `metrics.ellipsize` is in-tree, batch 27)** None of §3.5 or §4 can land first. Four new host ops,
    identical on Cocoa / UIKit / Android Canvas / Canvas2D, look unavoidable —
    `shadow`, `transform push/pop`, `clip_rounded`, and a per-corner `radius4`
    variant of `fill`. I will keep the count to these and justify each in the
@@ -1212,12 +1215,63 @@ wide on `shimmer_phase` (1.6 s, per-node offset). Reduced motion parks the
 band and `pulse_live` idles. `zeus_skeleton.loam`; `golden_controls` gains
 the five band ops.
 
+### Phase 4 — text truncation (batch 27)
+
+The one visible paint gap the audit flagged: a label wider than its box ran
+out the side. `metrics.ellipsize` measures the ellipsis glyph once, then
+binary-searches the longest grapheme prefix (via `unicode.grapheme_start`)
+whose width plus the mark fits `max_w` — the cut is always a cluster boundary,
+so a combining mark or a ZWJ emoji is never split, and an empty string is
+returned only when not even the mark fits. It rides the existing measure
+(`std:font` in-tree or the host), so **no host op is involved**.
+
+`UiNode.ellipsis` is opt-in. `paint_label` truncates when `inner_w < tw` and
+`apply_label_wrap` refuses to wrap such a label; `row_can_absorb` also lets it
+take a row's deficit, so it narrows instead of pushing siblings onto a second
+line. `Text(label, ellipsis = true)` is the API; `Table` cells, `Select`
+triggers and rows, `Chip`, `Tab`, and `NavTab` opt in. Metrics only change
+when a label actually overflows, so `golden_controls` / `golden_menu` /
+`golden_feedback` are byte-identical.
+
+### Phase 4 — gallery states + accent picker (batch 28)
+
+Phase 5's gallery gap: it showed components, not the states they can be in.
+The Components page gains a **States** matrix — every `Button` look resting
+beside disabled, plus loading / icon; a field resting beside disabled and
+invalid — and the navbar gains the **accent picker** (`set_accent` already
+existed but nothing exposed it; the five brand ramps are now dots, and the
+ring marks the one in effect). Hover, press, and focus are live — the engine
+drives them from the pointer and the keyboard, and forcing them for a static
+pose would need paint overrides the model is not built for — so the matrix
+documents them as live rather than posing them.
+
+### Phase 4 — per-corner radius + the loading spinner (batch 29)
+
+`plat_fill4` existed on all four hosts but nothing emitted it, so no sheet,
+tab-shape, grouped run, or rounded-top header was expressible. `UiNode` now
+carries four `u16` corner overrides (`rad_tl/tr/br/bl`, `0xFFFF` = "use the
+uniform `radius`"); `int` is 32-bit in this tree, so a packed four-lane value
+would have needed `i64` and shift-safe lanes — four `u16`s cost the same and
+need no shifts. `paint_fill_box` resolves the four corners and switches to
+`plat_fill4` only when they differ, so an untouched node keeps its old op and
+every uniform golden is byte-identical. A per-corner surface with a border has
+no per-corner stroke op, so the border is painted as an outer `fill4` ring with
+the background inset by it (exact for the opaque surfaces that carry corners);
+the shadow uses the largest corner. `Box.radius_top` / `radius_bottom` and the
+chainable `radius4` / `radius_corner` are the API. The `Drawer` sheet now
+rounds only its inner edge, so the panel still meets the window edge square;
+`golden_drawer` was regenerated (fill/stroke → `fill4` ring).
+
+Same batch, the loading spinner never drew on any host: `IC_LOADER` was the one
+icon whose path used an SVG **arc** (`a9 9 …`), and every host's SVG parser is a
+line-only lucide subset that skips `A`/`a`. It is now a 19-chord 270° polyline
+(`M`/`L` only), within a tenth of a pixel of the arc at 16px.
+
 ### Remaining work (living list)
 
-The single maintained tracker of what is still open. Update it in the same commit
-that closes an item, and tick a box rather than deleting the line, so the record
-of what was deferred stays readable. Landed so far: phases 1–3; phase 4 batches
-1–26.
+The single maintained tracker of what is still open. Landed so far: phases 1–3;
+phase 4 batches 1–26 (component upgrades), 27 (text truncation), 28 (gallery
+states + accent picker), 29 (per-corner radius + loading spinner).
 
 **Phase 4 — components still to build**
 
@@ -1260,14 +1314,19 @@ Component upgrades the audit calls out in §1 (all landed as of batch 26):
 
 **Paint primitives / host ops**
 
-- [ ] Per-corner radius. `plat_fill4` is implemented on all four hosts but
+- [x] Per-corner radius. `plat_fill4` is implemented on all four hosts but
   *nothing emits it*; `UiNode.radius` is a single `u16`. Needs packed node
-  fields (three more, or one packed value) — no new host op.
+  fields (three more, or one packed value) — no new host op. **(batch 29: four
+  `u16` corner overrides, `paint_fill_box` emits `plat_fill4` when they differ;
+  `Box.radius_top` / `radius_bottom` / `radius4`; `Drawer` rounds its inner
+  edge)**
 - [ ] Group / layer opacity. Descendant fills and text inherit `enter_fade`
   `show_amt` (batch 15), so overlay labels fade with the panel; overlapping
   translucent fills still double-darken. A true save-layer is still open.
 - [ ] Text ellipsis / truncation. None exists, so table cells, select triggers,
-  chips, and nav labels overflow. Needs an ellipsis measure.
+  chips, and nav labels overflow. Needs an ellipsis measure. **(batch 27:
+  `metrics.ellipsize` + `Text(ellipsis = true)`; Table / Select / Chip / Tab /
+  NavTab opt in. In-tree, no host op.)**
 - [ ] Baseline alignment. `plat_text` anchors at the top-left of the line box, so
   mixed-size text on one row does not share a baseline.
 - [ ] Line / polyline / dashed op. Charts hand-roll strokes as thin rects; no
@@ -1322,6 +1381,8 @@ Component upgrades the audit calls out in §1 (all landed as of batch 26):
 
 - [ ] The gallery shows components, not *matrices*: no side-by-side
   hover / pressed / focused / disabled / loading / invalid states, and no accent
-  picker.
+  picker. **(batch 28: accent picker + a States matrix for the posed states;
+  hover / pressed / focused stay live — posing them needs a paint override the
+  shared model does not have)**
 - [ ] A `www/` design-system page.
 - [ ] The remaining `spec.md` design-system coverage.

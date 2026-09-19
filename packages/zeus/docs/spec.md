@@ -263,7 +263,8 @@ transform never runs the layout pass. `motion_scale` / `motion_rot` / … read t
 current value for tests. Continuous indicators are clock-driven, not tracks: a
 `Spinner` paints its rotation from the frame clock (deterministic on the first
 frame, settled under reduced motion), so nothing is scheduled or allocated per
-frame.
+frame. Its ring is a line-only polyline, because the host SVG parsers skip arc
+commands.
 
 **Feedback components:** `Spinner(size, color, period, label)` is an
 indeterminate `progressbar`; `Empty(icon, title, body)` is a centred empty state
@@ -321,6 +322,14 @@ paint-only `ScalePct` track (`press_scale`); the wash still paints. Disabled
 and loading nodes swallow pointer clicks and Enter / Space in the engine
 (`is_inert`), so no handler has to guard itself.
 
+**Accent.** `set_accent(ACCENT.<name>)` re-registers the twelve `A*` role
+slots in place, so every themed control follows on the next paint with no
+rebuild and no effect run — the same paint-time resolution that makes the
+light / dark switch free. `accent_choice()` reports the ramp in effect;
+`accent_count()` / `accent_name(i)` drive a picker and
+`accent_scale_light(i).s9` gives a swatch color. The gallery navbar is the
+reference picker.
+
 **Badge** takes `dot = true` for a leading pip; `BadgeCount(sig, kind, max)`
 is a round numeric pill hidden at 0 and capped at `max+`. **Chip** takes
 `dot = false` and `on_remove` (a trailing X, role `button`, label
@@ -354,7 +363,12 @@ index into the caller's `rows`. `VirtualTable(rows, cols, row_h, build,
 sort = sig)` wires the header the same way, and the app reorders its own
 signal in an effect (`rows.set(sort_cells(base, cells, sort.get()))`, or
 `sort_by` with a key fn) because the windowed list owns the row builder.
-Text truncation is still open (no ellipsis measure).
+Cells, select triggers and rows, chips, tabs, and nav items truncate with a
+trailing `…` (`Text(label, ellipsis = true)`). `metrics.ellipsize`
+binary-searches the longest grapheme prefix whose width plus the mark fits the
+content box, so the cut is never mid-cluster, and an ellipsized label also
+absorbs a row's deficit (`row_can_absorb`) instead of wrapping its siblings.
+It needs no host op: it rides the same measure as everything else.
 
 **Card** takes `interactive` / `on_click` (role `button`, hover lift to
 elevation 3 and press scale — both paint-only, the lift replaces the wash),
@@ -379,9 +393,11 @@ finger move does not schedule a hover wash.
 
 **Collapsible(open, title)** is one 0/1 signal: the header toggles it, the
 chevron rotates and the body fades on paint-only tracks (no card chrome unless
-asked for). **Drawer(open, side, size)** pins an edge panel into a full-window
-scrim and slides it on a paint-only transform; `SIDE.SideTop` / `SideBottom` are
-the sheet shape. Both close on outside click and Escape.
+asked for). **Drawer(open, side, size, radius)** pins an edge panel into a
+full-window scrim and slides it on a paint-only transform; `SIDE.SideTop` /
+`SideBottom` are the sheet shape, and the panel rounds only its inner edge
+(`radius`, default `RAD_XL`, `0` = square) so it still meets the window edge
+square. Both close on outside click and Escape.
 
 `Select(value, labels)` and `Combobox(text, options)` share the same anchored
 floater: the menu sits under the trigger, flips when there is no room, and
@@ -411,6 +427,15 @@ the border, so a bordered surface may be translucent or carry a gradient and
 still keep a correct border — the old under-fill forced an opaque background and
 inset the fill by `border_w`, which also shifted the hover wash and press
 overlay inward. Both now use the full radius. (Phase 4 batch 4.)
+
+**Per-corner radius.** `Box` takes `radius_top` / `radius_bottom` (round one
+edge's pair) on top of `radius`, and `radius4(tl, tr, br, bl)` /
+`radius_corner(node, corner, px)` set corners directly. `paint_fill_box`
+emits the per-corner host op (`plat_fill4`) only when the resolved corners
+differ, so a uniform box keeps the same fill it always had. A per-corner
+surface with a border has no per-corner stroke op, so the border is an outer
+`fill4` ring with the background inset by it (opaque surfaces); the shadow
+uses the largest corner. (Phase 4 batch 29.)
 
 ## Scaffold
 

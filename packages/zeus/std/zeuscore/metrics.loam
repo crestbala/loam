@@ -12,6 +12,7 @@
 
 import "platform.loam"
 import "std:font"
+import "std:unicode"
 
 /// Font bytes for in-tree metrics, or `""` when unbound.
 let mut metrics_font: string = ""
@@ -95,4 +96,79 @@ fn measure_wrap(s: string, px: int, max_w: int, w: &mut int, h: &mut int) {
         return
     }
     platform.plat_measure_wrap(s, px, max_w, w, h)
+}
+
+// --- ellipsis -------------------------------------------------------------
+
+/// `…` (U+2026) as UTF-8 bytes: one glyph, so an ellipsized label keeps a
+/// stable trailing width in every font that has it.
+fn ellipsis_mark() -> string {
+    return string_from_bytes([]int { 226, 128, 166 })
+}
+
+/// Bytes of `s` in `[a, b)`.
+fn sub_bytes(s: string, a: int, b: int) -> string {
+    let mut out = []int {}
+    let mut i = a
+    while i < b {
+        push(out, s[i])
+        i = i + 1
+    }
+    return string_from_bytes(out)
+}
+
+/// Truncate `s` to fit `max_w` at `px`, appending `…`, cutting only at a
+/// grapheme boundary so the result is always valid UTF-8. `full_w` is the
+/// pre-measured width of the whole string (a node's `tw`), so a caller that
+/// already measured it does not pay for a second pass. `w` / `h` receive the
+/// width and height of the returned string.
+///
+/// Returns `s` unchanged when it already fits, and `""` when not even the
+/// ellipsis glyph fits — an empty cell reads better than a mark that spills.
+fn ellipsize(s: string, px: int, max_w: int, full_w: int, w: &mut int, h: &mut int) -> string {
+    if s.len == 0 || full_w <= max_w {
+        *w = full_w
+        return s
+    }
+    let mark = ellipsis_mark()
+    let mut mw = 0
+    let mut mh = 0
+    measure(mark, px, &mut mw, &mut mh)
+    if max_w <= mw {
+        *w = 0
+        *h = mh
+        return ""
+    }
+    // Binary search the longest grapheme prefix that still leaves room for
+    // the mark. `grapheme_start` maps a cluster count to a byte offset.
+    let total = unicode.grapheme_count(s)
+    let mut lo = 0
+    let mut hi = total
+    while lo < hi {
+        let mid = (lo + hi + 1) / 2
+        let cand = sub_bytes(s, 0, unicode.grapheme_start(s, mid))
+        let mut cw = 0
+        let mut ch = 0
+        measure(cand, px, &mut cw, &mut ch)
+        if cw + mw <= max_w {
+            lo = mid
+        } else {
+            hi = mid - 1
+        }
+    }
+    let mut merged = []int {}
+    let cut = unicode.grapheme_start(s, lo)
+    for i in 0..cut {
+        push(merged, s[i])
+    }
+    for i in 0..mark.len {
+        push(merged, mark[i])
+    }
+    let res = string_from_bytes(merged)
+    let mut rw = 0
+    let mut rh = 0
+    measure(res, px, &mut rw, &mut rh)
+    *w = rw
+    *h = rh
+    return res
 }
