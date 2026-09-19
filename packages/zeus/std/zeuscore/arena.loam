@@ -1784,6 +1784,148 @@ fn mark_paint_id(id: int) {
     push(dirty_paint, id)
 }
 
+// --- frame damage list (Phase 1) -------------------------------------------
+// The window-space rects a frame must repaint, consumed by the rasterizer to
+// rasterize only the tiles they touch, and by the blit to present only their
+// region. One frame's worth is accumulated between frame boundaries:
+// `damage_frame_begin` forgets the last frame, structural passes call
+// `damage_all`, and paint adds a rect for every node it visits inside a
+// paint-dirty subtree. Expansion is deliberately generous — a rect that is too
+// small leaves a visible trail, one that is too large only costs fill rate.
+
+/// Analytic AA coverage reaches one device pixel past a shape's edge.
+const AA_BLEED: int = 1
+
+struct Damage {
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+}
+
+let mut damage: []Damage = []Damage {}
+/// 1 = repaint the whole surface (layout, tree rebuild, resize, or an unknown
+/// global change). Wins over the per-node rects.
+let mut damage_full: int = 0
+/// > 0 while paint is inside a paint-dirty subtree; every node painted then
+/// contributes its rect, so a dirty container damages its descendants too.
+let mut damage_cap: int = 0
+/// 1 = a frame is open (its damage is being accumulated). Set on the first of
+/// layout / paint in a frame, cleared when paint has presented it.
+let mut damage_open: int = 0
+
+/// Begin a frame's damage. Called by both `engine_layout` and `engine_paint`,
+/// so a paint-only frame damages correctly and a layout-then-paint frame does
+/// not reset the layout's `damage_all` between the two.
+fn damage_frame_begin() {
+    if damage_open != 0 {
+        return
+    }
+    damage_open = 1
+    while damage.len > 0 {
+        pop(damage)
+    }
+    damage_full = 0
+    damage_cap = 0
+}
+
+/// The frame has been presented; the next frame starts fresh. The list is left
+/// readable until then so a consumer (rasterizer / blit / test) can inspect it.
+fn damage_frame_end() {
+    damage_open = 0
+}
+
+/// Repaint everything. The safe answer whenever geometry could have moved, or a
+/// change is not known to be local.
+fn damage_all() {
+    damage_full = 1
+}
+
+fn damage_add(x: int, y: int, w: int, h: int) {
+    if w <= 0 {
+        return
+    }
+    if h <= 0 {
+        return
+    }
+    push(damage, Damage { x: x, y: y, w: w, h: h })
+}
+
+/// How far a node's paint can reach past its box: its resolved shadow (blur
+/// plus offset), any paint-transform travel, and AA bleed. Painting never
+/// changes layout, so all of this is read from the node as it stands.
+fn damage_node_pad(id: int) -> int {
+    let mut p = AA_BLEED
+    let e = int(nodes[id].elev)
+    if e > 0 {
+        let v = elev_now(e)
+        p = p + v.blur
+        if v.dx < 0 {
+            p = p - v.dx
+        } else {
+            p = p + v.dx
+        }
+        if v.dy < 0 {
+            p = p - v.dy
+        } else {
+            p = p + v.dy
+        }
+    }
+    let tx = int(nodes[id].an_tx)
+    let ty = int(nodes[id].an_ty)
+    if tx < 0 {
+        p = p - tx
+    } else {
+        p = p + tx
+    }
+    if ty < 0 {
+        p = p - ty
+    } else {
+        p = p + ty
+    }
+    // A scale above 100% grows the box from its center, half the growth a side.
+    let sc = int(nodes[id].an_scale)
+    if sc > 100 {
+        let gx = nodes[id].w * (sc - 100) / 200
+        let gy = nodes[id].h * (sc - 100) / 200
+        if gx > p {
+            p = gx
+        }
+        if gy > p {
+            p = gy
+        }
+    }
+    return p
+}
+
+/// Paint-time capture. `x`/`y` are the node's window-space draw origin — the
+/// same numbers the draw list records — and `w`/`h` its box. Called for every
+/// node paint visits; only nodes inside a dirty subtree are recorded.
+fn damage_visit(id: int, x: int, y: int, w: int, h: int) {
+    if damage_cap <= 0 {
+        return
+    }
+    // A full repaint already covers every rect; recording them too would just
+    // grow the buffer (16 B per damaged node) for nothing.
+    if damage_full != 0 {
+        return
+    }
+    let p = damage_node_pad(id)
+    damage_add(x - p, y - p, w + 2 * p, h + 2 * p)
+}
+
+/// 1 while nothing at all has been recorded for this frame. Paint uses this to
+/// fall back to a full repaint when something dirty was marked without a node.
+fn damage_empty() -> int {
+    if damage_full != 0 {
+        return 0
+    }
+    if damage.len != 0 {
+        return 0
+    }
+    return 1
+}
+
 fn mark_chrome() {
     chrome_dirty = 1
 }
@@ -1935,6 +2077,16 @@ fn mark_scroll() {
     }
 }
 
+/// A scroller's offset changed: the global scroll flags plus the scroller's own
+/// PAINT bit. Marking the node is what makes damage capture cover its clipped
+/// rect and everything it paints, so a scroll repaints locally instead of
+/// needing a full-surface fallback (and cannot be masked by another node's
+/// dirty mark).
+fn mark_scroll_node(id: int) {
+    mark_scroll()
+    mark_paint_id(id)
+}
+
 fn mark_layout() {
     layout_dirty = 1
     paint_dirty = 1
@@ -2050,7 +2202,7 @@ fn mem_misc_bytes() -> i64 {
     ints = ints + free_nodes.len + drop_pool.len + dirty_paint.len
     ints = ints + zf_id.len + zf_z.len + zf_sx.len + zf_sy.len
     ints = ints + scroll_save.len + scroll_save_x.len
-    return i64(ints) * sz
+    return i64(ints) * sz + i64(damage.len) * i64(__sizeof(damage[0]))
 }
 
 /// Arena bytes across every bucket above (the draw list lives in `scene`).
@@ -3208,6 +3360,7 @@ fn physics_step() -> int {
             if ay.dirty != 0 {
                 dirty = 1
                 bar_on(i)
+                mark_paint_id(i)
                 if nodes[i].bind_sig > 0 {
                     store_sig_paint(nodes[i].bind_sig, ay.pos)
                 }
@@ -3215,6 +3368,7 @@ fn physics_step() -> int {
             if ax.dirty != 0 {
                 dirty = 1
                 bar_on(i)
+                mark_paint_id(i)
             }
         }
     }
@@ -3319,7 +3473,7 @@ fn apply_delta_y(id: int, dy: int, momentum: int) -> int {
     }
     nodes[id].scroll_y = ny
     bar_on(id)
-    mark_scroll()
+    mark_scroll_node(id)
     if nodes[id].bind_sig > 0 {
         store_sig_paint(nodes[id].bind_sig, ny)
     }
@@ -3353,7 +3507,7 @@ fn apply_delta_x(id: int, dx: int, momentum: int) -> int {
     }
     nodes[id].scroll_x = nx
     bar_on(id)
-    mark_scroll()
+    mark_scroll_node(id)
     return 1
 }
 
@@ -3378,7 +3532,7 @@ fn clamp_scroll(id: int) {
     if nodes[id].scroll_y > my {
         nodes[id].scroll_y = my
     }
-    mark_scroll()
+    mark_scroll_node(id)
 }
 
 /// Fade window for the thumb, in ms, and how long it lingers at full opacity

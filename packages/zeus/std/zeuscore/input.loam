@@ -549,7 +549,7 @@ fn drag(px: int, py: int) -> int {
         }
         arena.nodes[arena.drag_id].scroll_x = nx
         arena.bar_on(arena.drag_id)
-        arena.mark_scroll()
+        arena.mark_scroll_node(arena.drag_id)
         return 1
     }
     let maxs = arena.scroll_max(arena.drag_id)
@@ -565,7 +565,7 @@ fn drag(px: int, py: int) -> int {
     }
     arena.nodes[arena.drag_id].scroll_y = ny
     arena.bar_on(arena.drag_id)
-    arena.mark_scroll()
+    arena.mark_scroll_node(arena.drag_id)
     return 1
 }
 

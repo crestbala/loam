@@ -462,7 +462,27 @@ fn paint_scrollbar(id: int) {
 
 /// Paint a node, applying its animated paint transform first. The transform
 /// comes from paint-only tracks, so nothing here can move the layout box.
+/// Paint a node's subtree. Wraps the shaped pass with damage capture: a node
+/// whose PAINT bit is set opens a capture, so it and every node painted inside
+/// it contribute a damage rect. A dirty container must repaint its children —
+/// they composite over its new fill — so the capture covers the subtree, not
+/// just the node.
 fn paint_node(id: int) {
+    if id <= 0 {
+        return
+    }
+    if arena.want_paint(id) == 0 {
+        return
+    }
+    let cap_prev = arena.damage_cap
+    if (int(arena.nodes[id].dirty) & 1) != 0 {
+        arena.damage_cap = arena.damage_cap + 1
+    }
+    paint_node_shaped(id)
+    arena.damage_cap = cap_prev
+}
+
+fn paint_node_shaped(id: int) {
     if id <= 0 {
         return
     }
@@ -538,6 +558,9 @@ fn paint_node_body(id: int) {
     let y = arena.draw_y(id)
     let w = arena.nodes[id].w
     let h = arena.nodes[id].h
+    // Damage capture: the node's own rect, in the same window space the draw
+    // list records, expanded for shadow / transform / AA.
+    arena.damage_visit(id, x, y, w, h)
     if k == 9 {
         if arena.nodes[id].bg >= 0 {
             fill_a(x, y, w, h, arena.paint_rgb(arena.nodes[id].bg), 0, arena.paint_alpha(id))
@@ -820,6 +843,7 @@ fn paint_floaters(id: int) {
 
 fn paint() {
     arena.ensure()
+    arena.damage_frame_begin()
     // The first paint completes the first frame: tracks scheduled before it have
     // already settled to their final value (cold boot, audit §10).
     arena.anim_booted = 1
@@ -828,6 +852,7 @@ fn paint() {
         // correct. Re-present it — every host blits the whole surface — but
         // skip the tree walk and all the resolution it would redo.
         present()
+        arena.damage_frame_end()
         return
     }
     let n = draws.len
@@ -843,8 +868,15 @@ fn paint() {
             paint_floaters(arena.root_id)
         }
     }
+    // A dirty frame that recorded nothing painted locally — a global mark
+    // (scrollbar fade, an unmarked global write) — falls back to a full
+    // repaint. Under-damaging is the one failure that leaves a visible trail.
+    if arena.damage_empty() != 0 {
+        arena.damage_all()
+    }
     present()
     arena.clear_dirty()
+    arena.damage_frame_end()
 }
 
 fn step(dt: int) -> int {
