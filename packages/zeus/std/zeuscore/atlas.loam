@@ -941,8 +941,8 @@ fn str_intern(s: string) -> int {
     let mut i = str_hash_of(s)
     let mut guard = 0
     while guard < STR_TABLE_CAP {
-        let sid = str_ht[i]
-        if sid == -1 {
+        let signal_id = str_ht[i]
+        if signal_id == -1 {
             if str_key.len >= STR_TABLE_CAP {
                 str_overflow = str_overflow + 1
                 return -1
@@ -952,8 +952,8 @@ fn str_intern(s: string) -> int {
             push(str_key, s)
             return id
         }
-        if str_key[sid] == s {
-            return sid
+        if str_key[signal_id] == s {
+            return signal_id
         }
         i = (i + 1) % STR_TABLE_CAP
         guard = guard + 1
@@ -986,15 +986,15 @@ fn meas_init() {
     }
 }
 
-/// Cached measurement for (sid, font, size): 1 on hit, with `w`/`h` written.
-fn meas_get(sid: int, font: int, size: int, w: &mut int, h: &mut int) -> int {
+/// Cached measurement for (signal_id, font, size): 1 on hit, with `w`/`h` written.
+fn meas_get(signal_id: int, font: int, size: int, w: &mut int, h: &mut int) -> int {
     meas_init()
-    if sid < 0 {
+    if signal_id < 0 {
         return 0
     }
     let mut i = 0
     while i < MEAS_CACHE_CAP {
-        if meas_sid[i] == sid {
+        if meas_sid[i] == signal_id {
             if meas_font[i] == font {
                 if meas_size[i] == size {
                     meas_clock = meas_clock + 1
@@ -1012,16 +1012,16 @@ fn meas_get(sid: int, font: int, size: int, w: &mut int, h: &mut int) -> int {
     return 0
 }
 
-fn meas_put(sid: int, font: int, size: int, w: int, h: int) {
+fn meas_put(signal_id: int, font: int, size: int, w: int, h: int) {
     meas_init()
-    if sid < 0 {
+    if signal_id < 0 {
         return
     }
     meas_clock = meas_clock + 1
     // Update in place when present.
     let mut i = 0
     while i < MEAS_CACHE_CAP {
-        if meas_sid[i] == sid {
+        if meas_sid[i] == signal_id {
             if meas_font[i] == font {
                 if meas_size[i] == size {
                     meas_w[i] = w
@@ -1034,7 +1034,7 @@ fn meas_put(sid: int, font: int, size: int, w: int, h: int) {
         i = i + 1
     }
     if meas_n < MEAS_CACHE_CAP {
-        meas_sid[meas_n] = sid
+        meas_sid[meas_n] = signal_id
         meas_font[meas_n] = font
         meas_size[meas_n] = size
         meas_w[meas_n] = w
@@ -1054,7 +1054,7 @@ fn meas_put(sid: int, font: int, size: int, w: int, h: int) {
         }
         i = i + 1
     }
-    meas_sid[victim] = sid
+    meas_sid[victim] = signal_id
     meas_font[victim] = font
     meas_size[victim] = size
     meas_w[victim] = w

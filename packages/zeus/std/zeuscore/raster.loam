@@ -738,18 +738,18 @@ fn raster_clip_global(axis: int, bound: float, keep_ge: int) {
     }
     let mut i = 0
     while i < n {
-        let cur = rp_clip_a[i]
+        let current_value = rp_clip_a[i]
         let nxt = rp_clip_a[(i + 1) % n]
-        let cv = raster_coord(cur, axis)
+        let cv = raster_coord(current_value, axis)
         let nv = raster_coord(nxt, axis)
         let cin = raster_in_keep(cv, bound, keep_ge)
         let nin = raster_in_keep(nv, bound, keep_ge)
         if cin == 1 {
-            push(rp_clip_out, cur)
+            push(rp_clip_out, current_value)
         }
         if cin != nin {
             let t = (bound - cv) / (nv - cv)
-            push(rp_clip_out, RPoint { x: cur.x + t * (nxt.x - cur.x), y: cur.y + t * (nxt.y - cur.y) })
+            push(rp_clip_out, RPoint { x: current_value.x + t * (nxt.x - current_value.x), y: current_value.y + t * (nxt.y - current_value.y) })
         }
         i = i + 1
     }

@@ -2439,10 +2439,10 @@ fn jpg_sof(s: string, o: int, L: int) -> int {
     return 1
 }
 
-fn jpg_comp_of(cid: int) -> int {
+fn jpg_comp_of(component_id: int) -> int {
     let mut i = 0
     while i < jpg_ncomp {
-        if jpg_cid[i] == cid {
+        if jpg_cid[i] == component_id {
             return i
         }
         i = i + 1

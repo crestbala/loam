@@ -53,7 +53,7 @@ struct UiNode {
     h: int,
     iw: int,
     ih: int,
-    nid: int,
+    node_id: int,
     m_t: int,
     m_r: int,
     m_b: int,
@@ -271,8 +271,8 @@ let mut appearance_sid: int = 0
 let mut inited: int = 0
 let mut theme_l: []int = []int {}
 let mut theme_d: []int = []int {}
-let mut szbuf: []int = []int {}
-let mut szlay: []int = []int {}
+let mut size_buffer: []int = []int {}
+let mut size_layout: []int = []int {}
 let mut focus_id: int = 0
 let mut focus_at: int = -1
 let mut chain_nodes: []int = []int {}
@@ -368,10 +368,10 @@ let mut live_anchors: int = 0
 /// Floater stack for one paint / hit pass. `z_index` is only a boolean in
 /// `is_floater`; these lists sort by the numeric value so a Select menu
 /// (80) paints over a later Combobox field (50).
-let mut zf_id: []int = []int {}
-let mut zf_z: []int = []int {}
-let mut zf_sx: []int = []int {}
-let mut zf_sy: []int = []int {}
+let mut floater_id: []int = []int {}
+let mut floater_z: []int = []int {}
+let mut floater_screen_x: []int = []int {}
+let mut floater_screen_y: []int = []int {}
 /// Nodes with an indeterminate spin (`Spinner`) currently alive.
 let mut spin_count: int = 0
 /// Component-function runs (`Component`) and reactive-effect runs (`track.run`)
@@ -410,7 +410,7 @@ fn blank_node() -> UiNode {
         text: "", bind_sig: 0, click_sig: 0, click_mode: 0, click_set: 0,
         click2_sig: 0, click2_mode: 0, click2_set: 0,
         show_sig: 0, show_mode: 0, show_val: 0, show_on: 1, hover_sig: 0,
-        x: 0, y: 0, w: 0, h: 0, iw: 0, ih: 0, nid: 0, pos: 0, overflow: 0,
+        x: 0, y: 0, w: 0, h: 0, iw: 0, ih: 0, node_id: 0, pos: 0, overflow: 0,
         opacity: 100, span: 1, grid_cols: 0, grid_min: 0,
         m_t: 0, m_r: 0, m_b: 0, m_l: 0, border_w: 0, border_c: -1,
         gap_row: 0, gap_col: 0, aspect_w: 0, aspect_h: 0,
@@ -548,11 +548,11 @@ fn ensure() {
     anim_ensure()
 }
 
-/// Enter a rebuild scope: allocations from now on are owned by `nid`.
+/// Enter a rebuild scope: allocations from now on are owned by `node_id`.
 /// Returns the previous scope so the caller can restore it after the build.
-fn scope_begin(nid: int) -> int {
+fn scope_begin(node_id: int) -> int {
     let prev = scope_node
-    scope_node = nid
+    scope_node = node_id
     return prev
 }
 
@@ -577,24 +577,24 @@ fn record_intern(id: int, owner: int) {
 /// rebuilding the keep-list on every release was O(all records) per chart
 /// refit, which is what made window-resize frames crawl once the catalog
 /// accumulated records.
-fn release_sigs(nid: int) {
+fn release_sigs(node_id: int) {
     let n = rec_owner.len
     if n == 0 {
         return
     }
     let mut i = 0
     while i < rec_owner.len {
-        if rec_owner[i] == nid {
-            let sid = rec_sid[i]
+        if rec_owner[i] == node_id {
+            let signal_id = rec_sid[i]
             let last = rec_owner.len - 1
             rec_owner[i] = rec_owner[last]
             rec_sid[i] = rec_sid[last]
             pop(rec_owner)
             pop(rec_sid)
-            platform.plat_sig_free(sid)
-            forget_sig_meta(sid)
-            track.drop_sig(sid)
-            anim_drop_sig(sid)
+            platform.plat_sig_free(signal_id)
+            forget_sig_meta(signal_id)
+            track.drop_sig(signal_id)
+            anim_drop_sig(signal_id)
         } else {
             i = i + 1
         }
@@ -602,21 +602,21 @@ fn release_sigs(nid: int) {
 }
 
 /// Free every interned handler a node's rebuilds created, in one pass.
-fn release_fns(nid: int) {
+fn release_fns(node_id: int) {
     let n = rec_fowner.len
     if n == 0 {
         return
     }
     let mut i = 0
     while i < rec_fowner.len {
-        if rec_fowner[i] == nid {
-            let fid = rec_fid[i]
+        if rec_fowner[i] == node_id {
+            let fn_id = rec_fid[i]
             let last = rec_fowner.len - 1
             rec_fowner[i] = rec_fowner[last]
             rec_fid[i] = rec_fid[last]
             pop(rec_fowner)
             pop(rec_fid)
-            platform.plat_intern_free(fid)
+            platform.plat_intern_free(fn_id)
         } else {
             i = i + 1
         }
@@ -625,18 +625,18 @@ fn release_fns(nid: int) {
 
 // --- keyed-list identity ---
 // Keyed `For` mounts one child per unique key and reuses it across reorders,
-// so focus and per-row state survive a move. `kh_node[i]` is the top-level
-// child mounted for `kh_key[i]` under host `kh_host[i]`; entries live only
+// so focus and per-row state survive a move. `keyed_node[i]` is the top-level
+// child mounted for `keyed_key[i]` under host `keyed_host[i]`; entries live only
 // while the host is alive (cleared by `key_clear` on teardown).
-let mut kh_host: []int = []int {}
-let mut kh_key: []string = []string {}
-let mut kh_node: []int = []int {}
+let mut keyed_host: []int = []int {}
+let mut keyed_key: []string = []string {}
+let mut keyed_node: []int = []int {}
 
 fn key_index(host: int, k: string) -> int {
     let mut i = 0
-    while i < kh_host.len {
-        if kh_host[i] == host {
-            if kh_key[i] == k {
+    while i < keyed_host.len {
+        if keyed_host[i] == host {
+            if keyed_key[i] == k {
                 return i
             }
         }
@@ -650,25 +650,25 @@ fn key_node(host: int, k: string) -> int {
     if i < 0 {
         return 0
     }
-    return kh_node[i]
+    return keyed_node[i]
 }
 
 fn key_set(host: int, k: string, node: int) {
     let i = key_index(host, k)
     if i >= 0 {
-        kh_node[i] = node
+        keyed_node[i] = node
         return
     }
-    push(kh_host, host)
-    push(kh_key, k)
-    push(kh_node, node)
+    push(keyed_host, host)
+    push(keyed_key, k)
+    push(keyed_node, node)
 }
 
 fn key_count(host: int) -> int {
     let mut c = 0
     let mut i = 0
-    while i < kh_host.len {
-        if kh_host[i] == host {
+    while i < keyed_host.len {
+        if keyed_host[i] == host {
             c = c + 1
         }
         i = i + 1
@@ -678,15 +678,15 @@ fn key_count(host: int) -> int {
 
 fn key_clear(host: int) {
     let mut i = 0
-    while i < kh_host.len {
-        if kh_host[i] == host {
-            let last = kh_host.len - 1
-            kh_host[i] = kh_host[last]
-            kh_key[i] = kh_key[last]
-            kh_node[i] = kh_node[last]
-            pop(kh_host)
-            pop(kh_key)
-            pop(kh_node)
+    while i < keyed_host.len {
+        if keyed_host[i] == host {
+            let last = keyed_host.len - 1
+            keyed_host[i] = keyed_host[last]
+            keyed_key[i] = keyed_key[last]
+            keyed_node[i] = keyed_node[last]
+            pop(keyed_host)
+            pop(keyed_key)
+            pop(keyed_node)
         } else {
             i = i + 1
         }
@@ -768,9 +768,9 @@ fn reset_tree() {
     rec_fowner = []int {}
     free_nodes = []int {}
     drop_pool = []int {}
-    kh_host = []int {}
-    kh_key = []string {}
-    kh_node = []int {}
+    keyed_host = []int {}
+    keyed_key = []string {}
+    keyed_node = []int {}
     anim_reset()
     mark_tree()
 }
@@ -865,7 +865,7 @@ fn mark() -> ArenaMark {
         nodes: nodes.len, sigs: sigs.len, free: free_nodes.len,
         rec_s: rec_sid.len, rec_o: rec_owner.len,
         rec_f: rec_fid.len, rec_fo: rec_fowner.len,
-        kh: kh_host.len, khk: kh_key.len, khn: kh_node.len,
+        kh: keyed_host.len, khk: keyed_key.len, khn: keyed_node.len,
         scope: scope_node, root: root_id, focus: focus_id,
         down: down_id, drag: drag_id, drag_bar: drag_bar,
     }
@@ -893,9 +893,9 @@ fn release(m: ArenaMark) {
     while rec_owner.len > m.rec_o { pop(rec_owner) }
     while rec_fid.len > m.rec_f { pop(rec_fid) }
     while rec_fowner.len > m.rec_fo { pop(rec_fowner) }
-    while kh_host.len > m.kh { pop(kh_host) }
-    while kh_key.len > m.khk { pop(kh_key) }
-    while kh_node.len > m.khn { pop(kh_node) }
+    while keyed_host.len > m.kh { pop(keyed_host) }
+    while keyed_key.len > m.khk { pop(keyed_key) }
+    while keyed_node.len > m.khn { pop(keyed_node) }
     while sigs.len > m.sigs { pop(sigs) }
     while free_nodes.len > m.free { pop(free_nodes) }
     while nodes.len > m.nodes { pop(nodes) }
@@ -915,28 +915,28 @@ fn rollback(id: int, m: ArenaMark) {
     release(m)
 }
 
-/// Mark `sid` as layout-affecting: a later write re-runs the layout solve.
-fn mark_sig_layout(sid: int) {
-    if sid <= 0 {
+/// Mark `signal_id` as layout-affecting: a later write re-runs the layout solve.
+fn mark_sig_layout(signal_id: int) {
+    if signal_id <= 0 {
         return
     }
-    if sid >= sigs.len {
+    if signal_id >= sigs.len {
         return
     }
-    while affects_layout.len <= sid {
+    while affects_layout.len <= signal_id {
         push(affects_layout, 0)
     }
-    affects_layout[sid] = 1
+    affects_layout[signal_id] = 1
 }
 
 /// Drop the flag when a signal slot is freed, so a recycled id does not carry
 /// a stale layout mark onto an unrelated value.
-fn forget_sig_meta(sid: int) {
-    if sid <= 0 {
+fn forget_sig_meta(signal_id: int) {
+    if signal_id <= 0 {
         return
     }
-    if sid < affects_layout.len {
-        affects_layout[sid] = 0
+    if signal_id < affects_layout.len {
+        affects_layout[signal_id] = 0
     }
 }
 
@@ -1026,7 +1026,7 @@ enum APROP {
     // Mounted-surface fade 0..100 (UiNode.show_amt).
     EnterFade = 4,
     // 5 was the scrollbar fade; the thumb shows and hides in one frame now.
-    // Signal paint overlay (sig_paint[sid]).
+    // Signal paint overlay (sig_paint[signal_id]).
     SigVal = 6,
     // Paint transform / appearance, all paint-only (no layout pass reads them):
     // scale percent (100 = identity).
@@ -1051,7 +1051,7 @@ struct Track {
     prop: int,
     from: int,
     to: int,
-    cur: int,
+    current_value: int,
     elapsed: int,
     dur: int,
     easing: int,
@@ -1073,12 +1073,12 @@ let mut in_anim_tick: int = 0
 const LAYOUT_ANIM_CAP: int = 64
 
 struct LayoutAnim {
-    nid: int,
+    node_id: int,
     setter: int,
     from: int,
     to: int,
-    cur: int,
-    sid: int,
+    current_value: int,
+    signal_id: int,
     live: int,
     done: int,
 }
@@ -1094,7 +1094,7 @@ fn anim_ensure() {
         return
     }
     for i in 0..TRACK_CAP {
-        push(tracks, Track { node: 0, prop: 0, from: 0, to: 0, cur: 0, elapsed: 0, dur: 0, easing: 0, state: 0 })
+        push(tracks, Track { node: 0, prop: 0, from: 0, to: 0, current_value: 0, elapsed: 0, dur: 0, easing: 0, state: 0 })
     }
     let mut i = 0
     while i < TRACK_CAP {
@@ -1323,7 +1323,7 @@ fn anim_reduced() -> int {
 /// once instead.
 fn anim_schedule(node: int, prop: int, to: int, dur: int, easing: int) {
     anim_ensure()
-    let cur = anim_read(node, prop)
+    let current_value = anim_read(node, prop)
     let i = anim_find(node, prop)
     // Jump instead of animating before the first frame completes (cold boot),
     // for a zero duration, or under reduced motion.
@@ -1356,15 +1356,15 @@ fn anim_schedule(node: int, prop: int, to: int, dur: int, easing: int) {
         if tracks[i].to == to {
             return
         }
-        tracks[i].from = cur
-        tracks[i].cur = cur
+        tracks[i].from = current_value
+        tracks[i].current_value = current_value
         tracks[i].to = to
         tracks[i].elapsed = 0
         tracks[i].dur = dur
         tracks[i].easing = easing
         return
     }
-    if cur == to {
+    if current_value == to {
         return
     }
     let slot = anim_alloc()
@@ -1375,8 +1375,8 @@ fn anim_schedule(node: int, prop: int, to: int, dur: int, easing: int) {
     }
     tracks[slot].node = node
     tracks[slot].prop = prop
-    tracks[slot].from = cur
-    tracks[slot].cur = cur
+    tracks[slot].from = current_value
+    tracks[slot].current_value = current_value
     tracks[slot].to = to
     tracks[slot].elapsed = 0
     tracks[slot].dur = dur
@@ -1411,9 +1411,9 @@ fn anim_radius(node: int, to: int, ms: int) {
 }
 
 
-fn anim_bind_begin(sid: int) {
+fn anim_bind_begin(signal_id: int) {
     in_anim_bind = 1
-    anim_bind_sid = sid
+    anim_bind_sid = signal_id
 }
 
 fn anim_bind_end() {
@@ -1432,7 +1432,7 @@ fn layout_anim_ensure() {
     let mut i = 0
     while i < LAYOUT_ANIM_CAP {
         push(layout_anims, LayoutAnim {
-            nid: 0, setter: 0, from: 0, to: 0, cur: 0, sid: 0, live: 0, done: 0,
+            node_id: 0, setter: 0, from: 0, to: 0, current_value: 0, signal_id: 0, live: 0, done: 0,
         })
         i = i + 1
     }
@@ -1441,7 +1441,7 @@ fn layout_anim_ensure() {
 /// Record a layout prop that an in-flight `animate` just wrote. Keeps the
 /// node at `from` and tweens toward `to` on the signal's track. Returns 1
 /// when the write was intercepted (caller must not apply `to` this frame).
-fn layout_anim_push(nid: int, setter: int, from: int, to: int) -> int {
+fn layout_anim_push(node_id: int, setter: int, from: int, to: int) -> int {
     if in_anim_bind == 0 {
         return 0
     }
@@ -1449,15 +1449,15 @@ fn layout_anim_push(nid: int, setter: int, from: int, to: int) -> int {
         return 0
     }
     layout_anim_ensure()
-    let sid = anim_bind_sid
+    let signal_id = anim_bind_sid
     let mut i = 0
     while i < layout_anims.len {
         if layout_anims[i].live != 0 {
-            if layout_anims[i].nid == nid {
+            if layout_anims[i].node_id == node_id {
                 if layout_anims[i].setter == setter {
-                    layout_anims[i].from = layout_anims[i].cur
+                    layout_anims[i].from = layout_anims[i].current_value
                     layout_anims[i].to = to
-                    layout_anims[i].sid = sid
+                    layout_anims[i].signal_id = signal_id
                     layout_anims[i].done = 0
                     return 1
                 }
@@ -1468,12 +1468,12 @@ fn layout_anim_push(nid: int, setter: int, from: int, to: int) -> int {
     i = 0
     while i < layout_anims.len {
         if layout_anims[i].live == 0 {
-            layout_anims[i].nid = nid
+            layout_anims[i].node_id = node_id
             layout_anims[i].setter = setter
             layout_anims[i].from = from
             layout_anims[i].to = to
-            layout_anims[i].cur = from
-            layout_anims[i].sid = sid
+            layout_anims[i].current_value = from
+            layout_anims[i].signal_id = signal_id
             layout_anims[i].live = 1
             layout_anims[i].done = 0
             live_layout_anims = live_layout_anims + 1
@@ -1484,22 +1484,22 @@ fn layout_anim_push(nid: int, setter: int, from: int, to: int) -> int {
     return 0
 }
 
-fn layout_anim_advance(sid: int, shaped: int) {
+fn layout_anim_advance(signal_id: int, shaped: int) {
     if live_layout_anims == 0 {
         return
     }
     let mut i = 0
     while i < layout_anims.len {
         if layout_anims[i].live != 0 {
-            if layout_anims[i].sid == sid {
+            if layout_anims[i].signal_id == signal_id {
                 let a = layout_anims[i]
-                let mut cur = a.from + (a.to - a.from) * shaped / 1000
+                let mut current_value = a.from + (a.to - a.from) * shaped / 1000
                 let mut done = 0
                 if shaped >= 1000 {
-                    cur = a.to
+                    current_value = a.to
                     done = 1
                 }
-                layout_anims[i].cur = cur
+                layout_anims[i].current_value = current_value
                 layout_anims[i].done = done
                 layout_anim_moved = 1
                 mark_layout()
@@ -1544,14 +1544,14 @@ fn live_layout_anims_count() -> int {
 /// then interpolate its paint value on the track pool. A layout prop that
 /// the same write lands on (width / height / a pin) stays at `from` and
 /// tweens toward `to` on this track, reflowing each frame until it lands.
-fn anim_signal(sid: int, to: int, ms: int) {
-    if sid <= 0 {
+fn anim_signal(signal_id: int, to: int, ms: int) {
+    if signal_id <= 0 {
         return
     }
-    if sid >= sigs.len {
+    if signal_id >= sigs.len {
         return
     }
-    let from = sig_val(sid)
+    let from = sig_val(signal_id)
     let mut jump = 0
     if anim_booted == 0 {
         jump = 1
@@ -1563,22 +1563,22 @@ fn anim_signal(sid: int, to: int, ms: int) {
         jump = 1
     }
     if jump == 0 {
-        anim_bind_begin(sid)
+        anim_bind_begin(signal_id)
     }
-    store_sig(sid, to)
+    store_sig(signal_id, to)
     anim_bind_end()
     if from == to {
         return
     }
     sig_paint_fit()
-    if sid < sig_paint.len {
-        sig_paint[sid] = from
-        sig_anim[sid] = 1
+    if signal_id < sig_paint.len {
+        sig_paint[signal_id] = from
+        sig_anim[signal_id] = 1
     }
-    anim_schedule(sid, APROP.SigVal, to, ms, ease_standard())
+    anim_schedule(signal_id, APROP.SigVal, to, ms, ease_standard())
     // Pool full or a jump inside `anim_schedule`: land layout props now.
-    if anim_find(sid, APROP.SigVal) < 0 {
-        layout_anim_advance(sid, 1000)
+    if anim_find(signal_id, APROP.SigVal) < 0 {
+        layout_anim_advance(signal_id, 1000)
     }
 }
 
@@ -1610,7 +1610,7 @@ fn anim_tick(dt: int) -> int {
             let e = a.elapsed + dt
             let is_sig = a.prop == APROP.SigVal
             if e >= dur {
-                tracks[i].cur = a.to
+                tracks[i].current_value = a.to
                 tracks[i].elapsed = dur
                 tracks[i].state = 0
                 anim_active = anim_active - 1
@@ -1622,8 +1622,8 @@ fn anim_tick(dt: int) -> int {
             } else {
                 tracks[i].elapsed = e
                 let shaped = anim_ease(a.easing, e * 1000 / dur)
-                tracks[i].cur = a.from + (a.to - a.from) * shaped / 1000
-                anim_store(a.node, a.prop, tracks[i].cur)
+                tracks[i].current_value = a.from + (a.to - a.from) * shaped / 1000
+                anim_store(a.node, a.prop, tracks[i].current_value)
                 if is_sig {
                     layout_anim_advance(a.node, shaped)
                 }
@@ -1661,7 +1661,7 @@ fn anim_free_pool(ids: []int) {
     i = 0
     while i < layout_anims.len {
         if layout_anims[i].live != 0 {
-            if member(layout_anims[i].nid, ids) != 0 {
+            if member(layout_anims[i].node_id, ids) != 0 {
                 layout_anims[i].live = 0
                 live_layout_anims = live_layout_anims - 1
             }
@@ -1671,19 +1671,19 @@ fn anim_free_pool(ids: []int) {
 }
 
 /// Drop the paint overlay for a signal that is being freed.
-fn anim_drop_sig(sid: int) {
-    if sid <= 0 {
+fn anim_drop_sig(signal_id: int) {
+    if signal_id <= 0 {
         return
     }
-    if sid < sig_anim.len {
-        sig_anim[sid] = 0
-        sig_paint[sid] = 0
+    if signal_id < sig_anim.len {
+        sig_anim[signal_id] = 0
+        sig_paint[signal_id] = 0
     }
     let mut i = 0
     while i < tracks.len {
         if tracks[i].state == 1 {
             if tracks[i].prop == APROP.SigVal {
-                if tracks[i].node == sid {
+                if tracks[i].node == signal_id {
                     tracks[i].state = 0
                     anim_active = anim_active - 1
                     push(track_free, i)
@@ -1757,11 +1757,11 @@ fn sync_chrome() {
             anim_schedule(i, APROP.HoverAmt, over, motion_fast(), ease_standard())
         }
         if int(nodes[i].press) != 0 {
-            let mut tgt = 0
+            let mut target_value = 0
             if down_id == i {
-                tgt = 100
+                target_value = 100
             }
-            anim_schedule(i, APROP.PressAmt, tgt, motion_fast(), ease_standard())
+            anim_schedule(i, APROP.PressAmt, target_value, motion_fast(), ease_standard())
             if int(nodes[i].press_scale) != 0 {
                 let mut sc = 100
                 if down_id == i {
@@ -1772,25 +1772,25 @@ fn sync_chrome() {
         }
         let k = int(nodes[i].kind)
         if k == 7 {
-            let mut tgt = 0
+            let mut target_value = 0
             if bind_pct(i) > 0 {
-                tgt = 100
+                target_value = 100
             }
             if nodes[i].tween < 0 {
-                nodes[i].tween = tgt
+                nodes[i].tween = target_value
             } else {
-                anim_schedule(i, APROP.SwitchTween, tgt, motion_base(), ease_spring())
+                anim_schedule(i, APROP.SwitchTween, target_value, motion_base(), ease_spring())
             }
         }
         if k == 8 {
-            let mut tgt = 0
+            let mut target_value = 0
             if sig_val(nodes[i].bind_sig) != 0 {
-                tgt = 100
+                target_value = 100
             }
             if nodes[i].tween < 0 {
-                nodes[i].tween = tgt
+                nodes[i].tween = target_value
             } else {
-                anim_schedule(i, APROP.SwitchTween, tgt, motion_base(), ease_spring())
+                anim_schedule(i, APROP.SwitchTween, target_value, motion_base(), ease_spring())
             }
         }
         if int(nodes[i].enter_fade) != 0 {
@@ -2028,7 +2028,7 @@ fn shimmer_phase(id: int) -> int {
     if reduced != 0 {
         return 333
     }
-    return ((now_ms + nodes[id].nid * 120) % SHIMMER_MS) * 1000 / SHIMMER_MS
+    return ((now_ms + nodes[id].node_id * 120) % SHIMMER_MS) * 1000 / SHIMMER_MS
 }
 
 fn pulse_live() -> int {
@@ -2086,14 +2086,14 @@ fn clear_spin(id: int) {
 /// over `ms`, without writing the signal. `Progress` uses it so a plain
 /// `value.set(80)` eases instead of jumping; an in-flight tween retargets
 /// from where it is.
-fn anim_paint_from(sid: int, from: int, ms: int) {
-    if sid <= 0 {
+fn anim_paint_from(signal_id: int, from: int, ms: int) {
+    if signal_id <= 0 {
         return
     }
-    if sid >= sigs.len {
+    if signal_id >= sigs.len {
         return
     }
-    let to = sigs[sid]
+    let to = sigs[signal_id]
     let mut jump = 0
     if anim_booted == 0 {
         jump = 1
@@ -2108,19 +2108,19 @@ fn anim_paint_from(sid: int, from: int, ms: int) {
         return
     }
     sig_paint_fit()
-    if sid >= sig_paint.len {
+    if signal_id >= sig_paint.len {
         return
     }
     let mut f = from
-    if sig_anim[sid] != 0 {
-        f = sig_paint[sid]
+    if sig_anim[signal_id] != 0 {
+        f = sig_paint[signal_id]
     }
     if f == to {
         return
     }
-    sig_paint[sid] = f
-    sig_anim[sid] = 1
-    anim_schedule(sid, APROP.SigVal, to, ms, ease_standard())
+    sig_paint[signal_id] = f
+    sig_anim[signal_id] = 1
+    anim_schedule(signal_id, APROP.SigVal, to, ms, ease_standard())
 }
 
 fn spin_live() -> int {
@@ -2199,7 +2199,7 @@ fn alloc_node(kind: int) -> int {
         pop(free_nodes)
         nodes[id] = blank_node()
         nodes[id].kind = u8(kind)
-        nodes[id].nid = id
+        nodes[id].node_id = id
         return id
     }
     // Hard ceiling (Phase 2): refuse to grow past `node_cap`. Loud, once, and
@@ -2215,7 +2215,7 @@ fn alloc_node(kind: int) -> int {
     }
     let mut n = blank_node()
     n.kind = u8(kind)
-    n.nid = nodes.len
+    n.node_id = nodes.len
     push(nodes, n)
     return nodes.len - 1
 }
@@ -2261,7 +2261,7 @@ fn mem_live_nodes() -> int {
 /// Bytes held by the node store: the `nodes` slot vector plus every node's
 /// child-index vector. Those are the only per-node allocations in the tree.
 fn mem_tree_bytes() -> i64 {
-    let sz = i64(__sizeof(nodes[0].nid))
+    let sz = i64(__sizeof(nodes[0].node_id))
     let mut b = i64(nodes.len) * i64(__sizeof(nodes[0]))
     for i in 1..nodes.len {
         b = b + i64(nodes[i].kids.len) * sz
@@ -2276,16 +2276,16 @@ fn mem_sig_bytes() -> i64 {
 
 /// Bytes held by the rebuild-scope / keyed-`For` interning tables.
 fn mem_intern_bytes() -> i64 {
-    let sz = i64(__sizeof(nodes[0].nid))
+    let sz = i64(__sizeof(nodes[0].node_id))
     let ssz = i64(__sizeof(nodes[0].text))
-    let ints = rec_sid.len + rec_owner.len + rec_fid.len + rec_fowner.len + kh_host.len + kh_node.len
-    return i64(ints) * sz + i64(kh_key.len) * ssz
+    let ints = rec_sid.len + rec_owner.len + rec_fid.len + rec_fowner.len + keyed_host.len + keyed_node.len
+    return i64(ints) * sz + i64(keyed_key.len) * ssz
 }
 
 /// Bytes held by the animation tables (tracks, their free list, and the paint
 /// / layout anim side lists).
 fn mem_anim_bytes() -> i64 {
-    let sz = i64(__sizeof(nodes[0].nid))
+    let sz = i64(__sizeof(nodes[0].node_id))
     let ints = track_free.len + sig_paint.len + sig_anim.len
     let a = i64(tracks.len) * i64(__sizeof(tracks[0]))
     let b = i64(layout_anims.len) * i64(__sizeof(layout_anims[0]))
@@ -2296,11 +2296,11 @@ fn mem_anim_bytes() -> i64 {
 /// scroll snapshots, floater stacks, dirty lists, and free lists. Phase 2 splits
 /// these between the persistent and scratch arenas; Phase 0 only measures them.
 fn mem_misc_bytes() -> i64 {
-    let sz = i64(__sizeof(nodes[0].nid))
-    let mut ints = theme_l.len + theme_d.len + szbuf.len + szlay.len
+    let sz = i64(__sizeof(nodes[0].node_id))
+    let mut ints = theme_l.len + theme_d.len + size_buffer.len + size_layout.len
     ints = ints + chain_nodes.len + chain_ctxs.len + focus_ring.len
     ints = ints + free_nodes.len + drop_pool.len + dirty_paint.len
-    ints = ints + zf_id.len + zf_z.len + zf_sx.len + zf_sy.len
+    ints = ints + floater_id.len + floater_z.len + floater_screen_x.len + floater_screen_y.len
     ints = ints + scroll_save.len + scroll_save_x.len
     return i64(ints) * sz + i64(damage.len) * i64(__sizeof(damage[0]))
 }
@@ -2686,35 +2686,35 @@ fn fills_cross(c: int, row: int) -> int {
     return 0
 }
 
-fn sz_fit(n: int) {
-    let have = szbuf.len
+fn size_fit(n: int) {
+    let have = size_buffer.len
     if n > have {
         let extra = n - have
         for i in 0..extra {
-            push(szbuf, 0)
+            push(size_buffer, 0)
         }
     }
-    let have2 = szlay.len
+    let have2 = size_layout.len
     if n > have2 {
         let extra = n - have2
         for i in 0..extra {
-            push(szlay, 0)
+            push(size_layout, 0)
         }
     }
 }
 
-/// Copy szbuf into szlay so nested flex layout can reuse szbuf.
-fn sz_commit(n: int) {
-    sz_fit(n)
-    let have = szlay.len
+/// Copy size_buffer into size_layout so nested flex layout can reuse size_buffer.
+fn size_commit(n: int) {
+    size_fit(n)
+    let have = size_layout.len
     if n > have {
         let extra = n - have
         for i in 0..extra {
-            push(szlay, 0)
+            push(size_layout, 0)
         }
     }
     for i in 0..n {
-        szlay[i] = szbuf[i]
+        size_layout[i] = size_buffer[i]
     }
 }
 
@@ -2817,18 +2817,18 @@ fn snap_exit(id: int) {
     if id <= 0 {
         return
     }
-    let mut cur = id
+    let mut current_value = id
     let mut host = 0
     let mut guard = 0
-    while cur > 0 {
-        if cur >= nodes.len {
+    while current_value > 0 {
+        if current_value >= nodes.len {
             break
         }
-        if int(nodes[cur].enter_fade) != 0 {
-            host = cur
+        if int(nodes[current_value].enter_fade) != 0 {
+            host = current_value
             break
         }
-        cur = nodes[cur].parent
+        current_value = nodes[current_value].parent
         guard = guard + 1
         if guard > 64 {
             break
@@ -2880,13 +2880,13 @@ fn shown_in_tree(id: int) -> int {
     if id <= 0 {
         return 0
     }
-    let mut cur = id
+    let mut current_value = id
     let mut guard = 0
-    while cur > 0 {
-        if want_show(cur) == 0 {
+    while current_value > 0 {
+        if want_show(current_value) == 0 {
             return 0
         }
-        cur = nodes[cur].parent
+        current_value = nodes[current_value].parent
         guard = guard + 1
         if guard > 64 {
             break
@@ -3400,8 +3400,8 @@ fn physics_axis(pos: int, vel: int, maxs: int) -> Axis {
 /// One frame toward a wheel target: 35 % of the gap, at least 1 px, so a
 /// 100 px notch lands in ~11 frames and never stalls short. Returns the new
 /// position; the caller clears the bit when it equals the target.
-fn smooth_axis(pos: int, tgt: int) -> int {
-    let d = tgt - pos
+fn smooth_axis(pos: int, target_value: int) -> int {
+    let d = target_value - pos
     if d == 0 {
         return pos
     }
@@ -3957,24 +3957,24 @@ fn is_floater(id: int) -> int {
     return 0
 }
 
-fn zf_clear() {
-    let n = zf_id.len
+fn floater_clear() {
+    let n = floater_id.len
     for i in 0..n {
-        pop(zf_id)
-        pop(zf_z)
-        pop(zf_sx)
-        pop(zf_sy)
+        pop(floater_id)
+        pop(floater_z)
+        pop(floater_screen_x)
+        pop(floater_screen_y)
     }
 }
 
-fn zf_push(id: int, sx: int, sy: int) {
-    push(zf_id, id)
-    push(zf_z, int(nodes[id].z_index))
-    push(zf_sx, sx)
-    push(zf_sy, sy)
+fn floater_push(id: int, sx: int, sy: int) {
+    push(floater_id, id)
+    push(floater_z, int(nodes[id].z_index))
+    push(floater_screen_x, sx)
+    push(floater_screen_y, sy)
 }
 
-fn zf_collect(id: int, sx: int, sy: int, paint: int) {
+fn floater_collect(id: int, sx: int, sy: int, paint: int) {
     if id <= 0 {
         return
     }
@@ -3988,7 +3988,7 @@ fn zf_collect(id: int, sx: int, sy: int, paint: int) {
         }
     }
     if is_floater(id) != 0 {
-        zf_push(id, sx, sy)
+        floater_push(id, sx, sy)
         return
     }
     let mut cx = sx
@@ -4008,45 +4008,45 @@ fn zf_collect(id: int, sx: int, sy: int, paint: int) {
     }
     let nk = nodes[id].kids.len
     for i in 0..nk {
-        zf_collect(nodes[id].kids[i], cx, cy, paint)
+        floater_collect(nodes[id].kids[i], cx, cy, paint)
     }
 }
 
-fn zf_swap(i: int, j: int) {
-    let id = zf_id[i]
-    let z = zf_z[i]
-    let sx = zf_sx[i]
-    let sy = zf_sy[i]
-    zf_id[i] = zf_id[j]
-    zf_z[i] = zf_z[j]
-    zf_sx[i] = zf_sx[j]
-    zf_sy[i] = zf_sy[j]
-    zf_id[j] = id
-    zf_z[j] = z
-    zf_sx[j] = sx
-    zf_sy[j] = sy
+fn floater_swap(i: int, j: int) {
+    let id = floater_id[i]
+    let z = floater_z[i]
+    let sx = floater_screen_x[i]
+    let sy = floater_screen_y[i]
+    floater_id[i] = floater_id[j]
+    floater_z[i] = floater_z[j]
+    floater_screen_x[i] = floater_screen_x[j]
+    floater_screen_y[i] = floater_screen_y[j]
+    floater_id[j] = id
+    floater_z[j] = z
+    floater_screen_x[j] = sx
+    floater_screen_y[j] = sy
 }
 
 /// Insertion sort. `desc` 1 = high z first (hit-test), 0 = low z first (paint).
-fn zf_sort(desc: int) {
-    let n = zf_id.len
+fn floater_sort(desc: int) {
+    let n = floater_id.len
     for i in 1..n {
         let mut j = i
         while j > 0 {
             let mut swap = 0
             if desc != 0 {
-                if zf_z[j - 1] < zf_z[j] {
+                if floater_z[j - 1] < floater_z[j] {
                     swap = 1
                 }
             } else {
-                if zf_z[j - 1] > zf_z[j] {
+                if floater_z[j - 1] > floater_z[j] {
                     swap = 1
                 }
             }
             if swap == 0 {
                 break
             }
-            zf_swap(j - 1, j)
+            floater_swap(j - 1, j)
             j = j - 1
         }
     }

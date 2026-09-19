@@ -38,7 +38,7 @@ fn flex_grow_shrink(id: int, extra: int, row: int) -> int {
                 if arena.axis_frozen(c, row) == 0 {
                     if arena.nodes[c].grow > 0 {
                         let add = extra * arena.nodes[c].grow / growsum
-                        arena.szbuf[i] = arena.szbuf[i] + add
+                        arena.size_buffer[i] = arena.size_buffer[i] + add
                         left = left - add
                         last = i
                     }
@@ -46,7 +46,7 @@ fn flex_grow_shrink(id: int, extra: int, row: int) -> int {
             }
         }
         if last >= 0 {
-            arena.szbuf[last] = arena.szbuf[last] + left
+            arena.size_buffer[last] = arena.size_buffer[last] + left
             return 0
         }
         return extra
@@ -57,7 +57,7 @@ fn flex_grow_shrink(id: int, extra: int, row: int) -> int {
         if arena.skip_flow(c) == 0 {
             if arena.axis_frozen(c, row) == 0 {
                 if arena.nodes[c].shrink > 0 {
-                    if arena.szbuf[i] > 0 {
+                    if arena.size_buffer[i] > 0 {
                         shrinksum = shrinksum + arena.nodes[c].shrink
                     }
                 }
@@ -74,13 +74,13 @@ fn flex_grow_shrink(id: int, extra: int, row: int) -> int {
         if arena.skip_flow(c) == 0 {
             if arena.axis_frozen(c, row) == 0 {
                 if arena.nodes[c].shrink > 0 {
-                    if arena.szbuf[i] > 0 {
+                    if arena.size_buffer[i] > 0 {
                         let cut = need * arena.nodes[c].shrink / shrinksum
-                        if cut > arena.szbuf[i] {
-                            left = left - arena.szbuf[i]
-                            arena.szbuf[i] = 0
+                        if cut > arena.size_buffer[i] {
+                            left = left - arena.size_buffer[i]
+                            arena.size_buffer[i] = 0
                         } else {
-                            arena.szbuf[i] = arena.szbuf[i] - cut
+                            arena.size_buffer[i] = arena.size_buffer[i] - cut
                             left = left - cut
                         }
                     }
@@ -463,17 +463,17 @@ fn layout_flex_row(id: int) {
     if nflow <= 0 {
         return
     }
-    arena.sz_fit(nk)
+    arena.size_fit(nk)
     let iw = arena.inner_w(id)
     let ih = arena.inner_h(id)
     let gx = arena.gap_x(id)
     let mut fixed = gx * geometry.max2(nflow - 1, 0)
     for i in 0..nk {
         let c = arena.nodes[id].kids[i]
-        arena.szbuf[i] = 0
+        arena.size_buffer[i] = 0
         if arena.skip_flow(c) == 0 {
-            arena.szbuf[i] = row_child_w(id, c, iw)
-            fixed = fixed + arena.szbuf[i] + arena.nodes[c].m_l + arena.nodes[c].m_r
+            arena.size_buffer[i] = row_child_w(id, c, iw)
+            fixed = fixed + arena.size_buffer[i] + arena.nodes[c].m_l + arena.nodes[c].m_r
         }
     }
     let mut extra = iw - fixed
@@ -488,7 +488,7 @@ fn layout_flex_row(id: int) {
     }
     extra = flex_grow_shrink(id, extra, 1)
     for i in 0..nk {
-        arena.nodes[arena.nodes[id].kids[i]].aw = arena.szbuf[i]
+        arena.nodes[arena.nodes[id].kids[i]].aw = arena.size_buffer[i]
     }
     let mut ox = 0
     let mut between = 0
@@ -593,7 +593,7 @@ fn row_flex_absorb(id: int, nk: int, extra: int) -> int {
                 if arena.nodes[c].min_w >= 0 {
                     floor = arena.nodes[c].min_w
                 }
-                let room = arena.szbuf[i] - floor
+                let room = arena.size_buffer[i] - floor
                 if room > 0 {
                     cap = cap + room
                 }
@@ -616,10 +616,10 @@ fn row_flex_absorb(id: int, nk: int, extra: int) -> int {
                 if arena.nodes[c].min_w >= 0 {
                     floor = arena.nodes[c].min_w
                 }
-                let room = arena.szbuf[i] - floor
+                let room = arena.size_buffer[i] - floor
                 if room > 0 {
                     let cut = need * room / cap
-                    arena.szbuf[i] = arena.szbuf[i] - cut
+                    arena.size_buffer[i] = arena.size_buffer[i] - cut
                     left = left - cut
                     last = i
                 }
@@ -627,7 +627,7 @@ fn row_flex_absorb(id: int, nk: int, extra: int) -> int {
         }
     }
     if last >= 0 {
-        arena.szbuf[last] = arena.szbuf[last] - left
+        arena.size_buffer[last] = arena.size_buffer[last] - left
     }
     return 0
 }
@@ -742,7 +742,7 @@ fn layout_flex_row_wrap(id: int) {
     let gy = arena.gap_y(id)
     let x0 = arena.content_x(id)
     let y0 = arena.content_y(id)
-    arena.sz_fit(nk)
+    arena.size_fit(nk)
     let mut x = 0
     let mut line_h = 0
     let mut line_start = 0
@@ -817,14 +817,14 @@ fn layout_flex_col(id: int) {
     if nflow <= 0 {
         return
     }
-    arena.sz_fit(nk)
+    arena.size_fit(nk)
     let iw = arena.inner_w(id)
     let ih = arena.inner_h(id)
     let gy = arena.gap_y(id)
     let mut fixed = gy * geometry.max2(nflow - 1, 0)
     for i in 0..nk {
         let c = arena.nodes[id].kids[i]
-        arena.szbuf[i] = 0
+        arena.size_buffer[i] = 0
         if arena.skip_flow(c) == 0 {
             let avail = iw - arena.nodes[c].m_l - arena.nodes[c].m_r
             let mut cw = arena.sized_w(c, iw, 0)
@@ -845,8 +845,8 @@ fn layout_flex_col(id: int) {
                     ch = wh
                 }
             }
-            arena.szbuf[i] = ch
-            fixed = fixed + arena.szbuf[i] + arena.nodes[c].m_t + arena.nodes[c].m_b
+            arena.size_buffer[i] = ch
+            fixed = fixed + arena.size_buffer[i] + arena.nodes[c].m_t + arena.nodes[c].m_b
         }
     }
     let mut extra = ih - fixed
@@ -857,7 +857,7 @@ fn layout_flex_col(id: int) {
     }
     extra = flex_grow_shrink(id, extra, 0)
     for i in 0..nk {
-        arena.nodes[arena.nodes[id].kids[i]].ah = arena.szbuf[i]
+        arena.nodes[arena.nodes[id].kids[i]].ah = arena.size_buffer[i]
     }
     let mut oy = 0
     let mut between = 0

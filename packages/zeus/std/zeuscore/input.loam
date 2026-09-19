@@ -11,7 +11,7 @@ import "platform.loam"
 import "std:unicode"
 
 struct Click {
-    sid: int,
+    signal_id: int,
     mode: int,
     setv: int,
 }
@@ -27,12 +27,12 @@ fn hit_floaters(id: int, px: int, py: int) -> int {
     if id <= 0 {
         return 0
     }
-    arena.zf_clear()
-    arena.zf_collect(id, 0, 0, 0)
-    arena.zf_sort(1)
-    let n = arena.zf_id.len
+    arena.floater_clear()
+    arena.floater_collect(id, 0, 0, 0)
+    arena.floater_sort(1)
+    let n = arena.floater_id.len
     for i in 0..n {
-        let h = hit_one_floater(arena.zf_id[i], arena.zf_sx[i], arena.zf_sy[i])
+        let h = hit_one_floater(arena.floater_id[i], arena.floater_screen_x[i], arena.floater_screen_y[i])
         if h != 0 {
             return h
         }
@@ -251,15 +251,15 @@ fn click(px: int, py: int) -> int {
                 rel = travel
             }
             let v = (rel * 100 + travel / 2) / travel
-            let sid = arena.nodes[id].bind_sig
-            arena.store_sig_paint(sid, v)
+            let signal_id = arena.nodes[id].bind_sig
+            arena.store_sig_paint(signal_id, v)
             arena.drag_id = id
             return 1
         }
     }
-    let c1 = Click { sid: arena.nodes[id].click_sig, mode: int(arena.nodes[id].click_mode), setv: arena.nodes[id].click_set }
+    let c1 = Click { signal_id: arena.nodes[id].click_sig, mode: int(arena.nodes[id].click_mode), setv: arena.nodes[id].click_set }
     apply_click(c1)
-    let c2 = Click { sid: arena.nodes[id].click2_sig, mode: int(arena.nodes[id].click2_mode), setv: arena.nodes[id].click2_set }
+    let c2 = Click { signal_id: arena.nodes[id].click2_sig, mode: int(arena.nodes[id].click2_mode), setv: arena.nodes[id].click2_set }
     apply_click(c2)
     if arena.nodes[id].click_fn > 0 {
         platform.plat_invoke_fn(arena.nodes[id].click_fn)
@@ -276,13 +276,13 @@ fn click(px: int, py: int) -> int {
 }
 
 fn apply_click(c: Click) {
-    if c.sid <= 0 {
+    if c.signal_id <= 0 {
         return
     }
-    if c.sid >= arena.sigs.len {
+    if c.signal_id >= arena.sigs.len {
         return
     }
-    let mut next = arena.sigs[c.sid]
+    let mut next = arena.sigs[c.signal_id]
     if c.mode == 0 {
         next = next + 1
     } else if c.mode == 1 {
@@ -296,7 +296,7 @@ fn apply_click(c: Click) {
     } else {
         next = next + c.setv
     }
-    arena.store_sig(c.sid, next)
+    arena.store_sig(c.signal_id, next)
 }
 
 fn find_scroll_axis(id: int, px: int, py: int, horiz: int) -> int {
@@ -524,8 +524,8 @@ fn drag(px: int, py: int) -> int {
             rel = travel
         }
         let v = (rel * 100 + travel / 2) / travel
-        let sid = arena.nodes[arena.drag_id].bind_sig
-        arena.store_sig_paint(sid, v)
+        let signal_id = arena.nodes[arena.drag_id].bind_sig
+        arena.store_sig_paint(signal_id, v)
         return 1
     }
     if kind != 11 {
@@ -611,13 +611,13 @@ fn press_focused() -> int {
         return 0
     }
     let mut ran = 0
-    let c1 = Click { sid: arena.nodes[id].click_sig, mode: int(arena.nodes[id].click_mode), setv: arena.nodes[id].click_set }
-    if c1.sid > 0 {
+    let c1 = Click { signal_id: arena.nodes[id].click_sig, mode: int(arena.nodes[id].click_mode), setv: arena.nodes[id].click_set }
+    if c1.signal_id > 0 {
         apply_click(c1)
         ran = 1
     }
-    let c2 = Click { sid: arena.nodes[id].click2_sig, mode: int(arena.nodes[id].click2_mode), setv: arena.nodes[id].click2_set }
-    if c2.sid > 0 {
+    let c2 = Click { signal_id: arena.nodes[id].click2_sig, mode: int(arena.nodes[id].click2_mode), setv: arena.nodes[id].click2_set }
+    if c2.signal_id > 0 {
         apply_click(c2)
         ran = 1
     }
@@ -657,7 +657,7 @@ fn key_handlers(k: int, mods: int, up: int) -> int {
     return ran
 }
 
-fn hover_walk(id: int, px: int, py: int, sid: int) -> int {
+fn hover_walk(id: int, px: int, py: int, signal_id: int) -> int {
     if id <= 0 {
         return 0
     }
@@ -684,11 +684,11 @@ fn hover_walk(id: int, px: int, py: int, sid: int) -> int {
             hy = arena.ptr_y
             hx = arena.ptr_x
         }
-        if hover_walk(c, hx, hy, sid) != 0 {
+        if hover_walk(c, hx, hy, signal_id) != 0 {
             return 1
         }
     }
-    if arena.nodes[id].hover_sig == sid {
+    if arena.nodes[id].hover_sig == signal_id {
         if arena.in_box(id, px, py) != 0 {
             return 1
         }
@@ -706,18 +706,18 @@ fn hover(px: int, py: int) -> int {
     let mut dirty = 0
     let n = arena.nodes.len
     for i in 1..n {
-        let sid = arena.nodes[i].hover_sig
-        if sid > 0 {
+        let signal_id = arena.nodes[i].hover_sig
+        if signal_id > 0 {
             let mut first = 1
             for j in 1..i {
-                if arena.nodes[j].hover_sig == sid {
+                if arena.nodes[j].hover_sig == signal_id {
                     first = 0
                 }
             }
             if first != 0 {
-                let over = hover_walk(arena.root_id, px, py, sid)
-                if arena.sig_val(sid) != over {
-                    arena.store_sig(sid, over)
+                let over = hover_walk(arena.root_id, px, py, signal_id)
+                if arena.sig_val(signal_id) != over {
+                    arena.store_sig(signal_id, over)
                     dirty = 1
                 }
             }
@@ -877,10 +877,10 @@ fn key(k: int) -> int {
         let n = arena.nodes.len
         for i in 1..n {
             if int(arena.nodes[i].kind) == 9 {
-                let sid = arena.nodes[i].show_sig
-                if sid > 0 {
+                let signal_id = arena.nodes[i].show_sig
+                if signal_id > 0 {
                     if arena.want_show(i) != 0 {
-                        arena.store_sig(sid, 0)
+                        arena.store_sig(signal_id, 0)
                         changed = 1
                     }
                 }
@@ -897,11 +897,11 @@ fn key(k: int) -> int {
         }
         let mut insert = 0
         if arena.focus_captures_text() != 0 {
-            let fid = arena.focus_id
-            if fid > 0 {
-                if fid < arena.nodes.len {
-                    if int(arena.nodes[fid].kind) == 10 {
-                        if int(arena.nodes[fid].wrap) != 0 {
+            let focus_node_id = arena.focus_id
+            if focus_node_id > 0 {
+                if focus_node_id < arena.nodes.len {
+                    if int(arena.nodes[focus_node_id].kind) == 10 {
+                        if int(arena.nodes[focus_node_id].wrap) != 0 {
                             insert = 1
                         }
                     }
