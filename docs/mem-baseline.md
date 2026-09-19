@@ -1102,7 +1102,8 @@ So **three full-window buffers owned by the compositor** are the whole story. Th
 brief's "there must never be a second full-size buffer" is being violated by the
 compositor's 2nd and 3rd drawables, not by the rasterizer. `myapp`'s readme
 records the same x3 relationship (one buffer 18.1 MB, three reserved = 54 MB) and
-the measured peaks: **default 103–137 MB**, `ZEUS_OWN_BUFFER=1` **51–55 MB**, and
+the measured peaks: **AppKit's store 103–137 MB**, the owned bitmap **51–55 MB**,
+and
 — for the earlier IOSurface experiment, which was not shipped — **~35 MB**.
 
 **Landed: an owned-IOSurface display path** (`ZEUS_OWN_SURFACE=1`). Instead of
@@ -1135,8 +1136,16 @@ differs. The path is gated off by default and falls back to the bitmap path (the
   window will visibly run at half rate — that would mean two surfaces are not
   enough and the design needs the swap-back the note anticipated, not more
   surfaces.
-- Target status: `ZEUS_OWN_BUFFER=1` already measures **51–55 MB**, inside the
-  30–60 MB band; the surface path is expected to be the leanest of the four.
+- Target status: the owned buffer **is now the default**, which is what puts a
+  default build at **51–55 MB** — inside the 30–60 MB band — against 103–137 MB
+  before. `APP_KIT=1` (or `ZEUS_OWN_BUFFER=0`) restores AppKit's store; the
+  surface path is expected to be the leanest of the four.
+- **The default flip is a trade, stated plainly.** The owned buffer measures
+  **60 fps at 16.6 ms against a 16.7 ms budget** — the copy it saves in memory it
+  spends in frame time, so a build under enough load can drop frames where the
+  AppKit store would not. That headroom, not the pixels, is why `APP_KIT=1` stays
+  as an escape hatch, and why `ZEUS_OWN_SURFACE=1` (no copy) is the better default
+  once it is verified: it should be leaner AND faster than both.
 - bytes/node **476.0** and the arena high-water **986 628 B** are untouched: this
   is host-side storage, and no `UiNode` field was added.
 
