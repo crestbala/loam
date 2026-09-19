@@ -2389,6 +2389,16 @@ fn raster_stroke_round_rect_dev(x: float, y: float, w: float, h: float,
     raster.raster_stroke_round_rect(x, y, w, h, rad, bw, cr, cg, cb, alpha)
 }
 
+/// Draw a drop shadow for a rounded rect, under whatever is drawn next.
+/// `dx`/`dy` are the device offset, `blur` the device blur radius, `alpha` the
+/// peak opacity (0..255).
+fn raster_shadow_rect(x: int, y: int, w: int, h: int, rad: int,
+                      dx: int, dy: int, blur: int,
+                      cr: int, cg: int, cb: int, alpha: int) {
+    raster.raster_shadow_rect(float(x), float(y), float(w), float(h), float(rad),
+                              float(dx), float(dy), float(blur), alpha, cr, cg, cb)
+}
+
 fn damage_x(i: int) -> int {
     return arena.damage[i].x
 }

@@ -482,6 +482,13 @@ fn raster_min_i(a: int, b: int) -> int {
     return b
 }
 
+fn raster_max_i(a: int, b: int) -> int {
+    if a > b {
+        return a
+    }
+    return b
+}
+
 // sin/cos, reduced into the polynomial's interval (same approach as the PPM
 // demos' mathf; there is no std:math and no libm seam).
 fn raster_wrap(x: float) -> float {
@@ -1156,6 +1163,224 @@ fn raster_stroke_round_rect(x: float, y: float, w: float, h: float, rad: float, 
             raster_cov_zero(tw, th)
             raster_accum_ring(sx, sy, sw, sh, rad, t, tx, ty, tw, th)
             raster_composite_cov(tx, ty, tw, th, cr, cg, cb, alpha)
+            tx = tx + RASTER_TILE
+        }
+        ty = ty + RASTER_TILE
+    }
+}
+
+// --- shadows: single-channel alpha, 3 separable box passes (Phase 4) -------
+//
+// A drop shadow is one color at a soft alpha, so the only thing to compute is a
+// single-channel alpha mask: the rounded rect's coverage, blurred. Three
+// separable box blurs approximate a Gaussian closely and cost O(1) per pixel
+// per pass, far cheaper than a true Gaussian kernel. The mask is scratch — one
+// byte per pixel over the shadow's own support plus the tile, reset per draw —
+// never RGBA and never surface-sized.
+
+/// Single-channel alpha mask and the ping-pong buffer the separable passes use.
+let mut shmask: []u8 = []u8 {}
+let mut shbuf: []u8 = []u8 {}
+let mut shcap: int = 0
+
+fn raster_shadow_ensure(n: int) {
+    if n <= shcap {
+        return
+    }
+    while shmask.len > 0 {
+        pop(shmask)
+    }
+    while shbuf.len > 0 {
+        pop(shbuf)
+    }
+    let mut i = 0
+    while i < n {
+        push(shmask, u8(0))
+        push(shbuf, u8(0))
+        i = i + 1
+    }
+    shcap = n
+}
+
+/// Coverage (0..255) of the current path at one pixel — the same analytic test
+/// the fills use, so the shadow mask matches the filled shape exactly. The
+/// caller must have filled `rp_active` for this row first.
+fn raster_path_cov_px(px: int, py: int) -> int {
+    let n = rp_path.len
+    let mut hit = 0
+    let na = rp_active.len
+    let mut k = 0
+    while k < na {
+        let e = rp_active[k]
+        if raster_edge_hits_square(rp_path[e], rp_path[(e + 1) % n], px, py) == 1 {
+            hit = 1
+        }
+        k = k + 1
+    }
+    if hit == 0 {
+        if raster_point_inside(float(px) + 0.5, float(py) + 0.5) == 1 {
+            return 255
+        }
+        return 0
+    }
+    return raster_pixel_area(px, py)
+}
+
+/// Fill `shmask` (exw x exh) with the current path's coverage.
+fn raster_mask_fill(ex0: int, ey0: int, exw: int, exh: int) {
+    // zero the window
+    let mut i = 0
+    while i < exw * exh {
+        shmask[i] = u8(0)
+        i = i + 1
+    }
+    let n = rp_path.len
+    if n < 3 {
+        return
+    }
+    let mut minx = rp_path[0].x
+    let mut maxx = minx
+    let mut miny = rp_path[0].y
+    let mut maxy = miny
+    let mut j = 1
+    while j < n {
+        minx = raster_min_f(minx, rp_path[j].x)
+        maxx = raster_max_f(maxx, rp_path[j].x)
+        miny = raster_min_f(miny, rp_path[j].y)
+        maxy = raster_max_f(maxy, rp_path[j].y)
+        j = j + 1
+    }
+    let bx0 = raster_max_f(float(ex0), raster_floor(minx))
+    let by0 = raster_max_f(float(ey0), raster_floor(miny))
+    let bx1 = raster_min_f(float(ex0 + exw), raster_ceil(maxx))
+    let by1 = raster_min_f(float(ey0 + exh), raster_ceil(maxy))
+    let mut py = i32(by0)
+    let py_end = i32(by1)
+    while py < py_end {
+        raster_row_active(py)
+        let mut px = i32(bx0)
+        let px_end = i32(bx1)
+        while px < px_end {
+            let c = raster_path_cov_px(px, py)
+            if c > 0 {
+                shmask[(py - ey0) * exw + (px - ex0)] = u8(c)
+            }
+            px = px + 1
+        }
+        py = py + 1
+    }
+}
+
+/// One separable box-blur pass, horizontal: shmask -> shbuf, edge-clamped.
+fn raster_box_h(w: int, h: int, r: int) {
+    let span = 2 * r + 1
+    let mut y = 0
+    while y < h {
+        let base = y * w
+        let mut sum = int(shmask[base]) * (r + 1)
+        let mut i = 1
+        while i <= r {
+            let xx = i
+            let cx = raster_min_i(xx, w - 1)
+            sum = sum + int(shmask[base + cx])
+            i = i + 1
+        }
+        let mut x = 0
+        while x < w {
+            shbuf[base + x] = u8(sum / span)
+            let outi = x - r
+            let ini = x + r + 1
+            let co = raster_min_i(raster_max_i(outi, 0), w - 1)
+            let ci = raster_min_i(raster_max_i(ini, 0), w - 1)
+            sum = sum - int(shmask[base + co]) + int(shmask[base + ci])
+            x = x + 1
+        }
+        y = y + 1
+    }
+}
+
+/// One separable box-blur pass, vertical: shbuf -> shmask, edge-clamped.
+fn raster_box_v(w: int, h: int, r: int) {
+    let span = 2 * r + 1
+    let mut x = 0
+    while x < w {
+        let mut sum = int(shbuf[x]) * (r + 1)
+        let mut i = 1
+        while i <= r {
+            let yy = raster_min_i(i, h - 1)
+            sum = sum + int(shbuf[yy * w + x])
+            i = i + 1
+        }
+        let mut y = 0
+        while y < h {
+            shmask[y * w + x] = u8(sum / span)
+            let outi = raster_min_i(raster_max_i(y - r, 0), h - 1)
+            let ini = raster_min_i(raster_max_i(y + r + 1, 0), h - 1)
+            sum = sum - int(shbuf[outi * w + x]) + int(shbuf[ini * w + x])
+            y = y + 1
+        }
+        x = x + 1
+    }
+}
+
+/// Draw a drop shadow for a rounded rect: the shape offset by (dx, dy), its
+/// coverage blurred by three separable box passes, composited under whatever
+/// the caller draws next. `blur` is the device-pixel blur radius, `alpha` the
+/// peak shadow opacity (0..255).
+fn raster_shadow_rect(x: float, y: float, w: float, h: float, rad: float,
+                      dx: float, dy: float, blur: float, alpha: int,
+                      cr: int, cg: int, cb: int) {
+    raster_build()
+    if alpha <= 0 {
+        return
+    }
+    let mut pass = i32(blur / 3.0)
+    if pass < 1 {
+        pass = 1
+    }
+    let support = pass * 3
+    let mut ty = 0
+    while ty < fb_h {
+        let th = raster_min_i(ty + RASTER_TILE, fb_h) - ty
+        let mut tx = 0
+        while tx < fb_w {
+            let tw = raster_min_i(tx + RASTER_TILE, fb_w) - tx
+            let ex0 = raster_max_i(tx - support, 0)
+            let ey0 = raster_max_i(ty - support, 0)
+            let ex1 = raster_min_i(tx + tw + support, fb_w)
+            let ey1 = raster_min_i(ty + th + support, fb_h)
+            let exw = ex1 - ex0
+            let exh = ey1 - ey0
+            if exw > 0 {
+                if exh > 0 {
+                    raster_shadow_ensure(exw * exh)
+                    raster_round_rect(x + dx, y + dy, w, h, rad)
+                    raster_mask_fill(ex0, ey0, exw, exh)
+                    let mut p = 0
+                    while p < 3 {
+                        raster_box_h(exw, exh, pass)
+                        raster_box_v(exw, exh, pass)
+                        p = p + 1
+                    }
+                    let mut yy = 0
+                    while yy < th {
+                        let gy = ty + yy
+                        let mut xx = 0
+                        while xx < tw {
+                            let gx = tx + xx
+                            let c = int(shmask[(gy - ey0) * exw + (gx - ex0)])
+                            if c > 0 {
+                                let a = c * alpha / 255
+                                if a > 0 {
+                                    raster_blend(gx, gy, cr, cg, cb, a)
+                                }
+                            }
+                            xx = xx + 1
+                        }
+                        yy = yy + 1
+                    }
+                }
+            }
             tx = tx + RASTER_TILE
         }
         ty = ty + RASTER_TILE

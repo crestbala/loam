@@ -326,7 +326,7 @@ step; doing them half-way is how a UI engine regresses silently):
 Net: Phase 3's free/ordering step is done and measured; its structural items
 (1-3) and the `f32` geometry requirement (4) remain open.
 
-### Phase 4 — software rasterizer (framebuffer, color pipeline, analytic coverage, borders)
+### Phase 4 — software rasterizer (framebuffer, color, coverage, borders, shadows)
 
 - bytes/node: **476.0 — unchanged.** No tree/geometry code was touched.
 - New module `packages/zeus/std/zeuscore/raster.loam`:
@@ -383,6 +383,16 @@ outer edges to the pixel grid (quality rule 8). `zeus_raster_stroke.loam`:
 The coverage buffer is scratch (tile-sized, reset per shape), per the Phase 4
 rule that intermediates never reach surface size.
 
+**Shadows (fourth step).** A drop shadow is one color at a soft alpha, so the
+only thing to compute is a **single-channel** alpha mask: the rounded rect's
+coverage, blurred by three separable box passes (a cheap Gaussian
+approximation), offset, composited under the fill. The mask is scratch — one
+byte per pixel over the shadow's own support plus the tile, reset per draw —
+never RGBA and never surface-sized. `zeus_raster_shadow.loam` verifies: bounded
+support (well outside the blur is untouched), the `dy` offset makes it heavier
+below than above, the falloff is monotone (not a hard edge), and painting the
+card over the shadow restores the interior while the surround stays tinted.
+
 **Compiler bug this work surfaced.** Adding the raster module's ~40 globals and
 constants tipped four large programs (zeus_components / key_prop / reactive /
 spec_props) past a **silent 256-entry cap** in `typecheck.c`: `gvars[256]`,
@@ -393,8 +403,7 @@ now a compile error instead of a silent drop. It is a latent compiler bug any
 large app could hit; Phase 4 is simply what surfaced it. (The full `nob test`
 run: 449 passed; the 6 failures are the network suites this sandbox blocks.)
 
-**Remaining Phase 4** (not done, and each is substantial): tile-size
-single-channel shadow blur (3-pass separable box), damage-limited tile
+**Remaining Phase 4** (not done, and each is substantial): damage-limited tile
 selection, the glyph atlas with in-tree TrueType/GPOS metrics, image decode with
 Mitchell/Lanczos2 downsampling and an LRU byte budget, the zero-copy blit, and
 the web (devicePixelRatio) path.
