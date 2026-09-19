@@ -165,15 +165,15 @@ was never the bulk of it.
 |---|---|---|
 | AppKit store (`APP_KIT=1` / `ZEUS_OWN_BUFFER=0`) | 103–137 MB | 60 fps, zero copy |
 | owned bitmap (`ZEUS_OWN_SURFACE=0`) | 51–55 MB | 60 fps @16.6 ms of a 16.7 budget; single buffer + a full-frame copy |
-| **owned IOSurface pair — the default** | ~35 MB expected | zero copy, double buffered |
+| **owned IOSurface set — the default** | ~3x18 MB of surface | zero copy, drawn only into a surface the compositor is not reading |
 | AppKit store, wide gamut (`ZEUS_WIDE_GAMUT=1`) | 176–219 MB | — |
 
 `0440f3e` moved the default off AppKit's store, and a later field report (fast
 scroll shimmered and lagged on the single-buffer bitmap path, and did not on the
-IOSurface pair) moved it onto the pair. Both owned paths are two full-window
-buffers' worth of pixels; the pair is the one that never copies between them.
-`APP_KIT=1` remains the opt-in for AppKit's zero-copy `drawRect:` draw at ~54 MB
-of IOSurface, and `ZEUS_OWN_SURFACE=0` still selects the bitmap.
+IOSurface path) moved it onto the IOSurface set. The set is three surfaces by
+default: the bitmap path is the one that copies, and a single shared buffer is the
+one that shimmers. `ZEUS_OWN_SURFACE=0` still selects the bitmap, `APP_KIT=1` the
+AppKit store, and `ZEUS_OWN_SURFACES=2..4` trades a buffer for skip headroom.
 
 `docs/mem/regions.md` and `tools/mem-baseline.sh` still produce the full
 automated split; the table above is the manual measurement from this session.
