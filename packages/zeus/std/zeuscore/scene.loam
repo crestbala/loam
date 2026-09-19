@@ -90,8 +90,8 @@ fn fill4(x: int, y: int, w: int, h: int, rgb: int, alpha: int, tl: int, tr: int,
 /// Translate, then scale and rotate about an origin. Paint-space only: this
 /// never touches layout, which is what makes a move or a scale a PAINT-dirty
 /// change rather than a LAYOUT-dirty one.
-fn xform(dx: int, dy: int, scale: int, rot: int, ox: int, oy: int) {
-    emit(15, dx, dy, ox, oy, 0, scale, 255, rot, "", 0)
+fn xform(dx: int, dy: int, scale: int, rotation_degrees: int, ox: int, oy: int) {
+    emit(15, dx, dy, ox, oy, 0, scale, 255, rotation_degrees, "", 0)
 }
 
 fn text(x: int, y: int, s: string, rgb: int, font: int, alpha: int) {
@@ -1045,10 +1045,10 @@ fn paint_label(id: int) {
     let x = arena.draw_x(id) + i32(arena.nodes[id].pad_l) + i32(arena.nodes[id].border_w)
     let fg = arena.fg_of(id)
     let a = arena.paint_alpha(id)
-    let rot = int(arena.nodes[id].text_rot)
-    if rot != 0 {
+    let rotation_degrees = int(arena.nodes[id].text_rot)
+    if rotation_degrees != 0 {
         text_rot(x, arena.draw_y(id) + i32(arena.nodes[id].pad_t) + i32(arena.nodes[id].border_w),
-                 arena.nodes[id].text, fg, i32(arena.nodes[id].font), rot, a)
+                 arena.nodes[id].text, fg, i32(arena.nodes[id].font), rotation_degrees, a)
         return
     }
     if arena.has_bound_num(id) != 0 {
@@ -1171,14 +1171,14 @@ fn paint_node_shaped(id: int) {
     let sc = int(arena.nodes[id].an_scale)
     let tx = int(arena.nodes[id].an_tx)
     let mut ty = int(arena.nodes[id].an_ty)
-    let mut rot = int(arena.nodes[id].an_rot)
+    let mut rotation_degrees = int(arena.nodes[id].an_rot)
     // A spinning progress bar (kind 6) sweeps instead of rotating: the
     // flag only keeps the frame loop alive for it.
     if int(arena.nodes[id].spin) != 0 && int(arena.nodes[id].kind) != 6 {
         if arena.spin_live() != 0 {
             let per = int(arena.nodes[id].spin_ms)
             if per > 0 {
-                rot = (arena.now_ms % per) * 360 / per
+                rotation_degrees = (arena.now_ms % per) * 360 / per
             }
         }
     }
@@ -1197,7 +1197,7 @@ fn paint_node_shaped(id: int) {
     if sc == 100 {
         if tx == 0 {
             if ty == 0 {
-                if rot == 0 {
+                if rotation_degrees == 0 {
                     paint_node_body(id)
                     if clipped != 0 {
                         restore()
@@ -1210,7 +1210,7 @@ fn paint_node_shaped(id: int) {
     let cx = arena.draw_x(id) + arena.nodes[id].w / 2
     let cy = arena.draw_y(id) + arena.nodes[id].h / 2
     save()
-    xform(tx, ty, sc, rot, cx, cy)
+    xform(tx, ty, sc, rotation_degrees, cx, cy)
     paint_node_body(id)
     restore()
     if clipped != 0 {
@@ -1509,12 +1509,12 @@ fn paint_floaters(id: int) {
     if id <= 0 {
         return
     }
-    arena.zf_clear()
-    arena.zf_collect(id, arena.paint_sx, arena.paint_sy, 1)
-    arena.zf_sort(0)
-    let n = arena.zf_id.len
+    arena.floater_clear()
+    arena.floater_collect(id, arena.paint_sx, arena.paint_sy, 1)
+    arena.floater_sort(0)
+    let n = arena.floater_id.len
     for i in 0..n {
-        paint_one_floater(arena.zf_id[i], arena.zf_sx[i], arena.zf_sy[i])
+        paint_one_floater(arena.floater_id[i], arena.floater_screen_x[i], arena.floater_screen_y[i])
     }
 }
 

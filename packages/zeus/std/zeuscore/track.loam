@@ -28,7 +28,7 @@ let mut wrote: int = 0
    after the computed's own effect recomputed its output — no stale derived
    value, without a full topological sort over the whole graph. */
 let mut rank: []int = []int {}
-/* `produced_by[sid]` = the effect that writes signal `sid` (the internal
+/* `produced_by[signal_id]` = the effect that writes that signal (the internal
    effect of a `computed`), or 0. A reader that adds an edge to such a signal
    is ranked above the producer, in `note_read`. */
 let mut produced_by: []int = []int {}
@@ -67,10 +67,10 @@ fn reset() {
     boot()
 }
 
-fn alloc(fnid: int, nid: int) -> int {
+fn alloc(fn_id: int, node_id: int) -> int {
     boot()
-    push(fn_ids, fnid)
-    push(node_ids, nid)
+    push(fn_ids, fn_id)
+    push(node_ids, node_id)
     push(rank, 0)
     push(cleanup_fn, 0)
     return fn_ids.len - 1
@@ -84,46 +84,46 @@ fn current_eid() -> int {
 }
 
 fn current_rank() -> int {
-    let eid = current_eid()
-    if eid <= 0 {
+    let effect_id = current_eid()
+    if effect_id <= 0 {
         return 0
     }
-    if eid >= rank.len {
+    if effect_id >= rank.len {
         return 0
     }
-    return rank[eid]
+    return rank[effect_id]
 }
 
-fn set_rank(eid: int, r: int) {
-    if eid <= 0 {
+fn set_rank(effect_id: int, r: int) {
+    if effect_id <= 0 {
         return
     }
-    if eid >= rank.len {
+    if effect_id >= rank.len {
         return
     }
-    rank[eid] = r
+    rank[effect_id] = r
 }
 
-fn rank_of(eid: int) -> int {
-    if eid < 0 {
+fn rank_of(effect_id: int) -> int {
+    if effect_id < 0 {
         return 0
     }
-    if eid >= rank.len {
+    if effect_id >= rank.len {
         return 0
     }
-    return rank[eid]
+    return rank[effect_id]
 }
 
-/// Record that effect `eid` writes signal `sid`, so a reader of `sid` is
+/// Record that effect `effect_id` writes signal `signal_id`, so a reader of `signal_id` is
 /// ranked above it (see `note_read`).
-fn mark_produced(sid: int, eid: int) {
-    if sid <= 0 {
+fn mark_produced(signal_id: int, effect_id: int) {
+    if signal_id <= 0 {
         return
     }
-    while produced_by.len <= sid {
+    while produced_by.len <= signal_id {
         push(produced_by, 0)
     }
-    produced_by[sid] = eid
+    produced_by[signal_id] = effect_id
 }
 
 fn mute_begin() {
@@ -136,77 +136,77 @@ fn mute_end() {
     }
 }
 
-fn note_read(sid: int) {
+fn note_read(signal_id: int) {
     if mute != 0 {
         return
     }
     if stack.len == 0 {
         return
     }
-    if sid <= 0 {
+    if signal_id <= 0 {
         return
     }
-    let eid = stack[stack.len - 1]
+    let effect_id = stack[stack.len - 1]
     let n = dep_sig.len
     for i in 0..n {
-        if dep_sig[i] == sid {
-            if dep_eff[i] == eid {
+        if dep_sig[i] == signal_id {
+            if dep_eff[i] == effect_id {
                 return
             }
         }
     }
-    push(dep_sig, sid)
-    push(dep_eff, eid)
+    push(dep_sig, signal_id)
+    push(dep_eff, effect_id)
     /* A new edge onto a signal an effect writes: read the derived value only
        after the producer has recomputed it. */
-    if sid < produced_by.len {
-        let p = produced_by[sid]
+    if signal_id < produced_by.len {
+        let p = produced_by[signal_id]
         if p > 0 {
             let want = rank_of(p) + 1
-            if want > rank_of(eid) {
-                set_rank(eid, want)
+            if want > rank_of(effect_id) {
+                set_rank(effect_id, want)
             }
         }
     }
 }
 
-/// Run and clear `eid`'s cleanup handler (`on_cleanup`). Called before the
+/// Run and clear `effect_id`'s cleanup handler (`on_cleanup`). Called before the
 /// effect re-runs and when its edges are dropped, so a subscription it opened
 /// is closed before the body runs again.
-fn run_cleanup(eid: int) {
-    if eid <= 0 {
+fn run_cleanup(effect_id: int) {
+    if effect_id <= 0 {
         return
     }
-    if eid >= cleanup_fn.len {
+    if effect_id >= cleanup_fn.len {
         return
     }
-    let fid = cleanup_fn[eid]
-    if fid != 0 {
-        platform.plat_invoke_fn(fid)
-        cleanup_fn[eid] = 0
+    let fn_id = cleanup_fn[effect_id]
+    if fn_id != 0 {
+        platform.plat_invoke_fn(fn_id)
+        cleanup_fn[effect_id] = 0
     }
 }
 
-fn set_cleanup(eid: int, fnid: int) {
-    if eid <= 0 {
+fn set_cleanup(effect_id: int, fn_id: int) {
+    if effect_id <= 0 {
         return
     }
-    if eid >= cleanup_fn.len {
+    if effect_id >= cleanup_fn.len {
         return
     }
-    cleanup_fn[eid] = fnid
+    cleanup_fn[effect_id] = fn_id
 }
 
-fn drop_eid_deps(eid: int) {
-    run_cleanup(eid)
+fn drop_eid_deps(effect_id: int) {
+    run_cleanup(effect_id)
     let n = dep_sig.len
     if n == 0 {
         return
     }
-    /* Swap-remove every edge of `eid` in one pass (no keep-list rebuilds). */
+    /* Swap-remove every edge of `effect_id` in one pass (no keep-list rebuilds). */
     let mut i = 0
     while i < dep_sig.len {
-        if dep_eff[i] == eid {
+        if dep_eff[i] == effect_id {
             let last = dep_sig.len - 1
             dep_sig[i] = dep_sig[last]
             dep_eff[i] = dep_eff[last]
@@ -220,8 +220,8 @@ fn drop_eid_deps(eid: int) {
 
 /// Drop every dependency edge on a freed signal. A live effect must never
 /// re-run from a signal id that was recycled onto another value.
-fn drop_sig(sid: int) {
-    if sid <= 0 {
+fn drop_sig(signal_id: int) {
+    if signal_id <= 0 {
         return
     }
     let n = dep_sig.len
@@ -230,7 +230,7 @@ fn drop_sig(sid: int) {
     }
     let mut i = 0
     while i < dep_sig.len {
-        if dep_sig[i] == sid {
+        if dep_sig[i] == signal_id {
             let last = dep_sig.len - 1
             dep_sig[i] = dep_sig[last]
             dep_eff[i] = dep_eff[last]
@@ -330,45 +330,45 @@ fn free_nodes_effects(ids: []int) {
     }
 }
 
-fn run(eid: int) {
+fn run(effect_id: int) {
     boot()
-    if eid <= 0 {
+    if effect_id <= 0 {
         return
     }
-    if eid >= fn_ids.len {
+    if effect_id >= fn_ids.len {
         return
     }
     runs = runs + 1
-    drop_eid_deps(eid)
-    push(stack, eid)
-    platform.plat_invoke_fn(fn_ids[eid])
+    drop_eid_deps(effect_id)
+    push(stack, effect_id)
+    platform.plat_invoke_fn(fn_ids[effect_id])
     if stack.len > 0 {
         pop(stack)
     }
 }
 
-fn run_node(nid: int) {
+fn run_node(node_id: int) {
     boot()
     let n = node_ids.len
     for i in 1..n {
-        if node_ids[i] == nid {
+        if node_ids[i] == node_id {
             run(i)
         }
     }
 }
 
-fn notify(sid: int) {
-    notify_at(sid, 1)
+fn notify(signal_id: int) {
+    notify_at(signal_id, 1)
 }
 
 /// Paint-only notify: the write must not force a layout pass (scroll/drag
 /// positions, which an app may mirror into a signal).
-fn notify_paint(sid: int) {
-    notify_at(sid, 0)
+fn notify_paint(signal_id: int) {
+    notify_at(signal_id, 0)
 }
 
-fn notify_at(sid: int, mark: int) {
-    if sid <= 0 {
+fn notify_at(signal_id: int, mark: int) {
+    if signal_id <= 0 {
         return
     }
     if mark != 0 {
@@ -377,7 +377,7 @@ fn notify_at(sid: int, mark: int) {
     let mut hit = []int {}
     let n = dep_sig.len
     for i in 0..n {
-        if dep_sig[i] == sid {
+        if dep_sig[i] == signal_id {
             let e = dep_eff[i]
             let mut seen = 0
             let h = hit.len
@@ -409,14 +409,14 @@ fn notify_at(sid: int, mark: int) {
 
 /// Effects a batched write deferred, deduped. Order does not matter here —
 /// `sorted_by_rank` decides the run order at flush time.
-fn pending_push(eid: int) {
+fn pending_push(effect_id: int) {
     let n = pending.len
     for i in 0..n {
-        if pending[i] == eid {
+        if pending[i] == effect_id {
             return
         }
     }
-    push(pending, eid)
+    push(pending, effect_id)
 }
 
 /// A copy of `ids` stably ordered by effect rank. Insertion sort: the dirty

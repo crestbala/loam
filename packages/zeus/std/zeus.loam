@@ -496,8 +496,8 @@ fn child(parent: Node, node: Node) -> Node {
 /// call `child` or rebuild the tree.
 fn styled(node: Node, handler: fn()) -> Node {
     arena.ensure()
-    let eid = track.alloc(intern_fn(handler), node.id)
-    track.run(eid)
+    let effect_id = track.alloc(intern_fn(handler), node.id)
+    track.run(effect_id)
     return node
 }
 
@@ -666,13 +666,13 @@ fn set_flex_basis_zero(node: Node) -> Node {
 fn size_px(node: Node, px: int) -> Node {
     return node.set_width(px).set_height(px)
 }
-fn width_pct(node: Node, pct: int) -> Node {
+fn width_pct(node: Node, percent_value: int) -> Node {
     arena.nodes[node.id].ew = -1
-    arena.nodes[node.id].w_pct = i8(pct)
+    arena.nodes[node.id].w_pct = i8(percent_value)
     return node
 }
-fn height_pct(node: Node, pct: int) -> Node {
-    arena.nodes[node.id].h_pct = i8(pct)
+fn height_pct(node: Node, percent_value: int) -> Node {
+    arena.nodes[node.id].h_pct = i8(percent_value)
     return node
 }
 /// Floor the width. Min/max bounds are how a flexible child stays readable
@@ -857,8 +857,8 @@ fn radius_bottom(node: Node, px: int) -> Node {
     return node
 }
 
-fn opacity(node: Node, pct: int) -> Node {
-    arena.nodes[node.id].opacity = i16(pct)
+fn opacity(node: Node, percent_value: int) -> Node {
+    arena.nodes[node.id].opacity = i16(percent_value)
     return node
 }
 fn overflow(node: Node, mode: int) -> Node {
@@ -998,22 +998,22 @@ fn install_key(node: Node, spec: string, action: string, handler_fn: int,
 fn selected_chrome(node: Node, label: Node, is_on: fn() -> bool,
                    on_bg: string, off_bg: string,
                    on_fg: string, off_fg: string) -> Node {
-    let fid = intern_bool(is_on)
-    let nid = node.id
-    let lid = label.id
+    let fn_id = intern_bool(is_on)
+    let node_id = node.id
+    let label_id = label.id
     styled(node, || {
         let mut bg = off_bg
         let mut fg = off_fg
-        if platform.plat_invoke_bool_fn(fid) != 0 {
+        if platform.plat_invoke_bool_fn(fn_id) != 0 {
             bg = on_bg
             fg = on_fg
         }
         if bg.len > 0 {
-            apply_str(nid, SET.Background, bg)
+            apply_str(node_id, SET.Background, bg)
         }
-        if lid > 0 {
+        if label_id > 0 {
             if fg.len > 0 {
-                apply_str(lid, SET.Color, fg)
+                apply_str(label_id, SET.Color, fg)
             }
         }
     })
@@ -1377,19 +1377,19 @@ fn role_color(slot: int) -> int {
     return 2130706432 + slot
 }
 
-fn engine_key_apply(sid: int, mode: int, value: int, lo: int, hi: int) {
+fn engine_key_apply(signal_id: int, mode: int, value: int, lo: int, hi: int) {
     arena.ensure()
     if mode == 5 {
         platform.plat_invoke_fn(value)
         return
     }
-    if sid <= 0 {
+    if signal_id <= 0 {
         return
     }
-    if sid >= arena.sigs.len {
+    if signal_id >= arena.sigs.len {
         return
     }
-    let mut next = arena.sigs[sid]
+    let mut next = arena.sigs[signal_id]
     if mode == 1 {
         if next == 0 {
             next = 1
@@ -1418,7 +1418,7 @@ fn engine_key_apply(sid: int, mode: int, value: int, lo: int, hi: int) {
     } else {
         next = next + 1
     }
-    arena.store_sig(sid, next)
+    arena.store_sig(signal_id, next)
 }
 
 fn refresh_lists() {
@@ -2709,12 +2709,12 @@ fn string_intern_overflow_count() -> int {
 }
 
 /// Cached text measurement for (string id, font id, size px): 1 on hit.
-fn measure_cached(sid: int, font: int, size: int, w: &mut int, h: &mut int) -> int {
-    return atlas.meas_get(sid, font, size, w, h)
+fn measure_cached(signal_id: int, font: int, size: int, w: &mut int, h: &mut int) -> int {
+    return atlas.meas_get(signal_id, font, size, w, h)
 }
 
-fn measure_store(sid: int, font: int, size: int, w: int, h: int) {
-    atlas.meas_put(sid, font, size, w, h)
+fn measure_store(signal_id: int, font: int, size: int, w: int, h: int) {
+    atlas.meas_put(signal_id, font, size, w, h)
 }
 
 fn measure_cache_count() -> int {
@@ -3641,34 +3641,34 @@ fn layout_target_px(setter: int, v: int) -> int {
     }
 }
 
-fn layout_read(nid: int, setter: int) -> int {
+fn layout_read(node_id: int, setter: int) -> int {
     match setter {
         SET.Width => {
-            if arena.nodes[nid].ew >= 0 {
-                return arena.nodes[nid].ew
+            if arena.nodes[node_id].ew >= 0 {
+                return arena.nodes[node_id].ew
             }
-            return arena.nodes[nid].w
+            return arena.nodes[node_id].w
         }
         SET.Height => {
-            if arena.nodes[nid].eh >= 0 {
-                return arena.nodes[nid].eh
+            if arena.nodes[node_id].eh >= 0 {
+                return arena.nodes[node_id].eh
             }
-            return arena.nodes[nid].h
+            return arena.nodes[node_id].h
         }
-        SET.MinWidth => { return arena.nodes[nid].min_w }
-        SET.MaxWidth => { return arena.nodes[nid].max_w }
-        SET.MinHeight => { return arena.nodes[nid].min_h }
-        SET.MaxHeight => { return arena.nodes[nid].max_h }
-        SET.Left => { return arena.nodes[nid].pin_l }
-        SET.Top => { return arena.nodes[nid].pin_t }
-        SET.Right => { return arena.nodes[nid].pin_r }
-        SET.Bottom => { return arena.nodes[nid].pin_b }
+        SET.MinWidth => { return arena.nodes[node_id].min_w }
+        SET.MaxWidth => { return arena.nodes[node_id].max_w }
+        SET.MinHeight => { return arena.nodes[node_id].min_h }
+        SET.MaxHeight => { return arena.nodes[node_id].max_h }
+        SET.Left => { return arena.nodes[node_id].pin_l }
+        SET.Top => { return arena.nodes[node_id].pin_t }
+        SET.Right => { return arena.nodes[node_id].pin_r }
+        SET.Bottom => { return arena.nodes[node_id].pin_b }
         _ => { return 0 }
     }
 }
 
-fn apply_int_px(nid: int, setter: int, v: int) {
-    let n = node_handle(nid)
+fn apply_int_px(node_id: int, setter: int, v: int) {
+    let n = node_handle(node_id)
     match setter {
         SET.Width => { set_width(n, v) }
         SET.Height => { set_height(n, v) }
@@ -3676,10 +3676,10 @@ fn apply_int_px(nid: int, setter: int, v: int) {
         SET.MaxWidth => { set_max_width(n, v) }
         SET.MinHeight => { set_min_height(n, v) }
         SET.MaxHeight => { set_max_height(n, v) }
-        SET.Left => { arena.nodes[nid].pin_l = v }
-        SET.Top => { arena.nodes[nid].pin_t = v }
-        SET.Right => { arena.nodes[nid].pin_r = v }
-        SET.Bottom => { arena.nodes[nid].pin_b = v }
+        SET.Left => { arena.nodes[node_id].pin_l = v }
+        SET.Top => { arena.nodes[node_id].pin_t = v }
+        SET.Right => { arena.nodes[node_id].pin_r = v }
+        SET.Bottom => { arena.nodes[node_id].pin_b = v }
         _ => {}
     }
 }
@@ -3690,7 +3690,7 @@ fn apply_layout_anims() {
     while i < n {
         let a = arena.layout_anim_get(i)
         if a.live != 0 {
-            apply_int_px(a.nid, a.setter, a.cur)
+            apply_int_px(a.node_id, a.setter, a.current_value)
         }
         i = i + 1
     }
@@ -3698,20 +3698,20 @@ fn apply_layout_anims() {
     arena.mark_layout()
 }
 
-fn apply_int(nid: int, setter: int, v: int) {
+fn apply_int(node_id: int, setter: int, v: int) {
     if skip_unset(setter, v) {
         return
     }
     if arena.anim_bind_on() != 0 {
         if setter_tweens_layout(setter) {
-            let from = layout_read(nid, setter)
+            let from = layout_read(node_id, setter)
             let to = layout_target_px(setter, v)
-            if arena.layout_anim_push(nid, setter, from, to) != 0 {
+            if arena.layout_anim_push(node_id, setter, from, to) != 0 {
                 return
             }
         }
     }
-    let n = node_handle(nid)
+    let n = node_handle(node_id)
     // The UI-scale knob is applied here, once, so recipes and callers both
     // write plain design px and never call `scaled` themselves. Only
     // geometry and type scale; weights, flags, colors and z-order do not —
@@ -3740,7 +3740,7 @@ fn apply_int(nid: int, setter: int, v: int) {
         SET.Radius => { radius(n, scaled(v)) }
         SET.RadiusTop => { radius_top(n, scaled(v)) }
         SET.RadiusBottom => { radius_bottom(n, scaled(v)) }
-        SET.Border => { arena.nodes[nid].border_w = u16(v) }
+        SET.Border => { arena.nodes[node_id].border_w = u16(v) }
         SET.Grow => { grow(n, v) }
         SET.AlignItems => { align(n, v) }
         SET.Justify => { justify(n, v) }
@@ -3767,35 +3767,35 @@ fn apply_int(nid: int, setter: int, v: int) {
         }
         SET.Safe => {
             match v {
-                0 => { arena.nodes[nid].safe = u8(0) }
-                _ => { arena.nodes[nid].safe = u8(1) }
+                0 => { arena.nodes[node_id].safe = u8(0) }
+                _ => { arena.nodes[node_id].safe = u8(1) }
             }
         }
-        SET.Position => { arena.nodes[nid].pos = u8(v) }
-        SET.Left => { arena.nodes[nid].pin_l = scaled(v) }
-        SET.Top => { arena.nodes[nid].pin_t = scaled(v) }
-        SET.Right => { arena.nodes[nid].pin_r = scaled(v) }
-        SET.Bottom => { arena.nodes[nid].pin_b = scaled(v) }
-        SET.ZIndex => { arena.nodes[nid].z_index = i16(v) }
+        SET.Position => { arena.nodes[node_id].pos = u8(v) }
+        SET.Left => { arena.nodes[node_id].pin_l = scaled(v) }
+        SET.Top => { arena.nodes[node_id].pin_t = scaled(v) }
+        SET.Right => { arena.nodes[node_id].pin_r = scaled(v) }
+        SET.Bottom => { arena.nodes[node_id].pin_b = scaled(v) }
+        SET.ZIndex => { arena.nodes[node_id].z_index = i16(v) }
         SET.Shrink => { shrink(n, v) }
         SET.ShowOn => {
             match v {
-                0 | 1 => { arena.nodes[nid].show_on = u8(v) }
+                0 | 1 => { arena.nodes[node_id].show_on = u8(v) }
                 _ => {}
             }
         }
-        SET.SvgFit => { arena.nodes[nid].font = u16(v) }
-        SET.SvgLazy => { arena.nodes[nid].wrap = u8(v) }
+        SET.SvgFit => { arena.nodes[node_id].font = u16(v) }
+        SET.SvgLazy => { arena.nodes[node_id].wrap = u8(v) }
         SET.Elevation => {
             if v <= 0 {
-                arena.nodes[nid].elev = u8(0)
+                arena.nodes[node_id].elev = u8(0)
             } else {
                 let mut lv = v
                 if lv > 4 {
                     lv = 4
                 }
-                arena.nodes[nid].elev = u8(lv)
-                arena.nodes[nid].elev_c = role_color(ROLE.Shadow)
+                arena.nodes[node_id].elev = u8(lv)
+                arena.nodes[node_id].elev_c = role_color(ROLE.Shadow)
             }
         }
         _ => {}
@@ -3818,16 +3818,16 @@ fn setter_is_paint_only(setter: int) -> bool {
     }
 }
 
-fn apply_str(nid: int, setter: int, v: string) {
+fn apply_str(node_id: int, setter: int, v: string) {
     match setter {
         SET.Text => {
-            arena.nodes[nid].text = v
+            arena.nodes[node_id].text = v
             arena.mark_layout()
         }
-        SET.A11yLabel => { arena.nodes[nid].a11y_label = v }
-        SET.A11yRole => { arena.nodes[nid].a11y_role = v }
-        SET.Cursor => { arena.nodes[nid].cursor = v }
-        _ => { apply_int(nid, setter, parse_hex_color(v)) }
+        SET.A11yLabel => { arena.nodes[node_id].a11y_label = v }
+        SET.A11yRole => { arena.nodes[node_id].a11y_role = v }
+        SET.Cursor => { arena.nodes[node_id].cursor = v }
+        _ => { apply_int(node_id, setter, parse_hex_color(v)) }
     }
 }
 
@@ -3845,15 +3845,15 @@ fn set_prop_str(node: Node, setter: int, v: string) -> Node {
 }
 
 fn prop_int(node: Node, setter: int, thunk: fn() -> int) -> Node {
-    let fid = intern_int(thunk)
-    let nid = node.id
-    return styled(node, || { apply_int(nid, setter, platform.plat_invoke_int_fn(fid)) })
+    let fn_id = intern_int(thunk)
+    let node_id = node.id
+    return styled(node, || { apply_int(node_id, setter, platform.plat_invoke_int_fn(fn_id)) })
 }
 
 fn prop_str(node: Node, setter: int, thunk: fn() -> string) -> Node {
-    let fid = intern_str(thunk)
-    let nid = node.id
-    return styled(node, || { apply_str(nid, setter, platform.plat_invoke_str_fn(fid)) })
+    let fn_id = intern_str(thunk)
+    let node_id = node.id
+    return styled(node, || { apply_str(node_id, setter, platform.plat_invoke_str_fn(fn_id)) })
 }
 
 // --- effects and derivations ---
@@ -3883,7 +3883,7 @@ fn effect_owner() -> int {
 /// handle, so lookups need no side table; `T` must be Copy, as for `Signal`.
 struct Context<T> {
     id: int,
-    dflt: T,
+    default_value: T,
 }
 
 let mut ctx_next_id: int = 1
@@ -3895,13 +3895,13 @@ let mut ctx_stack_sig: []int = []int {}
    read only from a generic body is not the one the codegen emits (see
    `signal` vs `computed`), and keeping the id bookkeeping here avoids that. */
 fn ctx_take_id() -> int {
-    let cid = ctx_next_id
+    let context_id = ctx_next_id
     ctx_next_id = ctx_next_id + 1
-    return cid
+    return context_id
 }
 
-fn ctx_push(cid: int, cell: int) {
-    push(ctx_stack_ctx, cid)
+fn ctx_push(context_id: int, cell: int) {
+    push(ctx_stack_ctx, context_id)
     push(ctx_stack_sig, cell)
 }
 
@@ -3910,24 +3910,24 @@ fn ctx_pop() {
     pop(ctx_stack_sig)
 }
 
-/// Cell id of the topmost `provide` for `cid`, or -1 when none is open.
-fn ctx_cell(cid: int) -> int {
+/// Cell id of the topmost `provide` for `context_id`, or -1 when none is open.
+fn ctx_cell(context_id: int) -> int {
     let n = ctx_stack_ctx.len
     let mut i = n
     while i > 0 {
         i = i - 1
-        if ctx_stack_ctx[i] == cid {
+        if ctx_stack_ctx[i] == context_id {
             return ctx_stack_sig[i]
         }
     }
     return -1
 }
 
-/// Create a typed context whose value is `dflt` until something `provide`s
-/// one. `T` is inferred from `dflt`.
-fn create_context<T>(dflt: T) -> Context<T> {
+/// Create a typed context whose value is `default_value` until something `provide`s
+/// one. `T` is inferred from `default_value`.
+fn create_context<T>(default_value: T) -> Context<T> {
     arena.ensure()
-    return Context { id: ctx_take_id(), dflt: dflt }
+    return Context { id: ctx_take_id(), default_value: default_value }
 }
 
 /// Make `value` the current binding of `ctx` for the dynamic extent of
@@ -3945,14 +3945,14 @@ fn provide<T>(ctx: Context<T>, value: T, body: fn()) {
 /// Reading a context does not subscribe the caller to anything.
 fn use_context<T>(ctx: Context<T>) -> T {
     arena.ensure()
-    let sid = ctx_cell(ctx.id)
-    if sid < 0 {
-        return ctx.dflt
+    let signal_id = ctx_cell(ctx.id)
+    if signal_id < 0 {
+        return ctx.default_value
     }
     // Read without subscribing: `__sig_load` is what `peek` wraps, and its
     // result type comes from the return type, so no `Signal<T>` value is
     // needed here.
-    return __sig_load(sid)
+    return __sig_load(signal_id)
 }
 
 /// Run `body` once now, then again whenever a signal it read changes.
@@ -3973,12 +3973,12 @@ fn effect(body: fn()) {
 /// producer of its output signal (see `track.mark_produced`).
 fn effect_eid(body: fn()) -> int {
     arena.ensure()
-    let eid = track.alloc(intern_fn(body), effect_owner())
+    let effect_id = track.alloc(intern_fn(body), effect_owner())
     // A nested scope outranks its parent, so a reader of what this effect
     // writes is flushed after it (glitch-free ordering).
-    track.set_rank(eid, 1 + track.current_rank())
-    track.run(eid)
-    return eid
+    track.set_rank(effect_id, 1 + track.current_rank())
+    track.run(effect_id)
+    return effect_id
 }
 
 /// Batch `body`'s signal writes: each `set` re-runs no effect until the
@@ -4020,30 +4020,30 @@ fn on_cleanup(body: fn()) {
 /// ```
 fn computed(calc: fn() -> int) -> Signal<int> {
     arena.ensure()
-    let fid = intern_int(calc)
+    let fn_id = intern_int(calc)
     let out = signal(0)
-    let eid = effect_eid(|| { set(out, platform.plat_invoke_int_fn(fid)) })
-    track.mark_produced(out.id, eid)
+    let effect_id = effect_eid(|| { set(out, platform.plat_invoke_int_fn(fn_id)) })
+    track.mark_produced(out.id, effect_id)
     return out
 }
 
 /// `computed` for a string derivation.
 fn computed_str(calc: fn() -> string) -> Signal<string> {
     arena.ensure()
-    let fid = intern_str(calc)
+    let fn_id = intern_str(calc)
     let out = signal("")
-    let eid = effect_eid(|| { set(out, platform.plat_invoke_str_fn(fid)) })
-    track.mark_produced(out.id, eid)
+    let effect_id = effect_eid(|| { set(out, platform.plat_invoke_str_fn(fn_id)) })
+    track.mark_produced(out.id, effect_id)
     return out
 }
 
 /// `computed` for a bool derivation.
 fn computed_bool(calc: fn() -> bool) -> Signal<bool> {
     arena.ensure()
-    let fid = intern_bool(calc)
+    let fn_id = intern_bool(calc)
     let out = signal(false)
-    let eid = effect_eid(|| { set(out, platform.plat_invoke_bool_fn(fid) != 0) })
-    track.mark_produced(out.id, eid)
+    let effect_id = effect_eid(|| { set(out, platform.plat_invoke_bool_fn(fn_id) != 0) })
+    track.mark_produced(out.id, effect_id)
     return out
 }
 
@@ -4213,9 +4213,9 @@ fn Component(node: Node, p: BoxProps) -> Node {
     if p.edit__set {
         if p.edit.id > 0 {
             let sig = p.edit
-            let nid = node.id
-            arena.nodes[nid].edit_sig = sig.id
-            arena.nodes[nid].bind_fn = intern_fn(|| { set(sig, arena.input_committed(nid)) })
+            let node_id = node.id
+            arena.nodes[node_id].edit_sig = sig.id
+            arena.nodes[node_id].bind_fn = intern_fn(|| { set(sig, arena.input_committed(node_id)) })
             /* Seed the edit buffer from the bound signal. The signal is the
                field's text until the user edits it, and the C-side buffer is
                what every read goes through (`input_shown`, the caret, and the
@@ -4232,7 +4232,7 @@ fn Component(node: Node, p: BoxProps) -> Node {
                holds what the signal holds, the two agree and there is nothing
                to adopt. */
             let seed = sig.get()
-            if arena.input_committed(nid) != seed {
+            if arena.input_committed(node_id) != seed {
                 set_input(node, seed)
             }
         }
@@ -4272,14 +4272,14 @@ fn Component(node: Node, p: BoxProps) -> Node {
     }
     if k == 11 {
         if p.bind__set {
-            let nid = node.id
-            let sid = p.bind.id
+            let node_id = node.id
+            let signal_id = p.bind.id
             styled(node, || {
-                let y = signal_handle(sid).get()
-                if arena.nodes[nid].scroll_y != y {
-                    arena.nodes[nid].vel_y = 0
-                    arena.nodes[nid].scroll_y = y
-                    arena.clamp_scroll(nid)
+                let y = signal_handle(signal_id).get()
+                if arena.nodes[node_id].scroll_y != y {
+                    arena.nodes[node_id].vel_y = 0
+                    arena.nodes[node_id].scroll_y = y
+                    arena.clamp_scroll(node_id)
                 }
             })
         }
@@ -4762,15 +4762,15 @@ fn btn_look(p: ButtonProps) -> Node {
     Text(p.label, color = ink_c, font = px_or_default(p.font, button_font(size)))
     ui_pop()
     if p.loading__set {
-        let nid = n.id
+        let node_id = n.id
         let ls = p.loading
         effect(|| {
             if ls.get() != 0 {
-                arena.set_loading(nid, 1)
-                arena.nodes[nid].opacity = i16(70)
+                arena.set_loading(node_id, 1)
+                arena.nodes[node_id].opacity = i16(70)
             } else {
-                arena.set_loading(nid, 0)
-                arena.nodes[nid].opacity = i16(100)
+                arena.set_loading(node_id, 0)
+                arena.nodes[node_id].opacity = i16(100)
             }
         })
     }
@@ -4929,26 +4929,26 @@ fn find_scroller(id: int) -> int {
 /// Visible index window for a windowed list. `row_h` is the fixed row height
 /// used to turn `scroll_y` into indices; overscan keeps a few extra rows
 /// mounted so a small flick does not rebuild.
-fn virt_window(nid: int, n: int, row_h: int) -> VirtWin {
+fn virt_window(node_id: int, n: int, row_h: int) -> VirtWin {
     let mut first = 0
     let mut last = n
     if row_h <= 0 {
         return VirtWin { first: first, last: last }
     }
-    let sid = find_scroller(nid)
+    let signal_id = find_scroller(node_id)
     let mut view_h = 240
     let mut local = 0
-    if sid > 0 {
-        if arena.nodes[sid].h > 0 {
-            view_h = arena.nodes[sid].h
+    if signal_id > 0 {
+        if arena.nodes[signal_id].h > 0 {
+            view_h = arena.nodes[signal_id].h
         }
-        if nid == sid {
-            local = arena.nodes[sid].scroll_y
+        if node_id == signal_id {
+            local = arena.nodes[signal_id].scroll_y
         } else {
-            local = arena.nodes[sid].scroll_y - (arena.nodes[nid].y - arena.nodes[sid].y)
+            local = arena.nodes[signal_id].scroll_y - (arena.nodes[node_id].y - arena.nodes[signal_id].y)
         }
-    } else if arena.nodes[nid].h > 0 {
-        view_h = arena.nodes[nid].h
+    } else if arena.nodes[node_id].h > 0 {
+        view_h = arena.nodes[node_id].h
     }
     if local < 0 {
         local = 0
@@ -4967,42 +4967,42 @@ fn virt_window(nid: int, n: int, row_h: int) -> VirtWin {
     return VirtWin { first: first, last: last }
 }
 
-fn virt_refresh<T>(nid: int, items: Signal<[]T>, build: fn(int, T), row_h: int) {
+fn virt_refresh<T>(node_id: int, items: Signal<[]T>, build: fn(int, T), row_h: int) {
     let xs = items.get()
     let m = xs.len
     let gen = platform.plat_sig_gen(items.id)
     let mut first = 0
     let mut last = m
     if row_h > 0 {
-        let w = virt_window(nid, m, row_h)
+        let w = virt_window(node_id, m, row_h)
         first = w.first
         last = w.last
     }
-    if gen == arena.nodes[nid].list_gen {
-        if first == arena.nodes[nid].list_lo {
-            if last == arena.nodes[nid].list_hi {
-                if arena.nodes[nid].kids.len > 0 {
+    if gen == arena.nodes[node_id].list_gen {
+        if first == arena.nodes[node_id].list_lo {
+            if last == arena.nodes[node_id].list_hi {
+                if arena.nodes[node_id].kids.len > 0 {
                     return
                 }
                 if m == 0 {
-                    arena.nodes[nid].list_n = 0
+                    arena.nodes[node_id].list_n = 0
                     return
                 }
             }
         }
     }
-    arena.nodes[nid].list_gen = gen
-    arena.nodes[nid].list_lo = first
-    arena.nodes[nid].list_hi = last
-    arena.nodes[nid].list_n = m
-    arena.nodes[nid].row_h = row_h
+    arena.nodes[node_id].list_gen = gen
+    arena.nodes[node_id].list_lo = first
+    arena.nodes[node_id].list_hi = last
+    arena.nodes[node_id].list_n = m
+    arena.nodes[node_id].row_h = row_h
     // Everything the builder allocated last time is owned by this host:
     // signals and interned handlers are freed (and their ids recycled) on
     // the next rebuild, so streaming data does not grow the arena. A
     // windowed list only (re)builds the visible rows — append / insert
     // outside the window is a spacer resize, not O(n) widgets.
-    let prev = arena.rebuild_begin(nid)
-    ui_push(nid)
+    let prev = arena.rebuild_begin(node_id)
+    ui_push(node_id)
     if row_h > 0 {
         if first > 0 {
             let top = raw_spacer()
@@ -5047,24 +5047,24 @@ fn virt_prefix(heights: []int, n: int, fallback: int) -> int {
     return y
 }
 
-fn virt_window_var(nid: int, n: int, heights: []int, fallback: int) -> VirtWin {
+fn virt_window_var(node_id: int, n: int, heights: []int, fallback: int) -> VirtWin {
     if heights.len == 0 {
-        return virt_window(nid, n, fallback)
+        return virt_window(node_id, n, fallback)
     }
-    let sid = find_scroller(nid)
+    let signal_id = find_scroller(node_id)
     let mut view_h = 240
     let mut local = 0
-    if sid > 0 {
-        if arena.nodes[sid].h > 0 {
-            view_h = arena.nodes[sid].h
+    if signal_id > 0 {
+        if arena.nodes[signal_id].h > 0 {
+            view_h = arena.nodes[signal_id].h
         }
-        if nid == sid {
-            local = arena.nodes[sid].scroll_y
+        if node_id == signal_id {
+            local = arena.nodes[signal_id].scroll_y
         } else {
-            local = arena.nodes[sid].scroll_y - (arena.nodes[nid].y - arena.nodes[sid].y)
+            local = arena.nodes[signal_id].scroll_y - (arena.nodes[node_id].y - arena.nodes[signal_id].y)
         }
-    } else if arena.nodes[nid].h > 0 {
-        view_h = arena.nodes[nid].h
+    } else if arena.nodes[node_id].h > 0 {
+        view_h = arena.nodes[node_id].h
     }
     if local < 0 {
         local = 0
@@ -5102,35 +5102,35 @@ fn virt_window_var(nid: int, n: int, heights: []int, fallback: int) -> VirtWin {
     return VirtWin { first: first, last: last }
 }
 
-fn virt_refresh_var<T>(nid: int, items: Signal<[]T>, build: fn(int, T), fallback: int,
+fn virt_refresh_var<T>(node_id: int, items: Signal<[]T>, build: fn(int, T), fallback: int,
                        heights: Signal<[]int>) {
     let xs = items.get()
     let hs = heights.get()
     let m = xs.len
     let gen = platform.plat_sig_gen(items.id) + platform.plat_sig_gen(heights.id)
-    let w = virt_window_var(nid, m, hs, fallback)
+    let w = virt_window_var(node_id, m, hs, fallback)
     let first = w.first
     let last = w.last
-    if gen == arena.nodes[nid].list_gen {
-        if first == arena.nodes[nid].list_lo {
-            if last == arena.nodes[nid].list_hi {
-                if arena.nodes[nid].kids.len > 0 {
+    if gen == arena.nodes[node_id].list_gen {
+        if first == arena.nodes[node_id].list_lo {
+            if last == arena.nodes[node_id].list_hi {
+                if arena.nodes[node_id].kids.len > 0 {
                     return
                 }
                 if m == 0 {
-                    arena.nodes[nid].list_n = 0
+                    arena.nodes[node_id].list_n = 0
                     return
                 }
             }
         }
     }
-    arena.nodes[nid].list_gen = gen
-    arena.nodes[nid].list_lo = first
-    arena.nodes[nid].list_hi = last
-    arena.nodes[nid].list_n = m
-    arena.nodes[nid].row_h = fallback
-    let prev = arena.rebuild_begin(nid)
-    ui_push(nid)
+    arena.nodes[node_id].list_gen = gen
+    arena.nodes[node_id].list_lo = first
+    arena.nodes[node_id].list_hi = last
+    arena.nodes[node_id].list_n = m
+    arena.nodes[node_id].row_h = fallback
+    let prev = arena.rebuild_begin(node_id)
+    ui_push(node_id)
     if first > 0 {
         let top = raw_spacer()
         set_height(top, virt_prefix(hs, first, fallback))
@@ -5155,10 +5155,10 @@ fn virt_refresh_var<T>(nid: int, items: Signal<[]T>, build: fn(int, T), fallback
 /// across a reorder.
 fn Index<T>(items: Signal<[]T>, build: fn(int, T)) -> Node {
     let n = raw_box()
-    let nid = n.id
-    virt_refresh(nid, items, build, 0)
+    let node_id = n.id
+    virt_refresh(node_id, items, build, 0)
     return Component(n, align_direction = DIRECTION.Column,
-                     rebuild = || { virt_refresh(nid, items, build, 0) })
+                     rebuild = || { virt_refresh(node_id, items, build, 0) })
 }
 
 fn kfor_unique<T>(xs: []T, key: fn(T) -> string, m: int) -> int {
@@ -5184,24 +5184,24 @@ fn kfor_unique<T>(xs: []T, key: fn(T) -> string, m: int) -> int {
 /// item, read a signal inside the row instead of `i`.
 fn For<T>(items: Signal<[]T>, key: fn(T) -> string, build: fn(int, T)) -> Node {
     let n = raw_box()
-    let nid = n.id
-    kfor_refresh(nid, items, key, build)
+    let node_id = n.id
+    kfor_refresh(node_id, items, key, build)
     return Component(n, align_direction = DIRECTION.Column,
-                     rebuild = || { kfor_refresh(nid, items, key, build) })
+                     rebuild = || { kfor_refresh(node_id, items, key, build) })
 }
 
-fn kfor_refresh<T>(nid: int, items: Signal<[]T>, key: fn(T) -> string, build: fn(int, T)) {
+fn kfor_refresh<T>(node_id: int, items: Signal<[]T>, key: fn(T) -> string, build: fn(int, T)) {
     let xs = items.get()
     let m = xs.len
     // Fast path: the key set is unchanged, so move the existing rows into the
     // new order. Node ids, focus, scroll and row state all survive; nothing is
     // allocated. A changed key set (or duplicate keys) falls through.
-    if arena.key_count(nid) == m {
+    if arena.key_count(node_id) == m {
         if kfor_unique(xs, key, m) == 1 {
             let mut ok = 1
             let mut i = 0
             while i < m {
-                if arena.key_node(nid, key(xs[i])) <= 0 {
+                if arena.key_node(node_id, key(xs[i])) <= 0 {
                     ok = 0
                     break
                 }
@@ -5211,30 +5211,30 @@ fn kfor_refresh<T>(nid: int, items: Signal<[]T>, key: fn(T) -> string, build: fn
                 let mut order = []int {}
                 let mut j = 0
                 while j < m {
-                    push(order, arena.key_node(nid, key(xs[j])))
+                    push(order, arena.key_node(node_id, key(xs[j])))
                     j = j + 1
                 }
-                arena.nodes[nid].kids = order
+                arena.nodes[node_id].kids = order
                 return
             }
         }
     }
     // Slow path: rebuild the host; every row is re-created and recycled.
-    arena.key_clear(nid)
-    let prev = arena.rebuild_begin(nid)
-    ui_push(nid)
+    arena.key_clear(node_id)
+    let prev = arena.rebuild_begin(node_id)
+    ui_push(node_id)
     let mut i = 0
     while i < m {
-        let before = arena.nodes[nid].kids.len
+        let before = arena.nodes[node_id].kids.len
         build(i, xs[i])
-        let after = arena.nodes[nid].kids.len
+        let after = arena.nodes[node_id].kids.len
         // A row must be a single top-level child to be movable. If the builder
         // mounted zero or several, record nothing so the next update rebuilds
         // rather than reorders a partial row.
         if after == before + 1 {
-            arena.key_set(nid, key(xs[i]), arena.nodes[nid].kids[before])
+            arena.key_set(node_id, key(xs[i]), arena.nodes[node_id].kids[before])
         } else {
-            arena.key_set(nid, key(xs[i]), 0)
+            arena.key_set(node_id, key(xs[i]), 0)
         }
         i = i + 1
     }
@@ -5247,19 +5247,19 @@ fn kfor_refresh<T>(nid: int, items: Signal<[]T>, key: fn(T) -> string, build: fn
 /// Pair with an integer tag signal for a switch/match.
 fn Match<T>(on: Signal<T>, build: fn(T)) -> Node {
     let n = raw_box()
-    let nid = n.id
-    match_build(nid, on, build)
+    let node_id = n.id
+    match_build(node_id, on, build)
     return Component(n, align_direction = DIRECTION.Column,
-                     rebuild = || { match_refresh(nid, on, build) })
+                     rebuild = || { match_refresh(node_id, on, build) })
 }
 
 /// Tear the subtree down and rebuild it for the current value of `on`.
 /// `list_gen` records the slot it was built from, so `match_refresh` can tell
 /// a real change from a bare refresh sweep.
-fn match_build<T>(nid: int, on: Signal<T>, build: fn(T)) {
-    arena.nodes[nid].list_gen = platform.plat_sig_gen(on.id)
-    let prev = arena.rebuild_begin(nid)
-    ui_push(nid)
+fn match_build<T>(node_id: int, on: Signal<T>, build: fn(T)) {
+    arena.nodes[node_id].list_gen = platform.plat_sig_gen(on.id)
+    let prev = arena.rebuild_begin(node_id)
+    ui_push(node_id)
     build(on.get())
     ui_pop()
     arena.rebuild_end(prev)
@@ -5271,11 +5271,11 @@ fn match_build<T>(nid: int, on: Signal<T>, build: fn(T)) {
 /// and every `zeus.signal` the page declared was freed and re-created at its
 /// initial value. Page state reset on any repaint, which reads as "signals
 /// don't work" in a routed app. Rebuild only when `on` actually moved.
-fn match_refresh<T>(nid: int, on: Signal<T>, build: fn(T)) {
-    if platform.plat_sig_gen(on.id) == arena.nodes[nid].list_gen {
+fn match_refresh<T>(node_id: int, on: Signal<T>, build: fn(T)) {
+    if platform.plat_sig_gen(on.id) == arena.nodes[node_id].list_gen {
         return
     }
-    match_build(nid, on, build)
+    match_build(node_id, on, build)
 }
 
 /// Error boundary. `build()` runs under a recoverable trap; if it traps, the
@@ -5314,10 +5314,10 @@ fn Boundary(build: fn(), fallback: fn(string)) -> Node {
 /// `build(i, item)` is the row. 10k rows stay a few dozen nodes.
 fn VirtualList<T>(items: Signal<[]T>, row_h: int, build: fn(int, T)) -> Node {
     let n = raw_scroll()
-    let nid = n.id
-    virt_refresh(nid, items, build, row_h)
+    let node_id = n.id
+    virt_refresh(node_id, items, build, row_h)
     return Component(n, grow = 1, a11y_role = "list", row_h = row_h,
-                     rebuild = || { virt_refresh(nid, items, build, row_h) })
+                     rebuild = || { virt_refresh(node_id, items, build, row_h) })
 }
 
 /// Windowed list with per-row heights. `heights[i]` is row `i` in points
@@ -5326,10 +5326,10 @@ fn VirtualList<T>(items: Signal<[]T>, row_h: int, build: fn(int, T)) -> Node {
 fn VirtualListVar<T>(items: Signal<[]T>, heights: Signal<[]int>, fallback: int,
                      build: fn(int, T)) -> Node {
     let n = raw_scroll()
-    let nid = n.id
-    virt_refresh_var(nid, items, build, fallback, heights)
+    let node_id = n.id
+    virt_refresh_var(node_id, items, build, fallback, heights)
     return Component(n, grow = 1, a11y_role = "list", row_h = fallback,
-                     rebuild = || { virt_refresh_var(nid, items, build, fallback, heights) })
+                     rebuild = || { virt_refresh_var(node_id, items, build, fallback, heights) })
 }
 
 /// Windowed table. `rows` is `zeus.signal([]T {})` where `T` is a row struct;
@@ -5405,29 +5405,29 @@ fn measured_width(n: Node) -> int {
 /// with its parent. Pixel-exact widgets — charts, plots — lay out their
 /// children from the measured width, so they stay glued to the container.
 /// Rebuilds happen on the layout after a size change.
-fn refit_refresh(nid: int, build: fn()) {
-    let w = arena.nodes[nid].w
-    if w == arena.nodes[nid].list_gen {
+fn refit_refresh(node_id: int, build: fn()) {
+    let w = arena.nodes[node_id].w
+    if w == arena.nodes[node_id].list_gen {
         return
     }
     // A zero-width host (hidden tab, or not laid out yet) defers its rebuild
     // until it is measured at a real width. Syncing `list_gen` here keeps it
     // from refitting on every resize frame while off-screen.
     if w == 0 {
-        arena.nodes[nid].list_gen = 0
+        arena.nodes[node_id].list_gen = 0
         return
     }
-    arena.nodes[nid].list_gen = w
-    let prev = arena.rebuild_begin(nid)
-    slot(node_handle(nid), build)
+    arena.nodes[node_id].list_gen = w
+    let prev = arena.rebuild_begin(node_id)
+    slot(node_handle(node_id), build)
     arena.rebuild_end(prev)
 }
 
 fn refit(host: Node, build: fn()) -> Node {
     arena.ensure()
-    let nid = host.id
-    arena.nodes[nid].list_fn = intern_fn(|| {
-        refit_refresh(nid, build)
+    let node_id = host.id
+    arena.nodes[node_id].list_fn = intern_fn(|| {
+        refit_refresh(node_id, build)
     })
     return host
 }
@@ -6574,8 +6574,8 @@ const HAIRLINE: int = 1
 let mut roles_ready: int = 0
 let mut ui_scale: int = 100
 
-fn set_scale(pct: int) {
-    let mut v = pct
+fn set_scale(percent_value: int) {
+    let mut v = percent_value
     if v < 50 {
         v = 50
     }
@@ -6952,8 +6952,8 @@ fn Card(p: CardProps) -> Node {
             slot(strip, || {
                 Image(p.media, height = p.media_height, fit = IMAGE_FIT.Cover, grow = 1)
             })
-            let sid = strip.id
-            arena.nodes[sid].a11y_role = "img"
+            let signal_id = strip.id
+            arena.nodes[signal_id].a11y_role = "img"
         }
         if has_header {
             let hd = Column(2)
@@ -7448,24 +7448,24 @@ fn Slider(value: Signal<int>) {
 fn Progress(value: Signal<int>) -> Node {
     let n = Component(raw_progress(), bind = value, width = 220, height = 8, radius = 4)
     arena.nodes[n.id].a11y_role = "progressbar"
-    let nid = n.id
-    let sid = value.id
+    let node_id = n.id
+    let signal_id = value.id
     // `tween` holds the last state this bar was asked to show (-1 at build),
     // so the next write can ease from it.
     effect(|| {
         let v = value.get()
-        let last = arena.nodes[nid].tween
+        let last = arena.nodes[node_id].tween
         if v < 0 {
-            arena.note_spin(nid, 1400)
+            arena.note_spin(node_id, 1400)
         } else {
-            arena.clear_spin(nid)
+            arena.clear_spin(node_id)
             // A write from `zeus.animate` brings its own track and duration;
             // only a plain `set` gets the default ease.
             if last >= 0 && arena.anim_bind_on() == 0 {
-                arena.anim_paint_from(sid, last, MOTION.Base)
+                arena.anim_paint_from(signal_id, last, MOTION.Base)
             }
         }
-        arena.nodes[nid].tween = v
+        arena.nodes[node_id].tween = v
     })
     return n
 }
@@ -8063,13 +8063,13 @@ fn roving_step(value: Signal<int>, index: int, count: int, delta: int) {
 /// focusable, and it takes focus when it becomes selected so the next
 /// arrow lands on it. Menu rows do the same.
 fn roving_focus(node: Node, value: Signal<int>, index: int) {
-    let nid = node.id
+    let node_id = node.id
     effect(|| {
         if value.get() == index {
-            arena.nodes[nid].focusable = 1
-            arena.claim_focus(nid)
+            arena.nodes[node_id].focusable = 1
+            arena.claim_focus(node_id)
         } else {
-            arena.nodes[nid].focusable = 0
+            arena.nodes[node_id].focusable = 0
         }
     })
 }
@@ -8498,8 +8498,8 @@ fn Combobox(text: Signal<string>, options: []string, p: ComboboxProps) {
     show_ge(list, active, 0)
     arena.anchor_to(list.id, field.id, PLACE.PlaceBelow, 4)
     enter_fade(list)
-    let lid = list.id
-    let sid = scrim.id
+    let label_id = list.id
+    let signal_id = scrim.id
     arena.nodes[iid].kdown_fn = intern_fn(fn() {
         let picked = combo_key(active, matches)
         if picked >= 0 {
@@ -8508,14 +8508,14 @@ fn Combobox(text: Signal<string>, options: []string, p: ComboboxProps) {
                 text.set(ms[picked])
                 set_input(node_handle(iid), ms[picked])
             }
-            arena.snap_exit(lid)
-            arena.snap_exit(sid)
+            arena.snap_exit(label_id)
+            arena.snap_exit(signal_id)
             active.set(-1)
         }
     })
     ui_push(list.id)
     For(matches, fn(s) => s, fn(i, s) {
-        ComboRow(text, active, fin, i, s, sid)
+        ComboRow(text, active, fin, i, s, signal_id)
     })
     ui_pop()
     ui_pop()
@@ -10017,11 +10017,11 @@ fn Table<T>(spec: []TableCol, rows: Signal<[]T>, cells: fn(T) -> []string,
 }
 
 /// Next sort state after clicking column `i`: none → asc → desc → none.
-fn sort_cycle(cur: int, i: int) -> int {
-    if cur == i + 1 {
+fn sort_cycle(current_value: int, i: int) -> int {
+    if current_value == i + 1 {
         return -(i + 1)
     }
-    if cur == -(i + 1) {
+    if current_value == -(i + 1) {
         return 0
     }
     return i + 1
@@ -10107,9 +10107,9 @@ const PAGE_SLOTS: int = 7
 
 /// Page number shown in `slot` (0-based) of a `PAGE_SLOTS`-wide row, or 0
 /// for an ellipsis. Seven or fewer pages list every number; past that the
-/// row keeps 1 and `pages` fixed and slides a window around `cur`
+/// row keeps 1 and `pages` fixed and slides a window around `current_value`
 /// (`1 … 4 5 6 … 20`), collapsing the ellipsis at either end.
-fn page_at(cur: int, pages: int, slot: int) -> int {
+fn page_at(current_value: int, pages: int, slot: int) -> int {
     if pages <= PAGE_SLOTS {
         return slot + 1
     }
@@ -10119,14 +10119,14 @@ fn page_at(cur: int, pages: int, slot: int) -> int {
     if slot == PAGE_SLOTS - 1 {
         return pages
     }
-    if cur <= 4 {
+    if current_value <= 4 {
         // 1 2 3 4 5 … N
         if slot == PAGE_SLOTS - 2 {
             return 0
         }
         return slot + 1
     }
-    if cur >= pages - 3 {
+    if current_value >= pages - 3 {
         // 1 … N-4 N-3 N-2 N-1 N
         if slot == 1 {
             return 0
@@ -10140,12 +10140,12 @@ fn page_at(cur: int, pages: int, slot: int) -> int {
     if slot == PAGE_SLOTS - 2 {
         return 0
     }
-    return cur + slot - 3
+    return current_value + slot - 3
 }
 
 /// One slot of a collapsed `Pagination` row: the number it shows follows
-/// `cur`, so the row never rebuilds; an ellipsis slot is inert.
-fn PageSlot(cur: Signal<int>, pages: int, slot: int) {
+/// `current_value`, so the row never rebuilds; an ellipsis slot is inert.
+fn PageSlot(current_value: Signal<int>, pages: int, slot: int) {
     let btn = Box(align_direction = DIRECTION.Row,
                   width = 36,
                   height = 36,
@@ -10154,9 +10154,9 @@ fn PageSlot(cur: Signal<int>, pages: int, slot: int) {
                   justify = ALIGN.Center,
                   border_color = rule(),
                   on_click = fn() {
-                      let n = page_at(cur.get(), pages, slot)
+                      let n = page_at(current_value.get(), pages, slot)
                       if n > 0 {
-                          cur.set(n)
+                          current_value.set(n)
                       }
                   },
                   a11y_role = "button",
@@ -10164,19 +10164,19 @@ fn PageSlot(cur: Signal<int>, pages: int, slot: int) {
                  )
     ui_push(btn.id)
     let text = Text(fn() -> string {
-        let n = page_at(cur.get(), pages, slot)
+        let n = page_at(current_value.get(), pages, slot)
         if n == 0 {
             return "…"
         }
         return "{{n}}"
     }, font = FONT_BODY)
     ui_pop()
-    selected_chrome(btn, text, || { page_at(cur.get(), pages, slot) == cur.get() },
+    selected_chrome(btn, text, || { page_at(current_value.get(), pages, slot) == current_value.get() },
                     plate(), paper(), ink(), mute())
     styled(btn, || {
-        let n = page_at(cur.get(), pages, slot)
+        let n = page_at(current_value.get(), pages, slot)
         let mut bw = 0
-        if n == cur.get() {
+        if n == current_value.get() {
             bw = HAIRLINE
         }
         arena.nodes[btn.id].border_w = u16(bw)
@@ -10190,9 +10190,9 @@ fn PageSlot(cur: Signal<int>, pages: int, slot: int) {
     })
 }
 
-/// `Pagination(cur, pages)`: `pages` is the 1-based page count. Past seven
+/// `Pagination(current_value, pages)`: `pages` is the 1-based page count. Past seven
 /// pages the row collapses to `1 … c-1 c c+1 … N` (see `page_at`).
-fn Pagination(cur: Signal<int>, pages: int) {
+fn Pagination(current_value: Signal<int>, pages: int) {
     Row(4) {
         let prev = Box(
             align_direction = DIRECTION.Row,
@@ -10202,8 +10202,8 @@ fn Pagination(cur: Signal<int>, pages: int) {
             align_items = ALIGN.Center,
             justify = ALIGN.Center,
             on_click = fn() {
-            if cur.get() > 1 {
-                cur.set(cur.get() - 1)
+            if current_value.get() > 1 {
+                current_value.set(current_value.get() - 1)
             }
         },
             a11y_role = "button",
@@ -10215,12 +10215,12 @@ fn Pagination(cur: Signal<int>, pages: int) {
         if pages <= PAGE_SLOTS {
             let mut i = 1
             while i <= pages {
-                PageButton(cur, i)
+                PageButton(current_value, i)
                 i = i + 1
             }
         } else {
             for slot in 0..PAGE_SLOTS {
-                PageSlot(cur, pages, slot)
+                PageSlot(current_value, pages, slot)
             }
         }
         let next = Box(
@@ -10231,8 +10231,8 @@ fn Pagination(cur: Signal<int>, pages: int) {
             align_items = ALIGN.Center,
             justify = ALIGN.Center,
             on_click = fn() {
-            if cur.get() < pages {
-                cur.set(cur.get() + 1)
+            if current_value.get() < pages {
+                current_value.set(current_value.get() + 1)
             }
         },
             a11y_role = "button",
@@ -10747,12 +10747,12 @@ fn BarChart(labels: []string, names: []string, vals: []int, w: int, h: int) {
         return
     }
     let host = Column(SPACE.Exs)
-    let nid = host.id
+    let node_id = host.id
     refit(host, fn() {
         chart_bars(labels, names, vals, n, s, w, h, host)
     })
     // Render immediately with the requested width; the next layout refits.
-    slot(node_handle(nid), || {
+    slot(node_handle(node_id), || {
         chart_bars(labels, names, vals, n, s, w, h, host)
     })
 }
@@ -10803,11 +10803,11 @@ fn LineChart(labels: []string, names: []string, vals: []int, w: int, h: int) {
         return
     }
     let host = Column(SPACE.Exs)
-    let nid = host.id
+    let node_id = host.id
     refit(host, fn() {
         chart_lines(labels, names, vals, n, s, w, h, host)
     })
-    slot(node_handle(nid), || {
+    slot(node_handle(node_id), || {
         chart_lines(labels, names, vals, n, s, w, h, host)
     })
 }
@@ -10859,11 +10859,11 @@ fn AreaChart(labels: []string, names: []string, vals: []int, w: int, h: int) {
         return
     }
     let host = Column(SPACE.Exs)
-    let nid = host.id
+    let node_id = host.id
     refit(host, fn() {
         chart_areas(labels, names, vals, n, s, w, h, host)
     })
-    slot(node_handle(nid), || {
+    slot(node_handle(node_id), || {
         chart_areas(labels, names, vals, n, s, w, h, host)
     })
 }
