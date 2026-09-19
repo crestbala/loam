@@ -7,7 +7,7 @@
 # different buffers), so the first run sets no variable and the other paths are
 # the ones that have to ask:
 #
-#   default (owned IOSurface) | `ZEUS_OWN_SURFACE=0` (owned bitmap, the
+#   default (owned IOSurface set) | `ZEUS_OWN_SURFACE=0` (owned bitmap, the
 #   single-buffer path) | `APP_KIT=1` (AppKit's store) | `ZEUS_WIDE_GAMUT=1`
 #   (that store, display profile, which doubles its depth — see the colour-space
 #   note in hosts/desktop/mac.m)
@@ -250,7 +250,7 @@ fi
 
 echo
 echo "owned  = ZEUS_OWN_SURFACE=0 (owned bitmap, single buffer)"
-echo "surf   = the owned IOSurface pair, the DEFAULT (ZEUS_OWN_SURFACE=1)"
+echo "surf   = the owned IOSurface set, the DEFAULT (ZEUS_OWN_SURFACE=1, 3 surfaces)"
 echo "appkit = APP_KIT=1            wide = ZEUS_WIDE_GAMUT=1 (display profile)"
 echo "raw: $OUT/<mode>.log and $OUT/<mode>.vmmap"
 echo

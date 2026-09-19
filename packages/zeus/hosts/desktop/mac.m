@@ -1030,13 +1030,13 @@ static NSAccessibilityRole mac_a11y_role(NSString *r) {
 
    Display paths:
 
-     default              the owned IOSurface pair below: our memory IS the
-                          layer's texture, so a finished frame is never copied
-                          and the pair keeps the compositor's read and our next
-                          write in different buffers. This is also the only path
-                          with no shared mutable buffer, which is what removed
-                          the shimmer under fast scroll that the single-buffer
-                          bitmap path showed.
+     default              the owned IOSurface set below (three surfaces by
+                          default, `ZEUS_OWN_SURFACES` 2..4): our memory IS the
+                          layer's texture, so a finished frame is never copied,
+                          and each frame is drawn into a surface the compositor
+                          is not reading. No shared mutable buffer, which is what
+                          removed the shimmer under fast scroll that the
+                          single-buffer bitmap path showed.
      ZEUS_OWN_SURFACE=0   the owned bitmap: one buffer (~18 MB), wrapped in a
                           fresh CGImage per frame. CoreAnimation materialises
                           each frame into a texture of its own, so the frame
@@ -1057,10 +1057,16 @@ static NSAccessibilityRole mac_a11y_role(NSString *r) {
    Measured, handing the layer the IOSurface itself (rather than a CGImage over
    the bitmap) does remove that copy: `other` fell from 32 ms to 9.5 ms, the frame
    held 60 fps and the footprint dropped to ~35 MB. It was held back because
-   CoreAnimation then holds the surface as the layer's texture, so locking it to
-   write the next frame deadlocks the app after a few frames; that is fixed by the
-   two-buffer swap with a non-blocking `kIOSurfaceLockAvoidSync` lock below, which
-   is what makes it safe to be the default.
+   CoreAnimation then holds the surface as the layer's texture, so writing the
+   frame it is reading flickers; that is fixed by rotating over a few surfaces and
+   drawing only into one `IOSurfaceIsInUse` says is free (never
+   `kIOSurfaceLockAvoidSync`, which skips exactly that check and leaves the lock
+   state inconsistent with a plain unlock) — which is what makes it the default.
+
+   Cost: one full-window buffer per surface in the set, so ~3x18 MB at a
+   screen-filling Retina window. `ZEUS_OWN_SURFACES=2` trims a buffer; watch the
+   frame trace's `surf_skip`, which counts frames skipped because every surface
+   was busy (a stutter, told apart from a slow frame).
 
    No scale knob: the surface is always the display's own resolution. */
 static CGContextRef own_ctx;
@@ -1165,6 +1171,10 @@ static double frame_now_ms(void) {
     return CFAbsoluteTimeGetCurrent() * 1000.0;
 }
 
+/* Frames the surface path skipped because the compositor held every surface.
+   Printed by the frame trace, so a stutter can be told from a slow frame. */
+static int own_surf_skips;
+
 static int frame_debug_on(void) {
     static int v = -1;
     if (v < 0) {
@@ -1184,9 +1194,9 @@ static void frame_trace(double t0, FramePhases p) {
     if ((n++ % 30) != 0) return;
     fprintf(stderr,
             "[frame] interval=%.1fms setup=%.2f engine=%.1f image=%.2f set=%.2f other=%.1f "
-            "more=%d next=%dms\n",
+            "more=%d next=%dms surf_skip=%d\n",
             interval, p.setup_ms, p.engine_ms, p.image_ms, p.set_ms, interval - work, p.more,
-            (int)loam_zeus_engine_next_ms());
+            (int)loam_zeus_engine_next_ms(), own_surf_skips);
 }
 
 /* Reduced-motion preference (§3.2): reported once to the engine, which makes
@@ -1334,10 +1344,23 @@ static void mac_schedule_next(int more) {
  * the view. That is the difference between three full-window buffers and one.
  *
  * One surface is not enough. CoreAnimation holds the surface as the layer's
- * texture while compositing, so locking it to draw the next frame deadlocks the
- * app after a few frames. Two surfaces used alternately, with a NON-BLOCKING
- * lock, mean a frame is skipped rather than blocked when the compositor is
- * still reading it.
+ * texture while compositing, so writing the surface it is reading is what makes
+ * a frame flash or tear — and with a single buffer that is every frame. A small
+ * ROTATING SET, picked per frame from the ones the compositor is NOT using, is
+ * what makes the read and the write different memory with enough slack that a
+ * free surface is available: the last-shown surface is usually still held, the
+ * one before it may be, and the next one after that is free. Three by default;
+ * `ZEUS_OWN_SURFACES` moves it between 2 and 4 (2 is the leanest and can skip a
+ * frame when the compositor still holds both; 4 is the most slack).
+ *
+ * "Not using" is `IOSurfaceIsInUse`, which answers whether another client (the
+ * WindowServer) has the surface — the one non-blocking probe the IOSurface API
+ * offers. `kIOSurfaceLockAvoidSync` must NOT be used here: it tells the kernel
+ * not to wait for in-flight users, which is exactly the protection a presenting
+ * surface needs, and it leaves the surface's lock state inconsistent with a
+ * plain unlock — which is what showed as a blinking background before this. The
+ * lock that remains is only for the CPU write, uses the same options as its
+ * unlock, and contends with nobody because the surface was just found free.
  *
  * `ZEUS_OWN_SURFACE=1` selected it; since it is the only path with neither a
  * per-frame copy nor a buffer shared with the compositor, it is now the DEFAULT
@@ -1345,20 +1368,36 @@ static void mac_schedule_next(int more) {
  * pixels are identical to the other two paths by construction: `own_draw` runs
  * the same engine the same way, in the same format, at the same physical size —
  * only the memory differs. */
-#define OWN_SURFACES 2
+#define OWN_SURFACES_MAX 4
+#define OWN_SURFACES_DEFAULT 3
 /* 'BGRA' — the same 4-byte premultiplied layout `CGBitmapContextCreate` and the
    layer already use, so nothing converts on the way out. */
 #define OWN_SURF_BGRA 0x42475241u
 
-static IOSurfaceRef own_surf[OWN_SURFACES];
-static CGContextRef own_surf_ctx[OWN_SURFACES];
-static NSGraphicsContext *own_surf_gc[OWN_SURFACES];
+static IOSurfaceRef own_surf[OWN_SURFACES_MAX];
+static CGContextRef own_surf_ctx[OWN_SURFACES_MAX];
+static NSGraphicsContext *own_surf_gc[OWN_SURFACES_MAX];
 static int own_surf_cur;
+static int own_surf_n;
 static int own_surf_w, own_surf_h;
+
+/* How many surfaces to rotate over. 3 by default; `ZEUS_OWN_SURFACES` clamps to
+   2..4. Read once, so a frame never re-parses the environment. */
+static int own_surf_count(void) {
+    if (own_surf_n <= 0) {
+        const char *e = getenv("ZEUS_OWN_SURFACES");
+        int n = OWN_SURFACES_DEFAULT;
+        if (e && e[0] && e[0] != '0') n = atoi(e);
+        if (n < 2) n = 2;
+        if (n > OWN_SURFACES_MAX) n = OWN_SURFACES_MAX;
+        own_surf_n = n;
+    }
+    return own_surf_n;
+}
 
 static void own_surf_free(void) {
     int i;
-    for (i = 0; i < OWN_SURFACES; i++) {
+    for (i = 0; i < OWN_SURFACES_MAX; i++) {
         [own_surf_gc[i] release];
         own_surf_gc[i] = nil;
         if (own_surf_ctx[i]) {
@@ -1375,20 +1414,21 @@ static void own_surf_free(void) {
     own_surf_cur = 0;
 }
 
-/* (Re)create the pair at physical size: 1 on success. On failure everything is
+/* (Re)create the set at physical size: 1 on success. On failure everything is
    released and the caller falls back to the bitmap path — a display path that
    cannot be allocated must cost memory, not the window. */
 static int own_surf_ensure(int px_w, int px_h) {
     NSDictionary *props;
-    int i;
+    int i, n;
     if (own_surf[0] && own_surf_w == px_w && own_surf_h == px_h) return 1;
     own_surf_free();
+    n = own_surf_count();
     props = @{ (id)kIOSurfaceWidth : @(px_w),
                (id)kIOSurfaceHeight : @(px_h),
                (id)kIOSurfaceBytesPerElement : @4,
                (id)kIOSurfaceBytesPerRow : @(px_w * 4),
                (id)kIOSurfacePixelFormat : @(OWN_SURF_BGRA) };
-    for (i = 0; i < OWN_SURFACES; i++) {
+    for (i = 0; i < n; i++) {
         void *base;
         size_t bpr;
         own_surf[i] = IOSurfaceCreate((CFDictionaryRef)props);
@@ -1661,11 +1701,31 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int px_h, CGFloat s
         if ([self.layer respondsToSelector:@selector(setContentsFormat:)])
             self.layer.contentsFormat = kCAContentsFormatRGBA8Uint;
     }
+    /* Rotate to a surface the compositor is NOT using, then draw into it. This is
+       the whole point of having more than one: the surface in `layer.contents`
+       is being read, and writing it mid-scanout is what shows as a flash or a
+       tear. `IOSurfaceIsInUse` is the only non-blocking probe for that, and with
+       three surfaces one is always free in practice; if none is (the compositor
+       is holding all of them), skip the frame rather than write over one it is
+       reading — a skipped frame is one frame of animation, a torn one is a
+       visible flash. */
     i = own_surf_cur;
-    /* NON-BLOCKING: if the compositor is still reading this surface, skip the
-       frame rather than wait for it. A skipped frame is one frame of animation;
-       blocking here is the deadlock the second surface exists to avoid. */
-    if (IOSurfaceLock(own_surf[i], kIOSurfaceLockAvoidSync, NULL) != 0) {
+    int tries = 0;
+    int ns = own_surf_count();
+    while (tries < ns && IOSurfaceIsInUse(own_surf[i])) {
+        i = (i + 1) % ns;
+        tries++;
+    }
+    if (tries == ns) {
+        own_surf_skips++;
+        mac_schedule_next(1);
+        return 1;
+    }
+    /* Only for the CPU write now, and it contends with nobody: the surface was
+       just found unused. A blocking lock is correct here (and its options must
+       match the unlock's, which `kIOSurfaceLockAvoidSync` did not). */
+    if (IOSurfaceLock(own_surf[i], 0, NULL) != 0) {
+        own_surf_skips++;
         mac_schedule_next(1);
         return 1;
     }
@@ -1685,7 +1745,7 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int px_h, CGFloat s
     [CATransaction commit];
     p.more = more;
     p.set_ms = frame_now_ms() - tprev;
-    own_surf_cur = 1 - own_surf_cur; /* the next frame draws the other one */
+    own_surf_cur = (i + 1) % own_surf_count(); /* next frame starts past this one */
     frame_trace(t0, p);
     mac_schedule_next(more);
     return 1;

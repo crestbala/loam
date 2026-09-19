@@ -87,26 +87,27 @@ Three of them, chosen by environment variable. This is the whole memory/frame-ra
 trade in the native host.
 
 ```sh
-./run.sh myapp                          # default: the owned IOSurface pair (zero copy)
+./run.sh myapp                          # default: the owned IOSurface set (zero copy)
 ZEUS_OWN_SURFACE=0 ./run.sh myapp       # the owned bitmap instead (single buffer)
+ZEUS_OWN_SURFACES=2 ./run.sh myapp      # 2..4 surfaces in the set (default 3)
 APP_KIT=1 ./run.sh myapp                # AppKit's store instead
 ZEUS_OWN_BUFFER=0 ./run.sh myapp        # the same, spelled as a value
 ZEUS_WIDE_GAMUT=1 ./run.sh myapp        # AppKit's store, display profile (2x depth)
 ```
 
-The **owned IOSurface pair is the default**. The other owned path — the bitmap —
+The **owned IOSurface set is the default**. The other owned path — the bitmap —
 is a single buffer that is both our draw target *and* the layer's `contents`, and
 CoreAnimation reads it lazily, so a frame in flight and a frame being drawn share
 the same bytes; under a fast scroll that shows as a shimmer or tear of the moving
-content. The pair removes that by construction (the compositor reads one surface
-while we draw the other) and also removes the full-frame copy the bitmap path
-pays every frame while CoreAnimation builds a texture of its own. `APP_KIT=1`
-remains the escape hatch for a host that would rather have the zero-copy
-`drawRect:` draw even at AppKit's larger store.
+content. The set removes that by construction (each frame is drawn into a surface
+`IOSurfaceIsInUse` says the compositor is not reading) and also removes the
+full-frame copy the bitmap path pays every frame while CoreAnimation builds a
+texture of its own. `APP_KIT=1` remains the escape hatch for a host that would
+rather have the zero-copy `drawRect:` draw even at AppKit's larger store.
 
 | path | how it draws | copies per frame | IOSurface | measured (screen-filling) |
 |---|---|---|---|---|
-| **default** (owned IOSurface pair, `ZEUS_OWN_SURFACE=1`) | draws into a surface and hands the layer the SURFACE, so our memory *is* the texture | **0** | 2 surfaces, reused (one is the layer's texture) | the expectation recorded in `hosts/desktop/mac.m` is ~35 MB; no windowed number on the writer's machine yet |
+| **default** (owned IOSurface set, `ZEUS_OWN_SURFACE=1`) | draws into a surface and hands the layer the SURFACE, so our memory *is* the texture | **0** | 3 surfaces, rotated (one is the layer's texture, one is being drawn) | no windowed number on the writer's machine yet; ~3x18 MB of surface |
 | `ZEUS_OWN_SURFACE=0` | paints into a bitmap handed to the layer as `contents` | **1** — CoreAnimation materialises the whole frame into its own texture | 1 (~18 MB) plus that texture | **60 fps** (16.6 ms) with the sRGB window, 39 fps (25.4 ms) with `ZEUS_WIDE_GAMUT=1`; 51–55 MB |
 | `APP_KIT=1` | `drawRect:` paints straight into the window's backing store, which the compositor reads | **0** | 3 buffers, 54 MB reserved | **60 fps** (16.7 ms); peak 103–137 MB |
 | `ZEUS_WIDE_GAMUT=1` | the same, but the window keeps the display's ICC profile | **0** | 3 buffers, 109 MB reserved | **60 fps** (16.6–16.7 ms); peak 176–219 MB |
@@ -115,26 +116,31 @@ The default's row is the one without a figure yet: it is measured by the same
 harness, but the machine that writes this file has no windowed number to copy.
 What promoted it from experiment to default is a field report, not a benchmark —
 fast scrolling shimmered and lagged on the bitmap path and not on this one, which
-is exactly the single-buffer aliasing and per-frame copy described above. Both
-owned paths hold two full-window buffers' worth of pixels; the surface path is
-the one that never copies them. `sh packages/loam/tests/bench/own_buffer.sh` runs
-all four and byte-compares their window crops.
+is exactly the single-buffer aliasing and per-frame copy described above. The
+number to watch while tuning `ZEUS_OWN_SURFACES` is `surf_skip` in
+`ZEUS_FRAME_DEBUG=1`'s frame trace: frames skipped because the compositor held
+every surface. 2 surfaces trims ~18 MB and may skip; 4 costs one more buffer and
+skips essentially never. `sh packages/loam/tests/bench/own_buffer.sh` runs the
+paths and byte-compares their window crops.
 
-The **two surfaces** are not an optimisation: CoreAnimation holds a surface as the
-layer's texture while compositing, so locking it to draw the next frame deadlocks
-the app after a few frames (this is the measured reason the earlier IOSurface
-experiment was not shipped). They are used alternately with a NON-BLOCKING lock,
-so a frame the compositor is still reading is **skipped** rather than waited on.
+The **three surfaces** are not an optimisation: CoreAnimation holds a surface as the
+layer's texture while compositing, so writing the one it is reading is what makes a
+frame flash (this is the measured reason the earlier IOSurface experiment was not
+shipped). A frame is drawn only into a surface `IOSurfaceIsInUse` says the
+compositor is not reading; if it holds all of them, the frame is **skipped** rather
+than written over one in use — which the frame trace counts as `surf_skip`.
 
 **Where the frames go.** Both paths run the same `ZeusDraw` callbacks. The engine's
 own work (layout + step + paint) is 1.4–2.5 ms on the AppKit path and 5.0–6.6 ms on
 the owned one. AppKit wins because its context *is* the surface the compositor
-reads, so a finished frame never moves. The owned path paints into memory the GPU
-cannot see, so every frame is copied into a texture — and what that copy costs
-depends on the **store's depth**, because it also has to convert our 8-bit bitmap
-into the surface's format: it fits in a 16.7 ms frame against an sRGB window
-(16.6 ms) and does not against a half-float one (25.4 ms, `engine` unchanged at
-5.0/6.1 ms — the difference is all on CoreAnimation's side of the frame).
+reads, so a finished frame never moves. The owned **bitmap** path paints into
+memory the GPU cannot see, so every frame is copied into a texture — and what that
+copy costs depends on the **store's depth**, because it also has to convert our
+8-bit bitmap into the surface's format: it fits in a 16.7 ms frame against an sRGB
+window (16.6 ms) and does not against a half-float one (25.4 ms, `engine` unchanged
+at 5.0/6.1 ms — the difference is all on CoreAnimation's side of the frame). The
+owned **surface set** pays none of that: the texture is our memory, so the copy and
+the conversion both disappear.
 
 A window only draws when the engine has something pending (an idle window draws
 nothing at all — the frame clock stops), but any draw repaints the **whole
@@ -238,7 +244,7 @@ sh packages/loam/tests/bench/own_buffer.sh examples/zeus/myapp 10
 ```
 
 Runs the app four times — the owned bitmap (`ZEUS_OWN_SURFACE=0`), the owned
-IOSurface pair (the default), `APP_KIT=1`, then `ZEUS_WIDE_GAMUT=1` —
+IOSurface set (the default), `APP_KIT=1`, then `ZEUS_WIDE_GAMUT=1` —
 and prints each one's footprint, peak, per-buffer IOSurface lines and frame-time
 medians, with a crop of each run's own window (by window id, via `bench/winid.m`)
 so a hand-off that blanks or glitches the window cannot pass by logging frames. It
