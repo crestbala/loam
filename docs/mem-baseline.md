@@ -948,13 +948,106 @@ length guard (`buf.len >= w*h*4`) that keeps a host from reading past the buffer
   the retina↔non-retina drag — all need a display this environment does not have.
   Reported as pending, not fabricated.
 
+**Baseline JPEG in Loam (twenty-fifth step).** Photos are most of what an app
+actually shows, and JPEG is what they arrive in, so this is the decoder that
+matters most for "images just work". It is a baseline sequential decoder
+(SOF0/SOF1, 8-bit) with no image API anywhere: the marker stream, DQT/DHT,
+canonical-Huffman decoding, MCU-interleaved entropy decoding with restart
+markers (DRI/RSTn), real dequant + a separable float IDCT, chroma upsampling,
+and the YCbCr transform.
+
+The two decisions worth recording:
+
+- **Chroma upsampling matches libjpeg's "fancy" filter, phase included.** An
+  output pixel's centre maps to source coordinate
+  `(ox + 0.5) * ch / smaxh - 0.5`, which at 2x puts the two output samples a
+  source sample produces at ±0.25 of it, not ±0.5. Using the sample-centred
+  0.5 phase instead read max 43 off the oracle; the box-centred phase reads
+  max 3. That is the difference between "chroma is right" and "chroma is
+  right except at every saturated edge".
+- **Three row-band slots, not one.** At 2x a vertical triangle tap reaches one
+  component row past its band on BOTH sides, so emitting a band needs the band
+  below, the band itself, and the band above — and the band above is the one
+  just decoded. A single band buffer (or two) mismatches libjpeg at every MCU
+  row seam. Bands are emitted BEFORE the next is decoded, which is what keeps
+  exactly those three live under a mod-3 rotation.
+
+**Measured against libjpeg, not against ourselves.** The fixtures are written
+by Pillow, so the oracle is an independent implementation's answer. All four
+sampling modes decode to within the two IDCTs' rounding:
+
+| fixture | sampling | max channel diff | mean |
+|---|---|---|---|
+| `jpg_444.jpg` | 4:4:4 | 2 | 0 |
+| `jpg_422.jpg` | 4:2:2 | 3 | 0 |
+| `jpg_420.jpg` | 4:2:0 | 7 | 0 |
+| `jpg_restart.jpg` | 4:4:4 + DRI | 2 | 0 |
+| `jpg_gray.jpg` | grayscale | 1 | — |
+
+The restart fixture is the one that proves the RST path: disabling the restart
+handling makes that fixture fail while the others still pass, so the test is
+specific rather than incidental.
+
+**The boundary is drawn honestly.** Progressive (SOF2) and 4-component
+CMYK/YCCK are *recognised but not decoded*: `src_last_status()` is
+`SRC_UNSUPPORTED`, so the platform image path — which has always loaded them —
+keeps doing so. A format we do not decode falls back; it does not fail. That is
+the same contract the WebP/TIFF/HEIC entries below rely on.
+
+- bytes/node: **476.0 — unchanged.** No tree or environment code was touched.
+- arena: **unchanged** (total 982 624 B, high-water 986 628 B at 1000 buttons).
+- golden: structural pass; **all 15 draw goldens byte-identical**; pixel @2x
+  pass; 111 zeus `compile_pass` tests pass (the 2 failures are the network suites
+  this sandbox blocks).
+- memory note: the decoder holds **no coefficient plane and no whole sample
+  plane** — one MCU row of row-bands at a time, written straight into `src_px`,
+  so peak decode memory is the output plus a band. Same rule PNG and GIF follow.
+
+**The interned-closure signature bug (a fix, reported from the field).** This is
+the bug behind two unrelated-looking reports: the wasm gallery dying with
+`RuntimeError: function signature mismatch`, and the UI "vibrating" while
+scrolling on desktop / Android / iOS.
+
+The intern table is shared by four kinds of closure — plain handlers (`fn()`)
+and the int / bool / string prop thunks — and all four are just a `loam_fn` to C.
+`invoke_int_fn` called the slot as `int64_t (*)(void *)`, but a Loam
+`fn() -> int` compiles to `int32_t (*)(void *)` (Loam's `int` is i32; the
+generated C has 6 `int32_t (void*)` closures and no `int64_t` one). That is
+undefined behaviour, and it behaved differently per target:
+
+- **wasm** type-checks indirect calls, so it trapped outright.
+- **native** read the callee's stale high bits, and the garbage flowed into a
+  signal — a prop value that jitters, which is what "vibrating pixels" was.
+
+Two changes, both in the runtime seam:
+
+1. Cast to the signature the closure really has and widen the result
+   afterwards. This is the fix.
+2. Record the KIND alongside each slot and refuse a call through the wrong one,
+   counted and said out loud (rate-limited). Zero is the contract; the count is
+exposed as `zeus.intern_kind_mismatch_count()` so a test can pin it rather than
+   hope. A guard that silently papers over a real aliasing bug would be worse
+   than the bug, so it is loud.
+
+This is the third instance of the same lesson in this log: a C prototype that
+disagrees with the generated definition is not a warning, it is a target-specific
+bug — silent on native, fatal on wasm. The emitted prototypes are the contract.
+
+- bytes/node: **476.0 — unchanged.** No node layout was touched (the kind lives
+  in the runtime's table, beside the slot, not in `UiNode`).
+- golden: structural pass; all 15 draw goldens byte-identical; pixel @2x pass;
+  111 zeus `compile_pass` tests pass (the 2 failures are the network suites).
+- verified on the real reported case: the gallery wasm, driven in node through
+  the same entry points `loader.js` drives, went from trapping in `zeus_start`
+  to completing the tree build and painting frames.
+
 **Remaining Phase 4** (not done): SVG and `xform` in the raster pass (`text_int`,
-`text_wrap` and rotated text too), JPEG and WebP, and the **web** blit (a
-typed-array view over the same BGRA8 buffer plus one `putImageData` per frame; the
-buffer is ours, so the canvas never sees a Canvas2D draw call). Note also that
-the live frame loop still uses `present()` — the host's 2D API. The rasterizer is
-now independently able to drive a frame (`scene_rasterize` + `raster_blit`), and
-switching the loop over is a separate step.
+`text_wrap` and rotated text too), WebP, and the **web** blit (a typed-array view
+over the same BGRA8 buffer plus one `putImageData` per frame; the buffer is ours,
+so the canvas never sees a Canvas2D draw call). Note also that the live frame loop
+still uses `present()` — the host's 2D API. The rasterizer is now independently
+able to drive a frame (`scene_rasterize` + `raster_blit`), and switching the loop
+over is a separate step.
 
 **Image formats — status and roadmap.** Landed in Loam: **PNG** — colour types
 0/2/3/4/6, depths 1/2/4/8/16, all five scanline filters, multiple IDAT chunks,
