@@ -1030,15 +1030,20 @@ static NSAccessibilityRole mac_a11y_role(NSString *r) {
 
    Display paths:
 
-     default              the owned bitmap below: one buffer (~18 MB) instead of
-                          three, which is what keeps a screen-filling window at
-                          51-55 MB rather than 103-137 MB, for identical pixels.
-                          CoreAnimation still materialises each frame into a
-                          texture of its own, so the frame carries one copy.
-     ZEUS_OWN_SURFACE=1   the IOSurface path: our memory IS the layer's texture,
-                          so there is no copy and no store of the compositor's
-                          own. The leanest of the four, and the only one with
-                          neither cost.
+     default              the owned IOSurface pair below: our memory IS the
+                          layer's texture, so a finished frame is never copied
+                          and the pair keeps the compositor's read and our next
+                          write in different buffers. This is also the only path
+                          with no shared mutable buffer, which is what removed
+                          the shimmer under fast scroll that the single-buffer
+                          bitmap path showed.
+     ZEUS_OWN_SURFACE=0   the owned bitmap: one buffer (~18 MB), wrapped in a
+                          fresh CGImage per frame. CoreAnimation materialises
+                          each frame into a texture of its own, so the frame
+                          carries one full copy — and that one buffer is both
+                          our draw target and the layer's contents, which a fast
+                          scroll can catch mid-draw. Kept as an escape hatch,
+                          not as the default.
      APP_KIT=1            AppKit's own store, window pinned to sRGB. `drawRect:`
                           paints straight into the surface the compositor reads,
                           so nothing is ever copied and a screen-filling window
@@ -1055,10 +1060,9 @@ static NSAccessibilityRole mac_a11y_role(NSString *r) {
    CoreAnimation then holds the surface as the layer's texture, so locking it to
    write the next frame deadlocks the app after a few frames; that is fixed by the
    two-buffer swap with a non-blocking `kIOSurfaceLockAvoidSync` lock below, which
-   is why `ZEUS_OWN_SURFACE=1` now exists.
+   is what makes it safe to be the default.
 
-   No scale knob: the bitmap is always the display's own resolution. */
-static int own_buffer = -1;
+   No scale knob: the surface is always the display's own resolution. */
 static CGContextRef own_ctx;
 static NSGraphicsContext *own_gc; /* AppKit wrapper around `own_ctx`, built once */
 static int own_ctx_w, own_ctx_h;
@@ -1078,26 +1082,50 @@ static int env_truthy(const char *name) {
     return e && e[0] && e[0] != '0';
 }
 
-static int own_buffer_on(void) {
-    if (own_buffer < 0) {
-        /* The owned bitmap is the DEFAULT. AppKit's store is three full-window
-           buffers the compositor owns (~54 MB at Retina, and double that under a
-           display profile) against one buffer we own, and that is the whole of
-           the difference between ~100 MB and ~51 MB for identical pixels.
-           `APP_KIT=1` asks for AppKit's store instead — the escape hatch for a
-           host that wants the zero-copy `drawRect:` draw and its larger
-           frame-time headroom; `ZEUS_OWN_BUFFER=0` is the same choice spelled as
-           a value. */
-        if (env_truthy("APP_KIT")) {
-            own_buffer = 0;
-        } else if (getenv("ZEUS_OWN_BUFFER")) {
-            own_buffer = env_truthy("ZEUS_OWN_BUFFER") ? 1 : 0;
-        } else {
-            own_buffer = 1;
-        }
+/* The presentation path, chosen once, from the environment:
+
+     2  owned IOSurface pair   DEFAULT — our pixels ARE the layer's texture, so a
+                              frame is never copied, and the pair is what lets the
+                              next frame be drawn while the compositor still reads
+                              the last one.
+     1  owned bitmap           one `CGBitmapContext` wrapped in a fresh CGImage
+                              per frame (`ZEUS_OWN_SURFACE=0`).
+     0  AppKit's own store     `drawRect:` paints straight into the window's
+                              backing store (`APP_KIT=1`, or `ZEUS_OWN_BUFFER=0`).
+
+   Why the surface path is the default, in one line: the bitmap path has a
+   SINGLE buffer that is both our draw target and the layer's contents, and
+   CoreAnimation reads it lazily — a frame in flight and a frame being drawn
+   share the same bytes. Under a fast scroll that shows as a shimmer/tear of the
+   moving content, and the fresh CGImage per frame costs a full-frame copy into a
+   texture CA allocates anyway. The surface pair removes the copy and makes the
+   read and the write different memory. */
+static int display_path = -1;
+
+static int display_path_get(void) {
+    if (display_path < 0) {
+        /* Every explicit spelling keeps the path it always meant; only the
+           ABSENCE of all of them moved (bitmap -> surface pair). Order matters
+           only if more than one is set: APP_KIT wins, then ZEUS_OWN_SURFACE,
+           then ZEUS_OWN_BUFFER. */
+        if (env_truthy("APP_KIT"))
+            display_path = 0;
+        else if (getenv("ZEUS_OWN_SURFACE"))
+            display_path = env_truthy("ZEUS_OWN_SURFACE") ? 2 : 1;
+        else if (getenv("ZEUS_OWN_BUFFER"))
+            display_path = env_truthy("ZEUS_OWN_BUFFER") ? 1 : 0;
+        else
+            display_path = 2;
     }
-    return own_buffer;
+    return display_path;
 }
+
+/* The two owned paths, as predicates. `own_buffer_on()` is the bitmap path,
+   `own_surface_on()` the IOSurface pair; `wantsUpdateLayer` asks whether either
+   is in use, since both hand the layer memory we own and AppKit must not then
+   allocate a store for the view. */
+static int own_buffer_on(void) { return display_path_get() == 1; }
+static int own_surface_on(void) { return display_path_get() == 2; }
 
 /* A `CGImage` over the bitmap's own pixels, without copying them.
    `CGBitmapContextCreateImage` allocates a fresh buffer and memcpy's the whole
@@ -1311,9 +1339,12 @@ static void mac_schedule_next(int more) {
  * lock, mean a frame is skipped rather than blocked when the compositor is
  * still reading it.
  *
- * `ZEUS_OWN_SURFACE=1` selects it. The pixels are identical to the other two
- * paths by construction: `own_draw` runs the same engine the same way, in the
- * same format, at the same physical size — only the memory differs. */
+ * `ZEUS_OWN_SURFACE=1` selected it; since it is the only path with neither a
+ * per-frame copy nor a buffer shared with the compositor, it is now the DEFAULT
+ * (`ZEUS_OWN_SURFACE=0` selects the bitmap, `APP_KIT=1` AppKit's store). The
+ * pixels are identical to the other two paths by construction: `own_draw` runs
+ * the same engine the same way, in the same format, at the same physical size —
+ * only the memory differs. */
 #define OWN_SURFACES 2
 /* 'BGRA' — the same 4-byte premultiplied layout `CGBitmapContextCreate` and the
    layer already use, so nothing converts on the way out. */
@@ -1324,12 +1355,6 @@ static CGContextRef own_surf_ctx[OWN_SURFACES];
 static NSGraphicsContext *own_surf_gc[OWN_SURFACES];
 static int own_surf_cur;
 static int own_surf_w, own_surf_h;
-static int own_surface = -1;
-
-static int own_surface_on(void) {
-    if (own_surface < 0) own_surface = env_truthy("ZEUS_OWN_SURFACE") ? 1 : 0;
-    return own_surface;
-}
 
 static void own_surf_free(void) {
     int i;
@@ -1618,8 +1643,7 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int px_h, CGFloat s
     if (!own_surf_ensure(px_w, px_h)) {
         /* No surface: fall back to the bitmap, not to AppKit's store — the view
            is already layer-backed, so AppKit's drawn path is not available. */
-        own_surface = 0;
-        own_buffer = 1;
+        display_path = 1;
         self.layer.contents = nil;
         return 0;
     }
