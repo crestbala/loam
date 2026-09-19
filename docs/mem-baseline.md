@@ -670,16 +670,47 @@ allocated 200 KB to find out.
   suites this sandbox blocks), all 15 draw goldens byte-identical, structural
   golden pass, `tools/mem-baseline.sh --headless` unchanged.
 
-**Remaining Phase 4** (not done, and each is substantial): the rest of the image
-formats, the host half of the blit (a no-copy `CGImage` provider on native, a
-typed-array view on web), and driving `scene.paint` through the rasterizer (which
-changes every draw golden and so needs its own decision).
+**PNG's remaining sample formats (sixteenth step).** The RGB/RGBA path was the
+easy half. `png_decode` now handles what real assets actually use, and what an
+"8-bit RGB only" decoder silently gets wrong:
 
-**Image formats — status and roadmap.** Landed in Loam: **PNG** (8-bit
-RGB/RGBA, non-interlaced, all five scanline filters, multiple IDAT chunks, and
-stored/fixed/dynamic DEFLATE) and **BMP** (uncompressed 1/4/8/24/32-bit, both
-scan orders). A PNG produced by a real encoder — dynamic Huffman, a filter
-chosen per row, IDAT split into chunks — is now decoded entirely in Loam.
+- **Sample formats**: grayscale (colour type 0) at depths 1/2/4/8/16,
+grayscale+alpha (4), truecolour (2) and truecolour+alpha (6), and **palette**
+  (3) at depths 1/2/4/8. Sub-byte samples are read MSB-first out of shared
+  bytes, and 16-bit samples take the high byte (the engine is 8 bits per
+  channel). The filter's "bytes per pixel" is derived from the bit depth, so a
+  1-bit scanline filters correctly.
+- **tRNS in all three of its meanings**: a named gray sample, a named RGB
+triple, and a per-palette-entry alpha list.
+- **gAMA**: noted rather than converted. The whole pipeline is sRGB end to end,
+  so an image declaring a different transfer curve is composited as sRGB, and a
+  counter (`src_gamma_assumed`) makes that assumption visible instead of silent.
+  Real colour management needs a per-image transform and is not pretended here.
+- **Adam7 interlacing is refused by name** (`interlaced png`) rather than
+decoded wrongly. That is a stated limitation, not a silent wrong image.
+
+`zeus_image_png_variants.loam` checks every one of those against exact expected
+pixels, including the packed depths (1-bit and 4-bit rows where two or eight
+pixels share a byte), the premultiplied results of each tRNS form, and the
+round trip through the image cache. One subtlety it pins down: the decode buffer
+is **premultiplied** and the cache is **straight**, so the same pixel read from
+each differs wherever alpha < 255 — deliberately, because `raster_blend` wants
+the straight form. Both accessors now say so.
+
+- bytes/node: **476.0 — unchanged**; membench reports `images= 0`.
+- validation: 105 zeus `compile_pass` tests pass (the 2 failures are the network
+  suites this sandbox blocks), all 15 draw goldens byte-identical, structural
+  golden pass.
+
+**Remaining Phase 4** (not done, and each is substantial): Adam7, the remaining
+image formats, the host half of the blit (a no-copy `CGImage` provider on
+native, a typed-array view on web), and driving `scene.paint` through the
+rasterizer (which changes every draw golden and so needs its own decision).
+
+**Image formats — status and roadmap.** Landed in Loam: **PNG** — colour types
+0/2/3/4/6, depths 1/2/4/8/16, all five scanline filters, multiple IDAT chunks,
+stored/fixed/dynamic DEFLATE, PLTE and all three forms of tRNS, non-interlaced —
+and **BMP** (uncompressed 1/4/8/24/32-bit, both scan orders).
 
 Still handled by the platform path, and therefore still working: **everything
 else** — JPEG, GIF, WebP, TIFF, ICO, HEIC and any PNG variant the Loam decoder
@@ -689,10 +720,8 @@ is a routing decision rather than a capability cliff.
 
 The order that buys the most next:
 
-1. **PNG, the rest of it**: Adam7 interlacing, 16-bit depth, palette/grayscale/
-   `tRNS`, and `gAMA`/`sRGB` chunk handling. With inflate landed these are
-   parsing work rather than algorithmic work, and each one is a format real
-   files actually use — palette PNGs in particular are common in older assets.
+1. **Adam7 interlacing**, the last PNG feature we do not decode. It is the
+   remaining reason a real PNG could still fall back to the platform.
 2. **ICO/CUR**: a container of PNG or BMP, so it is nearly free once it can
    recurse into the two decoders we have — and an app icon is an ICO.
 3. **GIF**: LZW, palette, frame disposal. Small assets and animations.

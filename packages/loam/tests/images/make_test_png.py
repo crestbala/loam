@@ -294,6 +294,48 @@ def real_image(w, h):
     return rows
 
 
+def pack_samples(rows, depth, channels):
+    """Pack samples MSB-first into filtered scanlines (filter 0 throughout).
+    Several pixels share a byte at depths 1/2/4, and 16-bit samples are
+    big-endian, which is what the shift-based packer gives us for free."""
+    out = bytearray()
+    for row in rows:
+        line = bytearray()
+        acc = 0
+        nbits = 0
+        for px in row:
+            for s in px:
+                acc = (acc << depth) | (s & ((1 << depth) - 1))
+                nbits += depth
+                while nbits >= 8:
+                    nbits -= 8
+                    line.append((acc >> nbits) & 0xFF)
+                    acc &= (1 << nbits) - 1
+        if nbits:
+            line.append((acc << (8 - nbits)) & 0xFF)
+        out.append(0)
+        out += line
+    return bytes(out)
+
+
+def png_ex(w, h, ct, depth, rows, palette=None, trns=None, gama=None,
+           interlace=0, level=6):
+    """A PNG with a chosen colour type, sample depth, and optional PLTE / tRNS /
+    gAMA chunks -- the variants the RGB/RGBA path does not exercise."""
+    channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}[ct]
+    ihdr = struct.pack(">IIBBBBB", w, h, depth, ct, 0, 0, interlace)
+    out = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr)
+    if gama is not None:
+        out += chunk(b"gAMA", struct.pack(">I", gama))
+    if palette is not None:
+        out += chunk(b"PLTE", bytes(v for e in palette for v in e))
+    if trns is not None:
+        out += chunk(b"tRNS", trns)
+    co = zlib.compressobj(level, zlib.DEFLATED, 15, 9, 0)
+    z = co.compress(pack_samples(rows, depth, channels)) + co.flush()
+    return out + chunk(b"IDAT", z) + chunk(b"IEND", b"")
+
+
 def main():
     out = os.path.dirname(os.path.abspath(__file__))
     rows = checker(64, 64, 2)
@@ -348,6 +390,39 @@ def main():
     # filter per row, IDAT split into 500-byte chunks.
     files["real.png"] = png_multi_idat(200, 150, 2, real_image(200, 150),
                                        [0, 1, 2, 3, 4], 500)
+
+    # PNG variants: the sample formats and chunks the RGB/RGBA path never sees.
+    pal4 = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 255)]
+    files["gray8.png"] = png_ex(8, 4, 0, 8, [[(x * 36 % 256,) for x in range(8)]
+                                             for _ in range(4)],
+                                trns=struct.pack(">H", 36))
+    files["gray1.png"] = png_ex(8, 2, 0, 1, [[(x % 2,) for x in range(8)]
+                                             for _ in range(2)])
+    files["gray4.png"] = png_ex(8, 2, 0, 4, [[(x % 16,) for x in range(8)]
+                                             for _ in range(2)])
+    files["ga8.png"] = png_ex(4, 1, 4, 8, [[(200, 255), (200, 128),
+                                            (200, 0), (0, 255)]])
+    files["rgb16.png"] = png_ex(3, 1, 2, 16, [[(0x1234, 0x5678, 0x9ABC),
+                                              (0xFFFF, 0x0000, 0x0080),
+                                              (0x0100, 0x0001, 0x00FF)]])
+    files["rgb_trns.png"] = png_ex(3, 1, 2, 8, [[(10, 20, 30), (40, 50, 60),
+                                                 (70, 80, 90)]],
+                                   trns=struct.pack(">HHH", 40, 50, 60))
+    files["pal8.png"] = png_ex(4, 2, 3, 8, [[(x % 4,) for x in range(4)]
+                                            for _ in range(2)],
+                               palette=pal4, trns=bytes([128]))
+    files["pal4.png"] = png_ex(4, 2, 3, 4, [[(x % 4,) for x in range(4)]
+                                            for _ in range(2)],
+                               palette=pal4)
+    files["pal1.png"] = png_ex(8, 1, 3, 1, [[(x % 2,) for x in range(8)]],
+                               palette=[(0, 0, 0), (255, 255, 255)])
+    files["gama_odd.png"] = png_ex(4, 1, 2, 8, [[(1, 2, 3), (4, 5, 6),
+                                                (7, 8, 9), (10, 11, 12)]],
+                                   gama=100000)
+    # Adam7 is not implemented: the refusal must be explicit, not a wrong image.
+    files["interlaced.png"] = png_ex(8, 8, 2, 8, [[(x, y, 0) for x in range(8)]
+                                                  for y in range(8)],
+                                     interlace=1)
     for name, data in files.items():
         with open(os.path.join(out, name), "wb") as f:
             f.write(data)
