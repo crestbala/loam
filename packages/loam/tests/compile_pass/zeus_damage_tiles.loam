@@ -1,0 +1,45 @@
+// Phase 4: the damage list (Phase 1) drives tile selection. A full-damage frame
+// visits every tile; a paint-only change visits only the tile(s) its damage
+// rects touch, and overlapping rects never select a tile twice.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn main() {
+    // 600x600 at scale 1 is a 3x3 grid of 256px tiles.
+    zeus.raster_ensure(600, 600, 1)
+    zeus.window("damage-tiles", 600, 600)
+
+    let mut id = 0
+    zeus.root(zeus.Box() {
+        let b = zeus.Box(position = zeus.pos_absolute(), left = 300, top = 300,
+                         width = 20, height = 20, background = "#ff0000")
+        id = b.id
+    })
+    zeus.pump_frame()
+
+    // A layout frame damages the whole surface: every tile is selected.
+    let full = zeus.damage_tiles_build()
+    must(full == 9, "a full-damage frame selects all 9 tiles")
+
+    // A paint-only change (a running track) damages just the node, which lies
+    // inside tile (1,1) only.
+    zeus.animate_opacity(Node { id: id }, 50, 100)
+    zeus.engine_step_dt(16)
+    zeus.engine_paint()
+    let n = zeus.damage_tiles_build()
+    must(n == 1, "a paint-only node selects exactly one tile")
+    must(zeus.damage_tiles_x(0) == 256, "the selected tile is the node's column")
+    must(zeus.damage_tiles_y(0) == 256, "the selected tile is the node's row")
+
+    fmt.println("damage tiles ok", full, n)
+}
