@@ -1,0 +1,108 @@
+// Phase 4: ICO — a container, not a format.
+//
+// An icon entry is an embedded PNG or a BMP DIB whose declared height counts the
+// AND mask (twice the real height). So this exercises the two decoders already
+// tested, plus the container work: choosing the largest entry, rewriting the
+// DIB's height so the BMP decoder sees a normal file, and applying the AND mask
+// so a 24-bit icon has real transparency.
+//
+// The oracle is Pillow again, for the same reason as GIF: agreement with an
+// independent implementation is the only thing worth asserting here.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn load(name: string) -> string {
+    let s = sys.read_file("packages/loam/tests/images/{{name}}")
+    must(s.len > 0, "fixture not loaded")
+    return s
+}
+
+fn diff_against_oracle(name: string) -> int {
+    must(zeus.image_decode_any(load(name)) == 1, "icon decodes")
+    let w = zeus.image_src_width()
+    let h = zeus.image_src_height()
+    let want = load("{{name}}.rgba")
+    must(want.len == w * h * 4, "oracle size matches the decoded size")
+    let mut bad = 0
+    let mut y = 0
+    while y < h {
+        let mut x = 0
+        while x < w {
+            let mut c = 0
+            while c < 4 {
+                if zeus.image_src_get(x, y, c) != int(want[(y * w + x) * 4 + c]) {
+                    bad = bad + 1
+                }
+                c = c + 1
+            }
+            x = x + 1
+        }
+        y = y + 1
+    }
+    return bad
+}
+
+fn main() {
+    let ico = load("icon_dib.ico")
+    must(zeus.image_format_name(zeus.image_format_of(ico)) == "ico", "ico sniffed")
+    must(zeus.image_format_is_decodable(zeus.image_format_of(ico)) == 1,
+         "ico is decoded in Loam")
+
+    // --- a DIB entry, which is the form a real icon editor writes ---------
+    must(diff_against_oracle("icon_dib.ico") == 0, "DIB icon matches Pillow")
+    must(zeus.image_src_width() == 32, "DIB icon: 32 wide")
+    must(zeus.image_src_height() == 32, "DIB icon: 32 tall")
+    // The art has a white border ring, so the corners are the border and the
+    // middle is artwork: a decoder that ignored the row order or the palette
+    // would not put them there.
+    must(zeus.image_src_get(0, 0, 3) == 255, "DIB icon corner is opaque")
+    must(zeus.image_src_get(16, 16, 3) == 255, "DIB icon middle is opaque")
+
+    // --- 32-bit DIB with an alpha channel ---------------------------------
+    must(diff_against_oracle("icon_alpha.ico") == 0, "alpha icon matches Pillow")
+    must(zeus.image_src_get(0, 0, 3) == 0, "alpha icon corner is transparent")
+    must(zeus.image_src_get(0, 0, 0) == 0, "and premultiplies to nothing")
+    must(zeus.image_src_get(16, 16, 3) == 255, "alpha icon middle is opaque")
+
+    // --- several sizes: the largest entry is the one to draw --------------
+    must(diff_against_oracle("icon_multi.ico") == 0, "multi-size icon matches Pillow")
+    must(zeus.image_src_width() == 48, "multi-size icon picks 48 wide")
+    must(zeus.image_src_height() == 48, "multi-size icon picks 48 tall")
+
+    // --- a 256x256 entry, which ICO stores as an embedded PNG -------------
+    // This one goes through the PNG decoder, so it also proves the container
+    // recursion rather than duplicating the PNG work.
+    must(diff_against_oracle("icon_png.ico") == 0, "PNG-entry icon matches Pillow")
+    must(zeus.image_src_width() == 256, "PNG-entry icon: 256 wide")
+    must(zeus.image_src_get(0, 0, 3) == 0, "PNG-entry icon corner is transparent")
+    must(zeus.image_src_get(128, 128, 3) == 255, "PNG-entry icon middle is opaque")
+
+    // --- malformed input ---------------------------------------------------
+    let fails = zeus.image_decode_failure_count()
+    must(zeus.image_decode_any(load("magic_ico.bin")) == 0, "a header-only icon fails")
+    must(zeus.image_decode_failure_count() == fails + 1, "and is counted")
+    must(zeus.image_decode_failure_reason() == "icon too short", "and named")
+
+    // --- and icons go through the same cache pipeline ---------------------
+    zeus.image_cache_clear()
+    zeus.image_set_budget(8 * 1024 * 1024)
+    let slot = zeus.image_get(1, load("icon_alpha.ico"), 32, 32)
+    must(slot >= 0, "icon caches")
+    must(zeus.image_get_px(slot, 0, 0, 3) == 0, "cached icon keeps its transparency")
+    let scaled = zeus.image_get(2, load("icon_alpha.ico"), 16, 16)
+    must(scaled >= 0, "icon downscales")
+    must(zeus.image_w(scaled) == 16, "16 wide")
+
+    fmt.println("image ico ok", zeus.image_decode_count(),
+                zeus.image_decode_failure_count(), zeus.image_scratch_bytes())
+}

@@ -90,7 +90,7 @@ fn main() {
     must(zeus.image_format_is_decodable(zeus.image_format_of(webp)) == 0, "webp via platform")
     must(zeus.image_format_is_decodable(zeus.image_format_of(avif)) == 0, "avif via platform")
     must(zeus.image_format_is_decodable(zeus.image_format_of(tiff)) == 0, "tiff via platform")
-    must(zeus.image_format_is_decodable(zeus.image_format_of(ico)) == 0, "ico via platform")
+    must(zeus.image_format_is_decodable(zeus.image_format_of(ico)) == 1, "ico in Loam")
     must(zeus.image_format_is_decodable(zeus.image_format_of(junk)) == 0, "junk via platform")
 
     // --- decoding a recognisable format we do not cover says so -----------

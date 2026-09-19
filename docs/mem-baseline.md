@@ -727,18 +727,47 @@ image, one with a transparent index, an interlaced one, and a 3-frame animation
   suites this sandbox blocks), all 15 draw goldens byte-identical, structural
   golden pass.
 
-**Remaining Phase 4** (not done, and each is substantial): ICO/CUR and JPEG, the
-host half of the blit (a no-copy `CGImage` provider on native, a typed-array view
-on web), and driving `scene.paint` through the rasterizer (which changes every
-draw golden and so needs its own decision).
+**ICO (nineteenth step).** An icon entry is an embedded PNG or a BMP DIB whose
+declared height counts the AND mask (twice the real height), so this is a
+container around the two decoders already tested rather than a third format:
+the largest entry is chosen, the DIB's height is rewritten so the BMP decoder
+sees a normal file, and the AND mask is applied.
+
+Two details the fixtures settled, both of which a guess would have got wrong:
+
+- **The AND mask is optional.** Pillow omits it for a 32-bit entry (its alpha
+  channel already says what the mask would), so a decoder that requires it
+  rejects perfectly ordinary icons. Its absence is now handled rather than
+  treated as truncation — and the XOR rows being complete is still required.
+- Pillow writes PNG entries by default and DIB entries only with
+  `bitmap_format="bmp"`, so the fixtures ask for both on purpose: the DIB path
+  (24-bit and 32-bit, both with the height-doubling and the mask) and the
+  container-recursion path (a 256x256 embedded PNG) are each covered by real
+  files.
+
+`zeus_image_ico.loam` compares every byte against Pillow's decode for a 24-bit
+DIB icon, a 32-bit alpha DIB icon, a three-size icon (proving the largest entry
+is the one drawn) and a 256x256 PNG-entry icon, then checks the cache path
+including a downscale.
+
+- bytes/node: **476.0 — unchanged**; membench reports `images= 0`.
+- validation: 107 zeus `compile_pass` tests pass (the 2 failures are the network
+  suites this sandbox blocks), all 15 draw goldens byte-identical, structural
+  golden pass, `tools/mem-baseline.sh --headless` unchanged.
+
+**Remaining Phase 4** (not done, and each is substantial): JPEG (the largest
+remaining decoder) and WebP, the host half of the blit (a no-copy `CGImage`
+provider on native, a typed-array view on web), and driving `scene.paint`
+through the rasterizer (which changes every draw golden and so needs its own
+decision).
 
 **Image formats — status and roadmap.** Landed in Loam: **PNG** — colour types
 0/2/3/4/6, depths 1/2/4/8/16, all five scanline filters, multiple IDAT chunks,
 stored/fixed/dynamic DEFLATE, PLTE and all three forms of tRNS, **Adam7
-interlaced** — **BMP** (uncompressed 1/4/8/24/32-bit, both scan orders), and
-**GIF** (palette, LZW, transparent index, interlacing, first frame of an
-animation). There is no longer any PNG a real encoder produces that we cannot
-decode.
+interlaced** — **BMP** (uncompressed 1/4/8/24/32-bit, both scan orders), **GIF**
+(palette, LZW, transparent index, interlacing, first frame of an animation) and
+**ICO/CUR** (DIB or embedded PNG, largest entry, AND mask). There is no longer
+any PNG a real encoder produces that we cannot decode.
 
 Still handled by the platform path, and therefore still working: **everything
 else** — JPEG, GIF, WebP, TIFF, ICO, HEIC and any PNG variant the Loam decoder
@@ -748,15 +777,12 @@ is a routing decision rather than a capability cliff.
 
 The order that buys the most next:
 
-1. **ICO/CUR**: a container of PNG or BMP, so it is nearly free once it can
-   recurse into the two decoders we have — and an app icon is an ICO, so this is
-   the cheapest remaining win.
-2. **JPEG** baseline sequential: Huffman tables, dequantize, IDCT, YCbCr,
+1. **JPEG** baseline sequential: Huffman tables, dequantize, IDCT, YCbCr,
    chroma upsampling. The largest remaining decoder, and what photos and
    avatars need; progressive is a second pass.
-3. **WebP**: lossless/VP8L is a moderate job (LZ77 with transforms); lossy VP8
+2. **WebP**: lossless/VP8L is a moderate job (LZ77 with transforms); lossy VP8
    is a different order of magnitude and should be its own project.
-4. **SVG** is not a pixel format: it routes through the rasterizer we already
+3. **SVG** is not a pixel format: it routes through the rasterizer we already
    have (paths, fills, strokes), so it belongs with the paint work, not here.
 
 Not planned and not pretended: **AVIF** and **HEIC**, which are AV1 and H.265
