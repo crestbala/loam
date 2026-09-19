@@ -1,0 +1,63 @@
+// Phase 4: anti-aliased border strokes, drawn as a ring accumulated into a
+// tile-sized coverage buffer so the four runs and four corner arcs composite
+// ONCE (piece-by-piece compositing would seam at shared edges). A hairline
+// border snaps to the pixel grid so it is one crisp row, not two half-lit ones.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn main() {
+    zeus.raster_ensure(120, 120, 1)
+
+    // --- a 1px border is exactly one row on every side --------------------
+    zeus.raster_clear(255, 255, 255)
+    zeus.raster_stroke_round_rect(20, 20, 80, 80, 0, 1, 0, 0, 0, 255)
+    must(zeus.raster_get(60, 20, 1) == 0, "top border row is black")
+    must(zeus.raster_get(60, 19, 1) == 255, "nothing above the top border")
+    must(zeus.raster_get(60, 21, 1) == 255, "interior just below the top border")
+    must(zeus.raster_get(60, 99, 1) == 0, "bottom border row is black")
+    must(zeus.raster_get(60, 100, 1) == 255, "nothing below the bottom border")
+    must(zeus.raster_get(20, 60, 1) == 0, "left border column is black")
+    must(zeus.raster_get(19, 60, 1) == 255, "nothing left of the left border")
+    must(zeus.raster_get(99, 60, 1) == 0, "right border column is black")
+    must(zeus.raster_get(100, 60, 1) == 255, "nothing right of the right border")
+    must(zeus.raster_get(20, 20, 1) == 0, "top-left corner is joined, not gapped")
+    must(zeus.raster_get(60, 60, 1) == 255, "the ring interior is untouched")
+
+    // --- hairline snapping: a fractional device origin still lands one row --
+    // A 1px border at a fractional position (what a logical x * scale 2 gives)
+    // must occupy exactly one device row, not two half-lit ones.
+    zeus.raster_clear(255, 255, 255)
+    zeus.raster_stroke_round_rect_dev(20.4, 20.4, 80.0, 80.0, 0.0, 1.0, 0, 0, 0, 255)
+    must(zeus.raster_get(60, 20, 1) == 0, "fractional hairline snaps to one row")
+    must(zeus.raster_get(60, 21, 1) == 255, "and not a half-lit second row")
+    must(zeus.raster_get(60, 19, 1) == 255, "and not a half-lit row above")
+    must(zeus.raster_get(20, 60, 1) == 0, "fractional hairline snaps on the left edge")
+
+    // --- a 4px border is four solid rows ----------------------------------
+    zeus.raster_clear(255, 255, 255)
+    zeus.raster_stroke_round_rect(20, 20, 80, 80, 0, 4, 0, 0, 0, 255)
+    must(zeus.raster_get(60, 20, 1) == 0, "4px border first row")
+    must(zeus.raster_get(60, 23, 1) == 0, "4px border fourth row")
+    must(zeus.raster_get(60, 24, 1) == 255, "4px border stops after four rows")
+    must(zeus.raster_get(60, 60, 1) == 255, "thick border interior untouched")
+
+    // --- rounded corners: outside stays clear, the arc is drawn ----------
+    zeus.raster_clear(255, 255, 255)
+    zeus.raster_stroke_round_rect(20, 20, 80, 80, 10, 3, 0, 0, 0, 255)
+    must(zeus.raster_get(60, 60, 1) == 255, "rounded ring interior untouched")
+    must(zeus.raster_get(21, 21, 1) == 255, "outside the corner arc stays clear")
+    // The corner arc passes near (24,24) (center (30,30), radius ~10): drawn.
+    must(zeus.raster_get(24, 24, 1) < 200, "corner arc is painted")
+
+    fmt.println("raster stroke ok")
+}

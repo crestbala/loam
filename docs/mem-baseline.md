@@ -326,7 +326,7 @@ step; doing them half-way is how a UI engine regresses silently):
 Net: Phase 3's free/ordering step is done and measured; its structural items
 (1-3) and the `f32` geometry requirement (4) remain open.
 
-### Phase 4 — software rasterizer (framebuffer + color pipeline + analytic tile coverage)
+### Phase 4 — software rasterizer (framebuffer, color pipeline, analytic coverage, borders)
 
 - bytes/node: **476.0 — unchanged.** No tree/geometry code was touched.
 - New module `packages/zeus/std/zeuscore/raster.loam`:
@@ -367,6 +367,22 @@ so AA is real, and the interior/rounded-corner pixels are exact.
 - Curves flatten to a **0.25 DEVICE-pixel** tolerance; a plain rectangle's edges
 land exactly on the pixel grid (no half-lit rows).
 
+**Borders and hairline snapping (third step).** A border is a ring, so it is not
+convex: `raster_stroke_round_rect` accumulates its four straight runs and four
+corner quarter-rings into a **tile-sized coverage buffer** and composites once.
+Piece-by-piece compositing would double-blend at every shared edge and show a
+seam around every border. A border whose device width rounds to <= 1px snaps its
+outer edges to the pixel grid (quality rule 8). `zeus_raster_stroke.loam`:
+
+- a 1px border is exactly one row on all four sides, interior untouched;
+- a fractional device origin (20.4, what `logical * scale` produces) still lands
+  **one crisp row**, not two half-lit ones;
+- a 4px border is four solid rows and stops;
+- a rounded ring leaves the interior clear and paints its corner arc.
+
+The coverage buffer is scratch (tile-sized, reset per shape), per the Phase 4
+rule that intermediates never reach surface size.
+
 **Compiler bug this work surfaced.** Adding the raster module's ~40 globals and
 constants tipped four large programs (zeus_components / key_prop / reactive /
 spec_props) past a **silent 256-entry cap** in `typecheck.c`: `gvars[256]`,
@@ -377,10 +393,8 @@ now a compile error instead of a silent drop. It is a latent compiler bug any
 large app could hit; Phase 4 is simply what surfaced it. (The full `nob test`
 run: 449 passed; the 6 failures are the network suites this sandbox blocks.)
 
-**Remaining Phase 4** (not done, and each is substantial): rounded-rect /
-stroke fills with pixel-grid hairline snapping (the analytic path exists; the
-stroke-as-four-rectangles and snapping are next), tile-size single-channel
-shadow blur (3-pass separable box), damage-limited tile selection, the glyph
-atlas with in-tree TrueType/GPOS metrics, image decode with Mitchell/Lanczos2
-downsampling and an LRU byte budget, the zero-copy blit, and the web
-(devicePixelRatio) path.
+**Remaining Phase 4** (not done, and each is substantial): tile-size
+single-channel shadow blur (3-pass separable box), damage-limited tile
+selection, the glyph atlas with in-tree TrueType/GPOS metrics, image decode with
+Mitchell/Lanczos2 downsampling and an LRU byte budget, the zero-copy blit, and
+the web (devicePixelRatio) path.

@@ -2372,6 +2372,23 @@ fn raster_fill_round_rect_tiled(x: int, y: int, w: int, h: int, rad: int,
     raster.raster_fill_tiled(cr, cg, cb, alpha)
 }
 
+/// Draw a rounded-rect border. `bw` is the device-pixel thickness; a hairline
+/// (<= 1px) snaps to the pixel grid.
+fn raster_stroke_round_rect(x: int, y: int, w: int, h: int, rad: int, bw: int,
+                            cr: int, cg: int, cb: int, alpha: int) {
+    raster.raster_stroke_round_rect(float(x), float(y), float(w), float(h),
+                                    float(rad), float(bw), cr, cg, cb, alpha)
+}
+
+/// The same border in DEVICE coordinates (float) for callers that compute
+/// `logical * scale`, where edges are fractional. This is the path the renderer
+/// uses, and the one hairline snapping exists for.
+fn raster_stroke_round_rect_dev(x: float, y: float, w: float, h: float,
+                                rad: float, bw: float,
+                                cr: int, cg: int, cb: int, alpha: int) {
+    raster.raster_stroke_round_rect(x, y, w, h, rad, bw, cr, cg, cb, alpha)
+}
+
 fn damage_x(i: int) -> int {
     return arena.damage[i].x
 }
