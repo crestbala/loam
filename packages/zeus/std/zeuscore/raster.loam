@@ -897,3 +897,267 @@ fn raster_checksum() -> int {
     }
     return i32(h)
 }
+
+// --- multi-piece fills: a tile-sized coverage buffer (Phase 4) -------------
+//
+// A border is a RING — four straight runs plus four corner arcs — so it is not
+// convex and cannot be one path. Compositing its convex pieces one by one would
+// double-blend wherever two pieces share an edge (two half-covered pixels
+// composited twice are darker than one fully covered pixel), which shows as a
+// seam around every border. Instead the pieces ACCUMULATE signed coverage into
+// this buffer and it is composited once. The buffer is tile-sized and reset per
+// shape, so it is scratch, never a surface-sized intermediate.
+
+let mut cov: []int = []int {}
+
+fn raster_cov_ensure() {
+    let want = RASTER_TILE * RASTER_TILE
+    if cov.len == want {
+        return
+    }
+    while cov.len > 0 {
+        pop(cov)
+    }
+    let mut i = 0
+    while i < want {
+        push(cov, 0)
+        i = i + 1
+    }
+}
+
+fn raster_cov_zero(tw: int, th: int) {
+    let mut y = 0
+    while y < th {
+        let row = y * RASTER_TILE
+        let mut x = 0
+        while x < tw {
+            cov[row + x] = 0
+            x = x + 1
+        }
+        y = y + 1
+    }
+}
+
+/// Round to the nearest device pixel — hairline snapping (quality rule 8).
+fn raster_snap(v: float) -> float {
+    return raster_floor(v + 0.5)
+}
+
+/// Set the path to an axis-aligned rectangle (device pixels).
+fn raster_set_rect(x: float, y: float, w: float, h: float) {
+    while rp_path.len > 0 {
+        pop(rp_path)
+    }
+    push(rp_path, RPoint { x: x, y: y })
+    push(rp_path, RPoint { x: x + w, y: y })
+    push(rp_path, RPoint { x: x + w, y: y + h })
+    push(rp_path, RPoint { x: x, y: y + h })
+}
+
+/// Set the path to a quad (four points, convex).
+fn raster_set_quad(ax: float, ay: float, bx: float, by: float,
+                   cx: float, cy: float, dx: float, dy: float) {
+    while rp_path.len > 0 {
+        pop(rp_path)
+    }
+    push(rp_path, RPoint { x: ax, y: ay })
+    push(rp_path, RPoint { x: bx, y: by })
+    push(rp_path, RPoint { x: cx, y: cy })
+    push(rp_path, RPoint { x: dx, y: dy })
+}
+
+/// Add the current path's coverage, clipped to the region [tx,tx+tw) x
+/// [ty,ty+th), into the coverage buffer at stride RASTER_TILE. Same global-
+/// geometry rule as `raster_fill_path`: the region limits the write only.
+fn raster_accum_path(tx: int, ty: int, tw: int, th: int) {
+    let n = rp_path.len
+    if n < 3 {
+        return
+    }
+    let mut minx = rp_path[0].x
+    let mut maxx = minx
+    let mut miny = rp_path[0].y
+    let mut maxy = miny
+    let mut i = 1
+    while i < n {
+        minx = raster_min_f(minx, rp_path[i].x)
+        maxx = raster_max_f(maxx, rp_path[i].x)
+        miny = raster_min_f(miny, rp_path[i].y)
+        maxy = raster_max_f(maxy, rp_path[i].y)
+        i = i + 1
+    }
+    let bx0 = raster_max_f(float(tx), raster_floor(minx))
+    let by0 = raster_max_f(float(ty), raster_floor(miny))
+    let bx1 = raster_min_f(float(tx + tw), raster_ceil(maxx))
+    let by1 = raster_min_f(float(ty + th), raster_ceil(maxy))
+    let mut py = i32(by0)
+    let py_end = i32(by1)
+    while py < py_end {
+        raster_row_active(py)
+        let yc = float(py) + 0.5
+        let mut px = i32(bx0)
+        let px_end = i32(bx1)
+        while px < px_end {
+            let mut hit = 0
+            let na = rp_active.len
+            let mut k = 0
+            while k < na {
+                let e = rp_active[k]
+                if raster_edge_hits_square(rp_path[e], rp_path[(e + 1) % n], px, py) == 1 {
+                    hit = 1
+                }
+                k = k + 1
+            }
+            let mut c = 0
+            if hit == 0 {
+                if raster_point_inside(float(px) + 0.5, yc) == 1 {
+                    c = 255
+                }
+            } else {
+                c = raster_pixel_area(px, py)
+            }
+            if c != 0 {
+                let idx = (py - ty) * RASTER_TILE + (px - tx)
+                cov[idx] = cov[idx] + c
+            }
+            px = px + 1
+        }
+        py = py + 1
+    }
+}
+
+/// Composite the accumulated coverage for a region onto the framebuffer.
+fn raster_composite_cov(tx: int, ty: int, tw: int, th: int, cr: int, cg: int, cb: int, alpha: int) {
+    if alpha <= 0 {
+        return
+    }
+    let mut y = 0
+    while y < th {
+        let row = y * RASTER_TILE
+        let mut x = 0
+        while x < tw {
+            let mut c = cov[row + x]
+            if c > 255 {
+                c = 255
+            }
+            if c > 0 {
+                let a = c * alpha / 255
+                if a > 0 {
+                    raster_blend(tx + x, ty + y, cr, cg, cb, a)
+                }
+            }
+            x = x + 1
+        }
+        y = y + 1
+    }
+}
+
+/// Accumulate one quarter-ring: the band between radius `ro` and `ri` over the
+/// angle range [a0,a1], as a series of convex quads (the arc is flattened to the
+/// same device tolerance as `raster_round_rect`).
+fn raster_accum_corner(ccx: float, ccy: float, ro: float, ri: float,
+                       a0: float, a1: float, tx: int, ty: int, tw: int, th: int) {
+    let mut theta = raster_sqrt(8.0 * RASTER_FLAT_TOL / ro)
+    if theta < 0.05 {
+        theta = 0.05
+    }
+    let mut nseg = i32((a1 - a0) / theta) + 1
+    if nseg < 2 {
+        nseg = 2
+    }
+    let mut k = 0
+    while k < nseg {
+        let t0 = float(k) / float(nseg)
+        let t1 = float(k + 1) / float(nseg)
+        let g0 = a0 + (a1 - a0) * t0
+        let g1 = a0 + (a1 - a0) * t1
+        let ox0 = ccx + ro * raster_cos(g0)
+        let oy0 = ccy + ro * raster_sin(g0)
+        let ox1 = ccx + ro * raster_cos(g1)
+        let oy1 = ccy + ro * raster_sin(g1)
+        let ix0 = ccx + ri * raster_cos(g0)
+        let iy0 = ccy + ri * raster_sin(g0)
+        let ix1 = ccx + ri * raster_cos(g1)
+        let iy1 = ccy + ri * raster_sin(g1)
+        raster_set_quad(ox0, oy0, ox1, oy1, ix1, iy1, ix0, iy0)
+        raster_accum_path(tx, ty, tw, th)
+        k = k + 1
+    }
+}
+
+/// Accumulate a rounded-rect border RING of thickness `bw` into the coverage
+/// buffer, for region [tx,tx+tw) x [ty,ty+th). Four straight runs plus four
+/// corner quarter-rings; accumulated, so shared edges never double-blend.
+fn raster_accum_ring(x: float, y: float, w: float, h: float, rad: float, bw: float,
+                     tx: int, ty: int, tw: int, th: int) {
+    let short = raster_min_f(w, h) * 0.5
+    let mut ro = rad
+    if ro > short {
+        ro = short
+    }
+    if ro < 0.0 {
+        ro = 0.0
+    }
+    let mut ri = ro - bw
+    if ri < 0.0 {
+        ri = 0.0
+    }
+    let mut t = bw
+    if t > raster_min_f(w, h) * 0.5 {
+        t = raster_min_f(w, h) * 0.5
+    }
+    // straight runs (full thickness, between the corner arcs)
+    if w - ro - ro > 0.0 {
+        raster_set_rect(x + ro, y, w - ro - ro, t)
+        raster_accum_path(tx, ty, tw, th)
+        raster_set_rect(x + ro, y + h - t, w - ro - ro, t)
+        raster_accum_path(tx, ty, tw, th)
+    }
+    if h - ro - ro > 0.0 {
+        raster_set_rect(x, y + ro, t, h - ro - ro)
+        raster_accum_path(tx, ty, tw, th)
+        raster_set_rect(x + w - t, y + ro, t, h - ro - ro)
+        raster_accum_path(tx, ty, tw, th)
+    }
+    if ro > 0.0 {
+        raster_accum_corner(x + w - ro, y + ro, ro, ri, 0.0 - RASTER_HALF_PI, 0.0, tx, ty, tw, th)
+        raster_accum_corner(x + w - ro, y + h - ro, ro, ri, 0.0, RASTER_HALF_PI, tx, ty, tw, th)
+        raster_accum_corner(x + ro, y + h - ro, ro, ri, RASTER_HALF_PI, RASTER_PI, tx, ty, tw, th)
+        raster_accum_corner(x + ro, y + ro, ro, ri, RASTER_PI, RASTER_PI + RASTER_HALF_PI, tx, ty, tw, th)
+    }
+}
+
+/// Draw a rounded-rect border, tiled. A border whose device width rounds to one
+/// pixel or less snaps its outer edges to the pixel grid, so it lands as one
+/// crisp row instead of two half-lit ones (quality rule 8).
+fn raster_stroke_round_rect(x: float, y: float, w: float, h: float, rad: float, bw: float,
+                            cr: int, cg: int, cb: int, alpha: int) {
+    raster_build()
+    raster_cov_ensure()
+    let hair = bw <= 1.5
+    let mut sx = x
+    let mut sy = y
+    let mut sw = w
+    let mut sh = h
+    let mut t = bw
+    if hair {
+        sx = raster_snap(x)
+        sy = raster_snap(y)
+        sw = raster_snap(x + w) - sx
+        sh = raster_snap(y + h) - sy
+        t = 1.0
+    }
+    let mut ty = 0
+    while ty < fb_h {
+        let th = raster_min_i(ty + RASTER_TILE, fb_h) - ty
+        let mut tx = 0
+        while tx < fb_w {
+            let tw = raster_min_i(tx + RASTER_TILE, fb_w) - tx
+            raster_cov_zero(tw, th)
+            raster_accum_ring(sx, sy, sw, sh, rad, t, tx, ty, tw, th)
+            raster_composite_cov(tx, ty, tw, th, cr, cg, cb, alpha)
+            tx = tx + RASTER_TILE
+        }
+        ty = ty + RASTER_TILE
+    }
+}
