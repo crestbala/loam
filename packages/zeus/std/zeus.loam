@@ -1439,6 +1439,7 @@ fn refit_stale() -> int {
 
 fn engine_layout(width: int, height: int) {
     ensure_role_colors()
+    arena.damage_frame_begin()
     // One frame of the async world first: steppers advance in-flight socket
     // state machines, then spawns and due timers fire. Callbacks set signals;
     // the rebuild and layout below paint their effect this very frame. Hosts
@@ -1478,6 +1479,11 @@ fn engine_layout(width: int, height: int) {
     let mut lay = 0
     if resized != 0 || arena.layout_dirty != 0 {
         lay = 1
+    }
+    // Anything that can move geometry anywhere repaints the whole surface. A
+    // local repaint is only ever claimed for a paint-only change (Phase 1).
+    if resized != 0 || lay != 0 {
+        arena.damage_all()
     }
     if lay != 0 {
         arena.stamp_edits()
@@ -1593,6 +1599,7 @@ fn engine_key_up(key: int, mods: int) -> int {
 /// from app code; use `App`, clicks, and signals instead.
 
 fn engine_paint() {
+    arena.damage_frame_begin()
     scene.paint()
 }
 
@@ -2255,6 +2262,35 @@ fn mem_bytes() -> i64 {
 /// bucket moved between frames.
 fn mem_dump() {
     arena.mem_report()
+}
+
+/// Phase 1 damage diagnostics: 1 when the last frame repainted the whole
+/// surface (layout, tree rebuild, resize, or an unmarked global change).
+/// Additive; no paint behavior reads these.
+fn damage_full() -> int {
+    return arena.damage_full
+}
+
+/// Phase 1 damage diagnostics: rects contributed by the last frame's paint.
+/// Empty when `damage_full()` is 1. Additive.
+fn damage_count() -> int {
+    return arena.damage.len
+}
+
+fn damage_x(i: int) -> int {
+    return arena.damage[i].x
+}
+
+fn damage_y(i: int) -> int {
+    return arena.damage[i].y
+}
+
+fn damage_w(i: int) -> int {
+    return arena.damage[i].w
+}
+
+fn damage_h(i: int) -> int {
+    return arena.damage[i].h
 }
 
 /// Byte size of one draw-list record (diagnostics for the Phase 11 layout

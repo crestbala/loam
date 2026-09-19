@@ -16,6 +16,7 @@ Everything in this file was produced by commands in
 | `ZEUS_MEM_STATS` gate | `platform.plat_mem_stats` — build flag `-DZEUS_MEM_STATS` (via `driver.c`) **or** `ZEUS_MEM_STATS=1` at runtime |
 | `membench` app, three modes | `examples/zeus/membench/membench.loam` |
 | Structural golden scene | `tests/golden/ref_scene.loam` |
+| Frame damage list (Phase 1) | `packages/zeus/std/zeuscore/arena.loam`, `scene.loam` |
 
 The gate is a no-op when off: `mem_stats_report` calls one host function that
 returns 0, and `mem_sample()` (the only per-frame cost) is skipped entirely.
@@ -178,6 +179,35 @@ where the probe builds the windowed list, then loops
 `zeus.engine_scroll_step(...)` + `zeus.pump_frame()`, printing
 `zeus.mem_bytes()` and `zeus.memory_kb()`.
 
+## 5.2 Frame damage list (Phase 1)
+
+The scope of a repaint, as window-space rects. Phase 4 consumes it to rasterize
+only the tiles it touches and blit only that region; until then it is verified
+and measured on its own.
+
+**Semantics** (`arena.loam` counters, `scene.loam` capture):
+
+- Frame boundary: `damage_frame_begin` runs on the first of layout / paint in a
+  frame, `damage_frame_end` after `present`. A layout-then-paint frame keeps
+  the layout's full-damage mark across both.
+- Structural changes — layout ran, resize, tree rebuild — call `damage_all`.
+  A local repaint is only ever claimed for a change known to be paint-only.
+- Paint-only: a node whose PAINT bit is set opens a capture, and it plus every
+  node painted inside it contributes a rect. A dirty container must repaint its
+  children (they composite over its new fill), so capture covers the subtree.
+- Expansion is generous by construction: resolved shadow blur + offset, any
+  paint-transform travel, half the growth of a scale above 100%, and 1px of AA
+  bleed. Too small leaves a trail; too large only costs fill rate.
+- Scroll marks the **scroller's** PAINT bit (`mark_scroll_node`), so the shifted,
+  clipped content is damaged locally rather than needing a full fallback.
+- Safety net: a dirty frame that recorded nothing (an unmarked global change)
+  falls back to `damage_all`. Under-damaging is the one failure that shows.
+
+**Verification:** `packages/loam/tests/compile_pass/zeus_damage.loam` — a
+layout frame is full; a paint-only track frame is local with ≥1 rect; an
+elevated card's rect is wider than its box (shadow expansion); a scroll is local
+and non-empty.
+
 ## 6. Per-phase log
 
 Appended after each phase: DIRTY-by-region, footprint, arena high-water,
@@ -196,3 +226,27 @@ regression.
   scroll distance, but it is runtime closure lifetime, not arena growth (§5.1).
   Phase 0 did not patch it (behavior-neutral phase); it is the first Phase 1/
   Phase 5 target.
+
+### Phase 1 — frame damage list
+
+- bytes/node: **492.0 — unchanged.** Phase 1 did not move the per-node cost and
+  does not claim to. It is a capability phase.
+- arena high-water (1000 buttons): 1 018 672 B (unchanged)
+- process footprint: 1 888 / 3 649 / 4 913 KB (empty / one / thousand)
+- damage cost: **zero steady-state bytes.** On a layout frame `damage_all`
+  supersedes the per-node rects and capture is skipped, so `misc` and `total`
+  are byte-identical to Phase 0. A paint-only frame allocates ≤16 B per damaged
+  node; the buffer is popped, not dropped, so it does not reallocate frame to
+  frame.
+- golden: structural pass; all 11 draw goldens unchanged; pixel @2x still
+  *pending* (§5).
+- scope note: the rebuild anti-pattern Phase 1 targets was **already absent** —
+  `drop_children` is private to `arena` and reached only through
+  `rebuild_begin`, used solely by the `each`/`show`-class hosts
+  (`kfor_refresh`, `virt_refresh`, `match_build`, `refit_refresh`); there is no
+  `paint_acc` and no caller outside the core. Fine-grained reactivity already
+  exists in `track.loam` (a write re-runs only the props that read it). The one
+  missing Phase 1 piece was the damage list, which is what this phase adds.
+- **The scroll leak from §5.1 is not fixed by this phase.** Damage makes the
+  repaint correct and local; the footprint growth is closure lifetime and still
+  needs keyed row identity (Phase 5) / §1.3 closure work (Phase 14).

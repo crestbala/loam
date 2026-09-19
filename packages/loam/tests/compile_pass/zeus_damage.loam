@@ -1,0 +1,74 @@
+// Phase 1: frame damage. A layout frame repaints the whole surface; a
+// paint-only change (a running track) damages just the node it touches, with
+// its shadow expanding the rect past the box; a global dirty mark with no node
+// (a scroll) falls back to a full repaint rather than under-damaging.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn main() {
+    zeus.window("damage", 320, 220)
+
+    let mut box_id = 0
+    let mut card_id = 0
+    zeus.root(zeus.Box(padding = 20) {
+        zeus.Box(align_direction = DIRECTION.Column, spacing = 10) {
+            let b = zeus.Box(width = 100, height = 50, background = "#ff0000")
+            box_id = b.id
+            let c = zeus.Box(width = 100, height = 50, background = "#ffffff",
+                             radius = 10, elevation = 2)
+            card_id = c.id
+        }
+    })
+    zeus.pump_frame()
+    must(zeus.damage_full() == 1, "a layout frame damages the whole surface")
+
+    // Paint-only: a started track marks exactly the animated node.
+    zeus.animate_opacity(Node { id: box_id }, 50, 100)
+    zeus.engine_step_dt(16)
+    zeus.engine_paint()
+    must(zeus.damage_full() == 0, "a paint-only frame is not full")
+    must(zeus.damage_count() >= 1, "the animated node contributed a rect")
+
+    // The shadowed card's rect must reach past its own box.
+    zeus.animate_opacity(Node { id: card_id }, 50, 100)
+    zeus.engine_step_dt(16)
+    zeus.engine_paint()
+    must(zeus.damage_full() == 0, "card frame is local")
+    let bw = zeus.node_width(card_id)
+    let mut big = 0
+    let mut i = 0
+    while i < zeus.damage_count() {
+        if zeus.damage_w(i) > bw {
+            big = 1
+        }
+        i = i + 1
+    }
+    must(big == 1, "shadow expands the damage rect past the box")
+
+    // A scroll marks the scroller itself dirty, so its shifted, clipped content
+    // is damaged locally — no full-surface fallback needed.
+    let top = zeus.raw_scroll()
+    zeus.slot(top, fn() {
+        zeus.Box(align_direction = DIRECTION.Column) {
+            zeus.Box(height = 600)
+        }
+    })
+    zeus.root(top)
+    zeus.pump_frame()
+    zeus.engine_scroll_step(160, 110, 0, 40)
+    zeus.pump_frame()
+    must(zeus.damage_count() >= 1, "a scroll damages the scroller locally")
+    must(zeus.damage_full() == 0, "a scroll does not need a full repaint")
+
+    fmt.println("damage ok")
+}
