@@ -1052,21 +1052,21 @@ fn paint_label(id: int) {
         return
     }
     if arena.has_bound_num(id) != 0 {
-        let y = arena.draw_y(id) + i32(arena.nodes[id].pad_t) + geometry.max2(arena.nodes[id].h - i32(arena.nodes[id].pad_t) - i32(arena.nodes[id].pad_b) - arena.nodes[id].th, 0) / 2
+        let y = arena.draw_y(id) + i32(arena.nodes[id].pad_t) + geometry.max2(arena.nodes[id].h - i32(arena.nodes[id].pad_t) - i32(arena.nodes[id].pad_b) - arena.nodes[id].text_height, 0) / 2
         text_int(x, y, arena.bound_num(id), fg, i32(arena.nodes[id].font), a)
         return
     }
     let inner = arena.inner_w(id)
     if int(arena.nodes[id].ellipsis) != 0 {
         // Truncate rather than overflow: the longest prefix plus `…` that
-        // still fits the content box. `tw` is the full measured width, so
+        // still fits the content box. `text_width` is the full measured width, so
         // the measure is skipped when the label already fits.
         if inner > 0 {
-            if inner < arena.nodes[id].tw {
-                let mut ew = 0
-                let mut eh = 0
-                let shown = metrics.ellipsize(arena.nodes[id].text, i32(arena.nodes[id].font), inner, arena.nodes[id].tw, &mut ew, &mut eh)
-                let ey = arena.draw_y(id) + i32(arena.nodes[id].pad_t) + i32(arena.nodes[id].border_w) + geometry.max2(arena.nodes[id].h - i32(arena.nodes[id].pad_t) - i32(arena.nodes[id].pad_b) - arena.nodes[id].th, 0) / 2
+            if inner < arena.nodes[id].text_width {
+                let mut explicit_width = 0
+                let mut explicit_height = 0
+                let shown = metrics.ellipsize(arena.nodes[id].text, i32(arena.nodes[id].font), inner, arena.nodes[id].text_width, &mut explicit_width, &mut explicit_height)
+                let ey = arena.draw_y(id) + i32(arena.nodes[id].pad_t) + i32(arena.nodes[id].border_w) + geometry.max2(arena.nodes[id].h - i32(arena.nodes[id].pad_t) - i32(arena.nodes[id].pad_b) - arena.nodes[id].text_height, 0) / 2
                 text(x, ey, shown, fg, i32(arena.nodes[id].font), a)
                 return
             }
@@ -1074,13 +1074,13 @@ fn paint_label(id: int) {
     }
     if int(arena.nodes[id].wrap) != 0 {
         if inner > 0 {
-            if inner < arena.nodes[id].tw {
+            if inner < arena.nodes[id].text_width {
                 text_wrap(x, arena.draw_y(id) + i32(arena.nodes[id].pad_t) + i32(arena.nodes[id].border_w), arena.nodes[id].text, fg, i32(arena.nodes[id].font), inner, a)
                 return
             }
         }
     }
-    let y = arena.draw_y(id) + i32(arena.nodes[id].pad_t) + geometry.max2(arena.nodes[id].h - i32(arena.nodes[id].pad_t) - i32(arena.nodes[id].pad_b) - arena.nodes[id].th, 0) / 2
+    let y = arena.draw_y(id) + i32(arena.nodes[id].pad_t) + geometry.max2(arena.nodes[id].h - i32(arena.nodes[id].pad_t) - i32(arena.nodes[id].pad_b) - arena.nodes[id].text_height, 0) / 2
     text(x, y, arena.nodes[id].text, fg, i32(arena.nodes[id].font), a)
 }
 
@@ -1089,10 +1089,10 @@ fn paint_button(id: int) {
     if arena.nodes[id].bg >= 0 {
         fill_alpha(arena.draw_x(id), arena.draw_y(id), arena.nodes[id].w, arena.nodes[id].h, arena.paint_rgb(arena.nodes[id].bg), i32(arena.nodes[id].radius), a)
     }
-    let tw = arena.nodes[id].tw
-    let th = arena.nodes[id].th
-    let tx = arena.draw_x(id) + geometry.max2(arena.nodes[id].w - tw, 0) / 2
-    let ty = arena.draw_y(id) + geometry.max2(arena.nodes[id].h - th, 0) / 2
+    let text_width = arena.nodes[id].text_width
+    let text_height = arena.nodes[id].text_height
+    let tx = arena.draw_x(id) + geometry.max2(arena.nodes[id].w - text_width, 0) / 2
+    let ty = arena.draw_y(id) + geometry.max2(arena.nodes[id].h - text_height, 0) / 2
     if arena.has_bound_num(id) != 0 {
         text_int(tx, ty, arena.bound_num(id), arena.fg_of(id), i32(arena.nodes[id].font), a)
     } else {
@@ -1118,22 +1118,22 @@ fn paint_scrollbar(id: int) {
     let rgb = arena.hover_rgb()
     let ta = a * 36 / 180
     if arena.bar_visible(id) != 0 {
-        let tw = arena.bar_w()
+        let text_width = arena.bar_w()
         let tx = arena.bar_x(id, ox)
         let thh = arena.bar_thumb_h(id)
         let thy = arena.bar_thumb_y(id, oy)
         let track_h = geometry.max2(arena.nodes[id].h - 16, 8)
         if ta > 0 {
-            fill_a(tx, oy + 8, tw, track_h, rgb, tw / 2, ta)
+            fill_a(tx, oy + 8, text_width, track_h, rgb, text_width / 2, ta)
         }
-        fill_a(tx, thy, tw, thh, rgb, tw / 2, a)
+        fill_a(tx, thy, text_width, thh, rgb, text_width / 2, a)
     }
     if arena.bar_visible_x(id) != 0 {
-        let th = arena.bar_w()
+        let text_height = arena.bar_w()
         let ty = arena.bar_hy(id, oy)
         let thw = arena.bar_thumb_w(id)
         let tx = arena.bar_thumb_x(id, ox)
-        fill_a(tx, ty, thw, th, rgb, th / 2, a)
+        fill_a(tx, ty, thw, text_height, rgb, text_height / 2, a)
     }
 }
 
@@ -1311,11 +1311,11 @@ fn paint_node_body(id: int) {
         }
         paint_hover_wash(id)
     } else if k == 13 {
-        let mut th = 6
-        if th > h {
-            th = h
+        let mut text_height = 6
+        if text_height > h {
+            text_height = h
         }
-        let ty = y + (h - th) / 2
+        let ty = y + (h - text_height) / 2
         let mut kd = 18
         if kd > h {
             kd = h
@@ -1326,10 +1326,10 @@ fn paint_node_body(id: int) {
         if arena.nodes[id].bg >= 0 {
             track = arena.paint_rgb(arena.nodes[id].bg)
         }
-        fill(x, ty, w, th, track, th / 2)
+        fill(x, ty, w, text_height, track, text_height / 2)
         let fw = kx + kd / 2 - x
         if fw > 0 {
-            fill(x, ty, fw, th, arena.fg_of(id), th / 2)
+            fill(x, ty, fw, text_height, arena.fg_of(id), text_height / 2)
         }
         let mut knob = arena.fg_of(id)
         if arena.nodes[id].border_c >= 0 {
@@ -1367,9 +1367,9 @@ fn paint_node_body(id: int) {
         }
         fill(x, y, w, h, track, i32(arena.nodes[id].radius))
         let pad = geometry.max2(h / 6, 1)
-        let th = geometry.max2(h - pad * 2, 1)
+        let text_height = geometry.max2(h - pad * 2, 1)
         let t0 = x + pad
-        let mut t1 = x + w - th - pad
+        let mut t1 = x + w - text_height - pad
         if t1 < t0 {
             t1 = t0
         }
@@ -1378,7 +1378,7 @@ fn paint_node_body(id: int) {
         if arena.nodes[id].border_c >= 0 {
             knob = arena.paint_rgb(arena.nodes[id].border_c)
         }
-        fill(tx, y + (h - th) / 2, th, th, knob, th / 2)
+        fill(tx, y + (h - text_height) / 2, text_height, text_height, knob, text_height / 2)
         paint_hover_wash(id)
     } else if k == 8 {
         let mut fillc = 0
@@ -1556,10 +1556,10 @@ fn paint() {
     arena.damage_frame_end()
 }
 
-fn step(dt: int) -> int {
+fn step(delta_ms: int) -> int {
     arena.ensure()
-    arena.now_ms = arena.now_ms + dt
-    let mut live = arena.anim_tick(dt)
+    arena.now_ms = arena.now_ms + delta_ms
+    let mut live = arena.anim_tick(delta_ms)
     if arena.bar_expire() != 0 {
         arena.paint_dirty = 1
     }

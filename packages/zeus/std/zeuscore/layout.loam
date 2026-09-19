@@ -126,7 +126,7 @@ fn apply_label_wrap(id: int) {
     if inner <= 0 {
         return
     }
-    if inner >= arena.nodes[id].tw {
+    if inner >= arena.nodes[id].text_width {
         return
     }
     /* A squeezed label in a flex row must not grow to two lines under siblings. */
@@ -163,9 +163,9 @@ fn grow_to_children(id: int) {
         }
     }
     let mut need = max_b + i32(arena.nodes[id].pad_b) + i32(arena.nodes[id].border_w)
-    if arena.nodes[id].eh >= 0 {
-        if need < arena.nodes[id].eh {
-            need = arena.nodes[id].eh
+    if arena.nodes[id].explicit_height >= 0 {
+        if need < arena.nodes[id].explicit_height {
+            need = arena.nodes[id].explicit_height
         }
     }
     if need > arena.nodes[id].h {
@@ -191,17 +191,17 @@ fn stretch_cross(p: int, c: int, row: int) -> int {
 }
 
 fn measure_text(id: int) {
-    let mut tw = 0
-    let mut th = 0
+    let mut text_width = 0
+    let mut text_height = 0
     if arena.has_bound_num(id) != 0 {
-        metrics.measure_int(arena.bound_num(id), i32(arena.nodes[id].font), &mut tw, &mut th)
+        metrics.measure_int(arena.bound_num(id), i32(arena.nodes[id].font), &mut text_width, &mut text_height)
     } else if int(arena.nodes[id].kind) == 10 {
-        metrics.measure(arena.input_shown(id), i32(arena.nodes[id].font), &mut tw, &mut th)
+        metrics.measure(arena.input_shown(id), i32(arena.nodes[id].font), &mut text_width, &mut text_height)
     } else {
-        metrics.measure(arena.nodes[id].text, i32(arena.nodes[id].font), &mut tw, &mut th)
+        metrics.measure(arena.nodes[id].text, i32(arena.nodes[id].font), &mut text_width, &mut text_height)
     }
-    arena.nodes[id].tw = tw
-    arena.nodes[id].th = th
+    arena.nodes[id].text_width = text_width
+    arena.nodes[id].text_height = text_height
 }
 
 fn measure_node(id: int) {
@@ -209,117 +209,117 @@ fn measure_node(id: int) {
         return
     }
     if arena.want_show(id) == 0 {
-        arena.nodes[id].iw = 0
-        arena.nodes[id].ih = 0
+        arena.nodes[id].inner_width = 0
+        arena.nodes[id].inner_height = 0
         return
     }
     let k = int(arena.nodes[id].kind)
     let nk = arena.nodes[id].kids.len
     if k == 3 {
         measure_text(id)
-        let mut iw = arena.nodes[id].tw + arena.box_pad_x(id)
-        let mut ih = arena.nodes[id].th + arena.box_pad_y(id)
-        if arena.nodes[id].ew >= 0 {
-            iw = arena.nodes[id].ew
+        let mut inner_width = arena.nodes[id].text_width + arena.box_pad_x(id)
+        let mut inner_height = arena.nodes[id].text_height + arena.box_pad_y(id)
+        if arena.nodes[id].explicit_width >= 0 {
+            inner_width = arena.nodes[id].explicit_width
         }
-        if arena.nodes[id].eh >= 0 {
-            ih = arena.nodes[id].eh
+        if arena.nodes[id].explicit_height >= 0 {
+            inner_height = arena.nodes[id].explicit_height
         }
-        arena.nodes[id].iw = arena.clamp_w(id, iw)
-        arena.nodes[id].ih = arena.clamp_h(id, ih)
+        arena.nodes[id].inner_width = arena.clamp_w(id, inner_width)
+        arena.nodes[id].inner_height = arena.clamp_h(id, inner_height)
         return
     }
     if k == 4 {
         measure_text(id)
-        let mut iw = arena.nodes[id].tw + i32(arena.nodes[id].pad_l) + i32(arena.nodes[id].pad_r)
-        let mut ih = arena.nodes[id].th + i32(arena.nodes[id].pad_t) + i32(arena.nodes[id].pad_b)
-        if arena.nodes[id].ew >= 0 {
-            iw = arena.nodes[id].ew
+        let mut inner_width = arena.nodes[id].text_width + i32(arena.nodes[id].pad_l) + i32(arena.nodes[id].pad_r)
+        let mut inner_height = arena.nodes[id].text_height + i32(arena.nodes[id].pad_t) + i32(arena.nodes[id].pad_b)
+        if arena.nodes[id].explicit_width >= 0 {
+            inner_width = arena.nodes[id].explicit_width
         }
-        if arena.nodes[id].eh >= 0 {
-            ih = arena.nodes[id].eh
+        if arena.nodes[id].explicit_height >= 0 {
+            inner_height = arena.nodes[id].explicit_height
         }
-        arena.nodes[id].iw = arena.clamp_w(id, iw)
-        arena.nodes[id].ih = arena.clamp_h(id, ih)
+        arena.nodes[id].inner_width = arena.clamp_w(id, inner_width)
+        arena.nodes[id].inner_height = arena.clamp_h(id, inner_height)
         return
     }
     if k == 10 {
         measure_text(id)
-        let mut iw = arena.nodes[id].tw + arena.box_pad_x(id)
-        let mut ih = arena.nodes[id].th + arena.box_pad_y(id)
-        if arena.nodes[id].ew >= 0 {
-            iw = arena.nodes[id].ew
+        let mut inner_width = arena.nodes[id].text_width + arena.box_pad_x(id)
+        let mut inner_height = arena.nodes[id].text_height + arena.box_pad_y(id)
+        if arena.nodes[id].explicit_width >= 0 {
+            inner_width = arena.nodes[id].explicit_width
         }
-        if arena.nodes[id].eh >= 0 {
-            ih = arena.nodes[id].eh
+        if arena.nodes[id].explicit_height >= 0 {
+            inner_height = arena.nodes[id].explicit_height
         }
-        arena.nodes[id].iw = arena.clamp_w(id, iw)
-        arena.nodes[id].ih = arena.clamp_h(id, ih)
+        arena.nodes[id].inner_width = arena.clamp_w(id, inner_width)
+        arena.nodes[id].inner_height = arena.clamp_h(id, inner_height)
         return
     }
     if k == 5 {
-        let mut iw = 0
-        let mut ih = 0
-        if arena.nodes[id].ew >= 0 {
-            iw = arena.nodes[id].ew
+        let mut inner_width = 0
+        let mut inner_height = 0
+        if arena.nodes[id].explicit_width >= 0 {
+            inner_width = arena.nodes[id].explicit_width
         }
-        if arena.nodes[id].eh >= 0 {
-            ih = arena.nodes[id].eh
+        if arena.nodes[id].explicit_height >= 0 {
+            inner_height = arena.nodes[id].explicit_height
         }
-        arena.nodes[id].iw = arena.clamp_w(id, iw)
-        arena.nodes[id].ih = arena.clamp_h(id, ih)
+        arena.nodes[id].inner_width = arena.clamp_w(id, inner_width)
+        arena.nodes[id].inner_height = arena.clamp_h(id, inner_height)
         return
     }
     if k == 6 {
-        let mut iw = 0
-        let mut ih = 0
-        if arena.nodes[id].ew >= 0 {
-            iw = arena.nodes[id].ew
+        let mut inner_width = 0
+        let mut inner_height = 0
+        if arena.nodes[id].explicit_width >= 0 {
+            inner_width = arena.nodes[id].explicit_width
         }
-        if arena.nodes[id].eh >= 0 {
-            ih = arena.nodes[id].eh
+        if arena.nodes[id].explicit_height >= 0 {
+            inner_height = arena.nodes[id].explicit_height
         }
-        arena.nodes[id].iw = arena.clamp_w(id, iw)
-        arena.nodes[id].ih = arena.clamp_h(id, ih)
+        arena.nodes[id].inner_width = arena.clamp_w(id, inner_width)
+        arena.nodes[id].inner_height = arena.clamp_h(id, inner_height)
         return
     }
     if k == 7 {
-        let mut iw = 0
-        let mut ih = 0
-        if arena.nodes[id].ew >= 0 {
-            iw = arena.nodes[id].ew
+        let mut inner_width = 0
+        let mut inner_height = 0
+        if arena.nodes[id].explicit_width >= 0 {
+            inner_width = arena.nodes[id].explicit_width
         }
-        if arena.nodes[id].eh >= 0 {
-            ih = arena.nodes[id].eh
+        if arena.nodes[id].explicit_height >= 0 {
+            inner_height = arena.nodes[id].explicit_height
         }
-        arena.nodes[id].iw = arena.clamp_w(id, iw)
-        arena.nodes[id].ih = arena.clamp_h(id, ih)
+        arena.nodes[id].inner_width = arena.clamp_w(id, inner_width)
+        arena.nodes[id].inner_height = arena.clamp_h(id, inner_height)
         return
     }
     if k == 8 {
-        let mut iw = 0
-        let mut ih = 0
-        if arena.nodes[id].ew >= 0 {
-            iw = arena.nodes[id].ew
+        let mut inner_width = 0
+        let mut inner_height = 0
+        if arena.nodes[id].explicit_width >= 0 {
+            inner_width = arena.nodes[id].explicit_width
         }
-        if arena.nodes[id].eh >= 0 {
-            ih = arena.nodes[id].eh
+        if arena.nodes[id].explicit_height >= 0 {
+            inner_height = arena.nodes[id].explicit_height
         }
-        arena.nodes[id].iw = arena.clamp_w(id, iw)
-        arena.nodes[id].ih = arena.clamp_h(id, ih)
+        arena.nodes[id].inner_width = arena.clamp_w(id, inner_width)
+        arena.nodes[id].inner_height = arena.clamp_h(id, inner_height)
         return
     }
     if k == 12 {
-        let mut iw = 0
-        let mut ih = 0
-        if arena.nodes[id].ew >= 0 {
-            iw = arena.nodes[id].ew
+        let mut inner_width = 0
+        let mut inner_height = 0
+        if arena.nodes[id].explicit_width >= 0 {
+            inner_width = arena.nodes[id].explicit_width
         }
-        if arena.nodes[id].eh >= 0 {
-            ih = arena.nodes[id].eh
+        if arena.nodes[id].explicit_height >= 0 {
+            inner_height = arena.nodes[id].explicit_height
         }
-        arena.nodes[id].iw = arena.clamp_w(id, iw)
-        arena.nodes[id].ih = arena.clamp_h(id, ih)
+        arena.nodes[id].inner_width = arena.clamp_w(id, inner_width)
+        arena.nodes[id].inner_height = arena.clamp_h(id, inner_height)
         return
     }
     if k == 14 {
@@ -338,33 +338,33 @@ fn measure_node(id: int) {
                 arena.nodes[id].aspect_h = sh
             }
         }
-        let mut iw = sw
-        let mut ih = 0
-        if arena.nodes[id].ew >= 0 {
-            iw = arena.nodes[id].ew
+        let mut inner_width = sw
+        let mut inner_height = 0
+        if arena.nodes[id].explicit_width >= 0 {
+            inner_width = arena.nodes[id].explicit_width
         }
-        if arena.nodes[id].eh >= 0 {
-            ih = arena.nodes[id].eh
+        if arena.nodes[id].explicit_height >= 0 {
+            inner_height = arena.nodes[id].explicit_height
         }
         /* No explicit height: the box height follows the aspect ratio at the
            width layout gives it, which is not known yet. Report 0 here and
            let the parent `grow_to_children` upward — claiming `sh` would
            reserve the source height and leave a gap under a shrunk image. */
-        arena.nodes[id].iw = arena.clamp_w(id, iw)
-        arena.nodes[id].ih = arena.clamp_h(id, ih)
+        arena.nodes[id].inner_width = arena.clamp_w(id, inner_width)
+        arena.nodes[id].inner_height = arena.clamp_h(id, inner_height)
         return
     }
     if k == 13 {
-        let mut iw = 0
-        let mut ih = 0
-        if arena.nodes[id].ew >= 0 {
-            iw = arena.nodes[id].ew
+        let mut inner_width = 0
+        let mut inner_height = 0
+        if arena.nodes[id].explicit_width >= 0 {
+            inner_width = arena.nodes[id].explicit_width
         }
-        if arena.nodes[id].eh >= 0 {
-            ih = arena.nodes[id].eh
+        if arena.nodes[id].explicit_height >= 0 {
+            inner_height = arena.nodes[id].explicit_height
         }
-        arena.nodes[id].iw = arena.clamp_w(id, iw)
-        arena.nodes[id].ih = arena.clamp_h(id, ih)
+        arena.nodes[id].inner_width = arena.clamp_w(id, inner_width)
+        arena.nodes[id].inner_height = arena.clamp_h(id, inner_height)
         return
     }
     for i in 0..nk {
@@ -378,8 +378,8 @@ fn measure_node(id: int) {
             let c = arena.nodes[id].kids[i]
             if arena.skip_flow(c) == 0 {
                 nflow = nflow + 1
-                cw = geometry.max2(cw, arena.nodes[c].iw)
-                rh = geometry.max2(rh, arena.nodes[c].ih)
+                cw = geometry.max2(cw, arena.nodes[c].inner_width)
+                rh = geometry.max2(rh, arena.nodes[c].inner_height)
             }
         }
         let gx = arena.gap_x(id)
@@ -395,16 +395,16 @@ fn measure_node(id: int) {
         if nflow > 0 {
             rows = (nflow + cols - 1) / cols
         }
-        let mut iw = cols * cw + gx * geometry.max2(cols - 1, 0) + arena.box_pad_x(id)
-        let mut ih = rows * rh + gy * geometry.max2(rows - 1, 0) + arena.box_pad_y(id)
-        if arena.nodes[id].ew >= 0 {
-            iw = arena.nodes[id].ew
+        let mut inner_width = cols * cw + gx * geometry.max2(cols - 1, 0) + arena.box_pad_x(id)
+        let mut inner_height = rows * rh + gy * geometry.max2(rows - 1, 0) + arena.box_pad_y(id)
+        if arena.nodes[id].explicit_width >= 0 {
+            inner_width = arena.nodes[id].explicit_width
         }
-        if arena.nodes[id].eh >= 0 {
-            ih = arena.nodes[id].eh
+        if arena.nodes[id].explicit_height >= 0 {
+            inner_height = arena.nodes[id].explicit_height
         }
-        arena.nodes[id].iw = arena.clamp_w(id, iw)
-        arena.nodes[id].ih = arena.clamp_h(id, ih)
+        arena.nodes[id].inner_width = arena.clamp_w(id, inner_width)
+        arena.nodes[id].inner_height = arena.clamp_h(id, inner_height)
         return
     }
     let mut acc = 0
@@ -422,31 +422,31 @@ fn measure_node(id: int) {
             }
             first = 0
             if int(arena.nodes[id].dir) == 0 {
-                acc = acc + arena.nodes[c].iw + arena.nodes[c].m_l + arena.nodes[c].m_r
-                cross = geometry.max2(cross, arena.nodes[c].ih + arena.nodes[c].m_t + arena.nodes[c].m_b)
+                acc = acc + arena.nodes[c].inner_width + arena.nodes[c].m_l + arena.nodes[c].m_r
+                cross = geometry.max2(cross, arena.nodes[c].inner_height + arena.nodes[c].m_t + arena.nodes[c].m_b)
             } else {
-                acc = acc + arena.nodes[c].ih + arena.nodes[c].m_t + arena.nodes[c].m_b
-                cross = geometry.max2(cross, arena.nodes[c].iw + arena.nodes[c].m_l + arena.nodes[c].m_r)
+                acc = acc + arena.nodes[c].inner_height + arena.nodes[c].m_t + arena.nodes[c].m_b
+                cross = geometry.max2(cross, arena.nodes[c].inner_width + arena.nodes[c].m_l + arena.nodes[c].m_r)
             }
         }
     }
-    let mut iw = 0
-    let mut ih = 0
+    let mut inner_width = 0
+    let mut inner_height = 0
     if int(arena.nodes[id].dir) == 0 {
-        iw = acc + arena.box_pad_x(id)
-        ih = cross + arena.box_pad_y(id)
+        inner_width = acc + arena.box_pad_x(id)
+        inner_height = cross + arena.box_pad_y(id)
     } else {
-        iw = cross + arena.box_pad_x(id)
-        ih = acc + arena.box_pad_y(id)
+        inner_width = cross + arena.box_pad_x(id)
+        inner_height = acc + arena.box_pad_y(id)
     }
-    if arena.nodes[id].ew >= 0 {
-        iw = arena.nodes[id].ew
+    if arena.nodes[id].explicit_width >= 0 {
+        inner_width = arena.nodes[id].explicit_width
     }
-    if arena.nodes[id].eh >= 0 {
-        ih = arena.nodes[id].eh
+    if arena.nodes[id].explicit_height >= 0 {
+        inner_height = arena.nodes[id].explicit_height
     }
-    arena.nodes[id].iw = arena.clamp_w(id, iw)
-    arena.nodes[id].ih = arena.clamp_h(id, ih)
+    arena.nodes[id].inner_width = arena.clamp_w(id, inner_width)
+    arena.nodes[id].inner_height = arena.clamp_h(id, inner_height)
 }
 
 fn layout_flex_row(id: int) {
@@ -464,19 +464,19 @@ fn layout_flex_row(id: int) {
         return
     }
     arena.size_fit(nk)
-    let iw = arena.inner_w(id)
-    let ih = arena.inner_h(id)
+    let inner_width = arena.inner_w(id)
+    let inner_height = arena.inner_h(id)
     let gx = arena.gap_x(id)
     let mut fixed = gx * geometry.max2(nflow - 1, 0)
     for i in 0..nk {
         let c = arena.nodes[id].kids[i]
         arena.size_buffer[i] = 0
         if arena.skip_flow(c) == 0 {
-            arena.size_buffer[i] = row_child_w(id, c, iw)
+            arena.size_buffer[i] = row_child_w(id, c, inner_width)
             fixed = fixed + arena.size_buffer[i] + arena.nodes[c].m_l + arena.nodes[c].m_r
         }
     }
-    let mut extra = iw - fixed
+    let mut extra = inner_width - fixed
     if extra < 0 {
         // Rows shrink before they wrap: flexible children (grow = 1) narrow
         // to keep the row on one line. What they cannot absorb still wraps.
@@ -524,11 +524,11 @@ fn layout_flex_row(id: int) {
         if arena.skip_flow(c) == 0 {
             let al = arena.child_align(id, c)
             let aw = arena.nodes[c].aw
-            let mut ch = arena.sized_h(c, ih, aw)
+            let mut ch = arena.sized_h(c, inner_height, aw)
             if stretch_cross(id, c, 1) != 0 {
-                ch = geometry.max2(ih - arena.nodes[c].m_t - arena.nodes[c].m_b, 0)
+                ch = geometry.max2(inner_height - arena.nodes[c].m_t - arena.nodes[c].m_b, 0)
             }
-            let cy = geometry.cross_origin(al, y0, ih, ch + arena.nodes[c].m_t + arena.nodes[c].m_b) + arena.nodes[c].m_t
+            let cy = geometry.cross_origin(al, y0, inner_height, ch + arena.nodes[c].m_t + arena.nodes[c].m_b) + arena.nodes[c].m_t
             layout_node(c, cx + arena.nodes[c].m_l, cy, aw, ch)
             cx = cx + arena.nodes[c].w + arena.nodes[c].m_l + arena.nodes[c].m_r + gx + between
         }
@@ -551,9 +551,9 @@ fn is_flex_row(id: int) -> int {
 
 /// Width a flow child wants on the row's main axis, measured the same way in
 /// every pass (layout pre-pass, wrap measurement).
-fn row_child_w(id: int, c: int, iw: int) -> int {
-    let avail = iw - arena.nodes[c].m_l - arena.nodes[c].m_r
-    return geometry.fit_avail(arena.sized_w(c, iw, 1), avail)
+fn row_child_w(id: int, c: int, inner_width: int) -> int {
+    let avail = inner_width - arena.nodes[c].m_l - arena.nodes[c].m_r
+    return geometry.fit_avail(arena.sized_w(c, inner_width, 1), avail)
 }
 
 /// A row child may give up main-axis width to keep the row on one line:
@@ -635,7 +635,7 @@ fn row_flex_absorb(id: int, nk: int, extra: int) -> int {
 /// Height a row needs when children wrap at `outer_w` (includes padding).
 fn wrap_row_h(id: int, outer_w: int) -> int {
     let nk = arena.nodes[id].kids.len
-    let iw = geometry.max2(outer_w - arena.box_pad_x(id), 0)
+    let inner_width = geometry.max2(outer_w - arena.box_pad_x(id), 0)
     let gx = arena.gap_x(id)
     let gy = arena.gap_y(id)
     // If the flexible children can absorb the overflow, the row stays on one
@@ -648,7 +648,7 @@ fn wrap_row_h(id: int, outer_w: int) -> int {
     for i in 0..nk {
         let c = arena.nodes[id].kids[i]
         if arena.skip_flow(c) == 0 {
-            let cw = row_child_w(id, c, iw)
+            let cw = row_child_w(id, c, inner_width)
             let span = cw + arena.nodes[c].m_l + arena.nodes[c].m_r
             if nflow > 0 {
                 accw = accw + gx
@@ -672,12 +672,12 @@ fn wrap_row_h(id: int, outer_w: int) -> int {
             }
         }
     }
-    if accw > iw {
-        if cap >= accw - iw {
+    if accw > inner_width {
+        if cap >= accw - inner_width {
             let mut total = line_h + arena.box_pad_y(id)
-            if arena.nodes[id].eh >= 0 {
-                if total < arena.nodes[id].eh {
-                    total = arena.nodes[id].eh
+            if arena.nodes[id].explicit_height >= 0 {
+                if total < arena.nodes[id].explicit_height {
+                    total = arena.nodes[id].explicit_height
                 }
             }
             return arena.clamp_h(id, total)
@@ -690,11 +690,11 @@ fn wrap_row_h(id: int, outer_w: int) -> int {
     for i in 0..nk {
         let c = arena.nodes[id].kids[i]
         if arena.skip_flow(c) == 0 {
-            let cw = row_child_w(id, c, iw)
+            let cw = row_child_w(id, c, inner_width)
             let ch = arena.sized_h(c, line_h, cw)
             let span = cw + arena.nodes[c].m_l + arena.nodes[c].m_r
             if first == 0 {
-                if x + span > iw {
+                if x + span > inner_width {
                     total = total + line_h
                     nline = nline + 1
                     x = 0
@@ -717,9 +717,9 @@ fn wrap_row_h(id: int, outer_w: int) -> int {
         total = total + gy * (nline - 1)
     }
     total = total + arena.box_pad_y(id)
-    if arena.nodes[id].eh >= 0 {
-        if total < arena.nodes[id].eh {
-            total = arena.nodes[id].eh
+    if arena.nodes[id].explicit_height >= 0 {
+        if total < arena.nodes[id].explicit_height {
+            total = arena.nodes[id].explicit_height
         }
     }
     return arena.clamp_h(id, total)
@@ -736,8 +736,8 @@ fn wrap_mark_line(id: int, lo: int, hi: int, line_h: int) {
 
 fn layout_flex_row_wrap(id: int) {
     let nk = arena.nodes[id].kids.len
-    let iw = arena.inner_w(id)
-    let ih = arena.inner_h(id)
+    let inner_width = arena.inner_w(id)
+    let inner_height = arena.inner_h(id)
     let gx = arena.gap_x(id)
     let gy = arena.gap_y(id)
     let x0 = arena.content_x(id)
@@ -750,12 +750,12 @@ fn layout_flex_row_wrap(id: int) {
     for i in 0..nk {
         let c = arena.nodes[id].kids[i]
         if arena.skip_flow(c) == 0 {
-            let avail = iw - arena.nodes[c].m_l - arena.nodes[c].m_r
-            let mut cw = geometry.fit_avail(arena.sized_w(c, iw, 1), avail)
-            let mut ch = arena.sized_h(c, ih, cw)
+            let avail = inner_width - arena.nodes[c].m_l - arena.nodes[c].m_r
+            let mut cw = geometry.fit_avail(arena.sized_w(c, inner_width, 1), avail)
+            let mut ch = arena.sized_h(c, inner_height, cw)
             let span = cw + arena.nodes[c].m_l + arena.nodes[c].m_r
             if first == 0 {
-                if x + span > iw {
+                if x + span > inner_width {
                     wrap_mark_line(id, line_start, i, line_h)
                     x = 0
                     line_h = 0
@@ -782,7 +782,7 @@ fn layout_flex_row_wrap(id: int) {
             let cw = arena.nodes[c].aw
             let span = cw + arena.nodes[c].m_l + arena.nodes[c].m_r
             if first == 0 {
-                if x + span > iw {
+                if x + span > inner_width {
                     y = y + arena.nodes[arena.nodes[id].kids[line_start]].ah + gy
                     x = 0
                     line_start = i
@@ -790,7 +790,7 @@ fn layout_flex_row_wrap(id: int) {
             }
             first = 0
             let lh = arena.nodes[c].ah
-            let mut ch = arena.sized_h(c, ih, cw)
+            let mut ch = arena.sized_h(c, inner_height, cw)
             let al = arena.child_align(id, c)
             if stretch_cross(id, c, 1) != 0 {
                 ch = geometry.max2(lh - arena.nodes[c].m_t - arena.nodes[c].m_b, 0)
@@ -818,19 +818,19 @@ fn layout_flex_col(id: int) {
         return
     }
     arena.size_fit(nk)
-    let iw = arena.inner_w(id)
-    let ih = arena.inner_h(id)
+    let inner_width = arena.inner_w(id)
+    let inner_height = arena.inner_h(id)
     let gy = arena.gap_y(id)
     let mut fixed = gy * geometry.max2(nflow - 1, 0)
     for i in 0..nk {
         let c = arena.nodes[id].kids[i]
         arena.size_buffer[i] = 0
         if arena.skip_flow(c) == 0 {
-            let avail = iw - arena.nodes[c].m_l - arena.nodes[c].m_r
-            let mut cw = arena.sized_w(c, iw, 0)
+            let avail = inner_width - arena.nodes[c].m_l - arena.nodes[c].m_r
+            let mut cw = arena.sized_w(c, inner_width, 0)
             if arena.scrolls_x(id) != 0 {
-                if arena.nodes[c].iw > cw {
-                    cw = arena.clamp_w(c, arena.nodes[c].iw)
+                if arena.nodes[c].inner_width > cw {
+                    cw = arena.clamp_w(c, arena.nodes[c].inner_width)
                 }
             } else {
                 if stretch_cross(id, c, 0) != 0 {
@@ -838,7 +838,7 @@ fn layout_flex_col(id: int) {
                 }
                 cw = geometry.fit_avail(cw, avail)
             }
-            let mut ch = arena.sized_h(c, ih, cw)
+            let mut ch = arena.sized_h(c, inner_height, cw)
             if is_flex_row(c) != 0 {
                 let wh = wrap_row_h(c, cw)
                 if wh > ch {
@@ -849,7 +849,7 @@ fn layout_flex_col(id: int) {
             fixed = fixed + arena.size_buffer[i] + arena.nodes[c].m_t + arena.nodes[c].m_b
         }
     }
-    let mut extra = ih - fixed
+    let mut extra = inner_height - fixed
     if int(arena.nodes[id].kind) == 11 {
         if extra < 0 {
             extra = 0
@@ -892,11 +892,11 @@ fn layout_flex_col(id: int) {
         let c = arena.nodes[id].kids[i]
         if arena.skip_flow(c) == 0 {
             let al = arena.child_align(id, c)
-            let avail = iw - arena.nodes[c].m_l - arena.nodes[c].m_r
-            let mut cw = arena.sized_w(c, iw, 0)
+            let avail = inner_width - arena.nodes[c].m_l - arena.nodes[c].m_r
+            let mut cw = arena.sized_w(c, inner_width, 0)
             if arena.scrolls_x(id) != 0 {
-                if arena.nodes[c].iw > cw {
-                    cw = arena.clamp_w(c, arena.nodes[c].iw)
+                if arena.nodes[c].inner_width > cw {
+                    cw = arena.clamp_w(c, arena.nodes[c].inner_width)
                 }
             } else {
                 if stretch_cross(id, c, 0) != 0 {
@@ -904,7 +904,7 @@ fn layout_flex_col(id: int) {
                 }
                 cw = geometry.fit_avail(cw, avail)
             }
-            let cx = geometry.cross_origin(al, x0, iw, cw + arena.nodes[c].m_l + arena.nodes[c].m_r) + arena.nodes[c].m_l
+            let cx = geometry.cross_origin(al, x0, inner_width, cw + arena.nodes[c].m_l + arena.nodes[c].m_r) + arena.nodes[c].m_l
             layout_node(c, cx, cy + arena.nodes[c].m_t, cw, arena.nodes[c].ah)
             cy = cy + arena.nodes[c].h + arena.nodes[c].m_t + arena.nodes[c].m_b + gy + between
         }
@@ -912,7 +912,7 @@ fn layout_flex_col(id: int) {
     if nflow > 0 {
         let content = cy - gy - between - arena.nodes[id].y + i32(arena.nodes[id].pad_b) + i32(arena.nodes[id].border_w)
         if int(arena.nodes[id].kind) == 11 {
-            arena.nodes[id].ih = geometry.max2(content, arena.nodes[id].h)
+            arena.nodes[id].inner_height = geometry.max2(content, arena.nodes[id].h)
             if arena.scrolls_x(id) != 0 {
                 let mut content_w = arena.nodes[id].w
                 for i in 0..nk {
@@ -924,9 +924,9 @@ fn layout_flex_col(id: int) {
                         }
                     }
                 }
-                arena.nodes[id].iw = geometry.max2(content_w, arena.nodes[id].w)
+                arena.nodes[id].inner_width = geometry.max2(content_w, arena.nodes[id].w)
             } else {
-                arena.nodes[id].iw = arena.nodes[id].w
+                arena.nodes[id].inner_width = arena.nodes[id].w
                 arena.nodes[id].scroll_x = 0
             }
             arena.clamp_scroll(id)
@@ -943,7 +943,7 @@ fn layout_flex_col(id: int) {
 /// (`grid_cols == 0`, i.e. `GridConfig {}`, means a single column).
 ///
 /// `grid_auto != 0` is auto mode, where a column is a *cell* of a minimum
-/// width and the count is however many such cells fit the width `iw` has,
+/// width and the count is however many such cells fit the width `inner_width` has,
 /// capped by `grid_cols` when the caller gave one and by `flow` children so
 /// the last row is never empty tracks.
 ///
@@ -955,12 +955,12 @@ fn layout_flex_col(id: int) {
 /// own) the count falls back to `grid_cols`, which is the fixed behaviour.
 ///
 /// The gap is part of the cell (`cell + gx`), matching the packing in
-/// `layout_grid`, where `cols` cells plus `cols - 1` gaps span `iw`.
+/// `layout_grid`, where `cols` cells plus `cols - 1` gaps span `inner_width`.
 ///
 /// `flow` is how many children will actually be placed. `0` means the caller
 /// has none to offer (measure saw no flow children) — the cap is skipped
 /// rather than collapsing the count to nothing.
-fn grid_cols_at(id: int, iw: int, flow: int, nat: int) -> int {
+fn grid_cols_at(id: int, inner_width: int, flow: int, nat: int) -> int {
     let mut cols = i32(arena.nodes[id].grid_cols)
     if arena.nodes[id].grid_auto != 0 {
         let mut cell = i32(arena.nodes[id].grid_min)
@@ -969,7 +969,7 @@ fn grid_cols_at(id: int, iw: int, flow: int, nat: int) -> int {
         }
         if cell > 0 {
             cell = cell + arena.gap_x(id)
-            cols = (iw + arena.gap_x(id)) / cell
+            cols = (inner_width + arena.gap_x(id)) / cell
         }
         if cols < 1 {
             cols = 1
@@ -992,8 +992,8 @@ fn grid_cols_at(id: int, iw: int, flow: int, nat: int) -> int {
 
 fn layout_grid(id: int) {
     let nk = arena.nodes[id].kids.len
-    let iw = arena.inner_w(id)
-    let ih = arena.inner_h(id)
+    let inner_width = arena.inner_w(id)
+    let inner_height = arena.inner_h(id)
     let gx = arena.gap_x(id)
     let gy = arena.gap_y(id)
     /* Count flow children before choosing columns: a hidden child must not
@@ -1005,13 +1005,13 @@ fn layout_grid(id: int) {
         let c = arena.nodes[id].kids[i]
         if arena.skip_flow(c) == 0 {
             flow = flow + 1
-            nat = geometry.max2(nat, arena.nodes[c].iw)
+            nat = geometry.max2(nat, arena.nodes[c].inner_width)
         }
     }
-    let cols = grid_cols_at(id, iw, flow, nat)
-    let mut cw = iw
+    let cols = grid_cols_at(id, inner_width, flow, nat)
+    let mut cw = inner_width
     if cols > 0 {
-        cw = (iw - gx * (cols - 1)) / cols
+        cw = (inner_width - gx * (cols - 1)) / cols
     }
     if cw < 0 {
         cw = 0
@@ -1039,7 +1039,7 @@ fn layout_grid(id: int) {
             }
             let cx = x0 + col * (cw + gx)
             let cww = cw * sp + gx * (sp - 1)
-            let ch = arena.sized_h(c, ih, cww)
+            let ch = arena.sized_h(c, inner_height, cww)
             layout_node(c, cx, y, cww, ch)
             rh = geometry.max2(rh, arena.nodes[c].h)
             col = col + sp
@@ -1056,8 +1056,8 @@ fn layout_grid(id: int) {
 
 fn layout_abs(p: int) {
     let nk = arena.nodes[p].kids.len
-    let iw = arena.inner_w(p)
-    let ih = arena.inner_h(p)
+    let inner_width = arena.inner_w(p)
+    let inner_height = arena.inner_h(p)
     let ox = arena.content_x(p)
     let oy = arena.content_y(p)
     for i in 0..nk {
@@ -1075,8 +1075,8 @@ fn layout_abs(p: int) {
                            an unset `width`. An absolute node shrink-wraps unless
                            it says otherwise; an explicit `width` or an explicit
                            percentage still wins inside `sized_w`. */
-                        let mut w = arena.sized_w(c, iw, 1)
-                        let mut h = arena.sized_h(c, ih, w)
+                        let mut w = arena.sized_w(c, inner_width, 1)
+                        let mut h = arena.sized_h(c, inner_height, w)
                         let mut x = ox
                         let mut y = oy
                         /* `-1` is "unset", not "zero" — the guard used to be
@@ -1092,22 +1092,22 @@ fn layout_abs(p: int) {
                         }
                         if arena.nodes[c].pin_l != -1 {
                             if arena.nodes[c].pin_r != -1 {
-                                w = arena.clamp_w(c, iw - arena.nodes[c].pin_l - arena.nodes[c].pin_r)
+                                w = arena.clamp_w(c, inner_width - arena.nodes[c].pin_l - arena.nodes[c].pin_r)
                             }
                         }
                         if arena.nodes[c].pin_t != -1 {
                             if arena.nodes[c].pin_b != -1 {
-                                h = arena.clamp_h(c, ih - arena.nodes[c].pin_t - arena.nodes[c].pin_b)
+                                h = arena.clamp_h(c, inner_height - arena.nodes[c].pin_t - arena.nodes[c].pin_b)
                             }
                         }
                         if arena.nodes[c].pin_r != -1 {
                             if arena.nodes[c].pin_l == -1 {
-                                x = ox + iw - w - arena.nodes[c].pin_r
+                                x = ox + inner_width - w - arena.nodes[c].pin_r
                             }
                         }
                         if arena.nodes[c].pin_b != -1 {
                             if arena.nodes[c].pin_t == -1 {
-                                y = oy + ih - h - arena.nodes[c].pin_b
+                                y = oy + inner_height - h - arena.nodes[c].pin_b
                             }
                         }
                         layout_node(c, x, y, w, h)

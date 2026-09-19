@@ -119,7 +119,7 @@ fn sub_bytes(s: string, a: int, b: int) -> string {
 
 /// Truncate `s` to fit `max_w` at `px`, appending `…`, cutting only at a
 /// grapheme boundary so the result is always valid UTF-8. `full_w` is the
-/// pre-measured width of the whole string (a node's `tw`), so a caller that
+/// pre-measured width of the whole string (a node's `text_width`), so a caller that
 /// already measured it does not pay for a second pass. `w` / `h` receive the
 /// width and height of the returned string.
 ///
