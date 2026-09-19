@@ -1041,6 +1041,46 @@ bug — silent on native, fatal on wasm. The emitted prototypes are the contract
   the same entry points `loader.js` drives, went from trapping in `zeus_start`
   to completing the tree build and painting frames.
 
+**Scroll direction and speed (a fix, reported from the field).** Two defects in
+the shared physics, which is why every host showed them, and both only while
+scrolling:
+
+1. **A pan was applied twice per frame.** `apply_delta_y` moved the position by
+the finger's delta AND stored it as the coast velocity, and `physics_step` then
+applied that velocity again in the same frame — so a drag advanced the content
+at twice the finger's speed. Measured before the fix: a steady 20 px/frame pan
+moved 40 px/frame. `physics_step` now skips the coast for a node a pan just
+drove (one `smooth` byte, bit 4 for y and bit 8 for x, so the node record does
+not grow). After: 20 px/frame, and the coast starts on release at the finger's
+last speed — which is also what a browser feels like.
+2. **A direct scroll did not cancel a pending wheel easing.** A mouse notch arms
+an ease toward `tgt_y`; a precise (trackpad) delta or pan that followed moved
+the position but left that ease armed, so the next frames glided BACK toward the
+notch's now-stale target. This is exactly "it goes up and down when I scroll
+down": with all-positive deltas totalling +300 the content went down to 188 and
+back up to 101. A direct scroll now clears the ease on its own axis.
+
+`zeus_scroll_dir.loam` pins both: a pan tracks 1:1, the coast continues and
+decays, and **no sequence of downward deltas ever moves the content up**, while
+an undisturbed notch still eases and lands exactly and then goes idle.
+
+- bytes/node: **476.0 — unchanged** (the two new bits are in the existing
+  `smooth` byte).
+- arena: unchanged (982 624 B total, 986 628 B high-water at 1000 buttons).
+- golden: structural pass; 15/15 draw goldens byte-identical; pixel @2x pass;
+  111 `compile_pass` tests pass (the 2 failures are the blocked network suites).
+
+**The web `xform` scale bug (a fix, reported from the field).** In `loader.js`,
+`applyLayoutTransform` puts `setTransform(sx, 0, 0, sy, 0, 0)` on the canvas, so
+every draw callback takes LAYOUT units. `xform` was the one callback that
+multiplied its translates by `sx`/`sy` a second time, so under a 2x context the
+content moved by `sx^2` (4x) and the rotation swung about a pivot that no longer
+coincided with the node's centre — the wasm loader "rotating differently and far
+away" while native was correct. Verified against the real `loader.js` driven in
+node with a stub canvas: the pivot landed at (589, 390) instead of (224, 424)
+before, and exactly (224, 424) after, with the 45° rotation and the translate
+both landing on their layout-space targets.
+
 **Remaining Phase 4** (not done): SVG and `xform` in the raster pass (`text_int`,
 `text_wrap` and rotated text too), WebP, and the **web** blit (a typed-array view
 over the same BGRA8 buffer plus one `putImageData` per frame; the buffer is ours,

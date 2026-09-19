@@ -240,7 +240,13 @@ struct UiNode {
     capture_text: u8,
     ui_size: u8,
     ui_look: u8,
-    /// Smooth wheel scroll bit: 1 = y, 2 = x. Read with `tgt_x` / `tgt_y`.
+    /// Scroll state bits, all in one byte so the node record stays the size the
+    /// rest of the pipeline is built around:
+    ///   1 = y is easing to `tgt_y`, 2 = x is easing to `tgt_x`,
+    ///   4 = a pan drove y THIS frame, 8 = a pan drove x this frame.
+    /// Bits 4/8 exist so `physics_step` can tell a delta it has already applied
+    /// (the pan) from one it still owes (the coast). Without them a drag was
+    /// applied twice in the same frame and the content outran the finger.
     smooth: u8,
     w_pct: i8,
     h_pct: i8,
@@ -3390,7 +3396,7 @@ fn physics_step() -> int {
                     }
                 }
                 if ny == nodes[i].tgt_y {
-                    nodes[i].smooth = u8(sm & 2)
+                    nodes[i].smooth = u8(sm & 14)
                 }
             }
             if (sm & 2) != 0 {
@@ -3401,27 +3407,42 @@ fn physics_step() -> int {
                     bar_on(i)
                 }
                 if nx == nodes[i].tgt_x {
-                    nodes[i].smooth = u8(int(nodes[i].smooth) & 1)
+                    nodes[i].smooth = u8(int(nodes[i].smooth) & 13)
                 }
             }
-            let ay = physics_axis(nodes[i].scroll_y, nodes[i].vel_y, scroll_max(i))
-            let ax = physics_axis(nodes[i].scroll_x, nodes[i].vel_x, scroll_max_x(i))
-            nodes[i].scroll_y = ay.pos
-            nodes[i].vel_y = ay.vel
-            nodes[i].scroll_x = ax.pos
-            nodes[i].vel_x = ax.vel
-            if ay.dirty != 0 {
-                dirty = 1
-                bar_on(i)
-                mark_paint_id(i)
-                if nodes[i].bind_sig > 0 {
-                    store_sig_paint(nodes[i].bind_sig, ay.pos)
+            // A pan that arrived this frame already moved the position to follow
+            // the finger. Coasting from that same delta in the same frame would
+            // apply it a SECOND time, which is what made a drag advance the
+            // content at twice the finger's speed — and, because the finger's
+            // velocity reverses constantly, what read as the UI vibrating.
+            // A node a pan just drove is coasted from the next frame on, which
+            // is also what a browser feels like (release, then glide).
+            let sm2 = int(nodes[i].smooth)
+            let panned_y = sm2 & 4
+            let panned_x = sm2 & 8
+            nodes[i].smooth = u8(sm2 & 3)
+            if panned_y == 0 {
+                let ay = physics_axis(nodes[i].scroll_y, nodes[i].vel_y, scroll_max(i))
+                nodes[i].scroll_y = ay.pos
+                nodes[i].vel_y = ay.vel
+                if ay.dirty != 0 {
+                    dirty = 1
+                    bar_on(i)
+                    mark_paint_id(i)
+                    if nodes[i].bind_sig > 0 {
+                        store_sig_paint(nodes[i].bind_sig, ay.pos)
+                    }
                 }
             }
-            if ax.dirty != 0 {
-                dirty = 1
-                bar_on(i)
-                mark_paint_id(i)
+            if panned_x == 0 {
+                let ax = physics_axis(nodes[i].scroll_x, nodes[i].vel_x, scroll_max_x(i))
+                nodes[i].scroll_x = ax.pos
+                nodes[i].vel_x = ax.vel
+                if ax.dirty != 0 {
+                    dirty = 1
+                    bar_on(i)
+                    mark_paint_id(i)
+                }
             }
         }
     }
@@ -3521,6 +3542,18 @@ fn apply_delta_y(id: int, dy: int, momentum: int) -> int {
         v = 0
     }
     nodes[id].vel_y = v
+    // A direct scroll — a pan or a precise wheel step — is the finger taking
+    // this axis over, so it CANCELS any pending wheel easing (bit 1). Leaving
+    // that ease armed is the bug this comment exists for: the frames after the
+    // finger's delta kept easing toward the notch's now-stale `tgt_y`, so a
+    // downward scroll moved the content down and then back up. Bit 4 tells
+    // `physics_step` this frame's delta has already been applied by the finger,
+    // so the coast must not apply it a second time.
+    let mut bits = int(nodes[id].smooth) & 10
+    if momentum != 0 {
+        bits = bits | 4
+    }
+    nodes[id].smooth = u8(bits)
     if ny == nodes[id].scroll_y {
         return 0
     }
@@ -3555,6 +3588,13 @@ fn apply_delta_x(id: int, dx: int, momentum: int) -> int {
         v = 0
     }
     nodes[id].vel_x = v
+    // The x twin of the note in `apply_delta_y`: the finger cancels the x ease,
+    // and bit 8 suppresses the same-frame coast.
+    let mut bitsx = int(nodes[id].smooth) & 13
+    if momentum != 0 {
+        bitsx = bitsx | 8
+    }
+    nodes[id].smooth = u8(bitsx)
     if nx == nodes[id].scroll_x {
         return 0
     }
