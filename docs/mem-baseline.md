@@ -18,6 +18,7 @@ Everything in this file was produced by commands in
 | Structural golden scene | `tests/golden/ref_scene.loam` |
 | Frame damage list (Phase 1) | `packages/zeus/std/zeuscore/arena.loam`, `scene.loam` |
 | Node-arena ceiling (Phase 2) | `packages/zeus/std/zeuscore/arena.loam` (`node_cap`) |
+| `UiNode` field ordering (Phase 3) | `packages/zeus/std/zeuscore/arena.loam` |
 
 The gate is a no-op when off: `mem_stats_report` calls one host function that
 returns 0, and `mem_sample()` (the only per-frame cost) is skipped entirely.
@@ -286,3 +287,40 @@ exists for — never silently grow, never realloc-double — is enforced by the 
 the up-front reservation should follow the Phase 3 record shrink, at which
 point the maximum can be reserved cheaply or the cap raised. This matches the
 Phase 3-before-narrowing ordering `docs/loam_zeus_v2.md` §3.8 argues for.
+
+### Phase 3 — data layout (partial: ordering landed; SoA / interning / id width deferred)
+
+- bytes/node: **492.0 → 476.0 (−3.3%).** A real, measured reduction.
+- `node_record_bytes`: **488 → 472.** Field census: 71 `int` (4 B), 25 `u16`,
+  4 `i16`, 38 `u8`, 4 `i8`, 4 `string` (16 B), 1 slice (24 B) = payload 472.
+  The old order interleaved narrow fields between wide ones and paid 16 bytes of
+  alignment padding; grouped widest-first (16 → 4 → 2 → 1), **472 is the exact
+  payload — no padding remains.** Ordering is therefore at its floor; it cannot
+  be repeated for further gain.
+- tree bytes at 1000 buttons: 985 468 → 953 420. Arena total 1 014 672 →
+  982 624.
+- process footprint: 1 888 / 3 969 / 5 057 KB (empty / one / thousand).
+- golden: structural pass; **all 20 draw goldens byte-identical** (order carries
+  no semantics — every access is by name), 84 zeus tests pass.
+
+**Not done, and why** (each is a broad, cross-cutting rewrite, not a bounded
+step; doing them half-way is how a UI engine regresses silently):
+
+- Item 1, struct-of-arrays: every `nodes[id].field` read/write across `arena`,
+  `layout`, `scene`, `input`, and `zeus` becomes a parallel-array index. UFCS
+  accessors can hide the call sites, but the change is engine-wide and cannot be
+  landed and verified in one reviewed step.
+- Item 2, style interning (`style_id: u16`): needs a style-set hash and a
+  side table, and every style read to go through it.
+- Item 3, string interning (`{offset: u32, len: u16}`): text flows through
+  `metrics`, `scene` (draw ops), a11y, and inputs; the storage change is safe
+  but wide.
+- Item 4, `u16` ids/indices: cross-cutting, and it *collides with the Phase 2
+  cap* — `u16` ids leave no sentinel headroom above 65535 if the cap is also
+  65535. Also, item 4's "geometry in `f32`" is **not** how this tree works:
+  geometry (`x/y/w/h`, scroll) is integer `int` today. Moving it to `f32` is a
+  layout-wide precision change, not a storage tweak, and would need its own
+  golden pass. Flagged, not silently skipped.
+
+Net: Phase 3's free/ordering step is done and measured; its structural items
+(1-3) and the `f32` geometry requirement (4) remain open.
