@@ -234,9 +234,11 @@ fn main() {
     must(gtop < 40, "the gradient op starts dark")
     must(gbot > 215, "and ends light")
 
-    // --- ops the pass cannot rasterize are counted, not silent ------------
-    // Text is the kind this pass does not do yet. A scene WITH text must report
-    // exactly those, per kind, rather than quietly drawing nothing.
+    // --- the counted fallback: no font, so text is reported, not dropped ----
+    // This program never calls `scene_load_font`, and that IS the fallback
+    // contract: with no font loaded the pass cannot draw text, so it counts the
+    // ops per kind instead of quietly drawing nothing. (With a font loaded they
+    // are drawn — see zeus_raster_text.loam.)
     zeus.window("zeus-raster-scene-text", 240, 100)
     zeus.root(zeus.Page() {
         zeus.Text("hello")
@@ -246,8 +248,9 @@ fn main() {
     zeus.raster_ensure(240, 100, 2)
     zeus.scene_rasterize(2, 255, 255, 255)
     must(count_kind(2) > 0, "the scene has text ops")
+    must(zeus.scene_glyphs_drawn() == 0, "and no font means no glyphs")
     must(zeus.scene_raster_unhandled(2) == count_kind(2),
-         "every text op is counted as unhandled")
+         "so every text op is counted, not dropped")
     must(zeus.scene_raster_unhandled(0) == 0, "while fills are still handled")
     must(zeus.scene_raster_unhandled_total() > 0, "and the total says so")
 
