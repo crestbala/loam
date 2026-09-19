@@ -2399,6 +2399,57 @@ fn raster_shadow_rect(x: int, y: int, w: int, h: int, rad: int,
                               float(dx), float(dy), float(blur), alpha, cr, cg, cb)
 }
 
+/// Clear the damage clip: the next tiled draws cover the whole surface again.
+fn raster_clip_reset() {
+    raster.raster_clip_reset()
+}
+
+/// Restrict the next tiled draws to a device-space box.
+fn raster_clip_box(x0: int, y0: int, x1: int, y1: int) {
+    raster.raster_clip_box(x0, y0, x1, y1)
+}
+
+/// Set the damage clip from this frame's damage list: the bounding box of the
+/// damage rects. A bounding box is a superset of the union, so it can only
+/// damage MORE than needed, never less — the safe direction. A full-damage
+/// frame (or no damage) clears the clip.
+fn raster_clip_from_damage() {
+    raster.raster_clip_reset()
+    if arena.damage_full != 0 {
+        return
+    }
+    let n = arena.damage.len
+    if n == 0 {
+        return
+    }
+    let mut x0 = arena.damage[0].x
+    let mut y0 = arena.damage[0].y
+    let mut x1 = arena.damage[0].x + arena.damage[0].w
+    let mut y1 = arena.damage[0].y + arena.damage[0].h
+    let mut i = 1
+    while i < n {
+        let d = arena.damage[i]
+        if d.x < x0 {
+            x0 = d.x
+        }
+        if d.y < y0 {
+            y0 = d.y
+        }
+        if d.x + d.w > x1 {
+            x1 = d.x + d.w
+        }
+        if d.y + d.h > y1 {
+            y1 = d.y + d.h
+        }
+        i = i + 1
+    }
+    if x1 > x0 {
+        if y1 > y0 {
+            raster.raster_clip_box(x0, y0, x1, y1)
+        }
+    }
+}
+
 fn damage_x(i: int) -> int {
     return arena.damage[i].x
 }
