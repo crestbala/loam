@@ -19,6 +19,7 @@ Everything in this file was produced by commands in
 | Frame damage list (Phase 1) | `packages/zeus/std/zeuscore/arena.loam`, `scene.loam` |
 | Node-arena ceiling (Phase 2) | `packages/zeus/std/zeuscore/arena.loam` (`node_cap`) |
 | `UiNode` field ordering (Phase 3) | `packages/zeus/std/zeuscore/arena.loam` |
+| Framebuffer + color pipeline (Phase 4) | `packages/zeus/std/zeuscore/raster.loam` |
 
 The gate is a no-op when off: `mem_stats_report` calls one host function that
 returns 0, and `mem_sample()` (the only per-frame cost) is skipped entirely.
@@ -324,3 +325,38 @@ step; doing them half-way is how a UI engine regresses silently):
 
 Net: Phase 3's free/ordering step is done and measured; its structural items
 (1-3) and the `f32` geometry requirement (4) remain open.
+
+### Phase 4 — software rasterizer (first step: framebuffer + color pipeline)
+
+- bytes/node: **476.0 — unchanged.** No tree/geometry code was touched.
+- New module `packages/zeus/std/zeuscore/raster.loam`:
+  - **One owned framebuffer**, `physical_w * physical_h * 4`, BGRA8,
+    premultiplied. Enabled by a fact worth recording: Loam has `[]u8` with a
+    1-byte element, so the buffer is 20 MB — not the 83 MB a `[]int` buffer at
+    4 bytes/channel would have cost. That was the make-or-break question for
+    this phase and the answer is favourable.
+  - **Reallocated only on a real change.** Measured: 1440x900 logical @ scale 2
+    → 2880x1800 physical, **20 736 000 bytes**; a second identical `ensure` is a
+    no-op (generation and realloc count flat, footprint flat at 18 192 KB);
+    switching to scale 1 reallocates exactly once to 5 184 000 bytes (6 256 KB).
+    Process footprint across the allocation: 1 728 → 18 192 KB — this buffer is
+    the largest allocation in the process, as intended.
+  - **sRGB↔linear tables** and a compositor that blends in linear space:
+    `srgb_to_lin[256]` into a 12-bit linear domain and `lin_to_srgb[4096]` back.
+    (An 8-bit linear domain is unusable — sRGB bytes 1..12 collapse to linear 0,
+    crushing shadows; the test asserts the dark end survives.) Verified:
+    round-trip within 1, monotonic, non-linear curve, and the headline check —
+    50% white over black lands at **188**, not the naive sRGB byte blend's 128.
+  - **Ordered 8x8 Bayer dither**, asserted to be a permutation of 0..63, and a
+    `raster_quantize` that applies it when a gradient writer rounds to a byte.
+- golden: structural pass; all 20 draw goldens byte-identical; pixel @2x still
+  *pending* — it needs geometry rasterization + the blit, which is the rest of
+  this phase.
+
+**Remaining Phase 4** (not done, and each is substantial): analytic tile
+coverage (256x256, global geometry then clip-to-write, with the multi-tile
+circle seam test), rounded-rect / stroke fills with pixel-grid snapping, tile-
+size single-channel shadow blur (3-pass separable box), damage-limited tile
+selection, the glyph atlas with in-tree TrueType/GPOS metrics, image decode with
+Mitchell/Lanczos2 downsampling and an LRU byte budget, the zero-copy blit, and
+the web (devicePixelRatio) path.

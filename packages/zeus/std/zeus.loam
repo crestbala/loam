@@ -88,6 +88,7 @@
 import "zeuscore/geometry.loam"
 import "zeuscore/platform.loam"
 import "zeuscore/arena.loam"
+import "zeuscore/raster.loam"
 import "zeuscore/layout.loam"
 import "zeuscore/metrics.loam"
 import "zeuscore/scene.loam"
@@ -2290,6 +2291,62 @@ fn node_overflow() -> int {
 
 fn engine_set_node_cap(n: int) {
     arena.set_node_cap(n)
+}
+
+// --- Phase 4 raster diagnostics (additive) --------------------------------
+// Thin wrappers so tests and probes can drive the framebuffer and the color
+// tables without reaching into the module's globals.
+
+fn raster_ensure(lw: int, lh: int, scale: int) {
+    raster.raster_ensure(lw, lh, scale)
+}
+
+fn raster_width() -> int {
+    return raster.raster_width()
+}
+
+fn raster_height() -> int {
+    return raster.raster_height()
+}
+
+fn raster_scale() -> int {
+    return raster.raster_scale()
+}
+
+fn raster_bytes() -> int {
+    return raster.raster_bytes()
+}
+
+fn raster_generation() -> int {
+    return raster.raster_generation()
+}
+
+fn raster_realloc_count() -> int {
+    return raster.raster_realloc_count()
+}
+
+fn raster_get(x: int, y: int, c: int) -> int {
+    return raster.raster_get(x, y, c)
+}
+
+fn raster_set(x: int, y: int, r: int, g: int, b: int) {
+    raster.raster_set(x, y, r, g, b)
+}
+
+fn raster_blend(x: int, y: int, r: int, g: int, b: int, a: int) {
+    raster.raster_blend(x, y, r, g, b, a)
+}
+
+fn raster_dither(x: int, y: int) -> int {
+    return raster.raster_dither(x, y)
+}
+
+fn raster_srgb_to_lin(b: int) -> int {
+    return raster.raster_srgb_to_lin(b)
+}
+
+fn raster_lin_to_srgb(b: int) -> int {
+    return raster.raster_lin_to_srgb(b)
 }
 
 fn damage_x(i: int) -> int {

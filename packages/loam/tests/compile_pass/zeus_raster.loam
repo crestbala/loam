@@ -1,0 +1,111 @@
+// Phase 4 raster foundation: one premultiplied BGRA8 framebuffer at physical
+// resolution, reallocated only on a real size/scale change; sRGB↔linear tables
+// with gamma-correct compositing; ordered dithering.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn main() {
+    // --- sRGB <-> linear tables -------------------------------------------
+    must(zeus.raster_srgb_to_lin(0) == 0, "lin(0) = 0")
+    must(zeus.raster_srgb_to_lin(255) == 4095, "lin(255) = full scale")
+    let mut i = 1
+    let mut mono = 1
+    while i < 256 {
+        if zeus.raster_srgb_to_lin(i) < zeus.raster_srgb_to_lin(i - 1) {
+            mono = 0
+        }
+        i = i + 1
+    }
+    must(mono == 1, "srgb_to_lin is monotonic")
+
+    let mut rt = 1
+    i = 0
+    while i < 256 {
+        let d = zeus.raster_lin_to_srgb(zeus.raster_srgb_to_lin(i)) - i
+        if d > 1 || d < -1 {
+            rt = 0
+        }
+        i = i + 1
+    }
+    must(rt == 1, "tables round-trip within 1")
+    // The curve is the sRGB curve, not linear: mid-gray byte 128 decodes well
+    // below the linear midpoint.
+    must(zeus.raster_srgb_to_lin(128) < 2048, "sRGB decode is non-linear")
+    // The dark end survives: byte 1 is a distinct linear value, not crushed to 0.
+    must(zeus.raster_srgb_to_lin(1) > 0, "dark end is not crushed")
+
+    // --- ordered dither is a permutation of 0..63 -------------------------
+    let mut seen: []int = []int {}
+    i = 0
+    while i < 64 {
+        push(seen, 0)
+        i = i + 1
+    }
+    let mut y = 0
+    while y < 8 {
+        let mut x = 0
+        while x < 8 {
+            seen[zeus.raster_dither(x, y)] = 1
+            x = x + 1
+        }
+        y = y + 1
+    }
+    i = 0
+    let mut perm = 1
+    while i < 64 {
+        if seen[i] != 1 {
+            perm = 0
+        }
+        i = i + 1
+    }
+    must(perm == 1, "bayer matrix is a permutation of 0..63")
+
+    // --- framebuffer: physical size, reuse, realloc only on change --------
+    zeus.raster_ensure(100, 50, 2)
+    must(zeus.raster_width() == 200, "physical width = logical * scale")
+    must(zeus.raster_height() == 100, "physical height = logical * scale")
+    must(zeus.raster_bytes() == 200 * 100 * 4, "BGRA8 = 4 bytes per pixel")
+    let g1 = zeus.raster_generation()
+    let r1 = zeus.raster_realloc_count()
+    zeus.raster_ensure(100, 50, 2)
+    must(zeus.raster_generation() == g1, "same size does not reallocate")
+    must(zeus.raster_realloc_count() == r1, "realloc count stays flat across frames")
+    zeus.raster_ensure(100, 50, 1)
+    must(zeus.raster_width() == 100, "scale change re-renders at 1x")
+    must(zeus.raster_generation() == g1 + 1, "scale change reallocates exactly once")
+    must(zeus.raster_bytes() == 100 * 50 * 4, "1x buffer is a quarter the bytes")
+
+    // --- premultiplied compositing ----------------------------------------
+    zeus.raster_ensure(4, 4, 1)
+    zeus.raster_set(1, 1, 10, 20, 30)
+    must(zeus.raster_get(1, 1, 2) == 10, "set stores R")
+    must(zeus.raster_get(1, 1, 1) == 20, "set stores G")
+    must(zeus.raster_get(1, 1, 0) == 30, "set stores B")
+    must(zeus.raster_get(1, 1, 3) == 255, "set is opaque")
+
+    let before = zeus.raster_get(2, 2, 2)
+    zeus.raster_blend(2, 2, 255, 255, 255, 0)
+    must(zeus.raster_get(2, 2, 2) == before, "alpha 0 is a no-op")
+    zeus.raster_blend(2, 2, 255, 0, 0, 255)
+    must(zeus.raster_get(2, 2, 2) == 255, "opaque blend writes R")
+    must(zeus.raster_get(2, 2, 0) == 0, "opaque blend clears B")
+
+    // Gamma-correct: half-alpha white over black lands near sRGB(0.5) ≈ 188,
+    // not the naive byte blend's 128.
+    zeus.raster_set(3, 3, 0, 0, 0)
+    zeus.raster_blend(3, 3, 255, 255, 255, 128)
+    let g = zeus.raster_get(3, 3, 1)
+    must(g >= 186, "half-alpha white on black is gamma-correct (>= 186)")
+
+    fmt.println("raster ok", g)
+}
