@@ -543,9 +543,75 @@ capacity while evicting.
   suites this sandbox blocks), all 15 draw goldens byte-identical, structural
   golden pass, `tools/mem-baseline.sh --headless` unchanged.
 
-**Remaining Phase 4** (not done, and each is substantial): image decode with
-Mitchell/Lanczos2 under a fixed byte budget with LRU eviction, the host half of
-the blit (a no-copy `CGImage` provider on native, a typed-array view on web), the
-advance/kerning step the atlas deliberately does not own, and driving
-`scene.paint` through the rasterizer (which changes every draw golden and so
-needs its own decision).
+**Image resampling and cache (thirteenth step).** `image.loam` gains the part
+that decides image memory, and it is deliberately the opposite of the usual
+"decode and cache everything" approach:
+
+- **Separable Mitchell** (B = C = 1/3), with the kernel widened by the reduction
+  factor so the support becomes `2 * scale` source pixels. That is what makes a
+  large downscale area-correct rather than aliased.
+- The filter runs on **premultiplied** pixels (so a transparent edge cannot
+  bleed its colour) and the result is unpremultiplied on the way into the cache,
+  so the framebuffer's existing straight-source, gamma-correct blend composites
+  it with no second blend path.
+- **A fixed byte budget with LRU eviction**, not a growing map: entries are
+  evicted until `bytes + need <= budget`, the entry pool is fixed at 64, and an
+  image larger than the whole budget is **refused and counted** rather than
+  stored. The source decode lives in one reusable scratch buffer and dies as
+  soon as the resized result is cached, so a thumbnail never retains a
+  full-resolution decode.
+
+`zeus_image_resize.loam` asserts the aliasing property, not just "it runs": a
+4x downscale of a 1px checkerboard (the highest frequency an image can carry)
+comes out **flat** — the 12x12 interior is exactly constant at 128 — where
+nearest-neighbour would swing the full 0..255. The outermost row/column is
+allowed to differ, because the filter extends the boundary pixel and there is
+genuinely no data outside the image; the test pins that deviation to <= 16 and
+still mid grey. It also checks cache hits (a repeat request does not re-decode
+or re-resample), that display size and image id are both part of the key, that
+an upscale is monotone without ring overshoot, that the budget invariant holds
+through eviction and that a refusal stores nothing, and that a blit lands the
+averaged grey on the framebuffer.
+
+- bytes/node: **476.0 — unchanged.** The image cache is lazily initialized and
+  `membench` touches no images, so it reports `images= 0` and the totals are
+  byte-for-byte the Phase 3 column. A real frame reports it under the new
+  `bytes images=` line.
+- validation: 103 zeus `compile_pass` tests pass (the 2 failures are the network
+  suites this sandbox blocks), all 15 draw goldens byte-identical, structural
+  golden pass, `tools/mem-baseline.sh --headless` unchanged.
+
+**Remaining Phase 4** (not done, and each is substantial): the rest of the image
+formats (see below), the host half of the blit (a no-copy `CGImage` provider on
+native, a typed-array view on web), and driving `scene.paint` through the
+rasterizer (which changes every draw golden and so needs its own decision).
+
+**Image formats — status and roadmap.** The pipeline above (decode -> premultiply
+-> resample -> byte-budgeted cache -> blit) is **format-agnostic**: everything
+downstream of `png_decode` only ever sees premultiplied RGBA8. So adding a format
+is exactly "produce premultiplied RGBA8", and nothing else moves.
+
+Landed: **PNG**, 8-bit RGB/RGBA, non-interlaced, stored-block DEFLATE. Not yet:
+Huffman-coded DEFLATE (fixed and dynamic), Adam7 interlacing, 16-bit depth,
+palette/grayscale/`tRNS`, and `gAMA`/`sRGB` handling. The dispatch a UI needs — a
+single `image_get` that sniffs the magic bytes rather than trusting a file
+extension — is the next step, along with the cheap formats, in this order:
+
+1. **PNG**, the rest of it (a real inflate, then Adam7, 16-bit, palette). This is
+   the highest-value item by a wide margin: it is what almost every UI asset is.
+2. **BMP** (uncompressed 24/32-bit, both scan orders) and **ICO/CUR** (a
+   container of PNG/BMP) — trivial once the above exist, and ICO is what an app
+   icon actually is.
+3. **GIF** (LZW + palette + disposal) — small UI assets and animations.
+4. **JPEG** baseline sequential (Huffman tables, dequantize, IDCT, YCbCr,
+   chroma upsampling); progressive is a second pass. This is the largest
+   remaining decoder and the one photos/avatars need.
+5. **WebP**: lossless/VP8L is a moderate LZW-with-transforms job; lossy VP8 is a
+   different order of magnitude and should be treated as its own project.
+6. **SVG** is not a pixel format at all — it would route through the rasterizer
+   we already have (paths, fills, strokes), so it belongs with the paint work,
+   not here.
+
+Not planned and not pretended: **AVIF** and **HEIC**, which are AV1 and H.265
+video bitstreams; those are not decoder-sized tasks, and a UI that needs them
+should ask the platform for the pixels rather than grow one here.
