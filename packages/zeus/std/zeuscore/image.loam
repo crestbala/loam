@@ -339,11 +339,342 @@ fn png_adler_ok(s: string, o: int, n: int) -> int {
     return 0
 }
 
-// --- DEFLATE (stored blocks) -----------------------------------------------
+// --- DEFLATE: stored blocks, fixed Huffman and dynamic Huffman -------------
+//
+// This is the whole of RFC 1951. Stored blocks alone would only decode the
+// fixtures we generate ourselves; real PNGs are Huffman-coded, so without this
+// the in-Loam decoder is a demo rather than a decoder.
+//
+// Canonical Huffman here is FLAT (struct-of-arrays, three tables side by side)
+// rather than a tree: one 16-entry counts array, one first-code array, one
+// symbol-base array, and a symbol list per table. There is no per-block
+// allocation, and the bit reader is a bit position over the IDAT bytes.
 
-/// Inflate a zlib stream made of stored blocks into `png_raw`. Returns the
-/// inflated length, or -1 when the stream is not stored-block DEFLATE.
-fn png_inflate() -> int {
+const HT_LIT: int = 0
+const HT_DIST: int = 1
+const HT_CL: int = 2
+const HUFF_MAX_SYMS: int = 320
+
+let mut hf_count: []int = []int {}
+let mut hf_first: []int = []int {}
+let mut hf_base: []int = []int {}
+let mut hf_syms: []int = []int {}
+let mut hf_n: []int = []int {}
+let mut hf_ready: int = 0
+/// Code lengths of the table currently being built.
+let mut hl_lens: []int = []int {}
+
+let mut bitpos: int = 0
+let mut bit_err: int = 0
+
+/// Lengths 3..258 for symbols 257..285, and their extra-bit counts.
+let mut len_base: []int = []int { 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258 }
+let mut len_extra: []int = []int { 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0 }
+/// Distances 1..32768 for symbols 0..29, and their extra-bit counts.
+let mut dist_base: []int = []int { 1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577 }
+let mut dist_extra: []int = []int { 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13 }
+/// The order dynamic blocks store the code-length alphabet in.
+let mut cl_order: []int = []int { 16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15 }
+
+fn huffman_init() {
+    if hf_ready != 0 {
+        return
+    }
+    hf_ready = 1
+    let mut i = 0
+    while i < 3 * 16 {
+        push(hf_count, 0)
+        push(hf_first, 0)
+        push(hf_base, 0)
+        i = i + 1
+    }
+    i = 0
+    while i < 3 * HUFF_MAX_SYMS {
+        push(hf_syms, 0)
+        i = i + 1
+    }
+    i = 0
+    while i < 3 {
+        push(hf_n, 0)
+        i = i + 1
+    }
+    i = 0
+    while i < HUFF_MAX_SYMS {
+        push(hl_lens, 0)
+        i = i + 1
+    }
+}
+
+/// Read `n` bits, LSB-first (deflate's bit order). Sets `bit_err` past the end.
+fn bits_get(n: int) -> int {
+    if bit_err != 0 {
+        return 0
+    }
+    let mut v = 0
+    let mut k = 0
+    while k < n {
+        let byte_i = bitpos / 8
+        if byte_i >= png_idat.len {
+            bit_err = 1
+            return 0
+        }
+        let bit = (int(png_idat[byte_i]) / bit_pow2(bitpos % 8)) % 2
+        v = v + bit * bit_pow2(k)
+        bitpos = bitpos + 1
+        k = k + 1
+    }
+    return v
+}
+
+fn bits_align() {
+    bitpos = ((bitpos + 7) / 8) * 8
+}
+
+/// Build table `t` from `hl_lens[0..n)`. Returns 0 on an over-subscribed or
+/// incomplete-but-invalid set of lengths.
+fn huff_build(t: int, n: int) -> int {
+    let o = t * 16
+    let mut i = 0
+    while i < 16 {
+        hf_count[o + i] = 0
+        i = i + 1
+    }
+    i = 0
+    while i < n {
+        let l = hl_lens[i]
+        if l > 15 {
+            return 0
+        }
+        // A length of 0 means "no code for this symbol". It must NOT be
+        // counted: count[0] feeds the canonical first-code of length 1, so
+        // counting unused symbols shifts every code in the table.
+        if l > 0 {
+            hf_count[o + l] = hf_count[o + l] + 1
+        }
+        i = i + 1
+    }
+    // A code tree may be incomplete (unused codes) but never over-subscribed.
+    let mut left = 1
+    let mut l = 1
+    while l <= 15 {
+        left = left * 2 - hf_count[o + l]
+        if left < 0 {
+            return 0
+        }
+        l = l + 1
+    }
+    let mut code = 0
+    let mut nz = 0
+    l = 1
+    while l <= 15 {
+        code = (code + hf_count[o + l - 1]) * 2
+        hf_first[o + l] = code
+        hf_base[o + l] = nz
+        nz = nz + hf_count[o + l]
+        l = l + 1
+    }
+    hf_n[t] = nz
+    l = 1
+    while l <= 15 {
+        let mut slot = hf_base[o + l]
+        i = 0
+        while i < n {
+            if hl_lens[i] == l {
+                hf_syms[t * HUFF_MAX_SYMS + slot] = i
+                slot = slot + 1
+            }
+            i = i + 1
+        }
+        l = l + 1
+    }
+    return 1
+}
+
+/// Decode one symbol from table `t`, or -1.
+fn huff_decode(t: int) -> int {
+    let o = t * 16
+    let mut code = 0
+    let mut l = 1
+    while l <= 15 {
+        code = code * 2 + bits_get(1)
+        if bit_err != 0 {
+            return -1
+        }
+        let d = code - hf_first[o + l]
+        if d >= 0 {
+            if d < hf_count[o + l] {
+                return hf_syms[t * HUFF_MAX_SYMS + hf_base[o + l] + d]
+            }
+        }
+        l = l + 1
+    }
+    return -1
+}
+
+/// The static tables a type-1 block uses (RFC 1951 3.2.6).
+fn png_fixed_tables() -> int {
+    let mut i = 0
+    while i < 288 {
+        let mut l = 8
+        if i >= 144 {
+            if i <= 255 {
+                l = 9
+            }
+        }
+        if i >= 256 {
+            if i <= 279 {
+                l = 7
+            }
+        }
+        hl_lens[i] = l
+        i = i + 1
+    }
+    if huff_build(HT_LIT, 288) != 1 {
+        return 0
+    }
+    i = 0
+    while i < 30 {
+        hl_lens[i] = 5
+        i = i + 1
+    }
+    return huff_build(HT_DIST, 30)
+}
+
+/// Build the literal/length and distance tables a type-2 block declares.
+fn png_dynamic_tables() -> int {
+    let hlit = bits_get(5) + 257
+    let hdist = bits_get(5) + 1
+    let hclen = bits_get(4) + 4
+    if bit_err != 0 {
+        return 0
+    }
+    if hlit > 288 || hdist > 30 {
+        return 0
+    }
+    let mut i = 0
+    while i < 19 {
+        hl_lens[i] = 0
+        i = i + 1
+    }
+    i = 0
+    while i < hclen {
+        hl_lens[cl_order[i]] = bits_get(3)
+        i = i + 1
+    }
+    if bit_err != 0 {
+        return 0
+    }
+    if huff_build(HT_CL, 19) != 1 {
+        return 0
+    }
+    let total = hlit + hdist
+    i = 0
+    while i < total {
+        hl_lens[i] = 0
+        i = i + 1
+    }
+    let mut idx = 0
+    while idx < total {
+        let sym = huff_decode(HT_CL)
+        if sym < 0 {
+            return 0
+        }
+        if sym < 16 {
+            hl_lens[idx] = sym
+            idx = idx + 1
+        } else {
+            let mut rep = 0
+            let mut fill = 0
+            if sym == 16 {
+                // Repeat the previous length; there must be one.
+                if idx == 0 {
+                    return 0
+                }
+                fill = hl_lens[idx - 1]
+                rep = bits_get(2) + 3
+            } else if sym == 17 {
+                rep = bits_get(3) + 3
+            } else if sym == 18 {
+                rep = bits_get(7) + 11
+            } else {
+                return 0
+            }
+            if bit_err != 0 {
+                return 0
+            }
+            let mut k = 0
+            while k < rep {
+                if idx >= total {
+                    return 0
+                }
+                hl_lens[idx] = fill
+                idx = idx + 1
+                k = k + 1
+            }
+        }
+    }
+    if huff_build(HT_LIT, hlit) != 1 {
+        return 0
+    }
+    // The distance lengths sit after the literal ones; pack them down.
+    i = 0
+    while i < hdist {
+        hl_lens[i] = hl_lens[hlit + i]
+        i = i + 1
+    }
+    return huff_build(HT_DIST, hdist)
+}
+
+/// Decode one Huffman-coded block's symbols into `png_raw`.
+fn png_huff_block(limit: int) -> int {
+    while 1 == 1 {
+        let sym = huff_decode(HT_LIT)
+        if sym < 0 {
+            return 0
+        }
+        if sym < 256 {
+            if png_raw.len >= limit {
+                return 0
+            }
+            push(png_raw, u8(sym))
+        } else if sym == 256 {
+            return 1
+        } else {
+            let li = sym - 257
+            if li > 28 {
+                return 0
+            }
+            let len = len_base[li] + bits_get(len_extra[li])
+            let ds = huff_decode(HT_DIST)
+            if ds < 0 || ds > 29 {
+                return 0
+            }
+            let dist = dist_base[ds] + bits_get(dist_extra[ds])
+            if bit_err != 0 {
+                return 0
+            }
+            if dist <= 0 || dist > png_raw.len {
+                return 0
+            }
+            if png_raw.len + len > limit {
+                return 0
+            }
+            // Byte-by-byte, so an overlapping (RLE-style) match is correct.
+            let src = png_raw.len - dist
+            let mut k = 0
+            while k < len {
+                let b = png_raw[src + k]
+                push(png_raw, b)
+                k = k + 1
+            }
+        }
+    }
+    return 0
+}
+
+/// Inflate the zlib stream in `png_idat` into `png_raw`, never past `limit`
+/// bytes. Returns the inflated length, or -1 on any malformed stream.
+fn png_inflate(limit: int) -> int {
     let n = png_idat.len
     if n < 6 {
         return -1
@@ -355,37 +686,64 @@ fn png_inflate() -> int {
     if (int(png_idat[0]) * 256 + int(png_idat[1])) % 31 != 0 {
         return -1
     }
+    huffman_init()
     while png_raw.len > 0 {
         pop(png_raw)
     }
-    let mut o = 2
+    bitpos = 16
+    bit_err = 0
     let mut final = 0
     while final == 0 {
-        if o + 5 > n {
+        final = bits_get(1)
+        let btype = bits_get(2)
+        if bit_err != 0 {
             return -1
         }
-        let hdr = int(png_idat[o])
-        final = hdr % 2
-        let btype = (hdr / 2) % 4
-        if btype != 0 {
-            // Fixed/dynamic Huffman: refused, explicitly, not misdecoded.
+        if btype == 0 {
+            bits_align()
+            let mut o = bitpos / 8
+            if o + 4 > n {
+                return -1
+            }
+            let len = int(png_idat[o]) + int(png_idat[o + 1]) * 256
+            let nlen = int(png_idat[o + 2]) + int(png_idat[o + 3]) * 256
+            if len + nlen != 65535 {
+                return -1
+            }
+            o = o + 4
+            if o + len > n {
+                return -1
+            }
+            if png_raw.len + len > limit {
+                return -1
+            }
+            let mut i = 0
+            while i < len {
+                push(png_raw, png_idat[o + i])
+                i = i + 1
+            }
+            bitpos = (o + len) * 8
+        } else if btype == 1 {
+            if png_fixed_tables() != 1 {
+                return -1
+            }
+            if png_huff_block(limit) != 1 {
+                return -1
+            }
+        } else if btype == 2 {
+            if png_dynamic_tables() != 1 {
+                return -1
+            }
+            if png_huff_block(limit) != 1 {
+                return -1
+            }
+        } else {
+            // BTYPE 3 is reserved.
             return -1
         }
-        let len = int(png_idat[o + 1]) + int(png_idat[o + 2]) * 256
-        let nlen = int(png_idat[o + 3]) + int(png_idat[o + 4]) * 256
-        if len + nlen != 65535 {
-            return -1
-        }
-        o = o + 5
-        if o + len > n {
-            return -1
-        }
-        let mut i = 0
-        while i < len {
-            push(png_raw, png_idat[o + i])
-            i = i + 1
-        }
-        o = o + len
+    }
+    if bit_err != 0 {
+        return -1
     }
     return png_raw.len
 }
@@ -606,9 +964,9 @@ fn png_decode_inner(src: string) -> int {
         return 0
     }
     let stride = w * bpp
-    let n = png_inflate()
+    let n = png_inflate(h * (stride + 1))
     if n < 0 {
-        src_why = "not stored-block DEFLATE"
+        src_why = "malformed deflate stream"
         src_failures = src_failures + 1
         return 0
     }
