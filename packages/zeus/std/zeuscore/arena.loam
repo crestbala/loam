@@ -70,9 +70,13 @@ struct UiNode {
     tgt_y: int,
     smooth: u8,
     /// Wall-clock deadline (ms) until which the scrollbar thumb is shown;
-    /// 0 = hidden. Set on every scroll, no track: the thumb appears and
-    /// disappears in one frame each, and `bar_next_ms` wakes the host once.
+    /// 0 = hidden. Set on every scroll; `bar_s` is the wall-clock time the
+    /// bar *appeared*, so paint can fade it in from 0 and out again over the
+    /// tail of the deadline. No track and no per-frame state: `bar_alpha`
+    /// reads the two stamps, and `bar_next_ms` wakes the host for the fade
+    /// frames and then the hide.
     bar_t: int,
+    bar_s: int,
     parent: int,
     key_ctx: int,
     edit_slot: int,
@@ -230,6 +234,9 @@ struct UiNode {
 }
 
 let mut nodes: []UiNode = []UiNode {}
+/// Set by `bar_expire`: 1 while any scrollbar thumb is mid-fade, so the frame
+/// marks itself dirty without a second pass over the nodes.
+let mut bar_fading_live: int = 0
 let mut sigs: []int = []int {}
 let mut root_id: int = 0
 let mut win_w: int = 640
@@ -358,7 +365,7 @@ fn blank_node() -> UiNode {
         wrap: 0, ellipsis: 0, reverse: 0, align_self: -1,
         pin_t: -1, pin_r: -1, pin_b: -1, pin_l: -1,
         z_index: 0, grid_auto: 0, scroll_x: 0, scroll_y: 0, tw: 0, th: 0, pulse: 0, press: 0, press_scale: 0, lift: 0, slot_into: 0, press_amt: 0,
-        aw: 0, ah: 0, bar_t: 0, tgt_x: 0, tgt_y: 0, smooth: 0, parent: 0, key_ctx: 0, focusable: 0, capture_text: 0, edit_slot: -1,
+        aw: 0, ah: 0, bar_t: 0, bar_s: 0, tgt_x: 0, tgt_y: 0, smooth: 0, parent: 0, key_ctx: 0, focusable: 0, capture_text: 0, edit_slot: -1,
         dirty: 0,
         an_scale: 100, an_tx: 0, an_ty: 0, an_rot: 0, reveal: 0, an_reveal: 100,
         spin_ms: 900, spin: 0,
@@ -3258,14 +3265,24 @@ fn clamp_scroll(id: int) {
     mark_scroll()
 }
 
-/// How long the thumb stays after the last scroll before it hides.
+/// Fade window for the thumb, in ms, and how long it lingers at full opacity
+/// after the last scroll before the fade-out begins. The total from the last
+/// scroll event to gone is `BAR_LINGER + BAR_FADE_OUT`, so a scroll that stops
+/// immediately (a single notch or a flick with no coast) clears quickly, and a
+/// momentum coast keeps bumping the deadline while it is still moving.
+const BAR_FADE_IN: int = 80
+const BAR_FADE_OUT: int = 150
+const BAR_LINGER: int = 160
+const BAR_ALPHA: int = 180
+
+/// How long the thumb stays after the last scroll before it is fully gone.
 fn bar_hide() -> int {
-    return 900
+    return BAR_LINGER + BAR_FADE_OUT
 }
 
 /// Scroll / drag bumped the bar: show it now and push the hide deadline out.
-/// No track and no fade — it appears this frame and vanishes at the deadline
-/// (`bar_expire`), so an idle pane costs no frames.
+/// The fade-in starts only on the hidden → visible edge, so a stream of scroll
+/// events does not restart it every frame.
 fn bar_on(id: int) {
     if id <= 0 {
         return
@@ -3273,7 +3290,11 @@ fn bar_on(id: int) {
     if id >= nodes.len {
         return
     }
-    nodes[id].bar_t = platform.plat_now_ms() + bar_hide()
+    let now = platform.plat_now_ms()
+    if nodes[id].bar_t <= now {
+        nodes[id].bar_s = now
+    }
+    nodes[id].bar_t = now + bar_hide()
     mark_paint_id(id)
 }
 
@@ -3291,38 +3312,67 @@ fn bar_active(id: int) -> int {
 }
 
 /// Per-frame: clear deadlines that passed and ask for one paint to hide the
-/// thumb. Returns 1 if any bar just hid.
+/// thumb. Returns 1 if any bar just hid. Also records whether any bar is
+/// mid-fade (`bar_fading`) while it is already walking the nodes.
 fn bar_expire() -> int {
     let n = nodes.len
     let mut hid = 0
+    let mut fading = 0
     let now = platform.plat_now_ms()
     for i in 1..n {
-        if nodes[i].bar_t != 0 {
-            if nodes[i].bar_t <= now {
+        let t = nodes[i].bar_t
+        if t != 0 {
+            if t <= now {
                 nodes[i].bar_t = 0
                 mark_paint_id(i)
                 hid = 1
+            } else {
+                let since = now - nodes[i].bar_s
+                let remain = t - now
+                if since < BAR_FADE_IN || remain < BAR_FADE_OUT {
+                    fading = 1
+                }
             }
         }
     }
+    bar_fading_live = fading
     return hid
 }
 
 /// Milliseconds until the soonest thumb hides; 0 when none is shown. Lets an
-/// idle host wake exactly once to paint the hide instead of polling.
+/// idle host wake exactly once to paint the hide instead of polling. Returns
+/// 16 while a fade is in flight, so the fade gets frames, and the time to the
+/// start of the fade-out while the bar sits at full opacity (one wake, no
+/// busy loop).
 fn bar_next_ms() -> int {
     let n = nodes.len
     let mut soon = 0
     let now = platform.plat_now_ms()
     for i in 1..n {
         if nodes[i].bar_t > now {
-            let d = nodes[i].bar_t - now
+            let since = now - nodes[i].bar_s
+            let remain = nodes[i].bar_t - now
+            let mut d = 0
+            if since < BAR_FADE_IN {
+                d = 16
+            } else if remain <= BAR_FADE_OUT {
+                d = 16
+            } else {
+                d = remain - BAR_FADE_OUT
+            }
             if soon == 0 || d < soon {
                 soon = d
             }
         }
     }
     return soon
+}
+
+/// 1 while any thumb is inside a fade window (a fade-in or fade-out is in
+/// flight), so `scene.step` marks the frame dirty and the fade advances even
+/// though no scroll position changed. Read from `bar_expire`'s pass.
+fn bar_fading() -> int {
+    return bar_fading_live
 }
 
 fn bar_visible(id: int) -> int {
@@ -3358,7 +3408,35 @@ fn bar_visible_x(id: int) -> int {
 }
 
 fn bar_alpha(id: int) -> int {
-    return 180
+    if id <= 0 {
+        return 0
+    }
+    if id >= nodes.len {
+        return 0
+    }
+    // A thumb held by the pointer is fully opaque and does not fade.
+    if drag_id == id {
+        if drag_bar != 0 {
+            return BAR_ALPHA
+        }
+    }
+    let now = platform.plat_now_ms()
+    if nodes[id].bar_t <= now {
+        return 0
+    }
+    let mut a = BAR_ALPHA
+    let since = now - nodes[id].bar_s
+    if since < BAR_FADE_IN {
+        a = a * since / BAR_FADE_IN
+    }
+    let remain = nodes[id].bar_t - now
+    if remain < BAR_FADE_OUT {
+        a = a * remain / BAR_FADE_OUT
+    }
+    if a < 0 {
+        a = 0
+    }
+    return a
 }
 
 fn bar_w() -> int {

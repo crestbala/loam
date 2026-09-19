@@ -237,9 +237,11 @@ restarts. Before the first frame completes, a scheduled track jumps to its final
 value — nothing animates at boot, which also keeps the DRAW goldens
 deterministic. `zeus.set_reduced_motion(true)` (and each host's OS preference)
 skips to the final value as well. The chrome animations — hover, press, the
-switch / checkbox thumb, mounted-surface fade, scrollbar fade — are the same
-track pool; they are retargeted from discrete state by the shared interaction
-overlay, not scanned per frame.
+switch / checkbox thumb, mounted-surface fade — are the same track pool; they
+are retargeted from discrete state by the shared interaction overlay, not
+scanned per frame. The scrollbar fade is the exception: it is a pair of
+wall-clock stamps read at paint (below), so it needs no track and no live
+frames.
 
 `zeus.proof_components()`, `proof_effects()`, `proof_signal_writes()`,
 `proof_allocs()`, and `proof_anim_live()` are the Phase 3 harness: across an
@@ -265,6 +267,16 @@ current value for tests. Continuous indicators are clock-driven, not tracks: a
 frame, settled under reduced motion), so nothing is scheduled or allocated per
 frame. Its ring is a line-only polyline, because the host SVG parsers skip arc
 commands.
+
+**Scroll indicator.** The desktop scrollbar is not a track. A scroll stamps the
+wall-clock time the thumb appeared (`bar_s`) and its hide deadline (`bar_t`),
+and paint reads the two to fade the thumb in, hold it, then fade it out — so a
+scroll that stops immediately clears in about 310 ms, while a momentum coast
+keeps pushing the deadline for as long as it is moving. `bar_next_ms` asks the
+host for 16 ms frames while a fade is in flight and one wake at the deadline
+the rest of the time; the fade is therefore not a live frame (`engine_step_dt`
+stays 0) and costs no track. Overlay-scroll hosts (iOS / Android) paint no
+thumb.
 
 **Feedback components:** `Spinner(size, color, period, label)` is an
 indeterminate `progressbar`; `Empty(icon, title, body)` is a centred empty state
