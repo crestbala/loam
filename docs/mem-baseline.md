@@ -824,6 +824,43 @@ corner to corner of the thing it fills.
   suites this sandbox blocks), all 15 draw goldens byte-identical, structural
   golden pass.
 
+**The 2x pixel golden is real now (twenty-second step).** Phase 0's
+`tests/golden/capture.sh` was a stub that failed loudly because there was no code
+path in the tree that turned a node tree into pixels. There is one now, so the
+pixel half is a real check: `tests/golden/raster_scene.loam` builds the reference
+screen, rasterizes it through the Loam rasterizer at the physical backing scale,
+and dumps a PPM — **no graphics API anywhere in the chain**, so the bytes in the
+golden are bytes this project produced. `run.sh` now checks both halves and the
+diff is exact, reporting the first differing pixel as `(x, y) channel: want W got
+G` rather than "files differ".
+
+The golden is 160x120 logical at scale 2 (320x240) and covers what the pass can
+do today: the surface fill, a **1px hairline border**, a bordered rounded card,
+a drop shadow, and a vertical gradient. Reading it back numerically is already
+a quality check on this phase:
+
+- the hairline border lands on **exactly two device rows** (rows 16 and 17 are
+  `#cccccc` and nothing else) — quality rule 8, one crisp row per logical pixel
+  at 2x, with no half-lit neighbours;
+- the card's border is two device rows top and bottom, its fill is exact between
+  them, and the shadow grades 247→250→255 below the card;
+- the gradient interpolates `#4f46e5` → `#0ea5e9` smoothly across 80 device rows.
+
+Text and the image op are **absent from the golden on purpose, and the program
+exits nonzero if the pass ever counts an unhandled op while producing it**, so
+the gap is a number rather than a quietly emptier picture. Text needs a font file
+— the tree ships only the 8-glyph test fixture, so there is no usable UI font to
+render a body-text baseline with; the chain that would consume it (parse → atlas
+→ blit) is landed and tested. The image op carries a path or URL, and the pass
+blits images the app decodes and registers (`scene_register_image`); pointing the
+golden at a file is a small step, deliberately deferred.
+
+- bytes/node: **476.0 — unchanged**.
+- validation: 108 zeus `compile_pass` tests pass (the 2 failures are the network
+  suites this sandbox blocks), all 15 draw goldens byte-identical, and
+  `tests/golden/run.sh` reports **both halves**: the structural golden and the new
+  2x pixel golden.
+
 **Remaining Phase 4** (not done): text and SVG in the raster pass, JPEG and WebP,
 and the host blit (see the ABI note below).
 

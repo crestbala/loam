@@ -32,6 +32,10 @@ else
   exit 1
 fi
 
-if [ -n "$ZEUS_GOLDEN_CAPTURE" ]; then
+# The pixel half is headless too — the rasterizer IS our renderer, so nothing
+# here needs a display. Run it always; it is the check that catches a visual
+# regression rather than a structural one. Set ZEUS_SKIP_PIXEL_GOLDEN=1 to skip
+# it while iterating on the structural half.
+if [ -z "$ZEUS_SKIP_PIXEL_GOLDEN" ]; then
   "$HERE/capture.sh"
 fi
