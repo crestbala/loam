@@ -1,0 +1,65 @@
+// Phase 4: analytic tile coverage. A circle spanning many 256x256 tiles must
+// rasterize byte-identically whether it is drawn as one region or tile by tile
+// — that is the "compute coverage against global geometry, then clip the write
+// to the tile" invariant, and the seam guard for every later fill.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn main() {
+    // 600x600 at scale 1 spans a 3x3 grid of 256px tiles. A 260px-radius circle
+    // centered in it crosses every interior tile boundary.
+    zeus.raster_ensure(600, 600, 1)
+    must(zeus.raster_width() == 600, "framebuffer width")
+
+    zeus.raster_clear(255, 255, 255)
+    zeus.raster_fill_round_rect_whole(40, 40, 520, 520, 260, 20, 20, 20, 255)
+    let whole = zeus.raster_checksum()
+
+    zeus.raster_clear(255, 255, 255)
+    zeus.raster_fill_round_rect_tiled(40, 40, 520, 520, 260, 20, 20, 20, 255)
+    let tiled = zeus.raster_checksum()
+
+    must(whole == tiled, "tiled fill is byte-identical to the whole-surface fill (no seams)")
+
+    // Analytic AA: the edge is graded, not a hard 0/1 step. Count pixels whose
+    // green channel sits strictly between background (255) and fill (20).
+    let mut partial = 0
+    let mut y = 0
+    while y < 600 {
+        let mut x = 0
+        while x < 600 {
+            let v = zeus.raster_get(x, y, 1)
+            if v > 25 && v < 250 {
+                partial = partial + 1
+            }
+            x = x + 1
+        }
+        y = y + 1
+    }
+    must(partial > 200, "edge pixels are graded (analytic AA), not binary")
+
+    // Interior is solid fill; the corners outside the circle stay background.
+    must(zeus.raster_get(300, 300, 1) == 20, "center is solid fill")
+    must(zeus.raster_get(45, 45, 1) == 255, "outside the rounded corner is background")
+
+    // A plain (unrounded) rectangle spanning tiles is identical too, and its
+    // interior edge lands exactly on the pixel grid (no half-lit rows).
+    zeus.raster_clear(0, 0, 0)
+    zeus.raster_fill_round_rect_tiled(100, 100, 400, 200, 0, 255, 255, 255, 255)
+    must(zeus.raster_get(100, 100, 2) == 255, "snapped corner is full white")
+    must(zeus.raster_get(499, 299, 2) == 255, "snapped last pixel is full white")
+    must(zeus.raster_get(99, 100, 2) == 0, "one pixel left of the rect is untouched")
+    must(zeus.raster_get(500, 299, 2) == 0, "one pixel right of the rect is untouched")
+
+    fmt.println("raster tiles ok", partial, whole, tiled)
+}
