@@ -102,6 +102,16 @@
     ctx.font = px + "px " + fontFace;
     lastFontPx = px;
   }
+  /* `ctx.restore()` puts back the WHOLE drawing state, `font` included, so a
+     cached size can no longer be trusted after one — the next `setFont(13)`
+     would early-return and leave whatever the restored state had (the canvas
+     default, which is much larger than our small UI sizes). That is what made a
+     just-shown tooltip paint one frame at the default size. Every restore in
+     this file goes through here so the cache is dropped with the state. */
+  function popState() {
+    ctx.restore();
+    lastFontPx = 0;
+  }
   function resetFontCaches() {
     fontMetrics.clear();
     textWidths.clear();
@@ -197,6 +207,11 @@
   }
 
   /* Path2D rejects some SVG number runs (`m0-6.5`). Trace onto ctx instead. */
+  /* Path2D rejects some SVG number runs (`m0-6.5`). Trace onto ctx instead.
+     Covers every command the icons and charts emit: M/L/H/V/C/S/Q/T/Z, absolute
+     and relative, with the implicit-repeat rule (a run of numbers after `M` is
+     `L`, after anything else repeats the command). An unknown command stops, so
+     an `A` arc segment is skipped rather than misdrawn. */
   function traceSvgPath(d) {
     let i = 0;
     const n = d.length;
@@ -219,15 +234,16 @@
         if (d[j] === "+" || d[j] === "-") j++;
         while (j < n && d[j] >= "0" && d[j] <= "9") j++;
       }
-      if (j === s0 && d[i] !== "." ) return null;
+      if (j === s0 && d[i] !== ".") return null;
       const v = parseFloat(d.slice(i, j));
       i = j;
       return v;
     }
     ctx.beginPath();
-    let cmd = "M";
-    let px = 0, py = 0, sx = 0, sy = 0;
-    skip();
+    let cmd = "";
+    let prev = "";
+    let px = 0, py = 0, sx = 0, sy = 0, cx1 = 0, cy1 = 0;
+    let started = false;
     while (i < n) {
       skip();
       if (i >= n) break;
@@ -235,6 +251,14 @@
       if ((c >= "A" && c <= "Z") || (c >= "a" && c <= "z")) {
         cmd = c;
         i++;
+      } else if (!cmd) {
+        break;
+      } else if (prev === "M") {
+        cmd = "L";
+      } else if (prev === "m") {
+        cmd = "l";
+      } else {
+        cmd = prev;
       }
       const rel = cmd >= "a";
       const op = cmd.toUpperCase();
@@ -242,41 +266,119 @@
         ctx.closePath();
         px = sx;
         py = sy;
+        started = false;
+        prev = cmd;
         continue;
       }
-      if (op === "M" || op === "L") {
+      if (op === "M") {
         const x = num();
         const y = num();
         if (x == null || y == null) break;
-        const nx = rel ? px + x : x;
-        const ny = rel ? py + y : y;
-        if (op === "M") {
-          ctx.moveTo(nx, ny);
-          sx = nx;
-          sy = ny;
-          cmd = rel ? "l" : "L";
+        px = rel ? px + x : x;
+        py = rel ? py + y : y;
+        sx = px;
+        sy = py;
+        ctx.moveTo(px, py);
+        started = true;
+      } else if (op === "L") {
+        const x = num();
+        const y = num();
+        if (x == null || y == null) break;
+        px = rel ? px + x : x;
+        py = rel ? py + y : y;
+        if (!started) {
+          ctx.moveTo(px, py);
+          started = true;
         } else {
-          ctx.lineTo(nx, ny);
+          ctx.lineTo(px, py);
         }
-        px = nx;
-        py = ny;
-        continue;
-      }
-      if (op === "H") {
+      } else if (op === "H") {
         const x = num();
         if (x == null) break;
         px = rel ? px + x : x;
         ctx.lineTo(px, py);
-        continue;
-      }
-      if (op === "V") {
+      } else if (op === "V") {
         const y = num();
         if (y == null) break;
         py = rel ? py + y : y;
         ctx.lineTo(px, py);
-        continue;
+      } else if (op === "C" || op === "S" || op === "Q" || op === "T") {
+        /* Relative coordinates are relative to the point BEFORE this segment,
+           so the raw numbers are converted first and `px`/`py` updated after. */
+        if (!started) break;
+        let a1, b1, a2, b2, ax, ay;
+        if (op === "C" || op === "S") {
+          if (op === "C") {
+            a1 = num();
+            b1 = num();
+          } else {
+            const refl = prev === "C" || prev === "c" || prev === "S" || prev === "s";
+            a1 = refl ? 2 * px - cx1 : px;
+            b1 = refl ? 2 * py - cy1 : py;
+          }
+          a2 = num();
+          b2 = num();
+          ax = num();
+          ay = num();
+          if (a1 == null || b1 == null || a2 == null || b2 == null || ax == null || ay == null) break;
+          if (rel) {
+            if (op === "C") {
+              a1 += px;
+              b1 += py;
+            }
+            a2 += px;
+            b2 += py;
+            ax += px;
+            ay += py;
+          }
+          ctx.bezierCurveTo(a1, b1, a2, b2, ax, ay);
+          cx1 = a2;
+          cy1 = b2;
+        } else {
+          if (op === "Q") {
+            a1 = num();
+            b1 = num();
+          } else {
+            const refl = prev === "Q" || prev === "q" || prev === "T" || prev === "t";
+            a1 = refl ? 2 * px - cx1 : px;
+            b1 = refl ? 2 * py - cy1 : py;
+          }
+          ax = num();
+          ay = num();
+          if (a1 == null || b1 == null || ax == null || ay == null) break;
+          if (rel) {
+            if (op === "Q") {
+              a1 += px;
+              b1 += py;
+            }
+            ax += px;
+            ay += py;
+          }
+          ctx.quadraticCurveTo(a1, b1, ax, ay);
+          cx1 = a1;
+          cy1 = b1;
+        }
+        px = ax;
+        py = ay;
+      } else {
+        break;
       }
-      break;
+      prev = cmd;
+    }
+  }
+
+  /* Fill and/or stroke the path `traceSvgPath` / the shape helpers just built. */
+  function paintSvgShape(fillPaint, strokePaint, sw, cap, join) {
+    if (fillPaint) {
+      ctx.fillStyle = fillPaint;
+      ctx.fill();
+    }
+    if (strokePaint) {
+      ctx.strokeStyle = strokePaint;
+      ctx.lineWidth = sw ? parseFloat(sw) : 1;
+      if (cap) ctx.lineCap = cap;
+      if (join) ctx.lineJoin = join;
+      ctx.stroke();
     }
   }
 
@@ -414,7 +516,7 @@
            background painted square-cornered. */
         traceRoundRect(p.x, p.y, p.w, p.h, Math.round(radius * sx) / sx);
         ctx.fill();
-        ctx.restore();
+        popState();
       },
       /* Soft drop shadow. Canvas2D's shadow applies to the next fill, so the
          rounded path is filled offscreen-left and only its blur lands inside
@@ -439,7 +541,7 @@
         traceRoundRect(p.x - off, p.y, p.w, p.h,
                        Math.round(radius * sx) / sx);
         ctx.fill();
-        ctx.restore();
+        popState();
       },
       /* Ring stroke inset by half the width, so the line paints inside the
          rect — the box model layout already assumes when it insets content
@@ -457,7 +559,7 @@
         traceRoundRect(p.x + lw / 2, p.y + lw / 2, p.w - lw, p.h - lw,
                        Math.max(0, Math.round(radius * sx) / sx - lw / 2));
         ctx.stroke();
-        ctx.restore();
+        popState();
       },
       fill4: (x, y, w, h, color, a, tl, tr, br, bl) => {
         const p = snapRect(x, y, w, h);
@@ -502,7 +604,7 @@
         ctx.translate(snapX(x), snapY(y + box.ascent));
         ctx.rotate((deg * Math.PI) / 180);
         ctx.fillText(s, 0, 0);
-        ctx.restore();
+        popState();
       },
       /* "" restores the host default. Quoting the family lets names with
          spaces ("Universal Sans") survive the CSS shorthand. */
@@ -582,7 +684,7 @@
                        radius > 0 ? Math.round(radius * sx) / sx : 0);
         ctx.clip();
       },
-      restore: () => ctx.restore(),
+      restore: () => popState(),
       pick_image: () => {
         if (!fileInput) {
           fileInput = document.createElement("input");
@@ -675,7 +777,7 @@
         }
         ctx.globalAlpha = alpha >= 0 && alpha < 255 ? alpha / 255 : 1;
         ctx.drawImage(rec, dx, dy, dw, dh);
-        ctx.restore();
+        popState();
       },
       /* Intrinsic size for layout (`platform.plat_image_size`): the two i32
          out-params. Decode is shared with `image`; a not-yet-decoded source
@@ -732,12 +834,14 @@
         const defSw = svgAttr(svgTag, "stroke-width");
         const defCap = svgAttr(svgTag, "stroke-linecap");
         const defJoin = svgAttr(svgTag, "stroke-linejoin");
-        const re = /<path\b([^>]*)\/?\s*>/gi;
+        /* Every shape element, in document order — not just `path`. The Alert
+           and Info icons are a `<circle>` plus two paths, so ignoring the circle
+           drew the exclamation mark and the dot with no ring around them. */
+        const re = /<(path|circle|rect)\b([^>]*?)\/?\s*>/gi;
         let m;
         while ((m = re.exec(markup))) {
-          const tag = m[1];
-          const d = svgAttr(tag, "d");
-          if (!d) continue;
+          const el = m[1].toLowerCase();
+          const tag = m[2];
           let fillV = svgAttr(tag, "fill");
           if (fillV == null) fillV = defFill;
           let strokeV = svgAttr(tag, "stroke");
@@ -745,23 +849,45 @@
           const sw = svgAttr(tag, "stroke-width") || defSw;
           const cap = svgAttr(tag, "stroke-linecap") || defCap;
           const join = svgAttr(tag, "stroke-linejoin") || defJoin;
-          let fillPaint = svgPaint(fillV, cur);
+          const fillPaint = svgPaint(fillV, cur);
           let strokePaint = svgPaint(strokeV, cur);
           if (!fillPaint && !strokePaint) strokePaint = cur;
-          traceSvgPath(d);
-          if (fillPaint) {
-            ctx.fillStyle = fillPaint;
-            ctx.fill();
+          if (el === "path") {
+            const d = svgAttr(tag, "d");
+            if (!d) continue;
+            traceSvgPath(d);
+          } else if (el === "circle") {
+            const cx = parseFloat(svgAttr(tag, "cx") || "0");
+            const cy = parseFloat(svgAttr(tag, "cy") || "0");
+            const r = parseFloat(svgAttr(tag, "r") || "0");
+            if (!(r > 0)) continue;
+            ctx.beginPath();
+            ctx.arc(cx, cy, r, 0, Math.PI * 2);
+          } else {
+            const x = parseFloat(svgAttr(tag, "x") || "0");
+            const y = parseFloat(svgAttr(tag, "y") || "0");
+            const rw = parseFloat(svgAttr(tag, "width") || "0");
+            const rh = parseFloat(svgAttr(tag, "height") || "0");
+            if (!(rw > 0) || !(rh > 0)) continue;
+            let rr = parseFloat(svgAttr(tag, "rx") || "0");
+            if (!(rr > 0)) rr = 0;
+            if (rr > rw / 2) rr = rw / 2;
+            if (rr > rh / 2) rr = rh / 2;
+            ctx.beginPath();
+            if (rr > 0) {
+              ctx.moveTo(x + rr, y);
+              ctx.arcTo(x + rw, y, x + rw, y + rh, rr);
+              ctx.arcTo(x + rw, y + rh, x, y + rh, rr);
+              ctx.arcTo(x, y + rh, x, y, rr);
+              ctx.arcTo(x, y, x + rw, y, rr);
+              ctx.closePath();
+            } else {
+              ctx.rect(x, y, rw, rh);
+            }
           }
-          if (strokePaint) {
-            ctx.strokeStyle = strokePaint;
-            ctx.lineWidth = sw ? parseFloat(sw) : 1;
-            if (cap) ctx.lineCap = cap;
-            if (join) ctx.lineJoin = join;
-            ctx.stroke();
-          }
+          paintSvgShape(fillPaint, strokePaint, sw, cap, join);
         }
-        ctx.restore();
+        popState();
       },
       fetch_rpc_async: (pathPtr, pathLen, bodyPtr, bodyLen, outPtr, cap, handle) => {
         /* Sync XHR: `await` pumps on this thread (`tick` + `sleep`). An async
