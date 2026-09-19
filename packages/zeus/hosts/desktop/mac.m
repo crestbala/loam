@@ -1381,13 +1381,27 @@ static int own_surf_cur;
 static int own_surf_n;
 static int own_surf_w, own_surf_h;
 
-/* How many surfaces to rotate over. 3 by default; `ZEUS_OWN_SURFACES` clamps to
-   2..4. Read once, so a frame never re-parses the environment. */
+/* How many surfaces to rotate over. 3 by default; the count is clamped to 2..4
+   and read once, so a frame never re-parses the environment.
+
+   `ZEUS_OWN_SURFACE` and `ZEUS_OWN_SURFACES` differ by one letter and mean
+   different things, which is a trap worth closing: the singular selects the
+   DISPLAY PATH (0 = bitmap, 1 = this one) and the plural sets the COUNT. To make
+   the singular forgiving, a value of 2 or more there is taken as the count too,
+   so `ZEUS_OWN_SURFACE=2` means what it reads as — the surface path, two
+   buffers — rather than silently meaning `=1` with three. The plural wins when
+   both are set. */
 static int own_surf_count(void) {
     if (own_surf_n <= 0) {
         const char *e = getenv("ZEUS_OWN_SURFACES");
         int n = OWN_SURFACES_DEFAULT;
-        if (e && e[0] && e[0] != '0') n = atoi(e);
+        if (!e || !e[0]) e = getenv("ZEUS_OWN_SURFACE");
+        if (e && e[0]) {
+            int v = atoi(e);
+            /* A bare "1" (or a non-numeric truthy value) is the path switch, not
+               a count; anything 2+ is a count. */
+            if (v >= 2) n = v;
+        }
         if (n < 2) n = 2;
         if (n > OWN_SURFACES_MAX) n = OWN_SURFACES_MAX;
         own_surf_n = n;

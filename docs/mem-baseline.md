@@ -165,7 +165,7 @@ was never the bulk of it.
 |---|---|---|
 | AppKit store (`APP_KIT=1` / `ZEUS_OWN_BUFFER=0`) | 103–137 MB | 60 fps, zero copy |
 | owned bitmap (`ZEUS_OWN_SURFACE=0`) | 51–55 MB | 60 fps @16.6 ms of a 16.7 budget; single buffer + a full-frame copy |
-| **owned IOSurface set — the default** | ~3x18 MB of surface | zero copy, drawn only into a surface the compositor is not reading |
+| **owned IOSurface set — the default** | 3 x 18 MB of surface + ~16 MB baseline = **~70 MB** screen-filling (`ZEUS_OWN_SURFACE=2` for 2 buffers, ~52 MB) | zero copy, drawn only into a surface the compositor is not reading |
 | AppKit store, wide gamut (`ZEUS_WIDE_GAMUT=1`) | 176–219 MB | — |
 
 `0440f3e` moved the default off AppKit's store, and a later field report (fast
