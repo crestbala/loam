@@ -89,6 +89,7 @@ import "zeuscore/geometry.loam"
 import "zeuscore/platform.loam"
 import "zeuscore/arena.loam"
 import "zeuscore/raster.loam"
+import "zeuscore/atlas.loam"
 import "zeuscore/layout.loam"
 import "zeuscore/metrics.loam"
 import "zeuscore/scene.loam"
@@ -2459,6 +2460,153 @@ fn raster_mask_h() -> int {
 /// Mask coverage 0..255 at a point in the mask's own space.
 fn raster_mask_get(x: int, y: int) -> int {
     return raster.raster_mask_get(x, y)
+}
+
+// --- glyph atlas (Phase 4) --------------------------------------------------
+
+/// Gamma-corrected coverage 0..255 for a raw coverage 0..255. Glyph coverage
+/// goes through this on insert, so text weight is one documented constant.
+fn atlas_gamma(c: int) -> int {
+    return atlas.atlas_gamma(c)
+}
+
+/// Subpixel-x bucket: 1/4-px phase at sizes <= 16 LOGICAL px, 0 above.
+fn atlas_subx_bucket(size_logical: int, frac_x: float) -> int {
+    return atlas.atlas_subx_bucket(size_logical, frac_x)
+}
+
+/// Device offset (0, 0.25, 0.5, 0.75) baked in for a subpixel bucket.
+fn atlas_subx_offset(bucket: int) -> float {
+    return atlas.atlas_subx_offset(bucket)
+}
+
+/// Atlas slot for a key, or -1. A hit is promoted to most-recently-used.
+fn atlas_lookup(font: int, gid: int, size: int, subx: int) -> int {
+    return atlas.atlas_lookup(font, gid, size, subx)
+}
+
+/// Ensure a glyph is in the atlas (rasterizing on a miss) and return its slot,
+/// or -1 when it cannot be atlased. `size` is the DEVICE pixel size; `subx` a
+/// bucket from `atlas_subx_bucket`. The mask is stored relative to the pen, so
+/// blit it at the integer pen position.
+fn atlas_intern(font: int, gid: int, size: int, subx: int,
+                xs: []int, ys: []int, on: []int, ends: []int, upm: int) -> int {
+    return atlas.atlas_intern(font, gid, size, subx, xs, ys, on, ends, upm)
+}
+
+/// Composite an atlased glyph onto the framebuffer at an integer pen position.
+fn atlas_blit(s: int, pen_x: int, pen_y: int, r: int, g: int, b: int, alpha: int) {
+    atlas.atlas_blit(s, pen_x, pen_y, r, g, b, alpha)
+}
+
+fn atlas_cov(s: int, x: int, y: int) -> int {
+    return atlas.atlas_cov(s, x, y)
+}
+
+fn atlas_glyph_w(s: int) -> int {
+    return atlas.atlas_glyph_w(s)
+}
+
+fn atlas_glyph_h(s: int) -> int {
+    return atlas.atlas_glyph_h(s)
+}
+
+fn atlas_glyph_origin_x(s: int) -> int {
+    return atlas.atlas_glyph_origin_x(s)
+}
+
+fn atlas_glyph_origin_y(s: int) -> int {
+    return atlas.atlas_glyph_origin_y(s)
+}
+
+/// Reset the atlas to a given square dimension. Test hook.
+fn atlas_reset(dim: int) {
+    atlas.atlas_reset(dim)
+}
+
+fn atlas_reset_default() {
+    atlas.atlas_reset_default()
+}
+
+fn atlas_dim() -> int {
+    return atlas.atlas_dim()
+}
+
+fn atlas_entry_count() -> int {
+    return atlas.atlas_entry_count()
+}
+
+fn atlas_max_entries() -> int {
+    return atlas.atlas_max_entries()
+}
+
+fn atlas_bytes() -> int {
+    return atlas.atlas_bytes()
+}
+
+fn atlas_raster_count() -> int {
+    return atlas.atlas_raster_count()
+}
+
+fn atlas_eviction_count() -> int {
+    return atlas.atlas_eviction_count()
+}
+
+fn atlas_repack_count() -> int {
+    return atlas.atlas_repack_count()
+}
+
+fn atlas_grow_count() -> int {
+    return atlas.atlas_grow_count()
+}
+
+fn atlas_failure_count() -> int {
+    return atlas.atlas_failure_count()
+}
+
+fn atlas_mem_bytes() -> i64 {
+    return atlas.atlas_mem_bytes()
+}
+
+// --- string interning + measurement cache (Phase 4) ------------------------
+
+/// Intern a string, returning a stable id, or -1 when the fixed table is full
+/// (a counted, non-fatal condition: the measurement simply is not cached).
+fn string_intern(s: string) -> int {
+    return atlas.str_intern(s)
+}
+
+fn string_intern_count() -> int {
+    return atlas.str_count()
+}
+
+fn string_intern_overflow_count() -> int {
+    return atlas.str_overflow_count()
+}
+
+/// Cached text measurement for (string id, font id, size px): 1 on hit.
+fn measure_cached(sid: int, font: int, size: int, w: &mut int, h: &mut int) -> int {
+    return atlas.meas_get(sid, font, size, w, h)
+}
+
+fn measure_store(sid: int, font: int, size: int, w: int, h: int) {
+    atlas.meas_put(sid, font, size, w, h)
+}
+
+fn measure_cache_count() -> int {
+    return atlas.meas_count()
+}
+
+fn measure_cache_capacity() -> int {
+    return atlas.meas_capacity()
+}
+
+fn measure_cache_eviction_count() -> int {
+    return atlas.meas_eviction_count()
+}
+
+fn measure_cache_clear() {
+    atlas.meas_clear()
 }
 
 fn raster_push_str(b: &mut []int, s: string) {

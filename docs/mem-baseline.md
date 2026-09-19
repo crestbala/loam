@@ -326,7 +326,7 @@ step; doing them half-way is how a UI engine regresses silently):
 Net: Phase 3's free/ordering step is done and measured; its structural items
 (1-3) and the `f32` geometry requirement (4) remain open.
 
-### Phase 4 — software rasterizer (framebuffer, color, coverage, borders, shadows, tiles, damage clip, blit contract, multi-contour, glyph outlines, glyph bitmaps)
+### Phase 4 — software rasterizer (framebuffer, color, coverage, borders, shadows, tiles, damage clip, blit contract, multi-contour, glyph outlines, glyph bitmaps, glyph atlas)
 
 - bytes/node: **476.0 — unchanged.** No tree/geometry code was touched.
 - New module `packages/zeus/std/zeuscore/raster.loam`:
@@ -496,9 +496,56 @@ triangle exactly as expected, which pointed at the scale, not the rasterizer.)
   network suites this sandbox blocks), all 15 draw goldens byte-identical,
   structural golden pass, `tools/mem-baseline.sh --headless` unchanged.
 
-**Remaining Phase 4** (not done, and each is substantial): the atlas — pack
-these masks into a 1024x1024 R8 atlas keyed by (font, glyph, size, subpixel-x),
-apply coverage gamma, bound the atlas and measurement caches with LRU (no
-unbounded map anywhere), and quantize subpixel-x to 1/4 px at sizes <= 16 logical
-px — plus image decode with Mitchell/Lanczos2 + an LRU byte budget, the host half
-of the blit, and driving the paint pass through the rasterizer.
+**The glyph atlas (eleventh step).** `std/zeuscore/atlas.loam` is the cache
+that makes per-frame glyph rasterization affordable, and it is where the memory
+discipline shows:
+
+- **One R8 atlas**, 1024x1024 to start (1 MB), shelf-packed. It is a pure cache:
+  any entry may be dropped at any time and re-rasterized from its key, which is
+  what makes eviction, repacking and growth all safe.
+- **Keys** are (font_id, glyph_id, size_px, subpixel_x). Subpixel-x is a
+  **quarter-pixel** bucket at logical sizes <= 16 and always 0 above that, so a
+  small glyph can occupy up to four entries. That is the one place quality costs
+  memory, accepted deliberately: evenly spaced small text is worth the few
+  hundred KB.
+- **Bounded LRU, everywhere.** A fixed 4096-entry pool with a free list, a fixed
+  16384-slot open-addressed index (rehashed at 70% load, tombstones dropped), and
+  an exact O(1) intrusive LRU list. On pressure the cache **evicts rather than
+grows**, because a miss costs one re-rasterization while a bigger atlas is real
+  memory; it grows once only when a glyph cannot fit an *empty* atlas, then
+  reallocates and drops the (cache) entries. There is no unbounded map anywhere:
+  the string-interning table and the measurement cache have fixed capacities
+  too, and a full string table is a counted, non-fatal condition.
+- **Coverage gamma**: a 256-entry table, `cov = round(255 * (c/255)^(1/1.2))`,
+  forced monotone, applied on insert. Compositing is already gamma-correct in
+  linear space (which is what fixes polarity), and this restores the stem weight
+  type was designed for, as one documented constant rather than an accident.
+- **Repacking is overlap-safe**: live pixels go to scratch first, so moving them
+  inside the single atlas buffer can never clobber a block it has not read yet.
+
+`zeus_atlas.loam` verifies, headless: gamma is monotone with exact 0/255
+endpoints and a modest midtone lift; the quarter-px buckets are 4 at 11-16px and
+1 above; a 128x128 atlas seats exactly four ~54x47 glyphs; a repeat intern is a
+pure hit (no re-rasterization); subpixel, font and size are all part of the key;
+on pressure **exactly one** entry is evicted and it is the least recently used
+one (the entry touched just before it survived); an evicted key re-interns and
+is re-rasterized; growth happens only for a glyph larger than the whole atlas;
+an over-tile glyph is refused, not drawn wrong; a blit lands ink where the glyph
+is and leaves the background alone; and the measurement cache stays at its fixed
+capacity while evicting.
+
+- bytes/node: **476.0 — unchanged.** The atlas is lazily initialized, so
+  `membench` reports `glyphs= 0` and its totals are byte-for-byte the Phase 3
+  column (tree @1000 = 953 420, total 982 624). A frame that draws text will
+  report the atlas under the new `bytes glyphs=` line rather than hiding it in
+  `misc`.
+- validation: 100 zeus `compile_pass` tests pass (the 2 failures are the network
+  suites this sandbox blocks), all 15 draw goldens byte-identical, structural
+  golden pass, `tools/mem-baseline.sh --headless` unchanged.
+
+**Remaining Phase 4** (not done, and each is substantial): image decode with
+Mitchell/Lanczos2 under a fixed byte budget with LRU eviction, the host half of
+the blit (a no-copy `CGImage` provider on native, a typed-array view on web), the
+advance/kerning step the atlas deliberately does not own, and driving
+`scene.paint` through the rasterizer (which changes every draw golden and so
+needs its own decision).

@@ -1,0 +1,1110 @@
+//! atlas — the glyph atlas, the coverage gamma, and the measurement cache.
+//!
+//! Phase 4, glyph half. `raster.loam` turns an outline into an R8 mask; this
+//! module is the cache that makes doing so affordable per frame:
+//!
+//!   * ONE single-channel R8 atlas, 1024x1024 to start, packed with a shelf
+//!     allocator. It is a cache and nothing else: any entry may be dropped at
+//!     any time and re-rasterized from its key, which is what makes eviction,
+//!     repacking and growth all safe.
+//!   * Keys are (font_id, glyph_id, size_px, subpixel_x), where subpixel_x is
+//!     a QUARTER-pixel bucket at logical sizes <= 16 and always 0 above that.
+//!     Small text is where 1/4-px phase matters and where up to 4 entries per
+//!     glyph buys evenly spaced text; that cost is accepted deliberately.
+//!   * Bounded LRU. The entry pool is fixed (`ATLAS_MAX_ENTRIES`), the index is
+//!     a fixed-capacity open-addressed table, and both the atlas and the
+//!     measurement cache evict least-recently-used instead of growing forever.
+//!     There is no unbounded map anywhere in here.
+//!   * A 256-entry coverage gamma applied on insert, so text weight is a single
+//!     documented constant rather than whatever the blend happens to produce.
+//!
+//! Reallocating the framebuffer is NOT this module's business; it only owns
+//! glyph coverage and measurement results.
+
+import "raster.loam"
+
+/// Fixed entry-pool capacity. Reaching it evicts LRU entries; it never grows.
+const ATLAS_MAX_ENTRIES: int = 4096
+/// 1024x1024 R8 = 1 MB to start.
+const ATLAS_DEFAULT_DIM: int = 1024
+/// Growth ceiling. At 2048x2048 = 4 MB the atlas is a fixed, known budget; past
+/// that we evict rather than grow, because a bigger atlas is real memory and a
+/// miss only costs one re-rasterization.
+const ATLAS_MAX_DIM: int = 2048
+/// Padding around a glyph's mask, in device pixels. AA bleed and the fractional
+/// subpixel offset both need room, so this is quality, not slack.
+const ATLAS_PAD: int = 1
+/// Coverage gamma exponent. Compositing happens in LINEAR space (raster.loam),
+/// which is correct but makes rendered text a touch heavier than the designers'
+/// intent, since type was drawn for gamma-naive blending. Raising coverage to
+/// 1/1.2 restores the intended weight. One constant, one table, documented.
+const ATLAS_COV_GAMMA: float = 1.2
+/// Open-addressed index capacity. Must be >= 2x ATLAS_MAX_ENTRIES.
+const ATLAS_HASH_CAP: int = 16384
+
+// --- atlas state -----------------------------------------------------------
+
+let mut at_r: []u8 = []u8 {}
+let mut at_dim: int = 0
+let mut at_ready: int = 0
+
+let mut at_font: []int = []int {}
+let mut at_gid: []int = []int {}
+let mut at_size: []int = []int {}
+let mut at_subx: []int = []int {}
+let mut at_gx: []int = []int {}
+let mut at_gy: []int = []int {}
+let mut at_ox: []int = []int {}
+let mut at_oy: []int = []int {}
+let mut at_mw: []int = []int {}
+let mut at_mh: []int = []int {}
+let mut at_live: []int = []int {}
+let mut at_prev: []int = []int {}
+let mut at_next: []int = []int {}
+let mut at_free: []int = []int {}
+let mut at_head: int = -1
+let mut at_tail: int = -1
+
+/// Slot+1; 0 empty, -1 tombstone.
+let mut at_ht: []int = []int {}
+let mut at_ht_n: int = 0
+
+/// Scratch for repacking (glyph pixels only, so bounded by the live set).
+let mut at_scratch: []u8 = []u8 {}
+
+let mut pk_x: int = 0
+let mut pk_y: int = 0
+let mut pk_rh: int = 0
+let mut pk_dx: int = 0
+let mut pk_dy: int = 0
+
+let mut cov_gamma: []int = []int {}
+let mut cov_gamma_ready: int = 0
+
+let mut at_entries: int = 0
+let mut at_rasters: int = 0
+let mut at_evicts: int = 0
+let mut at_repacks: int = 0
+let mut at_grows: int = 0
+let mut at_failures: int = 0
+
+// --- coverage gamma --------------------------------------------------------
+
+fn atlas_build_gamma() {
+    if cov_gamma_ready != 0 {
+        return
+    }
+    raster.raster_build()
+    cov_gamma_ready = 1
+    let mut i = 0
+    while i < 256 {
+        if i == 0 {
+            push(cov_gamma, 0)
+        } else {
+            let c = float(i) / 255.0
+            let g = raster.raster_pow(c, 1.0 / ATLAS_COV_GAMMA)
+            push(cov_gamma, raster.raster_clamp_byte(i32(g * 255.0 + 0.5)))
+        }
+        i = i + 1
+    }
+    // Rounding must never invert the curve: force monotonicity.
+    i = 1
+    while i < 256 {
+        if cov_gamma[i] < cov_gamma[i - 1] {
+            cov_gamma[i] = cov_gamma[i - 1]
+        }
+        i = i + 1
+    }
+    cov_gamma[255] = 255
+}
+
+/// Gamma-corrected coverage 0..255 for a raw coverage 0..255.
+fn atlas_gamma(c: int) -> int {
+    atlas_build_gamma()
+    return cov_gamma[raster.raster_clamp_byte(c)]
+}
+
+/// Subpixel-x bucket for a glyph: 1/4-px phase at sizes <= 16 LOGICAL px,
+/// integer positioning above (where a single device pixel is small enough that
+/// the extra phase buys nothing).
+fn atlas_subx_bucket(size_logical: int, frac_x: float) -> int {
+    if size_logical > 16 {
+        return 0
+    }
+    let mut b = i32(frac_x * 4.0)
+    if b < 0 {
+        b = 0
+    }
+    if b > 3 {
+        b = 3
+    }
+    return b
+}
+
+/// Device offset baked in for a subpixel bucket.
+fn atlas_subx_offset(bucket: int) -> float {
+    return float(bucket) * 0.25
+}
+
+// --- packing ---------------------------------------------------------------
+
+fn pk_reset() {
+    pk_x = 0
+    pk_y = 0
+    pk_rh = 0
+}
+
+/// Shelf-allocate `w`x`h`; on success the position is in `pk_dx`/`pk_dy`.
+fn pk_try(w: int, h: int) -> int {
+    if w <= 0 || h <= 0 {
+        return 0
+    }
+    if w > at_dim || h > at_dim {
+        return 0
+    }
+    if pk_x + w > at_dim {
+        pk_x = 0
+        pk_y = pk_y + pk_rh
+        pk_rh = 0
+    }
+    if pk_y + h > at_dim {
+        return 0
+    }
+    pk_dx = pk_x
+    pk_dy = pk_y
+    pk_x = pk_x + w
+    if h > pk_rh {
+        pk_rh = h
+    }
+    return 1
+}
+
+fn atlas_copy_out(s: int, off: int) {
+    let w = at_mw[s]
+    let h = at_mh[s]
+    let mut r = 0
+    while r < h {
+        let src = (at_gy[s] + r) * at_dim + at_gx[s]
+        let dst = off + r * w
+        let mut c = 0
+        while c < w {
+            at_scratch[dst + c] = at_r[src + c]
+            c = c + 1
+        }
+        r = r + 1
+    }
+}
+
+fn atlas_copy_in(s: int, off: int) {
+    let w = at_mw[s]
+    let h = at_mh[s]
+    let mut r = 0
+    while r < h {
+        let dst = (at_gy[s] + r) * at_dim + at_gx[s]
+        let src = off + r * w
+        let mut c = 0
+        while c < w {
+            at_r[dst + c] = at_scratch[src + c]
+            c = c + 1
+        }
+        r = r + 1
+    }
+}
+
+// --- LRU list --------------------------------------------------------------
+
+fn atlas_lru_clear() {
+    at_head = -1
+    at_tail = -1
+}
+
+fn atlas_lru_unlink(s: int) {
+    let p = at_prev[s]
+    let n = at_next[s]
+    if p == -1 {
+        at_head = n
+    } else {
+        at_next[p] = n
+    }
+    if n == -1 {
+        at_tail = p
+    } else {
+        at_prev[n] = p
+    }
+    at_prev[s] = -1
+    at_next[s] = -1
+}
+
+fn atlas_lru_push_front(s: int) {
+    at_prev[s] = -1
+    at_next[s] = at_head
+    if at_head != -1 {
+        at_prev[at_head] = s
+    }
+    at_head = s
+    if at_tail == -1 {
+        at_tail = s
+    }
+}
+
+fn atlas_lru_touch(s: int) {
+    if at_head == s {
+        return
+    }
+    atlas_lru_unlink(s)
+    atlas_lru_push_front(s)
+}
+
+// --- index -----------------------------------------------------------------
+
+fn atlas_hash(font: int, gid: int, size: int, subx: int) -> int {
+    let cap = i64(ATLAS_HASH_CAP)
+    let mut h = i64(font) * 73856093
+    h = (h + i64(gid) * 19349663) % cap
+    h = (h + i64(size) * 83492791) % cap
+    h = (h + i64(subx) * 2654435761) % cap
+    if h < 0 {
+        h = h + cap
+    }
+    return int(h)
+}
+
+fn atlas_ht_place(s: int) {
+    let mut i = atlas_hash(at_font[s], at_gid[s], at_size[s], at_subx[s])
+    while at_ht[i] != 0 {
+        i = (i + 1) % ATLAS_HASH_CAP
+    }
+    at_ht[i] = s + 1
+}
+
+/// Rebuild the index from the live entries, dropping tombstones. Called before
+/// an insert rather than letting the table fill up.
+fn atlas_ht_rehash() {
+    let mut i = 0
+    while i < ATLAS_HASH_CAP {
+        at_ht[i] = 0
+        i = i + 1
+    }
+    let mut s = at_head
+    while s != -1 {
+        atlas_ht_place(s)
+        s = at_next[s]
+    }
+    at_ht_n = at_entries
+}
+
+fn atlas_ht_insert(s: int) {
+    if (at_ht_n + 1) * 10 >= ATLAS_HASH_CAP * 7 {
+        atlas_ht_rehash()
+    }
+    atlas_ht_place(s)
+    at_ht_n = at_ht_n + 1
+}
+
+fn atlas_ht_erase(s: int) {
+    let mut i = atlas_hash(at_font[s], at_gid[s], at_size[s], at_subx[s])
+    let mut guard = 0
+    while guard < ATLAS_HASH_CAP {
+        if at_ht[i] == s + 1 {
+            at_ht[i] = -1
+            return
+        }
+        if at_ht[i] == 0 {
+            return
+        }
+        i = (i + 1) % ATLAS_HASH_CAP
+        guard = guard + 1
+    }
+}
+
+fn atlas_find(font: int, gid: int, size: int, subx: int) -> int {
+    let mut i = atlas_hash(font, gid, size, subx)
+    let mut guard = 0
+    while guard < ATLAS_HASH_CAP {
+        let v = at_ht[i]
+        if v == 0 {
+            return -1
+        }
+        if v > 0 {
+            let s = v - 1
+            if at_live[s] == 1 {
+                if at_font[s] == font {
+                    if at_gid[s] == gid {
+                        if at_size[s] == size {
+                            if at_subx[s] == subx {
+                                return s
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        i = (i + 1) % ATLAS_HASH_CAP
+        guard = guard + 1
+    }
+    return -1
+}
+
+// --- entry lifecycle -------------------------------------------------------
+
+fn atlas_drop(s: int) {
+    if s < 0 {
+        return
+    }
+    if at_live[s] == 0 {
+        return
+    }
+    at_live[s] = 0
+    atlas_lru_unlink(s)
+    atlas_ht_erase(s)
+    push(at_free, s)
+    at_entries = at_entries - 1
+    at_evicts = at_evicts + 1
+}
+
+fn atlas_evict_one() -> int {
+    if at_tail == -1 {
+        return 0
+    }
+    atlas_drop(at_tail)
+    return 1
+}
+
+fn atlas_drop_all() {
+    while at_tail != -1 {
+        atlas_drop(at_tail)
+    }
+}
+
+/// Repack the live entries MRU-first, dropping any that will not seat. Pixels
+/// go through scratch first, so overlapping source and destination regions in
+/// the single atlas buffer are never a problem.
+fn atlas_repack() {
+    at_repacks = at_repacks + 1
+    pk_reset()
+    if at_entries == 0 {
+        return
+    }
+    let mut order: []int = []int {}
+    let mut s = at_head
+    while s != -1 {
+        push(order, s)
+        s = at_next[s]
+    }
+    let mut total = 0
+    let mut i = 0
+    while i < order.len {
+        total = total + at_mw[order[i]] * at_mh[order[i]]
+        i = i + 1
+    }
+    while at_scratch.len < total {
+        push(at_scratch, u8(0))
+    }
+    let mut offs: []int = []int {}
+    let mut off = 0
+    i = 0
+    while i < order.len {
+        atlas_copy_out(order[i], off)
+        push(offs, off)
+        off = off + at_mw[order[i]] * at_mh[order[i]]
+        i = i + 1
+    }
+    pk_reset()
+    i = 0
+    while i < order.len {
+        let e = order[i]
+        if pk_try(at_mw[e], at_mh[e]) == 1 {
+            at_gx[e] = pk_dx
+            at_gy[e] = pk_dy
+            atlas_copy_in(e, offs[i])
+        } else {
+            atlas_drop(e)
+        }
+        i = i + 1
+    }
+}
+
+/// Allocate shelf space for a glyph, reclaiming by LRU eviction. Growth is the
+/// last resort: a larger atlas is real memory, while a miss is one
+/// re-rasterization, so the cache prefers to evict.
+fn atlas_alloc(w: int, h: int) -> int {
+    if pk_try(w, h) == 1 {
+        return 1
+    }
+    atlas_repack()
+    if pk_try(w, h) == 1 {
+        return 1
+    }
+    let n0 = at_entries
+    let mut dropped = 0
+    let mut grow_state = 0
+    while at_entries > 0 {
+        if grow_state == 0 {
+            // Dropping most of the cache to seat one glyph means the atlas is
+            // too small for the working set: grow once instead of thrashing.
+            if dropped * 2 > n0 {
+                if at_dim < ATLAS_MAX_DIM {
+                    grow_state = 1
+                }
+            }
+        }
+        if grow_state == 1 {
+            grow_state = 2
+            atlas_grow()
+            atlas_repack()
+            if pk_try(w, h) == 1 {
+                return 1
+            }
+        } else {
+            atlas_evict_one()
+            dropped = dropped + 1
+            atlas_repack()
+            if pk_try(w, h) == 1 {
+                return 1
+            }
+        }
+    }
+    atlas_repack()
+    if pk_try(w, h) == 1 {
+        return 1
+    }
+    if at_dim < ATLAS_MAX_DIM {
+        atlas_grow()
+        atlas_repack()
+        if pk_try(w, h) == 1 {
+            return 1
+        }
+    }
+    at_failures = at_failures + 1
+    return 0
+}
+
+// --- (re)initialization and growth -----------------------------------------
+
+/// Allocate the atlas buffer and reset the pools, index and LRU. Counters are
+/// left alone: they are observations about the running cache.
+fn atlas_init_buffer(dim: int) {
+    at_dim = dim
+    while at_r.len > 0 {
+        pop(at_r)
+    }
+    let n = dim * dim
+    let mut i = 0
+    while i < n {
+        push(at_r, u8(0))
+        i = i + 1
+    }
+    while at_font.len > 0 {
+        pop(at_font)
+    }
+    while at_gid.len > 0 {
+        pop(at_gid)
+    }
+    while at_size.len > 0 {
+        pop(at_size)
+    }
+    while at_subx.len > 0 {
+        pop(at_subx)
+    }
+    while at_gx.len > 0 {
+        pop(at_gx)
+    }
+    while at_gy.len > 0 {
+        pop(at_gy)
+    }
+    while at_ox.len > 0 {
+        pop(at_ox)
+    }
+    while at_oy.len > 0 {
+        pop(at_oy)
+    }
+    while at_mw.len > 0 {
+        pop(at_mw)
+    }
+    while at_mh.len > 0 {
+        pop(at_mh)
+    }
+    while at_live.len > 0 {
+        pop(at_live)
+    }
+    while at_prev.len > 0 {
+        pop(at_prev)
+    }
+    while at_next.len > 0 {
+        pop(at_next)
+    }
+    let mut s = 0
+    while s < ATLAS_MAX_ENTRIES {
+        push(at_font, 0)
+        push(at_gid, 0)
+        push(at_size, 0)
+        push(at_subx, 0)
+        push(at_gx, 0)
+        push(at_gy, 0)
+        push(at_ox, 0)
+        push(at_oy, 0)
+        push(at_mw, 0)
+        push(at_mh, 0)
+        push(at_live, 0)
+        push(at_prev, -1)
+        push(at_next, -1)
+        s = s + 1
+    }
+    while at_free.len > 0 {
+        pop(at_free)
+    }
+    s = ATLAS_MAX_ENTRIES - 1
+    while s >= 0 {
+        push(at_free, s)
+        s = s - 1
+    }
+    atlas_lru_clear()
+    while at_ht.len > 0 {
+        pop(at_ht)
+    }
+    i = 0
+    while i < ATLAS_HASH_CAP {
+        push(at_ht, 0)
+        i = i + 1
+    }
+    at_ht_n = 0
+    at_entries = 0
+    pk_reset()
+}
+
+/// Double the atlas, reallocating the buffer. Entries are a cache, so they are
+/// simply dropped and re-rasterized on demand; that also avoids ever holding
+/// two atlas buffers at once.
+fn atlas_grow() {
+    if at_dim >= ATLAS_MAX_DIM {
+        return
+    }
+    let mut nd = at_dim * 2
+    if nd > ATLAS_MAX_DIM {
+        nd = ATLAS_MAX_DIM
+    }
+    at_grows = at_grows + 1
+    atlas_init_buffer(nd)
+}
+
+fn atlas_init() {
+    if at_ready != 0 {
+        return
+    }
+    at_ready = 1
+    atlas_build_gamma()
+    atlas_init_buffer(ATLAS_DEFAULT_DIM)
+}
+
+/// Full reset at a given dimension. Test hook (and the handle a future
+/// per-frame scratch reset would use), not a per-frame path.
+fn atlas_reset(dim: int) {
+    let mut d = dim
+    if d < 8 {
+        d = 8
+    }
+    if d > ATLAS_MAX_DIM {
+        d = ATLAS_MAX_DIM
+    }
+    at_entries = 0
+    at_rasters = 0
+    at_evicts = 0
+    at_repacks = 0
+    at_grows = 0
+    at_failures = 0
+    atlas_init_buffer(d)
+    at_ready = 1
+    atlas_build_gamma()
+}
+
+fn atlas_reset_default() {
+    atlas_reset(ATLAS_DEFAULT_DIM)
+}
+
+// --- the public glyph path -------------------------------------------------
+
+fn atlas_lookup(font: int, gid: int, size: int, subx: int) -> int {
+    atlas_init()
+    let s = atlas_find(font, gid, size, subx)
+    if s >= 0 {
+        atlas_lru_touch(s)
+    }
+    return s
+}
+
+/// Ensure a glyph is in the atlas, rasterizing it on a miss.
+///
+/// `xs`/`ys`/`on`/`ends` are the outline in FONT UNITS, `upm` its units per em,
+/// `size` the DEVICE pixel size, `subx` a bucket from `atlas_subx_bucket`. The
+/// mask is stored relative to the pen: blit it with `atlas_blit` at the integer
+/// pen position. Returns the slot, or -1 when the glyph cannot be atlased
+/// (empty, or larger than a tile).
+fn atlas_intern(font: int, gid: int, size: int, subx: int,
+                xs: []int, ys: []int, on: []int, ends: []int, upm: int) -> int {
+    atlas_init()
+    let have = atlas_find(font, gid, size, subx)
+    if have >= 0 {
+        atlas_lru_touch(have)
+        return have
+    }
+    if xs.len == 0 {
+        return -1
+    }
+    if upm <= 0 {
+        return -1
+    }
+    if size <= 0 {
+        return -1
+    }
+    let sc = float(size) / float(upm)
+    let mut xmin = xs[0]
+    let mut xmax = xs[0]
+    let mut ymin = ys[0]
+    let mut ymax = ys[0]
+    let mut i = 1
+    while i < xs.len {
+        if xs[i] < xmin {
+            xmin = xs[i]
+        }
+        if xs[i] > xmax {
+            xmax = xs[i]
+        }
+        if ys[i] < ymin {
+            ymin = ys[i]
+        }
+        if ys[i] > ymax {
+            ymax = ys[i]
+        }
+        i = i + 1
+    }
+    // Device box with the pen on the baseline at the origin, y flipped.
+    let left = float(xmin) * sc
+    let right = float(xmax) * sc
+    let top = 0.0 - float(ymax) * sc
+    let bot = 0.0 - float(ymin) * sc
+    let ox = i32(raster.raster_floor(left)) - ATLAS_PAD
+    let oy = i32(raster.raster_floor(top)) - ATLAS_PAD
+    let mw = i32(raster.raster_ceil(right)) - ox + ATLAS_PAD
+    let mh = i32(raster.raster_ceil(bot)) - oy + ATLAS_PAD
+    if mw <= 0 || mh <= 0 {
+        return -1
+    }
+    if mw > raster.raster_tile_size() || mh > raster.raster_tile_size() {
+        return -1
+    }
+    // The mask's own frame begins at (ox, oy) relative to the pen, and mask
+    // pixel (c, r) is device-pen (ox + c, oy + r). The subpixel phase is baked
+    // into the geometry, which is what keeps the mask grid integral.
+    let pen_x = atlas_subx_offset(subx)
+    let pen_y = 0.0
+    raster.raster_multi_begin()
+    raster.raster_multi_add_glyph(xs, ys, on, ends, pen_x, pen_y, sc)
+    if raster.raster_multi_count() == 0 {
+        return -1
+    }
+    if raster.raster_multi_to_mask(ox, oy, ox + mw, oy + mh) != 1 {
+        return -1
+    }
+    if atlas_alloc(mw, mh) == 0 {
+        return -1
+    }
+    if at_free.len == 0 {
+        atlas_evict_one()
+    }
+    if at_free.len == 0 {
+        return -1
+    }
+    let s = pop(at_free)
+    at_font[s] = font
+    at_gid[s] = gid
+    at_size[s] = size
+    at_subx[s] = subx
+    at_gx[s] = pk_dx
+    at_gy[s] = pk_dy
+    at_ox[s] = ox
+    at_oy[s] = oy
+    at_mw[s] = mw
+    at_mh[s] = mh
+    at_live[s] = 1
+    atlas_lru_push_front(s)
+    atlas_ht_insert(s)
+    at_entries = at_entries + 1
+    at_rasters = at_rasters + 1
+    let mut r = 0
+    while r < mh {
+        let row = (at_gy[s] + r) * at_dim + at_gx[s]
+        let mut c = 0
+        while c < mw {
+            let cv = raster.raster_mask_get(c, r)
+            let mut v = 0
+            if cv > 0 {
+                v = cov_gamma[cv]
+            }
+            at_r[row + c] = u8(v)
+            c = c + 1
+        }
+        r = r + 1
+    }
+    return s
+}
+
+/// Composite an atlased glyph onto the framebuffer at an integer pen position.
+/// The mask is stored relative to the pen (its origin is `at_ox`/`at_oy` from
+/// the pen), so this places it for you: coverage is premultiplied into `alpha`
+/// by the blend itself, and the framebuffer blend is gamma-correct, so a glyph
+/// composites the same way a filled shape does.
+fn atlas_blit(s: int, pen_x: int, pen_y: int, r: int, g: int, b: int, alpha: int) {
+    if s < 0 {
+        return
+    }
+    if at_live[s] == 0 {
+        return
+    }
+    if alpha <= 0 {
+        return
+    }
+    let bx = pen_x + at_ox[s]
+    let by = pen_y + at_oy[s]
+    let w = at_mw[s]
+    let h = at_mh[s]
+    let mut y = 0
+    while y < h {
+        let row = (at_gy[s] + y) * at_dim + at_gx[s]
+        let mut x = 0
+        while x < w {
+            let c = int(at_r[row + x])
+            if c > 0 {
+                let mut a = c * alpha / 255
+                if a > 255 {
+                    a = 255
+                }
+                raster.raster_blend(bx + x, by + y, r, g, b, a)
+            }
+            x = x + 1
+        }
+        y = y + 1
+    }
+}
+
+fn atlas_cov(s: int, x: int, y: int) -> int {
+    if s < 0 || at_live[s] == 0 {
+        return 0
+    }
+    if x < 0 || y < 0 {
+        return 0
+    }
+    if x >= at_mw[s] || y >= at_mh[s] {
+        return 0
+    }
+    return int(at_r[(at_gy[s] + y) * at_dim + at_gx[s] + x])
+}
+
+fn atlas_glyph_w(s: int) -> int {
+    if s < 0 {
+        return 0
+    }
+    return at_mw[s]
+}
+
+fn atlas_glyph_h(s: int) -> int {
+    if s < 0 {
+        return 0
+    }
+    return at_mh[s]
+}
+
+/// Origin of the glyph's mask relative to the pen, in device pixels. The blit
+/// position is the integer pen position, so this is informational.
+fn atlas_glyph_origin_x(s: int) -> int {
+    if s < 0 {
+        return 0
+    }
+    return at_ox[s]
+}
+
+fn atlas_glyph_origin_y(s: int) -> int {
+    if s < 0 {
+        return 0
+    }
+    return at_oy[s]
+}
+
+// --- stats -----------------------------------------------------------------
+
+fn atlas_dim() -> int {
+    atlas_init()
+    return at_dim
+}
+
+fn atlas_entry_count() -> int {
+    return at_entries
+}
+
+fn atlas_max_entries() -> int {
+    return ATLAS_MAX_ENTRIES
+}
+
+fn atlas_bytes() -> int {
+    atlas_init()
+    return at_r.len + at_scratch.len
+}
+
+fn atlas_raster_count() -> int {
+    return at_rasters
+}
+
+fn atlas_eviction_count() -> int {
+    return at_evicts
+}
+
+fn atlas_repack_count() -> int {
+    return at_repacks
+}
+
+fn atlas_grow_count() -> int {
+    return at_grows
+}
+
+fn atlas_failure_count() -> int {
+    return at_failures
+}
+
+fn at_lru_head() -> int {
+    return at_head
+}
+
+fn at_lru_tail() -> int {
+    return at_tail
+}
+
+// --- string interning + measurement cache ----------------------------------
+//
+// Strings are interned once into a fixed-capacity table and the measurement
+// cache is keyed by (string_id, font_id, size_px). Both are bounded: the string
+// table refuses new entries loudly past its cap (measurements still compute,
+// they just are not cached), and the measurement cache is a fixed-size LRU.
+
+const STR_TABLE_CAP: int = 2048
+const MEAS_CACHE_CAP: int = 512
+
+let mut str_ht: []int = []int {}
+let mut str_key: []string = []string {}
+let mut str_ready: int = 0
+let mut str_overflow: int = 0
+
+let mut meas_sid: []int = []int {}
+let mut meas_font: []int = []int {}
+let mut meas_size: []int = []int {}
+let mut meas_w: []int = []int {}
+let mut meas_h: []int = []int {}
+let mut meas_age: []int = []int {}
+let mut meas_n: int = 0
+let mut meas_clock: int = 0
+let mut meas_hits: int = 0
+let mut meas_misses: int = 0
+let mut meas_evicts: int = 0
+
+fn str_hash_of(s: string) -> int {
+    let mut h = 0
+    let mut i = 0
+    while i < s.len {
+        h = (h * 31 + int(s[i])) % STR_TABLE_CAP
+        i = i + 1
+    }
+    return h
+}
+
+fn str_init() {
+    if str_ready != 0 {
+        return
+    }
+    str_ready = 1
+    let mut i = 0
+    while i < STR_TABLE_CAP {
+        push(str_ht, -1)
+        i = i + 1
+    }
+}
+
+/// Intern a string, returning a stable id, or -1 when the table is full. A full
+/// table is a loud, counted, non-fatal condition: nothing is cached for the new
+/// string, and short strings are what fill it first.
+fn str_intern(s: string) -> int {
+    str_init()
+    if s.len == 0 {
+        return -1
+    }
+    if s.len > 64 {
+        // Not worth a table slot; measurement still happens, just uncached.
+        return -1
+    }
+    let mut i = str_hash_of(s)
+    let mut guard = 0
+    while guard < STR_TABLE_CAP {
+        let sid = str_ht[i]
+        if sid == -1 {
+            if str_key.len >= STR_TABLE_CAP {
+                str_overflow = str_overflow + 1
+                return -1
+            }
+            let id = str_key.len
+            str_ht[i] = id
+            push(str_key, s)
+            return id
+        }
+        if str_key[sid] == s {
+            return sid
+        }
+        i = (i + 1) % STR_TABLE_CAP
+        guard = guard + 1
+    }
+    str_overflow = str_overflow + 1
+    return -1
+}
+
+fn str_count() -> int {
+    return str_key.len
+}
+
+fn str_overflow_count() -> int {
+    return str_overflow
+}
+
+fn meas_init() {
+    if meas_sid.len > 0 {
+        return
+    }
+    let mut i = 0
+    while i < MEAS_CACHE_CAP {
+        push(meas_sid, -1)
+        push(meas_font, 0)
+        push(meas_size, 0)
+        push(meas_w, 0)
+        push(meas_h, 0)
+        push(meas_age, 0)
+        i = i + 1
+    }
+}
+
+/// Cached measurement for (sid, font, size): 1 on hit, with `w`/`h` written.
+fn meas_get(sid: int, font: int, size: int, w: &mut int, h: &mut int) -> int {
+    meas_init()
+    if sid < 0 {
+        return 0
+    }
+    let mut i = 0
+    while i < MEAS_CACHE_CAP {
+        if meas_sid[i] == sid {
+            if meas_font[i] == font {
+                if meas_size[i] == size {
+                    meas_clock = meas_clock + 1
+                    meas_age[i] = meas_clock
+                    *w = meas_w[i]
+                    *h = meas_h[i]
+                    meas_hits = meas_hits + 1
+                    return 1
+                }
+            }
+        }
+        i = i + 1
+    }
+    meas_misses = meas_misses + 1
+    return 0
+}
+
+fn meas_put(sid: int, font: int, size: int, w: int, h: int) {
+    meas_init()
+    if sid < 0 {
+        return
+    }
+    meas_clock = meas_clock + 1
+    // Update in place when present.
+    let mut i = 0
+    while i < MEAS_CACHE_CAP {
+        if meas_sid[i] == sid {
+            if meas_font[i] == font {
+                if meas_size[i] == size {
+                    meas_w[i] = w
+                    meas_h[i] = h
+                    meas_age[i] = meas_clock
+                    return
+                }
+            }
+        }
+        i = i + 1
+    }
+    if meas_n < MEAS_CACHE_CAP {
+        meas_sid[meas_n] = sid
+        meas_font[meas_n] = font
+        meas_size[meas_n] = size
+        meas_w[meas_n] = w
+        meas_h[meas_n] = h
+        meas_age[meas_n] = meas_clock
+        meas_n = meas_n + 1
+        return
+    }
+    // Full: replace the least recently used slot.
+    let mut victim = 0
+    let mut oldest = meas_age[0]
+    i = 1
+    while i < MEAS_CACHE_CAP {
+        if meas_age[i] < oldest {
+            oldest = meas_age[i]
+            victim = i
+        }
+        i = i + 1
+    }
+    meas_sid[victim] = sid
+    meas_font[victim] = font
+    meas_size[victim] = size
+    meas_w[victim] = w
+    meas_h[victim] = h
+    meas_age[victim] = meas_clock
+    meas_evicts = meas_evicts + 1
+}
+
+fn meas_count() -> int {
+    return meas_n
+}
+
+fn meas_capacity() -> int {
+    return MEAS_CACHE_CAP
+}
+
+fn meas_hit_count() -> int {
+    return meas_hits
+}
+
+fn meas_miss_count() -> int {
+    return meas_misses
+}
+
+fn meas_eviction_count() -> int {
+    return meas_evicts
+}
+
+fn meas_clear() {
+    meas_init()
+    let mut i = 0
+    while i < MEAS_CACHE_CAP {
+        meas_sid[i] = -1
+        i = i + 1
+    }
+    meas_n = 0
+    meas_clock = 0
+    meas_hits = 0
+    meas_misses = 0
+    meas_evicts = 0
+}
+
+/// Bytes held by the atlas and the measurement tables — the Phase 0
+/// instrumentation hook, so a later phase can report this rather than guess.
+fn atlas_mem_bytes() -> i64 {
+    let mut total = i64(at_r.len) + i64(at_scratch.len)
+    total = total + i64(at_font.len) * 8
+    total = total + i64(at_ht.len) * 8
+    total = total + i64(cov_gamma.len) * 8
+    total = total + i64(str_ht.len) * 8
+    total = total + i64(meas_sid.len) * 8 * 4
+    return total
+}
