@@ -1,0 +1,45 @@
+//! Phase 0 reference screen (`docs/mem-baseline.md`). It exercises every
+//! element the visual baseline must cover: body text at 11/13/17 px, a 1px
+//! border, a rounded card with a drop shadow, a vertical gradient, and an
+//! image drawn smaller than a source would be.
+//!
+//! Two halves, deliberately:
+//!
+//!   * The STRUCTURAL golden is the draw-list dump below and is checked now, by
+//!     `run.sh`, at logical 1x. It pins paint order and geometry so no later
+//!     phase can move them silently.
+//!   * The PIXEL golden — this same screen rasterized at 2x and diffed — needs
+//!     the software rasterizer of Phase 4. Until it exists there is no code in
+//!     the tree that can turn this tree into pixels; `capture.sh` writes
+//!     `ref@2x.png` the moment there is.
+//!
+//! Keep this file free of prints: stdout is the golden.
+
+import "std:zeus"
+
+fn main() {
+    zeus.snapshot(360, 320, fn() -> Node {
+        zeus.Box(align_direction = DIRECTION.Column, padding = 16, spacing = 10,
+                 background = "#ffffff") {
+            // Body text at the three sizes the baseline calls out.
+            zeus.Text("Body 11", font = 11, color = "#111111")
+            zeus.Text("Body 13", font = 13, color = "#111111")
+            zeus.Text("Body 17", font = 17, color = "#111111")
+            // A 1px hairline border (must land on one crisp device row).
+            zeus.Box(width = 200, height = 24, border = 1, border_color = "#cccccc")
+            // Rounded card with a drop shadow (elevation 2 clears its rect).
+            zeus.Box(width = 200, height = 40, radius = 10, background = "#f4f4f5",
+                     border = 1, border_color = "#e4e4e7", elevation = 2)
+            // Vertical gradient: `bg` down to `bg2`.
+            zeus.set_background_end(
+                zeus.Box(width = 200, height = 40, radius = 8, background = "#4f46e5"),
+                zeus.rgb(14, 165, 233))
+            // Image slot: the destination box is smaller than a real source, so
+            // the downscale filter is what paints here once the host reports an
+            // intrinsic size (Phase 4). The op is pinned now so the pixel golden
+            // can grow into it.
+            zeus.Image("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mO4o6YGAAMKASneDRr/AAAAAElFTkSuQmCC",
+                       width = 24, height = 24, radius = 4)
+        }
+    })
+}

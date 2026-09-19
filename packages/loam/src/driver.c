@@ -1060,13 +1060,16 @@ int main(int argc, char **argv) {
        -g makes lldb/gdb, profilers, and sanitizers report Loam lines. Off by
        default: it inflates binaries and the published size benchmark. */
     static char copt_buf[256];
-    snprintf(copt_buf, sizeof copt_buf, "%s%s%s",
+    snprintf(copt_buf, sizeof copt_buf, "%s%s%s%s",
              (headless || dev)
                  ? "-std=gnu99 -O0 -fno-asynchronous-unwind-tables -ffp-contract=off"
                  : "-std=gnu99 -O1 -fno-asynchronous-unwind-tables "
                    "-fomit-frame-pointer -ffp-contract=off",
              env_on("LOAM_DEBUG") ? " -g" : "",
-             uses_zeus ? " -DLOAM_ALLOC_TRACE" : "");
+             uses_zeus ? " -DLOAM_ALLOC_TRACE" : "",
+             /* Phase 0 arena instrumentation: the app's own C, so the flag
+                reaches `platform.plat_mem_stats()` on every frame. */
+             env_on("ZEUS_MEM_STATS") ? " -DZEUS_MEM_STATS" : "");
     const char *copt = copt_buf;
 #if defined(__APPLE__)
     const char *ld = (headless || dev) ? "" : "-Wl,-dead_strip";
@@ -1088,8 +1091,19 @@ int main(int argc, char **argv) {
        itself, and macro-rewriting its declarations is a syntax error. They also
        get their own cached objects, or a host build would leave a host-flavoured
        `zeus_plat.o` behind for the next normal build to link. */
-    const char *host_flags = host ? "-DLOAM_HOST_BUILD -DLOAM_ALLOC_TRACE" : "-DLOAM_ALLOC_TRACE";
-    const char *obj_tag = host ? ".host" : "";
+    static char host_flags_buf[128];
+    snprintf(host_flags_buf, sizeof host_flags_buf, "%s%s",
+             host ? "-DLOAM_HOST_BUILD -DLOAM_ALLOC_TRACE" : "-DLOAM_ALLOC_TRACE",
+             env_on("ZEUS_MEM_STATS") ? " -DZEUS_MEM_STATS" : "");
+    const char *host_flags = host_flags_buf;
+    /* `ZEUS_MEM_STATS` changes the platform object's code, not just the app's,
+       so it needs its own cached object too; otherwise a flagged build leaves a
+       stat-printing `zeus_plat.o` behind for the next unflagged one. */
+    static char obj_tag_buf[16];
+    snprintf(obj_tag_buf, sizeof obj_tag_buf, "%s%s",
+             host ? ".host" : "",
+             env_on("ZEUS_MEM_STATS") ? ".mem" : "");
+    const char *obj_tag = obj_tag_buf;
     snprintf(plat_o, sizeof plat_o, "%s/.obj/zeus_plat%s.o", LOAM_RUNTIME_DIR, obj_tag);
     snprintf(key_o, sizeof key_o, "%s/.obj/zeus_key%s.o", LOAM_RUNTIME_DIR, obj_tag);
     snprintf(mac_o, sizeof mac_o, "%s/.obj/zeus_mac%s.o", LOAM_RUNTIME_DIR, obj_tag);

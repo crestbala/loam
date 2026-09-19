@@ -169,3 +169,7 @@ fn plat_set_insets(top: int, right: int, bottom: int, left: int) {}
 /// runtime counts `loam_new` and array growth; an animated frame must not move
 /// it. 0 when the host/runtime does not track it.
 fn plat_alloc_count() -> int {}
+/// 1 when arena memory stats are on: compiled with `-DZEUS_MEM_STATS` or
+/// started with `ZEUS_MEM_STATS=1`. Phase 0 instrumentation only — no
+/// allocation decision reads it.
+fn plat_mem_stats() -> int {}

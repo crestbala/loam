@@ -8,6 +8,7 @@
 import "geometry.loam"
 import "platform.loam"
 import "track.loam"
+import "std:fmt"
 
 struct UiNode {
     kids: []int,
@@ -348,6 +349,23 @@ let mut reduced: int = 0
 /// violation). `store_sig` records it and, while `anim_assert != 0`, traps.
 let mut anim_signal_writes: int = 0
 let mut anim_assert: int = 1
+
+// --- Phase 0 memory instrumentation ---------------------------------------
+// See `docs/mem-baseline.md`. These counters only observe: no allocation or
+// layout decision reads them, and with `ZEUS_MEM_STATS` off `mem_sample()` is
+// never called, so a normal frame does no extra work. `mem_sample()` is invoked
+// at the end of every layout while stats are on, which is what makes the
+// high-water mark the peak of a whole frame rather than a spot reading.
+//
+// Phase 0 predates the persistent/scratch split (Phase 2), so "per bucket"
+// here means the arena's independent global vectors, not two bump arenas.
+
+/// Peak live node count over the sampled frames (0 until the first sample).
+let mut mem_peak_nodes: int = 0
+/// Peak arena bytes over the sampled frames.
+let mut mem_peak_bytes: i64 = 0
+/// Layouts sampled since boot.
+let mut mem_frames: int = 0
 
 fn blank_node() -> UiNode {
     return UiNode {
@@ -1964,6 +1982,104 @@ fn alloc_node(kind: int) -> int {
     n.nid = nodes.len
     push(nodes, n)
     return nodes.len - 1
+}
+
+// --- Phase 0 memory instrumentation (arena side) ---------------------------
+// `__sizeof(x)` is a compile-time size for x's type and does not evaluate x, so
+// the strides below are safe even when a vector is empty.
+
+/// 1 when the host says arena stats are on (`-DZEUS_MEM_STATS` or env).
+fn mem_stats_on() -> int {
+    return platform.plat_mem_stats()
+}
+
+/// Node slots holding a live node: id 0 (the sentinel) and every recycled slot
+/// in `free_nodes` are excluded, so this is the tree's real node count.
+fn mem_live_nodes() -> int {
+    let mut c = 0
+    let n = nodes.len
+    for i in 1..n {
+        if int(nodes[i].kind) != 0 {
+            c = c + 1
+        }
+    }
+    return c
+}
+
+/// Bytes held by the node store: the `nodes` slot vector plus every node's
+/// child-index vector. Those are the only per-node allocations in the tree.
+fn mem_tree_bytes() -> i64 {
+    let sz = i64(__sizeof(nodes[0].nid))
+    let mut b = i64(nodes.len) * i64(__sizeof(nodes[0]))
+    for i in 1..nodes.len {
+        b = b + i64(nodes[i].kids.len) * sz
+    }
+    return b
+}
+
+/// Bytes held by the signal table.
+fn mem_sig_bytes() -> i64 {
+    return i64(sigs.len) * i64(__sizeof(nodes[0].bind_sig))
+}
+
+/// Bytes held by the rebuild-scope / keyed-`For` interning tables.
+fn mem_intern_bytes() -> i64 {
+    let sz = i64(__sizeof(nodes[0].nid))
+    let ssz = i64(__sizeof(nodes[0].text))
+    let ints = rec_sid.len + rec_owner.len + rec_fid.len + rec_fowner.len + kh_host.len + kh_node.len
+    return i64(ints) * sz + i64(kh_key.len) * ssz
+}
+
+/// Bytes held by the animation tables (tracks, their free list, and the paint
+/// / layout anim side lists).
+fn mem_anim_bytes() -> i64 {
+    let sz = i64(__sizeof(nodes[0].nid))
+    let ints = track_free.len + sig_paint.len + sig_anim.len
+    let a = i64(tracks.len) * i64(__sizeof(tracks[0]))
+    let b = i64(layout_anims.len) * i64(__sizeof(layout_anims[0]))
+    return a + b + i64(ints) * sz
+}
+
+/// Bytes held by the remaining small arena vectors: theme slots, focus chains,
+/// scroll snapshots, floater stacks, dirty lists, and free lists. Phase 2 splits
+/// these between the persistent and scratch arenas; Phase 0 only measures them.
+fn mem_misc_bytes() -> i64 {
+    let sz = i64(__sizeof(nodes[0].nid))
+    let mut ints = theme_l.len + theme_d.len + szbuf.len + szlay.len
+    ints = ints + chain_nodes.len + chain_ctxs.len + focus_ring.len
+    ints = ints + free_nodes.len + drop_pool.len + dirty_paint.len
+    ints = ints + zf_id.len + zf_z.len + zf_sx.len + zf_sy.len
+    ints = ints + scroll_save.len + scroll_save_x.len
+    return i64(ints) * sz
+}
+
+/// Arena bytes across every bucket above (the draw list lives in `scene`).
+fn mem_total_bytes() -> i64 {
+    return mem_tree_bytes() + mem_sig_bytes() + mem_intern_bytes() + mem_anim_bytes() + mem_misc_bytes()
+}
+
+/// Update the high-water marks. Called once per layout while stats are on.
+fn mem_sample() {
+    mem_frames = mem_frames + 1
+    let ln = mem_live_nodes()
+    if ln > mem_peak_nodes {
+        mem_peak_nodes = ln
+    }
+    let b = mem_total_bytes()
+    if b > mem_peak_bytes {
+        mem_peak_bytes = b
+    }
+}
+
+/// Print the arena side of the Phase 0 report. The caller prints the draw list
+/// and the host footprint. One line per bucket so `docs/mem-baseline.md` can
+/// quote it verbatim.
+fn mem_report() {
+    fmt.println("ZEUS_MEM live_nodes=", mem_live_nodes(), " node_slots=", nodes.len, " frames=", mem_frames)
+    fmt.println("ZEUS_MEM bytes tree=", mem_tree_bytes(), " signals=", mem_sig_bytes(), " interning=", mem_intern_bytes(), " animation=", mem_anim_bytes(), " misc=", mem_misc_bytes())
+    fmt.println("ZEUS_MEM bytes total=", mem_total_bytes())
+    fmt.println("ZEUS_MEM peak_nodes=", mem_peak_nodes, " peak_bytes=", mem_peak_bytes)
+    fmt.println("ZEUS_MEM node_record_bytes=", __sizeof(nodes[0]))
 }
 
 // --- app ---

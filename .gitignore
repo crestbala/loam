@@ -48,6 +48,11 @@ www/macos/build/
 examples/zeus/counter/backend/build/
 bezel/
 
+# Phase 0 generated memory dumps (the curated numbers live in docs/mem-baseline.md)
+docs/mem/
+# Phase 0 golden runner scratch
+tests/golden/.tmp/
+
 # examples/language/ppm writes PPM frames and the encoded video into ./out
 # (`LOAM_PPM_OUT` overrides the directory).
 out/
