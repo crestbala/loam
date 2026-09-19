@@ -893,6 +893,13 @@ fn text_ellipsis(node: Node) -> Node {
 
 fn bind(label: Node, sig: Signal<int>) -> Node {
     arena.nodes[label.id].bind_sig = sig.id
+    /* A bound number is measured as text on a label / button / input, so a
+       write can change the box; flag it so the write re-runs layout. Elsewhere
+       (a switch's tween, a scroll offset) the bind is paint-only. */
+    let k = int(arena.nodes[label.id].kind)
+    if k == 3 || k == 4 || k == 10 {
+        arena.mark_sig_layout(sig.id)
+    }
     arena.mark_chrome()
     return label
 }
@@ -918,6 +925,7 @@ fn on_click(node: Node, handler: fn()) -> Node {
 fn show(node: Node, sig: Signal<int>) -> Node {
     arena.nodes[node.id].show_sig = sig.id
     arena.nodes[node.id].show_mode = 0
+    arena.mark_sig_layout(sig.id)
     arena.mark_chrome()
     return node
 }
@@ -925,6 +933,7 @@ fn show_eq(node: Node, sig: Signal<int>, value: int) -> Node {
     arena.nodes[node.id].show_sig = sig.id
     arena.nodes[node.id].show_mode = 1
     arena.nodes[node.id].show_val = value
+    arena.mark_sig_layout(sig.id)
     arena.mark_chrome()
     return node
 }
@@ -932,6 +941,7 @@ fn show_ne(node: Node, sig: Signal<int>, value: int) -> Node {
     arena.nodes[node.id].show_sig = sig.id
     arena.nodes[node.id].show_mode = 2
     arena.nodes[node.id].show_val = value
+    arena.mark_sig_layout(sig.id)
     arena.mark_chrome()
     return node
 }
@@ -1088,6 +1098,7 @@ fn show_ge(node: Node, sig: Signal<int>, value: int) -> Node {
     arena.nodes[node.id].show_sig = sig.id
     arena.nodes[node.id].show_mode = 3
     arena.nodes[node.id].show_val = value
+    arena.mark_sig_layout(sig.id)
     arena.mark_chrome()
     return node
 }
@@ -1095,6 +1106,7 @@ fn show_le(node: Node, sig: Signal<int>, value: int) -> Node {
     arena.nodes[node.id].show_sig = sig.id
     arena.nodes[node.id].show_mode = 4
     arena.nodes[node.id].show_val = value
+    arena.mark_sig_layout(sig.id)
     arena.mark_chrome()
     return node
 }
@@ -3860,6 +3872,89 @@ fn effect_owner() -> int {
     return 0
 }
 
+// --- context (provide / inject) ---
+// A `Context<T>` is a typed key. `provide` binds a value for the dynamic
+// extent of `body`; `use_context` reads the topmost binding, or the default
+// the context was created with. The bindings live in ordinary `Signal<T>`
+// cells — this file's one generic store — so the open-scope stack itself is
+// just ints (signal ids) and needs no per-type copy of the machinery.
+
+/// A typed key for `provide` / `use_context`. The default travels on the
+/// handle, so lookups need no side table; `T` must be Copy, as for `Signal`.
+struct Context<T> {
+    id: int,
+    dflt: T,
+}
+
+let mut ctx_next_id: int = 1
+/// Open `provide` scopes, as parallel stacks of (context id, value cell).
+let mut ctx_stack_ctx: []int = []int {}
+let mut ctx_stack_sig: []int = []int {}
+
+/* The stack itself is untyped ints, so these helpers are concrete: a global
+   read only from a generic body is not the one the codegen emits (see
+   `signal` vs `computed`), and keeping the id bookkeeping here avoids that. */
+fn ctx_take_id() -> int {
+    let cid = ctx_next_id
+    ctx_next_id = ctx_next_id + 1
+    return cid
+}
+
+fn ctx_push(cid: int, cell: int) {
+    push(ctx_stack_ctx, cid)
+    push(ctx_stack_sig, cell)
+}
+
+fn ctx_pop() {
+    pop(ctx_stack_ctx)
+    pop(ctx_stack_sig)
+}
+
+/// Cell id of the topmost `provide` for `cid`, or -1 when none is open.
+fn ctx_cell(cid: int) -> int {
+    let n = ctx_stack_ctx.len
+    let mut i = n
+    while i > 0 {
+        i = i - 1
+        if ctx_stack_ctx[i] == cid {
+            return ctx_stack_sig[i]
+        }
+    }
+    return -1
+}
+
+/// Create a typed context whose value is `dflt` until something `provide`s
+/// one. `T` is inferred from `dflt`.
+fn create_context<T>(dflt: T) -> Context<T> {
+    arena.ensure()
+    return Context { id: ctx_take_id(), dflt: dflt }
+}
+
+/// Make `value` the current binding of `ctx` for the dynamic extent of
+/// `body`. Call as `provide(ctx, value, fn() { ... })`; scopes nest, and the
+/// innermost binding wins.
+fn provide<T>(ctx: Context<T>, value: T, body: fn()) {
+    arena.ensure()
+    let cell = signal(value)
+    ctx_push(ctx.id, cell.id)
+    body()
+    ctx_pop()
+}
+
+/// The topmost provided value for `ctx`, else the default it was created with.
+/// Reading a context does not subscribe the caller to anything.
+fn use_context<T>(ctx: Context<T>) -> T {
+    arena.ensure()
+    let sid = ctx_cell(ctx.id)
+    if sid < 0 {
+        return ctx.dflt
+    }
+    // Read without subscribing: `__sig_load` is what `peek` wraps, and its
+    // result type comes from the return type, so no `Signal<T>` value is
+    // needed here.
+    return __sig_load(sid)
+}
+
 /// Run `body` once now, then again whenever a signal it read changes.
 /// Effects are the edges of the graph: `body` writes a signal, an arena
 /// field, or the outside world — it never rebuilds the tree. Prefer a text
@@ -3871,9 +3966,43 @@ fn effect_owner() -> int {
 /// zeus.effect(|| { fmt.println("n is now", n.get()) })
 /// ```
 fn effect(body: fn()) {
+    effect_eid(body)
+}
+
+/// `effect`, returning the effect id so a `computed` can record itself as the
+/// producer of its output signal (see `track.mark_produced`).
+fn effect_eid(body: fn()) -> int {
     arena.ensure()
     let eid = track.alloc(intern_fn(body), effect_owner())
+    // A nested scope outranks its parent, so a reader of what this effect
+    // writes is flushed after it (glitch-free ordering).
+    track.set_rank(eid, 1 + track.current_rank())
     track.run(eid)
+    return eid
+}
+
+/// Batch `body`'s signal writes: each `set` re-runs no effect until the
+/// outermost `batch` returns, then every affected effect runs once, in
+/// dependency order. Use it when a handler writes several signals that feed
+/// the same derivation, so it recomputes once instead of once per write.
+///
+/// ```
+/// zeus.batch(fn() {
+///     x.set(1)
+///     y.set(2)
+/// })
+/// ```
+fn batch(body: fn()) {
+    track.batch_begin()
+    body()
+    track.batch_end()
+}
+
+/// Register `body` to run before the enclosing `effect` re-runs, so a
+/// subscription the effect opened is closed before its body runs again.
+/// Call inside an effect; a no-op outside one.
+fn on_cleanup(body: fn()) {
+    track.set_cleanup(track.current_eid(), intern_fn(body))
 }
 
 /// A cached derivation. `calc` runs now, and re-runs only when one of the
@@ -3893,7 +4022,8 @@ fn computed(calc: fn() -> int) -> Signal<int> {
     arena.ensure()
     let fid = intern_int(calc)
     let out = signal(0)
-    effect(|| { set(out, platform.plat_invoke_int_fn(fid)) })
+    let eid = effect_eid(|| { set(out, platform.plat_invoke_int_fn(fid)) })
+    track.mark_produced(out.id, eid)
     return out
 }
 
@@ -3902,7 +4032,8 @@ fn computed_str(calc: fn() -> string) -> Signal<string> {
     arena.ensure()
     let fid = intern_str(calc)
     let out = signal("")
-    effect(|| { set(out, platform.plat_invoke_str_fn(fid)) })
+    let eid = effect_eid(|| { set(out, platform.plat_invoke_str_fn(fid)) })
+    track.mark_produced(out.id, eid)
     return out
 }
 
@@ -3911,7 +4042,8 @@ fn computed_bool(calc: fn() -> bool) -> Signal<bool> {
     arena.ensure()
     let fid = intern_bool(calc)
     let out = signal(false)
-    effect(|| { set(out, platform.plat_invoke_bool_fn(fid) != 0) })
+    let eid = effect_eid(|| { set(out, platform.plat_invoke_bool_fn(fid) != 0) })
+    track.mark_produced(out.id, eid)
     return out
 }
 

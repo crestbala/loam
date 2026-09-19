@@ -259,6 +259,11 @@ let mut nodes: []UiNode = []UiNode {}
 /// marks itself dirty without a second pass over the nodes.
 let mut bar_fading_live: int = 0
 let mut sigs: []int = []int {}
+/// Per-signal: 1 when a write can move geometry without an effect marking
+/// layout on its behalf (a node's `show` / `visible` predicate, or a number a
+/// bound label measures, reads the signal straight from layout). Grown lazily
+/// to `sigs.len` — the C signal allocators own `sigs` and are not mirrored.
+let mut affects_layout: []int = []int {}
 let mut root_id: int = 0
 let mut win_w: int = 640
 let mut win_h: int = 480
@@ -587,6 +592,7 @@ fn release_sigs(nid: int) {
             pop(rec_owner)
             pop(rec_sid)
             platform.plat_sig_free(sid)
+            forget_sig_meta(sid)
             track.drop_sig(sid)
             anim_drop_sig(sid)
         } else {
@@ -879,6 +885,7 @@ fn release(m: ArenaMark) {
     while s > m.sigs {
         s = s - 1
         platform.plat_sig_free(s)
+        forget_sig_meta(s)
         track.drop_sig(s)
         anim_drop_sig(s)
     }
@@ -908,6 +915,31 @@ fn rollback(id: int, m: ArenaMark) {
     release(m)
 }
 
+/// Mark `sid` as layout-affecting: a later write re-runs the layout solve.
+fn mark_sig_layout(sid: int) {
+    if sid <= 0 {
+        return
+    }
+    if sid >= sigs.len {
+        return
+    }
+    while affects_layout.len <= sid {
+        push(affects_layout, 0)
+    }
+    affects_layout[sid] = 1
+}
+
+/// Drop the flag when a signal slot is freed, so a recycled id does not carry
+/// a stale layout mark onto an unrelated value.
+fn forget_sig_meta(sid: int) {
+    if sid <= 0 {
+        return
+    }
+    if sid < affects_layout.len {
+        affects_layout[sid] = 0
+    }
+}
+
 fn store_sig(id: int, value: int) {
     if id <= 0 {
         return
@@ -927,10 +959,22 @@ fn store_sig(id: int, value: int) {
     }
     sigs[id] = value
     platform.plat_sig_bind_int(id, value)
+    // `notify` runs every dependent effect now, and a prop effect marks layout
+    // itself (`apply_int` / `apply_str`). So only a signal whose value layout
+    // reads *directly* — with no effect in between — needs a layout mark here;
+    // everything else is a paint-only change. The shared chrome pass still runs:
+    // it retargets hover / press / tween / fade tracks (a switch's tween or a
+    // scrollbar, none of which move the box model).
     track.notify(id)
-    // A discrete state change: layout may follow (a width/show signal feeds
-    // layout), and the shared chrome pass may need to retarget a track.
-    mark_layout()
+    if id < affects_layout.len {
+        if affects_layout[id] != 0 {
+            mark_layout()
+        } else {
+            mark_paint()
+        }
+    } else {
+        mark_paint()
+    }
     mark_chrome()
 }
 
