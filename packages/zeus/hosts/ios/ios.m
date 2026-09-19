@@ -265,6 +265,14 @@ static void ios_save(void *ctx) {
     CGContextSaveGState(UIGraphicsGetCurrentContext());
 }
 
+static void ios_alpha(void *ctx, int64_t alpha) {
+    CGFloat a = alpha < 0 ? 0 : (alpha > 255 ? 1.0 : (CGFloat)alpha / 255.0);
+    CGContextRef c = UIGraphicsGetCurrentContext();
+    (void)ctx;
+    CGContextSaveGState(c);
+    CGContextSetAlpha(c, a);
+}
+
 static void ios_clip(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
                      int64_t radius) {
     CGRect r = CGRectMake((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h);
@@ -991,6 +999,7 @@ static void zeus_sync_keyboard(UIView *v) {
     d.fill4 = ios_fill4;
     d.xform = ios_xform;
     d.save = ios_save;
+    d.alpha = ios_alpha;
     d.clip = ios_clip;
     d.restore = ios_restore;
     d.svg = ios_svg;

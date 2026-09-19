@@ -1,0 +1,57 @@
+// Badge dot / count variants and the removable Chip.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("badge", 400, 200)
+    let unread = zeus.signal(0)
+    let keep = zeus.signal(1)
+    zeus.root(zeus.Row(8) {
+        zeus.Badge("Live", zeus.TINT.Ok, dot = true)
+        zeus.Badge("Plain", zeus.TINT.Mute)
+        zeus.BadgeCount(unread, zeus.TINT.Danger)
+        let c = zeus.Chip("Iris", zeus.TINT.Ink, on_remove = fn() => keep.set(0))
+        zeus.show(c, keep)
+        zeus.Chip("Bare", zeus.TINT.Ok, dot = false)
+    })
+    zeus.pump_frame()
+
+    // Dot: the Live badge has a pip child before its label; Plain does not.
+    let live = zeus.engine_find_text("Live")
+    let plain = zeus.engine_find_text("Plain")
+    must(live > 0 && plain > 0, "badges found")
+    must(zeus.node_kind(live - 1) == 1 && zeus.node_parent(live - 1) == zeus.node_parent(live), "dot before Live")
+    must(zeus.node_parent(plain - 1) != zeus.node_parent(plain), "no dot on Plain")
+
+    // Count: hidden at 0, shows the number, caps at 99+.
+    must(zeus.engine_find_role("status") == 0, "count hidden at 0")
+    unread.set(3)
+    zeus.engine_layout(400, 200)
+    must(zeus.text_visible("3"), "count shows 3")
+    unread.set(250)
+    zeus.engine_layout(400, 200)
+    must(zeus.text_visible("99+"), "count caps at 99+")
+
+    // Removable chip: the X carries a button role and its click runs
+    // on_remove; the caller's show signal hides the chip.
+    let x = zeus.engine_find_text("Remove Iris")
+    must(x > 0, "remove control")
+    must(zeus.text_visible("Iris"), "chip shown")
+    must(zeus.engine_click_text("Remove Iris") != 0, "remove click")
+    zeus.engine_layout(400, 200)
+    must(keep.get() == 0, "on_remove ran")
+    must(!zeus.text_visible("Iris"), "chip hidden")
+
+    // dot = false: the label is the first child.
+    let bare = zeus.engine_find_text("Bare")
+    must(zeus.node_parent(bare - 1) != zeus.node_parent(bare), "no dot on Bare")
+    fmt.println("badge chip ok")
+}

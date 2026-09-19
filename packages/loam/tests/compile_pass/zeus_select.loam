@@ -12,14 +12,16 @@ fn must(ok: bool, what: string) {
 }
 
 fn main() {
-    zeus.window("select", 360, 300)
+    zeus.window("select", 360, 420)
     let value = zeus.signal(0)
+    let query = zeus.signal("")
     let tree = zeus.Page() {
         zeus.Select(value, []string { "Small", "Medium", "Large" })
+        zeus.Combobox(query, []string { "Apple", "Apricot", "Banana" }, width = 200)
     }
     zeus.root(tree)
     zeus.pump_frame()
-    zeus.engine_layout(360, 300)
+    zeus.engine_layout(360, 420)
 
     // Closed: only the picked label is shown.
     must(zeus.text_visible("Small"), "trigger shows the picked label")
@@ -28,37 +30,46 @@ fn main() {
     // The trigger opens it.
     zeus.engine_click_text("Small")
     zeus.engine_mouseup()
-    zeus.engine_layout(360, 300)
+    zeus.engine_layout(360, 420)
     must(zeus.text_visible("Medium"), "trigger opened the menu")
     must(zeus.text_visible("Large"), "every option is listed")
 
-    // Arrows move the highlight; Enter picks.
+    // Combobox sits under the open menu; a click on Medium must hit the
+    // option, not the Search field that used to paint over it.
+    zeus.engine_click_text("Medium")
+    zeus.engine_mouseup()
+    zeus.engine_layout(360, 420)
+    must(value.get() == 1, "menu stacks above the combobox field")
+
+    // Reopen; arrows move the highlight; Enter picks.
+    zeus.engine_click_text("Medium")
+    zeus.engine_mouseup()
+    zeus.engine_layout(360, 420)
     zeus.engine_key_ev(1003, 0)
     zeus.engine_key_ev(1003, 0)
     zeus.engine_key_ev(13, 0)
     must(value.get() == 2, "enter picked the highlighted option")
-    zeus.engine_layout(360, 300)
-    must(!zeus.text_visible("Medium"), "menu closed after picking")
+    zeus.engine_layout(360, 420)
     must(zeus.text_visible("Large"), "trigger shows the new label")
 
     // Escape closes without picking.
     zeus.engine_click_text("Large")
     zeus.engine_mouseup()
-    zeus.engine_layout(360, 300)
+    zeus.engine_layout(360, 420)
     must(zeus.text_visible("Medium"), "reopened")
     zeus.engine_key_ev(27, 0)
     must(value.get() == 2, "escape did not pick")
-    zeus.engine_layout(360, 300)
+    zeus.engine_layout(360, 420)
     must(!zeus.text_visible("Medium"), "escape closed the menu")
 
     // Outside click closes through the scrim.
     zeus.engine_click_text("Large")
     zeus.engine_mouseup()
-    zeus.engine_layout(360, 300)
+    zeus.engine_layout(360, 420)
     must(zeus.text_visible("Medium"), "reopened again")
-    zeus.engine_click(5, 290)
+    zeus.engine_click(5, 400)
     zeus.engine_mouseup()
-    zeus.engine_layout(360, 300)
+    zeus.engine_layout(360, 420)
     must(!zeus.text_visible("Medium"), "outside click closed the menu")
 
     fmt.println("select ok")

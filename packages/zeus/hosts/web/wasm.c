@@ -61,6 +61,9 @@ int32_t zeus_js_font_fetch(const char *src);
 __attribute__((import_module("zeus"), import_name("save")))
 void zeus_js_save(void);
 
+__attribute__((import_module("zeus"), import_name("alpha")))
+void zeus_js_alpha(int32_t a);
+
 __attribute__((import_module("zeus"), import_name("clip")))
 void zeus_js_clip(int32_t x, int32_t y, int32_t w, int32_t h, int32_t radius);
 
@@ -149,6 +152,11 @@ static void draw_text_rot(void *ctx, int64_t x, int64_t y, const char *s, int64_
 static void draw_save(void *ctx) {
     (void)ctx;
     zeus_js_save();
+}
+
+static void draw_alpha(void *ctx, int64_t a) {
+    (void)ctx;
+    zeus_js_alpha((int32_t)a);
 }
 
 static void draw_clip(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
@@ -281,6 +289,7 @@ static void bind_canvas(void) {
     d.text = draw_text;
     d.text_rot = draw_text_rot;
     d.save = draw_save;
+    d.alpha = draw_alpha;
     d.clip = draw_clip;
     d.restore = draw_restore;
     d.svg = draw_svg;

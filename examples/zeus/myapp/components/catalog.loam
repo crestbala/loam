@@ -144,13 +144,14 @@ fn People() {
     zeus.SectionTitle("People", "Avatars and stats")
     zeus.Row(SPACE.Md) {
         zeus.Card() {
-            zeus.User("AP", "Ada Park", "Operator")
-            zeus.User("BL", "Bea Liu", "Editor")
+            zeus.User("AP", "Ada Park", "Operator", status = zeus.TINT.Ok)
+            zeus.User("BL", "Bea Liu", "Editor", status = zeus.TINT.Warn)
             zeus.Row(SPACE.Xs) {
-                zeus.Avatar("AP", 32)
-                zeus.Avatar("BL", 40)
-                zeus.Avatar("CD", 48)
+                zeus.Avatar("AP", 32, status = zeus.TINT.Ok)
+                zeus.Avatar("BL", 40, status = zeus.TINT.Warn)
+                zeus.Avatar("CD", 48, status = zeus.TINT.Danger)
             }
+            zeus.AvatarGroup([]string { "AP", "BL", "CD" }, 32)
         }
         zeus.Stat("Uptime", "99.9%", zeus.TINT.Ok)
         zeus.Stat("Errors", "2", zeus.TINT.Danger)

@@ -7,9 +7,17 @@ import "std:kv"
 
 let mut ram_armed: int = 0
 
+/// Host memory in KB as "12.3 MB" (one decimal). Integer MB rounded the
+/// wasm live heap — a few hundred KB — down to "0 MB", which read as broken.
+fn fmt_mb(kb: int) -> string {
+    let tenths = kb * 10 / 1024
+    return "{{tenths / 10}}.{{tenths % 10}} MB"
+}
+
 /// Navbar RAM pill: refreshes twice a second through the async timer, so the
-/// chip shows live host memory (resident set on desktop, live wasm heap on
-/// web). Reads once at mount so the chip is never blank.
+/// chip shows live host memory (phys_footprint on Apple, resident set on
+/// Linux / Android, live wasm heap on web). Reads once at mount so the chip
+/// is never blank.
 fn RamChip() {
     let ram = zeus.signal(zeus.memory_kb())
     if ram_armed == 0 {
@@ -19,10 +27,7 @@ fn RamChip() {
     zeus.Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
              spacing = SPACE.Exxs, padding_x = 10, padding_y = 4, height = 26,
              radius = zeus.RAD_FULL, background = zeus.raised()) {
-        zeus.Text(fn() -> string {
-            let mb = ram.get() / 1024
-            return "RAM {{mb}} MB"
-        }, color = zeus.mute(), font = zeus.FONT_CAPTION)
+        zeus.Text("RAM {{fmt_mb(ram.get())}}", color = zeus.mute(), font = zeus.FONT_CAPTION)
     }
 }
 
@@ -68,10 +73,16 @@ fn Foundations() {
         zeus.Display("Build interfaces with Zeus")
         zeus.Body("Zinc tokens, neutral primary, and lucide SVG icons. Dark inverts every token that reads appearance.")
     }
+    let unread = zeus.signal(12)
+    let iris = zeus.signal(1)
     zeus.Row(SPACE.Sm) {
         zeus.Chip("Stable", zeus.TINT.Ok)
         zeus.Chip("Canvas2D", zeus.TINT.Ink)
         zeus.Badge("zeus", zeus.TINT.Mute)
+        zeus.Badge("Live", zeus.TINT.Ok, dot = true)
+        zeus.BadgeCount(unread, zeus.TINT.Danger)
+        let tag = zeus.Chip("Iris", zeus.TINT.Ink, on_remove = fn() => iris.set(0))
+        zeus.show(tag, iris)
         zeus.Kbd("⌘K")
     }
     zeus.Alert("Heads up", "Signals update on click. Hover and press are engine fades — no DOM.")
@@ -138,6 +149,18 @@ fn ButtonScale() {
             zeus.Button("Ghost", look = zeus.LOOK.Ghost, size = zeus.SIZE.Lg)
             zeus.Button("Danger", look = zeus.LOOK.Danger, size = zeus.SIZE.Lg)
             zeus.Button("Link", look = zeus.LOOK.Link, size = zeus.SIZE.Lg)
+        }
+        zeus.Note("states — icon slot, loading (spinner takes the slot, inert), disabled fill; press scales to 97%")
+        let busy = zeus.signal(0)
+        zeus.RowWrap(SPACE.Sm) {
+            zeus.Button("Add item", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, icon = zeus.IC_PLUS)
+            zeus.Button("Save", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, icon = zeus.IC_CHECK,
+                        loading = busy, on_click = fn() {
+                busy.set(1)
+                async.after(1500, fn() { busy.set(0) })
+            })
+            zeus.Button("Disabled", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, enabled = false)
+            zeus.Button("Disabled", look = zeus.LOOK.Outline, size = zeus.SIZE.Md, enabled = false)
         }
         zeus.Note("icon — square, 16px lucide glyphs in every look")
         zeus.RowWrap(SPACE.Sm) {
@@ -250,16 +273,18 @@ fn People() {
     zeus.SectionTitle("People", "Avatars and stats")
     zeus.Row(SPACE.Md) {
         zeus.Card() {
-            zeus.User("AP", "Ada Park", "Operator")
-            zeus.User("BL", "Bea Liu", "Editor")
+            zeus.User("AP", "Ada Park", "Operator", status = zeus.TINT.Ok)
+            zeus.User("BL", "Bea Liu", "Editor", status = zeus.TINT.Warn)
             zeus.Row(SPACE.Xs) {
-                zeus.Avatar("AP", 32)
-                zeus.Avatar("BL", 40)
-                zeus.Avatar("CD", 48)
+                zeus.Avatar("AP", 32, status = zeus.TINT.Ok)
+                zeus.Avatar("BL", 40, status = zeus.TINT.Warn)
+                zeus.Avatar("CD", 48, status = zeus.TINT.Danger)
             }
+            zeus.AvatarGroup([]string { "AP", "BL", "CD" }, 32)
         }
-        zeus.Stat("Uptime", "99.9%", zeus.TINT.Ok)
-        zeus.Stat("Errors", "2", zeus.TINT.Danger)
+        let spark = zeus.signal([]int { 3, 5, 4, 8, 7, 9, 12 })
+        zeus.Stat("Uptime", "99.9%", zeus.TINT.Ok, delta = "+0.2%", trend = zeus.TREND.Up, spark = spark)
+        zeus.Stat("Errors", "2", zeus.TINT.Danger, delta = "-3 today", trend = zeus.TREND.Down)
     }
 }
 
@@ -299,8 +324,31 @@ fn Upload() {
     }
 }
 
+struct Member {
+    name: string,
+    role: string,
+    qty: int,
+}
+
+fn member_cells(m: Member) -> []string {
+    return []string { m.name, m.role, "{{m.qty}}" }
+}
+
 fn Data() {
     let page = zeus.signal(3)
+    let long_page = zeus.signal(1)
+    let sort = zeus.signal(0)
+    let picked = zeus.signal("none")
+    let mut spec = []TableCol {}
+    push(spec, TableCol { title: "Name", width: 0, sortable: true })
+    push(spec, TableCol { title: "Role", width: 0, sortable: true })
+    push(spec, TableCol { title: "Qty", width: 64, align: ALIGN.End, sortable: true })
+    let mut members = []Member {}
+    push(members, Member { name: "Ada", role: "Operator", qty: 12 })
+    push(members, Member { name: "Bea", role: "Editor", qty: 7 })
+    push(members, Member { name: "Cal", role: "Viewer", qty: 30 })
+    push(members, Member { name: "Dee", role: "Viewer", qty: 4 })
+    let rows = zeus.signal(members)
     zeus.SectionTitle("Data", "Table and pagination")
     zeus.Card() {
         zeus.TableHead([]string {"Name", "Role", "Status"})
@@ -308,8 +356,15 @@ fn Data() {
         zeus.TableRow([]string {"Bea", "Editor", "Away"})
         zeus.TableRow([]string {"Cal", "Viewer", "Active"})
     }
+    zeus.Note("Table — sortable headers reorder the rows · zebra · row click · end-aligned numbers · picked: {{picked.get()}}")
+    zeus.Card() {
+        zeus.Table(spec, rows, member_cells, sort = sort, zebra = true,
+                   on_pick = fn(i: int) => picked.set(rows.get()[i].name))
+    }
     zeus.Note("Pagination — {{page.get()}} / 5 · ghost pages, outline current")
     zeus.Pagination(page, 5)
+    zeus.Note("Pagination — {{long_page.get()}} / 20 · collapses to 1 … c-1 c c+1 … 20")
+    zeus.Pagination(long_page, 20)
 }
 
 fn Components() {
@@ -371,7 +426,7 @@ fn Cards() {
 
 fn Skeletons() {
     zeus.SectionHeader("Feedback", "Skeleton",
-                       "Placeholder fills while content loads. Radius matches the shape it replaces.")
+                       "Placeholder fills while content loads, with a left-to-right shimmer. Radius matches the shape it replaces.")
     zeus.Card() {
         zeus.Row(SPACE.Md) {
             zeus.Skeleton(40, 40, 20)
@@ -379,6 +434,36 @@ fn Skeletons() {
                 zeus.Skeleton(220, 14, 7)
                 zeus.Skeleton(160, 14, 7)
             }
+        }
+    }
+    let pct = zeus.signal(35)
+    let busy = zeus.signal(-1)
+    zeus.Note("Progress — a plain set eases; a negative value sweeps (indeterminate)")
+    zeus.Card() {
+        zeus.Row(SPACE.Sm) {
+            zeus.Progress(pct)
+            zeus.Button("+20", look = zeus.LOOK.Outline, size = zeus.SIZE.Sm, on_click = fn() {
+                if pct.get() >= 100 {
+                    pct.set(0)
+                } else {
+                    pct.set(pct.get() + 20)
+                }
+            })
+        }
+        zeus.Progress(busy)
+    }
+    zeus.Note("Card — interactive: hover lifts, press scales; header / footer / media slots")
+    let taps = zeus.signal(0)
+    zeus.Row(SPACE.Sm) {
+        zeus.Card(interactive = true, on_click = fn() => taps.set(taps.get() + 1)) {
+            zeus.Title("Interactive")
+            zeus.Body("Tapped {{taps.get()}} times.")
+        }
+        zeus.Card(title = "Plan", subtitle = "Billed monthly", footer = fn() {
+            zeus.Grow()
+            zeus.Button("Upgrade", look = zeus.LOOK.Solid, size = zeus.SIZE.Sm)
+        }) {
+            zeus.Body("Header and footer slots keep the body between them.")
         }
     }
 }

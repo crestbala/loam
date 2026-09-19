@@ -43,5 +43,31 @@ fn main() {
     zeus.engine_layout(360, 300)
     must(!zeus.text_visible("Apricot"), "list closed after picking")
 
+    // Mac/iOS type through insertText, not key_ev — that must open the list.
+    zeus.engine_click_text("Search")
+    zeus.engine_mouseup()
+    query.set("")
+    zeus.set_input(zeus.node_handle(zeus.engine_find_role("textbox")), "")
+    zeus.engine_layout(360, 300)
+    zeus.engine_insert("ban")
+    zeus.engine_layout(360, 300)
+    must(query.get() == "ban", "insert wrote the query")
+    must(zeus.text_visible("Banana"), "insert opened and matched Banana")
+    must(!zeus.text_visible("Apple"), "Apple filtered out after insert")
+
+    // Clicking a match writes it into the field.
+    zeus.engine_click_text("Banana")
+    zeus.engine_mouseup()
+    zeus.engine_layout(360, 300)
+    must(query.get() == "Banana", "click picked Banana")
+    must(!zeus.text_visible("Cherry"), "list closed after click")
+
+    // Clear empties the field.
+    must(zeus.engine_find_text("Clear") != 0, "clear control")
+    zeus.engine_click_text("Clear")
+    zeus.engine_mouseup()
+    zeus.engine_layout(360, 300)
+    must(query.get() == "", "clear emptied the query")
+
     fmt.println("combobox ok")
 }

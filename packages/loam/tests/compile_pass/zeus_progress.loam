@@ -1,0 +1,65 @@
+// Progress eases a plain `set` on the paint overlay and sweeps while the
+// value is negative (indeterminate), keeping the frame loop alive only then.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("progress", 320, 120)
+    let v = zeus.signal(20)
+    zeus.root(zeus.Box(padding = 20) {
+        zeus.Progress(v)
+    })
+    zeus.pump_frame()
+    must(zeus.engine_find_role("progressbar") != 0, "role")
+    must(zeus.engine_step_dt(16) == 0, "idle at rest")
+
+    // A plain set eases: the paint value trails the state on a track.
+    let c0 = zeus.proof_components()
+    let e0 = zeus.proof_effects()
+    v.set(80)
+    zeus.engine_layout(320, 120)
+    must(v.get() == 80, "state landed")
+    must(zeus.anim_paint(v) < 80, "paint trails the state")
+    must(zeus.proof_anim_live() > 0, "set started a track")
+    let e1 = zeus.proof_effects()
+    let mut i = 0
+    while i < 30 {
+        zeus.engine_layout(320, 120)
+        zeus.engine_step_dt(16)
+        zeus.engine_paint()
+        i = i + 1
+    }
+    must(zeus.anim_paint(v) == 80, "eased to the state")
+    must(zeus.proof_components() == c0, "no component re-run")
+    must(zeus.proof_effects() == e1, "no effect re-run per frame")
+    must(zeus.engine_step_dt(16) == 0, "idle after the ease")
+
+    // Indeterminate: negative keeps the loop live; back to a value stops it.
+    v.set(-1)
+    zeus.engine_layout(320, 120)
+    must(zeus.engine_step_dt(16) != 0, "sweep keeps the frame live")
+    zeus.engine_paint()
+    let sweeping = zeus.draw_count()
+    v.set(50)
+    zeus.engine_layout(320, 120)
+    i = 0
+    while i < 30 {
+        zeus.engine_layout(320, 120)
+        zeus.engine_step_dt(16)
+        zeus.engine_paint()
+        i = i + 1
+    }
+    must(zeus.engine_step_dt(16) == 0, "idle again after a value")
+    must(zeus.anim_paint(v) == 50, "paint at 50")
+    zeus.engine_paint()
+    must(zeus.draw_count() < sweeping, "sweep ops gone (no clip pair)")
+    fmt.println("progress ok")
+}

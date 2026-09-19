@@ -33,18 +33,22 @@ fn main() {
         fmt.println("FAIL no tab node")
         sys.exit(1)
     }
-    let on = zeus.node_background_rgb(first)
+    // The selected fill lives on the tray's sliding indicator (a `Tabs`
+    // trigger only swaps its label colour), so track the label: ink while
+    // selected, muted otherwise.
+    let label = first + 1
+    let on = zeus.node_color_rgb(label)
 
-    // Selecting another tab must repaint the first one back to the tray fill.
+    // Selecting another tab must repaint the first one back to muted.
     tab.set(2)
-    let off = zeus.node_background_rgb(first)
+    let off = zeus.node_color_rgb(label)
     if on == off {
-        fmt.println("FAIL tab 0 kept its selected fill after the selection moved")
+        fmt.println("FAIL tab 0 kept its selected label colour after the selection moved")
         sys.exit(1)
     }
 
     tab.set(0)
-    check("tab 0 selected again", zeus.node_background_rgb(first), on)
+    check("tab 0 selected again", zeus.node_color_rgb(label), on)
 
     // Series 0 takes the first brand colour.
     if !fmt.eq(zeus.chart_stroke_light(0), "#ff6308") {

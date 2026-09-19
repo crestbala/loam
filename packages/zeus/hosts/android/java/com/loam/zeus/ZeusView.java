@@ -339,6 +339,11 @@ public class ZeusView extends View implements Choreographer.FrameCallback {
         c.save();
     }
 
+    void jniAlpha(Canvas c, int a) {
+        int alpha = a < 0 ? 0 : (a > 255 ? 255 : a);
+        c.saveLayerAlpha(null, alpha);
+    }
+
     void jniClip(Canvas c, int x, int y, int w, int h, int radius) {
         if (radius > 0) {
             float rad = radius;

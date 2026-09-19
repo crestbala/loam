@@ -78,6 +78,10 @@ fn plat_image_size(src: string, w: &mut int, h: &mut int) {}
 /// image's intrinsic size in layout points (0 if still loading).
 fn plat_pick_image(w: &mut int, h: &mut int) -> string {}
 fn plat_save() {}
+/// Save, then multiply subsequent drawing by `a` (0..255) until `plat_restore`.
+/// Text has no alpha argument, so overlay exit wraps faded text here — extra
+/// host calls, not extra draw-list ops, so `draw_count` holds.
+fn plat_alpha(a: int) {}
 /// Host process memory in KB: Apple phys_footprint (Xcode's memory-gauge
 /// number), Linux/Android resident set, or the live wasm heap on the web
 /// host. 0 when the host reports nothing.

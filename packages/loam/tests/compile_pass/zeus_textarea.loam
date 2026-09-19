@@ -53,5 +53,11 @@ fn main() {
     zeus.engine_key(13)
     zeus.engine_key(98)
     expect(fmt.eq(one.get(), "ab"), "single-line enter")
+    // Cmd+A selects all; Backspace then clears.
+    zeus.engine_set_mods(8)
+    zeus.engine_key(97)
+    zeus.engine_set_mods(0)
+    zeus.engine_key(8)
+    expect(fmt.eq(one.get(), ""), "cmd-a then backspace clears")
     fmt.println("textarea ok")
 }

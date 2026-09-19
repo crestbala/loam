@@ -44,6 +44,7 @@ fn main() {
     zeus.root(tree)
     zeus.pump_frame()
     let sigs0 = zeus.arena_sigs()
+    let closed_draws = zeus.draw_count()
 
     must(!zeus.text_visible("Rename"), "menu starts closed")
     must(!zeus.text_visible("Delete"), "closed means every item is hidden")
@@ -75,6 +76,9 @@ fn main() {
     zeus.engine_key_ev(13, 0)
     must(hits.get() == 1, "enter ran the active item")
     must(active.get() == -1, "enter closed the menu")
+    zeus.pump_frame()
+    must(!zeus.text_visible("Rename"), "pick hid the items")
+    must(zeus.draw_count() == closed_draws, "pick snaps the panel away")
 
     // Keys after a close are inert, even though the row still holds focus.
     zeus.engine_key_ev(13, 0)

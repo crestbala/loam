@@ -176,6 +176,11 @@ typedef struct {
     void (*clip)(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
                  int64_t radius);
     void (*restore)(void *ctx);
+    /* Multiply subsequent drawing by `a` (0..255) until the matching restore.
+       Text has no alpha argument; present() wraps faded text in this. The
+       callback itself saves, so the caller only restores. NULL hosts skip
+       it and text stays opaque. */
+    void (*alpha)(void *ctx, int64_t a);
     /* SVG markup in `markup`; `currentColor` paints as `rgb`. alpha is 0..255. */
     void (*svg)(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
                 const char *markup, int64_t rgb, int64_t alpha);
@@ -248,6 +253,7 @@ void loam_zeus_plat_fill4(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rg
 void loam_zeus_plat_xform(int64_t dx, int64_t dy, int64_t scale, int64_t rot,
                          int64_t ox, int64_t oy);
 void loam_zeus_plat_text(int64_t x, int64_t y, loam_str s, int64_t rgb, int64_t font);
+void loam_zeus_plat_alpha(int64_t a);
 /* Current global font family ("" = host default) and the hook a host
    registers to load one. See zeus_plat.c for why the family is global. */
 const char *zeus_font_family(void);
@@ -328,6 +334,7 @@ void loam_platform_plat_image(int64_t x, int64_t y, int64_t w, int64_t h, loam_s
 void loam_platform_plat_image_size(loam_str src, int32_t *w, int32_t *h);
 loam_str loam_platform_plat_pick_image(int32_t *w, int32_t *h);
 void loam_platform_plat_save(void);
+void loam_platform_plat_alpha(int64_t a);
 int64_t loam_platform_plat_mem_kb(void);
 int64_t loam_platform_plat_now_ms(void);
 void loam_platform_plat_clip(int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius);

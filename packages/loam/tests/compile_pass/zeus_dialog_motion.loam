@@ -1,0 +1,61 @@
+// Dialog motion and sizing: the card scales in from 96% on a paint track
+// (the scrim's fade runs alongside), and its width is 92% of a narrow window
+// but capped at 440dp on a wide one.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn settle(w: int, h: int) {
+    let mut i = 0
+    while i < 30 {
+        zeus.engine_layout(w, h)
+        zeus.engine_step_dt(16)
+        zeus.engine_paint()
+        i = i + 1
+    }
+}
+
+fn main() {
+    zeus.window("dialog", 800, 600)
+    let open = zeus.signal(0)
+    zeus.root(zeus.Box(padding = 16) {
+        zeus.Button("Open", on_click = fn() => open.set(1))
+        zeus.Dialog(open, title = "Confirm") {
+            zeus.Text("Inside")
+        }
+    })
+    zeus.pump_frame()
+    zeus.engine_layout(800, 600)
+
+    // Open: the card is scaling up on a track, no component re-run.
+    let c0 = zeus.proof_components()
+    must(zeus.engine_click_text("Open") != 0, "open")
+    zeus.engine_layout(800, 600)
+    let panel = zeus.engine_find_role("dialog")
+    must(panel != 0, "dialog shown")
+    must(zeus.motion_scale(zeus.node_handle(panel)) < 100, "starts below 100%")
+    must(zeus.proof_anim_live() > 0, "scale on a track")
+    settle(800, 600)
+    must(zeus.motion_scale(zeus.node_handle(panel)) == 100, "settled at 100%")
+    must(zeus.proof_components() == c0, "no component re-run")
+    must(zeus.node_width(panel) == 440, "desktop width capped at 440")
+
+    // Narrow window: 92% of the width.
+    settle(320, 600)
+    must(zeus.node_width(panel) == 320 * 92 / 100, "phone width is 92%")
+
+    // Close: shrinks back while fading.
+    zeus.engine_key(27)
+    zeus.engine_layout(320, 600)
+    must(open.get() == 0, "escape closed")
+    settle(320, 600)
+    must(zeus.motion_scale(zeus.node_handle(panel)) == 96, "rests at 96% closed")
+    fmt.println("dialog motion ok")
+}

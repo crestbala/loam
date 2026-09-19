@@ -1,0 +1,66 @@
+// Table upgrades: zebra stripes count body rows only, a row with on_click is
+// a pointer target, a sortable header cycles the sort signal and marks the
+// column, and TableRowCols aligns cells to the header spec.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("table", 480, 320)
+    let sort = zeus.signal(0)
+    let picked = zeus.signal("")
+    let mut spec = []TableCol {}
+    push(spec, TableCol { title: "Name", width: 0, sortable: true })
+    push(spec, TableCol { title: "Qty", width: 60, align: zeus.ALIGN.End, sortable: true })
+    push(spec, TableCol { title: "Status", width: 0 })
+    zeus.root(zeus.Column(0) {
+        zeus.TableCols(spec, sort = sort)
+        zeus.TableRowCols([]string { "Ada", "12", "Active" }, spec, zebra = true,
+                          on_click = fn() => picked.set("Ada"))
+        zeus.TableRowCols([]string { "Bea", "7", "Away" }, spec, zebra = true,
+                          on_click = fn() => picked.set("Bea"))
+        zeus.TableRowCols([]string { "Cal", "30", "Active" }, spec, zebra = true,
+                          on_click = fn() => picked.set("Cal"))
+    })
+    zeus.pump_frame()
+
+    // Zebra: rows 1 and 3 keep the plate; row 2 is shaded.
+    let ada = zeus.node_parent(zeus.node_parent(zeus.engine_find_text("Ada")))
+    let bea = zeus.node_parent(zeus.node_parent(zeus.engine_find_text("Bea")))
+    let cal = zeus.node_parent(zeus.node_parent(zeus.engine_find_text("Cal")))
+    must(zeus.node_background_rgb(ada) == zeus.node_background_rgb(cal), "odd rows match")
+    must(zeus.node_background_rgb(bea) != zeus.node_background_rgb(ada), "second row striped")
+
+    // Row click.
+    must(zeus.engine_click_text("Bea") != 0, "row hit")
+    must(fmt.eq(picked.get(), "Bea"), "row on_click")
+
+    // Alignment: the Qty cell's text sits at the right edge of a 60dp cell.
+    let qty = zeus.engine_find_text("12")
+    let cell = zeus.node_parent(qty)
+    must(zeus.node_width(cell) == 60, "fixed-width cell")
+    must(zeus.node_x(qty) + zeus.node_width(qty) == zeus.node_x(cell) + 60, "end-aligned number")
+    let name = zeus.engine_find_text("Ada")
+    must(zeus.node_x(name) == zeus.node_x(zeus.node_parent(name)), "start-aligned text")
+
+    // Sort: click Name → asc (1), again → desc (-1), again → none; a second
+    // column clears the first.
+    must(zeus.engine_click_text("Sort by Name") != 0, "sort hit")
+    must(sort.get() == 1, "asc")
+    must(zeus.engine_click_text("Sort by Name") != 0, "sort hit 2")
+    must(sort.get() == -1, "desc")
+    must(zeus.engine_click_text("Sort by Qty") != 0, "sort qty")
+    must(sort.get() == 2, "qty asc clears name")
+    must(zeus.engine_click_text("Sort by Qty") != 0, "sort qty 2")
+    must(zeus.engine_click_text("Sort by Qty") != 0, "sort qty 3")
+    must(sort.get() == 0, "cycles back to none")
+    must(zeus.engine_click_text("Sort by Status") == 0, "unsortable header is not a button")
+    fmt.println("table ok")
+}
