@@ -581,37 +581,87 @@ averaged grey on the framebuffer.
   suites this sandbox blocks), all 15 draw goldens byte-identical, structural
   golden pass, `tools/mem-baseline.sh --headless` unchanged.
 
+**Formats, and keeping the existing ones working (fourteenth step).** The
+pipeline is format-agnostic by construction — everything downstream of a decoder
+sees premultiplied RGBA8 — so supporting a format means "produce premultiplied
+RGBA8 here" and nothing else in the engine moves. This step makes that explicit
+and adds the second decoder:
+
+- **`src_format_of` sniffs the container by magic bytes**, not by file extension
+  (which lies). It recognises PNG, BMP, JPEG, GIF, WebP, TIFF, ICO, AVIF
+  (`ftyp`) and SVG (leading whitespace then `<`) and returns `unknown`
+  otherwise. It is deliberately a *classifier*, not a decoder: the UI needs to
+  know what a file is in order to route it.
+- **Routing, not replacement.** `src_last_status()` distinguishes
+  `SRC_MALFORMED` (the bytes are not a valid image of a format we decode) from
+  `SRC_UNSUPPORTED` (a real format the in-Loam decoders do not cover). The
+  second is the signal to use the platform image path — `plat_image`, reached
+  through `platform.loam` (ImageIO/AppKit on native, the host's loader on web) —
+  which is what has always loaded these formats. So **no format this engine
+  already displayed stops working**: the `scene.image` op and its host call are
+  untouched, and the two image draw goldens still pass byte-for-byte. As more
+  decoders land, more formats take the in-Loam path; the rest keep working
+  through the platform.
+- **BMP**, the second in-Loam decoder: uncompressed `BI_RGB` only, 1/4/8-bit
+  paletted plus 24- and 32-bit, bottom-up and top-down (negative height).
+  Compressed (RLE) and `BI_BITFIELDS` are **refused with a reason**
+  (`compressed bmp`) rather than misdecoded, which routes them to the platform.
+- **A native-size request is now a byte-exact copy, not a filtered one.** That
+  was a real bug the richer fixtures exposed: `image_get` at 1:1 was running a
+  scale-1 Mitchell over the image and blurring it. "Show this image at its real
+  size" is the common case, not an edge case.
+
+`zeus_image_formats.loam` pins both halves: the sniffer classifies all nine
+containers correctly and reports which the Loam decoders cover; a JPEG returns
+`SRC_UNSUPPORTED` while a corrupt PNG returns `SRC_MALFORMED`; BMP decodes
+pixel-for-pixel for 24-bit bottom-up, 24-bit top-down (agreeing with bottom-up),
+32-bit with alpha, 8-bit paletted, and an RLE BMP is refused by name; and a
+BMP downscaled 4x comes out **flat** — the same aliasing property as PNG, which
+is what proves the pipeline really is format-agnostic. Two fixture-only bugs were
+caught by writing the fixtures by hand: bottom-up BMP rows were emitted in image
+order, and an 8-bit row's alignment padding was computed in bits instead of
+bytes (a 3-pixel row silently lost its pad byte).
+
+- bytes/node: **476.0 — unchanged**; membench reports `images= 0`.
+- validation: 103 zeus `compile_pass` tests pass (the 2 failures are the network
+  suites this sandbox blocks), all 15 draw goldens byte-identical, structural
+  golden pass, `tools/mem-baseline.sh --headless` unchanged.
+
 **Remaining Phase 4** (not done, and each is substantial): the rest of the image
-formats (see below), the host half of the blit (a no-copy `CGImage` provider on
-native, a typed-array view on web), and driving `scene.paint` through the
-rasterizer (which changes every draw golden and so needs its own decision).
+formats, the host half of the blit (a no-copy `CGImage` provider on native, a
+typed-array view on web), and driving `scene.paint` through the rasterizer (which
+changes every draw golden and so needs its own decision).
 
-**Image formats — status and roadmap.** The pipeline above (decode -> premultiply
--> resample -> byte-budgeted cache -> blit) is **format-agnostic**: everything
-downstream of `png_decode` only ever sees premultiplied RGBA8. So adding a format
-is exactly "produce premultiplied RGBA8", and nothing else moves.
+**Image formats — status and roadmap.** Landed in Loam: **PNG** (8-bit
+RGB/RGBA, non-interlaced, stored-block DEFLATE) and **BMP** (uncompressed
+1/4/8/24/32-bit, both scan orders).
 
-Landed: **PNG**, 8-bit RGB/RGBA, non-interlaced, stored-block DEFLATE. Not yet:
-Huffman-coded DEFLATE (fixed and dynamic), Adam7 interlacing, 16-bit depth,
-palette/grayscale/`tRNS`, and `gAMA`/`sRGB` handling. The dispatch a UI needs — a
-single `image_get` that sniffs the magic bytes rather than trusting a file
-extension — is the next step, along with the cheap formats, in this order:
+Still handled by the platform path, and therefore still working: **everything
+else** — JPEG, GIF, WebP, TIFF, ICO, HEIC and any PNG variant the Loam decoder
+does not yet cover. `src_format_of` + `src_last_status` are what let the renderer
+pick the in-Loam path where it applies and hand the rest to `plat_image`, so this
+is a routing decision rather than a capability cliff.
 
-1. **PNG**, the rest of it (a real inflate, then Adam7, 16-bit, palette). This is
-   the highest-value item by a wide margin: it is what almost every UI asset is.
-2. **BMP** (uncompressed 24/32-bit, both scan orders) and **ICO/CUR** (a
-   container of PNG/BMP) — trivial once the above exist, and ICO is what an app
-   icon actually is.
-3. **GIF** (LZW + palette + disposal) — small UI assets and animations.
-4. **JPEG** baseline sequential (Huffman tables, dequantize, IDCT, YCbCr,
-   chroma upsampling); progressive is a second pass. This is the largest
-   remaining decoder and the one photos/avatars need.
-5. **WebP**: lossless/VP8L is a moderate LZW-with-transforms job; lossy VP8 is a
-   different order of magnitude and should be treated as its own project.
-6. **SVG** is not a pixel format at all — it would route through the rasterizer
-   we already have (paths, fills, strokes), so it belongs with the paint work,
-   not here.
+The order that buys the most next:
+
+1. **PNG, the rest of it**: a real inflate (fixed and dynamic Huffman — the one
+   piece that turns "stored blocks only" into "every PNG"), then Adam7
+   interlacing, 16-bit depth, palette/grayscale/`tRNS`, and `gAMA`/`sRGB`. This
+   is the highest-value item by a wide margin: it is what almost every UI asset
+   is, and it is the only format where we currently have a decoder that real
+   files routinely miss.
+2. **ICO/CUR**: a container of PNG or BMP, so it is nearly free once it can
+   recurse into the two decoders we have — and an app icon is an ICO.
+3. **GIF**: LZW, palette, frame disposal. Small assets and animations.
+4. **JPEG** baseline sequential: Huffman tables, dequantize, IDCT, YCbCr,
+   chroma upsampling. The largest remaining decoder, and what photos and
+   avatars need; progressive is a second pass.
+5. **WebP**: lossless/VP8L is a moderate job (LZ77 with transforms); lossy VP8
+   is a different order of magnitude and should be its own project.
+6. **SVG** is not a pixel format: it routes through the rasterizer we already
+   have (paths, fills, strokes), so it belongs with the paint work, not here.
 
 Not planned and not pretended: **AVIF** and **HEIC**, which are AV1 and H.265
-video bitstreams; those are not decoder-sized tasks, and a UI that needs them
-should ask the platform for the pixels rather than grow one here.
+bitstreams. Those go to the platform (which is also what every other desktop
+toolkit does), and a UI that needs them should ask the platform for the pixels
+rather than grow a video decoder here.

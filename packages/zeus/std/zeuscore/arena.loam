@@ -2282,7 +2282,7 @@ fn mem_report() {
     fmt.println("ZEUS_MEM bytes tree=", mem_tree_bytes(), " signals=", mem_sig_bytes(), " interning=", mem_intern_bytes(), " animation=", mem_anim_bytes(), " misc=", mem_misc_bytes())
     fmt.println("ZEUS_MEM bytes total=", mem_total_bytes())
     fmt.println("ZEUS_MEM bytes glyphs=", atlas.atlas_mem_bytes(), " atlas_entries=", atlas.atlas_entry_count(), " glyph_rasters=", atlas.atlas_raster_count())
-    fmt.println("ZEUS_MEM bytes images=", image.img_mem_bytes(), " image_entries=", image.img_cache_count(), " image_decodes=", image.png_decode_count())
+    fmt.println("ZEUS_MEM bytes images=", image.img_mem_bytes(), " image_entries=", image.img_cache_count(), " image_decodes=", image.src_decode_count())
     fmt.println("ZEUS_MEM peak_nodes=", mem_peak_nodes, " peak_bytes=", mem_peak_bytes)
     fmt.println("ZEUS_MEM node_record_bytes=", __sizeof(nodes[0]))
 }
