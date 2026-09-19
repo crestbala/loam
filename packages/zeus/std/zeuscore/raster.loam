@@ -1616,3 +1616,257 @@ fn raster_shadow_rect(x: float, y: float, w: float, h: float, rad: float,
         ty = ty + RASTER_TILE
     }
 }
+
+// --- glyph bitmaps: TrueType contours -> offscreen R8 mask (Phase 4) -------
+//
+// A glyph outline is quadratic contours: points flagged on- or off-curve, with
+// implied on-curve midpoints between consecutive off-curve controls. Resolve
+// those, flatten each quadratic to the device tolerance, and hand the contours
+// to the multi-contour mask. The winding sign comes from each contour's
+// orientation relative to the first, so a counter (opposite orientation)
+// subtracts — the caller passes no sign.
+
+let mut tt_fx: []float = []float {}
+let mut tt_fy: []float = []float {}
+
+fn raster_quad_flatten(x0: float, y0: float, x1: float, y1: float, x2: float, y2: float) {
+    let dx = x0 - 2.0 * x1 + x2
+    let dy = y0 - 2.0 * y1 + y2
+    let d = raster_sqrt(dx * dx + dy * dy)
+    let mut n = i32(raster_sqrt(d / (8.0 * RASTER_FLAT_TOL))) + 1
+    if n < 2 {
+        n = 2
+    }
+    if n > 64 {
+        n = 64
+    }
+    let mut k = 1
+    while k <= n {
+        let t = float(k) / float(n)
+        let mt = 1.0 - t
+        push(tt_fx, mt * mt * x0 + 2.0 * mt * t * x1 + t * t * x2)
+        push(tt_fy, mt * mt * y0 + 2.0 * mt * t * y1 + t * t * y2)
+        k = k + 1
+    }
+}
+
+fn raster_poly_area_signed(xs: []float, ys: []float) -> float {
+    let n = xs.len
+    if n < 3 {
+        return 0.0
+    }
+    let mut a = 0.0
+    let mut i = 0
+    while i < n {
+        let j = (i + 1) % n
+        a = a + xs[i] * ys[j] - xs[j] * ys[i]
+        i = i + 1
+    }
+    return 0.5 * a
+}
+
+/// Flatten one TrueType contour (points s..e) into tt_fx / tt_fy.
+fn raster_tt_contour(xs: []float, ys: []float, on: []int, s: int, e: int) {
+    while tt_fx.len > 0 {
+        pop(tt_fx)
+    }
+    while tt_fy.len > 0 {
+        pop(tt_fy)
+    }
+    let n = e - s + 1
+    if n < 2 {
+        return
+    }
+    let p_on = on[s] == 1
+    let l_on = on[e] == 1
+    let mut sx = 0.0
+    let mut sy = 0.0
+    let mut k = 0
+    if p_on {
+        sx = xs[s]
+        sy = ys[s]
+        k = 1
+    } else if l_on {
+        sx = xs[e]
+        sy = ys[e]
+        k = 0
+    } else {
+        sx = 0.5 * (xs[s] + xs[e])
+        sy = 0.5 * (ys[s] + ys[e])
+        k = 0
+    }
+    push(tt_fx, sx)
+    push(tt_fy, sy)
+    let mut cx = sx
+    let mut cy = sy
+    let mut done = 0
+    while done < n {
+        let i = s + (k % n)
+        if on[i] == 1 {
+            push(tt_fx, xs[i])
+            push(tt_fy, ys[i])
+            cx = xs[i]
+            cy = ys[i]
+            k = k + 1
+            done = done + 1
+        } else {
+            let j = s + ((k + 1) % n)
+            if on[j] == 1 {
+                raster_quad_flatten(cx, cy, xs[i], ys[i], xs[j], ys[j])
+                cx = xs[j]
+                cy = ys[j]
+                k = k + 2
+                done = done + 2
+            } else {
+                let mx = 0.5 * (xs[i] + xs[j])
+                let my = 0.5 * (ys[i] + ys[j])
+                raster_quad_flatten(cx, cy, xs[i], ys[i], mx, my)
+                cx = mx
+                cy = my
+                k = k + 1
+                done = done + 1
+            }
+        }
+    }
+}
+
+fn mc_push_contour(sign: int) {
+    push(mc_off, mc_x.len)
+    push(mc_len, tt_fx.len)
+    push(mc_sign, sign)
+    let mut i = 0
+    while i < tt_fx.len {
+        push(mc_x, tt_fx[i])
+        push(mc_y, tt_fy[i])
+        i = i + 1
+    }
+}
+
+/// Add every contour of a TrueType glyph (device-space coords) to the
+/// multi-contour set, deriving each contour's winding sign from its orientation
+/// relative to the first contour.
+fn raster_multi_add_tt(xs: []float, ys: []float, on: []int, ends: []int) {
+    let nc = ends.len
+    let mut s = 0
+    let mut c = 0
+    let mut have_base = 0
+    let mut base = 1.0
+    while c < nc {
+        let e = ends[c]
+        raster_tt_contour(xs, ys, on, s, e)
+        let a = raster_poly_area_signed(tt_fx, tt_fy)
+        if have_base == 0 {
+            have_base = 1
+            if a < 0.0 {
+                base = 0.0 - 1.0
+            }
+        }
+        let mut sg = -1
+        if a * base > 0.0 {
+            sg = 1
+        }
+        if tt_fx.len >= 3 {
+            mc_push_contour(sg)
+        }
+        s = e + 1
+        c = c + 1
+    }
+}
+
+/// Device-space scratch for one glyph's converted points.
+let mut tt_ux: []float = []float {}
+let mut tt_uy: []float = []float {}
+
+/// Add a glyph's contours, converting its FONT-UNIT points to device pixels:
+/// `sc` is px/unitsPerEm, `(pen_x, pen_y)` the device-space baseline origin.
+/// Y flips (font Y is up, device Y is down); every contour's orientation flips
+/// with it, so the relative winding test still separates the counter.
+fn raster_multi_add_glyph(xs: []int, ys: []int, on: []int, ends: []int,
+                          pen_x: float, pen_y: float, sc: float) {
+    while tt_ux.len > 0 {
+        pop(tt_ux)
+    }
+    while tt_uy.len > 0 {
+        pop(tt_uy)
+    }
+    let mut i = 0
+    while i < xs.len {
+        push(tt_ux, pen_x + float(xs[i]) * sc)
+        push(tt_uy, pen_y - float(ys[i]) * sc)
+        i = i + 1
+    }
+    raster_multi_add_tt(tt_ux, tt_uy, on, ends)
+}
+
+/// Offscreen single-channel mask for a rasterized glyph.
+let mut gm: []u8 = []u8 {}
+let mut gm_w: int = 0
+let mut gm_h: int = 0
+
+/// Rasterize the current multi-contour set into an offscreen R8 mask over the
+/// device box [x0,x1) x [y0,y1). 1 on success. The box must be at most one tile
+/// a side; the caller passes the device position (the pen).
+fn raster_multi_to_mask(x0: int, y0: int, x1: int, y1: int) -> int {
+    raster_build()
+    let w = x1 - x0
+    let h = y1 - y0
+    if w <= 0 || h <= 0 {
+        return 0
+    }
+    if w > RASTER_TILE || h > RASTER_TILE {
+        return 0
+    }
+    raster_cov_ensure()
+    gm_w = w
+    gm_h = h
+    while gm.len > w * h {
+        pop(gm)
+    }
+    while gm.len < w * h {
+        push(gm, u8(0))
+    }
+    raster_cov_zero(w, h)
+    let nc = mc_off.len
+    let mut c = 0
+    while c < nc {
+        raster_mc_load(c)
+        raster_accum_path(x0, y0, w, h, mc_sign[c])
+        c = c + 1
+    }
+    let mut y = 0
+    while y < h {
+        let mut x = 0
+        while x < w {
+            let mut v = cov[y * RASTER_TILE + x]
+            if v < 0 {
+                v = 0
+            }
+            if v > 255 {
+                v = 255
+            }
+            gm[y * w + x] = u8(v)
+            x = x + 1
+        }
+        y = y + 1
+    }
+    return 1
+}
+
+fn raster_mask_w() -> int {
+    return gm_w
+}
+
+fn raster_mask_h() -> int {
+    return gm_h
+}
+
+/// Mask coverage 0..255 at a point in the mask's own space.
+fn raster_mask_get(x: int, y: int) -> int {
+    if x < 0 || y < 0 {
+        return 0
+    }
+    if x >= gm_w || y >= gm_h {
+        return 0
+    }
+    return int(gm[y * gm_w + x])
+}

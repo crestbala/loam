@@ -2432,6 +2432,35 @@ fn raster_fill_multi(cr: int, cg: int, cb: int, alpha: int) {
     raster.raster_fill_multi(cr, cg, cb, alpha)
 }
 
+/// Add a glyph's contours to the multi-contour set. Points are in FONT UNITS;
+/// `sc` is px/unitsPerEm and `(pen_x, pen_y)` the device-space baseline origin.
+/// Winding signs are derived from contour orientation, so no sign is passed.
+fn raster_multi_add_glyph(xs: []int, ys: []int, on: []int, ends: []int,
+                          pen_x: float, pen_y: float, sc: float) {
+    raster.raster_multi_add_glyph(xs, ys, on, ends, pen_x, pen_y, sc)
+}
+
+/// Rasterize the multi-contour set into an offscreen single-channel (R8) mask
+/// over the device box [x0,x1) x [y0,y1). One tile a side at most. Returns 1 on
+/// success. The mask is scratch for the caller: read it with the accessors
+/// below, it is reused by the next call.
+fn raster_multi_to_mask(x0: int, y0: int, x1: int, y1: int) -> int {
+    return raster.raster_multi_to_mask(x0, y0, x1, y1)
+}
+
+fn raster_mask_w() -> int {
+    return raster.raster_mask_w()
+}
+
+fn raster_mask_h() -> int {
+    return raster.raster_mask_h()
+}
+
+/// Mask coverage 0..255 at a point in the mask's own space.
+fn raster_mask_get(x: int, y: int) -> int {
+    return raster.raster_mask_get(x, y)
+}
+
 fn raster_push_str(b: &mut []int, s: string) {
     let mut i = 0
     while i < s.len {
