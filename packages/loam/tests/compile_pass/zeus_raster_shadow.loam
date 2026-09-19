@@ -1,0 +1,64 @@
+// Phase 4: drop shadows. A single-channel alpha mask (the shape's coverage)
+// blurred by three separable box passes, offset, and composited under the fill.
+// Tests the offset direction, the falloff, and that the shadow has bounded
+// support — it must not tint the whole surface.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn main() {
+    zeus.raster_ensure(200, 200, 1)
+    zeus.raster_clear(255, 255, 255)
+
+    // Shape at (60,60,80,60), corner radius 8, shadow offset dy=2, blur 8,
+    // peak opacity 24 (elevation 2-ish). black shadow on white.
+    zeus.raster_shadow_rect(60, 60, 80, 60, 8, 0, 2, 8, 0, 0, 0, 24)
+
+    // Bounded support: well outside (shape + blur + offset) stays pure white.
+    must(zeus.raster_get(5, 5, 1) == 255, "far outside is untouched")
+    must(zeus.raster_get(100, 53, 1) == 255, "just beyond the blur support is untouched")
+
+    let above = zeus.raster_get(100, 61, 1)
+    let below = zeus.raster_get(100, 121, 1)
+    must(above < 255, "there is shadow just above the shape")
+    must(below < 255, "there is shadow just below the shape")
+    must(below < above, "the dy offset makes the shadow heavier below than above")
+
+    // Under the shape the mask is opaque, so the shadow is at peak alpha
+    // (24/255 ≈ 9% — a light tint, not near-black).
+    let under = zeus.raster_get(100, 90, 1)
+    must(under < 250, "directly under the shape the shadow is at peak")
+    must(under > 200, "the peak is a subtle tint, not a black block")
+
+    // The falloff is smooth: scanning up from the shape the values rise
+    // monotonically toward the background (never a hard step).
+    let mut prev = zeus.raster_get(100, 70, 1)
+    let mut y = 69
+    let mut monotone = 1
+    while y > 54 {
+        let v = zeus.raster_get(100, y, 1)
+        if v < prev {
+            monotone = 0
+        }
+        prev = v
+        y = y - 1
+    }
+    must(monotone == 1, "shadow falloff is monotone, not a hard edge")
+
+    // The shadow is drawn UNDER the fill: paint the card over it and the
+    // interior is the card color again, only the surround tinted.
+    zeus.raster_fill_round_rect_whole(60, 60, 80, 60, 8, 255, 255, 255, 255)
+    must(zeus.raster_get(100, 90, 1) == 255, "the fill covers the shadow's interior")
+    must(zeus.raster_get(100, 121, 1) < 255, "the shadow still shows outside the fill")
+
+    fmt.println("raster shadow ok", above, below)
+}
