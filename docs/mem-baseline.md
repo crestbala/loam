@@ -326,7 +326,7 @@ step; doing them half-way is how a UI engine regresses silently):
 Net: Phase 3's free/ordering step is done and measured; its structural items
 (1-3) and the `f32` geometry requirement (4) remain open.
 
-### Phase 4 — software rasterizer (framebuffer, color, coverage, borders, shadows, tiles, damage clip, blit contract, multi-contour)
+### Phase 4 — software rasterizer (framebuffer, color, coverage, borders, shadows, tiles, damage clip, blit contract, multi-contour, glyph outlines)
 
 - bytes/node: **476.0 — unchanged.** No tree/geometry code was touched.
 - New module `packages/zeus/std/zeuscore/raster.loam`:
@@ -440,6 +440,17 @@ clip applies. This is the rasterizer the glyph atlas will draw into.
 wrote was self-intersecting — one vertex had x=140 where it needed x=40. The
 rasterizer was right and the test was wrong.)
 
+**Glyph outlines (ninth step).** `std:font` now parses `loca` + `glyf` and
+returns a glyph's contours in font units: points with their on/off-curve flag
+and per-contour end indices. Simple glyphs are parsed; composite glyphs report
+`ok = 0` for now. The `tiny.ttf` fixture was metrics-only, so the generator
+(`make_tiny_font.py`) now emits `glyf`/`loca` too, including `B` as a
+two-contour glyph (an outer box plus its counter) to exercise holes at the
+outline level. `zeus_font_outline.loam` checks `A` (one contour, three
+on-curve points, exact coordinates), `B` (two contours, eight points, the
+counter inside the outer), and space (an empty `loca` entry, not an error).
+Metrics are unchanged: `golden_font_metrics` still matches byte for byte.
+
 **Compiler bug this work surfaced.** Adding the raster module's ~40 globals and
 constants tipped four large programs (zeus_components / key_prop / reactive /
 spec_props) past a **silent 256-entry cap** in `typecheck.c`: `gvars[256]`,
@@ -450,10 +461,10 @@ now a compile error instead of a silent drop. It is a latent compiler bug any
 large app could hit; Phase 4 is simply what surfaced it. (The full `nob test`
 run: 449 passed; the 6 failures are the network suites this sandbox blocks.)
 
-**Remaining Phase 4** (not done, and each is substantial): the glyph atlas
-itself — in-tree `glyf`/`loca` outline extraction (`std:font` parses
-head/maxp/hhea/hmtx/cmap but not outlines), on-demand glyph rasterization into
-an R8 atlas, subpixel positioning, and bounded LRU caches — plus image decode
-with Mitchell/Lanczos2, the host half of the blit, and driving the paint pass
-through the rasterizer. The fills, coverage, borders, shadows, tiles, damage
-clip, multi-contour core, and blit generation are all in place.
+**Remaining Phase 4** (not done, and each is substantial): the atlas — turn the
+parsed outlines into R8 glyph bitmaps (resolve implied on-curve points, flatten
+the quadratics, rasterize through the multi-contour core), pack them into a
+1024x1024 atlas keyed by (font, glyph, size, subpixel-x), apply coverage gamma,
+and bound the atlas and measurement caches with LRU — plus image decode with
+Mitchell/Lanczos2, the host half of the blit, and driving the paint pass through
+the rasterizer.

@@ -36,6 +36,54 @@ def be32(v):
     return struct.pack(">I", v & 0xFFFFFFFF)
 
 
+def simple_glyph(contours):
+    """A simple (non-composite) glyph from contours of (x, y) on-curve points.
+
+    Every point is on-curve with 16-bit deltas (flags = 0x01), which is valid
+    and keeps the encoder trivial. Contours are listed outer-first; a hole is a
+    second contour with the opposite winding.
+    """
+    pts = [p for c in contours for p in c]
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    ends = []
+    acc = 0
+    for c in contours:
+        acc += len(c)
+        ends.append(acc - 1)
+    b = (bei16(len(contours)) + bei16(min(xs)) + bei16(min(ys)) +
+         bei16(max(xs)) + bei16(max(ys)))
+    b += b"".join(be16(e) for e in ends)
+    b += be16(0)  # instructionLength
+    b += bytes([1] * len(pts))  # flags: on-curve, 16-bit deltas
+    px = 0
+    for x in xs:
+        b += bei16(x - px)
+        px = x
+    py = 0
+    for y in ys:
+        b += bei16(y - py)
+        py = y
+    return b
+
+
+def glyf_and_loca(contours_list):
+    glyf = b""
+    offs = [0]
+    for c in contours_list:
+        if not c:
+            offs.append(len(glyf))  # empty glyph (e.g. space)
+            continue
+        g = simple_glyph(c)
+        if len(g) % 2:
+            g += b"\0"
+        glyf += g
+        offs.append(len(glyf))
+    # head.indexToLocFormat = 0 (short): each offset is stored / 2.
+    loca = b"".join(be16(o // 2) for o in offs)
+    return glyf, loca
+
+
 def cmap4():
     """Format 4 for BMP: segments (idDelta for space/é, glyphIdArray for A-C)."""
     segs = [
@@ -123,11 +171,19 @@ def hmtx_table():
 
 
 def build():
+    tri = [[(100, 0), (500, 700), (900, 0)]]
+    # `B` is two contours: an outer box and an inner counter (a hole).
+    box = [[(100, 0), (900, 0), (900, 800), (100, 800)],
+           [(300, 200), (300, 600), (700, 600), (700, 200)]]
+    ords = [tri, tri, box, tri, [], tri, tri, tri]
+    glyf, loca = glyf_and_loca(ords)
     tables = {
         "cmap": cmap_table(),
+        "glyf": glyf,
         "head": head_table(),
         "hhea": hhea_table(),
         "hmtx": hmtx_table(),
+        "loca": loca,
         "maxp": maxp_table(),
     }
     tags = sorted(tables)
