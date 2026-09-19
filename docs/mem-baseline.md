@@ -755,11 +755,61 @@ including a downscale.
   suites this sandbox blocks), all 15 draw goldens byte-identical, structural
   golden pass, `tools/mem-baseline.sh --headless` unchanged.
 
-**Remaining Phase 4** (not done, and each is substantial): JPEG (the largest
-remaining decoder) and WebP, the host half of the blit (a no-copy `CGImage`
-provider on native, a typed-array view on web), and driving `scene.paint`
-through the rasterizer (which changes every draw golden and so needs its own
-decision).
+**The raster scene pass (twentieth step).** `present()` hands the draw list to
+the host, which draws it with a 2D API. `scene.rasterize(scale, ...)` is the
+other consumer of the **same** list: the Loam rasterizer, into the one buffer we
+own, at the backing scale. Paint does not change — a frame simply has two
+possible consumers, and this one needs no drawing API at all. This is where the
+two halves of the project meet.
+
+What it rasterizes today: fills (uniform and per-corner `fill4`, the latter
+decomposed into five convex bands plus one wedge per corner and accumulated into
+the coverage buffer so overlaps composite once rather than double-blending),
+strokes, shadows, the clip/save/restore nesting, and images the app has decoded
+and registered (`scene_register_image`), so a draw op's `src` can be blitted from
+our own cache instead of the host's.
+
+Two rules it follows that are worth stating:
+
+- Every op is emitted in LOGICAL units and scaled here, so the corner arcs are
+  generated at physical resolution rather than scaled up from a bitmap — which
+  is the whole point, and what the test checks by counting partially-covered
+  pixels along the arc.
+- An op the pass cannot rasterize yet is **counted per kind**, never skipped
+  silently. Text, gradients, SVG and `xform` are the current gaps, and they are
+  numbers (`scene_raster_unhandled(2)`), not a missing thing in a picture
+  somebody has to notice. Rounded clips are likewise counted
+  (`scene_raster_rounded_clips`) and currently treated as square.
+
+`zeus_raster_scene.loam` builds a real scene through the public API, paints it,
+and then rasterizes it — asserting against the geometry read back out of the
+draw list, so it says "whatever paint decided this card is, it came out with a
+round corner, a filled middle and an antialiased arc at 2x" rather than
+hard-coding a layout the test would then be measuring instead of the engine. It
+also pins that a shapes-only scene skips nothing while a scene with text reports
+exactly those ops as unhandled.
+
+- bytes/node: **476.0 — unchanged**; membench draw ops and bytes are unchanged
+  (this step adds no per-node or per-frame state).
+- validation: 108 zeus `compile_pass` tests pass (the 2 failures are the network
+  suites this sandbox blocks), all 15 draw goldens byte-identical, structural
+  golden pass, `tools/mem-baseline.sh --headless` unchanged.
+
+**Remaining Phase 4** (not done, and each is substantial): text and gradients in
+the raster pass (text needs a font file the app supplies — the repo ships only an
+8-glyph test fixture, so a text pixel golden needs one), JPEG and WebP, and the
+host blit.
+
+**The host blit is blocked on an ABI gap, not on effort.** The Loam half is
+landed and tested (the buffer's `fb_gen` generation changes only on reallocation,
+never per frame, so a host wraps once and rebuilds only when it moves). The host
+half needs the address of that buffer, and there is currently no way for a
+platform function to receive a `[]u8` — the platform ABI carries `loam_str` and
+scalars only, and Loam has no address-of for a vector. Two candidate fixes, both
+small: let the host reach the generated symbol for the module's buffer, or add a
+`&mut []u8` platform parameter. Until then the honest position is that the
+zero-copy blit contract is specified and measured, and the host binding is the
+next step — not verified, and not claimed.
 
 **Image formats — status and roadmap.** Landed in Loam: **PNG** — colour types
 0/2/3/4/6, depths 1/2/4/8/16, all five scanline filters, multiple IDAT chunks,

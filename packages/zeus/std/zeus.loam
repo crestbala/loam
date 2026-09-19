@@ -2151,6 +2151,43 @@ fn draw_op(i: int) -> int {
 fn draw_x(i: int) -> int {
     return scene.draws[i].x
 }
+/// Top edge of draw `i` (tests).
+fn draw_y(i: int) -> int {
+    return scene.draws[i].y
+}
+/// Width of draw `i` (tests).
+fn draw_w(i: int) -> int {
+    return scene.draws[i].w
+}
+/// Height of draw `i` (tests).
+fn draw_h(i: int) -> int {
+    return scene.draws[i].h
+}
+/// Colour of draw `i` (tests).
+fn draw_rgb(i: int) -> int {
+    return scene.draws[i].rgb
+}
+/// Corner radius of draw `i` (tests).
+fn draw_radius(i: int) -> int {
+    return scene.draws[i].radius
+}
+/// Alpha of draw `i` (tests).
+fn draw_alpha(i: int) -> int {
+    return scene.draws[i].alpha
+}
+/// The `font` field of draw `i`: pixel size for text, stroke width for a
+/// stroke, blur for a shadow, gradient axis for a gradient (tests).
+fn draw_font(i: int) -> int {
+    return scene.draws[i].font
+}
+/// The `value` field of draw `i` (tests).
+fn draw_value(i: int) -> int {
+    return scene.draws[i].value
+}
+/// The `text` field of draw `i` (tests).
+fn draw_text(i: int) -> string {
+    return scene.draws[i].text
+}
 
 /// Layout results for tests: the box of the node that matched
 /// `engine_find_text`. Positions are window-space after the last layout.
@@ -2410,6 +2447,41 @@ fn raster_clip_reset() {
 /// Restrict the next tiled draws to a device-space box.
 fn raster_clip_box(x0: int, y0: int, x1: int, y1: int) {
     raster.raster_clip_box(x0, y0, x1, y1)
+}
+
+/// Curve flattening tolerance in device pixels (0.25): the one source of truth
+/// for every arc and rounded corner.
+fn raster_flat_tol() -> float {
+    return raster.raster_flat_tol()
+}
+
+// --- the raster scene pass (Phase 4) ---------------------------------------
+
+/// Rasterize the current draw list into the framebuffer we own, at `scale`,
+/// on a background colour. Returns how many ops were rasterized.
+fn scene_rasterize(scale: int, br: int, bg: int, bb: int) -> int {
+    return scene.rasterize(scale, br, bg, bb)
+}
+
+/// Ops of `kind` the raster pass could not rasterize yet. Counted, never
+/// silent, so a gap is a number rather than something to notice in a picture.
+fn scene_raster_unhandled(kind: int) -> int {
+    return scene.raster_unhandled(kind)
+}
+
+fn scene_raster_unhandled_total() -> int {
+    return scene.raster_unhandled_total()
+}
+
+/// Clips with a radius that the raster pass currently treats as square.
+fn scene_raster_rounded_clips() -> int {
+    return scene.raster_rounded_clip_count()
+}
+
+/// Register a decoded image slot under the `src` string draw ops carry, so the
+/// raster pass blits from our own cache instead of the host.
+fn scene_register_image(src: string, slot: int) -> int {
+    return scene.raster_register_image(src, slot)
 }
 
 // --- multi-contour fills (holes / winding) --------------------------------
