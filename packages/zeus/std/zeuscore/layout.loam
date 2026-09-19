@@ -1066,7 +1066,16 @@ fn layout_abs(p: int) {
             if arena.want_show(c) != 0 {
                 if int(arena.nodes[c].pos) == 1 {
                     if int(arena.nodes[c].kind) != 9 {
-                        let mut w = arena.sized_w(c, iw, 0)
+                        /* `row = 1` asks `sized_w` for the CONTENT width. The
+                           `row = 0` form means "fill the parent", which is how
+                           a column stretches a flow child — and it is what made
+                           every absolutely positioned box with no explicit
+                           width render as a full-width div: the tooltip bubble
+                           was as wide as the window, and so was a popover with
+                           an unset `width`. An absolute node shrink-wraps unless
+                           it says otherwise; an explicit `width` or an explicit
+                           percentage still wins inside `sized_w`. */
+                        let mut w = arena.sized_w(c, iw, 1)
                         let mut h = arena.sized_h(c, ih, w)
                         let mut x = ox
                         let mut y = oy
@@ -1257,8 +1266,24 @@ fn place_node(id: int) {
     let bottom = arena.win_h - arena.safe_b
     let left = arena.safe_l
     let right = arena.win_w - arena.safe_r
-    let side = int(arena.nodes[id].place)
-    // 0 below, 1 above, 2 end (right), 3 start (left)
+    let code = int(arena.nodes[id].place)
+    // 0 below, 1 above, 2 end (right), 3 start (left) — menus, popovers, selects,
+    // and the tooltip's own side placements. 4..9 are the tooltip placements
+    // proper: above (4,5,6) or below (7,8,9) the trigger, aligned to its START,
+    // CENTRE or END along the cross axis. That alignment is what the six
+    // top-left / top-centre / top-right / bottom-* names are, and it rides in
+    // the same byte as the side so no per-node field had to be added.
+    let mut side = code
+    let mut cross = -1 /* -1 = the side's own default (start for above/below) */
+    if code >= 4 {
+        if code <= 6 {
+            side = 1
+            cross = code - 4
+        } else {
+            side = 0
+            cross = code - 7
+        }
+    }
     let mut x = ax
     let mut y = ay + ah + gap
     if side == 1 {
@@ -1269,6 +1294,11 @@ fn place_node(id: int) {
     } else if side == 3 {
         x = ax - w - gap
         y = ay
+    }
+    if cross == 1 {
+        x = ax + aw / 2 - w / 2
+    } else if cross == 2 {
+        x = ax + aw - w
     }
     if int(arena.nodes[id].flip) != 0 {
         if y + h > bottom {
