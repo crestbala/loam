@@ -2890,6 +2890,15 @@ fn raster_blit_generation() -> int {
     return raster.raster_generation()
 }
 
+/// Blit the framebuffer we rasterized into to the host: the one place our
+/// pixels leave the engine, and the only host call that is not a draw op.
+/// Returns 1 when a host presented, 0 when none is listening (headless, or a
+/// host without a blit path). Pair it with `scene_rasterize` to drive a frame
+/// with our own rasterizer instead of the host's 2D API.
+fn raster_blit() -> int {
+    return scene.raster_blit()
+}
+
 /// Write the framebuffer as a binary PPM (P6). This is the headless capture
 /// path: no graphics API, just the bytes we own, which is what lets a pixel
 /// golden exist without a display. Returns 0 on success.

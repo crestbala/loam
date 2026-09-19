@@ -235,6 +235,24 @@ void zeus_set_image_size(void (*size)(const char *src, int64_t *w, int64_t *h));
 void zeus_picked_image(const char *src, int64_t w, int64_t h);
 void zeus_bind_draw(ZeusDraw draw);
 
+/* Phase 4: the ONE blit of a frame Zeus rasterized itself — the sole place a
+   host may touch our pixels.
+
+   `px` is the framebuffer's first byte: `w * h * 4` bytes of BGRA8
+   premultiplied sRGB, owned by the Loam side. A host wraps those bytes with a
+   no-copy provider (native CGImage / web typed-array view) and rebuilds the
+   wrapper only when `gen` changes — `gen` moves on reallocation (a size or
+   backing-scale change), never per frame. No pixel is copied, and no host may
+   read past `w * h * 4`.
+
+   Returns 1 when the host presented the frame, 0 when it has nowhere to present.
+   The hook is NULL until a host registers one, so every other host — Linux,
+   iOS, Android, the web loader, and headless — links and runs unchanged, with
+   blitting a no-op. */
+typedef int64_t (*ZeusBlit)(void *ctx, const uint8_t *px, int64_t w, int64_t h,
+                            int64_t gen, int64_t scale);
+void zeus_set_blit(void *ctx, ZeusBlit fn);
+
 /* Empty packages/zeus/std/zeus.loam fns → these C symbols. */
 void loam_zeus_plat_run(void);
 int64_t loam_zeus_plat_headless(void);
@@ -285,6 +303,11 @@ loam_str loam_zeus_plat_pick_image(int32_t *w, int32_t *h);
 void loam_zeus_plat_save(void);
 void loam_zeus_plat_clip(int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius);
 void loam_zeus_plat_restore(void);
+
+/* The engine side of the blit: dispatched to the hook `zeus_set_blit`
+   registered, or a no-op returning 0 when no host did. */
+int64_t loam_zeus_plat_blit(const uint8_t *px, int64_t w, int64_t h, int64_t gen,
+                           int64_t scale);
 
 void zeus_set_insets(int64_t top, int64_t right, int64_t bottom, int64_t left);
 void zeus_set_overlay_scroll(int64_t on);
@@ -341,6 +364,13 @@ int64_t loam_platform_plat_mem_stats(void);
 int64_t loam_platform_plat_now_ms(void);
 void loam_platform_plat_clip(int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius);
 void loam_platform_plat_restore(void);
+/* Phase 4 blit. The Loam `[]u8` arrives as a `loam_vec` (ptr/len/cap) BY VALUE,
+   so the pixels are handed over rather than copied. See loam_zeus_plat_blit.
+   The parameter types are `int32_t` because that is exactly what codegen emits
+   in the forward declaration it writes for this bodyless fn (`int` is i32), and
+   C requires the declaration and the definition to agree. */
+int32_t loam_platform_plat_blit(loam_vec buf, int32_t w, int32_t h, int32_t gen,
+                                int32_t scale);
 int64_t loam_platform_plat_key_intern(loam_str name);
 int64_t loam_platform_plat_key_intern_action(loam_str action);
 void loam_platform_plat_key_reset(void);

@@ -267,6 +267,12 @@ fn raster_bytes() -> int {
     return fb.len
 }
 
+/// The framebuffer itself, for the one blit (Phase 4). Handed over as a byte
+/// slice so the host wraps these very bytes — it never gets a copy.
+fn raster_buffer() -> []u8 {
+    return fb
+}
+
 fn raster_generation() -> int {
     return fb_gen
 }
