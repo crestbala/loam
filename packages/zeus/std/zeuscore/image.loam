@@ -785,6 +785,110 @@ fn png_paeth(a: int, b: int, c: int) -> int {
     return c
 }
 
+/// The current decode's sample format, mirrored into module scope so the
+/// per-pixel resolver can read it without an eight-parameter signature.
+let mut pg_ct: int = 0
+let mut pg_depth: int = 0
+let mut pg_ch: int = 0
+let mut pg_trns_has: int = 0
+let mut pg_trns_r: int = 0
+let mut pg_trns_g: int = 0
+let mut pg_trns_b: int = 0
+let mut pg_plte_n: int = 0
+/// The resolver's output, and whether it rejected the pixel.
+let mut px_r: int = 0
+let mut px_g: int = 0
+let mut px_b: int = 0
+let mut px_a: int = 0
+let mut px_bad: int = 0
+
+/// Adam7 pass geometry: first column/row and the step in each.
+let mut a7_x0: []int = []int { 0, 4, 0, 2, 0, 1, 0 }
+let mut a7_y0: []int = []int { 0, 0, 4, 0, 2, 0, 1 }
+let mut a7_dx: []int = []int { 8, 8, 4, 4, 2, 2, 1 }
+let mut a7_dy: []int = []int { 8, 8, 8, 4, 4, 2, 2 }
+
+/// Extent of one Adam7 pass along one axis: 0 when the pass is absent.
+fn png_pass_dim(n: int, s: int, d: int) -> int {
+    if n <= s {
+        return 0
+    }
+    return (n - s + d - 1) / d
+}
+
+/// Resolve the pixel at column `x` of the unfiltered row starting at byte
+/// `row_base` into px_r/px_g/px_b/px_a (UNPREMULTIPLIED), or set px_bad.
+fn png_pixel(row_base: int, x: int) {
+    px_r = 0
+    px_g = 0
+    px_b = 0
+    px_a = 255
+    if pg_ct == 0 {
+        // Grayscale; sub-byte depths pack several pixels per byte, and tRNS
+        // names the sample value that means transparent.
+        let gs = png_sample(row_base, x, 0, pg_depth, pg_ch)
+        let g8 = png_scale(gs, pg_depth)
+        if pg_trns_has == 1 {
+            if gs == pg_trns_g {
+                px_a = 0
+            }
+        }
+        px_r = g8
+        px_g = g8
+        px_b = g8
+    } else if pg_ct == 4 {
+        let g8 = png_scale(png_sample(row_base, x, 0, pg_depth, pg_ch), pg_depth)
+        px_r = g8
+        px_g = g8
+        px_b = g8
+        px_a = png_scale(png_sample(row_base, x, 1, pg_depth, pg_ch), pg_depth)
+    } else if pg_ct == 2 {
+        let rs = png_sample(row_base, x, 0, pg_depth, pg_ch)
+        let gs = png_sample(row_base, x, 1, pg_depth, pg_ch)
+        let bs = png_sample(row_base, x, 2, pg_depth, pg_ch)
+        px_r = png_scale(rs, pg_depth)
+        px_g = png_scale(gs, pg_depth)
+        px_b = png_scale(bs, pg_depth)
+        if pg_trns_has == 1 {
+            if rs == pg_trns_r {
+                if gs == pg_trns_g {
+                    if bs == pg_trns_b {
+                        px_a = 0
+                    }
+                }
+            }
+        }
+    } else if pg_ct == 6 {
+        px_r = png_scale(png_sample(row_base, x, 0, pg_depth, pg_ch), pg_depth)
+        px_g = png_scale(png_sample(row_base, x, 1, pg_depth, pg_ch), pg_depth)
+        px_b = png_scale(png_sample(row_base, x, 2, pg_depth, pg_ch), pg_depth)
+        px_a = png_scale(png_sample(row_base, x, 3, pg_depth, pg_ch), pg_depth)
+    } else {
+        // Palette index -> RGB from PLTE, alpha from tRNS if present.
+        let idx = png_sample(row_base, x, 0, pg_depth, pg_ch)
+        if idx >= pg_plte_n {
+            px_bad = 1
+            return
+        }
+        px_r = int(png_plte[idx * 3])
+        px_g = int(png_plte[idx * 3 + 1])
+        px_b = int(png_plte[idx * 3 + 2])
+        if pg_trns_has == 1 {
+            if idx < png_trns.len {
+                px_a = int(png_trns[idx])
+            }
+        }
+    }
+}
+
+/// Write one resolved pixel into the premultiplied RGBA8 output.
+fn png_put(pi: int, r: int, g: int, b: int, a: int) {
+    src_px[pi * 4] = u8((r * a + 127) / 255)
+    src_px[pi * 4 + 1] = u8((g * a + 127) / 255)
+    src_px[pi * 4 + 2] = u8((b * a + 127) / 255)
+    src_px[pi * 4 + 3] = u8(a)
+}
+
 /// One raw sample at column `x`, channel `ch`, from the unfiltered row starting
 /// at byte `base`. Handles the packed sub-byte depths, where samples run
 /// MSB-first and several pixels share a byte.
@@ -815,32 +919,33 @@ fn png_scale(v: int, depth: int) -> int {
     return (v * 255 + maxv / 2) / maxv
 }
 
-/// Reverse the PNG scanline filters IN PLACE. The left and up neighbours are
-/// already reconstructed when they are read, which is what makes in-place
-/// correct. `stride` is bytes per scanline and `bpp` the filter's pixel
-/// distance (1 for sub-byte depths).
-fn png_unfilter(stride: int, bpp: int, h: int) -> int {
-    let mut y = 0
-    while y < h {
-        let base = y * (stride + 1)
+/// Reverse the PNG scanline filters IN PLACE, for a run of `h` rows starting at
+/// byte `base0`. The left and up neighbours are already reconstructed when they
+/// are read, which is what makes in-place correct. `stride` is bytes per
+/// scanline and `bpp` the filter's pixel distance (1 for sub-byte depths).
+/// Adam7 calls this once per pass, with that pass's own stride and row count.
+fn png_unfilter_rows(base0: int, stride: int, bpp: int, h: int) -> int {
+    let mut i = 0
+    while i < h {
+        let base = base0 + i * (stride + 1)
         let ft = int(png_raw[base])
         let mut k = 0
         while k < stride {
-            let i = base + 1 + k
+            let i2 = base + 1 + k
             let mut l = 0
             if k >= bpp {
-                l = int(png_raw[i - bpp])
+                l = int(png_raw[i2 - bpp])
             }
             let mut u = 0
-            if y > 0 {
+            if i > 0 {
                 // The row above starts one filter byte earlier, so its byte `k`
-                // is at i - (stride + 1), not i - stride.
-                u = int(png_raw[i - stride - 1])
+                // is at i2 - (stride + 1), not i2 - stride.
+                u = int(png_raw[i2 - stride - 1])
             }
             let mut ul = 0
-            if y > 0 {
+            if i > 0 {
                 if k >= bpp {
-                    ul = int(png_raw[i - stride - 1 - bpp])
+                    ul = int(png_raw[i2 - stride - 1 - bpp])
                 }
             }
             let mut f = 0
@@ -855,10 +960,10 @@ fn png_unfilter(stride: int, bpp: int, h: int) -> int {
             } else if ft != 0 {
                 return -1
             }
-            png_raw[i] = u8((int(png_raw[i]) + f) % 256)
+            png_raw[i2] = u8((int(png_raw[i2]) + f) % 256)
             k = k + 1
         }
-        y = y + 1
+        i = i + 1
     }
     return 1
 }
@@ -909,6 +1014,7 @@ fn png_decode_inner(src: string) -> int {
     let mut channels = 0
     let mut depth = 0
     let mut ct = 0
+    let mut interlace = 0
     let mut have_ihdr = 0
     let mut trns_has = 0
     let mut trns_r = 0
@@ -974,10 +1080,13 @@ fn png_decode_inner(src: string) -> int {
                 return 0
             }
             if inter != 0 {
-                src_why = "interlaced png"
-                src_failures = src_failures + 1
-                return 0
+                if inter != 1 {
+                    src_why = "unsupported interlace"
+                    src_failures = src_failures + 1
+                    return 0
+                }
             }
+            interlace = inter
             // Colour type -> channels. Palette is one index sample.
             if ct == 0 {
                 channels = 1
@@ -1106,13 +1215,31 @@ fn png_decode_inner(src: string) -> int {
     if filt_bpp < 1 {
         filt_bpp = 1
     }
-    let n = png_inflate(h * (stride + 1))
+    // How many bytes the stream must inflate to: one image for a non-interlaced
+    // file, seven passes for Adam7 (a pass with a zero dimension has no
+    // scanlines at all and contributes nothing).
+    let mut expect = h * (stride + 1)
+    if interlace == 1 {
+        expect = 0
+        let mut p = 0
+        while p < 7 {
+            let pw = png_pass_dim(w, a7_x0[p], a7_dx[p])
+            let ph = png_pass_dim(h, a7_y0[p], a7_dy[p])
+            if pw > 0 {
+                if ph > 0 {
+                    expect = expect + ph * ((pw * bpp_bits + 7) / 8 + 1)
+                }
+            }
+            p = p + 1
+        }
+    }
+    let n = png_inflate(expect)
     if n < 0 {
         src_why = "malformed deflate stream"
         src_failures = src_failures + 1
         return 0
     }
-    if n != h * (stride + 1) {
+    if n != expect {
         src_why = "wrong inflated length"
         src_failures = src_failures + 1
         return 0
@@ -1122,87 +1249,83 @@ fn png_decode_inner(src: string) -> int {
         src_failures = src_failures + 1
         return 0
     }
-    if png_unfilter(stride, filt_bpp, h) != 1 {
-        src_why = "bad filter type"
-        src_failures = src_failures + 1
-        return 0
-    }
     src_gamma_assumed = src_gamma_assumed + gamma_odd
-    // Unfiltered scanlines -> premultiplied RGBA8.
-    let mut y = 0
-    while y < h {
-        let base = y * (stride + 1) + 1
-        let mut x = 0
-        while x < w {
-            let mut r = 0
-            let mut g = 0
-            let mut b = 0
-            let mut a = 255
-            if ct == 0 {
-                // Grayscale; sub-byte depths pack several pixels per byte, and
-                // tRNS names the sample value that means transparent.
-                let gs = png_sample(base, x, 0, depth, channels)
-                let mut g8 = png_scale(gs, depth)
-                if trns_has == 1 {
-                    if gs == trns_g {
-                        a = 0
-                    }
-                }
-                r = g8
-                g = g8
-                b = g8
-            } else if ct == 4 {
-                let gs = png_sample(base, x, 0, depth, channels)
-                let g8 = png_scale(gs, depth)
-                r = g8
-                g = g8
-                b = g8
-                a = png_scale(png_sample(base, x, 1, depth, channels), depth)
-            } else if ct == 2 {
-                let rs = png_sample(base, x, 0, depth, channels)
-                let gs = png_sample(base, x, 1, depth, channels)
-                let bs = png_sample(base, x, 2, depth, channels)
-                r = png_scale(rs, depth)
-                g = png_scale(gs, depth)
-                b = png_scale(bs, depth)
-                if trns_has == 1 {
-                    if rs == trns_r {
-                        if gs == trns_g {
-                            if bs == trns_b {
-                                a = 0
-                            }
-                        }
-                    }
-                }
-            } else if ct == 6 {
-                r = png_scale(png_sample(base, x, 0, depth, channels), depth)
-                g = png_scale(png_sample(base, x, 1, depth, channels), depth)
-                b = png_scale(png_sample(base, x, 2, depth, channels), depth)
-                a = png_scale(png_sample(base, x, 3, depth, channels), depth)
-            } else {
-                // Palette index -> RGB from PLTE, alpha from tRNS if present.
-                let idx = png_sample(base, x, 0, depth, channels)
-                if idx >= plte_n {
+    // Mirror the sample format for the resolver, and size the output so Adam7
+    // can scatter into it (a pass visits every eighth pixel, not a run).
+    pg_ct = ct
+    pg_depth = depth
+    pg_ch = channels
+    pg_trns_has = trns_has
+    pg_trns_r = trns_r
+    pg_trns_g = trns_g
+    pg_trns_b = trns_b
+    pg_plte_n = plte_n
+    px_bad = 0
+    let npix = w * h
+    let mut z = 0
+    while z < npix * 4 {
+        push(src_px, u8(0))
+        z = z + 1
+    }
+    if interlace == 0 {
+        if png_unfilter_rows(0, stride, filt_bpp, h) != 1 {
+            src_why = "bad filter type"
+            src_failures = src_failures + 1
+            return 0
+        }
+        let mut y = 0
+        while y < h {
+            let row = 1 + y * (stride + 1)
+            let mut x = 0
+            while x < w {
+                png_pixel(row, x)
+                if px_bad != 0 {
                     src_why = "palette index out of range"
                     src_failures = src_failures + 1
                     return 0
                 }
-                r = int(png_plte[idx * 3])
-                g = int(png_plte[idx * 3 + 1])
-                b = int(png_plte[idx * 3 + 2])
-                if trns_has == 1 {
-                    if idx < png_trns.len {
-                        a = int(png_trns[idx])
+                png_put(y * w + x, px_r, px_g, px_b, px_a)
+                x = x + 1
+            }
+            y = y + 1
+        }
+    } else {
+        let mut base = 0
+        let mut p = 0
+        while p < 7 {
+            let pw = png_pass_dim(w, a7_x0[p], a7_dx[p])
+            let ph = png_pass_dim(h, a7_y0[p], a7_dy[p])
+            if pw > 0 {
+                if ph > 0 {
+                    let pstride = (pw * bpp_bits + 7) / 8
+                    if png_unfilter_rows(base, pstride, filt_bpp, ph) != 1 {
+                        src_why = "bad filter type"
+                        src_failures = src_failures + 1
+                        return 0
                     }
+                    let mut yy = 0
+                    while yy < ph {
+                        let row = base + yy * (pstride + 1) + 1
+                        let oy = a7_y0[p] + yy * a7_dy[p]
+                        let mut xx = 0
+                        while xx < pw {
+                            png_pixel(row, xx)
+                            if px_bad != 0 {
+                                src_why = "palette index out of range"
+                                src_failures = src_failures + 1
+                                return 0
+                            }
+                            png_put(oy * w + a7_x0[p] + xx * a7_dx[p],
+                                    px_r, px_g, px_b, px_a)
+                            xx = xx + 1
+                        }
+                        yy = yy + 1
+                    }
+                    base = base + ph * (pstride + 1)
                 }
             }
-            push(src_px, u8((r * a + 127) / 255))
-            push(src_px, u8((g * a + 127) / 255))
-            push(src_px, u8((b * a + 127) / 255))
-            push(src_px, u8(a))
-            x = x + 1
+            p = p + 1
         }
-        y = y + 1
     }
     src_w = w
     src_h = h
