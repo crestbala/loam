@@ -2658,6 +2658,12 @@ fn image_status_unsupported() -> int {
     return -2
 }
 
+/// How many decodes have seen a non-sRGB gAMA (composited as sRGB anyway, since
+/// the whole pipeline is sRGB).
+fn image_gamma_assumed_count() -> int {
+    return image.src_gamma_assumed_count()
+}
+
 fn image_src_width() -> int {
     return image.src_width()
 }

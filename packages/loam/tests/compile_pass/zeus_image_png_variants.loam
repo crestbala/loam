@@ -1,0 +1,134 @@
+// Phase 4: PNG's remaining sample formats and chunks.
+//
+// The RGB/RGBA path was the easy half. This test covers what real assets
+// actually use and an "8-bit RGB only" decoder silently gets wrong:
+//   grayscale at depths 1, 4 and 8 (sub-byte samples packed MSB-first, several
+//   pixels to a byte), grayscale+alpha, 16-bit samples, palette at depths 1, 4
+//   and 8, tRNS in all three of its meanings (a gray sample, an RGB triple, a
+//   per-palette-entry alpha list), a non-sRGB gAMA, and Adam7, which is refused
+//   by name rather than decoded wrongly.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn load(name: string) -> string {
+    let s = sys.read_file("packages/loam/tests/images/{{name}}")
+    must(s.len > 0, "fixture not loaded")
+    return s
+}
+
+fn main() {
+    // --- grayscale, including the packed sub-byte depths -------------------
+    must(zeus.image_decode_any(load("gray8.png")) == 1, "gray8 decodes")
+    must(zeus.image_src_width() == 8, "gray8: 8 wide")
+    must(zeus.image_src_height() == 4, "gray8: 4 tall")
+    must(zeus.image_src_get(0, 0, 0) == 0, "gray8: 0 stays 0")
+    must(zeus.image_src_get(2, 0, 0) == 72, "gray8: value passes through")
+    must(zeus.image_src_get(7, 0, 0) == 252, "gray8: 252")
+    must(zeus.image_src_get(3, 0, 1) == 108, "grayscale is r=g=b")
+    // tRNS on grayscale names the sample that is transparent. x=1 is that one.
+    must(zeus.image_src_get(1, 0, 3) == 0, "gray8: the tRNS value is transparent")
+    must(zeus.image_src_get(1, 0, 0) == 0, "and premultiplies to nothing")
+    must(zeus.image_src_get(2, 0, 3) == 255, "gray8: other values are opaque")
+
+    must(zeus.image_decode_any(load("gray1.png")) == 1, "gray1 decodes")
+    must(zeus.image_src_get(0, 0, 0) == 0, "gray1: bit 0 -> black")
+    must(zeus.image_src_get(1, 0, 0) == 255, "gray1: bit 1 -> white")
+    must(zeus.image_src_get(2, 0, 0) == 0, "gray1: alternating")
+    must(zeus.image_src_get(7, 0, 0) == 255, "gray1: last pixel of the byte")
+    must(zeus.image_src_get(7, 1, 0) == 255, "gray1: second row too")
+
+    must(zeus.image_decode_any(load("gray4.png")) == 1, "gray4 decodes")
+    must(zeus.image_src_get(0, 0, 0) == 0, "gray4: 0 -> 0")
+    must(zeus.image_src_get(1, 0, 0) == 17, "gray4: 1 -> 17")
+    must(zeus.image_src_get(7, 0, 0) == 119, "gray4: 7 -> 119")
+
+    // --- grayscale + alpha, premultiplied ---------------------------------
+    must(zeus.image_decode_any(load("ga8.png")) == 1, "ga8 decodes")
+    must(zeus.image_src_get(0, 0, 3) == 255, "ga8: first pixel opaque")
+    must(zeus.image_src_get(0, 0, 0) == 200, "ga8: gray 200")
+    must(zeus.image_src_get(1, 0, 3) == 128, "ga8: second pixel half")
+    must(zeus.image_src_get(1, 0, 0) == 100, "ga8: premultiplied 200*128/255")
+    must(zeus.image_src_get(2, 0, 3) == 0, "ga8: third pixel transparent")
+    must(zeus.image_src_get(2, 0, 0) == 0, "ga8: and premultiplies to nothing")
+
+    // --- 16-bit samples: the high byte is the value -----------------------
+    must(zeus.image_decode_any(load("rgb16.png")) == 1, "rgb16 decodes")
+    must(zeus.image_src_get(0, 0, 0) == 0x12, "rgb16: high byte of r")
+    must(zeus.image_src_get(0, 0, 1) == 0x56, "rgb16: high byte of g")
+    must(zeus.image_src_get(0, 0, 2) == 0x9A, "rgb16: high byte of b")
+    must(zeus.image_src_get(1, 0, 0) == 255, "rgb16: 0xFFFF -> 255")
+    must(zeus.image_src_get(1, 0, 1) == 0, "rgb16: 0x0000 -> 0")
+    must(zeus.image_src_get(2, 0, 0) == 1, "rgb16: 0x0100 -> 1")
+    must(zeus.image_src_get(2, 0, 2) == 0, "rgb16: 0x00FF -> 0 (high byte)")
+    must(zeus.image_src_get(2, 0, 1) == 0, "rgb16: 0x0001 -> 0")
+    must(zeus.image_src_get(2, 0, 3) == 255, "rgb16: opaque")
+
+    // --- truecolour tRNS ---------------------------------------------------
+    must(zeus.image_decode_any(load("rgb_trns.png")) == 1, "rgb_trns decodes")
+    must(zeus.image_src_get(0, 0, 0) == 10, "rgb_trns: first pixel opaque")
+    must(zeus.image_src_get(0, 0, 3) == 255, "rgb_trns: alpha 255")
+    must(zeus.image_src_get(1, 0, 3) == 0, "rgb_trns: the named colour is clear")
+    must(zeus.image_src_get(1, 0, 0) == 0, "rgb_trns: and premultiplies away")
+    must(zeus.image_src_get(2, 0, 3) == 255, "rgb_trns: third pixel opaque")
+
+    // --- palette at depths 8, 4 and 1 -------------------------------------
+    must(zeus.image_decode_any(load("pal8.png")) == 1, "pal8 decodes")
+    // Entry 0 carries tRNS alpha 128, so its colour premultiplies.
+    must(zeus.image_src_get(0, 0, 0) == 128, "pal8: entry 0 red, premultiplied")
+    must(zeus.image_src_get(0, 0, 1) == 0, "pal8: entry 0 has no green")
+    must(zeus.image_src_get(0, 0, 3) == 128, "pal8: entry 0 is half transparent")
+    must(zeus.image_src_get(1, 0, 1) == 255, "pal8: entry 1 is green")
+    must(zeus.image_src_get(1, 0, 3) == 255, "pal8: entry 1 has no tRNS alpha")
+    must(zeus.image_src_get(2, 0, 2) == 255, "pal8: entry 2 is blue")
+    must(zeus.image_src_get(3, 0, 0) == 255, "pal8: entry 3 is white")
+    must(zeus.image_src_get(0, 1, 0) == 128, "pal8: second row too")
+
+    must(zeus.image_decode_any(load("pal4.png")) == 1, "pal4 decodes")
+    must(zeus.image_src_get(0, 0, 0) == 255, "pal4: entry 0 red")
+    must(zeus.image_src_get(2, 0, 2) == 255, "pal4: entry 2 blue (packed index)")
+    must(zeus.image_src_get(3, 0, 3) == 255, "pal4: entry 3 opaque")
+
+    must(zeus.image_decode_any(load("pal1.png")) == 1, "pal1 decodes")
+    must(zeus.image_src_get(0, 0, 0) == 0, "pal1: index 0 black")
+    must(zeus.image_src_get(1, 0, 0) == 255, "pal1: index 1 white")
+    must(zeus.image_src_get(7, 0, 0) == 255, "pal1: last of the byte")
+
+    // --- a non-sRGB gAMA is decoded, and the assumption is counted --------
+    let gamma_before = zeus.image_gamma_assumed_count()
+    must(zeus.image_decode_any(load("gama_odd.png")) == 1, "gama_odd decodes")
+    must(zeus.image_src_get(0, 0, 0) == 1, "gama_odd: values are unchanged")
+    must(zeus.image_src_get(3, 0, 2) == 12, "gama_odd: and blue decodes")
+    must(zeus.image_gamma_assumed_count() == gamma_before + 1,
+         "the sRGB assumption is counted, not silent")
+
+    // --- Adam7 is refused by name, not decoded wrongly --------------------
+    let fails = zeus.image_decode_failure_count()
+    must(zeus.image_decode_any(load("interlaced.png")) == 0, "interlaced refused")
+    must(zeus.image_decode_failure_reason() == "interlaced png", "and named")
+    must(zeus.image_decode_failure_count() == fails + 1, "and counted")
+
+    // --- and the variants work through the cache/blit pipeline ------------
+    zeus.image_cache_clear()
+    zeus.image_set_budget(8 * 1024 * 1024)
+    let slot = zeus.image_get(1, load("pal8.png"), 4, 2)
+    must(slot >= 0, "a palette PNG goes through the cache")
+    // The cache holds the STRAIGHT (unpremultiplied) form the framebuffer blend
+    // wants, so red is back to 255 with alpha 128 beside it.
+    must(zeus.image_get_px(slot, 0, 0, 0) == 255, "cached palette red")
+    must(zeus.image_get_px(slot, 0, 0, 3) == 128, "cached palette alpha")
+    must(zeus.image_get_px(slot, 2, 0, 2) == 255, "cached palette blue")
+
+    fmt.println("image png variants ok", zeus.image_decode_count(),
+                zeus.image_decode_failure_count(),
+                zeus.image_gamma_assumed_count(), zeus.image_scratch_bytes())
+}
