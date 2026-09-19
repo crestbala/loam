@@ -23,6 +23,22 @@ let mut runs: int = 0
    from generated C (`loam_track_notify`), bypassing `arena.store_sig`, so the
    dirty channels are noted here and drained once per frame. */
 let mut wrote: int = 0
+/* Effect rank: 1 + the rank of the effect that produced a signal this scope
+   reads. A flush runs lower ranks first, so a reader of a `computed` runs
+   after the computed's own effect recomputed its output — no stale derived
+   value, without a full topological sort over the whole graph. */
+let mut rank: []int = []int {}
+/* `produced_by[sid]` = the effect that writes signal `sid` (the internal
+   effect of a `computed`), or 0. A reader that adds an edge to such a signal
+   is ranked above the producer, in `note_read`. */
+let mut produced_by: []int = []int {}
+/* `set` inside `batch` defers its effects here (deduped); `batch_end` flushes
+   them once, in rank order. */
+let mut batch_depth: int = 0
+let mut pending: []int = []int {}
+/* Per-effect cleanup handler (an interned fn id, 0 = none), run before the
+   effect re-runs and when its dependency edges are dropped. */
+let mut cleanup_fn: []int = []int {}
 
 fn boot() {
     if ready != 0 {
@@ -31,6 +47,8 @@ fn boot() {
     ready = 1
     push(fn_ids, 0)
     push(node_ids, 0)
+    push(rank, 0)
+    push(cleanup_fn, 0)
 }
 
 fn reset() {
@@ -39,6 +57,11 @@ fn reset() {
     node_ids = []int {}
     dep_sig = []int {}
     dep_eff = []int {}
+    rank = []int {}
+    produced_by = []int {}
+    batch_depth = 0
+    pending = []int {}
+    cleanup_fn = []int {}
     mute = 0
     ready = 0
     boot()
@@ -48,7 +71,59 @@ fn alloc(fnid: int, nid: int) -> int {
     boot()
     push(fn_ids, fnid)
     push(node_ids, nid)
+    push(rank, 0)
+    push(cleanup_fn, 0)
     return fn_ids.len - 1
+}
+
+fn current_eid() -> int {
+    if stack.len == 0 {
+        return 0
+    }
+    return stack[stack.len - 1]
+}
+
+fn current_rank() -> int {
+    let eid = current_eid()
+    if eid <= 0 {
+        return 0
+    }
+    if eid >= rank.len {
+        return 0
+    }
+    return rank[eid]
+}
+
+fn set_rank(eid: int, r: int) {
+    if eid <= 0 {
+        return
+    }
+    if eid >= rank.len {
+        return
+    }
+    rank[eid] = r
+}
+
+fn rank_of(eid: int) -> int {
+    if eid < 0 {
+        return 0
+    }
+    if eid >= rank.len {
+        return 0
+    }
+    return rank[eid]
+}
+
+/// Record that effect `eid` writes signal `sid`, so a reader of `sid` is
+/// ranked above it (see `note_read`).
+fn mark_produced(sid: int, eid: int) {
+    if sid <= 0 {
+        return
+    }
+    while produced_by.len <= sid {
+        push(produced_by, 0)
+    }
+    produced_by[sid] = eid
 }
 
 fn mute_begin() {
@@ -82,9 +157,48 @@ fn note_read(sid: int) {
     }
     push(dep_sig, sid)
     push(dep_eff, eid)
+    /* A new edge onto a signal an effect writes: read the derived value only
+       after the producer has recomputed it. */
+    if sid < produced_by.len {
+        let p = produced_by[sid]
+        if p > 0 {
+            let want = rank_of(p) + 1
+            if want > rank_of(eid) {
+                set_rank(eid, want)
+            }
+        }
+    }
+}
+
+/// Run and clear `eid`'s cleanup handler (`on_cleanup`). Called before the
+/// effect re-runs and when its edges are dropped, so a subscription it opened
+/// is closed before the body runs again.
+fn run_cleanup(eid: int) {
+    if eid <= 0 {
+        return
+    }
+    if eid >= cleanup_fn.len {
+        return
+    }
+    let fid = cleanup_fn[eid]
+    if fid != 0 {
+        platform.plat_invoke_fn(fid)
+        cleanup_fn[eid] = 0
+    }
+}
+
+fn set_cleanup(eid: int, fnid: int) {
+    if eid <= 0 {
+        return
+    }
+    if eid >= cleanup_fn.len {
+        return
+    }
+    cleanup_fn[eid] = fnid
 }
 
 fn drop_eid_deps(eid: int) {
+    run_cleanup(eid)
     let n = dep_sig.len
     if n == 0 {
         return
@@ -178,6 +292,8 @@ fn free_nodes_effects(ids: []int) {
                 }
                 pop(fn_ids)
                 pop(node_ids)
+                pop(rank)
+                pop(cleanup_fn)
             } else {
                 // Drop the dead row's edges first, then fill the hole with
                 // the tail row and follow its edges to the new position.
@@ -200,8 +316,12 @@ fn free_nodes_effects(ids: []int) {
                 }
                 fn_ids[i] = fn_ids[last]
                 node_ids[i] = node_ids[last]
+                rank[i] = rank[last]
+                cleanup_fn[i] = cleanup_fn[last]
                 pop(fn_ids)
                 pop(node_ids)
+                pop(rank)
+                pop(cleanup_fn)
             }
             // The row swapped into `i` may itself be dead: re-check it.
         } else {
@@ -271,9 +391,79 @@ fn notify_at(sid: int, mark: int) {
             }
         }
     }
-    let h = hit.len
+    if batch_depth > 0 {
+        let h = hit.len
+        for i in 0..h {
+            pending_push(hit[i])
+        }
+        return
+    }
+    let q = sorted_by_rank(hit)
+    let h = q.len
     for i in 0..h {
-        run(hit[i])
+        run(q[i])
+    }
+}
+
+// --- batching + ordered flush ---
+
+/// Effects a batched write deferred, deduped. Order does not matter here —
+/// `sorted_by_rank` decides the run order at flush time.
+fn pending_push(eid: int) {
+    let n = pending.len
+    for i in 0..n {
+        if pending[i] == eid {
+            return
+        }
+    }
+    push(pending, eid)
+}
+
+/// A copy of `ids` stably ordered by effect rank. Insertion sort: the dirty
+/// set per flush is small, and ties must keep registration order.
+fn sorted_by_rank(ids: []int) -> []int {
+    let mut out = []int {}
+    let n = ids.len
+    for i in 0..n {
+        push(out, ids[i])
+    }
+    let mut i = 1
+    while i < n {
+        let v = out[i]
+        let vr = rank_of(v)
+        let mut j = i
+        while j > 0 {
+            if rank_of(out[j - 1]) <= vr {
+                break
+            }
+            out[j] = out[j - 1]
+            j = j - 1
+        }
+        out[j] = v
+        i = i + 1
+    }
+    return out
+}
+
+fn batch_begin() {
+    batch_depth = batch_depth + 1
+}
+
+fn batch_end() {
+    if batch_depth > 0 {
+        batch_depth = batch_depth - 1
+    }
+    if batch_depth == 0 {
+        let n = pending.len
+        if n == 0 {
+            return
+        }
+        let q = sorted_by_rank(pending)
+        pending = []int {}
+        let m = q.len
+        for i in 0..m {
+            run(q[i])
+        }
     }
 }
 
