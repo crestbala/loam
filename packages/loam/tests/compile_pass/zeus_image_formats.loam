@@ -86,7 +86,7 @@ fn main() {
     must(zeus.image_format_is_decodable(zeus.image_format_of(pngb)) == 1, "png in Loam")
     must(zeus.image_format_is_decodable(zeus.image_format_of(bmpb)) == 1, "bmp in Loam")
     must(zeus.image_format_is_decodable(zeus.image_format_of(jpeg)) == 0, "jpeg via platform")
-    must(zeus.image_format_is_decodable(zeus.image_format_of(gif)) == 0, "gif via platform")
+    must(zeus.image_format_is_decodable(zeus.image_format_of(gif)) == 1, "gif in Loam")
     must(zeus.image_format_is_decodable(zeus.image_format_of(webp)) == 0, "webp via platform")
     must(zeus.image_format_is_decodable(zeus.image_format_of(avif)) == 0, "avif via platform")
     must(zeus.image_format_is_decodable(zeus.image_format_of(tiff)) == 0, "tiff via platform")
