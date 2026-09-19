@@ -1,0 +1,58 @@
+//! Phase 5 PIXEL golden: the reference screen rasterized by Zeus itself.
+//!
+//! `ref_scene.loam` is the STRUCTURAL half (the draw list at 1x). This is the
+//! pixel half: the same elements, rasterized by the Loam rasterizer at the
+//! physical backing scale (2x) into the buffer Zeus owns, then dumped as a PPM.
+//! No graphics API is involved anywhere — the bytes in the golden are bytes this
+//! project produced.
+//!
+//! Keep this in step with `ref_scene.loam` for the elements both cover. The
+//! elements the raster pass cannot do YET are absent here on purpose and counted
+//! there: text (the tree ships no usable UI font — `tiny.ttf` is an 8-glyph test
+//! fixture) and the image op (the pass blits registered images, and this program
+//! has no decode in it). Both are visible gaps, not silent ones.
+//!
+//! Usage: `raster_scene <out.ppm>` (capture.sh passes the path).
+
+import "std:sys"
+import "std:zeus"
+
+fn main() {
+    let argv = sys.args()
+    let mut out = "tests/golden/raster_scene.ppm"
+    if argv.len > 1 {
+        out = argv[1]
+    }
+
+    // 160x120 logical at scale 2 -> a 320x240 physical image.
+    zeus.window("zeus-golden", 160, 120)
+    zeus.root(zeus.Box(align_direction = DIRECTION.Column, padding = 8, spacing = 6,
+                       background = "#ffffff") {
+        // A 1px hairline border: it must land on exactly two device rows.
+        zeus.Box(width = 144, height = 20, border = 1, border_color = "#cccccc")
+        // Rounded card with a border and a drop shadow.
+        zeus.Box(width = 144, height = 28, radius = 8, background = "#f4f4f5",
+                 border = 1, border_color = "#e4e4e7", elevation = 2)
+        // Vertical gradient, `bg` down to `bg2`.
+        zeus.set_background_end(
+            zeus.Box(width = 144, height = 40, radius = 6, background = "#4f46e5"),
+            zeus.rgb(14, 165, 233))
+    })
+    zeus.engine_layout(160, 120)
+    zeus.engine_paint()
+
+    zeus.raster_ensure(160, 120, 2)
+    zeus.scene_rasterize(2, 255, 255, 255)
+
+    // The pass must not be silently dropping the elements this screen is made
+    // of: a scene of shapes and gradients should leave nothing unhandled.
+    if zeus.scene_raster_unhandled_total() != 0 {
+        sys.exit(2)
+    }
+    if zeus.raster_width() != 320 {
+        sys.exit(3)
+    }
+    if zeus.raster_dump_ppm(out) != 0 {
+        sys.exit(4)
+    }
+}
