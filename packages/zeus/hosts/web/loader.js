@@ -1240,6 +1240,7 @@
             if (e.key === "Enter") key = 13;
             if (e.key === "Tab") key = 9;
             if (e.key === "Backspace") key = 8;
+            if (e.key === "Delete") key = 127;
             if (e.key === "Escape") key = 27;
             if (e.key === "ArrowLeft") key = 1000;
             if (e.key === "ArrowRight") key = 1001;
@@ -1269,6 +1270,7 @@
             if (e.key === "Enter") key = 13;
             if (e.key === "Tab") key = 9;
             if (e.key === "Backspace") key = 8;
+            if (e.key === "Delete") key = 127;
             if (e.key === "Escape") key = 27;
             if (e.key === "ArrowLeft") key = 1000;
             if (e.key === "ArrowRight") key = 1001;

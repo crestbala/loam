@@ -4084,6 +4084,25 @@ fn Component(node: Node, p: BoxProps) -> Node {
             let nid = node.id
             arena.nodes[nid].edit_sig = sig.id
             arena.nodes[nid].bind_fn = intern_fn(|| { set(sig, arena.input_committed(nid)) })
+            /* Seed the edit buffer from the bound signal. The signal is the
+               field's text until the user edits it, and the C-side buffer is
+               what every read goes through (`input_shown`, the caret, and the
+               Backspace / Delete handlers), so without this the field draws its
+               PLACEHOLDER while the signal holds a value — and a Backspace has
+               an empty buffer to delete from, i.e. clearing does nothing. That
+               is what made a restored draft (std:kv) or a pre-filled form look
+               and behave empty.
+
+               Only on a real difference: a rebuild re-runs this on every
+               keystroke, and `plat_edit_set` resets the caret to the end and
+               drops the selection, so an unconditional seed would make typing
+               anywhere but the end jump to the end. When the buffer already
+               holds what the signal holds, the two agree and there is nothing
+               to adopt. */
+            let seed = sig.get()
+            if arena.input_committed(nid) != seed {
+                set_input(node, seed)
+            }
         }
     }
     if p.row_h != 0 {
@@ -8787,6 +8806,16 @@ enum PLACE {
     PlaceEnd = 2,
     // To the trigger's start.
     PlaceStart = 3,
+    // Tooltip placements: above / below the trigger, aligned to its start,
+    // centre or end along the cross axis. `PlaceAboveCenter` is what a plain
+    // tooltip wants — `PlaceAbove` / `PlaceBelow` keep the old start-aligned
+    // behaviour the menus and popovers use.
+    PlaceAboveStart = 4,
+    PlaceAboveCenter = 5,
+    PlaceAboveEnd = 6,
+    PlaceBelowStart = 7,
+    PlaceBelowCenter = 8,
+    PlaceBelowEnd = 9,
 }
 
 struct PopoverProps {
@@ -9184,10 +9213,52 @@ fn drawer_slide(panel: Node, side: int, to: int, ms: int) {
 
 struct TooltipProps {
     text: fn() -> string = empty_text,
-    place: int = 1,
+    /// Where the bubble sits (`PLACE.*`). The six tooltip placements are
+    /// `PlaceAboveStart` / `PlaceAboveCenter` / `PlaceAboveEnd` and the three
+    /// `PlaceBelow*` — i.e. top-left, top-centre, top-right, bottom-left,
+    /// bottom-centre, bottom-right. `PlaceAbove` / `PlaceBelow` still work and
+    /// are start-aligned. Defaults to top-centre, which is what a tooltip is.
+    place: int = 5,
     gap: int = 6,
+    /// Draw the little caret that points at the trigger. Dropped for the side
+    /// placements, which have no edge facing the trigger.
+    arrow: bool = true,
     /// Delay before showing, in ms (hover intent).
     delay: int = 400,
+}
+
+/// Padding and caret size of a tooltip bubble. The caret's offset is derived
+/// from the padding, so these two move together.
+const TOOLTIP_PAD_X: int = 10
+const TOOLTIP_PAD_Y: int = 6
+const TOOLTIP_ARROW: int = 8
+
+/// 1 when the bubble is above its trigger (so the caret points down).
+fn tooltip_above(place: int) -> bool {
+    if place == PLACE.PlaceBelow || place == PLACE.PlaceBelowStart ||
+        place == PLACE.PlaceBelowCenter || place == PLACE.PlaceBelowEnd {
+        return false
+    }
+    return true
+}
+
+/// A caret only makes sense on an edge that faces the trigger.
+fn tooltip_arrow_ok(place: int) -> bool {
+    if place == PLACE.PlaceEnd || place == PLACE.PlaceStart {
+        return false
+    }
+    return true
+}
+
+/// Slide the caret along the trigger's edge to follow the bubble's alignment.
+fn tooltip_justify(place: int) -> int {
+    if place == PLACE.PlaceAboveStart || place == PLACE.PlaceBelowStart {
+        return ALIGN.Start
+    }
+    if place == PLACE.PlaceAboveEnd || place == PLACE.PlaceBelowEnd {
+        return ALIGN.End
+    }
+    return ALIGN.Center
 }
 
 /// A small non-interactive label shown while the pointer rests on `trigger`.
@@ -9212,8 +9283,8 @@ fn Tooltip(trigger: Node, p: TooltipProps) -> Node {
                     z_index = 70,
                     background = ink(),
                     elevation = 2,
-                    padding_x = 8,
-                    padding_y = 4,
+                    padding_x = TOOLTIP_PAD_X,
+                    padding_y = TOOLTIP_PAD_Y,
                     radius = RAD_SM,
                     visible = shown,
                     a11y_role = "tooltip",
@@ -9222,6 +9293,38 @@ fn Tooltip(trigger: Node, p: TooltipProps) -> Node {
     enter_fade(panel)
     ui_push(panel.id)
     Text(p.text, color = on_ink(), font = FONT_CAPTION)
+    if p.arrow {
+        if tooltip_arrow_ok(p.place) {
+            // A square rotated 45°, straddling the edge that faces the trigger:
+            // half of it lies on the panel's own fill (invisible) and half
+            // sticks out, which is the shape that reads as a caret rather than
+            // as another div. Absolute children are placed against the panel's
+            // CONTENT box, so the offset adds the padding back to land the
+            // caret's centre exactly on the panel's outer edge.
+            let above = tooltip_above(p.place)
+            let edge = 0 - (TOOLTIP_PAD_Y + TOOLTIP_ARROW / 2)
+            let mut arrow_top = -1
+            let mut arrow_bottom = -1
+            if above {
+                arrow_bottom = edge
+            } else {
+                arrow_top = edge
+            }
+            let layer = Box(position = pos_absolute(),
+                            left = 0,
+                            right = 0,
+                            top = arrow_top,
+                            bottom = arrow_bottom,
+                            height = TOOLTIP_ARROW,
+                            align_direction = DIRECTION.Row,
+                            justify = tooltip_justify(p.place))
+            ui_push(layer.id)
+            let caret = Box(width = TOOLTIP_ARROW, height = TOOLTIP_ARROW,
+                            background = ink())
+            animate_rotate(caret, 45, 0)
+            ui_pop()
+        }
+    }
     ui_pop()
     return panel
 }
