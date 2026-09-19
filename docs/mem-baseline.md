@@ -326,7 +326,7 @@ step; doing them half-way is how a UI engine regresses silently):
 Net: Phase 3's free/ordering step is done and measured; its structural items
 (1-3) and the `f32` geometry requirement (4) remain open.
 
-### Phase 4 — software rasterizer (framebuffer, color, coverage, borders, shadows, tiles, damage clip, blit contract)
+### Phase 4 — software rasterizer (framebuffer, color, coverage, borders, shadows, tiles, damage clip, blit contract, multi-contour)
 
 - bytes/node: **476.0 — unchanged.** No tree/geometry code was touched.
 - New module `packages/zeus/std/zeuscore/raster.loam`:
@@ -426,6 +426,20 @@ and remains open. The same test lands the **headless PPM dump**
 (`raster_dump_ppm`): a golden can now be captured from our own bytes with no
 graphics API, which is what Phase 5 needs.
 
+**Multi-contour fills (eighth step).** Glyph outlines need two things the
+convex fills did not cover: **holes** (a letter's counters, a ring) and
+**concave** contours. Concave single contours already worked — the pixel clip is
+Sutherland-Hodgman against the pixel square, which does not require the subject
+to be convex. Holes are added by accumulating each contour with a winding sign
+(+1 outer, -1 hole) into the tile-sized coverage buffer and compositing once, so
+a hole subtracts. `zeus_raster_holes.loam` verifies a ring (empty centre, filled
+band), a concave L-shape (notch empty, both bars filled), and that the damage
+clip applies. This is the rasterizer the glyph atlas will draw into.
+
+(First run of that test failed and looked like a concave-fill bug; the polygon I
+wrote was self-intersecting — one vertex had x=140 where it needed x=40. The
+rasterizer was right and the test was wrong.)
+
 **Compiler bug this work surfaced.** Adding the raster module's ~40 globals and
 constants tipped four large programs (zeus_components / key_prop / reactive /
 spec_props) past a **silent 256-entry cap** in `typecheck.c`: `gvars[256]`,
@@ -436,9 +450,10 @@ now a compile error instead of a silent drop. It is a latent compiler bug any
 large app could hit; Phase 4 is simply what surfaced it. (The full `nob test`
 run: 449 passed; the 6 failures are the network suites this sandbox blocks.)
 
-**Remaining Phase 4** (not done, and each is substantial): the glyph atlas with
-in-tree TrueType/GPOS metrics, image decode with Mitchell/Lanczos2 downsampling
-and an LRU byte budget, and the host half of the blit (the no-copy CGImage /
-typed-array wrapper, native + web). The tiles, damage clip, and the Loam-side
-blit generation are in place; driving the paint pass (draw-list ops) through the
-rasterizer lands with the glyph atlas, since text is the last primitive missing.
+**Remaining Phase 4** (not done, and each is substantial): the glyph atlas
+itself — in-tree `glyf`/`loca` outline extraction (`std:font` parses
+head/maxp/hhea/hmtx/cmap but not outlines), on-demand glyph rasterization into
+an R8 atlas, subpixel positioning, and bounded LRU caches — plus image decode
+with Mitchell/Lanczos2, the host half of the blit, and driving the paint pass
+through the rasterizer. The fills, coverage, borders, shadows, tiles, damage
+clip, multi-contour core, and blit generation are all in place.

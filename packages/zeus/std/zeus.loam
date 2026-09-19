@@ -2410,6 +2410,28 @@ fn raster_clip_box(x0: int, y0: int, x1: int, y1: int) {
     raster.raster_clip_box(x0, y0, x1, y1)
 }
 
+// --- multi-contour fills (holes / winding) --------------------------------
+
+fn raster_multi_begin() {
+    raster.raster_multi_begin()
+}
+
+fn raster_multi_add_circle(cx: int, cy: int, r: int, sign: int) {
+    raster.raster_multi_add_circle(float(cx), float(cy), float(r), sign)
+}
+
+fn raster_multi_add_poly(xs: []float, ys: []float, sign: int) {
+    raster.raster_multi_add_poly(xs, ys, sign)
+}
+
+fn raster_multi_count() -> int {
+    return raster.raster_multi_count()
+}
+
+fn raster_fill_multi(cr: int, cg: int, cb: int, alpha: int) {
+    raster.raster_fill_multi(cr, cg, cb, alpha)
+}
+
 fn raster_push_str(b: &mut []int, s: string) {
     let mut i = 0
     while i < s.len {
