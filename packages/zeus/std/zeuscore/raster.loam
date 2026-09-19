@@ -869,16 +869,82 @@ fn raster_fill_whole(cr: int, cg: int, cb: int, alpha: int) {
     raster_fill_path(0, 0, fb_w, fb_h, cr, cg, cb, alpha)
 }
 
-/// Fill the current path in 256x256 tiles. Must be byte-identical to
-/// `raster_fill_whole`: the tile is a write clip, never a geometry clip.
+// Damage clip: when active, the tiled entry points process only the region it
+// covers (intersected with each tile), so a paint-only frame rasterizes the
+// tiles the damage touches instead of the whole surface. Coverage is still
+// computed from GLOBAL geometry, so the clipped result is identical to the full
+// result inside the clip — only writes outside it are skipped.
+let mut clip_on: int = 0
+let mut clip_x0: int = 0
+let mut clip_y0: int = 0
+let mut clip_x1: int = 0
+let mut clip_y1: int = 0
+
+fn raster_clip_reset() {
+    clip_on = 0
+}
+
+/// Restrict the next tiled draws to this device-space box.
+fn raster_clip_box(x0: int, y0: int, x1: int, y1: int) {
+    clip_x0 = x0
+    clip_y0 = y0
+    clip_x1 = x1
+    clip_y1 = y1
+    clip_on = 1
+}
+
+fn raster_clip_active() -> int {
+    return clip_on
+}
+
+/// Intersect a tile with the clip. Returns the effective region by writing the
+/// four globals below; empty when x1<=x0 or y1<=y0.
+let mut reg_x0: int = 0
+let mut reg_y0: int = 0
+let mut reg_x1: int = 0
+let mut reg_y1: int = 0
+
+fn raster_tile_region(tx: int, ty: int, tw: int, th: int) {
+    let mut x0 = tx
+    let mut y0 = ty
+    let mut x1 = tx + tw
+    let mut y1 = ty + th
+    if clip_on != 0 {
+        if x0 < clip_x0 {
+            x0 = clip_x0
+        }
+        if y0 < clip_y0 {
+            y0 = clip_y0
+        }
+        if x1 > clip_x1 {
+            x1 = clip_x1
+        }
+        if y1 > clip_y1 {
+            y1 = clip_y1
+        }
+    }
+    reg_x0 = x0
+    reg_y0 = y0
+    reg_x1 = x1
+    reg_y1 = y1
+}
+
+/// Fill the current path in 256x256 tiles, honoring the damage clip. Must be
+/// byte-identical to `raster_fill_whole` inside the clip: the tile is a write
+/// clip, never a geometry clip.
 fn raster_fill_tiled(cr: int, cg: int, cb: int, alpha: int) {
     let mut ty = 0
     while ty < fb_h {
-        let y1 = raster_min_i(ty + RASTER_TILE, fb_h)
+        let th = raster_min_i(ty + RASTER_TILE, fb_h) - ty
         let mut tx = 0
         while tx < fb_w {
-            let x1 = raster_min_i(tx + RASTER_TILE, fb_w)
-            raster_fill_path(tx, ty, x1, y1, cr, cg, cb, alpha)
+            let tw = raster_min_i(tx + RASTER_TILE, fb_w) - tx
+            raster_tile_region(tx, ty, tw, th)
+            if reg_x1 > reg_x0 {
+                if reg_y1 > reg_y0 {
+                    raster_fill_path(reg_x0, reg_y0, reg_x1, reg_y1, cr, cg, cb, alpha)
+                }
+            }
             tx = tx + RASTER_TILE
         }
         ty = ty + RASTER_TILE
@@ -1165,9 +1231,20 @@ fn raster_stroke_round_rect(x: float, y: float, w: float, h: float, rad: float, 
         let mut tx = 0
         while tx < fb_w {
             let tw = raster_min_i(tx + RASTER_TILE, fb_w) - tx
-            raster_cov_zero(tw, th)
-            raster_accum_ring(sx, sy, sw, sh, rad, t, tx, ty, tw, th)
-            raster_composite_cov(tx, ty, tw, th, cr, cg, cb, alpha)
+            raster_tile_region(tx, ty, tw, th)
+            let rx0 = reg_x0
+            let ry0 = reg_y0
+            let rx1 = reg_x1
+            let ry1 = reg_y1
+            if rx1 > rx0 {
+                if ry1 > ry0 {
+                    let rw = rx1 - rx0
+                    let rh = ry1 - ry0
+                    raster_cov_zero(rw, rh)
+                    raster_accum_ring(sx, sy, sw, sh, rad, t, rx0, ry0, rw, rh)
+                    raster_composite_cov(rx0, ry0, rw, rh, cr, cg, cb, alpha)
+                }
+            }
             tx = tx + RASTER_TILE
         }
         ty = ty + RASTER_TILE
@@ -1350,39 +1427,50 @@ fn raster_shadow_rect(x: float, y: float, w: float, h: float, rad: float,
         let mut tx = 0
         while tx < fb_w {
             let tw = raster_min_i(tx + RASTER_TILE, fb_w) - tx
-            let ex0 = raster_max_i(tx - support, 0)
-            let ey0 = raster_max_i(ty - support, 0)
-            let ex1 = raster_min_i(tx + tw + support, fb_w)
-            let ey1 = raster_min_i(ty + th + support, fb_h)
-            let exw = ex1 - ex0
-            let exh = ey1 - ey0
-            if exw > 0 {
-                if exh > 0 {
-                    raster_shadow_ensure(exw * exh)
-                    raster_round_rect(x + dx, y + dy, w, h, rad)
-                    raster_mask_fill(ex0, ey0, exw, exh)
-                    let mut p = 0
-                    while p < 3 {
-                        raster_box_h(exw, exh, pass)
-                        raster_box_v(exw, exh, pass)
-                        p = p + 1
-                    }
-                    let mut yy = 0
-                    while yy < th {
-                        let gy = ty + yy
-                        let mut xx = 0
-                        while xx < tw {
-                            let gx = tx + xx
-                            let c = int(shmask[(gy - ey0) * exw + (gx - ex0)])
-                            if c > 0 {
-                                let a = c * alpha / 255
-                                if a > 0 {
-                                    raster_blend(gx, gy, cr, cg, cb, a)
-                                }
+            raster_tile_region(tx, ty, tw, th)
+            let rx0 = reg_x0
+            let ry0 = reg_y0
+            let rx1 = reg_x1
+            let ry1 = reg_y1
+            if rx1 > rx0 {
+                if ry1 > ry0 {
+                    let rw = rx1 - rx0
+                    let rh = ry1 - ry0
+                    let ex0 = raster_max_i(rx0 - support, 0)
+                    let ey0 = raster_max_i(ry0 - support, 0)
+                    let ex1 = raster_min_i(rx1 + support, fb_w)
+                    let ey1 = raster_min_i(ry1 + support, fb_h)
+                    let exw = ex1 - ex0
+                    let exh = ey1 - ey0
+                    if exw > 0 {
+                        if exh > 0 {
+                            raster_shadow_ensure(exw * exh)
+                            raster_round_rect(x + dx, y + dy, w, h, rad)
+                            raster_mask_fill(ex0, ey0, exw, exh)
+                            let mut p = 0
+                            while p < 3 {
+                                raster_box_h(exw, exh, pass)
+                                raster_box_v(exw, exh, pass)
+                                p = p + 1
                             }
-                            xx = xx + 1
+                            let mut yy = 0
+                            while yy < rh {
+                                let gy = ry0 + yy
+                                let mut xx = 0
+                                while xx < rw {
+                                    let gx = rx0 + xx
+                                    let c = int(shmask[(gy - ey0) * exw + (gx - ex0)])
+                                    if c > 0 {
+                                        let a = c * alpha / 255
+                                        if a > 0 {
+                                            raster_blend(gx, gy, cr, cg, cb, a)
+                                        }
+                                    }
+                                    xx = xx + 1
+                                }
+                                yy = yy + 1
+                            }
                         }
-                        yy = yy + 1
                     }
                 }
             }

@@ -1,0 +1,48 @@
+// Phase 4: a damage-clipped render must be byte-identical to a full render
+// inside the clip, and must not touch a single pixel outside it. That is what
+// makes rasterizing only the damaged tiles safe.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn main() {
+    zeus.raster_ensure(300, 300, 1)
+
+    // Full render of a big circle, sampled inside the region we will clip to.
+    zeus.raster_clip_reset()
+    zeus.raster_clear(255, 255, 255)
+    zeus.raster_fill_round_rect_tiled(50, 50, 200, 200, 100, 40, 40, 40, 255)
+    let s1 = zeus.raster_get(200, 200, 1)
+    let s2 = zeus.raster_get(160, 160, 1)
+    let s3 = zeus.raster_get(240, 240, 1)
+    let outside = zeus.raster_get(70, 200, 1)
+
+    // Clipped render: same draw, restricted to [150,150,250,250).
+    zeus.raster_clip_box(150, 150, 250, 250)
+    zeus.raster_clear(255, 255, 255)
+    zeus.raster_fill_round_rect_tiled(50, 50, 200, 200, 100, 40, 40, 40, 255)
+
+    // Inside the clip: identical to the full render, pixel for pixel.
+    must(zeus.raster_get(200, 200, 1) == s1, "inside the clip: pixel 1 identical")
+    must(zeus.raster_get(160, 160, 1) == s2, "inside the clip: pixel 2 identical")
+    must(zeus.raster_get(240, 240, 1) == s3, "inside the clip: pixel 3 identical")
+    // Outside the clip: untouched, even where the full render had painted.
+    must(zeus.raster_get(70, 200, 1) == 255, "outside the clip: nothing was written")
+
+    // A full-damage frame clears the clip, so the whole surface paints again.
+    zeus.raster_clip_reset()
+    zeus.raster_clear(255, 255, 255)
+    zeus.raster_fill_round_rect_tiled(50, 50, 200, 200, 100, 40, 40, 40, 255)
+    must(zeus.raster_get(70, 200, 1) == outside, "clip reset repaints the full surface")
+
+    fmt.println("raster damage clip ok")
+}

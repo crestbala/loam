@@ -326,7 +326,7 @@ step; doing them half-way is how a UI engine regresses silently):
 Net: Phase 3's free/ordering step is done and measured; its structural items
 (1-3) and the `f32` geometry requirement (4) remain open.
 
-### Phase 4 — software rasterizer (framebuffer, color, coverage, borders, shadows, tiles)
+### Phase 4 — software rasterizer (framebuffer, color, coverage, borders, shadows, tiles, damage clip)
 
 - bytes/node: **476.0 — unchanged.** No tree/geometry code was touched.
 - New module `packages/zeus/std/zeuscore/raster.loam`:
@@ -403,6 +403,17 @@ over a 600x600 surface selects all 9 tiles; a paint-only node at (300,300)
 selects exactly one, at (256,256). This is the set the renderer will iterate in
 place of tiling the whole surface.
 
+**Damage-clipped raster (sixth step).** The tiled fills, strokes, and shadows
+now honor a device-space clip box: each tile is intersected with it, and only
+that sub-region is written. Coverage is still computed from global geometry, so
+a clipped render is **byte-identical to the full render inside the clip** and
+touches nothing outside it — which is what makes rasterizing only the damaged
+tiles safe. `raster_clip_from_damage` derives the box from the frame's damage
+list (its bounding box, a superset, so it can only damage more, never less) and
+clears it on a full-damage frame. `zeus_raster_clip.loam` asserts the identity
+inside the clip, a clean background outside it, and a full repaint once the clip
+is reset.
+
 **Compiler bug this work surfaced.** Adding the raster module's ~40 globals and
 constants tipped four large programs (zeus_components / key_prop / reactive /
 spec_props) past a **silent 256-entry cap** in `typecheck.c`: `gvars[256]`,
@@ -416,5 +427,5 @@ run: 449 passed; the 6 failures are the network suites this sandbox blocks.)
 **Remaining Phase 4** (not done, and each is substantial): the glyph atlas with
 in-tree TrueType/GPOS metrics, image decode with Mitchell/Lanczos2 downsampling
 and an LRU byte budget, the zero-copy blit, and the web (devicePixelRatio) path.
-Rasterizing through the tile set (calling the fills per selected tile) is wired
-next, together with the blit.
+The tiles and the damage clip are in place; driving the actual paint pass
+(draw-list ops) through them comes with the blit.
