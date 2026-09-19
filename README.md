@@ -20,6 +20,7 @@ make
 ```
 
 Language: [docs/loam.md](docs/loam.md). C vs Loam: [docs/boundary.md](docs/boundary.md).
+Loam vs C and Rust (incl. disadvantages): [docs/loam-vs-c-and-rust.md](docs/loam-vs-c-and-rust.md).
 Zeus backends and specifications: [packages/zeus/docs/spec.md](packages/zeus/docs/spec.md).
 Browsable docs: `./run.sh www` — Zeus UI at http://127.0.0.1:5175, `Docs.Page` on `:8082`.
 
@@ -299,6 +300,7 @@ examples/language/     standalone .loam programs
 examples/zeus/         gallery (component catalog), dashboard, full-stack counter
 www/                   Zeus + gRPC docs (Vite serves wasm, no Svelte)
 docs/                  loam.md (language + architecture), boundary.md (C seam),
+                       loam-vs-c-and-rust.md (comparison + disadvantages),
                        downsides.md (self-improvement phases),
                        zeus_roadmap.md (phase history)
 bin/loamc              compiler
