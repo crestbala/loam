@@ -2100,6 +2100,69 @@ static void mac_pick_image(char *out, int cap, int64_t *w, int64_t *h) {
     if (h) *h = (int64_t)(sz.height + 0.5);
 }
 
+/* Phase 4: the ONE blit of a frame Zeus rasterized itself.
+
+   The Loam rasterizer has already produced every pixel, in its own BGRA8
+   premultiplied sRGB buffer. This wraps those bytes and hands the image to the
+   layer: nothing is redrawn here and no pixel is copied in our code — the data
+   provider reads the engine's buffer directly.
+
+   Two details that are easy to get wrong and expensive to get wrong:
+
+     * The CGImage WRAPPER is recreated per frame. Assigning the same CGImage
+       object back to `contents` is a pointer store that CoreAnimation treats as
+       "no change", so a reused wrapper would simply never repaint. The wrapper
+       is a header over the same bytes, so this costs an allocation, not a
+       20 MB copy.
+     * The data PROVIDER and the buffer are reused across frames, keyed by
+       `gen`, which the Loam side bumps only on reallocation (a size or
+       backing-scale change). That is the contract that keeps a steady frame
+       from churning a second full-size buffer. */
+static CGDataProviderRef blit_prov = NULL;
+static int64_t blit_gen = -1;
+
+static CGColorSpaceRef blit_srgb(void) {
+    static CGColorSpaceRef cs;
+    if (!cs) cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    /* A missing sRGB profile is not a reason to skip the frame. */
+    if (!cs) cs = own_colorspace();
+    return cs;
+}
+
+static int64_t mac_blit(void *ctx, const uint8_t *px, int64_t w, int64_t h,
+                       int64_t gen, int64_t scale) {
+    (void)ctx;
+    if (!px || w <= 0 || h <= 0) return 0;
+    /* Headless, or no window yet: say so rather than pretend we presented. */
+    if (loam_zeus_plat_headless() || !g_view) return 0;
+    if (!g_view.layer) return 0;
+    if (!blit_prov || blit_gen != gen) {
+        if (blit_prov) { CGDataProviderRelease(blit_prov); blit_prov = NULL; }
+        blit_prov = CGDataProviderCreateWithData(NULL, (void *)px,
+                                                (size_t)(w * h * 4), NULL);
+        if (!blit_prov) return 0;
+        blit_gen = gen;
+    }
+    /* BGRA8 premultiplied, dimensions exactly the buffer's, scale exactly the
+       buffer's — so the compositor neither converts nor resamples (rules 1-3). */
+    CGImageRef img = CGImageCreate((size_t)w, (size_t)h, 8, 32, (size_t)w * 4,
+                                   blit_srgb(),
+                                   kCGImageAlphaPremultipliedFirst |
+                                       kCGBitmapByteOrder32Little,
+                                   blit_prov, NULL, false, kCGRenderingIntentDefault);
+    if (!img) return 0;
+    g_view.layer.contentsGravity = kCAGravityResize;
+    g_view.layer.contentsScale = (CGFloat)scale;
+    g_view.layer.opaque = YES;
+    g_view.layer.magnificationFilter = kCAFilterNearest;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    g_view.layer.contents = (id)img;
+    [CATransaction commit];
+    CGImageRelease(img);
+    return 1;
+}
+
 __attribute__((constructor))
 static void zeus_mac_register(void) {
     zeus_set_platform(mac_run, mac_measure, mac_redraw);
@@ -2111,6 +2174,9 @@ static void zeus_mac_register(void) {
     zeus_set_pick_image(mac_pick_image);
     zeus_set_image_size(mac_image_size);
     zeus_set_font_hooks(mac_load_font, NULL);
+    /* The one blit of a frame: the engine hands its own BGRA8 buffer over, and
+       this wraps it in a CGImage over a reused data provider. */
+    zeus_set_blit(NULL, mac_blit);
     /* `zeus.App` reads `window_size()` before any other host entry point runs,
        so the lazy work-area getters must be known by load time or the engine
        answers with the 640×480 placeholder and a default app opens as a small

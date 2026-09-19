@@ -255,6 +255,10 @@ void zeus_set_font_hooks(int (*load)(const char *family, const char *src),
     plat_set_family_fn = set_family;
 }
 static void (*plat_redraw)(void);
+/* Phase 4: the host's one-blit callback. NULL until a host registers one, so
+   blitting is a no-op everywhere else (Linux, iOS, Android, web, headless). */
+static void *blit_ctx;
+static ZeusBlit blit_fn;
 static void (*plat_pick_image)(char *out, int cap, int64_t *w, int64_t *h);
 /* Intrinsic size of a decoded image, in layout points. NULL or a 0 result
    means "not decoded yet"; layout then keeps the box width-only (an image
@@ -310,6 +314,11 @@ void zeus_set_pick_image(void (*pick)(char *out, int cap, int64_t *w, int64_t *h
 
 void zeus_set_image_size(void (*size)(const char *src, int64_t *w, int64_t *h)) {
     plat_image_size_fn = size;
+}
+
+void zeus_set_blit(void *ctx, ZeusBlit fn) {
+    blit_ctx = ctx;
+    blit_fn = fn;
 }
 
 static loam_str pick_dup(const char *src) {
@@ -698,6 +707,16 @@ void loam_zeus_plat_restore(void) {
     if (have_draw && paint_draw.restore) paint_draw.restore(paint_ctx);
 }
 
+/* The one blit of a finished frame (Phase 4). The pixels were produced by the
+   Loam rasterizer; this forwards the raw bytes to whatever host registered a
+   hook. No hook means no display (headless, or a host that has not implemented
+   it), which answers 0 rather than pretending a frame was presented. */
+int64_t loam_zeus_plat_blit(const uint8_t *px, int64_t w, int64_t h, int64_t gen,
+                           int64_t scale) {
+    if (!blit_fn || !px || w <= 0 || h <= 0) return 0;
+    return blit_fn(blit_ctx, px, w, h, gen, scale);
+}
+
 void loam_platform_plat_set_font_family(loam_str name) {
     char *p = dup_ys(name);
     if (p) {
@@ -1074,6 +1093,22 @@ void loam_platform_plat_clip(int64_t x, int64_t y, int64_t w, int64_t h, int64_t
     loam_zeus_plat_clip(x, y, w, h, radius);
 }
 void loam_platform_plat_restore(void) { loam_zeus_plat_restore(); }
+
+/* Phase 4: the one blit. `buf` is the Loam framebuffer vector handed over by
+   value — we pass its first byte and its length straight through, so not one
+   pixel is copied here. `gen` is bumped by the Loam side ONLY on reallocation
+   (a size or backing-scale change), which is the signal a host needs to rebuild
+   its wrapper; between bumps the same bytes stay wrapped.
+
+   The integer types are int32_t to match the prototype codegen emits for the
+   bodyless `platform.plat_blit`; `w * h * 4` is widened to int64_t so a large
+   surface cannot overflow the length check. */
+int32_t loam_platform_plat_blit(loam_vec buf, int32_t w, int32_t h, int32_t gen,
+                                int32_t scale) {
+    int64_t need = (int64_t)w * (int64_t)h * 4;
+    if (!buf.ptr || w <= 0 || h <= 0 || (int64_t)buf.len < need) return 0;
+    return (int32_t)loam_zeus_plat_blit((const uint8_t *)buf.ptr, w, h, gen, scale);
+}
 int64_t loam_platform_plat_key_intern(loam_str name) {
     char *s = dup_ys(name);
     int id = zeus_key_context_id(s);

@@ -122,9 +122,11 @@ above is the only real process number this environment can produce.
 * Structural golden: **pass**, logical 1x, `tests/golden/ref_scene.draw.txt`.
   Covers body text at 11/13/17 px, a 1px border, a rounded card with a drop
   shadow, a gradient, and an image op. Runner: `tests/golden/run.sh`.
-* Pixel golden at 2x: **pending, and blocked**. Producing pixels requires the
-  Phase 4 software rasterizer; nothing in the tree today can rasterize a node
-  tree. `tests/golden/README.md` states exactly what lands there and when.
+* Pixel golden at 2x: **pass**. `tests/golden/raster_scene.ppm` (320x300,
+  288 015 bytes) is rasterized by the Loam rasterizer itself — no graphics API,
+  just the bytes we own — and `tests/golden/run.sh` diffs it byte-for-byte. It
+  covers body text at 11/13/17px, the 1px border, the rounded card with its
+  shadow, the gradient, and image ops.
 * Regression check: all existing draw goldens pass unchanged
   (`golden_accordion`, `golden_controls`, `golden_overlays`,
   `golden_scale_gallery`, `golden_feedback`, `golden_menu`, `golden_picker`),
@@ -419,10 +421,10 @@ is a **generation**: `raster_blit_generation()` changes only on reallocation
 (size or backing-scale change), not per frame, so a host wraps the buffer once
 and rebuilds its wrapper only when that number moves. Verified in
 `zeus_raster_blit.loam`: a redraw keeps the generation (wrapper reused), a scale
-change bumps it (wrapper invalidated). The **host half** — wrapping the bytes
-with a no-copy `CGImage` data provider on native, a typed-array view on web — is
-host FFI that needs a display and `devicePixelRatio`, so it is not landed here
-and remains open. The same test lands the **headless PPM dump**
+change bumps it (wrapper invalidated). The **native host half** — wrapping the
+bytes with a no-copy `CGImage` data provider — landed later (twenty-fourth step
+below); the **web** half (a typed-array view plus one `putImageData`) is still
+open. The same test lands the **headless PPM dump**
 (`raster_dump_ppm`): a golden can now be captured from our own bytes with no
 graphics API, which is what Phase 5 needs.
 
@@ -905,20 +907,54 @@ pointing it at a real font file is a one-line change plus a regenerated golden.
   suites this sandbox blocks), all 15 draw goldens byte-identical, and
   `tests/golden/run.sh` reports both halves.
 
-**Remaining Phase 4** (not done): SVG and `xform` in the raster pass (`text_int`,
-`text_wrap` and rotated text too), JPEG and WebP, and the host blit (see the ABI
-note below).
+**The native blit (twenty-fourth step).** The single point where our pixels
+leave the engine is now wired end to end, on Cocoa.
 
-**The host blit is blocked on an ABI gap, not on effort.** The Loam half is
-landed and tested (the buffer's `fb_gen` generation changes only on reallocation,
-never per frame, so a host wraps once and rebuilds only when it moves). The host
-half needs the address of that buffer, and there is currently no way for a
-platform function to receive a `[]u8` — the platform ABI carries `loam_str` and
-scalars only, and Loam has no address-of for a vector. Two candidate fixes, both
-small: let the host reach the generated symbol for the module's buffer, or add a
-`&mut []u8` platform parameter. Until then the honest position is that the
-zero-copy blit contract is specified and measured, and the host binding is the
-next step — not verified, and not claimed.
+- Loam: `raster_buffer()` hands the framebuffer out as a byte slice, and
+  `raster_blit()` (in `scene.loam`, re-exported by `zeus.loam`) calls the new
+  bodyless `platform.plat_blit(buf, w, h, gen, scale)`.
+- Host: `mac.m` registers `mac_blit` through a new `zeus_set_blit` hook. It wraps
+  the bytes in a `CGImage` over a **reused** `CGDataProviderRef` keyed by `gen`,
+  and creates a fresh `CGImage` header per frame — assigning the same `CGImage`
+  object back to `layer.contents` is treated as "no change" and would never
+  repaint, so the wrapper is per frame while the ~20 MB buffer is not. It sets
+  `contentsScale` to the buffer's scale and `kCAFilterNearest`, and tags the image
+  sRGB.
+- The hook is **NULL by default**, so Linux / iOS / Android are untouched and
+  blitting is a no-op there; headless answers 0 rather than claiming a frame.
+
+**The earlier "blocked on an ABI gap" claim was wrong, and is corrected here.**
+Codegen already passes a Loam `[]u8` to a bodyless fn as a by-value `loam_vec`
+(ptr/len/cap) with a refcount bump (`loam_vec_retain`) rather than a copy — so no
+ABI extension was ever needed, and the pixels are handed over untouched.
+Verified on the emitted C: `int32_t loam_platform_plat_blit(loam_vec buf,
+int32_t w, int32_t h, int32_t gen, int32_t scale);`.
+
+The one real integration trap, now fixed: codegen writes that forward
+declaration itself, with **`int32_t`** parameters (`int` is i32), and C requires
+the declaration and the definition to agree — declaring the seam with `int64_t`
+is a hard `conflicting types` error. `zeus_raster_blit.loam` was **extended**
+(not replaced) to pin this: the PPM-dump and generation checks stay, and it now
+also calls `plat_blit` directly with a deliberately too-short slice, which proves
+the `[]u8` hand-off compiles against the emitted prototype and exercises the
+length guard (`buf.len >= w*h*4`) that keeps a host from reading past the buffer.
+
+- bytes/node: **476.0 — unchanged.** No tree or environment code was touched.
+- arena: **unchanged** (total 982 624 B, high-water 986 628 B at 1000 buttons).
+- golden: structural pass; **all 15 draw goldens byte-identical**; pixel @2x
+  pass; 109 zeus `compile_pass` tests pass (the 2 failures are the network suites
+  this sandbox blocks).
+- **Still not measured**: `vmmap` DIRTY-by-region, `footprint -p` by region, and
+  the retina↔non-retina drag — all need a display this environment does not have.
+  Reported as pending, not fabricated.
+
+**Remaining Phase 4** (not done): SVG and `xform` in the raster pass (`text_int`,
+`text_wrap` and rotated text too), JPEG and WebP, and the **web** blit (a
+typed-array view over the same BGRA8 buffer plus one `putImageData` per frame; the
+buffer is ours, so the canvas never sees a Canvas2D draw call). Note also that
+the live frame loop still uses `present()` — the host's 2D API. The rasterizer is
+now independently able to drive a frame (`scene_rasterize` + `raster_blit`), and
+switching the loop over is a separate step.
 
 **Image formats — status and roadmap.** Landed in Loam: **PNG** — colour types
 0/2/3/4/6, depths 1/2/4/8/16, all five scanline filters, multiple IDAT chunks,

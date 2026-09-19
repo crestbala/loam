@@ -2,10 +2,18 @@
 // rebuilds it only when the generation changes (reallocation), never per frame.
 // And the headless PPM dump, which is what lets a pixel golden exist without a
 // display.
+//
+// `raster_blit()` is the single place our pixels leave the engine — a platform
+// syscall, not a draw call: the buffer is handed over as a byte slice and the
+// host wraps those very bytes. With no display it reports 0 rather than
+// pretending a frame went out.
 
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+// Reached directly (and relatively) so the C seam's length guard can be
+// exercised with a slice that is deliberately too short to be a frame.
+import "../../../zeus/std/zeuscore/platform.loam" as platform
 
 fn must(ok: bool, what: string) {
     if ok {
@@ -37,6 +45,31 @@ fn main() {
     must(zeus.raster_blit_generation() == g, "redraw does not reallocate, so the wrapper is reused")
     zeus.raster_ensure(8, 8, 2)
     must(zeus.raster_blit_generation() != g, "a scale change reallocates and invalidates the wrapper")
+
+    // --- the blit itself: with no display, it presents nothing -------------
+    // The buffer is real (8x8 at scale 2), so this is not the "no buffer" case:
+    // the 0 comes from the host having nowhere to present, which is exactly what
+    // the return value is for. Headless must never claim a frame went out.
+    must(zeus.raster_blit() == 0, "a headless blit presents nothing")
+    let gb = zeus.raster_blit_generation()
+    let rb = zeus.raster_realloc_count()
+    must(zeus.raster_blit() == 0, "and a second frame is the same")
+    must(zeus.raster_blit_generation() == gb, "blitting never reallocates")
+    must(zeus.raster_realloc_count() == rb, "and never counts a realloc")
+
+    // --- the C seam's guard: a slice too short for w*h*4 is refused --------
+    // `plat_blit` forwards `buf.ptr` and `buf.len` straight through with no
+    // copy, so it must reject a slice that cannot hold the frame it is asked to
+    // present rather than let a host read past it. (Whether it is refused by the
+    // length check or by the headless host, the answer is 0 — what this pins is
+    // that the seam accepts our own `[]u8` at all, with the exact prototype
+    // codegen emits, which is where the declaration/definition contract lives.)
+    let mut tiny: []u8 = []u8 {}
+    tiny.push(u8(1))
+    tiny.push(u8(2))
+    must(tiny.len == 2, "the probe slice really is short")
+    must(platform.plat_blit(tiny, 4, 4, 1, 1) == 0, "a short slice is refused")
+    must(platform.plat_blit(tiny, 0, 0, 1, 1) == 0, "as is a zero-sized frame")
 
     fmt.println("raster blit ok", s.len, g)
 }

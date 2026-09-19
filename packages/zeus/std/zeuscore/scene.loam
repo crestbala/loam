@@ -642,6 +642,25 @@ fn raster_scene_count() -> int {
     return rs_drawn
 }
 
+/// The one blit of a finished frame: hand the framebuffer we rasterized into to
+/// the host, which wraps those very bytes (no copy) and shows them. Returns 1
+/// when a host presented, 0 when none is listening — headless, or a host that
+/// has no blit path (Linux / iOS / Android / web today).
+///
+/// `gen` is the buffer's generation, so a host rebuilds its wrapper only when
+/// the buffer was reallocated (a size or backing-scale change), never per frame.
+/// Nothing here touches a graphics API: this is the platform syscall boundary,
+/// the single point where our pixels leave the engine.
+fn raster_blit() -> int {
+    let w = raster.raster_width()
+    let h = raster.raster_height()
+    if w <= 0 || h <= 0 {
+        return 0
+    }
+    return platform.plat_blit(raster.raster_buffer(), w, h,
+                              raster.raster_generation(), raster.raster_scale())
+}
+
 /// Load the font the raster pass draws text with (a file path). Returns 1 on
 /// success. Until this is called, text ops are COUNTED as unhandled rather than
 /// dropped silently.
