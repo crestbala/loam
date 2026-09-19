@@ -469,6 +469,45 @@ static AstNode *lookup_unqualified(const char *name,
     return NULL;
 }
 
+/** Qualified form of `lookup_unqualified`: resolve `name` through `root` —
+ *  root's own declarations, then root's direct imports (reverse source order),
+ *  then the imports of those imports. This is what lets a barrel module
+ *  re-export a name by importing the module that declares it, so `zeus.Card`
+ *  reaches a widget that lives in `zeus-components`. */
+static AstNode *lookup_through(LoamModule *root, const char *name,
+                               AstNode *(*pick)(LoamModule *, const char *)) {
+    if (!root || !root->ast || !name) return NULL;
+    AstNode *d = pick(root, name);
+    if (d) return d;
+    size_t i = root->ast->as.program.import_count;
+    while (i > 0) {
+        i--;
+        AstNode *im = root->ast->as.program.imports[i];
+        if (!im || !im->as.import.alias) continue;
+        LoamModule *m = find_mod(im->as.import.alias);
+        d = m ? pick(m, name) : NULL;
+        if (d) return d;
+    }
+    i = root->ast->as.program.import_count;
+    while (i > 0) {
+        i--;
+        AstNode *im = root->ast->as.program.imports[i];
+        if (!im || !im->as.import.alias) continue;
+        LoamModule *m = find_mod(im->as.import.alias);
+        if (!m || !m->ast) continue;
+        size_t k = m->ast->as.program.import_count;
+        while (k > 0) {
+            k--;
+            AstNode *im2 = m->ast->as.program.imports[k];
+            if (!im2 || !im2->as.import.alias) continue;
+            LoamModule *m2 = find_mod(im2->as.import.alias);
+            d = m2 ? pick(m2, name) : NULL;
+            if (d) return d;
+        }
+    }
+    return NULL;
+}
+
 /** A struct reachable from the current module by unqualified name. Unlike
  *  find_struct this does not fall back to every loaded module. */
 static AstNode *find_struct_visible(const char *name) {
@@ -601,6 +640,25 @@ static AstNode *find_method(const char *fnn, Type *recv) {
         LoamModule *m = find_mod(im->as.import.alias);
         fn = m ? find_fn_in(m, fnn) : NULL;
         if (fn && method_recv_matches(fn, recv)) return fn;
+    }
+    /* Second level: a re-exported method (`zeus` imports the module that
+       declares it) is still a method of the receiver. */
+    i = prog->as.program.import_count;
+    while (i > 0) {
+        i--;
+        AstNode *im = prog->as.program.imports[i];
+        if (!im || !im->as.import.alias) continue;
+        LoamModule *m = find_mod(im->as.import.alias);
+        if (!m || !m->ast) continue;
+        size_t k = m->ast->as.program.import_count;
+        while (k > 0) {
+            k--;
+            AstNode *im2 = m->ast->as.program.imports[k];
+            if (!im2 || !im2->as.import.alias) continue;
+            LoamModule *m2 = find_mod(im2->as.import.alias);
+            fn = m2 ? find_fn_in(m2, fnn) : NULL;
+            if (fn && method_recv_matches(fn, recv)) return fn;
+        }
     }
     return NULL;
 }
@@ -1012,7 +1070,7 @@ static Type *peek_type(AstNode *a) {
             const char *base = a->as.access.target->as.ident.name;
             if (module_imported(Gmods[Gcur].ast, base)) {
                 LoamModule *m = find_mod(base);
-                AstNode *gv = m ? find_global_in(m, a->as.access.field) : NULL;
+                AstNode *gv = m ? lookup_through(m, a->as.access.field, find_global_in) : NULL;
                 return gv ? gv->ty : NULL;
             }
         }
@@ -1490,7 +1548,7 @@ static int as_struct_ctor(AstNode *n) {
                cal->as.access.target && cal->as.access.target->kind == AST_IDENT &&
                module_imported(Gmods[Gcur].ast, cal->as.access.target->as.ident.name)) {
         LoamModule *m = find_mod(cal->as.access.target->as.ident.name);
-        if (m && find_fn_in(m, cal->as.access.field)) return 0;
+        if (m && lookup_through(m, cal->as.access.field, find_fn_in)) return 0;
         if (m && find_struct_in(m, cal->as.access.field)) sname = cal->as.access.field;
     }
     if (!sname) return 0;
@@ -2001,7 +2059,7 @@ static Type *check_call(AstNode *n, Type *expect) {
             return ty_void();
         }
         LoamModule *m = find_mod(mod);
-        fn = m ? find_fn_in(m, fnn) : NULL;
+        fn = m ? lookup_through(m, fnn, find_fn_in) : NULL;
         if (!fn) {
             err(n->loc, "no function '%s' in module '%s'", fnn, mod);
             return ty_void();
@@ -2302,6 +2360,33 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
                 n->as.ident.def_loc = fn->loc;
                 return n->ty;
             }
+            /* Bare globals and fn values resolve through imports too, like
+               structs, enums, and bare calls — this is what lets a barrel
+               module re-export a `const` or a handler by importing the module
+               that declares it. */
+            AstNode *gv = lookup_unqualified(n->as.ident.name, find_global_in);
+            if (gv && gv->ty) {
+                n->ty = gv->ty;
+                n->place_mut = gv->as.var.is_mut;
+                n->as.ident.resolved = gv;
+                n->as.ident.def_loc = gv->loc;
+                return n->ty;
+            }
+            AstNode *ifn = lookup_unqualified(n->as.ident.name, find_fn_in);
+            if (ifn) {
+                if (ifn->as.fn.tparam_count) {
+                    err(n->loc, "cannot use generic function '%s' as a value", n->as.ident.name);
+                    n->ty = ty_void();
+                    return n->ty;
+                }
+                ifn->as.fn.used_as_value = 1;
+                n->flags |= ASTF_FN_VAL;
+                n->ty = fn_type_of(ifn);
+                n->place_mut = 0;
+                n->as.ident.resolved = ifn;
+                n->as.ident.def_loc = ifn->loc;
+                return n->ty;
+            }
             err(n->loc, "unknown identifier '%s'", n->as.ident.name);
             n->ty = ty_void();
             return n->ty;
@@ -2510,7 +2595,7 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
                 module_imported(Gmods[Gcur].ast,
                                 n->as.access.target->as.access.target->as.ident.name)) {
                 LoamModule *em = find_mod(n->as.access.target->as.access.target->as.ident.name);
-                AstNode *en = em ? find_enum_in(em, n->as.access.target->as.access.field) : NULL;
+                AstNode *en = em ? lookup_through(em, n->as.access.target->as.access.field, find_enum_in) : NULL;
                 if (en) {
                     int64_t v = 0;
                     if (!enum_value(en, n->as.access.field, &v)) {
@@ -2528,7 +2613,7 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
                 if (module_imported(Gmods[Gcur].ast, base) || strcmp(base, "Box") == 0) {
                     mark_module_ident(n->as.access.target, base);
                     LoamModule *mod = find_mod(base);
-                    AstNode *gv = mod ? find_global_in(mod, n->as.access.field) : NULL;
+                    AstNode *gv = mod ? lookup_through(mod, n->as.access.field, find_global_in) : NULL;
                     if (gv && gv->ty) {
                         n->as.access.resolved = gv;
                         n->ty = gv->ty;

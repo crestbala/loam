@@ -1,0 +1,11 @@
+//! molecules — a small group of atoms acting as one control.
+//!
+//! Fields and text entry (`Field`, `TextInput`, `TextArea`, `Label`),
+//! choice groups (`Checkbox`, `Radio` / `RadioGroup`, `Toggle` /
+//! `ToggleGroup`, `Segmented`, `Choice`, `Select`, `Combobox`, `Tabs` /
+//! `Tab`), and feedback molecules (`Alert` / `AlertDestructive` /
+//! `AlertWarning` / `AlertSuccess` / `AlertInfo`, `Stat` / `StatCount`,
+//! `Breadcrumbs`, `User`, `Tooltip`, `HoverCard`, `Toast`, `Surface`,
+//! `Empty`, `Accordion`, `Collapsible`, `Pagination`).
+//!
+//! Populated by the extraction from `zeus.loam`; see `../README.md`.

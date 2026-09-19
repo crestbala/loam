@@ -99,6 +99,7 @@ import "zeuscore/track.loam"
 import "std:async"
 import "std:fmt"
 import "std:sys"
+import "zeus_constants.loam"
 
 /// Button variants, named after the fill they carry. `Solid` is the
 /// `default` (primary) variant, `Soft` is `secondary`, `Danger` is
@@ -4899,8 +4900,6 @@ fn pop_item<T>(sig: Signal<[]T>) {
     }
 }
 
-const VIRT_OVERSCAN: int = 4
-
 struct VirtWin {
     first: int,
     last: int,
@@ -6190,27 +6189,6 @@ enum EASE {
     Spring = 3,
 }
 
-// --- focus ring -----------------------------------------------------------
-/// Focus ring stroke width in dp.
-const FOCUS_WIDTH: int = 2
-/// Gap between the control's edge and the ring, in dp. The offset is what
-/// keeps the ring legible on a solid-filled control, where a ring drawn flush
-/// would disappear into the fill.
-const FOCUS_OFFSET: int = 2
-
-// --- radius ---------------------------------------------------------------
-/// No rounding. Named so a caller can say `RAD_NONE` instead of a bare 0 and
-/// mean it — `radius = 0` and "radius unset" were indistinguishable before.
-const RAD_NONE: int = 0
-
-// --- type -----------------------------------------------------------------
-/// Line heights, as a percentage of the font size. Canvas hosts draw one
-/// weight, so hierarchy leans on size, colour, and leading — which makes the
-/// leading load-bearing rather than decorative.
-const LEAD_TIGHT: int = 115
-const LEAD_SNUG: int = 130
-const LEAD_NORMAL: int = 150
-const LEAD_RELAXED: int = 170
 
 /// Line box for `font` px at a `LEAD_*` percentage.
 fn line_height(font: int, lead: int) -> int {
@@ -6543,27 +6521,6 @@ fn role_rgb_now(slot: int) -> int {
     return arena.paint_rgb(role_color(slot))
 }
 
-/// Type scale. Canvas hosts draw one weight, so hierarchy leans on size and
-/// color. 14 is the body workhorse.
-const FONT_DISPLAY: int = 30
-const FONT_HEADING: int = 20
-const FONT_TITLE: int = 16
-const FONT_BODY: int = 14
-const FONT_CONTROL: int = 13
-const FONT_CAPTION: int = 12
-const FONT_OVERLINE: int = 11
-
-const PAGE_PAD: int = 32
-const SECTION: int = 24
-/// Corner radii, small to extra large.
-const RAD_SM: int = 6
-const RAD_MD: int = 8
-const RAD_LG: int = 10
-const RAD_XL: int = 14
-const RAD_FULL: int = 999
-const BAR: int = 52
-const DOT: int = 8
-const HAIRLINE: int = 1
 
 // --- UI scale (density + type, one knob) ---
 /// Scale in percent; 100 is the design system's 1.0. Clamped to 50..200.
@@ -6719,58 +6676,6 @@ fn button_border_color(look: int) -> string {
     }
 }
 
-// --- inline SVG icons (lucide, CC BY 4.0) ---
-// The engine's svg reader knows path / circle, `currentColor`, and the
-// stroke attrs used below. `Icon` tints them with the node's foreground.
-
-const IC_CHECK: string =
-"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M20 6 9 17l-5-5'/></svg>"
-
-const IC_X: string =
-"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M18 6 6 18'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 6 12 12'/></svg>"
-
-const IC_CHEV_DOWN: string =
-"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m19 9-7 6-7-6'/></svg>"
-
-const IC_CHEV_LEFT: string =
-"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m15 18-6-6 6-6'/></svg>"
-
-const IC_CHEV_RIGHT: string =
-"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m9 18 6-6-6-6'/></svg>"
-
-const IC_CALENDAR: string =
-"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M8 2v4'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M16 2v4'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M3 10h18'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M5 4h14v16H5z'/></svg>"
-
-const IC_INFO: string =
-"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><circle cx='12' cy='12' r='10' fill='none' stroke='currentColor' stroke-width='1.5'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M12 16v-4'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M12 8h.01'/></svg>"
-
-const IC_ALERT_CIRCLE: string =
-"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><circle cx='12' cy='12' r='10' fill='none' stroke='currentColor' stroke-width='1.5'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M12 8v4'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M12 16h.01'/></svg>"
-
-const IC_PLUS: string =
-"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M5 12h14'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M12 5v14'/></svg>"
-
-const IC_MINUS: string =
-"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M5 12h14'/></svg>"
-
-/// Sort arrows for `TableCols` headers (lucide arrow-up / arrow-down).
-const IC_SORT_ASC: string =
-"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m5 12 7-7 7 7'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M12 19V5'/></svg>"
-const IC_SORT_DESC: string =
-"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M12 5v14'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m19 12-7 7-7-7'/></svg>"
-
-/// Trend arrows for `Stat` deltas (lucide arrow-up-right / arrow-down-right).
-const IC_TREND_UP: string =
-"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M7 17 17 7'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M7 7h10v10'/></svg>"
-const IC_TREND_DOWN: string =
-"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m7 7 10 10'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M17 7v10H7'/></svg>"
-
-/// A gap-arc loader ring (used by `Spinner`). Drawn as a 270° polyline: the
-/// host SVG parsers are a line-only lucide subset (they skip `A`/`a` arcs), so
-/// an arc motif would emit an `svg` op that draws nothing. At 16px the 19
-/// chords are under a tenth of a pixel from a true arc.
-const IC_LOADER: string =
-"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M21 12L20.69 14.33L19.79 16.5L18.36 18.36L16.5 19.79L14.33 20.69L12 21L9.67 20.69L7.5 19.79L5.64 18.36L4.21 16.5L3.31 14.33L3 12L3.31 9.67L4.21 7.5L5.64 5.64L7.5 4.21L9.67 3.31L12 3'/></svg>"
 
 /// `markup` painted at `px` square and tinted by `tint`. Returns the node so
 /// callers can bind visibility.
@@ -8233,12 +8138,6 @@ fn Segmented(value: Signal<int>, labels: []string) {
     }
 }
 
-const SELECT_W: int = 200
-/// Stacking: scrim under the trigger/field, popup above both — so a Select
-/// menu is not covered by a Combobox later in the same card.
-const Z_SCRIM: int = 40
-const Z_FIELD: int = 50
-const Z_POPUP: int = 80
 
 /// One row of a `Select` menu: a check icon on the picked row and a raised fill
 /// on the active row (the keyboard highlight).
@@ -9359,11 +9258,6 @@ struct TooltipProps {
     delay: int = 400,
 }
 
-/// Padding and caret size of a tooltip bubble. The caret's offset is derived
-/// from the padding, so these two move together.
-const TOOLTIP_PAD_X: int = 10
-const TOOLTIP_PAD_Y: int = 6
-const TOOLTIP_ARROW: int = 8
 
 /// 1 when the bubble is above its trigger (so the caret points down).
 fn tooltip_above(place: int) -> bool {
@@ -9564,10 +9458,6 @@ struct DialogProps {
     title: string = "",
 }
 
-/// Desktop dialog width; narrower windows get 92% of their width.
-const DIALOG_W: int = 440
-/// Scale the dialog card rests at while closed (percent).
-const DIALOG_REST: int = 96
 
 /// Dialog + AlertDialog chrome. Header is a row: title, then `Grow()`, then
 /// a fixed 28px close slot (Dialog only). No `position` / `top` / `left`.
@@ -10102,8 +9992,6 @@ fn PageButton(page: Signal<int>, n: int) {
     })
 }
 
-/// Slots in a collapsed pagination row: first, last, and a five-wide window.
-const PAGE_SLOTS: int = 7
 
 /// Page number shown in `slot` (0-based) of a `PAGE_SLOTS`-wide row, or 0
 /// for an ellipsis. Seven or fewer pages list every number; past that the
@@ -10251,16 +10139,6 @@ fn Pagination(current_value: Signal<int>, pages: int) {
 // the series, and `vals` holds `labels.len * names.len` ints row-major
 // (category-major: `vals[i * s + j]` is category `i`, series `j`).
 
-/// Chart width/height used by the demos (put charts in a Card column).
-const CHART_W: int = 640
-const CHART_H: int = 200
-/// Left gutter for the y tick labels.
-const CHART_GUTTER: int = 34
-/// Air above the plot, room for the floating tooltip.
-const CHART_TOP: int = 8
-/// Bottom strip for the x labels (45° labels need diagonal room plus the
-/// air gap between the baseline and the label corners).
-const CHART_XLAB: int = 38
 
 /// Series palette (the default chart colors), from the
 /// `chart*` theme tokens so restyling edits the palette, not the charts.
@@ -10915,8 +10793,6 @@ fn chart_areas(labels: []string, names: []string, vals: []int, n: int, s: int,
 }
 
 // --- calendar internals ---
-
-const CAL_CELL: int = 36
 
 fn cal_leap(year: int) -> int {
     if year % 4 != 0 {
