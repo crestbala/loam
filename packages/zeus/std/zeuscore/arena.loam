@@ -11,6 +11,12 @@ import "track.loam"
 import "std:fmt"
 
 struct UiNode {
+    // Fields are grouped widest-first: 16-byte (slices/strings), then 4-byte,
+    // then 2-byte, then 1-byte. Scattered narrow fields would each cost
+    // alignment padding; grouped, the 488-byte record's ~24 bytes of padding
+    // disappear. Access is by name everywhere, so order carries no meaning.
+
+    // --- 16-byte block: slices and strings --------------------------------
     kids: []int,
     text: string,
     a11y_label: string,
@@ -18,6 +24,7 @@ struct UiNode {
     /// CSS cursor shown while the pointer is over this node ("" = default).
     cursor: string,
 
+    // --- 4-byte block: ints -----------------------------------------------
     grow: int,
     shrink: int,
     bg: int,
@@ -69,7 +76,6 @@ struct UiNode {
     /// the momentum coast, which decays from a velocity.
     tgt_x: int,
     tgt_y: int,
-    smooth: u8,
     /// Wall-clock deadline (ms) until which the scrollbar thumb is shown;
     /// 0 = hidden. Set on every scroll; `bar_s` is the wall-clock time the
     /// bar *appeared*, so paint can fade it in from 0 and out again over the
@@ -105,8 +111,22 @@ struct UiNode {
     /// no blank strip is ever revealed past the first/last content).
     vel_x: int,
     vel_y: int,
-    /// Clockwise-on-screen degrees for text nodes (0 = horizontal).
+    /// Anchor-based floating placement (popover / tooltip / hover card). When
+    /// `anchor` > 0 the node is positioned at layout time against that node's
+    /// screen rect: `place` is the preferred side, `anchor_gap` the offset in
+    /// dp, and `flip` allows the opposite side when the preferred one would
+    /// overflow.
+    anchor: int,
+    /// Elevation 0..4. `elev_c` holds the shadow color's role sentinel so the
+    /// paint pass resolves it per appearance (like every other role).
+    elev_c: int,
+    /// When > 0, `ui_push(id)` pushes this node instead: a recipe that
+    /// builds chrome after the caller's trailing block (a Card footer) sends
+    /// the block into an inner body column while callers still hold the
+    /// shell.
+    slot_into: int,
 
+    // --- 2-byte block: u16 / i16 ------------------------------------------
     /// Style lengths in dp, unscaled (the DPI scale is applied at paint), so
     /// the stored value is the authored value. Each is at most the `u16`
     /// maximum (65535); an out-of-range literal is a compile error at the
@@ -139,8 +159,22 @@ struct UiNode {
     grid_min: u16,
     opacity: i16,
     z_index: i16,
+    /// Clockwise-on-screen degrees for text nodes (0 = horizontal).
     text_rot: u16,
+    /// Animated paint transform: scale percent (100 = identity), translate in
+    /// dp, and rotation in degrees. Written only by paint-only tracks; the
+    /// layout pass never reads them, so a transform never forces a layout.
+    an_scale: u16,
+    an_tx: i16,
+    an_ty: i16,
+    an_rot: u16,
+    /// Indeterminate rotation (a `Spinner`): 1 = spin, period in ms. Driven by
+    /// the frame clock in paint, like `pulse`, so it needs no track and is
+    /// deterministic at `now_ms == 0`.
+    spin_ms: u16,
+    anchor_gap: u16,
 
+    // --- 1-byte block: u8 / i8 --------------------------------------------
     kind: u8,
     dir: u8,
     justify: u8,
@@ -166,13 +200,6 @@ struct UiNode {
     /// bit 1 LAYOUT, bit 2 TREE. A node is marked when a discrete write or an
     /// animation tick changes it; paint drains the marks.
     dirty: u8,
-    /// Animated paint transform: scale percent (100 = identity), translate in
-    /// dp, and rotation in degrees. Written only by paint-only tracks; the
-    /// layout pass never reads them, so a transform never forces a layout.
-    an_scale: u16,
-    an_tx: i16,
-    an_ty: i16,
-    an_rot: u16,
     /// Paint-only reveal: 1 opts in (`enter_reveal`), `an_reveal` is the share
     /// of the laid-out height paint shows, 0..100, clipped from the top with
     /// the content slid up by the hidden part. Layout sees the full box at
@@ -180,33 +207,17 @@ struct UiNode {
     /// out per frame (the "animated height" the audit deferred).
     reveal: u8,
     an_reveal: u8,
-    /// Indeterminate rotation (a `Spinner`): 1 = spin, period in ms. Driven by
-    /// the frame clock in paint, like `pulse`, so it needs no track and is
-    /// deterministic at `now_ms == 0`.
-    spin_ms: u16,
     spin: u8,
-    /// Anchor-based floating placement (popover / tooltip / hover card). When
-    /// `anchor` > 0 the node is positioned at layout time against that node's
-    /// screen rect: `place` is the preferred side, `anchor_gap` the offset in
-    /// dp, and `flip` allows the opposite side when the preferred one would
-    /// overflow.
-    anchor: int,
-    anchor_gap: u16,
     place: u8,
     flip: u8,
     /// Elevation 0..4. `elev_c` holds the shadow color's role sentinel so the
     /// paint pass resolves it per appearance (like every other role).
     elev: u8,
-    elev_c: int,
     /// Interaction-state overlay flags (see `UISTATE` / `interaction_state`).
     /// Components do not reimplement these; one shared model reads them.
     disabled: u8,
     loading: u8,
     invalid: u8,
-    w_pct: i8,
-    h_pct: i8,
-    align_self: i8,
-    hover_fade: i8,
     align: u8,
     show_mode: u8,
     /// Declarative `show` prop result (0 hidden / 1 visible); consulted when
@@ -224,14 +235,15 @@ struct UiNode {
     /// blends the resting `elev` shadow toward it on the hover track; the
     /// hover wash is skipped, since the lift is the feedback.
     lift: u8,
-    /// When > 0, `ui_push(id)` pushes this node instead: a recipe that
-    /// builds chrome after the caller's trailing block (a Card footer) sends
-    /// the block into an inner body column while callers still hold the
-    /// shell.
-    slot_into: int,
     capture_text: u8,
     ui_size: u8,
     ui_look: u8,
+    /// Smooth wheel scroll bit: 1 = y, 2 = x. Read with `tgt_x` / `tgt_y`.
+    smooth: u8,
+    w_pct: i8,
+    h_pct: i8,
+    align_self: i8,
+    hover_fade: i8,
 }
 
 let mut nodes: []UiNode = []UiNode {}
