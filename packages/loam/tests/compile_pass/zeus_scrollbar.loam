@@ -1,7 +1,9 @@
-// Scrollbar thumb: shown by a scroll, hidden `bar_hide` ms after the last one,
-// in one frame each — no fade, no track. The deadline is on the wall clock so
-// it holds across an idle host sleep (the engine clock lags after a wake), and
-// `engine_next_ms` reports it so an idle host wakes exactly once to hide it.
+// Scrollbar thumb: shown by a scroll, faded in over `BAR_FADE_IN` ms, held at
+// full opacity for `BAR_LINGER`, then faded out over `BAR_FADE_OUT` — a quick
+// clear once the scroll stops, with no track and no live frames of its own.
+// The timestamps are on the wall clock so the timeline holds across an idle
+// host sleep (the engine clock lags after a wake); `engine_next_ms` reports 16
+// while a fade is in flight, so the host wakes for the fade frames.
 
 import "std:fmt"
 import "std:sys"
@@ -12,6 +14,17 @@ fn must(ok: bool, what: string) {
     if !ok {
         fmt.println("FAIL", what)
         sys.exit(1)
+    }
+}
+
+/// Emulate the host's 16 ms wakes for `ms` of wall time.
+fn run_ms(ms: int) {
+    let mut t = 0
+    while t < ms {
+        async.sleep(16)
+        zeus.engine_step_dt(16)
+        zeus.pump_frame()
+        t = t + 16
     }
 }
 
@@ -31,26 +44,24 @@ fn main() {
     must(zeus.proof_anim_live() == 0, "settled")
     must(zeus.engine_next_ms() == 0, "idle wants no wake")
 
-    // A wheel step shows the thumb this frame, with no track.
+    // A wheel step fades the thumb in: the first frame is at (near) alpha 0, a
+    // wake is scheduled for the fade, but no track is created.
     zeus.engine_scroll_step(100, 100, 0, 40)
     zeus.pump_frame()
-    let shown = zeus.draw_count()
-    must(shown == idle + 2, "thumb + track painted on scroll")
+    must(zeus.draw_count() <= idle + 2, "first frame is the fade-in start")
     must(zeus.proof_anim_live() == 0, "no fade track")
     let wake = zeus.engine_next_ms()
-    must(wake > 0 && wake <= 900, "host asked to wake at the hide deadline")
+    must(wake > 0 && wake <= 16, "host woken for the fade frames")
 
-    // Still shown before the deadline; frames are not forced.
-    zeus.engine_step_dt(16)
-    zeus.pump_frame()
-    must(zeus.draw_count() == shown, "still shown")
-    must(zeus.engine_step_dt(16) == 0, "no continuous frames while shown")
+    // Once the fade-in window has passed the thumb is fully shown, and the fade
+    // still asks for no live frames of its own.
+    run_ms(140)
+    must(zeus.draw_count() == idle + 2, "thumb + track painted once faded in")
+    must(zeus.engine_step_dt(16) == 0, "the fade needs no live frames")
 
-    // After the deadline (wall clock), one frame hides it.
-    async.sleep(950)
-    zeus.engine_step_dt(16)
-    zeus.pump_frame()
-    must(zeus.draw_count() == idle, "thumb hidden after the deadline")
+    // After linger + fade-out (wall clock), the deadline clears it.
+    run_ms(420)
+    must(zeus.draw_count() == idle, "thumb hidden after the fade")
     must(zeus.engine_next_ms() == 0, "nothing pending once hidden")
 
     fmt.println("scrollbar ok")

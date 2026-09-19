@@ -924,6 +924,8 @@ same frames was correct throughout, which is why no golden caught them.
   No track, no fade, no frames while shown. The `BarFade` prop, `bar_amt`, and
   `anim_fade_from` are gone, and reduced motion no longer needs a scrollbar
   exception. `zeus_scrollbar.loam` locks show / no-track / single wake / hide.
+  **(batch 30: a time-based fade returns — still no track and no live frames,
+  and the hide is quicker; see below)**
 
 Recorded, not fixed: any `{{ }}` interpolation or `string_from_bytes` that
 runs per frame or per timer tick leaks for the process lifetime. That is a
@@ -1267,11 +1269,27 @@ icon whose path used an SVG **arc** (`a9 9 …`), and every host's SVG parser is
 line-only lucide subset that skips `A`/`a`. It is now a 19-chord 270° polyline
 (`M`/`L` only), within a tenth of a pixel of the arc at 16px.
 
+### Phase 4 — scrollbar fade + quick hide (batch 30)
+
+The thumb popped in and out in one frame each (batch 9.1 traded the old fade
+for that, to stop a `BarFade` track holding a paint frame every 16 ms for
+900 ms after every scroll). It now fades again without that cost: a scroll
+stamps the wall-clock time it appeared (`bar_s`) and the hide deadline
+(`bar_t`), `bar_alpha` reads the two at paint (in over `BAR_FADE_IN`, held for
+`BAR_LINGER`, out over `BAR_FADE_OUT` — about 310 ms from the last scroll to
+gone), and `scene.step` marks the frame dirty only while a fade is in flight.
+No track is created and `engine_step_dt` stays 0, so it is not a live frame;
+`bar_next_ms` returns 16 while a fade is running and the hide wake otherwise,
+so an idle host still never busy-loops. A momentum coast keeps bumping the
+deadline while it moves, so the thumb only clears once the pane has actually
+settled. `zeus_scrollbar.loam` was updated for the fade timeline.
+
 ### Remaining work (living list)
 
 The single maintained tracker of what is still open. Landed so far: phases 1–3;
 phase 4 batches 1–26 (component upgrades), 27 (text truncation), 28 (gallery
-states + accent picker), 29 (per-corner radius + loading spinner).
+states + accent picker), 29 (per-corner radius + loading spinner), 30 (scrollbar
+fade + quick hide).
 
 **Phase 4 — components still to build**
 

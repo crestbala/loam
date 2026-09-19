@@ -425,9 +425,10 @@ fn paint_button(id: int) {
 }
 
 fn paint_scrollbar(id: int) {
-    // Overlay hosts (iOS/Android) never paint a desktop thumb. On desktop
-    // the bar shows while scrolling (wheel / pan / thumb drag) and hides
-    // `bar_hide` ms after the last one — in one frame each, no fade.
+    // Overlay hosts (iOS/Android) never paint a desktop thumb. On desktop the
+    // bar fades in while scrolling (wheel / pan / thumb drag) and fades out
+    // over the tail of `bar_hide` ms after the last one — a short linger then
+    // a quick fade, so a scroll that stops immediately clears fast.
     if platform.plat_overlay_scroll() != 0 {
         return
     }
@@ -851,6 +852,12 @@ fn step(dt: int) -> int {
     arena.now_ms = arena.now_ms + dt
     let mut live = arena.anim_tick(dt)
     if arena.bar_expire() != 0 {
+        arena.paint_dirty = 1
+    }
+    if arena.bar_fading() != 0 {
+        // The fade is time-based (paint reads the two stamps), so it only needs
+        // a dirty frame per step, not a live track. `bar_next_ms` returns 16
+        // while it is in flight, so hosts still wake for it.
         arena.paint_dirty = 1
     }
     if arena.pulse_live() != 0 {
