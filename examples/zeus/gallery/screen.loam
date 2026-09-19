@@ -603,22 +603,20 @@ fn Feedback() {
 }
 
 /// One field in the state matrix. `edge` is the border token, `off` dims and
-/// inerts it through the shared disabled overlay, `bad` records the shared
+/// inerts it through the shared disabled state, `bad` records the shared
 /// `invalid` state (the border color is how the chrome shows it).
+///
+/// These are REAL fields, not pictures of fields. They used to be a Box with a
+/// Text in it, which read as a field but could not take a caret, so the
+/// "resting" one could not be typed into — the one thing the row is for. A
+/// `TextInput` bound to its own signal gives the resting and invalid rows a
+/// caret and a working keyboard, and disabled keeps its inert state.
 fn StateField(text: string, edge: string, off: int, bad: int) -> Node {
-    let f = zeus.Box(
-        align_direction = DIRECTION.Row,
-        align_items = ALIGN.Center,
-        width = 200,
-        padding_x = 12,
-        padding_y = 8,
-        background = zeus.plate(),
-        border = zeus.HAIRLINE,
-        border_color = edge,
-        radius = zeus.RAD_MD,
-        enabled = off == 0
-    ) {
-        zeus.Text(text, color = zeus.ink(), font = zeus.FONT_CONTROL)
+    let value = zeus.signal(text)
+    let f = zeus.TextInput(value, "", width = 200, border_color = edge,
+                           font = zeus.FONT_CONTROL)
+    if off != 0 {
+        zeus.disabled(f, true)
     }
     if bad != 0 {
         zeus.invalid(f, true)
