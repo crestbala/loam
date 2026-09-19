@@ -2649,6 +2649,83 @@ fn image_decode_failure_reason() -> string {
     return image.png_failure_reason()
 }
 
+// --- images: resized cache (Phase 4) ---------------------------------------
+
+/// Resized image for (id, display pixels), decoding and resampling on a miss.
+/// Returns the slot, or -1 when the image cannot be decoded or does not fit the
+/// fixed byte budget. Repeated calls for the same key are cache hits.
+fn image_get(id: int, encoded: string, dw: int, dh: int) -> int {
+    return image.img_get(id, encoded, dw, dh)
+}
+
+/// Composite a cached image at (x, y) with `alpha` as a multiplier 0..255.
+fn image_blit(s: int, x: int, y: int, alpha: int) {
+    image.img_blit(s, x, y, alpha)
+}
+
+fn image_w(s: int) -> int {
+    return image.img_w(s)
+}
+
+fn image_h(s: int) -> int {
+    return image.img_h(s)
+}
+
+/// Channel `c` (0 R, 1 G, 2 B, 3 A) of a cached image at (x, y).
+fn image_get_px(s: int, x: int, y: int, c: int) -> int {
+    return image.img_get_px(s, x, y, c)
+}
+
+fn image_cache_count() -> int {
+    return image.img_cache_count()
+}
+
+fn image_cache_bytes() -> int {
+    return image.img_cache_bytes()
+}
+
+fn image_cache_budget() -> int {
+    return image.img_cache_budget()
+}
+
+fn image_cache_capacity() -> int {
+    return image.img_cache_capacity()
+}
+
+fn image_cache_hit_count() -> int {
+    return image.img_hit_count()
+}
+
+fn image_cache_miss_count() -> int {
+    return image.img_miss_count()
+}
+
+fn image_cache_eviction_count() -> int {
+    return image.img_eviction_count()
+}
+
+fn image_cache_refusal_count() -> int {
+    return image.img_refusal_count()
+}
+
+/// Set the cache's byte budget (a knob, and a test hook: the invariant
+/// `image_cache_bytes() <= image_cache_budget()` is what the budget means).
+fn image_set_budget(b: int) {
+    image.img_set_budget(b)
+}
+
+fn image_cache_clear() {
+    image.img_cache_clear()
+}
+
+fn image_resize_count() -> int {
+    return image.mitchell_resize_count()
+}
+
+fn image_mem_bytes() -> i64 {
+    return image.img_mem_bytes()
+}
+
 fn raster_push_str(b: &mut []int, s: string) {
     let mut i = 0
     while i < s.len {

@@ -1,0 +1,173 @@
+// Phase 4: images — Mitchell resampling and the byte-budgeted LRU cache.
+//
+// The headline check is aliasing. A 1px checkerboard is the highest frequency
+// an image can carry, and a large downscale of it is the classic filter test:
+// nearest-neighbour and bilinear both leave a strong pattern behind (moiré),
+// while an area-correct filter turns it into flat mid grey. This test asserts
+// the flat grey, so it fails loudly if the filter is ever "simplified".
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn load(name: string) -> string {
+    let s = sys.read_file("packages/loam/tests/images/{{name}}")
+    must(s.len > 0, "fixture not loaded")
+    return s
+}
+
+fn main() {
+    let checker = load("checker.png")
+    let grad = load("grad.png")
+    zeus.image_cache_clear()
+    zeus.image_set_budget(8 * 1024 * 1024)
+
+    // --- a 4x downscale of the 1px checkerboard must be flat ---------------
+    let s = zeus.image_get(1, checker, 16, 16)
+    must(s >= 0, "checker downscaled to 16x16")
+    must(zeus.image_w(s) == 16, "16 wide")
+    must(zeus.image_h(s) == 16, "16 tall")
+    // Interior: every output pixel averages the same 4x4 input block, so they
+    // agree EXACTLY. (Nearest would swing the full 0..255 here.)
+    let mut lo = 255
+    let mut hi = 0
+    let mut y = 2
+    while y < 14 {
+        let mut x = 2
+        while x < 14 {
+            let v = zeus.image_get_px(s, x, y, 0)
+            if v < lo {
+                lo = v
+            }
+            if v > hi {
+                hi = v
+            }
+            x = x + 1
+        }
+        y = y + 1
+    }
+    must(hi - lo <= 2, "the downscale interior is flat, not aliased")
+    must(lo >= 120 && hi <= 136, "and lands at mid grey")
+    // The outermost row/column of outputs leans on the source's edge, where
+    // there is genuinely no data and the filter extends the boundary pixel. It
+    // must still be mid grey, not a bright or black seam.
+    let mut alo = 255
+    let mut ahi = 0
+    y = 0
+    while y < 16 {
+        let mut x = 0
+        while x < 16 {
+            let v = zeus.image_get_px(s, x, y, 0)
+            if v < alo {
+                alo = v
+            }
+            if v > ahi {
+                ahi = v
+            }
+            x = x + 1
+        }
+        y = y + 1
+    }
+    must(ahi - alo <= 16, "no aliased swing anywhere")
+    must(alo >= 112 && ahi <= 144, "edges included, still mid grey")
+    must(zeus.image_get_px(s, 0, 0, 3) == 255, "opaque image stays opaque")
+
+    // A repeat request is a hit: same slot, no re-decode, no re-resample.
+    let decodes = zeus.image_decode_count()
+    let resizes = zeus.image_resize_count()
+    let again = zeus.image_get(1, checker, 16, 16)
+    must(again == s, "a repeat request returns the same slot")
+    must(zeus.image_decode_count() == decodes, "a hit does not re-decode")
+    must(zeus.image_resize_count() == resizes, "a hit does not re-resample")
+
+    // The displayed size is part of the key: a different size is a new entry.
+    let s32 = zeus.image_get(1, checker, 32, 32)
+    must(s32 >= 0, "another display size is a distinct entry")
+    must(s32 != s, "distinct slot")
+    must(zeus.image_cache_count() == 2, "two entries")
+    // As is the image id.
+    let sother = zeus.image_get(2, checker, 16, 16)
+    must(sother >= 0, "the same size under another id is distinct")
+    must(zeus.image_cache_count() == 3, "three entries")
+
+    // --- upscaling a gradient is monotone and stays in range --------------
+    let g = zeus.image_get(3, grad, 64, 96)
+    must(g >= 0, "gradient upscaled")
+    must(zeus.image_w(g) == 64, "64 wide")
+    must(zeus.image_h(g) == 96, "96 tall")
+    must(zeus.image_get_px(g, 0, 0, 0) == 0, "black stays black")
+    must(zeus.image_get_px(g, 63, 0, 0) == 255, "white stays white")
+    let mut mono = 1
+    let mut x = 1
+    while x < 64 {
+        if zeus.image_get_px(g, x, 40, 0) < zeus.image_get_px(g, x - 1, 40, 0) {
+            mono = 0
+        }
+        x = x + 1
+    }
+    must(mono == 1, "the upscale is monotone (Mitchell clamps, no ringing)")
+    // Rows of a horizontal gradient are identical.
+    must(zeus.image_get_px(g, 30, 0, 0) == zeus.image_get_px(g, 30, 95, 0),
+         "the vertical pass preserves a horizontal gradient")
+
+    // --- a 1x downscale keeps the pattern (no blur to oblivion) -----------
+    let half = zeus.image_get(4, grad, 32, 24)
+    must(half >= 0, "half-size gradient")
+    must(zeus.image_get_px(half, 31, 0, 0) > 200, "the bright end survives")
+
+    // --- the cache honours a fixed byte budget with LRU eviction ----------
+    zeus.image_cache_clear()
+    zeus.image_set_budget(4096)
+    // 1024, 1600, 2304, 3136, 1024 bytes: the running total passes the budget
+    // on the third request, so eviction has to happen, and only ever of the
+    // least recently used entry.
+    let sizes: []int = []int { 16, 20, 24, 28, 16 }
+    let mut k = 0
+    while k < sizes.len {
+        let slot = zeus.image_get(9, checker, sizes[k], sizes[k])
+        must(slot >= 0, "a small image fits the budget")
+        must(zeus.image_cache_bytes() <= zeus.image_cache_budget(),
+             "the budget invariant holds")
+        k = k + 1
+    }
+    must(zeus.image_cache_eviction_count() > 0, "eviction kept it under budget")
+    must(zeus.image_cache_count() <= zeus.image_cache_capacity(), "pool bounded")
+    must(zeus.image_cache_bytes() <= 4096, "never over budget")
+
+    // A single image bigger than the whole budget is refused, not stored.
+    let refusals = zeus.image_cache_refusal_count()
+    must(zeus.image_get(9, checker, 64, 64) < 0, "an over-budget image is refused")
+    must(zeus.image_cache_refusal_count() == refusals + 1, "and counted")
+    must(zeus.image_cache_bytes() <= 4096, "a refusal never stores anything")
+
+    // An encoded input that is not an image fails without disturbing the cache.
+    // (A fresh key, so this is a miss and the bytes are actually examined.)
+    let before = zeus.image_cache_bytes()
+    must(zeus.image_get(77, "definitely not a png", 16, 16) < 0, "junk refused")
+    must(zeus.image_cache_bytes() == before, "and the cache is untouched")
+
+    // --- compositing onto the framebuffer ---------------------------------
+    zeus.image_cache_clear()
+    zeus.image_set_budget(8 * 1024 * 1024)
+    zeus.raster_ensure(48, 48, 1)
+    zeus.raster_clear(255, 255, 255)
+    let c16 = zeus.image_get(5, checker, 16, 16)
+    must(c16 >= 0, "16x16 for the blit")
+    zeus.image_blit(c16, 8, 8, 255)
+    // The averaged grey lands in the middle of the surface.
+    let mid = zeus.raster_get(8 + 8, 8 + 8, 2)
+    must(mid >= 118 && mid <= 138, "the image composited as mid grey")
+    must(zeus.raster_get(2, 2, 2) == 255, "outside the image is untouched")
+
+    fmt.println("image resize ok", zeus.image_cache_count(),
+                zeus.image_cache_eviction_count(), zeus.image_resize_count(),
+                zeus.image_mem_bytes())
+}

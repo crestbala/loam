@@ -493,3 +493,485 @@ fn png_get(x: int, y: int, c: int) -> int {
     }
     return int(png_px[(y * png_w + x) * 4 + c])
 }
+
+// --- resampling: separable Mitchell (Phase 4) -------------------------------
+//
+// Bilinear alone aliases badly on a large downscale, so the kernel is WIDENED
+// by the reduction factor: the support becomes 2 * scale source pixels, which
+// makes the filter area-correct (each output pixel averages the input region it
+// represents) instead of point-sampling it. Two passes, horizontal then
+// vertical, with the same 1-D kernel.
+//
+// The filter runs on PREMULTIPLIED pixels, so a transparent edge cannot bleed
+// its colour, and the result is unpremultiplied on the way into the cache so
+// the framebuffer's existing straight-source blend can composite it.
+
+let mut img_tmp: []u8 = []u8 {}
+let mut wgt_i: []int = []int {}
+let mut wgt_w: []float = []float {}
+let mut img_resizes: int = 0
+
+/// Mitchell-Netravali kernel with B = C = 1/3 (the usual "Mitchell" settings).
+/// Defined for t >= 0; support is 2.
+fn mitchell(t: float) -> float {
+    let x = t
+    let b = 1.0 / 3.0
+    let c = 1.0 / 3.0
+    if x < 1.0 {
+        let a3 = 12.0 - 9.0 * b - 6.0 * c
+        let a2 = 0.0 - 18.0 + 12.0 * b + 6.0 * c
+        let a0 = 6.0 - 2.0 * b
+        return (a3 * x * x * x + a2 * x * x + a0) / 6.0
+    }
+    if x < 2.0 {
+        let b3 = 0.0 - b - 6.0 * c
+        let b2 = 6.0 * b + 30.0 * c
+        let b1 = 0.0 - 12.0 * b - 48.0 * c
+        let b0 = 8.0 * b + 24.0 * c
+        return (b3 * x * x * x + b2 * x * x + b1 * x + b0) / 6.0
+    }
+    return 0.0
+}
+
+/// Build the tap list and normalized weights for output index `i`, mapping
+/// `in_n` source samples onto `out_n`. Out-of-range taps clamp to the edge.
+fn mitchell_taps(i: int, in_n: int, out_n: int) {
+    while wgt_i.len > 0 {
+        pop(wgt_i)
+    }
+    while wgt_w.len > 0 {
+        pop(wgt_w)
+    }
+    let scale = float(in_n) / float(out_n)
+    let mut f = scale
+    if f < 1.0 {
+        f = 1.0
+    }
+    let radius = 2.0 * f
+    let center = (float(i) + 0.5) * scale - 0.5
+    let lo = i32(raster.raster_floor(center - radius))
+    let hi = i32(raster.raster_ceil(center + radius))
+    let mut sum = 0.0
+    let mut k = lo
+    while k <= hi {
+        let w = mitchell(raster.raster_fabs((float(k) - center) / f))
+        if w > 0.0 {
+            push(wgt_i, k)
+            push(wgt_w, w)
+            sum = sum + w
+        }
+        k = k + 1
+    }
+    if sum <= 0.0 {
+        // Degenerate (no tap landed): fall back to the nearest sample.
+        push(wgt_i, i32(raster.raster_floor(center + 0.5)))
+        push(wgt_w, 1.0)
+        return
+    }
+    let mut j = 0
+    while j < wgt_w.len {
+        wgt_w[j] = wgt_w[j] / sum
+        j = j + 1
+    }
+}
+
+/// Horizontal pass: `sw`x`sh` source -> `dw`x`sh` into `out`.
+fn mitchell_x(sp: []u8, sw: int, sh: int, dw: int, out: &mut []u8) {
+    let mut y = 0
+    while y < sh {
+        let srow = y * sw
+        let drow = y * dw
+        let mut i = 0
+        while i < dw {
+            mitchell_taps(i, sw, dw)
+            let o = (drow + i) * 4
+            let mut c = 0
+            while c < 4 {
+                let mut acc = 0.0
+                let mut t = 0
+                while t < wgt_i.len {
+                    let mut sx = wgt_i[t]
+                    if sx < 0 {
+                        sx = 0
+                    }
+                    if sx > sw - 1 {
+                        sx = sw - 1
+                    }
+                    acc = acc + float(int(sp[(srow + sx) * 4 + c])) * wgt_w[t]
+                    t = t + 1
+                }
+                out[o + c] = u8(raster.raster_clamp_byte(i32(acc + 0.5)))
+                c = c + 1
+            }
+            i = i + 1
+        }
+        y = y + 1
+    }
+}
+
+/// Vertical pass: `dw`x`sh` -> `dw`x`dh` into `out`.
+fn mitchell_y(tp: []u8, dw: int, sh: int, dh: int, out: &mut []u8) {
+    let mut i = 0
+    while i < dh {
+        mitchell_taps(i, sh, dh)
+        let mut y = 0
+        while y < dw {
+            let o = (i * dw + y) * 4
+            let mut c = 0
+            while c < 4 {
+                let mut acc = 0.0
+                let mut t = 0
+                while t < wgt_i.len {
+                    let mut sy = wgt_i[t]
+                    if sy < 0 {
+                        sy = 0
+                    }
+                    if sy > sh - 1 {
+                        sy = sh - 1
+                    }
+                    acc = acc + float(int(tp[(sy * dw + y) * 4 + c])) * wgt_w[t]
+                    t = t + 1
+                }
+                out[o + c] = u8(raster.raster_clamp_byte(i32(acc + 0.5)))
+                c = c + 1
+            }
+            y = y + 1
+        }
+        i = i + 1
+    }
+}
+
+/// Resample `png_px` (`sw`x`sh`, premultiplied) into `dst` (`dw`x`dh`,
+/// UNPREMULTIPLIED, the form the framebuffer blend wants).
+fn mitchell_resize(sw: int, sh: int, dw: int, dh: int, dst: &mut []u8) {
+    img_resizes = img_resizes + 1
+    // Horizontal pass into the scratch, sized sh x dw.
+    let need = sh * dw * 4
+    while img_tmp.len < need {
+        push(img_tmp, u8(0))
+    }
+    mitchell_x(png_px, sw, sh, dw, &mut img_tmp)
+    // Vertical pass, then unpremultiply into the destination.
+    mitchell_y(img_tmp, dw, sh, dh, dst)
+    let mut p = 0
+    while p < dst.len {
+        let a = int(dst[p + 3])
+        if a == 0 {
+            dst[p] = u8(0)
+            dst[p + 1] = u8(0)
+            dst[p + 2] = u8(0)
+        } else if a < 255 {
+            dst[p] = u8((int(dst[p]) * 255 + a / 2) / a)
+            dst[p + 1] = u8((int(dst[p + 1]) * 255 + a / 2) / a)
+            dst[p + 2] = u8((int(dst[p + 2]) * 255 + a / 2) / a)
+        }
+        p = p + 4
+    }
+}
+
+fn mitchell_resize_count() -> int {
+    return img_resizes
+}
+
+// --- the resized-image cache: a fixed byte budget with LRU ------------------
+
+const IMG_CACHE_MAX: int = 64
+const IMG_BUDGET_DEFAULT: int = 8 * 1024 * 1024
+
+let mut img_id: []int = []int {}
+let mut img_dw: []int = []int {}
+let mut img_dh: []int = []int {}
+let mut img_live: []int = []int {}
+let mut img_prev: []int = []int {}
+let mut img_next: []int = []int {}
+let mut img_free: []int = []int {}
+let mut img_px: [][]u8 = [][]u8 {}
+
+let mut img_head: int = -1
+let mut img_tail: int = -1
+let mut img_count: int = 0
+let mut img_bytes: int = 0
+let mut img_budget: int = IMG_BUDGET_DEFAULT
+let mut img_ready: int = 0
+
+let mut img_hits: int = 0
+let mut img_misses: int = 0
+let mut img_evicts: int = 0
+let mut img_refusals: int = 0
+
+fn img_init() {
+    if img_ready != 0 {
+        return
+    }
+    img_ready = 1
+    let mut s = 0
+    while s < IMG_CACHE_MAX {
+        push(img_id, 0)
+        push(img_dw, 0)
+        push(img_dh, 0)
+        push(img_live, 0)
+        push(img_prev, -1)
+        push(img_next, -1)
+        push(img_px, []u8 {})
+        s = s + 1
+    }
+    s = IMG_CACHE_MAX - 1
+    while s >= 0 {
+        push(img_free, s)
+        s = s - 1
+    }
+}
+
+fn img_lru_unlink(s: int) {
+    let p = img_prev[s]
+    let n = img_next[s]
+    if p == -1 {
+        img_head = n
+    } else {
+        img_next[p] = n
+    }
+    if n == -1 {
+        img_tail = p
+    } else {
+        img_prev[n] = p
+    }
+    img_prev[s] = -1
+    img_next[s] = -1
+}
+
+fn img_touch(s: int) {
+    if img_head == s {
+        return
+    }
+    img_lru_unlink(s)
+    img_prev[s] = -1
+    img_next[s] = img_head
+    if img_head != -1 {
+        img_prev[img_head] = s
+    }
+    img_head = s
+    if img_tail == -1 {
+        img_tail = s
+    }
+}
+
+fn img_drop(s: int) {
+    if img_live[s] == 0 {
+        return
+    }
+    img_live[s] = 0
+    img_lru_unlink(s)
+    img_bytes = img_bytes - img_px[s].len
+    img_px[s] = []u8 {}
+    push(img_free, s)
+    img_count = img_count - 1
+    img_evicts = img_evicts + 1
+}
+
+fn img_find(id: int, dw: int, dh: int) -> int {
+    let mut s = img_head
+    while s != -1 {
+        if img_live[s] == 1 {
+            if img_id[s] == id {
+                if img_dw[s] == dw {
+                    if img_dh[s] == dh {
+                        return s
+                    }
+                }
+            }
+        }
+        s = img_next[s]
+    }
+    return -1
+}
+
+fn img_evict_one() -> int {
+    if img_tail == -1 {
+        return 0
+    }
+    img_drop(img_tail)
+    return 1
+}
+
+/// Resized image for (id, dw, dh), decoding and resampling on a miss. Returns
+/// the slot, or -1 when the image cannot be decoded or does not fit the budget.
+fn img_get(id: int, encoded: string, dw: int, dh: int) -> int {
+    img_init()
+    if dw <= 0 || dh <= 0 {
+        return -1
+    }
+    let have = img_find(id, dw, dh)
+    if have >= 0 {
+        img_touch(have)
+        img_hits = img_hits + 1
+        return have
+    }
+    img_misses = img_misses + 1
+    let need = dw * dh * 4
+    if need > img_budget {
+        // One image larger than the whole budget: refused and counted, never
+        // stored. This is also what stops a full-resolution decode from being
+        // retained for a thumbnail.
+        img_refusals = img_refusals + 1
+        return -1
+    }
+    if png_decode(encoded) != 1 {
+        return -1
+    }
+    while img_bytes + need > img_budget {
+        if img_evict_one() == 0 {
+            break
+        }
+    }
+    if img_free.len == 0 {
+        if img_evict_one() == 0 {
+            img_refusals = img_refusals + 1
+            return -1
+        }
+    }
+    if img_free.len == 0 {
+        img_refusals = img_refusals + 1
+        return -1
+    }
+    let s = pop(img_free)
+    img_id[s] = id
+    img_dw[s] = dw
+    img_dh[s] = dh
+    img_px[s] = []u8 {}
+    let mut n = 0
+    while n < need {
+        push(img_px[s], u8(0))
+        n = n + 1
+    }
+    mitchell_resize(png_w, png_h, dw, dh, &mut img_px[s])
+    img_live[s] = 1
+    img_prev[s] = -1
+    img_next[s] = img_head
+    if img_head != -1 {
+        img_prev[img_head] = s
+    }
+    img_head = s
+    if img_tail == -1 {
+        img_tail = s
+    }
+    img_count = img_count + 1
+    img_bytes = img_bytes + need
+    return s
+}
+
+/// Composite a cached image at (x, y) with `alpha` as a multiplier 0..255.
+fn img_blit(s: int, x: int, y: int, alpha: int) {
+    if s < 0 || s >= IMG_CACHE_MAX {
+        return
+    }
+    if img_live[s] == 0 {
+        return
+    }
+    if alpha <= 0 {
+        return
+    }
+    let w = img_dw[s]
+    let h = img_dh[s]
+    let mut r = 0
+    while r < h {
+        let mut c = 0
+        while c < w {
+            let p = (r * w + c) * 4
+            let a = int(img_px[s][p + 3]) * alpha / 255
+            if a > 0 {
+                raster.raster_blend(x + c, y + r, int(img_px[s][p]),
+                                    int(img_px[s][p + 1]), int(img_px[s][p + 2]), a)
+            }
+            c = c + 1
+        }
+        r = r + 1
+    }
+}
+
+fn img_w(s: int) -> int {
+    if s < 0 || s >= IMG_CACHE_MAX {
+        return 0
+    }
+    return img_dw[s]
+}
+
+fn img_h(s: int) -> int {
+    if s < 0 || s >= IMG_CACHE_MAX {
+        return 0
+    }
+    return img_dh[s]
+}
+
+fn img_get_px(s: int, x: int, y: int, c: int) -> int {
+    if s < 0 || s >= IMG_CACHE_MAX {
+        return 0
+    }
+    if img_live[s] == 0 {
+        return 0
+    }
+    if x < 0 || y < 0 || x >= img_dw[s] || y >= img_dh[s] {
+        return 0
+    }
+    if c < 0 || c > 3 {
+        return 0
+    }
+    return int(img_px[s][(y * img_dw[s] + x) * 4 + c])
+}
+
+fn img_cache_count() -> int {
+    return img_count
+}
+
+fn img_cache_bytes() -> int {
+    return img_bytes
+}
+
+fn img_cache_budget() -> int {
+    return img_budget
+}
+
+fn img_cache_capacity() -> int {
+    return IMG_CACHE_MAX
+}
+
+fn img_hit_count() -> int {
+    return img_hits
+}
+
+fn img_miss_count() -> int {
+    return img_misses
+}
+
+fn img_eviction_count() -> int {
+    return img_evicts
+}
+
+fn img_refusal_count() -> int {
+    return img_refusals
+}
+
+fn img_set_budget(b: int) {
+    img_init()
+    img_budget = b
+    while img_bytes > img_budget {
+        if img_evict_one() == 0 {
+            break
+        }
+    }
+}
+
+fn img_cache_clear() {
+    img_init()
+    while img_tail != -1 {
+        img_drop(img_tail)
+    }
+    img_hits = 0
+    img_misses = 0
+    img_evicts = 0
+    img_refusals = 0
+}
+
+/// Bytes held by the resized-image cache and its resample scratch.
+fn img_mem_bytes() -> i64 {
+    return i64(img_bytes) + i64(img_tmp.len)
+}
