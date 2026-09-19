@@ -141,10 +141,18 @@ typedef struct {
     char *cname;
 } Mono;
 
-static Mono monos[256];
+/* Caps on the session-wide symbol tables. These were 256 and, worse, dropped
+   entries SILENTLY once full (`gvars`) or without a diagnostic (`monos`), so a
+   large program failed later with a bogus "unknown identifier" for a global
+   that was merely the one-thousandth. Sized for the whole std tree plus app
+   modules, and every overflow is now a compile error, not a drop. */
+#define LOAM_MAX_MONOS 2048
+#define LOAM_MAX_STRUCT_INSTS 2048
+
+static Mono monos[LOAM_MAX_MONOS];
 static int nmono;
 
-static Type *struct_insts[256];
+static Type *struct_insts[LOAM_MAX_STRUCT_INSTS];
 static int nstruct_insts;
 
 typedef struct {
@@ -152,7 +160,10 @@ typedef struct {
     char *cname;
     int mod;
 } GVar;
-static GVar gvars[256];
+/* Session-wide module globals. 4096 leaves ample room for the std tree (Zeus
+   alone declares hundreds) plus a large app. */
+#define LOAM_MAX_GLOBALS 4096
+static GVar gvars[LOAM_MAX_GLOBALS];
 static int ngvars;
 
 static AstNode *find_struct(const char *name);
@@ -326,7 +337,10 @@ static void record_mono(AstNode *fn, Type **args, size_t n, const char *cname) {
             if (!type_eq(monos[i].args[k], args[k])) same = 0;
         if (same) return;
     }
-    if (nmono >= 256) return;
+    if (nmono >= LOAM_MAX_MONOS) {
+        err(fn->loc, "too many generic instantiations (max %d)", LOAM_MAX_MONOS);
+        return;
+    }
     Type **copy = calloc(n, sizeof(Type *));
     if (n && args) memcpy(copy, args, n * sizeof(Type *));
     monos[nmono].fn = fn;
@@ -719,7 +733,11 @@ static Type *make_struct_inst(AstNode *st, Type **args, size_t n) {
         t->field_names[i] = loam_dup(tmpl->field_names[i]);
         t->field_types[i] = subst_type(tmpl->field_types[i], st->as.strct.tparams, args, n);
     }
-    if (nstruct_insts < 256) struct_insts[nstruct_insts++] = t;
+    if (nstruct_insts >= LOAM_MAX_STRUCT_INSTS) {
+        err(st->loc, "too many generic struct instantiations (max %d)", LOAM_MAX_STRUCT_INSTS);
+        return t;
+    }
+    struct_insts[nstruct_insts++] = t;
     return t;
 }
 
@@ -3810,7 +3828,9 @@ int typecheck_modules(LoamModule *mods, int nmods) {
             AstNode *d = p->as.program.decls[i];
             if (d->kind != AST_VAR_DECL) continue;
             check_stmt(d);
-            if (ngvars < 256) {
+            if (ngvars >= LOAM_MAX_GLOBALS) {
+                err(d->loc, "too many module globals (max %d)", LOAM_MAX_GLOBALS);
+            } else {
                 char buf[256];
                 if (m == 0)
                     snprintf(buf, sizeof buf, "loam_%s", d->as.var.name);

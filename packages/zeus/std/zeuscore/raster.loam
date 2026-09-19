@@ -377,3 +377,523 @@ fn raster_quantize(x: int, y: int, v: float) -> int {
     let d = float(raster_dither(x, y) - 31) / 64.0
     return raster_clamp_byte(i32(v + d + 0.5))
 }
+
+// --- geometry: flattened convex paths, analytic coverage (Phase 4) ---------
+//
+// A filled shape is a convex path in DEVICE pixels (a rounded rect is four
+// straight edges and four quarter arcs; a circle is one rounded rect). Coverage
+// is the exact area of path ∩ pixel, so an edge that crosses a pixel diagonally
+// is graded smoothly. This is analytic coverage — not 2x/4x point sampling.
+//
+// The one invariant tiles depend on: coverage is computed from the path's
+// GLOBAL device coordinates and only the WRITE is clipped to the region passed
+// in. So rasterizing in 256x256 tiles is byte-identical to rasterizing the
+// whole surface at once, with no seams along tile boundaries. The tile test
+// asserts exactly that.
+
+const RASTER_PI: float = 3.14159265358979
+const RASTER_HALF_PI: float = 1.5707963267949
+const RASTER_TAU: float = 6.28318530717959
+const RASTER_R2: float = 0.5
+const RASTER_R3: float = 0.166666666666667
+const RASTER_R4: float = 0.0416666666666667
+const RASTER_R5: float = 0.00833333333333333
+const RASTER_R6: float = 0.00138888888888889
+const RASTER_R7: float = 0.000198412698412698
+const RASTER_R8: float = 0.0000248015873015873
+const RASTER_R9: float = 0.00000275573192239859
+const RASTER_R10: float = 0.000000275573192239859
+
+/// Flattening tolerance in DEVICE pixels: a curve is subdivided until its chord
+/// error is under this, so a rounded corner stays smooth at every scale.
+const RASTER_FLAT_TOL: float = 0.25
+
+struct RPoint {
+    x: float,
+    y: float,
+}
+
+/// The current path (device pixels) and the scratch polygons used to clip it.
+/// All three are popped to zero, never dropped, so a steady frame allocates
+/// nothing.
+let mut rp_path: []RPoint = []RPoint {}
+let mut rp_clip_a: []RPoint = []RPoint {}
+let mut rp_clip_out: []RPoint = []RPoint {}
+let mut rp_active: []int = []int {}
+
+fn raster_fabs(x: float) -> float {
+    if x < 0.0 {
+        return 0.0 - x
+    }
+    return x
+}
+
+/// Newton's method; `x > 0`. Used only to size curve subdivisions.
+fn raster_sqrt(x: float) -> float {
+    if x <= 0.0 {
+        return 0.0
+    }
+    let mut g = x
+    if g < 1.0 {
+        g = 1.0
+    }
+    let mut i = 0
+    while i < 26 {
+        g = 0.5 * (g + x / g)
+        i = i + 1
+    }
+    return g
+}
+
+fn raster_floor(x: float) -> float {
+    let t = f32(i32(x))
+    if t > x {
+        return t - 1.0
+    }
+    return t
+}
+
+fn raster_ceil(x: float) -> float {
+    let t = f32(i32(x))
+    if t < x {
+        return t + 1.0
+    }
+    return t
+}
+
+fn raster_min_f(a: float, b: float) -> float {
+    if a < b {
+        return a
+    }
+    return b
+}
+
+fn raster_max_f(a: float, b: float) -> float {
+    if a > b {
+        return a
+    }
+    return b
+}
+
+fn raster_min_i(a: int, b: int) -> int {
+    if a < b {
+        return a
+    }
+    return b
+}
+
+// sin/cos, reduced into the polynomial's interval (same approach as the PPM
+// demos' mathf; there is no std:math and no libm seam).
+fn raster_wrap(x: float) -> float {
+    return x - RASTER_TAU * raster_round(x / RASTER_TAU)
+}
+
+fn raster_sin_kernel(t: float) -> float {
+    let z = t * t
+    return t * (1.0 - z * (RASTER_R3 - z * (RASTER_R5 - z * (RASTER_R7 - z * RASTER_R9))))
+}
+
+fn raster_cos_kernel(t: float) -> float {
+    let z = t * t
+    return 1.0 - z * (RASTER_R2 - z * (RASTER_R4 - z * (RASTER_R6 - z * (RASTER_R8 - z * RASTER_R10))))
+}
+
+fn raster_sin(x: float) -> float {
+    let r = raster_wrap(x)
+    let a = raster_fabs(r)
+    let mut t = a
+    if a > RASTER_HALF_PI {
+        t = RASTER_PI - a
+    }
+    let s = raster_sin_kernel(t)
+    if r < 0.0 {
+        return 0.0 - s
+    }
+    return s
+}
+
+fn raster_cos(x: float) -> float {
+    let r = raster_wrap(x)
+    let mut a = raster_fabs(r)
+    let mut s = 1.0
+    if a > RASTER_HALF_PI {
+        a = RASTER_PI - a
+        s = 0.0 - 1.0
+    }
+    return s * raster_cos_kernel(a)
+}
+
+/// Append the arc from angle `a0` to `a1` on the circle (cx, cy, rad), both
+/// endpoints included so a corner meets its straight edges exactly.
+fn raster_arc(cx: float, cy: float, rad: float, a0: float, a1: float, nseg: int) {
+    let mut k = 0
+    while k <= nseg {
+        let t = float(k) / float(nseg)
+        let ang = a0 + (a1 - a0) * t
+        push(rp_path, RPoint { x: cx + rad * raster_cos(ang), y: cy + rad * raster_sin(ang) })
+        k = k + 1
+    }
+}
+
+/// Build a clockwise rounded rectangle in device pixels. `rad` is clamped to
+/// half the shorter side, and 0 gives a plain rectangle.
+fn raster_round_rect(x: float, y: float, w: float, h: float, r: float) {
+    while rp_path.len > 0 {
+        pop(rp_path)
+    }
+    let short = raster_min_f(w, h) * 0.5
+    let mut rad = r
+    if rad > short {
+        rad = short
+    }
+    if rad < 0.0 {
+        rad = 0.0
+    }
+    if rad <= 0.0 {
+        push(rp_path, RPoint { x: x, y: y })
+        push(rp_path, RPoint { x: x + w, y: y })
+        push(rp_path, RPoint { x: x + w, y: y + h })
+        push(rp_path, RPoint { x: x, y: y + h })
+        return
+    }
+    let mut theta = raster_sqrt(8.0 * RASTER_FLAT_TOL / rad)
+    if theta < 0.05 {
+        theta = 0.05
+    }
+    let mut nseg = i32(RASTER_HALF_PI / theta) + 1
+    if nseg < 2 {
+        nseg = 2
+    }
+    push(rp_path, RPoint { x: x + rad, y: y })
+    push(rp_path, RPoint { x: x + w - rad, y: y })
+    raster_arc(x + w - rad, y + rad, rad, 0.0 - RASTER_HALF_PI, 0.0, nseg)
+    raster_arc(x + w - rad, y + h - rad, rad, 0.0, RASTER_HALF_PI, nseg)
+    raster_arc(x + rad, y + h - rad, rad, RASTER_HALF_PI, RASTER_PI, nseg)
+    raster_arc(x + rad, y + rad, rad, RASTER_PI, RASTER_PI + RASTER_HALF_PI, nseg)
+}
+
+/// Edge indices whose y-extent overlaps pixel row `py`, skipping degenerate
+/// edges. Only the few edges in the row band are tested per pixel.
+fn raster_row_active(py: int) {
+    while rp_active.len > 0 {
+        pop(rp_active)
+    }
+    let n = rp_path.len
+    let y0 = float(py)
+    let y1 = y0 + 1.0
+    let mut i = 0
+    while i < n {
+        let a = rp_path[i]
+        let b = rp_path[(i + 1) % n]
+        let lo = raster_min_f(a.y, b.y)
+        let hi = raster_max_f(a.y, b.y)
+        if hi > lo {
+            if hi > y0 {
+                if lo < y1 {
+                    push(rp_active, i)
+                }
+            }
+        }
+        i = i + 1
+    }
+}
+
+/// Even-odd point-in-path at (x, y).
+fn raster_point_inside(x: float, y: float) -> int {
+    let n = rp_path.len
+    let mut inside = 0
+    let mut i = 0
+    while i < n {
+        let a = rp_path[i]
+        let b = rp_path[(i + 1) % n]
+        let a_lo = a.y <= y
+        let b_lo = b.y <= y
+        if a_lo != b_lo {
+            let xint = a.x + (y - a.y) * (b.x - a.x) / (b.y - a.y)
+            if x < xint {
+                inside = 1 - inside
+            }
+        }
+        i = i + 1
+    }
+    return inside
+}
+
+/// A Liang-Barsky result: the trimmed parameter interval and whether the
+/// segment survives it.
+struct LB {
+    t0: float,
+    t1: float,
+    ok: int,
+}
+
+fn raster_lb(p: float, q: float, t0: float, t1: float) -> LB {
+    if p == 0.0 {
+        if q < 0.0 {
+            return LB { t0: t0, t1: t1, ok: 0 }
+        }
+        return LB { t0: t0, t1: t1, ok: 1 }
+    }
+    let r = q / p
+    if p < 0.0 {
+        if r > t1 {
+            return LB { t0: t0, t1: t1, ok: 0 }
+        }
+        let mut n0 = t0
+        if r > n0 {
+            n0 = r
+        }
+        return LB { t0: n0, t1: t1, ok: 1 }
+    }
+    if r < t0 {
+        return LB { t0: t0, t1: t1, ok: 0 }
+    }
+    let mut n1 = t1
+    if r < n1 {
+        n1 = r
+    }
+    return LB { t0: t0, t1: n1, ok: 1 }
+}
+
+/// Does segment a→b touch the unit pixel square at (px, py)?
+fn raster_edge_hits_square(a: RPoint, b: RPoint, px: int, py: int) -> int {
+    let xmin = float(px)
+    let xmax = xmin + 1.0
+    let ymin = float(py)
+    let ymax = ymin + 1.0
+    let dx = b.x - a.x
+    let dy = b.y - a.y
+    let s1 = raster_lb(0.0 - dx, a.x - xmin, 0.0, 1.0)
+    if s1.ok == 0 {
+        return 0
+    }
+    let s2 = raster_lb(dx, xmax - a.x, s1.t0, s1.t1)
+    if s2.ok == 0 {
+        return 0
+    }
+    let s3 = raster_lb(0.0 - dy, a.y - ymin, s2.t0, s2.t1)
+    if s3.ok == 0 {
+        return 0
+    }
+    let s4 = raster_lb(dy, ymax - a.y, s3.t0, s3.t1)
+    if s4.ok == 0 {
+        return 0
+    }
+    return 1
+}
+
+fn raster_coord(p: RPoint, axis: int) -> float {
+    if axis == 0 {
+        return p.x
+    }
+    return p.y
+}
+
+fn raster_in_keep(v: float, bound: float, keep_ge: int) -> int {
+    if keep_ge == 1 {
+        if v >= bound {
+            return 1
+        }
+        return 0
+    }
+    if v <= bound {
+        return 1
+    }
+    return 0
+}
+
+/// Clip `rp_clip_a` by one half-plane into `rp_clip_out` (Sutherland-Hodgman;
+/// valid because the path is convex, so clipping keeps it convex).
+fn raster_clip_global(axis: int, bound: float, keep_ge: int) {
+    while rp_clip_out.len > 0 {
+        pop(rp_clip_out)
+    }
+    let n = rp_clip_a.len
+    if n < 1 {
+        return
+    }
+    let mut i = 0
+    while i < n {
+        let cur = rp_clip_a[i]
+        let nxt = rp_clip_a[(i + 1) % n]
+        let cv = raster_coord(cur, axis)
+        let nv = raster_coord(nxt, axis)
+        let cin = raster_in_keep(cv, bound, keep_ge)
+        let nin = raster_in_keep(nv, bound, keep_ge)
+        if cin == 1 {
+            push(rp_clip_out, cur)
+        }
+        if cin != nin {
+            let t = (bound - cv) / (nv - cv)
+            push(rp_clip_out, RPoint { x: cur.x + t * (nxt.x - cur.x), y: cur.y + t * (nxt.y - cur.y) })
+        }
+        i = i + 1
+    }
+}
+
+fn raster_copy_out_to_a() {
+    while rp_clip_a.len > 0 {
+        pop(rp_clip_a)
+    }
+    let n = rp_clip_out.len
+    let mut i = 0
+    while i < n {
+        push(rp_clip_a, rp_clip_out[i])
+        i = i + 1
+    }
+}
+
+fn raster_poly_area(pts: []RPoint) -> float {
+    let n = pts.len
+    if n < 3 {
+        return 0.0
+    }
+    let mut a = 0.0
+    let mut i = 0
+    while i < n {
+        let j = (i + 1) % n
+        a = a + pts[i].x * pts[j].y - pts[j].x * pts[i].y
+        i = i + 1
+    }
+    return 0.5 * raster_fabs(a)
+}
+
+/// Exact coverage of pixel (px, py), 0..255: area of path ∩ pixel square.
+fn raster_pixel_area(px: int, py: int) -> int {
+    while rp_clip_a.len > 0 {
+        pop(rp_clip_a)
+    }
+    let n = rp_path.len
+    let mut i = 0
+    while i < n {
+        push(rp_clip_a, rp_path[i])
+        i = i + 1
+    }
+    raster_clip_global(0, float(px), 1)
+    raster_copy_out_to_a()
+    raster_clip_global(0, float(px) + 1.0, 0)
+    raster_copy_out_to_a()
+    raster_clip_global(1, float(py), 1)
+    raster_copy_out_to_a()
+    raster_clip_global(1, float(py) + 1.0, 0)
+    let area = raster_poly_area(rp_clip_out)
+    let mut c = i32(area * 255.0 + 0.5)
+    if c < 0 {
+        c = 0
+    }
+    if c > 255 {
+        c = 255
+    }
+    return c
+}
+
+/// Fill the current path, writing only inside [x0,x1) x [y0,y1). Coverage is
+/// always from global geometry, so the region is a clip on the write only.
+fn raster_fill_path(x0: int, y0: int, x1: int, y1: int, cr: int, cg: int, cb: int, alpha: int) {
+    raster_build()
+    let n = rp_path.len
+    if n < 3 {
+        return
+    }
+    if alpha <= 0 {
+        return
+    }
+    let mut minx = rp_path[0].x
+    let mut maxx = minx
+    let mut miny = rp_path[0].y
+    let mut maxy = miny
+    let mut i = 1
+    while i < n {
+        minx = raster_min_f(minx, rp_path[i].x)
+        maxx = raster_max_f(maxx, rp_path[i].x)
+        miny = raster_min_f(miny, rp_path[i].y)
+        maxy = raster_max_f(maxy, rp_path[i].y)
+        i = i + 1
+    }
+    let bx0 = raster_max_f(float(x0), raster_floor(minx))
+    let by0 = raster_max_f(float(y0), raster_floor(miny))
+    let bx1 = raster_min_f(float(x1), raster_ceil(maxx))
+    let by1 = raster_min_f(float(y1), raster_ceil(maxy))
+    let mut py = i32(by0)
+    let py_end = i32(by1)
+    while py < py_end {
+        raster_row_active(py)
+        let yc = float(py) + 0.5
+        let mut px = i32(bx0)
+        let px_end = i32(bx1)
+        while px < px_end {
+            let mut hit = 0
+            let na = rp_active.len
+            let mut k = 0
+            while k < na {
+                let e = rp_active[k]
+                if raster_edge_hits_square(rp_path[e], rp_path[(e + 1) % n], px, py) == 1 {
+                    hit = 1
+                }
+                k = k + 1
+            }
+            let mut cov = 0
+            if hit == 0 {
+                if raster_point_inside(float(px) + 0.5, yc) == 1 {
+                    cov = 255
+                }
+            } else {
+                cov = raster_pixel_area(px, py)
+            }
+            if cov > 0 {
+                let a = cov * alpha / 255
+                if a > 0 {
+                    raster_blend(px, py, cr, cg, cb, a)
+                }
+            }
+            px = px + 1
+        }
+        py = py + 1
+    }
+}
+
+/// Fill the current path as ONE region (whole surface).
+fn raster_fill_whole(cr: int, cg: int, cb: int, alpha: int) {
+    raster_fill_path(0, 0, fb_w, fb_h, cr, cg, cb, alpha)
+}
+
+/// Fill the current path in 256x256 tiles. Must be byte-identical to
+/// `raster_fill_whole`: the tile is a write clip, never a geometry clip.
+fn raster_fill_tiled(cr: int, cg: int, cb: int, alpha: int) {
+    let mut ty = 0
+    while ty < fb_h {
+        let y1 = raster_min_i(ty + RASTER_TILE, fb_h)
+        let mut tx = 0
+        while tx < fb_w {
+            let x1 = raster_min_i(tx + RASTER_TILE, fb_w)
+            raster_fill_path(tx, ty, x1, y1, cr, cg, cb, alpha)
+            tx = tx + RASTER_TILE
+        }
+        ty = ty + RASTER_TILE
+    }
+}
+
+/// Set every pixel opaque. Test/probe helper and the frame's first clear.
+fn raster_clear(r: int, g: int, b: int) {
+    raster_build()
+    let mut i = 0
+    while i < fb.len {
+        fb[i] = u8(raster_clamp_byte(b))
+        fb[i + 1] = u8(raster_clamp_byte(g))
+        fb[i + 2] = u8(raster_clamp_byte(r))
+        fb[i + 3] = u8(255)
+        i = i + 4
+    }
+}
+
+/// Rolling hash of the whole framebuffer, so a test can prove two rendering
+/// paths produced identical pixels without copying 20 MB around.
+fn raster_checksum() -> int {
+    let mut h: i64 = 0
+    let mut i = 0
+    while i < fb.len {
+        h = (h * 131 + i64(int(fb[i]))) % 1000000007
+        i = i + 1
+    }
+    return i32(h)
+}

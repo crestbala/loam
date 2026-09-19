@@ -326,7 +326,7 @@ step; doing them half-way is how a UI engine regresses silently):
 Net: Phase 3's free/ordering step is done and measured; its structural items
 (1-3) and the `f32` geometry requirement (4) remain open.
 
-### Phase 4 — software rasterizer (first step: framebuffer + color pipeline)
+### Phase 4 — software rasterizer (framebuffer + color pipeline + analytic tile coverage)
 
 - bytes/node: **476.0 — unchanged.** No tree/geometry code was touched.
 - New module `packages/zeus/std/zeuscore/raster.loam`:
@@ -353,10 +353,34 @@ Net: Phase 3's free/ordering step is done and measured; its structural items
   *pending* — it needs geometry rasterization + the blit, which is the rest of
   this phase.
 
-**Remaining Phase 4** (not done, and each is substantial): analytic tile
-coverage (256x256, global geometry then clip-to-write, with the multi-tile
-circle seam test), rounded-rect / stroke fills with pixel-grid snapping, tile-
-size single-channel shadow blur (3-pass separable box), damage-limited tile
-selection, the glyph atlas with in-tree TrueType/GPOS metrics, image decode with
-Mitchell/Lanczos2 downsampling and an LRU byte budget, the zero-copy blit, and
-the web (devicePixelRatio) path.
+**Analytic coverage (second step).** `raster.loam` flattens a rounded rect /
+circle into a convex device-pixel path and fills it with exact per-pixel area
+coverage — the path is clipped to each pixel (Sutherland-Hodgman, valid because
+the path is convex) and its area taken by shoelace. That is analytic coverage,
+not point sampling. Coverage is computed from GLOBAL geometry and only the WRITE
+is clipped to the region, so tiling cannot produce seams:
+
+- `zeus_raster_tiles.loam` fills a 520px circle spanning a 3x3 grid of 256px
+tiles; the tiled checksum **equals** the whole-surface checksum (373695643).
+- 1764 edge pixels are graded — values strictly between background and fill —
+so AA is real, and the interior/rounded-corner pixels are exact.
+- Curves flatten to a **0.25 DEVICE-pixel** tolerance; a plain rectangle's edges
+land exactly on the pixel grid (no half-lit rows).
+
+**Compiler bug this work surfaced.** Adding the raster module's ~40 globals and
+constants tipped four large programs (zeus_components / key_prop / reactive /
+spec_props) past a **silent 256-entry cap** in `typecheck.c`: `gvars[256]`,
+`monos[256]`, `struct_insts[256]` dropped entries once full with no diagnostic,
+so `std/async.loam`'s own globals became "unknown identifier" — a bogus error
+pointing at the wrong file. Raised to 4096 / 2048 / 2048 and every overflow is
+now a compile error instead of a silent drop. It is a latent compiler bug any
+large app could hit; Phase 4 is simply what surfaced it. (The full `nob test`
+run: 449 passed; the 6 failures are the network suites this sandbox blocks.)
+
+**Remaining Phase 4** (not done, and each is substantial): rounded-rect /
+stroke fills with pixel-grid hairline snapping (the analytic path exists; the
+stroke-as-four-rectangles and snapping are next), tile-size single-channel
+shadow blur (3-pass separable box), damage-limited tile selection, the glyph
+atlas with in-tree TrueType/GPOS metrics, image decode with Mitchell/Lanczos2
+downsampling and an LRU byte budget, the zero-copy blit, and the web
+(devicePixelRatio) path.

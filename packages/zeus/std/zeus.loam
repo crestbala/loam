@@ -2349,6 +2349,29 @@ fn raster_lin_to_srgb(b: int) -> int {
     return raster.raster_lin_to_srgb(b)
 }
 
+fn raster_clear(r: int, g: int, b: int) {
+    raster.raster_clear(r, g, b)
+}
+
+fn raster_checksum() -> int {
+    return raster.raster_checksum()
+}
+
+/// Fill a rounded rectangle as one region (whole surface).
+fn raster_fill_round_rect_whole(x: int, y: int, w: int, h: int, rad: int,
+                                cr: int, cg: int, cb: int, alpha: int) {
+    raster.raster_round_rect(float(x), float(y), float(w), float(h), float(rad))
+    raster.raster_fill_whole(cr, cg, cb, alpha)
+}
+
+/// Fill the same rounded rectangle in 256x256 tiles. Byte-identical to
+/// `_whole` is the seam guarantee.
+fn raster_fill_round_rect_tiled(x: int, y: int, w: int, h: int, rad: int,
+                                cr: int, cg: int, cb: int, alpha: int) {
+    raster.raster_round_rect(float(x), float(y), float(w), float(h), float(rad))
+    raster.raster_fill_tiled(cr, cg, cb, alpha)
+}
+
 fn damage_x(i: int) -> int {
     return arena.damage[i].x
 }
