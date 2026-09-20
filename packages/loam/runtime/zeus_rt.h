@@ -44,6 +44,9 @@ void loam_zeus_set(Signal sig, int64_t value);
 void loam_zeus_inc(Signal sig, int32_t delta);
 
 void loam_zeus_sig_bind(int64_t id, const void *src, int64_t n);
+/* Bind an owned `loam_str` payload: the cell keeps a reference and releases it
+   when the cell dies or is rebound to another type (see zeus_plat.c). */
+void loam_zeus_sig_bind_str(int64_t id, const void *src, int64_t n);
 void loam_zeus_sig_load(int64_t id, void *dst, int64_t n);
 int64_t loam_zeus_sig_changed(int64_t id, const void *src, int64_t n);
 int64_t loam_zeus_sig_gen(int64_t id);

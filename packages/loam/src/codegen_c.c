@@ -2167,9 +2167,10 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                     fprintf(o, "{ loam_vec _sigv = loam_vec_retain(&%s); loam_zeus_sig_bind(%s, &_sigv, sizeof(_sigv)); }\n",
                             lv(in->args[0]), lv(in->dst));
                 } else if (type_is_refcounted(vt)) {
-                    /* The cell takes its own reference to the string. */
+                    /* The cell takes its own reference to the string, and is
+                       released when the cell dies or changes type. */
                     fprintf(o, "{ loam_str _sigv = %s; loam_str_retain(_sigv); "
-                               "loam_zeus_sig_bind(%s, &_sigv, sizeof(_sigv)); }\n",
+                               "loam_zeus_sig_bind_str(%s, &_sigv, sizeof(_sigv)); }\n",
                             lv(in->args[0]), lv(in->dst));
                 } else {
                     fprintf(o, "loam_zeus_sig_bind(%s, &%s, sizeof(", lv(in->dst), lv(in->args[0]));
@@ -2224,7 +2225,7 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                             lv(in->args[0]));
                     indent(o, 2);
                     fprintf(o, "loam_str _new = %s; loam_str_retain(_new); "
-                               "loam_zeus_sig_bind(%s, &_new, sizeof(_new));\n",
+                               "loam_zeus_sig_bind_str(%s, &_new, sizeof(_new));\n",
                             lv(in->args[1]), lv(in->args[0]));
                     indent(o, 2);
                     fprintf(o, "loam_str_release(&_old); loam_arena_note_write(%s);\n", lv(in->args[0]));
