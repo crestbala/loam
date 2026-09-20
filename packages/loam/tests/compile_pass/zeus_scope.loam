@@ -1,0 +1,67 @@
+// Phase 7: a nested-computation disposal graph. `scope` re-runs like an effect,
+// but every computation its body created is disposed before it re-runs, so a
+// transient derivation cannot outlive the run that made it. A plain `effect`
+// still keeps what it created across re-runs.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("scope", 240, 160)
+    let t = zeus.signal(0)
+    let disposed = zeus.signal(0)
+
+    // A scope whose body creates one child effect. The child reads nothing, so
+    // its cleanup runs only when the scope disposes it.
+    zeus.scope(|| {
+        t.get()
+        zeus.effect(|| {
+            zeus.on_cleanup(|| { disposed.set(disposed.get() + 1) })
+        })
+    })
+    must(disposed.get() == 0, "nothing disposed after the first run")
+
+    // A re-run disposes the previous child (its cleanup runs) and makes a new one.
+    t.set(1)
+    must(disposed.get() == 1, "a scope re-run disposes the child it created")
+
+    // The table is recycled, not grown: repeated re-runs reuse the disposed rows.
+    let mut i = 0
+    while i < 3 {
+        t.set(i + 2)
+        i = i + 1
+    }
+    let rows_hi = zeus.reactive_rows()
+    let sigs_hi = zeus.arena_sigs()
+    while i < 50 {
+        t.set(i + 2)
+        i = i + 1
+    }
+    must(zeus.reactive_rows() == rows_hi, "a re-running scope reuses its rows")
+    must(zeus.arena_sigs() == sigs_hi, "a re-running scope allocates no signal")
+    must(disposed.get() == 51, "every re-run disposed exactly one child")
+
+    // A plain `effect` keeps the computation it created across re-runs: its child
+    // is owned by the surrounding node, not by the effect, so no disposal here.
+    let s = zeus.signal(0)
+    let kept = zeus.signal(0)
+    zeus.effect(|| {
+        s.get()
+        zeus.effect(|| {
+            zeus.on_cleanup(|| { kept.set(kept.get() + 1) })
+        })
+    })
+    s.set(1)
+    s.set(2)
+    must(kept.get() == 0, "a plain effect does not dispose its children")
+
+    fmt.println("scope ok")
+}

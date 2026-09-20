@@ -42,6 +42,15 @@ let mut pending: []int = []int {}
 /* Per-effect cleanup handler (an interned fn id, 0 = none), run before the
    effect re-runs and when its dependency edges are dropped. */
 let mut cleanup_fn: []int = []int {}
+/// The computation whose body allocated this effect (0 at the top level). A
+/// `scope` re-run disposes its children first, so a nested computation never
+/// outlives the run that created it.
+let mut parent_eid: []int = []int {}
+/// 1 for an effect created by `scope`: re-running it disposes its children.
+let mut is_scope: []int = []int {}
+/// Rows disposed by a scope re-run, reused by `alloc`, so a scope that re-runs on
+/// every change does not grow the effect table.
+let mut eid_free: []int = []int {}
 
 fn boot() {
     if ready != 0 {
@@ -52,6 +61,8 @@ fn boot() {
     push(node_ids, 0)
     push(rank, 0)
     push(cleanup_fn, 0)
+    push(parent_eid, 0)
+    push(is_scope, 0)
 }
 
 fn reset() {
@@ -65,6 +76,9 @@ fn reset() {
     batch_depth = 0
     pending = []int {}
     cleanup_fn = []int {}
+    parent_eid = []int {}
+    is_scope = []int {}
+    eid_free = []int {}
     mute = 0
     ready = 0
     boot()
@@ -72,11 +86,37 @@ fn reset() {
 
 fn alloc(fn_id: int, node_id: int) -> int {
     boot()
-    push(fn_ids, fn_id)
-    push(node_ids, node_id)
-    push(rank, 0)
-    push(cleanup_fn, 0)
-    return fn_ids.len - 1
+    let mut idx = 0
+    if eid_free.len > 0 {
+        // Reuse a row a scope re-run disposed.
+        idx = eid_free[eid_free.len - 1]
+        pop(eid_free)
+        fn_ids[idx] = fn_id
+        node_ids[idx] = node_id
+        rank[idx] = 0
+        cleanup_fn[idx] = 0
+        is_scope[idx] = 0
+    } else {
+        push(fn_ids, fn_id)
+        push(node_ids, node_id)
+        push(rank, 0)
+        push(cleanup_fn, 0)
+        push(parent_eid, 0)
+        push(is_scope, 0)
+        idx = fn_ids.len - 1
+    }
+    // Parent is the computation whose body is running, if any.
+    parent_eid[idx] = current_eid()
+    return idx
+}
+
+/// `alloc` for a scope: re-running it disposes the computations it created.
+fn alloc_scope(fn_id: int, node_id: int) -> int {
+    let idx = alloc(fn_id, node_id)
+    if idx > 0 {
+        is_scope[idx] = 1
+    }
+    return idx
 }
 
 fn current_eid() -> int {
@@ -297,6 +337,8 @@ fn free_nodes_effects(ids: []int) {
                 pop(node_ids)
                 pop(rank)
                 pop(cleanup_fn)
+                pop(parent_eid)
+                pop(is_scope)
             } else {
                 // Drop the dead row's edges first, then fill the hole with
                 // the tail row and follow its edges to the new position.
@@ -317,19 +359,87 @@ fn free_nodes_effects(ids: []int) {
                         dep_eff[q] = i
                     }
                 }
+                // A child's parent is an effect index too, so it moves with the
+                // row it names.
+                for q in 0..parent_eid.len {
+                    if parent_eid[q] == last {
+                        parent_eid[q] = i
+                    }
+                }
                 fn_ids[i] = fn_ids[last]
                 node_ids[i] = node_ids[last]
                 rank[i] = rank[last]
                 cleanup_fn[i] = cleanup_fn[last]
+                parent_eid[i] = parent_eid[last]
+                is_scope[i] = is_scope[last]
                 pop(fn_ids)
                 pop(node_ids)
                 pop(rank)
                 pop(cleanup_fn)
+                pop(parent_eid)
+                pop(is_scope)
             }
             // The row swapped into `i` may itself be dead: re-check it.
         } else {
             i = i + 1
         }
+    }
+    // Compaction moved rows, so any recycled index no longer names a row.
+    while eid_free.len > 0 {
+        pop(eid_free)
+    }
+}
+
+/// Dispose `e`'s nested computations (recursively), then `e` itself: free the
+/// row so `alloc` can reuse it. The caller owns the removal of `e` from any
+/// pending list; rows are guarded by `fn_ids[e] == 0` in `run`.
+fn dispose_eid(e: int) {
+    if e <= 0 {
+        return
+    }
+    if e >= fn_ids.len {
+        return
+    }
+    if fn_ids[e] == 0 {
+        return
+    }
+    dispose_children(e)
+    // Drops the edges and runs the cleanup handler.
+    drop_eid_deps(e)
+    // The row's interned handler is not needed by anyone else, so return it: a
+    // scope that re-runs must not leak an intern id per run.
+    if fn_ids[e] != 0 {
+        platform.plat_intern_free(fn_ids[e])
+    }
+    fn_ids[e] = 0
+    node_ids[e] = 0
+    rank[e] = 0
+    cleanup_fn[e] = 0
+    parent_eid[e] = 0
+    is_scope[e] = 0
+    push(eid_free, e)
+}
+
+/// High-water size of the effect table. A scope that re-runs must reuse the rows
+/// it disposed, so this stays flat; exposed for tests.
+fn effect_rows() -> int {
+    boot()
+    return fn_ids.len
+}
+
+/// Dispose every computation whose body `e` allocated. Collected first, because
+/// disposing rewrites the tables the scan reads.
+fn dispose_children(e: int) {
+    let mut kids = []int {}
+    let n = parent_eid.len
+    for i in 1..n {
+        if parent_eid[i] == e {
+            push(kids, i)
+        }
+    }
+    let m = kids.len
+    for k in 0..m {
+        dispose_eid(kids[k])
     }
 }
 
@@ -340,6 +450,15 @@ fn run(effect_id: int) {
     }
     if effect_id >= fn_ids.len {
         return
+    }
+    if fn_ids[effect_id] == 0 {
+        // A disposed row (a scope dropped it, or a batch still names it).
+        return
+    }
+    // A scope re-run tears its nested computations down first, so a child never
+    // survives the run that created it.
+    if is_scope[effect_id] != 0 {
+        dispose_children(effect_id)
     }
     runs = runs + 1
     drop_eid_deps(effect_id)
