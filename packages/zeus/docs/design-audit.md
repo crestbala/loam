@@ -249,7 +249,7 @@ slots 1–36 and resolved at paint. Good bones; wrong shape for a design system.
 | 4pt spacing grid | `2, 6, 62` were off-grid | Snapped; enforced by `spacing_is_on_a_four_point_grid` |
 | Type: sizes, weights, line heights, tabular | Sizes only | `LEAD_TIGHT/SNUG/NORMAL/RELAXED` + `line_height()`. **Weights and tabular figures remain open** — `plat_text` carries a pixel size only |
 | Elevation 0–4 | **Absent**, inexpressible | `Elev` + `elevation` / `elevation_dark` / `elev_now`; dark roughly doubles alpha and tightens blur |
-| Motion fast/base/slow + easings | **Absent** | `MOTION.Fast/Base/Slow` = 120/200/320, `EASE.Linear/Standard/Emphasized/Spring` (curves land in phase 3) |
+| Motion fast/base/slow + easings | **Absent** | `MOTION.Fast/Base/Slow` = 100/170/270, `EASE.Linear/Standard/Emphasized/Spring` (curves land in phase 3) |
 | Focus ring color/width/offset | Colour only | `FOCUS_WIDTH` 2, `FOCUS_OFFSET` 2 |
 | WCAG AA on every pair | Unverified; `faint` on `bg` was **2.14:1** | 260 pairs checked in CI across 5 accents × 2 appearances |
 
@@ -359,7 +359,7 @@ hold."
 - **Width** changes keep `refit` — responsiveness across viewports is the point,
   and a width change is a discrete layout event, not something to animate.
 - **Value** changes interpolate paint-only against the cached post-refit rect at
-  `MOTION.base` (200 ms). Bar heights and line points only: no staggered series
+  `MOTION.base` (170 ms). Bar heights and line points only: no staggered series
   entry, no left-to-right line draw, no sweep. Those read as demo-ware and wear
   badly on a dashboard that updates on a timer.
 - **Mount** into a live tree gets one short fade + rise. The same chart present

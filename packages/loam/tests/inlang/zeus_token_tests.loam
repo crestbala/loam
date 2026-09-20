@@ -124,7 +124,7 @@ fn spacing_is_on_a_four_point_grid() {
 /// Motion has exactly three durations, ordered.
 #[test]
 fn motion_durations_are_ordered() {
-    test.assert_eq_int(MOTION.Fast, 120)
-    test.assert_eq_int(MOTION.Base, 200)
-    test.assert_eq_int(MOTION.Slow, 320)
+    test.assert_eq_int(MOTION.Fast, 100)
+    test.assert_eq_int(MOTION.Base, 170)
+    test.assert_eq_int(MOTION.Slow, 270)
 }

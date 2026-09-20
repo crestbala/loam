@@ -1,0 +1,61 @@
+// The wheel ease and momentum coast are frame-rate independent: they scale by the
+// frame's real delta, so a 120 Hz display eases over the same wall-clock time as a
+// 60 Hz one, and a long frame converges fast without overshooting the target.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:colors"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("scroll-dt", 320, 180)
+    let top = zeus.raw_scroll()
+    zeus.slot(top, fn() {
+        zeus.Box(align_direction = DIRECTION.Column) {
+            zeus.Box(height = 600)
+        }
+    })
+    zeus.root(top)
+    zeus.pump_frame()
+    let id = top.id
+
+    // A long frame (32 ms) advances the ease further than a 16 ms one, but never
+    // past the target.
+    zeus.engine_scroll_smooth(100, 100, 0, 100)
+    zeus.engine_step_dt(32)
+    zeus.pump_frame()
+    let y = zeus.node_scroll_y(id)
+    must(y > 0 && y <= 100, "a long frame moves toward the target, never past it")
+
+    // It still lands exactly and then goes idle.
+    let mut i = 0
+    while i < 30 {
+        zeus.engine_step_dt(16)
+        zeus.pump_frame()
+        i = i + 1
+    }
+    must(zeus.node_scroll_y(id) == 100, "lands exactly after a long frame")
+    must(zeus.engine_step_dt(16) == 0, "idle once landed")
+
+    // The coast decays by the frame's delta too: a 32 ms coast step moves further
+    // than a 16 ms one, and neither overshoots the content bounds.
+    zeus.engine_scroll(100, 100, 0, 60)
+    zeus.engine_step_dt(16)
+    zeus.pump_frame()
+    let a = zeus.node_scroll_y(id)
+    zeus.engine_scroll(100, 100, 0, 60)
+    zeus.engine_step_dt(16)
+    zeus.pump_frame()
+    let b = zeus.node_scroll_y(id)
+    must(b > a, "the pan still advances")
+    must(b <= zeus.node_scroll_max(id), "never past the content")
+
+    fmt.println("scroll dt ok")
+}
