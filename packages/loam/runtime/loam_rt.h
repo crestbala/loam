@@ -755,6 +755,19 @@ static inline void loam_vec_pop(loam_vec *v, void *out, size_t esz, const char *
     if (esz && out) memcpy(out, (char *)v->ptr + (size_t)v->len * esz, esz);
 }
 
+/* Pop an element that owns a string. The copy-on-write reallocation retains
+   every element it duplicates, so the popped slot's own reference transfers to
+   `out` (the slot is now past `len`, so the buffer never releases it) and the
+   remaining elements stay owned by the buffer. Without the retain hook the
+   shared element is released by both buffers. */
+static inline void loam_vec_pop_owned(loam_vec *v, void *out, size_t esz, loam_elem_fn retain,
+                                      const char *f, int l) {
+    if (!v || v->len <= 0) loam_panic(f, l, "pop from empty array");
+    loam_vec_unique_owned(v, esz, retain, f, l);
+    v->len--;
+    if (esz && out) memcpy(out, (char *)v->ptr + (size_t)v->len * esz, esz);
+}
+
 static inline void loam_vec_drop(loam_vec *v) {
     int64_t *rc;
     if (!v) return;
@@ -1606,6 +1619,46 @@ static inline int64_t loam_ch_pop(int64_t id, void *out, size_t sz) {
     c->head = (c->head + 1) % c->cap;
     c->count--;
     pthread_cond_signal(&c->has_space);
+    pthread_mutex_unlock(&c->mtx);
+    return 1;
+}
+
+/* --- channels with owning payloads --------------------------------------
+   A queued slot aliases the payload bytes, so the channel takes a reference
+   when it enqueues one; `recv`/`pop` copy the slot out and with it the
+   reference (the head advances past the slot, so the channel never releases
+   it). A payload still queued when the channel dies is not released — bounded,
+   and only when a producer enqueues what no consumer drains. */
+static inline void loam_ch_send_owned(int64_t id, const void *val, size_t sz,
+                                      loam_elem_fn retain) {
+    loam_ch *c = loam_ch_get(id);
+    if (!c || !val) return;
+    pthread_mutex_lock(&c->mtx);
+    while (c->count == c->cap) pthread_cond_wait(&c->has_space, &c->mtx);
+    if (retain) retain((void *)val);
+    if (sz > c->esz) sz = c->esz;
+    if (sz)
+        memcpy(c->buf + (size_t)((c->head + c->count) % c->cap) * c->esz, val, sz);
+    c->count++;
+    pthread_cond_signal(&c->has_data);
+    pthread_mutex_unlock(&c->mtx);
+}
+
+static inline int64_t loam_ch_try_send_owned(int64_t id, const void *val, size_t sz,
+                                             loam_elem_fn retain) {
+    loam_ch *c = loam_ch_get(id);
+    if (!c || !val) return 0;
+    pthread_mutex_lock(&c->mtx);
+    if (c->count == c->cap) {
+        pthread_mutex_unlock(&c->mtx);
+        return 0;
+    }
+    if (retain) retain((void *)val);
+    if (sz > c->esz) sz = c->esz;
+    if (sz)
+        memcpy(c->buf + (size_t)((c->head + c->count) % c->cap) * c->esz, val, sz);
+    c->count++;
+    pthread_cond_signal(&c->has_data);
     pthread_mutex_unlock(&c->mtx);
     return 1;
 }
