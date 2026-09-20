@@ -823,6 +823,139 @@ fn drop_children(id: int) {
     mark_tree()
 }
 
+// --- per-node structural operators -----------------------------------------
+// Zeus effects are barred from touching structure, so these are the *only* way
+// a single node moves in the tree. A list reconciles by calling them one move
+// at a time — it does not re-run a build closure. Each keeps `kids` and the
+// child's `parent` in sync and marks the tree, so the next layout sees the new
+// shape. Insert / detach rebuild the parent's `kids` vec (O(siblings)); there is
+// no in-place `insert` builtin to lean on, and the sibling count is small.
+
+/// Position of `child` in `parent`'s kid list, or -1 when it is not a child.
+fn child_index(parent: int, child: int) -> int {
+    if parent <= 0 {
+        return -1
+    }
+    if parent >= nodes.len {
+        return -1
+    }
+    let n = nodes[parent].kids.len
+    for i in 0..n {
+        if nodes[parent].kids[i] == child {
+            return i
+        }
+    }
+    return -1
+}
+
+/// Detach `child` from whatever parent holds it, preserving sibling order.
+/// Returns 1 when it was attached, 0 when it was already free.
+fn child_detach(child: int) -> int {
+    if child <= 0 {
+        return 0
+    }
+    if child >= nodes.len {
+        return 0
+    }
+    let parent = nodes[child].parent
+    if parent <= 0 {
+        return 0
+    }
+    if parent >= nodes.len {
+        nodes[child].parent = 0
+        return 0
+    }
+    let kids = nodes[parent].kids
+    let n = kids.len
+    let mut found = 0
+    for i in 0..n {
+        if kids[i] == child {
+            found = 1
+        }
+    }
+    if found == 0 {
+        nodes[child].parent = 0
+        return 0
+    }
+    let mut out = []int {}
+    for i in 0..n {
+        if kids[i] != child {
+            push(out, kids[i])
+        }
+    }
+    nodes[parent].kids = out
+    nodes[child].parent = 0
+    mark_tree()
+    return 1
+}
+
+/// Insert `child` under `parent` at `at` (clamped to `0..kids.len`). A node has
+/// one parent, so any previous attachment is dropped first, which also makes
+/// this a move within the same host. Returns 1 on success, 0 on a bad handle.
+fn child_insert(parent: int, child: int, at: int) -> int {
+    if parent <= 0 {
+        return 0
+    }
+    if child <= 0 {
+        return 0
+    }
+    if parent >= nodes.len {
+        return 0
+    }
+    if child >= nodes.len {
+        return 0
+    }
+    if parent == child {
+        return 0
+    }
+    child_detach(child)
+    let kids = nodes[parent].kids
+    let n = kids.len
+    let mut i = at
+    if i < 0 {
+        i = 0
+    }
+    if i > n {
+        i = n
+    }
+    let mut out = []int {}
+    let mut j = 0
+    while j < i {
+        push(out, kids[j])
+        j = j + 1
+    }
+    push(out, child)
+    while j < n {
+        push(out, kids[j])
+        j = j + 1
+    }
+    nodes[parent].kids = out
+    nodes[child].parent = parent
+    mark_tree()
+    return 1
+}
+
+/// Move `child` to position `at` under its current parent. No-op unless
+/// `parent` already holds `child`, so a caller cannot silently reparent.
+fn child_move(parent: int, child: int, at: int) -> int {
+    if parent <= 0 {
+        return 0
+    }
+    if child <= 0 {
+        return 0
+    }
+    if parent == child {
+        return 0
+    }
+    if child >= nodes.len {
+        return 0
+    }
+    if nodes[child].parent != parent {
+        return 0
+    }
+    return child_insert(parent, child, at)
+}
+
 /// Start a host rebuild: free everything the host's previous build owned
 /// (signals, interned handlers, children) and open a build scope owned by
 /// `id`. Pair with `rebuild_end`. This is the only entry point that tears a

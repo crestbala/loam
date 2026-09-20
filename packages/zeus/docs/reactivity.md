@@ -60,7 +60,7 @@ commit per phase. Line anchors are for the tree at `feat/zeus-upgrade-v2`.
 | Phase | Area | Deliverable | State |
 |-------|------|-------------|-------|
 | 0 | — | This roadmap | landed |
-| 1 | A | Per-node structural operators: `insert_child` / `remove_child` / `move_child` + accessors, with `arena.child_*` primitives that maintain `kids` / `parent` and mark minimal dirt | planned |
+| 1 | A | Per-node structural operators: `insert_child` / `remove_child` / `move_child` + accessors, with `arena.child_*` primitives that maintain `kids` / `parent` and mark minimal dirt | landed |
 | 2 | A | O(changes) keyed list reconciliation in `kfor_refresh`: build only new rows, free only removed rows, move the rest — per-row ownership via `scope_begin` | planned |
 | 3 | A | Reactive `Each` over a `Signal<[]T>` built on the phase-1 operators | planned |
 | 4 | B | Targeted per-node invalidation: a `signal → node` index so a write marks exactly the nodes whose effects ran, not the whole frame | planned |
