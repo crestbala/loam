@@ -185,3 +185,84 @@ enum SET {
     A11yRole = 102,
     Cursor = 103,
 }
+/// Theme slots. A widget stores the *role*, not a resolved color, so the
+/// paint pass resolves it against `appearance()` every frame — that is how
+/// a theme switch repaints a retained tree with no effects and no rebuild.
+enum ROLE {
+    Paper = 1,
+    Plate = 2,
+    Raised = 3,
+    Ink = 4,
+    Mute = 5,
+    Dim = 6,
+    Rule = 7,
+    Hard = 8,
+    Wash = 9,
+    OnInk = 10,
+    Accent = 11,
+    AccentSoft = 12,
+    Danger = 13,
+    DangerSolid = 14,
+    DangerEdge = 15,
+    OkSolid = 16,
+    Ok = 17,
+    OkFill = 18,
+    Warn = 19,
+    WarnFill = 20,
+    WarnEdge = 21,
+    OnFill = 22,
+    Scrim = 23,
+    ChartEdge = 24,
+    Chart1 = 25,
+    Chart2 = 26,
+    Chart3 = 27,
+    Chart4 = 28,
+    Chart5 = 29,
+    Fill1 = 30,
+    Fill2 = 31,
+    Fill3 = 32,
+    Fill4 = 33,
+    Fill5 = 34,
+    Bone = 35,
+    // 36 is baked into `arena.focus_ring_rgb`: the keyboard focus ring is
+    // the foreground color in both appearances.
+    FocusRing = 36,
+
+    // --- scales (design-system phase 2) ---
+    // A 12-step ramp in the Radix sense, not a Tailwind swatch list: the
+    // step number is a *role*, so a widget asks for "the border step" and
+    // gets a value that stays correct in both appearances and under any
+    // accent. 1-2 backgrounds, 3-5 component fills (rest / hover / active),
+    // 6-8 borders (subtle / default / strong), 9-10 solid fills, 11-12 text.
+    // Steps 11 and 12 are the only ones text is ever drawn in, and both are
+    // checked against steps 1-3 by `tokens_contrast_report`.
+    N1 = 40, N2 = 41, N3 = 42, N4 = 43, N5 = 44, N6 = 45,
+    N7 = 46, N8 = 47, N9 = 48, N10 = 49, N11 = 50, N12 = 51,
+    A1 = 52, A2 = 53, A3 = 54, A4 = 55, A5 = 56, A6 = 57,
+    A7 = 58, A8 = 59, A9 = 60, A10 = 61, A11 = 62, A12 = 63,
+    // Text on the accent's solid step (9/10). Recomputed per accent by
+    // `best_on`, because a light accent needs dark text and vice versa —
+    // hard-coding white here is what makes an orange primary button fail AA.
+    OnAccent = 64,
+
+    // Semantic tiers. Five slots each is what components actually consume:
+    // a wash to sit on, a border, a solid fill, that fill's hover, and a
+    // text ink that clears AA on the page background.
+    // Named by step, not by word: `OkFill` and `WarnFill` already exist above
+    // (slots 18 and 20) with different meanings, and Loam accepts duplicate
+    // enum names silently — the first cut of this collided and bound white
+    // text against a pale wash without any error.
+    OkS3 = 65, OkS6 = 66, OkS9 = 67, OkS10 = 68, OkS11 = 69,
+    WarnS3 = 70, WarnS6 = 71, WarnS9 = 72, WarnS10 = 73, WarnS11 = 74,
+    DangerS3 = 75, DangerS6 = 76, DangerS9 = 77, DangerS10 = 78, DangerS11 = 79,
+    InfoS3 = 80, InfoS6 = 81, InfoS9 = 82, InfoS10 = 83, InfoS11 = 84,
+    // Text on a semantic solid fill, one per tier. Not a single shared
+    // white: white on the amber solid is 2.14:1 and on the green 2.27:1,
+    // both under AA's 3:1 for component text. Each is `best_on` of its own
+    // fill, so amber badges get dark ink and blue ones get white — which is
+    // what the ratio demands, not a stylistic preference.
+    OnOk = 85, OnWarn = 87, OnDanger = 88, OnInfo = 89,
+    // Elevation shadow color: near-black in light, true black in dark
+    // (a dark UI needs a darker, tighter shadow to read as lift at all).
+    Shadow = 86,
+}
