@@ -1092,30 +1092,26 @@ static int env_truthy(const char *name) {
 
 /* The presentation path, chosen once, from the environment:
 
-     2  owned IOSurface pair   DEFAULT — our pixels ARE the layer's texture, so a
-                              frame is never copied, and the pair is what lets the
-                              next frame be drawn while the compositor still reads
-                              the last one.
-     1  owned bitmap           one `CGBitmapContext` wrapped in a fresh CGImage
-                              per frame (`ZEUS_OWN_SURFACE=0`).
+     1  owned bitmap           DEFAULT — one `CGBitmapContext` wrapped in a fresh
+                              CGImage per frame, handed to the layer as its
+                              `contents`. Our own single buffer.
+     2  owned IOSurface pair   our pixels ARE the layer's texture, so a frame is
+                              never copied, and the pair is what lets the next
+                              frame be drawn while the compositor still reads the
+                              last one (`ZEUS_OWN_SURFACE=1`).
      0  AppKit's own store     `drawRect:` paints straight into the window's
-                              backing store (`APP_KIT=1`, or `ZEUS_OWN_BUFFER=0`).
+                              backing store (`APP_KIT=1`, `ZEUS_OWN_BUFFER=0`).
 
-   Why the surface path is the default, in one line: the bitmap path has a
-   SINGLE buffer that is both our draw target and the layer's contents, and
-   CoreAnimation reads it lazily — a frame in flight and a frame being drawn
-   share the same bytes. Under a fast scroll that shows as a shimmer/tear of the
-   moving content, and the fresh CGImage per frame costs a full-frame copy into a
-   texture CA allocates anyway. The surface pair removes the copy and makes the
-   read and the write different memory. */
+   The owned paths are the default; AppKit's store is opt-in (`APP_KIT=1`). The
+   IOSurface pair is the leaner owned path when you want zero copies — pick it
+   with `ZEUS_OWN_SURFACE=1`. */
 static int display_path = -1;
 
 static int display_path_get(void) {
     if (display_path < 0) {
         /* Every explicit spelling keeps the path it always meant; only the
-           ABSENCE of all of them moved (bitmap -> surface pair). Order matters
-           only if more than one is set: APP_KIT wins, then ZEUS_OWN_SURFACE,
-           then ZEUS_OWN_BUFFER. */
+           ABSENCE of all of them moved. Order matters only if more than one is
+           set: APP_KIT wins, then ZEUS_OWN_SURFACE, then ZEUS_OWN_BUFFER. */
         if (env_truthy("APP_KIT"))
             display_path = 0;
         else if (getenv("ZEUS_OWN_SURFACE"))
@@ -1123,7 +1119,7 @@ static int display_path_get(void) {
         else if (getenv("ZEUS_OWN_BUFFER"))
             display_path = env_truthy("ZEUS_OWN_BUFFER") ? 1 : 0;
         else
-            display_path = 2;
+            display_path = 1;
     }
     return display_path;
 }
@@ -1364,12 +1360,12 @@ static void mac_schedule_next(int more) {
  * lock that remains is only for the CPU write, uses the same options as its
  * unlock, and contends with nobody because the surface was just found free.
  *
- * `ZEUS_OWN_SURFACE=1` selected it; since it is the only path with neither a
- * per-frame copy nor a buffer shared with the compositor, it is now the DEFAULT
- * (`ZEUS_OWN_SURFACE=0` selects the bitmap, `APP_KIT=1` AppKit's store). The
- * pixels are identical to the other two paths by construction: `own_draw` runs
- * the same engine the same way, in the same format, at the same physical size —
- * only the memory differs.
+ * `ZEUS_OWN_SURFACE=1` selects it: it is the only path with neither a per-frame
+ * copy nor a buffer shared with the compositor. It is opt-in here — the owned
+ * bitmap is the default — and `ZEUS_OWN_SURFACE=0` selects the bitmap,
+ * `ZEUS_OWN_BUFFER=1` the same. The pixels are identical to the other paths by
+ * construction: `own_draw` runs the same engine the same way, in the same
+ * format, at the same physical size — only the memory differs.
  *
  * The set is NOT sized to the window. Handing the layer an IOSurface whose pixel
  * size differs from the one it is showing costs a frame in which the compositor
