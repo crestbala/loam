@@ -312,15 +312,28 @@ stay 64-bit (clocks, hashes, large byte counts) are listed in
 
 ### 4. Modules
 
-Quoted imports only. No glob, no `use`.
+Quoted imports only. No glob. A full import brings the whole module in under
+its alias; a selective import names just the declarations you want.
 
 | Spec | Loads | Call as |
 |---|---|---|
 | `import "std:fmt"` | `std/fmt.loam` | `fmt.println(...)` |
 | `import "math.loam"` | `math.loam` next to this file | `math.add(2, 40)` |
 | `import "../mod/math.loam"` | relative to the importer | `math.add(...)` |
+| `import { add } from "math.loam"` | the same file | `add(2, 40)` — bare |
+| `import { add as plus } from "math.loam"` | the same file | `plus(2, 40)` |
 
-The module name is the file stem (`math`), or `bar` from `std:bar`.
+The module name is the file stem (`math`), or `bar` from `std:bar`. `as` after
+the path (`import "img.loam" as pic`) renames the module itself.
+
+A selective import binds only the names listed, and only for bare use; the
+module is still loaded under its alias, so `math.add(...)` keeps working. Names
+resolve through the imported module's own re-exports, so
+`import { Card } from "std:ui"` finds `Card` when `ui` re-exports it, and each
+listed name must exist there or the compiler errors at the import rather than
+at the use site. Struct type names are already visible in every loaded module,
+so listing one is documentation more than necessity; enums, `let`/`const`s, and
+functions are what a selective import actually scopes.
 
 Functions: `mod.fn(...)`. Module-level `let` bindings are places:
 `counter.n += 1`.

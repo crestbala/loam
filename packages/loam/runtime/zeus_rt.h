@@ -136,13 +136,13 @@ Node loam_zeus_show_ne(Node node, Signal sig, int32_t value);
 Node loam_zeus_key_context(Node node, loam_str name);
 Node loam_zeus_focusable(Node node);
 Node loam_zeus_capture_text(Node node);
-Node loam_zeus_on_action(Node node, loam_str action, Signal sig, int64_t mode, int64_t value);
+Node loam_zeusbase_on_action(Node node, loam_str action, Signal sig, int64_t mode, int64_t value);
 Node loam_zeus_on_key_fn(Node node, loam_str action);
-Node loam_zeus_on_range(Node node, loam_str action, Signal sig, int64_t delta, int64_t lo,
+Node loam_zeusbase_on_range(Node node, loam_str action, Signal sig, int64_t delta, int64_t lo,
                        int64_t hi);
-void loam_zeus_on_action_global(loam_str action, Signal sig, int64_t mode, int64_t value);
-void loam_zeus_map_key(loam_str spec, loam_str action, loam_str ctx);
-void loam_zeus_remap_key(loam_str spec, loam_str action, loam_str ctx);
+void loam_zeusbase_on_action_global(loam_str action, Signal sig, int64_t mode, int64_t value);
+void loam_zeusbase_map_key(loam_str spec, loam_str action, loam_str ctx);
+void loam_zeusbase_remap_key(loam_str spec, loam_str action, loam_str ctx);
 int zeus_handle_key_ev(int key, int mods);
 
 Node loam_zeus_show_ge(Node node, Signal sig, int32_t value);

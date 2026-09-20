@@ -1,0 +1,21 @@
+//! zeusbase — the C boundary hooks the Zeus runtime implements, plus (as the
+//! split continues) the Widget/reactive primitives the components build on.
+//!
+//! `Node` and `Signal<T>` come from the `structs` leaf module; the C side
+//! provides `loam_zeusbase_on_action`, `loam_zeusbase_on_range`, and friends
+//! (see `packages/loam/runtime/zeus_plat.c`), and `zeus` re-exports them.
+//!
+//! Dependency direction is one-way: `zeus` imports this file, so this file must
+//! never import `zeus` (that is an import cycle). Enums, consts, and fns
+//! declared elsewhere reach here only by importing the module that declares
+//! them — struct/type names resolve by name across loaded modules.
+
+import "structs.loam"
+
+fn on_action(node: Node, action: string, sig: Signal<int>, mode: int, value: int) -> Node {}
+fn on_action_global(action: string, sig: Signal<int>, mode: int, value: int) {}
+
+/// Step `sig` by `delta`, clamped to lo..hi — arrow navigation over a range.
+fn on_range(node: Node, action: string, sig: Signal<int>, delta: int, lo: int, hi: int) -> Node {}
+fn map_key(spec: string, action: string, ctx: string) {}
+fn remap_key(spec: string, action: string, ctx: string) {}

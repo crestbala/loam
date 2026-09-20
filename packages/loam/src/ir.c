@@ -42,6 +42,63 @@ static const char *fn_cname_in(LoamModule *m, const char *name) {
     return NULL;
 }
 
+/** Module named `name`, preferring the one `cur` imported under that alias.
+    Mirrors typecheck's find_mod so the IR walks the same module graph. */
+static LoamModule *find_mod_here(LoamModule *cur, const char *name) {
+    AstNode *prog = cur ? cur->ast : NULL;
+    if (prog) {
+        for (size_t i = 0; i < prog->as.program.import_count; i++) {
+            AstNode *im = prog->as.program.imports[i];
+            if (!im || !im->as.import.alias || !im->as.import.resolved) continue;
+            if (strcmp(im->as.import.alias, name) != 0) continue;
+            for (int m = 0; m < Gnmods; m++)
+                if (Gmods[m].path && strcmp(Gmods[m].path, im->as.import.resolved) == 0)
+                    return &Gmods[m];
+        }
+    }
+    for (int i = 0; i < Gnmods; i++)
+        if (Gmods[i].name && strcmp(Gmods[i].name, name) == 0) return &Gmods[i];
+    return NULL;
+}
+
+/** C symbol for `name` as re-exported by `root`: root's own decls, then root's
+    direct imports (reverse source order), then the imports of those imports.
+    The same walk as typecheck's lookup_through, so a barrel module like `zeus`
+    yields the C name of a fn declared in `zeusbase`. Without this the IR fell
+    back to the bare fn name and the C backend emitted an undeclared symbol. */
+static const char *fn_cname_through(LoamModule *root, const char *name) {
+    if (!root || !root->ast || !name) return NULL;
+    const char *c = fn_cname_in(root, name);
+    if (c) return c;
+    size_t i = root->ast->as.program.import_count;
+    while (i > 0) {
+        i--;
+        AstNode *im = root->ast->as.program.imports[i];
+        if (!im || !im->as.import.alias) continue;
+        LoamModule *m = find_mod_here(root, im->as.import.alias);
+        c = m ? fn_cname_in(m, name) : NULL;
+        if (c) return c;
+    }
+    i = root->ast->as.program.import_count;
+    while (i > 0) {
+        i--;
+        AstNode *im = root->ast->as.program.imports[i];
+        if (!im || !im->as.import.alias) continue;
+        LoamModule *m = find_mod_here(root, im->as.import.alias);
+        if (!m || !m->ast) continue;
+        size_t k = m->ast->as.program.import_count;
+        while (k > 0) {
+            k--;
+            AstNode *im2 = m->ast->as.program.imports[k];
+            if (!im2 || !im2->as.import.alias) continue;
+            LoamModule *m2 = find_mod_here(m, im2->as.import.alias);
+            c = m2 ? fn_cname_in(m2, name) : NULL;
+            if (c) return c;
+        }
+    }
+    return NULL;
+}
+
 /** Linkage symbol for a call target. Typecheck already assigned every function
     a unique cname; the IR records which one rather than re-deriving mangling. */
 static const char *resolve_callee(AstNode *cal) {
@@ -53,10 +110,10 @@ static const char *resolve_callee(AstNode *cal) {
         if (cal->as.ident.resolved && cal->as.ident.resolved->kind == AST_FN_DECL &&
             cal->as.ident.resolved->as.fn.cname)
             return cal->as.ident.resolved->as.fn.cname;
-        const char *c = fn_cname_in(&Gmods[Gcur], cal->as.ident.name);
+        const char *c = fn_cname_through(&Gmods[Gcur], cal->as.ident.name);
         if (c) return c;
         for (int i = 0; i < Gnmods; i++) {
-            c = fn_cname_in(&Gmods[i], cal->as.ident.name);
+            c = fn_cname_through(&Gmods[i], cal->as.ident.name);
             if (c) return c;
         }
         return cal->as.ident.name;
@@ -66,7 +123,7 @@ static const char *resolve_callee(AstNode *cal) {
         const char *mod = cal->as.access.target->as.ident.name;
         for (int i = 0; i < Gnmods; i++)
             if (Gmods[i].name && strcmp(Gmods[i].name, mod) == 0) {
-                const char *c = fn_cname_in(&Gmods[i], cal->as.access.field);
+                const char *c = fn_cname_through(&Gmods[i], cal->as.access.field);
                 if (c) return c;
             }
         return cal->as.access.field;

@@ -35,6 +35,12 @@ void ast_free(AstNode *node) {
             free((void *)node->as.import.alias);
             free((void *)node->as.import.path);
             free((void *)node->as.import.resolved);
+            for (size_t i = 0; i < node->as.import.name_count; i++) {
+                free((void *)node->as.import.names[i]);
+                free((void *)node->as.import.locals[i]);
+            }
+            free(node->as.import.names);
+            free(node->as.import.locals);
             break;
         case AST_FN_DECL:
         case AST_CLOSURE:
@@ -211,6 +217,15 @@ AstNode *ast_import(const char *alias, const char *path, SourceLoc loc) {
     AstNode *n = ast_new(AST_IMPORT, loc);
     n->as.import.alias = alias;
     n->as.import.path = path;
+    return n;
+}
+
+AstNode *ast_import_names(const char *alias, const char *path, const char **names,
+                          const char **locals, size_t name_count, SourceLoc loc) {
+    AstNode *n = ast_import(alias, path, loc);
+    n->as.import.names = names;
+    n->as.import.locals = locals;
+    n->as.import.name_count = name_count;
     return n;
 }
 
