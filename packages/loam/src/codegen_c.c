@@ -2354,17 +2354,26 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
             }
             if (in->op == IR_CALL && in->callee && strcmp(in->callee, "loam_ch_send") == 0 &&
                 in->nargs >= 2) {
-                fprintf(o, "loam_ch_send(%s, &%s, sizeof(", lv(in->args[0]), lv(in->args[1]));
+                char rr[64], rl[64];
+                elem_hook_cnames(in->ty, rr, sizeof rr, rl, sizeof rl);
+                (void)rl;
+                fprintf(o, "loam_ch_send%s(%s, &%s, sizeof(", rr[0] ? "_owned" : "",
+                        lv(in->args[0]), lv(in->args[1]));
                 emit_ctype(o, in->ty);
-                fprintf(o, "));\n");
+                if (rr[0]) fprintf(o, "), %s);\n", rr);
+                else fprintf(o, "));\n");
                 break;
             }
             if (in->op == IR_CALL && in->callee && strcmp(in->callee, "loam_ch_try_send") == 0 &&
                 in->nargs >= 2 && in->dst >= 0) {
-                fprintf(o, "%s = loam_ch_try_send(%s, &%s, sizeof(", lv(in->dst),
-                        lv(in->args[0]), lv(in->args[1]));
+                char rr[64], rl[64];
+                elem_hook_cnames(in->ty, rr, sizeof rr, rl, sizeof rl);
+                (void)rl;
+                fprintf(o, "%s = loam_ch_try_send%s(%s, &%s, sizeof(", lv(in->dst),
+                        rr[0] ? "_owned" : "", lv(in->args[0]), lv(in->args[1]));
                 emit_ctype(o, in->ty);
-                fprintf(o, "));\n");
+                if (rr[0]) fprintf(o, "), %s);\n", rr);
+                else fprintf(o, "));\n");
                 break;
             }
             if (in->op == IR_CALL && in->callee && strcmp(in->callee, "loam_ch_recv") == 0 &&
@@ -2407,13 +2416,21 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
             }
             if (in->op == IR_CALL && in->callee && strcmp(in->callee, "loam_vec_pop") == 0 &&
                 in->nargs >= 1 && in->dst >= 0) {
-                Type *vt = (in->args[0] >= 0 && in->args[0] < CF->nlocals)
-                               ? CF->locals[in->args[0]].ty
-                               : NULL;
-                const char *amp = (vt && vt->kind == TY_VEC) ? "&" : "";
-                fprintf(o, "loam_vec_pop(%s%s, &%s, sizeof(", amp, lv(in->args[0]), lv(in->dst));
+                Type *raw = (in->args[0] >= 0 && in->args[0] < CF->nlocals)
+                                ? CF->locals[in->args[0]].ty
+                                : NULL;
+                const char *amp = (raw && raw->kind == TY_VEC) ? "&" : "";
+                Type *vt = raw;
+                if (vt && (vt->kind == TY_PTR || vt->kind == TY_BOX)) vt = vt->elem;
+                Type *et = (vt && vt->kind == TY_VEC && vt->elem) ? vt->elem : in->ty;
+                char rr[64], rl[64];
+                elem_hook_cnames(et, rr, sizeof rr, rl, sizeof rl);
+                (void)rl;
+                fprintf(o, "loam_vec_pop%s(%s%s, &%s, sizeof(", rr[0] ? "_owned" : "",
+                        amp, lv(in->args[0]), lv(in->dst));
                 emit_ctype(o, in->ty);
-                fprintf(o, "), ");
+                if (rr[0]) fprintf(o, "), %s, ", rr);
+                else fprintf(o, "), ");
                 emit_ir_loc(o, in->loc);
                 fprintf(o, ");\n");
                 break;
