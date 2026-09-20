@@ -3,6 +3,7 @@
 // sequence — so the placement is computed against the live scroll. Painting the
 // floater through the scroller's offset would put it at 102 - 152 = -50 here.
 import "std:zeus"
+import "std:spacing"
 import "std:design"
 
 fn main() {
@@ -13,7 +14,7 @@ fn main() {
         zeus.Box(align_direction = zeus.DIRECTION.Column) {
             zeus.Box(height = 300)
             let trigger = zeus.Box(width = 120, height = 32, background = zeus.plate(),
-                                   border = zeus.HAIRLINE, border_color = zeus.rule())
+                                   border = spacing.HAIRLINE, border_color = zeus.rule())
             let rows = []MenuRow { MenuRow(label = "Rename") }
             design.Menu(trigger, active = open, items = rows, width = 160)
         }

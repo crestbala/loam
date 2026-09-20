@@ -2,6 +2,7 @@
 //! choice, controls, people, media, and data. One section per widget family.
 
 import "std:zeus"
+import "std:spacing"
 import "std:design"
 import "std:kv"
 
@@ -82,7 +83,7 @@ fn Field(name: Signal<string>, note: Signal<string>, st: Store) {
     design.Card() {
         design.Field("Name", name, "Your name")
         zeus.Text(if name.get().len < 3 { "Name must be at least 3 characters." } else { "" },
-                  color = zeus.danger(), font = zeus.FONT_CONTROL)
+                  color = zeus.danger(), font = spacing.FONT_CONTROL)
         design.TextArea(note, "Draft — saved as you type", fn() => kv.set(st, "draft", note.get()))
         design.Note("{{note.get().len}} chars · std:kv under Application Support")
         design.Button("Submit", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => name.set(name.get()))
@@ -131,7 +132,7 @@ fn Controls() {
     design.Card() {
         design.Row(SPACE.Md) {
             design.Switch(on)
-            zeus.Text(if on.get() == 1 { "On" } else { "Off" }, color = zeus.ink(), font = zeus.FONT_BODY)
+            zeus.Text(if on.get() == 1 { "On" } else { "Off" }, color = zeus.ink(), font = spacing.FONT_BODY)
             design.Grow()
             design.Checkbox("Notify me", notes)
         }
@@ -186,7 +187,7 @@ fn Upload() {
             height = 200,
             radius = 8,
             background = zeus.raised()) {
-            zeus.Text("No image yet", color = zeus.mute(), font = zeus.FONT_CAPTION)
+            zeus.Text("No image yet", color = zeus.mute(), font = spacing.FONT_CAPTION)
         }
         zeus.show_eq(empty, pw, 0)
         // No `max_width` / `aspect` wiring: `Image` reads the decoded source

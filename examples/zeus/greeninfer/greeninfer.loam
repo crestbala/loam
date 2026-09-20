@@ -7,6 +7,7 @@
 
 import "std:async"
 import "std:zeus"
+import "std:spacing"
 import "std:design"
 import "agent.loam"
 import "engine.loam"
@@ -98,23 +99,23 @@ fn RamChip() {
     }
     zeus.Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
              spacing = SPACE.Exxs, padding_x = 10, padding_y = 4, height = 26,
-             radius = zeus.RAD_FULL, background = zeus.raised()) {
+             radius = spacing.RAD_FULL, background = zeus.raised()) {
         zeus.Box(width = 6, height = 6, radius = 3, background = zeus.ok())
         zeus.Text(fn() -> string {
             let mb = ram.get() / 1024
             return "RAM {{mb}} MB"
-        }, color = zeus.mute(), font = zeus.FONT_CAPTION)
+        }, color = zeus.mute(), font = spacing.FONT_CAPTION)
     }
 }
 
 fn Header() {
     design.Row(SPACE.Md) {
         zeus.Box(width = 10, height = 26, radius = 5, background = zeus.ink())
-        zeus.Text("GreenInfer", color = zeus.ink(), font = zeus.FONT_TITLE)
+        zeus.Text("GreenInfer", color = zeus.ink(), font = spacing.FONT_TITLE)
         design.Chip("code memory", zeus.TINT.Mute)
         design.Grow()
         RamChip()
-        zeus.Text("Dark", color = zeus.mute(), font = zeus.FONT_BODY)
+        zeus.Text("Dark", color = zeus.mute(), font = spacing.FONT_BODY)
         design.Switch(zeus.appearance())
     }
 }
@@ -123,7 +124,7 @@ fn Header() {
 fn Caption(sig: Signal<string>) {
     let t = zeus.Text(fn() -> string {
         return sig.get()
-    }, font = zeus.FONT_CAPTION)
+    }, font = spacing.FONT_CAPTION)
     // Colour tracks the message, so it is an effect: style props are data.
     zeus.styled(t, || {
         if is_err_msg(sig.get()) {
@@ -137,15 +138,15 @@ fn Caption(sig: Signal<string>) {
 fn HitRow(i: int, h: Hit) {
     zeus.Box(align_direction = DIRECTION.Column, justify = ALIGN.Center,
              height = HIT_H, padding_x = SPACE.Exs, spacing = 2) {
-        zeus.Text(h.label, color = zeus.ink(), font = zeus.FONT_CONTROL)
-        zeus.Text(h.snippet, color = zeus.dim(), font = zeus.FONT_CAPTION)
+        zeus.Text(h.label, color = zeus.ink(), font = spacing.FONT_CONTROL)
+        zeus.Text(h.snippet, color = zeus.dim(), font = spacing.FONT_CAPTION)
     }
 }
 
 fn AnsRow(i: int, s: string) {
     zeus.Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
              height = 20, padding_x = SPACE.Exs) {
-        zeus.Text(s, color = zeus.mute(), font = zeus.FONT_CAPTION)
+        zeus.Text(s, color = zeus.mute(), font = spacing.FONT_CAPTION)
     }
 }
 
@@ -211,7 +212,7 @@ fn StepWatch(folder: Signal<string>, watch_on: Signal<int>, cap: Signal<string>,
         }
         design.Row(SPACE.Sm) {
             zeus.Text("Re-index automatically when files change", color = zeus.mute(),
-                      font = zeus.FONT_BODY)
+                      font = spacing.FONT_BODY)
             design.Switch(watch_on)
             design.Grow()
             Caption(cap)
@@ -445,7 +446,7 @@ fn GreenInferPage() {
         Header()
         design.Row(SPACE.Md) {
             zeus.Box(width = 6, height = 6, radius = 3, background = zeus.ok())
-            zeus.Text("Your codebase as local memory — watch a folder, ask in plain words. Everything stays in one file on this machine.", color = zeus.mute(), font = zeus.FONT_BODY)
+            zeus.Text("Your codebase as local memory — watch a folder, ask in plain words. Everything stays in one file on this machine.", color = zeus.mute(), font = spacing.FONT_BODY)
             design.Grow()
         }
         StatsRow(chunk_stat, kb_stat, qus, mus)
