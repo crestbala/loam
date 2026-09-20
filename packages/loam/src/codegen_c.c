@@ -3136,10 +3136,16 @@ void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path)
         if (t && struct_targs_concrete(t)) emit_struct_type(out, t);
     }
 
-    for (int i = 1; i <= elem_hook_n; i++)
-        fprintf(out, "static void loam_elem_retain_%d(void *p);\n"
-                     "static void loam_elem_release_%d(void *p);\n", i, i);
-    if (elem_hook_n) fprintf(out, "\n");
+    /* One prototype per possible hook id, not just the ones registered so far:
+       monomorphization runs while bodies are being emitted and can register an
+       element type (e.g. a `[]Member` instantiated inside a generic) after this
+       point, and its call sites still need the declaration. */
+    if (type_string_owns()) {
+        for (int i = 1; i <= 64; i++)
+            fprintf(out, "static void loam_elem_retain_%d(void *p);\n"
+                         "static void loam_elem_release_%d(void *p);\n", i, i);
+        fprintf(out, "\n");
+    }
 
     for (int i = 0; i < typecheck_global_count(); i++) {
         AstNode *gv = typecheck_global_var(i);

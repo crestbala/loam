@@ -196,8 +196,8 @@ fn page(p: Params) {
 fn meta(p: Params) -> Meta {
     return Meta { title: "Blog" }
 }
-=== routes/error.loam 163
-//! Route error page. A trap in a page's build lands here (see zeus.Boundary).
+=== routes/error.loam 162
+//! Route error page. A trap in a page's build lands here (see zui.Boundary).
 
 import "std:zeus"
 
