@@ -163,17 +163,19 @@ was never the bulk of it.
 
 | path | footprint | frame |
 |---|---|---|
-| AppKit store (`APP_KIT=1` / `ZEUS_OWN_BUFFER=0`) | 103–137 MB | 60 fps, zero copy |
-| owned bitmap (`ZEUS_OWN_SURFACE=0`) | 51–55 MB | 60 fps @16.6 ms of a 16.7 budget; single buffer + a full-frame copy |
-| **owned IOSurface set — the default** | 3 x 18 MB of surface + ~16 MB baseline = **~70 MB** screen-filling (`ZEUS_OWN_SURFACE=2` for 2 buffers, ~52 MB) | zero copy, drawn only into a surface the compositor is not reading |
+| AppKit store (`APP_KIT=1`) | 103–137 MB | 60 fps, zero copy |
+| **owned bitmap (`ZEUS_OWN_BUFFER=1`) — the default** | 51–55 MB | 60 fps @16.6 ms of a 16.7 budget; single buffer + a full-frame copy |
+| owned IOSurface set (`ZEUS_OWN_SURFACE=1`) | 3 x 18 MB of surface + ~16 MB baseline = **~70 MB** screen-filling (`ZEUS_OWN_SURFACE=2` for 2 buffers, ~52 MB) | zero copy, drawn only into a surface the compositor is not reading |
 | AppKit store, wide gamut (`ZEUS_WIDE_GAMUT=1`) | 176–219 MB | — |
 
 `0440f3e` moved the default off AppKit's store, and a later field report (fast
 scroll shimmered and lagged on the single-buffer bitmap path, and did not on the
-IOSurface path) moved it onto the IOSurface set. The set is three surfaces by
-default: the bitmap path is the one that copies, and a single shared buffer is the
-one that shimmers. `ZEUS_OWN_SURFACE=0` still selects the bitmap, `APP_KIT=1` the
-AppKit store, and `ZEUS_OWN_SURFACES=2..4` trades a buffer for skip headroom.
+IOSurface path) offered the IOSurface set as the leaner owned path. **The owned
+bitmap is the default** (`ZEUS_OWN_BUFFER=1`), with AppKit's store opt-in
+(`APP_KIT=1`). The owned paths are opt-in alternatives to AppKit: the bitmap is
+one buffer that both the draw and the compositor read, the IOSurface set removes
+that sharing and the copy, and `ZEUS_OWN_SURFACES=2..4` trades a buffer for skip
+headroom.
 
 `docs/mem/regions.md` and `tools/mem-baseline.sh` still produce the full
 automated split; the table above is the manual measurement from this session.

@@ -87,31 +87,32 @@ Three of them, chosen by environment variable. This is the whole memory/frame-ra
 trade in the native host.
 
 ```sh
-./run.sh myapp                          # default: the owned IOSurface set (zero copy)
-ZEUS_OWN_SURFACE=0 ./run.sh myapp       # the owned bitmap instead (single buffer)
+./run.sh myapp                          # default: the owned bitmap (single buffer)
+ZEUS_OWN_SURFACE=1 ./run.sh myapp       # the owned IOSurface set (zero copy)
+ZEUS_OWN_SURFACE=0 ./run.sh myapp       # the owned bitmap, spelled as a value
 ZEUS_OWN_SURFACE=2 ./run.sh myapp       # the surface path with 2 buffers (see below)
 ZEUS_OWN_SURFACES=4 ./run.sh myapp      # 2..4 buffers in the set (default 3)
+ZEUS_OWN_BUFFER=1 ./run.sh myapp        # the owned bitmap, spelled as a value
 APP_KIT=1 ./run.sh myapp                # AppKit's store instead
-ZEUS_OWN_BUFFER=0 ./run.sh myapp        # the same, spelled as a value
 ZEUS_WIDE_GAMUT=1 ./run.sh myapp        # AppKit's store, display profile (2x depth)
 ```
 
 Careful with the two names: **`ZEUS_OWN_SURFACE`** (singular) selects the display
-**path** — `0` is the bitmap, `1` (or unset) is the surface set — while
+**path** — `0` is the bitmap, `1` is the surface set — while
 **`ZEUS_OWN_SURFACES`** (plural) sets how many buffers are in the set, 2..4. To
 make the singular forgiving, `ZEUS_OWN_SURFACE=2` there is read as the count as
 well, so it means "the surface path, two buffers". `ZEUS_OWN_SURFACES` wins if
-both are set.
+both are set. Unset selects the owned bitmap; `APP_KIT=1` AppKit's store.
 
-The **owned IOSurface set is the default**. The other owned path — the bitmap —
-is a single buffer that is both our draw target *and* the layer's `contents`, and
-CoreAnimation reads it lazily, so a frame in flight and a frame being drawn share
-the same bytes; under a fast scroll that shows as a shimmer or tear of the moving
-content. The set removes that by construction (each frame is drawn into a surface
-`IOSurfaceIsInUse` says the compositor is not reading) and also removes the
-full-frame copy the bitmap path pays every frame while CoreAnimation builds a
-texture of its own. `APP_KIT=1` remains the escape hatch for a host that would
-rather have the zero-copy `drawRect:` draw even at AppKit's larger store.
+**The owned bitmap is the default.** It is a single buffer that is both our draw
+target *and* the layer's `contents`; CoreAnimation reads it lazily, so a frame in
+flight and a frame being drawn can share the same bytes, and the fresh CGImage
+per frame costs a full-frame copy while CA builds a texture of its own. When you
+want our memory to *be* the layer's texture instead — 0 copies per frame, and
+each frame drawn into a surface `IOSurfaceIsInUse` says the compositor is not
+reading — pick the **owned IOSurface set** with `ZEUS_OWN_SURFACE=1`. `APP_KIT=1`
+selects AppKit's own store: `drawRect:` paints straight into the window's backing
+store, so nothing is copied, at AppKit's larger footprint.
 
 **The set costs one full-window buffer per surface.** At a screen-filling Retina
 window one buffer is 2940 x 1618 x 4 = **18.1 MB**, so the set is 18.1 MB x N on
@@ -130,10 +131,10 @@ scrolling, the count can come down a step.
 
 | path | how it draws | copies per frame | IOSurface | measured (screen-filling) |
 |---|---|---|---|---|
-| **default** (owned IOSurface set, `ZEUS_OWN_SURFACE=1`) | draws into a surface and hands the layer the SURFACE, so our memory *is* the texture | **0** | 3 surfaces, rotated (one is the layer's texture, one is being drawn) | **~70 MB** screen-filling (3 x 18.1 MB + ~16 MB baseline); ~52 MB with `ZEUS_OWN_SURFACE=2` |
-| `ZEUS_OWN_SURFACE=0` | paints into a bitmap handed to the layer as `contents` | **1** — CoreAnimation materialises the whole frame into its own texture | 1 (~18 MB) plus that texture | **60 fps** (16.6 ms) with the sRGB window, 39 fps (25.4 ms) with `ZEUS_WIDE_GAMUT=1`; 51–55 MB |
-| `APP_KIT=1` | `drawRect:` paints straight into the window's backing store, which the compositor reads | **0** | 3 buffers, 54 MB reserved | **60 fps** (16.7 ms); peak 103–137 MB |
-| `ZEUS_WIDE_GAMUT=1` | the same, but the window keeps the display's ICC profile | **0** | 3 buffers, 109 MB reserved | **60 fps** (16.6–16.7 ms); peak 176–219 MB |
+| **default** (owned bitmap, `ZEUS_OWN_SURFACE=0` / `ZEUS_OWN_BUFFER=1`) | paints into a bitmap handed to the layer as `contents` | **1** — CoreAnimation materialises the whole frame into its own texture | 1 (~18 MB) plus that texture | **60 fps** (16.6 ms) with the sRGB window, 39 fps (25.4 ms) with `ZEUS_WIDE_GAMUT=1`; 51–55 MB |
+| `ZEUS_OWN_SURFACE=1` (owned IOSurface set) | draws into a surface and hands the layer the SURFACE, so our memory *is* the texture | **0** | 3 surfaces, rotated (one is the layer's texture, one is being drawn) | **~70 MB** screen-filling (3 x 18.1 MB + ~16 MB baseline); ~52 MB with `ZEUS_OWN_SURFACE=2` |
+| `APP_KIT=1` (AppKit's store) | `drawRect:` paints straight into the window's backing store, which the compositor reads | **0** | 3 buffers, 54 MB reserved | **60 fps** (16.7 ms); peak 103–137 MB |
+| `ZEUS_WIDE_GAMUT=1` | AppKit's store, but the window keeps the display's ICC profile | **0** | 3 buffers, 109 MB reserved | **60 fps** (16.6–16.7 ms); peak 176–219 MB |
 
 The default's memory column is arithmetic, not a sampled frame time: one
 full-window buffer at this size is 18.1 MB, so three of them plus a ~16 MB
