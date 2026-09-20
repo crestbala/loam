@@ -47,7 +47,9 @@ fn main() {
     zeus.window("traversal", 300, 200)
     let a = zeus.signal(100)
     let b = zeus.signal(100)
-    // A tree with depth: a header, a body, and a footer, each with children.
+    // A tree with depth: a header, a body, and a footer, each with children —
+    // plus an always-visible floater (as a `Select`'s trigger or a sticky bar
+    // is), which must not turn patching off for the whole window.
     zeus.root(zeus.Box(padding = 8, align_direction = DIRECTION.Column, spacing = 6) {
         zeus.Box(height = 30, background = "#102030", align_direction = DIRECTION.Row, spacing = 4) {
             zeus.Text("header")
@@ -63,6 +65,9 @@ fn main() {
             zeus.Text("footer")
             zeus.Box(width = 40, height = 20, background = "#405060")
         }
+        let fl = zeus.Box(position = zeus.pos_absolute(), width = 60, height = 18,
+                          background = "#00ff00", z_index = 1)
+        zeus.set_prop_int(fl, zeus.SET.Opacity, 100)
     })
     zeus.pump_frame()
     zeus.engine_layout(300, 200)
