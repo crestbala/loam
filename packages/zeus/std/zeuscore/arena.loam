@@ -832,6 +832,7 @@ fn reset_tree() {
     dirty_chrome_nodes = []int {}
     bind_sig = []int {}
     bind_node = []int {}
+    physics_ms = now_ms
     root_id = 0
     focus_id = 0
     trap_id = 0
@@ -859,6 +860,9 @@ fn reset_tree() {
 
 let mut scroll_save: []int = []int {}
 let mut scroll_save_x: []int = []int {}
+/// Engine clock at the last `physics_step`, so scroll easing and coast scale by
+/// the frame's real delta instead of assuming one 16 ms frame.
+let mut physics_ms: int = 0
 
 fn snapshot_scroll() {
     scroll_save = []int {}
@@ -1566,9 +1570,9 @@ fn ease_standard() -> int { return 1 }
 fn ease_emphasized() -> int { return 2 }
 fn ease_spring() -> int { return 3 }
 // Durations in ms, in step with `zeus.MOTION`.
-fn motion_fast() -> int { return 120 }
-fn motion_base() -> int { return 200 }
-fn motion_slow() -> int { return 320 }
+fn motion_fast() -> int { return 100 }
+fn motion_base() -> int { return 170 }
+fn motion_slow() -> int { return 270 }
 
 /// Cubic Bézier component at parameter `u` (0..1000): P0 = 0, P3 = 1000,
 /// P1 = `c1`, P2 = `c2` (all permille; `c1`/`c2` may exceed 1000 for Spring).
@@ -3952,9 +3956,11 @@ struct Axis {
     dirty: int,
 }
 
-fn physics_axis(pos: int, vel: int, maxs: int) -> Axis {
-    let mut y = pos + vel
-    let mut v = vel * 92 / 100
+fn physics_axis(pos: int, vel: int, maxs: int, dt: int) -> Axis {
+    // Frame-rate independent: advance the position and decay the velocity for the
+    // frame's delta, with the 60 Hz values as the reference (dt == 16).
+    let mut y = pos + vel * dt / 16
+    let mut v = vel * (100 - dt / 2) / 100
     let mut dirty = 0
     // Hard clamp at the content bounds: momentum never overshoots, so the
     // viewport can never show a blank strip past the first/last content.
@@ -3974,15 +3980,25 @@ fn physics_axis(pos: int, vel: int, maxs: int) -> Axis {
     return Axis { pos: y, vel: v, dirty: dirty }
 }
 
-/// One frame toward a wheel target: 35 % of the gap, at least 1 px, so a
-/// 100 px notch lands in ~11 frames and never stalls short. Returns the new
-/// position; the caller clears the bit when it equals the target.
-fn smooth_axis(pos: int, target_value: int) -> int {
+/// One frame toward a wheel target: 35 % of the gap per 16 ms, at least 1 px, so
+/// a 100 px notch lands smoothly and never stalls short. `dt` keeps the feel the
+/// same on a 120 Hz display as on a 60 Hz one. Returns the new position; the
+/// caller clears the bit when it equals the target.
+fn smooth_axis(pos: int, target_value: int, dt: int) -> int {
     let d = target_value - pos
     if d == 0 {
         return pos
     }
-    let mut step = d * 35 / 100
+    // 35 % of the gap per 16 ms, scaled by the frame's delta and capped below
+    // 100 % so a long frame converges fast without overshooting the target.
+    let mut f = 35 * dt / 16
+    if f > 90 {
+        f = 90
+    }
+    if f < 1 {
+        f = 1
+    }
+    let mut step = d * f / 100
     if step == 0 {
         if d > 0 {
             step = 1
@@ -4001,13 +4017,23 @@ fn physics_step() -> int {
             return 0
         }
     }
+    // The frame's delta, from the engine clock (`scene.step` advances it). A host
+    // that does not tick the clock falls back to a 60 Hz step.
+    let mut dt = now_ms - physics_ms
+    if dt <= 0 {
+        dt = 16
+    }
+    if dt > 32 {
+        dt = 32
+    }
+    physics_ms = now_ms
     let n = nodes.len
     let mut dirty = 0
     for i in 1..n {
         if int(nodes[i].kind) == 11 {
             let sm = int(nodes[i].smooth)
             if (sm & 1) != 0 {
-                let ny = smooth_axis(nodes[i].scroll_y, nodes[i].tgt_y)
+                let ny = smooth_axis(nodes[i].scroll_y, nodes[i].tgt_y, dt)
                 if ny != nodes[i].scroll_y {
                     nodes[i].scroll_y = ny
                     dirty = 1
@@ -4021,7 +4047,7 @@ fn physics_step() -> int {
                 }
             }
             if (sm & 2) != 0 {
-                let nx = smooth_axis(nodes[i].scroll_x, nodes[i].tgt_x)
+                let nx = smooth_axis(nodes[i].scroll_x, nodes[i].tgt_x, dt)
                 if nx != nodes[i].scroll_x {
                     nodes[i].scroll_x = nx
                     dirty = 1
@@ -4043,7 +4069,7 @@ fn physics_step() -> int {
             let panned_x = sm2 & 8
             nodes[i].smooth = u8(sm2 & 3)
             if panned_y == 0 {
-                let ay = physics_axis(nodes[i].scroll_y, nodes[i].vel_y, scroll_max(i))
+                let ay = physics_axis(nodes[i].scroll_y, nodes[i].vel_y, scroll_max(i), dt)
                 nodes[i].scroll_y = ay.pos
                 nodes[i].vel_y = ay.vel
                 if ay.dirty != 0 {
@@ -4056,7 +4082,7 @@ fn physics_step() -> int {
                 }
             }
             if panned_x == 0 {
-                let ax = physics_axis(nodes[i].scroll_x, nodes[i].vel_x, scroll_max_x(i))
+                let ax = physics_axis(nodes[i].scroll_x, nodes[i].vel_x, scroll_max_x(i), dt)
                 nodes[i].scroll_x = ax.pos
                 nodes[i].vel_x = ax.vel
                 if ax.dirty != 0 {

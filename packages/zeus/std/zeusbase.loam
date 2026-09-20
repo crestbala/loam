@@ -2370,11 +2370,11 @@ fn elev_now(level: int) -> Elev {
 /// these three; a bespoke duration is a bug, not a refinement.
 enum MOTION {
     // Hover, press, focus — feedback that must feel instant.
-    Fast = 120,
+    Fast = 100,
     // The default: state changes, indicators, switches.
-    Base = 200,
+    Base = 170,
     // Entrances and exits of large surfaces (dialog, drawer, toast).
-    Slow = 320,
+    Slow = 270,
 }
 
 /// Easing curves. Integer ids — the curve itself lives in the animation
