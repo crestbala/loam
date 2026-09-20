@@ -1001,9 +1001,10 @@ static int lower_expr(AstNode *n) {
             for (int k = 0; k < nf; k++) {
                 if (args[k] < 0 || args[k] >= F->nlocals) continue;
                 if (!type_needs_drop(F->locals[args[k]].ty)) continue;
-                /* An owned string field is copied in — the field retains and
-                   the source keeps its own reference, so it must still drop. */
-                if (type_string_owns() && F->locals[args[k]].ty->kind == TY_STRING)
+                /* An owned string (or a struct/array that holds one) is copied
+                   in — the container retains and the source keeps its own
+                   reference, so it must still drop. */
+                if (type_string_owns() && type_owns_string(F->locals[args[k]].ty))
                     continue;
                 F->locals[args[k]].needs_drop = 0;
             }
@@ -1023,9 +1024,10 @@ static int lower_expr(AstNode *n) {
                 for (int k = 0; k < nf; k++) {
                     if (args[k] < 0 || args[k] >= F->nlocals) continue;
                     if (!type_needs_drop(F->locals[args[k]].ty)) continue;
-                    /* Same as a struct field: the vec's copy retains, so the
-                       element's source keeps and drops its own reference. */
-                    if (type_string_owns() && F->locals[args[k]].ty->kind == TY_STRING)
+                    /* Same as a struct field: the vec's copy retains nested
+                       strings, so the element's source keeps and drops its
+                       own reference. */
+                    if (type_string_owns() && type_owns_string(F->locals[args[k]].ty))
                         continue;
                     F->locals[args[k]].needs_drop = 0;
                 }

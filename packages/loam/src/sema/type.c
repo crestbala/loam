@@ -289,6 +289,18 @@ int type_needs_drop(const Type *t) {
     return 0;
 }
 
+int type_owns_string(const Type *t) {
+    if (!t) return 0;
+    if (t->kind == TY_STRING) return 1;
+    if (t->kind == TY_ARRAY) return type_owns_string(t->elem);
+    if (t->kind == TY_STRUCT) {
+        for (size_t i = 0; i < t->field_count; i++)
+            if (type_owns_string(t->field_types[i])) return 1;
+        return 0;
+    }
+    return 0;
+}
+
 int type_arg_transfers(const Type *t) {
     if (!t) return 0;
     /* Passed through as-is: the callee's parameter drop frees it. */
