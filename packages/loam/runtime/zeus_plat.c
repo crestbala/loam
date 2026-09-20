@@ -1828,6 +1828,17 @@ int32_t loam_platform_plat_intern_kind_mismatch_count(void) {
     return (int32_t)intern_kind_mismatches;
 }
 
+/* Live rows in the interned-handler table: a slot is live while it carries a
+   kind. A streaming list, or a re-running `scope`, must recycle handlers rather
+   than grow this, so a test can hold it flat. */
+int32_t loam_platform_plat_intern_live_count(void) {
+    int i, n = 0;
+    for (i = 1; i < nclick_fns; i++) {
+        if (click_fns[i].kind != 0) n++;
+    }
+    return (int32_t)n;
+}
+
 const char *zeus_window_title(void) { return win_title ? win_title : ""; }
 int64_t zeus_window_width(void) { return win_w; }
 int64_t zeus_window_height(void) { return win_h; }

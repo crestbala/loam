@@ -1,0 +1,74 @@
+// Phase 8: a `scope` owns everything its body creates — live signals and interned
+// handlers, not just effect rows and `computed` cells. A re-run recycles them, so
+// a scope that runs on every change does not grow the arena. Ownership stays with
+// the host rebuild scope outside a `scope`, which is the common case.
+//
+// This is the supported shape: a scope body creates derived state and
+// subscriptions. Structure (widgets) belongs outside it — a re-run must not
+// rebuild the tree.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+let mut seen: int = 0
+let mut cleaned: int = 0
+
+fn main() {
+    zeus.window("scopeown", 240, 160)
+    let t = zeus.signal(0)
+
+    // Each run creates: a signal, a derivation (two cells + its stored body), and
+    // a child effect with a cleanup handler (two more interned thunks).
+    zeus.scope(|| {
+        let hot = zeus.signal(t.get())
+        let label = zeus.computed(|| { hot.get() * 2 })
+        seen = label.get()
+        zeus.effect(|| {
+            zeus.on_cleanup(|| { cleaned = cleaned + 1 })
+        })
+    })
+    must(seen == 0, "first run evaluates")
+
+    let mut i = 0
+    while i < 5 {
+        t.set(i + 1)
+        i = i + 1
+    }
+    let rows_hi = zeus.reactive_rows()
+    let sigs_hi = zeus.arena_sigs()
+    let fns_hi = zeus.intern_count()
+    let nodes_hi = zeus.arena_nodes()
+    while i < 50 {
+        t.set(i + 1)
+        i = i + 1
+    }
+    must(zeus.reactive_rows() == rows_hi, "a re-running scope reuses effect rows")
+    must(zeus.arena_sigs() == sigs_hi, "a re-running scope recycles signals")
+    must(zeus.intern_count() == fns_hi, "a re-running scope recycles handlers")
+    must(zeus.arena_nodes() == nodes_hi, "a scope re-run builds no structure")
+    must(seen == 100, "the re-created derivation still computes")
+    must(cleaned == 50, "every re-run disposed exactly one child")
+
+    // Outside a `scope`, cell ownership is unchanged: a signal created at top
+    // level stays owned by the host, and writes allocate nothing.
+    let plain = zeus.signal(0)
+    let base = zeus.arena_sigs()
+    let fbase = zeus.intern_count()
+    let mut j = 0
+    while j < 30 {
+        plain.set(j)
+        j = j + 1
+    }
+    must(zeus.arena_sigs() == base, "a plain signal is not reallocated by writes")
+    must(zeus.intern_count() == fbase, "writes allocate no handler")
+
+    fmt.println("scope ownership ok")
+}

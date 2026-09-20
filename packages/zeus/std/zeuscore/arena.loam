@@ -609,20 +609,35 @@ fn record_sig(owner: int, signal_id: int) {
     if owner == 0 {
         return
     }
-    let mut i = 0
-    while i < rec_sid.len {
+    // The alloc hook pushes its record last, so scan from the back: the common
+    // case (a just-allocated id) matches on the first step, and the break keeps
+    // that case O(1) rather than a full sweep.
+    let mut i = rec_sid.len
+    while i > 0 {
+        i = i - 1
         if rec_sid[i] == signal_id {
             let last = rec_sid.len - 1
             rec_sid[i] = rec_sid[last]
             rec_owner[i] = rec_owner[last]
             pop(rec_sid)
             pop(rec_owner)
-        } else {
-            i = i + 1
+            break
         }
     }
     push(rec_sid, signal_id)
     push(rec_owner, owner)
+}
+
+/// The owner a freshly created signal or handler is filed under: the innermost
+/// live-computation `scope` (as a negative id, so it cannot collide with a node),
+/// else the host rebuild scope, else 0 (process-lifetime). A no-op walk when the
+/// reactive stack is empty, which is the common case at build time.
+fn owner_now() -> int {
+    let s = track.current_scope_eid()
+    if s > 0 {
+        return 0 - s
+    }
+    return scope_node
 }
 
 /// Free everything recorded under `owner`: the signals and interned handlers a
