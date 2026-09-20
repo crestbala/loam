@@ -3,6 +3,7 @@
 // Dark restyles the whole palette via `zeus.appearance()`.
 import "std:async"
 import "std:zeus"
+import "std:spacing"
 import "std:design"
 import "std:kv"
 
@@ -27,24 +28,24 @@ fn RamChip() {
     }
     zeus.Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
              spacing = SPACE.Exxs, padding_x = 10, padding_y = 4, height = 26,
-             radius = zeus.RAD_FULL, background = zeus.raised()) {
-        zeus.Text("RAM {{fmt_mb(ram.get())}}", color = zeus.mute(), font = zeus.FONT_CAPTION)
+             radius = spacing.RAD_FULL, background = zeus.raised()) {
+        zeus.Text("RAM {{fmt_mb(ram.get())}}", color = zeus.mute(), font = spacing.FONT_CAPTION)
     }
 }
 
 fn Navbar(page: Signal<int>) {
     design.Column(SPACE.None) {
         zeus.Box(align_direction = DIRECTION.Row, spacing = SPACE.Md,
-                 align_items = ALIGN.Center, height = zeus.BAR) {
+                 align_items = ALIGN.Center, height = spacing.BAR) {
             zeus.Box(width = 22, height = 22, radius = 6, background = zeus.ink())
-            zeus.Text("Zeus", color = zeus.ink(), font = zeus.FONT_TITLE)
+            zeus.Text("Zeus", color = zeus.ink(), font = spacing.FONT_TITLE)
             design.NavTab("Foundations", page, 0)
             design.NavTab("Components", page, 1)
             design.NavTab("Patterns", page, 2)
             design.Grow()
             AccentDots()
             RamChip()
-            zeus.Text("Dark", color = zeus.mute(), font = zeus.FONT_CONTROL)
+            zeus.Text("Dark", color = zeus.mute(), font = spacing.FONT_CONTROL)
             design.Switch(zeus.appearance())
         }
         design.Separator()
@@ -63,7 +64,7 @@ fn AccentDots() {
     }
     design.Row(SPACE.Exxs) {
         design.Each(idx, fn(i, k) {
-            let dot = zeus.Box(width = 16, height = 16, radius = zeus.RAD_FULL,
+            let dot = zeus.Box(width = 16, height = 16, radius = spacing.RAD_FULL,
                                background = zeus.accent_scale_light(i).s9,
                                cursor = "pointer",
                                a11y_role = "button",
@@ -72,7 +73,7 @@ fn AccentDots() {
                                    which.set(i)
                                    zeus.set_accent(i)
                                }) {
-                let ring = zeus.Box(width = 22, height = 22, radius = zeus.RAD_FULL,
+                let ring = zeus.Box(width = 22, height = 22, radius = spacing.RAD_FULL,
                                     border = 2, border_color = zeus.ink(),
                                     position = zeus.pos_absolute(), left = -3, top = -3)
                 zeus.show_eq(ring, which, i)
@@ -94,7 +95,7 @@ fn ProjectCard() {
             design.Button("Cancel", look = zeus.LOOK.Outline, size = zeus.SIZE.Md, on_click = fn() => ticks.set(ticks.get() + 1))
             design.Button("Save", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => ticks.set(ticks.get() + 1))
             design.Grow()
-            zeus.Text("{{ticks.get()}}", color = zeus.mute(), font = zeus.FONT_CAPTION)
+            zeus.Text("{{ticks.get()}}", color = zeus.mute(), font = spacing.FONT_CAPTION)
         }
     }
 }
@@ -141,7 +142,7 @@ fn Customize() {
                   padding = 12, spacing = 8,
                   align_direction = DIRECTION.Row, align_items = ALIGN.Center) {
             design.Pip(zeus.accent(), 8)
-            zeus.Text("Comp — a function widget, styled by props", font = zeus.FONT_BODY,
+            zeus.Text("Comp — a function widget, styled by props", font = spacing.FONT_BODY,
                       color = zeus.ink())
         }
         design.Badge("custom", zeus.TINT.Mute, radius = 2, padding_x = 8)
@@ -239,7 +240,7 @@ fn Field(name: Signal<string>, note: Signal<string>, st: Store) {
     design.Card() {
         design.Field("Name", name, "Your name")
         zeus.Text(if name.get().len < 3 { "Name must be at least 3 characters." } else { "" },
-                  color = zeus.danger(), font = zeus.FONT_CONTROL)
+                  color = zeus.danger(), font = spacing.FONT_CONTROL)
         design.TextArea(note, "Draft — saved as you type", fn() => kv.set(st, "draft", note.get()))
         design.Note("{{note.get().len}} chars · std:kv under Application Support")
         design.Button("Submit", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => name.set(name.get()))
@@ -291,7 +292,7 @@ fn Controls() {
     design.Card() {
         design.Row(SPACE.Md) {
             design.Switch(on)
-            zeus.Text(if on.get() == 1 { "On" } else { "Off" }, color = zeus.ink(), font = zeus.FONT_BODY)
+            zeus.Text(if on.get() == 1 { "On" } else { "Off" }, color = zeus.ink(), font = spacing.FONT_BODY)
             design.Grow()
             design.Checkbox("Notify me", notes)
         }
@@ -346,7 +347,7 @@ fn Upload() {
             height = 200,
             radius = 8,
             background = zeus.raised()) {
-            zeus.Text("No image yet", color = zeus.mute(), font = zeus.FONT_CAPTION)
+            zeus.Text("No image yet", color = zeus.mute(), font = spacing.FONT_CAPTION)
         }
         zeus.show_eq(empty, pw, 0)
         // No `width` / `max_width` / aspect wiring: `Image` takes the decoded
@@ -567,21 +568,21 @@ fn Menus() {
             padding_x = 12,
             padding_y = 8,
             background = zeus.plate(),
-            border = zeus.HAIRLINE,
+            border = spacing.HAIRLINE,
             border_color = zeus.rule(),
-            radius = zeus.RAD_MD,
+            radius = spacing.RAD_MD,
             cursor = "pointer",
             hover_off = false,
             press = true,
             a11y_role = "button",
             a11y_label = "Open menu"
         ) {
-            zeus.Text(active_label.get(), color = zeus.ink(), font = zeus.FONT_CONTROL)
+            zeus.Text(active_label.get(), color = zeus.ink(), font = spacing.FONT_CONTROL)
             design.Icon(zeus.IC_CHEV_DOWN, 16, zeus.dim())
         }
         design.Menu(trigger, width = 200, label = "File", items = menu_items,
                   on_select = fn(i: int) => active_label.set(menu_items[i].label))
-        zeus.Text("last command: {{active_label.get()}}", color = zeus.mute(), font = zeus.FONT_BODY)
+        zeus.Text("last command: {{active_label.get()}}", color = zeus.mute(), font = spacing.FONT_BODY)
     }
 }
 
@@ -592,7 +593,7 @@ fn Feedback() {
         design.Row(SPACE.Md) {
             design.Spinner()
             design.Spinner(size = 24, color = zeus.ink())
-            zeus.Text("Working...", color = zeus.mute(), font = zeus.FONT_BODY)
+            zeus.Text("Working...", color = zeus.mute(), font = spacing.FONT_BODY)
         }
     }
     design.Card() {
@@ -615,7 +616,7 @@ fn Feedback() {
 fn StateField(text: string, edge: string, off: int, bad: int) -> Node {
     let value = zeus.signal(text)
     let f = design.TextInput(value, "", width = 200, border_color = edge,
-                           font = zeus.FONT_CONTROL)
+                           font = spacing.FONT_CONTROL)
     if off != 0 {
         zeus.disabled(f, true)
     }
@@ -689,7 +690,7 @@ fn Floating() {
                     on_click = fn() => drawer.set(1))
     }
     design.Toast(toast, width = 200) {
-        zeus.Text("Saved", color = zeus.on_ink(), font = zeus.FONT_BODY)
+        zeus.Text("Saved", color = zeus.on_ink(), font = spacing.FONT_BODY)
     }
     design.Drawer(drawer, side = design.SIDE.SideEnd, size = 300) {
         design.Title("Filters")
@@ -779,13 +780,13 @@ fn Showcase() {
     let page = zeus.signal(1)
     design.Page() {
         Navbar(page)
-        zeus.show_eq(design.Column(zeus.SECTION) {
+        zeus.show_eq(design.Column(spacing.SECTION) {
             Foundations()
         }, page, 0)
-        zeus.show_eq(design.Column(zeus.SECTION) {
+        zeus.show_eq(design.Column(spacing.SECTION) {
             Components()
         }, page, 1)
-        zeus.show_eq(design.Column(zeus.SECTION) {
+        zeus.show_eq(design.Column(spacing.SECTION) {
             Patterns()
         }, page, 2)
     }

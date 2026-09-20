@@ -4,6 +4,7 @@
 // settled first frame. Keep this file free of prints: stdout is the golden.
 
 import "std:zeus"
+import "std:spacing"
 import "std:design"
 
 fn main() {
@@ -13,11 +14,11 @@ fn main() {
         design.Page() {
             let trigger = design.Button("Menu", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
             design.Popover(trigger, open = open, place = design.PLACE.PlaceBelow, width = 200) {
-                zeus.Text("Rename", color = zeus.ink(), font = zeus.FONT_BODY)
-                zeus.Text("Duplicate", color = zeus.ink(), font = zeus.FONT_BODY)
+                zeus.Text("Rename", color = zeus.ink(), font = spacing.FONT_BODY)
+                zeus.Text("Duplicate", color = zeus.ink(), font = spacing.FONT_BODY)
             }
             design.Toast(toast, width = 180) {
-                zeus.Text("Saved", color = zeus.on_ink(), font = zeus.FONT_BODY)
+                zeus.Text("Saved", color = zeus.on_ink(), font = spacing.FONT_BODY)
             }
         }
     })

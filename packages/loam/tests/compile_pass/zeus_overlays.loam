@@ -6,6 +6,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:spacing"
 import "std:design"
 
 fn must(ok: bool, what: string) {
@@ -27,12 +28,12 @@ fn main() {
         let trigger = design.Button("Menu", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
         trig_id = trigger.id
         let pop = design.Popover(trigger, open = open, place = design.PLACE.PlaceBelow, width = 180) {
-            zeus.Text("Rename", color = zeus.ink(), font = zeus.FONT_BODY)
+            zeus.Text("Rename", color = zeus.ink(), font = spacing.FONT_BODY)
         }
         pop_id = pop.id
         design.Tooltip(trigger, text = "Open the menu", delay = 0)
         design.Toast(toast, width = 160, ms = 0) {
-            zeus.Text("Saved", color = zeus.on_ink(), font = zeus.FONT_BODY)
+            zeus.Text("Saved", color = zeus.on_ink(), font = spacing.FONT_BODY)
         }
     }
     zeus.root(tree)

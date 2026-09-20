@@ -3,6 +3,7 @@
 //! Every color is a role token, so the whole page inverts with the appearance.
 
 import "std:zeus"
+import "std:spacing"
 import "std:design"
 
 fn ProjectCard() {
@@ -18,7 +19,7 @@ fn ProjectCard() {
             design.Button("Cancel", look = zeus.LOOK.Outline, size = zeus.SIZE.Md, on_click = fn() => ticks.set(ticks.get() + 1))
             design.Button("Save", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => ticks.set(ticks.get() + 1))
             design.Grow()
-            zeus.Text("{{ticks.get()}}", color = zeus.mute(), font = zeus.FONT_CAPTION)
+            zeus.Text("{{ticks.get()}}", color = zeus.mute(), font = spacing.FONT_CAPTION)
         }
     }
 }
@@ -41,7 +42,7 @@ fn Customize() {
                   padding = 12, spacing = 8,
                   align_direction = DIRECTION.Row, align_items = ALIGN.Center) {
             design.Pip(zeus.accent(), 8)
-            zeus.Text("Comp — a function widget, styled by props", font = zeus.FONT_BODY,
+            zeus.Text("Comp — a function widget, styled by props", font = spacing.FONT_BODY,
                       color = zeus.ink())
         }
         design.Badge("custom", zeus.TINT.Mute, radius = 2, padding_x = 8)

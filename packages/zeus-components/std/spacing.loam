@@ -1,0 +1,93 @@
+//! spacing — the design system's fixed metrics: the type scale and leading, the
+//! corner radii, the focus ring, control sizes, stacking order, and the tooltip /
+//! dialog / pagination / chart / calendar dimensions. These are the values a
+//! theme leaves alone.
+//!
+//! The live palette and the role accessors live in `colors`. The inline SVG icon
+//! set stays in `zeus_constants`, together with `VIRT_OVERSCAN` — the one
+//! constant `zeusbase` itself reads, so it cannot move above it.
+
+// --- type -----------------------------------------------------------------
+/// Line heights, as a percentage of the font size. Canvas hosts draw one
+/// weight, so hierarchy leans on size, colour, and leading — which makes the
+/// leading load-bearing rather than decorative.
+const LEAD_TIGHT: int = 115
+const LEAD_SNUG: int = 130
+const LEAD_NORMAL: int = 150
+const LEAD_RELAXED: int = 170
+
+/// Type scale. Canvas hosts draw one weight, so hierarchy leans on size and
+/// color. 14 is the body workhorse.
+const FONT_DISPLAY: int = 30
+const FONT_HEADING: int = 20
+const FONT_TITLE: int = 16
+const FONT_BODY: int = 14
+const FONT_CONTROL: int = 13
+const FONT_CAPTION: int = 12
+const FONT_OVERLINE: int = 11
+
+const PAGE_PAD: int = 32
+const SECTION: int = 24
+
+// --- focus ring -----------------------------------------------------------
+/// Focus ring stroke width in dp.
+const FOCUS_WIDTH: int = 2
+/// Gap between the control's edge and the ring, in dp. The offset is what
+/// keeps the ring legible on a solid-filled control, where a ring drawn flush
+/// would disappear into the fill.
+const FOCUS_OFFSET: int = 2
+
+// --- radius ---------------------------------------------------------------
+/// Corner radii, small to extra large.
+const RAD_SM: int = 6
+const RAD_MD: int = 8
+const RAD_LG: int = 10
+const RAD_XL: int = 14
+const RAD_FULL: int = 999
+/// No rounding. Named so a caller can say `RAD_NONE` instead of a bare 0 and
+/// mean it — `radius = 0` and "radius unset" were indistinguishable before.
+const RAD_NONE: int = 0
+
+// --- control metrics ------------------------------------------------------
+const BAR: int = 52
+const DOT: int = 8
+const HAIRLINE: int = 1
+/// Default width of a `Select` field.
+const SELECT_W: int = 200
+/// Stacking: scrim under the trigger/field, popup above both — so a Select
+/// menu is not covered by a Combobox later in the same card.
+const Z_SCRIM: int = 40
+const Z_FIELD: int = 50
+const Z_POPUP: int = 80
+
+// --- tooltip --------------------------------------------------------------
+/// Padding and caret size of a tooltip bubble. The caret's offset is derived
+/// from the padding, so these two move together.
+const TOOLTIP_PAD_X: int = 10
+const TOOLTIP_PAD_Y: int = 6
+const TOOLTIP_ARROW: int = 8
+
+// --- dialog ---------------------------------------------------------------
+/// Desktop dialog width; narrower windows get 92% of their width.
+const DIALOG_W: int = 440
+/// Scale the dialog card rests at while closed (percent).
+const DIALOG_REST: int = 96
+
+// --- pagination -----------------------------------------------------------
+/// Slots in a collapsed pagination row: first, last, and a five-wide window.
+const PAGE_SLOTS: int = 7
+
+// --- charts ---------------------------------------------------------------
+/// Chart width/height used by the demos (put charts in a Card column).
+const CHART_W: int = 640
+const CHART_H: int = 200
+/// Left gutter for the y tick labels.
+const CHART_GUTTER: int = 34
+/// Air above the plot, room for the floating tooltip.
+const CHART_TOP: int = 8
+/// Bottom strip for the x labels (45° labels need diagonal room plus the
+/// air gap between the baseline and the label corners).
+const CHART_XLAB: int = 38
+
+// --- calendar -------------------------------------------------------------
+const CAL_CELL: int = 36

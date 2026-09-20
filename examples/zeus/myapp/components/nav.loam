@@ -4,6 +4,7 @@
 
 import "std:async"
 import "std:zeus"
+import "std:spacing"
 import "std:design"
 import "std:router"
 
@@ -19,11 +20,11 @@ fn RamChip() {
     }
     zeus.Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
              spacing = SPACE.Exxs, padding_x = 10, padding_y = 4, height = 26,
-             radius = zeus.RAD_FULL, background = zeus.raised()) {
+             radius = spacing.RAD_FULL, background = zeus.raised()) {
         zeus.Text(fn() -> string {
             let mb = ram.get() / 1024
             return "RAM {{mb}} MB"
-        }, color = zeus.mute(), font = zeus.FONT_CAPTION)
+        }, color = zeus.mute(), font = spacing.FONT_CAPTION)
     }
 }
 
@@ -40,13 +41,13 @@ fn NavLink(label: string, href: string) {
         spacing = SPACE.Exxs,
         padding_x = 12,
         height = 36,
-        radius = zeus.RAD_MD,
+        radius = spacing.RAD_MD,
         on_click = fn() => router.navigate(href),
         a11y_role = "button",
         a11y_label = label,
         cursor = "pointer")
     zeus.ui_push(item.id)
-    let text = zeus.Text(label, font = zeus.FONT_BODY)
+    let text = zeus.Text(label, font = spacing.FONT_BODY)
     zeus.ui_pop()
     zeus.selected_chrome(item, text, || { path.get() == href },
                          zeus.raised(), "", zeus.ink(), zeus.mute())
@@ -58,9 +59,9 @@ fn NavLink(label: string, href: string) {
 fn Navbar() {
     design.Column(SPACE.None) {
         zeus.Box(align_direction = DIRECTION.Row, spacing = SPACE.Md,
-                 align_items = ALIGN.Center, height = zeus.BAR) {
+                 align_items = ALIGN.Center, height = spacing.BAR) {
             zeus.Box(width = 22, height = 22, radius = 6, background = zeus.ink())
-            zeus.Text("myapp", color = zeus.ink(), font = zeus.FONT_TITLE)
+            zeus.Text("myapp", color = zeus.ink(), font = spacing.FONT_TITLE)
             NavLink("Foundations", "/")
             NavLink("Components", "/components")
             NavLink("Patterns", "/patterns")
@@ -69,7 +70,7 @@ fn Navbar() {
             NavLink("Pricing", "/pricing")
             design.Grow()
             RamChip()
-            zeus.Text("Dark", color = zeus.mute(), font = zeus.FONT_CONTROL)
+            zeus.Text("Dark", color = zeus.mute(), font = spacing.FONT_CONTROL)
             design.Switch(zeus.appearance())
         }
         design.Separator()

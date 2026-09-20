@@ -5,6 +5,7 @@
 //! `load0` seed signals.
 
 import "std:zeus"
+import "std:spacing"
 import "std:design"
 
 const TILE: int = 36
@@ -23,7 +24,7 @@ struct Job {
 fn Stat(label: string, value: string, kind: int) {
     design.Card() {
         zeus.Box(width = TILE, height = 4, radius = 2, background = zeus.tint_of(kind))
-        zeus.Text(label, color = zeus.dim(), font = zeus.FONT_CAPTION)
+        zeus.Text(label, color = zeus.dim(), font = spacing.FONT_CAPTION)
         zeus.Text(value, color = zeus.ink(), font = FONT_DISPLAY)
     }
 }
@@ -31,7 +32,7 @@ fn Stat(label: string, value: string, kind: int) {
 fn StatCount(label: string, sig: Signal<int>, kind: int) {
     design.Card() {
         zeus.Box(width = TILE, height = 4, radius = 2, background = zeus.tint_of(kind))
-        zeus.Text(label, color = zeus.dim(), font = zeus.FONT_CAPTION)
+        zeus.Text(label, color = zeus.dim(), font = spacing.FONT_CAPTION)
         zeus.Text("{{sig.get()}}", color = zeus.ink(), font = FONT_DISPLAY)
     }
 }
@@ -59,11 +60,11 @@ fn Bar(sig: Signal<int>) {
 fn Header(title: string, chip: string) {
     design.Row(SPACE.Md) {
         zeus.Box(width = 8, height = 24, radius = 4, background = zeus.ink())
-        zeus.Text(title, color = zeus.ink(), font = zeus.FONT_TITLE)
+        zeus.Text(title, color = zeus.ink(), font = spacing.FONT_TITLE)
         design.Chip(chip, zeus.TINT.Mute)
         design.Badge("live", zeus.TINT.Ok)
         design.Grow()
-        zeus.Text("Dark", color = zeus.mute(), font = zeus.FONT_BODY)
+        zeus.Text("Dark", color = zeus.mute(), font = spacing.FONT_BODY)
         design.Switch(zeus.appearance())
     }
 }
@@ -98,11 +99,11 @@ fn CountCard(count: Signal<int>, open: Signal<int>) {
 
 fn Load(load: Signal<int>) {
     design.Row(SPACE.Md) {
-        zeus.Text("Load", color = zeus.dim(), font = zeus.FONT_BODY)
+        zeus.Text("Load", color = zeus.dim(), font = spacing.FONT_BODY)
         Bar(load)
         // Fixed-width slot so the trailing buttons do not shift with the digits.
         zeus.Box(align_direction = DIRECTION.Row, justify = ALIGN.End, width = 44) {
-            zeus.Text("{{load.get()}}%", color = zeus.mute(), font = zeus.FONT_BODY)
+            zeus.Text("{{load.get()}}%", color = zeus.mute(), font = spacing.FONT_BODY)
         }
         design.Button("+10", look = zeus.LOOK.Soft, size = zeus.SIZE.Md, on_click = fn() => load.set(clamp(load.get() + 10)))
         design.Button("-10", look = zeus.LOOK.Soft, size = zeus.SIZE.Md, on_click = fn() => load.set(clamp(load.get() - 10)))
@@ -112,16 +113,16 @@ fn Load(load: Signal<int>) {
 fn FeedRow(i: int, s: string) {
     zeus.Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
              height = ROW_H, spacing = SPACE.Exs, padding_x = SPACE.Exs) {
-        zeus.Text(s, color = zeus.ink(), font = zeus.FONT_BODY, grow = 1)
+        zeus.Text(s, color = zeus.ink(), font = spacing.FONT_BODY, grow = 1)
     }
 }
 
 fn JobRow(i: int, r: Job) {
     zeus.Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
              height = ROW_H, spacing = SPACE.Sm, padding_x = SPACE.Exs) {
-        zeus.set_flex_basis_zero(zeus.Text(r.name, color = zeus.ink(), font = zeus.FONT_BODY, grow = 1))
-        zeus.set_flex_basis_zero(zeus.Text(r.role, color = zeus.mute(), font = zeus.FONT_BODY, grow = 1))
-        zeus.set_flex_basis_zero(zeus.Text(r.status, color = zeus.dim(), font = zeus.FONT_BODY, grow = 1))
+        zeus.set_flex_basis_zero(zeus.Text(r.name, color = zeus.ink(), font = spacing.FONT_BODY, grow = 1))
+        zeus.set_flex_basis_zero(zeus.Text(r.role, color = zeus.mute(), font = spacing.FONT_BODY, grow = 1))
+        zeus.set_flex_basis_zero(zeus.Text(r.status, color = zeus.dim(), font = spacing.FONT_BODY, grow = 1))
     }
 }
 
@@ -223,7 +224,7 @@ fn Screen(title: string, chip: string, users: string, jobs: string, uptime: stri
     push(cols, TableCol { title: "Status", width: 0 })
 
     zeus.Box(align_direction = DIRECTION.Column, spacing = SPACE.Exs,
-             padding = zeus.PAGE_PAD, background = zeus.paper(), grow = 1) {
+             padding = spacing.PAGE_PAD, background = zeus.paper(), grow = 1) {
         Header(title, chip),
         design.Alert("RPC", "Count is Counter.Hello. Cards are Counter.Stats."),
         Stats(users, jobs, uptime, count),

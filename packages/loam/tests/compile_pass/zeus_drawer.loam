@@ -5,6 +5,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:spacing"
 import "std:design"
 
 fn must(ok: bool, what: string) {
@@ -18,9 +19,9 @@ fn main() {
     zeus.window("drawer", 360, 260)
     let open = zeus.signal(0)
     let tree = design.Page() {
-        zeus.Text("Under", color = zeus.ink(), font = zeus.FONT_BODY)
+        zeus.Text("Under", color = zeus.ink(), font = spacing.FONT_BODY)
         design.Drawer(open, side = design.SIDE.SideEnd, size = 240) {
-            zeus.Text("Panel body", color = zeus.ink(), font = zeus.FONT_BODY)
+            zeus.Text("Panel body", color = zeus.ink(), font = spacing.FONT_BODY)
         }
     }
     zeus.root(tree)

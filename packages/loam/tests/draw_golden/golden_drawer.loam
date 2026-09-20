@@ -4,6 +4,7 @@
 // the golden.
 
 import "std:zeus"
+import "std:spacing"
 import "std:design"
 
 fn main() {
@@ -13,7 +14,7 @@ fn main() {
             design.Title("Page")
             design.Drawer(open, side = design.SIDE.SideEnd, size = 220) {
                 design.Title("Filters")
-                zeus.Text("Body copy", color = zeus.mute(), font = zeus.FONT_BODY)
+                zeus.Text("Body copy", color = zeus.mute(), font = spacing.FONT_BODY)
             }
         }
     })

@@ -5,6 +5,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:spacing"
 import "std:design"
 
 fn must(ok: bool, what: string) {
@@ -19,7 +20,7 @@ fn main() {
     let open = zeus.signal(0)
     let tree = design.Page() {
         design.Collapsible(open = open, title = "Details", border_color = zeus.rule()) {
-            zeus.Text("Hidden body", color = zeus.ink(), font = zeus.FONT_BODY)
+            zeus.Text("Hidden body", color = zeus.ink(), font = spacing.FONT_BODY)
         }
     }
     zeus.root(tree)

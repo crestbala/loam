@@ -10,6 +10,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:spacing"
 import "std:design"
 
 fn must(ok: bool, what: string) {
@@ -36,10 +37,10 @@ fn main() {
     let tree = design.Page() {
         let trigger = design.Button("Menu", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
         design.Popover(trigger, open = open, place = design.PLACE.PlaceBelow, width = 180) {
-            zeus.Text("Rename", color = zeus.ink(), font = zeus.FONT_BODY)
+            zeus.Text("Rename", color = zeus.ink(), font = spacing.FONT_BODY)
         }
         design.Dialog(dlg, title = "Confirm") {
-            zeus.Text("Body", color = zeus.ink(), font = zeus.FONT_BODY)
+            zeus.Text("Body", color = zeus.ink(), font = spacing.FONT_BODY)
         }
     }
     zeus.root(tree)

@@ -1,4 +1,5 @@
 import "std:zeus"
+import "std:spacing"
 import "std:design"
 import "std:router"
 import "../../components/patterns.loam" as patterns
@@ -6,7 +7,7 @@ import "../../components/patterns.loam" as patterns
 // `design.Match` (what the router mounts pages into) is a Column with no
 // spacing, so the page sets its own section rhythm.
 fn page(p: Params) {
-    design.Column(zeus.SECTION) {
+    design.Column(spacing.SECTION) {
         patterns.Patterns()
     }
 }
