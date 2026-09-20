@@ -1,0 +1,66 @@
+// Per-node structural operators: insert / remove / move a single child without
+// re-running a build closure. The invariants are that `kids` and `parent` stay
+// in sync, sibling order is preserved by a remove, and a node has one parent.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("structure", 200, 100)
+    let root = zeus.raw_box()
+    let a = zeus.raw_label("a")
+    let b = zeus.raw_label("b")
+    let c = zeus.raw_label("c")
+
+    // Append, then insert in the middle.
+    zeus.insert_child(root, a, 0)
+    zeus.insert_child(root, b, 1)
+    zeus.insert_child(root, c, 1) // a c b
+    must(zeus.child_count(root) == 3, "three kids")
+    must(zeus.child_at(root, 0).id == a.id, "0 is a")
+    must(zeus.child_at(root, 1).id == c.id, "1 is c")
+    must(zeus.child_at(root, 2).id == b.id, "2 is b")
+    must(zeus.parent_of(c).id == root.id, "c parent is root")
+    must(zeus.child_index(root, b) == 2, "b index 2")
+    must(zeus.child_index(root, zeus.raw_box()) == -1, "stranger is not a child")
+
+    // Move to the end, through the same parent.
+    zeus.move_child(root, c, 3) // a b c
+    must(zeus.child_count(root) == 3, "still three after move")
+    must(zeus.child_at(root, 2).id == c.id, "c moved to end")
+    must(zeus.child_index(root, c) == 2, "c index 2")
+
+    // Remove the middle without disturbing order.
+    zeus.remove_child(root, b)
+    must(zeus.child_count(root) == 2, "two after remove")
+    must(zeus.parent_of(b).id == 0, "b detached")
+    must(zeus.child_at(root, 0).id == a.id, "a still first")
+    must(zeus.child_at(root, 1).id == c.id, "c now second")
+    // A stale remove is a no-op.
+    zeus.remove_child(root, b)
+    must(zeus.child_count(root) == 2, "stale remove is a no-op")
+
+    // One parent: inserting into a second host reparents.
+    let other = zeus.raw_box()
+    zeus.insert_child(other, a, 0)
+    must(zeus.child_count(root) == 1, "a left root")
+    must(zeus.child_count(other) == 1, "a joined other")
+    must(zeus.parent_of(a).id == other.id, "a parent is other")
+    // A move that is not this parent's child is refused.
+    zeus.move_child(root, a, 0)
+    must(zeus.parent_of(a).id == other.id, "move cannot reparent")
+
+    // Insert at an out-of-range index clamps to the end.
+    zeus.insert_child(root, b, 99)
+    must(zeus.child_at(root, 1).id == b.id, "index clamps to end")
+
+    fmt.println("structure ok")
+}

@@ -470,6 +470,94 @@ fn styled(node: Node, handler: fn()) -> Node {
     return node
 }
 
+// --- structural operators (per-node) ---
+// One node at a time: insert / remove / move a single child. Zeus effects are
+// barred from touching structure, so a list or an app reconciles through these
+// rather than by re-running a build closure. `child` above is the append form;
+// `insert_child(parent, node, count)` says the same thing at an explicit index.
+
+/// Number of direct children of `node`.
+fn child_count(node: Node) -> int {
+    arena.ensure()
+    if node.id <= 0 {
+        return 0
+    }
+    if node.id >= arena.nodes.len {
+        return 0
+    }
+    return arena.nodes[node.id].kids.len
+}
+
+/// The `i`-th direct child of `node` (0-based), or the empty handle when out of
+/// range.
+fn child_at(node: Node, i: int) -> Node {
+    arena.ensure()
+    if node.id <= 0 {
+        return node_handle(0)
+    }
+    if node.id >= arena.nodes.len {
+        return node_handle(0)
+    }
+    if i < 0 {
+        return node_handle(0)
+    }
+    if i >= arena.nodes[node.id].kids.len {
+        return node_handle(0)
+    }
+    return node_handle(arena.nodes[node.id].kids[i])
+}
+
+/// Position of `node` in `parent`'s children, or -1 when it is not one of them.
+fn child_index(parent: Node, node: Node) -> int {
+    arena.ensure()
+    return arena.child_index(parent.id, node.id)
+}
+
+/// The parent of `node`, or the empty handle at the root.
+fn parent_of(node: Node) -> Node {
+    arena.ensure()
+    if node.id <= 0 {
+        return node_handle(0)
+    }
+    if node.id >= arena.nodes.len {
+        return node_handle(0)
+    }
+    return node_handle(arena.nodes[node.id].parent)
+}
+
+/// Attach `node` under `parent` at `index` (clamped to `0..child_count`).
+/// Detaches from any previous parent first, so a node has one parent. Returns
+/// `parent` for chaining.
+fn insert_child(parent: Node, node: Node, index: int) -> Node {
+    arena.ensure()
+    arena.child_insert(parent.id, node.id, index)
+    return parent
+}
+
+/// Detach `node` from `parent`. No-op when `parent` does not hold it, so a
+/// stale handle cannot pull a node out of an unrelated subtree.
+fn remove_child(parent: Node, node: Node) -> Node {
+    arena.ensure()
+    if parent.id > 0 {
+        if node.id > 0 {
+            if node.id < arena.nodes.len {
+                if arena.nodes[node.id].parent == parent.id {
+                    arena.child_detach(node.id)
+                }
+            }
+        }
+    }
+    return parent
+}
+
+/// Move `node` to position `index` under `parent`, which must already hold it.
+/// Reorder without rebuilding: ids, focus, and per-row state survive.
+fn move_child(parent: Node, node: Node, index: int) -> Node {
+    arena.ensure()
+    arena.child_move(parent.id, node.id, index)
+    return parent
+}
+
 fn root(node: Node) -> Node {
     arena.ensure()
     arena.root_id = node.id
