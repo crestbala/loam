@@ -1196,6 +1196,34 @@ fn forget_sig_meta(signal_id: int) {
     }
 }
 
+// --- targeted invalidation (Phase 4) ---------------------------------------
+//
+// A write used to mark the whole frame. Now the prop setters (`apply_int` /
+// `apply_str`) report the node they wrote and `store_sig` marks exactly those
+// nodes when every effect the write ran reported one, so the damage pass scopes
+// to them and a paint-only property skips layout entirely. Anything it cannot
+// attribute — an effect that mutated arena state directly, or a signal layout
+// reads with no effect in between — falls back to the frame-wide mark, so
+// under-marking is impossible.
+/// Prop-setter writes since the last read, and how many of them can move the
+/// box model. `store_sig` compares the first with `track.runs`.
+let mut prop_writes: int = 0
+let mut prop_layout: int = 0
+
+/// Report that a prop write landed on `node_id`; `layout` is 1 when the property
+/// can move the box model. A paint-only write marks the node's PAINT bit so the
+/// damage pass scopes to it; a layout write still marks layout whole-tree
+/// (until phase 5).
+fn note_prop_write(node_id: int, layout: int) {
+    prop_writes = prop_writes + 1
+    if layout != 0 {
+        prop_layout = prop_layout + 1
+        mark_layout()
+    } else {
+        mark_paint_id(node_id)
+    }
+}
+
 fn store_sig(id: int, value: int) {
     if id <= 0 {
         return
@@ -1215,19 +1243,30 @@ fn store_sig(id: int, value: int) {
     }
     sigs[id] = value
     platform.plat_sig_bind_int(id, value)
-    // `notify` runs every dependent effect now, and a prop effect marks layout
-    // itself (`apply_int` / `apply_str`). So only a signal whose value layout
-    // reads *directly* — with no effect in between — needs a layout mark here;
-    // everything else is a paint-only change. The shared chrome pass still runs:
-    // it retargets hover / press / tween / fade tracks (a switch's tween or a
-    // scrollbar, none of which move the box model).
+    // `notify` runs every dependent effect now, and a prop effect reports the
+    // node it wrote. Count what ran and what reported to decide targeted vs
+    // frame-wide. The shared chrome pass still runs: it retargets hover / press /
+    // tween / fade tracks (a switch's tween or a scrollbar, none of which move
+    // the box model).
+    let ran0 = track.runs
+    let pw0 = prop_writes
+    let lay0 = prop_layout
     track.notify(id)
+    let ran = track.runs - ran0
+    let pw = prop_writes - pw0
+    let mut lay = prop_layout - lay0
     if id < affects_layout.len {
         if affects_layout[id] != 0 {
-            mark_layout()
-        } else {
-            mark_paint()
+            lay = lay + 1
         }
+    }
+    if lay != 0 {
+        mark_layout()
+    } else if ran > 0 && pw >= ran {
+        // Every effect that ran wrote a node through a setter, which marked it:
+        // a targeted repaint, no layout. Drop this write's `wrote` so the frame
+        // does not force a layout for it.
+        track.consume_wrote()
     } else {
         mark_paint()
     }
@@ -1236,7 +1275,7 @@ fn store_sig(id: int, value: int) {
 
 /// A paint-only signal write: the value moved but nothing about the tree's
 /// geometry did (scroll offsets, drag positions). Effects still run — one that
-/// changes a layout prop marks layout itself, through `apply_int`.
+/// changes a layout prop marks layout itself, through `note_prop_write`.
 fn store_sig_paint(id: int, value: int) {
     if id <= 0 {
         return
@@ -1249,8 +1288,18 @@ fn store_sig_paint(id: int, value: int) {
     }
     sigs[id] = value
     platform.plat_sig_bind_int(id, value)
+    let ran0 = track.runs
+    let pw0 = prop_writes
+    let lay0 = prop_layout
     track.notify_paint(id)
-    paint_dirty = 1
+    let ran = track.runs - ran0
+    let pw = prop_writes - pw0
+    let lay = prop_layout - lay0
+    if lay != 0 {
+        mark_layout()
+    } else if ran == 0 || pw < ran {
+        paint_dirty = 1
+    }
 }
 
 // --- animation track pool (Phase 3) ---------------------------------------

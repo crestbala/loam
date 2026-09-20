@@ -31,7 +31,10 @@ commit per phase. Line anchors are for the tree at `feat/zeus-upgrade-v2`.
 - **Targeted per-node invalidation.** Writes set global flags — `paint_dirty` /
   `layout_dirty` / `chrome_dirty` (`arena.loam:943-978`, `2136-2138`,
   `2002-2004`, `1845-1858`). A per-node `PAINT` bit exists, but the write
-  channel marks the whole frame.
+  channel marks the whole frame. **Phase 4:** the prop setters report the node
+  they wrote and the write marks exactly those nodes when every effect it ran
+  reported one; a paint-only property skips layout and damages only its node.
+  Unattributable effects fall back to the frame-wide mark.
 - **Dependency-driven layout.** Any layout-affecting write re-lays the whole
   tree (`zeus.loam:381-397`).
 - **Dependency-driven paint.** A dirty frame pops the whole draw list and
@@ -67,7 +70,7 @@ commit per phase. Line anchors are for the tree at `feat/zeus-upgrade-v2`.
 | 1 | A | Per-node structural operators: `insert_child` / `remove_child` / `move_child` + accessors, with `arena.child_*` primitives that maintain `kids` / `parent` and mark minimal dirt | landed |
 | 2 | A | O(changes) keyed list reconciliation in `kfor_refresh`: build only new rows, free only removed rows, move the rest — per-row ownership via `scope_begin` | landed |
 | 3 | A | Reactive `Each` over a `Signal<[]T>`: the keyed engine exposed as the general list primitive, with the static one-shot loop renamed `Loop` | landed |
-| 4 | B | Targeted per-node invalidation: a `signal → node` index so a write marks exactly the nodes whose effects ran, not the whole frame | planned |
+| 4 | B | Targeted per-node invalidation: prop setters report their node; a write marks exactly those nodes (and skips layout) when every effect it ran reported one, else the frame-wide mark | landed |
 | 5 | B | Dependency-driven layout: dirty-subtree re-solve instead of a whole-tree pass | planned |
 | 6 | C | One reactive channel: fold the interaction overlay and theme resolution into the effect graph; keep motion paint-only by contract | planned |
 | 7 | D | Typed, lazy graph: generic `computed<T>` with pull-on-read, and a nested-computation disposal graph that auto-tears-down on owner re-run | planned |

@@ -21,7 +21,10 @@ let mut mute: int = 0
 let mut runs: int = 0
 /* Set by `notify` (every signal write). A non-int signal is written straight
    from generated C (`loam_track_notify`), bypassing `arena.store_sig`, so the
-   dirty channels are noted here and drained once per frame. */
+   dirty channels are noted here and drained once per frame. A count, not a
+   flag: `arena.store_sig` consumes its own contribution when it handled the
+   dirt exactly (targeted invalidation), while a write the C seam made directly
+   keeps its contribution so the frame still falls back to a layout mark. */
 let mut wrote: int = 0
 /* Effect rank: 1 + the rank of the effect that produced a signal this scope
    reads. A flush runs lower ranks first, so a reader of a `computed` runs
@@ -372,7 +375,7 @@ fn notify_at(signal_id: int, mark: int) {
         return
     }
     if mark != 0 {
-        wrote = 1
+        wrote = wrote + 1
     }
     let mut hit = []int {}
     let n = dep_sig.len
@@ -474,4 +477,14 @@ fn take_wrote() -> int {
     }
     wrote = 0
     return 1
+}
+
+/// Drop one write's `wrote` contribution. `arena.store_sig` calls this when it
+/// marked the exact nodes itself, so the frame does not also force a layout for
+/// that write. A non-int write the C seam made directly never consumes, so its
+/// dirt still drains.
+fn consume_wrote() {
+    if wrote > 0 {
+        wrote = wrote - 1
+    }
 }
