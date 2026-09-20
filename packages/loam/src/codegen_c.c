@@ -1771,6 +1771,9 @@ static void emit_steal(FILE *o, const char *place, Type *t, int ind) {
         return;
     }
     if (t->kind == TY_STRING) {
+        /* Only an owned string has a reference to transfer; with ownership off
+           a move leaves the source's copy alone, as it always did. */
+        if (!type_string_owns()) return;
         indent(o, ind);
         fprintf(o, "%s.ptr = NULL; %s.len = 0; %s.own = 0;\n", place, place, place);
         return;
