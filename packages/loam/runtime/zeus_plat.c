@@ -38,6 +38,9 @@ typedef struct {
     void *p;
     size_t n;
     int64_t gen;
+    /* 1 when the payload is an owned `loam_str` holding a reference the cell
+       must release when the cell dies or is reused for another type. */
+    int owns_str;
 } ZeusCell;
 
 static ZeusCell *g_cells;
@@ -82,7 +85,18 @@ void loam_zeus_sig_bind(int64_t id, const void *src, int64_t n) {
         c->n = nn;
     }
     if (nn && src && c->p) memcpy(c->p, src, nn);
+    /* A plain bind takes over the cell for a non-string payload; the caller
+       has already released any string it held (see the store path). */
+    c->owns_str = 0;
     c->gen++;
+}
+
+/* Bind an owned string: the cell keeps a reference and releases it when the
+   cell is freed or rebound to another type. The caller has already taken the
+   reference (`loam_str_retain`) and released the one the cell held. */
+void loam_zeus_sig_bind_str(int64_t id, const void *src, int64_t n) {
+    loam_zeus_sig_bind(id, src, n);
+    if (id >= 0 && (size_t)id < g_ncells) g_cells[id].owns_str = 1;
 }
 
 void loam_zeus_sig_load(int64_t id, void *dst, int64_t n) {
@@ -216,10 +230,15 @@ void loam_zeus_sig_free(int64_t id) {
     if (id <= 0 || (size_t)id >= g_ncells) return;
     if (!g_cells[id].p && g_cells[id].n == 0 && g_cells[id].gen == 0) return;
     if (id < loam_arena_sigs.len) ((int32_t *)loam_arena_sigs.ptr)[id] = 0;
+    /* Release the reference the cell held to an owned string before freeing
+       the slot that stored the handle. */
+    if (g_cells[id].owns_str && g_cells[id].p)
+        loam_str_release((loam_str *)g_cells[id].p);
     free(g_cells[id].p);
     g_cells[id].p = NULL;
     g_cells[id].n = 0;
     g_cells[id].gen = 0;
+    g_cells[id].owns_str = 0;
     free_sig_push(id);
 }
 
