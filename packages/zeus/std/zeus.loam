@@ -100,6 +100,8 @@ import "std:async"
 import "std:fmt"
 import "std:sys"
 import "zeus_constants.loam"
+import "structs.loam"
+import "zeusbase.loam"
 
 /// Button variants, named after the fill they carry. `Solid` is the
 /// `default` (primary) variant, `Soft` is `secondary`, `Danger` is
@@ -141,23 +143,6 @@ fn tint_of(kind: int) -> string {
         TINT.Warn => { return warn() }
         _ => { return ink() }
     }
-}
-
-/// A widget in the tree. Copy handle (`id`).
-struct Node {
-    /// Slot in the engine arena. Do not construct by hand; use `Box` / `Text`.
-    id: int,
-}
-
-/// Opaque reactive cell. Copy handle (`id`). `T` must be Copy (`int`,
-/// `string`, `float`, `bool`, `[]U` when `U` is Copy, or a Copy struct).
-///
-/// ```
-/// let n = zeus.signal(0)
-/// n.set(n.get() + 1)
-/// ```
-struct Signal<T> {
-    id: int,
 }
 
 fn empty_view() -> Node {
@@ -1050,13 +1035,6 @@ fn capture_text(node: Node) -> Node {
     arena.nodes[node.id].focusable = 1
     return node
 }
-fn on_action(node: Node, action: string, sig: Signal<int>, mode: int, value: int) -> Node {}
-fn on_action_global(action: string, sig: Signal<int>, mode: int, value: int) {}
-
-/// Step `sig` by `delta`, clamped to lo..hi — arrow navigation over a range.
-fn on_range(node: Node, action: string, sig: Signal<int>, delta: int, lo: int, hi: int) -> Node {}
-fn map_key(spec: string, action: string, ctx: string) {}
-fn remap_key(spec: string, action: string, ctx: string) {}
 
 /// Chord → action on this node. The action family (`button.press` → `button`)
 /// is the keymap context; `key_context` is only needed to override that name.

@@ -1,0 +1,25 @@
+//! structs — the two handle types the whole toolkit is built on: `Node` (a
+//! widget slot) and `Signal<T>` (a reactive cell). The C side owns the real
+//! typedefs (`zeus_rt.h`), so these declarations are what the compiler types
+//! against; they are not emitted (see `zeus_handle_mod` in `codegen_c.c`).
+//!
+//! They live in a leaf module with no imports of its own, so every layer above
+//! — `zeusbase`, the components, `zeus` itself — can name them without
+//! importing back down into `zeus`, which would be an import cycle.
+
+/// A widget in the tree. Copy handle (`id`).
+struct Node {
+    /// Slot in the engine arena. Do not construct by hand; use `Box` / `Text`.
+    id: int,
+}
+
+/// Opaque reactive cell. Copy handle (`id`). `T` must be Copy (`int`,
+/// `string`, `float`, `bool`, `[]U` when `U` is Copy, or a Copy struct).
+///
+/// ```
+/// let n = zeus.signal(0)
+/// n.set(n.get() + 1)
+/// ```
+struct Signal<T> {
+    id: int,
+}

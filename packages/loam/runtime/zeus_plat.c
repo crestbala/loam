@@ -1965,14 +1965,14 @@ int zeus_focus_step(int back) {
     return (int)loam_zeus_engine_focus_step(back);
 }
 
-Node loam_zeus_on_action(Node node, loam_str action, Signal sig, int64_t mode, int64_t value) {
+Node loam_zeusbase_on_action(Node node, loam_str action, Signal sig, int64_t mode, int64_t value) {
     char *s = dup_ys(action);
     zeus_key_on_action((int)node.id, s, (int)sig.id, (int)mode, value);
     free(s);
     return node;
 }
 
-Node loam_zeus_on_range(Node node, loam_str action, Signal sig, int64_t delta, int64_t lo,
+Node loam_zeusbase_on_range(Node node, loam_str action, Signal sig, int64_t delta, int64_t lo,
                        int64_t hi) {
     char *s = dup_ys(action);
     zeus_key_on_range((int)node.id, s, (int)sig.id, delta, lo, hi);
@@ -1980,13 +1980,13 @@ Node loam_zeus_on_range(Node node, loam_str action, Signal sig, int64_t delta, i
     return node;
 }
 
-void loam_zeus_on_action_global(loam_str action, Signal sig, int64_t mode, int64_t value) {
+void loam_zeusbase_on_action_global(loam_str action, Signal sig, int64_t mode, int64_t value) {
     char *s = dup_ys(action);
     zeus_key_on_action(0, s, (int)sig.id, (int)mode, value);
     free(s);
 }
 
-void loam_zeus_map_key(loam_str spec, loam_str action, loam_str ctx) {
+void loam_zeusbase_map_key(loam_str spec, loam_str action, loam_str ctx) {
     char *a = dup_ys(spec), *b = dup_ys(action), *c = dup_ys(ctx);
     zeus_key_map(a, b, c);
     free(a);
@@ -1994,7 +1994,7 @@ void loam_zeus_map_key(loam_str spec, loam_str action, loam_str ctx) {
     free(c);
 }
 
-void loam_zeus_remap_key(loam_str spec, loam_str action, loam_str ctx) {
+void loam_zeusbase_remap_key(loam_str spec, loam_str action, loam_str ctx) {
     char *a = dup_ys(spec), *b = dup_ys(action), *c = dup_ys(ctx);
     zeus_key_remap(a, b, c);
     free(a);

@@ -113,6 +113,13 @@ struct AstNode {
                module registered the same name — e.g. a file `raygui.loam`
                importing `std:raygui` would otherwise shadow it. */
             const char *resolved;
+            /* Selective import: `import { A, B as C } from "path"`. `names[k]`
+               is the name to find in the imported module, `locals[k]` the local
+               name it binds (equal when there is no `as`). Empty for a full
+               import, which brings in the module under its alias as before. */
+            const char **names;
+            const char **locals;
+            size_t name_count;
         } import;
         struct {
             const char *name;
@@ -281,6 +288,9 @@ void ast_free(AstNode *node);
 /** Constructors. Names and nested nodes are taken as owned (except loc). */
 AstNode *ast_program(AstNode **imps, size_t ni, AstNode **decls, size_t nd, SourceLoc loc);
 AstNode *ast_import(const char *alias, const char *path, SourceLoc loc);
+/** Selective import; `names`/`locals` are taken as owned arrays of owned strings. */
+AstNode *ast_import_names(const char *alias, const char *path, const char **names,
+                          const char **locals, size_t name_count, SourceLoc loc);
 AstNode *ast_fn(const char *name, Param *params, size_t pc, AstNode *ret, AstNode *body, SourceLoc loc);
 AstNode *ast_struct(const char *name, Field *fields, size_t fc, SourceLoc loc);
 AstNode *ast_enum(const char *name, const char **vnames, int64_t *vals, size_t n, SourceLoc loc);

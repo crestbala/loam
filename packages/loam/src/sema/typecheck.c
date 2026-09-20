@@ -429,6 +429,29 @@ static AstNode *find_struct_in(LoamModule *m, const char *name) {
     return NULL;
 }
 
+/** Resolve `name` against this module's *selective* imports: `import { A as X }`
+ *  binds `X` here to `A` in the imported module, so the requested name is not
+ *  the source name. Returns the source name and sets `*mod`, or NULL. Later
+ *  imports shadow earlier ones, matching the full-import order below. */
+static const char *selective_import_source(const char *name, LoamModule **mod) {
+    AstNode *prog = Gmods[Gcur].ast;
+    if (!prog) return NULL;
+    size_t i = prog->as.program.import_count;
+    while (i > 0) {
+        i--;
+        AstNode *im = prog->as.program.imports[i];
+        if (!im || !im->as.import.name_count) continue;
+        for (size_t k = 0; k < im->as.import.name_count; k++) {
+            const char *local = im->as.import.locals[k];
+            if (local && strcmp(local, name) == 0) {
+                *mod = find_mod(im->as.import.alias);
+                return im->as.import.names[k];
+            }
+        }
+    }
+    return NULL;
+}
+
 /** Resolve a bare name by import depth: this module's own declarations first,
  *  then each direct import in reverse source order (a later import shadows an
  *  earlier one), and only then the imports of those imports. This is what lets
@@ -438,13 +461,22 @@ static AstNode *lookup_unqualified(const char *name,
     if (!name) return NULL;
     AstNode *d = pick(&Gmods[Gcur], name);
     if (d) return d;
+    /* Selective imports next, since they may rename. */
+    {
+        LoamModule *sel = NULL;
+        const char *src = selective_import_source(name, &sel);
+        if (src) {
+            d = sel ? pick(sel, src) : NULL;
+            if (d) return d;
+        }
+    }
     AstNode *prog = Gmods[Gcur].ast;
     if (!prog) return NULL;
     size_t i = prog->as.program.import_count;
     while (i > 0) {
         i--;
         AstNode *im = prog->as.program.imports[i];
-        if (!im || !im->as.import.alias) continue;
+        if (!im || !im->as.import.alias || im->as.import.name_count) continue;
         LoamModule *m = find_mod(im->as.import.alias);
         d = m ? pick(m, name) : NULL;
         if (d) return d;
@@ -453,14 +485,14 @@ static AstNode *lookup_unqualified(const char *name,
     while (i > 0) {
         i--;
         AstNode *im = prog->as.program.imports[i];
-        if (!im || !im->as.import.alias) continue;
+        if (!im || !im->as.import.alias || im->as.import.name_count) continue;
         LoamModule *m = find_mod(im->as.import.alias);
         if (!m || !m->ast) continue;
         size_t k = m->ast->as.program.import_count;
         while (k > 0) {
             k--;
             AstNode *im2 = m->ast->as.program.imports[k];
-            if (!im2 || !im2->as.import.alias) continue;
+            if (!im2 || !im2->as.import.alias || im2->as.import.name_count) continue;
             LoamModule *m2 = find_mod(im2->as.import.alias);
             d = m2 ? pick(m2, name) : NULL;
             if (d) return d;
@@ -678,7 +710,8 @@ static AstNode *find_global_in(LoamModule *m, const char *name) {
  *  Not a keyword: ordinary empty `fn` in a std seam module. See docs/boundary.md. */
 static int is_ffi_mod(const char *name) {
     if (!name) return 0;
-    return strcmp(name, "zeus") == 0 || strcmp(name, "http") == 0 ||
+    return strcmp(name, "zeus") == 0 || strcmp(name, "zeusbase") == 0 ||
+           strcmp(name, "http") == 0 ||
            strcmp(name, "fmt") == 0 || strcmp(name, "maya") == 0 ||
            strcmp(name, "platform") == 0 || strcmp(name, "sys") == 0 ||
            strcmp(name, "net") == 0 || strcmp(name, "async") == 0 ||
@@ -1549,7 +1582,8 @@ static int as_struct_ctor(AstNode *n) {
                module_imported(Gmods[Gcur].ast, cal->as.access.target->as.ident.name)) {
         LoamModule *m = find_mod(cal->as.access.target->as.ident.name);
         if (m && lookup_through(m, cal->as.access.field, find_fn_in)) return 0;
-        if (m && find_struct_in(m, cal->as.access.field)) sname = cal->as.access.field;
+        if (m && lookup_through(m, cal->as.access.field, find_struct_in))
+            sname = cal->as.access.field;
     }
     if (!sname) return 0;
     FieldInit *fi = NULL;
@@ -3833,6 +3867,34 @@ static void instantiate_nested(void) {
  * Pass 1: types and C names, mark std intrinsics.
  * Pass 2: check bodies. Returns 1 if any error.
  */
+/** Check a module's selective imports: each listed name must exist in the
+ *  target module (or in what it re-exports), and no local name may repeat.
+ *  Catching a typo here beats a puzzling "unknown identifier" at the use site. */
+static void check_selective_imports(AstNode *p) {
+    for (size_t i = 0; i < p->as.program.import_count; i++) {
+        AstNode *im = p->as.program.imports[i];
+        if (!im || im->kind != AST_IMPORT || !im->as.import.name_count) continue;
+        LoamModule *tm = find_mod(im->as.import.alias);
+        for (size_t k = 0; k < im->as.import.name_count; k++) {
+            const char *src = im->as.import.names[k];
+            const char *local = im->as.import.locals[k];
+            for (size_t j = 0; j < k; j++) {
+                if (im->as.import.locals[j] && local &&
+                    strcmp(im->as.import.locals[j], local) == 0)
+                    err(im->loc, "duplicate import name '%s'", local);
+            }
+            if (!tm) continue;
+            AstNode *d = lookup_through(tm, src, find_fn_in);
+            if (!d) d = lookup_through(tm, src, find_struct_in);
+            if (!d) d = lookup_through(tm, src, find_enum_in);
+            if (!d) d = lookup_through(tm, src, find_global_in);
+            if (!d)
+                err(im->loc, "module '%s' has no '%s' to import",
+                    im->as.import.alias, src);
+        }
+    }
+}
+
 int typecheck_modules(LoamModule *mods, int nmods) {
     Gmods = mods;
     Gn = nmods;
@@ -3908,6 +3970,7 @@ int typecheck_modules(LoamModule *mods, int nmods) {
         cur_mod_name = mods[m].name;
         AstNode *p = mods[m].ast;
         if (!p) continue;
+        check_selective_imports(p);
         scope_push();
         for (size_t i = 0; i < p->as.program.decl_count; i++) {
             AstNode *d = p->as.program.decls[i];

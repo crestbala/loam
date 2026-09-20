@@ -1,0 +1,18 @@
+//! Fixture for selective imports (`import { A as B } from ...`): an enum, a
+//! const, a fn, and a struct to pull in by name.
+
+enum Shade {
+    Red = 1,
+    Blue = 2,
+}
+
+const LIMIT: int = 7
+
+struct Box {
+    width: int,
+    height: int,
+}
+
+fn twice(x: int) -> int {
+    return x * 2
+}

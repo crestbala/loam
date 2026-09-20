@@ -1168,9 +1168,100 @@ static AstNode *parse_enum(Parser *p) {
     return ast_enum(name, vn, vals, n, loc);
 }
 
-/** `import "std:foo"` or `import "rel/path.loam"` only (quoted). */
+/** The module alias a resolved import spec binds to: the `std:`/`pkg:` name, or
+    the file stem for a relative path. NULL (with an error) if the spec is bad. */
+static char *alias_from_path(Parser *p, const char *path) {
+    if (strncmp(path, "std:", 4) == 0) {
+        const char *name = path + 4;
+        if (!name[0] || strchr(name, '/') || strchr(name, '\\') || strchr(name, ':')) {
+            error(p, "std import must be import \"std:name\"");
+            return NULL;
+        }
+        return loam_dup(name);
+    }
+    if (strncmp(path, "pkg:", 4) == 0) {
+        const char *name = path + 4;
+        if (!name[0] || strchr(name, '/') || strchr(name, '\\') || strchr(name, ':')) {
+            error(p, "package import must be import \"pkg:name\"");
+            return NULL;
+        }
+        return loam_dup(name);
+    }
+    char *alias = file_stem(path);
+    if (!alias || !alias[0]) {
+        error(p, "import path has no module name");
+        free(alias);
+        return NULL;
+    }
+    return alias;
+}
+
+/** `import { A, B as C } from "path"` — the `{` has been consumed. */
+static AstNode *parse_named_import(Parser *p, SourceLoc loc) {
+    const char **names = NULL;
+    const char **locals = NULL;
+    size_t n = 0;
+    if (!check(p, TOK_RBRACE)) {
+        do {
+            if (!match(p, TOK_IDENT)) {
+                error(p, "expected a name in the import list");
+                break;
+            }
+            char *src = tok_text(p->previous);
+            char *local = loam_dup(src);
+            if (match(p, TOK_AS)) {
+                if (match(p, TOK_IDENT)) {
+                    free(local);
+                    local = tok_text(p->previous);
+                } else {
+                    error(p, "expected a local name after 'as'");
+                }
+            }
+            names = (const char **)realloc(names, (n + 1) * sizeof(char *));
+            locals = (const char **)realloc(locals, (n + 1) * sizeof(char *));
+            names[n] = src;
+            locals[n] = local;
+            n++;
+        } while (match(p, TOK_COMMA));
+    }
+    consume(p, TOK_RBRACE, "expected } to close the import list");
+    if (!check(p, TOK_IDENT) || p->current.len != 4 || strncmp(p->current.start, "from", 4) != 0) {
+        error(p, "expected 'from' before the import path");
+    } else {
+        advance(p);
+    }
+    if (!match(p, TOK_STRING)) {
+        error(p, "expected import path string after 'from'");
+        for (size_t i = 0; i < n; i++) {
+            free((void *)names[i]);
+            free((void *)locals[i]);
+        }
+        free(names);
+        free(locals);
+        return NULL;
+    }
+    loc.end_line = p->previous.loc.end_line;
+    loc.end_col = p->previous.loc.end_col;
+    char *path = unescape_string(p->previous);
+    char *alias = alias_from_path(p, path);
+    if (!alias) {
+        for (size_t i = 0; i < n; i++) {
+            free((void *)names[i]);
+            free((void *)locals[i]);
+        }
+        free(names);
+        free(locals);
+        free(path);
+        return NULL;
+    }
+    return ast_import_names(alias, path, names, locals, n, loc);
+}
+
+/** `import "std:foo"` / `import "rel/path.loam"` (either with `as name`), or a
+    selective `import { A, B as C } from "path"`. */
 static AstNode *parse_import(Parser *p) {
     SourceLoc loc = p->previous.loc;
+    if (match(p, TOK_LBRACE)) return parse_named_import(p, loc);
     if (match(p, TOK_IDENT)) {
         error(p, "import requires a quoted path, e.g. import \"std:zeus\" or import \"foo.loam\"");
         return NULL;
@@ -1182,31 +1273,10 @@ static AstNode *parse_import(Parser *p) {
     loc.end_line = p->previous.loc.end_line;
     loc.end_col = p->previous.loc.end_col;
     char *path = unescape_string(p->previous);
-    char *alias;
-    if (strncmp(path, "std:", 4) == 0) {
-        const char *name = path + 4;
-        if (!name[0] || strchr(name, '/') || strchr(name, '\\') || strchr(name, ':')) {
-            error(p, "std import must be import \"std:name\"");
-            free(path);
-            return NULL;
-        }
-        alias = loam_dup(name);
-    } else if (strncmp(path, "pkg:", 4) == 0) {
-        const char *name = path + 4;
-        if (!name[0] || strchr(name, '/') || strchr(name, '\\') || strchr(name, ':')) {
-            error(p, "package import must be import \"pkg:name\"");
-            free(path);
-            return NULL;
-        }
-        alias = loam_dup(name);
-    } else {
-        alias = file_stem(path);
-        if (!alias || !alias[0]) {
-            error(p, "import path has no module name");
-            free(path);
-            free(alias);
-            return NULL;
-        }
+    char *alias = alias_from_path(p, path);
+    if (!alias) {
+        free(path);
+        return NULL;
     }
     /* `import "path.loam" as name` — needed when two files share a stem
        (file-system routing: many `page.loam`). */
