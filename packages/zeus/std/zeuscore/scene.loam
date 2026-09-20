@@ -47,14 +47,23 @@ let mut op_len: []int = []int {}
 
 /// Recording state. `rec_mode` 1 means ops land in `patch_ops` instead of
 /// `draws`, and a span is rebased onto `rec_base` — the retained offset the run
-/// will be written back to.
+/// will be written back to. `cur_floater` is the floater root the floaters pass is
+/// recording; it is the one node whose run must *not* overwrite its main-region
+/// span, because its shell lives in the main region and its body does not.
 let mut rec_mode: int = 0
 let mut rec_base: int = 0
 let mut rec_from: int = 0
+let mut cur_floater: int = 0
 let mut patch_ops: []Draw = []Draw {}
 let mut patch_dst: []int = []int {}
 let mut patch_src: []int = []int {}
 let mut patch_len: []int = []int {}
+/* Where the floaters section starts in `draws`. Everything from here on is the
+   floaters pass. A floater's ops follow its trigger's screen rect rather than
+   only its own subtree, and its set can change from frame to frame, so the
+   section is re-recorded whole on a patched frame while the region before it is
+   reused. It is the tail of the list, so re-recording it never shifts anything. */
+let mut fl_section_start: int = 0
 
 /// Diagnostics for tests: frames that re-recorded only their dirty subtrees,
 /// frames that re-recorded everything, and op runs re-recorded rather than
@@ -90,6 +99,12 @@ fn grow_span(id: int) {
 
 fn set_span(id: int, from: int, len: int) {
     if id <= 0 {
+        return
+    }
+    // A floater root emits twice: a shell into the main region, then its whole run
+    // into the floaters section. The shell's span is the one a later frame needs
+    // (`patch_shell`), so the second pass must leave it alone.
+    if id == cur_floater {
         return
     }
     grow_span(id)
@@ -1608,7 +1623,10 @@ fn paint_floaters(id: int) {
 fn paint_floaters_paint() {
     let n = arena.floater_id.len
     for i in 0..n {
-        paint_one_floater(arena.floater_id[i], arena.floater_screen_x[i], arena.floater_screen_y[i])
+        let f = arena.floater_id[i]
+        cur_floater = f
+        paint_one_floater(f, arena.floater_screen_x[i], arena.floater_screen_y[i])
+        cur_floater = 0
     }
 }
 
@@ -1639,9 +1657,18 @@ fn patch_run(id: int) -> int {
 /// shadow packing, transforms — is not redone. A node with only a *descendant*
 /// marked keeps its own ops and recurses, because its ops bracket its children and
 /// an in-place patch elsewhere does not disturb them.
+///
+/// A floater is the exception. Its ops live in two places — a shell in the main
+/// region (which a transformed or revealing floater emits, and which moves with
+/// any scroller above it) and its body in the floaters section — so instead of
+/// trusting bits this re-records the shell unconditionally (it is a handful of ops
+/// at most) and leaves the section to `patch_frame`.
 fn patch_node(id: int) -> int {
     if id <= 0 {
         return 1
+    }
+    if arena.is_floater(id) != 0 {
+        return patch_shell(id)
     }
     let bits = arena.node_paint_bits(id)
     if bits == 0 {
@@ -1667,6 +1694,36 @@ fn patch_node(id: int) -> int {
     return 1
 }
 
+/// Re-record a floater's main-region shell (no body: `paint_skip_z` is set).
+fn patch_shell(id: int) -> int {
+    let from0 = op_start_span(id)
+    let len0 = op_len_len(id)
+    rec_from = patch_ops.len
+    rec_base = from0
+    rec_mode = 1
+    paint_node_shaped(id)
+    rec_mode = 0
+    let len = patch_ops.len - rec_from
+    if len != len0 {
+        return 0
+    }
+    push(patch_dst, from0)
+    push(patch_src, rec_from)
+    push(patch_len, len)
+    patch_runs = patch_runs + 1
+    return 1
+}
+
+fn op_start_span(id: int) -> int {
+    if id <= 0 {
+        return 0
+    }
+    if id >= op_start.len {
+        return 0
+    }
+    return op_start[id]
+}
+
 /// `op_len[id]`, 0 for a node the spans do not cover.
 fn op_len_len(id: int) -> int {
     if id <= 0 {
@@ -1690,7 +1747,10 @@ fn patch_frame() -> int {
     while patch_ops.len > 0 {
         pop(patch_ops)
     }
-    if patch_node(arena.root_id) == 0 {
+    arena.paint_skip_z = 1
+    let ok = patch_node(arena.root_id)
+    arena.paint_skip_z = 0
+    if ok == 0 {
         return 0
     }
     let n = patch_dst.len
@@ -1702,6 +1762,9 @@ fn patch_frame() -> int {
             draws[dst + k] = patch_ops[src + k]
         }
     }
+    // The floaters section is re-recorded whole: it is the tail of the list, so it
+    // can change length without shifting anything the patches above landed on.
+    paint_floaters_section(1)
     patch_frames = patch_frames + 1
     return 1
 }
@@ -1716,15 +1779,43 @@ fn record_frame() {
         pop(draws)
     }
     clear_spans()
+    arena.paint_skip_z = 1
     if arena.root_id > 0 {
-        arena.paint_skip_z = 1
         paint_node(arena.root_id)
-        arena.paint_skip_z = 0
+    }
+    arena.paint_skip_z = 0
+    paint_floaters_section(0)
+    arena.note_paint_spans()
+}
+
+/// Gather the floaters and paint them as the frame's tail, recording where the
+/// section starts. `truncate` drops the previous section first — needed on a
+/// patched frame, where the tail is still in `draws`; a full record has already
+/// emptied it. A scroller root paints its floaters inline instead, so its section
+/// is empty and the start lands at the frame's end.
+fn paint_floaters_section(truncate: int) {
+    if arena.root_id > 0 {
         if int(arena.nodes[arena.root_id].kind) != 11 {
+            if truncate != 0 {
+                let keep = fl_section_start
+                while draws.len > keep {
+                    pop(draws)
+                }
+            }
+            fl_section_start = draws.len
+            collect_floaters(arena.root_id)
             paint_floaters_paint()
+            return
         }
     }
-    arena.note_paint_spans()
+    fl_section_start = draws.len
+}
+
+/// Collect the visible floaters of `root` in z order.
+fn collect_floaters(root: int) {
+    arena.floater_clear()
+    arena.floater_collect(root, arena.paint_sx, arena.paint_sy, 1)
+    arena.floater_sort(0)
 }
 
 fn paint() {
@@ -1741,24 +1832,14 @@ fn paint() {
         arena.damage_frame_end()
         return
     }
+    // The floaters section is gathered and painted after the main walk (see
+    // `paint_floaters_section`): a nested scroller paints its own floaters inline,
+    // so collecting up front would double-paint them.
     prepaint()
-    // Gather the floaters first: a floater's ops depend on its trigger's screen
-    // rect rather than only on its own subtree, and the pass that paints them is a
-    // second traversal, so a frame with any visible floater re-records in full.
-    // (A frame with none is the common case; an invisible floater emits nothing.)
-    if arena.root_id > 0 {
-        if int(arena.nodes[arena.root_id].kind) != 11 {
-            arena.floater_clear()
-            arena.floater_collect(arena.root_id, arena.paint_sx, arena.paint_sy, 1)
-            arena.floater_sort(0)
-        }
-    }
     let mut patched = 0
     if arena.paint_can_patch() != 0 {
-        if arena.floater_id.len == 0 {
-            if patch_frame() != 0 {
-                patched = 1
-            }
+        if patch_frame() != 0 {
+            patched = 1
         }
     }
     if patched == 0 {

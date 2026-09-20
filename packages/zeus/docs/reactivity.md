@@ -60,9 +60,16 @@ commit per phase. Line anchors are for the tree at `feat/zeus-upgrade-v2`.
   node with only a descendant marked keeps its own ops. Resolution — theme
   colors, text, shadow packing, transforms — is what the reuse skips. When a run
   changes length the frame falls back to a full record, so the worst case is the
-  old behaviour. A frame with any visible floater still records in full: a
-  floater's ops follow its trigger's screen rect, not only its own subtree, and
-  the floaters pass is a second traversal.
+  old behaviour.
+- **The floaters section.** Floaters were the exception that made the above
+  useless in practice: `zui.Select`'s trigger carries `z_index = Z_FIELD`, so a
+  page with a Select has a permanently visible floater, and the first cut of
+  phase 10 skipped patching whenever one was on screen — measured, that turned
+  three patched frames into three full records. The floaters are now their own
+  section at the tail of the list and are re-recorded whole (their ops follow a
+  trigger's screen rect, and the set can change), while a floater's main-region
+  shell is re-recorded by length. Since the section is the tail, changing its
+  length shifts nothing the patches above it landed on.
 - **Synchronous, uniform propagation.** `Int` writes notify inline; non-int
   signals go through `loam_track_notify`, bypass `arena.store_sig`, and are
   drained once per frame (`track.loam:22-25`); `batch` defers to a pending list
