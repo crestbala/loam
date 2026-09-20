@@ -2352,6 +2352,18 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                 fprintf(o, ");\n");
                 break;
             }
+            /* A pushed owned string shares the buffer with the vec's copy, so
+               take a reference for the slot the element will occupy. */
+            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "loam_vec_push") == 0 &&
+                in->nargs >= 2 && type_string_owns()) {
+                Type *vt = (in->args[0] >= 0 && in->args[0] < CF->nlocals)
+                               ? CF->locals[in->args[0]].ty
+                               : NULL;
+                if (vt && vt->kind == TY_VEC && vt->elem && vt->elem->kind == TY_STRING) {
+                    indent(o, 1);
+                    fprintf(o, "loam_str_retain(%s);\n", lv(in->args[1]));
+                }
+            }
             /* Vec/struct call args share storage with the caller, but the
                callee drops its params on exit. Keep the shared storage alive
                for the call so reuses (loops, repeated calls) stay intact. */
@@ -2368,7 +2380,7 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                         at = ft->params[k];
                 }
                 if (at && type_needs_drop(at) && at->kind != TY_BOX &&
-                    at->kind != TY_PROC) {
+                    at->kind != TY_PROC && at->kind != TY_STRING) {
                     nkeep++;
                 }
             }
@@ -2387,7 +2399,7 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                             at = ft->params[k];
                     }
                     if (at && type_needs_drop(at) && at->kind != TY_BOX &&
-                        at->kind != TY_PROC)
+                        at->kind != TY_PROC && at->kind != TY_STRING)
                         emit_nested_keeps(o, lv(in->args[k]), at, 2);
                 }
                 indent(o, 1);
@@ -2488,6 +2500,18 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                     fprintf(o, "%s", lv(in->args[k]));
             }
             fprintf(o, " };\n");
+            /* An owned string field takes a reference; its source keeps its own
+               and drops normally (see the matching change in ir.c). */
+            if (type_string_owns() && t && t->kind == TY_STRUCT && in->nargs > 0) {
+                char dbuf[64];
+                snprintf(dbuf, sizeof dbuf, "%s", lv(in->dst));
+                for (int k = 0; k < in->nargs && k < (int)t->field_count; k++) {
+                    if (!t->field_types[k] || t->field_types[k]->kind != TY_STRING) continue;
+                    if (!t->field_names[k]) continue;
+                    indent(o, 1);
+                    fprintf(o, "loam_str_retain(%s.%s);\n", dbuf, t->field_names[k]);
+                }
+            }
             break;
         }
         case IR_ARRAY_LIT: {
@@ -2503,8 +2527,17 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                     emit_ir_loc(o, in->loc);
                     fprintf(o, ");\n");
                     if (in->args[k] >= 0 && in->args[k] < CF->nlocals &&
-                        type_needs_drop(CF->locals[in->args[k]].ty))
-                        emit_steal(o, lv(in->args[k]), CF->locals[in->args[k]].ty, 1);
+                        type_needs_drop(CF->locals[in->args[k]].ty)) {
+                        if (type_string_owns() &&
+                            CF->locals[in->args[k]].ty->kind == TY_STRING) {
+                            /* The vec's copy shares the buffer; the element's
+                               source keeps its own reference and drops it. */
+                            indent(o, 1);
+                            fprintf(o, "loam_str_retain(%s);\n", lv(in->args[k]));
+                        } else {
+                            emit_steal(o, lv(in->args[k]), CF->locals[in->args[k]].ty, 1);
+                        }
+                    }
                 }
             } else {
                 for (int k = 0; k < in->nargs; k++) {
@@ -2602,6 +2635,14 @@ static void emit_ir_term(FILE *o, const IrBlock *bb, int is_main) {
     indent(o, 1);
     switch (bb->term) {
         case IR_TERM_RET:
+            /* Returning a borrowed string parameter hands the caller an owned
+               reference, so the callee takes one on the way out. */
+            if (CF && CF->locals && bb->term_val >= 0 && bb->term_val < CF->nlocals &&
+                CF->locals[bb->term_val].is_param && type_string_owns() &&
+                CF->locals[bb->term_val].ty && CF->locals[bb->term_val].ty->kind == TY_STRING) {
+                fprintf(o, "loam_str_retain(%s);\n", lv(bb->term_val));
+                indent(o, 1);
+            }
             if (is_main && bb->term_val < 0)
                 fprintf(o, "return 0;\n");
             else if (bb->term_val >= 0)

@@ -143,6 +143,12 @@ static int new_local(Type *ty, const char *name, int is_param) {
     l->name = name;
     l->is_param = is_param;
     l->needs_drop = type_needs_drop(l->ty);
+    /* Under string ownership a parameter is a borrowed reference: the caller
+       owns the value and releases it, so the callee must not drop the param. A
+       param that is returned takes its own reference instead (see the return
+       path in codegen). */
+    if (is_param && type_string_owns() && l->ty && l->ty->kind == TY_STRING)
+        l->needs_drop = 0;
     return F->nlocals++;
 }
 
@@ -992,10 +998,15 @@ static int lower_expr(AstNode *n) {
             i->args = args;
             i->nargs = nf;
             i->ty = t;
-            for (int k = 0; k < nf; k++)
-                if (args[k] >= 0 && args[k] < F->nlocals &&
-                    type_needs_drop(F->locals[args[k]].ty))
-                    F->locals[args[k]].needs_drop = 0;
+            for (int k = 0; k < nf; k++) {
+                if (args[k] < 0 || args[k] >= F->nlocals) continue;
+                if (!type_needs_drop(F->locals[args[k]].ty)) continue;
+                /* An owned string field is copied in — the field retains and
+                   the source keeps its own reference, so it must still drop. */
+                if (type_string_owns() && F->locals[args[k]].ty->kind == TY_STRING)
+                    continue;
+                F->locals[args[k]].needs_drop = 0;
+            }
             return d;
         }
         case AST_ARRAY_LIT: {
@@ -1009,10 +1020,15 @@ static int lower_expr(AstNode *n) {
             i->nargs = nf;
             i->ty = ir_subst(n->ty);
             if (i->ty && i->ty->kind == TY_VEC) {
-                for (int k = 0; k < nf; k++)
-                    if (args[k] >= 0 && args[k] < F->nlocals &&
-                        type_needs_drop(F->locals[args[k]].ty))
-                        F->locals[args[k]].needs_drop = 0;
+                for (int k = 0; k < nf; k++) {
+                    if (args[k] < 0 || args[k] >= F->nlocals) continue;
+                    if (!type_needs_drop(F->locals[args[k]].ty)) continue;
+                    /* Same as a struct field: the vec's copy retains, so the
+                       element's source keeps and drops its own reference. */
+                    if (type_string_owns() && F->locals[args[k]].ty->kind == TY_STRING)
+                        continue;
+                    F->locals[args[k]].needs_drop = 0;
+                }
             }
             return d;
         }
