@@ -539,6 +539,16 @@ fn For<T>(items: Signal<[]T>, key: fn(T) -> string, build: fn(int, T)) -> Node {
 fn kfor_refresh<T>(node_id: int, items: Signal<[]T>, key: fn(T) -> string, build: fn(int, T)) {
     let xs = items.get()
     let m = xs.len
+    // Fast path 0: the list has not moved and still has a row per key. The key
+    // functions are arbitrary (usually building a string), and the uniqueness and
+    // lookup passes below are O(rows) and O(rows^2), so this guard is what makes an
+    // untouched list cost O(1) per layout instead of re-deriving every key. The
+    // count check catches a row freed out from under the host.
+    if platform.plat_sig_gen(items.id) == arena.nodes[node_id].list_gen {
+        if arena.key_count(node_id) == m {
+            return
+        }
+    }
     // Fast path: the key set is unchanged, so move the existing rows into the
     // new order. Node ids, focus, scroll and row state all survive; nothing is
     // allocated. A changed key set (or duplicate keys) falls through.
@@ -561,6 +571,7 @@ fn kfor_refresh<T>(node_id: int, items: Signal<[]T>, key: fn(T) -> string, build
                     j = j + 1
                 }
                 arena.nodes[node_id].kids = order
+                arena.nodes[node_id].list_gen = platform.plat_sig_gen(items.id)
                 return
             }
         }
@@ -569,10 +580,12 @@ fn kfor_refresh<T>(node_id: int, items: Signal<[]T>, key: fn(T) -> string, build
     // keys, free only the rows whose key is gone. This is O(changes) in rows,
     // where the full rebuild below is O(rows).
     if kfor_reconcile(node_id, xs, key, build) != 0 {
+        arena.nodes[node_id].list_gen = platform.plat_sig_gen(items.id)
         return
     }
     // Slow path: rebuild the host; every row is re-created and recycled.
     kfor_rebuild(node_id, xs, key, build)
+    arena.nodes[node_id].list_gen = platform.plat_sig_gen(items.id)
 }
 
 /// Reconcile the host's rows against `xs` in place: move the shared rows, build

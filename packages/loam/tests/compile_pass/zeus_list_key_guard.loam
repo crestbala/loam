@@ -1,0 +1,64 @@
+// Phase 11: an untouched list costs O(1) per layout. `kfor_refresh` re-derived
+// every row key on every layout — and the uniqueness and lookup passes over them
+// are O(rows) and O(rows^2) — so a page with a list paid for the whole key set on
+// every frame, whether or not the list had moved. `virtual_refresh` (Index,
+// VirtualList) and `match_refresh` already guarded on the signal generation; the
+// keyed list did not.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+let mut keycalls: int = 0
+
+fn key_of(s: string) -> string {
+    keycalls = keycalls + 1
+    return s
+}
+
+fn Row(i: int, s: string) {
+    zeus.Text(s)
+}
+
+fn main() {
+    zeus.window("listkey", 240, 160)
+    let items = zeus.signal([]string {})
+    let mut host = 0
+    zeus.root(zeus.Box(padding = 8, align_direction = DIRECTION.Column) {
+        let h = zui.Each(items, key_of, Row)
+        host = h.id
+    })
+    zui.push_item(items, "a")
+    zui.push_item(items, "b")
+    zeus.engine_layout(240, 160)
+    must(zeus.engine_find_text("b") != 0, "the rows mounted")
+
+    // Settle, then hold the list still: no layout may re-derive a key.
+    zeus.engine_layout(240, 160)
+    let settled = keycalls
+    must(settled > 0, "the key function ran while the list changed")
+    let mut i = 0
+    while i < 20 {
+        zeus.engine_layout(240, 160)
+        i = i + 1
+    }
+    must(keycalls == settled, "an unchanged list derives no key")
+
+    // A real change still reconciles, and only then.
+    zui.push_item(items, "c")
+    zeus.engine_layout(240, 160)
+    must(keycalls > settled, "a change derives keys again")
+    must(zeus.engine_find_text("c") != 0, "and mounts the new row")
+    must(zeus.engine_find_text("a") != 0, "keeping the old ones")
+
+    fmt.println("list key guard ok")
+}

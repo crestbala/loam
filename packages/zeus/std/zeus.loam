@@ -236,7 +236,14 @@ fn run(node: Node) {
 }
 
 /// GPUI-style: each frame rebuilds the element tree from signals.
-/// Omit this and the tree stays retained (the `App` mode).
+///
+/// The rebuild is conditional. It runs when the tree can actually have changed —
+/// a structural or layout frame, or a resize — and is skipped on a frame whose
+/// dirt is purely attributable paint (an interaction state, a paint-only prop, a
+/// scroll, an animation track). Those frames keep the retained tree, so the
+/// effects the previous build created stay alive and update their own nodes: the
+/// same fine-grained model a retained `App` tree runs. Omit this and the tree is
+/// retained unconditionally (the `App` mode).
 fn view(build: fn() -> Node) {
     init()
     view_fn = build
@@ -244,7 +251,8 @@ fn view(build: fn() -> Node) {
 }
 
 /// Open a window, install `build` as the per-frame view, and run.
-/// Rebuilds the tree every layout. Prefer `zeus.App` for a retained tree.
+/// Rebuilds the tree only on a frame that can have changed it (see `view`).
+/// Prefer `zeus.App` for a retained tree.
 ///
 /// Example:
 /// ```
@@ -364,7 +372,26 @@ fn engine_layout(width: int, height: int) {
     if height != arena.win_h {
         resized = 1
     }
+    // A `view` app builds its tree from the view function. That is the coarse
+    // path, and it is only needed when the tree can actually have changed: a frame
+    // whose dirt is purely *attributable paint* — an interaction state, a
+    // paint-only prop, a scroll, an animation track — cannot have moved structure,
+    // because a structural change marks the tree or the layout. Skipping the
+    // rebuild on those frames is what lets a `view` app run the same fine-grained
+    // model a retained tree does: the effects the previous build created stay
+    // alive and update their own nodes, instead of the whole graph being torn down
+    // (`track.reset`) and rebuilt every frame.
+    let mut rebuild_view = 0
     if has_view != 0 {
+        rebuild_view = 1
+        if resized == 0 && arena.tree_dirty == 0 && arena.layout_dirty == 0 {
+            if arena.paint_all == 0 {
+                // Attributable paint only: nothing structural moved.
+                rebuild_view = 0
+            }
+        }
+    }
+    if rebuild_view != 0 {
         arena.snapshot_focus()
         arena.snapshot_scroll()
         arena.reset_tree()
