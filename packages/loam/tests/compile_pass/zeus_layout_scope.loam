@@ -1,0 +1,55 @@
+// Phase 5: dependency-driven layout. A layout prop that lands inside a
+// size-stable box re-solves only that subtree — the card's box is explicit, so
+// nothing above it can move. A change with no size-stable ancestor re-solves the
+// whole tree.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn main() {
+    zeus.window("layout-scope", 300, 200)
+    let w = zeus.signal(40)
+    let label = zeus.signal("aa")
+    let mut inner_id = 0
+    let mut text_id = 0
+    zeus.root(zeus.Box(padding = 10) {
+        // Fixed-size card: explicit width and height, so a child's size change
+        // cannot move anything above it.
+        zeus.Box(width = 200, height = 100, background = "#ffffff") {
+            let b = zeus.Box(width = 40, height = 20, background = "#ff0000")
+            inner_id = b.id
+            zeus.styled(b, || { zeus.set_prop_int(b, zeus.SET.Width, w.get()) })
+        }
+        // No size-stable ancestor: an auto-sized label in an auto-sized column.
+        let t = zeus.Text("{{label.get()}}")
+        text_id = t.id
+    })
+    zeus.pump_frame()
+    must(zeus.layout_was_full() == 1, "the first frame solves the whole tree")
+    must(zeus.node_width(inner_id) == 40, "inner starts at 40")
+
+    // A width write inside the fixed-size card: subtree re-solve.
+    w.set(90)
+    zeus.engine_layout(300, 200)
+    must(zeus.layout_was_full() == 0, "a change inside a fixed-size box is a subtree re-solve")
+    must(zeus.node_width(inner_id) == 90, "the subtree re-solve landed the new width")
+
+    // A text write with no size-stable ancestor: whole-tree re-solve.
+    label.set("aaaa")
+    zeus.engine_layout(300, 200)
+    must(zeus.layout_was_full() == 1, "a change with no size-stable ancestor solves the whole tree")
+
+    // The card is still laid out correctly after both.
+    must(zeus.node_width(inner_id) == 90, "the card's child kept its width")
+
+    fmt.println("layout scope ok")
+}

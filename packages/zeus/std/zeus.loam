@@ -379,19 +379,33 @@ fn engine_layout(width: int, height: int) {
     }
     // Layout runs only when the box model can have moved: a resize, a tree
     // build, or a discrete write that touched a layout prop. A frame whose
-    // only dirt is PAINT — every animation frame — skips it entirely.
+    // only dirt is PAINT — every animation frame — skips it entirely. When it
+    // does run, a write that invalidated only a subpath of the tree can re-solve
+    // that subtree instead of the whole surface (`layout.relayout`).
     let mut lay = 0
     if resized != 0 || arena.layout_dirty != 0 {
         lay = 1
     }
-    // Anything that can move geometry anywhere repaints the whole surface. A
-    // local repaint is only ever claimed for a paint-only change (Phase 1).
-    if resized != 0 || lay != 0 {
+    let full = arena.take_layout_full()
+    let dirty = arena.take_dirty_layout_nodes()
+    // `whole` = re-solve the entire tree (and so repaint the whole surface).
+    let mut whole = 1
+    if lay == 0 {
+        whole = 0
+    } else if resized == 0 && full == 0 {
+        if layout.relayout(dirty) != 0 {
+            whole = 0
+        }
+    }
+    last_whole = whole
+    if whole != 0 {
         arena.damage_all()
     }
     if lay != 0 {
         arena.stamp_edits()
-        layout.layout(width, height)
+        if whole != 0 {
+            layout.layout(width, height)
+        }
         arena.layout_dirty = 0
         arena.mark_paint()
         layout_gen = layout_gen + 1
@@ -774,9 +788,16 @@ fn a11y_num(v: int) {
 /// every call and strings are never freed, so dumping per paint frame leaked
 /// ~16 KB a frame on the web host.
 let mut layout_gen: int = 0
+/// 1 when the last `engine_layout` re-solved the whole tree, 0 when it re-solved
+/// only a subtree (Phase 5). Exposed for tests as `layout_was_full`.
+let mut last_whole: int = 1
 
 fn engine_layout_gen() -> int {
     return layout_gen
+}
+
+fn layout_was_full() -> int {
+    return last_whole
 }
 
 /// Serialize the visible **semantic tree** for an accessibility mirror (§2.3):
