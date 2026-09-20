@@ -557,6 +557,7 @@ static void usage(void) {
             "  --target android Gradle + JNI Canvas host (needs Android SDK/NDK to build APK)\n"
             "  --run       compile and run (Simulator for --target=ios; gradle+adb for android)\n"
             "  --int64-compat  `int` = i64 and `float` = f64 (pre-Phase-10 behavior)\n"
+            "  --string-owns   `string` is owned and move-only (drops at scope exit)\n"
             "Default output: <source-dir>/build/<name> (.app on ios; Gradle tree on android)\n");
 }
 
@@ -573,6 +574,7 @@ int main(int argc, char **argv) {
     int target_ios = 0;
     int target_android = 0;
     int int64_compat = 0;
+    int string_owns = 0;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -621,6 +623,8 @@ int main(int argc, char **argv) {
             check_only = 1;
         } else if (strcmp(argv[i], "--int64-compat") == 0) {
             int64_compat = 1;
+        } else if (strcmp(argv[i], "--string-owns") == 0) {
+            string_owns = 1;
         } else if (strcmp(argv[i], "build") == 0) {
             /* `loam build --target=native app.loam` — same as omitting `build`. */
             continue;
@@ -639,6 +643,7 @@ int main(int argc, char **argv) {
     if (test_mode) run = 1;
 
     type_set_int64_compat(int64_compat);
+    type_set_string_owns(string_owns);
 
     int show_time = env_on("LOAM_TIME");
     double t0 = now_sec();
@@ -1060,7 +1065,7 @@ int main(int argc, char **argv) {
        -g makes lldb/gdb, profilers, and sanitizers report Loam lines. Off by
        default: it inflates binaries and the published size benchmark. */
     static char copt_buf[256];
-    snprintf(copt_buf, sizeof copt_buf, "%s%s%s%s",
+    snprintf(copt_buf, sizeof copt_buf, "%s%s%s%s%s",
              (headless || dev)
                  ? "-std=gnu99 -O0 -fno-asynchronous-unwind-tables -ffp-contract=off"
                  : "-std=gnu99 -O1 -fno-asynchronous-unwind-tables "
@@ -1069,7 +1074,10 @@ int main(int argc, char **argv) {
              uses_zeus ? " -DLOAM_ALLOC_TRACE" : "",
              /* Phase 0 arena instrumentation: the app's own C, so the flag
                 reaches `platform.plat_mem_stats()` on every frame. */
-             env_on("ZEUS_MEM_STATS") ? " -DZEUS_MEM_STATS" : "");
+             env_on("ZEUS_MEM_STATS") ? " -DZEUS_MEM_STATS" : "",
+             /* Ownership mode: the pasted runtime's constructors/drops change
+                shape, so the generated C must compile with the same switch. */
+             string_owns ? " -DLOAM_STRING_OWNS" : "");
     const char *copt = copt_buf;
 #if defined(__APPLE__)
     const char *ld = (headless || dev) ? "" : "-Wl,-dead_strip";

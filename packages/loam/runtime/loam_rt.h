@@ -44,6 +44,13 @@ void loam_jmp_set_msg(const char *msg, int64_t len);
 typedef struct {
     const char *ptr;
     int64_t len;
+    /* 1 when `ptr` is a heap buffer this value owns and must release; 0 when
+       `ptr` aliases static storage (a literal), where release is a no-op.
+       Every compound literal in the tree omits this field and so defaults to
+       0, which is exactly the old (never-freed) behavior. Kept as a field
+       rather than a header before `ptr` so `loam_str_release` never reads
+       memory it does not own. */
+    int64_t own;
 } loam_str;
 
 typedef struct {
@@ -502,6 +509,53 @@ static inline void loam_drop(void **p) {
     }
 }
 
+/* --- owned strings ------------------------------------------------------
+   A heap `loam_str` carries an int64 refcount in the word before `ptr` and is
+   freed when the last reference goes away. `own` marks a value that holds that
+   header; a literal leaves it 0 and is immortal, so retain/release are no-ops
+   and no header is ever read for static storage. Sharing is a counter bump,
+   never a byte copy, so a `Signal<string>` read costs one atomic increment —
+   the same deal `[]T` gets — and the user never writes `.clone()`. The counter
+   is atomic because a string is still a Send payload: it may move to a worker,
+   and whichever reference is freed last releases the buffer. */
+static inline int64_t *loam_str_rc(const char *ptr) {
+    return ptr ? ((int64_t *)ptr - 1) : NULL;
+}
+
+/** Heap bytes for `n` characters, refcount 1, trailing NUL. */
+static inline char *loam_str_bytes(int64_t n) {
+    int64_t m = n > 0 ? n : 0;
+    int64_t *blk = (int64_t *)loam_new(sizeof(int64_t) + (size_t)m + 1, "str", 0);
+    blk[0] = 1;
+    return (char *)(blk + 1);
+}
+
+static inline loam_str loam_str_owned(char *p, int64_t n) {
+    loam_str s;
+    s.ptr = p;
+    s.len = n;
+    s.own = 1;
+    return s;
+}
+
+/** Take another reference to `s` (no-op for a literal). */
+static inline void loam_str_retain(loam_str s) {
+    if (s.own && s.ptr)
+        __atomic_add_fetch(loam_str_rc(s.ptr), 1, __ATOMIC_RELAXED);
+}
+
+/** Drop one reference; the last one frees the buffer. */
+static inline void loam_str_release(loam_str *s) {
+    if (!s) return;
+    if (s->own && s->ptr) {
+        if (__atomic_sub_fetch(loam_str_rc(s->ptr), 1, __ATOMIC_ACQ_REL) == 0)
+            free(loam_str_rc(s->ptr));
+    }
+    s->ptr = NULL;
+    s->len = 0;
+    s->own = 0;
+}
+
 static inline void *loam_move_ptr(void **src) {
     void *p = src ? *src : NULL;
     if (src) *src = NULL;
@@ -648,18 +702,37 @@ static inline void loam_fn_drop(loam_fn *f) {
 
 /* `{{ }}` interpolation. Each piece is converted to a loam_str and the
    pieces are concatenated left to right. The result is heap-allocated with a
-   trailing NUL and, like loam_string_from_bytes, is never freed — the
-   language has no string ownership story to hook into yet. */
+   trailing NUL and marked owned, so it is released at the end of the binding
+   it lands in. Each intermediate `str_of_*` piece is owned too and is
+   consumed by the concat that folds it in. */
 static inline loam_str loam_str_concat(loam_str a, loam_str b) {
     int64_t an = a.len > 0 ? a.len : 0;
     int64_t bn = b.len > 0 ? b.len : 0;
-    if (!an) { if (bn) return b; return (loam_str){ .ptr = "", .len = 0 }; }
-    if (!bn) return a;
-    char *p = (char *)loam_new((size_t)(an + bn) + 1, "str_concat", 0);
+    char *p;
+    if (!an) {
+#ifdef LOAM_STRING_OWNS
+        loam_str_release(&a);
+#endif
+        return bn ? b : (loam_str){ .ptr = "", .len = 0, .own = 0 };
+    }
+    if (!bn) {
+#ifdef LOAM_STRING_OWNS
+        loam_str_release(&b);
+#endif
+        return a;
+    }
+    p = (char *)loam_new((size_t)(an + bn) + 1, "str_concat", 0);
     if (a.ptr) memcpy(p, a.ptr, (size_t)an);
     if (b.ptr) memcpy(p + an, b.ptr, (size_t)bn);
     p[an + bn] = 0;
-    return (loam_str){ .ptr = p, .len = an + bn };
+#ifdef LOAM_STRING_OWNS
+    /* Ownership mode: both operands were moved in by the caller, so whichever
+       one concat does not hand back is this call's to free. A literal operand
+       releases to a no-op. */
+    loam_str_release(&a);
+    loam_str_release(&b);
+#endif
+    return loam_str_owned(p, an + bn);
 }
 
 static inline loam_str loam_str_of_int(int64_t v) {
@@ -668,7 +741,7 @@ static inline loam_str loam_str_of_int(int64_t v) {
     char *p = (char *)loam_new((size_t)s.len + 1, "str_of_int", 0);
     memcpy(p, s.ptr, (size_t)s.len);
     p[s.len] = 0;
-    return (loam_str){ .ptr = p, .len = s.len };
+    return loam_str_owned(p, s.len);
 }
 
 static inline loam_str loam_str_of_float(double v) {
@@ -677,7 +750,7 @@ static inline loam_str loam_str_of_float(double v) {
     char *p = (char *)loam_new((size_t)s.len + 1, "str_of_float", 0);
     memcpy(p, s.ptr, (size_t)s.len);
     p[s.len] = 0;
-    return (loam_str){ .ptr = p, .len = s.len };
+    return loam_str_owned(p, s.len);
 }
 
 static inline loam_str loam_str_of_bool(bool v) {
@@ -696,7 +769,7 @@ static inline loam_str loam_string_from_bytes(loam_vec b) {
         p[i] = (char)(el ? (el[i] & 255) : 0);
     p[n] = 0;
     loam_vec_drop(&b);
-    return (loam_str){ .ptr = p, .len = n };
+    return loam_str_owned(p, n);
 }
 
 /** Compile target: "wasm" | "ios" | "android" | "native". Used by
