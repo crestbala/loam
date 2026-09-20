@@ -2107,13 +2107,15 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                 else
                     fprintf(o, "%s = loam_vec_move(&%s);\n", lv(in->dst), lv(in->a));
             } else if (ty && ty->kind == TY_STRING) {
-                /* A bare string is Copy, so it is never IR_MOVE'd; this is
-                   reached only for a non-Copy aggregate that owns one, where
-                   the reference transfers to `dst`. */
-                char sbuf[64];
-                snprintf(sbuf, sizeof sbuf, "%s", lv(in->a));
-                fprintf(o, "%s = %s;\n", lv(in->dst), sbuf);
-                emit_steal(o, sbuf, ty, 1);
+                /* A string is Copy, so an IR_MOVE of one is a copy: the
+                   destination takes its own reference and the source keeps
+                   its own. (A non-Copy aggregate that owns a string still
+                   transfers it through emit_steal, below.) */
+                fprintf(o, "%s = %s;\n", lv(in->dst), lv(in->a));
+                if (type_string_owns()) {
+                    indent(o, 1);
+                    fprintf(o, "loam_str_retain(%s);\n", lv(in->dst));
+                }
             } else if (ty && ty->kind == TY_ARRAY) {
                 fprintf(o, "\n");
                 emit_array_copy(o, in->dst, in->a, ty);
