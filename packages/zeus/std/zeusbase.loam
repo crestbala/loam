@@ -280,6 +280,32 @@ fn batch(body: fn()) {
     track.batch_end()
 }
 
+/// Run `body` in a nested computation scope: it runs now and re-runs whenever a
+/// signal it read changes, and **every reactive computation created inside it is
+/// disposed before it re-runs**. Use it for a group of derived state that must
+/// not outlive the run that created it (a per-run subscription, a transient
+/// derivation). A plain `effect` instead keeps what it created across re-runs,
+/// so its children are owned by the surrounding node, not by the effect.
+///
+/// ```
+/// zeus.scope(|| {
+///     let room = active_room.get()
+///     zeus.effect(|| subscribe(room))   // disposed when `active_room` moves
+/// })
+/// ```
+fn scope(body: fn()) {
+    scope_eid(body)
+}
+
+/// `scope`, returning the scope's effect id.
+fn scope_eid(body: fn()) -> int {
+    arena.ensure()
+    let effect_id = track.alloc_scope(intern_fn(body), effect_owner())
+    track.set_rank(effect_id, 1 + track.current_rank())
+    track.run(effect_id)
+    return effect_id
+}
+
 /// Register `body` to run before the enclosing `effect` re-runs, so a
 /// subscription the effect opened is closed before its body runs again.
 /// Call inside an effect; a no-op outside one.

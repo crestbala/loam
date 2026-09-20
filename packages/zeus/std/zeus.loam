@@ -620,6 +620,12 @@ fn proof_spin_live() -> int {
 fn proof_allocs() -> int {
     return platform.plat_alloc_count()
 }
+
+/// High-water size of the effect table. A `scope` that re-runs must reuse the
+/// rows it disposed, so this stays flat across re-runs; exposed for tests.
+fn reactive_rows() -> int {
+    return track.effect_rows()
+}
 /// The paint value a bound signal currently resolves to: the interpolated
 /// overlay while `animate` runs, else the signal's state. Tests use it to see
 /// the animation without a component thunk re-running.
