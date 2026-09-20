@@ -2360,9 +2360,8 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                 Type *vt = (in->args[0] >= 0 && in->args[0] < CF->nlocals)
                                ? CF->locals[in->args[0]].ty
                                : NULL;
-                if (vt && vt->kind == TY_VEC && vt->elem && vt->elem->kind == TY_STRING) {
-                    indent(o, 1);
-                    fprintf(o, "loam_str_retain(%s);\n", lv(in->args[1]));
+                if (vt && vt->kind == TY_VEC && vt->elem && type_owns_string(vt->elem)) {
+                    emit_nested_keeps(o, lv(in->args[1]), vt->elem, 1);
                 }
             }
             /* Vec/struct call args share storage with the caller, but the
@@ -2503,15 +2502,10 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
             fprintf(o, " };\n");
             /* An owned string field takes a reference; its source keeps its own
                and drops normally (see the matching change in ir.c). */
-            if (type_string_owns() && t && t->kind == TY_STRUCT && in->nargs > 0) {
+            if (type_string_owns() && t && t->kind == TY_STRUCT && type_owns_string(t)) {
                 char dbuf[64];
                 snprintf(dbuf, sizeof dbuf, "%s", lv(in->dst));
-                for (int k = 0; k < in->nargs && k < (int)t->field_count; k++) {
-                    if (!t->field_types[k] || t->field_types[k]->kind != TY_STRING) continue;
-                    if (!t->field_names[k]) continue;
-                    indent(o, 1);
-                    fprintf(o, "loam_str_retain(%s.%s);\n", dbuf, t->field_names[k]);
-                }
+                emit_nested_keeps(o, dbuf, t, 1);
             }
             break;
         }
@@ -2530,11 +2524,11 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                     if (in->args[k] >= 0 && in->args[k] < CF->nlocals &&
                         type_needs_drop(CF->locals[in->args[k]].ty)) {
                         if (type_string_owns() &&
-                            CF->locals[in->args[k]].ty->kind == TY_STRING) {
-                            /* The vec's copy shares the buffer; the element's
-                               source keeps its own reference and drops it. */
-                            indent(o, 1);
-                            fprintf(o, "loam_str_retain(%s);\n", lv(in->args[k]));
+                            type_owns_string(CF->locals[in->args[k]].ty)) {
+                            /* The vec's copy shares each nested string; the
+                               element's source keeps its own and drops it. */
+                            emit_nested_keeps(o, lv(in->args[k]),
+                                              CF->locals[in->args[k]].ty, 1);
                         } else {
                             emit_steal(o, lv(in->args[k]), CF->locals[in->args[k]].ty, 1);
                         }

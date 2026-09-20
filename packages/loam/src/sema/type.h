@@ -70,6 +70,12 @@ int type_is_copy(const Type *t);
 /** 1 if a local of this type must run a destructor (Box, []T, or a struct/array of those). */
 int type_needs_drop(const Type *t);
 
+/** 1 if a value of this type owns a `string` reference anywhere inline (a
+ *  string, or a struct/array containing one). A `[]T`/`Box<T>` handle does not
+ *  count: its contents belong to the buffer, not to the handle. Used to decide
+ *  whether a copy into a container must retain nested string references. */
+int type_owns_string(const Type *t);
+
 /** 1 if every heap handle a call argument of this type carries is *adopted* by
  *  the callee, so the caller must not drop its own binding.
  *
