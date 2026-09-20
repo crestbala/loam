@@ -40,9 +40,19 @@ commit per phase. Line anchors are for the tree at `feat/zeus-upgrade-v2`.
   the written node's path, and a re-solve of the nearest size-stable ancestor's
   subtree. It falls back to a whole-tree solve when no such ancestor exists, a
   write sits inside a scroller, or a floater is anchored.
-- **Dependency-driven paint.** A dirty frame pops the whole draw list and
-  re-records the visible tree (`scene.loam`); `damage` optimizes the host blit,
-  not the traversal.
+- **Dependency-driven paint.** A dirty frame popped the whole draw list and
+  re-recorded the visible tree; `damage` optimized the host blit, not the
+  traversal. **Phase 10:** the retained list gains a per-node run — everything
+  `paint_node(id)` emits is contiguous, because a node's ops bracket its
+  children — and `mark_paint_id` marks the node's ancestors too. A frame whose
+  dirt is attributable (not a `mark_paint` global, not a structural change) walks
+  the tree and re-records only the marked subtrees, reusing every other run; a
+  node with only a descendant marked keeps its own ops. Resolution — theme
+  colors, text, shadow packing, transforms — is what the reuse skips. When a run
+  changes length the frame falls back to a full record, so the worst case is the
+  old behaviour. A frame with any visible floater still records in full: a
+  floater's ops follow its trigger's screen rect, not only its own subtree, and
+  the floaters pass is a second traversal.
 - **Synchronous, uniform propagation.** `Int` writes notify inline; non-int
   signals go through `loam_track_notify`, bypass `arena.store_sig`, and are
   drained once per frame (`track.loam:22-25`); `batch` defers to a pending list
@@ -114,6 +124,7 @@ commit per phase. Line anchors are for the tree at `feat/zeus-upgrade-v2`.
 | 7b | D | Typed, lazy graph: generic `computed<T>` (the body persists in a signal cell, so no runtime hook), and a lazy memo — dirty on write, recomputed on read, skipped when no input generation moved, and recycled with its scope | landed |
 | 8 | D | Ownership below the graph: a `scope` owns the signals and interned handlers its body creates (`arena.owner_now`, one record per id), so a re-running scope recycles them; plus `zeus.intern_count()` so a test can hold the handler table flat | landed |
 | 9 | B | One write channel: `arena.note_write` is the accounting every state write shares, so a non-`int` write is as targeted as an `int` one instead of draining a frame mark | landed |
+| 10 | B | Dependency-driven paint traversal: per-node draw-op runs, an ancestor paint bit, and a patch path that re-records only the dirty subtrees — with a full record as the fallback when a run's length changes | landed |
 
 Phases 1–3 are additive over the current model: existing `For` / `Index` /
 `VirtualList` keep working while gaining a per-node fast path. Phases 4–7 change

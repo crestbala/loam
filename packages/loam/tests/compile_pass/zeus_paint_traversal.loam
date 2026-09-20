@@ -1,0 +1,113 @@
+// Phase 10: dependency-driven paint traversal. A frame whose paint dirt is
+// attributable to nodes re-records only the subtrees those nodes root, and reuses
+// the retained draw ops everywhere else — the resolution a clean subtree would
+// redo (theme colors, text, shadow packing, transforms) is skipped. A frame that
+// cannot be attributed, or whose op counts changed, still re-records in full.
+//
+// The load-bearing assertion is that the two paths agree: a patched frame's op
+// list is byte-for-byte what a full record of the same state produces.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+/// A checksum over every field of every op, so any difference — and any order
+/// difference — shows up.
+fn draw_sum() -> int {
+    let n = zeus.draw_count()
+    let mut s = 0
+    let mut i = 0
+    while i < n {
+        s = (s * 31 + zeus.draw_op(i)) % 1000003
+        s = (s * 31 + zeus.draw_x(i)) % 1000003
+        s = (s * 31 + zeus.draw_y(i)) % 1000003
+        s = (s * 31 + zeus.draw_w(i)) % 1000003
+        s = (s * 31 + zeus.draw_h(i)) % 1000003
+        s = (s * 31 + zeus.draw_rgb(i)) % 1000003
+        s = (s * 31 + zeus.draw_radius(i)) % 1000003
+        s = (s * 31 + zeus.draw_alpha(i)) % 1000003
+        s = (s * 31 + zeus.draw_font(i)) % 1000003
+        s = (s * 31 + zeus.draw_value(i)) % 1000003
+        let t = zeus.draw_text(i)
+        s = (s * 31 + t.len) % 1000003
+        i = i + 1
+    }
+    return s
+}
+
+fn main() {
+    zeus.window("traversal", 300, 200)
+    let a = zeus.signal(100)
+    let b = zeus.signal(100)
+    // A tree with depth: a header, a body, and a footer, each with children.
+    zeus.root(zeus.Box(padding = 8, align_direction = DIRECTION.Column, spacing = 6) {
+        zeus.Box(height = 30, background = "#102030", align_direction = DIRECTION.Row, spacing = 4) {
+            zeus.Text("header")
+            zeus.Box(width = 40, height = 20, background = "#203040")
+        }
+        zeus.Box(height = 60, align_direction = DIRECTION.Column, spacing = 2) {
+            zeus.Text("body")
+            let m = zeus.Box(width = 90, height = 24, background = "#ff0000")
+            zeus.styled(m, || { zeus.set_prop_int(m, zeus.SET.Opacity, a.get()) })
+            zeus.styled(m, || { zeus.set_prop_int(m, zeus.SET.Radius, b.get()) })
+        }
+        zeus.Box(height = 30, background = "#304050", align_direction = DIRECTION.Row, spacing = 4) {
+            zeus.Text("footer")
+            zeus.Box(width = 40, height = 20, background = "#405060")
+        }
+    })
+    zeus.pump_frame()
+    zeus.engine_layout(300, 200)
+    zeus.engine_paint()
+    // The first frame has no spans yet, so it records everything.
+    let base_full = zeus.paint_full_frames()
+    let base_patch = zeus.paint_patch_frames()
+    must(base_full >= 1, "the first frame records in full")
+
+    // A paint-only write: one node's subtree carries the dirt, so the frame is
+    // patched and the patched list must equal a full record of the same state.
+    a.set(40)
+    zeus.engine_paint()
+    let patched = draw_sum()
+    must(zeus.paint_patch_frames() > base_patch, "a paint-only frame is patched")
+    zeus.paint_force_full()
+    zeus.engine_paint()
+    must(draw_sum() == patched, "a patched frame matches a full record")
+
+    // A second, different paint-only write, same check.
+    b.set(3)
+    zeus.engine_paint()
+    let patched2 = draw_sum()
+    must(zeus.paint_patch_frames() > base_patch + 1, "another paint-only frame is patched")
+    zeus.paint_force_full()
+    zeus.engine_paint()
+    must(draw_sum() == patched2, "the second patched frame matches a full record")
+
+    // A patch must not change the op count (an in-place run), and the frame must
+    // still damage only the node it wrote.
+    zeus.engine_paint()
+    let n_ops = zeus.draw_count()
+    a.set(90)
+    zeus.engine_layout(300, 200)
+    zeus.engine_paint()
+    must(zeus.draw_count() == n_ops, "a patched frame keeps the op count")
+    must(zeus.damage_full() == 0, "a paint-only write is still not a full damage")
+    must(zeus.layout_was_full() == 0, "and still not a full layout")
+
+    // An unattributable mark cannot be patched: it re-records everything, so the
+    // retained ops can never go stale behind it.
+    zeus.paint_force_full()
+    let before = zeus.paint_full_frames()
+    zeus.engine_paint()
+    must(zeus.paint_full_frames() == before + 1, "a forced-full frame records in full")
+
+    fmt.println("paint traversal ok")
+}

@@ -203,8 +203,11 @@ struct UiNode {
     enter_fade: u8,
     safe: u8,
     /// Dirty-channel bits (see `mark_paint` / `mark_layout`). Bit 0 PAINT,
-    /// bit 1 LAYOUT, bit 2 TREE. A node is marked when a discrete write or an
-    /// animation tick changes it; paint drains the marks.
+    /// bit 1 LAYOUT, bit 2 TREE, bit 3 paint-descendant. A node is marked when a
+    /// discrete write or an animation tick changes it; paint drains the marks.
+    /// Bit 3 is set on a node's ancestors when it is paint-marked, so the paint
+    /// pass can tell a subtree it must re-record from one whose retained draw ops
+    /// it can reuse.
     dirty: u8,
     /// Paint-only reveal: 1 opts in (`enter_reveal`), `an_reveal` is the share
     /// of the laid-out height paint shows, 0..100, clipped from the top with
@@ -355,6 +358,18 @@ let mut paint_dirty: int = 1
 let mut layout_dirty: int = 1
 let mut tree_dirty: int = 1
 let mut chrome_dirty: int = 1
+/* 1 when this frame's paint dirt is frame-wide rather than attributable to
+   marked nodes (`mark_paint`, a structural change, a whole-tree re-solve). Paint
+   then re-records every op; with it clear, only the marked subtrees are
+   re-recorded and the rest of the retained draw list is reused. */
+let mut paint_all: int = 0
+/* 1 while the per-node draw-op spans of the retained list are trustworthy.
+   Cleared whenever the tree or a node changes hands (`mark_tree`, node alloc /
+   free), because a span is keyed by node id. */
+let mut paint_spans_ok: int = 0
+/// Nodes that only have a paint-marked *descendant* (bit 3). Kept so the bit can
+/// be cleared at the end of the frame like the PAINT marks are.
+let mut dirty_desc: []int = []int {}
 // Phase 5: layout invalidation. `measure_gen` is bumped to invalidate every
 // cached measure at once; `invalidate_path` marks just a node and its ancestors
 // so a re-measure recomputes that path and skips every clean subtree.
@@ -868,6 +883,9 @@ fn free_node(id: int) {
     if int(nodes[id].kind) == 0 {
         return
     }
+    // The id is about to change hands, so any draw-op span keyed by it is stale.
+    paint_spans_ok = 0
+    paint_all = 1
     let n = nodes[id].kids.len
     for i in 0..n {
         free_node(nodes[id].kids[i])
@@ -915,6 +933,8 @@ fn reset_tree() {
     dirty_layout_nodes = []int {}
     layout_full = 1
     invalidate_all()
+    paint_all = 1
+    paint_spans_ok = 0
     dirty_chrome_nodes = []int {}
     bind_sig = []int {}
     bind_node = []int {}
@@ -1546,7 +1566,7 @@ fn store_sig_paint(id: int, value: int) {
     // a frame-wide paint mark when the effect could not be attributed.
     if lay == 0 {
         if ran == 0 || pw < ran {
-            paint_dirty = 1
+            mark_paint()
         }
     }
 }
@@ -2183,7 +2203,7 @@ fn anim_tick(delta_ms: int) -> int {
                 }
             }
             if is_sig {
-                paint_dirty = 1
+                mark_paint()
             } else {
                 mark_paint_id(a.node)
             }
@@ -2449,6 +2469,36 @@ fn mark_paint_id(id: int) {
     }
     nodes[id].dirty = u8(int(nodes[id].dirty) | 1)
     push(dirty_paint, id)
+    // Mark the ancestors too: paint uses the bit to tell a subtree that has to be
+    // re-recorded from one whose retained draw ops can be reused as-is. Ancestor
+    // marking is what makes a deep mark cost O(depth) instead of O(subtree).
+    mark_descendants_of(id)
+}
+
+/// Record that node `id` has a paint-marked descendant, for `id` and every
+/// ancestor. Deduped per node, so marking many siblings of one parent walks the
+/// shared path once.
+fn mark_descendants_of(id: int) {
+    let mut p = id
+    let mut guard = 0
+    while p > 0 && guard < 512 {
+        if p >= nodes.len {
+            return
+        }
+        p = nodes[p].parent
+        if p <= 0 {
+            return
+        }
+        if p >= nodes.len {
+            return
+        }
+        if (int(nodes[p].dirty) & 8) != 0 {
+            return
+        }
+        nodes[p].dirty = u8(int(nodes[p].dirty) | 8)
+        push(dirty_desc, p)
+        guard = guard + 1
+    }
 }
 
 // --- frame damage list (Phase 1) -------------------------------------------
@@ -2610,7 +2660,7 @@ fn note_pulse(id: int) {
         pulse_count = pulse_count + 1
     }
     nodes[id].pulse = u8(1)
-    paint_dirty = 1
+    mark_paint()
 }
 
 /// Shimmer phase 0..1000 for a pulsing node: a 1.6 s left-to-right sweep
@@ -2656,7 +2706,7 @@ fn note_spin(id: int, period: int) {
         d = 65535
     }
     nodes[id].spin_ms = u16(d)
-    paint_dirty = 1
+    mark_paint()
 }
 
 /// Undo `note_spin`: the node stops keeping the frame loop alive.
@@ -2673,7 +2723,7 @@ fn clear_spin(id: int) {
         }
     }
     nodes[id].spin = u8(0)
-    paint_dirty = 1
+    mark_paint()
 }
 
 /// Tween a bound signal's *paint* value from `from` to its current state
@@ -2727,8 +2777,48 @@ fn spin_live() -> int {
     return 0
 }
 
+/// A frame-wide paint mark: the caller cannot attribute the change to nodes, so
+/// the pass re-records every op (and the retained spans are not reused).
 fn mark_paint() {
     paint_dirty = 1
+    paint_all = 1
+}
+
+/// A paint mark that *is* attributable: the nodes carry the dirt, so a frame
+/// whose only dirt came through `mark_paint_id` / `invalidate` may re-record just
+/// the marked subtrees and reuse the rest of the retained draw list.
+fn mark_paint_targeted() {
+    paint_dirty = 1
+}
+
+/// Can this frame's paint reuse the retained draw ops outside the marked
+/// subtrees? Needs a targeted mark (not a frame-wide one) and spans that still
+/// describe the retained list.
+fn paint_can_patch() -> int {
+    if paint_all != 0 {
+        return 0
+    }
+    if paint_spans_ok == 0 {
+        return 0
+    }
+    return 1
+}
+
+/// The paint pass records spans over the list it just built; from then on they
+/// describe the retained list.
+fn note_paint_spans() {
+    paint_spans_ok = 1
+}
+
+/// Paint-marked node bits: bit 0 = this node, bit 3 = a descendant of it.
+fn node_paint_bits(id: int) -> int {
+    if id <= 0 {
+        return 0
+    }
+    if id >= nodes.len {
+        return 0
+    }
+    return int(nodes[id].dirty) & 9
 }
 
 /// Invalidate every cached measure. Called by the coarse layout events (a
@@ -2761,7 +2851,10 @@ fn invalidate_path(id: int) {
 /// re-solve; `engine_layout` may then re-solve only `id`'s size-stable ancestor.
 fn mark_layout_path(id: int) {
     layout_dirty = 1
-    paint_dirty = 1
+    // The prop landed on this node, so it carries the paint dirt too: a frame
+    // that reuses retained ops outside the marked subtrees must re-record this
+    // one rather than wait for the layout pass to mark it.
+    mark_paint_id(id)
     invalidate_path(id)
     if id > 0 {
         push(dirty_layout_nodes, id)
@@ -2794,6 +2887,8 @@ fn mark_scroll_node(id: int) {
 fn mark_layout() {
     layout_dirty = 1
     paint_dirty = 1
+    // A whole-tree re-solve can move any node, so paint cannot reuse anything.
+    paint_all = 1
     invalidate_all()
     layout_full = 1
 }
@@ -2805,6 +2900,8 @@ fn mark_tree() {
     chrome_dirty = 1
     invalidate_all()
     layout_full = 1
+    paint_all = 1
+    paint_spans_ok = 0
 }
 
 /// 1 when this frame's layout must re-solve the whole tree. Read and cleared by
@@ -2838,13 +2935,29 @@ fn clear_dirty() {
     while dirty_paint.len > 0 {
         pop(dirty_paint)
     }
+    let m = dirty_desc.len
+    for i in 0..m {
+        let id = dirty_desc[i]
+        if id > 0 {
+            if id < nodes.len {
+                nodes[id].dirty = u8(int(nodes[id].dirty) & 247)
+            }
+        }
+    }
+    while dirty_desc.len > 0 {
+        pop(dirty_desc)
+    }
     paint_dirty = 0
+    paint_all = 0
     tree_dirty = 0
 }
 
 fn alloc_node(kind: int) -> int {
     ensure()
     mark_tree()
+    // A recycled id must not inherit the previous occupant's span. `mark_tree`
+    // already cleared the flag; the node's own span is overwritten when paint
+    // records it.
     if free_nodes.len > 0 {
         let id = free_nodes[free_nodes.len - 1]
         pop(free_nodes)
