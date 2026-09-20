@@ -36,7 +36,10 @@ commit per phase. Line anchors are for the tree at `feat/zeus-upgrade-v2`.
   reported one; a paint-only property skips layout and damages only its node.
   Unattributable effects fall back to the frame-wide mark.
 - **Dependency-driven layout.** Any layout-affecting write re-lays the whole
-  tree (`zeus.loam:381-397`).
+  tree (`zeus.loam:381-397`). **Phase 5:** a measure cache invalidated only along
+  the written node's path, and a re-solve of the nearest size-stable ancestor's
+  subtree. It falls back to a whole-tree solve when no such ancestor exists, a
+  write sits inside a scroller, or a floater is anchored.
 - **Dependency-driven paint.** A dirty frame pops the whole draw list and
   re-records the visible tree (`scene.loam`); `damage` optimizes the host blit,
   not the traversal.
@@ -71,7 +74,7 @@ commit per phase. Line anchors are for the tree at `feat/zeus-upgrade-v2`.
 | 2 | A | O(changes) keyed list reconciliation in `kfor_refresh`: build only new rows, free only removed rows, move the rest — per-row ownership via `scope_begin` | landed |
 | 3 | A | Reactive `Each` over a `Signal<[]T>`: the keyed engine exposed as the general list primitive, with the static one-shot loop renamed `Loop` | landed |
 | 4 | B | Targeted per-node invalidation: prop setters report their node; a write marks exactly those nodes (and skips layout) when every effect it ran reported one, else the frame-wide mark | landed |
-| 5 | B | Dependency-driven layout: dirty-subtree re-solve instead of a whole-tree pass | planned |
+| 5 | B | Dependency-driven layout: a measure cache invalidated along the written path, and a subtree re-solve from the nearest size-stable ancestor (with a whole-tree fallback) | landed |
 | 6 | C | One reactive channel: fold the interaction overlay and theme resolution into the effect graph; keep motion paint-only by contract | planned |
 | 7 | D | Typed, lazy graph: generic `computed<T>` with pull-on-read, and a nested-computation disposal graph that auto-tears-down on owner re-run | planned |
 

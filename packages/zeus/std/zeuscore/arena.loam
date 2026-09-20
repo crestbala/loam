@@ -108,6 +108,10 @@ struct UiNode {
     list_hi: int,
     list_n: int,
     row_h: int,
+    /// The measure generation `inner_width` / `inner_height` were computed for.
+    /// `measure_node` skips a node whose stamp is current, so a layout frame
+    /// re-measures only the path a write invalidated (see `invalidate_path`).
+    measure_stamp: int,
     /// Scroll physics. Wheel / pan writes a velocity; `physics_step` coasts
     /// and stops exactly at the content bounds (0..max — never past them, so
     /// no blank strip is ever revealed past the first/last content).
@@ -351,6 +355,15 @@ let mut paint_dirty: int = 1
 let mut layout_dirty: int = 1
 let mut tree_dirty: int = 1
 let mut chrome_dirty: int = 1
+// Phase 5: layout invalidation. `measure_gen` is bumped to invalidate every
+// cached measure at once; `invalidate_path` marks just a node and its ancestors
+// so a re-measure recomputes that path and skips every clean subtree.
+// `dirty_layout_nodes` are the nodes a layout prop landed on this frame, and
+// `layout_full` says the frame must re-solve the whole tree (a structural /
+// resize / theme change) rather than a subtree.
+let mut measure_gen: int = 1
+let mut dirty_layout_nodes: []int = []int {}
+let mut layout_full: int = 1
 /// A scroller moved: paint-only, but a windowed list's visible window may have
 /// shifted, so the virtual refresh pass must run before paint.
 let mut virtual_dirty: int = 0
@@ -428,7 +441,7 @@ fn blank_node() -> UiNode {
         hover_fade: 0, hover_amt: 0, tween: -1, enter_fade: 0, show_amt: 0,
         down_fn: 0, up_fn: 0, kdown_fn: 0, kup_fn: 0, kpress_fn: 0, edit_sig: 0, bind_fn: 0,
         safe: 0, list_fn: 0, list_gen: 0,
-        list_lo: 0, list_hi: 0, list_n: 0, row_h: 0, vel_x: 0, vel_y: 0,
+        list_lo: 0, list_hi: 0, list_n: 0, row_h: 0, vel_x: 0, vel_y: 0, measure_stamp: 0,
         a11y_label: "", a11y_role: "", cursor: "", text_rot: 0,
     }
 }
@@ -803,6 +816,9 @@ fn free_node(id: int) {
 fn reset_tree() {
     nodes = []UiNode {}
     push(nodes, blank_node())
+    dirty_layout_nodes = []int {}
+    layout_full = 1
+    invalidate_all()
     root_id = 0
     focus_id = 0
     trap_id = 0
@@ -1218,7 +1234,9 @@ fn note_prop_write(node_id: int, layout: int) {
     prop_writes = prop_writes + 1
     if layout != 0 {
         prop_layout = prop_layout + 1
-        mark_layout()
+        // A layout property invalidates only the path from this node up, so the
+        // frame can re-solve a subtree instead of the whole tree.
+        mark_layout_path(node_id)
     } else {
         mark_paint_id(node_id)
     }
@@ -1250,22 +1268,24 @@ fn store_sig(id: int, value: int) {
     // the box model).
     let ran0 = track.runs
     let pw0 = prop_writes
-    let lay0 = prop_layout
     track.notify(id)
     let ran = track.runs - ran0
     let pw = prop_writes - pw0
-    let mut lay = prop_layout - lay0
+    // A prop write marked its own path (`note_prop_write` -> `mark_layout_path`),
+    // so its dirt is already recorded. Only a signal layout reads *directly* —
+    // with no effect in between — needs a frame-wide layout mark here.
+    let mut direct_layout = 0
     if id < affects_layout.len {
         if affects_layout[id] != 0 {
-            lay = lay + 1
+            direct_layout = 1
         }
     }
-    if lay != 0 {
+    if direct_layout != 0 {
         mark_layout()
     } else if ran > 0 && pw >= ran {
         // Every effect that ran wrote a node through a setter, which marked it:
-        // a targeted repaint, no layout. Drop this write's `wrote` so the frame
-        // does not force a layout for it.
+        // a targeted repaint, no whole-tree layout. Drop this write's `wrote` so
+        // the frame does not force a full layout for it.
         track.consume_wrote()
     } else {
         mark_paint()
@@ -1295,10 +1315,12 @@ fn store_sig_paint(id: int, value: int) {
     let ran = track.runs - ran0
     let pw = prop_writes - pw0
     let lay = prop_layout - lay0
-    if lay != 0 {
-        mark_layout()
-    } else if ran == 0 || pw < ran {
-        paint_dirty = 1
+    // A layout prop the effect wrote marked its own path; otherwise fall back to
+    // a frame-wide paint mark when the effect could not be attributed.
+    if lay == 0 {
+        if ran == 0 || pw < ran {
+            paint_dirty = 1
+        }
     }
 }
 
@@ -2442,6 +2464,43 @@ fn mark_paint() {
     paint_dirty = 1
 }
 
+/// Invalidate every cached measure. Called by the coarse layout events (a
+/// structural change, a resize, a theme / scale change) — a re-measure after
+/// this recomputes the whole tree.
+fn invalidate_all() {
+    measure_gen = measure_gen + 1
+}
+
+/// Invalidate `id` and its ancestors: a size change at `id` can move each
+/// ancestor's inner size, so their cached measure is stale. Off-path subtrees
+/// keep their stamp and are skipped by the next `measure_node`.
+fn invalidate_path(id: int) {
+    let mut p = id
+    let mut guard = 0
+    while p > 0 {
+        if p < nodes.len {
+            nodes[p].measure_stamp = -1
+        }
+        p = nodes[p].parent
+        guard = guard + 1
+        if guard > 256 {
+            break
+        }
+    }
+}
+
+/// Record that a layout prop landed on `id`. Invalidates the path from `id` to
+/// the root (so a re-measure recomputes it) without forcing a whole-tree
+/// re-solve; `engine_layout` may then re-solve only `id`'s size-stable ancestor.
+fn mark_layout_path(id: int) {
+    layout_dirty = 1
+    paint_dirty = 1
+    invalidate_path(id)
+    if id > 0 {
+        push(dirty_layout_nodes, id)
+    }
+}
+
 /// Scroll moved: repaint now, and let the virtual-list window pass run.
 fn mark_scroll() {
     paint_dirty = 1
@@ -2468,6 +2527,8 @@ fn mark_scroll_node(id: int) {
 fn mark_layout() {
     layout_dirty = 1
     paint_dirty = 1
+    invalidate_all()
+    layout_full = 1
 }
 
 fn mark_tree() {
@@ -2475,6 +2536,24 @@ fn mark_tree() {
     layout_dirty = 1
     paint_dirty = 1
     chrome_dirty = 1
+    invalidate_all()
+    layout_full = 1
+}
+
+/// 1 when this frame's layout must re-solve the whole tree. Read and cleared by
+/// `engine_layout`; `mark_layout` / `mark_tree` / a resize set it.
+fn take_layout_full() -> int {
+    let f = layout_full
+    layout_full = 0
+    return f
+}
+
+/// The nodes a layout prop landed on since the last call, copied and cleared.
+/// `engine_layout` hands them to `layout.relayout`.
+fn take_dirty_layout_nodes() -> []int {
+    let out = dirty_layout_nodes
+    dirty_layout_nodes = []int {}
+    return out
 }
 
 /// Drain the PAINT marks at the end of a paint pass. The buffer is popped, not

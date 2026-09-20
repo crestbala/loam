@@ -208,6 +208,13 @@ fn measure_node(id: int) {
     if id <= 0 {
         return
     }
+    // Skip a subtree whose measure is already current: a write invalidates only
+    // the path it touched (`arena.invalidate_path`), so an unchanged sibling — or
+    // a whole clean subtree — is not re-measured.
+    if arena.nodes[id].measure_stamp == arena.measure_gen {
+        return
+    }
+    arena.nodes[id].measure_stamp = arena.measure_gen
     if arena.want_show(id) == 0 {
         arena.nodes[id].inner_width = 0
         arena.nodes[id].inner_height = 0
@@ -1204,6 +1211,97 @@ fn layout(width: int, height: int) {
     // are on screen (`arena.mark_scroll`), so a popup stays next to its trigger.
     arena.live_anchors = 0
     place_anchored(arena.root_id)
+}
+
+/// Nearest size-stable ancestor of `id` (including `id`): a node whose box is set
+/// explicitly, so a size change inside it cannot move anything above it. 0 when
+/// there is none, i.e. the change can reflow up to the root.
+fn layout_boundary(id: int) -> int {
+    let mut p = id
+    let mut guard = 0
+    while p > 0 {
+        if arena.nodes[p].explicit_width >= 0 {
+            if arena.nodes[p].explicit_height >= 0 {
+                return p
+            }
+        }
+        p = arena.nodes[p].parent
+        guard = guard + 1
+        if guard > 256 {
+            break
+        }
+    }
+    return 0
+}
+
+/// 1 when `id` sits inside a scroller. A subtree re-solve cannot update the
+/// scroller's content extent from the inside, so treat it as a whole-tree case.
+fn inside_scroller(id: int) -> int {
+    let mut p = arena.nodes[id].parent
+    let mut guard = 0
+    while p > 0 {
+        if int(arena.nodes[p].kind) == 11 {
+            return 1
+        }
+        p = arena.nodes[p].parent
+        guard = guard + 1
+        if guard > 256 {
+            break
+        }
+    }
+    return 0
+}
+
+/// Re-solve only the subtree a frame's layout-prop writes touched. Returns 0 when
+/// that cannot be done safely — no size-stable boundary, a write inside a
+/// scroller, writes with different boundaries, or a live anchored floater —
+/// leaving the caller to re-solve the whole tree.
+fn relayout(dirty: []int) -> int {
+    let n = dirty.len
+    if n == 0 {
+        return 0
+    }
+    let mut a = 0
+    for i in 0..n {
+        let d = dirty[i]
+        if d <= 0 {
+            return 0
+        }
+        if d >= arena.nodes.len {
+            return 0
+        }
+        if inside_scroller(d) != 0 {
+            return 0
+        }
+        let b = layout_boundary(d)
+        if b <= 0 {
+            return 0
+        }
+        if a == 0 {
+            a = b
+        } else if a != b {
+            return 0
+        }
+    }
+    if arena.live_anchors > 0 {
+        return 0
+    }
+    // The boundary's box is explicit, so its size is its explicit size — not the
+    // box it carried before, which a width / height write on the boundary itself
+    // may have just changed. Re-measure its subtree (only the invalidated path
+    // recomputes) and re-place from its own box.
+    let bx = arena.nodes[a].x
+    let by = arena.nodes[a].y
+    let bw = arena.nodes[a].explicit_width
+    let bh = arena.nodes[a].explicit_height
+    measure_node(a)
+    layout_node(a, bx, by, bw, bh)
+    // Everything the re-solve can have moved is inside the boundary: mark it so
+    // the damage pass repaints that subtree rather than falling back to full.
+    arena.mark_paint_id(a)
+    arena.live_anchors = 0
+    place_anchored(arena.root_id)
+    return 1
 }
 
 /// Screen origin of `id` in window points: its content-space x/y less every

@@ -1,6 +1,6 @@
-// Phase 4: targeted invalidation. A paint-only property write marks exactly the
-// node it wrote and skips layout, so the frame damages that node instead of the
-// whole surface. A layout property write still relayouts.
+// Phase 4 + 5: a paint-only property write marks exactly the node it wrote and
+// skips layout; a layout property write re-solves a subtree when the box is
+// size-stable, and the whole tree when it is not.
 
 import "std:fmt"
 import "std:sys"
@@ -36,19 +36,18 @@ fn main() {
     zeus.engine_paint()
     must(zeus.damage_full() == 0, "paint stays local")
     must(zeus.damage_count() >= 1, "the written node contributed damage")
-
-    // A paint-only write does not move geometry.
     must(zeus.node_width(box_id) == 50, "opacity left the width alone")
 
-    // Layout: width. It relayouts, and a relayout damages the whole surface.
+    // Layout: width. The box is explicit, so a width write re-solves its own
+    // subtree (phase 5) and damages only it.
     wd.set(80)
     zeus.engine_layout(240, 160)
-    must(zeus.damage_full() == 1, "a layout prop write relayouts")
+    must(zeus.layout_was_full() == 0, "a width write on a size-stable box re-solves a subtree")
     must(zeus.node_width(box_id) == 80, "the width landed")
-
-    // A signal read by nothing that moves geometry still reacts: a second
-    // paint-only write after a layout frame is again local.
     zeus.engine_paint()
+    must(zeus.damage_full() == 0, "the subtree re-solve damages locally")
+
+    // Paint-only again after a layout frame is still local.
     op.set(20)
     zeus.engine_layout(240, 160)
     must(zeus.damage_full() == 0, "paint-only again after a layout frame")
