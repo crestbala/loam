@@ -6,7 +6,7 @@ import "std:zui"
 let mut names: []string = []string {}
 
 fn Files() {
-    zui.Each(names, fn(i, s) {
+    zui.Loop(names, fn(i, s) {
         zeus.Text(s)
     })
 }

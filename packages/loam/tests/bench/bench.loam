@@ -22,7 +22,7 @@ fn main() {
     zeus.window("bench", 1024, 768)
     zeus.view(fn() -> Node {
         zeus.Box(align_direction = DIRECTION.Column, padding = 12, spacing = 4) {
-            zui.Each(items, fn(i, s) {
+            zui.Loop(items, fn(i, s) {
                 row(s)
             })
         }

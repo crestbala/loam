@@ -1,8 +1,8 @@
 //! atoms — the smallest Zeus pieces plus the declarative primitives every other
 //! recipe builds on: labels and hairlines, badges / chips / avatars, meters and
-//! stats, spinners and skeletons, the tree primitives (If / Each / For / Index /
-//! Match / Boundary / Grid / Overlay / Scroll / Svg / Image), and the shared
-//! helpers they need.
+//! stats, spinners and skeletons, the tree primitives (If / Loop / Each / For /
+//! Index / Match / Boundary / Grid / Overlay / Scroll / Svg / Image), and the
+//! shared helpers they need.
 //!
 //! Lowest component tier: imports nothing but `zeusbase` and the leaves below it.
 
@@ -196,9 +196,11 @@ fn If(visible: Signal<int>) -> Node {
     return Box(align_direction = DIRECTION.Column, visible = visible)
 }
 
-/// Run `build(i, item)` for each element. `[]T` is Copy when `T` is Copy, so
-/// this is safe inside a trailing block.
-fn Each<T>(items: []T, build: fn(int, T)) {
+/// Run `build(i, item)` for each element, once, at build time. `[]T` is Copy
+/// when `T` is Copy, so this is safe inside a trailing block. This is the
+/// *static* loop — the sequence is fixed at build time. For a list that follows
+/// a signal, use `Each`.
+fn Loop<T>(items: []T, build: fn(int, T)) {
     let n = items.len
     for i in 0..n {
         build(i, items[i])
@@ -512,18 +514,26 @@ fn kfor_has_id(ids: []int, v: int) -> int {
     return 0
 }
 
-/// Keyed list. `items` is `zeus.signal([]T {})` (`T` Copy); `key(item)` must
-/// return a stable, unique string. Rows are mounted once per key and **moved**
-/// on reorder, so focus and per-row state survive and a pure reorder allocates
-/// nothing. A changed key set (insert / remove) rebuilds the host and recycles
-/// every row. `build(i, item)` runs at mount; for content that follows the
-/// item, read a signal inside the row instead of `i`.
-fn For<T>(items: Signal<[]T>, key: fn(T) -> string, build: fn(int, T)) -> Node {
+/// Keyed reactive list: the general form of `For`, and the reactive `Each`.
+/// `items` is `zeus.signal([]T {})` (`T` Copy); `key(item)` must return a
+/// stable, unique string. Rows mount once per key and **move** on reorder, so
+/// focus and per-row state survive, and an insert or remove builds or frees only
+/// the affected row — O(changes) in rows, where a rebuild would be O(rows).
+/// `build(i, item)` runs at mount; for content that follows the item, read a
+/// signal inside the row instead of `i`.
+fn Each<T>(items: Signal<[]T>, key: fn(T) -> string, build: fn(int, T)) -> Node {
     let n = raw_box()
     let node_id = n.id
     kfor_refresh(node_id, items, key, build)
     return Component(n, align_direction = DIRECTION.Column,
                      rebuild = || { kfor_refresh(node_id, items, key, build) })
+}
+
+/// Keyed list. Same engine as `Each`; `For` reads as the list widget, `Each` as
+/// the broadcast case. Reach for `Loop` when the sequence is fixed at build
+/// time and no host node is wanted.
+fn For<T>(items: Signal<[]T>, key: fn(T) -> string, build: fn(int, T)) -> Node {
+    return Each(items, key, build)
 }
 
 fn kfor_refresh<T>(node_id: int, items: Signal<[]T>, key: fn(T) -> string, build: fn(int, T)) {
@@ -2174,7 +2184,7 @@ fn chart_xlab(label: string, i: int, col_w: int, plot_h: int, pt: int, n: int) {
 fn chart_legend(names: []string) {
     Box(align_direction = DIRECTION.Row, spacing = 16,
         justify = ALIGN.Center, wrap = 1) {
-        Each(names, fn(j, name) {
+        Loop(names, fn(j, name) {
             Row(SPACE.Exxs) {
                 Box(width = 8, height = 8, radius = 2, background = chart_color(j))
                 Text(name, color = mute(), font = FONT_CAPTION)

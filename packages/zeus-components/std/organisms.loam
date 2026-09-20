@@ -368,7 +368,7 @@ fn Accordion(open: Signal<int>, p: AccordionProps) -> Node {
                 radius = px_or_default(p.radius, RAD_LG),
                 width = p.width,
                 bind = p.bind, bind__set = p.bind__set) {
-                    Each(p.items, (index, item) => {
+                    Loop(p.items, (index, item) => {
                         AccordionItem(open = open, index = index, title = item.title, body = item.body)
                     })
                 }
@@ -559,7 +559,7 @@ fn Menu(trigger: Node, p: MenuProps) -> Node {
                         if p.label.len > 0 {
                             MenuLabel(p.label)
                         }
-                        Each(p.items, fn(index, item) {
+                        Loop(p.items, fn(index, item) {
                             if item.is_separated {
                                 MenuSeparator()
                             }
@@ -1163,7 +1163,7 @@ fn TableHead(cols: []string) {
         // Same gutter as `TableRow`, so header and cells share column edges.
         Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
             spacing = SPACE.Sm, padding_x = SPACE.Exs) {
-            Each(cols, fn(i, t) {
+            Loop(cols, fn(i, t) {
                 table_cell(t, 0, ALIGN.Start, mute())
             })
         }
@@ -1239,7 +1239,7 @@ fn table_cell(text: string, width: int, align: int, tint: string) {
 fn TableRow(cols: []string, p: TableRowProps) {
     let row = table_row_shell(p)
     slot(row, || {
-        Each(cols, fn(i, t) {
+        Loop(cols, fn(i, t) {
             table_cell(t, 0, ALIGN.Start, ink())
         })
     })
@@ -1252,7 +1252,7 @@ fn TableRow(cols: []string, p: TableRowProps) {
 fn TableRowCols(cols: []string, spec: []TableCol, p: TableRowProps) {
     let row = table_row_shell(p)
     slot(row, || {
-        Each(cols, fn(i, t) {
+        Loop(cols, fn(i, t) {
             let mut w = 0
             let mut al = ALIGN.Start
             if i < spec.len {
@@ -1344,7 +1344,7 @@ fn TableCols(cols: []TableCol, p: TableColsProps) {
         // and cells share the same column boundaries.
         Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
             spacing = SPACE.Sm, padding_x = SPACE.Exs) {
-            Each(cols, fn(i, c) {
+            Loop(cols, fn(i, c) {
                 let sortable = c.sortable && p.sort__set
                 let mut cursor = ""
                 if sortable {

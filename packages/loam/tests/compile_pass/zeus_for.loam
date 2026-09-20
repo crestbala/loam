@@ -15,7 +15,7 @@ fn main() {
         zeus.Box(align_direction = DIRECTION.Column) {
             zui.For(names, fn(s) => s, RowOf)
             zui.Button("Add", on_click = fn() => zui.push_item(names, "Cyd"))
-            zui.Each(names.get(), fn(i, s) {
+            zui.Loop(names.get(), fn(i, s) {
                 zeus.Text(s)
             })
         }

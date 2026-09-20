@@ -65,7 +65,7 @@ fn AccentDots() {
         push(idx, i)
     }
     zui.Row(SPACE.Exxs) {
-        zui.Each(idx, fn(i, k) {
+        zui.Loop(idx, fn(i, k) {
             let dot = zeus.Box(width = 16, height = 16, radius = spacing.RAD_FULL,
                                background = colors.accent_scale_light(i).s9,
                                cursor = "pointer",
