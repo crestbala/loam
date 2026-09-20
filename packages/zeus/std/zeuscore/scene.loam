@@ -34,12 +34,94 @@ struct Draw {
 
 let mut draws: []Draw = []Draw {}
 
+// --- retained draw-op spans (Phase 10) -------------------------------------
+//
+// A node's ops bracket its children, so everything `paint_node(id)` emits is one
+// contiguous run in `draws`. Recording that run per node is what lets a dirty
+// frame re-record only the subtrees that carry paint dirt and leave the rest of
+// the retained list alone — the dependency-driven traversal. The spans describe
+// the *retained* list, so they are only trusted while `arena.paint_spans_ok`
+// holds (a structural change or a whole-tree mark clears it).
+let mut op_start: []int = []int {}
+let mut op_len: []int = []int {}
+
+/// Recording state. `rec_mode` 1 means ops land in `patch_ops` instead of
+/// `draws`, and a span is rebased onto `rec_base` — the retained offset the run
+/// will be written back to.
+let mut rec_mode: int = 0
+let mut rec_base: int = 0
+let mut rec_from: int = 0
+let mut patch_ops: []Draw = []Draw {}
+let mut patch_dst: []int = []int {}
+let mut patch_src: []int = []int {}
+let mut patch_len: []int = []int {}
+
+/// Diagnostics for tests: frames that re-recorded only their dirty subtrees,
+/// frames that re-recorded everything, and op runs re-recorded rather than
+/// reused.
+let mut patch_frames: int = 0
+let mut full_frames: int = 0
+let mut patch_runs: int = 0
+
+fn paint_patch_frames() -> int {
+    return patch_frames
+}
+fn paint_full_frames() -> int {
+    return full_frames
+}
+fn paint_patch_runs() -> int {
+    return patch_runs
+}
+
+/// Index the next op will occupy — in `patch_ops` while re-recording a run.
+fn rec_here() -> int {
+    if rec_mode != 0 {
+        return patch_ops.len
+    }
+    return draws.len
+}
+
+fn grow_span(id: int) {
+    while op_start.len <= id {
+        push(op_start, 0)
+        push(op_len, 0)
+    }
+}
+
+fn set_span(id: int, from: int, len: int) {
+    if id <= 0 {
+        return
+    }
+    grow_span(id)
+    if rec_mode != 0 {
+        op_start[id] = rec_base + (from - rec_from)
+    } else {
+        op_start[id] = from
+    }
+    op_len[id] = len
+}
+
+/// Forget every span. Called at the start of a full record, so a node the record
+/// never reaches (inside an invisible subtree) cannot answer to a stale run.
+fn clear_spans() {
+    let n = op_len.len
+    for i in 0..n {
+        op_len[i] = 0
+        op_start[i] = 0
+    }
+}
+
 fn emit(kind: int, x: int, y: int, w: int, h: int, rgb: int, radius: int, alpha: int, font: int, text: string, value: int) {
-    push(draws, Draw {
+    let d = Draw {
         kind: kind, x: x, y: y, w: w, h: h,
         rgb: rgb, radius: radius, alpha: alpha, font: font,
         text: text, value: value,
-    })
+    }
+    if rec_mode != 0 {
+        push(patch_ops, d)
+    } else {
+        push(draws, d)
+    }
 }
 
 fn fill(x: int, y: int, w: int, h: int, rgb: int, radius: int) {
@@ -1149,14 +1231,21 @@ fn paint_node(id: int) {
         return
     }
     if arena.want_paint(id) == 0 {
+        // Invisible: it retains no ops, and its run is empty so a later patch
+        // sees a length change if it comes back.
+        set_span(id, 0, 0)
         return
     }
+    let from = rec_here()
     let cap_prev = arena.damage_cap
     if (int(arena.nodes[id].dirty) & 1) != 0 {
         arena.damage_cap = arena.damage_cap + 1
     }
     paint_node_shaped(id)
     arena.damage_cap = cap_prev
+    // Everything below was recorded between `from` and here, so the run covers
+    // the node's own ops and every descendant's.
+    set_span(id, from, rec_here() - from)
 }
 
 fn paint_node_shaped(id: int) {
@@ -1512,10 +1601,130 @@ fn paint_floaters(id: int) {
     arena.floater_clear()
     arena.floater_collect(id, arena.paint_sx, arena.paint_sy, 1)
     arena.floater_sort(0)
+    paint_floaters_paint()
+}
+
+/// Paint the floaters `floater_collect` already gathered, in z order.
+fn paint_floaters_paint() {
     let n = arena.floater_id.len
     for i in 0..n {
         paint_one_floater(arena.floater_id[i], arena.floater_screen_x[i], arena.floater_screen_y[i])
     }
+}
+
+/// Re-record one dirty node's whole run in place. Returns 0 when the run's length
+/// changed — the retained list would have to shift, so the frame falls back to a
+/// full record. Nothing is written to `draws` until every patch is known to fit.
+fn patch_run(id: int) -> int {
+    let from0 = op_start[id]
+    let len0 = op_len[id]
+    rec_from = patch_ops.len
+    rec_base = from0
+    rec_mode = 1
+    paint_node(id)
+    rec_mode = 0
+    let len = patch_ops.len - rec_from
+    if len != len0 {
+        return 0
+    }
+    push(patch_dst, from0)
+    push(patch_src, rec_from)
+    push(patch_len, len)
+    patch_runs = patch_runs + 1
+    return 1
+}
+
+/// Walk the retained tree and re-record only what carries dirt. A subtree with no
+/// paint bit below it keeps every op it has, so its resolution — colors, text,
+/// shadow packing, transforms — is not redone. A node with only a *descendant*
+/// marked keeps its own ops and recurses, because its ops bracket its children and
+/// an in-place patch elsewhere does not disturb them.
+fn patch_node(id: int) -> int {
+    if id <= 0 {
+        return 1
+    }
+    let bits = arena.node_paint_bits(id)
+    if bits == 0 {
+        return 1
+    }
+    if arena.want_paint(id) == 0 {
+        // It had ops and must now emit none: the run shrank, so shift is needed.
+        if op_len_len(id) != 0 {
+            return 0
+        }
+        return 1
+    }
+    if (bits & 1) != 0 {
+        return patch_run(id)
+    }
+    let kids = arena.nodes[id].kids
+    let n = kids.len
+    for i in 0..n {
+        if patch_node(kids[i]) == 0 {
+            return 0
+        }
+    }
+    return 1
+}
+
+/// `op_len[id]`, 0 for a node the spans do not cover.
+fn op_len_len(id: int) -> int {
+    if id <= 0 {
+        return 0
+    }
+    if id >= op_len.len {
+        return 0
+    }
+    return op_len[id]
+}
+
+/// Rebuild the frame's op list by patching the retained one. Returns 0 when the
+/// frame cannot be patched (a run changed length), leaving `draws` untouched so
+/// the caller can do a full record instead.
+fn patch_frame() -> int {
+    while patch_dst.len > 0 {
+        pop(patch_dst)
+        pop(patch_src)
+        pop(patch_len)
+    }
+    while patch_ops.len > 0 {
+        pop(patch_ops)
+    }
+    if patch_node(arena.root_id) == 0 {
+        return 0
+    }
+    let n = patch_dst.len
+    for i in 0..n {
+        let dst = patch_dst[i]
+        let src = patch_src[i]
+        let len = patch_len[i]
+        for k in 0..len {
+            draws[dst + k] = patch_ops[src + k]
+        }
+    }
+    patch_frames = patch_frames + 1
+    return 1
+}
+
+/// Re-record the whole frame. The fallback, and the frame that establishes the
+/// spans every later patch is measured against.
+fn record_frame() {
+    full_frames = full_frames + 1
+    rec_mode = 0
+    let n = draws.len
+    for i in 0..n {
+        pop(draws)
+    }
+    clear_spans()
+    if arena.root_id > 0 {
+        arena.paint_skip_z = 1
+        paint_node(arena.root_id)
+        arena.paint_skip_z = 0
+        if int(arena.nodes[arena.root_id].kind) != 11 {
+            paint_floaters_paint()
+        }
+    }
+    arena.note_paint_spans()
 }
 
 fn paint() {
@@ -1532,18 +1741,28 @@ fn paint() {
         arena.damage_frame_end()
         return
     }
-    let n = draws.len
-    for i in 0..n {
-        pop(draws)
-    }
     prepaint()
+    // Gather the floaters first: a floater's ops depend on its trigger's screen
+    // rect rather than only on its own subtree, and the pass that paints them is a
+    // second traversal, so a frame with any visible floater re-records in full.
+    // (A frame with none is the common case; an invisible floater emits nothing.)
     if arena.root_id > 0 {
-        arena.paint_skip_z = 1
-        paint_node(arena.root_id)
-        arena.paint_skip_z = 0
         if int(arena.nodes[arena.root_id].kind) != 11 {
-            paint_floaters(arena.root_id)
+            arena.floater_clear()
+            arena.floater_collect(arena.root_id, arena.paint_sx, arena.paint_sy, 1)
+            arena.floater_sort(0)
         }
+    }
+    let mut patched = 0
+    if arena.paint_can_patch() != 0 {
+        if arena.floater_id.len == 0 {
+            if patch_frame() != 0 {
+                patched = 1
+            }
+        }
+    }
+    if patched == 0 {
+        record_frame()
     }
     // A dirty frame that recorded nothing painted locally — a global mark
     // (scrollbar fade, an unmarked global write) — falls back to a full
@@ -1561,20 +1780,20 @@ fn step(delta_ms: int) -> int {
     arena.now_ms = arena.now_ms + delta_ms
     let mut live = arena.anim_tick(delta_ms)
     if arena.bar_expire() != 0 {
-        arena.paint_dirty = 1
+        arena.mark_paint()
     }
     if arena.bar_fading() != 0 {
         // The fade is time-based (paint reads the two stamps), so it only needs
         // a dirty frame per step, not a live track. `bar_next_ms` returns 16
         // while it is in flight, so hosts still wake for it.
-        arena.paint_dirty = 1
+        arena.mark_paint()
     }
     if arena.pulse_live() != 0 {
-        arena.paint_dirty = 1
+        arena.mark_paint()
         live = 1
     }
     if arena.spin_live() != 0 {
-        arena.paint_dirty = 1
+        arena.mark_paint()
         live = 1
     }
     return live

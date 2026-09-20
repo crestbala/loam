@@ -378,6 +378,8 @@ fn engine_layout(width: int, height: int) {
     }
     // A non-int signal write (array / string / bool) never passes through
     // `store_sig`, so its dirt is noted on the tracking module and drained here.
+    // (A write the engine *could* attribute never reaches this drain: it
+    // consumed its own contribution when it marked the exact nodes.)
     if track.take_wrote() != 0 {
         arena.mark_layout()
         arena.mark_chrome()
@@ -412,7 +414,16 @@ fn engine_layout(width: int, height: int) {
             layout.layout(width, height)
         }
         arena.layout_dirty = 0
-        arena.mark_paint()
+        if whole != 0 {
+            // A whole-tree re-solve can move any node, so paint re-records all of
+            // it.
+            arena.mark_paint()
+        } else {
+            // A subtree re-solve already marked the boundary it re-placed
+            // (`layout.relayout`), and nothing outside it can have moved, so
+            // paint may reuse the retained ops everywhere else.
+            arena.mark_paint_targeted()
+        }
         layout_gen = layout_gen + 1
     }
     // Windowed lists size their window from the scroller's laid-out height and
@@ -1201,6 +1212,28 @@ fn arena_sigs() -> int {
 /// streaming `For` or a re-running `scope` recycles handlers, so this stays flat.
 fn intern_count() -> int {
     return platform.plat_intern_live_count()
+}
+
+/// Frames whose paint re-recorded only the dirty subtrees and reused the rest of
+/// the retained draw list (diagnostics for tests).
+fn paint_patch_frames() -> int {
+    return scene.paint_patch_frames()
+}
+
+/// Frames whose paint re-recorded every op.
+fn paint_full_frames() -> int {
+    return scene.paint_full_frames()
+}
+
+/// Op runs re-recorded rather than reused, over the whole session.
+fn paint_patch_runs() -> int {
+    return scene.paint_patch_runs()
+}
+
+/// Force the next paint to re-record every op, so a test can compare a patched
+/// frame against a full one. Test / diagnostics only.
+fn paint_force_full() {
+    arena.mark_paint()
 }
 
 /// Byte size of one arena node record (diagnostics for the Phase 11 layout
