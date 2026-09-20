@@ -6335,27 +6335,14 @@ fn ensure_role_colors() {
         return
     }
     roles_ready = 1
-    theme(ROLE.Paper, parse_hex_color(LIGHT.bg), parse_hex_color(DARK.bg))
-    theme(ROLE.Plate, parse_hex_color(LIGHT.card), parse_hex_color(DARK.card))
-    theme(ROLE.Raised, parse_hex_color(LIGHT.raised), parse_hex_color(DARK.raised))
-    theme(ROLE.Ink, parse_hex_color(LIGHT.text), parse_hex_color(DARK.text))
-    theme(ROLE.Mute, parse_hex_color(LIGHT.muted), parse_hex_color(DARK.muted))
-    theme(ROLE.Dim, parse_hex_color(LIGHT.faint), parse_hex_color(DARK.faint))
-    theme(ROLE.Rule, parse_hex_color(LIGHT.line), parse_hex_color(DARK.line))
-    theme(ROLE.Hard, parse_hex_color(LIGHT.line_strong), parse_hex_color(DARK.line_strong))
-    theme(ROLE.Wash, parse_hex_color(LIGHT.wash), parse_hex_color(DARK.wash))
+    // Palette-derived roles the neutral ramp below does not cover: the accent,
+    // the chart / fill series, the scrim, and the ink that sits on a solid fill.
+    // Everything the ramp does cover — surfaces, text, rules, and the status
+    // tiers — is set exactly once, further down, so each role has one source of
+    // truth rather than a first-pass value that a second pass overwrites.
     theme(ROLE.OnInk, parse_hex_color(LIGHT.on_solid), parse_hex_color(DARK.on_solid))
     theme(ROLE.Accent, parse_hex_color(LIGHT.accent), parse_hex_color(DARK.accent))
     theme(ROLE.AccentSoft, parse_hex_color(LIGHT.accent_soft), parse_hex_color(DARK.accent_soft))
-    theme(ROLE.Danger, parse_hex_color(LIGHT.danger), parse_hex_color(DARK.danger))
-    theme(ROLE.DangerSolid, parse_hex_color(LIGHT.danger_solid), parse_hex_color(DARK.danger_solid))
-    theme(ROLE.DangerEdge, parse_hex_color(LIGHT.danger_edge), parse_hex_color(DARK.danger_edge))
-    theme(ROLE.OkSolid, parse_hex_color(LIGHT.ok_solid), parse_hex_color(DARK.ok_solid))
-    theme(ROLE.Ok, parse_hex_color(LIGHT.success), parse_hex_color(DARK.success))
-    theme(ROLE.OkFill, parse_hex_color(LIGHT.success_fill), parse_hex_color(DARK.success_fill))
-    theme(ROLE.Warn, parse_hex_color(LIGHT.warn), parse_hex_color(DARK.warn))
-    theme(ROLE.WarnFill, parse_hex_color(LIGHT.warn_fill), parse_hex_color(DARK.warn_fill))
-    theme(ROLE.WarnEdge, parse_hex_color(LIGHT.warn_edge), parse_hex_color(DARK.warn_edge))
     theme(ROLE.OnFill, parse_hex_color(LIGHT.on_fill), parse_hex_color(DARK.on_fill))
     theme(ROLE.Scrim, parse_hex_color(LIGHT.scrim), parse_hex_color(DARK.scrim))
     theme(ROLE.ChartEdge, parse_hex_color(LIGHT.chart_edge), parse_hex_color(DARK.chart_edge))
@@ -6369,8 +6356,6 @@ fn ensure_role_colors() {
     theme(ROLE.Fill3, parse_hex_color(LIGHT.fill3), parse_hex_color(DARK.fill3))
     theme(ROLE.Fill4, parse_hex_color(LIGHT.fill4), parse_hex_color(DARK.fill4))
     theme(ROLE.Fill5, parse_hex_color(LIGHT.fill5), parse_hex_color(DARK.fill5))
-    theme(ROLE.Bone, parse_hex_color(LIGHT.line), parse_hex_color(DARK.raised))
-    theme(ROLE.FocusRing, parse_hex_color(LIGHT.text), parse_hex_color(DARK.text))
 
     // --- scales, then the flat roles rebound onto them ---
     register_scale(ROLE.N1, NEUTRAL_L, NEUTRAL_D)
