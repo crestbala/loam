@@ -6,6 +6,6 @@
 //! its own. Tiers use each other directly (`organisms` imports `molecules`), so
 //! nothing here is needed for resolution — this is purely the public alias.
 
-import "std:atoms"
-import "std:molecules"
-import "std:organisms"
+import "zeus-components:atoms"
+import "zeus-components:molecules"
+import "zeus-components:organisms"

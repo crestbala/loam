@@ -6,17 +6,17 @@
 //!
 //! Lowest component tier: imports nothing but `zeusbase` and the leaves below it.
 
-import "std:structs"
-import "std:enums"
-import "std:zeusbase"
-import "std:colors"
-import "std:spacing"
-import "std:zeus_constants"
+import "zeus:structs"
+import "zeus:enums"
+import "zeus:zeusbase"
+import "zeus-components:colors"
+import "zeus-components:spacing"
+import "zeus:zeus_constants"
 import "std:async"
 import "std:fmt"
-import "../../zeus/std/zeuscore/geometry.loam"
-import "../../zeus/std/zeuscore/platform.loam"
-import "../../zeus/std/zeuscore/arena.loam"
+import "zeus:zeuscore/geometry"
+import "zeus:zeuscore/platform"
+import "zeus:zeuscore/arena"
 
 struct GridProps {
     config: GridConfig = GridConfig {},
