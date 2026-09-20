@@ -3195,6 +3195,64 @@ const DARK: Palette = Palette(
     fill4 = "#362e20",
     fill5 = "#152e2d"
 )
+fn tint_of(kind: int) -> string {
+    match kind {
+        TINT.Ok => { return ok() }
+        TINT.Mute => { return mute() }
+        TINT.Dim => { return dim() }
+        TINT.Danger => { return danger() }
+        TINT.Warn => { return warn() }
+        _ => { return ink() }
+    }
+}
+
+fn empty_view() -> Node {
+    return Node { id: 0 }
+}
+/// Move `sig` toward `to` over `ms` milliseconds.
+///
+/// **Behaviour change (Phase 3):** the signal's *state* moves to `to` once —
+/// every effect bound to `sig` re-runs once — and the moving value is a
+/// paint-only overlay interpolated on the animation track pool. Effects no
+/// longer re-run per frame, and nothing re-runs inside the tick at all. A new
+/// call retargets an in-flight animation from its current value. `ms == 0`
+/// jumps; before the first frame it jumps too (nothing animates at boot).
+///
+/// A layout prop the write lands on (width / height / a pin) does not jump
+/// to `to`: it stays at its current length and tweens on the same track,
+/// reflowing each frame. Paint-only readers (`Progress`, `anim_paint`) still
+/// use the overlay. Hover / press never reflow.
+fn animate(sig: Signal<int>, to: int, ms: int) {
+    arena.anim_signal(sig.id, to, ms)
+}
+
+
+/// 2D grid configuration.
+struct GridConfig {
+    /// Column count. In auto mode (see `auto_columns`) it is instead the cap
+    /// on the count, and `0` means no cap — the width alone decides.
+    /// `GridConfig {}`, like any count `< 1`, is a single column.
+    columns: int = 0,
+    gap: int = 0,
+    padding: int = 0,
+    /// The narrowest a cell may be, in points like `gap`. This is what makes
+    /// the grid responsive: the count becomes how many cells at least this
+    /// wide fit the width the grid is given, capped by `columns` and by the
+    /// child count. With `gap = 12` and `auto_columns = 220`, a grid with 1000
+    /// points of content width fits four cells (and `columns = 3` takes it back
+    /// to three), 620 points fits two, 420 fits one. The gap is part of the
+    /// cell, because `cols` cells leave `cols - 1` gaps.
+    ///
+    /// `0` is the same thing with the width taken from the children instead —
+    /// a cell is as wide as the widest child wants to be — so the count
+    /// follows the content and needs no number to pick. `-1` (the default)
+    /// keeps the fixed `columns` behaviour.
+    ///
+    /// A constant, not a signal: a cell width is a layout parameter, so
+    /// re-resolving it every frame would buy nothing.
+    auto_columns: int = -1,
+}
+
 // --- C boundary hooks -----------------------------------------------------
 // Bodyless: the runtime implements these (see `zeus_plat.c`), and `zeus`
 // re-exports them. Named `on_*` / `*_key` because they are the keyboard and
