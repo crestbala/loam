@@ -1,0 +1,57 @@
+// `Each` is the reactive form of the list primitive: it takes the same keyed
+// engine as `For`, so a signal-driven list reconciles in place and per-row state
+// survives a change. `Loop` is the static, one-shot counterpart.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn Row(i: int, s: string) {
+    let c = zeus.signal(0)
+    zeus.Box(align_direction = DIRECTION.Row, spacing = 4) {
+        zeus.Text(s)
+        zui.Button("inc", on_click = fn() => c.set(c.get() + 1), width = 40)
+        zeus.Text("{{c.get()}}")
+    }
+}
+
+fn main() {
+    let names = zeus.signal([]string {})
+    zui.push_item(names, "A")
+    zui.push_item(names, "B")
+    zeus.snapshot(240, 160, fn() -> Node {
+        zeus.Box(align_direction = DIRECTION.Column) {
+            zui.Each(names, fn(s) => s, Row)
+        }
+    })
+    // The list reacts to the signal without a manual rebuild.
+    zui.insert_item(names, 1, "X")
+    zeus.engine_layout(240, 160)
+    if zeus.engine_find_text("X") == 0 {
+        fmt.println("FAIL Each did not react to the insert")
+        sys.exit(1)
+    }
+    // Per-row state survives: increment A, insert, and the counter is still there.
+    if zeus.engine_click_text("inc") == 0 {
+        fmt.println("FAIL click inc")
+        sys.exit(1)
+    }
+    zeus.engine_layout(240, 160)
+    if zeus.engine_find_text("1") == 0 {
+        fmt.println("FAIL A did not increment")
+        sys.exit(1)
+    }
+    zui.insert_item(names, 2, "Y")
+    zeus.engine_layout(240, 160)
+    if zeus.engine_find_text("Y") == 0 {
+        fmt.println("FAIL second insert")
+        sys.exit(1)
+    }
+    if zeus.engine_find_text("1") == 0 {
+        fmt.println("FAIL insert rebuilt the rows (state lost)")
+        sys.exit(1)
+    }
+    // `Loop` is the static counterpart: it emits its rows at build time.
+    fmt.println("each reactive ok")
+}

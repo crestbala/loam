@@ -21,7 +21,11 @@ commit per phase. Line anchors are for the tree at `feat/zeus-upgrade-v2`.
 - **A framework with no coarse rebuild mode.** `view` / `app` rebuild the tree
   every frame (`zeus.loam:361-371`); `Component(..., rebuild = ...)` re-executes
   builders (`zeusbase.loam:2127-2129`).
-- **`Each` is not reactive.** A plain one-shot loop (`atoms.loam:201-206`).
+- **`Each` is not reactive.** It was a plain one-shot loop (`atoms.loam:201-206`).
+  Phase 3 makes `Each` the reactive keyed list and moves the static loop to
+  `Loop`. A positional list cannot reconcile correctly without value equality
+  (Loam rejects `==` on a generic `T`: "cannot compare T"), so identity comes
+  from a key — the same contract as `For`.
 
 ### B — Invalidation & scheduling granularity
 - **Targeted per-node invalidation.** Writes set global flags — `paint_dirty` /
@@ -62,7 +66,7 @@ commit per phase. Line anchors are for the tree at `feat/zeus-upgrade-v2`.
 | 0 | — | This roadmap | landed |
 | 1 | A | Per-node structural operators: `insert_child` / `remove_child` / `move_child` + accessors, with `arena.child_*` primitives that maintain `kids` / `parent` and mark minimal dirt | landed |
 | 2 | A | O(changes) keyed list reconciliation in `kfor_refresh`: build only new rows, free only removed rows, move the rest — per-row ownership via `scope_begin` | landed |
-| 3 | A | Reactive `Each` over a `Signal<[]T>` built on the phase-1 operators | planned |
+| 3 | A | Reactive `Each` over a `Signal<[]T>`: the keyed engine exposed as the general list primitive, with the static one-shot loop renamed `Loop` | landed |
 | 4 | B | Targeted per-node invalidation: a `signal → node` index so a write marks exactly the nodes whose effects ran, not the whole frame | planned |
 | 5 | B | Dependency-driven layout: dirty-subtree re-solve instead of a whole-tree pass | planned |
 | 6 | C | One reactive channel: fold the interaction overlay and theme resolution into the effect graph; keep motion paint-only by contract | planned |

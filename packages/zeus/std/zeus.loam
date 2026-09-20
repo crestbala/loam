@@ -1,9 +1,10 @@
 //! `zeus` — UI toolkit. Native Cocoa and WASM/Canvas2D run the same source.
 //!
 //! Widgets are `Box` / `Text` / `Button` / `Input` / `Grid` / `Overlay` /
-//! `Scroll` / `Svg` / `If` / `Each` / `For` / `VirtualList` / `VirtualTable` /
-//! `App`. Hierarchy is a trailing block. Lists: `zeus.signal([]T {})` +
-//! `For` / `VirtualList` + `push_item` / `insert_item`. Windowed lists
+//! `Scroll` / `Svg` / `If` / `Loop` / `Each` / `For` / `VirtualList` /
+//! `VirtualTable` / `App`. Hierarchy is a trailing block. Lists:
+//! `zeus.signal([]T {})` + `Each` / `For` (reactive, keyed) or `Loop` (static,
+//! one-shot) + `push_item` / `insert_item`. Windowed lists
 //! (`VirtualList`, `For(..., row_h)`, `VirtualTable`) render visible rows
 //! only; table rows and columns are structs.
 //!

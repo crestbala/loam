@@ -678,7 +678,7 @@ fn User(initials: string, name: string, role: string, p: UserProps) {
 /// Breadcrumb: items separated by chevron icons; last item is foreground.
 fn Breadcrumbs(items: []string) {
     Row(6) {
-        Each(items, fn(i, s) {
+        Loop(items, fn(i, s) {
             if i > 0 {
                 Icon(IC_CHEV_RIGHT, 14, mute())
             }
@@ -755,7 +755,7 @@ fn Tabs(selected: Signal<int>, labels: []string) {
             prop_int(ind, SET.Width, fn() -> int { return ind_w.get() })
             prop_int(ind, SET.Height, fn() -> int { return ind_h.get() })
             set_prop_int(ind, SET.Elevation, 1)
-            Each(labels, fn(i, lab) {
+            Loop(labels, fn(i, lab) {
                 Tab(lab, selected, i, n, 1)
             })
         })
@@ -843,7 +843,7 @@ fn Segmented(value: Signal<int>, labels: []string) {
             align_items = ALIGN.Center
         ) {
             let n = labels.len
-            Each(labels, fn(i, lab) {
+            Loop(labels, fn(i, lab) {
                 Choice(lab, value, i, n)
             })
         }
@@ -918,7 +918,7 @@ fn Select(value: Signal<int>, labels: []string) {
         press = true
     )
     ui_push(trigger.id)
-    Each(labels, fn(i, lab) {
+    Loop(labels, fn(i, lab) {
         let t = Text(lab, color = ink(), font = FONT_BODY, ellipsis = true)
         show_eq(t, value, i)
     })
@@ -968,7 +968,7 @@ fn Select(value: Signal<int>, labels: []string) {
         }
     })
     ui_push(menu.id)
-    Each(labels, fn(i, lab) {
+    Loop(labels, fn(i, lab) {
         SelectRow(value, active, i, lab)
     })
     ui_pop()
@@ -1006,7 +1006,7 @@ fn Radio(label: string, value: Signal<int>, index: int, count: int = 0) {
 fn RadioGroup(value: Signal<int>, labels: []string) {
     let n = labels.len
     Column(SPACE.Exs) {
-        Each(labels, fn(i, lab) {
+        Loop(labels, fn(i, lab) {
             Radio(lab, value, i, n)
         })
     }
@@ -1039,7 +1039,7 @@ fn Toggle(label: string, on: Signal<int>) {
 /// chrome; the pressed state fills muted.
 fn ToggleGroup(value: Signal<int>, labels: []string) {
     Row(4) {
-        Each(labels, fn(i, lab) {
+        Loop(labels, fn(i, lab) {
             let item = Box(
                 align_direction = DIRECTION.Row,
                 align_items = ALIGN.Center,
