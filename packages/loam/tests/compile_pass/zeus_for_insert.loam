@@ -1,0 +1,94 @@
+// A keyed `For` reconciles in place on a middle insert / remove: the rows whose
+// key survives keep their node, their signals, and their state; only the new row
+// is built and only the gone row is freed. The old slow path rebuilt every row,
+// which reset per-row state on any key-set change and re-created the tree.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn Row(i: int, s: string) {
+    let c = zeus.signal(0)
+    zeus.Box(align_direction = DIRECTION.Row, spacing = 4) {
+        zeus.Text(s)
+        zui.Button("inc", on_click = fn() => c.set(c.get() + 1), width = 40)
+        zeus.Text("{{c.get()}}")
+    }
+}
+
+fn main() {
+    let names = zeus.signal([]string {})
+    zui.push_item(names, "A")
+    zui.push_item(names, "B")
+    zui.push_item(names, "C")
+    zeus.snapshot(240, 200, fn() -> Node {
+        zeus.Box(align_direction = DIRECTION.Column) {
+            zui.For(names, fn(s) => s, Row)
+        }
+    })
+    // Increment A (the first row).
+    if zeus.engine_click_text("inc") == 0 {
+        fmt.println("FAIL click inc")
+        sys.exit(1)
+    }
+    zeus.engine_layout(240, 200)
+    if zeus.engine_find_text("1") == 0 {
+        fmt.println("FAIL A did not increment")
+        sys.exit(1)
+    }
+
+    // Insert between A and B. A's counter must survive: a full rebuild would
+    // reset it.
+    zui.insert_item(names, 1, "X")
+    zeus.engine_layout(240, 200)
+    if zeus.engine_find_text("X") == 0 {
+        fmt.println("FAIL X did not mount")
+        sys.exit(1)
+    }
+    if zeus.engine_find_text("1") == 0 {
+        fmt.println("FAIL insert rebuilt A (state lost)")
+        sys.exit(1)
+    }
+
+    // Remove C (the last row). A and X keep their rows.
+    zui.remove_item(names, 3)
+    zeus.engine_layout(240, 200)
+    if zeus.engine_find_text("C") != 0 {
+        fmt.println("FAIL C was not removed")
+        sys.exit(1)
+    }
+    if zeus.engine_find_text("1") == 0 {
+        fmt.println("FAIL remove rebuilt A (state lost)")
+        sys.exit(1)
+    }
+
+    // A middle insert/remove cycle must recycle: slots reach a high-water mark
+    // after the first few cycles, then must stay flat forever.
+    let mut cyc = 0
+    while cyc < 3 {
+        zui.insert_item(names, 1, "Z")
+        zeus.engine_layout(240, 200)
+        zui.remove_item(names, 1)
+        zeus.engine_layout(240, 200)
+        cyc = cyc + 1
+    }
+    let hi_nodes = zeus.arena_nodes()
+    let hi_sigs = zeus.arena_sigs()
+    while cyc < 60 {
+        zui.insert_item(names, 1, "Z")
+        zeus.engine_layout(240, 200)
+        zui.remove_item(names, 1)
+        zeus.engine_layout(240, 200)
+        cyc = cyc + 1
+    }
+    if zeus.arena_nodes() != hi_nodes {
+        fmt.println("FAIL nodes grew", hi_nodes, "->", zeus.arena_nodes())
+        sys.exit(1)
+    }
+    if zeus.arena_sigs() != hi_sigs {
+        fmt.println("FAIL sigs grew", hi_sigs, "->", zeus.arena_sigs())
+        sys.exit(1)
+    }
+    fmt.println("for insert ok")
+}

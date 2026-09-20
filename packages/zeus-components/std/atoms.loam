@@ -477,6 +477,41 @@ fn kfor_unique<T>(xs: []T, key: fn(T) -> string, m: int) -> int {
     return 1
 }
 
+fn kfor_unique_keys(keys: []string, m: int) -> int {
+    let mut i = 0
+    while i < m {
+        let mut j = i + 1
+        while j < m {
+            if keys[i] == keys[j] {
+                return 0
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+    return 1
+}
+
+fn kfor_has(keys: []string, k: string) -> int {
+    let n = keys.len
+    for i in 0..n {
+        if keys[i] == k {
+            return 1
+        }
+    }
+    return 0
+}
+
+fn kfor_has_id(ids: []int, v: int) -> int {
+    let n = ids.len
+    for i in 0..n {
+        if ids[i] == v {
+            return 1
+        }
+    }
+    return 0
+}
+
 /// Keyed list. `items` is `zeus.signal([]T {})` (`T` Copy); `key(item)` must
 /// return a stable, unique string. Rows are mounted once per key and **moved**
 /// on reorder, so focus and per-row state survive and a pure reorder allocates
@@ -520,7 +555,125 @@ fn kfor_refresh<T>(node_id: int, items: Signal<[]T>, key: fn(T) -> string, build
             }
         }
     }
+    // Incremental path: keep the rows whose key survives, build only the new
+    // keys, free only the rows whose key is gone. This is O(changes) in rows,
+    // where the full rebuild below is O(rows).
+    if kfor_reconcile(node_id, xs, key, build) != 0 {
+        return
+    }
     // Slow path: rebuild the host; every row is re-created and recycled.
+    kfor_rebuild(node_id, xs, key, build)
+}
+
+/// Reconcile the host's rows against `xs` in place: move the shared rows, build
+/// the new keys, free the removed ones. Returns 0 when the shape is not
+/// reconcilable — duplicate keys, a row builder that mounts zero or several
+/// top-level children, or an existing unkeyed row — leaving the caller to fall
+/// back to a full rebuild.
+///
+/// Nothing is torn down until every new row has built cleanly and every key
+/// resolves to a row, so a fallback cannot leak a half-adopted row: the rows
+/// built here stay owned by the host until `adopt_records` hands each its own
+/// signals and handlers, and a fallback's `rebuild_begin` releases host-owned
+/// records exactly as before.
+fn kfor_reconcile<T>(node_id: int, xs: []T, key: fn(T) -> string, build: fn(int, T)) -> int {
+    let m = xs.len
+    let mut nk = []string {}
+    let mut i = 0
+    while i < m {
+        push(nk, key(xs[i]))
+        i = i + 1
+    }
+    if kfor_unique_keys(nk, m) == 0 {
+        return 0
+    }
+    let old = arena.key_keys(node_id)
+    let mut o = 0
+    while o < old.len {
+        if arena.key_node(node_id, old[o]) <= 0 {
+            return 0
+        }
+        o = o + 1
+    }
+    // Build the rows whose key is new, under the host's build scope. Each row's
+    // allocations are handed to it the moment it builds, so a later row cannot
+    // claim them (an unbounded later sweep would).
+    let previous = arena.scope_begin(node_id)
+    ui_push(node_id)
+    let mut ok = 1
+    i = 0
+    while i < m {
+        if ok != 0 {
+            if arena.key_node(node_id, nk[i]) <= 0 {
+                let before = arena.nodes[node_id].kids.len
+                let s_mark = arena.rec_sid.len
+                let f_mark = arena.rec_fid.len
+                build(i, xs[i])
+                let after = arena.nodes[node_id].kids.len
+                if after == before + 1 {
+                    let row = arena.nodes[node_id].kids[before]
+                    arena.adopt_records(node_id, row, s_mark, f_mark)
+                    arena.key_set(node_id, nk[i], row)
+                } else {
+                    // A row that is not a single top-level child cannot be
+                    // moved or keyed; rebuild rather than reorder a partial row.
+                    arena.key_set(node_id, nk[i], 0)
+                    ok = 0
+                }
+            }
+        }
+        i = i + 1
+    }
+    ui_pop()
+    arena.scope_end(previous)
+    if ok == 0 {
+        return 0
+    }
+    // Free the rows whose key is gone. Only now that a fallback is impossible.
+    o = 0
+    while o < old.len {
+        if kfor_has(nk, old[o]) == 0 {
+            let row = arena.key_node(node_id, old[o])
+            arena.key_forget(node_id, old[o])
+            if row > 0 {
+                arena.free_subtree(row)
+            }
+        }
+        o = o + 1
+    }
+    // Order the kids by the new key sequence. Every key resolves now, so the
+    // array holds only live rows.
+    let mut order = []int {}
+    i = 0
+    while i < m {
+        push(order, arena.key_node(node_id, nk[i]))
+        i = i + 1
+    }
+    // A duplicate key overwrites its key entry, so the earlier row is a child
+    // the table no longer names. Replacing `kids` would orphan it — free every
+    // current child that the new order does not keep.
+    let cur = arena.nodes[node_id].kids
+    let mut c = 0
+    while c < cur.len {
+        let child = cur[c]
+        if child > 0 {
+            if kfor_has_id(order, child) == 0 {
+                arena.free_subtree(child)
+            }
+        }
+        c = c + 1
+    }
+    arena.nodes[node_id].kids = order
+    return 1
+}
+
+/// Full rebuild: free everything the host owned and re-create every row. The
+/// fallback whenever a reconcile cannot be done in place.
+fn kfor_rebuild<T>(node_id: int, xs: []T, key: fn(T) -> string, build: fn(int, T)) {
+    let m = xs.len
+    // A prior reconcile may have adopted records onto the rows; hand them back
+    // so `rebuild_begin` frees them with the rest.
+    arena.release_children_ownership(node_id)
     arena.key_clear(node_id)
     let previous = arena.rebuild_begin(node_id)
     ui_push(node_id)

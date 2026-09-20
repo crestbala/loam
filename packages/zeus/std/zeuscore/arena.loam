@@ -623,6 +623,31 @@ fn release_fns(node_id: int) {
     }
 }
 
+/// Re-attribute the allocations made since a mark from `host` to `row`. An
+/// incremental list reconcile sets the build scope to the host, builds one row,
+/// then hands that row its own signals and interned handlers so removing the row
+/// frees exactly them. Entries a nested scope already claimed (a `For` inside the
+/// row) keep their owner and are left alone.
+fn adopt_records(host: int, row: int, s_mark: int, f_mark: int) {
+    if row <= 0 {
+        return
+    }
+    let mut i = s_mark
+    while i < rec_owner.len {
+        if rec_owner[i] == host {
+            rec_owner[i] = row
+        }
+        i = i + 1
+    }
+    let mut j = f_mark
+    while j < rec_fowner.len {
+        if rec_fowner[j] == host {
+            rec_fowner[j] = row
+        }
+        j = j + 1
+    }
+}
+
 // --- keyed-list identity ---
 // Keyed `For` mounts one child per unique key and reuses it across reorders,
 // so focus and per-row state survive a move. `keyed_node[i]` is the top-level
@@ -691,6 +716,34 @@ fn key_clear(host: int) {
             i = i + 1
         }
     }
+}
+
+/// Drop one keyed entry. Table order is irrelevant, so swap-remove.
+fn key_forget(host: int, k: string) {
+    let i = key_index(host, k)
+    if i < 0 {
+        return
+    }
+    let last = keyed_host.len - 1
+    keyed_host[i] = keyed_host[last]
+    keyed_key[i] = keyed_key[last]
+    keyed_node[i] = keyed_node[last]
+    pop(keyed_host)
+    pop(keyed_key)
+    pop(keyed_node)
+}
+
+/// Every key currently mounted under `host`, in no particular order. An
+/// incremental reconcile diffs this against the new key set to find removals.
+fn key_keys(host: int) -> []string {
+    let mut out = []string {}
+    let n = keyed_host.len
+    for i in 0..n {
+        if keyed_host[i] == host {
+            push(out, keyed_key[i])
+        }
+    }
+    return out
 }
 
 /// Tear down a node: free its subtree (sigs, interned handlers, effects) and
@@ -814,13 +867,83 @@ fn drop_children(id: int) {
         free_node(nodes[id].kids[i])
     }
     nodes[id].kids = []int {}
-    // One effect-table sweep for the whole freed subtree: per-node sweeps
-    // made refit drops ~25 ms once the table had accumulated records.
+    flush_drops()
+    mark_tree()
+}
+
+/// One effect-table sweep for a whole batch of freed nodes, plus the animation
+/// tracks they owned. `free_node` appends to `drop_pool`; this drains it.
+fn flush_drops() {
+    if drop_pool.len == 0 {
+        return
+    }
     track.free_nodes_effects(drop_pool)
-    // Tracks owned by the freed nodes return to the pool in the same sweep.
     anim_free_pool(drop_pool)
     drop_pool = []int {}
-    mark_tree()
+}
+
+/// Free `id` and its whole subtree, releasing the signals and interned handlers
+/// each node in it *owns*. `free_node` recycles slots but leaves per-node
+/// ownership to the enclosing rebuild scope; an incremental list removal has no
+/// such scope, so this walks the subtree and releases as it goes.
+fn free_subtree_walk(id: int) {
+    if id <= 0 {
+        return
+    }
+    if id >= nodes.len {
+        return
+    }
+    if int(nodes[id].kind) == 0 {
+        return
+    }
+    let n = nodes[id].kids.len
+    for i in 0..n {
+        free_subtree_walk(nodes[id].kids[i])
+    }
+    release_sigs(id)
+    release_fns(id)
+    key_clear(id)
+    free_node(id)
+}
+
+fn free_subtree(id: int) {
+    free_subtree_walk(id)
+    flush_drops()
+}
+
+/// Release the signals and interned handlers every node in `id`'s subtree owns,
+/// without freeing the nodes. An incremental reconcile adopts records onto each
+/// row, so a host that later falls back to a full rebuild must hand those
+/// records back before the rebuild drops the rows.
+fn release_subtree(id: int) {
+    if id <= 0 {
+        return
+    }
+    if id >= nodes.len {
+        return
+    }
+    if int(nodes[id].kind) == 0 {
+        return
+    }
+    let n = nodes[id].kids.len
+    for i in 0..n {
+        release_subtree(nodes[id].kids[i])
+    }
+    release_sigs(id)
+    release_fns(id)
+}
+
+fn release_children_ownership(id: int) {
+    if id <= 0 {
+        return
+    }
+    if id >= nodes.len {
+        return
+    }
+    let n = nodes[id].kids.len
+    for i in 0..n {
+        release_subtree(nodes[id].kids[i])
+    }
 }
 
 // --- per-node structural operators -----------------------------------------

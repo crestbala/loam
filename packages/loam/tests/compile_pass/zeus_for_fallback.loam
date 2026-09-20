@@ -1,0 +1,58 @@
+// The keyed `For` full-rebuild fallback must release records an in-place
+// reconcile adopted onto rows, or the fallback leaks them. Duplicate keys force
+// the fallback; alternating them with a unique key exercises both paths and must
+// leave the arena flat.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn Row(i: int, s: string) {
+    let c = zeus.signal(0)
+    zeus.Box(align_direction = DIRECTION.Row, spacing = 4) {
+        zeus.Text(s)
+        zui.Button("inc", on_click = fn() => c.set(c.get() + 1), width = 40)
+    }
+}
+
+fn main() {
+    let names = zeus.signal([]string {})
+    zui.push_item(names, "solo")
+    zeus.snapshot(240, 200, fn() -> Node {
+        zeus.Box(align_direction = DIRECTION.Column) {
+            zui.For(names, fn(s) => s, Row)
+        }
+    })
+    let mut cyc = 0
+    while cyc < 3 {
+        names.set([]string { "dup", "dup" })
+        zeus.engine_layout(240, 200)
+        names.set([]string { "solo" })
+        zeus.engine_layout(240, 200)
+        cyc = cyc + 1
+    }
+    let hi_nodes = zeus.arena_nodes()
+    let hi_sigs = zeus.arena_sigs()
+    while cyc < 40 {
+        names.set([]string { "dup", "dup" })
+        zeus.engine_layout(240, 200)
+        names.set([]string { "solo" })
+        zeus.engine_layout(240, 200)
+        cyc = cyc + 1
+    }
+    if zeus.arena_nodes() != hi_nodes {
+        fmt.println("FAIL nodes grew", hi_nodes, "->", zeus.arena_nodes())
+        sys.exit(1)
+    }
+    if zeus.arena_sigs() != hi_sigs {
+        fmt.println("FAIL sigs grew", hi_sigs, "->", zeus.arena_sigs())
+        sys.exit(1)
+    }
+    // The unique-key frame really mounted its row.
+    if zeus.engine_find_text("solo") == 0 {
+        fmt.println("FAIL solo row missing")
+        sys.exit(1)
+    }
+    fmt.println("for fallback ok")
+}
