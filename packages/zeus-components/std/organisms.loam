@@ -1,9 +1,1660 @@
-//! organisms — a whole section of a screen.
+//! organisms — the section-level pieces: Card and Comp, Accordion, Popover,
+//! Menu, Drawer, Tooltip, HoverCard, Toast, Dialog, Combobox, Navbar, Table and
+//! VirtualTable, the charts, the calendar / DatePicker, and Page.
 //!
-//! `Card`, `Comp`, `Menu` / `MenuItem` / `MenuLabel` / `MenuSeparator`,
-//! `Dialog` / `AlertDialog`, `Drawer`, `Popover`, `Navbar` / `NavTab`,
-//! `Table` / `TableHead` / `TableRow` / `TableCols`, the chart shell
-//! (`BarChart`, `LineChart`, `AreaChart` and their `chart_*` helpers),
-//! `DatePicker`, and `Page`.
-//!
-//! Populated by the extraction from `zeus.loam`; see `../README.md`.
+//! Built on `molecules`, `atoms`, and `zeusbase`.
+
+import "std:structs"
+import "std:enums"
+import "std:zeusbase"
+import "std:zeus_constants"
+import "std:async"
+import "std:fmt"
+import "std:atoms"
+import "std:molecules"
+import "../../zeus/std/zeuscore/geometry.loam"
+import "../../zeus/std/zeuscore/platform.loam"
+import "../../zeus/std/zeuscore/arena.loam"
+
+/// One column of a `VirtualTable`. `width` 0 means the column takes an equal
+/// share of the row (pair cells with `set_flex_basis_zero(...).grow(1)`); a positive value
+/// is a pixel width. `title` is the header cell.
+struct TableCol {
+    title: string,
+    width: int,
+    /// Cell alignment for this column: `ALIGN.Start` (default), `Center`,
+    /// or `End` — numbers go `End`. `TableCols` aligns the header and
+    /// `TableRowCols` the body cells.
+    align: int = 0,
+    /// true = the header is a sort trigger (see `TableCols`' `sort`).
+    sortable: bool = false,
+}
+
+/// Extras for `TableCols`: `sort` is the sort state. `0` = none; `i + 1` =
+/// column `i` ascending; `-(i + 1)` = descending. Clicking a sortable header
+/// cycles none → asc → desc → none on its column and clears the others; the
+/// app orders its rows from the signal. An arrow marks the sorted column.
+struct TableColsProps {
+    sort: Signal<int> = Signal { id: 0 },
+    sort__set: bool = false,
+}
+
+/// Extras for `TableRow` / `TableRowCols`. `zebra` shades every second body
+/// row (counted among the row's siblings, so a header does not count);
+/// `hover` washes the row under the pointer; `on_click` makes the row a
+/// pointer target (hover implied).
+struct TableRowProps {
+    zebra: bool = false,
+    hover: bool = false,
+    on_click: fn() = noop,
+    on_click__set: bool = false,
+}
+
+/// Vertical scroller that window-renders `items`. `row_h` is the fixed row
+/// height in points (spacers use it so `scroll_max` matches the full list).
+/// `build(i, item)` is the row. 10k rows stay a few dozen nodes.
+fn VirtualList<T>(items: Signal<[]T>, row_h: int, build: fn(int, T)) -> Node {
+    let n = raw_scroll()
+    let node_id = n.id
+    virtual_refresh(node_id, items, build, row_h)
+    return Component(n, grow = 1, a11y_role = "list", row_h = row_h,
+                     rebuild = || { virtual_refresh(node_id, items, build, row_h) })
+}
+
+/// Windowed list with per-row heights. `heights[i]` is row `i` in points
+/// (0 / missing uses `fallback`). Spacers use the prefix sum so `scroll_max`
+/// matches the real list.
+fn VirtualListVar<T>(items: Signal<[]T>, heights: Signal<[]int>, fallback: int,
+                     build: fn(int, T)) -> Node {
+    let n = raw_scroll()
+    let node_id = n.id
+    virt_refresh_var(node_id, items, build, fallback, heights)
+    return Component(n, grow = 1, a11y_role = "list", row_h = fallback,
+                     rebuild = || { virt_refresh_var(node_id, items, build, fallback, heights) })
+}
+
+/// Windowed table. `rows` is `zeus.signal([]T {})` where `T` is a row struct;
+/// `cols` is `[]TableCol` (title + width) for the header. The body is a
+/// `VirtualList` of `build(i, row)` — only visible rows are mounted. The
+/// themed header (`TableCols`) shares its gutter with body rows; build every
+/// cell with `set_flex_basis_zero(...).grow(1)` (or a fixed `.set_width(px)` matching the column)
+/// so body columns line up under the header.
+/// Extras for `VirtualTable`: `sort` wires the header's sortable columns
+/// (see `TableColsProps`). Rows are the app's `Signal<[]T>`, so the app
+/// reorders them — `sort_by` with a key per column — in an effect on `sort`.
+struct VirtualTableProps {
+    sort: Signal<int> = Signal { id: 0 },
+    sort__set: bool = false,
+}
+
+fn VirtualTable<T>(rows: Signal<[]T>, cols: []TableCol, row_h: int, build: fn(int, T),
+                   p: VirtualTableProps) -> Node {
+    let wrap = raw_box()
+    ui_push(wrap.id)
+    TableCols(cols, sort = p.sort, sort__set = p.sort__set)
+    VirtualList(rows, row_h, build)
+    ui_pop()
+    return Component(wrap, align_direction = DIRECTION.Column, grow = 1,
+                     a11y_role = "table")
+}
+
+/// Card chrome. `Card()` keeps the recipe; pass any style prop to restyle
+/// it without copying the widget (`Card(radius = 6, padding = 12)`).
+/// `visible` and `bind` go through `Component`.
+
+/// Card body slot. The trailing block lands here — after the media and
+/// header, before the footer — so `Card(title = "…") { … }` reads top-down.
+
+/// Build your own widget: extends `Component` via `Box`. Trailing block is
+/// the slot. `bind` / `visible` / `press` are the same lifecycle as every
+/// other widget — pass them here, do not call `ui_push` / `bind` / `show`.
+struct CompProps {
+    /// Style props. Plain data — `radius = 4`, `background = paper()`. Each
+    /// is re-evaluated by the effect that owns that attribute, so it follows
+    /// a theme switch. `-1` / `""` keep the recipe's own value.
+    background: string = "",
+    color: string = "",
+    radius: int = -1,
+    padding: int = -1,
+    padding_x: int = -1,
+    padding_y: int = -1,
+    padding_top: int = -1,
+    padding_right: int = -1,
+    padding_bottom: int = -1,
+    padding_left: int = -1,
+    margin: int = -1,
+    margin_x: int = -1,
+    margin_y: int = -1,
+    margin_top: int = -1,
+    margin_right: int = -1,
+    margin_bottom: int = -1,
+    margin_left: int = -1,
+    width: int = -1,
+    height: int = -1,
+    /// Bounds for a custom widget; `Box` has always had these.
+    min_width: int = -1,
+    max_width: int = -1,
+    min_height: int = -1,
+    max_height: int = -1,
+    font: int = -1,
+    border: int = -1,
+    border_color: string = "",
+    spacing: int = -1,
+    gap: int = -1,
+    gap_row: int = -1,
+    gap_col: int = -1,
+    align_direction: int = 1,
+    align_items: int = -1,
+    justify: int = -1,
+    on_click: fn() = noop,
+    on_click__set: bool = false,
+    a11y_role: string = "",
+    a11y_label: string = "",
+    hover_off: bool = true,
+    cursor: string = "",
+    bind: Signal<int> = Signal { id: 0 },
+    bind__set: bool = false,
+    visible: Signal<int> = Signal { id: 0 },
+    visible__set: bool = false,
+    press: bool = false,
+    /// Chord that activates this node: `"cmd+s"`, `"ctrl+shift+p"`, or a
+    /// sequence like `"g d"`. Every widget takes it — key binding is a prop,
+    /// not something a particular widget hard-codes.
+    key: string = "",
+    /// Name the chord resolves to, so an app can remap it with `remap_key`
+    /// without touching the widget. Defaults to `"key.<chord>"`.
+    key_action: string = "",
+    /// Handler for the chord; omit it and the chord runs `on_click`.
+    on_key: fn() = noop,
+    on_key__set: bool = false,
+    /// true = fires wherever focus is, instead of only on this node.
+    key_global: bool = false,
+}
+
+fn Comp(p: CompProps) -> Node {
+    let want_press = p.press || p.on_click__set
+    let __n = Box(
+        align_direction = p.align_direction,
+        align_items = p.align_items,
+        justify = p.justify,
+        background = p.background,
+        color = p.color,
+        radius = p.radius,
+        padding = p.padding,
+        padding_x = p.padding_x,
+        padding_y = p.padding_y,
+        padding_top = p.padding_top,
+        padding_right = p.padding_right,
+        padding_bottom = p.padding_bottom,
+        padding_left = p.padding_left,
+        margin = p.margin,
+        margin_x = p.margin_x,
+        margin_y = p.margin_y,
+        margin_top = p.margin_top,
+        margin_right = p.margin_right,
+        margin_bottom = p.margin_bottom,
+        margin_left = p.margin_left,
+        width = p.width,
+        height = p.height,
+        min_width = p.min_width,
+        max_width = p.max_width,
+        min_height = p.min_height,
+        max_height = p.max_height,
+        font = p.font,
+        border = p.border,
+        border_color = p.border_color,
+        spacing = p.spacing,
+        gap = p.gap,
+        gap_row = p.gap_row,
+        gap_col = p.gap_col,
+        on_click = p.on_click,
+        on_click__set = p.on_click__set,
+        a11y_role = p.a11y_role,
+        a11y_label = p.a11y_label,
+        hover_off = p.hover_off,
+        cursor = p.cursor,
+        bind = p.bind,
+        visible = p.visible,
+        press = want_press
+    )
+    return apply_key(__n, p.key, p.key_action, p.on_key, p.on_key__set, p.key_global)
+}
+
+struct ComboboxProps {
+    placeholder: string = "Search",
+    width: int = -1,
+    radius: int = -1,
+}
+
+/// A text field with a filtered option list below it. Clicking the field (or
+/// its chevron), typing, or Down opens the list; an empty query shows every
+/// option. Up / Down move the highlight, Enter picks the highlighted option into
+/// the field, Escape or an outside click closes. `text` is the one piece of state
+/// and belongs to the caller. Options should be unique: the list is keyed by
+/// label (`zeus.For`).
+fn Combobox(text: Signal<string>, options: []string, p: ComboboxProps) {
+    let active = signal(-1)
+    let matches = signal([]string {})
+    let opts = options
+    effect(|| {
+        matches.set(combo_filter(opts, text.get()))
+    })
+    let w = px_or_default(p.width, 240)
+    // Outside click closes. Created first so the field and list draw over it.
+    let scrim = Overlay(on_click = fn() { active.set(-1) })
+    show_ge(scrim, active, 0)
+    z_index(scrim, Z_SCRIM)
+    let host = Box(align_direction = DIRECTION.Column)
+    ui_push(host.id)
+    let field = Box(
+        align_direction = DIRECTION.Row,
+        align_items = ALIGN.Center,
+        spacing = 4,
+        width = w,
+        padding_x = 12,
+        padding_y = 8,
+        background = plate(),
+        border = HAIRLINE,
+        border_color = rule(),
+        radius = px_or_default(p.radius, RAD_MD),
+        z_index = Z_FIELD,
+        cursor = "text"
+    )
+    ui_push(field.id)
+    // A focused text field consumes Enter before any keymap chord sees it, so
+    // the list keys are handled in `on_key_down` via `current_key()`. The
+    // handler is installed after the node exists (it writes back into the field;
+    // the local is `fin` because `input` is the input module).
+    let fin = Input(bind = text, placeholder = p.placeholder,
+                    background = "", color = ink(), font = FONT_BODY,
+                    padding = 0, grow = 1, a11y_label = p.placeholder)
+    let iid = fin.id
+    // Open on click whether the pointer lands on the field frame, the chevron,
+    // or the text area itself. The inner input CONSUMES its click — it is
+    // focusable, so the engine stops walking up the tree there and a handler on
+    // the frame alone never fires for the most obvious target of all. Both
+    // nodes get the same handler; it is idempotent, so double delivery is
+    // harmless.
+    let open_list = fn() {
+        arena.claim_focus(iid)
+        if active.get() < 0 {
+            active.set(0)
+        }
+    }
+    on_click(field, open_list)
+    on_click(node_handle(iid), open_list)
+    input_clear(text, fin)
+    Icon(IC_CHEV_DOWN, 16, dim())
+    ui_pop()
+    let list = Box(
+        align_direction = DIRECTION.Column,
+        width = w,
+        padding = 4,
+        spacing = 2,
+        background = plate(),
+        border = HAIRLINE,
+        border_color = rule(),
+        radius = px_or_default(p.radius, RAD_MD),
+        position = pos_absolute(),
+        z_index = Z_POPUP,
+        elevation = 2
+    )
+    show_ge(list, active, 0)
+    arena.anchor_to(list.id, field.id, PLACE.PlaceBelow, 4)
+    enter_fade(list)
+    let label_id = list.id
+    let signal_id = scrim.id
+    arena.nodes[iid].kdown_fn = intern_fn(fn() {
+        let picked = combo_key(active, matches)
+        if picked >= 0 {
+            let ms = matches.get()
+            if picked < ms.len {
+                text.set(ms[picked])
+                set_input(node_handle(iid), ms[picked])
+            }
+            arena.snap_exit(label_id)
+            arena.snap_exit(signal_id)
+            active.set(-1)
+        }
+    })
+    ui_push(list.id)
+    For(matches, fn(s) => s, fn(i, s) {
+        ComboRow(text, active, fin, i, s, signal_id)
+    })
+    ui_pop()
+    ui_pop()
+    align_self(host, ALIGN.Start)
+}
+
+/// One option row of a `Combobox`. Picking writes the label into the field.
+fn ComboRow(text: Signal<string>, active: Signal<int>, fin: Node, index: int, label: string, scrim: int) {
+    let row = Box(
+        align_direction = DIRECTION.Row,
+        align_items = ALIGN.Center,
+        spacing = 4,
+        padding_x = 8,
+        padding_y = 6,
+        radius = RAD_SM,
+        a11y_role = "option",
+        a11y_label = label,
+        cursor = "pointer",
+        hover_off = false
+    )
+    on_click(row, fn() {
+        text.set(label)
+        set_input(fin, label)
+        arena.snap_exit(row.id)
+        arena.snap_exit(scrim)
+        active.set(-1)
+    })
+    ui_push(row.id)
+    Text(label, color = ink(), font = FONT_BODY)
+    ui_pop()
+    selected_chrome(row, empty_view(), || { active.get() == index },
+                    raised(), "", "", "")
+}
+
+/// A single-open accordion. `open` is the *only* state: the open item's index,
+/// or `-1` for all closed. Items take the shared signal and their own `index`;
+/// no item owns state. Opening one closes the rest by construction — there is
+/// one index, so two items can never both match it.
+fn Accordion(open: Signal<int>, p: AccordionProps) -> Node {
+    let n = Box(align_direction = DIRECTION.Column,
+                background = str_or_default(p.background, plate()),
+                border = px_or_default(p.border, HAIRLINE),
+                border_color = str_or_default(p.border_color, rule()),
+                radius = px_or_default(p.radius, RAD_LG),
+                width = p.width,
+                bind = p.bind, bind__set = p.bind__set) {
+                    Each(p.items, (index, item) => {
+                        AccordionItem(open = open, index = index, title = item.title, body = item.body)
+                    })
+                }
+    // Clip the rounded corners, so a body cannot spill past the card edge.
+    return overflow(n, overflow_hidden())
+}
+
+struct AccordionProps {
+    width: int = -1,
+    radius: int = -1,
+    border: int = -1,
+    background: string = "",
+    border_color: string = "",
+    bind: Signal<int> = Signal { id: 0 },
+    bind__set: bool = false,
+    items: []AccordionRow,
+}
+
+struct AccordionItemProps {
+    /// The accordion's single open-index signal (`-1` = all closed).
+    open: Signal<int> = Signal { id: 0 },
+    /// This item's index within its accordion.
+    index: int = 0,
+    /// Header label.
+    title: fn() -> string = empty_text,
+    /// Body copy, shown while this item is open.
+    body: fn() -> string = empty_text,
+    /// Optional leading icon markup.
+    icon: string = "",
+}
+
+/// One row of an `Accordion`. Reads the shared `open` signal and compares it to
+/// `index`, so it holds no state of its own: the chevron rotates on a paint-only
+/// track and the body fades in, both driven by the container's one signal.
+fn AccordionItem(p: AccordionItemProps) {
+    let open = p.open
+    let idx = p.index
+    let head = Box(align_direction = DIRECTION.Row,
+                   align_items = ALIGN.Center,
+                   spacing = SPACE.Xs,
+                   padding_x = 16,
+                   padding_y = 12,
+                   on_click = fn() {
+                       if open.get() == idx {
+                           open.set(-1)
+                       } else {
+                           open.set(idx)
+                       }
+                   },
+                   a11y_role = "button",
+                   a11y_label = p.title(),
+                   cursor = "pointer",
+                   hover_off = false,
+                   press = true)
+    ui_push(head.id)
+    if p.icon.len > 0 {
+        Icon(p.icon, 16, dim())
+    }
+    Text(p.title, color = ink(), font = FONT_CONTROL, grow = 1)
+    let chev = Icon(IC_CHEV_DOWN, 16, dim())
+    styled(chev, || {
+        if open.get() == idx {
+            animate_rotate(chev, 180, MOTION.Fast)
+        } else {
+            animate_rotate(chev, 0, MOTION.Fast)
+        }
+    })
+    ui_pop()
+    let content = Box(align_direction = DIRECTION.Column,
+                      padding_x = 16,
+                      padding_y = 12)
+    // No gap above the body: the header already carries the top inset.
+    set_padding_top(content, 0)
+    show_eq(content, open, idx)
+    enter_fade(content)
+    enter_reveal(content)
+    ui_push(content.id)
+    Text(p.body, color = mute(), font = FONT_BODY, wrap = 1)
+    ui_pop()
+}
+
+struct PopoverProps {
+    /// 0 = closed, anything else = open.
+    open: Signal<int> = Signal { id: 0 },
+    /// Preferred side (`PLACE.*`); flips when it would overflow.
+    place: int = 0,
+    gap: int = 6,
+    width: int = -1,
+    padding: int = -1,
+    radius: int = -1,
+    background: string = "",
+    border_color: string = "",
+    key: string = "escape",
+}
+
+/// A floating panel anchored to `trigger`. `open` is a 0/1 signal; outside
+/// click and Escape close it. Edge-aware: `place` is preferred, flipped when
+/// it would leave the safe-area rect. Trailing block is the panel body.
+fn Popover(trigger: Node, p: PopoverProps) -> Node {
+    let open = p.open
+    // A transparent scrim: outside click closes; children are tried first, so
+    // clicks on the panel itself never reach it.
+    let scrim = Overlay(visible = open, on_click = fn() { open.set(0) })
+    z_index(scrim, Z_SCRIM)
+    let panel = Box(align_direction = DIRECTION.Column,
+                    position = pos_absolute(),
+                    z_index = Z_POPUP,
+                    elevation = 3,
+                    spacing = SPACE.Xs,
+                    background = str_or_default(p.background, plate()),
+                    border = HAIRLINE,
+                    border_color = str_or_default(p.border_color, rule()),
+                    radius = px_or_default(p.radius, RAD_LG),
+                    padding = px_or_default(p.padding, SPACE.Sm),
+                    width = p.width,
+                    visible = open)
+    arena.anchor_to(panel.id, trigger.id, p.place, p.gap)
+    enter_fade(panel)
+    // Escape closes while the panel holds focus; focus arrives when it opens.
+    let closer = fn() { open.set(0) }
+    apply_key(panel, p.key, "popover.close", closer, true, false)
+    let pid = panel.id
+    effect(|| {
+        if open.get() != 0 {
+            arena.claim_focus(pid)
+        }
+    })
+    return panel
+}
+
+struct MenuProps {
+    /// Open at this item index; `-1` is closed. The menu's only state. Pass
+    /// one to observe or drive the menu from outside; omitted, the menu owns it.
+    active: Signal<int> = Signal { id: 0 },
+    active__set: bool = false,
+    items: []MenuRow,
+    /// Runs with the picked row's index. Rows are plain data; this is the one
+    /// callback for the whole menu.
+    on_select: fn(int) = noop_int,
+    label: string = "",
+    /// Preferred side (`PLACE.*`); flips when it would overflow.
+    place: int = 0,
+    gap: int = 4,
+    width: int = -1,
+    padding: int = -1,
+    radius: int = -1,
+    background: string = "",
+    border_color: string = "",
+    /// Chord that dismisses the open menu.
+    key: string = "escape",
+}
+
+/// A dropdown menu anchored to `trigger`. Clicking the trigger toggles it;
+/// outside click and Escape close it; `place` is preferred and flips near the
+/// viewport edge. The trailing block is the item list (`MenuItem` /
+/// `MenuLabel` / `MenuSeparator`).
+fn Menu(trigger: Node, p: MenuProps) -> Node {
+    let mut active = p.active
+    if !p.active__set {
+        active = signal(-1)
+    }
+    // The trigger owns the toggle; opening lands on the first item.
+    on_click(trigger, fn() {
+        if active.get() >= 0 {
+            active.set(-1)
+        } else {
+            active.set(0)
+        }
+    })
+    // A transparent scrim: outside click closes. Children are tried first, so a
+    // click on the panel or an item never reaches it.
+    let scrim = Overlay(on_click = fn() { active.set(-1) })
+    show_ge(scrim, active, 0)
+    z_index(scrim, Z_SCRIM)
+    let panel = Box(align_direction = DIRECTION.Column,
+                    position = pos_absolute(),
+                    z_index = Z_POPUP,
+                    elevation = 3,
+                    spacing = 2,
+                    background = str_or_default(p.background, plate()),
+                    border = HAIRLINE,
+                    border_color = str_or_default(p.border_color, rule()),
+                    radius = px_or_default(p.radius, RAD_LG),
+                    padding = px_or_default(p.padding, 4),
+                    width = p.width,
+                    cursor = "pointer",
+                    a11y_role = "menu") {
+                        if p.label.len > 0 {
+                            MenuLabel(p.label)
+                        }
+                        Each(p.items, fn(index, item) {
+                            if item.is_separated {
+                                MenuSeparator()
+                            }
+                            MenuItem(active = active, index = index, count = p.items.len,
+                                     label = item.label, danger = item.danger,
+                                     scrim = scrim.id,
+                                     on_click = fn() => p.on_select(index))
+                        })
+                    }
+    show_ge(panel, active, 0)
+    arena.anchor_to(panel.id, trigger.id, p.place, p.gap)
+    enter_fade(panel)
+    // Escape closes while focus is inside the menu: a row, or the panel itself.
+    apply_key(panel, p.key, "menu.dismiss", fn() { active.set(-1) }, true, false)
+    return panel
+}
+
+struct MenuItemProps {
+    /// The menu's one signal; the item compares it to `index`.
+    active: Signal<int> = Signal { id: 0 },
+    active__set: bool = false,
+    /// This item's position within its menu.
+    index: int = 0,
+    /// How many items the menu has, so Up / Down clamp at the ends. Pass the
+    /// same number to every item.
+    count: int = 0,
+    label: fn() -> string = empty_text,
+    /// Optional leading icon markup.
+    icon: string = "",
+    on_click: fn() = noop,
+    on_click__set: bool = false,
+    disabled: bool = false,
+    /// Destructive command: painted in the danger ink.
+    danger: bool = false,
+    /// The menu scrim. Snapped on pick so its exit track does not keep frames
+    /// live after the panel is already gone.
+    scrim: int = 0,
+}
+
+/// One command row. Highlights while `active == index`; the pointer moves
+/// `active` on hover, so pointer and keyboard share one highlight. Owns no
+/// state — the menu's `active` is the only signal.
+fn MenuItem(p: MenuItemProps) {
+    let active = p.active
+    let idx = p.index
+    let n = p.count
+    let off = p.disabled
+    let mut row_ink = ink()
+    if p.danger {
+        row_ink = danger_ink()
+    }
+    let row = Box(align_direction = DIRECTION.Row,
+                  align_items = ALIGN.Center,
+                  spacing = SPACE.Xs,
+                  padding_x = 10,
+                  padding_y = 7,
+                  radius = RAD_SM,
+                  a11y_role = "menuitem",
+                  a11y_label = p.label(),
+                  enabled = !off,
+                  cursor = "pointer",
+                  press = true)
+    // Pick runs `on_select` then jumps the exit fade so the panel is gone
+    // this frame — a Fast fade left item labels over the heading.
+    on_click(row, fn() {
+        if !off {
+            p.on_click()
+            arena.snap_exit(row.id)
+            arena.snap_exit(p.scrim)
+            active.set(-1)
+        }
+    })
+    ui_push(row.id)
+    if p.icon.len > 0 {
+        Icon(p.icon, 16, dim())
+    }
+    Text(p.label, color = row_ink, font = FONT_BODY, grow = 1, ellipsis = true)
+    ui_pop()
+    selected_chrome(row, empty_view(), || { active.get() == idx },
+                    raised(), "", "", "")
+    // Hover moves the highlight, so the pointer and the keyboard agree.
+    let hs = signal(0)
+    hover(row, hs)
+    styled(row, || {
+        if hs.get() != 0 {
+            active.set(idx)
+        }
+    })
+    // Up / Down move the highlight; Enter runs this row. Every handler is gated
+    // on `active`, so keys pressed after a close are inert even if this (now
+    // hidden) row is still the focused one.
+    apply_key(row, "down", "menu.next", fn() {
+        if active.get() >= 0 {
+            if active.get() + 1 < n {
+                active.set(active.get() + 1)
+            }
+        }
+    }, true, false)
+    apply_key(row, "up", "menu.prev", fn() {
+        if active.get() > 0 {
+            active.set(active.get() - 1)
+        }
+    }, true, false)
+    apply_key(row, "enter", "menu.activate", fn() {
+        if active.get() == idx {
+            if !off {
+                p.on_click()
+                arena.snap_exit(row.id)
+                arena.snap_exit(p.scrim)
+                active.set(-1)
+            }
+        }
+    }, true, false)
+    // Roving: only the active row can take focus, and it takes it the moment it
+    // becomes active. Runs after the key bindings, which make a row focusable.
+    let rid = row.id
+    effect(|| {
+        if active.get() == idx {
+            arena.nodes[rid].focusable = 1
+            arena.claim_focus(rid)
+        } else {
+            arena.nodes[rid].focusable = 0
+        }
+    })
+}
+
+/// A non-interactive group heading inside a `Menu`.
+fn MenuLabel(text: fn() -> string) {
+    Box(padding_x = 10, padding_y = 6) {
+        Text(text, color = dim(), font = FONT_CAPTION)
+    }
+}
+
+/// A hairline between menu groups.
+fn MenuSeparator() {
+    Box(padding_y = 3) {
+        Separator()
+    }
+}
+
+struct DrawerProps {
+    /// Edge to slide from (`SIDE.*`). The top / bottom edges are the sheet shape.
+    side: int = 1,
+    /// Panel extent: width for the start / end edges, height for top / bottom.
+    size: int = 320,
+    /// Radius of the edge that faces the content (the inner edge). `-1` uses
+    /// the sheet default (`RAD_XL`), `0` is square. The outer edge stays square
+    /// so the panel meets the window edge cleanly.
+    radius: int = -1,
+    background: string = "",
+    border_color: string = "",
+    padding: int = -1,
+    /// Chord that closes the drawer.
+    key: string = "escape",
+}
+
+/// An edge panel over a scrim. `open` is a 0/1 signal; the scrim closes it on
+/// outside click and Escape closes it while focus is inside. `side` picks the
+/// edge and `size` the extent. Like the Dialog, the panel swallows clicks so a
+/// press inside does not close it. Trailing block is the panel content.
+fn Drawer(open: Signal<int>, p: DrawerProps) -> Node {
+    let dim = Overlay(background = scrim(), opacity = 80, visible = open,
+                      on_click = fn() { open.set(0) })
+    // Pin the panel to the chosen edge of the full-window overlay. The overlay
+    // is a centred column by default; the side edges need a row.
+    if p.side == SIDE.SideStart {
+        arena.nodes[dim.id].dir = 0
+        justify(dim, ALIGN.Start)
+        align(dim, ALIGN.Stretch)
+    } else if p.side == SIDE.SideEnd {
+        arena.nodes[dim.id].dir = 0
+        justify(dim, ALIGN.End)
+        align(dim, ALIGN.Stretch)
+    } else if p.side == SIDE.SideTop {
+        justify(dim, ALIGN.Start)
+        align(dim, ALIGN.Stretch)
+    } else {
+        justify(dim, ALIGN.End)
+        align(dim, ALIGN.Stretch)
+    }
+    let mut ww = -1
+    let mut hh = -1
+    if p.side == SIDE.SideStart || p.side == SIDE.SideEnd {
+        ww = p.size
+    } else {
+        hh = p.size
+    }
+    ui_push(dim.id)
+    let panel = Box(align_direction = DIRECTION.Column,
+                    width = ww,
+                    height = hh,
+                    background = str_or_default(p.background, plate()),
+                    border = HAIRLINE,
+                    border_color = str_or_default(p.border_color, rule()),
+                    padding = px_or_default(p.padding, SPACE.Md),
+                    spacing = SPACE.Sm,
+                    elevation = 4,
+                    a11y_role = "dialog",
+                    on_click = fn() { return })
+    // The sheet shape: only the inner edge rounds, so the panel still meets
+    // the window edge square. Per-corner fill is what makes this expressible.
+    let corner = px_or_default(p.radius, RAD_XL)
+    if corner > 0 {
+        if p.side == SIDE.SideBottom {
+            radius4(panel, corner, corner, 0, 0)
+        } else if p.side == SIDE.SideTop {
+            radius4(panel, 0, 0, corner, corner)
+        } else if p.side == SIDE.SideStart {
+            radius4(panel, 0, corner, corner, 0)
+        } else {
+            radius4(panel, corner, 0, 0, corner)
+        }
+    }
+    ui_pop()
+    enter_fade(panel)
+    // Rest off the edge, then slide on. Paint-only: a transform never runs the
+    // layout pass, and at boot the track jumps straight to its final value.
+    drawer_slide(panel, p.side, p.size, 0)
+    let side = p.side
+    let size = p.size
+    effect(|| {
+        if open.get() != 0 {
+            drawer_slide(panel, side, 0, MOTION.Base)
+        } else {
+            drawer_slide(panel, side, size, MOTION.Fast)
+        }
+    })
+    apply_key(panel, p.key, "drawer.close", fn() { open.set(0) }, true, false)
+    let pid = panel.id
+    effect(|| {
+        if open.get() != 0 {
+            arena.claim_focus(pid)
+        }
+    })
+    return panel
+}
+
+/// Slide `panel` to `to` points along its edge's axis (positive is out).
+fn drawer_slide(panel: Node, side: int, to: int, ms: int) {
+    if side == SIDE.SideStart {
+        animate_x(panel, -to, ms)
+    } else if side == SIDE.SideEnd {
+        animate_x(panel, to, ms)
+    } else if side == SIDE.SideTop {
+        animate_y(panel, -to, ms)
+    } else {
+        animate_y(panel, to, ms)
+    }
+}
+
+struct TooltipProps {
+    text: fn() -> string = empty_text,
+    /// Where the bubble sits (`PLACE.*`). The six tooltip placements are
+    /// `PlaceAboveStart` / `PlaceAboveCenter` / `PlaceAboveEnd` and the three
+    /// `PlaceBelow*` — i.e. top-left, top-centre, top-right, bottom-left,
+    /// bottom-centre, bottom-right. `PlaceAbove` / `PlaceBelow` still work and
+    /// are start-aligned. Defaults to top-centre, which is what a tooltip is.
+    place: int = 5,
+    gap: int = 6,
+    /// Draw the little caret that points at the trigger. Dropped for the side
+    /// placements, which have no edge facing the trigger.
+    arrow: bool = true,
+    /// Delay before showing, in ms (hover intent).
+    delay: int = 400,
+}
+
+/// 1 when the bubble is above its trigger (so the caret points down).
+fn tooltip_above(place: int) -> bool {
+    if place == PLACE.PlaceBelow || place == PLACE.PlaceBelowStart ||
+        place == PLACE.PlaceBelowCenter || place == PLACE.PlaceBelowEnd {
+        return false
+    }
+    return true
+}
+
+/// A caret only makes sense on an edge that faces the trigger.
+fn tooltip_arrow_ok(place: int) -> bool {
+    if place == PLACE.PlaceEnd || place == PLACE.PlaceStart {
+        return false
+    }
+    return true
+}
+
+/// Slide the caret along the trigger's edge to follow the bubble's alignment.
+fn tooltip_justify(place: int) -> int {
+    if place == PLACE.PlaceAboveStart || place == PLACE.PlaceBelowStart {
+        return ALIGN.Start
+    }
+    if place == PLACE.PlaceAboveEnd || place == PLACE.PlaceBelowEnd {
+        return ALIGN.End
+    }
+    return ALIGN.Center
+}
+
+/// A small non-interactive label shown while the pointer rests on `trigger`.
+fn Tooltip(trigger: Node, p: TooltipProps) -> Node {
+    let hovered = signal(0)
+    hover(trigger, hovered)
+    let shown = signal(0)
+    let delay = p.delay
+    effect(|| {
+        if hovered.get() != 0 {
+            async.after(delay, fn() {
+                if hovered.get() != 0 {
+                    shown.set(1)
+                }
+            })
+        } else {
+            shown.set(0)
+        }
+    })
+    let panel = Box(align_direction = DIRECTION.Column,
+                    position = pos_absolute(),
+                    z_index = 70,
+                    background = ink(),
+                    elevation = 2,
+                    padding_x = TOOLTIP_PAD_X,
+                    padding_y = TOOLTIP_PAD_Y,
+                    radius = RAD_SM,
+                    visible = shown,
+                    a11y_role = "tooltip",
+                    a11y_label = p.text())
+    arena.anchor_to(panel.id, trigger.id, p.place, p.gap)
+    enter_fade(panel)
+    ui_push(panel.id)
+    Text(p.text, color = on_ink(), font = FONT_CAPTION)
+    if p.arrow {
+        if tooltip_arrow_ok(p.place) {
+            // A square rotated 45°, straddling the edge that faces the trigger:
+            // half of it lies on the panel's own fill (invisible) and half
+            // sticks out, which is the shape that reads as a caret rather than
+            // as another div. Absolute children are placed against the panel's
+            // CONTENT box, so the offset adds the padding back to land the
+            // caret's centre exactly on the panel's outer edge.
+            let above = tooltip_above(p.place)
+            let edge = 0 - (TOOLTIP_PAD_Y + TOOLTIP_ARROW / 2)
+            let mut arrow_top = -1
+            let mut arrow_bottom = -1
+            if above {
+                arrow_bottom = edge
+            } else {
+                arrow_top = edge
+            }
+            let layer = Box(position = pos_absolute(),
+                            left = 0,
+                            right = 0,
+                            top = arrow_top,
+                            bottom = arrow_bottom,
+                            height = TOOLTIP_ARROW,
+                            align_direction = DIRECTION.Row,
+                            justify = tooltip_justify(p.place))
+            ui_push(layer.id)
+            let caret = Box(width = TOOLTIP_ARROW, height = TOOLTIP_ARROW,
+                            background = ink())
+            animate_rotate(caret, 45, 0)
+            ui_pop()
+        }
+    }
+    ui_pop()
+    return panel
+}
+
+struct HoverCardProps {
+    place: int = 1,
+    gap: int = 8,
+    /// Delay before showing, in ms. Longer than a tooltip: a hover card is
+    /// larger and should not appear under a passing pointer.
+    delay: int = 300,
+    width: int = 280,
+    padding: int = -1,
+}
+
+/// A hover-triggered panel, larger and interactive where a `Tooltip` is not.
+/// Trailing block is the card body.
+fn HoverCard(trigger: Node, p: HoverCardProps) -> Node {
+    let hovered = signal(0)
+    hover(trigger, hovered)
+    let shown = signal(0)
+    let delay = p.delay
+    effect(|| {
+        if hovered.get() != 0 {
+            async.after(delay, fn() {
+                if hovered.get() != 0 {
+                    shown.set(1)
+                }
+            })
+        } else {
+            shown.set(0)
+        }
+    })
+    let panel = Box(align_direction = DIRECTION.Column,
+                    position = pos_absolute(),
+                    z_index = 70,
+                    spacing = SPACE.Xs,
+                    background = plate(),
+                    border = HAIRLINE,
+                    border_color = rule(),
+                    radius = RAD_LG,
+                    padding = px_or_default(p.padding, SPACE.Sm),
+                    width = p.width,
+                    elevation = 2,
+                    visible = shown)
+    arena.anchor_to(panel.id, trigger.id, p.place, p.gap)
+    enter_fade(panel)
+    return panel
+}
+
+struct ToastProps {
+    /// Auto-dismiss after this many ms.
+    ms: int = 3200,
+    /// 0 = bottom, 1 = top.
+    place: int = 0,
+    width: int = -1,
+    padding: int = -1,
+    radius: int = -1,
+    background: string = "",
+    color: string = "",
+}
+
+/// A transient message pinned to the bottom (or top) of the window. `open` is a
+/// 0/1 signal; it dismisses itself after `ms`, or on click. It rises and fades
+/// in on open, and sinks and fades out on close. Trailing block is the message.
+fn Toast(open: Signal<int>, p: ToastProps) -> Node {
+    let ov = Overlay(visible = open, on_click = fn() { open.set(0) })
+    if p.place == 1 {
+        justify(ov, ALIGN.Start)
+        set_padding_top(ov, 24)
+    } else {
+        justify(ov, ALIGN.End)
+        set_padding_bottom(ov, 24)
+    }
+    ui_push(ov.id)
+    let card = Box(align_direction = DIRECTION.Row,
+                   align_items = ALIGN.Center,
+                   spacing = SPACE.Xs,
+                   background = str_or_default(p.background, ink()),
+                   padding_x = 16,
+                   padding_y = 12,
+                   radius = px_or_default(p.radius, RAD_MD),
+                   elevation = 2,
+                   width = p.width,
+                   on_click = fn() { open.set(0) },
+                   cursor = "pointer")
+    ui_pop()
+    enter_fade(card)
+    // Rest 12dp low, then rise to 0 while opening (jumps instantly at boot).
+    animate_y(card, 12, 0)
+    let ms = p.ms
+    effect(|| {
+        if open.get() != 0 {
+            animate_y(card, 0, MOTION.Base)
+            async.after(ms, fn() { open.set(0) })
+        } else {
+            animate_y(card, 12, MOTION.Fast)
+        }
+    })
+    return card
+}
+
+/// Named extras for `Dialog` / `AlertDialog`. `title` shares the header
+/// row with the close control (Dialog) or stands alone (AlertDialog).
+struct DialogProps {
+    title: string = "",
+}
+
+/// Dialog + AlertDialog chrome. Header is a row: title, then `Grow()`, then
+/// a fixed 28px close slot (Dialog only). No `position` / `top` / `left`.
+fn dialog_shell(open: Signal<int>, close_x: int, title: string) -> Node {
+    let dim = Overlay(
+        background = scrim(),
+        opacity = 80,
+        visible = open,
+        on_click = fn() => open.set(0)
+    )
+    ui_push(dim.id)
+    // Responsive: 92% of the window, capped at the desktop 440dp, so a phone
+    // keeps a gutter instead of clipping the card.
+    let panel = Box(
+        align_direction = DIRECTION.Column,
+        max_width = DIALOG_W,
+        padding = 24,
+        spacing = 16,
+        background = plate(),
+        border = HAIRLINE,
+        border_color = rule(),
+        radius = RAD_LG,
+        elevation = 4,
+        a11y_role = "dialog",
+        on_click = fn() { return }
+    )
+    width_pct(panel, 92)
+    enter_fade(panel)
+    // Scale-in: rest at 96%, grow to 100% while opening; shrink back on
+    // close under the exit fade (paint-only, as the scrim's fade).
+    animate_scale(panel, DIALOG_REST, 0)
+    let pid0 = panel.id
+    effect(|| {
+        if open.get() != 0 {
+            arena.anim_scale(pid0, 100, MOTION.Base)
+        } else {
+            arena.anim_scale(pid0, DIALOG_REST, MOTION.Fast)
+        }
+    })
+    slot(panel, || {
+        Box(
+            align_direction = DIRECTION.Row,
+            align_items = ALIGN.Center,
+            spacing = SPACE.Exs
+        ) {
+            Title(title)
+            Grow()
+            if close_x == 1 {
+                let close = Box(
+                    align_direction = DIRECTION.Row,
+                    width = 28,
+                    height = 28,
+                    shrink = 0,
+                    radius = RAD_MD,
+                    align_items = ALIGN.Center,
+                    justify = ALIGN.Center,
+                    on_click = fn() => open.set(0),
+                    a11y_role = "button",
+                    a11y_label = "Close",
+                    cursor = "pointer"
+                ) {
+                    Icon(IC_X, 16, mute())
+                }
+                focusable(close)
+            }
+        }
+    })
+    ui_pop()
+    apply_key(panel, "escape", "dialog.close", fn() { open.set(0) }, true, false)
+    focusable(panel)
+    let pid = panel.id
+    effect(|| {
+        if open.get() != 0 {
+            arena.claim_trap(pid)
+        } else {
+            arena.release_trap(pid)
+        }
+    })
+    return panel
+}
+
+/// Modal dialog: dim scrim, centered card. Pass `title = "..."` so the
+/// heading and close control share one row. Trailing block is the body.
+fn Dialog(open: Signal<int>, p: DialogProps) -> Node {
+    return dialog_shell(open, 1, p.title)
+}
+
+/// AlertDialog: modal confirm with no X. Pass `title = "..."` for the heading.
+fn AlertDialog(open: Signal<int>, p: DialogProps) -> Node {
+    return dialog_shell(open, 0, p.title)
+}
+
+/// Top bar. `dark = 1` (default) includes the appearance switch; pass
+/// `dark = 0` to omit it and put Dark in the trailing chrome yourself.
+fn Navbar(brand: string, dark: int = 1) {
+    Column(0) {
+        Box(align_direction = DIRECTION.Row, spacing = SPACE.Md,
+            align_items = ALIGN.Center, height = BAR,
+            a11y_role = "navigation") {
+            Pip(ink(), 10)
+            Text(brand, color = ink(), font = FONT_TITLE)
+            Grow()
+            if dark != 0 {
+                Text("Dark", color = mute(), font = FONT_CONTROL)
+                Switch(appearance())
+            }
+        }
+        Separator()
+    }
+}
+
+/// Docs-style nav item: muted text, muted pill when active, 36px tall.
+fn NavTab(label: string, page: Signal<int>, index: int) {
+    let item = Box(
+        align_direction = DIRECTION.Row,
+        align_items = ALIGN.Center,
+        spacing = SPACE.Exxs,
+        padding_x = 12,
+        height = 36,
+        radius = RAD_MD,
+        on_click = fn() => page.set(index),
+        a11y_role = "button",
+        a11y_label = label,
+        cursor = "pointer"
+    )
+    ui_push(item.id)
+    let text = Text(label, font = FONT_BODY, ellipsis = true)
+    ui_pop()
+    selected_chrome(item, text, || { page.get() == index },
+                    raised(), paper(), ink(), mute())
+}
+
+/// Header row: muted label cells above a hairline. Cells use zero basis +
+/// grow so columns split the row evenly and line up with `TableRow`.
+fn TableHead(cols: []string) {
+    Column(SPACE.Exs) {
+        // Same gutter as `TableRow`, so header and cells share column edges.
+        Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
+            spacing = SPACE.Sm, padding_x = SPACE.Exs) {
+            Each(cols, fn(i, t) {
+                table_cell(t, 0, ALIGN.Start, mute())
+            })
+        }
+        Separator()
+    }
+}
+
+/// Is the node about to be built an odd-numbered body row? Counts the
+/// current slot parent's `TableRow` kids so far (role `row`), so a header
+/// or separator sibling does not shift the stripe.
+fn table_row_odd() -> bool {
+    let pid = effect_owner()
+    if pid <= 0 {
+        return false
+    }
+    let mut n = 0
+    let kids = arena.nodes[pid].kids
+    let k = kids.len
+    for i in 0..k {
+        if fmt.eq(arena.nodes[kids[i]].a11y_role, "row") {
+            n = n + 1
+        }
+    }
+    return n % 2 == 1
+}
+
+/// Shell every body row shares: stripe, hover, click, role `row`.
+fn table_row_shell(p: TableRowProps) -> Node {
+    let mut fill = ""
+    if p.zebra {
+        if table_row_odd() {
+            fill = raised()
+        }
+    }
+    let mut cursor = ""
+    if p.on_click__set {
+        cursor = "pointer"
+    }
+    let row = Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
+                  spacing = SPACE.Sm, padding_x = SPACE.Exs, padding_y = SPACE.Exs,
+                  background = fill, radius = RAD_SM,
+                  on_click = p.on_click, on_click__set = p.on_click__set,
+                  cursor = cursor, a11y_role = "row")
+    if p.hover || p.on_click__set {
+        hover_fade(row)
+    }
+    return row
+}
+
+/// A `TableCol.width` as a `Box` width prop: 0 (share the row) is -1 (unset).
+fn table_col_width(w: int) -> int {
+    if w <= 0 {
+        return -1
+    }
+    return w
+}
+
+/// One cell: `width` 0 shares the row, `align` is `ALIGN.*`.
+fn table_cell(text: string, width: int, align: int, tint: string) {
+    // `width = 0` would pin a zero box; -1 leaves it to grow.
+    let cell = Box(align_direction = DIRECTION.Row, justify = align,
+                   width = table_col_width(width))
+    if width <= 0 {
+        set_flex_basis_zero(grow(cell, 1))
+    }
+    slot(cell, || {
+        Text(text, color = tint, font = FONT_BODY, ellipsis = true)
+    })
+}
+
+/// Body row: cells under a hairline, foreground text. Pair with `TableHead`.
+/// `zebra` / `hover` / `on_click` are `TableRowProps`.
+fn TableRow(cols: []string, p: TableRowProps) {
+    let row = table_row_shell(p)
+    slot(row, || {
+        Each(cols, fn(i, t) {
+            table_cell(t, 0, ALIGN.Start, ink())
+        })
+    })
+    Separator()
+}
+
+/// Body row laid out by a `[]TableCol` spec: fixed widths and per-column
+/// alignment match the `TableCols` header. `cols` beyond `spec` share the
+/// row, start-aligned.
+fn TableRowCols(cols: []string, spec: []TableCol, p: TableRowProps) {
+    let row = table_row_shell(p)
+    slot(row, || {
+        Each(cols, fn(i, t) {
+            let mut w = 0
+            let mut al = ALIGN.Start
+            if i < spec.len {
+                w = spec[i].width
+                al = spec[i].align
+            }
+            table_cell(t, w, al, ink())
+        })
+    })
+    Separator()
+}
+
+/// Parse a cell as an integer (optional sign, digits, then anything —
+/// "12", "-3", "30 kg" all count; "" and "abc" do not). Returns the value
+/// and whether it parsed, so numeric columns sort by value.
+
+/// Position of the row whose cells key is `k` in the caller's data
+/// (-1 when it is gone).
+fn table_index_of<T>(rows: Signal<[]T>, cells: fn(T) -> []string, k: string) -> int {
+    let xs = rows.get()
+    for i in 0..xs.len {
+        if fmt.eq(cells_key(cells(xs[i])), k) {
+            return i
+        }
+    }
+    return -1
+}
+
+/// Extras for `Table`.
+struct TableProps {
+    /// Sort state (see `TableColsProps`); rows reorder when it changes.
+    sort: Signal<int> = Signal { id: 0 },
+    sort__set: bool = false,
+    zebra: bool = false,
+    hover: bool = false,
+    /// Row click: receives the row's index in the caller's `rows` (not the
+    /// sorted order), so `rows.get()[i]` is the item.
+    on_pick: fn(int) = noop_int,
+    on_pick__set: bool = false,
+}
+
+/// Data table: a `TableCols` header over rows from a `Signal<[]T>`, each
+/// row's text from `cells(t)` (one string per column). Rows are keyed by
+/// their cells, so a sort moves the existing nodes instead of rebuilding
+/// them. Pass `sort` and the shown order follows it (`sort_cells`) without
+/// touching the caller's data; `zebra` / `hover` / `on_pick` go to every
+/// row. A long list wants `VirtualTable` (windowed) instead.
+fn Table<T>(spec: []TableCol, rows: Signal<[]T>, cells: fn(T) -> []string,
+            p: TableProps) -> Node {
+    let host = Column(0)
+    arena.nodes[host.id].a11y_role = "table"
+    let shown = signal(rows.get())
+    let sort = p.sort
+    let sort_set = p.sort__set
+    effect(|| {
+        let mut s = 0
+        if sort_set {
+            s = sort.get()
+        }
+        shown.set(sort_cells(rows.get(), cells, s))
+    })
+    slot(host, || {
+        TableCols(spec, sort = p.sort, sort__set = p.sort__set)
+        For(shown, fn(t: T) -> string { return cells_key(cells(t)) }, fn(i: int, t: T) {
+            // One top-level child per item, so `For` can reorder rows.
+            let wrap = Column(0)
+            slot(wrap, || {
+                if p.on_pick__set {
+                    TableRowCols(cells(t), spec, zebra = p.zebra, hover = p.hover,
+                                 on_click = fn() {
+                                     p.on_pick(table_index_of(rows, cells, cells_key(cells(t))))
+                                 })
+                } else {
+                    TableRowCols(cells(t), spec, zebra = p.zebra, hover = p.hover)
+                }
+            })
+            return
+        })
+    })
+    return host
+}
+
+/// Header from `[]TableCol` (`title` + `width`; 0 = equal share of the row).
+/// A `sortable` column is a button that cycles `sort`; the sorted column
+/// shows a direction arrow (see `TableColsProps`).
+fn TableCols(cols: []TableCol, p: TableColsProps) {
+    Column(SPACE.Exs) {
+        // Same gutter as the body rows (`padding_x = SPACE.Exs`), so header
+        // and cells share the same column boundaries.
+        Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
+            spacing = SPACE.Sm, padding_x = SPACE.Exs) {
+            Each(cols, fn(i, c) {
+                let sortable = c.sortable && p.sort__set
+                let mut cursor = ""
+                if sortable {
+                    cursor = "pointer"
+                }
+                let cell = Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
+                               justify = c.align, spacing = 2,
+                               width = table_col_width(c.width), cursor = cursor)
+                if c.width <= 0 {
+                    set_flex_basis_zero(grow(cell, 1))
+                }
+                slot(cell, || {
+                    Text(c.title, color = mute(), font = FONT_BODY)
+                    if sortable {
+                        show_eq(Icon(IC_SORT_ASC, 12, ink()), p.sort, i + 1)
+                        show_eq(Icon(IC_SORT_DESC, 12, ink()), p.sort, -(i + 1))
+                    }
+                })
+                if sortable {
+                    let sig = p.sort
+                    arena.nodes[cell.id].click_fn = intern_fn(fn() {
+                        sig.set(sort_cycle(sig.get(), i))
+                    })
+                    arena.nodes[cell.id].focusable = 1
+                    arena.nodes[cell.id].a11y_role = "button"
+                    arena.nodes[cell.id].a11y_label = "Sort by {{c.title}}"
+                    hover_fade(cell)
+                }
+            })
+        }
+        Separator()
+    }
+}
+
+/// Page number shown in `slot` (0-based) of a `PAGE_SLOTS`-wide row, or 0
+/// for an ellipsis. Seven or fewer pages list every number; past that the
+/// row keeps 1 and `pages` fixed and slides a window around `current_value`
+/// (`1 … 4 5 6 … 20`), collapsing the ellipsis at either end.
+
+/// Grouped bar chart. One shared y domain.
+/// The plot re-fits the container: pass the intended width, and the chart
+/// re-lays out whenever its card measures a different width.
+fn BarChart(labels: []string, names: []string, vals: []int, w: int, h: int) {
+    let n = labels.len
+    let s = names.len
+    if n == 0 {
+        return
+    }
+    if s == 0 {
+        return
+    }
+    let host = Column(SPACE.Exs)
+    let node_id = host.id
+    refit(host, fn() {
+        chart_bars(labels, names, vals, n, s, w, h, host)
+    })
+    // Render immediately with the requested width; the next layout refits.
+    slot(node_handle(node_id), || {
+        chart_bars(labels, names, vals, n, s, w, h, host)
+    })
+}
+
+/// Straight-segment line chart with dots.
+fn LineChart(labels: []string, names: []string, vals: []int, w: int, h: int) {
+    let n = labels.len
+    let s = names.len
+    if n == 0 {
+        return
+    }
+    if s == 0 {
+        return
+    }
+    let host = Column(SPACE.Exs)
+    let node_id = host.id
+    refit(host, fn() {
+        chart_lines(labels, names, vals, n, s, w, h, host)
+    })
+    slot(node_handle(node_id), || {
+        chart_lines(labels, names, vals, n, s, w, h, host)
+    })
+}
+
+/// Area chart: tinted fill under the line (fill follows appearance).
+fn AreaChart(labels: []string, names: []string, vals: []int, w: int, h: int) {
+    let n = labels.len
+    let s = names.len
+    if n == 0 {
+        return
+    }
+    if s == 0 {
+        return
+    }
+    let host = Column(SPACE.Exs)
+    let node_id = host.id
+    refit(host, fn() {
+        chart_areas(labels, names, vals, n, s, w, h, host)
+    })
+    slot(node_handle(node_id), || {
+        chart_areas(labels, names, vals, n, s, w, h, host)
+    })
+}
+
+/// Ghost icon step button for the month/year rails.
+fn CalStep(markup: string, label: string, press: fn()) {
+    Box(align_direction = DIRECTION.Row,
+        width = 28,
+        height = 28,
+        radius = RAD_MD,
+        align_items = ALIGN.Center,
+        justify = ALIGN.Center,
+        on_click = press,
+        a11y_role = "button",
+        a11y_label = label,
+        hover_off = true,
+        cursor = "pointer"
+       ) {
+        Icon(markup, 16, mute())
+    }
+}
+
+fn CalWeekday(s: string) {
+    Box(align_direction = DIRECTION.Row, width = CAL_CELL, height = 24,
+        align_items = ALIGN.Center, justify = ALIGN.Center) {
+        Text(s, color = dim(), font = FONT_CAPTION)
+    }
+}
+
+fn CalWeekRow() {
+    let n = Grid(config = GridConfig(columns = 7, gap = 4))
+    slot(n, || {
+        CalWeekday("Mo")
+        CalWeekday("Tu")
+        CalWeekday("We")
+        CalWeekday("Th")
+        CalWeekday("Fr")
+        CalWeekday("Sa")
+        CalWeekday("Su")
+    })
+}
+
+fn CalCell(y: Signal<int>, m: Signal<int>, d: Signal<int>, open: Signal<int>, idx: int) {
+    let cell = Box(
+        align_direction = DIRECTION.Row,
+        width = CAL_CELL,
+        height = CAL_CELL,
+        radius = RAD_LG,
+        align_items = ALIGN.Center,
+        justify = ALIGN.Center,
+        on_click = fn() {
+        let day = cal_day_at(y.get(), m.get(), idx)
+        if day > 0 {
+            d.set(day)
+            open.set(0)
+        }
+    },
+        a11y_role = "button",
+        padding_x = 2,
+        cursor = "pointer"
+    )
+    // Fill, label and text colour all track the y / m / d signals, so they
+    // are effects rather than plain props. `""` never clears a fill (hex -1
+    // is skipped), so the deselected state repaints the panel surface —
+    // otherwise the last picked day keeps its accent after the selection
+    // moves.
+    // Build the label inside the cell so it is parented once — `Component`
+    // attaches to the current `slot` parent, so creating it outside and then
+    // calling `child` would add it twice.
+    ui_push(cell.id)
+    let label = Text(fn() -> string {
+        let day = cal_day_at(y.get(), m.get(), idx)
+        if day > 0 {
+            return "{{day}}"
+        }
+        return ""
+    }, font = FONT_BODY)
+    ui_pop()
+    styled(cell, || {
+        let day = cal_day_at(y.get(), m.get(), idx)
+        let picked = day > 0 && d.get() == day
+        match picked {
+            true => {
+                set_background(cell, parse_hex_color(accent()))
+                set_color(label, parse_hex_color(on_ink()))
+            }
+            _ => {
+                set_background(cell, parse_hex_color(plate()))
+                set_color(label, parse_hex_color(ink()))
+            }
+        }
+        match day {
+            0 => { arena.nodes[cell.id].a11y_label = "" }
+            _ => { arena.nodes[cell.id].a11y_label = "{{day}}" }
+        }
+    })
+}
+
+/// One 7×6 grid for whichever month `m` names: 42 fixed cells whose content
+/// tracks `y`/`m`/`d` through prop thunks. Built once, no per-month subtrees.
+fn CalGrid(y: Signal<int>, m: Signal<int>, d: Signal<int>, open: Signal<int>) {
+    let n = Grid(config = GridConfig(columns = 7, gap = 3))
+    slot(n, || {
+        for i in 0..42 {
+            CalCell(y, m, d, open, i)
+        }
+    })
+}
+
+/// Calendar picker: label, input-like trigger with a calendar icon, and a
+/// floating sheet (kind-9 so the page scroller cannot clip it). Month and
+/// year rails step with chevron icons; picking a day closes the sheet.
+fn DatePicker(y: Signal<int>, m: Signal<int>, d: Signal<int>) {
+    let open = signal(0)
+    // Invisible full-window scrim: the first click that misses the popover
+    // closes it. It is created before the anchor, so the calendar panel (a
+    // z-indexed floater) hit-tests above it; the panel itself swallows clicks.
+    let scrim = Overlay(
+        background = "",
+        visible = open,
+        on_click = fn() => open.set(0)
+    )
+    // Floaters hit-test in z order, not tree order (batch 17): the scrim
+    // takes the Z_SCRIM tier and the sheet Z_POPUP, as Select / Menu do.
+    z_index(scrim, Z_SCRIM)
+    let anchor = Column(SPACE.Exs) {
+        Label("Date")
+        Box(
+            align_direction = DIRECTION.Row,
+            spacing = 4,
+            width = 200,
+            align_items = ALIGN.Center,
+            background = plate(),
+            border = HAIRLINE,
+            border_color = rule(),
+            radius = RAD_MD,
+            padding_x = 12,
+            padding_y = 8,
+            on_click = fn() => open.set(1 - open.get()),
+            a11y_role = "button",
+            a11y_label = "Pick a date",
+            cursor = "pointer"
+        ) {
+            Icon(IC_CALENDAR, 16, mute())
+            Text("{{y.get()}}", color = ink(), font = FONT_BODY)
+            Text("-", color = mute(), font = FONT_BODY)
+            Text("{{m.get()}}", color = ink(), font = FONT_BODY)
+            Text("-", color = mute(), font = FONT_BODY)
+            Text("{{d.get()}}", color = ink(), font = FONT_BODY)
+        }
+    }
+    slot(anchor, || {
+        let panel = Box(
+            align_direction = DIRECTION.Column,
+            width = 320,
+            padding = 12,
+            spacing = SPACE.Exs,
+            background = plate(),
+            border = HAIRLINE,
+            border_color = rule(),
+            radius = RAD_LG,
+            position = pos_absolute(),
+            top = 68,
+            left = 0,
+            z_index = Z_POPUP,
+            a11y_role = "dialog",
+            on_click = fn() { return },
+            visible = open
+        )
+        slot(panel, || {
+            Row(4) {
+                CalStep(IC_CHEV_LEFT, "Previous month", fn() {
+                    if m.get() <= 1 {
+                        m.set(12)
+                    } else {
+                        m.set(m.get() - 1)
+                    }
+                })
+                // One text node whose label tracks `m`; the rails are its only
+                // writers, so no pre-built name stack is needed. Centered between
+                // the month steps so long and short names do not jump the arrows.
+                Box(align_direction = DIRECTION.Row,
+                    justify = ALIGN.Center,
+                    align_items = ALIGN.Center,
+                    grow = 1) {
+                    Text(fn() -> string {
+                        return cal_month_name(m.get())
+                    }, color = ink(), font = FONT_BODY)
+                }
+                CalStep(IC_CHEV_RIGHT, "Next month", fn() {
+                    if m.get() >= 12 {
+                        m.set(1)
+                    } else {
+                        m.set(m.get() + 1)
+                    }
+                })
+                Grow()
+                CalStep(IC_CHEV_LEFT, "Previous year", fn() => y.set(y.get() - 1))
+                // Bound text paints the live year — same trick the gauge widgets use.
+                bind(Text("", color = ink(), font = FONT_BODY), y)
+                CalStep(IC_CHEV_RIGHT, "Next year", fn() => y.set(y.get() + 1))
+            }
+            CalWeekRow()
+            CalGrid(y, m, d, open)
+        })
+    })
+}
+
+/// Page: white background column with breathing room. Sets the native
+/// roles once; every following Component reads them at paint.
+fn Page() -> Node {
+    ensure_role_colors()
+    return Box(align_direction = DIRECTION.Column, spacing = SECTION,
+               padding = PAGE_PAD, background = paper(), grow = 1)
+}
+
+

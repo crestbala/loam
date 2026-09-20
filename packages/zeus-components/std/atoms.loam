@@ -1,19 +1,2499 @@
-//! atoms — the smallest Zeus pieces: a single glyph, hairline, label, badge,
-//! avatar, or meter. They compose nothing but `zeusbase` (Component, the props
-//! structs, the tokens, signals), so every tier above can build on them.
+//! atoms — the smallest Zeus pieces plus the declarative primitives every other
+//! recipe builds on: labels and hairlines, badges / chips / avatars, meters and
+//! stats, spinners and skeletons, the tree primitives (If / Each / For / Index /
+//! Match / Boundary / Grid / Overlay / Scroll / Svg / Image), and the shared
+//! helpers they need.
 //!
-//! Tier order is load order. `zeus` imports atoms, then molecules, then
-//! organisms, and each tier imports the one below it. C struct typedefs are
-//! emitted per module in load order, so a struct used as a field must live in a
-//! tier at or below its user.
-//!
-//! The widget moves land here next: Icon, Pip, Row/RowWrap/Column/Grow,
-//! Separator/Divider, the type-scale labels (Overline, Display, Heading, Title,
-//! Body, Note, SectionHeader, SectionTitle), Kbd, Chip, Badge/BadgeCount,
-//! Progress, Meter, Surface, Avatar/AvatarGroup, Sparkline, Stat/StatCount,
-//! Skeleton, Spinner, and Empty.
+//! Lowest component tier: imports nothing but `zeusbase` and the leaves below it.
 
 import "std:structs"
 import "std:enums"
 import "std:zeusbase"
 import "std:zeus_constants"
+import "std:async"
+import "std:fmt"
+import "../../zeus/std/zeuscore/geometry.loam"
+import "../../zeus/std/zeuscore/platform.loam"
+import "../../zeus/std/zeuscore/arena.loam"
+
+struct GridProps {
+    config: GridConfig = GridConfig {},
+    width: int = -1,
+    background: string = "",
+    padding: int = -1,
+    // position / left / top / right / bottom / z_index: as BoxProps.
+    position: int = -1,
+    left: int = -1,
+    top: int = -1,
+    right: int = -1,
+    bottom: int = -1,
+    z_index: int = -1,
+    /// Visible when the thunk is true (signal shows win, as BoxProps).
+    show: bool = true,
+    /// Chord that activates this node: `"cmd+s"`, `"ctrl+shift+p"`, or a
+    /// sequence like `"g d"`. Every widget takes it — key binding is a prop,
+    /// not something a particular widget hard-codes.
+    key: string = "",
+    /// Name the chord resolves to, so an app can remap it with `remap_key`
+    /// without touching the widget. Defaults to `"key.<chord>"`.
+    key_action: string = "",
+    /// Handler for the chord; omit it and the chord runs `on_click`.
+    on_key: fn() = noop,
+    on_key__set: bool = false,
+    /// true = fires wherever focus is, instead of only on this node.
+    key_global: bool = false,
+}
+
+struct OverlayProps {
+    background: string = "",
+    opacity: int = -1,
+    /// Visible when the thunk is true (signal shows win, as BoxProps).
+    show: bool = true,
+    /// Signal hide: `visible = open` is `show(node, open)`.
+    visible: Signal<int> = Signal { id: 0 },
+    visible__set: bool = false,
+    on_click: fn() = noop,
+    on_click__set: bool = false,
+    /// Chord that activates this node: `"cmd+s"`, `"ctrl+shift+p"`, or a
+    /// sequence like `"g d"`. Every widget takes it — key binding is a prop,
+    /// not something a particular widget hard-codes.
+    key: string = "",
+    /// Name the chord resolves to, so an app can remap it with `remap_key`
+    /// without touching the widget. Defaults to `"key.<chord>"`.
+    key_action: string = "",
+    /// Handler for the chord; omit it and the chord runs `on_click`.
+    on_key: fn() = noop,
+    on_key__set: bool = false,
+    /// true = fires wherever focus is, instead of only on this node.
+    key_global: bool = false,
+}
+
+/// Options for `Scroll`. `bind` is a two-way `scroll_y` signal: writing it
+/// calls `scroll_to`, and wheel / pan / physics write the live offset back.
+struct ScrollProps {
+    width: int = -1,
+    height: int = -1,
+    grow: int = -1,
+    bind: Signal<int> = Signal { id: 0 },
+    bind__set: bool = false,
+    /// Chord that activates this node: `"cmd+s"`, `"ctrl+shift+p"`, or a
+    /// sequence like `"g d"`. Every widget takes it — key binding is a prop,
+    /// not something a particular widget hard-codes.
+    key: string = "",
+    /// Name the chord resolves to, so an app can remap it with `remap_key`
+    /// without touching the widget. Defaults to `"key.<chord>"`.
+    key_action: string = "",
+    /// Handler for the chord; omit it and the chord runs `on_click`.
+    on_key: fn() = noop,
+    on_key__set: bool = false,
+    /// true = fires wherever focus is, instead of only on this node.
+    key_global: bool = false,
+}
+
+/// Geometry for `Svg` layers: explicit size plus absolute placement
+/// (`position` / `left` / `top` / `right` / `bottom` / `z_index`, as
+/// `BoxProps`). Without `width`/`height` an svg is measured like a label.
+struct SvgProps {
+    width: int = -1,
+    height: int = -1,
+    position: int = -1,
+    left: int = -1,
+    top: int = -1,
+    right: int = -1,
+    bottom: int = -1,
+    z_index: int = -1,
+    /// Visible when the thunk is true (signal shows win, as BoxProps).
+    show: bool = true,
+    /// Chord that activates this node: `"cmd+s"`, `"ctrl+shift+p"`, or a
+    /// sequence like `"g d"`. Every widget takes it — key binding is a prop,
+    /// not something a particular widget hard-codes.
+    key: string = "",
+    /// Name the chord resolves to, so an app can remap it with `remap_key`
+    /// without touching the widget. Defaults to `"key.<chord>"`.
+    key_action: string = "",
+    /// Handler for the chord; omit it and the chord runs `on_click`.
+    on_key: fn() = noop,
+    on_key__set: bool = false,
+    /// true = fires wherever focus is, instead of only on this node.
+    key_global: bool = false,
+}
+
+/// Options for `Image`. Hosts decode PNG / JPEG / WebP / GIF from a path,
+/// data URI, or URL and cache by `src`. With no `width`/`height` the box
+/// takes the decoded source size: it keeps the source aspect ratio and fills
+/// the container (device) width without growing past the source — web
+/// `max-width: 100%`. Give `width` and the height follows the aspect ratio;
+/// give `height` and the width is the container width. Set both to pin a box
+/// that `fit` then maps the bitmap into. `fit` is `IMAGE_FIT` (stretch /
+/// contain / cover / none).
+struct ImageProps {
+    width: int = -1,
+    height: int = -1,
+    radius: int = -1,
+    /// `IMAGE_FIT.Stretch` (default), `.Contain`, `.Cover`, or `.None`.
+    fit: int = 0,
+    /// 1 = decode only once the node intersects the view (skip off-screen).
+    lazy: int = 0,
+    opacity: int = -1,
+    grow: int = -1,
+    shrink: int = -1,
+    min_width: int = -1,
+    max_width: int = -1,
+    min_height: int = -1,
+    max_height: int = -1,
+    position: int = -1,
+    left: int = -1,
+    top: int = -1,
+    right: int = -1,
+    bottom: int = -1,
+    z_index: int = -1,
+    /// Visible when the thunk is true (signal shows win, as BoxProps).
+    show: bool = true,
+    a11y_label: string = "",
+    /// Chord that activates this node: `"cmd+s"`, `"ctrl+shift+p"`, or a
+    /// sequence like `"g d"`. Every widget takes it — key binding is a prop,
+    /// not something a particular widget hard-codes.
+    key: string = "",
+    /// Name the chord resolves to, so an app can remap it with `remap_key`
+    /// without touching the widget. Defaults to `"key.<chord>"`.
+    key_action: string = "",
+    /// Handler for the chord; omit it and the chord runs `on_click`.
+    on_key: fn() = noop,
+    on_key__set: bool = false,
+    /// true = fires wherever focus is, instead of only on this node.
+    key_global: bool = false,
+}
+
+/// Themed chrome branch of `Button`.
+
+/// 2D grid. Fixed: `config = GridConfig(columns = 3, gap = 12, padding = 16)`.
+/// Responsive: `auto_columns` is the narrowest a cell may be, in points like
+/// `gap`. `GridConfig(columns = 3, auto_columns = 220, gap = 12)` fits as many
+/// 220 point cells as the width allows — three at most, the `columns` cap —
+/// and `auto_columns = 0` instead sizes a cell to the widest child.
+fn Grid(p: GridProps) -> Node {
+    let __n = Component(
+        set_auto_columns(raw_grid(p.config.columns, p.config.gap), p.config.auto_columns),
+        width = p.width,
+        padding = p.config.padding, position = p.position, left = p.left,
+        top = p.top, right = p.right, bottom = p.bottom, z_index = p.z_index,
+        show = p.show, background = p.background)
+    return apply_key(__n, p.key, p.key_action, p.on_key, p.on_key__set, p.key_global)
+}
+
+/// Full-window floater. Kind 9 is out of flow. Children are centred.
+fn Overlay(p: OverlayProps) -> Node {
+    let __n = Component(raw_overlay(), background = p.background, opacity = p.opacity,
+                        show = p.show, visible = p.visible, on_click = p.on_click)
+    return apply_key(__n, p.key, p.key_action, p.on_key, p.on_key__set, p.key_global)
+}
+
+/// A column that skips layout while `visible` is 0. Trailing block is the body.
+/// The subtree is built once (retained), unlike a build-time `if`.
+fn If(visible: Signal<int>) -> Node {
+    return Box(align_direction = DIRECTION.Column, visible = visible)
+}
+
+/// Run `build(i, item)` for each element. `[]T` is Copy when `T` is Copy, so
+/// this is safe inside a trailing block.
+fn Each<T>(items: []T, build: fn(int, T)) {
+    let n = items.len
+    for i in 0..n {
+        build(i, items[i])
+    }
+}
+
+/// Append `v` to a live list signal and notify. Use with `For` / `VirtualList`.
+/// A windowed list only rebuilds the visible window, not every row.
+fn push_item<T>(sig: Signal<[]T>, v: T) {
+    let mut xs = sig.get()
+    push(xs, v)
+    sig.set(xs)
+}
+
+/// Insert `v` at index `i` (clamped to `0..len`). Use with `For` / `VirtualList`.
+fn insert_item<T>(sig: Signal<[]T>, i: int, v: T) {
+    let xs = sig.get()
+    let n = xs.len
+    let mut at = i
+    if at < 0 {
+        at = 0
+    }
+    if at > n {
+        at = n
+    }
+    let mut out = []T {}
+    let mut j = 0
+    while j < at {
+        push(out, xs[j])
+        j = j + 1
+    }
+    push(out, v)
+    while j < n {
+        push(out, xs[j])
+        j = j + 1
+    }
+    sig.set(out)
+}
+
+/// Remove the item at index `i`. No-op if `i` is out of range.
+fn remove_item<T>(sig: Signal<[]T>, i: int) {
+    let xs = sig.get()
+    let n = xs.len
+    if i < 0 {
+        return
+    }
+    if i >= n {
+        return
+    }
+    let mut out = []T {}
+    let mut j = 0
+    while j < n {
+        if j != i {
+            push(out, xs[j])
+        }
+        j = j + 1
+    }
+    sig.set(out)
+}
+
+/// Remove the last item from a live list signal. No-op if empty.
+fn pop_item<T>(sig: Signal<[]T>) {
+    let mut xs = sig.get()
+    if xs.len > 0 {
+        pop(xs)
+        sig.set(xs)
+    }
+}
+
+fn virtual_refresh<T>(node_id: int, items: Signal<[]T>, build: fn(int, T), row_h: int) {
+    let xs = items.get()
+    let m = xs.len
+    let gen = platform.plat_sig_gen(items.id)
+    let mut first = 0
+    let mut last = m
+    if row_h > 0 {
+        let w = virtual_window(node_id, m, row_h)
+        first = w.first
+        last = w.last
+    }
+    if gen == arena.nodes[node_id].list_gen {
+        if first == arena.nodes[node_id].list_lo {
+            if last == arena.nodes[node_id].list_hi {
+                if arena.nodes[node_id].kids.len > 0 {
+                    return
+                }
+                if m == 0 {
+                    arena.nodes[node_id].list_n = 0
+                    return
+                }
+            }
+        }
+    }
+    arena.nodes[node_id].list_gen = gen
+    arena.nodes[node_id].list_lo = first
+    arena.nodes[node_id].list_hi = last
+    arena.nodes[node_id].list_n = m
+    arena.nodes[node_id].row_h = row_h
+    // Everything the builder allocated last time is owned by this host:
+    // signals and interned handlers are freed (and their ids recycled) on
+    // the next rebuild, so streaming data does not grow the arena. A
+    // windowed list only (re)builds the visible rows — append / insert
+    // outside the window is a spacer resize, not O(n) widgets.
+    let previous = arena.rebuild_begin(node_id)
+    ui_push(node_id)
+    if row_h > 0 {
+        if first > 0 {
+            let top = raw_spacer()
+            set_height(top, first * row_h)
+            Component(top)
+        }
+    }
+    let mut i = first
+    while i < last {
+        build(i, xs[i])
+        i = i + 1
+    }
+    if row_h > 0 {
+        if last < m {
+            let bot = raw_spacer()
+            set_height(bot, (m - last) * row_h)
+            Component(bot)
+        }
+    }
+    ui_pop()
+    arena.rebuild_end(previous)
+}
+
+fn virtual_row_h(heights: []int, i: int, fallback: int) -> int {
+    if i >= 0 {
+        if i < heights.len {
+            if heights[i] > 0 {
+                return heights[i]
+            }
+        }
+    }
+    return fallback
+}
+
+fn virtual_prefix(heights: []int, n: int, fallback: int) -> int {
+    let mut y = 0
+    let mut i = 0
+    while i < n {
+        y = y + virtual_row_h(heights, i, fallback)
+        i = i + 1
+    }
+    return y
+}
+
+fn virt_window_var(node_id: int, n: int, heights: []int, fallback: int) -> VirtWin {
+    if heights.len == 0 {
+        return virtual_window(node_id, n, fallback)
+    }
+    let signal_id = find_scroller(node_id)
+    let mut view_h = 240
+    let mut local = 0
+    if signal_id > 0 {
+        if arena.nodes[signal_id].h > 0 {
+            view_h = arena.nodes[signal_id].h
+        }
+        if node_id == signal_id {
+            local = arena.nodes[signal_id].scroll_y
+        } else {
+            local = arena.nodes[signal_id].scroll_y - (arena.nodes[node_id].y - arena.nodes[signal_id].y)
+        }
+    } else if arena.nodes[node_id].h > 0 {
+        view_h = arena.nodes[node_id].h
+    }
+    if local < 0 {
+        local = 0
+    }
+    let mut acc = 0
+    let mut first = n
+    let mut last = n
+    let mut i = 0
+    while i < n {
+        let rh = virtual_row_h(heights, i, fallback)
+        if acc + rh > local {
+            first = i
+            break
+        }
+        acc = acc + rh
+        i = i + 1
+    }
+    first = first - VIRT_OVERSCAN
+    if first < 0 {
+        first = 0
+    }
+    acc = virtual_prefix(heights, first, fallback)
+    last = first
+    while last < n {
+        if acc >= local + view_h {
+            last = last + VIRT_OVERSCAN
+            if last > n {
+                last = n
+            }
+            return VirtWin { first: first, last: last }
+        }
+        acc = acc + virtual_row_h(heights, last, fallback)
+        last = last + 1
+    }
+    return VirtWin { first: first, last: last }
+}
+
+fn virt_refresh_var<T>(node_id: int, items: Signal<[]T>, build: fn(int, T), fallback: int,
+                       heights: Signal<[]int>) {
+    let xs = items.get()
+    let hs = heights.get()
+    let m = xs.len
+    let gen = platform.plat_sig_gen(items.id) + platform.plat_sig_gen(heights.id)
+    let w = virt_window_var(node_id, m, hs, fallback)
+    let first = w.first
+    let last = w.last
+    if gen == arena.nodes[node_id].list_gen {
+        if first == arena.nodes[node_id].list_lo {
+            if last == arena.nodes[node_id].list_hi {
+                if arena.nodes[node_id].kids.len > 0 {
+                    return
+                }
+                if m == 0 {
+                    arena.nodes[node_id].list_n = 0
+                    return
+                }
+            }
+        }
+    }
+    arena.nodes[node_id].list_gen = gen
+    arena.nodes[node_id].list_lo = first
+    arena.nodes[node_id].list_hi = last
+    arena.nodes[node_id].list_n = m
+    arena.nodes[node_id].row_h = fallback
+    let previous = arena.rebuild_begin(node_id)
+    ui_push(node_id)
+    if first > 0 {
+        let top = raw_spacer()
+        set_height(top, virtual_prefix(hs, first, fallback))
+        Component(top)
+    }
+    let mut i = first
+    while i < last {
+        build(i, xs[i])
+        i = i + 1
+    }
+    if last < m {
+        let bot = raw_spacer()
+        set_height(bot, virtual_prefix(hs, m, fallback) - virtual_prefix(hs, last, fallback))
+        Component(bot)
+    }
+    ui_pop()
+    arena.rebuild_end(previous)
+}
+
+/// Positional list. `items` is `zeus.signal([]T {})` (`T` Copy). Rows are
+/// rebuilt in place on every change; use `For` when a row must keep its state
+/// across a reorder.
+fn Index<T>(items: Signal<[]T>, build: fn(int, T)) -> Node {
+    let n = raw_box()
+    let node_id = n.id
+    virtual_refresh(node_id, items, build, 0)
+    return Component(n, align_direction = DIRECTION.Column,
+                     rebuild = || { virtual_refresh(node_id, items, build, 0) })
+}
+
+fn kfor_unique<T>(xs: []T, key: fn(T) -> string, m: int) -> int {
+    let mut i = 0
+    while i < m {
+        let mut j = i + 1
+        while j < m {
+            if key(xs[i]) == key(xs[j]) {
+                return 0
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+    return 1
+}
+
+/// Keyed list. `items` is `zeus.signal([]T {})` (`T` Copy); `key(item)` must
+/// return a stable, unique string. Rows are mounted once per key and **moved**
+/// on reorder, so focus and per-row state survive and a pure reorder allocates
+/// nothing. A changed key set (insert / remove) rebuilds the host and recycles
+/// every row. `build(i, item)` runs at mount; for content that follows the
+/// item, read a signal inside the row instead of `i`.
+fn For<T>(items: Signal<[]T>, key: fn(T) -> string, build: fn(int, T)) -> Node {
+    let n = raw_box()
+    let node_id = n.id
+    kfor_refresh(node_id, items, key, build)
+    return Component(n, align_direction = DIRECTION.Column,
+                     rebuild = || { kfor_refresh(node_id, items, key, build) })
+}
+
+fn kfor_refresh<T>(node_id: int, items: Signal<[]T>, key: fn(T) -> string, build: fn(int, T)) {
+    let xs = items.get()
+    let m = xs.len
+    // Fast path: the key set is unchanged, so move the existing rows into the
+    // new order. Node ids, focus, scroll and row state all survive; nothing is
+    // allocated. A changed key set (or duplicate keys) falls through.
+    if arena.key_count(node_id) == m {
+        if kfor_unique(xs, key, m) == 1 {
+            let mut ok = 1
+            let mut i = 0
+            while i < m {
+                if arena.key_node(node_id, key(xs[i])) <= 0 {
+                    ok = 0
+                    break
+                }
+                i = i + 1
+            }
+            if ok == 1 {
+                let mut order = []int {}
+                let mut j = 0
+                while j < m {
+                    push(order, arena.key_node(node_id, key(xs[j])))
+                    j = j + 1
+                }
+                arena.nodes[node_id].kids = order
+                return
+            }
+        }
+    }
+    // Slow path: rebuild the host; every row is re-created and recycled.
+    arena.key_clear(node_id)
+    let previous = arena.rebuild_begin(node_id)
+    ui_push(node_id)
+    let mut i = 0
+    while i < m {
+        let before = arena.nodes[node_id].kids.len
+        build(i, xs[i])
+        let after = arena.nodes[node_id].kids.len
+        // A row must be a single top-level child to be movable. If the builder
+        // mounted zero or several, record nothing so the next update rebuilds
+        // rather than reorders a partial row.
+        if after == before + 1 {
+            arena.key_set(node_id, key(xs[i]), arena.nodes[node_id].kids[before])
+        } else {
+            arena.key_set(node_id, key(xs[i]), 0)
+        }
+        i = i + 1
+    }
+    ui_pop()
+    arena.rebuild_end(previous)
+}
+
+/// One arm mounted at a time. `on` is a live signal; `build(value)` rebuilds
+/// the host whenever `on` changes, so only the current arm is in the tree.
+/// Pair with an integer tag signal for a switch/match.
+fn Match<T>(on: Signal<T>, build: fn(T)) -> Node {
+    let n = raw_box()
+    let node_id = n.id
+    match_build(node_id, on, build)
+    return Component(n, align_direction = DIRECTION.Column,
+                     rebuild = || { match_refresh(node_id, on, build) })
+}
+
+/// Tear the subtree down and rebuild it for the current value of `on`.
+/// `list_gen` records the slot it was built from, so `match_refresh` can tell
+/// a real change from a bare refresh sweep.
+fn match_build<T>(node_id: int, on: Signal<T>, build: fn(T)) {
+    arena.nodes[node_id].list_gen = platform.plat_sig_gen(on.id)
+    let previous = arena.rebuild_begin(node_id)
+    ui_push(node_id)
+    build(on.get())
+    ui_pop()
+    arena.rebuild_end(previous)
+}
+
+/// `refresh_lists` invokes every node that has a `list_fn`, on every layout.
+/// The refit and For/Index hosts all return early when nothing changed; Match
+/// did not, so each layout ran `rebuild_begin` — which calls `release_sigs` —
+/// and every `zeus.signal` the page declared was freed and re-created at its
+/// initial value. Page state reset on any repaint, which reads as "signals
+/// don't work" in a routed app. Rebuild only when `on` actually moved.
+fn match_refresh<T>(node_id: int, on: Signal<T>, build: fn(T)) {
+    if platform.plat_sig_gen(on.id) == arena.nodes[node_id].list_gen {
+        return
+    }
+    match_build(node_id, on, build)
+}
+
+/// Error boundary. `build()` runs under a recoverable trap; if it traps, the
+/// partial subtree is discarded, the arena is rolled back to its entry mark,
+/// and `fallback(message)` is built in its place, so the rest of the app keeps
+/// running. Recovers UI state only: C-seam side effects (I/O, network) are not
+/// undone, and a trap raised outside `build` (e.g. in a later layout effect) is
+/// not caught. On wasm there is no `setjmp`, so a trap still aborts.
+fn Boundary(build: fn(), fallback: fn(string)) -> Node {
+    let host = raw_box()
+    let hid = host.id
+    let m = arena.mark()
+    let previous = arena.scope_begin(hid)
+    ui_push(hid)
+    let stack0 = ui_parents.len
+    let msg = platform.plat_boundary(build)
+    arena.scope_end(previous)
+    if msg.len == 0 {
+        ui_pop()
+    } else {
+        // A trap skipped the normal pop: unwind the build stack by hand.
+        while ui_parents.len > stack0 {
+            pop(ui_parents)
+        }
+        ui_pop()
+        arena.rollback(hid, m)
+        ui_push(hid)
+        fallback(msg)
+        ui_pop()
+    }
+    return Component(host, align_direction = DIRECTION.Column)
+}
+
+/// Jump `n` (a `Scroll` / `VirtualList`) to vertical offset `y`. Clears
+/// residual velocity so physics does not coast past the target. Clamped.
+fn scroll_to(n: Node, y: int) -> Node {
+    arena.nodes[n.id].vel_y = 0
+    arena.nodes[n.id].scroll_y = y
+    arena.clamp_scroll(n.id)
+    if arena.nodes[n.id].bind_sig > 0 {
+        arena.store_sig(arena.nodes[n.id].bind_sig, arena.nodes[n.id].scroll_y)
+    }
+    return n
+}
+
+/// Jump `n` to horizontal offset `x`.
+fn scroll_to_x(n: Node, x: int) -> Node {
+    arena.nodes[n.id].vel_x = 0
+    arena.nodes[n.id].scroll_x = x
+    arena.clamp_scroll(n.id)
+    return n
+}
+
+/// Jump a windowed list so item `i` is at the top of the viewport.
+fn scroll_to_index(n: Node, i: int) -> Node {
+    let mut rh = arena.nodes[n.id].row_h
+    if rh < 1 {
+        rh = 1
+    }
+    let mut at = i
+    if at < 0 {
+        at = 0
+    }
+    return scroll_to(n, at * rh)
+}
+
+/// Live `scroll_y` of `n`.
+fn scroll_y(n: Node) -> int {
+    return arena.nodes[n.id].scroll_y
+}
+
+/// Width a node measured by the last layout pass (0 until the first one).
+fn measured_width(n: Node) -> int {
+    return arena.nodes[n.id].w
+}
+
+/// Re-run `build` into `host` whenever the host's measured width changes
+/// (window resize, card reflow). `host` must be widthless so it stretches
+/// with its parent. Pixel-exact widgets — charts, plots — lay out their
+/// children from the measured width, so they stay glued to the container.
+/// Rebuilds happen on the layout after a size change.
+fn refit_refresh(node_id: int, build: fn()) {
+    let w = arena.nodes[node_id].w
+    if w == arena.nodes[node_id].list_gen {
+        return
+    }
+    // A zero-width host (hidden tab, or not laid out yet) defers its rebuild
+    // until it is measured at a real width. Syncing `list_gen` here keeps it
+    // from refitting on every resize frame while off-screen.
+    if w == 0 {
+        arena.nodes[node_id].list_gen = 0
+        return
+    }
+    arena.nodes[node_id].list_gen = w
+    let previous = arena.rebuild_begin(node_id)
+    slot(node_handle(node_id), build)
+    arena.rebuild_end(previous)
+}
+
+fn refit(host: Node, build: fn()) -> Node {
+    arena.ensure()
+    let node_id = host.id
+    arena.nodes[node_id].list_fn = intern_fn(|| {
+        refit_refresh(node_id, build)
+    })
+    return host
+}
+
+/// Vertical scroller. Children keep intrinsic height; a bar appears on overflow.
+/// `bind` is an optional two-way `scroll_y` signal (`scroll_to` writes it).
+fn Scroll(p: ScrollProps) -> Node {
+    let __n = Component(raw_scroll(), width = p.width, height = p.height,
+                        grow = p.grow, bind = p.bind)
+    return apply_key(__n, p.key, p.key_action, p.on_key, p.on_key__set, p.key_global)
+}
+
+/// Inline SVG. `currentColor` follows the node's foreground. Geometry props:
+/// `width`, `height` (an svg is otherwise measured like a label), plus the
+/// usual `position` / pins / `z_index` for layered plots.
+fn Svg(markup: string, p: SvgProps) -> Node {
+    let __n = Component(raw_svg(markup), width = p.width, height = p.height,
+                        position = p.position, left = p.left, top = p.top, right = p.right,
+                        bottom = p.bottom, z_index = p.z_index, show = p.show)
+    return apply_key(__n, p.key, p.key_action, p.on_key, p.on_key__set, p.key_global)
+}
+
+/// Raster image. `src` is a file path, `data:` URI, or `http(s):` URL — a
+/// thunk, so a signal read inside it repaints this node. Hosts decode PNG /
+/// JPEG / WebP / GIF and cache by that string; a missing or still-loading
+/// src paints nothing. With no `width`/`height` the node auto-sizes to the
+/// container (device) width at the source aspect ratio — see `ImageProps`.
+/// `fit` is `IMAGE_FIT` (stretch / contain / cover / none). `lazy = 1` skips
+/// decode while off-screen.
+fn Image(src: fn() -> string, p: ImageProps) -> Node {
+    return Component(raw_image(""), text = src, width = p.width, height = p.height,
+                     radius = p.radius, fit = p.fit, lazy = p.lazy, opacity = p.opacity,
+                     grow = p.grow, shrink = p.shrink, min_width = p.min_width,
+                     max_width = p.max_width, min_height = p.min_height, max_height = p.max_height,
+                     position = p.position, left = p.left, top = p.top, right = p.right,
+                     bottom = p.bottom, z_index = p.z_index, show = p.show,
+                     a11y_label = p.a11y_label, a11y_role = "img")
+}
+
+/// Open a host file picker (PNG / JPEG / WebP / GIF). Writes the chosen src
+/// into `dest` and the image's intrinsic size into `dw` / `dh`. Native hosts
+/// return from the dialog; wasm and mobile finish via `engine_picked_image`.
+fn pick_image(dest: Signal<string>, dw: Signal<int>, dh: Signal<int>) {
+    pick_dest = dest
+    pick_w = dw
+    pick_h = dh
+    let mut w = 0
+    let mut h = 0
+    let src = platform.plat_pick_image(&mut w, &mut h)
+    if src.len > 0 {
+        set(dest, src)
+        set(dw, w)
+        set(dh, h)
+        pick_dest = Signal { id: 0 }
+        pick_w = Signal { id: 0 }
+        pick_h = Signal { id: 0 }
+    }
+}
+
+/// `markup` painted at `px` square and tinted by `tint`. Returns the node so
+/// callers can bind visibility.
+///
+/// An svg node has no intrinsic size, so the box is set explicitly. The tint
+/// goes through `prop_str` rather than `fg` so it re-applies on an
+/// appearance change: `apply_str` hands an unknown setter to `apply_int`, and
+/// 16 is the fg slot.
+fn Icon(markup: string, px: int, tint: string) -> Node {
+    return Component(raw_svg(markup), width = px, height = px, color = tint)
+}
+
+fn Pip(fill: string, size: int) -> Node {
+    return Box(width = size, height = size, radius = size / 2, background = fill)
+}
+
+fn Row(spacing: int) -> Node {
+    return Box(align_direction = DIRECTION.Row, spacing = spacing,
+               align_items = ALIGN.Center)
+}
+
+/// Row that wraps onto the next line when it overflows (`flex-wrap: wrap`).
+/// Use for responsive clusters of chips, buttons, and badges.
+fn RowWrap(spacing: int) -> Node {
+    return Box(align_direction = DIRECTION.Row, spacing = spacing,
+               align_items = ALIGN.Center, wrap = 1)
+}
+
+fn Column(spacing: int) -> Node {
+    return Box(align_direction = DIRECTION.Column, spacing = spacing)
+}
+
+fn Grow() {
+    Box(grow = 1)
+}
+
+/// Lift a node's shadow to elevation `level` while hovered (paint-only; the
+/// hover wash is dropped in favour of the lift). `Card(interactive = true)`
+/// sets it; any surface can take it.
+fn hover_lift(node: Node, level: int) -> Node {
+    let mut l = level
+    if l < 0 {
+        l = 0
+    }
+    if l > 4 {
+        l = 4
+    }
+    arena.nodes[node.id].lift = u8(l)
+    hover_fade(node)
+    return node
+}
+
+/// Horizontal hairline. Kept as `Divider` for older callers.
+fn Separator() {
+    Box(height = 1, background = rule())
+}
+
+/// Legacy name for `Separator`.
+fn Divider() {
+    Separator()
+}
+
+fn Overline(text: fn() -> string) -> Node {
+    return Text(text, color = dim(), font = FONT_OVERLINE)
+}
+
+fn Display(text: fn() -> string) -> Node {
+    return Text(text, color = ink(), font = FONT_DISPLAY)
+}
+
+fn Heading(text: fn() -> string) -> Node {
+    return Text(text, color = ink(), font = FONT_HEADING)
+}
+
+fn Title(text: fn() -> string) -> Node {
+    return Text(text, color = ink(), font = FONT_TITLE)
+}
+
+fn Body(text: fn() -> string) -> Node {
+    return Text(text, color = mute(), font = FONT_BODY)
+}
+
+fn Note(text: fn() -> string) -> Node {
+    return Text(text, color = dim(), font = FONT_CAPTION)
+}
+
+/// Overline + heading + supporting copy as one block.
+fn SectionHeader(overline: fn() -> string, title: fn() -> string,
+                 body: fn() -> string) {
+    Column(SPACE.Exxxs) {
+        Text(overline, color = dim(), font = FONT_OVERLINE)
+        Text(title, color = ink(), font = FONT_HEADING)
+        Text(body, color = mute(), font = FONT_BODY, wrap = 1)
+    }
+}
+
+/// `SectionHeader` without the supporting copy.
+fn SectionTitle(overline: fn() -> string, title: fn() -> string) {
+    Column(SPACE.Exxxs) {
+        Text(overline, color = dim(), font = FONT_OVERLINE)
+        Text(title, color = ink(), font = FONT_HEADING)
+    }
+}
+
+/// Status pill: tinted dot and label on a muted border pill. Pass any style
+/// prop to restyle it (`Chip("pill", TINT.Ok, radius = 6)`).
+struct ChipProps {
+    /// Style props. Plain data — `radius = 4`, `background = paper()`. Each
+    /// is re-evaluated by the effect that owns that attribute, so it follows
+    /// a theme switch. `-1` / `""` keep the recipe's own value.
+    background: string = "",
+    color: string = "",
+    radius: int = -1,
+    padding: int = -1,
+    padding_x: int = -1,
+    padding_y: int = -1,
+    width: int = -1,
+    height: int = -1,
+    font: int = -1,
+    border: int = -1,
+    border_color: string = "",
+    spacing: int = -1,
+    /// false hides the leading tint dot.
+    dot: bool = true,
+    /// Removable chip: a trailing X runs this (role `button`, label
+    /// `Remove <label>`). Hiding the chip is the caller's job — usually
+    /// `show` on a signal the handler clears.
+    on_remove: fn() = noop,
+    on_remove__set: bool = false,
+    /// Chord that activates this node: `"cmd+s"`, `"ctrl+shift+p"`, or a
+    /// sequence like `"g d"`. Every widget takes it — key binding is a prop,
+    /// not something a particular widget hard-codes.
+    key: string = "",
+    /// Name the chord resolves to, so an app can remap it with `remap_key`
+    /// without touching the widget. Defaults to `"key.<chord>"`.
+    key_action: string = "",
+    /// Handler for the chord; omit it and the chord runs `on_click`.
+    on_key: fn() = noop,
+    on_key__set: bool = false,
+    /// true = fires wherever focus is, instead of only on this node.
+    key_global: bool = false,
+}
+
+/// Chip: rounded tag with a tint dot and caption text. `dot = false` drops
+/// the pip; `on_remove` adds a trailing X.
+fn Chip(label: fn() -> string, kind: int, p: ChipProps) -> Node {
+    let tint = str_or_default(p.color, tint_of(kind))
+    let mut pad_r = px_or_default(p.padding_x, px_or_default(p.padding, 10))
+    if p.on_remove__set {
+        // The X carries its own hit box, so the trailing gutter shrinks.
+        pad_r = 4
+    }
+    let __n = Box(align_direction = DIRECTION.Row,
+                  spacing = px_or_default(p.spacing, SPACE.Exxs),
+                  align_items = ALIGN.Center,
+                  padding_left = px_or_default(p.padding_x, px_or_default(p.padding, 10)),
+                  padding_right = pad_r,
+                  padding_y = px_or_default(p.padding_y, px_or_default(p.padding, 5)),
+                  background = str_or_default(p.background, raised()),
+                  radius = px_or_default(p.radius, RAD_FULL),
+                  border = px_or_default(p.border, HAIRLINE),
+                  border_color = str_or_default(p.border_color, rule()),
+                  width = p.width,
+                  height = px_or_default(p.height, 26))
+    ui_push(__n.id)
+    if p.dot {
+        Pip(tint, DOT - 2)
+    }
+    Text(label, color = tint, font = px_or_default(p.font, FONT_CAPTION), ellipsis = true)
+    if p.on_remove__set {
+        let x = Box(width = 18, height = 18, radius = RAD_FULL,
+                    align_items = ALIGN.Center, justify = ALIGN.Center,
+                    shrink = 0,
+                    on_click = p.on_remove,
+                    a11y_role = "button",
+                    a11y_label = "Remove {{label()}}",
+                    cursor = "pointer") {
+            Icon(IC_X, 12, mute())
+        }
+        hover_fade(x)
+    }
+    ui_pop()
+    return apply_key(__n, p.key, p.key_action, p.on_key, p.on_key__set, p.key_global)
+}
+
+/// Fill for a badge `TINT`. Split from the button pickers because badges
+/// use filled status colors where buttons use accent chrome.
+fn badge_background(kind: int) -> string {
+    match kind {
+        TINT.Mute => { return raised() }
+        TINT.Ok => { return ok_solid() }
+        TINT.Danger => { return danger_solid() }
+        TINT.Warn => { return warn_fill() }
+        _ => { return accent() }
+    }
+}
+
+/// Label color for a badge `TINT`; see `badge_background`.
+fn badge_color(kind: int) -> string {
+    match kind {
+        TINT.Mute | TINT.Dim => { return ink() }
+        TINT.Ok => { return on_ok() }
+        TINT.Warn => { return warn() }
+        _ => { return on_ink() }
+    }
+}
+
+/// Border width for a badge `TINT` — only the outline tint carries one.
+fn badge_border_width(kind: int) -> int {
+    match kind {
+        TINT.Dim => { return HAIRLINE }
+        _ => { return 0 }
+    }
+}
+
+/// Border color for a badge `TINT`; see `badge_border_width`.
+fn badge_border_color(kind: int) -> string {
+    match kind {
+        TINT.Dim => { return hard() }
+        _ => { return "" }
+    }
+}
+
+/// Badge: small bordered pill, 10px side padding, caption type.
+/// Kinds: Ink default, Mute secondary, Dim outline, Danger destructive;
+/// Ok is a filled success badge. `dot = true` adds a leading status pip
+/// in the label colour; `BadgeCount` is the numeric variant.
+struct BadgeProps {
+    /// Style props. Plain data — `radius = 4`, `background = paper()`. Each
+    /// is re-evaluated by the effect that owns that attribute, so it follows
+    /// a theme switch. `-1` / `""` keep the recipe's own value.
+    background: string = "",
+    color: string = "",
+    radius: int = -1,
+    padding: int = -1,
+    padding_x: int = -1,
+    padding_y: int = -1,
+    width: int = -1,
+    height: int = -1,
+    font: int = -1,
+    border: int = -1,
+    border_color: string = "",
+    spacing: int = -1,
+    /// Leading status pip in the label colour.
+    dot: bool = false,
+    /// Chord that activates this node: `"cmd+s"`, `"ctrl+shift+p"`, or a
+    /// sequence like `"g d"`. Every widget takes it — key binding is a prop,
+    /// not something a particular widget hard-codes.
+    key: string = "",
+    /// Name the chord resolves to, so an app can remap it with `remap_key`
+    /// without touching the widget. Defaults to `"key.<chord>"`.
+    key_action: string = "",
+    /// Handler for the chord; omit it and the chord runs `on_click`.
+    on_key: fn() = noop,
+    on_key__set: bool = false,
+    /// true = fires wherever focus is, instead of only on this node.
+    key_global: bool = false,
+}
+
+fn Badge(label: fn() -> string, kind: int, p: BadgeProps) -> Node {
+    let tint = str_or_default(p.color, badge_color(kind))
+    let __n = Box(align_direction = DIRECTION.Row,
+                  padding_x = px_or_default(p.padding_x, px_or_default(p.padding, 10)),
+                  padding_y = px_or_default(p.padding_y, px_or_default(p.padding, 2)),
+                  radius = px_or_default(p.radius, RAD_MD),
+                  background = str_or_default(p.background, badge_background(kind)),
+                  border = px_or_default(p.border, badge_border_width(kind)),
+                  border_color = str_or_default(p.border_color, badge_border_color(kind)),
+                  width = p.width,
+                  height = p.height,
+                  spacing = px_or_default(p.spacing, SPACE.Exxs),
+                  align_items = ALIGN.Center,
+                  justify = ALIGN.Center)
+    ui_push(__n.id)
+    if p.dot {
+        Pip(tint, DOT - 2)
+    }
+    Text(label, color = tint, font = px_or_default(p.font, FONT_CAPTION))
+    ui_pop()
+    return apply_key(__n, p.key, p.key_action, p.on_key, p.on_key__set, p.key_global)
+}
+
+/// Count badge: a round pill bound to a number, hidden while it is 0 and
+/// capped at `max` ("99+"). Sits over an icon or after a nav label.
+fn BadgeCount(count: Signal<int>, kind: int, max: int = 99) -> Node {
+    let n = Box(align_direction = DIRECTION.Row,
+                min_width = 18,
+                height = 18,
+                padding_x = 5,
+                radius = RAD_FULL,
+                background = badge_background(kind),
+                align_items = ALIGN.Center,
+                justify = ALIGN.Center,
+                a11y_role = "status") {
+        Text(fn() -> string {
+            let v = count.get()
+            if v > max {
+                return "{{max}}+"
+            }
+            return "{{v}}"
+        }, color = badge_color(kind), font = 11)
+    }
+    return show_ne(n, count, 0)
+}
+
+/// Key cap: 1px border on muted, mono-ish small text, 20px tall.
+fn Kbd(key: fn() -> string) {
+    Box(align_direction = DIRECTION.Row, padding_x = 6, radius = 4,
+        height = 20, background = raised(), border = HAIRLINE,
+        border_color = rule(), align_items = ALIGN.Center,
+        justify = ALIGN.Center) {
+        Text(key, color = mute(), font = 10)
+    }
+}
+
+/// Progress: 8px track, rounded, filled with the accent. Value 0..100; a
+/// plain `set` eases the fill over `MOTION.Base` on the paint overlay (no
+/// effect re-runs per frame). A negative value is indeterminate: a segment
+/// sweeps the track on the frame clock until the value is 0..100 again.
+fn Progress(value: Signal<int>) -> Node {
+    let n = Component(raw_progress(), bind = value, width = 220, height = 8, radius = 4)
+    arena.nodes[n.id].a11y_role = "progressbar"
+    let node_id = n.id
+    let signal_id = value.id
+    // `tween` holds the last state this bar was asked to show (-1 at build),
+    // so the next write can ease from it.
+    effect(|| {
+        let v = value.get()
+        let last = arena.nodes[node_id].tween
+        if v < 0 {
+            arena.note_spin(node_id, 1400)
+        } else {
+            arena.clear_spin(node_id)
+            // A write from `zeus.animate` brings its own track and duration;
+            // only a plain `set` gets the default ease.
+            if last >= 0 && arena.anim_bind_on() == 0 {
+                arena.anim_paint_from(signal_id, last, MOTION.Base)
+            }
+        }
+        arena.nodes[node_id].tween = v
+    })
+    return n
+}
+
+/// Legacy name for `Progress`.
+fn Meter(value: Signal<int>) {
+    Progress(value)
+}
+
+/// Which `Alert` variant is painting.
+enum ALERT {
+    Info = 0,
+    Danger = 1,
+    Warn = 2,
+    Ok = 3,
+}
+
+/// Raised panel (no border). Prefer `Card` for the bordered look.
+fn Surface() -> Node {
+    return Box(
+        align_direction = DIRECTION.Column,
+        spacing = SPACE.Xs,
+        background = raised(),
+        padding = SPACE.Md,
+        radius = RAD_LG
+    )
+}
+
+/// Form label: body-size, medium weight.
+fn Label(text: fn() -> string) -> Node {
+    return Text(text, color = ink(), font = FONT_BODY)
+}
+
+fn avatar_dot(size: int) -> int {
+    let d = size / 4
+    if d < 8 {
+        return 8
+    }
+    if d > 14 {
+        return 14
+    }
+    return d
+}
+
+struct AvatarProps {
+    src: string = ""
+    /// `TINT` for the corner presence pip. `-1` = none.
+    status: int = -1
+}
+
+/// Avatar: full-round with initials on muted. `size` is the diameter in px
+/// (40 is the common one). Pass `src` for a photo; initials remain the fallback
+/// while the host loads. `status` is a `TINT` for the corner presence pip
+/// (`-1` = none). `User` composes it; `AvatarGroup` stacks several.
+fn Avatar(initials: string, size: int, p: AvatarProps) -> Node {
+    let host = Box(align_direction = DIRECTION.Row, width = size, height = size,
+                   radius = size / 2, background = raised(),
+                   align_items = ALIGN.Center, justify = ALIGN.Center)
+    ui_push(host.id)
+    Text(initials, color = ink(), font = (size + 8) / 4)
+    if p.src.len > 0 {
+        Image(p.src, width = size, height = size, radius = size / 2,
+              position = pos_absolute(), left = 0, top = 0)
+    }
+    if p.status >= 0 {
+        Box(width = avatar_dot(size), height = avatar_dot(size),
+            radius = avatar_dot(size) / 2,
+            background = tint_of(p.status),
+            border = 2, border_color = plate(),
+            position = pos_absolute(), right = 0, bottom = 0,
+            a11y_role = "status")
+    }
+    ui_pop()
+    return host
+}
+
+/// Overlapping row of avatars. Later faces sit on top; each one after the
+/// first pulls left by a third of `size`.
+fn AvatarGroup(labels: []string, size: int = 32) -> Node {
+    let row = Row(0)
+    ui_push(row.id)
+    let n = labels.len
+    for i in 0..n {
+        let av = Avatar(labels[i], size)
+        if i > 0 {
+            marginLeft(av, -(size / 3))
+        }
+        z_index(av, i + 1)
+    }
+    ui_pop()
+    return row
+}
+
+/// Trend direction for `Stat`'s delta row.
+enum TREND {
+    Flat = 0,
+    Up = 1,
+    Down = 2,
+}
+
+struct StatProps {
+    /// Change caption under the value ("+12%"). Empty = no delta row.
+    delta: fn() -> string = empty_text,
+    /// `TREND` for the arrow and tint: Up is ok, Down is danger, Flat is
+    /// muted with no arrow.
+    trend: int = 0,
+    /// Series for a trailing sparkline. A signal, so a dashboard can push
+    /// points and the line redraws without a rebuild.
+    spark: Signal<[]int> = Signal { id: 0 },
+    spark__set: bool = false,
+}
+
+fn trend_tint(trend: int) -> string {
+    match trend {
+        TREND.Up => { return ok() }
+        TREND.Down => { return danger() }
+        _ => { return mute() }
+    }
+}
+
+/// Sparkline path: `vals` fit to a `w`×`h` box, stroked in `currentColor`
+/// so `Icon`-style tinting applies. Flat series draw a midline.
+fn spark_markup(vals: []int, w: int, h: int) -> string {
+    let n = vals.len
+    if n < 2 {
+        return ""
+    }
+    let mut lo = vals[0]
+    let mut hi = vals[0]
+    for i in 1..n {
+        if vals[i] < lo {
+            lo = vals[i]
+        }
+        if vals[i] > hi {
+            hi = vals[i]
+        }
+    }
+    let mut span = hi - lo
+    if span <= 0 {
+        span = 1
+    }
+    let pad = 2
+    let mut d = ""
+    for i in 0..n {
+        let x = pad + (w - pad * 2) * i / (n - 1)
+        let y = pad + (h - pad * 2) * (hi - vals[i]) / span
+        if i == 0 {
+            d = "M{{x}} {{y}}"
+        } else {
+            d = "{{d}} L{{x}} {{y}}"
+        }
+    }
+    return "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 {{w}} {{h}}'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='{{d}}'/></svg>"
+}
+
+/// Inline trend line, `w`×`h` dp, stroked in `tint`. The markup is a text
+/// thunk over `vals`, so pushing a point repaints only this node.
+fn Sparkline(vals: Signal<[]int>, w: int, h: int, tint: string) -> Node {
+    let n = Component(raw_svg(""), width = w, height = h, color = tint,
+                      text = fn() -> string { return spark_markup(vals.get(), w, h) })
+    arena.nodes[n.id].a11y_role = "img"
+    arena.nodes[n.id].a11y_label = "sparkline"
+    return n
+}
+
+/// Stat card: small muted label over a big tinted value. `delta` + `trend`
+/// add an arrow-and-caption row; `spark` a sparkline beside the value.
+fn Stat(label: fn() -> string, value: fn() -> string, kind: int, p: StatProps) {
+    let c = Card() {
+        Text(label, color = mute(), font = FONT_CONTROL)
+        Row(SPACE.Xs) {
+            Text(value, color = tint_of(kind), font = 26)
+            if p.spark__set {
+                Grow()
+                Sparkline(p.spark, 64, 24, trend_tint(p.trend))
+            }
+        }
+        if p.delta().len > 0 {
+            let r = Row(2) {
+                if p.trend == TREND.Up {
+                    Icon(IC_TREND_UP, 14, trend_tint(p.trend))
+                }
+                if p.trend == TREND.Down {
+                    Icon(IC_TREND_DOWN, 14, trend_tint(p.trend))
+                }
+                Text(p.delta, color = trend_tint(p.trend), font = FONT_CAPTION)
+            }
+            arena.nodes[r.id].a11y_role = "status"
+        }
+    }
+    grow(c, 1)
+}
+
+fn StatCount(label: string, sig: Signal<int>, kind: int) {
+    let c = Card() {
+        Text(label, color = mute(), font = FONT_CONTROL)
+        Text("{{sig.get()}}", color = tint_of(kind), font = 26)
+    }
+    grow(c, 1)
+}
+
+/// Step an exclusive-pick signal by `delta` if this row is the one that
+/// currently holds it. Clamps at both ends (same as Menu / Select).
+fn roving_step(value: Signal<int>, index: int, count: int, delta: int) {
+    if value.get() != index {
+        return
+    }
+    let n = value.get() + delta
+    if n < 0 {
+        return
+    }
+    if n >= count {
+        return
+    }
+    value.set(n)
+}
+
+/// Roving tabindex for one exclusive-pick row: only the selected item is
+/// focusable, and it takes focus when it becomes selected so the next
+/// arrow lands on it. Menu rows do the same.
+fn roving_focus(node: Node, value: Signal<int>, index: int) {
+    let node_id = node.id
+    effect(|| {
+        if value.get() == index {
+            arena.nodes[node_id].focusable = 1
+            arena.claim_focus(node_id)
+        } else {
+            arena.nodes[node_id].focusable = 0
+        }
+    })
+}
+
+/// Case-insensitive ASCII substring test, used to filter combobox options.
+fn ci_has(hay: string, needle: string) -> bool {
+    let hn = hay.len
+    let nn = needle.len
+    if nn == 0 {
+        return true
+    }
+    if nn > hn {
+        return false
+    }
+    let mut i = 0
+    while i + nn <= hn {
+        let mut j = 0
+        let mut ok = 1
+        while j < nn {
+            if lower_byte(hay[i + j]) != lower_byte(needle[j]) {
+                ok = 0
+            }
+            j = j + 1
+        }
+        if ok != 0 {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+fn lower_byte(c: int) -> int {
+    if c >= 65 {
+        if c <= 90 {
+            return c + 32
+        }
+    }
+    return c
+}
+
+fn combo_filter(options: []string, q: string) -> []string {
+    let mut out = []string {}
+    let n = options.len
+    for i in 0..n {
+        if ci_has(options[i], q) {
+            push(out, options[i])
+        }
+    }
+    return out
+}
+
+/// Read the pending key and move the combobox highlight. Returns the index to
+/// pick, or -1.
+fn combo_key(active: Signal<int>, matches: Signal<[]string>) -> int {
+    let k = current_key().key
+    let n = matches.get().len
+    if k == Key.Down {
+        if active.get() < 0 {
+            active.set(0)
+        } else if active.get() + 1 < n {
+            active.set(active.get() + 1)
+        }
+        return -1
+    }
+    if k == Key.Up {
+        if active.get() > 0 {
+            active.set(active.get() - 1)
+        }
+        return -1
+    }
+    if k == Key.Enter {
+        if active.get() >= 0 {
+            return active.get()
+        }
+        return -1
+    }
+    if k == Key.Escape {
+        active.set(-1)
+        return -1
+    }
+    if k == Key.Backspace {
+        if n > 0 {
+            if active.get() < 0 {
+                active.set(0)
+            }
+        }
+        return -1
+    }
+    if k >= 32 {
+        if k < 127 {
+            // Typing filters the list; open it on the first character.
+            active.set(0)
+        }
+    }
+    return -1
+}
+
+/// Placeholder surface: rounded, faint accent fill with a left-to-right
+/// shimmer band on the frame clock (static under reduced motion). Width /
+/// height explicit; wrap in a card to demo.
+fn Skeleton(w: int, h: int, radius: int) -> Node {
+    let n = Box(width = w, height = h, radius = radius, background = bone())
+    arena.nodes[n.id].a11y_role = "progressbar"
+    arena.nodes[n.id].a11y_label = "Loading"
+    return pulse(n)
+}
+
+struct SpinnerProps {
+    /// Ring diameter in dp.
+    size: int = 16,
+    /// Ring color; defaults to `dim()`.
+    color: string = "",
+    /// Milliseconds per full turn.
+    period: int = 900,
+    /// Accessible label (role `progressbar`).
+    label: string = "Loading",
+}
+
+/// Indeterminate loader. The rotation is a paint-only loop track: it never
+/// re-runs a component or effect and skips layout, and it keeps a frame live
+/// while it is visible. Under reduced motion it settles static.
+fn Spinner(p: SpinnerProps) -> Node {
+    let n = Icon(IC_LOADER, px_or_default(p.size, 16), str_or_default(p.color, dim()))
+    arena.nodes[n.id].a11y_role = "progressbar"
+    arena.nodes[n.id].a11y_label = p.label
+    return spin(n, px_or_default(p.period, 900))
+}
+
+struct EmptyProps {
+    /// Icon markup, e.g. `IC_INFO`. Empty for none.
+    icon: string = "",
+    title: fn() -> string = empty_text,
+    body: fn() -> string = empty_text,
+    width: int = -1,
+    height: int = -1,
+    padding: int = -1,
+}
+
+/// Centred empty state: optional icon, title, supporting copy, then an action
+/// supplied as the trailing block.
+fn Empty(p: EmptyProps) -> Node {
+    let n = Box(align_direction = DIRECTION.Column,
+                align_items = ALIGN.Center,
+                justify = ALIGN.Center,
+                spacing = SPACE.Xs,
+                padding = px_or_default(p.padding, SPACE.Xl),
+                width = p.width, height = p.height)
+    ui_push(n.id)
+    if p.icon.len > 0 {
+        Icon(p.icon, 28, dim())
+    }
+    Text(p.title, color = ink(), font = FONT_TITLE)
+    Text(p.body, color = mute(), font = FONT_BODY)
+    ui_pop()
+    return n
+}
+
+struct AccordionRow {
+    title: string,
+    body: string,
+}
+
+/// Preferred side for an anchored floater. `flip` (default on) switches to the
+/// opposite side when the preferred one overflows.
+enum PLACE {
+    // Below the trigger (menus, select).
+    PlaceBelow = 0,
+    // Above the trigger (tooltips, hover cards).
+    PlaceAbove = 1,
+    // To the trigger's end (inline end on a row).
+    PlaceEnd = 2,
+    // To the trigger's start.
+    PlaceStart = 3,
+    // Tooltip placements: above / below the trigger, aligned to its start,
+    // centre or end along the cross axis. `PlaceAboveCenter` is what a plain
+    // tooltip wants — `PlaceAbove` / `PlaceBelow` keep the old start-aligned
+    // behaviour the menus and popovers use.
+    PlaceAboveStart = 4,
+    PlaceAboveCenter = 5,
+    PlaceAboveEnd = 6,
+    PlaceBelowStart = 7,
+    PlaceBelowCenter = 8,
+    PlaceBelowEnd = 9,
+}
+
+struct MenuRow {
+    label: string = "",
+    /// Paint a separator above this row.
+    is_separated: bool = false,
+    /// Destructive command: painted in the danger ink.
+    danger: bool = false,
+}
+
+/// Which window edge a `Drawer` slides from.
+enum SIDE {
+    // Slide in from the start (left) edge.
+    SideStart = 0,
+    // Slide in from the end (right) edge.
+    SideEnd = 1,
+    // Slide down from the top edge.
+    SideTop = 2,
+    // Slide up from the bottom edge (a sheet).
+    SideBottom = 3,
+}
+
+/// Column a `TableColsProps.sort` value points at (-1 = unsorted).
+fn sort_col(sort: int) -> int {
+    if sort > 0 {
+        return sort - 1
+    }
+    if sort < 0 {
+        return -sort - 1
+    }
+    return -1
+}
+
+/// true when a `sort` value is descending.
+fn sort_desc(sort: int) -> bool {
+    return sort < 0
+}
+
+/// Byte-wise string order: negative, 0, positive.
+fn str_cmp(a: string, b: string) -> int {
+    let n = if a.len < b.len { a.len } else { b.len }
+    for i in 0..n {
+        if a[i] != b[i] {
+            return a[i] - b[i]
+        }
+    }
+    return a.len - b.len
+}
+
+
+/// Order two cells: numerically when both parse, else by bytes.
+fn cell_cmp(a: string, b: string) -> int {
+    let na = cell_num(a)
+    let nb = cell_num(b)
+    if na.ok && nb.ok {
+        return na.v - nb.v
+    }
+    return str_cmp(a, b)
+}
+
+/// Stable sort of any items by a string key (numeric when the keys are
+/// numbers), for a `VirtualTable`'s `Signal<[]T>`:
+/// `rows.set(zeus.sort_by(base, fn(j) => j.name, zeus.sort_desc(sort.get())))`.
+/// `sort_cells` does the same from a `cells` mapper and a `sort` value.
+fn sort_by<T>(items: []T, key: fn(T) -> string, desc: bool) -> []T {
+    let mut out = []T {}
+    let n = items.len
+    for i in 0..n {
+        push(out, items[i])
+    }
+    for i in 1..n {
+        let mut j = i
+        while j > 0 {
+            let a = out[j - 1]
+            let b = out[j]
+            let mut c = cell_cmp(key(a), key(b))
+            if desc {
+                c = -c
+            }
+            if c <= 0 {
+                break
+            }
+            out[j - 1] = b
+            out[j] = a
+            j = j - 1
+        }
+    }
+    return out
+}
+
+/// Items ordered by a `sort` value (`TableColsProps`) over their `cells`:
+/// 0 returns them as given; otherwise a stable sort on that column, by
+/// value when the cells are numbers. `Table` derives its shown order with
+/// this; a `VirtualTable` app calls it in an effect on its sort signal.
+fn sort_cells<T>(items: []T, cells: fn(T) -> []string, sort: int) -> []T {
+    let col = sort_col(sort)
+    if col < 0 {
+        let mut out = []T {}
+        for i in 0..items.len {
+            push(out, items[i])
+        }
+        return out
+    }
+    return sort_by(items, fn(t: T) -> string {
+        let c = cells(t)
+        if col < c.len {
+            return c[col]
+        }
+        return ""
+    }, sort_desc(sort))
+}
+
+/// Cells joined by tabs: `Table`'s row key.
+fn cells_key(cells: []string) -> string {
+    let mut k = ""
+    for i in 0..cells.len {
+        if i > 0 {
+            k = "{{k}}\t{{cells[i]}}"
+        } else {
+            k = cells[i]
+        }
+    }
+    return k
+}
+
+/// Next sort state after clicking column `i`: none → asc → desc → none.
+fn sort_cycle(current_value: int, i: int) -> int {
+    if current_value == i + 1 {
+        return -(i + 1)
+    }
+    if current_value == -(i + 1) {
+        return 0
+    }
+    return i + 1
+}
+
+/// Light-mode stroke for series `i`.
+fn chart_stroke_light(i: int) -> string {
+    match i % 5 {
+        0 => { return LIGHT.chart1 }
+        1 => { return LIGHT.chart2 }
+        2 => { return LIGHT.chart3 }
+        3 => { return LIGHT.chart4 }
+        _ => { return LIGHT.chart5 }
+    }
+}
+
+/// Dark-mode stroke for series `i`.
+fn chart_stroke_dark(i: int) -> string {
+    match i % 5 {
+        0 => { return DARK.chart1 }
+        1 => { return DARK.chart2 }
+        2 => { return DARK.chart3 }
+        3 => { return DARK.chart4 }
+        _ => { return DARK.chart5 }
+    }
+}
+
+/// Light-mode area wash for series `i`.
+fn chart_fl(i: int) -> string {
+    match i % 5 {
+        0 => { return LIGHT.fill1 }
+        1 => { return LIGHT.fill2 }
+        2 => { return LIGHT.fill3 }
+        3 => { return LIGHT.fill4 }
+        _ => { return LIGHT.fill5 }
+    }
+}
+
+/// Dark-mode area wash for series `i`.
+fn chart_fd(i: int) -> string {
+    match i % 5 {
+        0 => { return DARK.fill1 }
+        1 => { return DARK.fill2 }
+        2 => { return DARK.fill3 }
+        3 => { return DARK.fill4 }
+        _ => { return DARK.fill5 }
+    }
+}
+
+/// Series stroke for series `i`. Series 0 is the first brand color — the
+/// old `k == 1` ladder sent series 0 to the `else` arm, so the first series
+/// was painted in the *last* color. Returns a role token, so a theme switch
+/// repaints the series without rebuilding the chart.
+fn chart_color(i: int) -> string {
+    match i % 5 {
+        0 => { return role_token(ROLE.Chart1) }
+        1 => { return role_token(ROLE.Chart2) }
+        2 => { return role_token(ROLE.Chart3) }
+        3 => { return role_token(ROLE.Chart4) }
+        _ => { return role_token(ROLE.Chart5) }
+    }
+}
+
+/// Area wash per series in the current appearance (`primary/20`-style
+/// blends of the series strokes).
+/// Area wash under series `i`, matched to `chart_color` and indexed the
+/// same way.
+fn chart_fill(i: int) -> string {
+    match i % 5 {
+        0 => { return role_token(ROLE.Fill1) }
+        1 => { return role_token(ROLE.Fill2) }
+        2 => { return role_token(ROLE.Fill3) }
+        3 => { return role_token(ROLE.Fill4) }
+        _ => { return role_token(ROLE.Fill5) }
+    }
+}
+
+/// Tooltip border: `border/50` in light, near-`border` in dark.
+fn chart_edge() -> string { return role_token(ROLE.ChartEdge) }
+
+fn bytes_s(b: []int, s: string) -> []int {
+    let mut out = b
+    for i in 0..s.len {
+        out.push(s[i])
+    }
+    return out
+}
+
+fn bytes_i(b: []int, v: int) -> []int {
+    let mut out = b
+    let mut w = v
+    if w < 0 {
+        out.push(45)
+        w = -w
+    }
+    if w == 0 {
+        out.push(48)
+        return out
+    }
+    let mut digits = []int {}
+    let mut t = w
+    while t > 0 {
+        digits.push(48 + t % 10)
+        t = t / 10
+    }
+    let m = digits.len
+    for i in 0..m {
+        out.push(digits[m - 1 - i])
+    }
+    return out
+}
+
+/// Value at category `i`, series `j` in the row-major flat array.
+fn chart_val(vals: []int, s: int, i: int, j: int) -> int {
+    return vals[i * s + j]
+}
+
+/// Shared y domain over series `0..s`: one axis scales every series.
+fn chart_domain(vals: []int, s: int, n: int) -> int {
+    let mut hi = 1
+    for i in 0..n {
+        for j in 0..s {
+            let v = chart_val(vals, s, i, j)
+            if v > hi {
+                hi = v
+            }
+        }
+    }
+    return hi
+}
+
+fn chart_col_x(gutter: int, col_w: int, i: int) -> int {
+    return gutter + i * col_w
+}
+
+/// Plot x of category `i` when the series spans the full plot width: the
+/// first point sits on the left grid edge and the last on the right edge,
+/// so a line/area chart has no half-column dead space at its ends.
+/// `col_w * n` is the plot width; the n marks divide it into n-1 spans.
+fn chart_pt_x(gutter: int, col_w: int, n: int, i: int) -> int {
+    if n <= 1 {
+        return gutter + col_w * n / 2
+    }
+    return gutter + i * (col_w * n) / (n - 1)
+}
+
+/// Mark x for category `i`: span mode (pt = 1, line/area charts) uses
+/// `chart_pt_x`; column mode (pt = 0, bar charts) keeps the band centers.
+fn chart_mx(pt: int, gutter: int, col_w: int, n: int, i: int) -> int {
+    if pt != 0 {
+        return chart_pt_x(gutter, col_w, n, i)
+    }
+    return chart_col_x(gutter, col_w, i) + col_w / 2
+}
+
+fn chart_y(maxv: int, plot_h: int, top: int, v: int) -> int {
+    return top + plot_h - v * plot_h / maxv
+}
+
+/// Compose svg markup; `d` is in plot coordinates and the viewBox matches
+/// the node size, so coordinates map 1:1.
+fn chart_svg(d: string, w: int, h: int, fill: string, stroke: string, sw: int) -> string {
+    let mut b = []int {}
+    b = bytes_s(b, "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ")
+    b = bytes_i(b, w)
+    b = bytes_s(b, " ")
+    b = bytes_i(b, h)
+    b = bytes_s(b, "'><path fill='")
+    b = bytes_s(b, fill)
+    b = bytes_s(b, "' stroke='")
+    b = bytes_s(b, stroke)
+    b = bytes_s(b, "' stroke-width='")
+    b = bytes_i(b, sw)
+    b = bytes_s(b, "' d='")
+    b = bytes_s(b, d)
+    b = bytes_s(b, "'/></svg>")
+    return string_from_bytes(b)
+}
+
+/// Full-size svg node for the plot, layered at 0,0.
+fn chart_layer(markup: string, w: int, h: int) -> Node {
+    return Svg(markup, width = w, height = h,
+               position = pos_absolute(), left = 0, top = 0)
+}
+
+/// Polyline for series `j` (straight segments — recharts default linear).
+fn chart_line_d(vals: []int, s: int, j: int, maxv: int, gutter: int, col_w: int,
+                plot_h: int, top: int, n: int) -> string {
+    let mut b = []int {}
+    b = bytes_s(b, "M")
+    for i in 0..n {
+        let x = chart_pt_x(gutter, col_w, n, i)
+        let y = chart_y(maxv, plot_h, top, chart_val(vals, s, i, j))
+        b = bytes_i(b, x)
+        b = bytes_s(b, " ")
+        b = bytes_i(b, y)
+        if i + 1 < n {
+            b = bytes_s(b, "L")
+        }
+    }
+    return string_from_bytes(b)
+}
+
+/// Closed polygon under series `j`: the line plus the baseline (area fill).
+fn chart_area_d(vals: []int, s: int, j: int, maxv: int, gutter: int, col_w: int,
+                plot_h: int, top: int, n: int) -> string {
+    let base = top + plot_h
+    let first_x = chart_pt_x(gutter, col_w, n, 0)
+    let last_x = chart_pt_x(gutter, col_w, n, n - 1)
+    let mut b = []int {}
+    b = bytes_s(b, "M")
+    for i in 0..n {
+        let x = chart_pt_x(gutter, col_w, n, i)
+        let y = chart_y(maxv, plot_h, top, chart_val(vals, s, i, j))
+        b = bytes_i(b, x)
+        b = bytes_s(b, " ")
+        b = bytes_i(b, y)
+        b = bytes_s(b, "L")
+    }
+    b = bytes_i(b, last_x)
+    b = bytes_s(b, " ")
+    b = bytes_i(b, base)
+    b = bytes_s(b, "L")
+    b = bytes_i(b, first_x)
+    b = bytes_s(b, " ")
+    b = bytes_i(b, base)
+    b = bytes_s(b, "Z")
+    return string_from_bytes(b)
+}
+
+/// Gridlines + y tick labels + baseline. Call with the plot pushed.
+fn chart_axes(w: int, h: int, maxv: int) {
+    let plot_h = h - CHART_TOP - CHART_XLAB
+    let base_y = CHART_TOP + plot_h
+    // Gridlines above the baseline (top = max value).
+    for k in 0..4 {
+        let line = Box(width = w - CHART_GUTTER, height = 1,
+                       background = rule(), opacity = 45,
+                       position = pos_absolute(),
+                       left = CHART_GUTTER,
+                       top = CHART_TOP + k * plot_h / 4)
+    }
+    // Y tick labels, max .. 0 (bottom 0 sits above the baseline).
+    for k in 0..5 {
+        let tv = maxv - k * maxv / 4
+        let lab = Box(align_direction = DIRECTION.Row, justify = ALIGN.End,
+                      width = CHART_GUTTER - 6, height = 12,
+                      position = pos_absolute(),
+                      left = 0,
+                      top = CHART_TOP + k * plot_h / 4 - 6) {
+            Text("{{tv}}", color = mute(), font = FONT_CAPTION)
+        }
+    }
+    // Baseline axis.
+    let axis = Box(width = w - CHART_GUTTER, height = 1, background = hard(),
+                   position = pos_absolute(),
+                   left = CHART_GUTTER,
+                   top = base_y)
+}
+
+/// One floating tooltip panel shared by every category: its content and
+/// position track the hovered column (`act` = category + 1, 0 = none)
+/// through an effect, instead of one pre-built panel per category. Style
+/// props are plain data, so a prop that must follow a signal gets `styled`.
+fn chart_tooltip(labels: []string, names: []string, vals: []int, s: int, n: int,
+                 w: int, col_w: int, act: Signal<int>, pt: int) {
+    let panel = Box(
+        align_direction = DIRECTION.Column,
+        width = 128,
+        spacing = 4,
+        padding_x = 10,
+        padding_y = 6,
+        background = plate(),
+        border = HAIRLINE,
+        border_color = chart_edge(),
+        radius = RAD_LG,
+        position = pos_absolute(),
+        top = 0,
+        z_index = 8,
+        on_click = fn() { return },
+        a11y_role = "dialog",
+        visible = act
+    )
+    enter_fade(panel)
+    // Slide to the hovered mark; -1 (no pin) while `act` is 0, when the
+    // panel is hidden anyway.
+    styled(panel, || {
+        let a = act.get() - 1
+        let mut x = -1
+        if a >= 0 {
+            if a < n {
+                x = chart_mx(pt, CHART_GUTTER, col_w, n, a) - 64
+                if x < CHART_GUTTER {
+                    x = CHART_GUTTER
+                }
+                let max_l = w - 128 - CHART_GUTTER
+                if x > max_l {
+                    x = max_l
+                }
+            }
+        }
+        arena.nodes[panel.id].pin_l = x
+    })
+    slot(panel, || {
+        Text(fn() -> string {
+            let a = act.get() - 1
+            if a >= 0 {
+                if a < n {
+                    return labels[a]
+                }
+            }
+            return ""
+        }, color = ink(), font = FONT_CAPTION)
+        for j in 0..s {
+            let jj = j
+            Row(SPACE.Exs) {
+                Box(width = 8, height = 8, radius = 2, background = chart_color(jj))
+                Text(names[jj], color = mute(), font = FONT_CAPTION)
+                Grow()
+                Text(fn() -> string {
+                    let a = act.get() - 1
+                    if a >= 0 {
+                        if a < n {
+                            return "{{vals[a * s + jj]}}"
+                        }
+                    }
+                    return ""
+                }, color = ink(), font = FONT_CAPTION)
+            }
+        }
+    })
+}
+
+/// Transparent hover zone for a category. Hovering it flips its own
+/// signal; a watch effect folds that into the shared `act`. Span mode
+/// gives each mark a contiguous catch strip from the midpoint of the
+/// previous mark to the midpoint of the next (the ends reach the plot
+/// edges), so the pointer always lands on the nearest mark; column mode
+/// keeps the full-band coverage of the bar columns.
+fn chart_zone(i: int, hov: Signal<int>, act: Signal<int>, h: int, col_w: int, pt: int,
+              n: int) {
+    let mut zl = 0
+    let mut zw = col_w
+    if pt != 0 {
+        // Span mode: Voronoi strip around mark `i`.
+        if n <= 1 {
+            zl = CHART_GUTTER
+            zw = col_w * n
+        } else {
+            if i == 0 {
+                zl = CHART_GUTTER
+            } else {
+                zl = (chart_pt_x(CHART_GUTTER, col_w, n, i - 1) + chart_pt_x(CHART_GUTTER, col_w, n, i)) / 2
+            }
+            if i == n - 1 {
+                zw = CHART_GUTTER + col_w * n - zl
+            } else {
+                let zr = (chart_pt_x(CHART_GUTTER, col_w, n, i) + chart_pt_x(CHART_GUTTER, col_w, n, i + 1)) / 2
+                zw = zr - zl
+            }
+        }
+    } else {
+        zl = chart_col_x(CHART_GUTTER, col_w, i)
+    }
+    let zone = Box(width = zw, height = h,
+                   position = pos_absolute(),
+                   left = zl,
+                   top = 0)
+    hover(zone, hov)
+    styled(zone, || {
+        if hov.get() > 0 {
+            act.set(i + 1)
+        } else {
+            if act.get() == i + 1 {
+                act.set(0)
+            }
+        }
+    })
+}
+
+/// X category label under the plot, rotated 45° clockwise around its top-left.
+/// Rotated labels are parallel diagonal strips, so they never collide with
+/// each other however narrow the plot gets; CHART_XLAB reserves their room.
+fn chart_xlab(label: string, i: int, col_w: int, plot_h: int, pt: int, n: int) {
+    // 8px of air below the baseline axis: the rotated strip starts below the
+    // line, not on it (the pivot corner is the strip's top edge). Span mode
+    // labels sit just left of their mark so the strip stays inside the plot.
+    let x = if pt != 0 { chart_pt_x(CHART_GUTTER, col_w, n, i) - 4 } else { chart_col_x(CHART_GUTTER, col_w, i) + 3 }
+    let lab = Text(label, color = mute(), font = FONT_CAPTION,
+                   position = pos_absolute(),
+                   left = x,
+                   top = CHART_TOP + plot_h + 8)
+    text_rot(lab, 45)
+}
+
+/// Bottom-centered legend, 16px between entries.
+fn chart_legend(names: []string) {
+    Box(align_direction = DIRECTION.Row, spacing = 16,
+        justify = ALIGN.Center, wrap = 1) {
+        Each(names, fn(j, name) {
+            Row(SPACE.Exxs) {
+                Box(width = 8, height = 8, radius = 2, background = chart_color(j))
+                Text(name, color = mute(), font = FONT_CAPTION)
+            }
+        })
+    }
+}
+
+/// Hover cursor: a single hairline through the hovered mark (no wash band).
+/// `act` = category + 1; the line shows and slides with it.
+fn chart_cursor(act: Signal<int>, n: int, col_w: int, plot_h: int, pt: int) {
+    let line = Box(width = 1, height = plot_h, background = hard(),
+                   opacity = 55, radius = 0, a11y_label = "cursor",
+                   position = pos_absolute(),
+                   top = CHART_TOP)
+    styled(line, || {
+        let a = act.get() - 1
+        let mut x = -1
+        if a >= 0 {
+            if a < n {
+                x = chart_mx(pt, CHART_GUTTER, col_w, n, a)
+            }
+        }
+        arena.nodes[line.id].pin_l = x
+    })
+    show(line, act)
+}
+
+/// Hover zones + the shared cursor + the single following tooltip; call with
+/// the plot pushed. `act` is created by the chart builder so the marks can
+/// dim for the hovered column. `pt` = 1 for plot-spanning line/area charts
+/// (zone strips snap to the nearest mark), 0 for column-mode bar charts.
+fn chart_tooltips(labels: []string, names: []string, vals: []int, s: int, n: int,
+                  h: int, w: int, col_w: int, act: Signal<int>, pt: int) {
+    for i in 0..n {
+        let hov = signal(0)
+        chart_zone(i, hov, act, h, col_w, pt, n)
+    }
+    chart_cursor(act, n, col_w, h - CHART_TOP - CHART_XLAB, pt)
+    chart_tooltip(labels, names, vals, s, n, w, col_w, act, pt)
+}
+
+/// Dim/restore a mark for the hovered column: full at rest or on its own
+/// column, faded while another column is hovered.
+fn chart_dim(act: Signal<int>, i: int) -> int {
+    let a = act.get()
+    if a == 0 {
+        return 100
+    }
+    if a == i + 1 {
+        return 100
+    }
+    return 40
+}
+
+/// Resolve the plot width: a measured host width wins (the host stretches
+/// with its parent, so the chart re-fits on window resize); before the first
+/// layout the caller's estimate is used.
+fn chart_w(w: int, host: Node) -> int {
+    let mw = measured_width(host)
+    if mw > CHART_GUTTER + 8 {
+        return mw
+    }
+    return w
+}
+
+fn chart_bars(labels: []string, names: []string, vals: []int, n: int, s: int,
+              w: int, h: int, host: Node) {
+    let gw = chart_w(w, host)
+    let plot_h = h - CHART_TOP - CHART_XLAB
+    let col_w = (gw - CHART_GUTTER) / n
+    let domain = chart_domain(vals, s, n)
+    let base_y = CHART_TOP + plot_h
+    let bar_w = (col_w - 10) / s
+    // Shared hovered mark: zones, cursor, tooltip, and the marks read it.
+    let act = signal(0)
+    let plot = Box(width = gw, height = h)
+    slot(plot, || {
+        chart_axes(gw, h, domain)
+        for i in 0..n {
+            let x0 = chart_col_x(CHART_GUTTER, col_w, i) + 5
+            let ii = i
+            for j in 0..s {
+                let v = chart_val(vals, s, i, j)
+                let bh = geometry.max2(v * plot_h / domain, 1)
+                if v > 0 {
+                    let bar = Box(width = bar_w, height = bh, radius = 3,
+                                  background = chart_color(j),
+                                  position = pos_absolute(),
+                                  left = x0 + j * bar_w,
+                                  top = base_y - bh)
+                    styled(bar, || { opacity(bar, chart_dim(act, ii)) })
+                }
+            }
+            chart_xlab(labels[i], i, col_w, plot_h, 0, n)
+        }
+        chart_tooltips(labels, names, vals, s, n, h, gw, col_w, act, 0)
+    })
+    chart_legend(names)
+}
+
+fn chart_lines(labels: []string, names: []string, vals: []int, n: int, s: int,
+               w: int, h: int, host: Node) {
+    let gw = chart_w(w, host)
+    let plot_h = h - CHART_TOP - CHART_XLAB
+    let col_w = (gw - CHART_GUTTER) / n
+    let domain = chart_domain(vals, s, n)
+    // Shared hovered mark: zones, cursor, tooltip, and the marks read it.
+    let act = signal(0)
+    let plot = Box(width = gw, height = h)
+    slot(plot, || {
+        chart_axes(gw, h, domain)
+        for j in 0..s {
+            let d = chart_line_d(vals, s, j, domain, CHART_GUTTER, col_w, plot_h,
+                                 CHART_TOP, n)
+            let line_l = chart_layer(chart_svg(d, gw, h, "none", chart_stroke_light(j), 2), gw, h)
+            let line_d = chart_layer(chart_svg(d, gw, h, "none", chart_stroke_dark(j), 2), gw, h)
+            show_eq(line_l, appearance(), 0)
+            show_eq(line_d, appearance(), 1)
+            for i in 0..n {
+                let x = chart_pt_x(CHART_GUTTER, col_w, n, i)
+                let y = chart_y(domain, plot_h, CHART_TOP, chart_val(vals, s, i, j))
+                let dot = Box(width = 6, height = 6, radius = 3,
+                              background = chart_color(j),
+                              position = pos_absolute(),
+                              left = x - 3,
+                              top = y - 3)
+            }
+        }
+        for i in 0..n {
+            chart_xlab(labels[i], i, col_w, plot_h, 1, n)
+        }
+        chart_tooltips(labels, names, vals, s, n, h, gw, col_w, act, 1)
+    })
+    chart_legend(names)
+}
+
+fn chart_areas(labels: []string, names: []string, vals: []int, n: int, s: int,
+               w: int, h: int, host: Node) {
+    let gw = chart_w(w, host)
+    let plot_h = h - CHART_TOP - CHART_XLAB
+    let col_w = (gw - CHART_GUTTER) / n
+    let domain = chart_domain(vals, s, n)
+    // Shared hovered mark: zones, cursor, tooltip, and the marks read it.
+    let act = signal(0)
+    let plot = Box(width = gw, height = h)
+    slot(plot, || {
+        chart_axes(gw, h, domain)
+        for j in 0..s {
+            let d = chart_area_d(vals, s, j, domain, CHART_GUTTER, col_w, plot_h,
+                                 CHART_TOP, n)
+            let fd = chart_svg(d, gw, h, chart_fd(j), "none", 0)
+            let fl = chart_svg(d, gw, h, chart_fl(j), "none", 0)
+            let area_l = chart_layer(fl, gw, h)
+            let area_d = chart_layer(fd, gw, h)
+            show_eq(area_l, appearance(), 0)
+            show_eq(area_d, appearance(), 1)
+            let dl = chart_line_d(vals, s, j, domain, CHART_GUTTER, col_w, plot_h,
+                                  CHART_TOP, n)
+            let line_l = chart_layer(chart_svg(dl, gw, h, "none", chart_stroke_light(j), 2), gw, h)
+            let line_d = chart_layer(chart_svg(dl, gw, h, "none", chart_stroke_dark(j), 2), gw, h)
+            show_eq(line_l, appearance(), 0)
+            show_eq(line_d, appearance(), 1)
+            for i in 0..n {
+                let x = chart_pt_x(CHART_GUTTER, col_w, n, i)
+                let y = chart_y(domain, plot_h, CHART_TOP, chart_val(vals, s, i, j))
+                let dot = Box(width = 6, height = 6, radius = 3,
+                              background = chart_color(j),
+                              position = pos_absolute(),
+                              left = x - 3,
+                              top = y - 3)
+                let ii = i
+                styled(dot, || { opacity(dot, chart_dim(act, ii)) })
+            }
+        }
+        for i in 0..n {
+            chart_xlab(labels[i], i, col_w, plot_h, 1, n)
+        }
+        chart_tooltips(labels, names, vals, s, n, h, gw, col_w, act, 1)
+    })
+    chart_legend(names)
+}
+
+fn cal_leap(year: int) -> int {
+    if year % 4 != 0 {
+        return 0
+    }
+    if year % 100 != 0 {
+        return 1
+    }
+    if year % 400 == 0 {
+        return 1
+    }
+    return 0
+}
+
+fn cal_len(year: int, month: int) -> int {
+    if month == 2 {
+        if cal_leap(year) != 0 {
+            return 29
+        }
+        return 28
+    }
+    if month == 4 {
+        return 30
+    }
+    if month == 6 {
+        return 30
+    }
+    if month == 9 {
+        return 30
+    }
+    if month == 11 {
+        return 30
+    }
+    return 31
+}
+
+fn cal_month_t(month: int) -> int {
+    if month == 1 { return 0 }
+    if month == 2 { return 3 }
+    if month == 3 { return 2 }
+    if month == 4 { return 5 }
+    if month == 5 { return 0 }
+    if month == 6 { return 3 }
+    if month == 7 { return 5 }
+    if month == 8 { return 1 }
+    if month == 9 { return 4 }
+    if month == 10 { return 6 }
+    if month == 11 { return 2 }
+    return 4
+}
+
+fn cal_first_monday(year: int, month: int) -> int {
+    let mut y = year
+    if month < 3 {
+        y = y - 1
+    }
+    let s = y + y / 4 - y / 100 + y / 400 + cal_month_t(month) + 1
+    let sun = s % 7
+    return (sun + 6) % 7
+}
+
+fn cal_month_name(m: int) -> string {
+    match m {
+        1 => { return "January" }
+        2 => { return "February" }
+        3 => { return "March" }
+        4 => { return "April" }
+        5 => { return "May" }
+        6 => { return "June" }
+        7 => { return "July" }
+        8 => { return "August" }
+        9 => { return "September" }
+        10 => { return "October" }
+        11 => { return "November" }
+        _ => { return "December" }
+    }
+}
+
+/// Day number for grid cell `idx` (0-based) in the month `m` of `year`,
+/// or 0 for a leading/trailing blank. Cells stay fixed; the value is
+/// recomputed from the live y/m signals, so flipping month or year only
+/// re-runs the cell prop thunks — no rebuild, no 12 pre-built grids.
+fn cal_day_at(year: int, m: int, idx: int) -> int {
+    let day = idx - cal_first_monday(year, m) + 1
+    if day < 1 {
+        return 0
+    }
+    if day > cal_len(year, m) {
+        return 0
+    }
+    return day
+}
+
+/// Card chrome. `Card()` keeps the recipe; pass any style prop to restyle
+/// it without copying the widget (`Card(radius = 6, padding = 12)`).
+/// `visible` and `bind` go through `Component`.
+struct CardProps {
+    /// Style props. Plain data — `radius = 4`, `background = paper()`. Each
+    /// is re-evaluated by the effect that owns that attribute, so it follows
+    /// a theme switch. `-1` / `""` keep the recipe's own value.
+    background: string = "",
+    color: string = "",
+    /// Elevation 0..4; defaults to 1 (a resting card).
+    elevation: int = -1,
+    radius: int = -1,
+    padding: int = -1,
+    padding_x: int = -1,
+    padding_y: int = -1,
+    width: int = -1,
+    height: int = -1,
+    /// Bounds the card can lay out within. `Box` has always had these; the
+    /// recipe dropped them, so `Card(min_width = …)` was an unknown field.
+    min_width: int = -1,
+    max_width: int = -1,
+    min_height: int = -1,
+    max_height: int = -1,
+    font: int = -1,
+    border: int = -1,
+    border_color: string = "",
+    spacing: int = -1,
+
+    visible: Signal<int> = Signal { id: 0 },
+    visible__set: bool = false,
+    bind: Signal<int> = Signal { id: 0 },
+    bind__set: bool = false,
+    /// Interactive card: a pointer target with a hover lift and `on_click`
+    /// (role `button`). `on_click` alone implies it.
+    interactive: bool = false,
+    on_click: fn() = noop,
+    on_click__set: bool = false,
+    /// Elevation the card lifts to on hover (default 3 when interactive,
+    /// 0 = no lift). Paint-only: the shadow blends on the hover track.
+    lift: int = -1,
+    /// Header row above the body: `title` (heading type) and `subtitle`
+    /// (muted caption). Either empty = no header.
+    title: string = "",
+    subtitle: string = "",
+    /// Media strip above everything: an image `src` at `media_height` dp,
+    /// bleeding to the card edge under the top corners.
+    media: string = "",
+    media_height: int = 160,
+    /// Footer row under the body, separated by a hairline; built by this
+    /// thunk (actions, a caption). Omit for none.
+    footer: fn() = noop,
+    footer__set: bool = false,
+    /// Chord that activates this node: `"cmd+s"`, `"ctrl+shift+p"`, or a
+    /// sequence like `"g d"`. Every widget takes it — key binding is a prop,
+    /// not something a particular widget hard-codes.
+    key: string = "",
+    /// Name the chord resolves to, so an app can remap it with `remap_key`
+    /// without touching the widget. Defaults to `"key.<chord>"`.
+    key_action: string = "",
+    /// Handler for the chord; omit it and the chord runs `on_click`.
+    on_key: fn() = noop,
+    on_key__set: bool = false,
+    /// true = fires wherever focus is, instead of only on this node.
+    key_global: bool = false,
+}
+
+/// Card body slot. The trailing block lands here — after the media and
+/// header, before the footer — so `Card(title = "…") { … }` reads top-down.
+fn Card(p: CardProps) -> Node {
+    let interactive = p.interactive || p.on_click__set
+    let mut cursor = ""
+    let mut role = ""
+    if interactive {
+        cursor = "pointer"
+        role = "button"
+    }
+    let mut pad_top = px_or_default(p.padding_y, px_or_default(p.padding, 16))
+    if p.media.len > 0 {
+        pad_top = 0
+    }
+    let n = Box(
+        align_direction = DIRECTION.Column,
+        spacing = px_or_default(p.spacing, SPACE.Xs),
+        background = str_or_default(p.background, plate()),
+        padding_x = px_or_default(p.padding_x, px_or_default(p.padding, 20)),
+        padding_top = pad_top,
+        padding_bottom = px_or_default(p.padding_y, px_or_default(p.padding, 16)),
+        radius = px_or_default(p.radius, RAD_XL),
+        border = px_or_default(p.border, HAIRLINE),
+        border_color = str_or_default(p.border_color, rule()),
+        elevation = px_or_default(p.elevation, 1),
+        color = p.color,
+        font = p.font,
+        width = p.width,
+        height = p.height,
+        min_width = p.min_width,
+        max_width = p.max_width,
+        min_height = p.min_height,
+        max_height = p.max_height,
+        visible = p.visible,
+        bind = p.bind,
+        on_click = p.on_click,
+        on_click__set = p.on_click__set,
+        cursor = cursor,
+        a11y_role = role
+    )
+    if interactive {
+        hover_lift(n, px_or_default(p.lift, 3))
+        press_scale(n)
+        arena.nodes[n.id].press = u8(1)
+    } else if p.lift > 0 {
+        hover_lift(n, p.lift)
+    }
+    let has_header = p.title.len > 0 || p.subtitle.len > 0
+    if p.media.len > 0 || has_header {
+        ui_push(n.id)
+        if p.media.len > 0 {
+            // Negative side margins pull the strip out to the card edge;
+            // the top corners follow the card radius.
+            let r = px_or_default(p.radius, RAD_XL)
+            let px = px_or_default(p.padding_x, px_or_default(p.padding, 20))
+            let strip = Box(height = p.media_height, radius = r)
+            // Props drop negatives (-1 = unset), so the bleed is set directly.
+            marginLeft(strip, -px)
+            marginRight(strip, -px)
+            overflow(strip, overflow_hidden())
+            slot(strip, || {
+                Image(p.media, height = p.media_height, fit = IMAGE_FIT.Cover, grow = 1)
+            })
+            let signal_id = strip.id
+            arena.nodes[signal_id].a11y_role = "img"
+        }
+        if has_header {
+            let hd = Column(2)
+            arena.nodes[hd.id].a11y_role = "heading"
+            slot(hd, || {
+                if p.title.len > 0 {
+                    Text(p.title, color = ink(), font = FONT_TITLE)
+                }
+                if p.subtitle.len > 0 {
+                    Text(p.subtitle, color = mute(), font = FONT_CAPTION)
+                }
+            })
+        }
+        ui_pop()
+    }
+    if p.footer__set {
+        // The caller's trailing block is emitted after this returns, so the
+        // footer built here would sit above it. An inner body column takes
+        // the block (`slot_into`), and the footer follows that column.
+        ui_push(n.id)
+        let body = Column(px_or_default(p.spacing, SPACE.Xs))
+        Separator()
+        let f = Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
+                    spacing = SPACE.Exs)
+        arena.nodes[f.id].a11y_role = "contentinfo"
+        slot(f, p.footer)
+        ui_pop()
+        arena.nodes[n.id].slot_into = body.id
+    }
+    return n
+}
+
+fn cell_num(s: string) -> CellNum {
+    let mut i = 0
+    let mut neg = false
+    if s.len > 0 {
+        if s[0] == 45 {
+            neg = true
+            i = 1
+        } else if s[0] == 43 {
+            i = 1
+        }
+    }
+    let mut v = 0
+    let mut digits = 0
+    while i < s.len {
+        let c = s[i]
+        if c < 48 || c > 57 {
+            break
+        }
+        v = v * 10 + (c - 48)
+        digits = digits + 1
+        i = i + 1
+    }
+    if digits == 0 {
+        return CellNum(ok = false, v = 0)
+    }
+    if neg {
+        v = -v
+    }
+    return CellNum(ok = true, v = v)
+}
+
+/// Parse a cell as an integer (optional sign, digits, then anything —
+/// "12", "-3", "30 kg" all count; "" and "abc" do not). Returns the value
+/// and whether it parsed, so numeric columns sort by value.
+struct CellNum {
+    ok: bool,
+    v: int,
+}
+
