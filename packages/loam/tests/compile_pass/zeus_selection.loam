@@ -6,6 +6,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:colors"
 import "std:design"
 
 let mut labels: []string = []string {}

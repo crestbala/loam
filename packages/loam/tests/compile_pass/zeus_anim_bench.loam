@@ -8,6 +8,7 @@ import "std:async"
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:colors"
 import "std:design"
 
 const N: int = 40
@@ -35,7 +36,7 @@ fn main() {
     // work (a live track ticking, paint marked, layout skipped).
     i = 0
     while i < N {
-        zeus.animate(sigs[i], 100, 1000000)
+        colors.animate(sigs[i], 100, 1000000)
         i = i + 1
     }
     // Warm up (buffer growth, first paint).

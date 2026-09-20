@@ -2,6 +2,7 @@
 // Keep stdout as the golden; no extra prints.
 
 import "std:zeus"
+import "std:colors"
 import "std:design"
 
 fn main() {

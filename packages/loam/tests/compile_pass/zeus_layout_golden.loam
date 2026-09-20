@@ -5,6 +5,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:colors"
 import "std:design"
 
 fn expect(ok: bool, what: string) {
@@ -29,7 +30,7 @@ fn main() {
                 design.Button("c", width = 60, height = 24, on_click = fn() {})
             }
             // 2x2 grid of fixed cells: columns then rows at gap 8.
-            design.Grid(config = zeus.GridConfig(columns = 2, gap = 8)) {
+            design.Grid(config = colors.GridConfig(columns = 2, gap = 8)) {
                 design.Button("g1", width = 70, height = 40, on_click = fn() {})
                 design.Button("g2", width = 70, height = 40, on_click = fn() {})
                 design.Button("g3", width = 70, height = 40, on_click = fn() {})
@@ -38,7 +39,7 @@ fn main() {
             // Responsive grid: a 130 dp floor at gap 8 has room for three
             // cells across the 416 point content width, but `columns = 2` is
             // the cap, so two 204 wide cells and the rest wrap.
-            design.Grid(config = zeus.GridConfig(columns = 2, auto_columns = 130, gap = 8)) {
+            design.Grid(config = colors.GridConfig(columns = 2, auto_columns = 130, gap = 8)) {
                 design.Button("a1", height = 20, on_click = fn() {})
                 design.Button("a2", height = 20, on_click = fn() {})
                 design.Button("a3", height = 20, on_click = fn() {})
@@ -46,7 +47,7 @@ fn main() {
             }
             // Same floor, no cap, half the width: the floor alone decides and
             // 200 points leaves a single column.
-            design.Grid(config = zeus.GridConfig(auto_columns = 130, gap = 8), width = 200) {
+            design.Grid(config = colors.GridConfig(auto_columns = 130, gap = 8), width = 200) {
                 design.Button("b1", height = 20, on_click = fn() {})
                 design.Button("b2", height = 20, on_click = fn() {})
             }

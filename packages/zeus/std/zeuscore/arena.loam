@@ -1010,7 +1010,7 @@ fn store_sig_paint(id: int, value: int) {
 //
 // `sig_paint` is the one overlay: a `SigVal` track interpolates a signal's
 // *paint* value while the signal's logical value (and so every effect bound to
-// it) has already moved to the target. That is what lets `zeus.animate` stop
+// it) has already moved to the target. That is what lets `colors.animate` stop
 // re-running effects per frame without changing its signature.
 
 // Which paint value a track drives. All are paint-only, so a frame that only
@@ -1066,7 +1066,7 @@ let mut sig_anim: []int = []int {}
 let mut anim_booted: int = 0
 let mut in_anim_tick: int = 0
 
-// Layout-driving `zeus.animate`: a signal write that lands on Width / Height /
+// Layout-driving `colors.animate`: a signal write that lands on Width / Height /
 // a pin is recorded here so the tick can tween the node field and reflow.
 // Hover still skips layout; only these bindings mark it (same idea as
 // `live_anchors`). Cap is fixed, no per-frame allocation.
@@ -1540,7 +1540,7 @@ fn live_layout_anims_count() -> int {
     return live_layout_anims
 }
 
-/// `zeus.animate`: move a signal's *state* to `to` once (effects run once),
+/// `colors.animate`: move a signal's *state* to `to` once (effects run once),
 /// then interpolate its paint value on the track pool. A layout prop that
 /// the same write lands on (width / height / a pin) stays at `from` and
 /// tweens toward `to` on this track, reflowing each frame until it lands.

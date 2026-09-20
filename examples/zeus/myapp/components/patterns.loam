@@ -3,6 +3,7 @@
 
 import "std:zeus"
 import "std:colors"
+import "std:colors"
 import "std:design"
 
 let mut chart_labs: []string = []string {}
