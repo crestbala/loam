@@ -1,0 +1,59 @@
+// Phase 4: targeted invalidation. A paint-only property write marks exactly the
+// node it wrote and skips layout, so the frame damages that node instead of the
+// whole surface. A layout property write still relayouts.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn main() {
+    zeus.window("invalidation", 240, 160)
+    let op = zeus.signal(100)
+    let wd = zeus.signal(50)
+    let mut box_id = 0
+    zeus.root(zeus.Box(padding = 10) {
+        let b = zeus.Box(width = 50, height = 20, background = "#ff0000")
+        box_id = b.id
+        zeus.styled(b, || { zeus.set_prop_int(b, zeus.SET.Opacity, op.get()) })
+        zeus.styled(b, || { zeus.set_prop_int(b, zeus.SET.Width, wd.get()) })
+    })
+    zeus.pump_frame()
+    must(zeus.damage_full() == 1, "a layout frame damages the whole surface")
+
+    // Paint-only: opacity. The frame must not relayout, and must damage exactly
+    // the node the property landed on.
+    op.set(50)
+    zeus.engine_layout(240, 160)
+    must(zeus.damage_full() == 0, "a paint-only prop write is not a full repaint")
+    zeus.engine_paint()
+    must(zeus.damage_full() == 0, "paint stays local")
+    must(zeus.damage_count() >= 1, "the written node contributed damage")
+
+    // A paint-only write does not move geometry.
+    must(zeus.node_width(box_id) == 50, "opacity left the width alone")
+
+    // Layout: width. It relayouts, and a relayout damages the whole surface.
+    wd.set(80)
+    zeus.engine_layout(240, 160)
+    must(zeus.damage_full() == 1, "a layout prop write relayouts")
+    must(zeus.node_width(box_id) == 80, "the width landed")
+
+    // A signal read by nothing that moves geometry still reacts: a second
+    // paint-only write after a layout frame is again local.
+    zeus.engine_paint()
+    op.set(20)
+    zeus.engine_layout(240, 160)
+    must(zeus.damage_full() == 0, "paint-only again after a layout frame")
+    zeus.engine_paint()
+    must(zeus.damage_count() >= 1, "and it damages the node")
+
+    fmt.println("invalidation ok")
+}

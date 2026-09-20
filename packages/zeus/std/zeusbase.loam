@@ -1634,10 +1634,12 @@ fn apply_int(node_id: int, setter: int, v: int) {
         }
         _ => {}
     }
+    // Report the write so the frame marks this node (a paint-only property) or
+    // layout, instead of the whole surface. See `arena.note_prop_write`.
     if setter_is_paint_only(setter) {
-        arena.mark_paint()
+        arena.note_prop_write(node_id, 0)
     } else {
-        arena.mark_layout()
+        arena.note_prop_write(node_id, 1)
     }
 }
 
@@ -1656,7 +1658,7 @@ fn apply_str(node_id: int, setter: int, v: string) {
     match setter {
         SET.Text => {
             arena.nodes[node_id].text = v
-            arena.mark_layout()
+            arena.note_prop_write(node_id, 1)
         }
         SET.A11yLabel => { arena.nodes[node_id].a11y_label = v }
         SET.A11yRole => { arena.nodes[node_id].a11y_role = v }
