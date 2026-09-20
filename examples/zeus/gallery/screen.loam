@@ -3,6 +3,7 @@
 // Dark restyles the whole palette via `zeus.appearance()`.
 import "std:async"
 import "std:zeus"
+import "std:colors"
 import "std:spacing"
 import "std:design"
 import "std:kv"
@@ -28,8 +29,8 @@ fn RamChip() {
     }
     zeus.Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
              spacing = SPACE.Exxs, padding_x = 10, padding_y = 4, height = 26,
-             radius = spacing.RAD_FULL, background = zeus.raised()) {
-        zeus.Text("RAM {{fmt_mb(ram.get())}}", color = zeus.mute(), font = spacing.FONT_CAPTION)
+             radius = spacing.RAD_FULL, background = colors.raised()) {
+        zeus.Text("RAM {{fmt_mb(ram.get())}}", color = colors.mute(), font = spacing.FONT_CAPTION)
     }
 }
 
@@ -45,7 +46,7 @@ fn Navbar(page: Signal<int>) {
             design.Grow()
             AccentDots()
             RamChip()
-            zeus.Text("Dark", color = zeus.mute(), font = spacing.FONT_CONTROL)
+            zeus.Text("Dark", color = colors.mute(), font = spacing.FONT_CONTROL)
             design.Switch(zeus.appearance())
         }
         design.Separator()
@@ -95,7 +96,7 @@ fn ProjectCard() {
             design.Button("Cancel", look = zeus.LOOK.Outline, size = zeus.SIZE.Md, on_click = fn() => ticks.set(ticks.get() + 1))
             design.Button("Save", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => ticks.set(ticks.get() + 1))
             design.Grow()
-            zeus.Text("{{ticks.get()}}", color = zeus.mute(), font = spacing.FONT_CAPTION)
+            zeus.Text("{{ticks.get()}}", color = colors.mute(), font = spacing.FONT_CAPTION)
         }
     }
 }
@@ -138,7 +139,7 @@ fn Customize() {
         design.Card(radius = 6, padding = 12) {
             design.Body("This card used radius = 6, padding = 12.")
         }
-        design.Comp(background = zeus.raised(), radius = 10,
+        design.Comp(background = colors.raised(), radius = 10,
                   padding = 12, spacing = 8,
                   align_direction = DIRECTION.Row, align_items = ALIGN.Center) {
             design.Pip(zeus.accent(), 8)
@@ -346,8 +347,8 @@ fn Upload() {
             justify = ALIGN.Center,
             height = 200,
             radius = 8,
-            background = zeus.raised()) {
-            zeus.Text("No image yet", color = zeus.mute(), font = spacing.FONT_CAPTION)
+            background = colors.raised()) {
+            zeus.Text("No image yet", color = colors.mute(), font = spacing.FONT_CAPTION)
         }
         zeus.show_eq(empty, pw, 0)
         // No `width` / `max_width` / aspect wiring: `Image` takes the decoded
@@ -420,7 +421,7 @@ fn Components() {
 
 fn NameRow(name: string) -> Node {
     design.Row(SPACE.Sm) {
-        design.Pip(zeus.mute(), 6)
+        design.Pip(colors.mute(), 6)
         design.Body(name)
     }
 }
@@ -453,7 +454,7 @@ fn Cards() {
     design.SectionTitle("Surfaces", "Cards")
     design.Grid(config = GridConfig(columns = 3, gap = SPACE.Md)) {
         design.Card() { design.Pip(zeus.accent(), 8) design.Title("Small") design.Body("Neutral primary on paper.") }
-        design.Card() { design.Pip(zeus.ok(), 8) design.Title("Medium") design.Body("Rounded-xl is the card radius.") }
+        design.Card() { design.Pip(colors.ok(), 8) design.Title("Medium") design.Body("Rounded-xl is the card radius.") }
         design.Card() { design.Pip(zeus.danger(), 8) design.Title("Large") design.Body("Badges and caps mark status.") }
     }
 }
@@ -542,7 +543,7 @@ fn Disclosure() {
     design.SectionHeader("Disclosure", "Accordion and collapsible",
                        "One open index closes the rest by construction; the collapsible is the same model without the card. Chevron and body fade are paint-only.")
     design.Accordion(open, items = rows)
-    design.Collapsible(open = more, title = "Advanced options", border_color = zeus.rule()) {
+    design.Collapsible(open = more, title = "Advanced options", border_color = colors.rule()) {
         design.Body("A bare disclosure: a header row, a chevron, and a body that fades in.")
     }
 }
@@ -567,9 +568,9 @@ fn Menus() {
             spacing = 4,
             padding_x = 12,
             padding_y = 8,
-            background = zeus.plate(),
+            background = colors.plate(),
             border = spacing.HAIRLINE,
-            border_color = zeus.rule(),
+            border_color = colors.rule(),
             radius = spacing.RAD_MD,
             cursor = "pointer",
             hover_off = false,
@@ -578,11 +579,11 @@ fn Menus() {
             a11y_label = "Open menu"
         ) {
             zeus.Text(active_label.get(), color = zeus.ink(), font = spacing.FONT_CONTROL)
-            design.Icon(zeus.IC_CHEV_DOWN, 16, zeus.dim())
+            design.Icon(zeus.IC_CHEV_DOWN, 16, colors.dim())
         }
         design.Menu(trigger, width = 200, label = "File", items = menu_items,
                   on_select = fn(i: int) => active_label.set(menu_items[i].label))
-        zeus.Text("last command: {{active_label.get()}}", color = zeus.mute(), font = spacing.FONT_BODY)
+        zeus.Text("last command: {{active_label.get()}}", color = colors.mute(), font = spacing.FONT_BODY)
     }
 }
 
@@ -593,7 +594,7 @@ fn Feedback() {
         design.Row(SPACE.Md) {
             design.Spinner()
             design.Spinner(size = 24, color = zeus.ink())
-            zeus.Text("Working...", color = zeus.mute(), font = spacing.FONT_BODY)
+            zeus.Text("Working...", color = colors.mute(), font = spacing.FONT_BODY)
         }
     }
     design.Card() {
@@ -656,8 +657,8 @@ fn States() {
     design.Card() {
         design.Note("Field — resting · disabled · invalid")
         design.Row(SPACE.Sm) {
-            StateField("ada@lovelace.dev", zeus.rule(), 0, 0)
-            StateField("ada@lovelace.dev", zeus.rule(), 1, 0)
+            StateField("ada@lovelace.dev", colors.rule(), 0, 0)
+            StateField("ada@lovelace.dev", colors.rule(), 1, 0)
             StateField("not-an-email", zeus.danger(), 0, 1)
         }
     }
@@ -690,7 +691,7 @@ fn Floating() {
                     on_click = fn() => drawer.set(1))
     }
     design.Toast(toast, width = 200) {
-        zeus.Text("Saved", color = zeus.on_ink(), font = spacing.FONT_BODY)
+        zeus.Text("Saved", color = colors.on_ink(), font = spacing.FONT_BODY)
     }
     design.Drawer(drawer, side = design.SIDE.SideEnd, size = 300) {
         design.Title("Filters")

@@ -4,6 +4,7 @@
 
 import "std:async"
 import "std:zeus"
+import "std:colors"
 import "std:spacing"
 import "std:design"
 import "std:router"
@@ -20,11 +21,11 @@ fn RamChip() {
     }
     zeus.Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
              spacing = SPACE.Exxs, padding_x = 10, padding_y = 4, height = 26,
-             radius = spacing.RAD_FULL, background = zeus.raised()) {
+             radius = spacing.RAD_FULL, background = colors.raised()) {
         zeus.Text(fn() -> string {
             let mb = ram.get() / 1024
             return "RAM {{mb}} MB"
-        }, color = zeus.mute(), font = spacing.FONT_CAPTION)
+        }, color = colors.mute(), font = spacing.FONT_CAPTION)
     }
 }
 
@@ -50,7 +51,7 @@ fn NavLink(label: string, href: string) {
     let text = zeus.Text(label, font = spacing.FONT_BODY)
     zeus.ui_pop()
     zeus.selected_chrome(item, text, || { path.get() == href },
-                         zeus.raised(), "", zeus.ink(), zeus.mute())
+                         colors.raised(), "", zeus.ink(), colors.mute())
 }
 
 /// Top bar: brand, route links, live RAM, and the light/dark switch. The
@@ -70,7 +71,7 @@ fn Navbar() {
             NavLink("Pricing", "/pricing")
             design.Grow()
             RamChip()
-            zeus.Text("Dark", color = zeus.mute(), font = spacing.FONT_CONTROL)
+            zeus.Text("Dark", color = colors.mute(), font = spacing.FONT_CONTROL)
             design.Switch(zeus.appearance())
         }
         design.Separator()

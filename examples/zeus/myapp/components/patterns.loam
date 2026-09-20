@@ -2,6 +2,7 @@
 //! card grids, charts, loading placeholders, and modal overlays.
 
 import "std:zeus"
+import "std:colors"
 import "std:design"
 
 let mut chart_labs: []string = []string {}
@@ -10,7 +11,7 @@ let mut chart_vals: []int = []int {}
 
 fn NameRow(name: string) -> Node {
     design.Row(SPACE.Sm) {
-        design.Pip(zeus.mute(), 6)
+        design.Pip(colors.mute(), 6)
         design.Body(name)
     }
 }
@@ -45,7 +46,7 @@ fn Cards() {
     // across a wide window and two or one as it narrows, never more than three.
     design.Grid(config = GridConfig(columns = 3, auto_columns = 200, gap = SPACE.Md)) {
         design.Card() { design.Pip(zeus.accent(), 8) design.Title("Small") design.Body("Neutral primary on paper.") }
-        design.Card() { design.Pip(zeus.ok(), 8) design.Title("Medium") design.Body("Rounded-xl is the card radius.") }
+        design.Card() { design.Pip(colors.ok(), 8) design.Title("Medium") design.Body("Rounded-xl is the card radius.") }
         design.Card() { design.Pip(zeus.danger(), 8) design.Title("Large") design.Body("Badges and caps mark status.") }
     }
 }

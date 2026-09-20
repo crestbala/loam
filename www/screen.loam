@@ -1,6 +1,7 @@
 //! Docs UI. Sidebar picks a page id; article copy was loaded over Docs.Page.
 
 import "std:zeus"
+import "std:colors"
 import "std:design"
 import "cache.loam"
 
@@ -11,7 +12,7 @@ fn NavItem(page: Signal<int>, id: int, label: string) {
         radius = 8,
         background = fn() -> string {
         if page.get() == id {
-            return zeus.wash()
+            return colors.wash()
         }
         return ""
     },
@@ -49,9 +50,9 @@ fn Nav(page: Signal<int>) {
 fn Block(id: int, page: Signal<int>) {
     let n = zeus.Box(align_direction = DIRECTION.Column, spacing = 8) {
         zeus.Text(cache.title(id), color = zeus.ink(), font = 22)
-        zeus.Text(cache.lead(id), color = zeus.mute(), font = 14)
+        zeus.Text(cache.lead(id), color = colors.mute(), font = 14)
         zeus.Text(cache.body(id), color = zeus.ink(), font = 13)
-        zeus.Box(background = zeus.wash(), padding = 12, radius = 8) {
+        zeus.Box(background = colors.wash(), padding = 12, radius = 8) {
             zeus.Text(cache.sample(id), color = zeus.ink(), font = 12)
         }
     }
@@ -70,7 +71,7 @@ fn Article(page: Signal<int>) {
 
 fn Screen(chip: string, page: Signal<int>) {
     zeus.Box(align_direction = DIRECTION.Column, spacing = 16, padding = 28,
-             background = zeus.paper()) {
+             background = colors.paper()) {
         design.Row(8) {
             zeus.Text("Loam", color = zeus.ink(), font = 22)
             design.Chip(chip, zeus.TINT.Ink)

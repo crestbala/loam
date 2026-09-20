@@ -2,6 +2,7 @@
 //! choice, controls, people, media, and data. One section per widget family.
 
 import "std:zeus"
+import "std:colors"
 import "std:spacing"
 import "std:design"
 import "std:kv"
@@ -186,8 +187,8 @@ fn Upload() {
             justify = ALIGN.Center,
             height = 200,
             radius = 8,
-            background = zeus.raised()) {
-            zeus.Text("No image yet", color = zeus.mute(), font = spacing.FONT_CAPTION)
+            background = colors.raised()) {
+            zeus.Text("No image yet", color = colors.mute(), font = spacing.FONT_CAPTION)
         }
         zeus.show_eq(empty, pw, 0)
         // No `max_width` / `aspect` wiring: `Image` reads the decoded source

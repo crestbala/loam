@@ -2288,56 +2288,31 @@ fn role_token(slot: int) -> string {
     return "@{{slot}}"
 }
 
-fn paper() -> string { return role_token(ROLE.Paper) }
 /// Card / popover / dialog surface.
-fn plate() -> string { return role_token(ROLE.Plate) }
 /// Muted / secondary / accent background (hover, chips, tab tray).
-fn raised() -> string { return role_token(ROLE.Raised) }
 /// Foreground text. `ink` is the strongest ink.
-fn ink() -> string { return role_token(ROLE.Ink) }
 /// Muted-foreground: secondary text, labels on wash.
-fn mute() -> string { return role_token(ROLE.Mute) }
 /// Faint text: captions, overlines, placeholders.
-fn dim() -> string { return role_token(ROLE.Dim) }
 /// Border / input stroke.
-fn rule() -> string { return role_token(ROLE.Rule) }
 /// Stronger border: popovers, focus-ish outlines.
-fn hard() -> string { return role_token(ROLE.Hard) }
 /// Soft fill for code blocks and inset panels.
-fn wash() -> string { return role_token(ROLE.Wash) }
 /// Text on `accent` (primary-foreground).
-fn on_ink() -> string { return role_token(ROLE.OnInk) }
 /// Primary: fills for default buttons, switches, selection. The accent ramp's
 /// solid step (`register_accent`), blue by default.
-fn accent() -> string { return role_token(ROLE.Accent) }
 /// Soft accent surface (`secondary`): soft buttons, pressed toggles.
-fn accent_soft() -> string { return role_token(ROLE.AccentSoft) }
 /// Destructive text (errors, destructive alerts).
-fn danger() -> string { return role_token(ROLE.Danger) }
 /// Destructive fill (destructive buttons, filled danger badges).
-fn danger_solid() -> string { return role_token(ROLE.DangerSolid) }
 /// Destructive border: destructive/50 in light, full in dark.
-fn danger_edge() -> string { return role_token(ROLE.DangerEdge) }
 /// Solid success fill (ok badges). Deeper than `ok` so white text holds.
-fn ok_solid() -> string { return role_token(ROLE.OkSolid) }
 /// Success tint.
-fn ok() -> string { return role_token(ROLE.Ok) }
 /// Success wash.
-fn ok_fill() -> string { return role_token(ROLE.OkS9) }
 /// Warning tint: alert icons, warning chips/pips.
-fn warn() -> string { return role_token(ROLE.Warn) }
 /// Warning wash (soft warning badges, alert fills).
-fn warn_fill() -> string { return role_token(ROLE.WarnS9) }
 /// Warning border: soft in light, full in dark.
-fn warn_edge() -> string { return role_token(ROLE.WarnEdge) }
 /// Text on danger fills is white in both appearances.
-fn on_danger() -> string { return role_token(ROLE.OnFill) }
 /// Text on ok fills is white in both appearances.
-fn on_ok() -> string { return role_token(ROLE.OnFill) }
 /// Modal scrim behind dialogs and popovers.
-fn scrim() -> string { return role_token(ROLE.Scrim) }
 /// Skeleton fill: borders in light, raised in dark.
-fn bone() -> string { return role_token(ROLE.Bone) }
 
 // ═══════════════════════════════════════════════════════════════════
 // Design tokens: scales, elevation, motion, focus, contrast
@@ -2759,7 +2734,6 @@ fn ac(step: int) -> string {
 }
 
 /// Text on the accent's solid fill — dark or light, whichever passes.
-fn on_accent() -> string { return role_token(ROLE.OnAccent) }
 /// Text on a semantic solid fill, picked per tier by contrast.
 fn on_tint(kind: int) -> string {
     if kind == TINT.Ok { return role_token(ROLE.OnOk) }
@@ -2769,31 +2743,10 @@ fn on_tint(kind: int) -> string {
     return role_token(ROLE.OnAccent)
 }
 /// Elevation shadow colour.
-fn shadow_color() -> string { return role_token(ROLE.Shadow) }
 
-fn ok_bg() -> string { return role_token(ROLE.OkS3) }
-fn ok_line() -> string { return role_token(ROLE.OkS6) }
-fn ok_fill_solid() -> string { return role_token(ROLE.OkS9) }
-fn ok_fill_hover() -> string { return role_token(ROLE.OkS10) }
-fn ok_ink() -> string { return role_token(ROLE.OkS11) }
 
-fn warn_bg() -> string { return role_token(ROLE.WarnS3) }
-fn warn_line() -> string { return role_token(ROLE.WarnS6) }
-fn warn_fill_solid() -> string { return role_token(ROLE.WarnS9) }
-fn warn_fill_hover() -> string { return role_token(ROLE.WarnS10) }
-fn warn_ink() -> string { return role_token(ROLE.WarnS11) }
 
-fn danger_bg() -> string { return role_token(ROLE.DangerS3) }
-fn danger_line() -> string { return role_token(ROLE.DangerS6) }
-fn danger_fill_solid() -> string { return role_token(ROLE.DangerS9) }
-fn danger_fill_hover() -> string { return role_token(ROLE.DangerS10) }
-fn danger_ink() -> string { return role_token(ROLE.DangerS11) }
 
-fn info_bg() -> string { return role_token(ROLE.InfoS3) }
-fn info_line() -> string { return role_token(ROLE.InfoS6) }
-fn info_fill_solid() -> string { return role_token(ROLE.InfoS9) }
-fn info_fill_hover() -> string { return role_token(ROLE.InfoS10) }
-fn info_ink() -> string { return role_token(ROLE.InfoS11) }
 
 /// Wash / border / ink for a `TINT`, so a widget takes one token and gets a
 /// consistent tier instead of picking three colours by hand.
@@ -3196,16 +3149,6 @@ const DARK: Palette = Palette(
     fill4 = "#362e20",
     fill5 = "#152e2d"
 )
-fn tint_of(kind: int) -> string {
-    match kind {
-        TINT.Ok => { return ok() }
-        TINT.Mute => { return mute() }
-        TINT.Dim => { return dim() }
-        TINT.Danger => { return danger() }
-        TINT.Warn => { return warn() }
-        _ => { return ink() }
-    }
-}
 
 fn empty_view() -> Node {
     return Node { id: 0 }
@@ -3334,3 +3277,45 @@ fn on_action_global(action: string, sig: Signal<int>, mode: int, value: int) {}
 fn on_range(node: Node, action: string, sig: Signal<int>, delta: int, lo: int, hi: int) -> Node {}
 fn map_key(spec: string, action: string, ctx: string) {}
 fn remap_key(spec: string, action: string, ctx: string) {}
+/// Foreground text. `ink` is the strongest ink.
+fn ink() -> string { return role_token(ROLE.Ink) }
+
+/// Primary: fills for default buttons, switches, selection. The accent ramp's
+/// solid step (`register_accent`), blue by default.
+fn accent() -> string { return role_token(ROLE.Accent) }
+
+/// Destructive text (errors, destructive alerts).
+fn danger() -> string { return role_token(ROLE.Danger) }
+
+fn ok_bg() -> string { return role_token(ROLE.OkS3) }
+
+fn ok_line() -> string { return role_token(ROLE.OkS6) }
+
+fn ok_fill_solid() -> string { return role_token(ROLE.OkS9) }
+
+fn ok_ink() -> string { return role_token(ROLE.OkS11) }
+
+fn warn_bg() -> string { return role_token(ROLE.WarnS3) }
+
+fn warn_line() -> string { return role_token(ROLE.WarnS6) }
+
+fn warn_fill_solid() -> string { return role_token(ROLE.WarnS9) }
+
+fn warn_ink() -> string { return role_token(ROLE.WarnS11) }
+
+fn danger_bg() -> string { return role_token(ROLE.DangerS3) }
+
+fn danger_line() -> string { return role_token(ROLE.DangerS6) }
+
+fn danger_fill_solid() -> string { return role_token(ROLE.DangerS9) }
+
+fn danger_ink() -> string { return role_token(ROLE.DangerS11) }
+
+fn info_bg() -> string { return role_token(ROLE.InfoS3) }
+
+fn info_line() -> string { return role_token(ROLE.InfoS6) }
+
+fn info_fill_solid() -> string { return role_token(ROLE.InfoS9) }
+
+fn info_ink() -> string { return role_token(ROLE.InfoS11) }
+

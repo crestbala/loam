@@ -2,6 +2,7 @@
 // are signals. The look follows the shadcn/ui default theme: zinc palette,
 // white page, primary-fill buttons, hairline cards.
 import "std:zeus"
+import "std:colors"
 import "std:spacing"
 import "std:design"
 
@@ -24,9 +25,9 @@ fn Header(title: string, ticks: Signal<int>, open: Signal<int>) {
         zeus.Box(width = 8, height = 24, radius = 4, background = zeus.ink())
         zeus.Text(title, color = zeus.ink(), font = spacing.FONT_TITLE)
         design.Grow()
-        zeus.Text("Dark", color = zeus.mute(), font = spacing.FONT_BODY)
+        zeus.Text("Dark", color = colors.mute(), font = spacing.FONT_BODY)
         design.Switch(zeus.appearance())
-        zeus.Text("ticks", color = zeus.dim(), font = spacing.FONT_BODY)
+        zeus.Text("ticks", color = colors.dim(), font = spacing.FONT_BODY)
         zeus.Text("{{ticks.get()}}", color = zeus.ink(), font = spacing.FONT_BODY)
         design.Button(label = "Ticks", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => ticks.set(ticks.get() + 1))
         design.Button(label = "Dialog", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => open.set(1))
@@ -37,7 +38,7 @@ fn Activity(title: string, meta: string) {
     zeus.Box(align_direction = DIRECTION.Row, spacing = SPACE.Sm,
              align_items = ALIGN.Center, padding_x = 2, padding_y = 2) {
         zeus.Text(title, color = zeus.ink(), font = spacing.FONT_BODY, grow = 1)
-        zeus.Text(meta, color = zeus.mute(), font = spacing.FONT_CAPTION)
+        zeus.Text(meta, color = colors.mute(), font = spacing.FONT_CAPTION)
     }
 }
 
@@ -52,9 +53,9 @@ fn Stats(ticks: Signal<int>) {
 
 fn Load(load: Signal<int>) {
     design.Row(SPACE.Md) {
-        zeus.Text("Load", color = zeus.dim(), font = spacing.FONT_BODY)
+        zeus.Text("Load", color = colors.dim(), font = spacing.FONT_BODY)
         design.Progress(load)
-        zeus.Text("{{load.get()}}%", color = zeus.mute(), font = spacing.FONT_BODY)
+        zeus.Text("{{load.get()}}%", color = colors.mute(), font = spacing.FONT_BODY)
         design.Button(label = "+10", look = zeus.LOOK.Soft, size = zeus.SIZE.Md, on_click = fn() => load.set(clamp(load.get() + 10)))
         design.Button(label = "-10", look = zeus.LOOK.Soft, size = zeus.SIZE.Md, on_click = fn() => load.set(clamp(load.get() - 10)))
     }
@@ -150,7 +151,7 @@ fn Traffic() {
         design.Row(SPACE.Sm) {
             design.Column(SPACE.Exxs) {
                 zeus.Text("Requests", color = zeus.ink(), font = spacing.FONT_TITLE)
-                zeus.Text("Per hour, last 24 hours", color = zeus.mute(), font = spacing.FONT_CAPTION)
+                zeus.Text("Per hour, last 24 hours", color = colors.mute(), font = spacing.FONT_CAPTION)
             }
             design.Grow()
             design.Badge("live", zeus.TINT.Ok)

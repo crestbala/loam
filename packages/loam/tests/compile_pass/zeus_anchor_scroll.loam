@@ -4,6 +4,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:colors"
 import "std:design"
 
 fn must(ok: bool, what: string) {
@@ -22,7 +23,7 @@ fn main() {
     zeus.slot(top, fn() {
         zeus.Box(align_direction = zeus.DIRECTION.Column) {
             zeus.Box(height = 400)
-            let trigger = zeus.Box(width = 120, height = 32, background = zeus.plate())
+            let trigger = zeus.Box(width = 120, height = 32, background = colors.plate())
             trig = trigger.id
             let rows = []MenuRow { MenuRow(label = "Rename") }
             let m = design.Menu(trigger, active = open, items = rows, width = 160)

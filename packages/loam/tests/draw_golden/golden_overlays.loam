@@ -4,6 +4,7 @@
 // settled first frame. Keep this file free of prints: stdout is the golden.
 
 import "std:zeus"
+import "std:colors"
 import "std:spacing"
 import "std:design"
 
@@ -18,7 +19,7 @@ fn main() {
                 zeus.Text("Duplicate", color = zeus.ink(), font = spacing.FONT_BODY)
             }
             design.Toast(toast, width = 180) {
-                zeus.Text("Saved", color = zeus.on_ink(), font = spacing.FONT_BODY)
+                zeus.Text("Saved", color = colors.on_ink(), font = spacing.FONT_BODY)
             }
         }
     })
