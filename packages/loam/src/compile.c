@@ -114,6 +114,38 @@ static int std_module_lookup(const char *name, char *out, size_t outsz) {
     return 0;
 }
 
+/** Resolve `package:module` — a module in the package rooted at the LOAM_PATH
+ *  entry named `package`. The module may be a path inside that package's `std`
+ *  dir (`zeus:zeuscore/arena`). Matching on the root's basename is what makes
+ *  the spec name the package it means, instead of relying on search order the
+ *  way a bare `std:name` does. */
+static int package_module_lookup(const char *pkg, const char *mod, char *out, size_t outsz) {
+    if (!pkg || !pkg[0] || !mod || !mod[0]) return 0;
+    if (strchr(pkg, '/') || strchr(pkg, '\\')) return 0;
+    char buf[1024];
+    const char *roots = std_search_path(buf, sizeof buf);
+    const char *p = roots;
+    while (*p) {
+        while (*p == ':') p++;
+        if (!*p) break;
+        const char *end = strchr(p, ':');
+        size_t len = end ? (size_t)(end - p) : strlen(p);
+        const char *base = p;
+        for (const char *q = p; q < p + len; q++)
+            if (*q == '/') base = q + 1;
+        size_t blen = (size_t)((p + len) - base);
+        if (blen == strlen(pkg) && strncmp(base, pkg, blen) == 0) {
+            for (size_t e = 0; e < LOAM_EXT_COUNT; e++) {
+                int k = snprintf(out, outsz, "%.*s/std/%s%s", (int)len, p, mod, loam_ext_name(e));
+                if (k > 0 && (size_t)k < outsz && file_exists(out)) return 1;
+            }
+        }
+        if (!end) break;
+        p = end + 1;
+    }
+    return 0;
+}
+
 /*
  * `import "pkg:name"` — a vendored package. Walk up from the entry file to the
  * nearest directory holding `vendor/name/`, then take `name.<ext>` (or
@@ -227,6 +259,25 @@ static char *resolve_import(const char *importer, AstNode *im) {
             return NULL;
         }
         return normalize_path(path);
+    }
+    {
+        const char *colon = strchr(spec, ':');
+        if (colon) {
+            if (colon == spec || colon[1] == '\0') {
+                loam_error(im->loc, "import spec '%s' needs a package and a module", spec);
+                return NULL;
+            }
+            char pkg[256];
+            size_t plen = (size_t)(colon - spec);
+            if (plen >= sizeof pkg) plen = sizeof pkg - 1;
+            memcpy(pkg, spec, plen);
+            pkg[plen] = '\0';
+            if (!package_module_lookup(pkg, colon + 1, path, sizeof path)) {
+                loam_error(im->loc, "cannot find module '%s' in package '%s'", colon + 1, pkg);
+                return NULL;
+            }
+            return normalize_path(path);
+        }
     }
     if (spec[0] == '/')
         snprintf(path, sizeof path, "%s", spec);
