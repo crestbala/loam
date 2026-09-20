@@ -47,6 +47,7 @@ fn main() {
     zeus.window("traversal", 300, 200)
     let a = zeus.signal(100)
     let b = zeus.signal(100)
+    let w = zeus.signal(90)
     // A tree with depth: a header, a body, and a footer, each with children —
     // plus an always-visible floater (as a `Select`'s trigger or a sticky bar
     // is), which must not turn patching off for the whole window.
@@ -60,6 +61,7 @@ fn main() {
             let m = zeus.Box(width = 90, height = 24, background = "#ff0000")
             zeus.styled(m, || { zeus.set_prop_int(m, zeus.SET.Opacity, a.get()) })
             zeus.styled(m, || { zeus.set_prop_int(m, zeus.SET.Radius, b.get()) })
+            zeus.styled(m, || { zeus.set_prop_int(m, zeus.SET.Width, w.get()) })
         }
         zeus.Box(height = 30, background = "#304050", align_direction = DIRECTION.Row, spacing = 4) {
             zeus.Text("footer")
@@ -106,6 +108,20 @@ fn main() {
     must(zeus.draw_count() == n_ops, "a patched frame keeps the op count")
     must(zeus.damage_full() == 0, "a paint-only write is still not a full damage")
     must(zeus.layout_was_full() == 0, "and still not a full layout")
+
+    // A layout prop on a size-stable box re-solves only that subtree, and the
+    // re-solve marks the boundary it re-placed — so that frame still patches
+    // instead of recording the whole window.
+    let p1 = zeus.paint_patch_frames()
+    w.set(50)
+    zeus.engine_layout(300, 200)
+    must(zeus.layout_was_full() == 0, "a width write on a size-stable box re-solves a subtree")
+    zeus.engine_paint()
+    must(zeus.paint_patch_frames() > p1, "a subtree re-solve still patches")
+    let patched3 = draw_sum()
+    zeus.paint_force_full()
+    zeus.engine_paint()
+    must(draw_sum() == patched3, "and matches a full record")
 
     // An unattributable mark cannot be patched: it re-records everything, so the
     // retained ops can never go stale behind it.
