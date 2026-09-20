@@ -14,6 +14,7 @@
 //! them — struct/type names resolve by name across loaded modules.
 
 import "structs.loam"
+import "enums.loam"
 import "zeuscore/platform.loam"
 import "zeuscore/arena.loam"
 import "zeuscore/track.loam"
