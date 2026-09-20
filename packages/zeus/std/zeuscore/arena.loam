@@ -1468,11 +1468,20 @@ fn store_sig(id: int, value: int) {
     }
     sigs[id] = value
     platform.plat_sig_bind_int(id, value)
-    // `notify` runs every dependent effect now, and a prop effect reports the
-    // node it wrote. Count what ran and what reported to decide targeted vs
-    // frame-wide. The shared chrome pass still runs: it retargets hover / press /
-    // tween / fade tracks (a switch's tween or a scrollbar, none of which move
-    // the box model).
+    note_write(id)
+}
+
+/// The accounting every state write shares. `store_sig` reaches it after binding
+/// an int; a value the C seam bound (a string, a struct, a list — anything but
+/// `int`) reaches it from generated code, which calls this by name. Both therefore
+/// decide targeted-vs-frame-wide the same way: a non-int prop write is as
+/// surgical as an int one, instead of draining a whole-frame mark once per frame.
+///
+/// `notify` runs every dependent effect now, and a prop effect reports the node it
+/// wrote. Count what ran and what reported to decide targeted vs frame-wide. The
+/// shared chrome pass still runs: it retargets hover / press / tween / fade tracks
+/// (a switch's tween or a scrollbar, none of which move the box model).
+fn note_write(id: int) {
     let ran0 = track.runs
     let pw0 = prop_writes
     track.notify(id)

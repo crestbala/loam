@@ -1,0 +1,63 @@
+// Phase 9: one write channel for every value type. A non-`int` signal write used
+// to bypass `arena.store_sig` — generated code bound the value and called
+// `track.notify` directly — so it never consumed its `wrote` contribution and the
+// frame fell back to a whole-tree layout and chrome pass once per frame. A string
+// prop is now as surgical as an int one.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn main() {
+    zeus.window("nonint", 240, 160)
+    let bg = zeus.signal("#ff0000")
+    let op = zeus.signal(100)
+    let mut box_id = 0
+    zeus.root(zeus.Box(padding = 10) {
+        let b = zeus.Box(width = 50, height = 20, background = "#ff0000")
+        box_id = b.id
+        // A string prop (`SET.Background` parses a hex color) and an int prop, both
+        // paint-only.
+        zeus.prop_str(b, zeus.SET.Background, || { bg.get() })
+        zeus.styled(b, || { zeus.set_prop_int(b, zeus.SET.Opacity, op.get()) })
+    })
+    zeus.pump_frame()
+    must(zeus.damage_full() == 1, "a layout frame damages the whole surface")
+
+    // A string write must be attributed like an int one: no whole-tree layout, and
+    // damage only on the node it wrote.
+    bg.set("#00ff00")
+    zeus.engine_layout(240, 160)
+    must(zeus.layout_was_full() == 0, "a string prop write is not a full-tree layout")
+    zeus.engine_paint()
+    must(zeus.damage_full() == 0, "a string prop write is not a full repaint")
+    must(zeus.damage_count() >= 1, "the written node contributed damage")
+    must(zeus.node_width(box_id) == 50, "the color left the width alone")
+
+    // Same for a whole-struct value: anything the C seam binds goes through the one
+    // channel.
+    op.set(50)
+    zeus.engine_layout(240, 160)
+    must(zeus.layout_was_full() == 0, "an int prop write is still targeted")
+    zeus.engine_paint()
+    must(zeus.damage_full() == 0, "and still local")
+
+    // An unattached write has no node to attribute, so it falls back to a frame
+    // mark — never under-marking. That fallback is identical in both channels; it
+    // is the conservative default, not the per-frame drain this phase removed.
+    let loose = zeus.signal("x")
+    loose.set("y")
+    zeus.engine_layout(240, 160)
+    must(zeus.damage_full() == 1, "an unattributed write falls back to a frame mark")
+    zeus.engine_paint()
+
+    fmt.println("nonint write ok")
+}

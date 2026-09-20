@@ -22,6 +22,7 @@ fn main() {
     let on = zeus.signal(0)
     let op = zeus.signal(100)
     let label = zeus.signal("aa")
+    let tint = zeus.signal("#ff0000")
     let mut box_id = 0
     zeus.root(zeus.Box(padding = 10, align_direction = DIRECTION.Column, spacing = 8) {
         zui.Switch(on)
@@ -29,6 +30,7 @@ fn main() {
         let b = zeus.Box(width = 40, height = 20, background = "#ff0000")
         box_id = b.id
         zeus.styled(b, || { zeus.set_prop_int(b, zeus.SET.Opacity, op.get()) })
+        zeus.prop_str(b, zeus.SET.Color, || { tint.get() })
     })
     zeus.pump_frame()
     let total = zeus.chrome_sync_count()
@@ -45,11 +47,19 @@ fn main() {
     must(zeus.chrome_sync_count() == 0, "a prop write needs no interaction-state pass")
     must(zeus.node_width(box_id) == 40, "the prop write still landed")
 
-    // A non-int (string) write still takes the conservative path: it bypasses
-    // `store_sig`, so the frame falls back to a whole-frame layout + chrome.
+    // A non-int (string) write is attributed exactly like an int one. Bound to a
+    // paint-only prop it names its node, so no chrome pass runs at all — the
+    // write channel is shared rather than the string path draining a frame mark.
+    tint.set("#00ff00")
+    zeus.engine_layout(300, 200)
+    must(zeus.chrome_sync_count() == 0, "a string prop write needs no chrome pass")
+
+    // A write nothing reads has no node to attribute, so it still takes the
+    // conservative frame-wide path. That is the default fallback in both channels,
+    // not the once-per-frame drain the shared channel removed.
     label.set("aaaa")
     zeus.engine_layout(300, 200)
-    must(zeus.chrome_sync_count() >= total, "a non-int write is a full chrome pass")
+    must(zeus.chrome_sync_count() >= total, "an unattributed write is a full chrome pass")
 
     fmt.println("chrome ok")
 }
