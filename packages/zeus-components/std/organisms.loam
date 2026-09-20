@@ -4,19 +4,19 @@
 //!
 //! Built on `molecules`, `atoms`, and `zeusbase`.
 
-import "std:structs"
-import "std:enums"
-import "std:zeusbase"
-import "std:colors"
-import "std:spacing"
-import "std:zeus_constants"
+import "zeus:structs"
+import "zeus:enums"
+import "zeus:zeusbase"
+import "zeus-components:colors"
+import "zeus-components:spacing"
+import "zeus:zeus_constants"
 import "std:async"
 import "std:fmt"
-import "std:atoms"
-import "std:molecules"
-import "../../zeus/std/zeuscore/geometry.loam"
-import "../../zeus/std/zeuscore/platform.loam"
-import "../../zeus/std/zeuscore/arena.loam"
+import "zeus-components:atoms"
+import "zeus-components:molecules"
+import "zeus:zeuscore/geometry"
+import "zeus:zeuscore/platform"
+import "zeus:zeuscore/arena"
 
 /// One column of a `VirtualTable`. `width` 0 means the column takes an equal
 /// share of the row (pair cells with `set_flex_basis_zero(...).grow(1)`); a positive value

@@ -4,18 +4,18 @@
 //!
 //! Built on `atoms` and `zeusbase`.
 
-import "std:structs"
-import "std:enums"
-import "std:zeusbase"
-import "std:colors"
-import "std:spacing"
-import "std:zeus_constants"
+import "zeus:structs"
+import "zeus:enums"
+import "zeus:zeusbase"
+import "zeus-components:colors"
+import "zeus-components:spacing"
+import "zeus:zeus_constants"
 import "std:async"
 import "std:fmt"
-import "std:atoms"
-import "../../zeus/std/zeuscore/geometry.loam"
-import "../../zeus/std/zeuscore/platform.loam"
-import "../../zeus/std/zeuscore/arena.loam"
+import "zeus-components:atoms"
+import "zeus:zeuscore/geometry"
+import "zeus:zeuscore/platform"
+import "zeus:zeuscore/arena"
 
 /// Options for `Button`. Default `look = LOOK.Solid` (gallery "Primary")
 /// paints themed chrome. `look = -1` is a plain clickable label styled by
