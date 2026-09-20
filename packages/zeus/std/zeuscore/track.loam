@@ -11,6 +11,10 @@ let mut fn_ids: []int = []int {}
 let mut node_ids: []int = []int {}
 let mut dep_sig: []int = []int {}
 let mut dep_eff: []int = []int {}
+/* The generation `plat_sig_gen` reported for `dep_sig[i]` when the edge was
+   recorded. A lazy memo compares these against the live generations to skip a
+   recompute whose inputs did not actually move — the check-clean pass. */
+let mut dep_gen: []int = []int {}
 let mut ready: int = 0
 /* Untracked-read depth. `peek` / `untrack` raise it so reads inside a
    reactive scope do not become dependency edges — a setter that reads the
@@ -52,6 +56,27 @@ let mut is_scope: []int = []int {}
 /// every change does not grow the effect table.
 let mut eid_free: []int = []int {}
 
+// --- lazy memos -----------------------------------------------------------
+// `computed<T>` is a *memo*: an effect whose body computes a value into an
+// output signal. Unlike a plain effect it is not run when its inputs move — it
+// is marked dirty, and its readers pull it when they run. `memo_state` is
+// 0 clean, 1 dirty, 2 computing (the cycle guard). `memo_out[e]` is the output
+// signal id, 0 for a non-memo effect.
+let mut memo_out: []int = []int {}
+let mut memo_state: []int = []int {}
+/* 1 while a flush is draining `pending`. A write inside a running effect (a memo
+   recompute's `set`) appends instead of recursing. */
+let mut flushing: int = 0
+
+/// Set by the arena: called when a `scope` re-runs, so the arena can free the
+/// signals and interned handlers that scope's body created. A hook rather than a
+/// call, because the arena depends on `track` and not the other way round.
+let mut scope_disposer: fn(int) = fn(eid: int) {}
+
+fn set_scope_disposer(f: fn(int)) {
+    scope_disposer = f
+}
+
 fn boot() {
     if ready != 0 {
         return
@@ -63,6 +88,8 @@ fn boot() {
     push(cleanup_fn, 0)
     push(parent_eid, 0)
     push(is_scope, 0)
+    push(memo_out, 0)
+    push(memo_state, 0)
 }
 
 fn reset() {
@@ -79,6 +106,10 @@ fn reset() {
     parent_eid = []int {}
     is_scope = []int {}
     eid_free = []int {}
+    dep_gen = []int {}
+    memo_out = []int {}
+    memo_state = []int {}
+    flushing = 0
     mute = 0
     ready = 0
     boot()
@@ -96,6 +127,8 @@ fn alloc(fn_id: int, node_id: int) -> int {
         rank[idx] = 0
         cleanup_fn[idx] = 0
         is_scope[idx] = 0
+        memo_out[idx] = 0
+        memo_state[idx] = 0
     } else {
         push(fn_ids, fn_id)
         push(node_ids, node_id)
@@ -103,6 +136,8 @@ fn alloc(fn_id: int, node_id: int) -> int {
         push(cleanup_fn, 0)
         push(parent_eid, 0)
         push(is_scope, 0)
+        push(memo_out, 0)
+        push(memo_state, 0)
         idx = fn_ids.len - 1
     }
     // Parent is the computation whose body is running, if any.
@@ -117,6 +152,28 @@ fn alloc_scope(fn_id: int, node_id: int) -> int {
         is_scope[idx] = 1
     }
     return idx
+}
+
+/// `alloc` for a memo (`computed<T>`): an effect whose body computes a value
+/// into an output signal. A memo is never run by a notify — it is marked dirty
+/// and its readers pull it. `mark_memo` binds it to the signal it feeds.
+fn alloc_memo(fn_id: int, node_id: int) -> int {
+    return alloc(fn_id, node_id)
+}
+
+/// Declare `effect_id` the producer of `signal_id` and mark it a memo. `pull`
+/// uses `produced_by` to find the memo behind a signal; `step` uses `memo_out`
+/// to walk from a stale memo to its readers.
+fn mark_memo(signal_id: int, effect_id: int) {
+    if effect_id <= 0 {
+        return
+    }
+    if effect_id >= memo_out.len {
+        return
+    }
+    mark_produced(signal_id, effect_id)
+    memo_out[effect_id] = signal_id
+    memo_state[effect_id] = 0
 }
 
 fn current_eid() -> int {
@@ -135,6 +192,34 @@ fn current_rank() -> int {
         return 0
     }
     return rank[effect_id]
+}
+
+/// The innermost `scope` whose body is running (0 when none). Walks the parent
+/// chain, because a `scope` disposes its descendants transitively: a memo created
+/// inside a plain `effect` inside a `scope` is still torn down by the scope. Used
+/// to give a `computed<T>`'s arena cells the same owner as its memo row.
+fn current_scope_eid() -> int {
+    let mut e = current_eid()
+    let mut guard = 0
+    while e > 0 && guard < 64 {
+        if e < is_scope.len {
+            if is_scope[e] != 0 {
+                return e
+            }
+        }
+        if e >= parent_eid.len {
+            return 0
+        }
+        if e >= fn_ids.len {
+            return 0
+        }
+        if fn_ids[e] == 0 {
+            return 0
+        }
+        e = parent_eid[e]
+        guard = guard + 1
+    }
+    return 0
 }
 
 fn set_rank(effect_id: int, r: int) {
@@ -200,6 +285,7 @@ fn note_read(signal_id: int) {
     }
     push(dep_sig, signal_id)
     push(dep_eff, effect_id)
+    push(dep_gen, platform.plat_sig_gen(signal_id))
     /* A new edge onto a signal an effect writes: read the derived value only
        after the producer has recomputed it. */
     if signal_id < produced_by.len {
@@ -253,8 +339,10 @@ fn drop_eid_deps(effect_id: int) {
             let last = dep_sig.len - 1
             dep_sig[i] = dep_sig[last]
             dep_eff[i] = dep_eff[last]
+            dep_gen[i] = dep_gen[last]
             pop(dep_sig)
             pop(dep_eff)
+            pop(dep_gen)
         } else {
             i = i + 1
         }
@@ -262,10 +350,14 @@ fn drop_eid_deps(effect_id: int) {
 }
 
 /// Drop every dependency edge on a freed signal. A live effect must never
-/// re-run from a signal id that was recycled onto another value.
+/// re-run from a signal id that was recycled onto another value. The signal's
+/// producer mapping goes with it, so a recycled id cannot pull a dead memo.
 fn drop_sig(signal_id: int) {
     if signal_id <= 0 {
         return
+    }
+    if signal_id < produced_by.len {
+        produced_by[signal_id] = 0
     }
     let n = dep_sig.len
     if n == 0 {
@@ -277,8 +369,10 @@ fn drop_sig(signal_id: int) {
             let last = dep_sig.len - 1
             dep_sig[i] = dep_sig[last]
             dep_eff[i] = dep_eff[last]
+            dep_gen[i] = dep_gen[last]
             pop(dep_sig)
             pop(dep_eff)
+            pop(dep_gen)
         } else {
             i = i + 1
         }
@@ -327,10 +421,17 @@ fn free_nodes_effects(ids: []int) {
                         let el = dep_sig.len - 1
                         dep_sig[e] = dep_sig[el]
                         dep_eff[e] = dep_eff[el]
+                        dep_gen[e] = dep_gen[el]
                         pop(dep_sig)
                         pop(dep_eff)
+                        pop(dep_gen)
                     } else {
                         e = e + 1
+                    }
+                }
+                for q in 0..produced_by.len {
+                    if produced_by[q] == last {
+                        produced_by[q] = 0
                     }
                 }
                 pop(fn_ids)
@@ -339,6 +440,8 @@ fn free_nodes_effects(ids: []int) {
                 pop(cleanup_fn)
                 pop(parent_eid)
                 pop(is_scope)
+                pop(memo_out)
+                pop(memo_state)
             } else {
                 // Drop the dead row's edges first, then fill the hole with
                 // the tail row and follow its edges to the new position.
@@ -348,8 +451,10 @@ fn free_nodes_effects(ids: []int) {
                         let el = dep_sig.len - 1
                         dep_sig[e] = dep_sig[el]
                         dep_eff[e] = dep_eff[el]
+                        dep_gen[e] = dep_gen[el]
                         pop(dep_sig)
                         pop(dep_eff)
+                        pop(dep_gen)
                     } else {
                         e = e + 1
                     }
@@ -360,10 +465,16 @@ fn free_nodes_effects(ids: []int) {
                     }
                 }
                 // A child's parent is an effect index too, so it moves with the
-                // row it names.
+                // row it names. `produced_by` names a memo row the same way, and
+                // `pull` reads it, so it moves too.
                 for q in 0..parent_eid.len {
                     if parent_eid[q] == last {
                         parent_eid[q] = i
+                    }
+                }
+                for q in 0..produced_by.len {
+                    if produced_by[q] == last {
+                        produced_by[q] = i
                     }
                 }
                 fn_ids[i] = fn_ids[last]
@@ -372,12 +483,16 @@ fn free_nodes_effects(ids: []int) {
                 cleanup_fn[i] = cleanup_fn[last]
                 parent_eid[i] = parent_eid[last]
                 is_scope[i] = is_scope[last]
+                memo_out[i] = memo_out[last]
+                memo_state[i] = memo_state[last]
                 pop(fn_ids)
                 pop(node_ids)
                 pop(rank)
                 pop(cleanup_fn)
                 pop(parent_eid)
                 pop(is_scope)
+                pop(memo_out)
+                pop(memo_state)
             }
             // The row swapped into `i` may itself be dead: re-check it.
         } else {
@@ -417,6 +532,8 @@ fn dispose_eid(e: int) {
     cleanup_fn[e] = 0
     parent_eid[e] = 0
     is_scope[e] = 0
+    memo_out[e] = 0
+    memo_state[e] = 0
     push(eid_free, e)
 }
 
@@ -455,9 +572,16 @@ fn run(effect_id: int) {
         // A disposed row (a scope dropped it, or a batch still names it).
         return
     }
+    // A memo's body computes its value; run it directly (the eager entry points:
+    // `run_node`, a fresh `computed`, the first pull after a batch).
+    if memo_out[effect_id] != 0 {
+        memo_recompute(effect_id, 1)
+        return
+    }
     // A scope re-run tears its nested computations down first, so a child never
-    // survives the run that created it.
+    // survives the run that created it. Its owned arena cells go with them.
     if is_scope[effect_id] != 0 {
+        scope_disposer(effect_id)
         dispose_children(effect_id)
     }
     runs = runs + 1
@@ -467,6 +591,124 @@ fn run(effect_id: int) {
     if stack.len > 0 {
         pop(stack)
     }
+}
+
+// --- lazy memos ------------------------------------------------------------
+
+/// Invoke a memo's body: drop the edges it recorded last time (so this run
+/// re-discovers its inputs and their generations) and run it with itself as the
+/// tracking scope.
+fn memo_body(effect_id: int) {
+    runs = runs + 1
+    drop_eid_deps(effect_id)
+    push(stack, effect_id)
+    platform.plat_invoke_fn(fn_ids[effect_id])
+    if stack.len > 0 {
+        pop(stack)
+    }
+}
+
+/// 1 when any input a scope read has moved since it read it. Values are compared
+/// by generation, not by identity — the runtime bumps a cell's generation only
+/// when its value actually changed, so this is the change gate the eager
+/// `computed` got for free from `set`. Inputs still being computed count as
+/// changed, so a cycle settles instead of silently reading a half-built value.
+fn inputs_changed(effect_id: int) -> int {
+    // 1. Collect the inputs, and bring any upstream memo up to date before
+    //    comparing, so a stale generation is not mistaken for an unchanged one.
+    let mut ins = []int {}
+    let n = dep_sig.len
+    for i in 0..n {
+        if dep_eff[i] == effect_id {
+            push(ins, dep_sig[i])
+        }
+    }
+    let m = ins.len
+    if m == 0 {
+        // Nothing recorded yet: it has never run and must.
+        return 1
+    }
+    for i in 0..m {
+        pull(ins[i])
+    }
+    // 2. Compare *after* the pulls. An upstream memo can re-enter and run this
+    //    scope while it is being brought up to date; its recorded generations are
+    //    then already fresh, and it must not run a second time.
+    let mut changed = 0
+    let mut any = 0
+    let k = dep_sig.len
+    for i in 0..k {
+        if dep_eff[i] == effect_id {
+            any = 1
+            if platform.plat_sig_gen(dep_sig[i]) != dep_gen[i] {
+                changed = 1
+            }
+        }
+    }
+    if any == 0 {
+        return 1
+    }
+    return changed
+}
+
+/// Recompute memo `effect_id` if its inputs moved. `force` skips the check (the
+/// first run of a `computed`, where there is nothing recorded to compare).
+fn memo_recompute(effect_id: int, force: int) {
+    if effect_id <= 0 {
+        return
+    }
+    if effect_id >= fn_ids.len {
+        return
+    }
+    if fn_ids[effect_id] == 0 {
+        return
+    }
+    if memo_out[effect_id] == 0 {
+        return
+    }
+    if memo_state[effect_id] == 2 {
+        // Already computing: a cycle. Leave it be.
+        return
+    }
+    if force == 0 {
+        if memo_state[effect_id] == 0 {
+            return
+        }
+        if inputs_changed(effect_id) == 0 {
+            memo_state[effect_id] = 0
+            return
+        }
+    }
+    memo_state[effect_id] = 2
+    memo_body(effect_id)
+    // The body's `set` can re-enter and dirty the memo again; keep that.
+    if memo_state[effect_id] == 2 {
+        memo_state[effect_id] = 0
+    }
+}
+
+/// Recompute the memo behind `signal_id` if it is stale. Called on every read
+/// (`get` / `peek`), so a read that happens outside a flush — an event handler,
+/// a `peek` inside an effect — sees a current value.
+fn pull(signal_id: int) {
+    if signal_id <= 0 {
+        return
+    }
+    if signal_id >= produced_by.len {
+        return
+    }
+    let effect_id = produced_by[signal_id]
+    if effect_id <= 0 {
+        return
+    }
+    if effect_id >= memo_out.len {
+        return
+    }
+    // A recycled signal id must not pull a stale memo.
+    if memo_out[effect_id] != signal_id {
+        return
+    }
+    memo_recompute(effect_id, 0)
 }
 
 fn run_node(node_id: int) {
@@ -513,17 +755,110 @@ fn notify_at(signal_id: int, mark: int) {
             }
         }
     }
+    let h = hit.len
     if batch_depth > 0 {
-        let h = hit.len
         for i in 0..h {
-            pending_push(hit[i])
+            schedule(hit[i])
         }
         return
     }
-    let q = sorted_by_rank(hit)
-    let h = q.len
+    if flushing != 0 {
+        // A write made from inside a running effect must propagate within that
+        // write. The animation bind is the contract: `anim_signal` writes the
+        // signal between `anim_bind_begin` / `anim_bind_end`, and the prop setter
+        // only intercepts a layout prop as an animated one while that window is
+        // open, so the effect that applies the prop has to run before it closes.
+        let q = sorted_by_rank(hit)
+        let m = q.len
+        for i in 0..m {
+            step(q[i])
+        }
+        return
+    }
     for i in 0..h {
-        run(q[i])
+        schedule(hit[i])
+    }
+    flush()
+}
+
+/// Queue `effect_id` for this flush. Deduped: a signal with several edges to the
+/// same effect (or several paths through a memo) schedules it once.
+fn schedule(effect_id: int) {
+    if effect_id <= 0 {
+        return
+    }
+    if effect_id >= fn_ids.len {
+        return
+    }
+    if fn_ids[effect_id] == 0 {
+        return
+    }
+    pending_push(effect_id)
+}
+
+/// Drain `pending` in rank order until it empties. A memo encountered here is
+/// *not* recomputed: it is marked stale and its readers are queued, so they pull
+/// it when they run. A reader whose inputs turn out not to have moved is skipped,
+/// which is the change gate a lazy memo would otherwise lose.
+fn flush() {
+    if flushing != 0 {
+        return
+    }
+    flushing = 1
+    while pending.len > 0 {
+        let q = sorted_by_rank(pending)
+        pending = []int {}
+        let m = q.len
+        for i in 0..m {
+            step(q[i])
+        }
+    }
+    flushing = 0
+}
+
+fn step(effect_id: int) {
+    if effect_id <= 0 {
+        return
+    }
+    if effect_id >= fn_ids.len {
+        return
+    }
+    if fn_ids[effect_id] == 0 {
+        return
+    }
+    if memo_out[effect_id] == 0 {
+        if inputs_changed(effect_id) == 0 {
+            return
+        }
+        run(effect_id)
+        return
+    }
+    // A memo: it is dirty now, not recomputed now.
+    if memo_state[effect_id] != 0 {
+        return
+    }
+    memo_state[effect_id] = 1
+    let out = memo_out[effect_id]
+    let mut hit = []int {}
+    let n = dep_sig.len
+    for i in 0..n {
+        if dep_sig[i] == out {
+            let r = dep_eff[i]
+            let mut seen = 0
+            let h = hit.len
+            for j in 0..h {
+                if hit[j] == r {
+                    seen = 1
+                }
+            }
+            if seen == 0 {
+                push(hit, r)
+            }
+        }
+    }
+    let h = hit.len
+    for i in 0..h {
+        schedule(hit[i])
     }
 }
 
@@ -576,16 +911,7 @@ fn batch_end() {
         batch_depth = batch_depth - 1
     }
     if batch_depth == 0 {
-        let n = pending.len
-        if n == 0 {
-            return
-        }
-        let q = sorted_by_rank(pending)
-        pending = []int {}
-        let m = q.len
-        for i in 0..m {
-            run(q[i])
-        }
+        flush()
     }
 }
 

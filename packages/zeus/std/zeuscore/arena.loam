@@ -567,6 +567,9 @@ fn ensure() {
     if sigs.len == 0 {
         push(sigs, 0)
     }
+    // A re-running `scope` frees the arena cells it owned; `track` cannot name
+    // this module, so it calls back through this hook.
+    track.set_scope_disposer(fn(eid: int) { release_owner(0 - eid) })
     anim_ensure()
 }
 
@@ -583,14 +586,82 @@ fn scope_end(previous: int) {
 }
 
 /// An interned handler was created under a rebuild scope (or for `owner`):
-/// record it so teardown can release its captured env.
+/// record it so teardown can release its captured env. A negative `owner` is a
+/// live-computation scope id, released by `release_owner`.
 fn record_intern(id: int, owner: int) {
     if id <= 0 {
         return
     }
-    if owner > 0 {
+    if owner != 0 {
         push(rec_fid, id)
         push(rec_fowner, owner)
+    }
+}
+
+/// Re-attribute a signal to `owner`, replacing whatever the alloc hook recorded
+/// for it (an id has exactly one owner). `computed<T>` uses this to hand its
+/// output and body cells to the scope that will dispose its memo, so a re-running
+/// `scope` frees them with the memo row instead of leaking two slots per run.
+fn record_sig(owner: int, signal_id: int) {
+    if signal_id <= 0 {
+        return
+    }
+    if owner == 0 {
+        return
+    }
+    let mut i = 0
+    while i < rec_sid.len {
+        if rec_sid[i] == signal_id {
+            let last = rec_sid.len - 1
+            rec_sid[i] = rec_sid[last]
+            rec_owner[i] = rec_owner[last]
+            pop(rec_sid)
+            pop(rec_owner)
+        } else {
+            i = i + 1
+        }
+    }
+    push(rec_sid, signal_id)
+    push(rec_owner, owner)
+}
+
+/// Free everything recorded under `owner`: the signals and interned handlers a
+/// live computation scope created. Complements `track.dispose_eid`, which frees
+/// the scope's effect rows; a negative owner is `-effect_id`.
+fn release_owner(owner: int) {
+    if owner == 0 {
+        return
+    }
+    let mut i = 0
+    while i < rec_owner.len {
+        if rec_owner[i] == owner {
+            let signal_id = rec_sid[i]
+            let last = rec_owner.len - 1
+            rec_owner[i] = rec_owner[last]
+            rec_sid[i] = rec_sid[last]
+            pop(rec_owner)
+            pop(rec_sid)
+            platform.plat_sig_free(signal_id)
+            forget_sig_meta(signal_id)
+            track.drop_sig(signal_id)
+            anim_drop_sig(signal_id)
+        } else {
+            i = i + 1
+        }
+    }
+    let mut j = 0
+    while j < rec_fowner.len {
+        if rec_fowner[j] == owner {
+            let fn_id = rec_fid[j]
+            let last = rec_fowner.len - 1
+            rec_fowner[j] = rec_fowner[last]
+            rec_fid[j] = rec_fid[last]
+            pop(rec_fowner)
+            pop(rec_fid)
+            platform.plat_intern_free(fn_id)
+        } else {
+            j = j + 1
+        }
     }
 }
 

@@ -61,26 +61,34 @@ commit per phase. Line anchors are for the tree at `feat/zeus-upgrade-v2`.
 
 ### D — Graph completeness & typing
 - Signals are id-indexed `int` arena slots; `computed` / `computed_str` /
-  `computed_bool` are three hand-written variants (`zeusbase.loam:303-330`);
-  `Context<T>` requires `Copy` (`zeusbase.loam:158-163`). **Blocked:** the runtime
-  interns and invokes only four closure kinds (`plat_intern_fn` / `_int` / `_bool`
-  / `_str` and the matching `plat_invoke_*`), and Loam has no generic persistent
-  closure table or generic invoke, so a `computed<T>` for an arbitrary `T`
-  (a struct, a `[]T`) cannot be expressed without a compiler/runtime hook. The
-  three variants exist for exactly this reason.
-- Computeds are eager push memos: an internal effect writes an output signal
-  (`zeusbase.loam:303-310`, `track.loam:26-34`). **Open.** A correct lazy memo
-  needs a check-clean pass (version/epoch per node) so a reader re-runs only when
-  the memo's value actually changes; a naive pull-on-read drops the change-gate
-  the eager form has, and computing eagerly on invalidate is not lazy. This is a
-  graph redesign, not an addition.
-- Ownership is manual: `effect_owner`, `ui_parents`, `record_intern`,
+  `computed_bool` were three hand-written variants (`zeusbase.loam:303-330`) because
+  the runtime interns and invokes only four closure kinds (`plat_intern_fn` / `_int`
+  / `_bool` / `_str` and the matching `plat_invoke_*`) and Loam has no generic
+  persistent closure table or generic invoke. **Phase 7b:** one generic
+  `computed<T>`. The body is a closure, and a closure can only be persisted through
+  an environment that is a plain int copy — so the body is stored in a *signal
+  cell* (whose payload is `sizeof(T)` typed bytes, monomorphized by the compiler)
+  and rehydrated inside a non-capturing void thunk that is interned the ordinary
+  way. No compiler or runtime hook is needed, and `computed_str` / `computed_bool`
+  are now thin wrappers. `Context<T>` still requires `Copy`, as `Signal<T>` does.
+- Computeds were eager push memos: an internal effect wrote an output signal
+  (`zeusbase.loam:303-310`, `track.loam:26-34`). **Phase 7b:** a memo is a *lazy*
+  node. A write marks it dirty and queues its readers; it recomputes when something
+  reads it (`get` / `peek`) or when the flush reaches one of its readers, and only
+  if an input's recorded generation actually moved — the check-clean pass, over
+  `plat_sig_gen`. A reader whose inputs turn out not to have moved is skipped, so
+  the change gate the eager form got from `set` is preserved, and a memo nothing
+  observes is never recomputed at all.
+- Ownership was manual: `effect_owner`, `ui_parents`, `record_intern`,
   `release_sigs` / `release_fns` (`zeusbase.loam:91-149`, `arena.loam:563-624`,
   `830-840`), plus wholesale `track.reset()` in view mode. **Phase 7a:** a
   nested-computation disposal graph: `alloc` records the computation whose body
   created an effect, and a `scope` (`scope_eid`) disposes its children before it
   re-runs, recycling their rows. A plain `effect` keeps its children (owned by
-  the surrounding node), so nothing existing changes.
+  the surrounding node), so nothing existing changes. Phase 7b extends the same
+  owner to the arena: a `computed<T>` files its output cell and body cell under
+  the scope that owns its memo row (`arena.record_sig` / `release_owner`), so a
+  re-running scope recycles them with the row.
 
 ## The phases
 
@@ -93,9 +101,9 @@ commit per phase. Line anchors are for the tree at `feat/zeus-upgrade-v2`.
 | 4 | B | Targeted per-node invalidation: prop setters report their node; a write marks exactly those nodes (and skips layout) when every effect it ran reported one, else the frame-wide mark | landed |
 | 5 | B | Dependency-driven layout: a measure cache invalidated along the written path, and a subtree re-solve from the nearest size-stable ancestor (with a whole-tree fallback) | landed |
 | 6 | C | One invalidation channel: a node-scoped `invalidate(id, kind)` used by prop effects and the interaction-state flags, plus a `signal -> bound node` index so a write syncs exactly the bound nodes' chrome (a full pass only for pointer / scroll / layout / tree events) | landed |
-| 7 | D | Typed, lazy graph: generic `computed<T>` with pull-on-read, and a nested-computation disposal graph that auto-tears-down on owner re-run | **split**: 7a landed, 7b blocked |
+| 7 | D | Typed, lazy graph: generic `computed<T>` with pull-on-read, and a nested-computation disposal graph that auto-tears-down on owner re-run | landed |
 | 7a | D | Disposal graph: `scope` / `scope_eid` — a re-run disposes the computations its body created, recycling their effect rows and intern ids; a plain `effect` is unchanged | landed |
-| 7b | D | Typed, lazy graph (`computed<T>`; pull-on-read memoization) | **blocked**: no generic closure intern/invoke in the runtime, and a correct lazy memo needs a check-clean pass |
+| 7b | D | Typed, lazy graph: generic `computed<T>` (the body persists in a signal cell, so no runtime hook), and a lazy memo — dirty on write, recomputed on read, skipped when no input generation moved, and recycled with its scope | landed |
 
 Phases 1–3 are additive over the current model: existing `For` / `Index` /
 `VirtualList` keep working while gaining a per-node fast path. Phases 4–7 change
