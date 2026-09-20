@@ -1,0 +1,187 @@
+//! enums — the shared enums of the widget API: layout direction, alignment,
+//! spacing, sizing, appearance, the reactive-prop setter keys, and host key
+//! codes. Leaf module with no imports of its own, so every layer above —
+//! `zeusbase`, the components, `zeus` itself — can name them without importing
+//! back down into `zeus`.
+//!
+//! This file exists because enum *variables* are not module-global the way
+//! struct type names are: an enum is reachable only through the import graph,
+//! so the ones the primitives and the components share have to sit below both.
+//! Values follow the codes the layout solver and the hosts already use.
+
+/// Button variants, named after the fill they carry. `Solid` is the
+/// `default` (primary) variant, `Soft` is `secondary`, `Danger` is
+/// `destructive`, and `Link` is text-only. Gallery rows read
+/// Primary / Secondary / Outline / Ghost / Destructive / Link.
+enum LOOK {
+    Solid = 0,
+    Soft = 1,
+    Outline = 2,
+    Ghost = 3,
+    Danger = 4,
+    Link = 5,
+}
+
+/// Button sizes, by control height: Sm 32px, Md 36px, Lg 40px.
+enum SIZE {
+    Sm = 0,
+    Md = 1,
+    Lg = 2,
+}
+
+/// Status tints for chips, badges, stats, meters.
+enum TINT {
+    Ink = 0,
+    Ok = 1,
+    Mute = 2,
+    Dim = 3,
+    Danger = 4,
+    Warn = 5,
+    Info = 6,
+}
+
+/// Layout direction for `align_direction`.
+enum DIRECTION {
+    Row = 0,
+    Column = 1,
+}
+
+/// Cross-axis and main-axis alignment. Same codes the layout solver uses.
+enum ALIGN {
+    Start = 0,
+    Center = 1,
+    End = 2,
+    Between = 3,
+    Around = 4,
+    Evenly = 5,
+    Stretch = 6,
+}
+
+/// How `Image` maps the bitmap into its layout box: Stretch (default, may
+/// distort), Contain (letterbox), Cover (crop to fill), None (intrinsic size).
+enum IMAGE_FIT {
+    Stretch = 0,
+    Contain = 1,
+    Cover = 2,
+    None = 3,
+}
+
+/// The spacing scale, in points.
+/// Spacing, on a 4pt grid. Every step is a multiple of 4 — the three that
+/// were not (`Exxxs` 2, `Exxs` 6, `Xxxl` 62) are snapped to the nearest
+/// multiple, which is the whole of the change. `Exxs` and `Exs` both land on
+/// 8: the old 6/8 pair was a distinction the grid does not make, and keeping
+/// both names means no call site has to move.
+enum SPACE {
+    None = 0,
+    Exxxs = 4,
+    Exxs = 8,
+    Exs = 8,
+    Xs = 12,
+    Sm = 16,
+    Md = 20,
+    Lg = 24,
+    Xl = 32,
+    Xxl = 48,
+    Xxxl = 64,
+    Xxxxl = 72
+}
+
+/// Key codes as delivered by the hosts. `e.key == Key.K` is the spell.
+enum Key {
+    Backspace = 8,
+    Tab = 9,
+    Enter = 13,
+    Escape = 27,
+    Space = 32,
+    A = 97,
+    B = 98,
+    C = 99,
+    D = 100,
+    E = 101,
+    F = 102,
+    G = 103,
+    H = 104,
+    I = 105,
+    J = 106,
+    K = 107,
+    L = 108,
+    M = 109,
+    N = 110,
+    O = 111,
+    P = 112,
+    Q = 113,
+    R = 114,
+    S = 115,
+    T = 116,
+    U = 117,
+    V = 118,
+    W = 119,
+    X = 120,
+    Y = 121,
+    Z = 122,
+    Left = 1000,
+    Right = 1001,
+    Up = 1002,
+    Down = 1003,
+    Home = 1004,
+    End = 1005,
+}
+
+/// Which node attribute a reactive prop writes. One effect per member, so a
+/// signal change repaints exactly that attribute.
+enum SET {
+    Width = 1,
+    Height = 2,
+    Padding = 3,
+    PaddingX = 4,
+    PaddingY = 5,
+    Spacing = 6,
+    Radius = 7,
+    Border = 8,
+    Grow = 9,
+    AlignItems = 10,
+    Justify = 11,
+    Font = 12,
+    Opacity = 13,
+    Direction = 14,
+    Background = 15,
+    Color = 16,
+    BorderColor = 17,
+    MinWidth = 18,
+    MaxWidth = 19,
+    MinHeight = 20,
+    MaxHeight = 21,
+    Wrap = 22,
+    Safe = 23,
+    Position = 24,
+    Left = 25,
+    Top = 26,
+    Right = 27,
+    Bottom = 28,
+    ZIndex = 29,
+    Shrink = 30,
+    ShowOn = 31,
+    SvgFit = 32,
+    SvgLazy = 33,
+    Elevation = 34,
+    PaddingTop = 35,
+    PaddingRight = 36,
+    PaddingBottom = 37,
+    PaddingLeft = 38,
+    Margin = 39,
+    MarginX = 40,
+    MarginY = 41,
+    MarginTop = 42,
+    MarginRight = 43,
+    MarginBottom = 44,
+    MarginLeft = 45,
+    GapRow = 46,
+    GapCol = 47,
+    RadiusTop = 48,
+    RadiusBottom = 49,
+    Text = 100,
+    A11yLabel = 101,
+    A11yRole = 102,
+    Cursor = 103,
+}
