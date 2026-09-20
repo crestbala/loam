@@ -144,6 +144,10 @@ int64_t loam_platform_plat_sig_gen(int64_t id) {
     return loam_zeus_sig_gen(id);
 }
 
+int64_t loam_platform_plat_sig_alloc_zero(void) {
+    return loam_zeus_sig_alloc_zero();
+}
+
 /* Freed signal slots, recycled by the allocators below. An id is freed only
    when nothing reachable from the live tree can reference it (subtree
    teardown), so recycling never aliases a live signal. */

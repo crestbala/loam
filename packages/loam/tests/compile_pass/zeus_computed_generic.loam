@@ -1,0 +1,114 @@
+// Phase 7b: one typed, lazy derivation.
+//
+//   * `computed<T>` is generic — a struct, a list, a string, not just the three
+//     hand-written variants it used to be.
+//   * It is lazy: an input moving marks it stale, it does not recompute until
+//     something reads it.
+//   * It is change-gated: an input moving in a way that leaves the value alone
+//     does not re-run its readers (the check-clean pass, over per-input
+//     generations).
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+struct Pair {
+    a: int,
+    b: int,
+}
+
+let mut calcs: int = 0
+let mut calcs2: int = 0
+let mut watches: int = 0
+let mut up: int = 0
+
+fn eq(what: string, got: int, want: int) {
+    if got != want {
+        fmt.println("FAIL", what, "got", got, "want", want)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    let n = zeus.signal(1)
+    let m = zeus.signal(2)
+
+    // A struct-valued derivation.
+    let sum = zeus.computed(|| {
+        calcs = calcs + 1
+        Pair { a: n.get(), b: m.get() }
+    })
+    eq("initial compute", calcs, 1)
+    let p0 = sum.get()
+    eq("struct value a", p0.a, 1)
+    eq("struct value b", p0.b, 2)
+
+    // Laziness: an input moves, but nothing has read the derivation yet, so it
+    // is only marked stale. The body has not run.
+    n.set(10)
+    eq("stale, not recomputed", calcs, 1)
+    let p1 = sum.get()
+    eq("pulled on read", calcs, 2)
+    eq("new struct value a", p1.a, 10)
+
+    // A list-valued derivation.
+    let items = zeus.signal([]int { 1, 2 })
+    let listed = zeus.computed(|| {
+        calcs2 = calcs2 + 1
+        items.get()
+    })
+    eq("list initial", listed.get().len, 2)
+    items.set([]int { 1, 2, 3 })
+    eq("list recomputed on read", listed.get().len, 3)
+    eq("list calc count", calcs2, 2)
+
+    // Change gate: `even` only flips when the parity moves, so a reader must
+    // re-run on the flip and not on a same-parity write.
+    let src = zeus.signal(0)
+    let even = zeus.computed_bool(|| { src.get() % 2 == 0 })
+    zeus.effect(|| {
+        watches = watches + 1
+        even.get()
+    })
+    eq("effect ran once", watches, 1)
+    src.set(2)
+    eq("same-parity write skips the reader", watches, 1)
+    if even.get() != true {
+        fmt.println("FAIL same-parity value holds")
+        sys.exit(1)
+    }
+    src.set(3)
+    eq("parity flip re-runs the reader", watches, 2)
+    if even.get() != false {
+        fmt.println("FAIL flipped value")
+        sys.exit(1)
+    }
+
+    // A derivation of a derivation, over the generic form.
+    let doubled = zeus.computed(|| { sum.get().a * 2 })
+    eq("chained generic computed", doubled.get(), 20)
+
+    // A memo is owned like any other computation: a re-running `scope` disposes
+    // it, recycling its effect row, its output cell and its stored body, and the
+    // freshly created one still derives correctly.
+    let tick = zeus.signal(0)
+    zeus.scope(|| {
+        tick.get()
+        up = zeus.computed(|| { tick.get() * 2 }).get()
+    })
+    let mut k = 0
+    while k < 5 {
+        tick.set(k + 1)
+        k = k + 1
+    }
+    let rows_hi = zeus.reactive_rows()
+    let sigs_hi = zeus.arena_sigs()
+    while k < 50 {
+        tick.set(k + 1)
+        k = k + 1
+    }
+    eq("a re-running scope reuses memo rows", zeus.reactive_rows(), rows_hi)
+    eq("a re-running scope allocates no memo cell", zeus.arena_sigs(), sigs_hi)
+    eq("the re-created memo still derives", up, 100)
+
+    fmt.println("zeus computed generic ok")
+}

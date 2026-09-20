@@ -148,7 +148,13 @@ fn plat_invoke_str_fn(id: int) -> string {}
 /// (it was undefined behaviour before, garbage on native and a trap on wasm).
 fn plat_intern_kind_mismatch_count() -> int {}
 fn plat_sig_bind_int(id: int, value: int) {}
+/// Every `plat_sig_bind_*` bumps the cell's generation; `plat_sig_gen` reads it
+/// back. `computed<T>` records the generation of each input it reads, so a lazy
+/// memo can tell whether an input's *value* moved before it recomputes.
 fn plat_sig_gen(id: int) -> int {}
+/// Reserving a signal slot with no value bound yet. `computed<T>` needs an
+/// output cell for a `T` it cannot name a default for; the first pull binds it.
+fn plat_sig_alloc_zero() -> int {}
 /// Free a signal slot: release its cell, zero its int mirror, and make the
 /// id reusable. No-op for ids that are already free.
 fn plat_sig_free(id: int) {}

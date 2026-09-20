@@ -55,6 +55,8 @@ fn signal<T>(value: T) -> Signal<T> {
 /// Call as `sig.get()`.
 fn get<T>(sig: Signal<T>) -> T {
     arena.ensure()
+    // A memo behind `sig` may be stale; a read is the point of observation.
+    track.pull(sig.id)
     track.note_read(sig.id)
     __sig_load(sig.id)
 }
@@ -71,6 +73,7 @@ fn set<T>(sig: Signal<T>, value: T) {
 /// notably read-modify-write (`c.set(c.peek() + 1)` inside an effect).
 fn peek<T>(sig: Signal<T>) -> T {
     arena.ensure()
+    track.pull(sig.id)
     __sig_load(sig.id)
 }
 
@@ -313,46 +316,76 @@ fn on_cleanup(body: fn()) {
     track.set_cleanup(track.current_eid(), intern_fn(body))
 }
 
-/// A cached derivation. `calc` runs now, and re-runs only when one of the
-/// signals *it* read changes — not on every read, and not when some
-/// unrelated signal moves. The result is a plain `Signal<int>`, so a reader
-/// subscribes to the derivation rather than to its inputs, and because `set`
-/// is change-gated a recompute that lands on the same value propagates no
-/// further.
+/// A cached derivation, generic over its value type. `calc` runs now, and
+/// re-runs only when one of the signals *it* read actually changed value — not on
+/// every read, and not when some unrelated signal moves. The result is a plain
+/// `Signal<T>`, so a reader subscribes to the derivation rather than to its
+/// inputs.
+///
+/// A derivation is lazy: when an input moves it is only marked stale, and the
+/// body re-runs when something reads it (or when the frame's flush reaches one of
+/// its readers). Each input's generation is recorded at read time, so a memo
+/// whose inputs did not in fact move is skipped instead of recomputed.
 ///
 /// ```
 /// let first = zeus.signal("Ada")
 /// let last = zeus.signal("Lovelace")
-/// let full = zeus.computed_str(|| { "{{first.get()}} {{last.get()}}" })
+/// let full = zeus.computed(|| { "{{first.get()}} {{last.get()}}" })
 /// zeus.Text("{{full.get()}}")
 /// ```
-fn computed(calc: fn() -> int) -> Signal<int> {
+fn computed<T>(calc: fn() -> T) -> Signal<T> {
     arena.ensure()
-    let fn_id = intern_int(calc)
-    let out = signal(0)
-    let effect_id = effect_eid(|| { set(out, platform.plat_invoke_int_fn(fn_id)) })
-    track.mark_produced(out.id, effect_id)
+    // The owner that will dispose this memo: the innermost live `scope`, else the
+    // host rebuild scope, else 0 (process-lifetime).
+    let owner = memo_owner()
+    // The output is reserved unbound: `T` may be a struct or a list with no
+    // nameable default, and the first pull is what binds it.
+    let out_id = platform.plat_sig_alloc_zero()
+    // A closure can only be persisted through an environment that is a plain int
+    // copy, and a `fn` value is not — so the body is stored in a raw signal cell
+    // (whose payload is typed bytes) and rehydrated by id inside the thunk. That
+    // is what makes one generic `computed<T>` possible for every `T`. The cell
+    // builtins take a plain id, so no generic `signal` / `get` is instantiated at
+    // a closure type.
+    let holder_id = __sig_push(calc)
+    let fn_id = platform.plat_intern_fn(|| {
+        let reopened: fn() -> T = __sig_load(holder_id)
+        let value: T = reopened()
+        __sig_store(out_id, value)
+    })
+    // The runtime alloc hooks filed both cells under the host rebuild scope; hand
+    // them to the scope that owns the memo row instead.
+    arena.record_sig(owner, out_id)
+    arena.record_sig(owner, holder_id)
+    arena.record_intern(fn_id, owner)
+    let effect_id = track.alloc_memo(fn_id, effect_owner())
+    track.set_rank(effect_id, 1 + track.current_rank())
+    track.mark_memo(out_id, effect_id)
+    // Run once now, with the memo as the tracking scope, so it subscribes to the
+    // signals it read.
+    track.memo_recompute(effect_id, 1)
+    let out: Signal<T> = Signal { id: out_id }
     return out
+}
+
+/// The owner for a `computed<T>`'s arena cells: the innermost live `scope` (as a
+/// negative id, so it cannot collide with a node), else the host rebuild scope.
+fn memo_owner() -> int {
+    let s = track.current_scope_eid()
+    if s > 0 {
+        return 0 - s
+    }
+    return arena.scope_node
 }
 
 /// `computed` for a string derivation.
 fn computed_str(calc: fn() -> string) -> Signal<string> {
-    arena.ensure()
-    let fn_id = intern_str(calc)
-    let out = signal("")
-    let effect_id = effect_eid(|| { set(out, platform.plat_invoke_str_fn(fn_id)) })
-    track.mark_produced(out.id, effect_id)
-    return out
+    return computed(calc)
 }
 
 /// `computed` for a bool derivation.
 fn computed_bool(calc: fn() -> bool) -> Signal<bool> {
-    arena.ensure()
-    let fn_id = intern_bool(calc)
-    let out = signal(false)
-    let effect_id = effect_eid(|| { set(out, platform.plat_invoke_bool_fn(fn_id) != 0) })
-    track.mark_produced(out.id, effect_id)
-    return out
+    return computed(calc)
 }
 
 /// Wrap a raw arena slot as a `Node`. Ids are the only thing the engine

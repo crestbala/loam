@@ -15,10 +15,11 @@
 //!      discovered, never declared. `peek` reads without subscribing.
 //!   2. An `effect` runs once, then re-runs whenever a signal it read
 //!      changes. Effects are the edges of the graph.
-//!   3. A `computed` (`computed_str` / `computed_bool`) is a cached
-//!      derivation: it recalculates only when its own inputs change, and
-//!      because `set` is change-gated, a recompute landing on the same
-//!      value propagates no further.
+//!   3. A `computed<T>` is a cached derivation, generic over its value type
+//!      (a struct, a list, a string — not just int). It is lazy: an input
+//!      change only marks it stale, and its body re-runs when something reads
+//!      it. Each input's generation is recorded, so a recompute that does not
+//!      actually change the value propagates no further.
 //!   4. Components disappear. A widget fn is a *setup* function: it runs
 //!      once, wires bindings to signals, and is never called again. There
 //!      is no render loop and no component re-execution.
@@ -26,6 +27,10 @@
 //!      `Image(photo.get())`) is its own effect over one node attribute, so a
 //!      `set` repaints exactly the attributes that read it — no virtual
 //!      DOM, no diffing, no tree walk.
+//!
+//! `scope` groups derivations that must not outlive the run that made them: a
+//! re-run disposes everything the body created — effect rows, output cells and
+//! stored bodies alike.
 //!
 //! Every widget is a `Component`: `slot` (parent stack), `bind`, `visible`,
 //! press, then attach. Trailing blocks are `slot`. Recipes extend `Comp` /

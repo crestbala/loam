@@ -410,6 +410,7 @@ loam_str loam_platform_plat_invoke_str_fn(int64_t id);
 int32_t loam_platform_plat_intern_kind_mismatch_count(void);
 void loam_platform_plat_sig_bind_int(int64_t id, int64_t value);
 int64_t loam_platform_plat_sig_gen(int64_t id);
+int64_t loam_platform_plat_sig_alloc_zero(void);
 void loam_platform_plat_sig_free(int64_t id);
 void loam_platform_plat_edit_reset(int64_t slot);
 void loam_platform_plat_intern_free(int64_t id);

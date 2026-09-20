@@ -46,6 +46,11 @@ let mut N_PASS: int = 0
 let mut N_FAIL: int = 0
 let mut TSTART: int = 0
 let mut FAILURES: []string = []string {}
+/// `nob test <filter>`: run only the fixtures whose path contains this
+/// substring, and skip the host checks. Empty means the whole suite.
+let mut ONLY: string = ""
+/// `nob test <file.loam>`: build and run exactly this file, headless.
+let mut ONLY_FILE: string = ""
 
 // --- small string helpers ------------------------------------------------
 
@@ -759,7 +764,31 @@ fn pass_jobs() -> []Job {
     let mut out = []Job {}
     let fs = pass_files()
     for i in 0..fs.len {
-        push(out, run_job(fs[i], "{{TMP}}/{{stem_of(fs[i])}}"))
+        if job_kept(fs[i]) != 0 {
+            push(out, run_job(fs[i], "{{TMP}}/{{stem_of(fs[i])}}"))
+        }
+    }
+    return out
+}
+
+/// `nob test <filter>` keeps only the fixtures whose path contains `ONLY`.
+fn job_kept(src: string) -> int {
+    if ONLY == "" {
+        return 1
+    }
+    if contains_str(src, ONLY) { return 1 }
+    return 0
+}
+
+fn keep_jobs(js: []Job) -> []Job {
+    if ONLY == "" {
+        return js
+    }
+    let mut out = []Job {}
+    for i in 0..js.len {
+        if contains_str(js[i].src, ONLY) {
+            push(out, js[i])
+        }
     }
     return out
 }
@@ -889,39 +918,67 @@ fn test() -> int {
     TSTART = t0
     let mut failed = 0
 
+    if ONLY_FILE != "" {
+        // A single file: compile and run it, and show its own output and any
+        // compiler/link error, rather than the pool's one-line verdict.
+        let bin = "{{TMP}}/{{stem_of(ONLY_FILE)}}"
+        let blog = "{{NOB}}/file.build"
+        let rlog = "{{NOB}}/file.run"
+        if !sh("{{shq(LOAMC)}} {{shq(ONLY_FILE)}} -o {{shq(bin)}} > {{shq(blog)}} 2>&1") {
+            fmt.println("FAIL compile {{ONLY_FILE}}")
+            catlog(blog)
+            sys.exit(1)
+        }
+        let ok = sh("{{shq(bin)}} > {{shq(rlog)}} 2>&1")
+        catlog(rlog)
+        if !ok {
+            fmt.println("FAIL run {{ONLY_FILE}}")
+            sys.exit(1)
+        }
+        fmt.println("ok   {{ONLY_FILE}}")
+        sys.exit(0)
+    }
+
     fmt.println("nob: test — language suites + host checks (-j {{JOBS}})")
 
     // Fixtures first, in the Makefile's order; each suite is a bounded pool.
     let pj = pass_jobs()
     failed += pool("pass", pj)
-    let fj = fail_jobs()
+    let fj = keep_jobs(fail_jobs())
     failed += pool("fail", fj)
-    let ej = example_jobs()
+    let ej = keep_jobs(example_jobs())
     failed += pool("examples", ej)
-    let oj = oob_jobs()
+    let oj = keep_jobs(oob_jobs())
     failed += pool("oob", oj)
-    let ij = ir_jobs()
+    let ij = keep_jobs(ir_jobs())
     failed += pool("ir", ij)
     fmt.println("ok   ir lowering + verify")
-    let igj = irgolden_jobs()
+    let igj = keep_jobs(irgolden_jobs())
     failed += pool("irgolden", igj)
-    let dj = draw_jobs()
+    let dj = keep_jobs(draw_jobs())
     failed += pool("draw", dj)
-    let aj = argv_jobs()
+    let aj = keep_jobs(argv_jobs())
     failed += pool("argv", aj)
-    let fsj = fs_jobs()
+    let fsj = keep_jobs(fs_jobs())
     failed += pool("fs", fsj)
-    let wj = watch_jobs()
+    let wj = keep_jobs(watch_jobs())
     failed += pool("watch", wj)
-    let ilj = inlang_jobs()
+    let ilj = keep_jobs(inlang_jobs())
     failed += pool("inlang", ilj)
-    let ztj = ztests_jobs()
+    let ztj = keep_jobs(ztests_jobs())
     failed += pool("ztests", ztj)
 
     // Host checks (wasm entry points, server split, LSP). The `zeli` suite is
-    // deliberately not part of `test`: run `nob integration` for it.
-    failed += host_checks()
+    // deliberately not part of `test`: run `nob integration` for it. Skipped for
+    // a filtered run, since they are whole-program checks with no fixture path.
+    if ONLY == "" {
+        failed += host_checks()
+    }
+    return report(t0, failed)
+}
 
+/// Print the run summary and return the exit code.
+fn report(t0: int, failed: int) -> int {
     let secs = now_s() - t0
     fmt.println("")
     if failed != 0 {
@@ -929,10 +986,9 @@ fn test() -> int {
         for i in 0..FAILURES.len {
             fmt.println("  FAIL {{FAILURES[i]}}")
         }
-        fmt.println("TESTS FAILED")
         return 1
     }
-    fmt.println("{{N_PASS}} passed, 0 failed in {{secs}}s")
+    fmt.println("{{N_PASS}} passed, {{N_FAIL}} failed in {{secs}}s")
     fmt.println("ALL TESTS PASSED")
     return 0
 }
@@ -1848,6 +1904,8 @@ fn usage() {
     fmt.println("")
     fmt.println("  build   (default) bin/loamc, bin/loam-lsp, bin/loam-fmt, bin/zeli")
     fmt.println("  test    language suites + host checks (no zeli)")
+    fmt.println("  test <s>  only fixtures whose path contains <s> (no host checks)")
+    fmt.println("  test <f.loam>  build and run exactly this file")
     fmt.println("  lsp     bin/loam-lsp and its objects only")
     fmt.println("  integration  the zeli/serve/pkg/fmt suite (slow; on demand)")
     fmt.println("  bench   build, then run packages/loam/tests/bench/run.sh")
@@ -1932,7 +1990,7 @@ fn main() {
     if pos.len > 1 {
         only = pos[1]
     }
-    if pos.len > 2 || (pos.len > 1 && cmd != "integration") {
+    if pos.len > 2 || (pos.len > 1 && cmd != "integration" && cmd != "test") {
         fmt.println("nob: unexpected argument", only)
         sys.exit(2)
     }
@@ -1942,6 +2000,15 @@ fn main() {
     } else if cmd == "lsp" {
         sys.exit(build("lsp"))
     } else if cmd == "test" {
+        ONLY = only
+        // `nob test <file.loam>`: run exactly that file (repo-relative or absolute).
+        if only != "" && ends_with(only, ".loam") {
+            if sys.exists(only) != 0 {
+                ONLY_FILE = only
+            } else if sys.exists("{{ROOT}}/{{only}}") != 0 {
+                ONLY_FILE = "{{ROOT}}/{{only}}"
+            }
+        }
         sys.exit(test())
     } else if cmd == "integration" {
         if only != "" {
