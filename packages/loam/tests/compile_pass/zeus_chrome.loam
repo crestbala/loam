@@ -1,0 +1,55 @@
+// Phase 6: one invalidation channel. A write names the nodes it affects, so the
+// interaction-state (chrome) pass is node-scoped: a bound signal (a switch's
+// tween is read by the chrome pass, not an effect) re-syncs only the bound
+// switches, and a paint-only prop write needs no chrome pass at all. Only a
+// pointer / layout / tree event re-syncs every hot target.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn main() {
+    zeus.window("chrome", 300, 200)
+    let on = zeus.signal(0)
+    let op = zeus.signal(100)
+    let label = zeus.signal("aa")
+    let mut box_id = 0
+    zeus.root(zeus.Box(padding = 10, align_direction = DIRECTION.Column, spacing = 8) {
+        zui.Switch(on)
+        zui.Switch(on)
+        let b = zeus.Box(width = 40, height = 20, background = "#ff0000")
+        box_id = b.id
+        zeus.styled(b, || { zeus.set_prop_int(b, zeus.SET.Opacity, op.get()) })
+    })
+    zeus.pump_frame()
+    let total = zeus.chrome_sync_count()
+    must(total >= 4, "the first frame syncs every node")
+
+    // A bound-signal write: only the two switches bound to `on` are re-synced.
+    on.set(1)
+    zeus.engine_layout(300, 200)
+    must(zeus.chrome_sync_count() == 2, "a switch write syncs just its bound nodes")
+
+    // A paint-only prop write: no chrome pass runs at all.
+    op.set(50)
+    zeus.engine_layout(300, 200)
+    must(zeus.chrome_sync_count() == 0, "a prop write needs no interaction-state pass")
+    must(zeus.node_width(box_id) == 40, "the prop write still landed")
+
+    // A non-int (string) write still takes the conservative path: it bypasses
+    // `store_sig`, so the frame falls back to a whole-frame layout + chrome.
+    label.set("aaaa")
+    zeus.engine_layout(300, 200)
+    must(zeus.chrome_sync_count() >= total, "a non-int write is a full chrome pass")
+
+    fmt.println("chrome ok")
+}

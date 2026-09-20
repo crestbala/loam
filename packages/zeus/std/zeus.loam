@@ -430,8 +430,14 @@ fn engine_layout(width: int, height: int) {
     // The shared interaction-state pass: recompute hover/press/tween/fade
     // targets and (re)target their paint tracks. Event-driven, never per frame.
     if arena.chrome_dirty != 0 {
-        arena.sync_chrome()
+        // A pointer move, a scroll, a layout change or a tree change can move
+        // every hot target: re-sync all of them and drop any targeted queue.
+        arena.sync_chrome_all()
         arena.chrome_dirty = 0
+        arena.clear_chrome_ids()
+    } else if arena.chrome_ids_len() != 0 {
+        // Only the flagged nodes changed: re-sync just them.
+        arena.sync_chrome_targeted()
     }
     if arena.mem_stats_on() != 0 {
         arena.mem_sample()
@@ -798,6 +804,13 @@ fn engine_layout_gen() -> int {
 
 fn layout_was_full() -> int {
     return last_whole
+}
+
+/// Nodes the last interaction-state (chrome) pass visited, then reset. A write
+/// that names the nodes it touched visits only them; a pointer / layout frame
+/// visits all of them. Exposed for tests.
+fn chrome_sync_count() -> int {
+    return arena.take_chrome_sync_count()
 }
 
 /// Serialize the visible **semantic tree** for an accessibility mirror (§2.3):

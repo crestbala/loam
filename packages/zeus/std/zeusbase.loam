@@ -957,6 +957,9 @@ fn bind(label: Node, sig: Signal<int>) -> Node {
     if k == 3 || k == 4 || k == 10 {
         arena.mark_sig_layout(sig.id)
     }
+    // The chrome pass reads a bind (a switch's tween) with no effect in between,
+    // so index it: a write marks the bound node, not the whole frame.
+    arena.bind_chrome(sig.id, label.id)
     arena.mark_chrome()
     return label
 }
