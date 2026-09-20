@@ -574,7 +574,10 @@ static int lower_call(AstNode *n) {
         i->ty = n->as.call.arg_count > 1 && n->as.call.args[1]
                     ? ir_subst(n->as.call.args[1]->ty)
                     : ty_int();
-        if (args[1] >= 0 && args[1] < F->nlocals && type_needs_drop(F->locals[args[1]].ty))
+        /* An element that owns a string keeps its own reference (the push takes
+           one for the slot), so it still drops; a plain element is moved in. */
+        if (args[1] >= 0 && args[1] < F->nlocals && type_needs_drop(F->locals[args[1]].ty) &&
+            !(type_string_owns() && type_owns_string(F->locals[args[1]].ty)))
             F->locals[args[1]].needs_drop = 0;
         return -1;
     }

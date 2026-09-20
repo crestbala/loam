@@ -557,7 +557,8 @@ static void usage(void) {
             "  --target android Gradle + JNI Canvas host (needs Android SDK/NDK to build APK)\n"
             "  --run       compile and run (Simulator for --target=ios; gradle+adb for android)\n"
             "  --int64-compat  `int` = i64 and `float` = f64 (pre-Phase-10 behavior)\n"
-            "  --string-owns   `string` is owned and move-only (drops at scope exit)\n"
+            "  --string-owns   `string` is owned and refcounted (default)\n"
+            "  --no-string-owns  restore never-freed strings (bisecting a bug)\n"
             "Default output: <source-dir>/build/<name> (.app on ios; Gradle tree on android)\n");
 }
 
@@ -574,7 +575,7 @@ int main(int argc, char **argv) {
     int target_ios = 0;
     int target_android = 0;
     int int64_compat = 0;
-    int string_owns = 0;
+    int string_owns = 1;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -625,6 +626,8 @@ int main(int argc, char **argv) {
             int64_compat = 1;
         } else if (strcmp(argv[i], "--string-owns") == 0) {
             string_owns = 1;
+        } else if (strcmp(argv[i], "--no-string-owns") == 0) {
+            string_owns = 0;
         } else if (strcmp(argv[i], "build") == 0) {
             /* `loam build --target=native app.loam` — same as omitting `build`. */
             continue;
