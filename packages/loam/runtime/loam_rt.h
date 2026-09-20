@@ -701,44 +701,32 @@ static inline void loam_fn_drop(loam_fn *f) {
 }
 
 /* `{{ }}` interpolation. Each piece is converted to a loam_str and the
-   pieces are concatenated left to right. The result is heap-allocated with a
-   trailing NUL and marked owned, so it is released at the end of the binding
-   it lands in. Each intermediate `str_of_*` piece is owned too and is
-   consumed by the concat that folds it in. */
+   pieces are concatenated left to right. Arguments are borrowed (the caller
+   still owns and releases them); the result is a fresh owned buffer, or a
+   shared reference to an operand when one side is empty. */
 static inline loam_str loam_str_concat(loam_str a, loam_str b) {
     int64_t an = a.len > 0 ? a.len : 0;
     int64_t bn = b.len > 0 ? b.len : 0;
     char *p;
-    if (!an) {
+    if (!an || !bn) {
+        loam_str r = an ? a : b;
+        if (!an) r = bn ? b : (loam_str){ .ptr = "", .len = 0, .own = 0 };
 #ifdef LOAM_STRING_OWNS
-        loam_str_release(&a);
+        loam_str_retain(r);
 #endif
-        return bn ? b : (loam_str){ .ptr = "", .len = 0, .own = 0 };
+        return r;
     }
-    if (!bn) {
-#ifdef LOAM_STRING_OWNS
-        loam_str_release(&b);
-#endif
-        return a;
-    }
-    p = (char *)loam_new((size_t)(an + bn) + 1, "str_concat", 0);
+    p = loam_str_bytes(an + bn);
     if (a.ptr) memcpy(p, a.ptr, (size_t)an);
     if (b.ptr) memcpy(p + an, b.ptr, (size_t)bn);
     p[an + bn] = 0;
-#ifdef LOAM_STRING_OWNS
-    /* Ownership mode: both operands were moved in by the caller, so whichever
-       one concat does not hand back is this call's to free. A literal operand
-       releases to a no-op. */
-    loam_str_release(&a);
-    loam_str_release(&b);
-#endif
     return loam_str_owned(p, an + bn);
 }
 
 static inline loam_str loam_str_of_int(int64_t v) {
     char buf[24];
     loam_str s = loam_fmt_itoa(buf, v);
-    char *p = (char *)loam_new((size_t)s.len + 1, "str_of_int", 0);
+    char *p = loam_str_bytes(s.len);
     memcpy(p, s.ptr, (size_t)s.len);
     p[s.len] = 0;
     return loam_str_owned(p, s.len);
@@ -747,7 +735,7 @@ static inline loam_str loam_str_of_int(int64_t v) {
 static inline loam_str loam_str_of_float(double v) {
     char buf[64];
     loam_str s = loam_fmt_ftoa(buf, v);
-    char *p = (char *)loam_new((size_t)s.len + 1, "str_of_float", 0);
+    char *p = loam_str_bytes(s.len);
     memcpy(p, s.ptr, (size_t)s.len);
     p[s.len] = 0;
     return loam_str_owned(p, s.len);
@@ -757,12 +745,19 @@ static inline loam_str loam_str_of_bool(bool v) {
     return v ? (loam_str){ .ptr = "true", .len = 4 } : (loam_str){ .ptr = "false", .len = 5 };
 }
 
-static inline loam_str loam_str_of_string(loam_str s) { return s; }
+/* Coercion to string: hands back a shared reference, since the caller keeps
+   its own. */
+static inline loam_str loam_str_of_string(loam_str s) {
+#ifdef LOAM_STRING_OWNS
+    loam_str_retain(s);
+#endif
+    return s;
+}
 
 /* Takes ownership of `b` (IR_CALL steals []int). Trailing NUL for C hosts. */
 static inline loam_str loam_string_from_bytes(loam_vec b) {
     int64_t n = b.len > 0 ? b.len : 0;
-    char *p = (char *)loam_new((size_t)n + 1, "string_from_bytes", 0);
+    char *p = loam_str_bytes(n);
     int32_t *el = (int32_t *)b.ptr;
     int64_t i;
     for (i = 0; i < n; i++)
