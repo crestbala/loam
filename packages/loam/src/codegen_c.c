@@ -930,7 +930,7 @@ static void emit_expr(FILE *o, AstNode *n) {
                                "_old = loam_vec_retain(&_old); "
                                "loam_vec _new = loam_vec_retain(&_sv); "
                                "loam_zeus_sig_bind(_sid, &_new, sizeof(_new)); "
-                               "loam_vec_drop(&_old); loam_track_notify(_sid); } 0; })");
+                               "loam_vec_drop(&_old); loam_arena_note_write(_sid); } 0; })");
                 } else {
                     fprintf(o, "({ ");
                     emit_ctype(o, vt);
@@ -939,7 +939,7 @@ static void emit_expr(FILE *o, AstNode *n) {
                     fprintf(o, "; int64_t _sid = ");
                     emit_expr(o, n->as.call.args[0]);
                     fprintf(o, "; if (loam_zeus_sig_changed(_sid, &_sv, sizeof(_sv))) { "
-                               "loam_zeus_sig_bind(_sid, &_sv, sizeof(_sv)); loam_track_notify(_sid); "
+                               "loam_zeus_sig_bind(_sid, &_sv, sizeof(_sv)); loam_arena_note_write(_sid); "
                                "} 0; })");
                 }
                 break;
@@ -2157,7 +2157,7 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                     fprintf(o, "loam_vec _new = loam_vec_retain(&%s); loam_zeus_sig_bind(%s, &_new, sizeof(_new));\n",
                             lv(in->args[1]), lv(in->args[0]));
                     indent(o, 2);
-                    fprintf(o, "loam_vec_drop(&_old); loam_track_notify(%s);\n", lv(in->args[0]));
+                    fprintf(o, "loam_vec_drop(&_old); loam_arena_note_write(%s);\n", lv(in->args[0]));
                     indent(o, 1);
                     fprintf(o, "}\n");
                 } else {
@@ -2167,7 +2167,7 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                     fprintf(o, "))) { loam_zeus_sig_bind(%s, &%s, sizeof(", lv(in->args[0]),
                             lv(in->args[1]));
                     emit_ctype(o, vt);
-                    fprintf(o, ")); loam_track_notify(%s); }\n", lv(in->args[0]));
+                    fprintf(o, ")); loam_arena_note_write(%s); }\n", lv(in->args[0]));
                 }
                 break;
             }

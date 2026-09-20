@@ -25,11 +25,14 @@ extern loam_vec loam_arena_rec_owner;
 void loam_arena_ensure(void);
 void loam_arena_store_sig(int32_t id, int32_t value);
 /* `fn note_read(sid: int)` / `fn notify(sid: int)` in zeuscore/track.loam, and
-   `int` is i32 since the Phase 10 width flip. Declaring these i64 is a silent
-   truncation on native but a hard signature mismatch under wasm-ld, which then
-   links a trapping stub in place of the call. */
+   `fn note_write(sid: int)` in zeuscore/arena.loam — the channel generated code
+   calls after it binds a non-`int` value, and `int` is i32 since the Phase 10
+   width flip. Declaring these i64 is a silent truncation on native but a hard
+   signature mismatch under wasm-ld, which then links a trapping stub in place of
+   the call. */
 void loam_track_note_read(int32_t sid);
 void loam_track_notify(int32_t sid);
+void loam_arena_note_write(int32_t sid);
 
 typedef struct {
     void *p;

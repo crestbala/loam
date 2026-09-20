@@ -46,7 +46,12 @@ commit per phase. Line anchors are for the tree at `feat/zeus-upgrade-v2`.
 - **Synchronous, uniform propagation.** `Int` writes notify inline; non-int
   signals go through `loam_track_notify`, bypass `arena.store_sig`, and are
   drained once per frame (`track.loam:22-25`); `batch` defers to a pending list
-  (`track.loam:35-38`, `370-406`).
+  (`track.loam:35-38`, `370-406`). **Phase 9:** one write channel. The accounting
+  `store_sig` did after binding an int — count the effects that ran and the nodes
+  they reported, then choose targeted marks or a frame-wide fallback — moves into
+  `arena.note_write`, which generated code calls by name after it binds any other
+  value. A string or struct prop write is now attributed exactly like an int one;
+  only a write with no node to attribute still falls back to a frame mark.
 
 ### C — Channel unification
 - Three visual channels: prop effects, coarse rebuild, paint-only. Animation
@@ -79,16 +84,19 @@ commit per phase. Line anchors are for the tree at `feat/zeus-upgrade-v2`.
   `plat_sig_gen`. A reader whose inputs turn out not to have moved is skipped, so
   the change gate the eager form got from `set` is preserved, and a memo nothing
   observes is never recomputed at all.
-- Ownership was manual: `effect_owner`, `ui_parents`, `record_intern`,
+- Ownership is manual: `effect_owner`, `ui_parents`, `record_intern`,
   `release_sigs` / `release_fns` (`zeusbase.loam:91-149`, `arena.loam:563-624`,
   `830-840`), plus wholesale `track.reset()` in view mode. **Phase 7a:** a
   nested-computation disposal graph: `alloc` records the computation whose body
   created an effect, and a `scope` (`scope_eid`) disposes its children before it
   re-runs, recycling their rows. A plain `effect` keeps its children (owned by
   the surrounding node), so nothing existing changes. Phase 7b extends the same
-  owner to the arena: a `computed<T>` files its output cell and body cell under
-  the scope that owns its memo row (`arena.record_sig` / `release_owner`), so a
-  re-running scope recycles them with the row.
+  owner to the arena for `computed<T>`'s cells. **Phase 8:** `arena.owner_now()` is
+  the single rule — the innermost live `scope` as a negative id, else the host
+  rebuild scope — and `signal<T>` and the `intern_*` helpers record under it, so a
+  `scope` owns everything its body creates. A scope's children are disposed
+  *before* its cells are released, so a child's `on_cleanup` still has a handler
+  to invoke.
 
 ## The phases
 
@@ -104,6 +112,8 @@ commit per phase. Line anchors are for the tree at `feat/zeus-upgrade-v2`.
 | 7 | D | Typed, lazy graph: generic `computed<T>` with pull-on-read, and a nested-computation disposal graph that auto-tears-down on owner re-run | landed |
 | 7a | D | Disposal graph: `scope` / `scope_eid` — a re-run disposes the computations its body created, recycling their effect rows and intern ids; a plain `effect` is unchanged | landed |
 | 7b | D | Typed, lazy graph: generic `computed<T>` (the body persists in a signal cell, so no runtime hook), and a lazy memo — dirty on write, recomputed on read, skipped when no input generation moved, and recycled with its scope | landed |
+| 8 | D | Ownership below the graph: a `scope` owns the signals and interned handlers its body creates (`arena.owner_now`, one record per id), so a re-running scope recycles them; plus `zeus.intern_count()` so a test can hold the handler table flat | landed |
+| 9 | B | One write channel: `arena.note_write` is the accounting every state write shares, so a non-`int` write is as targeted as an `int` one instead of draining a frame mark | landed |
 
 Phases 1–3 are additive over the current model: existing `For` / `Index` /
 `VirtualList` keep working while gaining a per-node fast path. Phases 4–7 change
