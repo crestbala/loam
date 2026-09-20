@@ -15,6 +15,7 @@
 
 import "structs.loam"
 import "enums.loam"
+import "zeus_constants.loam"
 import "zeuscore/geometry.loam"
 import "zeuscore/platform.loam"
 import "zeuscore/arena.loam"
@@ -3251,6 +3252,74 @@ struct GridConfig {
     /// A constant, not a signal: a cell width is a layout parameter, so
     /// re-resolving it every frame would buy nothing.
     auto_columns: int = -1,
+}
+
+struct VirtWin {
+    first: int,
+    last: int,
+}
+/// Visible index window for a windowed list. `row_h` is the fixed row height
+/// used to turn `scroll_y` into indices; overscan keeps a few extra rows
+/// mounted so a small flick does not rebuild.
+fn virtual_window(node_id: int, n: int, row_h: int) -> VirtWin {
+    let mut first = 0
+    let mut last = n
+    if row_h <= 0 {
+        return VirtWin { first: first, last: last }
+    }
+    let signal_id = find_scroller(node_id)
+    let mut view_h = 240
+    let mut local = 0
+    if signal_id > 0 {
+        if arena.nodes[signal_id].h > 0 {
+            view_h = arena.nodes[signal_id].h
+        }
+        if node_id == signal_id {
+            local = arena.nodes[signal_id].scroll_y
+        } else {
+            local = arena.nodes[signal_id].scroll_y - (arena.nodes[node_id].y - arena.nodes[signal_id].y)
+        }
+    } else if arena.nodes[node_id].h > 0 {
+        view_h = arena.nodes[node_id].h
+    }
+    if local < 0 {
+        local = 0
+    }
+    first = local / row_h - VIRT_OVERSCAN
+    last = (local + view_h) / row_h + VIRT_OVERSCAN + 1
+    if first < 0 {
+        first = 0
+    }
+    if last > n {
+        last = n
+    }
+    if last < first {
+        last = first
+    }
+    return VirtWin { first: first, last: last }
+}
+let mut pick_dest: Signal<string> = Signal { id: 0 }
+let mut pick_w: Signal<int> = Signal { id: 0 }
+let mut pick_h: Signal<int> = Signal { id: 0 }
+
+fn find_scroller(id: int) -> int {
+    if id <= 0 {
+        return 0
+    }
+    if id >= arena.nodes.len {
+        return 0
+    }
+    if int(arena.nodes[id].kind) == 11 {
+        return id
+    }
+    let mut p = arena.nodes[id].parent
+    while p > 0 {
+        if int(arena.nodes[p].kind) == 11 {
+            return p
+        }
+        p = arena.nodes[p].parent
+    }
+    return 0
 }
 
 // --- C boundary hooks -----------------------------------------------------
