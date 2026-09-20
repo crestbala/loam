@@ -7,7 +7,7 @@ import "std:sys"
 import "std:zeus"
 import "std:colors"
 import "std:spacing"
-import "std:design"
+import "std:zui"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -19,8 +19,8 @@ fn must(ok: bool, what: string) {
 fn main() {
     zeus.window("collapsible", 360, 260)
     let open = zeus.signal(0)
-    let tree = design.Page() {
-        design.Collapsible(open = open, title = "Details", border_color = colors.rule()) {
+    let tree = zui.Page() {
+        zui.Collapsible(open = open, title = "Details", border_color = colors.rule()) {
             zeus.Text("Hidden body", color = zeus.ink(), font = spacing.FONT_BODY)
         }
     }

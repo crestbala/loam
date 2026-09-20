@@ -1,6 +1,6 @@
-//! design — the components package's public entry point. The widgets live in
+//! zui — the components package's public entry point. The widgets live in
 //! `atoms` / `molecules` / `organisms`; this module imports all three so a caller
-//! can `import "std:design"` and reach any of them as `design.Card`.
+//! can `import "std:zui"` and reach any of them as `zui.Card`.
 //!
 //! It declares nothing and imports only the tiers, so it adds no dependency of
 //! its own. Tiers use each other directly (`organisms` imports `molecules`), so

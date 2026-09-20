@@ -3,15 +3,15 @@
 // prints: stdout is the golden.
 
 import "std:zeus"
-import "std:design"
+import "std:zui"
 
 fn main() {
     let y = zeus.signal(2026)
     let m = zeus.signal(9)
     let d = zeus.signal(15)
     zeus.snapshot(400, 420, fn() -> Node {
-        design.Page() {
-            design.DatePicker(y, m, d)
+        zui.Page() {
+            zui.DatePicker(y, m, d)
         }
     })
     zeus.engine_click_text("Pick a date")

@@ -5,7 +5,7 @@ import "std:fmt"
 import "std:sys"
 import "std:zeus"
 import "std:colors"
-import "std:design"
+import "std:zui"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -28,8 +28,8 @@ fn main() {
     zeus.window("dialog", 800, 600)
     let open = zeus.signal(0)
     zeus.root(zeus.Box(padding = 16) {
-        design.Button("Open", on_click = fn() => open.set(1))
-        design.Dialog(open, title = "Confirm") {
+        zui.Button("Open", on_click = fn() => open.set(1))
+        zui.Dialog(open, title = "Confirm") {
             zeus.Text("Inside")
         }
     })

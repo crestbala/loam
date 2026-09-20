@@ -3,14 +3,14 @@
 // so the point is only that the host entry points link and run.
 
 import "std:zeus"
-import "std:design"
+import "std:zui"
 
 fn main() {
     let count = zeus.signal(5)
     zeus.snapshot(320, 200, fn() -> Node {
         zeus.Box(align_direction = DIRECTION.Column) {
             zeus.Text("smoke")
-            design.Button(label = "Go")
+            zui.Button(label = "Go")
         }
     })
 }

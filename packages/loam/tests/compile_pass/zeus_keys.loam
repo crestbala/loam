@@ -1,7 +1,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
-import "std:design"
+import "std:zui"
 
 fn fail() {
     sys.exit(1)
@@ -28,7 +28,7 @@ fn main() {
     zeus.on_range(box, "select.prev", sel, -1, 0, 2)
     zeus.on_action(box, "select.toggle", open, 1, 0)
     zeus.slot(box, fn() {
-        design.Button("Comfortable", on_click = fn() => open.set(1 - open.get()), width = 200, height = 40)
+        zui.Button("Comfortable", on_click = fn() => open.set(1 - open.get()), width = 200, height = 40)
     })
     let top = zeus.Box(align_direction = DIRECTION.Column)
     zeus.child(top, box)

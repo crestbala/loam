@@ -4,7 +4,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
-import "std:design"
+import "std:zui"
 
 fn Item(i: int, s: string) {
     zeus.Text(s)
@@ -13,12 +13,12 @@ fn Item(i: int, s: string) {
 fn main() {
     let tab = zeus.signal(0)
     let items = zeus.signal([]string {})
-    design.push_item(items, "a")
-    design.push_item(items, "b")
+    zui.push_item(items, "a")
+    zui.push_item(items, "b")
     zeus.snapshot(240, 160, fn() -> Node {
         zeus.Box(align_direction = DIRECTION.Column) {
-            design.Index(items, Item)
-            design.Match(tab, fn(t) {
+            zui.Index(items, Item)
+            zui.Match(tab, fn(t) {
                 if t == 0 {
                     zeus.Text("tab zero")
                 } else {

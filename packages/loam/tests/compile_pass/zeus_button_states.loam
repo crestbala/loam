@@ -6,7 +6,7 @@ import "std:fmt"
 import "std:sys"
 import "std:zeus"
 import "std:colors"
-import "std:design"
+import "std:zui"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -20,10 +20,10 @@ fn main() {
     let clicks = zeus.signal(0)
     let busy = zeus.signal(0)
     let off_clicks = zeus.signal(0)
-    zeus.root(design.Row(8) {
-        design.Button("Save", icon = zeus.IC_CHECK, loading = busy,
+    zeus.root(zui.Row(8) {
+        zui.Button("Save", icon = zeus.IC_CHECK, loading = busy,
                     on_click = fn() => clicks.set(clicks.get() + 1))
-        design.Button("Off", enabled = false,
+        zui.Button("Off", enabled = false,
                     on_click = fn() => off_clicks.set(off_clicks.get() + 1))
     })
     zeus.pump_frame()

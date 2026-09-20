@@ -1,14 +1,14 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
-import "std:design"
+import "std:zui"
 
 let mut labs: []string = []string {}
 let mut cs: []string = []string {}
 let mut cv: []int = []int {}
 
 fn Picks(sel: Signal<int>) {
-    design.Tabs(sel, labs)
+    zui.Tabs(sel, labs)
 }
 
 fn ChartSeed() {
@@ -30,22 +30,22 @@ fn main() {
     let on = zeus.signal(1)
     let sel = zeus.signal(0)
     zeus.snapshot(320, 240, fn() -> Node {
-        design.Card() {
-            design.Heading("Hello")
-            design.Button("Go", look = zeus.LOOK.Solid, size = zeus.SIZE.Md)
-            design.Chip("live", zeus.TINT.Ok)
-            design.Checkbox("On", on)
-            design.Field("Name", zeus.signal(""), "Ada")
-            design.User("AP", "Ada", "Op")
+        zui.Card() {
+            zui.Heading("Hello")
+            zui.Button("Go", look = zeus.LOOK.Solid, size = zeus.SIZE.Md)
+            zui.Chip("live", zeus.TINT.Ok)
+            zui.Checkbox("On", on)
+            zui.Field("Name", zeus.signal(""), "Ada")
+            zui.User("AP", "Ada", "Op")
             Picks(sel)
             zeus.Box(safe = 1, min_width = 40, wrap = 1) {
-                design.Note("safe")
+                zui.Note("safe")
             }
-            design.BarChart(labs, cs, cv, 260, 120)
-            design.LineChart(labs, cs, cv, 260, 120)
-            design.AreaChart(labs, cs, cv, 260, 120)
-            design.Dialog(open, title = "Hi") {
-                design.Button("Ok", look = zeus.LOOK.Solid, size = zeus.SIZE.Sm, on_click = fn() => open.set(0))
+            zui.BarChart(labs, cs, cv, 260, 120)
+            zui.LineChart(labs, cs, cv, 260, 120)
+            zui.AreaChart(labs, cs, cv, 260, 120)
+            zui.Dialog(open, title = "Hi") {
+                zui.Button("Ok", look = zeus.LOOK.Solid, size = zeus.SIZE.Sm, on_click = fn() => open.set(0))
             }
         }
     })

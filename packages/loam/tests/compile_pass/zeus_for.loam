@@ -1,7 +1,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
-import "std:design"
+import "std:zui"
 
 fn RowOf(i: int, s: string) {
     zeus.Text(s)
@@ -9,13 +9,13 @@ fn RowOf(i: int, s: string) {
 
 fn main() {
     let names = zeus.signal([]string {})
-    design.push_item(names, "Ada")
-    design.push_item(names, "Bea")
+    zui.push_item(names, "Ada")
+    zui.push_item(names, "Bea")
     zeus.snapshot(240, 160, fn() -> Node {
         zeus.Box(align_direction = DIRECTION.Column) {
-            design.For(names, fn(s) => s, RowOf)
-            design.Button("Add", on_click = fn() => design.push_item(names, "Cyd"))
-            design.Each(names.get(), fn(i, s) {
+            zui.For(names, fn(s) => s, RowOf)
+            zui.Button("Add", on_click = fn() => zui.push_item(names, "Cyd"))
+            zui.Each(names.get(), fn(i, s) {
                 zeus.Text(s)
             })
         }
@@ -34,7 +34,7 @@ fn main() {
         fmt.println("FAIL len after add", after_add)
         sys.exit(1)
     }
-    design.pop_item(names)
+    zui.pop_item(names)
     let after_pop = names.get().len
     if after_pop != 2 {
         fmt.println("FAIL len after pop", after_pop)

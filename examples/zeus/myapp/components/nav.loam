@@ -6,7 +6,7 @@ import "std:async"
 import "std:zeus"
 import "std:colors"
 import "std:spacing"
-import "std:design"
+import "std:zui"
 import "std:router"
 
 let mut ram_armed: int = 0
@@ -29,7 +29,7 @@ fn RamChip() {
     }
 }
 
-/// One nav entry, mirroring `design.NavTab` but driven by the URL instead of a
+/// One nav entry, mirroring `zui.NavTab` but driven by the URL instead of a
 /// tab index. The active test is a thunk, so `selected_chrome` re-runs it
 /// whenever `cur_path` changes: the highlight follows navigation even though
 /// the bar itself is retained and never rebuilds. Evaluating `path.get()`
@@ -58,7 +58,7 @@ fn NavLink(label: string, href: string) {
 /// switch drives `zeus.appearance()`, which every role token resolves against
 /// at paint — one toggle restyles the whole tree with no rebuild.
 fn Navbar() {
-    design.Column(SPACE.None) {
+    zui.Column(SPACE.None) {
         zeus.Box(align_direction = DIRECTION.Row, spacing = SPACE.Md,
                  align_items = ALIGN.Center, height = spacing.BAR) {
             zeus.Box(width = 22, height = 22, radius = 6, background = zeus.ink())
@@ -69,11 +69,11 @@ fn Navbar() {
             NavLink("Blog", "/blog")
             NavLink("About", "/about")
             NavLink("Pricing", "/pricing")
-            design.Grow()
+            zui.Grow()
             RamChip()
             zeus.Text("Dark", color = colors.mute(), font = spacing.FONT_CONTROL)
-            design.Switch(zeus.appearance())
+            zui.Switch(zeus.appearance())
         }
-        design.Separator()
+        zui.Separator()
     }
 }

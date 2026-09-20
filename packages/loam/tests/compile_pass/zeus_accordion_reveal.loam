@@ -9,7 +9,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
-import "std:design"
+import "std:zui"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -34,7 +34,7 @@ fn main() {
         AccordionRow { title: "One", body: "alpha" },
         AccordionRow { title: "Two", body: "beta" },
     }
-    zeus.root(design.Accordion(open, items = rows))
+    zeus.root(zui.Accordion(open, items = rows))
     zeus.pump_frame()
     zeus.engine_step_dt(16)
     zeus.pump_frame()

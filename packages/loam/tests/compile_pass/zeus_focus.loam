@@ -4,7 +4,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
-import "std:design"
+import "std:zui"
 
 fn expect(ok: bool, what: string) {
     if ok {
@@ -22,12 +22,12 @@ fn main() {
     let saves = zeus.signal(0)
     zeus.window("focus", 640, 480)
     zeus.root(zeus.Box(padding = 24, align_direction = DIRECTION.Column, spacing = 8) {
-        design.TextInput(name, "Name")
-        design.Checkbox("Agree", agree)
-        design.Switch(pick)
-        design.Button("Save", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
+        zui.TextInput(name, "Name")
+        zui.Checkbox("Agree", agree)
+        zui.Switch(pick)
+        zui.Button("Save", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
                     on_click = fn() => saves.set(saves.get() + 1))
-        design.TextArea(draft, "Note")
+        zui.TextArea(draft, "Note")
     })
     zeus.engine_layout(640, 480)
 

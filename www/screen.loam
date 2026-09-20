@@ -2,7 +2,7 @@
 
 import "std:zeus"
 import "std:colors"
-import "std:design"
+import "std:zui"
 import "cache.loam"
 
 fn NavItem(page: Signal<int>, id: int, label: string) {
@@ -24,16 +24,16 @@ fn NavItem(page: Signal<int>, id: int, label: string) {
 
 fn Nav(page: Signal<int>) {
     zeus.Box(width = 240, align_direction = DIRECTION.Column, spacing = 4) {
-        design.Overline("Start")
+        zui.Overline("Start")
         NavItem(page, 0, "Overview")
         NavItem(page, 1, "Install")
-        design.Overline("Language")
+        zui.Overline("Language")
         NavItem(page, 2, "Syntax")
         NavItem(page, 3, "Types")
         NavItem(page, 4, "Ownership")
         NavItem(page, 5, "Control flow")
         NavItem(page, 6, "Modules")
-        design.Overline("Libraries")
+        zui.Overline("Libraries")
         NavItem(page, 7, "Overview")
         NavItem(page, 8, "fmt")
         NavItem(page, 9, "zeus")
@@ -41,7 +41,7 @@ fn Nav(page: Signal<int>) {
         NavItem(page, 11, "maya")
         NavItem(page, 12, "sys")
         NavItem(page, 13, "net")
-        design.Overline("More")
+        zui.Overline("More")
         NavItem(page, 14, "Platforms")
         NavItem(page, 15, "Examples")
     }
@@ -72,13 +72,13 @@ fn Article(page: Signal<int>) {
 fn Screen(chip: string, page: Signal<int>) {
     zeus.Box(align_direction = DIRECTION.Column, spacing = 16, padding = 28,
              background = colors.paper()) {
-        design.Row(8) {
+        zui.Row(8) {
             zeus.Text("Loam", color = zeus.ink(), font = 22)
-            design.Chip(chip, zeus.TINT.Ink)
-            design.Badge("Docs.Page", zeus.TINT.Ok)
+            zui.Chip(chip, zeus.TINT.Ink)
+            zui.Badge("Docs.Page", zeus.TINT.Ok)
         }
-        design.Alert("RPC", "Sidebar writes a signal. Copy was fetched once over Docs.Page (gRPC-Web).")
-        design.Row(24) {
+        zui.Alert("RPC", "Sidebar writes a signal. Copy was fetched once over Docs.Page (gRPC-Web).")
+        zui.Row(24) {
             Nav(page)
             Article(page)
         }

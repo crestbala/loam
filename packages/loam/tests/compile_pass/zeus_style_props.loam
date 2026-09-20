@@ -3,7 +3,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
-import "std:design"
+import "std:zui"
 
 fn expect(ok: bool, what: string) {
     if ok {
@@ -17,33 +17,33 @@ fn main() {
     let hidden = zeus.signal(0)
     let shown = zeus.signal(1)
     zeus.snapshot(320, 280, fn() -> Node {
-        design.Column(8) {
-            design.Button("Go", look = zeus.LOOK.Solid, size = zeus.SIZE.Md)
-            design.Button("Styled", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
+        zui.Column(8) {
+            zui.Button("Go", look = zeus.LOOK.Solid, size = zeus.SIZE.Md)
+            zui.Button("Styled", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
                         radius = 4)
-            design.IconButton(zeus.IC_CHECK, zeus.LOOK.Soft, zeus.SIZE.Md, "Icon")
-            design.Card() {
+            zui.IconButton(zeus.IC_CHECK, zeus.LOOK.Soft, zeus.SIZE.Md, "Icon")
+            zui.Card() {
                 zeus.Text("plain card")
             }
-            design.Card(radius = 2, padding = 8) {
+            zui.Card(radius = 2, padding = 8) {
                 zeus.Text("restyled")
             }
-            design.Chip("ok", zeus.TINT.Ok)
-            design.Chip("round", zeus.TINT.Mute, radius = 4)
-            design.Badge("tag", zeus.TINT.Ok, radius = 2)
-            design.Comp(background = "#111", radius = 6, padding = 8) {
+            zui.Chip("ok", zeus.TINT.Ok)
+            zui.Chip("round", zeus.TINT.Mute, radius = 4)
+            zui.Badge("tag", zeus.TINT.Ok, radius = 2)
+            zui.Comp(background = "#111", radius = 6, padding = 8) {
                 zeus.Text("comp", color = "#fff")
             }
-            design.Alert("Heads", "Restyled.", radius = 4)
-            design.Field("Name", zeus.signal(""), "Ada", width = 120,
+            zui.Alert("Heads", "Restyled.", radius = 4)
+            zui.Field("Name", zeus.signal(""), "Ada", width = 120,
                        radius = 2)
-            design.Comp(visible = hidden, a11y_label = "ghost") {
+            zui.Comp(visible = hidden, a11y_label = "ghost") {
                 zeus.Text("kid")
             }
-            design.If(shown) {
+            zui.If(shown) {
                 zeus.Text("shown")
             }
-            design.Card(visible = shown) {
+            zui.Card(visible = shown) {
                 zeus.Text("card vis")
             }
         }

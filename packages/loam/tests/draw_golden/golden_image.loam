@@ -2,12 +2,12 @@
 // golden is stable; hosts decode PNG / JPEG / WebP / GIF themselves.
 
 import "std:zeus"
-import "std:design"
+import "std:zui"
 
 fn main() {
     zeus.snapshot(120, 48, fn() -> Node {
         zeus.Box(padding = 8, background = "#ffffff") {
-            design.Image("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mO4o6YGAAMKASneDRr/AAAAAElFTkSuQmCC", width = 32, height = 32, radius = 4)
+            zui.Image("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mO4o6YGAAMKASneDRr/AAAAAElFTkSuQmCC", width = 32, height = 32, radius = 4)
         }
     })
 }

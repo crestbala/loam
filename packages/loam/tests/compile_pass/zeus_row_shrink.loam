@@ -7,7 +7,7 @@ import "std:fmt"
 import "std:sys"
 import "std:zeus"
 import "std:colors"
-import "std:design"
+import "std:zui"
 
 fn expect(ok: bool, what: string) {
     if ok {
@@ -20,7 +20,7 @@ fn expect(ok: bool, what: string) {
 fn R(text: fn() -> string, flexed: int, tag: string) -> Node {
     zeus.Box(align_direction = DIRECTION.Row, spacing = 4, width = 200) {
         zeus.Text(text, grow = flexed, color = "#000000")
-        design.Button(tag, width = 40, height = 20)
+        zui.Button(tag, width = 40, height = 20)
     }
 }
 

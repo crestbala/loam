@@ -5,7 +5,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
-import "std:design"
+import "std:zui"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -44,7 +44,7 @@ fn main() {
     zeus.snapshot(320, 200, fn() -> Node {
         zeus.Box(align_direction = DIRECTION.Column) {
             zeus.Text("hello world")
-            design.Button(label = "Save")
+            zui.Button(label = "Save")
         }
     })
     let dump = zeus.engine_a11y_dump()

@@ -5,7 +5,7 @@ import "std:fmt"
 import "std:sys"
 import "std:zeus"
 import "std:colors"
-import "std:design"
+import "std:zui"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -17,8 +17,8 @@ fn must(ok: bool, what: string) {
 fn main() {
     zeus.window("combobox", 360, 300)
     let query = zeus.signal("")
-    let tree = design.Page() {
-        design.Combobox(query, []string { "Apple", "Apricot", "Banana", "Cherry" },
+    let tree = zui.Page() {
+        zui.Combobox(query, []string { "Apple", "Apricot", "Banana", "Cherry" },
                       width = 220)
     }
     zeus.root(tree)

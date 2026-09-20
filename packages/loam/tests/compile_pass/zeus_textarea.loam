@@ -1,9 +1,9 @@
-// Phase 3: multiline Input / design.TextArea — type, newline, caret, bind.
+// Phase 3: multiline Input / zui.TextArea — type, newline, caret, bind.
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
 import "std:colors"
-import "std:design"
+import "std:zui"
 
 fn fail(what: string) {
     fmt.println("FAIL", what)
@@ -21,7 +21,7 @@ fn main() {
     let draft = zeus.signal("")
     zeus.snapshot(400, 240, fn() -> Node {
         zeus.Box(padding = 16) {
-            design.TextArea(draft, "Message")
+            zui.TextArea(draft, "Message")
         }
     })
     let id = zeus.engine_find_role("textbox")
@@ -45,7 +45,7 @@ fn main() {
     let one = zeus.signal("")
     zeus.snapshot(320, 120, fn() -> Node {
         zeus.Box(padding = 8) {
-            design.Input(bind = one, placeholder = "one")
+            zui.Input(bind = one, placeholder = "one")
         }
     })
     let sid = zeus.engine_find_text("one")

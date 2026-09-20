@@ -4,7 +4,7 @@ import "std:fmt"
 import "std:sys"
 import "std:zeus"
 import "std:colors"
-import "std:design"
+import "std:zui"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -41,14 +41,14 @@ fn main() {
     zeus.window("dialog", 480, 320)
     let open = zeus.signal(0)
     let value = zeus.signal(0)
-    let tree = design.Page() {
-        design.Button("Open", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
+    let tree = zui.Page() {
+        zui.Button("Open", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
                     on_click = fn() => open.set(1))
-        design.Button("Outside", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
-        design.Dialog(open, title = "Confirm") {
-            design.Button("Inside", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
+        zui.Button("Outside", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
+        zui.Dialog(open, title = "Confirm") {
+            zui.Button("Inside", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
         }
-        design.Select(value, []string { "Small", "Medium", "Large" })
+        zui.Select(value, []string { "Small", "Medium", "Large" })
     }
     zeus.root(tree)
     zeus.pump_frame()

@@ -5,7 +5,7 @@
 import "std:zeus"
 import "std:colors"
 import "std:spacing"
-import "std:design"
+import "std:zui"
 
 fn main() {
     zeus.window("anchor-scroll", 320, 180)
@@ -17,13 +17,13 @@ fn main() {
             let trigger = zeus.Box(width = 120, height = 32, background = colors.plate(),
                                    border = spacing.HAIRLINE, border_color = colors.rule())
             let rows = []MenuRow { MenuRow(label = "Rename") }
-            design.Menu(trigger, active = open, items = rows, width = 160)
+            zui.Menu(trigger, active = open, items = rows, width = 160)
         }
     })
     zeus.root(top)
     zeus.pump_frame()
     zeus.engine_layout(320, 180)
-    design.scroll_to(top, 200)
+    zui.scroll_to(top, 200)
     // Opening is a discrete state change, so it re-lays-out at the live scroll.
     open.set(0)
     zeus.engine_layout(320, 180)

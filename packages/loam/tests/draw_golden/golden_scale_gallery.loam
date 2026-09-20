@@ -5,7 +5,7 @@
 // Keep stdout as the golden; no extra prints.
 
 import "std:zeus"
-import "std:design"
+import "std:zui"
 
 fn main() {
     let on = zeus.signal(1)
@@ -17,37 +17,37 @@ fn main() {
     zeus.set_scale(100)
     zeus.appearance().set(0)
     zeus.snapshot(640, 820, fn() -> Node {
-        design.Page() {
-            design.Navbar("Zeus")
-            design.Row(SPACE.Sm) {
-                design.Button("Primary", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
+        zui.Page() {
+            zui.Navbar("Zeus")
+            zui.Row(SPACE.Sm) {
+                zui.Button("Primary", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
                             on_click = fn() {})
-                design.Button("Outline", look = zeus.LOOK.Outline, size = zeus.SIZE.Lg,
+                zui.Button("Outline", look = zeus.LOOK.Outline, size = zeus.SIZE.Lg,
                             on_click = fn() {})
-                design.Button("Ghost", look = zeus.LOOK.Ghost, size = zeus.SIZE.Sm,
+                zui.Button("Ghost", look = zeus.LOOK.Ghost, size = zeus.SIZE.Sm,
                             on_click = fn() {})
             }
-            design.Row(SPACE.Sm) {
-                design.Checkbox("Agree", on)
-                design.Switch(on)
-                design.Chip("busy", zeus.TINT.Warn)
-                design.Badge("ok", zeus.TINT.Ok)
-                design.Kbd("S")
+            zui.Row(SPACE.Sm) {
+                zui.Checkbox("Agree", on)
+                zui.Switch(on)
+                zui.Chip("busy", zeus.TINT.Warn)
+                zui.Badge("ok", zeus.TINT.Ok)
+                zui.Kbd("S")
             }
-            design.Tabs(tab, []string {"One", "Two", "Three"})
-            design.Row(SPACE.Sm) {
-                design.Segmented(pick, []string {"A", "B", "C"})
+            zui.Tabs(tab, []string {"One", "Two", "Three"})
+            zui.Row(SPACE.Sm) {
+                zui.Segmented(pick, []string {"A", "B", "C"})
             }
-            design.Row(SPACE.Sm) {
-                design.RadioGroup(pick, []string {"First", "Second"})
-                design.Column(SPACE.Exs) {
-                    design.Field("Name", name, "Ada")
-                    design.Field("Email", note, "ada@zeus.dev")
+            zui.Row(SPACE.Sm) {
+                zui.RadioGroup(pick, []string {"First", "Second"})
+                zui.Column(SPACE.Exs) {
+                    zui.Field("Name", name, "Ada")
+                    zui.Field("Email", note, "ada@zeus.dev")
                 }
             }
-            design.TextArea(note, "Message")
-            design.Pagination(cur, 5)
-            design.Alert("Heads up", "Tokens stay identical at scale 1.0.")
+            zui.TextArea(note, "Message")
+            zui.Pagination(cur, 5)
+            zui.Alert("Heads up", "Tokens stay identical at scale 1.0.")
         }
     })
 }

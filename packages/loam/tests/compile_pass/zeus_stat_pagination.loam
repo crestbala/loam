@@ -5,7 +5,7 @@ import "std:fmt"
 import "std:sys"
 import "std:zeus"
 import "std:colors"
-import "std:design"
+import "std:zui"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -18,11 +18,11 @@ fn main() {
     zeus.window("stat", 640, 300)
     let page = zeus.signal(1)
     let series = zeus.signal([]int { 3, 5, 4, 8, 7, 9 })
-    zeus.root(design.Column(8) {
-        design.Stat("Revenue", "$12.4k", zeus.TINT.Ink, delta = "+12%",
-                  trend = design.TREND.Up, spark = series)
-        design.Stat("Errors", "2", zeus.TINT.Danger)
-        design.Pagination(page, 20)
+    zeus.root(zui.Column(8) {
+        zui.Stat("Revenue", "$12.4k", zeus.TINT.Ink, delta = "+12%",
+                  trend = zui.TREND.Up, spark = series)
+        zui.Stat("Errors", "2", zeus.TINT.Danger)
+        zui.Pagination(page, 20)
     })
     zeus.pump_frame()
 
@@ -34,7 +34,7 @@ fn main() {
     must(zeus.engine_find_role("img") != 0, "sparkline")
     must(zeus.node_width(zeus.engine_find_role("img")) == 64, "sparkline width")
     let n_before = zeus.arena_nodes()
-    design.push_item(series, 12)
+    zui.push_item(series, 12)
     zeus.engine_layout(640, 300)
     must(zeus.arena_nodes() == n_before, "sparkline push did not rebuild")
 

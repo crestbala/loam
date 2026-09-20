@@ -1,5 +1,5 @@
 import "std:zeus"
-import "std:design"
+import "std:zui"
 
 fn Readout(n: int) {
     zeus.Text("{{n}}")
@@ -10,7 +10,7 @@ fn CounterPanel(initial: int) {
     zeus.Box(align_direction = DIRECTION.Column, padding = 16, spacing = 12) {
         zeus.Text("Counter", font = 22)
         zeus.Box(align_direction = DIRECTION.Row, spacing = 8) {
-            design.Button("+1", on_click = fn() { count = count + 1 })
+            zui.Button("+1", on_click = fn() { count = count + 1 })
             Readout(count)
         }
     }

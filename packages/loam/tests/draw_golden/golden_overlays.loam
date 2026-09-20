@@ -6,19 +6,19 @@
 import "std:zeus"
 import "std:colors"
 import "std:spacing"
-import "std:design"
+import "std:zui"
 
 fn main() {
     let open = zeus.signal(1)
     let toast = zeus.signal(1)
     zeus.snapshot(420, 320, fn() -> Node {
-        design.Page() {
-            let trigger = design.Button("Menu", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
-            design.Popover(trigger, open = open, place = design.PLACE.PlaceBelow, width = 200) {
+        zui.Page() {
+            let trigger = zui.Button("Menu", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
+            zui.Popover(trigger, open = open, place = zui.PLACE.PlaceBelow, width = 200) {
                 zeus.Text("Rename", color = zeus.ink(), font = spacing.FONT_BODY)
                 zeus.Text("Duplicate", color = zeus.ink(), font = spacing.FONT_BODY)
             }
-            design.Toast(toast, width = 180) {
+            zui.Toast(toast, width = 180) {
                 zeus.Text("Saved", color = colors.on_ink(), font = spacing.FONT_BODY)
             }
         }

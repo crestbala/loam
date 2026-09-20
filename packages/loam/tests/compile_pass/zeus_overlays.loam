@@ -9,7 +9,7 @@ import "std:zeus"
 import "std:colors"
 import "std:colors"
 import "std:spacing"
-import "std:design"
+import "std:zui"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -24,17 +24,17 @@ fn main() {
     let toast = zeus.signal(0)
     let mut pop_id = 0
     let mut trig_id = 0
-    let tree = design.Page() {
+    let tree = zui.Page() {
         // Push the trigger near the bottom so the popover must flip above.
         zeus.Box(height = 220)
-        let trigger = design.Button("Menu", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
+        let trigger = zui.Button("Menu", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
         trig_id = trigger.id
-        let pop = design.Popover(trigger, open = open, place = design.PLACE.PlaceBelow, width = 180) {
+        let pop = zui.Popover(trigger, open = open, place = zui.PLACE.PlaceBelow, width = 180) {
             zeus.Text("Rename", color = zeus.ink(), font = spacing.FONT_BODY)
         }
         pop_id = pop.id
-        design.Tooltip(trigger, text = "Open the menu", delay = 0)
-        design.Toast(toast, width = 160, ms = 0) {
+        zui.Tooltip(trigger, text = "Open the menu", delay = 0)
+        zui.Toast(toast, width = 160, ms = 0) {
             zeus.Text("Saved", color = colors.on_ink(), font = spacing.FONT_BODY)
         }
     }

@@ -6,7 +6,7 @@ import "std:sys"
 import "std:zeus"
 import "std:colors"
 import "std:colors"
-import "std:design"
+import "std:zui"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -18,16 +18,16 @@ fn must(ok: bool, what: string) {
 fn main() {
     zeus.window("card", 480, 400)
     let clicks = zeus.signal(0)
-    zeus.root(design.Column(12) {
-        design.Card(title = "Plan", subtitle = "Monthly", footer = fn() {
+    zeus.root(zui.Column(12) {
+        zui.Card(title = "Plan", subtitle = "Monthly", footer = fn() {
             zeus.Text("Footer", color = colors.mute())
         }) {
             zeus.Text("Body")
         }
-        design.Card(interactive = true, on_click = fn() => clicks.set(clicks.get() + 1)) {
+        zui.Card(interactive = true, on_click = fn() => clicks.set(clicks.get() + 1)) {
             zeus.Text("Tap")
         }
-        design.Card(media = "x.png") {
+        zui.Card(media = "x.png") {
             zeus.Text("Under media")
         }
     })

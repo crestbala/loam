@@ -5,7 +5,7 @@ import "std:fmt"
 import "std:sys"
 import "std:zeus"
 import "std:colors"
-import "std:design"
+import "std:zui"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -22,13 +22,13 @@ fn main() {
     push(spec, TableCol { title: "Name", width: 0, sortable: true })
     push(spec, TableCol { title: "Qty", width: 60, align: zeus.ALIGN.End, sortable: true })
     push(spec, TableCol { title: "Status", width: 0 })
-    zeus.root(design.Column(0) {
-        design.TableCols(spec, sort = sort)
-        design.TableRowCols([]string { "Ada", "12", "Active" }, spec, zebra = true,
+    zeus.root(zui.Column(0) {
+        zui.TableCols(spec, sort = sort)
+        zui.TableRowCols([]string { "Ada", "12", "Active" }, spec, zebra = true,
                           on_click = fn() => picked.set("Ada"))
-        design.TableRowCols([]string { "Bea", "7", "Away" }, spec, zebra = true,
+        zui.TableRowCols([]string { "Bea", "7", "Away" }, spec, zebra = true,
                           on_click = fn() => picked.set("Bea"))
-        design.TableRowCols([]string { "Cal", "30", "Active" }, spec, zebra = true,
+        zui.TableRowCols([]string { "Cal", "30", "Active" }, spec, zebra = true,
                           on_click = fn() => picked.set("Cal"))
     })
     zeus.pump_frame()

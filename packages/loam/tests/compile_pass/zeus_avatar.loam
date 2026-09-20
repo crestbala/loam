@@ -3,7 +3,7 @@ import "std:fmt"
 import "std:sys"
 import "std:zeus"
 import "std:colors"
-import "std:design"
+import "std:zui"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -14,9 +14,9 @@ fn must(ok: bool, what: string) {
 
 fn main() {
     zeus.window("avatar", 400, 200)
-    zeus.root(design.Row(8) {
-        design.Avatar("ZX", 40, status = zeus.TINT.Ok)
-        design.AvatarGroup([]string { "AA", "BB", "CC" }, 32)
+    zeus.root(zui.Row(8) {
+        zui.Avatar("ZX", 40, status = zeus.TINT.Ok)
+        zui.AvatarGroup([]string { "AA", "BB", "CC" }, 32)
     })
     zeus.pump_frame()
     must(zeus.text_visible("ZX"), "initials")

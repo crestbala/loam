@@ -8,7 +8,7 @@ import "std:sys"
 import "std:zeus"
 import "std:colors"
 import "std:colors"
-import "std:design"
+import "std:zui"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -33,9 +33,9 @@ fn main() {
             let trigger = zeus.Box(width = 120, height = 32, background = colors.plate())
             trig = trigger.id
             let rows = []MenuRow { MenuRow(label = "Rename") }
-            let m = design.Menu(trigger, active = open, items = rows, width = 160)
+            let m = zui.Menu(trigger, active = open, items = rows, width = 160)
             panel = m.id
-            let p = design.Popover(trigger, open = tall, place = design.PLACE.PlaceAbove, width = 160) {
+            let p = zui.Popover(trigger, open = tall, place = zui.PLACE.PlaceAbove, width = 160) {
                 zeus.Box(height = 140)
             }
             pop = p.id
@@ -76,13 +76,13 @@ fn main() {
     tall.set(0)
     open.set(0)
     zeus.engine_layout(360, 280)
-    design.scroll_to(top, 400)
+    zui.scroll_to(top, 400)
     zeus.engine_layout(360, 280)
-    must(zeus.node_y(trig) - design.scroll_y(top) < 47, "trigger is above the safe viewport")
+    must(zeus.node_y(trig) - zui.scroll_y(top) < 47, "trigger is above the safe viewport")
     must(zeus.node_y(panel) < 0, "panel followed the trigger off screen, not pinned to safe_t")
 
     // Landscape: left inset is the notch. The trigger and a below-menu share it.
-    design.scroll_to(top, 0)
+    zui.scroll_to(top, 0)
     zeus.engine_set_insets(0, 34, 0, 47)
     open.set(0)
     tall.set(0)

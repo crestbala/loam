@@ -38,7 +38,7 @@ fn signal_handle(id: int) -> Signal<int> {
 /// Example:
 /// ```
 /// let count = zeus.signal(0)
-/// design.Button("+", on_click = fn() => count.set(count.get() + 1))
+/// zui.Button("+", on_click = fn() => count.set(count.get() + 1))
 /// ```
 /// Allocations made while a `For` / `refit` rebuild is running are owned by
 /// that host (the C alloc hook records them) and are freed when the host

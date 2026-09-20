@@ -1,72 +1,72 @@
 //! Foundations page: the type scale, status accents, and the two ways to
-//! build a surface — a recipe (`design.Card`) and a primitive (`design.Comp`).
+//! build a surface — a recipe (`zui.Card`) and a primitive (`zui.Comp`).
 //! Every color is a role token, so the whole page inverts with the appearance.
 
 import "std:zeus"
 import "std:colors"
 import "std:colors"
 import "std:spacing"
-import "std:design"
+import "std:zui"
 
 fn ProjectCard() {
     let ticks = zeus.signal(0)
-    design.Card() {
-        design.Row(SPACE.Sm) {
-            design.Title("Project card")
-            design.Grow()
-            design.Badge("In progress", zeus.TINT.Ok)
+    zui.Card() {
+        zui.Row(SPACE.Sm) {
+            zui.Title("Project card")
+            zui.Grow()
+            zui.Badge("In progress", zeus.TINT.Ok)
         }
-        design.Body("A card with a title, supporting copy, and a footer of actions. Rounded-xl, hairline border, paper surface.")
-        design.Row(SPACE.Sm) {
-            design.Button("Cancel", look = zeus.LOOK.Outline, size = zeus.SIZE.Md, on_click = fn() => ticks.set(ticks.get() + 1))
-            design.Button("Save", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => ticks.set(ticks.get() + 1))
-            design.Grow()
+        zui.Body("A card with a title, supporting copy, and a footer of actions. Rounded-xl, hairline border, paper surface.")
+        zui.Row(SPACE.Sm) {
+            zui.Button("Cancel", look = zeus.LOOK.Outline, size = zeus.SIZE.Md, on_click = fn() => ticks.set(ticks.get() + 1))
+            zui.Button("Save", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => ticks.set(ticks.get() + 1))
+            zui.Grow()
             zeus.Text("{{ticks.get()}}", color = colors.mute(), font = spacing.FONT_CAPTION)
         }
     }
 }
 
 fn Customize() {
-    design.SectionHeader("Customize", "Style props + slots",
+    zui.SectionHeader("Customize", "Style props + slots",
                        "Style props restyle a recipe without copying it. Comp is the primitive for your own widget. Trailing blocks are slots.")
-    design.Card() {
-        design.RowWrap(SPACE.Sm) {
-            design.Button("Recipe", look = zeus.LOOK.Solid, size = zeus.SIZE.Md)
-            design.Button("Styled", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
+    zui.Card() {
+        zui.RowWrap(SPACE.Sm) {
+            zui.Button("Recipe", look = zeus.LOOK.Solid, size = zeus.SIZE.Md)
+            zui.Button("Styled", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
                         radius = 999, padding_x = 20,)
-            design.IconButton(zeus.IC_CHECK, zeus.LOOK.Soft, zeus.SIZE.Md, "Save")
-            design.Chip("pill", zeus.TINT.Ok, radius = 6)
+            zui.IconButton(zeus.IC_CHECK, zeus.LOOK.Soft, zeus.SIZE.Md, "Save")
+            zui.Chip("pill", zeus.TINT.Ok, radius = 6)
         }
-        design.Card(radius = 6, padding = 12) {
-            design.Body("This card used radius = 6, padding = 12.")
+        zui.Card(radius = 6, padding = 12) {
+            zui.Body("This card used radius = 6, padding = 12.")
         }
-        design.Comp(background = colors.raised(), radius = 10,
+        zui.Comp(background = colors.raised(), radius = 10,
                   padding = 12, spacing = 8,
                   align_direction = DIRECTION.Row, align_items = ALIGN.Center) {
-            design.Pip(zeus.accent(), 8)
+            zui.Pip(zeus.accent(), 8)
             zeus.Text("Comp — a function widget, styled by props", font = spacing.FONT_BODY,
                       color = zeus.ink())
         }
-        design.Badge("custom", zeus.TINT.Mute, radius = 2, padding_x = 8)
-        design.Alert("Styled alert", "Same recipe, different radius.",
+        zui.Badge("custom", zeus.TINT.Mute, radius = 2, padding_x = 8)
+        zui.Alert("Styled alert", "Same recipe, different radius.",
                    radius = 4, padding = 10)
     }
 }
 
 fn Foundations() {
-    design.Breadcrumbs([]string {"myapp", "Examples", "Foundations"})
-    design.Column(SPACE.Exs) {
-        design.Display("Build interfaces with Zeus")
-        design.Body("One entry, every host. Dark inverts every token that reads appearance.")
+    zui.Breadcrumbs([]string {"myapp", "Examples", "Foundations"})
+    zui.Column(SPACE.Exs) {
+        zui.Display("Build interfaces with Zeus")
+        zui.Body("One entry, every host. Dark inverts every token that reads appearance.")
     }
-    design.Row(SPACE.Sm) {
-        design.Chip("Stable", zeus.TINT.Ok)
-        design.Chip("Canvas2D", zeus.TINT.Ink)
-        design.Badge("zeus", zeus.TINT.Mute)
-        design.Kbd("⌘K")
+    zui.Row(SPACE.Sm) {
+        zui.Chip("Stable", zeus.TINT.Ok)
+        zui.Chip("Canvas2D", zeus.TINT.Ink)
+        zui.Badge("zeus", zeus.TINT.Mute)
+        zui.Kbd("⌘K")
     }
-    design.Alert("Heads up", "Signals update on click. Hover and press are engine fades — no DOM.")
-    design.AlertDestructive("Session expired", "Sign back in to keep syncing. Your drafts are saved locally.")
+    zui.Alert("Heads up", "Signals update on click. Hover and press are engine fades — no DOM.")
+    zui.AlertDestructive("Session expired", "Sign back in to keep syncing. Your drafts are saved locally.")
     ProjectCard()
     Customize()
 }

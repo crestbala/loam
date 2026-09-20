@@ -25,7 +25,7 @@
 //!     async.spawn(|| { a.set(Feed { state: 1, titles: pushed("delta") }) })
 //!     zeus.pump_frame()
 //!     // a.get().titles.len == 1, but `zeus.Text(a.get().titles[0])` inside a
-//!     // `design.Match` over `a` paints nothing.
+//!     // `zui.Match` over `a` paints nothing.
 //!
 //! `start()` is called from `app.loam` before `zeus.App`, not from the page:
 //! `call_async` registers connection state, and anything allocated during a
@@ -34,7 +34,7 @@
 
 import "std:http"
 import "std:zeus"
-import "std:design"
+import "std:zui"
 // Bare (no `as`), so `PostsReq` is in scope unqualified — a struct literal
 // cannot be qualified (`api.PostsReq { }` is a parse error) — while
 // `api.posts_rpc()` and the injected codecs resolve through the module stem.
@@ -67,7 +67,7 @@ fn start() {
     })
 }
 
-/// The load state, for the page to `design.Match` on.
+/// The load state, for the page to `zui.Match` on.
 fn load_state() -> Signal<int> {
     return state
 }

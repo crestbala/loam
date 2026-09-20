@@ -4,7 +4,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
-import "std:design"
+import "std:zui"
 
 fn expect(ok: bool, what: string) {
     if ok {
@@ -17,7 +17,7 @@ fn expect(ok: bool, what: string) {
 fn Counter(count: Signal<int>) {
     zeus.Box(align_direction = DIRECTION.Column, spacing = 8, padding = 16) {
         zeus.Text("Count: {{count.get()}}")
-        design.Button("Increment", on_click = fn() => count.set(count.get() + 1))
+        zui.Button("Increment", on_click = fn() => count.set(count.get() + 1))
     }
 }
 
