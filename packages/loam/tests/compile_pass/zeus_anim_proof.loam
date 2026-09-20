@@ -6,6 +6,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:colors"
 import "std:design"
 
 fn must(ok: bool, what: string) {
@@ -42,7 +43,7 @@ fn main() {
     // Animate every component at once.
     i = 0
     while i < N {
-        zeus.animate(sigs[i], 100, 400)
+        colors.animate(sigs[i], 100, 400)
         i = i + 1
     }
     must(zeus.proof_anim_live() == N, "a track per component")

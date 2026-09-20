@@ -4,6 +4,7 @@
 import "std:async"
 import "std:fmt"
 import "std:zeus"
+import "std:colors"
 import "std:design"
 
 fn row(label: string) {

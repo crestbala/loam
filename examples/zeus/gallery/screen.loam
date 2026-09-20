@@ -4,6 +4,7 @@
 import "std:async"
 import "std:zeus"
 import "std:colors"
+import "std:colors"
 import "std:spacing"
 import "std:design"
 import "std:kv"
@@ -58,21 +59,21 @@ fn Navbar(page: Signal<int>) {
 /// paint with no rebuild and no effect runs — the same trick that makes the
 /// light / dark switch free. The ring marks the ramp in effect.
 fn AccentDots() {
-    let which = zeus.signal(zeus.accent_choice())
+    let which = zeus.signal(colors.accent_choice())
     let mut idx = []int {}
-    for i in 0..zeus.accent_count() {
+    for i in 0..colors.accent_count() {
         push(idx, i)
     }
     design.Row(SPACE.Exxs) {
         design.Each(idx, fn(i, k) {
             let dot = zeus.Box(width = 16, height = 16, radius = spacing.RAD_FULL,
-                               background = zeus.accent_scale_light(i).s9,
+                               background = colors.accent_scale_light(i).s9,
                                cursor = "pointer",
                                a11y_role = "button",
-                               a11y_label = zeus.accent_name(i),
+                               a11y_label = colors.accent_name(i),
                                on_click = fn() {
                                    which.set(i)
-                                   zeus.set_accent(i)
+                                   colors.set_accent(i)
                                }) {
                 let ring = zeus.Box(width = 22, height = 22, radius = spacing.RAD_FULL,
                                     border = 2, border_color = zeus.ink(),

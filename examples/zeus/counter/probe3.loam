@@ -1,6 +1,7 @@
 // Headless probe: the REAL app path — zeus.App retained tree + root scroll.
 import "std:fmt"
 import "std:zeus"
+import "std:colors"
 import "screen.loam"
 
 fn jobs_near(step: string) {

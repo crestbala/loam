@@ -1,6 +1,7 @@
 // Headless probe: programmatic scroll buttons + insert, app mode.
 import "std:fmt"
 import "std:zeus"
+import "std:colors"
 import "screen.loam"
 
 fn feed_at(step: string) {

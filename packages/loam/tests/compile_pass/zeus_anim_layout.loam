@@ -1,10 +1,11 @@
-// `zeus.animate` on a layout-driving signal: state still jumps once (effects
+// `colors.animate` on a layout-driving signal: state still jumps once (effects
 // run once, `get()` is the target) but the node's box tweens from its current
 // length to the target and reflows each frame. Paint-only `Progress` is
 // unchanged. Reduced motion and zero-ms still jump.
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:colors"
 import "std:colors"
 
 fn must(ok: bool, what: string) {
@@ -30,7 +31,7 @@ fn main() {
     must(zeus.node_width(box_id) == 100, "starts at 100")
 
     zeus.effect(|| { seen.set(w.get()) })
-    zeus.animate(w, 200, 200)
+    colors.animate(w, 200, 200)
     must(w.get() == 200, "state is the target")
     must(seen.get() == 200, "bound effect ran once")
     must(zeus.node_width(box_id) == 100, "layout is still at from")
@@ -55,21 +56,21 @@ fn main() {
     must(zeus.engine_step_dt(16) == 0, "idle once the track lands")
 
     // Retarget mid-flight from the current box size.
-    zeus.animate(w, 100, 200)
+    colors.animate(w, 100, 200)
     zeus.engine_step_dt(16)
     let c = zeus.node_width(box_id)
     must(c > 100 && c < 200, "retargets from the current width")
     must(w.get() == 100, "retarget moved state once")
 
     // Zero ms jumps layout too.
-    zeus.animate(w, 160, 0)
+    colors.animate(w, 160, 0)
     zeus.engine_layout(400, 120)
     must(zeus.node_width(box_id) == 160, "zero ms jumps layout")
     must(zeus.anim_paint(w) == 160, "zero ms jumps paint")
 
     // Reduced motion jumps.
     zeus.set_reduced_motion(true)
-    zeus.animate(w, 80, 200)
+    colors.animate(w, 80, 200)
     zeus.engine_layout(400, 120)
     must(zeus.node_width(box_id) == 80, "reduced motion jumps layout")
     zeus.set_reduced_motion(false)

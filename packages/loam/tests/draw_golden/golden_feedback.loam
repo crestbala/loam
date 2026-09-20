@@ -4,6 +4,7 @@
 // stdout is the golden.
 
 import "std:zeus"
+import "std:colors"
 import "std:design"
 
 fn main() {

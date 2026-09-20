@@ -9,50 +9,51 @@
 
 import "std:test"
 import "std:zeus"
+import "std:colors"
 
 /// Every ink the system can draw, against every surface it can draw it on,
 /// for one appearance. Traps naming the offending pair.
 fn check_all_pairs(label: string) {
     let surfaces = []int {
-        zeus.role_rgb_now(zeus.ROLE.N1),
-        zeus.role_rgb_now(zeus.ROLE.N2),
-        zeus.role_rgb_now(zeus.ROLE.N3),
+        colors.role_rgb_now(zeus.ROLE.N1),
+        colors.role_rgb_now(zeus.ROLE.N2),
+        colors.role_rgb_now(zeus.ROLE.N3),
     }
     let inks = []int {
-        zeus.role_rgb_now(zeus.ROLE.N11),
-        zeus.role_rgb_now(zeus.ROLE.N12),
-        zeus.role_rgb_now(zeus.ROLE.OkS11),
-        zeus.role_rgb_now(zeus.ROLE.WarnS11),
-        zeus.role_rgb_now(zeus.ROLE.DangerS11),
-        zeus.role_rgb_now(zeus.ROLE.InfoS11),
-        zeus.role_rgb_now(zeus.ROLE.A11),
+        colors.role_rgb_now(zeus.ROLE.N11),
+        colors.role_rgb_now(zeus.ROLE.N12),
+        colors.role_rgb_now(zeus.ROLE.OkS11),
+        colors.role_rgb_now(zeus.ROLE.WarnS11),
+        colors.role_rgb_now(zeus.ROLE.DangerS11),
+        colors.role_rgb_now(zeus.ROLE.InfoS11),
+        colors.role_rgb_now(zeus.ROLE.A11),
     }
     for si in 0..surfaces.len {
         for ii in 0..inks.len {
-            if zeus.meets_aa(inks[ii], surfaces[si]) == 0 {
-                let r = zeus.contrast_ratio(inks[ii], surfaces[si])
+            if colors.meets_aa(inks[ii], surfaces[si]) == 0 {
+                let r = colors.contrast_ratio(inks[ii], surfaces[si])
                 test.fail("{{label}}: ink {{ii}} on surface {{si}} is {{r}} (<450)")
             }
         }
     }
     // Text on a solid control fill is component text: AA's 3:1 applies.
     let fg = []int {
-        zeus.role_rgb_now(zeus.ROLE.OnAccent),
-        zeus.role_rgb_now(zeus.ROLE.OnOk),
-        zeus.role_rgb_now(zeus.ROLE.OnWarn),
-        zeus.role_rgb_now(zeus.ROLE.OnDanger),
-        zeus.role_rgb_now(zeus.ROLE.OnInfo),
+        colors.role_rgb_now(zeus.ROLE.OnAccent),
+        colors.role_rgb_now(zeus.ROLE.OnOk),
+        colors.role_rgb_now(zeus.ROLE.OnWarn),
+        colors.role_rgb_now(zeus.ROLE.OnDanger),
+        colors.role_rgb_now(zeus.ROLE.OnInfo),
     }
     let bg = []int {
-        zeus.role_rgb_now(zeus.ROLE.A9),
-        zeus.role_rgb_now(zeus.ROLE.OkS9),
-        zeus.role_rgb_now(zeus.ROLE.WarnS9),
-        zeus.role_rgb_now(zeus.ROLE.DangerS9),
-        zeus.role_rgb_now(zeus.ROLE.InfoS9),
+        colors.role_rgb_now(zeus.ROLE.A9),
+        colors.role_rgb_now(zeus.ROLE.OkS9),
+        colors.role_rgb_now(zeus.ROLE.WarnS9),
+        colors.role_rgb_now(zeus.ROLE.DangerS9),
+        colors.role_rgb_now(zeus.ROLE.InfoS9),
     }
     for i in 0..fg.len {
-        if zeus.meets_aa_large(fg[i], bg[i]) == 0 {
-            let r = zeus.contrast_ratio(fg[i], bg[i])
+        if colors.meets_aa_large(fg[i], bg[i]) == 0 {
+            let r = colors.contrast_ratio(fg[i], bg[i])
             test.fail("{{label}}: on-fill {{i}} is {{r}} (<300)")
         }
     }
@@ -65,39 +66,39 @@ fn contrast_matches_known_ratios() {
     let white = 16777215
     let black = 0
     // The two ends of the scale.
-    test.assert_eq_int(zeus.contrast_ratio(black, white), 2100)
-    test.assert_eq_int(zeus.contrast_ratio(white, white), 100)
+    test.assert_eq_int(colors.contrast_ratio(black, white), 2100)
+    test.assert_eq_int(colors.contrast_ratio(white, white), 100)
     // Symmetry: the ratio does not depend on argument order.
-    test.assert_eq_int(zeus.contrast_ratio(black, white),
-                       zeus.contrast_ratio(white, black))
+    test.assert_eq_int(colors.contrast_ratio(black, white),
+                       colors.contrast_ratio(white, black))
     // The value the design audit flagged: the old `faint` on the old page
     // background, which is why captions and placeholders were illegible.
-    test.assert_eq_int(zeus.contrast_ratio(zeus.parse_hex_color("#a9b2bc"), white), 214)
+    test.assert_eq_int(colors.contrast_ratio(zeus.parse_hex_color("#a9b2bc"), white), 214)
     // White on the brand orange, the reason `on_accent` is computed and not
     // assumed.
-    test.assert_eq_int(zeus.contrast_ratio(white, zeus.parse_hex_color("#ff6308")), 298)
+    test.assert_eq_int(colors.contrast_ratio(white, zeus.parse_hex_color("#ff6308")), 298)
 }
 
 /// `best_on` must pick the ink that actually wins, not a fixed one.
 #[test]
 fn best_on_picks_the_passing_ink() {
     // Orange is light enough to need dark ink...
-    test.assert(zeus.best_on(zeus.parse_hex_color("#ff6308")) != 16777215)
+    test.assert(colors.best_on(zeus.parse_hex_color("#ff6308")) != 16777215)
     // ...and indigo is dark enough to need white.
-    test.assert_eq_int(zeus.best_on(zeus.parse_hex_color("#4f46e5")), 16777215)
+    test.assert_eq_int(colors.best_on(zeus.parse_hex_color("#4f46e5")), 16777215)
 }
 
 /// Every accent, in both appearances.
 #[test]
 fn every_accent_meets_aa_in_both_appearances() {
-    for a in 0..zeus.accent_count() {
-        zeus.set_accent(a)
+    for a in 0..colors.accent_count() {
+        colors.set_accent(a)
         zeus.appearance().set(0)
-        check_all_pairs("{{zeus.accent_name(a)}}/light")
+        check_all_pairs("{{colors.accent_name(a)}}/light")
         zeus.appearance().set(1)
-        check_all_pairs("{{zeus.accent_name(a)}}/dark")
+        check_all_pairs("{{colors.accent_name(a)}}/dark")
     }
-    zeus.set_accent(zeus.ACCENT.Blue)
+    colors.set_accent(colors.ACCENT.Blue)
     zeus.appearance().set(0)
 }
 
