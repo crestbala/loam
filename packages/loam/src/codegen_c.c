@@ -27,6 +27,45 @@ static int tmp_id;
 static int drop_sp;
 static const char *drop_names[64][64];
 static int drop_n[64];
+/* Element retain/release hooks for vectors whose elements own a string: one
+   pair per distinct element type, referenced by index from the vec calls the
+   emitter generates and defined after the functions (prototypes first). */
+static Type *elem_hook_types[64];
+static int elem_hook_n;
+
+static int elem_hook_id(Type *t) {
+    int i;
+    if (!t) return 0;
+    for (i = 0; i < elem_hook_n; i++)
+        if (type_eq(elem_hook_types[i], t)) return i + 1;
+    if (elem_hook_n >= 64) return elem_hook_n;
+    elem_hook_types[elem_hook_n] = t;
+    return ++elem_hook_n;
+}
+
+/** Hook names for `elem`, or empty strings when the element owns no string and
+ *  the plain vec calls apply. Registers the type on first use. */
+static void elem_hook_cnames(Type *elem, char *retain, size_t rc, char *release, size_t sc) {
+    int id = (type_string_owns() && elem && type_owns_string(elem)) ? elem_hook_id(elem) : 0;
+    if (id > 0) {
+        snprintf(retain, rc, "loam_elem_retain_%d", id);
+        snprintf(release, sc, "loam_elem_release_%d", id);
+    } else {
+        retain[0] = '\0';
+        release[0] = '\0';
+    }
+}
+
+/** Pre-register every element type a vec in this program will need a hook for,
+ *  so the prototypes can be emitted before any function body references one. */
+static void collect_elem_hooks(void) {
+    if (!type_string_owns()) return;
+    for (size_t i = 0; i < type_pool_count(); i++) {
+        Type *t = type_pool_at(i);
+        if (t && t->kind == TY_VEC && t->elem && type_owns_string(t->elem))
+            elem_hook_id(t->elem);
+    }
+}
 static const char *cur_mod_name;
 static int cur_is_main_mod;
 static AstNode *emit_clos;
@@ -1783,6 +1822,19 @@ static void emit_drop_place(FILE *o, const char *place, Type *t, int ind) {
         return;
     }
     if (t->kind == TY_VEC) {
+        char rr[64], rl[64];
+        elem_hook_cnames(t->elem, rr, sizeof rr, rl, sizeof rl);
+        (void)rr;
+        if (rl[0]) {
+            /* Elements are owned by the buffer: release them only when this
+               handle frees it, so a shared parameter does not zero the
+               caller's element slots. */
+            char cn[256];
+            format_ctype(cn, sizeof cn, t->elem);
+            indent(o, ind);
+            fprintf(o, "loam_vec_drop_owned(&%s, sizeof(%s), %s);\n", place, cn, rl);
+            return;
+        }
         if (t->elem && type_needs_drop(t->elem)) {
             char cn[256], ebuf[256];
             format_ctype(cn, sizeof cn, t->elem);
@@ -1836,6 +1888,14 @@ static void emit_nested_keeps(FILE *o, const char *place, Type *t, int ind) {
     if (t->kind == TY_VEC) {
         indent(o, ind);
         fprintf(o, "loam_vec_retain(&%s);\n", place);
+        {
+            char rr[64], rl[64];
+            elem_hook_cnames(t->elem, rr, sizeof rr, rl, sizeof rl);
+            (void)rr;
+            /* Elements belong to the buffer, so a copy shares them; only the
+               plain (non-owning) element path retains per element below. */
+            if (rl[0]) return;
+        }
         if (t->elem && type_needs_drop(t->elem)) {
             char cn[256], ebuf[256];
             format_ctype(cn, sizeof cn, t->elem);
@@ -2331,11 +2391,16 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                 Type *vt = (in->args[0] >= 0 && in->args[0] < CF->nlocals)
                                ? CF->locals[in->args[0]].ty
                                : NULL;
+                /* The vec may arrive by value or by address (`let mut v`). */
                 const char *amp = (vt && vt->kind == TY_VEC) ? "&" : "";
-                fprintf(o, "loam_vec_push(%s%s, &%s, sizeof(", amp, lv(in->args[0]),
-                        lv(in->args[1]));
+                char rr[64], rl[64];
+                elem_hook_cnames(in->ty, rr, sizeof rr, rl, sizeof rl);
+                (void)rl;
+                fprintf(o, "loam_vec_push%s(%s%s, &%s, sizeof(", rr[0] ? "_owned" : "",
+                        amp, lv(in->args[0]), lv(in->args[1]));
                 emit_ctype(o, in->ty);
-                fprintf(o, "), ");
+                if (rr[0]) fprintf(o, "), %s, ", rr);
+                else fprintf(o, "), ");
                 emit_ir_loc(o, in->loc);
                 fprintf(o, ");\n");
                 break;
@@ -2352,17 +2417,6 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                 emit_ir_loc(o, in->loc);
                 fprintf(o, ");\n");
                 break;
-            }
-            /* A pushed owned string shares the buffer with the vec's copy, so
-               take a reference for the slot the element will occupy. */
-            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "loam_vec_push") == 0 &&
-                in->nargs >= 2 && type_string_owns()) {
-                Type *vt = (in->args[0] >= 0 && in->args[0] < CF->nlocals)
-                               ? CF->locals[in->args[0]].ty
-                               : NULL;
-                if (vt && vt->kind == TY_VEC && vt->elem && type_owns_string(vt->elem)) {
-                    emit_nested_keeps(o, lv(in->args[1]), vt->elem, 1);
-                }
             }
             /* Vec/struct call args share storage with the caller, but the
                callee drops its params on exit. Keep the shared storage alive
@@ -2513,26 +2567,24 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
             char dbuf[64];
             snprintf(dbuf, sizeof dbuf, "%s", lv(in->dst));
             if (in->ty && in->ty->kind == TY_VEC) {
+                char rr[64], rl[64];
+                elem_hook_cnames(in->ty->elem, rr, sizeof rr, rl, sizeof rl);
+                (void)rl;
                 fprintf(o, "%s = loam_vec_new();\n", dbuf);
                 for (int k = 0; k < in->nargs; k++) {
                     indent(o, 1);
-                    fprintf(o, "loam_vec_push(&%s, &%s, sizeof(", dbuf, lv(in->args[k]));
+                    fprintf(o, "loam_vec_push%s(&%s, &%s, sizeof(", rr[0] ? "_owned" : "",
+                            dbuf, lv(in->args[k]));
                     emit_ctype(o, in->ty->elem);
-                    fprintf(o, "), ");
+                    if (rr[0]) fprintf(o, "), %s, ", rr);
+                    else fprintf(o, "), ");
                     emit_ir_loc(o, in->loc);
                     fprintf(o, ");\n");
-                    if (in->args[k] >= 0 && in->args[k] < CF->nlocals &&
-                        type_needs_drop(CF->locals[in->args[k]].ty)) {
-                        if (type_string_owns() &&
-                            type_owns_string(CF->locals[in->args[k]].ty)) {
-                            /* The vec's copy shares each nested string; the
-                               element's source keeps its own and drops it. */
-                            emit_nested_keeps(o, lv(in->args[k]),
-                                              CF->locals[in->args[k]].ty, 1);
-                        } else {
-                            emit_steal(o, lv(in->args[k]), CF->locals[in->args[k]].ty, 1);
-                        }
-                    }
+                    /* An owning element's source keeps its own reference (the
+                       push took one for the slot); a plain element is moved. */
+                    if (!rr[0] && in->args[k] >= 0 && in->args[k] < CF->nlocals &&
+                        type_needs_drop(CF->locals[in->args[k]].ty))
+                        emit_steal(o, lv(in->args[k]), CF->locals[in->args[k]].ty, 1);
                 }
             } else {
                 for (int k = 0; k < in->nargs; k++) {
@@ -3009,6 +3061,8 @@ void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path)
     emit_ir_mod = ir;
     line_map_file = NULL;
     line_map_no = 0;
+    elem_hook_n = 0;
+    collect_elem_hooks();
 
     fprintf(out, "/* Generated by loam */\n");
     copy_runtime(out, rt_path);
@@ -3062,6 +3116,11 @@ void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path)
             continue;
         if (t && struct_targs_concrete(t)) emit_struct_type(out, t);
     }
+
+    for (int i = 1; i <= elem_hook_n; i++)
+        fprintf(out, "static void loam_elem_retain_%d(void *p);\n"
+                     "static void loam_elem_release_%d(void *p);\n", i, i);
+    if (elem_hook_n) fprintf(out, "\n");
 
     for (int i = 0; i < typecheck_global_count(); i++) {
         AstNode *gv = typecheck_global_var(i);
@@ -3186,6 +3245,22 @@ void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path)
             }
             emit_fn(out, d, is_main);
         }
+    }
+
+    /* Container element hooks: release/retain the string leaves of one
+       element, used by the buffer-scoped vec calls above. */
+    for (int i = 0; i < elem_hook_n; i++) {
+        Type *ht = elem_hook_types[i];
+        char hcn[256];
+        format_ctype(hcn, sizeof hcn, ht);
+        fprintf(out, "static void loam_elem_retain_%d(void *p) {\n", i + 1);
+        fprintf(out, "    %s *_e = (%s *)p;\n", hcn, hcn);
+        emit_nested_keeps(out, "(*_e)", ht, 1);
+        fprintf(out, "}\n");
+        fprintf(out, "static void loam_elem_release_%d(void *p) {\n", i + 1);
+        fprintf(out, "    %s *_e = (%s *)p;\n", hcn, hcn);
+        emit_drop_place(out, "(*_e)", ht, 1);
+        fprintf(out, "}\n");
     }
 
     if (test_mode) {

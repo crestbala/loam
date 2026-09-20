@@ -110,6 +110,11 @@ const char *type_name(const Type *t);
 /** Free pooled compound types. Call at end of a compile. */
 void type_pool_reset(void);
 
+/** Iterate the compound types allocated this compile (scalars live outside the
+ *  pool). */
+size_t type_pool_count(void);
+Type *type_pool_at(size_t i);
+
 Type *ty_void(void);
 Type *ty_int(void);   /* `int` alias: i32 by default, i64 under --int64-compat */
 Type *ty_float(void); /* `float` alias: f32 by default, f64 under --int64-compat */

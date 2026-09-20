@@ -39,13 +39,13 @@ static int g_int64_compat = 0;
 void type_set_int64_compat(int on) { g_int64_compat = on ? 1 : 0; }
 int type_int64_compat(void) { return g_int64_compat; }
 
-/** 0 (default) = `string` keeps the old Copy, never-freed behavior: every
- *  `{{ }}`/`str_of_*` allocation lives for the process. 1 = `string` is an
- *  owned, move-only value (Rust `String`): it is dropped at the end of its
- *  binding, a callee adopts a by-value `string`, and a read-only parameter is
- *  `&string`. Gated so the tree migrates to borrow-by-value signatures a file
- *  at a time (see `--string-owns`), mirroring the Phase 10 numeric flip. */
-static int g_string_owns = 0;
+/** 1 (default) = `string` is an owned, refcounted value: a heap buffer is
+ *  freed when the last reference to it drops, so `{{ }}` and `str_of_*` no
+ *  longer live for the process. Sharing is a counter bump (never a copy), so
+ *  `Signal<string>` and `[]string` are unchanged and the user never writes
+ *  `.clone()`. 0 restores the old never-freed behavior. Set from the driver's
+ *  `--string-owns` / `--no-string-owns`. */
+static int g_string_owns = 1;
 
 void type_set_string_owns(int on) { g_string_owns = on ? 1 : 0; }
 int type_string_owns(void) { return g_string_owns; }
@@ -438,3 +438,9 @@ void type_pool_reset(void) {
     }
     npool = 0;
 }
+
+/** Iterate the compound types allocated this compile (scalars live outside the
+ *  pool). Codegen uses this to pre-register the container element hooks it will
+ *  need before it emits any function bodies. */
+size_t type_pool_count(void) { return (size_t)npool; }
+Type *type_pool_at(size_t i) { return i < (size_t)npool ? pool[i] : NULL; }

@@ -651,6 +651,103 @@ static inline void loam_vec_push(loam_vec *v, const void *elem, size_t esz, cons
     v->len++;
 }
 
+/* --- container element lifetime -----------------------------------------
+   A `[]T` buffer owns one reference to each element that itself owns a string.
+   So a copy (a bumped refcount) shares the buffer and its element references
+   unchanged, a copy-on-write reallocation must retain every element it
+   duplicates, and the elements are released exactly once — when the buffer's
+   last reference goes, never per handle. The `_owned` variants take the
+   element retain/release hook the compiler emits for `T`;
+   `loam_vec_drop_owned` is what a shared vec parameter must use, so dropping
+   it does not zero slots the caller still reads. */
+typedef void (*loam_elem_fn)(void *elem);
+
+static inline void loam_vec_unique_owned(loam_vec *v, size_t esz, loam_elem_fn retain,
+                                         const char *f, int l) {
+    int64_t *rc;
+    void *raw;
+    size_t bytes;
+    int64_t i;
+    if (!v || !v->ptr) return;
+    rc = loam_vec_rc(v->ptr);
+    if (*rc <= 1) return;
+    bytes = sizeof(int64_t) + (esz ? (size_t)v->cap * esz : 1);
+    raw = malloc(bytes);
+    if (!raw) loam_panic(f, l, "out of memory");
+    loam_alloc_note(bytes);
+    *(int64_t *)raw = 1;
+    if (v->len > 0 && esz) {
+        memcpy((char *)raw + sizeof(int64_t), v->ptr, (size_t)v->len * esz);
+        if (retain)
+            for (i = 0; i < v->len; i++)
+                retain((char *)raw + sizeof(int64_t) + (size_t)i * esz);
+    }
+    (*rc)--;
+    v->ptr = (char *)raw + sizeof(int64_t);
+}
+
+static inline void loam_vec_reserve_owned(loam_vec *v, int64_t n, size_t esz,
+                                          loam_elem_fn retain, const char *f, int l) {
+    int64_t cap;
+    void *raw;
+    if (!v || n <= v->cap) return;
+    loam_vec_unique_owned(v, esz, retain, f, l);
+    cap = v->cap ? v->cap : 8;
+    while (cap < n) {
+        if (cap > INT64_MAX / 2) loam_panic(f, l, "out of memory");
+        cap *= 2;
+    }
+    if (!v->ptr) {
+        raw = malloc(sizeof(int64_t) + (esz ? (size_t)cap * esz : 1));
+        if (!raw) loam_panic(f, l, "out of memory");
+        loam_alloc_note((size_t)cap * esz);
+        *(int64_t *)raw = 1;
+        v->ptr = (char *)raw + sizeof(int64_t);
+        v->cap = cap;
+        return;
+    }
+    raw = realloc((char *)v->ptr - sizeof(int64_t),
+                  sizeof(int64_t) + (esz ? (size_t)cap * esz : 1));
+    if (!raw) loam_panic(f, l, "out of memory");
+    loam_alloc_note((size_t)cap * esz);
+    v->ptr = (char *)raw + sizeof(int64_t);
+    v->cap = cap;
+}
+
+static inline void loam_vec_push_owned(loam_vec *v, const void *elem, size_t esz,
+                                       loam_elem_fn retain, const char *f, int l) {
+    if (!v) loam_panic(f, l, "push on null array");
+    if (retain) retain((void *)elem);
+    loam_vec_reserve_owned(v, v->len + 1, esz, retain, f, l);
+    if (esz && elem) memcpy((char *)v->ptr + (size_t)v->len * esz, elem, esz);
+    v->len++;
+}
+
+static inline void loam_vec_drop_owned(loam_vec *v, size_t esz, loam_elem_fn release) {
+    int64_t *rc;
+    int64_t i, n;
+    if (!v) return;
+    if (!v->ptr) {
+        v->len = 0;
+        v->cap = 0;
+        return;
+    }
+    rc = loam_vec_rc(v->ptr);
+    if (--(*rc) > 0) {
+        v->ptr = NULL;
+        v->len = 0;
+        v->cap = 0;
+        return;
+    }
+    n = v->len;
+    if (release)
+        for (i = 0; i < n; i++) release((char *)v->ptr + (size_t)i * esz);
+    free(rc);
+    v->ptr = NULL;
+    v->len = 0;
+    v->cap = 0;
+}
+
 static inline void loam_vec_pop(loam_vec *v, void *out, size_t esz, const char *f, int l) {
     if (!v || v->len <= 0) loam_panic(f, l, "pop from empty array");
     loam_vec_unique(v, esz, f, l);
