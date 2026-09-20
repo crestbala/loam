@@ -4,6 +4,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 let mut saves: int = 0
 let mut opens: int = 0
@@ -19,9 +20,9 @@ fn check(what: string, got: int, want: int) {
 fn main() {
     let count = zeus.signal(0)
     zeus.snapshot(300, 200, fn() -> Node {
-        zeus.Column(8) {
+        design.Column(8) {
             // Button: the chord reuses on_click, no second handler.
-            zeus.Button("Save", look = zeus.LOOK.Solid,
+            design.Button("Save", look = zeus.LOOK.Solid,
                         key = "cmd+s", on_click = fn() { saves = saves + 1 })
             // Plain Box: same prop, different widget.
             zeus.Box(width = 20, height = 20, a11y_label = "panel",

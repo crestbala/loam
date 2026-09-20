@@ -4,14 +4,15 @@
 // the golden.
 
 import "std:zeus"
+import "std:design"
 
 fn main() {
     let open = zeus.signal(1)
     zeus.snapshot(420, 260, fn() -> Node {
-        zeus.Page() {
-            zeus.Title("Page")
-            zeus.Drawer(open, side = zeus.SIDE.SideEnd, size = 220) {
-                zeus.Title("Filters")
+        design.Page() {
+            design.Title("Page")
+            design.Drawer(open, side = design.SIDE.SideEnd, size = 220) {
+                design.Title("Filters")
                 zeus.Text("Body copy", color = zeus.mute(), font = zeus.FONT_BODY)
             }
         }

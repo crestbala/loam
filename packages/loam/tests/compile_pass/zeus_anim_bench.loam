@@ -8,6 +8,7 @@ import "std:async"
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 const N: int = 40
 const FRAMES: int = 300
@@ -23,7 +24,7 @@ fn main() {
     let tree = zeus.Box(align_direction = DIRECTION.Column) {
         let mut j = 0
         while j < N {
-            zeus.Progress(sigs[j])
+            design.Progress(sigs[j])
             j = j + 1
         }
     }

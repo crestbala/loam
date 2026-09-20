@@ -4,31 +4,32 @@
 // up here first. Keep this file free of prints: stdout is the golden.
 
 import "std:zeus"
+import "std:design"
 
 fn main() {
     zeus.snapshot(560, 360, fn() -> Node {
         let load = zeus.signal(30)
         let on = zeus.signal(1)
-        zeus.Page() {
-            zeus.Row(SPACE.Sm) {
-                zeus.Button("Primary", look = zeus.LOOK.Solid, size = zeus.SIZE.Md)
-                zeus.Button("Soft", look = zeus.LOOK.Soft, size = zeus.SIZE.Md)
-                zeus.Button("Outline", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
-                zeus.Button("Danger", look = zeus.LOOK.Danger, size = zeus.SIZE.Md)
+        design.Page() {
+            design.Row(SPACE.Sm) {
+                design.Button("Primary", look = zeus.LOOK.Solid, size = zeus.SIZE.Md)
+                design.Button("Soft", look = zeus.LOOK.Soft, size = zeus.SIZE.Md)
+                design.Button("Outline", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
+                design.Button("Danger", look = zeus.LOOK.Danger, size = zeus.SIZE.Md)
             }
-            zeus.Row(SPACE.Sm) {
-                zeus.Badge("ok", zeus.TINT.Ok)
-                zeus.Badge("warn", zeus.TINT.Warn)
-                zeus.Badge("bad", zeus.TINT.Danger)
-                zeus.Chip("busy", zeus.TINT.Warn)
+            design.Row(SPACE.Sm) {
+                design.Badge("ok", zeus.TINT.Ok)
+                design.Badge("warn", zeus.TINT.Warn)
+                design.Badge("bad", zeus.TINT.Danger)
+                design.Chip("busy", zeus.TINT.Warn)
             }
-            zeus.AlertWarning("Low disk", "The volume is almost full.")
-            zeus.Row(SPACE.Sm) {
-                zeus.Switch(on)
-                zeus.Progress(load)
+            design.AlertWarning("Low disk", "The volume is almost full.")
+            design.Row(SPACE.Sm) {
+                design.Switch(on)
+                design.Progress(load)
             }
-            zeus.Row(SPACE.Sm) {
-                zeus.Skeleton(96, 24, 8)
+            design.Row(SPACE.Sm) {
+                design.Skeleton(96, 24, 8)
             }
         }
     })

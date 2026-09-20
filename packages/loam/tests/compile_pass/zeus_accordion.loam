@@ -6,6 +6,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -22,7 +23,7 @@ fn main() {
         AccordionRow { title: "Two", body: "beta" },
         AccordionRow { title: "Three", body: "gamma" },
     }
-    let tree = zeus.Accordion(open, items = rows)
+    let tree = design.Accordion(open, items = rows)
     zeus.root(tree)
     zeus.pump_frame()
 

@@ -4,6 +4,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -28,7 +29,7 @@ fn band_x() -> int {
 fn main() {
     zeus.window("skeleton", 320, 120)
     zeus.root(zeus.Box(padding = 20) {
-        zeus.Skeleton(200, 14, 7)
+        design.Skeleton(200, 14, 7)
     })
     zeus.pump_frame()
     must(zeus.engine_find_role("progressbar") != 0, "role")

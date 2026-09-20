@@ -4,6 +4,7 @@
 
 import "std:async"
 import "std:zeus"
+import "std:design"
 import "std:router"
 
 let mut ram_armed: int = 0
@@ -26,7 +27,7 @@ fn RamChip() {
     }
 }
 
-/// One nav entry, mirroring `zeus.NavTab` but driven by the URL instead of a
+/// One nav entry, mirroring `design.NavTab` but driven by the URL instead of a
 /// tab index. The active test is a thunk, so `selected_chrome` re-runs it
 /// whenever `cur_path` changes: the highlight follows navigation even though
 /// the bar itself is retained and never rebuilds. Evaluating `path.get()`
@@ -55,7 +56,7 @@ fn NavLink(label: string, href: string) {
 /// switch drives `zeus.appearance()`, which every role token resolves against
 /// at paint — one toggle restyles the whole tree with no rebuild.
 fn Navbar() {
-    zeus.Column(SPACE.None) {
+    design.Column(SPACE.None) {
         zeus.Box(align_direction = DIRECTION.Row, spacing = SPACE.Md,
                  align_items = ALIGN.Center, height = zeus.BAR) {
             zeus.Box(width = 22, height = 22, radius = 6, background = zeus.ink())
@@ -66,11 +67,11 @@ fn Navbar() {
             NavLink("Blog", "/blog")
             NavLink("About", "/about")
             NavLink("Pricing", "/pricing")
-            zeus.Grow()
+            design.Grow()
             RamChip()
             zeus.Text("Dark", color = zeus.mute(), font = zeus.FONT_CONTROL)
-            zeus.Switch(zeus.appearance())
+            design.Switch(zeus.appearance())
         }
-        zeus.Separator()
+        design.Separator()
     }
 }

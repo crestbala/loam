@@ -67,9 +67,9 @@
 //!             zeus.Text("Count", font = 22)
 //!             zeus.Text("{{n.get()}}", font = 28)
 //!             zeus.Box(align_direction = DIRECTION.Row, spacing = 8) {
-//!                 zeus.Button("-", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md,
+//!                 design.Button("-", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md,
 //!                             on_click = fn() => n.set(n.get() - 1))
-//!                 zeus.Button("+", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
+//!                 design.Button("+", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
 //!                             on_click = fn() => n.set(n.get() + 1))
 //!             }
 //!         }

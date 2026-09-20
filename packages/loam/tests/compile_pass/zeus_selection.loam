@@ -6,6 +6,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 let mut labels: []string = []string {}
 
@@ -23,8 +24,8 @@ fn main() {
     let tab = zeus.signal(0)
 
     zeus.snapshot(400, 120, fn() -> Node {
-        zeus.Column(8) {
-            zeus.Tabs(tab, labels)
+        design.Column(8) {
+            design.Tabs(tab, labels)
         }
     })
 
@@ -51,16 +52,16 @@ fn main() {
     check("tab 0 selected again", zeus.node_color_rgb(label), on)
 
     // Series 0 takes the first brand colour.
-    if !fmt.eq(zeus.chart_stroke_light(0), "#ff6308") {
-        fmt.println("FAIL series 0 colour:", zeus.chart_stroke_light(0))
+    if !fmt.eq(design.chart_stroke_light(0), "#ff6308") {
+        fmt.println("FAIL series 0 colour:", design.chart_stroke_light(0))
         sys.exit(1)
     }
-    if !fmt.eq(zeus.chart_stroke_light(1), "#6c28d9") {
-        fmt.println("FAIL series 1 colour:", zeus.chart_stroke_light(1))
+    if !fmt.eq(design.chart_stroke_light(1), "#6c28d9") {
+        fmt.println("FAIL series 1 colour:", design.chart_stroke_light(1))
         sys.exit(1)
     }
     // ...and series 5 wraps back to series 0's colour.
-    if !fmt.eq(zeus.chart_stroke_light(5), zeus.chart_stroke_light(0)) {
+    if !fmt.eq(design.chart_stroke_light(5), design.chart_stroke_light(0)) {
         fmt.println("FAIL series wrap")
         sys.exit(1)
     }

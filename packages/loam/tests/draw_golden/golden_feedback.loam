@@ -4,17 +4,18 @@
 // stdout is the golden.
 
 import "std:zeus"
+import "std:design"
 
 fn main() {
     zeus.snapshot(420, 240, fn() -> Node {
-        zeus.Page() {
-            zeus.Row(SPACE.Md) {
-                zeus.Spinner()
-                zeus.Spinner(size = 24, color = zeus.ink())
-                zeus.Empty(icon = zeus.IC_INFO, title = "No projects",
+        design.Page() {
+            design.Row(SPACE.Md) {
+                design.Spinner()
+                design.Spinner(size = 24, color = zeus.ink())
+                design.Empty(icon = zeus.IC_INFO, title = "No projects",
                            body = "Create one to get started.")
-                zeus.Card(width = 120) {
-                    zeus.Title("Elevated")
+                design.Card(width = 120) {
+                    design.Title("Elevated")
                 }
                 let scaled = zeus.Box(width = 40, height = 40, radius = 8,
                                       background = zeus.accent())

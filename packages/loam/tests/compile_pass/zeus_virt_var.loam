@@ -2,6 +2,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 fn expect(ok: bool, what: string) {
     if ok {
@@ -38,7 +39,7 @@ fn main() {
     let heights = zeus.signal(hs)
 
     zeus.snapshot(200, 200, fn() -> Node {
-        zeus.VirtualListVar(items, heights, 20, RowOf)
+        design.VirtualListVar(items, heights, 20, RowOf)
     })
 
     expect(zeus.arena_nodes() < 200, "var list stays small")
@@ -49,7 +50,7 @@ fn main() {
     expect(list > 0, "list")
     // 500 even rows * 20 + 500 odd * 40 = 30000; index 500 starts at
     // 250*20 + 250*40 = 15000.
-    zeus.scroll_to(Node { id: list }, 15000)
+    design.scroll_to(Node { id: list }, 15000)
     zeus.engine_layout(200, 200)
     expect(zeus.engine_find_text("r500") != 0, "windowed var row")
     expect(zeus.engine_find_text("r0") == 0, "offscreen dropped")

@@ -5,13 +5,14 @@
 // Keep stdout as the golden; no extra prints.
 
 import "std:zeus"
+import "std:design"
 
 fn main() {
     let on = zeus.signal(0)
     zeus.window("zeus-snap", 360, 200)
-    zeus.root(zeus.Page() {
-        zeus.Row(SPACE.Sm) {
-            zeus.Button("Save", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
+    zeus.root(design.Page() {
+        design.Row(SPACE.Sm) {
+            design.Button("Save", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
                         on_click = fn() => on.set(1))
         }
     })

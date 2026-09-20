@@ -4,6 +4,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -24,7 +25,7 @@ fn main() {
             let trigger = zeus.Box(width = 120, height = 32, background = zeus.plate())
             trig = trigger.id
             let rows = []MenuRow { MenuRow(label = "Rename") }
-            let m = zeus.Menu(trigger, active = open, items = rows, width = 160)
+            let m = design.Menu(trigger, active = open, items = rows, width = 160)
             panel = m.id
             zeus.Box(height = 800)
         }
@@ -41,22 +42,22 @@ fn main() {
     // must flip above it.
     open.set(0)
     zeus.engine_layout(320, 260)
-    let t0 = zeus.node_y(trig) - zeus.scroll_y(top)
+    let t0 = zeus.node_y(trig) - design.scroll_y(top)
     let p0 = zeus.node_y(panel)
     must(p0 < t0, "panel opened above the trigger (no room below)")
 
     // Scroll: the panel follows the trigger exactly.
-    zeus.scroll_to(top, 100)
+    design.scroll_to(top, 100)
     zeus.engine_layout(320, 260)
-    let t1 = zeus.node_y(trig) - zeus.scroll_y(top)
+    let t1 = zeus.node_y(trig) - design.scroll_y(top)
     let p1 = zeus.node_y(panel)
     must(t0 - t1 == 100, "trigger moved with the scroll")
     must(p0 - p1 == 100, "panel followed the trigger")
 
     // Scroll the trigger away: the panel goes with it, negative, not pinned to 0.
-    zeus.scroll_to(top, 700)
+    design.scroll_to(top, 700)
     zeus.engine_layout(320, 260)
-    must(zeus.node_y(trig) - zeus.scroll_y(top) < 0, "trigger is above the viewport")
+    must(zeus.node_y(trig) - design.scroll_y(top) < 0, "trigger is above the viewport")
     must(zeus.node_y(panel) < 0, "panel followed the trigger off screen")
 
     fmt.println("anchor ok")

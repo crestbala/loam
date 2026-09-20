@@ -1,6 +1,7 @@
-//! Route error page. A trap in a page's build lands here (see zeus.Boundary).
+//! Route error page. A trap in a page's build lands here (see design.Boundary).
 
 import "std:zeus"
+import "std:design"
 
 fn error(msg: string) {
     zeus.Text("something went wrong")

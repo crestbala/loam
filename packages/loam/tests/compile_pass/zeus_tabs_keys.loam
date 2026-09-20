@@ -3,6 +3,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -17,11 +18,11 @@ fn main() {
     let pick = zeus.signal(0)
     let hits = zeus.signal(0)
     let tree = zeus.Box(align_direction = zeus.DIRECTION.Column, padding = 16, spacing = 12) {
-        zeus.Button("Before", look = zeus.LOOK.Outline, size = zeus.SIZE.Md,
+        design.Button("Before", look = zeus.LOOK.Outline, size = zeus.SIZE.Md,
                     on_click = fn() => hits.set(hits.get() + 1))
-        zeus.Tabs(tab, []string { "One", "Two", "Three" })
-        zeus.RadioGroup(pick, []string { "First", "Second", "Third" })
-        zeus.Button("After", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
+        design.Tabs(tab, []string { "One", "Two", "Three" })
+        design.RadioGroup(pick, []string { "First", "Second", "Third" })
+        design.Button("After", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
     }
     zeus.root(tree)
     zeus.pump_frame()

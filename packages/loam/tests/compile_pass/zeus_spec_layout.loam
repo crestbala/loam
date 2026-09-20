@@ -3,6 +3,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 fn DashboardLayout() {
     zeus.Box(align_direction = DIRECTION.Row, spacing = 16, align_items = ALIGN.Center) {
@@ -14,7 +15,7 @@ fn DashboardLayout() {
         }
     }
 
-    zeus.Grid(config = GridConfig(columns = 3, gap = 12, padding = 16)) {
+    design.Grid(config = GridConfig(columns = 3, gap = 12, padding = 16)) {
         zeus.Box(background = "#89b4fa", height = 100) { zeus.Text("Card 1") }
         zeus.Box(background = "#a6e3a1", height = 100) { zeus.Text("Card 2") }
         zeus.Box(background = "#f9e2af", height = 100) { zeus.Text("Card 3") }

@@ -6,6 +6,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -20,17 +21,17 @@ fn main() {
     let toast = zeus.signal(0)
     let mut pop_id = 0
     let mut trig_id = 0
-    let tree = zeus.Page() {
+    let tree = design.Page() {
         // Push the trigger near the bottom so the popover must flip above.
         zeus.Box(height = 220)
-        let trigger = zeus.Button("Menu", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
+        let trigger = design.Button("Menu", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
         trig_id = trigger.id
-        let pop = zeus.Popover(trigger, open = open, place = zeus.PLACE.PlaceBelow, width = 180) {
+        let pop = design.Popover(trigger, open = open, place = design.PLACE.PlaceBelow, width = 180) {
             zeus.Text("Rename", color = zeus.ink(), font = zeus.FONT_BODY)
         }
         pop_id = pop.id
-        zeus.Tooltip(trigger, text = "Open the menu", delay = 0)
-        zeus.Toast(toast, width = 160, ms = 0) {
+        design.Tooltip(trigger, text = "Open the menu", delay = 0)
+        design.Toast(toast, width = 160, ms = 0) {
             zeus.Text("Saved", color = zeus.on_ink(), font = zeus.FONT_BODY)
         }
     }

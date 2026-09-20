@@ -4,6 +4,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -43,7 +44,7 @@ fn main() {
     zeus.snapshot(300, 200, fn() -> Node {
         zeus.Box(align_direction = DIRECTION.Column) {
             zeus.Text("inspect me")
-            zeus.Button(label = "Go")
+            design.Button(label = "Go")
         }
     })
     zeus.engine_layout(300, 200)

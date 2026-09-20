@@ -4,6 +4,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 import "std:devtools"
 
 fn must(ok: bool, what: string) {
@@ -55,7 +56,7 @@ fn main() {
     zeus.snapshot(480, 320, fn() -> Node {
         zeus.Box(align_direction = DIRECTION.Column) {
             zeus.Text("hello panel")
-            zeus.Button(label = "Action")
+            design.Button(label = "Action")
             devtools.Panel()
         }
     })

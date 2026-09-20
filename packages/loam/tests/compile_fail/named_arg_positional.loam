@@ -4,9 +4,10 @@
 // so the diagnostic has to stop the call here: letting it fall through to the
 // argument check dereferenced that null type name and crashed the compiler.
 import "std:zeus"
+import "std:design"
 
 fn main() {
-    zeus.Column(spacing = 4) {
+    design.Column(spacing = 4) {
         zeus.Text("x")
     }
 }

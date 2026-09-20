@@ -6,6 +6,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -27,7 +28,7 @@ fn main() {
     let tree = zeus.Box(align_direction = DIRECTION.Column) {
         let mut j = 0
         while j < N {
-            zeus.Progress(sigs[j])
+            design.Progress(sigs[j])
             j = j + 1
         }
     }

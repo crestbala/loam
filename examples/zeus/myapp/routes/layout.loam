@@ -2,12 +2,13 @@
 //! and the light/dark switch survive — only the page slot rebuilds.
 
 import "std:zeus"
+import "std:design"
 import "../theme.loam" as theme
 import "../components/nav.loam" as nav
 
 fn layout(build: fn()) {
     theme.install()
-    let page = zeus.Page()
+    let page = design.Page()
     zeus.slot(page, fn() {
         nav.Navbar()
         zeus.slot(page, build)

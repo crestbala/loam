@@ -14,7 +14,7 @@
 //! let r = res.resource("", fn(gen, done) {
 //!     http.client("").call_async(req, fn(reply) { done(gen, "", reply.name) })
 //! })
-//! zeus.Match(r.state, fn(st) {
+//! design.Match(r.state, fn(st) {
 //!     if st == RES.Loading { zeus.Text("loading") }
 //!     else if st == RES.Error { zeus.Text(res.error(r)) }
 //!     else { zeus.Text(res.data(r)) }
@@ -22,6 +22,7 @@
 //! ```
 
 import "std:zeus"
+import "std:design"
 
 enum RES {
     Loading = 0,
