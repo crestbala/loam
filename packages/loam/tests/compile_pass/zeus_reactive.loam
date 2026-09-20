@@ -4,7 +4,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
-import "std:design"
+import "std:zui"
 
 let mut runs: int = 0
 let mut calcs: int = 0
@@ -22,9 +22,9 @@ fn eq(what: string, got: int, want: int) {
 // A component: a setup function that runs once and returns bindings.
 fn Counter(n: Signal<int>) {
     setups = setups + 1
-    design.Column(4) {
+    zui.Column(4) {
         zeus.Text("n={{n.get()}}")
-        design.Button("+", on_click = fn() => n.set(n.get() + 1))
+        zui.Button("+", on_click = fn() => n.set(n.get() + 1))
     }
 }
 
@@ -87,7 +87,7 @@ fn main() {
 
     // The component runs once; a later set must not re-run it.
     zeus.snapshot(200, 120, fn() -> Node {
-        design.Column(0) {
+        zui.Column(0) {
             Counter(n)
         }
     })

@@ -1,12 +1,12 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
-import "std:design"
+import "std:zui"
 
 let mut names: []string = []string {}
 
 fn Files() {
-    design.Each(names, fn(i, s) {
+    zui.Each(names, fn(i, s) {
         zeus.Text(s)
     })
 }
@@ -18,7 +18,7 @@ fn main() {
     zeus.snapshot(240, 160, fn() -> Node {
         zeus.Box(align_direction = DIRECTION.Column, wrap = 1, min_width = 40) {
             Files()
-            design.If(open) {
+            zui.If(open) {
                 zeus.Text("shown")
             }
         }

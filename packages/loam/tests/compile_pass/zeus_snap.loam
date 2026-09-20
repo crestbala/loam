@@ -1,14 +1,14 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
-import "std:design"
+import "std:zui"
 
 fn main() {
     let count = zeus.signal(0)
     zeus.snapshot(320, 200, fn() -> Node {
         zeus.Box(align_direction = DIRECTION.Column, padding = 16, spacing = 12) {
             zeus.Text("Hello", font = 22)
-            design.Button("Click", on_click = fn() => count.set(count.get() + 1))
+            zui.Button("Click", on_click = fn() => count.set(count.get() + 1))
         }
     })
     if zeus.draw_count() < 1 {

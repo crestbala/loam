@@ -3,7 +3,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
-import "std:design"
+import "std:zui"
 
 fn expect(ok: bool, what: string) {
     if ok {
@@ -16,12 +16,12 @@ fn expect(ok: bool, what: string) {
 fn main() {
     let open = zeus.signal(1)
     zeus.snapshot(200, 160, fn() -> Node {
-        design.Scroll() {
+        zui.Scroll() {
             zeus.Box(height = 400) {
                 zeus.Text("pad")
             }
             zeus.Box() {
-                let dim = design.Overlay(on_click = fn() => open.set(0))
+                let dim = zui.Overlay(on_click = fn() => open.set(0))
                 zeus.show(dim, open)
             }
         }

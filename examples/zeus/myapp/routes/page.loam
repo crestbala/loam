@@ -1,13 +1,13 @@
 import "std:zeus"
 import "std:spacing"
-import "std:design"
+import "std:zui"
 import "std:router"
 import "../components/foundations.loam" as foundations
 
-// `design.Match` (what the router mounts pages into) is a Column with no
+// `zui.Match` (what the router mounts pages into) is a Column with no
 // spacing, so the page sets its own section rhythm.
 fn page(p: Params) {
-    design.Column(spacing.SECTION) {
+    zui.Column(spacing.SECTION) {
         foundations.Foundations()
     }
 }

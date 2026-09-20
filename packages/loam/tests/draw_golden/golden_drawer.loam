@@ -6,15 +6,15 @@
 import "std:zeus"
 import "std:colors"
 import "std:spacing"
-import "std:design"
+import "std:zui"
 
 fn main() {
     let open = zeus.signal(1)
     zeus.snapshot(420, 260, fn() -> Node {
-        design.Page() {
-            design.Title("Page")
-            design.Drawer(open, side = design.SIDE.SideEnd, size = 220) {
-                design.Title("Filters")
+        zui.Page() {
+            zui.Title("Page")
+            zui.Drawer(open, side = zui.SIDE.SideEnd, size = 220) {
+                zui.Title("Filters")
                 zeus.Text("Body copy", color = colors.mute(), font = spacing.FONT_BODY)
             }
         }

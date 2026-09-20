@@ -9,7 +9,7 @@ import "std:async"
 import "std:zeus"
 import "std:colors"
 import "std:spacing"
-import "std:design"
+import "std:zui"
 import "agent.loam"
 import "engine.loam"
 import "watcher.loam"
@@ -110,14 +110,14 @@ fn RamChip() {
 }
 
 fn Header() {
-    design.Row(SPACE.Md) {
+    zui.Row(SPACE.Md) {
         zeus.Box(width = 10, height = 26, radius = 5, background = zeus.ink())
         zeus.Text("GreenInfer", color = zeus.ink(), font = spacing.FONT_TITLE)
-        design.Chip("code memory", zeus.TINT.Mute)
-        design.Grow()
+        zui.Chip("code memory", zeus.TINT.Mute)
+        zui.Grow()
         RamChip()
         zeus.Text("Dark", color = colors.mute(), font = spacing.FONT_BODY)
-        design.Switch(zeus.appearance())
+        zui.Switch(zeus.appearance())
     }
 }
 
@@ -181,16 +181,16 @@ fn split_lines(s: string) -> []string {
 
 fn StepWatch(folder: Signal<string>, watch_on: Signal<int>, cap: Signal<string>,
              chunk_stat: Signal<int>, kb_stat: Signal<int>) {
-    design.Card() {
-        design.Row(SPACE.Sm) {
-            design.Title("1 · Watch a folder")
-            design.Grow()
-            design.Badge("one file holds it all", zeus.TINT.Mute)
+    zui.Card() {
+        zui.Row(SPACE.Sm) {
+            zui.Title("1 · Watch a folder")
+            zui.Grow()
+            zui.Badge("one file holds it all", zeus.TINT.Mute)
         }
-        design.Body("Point at a source tree. Files are chunked at 500 tokens and embedded into a single mmap'd index.")
-        design.Row(SPACE.Sm) {
-            design.Field("Source folder", folder, "repo-relative or absolute path", width = 560)
-            design.Button("Index folder", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
+        zui.Body("Point at a source tree. Files are chunked at 500 tokens and embedded into a single mmap'd index.")
+        zui.Row(SPACE.Sm) {
+            zui.Field("Source folder", folder, "repo-relative or absolute path", width = 560)
+            zui.Button("Index folder", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
                         on_click = fn() {
                 let root = folder.get()
                 if root.len == 0 {
@@ -211,11 +211,11 @@ fn StepWatch(folder: Signal<string>, watch_on: Signal<int>, cap: Signal<string>,
                 cap.set("{{m}} in {{ms}} ms")
             })
         }
-        design.Row(SPACE.Sm) {
+        zui.Row(SPACE.Sm) {
             zeus.Text("Re-index automatically when files change", color = colors.mute(),
                       font = spacing.FONT_BODY)
-            design.Switch(watch_on)
-            design.Grow()
+            zui.Switch(watch_on)
+            zui.Grow()
             Caption(cap)
         }
     }
@@ -227,12 +227,12 @@ fn StepWatch(folder: Signal<string>, watch_on: Signal<int>, cap: Signal<string>,
 
 fn StepAsk(query: Signal<string>, hits: Signal<[]Hit>, qus: Signal<int>,
            cap: Signal<string>) {
-    design.Card() {
-        design.Title("2 · Ask your code")
-        design.Body("Plain words work: the search is a cosine sweep over every chunk — local, no model involved.")
-        design.Row(SPACE.Sm) {
-            design.Field("Question", query, "e.g. how does search sweep the rows?", width = 480)
-            design.Button("Search chunks", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
+    zui.Card() {
+        zui.Title("2 · Ask your code")
+        zui.Body("Plain words work: the search is a cosine sweep over every chunk — local, no model involved.")
+        zui.Row(SPACE.Sm) {
+            zui.Field("Question", query, "e.g. how does search sweep the rows?", width = 480)
+            zui.Button("Search chunks", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
                         on_click = fn() {
                 let text = query.get()
                 if text.len == 0 {
@@ -263,11 +263,11 @@ fn StepAsk(query: Signal<string>, hits: Signal<[]Hit>, qus: Signal<int>,
             })
         }
         zeus.Box(height = LIST_H, border = 1, border_color = colors.rule(), radius = 8) {
-            design.VirtualList(hits, HIT_H, HitRow)
+            zui.VirtualList(hits, HIT_H, HitRow)
         }
-        design.Row(SPACE.Sm) {
+        zui.Row(SPACE.Sm) {
             Caption(cap)
-            design.Grow()
+            zui.Grow()
         }
     }
 }
@@ -279,24 +279,24 @@ fn StepAsk(query: Signal<string>, hits: Signal<[]Hit>, qus: Signal<int>,
 fn StepModel(prompt: Signal<string>, endpoint: Signal<int>, key_sig: Signal<string>,
              model_sig: Signal<string>, ans: Signal<[]string>, mus: Signal<int>,
              cap: Signal<string>) {
-    design.Card() {
-        design.Row(SPACE.Sm) {
-            design.Title("3 · Model answer")
-            design.Grow()
-            design.Badge("optional", zeus.TINT.Ok)
+    zui.Card() {
+        zui.Row(SPACE.Sm) {
+            zui.Title("3 · Model answer")
+            zui.Grow()
+            zui.Badge("optional", zeus.TINT.Ok)
         }
-        design.Body("Ask a question in your own words: the closest chunks are retrieved locally and go into the model's context. Grok needs an xAI key; the local option talks to Ollama on 127.0.0.1 and never leaves your machine.")
-        design.Row(SPACE.Sm) {
-            design.Field("Question for the model", prompt, "e.g. how does the watcher detect a changed file?", width = 600)
+        zui.Body("Ask a question in your own words: the closest chunks are retrieved locally and go into the model's context. Grok needs an xAI key; the local option talks to Ollama on 127.0.0.1 and never leaves your machine.")
+        zui.Row(SPACE.Sm) {
+            zui.Field("Question for the model", prompt, "e.g. how does the watcher detect a changed file?", width = 600)
         }
-        design.Row(SPACE.Sm) {
-            design.Field("Model", model_sig, "grok-4.6 / llama3.2 / qwen2.5-coder", width = 300)
-            design.Select(endpoint, endpoint_labels())
-            design.Grow()
+        zui.Row(SPACE.Sm) {
+            zui.Field("Model", model_sig, "grok-4.6 / llama3.2 / qwen2.5-coder", width = 300)
+            zui.Select(endpoint, endpoint_labels())
+            zui.Grow()
         }
-        design.Row(SPACE.Sm) {
-            design.Field("API key", key_sig, "xai-... only for Grok (console.x.ai)", width = 420)
-            design.Button("Ask model", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
+        zui.Row(SPACE.Sm) {
+            zui.Field("API key", key_sig, "xai-... only for Grok (console.x.ai)", width = 420)
+            zui.Button("Ask model", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
                         on_click = fn() {
                 let question = prompt.get()
                 if question.len == 0 {
@@ -327,11 +327,11 @@ fn StepModel(prompt: Signal<string>, endpoint: Signal<int>, key_sig: Signal<stri
             })
         }
         zeus.Box(height = 200, border = 1, border_color = colors.rule(), radius = 8) {
-            design.VirtualList(ans, 20, AnsRow)
+            zui.VirtualList(ans, 20, AnsRow)
         }
-        design.Row(SPACE.Sm) {
+        zui.Row(SPACE.Sm) {
             Caption(cap)
-            design.Grow()
+            zui.Grow()
         }
     }
 }
@@ -342,11 +342,11 @@ fn StepModel(prompt: Signal<string>, endpoint: Signal<int>, key_sig: Signal<stri
 
 fn StatsRow(chunk_stat: Signal<int>, kb_stat: Signal<int>, qus: Signal<int>,
             mus: Signal<int>) {
-    design.Grid(config = GridConfig(columns = 4, gap = SPACE.Md)) {
-        design.StatCount("chunks", chunk_stat, zeus.TINT.Ink)
-        design.StatCount("index KB", kb_stat, zeus.TINT.Mute)
-        design.StatCount("search us", qus, zeus.TINT.Ok)
-        design.StatCount("model us", mus, zeus.TINT.Danger)
+    zui.Grid(config = GridConfig(columns = 4, gap = SPACE.Md)) {
+        zui.StatCount("chunks", chunk_stat, zeus.TINT.Ink)
+        zui.StatCount("index KB", kb_stat, zeus.TINT.Mute)
+        zui.StatCount("search us", qus, zeus.TINT.Ok)
+        zui.StatCount("model us", mus, zeus.TINT.Danger)
     }
 }
 
@@ -443,18 +443,18 @@ fn GreenInferPage() {
         chunk_stat.set(nch)
     }
 
-    design.Page() {
+    zui.Page() {
         Header()
-        design.Row(SPACE.Md) {
+        zui.Row(SPACE.Md) {
             zeus.Box(width = 6, height = 6, radius = 3, background = colors.ok())
             zeus.Text("Your codebase as local memory — watch a folder, ask in plain words. Everything stays in one file on this machine.", color = colors.mute(), font = spacing.FONT_BODY)
-            design.Grow()
+            zui.Grow()
         }
         StatsRow(chunk_stat, kb_stat, qus, mus)
         StepWatch(folder, watch_on, wcap, chunk_stat, kb_stat)
         StepAsk(query, hits, qus, scap)
         StepModel(prompt, endpoint, key_sig, model_sig, ans, mus, mcap)
-        design.Note("GreenInfer: Loam engine + mmap + ARM NEON sweep. Tip: edit a file under the watched folder and it appears in search ~1.5 s later.")
+        zui.Note("GreenInfer: Loam engine + mmap + ARM NEON sweep. Tip: edit a file under the watched folder and it appears in search ~1.5 s later.")
     }
 }
 

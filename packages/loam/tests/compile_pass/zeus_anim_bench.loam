@@ -9,7 +9,7 @@ import "std:fmt"
 import "std:sys"
 import "std:zeus"
 import "std:colors"
-import "std:design"
+import "std:zui"
 
 const N: int = 40
 const FRAMES: int = 300
@@ -25,7 +25,7 @@ fn main() {
     let tree = zeus.Box(align_direction = DIRECTION.Column) {
         let mut j = 0
         while j < N {
-            design.Progress(sigs[j])
+            zui.Progress(sigs[j])
             j = j + 1
         }
     }

@@ -3,7 +3,7 @@ import "std:fmt"
 import "std:sys"
 import "std:zeus"
 import "std:colors"
-import "std:design"
+import "std:zui"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -16,13 +16,13 @@ fn main() {
     zeus.window("badge", 400, 200)
     let unread = zeus.signal(0)
     let keep = zeus.signal(1)
-    zeus.root(design.Row(8) {
-        design.Badge("Live", zeus.TINT.Ok, dot = true)
-        design.Badge("Plain", zeus.TINT.Mute)
-        design.BadgeCount(unread, zeus.TINT.Danger)
-        let c = design.Chip("Iris", zeus.TINT.Ink, on_remove = fn() => keep.set(0))
+    zeus.root(zui.Row(8) {
+        zui.Badge("Live", zeus.TINT.Ok, dot = true)
+        zui.Badge("Plain", zeus.TINT.Mute)
+        zui.BadgeCount(unread, zeus.TINT.Danger)
+        let c = zui.Chip("Iris", zeus.TINT.Ink, on_remove = fn() => keep.set(0))
         zeus.show(c, keep)
-        design.Chip("Bare", zeus.TINT.Ok, dot = false)
+        zui.Chip("Bare", zeus.TINT.Ok, dot = false)
     })
     zeus.pump_frame()
 

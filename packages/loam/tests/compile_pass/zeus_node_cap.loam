@@ -6,7 +6,7 @@ import "std:fmt"
 import "std:sys"
 import "std:zeus"
 import "std:colors"
-import "std:design"
+import "std:zui"
 
 fn must(ok: bool, what: string) {
     if ok {
@@ -25,7 +25,7 @@ fn main() {
     zeus.root(zeus.Box(align_direction = DIRECTION.Column) {
         let mut i = 0
         while i < 100 {
-            design.Button("b", width = 60)
+            zui.Button("b", width = 60)
             i = i + 1
         }
     })

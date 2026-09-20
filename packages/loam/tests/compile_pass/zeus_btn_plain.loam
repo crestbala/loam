@@ -1,11 +1,11 @@
 // look = -1 is a plain clickable label (default look is LOOK.Solid / Primary).
 import "std:zeus"
-import "std:design"
+import "std:zui"
 import "std:sys"
 
 fn main() {
     zeus.snapshot(200, 80, fn() -> Node {
-        design.Button(label = "plain", look = -1, background = "#111", color = "#fff",
+        zui.Button(label = "plain", look = -1, background = "#111", color = "#fff",
                     on_click = fn() {})
     })
     sys.exit(0)

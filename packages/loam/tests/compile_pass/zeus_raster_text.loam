@@ -14,7 +14,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
-import "std:design"
+import "std:zui"
 
 fn must(ok: bool, what: string) {
     if ok {
@@ -65,7 +65,7 @@ fn main() {
 
     // --- a text scene -----------------------------------------------------
     zeus.window("zeus-raster-text", 160, 80)
-    zeus.root(design.Page() {
+    zeus.root(zui.Page() {
         zeus.Text("ABC", font = 40, color = "#000000")
     })
     zeus.engine_layout(160, 80)
@@ -126,7 +126,7 @@ fn main() {
 
     // --- the same string at a larger size is bigger ink -------------------
     zeus.window("zeus-raster-text-big", 320, 160)
-    zeus.root(design.Page() {
+    zeus.root(zui.Page() {
         zeus.Text("ABC", font = 80, color = "#000000")
     })
     zeus.engine_layout(320, 160)
@@ -139,7 +139,7 @@ fn main() {
 
     // --- an empty string is not an error ----------------------------------
     zeus.window("zeus-raster-text-empty", 160, 40)
-    zeus.root(design.Page() {
+    zeus.root(zui.Page() {
         zeus.Text("")
     })
     zeus.engine_layout(160, 40)

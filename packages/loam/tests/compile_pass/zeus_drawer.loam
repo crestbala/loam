@@ -6,7 +6,7 @@ import "std:fmt"
 import "std:sys"
 import "std:zeus"
 import "std:spacing"
-import "std:design"
+import "std:zui"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -18,9 +18,9 @@ fn must(ok: bool, what: string) {
 fn main() {
     zeus.window("drawer", 360, 260)
     let open = zeus.signal(0)
-    let tree = design.Page() {
+    let tree = zui.Page() {
         zeus.Text("Under", color = zeus.ink(), font = spacing.FONT_BODY)
-        design.Drawer(open, side = design.SIDE.SideEnd, size = 240) {
+        zui.Drawer(open, side = zui.SIDE.SideEnd, size = 240) {
             zeus.Text("Panel body", color = zeus.ink(), font = spacing.FONT_BODY)
         }
     }

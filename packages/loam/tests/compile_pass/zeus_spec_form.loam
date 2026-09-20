@@ -3,7 +3,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
-import "std:design"
+import "std:zui"
 
 struct FormConfig {
     placeholder: string = "",
@@ -20,12 +20,12 @@ fn expect(ok: bool, what: string) {
 
 fn ProfileForm(config: FormConfig, username: Signal<string>) {
     zeus.Box(align_direction = DIRECTION.Column, spacing = 12) {
-        design.Input(bind = username, placeholder = config.placeholder)
+        zui.Input(bind = username, placeholder = config.placeholder)
         if username.get().len < config.min_length {
             zeus.Text("Username must be at least {{config.min_length}} characters!",
                       color = "#f38ba8")
         }
-        design.Button("Submit",
+        zui.Button("Submit",
                     enabled = username.get().len >= config.min_length,
                     on_click = fn() => fmt.println("Submitted"))
     }

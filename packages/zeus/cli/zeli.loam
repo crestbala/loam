@@ -2454,7 +2454,7 @@ fn scaffold_files(name: string) -> []ScaffoldFile {
     })
     push(out, ScaffoldFile {
         rel: "routes/error.loam",
-        body: "//! Route error page. A trap in a page's build lands here (see design.Boundary).\n\nimport \"std:zeus\"\n\nfn error(msg: string) {\n    zeus.Text(\"something went wrong\")\n}\n",
+        body: "//! Route error page. A trap in a page's build lands here (see zui.Boundary).\n\nimport \"std:zeus\"\n\nfn error(msg: string) {\n    zeus.Text(\"something went wrong\")\n}\n",
     })
     push(out, ScaffoldFile {
         rel: "routes/not-found.loam",

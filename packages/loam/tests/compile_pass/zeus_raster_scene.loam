@@ -14,7 +14,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
-import "std:design"
+import "std:zui"
 
 fn must(ok: bool, what: string) {
     if ok {
@@ -85,7 +85,7 @@ fn blue_of(rgb: int) -> int {
 fn main() {
     // --- a real scene, at backing scale 2 ---------------------------------
     zeus.window("zeus-raster-scene", 240, 200)
-    zeus.root(design.Page() {
+    zeus.root(zui.Page() {
         zeus.Box(width = 80, height = 60, radius = 12, background = "#3366CC")
         zeus.Box(width = 60, height = 40, radius = 6, background = "#CC3366",
                  margin = 8)
@@ -216,7 +216,7 @@ fn main() {
     // the node before it is added.
     let grad = zeus.Box(width = 60, height = 30, radius = 0, background = "#000000")
     zeus.set_background_end(grad, 0xFFFFFF)
-    let page = design.Page()
+    let page = zui.Page()
     zeus.child(page, grad)
     zeus.window("zeus-raster-scene-grad", 120, 160)
     zeus.root(page)
@@ -241,7 +241,7 @@ fn main() {
     // ops per kind instead of quietly drawing nothing. (With a font loaded they
     // are drawn — see zeus_raster_text.loam.)
     zeus.window("zeus-raster-scene-text", 240, 100)
-    zeus.root(design.Page() {
+    zeus.root(zui.Page() {
         zeus.Text("hello")
     })
     zeus.engine_layout(240, 100)

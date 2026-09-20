@@ -4,7 +4,7 @@ import "std:fmt"
 import "std:sys"
 import "std:zeus"
 import "std:colors"
-import "std:design"
+import "std:zui"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -68,7 +68,7 @@ fn main() {
             axis_a = a.id
             axis_b = b.id
         }
-        let cp = design.Comp(padding_left = zeus.SPACE.Sm, width = 80, height = 30) {
+        let cp = zui.Comp(padding_left = zeus.SPACE.Sm, width = 80, height = 30) {
             let kid = zeus.Box(width = 8, height = 8)
             comp_kid = kid.id
         }

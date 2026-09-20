@@ -3,7 +3,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
-import "std:design"
+import "std:zui"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -16,7 +16,7 @@ fn main() {
     zeus.window("progress", 320, 120)
     let v = zeus.signal(20)
     zeus.root(zeus.Box(padding = 20) {
-        design.Progress(v)
+        zui.Progress(v)
     })
     zeus.pump_frame()
     must(zeus.engine_find_role("progressbar") != 0, "role")

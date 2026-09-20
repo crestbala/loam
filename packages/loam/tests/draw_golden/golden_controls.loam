@@ -4,32 +4,32 @@
 // up here first. Keep this file free of prints: stdout is the golden.
 
 import "std:zeus"
-import "std:design"
+import "std:zui"
 
 fn main() {
     zeus.snapshot(560, 360, fn() -> Node {
         let load = zeus.signal(30)
         let on = zeus.signal(1)
-        design.Page() {
-            design.Row(SPACE.Sm) {
-                design.Button("Primary", look = zeus.LOOK.Solid, size = zeus.SIZE.Md)
-                design.Button("Soft", look = zeus.LOOK.Soft, size = zeus.SIZE.Md)
-                design.Button("Outline", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
-                design.Button("Danger", look = zeus.LOOK.Danger, size = zeus.SIZE.Md)
+        zui.Page() {
+            zui.Row(SPACE.Sm) {
+                zui.Button("Primary", look = zeus.LOOK.Solid, size = zeus.SIZE.Md)
+                zui.Button("Soft", look = zeus.LOOK.Soft, size = zeus.SIZE.Md)
+                zui.Button("Outline", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
+                zui.Button("Danger", look = zeus.LOOK.Danger, size = zeus.SIZE.Md)
             }
-            design.Row(SPACE.Sm) {
-                design.Badge("ok", zeus.TINT.Ok)
-                design.Badge("warn", zeus.TINT.Warn)
-                design.Badge("bad", zeus.TINT.Danger)
-                design.Chip("busy", zeus.TINT.Warn)
+            zui.Row(SPACE.Sm) {
+                zui.Badge("ok", zeus.TINT.Ok)
+                zui.Badge("warn", zeus.TINT.Warn)
+                zui.Badge("bad", zeus.TINT.Danger)
+                zui.Chip("busy", zeus.TINT.Warn)
             }
-            design.AlertWarning("Low disk", "The volume is almost full.")
-            design.Row(SPACE.Sm) {
-                design.Switch(on)
-                design.Progress(load)
+            zui.AlertWarning("Low disk", "The volume is almost full.")
+            zui.Row(SPACE.Sm) {
+                zui.Switch(on)
+                zui.Progress(load)
             }
-            design.Row(SPACE.Sm) {
-                design.Skeleton(96, 24, 8)
+            zui.Row(SPACE.Sm) {
+                zui.Skeleton(96, 24, 8)
             }
         }
     })

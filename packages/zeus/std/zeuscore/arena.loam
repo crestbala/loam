@@ -839,7 +839,7 @@ fn rebuild_end(previous: int) {
     scope_end(previous)
 }
 
-/// Snapshot of the allocator for `design.Boundary`: everything allocated after
+/// Snapshot of the allocator for `zui.Boundary`: everything allocated after
 /// this point can be discarded by `release`.
 struct ArenaMark {
     nodes: int,

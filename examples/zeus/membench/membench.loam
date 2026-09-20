@@ -19,7 +19,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
-import "std:design"
+import "std:zui"
 
 /// Button count for a mode name. Unknown modes are a hard error: a typo that
 /// silently benches the wrong tree makes the whole baseline meaningless.
@@ -42,7 +42,7 @@ fn Screen(n: int) {
     zeus.Box(align_direction = DIRECTION.Column, padding = 8, spacing = 4) {
         let mut i = 0
         while i < n {
-            design.Button(label = "b", look = zeus.LOOK.Ghost, size = zeus.SIZE.Sm)
+            zui.Button(label = "b", look = zeus.LOOK.Ghost, size = zeus.SIZE.Sm)
             i = i + 1
         }
     }

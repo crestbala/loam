@@ -5,7 +5,7 @@ import "std:async"
 import "std:fmt"
 import "std:zeus"
 import "std:colors"
-import "std:design"
+import "std:zui"
 
 fn row(label: string) {
     zeus.Box(align_direction = DIRECTION.Row, spacing = 4, padding = 2) {
@@ -22,7 +22,7 @@ fn main() {
     zeus.window("bench", 1024, 768)
     zeus.view(fn() -> Node {
         zeus.Box(align_direction = DIRECTION.Column, padding = 12, spacing = 4) {
-            design.Each(items, fn(i, s) {
+            zui.Each(items, fn(i, s) {
                 row(s)
             })
         }

@@ -6,7 +6,7 @@ import "std:fmt"
 import "std:sys"
 import "std:zeus"
 import "std:colors"
-import "std:design"
+import "std:zui"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -17,7 +17,7 @@ fn must(ok: bool, what: string) {
 
 fn main() {
     zeus.window("hover", 320, 120)
-    let btn = design.Button("Hover me", on_click = fn() {})
+    let btn = zui.Button("Hover me", on_click = fn() {})
     let tree = zeus.Box(padding = 20) {
         zeus.child(zeus.Box(), btn)
     }

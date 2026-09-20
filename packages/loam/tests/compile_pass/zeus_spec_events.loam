@@ -4,7 +4,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
-import "std:design"
+import "std:zui"
 
 fn expect(ok: bool, what: string) {
     if ok {
@@ -27,7 +27,7 @@ fn CanvasWidget(status: Signal<string>) {
 }
 
 fn CommandPalette(text: Signal<string>) {
-    design.Input(
+    zui.Input(
         bind = text,
         placeholder = "type a command",
         on_key_down = fn(e: KeyEvent) {

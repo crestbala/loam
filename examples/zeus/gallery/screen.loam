@@ -6,7 +6,7 @@ import "std:zeus"
 import "std:colors"
 import "std:colors"
 import "std:spacing"
-import "std:design"
+import "std:zui"
 import "std:kv"
 
 let mut ram_armed: int = 0
@@ -36,21 +36,21 @@ fn RamChip() {
 }
 
 fn Navbar(page: Signal<int>) {
-    design.Column(SPACE.None) {
+    zui.Column(SPACE.None) {
         zeus.Box(align_direction = DIRECTION.Row, spacing = SPACE.Md,
                  align_items = ALIGN.Center, height = spacing.BAR) {
             zeus.Box(width = 22, height = 22, radius = 6, background = zeus.ink())
             zeus.Text("Zeus", color = zeus.ink(), font = spacing.FONT_TITLE)
-            design.NavTab("Foundations", page, 0)
-            design.NavTab("Components", page, 1)
-            design.NavTab("Patterns", page, 2)
-            design.Grow()
+            zui.NavTab("Foundations", page, 0)
+            zui.NavTab("Components", page, 1)
+            zui.NavTab("Patterns", page, 2)
+            zui.Grow()
             AccentDots()
             RamChip()
             zeus.Text("Dark", color = colors.mute(), font = spacing.FONT_CONTROL)
-            design.Switch(zeus.appearance())
+            zui.Switch(zeus.appearance())
         }
-        design.Separator()
+        zui.Separator()
     }
 }
 
@@ -64,8 +64,8 @@ fn AccentDots() {
     for i in 0..colors.accent_count() {
         push(idx, i)
     }
-    design.Row(SPACE.Exxs) {
-        design.Each(idx, fn(i, k) {
+    zui.Row(SPACE.Exxs) {
+        zui.Each(idx, fn(i, k) {
             let dot = zeus.Box(width = 16, height = 16, radius = spacing.RAD_FULL,
                                background = colors.accent_scale_light(i).s9,
                                cursor = "pointer",
@@ -86,166 +86,166 @@ fn AccentDots() {
 
 fn ProjectCard() {
     let ticks = zeus.signal(0)
-    design.Card() {
-        design.Row(SPACE.Sm) {
-            design.Title("Project card")
-            design.Grow()
-            design.Badge("In progress", zeus.TINT.Ok)
+    zui.Card() {
+        zui.Row(SPACE.Sm) {
+            zui.Title("Project card")
+            zui.Grow()
+            zui.Badge("In progress", zeus.TINT.Ok)
         }
-        design.Body("A card with a title, supporting copy, and a footer of actions. Shadcn chrome: rounded-xl, hairline border, white surface.")
-        design.Row(SPACE.Sm) {
-            design.Button("Cancel", look = zeus.LOOK.Outline, size = zeus.SIZE.Md, on_click = fn() => ticks.set(ticks.get() + 1))
-            design.Button("Save", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => ticks.set(ticks.get() + 1))
-            design.Grow()
+        zui.Body("A card with a title, supporting copy, and a footer of actions. Shadcn chrome: rounded-xl, hairline border, white surface.")
+        zui.Row(SPACE.Sm) {
+            zui.Button("Cancel", look = zeus.LOOK.Outline, size = zeus.SIZE.Md, on_click = fn() => ticks.set(ticks.get() + 1))
+            zui.Button("Save", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => ticks.set(ticks.get() + 1))
+            zui.Grow()
             zeus.Text("{{ticks.get()}}", color = colors.mute(), font = spacing.FONT_CAPTION)
         }
     }
 }
 
 fn Foundations() {
-    design.Breadcrumbs([]string {"Zeus", "Examples", "Gallery"})
-    design.Column(SPACE.Exs) {
-        design.Display("Build interfaces with Zeus")
-        design.Body("Zinc tokens, neutral primary, and lucide SVG icons. Dark inverts every token that reads appearance.")
+    zui.Breadcrumbs([]string {"Zeus", "Examples", "Gallery"})
+    zui.Column(SPACE.Exs) {
+        zui.Display("Build interfaces with Zeus")
+        zui.Body("Zinc tokens, neutral primary, and lucide SVG icons. Dark inverts every token that reads appearance.")
     }
     let unread = zeus.signal(12)
     let iris = zeus.signal(1)
-    design.Row(SPACE.Sm) {
-        design.Chip("Stable", zeus.TINT.Ok)
-        design.Chip("Canvas2D", zeus.TINT.Ink)
-        design.Badge("zeus", zeus.TINT.Mute)
-        design.Badge("Live", zeus.TINT.Ok, dot = true)
-        design.BadgeCount(unread, zeus.TINT.Danger)
-        let tag = design.Chip("Iris", zeus.TINT.Ink, on_remove = fn() => iris.set(0))
+    zui.Row(SPACE.Sm) {
+        zui.Chip("Stable", zeus.TINT.Ok)
+        zui.Chip("Canvas2D", zeus.TINT.Ink)
+        zui.Badge("zeus", zeus.TINT.Mute)
+        zui.Badge("Live", zeus.TINT.Ok, dot = true)
+        zui.BadgeCount(unread, zeus.TINT.Danger)
+        let tag = zui.Chip("Iris", zeus.TINT.Ink, on_remove = fn() => iris.set(0))
         zeus.show(tag, iris)
-        design.Kbd("⌘K")
+        zui.Kbd("⌘K")
     }
-    design.Alert("Heads up", "Signals update on click. Hover and press are engine fades — no DOM.")
-    design.AlertDestructive("Session expired", "Sign back in to keep syncing. Your drafts are saved locally.")
+    zui.Alert("Heads up", "Signals update on click. Hover and press are engine fades — no DOM.")
+    zui.AlertDestructive("Session expired", "Sign back in to keep syncing. Your drafts are saved locally.")
     ProjectCard()
     Customize()
 }
 
 fn Customize() {
-    design.SectionHeader("Customize", "Style props + slots",
+    zui.SectionHeader("Customize", "Style props + slots",
                        "Style props restyle a recipe without copying it. Comp is the primitive for your own widget. Trailing blocks are slots.")
-    design.Card() {
-        design.RowWrap(SPACE.Sm) {
-            design.Button("Recipe", look = zeus.LOOK.Solid, size = zeus.SIZE.Md)
-            design.Button("Styled", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
+    zui.Card() {
+        zui.RowWrap(SPACE.Sm) {
+            zui.Button("Recipe", look = zeus.LOOK.Solid, size = zeus.SIZE.Md)
+            zui.Button("Styled", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
                         radius = 999, padding_x = 20,)
-            design.IconButton(zeus.IC_CHECK, zeus.LOOK.Soft, zeus.SIZE.Md, "Save")
-            design.Chip("pill", zeus.TINT.Ok, radius = 6)
+            zui.IconButton(zeus.IC_CHECK, zeus.LOOK.Soft, zeus.SIZE.Md, "Save")
+            zui.Chip("pill", zeus.TINT.Ok, radius = 6)
         }
-        design.Card(radius = 6, padding = 12) {
-            design.Body("This card used radius = 6, padding = 12.")
+        zui.Card(radius = 6, padding = 12) {
+            zui.Body("This card used radius = 6, padding = 12.")
         }
-        design.Comp(background = colors.raised(), radius = 10,
+        zui.Comp(background = colors.raised(), radius = 10,
                   padding = 12, spacing = 8,
                   align_direction = DIRECTION.Row, align_items = ALIGN.Center) {
-            design.Pip(zeus.accent(), 8)
+            zui.Pip(zeus.accent(), 8)
             zeus.Text("Comp — a function widget, styled by props", font = spacing.FONT_BODY,
                       color = zeus.ink())
         }
-        design.Badge("custom", zeus.TINT.Mute, radius = 2, padding_x = 8)
-        design.Alert("Styled alert", "Same recipe, different radius.",
+        zui.Badge("custom", zeus.TINT.Mute, radius = 2, padding_x = 8)
+        zui.Alert("Styled alert", "Same recipe, different radius.",
                    radius = 4, padding = 10)
     }
 }
 
 fn ButtonScale() {
-    design.SectionHeader("Actions", "Buttons",
+    zui.SectionHeader("Actions", "Buttons",
                        "The six variants across three sizes. Primary is the neutral ink fill; it inverts with appearance.")
-    design.Card() {
-        design.Overline("Primary · Secondary · Outline · Ghost · Destructive · Link")
-        design.Note("small")
-        design.RowWrap(SPACE.Sm) {
-            design.Button("Solid", look = zeus.LOOK.Solid, size = zeus.SIZE.Sm)
-            design.Button("Soft", look = zeus.LOOK.Soft, size = zeus.SIZE.Sm)
-            design.Button("Outline", look = zeus.LOOK.Outline, size = zeus.SIZE.Sm)
-            design.Button("Ghost", look = zeus.LOOK.Ghost, size = zeus.SIZE.Sm)
-            design.Button("Danger", look = zeus.LOOK.Danger, size = zeus.SIZE.Sm)
-            design.Button("Link", look = zeus.LOOK.Link, size = zeus.SIZE.Sm)
+    zui.Card() {
+        zui.Overline("Primary · Secondary · Outline · Ghost · Destructive · Link")
+        zui.Note("small")
+        zui.RowWrap(SPACE.Sm) {
+            zui.Button("Solid", look = zeus.LOOK.Solid, size = zeus.SIZE.Sm)
+            zui.Button("Soft", look = zeus.LOOK.Soft, size = zeus.SIZE.Sm)
+            zui.Button("Outline", look = zeus.LOOK.Outline, size = zeus.SIZE.Sm)
+            zui.Button("Ghost", look = zeus.LOOK.Ghost, size = zeus.SIZE.Sm)
+            zui.Button("Danger", look = zeus.LOOK.Danger, size = zeus.SIZE.Sm)
+            zui.Button("Link", look = zeus.LOOK.Link, size = zeus.SIZE.Sm)
         }
-        design.Note("medium")
-        design.RowWrap(SPACE.Sm) {
-            design.Button("Solid", look = zeus.LOOK.Solid, size = zeus.SIZE.Md)
-            design.Button("Soft", look = zeus.LOOK.Soft, size = zeus.SIZE.Md)
-            design.Button("Outline", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
-            design.Button("Ghost", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md)
-            design.Button("Danger", look = zeus.LOOK.Danger, size = zeus.SIZE.Md)
-            design.Button("Link", look = zeus.LOOK.Link, size = zeus.SIZE.Md)
+        zui.Note("medium")
+        zui.RowWrap(SPACE.Sm) {
+            zui.Button("Solid", look = zeus.LOOK.Solid, size = zeus.SIZE.Md)
+            zui.Button("Soft", look = zeus.LOOK.Soft, size = zeus.SIZE.Md)
+            zui.Button("Outline", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
+            zui.Button("Ghost", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md)
+            zui.Button("Danger", look = zeus.LOOK.Danger, size = zeus.SIZE.Md)
+            zui.Button("Link", look = zeus.LOOK.Link, size = zeus.SIZE.Md)
         }
-        design.Note("large")
-        design.RowWrap(SPACE.Sm) {
-            design.Button("Solid", look = zeus.LOOK.Solid, size = zeus.SIZE.Lg)
-            design.Button("Soft", look = zeus.LOOK.Soft, size = zeus.SIZE.Lg)
-            design.Button("Outline", look = zeus.LOOK.Outline, size = zeus.SIZE.Lg)
-            design.Button("Ghost", look = zeus.LOOK.Ghost, size = zeus.SIZE.Lg)
-            design.Button("Danger", look = zeus.LOOK.Danger, size = zeus.SIZE.Lg)
-            design.Button("Link", look = zeus.LOOK.Link, size = zeus.SIZE.Lg)
+        zui.Note("large")
+        zui.RowWrap(SPACE.Sm) {
+            zui.Button("Solid", look = zeus.LOOK.Solid, size = zeus.SIZE.Lg)
+            zui.Button("Soft", look = zeus.LOOK.Soft, size = zeus.SIZE.Lg)
+            zui.Button("Outline", look = zeus.LOOK.Outline, size = zeus.SIZE.Lg)
+            zui.Button("Ghost", look = zeus.LOOK.Ghost, size = zeus.SIZE.Lg)
+            zui.Button("Danger", look = zeus.LOOK.Danger, size = zeus.SIZE.Lg)
+            zui.Button("Link", look = zeus.LOOK.Link, size = zeus.SIZE.Lg)
         }
-        design.Note("states — icon slot, loading (spinner takes the slot, inert), disabled fill; press scales to 97%")
+        zui.Note("states — icon slot, loading (spinner takes the slot, inert), disabled fill; press scales to 97%")
         let busy = zeus.signal(0)
-        design.RowWrap(SPACE.Sm) {
-            design.Button("Add item", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, icon = zeus.IC_PLUS)
-            design.Button("Save", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, icon = zeus.IC_CHECK,
+        zui.RowWrap(SPACE.Sm) {
+            zui.Button("Add item", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, icon = zeus.IC_PLUS)
+            zui.Button("Save", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, icon = zeus.IC_CHECK,
                         loading = busy, on_click = fn() {
                 busy.set(1)
                 async.after(1500, fn() { busy.set(0) })
             })
-            design.Button("Disabled", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, enabled = false)
-            design.Button("Disabled", look = zeus.LOOK.Outline, size = zeus.SIZE.Md, enabled = false)
+            zui.Button("Disabled", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, enabled = false)
+            zui.Button("Disabled", look = zeus.LOOK.Outline, size = zeus.SIZE.Md, enabled = false)
         }
-        design.Note("icon — square, 16px lucide glyphs in every look")
-        design.RowWrap(SPACE.Sm) {
-            design.IconButton(zeus.IC_PLUS, zeus.LOOK.Solid, zeus.SIZE.Sm, "Add")
-            design.IconButton(zeus.IC_MINUS, zeus.LOOK.Soft, zeus.SIZE.Md, "Remove")
-            design.IconButton(zeus.IC_X, zeus.LOOK.Outline, zeus.SIZE.Md, "Close")
-            design.IconButton(zeus.IC_CHEV_LEFT, zeus.LOOK.Ghost, zeus.SIZE.Md, "Back")
-            design.IconButton(zeus.IC_ALERT_CIRCLE, zeus.LOOK.Danger, zeus.SIZE.Lg, "Warn")
+        zui.Note("icon — square, 16px lucide glyphs in every look")
+        zui.RowWrap(SPACE.Sm) {
+            zui.IconButton(zeus.IC_PLUS, zeus.LOOK.Solid, zeus.SIZE.Sm, "Add")
+            zui.IconButton(zeus.IC_MINUS, zeus.LOOK.Soft, zeus.SIZE.Md, "Remove")
+            zui.IconButton(zeus.IC_X, zeus.LOOK.Outline, zeus.SIZE.Md, "Close")
+            zui.IconButton(zeus.IC_CHEV_LEFT, zeus.LOOK.Ghost, zeus.SIZE.Md, "Back")
+            zui.IconButton(zeus.IC_ALERT_CIRCLE, zeus.LOOK.Danger, zeus.SIZE.Lg, "Warn")
         }
     }
 }
 
 fn DisplayRow() {
-    design.SectionTitle("Display", "Chips, badges, keys")
-    design.Card() {
-        design.Note("chips")
-        design.Row(SPACE.Sm) {
-            design.Chip("Iris", zeus.TINT.Ink)
-            design.Chip("Live", zeus.TINT.Ok)
-            design.Chip("Quiet", zeus.TINT.Mute)
-            design.Chip("Faint", zeus.TINT.Dim)
-            design.Chip("Alert", zeus.TINT.Danger)
+    zui.SectionTitle("Display", "Chips, badges, keys")
+    zui.Card() {
+        zui.Note("chips")
+        zui.Row(SPACE.Sm) {
+            zui.Chip("Iris", zeus.TINT.Ink)
+            zui.Chip("Live", zeus.TINT.Ok)
+            zui.Chip("Quiet", zeus.TINT.Mute)
+            zui.Chip("Faint", zeus.TINT.Dim)
+            zui.Chip("Alert", zeus.TINT.Danger)
         }
-        design.Note("badges")
-        design.Row(SPACE.Sm) {
-            design.Badge("secondary", zeus.TINT.Mute)
-            design.Badge("default", zeus.TINT.Ink)
-            design.Badge("success", zeus.TINT.Ok)
-            design.Badge("outline", zeus.TINT.Dim)
-            design.Badge("destructive", zeus.TINT.Danger)
+        zui.Note("badges")
+        zui.Row(SPACE.Sm) {
+            zui.Badge("secondary", zeus.TINT.Mute)
+            zui.Badge("default", zeus.TINT.Ink)
+            zui.Badge("success", zeus.TINT.Ok)
+            zui.Badge("outline", zeus.TINT.Dim)
+            zui.Badge("destructive", zeus.TINT.Danger)
         }
-        design.Note("kbd")
-        design.Row(SPACE.Sm) {
-            design.Kbd("Esc")
-            design.Kbd("⌘S")
-            design.Kbd("Ctrl K")
+        zui.Note("kbd")
+        zui.Row(SPACE.Sm) {
+            zui.Kbd("Esc")
+            zui.Kbd("⌘S")
+            zui.Kbd("Ctrl K")
         }
     }
 }
 
 fn Field(name: Signal<string>, note: Signal<string>, st: Store) {
-    design.SectionHeader("Forms", "Input",
+    zui.SectionHeader("Forms", "Input",
                        "A label + input pair: 36px tall, rounded, hairline border.")
-    design.Card() {
-        design.Field("Name", name, "Your name")
+    zui.Card() {
+        zui.Field("Name", name, "Your name")
         zeus.Text(if name.get().len < 3 { "Name must be at least 3 characters." } else { "" },
                   color = zeus.danger(), font = spacing.FONT_CONTROL)
-        design.TextArea(note, "Draft — saved as you type", fn() => kv.set(st, "draft", note.get()))
-        design.Note("{{note.get().len}} chars · std:kv under Application Support")
-        design.Button("Submit", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => name.set(name.get()))
+        zui.TextArea(note, "Draft — saved as you type", fn() => kv.set(st, "draft", note.get()))
+        zui.Note("{{note.get().len}} chars · std:kv under Application Support")
+        zui.Button("Submit", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => name.set(name.get()))
     }
 }
 
@@ -253,10 +253,10 @@ fn DateSection() {
     let year = zeus.signal(2026)
     let month = zeus.signal(10)
     let day = zeus.signal(17)
-    design.SectionHeader("Forms", "Date picker",
+    zui.SectionHeader("Forms", "Date picker",
                        "Input-like trigger with a calendar icon; the sheet floats above the page, so the scroller cannot clip it.")
-    design.Card() {
-        design.DatePicker(year, month, day)
+    zui.Card() {
+        zui.DatePicker(year, month, day)
     }
 }
 
@@ -265,23 +265,23 @@ fn Choice() {
     let size = zeus.signal(1)
     let mode = zeus.signal(1)
     let group = zeus.signal(0)
-    design.SectionHeader("Choice", "Tabs, select, radio, toggle",
+    zui.SectionHeader("Choice", "Tabs, select, radio, toggle",
                        "A muted tray for tabs, a dropdown for sizes, radio dots for one pick, and an accent-pressed toggle group.")
-    design.Card() {
-        design.Note("tabs — active trigger is the card surface")
-        design.Tabs(tab, []string { "One", "Two", "Three" })
-        design.Note("select — the menu floats below the trigger")
-        design.Select(size, []string { "Small", "Medium", "Large" })
-        design.Note("combobox — type to filter, Enter picks")
+    zui.Card() {
+        zui.Note("tabs — active trigger is the card surface")
+        zui.Tabs(tab, []string { "One", "Two", "Three" })
+        zui.Note("select — the menu floats below the trigger")
+        zui.Select(size, []string { "Small", "Medium", "Large" })
+        zui.Note("combobox — type to filter, Enter picks")
         let query = zeus.signal("")
-        design.Combobox(query, []string { "Apple", "Apricot", "Banana", "Cherry" }, width = 200)
-        design.Note("radio group — filled dot on the picked row")
-        design.RadioGroup(mode, []string { "Default", "Comfortable", "Compact" })
-        design.Note("toggle group — muted fill when pressed")
-        design.ToggleGroup(group, []string { "Bold", "Italic", "Underline" })
-        design.Note("toggle — borderless until pressed")
+        zui.Combobox(query, []string { "Apple", "Apricot", "Banana", "Cherry" }, width = 200)
+        zui.Note("radio group — filled dot on the picked row")
+        zui.RadioGroup(mode, []string { "Default", "Comfortable", "Compact" })
+        zui.Note("toggle group — muted fill when pressed")
+        zui.ToggleGroup(group, []string { "Bold", "Italic", "Underline" })
+        zui.Note("toggle — borderless until pressed")
         let blink = zeus.signal(1)
-        design.Toggle("Blink cursor", blink)
+        zui.Toggle("Blink cursor", blink)
     }
 }
 
@@ -289,37 +289,37 @@ fn Controls() {
     let on = zeus.signal(1)
     let notes = zeus.signal(0)
     let vol = zeus.signal(42)
-    design.SectionHeader("Controls", "Switch, check, slider, toggle",
+    zui.SectionHeader("Controls", "Switch, check, slider, toggle",
                        "The switch eases onto its track; drag the slider thumb or use the arrow keys. Progress echoes the value.")
-    design.Card() {
-        design.Row(SPACE.Md) {
-            design.Switch(on)
+    zui.Card() {
+        zui.Row(SPACE.Md) {
+            zui.Switch(on)
             zeus.Text(if on.get() == 1 { "On" } else { "Off" }, color = zeus.ink(), font = spacing.FONT_BODY)
-            design.Grow()
-            design.Checkbox("Notify me", notes)
+            zui.Grow()
+            zui.Checkbox("Notify me", notes)
         }
-        design.Note("volume  {{vol.get()}}%")
-        design.Slider(vol)
-        design.Progress(vol)
+        zui.Note("volume  {{vol.get()}}%")
+        zui.Slider(vol)
+        zui.Progress(vol)
     }
 }
 
 fn People() {
-    design.SectionTitle("People", "Avatars and stats")
-    design.Row(SPACE.Md) {
-        design.Card() {
-            design.User("AP", "Ada Park", "Operator", status = zeus.TINT.Ok)
-            design.User("BL", "Bea Liu", "Editor", status = zeus.TINT.Warn)
-            design.Row(SPACE.Xs) {
-                design.Avatar("AP", 32, status = zeus.TINT.Ok)
-                design.Avatar("BL", 40, status = zeus.TINT.Warn)
-                design.Avatar("CD", 48, status = zeus.TINT.Danger)
+    zui.SectionTitle("People", "Avatars and stats")
+    zui.Row(SPACE.Md) {
+        zui.Card() {
+            zui.User("AP", "Ada Park", "Operator", status = zeus.TINT.Ok)
+            zui.User("BL", "Bea Liu", "Editor", status = zeus.TINT.Warn)
+            zui.Row(SPACE.Xs) {
+                zui.Avatar("AP", 32, status = zeus.TINT.Ok)
+                zui.Avatar("BL", 40, status = zeus.TINT.Warn)
+                zui.Avatar("CD", 48, status = zeus.TINT.Danger)
             }
-            design.AvatarGroup([]string { "AP", "BL", "CD" }, 32)
+            zui.AvatarGroup([]string { "AP", "BL", "CD" }, 32)
         }
         let spark = zeus.signal([]int { 3, 5, 4, 8, 7, 9, 12 })
-        design.Stat("Uptime", "99.9%", zeus.TINT.Ok, delta = "+0.2%", trend = design.TREND.Up, spark = spark)
-        design.Stat("Errors", "2", zeus.TINT.Danger, delta = "-3 today", trend = design.TREND.Down)
+        zui.Stat("Uptime", "99.9%", zeus.TINT.Ok, delta = "+0.2%", trend = zui.TREND.Up, spark = spark)
+        zui.Stat("Errors", "2", zeus.TINT.Danger, delta = "-3 today", trend = zui.TREND.Down)
     }
 }
 
@@ -327,14 +327,14 @@ fn Upload() {
     let photo = zeus.signal("")
     let pw = zeus.signal(0)
     let ph = zeus.signal(0)
-    design.SectionHeader("Media", "Upload",
+    zui.SectionHeader("Media", "Upload",
                        "Choose a PNG, JPEG, WebP, or GIF. The preview keeps its aspect and auto-sizes to the device width.")
-    design.Card() {
-        design.Row(SPACE.Sm) {
-            design.Button("Choose image", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() {
-                design.pick_image(photo, pw, ph)
+    zui.Card() {
+        zui.Row(SPACE.Sm) {
+            zui.Button("Choose image", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() {
+                zui.pick_image(photo, pw, ph)
             })
-            design.Button("Clear", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click = fn() {
+            zui.Button("Clear", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click = fn() {
                 photo.set("")
                 pw.set(0)
                 ph.set(0)
@@ -354,7 +354,7 @@ fn Upload() {
         zeus.show_eq(empty, pw, 0)
         // No `width` / `max_width` / aspect wiring: `Image` takes the decoded
         // source size and shrinks to the card (device) width on its own.
-        let shot = design.Image(photo.get(), radius = 8, fit = IMAGE_FIT.Contain)
+        let shot = zui.Image(photo.get(), radius = 8, fit = IMAGE_FIT.Contain)
         zeus.show_ne(shot, pw, 0)
     }
 }
@@ -384,22 +384,22 @@ fn Data() {
     push(members, Member { name: "Cal", role: "Viewer", qty: 30 })
     push(members, Member { name: "Dee", role: "Viewer", qty: 4 })
     let rows = zeus.signal(members)
-    design.SectionTitle("Data", "Table and pagination")
-    design.Card() {
-        design.TableHead([]string {"Name", "Role", "Status"})
-        design.TableRow([]string {"Ada", "Operator", "Active"})
-        design.TableRow([]string {"Bea", "Editor", "Away"})
-        design.TableRow([]string {"Cal", "Viewer", "Active"})
+    zui.SectionTitle("Data", "Table and pagination")
+    zui.Card() {
+        zui.TableHead([]string {"Name", "Role", "Status"})
+        zui.TableRow([]string {"Ada", "Operator", "Active"})
+        zui.TableRow([]string {"Bea", "Editor", "Away"})
+        zui.TableRow([]string {"Cal", "Viewer", "Active"})
     }
-    design.Note("Table — sortable headers reorder the rows · zebra · row click · end-aligned numbers · picked: {{picked.get()}}")
-    design.Card() {
-        design.Table(spec, rows, member_cells, sort = sort, zebra = true,
+    zui.Note("Table — sortable headers reorder the rows · zebra · row click · end-aligned numbers · picked: {{picked.get()}}")
+    zui.Card() {
+        zui.Table(spec, rows, member_cells, sort = sort, zebra = true,
                    on_pick = fn(i: int) => picked.set(rows.get()[i].name))
     }
-    design.Note("Pagination — {{page.get()}} / 5 · ghost pages, outline current")
-    design.Pagination(page, 5)
-    design.Note("Pagination — {{long_page.get()}} / 20 · collapses to 1 … c-1 c c+1 … 20")
-    design.Pagination(long_page, 20)
+    zui.Note("Pagination — {{page.get()}} / 5 · ghost pages, outline current")
+    zui.Pagination(page, 5)
+    zui.Note("Pagination — {{long_page.get()}} / 20 · collapses to 1 … c-1 c c+1 … 20")
+    zui.Pagination(long_page, 20)
 }
 
 fn Components() {
@@ -421,28 +421,28 @@ fn Components() {
 }
 
 fn NameRow(name: string) -> Node {
-    design.Row(SPACE.Sm) {
-        design.Pip(colors.mute(), 6)
-        design.Body(name)
+    zui.Row(SPACE.Sm) {
+        zui.Pip(colors.mute(), 6)
+        zui.Body(name)
     }
 }
 
 fn LiveList() {
     let n = zeus.signal(2)
-    design.SectionHeader("Lists", "Growing rows",
-                       "Add and remove rows. Extra rows are shown, not rebuilt with design.For.")
-    design.Card() {
+    zui.SectionHeader("Lists", "Growing rows",
+                       "Add and remove rows. Extra rows are shown, not rebuilt with zui.For.")
+    zui.Card() {
         zeus.show_ge(NameRow("Ada"), n, 1)
         zeus.show_ge(NameRow("Bea"), n, 2)
         zeus.show_ge(NameRow("Row"), n, 3)
         zeus.show_ge(NameRow("Row"), n, 4)
-        design.Row(SPACE.Sm) {
-            design.Button("Add row", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() {
+        zui.Row(SPACE.Sm) {
+            zui.Button("Add row", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() {
                 if n.get() < 4 {
                     n.set(n.get() + 1)
                 }
             })
-            design.Button("Remove", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click = fn() {
+            zui.Button("Remove", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click = fn() {
                 if n.get() > 0 {
                     n.set(n.get() - 1)
                 }
@@ -452,33 +452,33 @@ fn LiveList() {
 }
 
 fn Cards() {
-    design.SectionTitle("Surfaces", "Cards")
-    design.Grid(config = GridConfig(columns = 3, gap = SPACE.Md)) {
-        design.Card() { design.Pip(zeus.accent(), 8) design.Title("Small") design.Body("Neutral primary on paper.") }
-        design.Card() { design.Pip(colors.ok(), 8) design.Title("Medium") design.Body("Rounded-xl is the card radius.") }
-        design.Card() { design.Pip(zeus.danger(), 8) design.Title("Large") design.Body("Badges and caps mark status.") }
+    zui.SectionTitle("Surfaces", "Cards")
+    zui.Grid(config = GridConfig(columns = 3, gap = SPACE.Md)) {
+        zui.Card() { zui.Pip(zeus.accent(), 8) zui.Title("Small") zui.Body("Neutral primary on paper.") }
+        zui.Card() { zui.Pip(colors.ok(), 8) zui.Title("Medium") zui.Body("Rounded-xl is the card radius.") }
+        zui.Card() { zui.Pip(zeus.danger(), 8) zui.Title("Large") zui.Body("Badges and caps mark status.") }
     }
 }
 
 fn Skeletons() {
-    design.SectionHeader("Feedback", "Skeleton",
+    zui.SectionHeader("Feedback", "Skeleton",
                        "Placeholder fills while content loads, with a left-to-right shimmer. Radius matches the shape it replaces.")
-    design.Card() {
-        design.Row(SPACE.Md) {
-            design.Skeleton(40, 40, 20)
-            design.Column(SPACE.Exs) {
-                design.Skeleton(220, 14, 7)
-                design.Skeleton(160, 14, 7)
+    zui.Card() {
+        zui.Row(SPACE.Md) {
+            zui.Skeleton(40, 40, 20)
+            zui.Column(SPACE.Exs) {
+                zui.Skeleton(220, 14, 7)
+                zui.Skeleton(160, 14, 7)
             }
         }
     }
     let pct = zeus.signal(35)
     let busy = zeus.signal(-1)
-    design.Note("Progress — a plain set eases; a negative value sweeps (indeterminate)")
-    design.Card() {
-        design.Row(SPACE.Sm) {
-            design.Progress(pct)
-            design.Button("+20", look = zeus.LOOK.Outline, size = zeus.SIZE.Sm, on_click = fn() {
+    zui.Note("Progress — a plain set eases; a negative value sweeps (indeterminate)")
+    zui.Card() {
+        zui.Row(SPACE.Sm) {
+            zui.Progress(pct)
+            zui.Button("+20", look = zeus.LOOK.Outline, size = zeus.SIZE.Sm, on_click = fn() {
                 if pct.get() >= 100 {
                     pct.set(0)
                 } else {
@@ -486,20 +486,20 @@ fn Skeletons() {
                 }
             })
         }
-        design.Progress(busy)
+        zui.Progress(busy)
     }
-    design.Note("Card — interactive: hover lifts, press scales; header / footer / media slots")
+    zui.Note("Card — interactive: hover lifts, press scales; header / footer / media slots")
     let taps = zeus.signal(0)
-    design.Row(SPACE.Sm) {
-        design.Card(interactive = true, on_click = fn() => taps.set(taps.get() + 1)) {
-            design.Title("Interactive")
-            design.Body("Tapped {{taps.get()}} times.")
+    zui.Row(SPACE.Sm) {
+        zui.Card(interactive = true, on_click = fn() => taps.set(taps.get() + 1)) {
+            zui.Title("Interactive")
+            zui.Body("Tapped {{taps.get()}} times.")
         }
-        design.Card(title = "Plan", subtitle = "Billed monthly", footer = fn() {
-            design.Grow()
-            design.Button("Upgrade", look = zeus.LOOK.Solid, size = zeus.SIZE.Sm)
+        zui.Card(title = "Plan", subtitle = "Billed monthly", footer = fn() {
+            zui.Grow()
+            zui.Button("Upgrade", look = zeus.LOOK.Solid, size = zeus.SIZE.Sm)
         }) {
-            design.Body("Header and footer slots keep the body between them.")
+            zui.Body("Header and footer slots keep the body between them.")
         }
     }
 }
@@ -507,26 +507,26 @@ fn Skeletons() {
 fn Overlays() {
     let open = zeus.signal(0)
     let ask = zeus.signal(0)
-    design.SectionTitle("Overlay", "Dialog and alert dialog")
-    design.Row(SPACE.Sm) {
-        design.Button("Dialog", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => open.set(1))
-        design.Button("Alert dialog", look = zeus.LOOK.Outline, size = zeus.SIZE.Md, on_click = fn() => ask.set(1))
+    zui.SectionTitle("Overlay", "Dialog and alert dialog")
+    zui.Row(SPACE.Sm) {
+        zui.Button("Dialog", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => open.set(1))
+        zui.Button("Alert dialog", look = zeus.LOOK.Outline, size = zeus.SIZE.Md, on_click = fn() => ask.set(1))
     }
-    design.Body("Dialog has a corner X; alert dialog does not. Cancel is ghost or outline; the destructive action closes.")
-    design.Dialog(open, title = "Share the link?") {
-        design.Body("Anyone with the link can view this project. You can revoke access later.")
-        design.Row(SPACE.Sm) {
-            design.Grow()
-            design.Button("Cancel", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click = fn() => open.set(0))
-            design.Button("Share", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => open.set(0))
+    zui.Body("Dialog has a corner X; alert dialog does not. Cancel is ghost or outline; the destructive action closes.")
+    zui.Dialog(open, title = "Share the link?") {
+        zui.Body("Anyone with the link can view this project. You can revoke access later.")
+        zui.Row(SPACE.Sm) {
+            zui.Grow()
+            zui.Button("Cancel", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click = fn() => open.set(0))
+            zui.Button("Share", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => open.set(0))
         }
     }
-    design.AlertDialog(ask, title = "Discard changes?") {
-        design.Body("This cannot be undone. The working tree keeps whatever you have not saved.")
-        design.Row(SPACE.Sm) {
-            design.Grow()
-            design.Button("Cancel", look = zeus.LOOK.Outline, size = zeus.SIZE.Md, on_click = fn() => ask.set(0))
-            design.Button("Discard", look = zeus.LOOK.Danger, size = zeus.SIZE.Md, on_click = fn() => ask.set(0))
+    zui.AlertDialog(ask, title = "Discard changes?") {
+        zui.Body("This cannot be undone. The working tree keeps whatever you have not saved.")
+        zui.Row(SPACE.Sm) {
+            zui.Grow()
+            zui.Button("Cancel", look = zeus.LOOK.Outline, size = zeus.SIZE.Md, on_click = fn() => ask.set(0))
+            zui.Button("Discard", look = zeus.LOOK.Danger, size = zeus.SIZE.Md, on_click = fn() => ask.set(0))
         }
     }
 }
@@ -541,11 +541,11 @@ fn Disclosure() {
         AccordionRow { title: "Returns", body: "30 days, no questions asked." },
         AccordionRow { title: "Warranty", body: "Two years, parts and labour." },
     }
-    design.SectionHeader("Disclosure", "Accordion and collapsible",
+    zui.SectionHeader("Disclosure", "Accordion and collapsible",
                        "One open index closes the rest by construction; the collapsible is the same model without the card. Chevron and body fade are paint-only.")
-    design.Accordion(open, items = rows)
-    design.Collapsible(open = more, title = "Advanced options", border_color = colors.rule()) {
-        design.Body("A bare disclosure: a header row, a chevron, and a body that fades in.")
+    zui.Accordion(open, items = rows)
+    zui.Collapsible(open = more, title = "Advanced options", border_color = colors.rule()) {
+        zui.Body("A bare disclosure: a header row, a chevron, and a body that fades in.")
     }
 }
 
@@ -558,9 +558,9 @@ fn Menus() {
         MenuRow(label = "Duplicate", is_separated = true),
         MenuRow(label = "Delete"),
     }
-    design.SectionHeader("Menus", "Dropdown menu",
+    zui.SectionHeader("Menus", "Dropdown menu",
                        "Click the trigger to open it. Arrows move the highlight, Enter runs the active command, and Escape or an outside click closes.")
-    design.Row(SPACE.Sm) {
+    zui.Row(SPACE.Sm) {
         // A menu trigger is any node: this one is a row with a chevron, so it
         // reads as a dropdown rather than a plain action button.
         let trigger = zeus.Box(
@@ -580,28 +580,28 @@ fn Menus() {
             a11y_label = "Open menu"
         ) {
             zeus.Text(active_label.get(), color = zeus.ink(), font = spacing.FONT_CONTROL)
-            design.Icon(zeus.IC_CHEV_DOWN, 16, colors.dim())
+            zui.Icon(zeus.IC_CHEV_DOWN, 16, colors.dim())
         }
-        design.Menu(trigger, width = 200, label = "File", items = menu_items,
+        zui.Menu(trigger, width = 200, label = "File", items = menu_items,
                   on_select = fn(i: int) => active_label.set(menu_items[i].label))
         zeus.Text("last command: {{active_label.get()}}", color = colors.mute(), font = spacing.FONT_BODY)
     }
 }
 
 fn Feedback() {
-    design.SectionHeader("Feedback", "Spinner and empty state",
+    zui.SectionHeader("Feedback", "Spinner and empty state",
                        "The spinner is clock-driven and settles under reduced motion; the empty state centres an optional action.")
-    design.Card() {
-        design.Row(SPACE.Md) {
-            design.Spinner()
-            design.Spinner(size = 24, color = zeus.ink())
+    zui.Card() {
+        zui.Row(SPACE.Md) {
+            zui.Spinner()
+            zui.Spinner(size = 24, color = zeus.ink())
             zeus.Text("Working...", color = colors.mute(), font = spacing.FONT_BODY)
         }
     }
-    design.Card() {
-        design.Empty(icon = zeus.IC_INFO, title = "No projects",
+    zui.Card() {
+        zui.Empty(icon = zeus.IC_INFO, title = "No projects",
                    body = "Create one to get started.") {
-            design.Button("New project", look = zeus.LOOK.Solid, size = zeus.SIZE.Sm)
+            zui.Button("New project", look = zeus.LOOK.Solid, size = zeus.SIZE.Sm)
         }
     }
 }
@@ -617,7 +617,7 @@ fn Feedback() {
 /// caret and a working keyboard, and disabled keeps its inert state.
 fn StateField(text: string, edge: string, off: int, bad: int) -> Node {
     let value = zeus.signal(text)
-    let f = design.TextInput(value, "", width = 200, border_color = edge,
+    let f = zui.TextInput(value, "", width = 200, border_color = edge,
                            font = spacing.FONT_CONTROL)
     if off != 0 {
         zeus.disabled(f, true)
@@ -634,30 +634,30 @@ fn StateField(text: string, edge: string, off: int, bad: int) -> Node {
 /// Hover, press and focus are live — the engine drives them from the pointer
 /// and the keyboard, so they are shown by using the control, not posed.
 fn States() {
-    design.SectionHeader("States", "Interaction matrix",
+    zui.SectionHeader("States", "Interaction matrix",
                        "Resting beside disabled, loading and invalid. Hover, press and focus are live: hover a control, press it, or Tab to it.")
-    design.Card() {
-        design.Note("Button — resting · disabled · loading · icon")
+    zui.Card() {
+        zui.Note("Button — resting · disabled · loading · icon")
         let busy = zeus.signal(1)
-        design.RowWrap(SPACE.Sm) {
-            design.Button("Resting", look = zeus.LOOK.Solid, size = zeus.SIZE.Md)
-            design.Button("Disabled", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, enabled = false)
-            design.Button("Loading", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, loading = busy)
-            design.Button("Icon", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, icon = zeus.IC_PLUS)
+        zui.RowWrap(SPACE.Sm) {
+            zui.Button("Resting", look = zeus.LOOK.Solid, size = zeus.SIZE.Md)
+            zui.Button("Disabled", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, enabled = false)
+            zui.Button("Loading", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, loading = busy)
+            zui.Button("Icon", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, icon = zeus.IC_PLUS)
         }
-        design.Note("Outline · ghost · link — resting beside disabled")
-        design.RowWrap(SPACE.Sm) {
-            design.Button("Outline", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
-            design.Button("Outline", look = zeus.LOOK.Outline, size = zeus.SIZE.Md, enabled = false)
-            design.Button("Ghost", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md)
-            design.Button("Ghost", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, enabled = false)
-            design.Button("Link", look = zeus.LOOK.Link, size = zeus.SIZE.Md)
-            design.Button("Link", look = zeus.LOOK.Link, size = zeus.SIZE.Md, enabled = false)
+        zui.Note("Outline · ghost · link — resting beside disabled")
+        zui.RowWrap(SPACE.Sm) {
+            zui.Button("Outline", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
+            zui.Button("Outline", look = zeus.LOOK.Outline, size = zeus.SIZE.Md, enabled = false)
+            zui.Button("Ghost", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md)
+            zui.Button("Ghost", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, enabled = false)
+            zui.Button("Link", look = zeus.LOOK.Link, size = zeus.SIZE.Md)
+            zui.Button("Link", look = zeus.LOOK.Link, size = zeus.SIZE.Md, enabled = false)
         }
     }
-    design.Card() {
-        design.Note("Field — resting · disabled · invalid")
-        design.Row(SPACE.Sm) {
+    zui.Card() {
+        zui.Note("Field — resting · disabled · invalid")
+        zui.Row(SPACE.Sm) {
             StateField("ada@lovelace.dev", colors.rule(), 0, 0)
             StateField("ada@lovelace.dev", colors.rule(), 1, 0)
             StateField("not-an-email", zeus.danger(), 0, 1)
@@ -669,35 +669,35 @@ fn Floating() {
     let pop = zeus.signal(0)
     let toast = zeus.signal(0)
     let drawer = zeus.signal(0)
-    design.SectionTitle("Overlay", "Popover, tooltip, hover card, toast, drawer")
-    design.Row(SPACE.Sm) {
-        let pt = design.Button("Open popover", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
+    zui.SectionTitle("Overlay", "Popover, tooltip, hover card, toast, drawer")
+    zui.Row(SPACE.Sm) {
+        let pt = zui.Button("Open popover", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
                              on_click = fn() => pop.set(1))
-        design.Popover(pt, open = pop, width = 220) {
-            design.Title("Details")
-            design.Body("Anchored to the trigger and edge-aware: it flips above near the bottom.")
+        zui.Popover(pt, open = pop, width = 220) {
+            zui.Title("Details")
+            zui.Body("Anchored to the trigger and edge-aware: it flips above near the bottom.")
         }
-        design.Tooltip(pt, text = "Opens a popover")
-        let hc = design.Button("Hover card", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
-        design.HoverCard(hc, width = 240) {
-            design.Title("Ada Lovelace")
-            design.Body("Wrote the first algorithm for a machine.")
+        zui.Tooltip(pt, text = "Opens a popover")
+        let hc = zui.Button("Hover card", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
+        zui.HoverCard(hc, width = 240) {
+            zui.Title("Ada Lovelace")
+            zui.Body("Wrote the first algorithm for a machine.")
         }
-        design.Tooltip(hc, text = "Hover for a card")
+        zui.Tooltip(hc, text = "Hover for a card")
     }
-    design.Row(SPACE.Sm) {
-        design.Button("Toast", look = zeus.LOOK.Outline, size = zeus.SIZE.Md,
+    zui.Row(SPACE.Sm) {
+        zui.Button("Toast", look = zeus.LOOK.Outline, size = zeus.SIZE.Md,
                     on_click = fn() => toast.set(1))
-        design.Button("Drawer", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
+        zui.Button("Drawer", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
                     on_click = fn() => drawer.set(1))
     }
-    design.Toast(toast, width = 200) {
+    zui.Toast(toast, width = 200) {
         zeus.Text("Saved", color = colors.on_ink(), font = spacing.FONT_BODY)
     }
-    design.Drawer(drawer, side = design.SIDE.SideEnd, size = 300) {
-        design.Title("Filters")
-        design.Body("A drawer pins to a window edge over a scrim and slides in.")
-        design.Button("Close", look = zeus.LOOK.Outline, size = zeus.SIZE.Md,
+    zui.Drawer(drawer, side = zui.SIDE.SideEnd, size = 300) {
+        zui.Title("Filters")
+        zui.Body("A drawer pins to a window edge over a scrim and slides in.")
+        zui.Button("Close", look = zeus.LOOK.Outline, size = zeus.SIZE.Md,
                     on_click = fn() => drawer.set(0))
     }
 }
@@ -749,22 +749,22 @@ fn ChartCards() {
         push(chart_vals, 170)
         push(chart_vals, 260)
     }
-    design.SectionHeader("Data", "Charts",
+    zui.SectionHeader("Data", "Charts",
                        "Hover a column or a point: the floating tooltip lists every series value, like the recharts cursor. The plot re-fits its card on window resize.")
-    design.Card() {
-        design.Title("Bar chart · Total visitors")
-        design.Body("Desktop and mobile sessions by month, grouped per category.")
-        design.BarChart(chart_labs, chart_series, chart_vals, 850, 216)
+    zui.Card() {
+        zui.Title("Bar chart · Total visitors")
+        zui.Body("Desktop and mobile sessions by month, grouped per category.")
+        zui.BarChart(chart_labs, chart_series, chart_vals, 850, 216)
     }
-    design.Card() {
-        design.Title("Line chart · Trend")
-        design.Body("Straight segments with a dot on every data point; the stroke follows the series color.")
-        design.LineChart(chart_labs, chart_series, chart_vals, 850, 216)
+    zui.Card() {
+        zui.Title("Line chart · Trend")
+        zui.Body("Straight segments with a dot on every data point; the stroke follows the series color.")
+        zui.LineChart(chart_labs, chart_series, chart_vals, 850, 216)
     }
-    design.Card() {
-        design.Title("Area chart · Volume")
-        design.Body("A tinted wash under the line; the fill restyles with the appearance.")
-        design.AreaChart(chart_labs, chart_series, chart_vals, 850, 216)
+    zui.Card() {
+        zui.Title("Area chart · Volume")
+        zui.Body("A tinted wash under the line; the fill restyles with the appearance.")
+        zui.AreaChart(chart_labs, chart_series, chart_vals, 850, 216)
     }
 }
 
@@ -780,15 +780,15 @@ fn Patterns() {
 
 fn Showcase() {
     let page = zeus.signal(1)
-    design.Page() {
+    zui.Page() {
         Navbar(page)
-        zeus.show_eq(design.Column(spacing.SECTION) {
+        zeus.show_eq(zui.Column(spacing.SECTION) {
             Foundations()
         }, page, 0)
-        zeus.show_eq(design.Column(spacing.SECTION) {
+        zeus.show_eq(zui.Column(spacing.SECTION) {
             Components()
         }, page, 1)
-        zeus.show_eq(design.Column(spacing.SECTION) {
+        zeus.show_eq(zui.Column(spacing.SECTION) {
             Patterns()
         }, page, 2)
     }

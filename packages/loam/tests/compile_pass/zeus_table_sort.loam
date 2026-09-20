@@ -6,7 +6,7 @@ import "std:fmt"
 import "std:sys"
 import "std:zeus"
 import "std:colors"
-import "std:design"
+import "std:zui"
 
 struct Job {
     name: string,
@@ -25,7 +25,7 @@ fn must(ok: bool, what: string) {
 }
 
 fn JobRow(i: int, j: Job) {
-    design.Row(8) {
+    zui.Row(8) {
         zeus.set_flex_basis_zero(zeus.grow(zeus.Text(j.name), 1))
         zeus.set_flex_basis_zero(zeus.grow(zeus.Text("{{j.qty}}"), 1))
     }
@@ -55,14 +55,14 @@ fn main() {
     push(base, Job { name: "amy", qty: 9 })
     let jobs = zeus.signal(base)
     zeus.effect(|| {
-        jobs.set(design.sort_cells(base, cells, vsort.get()))
+        jobs.set(zui.sort_cells(base, cells, vsort.get()))
     })
 
-    zeus.root(design.Column(8) {
-        design.Table(spec, rows, cells, sort = sort, zebra = true,
+    zeus.root(zui.Column(8) {
+        zui.Table(spec, rows, cells, sort = sort, zebra = true,
                    on_pick = fn(i: int) => picked.set(i))
         zeus.Box(height = 120) {
-            design.VirtualTable(jobs, spec, 24, JobRow, sort = vsort)
+            zui.VirtualTable(jobs, spec, 24, JobRow, sort = vsort)
         }
     })
     zeus.pump_frame()
@@ -90,7 +90,7 @@ fn main() {
     must(picked.get() == 2, "on_pick gives the data index")
 
     // Pushing a row keeps the current sort.
-    design.push_item(rows, Job { name: "Dee", qty: 50 })
+    zui.push_item(rows, Job { name: "Dee", qty: 50 })
     zeus.engine_layout(480, 400)
     must(y("50") < y("30"), "new row sorted in")
 

@@ -1,7 +1,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
-import "std:design"
+import "std:zui"
 
 /// A capturing `on_press` lives in a struct field, is interned by
 /// `Button(on_click = ...)`, then the struct is dropped. The click must still
@@ -24,7 +24,7 @@ fn expect(got: int, want: int) {
 }
 
 fn wire(p: ClickProps) -> Node {
-    let n = design.Button("+", width = 120, height = 40)
+    let n = zui.Button("+", width = 120, height = 40)
     return zeus.on_click(n, p.on_press)
 }
 

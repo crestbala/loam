@@ -1,9 +1,9 @@
 //! router — route table, typed params, history, and navigation.
 //!
 //! The router is a plain Loam module over the public `std:zeus` primitives:
-//! the current path is a `Signal<string>`, the page slot is a `design.Match`
+//! the current path is a `Signal<string>`, the page slot is a `zui.Match`
 //! host (one page mounted at a time), and each page build runs under
-//! `design.Boundary`, so a bad route paints `error(msg)` instead of killing the
+//! `zui.Boundary`, so a bad route paints `error(msg)` instead of killing the
 //! app.
 //!
 //! ```
@@ -48,7 +48,7 @@
 //! or an OS back button.
 
 import "std:zeus"
-import "std:design"
+import "std:zui"
 import "zeuscore/platform.loam"
 
 /// Captured `:name` segments of a matched route.
@@ -417,7 +417,7 @@ fn router_page(routes: []Route, p: RouterProps, path: string) {
         if match_route(routes[i].pattern, path) == 1 {
             let params = Params { keys: match_keys(), vals: match_vals() }
             apply_title(routes[i].meta(params))
-            design.Boundary(fn() { routes[i].build(params) }, fn(msg) { p.error(msg) })
+            zui.Boundary(fn() { routes[i].build(params) }, fn(msg) { p.error(msg) })
             return
         }
         i = i + 1
@@ -434,5 +434,5 @@ fn Router(routes: []Route, p: RouterProps) -> Node {
         initial_loads_done = 1
         start_loaders(cur_path.get())
     }
-    return design.Match(cur_path, fn(path) { router_page(routes, p, path) })
+    return zui.Match(cur_path, fn(path) { router_page(routes, p, path) })
 }

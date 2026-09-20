@@ -8,7 +8,7 @@ import "std:fmt"
 import "std:sys"
 import "std:zeus"
 import "std:colors"
-import "std:design"
+import "std:zui"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -22,7 +22,7 @@ fn main() {
     let s = zeus.signal(0)
     let seen = zeus.signal(-1)
     let tree = zeus.Box() {
-        design.Progress(s)
+        zui.Progress(s)
     }
     zeus.root(tree)
     // Complete one frame first: before it, tracks settle (nothing animates at
