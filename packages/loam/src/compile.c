@@ -118,8 +118,9 @@ static int std_module_lookup(const char *name, char *out, size_t outsz) {
  *  entry named `package`. The module may be a path inside that package's `std`
  *  dir (`zeus:zeuscore/arena`). Matching on the root's basename is what makes
  *  the spec name the package it means, instead of relying on search order the
- *  way a bare `std:name` does. */
-static int package_module_lookup(const char *pkg, const char *mod, char *out, size_t outsz) {
+ *  way a bare `std:name` does. Public so the language server can offer the form
+ *  in import completion. */
+int loam_package_module(const char *pkg, const char *mod, char *out, size_t outsz) {
     if (!pkg || !pkg[0] || !mod || !mod[0]) return 0;
     if (strchr(pkg, '/') || strchr(pkg, '\\')) return 0;
     char buf[1024];
@@ -272,7 +273,7 @@ static char *resolve_import(const char *importer, AstNode *im) {
             if (plen >= sizeof pkg) plen = sizeof pkg - 1;
             memcpy(pkg, spec, plen);
             pkg[plen] = '\0';
-            if (!package_module_lookup(pkg, colon + 1, path, sizeof path)) {
+            if (!loam_package_module(pkg, colon + 1, path, sizeof path)) {
                 loam_error(im->loc, "cannot find module '%s' in package '%s'", colon + 1, pkg);
                 return NULL;
             }

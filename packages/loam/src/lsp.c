@@ -1636,12 +1636,43 @@ static void import_str_prefix(const char *src, int off, char *pre, size_t cap) {
     }
 }
 
+/** Basename of the root owning a `loam_std_dirs` entry: `<root>/std` -> `<root>`'s
+ *  last segment, which is the name the `package:module` form matches on. Returns
+ *  0 for an entry that is not `<something>/std`, so the bare language std dir is
+ *  skipped unless a LOAM_PATH root happens to sit beside it. */
+static int pkg_of_std_dir(const char *dir, char *out, size_t cap) {
+    size_t n = dir ? strlen(dir) : 0;
+    if (n < 5 || strcmp(dir + n - 4, "/std") != 0) return 0;
+    n -= 4;
+    size_t b = n;
+    while (b > 0 && dir[b - 1] != '/') b--;
+    size_t len = n - b;
+    if (len == 0 || len >= cap) return 0;
+    memcpy(out, dir + b, len);
+    out[len] = 0;
+    return 1;
+}
+
+/** Import completion: `std:name` for every std-dir module, plus `pkg:name` for
+ *  each LOAM_PATH root that actually resolves that module. Packages below `std`
+ *  now name each other (`zeus:zeusbase`, `zeus-components:atoms`), so completing
+ *  only the `std:` spelling would hide the form those packages use. */
 static void add_std_import_comps(Completions *c, const char *prefix) {
-    char lab[64];
+    char lab[96], pkg[64], hit[1024];
+    const char *dirs[LOAM_MAX_STD_DIRS];
     load_std_names();
     for (int i = 0; i < nstd_names; i++) {
         snprintf(lab, sizeof lab, "std:%s", std_names[i]);
         add_comp(c, lab, "module", 9, prefix);
+    }
+    int nd = loam_std_dirs(dirs, LOAM_MAX_STD_DIRS);
+    for (int d = 0; d < nd; d++) {
+        if (!pkg_of_std_dir(dirs[d], pkg, sizeof pkg)) continue;
+        for (int i = 0; i < nstd_names; i++) {
+            if (!loam_package_module(pkg, std_names[i], hit, sizeof hit)) continue;
+            snprintf(lab, sizeof lab, "%s:%s", pkg, std_names[i]);
+            add_comp(c, lab, "module", 9, prefix);
+        }
     }
 }
 
