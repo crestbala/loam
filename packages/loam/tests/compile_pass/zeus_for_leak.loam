@@ -5,36 +5,37 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 fn Row(i: int, s: string) {
     let hot = zeus.signal(0)
     zeus.Box(align_direction = DIRECTION.Row, spacing = 4) {
         zeus.Text("{{s}}")
-        zeus.Button("up", on_click = fn() => hot.set(hot.get() + 1), width = 40)
+        design.Button("up", on_click = fn() => hot.set(hot.get() + 1), width = 40)
     }
 }
 
 fn main() {
     let names = zeus.signal([]string {})
-    zeus.push_item(names, "r0")
+    design.push_item(names, "r0")
     zeus.snapshot(240, 160, fn() -> Node {
-        zeus.For(names, fn(s) => s, Row)
+        design.For(names, fn(s) => s, Row)
     })
     // Reach the high-water mark, then hold it for 10k cycles.
     let mut cyc = 0
     while cyc < 4 {
-        zeus.push_item(names, "y")
+        design.push_item(names, "y")
         zeus.engine_layout(240, 160)
-        zeus.pop_item(names)
+        design.pop_item(names)
         zeus.engine_layout(240, 160)
         cyc = cyc + 1
     }
     let hi_n = zeus.arena_nodes()
     let hi_s = zeus.arena_sigs()
     while cyc < 10000 {
-        zeus.push_item(names, "y")
+        design.push_item(names, "y")
         zeus.engine_layout(240, 160)
-        zeus.pop_item(names)
+        design.pop_item(names)
         zeus.engine_layout(240, 160)
         cyc = cyc + 1
     }

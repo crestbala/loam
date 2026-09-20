@@ -1,11 +1,12 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 let mut opts: []string = []string {}
 
 fn Menu(sel: Signal<int>) {
-    zeus.Select(sel, opts)
+    design.Select(sel, opts)
 }
 
 fn main() {
@@ -13,7 +14,7 @@ fn main() {
     push(opts, "B")
     let sel = zeus.signal(1)
     zeus.snapshot(240, 80, fn() -> Node {
-        zeus.Row(SPACE.Sm) {
+        design.Row(SPACE.Sm) {
             Menu(sel)
         }
     })

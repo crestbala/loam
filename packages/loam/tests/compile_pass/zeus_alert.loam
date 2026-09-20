@@ -3,6 +3,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -16,11 +17,11 @@ fn main() {
     let shown = zeus.signal(1)
     let hits = zeus.signal(0)
     zeus.root(zeus.Box(align_direction = zeus.DIRECTION.Column, spacing = 8, padding = 16) {
-        zeus.Alert("Heads up", "Default is info.")
-        zeus.AlertSuccess("Saved", "Draft is on disk.")
-        zeus.Alert("Note", "You can dismiss this.", dismiss = shown)
-        zeus.AlertDestructive("Failed", "Try again.") {
-            zeus.Button("Retry", look = zeus.LOOK.Outline, size = zeus.SIZE.Sm,
+        design.Alert("Heads up", "Default is info.")
+        design.AlertSuccess("Saved", "Draft is on disk.")
+        design.Alert("Note", "You can dismiss this.", dismiss = shown)
+        design.AlertDestructive("Failed", "Try again.") {
+            design.Button("Retry", look = zeus.LOOK.Outline, size = zeus.SIZE.Sm,
                         on_click = fn() { hits.set(hits.get() + 1) })
         }
     })

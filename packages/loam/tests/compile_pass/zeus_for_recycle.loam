@@ -6,6 +6,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 fn Row(i: int, s: string) {
     // Row-owned state: created on every rebuild. If it is not freed when the
@@ -13,15 +14,15 @@ fn Row(i: int, s: string) {
     let hot = zeus.signal(0)
     zeus.Box(align_direction = DIRECTION.Row, spacing = 4) {
         zeus.Text("{{s}}")
-        zeus.Button("up", on_click = fn() => hot.set(hot.get() + 1), width = 40)
+        design.Button("up", on_click = fn() => hot.set(hot.get() + 1), width = 40)
     }
 }
 
 fn main() {
     let names = zeus.signal([]string {})
-    zeus.push_item(names, "r0")
+    design.push_item(names, "r0")
     zeus.snapshot(240, 160, fn() -> Node {
-        zeus.For(names, fn(s) => s, Row)
+        design.For(names, fn(s) => s, Row)
     })
     let base_nodes = zeus.arena_nodes()
     let base_sigs = zeus.arena_sigs()
@@ -31,18 +32,18 @@ fn main() {
     // high-water mark after the first cycle, then must stay flat forever.
     let mut cyc = 0
     while cyc < 2 {
-        zeus.push_item(names, "y")
+        design.push_item(names, "y")
         zeus.engine_layout(240, 160)
-        zeus.pop_item(names)
+        design.pop_item(names)
         zeus.engine_layout(240, 160)
         cyc = cyc + 1
     }
     let hi_nodes = zeus.arena_nodes()
     let hi_sigs = zeus.arena_sigs()
     while cyc < 60 {
-        zeus.push_item(names, "y")
+        design.push_item(names, "y")
         zeus.engine_layout(240, 160)
-        zeus.pop_item(names)
+        design.pop_item(names)
         zeus.engine_layout(240, 160)
         cyc = cyc + 1
     }

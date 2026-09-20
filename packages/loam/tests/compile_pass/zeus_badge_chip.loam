@@ -2,6 +2,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -14,13 +15,13 @@ fn main() {
     zeus.window("badge", 400, 200)
     let unread = zeus.signal(0)
     let keep = zeus.signal(1)
-    zeus.root(zeus.Row(8) {
-        zeus.Badge("Live", zeus.TINT.Ok, dot = true)
-        zeus.Badge("Plain", zeus.TINT.Mute)
-        zeus.BadgeCount(unread, zeus.TINT.Danger)
-        let c = zeus.Chip("Iris", zeus.TINT.Ink, on_remove = fn() => keep.set(0))
+    zeus.root(design.Row(8) {
+        design.Badge("Live", zeus.TINT.Ok, dot = true)
+        design.Badge("Plain", zeus.TINT.Mute)
+        design.BadgeCount(unread, zeus.TINT.Danger)
+        let c = design.Chip("Iris", zeus.TINT.Ink, on_remove = fn() => keep.set(0))
         zeus.show(c, keep)
-        zeus.Chip("Bare", zeus.TINT.Ok, dot = false)
+        design.Chip("Bare", zeus.TINT.Ok, dot = false)
     })
     zeus.pump_frame()
 

@@ -4,6 +4,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -26,8 +27,8 @@ fn main() {
     zeus.window("dialog", 800, 600)
     let open = zeus.signal(0)
     zeus.root(zeus.Box(padding = 16) {
-        zeus.Button("Open", on_click = fn() => open.set(1))
-        zeus.Dialog(open, title = "Confirm") {
+        design.Button("Open", on_click = fn() => open.set(1))
+        design.Dialog(open, title = "Confirm") {
             zeus.Text("Inside")
         }
     })

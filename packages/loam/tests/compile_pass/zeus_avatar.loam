@@ -2,6 +2,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -12,9 +13,9 @@ fn must(ok: bool, what: string) {
 
 fn main() {
     zeus.window("avatar", 400, 200)
-    zeus.root(zeus.Row(8) {
-        zeus.Avatar("ZX", 40, status = zeus.TINT.Ok)
-        zeus.AvatarGroup([]string { "AA", "BB", "CC" }, 32)
+    zeus.root(design.Row(8) {
+        design.Avatar("ZX", 40, status = zeus.TINT.Ok)
+        design.AvatarGroup([]string { "AA", "BB", "CC" }, 32)
     })
     zeus.pump_frame()
     must(zeus.text_visible("ZX"), "initials")

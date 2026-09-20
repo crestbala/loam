@@ -6,6 +6,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 fn Boom() {
     let s = zeus.signal(7)
@@ -19,7 +20,7 @@ fn Boom() {
 fn main() {
     zeus.snapshot(240, 160, fn() -> Node {
         zeus.Box(align_direction = DIRECTION.Column) {
-            zeus.Boundary(Boom, fn(msg) {
+            design.Boundary(Boom, fn(msg) {
                 zeus.Text("recovered")
             })
             zeus.Text("sibling survives")

@@ -5,21 +5,22 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 fn Row(i: int, s: string) {
     zeus.Box(align_direction = DIRECTION.Row, spacing = 4) {
         zeus.Text(s)
-        zeus.focusable(zeus.Button("hit", width = 40))
+        zeus.focusable(design.Button("hit", width = 40))
     }
 }
 
 fn main() {
     let names = zeus.signal([]string {})
-    zeus.push_item(names, "Ada")
-    zeus.push_item(names, "Bea")
+    design.push_item(names, "Ada")
+    design.push_item(names, "Bea")
     zeus.snapshot(240, 160, fn() -> Node {
         zeus.Box(align_direction = DIRECTION.Column) {
-            zeus.For(names, fn(s) => s, Row)
+            design.For(names, fn(s) => s, Row)
         }
     })
     zeus.engine_fill_focus()

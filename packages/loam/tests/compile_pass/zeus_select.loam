@@ -3,6 +3,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -15,9 +16,9 @@ fn main() {
     zeus.window("select", 360, 420)
     let value = zeus.signal(0)
     let query = zeus.signal("")
-    let tree = zeus.Page() {
-        zeus.Select(value, []string { "Small", "Medium", "Large" })
-        zeus.Combobox(query, []string { "Apple", "Apricot", "Banana" }, width = 200)
+    let tree = design.Page() {
+        design.Select(value, []string { "Small", "Medium", "Large" })
+        design.Combobox(query, []string { "Apple", "Apricot", "Banana" }, width = 200)
     }
     zeus.root(tree)
     zeus.pump_frame()

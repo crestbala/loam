@@ -1,6 +1,7 @@
 //! Docs UI. Sidebar picks a page id; article copy was loaded over Docs.Page.
 
 import "std:zeus"
+import "std:design"
 import "cache.loam"
 
 fn NavItem(page: Signal<int>, id: int, label: string) {
@@ -22,16 +23,16 @@ fn NavItem(page: Signal<int>, id: int, label: string) {
 
 fn Nav(page: Signal<int>) {
     zeus.Box(width = 240, align_direction = DIRECTION.Column, spacing = 4) {
-        zeus.Overline("Start")
+        design.Overline("Start")
         NavItem(page, 0, "Overview")
         NavItem(page, 1, "Install")
-        zeus.Overline("Language")
+        design.Overline("Language")
         NavItem(page, 2, "Syntax")
         NavItem(page, 3, "Types")
         NavItem(page, 4, "Ownership")
         NavItem(page, 5, "Control flow")
         NavItem(page, 6, "Modules")
-        zeus.Overline("Libraries")
+        design.Overline("Libraries")
         NavItem(page, 7, "Overview")
         NavItem(page, 8, "fmt")
         NavItem(page, 9, "zeus")
@@ -39,7 +40,7 @@ fn Nav(page: Signal<int>) {
         NavItem(page, 11, "maya")
         NavItem(page, 12, "sys")
         NavItem(page, 13, "net")
-        zeus.Overline("More")
+        design.Overline("More")
         NavItem(page, 14, "Platforms")
         NavItem(page, 15, "Examples")
     }
@@ -70,13 +71,13 @@ fn Article(page: Signal<int>) {
 fn Screen(chip: string, page: Signal<int>) {
     zeus.Box(align_direction = DIRECTION.Column, spacing = 16, padding = 28,
              background = zeus.paper()) {
-        zeus.Row(8) {
+        design.Row(8) {
             zeus.Text("Loam", color = zeus.ink(), font = 22)
-            zeus.Chip(chip, zeus.TINT.Ink)
-            zeus.Badge("Docs.Page", zeus.TINT.Ok)
+            design.Chip(chip, zeus.TINT.Ink)
+            design.Badge("Docs.Page", zeus.TINT.Ok)
         }
-        zeus.Alert("RPC", "Sidebar writes a signal. Copy was fetched once over Docs.Page (gRPC-Web).")
-        zeus.Row(24) {
+        design.Alert("RPC", "Sidebar writes a signal. Copy was fetched once over Docs.Page (gRPC-Web).")
+        design.Row(24) {
             Nav(page)
             Article(page)
         }

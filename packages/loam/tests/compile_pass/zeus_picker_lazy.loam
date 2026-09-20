@@ -5,6 +5,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 fn expect(ok: bool, what: string) {
     if ok {
@@ -19,8 +20,8 @@ fn main() {
     let m = zeus.signal(9)
     let d = zeus.signal(3)
     zeus.snapshot(340, 420, fn() -> Node {
-        zeus.Page() {
-            zeus.DatePicker(y, m, d)
+        design.Page() {
+            design.DatePicker(y, m, d)
         }
     })
     // A closed picker is one grid of 42 cells plus rails and weekday header:

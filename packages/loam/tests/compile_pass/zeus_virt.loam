@@ -5,6 +5,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 struct Person {
     name: string,
@@ -57,9 +58,9 @@ fn main() {
 
     zeus.snapshot(240, 240, fn() -> Node {
         zeus.Box(align_direction = DIRECTION.Column) {
-            zeus.VirtualList(items, 36, RowOf)
+            design.VirtualList(items, 36, RowOf)
             zeus.Box(height = 200) {
-                zeus.VirtualTable(rows, cols, 36, PersonRow)
+                design.VirtualTable(rows, cols, 36, PersonRow)
             }
         }
     })
@@ -74,7 +75,7 @@ fn main() {
 
     let list = zeus.engine_find_role("list")
     expect(list > 0, "list role")
-    zeus.scroll_to_index(Node { id: list }, 5000)
+    design.scroll_to_index(Node { id: list }, 5000)
     zeus.engine_layout(240, 240)
     expect(zeus.engine_find_text("row 5000") != 0, "windowed row paints")
     expect(zeus.engine_find_text("row 0") == 0, "offscreen row dropped")
@@ -82,18 +83,18 @@ fn main() {
     expect(n1 < 400, "scroll stays small")
     expect(n1 <= n0 + 40, "scroll does not grow the arena")
 
-    zeus.push_item(items, "row appended")
+    design.push_item(items, "row appended")
     zeus.engine_layout(240, 240)
     let n2 = zeus.arena_nodes()
     expect(n2 < 400, "append stays small")
 
-    zeus.insert_item(items, 5000, "row inserted")
+    design.insert_item(items, 5000, "row inserted")
     zeus.engine_layout(240, 240)
     expect(zeus.engine_find_text("row inserted") != 0, "insert in window")
     let n3 = zeus.arena_nodes()
     expect(n3 < 400, "insert stays small")
 
-    zeus.scroll_to_index(Node { id: list }, 0)
+    design.scroll_to_index(Node { id: list }, 0)
     zeus.engine_layout(240, 240)
     expect(zeus.engine_find_text("row 0") != 0, "scroll_to top")
 
@@ -103,7 +104,7 @@ fn main() {
     // the end, so measure max after that layout.
     let maxs = zeus.node_scroll_max(list)
     expect(maxs > 0, "list overflows")
-    zeus.scroll_to(Node { id: list }, maxs)
+    design.scroll_to(Node { id: list }, maxs)
     zeus.engine_layout(240, 240)
     let max_now = zeus.node_scroll_max(list)
     expect(zeus.node_scroll_y(list) == max_now, "scroll ends at last content")
@@ -120,7 +121,7 @@ fn main() {
     expect(back == max_now, "stays at last content")
 
     // Same at the top: flinging up past the first row stops at 0.
-    zeus.scroll_to(Node { id: list }, 0)
+    design.scroll_to(Node { id: list }, 0)
     zeus.engine_layout(240, 240)
     zeus.engine_scroll(20, 20, 0, -4000)
     zeus.engine_layout(240, 240)

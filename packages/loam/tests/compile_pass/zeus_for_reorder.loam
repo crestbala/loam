@@ -6,23 +6,24 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 fn Row(i: int, s: string) {
     let c = zeus.signal(0)
     zeus.Box(align_direction = DIRECTION.Row, spacing = 4) {
         zeus.Text(s)
-        zeus.Button("inc", on_click = fn() => c.set(c.get() + 1), width = 40)
+        design.Button("inc", on_click = fn() => c.set(c.get() + 1), width = 40)
         zeus.Text("{{c.get()}}")
     }
 }
 
 fn main() {
     let names = zeus.signal([]string {})
-    zeus.push_item(names, "Ada")
-    zeus.push_item(names, "Bea")
+    design.push_item(names, "Ada")
+    design.push_item(names, "Bea")
     zeus.snapshot(240, 160, fn() -> Node {
         zeus.Box(align_direction = DIRECTION.Column) {
-            zeus.For(names, fn(s) => s, Row)
+            design.For(names, fn(s) => s, Row)
         }
     })
     // Increment the first row's counter ("Ada").

@@ -6,13 +6,14 @@
 // Keep stdout as the golden; no extra prints.
 
 import "std:zeus"
+import "std:design"
 
 fn main() {
     zeus.App("zeus-snap", fn() {
-        zeus.Page() {
-            zeus.Display("Short page")
-            zeus.Body("Content ends here; the area below stays paper,")
-            zeus.Body("and edge overscroll reveals paper, not black.")
+        design.Page() {
+            design.Display("Short page")
+            design.Body("Content ends here; the area below stays paper,")
+            design.Body("and edge overscroll reveals paper, not black.")
         }
     }, 420, 320)
     zeus.engine_paint()

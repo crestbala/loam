@@ -5,6 +5,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 fn expect(ok: bool, what: string) {
     if ok {
@@ -17,41 +18,41 @@ fn expect(ok: bool, what: string) {
 fn main() {
     let open = zeus.signal(0)
     zeus.snapshot(480, 320, fn() -> Node {
-        zeus.Page() {
+        design.Page() {
             // Fixed-width buttons: row gap 8.
             zeus.Box(align_direction = DIRECTION.Row, spacing = 8) {
-                zeus.Button("a", width = 80, height = 28, on_click = fn() {})
-                zeus.Button("b", width = 120, height = 28, on_click = fn() {})
+                design.Button("a", width = 80, height = 28, on_click = fn() {})
+                design.Button("b", width = 120, height = 28, on_click = fn() {})
             }
             // Right-aligned row pins its trailing child to the content edge.
             zeus.Box(align_direction = DIRECTION.Row, justify = ALIGN.End, width = 416) {
-                zeus.Button("c", width = 60, height = 24, on_click = fn() {})
+                design.Button("c", width = 60, height = 24, on_click = fn() {})
             }
             // 2x2 grid of fixed cells: columns then rows at gap 8.
-            zeus.Grid(config = zeus.GridConfig(columns = 2, gap = 8)) {
-                zeus.Button("g1", width = 70, height = 40, on_click = fn() {})
-                zeus.Button("g2", width = 70, height = 40, on_click = fn() {})
-                zeus.Button("g3", width = 70, height = 40, on_click = fn() {})
-                zeus.Button("g4", width = 70, height = 40, on_click = fn() {})
+            design.Grid(config = zeus.GridConfig(columns = 2, gap = 8)) {
+                design.Button("g1", width = 70, height = 40, on_click = fn() {})
+                design.Button("g2", width = 70, height = 40, on_click = fn() {})
+                design.Button("g3", width = 70, height = 40, on_click = fn() {})
+                design.Button("g4", width = 70, height = 40, on_click = fn() {})
             }
             // Responsive grid: a 130 dp floor at gap 8 has room for three
             // cells across the 416 point content width, but `columns = 2` is
             // the cap, so two 204 wide cells and the rest wrap.
-            zeus.Grid(config = zeus.GridConfig(columns = 2, auto_columns = 130, gap = 8)) {
-                zeus.Button("a1", height = 20, on_click = fn() {})
-                zeus.Button("a2", height = 20, on_click = fn() {})
-                zeus.Button("a3", height = 20, on_click = fn() {})
-                zeus.Button("a4", height = 20, on_click = fn() {})
+            design.Grid(config = zeus.GridConfig(columns = 2, auto_columns = 130, gap = 8)) {
+                design.Button("a1", height = 20, on_click = fn() {})
+                design.Button("a2", height = 20, on_click = fn() {})
+                design.Button("a3", height = 20, on_click = fn() {})
+                design.Button("a4", height = 20, on_click = fn() {})
             }
             // Same floor, no cap, half the width: the floor alone decides and
             // 200 points leaves a single column.
-            zeus.Grid(config = zeus.GridConfig(auto_columns = 130, gap = 8), width = 200) {
-                zeus.Button("b1", height = 20, on_click = fn() {})
-                zeus.Button("b2", height = 20, on_click = fn() {})
+            design.Grid(config = zeus.GridConfig(auto_columns = 130, gap = 8), width = 200) {
+                design.Button("b1", height = 20, on_click = fn() {})
+                design.Button("b2", height = 20, on_click = fn() {})
             }
-            zeus.Button("open", width = 60, height = 24, on_click = fn() => open.set(1))
-            zeus.Dialog(open, title = "Golden") {
-                zeus.Body("Fixed 440 wide card, centered over the dim.")
+            design.Button("open", width = 60, height = 24, on_click = fn() => open.set(1))
+            design.Dialog(open, title = "Golden") {
+                design.Body("Fixed 440 wide card, centered over the dim.")
             }
         }
     })

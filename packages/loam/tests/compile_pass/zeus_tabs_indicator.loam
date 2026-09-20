@@ -4,6 +4,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -26,7 +27,7 @@ fn main() {
     zeus.window("tabs", 400, 200)
     let sel = zeus.signal(0)
     zeus.root(zeus.Box(padding = 16) {
-        zeus.Tabs(sel, []string { "Overview", "Metrics", "Logs" })
+        design.Tabs(sel, []string { "Overview", "Metrics", "Logs" })
     })
     zeus.pump_frame()
     zeus.engine_layout(400, 200)

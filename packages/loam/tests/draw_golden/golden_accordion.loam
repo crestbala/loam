@@ -3,17 +3,18 @@
 // file free of prints: stdout is the golden.
 
 import "std:zeus"
+import "std:design"
 
 fn main() {
     let open = zeus.signal(1)
     zeus.snapshot(360, 220, fn() -> Node {
-        zeus.Page() {
+        design.Page() {
             let rows = []AccordionRow {
                 AccordionRow { title: "Shipping", body: "Ships in 2-3 days." },
                 AccordionRow { title: "Returns", body: "30-day return window." },
                 AccordionRow { title: "Warranty", body: "Two years, parts and labor." },
             }
-            zeus.Accordion(open, items = rows)
+            design.Accordion(open, items = rows)
         }
     })
 }

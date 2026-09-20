@@ -2,6 +2,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 fn expect(ok: bool, what: string) {
     if ok {
@@ -24,11 +25,11 @@ fn scroller_of(id: int) -> int {
 
 fn main() {
     zeus.snapshot(240, 240, fn() -> Node {
-        zeus.Scroll(height = 240) {
+        design.Scroll(height = 240) {
             zeus.Box(height = 80) {
                 zeus.Text("page-top")
             }
-            zeus.Scroll(height = 80) {
+            design.Scroll(height = 80) {
                 zeus.Box(height = 400) {
                     zeus.Text("inner-top")
                     zeus.Box(height = 360) {
@@ -68,7 +69,7 @@ fn main() {
     expect(zeus.node_scroll_y(page) == 0, "page does not move yet")
 
     // Drive the inner to its end; leftover must chain to the page.
-    zeus.scroll_to(Node { id: inner }, zeus.node_scroll_max(inner))
+    design.scroll_to(Node { id: inner }, zeus.node_scroll_max(inner))
     zeus.engine_layout(240, 240)
     let imax = zeus.node_scroll_max(inner)
     expect(zeus.node_scroll_y(inner) == imax, "inner at end")
@@ -78,7 +79,7 @@ fn main() {
     expect(zeus.node_scroll_y(page) == p0 + 50, "page takes leftover")
 
     // Inner at top: scrolling up chains to the page.
-    zeus.scroll_to(Node { id: inner }, 0)
+    design.scroll_to(Node { id: inner }, 0)
     zeus.engine_layout(240, 240)
     expect(zeus.node_scroll_y(inner) == 0, "inner at top")
     let p1 = zeus.node_scroll_y(page)

@@ -10,6 +10,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -32,12 +33,12 @@ fn main() {
     zeus.window("overlay exit", 360, 300)
     let open = zeus.signal(0)
     let dlg = zeus.signal(0)
-    let tree = zeus.Page() {
-        let trigger = zeus.Button("Menu", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
-        zeus.Popover(trigger, open = open, place = zeus.PLACE.PlaceBelow, width = 180) {
+    let tree = design.Page() {
+        let trigger = design.Button("Menu", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
+        design.Popover(trigger, open = open, place = design.PLACE.PlaceBelow, width = 180) {
             zeus.Text("Rename", color = zeus.ink(), font = zeus.FONT_BODY)
         }
-        zeus.Dialog(dlg, title = "Confirm") {
+        design.Dialog(dlg, title = "Confirm") {
             zeus.Text("Body", color = zeus.ink(), font = zeus.FONT_BODY)
         }
     }

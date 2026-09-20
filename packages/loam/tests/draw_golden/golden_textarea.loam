@@ -1,13 +1,14 @@
-// DRAW-list golden: zeus.TextArea after a short compose (hi + newline + t).
+// DRAW-list golden: design.TextArea after a short compose (hi + newline + t).
 // Keep stdout as the golden; no extra prints.
 
 import "std:zeus"
+import "std:design"
 
 fn main() {
     let draft = zeus.signal("")
     zeus.window("zeus-snap", 400, 220)
     zeus.root(zeus.Box(padding = 20, background = "#ffffff") {
-        zeus.TextArea(draft, "Message")
+        design.TextArea(draft, "Message")
     })
     zeus.engine_layout(400, 220)
     let id = zeus.engine_find_role("textbox")

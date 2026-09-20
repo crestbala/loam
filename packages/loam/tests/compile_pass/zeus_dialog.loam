@@ -3,6 +3,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -39,14 +40,14 @@ fn main() {
     zeus.window("dialog", 480, 320)
     let open = zeus.signal(0)
     let value = zeus.signal(0)
-    let tree = zeus.Page() {
-        zeus.Button("Open", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
+    let tree = design.Page() {
+        design.Button("Open", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
                     on_click = fn() => open.set(1))
-        zeus.Button("Outside", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
-        zeus.Dialog(open, title = "Confirm") {
-            zeus.Button("Inside", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
+        design.Button("Outside", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
+        design.Dialog(open, title = "Confirm") {
+            design.Button("Inside", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
         }
-        zeus.Select(value, []string { "Small", "Medium", "Large" })
+        design.Select(value, []string { "Small", "Medium", "Large" })
     }
     zeus.root(tree)
     zeus.pump_frame()

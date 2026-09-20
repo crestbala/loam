@@ -1,9 +1,10 @@
 // Phase 15 router core: route matching with typed params, navigation, a
-// retained shell, and per-route error recovery through `zeus.Boundary`.
+// retained shell, and per-route error recovery through `design.Boundary`.
 
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 import "std:router"
 
 fn Home(p: Params) {

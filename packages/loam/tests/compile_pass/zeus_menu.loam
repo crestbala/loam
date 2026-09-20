@@ -7,6 +7,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -20,17 +21,17 @@ fn main() {
     let active = zeus.signal(-1)
     let hits = zeus.signal(0)
     let mut trig_id = 0
-    let tree = zeus.Page() {
+    let tree = design.Page() {
         zeus.Box(height = 40)
-        let trigger = zeus.Button("Actions", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
+        let trigger = design.Button("Actions", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
         trig_id = trigger.id
         let rows = []MenuRow {
             MenuRow(label = "Rename"),
             MenuRow(label = "Duplicate"),
             MenuRow(label = "Delete", is_separated = true, danger = true),
         }
-        zeus.Menu(trigger, active = active, items = rows, label = "File",
-                  place = zeus.PLACE.PlaceBelow, width = 180,
+        design.Menu(trigger, active = active, items = rows, label = "File",
+                  place = design.PLACE.PlaceBelow, width = 180,
                   on_select = fn(i: int) {
                       if i == 0 {
                           hits.set(hits.get() + 1)

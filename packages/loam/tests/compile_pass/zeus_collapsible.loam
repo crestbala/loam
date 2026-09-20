@@ -5,6 +5,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -16,8 +17,8 @@ fn must(ok: bool, what: string) {
 fn main() {
     zeus.window("collapsible", 360, 260)
     let open = zeus.signal(0)
-    let tree = zeus.Page() {
-        zeus.Collapsible(open = open, title = "Details", border_color = zeus.rule()) {
+    let tree = design.Page() {
+        design.Collapsible(open = open, title = "Details", border_color = zeus.rule()) {
             zeus.Text("Hidden body", color = zeus.ink(), font = zeus.FONT_BODY)
         }
     }

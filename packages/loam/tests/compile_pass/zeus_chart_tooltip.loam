@@ -6,6 +6,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 fn expect(ok: bool, what: string) {
     if ok {
@@ -20,8 +21,8 @@ fn main() {
     let names = []string { "Visits" }
     let vals = []int { 11, 22, 33 }
     zeus.snapshot(340, 240, fn() -> Node {
-        zeus.Page() {
-            zeus.LineChart(labs, names, vals, 300, 160)
+        design.Page() {
+            design.LineChart(labs, names, vals, 300, 160)
         }
     })
     // Settle the chart's first refit (estimate -> measured width) so the

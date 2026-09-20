@@ -5,6 +5,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 fn expect(ok: bool, what: string) {
     if ok {
@@ -29,11 +30,11 @@ fn main() {
     zeus.window("scale", 800, 600)
     zeus.view(fn() -> Node {
         zeus.Box(padding = 24, align_direction = DIRECTION.Column, spacing = 12) {
-            zeus.TextInput(name, "Name")
-            zeus.Checkbox("Agree", on)
-            zeus.Switch(on)
-            zeus.Tabs(sel, []string {"One", "Two"})
-            zeus.Button("Save", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
+            design.TextInput(name, "Name")
+            design.Checkbox("Agree", on)
+            design.Switch(on)
+            design.Tabs(sel, []string {"One", "Two"})
+            design.Button("Save", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
                         on_click = fn() {})
         }
     })

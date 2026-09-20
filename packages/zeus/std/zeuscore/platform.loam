@@ -158,7 +158,7 @@ fn plat_edit_reset(slot: int) {}
 /// Free an interned handler/thunk: release its captured env and make the id
 /// reusable. No-op for ids that are already free.
 fn plat_intern_free(id: int) {}
-/// Run `build` under a recoverable trap (`zeus.Boundary`). Returns "" when the
+/// Run `build` under a recoverable trap (`design.Boundary`). Returns "" when the
 /// build completed, else the panic message. Empty on wasm, where a trap aborts.
 fn plat_boundary(build: fn()) -> string {}
 /// Router history: mirror a pushed / replaced entry into the host's own

@@ -6,6 +6,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:design"
 
 fn must(ok: bool, what: string) {
     if !ok {
@@ -17,7 +18,7 @@ fn must(ok: bool, what: string) {
 fn main() {
     zeus.window("motion", 240, 160)
     let box = zeus.Box(width = 60, height = 60, background = zeus.raised())
-    let sp = zeus.Spinner(size = 20)
+    let sp = design.Spinner(size = 20)
     let tree = zeus.Box(align_direction = DIRECTION.Column) {
         zeus.child(zeus.Box(), box)
         zeus.child(zeus.Box(), sp)
