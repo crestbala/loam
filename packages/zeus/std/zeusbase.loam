@@ -46,7 +46,12 @@ fn signal_handle(id: int) -> Signal<int> {
 /// signal arena.
 fn signal<T>(value: T) -> Signal<T> {
     arena.ensure()
-    Signal { id: __sig_push(value) }
+    let id = __sig_push(value)
+    // The alloc hook filed this cell under the host rebuild scope; hand it to the
+    // `scope` whose body is running if there is one, so a re-run frees it with
+    // everything else the body created. One record, one owner, always.
+    arena.record_sig(arena.owner_now(), id)
+    return Signal { id: id }
 }
 
 /// Read the current value of `sig`. Reading inside a reactive scope (an
@@ -93,25 +98,25 @@ fn untrack(body: fn()) {
 /// so streaming lists do not leak handler envs.
 fn intern_fn(h: fn()) -> int {
     let id = platform.plat_intern_fn(h)
-    arena.record_intern(id, arena.scope_node)
+    arena.record_intern(id, arena.owner_now())
     return id
 }
 
 fn intern_int(h: fn() -> int) -> int {
     let id = platform.plat_intern_int_fn(h)
-    arena.record_intern(id, arena.scope_node)
+    arena.record_intern(id, arena.owner_now())
     return id
 }
 
 fn intern_bool(h: fn() -> bool) -> int {
     let id = platform.plat_intern_bool_fn(h)
-    arena.record_intern(id, arena.scope_node)
+    arena.record_intern(id, arena.owner_now())
     return id
 }
 
 fn intern_str(h: fn() -> string) -> int {
     let id = platform.plat_intern_str_fn(h)
-    arena.record_intern(id, arena.scope_node)
+    arena.record_intern(id, arena.owner_now())
     return id
 }
 
@@ -290,6 +295,11 @@ fn batch(body: fn()) {
 /// derivation). A plain `effect` instead keeps what it created across re-runs,
 /// so its children are owned by the surrounding node, not by the effect.
 ///
+/// The scope owns the arena too: signals and interned handlers created in its
+/// body are recycled with it, so a scope that re-runs on every change does not
+/// grow the arena. That is why structure belongs *outside* a scope — a re-run
+/// must not build the tree.
+///
 /// ```
 /// zeus.scope(|| {
 ///     let room = active_room.get()
@@ -337,7 +347,7 @@ fn computed<T>(calc: fn() -> T) -> Signal<T> {
     arena.ensure()
     // The owner that will dispose this memo: the innermost live `scope`, else the
     // host rebuild scope, else 0 (process-lifetime).
-    let owner = memo_owner()
+    let owner = arena.owner_now()
     // The output is reserved unbound: `T` may be a struct or a list with no
     // nameable default, and the first pull is what binds it.
     let out_id = platform.plat_sig_alloc_zero()
@@ -366,16 +376,6 @@ fn computed<T>(calc: fn() -> T) -> Signal<T> {
     track.memo_recompute(effect_id, 1)
     let out: Signal<T> = Signal { id: out_id }
     return out
-}
-
-/// The owner for a `computed<T>`'s arena cells: the innermost live `scope` (as a
-/// negative id, so it cannot collide with a node), else the host rebuild scope.
-fn memo_owner() -> int {
-    let s = track.current_scope_eid()
-    if s > 0 {
-        return 0 - s
-    }
-    return arena.scope_node
 }
 
 /// `computed` for a string derivation.

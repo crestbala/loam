@@ -1197,6 +1197,12 @@ fn arena_sigs() -> int {
     return arena.sigs.len
 }
 
+/// Live rows in the shared interned-handler table (diagnostics for tests). A
+/// streaming `For` or a re-running `scope` recycles handlers, so this stays flat.
+fn intern_count() -> int {
+    return platform.plat_intern_live_count()
+}
+
 /// Byte size of one arena node record (diagnostics for the Phase 11 layout
 /// steps).
 fn node_bytes() -> int {

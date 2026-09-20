@@ -147,6 +147,9 @@ fn plat_invoke_str_fn(id: int) -> string {}
 /// string kinds, so an invoke that reaches a slot of the wrong kind is a bug
 /// (it was undefined behaviour before, garbage on native and a trap on wasm).
 fn plat_intern_kind_mismatch_count() -> int {}
+/// Live rows in the shared interned-handler table. A streaming list or a
+/// re-running scope must recycle handlers, not grow this. Exposed for tests.
+fn plat_intern_live_count() -> int {}
 fn plat_sig_bind_int(id: int, value: int) {}
 /// Every `plat_sig_bind_*` bumps the cell's generation; `plat_sig_gen` reads it
 /// back. `computed<T>` records the generation of each input it reads, so a lazy

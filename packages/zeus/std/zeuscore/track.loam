@@ -579,10 +579,12 @@ fn run(effect_id: int) {
         return
     }
     // A scope re-run tears its nested computations down first, so a child never
-    // survives the run that created it. Its owned arena cells go with them.
+    // survives the run that created it — and its cleanup handlers still exist
+    // while they run. The arena cells the body owned go after that, once nothing
+    // can name them.
     if is_scope[effect_id] != 0 {
-        scope_disposer(effect_id)
         dispose_children(effect_id)
+        scope_disposer(effect_id)
     }
     runs = runs + 1
     drop_eid_deps(effect_id)
