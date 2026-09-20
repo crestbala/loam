@@ -18,9 +18,19 @@ commit per phase. Line anchors are for the tree at `feat/zeus-upgrade-v2`.
   `rebuild_begin` → `release_sigs` + `release_fns` + `drop_children` and
   re-creates every row (`atoms.loam:494-544`, `arena.loam:826-840`). The fast
   path only reorders the host's `kids` array (`atoms.loam:500-520`).
-- **A framework with no coarse rebuild mode.** `view` / `app` rebuild the tree
-  every frame (`zeus.loam:361-371`); `Component(..., rebuild = ...)` re-executes
-  builders (`zeusbase.loam:2127-2129`).
+- **A framework with no coarse rebuild mode.** `view` / `app` rebuilt the tree
+  (and `track.reset()` the graph) every frame (`zeus.loam:367-378`), and
+  `Component(..., rebuild = ...)` re-executed builders. **Phase 11:** a `view` app
+  rebuilds only on a frame that can have changed the tree — a structural or layout
+  frame, or a resize. A frame whose dirt is attributable paint keeps the retained
+  tree, so the effects the previous build created update their own nodes and the
+  graph is not reset. The list hosts had already grown generation guards
+  (`virtual_refresh`, `match_refresh`); the keyed list had not, so it re-derived
+  every row key — with an O(rows^2) uniqueness pass — on every layout. It now
+  guards on the list signal's generation, which makes an untouched list O(1) per
+  layout. `Each` and `For` were already one keyed engine (phase 3). What remains
+  coarse by design: a write the engine cannot attribute still rebuilds, and a
+  structural change still rebuilds the host it lands in.
 - **`Each` is not reactive.** It was a plain one-shot loop (`atoms.loam:201-206`).
   Phase 3 makes `Each` the reactive keyed list and moves the static loop to
   `Loop`. A positional list cannot reconcile correctly without value equality
@@ -125,6 +135,7 @@ commit per phase. Line anchors are for the tree at `feat/zeus-upgrade-v2`.
 | 8 | D | Ownership below the graph: a `scope` owns the signals and interned handlers its body creates (`arena.owner_now`, one record per id), so a re-running scope recycles them; plus `zeus.intern_count()` so a test can hold the handler table flat | landed |
 | 9 | B | One write channel: `arena.note_write` is the accounting every state write shares, so a non-`int` write is as targeted as an `int` one instead of draining a frame mark | landed |
 | 10 | B | Dependency-driven paint traversal: per-node draw-op runs, an ancestor paint bit, and a patch path that re-records only the dirty subtrees — with a full record as the fallback when a run's length changes | landed |
+| 11 | A | One model: a `view` app rebuilds only when the tree can have changed, so non-structural frames keep the retained tree and its live effect graph; and the keyed list guards on its signal generation, making an untouched list O(1) per layout | landed |
 
 Phases 1–3 are additive over the current model: existing `For` / `Index` /
 `VirtualList` keep working while gaining a per-node fast path. Phases 4–7 change

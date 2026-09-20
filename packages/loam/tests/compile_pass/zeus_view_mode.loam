@@ -1,0 +1,83 @@
+// Phase 11: one model. A `view` app used to rebuild its whole tree — and
+// `track.reset()` its reactive graph — on every frame, so the fine-grained path
+// only ever ran within a single frame. Now the rebuild happens only when the tree
+// can have changed (a structural or layout frame, or a resize); a frame whose dirt
+// is attributable paint keeps the tree and lets the effects the previous build
+// created update their own nodes, exactly as a retained `App` tree does.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+let mut builds: int = 0
+
+fn main() {
+    zeus.window("viewmode", 260, 180)
+    // A view app. `n` lives outside the view so its value survives a rebuild.
+    let n = zeus.signal(1)
+    let op = zeus.signal(100)
+    zeus.view(|| {
+        builds = builds + 1
+        zeus.root(zeus.Box(padding = 8, align_direction = DIRECTION.Column, spacing = 4) {
+            zeus.Text("n={{n.get()}}")
+            let b = zeus.Box(width = 40, height = 20, background = "#ff0000")
+            zeus.styled(b, || { zeus.set_prop_int(b, zeus.SET.Opacity, op.get()) })
+        })
+    })
+    zeus.pump_frame()
+    zeus.engine_layout(260, 180)
+    must(builds == 1, "the first frame builds the view")
+    let nodes0 = zeus.arena_nodes()
+
+    // A structural write rebuilds the view (the tree can differ).
+    n.set(2)
+    zeus.engine_layout(260, 180)
+    must(builds == 2, "a structural write rebuilds the view")
+    must(zeus.engine_find_text("n=2") != 0, "the view shows the new value")
+
+    // A paint-only prop write does NOT rebuild: the effect the build created
+    // updates its node, and the tree is retained.
+    zeus.engine_paint()
+    let b0 = builds
+    let rows0 = zeus.reactive_rows()
+    op.set(40)
+    zeus.engine_layout(260, 180)
+    zeus.engine_paint()
+    must(builds == b0, "a paint-only write does not rebuild the view")
+    must(zeus.reactive_rows() == rows0, "and does not reset the reactive graph")
+    must(zeus.layout_was_full() == 0, "and needs no layout")
+    must(zeus.damage_full() == 0, "and damages locally")
+
+    // Repeated paint-only frames keep both the view and the graph untouched, so a
+    // view app holds a stable arena instead of re-creating it per frame.
+    let sigs0 = zeus.arena_sigs()
+    let fns0 = zeus.intern_count()
+    let mut i = 0
+    while i < 30 {
+        op.set(30 + i)
+        zeus.engine_layout(260, 180)
+        zeus.engine_paint()
+        i = i + 1
+    }
+    must(builds == b0, "thirty paint-only frames rebuild nothing")
+    must(zeus.arena_sigs() == sigs0, "and allocate no signal")
+    must(zeus.intern_count() == fns0, "and intern no handler")
+    must(zeus.arena_nodes() == nodes0, "and keep the node table")
+
+    // A structural write still rebuilds, and the tree follows.
+    n.set(3)
+    zeus.engine_layout(260, 180)
+    must(builds == b0 + 1, "a later structural write still rebuilds")
+    must(zeus.engine_find_text("n=3") != 0, "and the tree follows it")
+
+    fmt.println("view mode ok")
+}
