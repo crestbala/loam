@@ -364,6 +364,15 @@ let mut chrome_dirty: int = 1
 let mut measure_gen: int = 1
 let mut dirty_layout_nodes: []int = []int {}
 let mut layout_full: int = 1
+// Phase 6: one node-scoped invalidation channel. Prop effects and the
+// interaction-state flags both call `invalidate`; the chrome pass can then be
+// targeted at the flagged nodes instead of walking every hot target.
+let mut dirty_chrome_nodes: []int = []int {}
+let mut chrome_sync_count: int = 0
+// `signal -> bound node`, so a write can mark the chrome of the nodes whose
+// `bind` reads it (a switch's tween is read by the chrome pass, not an effect).
+let mut bind_sig: []int = []int {}
+let mut bind_node: []int = []int {}
 /// A scroller moved: paint-only, but a windowed list's visible window may have
 /// shifted, so the virtual refresh pass must run before paint.
 let mut virtual_dirty: int = 0
@@ -807,6 +816,7 @@ fn free_node(id: int) {
             spin_count = spin_count - 1
         }
     }
+    bind_forget(id)
     push(drop_pool, id)
     nodes[id].kids = []int {}
     nodes[id] = blank_node()
@@ -819,6 +829,9 @@ fn reset_tree() {
     dirty_layout_nodes = []int {}
     layout_full = 1
     invalidate_all()
+    dirty_chrome_nodes = []int {}
+    bind_sig = []int {}
+    bind_node = []int {}
     root_id = 0
     focus_id = 0
     trap_id = 0
@@ -1234,12 +1247,116 @@ fn note_prop_write(node_id: int, layout: int) {
     prop_writes = prop_writes + 1
     if layout != 0 {
         prop_layout = prop_layout + 1
-        // A layout property invalidates only the path from this node up, so the
-        // frame can re-solve a subtree instead of the whole tree.
-        mark_layout_path(node_id)
+        invalidate(node_id, INV.Layout)
     } else {
-        mark_paint_id(node_id)
+        invalidate(node_id, INV.Paint)
     }
+}
+
+// --- one invalidation channel (Phase 6) ------------------------------------
+//
+// Every visual update goes through `invalidate`: the prop effects (above), the
+// interaction-state flags, and the bound-signal chrome all name a node and what
+// changed. `INV.Chrome` is node-scoped, so the interaction overlay recomputes
+// only the flagged nodes; a filter-wide chrome pass is reserved for the events
+// that can move every hot target (pointer, scroll, layout, a tree change).
+enum INV {
+    // Repaint this node (and its subtree's damage).
+    Paint = 1,
+    // The box model can have moved: invalidate the measure path.
+    Layout = 2,
+    // Retarget this node's hover / press / tween / fade tracks.
+    Chrome = 3,
+}
+
+fn invalidate(id: int, kind: int) {
+    if kind == INV.Layout {
+        mark_layout_path(id)
+    } else if kind == INV.Chrome {
+        mark_chrome_id(id)
+        mark_paint_id(id)
+    } else {
+        mark_paint_id(id)
+    }
+}
+
+/// Queue `id` for the interaction-state pass without forcing a full walk.
+/// Deduped, so a node flagged twice in a frame syncs once.
+fn mark_chrome_id(id: int) {
+    if id <= 0 {
+        return
+    }
+    if id >= nodes.len {
+        return
+    }
+    let n = dirty_chrome_nodes.len
+    for i in 0..n {
+        if dirty_chrome_nodes[i] == id {
+            return
+        }
+    }
+    push(dirty_chrome_nodes, id)
+}
+
+fn chrome_ids_len() -> int {
+    return dirty_chrome_nodes.len
+}
+
+fn clear_chrome_ids() {
+    dirty_chrome_nodes = []int {}
+}
+
+/// Record that `node_id` binds `sig_id`, so a write to `sig_id` can mark that
+/// node's chrome. A switch's tween is read by the chrome pass, not an effect, so
+/// without this a write would have to force a whole-frame chrome walk.
+fn bind_chrome(sig_id: int, node_id: int) {
+    if sig_id <= 0 {
+        return
+    }
+    if node_id <= 0 {
+        return
+    }
+    push(bind_sig, sig_id)
+    push(bind_node, node_id)
+}
+
+/// Drop a freed node's bind entry so a recycled id cannot be marked for an
+/// unrelated signal.
+fn bind_forget(node_id: int) {
+    let mut i = 0
+    while i < bind_node.len {
+        if bind_node[i] == node_id {
+            let last = bind_node.len - 1
+            bind_sig[i] = bind_sig[last]
+            bind_node[i] = bind_node[last]
+            pop(bind_sig)
+            pop(bind_node)
+        } else {
+            i = i + 1
+        }
+    }
+}
+
+/// Mark the chrome (and paint) of every node bound to `sig_id`. Returns how many
+/// nodes were marked — 0 means the signal has no direct bound consumer.
+fn chrome_for_signal(sig_id: int) -> int {
+    let mut hits = 0
+    let n = bind_sig.len
+    for i in 0..n {
+        if bind_sig[i] == sig_id {
+            let nd = bind_node[i]
+            if nd > 0 {
+                if nd < nodes.len {
+                    if nodes[nd].bind_sig == sig_id {
+                        mark_chrome_id(nd)
+                        mark_paint_id(nd)
+                        hits = hits + 1
+                    }
+                }
+            }
+        }
+    }
+    return hits
 }
 
 fn store_sig(id: int, value: int) {
@@ -1280,17 +1397,28 @@ fn store_sig(id: int, value: int) {
             direct_layout = 1
         }
     }
+    // A bound node's tween / selection is read by the chrome pass, not an effect,
+    // so mark those nodes' chrome directly.
+    let bound = chrome_for_signal(id)
+    let mut targeted = 0
     if direct_layout != 0 {
         mark_layout()
     } else if ran > 0 && pw >= ran {
-        // Every effect that ran wrote a node through a setter, which marked it:
-        // a targeted repaint, no whole-tree layout. Drop this write's `wrote` so
-        // the frame does not force a full layout for it.
+        targeted = 1
+    } else if ran == 0 && bound > 0 {
+        // No effect consumed the write, but a bound node did: targeted too.
+        targeted = 1
+    }
+    if targeted != 0 {
+        // The node's own marks carry the dirt; drop this write's `wrote` so the
+        // frame neither forces a layout nor walks every chrome target.
         track.consume_wrote()
     } else {
-        mark_paint()
+        if direct_layout == 0 {
+            mark_paint()
+        }
+        mark_chrome()
     }
-    mark_chrome()
 }
 
 /// A paint-only signal write: the value moved but nothing about the tree's
@@ -2068,14 +2196,54 @@ fn anim_reset() {
     in_anim_tick = 0
 }
 
-/// Recompute every chrome target from discrete state and schedule the tracks.
-/// Event-driven (pointer, signal, show change), never the per-frame path.
-fn sync_chrome() {
+// Reused across passes so a full chrome pass writes into a buffer that keeps
+// its capacity instead of allocating an id vector every frame.
+let mut chrome_scan: []int = []int {}
+
+/// Recompute one frame's chrome targets from discrete state and schedule the
+/// tracks. Event-driven (pointer, signal, show change), never the per-frame
+/// paint path.
+/// Full pass: pointer motion, a scroll, a layout change or a tree change can
+/// move every hot target, so every node is re-synced.
+fn sync_chrome_all() {
     let n = nodes.len
+    while chrome_scan.len > 0 {
+        pop(chrome_scan)
+    }
     for i in 1..n {
+        push(chrome_scan, i)
+    }
+    sync_chrome_scan()
+}
+
+/// Re-sync only the flagged nodes: `invalidate(id, INV.Chrome)` queues a node
+/// whose own state changed, and a write queues the nodes bound to its signal.
+fn sync_chrome_targeted() {
+    while chrome_scan.len > 0 {
+        pop(chrome_scan)
+    }
+    let m = dirty_chrome_nodes.len
+    for j in 0..m {
+        push(chrome_scan, dirty_chrome_nodes[j])
+    }
+    dirty_chrome_nodes = []int {}
+    sync_chrome_scan()
+}
+
+fn sync_chrome_scan() {
+    let n = chrome_scan.len
+    for j in 0..n {
+        let i = chrome_scan[j]
+        if i <= 0 {
+            continue
+        }
+        if i >= nodes.len {
+            continue
+        }
         if int(nodes[i].kind) == 0 {
             continue
         }
+        chrome_sync_count = chrome_sync_count + 1
         if is_hot(i) != 0 {
             let mut over = 0
             if ptr_in(i) != 0 {
@@ -3384,15 +3552,40 @@ fn set_interaction_state(id: int, s: int, on: int) {
     if on != 0 {
         v = 1
     }
+    // Read the current value before writing: a prop that re-asserts the same
+    // state (every `Component` sets `disabled` on every build) is a no-op.
+    let mut cur = 0
+    if s == UISTATE.StDisabled {
+        cur = int(nodes[id].disabled)
+    } else if s == UISTATE.StLoading {
+        cur = int(nodes[id].loading)
+    } else if s == UISTATE.StInvalid {
+        cur = int(nodes[id].invalid)
+    } else {
+        return
+    }
+    if cur == v {
+        return
+    }
     if s == UISTATE.StDisabled {
         nodes[id].disabled = u8(v)
     } else if s == UISTATE.StLoading {
         nodes[id].loading = u8(v)
-    } else if s == UISTATE.StInvalid {
+    } else {
         nodes[id].invalid = u8(v)
     }
-    mark_paint()
-    mark_chrome()
+    // The interaction overlay is node-scoped: only this node's paint and chrome
+    // change, so flag it on the one channel instead of walking every target.
+    invalidate(id, INV.Paint)
+    invalidate(id, INV.Chrome)
+}
+
+/// Nodes the last chrome pass visited, then reset. A targeted pass after a
+/// signal write should visit only the affected nodes; the full pass visits all.
+fn take_chrome_sync_count() -> int {
+    let c = chrome_sync_count
+    chrome_sync_count = 0
+    return c
 }
 
 fn set_disabled(id: int, on: int) {

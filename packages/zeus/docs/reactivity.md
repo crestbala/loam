@@ -52,7 +52,11 @@ commit per phase. Line anchors are for the tree at `feat/zeus-upgrade-v2`.
 - Three visual channels: prop effects, coarse rebuild, paint-only. Animation
   tracks panic if the tick writes state (`arena.loam:953-959`); theme / accent /
   elevation resolve with "no rebuild and no effect run"; the shared interaction
-  overlay is its own pass.
+  overlay is its own pass. **Phase 6:** prop effects and the interaction-state
+  flags share one node-scoped `invalidate(id, kind)`; the overlay's chrome pass
+  is node-scoped (a `signal -> bound node` index covers the tween a bind drives
+  with no effect). Theme resolution and motion stay deliberately out: theme is an
+  in-place slot recolor, motion is a paint-only overlay by contract.
 - Reactive tweens are deliberately excluded (paint-only motion).
 
 ### D — Graph completeness & typing
@@ -75,7 +79,7 @@ commit per phase. Line anchors are for the tree at `feat/zeus-upgrade-v2`.
 | 3 | A | Reactive `Each` over a `Signal<[]T>`: the keyed engine exposed as the general list primitive, with the static one-shot loop renamed `Loop` | landed |
 | 4 | B | Targeted per-node invalidation: prop setters report their node; a write marks exactly those nodes (and skips layout) when every effect it ran reported one, else the frame-wide mark | landed |
 | 5 | B | Dependency-driven layout: a measure cache invalidated along the written path, and a subtree re-solve from the nearest size-stable ancestor (with a whole-tree fallback) | landed |
-| 6 | C | One reactive channel: fold the interaction overlay and theme resolution into the effect graph; keep motion paint-only by contract | planned |
+| 6 | C | One invalidation channel: a node-scoped `invalidate(id, kind)` used by prop effects and the interaction-state flags, plus a `signal -> bound node` index so a write syncs exactly the bound nodes' chrome (a full pass only for pointer / scroll / layout / tree events) | landed |
 | 7 | D | Typed, lazy graph: generic `computed<T>` with pull-on-read, and a nested-computation disposal graph that auto-tears-down on owner re-run | planned |
 
 Phases 1–3 are additive over the current model: existing `For` / `Index` /
