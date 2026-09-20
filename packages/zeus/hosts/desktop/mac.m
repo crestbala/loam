@@ -1063,10 +1063,12 @@ static NSAccessibilityRole mac_a11y_role(NSString *r) {
    `kIOSurfaceLockAvoidSync`, which skips exactly that check and leaves the lock
    state inconsistent with a plain unlock) — which is what makes it the default.
 
-   Cost: one full-window buffer per surface in the set, so ~3x18 MB at a
-   screen-filling Retina window. `ZEUS_OWN_SURFACES=2` trims a buffer; watch the
-   frame trace's `surf_skip`, which counts frames skipped because every surface
-   was busy (a stutter, told apart from a slow frame).
+   Cost: one SCREEN-sized buffer per surface in the set, so ~3x18 MB on a Retina
+   laptop display whatever the window's size — the set is sized to the screen,
+   not the window, so a live resize never swaps surfaces (which is what blinked
+   white; see `OWN_SURFACES_MAX`). `ZEUS_OWN_SURFACES=2` trims a buffer; watch
+   the frame trace's `surf_skip`, which counts frames skipped because every
+   surface was busy (a stutter, told apart from a slow frame).
 
    No scale knob: the surface is always the display's own resolution. */
 static CGContextRef own_ctx;
@@ -1367,7 +1369,23 @@ static void mac_schedule_next(int more) {
  * (`ZEUS_OWN_SURFACE=0` selects the bitmap, `APP_KIT=1` AppKit's store). The
  * pixels are identical to the other two paths by construction: `own_draw` runs
  * the same engine the same way, in the same format, at the same physical size —
- * only the memory differs. */
+ * only the memory differs.
+ *
+ * The set is NOT sized to the window. Handing the layer an IOSurface whose pixel
+ * size differs from the one it is showing costs a frame in which the compositor
+ * draws the layer with no contents at all — the window's background, white —
+ * and a live resize does that on every step: a fast drag blinked white every
+ * few frames and could stay white after the drag ended (the bitmap and AppKit
+ * paths never did, and fresh surfaces at an unchanged size never did either;
+ * only the size change does it). So the set is allocated once at the screen's
+ * own backing size, the frame is drawn into its top-left `px_w x px_h`, and
+ * `layer.contentsRect` shows exactly that region. A resize then changes a
+ * rectangle, never the surface, and the same three surfaces serve the whole
+ * drag. Reallocation is left for the cases a drag cannot reach: the window
+ * landing on a bigger screen, or a scale change. Cost: three screen-sized
+ * buffers whatever the window's size — which is the footprint documented for
+ * the default, screen-filling window, so a smaller window is the only one that
+ * pays for the headroom. */
 #define OWN_SURFACES_MAX 4
 #define OWN_SURFACES_DEFAULT 3
 /* 'BGRA' — the same 4-byte premultiplied layout `CGBitmapContextCreate` and the
@@ -1479,16 +1497,44 @@ static int own_surf_ensure(int px_w, int px_h) {
     return 1;
 }
 
+/* The size the surface set is allocated at for a frame of `px_w x px_h`: the
+   current set if it already fits, else the window's screen at its backing
+   scale (the largest a drag can make the window), or the frame itself when
+   that is somehow bigger. Growth only — see the note above `OWN_SURFACES_MAX`. */
+static void own_surf_alloc_size(NSView *v, int px_w, int px_h, int *aw, int *ah) {
+    NSScreen *scr;
+    NSRect f;
+    CGFloat s;
+    if (own_surf[0] && own_surf_w >= px_w && own_surf_h >= px_h) {
+        *aw = own_surf_w;
+        *ah = own_surf_h;
+        return;
+    }
+    *aw = px_w;
+    *ah = px_h;
+    scr = v.window ? v.window.screen : nil;
+    if (!scr) scr = [NSScreen mainScreen];
+    if (!scr) return;
+    f = scr.frame;
+    s = scr.backingScaleFactor;
+    if (s < 1.0) s = 1.0;
+    if ((int)(f.size.width * s + 0.5) > *aw) *aw = (int)(f.size.width * s + 0.5);
+    if ((int)(f.size.height * s + 0.5) > *ah) *ah = (int)(f.size.height * s + 0.5);
+}
+
 /* Draw one frame into `ctx`: physical pixels, `scale` pixels per point, y down
-   (the view is flipped). BOTH display paths go through here, which is what
-   keeps their pixels from drifting apart — the memory being drawn into is the
-   only thing that differs between them. */
-static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int px_h, CGFloat scale,
+   (the view is flipped). `ctx_h` is the CONTEXT's height in pixels, which is
+   what puts logical (0,0) at the first row of the buffer; the frame may be
+   shorter than the context (the surface path draws into the top-left of a
+   larger surface). BOTH display paths go through here, which is what keeps
+   their pixels from drifting apart — the memory being drawn into is the only
+   thing that differs between them. */
+static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat scale,
                     int64_t lw, int64_t lh, double *engine_ms) {
     double t0;
     int more;
     CGContextSaveGState(ctx);
-    CGContextTranslateCTM(ctx, 0, (CGFloat)px_h);
+    CGContextTranslateCTM(ctx, 0, (CGFloat)ctx_h);
     CGContextScaleCTM(ctx, scale, -scale);
     [NSGraphicsContext saveGraphicsState];
     [NSGraphicsContext setCurrentContext:gc];
@@ -1690,22 +1736,28 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int px_h, CGFloat s
    the frame and 0 when the path is unavailable, in which case the caller draws
    the bitmap path instead. */
 - (int)zeusRenderSurface:(NSRect)b pxw:(int)px_w pxh:(int)px_h {
+    /* The region of the surface the layer shows, in pixels. A resize moves this
+       and nothing else — see the note above `OWN_SURFACES_MAX`. */
+    static int shown_w, shown_h;
     FramePhases p;
     double t0, tprev;
-    int i, more, resized;
-    resized = (!own_surf[0] || own_surf_w != px_w || own_surf_h != px_h) ? 1 : 0;
-    if (!own_surf_ensure(px_w, px_h)) {
+    int i, more, realloc, aw, ah;
+    own_surf_alloc_size(self, px_w, px_h, &aw, &ah);
+    realloc = (!own_surf[0] || own_surf_w != aw || own_surf_h != ah) ? 1 : 0;
+    if (frame_debug_on() && realloc)
+        fprintf(stderr, "[surf] set %dx%d for a %dx%d frame\n", aw, ah, px_w, px_h);
+    if (!own_surf_ensure(aw, ah)) {
         /* No surface: fall back to the bitmap, not to AppKit's store — the view
            is already layer-backed, so AppKit's drawn path is not available. */
         display_path = 1;
         self.layer.contents = nil;
         return 0;
     }
-    if (resized) {
-        self.layer.contents = nil; /* the old surface is not this size */
+    if (realloc) {
         /* Static layer properties: set them when the backing changes, never per
            frame. Writing `contentsScale` every frame marks the layer dirty and
-           can force a texture reallocation. */
+           can force a texture reallocation. The old surface stays the layer's
+           contents until the new one is drawn below — never nil in between. */
         self.layer.contentsGravity = kCAGravityResize;
         self.layer.contentsScale = own_ctx_scale;
         self.layer.magnificationFilter = kCAFilterLinear;
@@ -1714,6 +1766,7 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int px_h, CGFloat s
            CGImage says. Without it CoreAnimation has to guess the format. */
         if ([self.layer respondsToSelector:@selector(setContentsFormat:)])
             self.layer.contentsFormat = kCAContentsFormatRGBA8Uint;
+        shown_w = shown_h = 0;
     }
     /* Rotate to a surface the compositor is NOT using, then draw into it. This is
        the whole point of having more than one: the surface in `layer.contents`
@@ -1745,7 +1798,7 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int px_h, CGFloat s
     }
     memset(&p, 0, sizeof p);
     t0 = tprev = frame_now_ms();
-    more = own_draw(own_surf_ctx[i], own_surf_gc[i], px_h, own_ctx_scale,
+    more = own_draw(own_surf_ctx[i], own_surf_gc[i], ah, own_ctx_scale,
                     (int64_t)b.size.width, (int64_t)b.size.height, &p.engine_ms);
     IOSurfaceUnlock(own_surf[i], 0, NULL);
     tprev = frame_now_ms();
@@ -1755,6 +1808,18 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int px_h, CGFloat s
        actions disabled, CoreAnimation cross-fades between frames. */
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
+    if (shown_w != px_w || shown_h != px_h) {
+        /* The frame lives in the surface's top-left; `contentsRect` is in unit
+           coordinates of the contents, origin at its top-left, so this is the
+           one rectangle the compositor stretches to the layer — 1:1, since the
+           region is `bounds x scale` pixels and `contentsScale` is `scale`.
+           Moved in the same commit as the frame drawn for it, so a skipped
+           frame keeps the old frame with the old rectangle. */
+        self.layer.contentsRect = CGRectMake(0, 0, (CGFloat)px_w / (CGFloat)aw,
+                                             (CGFloat)px_h / (CGFloat)ah);
+        shown_w = px_w;
+        shown_h = px_h;
+    }
     self.layer.contents = (id)own_surf[i];
     [CATransaction commit];
     p.more = more;
