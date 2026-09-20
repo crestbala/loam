@@ -1,7 +1,10 @@
-//! zeusbase — the C boundary hooks the Zeus runtime implements, plus (as the
-//! split continues) the Widget/reactive primitives the components build on.
+//! zeusbase — the reactive core (signals, effects, derivations, context) and the
+//! C boundary hooks the Zeus runtime implements. Everything the components and
+//! `zeus` build on lives here, at the bottom of the stack, so a layer above can
+//! name it without importing back up into `zeus`.
 //!
-//! `Node` and `Signal<T>` come from the `structs` leaf module; the C side
+//! `Node` and `Signal<T>` come from the `structs` leaf module; the internal
+//! modules `arena`, `track`, and `platform` come from `zeuscore`. The C side
 //! provides `loam_zeusbase_on_action`, `loam_zeusbase_on_range`, and friends
 //! (see `packages/loam/runtime/zeus_plat.c`), and `zeus` re-exports them.
 //!
@@ -11,6 +14,320 @@
 //! them — struct/type names resolve by name across loaded modules.
 
 import "structs.loam"
+import "zeuscore/platform.loam"
+import "zeuscore/arena.loam"
+import "zeuscore/track.loam"
+
+// --- handles --------------------------------------------------------------
+
+/// Wrap a raw arena slot as a `Signal<int>`. Same reason as `node_handle`:
+/// the engine speaks ids, the API speaks handles.
+fn signal_handle(id: int) -> Signal<int> {
+    return Signal { id: id }
+}
+
+// --- signals (live Copy state) ---
+
+/// Allocate a live cell. `T` is inferred from `value`.
+///
+/// Example:
+/// ```
+/// let count = zeus.signal(0)
+/// zeus.Button("+", on_click = fn() => count.set(count.get() + 1))
+/// ```
+/// Allocations made while a `For` / `refit` rebuild is running are owned by
+/// that host (the C alloc hook records them) and are freed when the host
+/// rebuilds or is torn down, so builders that create state do not grow the
+/// signal arena.
+fn signal<T>(value: T) -> Signal<T> {
+    arena.ensure()
+    Signal { id: __sig_push(value) }
+}
+
+/// Read the current value of `sig`. Reading inside a reactive scope (an
+/// `effect`, a `computed`, or the thunk behind any widget prop) records
+/// `sig` as a dependency of that scope, so a later `set` re-runs it.
+/// Call as `sig.get()`.
+fn get<T>(sig: Signal<T>) -> T {
+    arena.ensure()
+    track.note_read(sig.id)
+    __sig_load(sig.id)
+}
+/// Write `value` into `sig`, then re-run every reactive scope that read it.
+/// Writing the value it already holds is a no-op: nothing is notified, so
+/// derivations built on `sig` do not recompute. Call as `sig.set(value)`.
+fn set<T>(sig: Signal<T>, value: T) {
+    arena.ensure()
+    __sig_store(sig.id, value)
+}
+
+/// Read `sig` *without* subscribing the enclosing scope to it. Use when an
+/// effect needs the current value but must not re-run when it changes —
+/// notably read-modify-write (`c.set(c.peek() + 1)` inside an effect).
+fn peek<T>(sig: Signal<T>) -> T {
+    arena.ensure()
+    __sig_load(sig.id)
+}
+
+/// Run `body` with dependency tracking suspended: signals read inside it
+/// become dependencies of nothing. Writes still notify as usual.
+fn untrack(body: fn()) {
+    track.mute_begin()
+    body()
+    track.mute_end()
+}
+
+// --- interned handlers ----------------------------------------------------
+
+/// Intern a handler or thunk, and record it as owned by the open rebuild
+/// scope if there is one. A `For`/`refit` rebuild interns fresh closures per
+/// row; when the host is torn down the recorded ids are freed and recycled,
+/// so streaming lists do not leak handler envs.
+fn intern_fn(h: fn()) -> int {
+    let id = platform.plat_intern_fn(h)
+    arena.record_intern(id, arena.scope_node)
+    return id
+}
+
+fn intern_int(h: fn() -> int) -> int {
+    let id = platform.plat_intern_int_fn(h)
+    arena.record_intern(id, arena.scope_node)
+    return id
+}
+
+fn intern_bool(h: fn() -> bool) -> int {
+    let id = platform.plat_intern_bool_fn(h)
+    arena.record_intern(id, arena.scope_node)
+    return id
+}
+
+fn intern_str(h: fn() -> string) -> int {
+    let id = platform.plat_intern_str_fn(h)
+    arena.record_intern(id, arena.scope_node)
+    return id
+}
+
+// --- scope owner ----------------------------------------------------------
+
+/// Slot parents currently being built, innermost last. `ui_push` / `ui_pop`
+/// bracket a `Box(...) { ... }` trailing block; the top of this stack is the
+/// owner of any reactive scope created inside that block, so an effect dies
+/// with the component's subtree instead of outliving it.
+let mut ui_parents: []int = []int {}
+
+fn ui_push(id: int) {
+    let mut target = id
+    if id > 0 {
+        if id < arena.nodes.len {
+            if arena.nodes[id].slot_into > 0 {
+                target = arena.nodes[id].slot_into
+            }
+        }
+    }
+    push(ui_parents, target)
+}
+
+fn ui_pop() {
+    if ui_parents.len > 0 {
+        pop(ui_parents)
+    }
+}
+
+/// Owner for a free-standing reactive scope: the `slot` parent currently
+/// being built. An effect created inside a component therefore dies with
+/// that component's subtree. 0 at top level — those live for the process.
+fn effect_owner() -> int {
+    if ui_parents.len > 0 {
+        return ui_parents[ui_parents.len - 1]
+    }
+    return 0
+}
+
+// --- context (provide / inject) ---
+// A `Context<T>` is a typed key. `provide` binds a value for the dynamic
+// extent of `body`; `use_context` reads the topmost binding, or the default
+// the context was created with. The bindings live in ordinary `Signal<T>`
+// cells — the one generic store — so the open-scope stack itself is just ints
+// (signal ids) and needs no per-type copy of the machinery.
+
+/// A typed key for `provide` / `use_context`. The default travels on the
+/// handle, so lookups need no side table; `T` must be Copy, as for `Signal`.
+struct Context<T> {
+    id: int,
+    default_value: T,
+}
+
+let mut ctx_next_id: int = 1
+/// Open `provide` scopes, as parallel stacks of (context id, value cell).
+let mut ctx_stack_ctx: []int = []int {}
+let mut ctx_stack_sig: []int = []int {}
+
+/* The stack itself is untyped ints, so these helpers are concrete: a global
+   read only from a generic body is not the one the codegen emits (see
+   `signal` vs `computed`), and keeping the id bookkeeping here avoids that. */
+fn ctx_take_id() -> int {
+    let context_id = ctx_next_id
+    ctx_next_id = ctx_next_id + 1
+    return context_id
+}
+
+fn ctx_push(context_id: int, cell: int) {
+    push(ctx_stack_ctx, context_id)
+    push(ctx_stack_sig, cell)
+}
+
+fn ctx_pop() {
+    pop(ctx_stack_ctx)
+    pop(ctx_stack_sig)
+}
+
+/// Cell id of the topmost `provide` for `context_id`, or -1 when none is open.
+fn ctx_cell(context_id: int) -> int {
+    let n = ctx_stack_ctx.len
+    let mut i = n
+    while i > 0 {
+        i = i - 1
+        if ctx_stack_ctx[i] == context_id {
+            return ctx_stack_sig[i]
+        }
+    }
+    return -1
+}
+
+/// Create a typed context whose value is `default_value` until something `provide`s
+/// one. `T` is inferred from `default_value`.
+fn create_context<T>(default_value: T) -> Context<T> {
+    arena.ensure()
+    return Context { id: ctx_take_id(), default_value: default_value }
+}
+
+/// Make `value` the current binding of `ctx` for the dynamic extent of
+/// `body`. Call as `provide(ctx, value, fn() { ... })`; scopes nest, and the
+/// innermost binding wins.
+fn provide<T>(ctx: Context<T>, value: T, body: fn()) {
+    arena.ensure()
+    let cell = signal(value)
+    ctx_push(ctx.id, cell.id)
+    body()
+    ctx_pop()
+}
+
+/// The topmost provided value for `ctx`, else the default it was created with.
+/// Reading a context does not subscribe the caller to anything.
+fn use_context<T>(ctx: Context<T>) -> T {
+    arena.ensure()
+    let signal_id = ctx_cell(ctx.id)
+    if signal_id < 0 {
+        return ctx.default_value
+    }
+    // Read without subscribing: `__sig_load` is what `peek` wraps, and its
+    // result type comes from the return type, so no `Signal<T>` value is
+    // needed here.
+    return __sig_load(signal_id)
+}
+
+// --- effects and derivations ---
+// `styled` is the node-scoped effect every prop is built from. The two below
+// are the free-standing forms: `effect` for a side effect, `computed` for a
+// cached value. Both are ordinary reactive scopes — they read signals through
+// `get`, so their dependencies are discovered, not declared.
+
+/// Run `body` once now, then again whenever a signal it read changes.
+/// Effects are the edges of the graph: `body` writes a signal, an arena
+/// field, or the outside world — it never rebuilds the tree. Prefer a text
+/// thunk (`Text("{{n.get()}}")`) for anything a widget can express; reach
+/// for `effect` for the rest (logging, sync, imperative host calls).
+///
+/// ```
+/// let n = zeus.signal(0)
+/// zeus.effect(|| { fmt.println("n is now", n.get()) })
+/// ```
+fn effect(body: fn()) {
+    effect_eid(body)
+}
+
+/// `effect`, returning the effect id so a `computed` can record itself as the
+/// producer of its output signal (see `track.mark_produced`).
+fn effect_eid(body: fn()) -> int {
+    arena.ensure()
+    let effect_id = track.alloc(intern_fn(body), effect_owner())
+    // A nested scope outranks its parent, so a reader of what this effect
+    // writes is flushed after it (glitch-free ordering).
+    track.set_rank(effect_id, 1 + track.current_rank())
+    track.run(effect_id)
+    return effect_id
+}
+
+/// Batch `body`'s signal writes: each `set` re-runs no effect until the
+/// outermost `batch` returns, then every affected effect runs once, in
+/// dependency order. Use it when a handler writes several signals that feed
+/// the same derivation, so it recomputes once instead of once per write.
+///
+/// ```
+/// zeus.batch(fn() {
+///     x.set(1)
+///     y.set(2)
+/// })
+/// ```
+fn batch(body: fn()) {
+    track.batch_begin()
+    body()
+    track.batch_end()
+}
+
+/// Register `body` to run before the enclosing `effect` re-runs, so a
+/// subscription the effect opened is closed before its body runs again.
+/// Call inside an effect; a no-op outside one.
+fn on_cleanup(body: fn()) {
+    track.set_cleanup(track.current_eid(), intern_fn(body))
+}
+
+/// A cached derivation. `calc` runs now, and re-runs only when one of the
+/// signals *it* read changes — not on every read, and not when some
+/// unrelated signal moves. The result is a plain `Signal<int>`, so a reader
+/// subscribes to the derivation rather than to its inputs, and because `set`
+/// is change-gated a recompute that lands on the same value propagates no
+/// further.
+///
+/// ```
+/// let first = zeus.signal("Ada")
+/// let last = zeus.signal("Lovelace")
+/// let full = zeus.computed_str(|| { "{{first.get()}} {{last.get()}}" })
+/// zeus.Text("{{full.get()}}")
+/// ```
+fn computed(calc: fn() -> int) -> Signal<int> {
+    arena.ensure()
+    let fn_id = intern_int(calc)
+    let out = signal(0)
+    let effect_id = effect_eid(|| { set(out, platform.plat_invoke_int_fn(fn_id)) })
+    track.mark_produced(out.id, effect_id)
+    return out
+}
+
+/// `computed` for a string derivation.
+fn computed_str(calc: fn() -> string) -> Signal<string> {
+    arena.ensure()
+    let fn_id = intern_str(calc)
+    let out = signal("")
+    let effect_id = effect_eid(|| { set(out, platform.plat_invoke_str_fn(fn_id)) })
+    track.mark_produced(out.id, effect_id)
+    return out
+}
+
+/// `computed` for a bool derivation.
+fn computed_bool(calc: fn() -> bool) -> Signal<bool> {
+    arena.ensure()
+    let fn_id = intern_bool(calc)
+    let out = signal(false)
+    let effect_id = effect_eid(|| { set(out, platform.plat_invoke_bool_fn(fn_id) != 0) })
+    track.mark_produced(out.id, effect_id)
+    return out
+}
+
+// --- C boundary hooks -----------------------------------------------------
+// Bodyless: the runtime implements these (see `zeus_plat.c`), and `zeus`
+// re-exports them. Named `on_*` / `*_key` because they are the keyboard and
+// focus seams the host drives.
 
 fn on_action(node: Node, action: string, sig: Signal<int>, mode: int, value: int) -> Node {}
 fn on_action_global(action: string, sig: Signal<int>, mode: int, value: int) {}
