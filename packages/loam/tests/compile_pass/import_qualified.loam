@@ -1,0 +1,14 @@
+// Qualified imports: `package:module` names the package outright instead of
+// relying on LOAM_PATH search order, and the module may be a path inside the
+// package (`zeus:zeuscore/arena`). `std:` still works, additively.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "zeus:zeuscore/arena"
+
+fn main() {
+    let n: Node = Node { id: 7 }
+    arena.ensure()
+    fmt.println("qualified import ok", n.id)
+    sys.exit(0)
+}

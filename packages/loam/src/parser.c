@@ -1187,6 +1187,19 @@ static char *alias_from_path(Parser *p, const char *path) {
         }
         return loam_dup(name);
     }
+    /* `package:module` — the alias is the module, not the package. */
+    {
+        const char *colon = strchr(path, ':');
+        if (colon) {
+            char *alias = file_stem(colon + 1);
+            if (!alias || !alias[0]) {
+                error(p, "import spec needs a module after ':'");
+                free(alias);
+                return NULL;
+            }
+            return alias;
+        }
+    }
     char *alias = file_stem(path);
     if (!alias || !alias[0]) {
         error(p, "import path has no module name");
