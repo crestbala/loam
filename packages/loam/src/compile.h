@@ -20,6 +20,13 @@ int loam_std_dirs(const char **out, int max);
 /** 1 if `path` lives under any directory returned by loam_std_dirs(). */
 int loam_is_std_path(const char *path);
 
+/** Resolve the `package:module` spec form to a path, or 0. The package is the
+ *  LOAM_PATH root whose directory is named `package`; the module is looked up in
+ *  that root's `std` dir, and may itself be a path (`zeus:zeuscore/arena`).
+ *  Writes `out` only on success, so the language server can offer exactly the
+ *  package-qualified specs that resolve. */
+int loam_package_module(const char *pkg, const char *mod, char *out, size_t outsz);
+
 /** All modules of one compile, plus diagnostics from the last check. */
 typedef struct {
     LoamModule mods[LOAM_MAX_MODULES];
