@@ -115,6 +115,12 @@ Type *ty_string(void);
 void type_set_int64_compat(int on);
 int type_int64_compat(void);
 
+/** Arms string ownership: `string` becomes move-only (not Copy), needs a
+ *  destructor, and is adopted by a by-value callee. Off by default so the tree
+ *  migrates incrementally; set from the driver's `--string-owns`. */
+void type_set_string_owns(int on);
+int type_string_owns(void);
+
 /** 1 if t is any integer width (signed or unsigned). */
 int type_is_int_kind(const Type *t);
 /** 1 if t is f32 or f64. */

@@ -482,6 +482,13 @@ static int type_is_copy_vec(Type *t) {
     return t && t->kind == TY_VEC && type_is_copy(t);
 }
 
+/** A Copy handle whose refcount the backend manages: `[]T`, and under string
+ *  ownership an owned `string`. Sharing one is a counter bump, not a copy. */
+static int type_is_refcounted(Type *t) {
+    if (type_is_copy_vec(t)) return 1;
+    return type_string_owns() && t && t->kind == TY_STRING;
+}
+
 /** Copy a capture into a closure env; []T must retain the buffer. */
 static void emit_cap_set_ident(FILE *o, Type *ty, const char *dst_field, const char *src) {
     if (type_is_copy_vec(ty)) {
@@ -1724,6 +1731,11 @@ static void emit_steal(FILE *o, const char *place, Type *t, int ind) {
         fprintf(o, "%s = NULL;\n", place);
         return;
     }
+    if (t->kind == TY_STRING) {
+        indent(o, ind);
+        fprintf(o, "%s.ptr = NULL; %s.len = 0; %s.own = 0;\n", place, place, place);
+        return;
+    }
     if (t->kind == TY_PROC) {
         indent(o, ind);
         fprintf(o, "%s.fn = NULL; %s.env = NULL;\n", place, place);
@@ -1758,6 +1770,11 @@ static void emit_drop_place(FILE *o, const char *place, Type *t, int ind) {
     if (t->kind == TY_BOX) {
         indent(o, ind);
         fprintf(o, "loam_drop((void **)&%s);\n", place);
+        return;
+    }
+    if (t->kind == TY_STRING) {
+        indent(o, ind);
+        fprintf(o, "loam_str_release(&%s);\n", place);
         return;
     }
     if (t->kind == TY_PROC) {
@@ -1810,6 +1827,12 @@ static void emit_drop_place(FILE *o, const char *place, Type *t, int ind) {
  * callee will drop; the callee's param drops then release exactly these. */
 static void emit_nested_keeps(FILE *o, const char *place, Type *t, int ind) {
     if (!t || !type_needs_drop(t)) return;
+    if (t->kind == TY_STRING) {
+        /* The place keeps its own reference; the temporary takes one too. */
+        indent(o, ind);
+        fprintf(o, "loam_str_retain(%s);\n", place);
+        return;
+    }
     if (t->kind == TY_VEC) {
         indent(o, ind);
         fprintf(o, "loam_vec_retain(&%s);\n", place);
@@ -1970,6 +1993,20 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                     fprintf(o, " = loam_vec_retain(&%s);\n", lv(in->a));
                     emit_drop_place(o, "_repl", in->ty, 1);
                     fprintf(o, "    }\n");
+                } else if (in->ty && in->ty->kind == TY_STRING && type_string_owns()) {
+                    /* Copy a refcounted string: take a reference on the new
+                       value, drop the one the place used to hold. */
+                    fprintf(o, "{\n        loam_str _repl = ");
+                    emit_ir_place(o, in->place);
+                    fprintf(o, ";\n        ");
+                    emit_ir_place(o, in->place);
+                    fprintf(o, " = %s;\n        ", lv(in->a));
+                    indent(o, 1);
+                    fprintf(o, "loam_str_retain(");
+                    emit_ir_place(o, in->place);
+                    fprintf(o, ");\n");
+                    emit_drop_place(o, "_repl", in->ty, 1);
+                    fprintf(o, "    }\n");
                 } else if (in->ty && type_needs_drop(in->ty) && in->ty->kind != TY_ARRAY) {
                     char cn[256];
                     format_ctype(cn, sizeof cn, in->ty);
@@ -2009,6 +2046,14 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                     fprintf(o, "%s = loam_vec_retain(&%s);\n", lv(in->dst), lv(in->a));
                 else
                     fprintf(o, "%s = loam_vec_move(&%s);\n", lv(in->dst), lv(in->a));
+            } else if (ty && ty->kind == TY_STRING) {
+                /* A bare string is Copy, so it is never IR_MOVE'd; this is
+                   reached only for a non-Copy aggregate that owns one, where
+                   the reference transfers to `dst`. */
+                char sbuf[64];
+                snprintf(sbuf, sizeof sbuf, "%s", lv(in->a));
+                fprintf(o, "%s = %s;\n", lv(in->dst), sbuf);
+                emit_steal(o, sbuf, ty, 1);
             } else if (ty && ty->kind == TY_ARRAY) {
                 fprintf(o, "\n");
                 emit_array_copy(o, in->dst, in->a, ty);
@@ -2121,6 +2166,11 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                 if (type_is_copy_vec(vt)) {
                     fprintf(o, "{ loam_vec _sigv = loam_vec_retain(&%s); loam_zeus_sig_bind(%s, &_sigv, sizeof(_sigv)); }\n",
                             lv(in->args[0]), lv(in->dst));
+                } else if (type_is_refcounted(vt)) {
+                    /* The cell takes its own reference to the string. */
+                    fprintf(o, "{ loam_str _sigv = %s; loam_str_retain(_sigv); "
+                               "loam_zeus_sig_bind(%s, &_sigv, sizeof(_sigv)); }\n",
+                            lv(in->args[0]), lv(in->dst));
                 } else {
                     fprintf(o, "loam_zeus_sig_bind(%s, &%s, sizeof(", lv(in->dst), lv(in->args[0]));
                     emit_ctype(o, vt);
@@ -2136,6 +2186,10 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                 if (type_is_copy_vec(in->ty)) {
                     indent(o, 1);
                     fprintf(o, "%s = loam_vec_retain(&%s);\n", lv(in->dst), lv(in->dst));
+                } else if (type_is_refcounted(in->ty)) {
+                    /* Loading hands out another reference to the cell's value. */
+                    indent(o, 1);
+                    fprintf(o, "loam_str_retain(%s);\n", lv(in->dst));
                 }
                 break;
             }
@@ -2158,6 +2212,22 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                             lv(in->args[1]), lv(in->args[0]));
                     indent(o, 2);
                     fprintf(o, "loam_vec_drop(&_old); loam_arena_note_write(%s);\n", lv(in->args[0]));
+                    indent(o, 1);
+                    fprintf(o, "}\n");
+                } else if (type_is_refcounted(vt)) {
+                    /* New value takes a reference for the cell; the bytes the
+                       cell held are released as bind overwrites them. */
+                    fprintf(o, "if (loam_zeus_sig_changed(%s, &%s, sizeof(%s))) {\n",
+                            lv(in->args[0]), lv(in->args[1]), lv(in->args[1]));
+                    indent(o, 2);
+                    fprintf(o, "loam_str _old; loam_zeus_sig_load(%s, &_old, sizeof(_old));\n",
+                            lv(in->args[0]));
+                    indent(o, 2);
+                    fprintf(o, "loam_str _new = %s; loam_str_retain(_new); "
+                               "loam_zeus_sig_bind(%s, &_new, sizeof(_new));\n",
+                            lv(in->args[1]), lv(in->args[0]));
+                    indent(o, 2);
+                    fprintf(o, "loam_str_release(&_old); loam_arena_note_write(%s);\n", lv(in->args[0]));
                     indent(o, 1);
                     fprintf(o, "}\n");
                 } else {

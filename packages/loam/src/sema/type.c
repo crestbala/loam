@@ -39,6 +39,17 @@ static int g_int64_compat = 0;
 void type_set_int64_compat(int on) { g_int64_compat = on ? 1 : 0; }
 int type_int64_compat(void) { return g_int64_compat; }
 
+/** 0 (default) = `string` keeps the old Copy, never-freed behavior: every
+ *  `{{ }}`/`str_of_*` allocation lives for the process. 1 = `string` is an
+ *  owned, move-only value (Rust `String`): it is dropped at the end of its
+ *  binding, a callee adopts a by-value `string`, and a read-only parameter is
+ *  `&string`. Gated so the tree migrates to borrow-by-value signatures a file
+ *  at a time (see `--string-owns`), mirroring the Phase 10 numeric flip. */
+static int g_string_owns = 0;
+
+void type_set_string_owns(int on) { g_string_owns = on ? 1 : 0; }
+int type_string_owns(void) { return g_string_owns; }
+
 Type *ty_void(void) { return &t_void; }
 Type *ty_int(void) { return g_int64_compat ? &t_i64 : &t_i32; }
 Type *ty_float(void) { return g_int64_compat ? &t_f64 : &t_f32; }
@@ -268,6 +279,7 @@ int type_can_hold_fn(const Type *t) {
 int type_needs_drop(const Type *t) {
     if (!t) return 0;
     if (t->kind == TY_BOX || t->kind == TY_VEC) return 1;
+    if (t->kind == TY_STRING) return g_string_owns ? 1 : 0;
     if (t->kind == TY_ARRAY) return type_needs_drop(t->elem);
     if (t->kind == TY_STRUCT) {
         for (size_t i = 0; i < t->field_count; i++)
@@ -283,6 +295,9 @@ int type_arg_transfers(const Type *t) {
     if (t->kind == TY_BOX || t->kind == TY_PROC) return 1;
     /* Retained at the call site, so the caller still owns a reference. */
     if (t->kind == TY_VEC) return 0;
+    /* An owned string is a refcounted Copy value like []T: the caller keeps
+       its reference and the argument is retained across the call. */
+    if (t->kind == TY_STRING) return 0;
     if (t->kind == TY_ARRAY) return type_arg_transfers(t->elem);
     if (t->kind == TY_STRUCT) {
         for (size_t i = 0; i < t->field_count; i++) {
