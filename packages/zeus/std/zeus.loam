@@ -138,7 +138,7 @@ fn App(title: string, build: fn(), width: int = 0, height: int = 0) {
     // ends short of the viewport, the revealed strip stays paper instead of
     // showing the host's clear color (black on a dark window / wasm page).
     // Root already takes host safe-area insets (`inset_here(root)`).
-    Component(top, background = paper())
+    Component(top, background = role_token(ROLE.Paper))
     slot(top, build)
     root(top)
     raw_run()

@@ -4,6 +4,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:colors"
 import "std:design"
 
 fn must(ok: bool, what: string) {
@@ -18,7 +19,7 @@ fn main() {
     let clicks = zeus.signal(0)
     zeus.root(design.Column(12) {
         design.Card(title = "Plan", subtitle = "Monthly", footer = fn() {
-            zeus.Text("Footer", color = zeus.mute())
+            zeus.Text("Footer", color = colors.mute())
         }) {
             zeus.Text("Body")
         }

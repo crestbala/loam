@@ -6,6 +6,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:colors"
 import "std:spacing"
 import "std:design"
 
@@ -33,7 +34,7 @@ fn main() {
         pop_id = pop.id
         design.Tooltip(trigger, text = "Open the menu", delay = 0)
         design.Toast(toast, width = 160, ms = 0) {
-            zeus.Text("Saved", color = zeus.on_ink(), font = spacing.FONT_BODY)
+            zeus.Text("Saved", color = colors.on_ink(), font = spacing.FONT_BODY)
         }
     }
     zeus.root(tree)

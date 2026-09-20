@@ -7,6 +7,7 @@
 
 import "std:async"
 import "std:zeus"
+import "std:colors"
 import "std:spacing"
 import "std:design"
 import "agent.loam"
@@ -99,12 +100,12 @@ fn RamChip() {
     }
     zeus.Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
              spacing = SPACE.Exxs, padding_x = 10, padding_y = 4, height = 26,
-             radius = spacing.RAD_FULL, background = zeus.raised()) {
-        zeus.Box(width = 6, height = 6, radius = 3, background = zeus.ok())
+             radius = spacing.RAD_FULL, background = colors.raised()) {
+        zeus.Box(width = 6, height = 6, radius = 3, background = colors.ok())
         zeus.Text(fn() -> string {
             let mb = ram.get() / 1024
             return "RAM {{mb}} MB"
-        }, color = zeus.mute(), font = spacing.FONT_CAPTION)
+        }, color = colors.mute(), font = spacing.FONT_CAPTION)
     }
 }
 
@@ -115,7 +116,7 @@ fn Header() {
         design.Chip("code memory", zeus.TINT.Mute)
         design.Grow()
         RamChip()
-        zeus.Text("Dark", color = zeus.mute(), font = spacing.FONT_BODY)
+        zeus.Text("Dark", color = colors.mute(), font = spacing.FONT_BODY)
         design.Switch(zeus.appearance())
     }
 }
@@ -131,7 +132,7 @@ fn Caption(sig: Signal<string>) {
             zeus.set_color(t, zeus.parse_hex_color(zeus.danger()))
             return
         }
-        zeus.set_color(t, zeus.parse_hex_color(zeus.mute()))
+        zeus.set_color(t, zeus.parse_hex_color(colors.mute()))
     })
 }
 
@@ -139,14 +140,14 @@ fn HitRow(i: int, h: Hit) {
     zeus.Box(align_direction = DIRECTION.Column, justify = ALIGN.Center,
              height = HIT_H, padding_x = SPACE.Exs, spacing = 2) {
         zeus.Text(h.label, color = zeus.ink(), font = spacing.FONT_CONTROL)
-        zeus.Text(h.snippet, color = zeus.dim(), font = spacing.FONT_CAPTION)
+        zeus.Text(h.snippet, color = colors.dim(), font = spacing.FONT_CAPTION)
     }
 }
 
 fn AnsRow(i: int, s: string) {
     zeus.Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
              height = 20, padding_x = SPACE.Exs) {
-        zeus.Text(s, color = zeus.mute(), font = spacing.FONT_CAPTION)
+        zeus.Text(s, color = colors.mute(), font = spacing.FONT_CAPTION)
     }
 }
 
@@ -211,7 +212,7 @@ fn StepWatch(folder: Signal<string>, watch_on: Signal<int>, cap: Signal<string>,
             })
         }
         design.Row(SPACE.Sm) {
-            zeus.Text("Re-index automatically when files change", color = zeus.mute(),
+            zeus.Text("Re-index automatically when files change", color = colors.mute(),
                       font = spacing.FONT_BODY)
             design.Switch(watch_on)
             design.Grow()
@@ -261,7 +262,7 @@ fn StepAsk(query: Signal<string>, hits: Signal<[]Hit>, qus: Signal<int>,
                 cap.set("swept {{nrows}} chunks in {{us}} us")
             })
         }
-        zeus.Box(height = LIST_H, border = 1, border_color = zeus.rule(), radius = 8) {
+        zeus.Box(height = LIST_H, border = 1, border_color = colors.rule(), radius = 8) {
             design.VirtualList(hits, HIT_H, HitRow)
         }
         design.Row(SPACE.Sm) {
@@ -325,7 +326,7 @@ fn StepModel(prompt: Signal<string>, endpoint: Signal<int>, key_sig: Signal<stri
                 }
             })
         }
-        zeus.Box(height = 200, border = 1, border_color = zeus.rule(), radius = 8) {
+        zeus.Box(height = 200, border = 1, border_color = colors.rule(), radius = 8) {
             design.VirtualList(ans, 20, AnsRow)
         }
         design.Row(SPACE.Sm) {
@@ -445,8 +446,8 @@ fn GreenInferPage() {
     design.Page() {
         Header()
         design.Row(SPACE.Md) {
-            zeus.Box(width = 6, height = 6, radius = 3, background = zeus.ok())
-            zeus.Text("Your codebase as local memory — watch a folder, ask in plain words. Everything stays in one file on this machine.", color = zeus.mute(), font = spacing.FONT_BODY)
+            zeus.Box(width = 6, height = 6, radius = 3, background = colors.ok())
+            zeus.Text("Your codebase as local memory — watch a folder, ask in plain words. Everything stays in one file on this machine.", color = colors.mute(), font = spacing.FONT_BODY)
             design.Grow()
         }
         StatsRow(chunk_stat, kb_stat, qus, mus)

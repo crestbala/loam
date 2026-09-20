@@ -1,0 +1,128 @@
+//! colors — the colour API of the design system: the accessors a caller writes
+//! (`ink`, `paper`, `plate`, `rule`, `mute`, `dim`, `ok`, `warn`, `danger`, the
+//! `*_fill` pair, the accent, and `tint_of`). Each returns a role token — a
+//! sentinel the paint pass resolves against `appearance()` every frame, so a
+//! theme switch repaints a retained tree with no effects and no rebuild.
+//!
+//! The palette data (`LIGHT` / `DARK` / `NEUTRAL_*` / the semantic tiers) and the
+//! engine that registers it — `ensure_role_colors`, `role_rgb_now`, `role_token`,
+//! `role_color` — stay in `zeusbase`. The host entry calls the initializer before
+//! the first paint, and a lower module may not import upward.
+
+import "std:structs"
+import "std:enums"
+import "std:zeusbase"
+
+fn paper() -> string { return role_token(ROLE.Paper) }
+
+/// Card / popover / dialog surface.
+fn plate() -> string { return role_token(ROLE.Plate) }
+
+/// Muted / secondary / accent background (hover, chips, tab tray).
+fn raised() -> string { return role_token(ROLE.Raised) }
+
+/// Foreground text. `ink` is the strongest ink.
+
+/// Muted-foreground: secondary text, labels on wash.
+fn mute() -> string { return role_token(ROLE.Mute) }
+
+/// Faint text: captions, overlines, placeholders.
+fn dim() -> string { return role_token(ROLE.Dim) }
+
+/// Border / input stroke.
+fn rule() -> string { return role_token(ROLE.Rule) }
+
+/// Stronger border: popovers, focus-ish outlines.
+fn hard() -> string { return role_token(ROLE.Hard) }
+
+/// Soft fill for code blocks and inset panels.
+fn wash() -> string { return role_token(ROLE.Wash) }
+
+/// Text on `accent` (primary-foreground).
+fn on_ink() -> string { return role_token(ROLE.OnInk) }
+
+/// Primary: fills for default buttons, switches, selection. The accent ramp's
+/// solid step (`register_accent`), blue by default.
+
+/// Soft accent surface (`secondary`): soft buttons, pressed toggles.
+fn accent_soft() -> string { return role_token(ROLE.AccentSoft) }
+
+/// Destructive text (errors, destructive alerts).
+
+/// Destructive fill (destructive buttons, filled danger badges).
+fn danger_solid() -> string { return role_token(ROLE.DangerSolid) }
+
+/// Destructive border: destructive/50 in light, full in dark.
+fn danger_edge() -> string { return role_token(ROLE.DangerEdge) }
+
+/// Solid success fill (ok badges). Deeper than `ok` so white text holds.
+fn ok_solid() -> string { return role_token(ROLE.OkSolid) }
+
+/// Success tint.
+fn ok() -> string { return role_token(ROLE.Ok) }
+
+/// Success wash.
+fn ok_fill() -> string { return role_token(ROLE.OkS9) }
+
+/// Warning tint: alert icons, warning chips/pips.
+fn warn() -> string { return role_token(ROLE.Warn) }
+
+/// Warning wash (soft warning badges, alert fills).
+fn warn_fill() -> string { return role_token(ROLE.WarnS9) }
+
+/// Warning border: soft in light, full in dark.
+fn warn_edge() -> string { return role_token(ROLE.WarnEdge) }
+
+/// Text on danger fills is white in both appearances.
+fn on_danger() -> string { return role_token(ROLE.OnFill) }
+
+/// Text on ok fills is white in both appearances.
+fn on_ok() -> string { return role_token(ROLE.OnFill) }
+
+/// Modal scrim behind dialogs and popovers.
+fn scrim() -> string { return role_token(ROLE.Scrim) }
+
+/// Skeleton fill: borders in light, raised in dark.
+fn bone() -> string { return role_token(ROLE.Bone) }
+
+/// Text on the accent's solid fill — dark or light, whichever passes.
+fn on_accent() -> string { return role_token(ROLE.OnAccent) }
+
+/// Elevation shadow colour.
+fn shadow_color() -> string { return role_token(ROLE.Shadow) }
+
+
+
+
+fn ok_fill_hover() -> string { return role_token(ROLE.OkS10) }
+
+
+
+
+
+fn warn_fill_hover() -> string { return role_token(ROLE.WarnS10) }
+
+
+
+
+
+fn danger_fill_hover() -> string { return role_token(ROLE.DangerS10) }
+
+
+
+
+
+fn info_fill_hover() -> string { return role_token(ROLE.InfoS10) }
+
+
+fn tint_of(kind: int) -> string {
+    match kind {
+        TINT.Ok => { return ok() }
+        TINT.Mute => { return mute() }
+        TINT.Dim => { return dim() }
+        TINT.Danger => { return danger() }
+        TINT.Warn => { return warn() }
+        _ => { return ink() }
+    }
+}
+
