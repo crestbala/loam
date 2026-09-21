@@ -45,7 +45,7 @@ fn m_blog_page(p: Params) -> Meta {
 }
 
 fn b_blog_slug_page(p: Params) {
-    r_blog_layout.layout(fn() { r_blog_slug_page.page(p) })
+    r_blog_layout.layout(fn() { r_blog_slug_page.page_live() })
 }
 
 fn m_blog_slug_page(p: Params) -> Meta {
@@ -78,7 +78,7 @@ fn routes() -> []Route {
         Route { pattern: "/about", build: b_marketing_about_page, meta: m_marketing_about_page },
         Route { pattern: "/pricing", build: b_marketing_pricing_page, meta: m_marketing_pricing_page },
         Route { pattern: "/blog", build: b_blog_page, meta: m_blog_page },
-        Route { pattern: "/blog/:slug", build: b_blog_slug_page, meta: m_blog_slug_page, paths: p_blog_slug_page },
+        Route { pattern: "/blog/:slug", build: b_blog_slug_page, meta: m_blog_slug_page, paths: p_blog_slug_page, live: true },
         Route { pattern: "/components", build: b_components_page, meta: m_components_page },
         Route { pattern: "/patterns", build: b_patterns_page, meta: m_patterns_page },
     }
