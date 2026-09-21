@@ -2,6 +2,10 @@
 // size-stable box re-solves only that subtree — the card's box is explicit, so
 // nothing above it can move. A change with no size-stable ancestor re-solves the
 // whole tree.
+//
+// A box is not its own boundary when the write changed the size its parent
+// lays it out from: widening the first box of a row must move the second, so
+// that write reaches the row and, with nothing stable above it, the whole tree.
 
 import "std:fmt"
 import "std:sys"
@@ -19,9 +23,19 @@ fn main() {
     zeus.window("layout-scope", 300, 200)
     let w = zeus.signal(40)
     let label = zeus.signal("aa")
+    let first = zeus.signal(40)
     let mut inner_id = 0
     let mut text_id = 0
+    let mut second_id = 0
     zeus.root(zeus.Box(padding = 10) {
+        // Two explicit boxes in a row: a width write on the first moves the
+        // second, so the first cannot be its own boundary.
+        zeus.Box(align_direction = DIRECTION.Row) {
+            let a = zeus.Box(width = 40, height = 20, background = "#0000ff")
+            zeus.styled(a, || { zeus.set_prop_int(a, zeus.SET.Width, first.get()) })
+            let b = zeus.Box(width = 40, height = 20, background = "#00ffff")
+            second_id = b.id
+        }
         // Fixed-size card: explicit width and height, so a child's size change
         // cannot move anything above it.
         zeus.Box(width = 200, height = 100, background = "#ffffff") {
@@ -50,6 +64,13 @@ fn main() {
 
     // The card is still laid out correctly after both.
     must(zeus.node_width(inner_id) == 90, "the card's child kept its width")
+
+    // A width write on the first box of a row: its sibling must move with it.
+    let bx0 = zeus.node_x(second_id)
+    first.set(90)
+    zeus.engine_layout(300, 200)
+    must(zeus.layout_was_full() == 1, "widening a row's first box reaches above the box")
+    must(zeus.node_x(second_id) == bx0 + 50, "the row sibling moved by the width change")
 
     fmt.println("layout scope ok")
 }

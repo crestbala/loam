@@ -919,7 +919,7 @@ fn layout_flex_col(id: int) {
     if nflow > 0 {
         let content = cy - gy - between - arena.nodes[id].y + i32(arena.nodes[id].pad_b) + i32(arena.nodes[id].border_w)
         if int(arena.nodes[id].kind) == 11 {
-            arena.nodes[id].inner_height = geometry.max2(content, arena.nodes[id].h)
+            arena.nodes[id].ext_h = geometry.max2(content, arena.nodes[id].h)
             if arena.scrolls_x(id) != 0 {
                 let mut content_w = arena.nodes[id].w
                 for i in 0..nk {
@@ -931,9 +931,9 @@ fn layout_flex_col(id: int) {
                         }
                     }
                 }
-                arena.nodes[id].inner_width = geometry.max2(content_w, arena.nodes[id].w)
+                arena.nodes[id].ext_w = geometry.max2(content_w, arena.nodes[id].w)
             } else {
-                arena.nodes[id].inner_width = arena.nodes[id].w
+                arena.nodes[id].ext_w = arena.nodes[id].w
                 arena.nodes[id].scroll_x = 0
             }
             arena.clamp_scroll(id)
@@ -1164,6 +1164,7 @@ fn layout_node(id: int, x: int, y: int, w: int, h: int) {
     }
     arena.nodes[id].x = x
     arena.nodes[id].y = y
+    arena.nodes[id].lay_h = h
     arena.nodes[id].w = arena.clamp_w(id, w)
     arena.nodes[id].h = arena.clamp_h(id, h)
     apply_label_wrap(id)
@@ -1213,92 +1214,361 @@ fn layout(width: int, height: int) {
     place_anchored(arena.root_id)
 }
 
-/// Nearest size-stable ancestor of `id` (including `id`): a node whose box is set
-/// explicitly, so a size change inside it cannot move anything above it. 0 when
-/// there is none, i.e. the change can reflow up to the root.
-fn layout_boundary(id: int) -> int {
-    let mut p = id
-    let mut guard = 0
-    while p > 0 {
-        if arena.nodes[p].explicit_width >= 0 {
-            if arena.nodes[p].explicit_height >= 0 {
-                return p
+// --- subtree re-solve --------------------------------------------------------
+//
+// A frame's layout dirt names nodes: a prop write landed on one, or a host's kid
+// list moved under one. `relayout` finds, for each, the nearest ancestor whose
+// *box* the change cannot have moved — the boundary — and re-solves only that
+// subtree, from the exact call its parent made (`x`, `y`, `w`, `lay_h`).
+//
+// A box is unmovable on an axis when the re-measure left the node's natural
+// size on that axis unchanged (then nothing above it can have changed either),
+// or when the parent imposes that axis regardless of the natural size — a
+// percent width in a column, a cross-axis stretch — *and* the parent's own box
+// on that axis is unmovable in turn, because a column's natural width is the
+// widest child's and the change may have moved it. So the test runs top-down
+// along the path from the root, whose box is the window.
+//
+// Two cases are declined outright. A flex row under a column: the column
+// sizes it from `wrap_row_h`, which depends on the children's widths in order,
+// not on any natural size. And a prop-written node as its own boundary: the
+// write may have changed how the parent sizes it (`w_pct`, `align_self`, a
+// margin), which no natural size reflects. Finally the re-solve is checked:
+// if the boundary's box did not hold — a wrapped label made the column taller,
+// or shorter — the change reaches above it, and the frame falls back to the
+// whole tree. Under-solving is the one failure that leaves a stale box.
+
+/// The natural size of every node on a dirty path, taken before the re-measure
+/// overwrites it. Indexed by node id, grown lazily; bit 2 of `dirty` marks the
+/// nodes taken this frame.
+let mut nat_w0: []int = []int {}
+let mut nat_h0: []int = []int {}
+
+fn snapshot_natural(id: int) {
+    while nat_w0.len <= id {
+        push(nat_w0, 0)
+        push(nat_h0, 0)
+    }
+    nat_w0[id] = arena.nodes[id].inner_width
+    nat_h0[id] = arena.nodes[id].inner_height
+}
+
+/// 1 when the parent `q` hands `p` its width regardless of `p`'s natural width.
+fn imposed_w(q: int, p: int) -> int {
+    if arena.nodes[p].explicit_width >= 0 {
+        return 0
+    }
+    if arena.skip_flow(p) != 0 {
+        return 0
+    }
+    let qk = int(arena.nodes[q].kind)
+    let mut col = 0
+    if qk == 11 {
+        col = 1
+    } else if qk == 1 || qk == 9 {
+        if int(arena.nodes[q].dir) != 0 {
+            col = 1
+        }
+    } else {
+        return 0
+    }
+    if col == 0 {
+        // A row sizes a child from its natural width, then shrinks / grows the
+        // line; a percent other than 100 is the one width it hands down.
+        if int(arena.nodes[p].w_pct) >= 0 {
+            if int(arena.nodes[p].w_pct) != 100 {
+                return 1
             }
         }
-        p = arena.nodes[p].parent
-        guard = guard + 1
-        if guard > 256 {
-            break
-        }
+        return 0
     }
-    return 0
-}
-
-/// 1 when `id` sits inside a scroller. A subtree re-solve cannot update the
-/// scroller's content extent from the inside, so treat it as a whole-tree case.
-fn inside_scroller(id: int) -> int {
-    let mut p = arena.nodes[id].parent
-    let mut guard = 0
-    while p > 0 {
-        if int(arena.nodes[p].kind) == 11 {
+    // A column: a percent width is the available width's share (an image is
+    // capped at its source width, so not that), and a stretch is the available
+    // width — unless the column scrolls sideways, where a child keeps its
+    // natural width.
+    if arena.scrolls_x(q) != 0 {
+        return 0
+    }
+    if int(arena.nodes[p].w_pct) >= 0 {
+        if int(arena.nodes[p].kind) != 14 {
             return 1
         }
-        p = arena.nodes[p].parent
-        guard = guard + 1
-        if guard > 256 {
-            break
+    }
+    if stretch_cross(q, p, 0) != 0 {
+        return 1
+    }
+    return 0
+}
+
+/// 1 when the parent `q` hands `p` its height regardless of `p`'s natural height.
+fn imposed_h(q: int, p: int) -> int {
+    if arena.nodes[p].explicit_height >= 0 {
+        return 0
+    }
+    if arena.skip_flow(p) != 0 {
+        return 0
+    }
+    let qk = int(arena.nodes[q].kind)
+    if qk != 1 && qk != 9 {
+        return 0
+    }
+    if int(arena.nodes[q].dir) != 0 {
+        // A column sizes a child from its natural height (plus a grow share
+        // that depends on it).
+        return 0
+    }
+    if int(arena.nodes[p].h_pct) >= 0 {
+        return 1
+    }
+    if stretch_cross(q, p, 1) != 0 {
+        return 1
+    }
+    return 0
+}
+
+/// A flex row under a column: its assigned height is `wrap_row_h`, a function
+/// of the children's widths in order, which no natural size captures.
+fn wraps_under_column(p: int) -> int {
+    if is_flex_row(p) == 0 {
+        return 0
+    }
+    let q = arena.nodes[p].parent
+    if q <= 0 {
+        return 0
+    }
+    let qk = int(arena.nodes[q].kind)
+    if qk == 11 {
+        return 1
+    }
+    if qk == 1 || qk == 9 {
+        if int(arena.nodes[q].dir) != 0 {
+            return 1
         }
     }
     return 0
 }
 
-/// Re-solve only the subtree a frame's layout-prop writes touched. Returns 0 when
-/// that cannot be done safely — no size-stable boundary, a write inside a
-/// scroller, writes with different boundaries, or a live anchored floater —
-/// leaving the caller to re-solve the whole tree.
+/// The boundary for one dirty node: the nearest ancestor (itself included when
+/// `own` is 1) whose box the change cannot have moved. 0 when the change can
+/// reach the root, or the node is not under it.
+fn find_boundary(d: int, own: int) -> int {
+    let root = arena.root_id
+    // The path root -> d, so the axis test can run top-down.
+    let mut path = []int {}
+    let mut p = d
+    let mut guard = 0
+    while p > 0 && p < arena.nodes.len {
+        push(path, p)
+        if p == root {
+            break
+        }
+        p = arena.nodes[p].parent
+        guard = guard + 1
+        if guard > 256 {
+            return 0
+        }
+    }
+    if path.len == 0 {
+        return 0
+    }
+    if path[path.len - 1] != root {
+        return 0
+    }
+    // Top-down: `w_ok` / `h_ok` are the parent's verdicts as the walk descends.
+    let mut w_ok = 1
+    let mut h_ok = 1
+    let mut i = path.len - 1
+    let mut best = 0
+    while i >= 0 {
+        let n = path[i]
+        if n != root {
+            let q = arena.nodes[n].parent
+            let mut nw = 0
+            let mut nh = 0
+            if int(arena.nodes[n].kind) == 11 {
+                // A scroller measures with its `dir` (a row by default) but
+                // lays out as a column, so its natural size does not describe
+                // its box: only an explicit box is known to hold.
+                if arena.nodes[n].explicit_width >= 0 {
+                    nw = 1
+                }
+                if arena.nodes[n].explicit_height >= 0 {
+                    nh = 1
+                }
+            } else {
+                if n < nat_w0.len {
+                    if arena.nodes[n].inner_width == nat_w0[n] {
+                        nw = 1
+                    }
+                    if arena.nodes[n].inner_height == nat_h0[n] {
+                        nh = 1
+                    }
+                }
+            }
+            let mut w2 = nw
+            let mut h2 = nh
+            if w2 == 0 && w_ok != 0 {
+                w2 = imposed_w(q, n)
+            }
+            if h2 == 0 && h_ok != 0 {
+                h2 = imposed_h(q, n)
+            }
+            w_ok = w2
+            h_ok = h2
+            if arena.want_show(n) == 0 {
+                // Hidden: nothing under it is laid out or painted, so the
+                // change cannot reach past it. Its re-solve is skipped.
+                return n
+            }
+            let mut can = 1
+            if n == d && own == 0 {
+                can = 0
+            }
+            if wraps_under_column(n) != 0 {
+                can = 0
+            }
+            if w_ok != 0 && h_ok != 0 && can != 0 {
+                best = n
+            }
+            if w_ok == 0 && h_ok == 0 {
+                // Nothing below can recover an axis the parent does not impose.
+                return best
+            }
+        }
+        if i == 0 {
+            break
+        }
+        i = i - 1
+    }
+    return best
+}
+
+/// Re-solve only the subtrees a frame's layout dirt touched. `dirty` is
+/// `arena.take_dirty_layout_nodes()`: a structural entry is `-id`. Returns 0
+/// when a change can reach the root (or a floater is anchored), leaving the
+/// caller to re-solve the whole tree.
 fn relayout(dirty: []int) -> int {
     let n = dirty.len
     if n == 0 {
         return 0
     }
-    let mut a = 0
-    for i in 0..n {
-        let d = dirty[i]
-        if d <= 0 {
-            return 0
-        }
-        if d >= arena.nodes.len {
-            return 0
-        }
-        if inside_scroller(d) != 0 {
-            return 0
-        }
-        let b = layout_boundary(d)
-        if b <= 0 {
-            return 0
-        }
-        if a == 0 {
-            a = b
-        } else if a != b {
-            return 0
-        }
-    }
     if arena.live_anchors > 0 {
         return 0
     }
-    // The boundary's box is explicit, so its size is its explicit size — not the
-    // box it carried before, which a width / height write on the boundary itself
-    // may have just changed. Re-measure its subtree (only the invalidated path
-    // recomputes) and re-place from its own box.
-    let bx = arena.nodes[a].x
-    let by = arena.nodes[a].y
-    let bw = arena.nodes[a].explicit_width
-    let bh = arena.nodes[a].explicit_height
-    measure_node(a)
-    layout_node(a, bx, by, bw, bh)
-    // Everything the re-solve can have moved is inside the boundary: mark it so
-    // the damage pass repaints that subtree rather than falling back to full.
-    arena.mark_paint_id(a)
+    let root = arena.root_id
+    if root <= 0 {
+        return 0
+    }
+    // 1. Snapshot the natural size along every dirty path, before any
+    //    re-measure. Bit 2 of `dirty` dedupes shared path prefixes.
+    let mut taken = []int {}
+    for i in 0..n {
+        let mut p = dirty[i]
+        if p < 0 {
+            p = 0 - p
+        }
+        let mut guard = 0
+        while p > 0 && p < arena.nodes.len {
+            if (int(arena.nodes[p].dirty) & 4) != 0 {
+                break
+            }
+            arena.nodes[p].dirty = u8(int(arena.nodes[p].dirty) | 4)
+            push(taken, p)
+            snapshot_natural(p)
+            p = arena.nodes[p].parent
+            guard = guard + 1
+            if guard > 256 {
+                break
+            }
+        }
+    }
+    // 2. Re-measure. Only the invalidated paths recompute; a clean subtree
+    //    returns at its stamp.
+    measure_node(root)
+    // 3. A boundary per dirty node. A node freed since it was queued (a row
+    //    dropped by its host) is skipped; the host carries the mark.
+    let mut bounds = []int {}
+    let mut ok = 1
+    for i in 0..n {
+        let mut d = dirty[i]
+        let mut own = 0
+        if d < 0 {
+            d = 0 - d
+            own = 1
+        }
+        if d <= 0 || d >= arena.nodes.len {
+            ok = 0
+            break
+        }
+        if int(arena.nodes[d].kind) == 0 {
+            continue
+        }
+        let b = find_boundary(d, own)
+        if b <= 0 {
+            ok = 0
+            break
+        }
+        let mut seen = 0
+        let m = bounds.len
+        for j in 0..m {
+            if bounds[j] == b {
+                seen = 1
+            }
+        }
+        if seen == 0 {
+            push(bounds, b)
+        }
+    }
+    let t = taken.len
+    for i in 0..t {
+        arena.nodes[taken[i]].dirty = u8(int(arena.nodes[taken[i]].dirty) & 251)
+    }
+    if ok == 0 {
+        return 0
+    }
+    // 4. Re-solve each boundary from the call its parent made, skipping one
+    //    that sits inside another. If the box did not hold, the change reaches
+    //    above the boundary: whole tree.
+    let m = bounds.len
+    for i in 0..m {
+        let a = bounds[i]
+        let mut nested = 0
+        let mut p = arena.nodes[a].parent
+        let mut guard = 0
+        while p > 0 {
+            for j in 0..m {
+                if bounds[j] == p {
+                    nested = 1
+                }
+            }
+            p = arena.nodes[p].parent
+            guard = guard + 1
+            if guard > 256 {
+                break
+            }
+        }
+        if nested != 0 {
+            continue
+        }
+        if arena.want_show(a) == 0 {
+            continue
+        }
+        let bx = arena.nodes[a].x
+        let by = arena.nodes[a].y
+        let bw = arena.nodes[a].w
+        let bh = arena.nodes[a].h
+        layout_node(a, bx, by, bw, arena.nodes[a].lay_h)
+        if arena.nodes[a].w != bw {
+            return 0
+        }
+        if arena.nodes[a].h != bh {
+            return 0
+        }
+        // Everything the re-solve can have moved is inside the boundary: mark
+        // it so the damage pass repaints that subtree rather than falling back
+        // to full.
+        arena.mark_paint_id(a)
+    }
     arena.live_anchors = 0
     place_anchored(arena.root_id)
     return 1

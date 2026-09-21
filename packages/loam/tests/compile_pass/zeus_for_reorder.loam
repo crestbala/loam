@@ -2,6 +2,12 @@
 // state survives. Here each row owns a signal that a button increments; if a
 // reorder rebuilt the row, the signal would reset and the "1" label would
 // disappear. (The streaming push/pop case is covered by zeus_for_recycle.)
+//
+// The moved rows must also *land*: a reorder (and a remove-only reconcile)
+// changes no node's parent, so the host itself marks the tree, and the frame
+// keys its follow-up layout on that mark. Positions are asserted after each.
+// A reorder leaves the host's box as it was, so it re-solves only the host's
+// subtree; the write is attributed to the host (`bind_host`), not the frame.
 
 import "std:fmt"
 import "std:sys"
@@ -36,11 +42,40 @@ fn main() {
         fmt.println("FAIL row signal did not update")
         sys.exit(1)
     }
+    let ada0 = zeus.node_y(zeus.engine_find_text("Ada"))
+    let bea0 = zeus.node_y(zeus.engine_find_text("Bea"))
+    if bea0 <= ada0 {
+        fmt.println("FAIL initial order")
+        sys.exit(1)
+    }
     // Reorder: Ada moves to the second row. A rebuild would reset the counter.
     names.set([]string { "Bea", "Ada" })
     zeus.engine_layout(240, 160)
     if zeus.engine_find_text("1") == 0 {
         fmt.println("FAIL reorder rebuilt the row (state lost)")
+        sys.exit(1)
+    }
+    if zeus.node_y(zeus.engine_find_text("Bea")) != ada0 {
+        fmt.println("FAIL reorder did not re-lay out (Bea stayed put)")
+        sys.exit(1)
+    }
+    if zeus.node_y(zeus.engine_find_text("Ada")) != bea0 {
+        fmt.println("FAIL reorder did not re-lay out (Ada stayed put)")
+        sys.exit(1)
+    }
+    if zeus.layout_was_full() != 0 {
+        fmt.println("FAIL reorder re-solved the whole tree")
+        sys.exit(1)
+    }
+    // Remove-only: Bea goes, no row is built, and Ada must move up.
+    names.set([]string { "Ada" })
+    zeus.engine_layout(240, 160)
+    if zeus.node_y(zeus.engine_find_text("Ada")) != ada0 {
+        fmt.println("FAIL remove did not re-lay out")
+        sys.exit(1)
+    }
+    if zeus.engine_find_text("1") == 0 {
+        fmt.println("FAIL remove rebuilt the surviving row (state lost)")
         sys.exit(1)
     }
     fmt.println("for reorder ok")

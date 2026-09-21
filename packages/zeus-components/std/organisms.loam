@@ -58,6 +58,7 @@ struct TableRowProps {
 fn VirtualList<T>(items: Signal<[]T>, row_h: int, build: fn(int, T)) -> Node {
     let n = raw_scroll()
     let node_id = n.id
+    arena.bind_host(items.id, node_id)
     virtual_refresh(node_id, items, build, row_h)
     return Component(n, grow = 1, a11y_role = "list", row_h = row_h,
                      rebuild = || { virtual_refresh(node_id, items, build, row_h) })
@@ -70,6 +71,8 @@ fn VirtualListVar<T>(items: Signal<[]T>, heights: Signal<[]int>, fallback: int,
                      build: fn(int, T)) -> Node {
     let n = raw_scroll()
     let node_id = n.id
+    arena.bind_host(items.id, node_id)
+    arena.bind_host(heights.id, node_id)
     virt_refresh_var(node_id, items, build, fallback, heights)
     return Component(n, grow = 1, a11y_role = "list", row_h = fallback,
                      rebuild = || { virt_refresh_var(node_id, items, build, fallback, heights) })

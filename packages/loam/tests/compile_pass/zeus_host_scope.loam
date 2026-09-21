@@ -1,0 +1,97 @@
+// A host (Match / For / Index) reads its signal from its refresh hook, not an
+// effect, so the arena binds the host to the signal (`bind_host`): a write is
+// attributed to the host, the frame runs the hooks, and the host that rebuilds
+// marks itself. The layout that follows is then scoped to the nearest box the
+// rebuild cannot have moved — or the whole tree when there is none.
+//
+// Three cases: a Match arm swap of equal size inside a fixed card (scoped); a
+// swap to a taller arm under a plain column (whole tree, and the sibling below
+// moves); a keyed reorder inside a scroller (scoped, and the scroll extent is
+// untouched — a box that held cannot have changed what the scroller contains).
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn Row(i: int, s: string) {
+    zeus.Text(s)
+}
+
+fn main() {
+    zeus.window("host-scope", 300, 400)
+    let tag = zeus.signal(0)
+    let tall = zeus.signal(0)
+    let names = zeus.signal([]string {})
+    zui.push_item(names, "Ada")
+    zui.push_item(names, "Bea")
+    zui.push_item(names, "Cy")
+    let mut below_id = 0
+    let mut scroll_id = 0
+    zeus.root(zeus.Box(padding = 10, align_direction = DIRECTION.Column, spacing = 4) {
+        // Fixed card: whichever arm is mounted, the card's box holds.
+        zeus.Box(width = 200, height = 60, background = "#ffffff") {
+            zui.Match(tag, fn(t: int) {
+                if t == 0 {
+                    zeus.Text("arm zero")
+                } else {
+                    zeus.Text("arm one")
+                }
+            })
+        }
+        // Plain column: a taller arm pushes the sibling below it down.
+        zui.Match(tall, fn(t: int) {
+            if t == 0 {
+                zeus.Box(width = 100, height = 20, background = "#ff0000")
+            } else {
+                zeus.Box(width = 100, height = 50, background = "#00ff00")
+            }
+        })
+        let below = zeus.Text("below")
+        below_id = below.id
+        let sc = zui.Scroll(height = 20) {
+            zui.For(names, fn(s) => s, Row)
+        }
+        scroll_id = sc.id
+    })
+    zeus.pump_frame()
+    must(zeus.layout_was_full() == 1, "the first frame solves the whole tree")
+    must(zeus.engine_find_text("arm zero") != 0, "arm zero mounted")
+
+    // 1. Equal-size arm swap inside the fixed card: scoped to the card.
+    tag.set(1)
+    zeus.engine_layout(300, 400)
+    must(zeus.engine_find_text("arm one") != 0, "the Match swapped its arm")
+    must(zeus.engine_find_text("arm zero") == 0, "and unmounted the old one")
+    must(zeus.layout_was_full() == 0, "an arm swap inside a fixed card is a subtree re-solve")
+
+    // 2. Taller arm under a plain column: the change reaches the root, and the
+    //    sibling below moves by the height difference.
+    let y0 = zeus.node_y(below_id)
+    tall.set(1)
+    zeus.engine_layout(300, 400)
+    must(zeus.layout_was_full() == 1, "a taller arm with no stable box above solves the whole tree")
+    must(zeus.node_y(below_id) == y0 + 30, "the sibling below moved with the taller arm")
+
+    // 3. Reorder inside a scroller: scoped to the host, extent unchanged.
+    let max0 = zeus.node_scroll_max(scroll_id)
+    must(max0 > 0, "the scroller overflows")
+    let ada0 = zeus.node_y(zeus.engine_find_text("Ada"))
+    let cy0 = zeus.node_y(zeus.engine_find_text("Cy"))
+    names.set([]string { "Cy", "Bea", "Ada" })
+    zeus.engine_layout(300, 400)
+    must(zeus.layout_was_full() == 0, "a reorder inside a scroller is a subtree re-solve")
+    must(zeus.node_y(zeus.engine_find_text("Cy")) == ada0, "Cy took Ada's row")
+    must(zeus.node_y(zeus.engine_find_text("Ada")) == cy0, "Ada took Cy's row")
+    must(zeus.node_scroll_max(scroll_id) == max0, "the scroll extent is unchanged")
+
+    fmt.println("host scope ok")
+}

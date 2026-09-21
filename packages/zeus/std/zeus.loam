@@ -311,6 +311,13 @@ fn engine_key_apply(signal_id: int, mode: int, value: int, lo: int, hi: int) {
     arena.store_sig(signal_id, next)
 }
 
+/// Run every host's refresh hook (Match, For, Index, refit). Each hook decides
+/// for itself whether its input moved — a signal generation, a virtual window,
+/// a measured width — and returns early when it did not, so an untouched host
+/// costs O(1). The engine does not pre-judge staleness here: what `list_gen`
+/// means is the host's business (a generation for the signal hosts, a width for
+/// refit), and a host that does rebuild marks the tree, which is what the caller
+/// keys the follow-up layout on.
 fn refresh_lists() {
     let n = arena.nodes.len
     for i in 1..n {
@@ -318,40 +325,6 @@ fn refresh_lists() {
             platform.plat_invoke_fn(arena.nodes[i].list_fn)
         }
     }
-}
-
-fn virtual_stale() -> int {
-    let n = arena.nodes.len
-    for i in 1..n {
-        if arena.nodes[i].row_h > 0 {
-            if arena.nodes[i].list_fn > 0 {
-                let w = virtual_window(i, arena.nodes[i].list_n, arena.nodes[i].row_h)
-                if w.first != arena.nodes[i].list_lo {
-                    return 1
-                }
-                if w.last != arena.nodes[i].list_hi {
-                    return 1
-                }
-            }
-        }
-    }
-    return 0
-}
-
-/// A refit host (chart, plot) whose measured width moved since its last
-/// rebuild. Checked after the layout that measured it, so the refresh pass
-/// rebuilds it with the width it will paint this very frame — no one-frame
-/// lag and no empty band while a window is being resized.
-fn refit_stale() -> int {
-    let n = arena.nodes.len
-    for i in 1..n {
-        if arena.nodes[i].list_fn > 0 {
-            if arena.nodes[i].w != arena.nodes[i].list_gen {
-                return 1
-            }
-        }
-    }
-    return 0
 }
 
 fn engine_layout(width: int, height: int) {
@@ -454,14 +427,36 @@ fn engine_layout(width: int, height: int) {
         layout_gen = layout_gen + 1
     }
     // Windowed lists size their window from the scroller's laid-out height and
-    // its scroll, and refit hosts (charts) rebuild when this frame's layout
-    // moved their width. One refresh pass covers both; a second layout applies
-    // the new rows / fresh chart width. A pure scroll frame that stays inside
-    // the mounted window skips both.
+    // its scroll, refit hosts (charts) rebuild when this frame's layout moved
+    // their width, and the signal hosts (Match, For, Index) rebuild when their
+    // signal moved (`arena.hosts_for_signal` asks for the pass). One refresh
+    // pass covers all of them, after the layout that measured them, so a refit
+    // sees the width it will paint this very frame. `layout_dirty` is clear at
+    // this point (zeroed above, or `lay` would be set), so it reads as "a host
+    // actually rebuilt": only then is a second layout run, scoped to the host
+    // when its box held. A pure scroll frame that stays inside the mounted
+    // window, or a frame where every host returns early, pays the sweep and
+    // nothing else.
     if lay != 0 || arena.virtual_dirty != 0 {
-        if (virtual_stale() != 0) || (refit_stale() != 0) {
-            refresh_lists()
-            layout.layout(width, height)
+        refresh_lists()
+        if arena.layout_dirty != 0 {
+            // Same rule as the first pass: a host that rebuilt marked itself,
+            // so the re-solve is scoped to its boundary when one exists.
+            let full2 = arena.take_layout_full()
+            let dirty2 = arena.take_dirty_layout_nodes()
+            let mut whole2 = 1
+            if full2 == 0 {
+                if layout.relayout(dirty2) != 0 {
+                    whole2 = 0
+                }
+            }
+            if whole2 != 0 {
+                layout.layout(width, height)
+                arena.mark_paint()
+                last_whole = 1
+            } else {
+                arena.mark_paint_targeted()
+            }
             arena.layout_dirty = 0
         }
         arena.virtual_dirty = 0
