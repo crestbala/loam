@@ -2123,11 +2123,20 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                 fprintf(o, "\n");
                 emit_array_copy(o, in->dst, in->a, ty);
             } else if (ty && type_needs_drop(ty) && ty->kind == TY_STRUCT) {
+                /* Same rule as a vec: a Copy struct (every field Copy — a
+                   `[]string` field is) is copied, the destination taking its
+                   own references and the source keeping its own; only a
+                   non-Copy aggregate transfers. Stealing from a Copy struct
+                   emptied `let z = g` 's source — a global route-params
+                   struct read once was gone for every later reader. */
                 char dbuf[64], sbuf[64];
                 snprintf(dbuf, sizeof dbuf, "%s", lv(in->dst));
                 snprintf(sbuf, sizeof sbuf, "%s", lv(in->a));
                 fprintf(o, "%s = %s;\n", dbuf, sbuf);
-                emit_steal(o, sbuf, ty, 1);
+                if (type_is_copy(ty))
+                    emit_nested_keeps(o, dbuf, ty, 1);
+                else
+                    emit_steal(o, sbuf, ty, 1);
             } else {
                 fprintf(o, "%s = %s;\n", lv(in->dst), lv(in->a));
             }
