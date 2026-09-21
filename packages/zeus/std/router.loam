@@ -41,7 +41,17 @@
 //!
 //! A shell built around `router.Router` is created once, so its state (nav
 //! selection, scroll, open menus) survives navigation — only the page slot
-//! rebuilds.
+//! rebuilds. The slot is keyed on the *matched route*, not the path: a route
+//! marked `live` keeps its page mounted when only the params change
+//! (`/post/a` → `/post/b`) and reads them through `param_live`, which is a
+//! signal read, so the labels that used a param update in place. A route that
+//! takes `Params` by value (the default) rebuilds on every navigation, as a
+//! snapshot must.
+//!
+//! ```loam
+//! fn PostLive() { zeus.Text("post " + router.param_live("slug")) }
+//! Route { pattern: "/post/:slug", build: fn(p) { PostLive() }, live: true }
+//! ```
 //!
 //! Host history is the `platform.plat_history_*` seam; the core keeps the
 //! back/forward stack and hosts call `router.engine_open_url` for a deep link
@@ -84,6 +94,11 @@ struct Route {
     build: fn(Params),
     meta: fn(Params) -> Meta = router_default_meta,
     paths: fn() -> []string = router_default_paths,
+    /// The page reads its params through `param_live` / `params_live` and so
+    /// survives a navigation that changes only them: the slot is not rebuilt,
+    /// the page's own effects update. Leave it off for a page that takes the
+    /// `Params` argument as a snapshot.
+    live: bool = false,
 }
 
 fn router_default_meta(p: Params) -> Meta {
@@ -286,11 +301,44 @@ fn param_int(p: Params, name: string) -> int {
     return n
 }
 
+/// The current route's params, read live: a signal read, so the thunk or
+/// effect that calls this re-runs on every navigation. This is how a `live`
+/// route's page follows its params without being rebuilt. Outside a reactive
+/// scope it is simply the current params.
+fn params_live() -> Params {
+    ensure_path()
+    params_gen.get()
+    return cur_params
+}
+
+/// `param` over `params_live()`.
+fn param_live(name: string) -> string {
+    return param(params_live(), name)
+}
+
+/// `param_int` over `params_live()`.
+fn param_int_live(name: string) -> int {
+    return param_int(params_live(), name)
+}
+
 // --- history + current path ---
 
 let mut cur_path: Signal<string> = Signal { id: 0 }
 let mut hist: []string = []string {}
 let mut hist_at: int = 0
+/// The route table the mounted `Router` resolves against (empty until it is
+/// built), the match for the current path, and the two signals the page slot
+/// hangs off. `page_key` moves when the slot must rebuild — a different route,
+/// or the same route taken as a snapshot; `params_gen` moves on every
+/// navigation, so a `param_live` read re-runs whatever read it. The params
+/// themselves are module state, not a signal payload: a signal holding a
+/// struct that owns lists does not round-trip its elements (see the myapp blog
+/// loader), and this is `match_keys()` / `match_vals()`'s idiom already.
+let mut cur_routes: []Route = []Route {}
+let mut cur_index: int = -1
+let mut cur_params: Params = Params { keys: []string {}, vals: []string {} }
+let mut params_gen: Signal<int> = Signal { id: 0 }
+let mut page_key: Signal<int> = Signal { id: 0 }
 /// Loaders registered with `on_load`, matched against the target path when
 /// navigation begins.
 let mut route_loaders: []LoaderEntry = []LoaderEntry {}
@@ -301,8 +349,51 @@ let mut cur_title: string = ""
 fn ensure_path() {
     if cur_path.id == 0 {
         cur_path = zeus.signal("/")
+        params_gen = zeus.signal(0)
+        page_key = zeus.signal(0)
         hist = []string { "/" }
         hist_at = 0
+    }
+}
+
+/// Match `path` against the mounted route table: sets `cur_index` /
+/// `cur_params` and returns the index (-1 for no route).
+fn resolve(path: string) -> int {
+    let mut i = 0
+    while i < cur_routes.len {
+        if match_route(cur_routes[i].pattern, path) == 1 {
+            cur_index = i
+            cur_params = Params { keys: match_keys(), vals: match_vals() }
+            return i
+        }
+        i = i + 1
+    }
+    cur_index = -1
+    cur_params = Params { keys: []string {}, vals: []string {} }
+    return -1
+}
+
+/// Make `path` current. The params are resolved first, so an effect that
+/// `params_gen` re-runs reads the new ones; the slot then rebuilds unless the
+/// route is the one already mounted and it is `live`, in which case only the
+/// title (which may depend on the params) is refreshed.
+fn set_path(path: string) {
+    let prev = cur_index
+    let idx = resolve(path)
+    cur_path.set(path)
+    params_gen.set(params_gen.get() + 1)
+    let mut keep = 0
+    if idx >= 0 {
+        if idx == prev {
+            if cur_routes[idx].live {
+                keep = 1
+            }
+        }
+    }
+    if keep != 0 {
+        apply_title(cur_routes[idx].meta(cur_params))
+    } else {
+        page_key.set(page_key.get() + 1)
     }
 }
 
@@ -367,7 +458,7 @@ fn navigate(path: string) {
     hist = out
     hist_at = out.len - 1
     start_loaders(path)
-    cur_path.set(path)
+    set_path(path)
     platform.plat_history_push(path)
 }
 
@@ -381,7 +472,7 @@ fn replace(path: string) {
         hist[hist_at] = path
     }
     start_loaders(path)
-    cur_path.set(path)
+    set_path(path)
     platform.plat_history_replace(path)
 }
 
@@ -391,7 +482,7 @@ fn back() {
     if hist_at > 0 {
         hist_at = hist_at - 1
         start_loaders(hist[hist_at])
-        cur_path.set(hist[hist_at])
+        set_path(hist[hist_at])
         platform.plat_history_back()
     }
 }
@@ -411,28 +502,29 @@ fn engine_history_back() {
 
 // --- the router ---
 
-fn router_page(routes: []Route, p: RouterProps, path: string) {
-    let mut i = 0
-    while i < routes.len {
-        if match_route(routes[i].pattern, path) == 1 {
-            let params = Params { keys: match_keys(), vals: match_vals() }
-            apply_title(routes[i].meta(params))
-            zui.Boundary(fn() { routes[i].build(params) }, fn(msg) { p.error(msg) })
-            return
-        }
-        i = i + 1
+/// Mount the page for the resolved route (`cur_index` / `cur_params`).
+fn router_page(p: RouterProps) {
+    if cur_index < 0 {
+        p.not_found()
+        return
     }
-    p.not_found()
+    let i = cur_index
+    let params = cur_params
+    apply_title(cur_routes[i].meta(params))
+    zui.Boundary(fn() { cur_routes[i].build(params) }, fn(msg) { p.error(msg) })
 }
 
 /// The page slot. Put it inside a retained shell: on navigation only this
 /// host rebuilds, so shell state survives. `RouterProps {}` uses the built-in
-/// not-found / error pages.
+/// not-found / error pages. Keyed on `page_key`, which `set_path` moves for
+/// every navigation except one that keeps a `live` route's page.
 fn Router(routes: []Route, p: RouterProps) -> Node {
     ensure_path()
+    cur_routes = routes
+    resolve(cur_path.get())
     if initial_loads_done == 0 {
         initial_loads_done = 1
         start_loaders(cur_path.get())
     }
-    return zui.Match(cur_path, fn(path) { router_page(routes, p, path) })
+    return zui.Match(page_key, fn(k: int) { router_page(p) })
 }

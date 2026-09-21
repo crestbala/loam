@@ -1,0 +1,108 @@
+// The page slot is keyed on the matched route, not the path. A `live` route
+// keeps its page across a params-only navigation: the page reads the param
+// through `router.param_live`, a signal read, so the label follows the slug
+// while the page's nodes (and any state they hold) survive. A route that takes
+// `Params` by value still rebuilds on every navigation — a snapshot must — and
+// leaving a live route and coming back rebuilds it too.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+import "std:router"
+
+let mut live_builds: int = 0
+let mut snap_builds: int = 0
+let mut live_label: int = 0
+
+fn Home(p: Params) {
+    zeus.Text("home")
+}
+
+fn slug_live() -> string {
+    return router.param_live("slug")
+}
+
+/// Reads the slug live; never touches `p`.
+fn PostLive(p: Params) {
+    live_builds = live_builds + 1
+    let t = zeus.Text("post {{slug_live()}}")
+    live_label = t.id
+}
+
+/// Takes the name as a snapshot.
+fn UserSnap(p: Params) {
+    snap_builds = snap_builds + 1
+    let name = router.param(p, "name")
+    zeus.Text("user {{name}}")
+}
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn main() {
+    zeus.snapshot(240, 160, fn() -> Node {
+        zeus.Box(align_direction = DIRECTION.Column) {
+            zeus.Text("shell")
+            router.Router([]Route {
+                Route { pattern: "/", build: Home },
+                Route { pattern: "/post/:slug", build: PostLive, live: true },
+                Route { pattern: "/user/:name", build: UserSnap },
+            }, RouterProps {})
+        }
+    })
+    must(zeus.engine_find_text("home") != 0, "initial route")
+
+    // Live route: the first visit builds the page.
+    router.navigate("/post/alpha")
+    zeus.engine_layout(240, 160)
+    must(zeus.engine_find_text("post alpha") != 0, "live page mounted")
+    must(live_builds == 1, "live page built once")
+    let label0 = live_label
+
+    // Params-only navigation: the label follows, the page is not rebuilt.
+    router.navigate("/post/beta")
+    zeus.engine_layout(240, 160)
+    must(zeus.engine_find_text("post beta") != 0, "live page followed the slug")
+    must(zeus.engine_find_text("post alpha") == 0, "and dropped the old one")
+    must(live_builds == 1, "a params-only navigation did not rebuild the live page")
+    must(live_label == label0, "the live page's node survived")
+    must(zeus.engine_find_text("shell") != 0, "shell retained")
+
+    // Snapshot route: every navigation rebuilds.
+    router.navigate("/user/ann")
+    zeus.engine_layout(240, 160)
+    must(zeus.engine_find_text("user ann") != 0, "snapshot page mounted")
+    must(snap_builds == 1, "snapshot page built")
+    router.navigate("/user/bob")
+    zeus.engine_layout(240, 160)
+    must(zeus.engine_find_text("user bob") != 0, "snapshot page followed the param")
+    must(zeus.engine_find_text("user ann") == 0, "by rebuilding")
+    must(snap_builds == 2, "a params-only navigation rebuilt the snapshot page")
+
+    // Back to the live route from elsewhere: a fresh build, current params.
+    router.navigate("/post/gamma")
+    zeus.engine_layout(240, 160)
+    must(zeus.engine_find_text("post gamma") != 0, "live page remounted with the new slug")
+    must(live_builds == 2, "returning to a live route rebuilds it")
+
+    // History back lands on the same live route: still no rebuild.
+    router.back()
+    zeus.engine_layout(240, 160)
+    must(zeus.engine_find_text("user bob") != 0, "back to the snapshot route")
+    router.back()
+    zeus.engine_layout(240, 160)
+    must(zeus.engine_find_text("user ann") != 0, "back again")
+    must(snap_builds == 4, "each back rebuilt the snapshot page")
+
+    // `param_live` outside a reactive scope is just the current params.
+    must(router.param_live("name") == "ann", "param_live reads the current params")
+    must(router.param_live("slug") == "", "and is empty for a param the route lacks")
+
+    fmt.println("router live ok")
+}
