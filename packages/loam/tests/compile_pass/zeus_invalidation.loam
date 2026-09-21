@@ -1,6 +1,10 @@
 // Phase 4 + 5: a paint-only property write marks exactly the node it wrote and
-// skips layout; a layout property write re-solves a subtree when the box is
-// size-stable, and the whole tree when it is not.
+// skips layout; a layout property write re-solves a subtree when it lands
+// inside a box the change cannot move, and the whole tree when it does not.
+//
+// The written box sits inside a fixed-size card. The card is the boundary: the
+// box itself is not, because the write changed the very size its parent lays
+// it out from (a sibling after it would have to move — see zeus_layout_scope).
 
 import "std:fmt"
 import "std:sys"
@@ -20,10 +24,12 @@ fn main() {
     let wd = zeus.signal(50)
     let mut box_id = 0
     zeus.root(zeus.Box(padding = 10) {
-        let b = zeus.Box(width = 50, height = 20, background = "#ff0000")
-        box_id = b.id
-        zeus.styled(b, || { zeus.set_prop_int(b, zeus.SET.Opacity, op.get()) })
-        zeus.styled(b, || { zeus.set_prop_int(b, zeus.SET.Width, wd.get()) })
+        zeus.Box(width = 200, height = 100, background = "#ffffff") {
+            let b = zeus.Box(width = 50, height = 20, background = "#ff0000")
+            box_id = b.id
+            zeus.styled(b, || { zeus.set_prop_int(b, zeus.SET.Opacity, op.get()) })
+            zeus.styled(b, || { zeus.set_prop_int(b, zeus.SET.Width, wd.get()) })
+        }
     })
     zeus.pump_frame()
     must(zeus.damage_full() == 1, "a layout frame damages the whole surface")
@@ -38,11 +44,11 @@ fn main() {
     must(zeus.damage_count() >= 1, "the written node contributed damage")
     must(zeus.node_width(box_id) == 50, "opacity left the width alone")
 
-    // Layout: width. The box is explicit, so a width write re-solves its own
-    // subtree (phase 5) and damages only it.
+    // Layout: width. The card around the box is explicit, so a width write
+    // re-solves the card's subtree (phase 5) and damages only it.
     wd.set(80)
     zeus.engine_layout(240, 160)
-    must(zeus.layout_was_full() == 0, "a width write on a size-stable box re-solves a subtree")
+    must(zeus.layout_was_full() == 0, "a width write inside a size-stable box re-solves a subtree")
     must(zeus.node_width(box_id) == 80, "the width landed")
     zeus.engine_paint()
     must(zeus.damage_full() == 0, "the subtree re-solve damages locally")

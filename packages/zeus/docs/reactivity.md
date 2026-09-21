@@ -31,6 +31,16 @@ commit per phase. Line anchors are for the tree at `feat/zeus-upgrade-v2`.
   layout. `Each` and `For` were already one keyed engine (phase 3). What remains
   coarse by design: a write the engine cannot attribute still rebuilds, and a
   structural change still rebuilds the host it lands in.
+- **A host's signal was unattributable.** `Match` / `For` / `Index` read their
+  signal from a refresh hook, not an effect, so a write to it was a write nothing
+  consumed: paint-only, or — when a paint effect elsewhere also read it — consumed
+  by that effect, and the host never ran (the router's page slot did not swap).
+  **Phase 12:** the host binds itself to the signal (`arena.bind_host`); a write
+  is attributed to it, the frame runs the hooks, and a host that rebuilds marks
+  itself. The frame no longer pre-judges which hosts are stale (`refit_stale`
+  compared a width against a field that held a signal generation for every host
+  but refit); every hook returns early on its own, and a second layout runs only
+  when a host marked one.
 - **`Each` is not reactive.** It was a plain one-shot loop (`atoms.loam:201-206`).
   Phase 3 makes `Each` the reactive keyed list and moves the static loop to
   `Loop`. A positional list cannot reconcile correctly without value equality
@@ -49,7 +59,19 @@ commit per phase. Line anchors are for the tree at `feat/zeus-upgrade-v2`.
   tree (`zeus.loam:381-397`). **Phase 5:** a measure cache invalidated only along
   the written node's path, and a re-solve of the nearest size-stable ancestor's
   subtree. It falls back to a whole-tree solve when no such ancestor exists, a
-  write sits inside a scroller, or a floater is anchored.
+  write sits inside a scroller, or a floater is anchored. **Phase 12:** the
+  boundary is the nearest ancestor whose *box* the change cannot have moved, per
+  axis: a natural size the re-measure left unchanged, or an axis the parent
+  imposes (a percent width in a column, a cross-axis stretch) when the parent's
+  own box holds — evaluated top-down from the root, whose box is the window. An
+  explicit box is no longer its own boundary when the write changed that size
+  (widening the first box of a row must move the second), and a scroller above
+  the boundary is fine, since its extent (`ext_w` / `ext_h`, kept apart from the
+  natural size) cannot have changed. A structural change — a child attached,
+  dropped, or a keyed list reordered — marks the host it lands in the same way
+  (`arena.mark_tree_at`), so a reorder re-solves only its host. The re-solve
+  repeats the parent's exact call (`x`, `y`, `w`, `lay_h`) and is verified: a box
+  that did not hold falls back to the whole tree.
 - **Dependency-driven paint.** A dirty frame popped the whole draw list and
   re-recorded the visible tree; `damage` optimized the host blit, not the
   traversal. **Phase 10:** the retained list gains a per-node run — everything
@@ -143,6 +165,7 @@ commit per phase. Line anchors are for the tree at `feat/zeus-upgrade-v2`.
 | 9 | B | One write channel: `arena.note_write` is the accounting every state write shares, so a non-`int` write is as targeted as an `int` one instead of draining a frame mark | landed |
 | 10 | B | Dependency-driven paint traversal: per-node draw-op runs, an ancestor paint bit, and a patch path that re-records only the dirty subtrees — with a full record as the fallback when a run's length changes | landed |
 | 11 | A | One model: a `view` app rebuilds only when the tree can have changed, so non-structural frames keep the retained tree and its live effect graph; and the keyed list guards on its signal generation, making an untouched list O(1) per layout | landed |
+| 12 | B | Scoped structural layout: a host binds to its signal so the write is attributed to it; a tree edit marks the host it lands in, not the frame; and `relayout` finds the boundary by whether the box holds (natural size or an imposed axis, top-down), verifies it, and works under a scroller | landed |
 
 Phases 1–3 are additive over the current model: existing `For` / `Index` /
 `VirtualList` keep working while gaining a per-node fast path. Phases 4–7 change

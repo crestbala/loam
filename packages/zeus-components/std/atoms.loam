@@ -459,6 +459,7 @@ fn virt_refresh_var<T>(node_id: int, items: Signal<[]T>, build: fn(int, T), fall
 fn Index<T>(items: Signal<[]T>, build: fn(int, T)) -> Node {
     let n = raw_box()
     let node_id = n.id
+    arena.bind_host(items.id, node_id)
     virtual_refresh(node_id, items, build, 0)
     return Component(n, align_direction = DIRECTION.Column,
                      rebuild = || { virtual_refresh(node_id, items, build, 0) })
@@ -524,6 +525,7 @@ fn kfor_has_id(ids: []int, v: int) -> int {
 fn Each<T>(items: Signal<[]T>, key: fn(T) -> string, build: fn(int, T)) -> Node {
     let n = raw_box()
     let node_id = n.id
+    arena.bind_host(items.id, node_id)
     kfor_refresh(node_id, items, key, build)
     return Component(n, align_direction = DIRECTION.Column,
                      rebuild = || { kfor_refresh(node_id, items, key, build) })
@@ -572,6 +574,10 @@ fn kfor_refresh<T>(node_id: int, items: Signal<[]T>, key: fn(T) -> string, build
                 }
                 arena.nodes[node_id].kids = order
                 arena.nodes[node_id].list_gen = platform.plat_sig_gen(items.id)
+                // Rows moved without any child insert / drop, so nothing has
+                // marked the tree yet; the frame keys its follow-up layout on
+                // that mark.
+                arena.mark_tree_at(node_id)
                 return
             }
         }
@@ -687,6 +693,9 @@ fn kfor_reconcile<T>(node_id: int, xs: []T, key: fn(T) -> string, build: fn(int,
         c = c + 1
     }
     arena.nodes[node_id].kids = order
+    // A remove-only reconcile frees rows without inserting any, and a freed
+    // node does not mark the tree; the host does, so the frame re-lays out.
+    arena.mark_tree_at(node_id)
     return 1
 }
 
@@ -725,6 +734,11 @@ fn kfor_rebuild<T>(node_id: int, xs: []T, key: fn(T) -> string, build: fn(int, T
 fn Match<T>(on: Signal<T>, build: fn(T)) -> Node {
     let n = raw_box()
     let node_id = n.id
+    // A write to `on` swaps the mounted arm. The host's refresh hook is what
+    // reads `on`, not an effect, so bind it: the write is attributed to this
+    // node — a scoped layout, and the frame runs the hooks — instead of being
+    // paint-only (or, read by a paint effect elsewhere, consumed by that).
+    arena.bind_host(on.id, node_id)
     match_build(node_id, on, build)
     return Component(n, align_direction = DIRECTION.Column,
                      rebuild = || { match_refresh(node_id, on, build) })

@@ -515,7 +515,7 @@ fn child(parent: Node, node: Node) -> Node {
     arena.ensure()
     push(arena.nodes[parent.id].kids, node.id)
     arena.nodes[node.id].parent = parent.id
-    arena.mark_tree()
+    arena.mark_tree_at(parent.id)
     return parent
 }
 

@@ -53,6 +53,12 @@ struct UiNode {
     h: int,
     inner_width: int,
     inner_height: int,
+    /// A scroller's content extent, written by layout: how far it can scroll
+    /// is `ext - box`. Kept apart from `inner_*` (the natural size measure
+    /// computes) so a re-measure that skips the scroller's layout — a subtree
+    /// re-solve below it — cannot overwrite the extent it is still using.
+    ext_w: int,
+    ext_h: int,
     node_id: int,
     m_t: int,
     m_r: int,
@@ -72,6 +78,10 @@ struct UiNode {
     /// 0..100 ease of the press overlay. Rest is 0, so DRAW goldens hold.
     aw: int,
     ah: int,
+    /// The height `layout_node` was handed by the parent. `h` may grow past it
+    /// when content overflows (a column, a wrapping row), so a re-solve that
+    /// wants to reproduce the parent's call exactly starts from this, not `h`.
+    lay_h: int,
     /// Smooth wheel scroll: the position eases toward `tgt_x` / `tgt_y` each
     /// frame while the matching `smooth` bit (1 = y, 2 = x) is set. Bounded —
     /// a notch converges in ~150 ms and retargets on the next notch — unlike
@@ -203,11 +213,11 @@ struct UiNode {
     enter_fade: u8,
     safe: u8,
     /// Dirty-channel bits (see `mark_paint` / `mark_layout`). Bit 0 PAINT,
-    /// bit 1 LAYOUT, bit 2 TREE, bit 3 paint-descendant. A node is marked when a
-    /// discrete write or an animation tick changes it; paint drains the marks.
-    /// Bit 3 is set on a node's ancestors when it is paint-marked, so the paint
-    /// pass can tell a subtree it must re-record from one whose retained draw ops
-    /// it can reuse.
+    /// bit 1 queued in `dirty_layout_nodes`, bit 2 `layout.relayout` scratch,
+    /// bit 3 paint-descendant. A node is marked when a discrete write or an
+    /// animation tick changes it; paint drains the marks. Bit 3 is set on a
+    /// node's ancestors when it is paint-marked, so the paint pass can tell a
+    /// subtree it must re-record from one whose retained draw ops it can reuse.
     dirty: u8,
     /// Paint-only reveal: 1 opts in (`enter_reveal`), `an_reveal` is the share
     /// of the laid-out height paint shows, 0..100, clipped from the top with
@@ -388,8 +398,16 @@ let mut chrome_sync_count: int = 0
 // `bind` reads it (a switch's tween is read by the chrome pass, not an effect).
 let mut bind_sig: []int = []int {}
 let mut bind_node: []int = []int {}
-/// A scroller moved: paint-only, but a windowed list's visible window may have
-/// shifted, so the virtual refresh pass must run before paint.
+/// Host consumers of a signal (a `Match` on its tag, a `For` / `Index` on its
+/// items): the host's refresh hook, not an effect, reads the signal, so a write
+/// would otherwise be unattributable and mark the whole frame. Indexed like
+/// `bind_*`; `hosts_for_signal` asks the frame to run the host refresh pass.
+let mut host_sig: []int = []int {}
+let mut host_node: []int = []int {}
+/// The host refresh pass must run this frame: a scroller moved (a windowed
+/// list's visible window may have shifted), or a signal a host rebuilds from
+/// was written (`hosts_for_signal`). Paint-only on its own; a host that does
+/// rebuild marks itself.
 let mut virtual_dirty: int = 0
 /// Node ids whose PAINT bit was set since the last paint. The animation tick
 /// appends here; `scene.paint` drains it. Ids are deduped by the PAINT bit.
@@ -447,14 +465,14 @@ fn blank_node() -> UiNode {
         text: "", bind_sig: 0, click_sig: 0, click_mode: 0, click_set: 0,
         click2_sig: 0, click2_mode: 0, click2_set: 0,
         show_sig: 0, show_mode: 0, show_val: 0, show_on: 1, hover_sig: 0,
-        x: 0, y: 0, w: 0, h: 0, inner_width: 0, inner_height: 0, node_id: 0, pos: 0, overflow: 0,
+        x: 0, y: 0, w: 0, h: 0, inner_width: 0, inner_height: 0, ext_w: 0, ext_h: 0, node_id: 0, pos: 0, overflow: 0,
         opacity: 100, span: 1, grid_cols: 0, grid_min: 0,
         m_t: 0, m_r: 0, m_b: 0, m_l: 0, border_w: 0, border_c: -1,
         gap_row: 0, gap_col: 0, aspect_w: 0, aspect_h: 0,
         wrap: 0, ellipsis: 0, reverse: 0, align_self: -1,
         pin_t: -1, pin_r: -1, pin_b: -1, pin_l: -1,
         z_index: 0, grid_auto: 0, scroll_x: 0, scroll_y: 0, text_width: 0, text_height: 0, pulse: 0, press: 0, press_scale: 0, lift: 0, slot_into: 0, press_amt: 0,
-        aw: 0, ah: 0, bar_t: 0, bar_s: 0, tgt_x: 0, tgt_y: 0, smooth: 0, parent: 0, key_ctx: 0, focusable: 0, capture_text: 0, edit_slot: -1,
+        aw: 0, ah: 0, lay_h: 0, bar_t: 0, bar_s: 0, tgt_x: 0, tgt_y: 0, smooth: 0, parent: 0, key_ctx: 0, focusable: 0, capture_text: 0, edit_slot: -1,
         dirty: 0,
         an_scale: 100, an_tx: 0, an_ty: 0, an_rot: 0, reveal: 0, an_reveal: 100,
         spin_ms: 900, spin: 0,
@@ -921,6 +939,7 @@ fn free_node(id: int) {
         }
     }
     bind_forget(id)
+    host_forget(id)
     push(drop_pool, id)
     nodes[id].kids = []int {}
     nodes[id] = blank_node()
@@ -1007,7 +1026,7 @@ fn drop_children(id: int) {
     }
     nodes[id].kids = []int {}
     flush_drops()
-    mark_tree()
+    mark_tree_at(id)
 }
 
 /// One effect-table sweep for a whole batch of freed nodes, plus the animation
@@ -1147,7 +1166,7 @@ fn child_detach(child: int) -> int {
     }
     nodes[parent].kids = out
     nodes[child].parent = 0
-    mark_tree()
+    mark_tree_at(parent)
     return 1
 }
 
@@ -1193,7 +1212,7 @@ fn child_insert(parent: int, child: int, at: int) -> int {
     }
     nodes[parent].kids = out
     nodes[child].parent = parent
-    mark_tree()
+    mark_tree_at(parent)
     return 1
 }
 
@@ -1333,6 +1352,7 @@ fn forget_sig_meta(signal_id: int) {
     if signal_id < affects_layout.len {
         affects_layout[signal_id] = 0
     }
+    host_forget_sig(signal_id)
 }
 
 // --- targeted invalidation (Phase 4) ---------------------------------------
@@ -1430,6 +1450,90 @@ fn bind_chrome(sig_id: int, node_id: int) {
     push(bind_node, node_id)
 }
 
+/// Register `node_id` as a host that rebuilds from `sig_id`. A write to the
+/// signal is then attributed to the host: its refresh hook runs that frame and
+/// the rebuild marks the host for a scoped layout, instead of the write marking
+/// the frame whole because nothing the tracker knows about consumed it.
+fn bind_host(sig_id: int, node_id: int) {
+    if sig_id <= 0 {
+        return
+    }
+    if node_id <= 0 {
+        return
+    }
+    let n = host_sig.len
+    for i in 0..n {
+        if host_sig[i] == sig_id {
+            if host_node[i] == node_id {
+                return
+            }
+        }
+    }
+    push(host_sig, sig_id)
+    push(host_node, node_id)
+}
+
+/// A write to `sig_id` reached its bound hosts: request the host refresh pass,
+/// where each host's hook sees the new generation and rebuilds — marking
+/// itself, so the layout that follows is scoped to it. Returns how many hosts
+/// are bound — 0 means no host consumes the signal. Nothing is queued for
+/// layout here: the host has not changed yet, and queueing it would re-solve
+/// its subtree once before the hook and once after.
+fn hosts_for_signal(sig_id: int) -> int {
+    let mut hits = 0
+    let n = host_sig.len
+    for i in 0..n {
+        if host_sig[i] == sig_id {
+            let nd = host_node[i]
+            if nd > 0 {
+                if nd < nodes.len {
+                    if nodes[nd].list_fn > 0 {
+                        hits = hits + 1
+                    }
+                }
+            }
+        }
+    }
+    if hits > 0 {
+        virtual_dirty = 1
+    }
+    return hits
+}
+
+/// Drop a freed node's host entries so a recycled id cannot be queued for an
+/// unrelated signal.
+fn host_forget(node_id: int) {
+    let mut i = 0
+    while i < host_node.len {
+        if host_node[i] == node_id {
+            let last = host_node.len - 1
+            host_sig[i] = host_sig[last]
+            host_node[i] = host_node[last]
+            pop(host_sig)
+            pop(host_node)
+        } else {
+            i = i + 1
+        }
+    }
+}
+
+/// Drop a freed signal's host entries so a recycled slot cannot queue a host
+/// for a value it never read.
+fn host_forget_sig(sig_id: int) {
+    let mut i = 0
+    while i < host_sig.len {
+        if host_sig[i] == sig_id {
+            let last = host_sig.len - 1
+            host_sig[i] = host_sig[last]
+            host_node[i] = host_node[last]
+            pop(host_sig)
+            pop(host_node)
+        } else {
+            i = i + 1
+        }
+    }
+}
+
 /// Drop a freed node's bind entry so a recycled id cannot be marked for an
 /// unrelated signal.
 fn bind_forget(node_id: int) {
@@ -1517,15 +1621,19 @@ fn note_write(id: int) {
         }
     }
     // A bound node's tween / selection is read by the chrome pass, not an effect,
-    // so mark those nodes' chrome directly.
+    // so mark those nodes' chrome directly. A host (Match / For / Index) reads
+    // its signal from its refresh hook: ask the frame to run the hooks, and the
+    // host that rebuilds marks itself.
     let bound = chrome_for_signal(id)
+    let hosts = hosts_for_signal(id)
     let mut targeted = 0
     if direct_layout != 0 {
         mark_layout()
     } else if ran > 0 && pw >= ran {
         targeted = 1
-    } else if ran == 0 && bound > 0 {
-        // No effect consumed the write, but a bound node did: targeted too.
+    } else if ran == 0 && (bound > 0 || hosts > 0) {
+        // No effect consumed the write, but a bound node or a host did:
+        // targeted too.
         targeted = 1
     }
     if targeted != 0 {
@@ -2850,15 +2958,80 @@ fn invalidate_path(id: int) {
 /// the root (so a re-measure recomputes it) without forcing a whole-tree
 /// re-solve; `engine_layout` may then re-solve only `id`'s size-stable ancestor.
 fn mark_layout_path(id: int) {
+    queue_layout(id, 0)
+}
+
+/// Queue `id` for `layout.relayout`. `structural` is 1 for a change *under*
+/// the node (its kid list moved) and 0 for a prop write *on* it. The queue
+/// records the difference by sign — a structural entry is `-id` — because a
+/// prop write can change how the parent sizes the node itself (`w_pct`,
+/// `align_self`, a margin), so only a structural entry may resolve to the node
+/// as its own boundary. Queued once per frame: a host that attaches a thousand
+/// rows marks itself a thousand times, and `relayout` should see it once. A
+/// prop write on an already-queued structural entry demotes it.
+fn queue_layout(id: int, structural: int) {
     layout_dirty = 1
-    // The prop landed on this node, so it carries the paint dirt too: a frame
+    if id <= 0 {
+        return
+    }
+    if id >= nodes.len {
+        return
+    }
+    if (int(nodes[id].dirty) & 2) != 0 {
+        if structural == 0 {
+            let n = dirty_layout_nodes.len
+            for i in 0..n {
+                if dirty_layout_nodes[i] == 0 - id {
+                    dirty_layout_nodes[i] = id
+                }
+            }
+        }
+        return
+    }
+    nodes[id].dirty = u8(int(nodes[id].dirty) | 2)
+    // The change landed on this node, so it carries the paint dirt too: a frame
     // that reuses retained ops outside the marked subtrees must re-record this
     // one rather than wait for the layout pass to mark it.
     mark_paint_id(id)
     invalidate_path(id)
-    if id > 0 {
+    if structural != 0 {
+        push(dirty_layout_nodes, 0 - id)
+    } else {
         push(dirty_layout_nodes, id)
     }
+}
+
+/// A structural change under `id`: a child attached, detached or dropped, or
+/// the kid list reordered. Scoped like a layout-prop write — the path to the
+/// root is invalidated and `id` is queued for `layout.relayout`, which finds
+/// the nearest box the change cannot have moved — rather than marking the
+/// whole tree. Inside a host rebuild every attach under the host collapses
+/// onto the host: it is the unit of change, and it is queued once.
+fn mark_tree_at(id: int) {
+    tree_dirty = 1
+    // Hover / press targets may have moved with the structure.
+    chrome_dirty = 1
+    let mut at = id
+    if scope_node > 0 {
+        let mut p = id
+        let mut guard = 0
+        while p > 0 && p < nodes.len {
+            if p == scope_node {
+                at = scope_node
+                break
+            }
+            p = nodes[p].parent
+            guard = guard + 1
+            if guard > 256 {
+                break
+            }
+        }
+    }
+    if at <= 0 || at >= nodes.len {
+        mark_tree()
+        return
+    }
+    queue_layout(at, 1)
 }
 
 /// Scroll moved: repaint now, and let the virtual-list window pass run.
@@ -2917,6 +3090,18 @@ fn take_layout_full() -> int {
 fn take_dirty_layout_nodes() -> []int {
     let out = dirty_layout_nodes
     dirty_layout_nodes = []int {}
+    let n = out.len
+    for i in 0..n {
+        let mut id = out[i]
+        if id < 0 {
+            id = 0 - id
+        }
+        if id > 0 {
+            if id < nodes.len {
+                nodes[id].dirty = u8(int(nodes[id].dirty) & 253)
+            }
+        }
+    }
     return out
 }
 
@@ -2954,10 +3139,11 @@ fn clear_dirty() {
 
 fn alloc_node(kind: int) -> int {
     ensure()
-    mark_tree()
-    // A recycled id must not inherit the previous occupant's span. `mark_tree`
-    // already cleared the flag; the node's own span is overwritten when paint
-    // records it.
+    // No mark here: a node has no effect on the tree until it is attached, and
+    // the attach (`zeusbase.child`, `child_insert`) marks the parent. A recycled
+    // id's stale draw-op span is never read: the parent's paint mark stops the
+    // patch walk above it, and the run it re-records writes the node a fresh
+    // span (`free_node` also drops the spans outright).
     if free_nodes.len > 0 {
         let id = free_nodes[free_nodes.len - 1]
         pop(free_nodes)
@@ -4101,11 +4287,11 @@ fn in_box(id: int, px: int, py: int) -> int {
 }
 
 fn scroll_max(id: int) -> int {
-    return geometry.max2(nodes[id].inner_height - nodes[id].h, 0)
+    return geometry.max2(nodes[id].ext_h - nodes[id].h, 0)
 }
 
 fn scroll_max_x(id: int) -> int {
-    return geometry.max2(nodes[id].inner_width - nodes[id].w, 0)
+    return geometry.max2(nodes[id].ext_w - nodes[id].w, 0)
 }
 
 /// 1 if this scroll node may overflow horizontally (`scroll_xy` / overflow 3).
@@ -4680,8 +4866,8 @@ fn bar_track_h(id: int) -> int {
 fn bar_thumb_h(id: int) -> int {
     let text_height = bar_track_h(id)
     let mut thh = 32
-    if nodes[id].inner_height > 0 {
-        thh = geometry.max2(text_height * nodes[id].h / nodes[id].inner_height, 32)
+    if nodes[id].ext_h > 0 {
+        thh = geometry.max2(text_height * nodes[id].h / nodes[id].ext_h, 32)
     }
     if thh > text_height {
         thh = text_height
@@ -4718,8 +4904,8 @@ fn bar_track_w(id: int) -> int {
 fn bar_thumb_w(id: int) -> int {
     let text_width = bar_track_w(id)
     let mut thw = 32
-    if nodes[id].inner_width > 0 {
-        thw = geometry.max2(text_width * nodes[id].w / nodes[id].inner_width, 32)
+    if nodes[id].ext_w > 0 {
+        thw = geometry.max2(text_width * nodes[id].w / nodes[id].ext_w, 32)
     }
     if thw > text_width {
         thw = text_width
