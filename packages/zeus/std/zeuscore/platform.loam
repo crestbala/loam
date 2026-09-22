@@ -180,10 +180,14 @@ fn plat_history_back() {}
 fn plat_overlay_scroll() -> int {}
 /// Test / host override for `plat_overlay_scroll` (1 = iOS/Android-like).
 fn plat_set_overlay_scroll(on: int) {}
-fn plat_inset_top() -> int {}
-fn plat_inset_right() -> int {}
-fn plat_inset_bottom() -> int {}
-fn plat_inset_left() -> int {}
+/// Host safe-area insets in layout points (notch / home indicator / landscape
+/// inset), written together into `out[0..3]` as top, right, bottom, left.
+///
+/// One call, not four: the four edges are one box, and reading them separately
+/// let a host that updated them between two reads hand layout a torn rectangle.
+/// iOS and Android write these on every frame; tests set them through
+/// `zeus.engine_set_insets` so a layout pass sees a notched viewport.
+fn plat_inset_get(out: &mut []int) {}
 /// Host safe-area insets in layout points (notch / home indicator / landscape
 /// inset). iOS and Android write these every frame; tests set them through
 /// `zeus.engine_set_insets` so a layout pass sees a notched viewport.
