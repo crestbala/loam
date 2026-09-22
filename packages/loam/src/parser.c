@@ -473,12 +473,88 @@ static AstNode *parse_if_expr(Parser *p) {
     return ast_if(cond, thenb, elseb, loc);
 }
 
+/** Does an ident's `<` open a type-argument list for a struct literal?
+ *
+ * Scans forward from the current token for a `>` that closes the angles it
+ * opens, and reports whether a `{` follows. This is what keeps `Pair<int> { … }`
+ * a literal while leaving `if a < b {` a comparison — the latter has no `>`
+ * before its `{`, so the lookahead declines and the `<` stays an operator.
+ *
+ * The parser is a two-token stream (`current` / `peek`), so the lookahead works
+ * on a *copy* of the lexer and throws it away: the real cursor is untouched, and
+ * nothing has to be buffered or un-consumed. */
+static int ident_targs_then_brace(Parser *p) {
+    Lexer scan = *p->lex;
+    Token cur = p->current;
+    Token nxt = p->peek;
+    int depth = 0;
+    int guard = 0;
+    /* Start at the `<`, which is `current` when this is called. */
+    for (;;) {
+        TokenKind k = cur.kind;
+        if (k == TOK_LT) {
+            depth++;
+        } else if (k == TOK_GT) {
+            depth--;
+            if (depth == 0) return nxt.kind == TOK_LBRACE;
+        } else if (k == TOK_LBRACE || k == TOK_SEMICOLON || k == TOK_EOF || k == TOK_RPAREN ||
+                   k == TOK_EQ_EQ || k == TOK_BANG_EQ || k == TOK_COMMA) {
+            /* End of the expression, or the start of a block, before the angles
+               closed: not a type-argument list. */
+            return 0;
+        }
+        if (++guard > 256) return 0;
+        cur = nxt;
+        nxt = lexer_next(&scan);
+    }
+}
+
 /** Literals, ident, parenthesized expr, array lit, or `|x| { }` /
  * `(x) => { }` closure. */
 static AstNode *parse_primary(Parser *p) {
     SourceLoc loc = p->current.loc;
     if (match(p, TOK_IDENT)) {
         char *nm = tok_text(p->previous);
+        /* `Name<targs> { … }` — a generic struct literal.
+         *
+         * The type-argument list has to be consumed here, or `Pair<int> { … }`
+         * reads as `Pair < int > { … }`: the `<` becomes a comparison, the
+         * literal is lost, and the error lands on the `{` as "expected
+         * expression". `ident_targs_then_brace` is what keeps `if a < b {` a
+         * comparison — it only takes the angles when a `{` follows the `>`. */
+        if (p->allow_struct_lit && check(p, TOK_LT) && ident_targs_then_brace(p)) {
+            AstNode **targs = NULL;
+            size_t nt = 0;
+            consume(p, TOK_LT, "expected <");
+            do {
+                AstNode *a = parse_type(p);
+                targs = (AstNode **)realloc(targs, (nt + 1) * sizeof(AstNode *));
+                targs[nt++] = a;
+            } while (match(p, TOK_COMMA));
+            consume(p, TOK_GT, "expected >");
+            match(p, TOK_LBRACE);
+            FieldInit *fi = NULL;
+            size_t fc = 0;
+            while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
+                if (!match(p, TOK_IDENT)) {
+                    error(p, "expected field name");
+                    break;
+                }
+                char *fname = tok_text(p->previous);
+                consume(p, TOK_COLON, "expected : in struct literal");
+                AstNode *v = parse_expr(p);
+                fi = (FieldInit *)realloc(fi, (fc + 1) * sizeof(FieldInit));
+                fi[fc].name = fname;
+                fi[fc].init = v;
+                fc++;
+                if (!match(p, TOK_COMMA)) break;
+            }
+            consume(p, TOK_RBRACE, "expected }");
+            AstNode *lit = ast_struct_lit(nm, fi, fc, loc);
+            lit->as.struct_lit.targs = targs;
+            lit->as.struct_lit.targ_count = nt;
+            return lit;
+        }
         if (p->allow_struct_lit && match(p, TOK_LBRACE)) {
             FieldInit *fi = NULL;
             size_t fc = 0;

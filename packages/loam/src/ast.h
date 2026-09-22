@@ -257,6 +257,10 @@ struct AstNode {
             const char *type_name;
             FieldInit *fields;
             size_t field_count;
+            /* Explicit type arguments on a generic literal (`Pair<int> { … }`).
+               NULL/0 when the literal relies on its expected type instead. */
+            AstNode **targs;
+            size_t targ_count;
         } struct_lit;
         struct {
             AstNode *elem_type;
