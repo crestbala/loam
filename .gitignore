@@ -22,6 +22,7 @@ packages/tooling/editors/zed/extension.wasm
 examples/language/build/
 examples/language/*/build/
 examples/zeus/*/build/
+examples/tour/build/
 examples/zeus/repl/tmp/
 examples/zeus/repl/backend/tmp/
 examples/zeus/repl/frontend/node_modules/
