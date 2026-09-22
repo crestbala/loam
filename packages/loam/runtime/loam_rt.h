@@ -15,10 +15,23 @@
 #ifndef __wasm32__
 #include <time.h>
 #include <setjmp.h>
-/* Recoverable traps (zeus.Boundary). The generated program defines the state
-   (exactly one TU); the zeus seam (zeus_plat.c) sets the `jmp_buf` target and
-   reads the message. A program that does not link that seam leaves it NULL,
-   so a trap still aborts. */
+/* Recoverable traps. A panic that would abort instead winds the stack back to
+   the innermost arm installed through `loam_trap_guard`, which returns the
+   panic message in place of its body's result.
+
+   The state is part of the runtime and the runtime defines it (see the
+   LOAM_RT_DEFINE_JMP block below), not the library that happens to want a
+   recoverable region: `loam_panic` is *here*, so the target it longjmps to has
+   to be here too. Before this moved, the only writer of `loam_jmp_top` in the
+   whole tree was `zeus_plat.c` — a library translation unit owning a runtime
+   symbol, and a panic from any other library silently aborting because nobody
+   had installed an arm.
+
+   Exactly one translation unit defines the storage: the generated program
+   (codegen_c.c emits `#define LOAM_RT_DEFINE_JMP`) on native, and nobody on
+   wasm, where setjmp does not exist and a trap aborts as it always has. An
+   arm leaves the state NULL, so a trap with no guard still aborts. */
+#ifndef __wasm32__
 typedef struct LoamJmp {
     jmp_buf jb;
     struct LoamJmp *prev;
@@ -38,6 +51,7 @@ void loam_jmp_set_msg(const char *msg, int64_t len) {
 extern LoamJmp *loam_jmp_top;
 extern char loam_jmp_msg[512];
 void loam_jmp_set_msg(const char *msg, int64_t len);
+#endif
 #endif
 #endif
 
@@ -482,17 +496,29 @@ static inline int64_t loam_idx(int64_t i, int64_t n, const char *f, int l) {
 }
 
 /* Allocation accounting for the animation proof harness (phase 3). Only a Zeus
-   program turns this on (`-DLOAM_ALLOC_TRACE`): the counter lives in the Zeus
-   runtime, which is what `plat_alloc_count` reads. Every other program keeps
-   the no-op inline. */
+   program turns this on (`-DLOAM_ALLOC_TRACE`): the counter is the runtime's own
+   `loam_alloc_note`, which `zeus.proof_allocs()` reads back through
+   `loam_alloc_count`. Every other program keeps the no-op inline.
+
+   The storage lives here, with the counter it belongs to, and the generated
+   program defines it (`codegen_c.c` emits `#define LOAM_RT_DEFINE_ALLOC` beside
+   the trap state). It used to be defined inside `zeus_plat.c` while this header
+   declared it `extern` — the language runtime's accounting depending on a Zeus
+   translation unit, which is the one inversion docs/boundary.md forbids. */
 #ifdef LOAM_ALLOC_TRACE
+#ifdef LOAM_RT_DEFINE_ALLOC
+int64_t loam_alloc_count = 0;
+#else
 extern int64_t loam_alloc_count;
+#endif
 static inline void loam_alloc_note(size_t sz) {
     (void)sz;
     loam_alloc_count++;
 }
+static inline int64_t loam_alloc_total(void) { return loam_alloc_count; }
 #else
 static inline void loam_alloc_note(size_t sz) { (void)sz; }
+static inline int64_t loam_alloc_total(void) { return 0; }
 #endif
 
 static inline void *loam_new(size_t sz, const char *f, int l) {
@@ -809,6 +835,118 @@ static inline void loam_fn_drop(loam_fn *f) {
     f->env = NULL;
     f->fn = NULL;
 }
+
+/* --- env lifetime: copy a closure env, and drop one -----------------------
+
+   A `fn` value's `env` is a stack record owned by the frame that created the
+   closure, so storing the `loam_fn` alone gives a dangling env the moment that
+   frame returns. `loam_fn_move` only *steals* — it is the move path, and it
+   leaves the source empty. Anything that must keep a `fn` beyond its frame
+   (interning a handler or a reactive thunk, a deferred callback) needs a copy
+   the runtime allocates and the same code later frees.
+
+   These two are that pair, and they are deliberately generic: they say nothing
+   about widgets, handlers, or props, and any library that stores a `fn` value
+   wants exactly this. Each takes and returns the raw env pointer so the caller
+   never has to know whether `loam_fn.env` is a heap record or NULL. */
+static inline void *loam_env_copy(const void *env, int64_t n) {
+    void *p;
+    if (!env || n <= 0) return NULL;
+    p = loam_new((size_t)n, "env.copy", 0);
+    memcpy(p, env, (size_t)n);
+    return p;
+}
+
+static inline void loam_env_drop(void *env) {
+    if (env) free(env);
+}
+
+/* --- recoverable traps ---------------------------------------------------
+
+   Run `build` on the stack of an installed arm. Returns "" when the body
+   completed, else the panic message — the same contract a library-level
+   boundary wants, expressed as one runtime verb rather than as library code in
+   C. Nesting works: the arm chains to the previous target, so the inner-most
+   guard wins and an outer one stays installed.
+
+   On wasm there is no setjmp, so the body runs unprotected and a trap aborts.
+   That is the honest answer for the platform, not a missing implementation: a
+   wasm trap is a host-visible abort either way, and faking recovery over one
+   would cost more than it buys.
+
+   `build`'s env is borrowed, not copied: the call is synchronous, so the frame
+   that owns the env is still live for the whole body. */
+static inline loam_str loam_trap_guard(loam_fn build) {
+    loam_str none;
+    none.ptr = "";
+    none.len = 0;
+    none.own = 0;
+#ifndef __wasm32__
+    LoamJmp b;
+    b.prev = loam_jmp_top;
+    loam_jmp_top = &b;
+    loam_jmp_msg[0] = 0;
+    if (setjmp(b.jb) == 0) {
+        if (build.fn) ((void (*)(void *))build.fn)(build.env);
+        loam_jmp_top = b.prev;
+        return none;
+    }
+    loam_jmp_top = b.prev;
+    {
+        loam_str msg;
+        msg.ptr = loam_jmp_msg;
+        msg.len = (int64_t)strlen(loam_jmp_msg);
+        msg.own = 0;
+        return msg;
+    }
+#else
+    if (build.fn) ((void (*)(void *))build.fn)(build.env);
+    return none;
+#endif
+}
+
+/* --- runtime verbs libraries read ----------------------------------------
+
+   The numbers a UI library needs and should not have to own: the monotonic
+   clock its deadlines run on, the live heap, and the allocation counter above.
+   Each is defined once, here, so a library asks the runtime instead of reaching
+   into a sibling translation unit.
+
+   On wasm the clock and the heap come from the host, which declares the two
+   imports below. Both are declared *once* in this file with their import
+   attributes: the host's own C declares them too, and a second declaration
+   without the attribute makes wasm-ld reject the pair with "import module
+   mismatch for symbol: zeus_js_now_ms" (one object says `zeus`, the other
+   `env`). The `__wasm32__` ordering matters as well — the import block lives
+   further down, so the attribute-bearing declaration is the one that wins. */
+#if defined(__wasm32__)
+/* `zeus_js_now_ms` is the browser's `performance.now` import, whose attribute
+   must appear exactly once for the whole link — the host's own C declares it
+   too, and a second declaration without the attribute makes wasm-ld reject the
+   pair with "import module mismatch for symbol: zeus_js_now_ms" (one object
+   says `zeus`, the other `env`), which is why it is declared here and not
+   redeclared below. `zeus_heap_used` is not an import at all: it is the wasm
+   libc's own allocator statistic (`zeus_wasm_libc.c`). */
+__attribute__((import_module("zeus"), import_name("now_ms")))
+int64_t zeus_js_now_ms(void);
+int32_t zeus_heap_used(void);
+static inline int64_t loam_now_ms(void) { return zeus_js_now_ms(); }
+static inline int64_t loam_heap_used(void) { return (int64_t)zeus_heap_used(); }
+#else
+static inline int64_t loam_now_ms(void) {
+    struct timespec ts;
+#if defined(CLOCK_MONOTONIC)
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+#else
+    clock_gettime(CLOCK_REALTIME, &ts);
+#endif
+    return (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000);
+}
+/* No process footprint on a native host here: the platform layer answers that
+   through its own OS call (mach task_info, /proc), so this stays 0 as the
+   "unknown" answer `plat_mem_kb` documents. */
+static inline int64_t loam_heap_used(void) { return 0; }
+#endif
 
 /* `{{ }}` interpolation. Each piece is converted to a loam_str and the
    pieces are concatenated left to right. Arguments are borrowed (the caller
@@ -1472,9 +1610,9 @@ static inline void loam_fut_store(int64_t id, const void *val, size_t sz) {
 }
 
 #ifdef __wasm32__
-__attribute__((import_module("zeus"), import_name("now_ms")))
-int64_t zeus_js_now_ms(void);
-static inline int64_t loam_async_now_ms(void) { return zeus_js_now_ms(); }
+/* `zeus_js_now_ms` and `zeus_js_heap_used` are declared with their import
+   attributes near `loam_now_ms` above; only the async helpers are added here. */
+static inline int64_t loam_async_now_ms(void) { return loam_now_ms(); }
 static inline void loam_async_sleep(int64_t ms) {
     int64_t t0 = loam_async_now_ms();
     while (loam_async_now_ms() - t0 < ms) {

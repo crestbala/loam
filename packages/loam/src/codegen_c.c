@@ -33,6 +33,8 @@ static int drop_n[64];
 static Type *elem_hook_types[64];
 static int elem_hook_n;
 
+static int struct_targs_concrete(Type *t);
+
 static int elem_hook_id(Type *t) {
     int i;
     if (!t) return 0;
@@ -57,12 +59,22 @@ static void elem_hook_cnames(Type *elem, char *retain, size_t rc, char *release,
 }
 
 /** Pre-register every element type a vec in this program will need a hook for,
- *  so the prototypes can be emitted before any function body references one. */
+ *  so the prototypes can be emitted before any function body references one.
+ *
+ *  Only *concrete* element types: the pool also holds generic shapes like
+ *  `[]Entry<T>` from a library's own body, and registering one of those emitted
+ *  a hook body naming `Entry__T` — a type that is (correctly) never defined,
+ *  because `struct_targs_concrete` skips a param-holding struct. The hook bodies
+ *  are generated after the function loop, where `subst_names` is already cleared,
+ *  so a `T` inside an element type can only ever render as the parameter's own
+ *  name. A monomorphized `[]Entry<int>` is a distinct Type in the pool and
+ *  registers on its own. */
 static void collect_elem_hooks(void) {
     if (!type_string_owns()) return;
     for (size_t i = 0; i < type_pool_count(); i++) {
         Type *t = type_pool_at(i);
-        if (t && t->kind == TY_VEC && t->elem && type_owns_string(t->elem))
+        if (t && t->kind == TY_VEC && t->elem && type_owns_string(t->elem) &&
+            struct_targs_concrete(t->elem))
             elem_hook_id(t->elem);
     }
 }
@@ -2829,7 +2841,11 @@ static void emit_fn(FILE *o, AstNode *fn, int is_main) {
 /** Paste loam_rt.h into the translation unit (fallback includes if missing). */
 static void copy_runtime(FILE *out, const char *rt_path) {
     /* The pasted runtime defines the recoverable-trap state in this TU. */
+    /* The pasted runtime defines its own state in this TU: the recoverable-trap
+       target, and the allocation counter the proof harness reads. Exactly one
+       translation unit may define either, and it is the generated program. */
     fputs("#define LOAM_RT_DEFINE_JMP 1\n", out);
+    fputs("#define LOAM_RT_DEFINE_ALLOC 1\n", out);
     FILE *f = rt_path ? fopen(rt_path, "r") : NULL;
     if (f) {
         char buf[4096];

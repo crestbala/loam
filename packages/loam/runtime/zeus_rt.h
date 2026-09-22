@@ -315,10 +315,7 @@ int64_t loam_zeus_plat_blit(const uint8_t *px, int64_t w, int64_t h, int64_t gen
 void zeus_set_insets(int64_t top, int64_t right, int64_t bottom, int64_t left);
 void zeus_set_overlay_scroll(int64_t on);
 int64_t loam_zeus_plat_overlay_scroll(void);
-int64_t loam_zeus_plat_inset_top(void);
-int64_t loam_zeus_plat_inset_right(void);
-int64_t loam_zeus_plat_inset_bottom(void);
-int64_t loam_zeus_plat_inset_left(void);
+void loam_zeus_plat_inset_get(loam_vec *out);
 
 /* packages/zeus/std/zeuscore/platform.loam FFI (aliases of loam_zeus_plat_*). */
 void loam_platform_plat_run(void);
@@ -426,11 +423,8 @@ void loam_platform_plat_history_replace(loam_str path);
 void loam_platform_plat_history_back(void);
 int64_t loam_platform_plat_overlay_scroll(void);
 void loam_platform_plat_set_overlay_scroll(int64_t on);
-int64_t loam_platform_plat_inset_top(void);
-int64_t loam_platform_plat_inset_right(void);
-int64_t loam_platform_plat_inset_bottom(void);
+void loam_platform_plat_inset_get(loam_vec *out);
 int64_t loam_platform_plat_alloc_count(void);
-int64_t loam_platform_plat_inset_left(void);
 void loam_platform_plat_set_insets(int64_t top, int64_t right, int64_t bottom,
                                   int64_t left);
 
