@@ -93,6 +93,7 @@
 
 import "zeuscore/geometry.loam"
 import "zeuscore/platform.loam"
+import "zeuscore/memory.loam"
 import "zeuscore/arena.loam"
 import "zeuscore/raster.loam"
 import "zeuscore/atlas.loam"

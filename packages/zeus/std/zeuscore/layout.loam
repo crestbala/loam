@@ -1198,10 +1198,14 @@ fn layout(width: int, height: int) {
     if height > 0 {
         arena.win_h = height
     }
-    arena.safe_t = platform.plat_inset_top()
-    arena.safe_r = platform.plat_inset_right()
-    arena.safe_b = platform.plat_inset_bottom()
-    arena.safe_l = platform.plat_inset_left()
+    // The whole safe-area box in one read (platform.loam `plat_inset_get`):
+    // four calls could observe a host that updated them mid-pass.
+    let mut insets = []int { 0, 0, 0, 0 }
+    platform.plat_inset_get(insets)
+    arena.safe_t = insets[0]
+    arena.safe_r = insets[1]
+    arena.safe_b = insets[2]
+    arena.safe_l = insets[3]
     if arena.root_id <= 0 {
         return
     }

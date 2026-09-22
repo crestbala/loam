@@ -1,0 +1,91 @@
+// The cell store, in Loam: the substrate a signal's value lives in.
+//
+// This is the layer that used to be `ZeusCell` in `zeus_plat.c` — a `malloc`'d
+// buffer per signal, a `memcmp` to detect change, and a free-list. The port to
+// Loam changed one behaviour deliberately, and this test pins it: writing a
+// value a signal already holds is a **no-op**, which for a `string` is a fix
+// (the old `memcmp` compared the `loam_str {ptr,len,own}` struct, so equal text
+// in a different buffer always counted as a write and re-ran every effect).
+import "std:zeus"
+import "std:fmt"
+
+fn main() {
+    // --- int ---
+    let mut i: Cell = zeus.cell_new_int(7)
+    must(zeus.cell_get_int(i) == 7, "a fresh int cell reads back its value")
+    must(zeus.cell_write_int(&mut i, 8) == 1, "a moved int writes")
+    must(zeus.cell_get_int(i) == 8, "the write is visible")
+    must(zeus.cell_write_int(&mut i, 8) == 0, "writing the same int is a no-op")
+
+    // --- string ---
+    let mut s: Cell = zeus.cell_new_str("ada")
+    must(zeus.cell_get_str(s) == "ada", "a fresh string cell reads back its value")
+    must(zeus.cell_write_str(&mut s, "bob") == 1, "a moved string writes")
+    must(zeus.cell_get_str(s) == "bob", "the string write is visible")
+    // The fix: equal text is a no-op even though the buffer may differ.
+    must(zeus.cell_write_str(&mut s, "bob") == 0,
+         "writing an equal string is a no-op (not a memcmp of the header)")
+
+    // --- bool ---
+    let mut b: Cell = zeus.cell_new_bool(true)
+    must(zeus.cell_get_bool(b) == true, "a fresh bool cell reads back its value")
+    must(zeus.cell_write_bool(&mut b, false) == 1, "a flipped bool writes")
+    must(zeus.cell_write_bool(&mut b, false) == 0, "writing the same bool is a no-op")
+
+    // --- float ---
+    let mut f: Cell = zeus.cell_new_float(1.5)
+    must(zeus.cell_write_float(&mut f, 2.5) == 1, "a moved float writes")
+    must(zeus.cell_write_float(&mut f, 2.5) == 0, "writing the same float is a no-op")
+
+    // --- list ---
+    // `Signal<[]T>` is a real instantiation kind in the tree (18 uses), and the
+    // value is a *heap handle*: the cell must retain the buffer on write and
+    // release it on the overwrite, which is the `copy_vec` case the C codegen
+    // used to emit. Covered here because a scalar-only cell store would pass
+    // every other assertion in this file and still corrupt a list signal.
+    let mut l: Cell = zeus.cell_new_list_int([]int { 1, 2, 3 })
+    let back = zeus.cell_get_list_int(l)
+    must(back.len == 3, "a fresh list cell reads back its length")
+    must(back[0] == 1, "and its first element")
+    must(zeus.cell_write_list_int(&mut l, []int { 4, 5 }) == 1, "a moved list writes")
+    must(zeus.cell_get_list_int(l).len == 2, "the list write is visible")
+
+    // --- list identity/lifetime ---
+    // The dangling case: the caller's buffer dies, the cell must keep it alive.
+    // Written through a helper so the drop really happens before the read.
+    let mut keep: Cell = zeus.cell_new_list_int([]int { 9 })
+    zeus.cell_write_list_int(&mut keep, make_list())
+    let survived = zeus.cell_get_list_int(keep)
+    must(survived.len == 2, "a written list outlives the caller's buffer")
+    must(survived[1] == 42, "and its contents are intact")
+
+    // Re-writing an equal list is a no-op, like an equal string.
+    must(zeus.cell_write_list_int(&mut keep, []int { 0, 42 }) == 0,
+         "writing an equal list is a no-op")
+
+    // --- release ---
+    zeus.cell_drop(&mut i)
+    zeus.cell_drop(&mut s)
+    zeus.cell_drop(&mut b)
+    zeus.cell_drop(&mut f)
+    zeus.cell_drop(&mut l)
+    zeus.cell_drop(&mut keep)
+    must(i.id == 0, "a dropped cell is empty")
+
+    fmt.println("zeus-cell ok")
+}
+
+fn must(cond: bool, msg: string) {
+    if cond == false {
+        fmt.println("FAIL ", msg)
+        panic(msg)
+    }
+}
+
+/// A list built and returned from a callee, so its buffer's original owner is
+/// gone by the time the cell holds it — the case a signal must survive.
+fn make_list() -> []int {
+    let mut v = []int { 0 }
+    push(v, 42)
+    return v
+}

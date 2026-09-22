@@ -1329,6 +1329,7 @@ fn rollback(id: int, m: ArenaMark) {
     release(m)
 }
 
+
 /// Mark `signal_id` as layout-affecting: a later write re-runs the layout solve.
 fn mark_sig_layout(signal_id: int) {
     if signal_id <= 0 {

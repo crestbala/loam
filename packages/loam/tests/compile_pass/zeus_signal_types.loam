@@ -2,6 +2,14 @@ import "std:fmt"
 import "std:sys"
 import "std:zeus"
 
+/// A user's own Copy struct. `Signal<T>` claims `T` may be "a Copy struct"
+/// (structs.loam), so this is the case the API promises and the one worth
+/// pinning: reactivity over a type the *engine* has never heard of.
+struct Point {
+    x: int,
+    y: int,
+}
+
 fn fail() {
     sys.exit(1)
 }
@@ -22,4 +30,27 @@ fn main() {
     expect(n.get(), 7)
     n.set(n.get() + 1)
     expect(n.get(), 8)
+
+    // --- a struct payload ---------------------------------------------------
+    let p = zeus.signal(Point { x: 1, y: 2 })
+    expect(p.get().x, 1)
+    expect(p.get().y, 2)
+    p.set(Point { x: 3, y: 4 })
+    expect(p.get().x, 3)
+    expect(p.get().y, 4)
+
+    // --- an effect over a struct signal -------------------------------------
+    // The reactive half, not just the storage half: an effect that reads a
+    // struct signal must re-run exactly when the struct actually changes.
+    let seen = zeus.signal(0)
+    let watched = zeus.signal(Point { x: 0, y: 0 })
+    zeus.effect(|| {
+        let cur = watched.get()
+        seen.set(cur.x)
+    })
+    expect(seen.get(), 0)
+    watched.set(Point { x: 9, y: 9 })
+    expect(seen.get(), 9)
+
+    fmt.println("zeus-signal-types ok")
 }

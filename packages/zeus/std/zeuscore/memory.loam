@@ -1,0 +1,308 @@
+//! memory — the byte store a signal cell lives in, in Loam.
+//!
+//! A signal holds a `T` whose layout only the compiler knows: 4 bytes for an
+//! `int` (i32), 16 for a `string` or a `[]U`, a struct's size for a Copy struct.
+
+import "platform.loam"
+
+//! The language already provides the pair that makes this possible without the
+//! engine ever naming a type:
+//!
+//!   `__sig_push(value)`  — allocate a cell holding `value`
+//!   `__sig_load(id)`     — typed read; `T` comes from the call site
+//!   `__sig_store(id, v)` — typed write; retains a string / vec payload
+//!   `__sizeof(value)`    — byte width of `T`, a compile-time constant
+//!
+//! Because `typecheck.c` substitutes `T` (`typecheck_subst`) when it
+//! monomorphizes a generic, those builtins inside a generic body already know
+//! whether they are moving a `string` (take a reference) or an `int` (plain
+//! bytes). A cell therefore needs no type tag and no per-type copy of any
+//! machinery: the type is a compile-time property of the call site, and what is
+//! left for the engine is only the bookkeeping that is *not* typed.
+//!
+//! What used to live in C: a `ZeusCell` array with `malloc`/`memcpy`/`free`, a
+//! per-slot `owns_str` flag, a free-list of reusable ids, and the generation
+//! counter. All of that was policy, and it is now here. C keeps only the
+//! language runtime's allocator, reached through the four `rt_mem_*` bindings —
+//! untyped, and naming no widget, no signal, and no Zeus concept.
+
+/// Allocate `n` bytes. Never returns 0 for a positive `n`.
+fn rt_mem_new(n: int) -> int {}
+/// Release a buffer from `rt_mem_new`. Safe on 0.
+fn rt_mem_free(p: int) {}
+/// Write the bytes of `src` at `offset` in the buffer.
+fn rt_mem_write(p: int, offset: int, src: &[]u8) {}
+/// Read `n` bytes at `offset` into `dst`.
+fn rt_mem_read(p: int, offset: int, n: int, dst: &mut []u8) {}
+/// 1 when the `src` bytes equal those at `offset`.
+fn rt_mem_eq(p: int, offset: int, src: &[]u8) -> int {}
+
+/// A signal's storage, as the engine sees it: the id of the cell holding the
+/// value, plus the two facts that have no type.
+///
+/// The value is *not* held here. It lives in the cell the id names, written and
+/// read through the compiler's typed builtins, so nothing in this struct has to
+/// know what `T` is.
+struct Cell {
+    /// Cell id, or 0 for a reserved-but-unbound slot — `computed<T>` reserves
+    /// its output before the first pull, because `T` may be a struct or a list
+    /// with no nameable default.
+    id: int,
+    /// `__sizeof(T)` of the payload currently bound. Kept so a write of the same
+    /// width may compare values, and so a rebind at a different width knows the
+    /// old payload has a different shape.
+    n: int,
+    /// Bumped on every write that moved the value. `computed<T>` samples it to
+    /// tell a real change from a notification carrying the same value.
+    gen: int,
+}
+
+/// A cell holding `value`. `T` is inferred from the argument, so the width is
+/// the compiler's answer and nothing has to be declared.
+fn cell_new<T>(value: T) -> Cell {
+    return Cell { id: __sig_push(value), n: __sizeof(value), gen: 1 }
+}
+
+/* The per-kind constructors. `cell_new` already infers `T` from its argument,
+   so these are the readable spelling of the same thing — and they are what the
+   `Signal<T>` rewiring calls, which keeps one name per kind across the whole
+   surface (`cell_new_str` / `cell_get_str` / `cell_write_str`). */
+fn cell_new_int(value: int) -> Cell { return cell_new(value) }
+fn cell_new_str(value: string) -> Cell { return cell_new(value) }
+fn cell_new_bool(value: bool) -> Cell { return cell_new(value) }
+fn cell_new_float(value: float) -> Cell { return cell_new(value) }
+
+/// A cell id reserved with nothing bound yet.
+fn cell_reserve(id: int) -> Cell {
+    return Cell { id: id, n: 0, gen: 0 }
+}
+
+/// Read a cell's value.
+///
+/// One function per kind, and each spells `__sig_load` directly — a thin generic
+/// forwarder cannot work here, because `cell_get<T>(c)` has nothing to infer `T`
+/// from: a return position does not drive inference ("cannot infer type parameter
+/// 'T'"). So the kind is named at the binding, which is exactly what the compiler
+/// used to do for `__sig_load` when it emitted the typed call itself.
+///
+/// `get_str` retains: a read hands out another reference to the cell's payload,
+/// exactly as `__sig_load` on a `string` did.
+fn cell_get_int(c: Cell) -> int {
+    return __sig_load(c.id)
+}
+
+fn cell_get_str(c: Cell) -> string {
+    return __sig_load(c.id)
+}
+
+fn cell_get_bool(c: Cell) -> bool {
+    return __sig_load(c.id)
+}
+
+fn cell_get_float(c: Cell) -> float {
+    return __sig_load(c.id)
+}
+
+/// Is the cell already holding a value equal to `value`? One per kind.
+///
+/// The old C side answered this with `memcmp` over the bound bytes, which was
+/// correct for an `int` and **wrong for a `string`**: the payload is a
+/// `loam_str { ptr, len, own }`, so two equal texts in different buffers
+/// compared unequal and every write of an equal string re-ran its effects.
+/// Comparing the *value* is both the fix and the smaller thing to do — a struct
+/// with padding has no meaningful byte comparison at all.
+///
+/// A bare `T` could do this, but only where the caller binds `T`; named per
+/// kind, the comparison is the language's own `==` at a concrete type, which is
+/// the same rule `cell_write` needs.
+fn cell_same_int(id: int, value: int) -> int {
+    let held: int = __sig_load(id)
+    if held == value {
+        return 1
+    }
+    return 0
+}
+
+fn cell_same_str(id: int, value: string) -> int {
+    let held: string = __sig_load(id)
+    if held == value {
+        return 1
+    }
+    return 0
+}
+
+fn cell_same_bool(id: int, value: bool) -> int {
+    let held: bool = __sig_load(id)
+    if held == value {
+        return 1
+    }
+    return 0
+}
+
+fn cell_same_float(id: int, value: float) -> int {
+    let held: float = __sig_load(id)
+    if held == value {
+        return 1
+    }
+    return 0
+}
+
+/// The store itself, after the caller has decided the value moved. Kept generic
+/// because `__sig_store` needs `T` — and here `T` *is* bound by the `value`
+/// argument, which is the one place a generic cell helper can exist at all.
+fn cell_write_impl<T>(c: &mut Cell, value: T, n: int) -> int {
+    __sig_store(c.id, value)
+    c.n = n
+    c.gen = c.gen + 1
+    return 1
+}
+
+/// Write a value into a cell; 1 when the payload moved (0 means "it already held
+/// this value", and the caller must then NOT notify).
+///
+/// Like the readers, each kind names its own comparison. A single generic writer
+/// cannot infer `T` through a forwarder — only at a call where the argument is
+/// present — so the readable per-kind names are the interface.
+fn cell_write_int(c: &mut Cell, value: int) -> int {
+    let n = __sizeof(value)
+    if c.gen != 0 && c.n == n && c.id != 0 {
+        if cell_same_int(c.id, value) != 0 {
+            return 0
+        }
+    }
+    return cell_write_impl(c, value, n)
+}
+
+fn cell_write_str(c: &mut Cell, value: string) -> int {
+    let n = __sizeof(value)
+    if c.gen != 0 && c.n == n && c.id != 0 {
+        if cell_same_str(c.id, value) != 0 {
+            return 0
+        }
+    }
+    return cell_write_impl(c, value, n)
+}
+
+fn cell_write_bool(c: &mut Cell, value: bool) -> int {
+    let n = __sizeof(value)
+    if c.gen != 0 && c.n == n && c.id != 0 {
+        if cell_same_bool(c.id, value) != 0 {
+            return 0
+        }
+    }
+    return cell_write_impl(c, value, n)
+}
+
+fn cell_write_float(c: &mut Cell, value: float) -> int {
+    let n = __sizeof(value)
+    if c.gen != 0 && c.n == n && c.id != 0 {
+        if cell_same_float(c.id, value) != 0 {
+            return 0
+        }
+    }
+    return cell_write_impl(c, value, n)
+}
+
+/* --- list cells -----------------------------------------------------------
+ *
+ * `Signal<[]T>` is a real instantiation kind (the tree has 18 of them), and its
+ * value is a **heap handle**, not bytes. Lifetime is *not* this module's job:
+ * codegen's `__sig_store` already retains the buffer it binds and drops the one
+ * it replaces, and `__sig_load` already retains what it hands out
+ * (`type_is_copy_vec`, codegen_c.c:2261-2291). Those builtins are per-instantiation,
+ * so they see the real `[]T` — which is exactly the knowledge this module does
+ * not have.
+ *
+ * What is left for the engine is only the width, which is why these are thin:
+ * the cell still needs `n` so a rebind at a different shape is detected.
+ *
+ * Change detection compares elements by value, so re-writing an equal list is a
+ * no-op — the same contract as an equal `string`, and for the same reason: the
+ * question a signal asks is "is this the same state?", not "is this the same
+ * buffer". A `[]T` is not `==`-comparable in this language, so the element
+ * comparison is written out below. */
+
+fn cell_new_list_int(value: []int) -> Cell {
+    return Cell { id: __sig_push(value), n: __sizeof(value), gen: 1 }
+}
+
+fn cell_new_list_str(value: []string) -> Cell {
+    return Cell { id: __sig_push(value), n: __sizeof(value), gen: 1 }
+}
+
+fn cell_get_list_int(c: Cell) -> []int {
+    return __sig_load(c.id)
+}
+
+fn cell_get_list_str(c: Cell) -> []string {
+    return __sig_load(c.id)
+}
+
+fn cell_write_list_int(c: &mut Cell, value: []int) -> int {
+    let n = __sizeof(value)
+    if c.gen != 0 && c.n == n && c.id != 0 {
+        let held: []int = __sig_load(c.id)
+        if same_list_int(held, value) != 0 {
+            return 0
+        }
+    }
+    return cell_write_impl(c, value, n)
+}
+
+fn cell_write_list_str(c: &mut Cell, value: []string) -> int {
+    let n = __sizeof(value)
+    if c.gen != 0 && c.n == n && c.id != 0 {
+        let held: []string = __sig_load(c.id)
+        if same_list_str(held, value) != 0 {
+            return 0
+        }
+    }
+    return cell_write_impl(c, value, n)
+}
+
+/// Element-wise equality for a list signal's change check. Lengths first (that
+/// is what makes the element loop safe), then each element by value.
+///
+/// Not the language's `==` (a `[]T` is not comparable by value here), and not
+/// raw bytes either: a `[]int` buffer compare would be right, but comparing
+/// `[]string` handles would be wrong for the same reason the old string
+/// `memcmp` was. Comparing elements by value answers the question the signal
+/// actually asks — "is this the same state?" — so re-writing an equal list is a
+/// no-op, just as re-writing an equal string is.
+fn same_list_int(a: []int, b: []int) -> int {
+    if a.len != b.len {
+        return 0
+    }
+    let mut i = 0
+    while i < a.len {
+        if a[i] != b[i] {
+            return 0
+        }
+        i = i + 1
+    }
+    return 1
+}
+
+fn same_list_str(a: []string, b: []string) -> int {
+    if a.len != b.len {
+        return 0
+    }
+    let mut i = 0
+    while i < a.len {
+        if a[i] != b[i] {
+            return 0
+        }
+        i = i + 1
+    }
+    return 1
+}
+
+fn cell_drop(c: &mut Cell) {
+    if c.id == 0 {
+        return
+    }
+    plat_sig_free(c.id)
+    c.id = 0
+    c.n = 0
+    c.gen = 0
+}
