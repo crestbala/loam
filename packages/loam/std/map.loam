@@ -1,0 +1,320 @@
+//! map — an open-addressing hash map, in Loam.
+//!
+//! `[]T` with `push`/`pop` covers the vector case; nothing in the language was
+//! keyed, and the engine needs keyed state (signal metadata, the intern table,
+//! route params). This is that container.
+//!
+//! Shape: open addressing with linear probing over a flat `[]Entry`, power-of-two
+//! capacity, tombstones for deletion, and a 0.75 load factor — one allocation,
+//! no per-entry pointer chase, and the only layout `[]T` can express without a
+//! per-node box.
+//!
+//! Four language facts shape this API, all of the same kind (a type parameter
+//! carries no default, no bound, no `Eq`, and no nameable lifetime):
+//!
+//! * `map_new<T>(absent: T)` **takes** the value meaning "not here", because no
+//!   default `T` is nameable — the same reason `std:thread`'s `chan<T>(cap, init)`
+//!   takes one.
+//! * Keys are `string` and the table does **not** own them: retention outside a
+//!   signal cell is not expressible, so a key must outlive its entry.
+//! * Readers take `&mut Map<T>`: this language does not coerce a `&mut` argument
+//!   to a shared one at a call, so a helper reached from `map_put` must accept
+//!   the borrow its caller already holds.
+//! * A generic struct literal cannot stand mid-expression (`Map<T> { … }` parses
+//!   as a block), so construction goes through named helpers.
+//!
+//! Lookups compare keys **by content**, never by pointer — see `hash_str`.
+
+import "std:fmt"
+
+/// One slot. `used` 0 = unwritten, 1 = live, 2 = tombstone. A tombstone keeps
+/// probing alive after a delete, so a lookup that would have passed through the
+/// freed slot still reaches the entry beyond it.
+struct Entry<T> {
+    used: int,
+    hash: int,
+    key: string,
+    value: T,
+}
+
+struct Map<T> {
+    entries: []Entry<T>,
+    /// Live entries. Compared against three quarters of capacity.
+    len: int,
+    /// Live + tombstones: the count that decides whether growth helps.
+    filled: int,
+    /// What `get` returns for a missing key (see the header).
+    absent: T,
+}
+
+/// FNV-1a over the key's bytes, reduced to what a checked i32 multiply allows.
+///
+/// Content, not address: a key built at run time must find the entry a literal
+/// stored. Hashing the `loam_str` header would miss — the same class of bug as
+/// the `memcmp` that compared `loam_str` headers instead of text.
+///
+/// Loam's `int` is i32 and multiplication is **checked** — it traps on overflow
+/// rather than wrapping — so the FNV prime cannot be applied to a full-width
+/// accumulator. The product is computed in `i64` and folded back down, which is
+/// the only way to keep real FNV mixing without tripping the check. The fold is
+/// what makes it a 26-bit hash: enough spread for a table of tens of keys, and a
+/// trap inside a lookup would be far worse than a few extra collisions.
+fn hash_str(s: string) -> int {
+    let mut h: i64 = 531216261
+    let mut i = 0
+    while i < s.len {
+        h = h ^ i64(byte_at(s, i))
+        h = (h * 16777619) & 67108863
+        i = i + 1
+    }
+    let out = i32(h)
+    // Never 0, so "unwritten" and "hashed to zero" can never coincide.
+    if out == 0 {
+        return 1
+    }
+    return out
+}
+
+/// Byte `i` of `s` as a non-negative int: `u8` is not a nameable type here, and
+/// a negative byte would poison the multiply.
+fn byte_at(s: string, i: int) -> int {
+    let b = s[i]
+    if b < 0 {
+        return 0 - b
+    }
+    return b
+}
+
+/// An empty table. `absent` is what `get` returns for a missing key.
+fn map_new<T>(absent: T) -> Map<T> {
+    return map_with_cap(8, absent)
+}
+
+fn map_with_cap<T>(cap: int, absent: T) -> Map<T> {
+    let mut n = 8
+    while n < cap {
+        n = n * 2
+    }
+    let mut es = []Entry<T> {}
+    let mut i = 0
+    while i < n {
+        push(es, entry_empty(absent))
+        i = i + 1
+    }
+    return map_of(es, absent)
+}
+
+/// A table over an already-sized slot array.
+///
+/// A named constructor because a generic struct literal cannot stand in an
+/// expression position here — `Map<T> { … }` mid-expression parses as a block.
+/// The same limit is why `entry_empty` and the writers are functions rather
+/// than inline literals.
+fn map_of<T>(es: []Entry<T>, absent: T) -> Map<T> {
+    return Map<T> { entries: es, len: 0, filled: 0, absent: absent }
+}
+
+/// One unwritten slot.
+fn entry_empty<T>(absent: T) -> Entry<T> {
+    return Entry<T> { used: 0, hash: 0, key: "", value: absent }
+}
+
+/// The probe sequence for `h` at step `i`: linear, masked to capacity so it
+/// wraps. Linear because with a power-of-two table the walk touches consecutive
+/// cache lines, and it cannot fail to terminate.
+fn map_slot<T>(m: &mut Map<T>, h: int, i: int) -> int {
+    return (h + i) & (m.entries.len - 1)
+}
+
+/// Find `key`'s slot index, or -1.
+///
+/// Probing stops at an unwritten slot (the key cannot lie beyond it) but walks
+/// *through* tombstones — which is why `len` and `filled` are tracked apart.
+fn map_find<T>(m: &mut Map<T>, key: string) -> int {
+    if m.entries.len == 0 {
+        return 0 - 1
+    }
+    let h = hash_str(key)
+    let mut i = 0
+    while i < m.entries.len {
+        let s = map_slot(m, h, i)
+        if m.entries[s].used == 0 {
+            return 0 - 1
+        }
+        if m.entries[s].used == 1 {
+            if m.entries[s].hash == h {
+                if m.entries[s].key == key {
+                    return s
+                }
+            }
+        }
+        i = i + 1
+    }
+    return 0 - 1
+}
+
+/// Is `key` present? `get` cannot answer this: `T` may have no value that means
+/// "absent", so a stored `0` and a missing key are indistinguishable.
+fn map_has<T>(m: &mut Map<T>, key: string) -> bool {
+    if map_find(m, key) < 0 {
+        return false
+    }
+    return true
+}
+
+/// The value at `key`, or the table's `absent` value.
+fn map_get<T>(m: &mut Map<T>, key: string) -> T {
+    let s = map_find(m, key)
+    if s < 0 {
+        return m.absent
+    }
+    return m.entries[s].value
+}
+
+/// The value at `key`, trapping when absent (the -1 indexes out of bounds). Use
+/// where the key is known to exist, so a missing key is a bug, not a default.
+fn map_at<T>(m: &mut Map<T>, key: string) -> T {
+    let s = map_find(m, key)
+    return m.entries[s].value
+}
+
+/// Insert or replace. Returns 1 when the key was new, 0 when it was replaced.
+fn map_put<T>(m: &mut Map<T>, key: string, value: T) -> int {
+    // Grow *before* inserting, so the probe always has room and a failed insert
+    // can never leave a half-written table.
+    if (m.filled + 1) * 4 >= m.entries.len * 3 {
+        map_grow(m, m.absent)
+    }
+    return map_put_nogrow(m, key, value)
+}
+
+/// Insert without the growth check. Split out so `map_grow` — which re-inserts
+/// every entry — cannot re-enter the growth test and recurse.
+fn map_put_nogrow<T>(m: &mut Map<T>, key: string, value: T) -> int {
+    let h = hash_str(key)
+    let mut i = 0
+    let mut tomb = 0 - 1
+    while i < m.entries.len {
+        let s = map_slot(m, h, i)
+        let u = m.entries[s].used
+        if u == 0 {
+            // Unwritten: the key is neither here nor beyond this slot.
+            let mut at = tomb
+            if tomb < 0 {
+                at = s
+            }
+            m.entries[at].used = 1
+            m.entries[at].hash = h
+            m.entries[at].key = key
+            m.entries[at].value = value
+            m.len = m.len + 1
+            if tomb < 0 {
+                // Reusing a tombstone leaves `filled` as it was; consuming an
+                // unwritten slot raises it.
+                m.filled = m.filled + 1
+            }
+            return 1
+        }
+        if u == 2 {
+            // Remember the first tombstone: reusing it stops `filled` growing,
+            // and the key may still lie further along the probe.
+            if tomb < 0 {
+                tomb = s
+            }
+        } else if m.entries[s].hash == h && m.entries[s].key == key {
+            m.entries[s].value = value
+            return 0
+        }
+        i = i + 1
+    }
+    // Every slot probed: reachable only when the table is all tombstones, since
+    // the load factor guarantees an unwritten slot otherwise.
+    if tomb >= 0 {
+        m.entries[tomb].used = 1
+        m.entries[tomb].hash = h
+        m.entries[tomb].key = key
+        m.entries[tomb].value = value
+        m.len = m.len + 1
+        return 1
+    }
+    return 0
+}
+
+/// Remove `key`. Returns 1 when something was removed.
+///
+/// Leaves a tombstone, not an unwritten slot: clearing to 0 would cut a probe
+/// chain and hide every entry that collided past this slot.
+fn map_remove<T>(m: &mut Map<T>, key: string) -> int {
+    let s = map_find(m, key)
+    if s < 0 {
+        return 0
+    }
+    m.entries[s].key = ""
+    m.entries[s].used = 2
+    m.entries[s].hash = 0
+    m.len = m.len - 1
+    return 1
+}
+
+/// Double the table and re-insert everything.
+///
+/// A table that is mostly tombstones is rebuilt at the *same* capacity: the
+/// tombstones are dropped and `filled` collapses to `len`, so an insert/remove
+/// workload stops growing once it stops adding live entries. Without that a
+/// churning map would grow without bound while `len` stayed flat.
+fn map_grow<T>(m: &mut Map<T>, absent: T) {
+    let mut cap = m.entries.len * 2
+    if m.len * 4 < m.entries.len {
+        cap = m.entries.len
+    }
+    let old = m.entries
+    let mut es = []Entry<T> {}
+    let mut i = 0
+    while i < cap {
+        push(es, entry_empty(absent))
+        i = i + 1
+    }
+    m.entries = es
+    m.len = 0
+    m.filled = 0
+    let mut j = 0
+    while j < old.len {
+        if old[j].used == 1 {
+            map_put_nogrow(m, old[j].key, old[j].value)
+        }
+        j = j + 1
+    }
+}
+
+/// Drop every entry. The table does not own its keys, so there is nothing to
+/// release — see the header.
+fn map_clear<T>(m: &mut Map<T>) {
+    let mut i = 0
+    while i < m.entries.len {
+        m.entries[i].used = 0
+        m.entries[i].key = ""
+        m.entries[i].hash = 0
+        i = i + 1
+    }
+    m.len = 0
+    m.filled = 0
+}
+
+/// Release the table.
+fn map_drop<T>(m: &mut Map<T>) {
+    map_clear(m)
+}
+
+/// Keys, in slot order. Deliberately not sorted: a map has no order, and
+/// inventing one is a promise the caller then depends on.
+fn map_keys<T>(m: &mut Map<T>) -> []string {
+    let mut out = []string {}
+    let mut i = 0
+    while i < m.entries.len {
+        if m.entries[i].used == 1 {
+            push(out, m.entries[i].key)
+        }
+        i = i + 1
+    }
+    return out
+}
