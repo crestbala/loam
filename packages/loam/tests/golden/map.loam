@@ -1,0 +1,86 @@
+// `std:map` — the keyed container the language did not have.
+//
+// `[]T` + `push`/`pop` cover the vector case; nothing was keyed, and the engine
+// needs keyed state. This pins the container: content hashing (not pointer),
+// insert-vs-replace, tombstones surviving a delete, growth, and the churn case
+// that must not grow without bound.
+import "std:map"
+import "std:fmt"
+
+fn main() {
+    let mut m: Map<int> = map_new(0 - 1)
+
+    // --- absent, then present ---
+    must(map_has(&mut m, "nope") == false, "a missing key is absent")
+    must(map_get(&mut m, "nope") == 0 - 1, "a missing key reads the absent value")
+    must(map_put(&mut m, "a", 1) == 1, "a new key reports insert")
+    must(map_has(&mut m, "a") == true, "the key is present after put")
+    must(map_get(&mut m, "a") == 1, "and reads back its value")
+    must(map_put(&mut m, "a", 2) == 0, "an existing key reports replace")
+    must(map_get(&mut m, "a") == 2, "and the value was replaced")
+    must(m.len == 1, "replace did not add a slot")
+
+    // --- crucially: a STORED 0 is not "absent" ---
+    // This is why `map_has` exists separately from `map_get`.
+    map_put(&mut m, "zero", 0)
+    must(map_has(&mut m, "zero") == true, "a stored 0 is present, not absent")
+    must(map_get(&mut m, "zero") == 0, "and reads back as 0")
+
+    // --- content hashing, not pointer hashing ---
+    // A key built at run time must find the entry a literal stored; a pointer
+    // hash would miss here, silently, which is the bug this guards.
+    let mut built = "k"
+    built = "{{built}}ey"
+    must(map_has(&mut m, built) == false, "a built key is absent before it is stored")
+    map_put(&mut m, "key", 9)
+    must(map_get(&mut m, built) == 9, "a built key finds the literal entry")
+    must(map_get(&mut m, key_like("key")) == 9, "a key from a callee finds it too")
+
+    // --- remove leaves a tombstone, and probing still works past it ---
+    must(map_remove(&mut m, "a") == 1, "remove reports the hit")
+    must(map_has(&mut m, "a") == false, "the key is gone")
+    must(map_remove(&mut m, "a") == 0, "removing twice reports nothing")
+    must(map_get(&mut m, "key") == 9, "a colliding key is reachable past the tombstone")
+    map_put(&mut m, "a", 5)
+    must(map_get(&mut m, "a") == 5, "the tombstone was reused")
+
+    // --- growth: many keys, all findable ---
+    let mut i = 0
+    while i < 500 {
+        map_put(&mut m, "k{{i}}", i)
+        i = i + 1
+    }
+    must(m.len == 503, "every insert was counted")
+    let mut ok = true
+    let mut j = 0
+    while j < 500 {
+        if map_get(&mut m, "k{{j}}") != j {
+            ok = false
+        }
+        j = j + 1
+    }
+    must(ok == true, "every one of 500 keys survived growth")
+
+    // --- churn must not grow forever: len stays flat ---
+    let mut r = 0
+    while r < 2000 {
+        map_put(&mut m, "churn", r)
+        map_remove(&mut m, "churn")
+        r = r + 1
+    }
+    must(m.len == 503, "2000 insert/remove pairs added no live entries")
+    must(map_get(&mut m, "k499") == 499, "and left the real entries intact")
+
+    fmt.println("map ok")
+}
+
+fn key_like(s: string) -> string {
+    return "{{s}}"
+}
+
+fn must(cond: bool, msg: string) {
+    if cond == false {
+        fmt.println("FAIL ", msg)
+        panic(msg)
+    }
+}
