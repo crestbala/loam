@@ -2745,9 +2745,20 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
             size_t nt = st->as.strct.tparam_count;
             Type **bound = NULL;
             if (nt) bound = calloc(nt, sizeof(Type *));
+            /* Explicit targs win: `Pair<int> { … }` names its argument directly,
+               and only a literal without targs falls back to the expected type
+               (or reports "cannot infer type parameter"). */
+            if (nt && n->as.struct_lit.targ_count == nt) {
+                for (size_t i = 0; i < nt; i++) {
+                    Type *at = resolve_type(n->as.struct_lit.targs[i]);
+                    if (at && at->kind != TY_PARAM) bound[i] = at;
+                }
+            }
             if (nt && expect && expect->kind == TY_STRUCT && expect->name && tmpl->name &&
                 strcmp(expect->name, tmpl->name) == 0 && expect->param_count == nt) {
-                for (size_t i = 0; i < nt; i++) bound[i] = expect->params[i];
+                for (size_t i = 0; i < nt; i++) {
+                    if (!bound[i]) bound[i] = expect->params[i];
+                }
             }
             int *seen = calloc(tmpl->field_count, sizeof(int));
             for (size_t i = 0; i < n->as.struct_lit.field_count; i++) {
@@ -4008,6 +4019,19 @@ int typecheck_modules(LoamModule *mods, int nmods) {
         }
         for (size_t i = 0; i < p->as.program.decl_count; i++) {
             AstNode *d = p->as.program.decls[i];
+            /* A struct may not be named `Box` and take type arguments.
+               `Box` is the heap-box keyword in `parse_type`, so `Box<int>` is
+               always a box *of* int — a struct `Box<T>` is then unreachable by
+               name, and `Box<int> { … }` becomes a box followed by a stray brace.
+               The failure surfaced three stages later as
+               "Box<int> does not match Box<int>", which reads like a compiler
+               bug rather than a name collision; that cost real time while
+               building `std:map`. Caught here, where the declaration and its
+               arity are both known. */
+            if (d->kind == AST_STRUCT_DECL && d->as.strct.name &&
+                strcmp(d->as.strct.name, "Box") == 0 && d->as.strct.tparam_count)
+                err(d->loc, "'Box' is the heap-box keyword; a struct named Box cannot "
+                            "take type arguments — name it something else");
             if (d->kind == AST_FN_DECL && !d->as.fn.is_intrinsic)
                 check_fn(d);
         }
