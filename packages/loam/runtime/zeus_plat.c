@@ -249,16 +249,11 @@ void loam_platform_plat_sig_free(int64_t id) {
 /* Allocation accounting (phase 3 proof harness). `loam_rt.h` increments this
    from `loam_new` / array growth when the program was compiled with
    `-DLOAM_ALLOC_TRACE` (all Zeus programs are); `zeus.proof_allocs()` reads it. */
-#ifdef LOAM_ALLOC_TRACE
-int64_t loam_alloc_count = 0;
-#endif
-
 int64_t loam_platform_plat_alloc_count(void) {
-#ifdef LOAM_ALLOC_TRACE
-    return loam_alloc_count;
-#else
-    return 0;
-#endif
+    /* The counter is the runtime's (`loam_rt.h`, `LOAM_RT_DEFINE_ALLOC`); this
+       seam only reports it. The copy that used to live here — one line, but a
+       Zeus translation unit defining a language-runtime symbol — is gone. */
+    return loam_alloc_total();
 }
 
 static void (*plat_run)(void);
@@ -974,14 +969,47 @@ void zeus_window_opened(void) {
     opened_window = 1;
 }
 
-static int64_t g_inset_t, g_inset_r, g_inset_b, g_inset_l;
+/* Safe-area insets (notch / home indicator / landscape inset).
+
+   Held in one struct rather than four file-scope ints read back through four
+   getters: the engine's layout pass already keeps `safe_t/r/b/l` in the arena
+   (layout.loam), so the *authority* is Loam and this side is only the store a
+   host can write before the engine runs. `plat_set_insets` writes it; a layout
+   reads it once per pass through `plat_inset_get`. Four separate accessors made
+   it possible for a host to update half the box between two reads. */
+typedef struct {
+    int64_t t, r, b, l;
+} ZeusInsets;
+
+static ZeusInsets g_insets;
 
 void zeus_set_insets(int64_t top, int64_t right, int64_t bottom, int64_t left) {
-    g_inset_t = top < 0 ? 0 : top;
-    g_inset_r = right < 0 ? 0 : right;
-    g_inset_b = bottom < 0 ? 0 : bottom;
-    g_inset_l = left < 0 ? 0 : left;
+    g_insets.t = top < 0 ? 0 : top;
+    g_insets.r = right < 0 ? 0 : right;
+    g_insets.b = bottom < 0 ? 0 : bottom;
+    g_insets.l = left < 0 ? 0 : left;
 }
+
+/* Read all four at once, into the caller's `[]int` (the ABI passes a
+   `loam_vec *`, so the callee writes through `->ptr`).
+
+   The element width is `int32_t`, NOT `int64_t`: `int` in Loam is i32 (the
+   Phase 10 width flip), and the generated vec literal pushes with
+   `sizeof(int32_t)`. Writing 8-byte values into a 4-byte-per-element buffer
+   corrupts it and silently loses the insets — which is exactly what the
+   `zeus_anchor_safe` test caught. */
+void loam_platform_plat_inset_get(loam_vec *out) {
+    int32_t *p;
+    if (!out || !out->ptr) return;
+    if (out->len < 4) return;
+    p = (int32_t *)out->ptr;
+    p[0] = (int32_t)g_insets.t;
+    p[1] = (int32_t)g_insets.r;
+    p[2] = (int32_t)g_insets.b;
+    p[3] = (int32_t)g_insets.l;
+}
+
+void loam_zeus_plat_inset_get(loam_vec *out) { loam_platform_plat_inset_get(out); }
 
 static int64_t g_overlay_scroll = -1;
 
@@ -1000,10 +1028,9 @@ int64_t loam_zeus_plat_overlay_scroll(void) {
 #endif
 }
 
-int64_t loam_zeus_plat_inset_top(void) { return g_inset_t; }
-int64_t loam_zeus_plat_inset_right(void) { return g_inset_r; }
-int64_t loam_zeus_plat_inset_bottom(void) { return g_inset_b; }
-int64_t loam_zeus_plat_inset_left(void) { return g_inset_l; }
+/* The four `inset_*` getters are gone: `plat_inset_get` above returns the whole
+   box in one call. Kept as a comment rather than deleted silently because the
+   old names are referenced from `zeus_rt.h`'s history and from older hosts. */
 
 /* packages/zeus/std/zeuscore/platform.loam is the GPUI-style platform leaf. Empty Loam stubs
    compile to loam_platform_plat_*; the Cocoa implementations stay as
@@ -1068,16 +1095,17 @@ void loam_platform_plat_image_size(loam_str src, int32_t *w, int32_t *h) {
 void loam_platform_plat_save(void) { loam_zeus_plat_save(); }
 void loam_platform_plat_alpha(int64_t a) { loam_zeus_plat_alpha(a); }
 
-/* Wall clock for host-sleep-safe deadlines (scrollbar hide). */
-int64_t loam_platform_plat_now_ms(void) { return loam_async_now_ms(); }
+/* Wall clock for host-sleep-safe deadlines (scrollbar hide). The clock itself is
+   the runtime's `loam_now_ms`, so there is exactly one monotonic clock in the
+   tree instead of one per library. */
+int64_t loam_platform_plat_now_ms(void) { return loam_now_ms(); }
 
 /* Host process memory in KB for the gallery RAM chip: Apple phys_footprint
    (the number Xcode's memory gauge shows — RSS overstates iOS processes),
-   Linux/Android resident set, wasm live heap on the web host. */
+   Linux/Android resident set, live wasm heap on the web host (0 = unknown). */
 int64_t loam_platform_plat_mem_kb(void) {
 #ifdef __wasm32__
-    extern int32_t zeus_heap_used(void);
-    return (int64_t)(zeus_heap_used() / 1024);
+    return loam_heap_used() / 1024;
 #elif defined(__APPLE__)
     {
         struct task_vm_info info;
@@ -1113,6 +1141,66 @@ int64_t loam_platform_plat_mem_stats(void) {
     if (!v || !v[0] || strcmp(v, "0") == 0) return 0;
     return 1;
 #endif
+}
+
+/* --- byte store for signal cells (zeuscore/memory.loam) -------------------
+ *
+ * The four bindings a Loam signal cell is built on: allocate, free, and read
+ * back typed bytes. They are deliberately untyped and library-agnostic — no
+ * widget, no signal, no Zeus concept appears below — because the *type* is a
+ * compile-time property of the Loam call site, never of the buffer.
+ *
+ * The allocator is the language runtime's (`loam_new` / `loam_drop`), so a
+ * library that owns bytes asks the runtime for them exactly as `loam_vec` does.
+ * Before, the cell array, its `malloc`/`memcpy`/`free`, and the per-slot
+ * `owns_str` flag all lived in this file; the policy is now in memory.loam.
+ *
+ * Widths: `p` is the buffer pointer as an integer handle, which is what a Loam
+ * `int` (i32) can carry on every target including wasm32. */
+int64_t loam_platform_rt_mem_new(int64_t n) {
+    return (int64_t)(long)loam_new(n > 0 ? (size_t)n : 1, "zeus.cell", 0);
+}
+
+void loam_platform_rt_mem_free(int64_t p) {
+    void *q;
+    if (p == 0) return;
+    q = (void *)(long)p;
+    loam_drop(&q);
+}
+
+/* Write `n` bytes of the caller's value into the buffer at `offset`. The caller
+   passes the raw bytes of its `T` as a `[]u8` view, so nothing here has to know
+   what `T` was. */
+void loam_platform_rt_mem_write(int64_t p, int64_t offset, loam_vec *src) {
+    size_t n;
+    if (p == 0 || !src || !src->ptr) return;
+    n = (size_t)src->len;
+    if (n == 0) return;
+    memcpy((unsigned char *)(long)p + (size_t)offset, src->ptr, n);
+}
+
+/* `n` bytes at `offset` into the caller's `[]u8`. */
+void loam_platform_rt_mem_read(int64_t p, int64_t offset, int64_t n, loam_vec *dst) {
+    unsigned char *d;
+    size_t k;
+    if (!dst || !dst->ptr || n <= 0) return;
+    d = (unsigned char *)dst->ptr;
+    k = (size_t)n;
+    if (k > (size_t)dst->len) k = (size_t)dst->len;
+    if (p == 0) {
+        memset(d, 0, k);
+        return;
+    }
+    memcpy(d, (const unsigned char *)(long)p + (size_t)offset, k);
+}
+
+/* Do the `n` bytes at `offset` equal `src`? 1 = equal. */
+int64_t loam_platform_rt_mem_eq(int64_t p, int64_t offset, loam_vec *src) {
+    size_t n;
+    if (p == 0 || !src || !src->ptr) return 0;
+    n = (size_t)src->len;
+    if (n == 0) return 1;
+    return memcmp((const unsigned char *)(long)p + (size_t)offset, src->ptr, n) == 0 ? 1 : 0;
 }
 
 void loam_platform_plat_clip(int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius) {
@@ -1641,10 +1729,7 @@ int64_t loam_platform_plat_overlay_scroll(void) {
 void loam_platform_plat_set_overlay_scroll(int64_t on) {
     zeus_set_overlay_scroll(on);
 }
-int64_t loam_platform_plat_inset_top(void) { return loam_zeus_plat_inset_top(); }
-int64_t loam_platform_plat_inset_right(void) { return loam_zeus_plat_inset_right(); }
-int64_t loam_platform_plat_inset_bottom(void) { return loam_zeus_plat_inset_bottom(); }
-int64_t loam_platform_plat_inset_left(void) { return loam_zeus_plat_inset_left(); }
+/* Forward to the one insets read. The four per-edge forms are gone. */
 void loam_platform_plat_set_insets(int64_t top, int64_t right, int64_t bottom,
                                   int64_t left) {
     zeus_set_insets(top, right, bottom, left);
@@ -2040,34 +2125,15 @@ void loam_zeusbase_remap_key(loam_str spec, loam_str action, loam_str ctx) {
 }
 
 /* --- recoverable traps (zeus.Boundary) ---
-   `loam_panic` longjmps here when a boundary is installed. The trap state
-   (`loam_jmp_top`, `loam_jmp_msg`) is defined once in the generated program
-   and reached through the declarations in loam_rt.h. */
 
-/* Run `build` under a recoverable trap. Returns "" if it completed, else the
-   panic message. On wasm there is no setjmp, so the build runs unprotected and
-   a trap aborts as it always has. */
+   The arm is a runtime verb now (`loam_trap_guard` in loam_rt.h), so this seam
+   is one line. It used to carry the setjmp arm plus a copy of the trap-state
+   contract in a comment, which made Zeuss the owner of a language-runtime
+   facility. The verb is generic: any library that wants a recoverable region
+   calls the same one. On wasm it runs the body unprotected and a trap aborts,
+   as before. */
 loam_str loam_platform_plat_boundary(loam_fn build) {
-    loam_str none = { "", 0 };
-#ifndef __wasm32__
-    LoamJmp b;
-    b.prev = loam_jmp_top;
-    loam_jmp_top = &b;
-    loam_jmp_msg[0] = 0;
-    if (setjmp(b.jb) == 0) {
-        if (build.fn) ((void (*)(void *))build.fn)(build.env);
-        loam_jmp_top = b.prev;
-        return none;
-    }
-    loam_jmp_top = b.prev;
-    {
-        loam_str msg = { loam_jmp_msg, (int64_t)strlen(loam_jmp_msg) };
-        return msg;
-    }
-#else
-    if (build.fn) ((void (*)(void *))build.fn)(build.env);
-    return none;
-#endif
+    return loam_trap_guard(build);
 }
 
 /* Router host entry points. A build that never imports `std:router` has no
