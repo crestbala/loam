@@ -1,0 +1,16 @@
+//! Root shell: theme + top bar. Retained across navigation, so the nav and
+//! the light/dark switch survive. Only the page slot rebuilds.
+
+import "std:zeus"
+import "std:zui"
+import "../components/nav.loam" as nav
+import "../theme.loam" as theme
+
+fn layout(build: fn()) {
+    theme.install()
+    let page = zui.Page()
+    zeus.slot(page, fn() {
+        nav.Navbar()
+        zeus.slot(page, build)
+    })
+}

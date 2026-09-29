@@ -1,0 +1,1039 @@
+//! Event-driven backtest. Cash is paise. Units are millionths of a unit.
+//!
+//! A signal dated on a bar is filled at the next published NAV after that
+//! date, never at the bar that produced it. There is no flag that fills on
+//! the signal. An order with no later bar is left unfilled.
+//!
+//! Buys spend a paise budget (zero means all free cash). Stamp duty comes
+//! off that budget, and the rest buys units at the fill NAV. Sells are
+//! FIFO. A sell budget of zero closes the position; a positive budget is
+//! the gross paise to redeem, and the rest of the lot stays. Each lot pays
+//! its own exit load from its own holding period, and STT comes off the
+//! redemption. The expense ratio is not applied: it is already in the NAV.
+//!
+//! One scheme is a book of one. Several schemes share the cash. A deposit
+//! is external money arriving on a date, which is what a monthly SIP is,
+//! and the reported XIRR prices every deposit, not only the opening cash.
+//!
+//! The result is the net of those dealing costs. Capital-gains tax is not
+//! part of it.
+
+import "std:math"
+import "std:date"
+import "costs.loam"
+import "series.loam"
+import "sortx.loam"
+import "stats.loam"
+
+struct Orders {
+    /// The bar whose NAV the decision saw. The fill is a later bar.
+    dates: []int,
+    /// `1` buy, `-1` sell.
+    sides: []int,
+    /// Buy: paise to spend, or `0` for all free cash. Sell: paise of gross
+    /// NAV to redeem, or `0` to close whatever is still held.
+    amounts: []i64,
+}
+
+/// External paise arriving in the account. Not a fill: the cash is there
+/// on the first published bar on or after `dates[i]`, and a buy can spend
+/// it only at a later NAV.
+struct Flows {
+    dates: []int,
+    amounts: []i64,
+}
+
+/// One row per scheme, columns laid end to end. `starts` has one more entry
+/// than `codes`: scheme `i` occupies `[starts[i], starts[i + 1])` of the
+/// date and NAV columns. Each scheme's own dates are in order.
+struct Panel {
+    codes: []string,
+    starts: []int,
+    dates: []int,
+    navs: []i64,
+}
+
+struct BookOrders {
+    dates: []int,
+    sides: []int,
+    amounts: []i64,
+    /// Index into `Panel.codes`.
+    scheme: []int,
+}
+
+/// Equal-weight rebalance points. Group `g` is the schemes in
+/// `[off[g], off[g + 1])`, held in rank order, and it is decided on
+/// `dates[g]`.
+struct Targets {
+    dates: []int,
+    off: []int,
+    scheme: []int,
+}
+
+struct Ledger {
+    signal_dates: []int,
+    fill_dates: []int,
+    sides: []int,
+    /// Scheme index. Zero for a one-scheme run.
+    schemes: []int,
+    navs: []i64,
+    units: []i64,
+    gross: []i64,
+    stamp: []i64,
+    stt: []i64,
+    load: []i64,
+    cash_after: []i64,
+}
+
+struct Report {
+    end_cash: i64,
+    /// Sum of units still held. A book of several schemes adds them, which
+    /// is only meaningful scheme by scheme via the ledger.
+    end_units: i64,
+    end_equity: i64,
+    /// Equity at the close of the last bar strictly before `mark`, or the
+    /// starting cash when the mark is on the first bar or was left at 0.
+    /// Walk-forward reads this as the capital the test window opens with.
+    mark_equity: i64,
+    cagr: f64,
+    xirr: f64,
+    sharpe: f64,
+    sortino: f64,
+    max_dd: f64,
+    dd_duration: int,
+    wins: int,
+    losses: int,
+    win_rate: f64,
+    /// Net profit of winning closed lots, in paise.
+    gross_win: i64,
+    /// Net loss of losing closed lots, in paise, as a positive number.
+    gross_loss: i64,
+    /// `gross_win / gross_loss`, or `0` when there is no losing lot.
+    profit_factor: f64,
+    /// (paise bought + paise sold) / starting cash. Deposits are not a trade.
+    turnover: f64,
+    /// One point per published bar, after that bar's fills. The equity
+    /// curve is this close, so a fill marker sits on the bar that booked it.
+    curve_dates: []int,
+    curve_paise: []i64,
+    ledger: Ledger,
+}
+
+struct BookRun {
+    report: Report,
+    orders: BookOrders,
+}
+
+fn scale() -> i64 {
+    return i64(1000000)
+}
+
+fn empty_flows() -> Flows {
+    return Flows { dates: []int {}, amounts: []i64 {} }
+}
+
+fn empty_panel() -> Panel {
+    return Panel {
+        codes: []string {},
+        starts: []int {},
+        dates: []int {},
+        navs: []i64 {},
+    }
+}
+
+fn empty_targets() -> Targets {
+    return Targets { dates: []int {}, off: []int {}, scheme: []int {} }
+}
+
+fn empty_orders() -> BookOrders {
+    return BookOrders {
+        dates: []int {},
+        sides: []int {},
+        amounts: []i64 {},
+        scheme: []int {},
+    }
+}
+
+/// Append one scheme. The columns are copied, so the caller's arrays stay
+/// put. Dates are taken as already ordered; the cache does not write them
+/// any other way.
+fn add_scheme(p: Panel, code: string, dates: []int, navs: []i64) -> Panel {
+    let mut codes = p.codes
+    let mut starts = p.starts
+    let mut out_d = p.dates
+    let mut out_n = p.navs
+    if starts.len == 0 {
+        push(starts, 0)
+    }
+    let mut n = dates.len
+    if navs.len < n {
+        n = navs.len
+    }
+    let mut i = 0
+    while i < n {
+        push(out_d, dates[i])
+        push(out_n, navs[i])
+        i = i + 1
+    }
+    push(starts, out_d.len)
+    push(codes, code)
+    return Panel { codes: codes, starts: starts, dates: out_d, navs: out_n }
+}
+
+/// One scheme, copied out so an indicator can take a `NavSeries`.
+fn scheme_series(p: Panel, i: int) -> NavSeries {
+    if i < 0 || i + 1 >= p.starts.len {
+        return series.build("", []int {}, []i64 {})
+    }
+    let from = p.starts[i]
+    let to = p.starts[i + 1]
+    let mut d = []int {}
+    let mut navs = []i64 {}
+    let mut k = from
+    while k < to {
+        push(d, p.dates[k])
+        push(navs, p.navs[k])
+        k = k + 1
+    }
+    let mut code = ""
+    if i < p.codes.len {
+        code = p.codes[i]
+    }
+    return series.build(code, d, navs)
+}
+
+fn empty_ledger() -> Ledger {
+    return Ledger {
+        signal_dates: []int {},
+        fill_dates: []int {},
+        sides: []int {},
+        schemes: []int {},
+        navs: []i64 {},
+        units: []i64 {},
+        gross: []i64 {},
+        stamp: []i64 {},
+        stt: []i64 {},
+        load: []i64 {},
+        cash_after: []i64 {},
+    }
+}
+
+fn empty_report(cash: i64) -> Report {
+    return Report {
+        end_cash: cash,
+        end_units: i64(0),
+        end_equity: cash,
+        mark_equity: cash,
+        cagr: 0.0,
+        xirr: 0.0,
+        sharpe: 0.0,
+        sortino: 0.0,
+        max_dd: 0.0,
+        dd_duration: 0,
+        wins: 0,
+        losses: 0,
+        win_rate: 0.0,
+        gross_win: i64(0),
+        gross_loss: i64(0),
+        profit_factor: 0.0,
+        turnover: 0.0,
+        curve_dates: []int {},
+        curve_paise: []i64 {},
+        ledger: empty_ledger(),
+    }
+}
+
+/// First bar strictly after `signal`, or `-1` when the series has ended.
+fn next_bar(dates: []int, signal: int) -> int {
+    let mut i = 0
+    while i < dates.len {
+        if dates[i] > signal {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+fn next_scheme_bar(p: Panel, s: int, signal: int) -> int {
+    if s < 0 || s + 1 >= p.starts.len {
+        return -1
+    }
+    let mut k = p.starts[s]
+    let lim = p.starts[s + 1]
+    while k < lim {
+        if p.dates[k] > signal {
+            return k
+        }
+        k = k + 1
+    }
+    return -1
+}
+
+fn union_dates(p: Panel) -> []int {
+    let mut keys = []i64 {}
+    let mut i = 0
+    while i < p.dates.len {
+        push(keys, i64(p.dates[i]))
+        i = i + 1
+    }
+    if keys.len > 1 {
+        sortx.sort(keys)
+    }
+    let mut out = []int {}
+    i = 0
+    while i < keys.len {
+        let d = int(keys[i])
+        if out.len == 0 || out[out.len - 1] != d {
+            push(out, d)
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn first_on_or_after(dates: []int, ymd: int) -> int {
+    let mut i = 0
+    while i < dates.len {
+        if dates[i] >= ymd {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+fn npv_at(start: i64, endv: i64, years: f64, rate: f64) -> f64 {
+    let one: f64 = 1.0
+    let growth = math.pow(one + rate, years)
+    if growth == 0.0 {
+        return f64(0)
+    }
+    return f64(endv) / growth - f64(start)
+}
+
+/// One deposit at the first date and the terminal equity at the last date.
+/// Bisection, so a short window with a large rate still settles.
+fn xirr_two(start: i64, endv: i64, years: f64) -> f64 {
+    if start <= 0 || endv <= 0 || years <= 0.0 {
+        return 0.0
+    }
+    let mut lo: f64 = 0.0
+    let mut hi: f64 = 1.0
+    let mut n = 0
+    while n < 40 && npv_at(start, endv, years, hi) > 0.0 {
+        hi = hi * 2.0
+        n = n + 1
+    }
+    if npv_at(start, endv, years, hi) > 0.0 {
+        return 0.0
+    }
+    let mut k = 0
+    while k < 60 {
+        let mid = (lo + hi) * 0.5
+        if npv_at(start, endv, years, mid) > 0.0 {
+            lo = mid
+        } else {
+            hi = mid
+        }
+        k = k + 1
+    }
+    return (lo + hi) * 0.5
+}
+
+fn npv_flows(dates: []int, amounts: []i64, rate: f64) -> f64 {
+    if dates.len == 0 {
+        return 0.0
+    }
+    let t0 = dates[0]
+    let mut sum: f64 = 0.0
+    let one: f64 = 1.0
+    let mut i = 0
+    while i < dates.len {
+        let years = f64(date.days_between(t0, dates[i])) / f64(365)
+        let growth = math.pow(one + rate, years)
+        if growth != 0.0 {
+            sum = sum + f64(amounts[i]) / growth
+        }
+        i = i + 1
+    }
+    return sum
+}
+
+/// Internal rate on dated cash flows. Money into the account is negative,
+/// money out (the terminal equity included) is positive. Same-day flows are
+/// summed. `0` when the flows do not change sign or the root sits outside
+/// the range the bisection will search.
+fn xirr(dates: []int, amounts: []i64) -> f64 {
+    let mut n = dates.len
+    if amounts.len < n {
+        n = amounts.len
+    }
+    if n == 0 {
+        return 0.0
+    }
+    let mut keys = []i64 {}
+    let mut vals = []i64 {}
+    let mut i = 0
+    while i < n {
+        push(keys, i64(dates[i]))
+        push(vals, amounts[i])
+        i = i + 1
+    }
+    if keys.len > 1 {
+        sortx.sort_by(keys, vals)
+    }
+    let mut cd = []int {}
+    let mut ca = []i64 {}
+    i = 0
+    while i < keys.len {
+        let d = int(keys[i])
+        let a = vals[i]
+        if cd.len > 0 && cd[cd.len - 1] == d {
+            let last = ca.len - 1
+            ca[last] = ca[last] + a
+        } else {
+            push(cd, d)
+            push(ca, a)
+        }
+        i = i + 1
+    }
+    let mut fd = []int {}
+    let mut fa = []i64 {}
+    let mut neg = false
+    let mut pos = false
+    i = 0
+    while i < ca.len {
+        if ca[i] != 0 {
+            push(fd, cd[i])
+            push(fa, ca[i])
+            if ca[i] < 0 {
+                neg = true
+            }
+            if ca[i] > 0 {
+                pos = true
+            }
+        }
+        i = i + 1
+    }
+    if fd.len < 2 || !neg || !pos {
+        return 0.0
+    }
+    let zero: f64 = 0.0
+    let at0 = npv_flows(fd, fa, zero)
+    let mut lo: f64 = -0.5
+    let mut hi: f64 = 1.0
+    if at0 > 0.0 {
+        lo = 0.0
+        hi = 1.0
+        let mut e = 0
+        while e < 40 && npv_flows(fd, fa, hi) > 0.0 {
+            hi = hi * 2.0
+            e = e + 1
+        }
+    } else if at0 < 0.0 {
+        hi = 0.0
+        lo = -0.5
+        let mut e = 0
+        while e < 40 && npv_flows(fd, fa, lo) < 0.0 {
+            lo = (lo + 1.0) * 0.5 - 1.0
+            e = e + 1
+        }
+    } else {
+        return 0.0
+    }
+    if npv_flows(fd, fa, lo) < 0.0 || npv_flows(fd, fa, hi) > 0.0 {
+        return 0.0
+    }
+    let mut k = 0
+    while k < 70 {
+        let mid = (lo + hi) * 0.5
+        if npv_flows(fd, fa, mid) > 0.0 {
+            lo = mid
+        } else {
+            hi = mid
+        }
+        k = k + 1
+    }
+    return (lo + hi) * 0.5
+}
+
+fn annualise(rets: []f64, downside: bool) -> f64 {
+    if rets.len < 2 {
+        return 0.0
+    }
+    let mu = stats.mean(rets)
+    let mut den: f64 = 0.0
+    if downside {
+        den = stats.downside_deviation(rets, 0.0)
+    } else {
+        den = stats.sample_sd(rets)
+    }
+    if den == 0.0 {
+        return 0.0
+    }
+    return mu / den * math.sqrt(252.0)
+}
+
+fn one_panel(s: NavSeries) -> Panel {
+    let mut codes = []string {}
+    push(codes, s.code)
+    let mut starts = []int {}
+    push(starts, 0)
+    push(starts, s.dates.len)
+    return Panel { codes: codes, starts: starts, dates: s.dates, navs: s.navs }
+}
+
+fn book_of(orders: Orders) -> BookOrders {
+    let mut scheme = []int {}
+    let mut i = 0
+    while i < orders.dates.len {
+        push(scheme, 0)
+        i = i + 1
+    }
+    return BookOrders {
+        dates: orders.dates,
+        sides: orders.sides,
+        amounts: orders.amounts,
+        scheme: scheme,
+    }
+}
+
+fn target_group(t: Targets, ymd: int) -> int {
+    let mut g = -1
+    let mut i = 0
+    while i < t.dates.len {
+        if t.dates[i] == ymd {
+            g = i
+        }
+        i = i + 1
+    }
+    return g
+}
+
+fn in_group(t: Targets, g: int, scheme: int) -> bool {
+    if g < 0 || g + 1 >= t.off.len {
+        return false
+    }
+    let mut k = t.off[g]
+    while k < t.off[g + 1] {
+        if t.scheme[k] == scheme {
+            return true
+        }
+        k = k + 1
+    }
+    return false
+}
+
+fn finish(start_cash: i64, end_cash: i64, end_units: i64, end_equity: i64, mark_equity: i64, had_flow: bool, flow_dates: []int, flow_amounts: []i64, first: int, last: int, bought: i64, sold: i64, wins: int, losses: int, gross_win: i64, gross_loss: i64, equity: []f64, curve_dates: []int, curve_paise: []i64, book: Ledger) -> Report {
+    let days = date.days_between(first, last)
+    let years = f64(days) / f64(365)
+    let mut cagr: f64 = 0.0
+    let mut xr: f64 = 0.0
+    if years > 0.0 && !had_flow {
+        cagr = stats.cagr(f64(start_cash), f64(end_equity), years)
+        xr = xirr_two(start_cash, end_equity, years)
+    }
+    if years > 0.0 && had_flow {
+        cagr = stats.cagr(f64(start_cash + flow_sum(flow_amounts)), f64(end_equity), years)
+        let mut xd = []int {}
+        let mut xa = []i64 {}
+        if start_cash > 0 {
+            push(xd, first)
+            push(xa, i64(0) - start_cash)
+        }
+        let mut fi = 0
+        while fi < flow_dates.len {
+            push(xd, flow_dates[fi])
+            push(xa, i64(0) - flow_amounts[fi])
+            fi = fi + 1
+        }
+        push(xd, last)
+        push(xa, end_equity)
+        xr = xirr(xd, xa)
+    }
+    let mut rets = []f64 {}
+    let mut ri = 1
+    while ri < equity.len {
+        let prev = equity[ri - 1]
+        if prev > 0.0 {
+            push(rets, equity[ri] / prev - f64(1))
+        }
+        ri = ri + 1
+    }
+    let sharpe = annualise(rets, false)
+    let sortino = annualise(rets, true)
+    let dd = stats.max_drawdown(equity)
+    let mut win_rate: f64 = 0.0
+    let closed = wins + losses
+    if closed > 0 {
+        win_rate = f64(wins) / f64(closed)
+    }
+    let mut pf: f64 = 0.0
+    if gross_loss > 0 {
+        pf = f64(gross_win) / f64(gross_loss)
+    }
+    let mut turn: f64 = 0.0
+    if start_cash > 0 {
+        turn = f64(bought + sold) / f64(start_cash)
+    }
+    return Report {
+        end_cash: end_cash,
+        end_units: end_units,
+        end_equity: end_equity,
+        mark_equity: mark_equity,
+        cagr: cagr,
+        xirr: xr,
+        sharpe: sharpe,
+        sortino: sortino,
+        max_dd: dd.depth,
+        dd_duration: dd.duration,
+        wins: wins,
+        losses: losses,
+        win_rate: win_rate,
+        gross_win: gross_win,
+        gross_loss: gross_loss,
+        profit_factor: pf,
+        turnover: turn,
+        curve_dates: curve_dates,
+        curve_paise: curve_paise,
+        ledger: book,
+    }
+}
+
+fn flow_sum(amounts: []i64) -> i64 {
+    let mut s = i64(0)
+    let mut i = 0
+    while i < amounts.len {
+        s = s + amounts[i]
+        i = i + 1
+    }
+    return s
+}
+
+/// Size today's rebalance off the NAV already in hand. Fills are scheduled
+/// on a later bar, so this must run after today's fills have updated `units`.
+fn emit_rebalance(p: Panel, targets: Targets, ymd: int, cash: i64, units: []i64, last_nav: []i64, od: &mut []int, os: &mut []int, oa: &mut []i64, oq: &mut []int, pend_ord: &mut []int, pend_date: &mut []int, pend_done: &mut []int) {
+    let g = target_group(targets, ymd)
+    if g < 0 {
+        return
+    }
+    let ns = p.codes.len
+    let mut equity_now = cash
+    let mut s = 0
+    while s < ns {
+        if s < last_nav.len && s < units.len && last_nav[s] > 0 {
+            equity_now = equity_now + costs.mul_div(units[s], last_nav[s], scale())
+        }
+        s = s + 1
+    }
+    let mut hold_n = 0
+    if g + 1 < targets.off.len {
+        let mut k = targets.off[g]
+        while k < targets.off[g + 1] && k < targets.scheme.len {
+            let qs = targets.scheme[k]
+            if qs >= 0 && qs < ns && qs < last_nav.len && last_nav[qs] > 0 {
+                hold_n = hold_n + 1
+            }
+            k = k + 1
+        }
+    }
+    let mut target_each = i64(0)
+    if hold_n > 0 {
+        target_each = equity_now / i64(hold_n)
+    }
+    s = 0
+    while s < ns {
+        if s < units.len && units[s] > 0 && !in_group(targets, g, s) {
+            let at = next_scheme_bar(p, s, ymd)
+            push(od, ymd)
+            push(os, -1)
+            push(oa, i64(0))
+            push(oq, s)
+            if at >= 0 {
+                push(pend_ord, od.len - 1)
+                push(pend_date, p.dates[at])
+                push(pend_done, 0)
+            }
+        }
+        s = s + 1
+    }
+    if g + 1 < targets.off.len {
+        let mut k = targets.off[g]
+        while k < targets.off[g + 1] && k < targets.scheme.len {
+            let qs = targets.scheme[k]
+            if qs >= 0 && qs < ns && qs < last_nav.len && qs < units.len && last_nav[qs] > 0 {
+                let have = costs.mul_div(units[qs], last_nav[qs], scale())
+                if have > target_each {
+                    let at = next_scheme_bar(p, qs, ymd)
+                    push(od, ymd)
+                    push(os, -1)
+                    push(oa, have - target_each)
+                    push(oq, qs)
+                    if at >= 0 {
+                        push(pend_ord, od.len - 1)
+                        push(pend_date, p.dates[at])
+                        push(pend_done, 0)
+                    }
+                } else if have < target_each {
+                    let at = next_scheme_bar(p, qs, ymd)
+                    push(od, ymd)
+                    push(os, 1)
+                    push(oa, target_each - have)
+                    push(oq, qs)
+                    if at >= 0 {
+                        push(pend_ord, od.len - 1)
+                        push(pend_date, p.dates[at])
+                        push(pend_done, 0)
+                    }
+                }
+            }
+            k = k + 1
+        }
+    }
+}
+
+/// `mark` is a `YYYYMMDD`. Equity at the last bar before it is stored on
+/// the report. `0` leaves that field at the starting cash and changes nothing
+/// else. `targets` is read only when it has dates; the orders are then the
+/// ones the rebalance emits, and `seed` is ignored.
+fn execute(p: Panel, seed: BookOrders, targets: Targets, flows: Flows, c: Costs, start_cash: i64, mark: int) -> BookRun {
+    if p.codes.len == 0 || start_cash < 0 || p.starts.len != p.codes.len + 1 {
+        return BookRun { report: empty_report(start_cash), orders: empty_orders() }
+    }
+    let udates = union_dates(p)
+    if udates.len == 0 {
+        return BookRun { report: empty_report(start_cash), orders: empty_orders() }
+    }
+    let use_targets = targets.dates.len > 0
+    let mut od = []int {}
+    let mut os = []int {}
+    let mut oa = []i64 {}
+    let mut oq = []int {}
+    if !use_targets {
+        let mut n = seed.dates.len
+        if seed.sides.len < n {
+            n = seed.sides.len
+        }
+        if seed.amounts.len < n {
+            n = seed.amounts.len
+        }
+        if seed.scheme.len < n {
+            n = seed.scheme.len
+        }
+        let mut i = 0
+        while i < n {
+            push(od, seed.dates[i])
+            push(os, seed.sides[i])
+            push(oa, seed.amounts[i])
+            push(oq, seed.scheme[i])
+            i = i + 1
+        }
+    }
+    let mut pend_ord = []int {}
+    let mut pend_date = []int {}
+    let mut pend_done = []int {}
+    if !use_targets {
+        let mut i = 0
+        while i < od.len {
+            let at = next_scheme_bar(p, oq[i], od[i])
+            if at >= 0 {
+                push(pend_ord, i)
+                push(pend_date, p.dates[at])
+                push(pend_done, 0)
+            }
+            i = i + 1
+        }
+    }
+
+    let ns = p.codes.len
+    let mut units = []i64 {}
+    let mut last_nav = []i64 {}
+    let mut ptr = []int {}
+    let mut s = 0
+    while s < ns {
+        push(units, i64(0))
+        push(last_nav, i64(0))
+        push(ptr, 0)
+        s = s + 1
+    }
+    let mut lot_scheme = []int {}
+    let mut lot_units = []i64 {}
+    let mut lot_dates = []int {}
+    let mut lot_cost = []i64 {}
+    let mut cash = start_cash
+    let mut wins = 0
+    let mut losses = 0
+    let mut gross_win = i64(0)
+    let mut gross_loss = i64(0)
+    let mut bought = i64(0)
+    let mut sold = i64(0)
+    let mut book = empty_ledger()
+    let mut equity = []f64 {}
+    let mut curve_dates = []int {}
+    let mut curve_paise = []i64 {}
+    let mut mark_equity = start_cash
+    let mut flow_dates = []int {}
+    let mut flow_amounts = []i64 {}
+    let mut had_flow = false
+
+    let mut ui = 0
+    while ui < udates.len {
+        let ymd = udates[ui]
+        s = 0
+        while s < ns {
+            let base = p.starts[s]
+            let lim = p.starts[s + 1]
+            while ptr[s] < lim - base && p.dates[base + ptr[s]] == ymd {
+                last_nav[s] = p.navs[base + ptr[s]]
+                ptr[s] = ptr[s] + 1
+            }
+            s = s + 1
+        }
+
+        let mut fi = 0
+        let flen = flows.dates.len
+        while fi < flen && fi < flows.amounts.len {
+            if flows.amounts[fi] > 0 {
+                let at = first_on_or_after(udates, flows.dates[fi])
+                if at == ui {
+                    cash = cash + flows.amounts[fi]
+                    push(flow_dates, ymd)
+                    push(flow_amounts, flows.amounts[fi])
+                    had_flow = true
+                }
+            }
+            fi = fi + 1
+        }
+
+        let mut pass = 0
+        while pass < 2 {
+            let mut pi = 0
+            while pi < pend_ord.len {
+                if pend_done[pi] == 0 && pend_date[pi] == ymd {
+                    let oi = pend_ord[pi]
+                    let side = os[oi]
+                    let want_sell = pass == 0 && side < 0
+                    let want_buy = pass == 1 && side > 0
+                    if want_sell || want_buy {
+                        pend_done[pi] = 1
+                        let si = oq[oi]
+                        if si >= 0 && si < ns {
+                        let nav = last_nav[si]
+                        let signal = od[oi]
+                        if want_buy && nav > 0 && cash > 0 {
+                            let mut budget = oa[oi]
+                            if budget <= 0 || budget > cash {
+                                budget = cash
+                            }
+                            let stamp = costs.stamp_duty(budget, c)
+                            let invested = budget - stamp
+                            if invested > 0 {
+                                let got = invested * scale() / nav
+                                if got > 0 {
+                                    let mut actual = costs.mul_div(got, nav, scale())
+                                    if actual > invested {
+                                        actual = invested
+                                    }
+                                    cash = cash - stamp - actual
+                                    units[si] = units[si] + got
+                                    push(lot_scheme, si)
+                                    push(lot_units, got)
+                                    push(lot_dates, ymd)
+                                    push(lot_cost, stamp + actual)
+                                    bought = bought + actual
+                                    push(book.signal_dates, signal)
+                                    push(book.fill_dates, ymd)
+                                    push(book.sides, 1)
+                                    push(book.schemes, si)
+                                    push(book.navs, nav)
+                                    push(book.units, got)
+                                    push(book.gross, actual)
+                                    push(book.stamp, stamp)
+                                    push(book.stt, i64(0))
+                                    push(book.load, i64(0))
+                                    push(book.cash_after, cash)
+                                }
+                            }
+                        } else if want_sell && nav > 0 && units[si] > 0 {
+                            let mut left = units[si]
+                            if oa[oi] > 0 {
+                                left = oa[oi] * scale() / nav
+                                if left > units[si] {
+                                    left = units[si]
+                                }
+                            }
+                            if left > 0 {
+                                let mut gsum = i64(0)
+                                let mut lsum = i64(0)
+                                let mut tsum = i64(0)
+                                let mut take_units = i64(0)
+                                let mut remain_s = []int {}
+                                let mut remain_u = []i64 {}
+                                let mut remain_d = []int {}
+                                let mut remain_c = []i64 {}
+                                let mut li = 0
+                                while li < lot_units.len {
+                                    let have = lot_units[li]
+                                    if lot_scheme[li] != si || left <= 0 {
+                                        push(remain_s, lot_scheme[li])
+                                        push(remain_u, have)
+                                        push(remain_d, lot_dates[li])
+                                        push(remain_c, lot_cost[li])
+                                    } else {
+                                        let mut take = have
+                                        if take > left {
+                                            take = left
+                                        }
+                                        let g = costs.mul_div(take, nav, scale())
+                                        let held_days = date.days_between(lot_dates[li], ymd)
+                                        let load = costs.exit_load(g, held_days, c)
+                                        let tx = costs.stt(g, c)
+                                        let mut proceeds = g - load - tx
+                                        if proceeds < 0 {
+                                            proceeds = i64(0)
+                                        }
+                                        let mut cost_part = lot_cost[li]
+                                        if take < have {
+                                            cost_part = costs.mul_div(lot_cost[li], take, have)
+                                        }
+                                        let pnl = proceeds - cost_part
+                                        if pnl > 0 {
+                                            wins = wins + 1
+                                            gross_win = gross_win + pnl
+                                        } else if pnl < 0 {
+                                            losses = losses + 1
+                                            gross_loss = gross_loss + (i64(0) - pnl)
+                                        }
+                                        gsum = gsum + g
+                                        lsum = lsum + load
+                                        tsum = tsum + tx
+                                        take_units = take_units + take
+                                        left = left - take
+                                        cash = cash + proceeds
+                                        if take < have {
+                                            push(remain_s, si)
+                                            push(remain_u, have - take)
+                                            push(remain_d, lot_dates[li])
+                                            push(remain_c, lot_cost[li] - cost_part)
+                                        }
+                                    }
+                                    li = li + 1
+                                }
+                                lot_scheme = remain_s
+                                lot_units = remain_u
+                                lot_dates = remain_d
+                                lot_cost = remain_c
+                                units[si] = units[si] - take_units
+                                sold = sold + gsum
+                                if take_units > 0 {
+                                    push(book.signal_dates, signal)
+                                    push(book.fill_dates, ymd)
+                                    push(book.sides, -1)
+                                    push(book.schemes, si)
+                                    push(book.navs, nav)
+                                    push(book.units, take_units)
+                                    push(book.gross, gsum)
+                                    push(book.stamp, i64(0))
+                                    push(book.stt, tsum)
+                                    push(book.load, lsum)
+                                    push(book.cash_after, cash)
+                                }
+                            }
+                        }
+                        }
+                    }
+                }
+                pi = pi + 1
+            }
+            pass = pass + 1
+        }
+
+        if use_targets {
+            emit_rebalance(p, targets, ymd, cash, units, last_nav, od, os, oa, oq, pend_ord, pend_date, pend_done)
+        }
+
+        let mut mtm = cash
+        s = 0
+        while s < ns {
+            if last_nav[s] > 0 {
+                mtm = mtm + costs.mul_div(units[s], last_nav[s], scale())
+            }
+            s = s + 1
+        }
+        push(equity, f64(mtm))
+        push(curve_dates, ymd)
+        push(curve_paise, mtm)
+        if mark > 0 && ymd < mark {
+            mark_equity = mtm
+        }
+        ui = ui + 1
+    }
+
+    let mut end_units = i64(0)
+    s = 0
+    while s < ns {
+        end_units = end_units + units[s]
+        s = s + 1
+    }
+    let mut end_equity = cash
+    s = 0
+    while s < ns {
+        if last_nav[s] > 0 {
+            end_equity = end_equity + costs.mul_div(units[s], last_nav[s], scale())
+        }
+        s = s + 1
+    }
+    let report = finish(start_cash, cash, end_units, end_equity, mark_equity, had_flow, flow_dates, flow_amounts, udates[0], udates[udates.len - 1], bought, sold, wins, losses, gross_win, gross_loss, equity, curve_dates, curve_paise, book)
+    return BookRun {
+        report: report,
+        orders: BookOrders { dates: od, sides: os, amounts: oa, scheme: oq },
+    }
+}
+
+/// Run `orders` against `s`. `start_cash` is the paise in the account before
+/// the first bar.
+fn run(s: NavSeries, orders: Orders, c: Costs, start_cash: i64) -> Report {
+    return run_marked(s, orders, c, start_cash, 0)
+}
+
+/// Like `run`, and `report.mark_equity` is the close before `mark`.
+fn run_marked(s: NavSeries, orders: Orders, c: Costs, start_cash: i64, mark: int) -> Report {
+    return run_flows_marked(s, orders, empty_flows(), c, start_cash, mark)
+}
+
+/// `flows` are SIP contributions. They are not trades, and the XIRR counts
+/// each of them.
+fn run_flows(s: NavSeries, orders: Orders, flows: Flows, c: Costs, start_cash: i64) -> Report {
+    return run_flows_marked(s, orders, flows, c, start_cash, 0)
+}
+
+fn run_flows_marked(s: NavSeries, orders: Orders, flows: Flows, c: Costs, start_cash: i64, mark: int) -> Report {
+    if series.len(s) == 0 || start_cash < 0 {
+        return empty_report(start_cash)
+    }
+    let done = execute(one_panel(s), book_of(orders), empty_targets(), flows, c, start_cash, mark)
+    return done.report
+}
+
+/// Several schemes, one cash balance.
+fn run_book(p: Panel, orders: BookOrders, c: Costs, start_cash: i64) -> Report {
+    return run_book_flows(p, orders, empty_flows(), c, start_cash)
+}
+
+fn run_book_flows(p: Panel, orders: BookOrders, flows: Flows, c: Costs, start_cash: i64) -> Report {
+    let done = execute(p, orders, empty_targets(), flows, c, start_cash, 0)
+    return done.report
+}
+
+fn run_book_marked(p: Panel, orders: BookOrders, c: Costs, start_cash: i64, mark: int) -> Report {
+    let done = execute(p, orders, empty_targets(), empty_flows(), c, start_cash, mark)
+    return done.report
+}
+
+/// Rebalance to `targets` and return both the orders that were emitted and
+/// the result of filling them. Sizing uses only the NAV already published
+/// on the signal date; the fill is the next one.
+fn run_targets(p: Panel, targets: Targets, c: Costs, start_cash: i64) -> BookRun {
+    return execute(p, empty_orders(), targets, empty_flows(), c, start_cash, 0)
+}

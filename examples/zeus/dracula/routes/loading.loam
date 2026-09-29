@@ -1,0 +1,7 @@
+//! Shown while a route's loaders are pending.
+
+import "std:zeus"
+
+fn loading() {
+    zeus.Text("loading...")
+}

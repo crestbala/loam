@@ -1,0 +1,67 @@
+//! Top bar. Each entry is a URL. The bar reads `router.path_signal()` so the
+//! highlight follows navigation while the shell stays mounted.
+
+import "std:colors"
+import "std:router"
+import "std:spacing"
+import "std:zeus"
+import "std:zui"
+
+/// `deep` 1 also lights the link on any path under `href`.
+fn NavLink(label: string, href: string, deep: int = 0) {
+    let path = router.path_signal()
+    let item = zeus.Box(
+        align_direction = DIRECTION.Row,
+        align_items = ALIGN.Center,
+        spacing = SPACE.Exxs,
+        padding_x = 12,
+        height = 36,
+        radius = spacing.RAD_MD,
+        on_click = fn() => router.navigate(href),
+        a11y_role = "button",
+        a11y_label = label,
+        cursor = "pointer")
+    zeus.ui_push(item.id)
+    let text = zeus.Text(label, font = spacing.FONT_BODY)
+    zeus.ui_pop()
+    zeus.selected_chrome(item, text, || { lit(path.get(), href, deep) },
+                         colors.raised(), "", zeus.ink(), colors.mute())
+}
+
+fn lit(path: string, href: string, deep: int) -> bool {
+    if path == href {
+        return true
+    }
+    if deep == 0 || path.len <= href.len {
+        return false
+    }
+    let mut i = 0
+    while i < href.len {
+        if path[i] != href[i] {
+            return false
+        }
+        i = i + 1
+    }
+    return path[href.len] == 47
+}
+
+fn Navbar() {
+    zui.Column(SPACE.None) {
+        zeus.Box(align_direction = DIRECTION.Row, spacing = SPACE.Md,
+                 align_items = ALIGN.Center, height = spacing.BAR) {
+            zeus.Box(width = 22, height = 22, radius = 6, background = zeus.ink())
+            zeus.Text("dracula", color = zeus.ink(), font = spacing.FONT_TITLE)
+            NavLink("Holdings", "/")
+            NavLink("Charts", "/scheme", 1)
+            NavLink("Screener", "/screener")
+            NavLink("Backtest", "/backtest")
+            NavLink("Walk-forward", "/backtest/walkforward")
+            NavLink("Stocks", "/stocks", 1)
+            NavLink("Data", "/data")
+            zui.Grow()
+            zeus.Text("Dark", color = colors.mute(), font = spacing.FONT_CONTROL)
+            zui.Switch(zeus.appearance())
+        }
+        zui.Separator()
+    }
+}

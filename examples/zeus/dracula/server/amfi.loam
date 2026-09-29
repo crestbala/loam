@@ -1,0 +1,313 @@
+//! Parse an AMFI NAV file into flat columns.
+//!
+//! Two layouts share this walker:
+//!
+//! - The daily file (`NAVAll.txt`) repeats a header under category lines such
+//!   as `Open Ended Schemes(Equity Scheme - Large Cap Fund)`. Current files
+//!   put the plan and the option in their own columns (`Direct Plan`,
+//!   `Growth Option`) beside the scheme name; older files fold both into the
+//!   name. Either way the stored name is `scheme - plan - option`, which is
+//!   what the plan-change check reads. An AMC name sits between category
+//!   lines and has no semicolon. Only a line that contains `Scheme` updates
+//!   the category. An AMC line must not wipe it, or the equity filter would
+//!   drop the rows that follow.
+//! - The historical report names the scheme column `Scheme Name` or `NAV Name`.
+//!   Current files also carry plan, option, and ISINs, and a category line
+//!   above each block. Older files are scheme code, name, NAV, repurchase
+//!   price, sale price, date. Columns come from the header text, so an empty
+//!   repurchase price does not shift the date. A `NAV Name` header is history
+//!   even when ISINs are present: a date range is not the daily census.
+//!
+//! A header row (`Scheme Code` in the first field) is not data. A delimited
+//! line that cannot fill the columns the header named is a short row. Both
+//! are reported by line number. Section titles and blanks are neither rows
+//! nor errors.
+//!
+//! `kind` is `daily` when the header has an ISIN column, and `history`
+//! otherwise. The ingest layer marks dormant schemes only from a daily file:
+//! a history report is one date range, not the whole universe.
+
+import "std:date"
+import "../core/csvx.loam"
+import "validate.loam"
+
+/// One file, flattened. Row `i` is `codes[i]` / `names[i]` / `dates[i]` /
+/// `navs[i]`. `navs[i]` is `-1` and `dates[i]` is `0` when that cell did not
+/// parse; `review` turns those into reject reasons.
+struct Sheet {
+    codes: []string,
+    names: []string,
+    isin_g: []string,
+    isin_d: []string,
+    dates: []int,
+    navs: []i64,
+    lines: []int,
+    sections: []string,
+    bad_lines: []int,
+    bad_reasons: []string,
+    /// `daily` or `history`. Empty when the file had no header.
+    kind: string,
+}
+
+fn empty_sheet() -> Sheet {
+    return Sheet {
+        codes: []string {},
+        names: []string {},
+        isin_g: []string {},
+        isin_d: []string {},
+        dates: []int {},
+        navs: []i64 {},
+        lines: []int {},
+        sections: []string {},
+        bad_lines: []int {},
+        bad_reasons: []string {},
+        kind: "",
+    }
+}
+
+fn contains(s: string, w: string) -> bool {
+    if w.len == 0 || w.len > s.len {
+        return false
+    }
+    let mut i = 0
+    let last = s.len - w.len
+    while i <= last {
+        let mut k = 0
+        let mut same = true
+        while k < w.len {
+            if s[i + k] != w[k] {
+                same = false
+                break
+            }
+            k = k + 1
+        }
+        if same {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+fn eq_field(a: string, b: string) -> bool {
+    return a == b
+}
+
+fn find_field(cols: []string, name: string) -> int {
+    let mut i = 0
+    while i < cols.len {
+        if eq_field(cols[i], name) {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+fn find_isin(cols: []string, growth: bool) -> int {
+    let mut i = 0
+    while i < cols.len {
+        if contains(cols[i], "ISIN") {
+            if growth && contains(cols[i], "Growth") {
+                return i
+            }
+            if !growth && contains(cols[i], "Reinvestment") {
+                return i
+            }
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+fn cell(cols: []string, at: int) -> string {
+    if at < 0 || at >= cols.len {
+        return ""
+    }
+    return cols[at]
+}
+
+fn digits_only(s: string) -> bool {
+    if s.len == 0 || s.len > 12 {
+        return false
+    }
+    let mut i = 0
+    while i < s.len {
+        let c = s[i]
+        if c < 48 || c > 57 {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+/// `"-"` is how AMFI writes a missing ISIN. Store that as empty.
+fn clean_isin(s: string) -> string {
+    if s == "-" {
+        return ""
+    }
+    return s
+}
+
+/// Equity-oriented category. `Equity Schemes` contains `Equity Scheme`, so
+/// the plural header AMFI also writes is covered. Index equity funds and
+/// equity ETFs use a different heading and are included on purpose. Hybrid
+/// "Equity Savings" does not match either phrase.
+fn equity_section(section: string) -> bool {
+    if contains(section, "Equity Scheme") {
+        return true
+    }
+    if contains(section, "Equity ETF") {
+        return true
+    }
+    if contains(section, "Equity Funds") {
+        return true
+    }
+    return false
+}
+
+/// `scheme`, plus plan and option when the file split them into columns.
+/// Empty pieces are left out, so an older file whose name already contains
+/// the plan is stored unchanged.
+fn join_name(scheme: string, plan: string, option: string) -> string {
+    if plan.len == 0 && option.len == 0 {
+        return scheme
+    }
+    if plan.len == 0 {
+        return "{{scheme}} - {{option}}"
+    }
+    if option.len == 0 {
+        return "{{scheme}} - {{plan}}"
+    }
+    return "{{scheme}} - {{plan}} - {{option}}"
+}
+
+/// Whether this row belongs in the tracked universe.
+///
+/// A scheme we already cache is always tracked: a direct plan that AMFI
+/// relabels as regular has to stay, so the jump can be flagged instead of
+/// the scheme silently vanishing. A new scheme from the daily file must sit
+/// under an equity category and be a Direct plan. A history file with a
+/// category line uses that same equity test. One with no category line, the
+/// older report, keeps every new Direct plan.
+fn track(kind: string, section: string, name: string, known: bool) -> bool {
+    if known {
+        return true
+    }
+    if !contains(name, "Direct") {
+        return false
+    }
+    if kind == "daily" && !equity_section(section) {
+        return false
+    }
+    if kind == "history" && section.len > 0 && !equity_section(section) {
+        return false
+    }
+    return true
+}
+
+/// Walk `text`. Category lines that contain `Scheme` stick until the next one.
+fn parse(text: string) -> Sheet {
+    let mut sh = empty_sheet()
+    let mut section = ""
+    let mut kind = ""
+    let mut code_at = -1
+    let mut name_at = -1
+    let mut nav_at = -1
+    let mut date_at = -1
+    let mut isin_g_at = -1
+    let mut isin_d_at = -1
+    let mut plan_at = -1
+    let mut option_at = -1
+    let mut have_header = false
+    let parts = csvx.split_lines(text)
+    let mut li = 0
+    while li < parts.len {
+        let line_no = li + 1
+        let raw = parts[li]
+        let trimmed = csvx.trim(raw)
+        if trimmed.len == 0 {
+            li = li + 1
+            continue
+        }
+        if !csvx.has_semi(raw) {
+            if contains(trimmed, "Scheme") {
+                section = trimmed
+            }
+            li = li + 1
+            continue
+        }
+        let cols = csvx.split_fields(raw)
+        if cols.len > 0 && cols[0] == "Scheme Code" {
+            code_at = 0
+            let mut from_nav = 0
+            name_at = find_field(cols, "Scheme Name")
+            if name_at < 0 {
+                name_at = find_field(cols, "NAV Name")
+                if name_at >= 0 {
+                    from_nav = 1
+                }
+            }
+            nav_at = find_field(cols, "Net Asset Value")
+            date_at = find_field(cols, "Date")
+            isin_g_at = find_isin(cols, true)
+            isin_d_at = find_isin(cols, false)
+            plan_at = find_field(cols, "Plan")
+            option_at = find_field(cols, "Option")
+            if name_at < 0 || nav_at < 0 || date_at < 0 {
+                push(sh.bad_lines, line_no)
+                push(sh.bad_reasons, "bad header")
+                have_header = false
+            } else {
+                have_header = true
+                if from_nav == 1 {
+                    kind = "history"
+                } else if isin_g_at >= 0 {
+                    kind = "daily"
+                } else if kind != "daily" {
+                    kind = "history"
+                }
+            }
+            li = li + 1
+            continue
+        }
+        if !have_header {
+            push(sh.bad_lines, line_no)
+            push(sh.bad_reasons, "no header")
+            li = li + 1
+            continue
+        }
+        let mut need = date_at
+        if name_at > need {
+            need = name_at
+        }
+        if nav_at > need {
+            need = nav_at
+        }
+        if cols.len <= need {
+            push(sh.bad_lines, line_no)
+            push(sh.bad_reasons, "short row")
+            li = li + 1
+            continue
+        }
+        let code = cell(cols, code_at)
+        if !digits_only(code) {
+            push(sh.bad_lines, line_no)
+            push(sh.bad_reasons, "bad code")
+            li = li + 1
+            continue
+        }
+        push(sh.codes, code)
+        push(sh.names, join_name(cell(cols, name_at), cell(cols, plan_at), cell(cols, option_at)))
+        push(sh.isin_g, clean_isin(cell(cols, isin_g_at)))
+        push(sh.isin_d, clean_isin(cell(cols, isin_d_at)))
+        push(sh.dates, date.parse_amfi(cell(cols, date_at)))
+        push(sh.navs, validate.paise_of(cell(cols, nav_at)))
+        push(sh.lines, line_no)
+        push(sh.sections, section)
+        li = li + 1
+    }
+    sh.kind = kind
+    return sh
+}

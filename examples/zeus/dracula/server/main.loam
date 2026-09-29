@@ -1,0 +1,311 @@
+//! Server entry.
+//!
+//! A client build never imports this file. That is what keeps curl and the
+//! cache out of the UI binary. `loam test` on this file runs the fetch seam
+//! and the ingest pipeline; `main` itself is the process that listens.
+
+import "std:http"
+import "std:test"
+import "api.loam"
+import "ingest.loam"
+import "store.loam"
+import "catalog.loam"
+import "tape.loam"
+import "std:date"
+import "../tests/fetchx_tests.loam" as fetchx_tests
+import "../tests/validate_tests.loam" as validate_tests
+import "../tests/ingest_tests.loam" as ingest_tests
+import "../tests/catalog_tests.loam" as catalog_tests
+import "../tests/tape_tests.loam" as tape_tests
+
+fn navs_text(navs: []i64) -> []string {
+    let mut out = []string {}
+    let mut i = 0
+    while i < navs.len {
+        push(out, store.i64_str(navs[i]))
+        i = i + 1
+    }
+    return out
+}
+
+fn main() {
+    let app = http.app()
+
+    app.rpc(api.sync_rpc(), |body| {
+        let req = api.decode_SyncReq(body)
+        let r = ingest.sync_live()
+        api.encode_SyncResp(SyncResp {
+            ok: r.ok,
+            sync_id: r.sync_id,
+            accepted: r.accepted,
+            rejected: r.rejected,
+            warnings: r.warnings,
+            dormant: r.dormant,
+            err: r.err,
+        })
+    })
+
+    app.rpc(api.backfill_rpc(), |body| {
+        let req = api.decode_BackfillReq(body)
+        let r = ingest.backfill_live(req.frm, req.to)
+        api.encode_SyncResp(SyncResp {
+            ok: r.ok,
+            sync_id: r.sync_id,
+            accepted: r.accepted,
+            rejected: r.rejected,
+            warnings: r.warnings,
+            dormant: r.dormant,
+            err: r.err,
+        })
+    })
+
+    app.rpc(api.status_rpc(), |body| {
+        let req = api.decode_StatusReq(body)
+        let root = store.nav_root()
+        let log = store.read_syncs(root)
+        let at = store.latest_open(log)
+        let cat = store.read_catalog(root)
+        let mut found = 0
+        let mut sync_id = 0
+        let mut stamp = ""
+        let mut url = ""
+        let mut kind = ""
+        let mut accepted = 0
+        let mut rejected = 0
+        let mut warnings = 0
+        if at >= 0 {
+            found = 1
+            sync_id = log.ids[at]
+            stamp = log.stamps[at]
+            url = log.urls[at]
+            kind = log.kinds[at]
+            accepted = log.accepted[at]
+            rejected = log.rejected[at]
+            warnings = log.warnings[at]
+        }
+        api.encode_StatusResp(StatusResp {
+            live: 1,
+            found: found,
+            sync_id: sync_id,
+            stamp: stamp,
+            url: url,
+            kind: kind,
+            accepted: accepted,
+            rejected: rejected,
+            warnings: warnings,
+            dormant: store.dormant_count(cat),
+            gaps: store.open_gaps(cat),
+        })
+    })
+
+    app.rpc(api.rejects_rpc(), |body| {
+        let req = api.decode_RejectsReq(body)
+        let root = store.nav_root()
+        let log = store.read_syncs(root)
+        let at = store.latest_open(log)
+        let mut id = 0
+        if at >= 0 {
+            id = log.ids[at]
+        }
+        api.encode_RejectsResp(RejectsResp { lines: store.rejects_for(root, id) })
+    })
+
+    app.rpc(api.scheme_rpc(), |body| {
+        let req = api.decode_SchemeReq(body)
+        let root = store.nav_root()
+        let cat = store.read_catalog(root)
+        let at = store.find_code(cat, req.code)
+        let ser = store.series(root, req.code)
+        let mut found = 0
+        let mut name = ""
+        let mut dormant = 0
+        let mut gap_from = 0
+        let mut gap_ack = 0
+        if at >= 0 {
+            found = 1
+            name = cat.names[at]
+            dormant = cat.dormant[at]
+            gap_from = cat.gap_from[at]
+            gap_ack = cat.gap_ack[at]
+        }
+        api.encode_SchemeResp(SchemeResp {
+            found: found,
+            code: req.code,
+            name: name,
+            dormant: dormant,
+            gap_from: gap_from,
+            gap_ack: gap_ack,
+            dates: ser.dates,
+            navs: navs_text(ser.navs),
+        })
+    })
+
+    app.rpc(api.catalog_rpc(), |body| {
+        let req = api.decode_CatalogReq(body)
+        let root = store.nav_root()
+        let cat = store.read_catalog(root)
+        let hits = catalog.search(cat, req.query)
+        let page = catalog.window(hits, req.offset, req.limit)
+        let mut codes = []string {}
+        let mut names = []string {}
+        let mut last_dates = []int {}
+        let mut last_navs = []string {}
+        let mut dormant = []int {}
+        let mut i = 0
+        while i < page.len {
+            let at = page[i]
+            let code = cat.codes[at]
+            let ser = store.series(root, code)
+            push(codes, code)
+            push(names, cat.names[at])
+            push(dormant, cat.dormant[at])
+            let n = ser.dates.len
+            if n > 0 {
+                push(last_dates, ser.dates[n - 1])
+                push(last_navs, store.i64_str(ser.navs[n - 1]))
+            } else {
+                push(last_dates, 0)
+                push(last_navs, "")
+            }
+            i = i + 1
+        }
+        api.encode_CatalogResp(CatalogResp {
+            live: 1,
+            total: hits.len,
+            codes: codes,
+            names: names,
+            last_dates: last_dates,
+            last_navs: last_navs,
+            dormant: dormant,
+        })
+    })
+
+    app.rpc(api.stock_search_rpc(), |body| {
+        let req = api.decode_StockSearchReq(body)
+        let ix = tape.read_index(tape.tape_root())
+        let hits = catalog.search_rows(ix.symbols, ix.names, req.query)
+        let page = catalog.window(hits, req.offset, req.limit)
+        let mut symbols = []string {}
+        let mut names = []string {}
+        let mut last_dates = []int {}
+        let mut last_closes = []string {}
+        let mut i = 0
+        while i < page.len {
+            let at = page[i]
+            push(symbols, ix.symbols[at])
+            push(names, ix.names[at])
+            push(last_dates, ix.last_dates[at])
+            push(last_closes, store.i64_str(ix.last_paise[at]))
+            i = i + 1
+        }
+        api.encode_StockSearchResp(StockSearchResp {
+            live: 1,
+            total: hits.len,
+            symbols: symbols,
+            names: names,
+            last_dates: last_dates,
+            last_closes: last_closes,
+        })
+    })
+
+    app.rpc(api.stock_rpc(), |body| {
+        let req = api.decode_StockReq(body)
+        let root = tape.tape_root()
+        let ix = tape.read_index(root)
+        let mut found = 0
+        let mut name = ""
+        let mut isin = ""
+        let mut i = 0
+        while i < ix.symbols.len {
+            if ix.symbols[i] == req.symbol {
+                found = 1
+                name = ix.names[i]
+                isin = ix.isins[i]
+                break
+            }
+            i = i + 1
+        }
+        let mut dates = []int {}
+        let mut closes = []string {}
+        if found == 1 {
+            let c = tape.closes(root, req.symbol)
+            dates = c.dates
+            closes = navs_text(c.paise)
+        }
+        api.encode_StockResp(StockResp {
+            live: 1,
+            found: found,
+            symbol: req.symbol,
+            name: name,
+            isin: isin,
+            dates: dates,
+            closes: closes,
+        })
+    })
+
+    app.rpc(api.stock_day_rpc(), |body| {
+        let req = api.decode_StockDayReq(body)
+        let r = tape.day_live(date.parse_iso(req.day), ingest.stamp_now())
+        api.encode_StockDayResp(StockDayResp {
+            live: 1,
+            ok: r.ok,
+            closed: r.closed,
+            accepted: r.accepted,
+            rejected: r.rejected,
+            warnings: r.warnings,
+            err: r.err,
+        })
+    })
+
+    app.rpc(api.stock_status_rpc(), |body| {
+        let req = api.decode_StockStatusReq(body)
+        let root = tape.tape_root()
+        let f = tape.last_fetch(root)
+        let ix = tape.read_index(root)
+        let mut found = 0
+        let mut id = 0
+        let mut stamp = ""
+        let mut url = ""
+        let mut day = 0
+        let mut accepted = 0
+        let mut rejected = 0
+        let mut warnings = 0
+        if f.len >= 7 {
+            found = 1
+            id = store.parse_int(f[0])
+            stamp = f[1]
+            url = f[2]
+            day = store.parse_int(f[3])
+            accepted = store.parse_int(f[4])
+            rejected = store.parse_int(f[5])
+            warnings = store.parse_int(f[6])
+        }
+        api.encode_StockStatusResp(StockStatusResp {
+            live: 1,
+            found: found,
+            fetch_id: id,
+            stamp: stamp,
+            url: url,
+            day: day,
+            accepted: accepted,
+            rejected: rejected,
+            warnings: warnings,
+            symbols: ix.symbols.len,
+            rejects: tape.rejects_for(root, id, 20),
+        })
+    })
+
+    app.rpc(api.ack_rpc(), |body| {
+        let req = api.decode_AckReq(body)
+        let ok = store.ack_gap(store.nav_root(), req.code)
+        api.encode_AckResp(AckResp { ok: ok })
+    })
+
+    app.rpc(api.rollback_rpc(), |body| {
+        let req = api.decode_RollbackReq(body)
+        let ok = store.rollback(store.nav_root())
+        api.encode_RollbackResp(RollbackResp { ok: ok })
+    })
+
+    app.listen(8080)
+}

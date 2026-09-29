@@ -1,0 +1,112 @@
+//! Stable ordering for parallel `[]i64` columns.
+//!
+//! Loam has no `sort`. A NAV file arrives in whatever order AMFI printed, and
+//! every later step — duplicate dates, a gap check, a merge of two schemes —
+//! assumes date order. This is that primitive, and nothing else: it does not
+//! know what a date is.
+//!
+//! Two functions:
+//!
+//! - `sort` orders one `[]i64` in place.
+//! - `sort_by` orders `keys` the same way and applies that permutation to a
+//!   parallel `labels` array, so a column of scheme codes, or of original
+//!   indexes, follows its key.
+//!
+//! The algorithm is a bottom-up merge sort. It is stable: when two keys
+//! compare equal, the one that arrived first stays first. That is what keeps
+//! an already-ranked tie from flipping between runs. "In place" means the
+//! caller's buffer is the one that ends up sorted; a scratch buffer of the
+//! same length is allocated for the merge and dropped.
+//!
+//! `keys` and `labels` must be the same length. A mismatch is a caller bug and
+//! traps, rather than sorting one and silently leaving the other behind.
+
+/// Order `keys` ascending, stably, in place.
+fn sort(keys: &mut []i64) {
+    let mut labels = []i64 {}
+    let n = keys.len
+    let mut i = 0
+    while i < n {
+        push(labels, i64(i))
+        i = i + 1
+    }
+    sort_by(keys, labels)
+}
+
+/// Order `keys` ascending and move `labels` with them.
+///
+/// `labels[i]` is whatever rode along with `keys[i]` — an original index, a
+/// scheme code, a second numeric column. Equal keys keep their input order,
+/// and the labels of those keys keep that order too.
+///
+/// Both are `&mut`: an index write through a plain parameter is rejected, and
+/// a sort that returned a fresh array would drop the caller's buffer.
+fn sort_by(keys: &mut []i64, labels: &mut []i64) {
+    if keys.len != labels.len {
+        panic("sortx.sort_by: keys and labels have different lengths")
+    }
+    let n = keys.len
+    if n < 2 {
+        return
+    }
+
+    // Scratch for one merge pass. The pass writes every index, so the initial
+    // zeros are never read.
+    let mut sk = []i64 {}
+    let mut sl = []i64 {}
+    let mut i = 0
+    while i < n {
+        push(sk, i64(0))
+        push(sl, i64(0))
+        i = i + 1
+    }
+
+    // `width` is the length of a run that is already sorted. Doubling it
+    // merges adjacent runs. The last pass stops without doubling once two
+    // widths would meet or pass `n`: `width * 2` on a huge `n` would overflow
+    // i32, and that pass is not needed anyway.
+    let mut width = 1
+    while width < n {
+        let mut at = 0
+        while at < n {
+            let left = at
+            let mut mid = at + width
+            if mid > n {
+                mid = n
+            }
+            let mut right = mid + width
+            if right > n {
+                right = n
+            }
+            let mut a = left
+            let mut b = mid
+            let mut k = left
+            while k < right {
+                // `<=` takes the left run on a tie, which is what makes the
+                // sort stable. The left comparison is skipped once `a` is
+                // exhausted; `&&` / `||` do not evaluate the other side.
+                if b >= right || (a < mid && keys[a] <= keys[b]) {
+                    sk[k] = keys[a]
+                    sl[k] = labels[a]
+                    a = a + 1
+                } else {
+                    sk[k] = keys[b]
+                    sl[k] = labels[b]
+                    b = b + 1
+                }
+                k = k + 1
+            }
+            at = right
+        }
+        let mut k = 0
+        while k < n {
+            keys[k] = sk[k]
+            labels[k] = sl[k]
+            k = k + 1
+        }
+        if width > n - width {
+            break
+        }
+        width = width * 2
+    }
+}

@@ -1,0 +1,84 @@
+import "std:router"
+import "std:spacing"
+import "std:zeus"
+import "std:zui"
+import "../../../components/book.loam" as book
+import "../../../components/lab.loam" as lab
+import "../../../components/present.loam" as present
+import "../../../components/ui.loam" as ui
+
+fn spec() -> []TableCol {
+    let mut h = []TableCol {}
+    push(h, TableCol { title: "Train", width: 0 })
+    push(h, TableCol { title: "Test", width: 0 })
+    push(h, TableCol { title: "Frozen", width: 0 })
+    push(h, TableCol { title: "In sample", width: 0, align: ALIGN.End })
+    push(h, TableCol { title: "Out of sample", width: 0, align: ALIGN.End })
+    push(h, TableCol { title: "Buy and hold", width: 0, align: ALIGN.End })
+    push(h, TableCol { title: "Monthly SIP", width: 0, align: ALIGN.End })
+    return h
+}
+
+fn paint_pick() {
+    if book.watch_count() == 0 {
+        zui.Empty(icon = zeus.IC_INFO, title = "Add a fund on Holdings first",
+                  body = "Walk-forward runs on a scheme from your list.") {
+            zui.Button(label = "Go to Holdings", size = zeus.SIZE.Sm, on_click = fn() { router.navigate("/") })
+        }
+        return
+    }
+    zui.Row(8) {
+        zui.Select(lab.pick_signal(), lab.pick_labels())
+        zui.Button(label = "Run", on_click = fn() { lab.arm_walk() })
+    }
+}
+
+fn paint_walk() {
+    if !lab.has_walk() {
+        zeus.Text("Run the frozen rule once a scheme has loaded.")
+        return
+    }
+    let note = lab.walk_text()
+    if note.len > 0 {
+        zeus.Text(note, wrap = 1)
+    }
+    let cells = lab.fold_cells()
+    if cells.len == 0 {
+        return
+    }
+    zui.TableCols(spec())
+    let rows = cells.len / present.walk_cols()
+    let mut r = 0
+    while r < rows {
+        zui.TableRowCols(present.row_at(cells, present.walk_cols(), r), spec(), zebra = true)
+        r = r + 1
+    }
+}
+
+fn page(p: Params) {
+    zui.Column(spacing.SECTION) {
+        zui.Heading("Walk-forward")
+        zeus.Text("In sample")
+        zeus.Text("Out of sample")
+        zui.Body("The length is chosen on the train window and then frozen. In sample starts from fresh cash. Out of sample carries the book from the last train bar. Buy and hold and the monthly SIP deploy that same cash on the test window.")
+        if book.started() && lab.started() {
+            zui.Match(book.load_gen(), fn(g) {
+                if g >= 0 {
+                    paint_pick()
+                }
+            })
+            zeus.effect(fn() { lab.try_walk() })
+            zui.Match(lab.walk_gen(), fn(g) {
+                if g >= 0 {
+                    paint_walk()
+                }
+            })
+        } else {
+            zeus.Text("Run the frozen rule once a scheme has loaded.")
+        }
+    }
+}
+
+fn meta(p: Params) -> Meta {
+    return Meta { title: "Walk-forward" }
+}

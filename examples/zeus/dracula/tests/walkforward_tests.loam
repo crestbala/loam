@@ -1,0 +1,57 @@
+//! One fold is enough to see the freeze: the length is chosen on the rise,
+//! and the decline that follows is scored with that length left alone.
+
+import "std:test"
+import "std:date"
+import "../core/series.loam"
+import "../core/costs.loam"
+import "../core/walkforward.loam"
+
+fn rise_then_fall() -> NavSeries {
+    let mut dates = []int {}
+    let mut navs = []i64 {}
+    let origin = date.to_days(20260101)
+    let mut i = 0
+    while i < 25 {
+        push(dates, date.from_days(origin + i))
+        let mut px = 1000 + i * 100
+        if i > 14 {
+            px = 2400 - (i - 14) * 200
+        }
+        push(navs, i64(px))
+        i = i + 1
+    }
+    return series.build("1001", dates, navs)
+}
+
+#[test]
+fn the_frozen_length_is_the_one_that_won_in_sample() {
+    let s = rise_then_fall()
+    let mut grid = []int {}
+    push(grid, 2)
+    push(grid, 50)
+    let w = walkforward.sma(s, grid, 0, 15, 10, 0, costs.equity(), i64(1000000))
+    test.assert_eq_int(w.param.len, 1)
+    test.assert_eq_int(w.param[0], 2)
+    test.assert_eq_int(w.train_from[0], 20260101)
+    test.assert_eq_int(w.test_from[0], s.dates[15])
+    test.assert(w.is_equity[0] > i64(1000000))
+    test.assert(w.is_cagr[0] > 0.0)
+    test.assert(w.oos_cagr[0] < 0.0)
+    test.assert_eq_int(w.hold_cagr.len, 1)
+    test.assert_eq_int(w.sip_cagr.len, 1)
+    test.assert(w.hold_cagr[0] < 0.0)
+    test.assert(w.sip_cagr[0] < 0.0)
+    test.assert_eq_int(w.degraded[0], 1)
+    test.assert_eq_str(w.note, "Out of sample, the frozen rule made less than it did on the sample it was fit to.")
+}
+
+#[test]
+fn a_short_series_says_there_is_no_window() {
+    let s = rise_then_fall()
+    let mut grid = []int {}
+    push(grid, 2)
+    let w = walkforward.sma(s, grid, 0, 20, 20, 0, costs.equity(), i64(1000000))
+    test.assert_eq_int(w.param.len, 0)
+    test.assert_eq_str(w.note, "There is not enough history for a train window and a test window.")
+}

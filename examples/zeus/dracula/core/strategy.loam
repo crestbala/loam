@@ -1,0 +1,465 @@
+//! Rules that turn a NAV series into orders.
+//!
+//! A rule sees the bar it is standing on and nothing after it. The order it
+//! writes is filled by the backtest at the next published NAV, so the rule
+//! does not choose a price. Warm-up bars, where the indicator has no opinion,
+//! produce no order.
+//!
+//! Three rules, plus the buy-and-hold every report is measured against:
+//!
+//! - NAV above its 200-day average, and no exit until the lot is already past
+//!   the 365-day exit load. The fill is later than the signal, so the
+//!   redemption itself clears the load.
+//! - Twelve-month momentum, rebalanced on the last published day of the month,
+//!   equal weight in the top N. A name that is not ready is not ranked.
+//! - A monthly SIP of a fixed paise amount.
+//!
+//! `compare` runs the rule and, beside it, a lump-sum buy-and-hold and a
+//! monthly SIP that deploys the same paise over the same dates, at the same
+//! costs.
+
+import "std:date"
+import "backtest.loam"
+import "costs.loam"
+import "indicators.loam"
+import "series.loam"
+
+struct SipPlan {
+    orders: Orders,
+    flows: Flows,
+}
+
+struct BookPlan {
+    orders: BookOrders,
+    flows: Flows,
+}
+
+struct Compared {
+    rule: Report,
+    buy_hold: Report,
+    sip: Report,
+}
+
+fn empty_order_cols() -> Orders {
+    return Orders { dates: []int {}, sides: []int {}, amounts: []i64 {} }
+}
+
+fn empty_sip() -> SipPlan {
+    return SipPlan { orders: empty_order_cols(), flows: backtest.empty_flows() }
+}
+
+fn empty_book_plan() -> BookPlan {
+    return BookPlan { orders: backtest.empty_orders(), flows: backtest.empty_flows() }
+}
+
+/// Buy when the NAV is above its `n`-bar average, sell when it is below,
+/// but not until the filled lot is older than `min_hold` days. `min_hold`
+/// of 365 is what keeps the exit on the far side of the exit load. The
+/// 200-day rule is `sma_200`.
+fn sma_orders(s: NavSeries, n: int, min_hold: int, ack: int) -> Orders {
+    let line = indicators.sma(s, n, ack)
+    let mut dates = []int {}
+    let mut sides = []int {}
+    let mut amounts = []i64 {}
+    let mut held = false
+    let mut pending = 0
+    let mut entry = 0
+    let mut i = 0
+    while i < series.len(s) {
+        if !held && pending != 0 && s.dates[i] > pending {
+            held = true
+            entry = s.dates[i]
+            pending = 0
+        }
+        if i < line.ready.len && line.ready[i] == 1 {
+            let px = f64(s.navs[i])
+            if !held && pending == 0 && px > line.v[i] {
+                push(dates, s.dates[i])
+                push(sides, 1)
+                push(amounts, i64(0))
+                pending = s.dates[i]
+            } else if held && px < line.v[i] {
+                if date.days_between(entry, s.dates[i]) > min_hold {
+                    push(dates, s.dates[i])
+                    push(sides, -1)
+                    push(amounts, i64(0))
+                    held = false
+                    entry = 0
+                }
+            }
+        }
+        i = i + 1
+    }
+    return Orders { dates: dates, sides: sides, amounts: amounts }
+}
+
+/// The v1 trend rule. Two hundred daily bars, and the lot is held past the
+/// exit load before a close is allowed.
+fn sma_200(s: NavSeries, ack: int) -> Orders {
+    return sma_orders(s, 200, 365, ack)
+}
+
+/// One buy on the first bar, for all free cash. The fill is the next NAV.
+fn buy_hold(s: NavSeries) -> Orders {
+    let mut dates = []int {}
+    let mut sides = []int {}
+    let mut amounts = []i64 {}
+    if series.len(s) > 0 {
+        push(dates, s.dates[0])
+        push(sides, 1)
+        push(amounts, i64(0))
+    }
+    return Orders { dates: dates, sides: sides, amounts: amounts }
+}
+
+fn month_breaks(dates: []int) -> []int {
+    let mut out = []int {}
+    let mut i = 0
+    while i < dates.len {
+        if i == 0 || dates[i] / 100 != dates[i - 1] / 100 {
+            push(out, i)
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn plan_of(dates: []int, amounts: []i64) -> SipPlan {
+    let mut od = []int {}
+    let mut os = []int {}
+    let mut oa = []i64 {}
+    let mut fd = []int {}
+    let mut fa = []i64 {}
+    let mut i = 0
+    while i < dates.len && i < amounts.len {
+        if amounts[i] > 0 {
+            push(od, dates[i])
+            push(os, 1)
+            push(oa, amounts[i])
+            push(fd, dates[i])
+            push(fa, amounts[i])
+        }
+        i = i + 1
+    }
+    return SipPlan {
+        orders: Orders { dates: od, sides: os, amounts: oa },
+        flows: Flows { dates: fd, amounts: fa },
+    }
+}
+
+/// Fixed `amount` paise on the first published bar of each month. The cash
+/// arrives that day; the units are allotted at the next NAV.
+fn monthly_sip(s: NavSeries, amount: i64) -> SipPlan {
+    if amount <= 0 {
+        return empty_sip()
+    }
+    let at = month_breaks(s.dates)
+    let mut dates = []int {}
+    let mut amounts = []i64 {}
+    let mut i = 0
+    while i < at.len {
+        push(dates, s.dates[at[i]])
+        push(amounts, amount)
+        i = i + 1
+    }
+    return plan_of(dates, amounts)
+}
+
+/// The same paise as a lump sum, split across the months in the window.
+/// The last month takes the remainder so the contributions add up.
+fn capital_sip(s: NavSeries, capital: i64) -> SipPlan {
+    if capital <= 0 {
+        return empty_sip()
+    }
+    let at = month_breaks(s.dates)
+    if at.len == 0 {
+        return empty_sip()
+    }
+    let n = at.len
+    let base = capital / i64(n)
+    let rem = capital - base * i64(n)
+    let mut dates = []int {}
+    let mut amounts = []i64 {}
+    let mut i = 0
+    while i < n {
+        let mut amt = base
+        if i == n - 1 {
+            amt = amt + rem
+        }
+        push(dates, s.dates[at[i]])
+        push(amounts, amt)
+        i = i + 1
+    }
+    return plan_of(dates, amounts)
+}
+
+fn contributed(flows: Flows) -> i64 {
+    let mut s = i64(0)
+    let mut i = 0
+    while i < flows.amounts.len {
+        s = s + flows.amounts[i]
+        i = i + 1
+    }
+    return s
+}
+
+/// The rule, a lump-sum buy-and-hold, and a monthly SIP. All three deploy
+/// `start_cash` plus whatever `flows` add, on `s`, at `c`.
+fn compare_flows(s: NavSeries, orders: Orders, flows: Flows, c: Costs, start_cash: i64) -> Compared {
+    let total = start_cash + contributed(flows)
+    let rule = backtest.run_flows(s, orders, flows, c, start_cash)
+    let held = backtest.run(s, buy_hold(s), c, total)
+    let plan = capital_sip(s, total)
+    let sip = backtest.run_flows(s, plan.orders, plan.flows, c, i64(0))
+    return Compared { rule: rule, buy_hold: held, sip: sip }
+}
+
+fn compare(s: NavSeries, orders: Orders, c: Costs, start_cash: i64) -> Compared {
+    return compare_flows(s, orders, backtest.empty_flows(), c, start_cash)
+}
+
+/// Equal paise in each scheme, signaled on that scheme's first bar.
+/// The last scheme takes the remainder.
+fn buy_hold_book(p: Panel, capital: i64) -> BookOrders {
+    let ns = p.codes.len
+    if ns == 0 || capital <= 0 {
+        return backtest.empty_orders()
+    }
+    let share = capital / i64(ns)
+    let rem = capital - share * i64(ns)
+    let mut dates = []int {}
+    let mut sides = []int {}
+    let mut amounts = []i64 {}
+    let mut scheme = []int {}
+    let mut s = 0
+    while s < ns {
+        if s + 1 < p.starts.len && p.starts[s] < p.starts[s + 1] {
+            let mut amt = share
+            if s == ns - 1 {
+                amt = amt + rem
+            }
+            if amt > 0 {
+                push(dates, p.dates[p.starts[s]])
+                push(sides, 1)
+                push(amounts, amt)
+                push(scheme, s)
+            }
+        }
+        s = s + 1
+    }
+    return BookOrders { dates: dates, sides: sides, amounts: amounts, scheme: scheme }
+}
+
+/// `capital` split across the months of the merged calendar, and each
+/// month split across the schemes. One deposit per month.
+fn sip_book(p: Panel, capital: i64) -> BookPlan {
+    let ns = p.codes.len
+    if ns == 0 || capital <= 0 {
+        return empty_book_plan()
+    }
+    let udates = backtest.union_dates(p)
+    let at = month_breaks(udates)
+    if at.len == 0 {
+        return empty_book_plan()
+    }
+    let n = at.len
+    let base = capital / i64(n)
+    let rem = capital - base * i64(n)
+    let mut dates = []int {}
+    let mut sides = []int {}
+    let mut amounts = []i64 {}
+    let mut scheme = []int {}
+    let mut fd = []int {}
+    let mut fa = []i64 {}
+    let mut i = 0
+    while i < n {
+        let mut tranche = base
+        if i == n - 1 {
+            tranche = tranche + rem
+        }
+        if tranche > 0 {
+            push(fd, udates[at[i]])
+            push(fa, tranche)
+            let piece = tranche / i64(ns)
+            let extra = tranche - piece * i64(ns)
+            let mut s = 0
+            while s < ns {
+                let mut amt = piece
+                if s == ns - 1 {
+                    amt = amt + extra
+                }
+                if amt > 0 {
+                    push(dates, udates[at[i]])
+                    push(sides, 1)
+                    push(amounts, amt)
+                    push(scheme, s)
+                }
+                s = s + 1
+            }
+        }
+        i = i + 1
+    }
+    return BookPlan {
+        orders: BookOrders { dates: dates, sides: sides, amounts: amounts, scheme: scheme },
+        flows: Flows { dates: fd, amounts: fa },
+    }
+}
+
+fn compare_book(p: Panel, orders: BookOrders, c: Costs, start_cash: i64) -> Compared {
+    let rule = backtest.run_book(p, orders, c, start_cash)
+    let held = backtest.run_book(p, buy_hold_book(p, start_cash), c, start_cash)
+    let plan = sip_book(p, start_cash)
+    let sip = backtest.run_book_flows(p, plan.orders, plan.flows, c, i64(0))
+    return Compared { rule: rule, buy_hold: held, sip: sip }
+}
+
+fn last_offset(p: Panel, s: int, ymd: int) -> int {
+    if s < 0 || s + 1 >= p.starts.len {
+        return -1
+    }
+    let mut found = -1
+    let mut k = p.starts[s]
+    let lim = p.starts[s + 1]
+    let mut off = 0
+    while k < lim {
+        if p.dates[k] <= ymd {
+            found = off
+        } else {
+            break
+        }
+        off = off + 1
+        k = k + 1
+    }
+    return found
+}
+
+/// Higher score first. An equal score keeps the smaller scheme index first,
+/// which is the order the schemes were added, so a tie does not flip.
+fn rank(idx: &mut []int, sc: &mut []f64) {
+    let mut i = 1
+    while i < idx.len && i < sc.len {
+        let id = idx[i]
+        let v = sc[i]
+        let mut j = i
+        while j > 0 {
+            let worse = sc[j - 1] < v
+            let tie = sc[j - 1] == v && idx[j - 1] > id
+            if worse || tie {
+                idx[j] = idx[j - 1]
+                sc[j] = sc[j - 1]
+                j = j - 1
+            } else {
+                break
+            }
+        }
+        idx[j] = id
+        sc[j] = v
+        i = i + 1
+    }
+}
+
+/// Month-end membership of the top `top_n` by `months`-month momentum.
+/// A month in which nothing is ready is skipped, so the warm-up does not
+/// sell the book into cash. `acks` is one entry per scheme, in panel order.
+/// A missing entry is unacknowledged, so that series does not carry an
+/// indicator across a gap.
+fn momentum_targets_each(p: Panel, months: int, top_n: int, acks: []int) -> Targets {
+    let mut ready = []int {}
+    let mut score = []f64 {}
+    let mut line_at = []int {}
+    push(line_at, 0)
+    let mut s = 0
+    while s < p.codes.len {
+        let ser = backtest.scheme_series(p, s)
+        let mut ack = 0
+        if s < acks.len {
+            ack = acks[s]
+        }
+        let line = indicators.momentum(ser, months, ack)
+        let mut i = 0
+        while i < line.ready.len && i < line.v.len {
+            push(ready, line.ready[i])
+            push(score, line.v[i])
+            i = i + 1
+        }
+        push(line_at, ready.len)
+        s = s + 1
+    }
+    let udates = backtest.union_dates(p)
+    let mut dates = []int {}
+    let mut off = []int {}
+    push(off, 0)
+    let mut scheme = []int {}
+    let mut u = 0
+    while u < udates.len {
+        let ymd = udates[u]
+        let mut month_end = u + 1 == udates.len
+        if u + 1 < udates.len {
+            month_end = ymd / 100 != udates[u + 1] / 100
+        }
+        if month_end && top_n > 0 {
+            let mut idx = []int {}
+            let mut sc = []f64 {}
+            s = 0
+            while s < p.codes.len {
+                let bar = last_offset(p, s, ymd)
+                if bar >= 0 && s + 1 < line_at.len {
+                    let at = line_at[s] + bar
+                    if at < ready.len && ready[at] == 1 {
+                        push(idx, s)
+                        push(sc, score[at])
+                    }
+                }
+                s = s + 1
+            }
+            if idx.len > 0 {
+                rank(idx, sc)
+                let mut take = top_n
+                if take > idx.len {
+                    take = idx.len
+                }
+                let mut t = 0
+                while t < take {
+                    push(scheme, idx[t])
+                    t = t + 1
+                }
+                push(dates, ymd)
+                push(off, scheme.len)
+            }
+        }
+        u = u + 1
+    }
+    return Targets { dates: dates, off: off, scheme: scheme }
+}
+
+fn repeat_ack(n: int, ack: int) -> []int {
+    let mut a = []int {}
+    let mut i = 0
+    while i < n {
+        push(a, ack)
+        i = i + 1
+    }
+    return a
+}
+
+/// The same acknowledgement on every scheme.
+fn momentum_targets(p: Panel, months: int, top_n: int, ack: int) -> Targets {
+    return momentum_targets_each(p, months, top_n, repeat_ack(p.codes.len, ack))
+}
+
+/// How many names the screen holds. A shorter watchlist holds every name
+/// that is ready.
+fn momentum_top() -> int {
+    return 5
+}
+
+/// Rank, rebalance, and fill. The orders on the result are the ones the
+/// book actually tried to trade. `acks` follows the panel, one per scheme.
+fn momentum_book_each(p: Panel, months: int, top_n: int, acks: []int, c: Costs, start_cash: i64) -> BookRun {
+    let targets = momentum_targets_each(p, months, top_n, acks)
+    return backtest.run_targets(p, targets, c, start_cash)
+}
+
+fn momentum_book(p: Panel, months: int, top_n: int, ack: int, c: Costs, start_cash: i64) -> BookRun {
+    return momentum_book_each(p, months, top_n, repeat_ack(p.codes.len, ack), c, start_cash)
+}

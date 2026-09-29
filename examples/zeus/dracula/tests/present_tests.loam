@@ -1,0 +1,323 @@
+//! Paise text, the rank order, and the chart downsample. A bucket keeps
+//! the last published price. A marked date is kept too, at that bar's price.
+
+import "std:date"
+import "std:test"
+import "std:zui"
+import "../components/present.loam" as present
+import "../core/backtest.loam"
+import "../core/series.loam"
+
+fn bars(navs: []i64) -> NavSeries {
+    let mut dates = []int {}
+    let mut i = 0
+    while i < navs.len {
+        push(dates, date.from_days(date.to_days(20260101) + i))
+        i = i + 1
+    }
+    return series.build("1001", dates, navs)
+}
+
+fn ramp() -> NavSeries {
+    let mut navs = []i64 {}
+    let mut i = 1
+    while i <= 10 {
+        push(navs, i64(i * 100))
+        i = i + 1
+    }
+    return bars(navs)
+}
+
+#[test]
+fn parse_i64_rejects_a_blank_and_a_letter() {
+    test.assert(present.parse_i64("10000") == i64(10000))
+    test.assert(present.parse_i64("0") == i64(0))
+    test.assert(present.parse_i64("") == i64(-1))
+    test.assert(present.parse_i64("12a") == i64(-1))
+}
+
+#[test]
+fn rupees_are_paise_over_100() {
+    test.assert_eq_str(present.rupees(i64(10050)), "100.50")
+    test.assert_eq_str(present.rupees(i64(5)), "0.05")
+    test.assert_eq_str(present.rupees(i64(0)), "0.00")
+    test.assert_eq_str(present.rupees(i64(-10)), "-0.10")
+}
+
+#[test]
+fn pct_is_two_decimals() {
+    test.assert_eq_str(present.pct(f64(15) / f64(100)), "15.00%")
+    test.assert_eq_str(present.pct(f64(0)), "0.00%")
+    test.assert_eq_str(present.pct(f64(-1) / f64(2)), "-50.00%")
+}
+
+#[test]
+fn watch_codes_round_trip_on_spaces() {
+    let back = present.join_ws(present.split_ws("1001, 1002 1003"))
+    test.assert_eq_str(back, "1001 1002 1003")
+    test.assert(present.digits("1001"))
+    test.assert(!present.digits(""))
+    test.assert(!present.digits("10a"))
+}
+
+#[test]
+fn downsample_keeps_the_last_price_in_the_bucket() {
+    let s = ramp()
+    let plot = present.downsample(s.dates, s.navs, 2, []int {})
+    test.assert_eq_int(plot.vals.len, 2)
+    test.assert_eq_int(plot.labels.len, 2)
+    test.assert_eq_int(plot.vals[0], 500)
+    test.assert_eq_int(plot.vals[1], 1000)
+    test.assert_eq_str(plot.labels[0], date.fmt_iso(s.dates[4]))
+}
+
+#[test]
+fn downsample_keeps_a_marked_date_at_its_own_price() {
+    let s = ramp()
+    let mut marks = []int {}
+    push(marks, s.dates[0])
+    let plot = present.downsample(s.dates, s.navs, 2, marks)
+    test.assert_eq_int(plot.vals.len, 3)
+    test.assert_eq_int(plot.vals[0], 100)
+    test.assert_eq_int(plot.vals[1], 500)
+    test.assert_eq_int(plot.vals[2], 1000)
+}
+
+#[test]
+fn ready_schemes_rank_above_a_higher_score_that_is_not_ready() {
+    let mut score = []f64 {}
+    push(score, f64(1) / f64(10))
+    push(score, f64(9) / f64(10))
+    push(score, f64(4) / f64(10))
+    let mut ready = []int {}
+    push(ready, 1)
+    push(ready, 0)
+    push(ready, 1)
+    let order = present.rank_indexes(score, ready)
+    test.assert_eq_int(order.len, 3)
+    test.assert_eq_int(order[0], 2)
+    test.assert_eq_int(order[1], 0)
+    test.assert_eq_int(order[2], 1)
+}
+
+#[test]
+fn trend_line_names_the_rule_and_the_nav_it_saw() {
+    let mut up = []i64 {}
+    push(up, i64(10000))
+    push(up, i64(10000))
+    push(up, i64(20000))
+    let day = date.fmt_iso(date.from_days(date.to_days(20260101) + 2))
+    let buy = "Buy. On {{day}} NAV 200.00 is above the 2-day average 150.00. The fill is the next published NAV. This is not an order."
+    test.assert_eq_str(present.trend_line(bars(up), 2, 1), buy)
+    let mut down = []i64 {}
+    push(down, i64(30000))
+    push(down, i64(20000))
+    push(down, i64(10000))
+    let sell = "Sell, once the lot is older than 365 days. On {{day}} NAV 100.00 is below the 2-day average 150.00. The fill is the next published NAV. This is not an order."
+    test.assert_eq_str(present.trend_line(bars(down), 2, 1), sell)
+    let not_ready = "200-day average is not ready on {{day}}. Warm-up bars are not a signal."
+    test.assert_eq_str(present.trend_line(bars(up), 200, 1), not_ready)
+}
+
+fn has(s: string, part: string) -> bool {
+    if part.len == 0 || part.len > s.len {
+        return false
+    }
+    let mut i = 0
+    while i + part.len <= s.len {
+        let mut ok = true
+        let mut j = 0
+        while j < part.len {
+            if s[i + j] != part[j] {
+                ok = false
+                break
+            }
+            j = j + 1
+        }
+        if ok {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+#[test]
+fn a_short_history_names_each_indicator_as_not_ready() {
+    let s = ramp()
+    let day = date.fmt_iso(s.dates[s.dates.len - 1])
+    let want = "On {{day}} NAV 10.00. 200-day average is not ready. 20-day exponential average is not ready. RSI 14 is not ready. MACD 12 26 9 is not ready. 20-day volatility is not ready. drawdown 0.00%. 12-month momentum is not ready."
+    test.assert_eq_str(present.indicators_text(s, 0), want)
+}
+
+#[test]
+fn a_long_rise_reports_rsi_at_100_and_a_daily_volatility() {
+    let mut navs = []i64 {}
+    let mut i = 0
+    while i < 40 {
+        push(navs, i64(10000 + i * 100))
+        i = i + 1
+    }
+    let line = present.indicators_text(bars(navs), 0)
+    test.assert(has(line, "RSI 14 100.00"))
+    test.assert(has(line, "drawdown 0.00%"))
+    test.assert(has(line, "not annualised"))
+    test.assert(!has(line, "20-day exponential average is not ready"))
+    test.assert(!has(line, "MACD 12 26 9 is not ready"))
+    test.assert(!has(line, "20-day volatility is not ready"))
+}
+
+#[test]
+fn a_day_parses_iso_and_amfi_and_lists_the_inclusive_span() {
+    test.assert_eq_int(present.parse_day("2026-04-01"), 20260401)
+    test.assert_eq_int(present.parse_day(" 01-Apr-2026 "), 20260401)
+    test.assert_eq_int(present.parse_day("nope"), 0)
+    let days = present.day_list(20260130, 20260202)
+    test.assert_eq_int(days.len, 4)
+    test.assert_eq_int(days[0], 20260130)
+    test.assert_eq_int(days[1], 20260131)
+    test.assert_eq_int(days[2], 20260201)
+    test.assert_eq_int(days[3], 20260202)
+    test.assert_eq_int(present.day_list(20260403, 20260401).len, 0)
+}
+
+#[test]
+fn reject_head_names_the_window_when_the_sync_is_longer() {
+    test.assert_eq_int(present.reject_limit(), 20)
+    test.assert_eq_int(present.reject_shown(0), 0)
+    test.assert_eq_int(present.reject_shown(7), 7)
+    test.assert_eq_int(present.reject_shown(1219), 20)
+    test.assert_eq_str(present.reject_head(0), "")
+    test.assert_eq_str(present.reject_head(7), "")
+    test.assert_eq_str(present.reject_head(1219), "First 20 of 1219 rejected rows.")
+}
+
+#[test]
+fn score_line_names_xirr_drawdown_and_turnover() {
+    let mut r = backtest.empty_report(i64(0))
+    r.xirr = f64(12) / f64(100)
+    r.sharpe = f64(15) / f64(10)
+    r.sortino = f64(2)
+    r.max_dd = f64(45) / f64(100)
+    r.dd_duration = 8
+    r.win_rate = f64(6) / f64(10)
+    r.profit_factor = f64(18) / f64(10)
+    r.turnover = f64(3) / f64(2)
+    let want = "XIRR 12.00%. Sharpe 1.50 and Sortino 2.00, from daily equity changes and no risk-free rate. Largest fall 45.00% over 8 bars. Win rate 60.00%. Profit factor 1.80. Turnover 1.50 times starting cash."
+    test.assert_eq_str(present.score_line(r), want)
+}
+
+fn flat_then_rise(n: int) -> NavSeries {
+    let mut navs = []i64 {}
+    let mut i = 0
+    while i < n {
+        push(navs, i64(10000 + i))
+        i = i + 1
+    }
+    return bars(navs)
+}
+
+#[test]
+fn range_counts_back_from_the_last_date() {
+    test.assert_eq_int(present.range_from(20260928, 0), 20250928)
+    test.assert_eq_int(present.range_from(20260928, 1), 20230928)
+    test.assert_eq_int(present.range_from(20260928, 2), 0)
+    test.assert_eq_int(present.range_from(0, 0), 0)
+    test.assert_eq_int(present.range_labels().len, 3)
+}
+
+#[test]
+fn the_average_is_a_gap_until_it_is_ready() {
+    // 250 prints: the 200-day average is ready from bar 199 on.
+    let s = flat_then_rise(250)
+    let c = present.price_chart(s, "NAV", 200, 0, 0, []int {})
+    test.assert_eq_int(c.names.len, 2)
+    test.assert_eq_int(c.decimals, 2)
+    test.assert_eq_int(c.labels.len, 200)
+    test.assert_eq_int(c.vals.len, c.labels.len * 2)
+    // The first kept bar is warm-up: a gap, never zero.
+    test.assert_eq_int(c.vals[1], zui.CHART_GAP)
+    // The last kept bar is the last print, and its average is ready:
+    // bars 50..249 average to 10000 + 149.5, rounded half away to 10150.
+    let last = c.labels.len - 1
+    test.assert_eq_int(c.vals[last * 2], 10249)
+    test.assert_eq_int(c.vals[last * 2 + 1], 10150)
+    test.assert_eq_str(c.labels[last], date.fmt_iso(s.dates[249]))
+}
+
+#[test]
+fn a_late_window_keeps_the_average_from_earlier_history() {
+    let s = flat_then_rise(250)
+    // Start at bar 220. The average there already has 200 prints behind it.
+    let c = present.price_chart(s, "NAV", 200, 0, s.dates[220], []int {})
+    test.assert_eq_int(c.labels.len, 30)
+    test.assert_eq_str(c.labels[0], date.fmt_iso(s.dates[220]))
+    test.assert(c.vals[1] != zui.CHART_GAP)
+    test.assert_eq_int(c.vals[0], 10220)
+}
+
+#[test]
+fn a_bucket_keeps_its_last_price_in_the_chart_too() {
+    let s = flat_then_rise(400)
+    let c = present.price_chart(s, "NAV", 0, 0, 0, []int {})
+    test.assert_eq_int(c.names.len, 1)
+    test.assert_eq_int(c.labels.len, 200)
+    // Two bars per bucket; the kept one is the second.
+    test.assert_eq_int(c.vals[0], 10001)
+    test.assert_eq_int(c.vals[199], 10399)
+}
+
+#[test]
+fn a_window_past_the_last_print_is_empty() {
+    let s = flat_then_rise(10)
+    let c = present.price_chart(s, "NAV", 200, 0, 20991231, []int {})
+    test.assert_eq_int(c.labels.len, 0)
+    test.assert_eq_int(present.price_chart(bars([]i64 {}), "NAV", 200, 0, 0, []int {}).labels.len, 0)
+}
+
+#[test]
+fn signal_word_is_short_and_says_warm_up() {
+    test.assert_eq_str(present.signal_word(flat_then_rise(50), 200, 0), "Warm-up")
+    test.assert_eq_str(present.signal_word(flat_then_rise(250), 200, 0), "Buy, above 200-day")
+    test.assert_eq_str(present.signal_word(bars([]i64 {}), 200, 0), "No published NAV")
+}
+
+#[test]
+fn stat_cells_say_warm_up_instead_of_zero() {
+    let cells = present.stat_cells(flat_then_rise(50), 0)
+    test.assert_eq_int(cells.len, 8 * 3)
+    test.assert_eq_str(cells[0], "Last NAV")
+    test.assert_eq_str(cells[1], "100.49")
+    test.assert_eq_str(cells[3], "200-day average")
+    test.assert_eq_str(cells[4], "Warm-up")
+}
+
+#[test]
+fn a_reject_line_splits_into_cells() {
+    let c = present.reject_cells("15;148921;20260102;out of sequence")
+    test.assert_eq_int(c.len, 4)
+    test.assert_eq_str(c[0], "15")
+    test.assert_eq_str(c[1], "148921")
+    test.assert_eq_str(c[2], "2026-01-02")
+    test.assert_eq_str(c[3], "out of sequence")
+    let odd = present.reject_cells("garbled")
+    test.assert_eq_str(odd[3], "garbled")
+    let semi = present.reject_cells("1;2;20260102;a;b")
+    test.assert_eq_str(semi[3], "a;b")
+}
+
+#[test]
+fn close_cells_count_moves_over_a_fifth() {
+    let mut navs = []i64 {}
+    push(navs, i64(100000))
+    push(navs, i64(101000))
+    // A 1:1 bonus on an unadjusted close halves the price.
+    push(navs, i64(50500))
+    push(navs, i64(51000))
+    let cells = present.close_cells(bars(navs))
+    test.assert_eq_int(cells.len, 9)
+    test.assert_eq_str(cells[1], "510.00")
+    test.assert_eq_str(cells[4], "4")
+    test.assert_eq_str(cells[7], "1")
+    test.assert_eq_int(present.close_cells(bars([]i64 {})).len, 0)
+}

@@ -1,0 +1,160 @@
+//! Rolling train and test. The parameter is chosen on the train window and
+//! then frozen: the test window is traded with that same number, and it does
+//! not get a vote in the choice.
+//!
+//! The average on a test bar is allowed to see the train bars. Hiding them
+//! would make the first test months a warm-up, which is not a test of the
+//! rule. What the test window must not see is its own future, and the fit
+//! must not see the test window at all.
+//!
+//! In-sample is the train window traded from fresh cash. Out-of-sample is
+//! the same book carried across the boundary: the capital it opens the test
+//! with is the close of the last train bar, and the rate is from there to
+//! the end of the test. When that rate is below the in-sample rate, the
+//! note says so in one sentence.
+
+import "std:date"
+import "backtest.loam"
+import "costs.loam"
+import "series.loam"
+import "stats.loam"
+import "strategy.loam"
+
+struct Walk {
+    train_from: []int,
+    train_to: []int,
+    test_from: []int,
+    test_to: []int,
+    /// The frozen parameter, one per window. For the SMA fold this is the
+    /// bar count.
+    param: []int,
+    is_cagr: []f64,
+    oos_cagr: []f64,
+    /// Buy-and-hold and monthly SIP on the test window only, starting from
+    /// the same cash the frozen rule carries in, at the same costs.
+    hold_cagr: []f64,
+    sip_cagr: []f64,
+    is_equity: []i64,
+    oos_equity: []i64,
+    /// `1` when the out-of-sample rate is below the in-sample rate.
+    degraded: []int,
+    note: string,
+}
+
+fn empty_walk(note: string) -> Walk {
+    return Walk {
+        train_from: []int {},
+        train_to: []int {},
+        test_from: []int {},
+        test_to: []int {},
+        param: []int {},
+        is_cagr: []f64 {},
+        oos_cagr: []f64 {},
+        hold_cagr: []f64 {},
+        sip_cagr: []f64 {},
+        is_equity: []i64 {},
+        oos_equity: []i64 {},
+        degraded: []int {},
+        note: note,
+    }
+}
+
+fn short_note() -> string {
+    return "There is not enough history for a train window and a test window."
+}
+
+fn degraded_note() -> string {
+    return "Out of sample, the frozen rule made less than it did on the sample it was fit to."
+}
+
+/// SMA length chosen on each train window from `grid`, frozen, then traded
+/// through the following `test_bars`. The window then steps forward by
+/// `test_bars`. `min_hold` is not fitted; it is the exit-load constraint.
+fn sma(s: NavSeries, grid: []int, min_hold: int, train_bars: int, test_bars: int, ack: int, c: Costs, start_cash: i64) -> Walk {
+    let n = series.len(s)
+    if grid.len == 0 || train_bars < 2 || test_bars < 1 || n < train_bars + test_bars {
+        return empty_walk(short_note())
+    }
+    let mut train_from = []int {}
+    let mut train_to = []int {}
+    let mut test_from = []int {}
+    let mut test_to = []int {}
+    let mut param = []int {}
+    let mut is_cagr = []f64 {}
+    let mut oos_cagr = []f64 {}
+    let mut hold_cagr = []f64 {}
+    let mut sip_cagr = []f64 {}
+    let mut is_equity = []i64 {}
+    let mut oos_equity = []i64 {}
+    let mut degraded = []int {}
+    let mut any = false
+    let mut start = 0
+    while start + train_bars + test_bars <= n {
+        let train = series.window(s, start, start + train_bars)
+        let mut best = grid[0]
+        let mut best_eq = i64(-1)
+        let mut g = 0
+        while g < grid.len {
+            let trial = strategy.sma_orders(train, grid[g], min_hold, ack)
+            let rep = backtest.run(train, trial, c, start_cash)
+            if rep.end_equity > best_eq {
+                best_eq = rep.end_equity
+                best = grid[g]
+            }
+            g = g + 1
+        }
+        let is_orders = strategy.sma_orders(train, best, min_hold, ack)
+        let is_rep = backtest.run(train, is_orders, c, start_cash)
+        let fold_end = start + train_bars + test_bars
+        let fold = series.window(s, start, fold_end)
+        let oos_orders = strategy.sma_orders(fold, best, min_hold, ack)
+        let mark = s.dates[start + train_bars]
+        let fold_rep = backtest.run_marked(fold, oos_orders, c, start_cash, mark)
+        let years = f64(date.days_between(s.dates[start + train_bars - 1], s.dates[fold_end - 1])) / f64(365)
+        let oos_rate = stats.cagr(f64(fold_rep.mark_equity), f64(fold_rep.end_equity), years)
+        let test = series.window(s, start + train_bars, fold_end)
+        let open = fold_rep.mark_equity
+        let held = backtest.run(test, strategy.buy_hold(test), c, open)
+        let plan = strategy.capital_sip(test, open)
+        let sip_rep = backtest.run_flows(test, plan.orders, plan.flows, c, i64(0))
+        let hold_rate = stats.cagr(f64(open), f64(held.end_equity), years)
+        let sip_rate = stats.cagr(f64(open), f64(sip_rep.end_equity), years)
+        let mut worse = 0
+        if oos_rate < is_rep.cagr {
+            worse = 1
+            any = true
+        }
+        push(train_from, s.dates[start])
+        push(train_to, s.dates[start + train_bars - 1])
+        push(test_from, mark)
+        push(test_to, s.dates[fold_end - 1])
+        push(param, best)
+        push(is_cagr, is_rep.cagr)
+        push(oos_cagr, oos_rate)
+        push(hold_cagr, hold_rate)
+        push(sip_cagr, sip_rate)
+        push(is_equity, is_rep.end_equity)
+        push(oos_equity, fold_rep.end_equity)
+        push(degraded, worse)
+        start = start + test_bars
+    }
+    let mut note = ""
+    if any {
+        note = degraded_note()
+    }
+    return Walk {
+        train_from: train_from,
+        train_to: train_to,
+        test_from: test_from,
+        test_to: test_to,
+        param: param,
+        is_cagr: is_cagr,
+        oos_cagr: oos_cagr,
+        hold_cagr: hold_cagr,
+        sip_cagr: sip_cagr,
+        is_equity: is_equity,
+        oos_equity: oos_equity,
+        degraded: degraded,
+        note: note,
+    }
+}

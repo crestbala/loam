@@ -1,0 +1,338 @@
+//! The three rules, the two benchmarks, and the look-ahead check on the
+//! orders themselves: a series cut at date t produces the same orders up to
+//! t as the full series.
+
+import "std:test"
+import "std:date"
+import "../core/series.loam"
+import "../core/costs.loam"
+import "../core/backtest.loam"
+import "../core/strategy.loam"
+import "../components/present.loam" as present
+
+fn day(offset: int) -> int {
+    return date.from_days(date.to_days(20260101) + offset)
+}
+
+fn ramp(n: int, start: i64, step: i64) -> NavSeries {
+    let mut dates = []int {}
+    let mut navs = []i64 {}
+    let mut i = 0
+    while i < n {
+        push(dates, day(i))
+        push(navs, start + step * i64(i))
+        i = i + 1
+    }
+    return series.build("1001", dates, navs)
+}
+
+fn count_side(o: Orders, side: int) -> int {
+    let mut n = 0
+    let mut i = 0
+    while i < o.sides.len {
+        if o.sides[i] == side {
+            n = n + 1
+        }
+        i = i + 1
+    }
+    return n
+}
+
+#[test]
+fn sma_buys_above_the_average_and_sells_below_it() {
+    let mut dates = []int {}
+    let mut navs = []i64 {}
+    let mut i = 0
+    while i < 8 {
+        push(dates, day(i))
+        let mut px = 1000 + i * 100
+        if i > 5 {
+            px = 1500 - (i - 5) * 200
+        }
+        push(navs, i64(px))
+        i = i + 1
+    }
+    let s = series.build("1001", dates, navs)
+    let o = strategy.sma_orders(s, 3, 0, 0)
+    test.assert(count_side(o, 1) >= 1)
+    test.assert(count_side(o, -1) >= 1)
+    test.assert(o.dates[0] < o.dates[o.dates.len - 1])
+    let r = backtest.run(s, o, costs.equity(), i64(1000000))
+    let mut k = 0
+    while k < r.ledger.fill_dates.len {
+        test.assert(r.ledger.fill_dates[k] > r.ledger.signal_dates[k])
+        k = k + 1
+    }
+}
+
+#[test]
+fn sma_will_not_exit_until_the_lot_is_past_the_load() {
+    let mut dates = []int {}
+    let mut navs = []i64 {}
+    let mut i = 0
+    while i < 400 {
+        push(dates, day(i))
+        let mut px = 5000 - i
+        if i == 0 {
+            px = 4000
+        }
+        if i == 1 {
+            px = 5000
+        }
+        push(navs, i64(px))
+        i = i + 1
+    }
+    let s = series.build("1001", dates, navs)
+    let o = strategy.sma_orders(s, 2, 365, 0)
+    test.assert_eq_int(count_side(o, 1), 1)
+    test.assert_eq_int(count_side(o, -1), 1)
+    let ran = backtest.run(s, o, costs.equity(), i64(1000000))
+    test.assert_eq_int(ran.ledger.sides.len, 2)
+    let held = date.days_between(ran.ledger.fill_dates[0], o.dates[1])
+    test.assert(held > 365)
+    test.assert(ran.ledger.load[1] == i64(0))
+
+    let cut = series.window(s, 0, 300)
+    let early = strategy.sma_orders(cut, 2, 365, 0)
+    test.assert_eq_int(count_side(early, 1), 1)
+    test.assert_eq_int(count_side(early, -1), 0)
+    test.assert_eq_int(early.dates[0], o.dates[0])
+}
+
+#[test]
+fn a_200_day_average_has_no_order_during_warmup() {
+    let s = ramp(20, i64(1000), i64(10))
+    let o = strategy.sma_200(s, 0)
+    test.assert_eq_int(o.dates.len, 0)
+}
+
+#[test]
+fn orders_up_to_t_do_not_depend_on_later_bars() {
+    let mut dates = []int {}
+    let mut navs = []i64 {}
+    let mut i = 0
+    while i < 8 {
+        push(dates, day(i))
+        let mut px = 1000 + i * 100
+        if i > 5 {
+            px = 1500 - (i - 5) * 200
+        }
+        push(navs, i64(px))
+        i = i + 1
+    }
+    let full = series.build("1001", dates, navs)
+    let cut = series.window(full, 0, 6)
+    let a = strategy.sma_orders(full, 3, 0, 0)
+    let b = strategy.sma_orders(cut, 3, 0, 0)
+    let mut i2 = 0
+    let mut seen = 0
+    while i2 < a.dates.len {
+        if a.dates[i2] <= cut.dates[cut.dates.len - 1] {
+            test.assert(seen < b.dates.len)
+            test.assert_eq_int(a.dates[i2], b.dates[seen])
+            test.assert_eq_int(a.sides[i2], b.sides[seen])
+            seen = seen + 1
+        }
+        i2 = i2 + 1
+    }
+    test.assert_eq_int(seen, b.dates.len)
+    test.assert(a.dates.len > b.dates.len)
+}
+
+#[test]
+fn monthly_sip_buys_once_per_month_with_that_cash() {
+    let mut dates = []int {}
+    let mut navs = []i64 {}
+    push(dates, 20260105)
+    push(dates, 20260106)
+    push(dates, 20260202)
+    push(dates, 20260203)
+    push(navs, i64(10000))
+    push(navs, i64(10000))
+    push(navs, i64(10000))
+    push(navs, i64(10000))
+    let s = series.build("1001", dates, navs)
+    let plan = strategy.monthly_sip(s, i64(100000))
+    test.assert_eq_int(plan.orders.dates.len, 2)
+    test.assert_eq_int(plan.orders.dates[0], 20260105)
+    test.assert_eq_int(plan.orders.dates[1], 20260202)
+    test.assert(plan.orders.amounts[0] == i64(100000))
+    test.assert_eq_int(plan.flows.dates.len, 2)
+    let r = backtest.run_flows(s, plan.orders, plan.flows, costs.equity(), i64(0))
+    test.assert_eq_int(r.ledger.sides.len, 2)
+    test.assert_eq_int(r.ledger.sides[0], 1)
+    test.assert_eq_int(r.ledger.sides[1], 1)
+    test.assert(r.ledger.fill_dates[0] > r.ledger.signal_dates[0])
+    test.assert(r.end_units > i64(0))
+}
+
+#[test]
+fn buy_and_hold_beats_a_sip_when_the_rise_is_early() {
+    let mut dates = []int {}
+    let mut navs = []i64 {}
+    push(dates, 20260101)
+    push(dates, 20260102)
+    push(dates, 20260105)
+    push(dates, 20260202)
+    push(dates, 20260203)
+    push(navs, i64(10000))
+    push(navs, i64(12000))
+    push(navs, i64(18000))
+    push(navs, i64(18000))
+    push(navs, i64(18000))
+    let s = series.build("1001", dates, navs)
+    let c = strategy.compare(s, strategy.buy_hold(s), costs.equity(), i64(1000000))
+    test.assert(c.rule.end_equity == c.buy_hold.end_equity)
+    test.assert(c.buy_hold.end_equity > c.sip.end_equity)
+    test.assert(c.buy_hold.ledger.sides.len >= 1)
+    test.assert(c.sip.ledger.sides.len >= 2)
+}
+
+fn panel_two() -> Panel {
+    let mut da = []int {}
+    let mut db = []int {}
+    let mut na = []i64 {}
+    let mut nb = []i64 {}
+    push(da, 20250101)
+    push(da, 20250201)
+    push(da, 20250301)
+    push(da, 20250401)
+    push(db, 20250101)
+    push(db, 20250201)
+    push(db, 20250301)
+    push(db, 20250401)
+    push(na, i64(10000))
+    push(na, i64(10000))
+    push(na, i64(10000))
+    push(na, i64(20000))
+    push(nb, i64(10000))
+    push(nb, i64(12000))
+    push(nb, i64(15000))
+    push(nb, i64(14000))
+    let mut p = backtest.empty_panel()
+    p = backtest.add_scheme(p, "A", da, na)
+    p = backtest.add_scheme(p, "B", db, nb)
+    return p
+}
+
+fn panel_until(last: int) -> Panel {
+    let full = panel_two()
+    let a = backtest.scheme_series(full, 0)
+    let b = backtest.scheme_series(full, 1)
+    let mut p = backtest.empty_panel()
+    p = backtest.add_scheme(p, "A", series.window(a, 0, 3).dates, series.window(a, 0, 3).navs)
+    p = backtest.add_scheme(p, "B", series.window(b, 0, 3).dates, series.window(b, 0, 3).navs)
+    if last < 20250301 {
+        return p
+    }
+    return p
+}
+
+#[test]
+fn momentum_holds_the_name_that_led_and_switches_when_it_stops() {
+    let p = panel_two()
+    let ran = strategy.momentum_book(p, 1, 1, 1, costs.equity(), i64(1000000))
+    let o = ran.orders
+    test.assert(o.dates.len >= 1)
+    test.assert_eq_int(o.dates[0], 20250201)
+    test.assert_eq_int(o.scheme[0], 1)
+    test.assert_eq_int(o.sides[0], 1)
+    let mut sold_b = false
+    let mut bought_a = false
+    let mut i = 0
+    while i < o.dates.len {
+        test.assert(o.dates[i] != 20250101)
+        if o.dates[i] == 20250401 && o.scheme[i] == 1 && o.sides[i] < 0 {
+            sold_b = true
+        }
+        if o.dates[i] == 20250401 && o.scheme[i] == 0 && o.sides[i] > 0 {
+            bought_a = true
+        }
+        i = i + 1
+    }
+    test.assert(sold_b)
+    test.assert(bought_a)
+    let mut f = 0
+    while f < ran.report.ledger.fill_dates.len {
+        test.assert(ran.report.ledger.fill_dates[f] > ran.report.ledger.signal_dates[f])
+        f = f + 1
+    }
+}
+
+#[test]
+fn momentum_orders_up_to_t_ignore_the_bars_after_t() {
+    let full = strategy.momentum_book(panel_two(), 1, 1, 1, costs.equity(), i64(1000000))
+    let cut = strategy.momentum_book(panel_until(20250301), 1, 1, 1, costs.equity(), i64(1000000))
+    let mut seen = 0
+    let mut i = 0
+    while i < full.orders.dates.len {
+        if full.orders.dates[i] <= 20250301 {
+            test.assert(seen < cut.orders.dates.len)
+            test.assert_eq_int(full.orders.dates[i], cut.orders.dates[seen])
+            test.assert_eq_int(full.orders.sides[i], cut.orders.sides[seen])
+            test.assert_eq_int(full.orders.scheme[i], cut.orders.scheme[seen])
+            test.assert(full.orders.amounts[i] == cut.orders.amounts[seen])
+            seen = seen + 1
+        }
+        i = i + 1
+    }
+    test.assert_eq_int(seen, cut.orders.dates.len)
+    test.assert(full.orders.dates.len > cut.orders.dates.len)
+}
+
+#[test]
+fn a_book_report_carries_both_benchmarks() {
+    let p = panel_two()
+    let ran = strategy.momentum_book(p, 1, 1, 1, costs.equity(), i64(1000000))
+    let c = strategy.compare_book(p, ran.orders, costs.equity(), i64(1000000))
+    test.assert(c.rule.end_equity == ran.report.end_equity)
+    test.assert(c.buy_hold.ledger.sides.len >= 2)
+    test.assert(c.sip.ledger.sides.len >= 2)
+    test.assert(c.buy_hold.end_equity > i64(0))
+    test.assert(c.sip.end_equity > i64(0))
+}
+
+fn ack_pair(a: int, b: int) -> []int {
+    let mut xs = []int {}
+    push(xs, a)
+    push(xs, b)
+    return xs
+}
+
+#[test]
+fn one_ack_and_each_ack_place_the_same_orders() {
+    let p = panel_two()
+    let one = strategy.momentum_book(p, 1, 1, 1, costs.equity(), i64(1000000))
+    let each = strategy.momentum_book_each(p, 1, 1, ack_pair(1, 1), costs.equity(), i64(1000000))
+    test.assert_eq_int(one.orders.dates.len, each.orders.dates.len)
+    let mut i = 0
+    while i < one.orders.dates.len && i < each.orders.dates.len {
+        test.assert_eq_int(one.orders.dates[i], each.orders.dates[i])
+        test.assert_eq_int(one.orders.scheme[i], each.orders.scheme[i])
+        test.assert_eq_int(one.orders.sides[i], each.orders.sides[i])
+        i = i + 1
+    }
+}
+
+#[test]
+fn an_unacknowledged_name_is_left_out_of_the_rank() {
+    let p = panel_two()
+    let ran = strategy.momentum_book_each(p, 1, 1, ack_pair(0, 1), costs.equity(), i64(1000000))
+    test.assert(ran.orders.dates.len >= 1)
+    let mut i = 0
+    while i < ran.orders.scheme.len {
+        test.assert_eq_int(ran.orders.scheme[i], 1)
+        i = i + 1
+    }
+}
+
+#[test]
+fn a_fill_names_its_scheme() {
+    let p = panel_two()
+    let ran = strategy.momentum_book(p, 1, 1, 1, costs.equity(), i64(1000000))
+    let cells = present.ledger_cells(ran.report.ledger, p.codes)
+    let cols = present.ledger_cols()
+    test.assert(cells.len >= cols)
+    test.assert_eq_int(cells.len - (cells.len / cols) * cols, 0)
+    test.assert_eq_str(cells[3], "B")
+}

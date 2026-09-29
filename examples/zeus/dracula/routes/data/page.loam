@@ -1,0 +1,161 @@
+import "std:router"
+import "std:spacing"
+import "std:zeus"
+import "std:zui"
+import "../../components/data.loam" as data
+import "../../components/present.loam" as present
+import "../../components/stocks.loam" as stocks
+import "../../components/ui.loam" as ui
+
+fn reject_spec() -> []TableCol {
+    let mut h = []TableCol {}
+    push(h, TableCol { title: "File line", width: 80, align: ALIGN.End })
+    push(h, TableCol { title: "Code", width: 80 })
+    push(h, TableCol { title: "Date", width: 100 })
+    push(h, TableCol { title: "Reason", width: 0 })
+    return h
+}
+
+fn paint() {
+    if data.ready() {
+        paint_ready()
+        return
+    }
+    let progress = data.progress_text()
+    if progress.len > 0 {
+        zeus.Text(progress, wrap = 1)
+    }
+    zeus.Text("Loading the last fetch.")
+}
+
+fn paint_ready() {
+    let err = data.error_text()
+    if err.len > 0 {
+        zui.AlertWarning("The last request did not finish", err)
+    }
+    if data.server_down() {
+        ui.ServerDown(fn() { data.retry() })
+        return
+    }
+    zeus.Text(data.status_text(), wrap = 1)
+    ui.StatGrid(data.stat_cells())
+    let progress = data.progress_text()
+    if progress.len > 0 {
+        zeus.Text(progress, wrap = 1)
+    }
+    zui.Title("Rejected rows")
+    let n = data.reject_count()
+    if n == 0 {
+        zeus.Text("No rejected rows.")
+        return
+    }
+    let head = present.reject_head(n)
+    if head.len > 0 {
+        zeus.Text(head, wrap = 1)
+    }
+    zui.TableCols(reject_spec())
+    // Capped at present.reject_limit(): one row per reject of a
+    // thousand-line sync stalls the first layout of this route.
+    let shown = present.reject_shown(n)
+    let mut i = 0
+    while i < shown {
+        let cells = present.reject_cells(data.reject_at(i))
+        let code = cells[1]
+        if present.digits(code) {
+            zui.TableRowCols(cells, reject_spec(), hover = true,
+                             on_click = fn() { router.navigate("/scheme/{{code}}") })
+        } else {
+            zui.TableRowCols(cells, reject_spec(), zebra = true)
+        }
+        i = i + 1
+    }
+}
+
+fn stock_reject_spec() -> []TableCol {
+    let mut h = []TableCol {}
+    push(h, TableCol { title: "File line", width: 80, align: ALIGN.End })
+    push(h, TableCol { title: "Symbol", width: 120 })
+    push(h, TableCol { title: "Date", width: 100 })
+    push(h, TableCol { title: "Reason", width: 0 })
+    return h
+}
+
+fn paint_stocks() {
+    let err = stocks.walk_error()
+    if err.len > 0 {
+        zui.AlertWarning("The stock walk stopped", err)
+    }
+    let progress = stocks.walk_text()
+    if progress.len > 0 {
+        zeus.Text(progress, wrap = 1)
+    }
+    if !stocks.status_ready() {
+        zeus.Text("Loading the last stock fetch.")
+        return
+    }
+    if stocks.status_down() {
+        ui.ServerDown(fn() { stocks.status_retry() })
+        return
+    }
+    zeus.Text(stocks.status_text(), wrap = 1)
+    ui.StatGrid(stocks.status_stats())
+    let n = stocks.reject_count()
+    if n == 0 {
+        return
+    }
+    let rows = stocks.reject_rows()
+    if rows.len < n {
+        let shown = rows.len
+        zeus.Text("First {{shown}} of {{n}} rejected rows.")
+    }
+    zui.TableCols(stock_reject_spec())
+    let mut i = 0
+    while i < rows.len {
+        zui.TableRowCols(present.reject_cells(rows[i]), stock_reject_spec(), zebra = true)
+        i = i + 1
+    }
+}
+
+fn page(p: Params) {
+    zui.Column(spacing.SECTION) {
+        zui.Heading("Sync")
+        zui.Body("A rejected row is kept here with its reason. Rollback restores the previous catalog and drops rows the last sync added.")
+        zui.Body("History is one calendar day per fetch, oldest first. The cache only accepts a later date, and rollback undoes only the last day that landed.")
+        if data.started() {
+            zui.Row(8) {
+                zui.Button(label = "Sync now", on_click = fn() { data.sync_now() })
+                zui.Button(label = "Roll back", look = zeus.LOOK.Ghost, on_click = fn() { data.rollback_now() })
+            }
+            zui.Row(8) {
+                zui.Input(placeholder = "From YYYY-MM-DD", bind = data.from_field(), a11y_label = "History from", width = 180)
+                zui.Input(placeholder = "To YYYY-MM-DD", bind = data.to_field(), a11y_label = "History to", width = 180)
+                zui.Button(label = "Load history", look = zeus.LOOK.Ghost, on_click = fn() { data.load_history() })
+            }
+            zui.Match(data.load_gen(), fn(g) {
+                if g >= 0 {
+                    paint()
+                }
+            })
+        } else {
+            zeus.Text("Loading the last fetch.")
+        }
+        if stocks.started() {
+            zui.Heading("Stock closes")
+            zui.Body("NSE capital-market bhavcopy, one trading day per fetch, from 2024-01-02. EQ series only. A close that is not positive, or on a date not after the last cached close for that symbol, is rejected. The cache sits apart from the fund NAVs.")
+            zui.Row(8) {
+                zui.Input(placeholder = "From YYYY-MM-DD", bind = stocks.from_field(), a11y_label = "Stock closes from", width = 180)
+                zui.Input(placeholder = "To YYYY-MM-DD", bind = stocks.to_field(), a11y_label = "Stock closes to", width = 180)
+                zui.Button(label = "Load stock closes", look = zeus.LOOK.Ghost, on_click = fn() { stocks.load_history() })
+            }
+            zui.Match(stocks.data_generation(), fn(g) {
+                if g >= 0 {
+                    paint_stocks()
+                }
+            })
+        }
+    }
+}
+
+fn meta(p: Params) -> Meta {
+    return Meta { title: "Sync" }
+}

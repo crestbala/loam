@@ -1,0 +1,389 @@
+//! Stock close cache. Separate from the AMFI NAV cache: its own directory,
+//! its own logs, and nothing in it is a fund.
+//!
+//! ```
+//! <root>/symbols.txt      symbol;name;isin;last_date;last_paise;bars
+//! <root>/fetches.txt      id;stamp;url;day;accepted;rejected;warnings
+//! <root>/rejects.txt      id;line;symbol;date;reason
+//! <root>/px/<file>.csv    date;paise;fetch_id
+//! ```
+//!
+//! `<file>` is the symbol with any byte outside `A-Z 0-9` written as `_`
+//! and two hex digits, so `M&M` is `M_26M`.
+//!
+//! Append-only in date order. A row is cached only when its date is after
+//! the last cached date for that symbol, checked against the price file
+//! itself as well as the index, so a run that stopped half way cannot write
+//! a day twice. Every write is a `.tmp` sibling renamed over the file.
+
+import "std:sys"
+import "std:kv"
+import "std:map"
+import "std:date"
+import "../core/csvx.loam"
+import "store.loam"
+import "nse.loam"
+
+struct Index {
+    symbols: []string,
+    names: []string,
+    isins: []string,
+    last_dates: []int,
+    last_paise: []i64,
+    bars: []int,
+}
+
+struct Closes {
+    dates: []int,
+    paise: []i64,
+}
+
+struct DayReport {
+    ok: int,
+    /// `1` when the exchange had no session that day.
+    closed: int,
+    fetch_id: int,
+    accepted: int,
+    rejected: int,
+    warnings: int,
+    err: string,
+}
+
+fn day_err(msg: string) -> DayReport {
+    return DayReport { ok: 0, closed: 0, fetch_id: 0, accepted: 0, rejected: 0, warnings: 0, err: msg }
+}
+
+/// `~/Library/Application Support/dracula/stocks`. Beside `nav`, never in it.
+fn tape_root() -> string {
+    let d = kv.data_dir("dracula")
+    if d.len == 0 {
+        return ""
+    }
+    sys.mkdir(d)
+    return "{{d}}/stocks"
+}
+
+fn ensure(root: string) -> int {
+    if sys.mkdir(root) != 0 && sys.exists(root) == 0 {
+        return 1
+    }
+    let px = "{{root}}/px"
+    if sys.mkdir(px) != 0 && sys.exists(px) == 0 {
+        return 1
+    }
+    return 0
+}
+
+fn hex(n: int) -> int {
+    if n < 10 {
+        return 48 + n
+    }
+    return 55 + n
+}
+
+fn file_of(symbol: string) -> string {
+    let mut b = []int {}
+    let mut i = 0
+    while i < symbol.len {
+        let c = symbol[i]
+        if (c >= 65 && c <= 90) || (c >= 48 && c <= 57) {
+            push(b, c)
+        } else {
+            push(b, 95)
+            push(b, hex(c / 16))
+            push(b, hex(c % 16))
+        }
+        i = i + 1
+    }
+    return string_from_bytes(b)
+}
+
+fn px_path(root: string, symbol: string) -> string {
+    let f = file_of(symbol)
+    return "{{root}}/px/{{f}}.csv"
+}
+
+fn empty_index() -> Index {
+    return Index {
+        symbols: []string {},
+        names: []string {},
+        isins: []string {},
+        last_dates: []int {},
+        last_paise: []i64 {},
+        bars: []int {},
+    }
+}
+
+fn read_index(root: string) -> Index {
+    let text = sys.read_file("{{root}}/symbols.txt")
+    let mut ix = empty_index()
+    let lines = csvx.split_lines(text)
+    let mut i = 0
+    while i < lines.len {
+        let f = csvx.split_fields(lines[i])
+        if f.len >= 6 && f[0].len > 0 {
+            push(ix.symbols, f[0])
+            push(ix.names, f[1])
+            push(ix.isins, f[2])
+            push(ix.last_dates, store.parse_int(f[3]))
+            push(ix.last_paise, store.parse_i64(f[4]))
+            push(ix.bars, store.parse_int(f[5]))
+        }
+        i = i + 1
+    }
+    return ix
+}
+
+fn write_index(root: string, ix: Index) -> int {
+    let mut b = []int {}
+    let mut i = 0
+    while i < ix.symbols.len {
+        store.add_str(b, ix.symbols[i])
+        store.add_str(b, ";")
+        store.add_str(b, ix.names[i])
+        store.add_str(b, ";")
+        store.add_str(b, ix.isins[i])
+        store.add_str(b, ";")
+        store.add_int(b, ix.last_dates[i])
+        store.add_str(b, ";")
+        store.add_str(b, store.i64_str(ix.last_paise[i]))
+        store.add_str(b, ";")
+        store.add_int(b, ix.bars[i])
+        store.add_str(b, "\n")
+        i = i + 1
+    }
+    return store.write_atomic("{{root}}/symbols.txt", store.finish(b))
+}
+
+fn closes(root: string, symbol: string) -> Closes {
+    let text = sys.read_file(px_path(root, symbol))
+    let mut out = Closes { dates: []int {}, paise: []i64 {} }
+    let lines = csvx.split_lines(text)
+    let mut i = 0
+    while i < lines.len {
+        let f = csvx.split_fields(lines[i])
+        if f.len >= 3 {
+            let ymd = store.parse_int(f[0])
+            let px = store.parse_i64(f[1])
+            if ymd > 0 && px > i64(0) {
+                push(out.dates, ymd)
+                push(out.paise, px)
+            }
+        }
+        i = i + 1
+    }
+    return out
+}
+
+/// Date on the last line of a price file, or 0.
+fn last_date_in(text: string) -> int {
+    let mut end = text.len
+    while end > 0 && (text[end - 1] == 10 || text[end - 1] == 13) {
+        end = end - 1
+    }
+    if end == 0 {
+        return 0
+    }
+    let mut start = end
+    while start > 0 && text[start - 1] != 10 {
+        start = start - 1
+    }
+    let f = csvx.split_fields(csvx.slice(text, start, end))
+    if f.len == 0 {
+        return 0
+    }
+    return store.parse_int(f[0])
+}
+
+fn next_fetch_id(root: string) -> int {
+    let lines = csvx.split_lines(sys.read_file("{{root}}/fetches.txt"))
+    let mut top = 0
+    let mut i = 0
+    while i < lines.len {
+        let f = csvx.split_fields(lines[i])
+        if f.len > 0 {
+            let id = store.parse_int(f[0])
+            if id > top {
+                top = id
+            }
+        }
+        i = i + 1
+    }
+    return top + 1
+}
+
+fn append_line(path: string, line: string) -> int {
+    let prev = sys.read_file(path)
+    if prev.len > 0 && prev[prev.len - 1] != 10 {
+        return store.write_atomic(path, "{{prev}}\n{{line}}\n")
+    }
+    return store.write_atomic(path, "{{prev}}{{line}}\n")
+}
+
+/// Reject reason for a close on `day` after `last` cached, or empty.
+fn review(last: int, day: int, paise: i64) -> string {
+    if paise <= i64(0) {
+        return "bad close"
+    }
+    if day == last {
+        return "duplicate date"
+    }
+    if day < last {
+        return "out of sequence"
+    }
+    return ""
+}
+
+/// A move of more than 20% on an unadjusted close is usually a split or a
+/// bonus. It is cached and counted as a warning, not rejected: the next
+/// close would otherwise be judged against a price the stock no longer has.
+fn big_move(prev: i64, now: i64) -> bool {
+    if prev <= i64(0) {
+        return false
+    }
+    let mut d = now - prev
+    if d < i64(0) {
+        d = -d
+    }
+    return d * i64(5) > prev
+}
+
+/// Cache one parsed day. `url` and `stamp` go to the fetch log.
+fn apply(root: string, b: Bhav, url: string, stamp: string) -> DayReport {
+    if b.ok == 0 {
+        return day_err(b.err)
+    }
+    if ensure(root) != 0 {
+        return day_err("cannot create the stock cache")
+    }
+    let id = next_fetch_id(root)
+    let mut ix = read_index(root)
+    let mut at: Map<int> = map_new(0 - 1)
+    let mut i = 0
+    while i < ix.symbols.len {
+        map_put(&mut at, ix.symbols[i], i)
+        i = i + 1
+    }
+    let mut accepted = 0
+    let mut rejected = 0
+    let mut warnings = 0
+    let mut rej = []string {}
+    i = 0
+    while i < b.bad_lines.len {
+        let ln = b.bad_lines[i]
+        let sym = b.bad_symbols[i]
+        let why = b.bad_reasons[i]
+        push(rej, "{{id}};{{ln}};{{sym}};{{b.day}};{{why}}")
+        rejected = rejected + 1
+        i = i + 1
+    }
+    i = 0
+    while i < b.symbols.len {
+        let sym = b.symbols[i]
+        let px = b.closes[i]
+        let mut k = map_get(&mut at, sym)
+        if k < 0 {
+            push(ix.symbols, sym)
+            push(ix.names, b.names[i])
+            push(ix.isins, b.isins[i])
+            push(ix.last_dates, 0)
+            push(ix.last_paise, i64(0))
+            push(ix.bars, 0)
+            k = ix.symbols.len - 1
+            map_put(&mut at, ix.symbols[k], k)
+        }
+        let path = px_path(root, sym)
+        let prev = sys.read_file(path)
+        let mut last = ix.last_dates[k]
+        let on_file = last_date_in(prev)
+        if on_file > last {
+            last = on_file
+        }
+        let why = review(last, b.day, px)
+        if why.len > 0 {
+            let ln = b.lines[i]
+            push(rej, "{{id}};{{ln}};{{sym}};{{b.day}};{{why}}")
+            rejected = rejected + 1
+        } else {
+            let row = store.i64_str(px)
+            let mut body = "{{prev}}{{b.day}};{{row}};{{id}}\n"
+            if prev.len > 0 && prev[prev.len - 1] != 10 {
+                body = "{{prev}}\n{{b.day}};{{row}};{{id}}\n"
+            }
+            if store.write_atomic(path, body) != 0 {
+                return day_err("cannot write {{path}}")
+            }
+            if big_move(ix.last_paise[k], px) {
+                warnings = warnings + 1
+            }
+            ix.last_dates[k] = b.day
+            ix.last_paise[k] = px
+            ix.bars[k] = ix.bars[k] + 1
+            ix.names[k] = b.names[i]
+            accepted = accepted + 1
+        }
+        i = i + 1
+    }
+    if write_index(root, ix) != 0 {
+        return day_err("cannot write the symbol index")
+    }
+    i = 0
+    while i < rej.len {
+        append_line("{{root}}/rejects.txt", rej[i])
+        i = i + 1
+    }
+    append_line("{{root}}/fetches.txt", "{{id}};{{stamp}};{{url}};{{b.day}};{{accepted}};{{rejected}};{{warnings}}")
+    return DayReport { ok: 1, closed: 0, fetch_id: id, accepted: accepted, rejected: rejected, warnings: warnings, err: "" }
+}
+
+/// Fetch and cache one trading day. A day with no session is `closed`.
+fn day_live(ymd: int, stamp: string) -> DayReport {
+    if !date.is_valid(ymd) {
+        return day_err("not a date")
+    }
+    if ymd < nse.first_day() {
+        return day_err("NSE bhavcopy in this layout starts on 2024-01-02")
+    }
+    let root = tape_root()
+    if root.len == 0 {
+        return day_err("no app data directory")
+    }
+    let got = nse.fetch_day(ymd)
+    if got.state == 1 {
+        return DayReport { ok: 1, closed: 1, fetch_id: 0, accepted: 0, rejected: 0, warnings: 0, err: "" }
+    }
+    if got.state != 0 {
+        return day_err(got.err)
+    }
+    return apply(root, nse.parse(got.body, ymd), nse.bhav_url(ymd), stamp)
+}
+
+/// Last fetch as `id;stamp;url;day;accepted;rejected;warnings` fields, or empty.
+fn last_fetch(root: string) -> []string {
+    let lines = csvx.split_lines(sys.read_file("{{root}}/fetches.txt"))
+    let mut i = lines.len - 1
+    while i >= 0 {
+        let f = csvx.split_fields(lines[i])
+        if f.len >= 7 {
+            return f
+        }
+        i = i - 1
+    }
+    return []string {}
+}
+
+/// Up to `cap` reject lines `line;symbol;date;reason` for fetch `id`, and
+/// the full count.
+fn rejects_for(root: string, id: int, cap: int) -> []string {
+    let lines = csvx.split_lines(sys.read_file("{{root}}/rejects.txt"))
+    let mut out = []string {}
+    let mut i = 0
+    while i < lines.len && out.len < cap {
+        let f = csvx.split_fields(lines[i])
+        if f.len >= 5 && store.parse_int(f[0]) == id {
+            push(out, "{{f[1]}};{{f[2]}};{{f[3]}};{{f[4]}}")
+        }
+        i = i + 1
+    }
+    return out
+}

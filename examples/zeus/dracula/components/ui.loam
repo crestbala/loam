@@ -1,0 +1,58 @@
+//! Screen pieces the pages share, built from `std:zui`. Nothing here is a
+//! widget of its own: stat cards from label, value, caption triples, the
+//! server-down state, and a table row with an action beside it.
+
+import "std:router"
+import "std:spacing"
+import "std:zeus"
+import "std:zui"
+
+/// Label, value, caption triples as stat cards that wrap across the row.
+fn StatGrid(cells: []string) {
+    let n = cells.len / 3
+    zui.RowWrap(SPACE.Sm) {
+        let mut i = 0
+        while i < n {
+            let label = cells[i * 3]
+            let value = cells[i * 3 + 1]
+            let caption = cells[i * 3 + 2]
+            zeus.Box(width = 190, align_direction = DIRECTION.Column) {
+                zui.Stat(label, value, zeus.TINT.Ink, delta = caption)
+            }
+            i = i + 1
+        }
+    }
+}
+
+/// What a dead RPC looks like on a page, with the way out.
+fn ServerDown(retry: fn()) {
+    zui.Empty(icon = zeus.IC_INFO, title = "The data server did not answer",
+              body = "Start it with ./bin/zeli serve examples/zeus/dracula --target macos, then Retry.") {
+        zui.Button(label = "Retry", look = zeus.LOOK.Solid, size = zeus.SIZE.Sm, on_click = retry)
+    }
+}
+
+/// Header for a table whose rows carry an action at the right end.
+fn HeadWithAction(spec: []TableCol) {
+    zui.Row(SPACE.Sm) {
+        let head = zui.Column(0) {
+            zui.TableCols(spec)
+        }
+        zeus.grow(head, 1)
+        zeus.Box(width = 96)
+    }
+}
+
+/// A row that opens `href` on click, with `action` at the right end, kept
+/// out of the row so the click on it does not navigate.
+fn LinkRowWithAction(cells: []string, spec: []TableCol, href: string, action: fn()) {
+    zui.Row(SPACE.Sm) {
+        let body = zui.Column(0) {
+            zui.TableRowCols(cells, spec, hover = true, on_click = fn() { router.navigate(href) })
+        }
+        zeus.grow(body, 1)
+        zeus.Box(width = 96, align_direction = DIRECTION.Row, justify = ALIGN.End) {
+            action()
+        }
+    }
+}

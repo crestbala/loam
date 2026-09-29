@@ -1,0 +1,251 @@
+//! The cache pipeline, on fixture files shaped like AMFI's.
+//!
+//! No network. Each test uses its own directory and removes it afterwards.
+//! What is checked is the thing a bad row would otherwise become: a cached
+//! NAV, a dormant flag, or a gap that indicators must not cross.
+
+import "std:test"
+import "std:sys"
+import "../server/ingest.loam"
+import "../server/store.loam"
+
+fn fresh(name: string) -> string {
+    let p = "/tmp/{{name}}"
+    sys.remove_path(p)
+    sys.mkdir(p)
+    return p
+}
+
+fn done(p: string) {
+    sys.remove_path(p)
+}
+
+fn has_reason(lines: []string, reason: string) -> bool {
+    let mut i = 0
+    while i < lines.len {
+        let line = lines[i]
+        if line.len >= reason.len {
+            let mut k = 0
+            let start = line.len - reason.len
+            let mut same = true
+            while k < reason.len {
+                if line[start + k] != reason[k] {
+                    same = false
+                    break
+                }
+                k = k + 1
+            }
+            if same {
+                return true
+            }
+        }
+        i = i + 1
+    }
+    return false
+}
+
+fn daily_one() -> string {
+    return "Open Ended Schemes(Equity Scheme - Large Cap Fund)\nSample AMC Mutual Fund\nScheme Code;ISIN Div Payout/ ISIN Growth;ISIN Div Reinvestment;Scheme Name;Net Asset Value;Date\n1001;INF000000001;INF000000002;Sample Equity Fund - Direct Plan - Growth;100.0000;01-Apr-2026\n1001;INF000000001;INF000000002;Sample Equity Fund - Direct Plan - Growth;N.A.;01-Apr-2026\n1002;INF000000003;-;Other Equity Fund - Direct Plan - Growth;50.0000;01-Apr-2026\n1003;INF000000004;-;Skipped Equity Fund - Regular Plan - Growth;40.0000;01-Apr-2026\n9999;too-short\nOpen Ended Schemes(Debt Scheme - Overnight Fund)\nScheme Code;ISIN Div Payout/ ISIN Growth;ISIN Div Reinvestment;Scheme Name;Net Asset Value;Date\n3001;INF000000005;-;Overnight Fund - Direct Plan - Growth;1000.0000;01-Apr-2026\n"
+}
+
+fn daily_two() -> string {
+    return "Open Ended Schemes(Equity Scheme - Large Cap Fund)\nScheme Code;ISIN Div Payout/ ISIN Growth;ISIN Div Reinvestment;Scheme Name;Net Asset Value;Date\n1001;INF000000001;INF000000002;Sample Equity Fund - Direct Plan - Growth;101.0000;02-Apr-2026\n"
+}
+
+#[test]
+fn a_daily_file_caches_equity_direct_only() {
+    let root = fresh("dracula-ingest-daily")
+    let r = ingest.apply(root, daily_one(), "fixture://daily", "2026-04-01T12:00:00Z")
+    test.assert_eq_int(r.ok, 1)
+    test.assert_eq_int(r.accepted, 2)
+    test.assert_eq_int(r.rejected, 2)
+    let a = store.series(root, "1001")
+    test.assert_eq_int(a.dates.len, 1)
+    test.assert_eq_int(a.dates[0], 20260401)
+    test.assert(a.navs[0] == i64(10000))
+    test.assert_eq_int(a.syncs[0], r.sync_id)
+    let b = store.series(root, "1002")
+    test.assert(b.navs[0] == i64(5000))
+    let cat = store.read_catalog(root)
+    let at = store.find_code(cat, "1001")
+    test.assert(at >= 0)
+    test.assert_eq_str(cat.names[at], "Sample Equity Fund - Direct Plan - Growth")
+    test.assert_eq_str(cat.isin_g[at], "INF000000001")
+    test.assert_eq_str(cat.isin_d[at], "INF000000002")
+    test.assert_eq_int(store.find_code(cat, "1003"), -1)
+    test.assert_eq_int(store.find_code(cat, "3001"), -1)
+    let reasons = store.rejects_for(root, r.sync_id)
+    test.assert(has_reason(reasons, "short row"))
+    test.assert(has_reason(reasons, "bad nav"))
+    let log = store.read_syncs(root)
+    test.assert_eq_int(log.ids.len, 1)
+    test.assert_eq_str(log.stamps[0], "2026-04-01T12:00:00Z")
+    test.assert_eq_str(log.urls[0], "fixture://daily")
+    test.assert_eq_str(log.kinds[0], "daily")
+    done(root)
+}
+
+#[test]
+fn a_missing_scheme_goes_dormant_and_rollback_restores_it() {
+    let root = fresh("dracula-ingest-dormant")
+    let first = ingest.apply(root, daily_one(), "fixture://daily", "t1")
+    test.assert_eq_int(first.ok, 1)
+    let second = ingest.apply(root, daily_two(), "fixture://daily", "t2")
+    test.assert_eq_int(second.ok, 1)
+    test.assert_eq_int(second.accepted, 1)
+    test.assert_eq_int(second.dormant, 1)
+    let cat = store.read_catalog(root)
+    let gone = store.find_code(cat, "1002")
+    test.assert_eq_int(cat.dormant[gone], 1)
+    let kept = store.series(root, "1001")
+    test.assert_eq_int(kept.dates.len, 2)
+    test.assert(kept.navs[1] == i64(10100))
+    let still = store.series(root, "1002")
+    test.assert_eq_int(still.dates.len, 1)
+    test.assert_eq_int(store.rollback(root), 1)
+    let restored = store.read_catalog(root)
+    test.assert_eq_int(restored.dormant[store.find_code(restored, "1002")], 0)
+    let after = store.series(root, "1001")
+    test.assert_eq_int(after.dates.len, 1)
+    test.assert_eq_int(after.dates[0], 20260401)
+    let log = store.read_syncs(root)
+    test.assert_eq_int(store.latest_open(log), 0)
+    test.assert_eq_int(log.rolled[1], 1)
+    done(root)
+}
+
+#[test]
+fn jumps_gaps_and_an_old_date() {
+    let root = fresh("dracula-ingest-rules")
+    let name = "Sample Equity Fund - Direct Plan - Growth"
+    let day = "Open Ended Schemes(Equity Scheme - Large Cap Fund)\nScheme Code;ISIN Div Payout/ ISIN Growth;ISIN Div Reinvestment;Scheme Name;Net Asset Value;Date\n1001;INF000000001;-;{{name}};100.0000;01-Apr-2026\n"
+    test.assert_eq_int(ingest.apply(root, day, "fixture://daily", "t1").ok, 1)
+
+    let jump = "Open Ended Schemes(Equity Scheme - Large Cap Fund)\nScheme Code;ISIN Div Payout/ ISIN Growth;ISIN Div Reinvestment;Scheme Name;Net Asset Value;Date\n1001;INF000000001;-;{{name}};130.0000;02-Apr-2026\n"
+    let jumped = ingest.apply(root, jump, "fixture://daily", "t2")
+    test.assert_eq_int(jumped.accepted, 0)
+    test.assert_eq_int(jumped.rejected, 1)
+    test.assert(has_reason(store.rejects_for(root, jumped.sync_id), "nav jump"))
+    test.assert_eq_int(store.series(root, "1001").dates.len, 1)
+
+    let exact = "Open Ended Schemes(Equity Scheme - Large Cap Fund)\nScheme Code;ISIN Div Payout/ ISIN Growth;ISIN Div Reinvestment;Scheme Name;Net Asset Value;Date\n1001;INF000000001;-;{{name}};120.0000;02-Apr-2026\n"
+    let at = ingest.apply(root, exact, "fixture://daily", "t3")
+    test.assert_eq_int(at.accepted, 1)
+    test.assert(store.series(root, "1001").navs[1] == i64(12000))
+
+    let renamed = "Open Ended Schemes(Equity Scheme - Large Cap Fund)\nScheme Code;ISIN Div Payout/ ISIN Growth;ISIN Div Reinvestment;Scheme Name;Net Asset Value;Date\n1001;INF000000001;-;Sample Equity Fund - Regular Plan - IDCW;150.0000;03-Apr-2026\n"
+    let warn = ingest.apply(root, renamed, "fixture://daily", "t4")
+    test.assert_eq_int(warn.accepted, 1)
+    test.assert_eq_int(warn.warnings, 1)
+    test.assert(has_reason(store.warnings_for(root, warn.sync_id), "nav jump on plan change"))
+    let cat = store.read_catalog(root)
+    test.assert_eq_str(cat.names[store.find_code(cat, "1001")], "Sample Equity Fund - Regular Plan - IDCW")
+
+    let gap = "Open Ended Schemes(Equity Scheme - Large Cap Fund)\nScheme Code;ISIN Div Payout/ ISIN Growth;ISIN Div Reinvestment;Scheme Name;Net Asset Value;Date\n1001;INF000000001;-;Sample Equity Fund - Regular Plan - IDCW;151.0000;15-Apr-2026\n"
+    let g = ingest.apply(root, gap, "fixture://daily", "t5")
+    test.assert_eq_int(g.warnings, 1)
+    let cat2 = store.read_catalog(root)
+    let slot = store.find_code(cat2, "1001")
+    test.assert_eq_int(cat2.gap_from[slot], 20260415)
+    test.assert_eq_int(cat2.gap_ack[slot], 0)
+    test.assert_eq_int(store.ack_gap(root, "1001"), 1)
+    let cat3 = store.read_catalog(root)
+    test.assert_eq_int(cat3.gap_ack[store.find_code(cat3, "1001")], 1)
+
+    let old = "Open Ended Schemes(Equity Scheme - Large Cap Fund)\nScheme Code;ISIN Div Payout/ ISIN Growth;ISIN Div Reinvestment;Scheme Name;Net Asset Value;Date\n1001;INF000000001;-;Sample Equity Fund - Regular Plan - IDCW;90.0000;31-Mar-2026\n"
+    let back = ingest.apply(root, old, "fixture://daily", "t6")
+    test.assert_eq_int(back.accepted, 0)
+    test.assert(has_reason(store.rejects_for(root, back.sync_id), "out of sequence"))
+    done(root)
+}
+
+#[test]
+fn history_seeds_an_empty_cache_and_does_not_mark_dormant() {
+    let root = fresh("dracula-ingest-history")
+    let text = "Scheme Code;Scheme Name;Net Asset Value;Repurchase Price;Sale Price;Date\n1001;Sample Equity Fund - Direct Plan - Growth;99.5000;;;31-Mar-2026\n1001;Sample Equity Fund - Direct Plan - Growth;100.0000;;;01-Apr-2026\n4001;Regular Equity Fund - Regular Plan - Growth;10.0000;;;31-Mar-2026\n"
+    let r = ingest.apply(root, text, "fixture://history", "t1")
+    test.assert_eq_int(r.ok, 1)
+    test.assert_eq_int(r.accepted, 2)
+    test.assert_eq_int(r.dormant, 0)
+    let ser = store.series(root, "1001")
+    test.assert_eq_int(ser.dates[0], 20260331)
+    test.assert_eq_int(ser.dates[1], 20260401)
+    test.assert(ser.navs[0] == i64(9950))
+    test.assert(ser.navs[1] == i64(10000))
+    let log = store.read_syncs(root)
+    test.assert_eq_str(log.kinds[0], "history")
+    test.assert_eq_int(store.find_code(store.read_catalog(root), "4001"), -1)
+
+    let daily = daily_one()
+    let d = ingest.apply(root, daily, "fixture://daily", "t2")
+    test.assert_eq_int(d.ok, 1)
+    let only = "Scheme Code;Scheme Name;Net Asset Value;Repurchase Price;Sale Price;Date\n1001;Sample Equity Fund - Direct Plan - Growth;102.0000;;;03-Apr-2026\n"
+    let h2 = ingest.apply(root, only, "fixture://history", "t3")
+    test.assert_eq_int(h2.dormant, 0)
+    let cat = store.read_catalog(root)
+    test.assert_eq_int(cat.dormant[store.find_code(cat, "1002")], 0)
+    done(root)
+}
+
+#[test]
+fn a_nav_name_history_file_keeps_equity_direct_only() {
+    let root = fresh("dracula-ingest-navname")
+    let text = "Open Ended Schemes ( Equity Scheme - Large Cap Fund )\nScheme Code;NAV Name;Plan;Option;ISIN Div Payout/ISIN Growth;ISIN Div Reinvestment;Net Asset Value;Date\n1001;Sample Equity Fund;Direct Plan;Growth;INF000000001;-;100.0000;01-Sep-2026\n1002;Sample Equity Fund;Regular Plan;Growth;INF000000003;-;100.0000;01-Sep-2026\nOpen Ended Schemes ( Money Market )\nScheme Code;NAV Name;Plan;Option;ISIN Div Payout/ISIN Growth;ISIN Div Reinvestment;Net Asset Value;Date\n3001;Overnight Fund;Direct Plan;Growth;INF000000005;-;1000.0000;01-Sep-2026\n"
+    let r = ingest.apply(root, text, "fixture://history", "t1")
+    test.assert_eq_int(r.ok, 1)
+    test.assert_eq_int(r.accepted, 1)
+    test.assert_eq_int(r.dormant, 0)
+    let cat = store.read_catalog(root)
+    let at = store.find_code(cat, "1001")
+    test.assert(at >= 0)
+    test.assert_eq_str(cat.names[at], "Sample Equity Fund - Direct Plan - Growth")
+    test.assert_eq_int(store.find_code(cat, "1002"), -1)
+    test.assert_eq_int(store.find_code(cat, "3001"), -1)
+    let log = store.read_syncs(root)
+    test.assert_eq_str(log.kinds[0], "history")
+    test.assert_eq_int(cat.dormant[at], 0)
+    done(root)
+}
+
+#[test]
+fn an_eight_column_row_keeps_the_plan() {
+    let root = fresh("dracula-ingest-cols")
+    let text = "Open Ended Schemes(Equity Schemes - Large Cap Fund)\nScheme Code;ISIN Div Payout/ ISIN Growth;ISIN Div Reinvestment;Scheme Name;Plan;Option;Net Asset Value;Date\n1001;INF000000001;-;Sample Equity Fund;Direct Plan;Growth Option;100.0000;01-Apr-2026\n1002;INF000000003;-;Sample Equity Fund;Regular Plan;Growth Option;100.0000;01-Apr-2026\n"
+    let r = ingest.apply(root, text, "fixture://daily", "t1")
+    test.assert_eq_int(r.ok, 1)
+    test.assert_eq_int(r.accepted, 1)
+    let cat = store.read_catalog(root)
+    let at = store.find_code(cat, "1001")
+    test.assert(at >= 0)
+    test.assert_eq_str(cat.names[at], "Sample Equity Fund - Direct Plan - Growth Option")
+    test.assert_eq_int(store.find_code(cat, "1002"), -1)
+    test.assert(store.series(root, "1001").navs[0] == i64(10000))
+    done(root)
+}
+
+#[test]
+fn a_week_window_covers_the_range_without_a_gap() {
+    let w = ingest.windows(20260101, 20260110, 7)
+    test.assert_eq_int(w.frm.len, 2)
+    test.assert_eq_int(w.to.len, 2)
+    test.assert_eq_int(w.frm[0], 20260101)
+    test.assert_eq_int(w.to[0], 20260107)
+    test.assert_eq_int(w.frm[1], 20260108)
+    test.assert_eq_int(w.to[1], 20260110)
+    test.assert_eq_int(ingest.windows(20260110, 20260101, 7).frm.len, 0)
+    test.assert_eq_int(ingest.windows(20260101, 20260101, 7).to[0], 20260101)
+    test.assert_eq_int(ingest.ymd_of("2026-01-01"), 20260101)
+    test.assert_eq_int(ingest.ymd_of("01-Jan-2026"), 20260101)
+    test.assert_eq_int(ingest.ymd_of("nope"), 0)
+}
+
+#[test]
+fn a_file_without_a_header_does_not_touch_the_cache() {
+    let root = fresh("dracula-ingest-bad")
+    let r = ingest.apply(root, "1001;Sample;100.00;01-Apr-2026\n", "fixture://nope", "t1")
+    test.assert_eq_int(r.ok, 0)
+    test.assert_eq_str(r.err, "no header")
+    test.assert_eq_int(store.read_syncs(root).ids.len, 0)
+    test.assert_eq_int(store.series(root, "1001").dates.len, 0)
+    done(root)
+}

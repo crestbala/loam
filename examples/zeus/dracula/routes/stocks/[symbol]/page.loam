@@ -1,0 +1,89 @@
+import "std:router"
+import "std:spacing"
+import "std:zeus"
+import "std:zui"
+import "../../../components/present.loam" as present
+import "../../../components/stocks.loam" as stocks
+import "../../../components/ui.loam" as ui
+
+fn paint_chart() {
+    let labels = stocks.labels()
+    let vals = stocks.vals()
+    let names = stocks.names()
+    if labels.len == 0 || names.len == 0 || vals.len != labels.len * names.len {
+        zeus.Text("No cached close in this range.")
+        return
+    }
+    let first = labels[0]
+    let last = labels[labels.len - 1]
+    let n = labels.len
+    zui.Card(title = "Daily close, rupees", subtitle = "{{first}} to {{last}}. {{n}} points: the last close in each bucket. Unadjusted.") {
+        zui.LineChart(labels, names, vals, 720, 300, fit = true, decimals = stocks.decimals(),
+                      label_every = 0, dots = false)
+    }
+}
+
+fn paint(sym: string) {
+    let st = stocks.state()
+    if st == 0 {
+        zeus.Text("Loading the cached closes for {{sym}}.")
+        return
+    }
+    if st == 3 {
+        ui.ServerDown(fn() { stocks.retry() })
+        return
+    }
+    if st == 2 {
+        zui.Empty(icon = zeus.IC_INFO, title = "No cached closes for {{sym}}",
+                  body = "The symbol is not in a fetched NSE bhavcopy. Search, or load closes on the Data page.") {
+            zui.Button(label = "Search stocks", size = zeus.SIZE.Sm, on_click = fn() { router.navigate("/stocks") })
+        }
+        return
+    }
+    let name = stocks.name()
+    if name.len > 0 {
+        zui.Title(name)
+    }
+    zui.Row(8) {
+        zui.Badge(sym, zeus.TINT.Mute)
+        let isin = stocks.isin()
+        if isin.len > 0 {
+            zui.Badge(isin, zeus.TINT.Mute)
+        }
+        zui.Badge("NSE close, not a fund", zeus.TINT.Warn)
+    }
+    paint_chart()
+    ui.StatGrid(stocks.stat_cells())
+}
+
+fn page(p: Params) {
+    let sym = router.param(p, "symbol")
+    zui.Column(spacing.SECTION) {
+        zui.Row(8) {
+            zui.Heading("Stock")
+            zui.Grow()
+            zui.Button(label = "Search stocks", look = zeus.LOOK.Ghost, on_click = fn() { router.navigate("/stocks") })
+        }
+        if stocks.started() {
+            stocks.focus(sym)
+            zui.Segmented(stocks.range_signal(), present.range_labels())
+            zeus.effect(fn() { stocks.range_tick() })
+            zui.Match(stocks.generation(), fn(g) {
+                if g >= 0 {
+                    paint(sym)
+                }
+            })
+            zui.Body("The line keeps the last close in each bucket; nothing is averaged. Fund rules, exit load, stamp duty, and STT do not apply here.")
+        } else {
+            if sym.len > 0 {
+                zeus.Text(sym)
+            }
+            zeus.Text("Loading")
+        }
+    }
+}
+
+fn meta(p: Params) -> Meta {
+    let sym = router.param(p, "symbol")
+    return Meta { title: "Stock {{sym}}" }
+}

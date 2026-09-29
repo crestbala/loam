@@ -1,0 +1,63 @@
+//! `catalog.search` and `catalog.window` over a hand-built catalog.
+
+import "std:test"
+import "../server/store.loam"
+import "../server/catalog.loam"
+
+fn sample() -> Catalog {
+    let mut cat = store.empty_catalog()
+    push(cat.codes, "103490")
+    push(cat.names, "Quantum Value Fund - Direct Plan Growth Option")
+    push(cat.codes, "118267")
+    push(cat.names, "HDFC Value Fund - Direct Plan - Growth")
+    push(cat.codes, "1034")
+    push(cat.names, "Value Leaders - Direct")
+    push(cat.codes, "120505")
+    push(cat.names, "Axis Midcap Fund - Direct Plan - Growth")
+    return cat
+}
+
+#[test]
+fn words_fold_and_split() {
+    let ws = catalog.words("  Quantum  VALUE ")
+    test.assert_eq_int(ws.len, 2)
+    test.assert_eq_str(ws[0], "quantum")
+    test.assert_eq_str(ws[1], "value")
+}
+
+#[test]
+fn every_word_must_match() {
+    let hits = catalog.search(sample(), "value direct growth")
+    test.assert_eq_int(hits.len, 2)
+    test.assert_eq_int(hits[0], 0)
+    test.assert_eq_int(hits[1], 1)
+    test.assert_eq_int(catalog.search(sample(), "quantum midcap").len, 0)
+}
+
+#[test]
+fn exact_code_then_leading_name() {
+    let hits = catalog.search(sample(), "1034")
+    // 1034 exactly, then 103490 by code prefix.
+    test.assert_eq_int(hits.len, 2)
+    test.assert_eq_int(hits[0], 2)
+    test.assert_eq_int(hits[1], 0)
+    let lead = catalog.search(sample(), "value")
+    test.assert_eq_int(lead.len, 3)
+    test.assert_eq_int(lead[0], 2)
+    test.assert_eq_int(lead[1], 0)
+    test.assert_eq_int(lead[2], 1)
+}
+
+#[test]
+fn empty_query_is_every_row_and_window_is_bounded() {
+    let hits = catalog.search(sample(), "")
+    test.assert_eq_int(hits.len, 4)
+    let page = catalog.window(hits, 1, 2)
+    test.assert_eq_int(page.len, 2)
+    test.assert_eq_int(page[0], 1)
+    test.assert_eq_int(page[1], 2)
+    test.assert_eq_int(catalog.window(hits, 3, 10).len, 1)
+    test.assert_eq_int(catalog.window(hits, 9, 10).len, 0)
+    test.assert_eq_int(catalog.page_size(0), catalog.page_max())
+    test.assert_eq_int(catalog.page_size(500), catalog.page_max())
+}

@@ -507,7 +507,9 @@ fn raster_max_i(a: int, b: int) -> int {
 }
 
 // sin/cos, reduced into the polynomial's interval (same approach as the PPM
-// demos' mathf; there is no std:math and no libm seam).
+// demos' mathf). `std:math` exists now, but its trig is not in it — this stays a
+// local f32 polynomial because the raster path is `float`, not `f64`, and a
+// conversion per drawn arc would cost more than the series saves.
 fn raster_wrap(x: float) -> float {
     return x - RASTER_TAU * raster_round(x / RASTER_TAU)
 }

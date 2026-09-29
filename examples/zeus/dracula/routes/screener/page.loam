@@ -1,0 +1,56 @@
+import "std:router"
+import "std:spacing"
+import "std:zeus"
+import "std:zui"
+import "../../components/book.loam" as book
+import "../../components/ui.loam" as ui
+
+fn spec() -> []TableCol {
+    let mut h = []TableCol {}
+    push(h, TableCol { title: "Rank", width: 48, align: ALIGN.End })
+    push(h, TableCol { title: "Scheme", width: 0 })
+    push(h, TableCol { title: "Code", width: 72 })
+    push(h, TableCol { title: "12-month momentum", width: 150, align: ALIGN.End })
+    push(h, TableCol { title: "Status", width: 170 })
+    return h
+}
+
+fn paint_ranks() {
+    if book.rank_count() == 0 {
+        zui.Empty(icon = zeus.IC_INFO, title = "No schemes to rank.",
+                  body = "Add funds on Holdings. The screener ranks that list.")
+        return
+    }
+    if book.any_down() {
+        ui.ServerDown(fn() { book.retry() })
+    }
+    zui.TableCols(spec())
+    let n = book.rank_count()
+    let mut i = 0
+    while i < n {
+        let code = book.rank_code(i)
+        zui.TableRowCols(book.rank_cells(i), spec(), hover = true,
+                         on_click = fn() { router.navigate("/scheme/{{code}}") })
+        i = i + 1
+    }
+}
+
+fn page(p: Params) {
+    zui.Column(spacing.SECTION) {
+        zui.Heading("Screener")
+        zui.Body("Ranks the watchlist by 12-month momentum. A tie keeps the earlier scheme. Warm-up is not a rank. Click a row for its chart.")
+        if book.started() {
+            zui.Match(book.load_gen(), fn(g) {
+                if g >= 0 {
+                    paint_ranks()
+                }
+            })
+        } else {
+            zeus.Text("No schemes to rank.")
+        }
+    }
+}
+
+fn meta(p: Params) -> Meta {
+    return Meta { title: "Screener" }
+}

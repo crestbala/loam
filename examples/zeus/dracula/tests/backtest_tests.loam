@@ -1,0 +1,375 @@
+//! A 20-bar buy and sell, with the ending cash worked out in paise.
+//!
+//! Start with 1,000,000 paise. Signal a buy on 2026-01-01, filled the next
+//! day at 10,000 paise per unit. Stamp duty is 50. The remaining 999,950
+//! paise buy 99.995 units. Signal a sell on 2026-01-11, filled on 2026-01-12
+//! at 11,000. Gross redemption is 1,099,945. The lot is 10 days old, so the
+//! 1% exit load is 10,999 and STT is 11. Cash left is 1,088,935. No other
+//! charge is taken.
+
+import "std:test"
+import "std:math"
+import "std:date"
+import "../core/series.loam"
+import "../core/costs.loam"
+import "../core/backtest.loam"
+import "../core/stats.loam"
+
+fn near(got: f64, want: f64) {
+    let mut rel = math.abs(got - want)
+    if want != 0.0 {
+        rel = rel / math.abs(want)
+    }
+    if rel > 1.0e-8 {
+        test.fail("value out of tolerance")
+    }
+}
+
+fn day(offset: int) -> int {
+    return date.from_days(date.to_days(20260101) + offset)
+}
+
+fn scenario() -> NavSeries {
+    let mut dates = []int {}
+    let mut navs = []i64 {}
+    let mut i = 0
+    while i < 20 {
+        push(dates, day(i))
+        let mut nav = 10000
+        if i >= 11 {
+            nav = 11000
+        }
+        push(navs, i64(nav))
+        i = i + 1
+    }
+    return series.build("1001", dates, navs)
+}
+
+fn orders() -> Orders {
+    let mut dates = []int {}
+    let mut sides = []int {}
+    let mut amounts = []i64 {}
+    push(dates, day(0))
+    push(sides, 1)
+    push(amounts, i64(0))
+    push(dates, day(10))
+    push(sides, -1)
+    push(amounts, i64(0))
+    return Orders { dates: dates, sides: sides, amounts: amounts }
+}
+
+#[test]
+fn ending_cash_is_correct_to_the_paisa() {
+    let s = scenario()
+    let r = backtest.run(s, orders(), costs.equity(), i64(1000000))
+    test.assert(r.end_cash == i64(1088935))
+    test.assert(r.end_units == i64(0))
+    test.assert(r.end_equity == i64(1088935))
+    test.assert_eq_int(r.wins, 1)
+    test.assert_eq_int(r.losses, 0)
+    near(r.win_rate, 1.0)
+    test.assert(r.gross_win == i64(88935))
+    test.assert(r.gross_loss == i64(0))
+    near(r.profit_factor, 0.0)
+    near(r.turnover, f64(i64(2099895)) / f64(i64(1000000)))
+
+    test.assert_eq_int(r.ledger.sides.len, 2)
+    test.assert_eq_int(r.ledger.sides[0], 1)
+    test.assert_eq_int(r.ledger.fill_dates[0], day(1))
+    test.assert(r.ledger.signal_dates[0] == day(0))
+    test.assert(r.ledger.navs[0] == i64(10000))
+    test.assert(r.ledger.units[0] == i64(99995000))
+    test.assert(r.ledger.gross[0] == i64(999950))
+    test.assert(r.ledger.stamp[0] == i64(50))
+    test.assert(r.ledger.stt[0] == i64(0))
+    test.assert(r.ledger.load[0] == i64(0))
+    test.assert(r.ledger.cash_after[0] == i64(0))
+
+    test.assert_eq_int(r.ledger.sides[1], -1)
+    test.assert_eq_int(r.ledger.fill_dates[1], day(11))
+    test.assert(r.ledger.signal_dates[1] == day(10))
+    test.assert(r.ledger.navs[1] == i64(11000))
+    test.assert(r.ledger.gross[1] == i64(1099945))
+    test.assert(r.ledger.load[1] == i64(10999))
+    test.assert(r.ledger.stt[1] == i64(11))
+    test.assert(r.ledger.stamp[1] == i64(0))
+    test.assert(r.ledger.cash_after[1] == i64(1088935))
+
+    let years = f64(19) / f64(365)
+    near(r.cagr, stats.cagr(f64(i64(1000000)), f64(i64(1088935)), years))
+    near(r.xirr, r.cagr)
+    near(r.max_dd, f64(50) / f64(1000000))
+    test.assert_eq_int(r.dd_duration, 11)
+
+    let mut rets = []f64 {}
+    push(rets, f64(i64(999950)) / f64(i64(1000000)) - f64(1))
+    let mut z = 0
+    while z < 9 {
+        push(rets, f64(0))
+        z = z + 1
+    }
+    push(rets, f64(i64(1088935)) / f64(i64(999950)) - f64(1))
+    z = 0
+    while z < 8 {
+        push(rets, f64(0))
+        z = z + 1
+    }
+    let sharpe = stats.mean(rets) / stats.sample_sd(rets) * math.sqrt(f64(252))
+    let sortino = stats.mean(rets) / stats.downside_deviation(rets, 0.0) * math.sqrt(f64(252))
+    near(r.sharpe, sharpe)
+    near(r.sortino, sortino)
+
+    let tax = costs.capital_gains(r.gross_win, 10, 365, i64(1), i64(5), i64(1), i64(8))
+    test.assert(tax == i64(17787))
+    test.assert(r.end_cash == i64(1088935))
+    test.assert_eq_int(r.curve_dates.len, 20)
+    test.assert_eq_int(r.curve_paise.len, 20)
+    test.assert_eq_int(r.curve_dates[0], day(0))
+    test.assert_eq_int(r.curve_dates[19], day(19))
+    test.assert(r.curve_paise[0] == i64(1000000))
+    test.assert(r.curve_paise[19] == r.end_equity)
+}
+
+#[test]
+fn exit_load_stops_after_365_days() {
+    let mut dates = []int {}
+    let mut navs = []i64 {}
+    push(dates, 20250101)
+    push(dates, 20260101)
+    push(dates, 20260102)
+    push(navs, i64(10000))
+    push(navs, i64(10000))
+    push(navs, i64(10000))
+    let s = series.build("1001", dates, navs)
+
+    let mut inside_d = []int {}
+    let mut inside_s = []int {}
+    let mut inside_a = []i64 {}
+    push(inside_d, 20241231)
+    push(inside_s, 1)
+    push(inside_a, i64(0))
+    push(inside_d, 20251231)
+    push(inside_s, -1)
+    push(inside_a, i64(0))
+    let inside = backtest.run(s, Orders { dates: inside_d, sides: inside_s, amounts: inside_a }, costs.equity(), i64(1000000))
+    test.assert(inside.end_cash == i64(989940))
+    test.assert(inside.ledger.load[1] == i64(10000))
+
+    let mut outside_d = []int {}
+    let mut outside_s = []int {}
+    let mut outside_a = []i64 {}
+    push(outside_d, 20241231)
+    push(outside_s, 1)
+    push(outside_a, i64(0))
+    push(outside_d, 20260101)
+    push(outside_s, -1)
+    push(outside_a, i64(0))
+    let outside = backtest.run(s, Orders { dates: outside_d, sides: outside_s, amounts: outside_a }, costs.equity(), i64(1000000))
+    test.assert(outside.end_cash == i64(999940))
+    test.assert(outside.ledger.load[1] == i64(0))
+    test.assert(outside.ledger.stt[1] == i64(10))
+}
+
+fn drift(s: NavSeries) -> Orders {
+    let mut dates = []int {}
+    let mut sides = []int {}
+    let mut amounts = []i64 {}
+    let mut held = false
+    let mut i = 1
+    while i < series.len(s) {
+        if !held && s.navs[i] > s.navs[i - 1] {
+            push(dates, s.dates[i])
+            push(sides, 1)
+            push(amounts, i64(0))
+            held = true
+        } else if held && s.navs[i] < s.navs[i - 1] {
+            push(dates, s.dates[i])
+            push(sides, -1)
+            push(amounts, i64(0))
+            held = false
+        }
+        i = i + 1
+    }
+    return Orders { dates: dates, sides: sides, amounts: amounts }
+}
+
+fn cut(s: NavSeries, last: int) -> NavSeries {
+    let mut dates = []int {}
+    let mut navs = []i64 {}
+    let mut i = 0
+    while i < series.len(s) {
+        if s.dates[i] <= last {
+            push(dates, s.dates[i])
+            push(navs, s.navs[i])
+        }
+        i = i + 1
+    }
+    return series.build(s.code, dates, navs)
+}
+
+#[test]
+fn no_lookahead_and_fills_are_the_next_nav() {
+    let mut dates = []int {}
+    let mut navs = []i64 {}
+    let mut i = 0
+    while i < 5 {
+        push(dates, day(i))
+        i = i + 1
+    }
+    push(navs, i64(100))
+    push(navs, i64(110))
+    push(navs, i64(120))
+    push(navs, i64(115))
+    push(navs, i64(130))
+    let full = series.build("1001", dates, navs)
+    let t = full.dates[3]
+    let short = cut(full, t)
+    let a = drift(full)
+    let b = drift(short)
+    test.assert_eq_int(b.dates.len, 2)
+    test.assert_eq_int(a.dates[0], b.dates[0])
+    test.assert_eq_int(a.sides[0], b.sides[0])
+    test.assert_eq_int(a.dates[1], b.dates[1])
+    test.assert_eq_int(a.sides[1], b.sides[1])
+    test.assert(a.dates[1] == t)
+    test.assert_eq_int(a.dates.len, 3)
+
+    let full_run = backtest.run(full, a, costs.equity(), i64(1000000))
+    let mut f = 0
+    while f < full_run.ledger.fill_dates.len {
+        test.assert(full_run.ledger.fill_dates[f] > full_run.ledger.signal_dates[f])
+        let sig = full_run.ledger.signal_dates[f]
+        let mut k = 0
+        while k < full.dates.len {
+            if full.dates[k] > sig {
+                test.assert_eq_int(full_run.ledger.fill_dates[f], full.dates[k])
+                break
+            }
+            k = k + 1
+        }
+        f = f + 1
+    }
+    let short_run = backtest.run(short, b, costs.equity(), i64(1000000))
+    test.assert_eq_int(short_run.ledger.sides.len, 1)
+    test.assert_eq_int(short_run.ledger.sides[0], 1)
+    test.assert(short_run.ledger.fill_dates[0] > short_run.ledger.signal_dates[0])
+}
+
+#[test]
+fn partial_sell_keeps_the_rest_of_the_lot() {
+    let mut dates = []int {}
+    let mut navs = []i64 {}
+    push(dates, day(0))
+    push(dates, day(1))
+    push(dates, day(2))
+    push(navs, i64(10000))
+    push(navs, i64(10000))
+    push(navs, i64(10000))
+    let s = series.build("1001", dates, navs)
+    let mut od = []int {}
+    let mut os = []int {}
+    let mut oa = []i64 {}
+    push(od, day(0))
+    push(os, 1)
+    push(oa, i64(0))
+    push(od, day(1))
+    push(os, -1)
+    push(oa, i64(500000))
+    let r = backtest.run(s, Orders { dates: od, sides: os, amounts: oa }, costs.equity(), i64(1000000))
+    test.assert(r.end_cash == i64(494995))
+    test.assert(r.end_units == i64(49995000))
+    test.assert(r.end_equity == i64(994945))
+    test.assert_eq_int(r.ledger.sides.len, 2)
+    test.assert(r.ledger.gross[1] == i64(500000))
+    test.assert(r.ledger.load[1] == i64(5000))
+    test.assert(r.ledger.stt[1] == i64(5))
+    test.assert(r.ledger.units[1] == i64(50000000))
+    test.assert_eq_int(r.losses, 1)
+    test.assert(r.gross_loss == i64(5030))
+}
+
+#[test]
+fn xirr_of_two_cashflows_is_the_rate_that_prices_them() {
+    let mut up_d = []int {}
+    let mut up_a = []i64 {}
+    push(up_d, 20250101)
+    push(up_a, i64(-100000))
+    push(up_d, 20260101)
+    push(up_a, i64(115000))
+    near(backtest.xirr(up_d, up_a), 0.15)
+
+    let mut down_d = []int {}
+    let mut down_a = []i64 {}
+    push(down_d, 20250101)
+    push(down_a, i64(-100000))
+    push(down_d, 20260101)
+    push(down_a, i64(50000))
+    near(backtest.xirr(down_d, down_a), -0.5)
+}
+
+#[test]
+fn a_deposit_is_cash_the_xirr_counts() {
+    let mut dates = []int {}
+    let mut navs = []i64 {}
+    push(dates, day(0))
+    push(dates, day(1))
+    push(navs, i64(10000))
+    push(navs, i64(10000))
+    let s = series.build("1001", dates, navs)
+    let mut od = []int {}
+    let mut os = []int {}
+    let mut oa = []i64 {}
+    push(od, day(0))
+    push(os, 1)
+    push(oa, i64(1000000))
+    let mut fd = []int {}
+    let mut fa = []i64 {}
+    push(fd, day(0))
+    push(fa, i64(1000000))
+    let r = backtest.run_flows(s, Orders { dates: od, sides: os, amounts: oa }, Flows { dates: fd, amounts: fa }, costs.equity(), i64(0))
+    test.assert(r.end_cash == i64(0))
+    test.assert(r.ledger.gross[0] == i64(999950))
+    test.assert(r.ledger.stamp[0] == i64(50))
+    let mut xd = []int {}
+    let mut xa = []i64 {}
+    push(xd, day(0))
+    push(xa, i64(-1000000))
+    push(xd, day(1))
+    push(xa, r.end_equity)
+    near(r.xirr, backtest.xirr(xd, xa))
+}
+
+#[test]
+fn two_schemes_share_one_cash_balance() {
+    let mut dates = []int {}
+    let mut navs = []i64 {}
+    push(dates, day(0))
+    push(dates, day(1))
+    push(navs, i64(10000))
+    push(navs, i64(10000))
+    let mut p = backtest.empty_panel()
+    p = backtest.add_scheme(p, "A", dates, navs)
+    p = backtest.add_scheme(p, "B", dates, navs)
+    let mut od = []int {}
+    let mut os = []int {}
+    let mut oa = []i64 {}
+    let mut oq = []int {}
+    push(od, day(0))
+    push(os, 1)
+    push(oa, i64(400000))
+    push(oq, 0)
+    push(od, day(0))
+    push(os, 1)
+    push(oa, i64(400000))
+    push(oq, 1)
+    let orders = BookOrders { dates: od, sides: os, amounts: oa, scheme: oq }
+    let r = backtest.run_book(p, orders, costs.equity(), i64(1000000))
+    test.assert(r.end_cash == i64(200000))
+    test.assert(r.end_equity == i64(999960))
+    test.assert_eq_int(r.ledger.sides.len, 2)
+    test.assert_eq_int(r.ledger.schemes[0], 0)
+    test.assert_eq_int(r.ledger.schemes[1], 1)
+    test.assert(r.ledger.gross[0] == i64(399980))
+    test.assert(r.ledger.gross[1] == i64(399980))
+    test.assert(r.ledger.stamp[0] == i64(20))
+}

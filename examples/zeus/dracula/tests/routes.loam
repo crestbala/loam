@@ -1,0 +1,96 @@
+//! Drives dracula's generated route table headlessly and asserts every
+//! route paints. The data server is not running: each page's marker is
+//! the heading, and the loading or empty line under it.
+//!
+//!     ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/dracula/tests/routes.loam -o /tmp/r && /tmp/r
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:router"
+import "../app_routes.loam" as approutes
+
+fn fail(what: string) {
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn visit(path: string, want: string) {
+    router.navigate(path)
+    zeus.engine_layout(400, 300)
+    if zeus.engine_find_text(want) == 0 {
+        fail(path)
+    }
+    if zeus.engine_find_text("dracula") == 0 {
+        fail("root shell lost at {{path}}")
+    }
+}
+
+fn main() {
+    zeus.snapshot(400, 300, fn() -> Node {
+        zeus.Box(align_direction = DIRECTION.Column) {
+            approutes.app()
+        }
+    })
+    if zeus.engine_find_text("Holdings") == 0 {
+        fail("root page")
+    }
+    if zeus.engine_find_text("No holdings yet") == 0 {
+        fail("holdings empty")
+    }
+    if zeus.engine_find_text("Charts") == 0 {
+        fail("nav missing Charts")
+    }
+    if zeus.engine_find_text("Screener") == 0 {
+        fail("nav missing Screener")
+    }
+    if zeus.engine_find_text("Backtest") == 0 {
+        fail("nav missing Backtest")
+    }
+    if zeus.engine_find_text("Walk-forward") == 0 {
+        fail("nav missing Walk-forward")
+    }
+    if zeus.engine_find_text("Data") == 0 {
+        fail("nav missing Data")
+    }
+    visit("/screener", "Screener")
+    if zeus.engine_find_text("No schemes to rank.") == 0 {
+        fail("screener empty")
+    }
+    visit("/scheme", "Charts")
+    if zeus.engine_find_text("Search the cached funds") == 0 {
+        fail("charts empty")
+    }
+    visit("/scheme/1001", "Scheme")
+    if zeus.engine_find_text("1001") == 0 {
+        fail("scheme code")
+    }
+    if zeus.engine_find_text("Loading") == 0 {
+        fail("scheme loading")
+    }
+    visit("/backtest", "Backtest")
+    if zeus.engine_find_text("Run a rule once a scheme has loaded.") == 0 {
+        fail("backtest empty")
+    }
+    visit("/backtest/walkforward", "Walk-forward")
+    if zeus.engine_find_text("In sample") == 0 {
+        fail("in sample")
+    }
+    if zeus.engine_find_text("Out of sample") == 0 {
+        fail("out of sample")
+    }
+    visit("/stocks", "Stocks")
+    if zeus.engine_find_text("Search the cached stocks") == 0 {
+        fail("stocks empty")
+    }
+    visit("/stocks/RELIANCE", "Stock")
+    if zeus.engine_find_text("RELIANCE") == 0 {
+        fail("stock symbol")
+    }
+    visit("/data", "Sync")
+    if zeus.engine_find_text("Loading the last fetch.") == 0 {
+        fail("sync loading")
+    }
+    visit("/nope", "not found")
+    fmt.println("dracula routes ok")
+}

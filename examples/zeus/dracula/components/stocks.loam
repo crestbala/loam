@@ -1,0 +1,551 @@
+//! Stock closes for the screens: search, one focused chart, and the day
+//! walk that fills the stock cache. Nothing here is a fund. There is no
+//! signal, no exit load, stamp duty, or STT, and no backtest.
+//!
+//! Signals are created in `start`, which `app.loam` calls before `zeus.App`.
+//! A dead server is an empty reply body (see `book.loam`): state 3.
+
+import "std:date"
+import "std:http"
+import "std:zeus"
+import "../server/api.loam"
+import "../core/series.loam"
+import "present.loam" as present
+
+let mut gen: Signal<int> = Signal { id: 0 }
+let mut range_sel: Signal<int> = Signal { id: 0 }
+let mut search_input: Signal<string> = Signal { id: 0 }
+let mut search_gen: Signal<int> = Signal { id: 0 }
+let mut data_gen: Signal<int> = Signal { id: 0 }
+let mut from_input: Signal<string> = Signal { id: 0 }
+let mut to_input: Signal<string> = Signal { id: 0 }
+
+let mut gen_n = 0
+let mut search_n = 0
+let mut data_n = 0
+
+let mut asked_query = ""
+let mut search_state = 0
+let mut hit_total = 0
+let mut hit_syms = []string {}
+let mut hit_names = []string {}
+let mut hit_dates = []int {}
+let mut hit_closes = []string {}
+
+let mut focus_sym = ""
+let mut focus_state = 0
+let mut focus_range = -1
+let mut focus_name = ""
+let mut focus_isin = ""
+let mut focus_dates = []int {}
+let mut focus_paise = []i64 {}
+let mut chart_labels = []string {}
+let mut chart_names = []string {}
+let mut chart_vals = []int {}
+let mut chart_decimals = 0
+let mut stat_texts = []string {}
+
+let mut status_state = 0
+let mut status_line = ""
+let mut status_cells = []string {}
+let mut reject_lines = []string {}
+let mut rejected_total = 0
+let mut walk_err = ""
+let mut walking = 0
+let mut walk_i = 0
+let mut walk_days = []int {}
+let mut walk_cached = 0
+let mut progress = ""
+
+fn started() -> bool {
+    return gen.id != 0
+}
+
+fn generation() -> Signal<int> {
+    return gen
+}
+
+fn range_signal() -> Signal<int> {
+    return range_sel
+}
+
+fn search_field() -> Signal<string> {
+    return search_input
+}
+
+fn search_generation() -> Signal<int> {
+    return search_gen
+}
+
+fn data_generation() -> Signal<int> {
+    return data_gen
+}
+
+fn from_field() -> Signal<string> {
+    return from_input
+}
+
+fn to_field() -> Signal<string> {
+    return to_input
+}
+
+fn bump() {
+    if gen.id != 0 {
+        gen_n = gen_n + 1
+        gen.set(gen_n)
+    }
+}
+
+fn bump_search() {
+    if search_gen.id != 0 {
+        search_n = search_n + 1
+        search_gen.set(search_n)
+    }
+}
+
+fn bump_data() {
+    if data_gen.id != 0 {
+        data_n = data_n + 1
+        data_gen.set(data_n)
+    }
+}
+
+fn copy_strs(xs: []string) -> []string {
+    let mut out = []string {}
+    let mut i = 0
+    while i < xs.len {
+        push(out, xs[i])
+        i = i + 1
+    }
+    return out
+}
+
+fn copy_ints(xs: []int) -> []int {
+    let mut out = []int {}
+    let mut i = 0
+    while i < xs.len {
+        push(out, xs[i])
+        i = i + 1
+    }
+    return out
+}
+
+// --- search -------------------------------------------------------------
+
+fn clear_hits() {
+    hit_total = 0
+    hit_syms = []string {}
+    hit_names = []string {}
+    hit_dates = []int {}
+    hit_closes = []string {}
+}
+
+/// Runs in an effect on the search field.
+fn search_tick() {
+    if search_input.id == 0 {
+        return
+    }
+    let q = present.trim(search_input.get())
+    if q == asked_query {
+        return
+    }
+    asked_query = q
+    if q.len == 0 {
+        search_state = 0
+        clear_hits()
+        bump_search()
+        return
+    }
+    search_state = 1
+    bump_search()
+    let req = StockSearchReq { query: q, offset: 0, limit: 12 }
+    http.client().call_async(api.stock_search_rpc(), api.encode_StockSearchReq(req), fn(raw) {
+        got_search(q, raw)
+    })
+}
+
+fn got_search(q: string, raw: string) {
+    if q != asked_query {
+        return
+    }
+    let reply = api.decode_StockSearchResp(raw)
+    if raw.len == 0 || reply.live == 0 {
+        search_state = 3
+        clear_hits()
+        bump_search()
+        return
+    }
+    hit_total = reply.total
+    hit_syms = copy_strs(reply.symbols)
+    hit_names = copy_strs(reply.names)
+    hit_dates = copy_ints(reply.last_dates)
+    hit_closes = copy_strs(reply.last_closes)
+    search_state = 2
+    bump_search()
+}
+
+fn search_retry() {
+    asked_query = ""
+    search_tick()
+}
+
+fn search_query() -> string {
+    return asked_query
+}
+
+/// `0` no query, `1` asking, `2` answered, `3` the server did not answer.
+fn search_status() -> int {
+    return search_state
+}
+
+fn hit_count() -> int {
+    return hit_syms.len
+}
+
+fn hit_total_count() -> int {
+    return hit_total
+}
+
+fn hit_symbol(i: int) -> string {
+    if i < 0 || i >= hit_syms.len {
+        return ""
+    }
+    return hit_syms[i]
+}
+
+/// Name, symbol, last close, as of.
+fn hit_cells(i: int) -> []string {
+    let mut row = []string {}
+    if i < 0 || i >= hit_syms.len {
+        return row
+    }
+    push(row, hit_names[i])
+    push(row, hit_syms[i])
+    let mut px = ""
+    if i < hit_closes.len {
+        let p = present.parse_i64(hit_closes[i])
+        if p > i64(0) {
+            px = present.rupees(p)
+        }
+    }
+    push(row, px)
+    let mut day = ""
+    if i < hit_dates.len && date.is_valid(hit_dates[i]) {
+        day = date.fmt_iso(hit_dates[i])
+    }
+    push(row, day)
+    return row
+}
+
+// --- one chart ----------------------------------------------------------
+
+fn clear_chart() {
+    chart_labels = []string {}
+    chart_names = []string {}
+    chart_vals = []int {}
+    chart_decimals = 0
+    stat_texts = []string {}
+}
+
+/// The stock page. `0` loading, `1` loaded, `2` not cached, `3` server down.
+fn focus(sym: string) {
+    if gen.id == 0 || sym.len == 0 {
+        return
+    }
+    if sym == focus_sym && focus_state != 0 {
+        return
+    }
+    if sym == focus_sym {
+        return
+    }
+    focus_sym = sym
+    focus_state = 0
+    focus_name = ""
+    focus_isin = ""
+    focus_dates = []int {}
+    focus_paise = []i64 {}
+    clear_chart()
+    bump()
+    ask(sym)
+}
+
+fn ask(sym: string) {
+    http.client().call_async(api.stock_rpc(), api.encode_StockReq(StockReq { symbol: sym }), fn(raw) {
+        got_stock(sym, raw)
+    })
+}
+
+fn got_stock(sym: string, raw: string) {
+    if sym != focus_sym {
+        return
+    }
+    let reply = api.decode_StockResp(raw)
+    if raw.len == 0 || reply.live == 0 {
+        focus_state = 3
+        clear_chart()
+        bump()
+        return
+    }
+    if reply.found == 0 {
+        focus_state = 2
+        clear_chart()
+        bump()
+        return
+    }
+    focus_name = reply.name
+    focus_isin = reply.isin
+    focus_dates = copy_ints(reply.dates)
+    focus_paise = present.split_i64(present.join_ws(reply.closes))
+    focus_state = 1
+    publish()
+}
+
+fn retry() {
+    let sym = focus_sym
+    focus_sym = ""
+    focus(sym)
+}
+
+fn publish() {
+    if focus_state != 1 {
+        return
+    }
+    let s = series.build(focus_sym, focus_dates, focus_paise)
+    let mut which = 2
+    if range_sel.id != 0 {
+        which = range_sel.get()
+    }
+    focus_range = which
+    let bars = series.len(s)
+    let mut last = 0
+    if bars > 0 {
+        last = s.dates[bars - 1]
+    }
+    let chart = present.price_chart(s, "Close", 0, 0, present.range_from(last, which), []int {})
+    chart_labels = chart.labels
+    chart_names = chart.names
+    chart_vals = chart.vals
+    chart_decimals = chart.decimals
+    stat_texts = present.close_cells(s)
+    bump()
+}
+
+/// Runs in an effect on the range control.
+fn range_tick() {
+    if range_sel.id == 0 {
+        return
+    }
+    let which = range_sel.get()
+    if which == focus_range || focus_state != 1 {
+        return
+    }
+    publish()
+}
+
+fn state() -> int {
+    return focus_state
+}
+
+fn name() -> string {
+    return focus_name
+}
+
+fn isin() -> string {
+    return focus_isin
+}
+
+fn labels() -> []string {
+    return chart_labels
+}
+
+fn names() -> []string {
+    return chart_names
+}
+
+fn vals() -> []int {
+    return chart_vals
+}
+
+fn decimals() -> int {
+    return chart_decimals
+}
+
+fn stat_cells() -> []string {
+    return stat_texts
+}
+
+// --- the stock cache on the Data page -------------------------------------
+
+fn status_down() -> bool {
+    return status_state == 3
+}
+
+fn status_ready() -> bool {
+    return status_state != 0
+}
+
+fn status_text() -> string {
+    return status_line
+}
+
+fn status_stats() -> []string {
+    return status_cells
+}
+
+fn reject_count() -> int {
+    return rejected_total
+}
+
+fn reject_rows() -> []string {
+    return reject_lines
+}
+
+fn walk_text() -> string {
+    return progress
+}
+
+fn walk_error() -> string {
+    return walk_err
+}
+
+fn stat3(out: []string, label: string, value: string, cap: string) -> []string {
+    let mut o = out
+    push(o, label)
+    push(o, value)
+    push(o, cap)
+    return o
+}
+
+fn fetch_status() {
+    http.client().call_async(api.stock_status_rpc(), api.encode_StockStatusReq(StockStatusReq {}), fn(raw) {
+        let reply = api.decode_StockStatusResp(raw)
+        if raw.len == 0 || reply.live == 0 {
+            status_state = 3
+            status_line = ""
+            status_cells = []string {}
+            reject_lines = []string {}
+            rejected_total = 0
+            bump_data()
+            return
+        }
+        status_state = 1
+        reject_lines = copy_strs(reply.rejects)
+        rejected_total = reply.rejected
+        if reply.found == 0 {
+            status_line = "No stock closes cached yet. Load a range of days below."
+            status_cells = []string {}
+        } else {
+            let day = date.fmt_iso(reply.day)
+            let stamp = reply.stamp
+            let url = reply.url
+            let id = reply.fetch_id
+            status_line = "Fetch {{id}}, trading day {{day}}, at {{stamp}} from {{url}}."
+            let mut cells = []string {}
+            cells = stat3(cells, "Symbols", "{{reply.symbols}}", "NSE EQ series")
+            cells = stat3(cells, "Accepted", "{{reply.accepted}}", "Closes cached that day")
+            cells = stat3(cells, "Rejected", "{{reply.rejected}}", "Kept below with a reason")
+            cells = stat3(cells, "Moves over 20%", "{{reply.warnings}}", "Unadjusted: split or bonus?")
+            status_cells = cells
+        }
+        bump_data()
+    })
+}
+
+fn status_retry() {
+    status_state = 0
+    bump_data()
+    fetch_status()
+}
+
+fn stop_walk() {
+    walking = 0
+    walk_days = []int {}
+    walk_i = 0
+}
+
+fn walk_step() {
+    if walking == 0 {
+        return
+    }
+    if walk_i < 0 || walk_i >= walk_days.len {
+        let n = walk_days.len
+        let cached = walk_cached
+        stop_walk()
+        progress = "Walked {{n}} days. {{cached}} closes cached."
+        fetch_status()
+        return
+    }
+    let ymd = walk_days[walk_i]
+    let day = date.fmt_iso(ymd)
+    let n = walk_i + 1
+    let total = walk_days.len
+    progress = "Loading {{day}}. {{n}} of {{total}}."
+    bump_data()
+    http.client().call_async(api.stock_day_rpc(), api.encode_StockDayReq(StockDayReq { day: day }), fn(raw) {
+        on_day(day, raw)
+    })
+}
+
+fn on_day(day: string, raw: string) {
+    if walking == 0 {
+        return
+    }
+    let reply = api.decode_StockDayResp(raw)
+    if raw.len == 0 || reply.live == 0 || reply.ok == 0 {
+        let mut msg = reply.err
+        if raw.len == 0 {
+            msg = "The data server did not answer."
+        } else if msg.len == 0 {
+            msg = "The day did not finish."
+        }
+        stop_walk()
+        progress = ""
+        walk_err = "Stock closes stopped on {{day}}. {{msg}}"
+        fetch_status()
+        return
+    }
+    walk_cached = walk_cached + reply.accepted
+    walk_i = walk_i + 1
+    walk_step()
+}
+
+/// Walk the typed range one trading day at a time, oldest first. A weekend
+/// or holiday answers "closed" and the walk moves on.
+fn load_history() {
+    if data_gen.id == 0 || walking == 1 {
+        return
+    }
+    let frm = present.parse_day(from_input.get())
+    let to = present.parse_day(to_input.get())
+    if frm == 0 || to == 0 {
+        walk_err = "Enter the from date and the to date as YYYY-MM-DD."
+        bump_data()
+        return
+    }
+    let days = present.day_list(frm, to)
+    if days.len == 0 {
+        walk_err = "The from date is after the to date."
+        bump_data()
+        return
+    }
+    walk_err = ""
+    walk_days = days
+    walk_i = 0
+    walk_cached = 0
+    walking = 1
+    walk_step()
+}
+
+fn start() {
+    if gen.id != 0 {
+        return
+    }
+    gen = zeus.signal(0)
+    range_sel = zeus.signal(2)
+    search_input = zeus.signal("")
+    search_gen = zeus.signal(0)
+    data_gen = zeus.signal(0)
+    from_input = zeus.signal("")
+    to_input = zeus.signal("")
+    fetch_status()
+}

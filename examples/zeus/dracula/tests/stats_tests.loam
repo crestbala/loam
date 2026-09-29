@@ -1,0 +1,209 @@
+//! Hand-checked statistics.
+//!
+//! The 20-point series is the fixture the design asks for. The shifted series
+//! is the one the textbook variance formula gets wrong: the same five offsets
+//! sitting on `1e10`. Welford must still report a sample variance of `2.5`;
+//! `sum(x^2) / n - mean^2` collapses to zero there.
+//!
+//! Expected values are decimal literals, checked by relative error. An
+//! absolute epsilon would pass a large CAGR for the wrong reason and fail a
+//! small downside deviation for the same one.
+
+import "std:test"
+import "std:math"
+import "../core/stats.loam"
+
+/// An untyped float literal is `float`, and `push` into `[]f64` does not
+/// adopt the element type. A parameter does, so every literal goes through here.
+fn f(v: f64) -> f64 {
+    return v
+}
+
+fn rel(got: f64, want: f64) -> f64 {
+    if want == 0.0 {
+        return math.abs(got)
+    }
+    return math.abs(got - want) / math.abs(want)
+}
+
+fn near(got: f64, want: f64) {
+    if rel(got, want) > 1.0e-9 {
+        test.fail("value out of tolerance")
+    }
+}
+
+/// The textbook variance. Correct on small numbers, and the thing Welford
+/// exists to replace once the numbers get large.
+fn naive_variance(xs: []f64) -> f64 {
+    let n = xs.len
+    if n < 2 {
+        return 0.0
+    }
+    let mut sum: f64 = 0.0
+    let mut squares: f64 = 0.0
+    let mut i = 0
+    while i < n {
+        let x = xs[i]
+        sum = sum + x
+        squares = squares + x * x
+        i = i + 1
+    }
+    let mean = sum / f64(n)
+    let pop = squares / f64(n) - mean * mean
+    return pop * f64(n) / f64(n - 1)
+}
+
+fn five() -> []f64 {
+    let mut xs = []f64 {}
+    push(xs, f(1.0))
+    push(xs, f(2.0))
+    push(xs, f(3.0))
+    push(xs, f(4.0))
+    push(xs, f(5.0))
+    return xs
+}
+
+/// 20 prices. The deep decline is 115 down to 98, and the series makes a new
+/// high at 116, so the drawdown both has a known depth and recovers.
+fn twenty() -> []f64 {
+    let mut xs = []f64 {}
+    push(xs, f(100.0))
+    push(xs, f(102.0))
+    push(xs, f(101.0))
+    push(xs, f(105.0))
+    push(xs, f(103.0))
+    push(xs, f(110.0))
+    push(xs, f(108.0))
+    push(xs, f(107.0))
+    push(xs, f(104.0))
+    push(xs, f(106.0))
+    push(xs, f(109.0))
+    push(xs, f(115.0))
+    push(xs, f(112.0))
+    push(xs, f(111.0))
+    push(xs, f(108.0))
+    push(xs, f(100.0))
+    push(xs, f(98.0))
+    push(xs, f(102.0))
+    push(xs, f(110.0))
+    push(xs, f(116.0))
+    return xs
+}
+
+#[test]
+fn empty_and_single_are_zero() {
+    let none = []f64 {}
+    near(stats.mean(none), 0.0)
+    near(stats.variance(none), 0.0)
+    near(stats.sample_sd(none), 0.0)
+    near(stats.downside_deviation(none, 0.0), 0.0)
+    let dd = stats.max_drawdown(none)
+    near(dd.depth, 0.0)
+    test.assert_eq_int(dd.duration, 0)
+    test.assert_eq_int(dd.trough, 0)
+
+    let mut one = []f64 {}
+    push(one, f(42.0))
+    near(stats.mean(one), 42.0)
+    near(stats.variance(one), 0.0)
+    near(stats.sample_sd(one), 0.0)
+}
+
+#[test]
+fn five_point_moments() {
+    let xs = five()
+    near(stats.mean(xs), 3.0)
+    near(stats.variance(xs), 2.5)
+    near(stats.sample_sd(xs), 1.5811388300841898)
+    near(naive_variance(xs), stats.variance(xs))
+}
+
+/// Same offsets as `five`, translated by 1e10. The sample variance is still
+/// 2.5. The textbook formula loses it.
+#[test]
+fn welford_survives_a_large_base() {
+    let mut xs = []f64 {}
+    let base: f64 = 10000000000.0
+    push(xs, base)
+    push(xs, base + f(1.0))
+    push(xs, base + f(2.0))
+    push(xs, base + f(3.0))
+    push(xs, base + f(4.0))
+    near(stats.variance(xs), 2.5)
+    near(stats.sample_sd(xs), 1.5811388300841898)
+    near(naive_variance(xs), 0.0)
+}
+
+#[test]
+fn downside_uses_the_whole_sample() {
+    let mut xs = []f64 {}
+    push(xs, f(0.02))
+    push(xs, f(-0.01))
+    push(xs, f(0.03))
+    push(xs, f(-0.04))
+    push(xs, f(0.01))
+    // Shortfalls -0.01 and -0.04. Squares 0.0001 + 0.0016, divided by 5.
+    near(stats.downside_deviation(xs, 0.0), 0.018439088914585774)
+    // mar of 0.02 also counts 0.01 as a shortfall. Three points, still / 5.
+    let mut ys = []f64 {}
+    push(ys, f(0.01))
+    push(ys, f(-0.02))
+    push(ys, f(0.03))
+    near(stats.downside_deviation(ys, 0.02), 0.02380476142847617)
+}
+
+#[test]
+fn twenty_point_fixture() {
+    let xs = twenty()
+    near(stats.mean(xs), 106.35)
+    near(stats.variance(xs), 26.13421052631579)
+    near(stats.sample_sd(xs), 5.112162998801563)
+    let dd = stats.max_drawdown(xs)
+    // 115 down to 98 is 17/115. Recovery is the final 116, eight bars later.
+    // The trough is five bars after the peak.
+    near(dd.depth, 0.14782608695652175)
+    test.assert_eq_int(dd.duration, 8)
+    test.assert_eq_int(dd.trough, 5)
+    near(stats.cagr(100.0, 116.0, 2.0), 0.07703296142690075)
+}
+
+#[test]
+fn drawdown_edges() {
+    let mut up = []f64 {}
+    push(up, f(10.0))
+    push(up, f(11.0))
+    push(up, f(12.0))
+    let flat = stats.max_drawdown(up)
+    near(flat.depth, 0.0)
+    test.assert_eq_int(flat.duration, 0)
+
+    // 10 to 8 is 0.2, and the series touches 10 again. Duration is 2 bars.
+    let mut back = []f64 {}
+    push(back, f(10.0))
+    push(back, f(8.0))
+    push(back, f(10.0))
+    let recovered = stats.max_drawdown(back)
+    near(recovered.depth, 0.2)
+    test.assert_eq_int(recovered.duration, 2)
+    test.assert_eq_int(recovered.trough, 1)
+
+    // 12 to 9 is 0.25, and 11 never retakes 12. Duration runs to the end.
+    let mut stuck = []f64 {}
+    push(stuck, f(10.0))
+    push(stuck, f(12.0))
+    push(stuck, f(9.0))
+    push(stuck, f(11.0))
+    let open = stats.max_drawdown(stuck)
+    near(open.depth, 0.25)
+    test.assert_eq_int(open.duration, 2)
+    test.assert_eq_int(open.trough, 1)
+}
+
+#[test]
+fn cagr_edges() {
+    near(stats.cagr(0.0, 10.0, 1.0), 0.0)
+    near(stats.cagr(10.0, 20.0, 0.0), 0.0)
+    near(stats.cagr(10.0, -1.0, 1.0), 0.0)
+    near(stats.cagr(10.0, 0.0, 1.0), -1.0)
+    near(stats.cagr(100.0, 100.0, 5.0), 0.0)
+}

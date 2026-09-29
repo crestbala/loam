@@ -1,0 +1,495 @@
+//! Indicators over a `NavSeries`. Pure functions, no module state.
+//!
+//! Every result is one value per bar, plus a `ready` flag. `ready[i] == 0`
+//! means the indicator has no opinion at that bar: the window is not full
+//! yet, or the window would reach across a gap of more than five calendar
+//! days. A 200-day SMA has no opinion before bar 200. Those bars are not
+//! zeroes. A strategy that treats them as zeroes would trade the warmup.
+//!
+//! `ack` is 1 when the operator has acknowledged the gaps in this series.
+//! Then a window may cross them. `ack` is 0 otherwise, and a gap starts a
+//! new window the way a fresh listing would.
+//!
+//! Prices enter as paise and leave as `f64` in that same unit, except the
+//! ratio indicators (drawdown, momentum, relative strength, volatility),
+//! which are plain fractions. A drawdown of `0.25` is a 25% decline.
+
+import "std:math"
+import "std:date"
+import "series.loam"
+import "stats.loam"
+
+struct Line {
+    /// `1` when `v` at this bar is an opinion.
+    ready: []int,
+    v: []f64,
+}
+
+struct Macd {
+    /// `1` when `macd` at this bar is an opinion.
+    ready: []int,
+    macd: []f64,
+    /// `1` when `signal` and `hist` at this bar are opinions.
+    sig_ready: []int,
+    signal: []f64,
+    hist: []f64,
+}
+
+fn blank(n: int) -> Line {
+    let mut ready = []int {}
+    let mut v = []f64 {}
+    let mut i = 0
+    while i < n {
+        push(ready, 0)
+        push(v, f64(0))
+        i = i + 1
+    }
+    return Line { ready: ready, v: v }
+}
+
+fn blank_macd(n: int) -> Macd {
+    let mut ready = []int {}
+    let mut macd = []f64 {}
+    let mut sig_ready = []int {}
+    let mut signal = []f64 {}
+    let mut hist = []f64 {}
+    let mut i = 0
+    while i < n {
+        push(ready, 0)
+        push(macd, f64(0))
+        push(sig_ready, 0)
+        push(signal, f64(0))
+        push(hist, f64(0))
+        i = i + 1
+    }
+    return Macd {
+        ready: ready,
+        macd: macd,
+        sig_ready: sig_ready,
+        signal: signal,
+        hist: hist,
+    }
+}
+
+fn price(s: NavSeries, i: int) -> f64 {
+    return f64(s.navs[i])
+}
+
+/// The `bars` ending at `i` sit inside one unbroken run.
+fn in_window(dates: []int, i: int, bars: int, ack: int) -> bool {
+    if bars < 1 || i < bars - 1 {
+        return false
+    }
+    if ack != 0 {
+        return true
+    }
+    let mut k = i - bars + 2
+    while k <= i {
+        if series.is_gap(dates, k) {
+            return false
+        }
+        k = k + 1
+    }
+    return true
+}
+
+/// Segment boundaries. `cuts[0] == 0`, `cuts[last] == len`, and each entry
+/// in between is the first bar after an unacknowledged gap.
+fn cuts(dates: []int, ack: int) -> []int {
+    let mut c = []int {}
+    push(c, 0)
+    if ack == 0 {
+        let mut i = 1
+        while i < dates.len {
+            if series.is_gap(dates, i) {
+                push(c, i)
+            }
+            i = i + 1
+        }
+    }
+    push(c, dates.len)
+    return c
+}
+
+fn mean_prices(s: NavSeries, from: int, to: int) -> f64 {
+    let mut sum: f64 = 0.0
+    let mut i = from
+    while i <= to {
+        sum = sum + price(s, i)
+        i = i + 1
+    }
+    let n = to - from + 1
+    return sum / f64(n)
+}
+
+/// `pre[k]` is the number of unacknowledged gaps at bars `1..k`, so a run
+/// `(from, to]` crosses one exactly when `pre[to] - pre[from] > 0`. With
+/// `ack` set nothing is a gap.
+fn gap_prefix(dates: []int, ack: int) -> []int {
+    let mut pre = []int {}
+    let mut n = 0
+    let mut i = 0
+    while i < dates.len {
+        if i > 0 && ack == 0 && series.is_gap(dates, i) {
+            n = n + 1
+        }
+        push(pre, n)
+        i = i + 1
+    }
+    return pre
+}
+
+/// Simple moving average of `n` NAVs. No opinion before `n` bars, and none
+/// whose window crosses an unacknowledged gap.
+///
+/// One pass: a running sum in paise, and the gap count from `gap_prefix`.
+/// NAVs are whole paise, so the sum is exact and the mean is the same
+/// value a fresh sum over the window gives.
+fn sma(s: NavSeries, n: int, ack: int) -> Line {
+    let mut line = blank(series.len(s))
+    if n < 1 {
+        return line
+    }
+    let pre = gap_prefix(s.dates, ack)
+    let mut sum = i64(0)
+    let mut i = 0
+    while i < s.dates.len {
+        sum = sum + s.navs[i]
+        if i >= n {
+            sum = sum - s.navs[i - n]
+        }
+        if i >= n - 1 && pre[i] - pre[i - n + 1] == 0 {
+            line.ready[i] = 1
+            line.v[i] = f64(sum) / f64(n)
+        }
+        i = i + 1
+    }
+    return line
+}
+
+/// Exponential moving average. Seeded with the SMA of the first `n` bars of
+/// the segment, then `k = 2 / (n + 1)`. A gap that is not acknowledged
+/// throws the seed away and starts again.
+fn ema(s: NavSeries, n: int, ack: int) -> Line {
+    let mut line = blank(series.len(s))
+    if n < 1 {
+        return line
+    }
+    let k = f64(2) / f64(n + 1)
+    let one: f64 = 1.0
+    let bounds = cuts(s.dates, ack)
+    let mut b = 0
+    while b + 1 < bounds.len {
+        let from = bounds[b]
+        let to = bounds[b + 1]
+        let mut seeded = false
+        let mut prev: f64 = 0.0
+        let mut i = from
+        while i < to {
+            let bars = i - from + 1
+            if bars < n {
+                i = i + 1
+                continue
+            }
+            if !seeded {
+                prev = mean_prices(s, from, i)
+                seeded = true
+            } else {
+                prev = price(s, i) * k + prev * (one - k)
+            }
+            line.ready[i] = 1
+            line.v[i] = prev
+            i = i + 1
+        }
+        b = b + 1
+    }
+    return line
+}
+
+/// Wilder RSI of `n` changes. No opinion until `n` changes exist inside the
+/// segment. A flat window, gain and loss both zero, is 50. A window with no
+/// losses is 100.
+fn rsi(s: NavSeries, n: int, ack: int) -> Line {
+    let mut line = blank(series.len(s))
+    if n < 1 {
+        return line
+    }
+    let bounds = cuts(s.dates, ack)
+    let mut b = 0
+    while b + 1 < bounds.len {
+        let from = bounds[b]
+        let to = bounds[b + 1]
+        let mut avg_gain: f64 = 0.0
+        let mut avg_loss: f64 = 0.0
+        let mut seeded = false
+        let mut i = from + 1
+        while i < to {
+            let ch = price(s, i) - price(s, i - 1)
+            let mut gain: f64 = 0.0
+            let mut loss: f64 = 0.0
+            if ch > 0.0 {
+                gain = ch
+            } else if ch < 0.0 {
+                loss = -ch
+            }
+            let changes = i - from
+            if changes < n {
+                i = i + 1
+                continue
+            }
+            if !seeded {
+                let mut gsum: f64 = 0.0
+                let mut lsum: f64 = 0.0
+                let mut j = from + 1
+                while j <= i {
+                    let d = price(s, j) - price(s, j - 1)
+                    if d > 0.0 {
+                        gsum = gsum + d
+                    } else if d < 0.0 {
+                        lsum = lsum - d
+                    }
+                    j = j + 1
+                }
+                avg_gain = gsum / f64(n)
+                avg_loss = lsum / f64(n)
+                seeded = true
+            } else {
+                avg_gain = (avg_gain * f64(n - 1) + gain) / f64(n)
+                avg_loss = (avg_loss * f64(n - 1) + loss) / f64(n)
+            }
+            line.ready[i] = 1
+            if avg_loss == 0.0 && avg_gain == 0.0 {
+                line.v[i] = f64(50)
+            } else if avg_loss == 0.0 {
+                line.v[i] = f64(100)
+            } else {
+                let rs = avg_gain / avg_loss
+                let hundred: f64 = 100.0
+                line.v[i] = hundred - hundred / (f64(1) + rs)
+            }
+            i = i + 1
+        }
+        b = b + 1
+    }
+    return line
+}
+
+/// MACD line `ema(fast) - ema(slow)`, and a signal line that is the EMA of
+/// that difference. The signal has no opinion until `sig` MACD values exist
+/// in the segment. `hist` is the line minus the signal, and only while the
+/// signal itself has an opinion.
+fn macd(s: NavSeries, fast: int, slow: int, sig: int, ack: int) -> Macd {
+    let mut out = blank_macd(series.len(s))
+    if fast < 1 || slow < 1 || sig < 1 {
+        return out
+    }
+    let fast_line = ema(s, fast, ack)
+    let slow_line = ema(s, slow, ack)
+    let mut i = 0
+    while i < s.dates.len {
+        if fast_line.ready[i] == 1 && slow_line.ready[i] == 1 {
+            out.ready[i] = 1
+            out.macd[i] = fast_line.v[i] - slow_line.v[i]
+        }
+        i = i + 1
+    }
+    let k = f64(2) / f64(sig + 1)
+    let one: f64 = 1.0
+    let bounds = cuts(s.dates, ack)
+    let mut b = 0
+    while b + 1 < bounds.len {
+        let from = bounds[b]
+        let to = bounds[b + 1]
+        let mut count = 0
+        let mut sum: f64 = 0.0
+        let mut seeded = false
+        let mut prev: f64 = 0.0
+        i = from
+        while i < to {
+            if out.ready[i] == 1 {
+                count = count + 1
+                if !seeded {
+                    sum = sum + out.macd[i]
+                    if count == sig {
+                        prev = sum / f64(sig)
+                        seeded = true
+                        out.sig_ready[i] = 1
+                        out.signal[i] = prev
+                        out.hist[i] = out.macd[i] - prev
+                    }
+                } else {
+                    prev = out.macd[i] * k + prev * (one - k)
+                    out.sig_ready[i] = 1
+                    out.signal[i] = prev
+                    out.hist[i] = out.macd[i] - prev
+                }
+            }
+            i = i + 1
+        }
+        b = b + 1
+    }
+    return out
+}
+
+/// Sample standard deviation of the last `n` log returns. `n` is a count of
+/// returns, so the window is `n + 1` prices. Not annualised: the fixture is
+/// the deviation itself, and a 252-day scale factor would only hide it.
+/// No opinion when any price in the window is not positive.
+fn rolling_vol(s: NavSeries, n: int, ack: int) -> Line {
+    let mut line = blank(series.len(s))
+    if n < 2 {
+        return line
+    }
+    let bars = n + 1
+    let mut i = 0
+    while i < s.dates.len {
+        if in_window(s.dates, i, bars, ack) {
+            let mut rets = []f64 {}
+            let mut ok = true
+            let mut j = i - n + 1
+            while j <= i {
+                let prev = price(s, j - 1)
+                let cur = price(s, j)
+                if prev <= 0.0 || cur <= 0.0 {
+                    ok = false
+                    break
+                }
+                push(rets, math.ln(cur / prev))
+                j = j + 1
+            }
+            if ok {
+                line.ready[i] = 1
+                line.v[i] = stats.sample_sd(rets)
+            }
+        }
+        i = i + 1
+    }
+    return line
+}
+
+/// Drawdown from the segment's running peak, as a positive fraction.
+/// The first bar of a segment is zero: it is the peak so far. An
+/// unacknowledged gap starts a new peak. A non-positive price has no opinion.
+fn drawdown(s: NavSeries, ack: int) -> Line {
+    let mut line = blank(series.len(s))
+    let bounds = cuts(s.dates, ack)
+    let mut b = 0
+    while b + 1 < bounds.len {
+        let from = bounds[b]
+        let to = bounds[b + 1]
+        let mut peak: f64 = 0.0
+        let mut have = false
+        let mut i = from
+        while i < to {
+            let px = price(s, i)
+            if px <= 0.0 {
+                have = false
+                i = i + 1
+                continue
+            }
+            if !have || px > peak {
+                peak = px
+                have = true
+            }
+            line.ready[i] = 1
+            line.v[i] = (peak - px) / peak
+            i = i + 1
+        }
+        b = b + 1
+    }
+    return line
+}
+
+/// Latest bar whose date is on or before `ymd`, or `-1`. The series is in
+/// date order, so the scan stops at the first later date.
+fn on_or_before(dates: []int, ymd: int) -> int {
+    let mut found = -1
+    let mut i = 0
+    while i < dates.len {
+        if dates[i] <= ymd {
+            found = i
+        } else {
+            break
+        }
+        i = i + 1
+    }
+    return found
+}
+
+fn crosses(dates: []int, from: int, to: int, ack: int) -> bool {
+    if ack != 0 {
+        return false
+    }
+    let mut k = from + 1
+    while k <= to {
+        if series.is_gap(dates, k) {
+            return true
+        }
+        k = k + 1
+    }
+    return false
+}
+
+/// `nav[t] / nav[t - months] - 1`. The past bar is the latest one on or
+/// before the calendar date `months` earlier, not a count of prints. No
+/// opinion when that bar is missing, is this same bar, or an unacknowledged
+/// gap sits between the two.
+fn momentum(s: NavSeries, months: int, ack: int) -> Line {
+    let mut line = blank(series.len(s))
+    if months < 1 {
+        return line
+    }
+    let pre = gap_prefix(s.dates, ack)
+    // `on_or_before` walked forward from bar 0 for every bar. The first bar
+    // past a target only moves forward while targets do, so the walk
+    // resumes where it stopped, and starts over if a target goes back.
+    let mut p = 0
+    let mut last_target = 0
+    let mut i = 0
+    while i < s.dates.len {
+        let target = date.add_months(s.dates[i], -months)
+        if target < last_target {
+            p = 0
+        }
+        last_target = target
+        while p < s.dates.len && s.dates[p] <= target {
+            p = p + 1
+        }
+        let base = p - 1
+        if base >= 0 && base < i && pre[i] - pre[base] == 0 {
+            let then = price(s, base)
+            let now = price(s, i)
+            if then > 0.0 && now > 0.0 {
+                line.ready[i] = 1
+                line.v[i] = now / then - f64(1)
+            }
+        }
+        i = i + 1
+    }
+    return line
+}
+
+/// Scheme momentum minus the reference's momentum, over the same number of
+/// months. The reference bar is the latest one on or before the scheme's
+/// date. No opinion when either side has none, or when the two dates are
+/// more than five days apart and the gap is not acknowledged.
+fn relative_strength(s: NavSeries, ref: NavSeries, months: int, ack: int) -> Line {
+    let mut line = blank(series.len(s))
+    let sm = momentum(s, months, ack)
+    let rm = momentum(ref, months, ack)
+    let mut i = 0
+    while i < s.dates.len {
+        if sm.ready[i] == 1 {
+            let j = on_or_before(ref.dates, s.dates[i])
+            if j >= 0 && rm.ready[j] == 1 {
+                let apart = date.days_between(ref.dates[j], s.dates[i])
+                if ack != 0 || (apart >= 0 && apart <= 5) {
+                    line.ready[i] = 1
+                    line.v[i] = sm.v[i] - rm.v[j]
+                }
+            }
+        }
+        i = i + 1
+    }
+    return line
+}
