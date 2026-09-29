@@ -1,0 +1,172 @@
+//! Sample statistics over a NAV-shaped series.
+//!
+//! Prices are `f64` in whatever unit the caller used (paise, rupees). The
+//! ratios this module returns — a drawdown, a CAGR — do not depend on the
+//! unit. Money stays `i64` paise everywhere it is stored; it becomes `f64`
+//! only at this boundary, where a ratio is the point.
+//!
+//! Variance and the sample standard deviation are Welford's one-pass formulas,
+//! not `sum(x^2) / n - mean^2`. The textbook form cancels to zero once the
+//! values sit near each other on a large base (a NAV series quoted in paise
+//! is exactly that), and a volatility of zero is a signal this app would
+//! believe. Welford keeps the running mean and the sum of squares of
+//! *differences*, so the large base never enters the squares.
+//!
+//! An empty series, a single point, a non-positive price, and a non-positive
+//! span of years all return a defined zero (CAGR on a wiped-out end value is
+//! `-1`). A trap there would take a backtest down on a degenerate window.
+
+import "std:math"
+
+/// Welford accumulators. `m2` is the sum of squares of differences from the
+/// running mean, which is `(n - 1)` times the sample variance.
+struct Welford {
+    n: int,
+    mean: f64,
+    m2: f64,
+}
+
+/// One peak-to-trough fall.
+struct Drawdown {
+    /// The fall as a positive fraction of the peak. `0.25` is a 25% decline.
+    /// `0` when the series never declines.
+    depth: f64,
+    /// Bars from the peak of that fall until a later point prints a value at
+    /// least as high. If the series never gets back, bars from the peak
+    /// through the last point. `0` when `depth` is `0`.
+    duration: int,
+    /// Bars from that peak down to the trough.
+    trough: int,
+}
+
+/// One pass of Welford. `n == 0` leaves the means at zero.
+fn welford(xs: []f64) -> Welford {
+    let mut n = 0
+    let mut mean: f64 = 0.0
+    let mut m2: f64 = 0.0
+    let count = xs.len
+    let mut i = 0
+    while i < count {
+        let x = xs[i]
+        n = n + 1
+        let delta = x - mean
+        mean = mean + delta / f64(n)
+        let delta2 = x - mean
+        m2 = m2 + delta * delta2
+        i = i + 1
+    }
+    return Welford { n: n, mean: mean, m2: m2 }
+}
+
+/// Arithmetic mean. `0` for an empty series.
+fn mean(xs: []f64) -> f64 {
+    return welford(xs).mean
+}
+
+/// Sample variance (divide by `n - 1`). `0` when there are fewer than two
+/// points, which is the only honest answer: one point has no spread.
+fn variance(xs: []f64) -> f64 {
+    let w = welford(xs)
+    if w.n < 2 {
+        return 0.0
+    }
+    return w.m2 / f64(w.n - 1)
+}
+
+/// Sample standard deviation. `sqrt` of `variance`.
+fn sample_sd(xs: []f64) -> f64 {
+    return math.sqrt(variance(xs))
+}
+
+/// Downside deviation against a minimum acceptable return `mar`.
+///
+/// Sortino's form: the square root of the mean squared shortfall, with the
+/// mean taken over the **whole** sample. A point that cleared `mar` adds
+/// nothing to the numerator and still counts in the denominator, so a series
+/// that was mostly fine is not punished as if only its bad days existed.
+/// `0` for an empty series.
+fn downside_deviation(xs: []f64, mar: f64) -> f64 {
+    let n = xs.len
+    if n == 0 {
+        return 0.0
+    }
+    let mut acc: f64 = 0.0
+    let mut i = 0
+    while i < n {
+        let d = xs[i] - mar
+        if d < 0.0 {
+            acc = acc + d * d
+        }
+        i = i + 1
+    }
+    return math.sqrt(acc / f64(n))
+}
+
+/// The deepest peak-to-trough decline in `navs`, and how long it lasted.
+///
+/// The peak is the highest value seen so far. A later equal value does not
+/// start a new peak, so the underwater period keeps running until something
+/// strictly exceeds it — touching the old peak again is the recovery.
+///
+/// A non-positive peak contributes no decline. Dividing by it would invent a
+/// ratio, and a NAV of zero is a data error the validator rejects upstream,
+/// not a drawdown of infinity.
+fn max_drawdown(navs: []f64) -> Drawdown {
+    let n = navs.len
+    if n == 0 {
+        return Drawdown { depth: 0.0, duration: 0, trough: 0 }
+    }
+    let mut peak = navs[0]
+    let mut peak_i = 0
+    let mut best: f64 = 0.0
+    let mut best_peak = 0
+    let mut best_trough = 0
+    let mut i = 0
+    while i < n {
+        let v = navs[i]
+        if v > peak {
+            peak = v
+            peak_i = i
+        }
+        if peak > 0.0 {
+            let dd = (peak - v) / peak
+            if dd > best {
+                best = dd
+                best_peak = peak_i
+                best_trough = i
+            }
+        }
+        i = i + 1
+    }
+    if best == 0.0 {
+        return Drawdown { depth: 0.0, duration: 0, trough: 0 }
+    }
+    let peak_v = navs[best_peak]
+    let mut rec = n - 1
+    let mut j = best_peak + 1
+    while j < n {
+        if navs[j] >= peak_v {
+            rec = j
+            break
+        }
+        j = j + 1
+    }
+    return Drawdown {
+        depth: best,
+        duration: rec - best_peak,
+        trough: best_trough - best_peak,
+    }
+}
+
+/// Compound annual growth from `begin` to `end` over `years`.
+///
+/// `(end / begin) ^ (1 / years) - 1`. A non-positive `begin` or `years`
+/// returns `0` — there is no rate to report. An `end` of `0` is a total loss,
+/// which is `-1`, not an error. A negative `end` is not a NAV and returns `0`.
+fn cagr(begin: f64, end: f64, years: f64) -> f64 {
+    if begin <= 0.0 || years <= 0.0 || end < 0.0 {
+        return 0.0
+    }
+    let one: f64 = 1.0
+    return math.pow(end / begin, one / years) - one
+}

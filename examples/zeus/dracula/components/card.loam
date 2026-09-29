@@ -1,0 +1,11 @@
+//! Shared component, no routing knowledge: a fn that builds into the
+//! current host.
+
+import "std:zeus"
+import "std:zui"
+
+fn Card(text: string) -> Node {
+    return zeus.Box(background = "#FFFFFF", padding = 12, spacing = 4) {
+        zui.Body(text)
+    }
+}

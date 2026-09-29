@@ -1,0 +1,1119 @@
+//! Formatting and the chart downsample for the screens.
+//!
+//! A bucket keeps its last published price, and a signal or fill date is
+//! kept as well, so a marker sits on a NAV that was actually printed.
+//! Paise are scaled into i32 by one common divisor. Prices are never
+//! averaged into a bucket. The 200-day average is its own series, read at
+//! the same kept bars, and it is a gap wherever it is still warming up.
+
+import "std:date"
+import "std:math"
+import "std:zui"
+import "../core/backtest.loam"
+import "../core/indicators.loam"
+import "../core/series.loam"
+import "../core/walkforward.loam"
+
+struct Plot {
+    labels: []string,
+    vals: []int,
+}
+
+/// A price chart: flat row-major values for `names`, and the implied
+/// decimals a value prints with (2 when the divisor is 1, so paise read as
+/// rupees).
+struct PriceChart {
+    labels: []string,
+    names: []string,
+    vals: []int,
+    decimals: int,
+}
+
+struct Mom {
+    ready: int,
+    v: f64,
+    line: string,
+}
+
+/// Opening account, in paise. One lakh rupees. The SIP deploys the same sum.
+fn opening_cash() -> i64 {
+    return i64(10000000)
+}
+
+/// Rejected rows the data page mounts. One wrapped text node per row of a
+/// thousand-line sync stalls the first layout of that route.
+fn reject_limit() -> int {
+    return 20
+}
+
+fn reject_shown(total: int) -> int {
+    if total <= 0 {
+        return 0
+    }
+    if total < reject_limit() {
+        return total
+    }
+    return reject_limit()
+}
+
+/// Empty when every row is on the page. Otherwise names the window and the
+/// full count from the sync.
+fn reject_head(total: int) -> string {
+    let shown = reject_shown(total)
+    if shown == 0 || shown == total {
+        return ""
+    }
+    return "First {{shown}} of {{total}} rejected rows."
+}
+
+fn slice_str(s: string, from: int, to: int) -> string {
+    let mut b = []int {}
+    let mut i = from
+    while i < to && i < s.len {
+        push(b, s[i])
+        i = i + 1
+    }
+    return string_from_bytes(b)
+}
+
+fn trim(s: string) -> string {
+    let mut a = 0
+    while a < s.len {
+        let c = s[a]
+        if c == 32 || c == 9 || c == 10 || c == 13 {
+            a = a + 1
+        } else {
+            break
+        }
+    }
+    let mut b = s.len
+    while b > a {
+        let c = s[b - 1]
+        if c == 32 || c == 9 || c == 10 || c == 13 {
+            b = b - 1
+        } else {
+            break
+        }
+    }
+    return slice_str(s, a, b)
+}
+
+fn digits(s: string) -> bool {
+    if s.len == 0 {
+        return false
+    }
+    let mut i = 0
+    while i < s.len {
+        let c = s[i]
+        if c < 48 || c > 57 {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+fn is_sep(c: int) -> bool {
+    if c == 32 || c == 9 || c == 10 || c == 13 || c == 44 {
+        return true
+    }
+    return false
+}
+
+fn split_ws(s: string) -> []string {
+    let mut out = []string {}
+    let mut i = 0
+    while i < s.len {
+        if is_sep(s[i]) {
+            i = i + 1
+            continue
+        }
+        let mut j = i
+        while j < s.len {
+            if is_sep(s[j]) {
+                break
+            }
+            j = j + 1
+        }
+        push(out, slice_str(s, i, j))
+        i = j
+    }
+    return out
+}
+
+fn join_ws(xs: []string) -> string {
+    let mut s = ""
+    let mut i = 0
+    while i < xs.len {
+        if i == 0 {
+            s = xs[i]
+        } else {
+            let bit = xs[i]
+            s = "{{s}} {{bit}}"
+        }
+        i = i + 1
+    }
+    return s
+}
+
+/// Decimal paise. Empty or any non-digit is `-1`.
+fn parse_i64(s: string) -> i64 {
+    let mut n: i64 = 0
+    let mut i = 0
+    if s.len == 0 {
+        return i64(-1)
+    }
+    while i < s.len {
+        let c = s[i]
+        if c < 48 || c > 57 {
+            return i64(-1)
+        }
+        n = n * 10 + i64(c - 48)
+        i = i + 1
+    }
+    return n
+}
+
+fn i64_str(n: i64) -> string {
+    if n == 0 {
+        return "0"
+    }
+    let mut neg = false
+    let mut x = n
+    if x < 0 {
+        neg = true
+        x = -x
+    }
+    let mut digs = []int {}
+    while x > 0 {
+        let d = x % 10
+        push(digs, 48 + int(d))
+        x = x / 10
+    }
+    let mut b = []int {}
+    if neg {
+        push(b, 45)
+    }
+    let mut i = digs.len - 1
+    while i >= 0 {
+        push(b, digs[i])
+        i = i - 1
+    }
+    return string_from_bytes(b)
+}
+
+fn pad2(n: int) -> string {
+    if n < 0 {
+        return pad2(-n)
+    }
+    if n < 10 {
+        return "0{{n}}"
+    }
+    return "{{n}}"
+}
+
+/// Paise as rupees, two decimals.
+fn rupees(paise: i64) -> string {
+    let mut n = paise
+    let mut sign = ""
+    if n < 0 {
+        sign = "-"
+        n = -n
+    }
+    let whole = n / 100
+    let frac = int(n % 100)
+    let w = i64_str(whole)
+    let f = pad2(frac)
+    return "{{sign}}{{w}}.{{f}}"
+}
+
+/// A ratio as a percent with two decimals. `0.15` is `15.00%`.
+fn pct(x: f64) -> string {
+    let scaled = math.round(x * f64(10000))
+    let mut n = i64(scaled)
+    let mut sign = ""
+    if n < 0 {
+        sign = "-"
+        n = -n
+    }
+    let whole = n / 100
+    let frac = int(n % 100)
+    let w = i64_str(whole)
+    let f = pad2(frac)
+    return "{{sign}}{{w}}.{{f}}%"
+}
+
+/// A ratio with two decimals. `1.5` is `1.50`.
+fn ratio(x: f64) -> string {
+    let scaled = math.round(x * f64(100))
+    let mut n = i64(scaled)
+    let mut sign = ""
+    if n < 0 {
+        sign = "-"
+        n = -n
+    }
+    let whole = n / 100
+    let frac = int(n % 100)
+    let w = i64_str(whole)
+    let f = pad2(frac)
+    return "{{sign}}{{w}}.{{f}}"
+}
+
+/// `YYYY-MM-DD` or AMFI's `DD-Mon-YYYY`. Anything else is `0`.
+fn parse_day(s: string) -> int {
+    let t = trim(s)
+    let iso = date.parse_iso(t)
+    if date.is_valid(iso) {
+        return iso
+    }
+    let am = date.parse_amfi(t)
+    if date.is_valid(am) {
+        return am
+    }
+    return 0
+}
+
+/// Inclusive calendar days from `frm` through `to`. Empty when `frm` is later.
+fn day_list(frm: int, to: int) -> []int {
+    if !date.is_valid(frm) || !date.is_valid(to) {
+        return []int {}
+    }
+    let a = date.to_days(frm)
+    let b = date.to_days(to)
+    if a > b {
+        return []int {}
+    }
+    let mut out = []int {}
+    let mut d = a
+    while d <= b {
+        push(out, date.from_days(d))
+        d = d + 1
+    }
+    return out
+}
+
+fn join_ints(xs: []int) -> string {
+    let mut s = ""
+    let mut i = 0
+    while i < xs.len {
+        let n = xs[i]
+        if i == 0 {
+            s = "{{n}}"
+        } else {
+            s = "{{s}} {{n}}"
+        }
+        i = i + 1
+    }
+    return s
+}
+
+fn parse_int(s: string) -> int {
+    if s.len == 0 {
+        return 0
+    }
+    let mut n = 0
+    let mut i = 0
+    while i < s.len {
+        let c = s[i]
+        if c < 48 || c > 57 {
+            return 0
+        }
+        n = n * 10 + (c - 48)
+        i = i + 1
+    }
+    return n
+}
+
+fn split_ints(s: string) -> []int {
+    let bits = split_ws(s)
+    let mut out = []int {}
+    let mut i = 0
+    while i < bits.len {
+        push(out, parse_int(bits[i]))
+        i = i + 1
+    }
+    return out
+}
+
+fn split_i64(s: string) -> []i64 {
+    let bits = split_ws(s)
+    let mut out = []i64 {}
+    let mut i = 0
+    while i < bits.len {
+        let n = parse_i64(bits[i])
+        if n >= 0 {
+            push(out, n)
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn nav_series(code: string, dates_text: string, navs_text: string) -> NavSeries {
+    return series.build(code, split_ints(dates_text), split_i64(navs_text))
+}
+
+fn trend_line(s: NavSeries, n: int, ack: int) -> string {
+    let bars = series.len(s)
+    if bars == 0 {
+        return "No published NAV."
+    }
+    let i = bars - 1
+    let day = date.fmt_iso(s.dates[i])
+    let line = indicators.sma(s, n, ack)
+    if i >= line.ready.len || line.ready[i] != 1 {
+        return "{{n}}-day average is not ready on {{day}}. Warm-up bars are not a signal."
+    }
+    let nav = rupees(s.navs[i])
+    let avg = rupees(i64(math.round(line.v[i])))
+    let px = f64(s.navs[i])
+    if px > line.v[i] {
+        return "Buy. On {{day}} NAV {{nav}} is above the {{n}}-day average {{avg}}. The fill is the next published NAV. This is not an order."
+    }
+    if px < line.v[i] {
+        return "Sell, once the lot is older than 365 days. On {{day}} NAV {{nav}} is below the {{n}}-day average {{avg}}. The fill is the next published NAV. This is not an order."
+    }
+    return "On {{day}} NAV {{nav}} equals the {{n}}-day average {{avg}}. The rule does not trade a tie."
+}
+
+fn momentum_view(s: NavSeries, ack: int) -> Mom {
+    let bars = series.len(s)
+    if bars == 0 {
+        return Mom {
+            ready: 0,
+            v: f64(0),
+            line: "12-month momentum is not ready. Warm-up is not a rank.",
+        }
+    }
+    let i = bars - 1
+    let day = date.fmt_iso(s.dates[i])
+    let line = indicators.momentum(s, 12, ack)
+    if i >= line.ready.len || line.ready[i] != 1 {
+        return Mom {
+            ready: 0,
+            v: f64(0),
+            line: "12-month momentum is not ready on {{day}}. Warm-up is not a rank.",
+        }
+    }
+    let rate = pct(line.v[i])
+    let now = rupees(s.navs[i])
+    let target = date.add_months(s.dates[i], -12)
+    let base = indicators.on_or_before(s.dates, target)
+    let mut then = ""
+    if base >= 0 && base < s.navs.len {
+        then = rupees(s.navs[base])
+    }
+    return Mom {
+        ready: 1,
+        v: line.v[i],
+        line: "12-month momentum {{rate}} on {{day}}. NAV {{now}} against {{then}}.",
+    }
+}
+
+fn price_bit(line: Line, i: int, ready_at: string, missing: string) -> string {
+    if i < line.ready.len && i < line.v.len && line.ready[i] == 1 {
+        let avg = rupees(i64(math.round(line.v[i])))
+        return "{{ready_at}} {{avg}}"
+    }
+    return missing
+}
+
+fn indicators_text(s: NavSeries, ack: int) -> string {
+    let bars = series.len(s)
+    if bars == 0 {
+        return "No published NAV."
+    }
+    let i = bars - 1
+    let day = date.fmt_iso(s.dates[i])
+    let nav = rupees(s.navs[i])
+    let sma_bit = price_bit(indicators.sma(s, 200, ack), i, "200-day average", "200-day average is not ready")
+    let ema_bit = price_bit(indicators.ema(s, 20, ack), i, "20-day exponential average", "20-day exponential average is not ready")
+    let rsi_line = indicators.rsi(s, 14, ack)
+    let mut rsi_bit = "RSI 14 is not ready"
+    if i < rsi_line.ready.len && rsi_line.ready[i] == 1 {
+        let level = ratio(rsi_line.v[i])
+        rsi_bit = "RSI 14 {{level}}"
+    }
+    let macd_line = indicators.macd(s, 12, 26, 9, ack)
+    let mut macd_bit = "MACD 12 26 9 is not ready"
+    if i < macd_line.ready.len && macd_line.ready[i] == 1 {
+        let line = rupees(i64(math.round(macd_line.macd[i])))
+        if i < macd_line.sig_ready.len && macd_line.sig_ready[i] == 1 {
+            let sig = rupees(i64(math.round(macd_line.signal[i])))
+            macd_bit = "MACD 12 26 9 {{line}}, signal {{sig}}"
+        } else {
+            macd_bit = "MACD 12 26 9 {{line}}, signal is not ready"
+        }
+    }
+    let vol_line = indicators.rolling_vol(s, 20, ack)
+    let mut vol_bit = "20-day volatility is not ready"
+    if i < vol_line.ready.len && vol_line.ready[i] == 1 {
+        let rate = pct(vol_line.v[i])
+        vol_bit = "20-day volatility {{rate}}, not annualised"
+    }
+    let dd = indicators.drawdown(s, ack)
+    let mut dd_bit = "drawdown is not ready"
+    if i < dd.ready.len && dd.ready[i] == 1 {
+        let rate = pct(dd.v[i])
+        dd_bit = "drawdown {{rate}}"
+    }
+    let mom = indicators.momentum(s, 12, ack)
+    let mut mom_bit = "12-month momentum is not ready"
+    if i < mom.ready.len && mom.ready[i] == 1 {
+        let rate = pct(mom.v[i])
+        mom_bit = "12-month momentum {{rate}}"
+    }
+    return "On {{day}} NAV {{nav}}. {{sma_bit}}. {{ema_bit}}. {{rsi_bit}}. {{macd_bit}}. {{vol_bit}}. {{dd_bit}}. {{mom_bit}}."
+}
+
+fn gap_line(gap_from: int, ack: int) -> string {
+    if gap_from == 0 {
+        return ""
+    }
+    let day = date.fmt_iso(gap_from)
+    if ack == 0 {
+        return "A gap starts on {{day}}. Indicators stop there until it is acknowledged."
+    }
+    return "A gap starts on {{day}}. It is acknowledged, so indicators may cross it."
+}
+
+fn ended_line(name: string, r: Report) -> string {
+    let cash = rupees(r.end_equity)
+    let rate = pct(r.cagr)
+    return "{{name}} ended at {{cash}} rupees, {{rate}} a year."
+}
+
+/// Ending equity and CAGR of the rule and both benchmarks, as label,
+/// value, caption triples for stat cards.
+fn end_cells(name: string, rule: Report, hold: Report, sip: Report) -> []string {
+    let mut out = []string {}
+    push(out, name)
+    push(out, rupees(rule.end_equity))
+    let a = pct(rule.cagr)
+    push(out, "{{a}} a year")
+    push(out, "Buy and hold")
+    push(out, rupees(hold.end_equity))
+    let b = pct(hold.cagr)
+    push(out, "{{b}} a year")
+    push(out, "Monthly SIP")
+    push(out, rupees(sip.end_equity))
+    let c = pct(sip.cagr)
+    push(out, "{{c}} a year")
+    return out
+}
+
+/// The rest of a report, for the rule the screen has selected.
+/// Sharpe and Sortino annualise daily equity changes with a 252-day year
+/// and no risk-free rate. Drawdown length is in published bars.
+fn score_line(r: Report) -> string {
+    let xr = pct(r.xirr)
+    let sh = ratio(r.sharpe)
+    let so = ratio(r.sortino)
+    let dd = pct(r.max_dd)
+    let bars = r.dd_duration
+    let wr = pct(r.win_rate)
+    let pf = ratio(r.profit_factor)
+    let turn = ratio(r.turnover)
+    return "XIRR {{xr}}. Sharpe {{sh}} and Sortino {{so}}, from daily equity changes and no risk-free rate. Largest fall {{dd}} over {{bars}} bars. Win rate {{wr}}. Profit factor {{pf}}. Turnover {{turn}} times starting cash."
+}
+
+fn side_word(side: int) -> string {
+    if side < 0 {
+        return "Sell"
+    }
+    return "Buy"
+}
+
+fn signal_cells(dates: []int, sides: []int) -> []string {
+    let mut n = dates.len
+    if sides.len < n {
+        n = sides.len
+    }
+    let mut out = []string {}
+    let mut i = 0
+    while i < n {
+        push(out, date.fmt_iso(dates[i]))
+        push(out, side_word(sides[i]))
+        push(out, "Next published NAV")
+        i = i + 1
+    }
+    return out
+}
+
+fn ledger_cols() -> int {
+    return 9
+}
+
+fn scheme_label(codes: []string, at: int) -> string {
+    if at < 0 || at >= codes.len {
+        return ""
+    }
+    return codes[at]
+}
+
+fn ledger_cells(rows: Ledger, codes: []string) -> []string {
+    let mut n = rows.signal_dates.len
+    if rows.fill_dates.len < n {
+        n = rows.fill_dates.len
+    }
+    if rows.sides.len < n {
+        n = rows.sides.len
+    }
+    if rows.schemes.len < n {
+        n = rows.schemes.len
+    }
+    let mut out = []string {}
+    let mut i = 0
+    while i < n {
+        push(out, date.fmt_iso(rows.signal_dates[i]))
+        push(out, date.fmt_iso(rows.fill_dates[i]))
+        push(out, side_word(rows.sides[i]))
+        push(out, scheme_label(codes, rows.schemes[i]))
+        push(out, rupees(rows.navs[i]))
+        push(out, rupees(rows.gross[i]))
+        push(out, rupees(rows.stamp[i]))
+        push(out, rupees(rows.stt[i]))
+        push(out, rupees(rows.load[i]))
+        i = i + 1
+    }
+    return out
+}
+
+fn walk_cols() -> int {
+    return 7
+}
+
+fn walk_cells(w: Walk) -> []string {
+    let mut n = w.param.len
+    if w.train_from.len < n {
+        n = w.train_from.len
+    }
+    if w.test_from.len < n {
+        n = w.test_from.len
+    }
+    if w.hold_cagr.len < n {
+        n = w.hold_cagr.len
+    }
+    if w.sip_cagr.len < n {
+        n = w.sip_cagr.len
+    }
+    let mut out = []string {}
+    let mut i = 0
+    while i < n {
+        let a = date.fmt_iso(w.train_from[i])
+        let b = date.fmt_iso(w.train_to[i])
+        let c = date.fmt_iso(w.test_from[i])
+        let d = date.fmt_iso(w.test_to[i])
+        let p = w.param[i]
+        push(out, "{{a}} to {{b}}")
+        push(out, "{{c}} to {{d}}")
+        push(out, "{{p}}-day average")
+        push(out, pct(w.is_cagr[i]))
+        push(out, pct(w.oos_cagr[i]))
+        push(out, pct(w.hold_cagr[i]))
+        push(out, pct(w.sip_cagr[i]))
+        i = i + 1
+    }
+    return out
+}
+
+fn row_at(cells: []string, cols: int, r: int) -> []string {
+    let mut out = []string {}
+    let mut c = 0
+    while c < cols {
+        let i = r * cols + c
+        if i >= 0 && i < cells.len {
+            push(out, cells[i])
+        } else {
+            push(out, "")
+        }
+        c = c + 1
+    }
+    return out
+}
+
+/// Ready schemes first, higher score first. A tie keeps the smaller index.
+/// A scheme that is not ready stays behind every ready one, in index order.
+fn rank_indexes(score: []f64, ready: []int) -> []int {
+    let mut n = score.len
+    if ready.len < n {
+        n = ready.len
+    }
+    let mut idx = []int {}
+    let mut i = 0
+    while i < n {
+        push(idx, i)
+        i = i + 1
+    }
+    i = 1
+    while i < n {
+        let mut j = i
+        while j > 0 {
+            if !outranks(score, ready, idx[j], idx[j - 1]) {
+                break
+            }
+            let tmp = idx[j - 1]
+            idx[j - 1] = idx[j]
+            idx[j] = tmp
+            j = j - 1
+        }
+        i = i + 1
+    }
+    return idx
+}
+
+fn outranks(score: []f64, ready: []int, b: int, a: int) -> bool {
+    let mut rb = 0
+    let mut ra = 0
+    if b >= 0 && b < ready.len && ready[b] == 1 {
+        rb = 1
+    }
+    if a >= 0 && a < ready.len && ready[a] == 1 {
+        ra = 1
+    }
+    if rb != ra {
+        return rb > ra
+    }
+    if rb == 1 && b < score.len && a < score.len {
+        if score[b] > score[a] {
+            return true
+        }
+        if score[b] < score[a] {
+            return false
+        }
+    }
+    return b < a
+}
+
+fn has_date(marks: []int, ymd: int) -> bool {
+    let mut i = 0
+    while i < marks.len {
+        if marks[i] == ymd {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+fn insert_unique(xs: []int, v: int) -> []int {
+    let mut out = []int {}
+    let mut placed = false
+    let mut i = 0
+    while i < xs.len {
+        if xs[i] == v {
+            push(out, v)
+            placed = true
+        } else if !placed && xs[i] > v {
+            push(out, v)
+            push(out, xs[i])
+            placed = true
+        } else {
+            push(out, xs[i])
+        }
+        i = i + 1
+    }
+    if !placed {
+        push(out, v)
+    }
+    return out
+}
+
+fn scale_div(paise: []i64, keep: []int) -> i64 {
+    let mut m = i64(0)
+    let mut i = 0
+    while i < keep.len {
+        let at = keep[i]
+        if at >= 0 && at < paise.len {
+            let mut v = paise[at]
+            if v < 0 {
+                v = -v
+            }
+            if v > m {
+                m = v
+            }
+        }
+        i = i + 1
+    }
+    let mut div = i64(1)
+    let cap = i64(1000000000)
+    while div > 0 && m / div > cap {
+        div = div * i64(10)
+    }
+    if div <= 0 {
+        return i64(1)
+    }
+    return div
+}
+
+fn empty_plot() -> Plot {
+    return Plot { labels: []string {}, vals: []int {} }
+}
+
+/// Bars a chart keeps: the last bar of each of `buckets` buckets, plus every
+/// bar whose date is in `marks`. Ascending.
+fn keep_bars(dates: []int, n: int, buckets: int, marks: []int) -> []int {
+    let mut bins = buckets
+    if bins < 1 {
+        bins = 1
+    }
+    let mut keep = []int {}
+    if n <= bins {
+        let mut i = 0
+        while i < n {
+            push(keep, i)
+            i = i + 1
+        }
+    } else {
+        let mut b = 0
+        while b < bins {
+            let from = b * n / bins
+            let to = (b + 1) * n / bins
+            if to > from {
+                push(keep, to - 1)
+            }
+            b = b + 1
+        }
+    }
+    let mut i = 0
+    while i < n {
+        if has_date(marks, dates[i]) {
+            keep = insert_unique(keep, i)
+        }
+        i = i + 1
+    }
+    return keep
+}
+
+fn scaled(v: i64, div: i64) -> int {
+    let mut x = v / div
+    if x > i64(1000000000) {
+        x = i64(1000000000)
+    }
+    if x < i64(-1000000000) {
+        x = i64(-1000000000)
+    }
+    return int(x)
+}
+
+/// Last price in each bucket, plus every `marks` date that is a bar.
+/// `buckets` is the target count before marks are added.
+fn downsample(dates: []int, paise: []i64, buckets: int, marks: []int) -> Plot {
+    let mut n = dates.len
+    if paise.len < n {
+        n = paise.len
+    }
+    if n == 0 {
+        return empty_plot()
+    }
+    let keep = keep_bars(dates, n, buckets, marks)
+    let div = scale_div(paise, keep)
+    let mut labels = []string {}
+    let mut vals = []int {}
+    let mut i = 0
+    while i < keep.len {
+        let at = keep[i]
+        push(labels, date.fmt_iso(dates[at]))
+        push(vals, scaled(paise[at], div))
+        i = i + 1
+    }
+    return Plot { labels: labels, vals: vals }
+}
+
+/// Implied decimals for values divided by `div` out of paise.
+fn decimals_for(div: i64) -> int {
+    if div == i64(1) {
+        return 2
+    }
+    if div == i64(10) {
+        return 1
+    }
+    return 0
+}
+
+/// Chart range. `0` one year, `1` three years, anything else full history.
+fn range_labels() -> []string {
+    let mut out = []string {}
+    push(out, "1 year")
+    push(out, "3 years")
+    push(out, "Full history")
+    return out
+}
+
+/// First date a range keeps, counted back from `last`. `0` keeps every bar.
+fn range_from(last: int, which: int) -> int {
+    if last == 0 || !date.is_valid(last) {
+        return 0
+    }
+    if which == 0 {
+        return date.add_years(last, -1)
+    }
+    if which == 1 {
+        return date.add_years(last, -3)
+    }
+    return 0
+}
+
+/// First bar on or after `from`.
+fn first_bar(dates: []int, from: int) -> int {
+    let mut i = 0
+    while i < dates.len {
+        if dates[i] >= from {
+            return i
+        }
+        i = i + 1
+    }
+    return dates.len
+}
+
+fn empty_chart() -> PriceChart {
+    return PriceChart { labels: []string {}, names: []string {}, vals: []int {}, decimals: 0 }
+}
+
+/// Price series for a chart: dates and paise from `from` on, the last price
+/// in each of about 200 buckets plus each `marks` date. With `avg` set, a
+/// second series is `avg`-day average read at the same bars, computed over
+/// the whole history so a window that starts late is not in warm-up again,
+/// and `zui.CHART_GAP` wherever the average is not ready.
+fn price_chart(s: NavSeries, name: string, avg: int, ack: int, from: int, marks: []int) -> PriceChart {
+    let total = series.len(s)
+    let start = first_bar(s.dates, from)
+    if total == 0 || start >= total {
+        return empty_chart()
+    }
+    let mut dates = []int {}
+    let mut paise = []i64 {}
+    let mut i = start
+    while i < total {
+        push(dates, s.dates[i])
+        push(paise, s.navs[i])
+        i = i + 1
+    }
+    let keep = keep_bars(dates, dates.len, 200, marks)
+    let div = scale_div(paise, keep)
+    let mut names = []string {}
+    push(names, name)
+    let mut line = indicators.sma(s, 1, ack)
+    if avg > 0 {
+        // Short enough for one line in the chart tooltip.
+        let label = "{{avg}}-day avg"
+        push(names, label)
+        line = indicators.sma(s, avg, ack)
+    }
+    let mut labels = []string {}
+    let mut vals = []int {}
+    let mut k = 0
+    while k < keep.len {
+        let at = keep[k]
+        push(labels, date.fmt_iso(dates[at]))
+        push(vals, scaled(paise[at], div))
+        if avg > 0 {
+            let full = start + at
+            if full < line.ready.len && full < line.v.len && line.ready[full] == 1 {
+                push(vals, scaled(i64(math.round(line.v[full])), div))
+            } else {
+                push(vals, zui.CHART_GAP)
+            }
+        }
+        k = k + 1
+    }
+    return PriceChart { labels: labels, names: names, vals: vals, decimals: decimals_for(div) }
+}
+
+fn plot_series(dates: []int, paise: []i64, marks: []int) -> Plot {
+    return downsample(dates, paise, 200, marks)
+}
+
+/// Last price as rupees, or empty.
+fn last_price(s: NavSeries) -> string {
+    let n = series.len(s)
+    if n == 0 {
+        return ""
+    }
+    return rupees(s.navs[n - 1])
+}
+
+/// Last date as `YYYY-MM-DD`, or empty.
+fn last_day(s: NavSeries) -> string {
+    let n = series.len(s)
+    if n == 0 {
+        return ""
+    }
+    return date.fmt_iso(s.dates[n - 1])
+}
+
+/// The 200-day rule on the last bar, short enough for a table cell. The
+/// full sentence is `trend_line`.
+fn signal_word(s: NavSeries, n: int, ack: int) -> string {
+    let bars = series.len(s)
+    if bars == 0 {
+        return "No published NAV"
+    }
+    let i = bars - 1
+    let line = indicators.sma(s, n, ack)
+    if i >= line.ready.len || line.ready[i] != 1 {
+        return "Warm-up"
+    }
+    let px = f64(s.navs[i])
+    if px > line.v[i] {
+        return "Buy, above {{n}}-day"
+    }
+    if px < line.v[i] {
+        return "Sell, below {{n}}-day"
+    }
+    return "Tie, no trade"
+}
+
+fn push3(out: []string, a: string, b: string, c: string) -> []string {
+    let mut o = out
+    push(o, a)
+    push(o, b)
+    push(o, c)
+    return o
+}
+
+/// Latest reading of each indicator as label, value, caption triples. A
+/// value that is still warming up reads `Warm-up`, never zero.
+fn stat_cells(s: NavSeries, ack: int) -> []string {
+    let mut out = []string {}
+    let bars = series.len(s)
+    if bars == 0 {
+        return out
+    }
+    let i = bars - 1
+    let day = date.fmt_iso(s.dates[i])
+    out = push3(out, "Last NAV", rupees(s.navs[i]), day)
+    let sma = indicators.sma(s, 200, ack)
+    if i < sma.ready.len && sma.ready[i] == 1 {
+        let px = f64(s.navs[i])
+        let mut side = "NAV equals it"
+        if px > sma.v[i] {
+            side = "NAV is above it"
+        } else if px < sma.v[i] {
+            side = "NAV is below it"
+        }
+        out = push3(out, "200-day average", rupees(i64(math.round(sma.v[i]))), side)
+    } else {
+        out = push3(out, "200-day average", "Warm-up", "Needs 200 prints")
+    }
+    let ema = indicators.ema(s, 20, ack)
+    if i < ema.ready.len && ema.ready[i] == 1 {
+        out = push3(out, "20-day EMA", rupees(i64(math.round(ema.v[i]))), "Exponential")
+    } else {
+        out = push3(out, "20-day EMA", "Warm-up", "Needs 20 prints")
+    }
+    let rsi = indicators.rsi(s, 14, ack)
+    if i < rsi.ready.len && rsi.ready[i] == 1 {
+        out = push3(out, "RSI 14", ratio(rsi.v[i]), "0 to 100")
+    } else {
+        out = push3(out, "RSI 14", "Warm-up", "Needs 15 prints")
+    }
+    let macd = indicators.macd(s, 12, 26, 9, ack)
+    if i < macd.ready.len && macd.ready[i] == 1 {
+        let mut cap = "Signal warming up"
+        if i < macd.sig_ready.len && macd.sig_ready[i] == 1 {
+            let sig = rupees(i64(math.round(macd.signal[i])))
+            cap = "Signal {{sig}}"
+        }
+        out = push3(out, "MACD 12 26 9", rupees(i64(math.round(macd.macd[i]))), cap)
+    } else {
+        out = push3(out, "MACD 12 26 9", "Warm-up", "Needs 26 prints")
+    }
+    let vol = indicators.rolling_vol(s, 20, ack)
+    if i < vol.ready.len && vol.ready[i] == 1 {
+        out = push3(out, "20-day volatility", pct(vol.v[i]), "Daily, not annualised")
+    } else {
+        out = push3(out, "20-day volatility", "Warm-up", "Needs 21 prints")
+    }
+    let dd = indicators.drawdown(s, ack)
+    if i < dd.ready.len && dd.ready[i] == 1 {
+        out = push3(out, "Drawdown", pct(dd.v[i]), "From the running peak")
+    } else {
+        out = push3(out, "Drawdown", "Warm-up", "")
+    }
+    let mom = indicators.momentum(s, 12, ack)
+    if i < mom.ready.len && mom.ready[i] == 1 {
+        out = push3(out, "12-month momentum", pct(mom.v[i]), "Against a year earlier")
+    } else {
+        out = push3(out, "12-month momentum", "Warm-up", "Needs a year of prints")
+    }
+    return out
+}
+
+fn split_semi(s: string) -> []string {
+    let mut out = []string {}
+    let mut from = 0
+    let mut i = 0
+    while i <= s.len {
+        if i == s.len || s[i] == 59 {
+            push(out, slice_str(s, from, i))
+            from = i + 1
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn reject_cols() -> int {
+    return 4
+}
+
+/// A reject line `line;code;date;reason` as table cells: file line, code,
+/// ISO date, reason. A reason that held a `;` keeps the rest of the line.
+fn reject_cells(line: string) -> []string {
+    let bits = split_semi(line)
+    let mut out = []string {}
+    if bits.len < 4 {
+        push(out, "")
+        push(out, "")
+        push(out, "")
+        push(out, line)
+        return out
+    }
+    push(out, bits[0])
+    push(out, bits[1])
+    let ymd = parse_int(bits[2])
+    if date.is_valid(ymd) {
+        push(out, date.fmt_iso(ymd))
+    } else {
+        push(out, bits[2])
+    }
+    let mut reason = bits[3]
+    let mut k = 4
+    while k < bits.len {
+        let more = bits[k]
+        reason = "{{reason}};{{more}}"
+        k = k + 1
+    }
+    push(out, reason)
+    return out
+}
+
+/// Latest close of a stock and what the cache holds, as label, value,
+/// caption triples. Closes are unadjusted, so a one-day move over 20% is
+/// counted: it is more often a split or bonus than a market move.
+fn close_cells(s: NavSeries) -> []string {
+    let mut out = []string {}
+    let bars = series.len(s)
+    if bars == 0 {
+        return out
+    }
+    let i = bars - 1
+    out = push3(out, "Last close", rupees(s.navs[i]), date.fmt_iso(s.dates[i]))
+    out = push3(out, "Closes cached", "{{bars}}", "From {{date.fmt_iso(s.dates[0])}}")
+    let mut jumps = 0
+    let mut k = 1
+    while k < bars {
+        let prev = s.navs[k - 1]
+        let mut d = s.navs[k] - prev
+        if d < i64(0) {
+            d = -d
+        }
+        if prev > i64(0) && d * i64(5) > prev {
+            jumps = jumps + 1
+        }
+        k = k + 1
+    }
+    out = push3(out, "Moves over 20%", "{{jumps}}", "Unadjusted closes")
+    return out
+}

@@ -1,0 +1,890 @@
+//! Watchlist, scheme cache, and catalog search.
+//!
+//! Signals are created in `start`, which `app.loam` calls before `zeus.App`.
+//! The zero handle means not started, which is what a headless route drive
+//! sees. One signal per column. NAV columns live beside the signals: a
+//! signal of a struct that owns a list drops the list when an RPC callback
+//! stores it.
+//!
+//! A scheme's fetch state is `0` loading, `1` loaded, `2` no NAV file, `3`
+//! the server did not answer. `call_async` reports a dead server or a
+//! timeout as an empty body; that is state 3, never a loading line that
+//! does not end.
+
+import "std:date"
+import "std:http"
+import "std:kv"
+import "std:zeus"
+import "../server/api.loam"
+import "../core/series.loam"
+// The C backend emits a module's structs before it walks that module's
+// imports. strategy's SipPlan embeds Orders, so backtest has to be entered
+// first or the generated typedefs name a type that does not exist yet.
+import "../core/backtest.loam"
+import "../core/strategy.loam"
+import "present.loam" as present
+
+let mut gen: Signal<int> = Signal { id: 0 }
+let mut scheme_gen: Signal<int> = Signal { id: 0 }
+let mut range_sel: Signal<int> = Signal { id: 0 }
+let mut search_input: Signal<string> = Signal { id: 0 }
+let mut search_gen: Signal<int> = Signal { id: 0 }
+
+// Generation counters. A bump is `n = n + 1; sig.set(n)`, so an effect that
+// bumps does not also subscribe to the signal it bumps.
+let mut scheme_n = 0
+let mut search_n = 0
+
+let mut asked_query = ""
+let mut search_state = 0
+let mut hit_total = 0
+let mut hit_codes = []string {}
+let mut hit_names = []string {}
+let mut hit_dates = []int {}
+let mut hit_navs = []string {}
+let mut hit_dormant = []int {}
+
+let mut watch_codes = []string {}
+let mut cache_codes = []string {}
+let mut cache_names = []string {}
+let mut cache_dates = []string {}
+let mut cache_navs = []string {}
+let mut cache_ack = []int {}
+let mut cache_gap = []int {}
+let mut cache_found = []int {}
+let mut cache_dormant = []int {}
+
+let mut focus_code = ""
+let mut focus_ready = 0
+let mut focus_range = -1
+let mut scheme_name = ""
+let mut scheme_line = ""
+let mut scheme_gap = ""
+let mut scheme_dormant = ""
+let mut nav_labels = []string {}
+let mut nav_names = []string {}
+let mut nav_vals = []int {}
+let mut nav_decimals = 0
+let mut stat_texts = []string {}
+let mut signal_cells = []string {}
+let mut rank_codes = []string {}
+let mut rank_moms = []string {}
+let mut rank_states = []string {}
+
+fn started() -> bool {
+    return gen.id != 0
+}
+
+fn load_gen() -> Signal<int> {
+    return gen
+}
+
+fn scheme_generation() -> Signal<int> {
+    return scheme_gen
+}
+
+fn range_signal() -> Signal<int> {
+    return range_sel
+}
+
+fn search_field() -> Signal<string> {
+    return search_input
+}
+
+fn search_generation() -> Signal<int> {
+    return search_gen
+}
+
+fn bump_scheme() {
+    if scheme_gen.id != 0 {
+        scheme_n = scheme_n + 1
+        scheme_gen.set(scheme_n)
+    }
+}
+
+fn bump_search() {
+    if search_gen.id != 0 {
+        search_n = search_n + 1
+        search_gen.set(search_n)
+    }
+}
+
+fn copy_strs(xs: []string) -> []string {
+    let mut out = []string {}
+    let mut i = 0
+    while i < xs.len {
+        push(out, xs[i])
+        i = i + 1
+    }
+    return out
+}
+
+fn copy_ints(xs: []int) -> []int {
+    let mut out = []int {}
+    let mut i = 0
+    while i < xs.len {
+        push(out, xs[i])
+        i = i + 1
+    }
+    return out
+}
+
+fn clear_hits() {
+    hit_total = 0
+    hit_codes = []string {}
+    hit_names = []string {}
+    hit_dates = []int {}
+    hit_navs = []string {}
+    hit_dormant = []int {}
+}
+
+/// Runs in an effect on the search field. A new query asks `Data.Catalog`
+/// for one page. A reply to an older query is dropped.
+fn search_tick() {
+    if search_input.id == 0 {
+        return
+    }
+    let q = present.trim(search_input.get())
+    if q == asked_query {
+        return
+    }
+    asked_query = q
+    if q.len == 0 {
+        search_state = 0
+        clear_hits()
+        bump_search()
+        return
+    }
+    search_state = 1
+    bump_search()
+    let req = CatalogReq { query: q, offset: 0, limit: search_page() }
+    http.client().call_async(api.catalog_rpc(), api.encode_CatalogReq(req), fn(raw) {
+        got_catalog(q, raw)
+    })
+}
+
+fn search_page() -> int {
+    return 12
+}
+
+fn got_catalog(q: string, raw: string) {
+    if q != asked_query {
+        return
+    }
+    if raw.len == 0 {
+        search_state = 3
+        clear_hits()
+        bump_search()
+        return
+    }
+    let reply = api.decode_CatalogResp(raw)
+    if reply.live == 0 {
+        search_state = 3
+        clear_hits()
+        bump_search()
+        return
+    }
+    hit_total = reply.total
+    hit_codes = copy_strs(reply.codes)
+    hit_names = copy_strs(reply.names)
+    hit_dates = copy_ints(reply.last_dates)
+    hit_navs = copy_strs(reply.last_navs)
+    hit_dormant = copy_ints(reply.dormant)
+    search_state = 2
+    bump_search()
+}
+
+/// Search again after the server was down.
+fn search_retry() {
+    asked_query = ""
+    search_tick()
+}
+
+fn search_query() -> string {
+    return asked_query
+}
+
+/// `0` no query, `1` asking, `2` answered, `3` the server did not answer.
+fn search_status() -> int {
+    return search_state
+}
+
+fn hit_count() -> int {
+    return hit_codes.len
+}
+
+fn hit_total_count() -> int {
+    return hit_total
+}
+
+fn hit_code(i: int) -> string {
+    if i < 0 || i >= hit_codes.len {
+        return ""
+    }
+    return hit_codes[i]
+}
+
+/// Scheme, code, last NAV, as of, and a dormant mark.
+fn hit_cells(i: int) -> []string {
+    let mut row = []string {}
+    if i < 0 || i >= hit_codes.len {
+        return row
+    }
+    push(row, hit_names[i])
+    push(row, hit_codes[i])
+    let mut nav = ""
+    if i < hit_navs.len {
+        let p = present.parse_i64(hit_navs[i])
+        if p >= 0 {
+            nav = present.rupees(p)
+        }
+    }
+    push(row, nav)
+    let mut day = ""
+    if i < hit_dates.len && hit_dates[i] != 0 {
+        day = date.fmt_iso(hit_dates[i])
+    }
+    if i < hit_dormant.len && hit_dormant[i] != 0 {
+        day = "{{day}}, dormant"
+    }
+    push(row, day)
+    return row
+}
+
+fn watching(code: string) -> bool {
+    return find_str(watch_codes, code) >= 0
+}
+
+fn push_str(xs: []string, v: string) -> []string {
+    let mut out = xs
+    push(out, v)
+    return out
+}
+
+fn push_int(xs: []int, v: int) -> []int {
+    let mut out = xs
+    push(out, v)
+    return out
+}
+
+fn put_str(xs: []string, i: int, v: string) -> []string {
+    let mut out = []string {}
+    let mut n = xs.len
+    if i + 1 > n {
+        n = i + 1
+    }
+    let mut k = 0
+    while k < n {
+        if k == i {
+            push(out, v)
+        } else if k < xs.len {
+            push(out, xs[k])
+        } else {
+            push(out, "")
+        }
+        k = k + 1
+    }
+    return out
+}
+
+fn put_int(xs: []int, i: int, v: int) -> []int {
+    let mut out = []int {}
+    let mut n = xs.len
+    if i + 1 > n {
+        n = i + 1
+    }
+    let mut k = 0
+    while k < n {
+        if k == i {
+            push(out, v)
+        } else if k < xs.len {
+            push(out, xs[k])
+        } else {
+            push(out, 0)
+        }
+        k = k + 1
+    }
+    return out
+}
+
+fn find_str(xs: []string, s: string) -> int {
+    let mut i = 0
+    while i < xs.len {
+        if xs[i] == s {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+fn drop_at(xs: []string, i: int) -> []string {
+    let mut out = []string {}
+    let mut k = 0
+    while k < xs.len {
+        if k != i {
+            push(out, xs[k])
+        }
+        k = k + 1
+    }
+    return out
+}
+
+fn save_watch() {
+    kv.set(kv.open("dracula"), "watch", present.join_ws(watch_codes))
+}
+
+fn blank_cache(code: string) {
+    cache_codes = push_str(cache_codes, code)
+    cache_names = push_str(cache_names, "")
+    cache_dates = push_str(cache_dates, "")
+    cache_navs = push_str(cache_navs, "")
+    cache_ack = push_int(cache_ack, 0)
+    cache_gap = push_int(cache_gap, 0)
+    cache_found = push_int(cache_found, 0)
+    cache_dormant = push_int(cache_dormant, 0)
+}
+
+fn fetch_state(code: string) -> int {
+    let at = find_str(cache_codes, code)
+    if at < 0 || at >= cache_found.len {
+        return 0
+    }
+    return cache_found[at]
+}
+
+fn ensure_cache(code: string) {
+    if !present.digits(code) {
+        return
+    }
+    if find_str(cache_codes, code) >= 0 {
+        return
+    }
+    blank_cache(code)
+    ask_scheme(code)
+}
+
+fn ask_scheme(code: string) {
+    http.client().call_async(api.scheme_rpc(), api.encode_SchemeReq(SchemeReq { code: code }), fn(raw) {
+        if raw.len == 0 {
+            server_down(code)
+            return
+        }
+        got_scheme(api.decode_SchemeResp(raw))
+    })
+}
+
+fn server_down(code: string) {
+    let at = find_str(cache_codes, code)
+    if at < 0 {
+        return
+    }
+    cache_found = put_int(cache_found, at, 3)
+    rerank()
+    if gen.id != 0 {
+        gen.set(gen.get() + 1)
+    }
+    if code == focus_code {
+        publish_scheme(code)
+    }
+}
+
+/// Ask again for every scheme the server did not answer for.
+fn retry() {
+    let mut i = 0
+    while i < cache_codes.len {
+        if i < cache_found.len && cache_found[i] == 3 {
+            cache_found = put_int(cache_found, i, 0)
+            ask_scheme(cache_codes[i])
+        }
+        i = i + 1
+    }
+    if focus_code.len > 0 {
+        focus_ready = 0
+        clear_focus_view()
+        bump_scheme()
+    }
+    rerank()
+    if gen.id != 0 {
+        gen.set(gen.get() + 1)
+    }
+}
+
+fn got_scheme(reply: SchemeResp) {
+    let at = find_str(cache_codes, reply.code)
+    if at < 0 {
+        return
+    }
+    cache_names = put_str(cache_names, at, reply.name)
+    cache_ack = put_int(cache_ack, at, reply.gap_ack)
+    cache_gap = put_int(cache_gap, at, reply.gap_from)
+    cache_dormant = put_int(cache_dormant, at, reply.dormant)
+    if reply.found == 0 {
+        cache_found = put_int(cache_found, at, 2)
+        cache_dates = put_str(cache_dates, at, "")
+        cache_navs = put_str(cache_navs, at, "")
+    } else {
+        cache_found = put_int(cache_found, at, 1)
+        cache_dates = put_str(cache_dates, at, present.join_ints(reply.dates))
+        cache_navs = put_str(cache_navs, at, present.join_ws(reply.navs))
+    }
+    rerank()
+    if gen.id != 0 {
+        gen.set(gen.get() + 1)
+    }
+    if reply.code == focus_code {
+        publish_scheme(reply.code)
+    }
+}
+
+fn series_for(code: string) -> NavSeries {
+    let at = find_str(cache_codes, code)
+    if at < 0 {
+        return series.build(code, []int {}, []i64 {})
+    }
+    let mut dates_text = ""
+    let mut navs_text = ""
+    if at < cache_dates.len {
+        dates_text = cache_dates[at]
+    }
+    if at < cache_navs.len {
+        navs_text = cache_navs[at]
+    }
+    return present.nav_series(code, dates_text, navs_text)
+}
+
+fn ack_for(code: string) -> int {
+    let at = find_str(cache_codes, code)
+    if at < 0 || at >= cache_ack.len {
+        return 0
+    }
+    return cache_ack[at]
+}
+
+fn name_for(code: string) -> string {
+    let at = find_str(cache_codes, code)
+    if at < 0 || at >= cache_names.len {
+        return ""
+    }
+    return cache_names[at]
+}
+
+fn state_word(st: int) -> string {
+    if st == 0 {
+        return "Loading"
+    }
+    if st == 2 {
+        return "No NAV file"
+    }
+    if st == 3 {
+        return "Server down"
+    }
+    return ""
+}
+
+fn rerank() {
+    let n = watch_codes.len
+    let mut score = []f64 {}
+    let mut ready = []int {}
+    let mut moms = []string {}
+    let mut states = []string {}
+    let mut i = 0
+    while i < n {
+        let code = watch_codes[i]
+        let st = fetch_state(code)
+        if st != 1 {
+            push(score, f64(0))
+            push(ready, 0)
+            push(moms, "")
+            push(states, state_word(st))
+        } else {
+            let view = present.momentum_view(series_for(code), ack_for(code))
+            push(score, view.v)
+            push(ready, view.ready)
+            if view.ready == 1 {
+                push(moms, present.pct(view.v))
+                push(states, "Ready")
+            } else {
+                push(moms, "")
+                push(states, "Warm-up, not ranked")
+            }
+        }
+        i = i + 1
+    }
+    let order = present.rank_indexes(score, ready)
+    let mut codes = []string {}
+    let mut out_moms = []string {}
+    let mut out_states = []string {}
+    let mut k = 0
+    while k < order.len {
+        let at = order[k]
+        push(codes, watch_codes[at])
+        push(out_moms, moms[at])
+        push(out_states, states[at])
+        k = k + 1
+    }
+    rank_codes = codes
+    rank_moms = out_moms
+    rank_states = out_states
+}
+
+fn clear_chart() {
+    nav_labels = []string {}
+    nav_names = []string {}
+    nav_vals = []int {}
+    nav_decimals = 0
+    stat_texts = []string {}
+    signal_cells = []string {}
+}
+
+fn publish_scheme(code: string) {
+    if code != focus_code {
+        return
+    }
+    let at = find_str(cache_codes, code)
+    if at < 0 {
+        return
+    }
+    let st = fetch_state(code)
+    if st != 1 {
+        scheme_name = ""
+        scheme_line = "No NAV file for this code."
+        if st == 3 {
+            scheme_line = "The data server did not answer."
+        }
+        scheme_gap = ""
+        scheme_dormant = ""
+        clear_chart()
+        focus_ready = 1
+        bump_scheme()
+        return
+    }
+    let s = series_for(code)
+    let ack = ack_for(code)
+    let orders = strategy.sma_200(s, ack)
+    let mut which = 2
+    if range_sel.id != 0 {
+        which = range_sel.get()
+    }
+    focus_range = which
+    let bars = series.len(s)
+    let mut last = 0
+    if bars > 0 {
+        last = s.dates[bars - 1]
+    }
+    let chart = present.price_chart(s, "NAV", 200, ack, present.range_from(last, which), orders.dates)
+    nav_labels = chart.labels
+    nav_names = chart.names
+    nav_vals = chart.vals
+    nav_decimals = chart.decimals
+    stat_texts = present.stat_cells(s, ack)
+    signal_cells = present.signal_cells(orders.dates, orders.sides)
+    scheme_name = name_for(code)
+    scheme_line = ""
+    if bars == 0 {
+        scheme_line = "No published NAV."
+    }
+    let mut gap = 0
+    if at < cache_gap.len {
+        gap = cache_gap[at]
+    }
+    scheme_gap = present.gap_line(gap, ack)
+    scheme_dormant = ""
+    if at < cache_dormant.len && cache_dormant[at] != 0 {
+        scheme_dormant = "Dormant. History is kept."
+    }
+    focus_ready = 1
+    bump_scheme()
+}
+
+/// Runs in an effect on the range control. Redraws the focused chart.
+fn range_tick() {
+    if range_sel.id == 0 {
+        return
+    }
+    let which = range_sel.get()
+    if which == focus_range || focus_ready == 0 {
+        return
+    }
+    publish_scheme(focus_code)
+}
+
+fn clear_focus_view() {
+    scheme_name = ""
+    scheme_line = "Loading."
+    scheme_gap = ""
+    scheme_dormant = ""
+    clear_chart()
+}
+
+/// The scheme page. Fetches `code` without adding it to the watchlist.
+fn focus(code: string) {
+    if gen.id == 0 || code.len == 0 {
+        return
+    }
+    if focus_code != code {
+        focus_code = code
+        focus_ready = 0
+        clear_focus_view()
+        bump_scheme()
+    }
+    if focus_ready == 1 {
+        return
+    }
+    ensure_cache(code)
+    if fetch_state(code) == 0 {
+        return
+    }
+    publish_scheme(code)
+}
+
+fn watch_count() -> int {
+    return watch_codes.len
+}
+
+fn watch_code(i: int) -> string {
+    if i < 0 || i >= watch_codes.len {
+        return ""
+    }
+    return watch_codes[i]
+}
+
+fn first_watch() -> string {
+    return watch_code(0)
+}
+
+/// Scheme, code, last NAV, as of, signal.
+fn holding_row(i: int) -> []string {
+    let mut row = []string {}
+    let code = watch_code(i)
+    let st = fetch_state(code)
+    let mut name = name_for(code)
+    if name.len == 0 {
+        name = code
+    }
+    push(row, name)
+    push(row, code)
+    if st == 1 {
+        let s = series_for(code)
+        push(row, present.last_price(s))
+        push(row, present.last_day(s))
+        push(row, present.signal_word(s, 200, ack_for(code)))
+    } else {
+        push(row, "")
+        push(row, "")
+        push(row, state_word(st))
+    }
+    return row
+}
+
+fn rank_count() -> int {
+    return rank_codes.len
+}
+
+fn rank_code(i: int) -> string {
+    if i < 0 || i >= rank_codes.len {
+        return ""
+    }
+    return rank_codes[i]
+}
+
+/// Rank, scheme, code, 12-month momentum, status. A scheme in warm-up has
+/// no momentum figure and no place number.
+fn rank_cells(i: int) -> []string {
+    let mut row = []string {}
+    if i < 0 || i >= rank_codes.len {
+        return row
+    }
+    let code = rank_codes[i]
+    if rank_moms[i].len > 0 {
+        let place = i + 1
+        push(row, "{{place}}")
+    } else {
+        push(row, "")
+    }
+    let mut name = name_for(code)
+    if name.len == 0 {
+        name = code
+    }
+    push(row, name)
+    push(row, code)
+    push(row, rank_moms[i])
+    push(row, rank_states[i])
+    return row
+}
+
+fn any_down() -> bool {
+    let mut i = 0
+    while i < watch_codes.len {
+        if fetch_state(watch_codes[i]) == 3 {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+fn add_watch(code: string) {
+    if !present.digits(code) {
+        return
+    }
+    if find_str(watch_codes, code) >= 0 {
+        return
+    }
+    watch_codes = push_str(watch_codes, code)
+    save_watch()
+    ensure_cache(code)
+    rerank()
+    if gen.id != 0 {
+        gen.set(gen.get() + 1)
+    }
+    // Search rows and the scheme page show whether a code is on the list.
+    bump_search()
+    bump_scheme()
+}
+
+/// The search field holds a bare scheme code: add it without a result row.
+fn add_typed() {
+    if search_input.id == 0 {
+        return
+    }
+    let code = present.trim(search_input.get())
+    if !present.digits(code) {
+        return
+    }
+    add_watch(code)
+    search_input.set("")
+}
+
+fn remove_at(i: int) {
+    if i < 0 || i >= watch_codes.len {
+        return
+    }
+    watch_codes = drop_at(watch_codes, i)
+    save_watch()
+    rerank()
+    if gen.id != 0 {
+        gen.set(gen.get() + 1)
+    }
+    bump_search()
+    bump_scheme()
+}
+
+fn ensure(code: string) {
+    ensure_cache(code)
+}
+
+fn loaded(code: string) -> bool {
+    if fetch_state(code) != 1 {
+        return false
+    }
+    return series.len(series_for(code)) > 0
+}
+
+fn scheme_title() -> string {
+    return scheme_name
+}
+
+fn scheme_status() -> string {
+    return scheme_line
+}
+
+fn scheme_gap_text() -> string {
+    return scheme_gap
+}
+
+fn scheme_dormant_text() -> string {
+    return scheme_dormant
+}
+
+fn chart_labels() -> []string {
+    return nav_labels
+}
+
+fn chart_vals() -> []int {
+    return nav_vals
+}
+
+fn chart_names() -> []string {
+    return nav_names
+}
+
+fn chart_decimals() -> int {
+    return nav_decimals
+}
+
+/// Label, value, caption triples for the stat cards.
+fn stat_cells() -> []string {
+    return stat_texts
+}
+
+fn focus_state() -> int {
+    if focus_ready == 0 {
+        return 0
+    }
+    return fetch_state(focus_code)
+}
+
+fn focused() -> string {
+    return focus_code
+}
+
+fn history_cells() -> []string {
+    return signal_cells
+}
+
+fn gap_open() -> bool {
+    if scheme_gap.len == 0 {
+        return false
+    }
+    let at = find_str(cache_codes, focus_code)
+    if at < 0 || at >= cache_ack.len {
+        return false
+    }
+    if cache_gap[at] == 0 {
+        return false
+    }
+    return cache_ack[at] == 0
+}
+
+fn acknowledge() {
+    let code = focus_code
+    if gen.id == 0 || code.len == 0 {
+        return
+    }
+    http.client().call_async(api.ack_rpc(), api.encode_AckReq(AckReq { code: code }), fn(raw) {
+        let reply = api.decode_AckResp(raw)
+        if reply.ok == 0 {
+            return
+        }
+        let at = find_str(cache_codes, code)
+        if at < 0 {
+            return
+        }
+        cache_ack = put_int(cache_ack, at, 1)
+        rerank()
+        publish_scheme(code)
+        if gen.id != 0 {
+            gen.set(gen.get() + 1)
+        }
+    })
+}
+
+fn start() {
+    if gen.id != 0 {
+        return
+    }
+    gen = zeus.signal(0)
+    scheme_gen = zeus.signal(0)
+    range_sel = zeus.signal(2)
+    search_input = zeus.signal("")
+    search_gen = zeus.signal(0)
+    watch_codes = present.split_ws(kv.get(kv.open("dracula"), "watch"))
+    let mut i = 0
+    while i < watch_codes.len {
+        ensure_cache(watch_codes[i])
+        i = i + 1
+    }
+    rerank()
+    gen.set(1)
+}

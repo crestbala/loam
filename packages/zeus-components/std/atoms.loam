@@ -1968,7 +1968,193 @@ fn chart_mx(pt: int, gutter: int, col_w: int, n: int, i: int) -> int {
 }
 
 fn chart_y(maxv: int, plot_h: int, top: int, v: int) -> int {
-    return top + plot_h - v * plot_h / maxv
+    // i64: a value in the millions times the plot height passes i32.
+    return top + plot_h - int(i64(v) * i64(plot_h) / i64(maxv))
+}
+
+/// A `LineChart` value that is not drawn: no dot, the line breaks around
+/// it, the y domain ignores it, and the tooltip shows a dash. For a series
+/// that has no value yet at that label (an indicator still warming up).
+const CHART_GAP: int = -2147483647
+
+/// Extras for `LineChart`. The defaults draw what the chart always drew.
+struct LineChartProps {
+    /// true = the y axis spans the values instead of starting at 0.
+    fit: bool = false,
+    /// Implied decimals when a value prints: 12037 with 2 reads `120.37`.
+    decimals: int = 0,
+    /// Draw every k-th x label. 0 picks about eight across the plot.
+    label_every: int = 1,
+    /// false = the line alone, no dot per point.
+    dots: bool = true,
+}
+
+/// `v` with `dec` implied decimals. `CHART_GAP` prints as a dash.
+fn chart_fmt(v: int, dec: int) -> string {
+    if v == CHART_GAP {
+        return "-"
+    }
+    if dec <= 0 {
+        return "{{v}}"
+    }
+    let mut sign = ""
+    let mut n = i64(v)
+    if n < i64(0) {
+        sign = "-"
+        n = -n
+    }
+    let mut unit = i64(1)
+    for k in 0..dec {
+        unit = unit * i64(10)
+    }
+    let whole = n / unit
+    let mut frac = "{{n % unit}}"
+    while frac.len < dec {
+        frac = "0{{frac}}"
+    }
+    return "{{sign}}{{whole}}.{{frac}}"
+}
+
+/// Smallest and largest drawn value over series `0..s`; gaps are skipped.
+/// `hi` stays at least `lo + 1`, so a flat series still has a span.
+fn chart_span(vals: []int, s: int, n: int, fit: bool) -> []int {
+    let mut lo = 0
+    let mut hi = 1
+    let mut seen = false
+    for i in 0..n {
+        for j in 0..s {
+            let v = chart_val(vals, s, i, j)
+            if v != CHART_GAP {
+                if !seen {
+                    hi = v
+                    if fit {
+                        lo = v
+                    }
+                    seen = true
+                }
+                if v > hi {
+                    hi = v
+                }
+                if fit && v < lo {
+                    lo = v
+                }
+            }
+        }
+    }
+    if fit && seen {
+        // A tenth of the span below the lowest value, so the line does not
+        // ride the baseline.
+        let pad = (hi - lo) / 10
+        lo = lo - pad
+        if lo < 0 {
+            lo = 0
+        }
+    }
+    if hi <= lo {
+        hi = lo + 1
+    }
+    let mut out = []int {}
+    out.push(lo)
+    out.push(hi)
+    return out
+}
+
+fn chart_fy(lo: int, hi: int, plot_h: int, top: int, v: int) -> int {
+    return top + plot_h - int(i64(v - lo) * i64(plot_h) / i64(hi - lo))
+}
+
+/// Polyline for series `j` over `lo..hi`. A gap lifts the pen.
+fn chart_fline_d(vals: []int, s: int, j: int, lo: int, hi: int, gutter: int, col_w: int,
+                 plot_h: int, top: int, n: int) -> string {
+    let mut b = []int {}
+    let mut pen = false
+    for i in 0..n {
+        let v = chart_val(vals, s, i, j)
+        if v == CHART_GAP {
+            pen = false
+        } else {
+            if pen {
+                b = bytes_s(b, "L")
+            } else {
+                b = bytes_s(b, "M")
+            }
+            b = bytes_i(b, chart_pt_x(gutter, col_w, n, i))
+            b = bytes_s(b, " ")
+            b = bytes_i(b, chart_fy(lo, hi, plot_h, top, v))
+            pen = true
+        }
+    }
+    return string_from_bytes(b)
+}
+
+/// Gridlines, y ticks from `hi` down to `lo`, and the baseline.
+fn chart_faxes(w: int, h: int, lo: int, hi: int, dec: int) {
+    let plot_h = h - CHART_TOP - CHART_XLAB
+    let base_y = CHART_TOP + plot_h
+    for k in 0..4 {
+        let line = Box(width = w - CHART_GUTTER, height = 1,
+                       background = rule(), opacity = 45,
+                       position = pos_absolute(),
+                       left = CHART_GUTTER,
+                       top = CHART_TOP + k * plot_h / 4)
+    }
+    for k in 0..5 {
+        let tv = hi - int(i64(k) * i64(hi - lo) / i64(4))
+        let lab = Box(align_direction = DIRECTION.Row, justify = ALIGN.End,
+                      width = CHART_GUTTER - 6, height = 12,
+                      position = pos_absolute(),
+                      left = 0,
+                      top = CHART_TOP + k * plot_h / 4 - 6) {
+            Text(chart_tick(tv, dec, hi - lo), color = mute(), font = FONT_CAPTION)
+        }
+    }
+    let axis = Box(width = w - CHART_GUTTER, height = 1, background = hard(),
+                   position = pos_absolute(),
+                   left = CHART_GUTTER,
+                   top = base_y)
+}
+
+/// A y tick. Once a quarter of the span is a whole unit or more, the
+/// decimals are dropped (rounded), so the label fits the gutter.
+fn chart_tick(v: int, dec: int, span: int) -> string {
+    if dec <= 0 {
+        return "{{v}}"
+    }
+    let mut unit = 1
+    for k in 0..dec {
+        unit = unit * 10
+    }
+    if span / 4 < unit {
+        return chart_fmt(v, dec)
+    }
+    let whole = (v + unit / 2) / unit
+    return "{{whole}}"
+}
+
+/// Room below the plot for rotated x labels past about six characters.
+fn chart_xlab_extra(labels: []string) -> int {
+    let mut m = 0
+    for i in 0..labels.len {
+        if labels[i].len > m {
+            m = labels[i].len
+        }
+    }
+    if m <= 6 {
+        return 0
+    }
+    return (m - 6) * 5
+}
+
+/// Label stride for `LineChartProps.label_every`: 0 is about eight labels.
+fn chart_every(every: int, n: int) -> int {
+    if every > 0 {
+        return every
+    }
+    let k = n / 8
+    if k < 1 {
+        return 1
+    }
+    return k
 }
 
 /// Compose svg markup; `d` is in plot coordinates and the viewBox matches
@@ -2077,7 +2263,7 @@ fn chart_axes(w: int, h: int, maxv: int) {
 /// through an effect, instead of one pre-built panel per category. Style
 /// props are plain data, so a prop that must follow a signal gets `styled`.
 fn chart_tooltip(labels: []string, names: []string, vals: []int, s: int, n: int,
-                 w: int, col_w: int, act: Signal<int>, pt: int) {
+                 w: int, col_w: int, act: Signal<int>, pt: int, dec: int) {
     let panel = Box(
         align_direction = DIRECTION.Column,
         width = 128,
@@ -2135,7 +2321,7 @@ fn chart_tooltip(labels: []string, names: []string, vals: []int, s: int, n: int,
                     let a = act.get() - 1
                     if a >= 0 {
                         if a < n {
-                            return "{{vals[a * s + jj]}}"
+                            return chart_fmt(vals[a * s + jj], dec)
                         }
                     }
                     return ""
@@ -2245,13 +2431,13 @@ fn chart_cursor(act: Signal<int>, n: int, col_w: int, plot_h: int, pt: int) {
 /// dim for the hovered column. `pt` = 1 for plot-spanning line/area charts
 /// (zone strips snap to the nearest mark), 0 for column-mode bar charts.
 fn chart_tooltips(labels: []string, names: []string, vals: []int, s: int, n: int,
-                  h: int, w: int, col_w: int, act: Signal<int>, pt: int) {
+                  h: int, w: int, col_w: int, act: Signal<int>, pt: int, dec: int = 0) {
     for i in 0..n {
         let hov = signal(0)
         chart_zone(i, hov, act, h, col_w, pt, n)
     }
     chart_cursor(act, n, col_w, h - CHART_TOP - CHART_XLAB, pt)
-    chart_tooltip(labels, names, vals, s, n, w, col_w, act, pt)
+    chart_tooltip(labels, names, vals, s, n, w, col_w, act, pt, dec)
 }
 
 /// Dim/restore a mark for the hovered column: full at rest or on its own
@@ -2314,37 +2500,49 @@ fn chart_bars(labels: []string, names: []string, vals: []int, n: int, s: int,
 }
 
 fn chart_lines(labels: []string, names: []string, vals: []int, n: int, s: int,
-               w: int, h: int, host: Node) {
+               w: int, h: int, host: Node, p: LineChartProps) {
     let gw = chart_w(w, host)
     let plot_h = h - CHART_TOP - CHART_XLAB
     let col_w = (gw - CHART_GUTTER) / n
-    let domain = chart_domain(vals, s, n)
+    let span = chart_span(vals, s, n, p.fit)
+    let lo = span[0]
+    let hi = span[1]
+    let every = chart_every(p.label_every, n)
     // Shared hovered mark: zones, cursor, tooltip, and the marks read it.
     let act = signal(0)
-    let plot = Box(width = gw, height = h)
+    // A 45° label longer than a few characters reaches below CHART_XLAB;
+    // the extra height keeps the legend clear of it. Short labels add none.
+    let plot = Box(width = gw, height = h + chart_xlab_extra(labels))
     slot(plot, || {
-        chart_axes(gw, h, domain)
+        chart_faxes(gw, h, lo, hi, p.decimals)
         for j in 0..s {
-            let d = chart_line_d(vals, s, j, domain, CHART_GUTTER, col_w, plot_h,
-                                 CHART_TOP, n)
+            let d = chart_fline_d(vals, s, j, lo, hi, CHART_GUTTER, col_w, plot_h,
+                                  CHART_TOP, n)
             let line_l = chart_layer(chart_svg(d, gw, h, "none", chart_stroke_light(j), 2), gw, h)
             let line_d = chart_layer(chart_svg(d, gw, h, "none", chart_stroke_dark(j), 2), gw, h)
             show_eq(line_l, appearance(), 0)
             show_eq(line_d, appearance(), 1)
-            for i in 0..n {
-                let x = chart_pt_x(CHART_GUTTER, col_w, n, i)
-                let y = chart_y(domain, plot_h, CHART_TOP, chart_val(vals, s, i, j))
-                let dot = Box(width = 6, height = 6, radius = 3,
-                              background = chart_color(j),
-                              position = pos_absolute(),
-                              left = x - 3,
-                              top = y - 3)
+            if p.dots {
+                for i in 0..n {
+                    let v = chart_val(vals, s, i, j)
+                    if v != CHART_GAP {
+                        let x = chart_pt_x(CHART_GUTTER, col_w, n, i)
+                        let y = chart_fy(lo, hi, plot_h, CHART_TOP, v)
+                        let dot = Box(width = 6, height = 6, radius = 3,
+                                      background = chart_color(j),
+                                      position = pos_absolute(),
+                                      left = x - 3,
+                                      top = y - 3)
+                    }
+                }
             }
         }
         for i in 0..n {
-            chart_xlab(labels[i], i, col_w, plot_h, 1, n)
+            if i % every == 0 {
+                chart_xlab(labels[i], i, col_w, plot_h, 1, n)
+            }
         }
-        chart_tooltips(labels, names, vals, s, n, h, gw, col_w, act, 1)
+        chart_tooltips(labels, names, vals, s, n, h, gw, col_w, act, 1, p.decimals)
     })
     chart_legend(names)
 }

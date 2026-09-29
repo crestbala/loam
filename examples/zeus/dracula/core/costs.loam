@@ -1,0 +1,100 @@
+//! What a fund purchase and a redemption actually cost, in paise.
+//!
+//! Three charges, and no fourth. Stamp duty is 0.005% of every purchase
+//! (and would be the same on a switch-in). STT is 0.001% of an equity-fund
+//! redemption. Exit load is 1% when the lot is redeemed inside 365 days,
+//! and nothing after that. Each one is an integer number of paise, rounded
+//! half away from zero, so a test can name the paisa.
+//!
+//! The expense ratio is already inside the published NAV. Nothing here
+//! subtracts it again. Capital-gains tax is a separate function the backtest
+//! does not call: net of dealing costs is the headline, and tax is a view
+//! on top of that, never folded in.
+
+struct Costs {
+    stamp_numer: i64,
+    stamp_denom: i64,
+    stt_numer: i64,
+    stt_denom: i64,
+    load_numer: i64,
+    load_denom: i64,
+    /// Exit load applies when the lot is held for this many days or fewer.
+    load_days: int,
+}
+
+/// Equity-oriented fund: stamp 0.005%, STT 0.001% on redemption, 1% exit
+/// load on or before day 365.
+fn equity() -> Costs {
+    return Costs {
+        stamp_numer: i64(1),
+        stamp_denom: i64(20000),
+        stt_numer: i64(1),
+        stt_denom: i64(100000),
+        load_numer: i64(1),
+        load_denom: i64(100),
+        load_days: 365,
+    }
+}
+
+/// `amount * numer / denom`, rounded half away from zero. Zero when any
+/// argument is not positive.
+fn share(amount: i64, numer: i64, denom: i64) -> i64 {
+    if amount <= 0 || numer <= 0 || denom <= 0 {
+        return i64(0)
+    }
+    let prod = amount * numer
+    let q = prod / denom
+    let r = prod - q * denom
+    if r * 2 >= denom {
+        return q + 1
+    }
+    return q
+}
+
+/// `(a * b) / denom`, same rounding. Used to turn micro-units back into paise.
+fn mul_div(a: i64, b: i64, denom: i64) -> i64 {
+    if a <= 0 || b <= 0 || denom <= 0 {
+        return i64(0)
+    }
+    let q = a / denom
+    let r = a - q * denom
+    let head = q * b
+    let tail = r * b
+    let tq = tail / denom
+    let tr = tail - tq * denom
+    let mut out = head + tq
+    if tr * 2 >= denom {
+        out = out + 1
+    }
+    return out
+}
+
+fn stamp_duty(amount: i64, c: Costs) -> i64 {
+    return share(amount, c.stamp_numer, c.stamp_denom)
+}
+
+fn stt(amount: i64, c: Costs) -> i64 {
+    return share(amount, c.stt_numer, c.stt_denom)
+}
+
+/// Exit load on a redemption of `amount` paise held for `held_days`.
+/// Zero once the holding is longer than `load_days`.
+fn exit_load(amount: i64, held_days: int, c: Costs) -> i64 {
+    if held_days > c.load_days {
+        return i64(0)
+    }
+    return share(amount, c.load_numer, c.load_denom)
+}
+
+/// Tax on a realised gain. `split_days` is the long-term threshold: a
+/// holding of that many days or fewer uses the short rate. A loss taxes
+/// nothing. The backtest does not call this.
+fn capital_gains(gain: i64, held_days: int, split_days: int, short_numer: i64, short_denom: i64, long_numer: i64, long_denom: i64) -> i64 {
+    if gain <= 0 {
+        return i64(0)
+    }
+    if held_days <= split_days {
+        return share(gain, short_numer, short_denom)
+    }
+    return share(gain, long_numer, long_denom)
+}

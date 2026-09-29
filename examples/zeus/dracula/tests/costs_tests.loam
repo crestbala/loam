@@ -1,0 +1,27 @@
+//! The three dealing costs, in paise, and the tax function the backtest
+//! is not allowed to call.
+
+import "std:test"
+import "../core/costs.loam"
+
+#[test]
+fn rates_round_half_away_from_zero() {
+    let c = costs.equity()
+    test.assert(costs.stamp_duty(i64(1000000), c) == i64(50))
+    test.assert(costs.stt(i64(1099945), c) == i64(11))
+    test.assert(costs.exit_load(i64(1099945), 10, c) == i64(10999))
+    test.assert(costs.exit_load(i64(999950), 365, c) == i64(10000))
+    test.assert(costs.exit_load(i64(999950), 366, c) == i64(0))
+    test.assert(costs.share(i64(100), i64(1), i64(8)) == i64(13))
+    test.assert(costs.share(i64(100), i64(1), i64(6)) == i64(17))
+}
+
+#[test]
+fn capital_gains_are_a_separate_view() {
+    let tax = costs.capital_gains(i64(88935), 10, 365, i64(1), i64(5), i64(1), i64(8))
+    test.assert(tax == i64(17787))
+    let later = costs.capital_gains(i64(88935), 400, 365, i64(1), i64(5), i64(1), i64(8))
+    test.assert(later == i64(11117))
+    let loss = costs.capital_gains(i64(-100), 10, 365, i64(1), i64(5), i64(1), i64(8))
+    test.assert(loss == i64(0))
+}

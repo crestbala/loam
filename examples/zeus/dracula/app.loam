@@ -1,0 +1,35 @@
+//! dracula — application entry. One entry, every host.
+//!
+//! `zeli routes` generates app_routes.loam from routes/; this file
+//! mounts it. `zeli build` emits all five targets from here.
+
+import "std:zeus"
+import "app_routes.loam" as approutes
+import "server/api.loam" as api
+import "components/book.loam" as book
+import "components/lab.loam" as lab
+import "components/data.loam" as data
+import "components/stocks.loam" as stocks
+import "tests/smoke.loam" as smoketest
+import "tests/sortx_tests.loam" as sortx_tests
+import "tests/stats_tests.loam" as stats_tests
+import "tests/csvx_tests.loam" as csvx_tests
+import "tests/series_tests.loam" as series_tests
+import "tests/indicator_tests.loam" as indicator_tests
+import "tests/costs_tests.loam" as costs_tests
+import "tests/backtest_tests.loam" as backtest_tests
+import "tests/strategy_tests.loam" as strategy_tests
+import "tests/walkforward_tests.loam" as walkforward_tests
+import "tests/present_tests.loam" as present_tests
+import "../../../packages/loam/tests/inlang/math_tests.loam" as math_tests
+import "../../../packages/loam/tests/inlang/date_tests.loam" as date_tests
+
+fn main() {
+    book.start()
+    lab.start()
+    data.start()
+    stocks.start()
+    zeus.App("dracula", fn() {
+        approutes.app()
+    })
+}

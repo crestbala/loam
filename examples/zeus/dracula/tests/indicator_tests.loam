@@ -1,0 +1,212 @@
+//! Hand-checked indicators on a 20-bar ramp.
+//!
+//! Bars 0..10 rise by 100 paise a bar from 1000 to 2000. Bars 11..19 fall by
+//! 100 paise a bar back to 1100. Dates are the twenty days from 2026-01-01,
+//! so nothing in the fixture is a gap. The warmup and the gap are separate
+//! cases, because a 200-day average cannot be checked on twenty bars and a
+//! gap must not be hidden inside the arithmetic.
+
+import "std:test"
+import "std:math"
+import "std:date"
+import "../core/series.loam"
+import "../core/indicators.loam"
+
+fn near(got: f64, want: f64) {
+    let mut rel = math.abs(got - want)
+    if want != 0.0 {
+        rel = rel / math.abs(want)
+    }
+    if rel > 1.0e-9 {
+        test.fail("value out of tolerance")
+    }
+}
+
+fn ramp() -> NavSeries {
+    let mut dates = []int {}
+    let mut navs = []i64 {}
+    let start = date.to_days(20260101)
+    let mut i = 0
+    while i < 20 {
+        push(dates, date.from_days(start + i))
+        let mut p = 1000 + i * 100
+        if i > 10 {
+            p = 2000 - (i - 10) * 100
+        }
+        push(navs, i64(p))
+        i = i + 1
+    }
+    return series.build("1001", dates, navs)
+}
+
+fn flat(n: int, paise: int) -> NavSeries {
+    let mut dates = []int {}
+    let mut navs = []i64 {}
+    let start = date.to_days(20260101)
+    let mut i = 0
+    while i < n {
+        push(dates, date.from_days(start + i))
+        push(navs, i64(paise))
+        i = i + 1
+    }
+    return series.build("flat", dates, navs)
+}
+
+#[test]
+fn sma_on_the_ramp_and_the_warmup() {
+    let s = ramp()
+    let m5 = indicators.sma(s, 5, 0)
+    test.assert_eq_int(m5.ready[3], 0)
+    test.assert_eq_int(m5.ready[4], 1)
+    near(m5.v[4], 1200.0)
+    near(m5.v[19], 1300.0)
+    let m20 = indicators.sma(s, 20, 0)
+    test.assert_eq_int(m20.ready[18], 0)
+    test.assert_eq_int(m20.ready[19], 1)
+    near(m20.v[19], 1500.0)
+
+    let long = flat(200, 10000)
+    let m200 = indicators.sma(long, 200, 0)
+    test.assert_eq_int(m200.ready[198], 0)
+    test.assert_eq_int(m200.ready[199], 1)
+    near(m200.v[199], 10000.0)
+    let short = flat(199, 10000)
+    let early = indicators.sma(short, 200, 0)
+    test.assert_eq_int(early.ready[198], 0)
+}
+
+#[test]
+fn ema_seeds_with_the_average() {
+    let s = ramp()
+    let e = indicators.ema(s, 5, 0)
+    test.assert_eq_int(e.ready[3], 0)
+    test.assert_eq_int(e.ready[4], 1)
+    // Seed is the SMA. Through the +100 ramp the next values stay 200 paise
+    // under the price: k = 2/6, and the arithmetic works out exactly.
+    near(e.v[4], 1200.0)
+    near(e.v[5], 1300.0)
+    near(e.v[10], 1800.0)
+}
+
+#[test]
+fn rsi_is_100_on_the_way_up_and_80_at_the_turn() {
+    let s = ramp()
+    let r = indicators.rsi(s, 5, 0)
+    test.assert_eq_int(r.ready[4], 0)
+    test.assert_eq_int(r.ready[5], 1)
+    near(r.v[5], 100.0)
+    near(r.v[10], 100.0)
+    // First down step is -100 against a Wilder average that was all gains.
+    // avg gain 80, avg loss 20, RSI 80.
+    near(r.v[11], 80.0)
+}
+
+#[test]
+fn macd_on_the_ramp_is_a_flat_hundred() {
+    let s = ramp()
+    let m = indicators.macd(s, 3, 5, 3, 0)
+    test.assert_eq_int(m.ready[3], 0)
+    test.assert_eq_int(m.ready[4], 1)
+    near(m.macd[4], 100.0)
+    near(m.macd[10], 100.0)
+    test.assert_eq_int(m.sig_ready[5], 0)
+    test.assert_eq_int(m.sig_ready[6], 1)
+    near(m.signal[6], 100.0)
+    near(m.hist[6], 0.0)
+    let standard = indicators.macd(s, 12, 26, 9, 0)
+    test.assert_eq_int(standard.ready[19], 0)
+}
+
+#[test]
+fn drawdown_vol_and_momentum() {
+    let s = ramp()
+    let dd = indicators.drawdown(s, 0)
+    test.assert_eq_int(dd.ready[0], 1)
+    near(dd.v[0], 0.0)
+    near(dd.v[10], 0.0)
+    // Peak 2000, bar 19 is 1100. (2000-1100)/2000 = 0.45.
+    near(dd.v[19], 0.45)
+
+    let mut dates = []int {}
+    let mut navs = []i64 {}
+    push(dates, 20260301)
+    push(dates, 20260302)
+    push(dates, 20260303)
+    push(navs, i64(10000))
+    push(navs, i64(11000))
+    push(navs, i64(10000))
+    let w = series.build("v", dates, navs)
+    let vol = indicators.rolling_vol(w, 2, 0)
+    test.assert_eq_int(vol.ready[1], 0)
+    test.assert_eq_int(vol.ready[2], 1)
+    let step = math.ln(1.1)
+    near(vol.v[2], step * math.sqrt(2.0))
+
+    // Every calendar day, so a month is not mistaken for a missing NAV.
+    // 10000 through 15 Feb, 11000 on that day through 14 Mar, 12100 on 15 Mar.
+    let mut md = []int {}
+    let mut mn = []i64 {}
+    let mut rn = []i64 {}
+    let origin = date.to_days(20260115)
+    let feb = date.to_days(20260215)
+    let mar = date.to_days(20260315)
+    let mut day = origin
+    while day <= mar {
+        push(md, date.from_days(day))
+        let mut p = 10000
+        if day == mar {
+            p = 12100
+        } else if day >= feb {
+            p = 11000
+        }
+        push(mn, i64(p))
+        push(rn, i64(10000))
+        day = day + 1
+    }
+    let mom_s = series.build("m", md, mn)
+    let mom = indicators.momentum(mom_s, 1, 0)
+    let at_feb = feb - origin
+    let at_mar = mar - origin
+    test.assert_eq_int(mom.ready[0], 0)
+    test.assert_eq_int(mom.ready[at_feb], 1)
+    near(mom.v[at_feb], 0.1)
+    near(mom.v[at_mar], 0.1)
+    let two = indicators.momentum(mom_s, 2, 0)
+    test.assert_eq_int(two.ready[at_mar], 1)
+    near(two.v[at_mar], 0.21)
+
+    let ref = series.build("ref", md, rn)
+    let rs = indicators.relative_strength(mom_s, ref, 1, 0)
+    test.assert_eq_int(rs.ready[at_feb], 1)
+    near(rs.v[at_feb], 0.1)
+    near(rs.v[at_mar], 0.1)
+}
+
+#[test]
+fn a_gap_blocks_the_window_until_it_is_acknowledged() {
+    let mut dates = []int {}
+    let mut navs = []i64 {}
+    push(dates, 20260101)
+    push(dates, 20260102)
+    push(dates, 20260110)
+    push(dates, 20260111)
+    push(navs, i64(10000))
+    push(navs, i64(8000))
+    push(navs, i64(7000))
+    push(navs, i64(6000))
+    let s = series.build("g", dates, navs)
+    let blocked = indicators.sma(s, 2, 0)
+    test.assert_eq_int(blocked.ready[1], 1)
+    test.assert_eq_int(blocked.ready[2], 0)
+    test.assert_eq_int(blocked.ready[3], 1)
+    near(blocked.v[3], 6500.0)
+    let open = indicators.sma(s, 2, 1)
+    test.assert_eq_int(open.ready[2], 1)
+    near(open.v[2], 7500.0)
+
+    let dd = indicators.drawdown(s, 0)
+    near(dd.v[1], 0.2)
+    near(dd.v[3], 1.0 / 7.0)
+    let across = indicators.drawdown(s, 1)
+    near(across.v[3], 0.4)
+}

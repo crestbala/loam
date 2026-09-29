@@ -1,0 +1,84 @@
+//! Load AMFI history into the cache, oldest day first.
+//!
+//! A week of the history report is about 6MB. `sys.read_file` stops at 16MB,
+//! so the range is fetched in 7-day windows. The cache is append-only: a
+//! window that starts before the latest cached day is refused. Set
+//! `DRACULA_ROLLBACK=1` to drop the last sync before the first window.
+//!
+//!     DRACULA_FROM=2023-01-01 DRACULA_TO=2026-09-28 DRACULA_ROLLBACK=1 \
+//!       ./bin/loamc examples/zeus/dracula/server/fill.loam -o /tmp/dracula-fill && /tmp/dracula-fill
+
+import "std:date"
+import "std:fmt"
+import "std:sys"
+import "ingest.loam"
+import "store.loam"
+
+fn fetch_problem(err: string) -> bool {
+    let w = "fetch failed"
+    if err.len < w.len {
+        return false
+    }
+    let mut i = 0
+    while i < w.len {
+        if err[i] != w[i] {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+/// One slow week is not a reason to stop a multi-year load. A refused row
+/// or a file the reader cannot take is returned on the first try.
+fn fetch_window(a: string, b: string) -> Report {
+    let mut last = ingest.backfill_live(a, b)
+    let mut n = 1
+    while last.ok == 0 && fetch_problem(last.err) && n < 3 {
+        let err = last.err
+        fmt.println("retry {{a}} {{b}} {{err}}")
+        last = ingest.backfill_live(a, b)
+        n = n + 1
+    }
+    return last
+}
+
+fn main() {
+    let frm = sys.env("DRACULA_FROM")
+    let to = sys.env("DRACULA_TO")
+    let from_ymd = ingest.ymd_of(frm)
+    let to_ymd = ingest.ymd_of(to)
+    if from_ymd == 0 || to_ymd == 0 {
+        fmt.println("bad date")
+        sys.exit(1)
+    }
+    if sys.env("DRACULA_ROLLBACK") == "1" {
+        let root = store.nav_root()
+        let ok = store.rollback(root)
+        fmt.println("rollback {{ok}}")
+    }
+    let w = ingest.windows(from_ymd, to_ymd, 7)
+    let n = w.frm.len
+    if n == 0 {
+        fmt.println("bad date")
+        sys.exit(1)
+    }
+    fmt.println("windows {{n}}")
+    let mut i = 0
+    while i < n {
+        let a = date.fmt_iso(w.frm[i])
+        let b = date.fmt_iso(w.to[i])
+        let r = fetch_window(a, b)
+        let num = i + 1
+        let ok = r.ok
+        let accepted = r.accepted
+        let rejected = r.rejected
+        let err = r.err
+        fmt.println("{{num}}/{{n}} {{a}} {{b}} ok {{ok}} accepted {{accepted}} rejected {{rejected}} {{err}}")
+        if r.ok == 0 {
+            sys.exit(1)
+        }
+        i = i + 1
+    }
+    fmt.println("fill done")
+}

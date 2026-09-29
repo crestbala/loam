@@ -1,0 +1,218 @@
+//! Ingest guards for one NAV row.
+//!
+//! A bad row that slips through does not look like a bug later. It looks like
+//! a signal. Every check lives here, returns a reason, and the store logs that
+//! reason. Nothing in this file reads or writes a file.
+//!
+//! Money is integer paise. `paise_of` turns AMFI's rupee text (`1234.5678`)
+//! into paise, rounding the half-paisa up and away from zero. A value that is
+//! not a NAV — `N.A.`, a blank, a second dot — comes back as `-1`, which
+//! `review` rejects. Zero is parsed as zero and rejected as non-positive, so
+//! a missing price and a zero price are the same outcome with the same reason.
+
+import "std:date"
+
+/// What `review` decided. `accept` is 1 when the row may be cached.
+/// `warn` is 1 when it is cached but a person should look at it: a plan or
+/// option rename that jumped, or a gap longer than five calendar days.
+/// `gap` is 1 only for that gap. `reason` is empty when nothing is wrong.
+/// A reason never contains `;` — the reject log is semicolon-separated.
+struct Verdict {
+    accept: int,
+    warn: int,
+    gap: int,
+    reason: string,
+}
+
+fn verdict(accept: int, warn: int, gap: int, reason: string) -> Verdict {
+    return Verdict { accept: accept, warn: warn, gap: gap, reason: reason }
+}
+
+fn contains(s: string, w: string) -> bool {
+    if w.len == 0 || w.len > s.len {
+        return false
+    }
+    let mut i = 0
+    let last = s.len - w.len
+    while i <= last {
+        let mut k = 0
+        let mut same = true
+        while k < w.len {
+            if s[i + k] != w[k] {
+                same = false
+                break
+            }
+            k = k + 1
+        }
+        if same {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+/// True when the plan (Direct/Regular) or the option (Growth/IDCW/Dividend/Bonus)
+/// wording differs. A direct-to-regular switch is how a large NAV jump shows
+/// up without the fund having moved.
+fn plan_moved(prev: string, now: string) -> bool {
+    if contains(prev, "Direct") != contains(now, "Direct") {
+        return true
+    }
+    if contains(prev, "Regular") != contains(now, "Regular") {
+        return true
+    }
+    if contains(prev, "Growth") != contains(now, "Growth") {
+        return true
+    }
+    if contains(prev, "IDCW") != contains(now, "IDCW") {
+        return true
+    }
+    if contains(prev, "Dividend") != contains(now, "Dividend") {
+        return true
+    }
+    if contains(prev, "Bonus") != contains(now, "Bonus") {
+        return true
+    }
+    return false
+}
+
+fn trim(s: string) -> string {
+    let mut a = 0
+    while a < s.len {
+        let c = s[a]
+        if c == 32 || c == 9 || c == 13 || c == 10 {
+            a = a + 1
+        } else {
+            break
+        }
+    }
+    let mut b = s.len
+    while b > a {
+        let c = s[b - 1]
+        if c == 32 || c == 9 || c == 13 || c == 10 {
+            b = b - 1
+        } else {
+            break
+        }
+    }
+    let mut out = []int {}
+    let mut i = a
+    while i < b {
+        push(out, s[i])
+        i = i + 1
+    }
+    return string_from_bytes(out)
+}
+
+/// Rupee text to paise. `-1` when `s` is not a non-negative decimal number.
+///
+/// The third digit after the dot is the half-paisa place. `100.005` is
+/// 10000.5 paise and rounds to `10001`. `100.004` stays `10000`.
+fn paise_of(s: string) -> i64 {
+    let t = trim(s)
+    if t.len == 0 {
+        return i64(-1)
+    }
+    let mut whole: i64 = 0
+    let mut i = 0
+    let mut saw_digit = false
+    let mut digits = 0
+    while i < t.len && t[i] != 46 {
+        let c = t[i]
+        if c < 48 || c > 57 {
+            return i64(-1)
+        }
+        saw_digit = true
+        digits = digits + 1
+        if digits > 12 {
+            return i64(-1)
+        }
+        whole = whole * 10 + i64(c - 48)
+        i = i + 1
+    }
+    let mut d0 = 0
+    let mut d1 = 0
+    let mut round_up = false
+    let mut frac_i = 0
+    if i < t.len && t[i] == 46 {
+        i = i + 1
+        while i < t.len {
+            let c = t[i]
+            if c < 48 || c > 57 {
+                return i64(-1)
+            }
+            saw_digit = true
+            if frac_i == 0 {
+                d0 = c - 48
+            } else if frac_i == 1 {
+                d1 = c - 48
+            } else if frac_i == 2 {
+                if c >= 53 {
+                    round_up = true
+                }
+            }
+            frac_i = frac_i + 1
+            i = i + 1
+        }
+    }
+    if !saw_digit {
+        return i64(-1)
+    }
+    let mut paise = whole * 100 + i64(d0 * 10 + d1)
+    if round_up {
+        paise = paise + 1
+    }
+    return paise
+}
+
+fn abs_i64(n: i64) -> i64 {
+    if n < 0 {
+        return -n
+    }
+    return n
+}
+
+/// More than 20% away from `prev`. Exactly 20% is not a jump: a move of that
+/// size is the threshold, and the row above it is the one we refuse.
+fn jumped(prev: i64, nav: i64) -> bool {
+    if prev <= 0 {
+        return false
+    }
+    let d = abs_i64(nav - prev)
+    return d * i64(5) > prev
+}
+
+/// Judge one row against the previous accepted point for the same scheme.
+///
+/// `prev_date == 0` means the cache has no point yet. The new date must be
+/// strictly later than `prev_date`; the cache is append-only, so a duplicate
+/// and an older date are both refused. A gap of more than five calendar days
+/// is stored, not refused — indicators will not cross it until someone
+/// acknowledges it.
+fn review(prev_date: int, prev_nav: i64, prev_name: string, ymd: int, nav: i64, name: string) -> Verdict {
+    if !date.is_valid(ymd) {
+        return verdict(0, 0, 0, "bad date")
+    }
+    if nav <= 0 {
+        return verdict(0, 0, 0, "bad nav")
+    }
+    if prev_date != 0 {
+        if ymd == prev_date {
+            return verdict(0, 0, 0, "duplicate date")
+        }
+        if ymd < prev_date {
+            return verdict(0, 0, 0, "out of sequence")
+        }
+        if jumped(prev_nav, nav) {
+            if plan_moved(prev_name, name) {
+                return verdict(1, 1, 0, "nav jump on plan change")
+            }
+            return verdict(0, 0, 0, "nav jump")
+        }
+        if date.days_between(prev_date, ymd) > 5 {
+            return verdict(1, 1, 1, "gap")
+        }
+    }
+    return verdict(1, 0, 0, "")
+}

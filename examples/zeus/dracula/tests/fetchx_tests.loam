@@ -1,0 +1,63 @@
+//! curl's failure modes, against local files so the test does not need a
+//! network. A failed fetch must not touch a file standing in for the cache,
+//! and it must not leave the temporary download behind either.
+
+import "std:test"
+import "std:sys"
+import "../server/fetchx.loam"
+
+fn write_ok(path: string, body: string) {
+    if sys.write_file(path, body) != 0 {
+        test.fail("could not write {{path}}")
+    }
+}
+
+#[test]
+fn a_file_url_comes_back_whole() {
+    let src = "/tmp/dracula-fetch-ok.txt"
+    write_ok(src, "hello-nav\n")
+    let r = fetchx.fetch_text("file:///tmp/dracula-fetch-ok.txt")
+    if !r.ok {
+        test.fail(r.err)
+    }
+    test.assert_eq_str(r.val, "hello-nav\n")
+    test.assert(sys.exists(fetchx.FETCH_TMP) == 0)
+    sys.remove_path(src)
+}
+
+/// `$` in the path is legal for curl and special to the shell. Single quotes
+/// are what keep it from being expanded away before curl sees it.
+#[test]
+fn a_dollar_in_the_path_stays_quoted() {
+    let src = "/tmp/dracula-fetch-$NOT_A_VAR.txt"
+    write_ok(src, "quoted")
+    let r = fetchx.fetch_text("file:///tmp/dracula-fetch-$NOT_A_VAR.txt")
+    if !r.ok {
+        test.fail(r.err)
+    }
+    test.assert_eq_str(r.val, "quoted")
+    sys.remove_path(src)
+}
+
+#[test]
+fn failure_leaves_the_cache_and_the_temp_alone() {
+    let cache = "/tmp/dracula-cache-sentinel.txt"
+    write_ok(cache, "keep-me")
+
+    let missing = fetchx.fetch_text("file:///tmp/dracula-fetch-missing-no-such")
+    test.assert(!missing.ok)
+    test.assert(missing.err.len > 0)
+    test.assert_eq_str(sys.read_file(cache), "keep-me")
+    test.assert(sys.exists(fetchx.FETCH_TMP) == 0)
+
+    let empty_path = "/tmp/dracula-fetch-empty.txt"
+    write_ok(empty_path, "")
+    let empty = fetchx.fetch_text("file:///tmp/dracula-fetch-empty.txt")
+    test.assert(!empty.ok)
+    test.assert_eq_str(empty.err, "empty body")
+    test.assert_eq_str(sys.read_file(cache), "keep-me")
+    test.assert(sys.exists(fetchx.FETCH_TMP) == 0)
+
+    sys.remove_path(empty_path)
+    sys.remove_path(cache)
+}

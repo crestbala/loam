@@ -1,0 +1,528 @@
+//! `date` — a calendar for `int` days.
+//!
+//! ```loam
+//! import "std:date"
+//!
+//! let d = date.parse_amfi("31-Mar-2026")
+//! let held = date.days_between(buy_date, d)
+//! ```
+//!
+//! `async.now_ms()` is a monotonic millisecond count and nothing else: there is
+//! no year/month/day type, no parse, no civil-from-days. AMFI's NAV file gives
+//! dates as `DD-Mon-YYYY` (for example `31-Mar-2026`) and every cost rule in a
+//! fund backtest is a counting question — an exit load is 1% "within 365 days",
+//! a SIP is "the first of every month" — so the calendar is load-bearing, not
+//! cosmetic.
+//!
+//! Two representations, on purpose:
+//!
+//! - A **date** is an `int` in `YYYYMMDD` form. Sortable with `<` and `>`,
+//!   comparable with `==`, and legible in a debugger: `20260331` *is* the 31st
+//!   of March 2026. No struct, no boxing, no equal-comparing trap.
+//! - A **day number** is an `int` count of days from 1970-01-01, which is what
+//!   subtraction needs. `days_between` is a subtraction of two day numbers.
+//!
+//! Days are `int` (i32) and not `i64`: `to_days` for any year inside
+//! 0001-01-01..9999-12-31 lands in roughly ±3 million, four orders inside i32.
+//!
+//! The conversions are Howard Hinnant's `days_from_civil` / `civil_from_days`,
+//! the standard algorithms — integer-only, exact for the whole range, and
+//! shift-based rather than table-based, so a leap rule is changed in one place.
+//! The epoch is 1970-01-01 (a Thursday), chosen only because it is conventional.
+//!
+//! Everything is computed in `i64` internally and checked on the way in and out,
+//! because the intermediate `era` terms for a far-future year would overflow
+//! i32 even though the final answer fits.
+//!
+//! Tests: `packages/loam/tests/inlang/date_tests.loam`.
+
+/// Month-name table, in calendar order. `month_of` is the index.
+/// Three-letter forms because that is what AMFI writes.
+let MONTHS: []string = []string {
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+}
+
+/// Day number of 1970-01-01, i.e. the epoch. Named so `to_days` reads as
+/// "days since this", not as a bare `0`.
+let EPOCH_DAY: int = 0
+
+/// Returned by `parse_amfi` on malformed input, and by `to_days` / `from_days`
+/// on an argument that is not a date or a plausible day number.
+///
+/// A sentinel rather than a trap: a bad row in a 20,000-line AMFI file must be
+/// *reported*, and `server/validate.loam` reports it by comparing against this.
+/// A trap would take the whole sync down on one typo, which is the behavior
+/// that makes an app lose money by not running.
+let INVALID: int = 0
+
+/// True when `y` is a leap year in the proleptic Gregorian calendar.
+///
+/// Divisible by 4, except centuries — which are leap only when divisible by
+/// 400. So 1900 is not a leap year and 2000 is.
+fn is_leap(y: int) -> bool {
+    if y % 4 != 0 {
+        return false
+    }
+    if y % 100 != 0 {
+        return true
+    }
+    return y % 400 == 0
+}
+
+/// Days in month `m` (1..12) of year `y`, or 0 when `m` is out of range.
+fn days_in_month(y: int, m: int) -> int {
+    if m < 1 || m > 12 {
+        return 0
+    }
+    if m == 2 {
+        if is_leap(y) {
+            return 29
+        }
+        return 28
+    }
+    if m == 4 || m == 6 || m == 9 || m == 11 {
+        return 30
+    }
+    return 31
+}
+
+/// Days from Jan 1 to the 1st of month `m` in year `y`, for `m` in 1..12.
+///
+/// The month lengths before `m` are accumulated from `days_in_month`, so the
+/// only calendar fact in this file is the leap rule — there is no second table
+/// that can drift out of step with it.
+fn days_before_month(y: int, m: int) -> int {
+    let mut total = 0
+    let mut i = 1
+    while i < m {
+        total = total + days_in_month(y, i)
+        i = i + 1
+    }
+    return total
+}
+
+// --- YYYYMMDD and day numbers --------------------------------------------
+
+/// Year of a `YYYYMMDD` date, or 0 when the argument is not one.
+fn year_of(ymd: int) -> int {
+    return ymd / 10000
+}
+
+/// Month (1..12) of a `YYYYMMDD` date, or 0 when the argument is not one.
+fn month_of(ymd: int) -> int {
+    return (ymd / 100) % 100
+}
+
+/// Day of month (1..31) of a `YYYYMMDD` date, or 0 when the argument is not one.
+fn day_of(ymd: int) -> int {
+    return ymd % 100
+}
+
+/// True when `ymd` is a plausible `YYYYMMDD`: right shape, a real month, and a
+/// day inside that month. `20260230` is rejected; `20260229` is accepted.
+///
+/// This is the gate every parsed date passes, so a `YYYYMMDD` value that reaches
+/// the rest of the app is known to be a date and not a scheme code that looked
+/// like one.
+fn is_valid(ymd: int) -> bool {
+    if ymd <= 0 {
+        return false
+    }
+    let y = year_of(ymd)
+    let m = month_of(ymd)
+    let d = day_of(ymd)
+    if y < 1900 || y > 2200 {
+        return false
+    }
+    if m < 1 || m > 12 {
+        return false
+    }
+    if d < 1 {
+        return false
+    }
+    return d <= days_in_month(y, m)
+}
+
+/// Day number (days since 1970-01-01) for a `YYYYMMDD` date.
+///
+/// Hinnant's `days_from_civil`. The `era` term is what makes the shift
+/// arithmetic work across the 400-year cycle: it re-bases years on March 1st so
+/// February is the *last* month of the cycle and the leap day is the year's
+/// final day, after which the month lengths are a fixed ramp. Every step is
+/// integer, so the result is exact for the whole supported range rather than
+/// accumulating the drift a float day count would.
+///
+/// Returns `INVALID` (0) for a date that is not one, which is also the day
+/// number of 1970-01-01 — deliberate: a caller with a bad row gets the sentinel
+/// and `is_valid` tells it apart from a real epoch date.
+fn to_days(ymd: int) -> int {
+    if !is_valid(ymd) {
+        return INVALID
+    }
+    let y = i64(year_of(ymd))
+    let m = i64(month_of(ymd))
+    let d = i64(day_of(ymd))
+    // Re-base on March: Jan/Feb become months 11/12 of the *previous* year, so
+    // the leap day falls at the end of the cycle rather than the middle.
+    let yy = y - march_base(m)
+    let era = floor_div(yy, 400)
+    let yoe = yy - era * 400
+    let mp = shifted_month(m)
+    let doy = (153 * mp + 2) / 5 + d - 1
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+    let days = era * 146097 + doe - 719468
+    return int_from_i64(days)
+}
+
+/// 1 for Jan/Feb, 0 otherwise: the re-basing offset for `days_from_civil`.
+fn march_base(m: i64) -> i64 {
+    if m <= 2 {
+        return 1
+    }
+    return 0
+}
+
+/// March-based month index: Mar = 0, Apr = 1, ..., Feb = 11.
+fn shifted_month(m: i64) -> i64 {
+    if m > 2 {
+        return m - 3
+    }
+    return m + 9
+}
+
+/// Integer division that rounds toward negative infinity, for the `era` term.
+///
+/// `era` must be a floor, not a truncation, or a date before the epoch lands in
+/// the wrong 400-year block: `-1 / 400` truncates to 0 where the algorithm needs
+/// -1. `%` in Loam takes the sign of the numerator, so the correction is the
+/// usual one.
+fn floor_div(a: i64, b: i64) -> i64 {
+    let q = a / b
+    if a - q * b != 0 && (a < 0) != (b < 0) {
+        return q - 1
+    }
+    return q
+}
+
+/// The `YYYYMMDD` date of a day number. The inverse of `to_days`.
+///
+/// Hinnant's `civil_from_days`, the mirror of the above: shift back to a March
+/// base, take the era and the year-of-era, then invert the month ramp with
+/// `(5 * doy + 2) / 153`, which recovers the March-based month index exactly.
+fn from_days(d: int) -> int {
+    let z = i64(d) + 719468
+    let era = floor_div(z, 146097)
+    let doe = z - era * 146097
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+    let y = yoe + era * 400
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+    let mp = (5 * doy + 2) / 153
+    let d2 = doy - (153 * mp + 2) / 5 + 1
+    let m2 = shifted_month_back(mp)
+    let yy = y + march_base(m2)
+    return int_from_i64(yy * 10000 + m2 * 100 + d2)
+}
+
+/// The calendar month for a March-based month index, the inverse of
+/// `shifted_month`.
+fn shifted_month_back(mp: i64) -> i64 {
+    if mp < 10 {
+        return mp + 3
+    }
+    return mp - 9
+}
+
+/// Narrow an i64 to `int`, trapping if it does not fit.
+///
+/// Every value in this file is inside i32 by construction, so the conversion
+/// cannot fail for a valid date in range; `is_valid` is what keeps it that way.
+fn int_from_i64(v: i64) -> int {
+    return i32(v)
+}
+
+/// Signed days from `a` to `b`: positive when `b` is later.
+///
+/// This is the 365-day exit-load boundary and the holding-period count behind
+/// every per-lot cost, so it is a plain subtraction of day numbers rather than
+/// anything calendar-aware. Returns 0 when either date is invalid.
+fn days_between(a: int, b: int) -> int {
+    if !is_valid(a) || !is_valid(b) {
+        return 0
+    }
+    return to_days(b) - to_days(a)
+}
+
+// --- parsing AMFI's DD-Mon-YYYY ------------------------------------------
+
+/// Index 0..11 of a three-letter month name, or -1 when it is not one.
+///
+/// Compared case-insensitively: AMFI writes `Mar`, but a hand-edited cache or a
+/// differently-cased export should not be a parse failure for a cosmetic
+/// reason.
+fn month_index(s: string) -> int {
+    if s.len < 3 {
+        return -1
+    }
+    let a = lower(s[0])
+    let b = lower(s[1])
+    let c = lower(s[2])
+    let mut i = 0
+    while i < 12 {
+        let nm = MONTHS[i]
+        if lower(nm[0]) == a && lower(nm[1]) == b && lower(nm[2]) == c {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+/// ASCII lowercase of one byte; anything else is returned unchanged.
+fn lower(ch: int) -> int {
+    if ch >= 65 && ch <= 90 {
+        return ch + 32
+    }
+    return ch
+}
+
+/// Parse AMFI's `DD-Mon-YYYY` (for example `31-Mar-2026`) into `YYYYMMDD`.
+///
+/// Returns `INVALID` (0) on anything malformed — a wrong separator, a month
+/// name that is not one, a day outside that month, a year outside 1900..2200 —
+/// rather than guessing. `server/validate.loam` reports the sentinel with its
+/// line number, which is the whole point: a misread date in NAV data becomes a
+/// plausible-looking wrong signal, and there is no way to notice that later.
+///
+/// The shape is fixed: two digits, a separator, three letters, a separator,
+/// four digits. AMFI has used it for years and a looser parser would only make
+/// a malformed row look like a good one.
+fn parse_amfi(s: string) -> int {
+    // 11 bytes: "31-Mar-2026".
+    if s.len != 11 {
+        return INVALID
+    }
+    if s[2] != 45 || s[6] != 45 {
+        return INVALID
+    }
+    let d = digits2(s, 0)
+    if d < 0 {
+        return INVALID
+    }
+    let mi = month_index(slice(s, 3, 6))
+    if mi < 0 {
+        return INVALID
+    }
+    let y = digits4(s, 7)
+    if y < 0 {
+        return INVALID
+    }
+    let m = mi + 1
+    let ymd = y * 10000 + m * 100 + d
+    if !is_valid(ymd) {
+        return INVALID
+    }
+    return ymd
+}
+
+/// Two decimal digits at `at`, or -1 if either byte is not a digit.
+fn digits2(s: string, at: int) -> int {
+    if at + 1 >= s.len {
+        return -1
+    }
+    let a = s[at]
+    let b = s[at + 1]
+    if a < 48 || a > 57 || b < 48 || b > 57 {
+        return -1
+    }
+    return (a - 48) * 10 + (b - 48)
+}
+
+/// Four decimal digits at `at`, or -1 if any byte is not a digit.
+fn digits4(s: string, at: int) -> int {
+    if at + 3 >= s.len {
+        return -1
+    }
+    let mut n = 0
+    let mut i = 0
+    while i < 4 {
+        let ch = s[at + i]
+        if ch < 48 || ch > 57 {
+            return -1
+        }
+        n = n * 10 + (ch - 48)
+        i = i + 1
+    }
+    return n
+}
+
+/// The bytes of `s` in `[from, to)`, as a fresh string.
+///
+/// `string` is bytes and indexable, but there is no slice operator that returns
+/// a string, so this is the one-liner every parser in the tree carries.
+fn slice(s: string, from: int, to: int) -> string {
+    let mut b = []int {}
+    let mut i = from
+    while i < to {
+        if i >= s.len {
+            break
+        }
+        push(b, s[i])
+        i = i + 1
+    }
+    return string_from_bytes(b)
+}
+
+// --- calendar arithmetic -------------------------------------------------
+
+/// Day of week for a `YYYYMMDD` date: 0 = Sunday .. 6 = Saturday, or -1 when
+/// the date is not one.
+///
+/// 1970-01-01 was a Thursday, which is day number 3 of the week; AMFI NAVs are
+/// published on business days, so this is what lets the SIP scheduler skip a
+/// weekend and the data page say "last sync was Monday".
+///
+/// The modulo is corrected for a negative day number, since Loam's `%` takes
+/// the sign of the numerator and a pre-1970 date would otherwise come back
+/// negative.
+fn weekday(ymd: int) -> int {
+    if !is_valid(ymd) {
+        return -1
+    }
+    let d = to_days(ymd) + 4
+    let mut r = d % 7
+    if r < 0 {
+        r = r + 7
+    }
+    return r
+}
+
+/// True when `ymd` falls on a Saturday or Sunday.
+fn is_weekend(ymd: int) -> bool {
+    let w = weekday(ymd)
+    return w == 0 || w == 6
+}
+
+/// `ymd` shifted by `n` calendar months, clamped to the last day of the target
+/// month.
+///
+/// Clamping is the point: a SIP on the 31st has no 31st to run on in February
+/// or April, and the convention every fund house uses is the last day of the
+/// month rather than rolling into the next one. `add_months(2026-01-31, 1)` is
+/// 2026-02-28, not 2026-03-03.
+///
+/// The year is carried by dividing the month index by 12 with a floor, so a
+/// negative `n` before January works the same way as a positive one after
+/// December.
+fn add_months(ymd: int, n: int) -> int {
+    if !is_valid(ymd) {
+        return INVALID
+    }
+    let y = year_of(ymd)
+    let m = month_of(ymd)
+    let d = day_of(ymd)
+    let total = i64(y) * 12 + i64(m - 1) + i64(n)
+    let ny = i64(floor_div(total, 12))
+    let nm = total - ny * 12 + 1
+    let last = days_in_month(int_from_i64(ny), int_from_i64(nm))
+    let mut nd = d
+    if nd > last {
+        nd = last
+    }
+    return int_from_i64(ny * 10000 + nm * 100 + i64(nd))
+}
+
+/// The first day of the month containing `ymd`.
+///
+/// What the SIP scheduler steps by: advance a month, reset to day 1, then walk
+/// forward to the next published NAV.
+fn month_start(ymd: int) -> int {
+    if !is_valid(ymd) {
+        return INVALID
+    }
+    return year_of(ymd) * 10000 + month_of(ymd) * 100 + 1
+}
+
+/// The last day of the month containing `ymd`.
+fn month_end(ymd: int) -> int {
+    if !is_valid(ymd) {
+        return INVALID
+    }
+    return year_of(ymd) * 10000 + month_of(ymd) * 100 + days_in_month(year_of(ymd), month_of(ymd))
+}
+
+/// The whole calendar year of `ymd`, as `YYYY0101`.
+fn year_start(ymd: int) -> int {
+    if !is_valid(ymd) {
+        return INVALID
+    }
+    return year_of(ymd) * 10000 + 101
+}
+
+/// `ymd` shifted by `n` whole years. 29 February clamps to 28 February, the
+/// same rule `add_months` uses.
+fn add_years(ymd: int, n: int) -> int {
+    return add_months(ymd, n * 12)
+}
+
+// --- formatting ----------------------------------------------------------
+
+/// Zero-pad `v` to `width` decimal digits, appended to `acc`.
+fn pad_into(acc: string, v: int, width: int) -> string {
+    let mut digits = "{{v}}"
+    let mut pad = width - digits.len
+    let mut out = acc
+    while pad > 0 {
+        out = "{{out}}0"
+        pad = pad - 1
+    }
+    return "{{out}}{{digits}}"
+}
+
+/// `YYYYMMDD` as `DD-Mon-YYYY`, the form AMFI writes and the form a log line
+/// should carry. `INVALID` formats as `--` so a missing date is obvious in a
+/// report rather than reading as a real one.
+fn fmt_date(ymd: int) -> string {
+    if !is_valid(ymd) {
+        return "--"
+    }
+    let out = pad_into("", day_of(ymd), 2)
+    return "{{out}}-{{MONTHS[month_of(ymd) - 1]}}-{{year_of(ymd)}}"
+}
+
+/// `YYYYMMDD` as `YYYY-MM-DD`, for CSV headers and URLs.
+fn fmt_iso(ymd: int) -> string {
+    if !is_valid(ymd) {
+        return "--"
+    }
+    let out = pad_into("", year_of(ymd), 4)
+    let out2 = pad_into("{{out}}-", month_of(ymd), 2)
+    return pad_into("{{out2}}-", day_of(ymd), 2)
+}
+
+/// Parse `YYYY-MM-DD` back into `YYYYMMDD`, for a URL segment or a config file.
+fn parse_iso(s: string) -> int {
+    if s.len != 10 {
+        return INVALID
+    }
+    if s[4] != 45 || s[7] != 45 {
+        return INVALID
+    }
+    let y = digits4(s, 0)
+    if y < 0 {
+        return INVALID
+    }
+    let m = digits2(s, 5)
+    if m < 0 {
+        return INVALID
+    }
+    let d = digits2(s, 8)
+    if d < 0 {
+        return INVALID
+    }
+    let ymd = y * 10000 + m * 100 + d
+    if !is_valid(ymd) {
+        return INVALID
+    }
+    return ymd
+}

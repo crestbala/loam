@@ -1,0 +1,240 @@
+//! NSE daily closes: the capital-market bhavcopy in the UDiFF layout.
+//!
+//! Source, one zip per trading day, public, no key:
+//!
+//! ```
+//! https://nsearchives.nseindia.com/content/cm/BhavCopy_NSE_CM_0_0_0_<YYYYMMDD>_F_0000.csv.zip
+//! ```
+//!
+//! The zip holds one comma-separated file with a header row. Fields are
+//! found by header name, not position. The ones read here:
+//!
+//! | Field         | Meaning                                  |
+//! |---------------|------------------------------------------|
+//! | `TradDt`      | trade date, `YYYY-MM-DD`                 |
+//! | `TckrSymb`    | NSE symbol, e.g. `RELIANCE`, `M&M`       |
+//! | `SctySrs`     | series; only `EQ` is kept                |
+//! | `FinInstrmNm` | security name                            |
+//! | `ISIN`        | ISIN                                     |
+//! | `ClsPric`     | official closing price, rupees, 2 places |
+//!
+//! Closes are as published: not adjusted for splits, bonuses, or dividends.
+//! This URL has files from 2 Jan 2024. A day with no session (weekend or
+//! exchange holiday) answers 404 with an HTML page, which is "closed", not
+//! a failure. The CDN resets a request that carries no browser User-Agent.
+
+import "std:sys"
+import "../core/csvx.loam"
+import "validate.loam"
+import "fetchx.loam"
+
+struct Bhav {
+    ok: int,
+    err: string,
+    day: int,
+    lines: []int,
+    symbols: []string,
+    names: []string,
+    isins: []string,
+    closes: []i64,
+    bad_lines: []int,
+    bad_symbols: []string,
+    bad_reasons: []string,
+}
+
+struct Got {
+    /// `0` a body, `1` no session that day, `2` failure.
+    state: int,
+    body: string,
+    err: string,
+}
+
+let BHAV_TMP: string = "/tmp/dracula-bhav.zip"
+
+fn bhav_url(ymd: int) -> string {
+    return "https://nsearchives.nseindia.com/content/cm/BhavCopy_NSE_CM_0_0_0_{{ymd}}_F_0000.csv.zip"
+}
+
+/// First day this layout exists at `bhav_url`.
+fn first_day() -> int {
+    return 20240102
+}
+
+fn empty_bhav(err: string) -> Bhav {
+    return Bhav {
+        ok: 0,
+        err: err,
+        day: 0,
+        lines: []int {},
+        symbols: []string {},
+        names: []string {},
+        isins: []string {},
+        closes: []i64 {},
+        bad_lines: []int {},
+        bad_symbols: []string {},
+        bad_reasons: []string {},
+    }
+}
+
+/// Split one line on `,`. The file has no quoting.
+fn split_commas(line: string) -> []string {
+    let mut out = []string {}
+    let mut start = 0
+    let mut i = 0
+    while i < line.len {
+        if line[i] == 44 {
+            push(out, csvx.trim(csvx.slice(line, start, i)))
+            start = i + 1
+        }
+        i = i + 1
+    }
+    push(out, csvx.trim(csvx.slice(line, start, line.len)))
+    return out
+}
+
+fn col(head: []string, name: string) -> int {
+    let mut i = 0
+    while i < head.len {
+        if head[i] == name {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+/// `YYYY-MM-DD` as `YYYYMMDD`, or 0.
+fn iso_day(s: string) -> int {
+    if s.len != 10 || s[4] != 45 || s[7] != 45 {
+        return 0
+    }
+    let mut n = 0
+    let mut i = 0
+    while i < 10 {
+        if i != 4 && i != 7 {
+            let c = s[i]
+            if c < 48 || c > 57 {
+                return 0
+            }
+            n = n * 10 + (c - 48)
+        }
+        i = i + 1
+    }
+    return n
+}
+
+/// Parse one bhavcopy for `want` (`YYYYMMDD`). A file without the header
+/// fields, or with a row for another trade date, is refused whole. A row
+/// with a bad close is kept in `bad_*` with its reason.
+fn parse(text: string, want: int) -> Bhav {
+    let lines = csvx.split_lines(text)
+    if lines.len == 0 {
+        return empty_bhav("empty file")
+    }
+    // Early 2024 files end the header with a comma: an empty last name
+    // that no data row carries. Trailing empty names are not fields.
+    let raw_head = split_commas(lines[0])
+    let mut named = raw_head.len
+    while named > 0 && raw_head[named - 1].len == 0 {
+        named = named - 1
+    }
+    let mut head = []string {}
+    let mut h = 0
+    while h < named {
+        push(head, raw_head[h])
+        h = h + 1
+    }
+    let c_day = col(head, "TradDt")
+    let c_sym = col(head, "TckrSymb")
+    let c_srs = col(head, "SctySrs")
+    let c_name = col(head, "FinInstrmNm")
+    let c_isin = col(head, "ISIN")
+    let c_close = col(head, "ClsPric")
+    if c_day < 0 || c_sym < 0 || c_srs < 0 || c_name < 0 || c_isin < 0 || c_close < 0 {
+        return empty_bhav("not a bhavcopy header")
+    }
+    let mut out = empty_bhav("")
+    out.day = want
+    let mut i = 1
+    while i < lines.len {
+        let line_no = i + 1
+        let raw = csvx.trim(lines[i])
+        if raw.len == 0 {
+            i = i + 1
+            continue
+        }
+        let f = split_commas(raw)
+        if f.len != head.len && f.len != raw_head.len {
+            push(out.bad_lines, line_no)
+            push(out.bad_symbols, "")
+            push(out.bad_reasons, "field count")
+            i = i + 1
+            continue
+        }
+        let day = iso_day(f[c_day])
+        if day != want {
+            return empty_bhav("the file is for another trade date")
+        }
+        if f[c_srs] != "EQ" {
+            i = i + 1
+            continue
+        }
+        let sym = f[c_sym]
+        let px = validate.paise_of(f[c_close])
+        if sym.len == 0 {
+            push(out.bad_lines, line_no)
+            push(out.bad_symbols, "")
+            push(out.bad_reasons, "no symbol")
+        } else if px <= i64(0) {
+            push(out.bad_lines, line_no)
+            push(out.bad_symbols, sym)
+            push(out.bad_reasons, "bad close")
+        } else {
+            push(out.lines, line_no)
+            push(out.symbols, sym)
+            push(out.names, f[c_name])
+            push(out.isins, f[c_isin])
+            push(out.closes, px)
+        }
+        i = i + 1
+    }
+    if out.symbols.len == 0 && out.bad_lines.len == 0 {
+        return empty_bhav("no EQ rows")
+    }
+    out.ok = 1
+    return out
+}
+
+/// Download and unzip one day. The zip is removed on every path.
+fn fetch_day(ymd: int) -> Got {
+    let tmp = BHAV_TMP
+    let url = bhav_url(ymd)
+    let ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) dracula"
+    let cmd = "curl -sS --max-time 60 -A {{fetchx.sh_quote(ua)}} -o {{fetchx.sh_quote(tmp)}} -w '%{http_code}' {{fetchx.sh_quote(url)}} 2>/dev/null"
+    let code = csvx.trim(sys.exec(cmd))
+    let st = sys.exec_status()
+    if st != 0 {
+        sys.remove_path(tmp)
+        return Got { state: 2, body: "", err: "fetch failed: {{st}}" }
+    }
+    if code == "404" {
+        sys.remove_path(tmp)
+        return Got { state: 1, body: "", err: "" }
+    }
+    if code != "200" {
+        sys.remove_path(tmp)
+        return Got { state: 2, body: "", err: "HTTP {{code}}" }
+    }
+    let body = sys.exec("unzip -p {{fetchx.sh_quote(tmp)}} 2>/dev/null > {{fetchx.sh_quote(tmp)}}.csv; echo $?")
+    let unz = csvx.trim(body)
+    let csv = sys.read_file("{{tmp}}.csv")
+    sys.remove_path(tmp)
+    sys.remove_path("{{tmp}}.csv")
+    if unz != "0" {
+        return Got { state: 2, body: "", err: "the zip did not open" }
+    }
+    if csv.len == 0 {
+        return Got { state: 2, body: "", err: "empty file" }
+    }
+    return Got { state: 0, body: csv, err: "" }
+}

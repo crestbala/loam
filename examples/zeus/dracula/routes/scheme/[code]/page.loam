@@ -1,0 +1,131 @@
+import "std:router"
+import "std:spacing"
+import "std:zeus"
+import "std:zui"
+import "../../../components/book.loam" as book
+import "../../../components/present.loam" as present
+import "../../../components/ui.loam" as ui
+
+fn signal_spec() -> []TableCol {
+    let mut h = []TableCol {}
+    push(h, TableCol { title: "Signal date", width: 0 })
+    push(h, TableCol { title: "Side", width: 0 })
+    push(h, TableCol { title: "Fill", width: 0 })
+    return h
+}
+
+fn paint_missing(code: string) {
+    zui.Empty(icon = zeus.IC_INFO, title = "No NAV file for {{code}}",
+              body = "This code is not in the cached catalog. Search by name on Charts.") {
+        zui.Button(label = "Search funds", size = zeus.SIZE.Sm, on_click = fn() { router.navigate("/scheme") })
+    }
+}
+
+fn paint_chart() {
+    let labels = book.chart_labels()
+    let vals = book.chart_vals()
+    let names = book.chart_names()
+    if labels.len == 0 || names.len == 0 || vals.len != labels.len * names.len {
+        zeus.Text("No published NAV in this range.")
+        return
+    }
+    let first = labels[0]
+    let last = labels[labels.len - 1]
+    let n = labels.len
+    zui.Card(title = "NAV history, rupees", subtitle = "{{first}} to {{last}}. {{n}} points: the last NAV in each bucket and every signal date.") {
+        zui.LineChart(labels, names, vals, 720, 300, fit = true, decimals = book.chart_decimals(),
+                      label_every = 0, dots = false)
+    }
+}
+
+fn paint_scheme(code: string) {
+    let st = book.focus_state()
+    if st == 0 {
+        zeus.Text("Loading the NAV history for {{code}}.")
+        return
+    }
+    if st == 3 {
+        ui.ServerDown(fn() { book.retry() })
+        return
+    }
+    if st == 2 {
+        paint_missing(code)
+        return
+    }
+    let name = book.scheme_title()
+    if name.len > 0 {
+        zui.Title(name)
+    }
+    zui.Row(8) {
+        zui.Badge(code, zeus.TINT.Mute)
+        let dormant = book.scheme_dormant_text()
+        if dormant.len > 0 {
+            zui.Badge("Dormant, history kept", zeus.TINT.Warn)
+        }
+        if book.watching(code) {
+            zui.Badge("On Holdings", zeus.TINT.Ok)
+        } else {
+            zui.Button(label = "Add to Holdings", size = zeus.SIZE.Sm, on_click = fn() { book.add_watch(code) })
+        }
+    }
+    let status = book.scheme_status()
+    if status.len > 0 {
+        zeus.Text(status, wrap = 1)
+    }
+    let gap = book.scheme_gap_text()
+    if gap.len > 0 {
+        zui.Row(8) {
+            zeus.Text(gap, wrap = 1)
+            if book.gap_open() {
+                zui.Button(label = "Acknowledge gap", size = zeus.SIZE.Sm, on_click = fn() { book.acknowledge() })
+            }
+        }
+    }
+    paint_chart()
+    ui.StatGrid(book.stat_cells())
+    zui.Title("200-day average signals")
+    let cells = book.history_cells()
+    if cells.len == 0 {
+        zeus.Text("The 200-day average has not signalled on this history.")
+        return
+    }
+    zui.TableCols(signal_spec())
+    let rows = cells.len / 3
+    let mut r = 0
+    while r < rows {
+        zui.TableRowCols(present.row_at(cells, 3, r), signal_spec(), zebra = true)
+        r = r + 1
+    }
+}
+
+fn page(p: Params) {
+    let code = router.param(p, "code")
+    zui.Column(spacing.SECTION) {
+        zui.Row(8) {
+            zui.Heading("Scheme")
+            zui.Grow()
+            zui.Button(label = "Search funds", look = zeus.LOOK.Ghost, on_click = fn() { router.navigate("/scheme") })
+        }
+        if book.started() {
+            book.focus(code)
+            zui.Segmented(book.range_signal(), present.range_labels())
+            zeus.effect(fn() { book.range_tick() })
+            zui.Match(book.scheme_generation(), fn(g) {
+                if g >= 0 {
+                    paint_scheme(code)
+                }
+            })
+            zui.Body("The line keeps the last published NAV in each bucket and every bar that produced a signal. The 200-day average starts where it has 200 prints; before that it is a gap, not a zero. Nothing here is an order.")
+        } else {
+            if code.len > 0 {
+                zeus.Text(code)
+            }
+            zeus.Text("Loading")
+        }
+    }
+}
+
+fn meta(p: Params) -> Meta {
+    let code = router.param(p, "code")
+    return Meta { title: "Scheme {{code}}" }
+}

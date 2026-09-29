@@ -1,0 +1,43 @@
+//! The series is two columns of the same length, and a gap is a step of
+//! more than five calendar days. A weekend is not one.
+
+import "std:test"
+import "std:date"
+import "../core/series.loam"
+
+#[test]
+fn unequal_columns_keep_the_shared_prefix() {
+    let mut dates = []int {}
+    push(dates, 20260101)
+    push(dates, 20260102)
+    push(dates, 20260105)
+    let mut navs = []i64 {}
+    push(navs, i64(1000))
+    push(navs, i64(1100))
+    let s = series.build("1001", dates, navs)
+    test.assert_eq_str(s.code, "1001")
+    test.assert_eq_int(series.len(s), 2)
+    test.assert_eq_int(s.dates[1], 20260102)
+    test.assert(s.navs[1] == i64(1100))
+}
+
+#[test]
+fn a_weekend_is_not_a_gap() {
+    let fri = 20260102
+    let mon = date.from_days(date.to_days(fri) + 3)
+    let mut dates = []int {}
+    push(dates, fri)
+    push(dates, mon)
+    test.assert_eq_int(series.step_days(dates, 1), 3)
+    test.assert(!series.is_gap(dates, 1))
+    test.assert(!series.is_gap(dates, 0))
+}
+
+#[test]
+fn six_days_is_a_gap() {
+    let mut dates = []int {}
+    push(dates, 20260101)
+    push(dates, 20260107)
+    test.assert_eq_int(series.step_days(dates, 1), 6)
+    test.assert(series.is_gap(dates, 1))
+}

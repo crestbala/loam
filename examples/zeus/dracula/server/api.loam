@@ -1,0 +1,238 @@
+//! RPC contracts for the data path.
+//!
+//! `#[proto]` fields are `int`, `string`, or a list of those. A NAV series
+//! crosses as `dates` (`YYYYMMDD`) plus `navs` (paise, decimal strings): an
+//! `int` is i32, and paise must not have to fit in one.
+//!
+//! A reply the client has to tell apart from a dead server carries
+//! `live: 1`. `call_async` hands a transport failure to the callback as an
+//! empty body, and an all-default message also encodes to nothing.
+//!
+//! These are names and codecs only. The handlers live in `server/main.loam`,
+//! which a client build does not import. Calling a `#[server] fn` from the UI
+//! traps; nothing in this file is one.
+
+import "std:http"
+
+#[proto]
+struct SyncReq {
+}
+
+#[proto]
+struct SyncResp {
+    ok: int,
+    sync_id: int,
+    accepted: int,
+    rejected: int,
+    warnings: int,
+    dormant: int,
+    err: string,
+}
+
+#[proto]
+struct BackfillReq {
+    frm: string,
+    to: string,
+}
+
+#[proto]
+struct StatusReq {
+}
+
+#[proto]
+struct StatusResp {
+    live: int,
+    found: int,
+    sync_id: int,
+    stamp: string,
+    url: string,
+    kind: string,
+    accepted: int,
+    rejected: int,
+    warnings: int,
+    dormant: int,
+    gaps: int,
+}
+
+#[proto]
+struct RejectsReq {
+}
+
+#[proto]
+struct RejectsResp {
+    lines: []string,
+}
+
+#[proto]
+struct SchemeReq {
+    code: string,
+}
+
+#[proto]
+struct SchemeResp {
+    found: int,
+    code: string,
+    name: string,
+    dormant: int,
+    gap_from: int,
+    gap_ack: int,
+    dates: []int,
+    navs: []string,
+}
+
+/// A bounded page of the cached catalog. `query` matches code or name;
+/// `limit` is capped by the server. `total` is every match, not the page.
+#[proto]
+struct CatalogReq {
+    query: string,
+    offset: int,
+    limit: int,
+}
+
+#[proto]
+struct CatalogResp {
+    live: int,
+    total: int,
+    codes: []string,
+    names: []string,
+    last_dates: []int,
+    last_navs: []string,
+    dormant: []int,
+}
+
+#[proto]
+struct AckReq {
+    code: string,
+}
+
+#[proto]
+struct AckResp {
+    ok: int,
+}
+
+#[proto]
+struct RollbackReq {
+}
+
+#[proto]
+struct RollbackResp {
+    ok: int,
+}
+
+/// Stock closes. A separate cache from the NAV files; nothing here is a fund.
+#[proto]
+struct StockSearchReq {
+    query: string,
+    offset: int,
+    limit: int,
+}
+
+#[proto]
+struct StockSearchResp {
+    live: int,
+    total: int,
+    symbols: []string,
+    names: []string,
+    last_dates: []int,
+    last_closes: []string,
+}
+
+#[proto]
+struct StockReq {
+    symbol: string,
+}
+
+#[proto]
+struct StockResp {
+    live: int,
+    found: int,
+    symbol: string,
+    name: string,
+    isin: string,
+    dates: []int,
+    closes: []string,
+}
+
+/// One trading day, `YYYY-MM-DD`.
+#[proto]
+struct StockDayReq {
+    day: string,
+}
+
+#[proto]
+struct StockDayResp {
+    live: int,
+    ok: int,
+    closed: int,
+    accepted: int,
+    rejected: int,
+    warnings: int,
+    err: string,
+}
+
+#[proto]
+struct StockStatusReq {
+}
+
+#[proto]
+struct StockStatusResp {
+    live: int,
+    found: int,
+    fetch_id: int,
+    stamp: string,
+    url: string,
+    day: int,
+    accepted: int,
+    rejected: int,
+    warnings: int,
+    symbols: int,
+    rejects: []string,
+}
+
+fn stock_search_rpc() -> string {
+    return "Stocks.Search"
+}
+
+fn stock_rpc() -> string {
+    return "Stocks.Series"
+}
+
+fn stock_day_rpc() -> string {
+    return "Stocks.Day"
+}
+
+fn stock_status_rpc() -> string {
+    return "Stocks.Status"
+}
+
+fn sync_rpc() -> string {
+    return "Data.Sync"
+}
+
+fn backfill_rpc() -> string {
+    return "Data.Backfill"
+}
+
+fn status_rpc() -> string {
+    return "Data.Status"
+}
+
+fn rejects_rpc() -> string {
+    return "Data.Rejects"
+}
+
+fn scheme_rpc() -> string {
+    return "Data.Scheme"
+}
+
+fn catalog_rpc() -> string {
+    return "Data.Catalog"
+}
+
+fn ack_rpc() -> string {
+    return "Data.AckGap"
+}
+
+fn rollback_rpc() -> string {
+    return "Data.Rollback"
+}

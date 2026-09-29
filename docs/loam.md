@@ -90,7 +90,9 @@ loam/
   bin/loam-fmt     formatter (one style, no options)
 ```
 
-Std modules today: `fmt` (print), `zeus` (UI), `http`, `maya` (tiny 3D),
+Std modules today: `fmt` (print), `math` (`f64` elementary functions), `date`
+(`YYYYMMDD` calendar and day numbers), `zeus`
+(UI), `http`, `maya` (tiny 3D),
 `thread` (OS threads + `Chan<T>` for CPU-bound work; Send discipline keeps
 workers off module state — native/iOS/Android only, wasm `spawn` is a no-op).
 
@@ -108,8 +110,10 @@ Three import forms, one per kind of dependency:
 | `import "pkg:name"` | `vendor/name/name.loam`, searched upward from the entry | vendored third-party code |
 
 The `std:` search path is a real path, not "`std/` next to the compiler".
-`packages/loam/std/` holds the language core (`fmt`, `net`, `sys`, `thread`, `math`,
-`str`, `time`, `kv`, `json`, `result`, `test`); `zeus`, `http`, and `maya` are
+`packages/loam/std/` holds the language core (`async`, `date`, `fmt`, `font`,
+`json`, `kv`, `map`, `math`, `net`, `result`, `sys`, `test`, `thread`,
+`unicode`);
+`zeus`, `http`, and `maya` are
 **frameworks** that live outside `loam/` and are found because `LOAM_PATH`
 names their roots (`packages/zeus/std/zeus.loam`, `packages/http/std/http.loam`, …). Language std
 is searched first, so a framework cannot shadow `std:fmt`. Relative imports

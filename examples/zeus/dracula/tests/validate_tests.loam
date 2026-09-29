@@ -1,0 +1,76 @@
+//! `paise_of` and `review`, with no files in the way.
+//!
+//! The amounts are small enough to check by hand. 100.005 rupees is 10000.5
+//! paise and rounds away from zero to 10001. A move of exactly 20% is not a
+//! jump; one paisa more is.
+
+import "std:test"
+import "../server/validate.loam"
+
+#[test]
+fn paise_parses_and_rounds() {
+    test.assert(validate.paise_of("100.0000") == i64(10000))
+    test.assert(validate.paise_of("50.0000") == i64(5000))
+    test.assert(validate.paise_of("99.5000") == i64(9950))
+    test.assert(validate.paise_of("100.0050") == i64(10001))
+    test.assert(validate.paise_of("100.0049") == i64(10000))
+    test.assert(validate.paise_of("0.00") == i64(0))
+    test.assert(validate.paise_of("  12.30 ") == i64(1230))
+    test.assert(validate.paise_of("N.A.") == i64(-1))
+    test.assert(validate.paise_of("-") == i64(-1))
+    test.assert(validate.paise_of("") == i64(-1))
+    test.assert(validate.paise_of("12.3.4") == i64(-1))
+}
+
+#[test]
+fn first_point_and_the_threshold() {
+    let name = "Sample Equity Fund - Direct Plan - Growth"
+    let first = validate.review(0, i64(0), "", 20260401, i64(10000), name)
+    test.assert_eq_int(first.accept, 1)
+    test.assert_eq_int(first.warn, 0)
+
+    let exact = validate.review(20260401, i64(10000), name, 20260402, i64(12000), name)
+    test.assert_eq_int(exact.accept, 1)
+    test.assert_eq_int(exact.warn, 0)
+
+    let over = validate.review(20260401, i64(10000), name, 20260402, i64(12001), name)
+    test.assert_eq_int(over.accept, 0)
+    test.assert_eq_str(over.reason, "nav jump")
+}
+
+#[test]
+fn a_plan_change_is_a_warning_not_a_reject() {
+    let prev = "Sample Equity Fund - Direct Plan - Growth"
+    let now = "Sample Equity Fund - Regular Plan - IDCW"
+    let v = validate.review(20260401, i64(10000), prev, 20260402, i64(13000), now)
+    test.assert_eq_int(v.accept, 1)
+    test.assert_eq_int(v.warn, 1)
+    test.assert_eq_str(v.reason, "nav jump on plan change")
+}
+
+#[test]
+fn sequence_and_gaps() {
+    let name = "Sample Equity Fund - Direct Plan - Growth"
+    let dup = validate.review(20260401, i64(10000), name, 20260401, i64(10100), name)
+    test.assert_eq_str(dup.reason, "duplicate date")
+
+    let old = validate.review(20260402, i64(10000), name, 20260401, i64(9900), name)
+    test.assert_eq_str(old.reason, "out of sequence")
+
+    let bad_nav = validate.review(0, i64(0), "", 20260401, i64(-1), name)
+    test.assert_eq_str(bad_nav.reason, "bad nav")
+
+    let bad_date = validate.review(0, i64(0), "", 0, i64(10000), name)
+    test.assert_eq_str(bad_date.reason, "bad date")
+
+    // 1 Apr to 6 Apr is five calendar days. The flag starts at six.
+    let five = validate.review(20260401, i64(10000), name, 20260406, i64(10100), name)
+    test.assert_eq_int(five.accept, 1)
+    test.assert_eq_int(five.gap, 0)
+
+    let six = validate.review(20260401, i64(10000), name, 20260407, i64(10100), name)
+    test.assert_eq_int(six.accept, 1)
+    test.assert_eq_int(six.warn, 1)
+    test.assert_eq_int(six.gap, 1)
+    test.assert_eq_str(six.reason, "gap")
+}

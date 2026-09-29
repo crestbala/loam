@@ -1,0 +1,91 @@
+//! Download a URL to a string, via curl.
+//!
+//! `std:http` speaks gRPC, not an AMFI text file, and `std:net` has TCP with
+//! no HTTP/1.1 framing. The daily NAV file is a plain GET. curl already does
+//! that, including TLS, so this is a thin seam over
+//! `curl -sS --max-time 90` rather than a second HTTP stack. A week of the
+//! history report is a few megabytes and sometimes takes longer than half
+//! a minute.
+//!
+//! The body is written to a temporary file and read back, instead of being
+//! captured from curl's stdout. `sys.exec` keeps at most 256KB of stdout, and
+//! the daily file is several times that; a truncated NAV file would look like
+//! a successful sync that ended early. `sys.read_file` in turn refuses a file
+//! over 16MB and returns empty — that case is reported as its own failure,
+//! not as an empty body, because "empty" and "too big to read" ask for
+//! different responses.
+//!
+//! A non-zero curl status, an empty body, or a body this process cannot read
+//! is a failure. This function never writes the caller's cache. On every
+//! path, including failure, the temporary file is removed, so a bad run
+//! cannot be mistaken for a file the cache should adopt.
+
+import "std:sys"
+import "std:result"
+
+/// Where curl writes. Removed before `fetch_text` returns, on success and
+/// on failure. Not the cache.
+let FETCH_TMP: string = "/tmp/dracula-fetch.body"
+
+/// Wrap `s` in single quotes for the shell, with an embedded `'` written as
+/// the usual `'\''` sequence. A URL is data; it must not be able to end the
+/// quoted string early.
+fn sh_quote(s: string) -> string {
+    let mut b = []int {}
+    push(b, 39)
+    let mut i = 0
+    while i < s.len {
+        if s[i] == 39 {
+            push(b, 39)
+            push(b, 92)
+            push(b, 39)
+            push(b, 39)
+        } else {
+            push(b, s[i])
+        }
+        i = i + 1
+    }
+    push(b, 39)
+    return string_from_bytes(b)
+}
+
+/// True when `path` exists and is not empty. `test -s` is a status, and its
+/// stdout is irrelevant; the status is what the caller checks.
+fn nonempty(path: string) -> bool {
+    let probe = sys.exec("test -s {{sh_quote(path)}}")
+    let st = sys.exec_status()
+    if probe.len < 0 {
+        return false
+    }
+    return st == 0
+}
+
+/// GET `url`. `ok` is false when curl fails, the body is empty, or the body
+/// is larger than `sys.read_file` will load. The value is the body text.
+///
+/// The temporary download is removed before returning. A caller that keeps a
+/// cache should write that cache only after reading a successful result.
+fn fetch_text(url: string) -> Res<string> {
+    let tmp = FETCH_TMP
+    // stderr is discarded. `-S` would print curl's own message, and a missing
+    // file is a result we return, not a line on the process's stderr.
+    let cmd = "curl -sS --max-time 90 --output {{sh_quote(tmp)}} {{sh_quote(url)}} 2>/dev/null"
+    let out = sys.exec(cmd)
+    let st = sys.exec_status()
+    // `out` is curl's stdout, which `--output` leaves empty. Reading it keeps
+    // the call in the function; the body is the file.
+    if st != 0 || out.len < 0 {
+        sys.remove_path(tmp)
+        return result.err("fetch failed: {{st}}", "")
+    }
+    if !nonempty(tmp) {
+        sys.remove_path(tmp)
+        return result.err("empty body", "")
+    }
+    let body = sys.read_file(tmp)
+    sys.remove_path(tmp)
+    if body.len == 0 {
+        return result.err("body exceeds read limit", "")
+    }
+    return result.ok(body)
+}

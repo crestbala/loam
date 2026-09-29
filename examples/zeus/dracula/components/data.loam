@@ -1,0 +1,329 @@
+//! Sync status and rejected rows from `Data.Status` and `Data.Rejects`.
+//!
+//! `start` is called from `app.loam` before `zeus.App`. `call_async` hands a
+//! transport failure or a timeout to the callback as an empty body. A
+//! status reply always carries `live: 1`, so an empty body there is a dead
+//! server, and the page says so instead of loading forever.
+
+import "std:date"
+import "std:http"
+import "std:zeus"
+import "../server/api.loam"
+import "present.loam" as present
+
+let mut gen: Signal<int> = Signal { id: 0 }
+let mut from_input: Signal<string> = Signal { id: 0 }
+let mut to_input: Signal<string> = Signal { id: 0 }
+let mut phase = 0
+let mut status_done = 0
+let mut rejects_done = 0
+let mut status_line = ""
+let mut reject_lines = []string {}
+let mut sync_err = ""
+let mut walking = 0
+let mut walk_i = 0
+let mut walk_days = []int {}
+let mut progress = ""
+let mut down = 0
+let mut stat_texts = []string {}
+
+fn started() -> bool {
+    return gen.id != 0
+}
+
+fn load_gen() -> Signal<int> {
+    return gen
+}
+
+fn from_field() -> Signal<string> {
+    return from_input
+}
+
+fn to_field() -> Signal<string> {
+    return to_input
+}
+
+fn progress_text() -> string {
+    return progress
+}
+
+fn ready() -> bool {
+    return phase == 1
+}
+
+fn status_text() -> string {
+    return status_line
+}
+
+/// The last status reply was a dead server.
+fn server_down() -> bool {
+    return down == 1
+}
+
+/// Label, value, caption triples for the last fetch.
+fn stat_cells() -> []string {
+    return stat_texts
+}
+
+fn down_line() -> string {
+    return "The data server did not answer at 127.0.0.1:8080. Start it with ./bin/zeli serve examples/zeus/dracula --target macos, then Retry."
+}
+
+fn error_text() -> string {
+    return sync_err
+}
+
+fn reject_count() -> int {
+    return reject_lines.len
+}
+
+fn reject_at(i: int) -> string {
+    if i < 0 || i >= reject_lines.len {
+        return ""
+    }
+    return reject_lines[i]
+}
+
+fn copy_strs(xs: []string) -> []string {
+    let mut out = []string {}
+    let mut i = 0
+    while i < xs.len {
+        push(out, xs[i])
+        i = i + 1
+    }
+    return out
+}
+
+fn bump() {
+    if gen.id != 0 {
+        gen.set(gen.get() + 1)
+    }
+}
+
+fn poke() {
+    if status_done == 1 && rejects_done == 1 {
+        phase = 1
+        if gen.id != 0 {
+            gen.set(gen.get() + 1)
+        }
+    }
+}
+
+fn stat3(out: []string, label: string, n: int, cap: string) -> []string {
+    let mut o = out
+    push(o, label)
+    push(o, "{{n}}")
+    push(o, cap)
+    return o
+}
+
+fn paint_status(reply: StatusResp) {
+    let mut cells = []string {}
+    if reply.found == 0 {
+        status_line = "No successful fetch yet."
+        stat_texts = cells
+        return
+    }
+    let stamp = reply.stamp
+    let url = reply.url
+    let kind = reply.kind
+    let id = reply.sync_id
+    status_line = "Sync {{id}}, {{kind}}, at {{stamp}} from {{url}}."
+    cells = stat3(cells, "Accepted", reply.accepted, "Rows cached")
+    cells = stat3(cells, "Rejected", reply.rejected, "Kept below with a reason")
+    cells = stat3(cells, "Warnings", reply.warnings, "Cached with a flag")
+    cells = stat3(cells, "Dormant", reply.dormant, "History kept")
+    cells = stat3(cells, "Open gaps", reply.gaps, "Indicators stop there")
+    stat_texts = cells
+}
+
+fn fetch_status() {
+    status_done = 0
+    http.client().call_async(api.status_rpc(), api.encode_StatusReq(StatusReq {}), fn(raw) {
+        let reply = api.decode_StatusResp(raw)
+        if raw.len == 0 || reply.live == 0 {
+            down = 1
+            status_line = ""
+            stat_texts = []string {}
+        } else {
+            down = 0
+            paint_status(reply)
+        }
+        status_done = 1
+        poke()
+    })
+}
+
+fn fetch_rejects() {
+    rejects_done = 0
+    http.client().call_async(api.rejects_rpc(), api.encode_RejectsReq(RejectsReq {}), fn(raw) {
+        let reply = api.decode_RejectsResp(raw)
+        reject_lines = copy_strs(reply.lines)
+        rejects_done = 1
+        poke()
+    })
+}
+
+fn reload() {
+    phase = 0
+    sync_err = ""
+    status_done = 0
+    rejects_done = 0
+    if gen.id != 0 {
+        gen.set(gen.get() + 1)
+    }
+    fetch_status()
+    fetch_rejects()
+}
+
+/// Ask for status and rejects again, after the server was down.
+fn retry() {
+    if gen.id == 0 {
+        return
+    }
+    reload()
+}
+
+fn stop_walk() {
+    walking = 0
+    progress = ""
+    walk_days = []int {}
+    walk_i = 0
+}
+
+fn on_backfill(raw: string) {
+    if walking == 0 {
+        return
+    }
+    let reply = api.decode_SyncResp(raw)
+    if reply.ok == 0 {
+        let mut day = ""
+        if walk_i >= 0 && walk_i < walk_days.len {
+            day = date.fmt_iso(walk_days[walk_i])
+        }
+        let mut msg = reply.err
+        if raw.len == 0 {
+            msg = "The data server did not answer."
+        } else if msg.len == 0 {
+            msg = "The history day did not finish."
+        }
+        stop_walk()
+        if day.len == 0 {
+            sync_err = msg
+        } else {
+            sync_err = "History stopped on {{day}}. {{msg}}"
+        }
+        bump()
+        fetch_status()
+        fetch_rejects()
+        return
+    }
+    walk_i = walk_i + 1
+    walk_step()
+}
+
+fn walk_step() {
+    if walking == 0 {
+        return
+    }
+    if walk_i < 0 || walk_i >= walk_days.len {
+        stop_walk()
+        reload()
+        return
+    }
+    let ymd = walk_days[walk_i]
+    let day = date.fmt_iso(ymd)
+    let n = walk_i + 1
+    let total = walk_days.len
+    progress = "Loading {{day}}. {{n}} of {{total}}."
+    bump()
+    http.client().call_async(api.backfill_rpc(), api.encode_BackfillReq(BackfillReq { frm: day, to: day }), fn(raw) {
+        on_backfill(raw)
+    })
+}
+
+fn load_history() {
+    if gen.id == 0 || from_input.id == 0 || to_input.id == 0 || walking == 1 {
+        return
+    }
+    let frm = present.parse_day(from_input.get())
+    let to = present.parse_day(to_input.get())
+    if frm == 0 || to == 0 {
+        sync_err = "Enter the from date and the to date as YYYY-MM-DD."
+        bump()
+        return
+    }
+    let days = present.day_list(frm, to)
+    if days.len == 0 {
+        sync_err = "The from date is after the to date."
+        bump()
+        return
+    }
+    walk_days = days
+    walk_i = 0
+    walking = 1
+    sync_err = ""
+    walk_step()
+}
+
+fn sync_now() {
+    if gen.id == 0 {
+        return
+    }
+    stop_walk()
+    phase = 0
+    sync_err = ""
+    status_done = 0
+    rejects_done = 0
+    gen.set(gen.get() + 1)
+    http.client().call_async(api.sync_rpc(), api.encode_SyncReq(SyncReq {}), fn(raw) {
+        let reply = api.decode_SyncResp(raw)
+        if reply.ok == 0 {
+            if raw.len == 0 {
+                sync_err = "The data server did not answer the sync."
+            } else if reply.err.len == 0 {
+                sync_err = "The sync did not finish."
+            } else {
+                sync_err = reply.err
+            }
+            status_done = 1
+            rejects_done = 1
+            poke()
+            return
+        }
+        fetch_status()
+        fetch_rejects()
+    })
+}
+
+fn rollback_now() {
+    if gen.id == 0 {
+        return
+    }
+    stop_walk()
+    phase = 0
+    sync_err = ""
+    gen.set(gen.get() + 1)
+    http.client().call_async(api.rollback_rpc(), api.encode_RollbackReq(RollbackReq {}), fn(raw) {
+        let reply = api.decode_RollbackResp(raw)
+        if raw.len == 0 {
+            sync_err = "The data server did not answer the rollback."
+        } else if reply.ok == 0 {
+            sync_err = "Rollback did not restore the previous catalog."
+        }
+        fetch_status()
+        fetch_rejects()
+    })
+}
+
+fn start() {
+    if gen.id != 0 {
+        return
+    }
+    gen = zeus.signal(0)
+    from_input = zeus.signal("")
+    to_input = zeus.signal("")
+    phase = 0
+    fetch_status()
+    fetch_rejects()
+}

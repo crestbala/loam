@@ -1,0 +1,538 @@
+//! NAV cache. One CSV per scheme code, plus three logs next to it.
+//!
+//! ```
+//! <root>/schemes.txt     code;name;isin_g;isin_d;dormant;last_seen;gap_from;gap_ack
+//! <root>/schemes.bak     the catalog from before the latest sync
+//! <root>/syncs.txt       id;stamp;url;kind;accepted;rejected;warnings;rolled
+//! <root>/rejects.txt     id;line;code;date;reason
+//! <root>/warnings.txt    same shape, for rows that were cached with a flag
+//! <root>/nav/<code>.csv  date;paise;sync_id
+//! ```
+//!
+//! Every write goes to a `.tmp` sibling and is renamed over the destination.
+//! A crash mid-write leaves the previous file in place. Rollback puts
+//! `schemes.bak` back and drops NAV rows tagged with the latest sync id.
+//! History of a scheme that has gone dormant is not deleted.
+//!
+//! `root` is passed in. The server uses `nav_root`, which is
+//! `kv.data_dir("dracula")/nav`. Tests pass a directory under `/tmp`.
+
+import "std:sys"
+import "std:kv"
+import "../core/csvx.loam"
+
+struct Series {
+    dates: []int,
+    navs: []i64,
+    syncs: []int,
+}
+
+struct Catalog {
+    codes: []string,
+    names: []string,
+    isin_g: []string,
+    isin_d: []string,
+    dormant: []int,
+    last_seen: []int,
+    gap_from: []int,
+    gap_ack: []int,
+}
+
+struct SyncLog {
+    ids: []int,
+    stamps: []string,
+    urls: []string,
+    kinds: []string,
+    accepted: []int,
+    rejected: []int,
+    warnings: []int,
+    rolled: []int,
+}
+
+fn add_str(b: &mut []int, s: string) {
+    let mut i = 0
+    while i < s.len {
+        push(b, s[i])
+        i = i + 1
+    }
+}
+
+fn add_int(b: &mut []int, n: int) {
+    add_str(b, "{{n}}")
+}
+
+fn i64_str(n: i64) -> string {
+    if n == 0 {
+        return "0"
+    }
+    let mut neg = false
+    let mut x = n
+    if x < 0 {
+        neg = true
+        x = -x
+    }
+    let mut digits = []int {}
+    while x > 0 {
+        let d = x % 10
+        push(digits, 48 + int(d))
+        x = x / 10
+    }
+    let mut b = []int {}
+    if neg {
+        push(b, 45)
+    }
+    let mut i = digits.len - 1
+    while i >= 0 {
+        push(b, digits[i])
+        i = i - 1
+    }
+    return string_from_bytes(b)
+}
+
+fn parse_int(s: string) -> int {
+    if s.len == 0 {
+        return 0
+    }
+    let mut n = 0
+    let mut i = 0
+    while i < s.len {
+        let c = s[i]
+        if c < 48 || c > 57 {
+            return 0
+        }
+        n = n * 10 + (c - 48)
+        i = i + 1
+    }
+    return n
+}
+
+fn parse_i64(s: string) -> i64 {
+    let mut n: i64 = 0
+    let mut i = 0
+    if s.len == 0 {
+        return i64(-1)
+    }
+    while i < s.len {
+        let c = s[i]
+        if c < 48 || c > 57 {
+            return i64(-1)
+        }
+        n = n * 10 + i64(c - 48)
+        i = i + 1
+    }
+    return n
+}
+
+fn finish(b: []int) -> string {
+    return string_from_bytes(b)
+}
+
+fn write_atomic(path: string, body: string) -> int {
+    let tmp = "{{path}}.tmp"
+    if sys.write_file(tmp, body) != 0 {
+        return 1
+    }
+    if sys.rename(tmp, path) != 0 {
+        return 1
+    }
+    return 0
+}
+
+/// `~/Library/Application Support/dracula/nav`, or under `LOAM_KV_DIR`.
+/// Empty when there is no home directory.
+fn nav_root() -> string {
+    let d = kv.data_dir("dracula")
+    if d.len == 0 {
+        return ""
+    }
+    sys.mkdir(d)
+    return "{{d}}/nav"
+}
+
+fn ensure(root: string) -> int {
+    if sys.mkdir(root) != 0 && sys.exists(root) == 0 {
+        return 1
+    }
+    let nav = "{{root}}/nav"
+    if sys.mkdir(nav) != 0 && sys.exists(nav) == 0 {
+        return 1
+    }
+    return 0
+}
+
+fn empty_series() -> Series {
+    return Series { dates: []int {}, navs: []i64 {}, syncs: []int {} }
+}
+
+fn empty_catalog() -> Catalog {
+    return Catalog {
+        codes: []string {},
+        names: []string {},
+        isin_g: []string {},
+        isin_d: []string {},
+        dormant: []int {},
+        last_seen: []int {},
+        gap_from: []int {},
+        gap_ack: []int {},
+    }
+}
+
+fn series(root: string, code: string) -> Series {
+    let text = sys.read_file("{{root}}/nav/{{code}}.csv")
+    let mut out = empty_series()
+    let lines = csvx.split_lines(text)
+    let mut i = 0
+    while i < lines.len {
+        let cols = csvx.split_fields(lines[i])
+        if cols.len >= 3 {
+            let ymd = parse_int(cols[0])
+            let nav = parse_i64(cols[1])
+            let sid = parse_int(cols[2])
+            if ymd > 0 && nav >= 0 {
+                push(out.dates, ymd)
+                push(out.navs, nav)
+                push(out.syncs, sid)
+            }
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn write_series(root: string, code: string, ser: Series) -> int {
+    let path = "{{root}}/nav/{{code}}.csv"
+    if ser.dates.len == 0 {
+        if sys.exists(path) != 0 {
+            sys.remove_path(path)
+        }
+        return 0
+    }
+    let mut b = []int {}
+    let mut i = 0
+    while i < ser.dates.len {
+        add_int(b, ser.dates[i])
+        add_str(b, ";")
+        add_str(b, i64_str(ser.navs[i]))
+        add_str(b, ";")
+        add_int(b, ser.syncs[i])
+        add_str(b, "\n")
+        i = i + 1
+    }
+    return write_atomic(path, finish(b))
+}
+
+fn read_catalog(root: string) -> Catalog {
+    let text = sys.read_file("{{root}}/schemes.txt")
+    let mut cat = empty_catalog()
+    let lines = csvx.split_lines(text)
+    let mut i = 0
+    while i < lines.len {
+        let cols = csvx.split_fields(lines[i])
+        if cols.len >= 8 && cols[0].len > 0 {
+            push(cat.codes, cols[0])
+            push(cat.names, cols[1])
+            push(cat.isin_g, cols[2])
+            push(cat.isin_d, cols[3])
+            push(cat.dormant, parse_int(cols[4]))
+            push(cat.last_seen, parse_int(cols[5]))
+            push(cat.gap_from, parse_int(cols[6]))
+            push(cat.gap_ack, parse_int(cols[7]))
+        }
+        i = i + 1
+    }
+    return cat
+}
+
+fn write_catalog(root: string, cat: Catalog) -> int {
+    let mut b = []int {}
+    let mut i = 0
+    while i < cat.codes.len {
+        add_str(b, cat.codes[i])
+        add_str(b, ";")
+        add_str(b, cat.names[i])
+        add_str(b, ";")
+        add_str(b, cat.isin_g[i])
+        add_str(b, ";")
+        add_str(b, cat.isin_d[i])
+        add_str(b, ";")
+        add_int(b, cat.dormant[i])
+        add_str(b, ";")
+        add_int(b, cat.last_seen[i])
+        add_str(b, ";")
+        add_int(b, cat.gap_from[i])
+        add_str(b, ";")
+        add_int(b, cat.gap_ack[i])
+        add_str(b, "\n")
+        i = i + 1
+    }
+    return write_atomic("{{root}}/schemes.txt", finish(b))
+}
+
+/// Copy the current catalog aside so the latest sync can be undone.
+fn snapshot(root: string) -> int {
+    let cur = sys.read_file("{{root}}/schemes.txt")
+    return write_atomic("{{root}}/schemes.bak", cur)
+}
+
+fn restore_snapshot(root: string) -> int {
+    let bak = sys.read_file("{{root}}/schemes.bak")
+    return write_atomic("{{root}}/schemes.txt", bak)
+}
+
+fn read_syncs(root: string) -> SyncLog {
+    let text = sys.read_file("{{root}}/syncs.txt")
+    let mut log = SyncLog {
+        ids: []int {},
+        stamps: []string {},
+        urls: []string {},
+        kinds: []string {},
+        accepted: []int {},
+        rejected: []int {},
+        warnings: []int {},
+        rolled: []int {},
+    }
+    let lines = csvx.split_lines(text)
+    let mut i = 0
+    while i < lines.len {
+        let cols = csvx.split_fields(lines[i])
+        if cols.len >= 8 {
+            push(log.ids, parse_int(cols[0]))
+            push(log.stamps, cols[1])
+            push(log.urls, cols[2])
+            push(log.kinds, cols[3])
+            push(log.accepted, parse_int(cols[4]))
+            push(log.rejected, parse_int(cols[5]))
+            push(log.warnings, parse_int(cols[6]))
+            push(log.rolled, parse_int(cols[7]))
+        }
+        i = i + 1
+    }
+    return log
+}
+
+fn write_syncs(root: string, log: SyncLog) -> int {
+    let mut b = []int {}
+    let mut i = 0
+    while i < log.ids.len {
+        add_int(b, log.ids[i])
+        add_str(b, ";")
+        add_str(b, log.stamps[i])
+        add_str(b, ";")
+        add_str(b, log.urls[i])
+        add_str(b, ";")
+        add_str(b, log.kinds[i])
+        add_str(b, ";")
+        add_int(b, log.accepted[i])
+        add_str(b, ";")
+        add_int(b, log.rejected[i])
+        add_str(b, ";")
+        add_int(b, log.warnings[i])
+        add_str(b, ";")
+        add_int(b, log.rolled[i])
+        add_str(b, "\n")
+        i = i + 1
+    }
+    return write_atomic("{{root}}/syncs.txt", finish(b))
+}
+
+fn next_id(root: string) -> int {
+    let log = read_syncs(root)
+    let mut m = 0
+    let mut i = 0
+    while i < log.ids.len {
+        if log.ids[i] > m {
+            m = log.ids[i]
+        }
+        i = i + 1
+    }
+    return m + 1
+}
+
+/// Index of the latest sync that has not been rolled back, or `-1`.
+fn latest_open(log: SyncLog) -> int {
+    let mut i = log.ids.len - 1
+    while i >= 0 {
+        if log.rolled[i] == 0 {
+            return i
+        }
+        i = i - 1
+    }
+    return -1
+}
+
+fn append_sync(root: string, id: int, stamp: string, url: string, kind: string, accepted: int, rejected: int, warnings: int) -> int {
+    let mut log = read_syncs(root)
+    push(log.ids, id)
+    push(log.stamps, stamp)
+    push(log.urls, url)
+    push(log.kinds, kind)
+    push(log.accepted, accepted)
+    push(log.rejected, rejected)
+    push(log.warnings, warnings)
+    push(log.rolled, 0)
+    return write_syncs(root, log)
+}
+
+fn append_note(path: string, id: int, line: int, code: string, ymd: int, reason: string) -> int {
+    let prev = sys.read_file(path)
+    let mut b = []int {}
+    add_str(b, prev)
+    if prev.len > 0 && prev[prev.len - 1] != 10 {
+        add_str(b, "\n")
+    }
+    add_int(b, id)
+    add_str(b, ";")
+    add_int(b, line)
+    add_str(b, ";")
+    add_str(b, code)
+    add_str(b, ";")
+    add_int(b, ymd)
+    add_str(b, ";")
+    add_str(b, reason)
+    add_str(b, "\n")
+    return write_atomic(path, finish(b))
+}
+
+fn add_reject(root: string, id: int, line: int, code: string, ymd: int, reason: string) -> int {
+    return append_note("{{root}}/rejects.txt", id, line, code, ymd, reason)
+}
+
+fn add_warning(root: string, id: int, line: int, code: string, ymd: int, reason: string) -> int {
+    return append_note("{{root}}/warnings.txt", id, line, code, ymd, reason)
+}
+
+/// Lines `line;code;date;reason` for one sync, from `rejects.txt` or `warnings.txt`.
+fn notes(path: string, id: int) -> []string {
+    let text = sys.read_file(path)
+    let mut out = []string {}
+    let lines = csvx.split_lines(text)
+    let mut i = 0
+    while i < lines.len {
+        let cols = csvx.split_fields(lines[i])
+        if cols.len >= 5 && parse_int(cols[0]) == id {
+            push(out, "{{cols[1]}};{{cols[2]}};{{cols[3]}};{{cols[4]}}")
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn rejects_for(root: string, id: int) -> []string {
+    return notes("{{root}}/rejects.txt", id)
+}
+
+fn warnings_for(root: string, id: int) -> []string {
+    return notes("{{root}}/warnings.txt", id)
+}
+
+fn find_code(cat: Catalog, code: string) -> int {
+    let mut i = 0
+    while i < cat.codes.len {
+        if cat.codes[i] == code {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+/// Acknowledge the open gap on `code`. Returns 1 when there was one.
+fn ack_gap(root: string, code: string) -> int {
+    let mut cat = read_catalog(root)
+    let at = find_code(cat, code)
+    if at < 0 || cat.gap_from[at] == 0 {
+        return 0
+    }
+    cat.gap_ack[at] = 1
+    if write_catalog(root, cat) != 0 {
+        return 0
+    }
+    return 1
+}
+
+fn dormant_count(cat: Catalog) -> int {
+    let mut n = 0
+    let mut i = 0
+    while i < cat.dormant.len {
+        if cat.dormant[i] != 0 {
+            n = n + 1
+        }
+        i = i + 1
+    }
+    return n
+}
+
+fn open_gaps(cat: Catalog) -> int {
+    let mut n = 0
+    let mut i = 0
+    while i < cat.gap_from.len {
+        if cat.gap_from[i] != 0 && cat.gap_ack[i] == 0 {
+            n = n + 1
+        }
+        i = i + 1
+    }
+    return n
+}
+
+/// Drop NAV rows from sync `id` in every scheme file. An emptied file is removed.
+fn strip_sync(root: string, id: int) -> int {
+    let dir = "{{root}}/nav"
+    let names = sys.list_dir(dir)
+    let mut i = 0
+    while i < names.len {
+        let name = names[i]
+        if name.len > 4 {
+            let tail = name.len - 4
+            let mut csv = true
+            if name[tail] != 46 || name[tail + 1] != 99 || name[tail + 2] != 115 || name[tail + 3] != 118 {
+                csv = false
+            }
+            if csv {
+                let mut code = []int {}
+                let mut k = 0
+                while k < tail {
+                    push(code, name[k])
+                    k = k + 1
+                }
+                let code_s = string_from_bytes(code)
+                let ser = series(root, code_s)
+                let mut kept = empty_series()
+                let mut j = 0
+                while j < ser.dates.len {
+                    if ser.syncs[j] != id {
+                        push(kept.dates, ser.dates[j])
+                        push(kept.navs, ser.navs[j])
+                        push(kept.syncs, ser.syncs[j])
+                    }
+                    j = j + 1
+                }
+                if write_series(root, code_s, kept) != 0 {
+                    return 1
+                }
+            }
+        }
+        i = i + 1
+    }
+    return 0
+}
+
+/// Undo the latest sync that is still applied. Returns 1 on success.
+fn rollback(root: string) -> int {
+    let mut log = read_syncs(root)
+    let at = latest_open(log)
+    if at < 0 {
+        return 0
+    }
+    let id = log.ids[at]
+    if strip_sync(root, id) != 0 {
+        return 0
+    }
+    if restore_snapshot(root) != 0 {
+        return 0
+    }
+    log.rolled[at] = 1
+    if write_syncs(root, log) != 0 {
+        return 0
+    }
+    return 1
+}

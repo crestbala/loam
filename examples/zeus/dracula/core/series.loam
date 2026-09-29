@@ -1,0 +1,88 @@
+//! One scheme's published NAVs.
+//!
+//! `dates` are `YYYYMMDD` and `navs` are paise, the same pair the cache writes
+//! and the same pair an indicator is allowed to see. The two columns are the
+//! same length. A caller that hands over unequal columns gets the shared
+//! prefix; the leftover tail is not a bar, and inventing a date or a price
+//! for it would be a look-ahead of a kind.
+//!
+//! The series is in date order. The cache refuses anything else, and
+//! `is_gap` assumes a later index is a later date.
+
+import "std:date"
+
+struct NavSeries {
+    code: string,
+    dates: []int,
+    navs: []i64,
+}
+
+/// The columns the caller passed, cut to the shared length.
+fn build(code: string, dates: []int, navs: []i64) -> NavSeries {
+    let mut n = dates.len
+    if navs.len < n {
+        n = navs.len
+    }
+    if n == dates.len && n == navs.len {
+        return NavSeries { code: code, dates: dates, navs: navs }
+    }
+    let mut d = []int {}
+    let mut p = []i64 {}
+    let mut i = 0
+    while i < n {
+        push(d, dates[i])
+        push(p, navs[i])
+        i = i + 1
+    }
+    return NavSeries { code: code, dates: d, navs: p }
+}
+
+fn len(s: NavSeries) -> int {
+    return s.dates.len
+}
+
+/// Bars in `[from, to)`. Indexes outside the series are cut back.
+///
+/// A walk-forward fold is this slice: the train window, the test window, or
+/// the two joined so a test-window average can see the train bars. Copying
+/// keeps the caller's series intact.
+fn window(s: NavSeries, from: int, to: int) -> NavSeries {
+    let mut a = from
+    let mut b = to
+    if a < 0 {
+        a = 0
+    }
+    if b > s.dates.len {
+        b = s.dates.len
+    }
+    if b < a {
+        b = a
+    }
+    let mut d = []int {}
+    let mut p = []i64 {}
+    let mut i = a
+    while i < b {
+        push(d, s.dates[i])
+        push(p, s.navs[i])
+        i = i + 1
+    }
+    return build(s.code, d, p)
+}
+
+/// Calendar days from the previous bar into bar `i`. `0` at the first bar
+/// and whenever either date is not a date.
+fn step_days(dates: []int, i: int) -> int {
+    if i <= 0 || i >= dates.len {
+        return 0
+    }
+    return date.days_between(dates[i - 1], dates[i])
+}
+
+/// True when the step into bar `i` is longer than five calendar days.
+///
+/// A weekend is three days and a long weekend is four or five. Six is a
+/// missing NAV, which is the gap the ingest layer flags. Indicators refuse
+/// to read across it unless the caller says it has been acknowledged.
+fn is_gap(dates: []int, i: int) -> bool {
+    return step_days(dates, i) > 5
+}

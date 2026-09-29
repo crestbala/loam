@@ -1,0 +1,5 @@
+name = "dracula"
+targets = ["web", "macos", "ios", "android", "server"]
+routes = "routes"
+theme = "theme.loam"
+revalidate = 60

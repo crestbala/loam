@@ -1,0 +1,335 @@
+//! One sync: parse, validate, cache.
+//!
+//! `apply` takes the file body. It does not fetch. The live entry points
+//! `sync_live` and `backfill_live` fetch first and then call `apply`, so a
+//! test can run the whole pipeline on a fixture without the network.
+//!
+//! A daily file with at least one data row marks catalog schemes that are
+//! absent from it as dormant. Their NAV files stay. A history file never
+//! does this — it is a date range, not a census. A file that parsed a header
+//! and then no rows does not mark anyone dormant either; that shape is a
+//! truncated download, and treating it as "everyone left" would be the bug
+//! this layer exists to prevent.
+
+import "std:sys"
+import "std:date"
+import "../core/sortx.loam"
+import "amfi.loam"
+import "validate.loam"
+import "store.loam"
+import "fetchx.loam"
+
+let DAILY_URL: string = "https://portal.amfiindia.com/spages/NAVAll.txt"
+
+struct Report {
+    ok: int,
+    sync_id: int,
+    accepted: int,
+    rejected: int,
+    warnings: int,
+    dormant: int,
+    err: string,
+}
+
+fn report_err(msg: string) -> Report {
+    return Report {
+        ok: 0,
+        sync_id: 0,
+        accepted: 0,
+        rejected: 0,
+        warnings: 0,
+        dormant: 0,
+        err: msg,
+    }
+}
+
+fn stamp_now() -> string {
+    let raw = sys.exec("date -u +%Y-%m-%dT%H:%M:%SZ")
+    let st = sys.exec_status()
+    if st != 0 || raw.len == 0 {
+        return "unknown"
+    }
+    let mut n = raw.len
+    while n > 0 {
+        let c = raw[n - 1]
+        if c != 10 && c != 13 {
+            break
+        }
+        n = n - 1
+    }
+    let mut b = []int {}
+    let mut i = 0
+    while i < n {
+        push(b, raw[i])
+        i = i + 1
+    }
+    return string_from_bytes(b)
+}
+
+fn amfi_day(s: string) -> string {
+    let iso = date.parse_iso(s)
+    if date.is_valid(iso) {
+        return date.fmt_date(iso)
+    }
+    if date.is_valid(date.parse_amfi(s)) {
+        return s
+    }
+    return ""
+}
+
+fn seen(codes: []string, code: string) -> bool {
+    let mut i = 0
+    while i < codes.len {
+        if codes[i] == code {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+/// Parse `text` and merge it into the cache at `root`.
+fn apply(root: string, text: string, url: string, stamp: string) -> Report {
+    if store.ensure(root) != 0 {
+        return report_err("cannot create cache")
+    }
+    let sh = amfi.parse(text)
+    if sh.kind == "" {
+        return report_err("no header")
+    }
+    let mut cat = store.read_catalog(root)
+    if store.snapshot(root) != 0 {
+        return report_err("cannot snapshot catalog")
+    }
+    let id = store.next_id(root)
+    let n = sh.codes.len
+    let mut ids = []i64 {}
+    let mut uniq = []string {}
+    let mut i = 0
+    while i < n {
+        let known = store.find_code(cat, sh.codes[i]) >= 0
+        if !amfi.track(sh.kind, sh.sections[i], sh.names[i], known) {
+            push(ids, i64(-1))
+        } else {
+            let mut found = -1
+            let mut u = 0
+            while u < uniq.len {
+                if uniq[u] == sh.codes[i] {
+                    found = u
+                    break
+                }
+                u = u + 1
+            }
+            if found < 0 {
+                found = uniq.len
+                push(uniq, sh.codes[i])
+            }
+            push(ids, i64(found))
+        }
+        i = i + 1
+    }
+
+    let mut keys = []i64 {}
+    let mut order = []i64 {}
+    i = 0
+    while i < n {
+        if ids[i] >= i64(0) {
+            push(keys, ids[i] * i64(100000000) + i64(sh.dates[i]))
+            push(order, i64(i))
+        }
+        i = i + 1
+    }
+    if order.len > 1 {
+        sortx.sort_by(keys, order)
+    }
+
+    let mut accepted = 0
+    let mut rejected = 0
+    let mut warnings = 0
+    i = 0
+    while i < sh.bad_lines.len {
+        store.add_reject(root, id, sh.bad_lines[i], "", 0, sh.bad_reasons[i])
+        rejected = rejected + 1
+        i = i + 1
+    }
+
+    let mut p = 0
+    while p < order.len {
+        let row0 = int(order[p])
+        let gid = ids[row0]
+        let code = sh.codes[row0]
+        let mut ser = store.series(root, code)
+        let mut prev_date = 0
+        let mut prev_nav = i64(0)
+        if ser.dates.len > 0 {
+            let last = ser.dates.len - 1
+            prev_date = ser.dates[last]
+            prev_nav = ser.navs[last]
+        }
+        let mut at = store.find_code(cat, code)
+        let mut prev_name = ""
+        if at >= 0 {
+            prev_name = cat.names[at]
+        }
+        let mut added = 0
+        while p < order.len {
+            let row = int(order[p])
+            if ids[row] != gid {
+                break
+            }
+            let ymd = sh.dates[row]
+            let nav = sh.navs[row]
+            let name = sh.names[row]
+            let v = validate.review(prev_date, prev_nav, prev_name, ymd, nav, name)
+            if v.accept == 1 {
+                push(ser.dates, ymd)
+                push(ser.navs, nav)
+                push(ser.syncs, id)
+                prev_date = ymd
+                prev_nav = nav
+                prev_name = name
+                added = added + 1
+                accepted = accepted + 1
+                if at < 0 {
+                    push(cat.codes, code)
+                    push(cat.names, name)
+                    push(cat.isin_g, sh.isin_g[row])
+                    push(cat.isin_d, sh.isin_d[row])
+                    push(cat.dormant, 0)
+                    push(cat.last_seen, ymd)
+                    push(cat.gap_from, 0)
+                    push(cat.gap_ack, 0)
+                    at = cat.codes.len - 1
+                } else {
+                    cat.names[at] = name
+                    cat.isin_g[at] = sh.isin_g[row]
+                    cat.isin_d[at] = sh.isin_d[row]
+                    cat.dormant[at] = 0
+                    cat.last_seen[at] = ymd
+                }
+                if v.gap == 1 {
+                    if cat.gap_from[at] == 0 || cat.gap_ack[at] == 1 {
+                        cat.gap_from[at] = ymd
+                        cat.gap_ack[at] = 0
+                    }
+                }
+                if v.warn == 1 {
+                    warnings = warnings + 1
+                    store.add_warning(root, id, sh.lines[row], code, ymd, v.reason)
+                }
+            } else {
+                rejected = rejected + 1
+                store.add_reject(root, id, sh.lines[row], code, ymd, v.reason)
+            }
+            p = p + 1
+        }
+        if added > 0 {
+            if store.write_series(root, code, ser) != 0 {
+                return report_err("cannot write {{code}}")
+            }
+        }
+    }
+
+    let mut dormant_n = 0
+    if sh.kind == "daily" && n > 0 {
+        i = 0
+        while i < cat.codes.len {
+            if !seen(sh.codes, cat.codes[i]) {
+                if cat.dormant[i] == 0 {
+                    dormant_n = dormant_n + 1
+                }
+                cat.dormant[i] = 1
+            }
+            i = i + 1
+        }
+    }
+    if store.write_catalog(root, cat) != 0 {
+        return report_err("cannot write catalog")
+    }
+    if store.append_sync(root, id, stamp, url, sh.kind, accepted, rejected, warnings) != 0 {
+        return report_err("cannot write sync log")
+    }
+    return Report {
+        ok: 1,
+        sync_id: id,
+        accepted: accepted,
+        rejected: rejected,
+        warnings: warnings,
+        dormant: dormant_n,
+        err: "",
+    }
+}
+
+fn sync_live() -> Report {
+    let root = store.nav_root()
+    if root.len == 0 {
+        return report_err("no data dir")
+    }
+    let got = fetchx.fetch_text(DAILY_URL)
+    if !got.ok {
+        return report_err(got.err)
+    }
+    return apply(root, got.val, DAILY_URL, stamp_now())
+}
+
+/// Inclusive calendar windows of `span` days. The last window is shorter
+/// when the range does not divide evenly. Empty when the dates are backwards
+/// or `span` is below 1.
+struct Span {
+    frm: []int
+    to: []int
+}
+
+fn ymd_of(s: string) -> int {
+    let iso = date.parse_iso(s)
+    if date.is_valid(iso) {
+        return iso
+    }
+    let am = date.parse_amfi(s)
+    if date.is_valid(am) {
+        return am
+    }
+    return 0
+}
+
+fn windows(frm: int, to: int, span: int) -> Span {
+    if span < 1 || !date.is_valid(frm) || !date.is_valid(to) {
+        return Span { frm: []int {}, to: []int {} }
+    }
+    let a = date.to_days(frm)
+    let b = date.to_days(to)
+    if a > b {
+        return Span { frm: []int {}, to: []int {} }
+    }
+    let mut out_f = []int {}
+    let mut out_t = []int {}
+    let mut d = a
+    while d <= b {
+        let mut last = d + span - 1
+        if last > b {
+            last = b
+        }
+        push(out_f, date.from_days(d))
+        push(out_t, date.from_days(last))
+        d = last + 1
+    }
+    return Span { frm: out_f, to: out_t }
+}
+
+fn backfill_live(frm: string, to: string) -> Report {
+    let from_day = amfi_day(frm)
+    let to_day = amfi_day(to)
+    if from_day.len == 0 || to_day.len == 0 {
+        return report_err("bad date")
+    }
+    let root = store.nav_root()
+    if root.len == 0 {
+        return report_err("no data dir")
+    }
+    let url = "https://portal.amfiindia.com/DownloadNAVHistoryReport_Po.aspx?tp=1&frmdt={{from_day}}&todt={{to_day}}"
+    let got = fetchx.fetch_text(url)
+    if !got.ok {
+        return report_err(got.err)
+    }
+    return apply(root, got.val, url, stamp_now())
+}

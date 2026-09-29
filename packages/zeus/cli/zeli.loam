@@ -1427,10 +1427,80 @@ fn stop_pid(pid: int) -> bool {
     return !pid_alive(pid)
 }
 
+/// True when something is already accepting connections at `addr`. A connect
+/// that fails is "nothing there", which is what a serve that has to start the
+/// backend needs to tell apart from one the operator started already.
+fn backend_listening(addr: string) -> bool {
+    let hp = rpc_addr_of(addr)
+    if hp.port <= 0 {
+        return false
+    }
+    let fd = net.tcp_connect(hp.host, hp.port)
+    if fd < 0 {
+        return false
+    }
+    net.tcp_close(fd)
+    return true
+}
+
+/// Build and start `<appdir>/server/main.loam` on the RPC address, once.
+///
+/// The UI talks to that process and has no way to say the process is missing,
+/// so a page that fetches data otherwise sits on its loading line. An address
+/// that is already open is left alone: that backend is not ours to stop.
+/// Returns the pid we started, `0` when there is nothing to start, and `-1`
+/// when the build or the listen failed.
+fn ensure_backend(appdir: string) -> int {
+    let entry = join(join(appdir, "server"), "main.loam")
+    if sys.exists(entry) == 0 {
+        return 0
+    }
+    let addr = serve_rpc_addr()
+    if backend_listening(addr) {
+        fmt.println("zeli: rpc backend {{addr}} already listening")
+        return 0
+    }
+    let dir = join(join(appdir, "build"), "server")
+    sys.mkdir(dir)
+    let bin = join(dir, "main")
+    let log = app_log(appdir, "server", "main")
+    fmt.println("zeli: building rpc backend…")
+    let built = run_loam(serve_build_env("macos"), cat(cat(shell_quote(entry), " -o "), shell_quote(bin)))
+    if sys.exec_status() != 0 {
+        fmt.println(trim(built))
+        fmt.println("zeli: rpc backend failed to build")
+        return -1
+    }
+    let pid = launch_app(shell_quote(bin), log)
+    if pid <= 0 {
+        return -1
+    }
+    let mut waited = 0
+    while waited < 50 && !backend_listening(addr) {
+        if !pid_alive(pid) {
+            fmt.println(trim(sys.read_file(log)))
+            fmt.println("zeli: rpc backend exited before it listened on {{addr}}")
+            return -1
+        }
+        async.sleep(100)
+        waited += 1
+    }
+    if !backend_listening(addr) {
+        stop_pid(pid)
+        fmt.println("zeli: rpc backend did not listen on {{addr}}")
+        return -1
+    }
+    guard_app(self_pid(), pid)
+    fmt.println("zeli: rpc backend {{addr}} (pid {{pid}})")
+    return pid
+}
+
 /// `zeli serve <appdir> [--target T] [--port N] [--build-only]`
 ///
 /// Builds one target and watches `.loam` sources — the app plus the framework
-/// `std/` trees — so an edit is reflected without a manual rebuild:
+/// `std/` trees — so an edit is reflected without a manual rebuild. An app
+/// with `server/main.loam` gets that backend on the RPC address first, so the
+/// window and the data come up from this one command:
 ///
 ///   web      serves `build/web` on localhost, and every HTML page subscribes to
 ///            the live channel, so the browser is *told* about a rebuild
@@ -1465,6 +1535,9 @@ fn serve(appdir: string, target: string, port: int, build_only: bool) -> int {
     if build_only {
         fmt.println("zeli: serve build ok (--build-only)")
         return 0
+    }
+    if ensure_backend(appdir) < 0 {
+        return 1
     }
     if target == "web" {
         return serve_web(appdir, port)

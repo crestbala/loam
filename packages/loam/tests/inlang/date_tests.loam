@@ -1,0 +1,516 @@
+//! Tests for `core/date.loam`.
+//!
+//! Imported by `app.loam`, so `loam test examples/zeus/dracula/app.loam` runs
+//! them.
+//!
+//! The calendar is where a silent bug is most expensive: a holding period off by
+//! one day flips an exit load at the 365-day boundary, and a misparsed NAV date
+//! reorders a whole series. So the tests here are exhaustive over a range rather
+//! than spot-checks — every day of four years, including a leap year and a
+//! century boundary, round-trips through `to_days` / `from_days`.
+
+import "std:test"
+import "std:date"
+
+/// A handful of dates with their day numbers, independently computed. The
+/// absolute values anchor the algorithm; the round trip below then covers
+/// everything between them.
+fn anchor(ymd: int, days: int) {
+    if date.to_days(ymd) != days {
+        test.fail("to_days disagrees with the anchor")
+    }
+    if date.from_days(days) != ymd {
+        test.fail("from_days disagrees with the anchor")
+    }
+}
+
+#[test]
+fn to_days_anchors() {
+    anchor(19700101, 0)
+    anchor(19700102, 1)
+    anchor(19691231, -1)
+    anchor(19681231, -366)
+    anchor(20000101, 10957)
+    anchor(19000301, -25508)
+    anchor(20260331, 20543)
+    anchor(20240229, 19782)
+}
+
+/// Four years of consecutive days, every one of which must survive the round
+/// trip. 2024 is a leap year and 2026 is not, so both branches of the leap rule
+/// are inside the span.
+#[test]
+fn round_trip_four_years() {
+    let start = date.to_days(20230101)
+    let end = date.to_days(20270101)
+    let mut d = start
+    while d < end {
+        let ymd = date.from_days(d)
+        if date.to_days(ymd) != d {
+            test.fail("day number does not round trip")
+        }
+        d = d + 1
+    }
+}
+
+/// The same round trip the other way: every date from 1999-01-01 to
+/// 2001-12-31, which brackets the 2000 century boundary — 2000 is divisible by
+/// 400 and *is* a leap year, while 1900 would not have been.
+#[test]
+fn round_trip_across_century() {
+    let mut d = date.to_days(19990101)
+    let end = date.to_days(20011231)
+    while d <= end {
+        let ymd = date.from_days(d)
+        if date.to_days(ymd) != d {
+            test.fail("century round trip failed")
+        }
+        d = d + 1
+    }
+}
+
+/// A wide sweep by steps of 997 days — coprime with 7 and with the leap cycle,
+/// so it walks through every weekday and every month without enumerating
+/// decades of days.
+#[test]
+fn round_trip_sparse_wide_range() {
+    let mut d = date.to_days(19000101)
+    let end = date.to_days(22001231)
+    while d < end {
+        let ymd = date.from_days(d)
+        if date.to_days(ymd) != d {
+            test.fail("sparse round trip failed")
+        }
+        d = d + 997
+    }
+}
+
+#[test]
+fn leap_years() {
+    if !date.is_leap(2024) {
+        test.fail("2024 is a leap year")
+    }
+    if !date.is_leap(2000) {
+        test.fail("2000 is a leap year")
+    }
+    if date.is_leap(1900) {
+        test.fail("1900 is not a leap year")
+    }
+    if date.is_leap(2026) {
+        test.fail("2026 is not a leap year")
+    }
+    if date.is_leap(2100) {
+        test.fail("2100 is not a leap year")
+    }
+    if !date.is_leap(2400) {
+        test.fail("2400 is a leap year")
+    }
+}
+
+#[test]
+fn month_lengths() {
+    if date.days_in_month(2026, 1) != 31 {
+        test.fail("January")
+    }
+    if date.days_in_month(2026, 2) != 28 {
+        test.fail("February, common year")
+    }
+    if date.days_in_month(2024, 2) != 29 {
+        test.fail("February, leap year")
+    }
+    if date.days_in_month(2026, 4) != 30 {
+        test.fail("April")
+    }
+    if date.days_in_month(2026, 12) != 31 {
+        test.fail("December")
+    }
+    if date.days_in_month(2026, 0) != 0 {
+        test.fail("month 0 has no days")
+    }
+    if date.days_in_month(2026, 13) != 0 {
+        test.fail("month 13 has no days")
+    }
+}
+
+// --- weekdays ------------------------------------------------------------
+
+/// Known weekdays. 2026-03-31 is a Tuesday, 2000-01-01 was a Saturday, and
+/// 1970-01-01 (the epoch) was a Thursday — the anchor the whole function is
+/// derived from.
+#[test]
+fn known_weekdays() {
+    if date.weekday(19700101) != 4 {
+        test.fail("1970-01-01 was a Thursday")
+    }
+    if date.weekday(20000101) != 6 {
+        test.fail("2000-01-01 was a Saturday")
+    }
+    if date.weekday(20260331) != 2 {
+        test.fail("2026-03-31 is a Tuesday")
+    }
+    if date.weekday(20260401) != 3 {
+        test.fail("2026-04-01 is a Wednesday")
+    }
+    if date.weekday(20240229) != 4 {
+        test.fail("2024-02-29 is a Thursday")
+    }
+    if date.weekday(19691231) != 3 {
+        test.fail("1969-12-31 was a Wednesday")
+    }
+    if date.weekday(0) != -1 {
+        test.fail("an invalid date has no weekday")
+    }
+}
+
+/// The weekday of a date and the next day differ by exactly one, modulo seven,
+/// over a long span. This catches an off-by-one in the epoch offset that a
+/// handful of spot-checks can miss.
+#[test]
+fn weekday_advances_by_one() {
+    let mut d = date.to_days(20200101)
+    let end = date.to_days(20260101)
+    while d < end {
+        let a = date.weekday(date.from_days(d))
+        let b = date.weekday(date.from_days(d + 1))
+        let mut want = a + 1
+        if want > 6 {
+            want = 0
+        }
+        if b != want {
+            test.fail("weekday did not advance by one")
+        }
+        d = d + 1
+    }
+}
+
+#[test]
+fn weekends() {
+    // 2026-03-28 is a Saturday, 2026-03-29 a Sunday, 2026-03-30 a Monday.
+    if !date.is_weekend(20260328) {
+        test.fail("2026-03-28 is a Saturday")
+    }
+    if !date.is_weekend(20260329) {
+        test.fail("2026-03-29 is a Sunday")
+    }
+    if date.is_weekend(20260330) {
+        test.fail("2026-03-30 is a Monday")
+    }
+}
+
+// --- days_between --------------------------------------------------------
+
+/// The 365-day exit-load boundary, which is what this function exists for.
+#[test]
+fn days_between_exit_load_boundary() {
+    if date.days_between(20250101, 20260101) != 365 {
+        test.fail("a common year is 365 days")
+    }
+    if date.days_between(20240101, 20250101) != 366 {
+        test.fail("a leap year is 366 days")
+    }
+    if date.days_between(20260331, 20260331) != 0 {
+        test.fail("a date to itself is 0 days")
+    }
+    if date.days_between(20260331, 20260330) != -1 {
+        test.fail("days_between is signed")
+    }
+}
+
+/// Across a leap day, which is where a hand-rolled day count goes wrong.
+#[test]
+fn days_between_across_leap_day() {
+    if date.days_between(20240228, 20240229) != 1 {
+        test.fail("28 to 29 February")
+    }
+    if date.days_between(20240229, 20240301) != 1 {
+        test.fail("29 February to 1 March")
+    }
+    if date.days_between(20240228, 20240301) != 2 {
+        test.fail("28 February to 1 March in a leap year is 2 days")
+    }
+    if date.days_between(20230228, 20230301) != 1 {
+        test.fail("28 February to 1 March in a common year is 1 day")
+    }
+    if date.days_between(20200228, 20200301) != 2 {
+        test.fail("the 2020 leap day")
+    }
+    if date.days_between(20000228, 20000301) != 2 {
+        test.fail("2000 had a leap day")
+    }
+    if date.days_between(19000228, 19000301) != 1 {
+        test.fail("1900 had no leap day")
+    }
+}
+
+/// An invalid date yields 0 rather than a garbage span.
+#[test]
+fn days_between_rejects_invalid() {
+    if date.days_between(0, 20260331) != 0 {
+        test.fail("an invalid start is not counted")
+    }
+    if date.days_between(20260331, 0) != 0 {
+        test.fail("an invalid end is not counted")
+    }
+}
+
+// --- AMFI parsing --------------------------------------------------------
+
+/// `DD-Mon-YYYY`, the only shape AMFI publishes. Every rejection case here is
+/// one that would otherwise become a *plausible* wrong date: swapping day and
+/// year, reading `Feb` as `Mar`, or accepting `31-Feb-2026`.
+#[test]
+fn parse_amfi_accepts() {
+    if date.parse_amfi("01-Jan-2026") != 20260101 {
+        test.fail("1 January")
+    }
+    if date.parse_amfi("31-Mar-2026") != 20260331 {
+        test.fail("31 March")
+    }
+    if date.parse_amfi("31-Dec-2026") != 20261231 {
+        test.fail("31 December")
+    }
+    if date.parse_amfi("29-Feb-2024") != 20240229 {
+        test.fail("29 February in a leap year")
+    }
+    if date.parse_amfi("01-Jan-1970") != 19700101 {
+        test.fail("the epoch")
+    }
+    if date.parse_amfi("15-Aug-2000") != 20000815 {
+        test.fail("15 August 2000")
+    }
+    // Case-insensitive, so a hand-edited cache is not a parse failure.
+    if date.parse_amfi("31-mar-2026") != 20260331 {
+        test.fail("lowercase month name")
+    }
+}
+
+#[test]
+fn parse_amfi_rejects() {
+    if date.parse_amfi("") != 0 {
+        test.fail("empty")
+    }
+    if date.parse_amfi("31-Mar-26") != 0 {
+        test.fail("two-digit year")
+    }
+    if date.parse_amfi("31-03-2026") != 0 {
+        test.fail("numeric month")
+    }
+    if date.parse_amfi("2026-03-31") != 0 {
+        test.fail("ISO order")
+    }
+    if date.parse_amfi("31/Mar/2026") != 0 {
+        test.fail("wrong separator")
+    }
+    if date.parse_amfi("31-Foo-2026") != 0 {
+        test.fail("not a month name")
+    }
+    if date.parse_amfi("31-Feb-2026") != 0 {
+        test.fail("31 February does not exist")
+    }
+    if date.parse_amfi("29-Feb-2026") != 0 {
+        test.fail("29 February in a common year")
+    }
+    if date.parse_amfi("00-Mar-2026") != 0 {
+        test.fail("day zero")
+    }
+    if date.parse_amfi("32-Mar-2026") != 0 {
+        test.fail("day 32")
+    }
+    if date.parse_amfi("3-Mar-2026") != 0 {
+        test.fail("one-digit day")
+    }
+    if date.parse_amfi("31-Mar-20265") != 0 {
+        test.fail("too long")
+    }
+}
+
+// --- formatting ----------------------------------------------------------
+
+#[test]
+fn iso_round_trip() {
+    if date.parse_iso("2026-03-31") != 20260331 {
+        test.fail("parse ISO")
+    }
+    if date.fmt_iso(20260331) != "2026-03-31" {
+        test.fail("format ISO")
+    }
+    if date.fmt_iso(20260101) != "2026-01-01" {
+        test.fail("January pads to two digits")
+    }
+    if date.parse_iso("2026-3-31") != 0 {
+        test.fail("unpadded month is rejected")
+    }
+    if date.parse_iso("2026-13-01") != 0 {
+        test.fail("month 13 is rejected")
+    }
+    if date.parse_iso("") != 0 {
+        test.fail("empty ISO")
+    }
+}
+
+#[test]
+fn fmt_date_matches_amfi() {
+    if date.fmt_date(20260331) != "31-Mar-2026" {
+        test.fail("31 March")
+    }
+    if date.fmt_date(20260101) != "01-Jan-2026" {
+        test.fail("January pads to two digits")
+    }
+    if date.fmt_date(20241231) != "31-Dec-2024" {
+        test.fail("December")
+    }
+    if date.fmt_date(0) != "--" {
+        test.fail("an invalid date formats as --")
+    }
+}
+
+/// `fmt_date` and `parse_amfi` are inverses over a range, which is what keeps a
+/// cache written by one readable by the other.
+#[test]
+fn fmt_parse_round_trip() {
+    let mut d = date.to_days(20240101)
+    let end = date.to_days(20260101)
+    while d < end {
+        let ymd = date.from_days(d)
+        if date.parse_amfi(date.fmt_date(ymd)) != ymd {
+            test.fail("format then parse is not the identity")
+        }
+        d = d + 1
+    }
+}
+
+// --- month arithmetic and SIP dates --------------------------------------
+
+/// `add_months` clamps to the month end: a SIP on the 31st has no 31st to run
+/// on in February, and rolling into March would move the contribution.
+#[test]
+fn add_months_clamps() {
+    if date.add_months(20260131, 1) != 20260228 {
+        test.fail("31 January + 1 month is 28 February")
+    }
+    if date.add_months(20240131, 1) != 20240229 {
+        test.fail("31 January + 1 month is 29 February in a leap year")
+    }
+    if date.add_months(20260331, 1) != 20260430 {
+        test.fail("31 March + 1 month is 30 April")
+    }
+    if date.add_months(20260115, 1) != 20260215 {
+        test.fail("mid-month does not move")
+    }
+}
+
+/// Year carry in both directions, including across December and January.
+#[test]
+fn add_months_carries_years() {
+    if date.add_months(20261201, 1) != 20270101 {
+        test.fail("December + 1 is next January")
+    }
+    if date.add_months(20260101, -1) != 20251201 {
+        test.fail("January - 1 is the previous December")
+    }
+    if date.add_months(20260331, 12) != 20270331 {
+        test.fail("+12 months is a year")
+    }
+    if date.add_months(20260331, -12) != 20250331 {
+        test.fail("-12 months is a year")
+    }
+    if date.add_months(20260331, 0) != 20260331 {
+        test.fail("+0 months is the same date")
+    }
+}
+
+/// The SIP schedule: monthly dates from a start, each clamped. This is the walk
+/// `core/strategy.sip` performs, minus the NAV lookup.
+///
+/// Note the third step: once 31 January clamps to 28 February, March keeps the
+/// 28th. That is what a real SIP mandate on the 31st does, and it is the
+/// behavior a naive "next month, same day, else last day" would get wrong.
+#[test]
+fn monthly_sip_schedule() {
+    let start = 20260131
+    let second = date.add_months(start, 1)
+    let third = date.add_months(second, 1)
+    let fourth = date.add_months(third, 1)
+    if second != 20260228 {
+        test.fail("February contribution clamps to the 28th")
+    }
+    if third != 20260328 {
+        test.fail("March contribution keeps the clamped day")
+    }
+    if fourth != 20260428 {
+        test.fail("April contribution keeps the clamped day")
+    }
+}
+
+#[test]
+fn month_boundaries() {
+    if date.month_start(20260315) != 20260301 {
+        test.fail("month start")
+    }
+    if date.month_end(20260215) != 20260228 {
+        test.fail("month end, common February")
+    }
+    if date.month_end(20240215) != 20240229 {
+        test.fail("month end, leap February")
+    }
+    if date.month_end(20260415) != 20260430 {
+        test.fail("month end, 30-day month")
+    }
+    if date.year_start(20260315) != 20260101 {
+        test.fail("year start")
+    }
+}
+
+#[test]
+fn add_years_clamps_leap_day() {
+    if date.add_years(20240229, 1) != 20250228 {
+        test.fail("29 February + 1 year is 28 February")
+    }
+    if date.add_years(20260331, 1) != 20270331 {
+        test.fail("a normal date is unchanged")
+    }
+}
+
+#[test]
+fn validity_gate() {
+    if !date.is_valid(20260331) {
+        test.fail("31 March is valid")
+    }
+    if !date.is_valid(20240229) {
+        test.fail("leap day is valid")
+    }
+    if date.is_valid(20260229) {
+        test.fail("29 February in a common year is invalid")
+    }
+    if date.is_valid(20260230) {
+        test.fail("30 February is invalid")
+    }
+    if date.is_valid(20261301) {
+        test.fail("month 13 is invalid")
+    }
+    if date.is_valid(20260001) {
+        test.fail("month 0 is invalid")
+    }
+    if date.is_valid(20260300) {
+        test.fail("day 0 is invalid")
+    }
+    if date.is_valid(0) {
+        test.fail("0 is invalid")
+    }
+    if date.is_valid(18000101) {
+        test.fail("out of the supported range")
+    }
+}
+
+#[test]
+fn component_accessors() {
+    if date.year_of(20260331) != 2026 {
+        test.fail("year")
+    }
+    if date.month_of(20260331) != 3 {
+        test.fail("month")
+    }
+    if date.day_of(20260331) != 31 {
+        test.fail("day")
+    }
+}

@@ -1,0 +1,363 @@
+//! In-language tests for `std:math`.
+//!
+//! Run by the language suite (`nob test` → the inlang check), and imported by
+//! dracula's `app.loam` so `loam test` covers it there too.
+//!
+//! Every expected value is a decimal literal a reader can check against a
+//! calculator, and every assertion is on **relative** error: an absolute
+//! epsilon passes trivially for large values and fails spuriously for small
+//! ones, which is the wrong shape for a numeric test.
+//!
+//! The edges are covered explicitly (`sqrt(0)`, `ln(1)`, `pow(x, 0)`, a
+//! negative base, an out-of-range `exp`) because these are the inputs real data
+//! produces — a flat series, a wiped-out portfolio — and a trap there would
+//! take the process down where a defined value would not.
+
+import "std:test"
+import "std:math"
+
+/// Relative error of `got` against `want`, guarding the zero case.
+fn rel(got: f64, want: f64) -> f64 {
+    if want == 0.0 {
+        return math.abs(got)
+    }
+    return math.abs(got - want) / math.abs(want)
+}
+
+/// Trap unless `got` is within 1e-10 relative of `want`.
+fn near(got: f64, want: f64) {
+    if rel(got, want) > 1.0e-10 {
+        test.fail("value out of tolerance")
+    }
+}
+
+// --- rounding and comparison ---------------------------------------------
+
+#[test]
+fn test_abs() {
+    near(math.abs(0.0), 0.0)
+    near(math.abs(-0.0), 0.0)
+    near(math.abs(3.25), 3.25)
+    near(math.abs(-3.25), 3.25)
+    near(math.abs(-1.0e-9), 1.0e-9)
+    near(math.abs(7.0), 7.0)
+    near(math.abs(-7.0), 7.0)
+    near(math.abs(-1.0e300), 1.0e300)
+}
+
+#[test]
+fn test_floor() {
+    near(math.floor(2.7), 2.0)
+    near(math.floor(2.0), 2.0)
+    near(math.floor(-2.1), -3.0)
+    near(math.floor(-2.0), -2.0)
+    near(math.floor(0.0), 0.0)
+    near(math.floor(-0.5), -1.0)
+    near(math.floor(1000000.25), 1000000.0)
+}
+
+#[test]
+fn test_ceil() {
+    near(math.ceil(2.1), 3.0)
+    near(math.ceil(2.0), 2.0)
+    near(math.ceil(-2.7), -2.0)
+    near(math.ceil(0.0), 0.0)
+    near(math.ceil(0.5), 1.0)
+    near(math.ceil(-1000000.25), -1000000.0)
+}
+
+#[test]
+fn test_round() {
+    near(math.round(2.5), 3.0)
+    near(math.round(2.4), 2.0)
+    near(math.round(-2.5), -3.0)
+    near(math.round(-2.4), -2.0)
+    near(math.round(0.0), 0.0)
+    near(math.round(1234.5), 1235.0)
+}
+
+#[test]
+fn test_trunc() {
+    near(math.trunc(2.9), 2.0)
+    near(math.trunc(-2.9), -2.0)
+    near(math.trunc(0.0), 0.0)
+}
+
+#[test]
+fn test_min_max_clamp() {
+    near(math.min(2.0, 3.0), 2.0)
+    near(math.min(-2.0, -3.0), -3.0)
+    near(math.max(2.0, 3.0), 3.0)
+    near(math.max(-2.0, -3.0), -2.0)
+    near(math.min(1.5, 1.5), 1.5)
+    near(math.clamp(9.0, 0.0, 5.0), 5.0)
+    near(math.clamp(-9.0, 0.0, 5.0), 0.0)
+    near(math.clamp(3.0, 0.0, 5.0), 3.0)
+}
+
+#[test]
+fn test_is_finite() {
+    if !math.is_finite(0.0) {
+        test.fail("0 is finite")
+    }
+    if !math.is_finite(-1.5) {
+        test.fail("-1.5 is finite")
+    }
+    if !math.is_finite(1.0e307) {
+        test.fail("1e307 is finite")
+    }
+    let z: f64 = 0.0
+    if math.is_finite(z / z) {
+        test.fail("NaN is not finite")
+    }
+    if math.is_finite(1.0e300 * 1.0e300) {
+        test.fail("overflow is not finite")
+    }
+}
+
+// --- sqrt ----------------------------------------------------------------
+
+/// Twenty hand-checked roots. The irrational ones carry all the digits an f64
+/// holds; the perfect squares are exact, and the same relative test proves it.
+#[test]
+fn test_sqrt() {
+    near(math.sqrt(0.0), 0.0)
+    near(math.sqrt(1.0), 1.0)
+    near(math.sqrt(2.0), 1.4142135623730951)
+    near(math.sqrt(3.0), 1.7320508075688772)
+    near(math.sqrt(4.0), 2.0)
+    near(math.sqrt(5.0), 2.23606797749979)
+    near(math.sqrt(9.0), 3.0)
+    near(math.sqrt(10.0), 3.1622776601683795)
+    near(math.sqrt(16.0), 4.0)
+    near(math.sqrt(25.0), 5.0)
+    near(math.sqrt(49.0), 7.0)
+    near(math.sqrt(100.0), 10.0)
+    near(math.sqrt(0.25), 0.5)
+    near(math.sqrt(0.0625), 0.25)
+    near(math.sqrt(1000000.0), 1000.0)
+    near(math.sqrt(100000000.0), 10000.0)
+    near(math.sqrt(0.01), 0.1)
+    near(math.sqrt(1.0e-8), 1.0e-4)
+    near(math.sqrt(123456.789), 351.3641828644462)
+    near(math.sqrt(0.000123), 0.011090536506409418)
+}
+
+/// A negative argument is out of domain and returns zero rather than trapping.
+#[test]
+fn test_sqrt_negative_is_zero() {
+    near(math.sqrt(-1.0), 0.0)
+    near(math.sqrt(-1000000.0), 0.0)
+}
+
+/// `sqrt(x)^2 == x` to within f64's own rounding, across a range of
+/// magnitudes.
+#[test]
+fn test_sqrt_squares_back() {
+    let mut x: f64 = 0.001
+    let mut i = 0
+    while i < 40 {
+        let r = math.sqrt(x)
+        if rel(r * r, x) > 1.0e-14 {
+            test.fail("sqrt does not square back")
+        }
+        x = x * 1.5
+        i = i + 1
+    }
+}
+
+// --- ln ------------------------------------------------------------------
+
+/// Twenty hand-checked logarithms, including `ln(1) == 0` and the sub-unity
+/// arguments a return series produces.
+#[test]
+fn test_ln() {
+    near(math.ln(0.0), 0.0)
+    near(math.ln(-1.0), 0.0)
+    near(math.ln(1.0), 0.0)
+    near(math.ln(2.0), 0.6931471805599453)
+    near(math.ln(3.0), 1.0986122886681098)
+    near(math.ln(4.0), 1.3862943611198906)
+    near(math.ln(5.0), 1.6094379124341003)
+    near(math.ln(7.0), 1.9459101490553132)
+    near(math.ln(10.0), 2.302585092994046)
+    near(math.ln(100.0), 4.605170185988092)
+    near(math.ln(1000.0), 6.907755278982137)
+    near(math.ln(1000000.0), 13.815510557964274)
+    near(math.ln(0.5), -0.6931471805599453)
+    near(math.ln(0.1), -2.302585092994046)
+    near(math.ln(0.01), -4.605170185988092)
+    near(math.ln(0.001), -6.907755278982137)
+    near(math.ln(1.5), 0.4054651081081644)
+    near(math.ln(2.718281828459045), 1.0)
+    near(math.ln(1234.5678), 7.118476228297786)
+    near(math.ln(0.000123), -9.003326202591856)
+}
+
+/// `ln(a * b) == ln(a) + ln(b)`, the identity compounding relies on.
+#[test]
+fn test_ln_is_multiplicative() {
+    let pairs = [7]f64 { 2.0, 3.0, 5.0, 7.0, 10.0, 0.5, 1.25 }
+    let mut i = 0
+    while i < 7 {
+        let mut j = 0
+        while j < 7 {
+            let a = pairs[i]
+            let b = pairs[j]
+            if rel(math.ln(a * b), math.ln(a) + math.ln(b)) > 1.0e-13 {
+                test.fail("ln is not multiplicative")
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+}
+
+// --- exp -----------------------------------------------------------------
+
+/// Twenty hand-checked exponentials. The negative arguments are the awkward
+/// ones — that is where a naive series loses digits fastest, and the range
+/// reduction is what keeps them accurate.
+#[test]
+fn test_exp() {
+    near(math.exp(0.0), 1.0)
+    near(math.exp(1.0), 2.718281828459045)
+    near(math.exp(2.0), 7.38905609893065)
+    near(math.exp(0.5), 1.6487212707001282)
+    near(math.exp(0.1), 1.1051709180756477)
+    near(math.exp(3.0), 20.085536923187668)
+    near(math.exp(5.0), 148.4131591025766)
+    near(math.exp(10.0), 22026.465794806718)
+    near(math.exp(20.0), 485165195.4097903)
+    near(math.exp(-0.5), 0.6065306597126334)
+    near(math.exp(-1.0), 0.36787944117144233)
+    near(math.exp(-2.0), 0.1353352832366127)
+    near(math.exp(-3.5), 0.0301973834223185)
+    near(math.exp(-10.0), 4.5399929762484854e-05)
+    near(math.exp(-20.0), 2.061153622438558e-09)
+    near(math.exp(0.6931471805599453), 2.0)
+    near(math.exp(-0.000001), 0.9999990000005)
+    near(math.exp(0.000001), 1.0000010000005)
+    near(math.exp(-100.0), 3.720075976020836e-44)
+    near(math.exp(100.0), 2.6881171418161356e43)
+}
+
+/// Out-of-range arguments clamp rather than producing an infinity that would
+/// spread into every downstream metric.
+#[test]
+fn test_exp_range_guards() {
+    if math.exp(-1000.0) != 0.0 {
+        test.fail("exp underflow should be 0")
+    }
+    if math.exp(1000.0) != 1.0e308 {
+        test.fail("exp overflow should clamp")
+    }
+}
+
+/// `exp(ln(x)) == x` across a decade range — the property a log-return
+/// conversion stands on.
+///
+/// The upper bound is 1e6 rather than anything larger because the assertion is
+/// on *relative* error: at `x` in the thousands, `exp(x)` sits near the top of
+/// the f64 range where the last place of the mantissa is a large absolute
+/// number, so `ln` of it cannot recover `x` to 1e-10 — and a real use of
+/// `exp(x)` is `exp(y * ln(x))`, i.e. an exponent in the tens, never the
+/// thousands. `core/stats.cagr` and `core/backtest` both stay inside this band.
+#[test]
+fn test_exp_ln_round_trip() {
+    let mut x: f64 = 0.001
+    while x < 1000000.0 {
+        if rel(math.exp(math.ln(x)), x) > 1.0e-10 {
+            test.fail("exp(ln(x)) is not x")
+        }
+        x = x * 10.0
+    }
+}
+
+/// `ln(exp(x)) == x` over the range an exponent actually reaches. 700 is the
+/// f64 ceiling for `exp`, so the band is bounded there — above it `exp` clamps
+/// by design and the round trip is no longer the identity.
+#[test]
+fn test_ln_exp_round_trip() {
+    let mut x: f64 = -700.0
+    while x <= 700.0 {
+        let e = math.exp(x)
+        if e > 0.0 {
+            if rel(math.ln(e), x) > 1.0e-10 {
+                test.fail("ln(exp(x)) is not x")
+            }
+        }
+        x = x + 100.0
+    }
+}
+
+// --- pow -----------------------------------------------------------------
+
+/// Twenty hand-checked powers. The whole-number exponents go through
+/// exponentiation by squaring, so they are exact; the rest go through
+/// `exp(y * ln x)`.
+#[test]
+fn test_pow() {
+    near(math.pow(2.0, 10.0), 1024.0)
+    near(math.pow(2.0, 0.0), 1.0)
+    near(math.pow(2.0, 1.0), 2.0)
+    near(math.pow(2.0, -1.0), 0.5)
+    near(math.pow(2.0, 16.0), 65536.0)
+    near(math.pow(10.0, 3.0), 1000.0)
+    near(math.pow(0.5, 2.0), 0.25)
+    near(math.pow(1.0, 999.0), 1.0)
+    near(math.pow(3.0, 4.0), 81.0)
+    near(math.pow(7.0, 3.0), 343.0)
+    near(math.pow(4.0, 0.5), 2.0)
+    near(math.pow(9.0, 0.5), 3.0)
+    near(math.pow(27.0, 0.3333333333333333), 3.0)
+    near(math.pow(1.07, 10.0), 1.9671513572895665)
+    near(math.pow(1.12, 30.0), 29.95992212091116)
+    near(math.pow(2.0, -10.0), 0.0009765625)
+    near(math.pow(1000.0, 2.0), 1000000.0)
+    near(math.pow(0.9, 5.0), 0.5904900000000001)
+    near(math.pow(1.5, 1.5), 1.8371173070873836)
+    near(math.pow(100.0, 0.25), 3.1622776601683795)
+}
+
+/// Edge conventions: `x^0 == 1` for every `x` including zero, and a negative
+/// base with a fractional exponent is out of domain and returns zero rather
+/// than a NaN.
+#[test]
+fn test_pow_edges() {
+    near(math.pow(0.0, 0.0), 1.0)
+    near(math.pow(0.0, 2.0), 0.0)
+    near(math.pow(0.0, 0.5), 0.0)
+    near(math.pow(-2.0, 2.0), 4.0)
+    near(math.pow(-2.0, 3.0), -8.0)
+    near(math.pow(-2.0, 0.5), 0.0)
+}
+
+/// A whole exponent is exact, not an `exp(y ln x)` approximation — a
+/// compounding calculation over a whole year count uses this path, so the
+/// reported figure has to match a hand calculation exactly.
+#[test]
+fn test_pow_integer_is_exact() {
+    let mut i = 1
+    let mut want: f64 = 1.0
+    while i <= 30 {
+        want = want * 3.0
+        if math.pow(3.0, f64(i)) != want {
+            test.fail("integer pow is not exact")
+        }
+        i = i + 1
+    }
+}
+
+/// `sqrt` and `pow(x, 0.5)` agree — two code paths, one answer.
+#[test]
+fn test_pow_half_agrees_with_sqrt() {
+    let xs = [8]f64 { 0.25, 0.5, 1.0, 2.0, 3.0, 10.0, 123.456, 100000.0 }
+    let mut i = 0
+    while i < 8 {
+        if rel(math.pow(xs[i], 0.5), math.sqrt(xs[i])) > 1.0e-10 {
+            test.fail("pow(x, 0.5) disagrees with sqrt")
+        }
+        i = i + 1
+    }
+}

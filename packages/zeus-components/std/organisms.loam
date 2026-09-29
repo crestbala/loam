@@ -1410,8 +1410,11 @@ fn BarChart(labels: []string, names: []string, vals: []int, w: int, h: int) {
     })
 }
 
-/// Straight-segment line chart with dots.
-fn LineChart(labels: []string, names: []string, vals: []int, w: int, h: int) {
+/// Straight-segment line chart with dots. `p` is `LineChartProps`: a fitted
+/// y axis, implied decimals, a label stride, no dots. A `CHART_GAP` value
+/// is not drawn and breaks its line.
+fn LineChart(labels: []string, names: []string, vals: []int, w: int, h: int,
+             p: LineChartProps) {
     let n = labels.len
     let s = names.len
     if n == 0 {
@@ -1423,10 +1426,10 @@ fn LineChart(labels: []string, names: []string, vals: []int, w: int, h: int) {
     let host = Column(SPACE.Exs)
     let node_id = host.id
     refit(host, fn() {
-        chart_lines(labels, names, vals, n, s, w, h, host)
+        chart_lines(labels, names, vals, n, s, w, h, host, p)
     })
     slot(node_handle(node_id), || {
-        chart_lines(labels, names, vals, n, s, w, h, host)
+        chart_lines(labels, names, vals, n, s, w, h, host, p)
     })
 }
 

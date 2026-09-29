@@ -1,0 +1,444 @@
+//! Backtest and walk-forward runs for the screens.
+//!
+//! A worker cannot take the series: a slice is not Send, and a channel
+//! cannot carry one. The series is already in memory, and the run stays
+//! on the UI thread.
+
+import "std:zeus"
+import "../core/backtest.loam"
+import "../core/costs.loam"
+import "../core/strategy.loam"
+import "../core/walkforward.loam"
+import "book.loam" as book
+import "present.loam" as present
+
+let mut rule: Signal<int> = Signal { id: 0 }
+let mut pick: Signal<int> = Signal { id: 0 }
+let mut bt_gen: Signal<int> = Signal { id: 0 }
+let mut wf_gen: Signal<int> = Signal { id: 0 }
+
+let mut pending = 0
+let mut pending_code = ""
+let mut pending_walk = 0
+let mut walk_code = ""
+let mut have = 0
+let mut shown_rule = -1
+let mut shown_code = ""
+let mut rule_line = ""
+let mut hold_line = ""
+let mut sip_line = ""
+let mut rule_name = ""
+let mut end_cells = []string {}
+let mut chart_decimals = 0
+let mut score = ""
+let mut note = ""
+let mut chart_labels = []string {}
+let mut chart_vals = []int {}
+let mut tx_cells = []string {}
+let mut walk_note = ""
+let mut walk_cells = []string {}
+let mut walk_have = 0
+let mut pending_book = 0
+let mut mom_acks = []int {}
+
+fn started() -> bool {
+    return rule.id != 0
+}
+
+fn rule_signal() -> Signal<int> {
+    return rule
+}
+
+/// Index into the watchlist of the scheme a run uses.
+fn pick_signal() -> Signal<int> {
+    return pick
+}
+
+/// Watchlist entries for the scheme picker: name, then code.
+fn pick_labels() -> []string {
+    let mut out = []string {}
+    let n = book.watch_count()
+    let mut i = 0
+    while i < n {
+        let code = book.watch_code(i)
+        let name = book.name_for(code)
+        if name.len > 0 {
+            push(out, "{{name}} ({{code}})")
+        } else {
+            push(out, code)
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn backtest_gen() -> Signal<int> {
+    return bt_gen
+}
+
+fn walk_gen() -> Signal<int> {
+    return wf_gen
+}
+
+fn cash_sentence() -> string {
+    let cash = present.rupees(present.opening_cash())
+    return "Opening cash is {{cash}} rupees. Stamp duty, STT, and exit load come off the fill. The expense ratio is already in the NAV."
+}
+
+fn rule_labels() -> []string {
+    let mut labels = []string {}
+    push(labels, "200-day average")
+    push(labels, "Buy and hold")
+    push(labels, "Monthly SIP")
+    push(labels, "12-month momentum")
+    return labels
+}
+
+fn bump_bt() {
+    if bt_gen.id != 0 {
+        bt_gen.set(bt_gen.get() + 1)
+    }
+}
+
+fn bump_wf() {
+    if wf_gen.id != 0 {
+        wf_gen.set(wf_gen.get() + 1)
+    }
+}
+
+fn chosen_code() -> string {
+    if pick.id == 0 {
+        return book.first_watch()
+    }
+    let at = pick.get()
+    if at < 0 || at >= book.watch_count() {
+        return book.first_watch()
+    }
+    return book.watch_code(at)
+}
+
+fn grid() -> []int {
+    let mut g = []int {}
+    push(g, 50)
+    push(g, 100)
+    push(g, 200)
+    return g
+}
+
+fn compute_backtest(code: string, which: int) {
+    let s = book.series_for(code)
+    let ack = book.ack_for(code)
+    let cash = present.opening_cash()
+    let cmp = strategy.compare(s, strategy.sma_200(s, ack), costs.equity(), cash)
+    let mut rep = cmp.rule
+    if which == 1 {
+        rep = cmp.buy_hold
+    }
+    if which == 2 {
+        rep = cmp.sip
+    }
+    rule_line = present.ended_line("200-day average", cmp.rule)
+    hold_line = present.ended_line("Buy and hold", cmp.buy_hold)
+    sip_line = present.ended_line("Monthly SIP", cmp.sip)
+    end_cells = present.end_cells("200-day average", cmp.rule, cmp.buy_hold, cmp.sip)
+    score = present.score_line(rep)
+    let plot = present.plot_series(rep.curve_dates, rep.curve_paise, rep.ledger.fill_dates)
+    chart_labels = plot.labels
+    chart_vals = plot.vals
+    chart_decimals = present.decimals_for(present.scale_div(rep.curve_paise, present.keep_bars(rep.curve_dates, rep.curve_dates.len, 200, rep.ledger.fill_dates)))
+    let mut codes = []string {}
+    push(codes, code)
+    tx_cells = present.ledger_cells(rep.ledger, codes)
+    note = "The fill is the next published NAV after the signal. A signal on the last bar stays unfilled."
+    shown_rule = which
+    shown_code = code
+    have = 1
+    bump_bt()
+}
+
+fn fail_bt(msg: string) {
+    note = msg
+    have = 0
+    rule_line = ""
+    hold_line = ""
+    sip_line = ""
+    score = ""
+    end_cells = []string {}
+    chart_labels = []string {}
+    chart_vals = []int {}
+    tx_cells = []string {}
+    bump_bt()
+}
+
+fn watch_settled() -> bool {
+    let n = book.watch_count()
+    if n == 0 {
+        return false
+    }
+    let mut i = 0
+    while i < n {
+        if book.fetch_state(book.watch_code(i)) == 0 {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+/// Loaded watchlist names, in the order they were added. An open gap on
+/// one name stays on that name; the others keep their own acknowledgement.
+fn take_watch() -> Panel {
+    let mut p = backtest.empty_panel()
+    let mut acks = []int {}
+    let n = book.watch_count()
+    let mut i = 0
+    while i < n {
+        let code = book.watch_code(i)
+        if book.loaded(code) {
+            let s = book.series_for(code)
+            p = backtest.add_scheme(p, code, s.dates, s.navs)
+            push(acks, book.ack_for(code))
+        }
+        i = i + 1
+    }
+    mom_acks = acks
+    return p
+}
+
+fn compute_momentum() {
+    let p = take_watch()
+    if p.codes.len == 0 {
+        fail_bt("No published NAV.")
+        return
+    }
+    let cash = present.opening_cash()
+    let top = strategy.momentum_top()
+    let ran = strategy.momentum_book_each(p, 12, top, mom_acks, costs.equity(), cash)
+    let cmp = strategy.compare_book(p, ran.orders, costs.equity(), cash)
+    rule_line = present.ended_line("12-month momentum", cmp.rule)
+    hold_line = present.ended_line("Buy and hold", cmp.buy_hold)
+    sip_line = present.ended_line("Monthly SIP", cmp.sip)
+    end_cells = present.end_cells("12-month momentum", cmp.rule, cmp.buy_hold, cmp.sip)
+    score = present.score_line(cmp.rule)
+    let plot = present.plot_series(cmp.rule.curve_dates, cmp.rule.curve_paise, cmp.rule.ledger.fill_dates)
+    chart_labels = plot.labels
+    chart_vals = plot.vals
+    chart_decimals = present.decimals_for(present.scale_div(cmp.rule.curve_paise, present.keep_bars(cmp.rule.curve_dates, cmp.rule.curve_dates.len, 200, cmp.rule.ledger.fill_dates)))
+    tx_cells = present.ledger_cells(cmp.rule.ledger, p.codes)
+    note = "Ranked on the NAV already published, filled at the next one. Up to the top 5 of the watchlist, equal weight, on the last print of the month."
+    shown_rule = 3
+    shown_code = book.first_watch()
+    have = 1
+    bump_bt()
+}
+
+fn arm_momentum() {
+    if book.watch_count() == 0 {
+        pending_book = 0
+        fail_bt("Add a scheme on Holdings first.")
+        return
+    }
+    pending = 0
+    pending_book = 1
+    note = "Loading the watchlist."
+    have = 0
+    bump_bt()
+    let mut i = 0
+    while i < book.watch_count() {
+        book.ensure(book.watch_code(i))
+        i = i + 1
+    }
+    try_backtest()
+}
+
+fn try_backtest() {
+    let bump = book.load_gen().get()
+    if bump < 0 {
+        return
+    }
+    let which = rule.get()
+    if pending_book != 0 {
+        if !watch_settled() {
+            return
+        }
+        pending_book = 0
+        pending = 0
+        compute_momentum()
+        return
+    }
+    if pending == 0 {
+        if have == 1 && which != shown_rule {
+            if which == 3 {
+                arm_momentum()
+            } else if book.loaded(shown_code) {
+                compute_backtest(shown_code, which)
+            }
+        }
+        return
+    }
+    let code = pending_code
+    let st = book.fetch_state(code)
+    if st == 0 {
+        return
+    }
+    pending = 0
+    if st == 2 {
+        fail_bt("No NAV file for this code.")
+        return
+    }
+    if !book.loaded(code) {
+        fail_bt("No published NAV.")
+        return
+    }
+    compute_backtest(code, which)
+}
+
+fn arm_backtest() {
+    if rule.id == 0 {
+        return
+    }
+    if rule.get() == 3 {
+        arm_momentum()
+        return
+    }
+    pending_book = 0
+    let code = chosen_code()
+    if !present.digits(code) {
+        fail_bt("Add a scheme on Holdings first.")
+        return
+    }
+    pending = 1
+    pending_code = code
+    book.ensure(code)
+    try_backtest()
+}
+
+fn compute_walk(code: string) {
+    let s = book.series_for(code)
+    let ack = book.ack_for(code)
+    let w = walkforward.sma(s, grid(), 365, 504, 252, ack, costs.equity(), present.opening_cash())
+    walk_note = w.note
+    walk_cells = present.walk_cells(w)
+    walk_have = 1
+    bump_wf()
+}
+
+fn fail_walk(msg: string) {
+    walk_note = msg
+    walk_cells = []string {}
+    walk_have = 1
+    bump_wf()
+}
+
+fn try_walk() {
+    let bump = book.load_gen().get()
+    if bump < 0 {
+        return
+    }
+    if pending_walk == 0 {
+        return
+    }
+    let code = walk_code
+    let st = book.fetch_state(code)
+    if st == 0 {
+        return
+    }
+    pending_walk = 0
+    if st == 2 {
+        fail_walk("No NAV file for this code.")
+        return
+    }
+    if !book.loaded(code) {
+        fail_walk("No published NAV.")
+        return
+    }
+    compute_walk(code)
+}
+
+fn arm_walk() {
+    if wf_gen.id == 0 {
+        return
+    }
+    let code = chosen_code()
+    if !present.digits(code) {
+        fail_walk("Add a scheme on Holdings first.")
+        return
+    }
+    pending_walk = 1
+    walk_code = code
+    book.ensure(code)
+    try_walk()
+}
+
+fn has_backtest() -> bool {
+    return have == 1
+}
+
+fn backtest_note() -> string {
+    return note
+}
+
+fn average_line() -> string {
+    return rule_line
+}
+
+fn hold_text() -> string {
+    return hold_line
+}
+
+fn sip_text() -> string {
+    return sip_line
+}
+
+fn score_text() -> string {
+    return score
+}
+
+fn equity_labels() -> []string {
+    return chart_labels
+}
+
+fn equity_vals() -> []int {
+    return chart_vals
+}
+
+fn equity_decimals() -> int {
+    return chart_decimals
+}
+
+/// Label, value, caption triples: the selected rule, buy and hold, SIP.
+fn ending_cells() -> []string {
+    return end_cells
+}
+
+fn equity_names() -> []string {
+    let mut names = []string {}
+    push(names, "Equity")
+    return names
+}
+
+fn trade_cells() -> []string {
+    return tx_cells
+}
+
+fn has_walk() -> bool {
+    return walk_have == 1
+}
+
+fn walk_text() -> string {
+    return walk_note
+}
+
+fn fold_cells() -> []string {
+    return walk_cells
+}
+
+fn start() {
+    if rule.id != 0 {
+        return
+    }
+    rule = zeus.signal(0)
+    pick = zeus.signal(0)
+    bt_gen = zeus.signal(0)
+    wf_gen = zeus.signal(0)
+}
