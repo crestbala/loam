@@ -176,7 +176,9 @@ static int scope_is_inside(Scope *s, Scope *outer) {
     return 0;
 }
 
-/** Record a local captured by the current closure (Copy only). */
+/** Record a local captured by the current closure. A Copy value is captured by
+ *  copy; a non-Copy owned value is captured by move (borrowck consumes the
+ *  source, the codegen steals it into the env). */
 static void add_cap(AstNode *clos, const char *name, Type *ty) {
     if (!clos || !name) return;
     for (size_t i = 0; i < clos->as.fn.cap_count; i++)
@@ -757,6 +759,7 @@ static Type *struct_type_of(AstNode *st) {
     Type *t = type_new(TY_STRUCT);
     t->name = loam_dup(st->as.strct.name);
     t->must_check = st->as.strct.is_must_check;
+    t->no_send = st->as.strct.is_no_send;
     t->field_count = st->as.strct.field_count;
     t->field_names = calloc(t->field_count, sizeof(char *));
     t->field_types = calloc(t->field_count, sizeof(Type *));
@@ -812,6 +815,7 @@ static Type *make_struct_inst(AstNode *st, Type **args, size_t n) {
     Type *t = type_new(TY_STRUCT);
     t->name = loam_dup(st->as.strct.name);
     t->must_check = tmpl->must_check;
+    t->no_send = tmpl->no_send;
     t->param_count = n;
     if (n) {
         t->params = calloc(n, sizeof(Type *));
@@ -2366,7 +2370,18 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
                 if (!is_global) {
                     for (int c = clos_depth - 1; c >= 0; c--) {
                         if (scope_is_inside(found, clos_scope_stack[c])) break;
-                        if (!type_is_copy(ty) || (ty->kind == TY_PTR && ty->is_mut)) {
+                        /* A Copy value is captured by copy; a non-Copy owned
+                           value (Box, or a struct/array/vec of one) is
+                           *moved* into the closure env, and borrowck records
+                           the source as consumed. A reference cannot be
+                           captured — moving a `&T`/`&mut T` into a closure
+                           that outlives the borrow is exactly the dangling
+                           reference the return-of-local check guards. */
+                        if (ty->kind == TY_PTR) {
+                            err(n->loc, "cannot capture reference '%s'", n->as.ident.name);
+                            break;
+                        }
+                        if (!type_is_copy(ty) && !type_needs_drop(ty)) {
                             err(n->loc, "cannot capture non-Copy '%s'", n->as.ident.name);
                             break;
                         }
@@ -2582,6 +2597,42 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
             if (!ok)
                 err(n->loc, "cannot cast %s as %s", type_name(from), type_name(to));
             n->ty = to;
+            n->place_mut = 0;
+            return n->ty;
+        }
+        case AST_TRY: {
+            /* `expr?` — propagate a `Result<T>` / `Option<T>` failure. Requires
+               the enclosing fn to return the same container, so the early
+               return is well-typed. Yields the payload type `T`. */
+            Type *ot = check_expr(n->as.try_expr.expr);
+            Type *val_ty = NULL;
+            int is_res = 0, is_opt = 0;
+            if (ot && ot->kind == TY_STRUCT && ot->name) {
+                if (strcmp(ot->name, "Result") == 0) is_res = 1;
+                else if (strcmp(ot->name, "Option") == 0) is_opt = 1;
+            }
+            if (!is_res && !is_opt) {
+                err(n->loc, "`?` requires a Result<T> or Option<T>, got %s", type_name(ot));
+                n->ty = ty_void();
+                return n->ty;
+            }
+            for (size_t i = 0; i < ot->field_count; i++)
+                if (ot->field_names[i] && strcmp(ot->field_names[i], "val") == 0)
+                    val_ty = ot->field_types[i];
+            if (!val_ty) {
+                err(n->loc, "`?` requires a Result<T> or Option<T> with a `val` payload");
+                n->ty = ty_void();
+                return n->ty;
+            }
+            if (!cur_ret || cur_ret->kind != TY_STRUCT || !type_eq(cur_ret, ot)) {
+                err(n->loc,
+                    "`?` in a fn returning %s: the result must be returned, not propagated "
+                    "(the enclosing fn must return the same Result/Option type)",
+                    type_name(cur_ret));
+                n->ty = val_ty;
+                return n->ty;
+            }
+            n->ty = val_ty;
             n->place_mut = 0;
             return n->ty;
         }
@@ -2889,6 +2940,20 @@ static Type *check_expr(AstNode *n) { return check_expr_ty(n, NULL); }
 
 static void check_stmt(AstNode *n);
 
+/** 1 if every variant of enum `en` appears in the captured `covered` names —
+ *  a complete, `_`-free `match` over the enum. */
+static int enum_variants_covered(AstNode *en, const char **covered, int n) {
+    if (!en) return 0;
+    for (size_t i = 0; i < en->as.enm.count; i++) {
+        const char *v = en->as.enm.vnames[i];
+        int seen = 0;
+        for (int c = 0; c < n; c++)
+            if (covered[c] && strcmp(covered[c], v) == 0) { seen = 1; break; }
+        if (!seen) return 0;
+    }
+    return 1;
+}
+
 /** Statements of `n` in the caller's scope — used for a function or closure
  *  body, so that a `let` shadowing a parameter is a same-scope collision. */
 static void check_block_in_scope(AstNode *n) {
@@ -3019,6 +3084,13 @@ static void check_stmt(AstNode *n) {
                 err(n->loc, "match requires int, float, bool, or string");
             int saw_wild = 0;
             int saw_true = 0, saw_false = 0;
+            /* If the arms name enum variants (`Tag.Ok`), the set of covered
+               variants can be checked against the enum: all of them, with no
+               `_`, is exhaustive. The names are captured here because
+               `check_expr_ty` below lowers `Tag.Ok` to an int literal. */
+            AstNode *pat_enum = NULL;
+            const char *cov_variants[128];
+            int cov_n = 0;
             if (n->as.match_stmt.arm_count == 0)
                 err(n->loc, "match needs at least one arm");
             for (size_t i = 0; i < n->as.match_stmt.arm_count; i++) {
@@ -3032,12 +3104,29 @@ static void check_stmt(AstNode *n) {
                     continue;
                 }
                 for (size_t p = 0; p < arm->as.match_arm.pat_count; p++) {
-                    Type *pt = check_expr_ty(arm->as.match_arm.pats[p],
-                                             type_is_numeric(st) ? st : NULL);
-                    if (st && pt && !type_eq(st, pt))
-                        err(arm->as.match_arm.pats[p]->loc, "pattern type %s does not match %s",
-                            type_name(pt), type_name(st));
                     AstNode *pat = arm->as.match_arm.pats[p];
+                    /* `Enum.Member` pattern: remember the enum so completeness
+                       can be judged against its variant set. Detected *before*
+                       `check_expr_ty`, which lowers the enum constant to an int
+                       literal and would erase the variant name. */
+                    if (pat && pat->kind == AST_FIELD && pat->as.access.target &&
+                        pat->as.access.target->kind == AST_IDENT) {
+                        AstNode *en = find_enum(pat->as.access.target->as.ident.name);
+                        if (!en) {
+                            LoamModule *em2 = find_mod(pat->as.access.target->as.ident.name);
+                            if (em2)
+                                en = lookup_through(em2, pat->as.access.field, find_enum_in);
+                        }
+                        if (en) {
+                            pat_enum = en;
+                            if (cov_n < 128)
+                                cov_variants[cov_n++] = loam_dup(pat->as.access.field);
+                        }
+                    }
+                    Type *pt = check_expr_ty(pat, type_is_numeric(st) ? st : NULL);
+                    if (st && pt && !type_eq(st, pt))
+                        err(pat->loc, "pattern type %s does not match %s",
+                            type_name(pt), type_name(st));
                     if (pat && pat->kind == AST_BOOL) {
                         if (pat->as.lit.b) saw_true = 1;
                         else saw_false = 1;
@@ -3048,9 +3137,10 @@ static void check_stmt(AstNode *n) {
             if (st && st->kind == TY_BOOL) {
                 if (!saw_wild && !(saw_true && saw_false))
                     err(n->loc, "match on bool is not exhaustive (add `_` or both true and false)");
-            } else if (!saw_wild) {
+            } else if (!saw_wild && !(pat_enum && enum_variants_covered(pat_enum, cov_variants, cov_n))) {
                 err(n->loc, "match must be exhaustive (add `_`)");
             }
+            for (int ci = 0; ci < cov_n; ci++) free((void *)cov_variants[ci]);
             break;
         }
         case AST_BLOCK:
@@ -3564,21 +3654,23 @@ static AstNode *json_decode_body(AstNode *st, Type *t, SourceLoc loc) {
             pa[1] = jstr(fnm, loc);
             proto_stmts_add(&fs, &fn_,
                             ast_var(loam_dup("px"), NULL, json_call("child", pa, 2, loc), 0, loc));
-            AstNode **fa = (AstNode **)malloc(3 * sizeof(AstNode *));
-            fa[0] = jdent("id", loc);
-            fa[1] = jstr(fnm, loc);
-            fa[2] = jdent("px", loc);
+            AstNode **fa = (AstNode **)malloc(4 * sizeof(AstNode *));
+            fa[0] = jdent("nodes", loc);
+            fa[1] = jdent("id", loc);
+            fa[2] = jstr(fnm, loc);
+            fa[3] = jdent("px", loc);
             proto_stmts_add(&fs, &fn_,
-                            ast_var(loam_dup("f"), NULL, json_call("field", fa, 3, loc), 0, loc));
+                            ast_var(loam_dup("f"), NULL, json_call("field", fa, 4, loc), 0, loc));
             proto_stmts_add(&fs, &fn_,
                             json_guard_fail(st, t, jfield(jdent("f", loc), "ok", loc),
                                             jfield(jdent("f", loc), "err", loc), loc));
-            AstNode **va = (AstNode **)malloc(2 * sizeof(AstNode *));
-            va[0] = jfield(jdent("f", loc), "id", loc);
-            va[1] = jdent("px", loc);
+            AstNode **va = (AstNode **)malloc(3 * sizeof(AstNode *));
+            va[0] = jdent("nodes", loc);
+            va[1] = jfield(jdent("f", loc), "id", loc);
+            va[2] = jdent("px", loc);
             const char *getter = ft->kind == TY_STRING ? "as_str" : "as_int";
             proto_stmts_add(&fs, &fn_,
-                            ast_var(loam_dup("v"), NULL, json_call(getter, va, 2, loc), 0, loc));
+                            ast_var(loam_dup("v"), NULL, json_call(getter, va, 3, loc), 0, loc));
             proto_stmts_add(&fs, &fn_,
                             json_guard_fail(st, t, jfield(jdent("v", loc), "ok", loc),
                                             jfield(jdent("v", loc), "err", loc), loc));
@@ -3639,15 +3731,21 @@ static void inject_json_fn(AstNode *prog, AstNode *st, int is_encode) {
                             json_encode_body(st, t, loc), loc);
         program_add_decl(prog, fn);
     } else {
-        Param *ps = (Param *)calloc(2, sizeof(Param));
+        /* `json_decode_X(nodes, id, path)` — the document's node pool travels
+           with the call, so two documents in flight never alias (see std:json).
+           `nodes` is `[]Json`; the importing module has `Json` in scope. */
+        Param *ps = (Param *)calloc(3, sizeof(Param));
         if (!ps) loam_fatal("out of memory");
-        ps[0].name = loam_dup("id");
-        ps[0].type = named_type_node("int", loc);
+        ps[0].name = loam_dup("nodes");
+        ps[0].type = ast_type(NULL, 3, named_type_node("Json", loc), -1, loc);
         ps[0].loc = loc;
-        ps[1].name = loam_dup("path");
-        ps[1].type = named_type_node("string", loc);
+        ps[1].name = loam_dup("id");
+        ps[1].type = named_type_node("int", loc);
         ps[1].loc = loc;
-        AstNode *fn = ast_fn(loam_dup(fnname), ps, 2, named_type_node(sname, loc),
+        ps[2].name = loam_dup("path");
+        ps[2].type = named_type_node("string", loc);
+        ps[2].loc = loc;
+        AstNode *fn = ast_fn(loam_dup(fnname), ps, 3, named_type_node(sname, loc),
                             json_decode_body(st, t, loc), loc);
         program_add_decl(prog, fn);
     }
@@ -3834,6 +3932,9 @@ static void walk_instantiate(AstNode *n, const char **names, Type **args, size_t
             break;
         case AST_CAST:
             walk_instantiate(n->as.cast.expr, names, args, na, added);
+            break;
+        case AST_TRY:
+            walk_instantiate(n->as.try_expr.expr, names, args, na, added);
             break;
         case AST_DEREF:
         case AST_ADDR:

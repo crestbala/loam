@@ -1,0 +1,12 @@
+import "std:thread"
+import "std:zeus"
+
+// Phase 3 exit (channel half): a `Chan<Signal<int>>` is rejected for the same
+// reason a spawn capture is — the payload would hand UI-thread signal state to
+// a worker. `#[no_send]` on `Signal` makes `type_is_send` say no at `chan<>`.
+
+fn main() {
+    let s = zeus.signal(0)
+    let jobs = thread.chan(4, s)
+    jobs.send(s)
+}

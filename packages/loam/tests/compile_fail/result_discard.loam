@@ -1,0 +1,11 @@
+// Phase 4 exit: discarding a `#[must_check]` `Result<T>` without reading a
+// field is a compile error, so a caller cannot silently ignore a failure.
+import "std:result"
+
+fn f() -> Result<int> {
+    return result.res_ok(1)
+}
+
+fn main() {
+    let r = f()
+}

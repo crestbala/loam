@@ -26,11 +26,14 @@ Browsable docs: `./run.sh www` — Zeus UI at http://127.0.0.1:5175, `Docs.Page`
 
 ## Requirements
 
-New to the repository? macOS: `./install.sh` (core) or `./install.sh android` (adds the
-Android stack) installs everything below that Homebrew can. See [Setup](#setup).
+New to the repository? `./install.sh` (core) or `./install.sh android` (adds the
+Android stack) installs everything below that Homebrew (macOS) or your distro's
+package manager (Linux: apt / dnf / pacman) can. See [Setup](#setup).
 
-- A C11 compiler (`cc`) and `make` (Apple Command Line Tools)
-- macOS for native desktop GUI (Cocoa) and Maya present
+- A C11 compiler (`cc`) and `make` (Apple Command Line Tools, or build-essential
+  / base-devel on Linux)
+- macOS for the native desktop GUI (Cocoa); Linux uses the X11 host
+  (`packages/zeus/hosts/desktop/linux.c`, needs `libx11-dev`). Maya is macOS-only
 - [raylib](https://www.raylib.com) (`brew install raylib`) for the `std:raygui`
   example (`examples/language/raygui.loam`); nothing else needs it
 - [Xcode](https://developer.apple.com/xcode/) for the iOS Simulator target
@@ -46,7 +49,7 @@ and 3D hosts are listed under [Platforms](#platforms).
 
 ## Setup
 
-One-time, on macOS with Homebrew (the script can install Homebrew too):
+One-time. On macOS with Homebrew (the script can install Homebrew too):
 
 ```
 ./install.sh          # core: Command Line Tools check, LLVM (wasm32), Node
@@ -56,6 +59,12 @@ One-time, on macOS with Homebrew (the script can install Homebrew too):
 Both are idempotent. The Android step also links the shared `.sdk-env` into
 every zeus example that has an `android/` host. Full Xcode (App Store) is a
 manual install if you want `./run.sh … ios`.
+
+On Linux, `./install.sh` checks `cc` / `make`, then prints the distro command
+for a `wasm32` clang (`clang lld`), the X11 GUI headers (`libx11-dev`), and
+Node; it does not install anything itself. The `android` mode targets macOS —
+on Linux install the SDK/NDK and Gradle yourself and set `ANDROID_HOME` /
+`ANDROID_NDK_HOME`.
 
 ## Build
 
@@ -72,6 +81,7 @@ That produces `bin/loamc` and `bin/loam-lsp`. Then:
 ./bin/loamc app.loam --run           # compile and run
 ./bin/loamc app.loam --emit-c -o a.c # C99
 ./bin/loamc app.loam --emit-ir -o a.ir
+./bin/loamc app.loam --cost           # functions, allocs, drops, traps, C bytes
 ./bin/loamc --target wasm app.loam -o app.wasm
 ./bin/loamc --target=ios --run examples/zeus/dashboard/dashboard.loam
 ./bin/loamc --target=android examples/zeus/counter/android/app.loam
@@ -166,7 +176,7 @@ _Open the recording in a new tab: [docs/media/gallery-demo.mp4](docs/media/galle
 
 | Target | Flag | Host | Notes |
 |---|---|---|---|
-| Native desktop | `--target=native` (default) | macOS Cocoa | Zeus paints; AppKit is the window, not the widgets. |
+| Native desktop | `--target=native` (default) | macOS Cocoa / Linux X11 | Zeus paints; the OS toolkit is the window, not the widgets. Linux needs `libx11-dev`. |
 | Web | `--target=wasm` / `wasm32` | Canvas2D | Same Zeus tree as native. No HTML/DOM widgets. Needs a `wasm32` clang. |
 | iOS | `--target=ios` | UIKit Simulator | Window and touch only. Needs Xcode. Device signing is out of scope. |
 | Android | `--target=android` | JNI Canvas | Writes a Gradle project. Layout is density-independent pixels. |
@@ -236,7 +246,7 @@ Golden programs under `packages/loam/tests/golden/` (hello, fib, fizzbuzz,
 |---|---|
 | `gallery` | Every zeus component in isolation. Start here to see the component library. |
 | `dashboard` | A small dashboard: stats, activity, dialog, signals. |
-| `counter` | Full-stack: shared `#[proto]` contract, Loam backend, Zeus UI on web / macOS / iOS / Android. |
+| `counter` | Full-stack: shared `#[proto]` contract, Loam backend, one `ui.loam` on five surfaces (native macOS/Linux, wasm, iOS sim, Android) via four six-line host stubs. |
 | `greeninfer` | Local vector memory engine: mmap + NEON row sweep in a Zeus harness. [README](examples/zeus/greeninfer/README.md) |
 
 ```

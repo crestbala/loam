@@ -2889,12 +2889,12 @@ fn meta_dump_source() -> string {
 /// A string member of a parsed record, or `""` when the field is absent or is
 /// not a string. `JSON.parse` gives the TypeScript CLI `undefined` for a missing
 /// key, which reads the same way at every use site here.
-fn fld(root: int, key: string) -> string {
-    let v = json.field(root, key, key)
+fn fld(doc: JsonDoc, key: string) -> string {
+    let v = json.field(doc.nodes, doc.root, key, key)
     if v.ok == 0 {
         return ""
     }
-    let s = json.as_str(v.id, key)
+    let s = json.as_str(doc.nodes, v.id, key)
     if s.ok == 0 {
         return ""
     }
@@ -2933,14 +2933,14 @@ fn collect_meta(appdir: string) -> []MetaRec {
             continue
         }
         push(recs, MetaRec {
-            path: fld(doc.root, "path"),
-            title: fld(doc.root, "title"),
-            description: fld(doc.root, "description"),
-            canonical: fld(doc.root, "canonical"),
-            og_image: fld(doc.root, "og_image"),
-            og_type: fld(doc.root, "og_type"),
-            robots: fld(doc.root, "robots"),
-            jsonld: fld(doc.root, "jsonld"),
+            path: fld(doc, "path"),
+            title: fld(doc, "title"),
+            description: fld(doc, "description"),
+            canonical: fld(doc, "canonical"),
+            og_image: fld(doc, "og_image"),
+            og_type: fld(doc, "og_type"),
+            robots: fld(doc, "robots"),
+            jsonld: fld(doc, "jsonld"),
         })
     }
     return recs

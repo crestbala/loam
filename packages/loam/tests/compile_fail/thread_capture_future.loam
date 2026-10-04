@@ -1,0 +1,14 @@
+import "std:async"
+import "std:thread"
+import "std:fmt"
+
+// A `Future<T>` is a UI-thread async cell (`{ id: int }`), so — like a
+// `Signal<T>` — it is `#[no_send]`: a worker may not capture one. Results come
+// back through a `Chan<T>`.
+
+fn main() {
+    let fut = async.future(0)
+    thread.spawn(|| {
+        fmt.println("future", fut.id)
+    })
+}

@@ -1,0 +1,15 @@
+// A `match` over an enum must name every variant (or add `_`); leaving one out
+// is not exhaustive.
+
+enum Tag {
+    A = 0,
+    B = 1,
+    C = 2,
+}
+
+fn f(t: Tag) -> int {
+    match t {
+        Tag.A => { return 1 }
+        Tag.B => { return 2 }
+    }
+}

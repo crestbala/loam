@@ -44,6 +44,7 @@ struct Type {
     const char **field_names;
     Type **field_types;
     int must_check; /* TY_STRUCT: `#[must_check]` — see borrowck */
+    int no_send;    /* TY_STRUCT: `#[no_send]` — never a Send capture/payload */
     int64_t array_len;
 };
 

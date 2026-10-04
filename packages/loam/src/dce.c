@@ -192,6 +192,9 @@ static void walk(AstNode *n) {
         case AST_CAST:
             walk(n->as.cast.expr);
             break;
+        case AST_TRY:
+            walk(n->as.try_expr.expr);
+            break;
         case AST_CALL:
             walk(n->as.call.callee);
             for (size_t i = 0; i < n->as.call.arg_count; i++)
@@ -263,6 +266,8 @@ static int has_closure(AstNode *n) {
             return has_closure(n->as.unary.operand);
         case AST_CAST:
             return has_closure(n->as.cast.expr);
+        case AST_TRY:
+            return has_closure(n->as.try_expr.expr);
         case AST_CALL:
             if (has_closure(n->as.call.callee)) return 1;
             for (size_t i = 0; i < n->as.call.arg_count; i++)

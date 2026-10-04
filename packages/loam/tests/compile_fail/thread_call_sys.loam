@@ -1,0 +1,15 @@
+import "std:thread"
+import "std:sys"
+
+// `std:sys` exposes no handle *type* — every handle is a bare `int`/`string`
+// (watcher fd, path). The guarantee that a worker cannot reach sys state is the
+// call-graph rule: any `sys` seam call from a worker is rejected (only pure
+// value helpers and channel ops are allowed). Polling a watcher from a worker
+// is the representative case.
+
+fn main() {
+    let h = sys.watch_open()
+    thread.spawn(|| {
+        sys.watch_next(h, 0)
+    })
+}

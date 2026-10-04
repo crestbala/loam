@@ -15,6 +15,7 @@
  */
 #include "compile.h"
 #include "codegen_c.h"
+#include "dce.h"
 #include "ext.h"
 #include "ir.h"
 #include "diagnostics.h"
@@ -551,15 +552,98 @@ static void usage(void) {
             "  -o PATH     output binary (or .c/.ir with --emit-c/--emit-ir)\n"
             "  --emit-c    emit C99 (gnu99) instead of a binary\n"
             "  --emit-ir   emit backend-neutral IR instead of a binary\n"
-            "  --target native  Cocoa desktop (default)\n"
-            "  --target wasm32  Canvas2D .wasm (alias: wasm; needs clang wasm32)\n"
+            "  --target native  desktop GUI: Cocoa on macOS, X11 on Linux (default)\n"
+            "  --target wasm32  Canvas2D GUI .wasm (alias: wasm; needs clang wasm32).\n"
+            "                   This is the browser *canvas host*, not a CLI target:\n"
+            "                   a future CLI/WASI build is a separate target.\n"
             "  --target ios     iOS Simulator .app (same Zeus paint as Cocoa; needs Xcode)\n"
             "  --target android Gradle + JNI Canvas host (needs Android SDK/NDK to build APK)\n"
             "  --run       compile and run (Simulator for --target=ios; gradle+adb for android)\n"
             "  --int64-compat  `int` = i64 and `float` = f64 (pre-Phase-10 behavior)\n"
             "  --string-owns   `string` is owned and refcounted (default)\n"
             "  --no-string-owns  restore never-freed strings (bisecting a bug)\n"
+            "  --cost      print a cost report (fns, allocs, copies, traps, C bytes) and stop\n"
             "Default output: <source-dir>/build/<name> (.app on ios; Gradle tree on android)\n");
+}
+
+/**
+ * `--cost` — a static cost report for the whole program.
+ *
+ * Phase 5 of the gap plan asks for a report that "names the biggest alloc"
+ * and the bytes a whole-program compile emits, so a program can be measured
+ * before anything is added to the language. The numbers come from the one
+ * lowering the backend already does (`ir_lower`): every box allocation, drop,
+ * bounds check, and checked (trap-carrying) arithmetic is an explicit IR
+ * instruction, so counting them here reports what the emitted C will do
+ * rather than a guess. The C byte count is the size of the real translation
+ * unit, produced by running codegen into a byte sink — the same path a build
+ * takes, minus `cc`.
+ */
+typedef struct {
+    long fns;
+    long blocks;
+    long insts;
+    long allocs;        /* IR_ALLOC: a heap box (malloc) */
+    long drops;         /* IR_DROP: a free on an exit path */
+    long copies;        /* IR_MOVE: an owned value transferred */
+    long bounds;        /* IR_BOUND: an index trap the backend still emits */
+    long checked_bins;  /* IR_BIN with `checked`: an overflow/div trap */
+    long calls;         /* IR_CALL + IR_CALL_VAL */
+    long closures;      /* IR_CLOS: a heap closure environment */
+    long strings;       /* IR_CONST_STR: a literal (immortal unless owned) */
+    long width;         /* the widest single IrFn, by instruction count */
+    const char *width_name;
+} CostTally;
+
+static void cost_tally_fn(const IrFn *fn, CostTally *c) {
+    long insts = 0;
+    for (int b = 0; b < fn->nblocks; b++) {
+        insts += fn->blocks[b].ninsts;
+        for (int i = 0; i < fn->blocks[b].ninsts; i++) {
+            const IrInst *in = &fn->blocks[b].insts[i];
+            switch (in->op) {
+                case IR_ALLOC: c->allocs++; break;
+                case IR_DROP: c->drops++; break;
+                case IR_MOVE: c->copies++; break;
+                case IR_BOUND: c->bounds++; break;
+                case IR_CLOS: c->closures++; break;
+                case IR_CONST_STR: c->strings++; break;
+                case IR_CALL:
+                case IR_CALL_VAL: c->calls++; break;
+                case IR_BIN: if (in->checked) c->checked_bins++; break;
+                default: break;
+            }
+        }
+    }
+    c->blocks += fn->nblocks;
+    c->insts += insts;
+    c->fns++;
+    if (insts > c->width) {
+        c->width = insts;
+        c->width_name = fn->name ? fn->name : fn->cname;
+    }
+}
+
+static void cost_report(const IrModule *m, long c_bytes) {
+    CostTally c;
+    memset(&c, 0, sizeof c);
+    for (int i = 0; i < m->nfns; i++)
+        cost_tally_fn(&m->fns[i], &c);
+    printf("loam: cost report\n");
+    printf("  functions      %8ld\n", c.fns);
+    printf("  blocks         %8ld\n", c.blocks);
+    printf("  IR insts       %8ld\n", c.insts);
+    printf("  allocs (malloc)%8ld\n", c.allocs);
+    printf("  drops (frees)  %8ld\n", c.drops);
+    printf("  moves          %8ld\n", c.copies);
+    printf("  bounds checks  %8ld\n", c.bounds);
+    printf("  overflow traps %8ld\n", c.checked_bins);
+    printf("  calls          %8ld\n", c.calls);
+    printf("  closures       %8ld\n", c.closures);
+    printf("  string literals%8ld\n", c.strings);
+    printf("  C bytes        %8ld\n", c_bytes);
+    printf("  largest fn     %s (%ld IR insts)\n",
+           c.width_name ? c.width_name : "-", c.width);
 }
 
 /** Parse flags, run the frontend, emit C, optionally invoke cc and run. */
@@ -576,6 +660,7 @@ int main(int argc, char **argv) {
     int target_android = 0;
     int int64_compat = 0;
     int string_owns = 1;
+    int cost = 0;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -628,6 +713,8 @@ int main(int argc, char **argv) {
             string_owns = 1;
         } else if (strcmp(argv[i], "--no-string-owns") == 0) {
             string_owns = 0;
+        } else if (strcmp(argv[i], "--cost") == 0) {
+            cost = 1;
         } else if (strcmp(argv[i], "build") == 0) {
             /* `loam build --target=native app.loam` — same as omitting `build`. */
             continue;
@@ -658,6 +745,30 @@ int main(int argc, char **argv) {
         return 1;
     }
     if (show_time) fprintf(stderr, "loam: check %.3fs\n", now_sec() - t0);
+
+    if (cost) {
+        /* Same reachability pruning a real build does, so the report counts
+           the code that would actually ship. */
+        if (!getenv("LOAM_NO_DCE"))
+            loam_dce_run(sess.mods, sess.nmods);
+        IrModule *ir = ir_lower(sess.mods, sess.nmods);
+        (void)ir_verify(ir);
+        /* Size the real translation unit by running codegen into a temp file
+           and reading it back, so the bytes are exactly the build's C. */
+        long c_bytes = 0;
+        FILE *sink = tmpfile();
+        if (sink) {
+            codegen_set_test_mode(0);
+            codegen_set_server_split(0);
+            codegen_emit_c(sink, sess.mods, sess.nmods, LOAM_RT_PATH);
+            if (fseek(sink, 0, SEEK_END) == 0) c_bytes = ftell(sink);
+            fclose(sink);
+        }
+        cost_report(ir, c_bytes);
+        ir_free(ir);
+        loam_session_free(&sess);
+        return 0;
+    }
 
     if (check_only) {
         /* The frontend already ran above; a clean session is the whole result. */

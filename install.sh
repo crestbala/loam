@@ -1,28 +1,91 @@
 #!/bin/sh
-# One-time macOS setup for building Loam and running its examples.
+# One-time setup for building Loam and running its examples.
 #
-#   ./install.sh            core: Apple CLT, Homebrew, LLVM (wasm32 clang), Node
+#   ./install.sh            core: cc, make, LLVM (wasm32 clang), Node
 #   ./install.sh android    core + Android SDK/NDK/Gradle + emulator AVD (several GB)
 #
-# Idempotent — safe to re-run. Requires macOS and an internet connection.
-# The android stack downloads several GB and asks you to accept Google's SDK
-# licenses; the iOS Simulator target additionally needs full Xcode (App
-# Store), not just the Command Line Tools.
+# Idempotent — safe to re-run. Works on macOS (Homebrew) and Linux
+# (apt / dnf / pacman). The android stack downloads several GB and asks you to
+# accept Google's SDK licenses; on macOS the iOS Simulator target additionally
+# needs full Xcode (App Store), not just the Command Line Tools.
 set -e
 HERE=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 MODE=${1:-core}
+OS=$(uname -s)
 
 say() { printf 'install: %s\n' "$*"; }
 die() { echo "install: $*" >&2; exit 1; }
 
-case "$(uname -s)" in
-  Darwin) ;;
-  *) die "this script sets up macOS only. On other systems install a C11 cc + make, a wasm32 clang (LLVM), and Node yourself; 'make' then works the same." ;;
+case "$OS" in
+  Darwin|Linux) ;;
+  *) die "$OS is not a supported host. Install a C11 cc + make, a wasm32 clang (LLVM), Node, and (for the GUI) libX11 yourself; 'make' then works the same." ;;
 esac
 
 if [ "$MODE" != core ] && [ "$MODE" != android ]; then
   die "unknown mode '$MODE' (core | android)"
 fi
+
+if [ "$MODE" = android ] && [ "$OS" = Linux ]; then
+  die "the android installer targets macOS. On Linux install the Android SDK/NDK, Gradle and a JDK with your package manager, then set ANDROID_HOME/ANDROID_NDK_HOME and run 'make' normally."
+fi
+
+# --- Linux: core toolchain ----------------------------------------------------
+# The GUI host is X11 (packages/zeus/hosts/desktop/linux.c): no GTK, just
+# libX11 plus a C11 cc. Desktop and CLI programs need nothing else. iOS/Android
+# hosts still come from their own SDKs; a Linux box builds the native + wasm
+# + CLI targets.
+if [ "$OS" = Linux ]; then
+  command -v cc >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1 || command -v clang >/dev/null 2>&1 \
+    || die "no C compiler (cc / gcc / clang). Install build-essential (Debian/Ubuntu), 'Development Tools' (Fedora), or 'base-devel' (Arch), then re-run."
+  command -v make >/dev/null 2>&1 || die "make is missing. Install your distro's build-essential / base-devel group, then re-run."
+  say "C11 toolchain ok ($(command -v cc >/dev/null 2>&1 && echo cc || command -v gcc 2>/dev/null || command -v clang))"
+
+  # LLVM ships a clang with the wasm32 target that a distro gcc lacks.
+  if ! command -v clang >/dev/null 2>&1; then
+    say "clang/LLVM is missing (needed for --target=wasm32)."
+    say "  Debian/Ubuntu:  sudo apt-get install -y clang lld"
+    say "  Fedora:         sudo dnf install -y clang lld"
+    say "  Arch:           sudo pacman -S --needed clang lld"
+  else
+    WASMCC=$(command -v clang)
+    if "$WASMCC" --target=wasm32 -fsyntax-only -x c /dev/null >/dev/null 2>&1; then
+      say "wasm32 clang ok ($WASMCC)"
+    else
+      say "clang found but has no wasm32 target; a full LLVM clang is required for --target=wasm32"
+    fi
+    say "different LLVM? export LOAM_WASM_CC=/path/to/clang"
+  fi
+
+  # libX11 + headers for the desktop GUI host.
+  if ! { command -v pkg-config >/dev/null 2>&1 && pkg-config --exists x11; }; then
+    say "libX11 headers not found (needed for the native GUI window)."
+    say "  Debian/Ubuntu:  sudo apt-get install -y libx11-dev"
+    say "  Fedora:         sudo dnf install -y libX11-devel"
+    say "  Arch:           sudo pacman -S --needed libx11"
+  else
+    say "libX11 ok (native GUI host)"
+  fi
+
+  if ! command -v node >/dev/null 2>&1; then
+    say "Node.js not found (needed only for the Vite wasm dev servers)."
+    say "  Debian/Ubuntu:  sudo apt-get install -y nodejs npm"
+    say "  Fedora:         sudo dnf install -y nodejs npm"
+    say "  Arch:           sudo pacman -S --needed nodejs npm"
+  else
+    say "node ok ($(node --version 2>/dev/null || echo present))"
+  fi
+
+  say "done. Next steps:"
+  say "  make && make test            # build loam, run the full gate"
+  say "  ./bin/loamc app.loam --run   # a CLI program"
+  say "  ./bin/loamc --cost app.loam  # where the compile time goes"
+  say "  ./run.sh gallery web         # wasm UI (Vite) at http://127.0.0.1:5174"
+  say "  ./run.sh gallery             # native X11 window (needs a DISPLAY)"
+  say "Everything else: ./run.sh (no arguments) lists every example."
+  exit 0
+fi
+
+# --- macOS --------------------------------------------------------------------
 
 # 1. Apple Command Line Tools — cc, make, and the native-target clang.
 if ! xcode-select -p >/dev/null 2>&1; then
@@ -83,6 +146,7 @@ fi
 
 say "done. Next steps:"
 say "  make && make test            # build loam, run the full gate"
+say "  ./bin/loamc --cost app.loam  # where the compile time goes"
 say "  ./run.sh gallery web         # wasm UI (Vite) at http://127.0.0.1:5174"
 say "  ./run.sh gallery macos       # Cocoa window"
 say "  ./run.sh gallery ios         # iOS Simulator (needs full Xcode)"

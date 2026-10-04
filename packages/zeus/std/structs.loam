@@ -8,6 +8,12 @@
 //! importing back down into `zeus`, which would be an import cycle.
 
 /// A widget in the tree. Copy handle (`id`).
+///
+/// `#[no_send]`: it is plain bytes (`{ id: int }`) but it addresses UI-thread
+/// engine state, so a worker that captured one would race the arena. It is
+/// rejected as a `thread.spawn` capture and a `Chan<T>` payload. (See
+/// `type_is_send` in the compiler and `std:thread`.)
+#[no_send]
 struct Node {
     /// Slot in the engine arena. Do not construct by hand; use `Box` / `Text`.
     id: int,
@@ -20,6 +26,11 @@ struct Node {
 /// let n = zeus.signal(0)
 /// n.set(n.get() + 1)
 /// ```
+///
+/// `#[no_send]`: the cell lives in the signal arena, which only the UI thread
+/// owns. Passing a `Signal<T>` to `thread.spawn` or `thread.chan` is a
+/// compile error — the worker must post plain data through a channel instead.
+#[no_send]
 struct Signal<T> {
     id: int,
 }

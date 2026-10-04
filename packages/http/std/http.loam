@@ -41,14 +41,16 @@ struct App {
     id: int,
 }
 
-/// RPC error. `code` 0 is unused (success lives on `Result.ok`).
+/// RPC error. `code` 0 is unused (success lives on `RpcResult.ok`).
 struct Error {
     code: int,
     msg: string,
 }
 
-/// Unary RPC outcome. Read `val` only when `ok == 1`.
-struct Result<T> {
+/// Unary RPC outcome. Read `val` only when `ok == 1`. Named `RpcResult` (not
+/// `Result`) so it does not shadow the language's `Result<T>` in `std:result`;
+/// this edge keeps a structured `Error` payload rather than a message string.
+struct RpcResult<T> {
     ok: int,
     val: T,
     err: Error,
@@ -438,12 +440,12 @@ fn name_to_path(name: string) -> string {
     return string_of(b)
 }
 
-/// Wrap `val` as a successful `Result`.
-fn ok<T>(val: T) -> Result<T> {
-    Result { ok: 1, val: val, err: Error { code: 0, msg: "" } }
+/// Wrap `val` as a successful `RpcResult`.
+fn ok<T>(val: T) -> RpcResult<T> {
+    RpcResult { ok: 1, val: val, err: Error { code: 0, msg: "" } }
 }
 
-/// Build an error payload. Put it in `Result.err` with `ok: 0`.
+/// Build an error payload. Put it in `RpcResult.err` with `ok: 0`.
 fn fail(code: int, msg: string) -> Error {
     Error { code: code, msg: msg }
 }

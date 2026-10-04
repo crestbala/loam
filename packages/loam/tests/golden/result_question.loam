@@ -1,0 +1,52 @@
+// Phase 4: `Result<T>` / `Option<T>` with the `?` operator. `?` propagates the
+// failure early (the enclosing fn returns the same container) and yields the
+// payload otherwise.
+
+import "std:fmt"
+import "std:result"
+
+fn half(n: int) -> Result<int> {
+    if n % 2 != 0 {
+        return result.res_err("odd", 0)
+    }
+    return result.res_ok(n / 2)
+}
+
+fn quarter(n: int) -> Result<int> {
+    let h = half(n)?          // early-returns on failure
+    return result.res_ok(h / 2)
+}
+
+fn find(xs: []int, want: int) -> Option<int> {
+    for i in 0..xs.len {
+        if xs[i] == want {
+            return result.some(i)
+        }
+    }
+    return result.none(0)
+}
+
+fn index_plus(xs: []int, want: int) -> Option<int> {
+    let i = find(xs, want)?
+    return result.some(i + 100)
+}
+
+fn main() {
+    let a = quarter(20)
+    fmt.println(result.is_ok(a), a.val)
+
+    let b = quarter(10)          // half(10)=5, 5/2=2: still ok
+    fmt.println(result.is_ok(b), b.val)
+
+    let c = quarter(5)           // half(5) fails: `?` returns err "odd"
+    fmt.println(result.is_err(c), c.err)
+
+    let xs = []int { 3, 7, 9 }
+    let d = index_plus(xs, 7)
+    fmt.println(result.is_some(d), d.val)
+
+    let e = index_plus(xs, 4)
+    fmt.println(result.is_some(e))
+
+    fmt.println(result.unwrap_or(quarter(3), -1))
+}

@@ -371,6 +371,13 @@ AstNode *ast_cast(AstNode *expr, AstNode *type, SourceLoc loc) {
     return n;
 }
 
+AstNode *ast_try(AstNode *expr, SourceLoc loc) {
+    AstNode *n = ast_new(AST_TRY, loc);
+    n->as.try_expr.expr = expr;
+    n->as.try_expr.errname = NULL;
+    return n;
+}
+
 AstNode *ast_call(AstNode *callee, AstNode **args, size_t n, SourceLoc loc) {
     AstNode *node = ast_new(AST_CALL, loc);
     node->as.call.callee = callee;

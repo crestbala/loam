@@ -242,6 +242,23 @@ closure lifetime in Phase 14. This was deliberately **not patched in Phase 0**:
 Phase 0 is behavior-neutral, and a partial patch here would have masked the
 real cost without moving the measurement.
 
+**Fix (Phase 2) — keyed windowed rows.** `zui.VirtualListKeyed(items, row_h,
+key, build)` moves the rows whose key stays in the window, builds only the row
+entering it, and reuses the top/bottom spacers, instead of rebuilding every
+visible row per shift (`kfor_reconcile`'s move logic applied to the window).
+Measured with `membench scroll` (500 rows, 500 one-row frames, headless):
+
+| path | live nodes | allocs / 500 frames |
+|---|---|---|
+| `VirtualList` (rebuild-all) | 37 → 35 | 69 680 |
+| `VirtualListKeyed` | 37 → 35 | **30 195** |
+
+Live nodes are flat for both (the arena recycles slots either way); the keyed
+path cuts the runtime allocations ~2.3× — the closures the §1.3 note is about.
+The residual ~60 allocs/frame is the `key(item)` string build plus the one
+entering row; an app that stores the key on the item removes the former.
+Regression: `packages/loam/tests/compile_pass/zeus_virt_keyed.loam`.
+
 **Reproduce:**
 
 ```

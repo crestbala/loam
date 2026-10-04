@@ -721,6 +721,60 @@ static void lower_block_value(AstNode *blk, int dst, Type *ty) {
 static int lower_expr(AstNode *n) {
     if (!n) return -1;
     switch (n->kind) {
+        case AST_TRY: {
+            /* `expr?` — evaluate the container, branch on its tag, return it
+               whole on failure (Err / None == tag 1), else yield its `val`. */
+            int v = lower_expr(n->as.try_expr.expr);
+            Type *ct = (v >= 0 && v < F->nlocals) ? F->locals[v].ty : NULL;
+            Type *vt = ir_subst(n->ty);
+
+            /* tag = v.tag */
+            IrPlace *tagp = (IrPlace *)calloc(1, sizeof(IrPlace));
+            tagp->kind = IR_PL_FIELD;
+            tagp->field = "tag";
+            tagp->base = place_local(v, ct);
+            tagp->ty = ty_int();
+            int tagl = new_local(ty_int(), NULL, 0);
+            IrInst *ldt = emit(IR_LOAD, n->loc);
+            ldt->dst = tagl;
+            ldt->place = tagp;
+            ldt->ty = ty_int();
+
+            /* cond = tag != 0  (1 == Err / None) */
+            int zero = new_local(ty_int(), NULL, 0);
+            IrInst *z = emit(IR_CONST_INT, n->loc);
+            z->dst = zero;
+            z->imm = 0;
+            z->ty = ty_int();
+            int cond = new_local(ty_bool(), NULL, 0);
+            IrInst *cmp = emit(IR_BIN, n->loc);
+            cmp->dst = cond;
+            cmp->a = tagl;
+            cmp->b = zero;
+            cmp->binop = (int)TOK_BANG_EQ;
+            cmp->ty = ty_bool();
+
+            int fail = new_block(), join = new_block();
+            term_br(cond, fail, join);
+
+            /* Failure: return the whole container (the caller's failure). */
+            CUR = fail;
+            term_ret(v, n->loc);
+
+            /* Success: load the payload, owning, out of the container. */
+            CUR = join;
+            IrPlace *valp = (IrPlace *)calloc(1, sizeof(IrPlace));
+            valp->kind = IR_PL_FIELD;
+            valp->field = "val";
+            valp->base = place_local(v, ct);
+            valp->ty = vt;
+            int d = new_local(vt, NULL, 0);
+            IrInst *ldv = emit(IR_LOAD, n->loc);
+            ldv->dst = d;
+            ldv->place = valp;
+            ldv->ty = vt;
+            return d;
+        }
         case AST_IF: {
             /* value position: both arms write the same result local */
             int d = new_local(n->ty, NULL, 0);
@@ -873,6 +927,49 @@ static int lower_expr(AstNode *n) {
             i->checked = n->ty && n->ty->kind == TY_INT &&
                          (op == TOK_PLUS || op == TOK_MINUS || op == TOK_STAR ||
                           op == TOK_SLASH || op == TOK_PERCENT);
+            /* A literal op literal cannot overflow: fold it here and drop the
+               trap. The proof is an exact evaluation in i64 (every operand
+               type is at most 64-bit), so the check only stays when the true
+               result genuinely leaves the type's range — which the checker has
+               already rejected for a literal, so in practice it always folds. */
+            if (i->checked && n->as.binary.left && n->as.binary.right &&
+                n->as.binary.left->kind == AST_NUMBER && n->as.binary.right->kind == AST_NUMBER) {
+                int64_t x = n->as.binary.left->as.lit.value;
+                int64_t y = n->as.binary.right->as.lit.value;
+                /* Keep the fold itself overflow-free: two i32 literals multiply
+                   into i64 with room to spare. Wider literals stay checked. */
+                if (x < -2147483647LL || x > 2147483647LL || y < -2147483647LL ||
+                    y > 2147483647LL) {
+                    return d;
+                }
+                Type *bt = i->ty;
+                int bits = (bt && bt->bits) ? bt->bits : 64;
+                int is_signed = (bt && bt->is_unsigned) ? 0 : 1;
+                int64_t lo, hi;
+                if (bits >= 64) {
+                    lo = is_signed ? INT64_MIN : 0;
+                    hi = is_signed ? INT64_MAX : (int64_t)-1; /* u64: always fits */
+                } else if (is_signed) {
+                    lo = -(int64_t)1 << (bits - 1);
+                    hi = ((int64_t)1 << (bits - 1)) - 1;
+                } else {
+                    lo = 0;
+                    hi = ((int64_t)1 << bits) - 1;
+                }
+                int64_t r = 0;
+                int ok = 0;
+                switch (op) {
+                    case TOK_PLUS: r = x + y; ok = 1; break;
+                    case TOK_MINUS: r = x - y; ok = 1; break;
+                    case TOK_STAR: r = x * y; ok = 1; break;
+                    case TOK_SLASH: if (y != 0) { r = x / y; ok = 1; } break;
+                    case TOK_PERCENT: if (y != 0) { r = x % y; ok = 1; } break;
+                    default: break;
+                }
+                /* Fits the type's range: the trap can never fire. Division by
+                   zero stays checked (typecheck rejects a literal zero anyway). */
+                if (ok && r >= lo && r <= hi) i->checked = 0;
+            }
             return d;
         }
         case AST_UNARY: {
@@ -1477,6 +1574,9 @@ static void collect_clos(AstNode *n) {
         case AST_CAST:
             collect_clos(n->as.cast.expr);
             break;
+        case AST_TRY:
+            collect_clos(n->as.try_expr.expr);
+            break;
         case AST_CALL:
             collect_clos(n->as.call.callee);
             for (size_t i = 0; i < n->as.call.arg_count; i++)
@@ -1671,6 +1771,9 @@ static void lower_clos_in(IrModule *m, AstNode *n) {
             break;
         case AST_CAST:
             lower_clos_in(m, n->as.cast.expr);
+            break;
+        case AST_TRY:
+            lower_clos_in(m, n->as.try_expr.expr);
             break;
         case AST_CALL:
             lower_clos_in(m, n->as.call.callee);

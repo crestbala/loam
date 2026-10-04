@@ -1,0 +1,23 @@
+// Phase 4: a `match` whose arms name every variant of an enum is exhaustive
+// with no `_`. The payload of a tagged `Result<T>` is still read per-branch.
+
+import "std:fmt"
+import "std:result"
+
+fn describe(r: Result<int>) -> string {
+    match r.tag {
+        ResultTag.Ok => {
+            if r.val > 0 {
+                return "positive"
+            }
+            return "non-positive"
+        }
+        ResultTag.Err => { return r.err }
+    }
+}
+
+fn main() {
+    fmt.println(describe(result.res_ok(3)))
+    fmt.println(describe(result.res_ok(-3)))
+    fmt.println(describe(result.res_err("bad", 0)))
+}

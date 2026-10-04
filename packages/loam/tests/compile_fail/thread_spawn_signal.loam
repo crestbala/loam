@@ -1,0 +1,14 @@
+import "std:thread"
+import "std:zeus"
+
+// Phase 3 exit: a spawned fn may not capture UI state. `Signal<T>` is plain
+// bytes (`{ id: int }`), so the old Send test would have let it through; the
+// `#[no_send]` marker on `Signal` / `Node` in zeus std makes the capture a
+// compile error. Worker results must come back through a channel instead.
+
+fn main() {
+    let count = zeus.signal(0)
+    thread.spawn(|| {
+        count.set(count.get() + 1)
+    })
+}

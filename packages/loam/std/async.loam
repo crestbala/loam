@@ -48,6 +48,13 @@ struct Timer {
 /// A single-use mailbox: created by `future` / `future_str`, filled by
 /// `resolve`, drained by `await_value` (the `await` sugar). `T` must be Copy
 /// (`int`, `string`, `float`, `bool`, `[]U` when `U` is Copy, or a Copy struct).
+///
+/// `#[no_send]`: the cell lives in the UI-thread async store, like a
+/// `Signal<T>` lives in the signal arena. It is plain bytes (`{ id: int }`), so
+/// the structural Send rule would otherwise let a worker capture it; the marker
+/// makes that a compile error. Workers return results through a `Chan<T>`
+/// instead (see `std:thread`).
+#[no_send]
 struct Future<T> {
     id: int,
 }

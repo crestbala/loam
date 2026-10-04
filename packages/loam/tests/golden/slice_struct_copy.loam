@@ -1,0 +1,38 @@
+// Phase 2 regression: a copied struct that holds a slice. `Node` owns a
+// `[]int`, so a `[]Node` buffer owns its elements. Before the fix, dropping a
+// shared `[]Node` parameter zeroed the caller's element slots and a copy of
+// the slice lost the nested slices. Both the pass-by-value call and `let b = a`
+// must preserve every element's `kids`.
+
+import "std:fmt"
+
+struct Node {
+    kind: int,
+    kids: []int,
+}
+
+fn build() -> []Node {
+    let mut out = []Node {}
+    let mut k = []int {}
+    push(k, 7)
+    push(k, 8)
+    push(out, Node { kind: 1, kids: k })
+    push(out, Node { kind: 2, kids: []int {} })
+    return out
+}
+
+fn total(ns: []Node) -> int {
+    let mut t = 0
+    for i in 0..ns.len {
+        t = t + ns[i].kind + ns[i].kids.len
+    }
+    return t
+}
+
+fn main() {
+    let a = build()
+    fmt.println(total(a))
+    let b = a
+    fmt.println(total(b))
+    fmt.println(a.len)
+}

@@ -21,7 +21,7 @@ fn main() {
     if d.ok == 0 {
         fail("parse")
     }
-    let p = json_decode_Point(d.root, "")
+    let p = json_decode_Point(d.nodes, d.root, "")
     let e = json.take_err()
     if e.len != 0 {
         fail(e)
@@ -40,7 +40,7 @@ fn main() {
 
     // Missing field names the field path.
     let d2 = json.parse("{\"x\":1}")
-    let p2 = json_decode_Point(d2.root, "")
+    let p2 = json_decode_Point(d2.nodes, d2.root, "")
     let e2 = json.take_err()
     if e2 != "name: missing" {
         fail(e2)
@@ -48,7 +48,7 @@ fn main() {
 
     // Out-of-range integer names the field path, does not trap.
     let d3 = json.parse("{\"x\":9999999999999,\"name\":\"a\"}")
-    let p3 = json_decode_Point(d3.root, "")
+    let p3 = json_decode_Point(d3.nodes, d3.root, "")
     let e3 = json.take_err()
     if e3 != "x" {
         fail(e3)

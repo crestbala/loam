@@ -118,12 +118,14 @@ Rust, not a hypothetical.
   in [loam.md](loam.md)), but [downsides.md](downsides.md) still lists
   **"borrowck is not NLL"** as a cost that bites. Expect Rust-grade
   reasoning to fail where you'd want it.
-- **Closures capture Copy values only.** No closure can hold a borrow or a
-  non-Copy owned value. This rules out patterns Rust users reach for routinely
-  (callbacks that own a buffer, iterator chains over borrowed data).
-  *(observed)* A closure that **mutates a captured `let mut` local traps** — I
-  reproduced this on an unmodified checkout, so it is not a consequence of any
-  particular change; treat mutable capture as unusable.
+- **Closures capture Copy values by copy, and non-Copy owned values by move.**
+  A closure may own a `Box` / owned struct (the source is consumed — a
+  use-after-move), but it **cannot hold a borrow**: a `&T` / `&mut T` capture
+  is rejected, so iterator chains over borrowed data are still out.
+  *(observed)* A closure that **mutates a captured Copy `let mut` local** traps
+  — I reproduced this on an unmodified checkout, so it is not a consequence of
+  any particular change; treat mutable *Copy* capture as unusable. Mutating a
+  **moved** `Box` through the closure works (the env owns it).
 - **No memory-safety claim over the C seam.** Every host and boundary module is
   C; nothing in the type system protects that half of the program.
 - **Strings leak.** `loam_rt` heap-allocates strings and never frees them — the

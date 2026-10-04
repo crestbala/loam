@@ -1,10 +1,16 @@
 //! membench — the Phase 0 Zeus memory baseline (`docs/mem-baseline.md`).
 //!
-//! Three fixed modes so bytes-per-node can be derived from a slope:
+//! Fixed modes so bytes-per-node can be derived from a slope:
 //!
 //!   membench empty      an empty root box
 //!   membench one        one Ghost button
 //!   membench thousand   1000 Ghost buttons
+//!   membench scroll     a keyed windowed list scrolled 500 one-row frames
+//!
+//! `scroll` is the Phase 2 proof for `docs/mem-baseline.md` §5.1: it mirrors
+//! the reported reproduction (a windowed list scrolled one row at a time) on the
+//! keyed path (`zui.VirtualListKeyed`), so the scroll is a bounded delta instead
+//! of a rebuild of every visible row per frame.
 //!
 //! Run headless (one layout, then the stats report on exit):
 //!
@@ -48,11 +54,65 @@ fn Screen(n: int) {
     }
 }
 
+struct BenchRow {
+    id: int,
+}
+
+fn RowKey(r: BenchRow) -> string {
+    return "r{{r.id}}"
+}
+
+fn RowView(i: int, r: BenchRow) {
+    zeus.Box(align_direction = DIRECTION.Row, height = 20) {
+        zeus.Text("row {{r.id}}")
+    }
+}
+
+/// The Phase 2 scroll proof: a keyed windowed list of 500 rows scrolled 500
+/// one-row frames. Live node count and `proof_allocs` should stay bounded —
+/// the keyed path moves the rows that stay in the window and builds only the
+/// row entering it.
+fn scroll_proof() {
+    let mut rows = []BenchRow {}
+    let mut i = 0
+    while i < 500 {
+        push(rows, BenchRow { id: i })
+        i = i + 1
+    }
+    let items = zeus.signal(rows)
+    zeus.snapshot(320, 240, fn() -> Node {
+        zeus.Box(align_direction = DIRECTION.Column) {
+            zui.VirtualListKeyed(items, 20, RowKey, RowView)
+        }
+    })
+    let nodes0 = zeus.mem_live_nodes()
+    let allocs0 = zeus.proof_allocs()
+    let mut f = 0
+    while f < 500 {
+        zeus.engine_scroll(20, 20, 0, 20)
+        zeus.engine_layout(320, 240)
+        f = f + 1
+    }
+    let nodes1 = zeus.mem_live_nodes()
+    let allocs1 = zeus.proof_allocs()
+    fmt.println("MEMBENCH scroll live_nodes", nodes0, "->", nodes1,
+                "allocs", allocs1 - allocs0)
+    if nodes1 > nodes0 + 40 {
+        fmt.println("FAIL: live nodes grew with scroll")
+        sys.exit(1)
+    }
+}
+
 fn main() {
     let a = sys.args()
     let mut mode = "empty"
     if a.len > 1 {
         mode = a[1]
+    }
+    if mode == "scroll" {
+        fmt.println("MEMBENCH mode=scroll rows=500 frames=500")
+        scroll_proof()
+        return
     }
     let n = count_for(mode)
     fmt.println("MEMBENCH mode=", mode, " buttons=", n)

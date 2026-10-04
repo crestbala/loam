@@ -1,0 +1,37 @@
+// Phase 2: a `[]Json`-shaped tree — a slice of structs that themselves hold a
+// slice — is returned by value and copied, the exact shape `std:json` used to
+// refuse to move. The compiler bug that corrupted such a copy is fixed; this
+// pins it so the JSON pool can eventually move into `JsonDoc`.
+
+struct Json {
+    kind: int,
+    s: string,
+    kids: []int,
+    keys: []string,
+}
+
+struct Doc {
+    ok: int,
+    nodes: []Json,
+}
+
+fn parse_like() -> Doc {
+    let mut nodes = []Json {}
+    let mut kids = []int {}
+    push(kids, 1)
+    let mut keys = []string {}
+    push(keys, "a")
+    push(nodes, Json { kind: 5, s: "", kids: kids, keys: keys })
+    return Doc { ok: 1, nodes: nodes }
+}
+
+fn main() {
+    let d = parse_like()
+    let d2 = d
+    if d2.nodes[0].kids.len != 1 {
+        panic("nested slice lost in copy")
+    }
+    if d.nodes[0].keys.len != 1 {
+        panic("nested string slice lost")
+    }
+}

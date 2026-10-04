@@ -8,10 +8,14 @@
 //! - `spawn(cb)` runs `cb` (a closure, or a plain fn name) on a new OS thread.
 //!   A closure's captures must be **Send**: plain data — int / float / bool /
 //!   string / `Chan<T>` / structs of those — never `[]T`, `fn`, `Box`, or
-//!   `&T` (that bookkeeping is single-threaded by design).
+//!   `&T` (that bookkeeping is single-threaded by design). UI-thread handles
+//!   (`Signal<T>`, `Node`, `Future<T>`) are plain bytes but are marked
+//!   `#[no_send]`, so capturing one is a compile error.
 //! - The spawned fn and everything it calls may not touch module state
 //!   (globals, zeus arenas, async timers) or the C seam, except pure value
-//!   helpers (`loam` rejects the rest at compile time). Values go **in** as
+//!   helpers (`loam` rejects the rest at compile time). `std:sys` is covered by
+//!   this rule — its handles are bare `int`/`string` values, and every
+//!   `sys.*` call is a seam call a worker may not make. Values go **in** as
 //!   captures; results come **out** through a `channel<T>`.
 //! - `channel<T>` is a bounded FIFO of Send `T` guarded by the C runtime:
 //!   `recv` blocks (workers pulling jobs), `try_recv` never blocks (the UI
