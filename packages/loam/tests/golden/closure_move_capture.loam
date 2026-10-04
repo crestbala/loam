@@ -1,0 +1,33 @@
+// Phase 2: a closure may move an owned (non-Copy) value into its env, not
+// only copy one. The source is consumed (borrowck records the move) and the
+// env owns the value, so a closure returned from a function keeps it live.
+
+import "std:fmt"
+
+struct Holder {
+    v: Box<int>,
+    label: string,
+}
+
+fn make(seed: int) -> fn() -> int {
+    let h = Holder { v: Box::new(seed), label: "x" }
+    // `h` (and its Box and string) is moved into the closure env.
+    let f = fn() -> int {
+        return *h.v + 1
+    }
+    return f
+}
+
+fn main() {
+    let f = make(41)
+    fmt.println(f())
+
+    // A moved Box mutated through the closure keeps state across calls.
+    let mut s = Box::new(10)
+    let bump = fn() -> int {
+        *s = *s + 5
+        return *s
+    }
+    fmt.println(bump())
+    fmt.println(bump())
+}

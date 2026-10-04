@@ -770,6 +770,13 @@ static AstNode *parse_postfix(Parser *p, AstNode *left) {
             left = ast_incdec(left, dec, 1, loc);
             continue;
         }
+        /* Postfix `?`: propagate a `Result`/`Option` failure. Not a closing
+           delimiters issue — it is a real expression operator, so it chains
+           (`a?.b` is `(a?).b`). */
+        if (match(p, TOK_QUESTION)) {
+            left = ast_try(left, loc);
+            continue;
+        }
         break;
     }
     return left;
@@ -1418,6 +1425,7 @@ AstNode *parser_parse(Parser *p) {
         int is_server = 0;
         int is_json = 0;
         int is_must_check = 0;
+        int is_no_send = 0;
         if (match(p, TOK_HASH)) {
             consume(p, TOK_LBRACKET, "expected [ after #");
             if (!match(p, TOK_IDENT)) {
@@ -1436,6 +1444,8 @@ AstNode *parser_parse(Parser *p) {
                 is_json = 1;
             } else if (strcmp(attr, "must_check") == 0) {
                 is_must_check = 1;
+            } else if (strcmp(attr, "no_send") == 0) {
+                is_no_send = 1;
             } else {
                 char msg[96];
                 snprintf(msg, sizeof msg, "unknown attribute '%s'", attr);
@@ -1468,6 +1478,11 @@ AstNode *parser_parse(Parser *p) {
             }
             if (is_must_check && !check(p, TOK_STRUCT)) {
                 error(p, "#[must_check] can only be applied to a struct");
+                free(doc);
+                break;
+            }
+            if (is_no_send && !check(p, TOK_STRUCT)) {
+                error(p, "#[no_send] can only be applied to a struct");
                 free(doc);
                 break;
             }
@@ -1524,6 +1539,7 @@ AstNode *parser_parse(Parser *p) {
                 st->as.strct.is_proto = is_proto;
                 st->as.strct.is_json = is_json;
                 st->as.strct.is_must_check = is_must_check;
+                st->as.strct.is_no_send = is_no_send;
                 decls = (AstNode **)realloc(decls, (nd + 1) * sizeof(AstNode *));
                 decls[nd++] = st;
             } else {
@@ -1545,6 +1561,11 @@ AstNode *parser_parse(Parser *p) {
         }
         if (is_must_check) {
             error(p, "#[must_check] can only be applied to a struct");
+            free(doc);
+            break;
+        }
+        if (is_no_send) {
+            error(p, "#[no_send] can only be applied to a struct");
             free(doc);
             break;
         }

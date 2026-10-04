@@ -27,9 +27,14 @@ static int tmp_id;
 static int drop_sp;
 static const char *drop_names[64][64];
 static int drop_n[64];
-/* Element retain/release hooks for vectors whose elements own a string: one
-   pair per distinct element type, referenced by index from the vec calls the
-   emitter generates and defined after the functions (prototypes first). */
+/* Element retain/release hooks for vectors whose elements themselves own
+   something (a string leaf, a nested `[]T`, a `Box`, an owning struct/array):
+   one pair per distinct element type, referenced by index from the vec calls
+   the emitter generates and defined after the functions (prototypes first).
+   The hook is what makes element lifetime buffer-scoped — a copy of the buffer
+   shares the elements, and they are released exactly once, when the last
+   buffer reference goes. Without it a shared `[]T` parameter drop zeroed the
+   caller's element slots (legacy `[]Node`-of-`[]int` corruption). */
 static Type *elem_hook_types[64];
 static int elem_hook_n;
 
@@ -45,10 +50,10 @@ static int elem_hook_id(Type *t) {
     return ++elem_hook_n;
 }
 
-/** Hook names for `elem`, or empty strings when the element owns no string and
+/** Hook names for `elem`, or empty strings when the element owns nothing and
  *  the plain vec calls apply. Registers the type on first use. */
 static void elem_hook_cnames(Type *elem, char *retain, size_t rc, char *release, size_t sc) {
-    int id = (type_string_owns() && elem && type_owns_string(elem)) ? elem_hook_id(elem) : 0;
+    int id = (elem && type_needs_drop(elem)) ? elem_hook_id(elem) : 0;
     if (id > 0) {
         snprintf(retain, rc, "loam_elem_retain_%d", id);
         snprintf(release, sc, "loam_elem_release_%d", id);
@@ -70,10 +75,9 @@ static void elem_hook_cnames(Type *elem, char *retain, size_t rc, char *release,
  *  name. A monomorphized `[]Entry<int>` is a distinct Type in the pool and
  *  registers on its own. */
 static void collect_elem_hooks(void) {
-    if (!type_string_owns()) return;
     for (size_t i = 0; i < type_pool_count(); i++) {
         Type *t = type_pool_at(i);
-        if (t && t->kind == TY_VEC && t->elem && type_owns_string(t->elem) &&
+        if (t && t->kind == TY_VEC && t->elem && type_needs_drop(t->elem) &&
             struct_targs_concrete(t->elem))
             elem_hook_id(t->elem);
     }
@@ -2663,6 +2667,13 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                     indent(o, 2);
                     if (type_is_copy_vec(ct)) {
                         fprintf(o, "_ce->%s = loam_vec_retain(&%s);\n", fnm, lv(in->args[k]));
+                    } else if (ct && !type_is_copy(ct) && type_needs_drop(ct)) {
+                        /* A non-Copy owned capture is *moved* into the env:
+                           borrowck marked the source consumed, so the env takes
+                           the value and the source is stole (its drop becomes a
+                           no-op). No reference bump — the env owns it now. */
+                        fprintf(o, "_ce->%s = %s;\n", fnm, lv(in->args[k]));
+                        emit_steal(o, lv(in->args[k]), ct, 2);
                     } else {
                         fprintf(o, "_ce->%s = %s;\n", fnm, lv(in->args[k]));
                         /* The env outlives the frame that captured it, so it
@@ -2936,6 +2947,9 @@ static void collect_clos(AstNode *n) {
         case AST_CAST:
             collect_clos(n->as.cast.expr);
             break;
+        case AST_TRY:
+            collect_clos(n->as.try_expr.expr);
+            break;
         case AST_CALL:
             collect_clos(n->as.call.callee);
             for (size_t i = 0; i < n->as.call.arg_count; i++) collect_clos(n->as.call.args[i]);
@@ -3168,12 +3182,10 @@ void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path)
        monomorphization runs while bodies are being emitted and can register an
        element type (e.g. a `[]Member` instantiated inside a generic) after this
        point, and its call sites still need the declaration. */
-    if (type_string_owns()) {
-        for (int i = 1; i <= 64; i++)
-            fprintf(out, "static void loam_elem_retain_%d(void *p);\n"
-                         "static void loam_elem_release_%d(void *p);\n", i, i);
-        fprintf(out, "\n");
-    }
+    for (int i = 1; i <= 64; i++)
+        fprintf(out, "static void loam_elem_retain_%d(void *p);\n"
+                     "static void loam_elem_release_%d(void *p);\n", i, i);
+    fprintf(out, "\n");
 
     for (int i = 0; i < typecheck_global_count(); i++) {
         AstNode *gv = typecheck_global_var(i);

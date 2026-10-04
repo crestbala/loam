@@ -23,6 +23,12 @@
  * `thread.running` themselves. Everything else in the seam — zeus platform
  * calls, net, sys, sig/fut cells, host entry points — touches shared state
  * and stays UI-thread-only.
+ *
+ * `std:sys` is covered by this rule, not by a `#[no_send]` type: it exposes no
+ * handle type, only bare `int` / `string` values (a watcher fd, a path), so
+ * there is nothing to mark. A worker cannot reach sys state because every
+ * `loam_sys_*` call is off the allowlist; capturing the `int` a handle *is*
+ * is harmless, since the worker can do nothing with it.
  */
 #include "threadcheck.h"
 #include "diagnostics.h"
@@ -349,6 +355,9 @@ static void worker_walk(AstNode *n, ThreadCheck *tc) {
         case AST_CAST:
             worker_walk(n->as.cast.expr, tc);
             break;
+        case AST_TRY:
+            worker_walk(n->as.try_expr.expr, tc);
+            break;
         case AST_INDEX:
         case AST_DEREF:
         case AST_ADDR:
@@ -494,6 +503,9 @@ static void scan_walk(AstNode *n, ThreadCheck *tc) {
             break;
         case AST_CAST:
             scan_walk(n->as.cast.expr, tc);
+            break;
+        case AST_TRY:
+            scan_walk(n->as.try_expr.expr, tc);
             break;
         case AST_INDEX:
         case AST_DEREF:

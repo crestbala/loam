@@ -329,6 +329,183 @@ fn virtual_refresh<T>(node_id: int, items: Signal<[]T>, build: fn(int, T), row_h
     arena.rebuild_end(previous)
 }
 
+/// A spacer row under `node_id` keyed by `k`, reused across shifts: only its
+/// height changes, so a scroll does not reallocate it. Returns the node id.
+fn keyed_spacer(node_id: int, k: string, px: int) -> int {
+    let id = arena.key_node(node_id, k)
+    if id > 0 {
+        set_height(node_handle(id), px)
+        return id
+    }
+    let s = raw_spacer()
+    set_height(s, px)
+    arena.nodes[s.id].parent = node_id
+    arena.key_set(node_id, k, s.id)
+    return s.id
+}
+
+/// Free a spacer keyed `k` under `node_id` when the window reaches the end.
+fn drop_keyed_spacer(node_id: int, k: string) {
+    let id = arena.key_node(node_id, k)
+    if id > 0 {
+        arena.key_forget(node_id, k)
+        arena.free_subtree(id)
+    }
+}
+
+/// Keyed windowed refresh. Like `virtual_refresh`, but a one-row scroll shift
+/// **moves** the rows whose key is still in the window and builds only the row
+/// entering it, instead of rebuilding every visible row. That is what keeps a
+/// scroll from allocating a fresh closure per visible row per frame (the
+/// `docs/mem-baseline.md` §5.1 growth): the delta is O(rows entering/leaving),
+/// not O(window). `key(item)` must be stable and unique.
+fn virtual_refresh_keyed<T>(node_id: int, items: Signal<[]T>, key: fn(T) -> string,
+                            build: fn(int, T), row_h: int) {
+    let xs = items.get()
+    let m = xs.len
+    let w = virtual_window(node_id, m, row_h)
+    let first = w.first
+    let last = w.last
+    let gen = platform.plat_sig_gen(items.id)
+    if gen == arena.nodes[node_id].list_gen {
+        if first == arena.nodes[node_id].list_lo {
+            if last == arena.nodes[node_id].list_hi {
+                if arena.nodes[node_id].kids.len > 0 {
+                    return
+                }
+                if m == 0 {
+                    arena.nodes[node_id].list_n = 0
+                    return
+                }
+            }
+        }
+    }
+    // Fall back to the plain (rebuild-all) path if any row is unkeyed or two
+    // visible rows share a key: the move is only sound with a clean key set.
+    let mut keys = []string {}
+    let mut i = first
+    let mut ok = 1
+    while i < last {
+        let k = key(xs[i])
+        if kfor_has(keys, k) == 1 {
+            ok = 0
+            break
+        }
+        push(keys, k)
+        i = i + 1
+    }
+    if ok == 0 {
+        virtual_refresh(node_id, items, build, row_h)
+        return
+    }
+    // Existing keyed rows (from a previous keyed refresh) that are still visible
+    // are kept in place; everything else is built or freed below.
+    let old = arena.key_keys(node_id)
+    let mut o = 0
+    while o < old.len {
+        if arena.key_node(node_id, old[o]) <= 0 {
+            ok = 0
+            break
+        }
+        o = o + 1
+    }
+    if ok == 0 {
+        virtual_refresh(node_id, items, build, row_h)
+        return
+    }
+    arena.nodes[node_id].list_gen = gen
+    arena.nodes[node_id].list_lo = first
+    arena.nodes[node_id].list_hi = last
+    arena.nodes[node_id].list_n = m
+    arena.nodes[node_id].row_h = row_h
+    // Build the rows entering the window, under the host's build scope, so each
+    // row owns only what it allocated.
+    let previous = arena.scope_begin(node_id)
+    ui_push(node_id)
+    i = first
+    while i < last {
+        if arena.key_node(node_id, keys[i - first]) <= 0 {
+            let before = arena.nodes[node_id].kids.len
+            let s_mark = arena.rec_sid.len
+            let f_mark = arena.rec_fid.len
+            build(i, xs[i])
+            let after = arena.nodes[node_id].kids.len
+            if after == before + 1 {
+                let row = arena.nodes[node_id].kids[before]
+                arena.adopt_records(node_id, row, s_mark, f_mark)
+                arena.key_set(node_id, keys[i - first], row)
+            } else {
+                arena.key_set(node_id, keys[i - first], 0)
+            }
+        }
+        i = i + 1
+    }
+    ui_pop()
+    arena.scope_end(previous)
+    // Free the rows whose key left the window. The spacer keys are not rows;
+    // they are kept and updated below.
+    o = 0
+    while o < old.len {
+        if old[o] != "@top" {
+            if old[o] != "@bot" {
+                if kfor_has(keys, old[o]) == 0 {
+                    let row = arena.key_node(node_id, old[o])
+                    arena.key_forget(node_id, old[o])
+                    if row > 0 {
+                        arena.free_subtree(row)
+                    }
+                }
+            }
+        }
+        o = o + 1
+    }
+    // Order the children: top spacer (rows before the window), the visible
+    // keyed rows in list order, then the bottom spacer (rows after the window).
+    // A spacer is itself keyed (`@top` / `@bot`) and reused across shifts so a
+    // scroll only resizes it, never reallocates it.
+    let mut order = []int {}
+    if row_h > 0 {
+        if first > 0 {
+            let top = keyed_spacer(node_id, "@top", first * row_h)
+            push(order, top)
+        } else {
+            drop_keyed_spacer(node_id, "@top")
+        }
+    }
+    i = 0
+    while i < keys.len {
+        let row = arena.key_node(node_id, keys[i])
+        if row > 0 {
+            arena.nodes[row].parent = node_id
+            push(order, row)
+        }
+        i = i + 1
+    }
+    if row_h > 0 {
+        if last < m {
+            let bot = keyed_spacer(node_id, "@bot", (m - last) * row_h)
+            push(order, bot)
+        } else {
+            drop_keyed_spacer(node_id, "@bot")
+        }
+    }
+    // Free any current child the new order does not keep (a replaced spacer or
+    // a row already freed above leaves a stale id here).
+    let cur = arena.nodes[node_id].kids
+    let mut c = 0
+    while c < cur.len {
+        let child = cur[c]
+        if child > 0 {
+            if kfor_has_id(order, child) == 0 {
+                arena.free_subtree(child)
+            }
+        }
+        c = c + 1
+    }
+    arena.nodes[node_id].kids = order
+    arena.mark_tree_at(node_id)
+}
+
 fn virtual_row_h(heights: []int, i: int, fallback: int) -> int {
     if i >= 0 {
         if i < heights.len {

@@ -1,0 +1,86 @@
+// Phase 2: keyed windowed rows. A scroll must MOVE the rows whose key stays in
+// the window and build only the rows entering it, so a scroll allocates O(rows
+// entering), not O(window) per frame — the `docs/mem-baseline.md` §5.1 growth.
+// `zeus.proof_allocs()` is the runtime allocation counter.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:colors"
+import "std:zui"
+
+struct Item {
+    id: int,
+}
+
+fn expect(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn ItemKey(it: Item) -> string {
+    return "k{{it.id}}"
+}
+
+fn ItemRow(i: int, it: Item) {
+    zeus.Box(align_direction = DIRECTION.Row, height = 20) {
+        zeus.Text("item {{it.id}}")
+    }
+}
+
+/// Scroll `n` one-row shifts, returning `[allocs, live_nodes_at_end]`.
+fn scroll_n(items: Signal<[]Item>, keyed: bool, n: int) -> []int {
+    zeus.snapshot(240, 300, fn() -> Node {
+        zeus.Box(align_direction = DIRECTION.Column) {
+            if keyed {
+                zui.VirtualListKeyed(items, 20, ItemKey, ItemRow)
+            } else {
+                zui.VirtualList(items, 20, ItemRow)
+            }
+        }
+    })
+    let a0 = zeus.proof_allocs()
+    let mut f = 0
+    while f < n {
+        zeus.engine_scroll(20, 20, 0, 20)
+        zeus.engine_layout(240, 300)
+        f = f + 1
+    }
+    let mut out = []int {}
+    push(out, zeus.proof_allocs() - a0)
+    push(out, zeus.mem_live_nodes())
+    return out
+}
+
+fn main() {
+    let mut xs = []Item {}
+    let mut i = 0
+    while i < 500 {
+        push(xs, Item { id: i })
+        i = i + 1
+    }
+    let kitems = zeus.signal(xs)
+    let pitems = zeus.signal(xs)
+
+    // Scrolling a windowed list must not rebuild every visible row each shift.
+    // `proof_allocs()` is the runtime allocation counter; the keyed list builds
+    // the keyed list builds only the rows entering the window, so it allocates
+    // far less than the unkeyed rebuild-every-row list over the same scroll.
+    let k = scroll_n(kitems, true, 200)
+    let list = zeus.engine_find_role("list")
+    expect(list > 0, "keyed list role")
+    expect(zeus.engine_find_text("item 0") == 0, "offscreen row dropped")
+
+    let p = scroll_n(pitems, false, 200)
+
+    fmt.println("keyed", k[0], "plain", p[0])
+    // The keyed path must be materially cheaper (well under half), and its live
+    // node count must be flat (bounded) rather than growing with scroll distance.
+    expect(k[0] * 2 < p[0], "keyed scroll allocates less than rebuild-all")
+    expect(k[1] < 200, "keyed live nodes stay small")
+
+    fmt.println("virt keyed ok", k[0], p[0], k[1])
+}

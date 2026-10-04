@@ -65,6 +65,7 @@ typedef enum {
     AST_TYPE,
     AST_CLOSURE,
     AST_INCDEC,
+    AST_TRY,
 } AstKind;
 
 typedef struct AstNode AstNode;
@@ -152,6 +153,7 @@ struct AstNode {
             int is_proto; /* inject encode_/decode_ as Loam calling std:http */
             int is_json;  /* `#[json]`: inject json_encode_/json_decode_ */
             int is_must_check; /* `#[must_check]`: a dropped value must read a field */
+            int is_no_send; /* `#[no_send]`: never a worker capture / channel payload */
         } strct;
         struct {
             const char *name;
@@ -215,6 +217,10 @@ struct AstNode {
             AstNode *type;
             int conv_mode; /* 0 = trap on range error, 1 = wrapping, 2 = saturating */
         } cast;
+        struct {
+            AstNode *expr;    /* the `Result<T>` / `Option<T>` operand of `?` */
+            const char *errname; /* fn's declared return type name, for the message */
+        } try_expr;
         struct {
             AstNode *callee;
             AstNode **args;
@@ -314,6 +320,7 @@ AstNode *ast_binary(TokenKind op, AstNode *l, AstNode *r, SourceLoc loc);
 AstNode *ast_unary(TokenKind op, AstNode *opnd, SourceLoc loc);
 AstNode *ast_incdec(AstNode *opnd, int is_dec, int is_post, SourceLoc loc);
 AstNode *ast_cast(AstNode *expr, AstNode *type, SourceLoc loc);
+AstNode *ast_try(AstNode *expr, SourceLoc loc);
 AstNode *ast_call(AstNode *callee, AstNode **args, size_t n, SourceLoc loc);
 AstNode *ast_index(AstNode *target, AstNode *idx, SourceLoc loc);
 AstNode *ast_field(AstNode *target, const char *field, int via_colon, SourceLoc loc);

@@ -43,11 +43,11 @@ fn main() {
     if d.ok == 0 {
         fail("valid doc rejected")
     }
-    let u = json.field(d.root, "user", "user")
+    let u = json.field(d.nodes, d.root, "user", "user")
     if u.ok == 0 {
         fail("user field")
     }
-    let age = json.field(u.id, "age", "user.age")
+    let age = json.field(d.nodes, u.id, "age", "user.age")
     if age.ok != 0 {
         fail("missing field accepted")
     }
@@ -57,11 +57,11 @@ fn main() {
 
     // 4. Out-of-range integer names the field path.
     let big = json.parse("{\"n\":99999999999999999999}")
-    let nid = json.field(big.root, "n", "n")
+    let nid = json.field(big.nodes, big.root, "n", "n")
     if nid.ok == 0 {
         fail("n field")
     }
-    let iv = json.as_int(nid.id, "n")
+    let iv = json.as_int(big.nodes, nid.id, "n")
     if iv.ok != 0 {
         fail("overflow accepted")
     }
@@ -71,40 +71,61 @@ fn main() {
 
     // Happy path: kinds, indexing, stringify.
     let v = json.parse("{\"a\":[1,2,3],\"s\":\"hi\",\"t\":true}")
-    let a = json.field(v.root, "a", "a")
-    if json.kind(a.id) != JSON_KIND.Arr {
+    let a = json.field(v.nodes, v.root, "a", "a")
+    if json.kind(v.nodes, a.id) != JSON_KIND.Arr {
         fail("array kind")
     }
-    if json.child_count(a.id) != 3 {
+    if json.child_count(v.nodes, a.id) != 3 {
         fail("array length")
     }
-    let e = json.index(a.id, 1, "a[1]")
-    let n = json.as_int(e.id, "a[1]")
+    let e = json.index(v.nodes, a.id, 1, "a[1]")
+    let n = json.as_int(v.nodes, e.id, "a[1]")
     if n.ok == 0 {
         fail("int access")
     }
     if n.n != 2 {
         fail("int value")
     }
-    let sfield = json.field(v.root, "s", "s")
-    let s = json.as_str(sfield.id, "s")
+    let sfield = json.field(v.nodes, v.root, "s", "s")
+    let s = json.as_str(v.nodes, sfield.id, "s")
     if s.ok == 0 {
         fail("str access")
     }
     if s.s != "hi" {
         fail("str value")
     }
-    let tfield = json.field(v.root, "t", "t")
-    let t = json.as_bool(tfield.id, "t")
+    let tfield = json.field(v.nodes, v.root, "t", "t")
+    let t = json.as_bool(v.nodes, tfield.id, "t")
     if t.ok == 0 {
         fail("bool access")
     }
     if t.b == false {
         fail("bool value")
     }
-    let rt = json.stringify(v.root)
+    let rt = json.stringify(v.nodes, v.root)
     if rt != "{\"a\":[1,2,3],\"s\":\"hi\",\"t\":true}" {
         fail("stringify round-trip")
     }
+
+    // Two live documents must not alias: the pool travels with the doc, so
+    // reading `a` after parsing `b` still reads `a`'s tree.
+    let t1 = json.parse("{\"x\":1}")
+    let t2 = json.parse("{\"y\":2}")
+    let fx = json.field(t1.nodes, t1.root, "x", "x")
+    let fy = json.field(t2.nodes, t2.root, "y", "y")
+    if fx.ok == 0 {
+        fail("doc 1 read after doc 2 parsed (aliased pool)")
+    }
+    if fy.ok == 0 {
+        fail("doc 2 read")
+    }
+    let nx = json.as_int(t1.nodes, fx.id, "x")
+    if nx.ok == 0 {
+        fail("doc 1 int after doc 2 parsed")
+    }
+    if nx.n != 1 {
+        fail("doc 1 value after doc 2 parsed")
+    }
+
     fmt.println("json ok")
 }

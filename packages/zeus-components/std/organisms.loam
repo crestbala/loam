@@ -64,6 +64,23 @@ fn VirtualList<T>(items: Signal<[]T>, row_h: int, build: fn(int, T)) -> Node {
                      rebuild = || { virtual_refresh(node_id, items, build, row_h) })
 }
 
+/// Keyed windowed list: `VirtualList` with a stable `key(item)`. Scrolling
+/// **moves** the rows whose key stays in the window instead of rebuilding every
+/// visible row, so a scroll allocates only the rows entering it — the fix for
+/// the `docs/mem-baseline.md` §5.1 per-scroll growth. `key` must be stable and
+/// unique among the items. Row state that must follow the item should read a
+/// signal inside the row, not `i`. Falls back to the unkeyed path if a key is
+/// empty or duplicated.
+fn VirtualListKeyed<T>(items: Signal<[]T>, row_h: int, key: fn(T) -> string,
+                       build: fn(int, T)) -> Node {
+    let n = raw_scroll()
+    let node_id = n.id
+    arena.bind_host(items.id, node_id)
+    virtual_refresh_keyed(node_id, items, key, build, row_h)
+    return Component(n, grow = 1, a11y_role = "list", row_h = row_h,
+                     rebuild = || { virtual_refresh_keyed(node_id, items, key, build, row_h) })
+}
+
 /// Windowed list with per-row heights. `heights[i]` is row `i` in points
 /// (0 / missing uses `fallback`). Spacers use the prefix sum so `scroll_max`
 /// matches the real list.

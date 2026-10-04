@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <poll.h>
 #include <sys/time.h>
 
 static Display *g_dpy;
@@ -119,36 +120,78 @@ static void linux_run(void) {
     XMapWindow(g_dpy, g_win);
     g_open = 1;
     zeus_window_opened();
+
+    /* Frame clock. The loop blocks in `poll` on the X connection instead of
+       `XNextEvent`, so an idle window costs nothing — but it wakes on a timer
+       or animation deadline so async work still paints. The wait is:
+         - 0      when the last step asked for another frame (animation running);
+         - the next async deadline when one is pending (`engine_next_ms`);
+         - -1     (block indefinitely) when truly idle, until an X event.
+       `engine_next_ms` returns -1 for a pending spawn (draw a frame now). */
+    int xfd = ConnectionNumber(g_dpy);
     for (;;) {
-        XNextEvent(g_dpy, &ev);
-        if (ev.type == ClientMessage && (Atom)ev.xclient.data.l[0] == wm_del) break;
-        if (ev.type == Expose && ev.xexpose.count == 0) linux_paint();
-        if (ev.type == ConfigureNotify) {
-            g_w = ev.xconfigure.width;
-            g_h = ev.xconfigure.height;
-            linux_paint();
+        /* How long to wait for input: 0 = a frame is due now (a timer has
+           expired, or a spawn is pending); the timer's delay; -1 = idle until
+           an X event. */
+        int due = loam_zeus_engine_next_ms();
+        int timeout_ms = (due == 0) ? -1 : (due < 0 ? 0 : due);
+
+        /* Drain everything the X server already queued; poll with a timeout
+           only when the queue is empty. */
+        while (XPending(g_dpy) > 0) {
+            int quit = 0;
+            XNextEvent(g_dpy, &ev);
+            if (ev.type == ClientMessage && (Atom)ev.xclient.data.l[0] == wm_del) {
+                quit = 1;
+            } else if (ev.type == Expose && ev.xexpose.count == 0) {
+                linux_paint();
+            } else if (ev.type == ConfigureNotify) {
+                g_w = ev.xconfigure.width;
+                g_h = ev.xconfigure.height;
+                linux_paint();
+            } else if (ev.type == ButtonPress) {
+                int x = ev.xbutton.x, y = ev.xbutton.y;
+                if (ev.xbutton.button == Button4) zeus_handle_scroll_step(x, y, 0, -40);
+                else if (ev.xbutton.button == Button5) zeus_handle_scroll_step(x, y, 0, 40);
+                else zeus_handle_click(x, y);
+                linux_paint();
+            } else if (ev.type == MotionNotify) {
+                zeus_handle_hover(ev.xmotion.x, ev.xmotion.y);
+            } else if (ev.type == KeyPress) {
+                KeySym ks = XLookupKeysym(&ev.xkey, 0);
+                int key = 0;
+                if (ks == XK_Return) key = 13;
+                else if (ks == XK_Tab) key = 9;
+                else if (ks == XK_BackSpace) key = 8;
+                else if (ks == XK_Escape) key = 27;
+                else if (ks >= 32 && ks < 127) key = (int)ks;
+                if (key) zeus_handle_key(key);
+                linux_paint();
+            }
+            if (quit) goto done;
         }
-        if (ev.type == ButtonPress) {
-            int x = ev.xbutton.x, y = ev.xbutton.y;
-            if (ev.xbutton.button == Button4) zeus_handle_scroll_step(x, y, 0, -40);
-            else if (ev.xbutton.button == Button5) zeus_handle_scroll_step(x, y, 0, 40);
-            else zeus_handle_click(x, y);
-            linux_paint();
+
+        /* No queued events: wait for input or the next frame deadline. */
+        if (timeout_ms != 0) {
+            struct pollfd pfd;
+            pfd.fd = xfd;
+            pfd.events = POLLIN;
+            pfd.revents = 0;
+            int r = poll(&pfd, 1, timeout_ms);
+            if (r < 0) break;
+            if (r == 0) {
+                /* Timed out: a timer or animation is due. Step and repaint. */
+                float dt = 1.f / 60.f;
+                zeus_step(dt);
+                linux_paint();
+            }
+            continue;
         }
-        if (ev.type == MotionNotify)
-            zeus_handle_hover(ev.xmotion.x, ev.xmotion.y);
-        if (ev.type == KeyPress) {
-            KeySym ks = XLookupKeysym(&ev.xkey, 0);
-            int key = 0;
-            if (ks == XK_Return) key = 13;
-            else if (ks == XK_Tab) key = 9;
-            else if (ks == XK_BackSpace) key = 8;
-            else if (ks == XK_Escape) key = 27;
-            else if (ks >= 32 && ks < 127) key = (int)ks;
-            if (key) zeus_handle_key(key, 0);
-            linux_paint();
-        }
+
+        /* timeout_ms == 0: a frame is due now. */
+        if (zeus_step(1.f / 60.f)) linux_paint();
     }
+done:
     XFreeGC(g_dpy, g_gc);
     XDestroyWindow(g_dpy, g_win);
     XCloseDisplay(g_dpy);

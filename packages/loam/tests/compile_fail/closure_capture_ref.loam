@@ -1,0 +1,11 @@
+// A reference cannot be captured: moving a `&T` into a closure that outlives
+// the borrow is the dangling reference the borrow checker guards against.
+struct P {
+    x: int,
+}
+
+fn main() {
+    let p = P { x: 1 }
+    let r = &p
+    let f = fn() -> int { return r.x }
+}

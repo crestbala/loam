@@ -271,6 +271,8 @@ static int expr_uses(AstNode *n, const char *name) {
             return expr_uses(n->as.incdec.operand, name);
         case AST_CAST:
             return expr_uses(n->as.cast.expr, name);
+        case AST_TRY:
+            return expr_uses(n->as.try_expr.expr, name);
         case AST_CLOSURE: {
             for (size_t i = 0; i < n->as.fn.cap_count; i++)
                 if (strcmp(n->as.fn.caps[i], name) == 0) return 1;
@@ -486,6 +488,11 @@ static int check_expr(AstNode *n, int as_move) {
             return check_expr(n->as.incdec.operand, 0);
         case AST_CAST:
             return check_expr(n->as.cast.expr, 0);
+        case AST_TRY:
+            /* `expr?` reads the container and moves its payload out on the
+               success path, but the failure path returns it whole. Treat it as
+               a read of the operand (the container is never moved by `?`). */
+            return check_expr(n->as.try_expr.expr, 0);
         case AST_CLOSURE: {
             for (size_t i = 0; i < n->as.fn.cap_count; i++) {
                 Binding *v = find_b(n->as.fn.caps[i]);
@@ -494,12 +501,32 @@ static int check_expr(AstNode *n, int as_move) {
                     errn = 1;
                     return 1;
                 }
+                /* A non-Copy capture is *moved* into the closure env: the
+                   source is consumed here, so a later read of it is a
+                   use-after-move and the codegen steals the value in. */
+                if (v && !v->is_copy) {
+                    if (borrow_covers(n->as.fn.caps[i])) {
+                        loam_error(n->loc, "cannot move '%s' into a closure while borrowed",
+                                   n->as.fn.caps[i]);
+                        errn = 1;
+                        return 1;
+                    }
+                    v->own = ST_MOVED;
+                }
             }
             depth++;
             Type *ft = n->ty;
             for (size_t k = 0; k < n->as.fn.param_count; k++) {
                 Type *pt = (ft && k < ft->param_count) ? ft->params[k] : NULL;
                 push_b(n->as.fn.params[k].name, pt);
+            }
+            /* The closure body reads its *captures*, not the outer bindings
+               (a moved capture's source is consumed here). Shadow each capture
+               with its own binding so a body read is not a use-after-move of
+               the source. */
+            for (size_t k = 0; k < n->as.fn.cap_count; k++) {
+                Type *ct = n->as.fn.cap_types ? n->as.fn.cap_types[k] : NULL;
+                push_b(n->as.fn.caps[k], ct);
             }
             if (n->as.fn.body && check_stmt(n->as.fn.body)) {
                 pop_to_depth(depth - 1);

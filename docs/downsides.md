@@ -24,7 +24,7 @@ over a new keyword.
 | Keep | Do not add |
 |---|---|
 | `int` / `float` / `bool` / `string` / `[]T` / `[N]T` / `Box<T>` / `&T` / `&mut T` / `fn` | Width integers, `&str` vs `String`, trait objects |
-| Structs, C-style `enum` as named ints, `match` as switch | Algebraic enums, language `Option` / `Result` |
+| Structs, C-style `enum` as named ints, `match` as a variant-aware switch | Algebraic enums (per-variant payloads in the enum itself; no trait system) |
 | Quoted `import "std:foo"`, `mod.name` | Glob, `use`, `pub`, re-exports |
 | Ownership + exclusive vs shared, auto-borrow | Lifetime parameters, NLL, `unsafe` |
 | Monomorphized generics, UFCS | `impl`, traits, operator overloading |
@@ -33,7 +33,8 @@ over a new keyword.
 
 Costs that still bite and stay unless a later phase names them: C99 + `cc`
 backend (debuggers see generated C); `loam` is C11; no package registry;
-borrowck is not NLL; closures capture Copy only; `+ - *` and indexes trap;
+borrowck is not NLL; closures capture Copy values by copy and owned values by
+move (never a borrow); `+ - *` and indexes trap;
 wasm `thread.spawn` is a no-op; no async TLS (Phase 8 here); HTTP server is
 one thread; native GUI is macOS.
 

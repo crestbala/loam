@@ -63,6 +63,7 @@ typedef enum {
     TOK_PIPE,
     TOK_PIPE_PIPE,
     TOK_BANG,
+    TOK_QUESTION,
     TOK_HASH,
     TOK_ARROW,
     TOK_FAT_ARROW,

@@ -1711,6 +1711,149 @@ fn ig_lsp() {
     }
 }
 
+/// `--cost` is the Phase 5 measurement, so it gets a check: a program whose
+/// bounds/overflow traps the compiler can prove redundant must report fewer of
+/// them (the elision is the language's whole point for speed). The numbers are
+/// compared, not a golden string, so a diagnostic reformat does not break it.
+fn ig_cost() {
+    mark("cost report")
+    let d = tmpf("cost_probe")
+    if !reset_dir(d) || !mkdirp(d) {
+        bad("cost report (setup)", "")
+        return
+    }
+    let src = "{{d}}/probe.loam"
+    let body = cat(
+        "fn main() {\n",
+        cat("    let xs = []int { 1, 2, 3, 4, 5 }\n",
+            cat("    let mut s = 0\n",
+                // The index is proven in range: the loop trap is elided. The
+                // body has no dynamic arithmetic, so the only overflow site is
+                // the literal sum, which folds — both counts land at 0.
+                cat("    for i in 0..xs.len { s = xs[i] }\n",
+                    cat("    let a = 1000 + 2000\n", "}\n")))))
+    if !write_text(src, body) {
+        bad("cost report (setup)", "")
+        return
+    }
+    let o = sys.exec("{{shq(LOAMC)}} --cost {{shq(src)}} 2>&1")
+    if sys.exec_status() != 0 {
+        bad("cost report (run)", o)
+        return
+    }
+    let bounds = cost_field(o, "bounds checks")
+    let traps = cost_field(o, "overflow traps")
+    if bounds != 0 {
+        bad("cost report (loop index not elided: bounds={{bounds}})", o)
+        return
+    }
+    /* One trap remains: the for-loop's own `i = i + 1` latch, whose operands
+       are not literals. The literal `1000 + 2000` folded, so it added none. */
+    if traps != 1 {
+        bad("cost report (literal arithmetic not elided: traps={{traps}})", o)
+        return
+    }
+    ok("cost report (bounds + overflow elision)")
+}
+
+/// The first integer appearing after `label` in a `--cost` report, or -1 when
+/// the label is missing. Bytes are compared directly; digits are ASCII.
+fn cost_field(report: string, label: string) -> int {
+    let mut i = 0
+    while i + label.len <= report.len {
+        if same_at(report, i, label) {
+            let mut k = i + label.len
+            while k < report.len && (report[k] < 48 || report[k] > 57) {
+                k = k + 1
+            }
+            if k >= report.len {
+                return -1
+            }
+            let mut v = 0
+            while k < report.len && report[k] >= 48 && report[k] <= 57 {
+                v = v * 10 + (report[k] - 48)
+                k = k + 1
+            }
+            return v
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+/// True when `s` has `needle` starting at byte `at`.
+fn same_at(s: string, at: int, needle: string) -> bool {
+    let mut i = 0
+    while i < needle.len {
+        if s[at + i] != needle[i] {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+/// Phase 6: one program, five surfaces. The counter, gallery, and www each have
+/// a per-host entry (`macos` = native, shared by Linux + macOS; `ios`,
+/// `android`, `frontend` = wasm Canvas2D) that is a **thin stub**: it imports
+/// the shared `../ui.loam` and calls `ui.start()`, and holds no UI of its own.
+/// This check pins that shape, so a host cannot drift into a second copy of the
+/// UI — the whole point of "one UI change shows up on all five".
+fn ig_one_surface() {
+    mark("one surface")
+    let mut apps = []string {}
+    push(apps, "examples/zeus/counter")
+    push(apps, "examples/zeus/gallery")
+    push(apps, "www")
+    let mut hosts = []string {}
+    push(hosts, "frontend")
+    push(hosts, "macos")
+    push(hosts, "ios")
+    push(hosts, "android")
+    let mut badish = ""
+    for a in 0..apps.len {
+        let root = "{{ROOT}}/{{apps[a]}}"
+        if sys.exists("{{root}}/ui.loam") == 0 {
+            badish = "{{apps[a]}} has no shared ui.loam"
+            break
+        }
+        for h in 0..hosts.len {
+            let p = "{{root}}/{{hosts[h]}}/app.loam"
+            if sys.exists(p) == 0 {
+                continue /* www has only frontend + macos */
+            }
+            let src = sys.read_file(p)
+            let lines = lines_with(src, "").len
+            if lines > 12 {
+                badish = "{{apps[a]}}/{{hosts[h]}}/app.loam is {{lines}} lines, not a stub"
+                break
+            }
+            if !contains_str(src, "../ui.loam") {
+                badish = "{{apps[a]}}/{{hosts[h]}}/app.loam does not import ../ui.loam"
+                break
+            }
+            if !contains_str(src, "ui.start()") {
+                badish = "{{apps[a]}}/{{hosts[h]}}/app.loam does not call ui.start()"
+                break
+            }
+            /* A host stub must not paint. `zeus.App`, `Box`, `Text`, … are the
+               UI's job in ui.loam; a widget call here means the UI was copied. */
+            if contains_str(src, "zeus.") {
+                badish = "{{apps[a]}}/{{hosts[h]}}/app.loam calls zeus.* (UI belongs in ui.loam)"
+                break
+            }
+        }
+        if badish != "" {
+            break
+        }
+    }
+    if badish != "" {
+        bad("one surface ({{badish}})", "")
+        return
+    }
+    ok("one surface (thin host stubs share one ui.loam)")
+}
+
 fn ig_myapp() {
     ig_myapp_routes()
     ig_myapp_build()
@@ -1750,6 +1893,10 @@ fn stanza_dispatch(name: string) -> bool {
         ig_server_split()
     } else if name == "lsp" {
         ig_lsp()
+    } else if name == "cost" {
+        ig_cost()
+    } else if name == "one_surface" {
+        ig_one_surface()
     } else {
         return false
     }
@@ -1778,6 +1925,8 @@ fn stanza_names() -> []string {
     push(v, "wasm_smoke")
     push(v, "server_split")
     push(v, "lsp")
+    push(v, "cost")
+    push(v, "one_surface")
     return v
 }
 
@@ -1850,6 +1999,8 @@ fn host_checks() -> int {
     ig_wasm_smoke()
     ig_server_split()
     ig_lsp()
+    ig_cost()
+    ig_one_surface()
     return N_FAIL - before
 }
 

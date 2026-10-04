@@ -1,0 +1,10 @@
+// A non-Copy capture is *moved* into the closure: the source is consumed, so a
+// read of it afterwards is a use-after-move.
+import "std:fmt"
+
+fn main() {
+    let b = Box::new(1)
+    let f = fn() -> int { return *b }
+    fmt.println(*b)
+    fmt.println(f())
+}

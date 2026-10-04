@@ -1,0 +1,6 @@
+// `?` only applies to `Result<T>` / `Option<T>`.
+import "std:result"
+
+fn f(n: int) -> int {
+    return n?
+}

@@ -11,7 +11,7 @@
 #include <stdio.h>
 
 /* kind, is_mut, bits, is_unsigned, name, elem, ret, param_count, params,
-   field_count, field_names, field_types, must_check, array_len */
+   field_count, field_names, field_types, must_check, no_send, array_len */
 #define SCALAR(K, B, U) {K, 0, B, U, NULL, NULL, NULL, 0, NULL, 0, NULL, NULL, 0, 0}
 
 static Type t_void = SCALAR(TY_VOID, 0, 0);
@@ -250,6 +250,10 @@ int type_is_send(const Type *t) {
     if (t->kind == TY_PARAM) return 1; /* concrete at the check sites */
     if (t->kind == TY_ARRAY) return type_is_send(t->elem);
     if (t->kind == TY_STRUCT) {
+        /* `#[no_send]` is the escape hatch for a handle that is plain bytes
+           (`Signal<T>` is `{ id: int }`) but addresses UI-thread state: a
+           worker holding it would race the signal arena. */
+        if (t->no_send) return 0;
         for (size_t i = 0; i < t->field_count; i++)
             if (!type_is_send(t->field_types[i])) return 0;
         return 1;

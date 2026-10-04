@@ -5,6 +5,13 @@ Loam is a memory-safe systems language: Odin-like syntax, Rust-like ownership.
 and invokes `cc`. C is the **platform binding target**, not the language's
 semantics.
 
+**One Loam file in, one C file out.** `loamc` compiles, tests, and runs a whole
+`.loam` program as a unit; the source is never required to be split into many
+files, and no backend other than `cc` is used. The generated C may be large
+(a Zeus app is ~2.9 MB), which is fine — the compile path stays small and the
+same shape is what a **self-hosting** `loamc` (the compiler written in Loam,
+building and testing itself from whole Loam sources) will keep.
+
 Language rules live in [spec.md](spec.md). C vs Loam: [boundary.md](boundary.md).
 Loam vs C and Rust: [loam-vs-c-and-rust.md](loam-vs-c-and-rust.md).
 Self-improvement phases: [downsides.md](downsides.md).
@@ -50,7 +57,7 @@ Pipeline, in order:
 | Lex / parse | `src/lexer.c`, `src/parser.c` | Tokens → AST. |
 | Typecheck | `src/sema/typecheck.c` | Names, types, auto-borrow, generics (monomorphized, including nested calls and defaults), `mod.fn` / `mod.global`, method rewrite `n.w(32)` → `zeus.w(n, 32)`. |
 | Borrowck | `src/sema/borrowck.c` | Exclusive vs shared, moves, place paths (`p.a` vs `p.b`). Borrows end at the holder's last use (NLL). Enforces `#[must_check]`. |
-| Boundscheck | `src/sema/boundscheck.c` | Proven in-range indexes skip the runtime trap. |
+| Boundscheck | `src/sema/boundscheck.c` | Proven in-range indexes skip the runtime trap: a literal in `0..N` for `[N]T`, and `for i in 0..C.len { … C[i] … }` (loop var matched by resolution). Overflow traps likewise drop on a foldable literal op literal (`src/ir.c`). |
 | IR | `src/ir.c` | CFG, drops, closures as heap env + fn pointer (`loam_fn`: fn, env, env_size). |
 | C | `src/codegen_c.c` | C99, then `cc`. |
 
@@ -251,25 +258,49 @@ let p = &mut x
 x = 3            // legal: p is dead after `*p = 2`
 ```
 
-### 2b. Error handling: `Res<T>`
+### 2b. Error handling: `Result<T>` and `Option<T>`
 
-There is no `Result` type system, no `?`, and no pattern matching. The one
-checked container is `Res<T>` (`std:result`), marked `#[must_check]`:
+`std:result` has two checked containers, both `#[must_check]`:
+
+- `Result<T>` — a tagged `{ tag, val, err }`. `tag` is `ResultTag.Ok` /
+  `ResultTag.Err`; read `val` only on `Ok` and `err` only on `Err`.
+- `Option<T>` — a tagged `{ tag, val }`. `tag` is `OptionTag.Some` /
+  `OptionTag.None`.
 
 ```loam
 import "std:result"
 
-let r = http.call(c, "Counter.Increment", body)
-if r.ok {
-    use(decode_Count(r.val))
+fn half(n: int) -> Result<int> {
+    if n % 2 != 0 { return result.res_err("odd", 0) }
+    return result.res_ok(n / 2)
+}
+
+fn quarter(n: int) -> Result<int> {
+    let h = half(n)?          // early-returns on failure
+    return result.res_ok(h / 2)
 }
 ```
 
-A `#[must_check]` value that is dropped without reading any field — or
-discarded as a bare expression statement — is a **compile error**. `res.or(x)`
-gives the value or a default; `res.or_trap()` gives the value or traps with
-`r.err`. `http.call` returns `Res<string>`; its optional REST counterparts stay
-plain values.
+A `#[must_check]` value dropped without reading a field — or discarded as a bare
+expression statement — is a **compile error**, so a failure cannot be ignored.
+
+**`?`** propagates a failure: `expr?` returns the whole container on the bad tag
+(`Err` / `None`) and yields the payload otherwise. The enclosing `fn` must
+return the same `Result<T>` / `Option<T>` type; there are no exceptions and no
+unwinding. Helpers: `result.is_ok` / `is_err` / `is_some`, `result.unwrap` /
+`unwrap_or` / `unwrap_some` / `some_or`.
+
+A `match` over the tag is exhaustive when it names every variant, no `_` needed:
+
+```loam
+match r.tag {
+    ResultTag.Ok  => { use(r.val) }
+    ResultTag.Err => { log(r.err) }
+}
+```
+
+`http.call` returns `Res<string>` — the older `{ ok, val, err }` shape kept for
+that edge; new code should prefer `Result<T>`.
 
 ### 3. Arrays and generics
 
@@ -378,10 +409,23 @@ fn main() {
 }
 ```
 
-Captures must be Copy. `fn` values are Copy handles (shared env). They may be
-returned or stored. Zeus intern (`plat_intern_fn`) memcpy's that env using
-`env_size`, so a click handler still sees captured `Signal`s after the stack
-frame that created the closure is gone.
+A Copy capture is captured by copy. A non-Copy **owned** value (`Box`, or a
+struct/array/vec of one) is **moved** into the closure env: the source is
+consumed, so a later read of it is a use-after-move, and a closure returned from
+a function keeps the value live. A reference (`&T` / `&mut T`) cannot be
+captured — that would outlive the borrow.
+
+```loam
+fn make() -> fn() -> int {
+    let b = Box::new(41)
+    return fn() -> int { *b + 1 }   // `b` moves into the closure
+}
+```
+
+`fn` values are Copy handles (shared env). They may be returned or stored. Zeus
+intern (`plat_intern_fn`) memcpy's that env using `env_size`, so a click handler
+still sees captured `Signal`s after the stack frame that created the closure is
+gone.
 
 ### 6. Tests
 

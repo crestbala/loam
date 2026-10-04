@@ -1,0 +1,8 @@
+// `?` propagates by returning the whole container, so the enclosing fn must
+// return the same Result/Option type (you cannot drop a failure into an int).
+import "std:result"
+
+fn f(n: int) -> int {
+    let r = result.res_ok(n)
+    return r?
+}

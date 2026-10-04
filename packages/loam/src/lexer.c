@@ -98,6 +98,7 @@ const char *token_kind_name(TokenKind k) {
         case TOK_PIPE: return "|";
         case TOK_PIPE_PIPE: return "||";
         case TOK_BANG: return "!";
+        case TOK_QUESTION: return "?";
         case TOK_HASH: return "#";
         case TOK_ARROW: return "->";
         case TOK_FAT_ARROW: return "=>";
@@ -279,6 +280,7 @@ Token lexer_next(Lexer *l) {
         case '>': return make_token(l, TOK_GT, start, sl, sc);
         case '&': return make_token(l, TOK_AMP, start, sl, sc);
         case '!': return make_token(l, TOK_BANG, start, sl, sc);
+        case '?': return make_token(l, TOK_QUESTION, start, sl, sc);
         case '#': return make_token(l, TOK_HASH, start, sl, sc);
         case '^': return make_token(l, TOK_CARET, start, sl, sc);
         case '~': return make_token(l, TOK_TILDE, start, sl, sc);
