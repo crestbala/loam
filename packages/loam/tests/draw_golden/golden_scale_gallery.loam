@@ -8,7 +8,7 @@ import "std:zeus"
 import "std:zui"
 
 fn main() {
-    let on = zeus.signal(1)
+    let on = zeus.signal(true)
     let tab = zeus.signal(0)
     let pick = zeus.signal(0)
     let cur = zeus.signal(2)
@@ -19,28 +19,28 @@ fn main() {
     zeus.snapshot(640, 820, fn() -> Node {
         zui.Page() {
             zui.Navbar("Zeus")
-            zui.Row(SPACE.Sm) {
-                zui.Button("Primary", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
+            zui.Row(Space.Sm) {
+                zui.Button("Primary", look = zeus.Look.Solid, size = zeus.Size.Md,
                             on_click = fn() {})
-                zui.Button("Outline", look = zeus.LOOK.Outline, size = zeus.SIZE.Lg,
+                zui.Button("Outline", look = zeus.Look.Outline, size = zeus.Size.Lg,
                             on_click = fn() {})
-                zui.Button("Ghost", look = zeus.LOOK.Ghost, size = zeus.SIZE.Sm,
+                zui.Button("Ghost", look = zeus.Look.Ghost, size = zeus.Size.Sm,
                             on_click = fn() {})
             }
-            zui.Row(SPACE.Sm) {
+            zui.Row(Space.Sm) {
                 zui.Checkbox("Agree", on)
                 zui.Switch(on)
-                zui.Chip("busy", zeus.TINT.Warn)
-                zui.Badge("ok", zeus.TINT.Ok)
+                zui.Chip("busy", zeus.Tint.Warn)
+                zui.Badge("ok", zeus.Tint.Ok)
                 zui.Kbd("S")
             }
             zui.Tabs(tab, []string {"One", "Two", "Three"})
-            zui.Row(SPACE.Sm) {
+            zui.Row(Space.Sm) {
                 zui.Segmented(pick, []string {"A", "B", "C"})
             }
-            zui.Row(SPACE.Sm) {
+            zui.Row(Space.Sm) {
                 zui.RadioGroup(pick, []string {"First", "Second"})
-                zui.Column(SPACE.Exs) {
+                zui.Column(Space.Exs) {
                     zui.Field("Name", name, "Ada")
                     zui.Field("Email", note, "ada@zeus.dev")
                 }

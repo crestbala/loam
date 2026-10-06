@@ -25,15 +25,15 @@ fn key_of(s: string) -> string {
     return s
 }
 
-fn Row(i: int, s: string) {
-    zeus.Text(s)
+fn Row(i: int, s: string) -> Node {
+    return zeus.Text(s)
 }
 
 fn main() {
     zeus.window("listkey", 240, 160)
     let items = zeus.signal([]string {})
     let mut host = 0
-    zeus.root(zeus.Box(padding = 8, align_direction = DIRECTION.Column) {
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column, padding = edges(8))) {
         let h = zui.Each(items, key_of, Row)
         host = h.id
     })

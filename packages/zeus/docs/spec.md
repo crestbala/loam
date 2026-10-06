@@ -290,14 +290,18 @@ shown/hidden with a fade rather than an animated height.
 **Overlays** are anchored out-of-flow floaters. `arena.anchor_to(panel, trigger,
 side, gap)` records a node id and the layout pass places the panel against the
 trigger's screen rect, flipping when the preferred `PLACE` side would leave the
-safe-area rect (host notch / home-indicator insets; on desktop those are 0). `Popover(trigger, open, …)` adds a transparent outside-click scrim and
-closes on Escape; `Tooltip(trigger, text, delay)` and `HoverCard(trigger, …, delay)`
-show on hover after a hover-intent delay; `Toast(open, ms)` pins to the window
+safe-area rect (host notch / home-indicator insets; on desktop those are 0). A
+floater takes its trigger as a slot and its body as the trailing block:
+`Popover(open = o, trigger = || { Button(...) }) { body }` adds a transparent
+outside-click scrim and closes on Escape; `Tooltip(text = t, trigger = || { ... })`
+and `HoverCard(trigger = || { ... }) { body }` show on hover after a hover-intent
+delay. A tooltip on a popover's button wraps the popover; `Toast(open, ms)` pins to the window
 edge, rises and fades in, and auto-dismisses. None of them rebuilds a tree or
 runs a component while animating.
 
 **Menu** is a dropdown of commands on the same anchored floater:
-`Menu(trigger, active)` anchors to the trigger, and
+`Menu(active = a, items = rows, trigger = || { ... })` anchors to the trigger
+(and owns its click), and
 `MenuItem(active = active, index = i, count = n, …)` reads the menu's one signal
 — the highlighted index, where `-1` is closed — so items own no state. The
 active row is the only focusable one and handles Up / Down / Enter; hover moves
@@ -363,7 +367,7 @@ soft shadow and grows 2dp on the hover track.
 **Table**: `TableRow` / `TableRowCols` take `zebra` (every second body row,
 counted among `row` siblings), `hover`, and `on_click`; `TableRowCols`
 lays cells out by the same `[]TableCol` spec as `TableCols`, so fixed widths
-and `align` (`ALIGN.End` for numbers) match the header. `TableCols(cols,
+and `align` (`Align.End` for numbers) match the header. `TableCols(cols,
 sort = sig)` makes `sortable` columns buttons that cycle none → asc → desc
 (`i + 1` / `-(i + 1)` / 0) and marks the sorted one with an arrow. The
 header only writes the signal; the rows follow it in one of two ways.
@@ -394,9 +398,9 @@ shell (`grow(card, 1)` keeps working).
 plate → fill) sweep left to right on the frame clock, clipped to the box,
 phase-offset per node; reduced motion parks the band and idles the loop.
 
-**Alert** has four tiers (`Alert` / `AlertInfo` = info, `AlertSuccess`,
-`AlertWarning`, `AlertDestructive`). `dismiss` is a 0/1 signal the X sets
-to 0. Trailing block is the action slot.
+**Alert** has four tones: `Alert(title, body, tone = ALERT.Info)` (the
+default), `ALERT.Ok`, `ALERT.Warn`, `ALERT.Danger`. `dismiss` is a 0/1 signal
+the X sets to 0. Trailing block is the action slot, under the body.
 
 On iOS / Android a tappable node smaller than 44dp still receives the
 pointer in a 44×44 box centered on its layout rect; paint and layout stay

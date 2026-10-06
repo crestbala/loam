@@ -1,0 +1,41 @@
+// Leading positionals fill a props struct's first fields even with no named
+// argument, while a value of the struct type itself is still passed as-is.
+import "std:fmt"
+
+struct TabProps {
+    label: string = "",
+    index: int = 0,
+}
+
+fn Tab(p: TabProps) -> int {
+    fmt.println("{{p.label}}:{{p.index}}")
+    return 0
+}
+
+struct Cell {
+    id: int,
+}
+
+fn first<T>(a: T, b: T) -> T {
+    return a
+}
+
+/// The last parameter is a plain struct: a value whose type is an unresolved
+/// generic (`first(...)` returns `T`) is that struct, not a props fill.
+fn show_cell(label: string, c: Cell) {
+    fmt.println("{{label}}={{c.id}}")
+}
+
+fn make() -> TabProps {
+    return TabProps { label: "made", index: 9 }
+}
+
+fn main() {
+    let tp = TabProps { label: "value", index: 1 }
+    Tab(tp)
+    Tab(make())
+    Tab("one")
+    Tab("two", 2)
+    Tab("named", index = 3)
+    show_cell("cell", first(Cell { id: 7 }, Cell { id: 8 }))
+}

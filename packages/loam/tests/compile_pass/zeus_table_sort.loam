@@ -24,8 +24,8 @@ fn must(ok: bool, what: string) {
     }
 }
 
-fn JobRow(i: int, j: Job) {
-    zui.Row(8) {
+fn JobRow(i: int, j: Job) -> Node {
+    return zui.Row(8) {
         zeus.set_flex_basis_zero(zeus.grow(zeus.Text(j.name), 1))
         zeus.set_flex_basis_zero(zeus.grow(zeus.Text("{{j.qty}}"), 1))
     }
@@ -40,7 +40,7 @@ fn main() {
     let sort = zeus.signal(0)
     let mut spec = []TableCol {}
     push(spec, TableCol { title: "Name", width: 0, sortable: true })
-    push(spec, TableCol { title: "Qty", width: 60, align: zeus.ALIGN.End, sortable: true })
+    push(spec, TableCol { title: "Qty", width: 60, align: zeus.Align.End, sortable: true })
     let mut data = []Job {}
     push(data, Job { name: "Cal", qty: 30 })
     push(data, Job { name: "Ada", qty: 7 })
@@ -61,7 +61,7 @@ fn main() {
     zeus.root(zui.Column(8) {
         zui.Table(spec, rows, cells, sort = sort, zebra = true,
                    on_pick = fn(i: int) => picked.set(i))
-        zeus.Box(height = 120) {
+        zeus.Box(style = Style(height = px(120))) {
             zui.VirtualTable(jobs, spec, 24, JobRow, sort = vsort)
         }
     })

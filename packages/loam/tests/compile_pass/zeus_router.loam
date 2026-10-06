@@ -7,19 +7,19 @@ import "std:zeus"
 import "std:zui"
 import "std:router"
 
-fn Home(p: Params) {
-    zeus.Text("home")
+fn Home(p: Params) -> Node {
+    return zeus.Text("home")
 }
 
-fn Post(p: Params) {
-    zeus.Text(router.param(p, "slug"))
+fn Post(p: Params) -> Node {
+    return zeus.Text(router.param(p, "slug"))
 }
 
-fn Boom(p: Params) {
+fn Boom(p: Params) -> Node {
     let a = []int { 1 }
     let mut i = 5
     let bad = a[i]
-    zeus.Text("{{bad}}")
+    return zeus.Text("{{bad}}")
 }
 
 fn fail(what: string) {
@@ -29,7 +29,7 @@ fn fail(what: string) {
 
 fn main() {
     zeus.snapshot(240, 160, fn() -> Node {
-        zeus.Box(align_direction = DIRECTION.Column) {
+        zeus.Box(style = Style(direction = Direction.Column)) {
             zeus.Text("shell")
             router.Router([]Route {
                 Route { pattern: "/", build: Home },

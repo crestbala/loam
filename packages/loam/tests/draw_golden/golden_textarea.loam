@@ -8,7 +8,7 @@ import "std:zui"
 fn main() {
     let draft = zeus.signal("")
     zeus.window("zeus-snap", 400, 220)
-    zeus.root(zeus.Box(padding = 20, background = "#ffffff") {
+    zeus.root(zeus.Box(style = Style(padding = edges(20), background = "#ffffff")) {
         zui.TextArea(draft, "Message")
     })
     zeus.engine_layout(400, 220)

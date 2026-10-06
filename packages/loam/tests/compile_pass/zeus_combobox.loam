@@ -18,8 +18,9 @@ fn main() {
     zeus.window("combobox", 360, 300)
     let query = zeus.signal("")
     let tree = zui.Page() {
-        zui.Combobox(query, []string { "Apple", "Apricot", "Banana", "Cherry" },
-                      width = 220)
+        zui.Combobox(query,
+                      []string { "Apple", "Apricot", "Banana", "Cherry" },
+                      style = Style(width = px(220)))
     }
     zeus.root(tree)
     zeus.pump_frame()

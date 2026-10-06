@@ -18,7 +18,7 @@ fn must(ok: bool, what: string) {
 fn main() {
     zeus.window("button", 400, 200)
     let clicks = zeus.signal(0)
-    let busy = zeus.signal(0)
+    let busy = zeus.signal(false)
     let off_clicks = zeus.signal(0)
     zeus.root(zui.Row(8) {
         zui.Button("Save", icon = zeus.IC_CHECK, loading = busy,
@@ -70,14 +70,14 @@ fn main() {
 
     // Loading: the spinner shows, the overlay reports loading, the click
     // is swallowed, and Enter on the focused button is too.
-    busy.set(1)
+    busy.set(true)
     zeus.engine_layout(400, 200)
     must(zeus.state_loading(save), "loading state")
     let sp = zeus.engine_find_role("progressbar")
     must(sp != 0, "spinner shown while loading")
     must(zeus.engine_click_text("Save") != 0, "hit while loading")
     must(clicks.get() == 1, "loading click swallowed")
-    busy.set(0)
+    busy.set(false)
     zeus.engine_layout(400, 200)
     must(!zeus.state_loading(save), "loading cleared")
     must(zeus.engine_click_text("Save") != 0, "hit after loading")

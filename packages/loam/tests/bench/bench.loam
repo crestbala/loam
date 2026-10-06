@@ -8,7 +8,7 @@ import "std:colors"
 import "std:zui"
 
 fn row(label: string) {
-    zeus.Box(align_direction = DIRECTION.Row, spacing = 4, padding = 2) {
+    zeus.Box(style = Style(direction = Direction.Row, gap = 4, padding = edges(2))) {
         zeus.Text(label)
     }
 }
@@ -21,7 +21,7 @@ fn main() {
 
     zeus.window("bench", 1024, 768)
     zeus.view(fn() -> Node {
-        zeus.Box(align_direction = DIRECTION.Column, padding = 12, spacing = 4) {
+        zeus.Box(style = Style(direction = Direction.Column, gap = 4, padding = edges(12))) {
             zui.Loop(items, fn(i, s) {
                 row(s)
             })

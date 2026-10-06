@@ -16,7 +16,7 @@ fn must(ok: bool, what: string) {
 fn main() {
     zeus.window("touch-hover", 320, 120)
     let btn = zui.Button("Hover me", on_click = fn() {})
-    zeus.root(zeus.Box(padding = 20) {
+    zeus.root(zeus.Box(style = Style(padding = edges(20))) {
         zeus.child(zeus.Box(), btn)
     })
     zeus.pump_frame()

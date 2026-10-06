@@ -313,6 +313,11 @@ static void cname_append_ty(char *buf, size_t cap, const Type *t) {
         char c = *p;
         if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))
             buf[used++] = c;
+        /* Same rule as `type_c_name`: a nested `[]T` stays distinct from `T`. */
+        else if (c == '[')
+            buf[used++] = 'L';
+        else if (c == ']')
+            buf[used++] = 'R';
         else if (used && buf[used - 1] != '_')
             buf[used++] = '_';
     }
@@ -333,6 +338,10 @@ static char *mono_cname(AstNode *fn, Type **args, size_t n) {
 
 static void record_mono(AstNode *fn, Type **args, size_t n, const char *cname) {
     for (int i = 0; i < nmono; i++) {
+        /* One C definition per name: two type objects that print the same
+           (`Signal<int>` built two ways) are the same instance. */
+        if (monos[i].fn == fn && cname && monos[i].cname && strcmp(monos[i].cname, cname) == 0)
+            return;
         if (monos[i].fn != fn || monos[i].n != n) continue;
         int same = 1;
         for (size_t k = 0; k < n; k++)
@@ -639,6 +648,7 @@ static Type *lit_with_expect(AstNode *n, Type *expect) {
 
 
 static Type *fn_type_of(AstNode *fn);
+static int module_of_decl(AstNode *d);
 static Type *peel_ref(Type *t);
 
 /** 1 if `fn`'s first parameter can be the method receiver `recv`. */
@@ -750,6 +760,43 @@ static AstNode *find_struct(const char *name) {
 
 static Type *resolve_type(AstNode *tn);
 
+/** C17: a struct in a user (non-std) module whose name another module also
+ *  declares gets a module-qualified C name, so the two do not clash in the
+ *  generated C. Library structs keep their names (the runtime C uses them). */
+static const char *struct_cname_of(AstNode *st) {
+    const char *nm = st->as.strct.name;
+    if (!nm) return NULL;
+    int home = module_of_decl(st);
+    if (home < 0 || home >= Gn) return NULL;
+    const char *path = Gmods[home].path;
+    if (path && strstr(path, "/std/")) return NULL;
+    int dup = 0;
+    for (int m = 0; m < Gn; m++) {
+        if (m == home) continue;
+        if (find_struct_in(&Gmods[m], nm)) dup = 1;
+    }
+    if (!dup) return NULL;
+    char buf[256];
+    size_t used = 0;
+    const char *mod = Gmods[home].name ? Gmods[home].name : "mod";
+    for (const char *p = mod; *p && used + 1 < sizeof buf; p++) {
+        char c = *p;
+        int ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+        buf[used++] = ok ? c : '_';
+    }
+    buf[used] = '\0';
+    snprintf(buf + used, sizeof buf - used, "__%s", nm);
+    return loam_dup(buf);
+}
+
+/** 1 if `a` and `b` come from the same struct declaration (C names agree). */
+static int type_same_decl(const Type *a, const Type *b) {
+    const char *x = a ? a->cname : NULL;
+    const char *y = b ? b->cname : NULL;
+    if (!x && !y) return 1;
+    return x && y && strcmp(x, y) == 0;
+}
+
 static Type *struct_type_of(AstNode *st) {
     if (st->ty) return st->ty;
     const char **save_tp = cur_tparams;
@@ -758,6 +805,7 @@ static Type *struct_type_of(AstNode *st) {
     cur_ntparams = st->as.strct.tparam_count;
     Type *t = type_new(TY_STRUCT);
     t->name = loam_dup(st->as.strct.name);
+    t->cname = struct_cname_of(st);
     t->must_check = st->as.strct.is_must_check;
     t->no_send = st->as.strct.is_no_send;
     t->field_count = st->as.strct.field_count;
@@ -814,6 +862,7 @@ static Type *make_struct_inst(AstNode *st, Type **args, size_t n) {
     }
     Type *t = type_new(TY_STRUCT);
     t->name = loam_dup(st->as.strct.name);
+    t->cname = tmpl->cname;
     t->must_check = tmpl->must_check;
     t->no_send = tmpl->no_send;
     t->param_count = n;
@@ -919,6 +968,15 @@ static Type *resolve_type(AstNode *tn) {
 
 static Type *fn_type_of(AstNode *fn) {
     if (fn->ty) return fn->ty;
+    /* Resolve the signature in the module that declares it: a caller that
+       declares its own `ChipProps` must not change what `zui.Chip` takes. */
+    int save_cur = Gcur;
+    const char *save_mod = cur_mod_name;
+    int home = module_of_decl(fn);
+    if (home >= 0 && home < Gn && home != Gcur) {
+        Gcur = home;
+        cur_mod_name = Gmods[home].name;
+    }
     const char **save_tp = cur_tparams;
     size_t save_n = cur_ntparams;
     cur_tparams = fn->as.fn.tparams;
@@ -939,6 +997,8 @@ static Type *fn_type_of(AstNode *fn) {
     fn->ty = t;
     cur_tparams = save_tp;
     cur_ntparams = save_n;
+    Gcur = save_cur;
+    cur_mod_name = save_mod;
     return t;
 }
 
@@ -1094,6 +1154,8 @@ static int struct_all_defaulted(AstNode *st) {
 /** The type of a name or a field path, without checking (and so without
  *  rewriting) the expression. NULL when it cannot be told cheaply. Used only
  *  to decide whether an argument already holds a function. */
+static Type *peek_value_type(AstNode *a);
+
 static Type *peek_type(AstNode *a) {
     if (!a) return NULL;
     if (a->kind == AST_IDENT) {
@@ -1111,7 +1173,7 @@ static Type *peek_type(AstNode *a) {
                 return gv ? gv->ty : NULL;
             }
         }
-        Type *bt = peel_ref(peek_type(a->as.access.target));
+        Type *bt = peel_ref(peek_value_type(a->as.access.target));
         if (!bt || bt->kind != TY_STRUCT) return NULL;
         for (size_t i = 0; i < bt->field_count; i++)
             if (bt->field_names[i] && strcmp(bt->field_names[i], a->as.access.field) == 0)
@@ -1139,11 +1201,254 @@ static AstNode *make_thunk(AstNode *arg) {
     return c;
 }
 
+static int is_option_ty(const Type *t) {
+    return t && t->kind == TY_STRUCT && t->name && strcmp(t->name, "Option") == 0 &&
+           t->param_count == 1;
+}
+
+/** 1 if `a` is a call whose callee is declared to return an `Option`. */
+static int call_returns_option(AstNode *a) {
+    if (!a || a->kind != AST_CALL || !a->as.call.callee) return 0;
+    AstNode *c = a->as.call.callee;
+    AstNode *f = NULL;
+    if (c->kind == AST_IDENT) {
+        f = lookup_unqualified(c->as.ident.name, find_fn_in);
+    } else if (c->kind == AST_FIELD && !c->as.access.via_colon && c->as.access.target &&
+               c->as.access.target->kind == AST_IDENT &&
+               module_imported(Gmods[Gcur].ast, c->as.access.target->as.ident.name)) {
+        LoamModule *m = find_mod(c->as.access.target->as.ident.name);
+        f = m ? lookup_through(m, c->as.access.field, find_fn_in) : NULL;
+    }
+    if (!f) return 0;
+    Type *ft = fn_type_of(f);
+    return ft && is_option_ty(ft->ret);
+}
+
+/** Where an `Option<T>` is expected, a plain `T` is `Some(T)`: `on_click =
+ *  save` needs no `result.some(...)`. An argument that already is an Option
+ *  (a forwarded `p.on_click`, `result.none(...)`) is passed through. */
+static int wants_some(Type *pt, AstNode *arg) {
+    if (!is_option_ty(pt) || !arg) return 0;
+    if (arg->kind == AST_CLOSURE) return 1;
+    if (call_returns_option(arg)) return 0;
+    Type *at = peek_type(arg);
+    return !is_option_ty(at);
+}
+
+/** `none` where an `Option<T>` is expected, and no binding named `none` is
+ *  in scope: the empty Option, with a zeroed payload. No placeholder value is
+ *  needed, so `on_click: Option<fn()> = none` works for any `T`. */
+static int is_bare_none(AstNode *arg) {
+    if (!arg || arg->kind != AST_IDENT || !arg->as.ident.name) return 0;
+    if (strcmp(arg->as.ident.name, "none") != 0) return 0;
+    Type *ty = NULL;
+    int mut = 0;
+    SourceLoc dloc = {0};
+    AstNode *dnode = NULL;
+    if (scope_find_s("none", &ty, &mut, NULL, &dloc, &dnode)) return 0;
+    /* `result.none` (generic, so never a value) does not count as a binding. */
+    AstNode *f = lookup_unqualified("none", find_fn_in);
+    if (f && !f->as.fn.tparam_count) return 0;
+    return 1;
+}
+
+static AstNode *make_none(AstNode *arg) {
+    FieldInit *fi = (FieldInit *)calloc(1, sizeof(FieldInit));
+    if (!fi) loam_fatal("out of memory");
+    fi[0].name = loam_dup("tag");
+    fi[0].init = ast_number(1, arg->loc); /* OptionTag.None */
+    AstNode *lit = ast_struct_lit(loam_dup("Option"), fi, 1, arg->loc);
+    lit->as.struct_lit.zero_rest = 1;
+    return lit;
+}
+
+/** A Zeus state style (`hoverStyle = Style(...)` & co.) is a paint-only
+ *  overlay: hover must not reflow. A `Style(...)` literal given one with a
+ *  key outside the paint set is an error here; at run time the engine would
+ *  drop the key silently (`paint_only`). */
+static void check_state_style(FieldInit *fi) {
+    static const char *states[] = { "hoverStyle", "pressStyle", "focusStyle", "disabledStyle" };
+    static const char *paint[] = { "background", "color", "opacity", "border", "elevation" };
+    if (!fi || !fi->name || !fi->init) return;
+    int is_state = 0;
+    for (size_t i = 0; i < sizeof states / sizeof *states; i++)
+        if (strcmp(fi->name, states[i]) == 0) is_state = 1;
+    if (!is_state) return;
+    AstNode *v = fi->init;
+    if (v->kind != AST_CALL || !v->as.call.callee) return;
+    AstNode *c = v->as.call.callee;
+    const char *cn = c->kind == AST_IDENT ? c->as.ident.name
+                   : (c->kind == AST_FIELD ? c->as.access.field : NULL);
+    if (!cn || strcmp(cn, "Style") != 0 || v->as.call.arg_count == 0) return;
+    AstNode *lit = v->as.call.args[v->as.call.arg_count - 1];
+    if (!lit || lit->kind != AST_STRUCT_LIT) return;
+    for (size_t k = 0; k < lit->as.struct_lit.field_count; k++) {
+        const char *key = lit->as.struct_lit.fields[k].name;
+        int ok = 0;
+        for (size_t i = 0; i < sizeof paint / sizeof *paint; i++)
+            if (key && strcmp(key, paint[i]) == 0) ok = 1;
+        if (!ok)
+            err(lit->as.struct_lit.fields[k].init->loc,
+                "'%s' in %s: a state style takes paint keys only (background, color, "
+                "opacity, border, elevation), so hover and press never reflow",
+                key ? key : "?", fi->name);
+    }
+}
+
+static AstNode *make_some(AstNode *arg) {
+    FieldInit *fi = (FieldInit *)calloc(2, sizeof(FieldInit));
+    if (!fi) loam_fatal("out of memory");
+    fi[0].name = loam_dup("tag");
+    fi[0].init = ast_number(0, arg->loc); /* OptionTag.Some */
+    fi[1].name = loam_dup("val");
+    fi[1].init = arg;
+    return ast_struct_lit(loam_dup("Option"), fi, 2, arg->loc);
+}
+
 /** Check an argument against `pt`, wrapping it in a thunk when `pt` is a
- *  no-argument function type and the argument is a plain value. */
+ *  no-argument function type and the argument is a plain value, and in
+ *  `Some` when `pt` is an `Option` and the argument is a plain value. */
 static Type *check_arg_ty(AstNode **slot, Type *pt) {
-    if (wants_thunk(pt, *slot)) *slot = make_thunk(*slot);
+    if (is_option_ty(pt) && is_bare_none(*slot)) {
+        *slot = make_none(*slot);
+    } else if (wants_some(pt, *slot)) {
+        if (wants_thunk(pt->params[0], *slot)) *slot = make_thunk(*slot);
+        *slot = make_some(*slot);
+    } else if (wants_thunk(pt, *slot)) {
+        *slot = make_thunk(*slot);
+    }
     return check_expr_ty(*slot, pt);
+}
+
+/** The type of `a` without checking it: `peek_type`, or for a call the
+ *  callee's declared return type. NULL when it cannot be told cheaply. */
+static Type *peek_value_type(AstNode *a) {
+    if (!a) return NULL;
+    switch (a->kind) {
+        case AST_NUMBER: return ty_int();
+        case AST_BOOL: return ty_bool();
+        case AST_STRING: return ty_string();
+        default: break;
+    }
+    if (a->kind == AST_CALL && a->as.call.callee) {
+        AstNode *c = a->as.call.callee;
+        AstNode *f = NULL;
+        if (c->kind == AST_IDENT) {
+            f = lookup_unqualified(c->as.ident.name, find_fn_in);
+        } else if (c->kind == AST_FIELD && !c->as.access.via_colon && c->as.access.target &&
+                   c->as.access.target->kind == AST_IDENT &&
+                   module_imported(Gmods[Gcur].ast, c->as.access.target->as.ident.name)) {
+            LoamModule *m = find_mod(c->as.access.target->as.ident.name);
+            f = m ? lookup_through(m, c->as.access.field, find_fn_in) : NULL;
+        }
+        Type *ft = f ? fn_type_of(f) : NULL;
+        return ft ? ft->ret : NULL;
+    }
+    return peek_type(a);
+}
+
+/** The fn a call names directly (`f(...)` or `mod.f(...)`), or NULL. */
+static AstNode *call_target_decl(AstNode *call) {
+    if (!call || call->kind != AST_CALL || !call->as.call.callee) return NULL;
+    AstNode *c = call->as.call.callee;
+    if (c->kind == AST_IDENT) return lookup_unqualified(c->as.ident.name, find_fn_in);
+    if (c->kind == AST_FIELD && !c->as.access.via_colon && c->as.access.target &&
+        c->as.access.target->kind == AST_IDENT &&
+        module_imported(Gmods[Gcur].ast, c->as.access.target->as.ident.name)) {
+        LoamModule *m = find_mod(c->as.access.target->as.ident.name);
+        return m ? lookup_through(m, c->as.access.field, find_fn_in) : NULL;
+    }
+    return NULL;
+}
+
+/** `C(...) { block }` parses as `slot(C(...), || { block })`: build C, then
+ *  build the block into it. When C's props struct has a `children: fn()`
+ *  field, the block is that field instead, so the component places its
+ *  children itself (a body inside its chrome, before a footer). Rewrites the
+ *  slot call into the inner call; returns 1 when it did. */
+static int fold_children_block(AstNode *n) {
+    AstNode *cal = n->as.call.callee;
+    if (!cal || cal->kind != AST_IDENT || strcmp(cal->as.ident.name, "slot") != 0) return 0;
+    if (n->as.call.arg_count != 2) return 0;
+    AstNode *inner = n->as.call.args[0];
+    AstNode *blk = n->as.call.args[1];
+    if (!inner || inner->kind != AST_CALL || !blk || blk->kind != AST_CLOSURE) return 0;
+    AstNode *f = call_target_decl(inner);
+    if (!f || f->as.fn.tparam_count) return 0;
+    Type *ft = fn_type_of(f);
+    if (!ft || !ft->param_count) return 0;
+    Type *last = ft->params[ft->param_count - 1];
+    if (!last || last->kind != TY_STRUCT || !last->name) return 0;
+    AstNode *st = find_struct(last->name);
+    if (!st) return 0;
+    int has = 0;
+    for (size_t i = 0; i < st->as.strct.field_count; i++)
+        if (st->as.strct.fields[i].name && strcmp(st->as.strct.fields[i].name, "children") == 0)
+            has = 1;
+    if (!has) return 0;
+    size_t ac = inner->as.call.arg_count;
+    AstNode *lit = NULL;
+    if (ac && is_props_lit(inner->as.call.args[ac - 1])) {
+        lit = inner->as.call.args[ac - 1];
+    } else {
+        if (ac >= ft->param_count) {
+            /* A props value passed whole (`Card(props) { ... }`) keeps the
+               slot form. */
+            Type *at = peek_value_type(inner->as.call.args[ft->param_count - 1]);
+            if (!at || (at->kind == TY_STRUCT && at->name && strcmp(at->name, last->name) == 0))
+                return 0;
+        }
+        AstNode **na = (AstNode **)realloc(inner->as.call.args, (ac + 1) * sizeof(AstNode *));
+        if (!na) loam_fatal("out of memory");
+        lit = ast_struct_lit(NULL, NULL, 0, inner->loc);
+        na[ac] = lit;
+        inner->as.call.args = na;
+        inner->as.call.arg_count = ac + 1;
+    }
+    size_t fc = lit->as.struct_lit.field_count;
+    for (size_t i = 0; i < fc; i++)
+        if (strcmp(lit->as.struct_lit.fields[i].name, "children") == 0) {
+            err(blk->loc, "children given twice: as `children =` and as a trailing block");
+            return 0;
+        }
+    FieldInit *nf = (FieldInit *)realloc(lit->as.struct_lit.fields, (fc + 1) * sizeof(FieldInit));
+    if (!nf) loam_fatal("out of memory");
+    nf[fc].name = loam_dup("children");
+    nf[fc].init = blk;
+    lit->as.struct_lit.fields = nf;
+    lit->as.struct_lit.field_count = fc + 1;
+    n->as.call.callee = inner->as.call.callee;
+    n->as.call.args = inner->as.call.args;
+    n->as.call.arg_count = inner->as.call.arg_count;
+    return 1;
+}
+
+/** `Tab("Home")` against `fn Tab(p: TabProps)`: positionals past the leading
+ *  parameters fill the props struct's first fields even when no named argument
+ *  follows. Appends an empty props literal so the extra-positional rewrite
+ *  below handles it. Applies only when the first spare argument is known not
+ *  to be the struct itself (so `Tab(props)` still passes a value), and every
+ *  field it does not fill has a default. */
+static void add_empty_props(AstNode *n, size_t pc, Type *last) {
+    size_t ac = n->as.call.arg_count;
+    if (ac < pc || (ac && is_props_lit(n->as.call.args[ac - 1]))) return;
+    AstNode *first = n->as.call.args[pc - 1];
+    Type *ft = peek_value_type(first);
+    if (first->kind != AST_CLOSURE && !ft) return;
+    /* Only a value whose type is known and is not a struct: an unresolved
+       generic (`some_or(...)` returns `T`) or any struct may be the props
+       value itself. */
+    if (ft && (ft->kind == TY_PARAM || ft->kind == TY_STRUCT)) return;
+    AstNode *st = find_struct(last->name);
+    size_t extra = ac - (pc - 1);
+    if (!st || extra > st->as.strct.field_count) return;
+    for (size_t i = extra; i < st->as.strct.field_count; i++)
+        if (!st->as.strct.fields[i].def) return;
+    AstNode **na = (AstNode **)realloc(n->as.call.args, (ac + 1) * sizeof(AstNode *));
+    if (!na) loam_fatal("out of memory");
+    na[ac] = ast_struct_lit(NULL, NULL, 0, n->loc);
+    n->as.call.args = na;
+    n->as.call.arg_count = ac + 1;
 }
 
 /** Check a call against a procedure type; monomorphize if `named` is generic. */
@@ -1160,6 +1465,8 @@ static Type *finish_proc_call(AstNode *n, Type *ft, AstNode *named) {
        struct; an all-defaulted props struct may be left out entirely. */
     if (ft->param_count) {
         Type *last = ft->params[ft->param_count - 1];
+        if (last && last->kind == TY_STRUCT && last->name)
+            add_empty_props(n, ft->param_count, last);
         if (last && last->kind == TY_STRUCT && last->name) {
             if (n->as.call.arg_count == ft->param_count &&
                 is_props_lit(n->as.call.args[ft->param_count - 1])) {
@@ -1463,6 +1770,14 @@ static int expand_children(AstNode *n) {
     if (!cal || cal->kind != AST_FIELD || cal->as.access.via_colon) return 0;
     if (!cal->as.access.field || strcmp(cal->as.access.field, "children") != 0) return 0;
     if (!cal->as.access.target) return 0;
+    /* `p.children()` on a props struct with a `children` field calls that
+       field (a component placing its trailing block), not the node method. */
+    {
+        Type *bt = peel_ref(peek_type(cal->as.access.target));
+        if (bt && bt->kind == TY_STRUCT)
+            for (size_t i = 0; i < bt->field_count; i++)
+                if (bt->field_names[i] && strcmp(bt->field_names[i], "children") == 0) return 0;
+    }
     int mod = is_mod_field(cal);
     if (n->as.call.arg_count == 0 || (mod && n->as.call.arg_count == 1)) {
         err(n->loc, "'.children' needs at least one node");
@@ -1621,6 +1936,7 @@ static Type *check_call(AstNode *n, Type *expect) {
     if (as_struct_ctor(n)) return check_expr_ty(n, expect);
     if (reject_multi_child(n)) return ty_void();
     if (expand_children(n)) return check_call(n, expect);
+    if (fold_children_block(n)) return check_call(n, expect);
     AstNode *cal = n->as.call.callee;
 
     /* Box::new(expr) */
@@ -2182,6 +2498,17 @@ static int block_ends_in_value(AstNode *blk) {
     return 0;
 }
 
+/** Undo `tail_expr_to_return` for a trailing `if` whose value is void. */
+static void untail_void_if(AstNode *body) {
+    if (!body || body->kind != AST_BLOCK || !body->as.block.stmt_count) return;
+    size_t li = body->as.block.stmt_count - 1;
+    AstNode *last = body->as.block.stmts[li];
+    if (last->kind == AST_RETURN && last->as.ret.expr && last->as.ret.expr->kind == AST_IF) {
+        AstNode *iff = last->as.ret.expr;
+        if (!iff->ty || iff->ty->kind == TY_VOID) body->as.block.stmts[li] = iff;
+    }
+}
+
 static void tail_expr_to_return(AstNode *body) {
     if (!body || body->kind != AST_BLOCK || !body->as.block.stmt_count) return;
     size_t li = body->as.block.stmt_count - 1;
@@ -2283,6 +2610,10 @@ static Type *check_closure(AstNode *n, Type *expect) {
         cur_ret = ty_void();
         check_block_in_scope(n->as.fn.body);
         n->ty->ret = clos_infer_ty ? clos_infer_ty : ty_void();
+        /* A tail `if c { f() } else { g() }` was read as the closure's value;
+           when that value turns out to be void, it is a plain statement — a
+           `return` of a void `if` has nothing to return. */
+        if (n->ty->ret->kind == TY_VOID) untail_void_if(n->as.fn.body);
     } else {
         clos_infer = 0;
         n->ty = type_proc(ps, npc, ret);
@@ -2787,6 +3118,19 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
             return check_closure(n, expect);
         case AST_STRUCT_LIT: {
             AstNode *st = find_struct(n->as.struct_lit.type_name);
+            /* C17: the expected type names one of two same-named structs
+               (an app's `ChipProps` vs std:zui's): build that one. */
+            if (st && expect && expect->kind == TY_STRUCT && expect->name &&
+                strcmp(expect->name, n->as.struct_lit.type_name) == 0 &&
+                !type_same_decl(struct_type_of(st), expect)) {
+                for (int m = 0; m < Gn; m++) {
+                    AstNode *cand = find_struct_in(&Gmods[m], expect->name);
+                    if (cand && type_same_decl(struct_type_of(cand), expect)) {
+                        st = cand;
+                        break;
+                    }
+                }
+            }
             if (!st) {
                 err(n->loc, "unknown struct '%s'", n->as.struct_lit.type_name);
                 n->ty = ty_void();
@@ -2826,7 +3170,19 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
                     continue;
                 }
                 seen[found] = 1;
+                check_state_style(fi);
                 Type *want = nt ? NULL : tmpl->field_types[found];
+                /* Type args already known (explicit, or from the expected
+                   type): the field's concrete type guides the init, so a
+                   closure gets its parameter types and a value its thunk. */
+                if (nt) {
+                    int all = 1;
+                    for (size_t b = 0; b < nt; b++)
+                        if (!bound[b]) all = 0;
+                    if (all)
+                        want = subst_type(tmpl->field_types[found], st->as.strct.tparams,
+                                          bound, nt);
+                }
                 Type *it = check_arg_ty(&fi->init, want);
                 if (nt) {
                     if (!unify(tmpl->field_types[found], it, st->as.strct.tparams, bound, nt))
@@ -2838,39 +3194,15 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
                 }
             }
             /* A field the caller left out takes its declared default, resolved
-               in the module that declares the struct — not the caller's. A
-               `foo__set: bool` companion field records whether `foo` was
-               passed, which is how an optional handler is told from its
-               default (function values cannot be compared). */
+               in the module that declares the struct — not the caller's. An
+               optional field says so in its type (`Option<T>`), so there is no
+               naming convention for "was it passed". */
             for (size_t f = 0; f < tmpl->field_count; f++) {
                 if (seen[f]) continue;
                 const char *fname = tmpl->field_names[f];
-                size_t fl = fname ? strlen(fname) : 0;
-                if (fl > 5 && strcmp(fname + fl - 5, "__set") == 0) {
-                    /* `seen` is the caller's fields only — defaults appended
-                       to the literal above must not count as "passed". */
-                    int was_set = 0;
-                    for (size_t g = 0; g < tmpl->field_count; g++) {
-                        const char *gn = tmpl->field_names[g];
-                        if (gn && strlen(gn) == fl - 5 && strncmp(gn, fname, fl - 5) == 0)
-                            was_set = seen[g];
-                    }
-                    if (was_set) {
-                        AstNode *b = ast_bool(1, n->loc);
-                        b->ty = ty_bool();
-                        n->as.struct_lit.fields = (FieldInit *)realloc(
-                            n->as.struct_lit.fields,
-                            (n->as.struct_lit.field_count + 1) * sizeof(FieldInit));
-                        if (!n->as.struct_lit.fields) loam_fatal("out of memory");
-                        n->as.struct_lit.fields[n->as.struct_lit.field_count].name =
-                            loam_dup(fname);
-                        n->as.struct_lit.fields[n->as.struct_lit.field_count].init = b;
-                        n->as.struct_lit.field_count++;
-                        continue;
-                    }
-                }
                 AstNode *def = f < st->as.strct.field_count ? st->as.strct.fields[f].def : NULL;
                 AstNode *cp = clone_const(def);
+                if (!cp && n->as.struct_lit.zero_rest) continue; /* zeroed */
                 if (!cp) {
                     if (def)
                         err(n->loc, "default for '%s' is not a constant expression", fname);
@@ -3189,7 +3521,10 @@ static void check_fn(AstNode *fn) {
                expression is checked on its own, and the call site unifies
                it with T after the other arguments have bound T — or, if
                every argument is omitted, from the default itself. */
-            Type *dt = check_expr_ty(def, type_has_param(pt) ? NULL : pt);
+            /* Checked on a copy, with the call-site rules (`none`, `Some`
+               wrapping, thunks): each call clones `def` again. */
+            AstNode *dcp = clone_const(def);
+            Type *dt = check_arg_ty(&dcp, type_has_param(pt) ? NULL : pt);
             if (dt && pt && !type_eq(dt, pt) && !type_has_param(pt))
                 err(fn->as.fn.params[i].loc,
                     "default for parameter '%s' has type %s, expected %s",

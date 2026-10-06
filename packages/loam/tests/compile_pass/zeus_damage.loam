@@ -21,12 +21,15 @@ fn main() {
 
     let mut box_id = 0
     let mut card_id = 0
-    zeus.root(zeus.Box(padding = 20) {
-        zeus.Box(align_direction = DIRECTION.Column, spacing = 10) {
-            let b = zeus.Box(width = 100, height = 50, background = "#ff0000")
+    zeus.root(zeus.Box(style = Style(padding = edges(20))) {
+        zeus.Box(style = Style(direction = Direction.Column, gap = 10)) {
+            let b = zeus.Box(style = Style(width = px(100), height = px(50), background = "#ff0000"))
             box_id = b.id
-            let c = zeus.Box(width = 100, height = 50, background = "#ffffff",
-                             radius = 10, elevation = 2)
+            let c = zeus.Box(style = Style(width = px(100),
+                                           height = px(50),
+                                           elevation = 2,
+                                           radius = corners(10),
+                                           background = "#ffffff"))
             card_id = c.id
         }
     })
@@ -60,8 +63,8 @@ fn main() {
     // is damaged locally — no full-surface fallback needed.
     let top = zeus.raw_scroll()
     zeus.slot(top, fn() {
-        zeus.Box(align_direction = DIRECTION.Column) {
-            zeus.Box(height = 600)
+        zeus.Box(style = Style(direction = Direction.Column)) {
+            zeus.Box(style = Style(height = px(600)))
         }
     })
     zeus.root(top)

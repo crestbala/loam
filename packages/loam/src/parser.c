@@ -41,6 +41,20 @@ static void consume(Parser *p, TokenKind k, const char *m) {
 
 static void optional_semi(Parser *p) { match(p, TOK_SEMICOLON); }
 
+/** Close a type-argument list. `Option<Signal<int>>` lexes its two closers
+ *  as one `>>`: take the first `>` and leave the second as the current
+ *  token. */
+static void consume_gt(Parser *p) {
+    if (check(p, TOK_SHR)) {
+        p->current.kind = TOK_GT;
+        p->current.start += 1;
+        p->current.len = 1;
+        p->current.loc.col += 1;
+        return;
+    }
+    consume(p, TOK_GT, "expected >");
+}
+
 /** Text after `///` / `//!`, dropping one leading space. */
 static char *doc_line_text(Token t) {
     int skip = 3;
@@ -274,7 +288,7 @@ static AstNode *parse_type(Parser *p) {
     char *nm = tok_text(p->previous);
     if (strcmp(nm, "Box") == 0 && match(p, TOK_LT)) {
         AstNode *e = parse_type(p);
-        consume(p, TOK_GT, "expected >");
+        consume_gt(p);
         free(nm);
         return ast_type(NULL, 4, e, 0, loc);
     }
@@ -289,7 +303,7 @@ static AstNode *parse_type(Parser *p) {
                 targs[nt++] = a;
             } while (match(p, TOK_COMMA));
         }
-        consume(p, TOK_GT, "expected >");
+        consume_gt(p);
         t->as.type.targs = targs;
         t->as.type.targ_count = nt;
     }
@@ -494,9 +508,9 @@ static int ident_targs_then_brace(Parser *p) {
         TokenKind k = cur.kind;
         if (k == TOK_LT) {
             depth++;
-        } else if (k == TOK_GT) {
-            depth--;
-            if (depth == 0) return nxt.kind == TOK_LBRACE;
+        } else if (k == TOK_GT || k == TOK_SHR) {
+            depth -= (k == TOK_SHR) ? 2 : 1;
+            if (depth <= 0) return depth == 0 && nxt.kind == TOK_LBRACE;
         } else if (k == TOK_LBRACE || k == TOK_SEMICOLON || k == TOK_EOF || k == TOK_RPAREN ||
                    k == TOK_EQ_EQ || k == TOK_BANG_EQ || k == TOK_COMMA) {
             /* End of the expression, or the start of a block, before the angles
@@ -531,7 +545,7 @@ static AstNode *parse_primary(Parser *p) {
                 targs = (AstNode **)realloc(targs, (nt + 1) * sizeof(AstNode *));
                 targs[nt++] = a;
             } while (match(p, TOK_COMMA));
-            consume(p, TOK_GT, "expected >");
+            consume_gt(p);
             match(p, TOK_LBRACE);
             FieldInit *fi = NULL;
             size_t fc = 0;
@@ -1054,6 +1068,34 @@ static AstNode *parse_stmt(Parser *p) {
         else free(doc);
         return v;
     }
+    /* `fn name(a: T) -> R { ... }` inside a body is a local fn: sugar for
+       `let name = fn(a: T) -> R { ... }`, so it is an ordinary closure (Copy
+       captures, no self-recursion). `fn(` stays the closure expression. */
+    if (check(p, TOK_FN) && p->peek.kind == TOK_IDENT) {
+        advance(p);
+        advance(p);
+        char *name = tok_text(p->previous);
+        SourceLoc nloc = p->previous.loc;
+        AstNode *clos = parse_fn_closure(p, loc);
+        optional_semi(p);
+        if (!clos) {
+            free(name);
+            free(doc);
+            return NULL;
+        }
+        for (size_t i = 0; i < clos->as.fn.param_count; i++) {
+            if (!clos->as.fn.params[i].type && !p->had_error) {
+                loam_error(clos->as.fn.params[i].loc,
+                           "local fn '%s' needs a type on parameter '%s'", name,
+                           clos->as.fn.params[i].name);
+                p->had_error = 1;
+                break;
+            }
+        }
+        AstNode *v = ast_var(name, NULL, clos, 0, nloc);
+        v->doc = doc;
+        return v;
+    }
     free(doc);
 
     AstNode *e = parse_expr(p);
@@ -1115,6 +1157,55 @@ static Param *parse_params(Parser *p, size_t *out) {
     return params;
 }
 
+/** A component fn's tree is `return Element(...) { children }`, which the
+ *  parser lowers to `return slot(Element(...), || { children })`. That slot
+ *  call is the component's one root, so `parse_fn` opens a view frame around
+ *  the whole body — everything the state and controller sections create is
+ *  owned by the root node, which does not exist until the tree is built:
+ *
+ *      let __zv = __view_begin()
+ *      ... body ...
+ *      return __view_end(__zv, || { slot(...) })
+ *
+ *  A fn whose tail is not a returned element with a trailing block (`return
+ *  SomeComponent(...)`, `return node`, a fragment that emits into its caller's
+ *  slot) needs no frame. Returns 1 when the frame was opened. */
+static int frame_component(AstNode *body, SourceLoc loc) {
+    if (!body || body->kind != AST_BLOCK || body->as.block.stmt_count == 0) return 0;
+    AstNode *last = body->as.block.stmts[body->as.block.stmt_count - 1];
+    if (!last || last->kind != AST_RETURN || !last->as.ret.expr) return 0;
+    AstNode *e = last->as.ret.expr;
+    if (e->kind != AST_CALL || !e->as.call.callee || e->as.call.callee->kind != AST_IDENT)
+        return 0;
+    if (strcmp(e->as.call.callee->as.ident.name, "slot") != 0) return 0;
+
+    /* return __view_end(__zv, || { slot(...) }) */
+    AstNode **bs = (AstNode **)malloc(sizeof(AstNode *));
+    if (!bs) loam_fatal("out of memory");
+    bs[0] = ast_expr_stmt(e, loc);
+    AstNode *bblk = ast_block(bs, 1, loc);
+    AstNode *clos = ast_fn(NULL, NULL, 0, NULL, bblk, loc);
+    clos->kind = AST_CLOSURE;
+    AstNode **ca = (AstNode **)malloc(2 * sizeof(AstNode *));
+    if (!ca) loam_fatal("out of memory");
+    ca[0] = ast_ident(loam_dup("__zv"), loc);
+    ca[1] = clos;
+    last->as.ret.expr = ast_call(ast_ident(loam_dup("__view_end"), loc), ca, 2, loc);
+
+    /* let __zv = __view_begin() — first statement of the body. */
+    AstNode *begin = ast_call(ast_ident(loam_dup("__view_begin"), loc), NULL, 0, loc);
+    AstNode *decl = ast_var(loam_dup("__zv"), NULL, begin, 0, loc);
+    size_t n0 = body->as.block.stmt_count;
+    AstNode **st = (AstNode **)malloc((n0 + 1) * sizeof(AstNode *));
+    if (!st) loam_fatal("out of memory");
+    st[0] = decl;
+    for (size_t i = 0; i < n0; i++) st[i + 1] = body->as.block.stmts[i];
+    free(body->as.block.stmts);
+    body->as.block.stmts = st;
+    body->as.block.stmt_count = n0 + 1;
+    return 1;
+}
+
 /** `fn` item: optional type params, params, return type, body. */
 static AstNode *parse_fn(Parser *p) {
     SourceLoc loc = p->previous.loc;
@@ -1136,7 +1227,7 @@ static AstNode *parse_fn(Parser *p) {
             tparams = (const char **)realloc(tparams, (nt + 1) * sizeof(char *));
             tparams[nt++] = tok_text(p->previous);
         } while (match(p, TOK_COMMA));
-        consume(p, TOK_GT, "expected >");
+        consume_gt(p);
     }
     consume(p, TOK_LPAREN, "expected (");
     size_t pc = 0;
@@ -1145,6 +1236,9 @@ static AstNode *parse_fn(Parser *p) {
     AstNode *ret = NULL;
     if (match(p, TOK_ARROW)) ret = parse_type(p);
     AstNode *body = parse_block(p);
+    /* A component — a fn whose tail returns an element with a trailing block —
+       opens a view frame, so its state is owned by the root it builds. */
+    frame_component(body, loc);
     AstNode *n = ast_fn(name, ps, pc, ret, body, loc);
     n->as.fn.tparams = tparams;
     n->as.fn.tparam_count = nt;
@@ -1172,7 +1266,7 @@ static AstNode *parse_struct(Parser *p) {
             tparams = (const char **)realloc(tparams, (nt + 1) * sizeof(char *));
             tparams[nt++] = tok_text(p->previous);
         } while (match(p, TOK_COMMA));
-        consume(p, TOK_GT, "expected >");
+        consume_gt(p);
     }
     consume(p, TOK_LBRACE, "expected {");
     Field *fields = NULL;

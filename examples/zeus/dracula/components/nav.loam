@@ -8,24 +8,26 @@ import "std:zeus"
 import "std:zui"
 
 /// `deep` 1 also lights the link on any path under `href`.
-fn NavLink(label: string, href: string, deep: int = 0) {
+fn NavLink(label: string, href: string, deep: int = 0) -> Node {
     let path = router.path_signal()
-    let item = zeus.Box(
-        align_direction = DIRECTION.Row,
-        align_items = ALIGN.Center,
-        spacing = SPACE.Exxs,
-        padding_x = 12,
-        height = 36,
-        radius = spacing.RAD_MD,
+    fn active() -> bool {
+        return lit(path.get(), href, deep)
+    }
+    return zeus.Box(
+        style = Style(height = px(36),
+                      direction = Direction.Row,
+                      gap = Space.Exxs,
+                      align = Align.Center,
+                      padding = Edges(right = 12, left = 12),
+                      radius = corners(spacing.RAD_MD),
+                      cursor = "pointer",
+                      background = if active() { colors.raised() } else { "" }),
         on_click = fn() => router.navigate(href),
-        a11y_role = "button",
-        a11y_label = label,
-        cursor = "pointer")
-    zeus.ui_push(item.id)
-    let text = zeus.Text(label, font = spacing.FONT_BODY)
-    zeus.ui_pop()
-    zeus.selected_chrome(item, text, || { lit(path.get(), href, deep) },
-                         colors.raised(), "", zeus.ink(), colors.mute())
+        role = "button",
+        label = label) {
+        zeus.Text(label, style = Style(font = spacing.FONT_BODY,
+                                       color = if active() { zeus.ink() } else { colors.mute() }))
+    }
 }
 
 fn lit(path: string, href: string, deep: int) -> bool {
@@ -45,12 +47,14 @@ fn lit(path: string, href: string, deep: int) -> bool {
     return path[href.len] == 47
 }
 
-fn Navbar() {
-    zui.Column(SPACE.None) {
-        zeus.Box(align_direction = DIRECTION.Row, spacing = SPACE.Md,
-                 align_items = ALIGN.Center, height = spacing.BAR) {
-            zeus.Box(width = 22, height = 22, radius = 6, background = zeus.ink())
-            zeus.Text("dracula", color = zeus.ink(), font = spacing.FONT_TITLE)
+fn Navbar() -> Node {
+    return zui.Column(Space.None) {
+        zeus.Box(style = Style(height = px(spacing.BAR),
+                               direction = Direction.Row,
+                               gap = Space.Md,
+                               align = Align.Center)) {
+            zeus.Box(style = Style(width = px(22), height = px(22), radius = corners(6), background = zeus.ink()))
+            zeus.Text("dracula", style = Style(font = spacing.FONT_TITLE, color = zeus.ink()))
             NavLink("Holdings", "/")
             NavLink("Charts", "/scheme", 1)
             NavLink("Screener", "/screener")
@@ -59,8 +63,8 @@ fn Navbar() {
             NavLink("Stocks", "/stocks", 1)
             NavLink("Data", "/data")
             zui.Grow()
-            zeus.Text("Dark", color = colors.mute(), font = spacing.FONT_CONTROL)
-            zui.Switch(zeus.appearance())
+            zeus.Text("Dark", style = Style(font = spacing.FONT_CONTROL, color = colors.mute()))
+            zui.ThemeSwitch()
         }
         zui.Separator()
     }

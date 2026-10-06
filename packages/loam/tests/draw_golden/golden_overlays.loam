@@ -9,17 +9,19 @@ import "std:spacing"
 import "std:zui"
 
 fn main() {
-    let open = zeus.signal(1)
-    let toast = zeus.signal(1)
+    let open = zeus.signal(true)
+    let toast = zeus.signal(true)
     zeus.snapshot(420, 320, fn() -> Node {
         zui.Page() {
-            let trigger = zui.Button("Menu", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
-            zui.Popover(trigger, open = open, place = zui.PLACE.PlaceBelow, width = 200) {
-                zeus.Text("Rename", color = zeus.ink(), font = spacing.FONT_BODY)
-                zeus.Text("Duplicate", color = zeus.ink(), font = spacing.FONT_BODY)
+            zui.Popover(open = open,
+                        place = zui.Place.PlaceBelow,
+                        style = Style(width = px(200)),
+                        trigger = || { zui.Button("Menu", look = zeus.Look.Outline, size = zeus.Size.Md) }) {
+                zeus.Text("Rename", style = Style(font = spacing.FONT_BODY, color = zeus.ink()))
+                zeus.Text("Duplicate", style = Style(font = spacing.FONT_BODY, color = zeus.ink()))
             }
-            zui.Toast(toast, width = 180) {
-                zeus.Text("Saved", color = colors.on_ink(), font = spacing.FONT_BODY)
+            zui.Toast(toast, style = Style(width = px(180))) {
+                zeus.Text("Saved", style = Style(font = spacing.FONT_BODY, color = colors.on_ink()))
             }
         }
     })

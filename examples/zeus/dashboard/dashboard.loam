@@ -20,60 +20,62 @@ fn clamp(v: int) -> int {
     }
 }
 
-fn Header(title: string, ticks: Signal<int>, open: Signal<int>) {
-    zui.Row(SPACE.Md) {
-        zeus.Box(width = 8, height = 24, radius = 4, background = zeus.ink())
-        zeus.Text(title, color = zeus.ink(), font = spacing.FONT_TITLE)
+fn Header(title: string, ticks: Signal<int>, open: Signal<bool>) -> Node {
+    return zui.Row(Space.Md) {
+        zeus.Box(style = Style(width = px(8), height = px(24), radius = corners(4), background = zeus.ink()))
+        zeus.Text(title, style = Style(font = spacing.FONT_TITLE, color = zeus.ink()))
         zui.Grow()
-        zeus.Text("Dark", color = colors.mute(), font = spacing.FONT_BODY)
-        zui.Switch(zeus.appearance())
-        zeus.Text("ticks", color = colors.dim(), font = spacing.FONT_BODY)
-        zeus.Text("{{ticks.get()}}", color = zeus.ink(), font = spacing.FONT_BODY)
-        zui.Button(label = "Ticks", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => ticks.set(ticks.get() + 1))
-        zui.Button(label = "Dialog", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => open.set(1))
+        zeus.Text("Dark", style = Style(font = spacing.FONT_BODY, color = colors.mute()))
+        zui.ThemeSwitch()
+        zeus.Text("ticks", style = Style(font = spacing.FONT_BODY, color = colors.dim()))
+        zeus.Text("{{ticks.get()}}", style = Style(font = spacing.FONT_BODY, color = zeus.ink()))
+        zui.Button(label = "Ticks", look = zeus.Look.Solid, size = zeus.Size.Md, on_click = fn() => ticks.set(ticks.get() + 1))
+        zui.Button(label = "Dialog", look = zeus.Look.Solid, size = zeus.Size.Md, on_click = fn() => open.set(true))
     }
 }
 
-fn Activity(title: string, meta: string) {
-    zeus.Box(align_direction = DIRECTION.Row, spacing = SPACE.Sm,
-             align_items = ALIGN.Center, padding_x = 2, padding_y = 2) {
-        zeus.Text(title, color = zeus.ink(), font = spacing.FONT_BODY, grow = 1)
-        zeus.Text(meta, color = colors.mute(), font = spacing.FONT_CAPTION)
+fn Activity(title: string, meta: string) -> Node {
+    return zeus.Box(style = Style(direction = Direction.Row,
+                           gap = Space.Sm,
+                           align = Align.Center,
+                           padding = edges(2))) {
+        zeus.Text(title, style = Style(grow = 1, font = spacing.FONT_BODY, color = zeus.ink()))
+        zeus.Text(meta, style = Style(font = spacing.FONT_CAPTION, color = colors.mute()))
     }
 }
 
-fn Stats(ticks: Signal<int>) {
-    zui.Grid(config = GridConfig(columns = 2, gap = SPACE.Md)) {
-        zui.Stat("Users", "1,204", zeus.TINT.Ink)
-        zui.Stat("Jobs", "12", zeus.TINT.Mute)
-        zui.Stat("Uptime", "99.9%", zeus.TINT.Ok)
-        zui.StatCount("Ticks", ticks, zeus.TINT.Danger)
+fn Stats(ticks: Signal<int>) -> Node {
+    return zui.Grid(config = GridConfig(columns = 2, gap = Space.Md)) {
+        zui.Stat("Users", "1,204", zeus.Tint.Ink)
+        zui.Stat("Jobs", "12", zeus.Tint.Mute)
+        zui.Stat("Uptime", "99.9%", zeus.Tint.Ok)
+        zui.StatCount("Ticks", ticks, zeus.Tint.Danger)
     }
 }
 
-fn Load(load: Signal<int>) {
-    zui.Row(SPACE.Md) {
-        zeus.Text("Load", color = colors.dim(), font = spacing.FONT_BODY)
+fn Load(load: Signal<int>) -> Node {
+    return zui.Row(Space.Md) {
+        zeus.Text("Load", style = Style(font = spacing.FONT_BODY, color = colors.dim()))
         zui.Progress(load)
-        zeus.Text("{{load.get()}}%", color = colors.mute(), font = spacing.FONT_BODY)
-        zui.Button(label = "+10", look = zeus.LOOK.Soft, size = zeus.SIZE.Md, on_click = fn() => load.set(clamp(load.get() + 10)))
-        zui.Button(label = "-10", look = zeus.LOOK.Soft, size = zeus.SIZE.Md, on_click = fn() => load.set(clamp(load.get() - 10)))
+        zeus.Text("{{load.get()}}%", style = Style(font = spacing.FONT_BODY, color = colors.mute()))
+        zui.Button(label = "+10", look = zeus.Look.Soft, size = zeus.Size.Md, on_click = fn() => load.set(clamp(load.get() + 10)))
+        zui.Button(label = "-10", look = zeus.Look.Soft, size = zeus.Size.Md, on_click = fn() => load.set(clamp(load.get() - 10)))
     }
 }
 
-fn Alerts(notify: Signal<int>) {
-    zui.Card() {
-        zui.Row(SPACE.Md) {
+fn Alerts(notify: Signal<bool>) -> Node {
+    return zui.Card() {
+        zui.Row(Space.Md) {
             zui.Switch(notify)
-            zeus.Text("Alerts", color = zeus.ink(), font = spacing.FONT_BODY)
+            zeus.Text("Alerts", style = Style(font = spacing.FONT_BODY, color = zeus.ink()))
             zui.Grow()
             zui.Checkbox("Notify", notify)
         }
     }
 }
 
-fn Feed() {
-    zui.Card() {
+fn Feed() -> Node {
+    return zui.Card() {
         zui.Title("Activity")
         Activity("Deploy web", "2m ago")
         zui.Divider()
@@ -95,7 +97,7 @@ fn Feed() {
     }
 }
 
-fn Traffic() {
+fn Traffic() -> Node {
     if req_labs.len == 0 {
         push(req_labs, "00")
         push(req_labs, "01")
@@ -147,55 +149,57 @@ fn Traffic() {
         push(req_vals, 40)
         push(req_vals, 22)
     }
-    zui.Card() {
-        zui.Row(SPACE.Sm) {
-            zui.Column(SPACE.Exxs) {
-                zeus.Text("Requests", color = zeus.ink(), font = spacing.FONT_TITLE)
-                zeus.Text("Per hour, last 24 hours", color = colors.mute(), font = spacing.FONT_CAPTION)
+    return zui.Card() {
+        zui.Row(Space.Sm) {
+            zui.Column(Space.Exxs) {
+                zeus.Text("Requests", style = Style(font = spacing.FONT_TITLE, color = zeus.ink()))
+                zeus.Text("Per hour, last 24 hours", style = Style(font = spacing.FONT_CAPTION, color = colors.mute()))
             }
             zui.Grow()
-            zui.Badge("live", zeus.TINT.Ok)
+            zui.Badge("live", zeus.Tint.Ok)
         }
         zui.AreaChart(req_labs, req_series, req_vals, 810, 196)
     }
 }
 
-fn Dashboard() {
+fn Dashboard() -> Node {
     let ticks = zeus.signal(0)
     let load = zeus.signal(42)
-    let notify = zeus.signal(1)
-    let open = zeus.signal(0)
-
-    zui.Page() {
-        Header("Zeus Dashboard", ticks, open)
-        zui.Breadcrumbs([]string {"Zeus", "App", "Dashboard"})
-        zui.Body("Rows and cards fill the window. Labels stay left; actions sit on the right.")
-        zui.Alert("Heads up", "Signals update on click. Scroll if the page overflows.")
-        zui.Row(SPACE.Md) {
-            zui.User("AP", "Ada Park", "Operator")
-            zui.Grow()
-            zui.Chip("Live", zeus.TINT.Ok)
-            zui.Chip("v1", zeus.TINT.Mute)
-        }
-        Stats(ticks)
-        Load(load)
-        Traffic()
-        Alerts(notify)
-        Feed()
-        zui.Note("Hover the area chart to read exact request counts. Tick, Load, and Alerts are signals.")
-        zui.Dialog(open, title = "Discard changes?") {
-            zui.Body("This cannot be undone. The working tree keeps whatever you have not saved.")
-            zui.Row(SPACE.Sm) {
+    let notify = zeus.signal(true)
+    let open = zeus.signal(false)
+return Column(spacing.SECTION) {
+    
+        zui.Page() {
+            Header("Zeus Dashboard", ticks, open)
+            zui.Breadcrumbs([]string {"Zeus", "App", "Dashboard"})
+            zui.Body("Rows and cards fill the window. Labels stay left; actions sit on the right.")
+            zui.Alert("Heads up", "Signals update on click. Scroll if the page overflows.")
+            zui.Row(Space.Md) {
+                zui.User("AP", "Ada Park", "Operator")
                 zui.Grow()
-                zui.Button(label = "Cancel", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click = fn() => open.set(0))
-                zui.Button(label = "Discard", look = zeus.LOOK.Danger, size = zeus.SIZE.Md, on_click = fn() => open.set(0))
+                zui.Chip("Live", zeus.Tint.Ok)
+                zui.Chip("v1", zeus.Tint.Mute)
+            }
+            Stats(ticks)
+            Load(load)
+            Traffic()
+            Alerts(notify)
+            Feed()
+            zui.Note("Hover the area chart to read exact request counts. Tick, Load, and Alerts are signals.")
+            zui.Dialog(open, title = "Discard changes?") {
+                zui.Body("This cannot be undone. The working tree keeps whatever you have not saved.")
+                zui.Row(Space.Sm) {
+                    zui.Grow()
+                    zui.Button(label = "Cancel", look = zeus.Look.Ghost, size = zeus.Size.Md, on_click = fn() => open.set(false))
+                    zui.Button(label = "Discard", look = zeus.Look.Danger, size = zeus.Size.Md, on_click = fn() => open.set(false))
+                }
             }
         }
-    }
+}
 }
 
 fn main() {
-    zeus.App("Zeus Dashboard", fn() {
-        Dashboard()
+    zeus.App("Zeus Dashboard", fn() -> Node {
+        return Dashboard()
     }, 920, 720)
 }

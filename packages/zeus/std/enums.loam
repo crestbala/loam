@@ -13,7 +13,7 @@
 /// `default` (primary) variant, `Soft` is `secondary`, `Danger` is
 /// `destructive`, and `Link` is text-only. Gallery rows read
 /// Primary / Secondary / Outline / Ghost / Destructive / Link.
-enum LOOK {
+enum Look {
     Solid = 0,
     Soft = 1,
     Outline = 2,
@@ -23,14 +23,14 @@ enum LOOK {
 }
 
 /// Button sizes, by control height: Sm 32px, Md 36px, Lg 40px.
-enum SIZE {
+enum Size {
     Sm = 0,
     Md = 1,
     Lg = 2,
 }
 
 /// Status tints for chips, badges, stats, meters.
-enum TINT {
+enum Tint {
     Ink = 0,
     Ok = 1,
     Mute = 2,
@@ -41,13 +41,13 @@ enum TINT {
 }
 
 /// Layout direction for `align_direction`.
-enum DIRECTION {
+enum Direction {
     Row = 0,
     Column = 1,
 }
 
 /// Cross-axis and main-axis alignment. Same codes the layout solver uses.
-enum ALIGN {
+enum Align {
     Start = 0,
     Center = 1,
     End = 2,
@@ -59,7 +59,7 @@ enum ALIGN {
 
 /// How `Image` maps the bitmap into its layout box: Stretch (default, may
 /// distort), Contain (letterbox), Cover (crop to fill), None (intrinsic size).
-enum IMAGE_FIT {
+enum Fit {
     Stretch = 0,
     Contain = 1,
     Cover = 2,
@@ -72,7 +72,7 @@ enum IMAGE_FIT {
 /// multiple, which is the whole of the change. `Exxs` and `Exs` both land on
 /// 8: the old 6/8 pair was a distinction the grid does not make, and keeping
 /// both names means no call site has to move.
-enum SPACE {
+enum Space {
     None = 0,
     Exxxs = 4,
     Exxs = 8,
@@ -180,6 +180,19 @@ enum SET {
     GapCol = 47,
     RadiusTop = 48,
     RadiusBottom = 49,
+    // Written by the `style` prop (`Style` keys with no older prop).
+    AlignSelf = 50,
+    Span = 51,
+    Overflow = 52,
+    WidthPct = 53,
+    HeightPct = 54,
+    Ellipsis = 55,
+    CornerTL = 56,
+    CornerTR = 57,
+    CornerBR = 58,
+    CornerBL = 59,
+    // Exact 0/1 wrap flag (`Wrap` only ever turns wrapping on).
+    WrapFlag = 60,
     Text = 100,
     A11yLabel = 101,
     A11yRole = 102,

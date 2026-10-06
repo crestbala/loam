@@ -9,7 +9,7 @@ import "../../components/ui.loam" as ui
 
 fn reject_spec() -> []TableCol {
     let mut h = []TableCol {}
-    push(h, TableCol { title: "File line", width: 80, align: ALIGN.End })
+    push(h, TableCol { title: "File line", width: 80, align: Align.End })
     push(h, TableCol { title: "Code", width: 80 })
     push(h, TableCol { title: "Date", width: 100 })
     push(h, TableCol { title: "Reason", width: 0 })
@@ -23,7 +23,7 @@ fn paint() {
     }
     let progress = data.progress_text()
     if progress.len > 0 {
-        zeus.Text(progress, wrap = 1)
+        zeus.Text(progress, style = Style(wrap = true))
     }
     zeus.Text("Loading the last fetch.")
 }
@@ -31,17 +31,17 @@ fn paint() {
 fn paint_ready() {
     let err = data.error_text()
     if err.len > 0 {
-        zui.AlertWarning("The last request did not finish", err)
+        zui.Alert("The last request did not finish", err, tone = Tone.Warn)
     }
     if data.server_down() {
         ui.ServerDown(fn() { data.retry() })
         return
     }
-    zeus.Text(data.status_text(), wrap = 1)
+    zeus.Text(data.status_text(), style = Style(wrap = true))
     ui.StatGrid(data.stat_cells())
     let progress = data.progress_text()
     if progress.len > 0 {
-        zeus.Text(progress, wrap = 1)
+        zeus.Text(progress, style = Style(wrap = true))
     }
     zui.Title("Rejected rows")
     let n = data.reject_count()
@@ -51,7 +51,7 @@ fn paint_ready() {
     }
     let head = present.reject_head(n)
     if head.len > 0 {
-        zeus.Text(head, wrap = 1)
+        zeus.Text(head, style = Style(wrap = true))
     }
     zui.TableCols(reject_spec())
     // Capped at present.reject_limit(): one row per reject of a
@@ -73,7 +73,7 @@ fn paint_ready() {
 
 fn stock_reject_spec() -> []TableCol {
     let mut h = []TableCol {}
-    push(h, TableCol { title: "File line", width: 80, align: ALIGN.End })
+    push(h, TableCol { title: "File line", width: 80, align: Align.End })
     push(h, TableCol { title: "Symbol", width: 120 })
     push(h, TableCol { title: "Date", width: 100 })
     push(h, TableCol { title: "Reason", width: 0 })
@@ -83,11 +83,11 @@ fn stock_reject_spec() -> []TableCol {
 fn paint_stocks() {
     let err = stocks.walk_error()
     if err.len > 0 {
-        zui.AlertWarning("The stock walk stopped", err)
+        zui.Alert("The stock walk stopped", err, tone = Tone.Warn)
     }
     let progress = stocks.walk_text()
     if progress.len > 0 {
-        zeus.Text(progress, wrap = 1)
+        zeus.Text(progress, style = Style(wrap = true))
     }
     if !stocks.status_ready() {
         zeus.Text("Loading the last stock fetch.")
@@ -97,7 +97,7 @@ fn paint_stocks() {
         ui.ServerDown(fn() { stocks.status_retry() })
         return
     }
-    zeus.Text(stocks.status_text(), wrap = 1)
+    zeus.Text(stocks.status_text(), style = Style(wrap = true))
     ui.StatGrid(stocks.status_stats())
     let n = stocks.reject_count()
     if n == 0 {
@@ -116,20 +116,20 @@ fn paint_stocks() {
     }
 }
 
-fn page(p: Params) {
-    zui.Column(spacing.SECTION) {
+fn Page(p: Params) -> Node {
+    return zui.Column(spacing.SECTION) {
         zui.Heading("Sync")
         zui.Body("A rejected row is kept here with its reason. Rollback restores the previous catalog and drops rows the last sync added.")
         zui.Body("History is one calendar day per fetch, oldest first. The cache only accepts a later date, and rollback undoes only the last day that landed.")
         if data.started() {
             zui.Row(8) {
                 zui.Button(label = "Sync now", on_click = fn() { data.sync_now() })
-                zui.Button(label = "Roll back", look = zeus.LOOK.Ghost, on_click = fn() { data.rollback_now() })
+                zui.Button(label = "Roll back", look = zeus.Look.Ghost, on_click = fn() { data.rollback_now() })
             }
             zui.Row(8) {
-                zui.Input(placeholder = "From YYYY-MM-DD", bind = data.from_field(), a11y_label = "History from", width = 180)
-                zui.Input(placeholder = "To YYYY-MM-DD", bind = data.to_field(), a11y_label = "History to", width = 180)
-                zui.Button(label = "Load history", look = zeus.LOOK.Ghost, on_click = fn() { data.load_history() })
+                zui.Input(placeholder = "From YYYY-MM-DD", bind = data.from_field(), label = "History from", style = Style(width = px(180)))
+                zui.Input(placeholder = "To YYYY-MM-DD", bind = data.to_field(), label = "History to", style = Style(width = px(180)))
+                zui.Button(label = "Load history", look = zeus.Look.Ghost, on_click = fn() { data.load_history() })
             }
             zui.Match(data.load_gen(), fn(g) {
                 if g >= 0 {
@@ -143,9 +143,9 @@ fn page(p: Params) {
             zui.Heading("Stock closes")
             zui.Body("NSE capital-market bhavcopy, one trading day per fetch, from 2024-01-02. EQ series only. A close that is not positive, or on a date not after the last cached close for that symbol, is rejected. The cache sits apart from the fund NAVs.")
             zui.Row(8) {
-                zui.Input(placeholder = "From YYYY-MM-DD", bind = stocks.from_field(), a11y_label = "Stock closes from", width = 180)
-                zui.Input(placeholder = "To YYYY-MM-DD", bind = stocks.to_field(), a11y_label = "Stock closes to", width = 180)
-                zui.Button(label = "Load stock closes", look = zeus.LOOK.Ghost, on_click = fn() { stocks.load_history() })
+                zui.Input(placeholder = "From YYYY-MM-DD", bind = stocks.from_field(), label = "Stock closes from", style = Style(width = px(180)))
+                zui.Input(placeholder = "To YYYY-MM-DD", bind = stocks.to_field(), label = "Stock closes to", style = Style(width = px(180)))
+                zui.Button(label = "Load stock closes", look = zeus.Look.Ghost, on_click = fn() { stocks.load_history() })
             }
             zui.Match(stocks.data_generation(), fn(g) {
                 if g >= 0 {
@@ -154,6 +154,7 @@ fn page(p: Params) {
             })
         }
     }
+
 }
 
 fn meta(p: Params) -> Meta {

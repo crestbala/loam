@@ -1,0 +1,73 @@
+// `Option<T>` props: a struct holding a generic instance inline compiles (the
+// instance is emitted first), a plain `T` where `Option<T>` is expected is
+// wrapped in `Some`, and an Option-valued argument passes through unchanged.
+import "std:fmt"
+import "std:result"
+
+fn noop() {
+    return
+}
+
+fn pick_none(i: int) {
+    return
+}
+
+fn empty() -> string {
+    return ""
+}
+
+struct Style {
+    paddingX: int = -1,
+    background: string = "",
+}
+
+struct CardProps {
+    title: string = "",
+    width: Option<int> = result.none(0),
+    style: Option<Style> = result.none(Style {}),
+    on_click: Option<fn()> = result.none(noop),
+    on_pick: Option<fn(int)> = result.none(pick_none),
+    label: Option<fn() -> string> = result.none(empty),
+}
+
+fn Card(p: CardProps) -> int {
+    fmt.println(p.title)
+    if result.is_some(p.width) {
+        fmt.println(p.width.val)
+    }
+    if result.is_some(p.style) {
+        fmt.println(p.style.val.paddingX)
+    }
+    if result.is_some(p.on_click) {
+        let f = p.on_click.val
+        f()
+    }
+    if result.is_some(p.on_pick) {
+        let g = p.on_pick.val
+        g(7)
+    }
+    if result.is_some(p.label) {
+        let l = p.label.val
+        fmt.println(l())
+    }
+    return 0
+}
+
+/// Forwarding an optional handler is one field, absent or present.
+fn Inner(p: CardProps) -> int {
+    return Card(title = "forwarded", on_click = p.on_click)
+}
+
+fn save() {
+    fmt.println("saved")
+}
+
+fn main() {
+    let n = 3
+    Card(title = "wrapped", width = 200, style = Style(paddingX = 12), on_click = save,
+         on_pick = fn(i: int) { fmt.println(i + 1) }, label = "n = {{n + 1}}")
+    Card(title = "defaults")
+    Card(title = "explicit", width = result.some(5), on_click = result.none(noop))
+    Inner(title = "outer", on_click = || { fmt.println("clicked through") })
+    Inner(title = "outer, no handler")
+}

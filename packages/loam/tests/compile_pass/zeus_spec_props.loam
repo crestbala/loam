@@ -14,18 +14,18 @@ struct CardStyle {
     radius: int = 8,
 }
 
-fn Tab(label: string, sel: bool) {
-    zeus.Text(label, color = if sel { ACCENT } else { MUTED })
+fn Tab(label: string, sel: bool) -> Node {
+    return zeus.Text(label, style = Style(color = if sel { ACCENT } else { MUTED }))
 }
 
-fn Card(style: CardStyle, compact: bool) {
-    zeus.Box(
-        background = style.background,
-        padding = if compact { 8 } else { style.padding },
-        radius = style.radius,
-        align_direction = if compact { DIRECTION.Row } else { DIRECTION.Column },
-        align_items = ALIGN.Center,
-        spacing = SPACE.Sm
+fn Card(style: CardStyle, compact: bool) -> Node {
+    return zeus.Box(
+        style = Style(direction = if compact { Direction.Row } else { Direction.Column },
+                      gap = Space.Sm,
+                      align = Align.Center,
+                      padding = edges(if compact { 8 } else { style.padding }),
+                      radius = corners(style.radius),
+                      background = style.background)
     ) {
         Tab("Selected", true)
         Tab("Other", false)
@@ -34,7 +34,7 @@ fn Card(style: CardStyle, compact: bool) {
 
 fn main() {
     zeus.snapshot(300, 200, fn() -> Node {
-        zeus.Box(align_direction = DIRECTION.Column) {
+        zeus.Box(style = Style(direction = Direction.Column)) {
             // Every field of CardStyle has a default, so an omitted one is filled
             // in from the declaring module.
             Card(CardStyle(padding = CARD_PAD), false)

@@ -28,8 +28,8 @@ async fn start() {
     let stats_raw = await c.async_call(api.stats_rpc(), api.encode_StatsReq(StatsReq {}))
     let hello = api.decode_HelloResp(hello_raw)
     let stats = api.decode_StatsResp(stats_raw)
-    zeus.App("Zeus", fn() {
-        screen.Screen("API", host_chip(), stats.users, stats.jobs, stats.uptime, stats.load, hello.count)
+    zeus.App("Zeus", fn() -> Node {
+        return screen.Screen("API", host_chip(), stats.users, stats.jobs, stats.uptime, stats.load, hello.count)
     })
 }
 

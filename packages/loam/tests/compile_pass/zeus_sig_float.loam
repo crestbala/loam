@@ -45,7 +45,7 @@ fn main() {
     // writes the pixel-rounded value into `seen`; every `anim.set` re-runs it.
     let anim = zeus.signal(0.0)
     let seen = zeus.signal(-1)
-    let fb = zeus.Box(background = "#010101")
+    let fb = zeus.Box(style = Style(background = "#010101"))
     zeus.styled(fb, || { seen.set((anim.get() * 4.0) as int) })
     expect(i64(seen.get()), 0)
     anim.set(3.25)

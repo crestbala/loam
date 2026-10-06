@@ -1,0 +1,31 @@
+// A trailing block fills a `children: fn()` prop, so a component places it
+// itself; a struct field named `children` is called, not the node method.
+import "std:fmt"
+
+fn noop() {
+    return
+}
+
+struct PanelProps {
+    title: string = "",
+    children: fn() = noop,
+}
+
+fn Panel(p: PanelProps) {
+    fmt.println("[{{p.title}}")
+    p.children()
+    fmt.println("]")
+}
+
+fn main() {
+    Panel(title = "a") {
+        fmt.println("body a")
+    }
+    Panel("b") {
+        fmt.println("body b")
+    }
+    Panel() {
+        fmt.println("body c")
+    }
+    Panel(title = "d")
+}

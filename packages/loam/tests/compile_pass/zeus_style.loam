@@ -1,0 +1,106 @@
+// The `style` prop: one CSS-subset `Style` per element.
+//
+// - A static style writes each present key once and keeps nothing: no effect
+//   row survives and no style row is held.
+// - A present key wins over the matching flat prop.
+// - An `Option` key carries real negatives (a bleed margin) that the flat
+//   props drop as "unset".
+// - A reactive style re-runs on its signal and writes only the keys that
+//   changed (a key it did not change is left alone).
+// - A freed element returns its style row.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+import "zeus:zeuscore/arena"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn main() {
+    zeus.window("style", 300, 400)
+    let on = zeus.signal(false)
+    let arm = zeus.signal(0)
+    let mut static_id = 0
+    let mut wins_id = 0
+    let mut live_id = 0
+    let mut pct_id = 0
+    let mut text_id = 0
+    let mut merged_id = 0
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column)) {
+        let s = zeus.Box(style = merge(Style(padding = edges(4)), Style(gap = 8, padding = edges2(6, 10),
+                                                    margin = Edges(left = -16),
+                                                    radius = corners(5), width = px(120),
+                                                    background = "#112233")))
+        static_id = s.id
+        let w = zeus.Box(style = merge(Style(background = "#ff0000"), Style(background = "#00ff00")))
+        wins_id = w.id
+        let l = zeus.Box(style = Style(width = px(50),
+                                       background = if on.get() { "#0000ff" } else { "#ffffff" }))
+        live_id = l.id
+        let p = zeus.Box(style = Style(width = pct(50)))
+        pct_id = p.id
+        let t = zeus.Text("hi", style = Style(color = "#123456", font = 20))
+        text_id = t.id
+        let base = Style(padding = edges2(8, 12), background = "#000000")
+        let m = zeus.Box(style = merge(base, Style(padding = Edges(top = 0))))
+        merged_id = m.id
+        zui.Match(arm, fn(a: int) {
+            if a == 0 {
+                zeus.Box(style = Style(opacity = if on.get() { 50 } else { 100 }))
+            }
+        })
+    })
+    zeus.pump_frame()
+
+    // Static: every present key landed, nothing kept.
+    must(arena.nodes[static_id].gap == 8, "gap")
+    must(arena.nodes[static_id].pad_t == 6, "padding top from edges2")
+    must(arena.nodes[static_id].pad_l == 10, "padding left from edges2")
+    must(arena.nodes[static_id].m_l == -16, "a negative margin is a value")
+    must(arena.radius_at(static_id, 0) == 5, "corner radius")
+    must(arena.corners_set(static_id) == 0, "a uniform radius stays on the uniform path")
+    must(arena.nodes[static_id].explicit_width == 120, "px width")
+    must(arena.nodes[static_id].bg == 1122867, "background #112233")
+    must(arena.style_row(static_id) == 0, "a static style keeps no row")
+
+    // A style key beats the flat prop.
+    must(arena.nodes[wins_id].bg == 65280, "style background wins over the flat prop")
+
+    // Percent width clears the pixel pin.
+    must(arena.nodes[pct_id].w_pct == 50, "pct width")
+    must(arena.nodes[pct_id].explicit_width == -1, "pct clears px")
+
+    // Text takes a style too.
+    must(arena.nodes[text_id].fg == 1193046, "text color #123456")
+    must(arena.nodes[text_id].font == 20, "text font")
+
+    // merge keeps the base's other sides.
+    must(arena.nodes[merged_id].pad_t == 0, "merge override top")
+    must(arena.nodes[merged_id].pad_l == 12, "merge keeps base left")
+
+    // Reactive: two live styles hold rows (the live box and the Match arm).
+    must(arena.style_row(live_id) > 0, "a reactive style keeps its row")
+    must(arena.style_row_count() == 2, "only reactive styles hold rows")
+    must(arena.nodes[live_id].bg == 16777215, "reactive background, first value")
+    // Move the width by hand: a run that only changes the background must not
+    // write the width again.
+    arena.nodes[live_id].explicit_width = 77
+    on.set(true)
+    zeus.pump_frame()
+    must(arena.nodes[live_id].bg == 255, "reactive background followed the signal")
+    must(arena.nodes[live_id].explicit_width == 77, "an unchanged key is not rewritten")
+
+    // Freeing a reactive element returns its row.
+    arm.set(1)
+    zeus.pump_frame()
+    must(arena.style_row_count() == 1, "a freed element returns its style row")
+
+    fmt.println("style ok")
+}

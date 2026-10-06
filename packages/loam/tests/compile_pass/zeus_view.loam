@@ -1,0 +1,124 @@
+// Component fns that return a tree: state, controller (local fns) and keys,
+// then `return Element(...) { ... }`.
+//
+// - A fn whose tail returns an element with a trailing block opens a view
+//   frame: the tree returns the one root it built, and a component used as a
+//   child attaches to its caller's slot like any element.
+// - `on_mount` runs after the root is attached, with refs filled.
+// - The component's signals, effects and handlers are owned by its root, so
+//   mounting and unmounting it repeatedly keeps every table flat.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+import "zeus:zeuscore/arena"
+import "zeus:zeuscore/track"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+let mut mounted: []int = []int {}
+let mut effect_runs: int = 0
+
+struct CounterProps {
+    start: int = 0,
+    label: string = "count",
+}
+
+fn Counter(p: CounterProps) -> Node {
+    // state
+    let count = zeus.signal(p.start)
+    let body = ref()
+
+    // controller
+    fn add(d: int) {
+        count.set(count.get() + d)
+    }
+    zeus.effect(|| {
+        let c = count.get()
+        effect_runs = effect_runs + 1
+    })
+    on_mount(|| {
+        push(mounted, ref_id(body))
+    })
+
+    // keys
+    let keys = []KeyBind {
+        chord_global("cmd+u", "counter.inc", || { add(1) }),
+    }
+
+    // view
+    return zeus.Box(ref = body, keys = keys, style = Style(direction = Direction.Row, gap = 4)) {
+        zeus.Text("{{p.label}} {{count.get()}}")
+        zui.Button(label = "+", on_click = || { add(1) })
+    }
+}
+
+/// A component whose tree is another component: the inner frame reports its
+/// root to this one.
+fn Wrapped() -> Node {
+    return zui.Badge("wrapped", zeus.Tint.Ink)
+}
+
+fn main() {
+    zeus.window("view", 300, 200)
+    let show = zeus.signal(0)
+    let mut outer_id = 0
+    let mut first_id = 0
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column)) {
+        let first = Counter(start = 5)
+        first_id = first.id
+        let o = zeus.Box() {
+            zui.Match(show, fn(s: int) {
+                if s == 1 {
+                    Counter(label = "inner")
+                }
+            })
+        }
+        outer_id = o.id
+        Wrapped()
+    })
+    zeus.pump_frame()
+
+    must(zeus.engine_find_text("count 5") != 0, "the View built its tree")
+    must(zeus.engine_find_text("wrapped") != 0, "a View whose root is a component")
+    must(mounted.len == 1, "the counter mounted once")
+    must(mounted[0] == first_id, "on_mount ran with the ref filled to the root")
+    must(zeus.node_parent(first_id) != 0, "the root attached to the caller's slot")
+    must(effect_runs == 1, "the component effect ran once")
+
+    // Keys from the keys section work.
+    zeus.engine_key_ev(117, 8)
+    zeus.pump_frame()
+    must(zeus.engine_find_text("count 6") != 0, "the chord ran the local fn")
+    must(effect_runs == 2, "the effect followed its signal")
+
+    // Mount and unmount the inner counter repeatedly: nothing grows.
+    show.set(1)
+    zeus.pump_frame()
+    must(zeus.engine_find_text("inner 0") != 0, "the inner counter mounted")
+    show.set(0)
+    zeus.pump_frame()
+    let recs = arena.owned_records()
+    let rows = track.effect_rows()
+    let fns = zeus.intern_count()
+    let mut i = 0
+    while i < 20 {
+        show.set(1)
+        zeus.pump_frame()
+        show.set(0)
+        zeus.pump_frame()
+        i = i + 1
+    }
+    must(arena.owned_records() == recs, "owned records stay flat")
+    must(track.effect_rows() == rows, "effect rows stay flat")
+    must(zeus.intern_count() == fns, "interned handlers stay flat")
+
+    fmt.println("view ok")
+}

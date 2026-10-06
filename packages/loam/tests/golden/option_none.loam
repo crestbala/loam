@@ -1,0 +1,50 @@
+// C4: `none` where an `Option<T>` is expected is the empty Option with a
+// zeroed payload, so an optional field or parameter needs no placeholder
+// value (`= result.none(noop)`) whatever its `T`.
+import "std:fmt"
+import "std:result"
+
+struct Box2 {
+    w: int = 0,
+    name: string = "",
+}
+
+struct Props {
+    on_click: Option<fn()> = none,
+    on_pick: Option<fn(int)> = none,
+    label: Option<fn() -> string> = none,
+    width: Option<int> = none,
+    title: Option<string> = none,
+    items: Option<[]string> = none,
+    inner: Option<Box2> = none,
+}
+
+fn describe(p: Props) {
+    fmt.println("click", result.is_some(p.on_click), "pick", result.is_some(p.on_pick),
+                "label", result.is_some(p.label), "width", result.is_some(p.width),
+                "title", result.is_some(p.title), "items", result.is_some(p.items),
+                "inner", result.is_some(p.inner))
+    if result.is_some(p.on_click) {
+        p.on_click.val()
+    }
+    if result.is_some(p.title) {
+        fmt.println("title =", p.title.val)
+    }
+}
+
+fn greet(name: Option<string> = none) {
+    if result.is_some(name) {
+        fmt.println("hello", name.val)
+    } else {
+        fmt.println("hello, nobody")
+    }
+}
+
+fn main() {
+    describe(Props {})
+    describe(Props { on_click: fn() { fmt.println("clicked") }, title: "Ada", width: 3 })
+    describe(Props { inner: Box2 { w: 2, name: "b" }, items: []string { "x", "y" }, title: none })
+    greet()
+    greet("Bea")
+    greet(none)
+}

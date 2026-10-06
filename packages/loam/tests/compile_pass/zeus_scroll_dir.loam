@@ -1,4 +1,4 @@
-// Scroll DIRECTION and speed. Two bugs lived here, both felt as "the UI
+// Scroll Direction and speed. Two bugs lived here, both felt as "the UI
 // vibrates while scrolling" and "it goes up and down when I scroll down", and
 // both were in the shared engine (so every host showed them):
 //
@@ -27,8 +27,8 @@ fn scrollable() -> int {
     zeus.window("scroll-dir", 320, 180)
     let top = zeus.raw_scroll()
     zeus.slot(top, fn() {
-        zeus.Box(align_direction = DIRECTION.Column) {
-            zeus.Box(height = 3000)
+        zeus.Box(style = Style(direction = Direction.Column)) {
+            zeus.Box(style = Style(height = px(3000)))
         }
     })
     zeus.root(top)

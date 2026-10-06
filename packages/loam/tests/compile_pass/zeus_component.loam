@@ -1,0 +1,55 @@
+// A component is a fn that returns its tree — there is no `View` keyword.
+//
+// `return Element(...) { children }` is the whole tree. The parser lowers that
+// tail slot call into a view frame, so the state created above the return is
+// owned by the root the element builds, and a nested component (which returns
+// its own tree) reports its root to the enclosing frame.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+struct LeafProps {
+    text: string = "leaf",
+}
+
+/// A component: a fn whose tail returns an element with a trailing block.
+fn Leaf(p: LeafProps) -> Node {
+    return zeus.Box(style = Style(direction = Direction.Column, gap = 2)) {
+        zeus.Text(p.text)
+    }
+}
+
+struct BoxProps2 {
+    label: string = "box",
+}
+
+/// State above the return is owned by the root; the nested `Leaf` is a child.
+fn Wrapper(p: BoxProps2) -> Node {
+    let n = zeus.signal(7)
+    zeus.effect(|| {
+        let _ = n.get()
+    })
+    return zeus.Box(style = Style(direction = Direction.Column, gap = 4)) {
+        zeus.Text("{{p.label}} {{n.get()}}")
+        Leaf(text = "inner")
+    }
+}
+
+fn main() {
+    zeus.window("component", 240, 160)
+    zeus.root(Wrapper(label = "wrap"))
+    zeus.pump_frame()
+    must(zeus.engine_find_text("wrap 7") != 0, "the component built its tree")
+    must(zeus.engine_find_text("inner") != 0, "the nested component attached")
+    fmt.println("component ok")
+}

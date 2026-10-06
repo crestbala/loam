@@ -18,7 +18,7 @@ fn expect(got: int, want: int) {
 fn main() {
     let sig = zeus.signal(1)
     let out = zeus.signal(0)
-    let b = zeus.Box(background = "#010101")
+    let b = zeus.Box(style = Style(background = "#010101"))
     zeus.styled(b, || { out.set(sig.get()) })
     expect(out.get(), 1)
     expect(sig.get(), 1)
@@ -29,7 +29,7 @@ fn main() {
 
     let bound = zeus.signal(3)
     zeus.window("styled", 120, 80)
-    zeus.root(zeus.Box(align_direction = DIRECTION.Column) {
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column)) {
         zeus.Text("{{bound.get()}}")
     })
     zeus.engine_layout(120, 80)

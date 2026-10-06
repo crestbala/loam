@@ -22,8 +22,8 @@ fn must(ok: bool, what: string) {
     sys.exit(1)
 }
 
-fn Row(i: int, s: string) {
-    zeus.Text(s)
+fn Row(i: int, s: string) -> Node {
+    return zeus.Text(s)
 }
 
 fn main() {
@@ -36,9 +36,9 @@ fn main() {
     zui.push_item(names, "Cy")
     let mut below_id = 0
     let mut scroll_id = 0
-    zeus.root(zeus.Box(padding = 10, align_direction = DIRECTION.Column, spacing = 4) {
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 4, padding = edges(10))) {
         // Fixed card: whichever arm is mounted, the card's box holds.
-        zeus.Box(width = 200, height = 60, background = "#ffffff") {
+        zeus.Box(style = Style(width = px(200), height = px(60), background = "#ffffff")) {
             zui.Match(tag, fn(t: int) {
                 if t == 0 {
                     zeus.Text("arm zero")
@@ -50,14 +50,14 @@ fn main() {
         // Plain column: a taller arm pushes the sibling below it down.
         zui.Match(tall, fn(t: int) {
             if t == 0 {
-                zeus.Box(width = 100, height = 20, background = "#ff0000")
+                zeus.Box(style = Style(width = px(100), height = px(20), background = "#ff0000"))
             } else {
-                zeus.Box(width = 100, height = 50, background = "#00ff00")
+                zeus.Box(style = Style(width = px(100), height = px(50), background = "#00ff00"))
             }
         })
         let below = zeus.Text("below")
         below_id = below.id
-        let sc = zui.Scroll(height = 20) {
+        let sc = zui.Scroll(style = Style(height = px(20))) {
             zui.For(names, fn(s) => s, Row)
         }
         scroll_id = sc.id

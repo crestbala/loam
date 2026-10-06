@@ -1,5 +1,6 @@
 import "std:zeus"
 
-fn error(msg: string) {
-    zeus.Text("post not available")
+fn Error(msg: string) -> Node {
+    return zeus.Text("post not available")
+
 }

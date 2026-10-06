@@ -8,7 +8,7 @@
 //! ```
 //! import "std:devtools"
 //!
-//! zeus.Box(align_direction = DIRECTION.Column) {
+//! zeus.Box(align_direction = Direction.Column) {
 //!     App()
 //!     devtools.Panel()
 //! }

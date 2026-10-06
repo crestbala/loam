@@ -14,20 +14,20 @@ fn expect(ok: bool, what: string) {
     sys.exit(1)
 }
 
-fn CanvasWidget(status: Signal<string>) {
-    zeus.Box(
-        style = BoxStyle(width = 300, height = 200, background = "#1e1e2e"),
+fn CanvasWidget(status: Signal<string>) -> Node {
+    return zeus.Box(
+        style = Style(width = px(300), height = px(200), background = "#1e1e2e"),
         on_mouse_down = fn(e: MouseEvent) => status.set("Pressed button {{e.button}} at {{e.x}}"),
         on_mouse_up = fn(e: MouseEvent) => status.set("Released mouse")
     ) {
-        zeus.Box(align_direction = DIRECTION.Column, padding = 16) {
+        zeus.Box(style = Style(direction = Direction.Column, padding = edges(16))) {
             zeus.Text(status.get())
         }
     }
 }
 
-fn CommandPalette(text: Signal<string>) {
-    zui.Input(
+fn CommandPalette(text: Signal<string>) -> Node {
+    return zui.Input(
         bind = text,
         placeholder = "type a command",
         on_key_down = fn(e: KeyEvent) {
@@ -46,7 +46,7 @@ fn main() {
     let status = zeus.signal("Idle")
     let text = zeus.signal("")
     zeus.snapshot(320, 260, fn() -> Node {
-        zeus.Box(align_direction = DIRECTION.Column) {
+        zeus.Box(style = Style(direction = Direction.Column)) {
             CanvasWidget(status)
             CommandPalette(text)
         }

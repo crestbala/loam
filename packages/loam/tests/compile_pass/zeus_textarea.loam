@@ -20,7 +20,7 @@ fn expect(ok: bool, what: string) {
 fn main() {
     let draft = zeus.signal("")
     zeus.snapshot(400, 240, fn() -> Node {
-        zeus.Box(padding = 16) {
+        zeus.Box(style = Style(padding = edges(16))) {
             zui.TextArea(draft, "Message")
         }
     })
@@ -44,7 +44,7 @@ fn main() {
     // Single-line Input: Enter must not insert a newline.
     let one = zeus.signal("")
     zeus.snapshot(320, 120, fn() -> Node {
-        zeus.Box(padding = 8) {
+        zeus.Box(style = Style(padding = edges(8))) {
             zui.Input(bind = one, placeholder = "one")
         }
     })

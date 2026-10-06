@@ -23,9 +23,9 @@ fn main() {
     let op = zeus.signal(100)
     let wd = zeus.signal(50)
     let mut box_id = 0
-    zeus.root(zeus.Box(padding = 10) {
-        zeus.Box(width = 200, height = 100, background = "#ffffff") {
-            let b = zeus.Box(width = 50, height = 20, background = "#ff0000")
+    zeus.root(zeus.Box(style = Style(padding = edges(10))) {
+        zeus.Box(style = Style(width = px(200), height = px(100), background = "#ffffff")) {
+            let b = zeus.Box(style = Style(width = px(50), height = px(20), background = "#ff0000"))
             box_id = b.id
             zeus.styled(b, || { zeus.set_prop_int(b, zeus.SET.Opacity, op.get()) })
             zeus.styled(b, || { zeus.set_prop_int(b, zeus.SET.Width, wd.get()) })

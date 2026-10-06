@@ -9,26 +9,26 @@ import "std:zui"
 fn main() {
     zeus.snapshot(560, 360, fn() -> Node {
         let load = zeus.signal(30)
-        let on = zeus.signal(1)
+        let on = zeus.signal(true)
         zui.Page() {
-            zui.Row(SPACE.Sm) {
-                zui.Button("Primary", look = zeus.LOOK.Solid, size = zeus.SIZE.Md)
-                zui.Button("Soft", look = zeus.LOOK.Soft, size = zeus.SIZE.Md)
-                zui.Button("Outline", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
-                zui.Button("Danger", look = zeus.LOOK.Danger, size = zeus.SIZE.Md)
+            zui.Row(Space.Sm) {
+                zui.Button("Primary", look = zeus.Look.Solid, size = zeus.Size.Md)
+                zui.Button("Soft", look = zeus.Look.Soft, size = zeus.Size.Md)
+                zui.Button("Outline", look = zeus.Look.Outline, size = zeus.Size.Md)
+                zui.Button("Danger", look = zeus.Look.Danger, size = zeus.Size.Md)
             }
-            zui.Row(SPACE.Sm) {
-                zui.Badge("ok", zeus.TINT.Ok)
-                zui.Badge("warn", zeus.TINT.Warn)
-                zui.Badge("bad", zeus.TINT.Danger)
-                zui.Chip("busy", zeus.TINT.Warn)
+            zui.Row(Space.Sm) {
+                zui.Badge("ok", zeus.Tint.Ok)
+                zui.Badge("warn", zeus.Tint.Warn)
+                zui.Badge("bad", zeus.Tint.Danger)
+                zui.Chip("busy", zeus.Tint.Warn)
             }
-            zui.AlertWarning("Low disk", "The volume is almost full.")
-            zui.Row(SPACE.Sm) {
+            zui.Alert("Low disk", "The volume is almost full.", tone = Tone.Warn)
+            zui.Row(Space.Sm) {
                 zui.Switch(on)
                 zui.Progress(load)
             }
-            zui.Row(SPACE.Sm) {
+            zui.Row(Space.Sm) {
                 zui.Skeleton(96, 24, 8)
             }
         }

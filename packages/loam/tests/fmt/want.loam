@@ -24,8 +24,8 @@ fn main() {
 // wrongly: a trailing block indented by the call paren, a nested group
 // flattened, and a one-line `{ x }` closed up on one side only.
 fn shapes() {
-    zeus.App("x", fn() {
-        body(1)
+    zeus.App("x", fn() -> Node {
+        return body(1)
     })
     let hreq = http.concat_str(
         "pre",

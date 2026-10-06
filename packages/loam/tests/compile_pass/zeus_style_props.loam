@@ -18,32 +18,36 @@ fn main() {
     let shown = zeus.signal(1)
     zeus.snapshot(320, 280, fn() -> Node {
         zui.Column(8) {
-            zui.Button("Go", look = zeus.LOOK.Solid, size = zeus.SIZE.Md)
-            zui.Button("Styled", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
-                        radius = 4)
-            zui.IconButton(zeus.IC_CHECK, zeus.LOOK.Soft, zeus.SIZE.Md, "Icon")
+            zui.Button("Go", look = zeus.Look.Solid, size = zeus.Size.Md)
+            zui.Button("Styled",
+                        look = zeus.Look.Solid,
+                        size = zeus.Size.Md,
+                        style = Style(radius = corners(4)))
+            zui.IconButton(zeus.IC_CHECK, zeus.Look.Soft, zeus.Size.Md, "Icon")
             zui.Card() {
                 zeus.Text("plain card")
             }
-            zui.Card(radius = 2, padding = 8) {
+            zui.Card(style = Style(padding = edges(8), radius = corners(2))) {
                 zeus.Text("restyled")
             }
-            zui.Chip("ok", zeus.TINT.Ok)
-            zui.Chip("round", zeus.TINT.Mute, radius = 4)
-            zui.Badge("tag", zeus.TINT.Ok, radius = 2)
-            zui.Comp(background = "#111", radius = 6, padding = 8) {
-                zeus.Text("comp", color = "#fff")
+            zui.Chip("ok", zeus.Tint.Ok)
+            zui.Chip("round", zeus.Tint.Mute, style = Style(radius = corners(4)))
+            zui.Badge("tag", zeus.Tint.Ok, style = Style(radius = corners(2)))
+            zui.Comp(style = Style(padding = edges(8), radius = corners(6), background = "#111")) {
+                zeus.Text("comp", style = Style(color = "#fff"))
             }
-            zui.Alert("Heads", "Restyled.", radius = 4)
-            zui.Field("Name", zeus.signal(""), "Ada", width = 120,
-                       radius = 2)
-            zui.Comp(visible = hidden, a11y_label = "ghost") {
+            zui.Alert("Heads", "Restyled.", style = Style(radius = corners(4)))
+            zui.Field("Name",
+                       zeus.signal(""),
+                       "Ada",
+                       style = Style(width = px(120), radius = corners(2)))
+            zui.Comp(visible = hidden.get() != 0, label = "ghost") {
                 zeus.Text("kid")
             }
-            zui.If(shown) {
+            zui.Show(when = shown.get() == 1) {
                 zeus.Text("shown")
             }
-            zui.Card(visible = shown) {
+            zui.Card(visible = shown.get() != 0) {
                 zeus.Text("card vis")
             }
         }

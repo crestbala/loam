@@ -3,21 +3,19 @@ import "std:fmt"
 import "std:sys"
 import "std:zeus"
 
-fn Kids() {
-    zeus.Box(
-        align_direction = DIRECTION.Column,
-        spacing = 8,
-        padding = 12
+fn Kids() -> Node {
+    return zeus.Box(
+        style = Style(direction = Direction.Column, gap = 8, padding = edges(12))
     ) {
         zeus.Text("a"),
         zeus.Text("b"),
-        zeus.Box(width = 4, height = 4, background = "#89b4fa"),
+        zeus.Box(style = Style(width = px(4), height = px(4), background = "#89b4fa")),
     }
 }
 
 fn main() {
     zeus.snapshot(200, 120, fn() -> Node {
-        zeus.Box(align_direction = DIRECTION.Column) {
+        zeus.Box(style = Style(direction = Direction.Column)) {
             Kids()
         }
     })

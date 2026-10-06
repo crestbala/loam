@@ -1,0 +1,33 @@
+// C12: a captured `let mut int` inside a component (a fn returning `Node`)
+// is a signal cell, as it is in any other fn. It used to lower to an
+// undefined `loam_zeus_hook_signal` and fail to link.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn Counter() -> Node {
+    let mut clicks = 0
+    return zeus.Box(label = "count", style = Style(width = px(40), height = px(20)),
+                    on_click = fn() { clicks = clicks + 1 }) {
+        zeus.Text("{{clicks}}")
+    }
+}
+
+fn main() {
+    zeus.snapshot(100, 60, fn() -> Node {
+        return Counter()
+    })
+    let id = zeus.engine_find_text("count")
+    if id <= 0 {
+        fmt.println("FAIL counter missing")
+        sys.exit(1)
+    }
+    zeus.click_node(id)
+    zeus.click_node(id)
+    zeus.engine_layout(100, 60)
+    if zeus.engine_find_text("2") == 0 {
+        fmt.println("FAIL captured let mut did not count")
+        sys.exit(1)
+    }
+    fmt.println("mut capture ok")
+}

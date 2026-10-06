@@ -27,19 +27,19 @@ fn main() {
     let mut inner_id = 0
     let mut text_id = 0
     let mut second_id = 0
-    zeus.root(zeus.Box(padding = 10) {
+    zeus.root(zeus.Box(style = Style(padding = edges(10))) {
         // Two explicit boxes in a row: a width write on the first moves the
         // second, so the first cannot be its own boundary.
-        zeus.Box(align_direction = DIRECTION.Row) {
-            let a = zeus.Box(width = 40, height = 20, background = "#0000ff")
+        zeus.Box(style = Style(direction = Direction.Row)) {
+            let a = zeus.Box(style = Style(width = px(40), height = px(20), background = "#0000ff"))
             zeus.styled(a, || { zeus.set_prop_int(a, zeus.SET.Width, first.get()) })
-            let b = zeus.Box(width = 40, height = 20, background = "#00ffff")
+            let b = zeus.Box(style = Style(width = px(40), height = px(20), background = "#00ffff"))
             second_id = b.id
         }
         // Fixed-size card: explicit width and height, so a child's size change
         // cannot move anything above it.
-        zeus.Box(width = 200, height = 100, background = "#ffffff") {
-            let b = zeus.Box(width = 40, height = 20, background = "#ff0000")
+        zeus.Box(style = Style(width = px(200), height = px(100), background = "#ffffff")) {
+            let b = zeus.Box(style = Style(width = px(40), height = px(20), background = "#ff0000"))
             inner_id = b.id
             zeus.styled(b, || { zeus.set_prop_int(b, zeus.SET.Width, w.get()) })
         }

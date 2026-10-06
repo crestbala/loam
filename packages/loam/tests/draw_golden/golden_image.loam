@@ -6,8 +6,8 @@ import "std:zui"
 
 fn main() {
     zeus.snapshot(120, 48, fn() -> Node {
-        zeus.Box(padding = 8, background = "#ffffff") {
-            zui.Image("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mO4o6YGAAMKASneDRr/AAAAAElFTkSuQmCC", width = 32, height = 32, radius = 4)
+        zeus.Box(style = Style(padding = edges(8), background = "#ffffff")) {
+            zui.Image("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mO4o6YGAAMKASneDRr/AAAAAElFTkSuQmCC", style = Style(width = px(32), height = px(32), radius = corners(4)))
         }
     })
 }

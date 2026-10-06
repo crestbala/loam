@@ -19,15 +19,15 @@ fn must(ok: bool, what: string) {
 
 fn main() {
     zeus.window("chrome", 300, 200)
-    let on = zeus.signal(0)
+    let on = zeus.signal(false)
     let op = zeus.signal(100)
     let label = zeus.signal("aa")
     let tint = zeus.signal("#ff0000")
     let mut box_id = 0
-    zeus.root(zeus.Box(padding = 10, align_direction = DIRECTION.Column, spacing = 8) {
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 8, padding = edges(10))) {
         zui.Switch(on)
         zui.Switch(on)
-        let b = zeus.Box(width = 40, height = 20, background = "#ff0000")
+        let b = zeus.Box(style = Style(width = px(40), height = px(20), background = "#ff0000"))
         box_id = b.id
         zeus.styled(b, || { zeus.set_prop_int(b, zeus.SET.Opacity, op.get()) })
         zeus.prop_str(b, zeus.SET.Color, || { tint.get() })
@@ -37,7 +37,7 @@ fn main() {
     must(total >= 4, "the first frame syncs every node")
 
     // A bound-signal write: only the two switches bound to `on` are re-synced.
-    on.set(1)
+    on.set(true)
     zeus.engine_layout(300, 200)
     must(zeus.chrome_sync_count() == 2, "a switch write syncs just its bound nodes")
 

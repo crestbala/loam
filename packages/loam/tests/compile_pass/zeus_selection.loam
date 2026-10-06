@@ -1,7 +1,6 @@
 // Selectable chrome (tabs, radios, toggles, nav, pagination) tracks its
-// signal. Style props are plain data, evaluated once, so the fill has to be
-// an effect — before `selected_chrome` the first tab stayed highlighted no
-// matter which one you clicked. Chart series colours are checked here too:
+// signal. The fill is a reactive `style` (one effect per element) — before
+// that the first tab stayed highlighted no matter which one you clicked. Chart series colours are checked here too:
 // series 0 must take the first brand colour, not the last.
 import "std:fmt"
 import "std:sys"

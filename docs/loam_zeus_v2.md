@@ -1303,7 +1303,8 @@ shows tree, layout boxes, and signal values live.
   component ever emits an element.
 - Not SSR, not SSG of markup, not prerendering. Every route renders on the client
   on every host. SEO is handled by metadata, not by rendering (§5.7).
-- Not a `View` trait. A component is a `fn`. `Node` is a handle.
+- Not a `View` trait or keyword. A component is a `fn` that returns its tree.
+  `Node` is a handle.
 - **First-party traffic is gRPC, no exceptions.** Every Zeus client ↔ Loam server
   path is `#[proto]` over gRPC-Web / h2c. JSON and REST are supported for
   third-party APIs and inbound webhooks only, and they stop at the server binary

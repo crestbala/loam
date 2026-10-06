@@ -86,9 +86,12 @@ fn main() {
     // --- a real scene, at backing scale 2 ---------------------------------
     zeus.window("zeus-raster-scene", 240, 200)
     zeus.root(zui.Page() {
-        zeus.Box(width = 80, height = 60, radius = 12, background = "#3366CC")
-        zeus.Box(width = 60, height = 40, radius = 6, background = "#CC3366",
-                 margin = 8)
+        zeus.Box(style = Style(width = px(80), height = px(60), radius = corners(12), background = "#3366CC"))
+        zeus.Box(style = Style(width = px(60),
+                               height = px(40),
+                               margin = edges(8),
+                               radius = corners(6),
+                               background = "#CC3366"))
     })
     zeus.engine_layout(240, 200)
     zeus.engine_paint()
@@ -214,7 +217,7 @@ fn main() {
     // A node with both stops set paints a gradient (kind 11). Built with
     // `child()` rather than a trailing block so the second stop can be set on
     // the node before it is added.
-    let grad = zeus.Box(width = 60, height = 30, radius = 0, background = "#000000")
+    let grad = zeus.Box(style = Style(width = px(60), height = px(30), radius = corners(0), background = "#000000"))
     zeus.set_background_end(grad, 0xFFFFFF)
     let page = zui.Page()
     zeus.child(page, grad)

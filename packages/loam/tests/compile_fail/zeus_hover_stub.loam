@@ -2,5 +2,5 @@
 import "std:zeus"
 
 fn main() {
-    zeus.Box(padding = 8).hover_delay(200)
+    zeus.Box(style = Style(padding = edges(8))).hover_delay(200)
 }

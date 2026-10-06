@@ -8,65 +8,75 @@ import "std:colors"
 import "std:spacing"
 import "std:zui"
 
-fn ProjectCard() {
+fn ProjectCard() -> Node {
     let ticks = zeus.signal(0)
-    zui.Card() {
-        zui.Row(SPACE.Sm) {
+    return zui.Card() {
+        zui.Row(Space.Sm) {
             zui.Title("Project card")
             zui.Grow()
-            zui.Badge("In progress", zeus.TINT.Ok)
+            zui.Badge("In progress", zeus.Tint.Ok)
         }
         zui.Body("A card with a title, supporting copy, and a footer of actions. Rounded-xl, hairline border, paper surface.")
-        zui.Row(SPACE.Sm) {
-            zui.Button("Cancel", look = zeus.LOOK.Outline, size = zeus.SIZE.Md, on_click = fn() => ticks.set(ticks.get() + 1))
-            zui.Button("Save", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => ticks.set(ticks.get() + 1))
+        zui.Row(Space.Sm) {
+            zui.Button("Cancel", look = zeus.Look.Outline, size = zeus.Size.Md, on_click = fn() => ticks.set(ticks.get() + 1))
+            zui.Button("Save", look = zeus.Look.Solid, size = zeus.Size.Md, on_click = fn() => ticks.set(ticks.get() + 1))
             zui.Grow()
-            zeus.Text("{{ticks.get()}}", color = colors.mute(), font = spacing.FONT_CAPTION)
+            zeus.Text("{{ticks.get()}}", style = Style(font = spacing.FONT_CAPTION, color = colors.mute()))
         }
     }
 }
 
-fn Customize() {
-    zui.SectionHeader("Customize", "Style props + slots",
-                       "Style props restyle a recipe without copying it. Comp is the primitive for your own widget. Trailing blocks are slots.")
-    zui.Card() {
-        zui.RowWrap(SPACE.Sm) {
-            zui.Button("Recipe", look = zeus.LOOK.Solid, size = zeus.SIZE.Md)
-            zui.Button("Styled", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
-                        radius = 999, padding_x = 20,)
-            zui.IconButton(zeus.IC_CHECK, zeus.LOOK.Soft, zeus.SIZE.Md, "Save")
-            zui.Chip("pill", zeus.TINT.Ok, radius = 6)
+fn Customize() -> Node {
+    return Column(spacing.SECTION) {
+        zui.SectionHeader("Customize", "Style props + slots",
+                           "Style props restyle a recipe without copying it. Comp is the primitive for your own widget. Trailing blocks are slots.")
+        zui.Card() {
+            zui.RowWrap(Space.Sm) {
+                zui.Button("Recipe", look = zeus.Look.Solid, size = zeus.Size.Md)
+                zui.Button("Styled",
+                            look = zeus.Look.Solid,
+                            size = zeus.Size.Md,
+                            style = Style(padding = Edges(right = 20, left = 20), radius = corners(999)))
+                zui.IconButton(zeus.IC_CHECK, zeus.Look.Soft, zeus.Size.Md, "Save")
+                zui.Chip("pill", zeus.Tint.Ok, style = Style(radius = corners(6)))
+            }
+            zui.Card(style = Style(padding = edges(12), radius = corners(6))) {
+                zui.Body("This card used radius = 6, padding = 12.")
+            }
+            zui.Comp(style = Style(direction = Direction.Row,
+                                    gap = 8,
+                                    align = Align.Center,
+                                    padding = edges(12),
+                                    radius = corners(10),
+                                    background = colors.raised())) {
+                zui.Pip(zeus.accent(), 8)
+                zeus.Text("Comp — a function widget, styled by props",
+                          style = Style(font = spacing.FONT_BODY, color = zeus.ink()))
+            }
+            zui.Badge("custom", zeus.Tint.Mute, style = Style(padding = Edges(right = 8, left = 8), radius = corners(2)))
+            zui.Alert("Styled alert",
+                       "Same recipe, different radius.",
+                       style = Style(padding = edges(10), radius = corners(4)))
         }
-        zui.Card(radius = 6, padding = 12) {
-            zui.Body("This card used radius = 6, padding = 12.")
-        }
-        zui.Comp(background = colors.raised(), radius = 10,
-                  padding = 12, spacing = 8,
-                  align_direction = DIRECTION.Row, align_items = ALIGN.Center) {
-            zui.Pip(zeus.accent(), 8)
-            zeus.Text("Comp — a function widget, styled by props", font = spacing.FONT_BODY,
-                      color = zeus.ink())
-        }
-        zui.Badge("custom", zeus.TINT.Mute, radius = 2, padding_x = 8)
-        zui.Alert("Styled alert", "Same recipe, different radius.",
-                   radius = 4, padding = 10)
     }
 }
 
-fn Foundations() {
-    zui.Breadcrumbs([]string {"myapp", "Examples", "Foundations"})
-    zui.Column(SPACE.Exs) {
-        zui.Display("Build interfaces with Zeus")
-        zui.Body("One entry, every host. Dark inverts every token that reads appearance.")
+fn Foundations() -> Node {
+    return Column(spacing.SECTION) {
+        zui.Breadcrumbs([]string {"myapp", "Examples", "Foundations"})
+        zui.Column(Space.Exs) {
+            zui.Display("Build interfaces with Zeus")
+            zui.Body("One entry, every host. Dark inverts every token that reads appearance.")
+        }
+        zui.Row(Space.Sm) {
+            zui.Chip("Stable", zeus.Tint.Ok)
+            zui.Chip("Canvas2D", zeus.Tint.Ink)
+            zui.Badge("zeus", zeus.Tint.Mute)
+            zui.Kbd("⌘K")
+        }
+        zui.Alert("Heads up", "Signals update on click. Hover and press are engine fades — no DOM.")
+        zui.Alert("Session expired", "Sign back in to keep syncing. Your drafts are saved locally.", tone = Tone.Danger)
+        ProjectCard()
+        Customize()
     }
-    zui.Row(SPACE.Sm) {
-        zui.Chip("Stable", zeus.TINT.Ok)
-        zui.Chip("Canvas2D", zeus.TINT.Ink)
-        zui.Badge("zeus", zeus.TINT.Mute)
-        zui.Kbd("⌘K")
-    }
-    zui.Alert("Heads up", "Signals update on click. Hover and press are engine fades — no DOM.")
-    zui.AlertDestructive("Session expired", "Sign back in to keep syncing. Your drafts are saved locally.")
-    ProjectCard()
-    Customize()
 }

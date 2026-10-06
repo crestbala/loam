@@ -1,0 +1,14 @@
+// `Option<W<int>>` closes two type-argument lists with one `>>` token; the
+// parser splits it. A shift in an expression is still a shift.
+import "std:fmt"
+import "std:result"
+
+struct W<T> {
+    v: T,
+}
+
+fn main() {
+    let o: Option<W<int>> = result.some(W<int> { v: 4 })
+    let a = 16 >> 2
+    fmt.println(o.val.v + a)
+}

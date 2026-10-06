@@ -14,14 +14,14 @@ fn must(ok: bool, what: string) {
 
 fn main() {
     zeus.window("alert", 480, 360)
-    let shown = zeus.signal(1)
+    let shown = zeus.signal(true)
     let hits = zeus.signal(0)
-    zeus.root(zeus.Box(align_direction = zeus.DIRECTION.Column, spacing = 8, padding = 16) {
+    zeus.root(zeus.Box(style = Style(direction = zeus.Direction.Column, gap = 8, padding = edges(16))) {
         zui.Alert("Heads up", "Default is info.")
-        zui.AlertSuccess("Saved", "Draft is on disk.")
+        zui.Alert("Saved", "Draft is on disk.", tone = Tone.Ok)
         zui.Alert("Note", "You can dismiss this.", dismiss = shown)
-        zui.AlertDestructive("Failed", "Try again.") {
-            zui.Button("Retry", look = zeus.LOOK.Outline, size = zeus.SIZE.Sm,
+        zui.Alert("Failed", "Try again.", tone = Tone.Danger) {
+            zui.Button("Retry", look = zeus.Look.Outline, size = zeus.Size.Sm,
                         on_click = fn() { hits.set(hits.get() + 1) })
         }
     })
@@ -37,7 +37,7 @@ fn main() {
     zeus.engine_click_text("Dismiss")
     zeus.engine_mouseup()
     zeus.engine_layout(480, 360)
-    must(shown.get() == 0, "dismiss set the signal to 0")
+    must(!shown.get(), "dismiss set the signal to 0")
     must(!zeus.text_visible("Note"), "dismissed alert is hidden")
 
     zeus.engine_click_text("Retry")

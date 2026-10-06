@@ -39,14 +39,14 @@ fn in_cycle(id: int) -> int {
 
 fn main() {
     zeus.window("dialog", 480, 320)
-    let open = zeus.signal(0)
+    let open = zeus.signal(false)
     let value = zeus.signal(0)
     let tree = zui.Page() {
-        zui.Button("Open", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
-                    on_click = fn() => open.set(1))
-        zui.Button("Outside", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
+        zui.Button("Open", look = zeus.Look.Solid, size = zeus.Size.Md,
+                    on_click = fn() => open.set(true))
+        zui.Button("Outside", look = zeus.Look.Outline, size = zeus.Size.Md)
         zui.Dialog(open, title = "Confirm") {
-            zui.Button("Inside", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
+            zui.Button("Inside", look = zeus.Look.Outline, size = zeus.Size.Md)
         }
         zui.Select(value, []string { "Small", "Medium", "Large" })
     }
@@ -72,12 +72,12 @@ fn main() {
     must(focused == close || focused == inside, "focus moved into the dialog")
 
     zeus.engine_key_ev(27, 0)
-    must(open.get() == 0, "escape closed the dialog")
+    must(!open.get(), "escape closed the dialog")
     zeus.engine_layout(480, 320)
     must(!zeus.text_visible("Inside"), "dialog hidden after escape")
 
     // Re-open: Tab stays inside. Open / Outside are not stops.
-    open.set(1)
+    open.set(true)
     zeus.engine_layout(480, 320)
     must(in_cycle(close) != 0, "close is in the trap")
     must(in_cycle(inside) != 0, "inside button is in the trap")
@@ -85,7 +85,7 @@ fn main() {
     must(in_cycle(outside) == 0, "outside button is not in the trap")
 
     // Select still closes on Escape without picking.
-    open.set(0)
+    open.set(false)
     zeus.engine_layout(480, 320)
     zeus.engine_click_text("Small")
     zeus.engine_mouseup()

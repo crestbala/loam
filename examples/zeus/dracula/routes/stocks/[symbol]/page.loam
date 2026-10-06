@@ -19,7 +19,7 @@ fn paint_chart() {
     let n = labels.len
     zui.Card(title = "Daily close, rupees", subtitle = "{{first}} to {{last}}. {{n}} points: the last close in each bucket. Unadjusted.") {
         zui.LineChart(labels, names, vals, 720, 300, fit = true, decimals = stocks.decimals(),
-                      label_every = 0, dots = false)
+                      labelEvery = 0, dots = false)
     }
 }
 
@@ -36,7 +36,7 @@ fn paint(sym: string) {
     if st == 2 {
         zui.Empty(icon = zeus.IC_INFO, title = "No cached closes for {{sym}}",
                   body = "The symbol is not in a fetched NSE bhavcopy. Search, or load closes on the Data page.") {
-            zui.Button(label = "Search stocks", size = zeus.SIZE.Sm, on_click = fn() { router.navigate("/stocks") })
+            zui.Button(label = "Search stocks", size = zeus.Size.Sm, on_click = fn() { router.navigate("/stocks") })
         }
         return
     }
@@ -45,24 +45,24 @@ fn paint(sym: string) {
         zui.Title(name)
     }
     zui.Row(8) {
-        zui.Badge(sym, zeus.TINT.Mute)
+        zui.Badge(sym, zeus.Tint.Mute)
         let isin = stocks.isin()
         if isin.len > 0 {
-            zui.Badge(isin, zeus.TINT.Mute)
+            zui.Badge(isin, zeus.Tint.Mute)
         }
-        zui.Badge("NSE close, not a fund", zeus.TINT.Warn)
+        zui.Badge("NSE close, not a fund", zeus.Tint.Warn)
     }
     paint_chart()
     ui.StatGrid(stocks.stat_cells())
 }
 
-fn page(p: Params) {
+fn Page(p: Params) -> Node {
     let sym = router.param(p, "symbol")
-    zui.Column(spacing.SECTION) {
+    return zui.Column(spacing.SECTION) {
         zui.Row(8) {
             zui.Heading("Stock")
             zui.Grow()
-            zui.Button(label = "Search stocks", look = zeus.LOOK.Ghost, on_click = fn() { router.navigate("/stocks") })
+            zui.Button(label = "Search stocks", look = zeus.Look.Ghost, on_click = fn() { router.navigate("/stocks") })
         }
         if stocks.started() {
             stocks.focus(sym)
@@ -81,6 +81,7 @@ fn page(p: Params) {
             zeus.Text("Loading")
         }
     }
+
 }
 
 fn meta(p: Params) -> Meta {

@@ -20,9 +20,9 @@ fn eq(what: string, got: int, want: int) {
 }
 
 // A component: a setup function that runs once and returns bindings.
-fn Counter(n: Signal<int>) {
+fn Counter(n: Signal<int>) -> Node {
     setups = setups + 1
-    zui.Column(4) {
+    return zui.Column(4) {
         zeus.Text("n={{n.get()}}")
         zui.Button("+", on_click = fn() => n.set(n.get() + 1))
     }

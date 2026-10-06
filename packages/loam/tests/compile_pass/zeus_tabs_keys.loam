@@ -17,12 +17,12 @@ fn main() {
     let tab = zeus.signal(0)
     let pick = zeus.signal(0)
     let hits = zeus.signal(0)
-    let tree = zeus.Box(align_direction = zeus.DIRECTION.Column, padding = 16, spacing = 12) {
-        zui.Button("Before", look = zeus.LOOK.Outline, size = zeus.SIZE.Md,
+    let tree = zeus.Box(style = Style(direction = zeus.Direction.Column, gap = 12, padding = edges(16))) {
+        zui.Button("Before", look = zeus.Look.Outline, size = zeus.Size.Md,
                     on_click = fn() => hits.set(hits.get() + 1))
         zui.Tabs(tab, []string { "One", "Two", "Three" })
         zui.RadioGroup(pick, []string { "First", "Second", "Third" })
-        zui.Button("After", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
+        zui.Button("After", look = zeus.Look.Outline, size = zeus.Size.Md)
     }
     zeus.root(tree)
     zeus.pump_frame()

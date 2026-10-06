@@ -22,17 +22,17 @@ fn expect(ok: bool, what: string) {
     sys.exit(1)
 }
 
-fn RowOf(i: int, s: string) {
-    zeus.Text(s)
+fn RowOf(i: int, s: string) -> Node {
+    return zeus.Text(s)
 }
 
-fn PersonRow(i: int, p: Person) {
-    zeus.Box(align_direction = DIRECTION.Row, height = 36) {
+fn PersonRow(i: int, p: Person) -> Node {
+    return zeus.Box(style = Style(height = px(36), direction = Direction.Row)) {
         // Zero basis + grow: cells split the row evenly, so columns stay
         // under the header no matter how long the strings are.
-        zeus.set_flex_basis_zero(zeus.Text(p.name, grow = 1))
-        zeus.set_flex_basis_zero(zeus.Text(p.role, grow = 1))
-        zeus.set_flex_basis_zero(zeus.Text(p.status, grow = 1))
+        zeus.set_flex_basis_zero(zeus.Text(p.name, style = Style(grow = 1)))
+        zeus.set_flex_basis_zero(zeus.Text(p.role, style = Style(grow = 1)))
+        zeus.set_flex_basis_zero(zeus.Text(p.status, style = Style(grow = 1)))
     }
 }
 
@@ -58,9 +58,9 @@ fn main() {
     push(cols, TableCol { title: "Status", width: 0 })
 
     zeus.snapshot(240, 240, fn() -> Node {
-        zeus.Box(align_direction = DIRECTION.Column) {
+        zeus.Box(style = Style(direction = Direction.Column)) {
             zui.VirtualList(items, 36, RowOf)
-            zeus.Box(height = 200) {
+            zeus.Box(style = Style(height = px(200))) {
                 zui.VirtualTable(rows, cols, 36, PersonRow)
             }
         }

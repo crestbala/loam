@@ -9,7 +9,7 @@ fn spec() -> []TableCol {
     let mut h = []TableCol {}
     push(h, TableCol { title: "Company", width: 0 })
     push(h, TableCol { title: "Symbol", width: 120 })
-    push(h, TableCol { title: "Last close", width: 110, align: ALIGN.End })
+    push(h, TableCol { title: "Last close", width: 110, align: Align.End })
     push(h, TableCol { title: "As of", width: 110 })
     return h
 }
@@ -50,12 +50,12 @@ fn paint_hits() {
     }
 }
 
-fn page(p: Params) {
-    zui.Column(spacing.SECTION) {
+fn Page(p: Params) -> Node {
+    return zui.Column(spacing.SECTION) {
         zui.Heading("Stocks")
         zui.Body("Daily closing prices from the NSE bhavcopy, cached apart from the fund NAVs. Closes are as published, not adjusted for splits or bonuses. No signal, no backtest, no order.")
         if stocks.started() {
-            zui.TextInput(stocks.search_field(), "Symbol or company name", width = 360)
+            zui.TextInput(stocks.search_field(), "Symbol or company name", style = Style(width = px(360)))
             zeus.effect(fn() { stocks.search_tick() })
             zui.Match(stocks.search_generation(), fn(g) {
                 if g >= 0 {
@@ -66,6 +66,7 @@ fn page(p: Params) {
             zeus.Text("Search the cached stocks")
         }
     }
+
 }
 
 fn meta(p: Params) -> Meta {

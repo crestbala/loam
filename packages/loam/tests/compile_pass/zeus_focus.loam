@@ -17,15 +17,15 @@ fn expect(ok: bool, what: string) {
 fn main() {
     let name = zeus.signal("")
     let draft = zeus.signal("")
-    let agree = zeus.signal(0)
-    let pick = zeus.signal(0)
+    let agree = zeus.signal(false)
+    let pick = zeus.signal(false)
     let saves = zeus.signal(0)
     zeus.window("focus", 640, 480)
-    zeus.root(zeus.Box(padding = 24, align_direction = DIRECTION.Column, spacing = 8) {
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 8, padding = edges(24))) {
         zui.TextInput(name, "Name")
         zui.Checkbox("Agree", agree)
         zui.Switch(pick)
-        zui.Button("Save", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
+        zui.Button("Save", look = zeus.Look.Solid, size = zeus.Size.Md,
                     on_click = fn() => saves.set(saves.get() + 1))
         zui.TextArea(draft, "Note")
     })
@@ -81,12 +81,12 @@ fn main() {
     zeus.engine_fill_focus()
     expect(zeus.engine_focus_node(0) == sw, "focus switch")
     zeus.engine_key(32)
-    expect(pick.get() == 1, "space toggled switch")
+    expect(pick.get(), "space toggled switch")
     expect(zeus.engine_focus_step(1) == 1, "back to checkbox")
     zeus.engine_fill_focus()
     expect(zeus.engine_focus_node(0) == cb, "focus checkbox")
     zeus.engine_key(32)
-    expect(agree.get() == 1, "space checked checkbox")
+    expect(agree.get(), "space checked checkbox")
 
     // The focus ring paints only for keyboard focus: 4 ring fills appear
     // after a tab step; a pointer click clears the ring again.

@@ -32,15 +32,17 @@ fn run_ms(ms: int) {
 
 fn main() {
     zeus.window("overlay exit", 360, 300)
-    let open = zeus.signal(0)
-    let dlg = zeus.signal(0)
+    let open = zeus.signal(false)
+    let dlg = zeus.signal(false)
     let tree = zui.Page() {
-        let trigger = zui.Button("Menu", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
-        zui.Popover(trigger, open = open, place = zui.PLACE.PlaceBelow, width = 180) {
-            zeus.Text("Rename", color = zeus.ink(), font = spacing.FONT_BODY)
+        zui.Popover(open = open,
+                    place = zui.Place.PlaceBelow,
+                    style = Style(width = px(180)),
+                    trigger = || { zui.Button("Menu", look = zeus.Look.Outline, size = zeus.Size.Md) }) {
+            zeus.Text("Rename", style = Style(font = spacing.FONT_BODY, color = zeus.ink()))
         }
         zui.Dialog(dlg, title = "Confirm") {
-            zeus.Text("Body", color = zeus.ink(), font = spacing.FONT_BODY)
+            zeus.Text("Body", style = Style(font = spacing.FONT_BODY, color = zeus.ink()))
         }
     }
     zeus.root(tree)
@@ -53,14 +55,14 @@ fn main() {
     must(zeus.proof_anim_live() == 0, "settled before open")
 
     // --- popover: close fades out ---
-    open.set(1)
+    open.set(true)
     run_ms(400)
     must(zeus.text_visible("Rename"), "popover open")
     let open_draws = zeus.draw_count()
     must(open_draws > closed_draws, "open panel adds draw ops")
     must(zeus.proof_anim_live() == 0, "enter fade landed")
 
-    open.set(0)
+    open.set(false)
     zeus.pump_frame()
     must(!zeus.text_visible("Rename"), "closed for the tree the same frame")
     must(zeus.draw_count() == open_draws, "closed panel still painted this frame")
@@ -74,28 +76,28 @@ fn main() {
     must(zeus.engine_step_dt(16) == 0, "idle wants zero frames after the exit")
 
     // --- reopen mid-exit retargets: no gap, no pop ---
-    open.set(1)
+    open.set(true)
     run_ms(400)
-    open.set(0)
+    open.set(false)
     run_ms(32)
     must(zeus.draw_count() == open_draws, "mid-exit: still painted")
-    open.set(1)
+    open.set(true)
     zeus.pump_frame()
     must(zeus.text_visible("Rename"), "reopened mid-exit")
     must(zeus.draw_count() == open_draws, "reopened: painted without a gap")
     run_ms(400)
     must(zeus.proof_anim_live() == 0, "re-entry landed")
-    open.set(0)
+    open.set(false)
     run_ms(400)
     must(zeus.draw_count() == closed_draws, "closed again")
 
     // --- dialog: hidden by the scrim, fades on every open and close ---
-    dlg.set(1)
+    dlg.set(true)
     run_ms(400)
     must(zeus.text_visible("Body"), "dialog open")
     let dlg_draws = zeus.draw_count()
     must(dlg_draws > closed_draws, "dialog adds draw ops")
-    dlg.set(0)
+    dlg.set(false)
     zeus.pump_frame()
     must(!zeus.text_visible("Body"), "dialog closed for the tree")
     must(zeus.draw_count() == dlg_draws, "dialog still painted during exit")
@@ -103,20 +105,20 @@ fn main() {
     run_ms(400)
     must(zeus.draw_count() == closed_draws, "dialog gone after the fade")
     // Second open must animate too (the panel's own show never changes).
-    dlg.set(1)
+    dlg.set(true)
     zeus.pump_frame()
     must(zeus.proof_anim_live() > 0, "second open animates in")
     run_ms(400)
-    dlg.set(0)
+    dlg.set(false)
     run_ms(400)
     must(zeus.draw_count() == closed_draws, "dialog closed")
 
     // --- reduced motion: the exit is a jump ---
     zeus.set_reduced_motion(true)
-    open.set(1)
+    open.set(true)
     zeus.pump_frame()
     must(zeus.draw_count() == open_draws, "reduced: open jumps")
-    open.set(0)
+    open.set(false)
     zeus.pump_frame()
     must(zeus.draw_count() == closed_draws, "reduced: close jumps")
     must(zeus.proof_anim_live() == 0, "reduced: no exit track")

@@ -5,8 +5,8 @@ import "std:zui"
 
 let mut opts: []string = []string {}
 
-fn Menu(sel: Signal<int>) {
-    zui.Select(sel, opts)
+fn Menu(sel: Signal<int>) -> Node {
+    return zui.Select(sel, opts)
 }
 
 fn main() {
@@ -14,7 +14,7 @@ fn main() {
     push(opts, "B")
     let sel = zeus.signal(1)
     zeus.snapshot(240, 80, fn() -> Node {
-        zui.Row(SPACE.Sm) {
+        zui.Row(Space.Sm) {
             Menu(sel)
         }
     })

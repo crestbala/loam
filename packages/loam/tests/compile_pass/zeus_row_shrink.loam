@@ -18,15 +18,15 @@ fn expect(ok: bool, what: string) {
 }
 
 fn R(text: fn() -> string, flexed: int, tag: string) -> Node {
-    zeus.Box(align_direction = DIRECTION.Row, spacing = 4, width = 200) {
-        zeus.Text(text, grow = flexed, color = "#000000")
-        zui.Button(tag, width = 40, height = 20)
+    zeus.Box(style = Style(width = px(200), direction = Direction.Row, gap = 4)) {
+        zeus.Text(text, style = Style(grow = flexed, color = "#000000"))
+        zui.Button(tag, style = Style(width = px(40), height = px(20)))
     }
 }
 
 fn main() {
     zeus.snapshot(220, 140, fn() -> Node {
-        zeus.Box(align_direction = DIRECTION.Column, spacing = 8) {
+        zeus.Box(style = Style(direction = Direction.Column, gap = 8)) {
             R(fn() -> string { "a long flexible label that cannot fit" }, 1, "b1")
             R(fn() -> string { "another long flexible label that cannot fit" }, 0, "b2")
         }

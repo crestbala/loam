@@ -8,24 +8,24 @@ import "routes/layout.loam" as r_root_layout
 import "routes/not-found.loam" as r_root_not_found
 import "routes/page.loam" as r_root_page
 
-fn b_root_page(p: Params) {
-    r_root_page.page(p)
+fn b_root_page(p: Params) -> Node {
+    return r_root_page.Page(p)
 }
 
 fn m_root_page(p: Params) -> Meta {
     return r_root_page.meta(p)
 }
 
-fn b_blog_page(p: Params) {
-    r_blog_layout.layout(fn() { r_blog_page.page(p) })
+fn b_blog_page(p: Params) -> Node {
+    return r_blog_layout.Layout(fn() { r_blog_page.Page(p) })
 }
 
 fn m_blog_page(p: Params) -> Meta {
     return r_blog_page.meta(p)
 }
 
-fn b_blog_slug_page(p: Params) {
-    r_blog_layout.layout(fn() { r_blog_slug_page.page(p) })
+fn b_blog_slug_page(p: Params) -> Node {
+    return r_blog_layout.Layout(fn() { r_blog_slug_page.Page(p) })
 }
 
 fn m_blog_slug_page(p: Params) -> Meta {
@@ -44,8 +44,8 @@ fn routes() -> []Route {
     }
 }
 
-fn app() {
-    r_root_layout.layout(fn() {
-        router.Router(routes(), RouterProps { not_found: fn() { r_root_not_found.not_found() } })
+fn app() -> Node {
+    return r_root_layout.Layout(fn() {
+        router.Router(routes(), RouterProps { notFound: fn() { r_root_not_found.NotFound() } })
     })
 }

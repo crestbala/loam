@@ -1,23 +1,23 @@
 import "std:zeus"
 import "std:zui"
 
-fn Readout(n: int) {
-    zeus.Text("{{n}}")
+fn Readout(n: int) -> Node {
+    return zeus.Text("{{n}}")
 }
 
-fn CounterPanel(initial: int) {
-    let mut count = initial
-    zeus.Box(align_direction = DIRECTION.Column, padding = 16, spacing = 12) {
-        zeus.Text("Counter", font = 22)
-        zeus.Box(align_direction = DIRECTION.Row, spacing = 8) {
-            zui.Button("+1", on_click = fn() { count = count + 1 })
-            Readout(count)
+fn CounterPanel(initial: int) -> Node {
+    let count = zeus.signal(initial)
+    return zeus.Box(style = Style(direction = Direction.Column, gap = 12, padding = edges(16))) {
+        zeus.Text("Counter", style = Style(font = 22))
+        zeus.Box(style = Style(direction = Direction.Row, gap = 8)) {
+            zui.Button("+1", on_click = fn() { count.set(count.get() + 1) })
+            Readout(count.get())
         }
     }
 }
 
 fn main() {
-    zeus.App("Counter", fn() {
-        CounterPanel(0)
+    zeus.App("Counter", fn() -> Node {
+        return CounterPanel(0)
     }, 400, 240)
 }

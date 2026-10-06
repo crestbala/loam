@@ -18,20 +18,20 @@ fn expect(ok: bool, what: string) {
 fn main() {
     let flag = zeus.signal(0)
     zeus.snapshot(300, 160, fn() -> Node {
-        zeus.Box(align_direction = DIRECTION.Column, spacing = 8) {
-            zeus.Box(align_direction = DIRECTION.Row, spacing = 4, a11y_label = "r1") {
-                zeus.Box(width = 60, height = 10, background = "#ff0000")
-                zeus.Box(grow = 1, height = 10, background = "#00ff00",
-                         a11y_label = "flexy")
-                zeus.Box(width = 40, height = 10, background = "#0000ff",
-                         a11y_label = "fixr")
+        zeus.Box(style = Style(direction = Direction.Column, gap = 8)) {
+            zeus.Box(style = Style(direction = Direction.Row, gap = 4), label = "r1") {
+                zeus.Box(style = Style(width = px(60), height = px(10), background = "#ff0000"))
+                zeus.Box(style = Style(height = px(10), grow = 1, background = "#00ff00"),
+                         label = "flexy")
+                zeus.Box(style = Style(width = px(40), height = px(10), background = "#0000ff"),
+                         label = "fixr")
             }
             // Static hide: out of flow, so the sibling below does not move.
-            zeus.Box(show = false, height = 30, a11y_label = "gone")
-            zeus.Box(height = 10, a11y_label = "after")
+            zeus.Box(style = Style(height = px(30), display = Display.None), label = "gone")
+            zeus.Box(style = Style(height = px(10)), label = "after")
             // Reactive hide goes through the `visible` Signal: `show` is a
             // plain bool, read once at build.
-            zeus.Box(visible = flag, height = 10, a11y_label = "tog")
+            zeus.Box(visible = flag.get() != 0, style = Style(height = px(10)), label = "tog")
         }
     })
     let flexy = zeus.engine_find_text("flexy")

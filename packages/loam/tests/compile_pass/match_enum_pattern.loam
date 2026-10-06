@@ -4,7 +4,7 @@
 import "std:fmt"
 import "std:sys"
 
-enum LOOK {
+enum Look {
     Solid = 0,
     Soft = 1,
     Outline = 2,
@@ -13,8 +13,8 @@ enum LOOK {
 
 fn name_of(look: int) -> string {
     match look {
-        LOOK.Solid => { return "solid" }
-        LOOK.Soft | LOOK.Outline => { return "layered" }
+        Look.Solid => { return "solid" }
+        Look.Soft | Look.Outline => { return "layered" }
         _ => { return "bare" }
     }
 }
@@ -27,10 +27,10 @@ fn check(got: string, want: string) {
 }
 
 fn main() {
-    check(name_of(LOOK.Solid), "solid")
-    check(name_of(LOOK.Soft), "layered")
-    check(name_of(LOOK.Outline), "layered")
-    check(name_of(LOOK.Ghost), "bare")
+    check(name_of(Look.Solid), "solid")
+    check(name_of(Look.Soft), "layered")
+    check(name_of(Look.Outline), "layered")
+    check(name_of(Look.Ghost), "bare")
     check(name_of(99), "bare")
     fmt.println("match enum pattern ok")
 }

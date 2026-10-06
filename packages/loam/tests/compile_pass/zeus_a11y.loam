@@ -42,7 +42,7 @@ fn has(hay: string, needle: string) -> int {
 
 fn main() {
     zeus.snapshot(320, 200, fn() -> Node {
-        zeus.Box(align_direction = DIRECTION.Column) {
+        zeus.Box(style = Style(direction = Direction.Column)) {
             zeus.Text("hello world")
             zui.Button(label = "Save")
         }

@@ -14,7 +14,7 @@ fn main() {
     for i in 1..4 {
         push(nums, i)
     }
-    let top = zeus.Box(align_direction = DIRECTION.Column)
+    let top = zeus.Box(style = Style(direction = Direction.Column))
     zeus.slot(top, fn() {
         for i in 0..nums.len {
             let v = nums[i]
@@ -24,8 +24,9 @@ fn main() {
             let a = rows[i].a
             zeus.Text(a)
         }
-        let shown = zeus.Text("shown")
-        zeus.show(shown, open)
+        zeus.Box(visible = open.get() != 0) {
+            zeus.Text("shown")
+        }
     })
     zeus.snapshot(240, 160, fn() -> Node { top })
 }

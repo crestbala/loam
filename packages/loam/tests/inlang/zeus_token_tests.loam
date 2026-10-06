@@ -107,8 +107,8 @@ fn every_accent_meets_aa_in_both_appearances() {
 #[test]
 fn spacing_is_on_a_four_point_grid() {
     let steps = []int {
-        SPACE.None, SPACE.Exxxs, SPACE.Exxs, SPACE.Exs, SPACE.Xs, SPACE.Sm,
-        SPACE.Md, SPACE.Lg, SPACE.Xl, SPACE.Xxl, SPACE.Xxxl, SPACE.Xxxxl,
+        Space.None, Space.Exxxs, Space.Exxs, Space.Exs, Space.Xs, Space.Sm,
+        Space.Md, Space.Lg, Space.Xl, Space.Xxl, Space.Xxxl, Space.Xxxxl,
     }
     for i in 0..steps.len {
         test.assert_eq_int(steps[i] % 4, 0)
@@ -124,7 +124,7 @@ fn spacing_is_on_a_four_point_grid() {
 /// Motion has exactly three durations, ordered.
 #[test]
 fn motion_durations_are_ordered() {
-    test.assert_eq_int(MOTION.Fast, 100)
-    test.assert_eq_int(MOTION.Base, 170)
-    test.assert_eq_int(MOTION.Slow, 270)
+    test.assert_eq_int(Motion.Fast, 100)
+    test.assert_eq_int(Motion.Base, 170)
+    test.assert_eq_int(Motion.Slow, 270)
 }

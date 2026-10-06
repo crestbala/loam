@@ -21,8 +21,8 @@ fn main() {
     let bg = zeus.signal("#ff0000")
     let op = zeus.signal(100)
     let mut box_id = 0
-    zeus.root(zeus.Box(padding = 10) {
-        let b = zeus.Box(width = 50, height = 20, background = "#ff0000")
+    zeus.root(zeus.Box(style = Style(padding = edges(10))) {
+        let b = zeus.Box(style = Style(width = px(50), height = px(20), background = "#ff0000"))
         box_id = b.id
         // A string prop (`SET.Background` parses a hex color) and an int prop, both
         // paint-only.

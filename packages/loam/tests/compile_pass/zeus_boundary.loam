@@ -8,18 +8,20 @@ import "std:sys"
 import "std:zeus"
 import "std:zui"
 
-fn Boom() {
+fn Boom() -> Node {
     let s = zeus.signal(7)
-    zeus.Text("boom {{s.get()}}")
-    let a = []int { 1, 2 }
-    let mut i = 9
-    let bad = a[i]
-    zeus.Text("unreachable {{bad}}")
+    return Column(0) {
+        zeus.Text("boom {{s.get()}}")
+        let a = []int { 1, 2 }
+        let mut i = 9
+        let bad = a[i]
+        zeus.Text("unreachable {{bad}}")
+    }
 }
 
 fn main() {
     zeus.snapshot(240, 160, fn() -> Node {
-        zeus.Box(align_direction = DIRECTION.Column) {
+        zeus.Box(style = Style(direction = Direction.Column)) {
             zui.Boundary(Boom, fn(msg) {
                 zeus.Text("recovered")
             })

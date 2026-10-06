@@ -52,17 +52,17 @@ fn srv_main() {
     sys.exit(0)
 }
 
-fn Panel(n: Signal<int>) {
-    zeus.Box(align_direction = DIRECTION.Column, padding = 8, width = 220) {
-        zeus.Text("async: {{n.get()}}", font = 18)
+fn Panel(n: Signal<int>) -> Node {
+    return zeus.Box(style = Style(width = px(220), direction = Direction.Column, padding = edges(8))) {
+        zeus.Text("async: {{n.get()}}", style = Style(font = 18))
     }
 }
 
 fn cli_main() {
     sys.write_file("/tmp/loam_async_rpc.port", "")
     let n = zeus.signal(0)
-    zeus.App("async-rpc", fn() {
-        Panel(n)
+    zeus.App("async-rpc", fn() -> Node {
+        return Panel(n)
     }, 240, 90)
 
     // Fake async op: a spawn completes on the very next pump's tick; the

@@ -8,7 +8,7 @@ import "std:zui"
 fn main() {
     let count = zeus.signal(5)
     zeus.snapshot(320, 200, fn() -> Node {
-        zeus.Box(align_direction = DIRECTION.Column) {
+        zeus.Box(style = Style(direction = Direction.Column)) {
             zeus.Text("smoke")
             zui.Button(label = "Go")
         }

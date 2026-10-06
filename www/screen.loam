@@ -5,25 +5,17 @@ import "std:colors"
 import "std:zui"
 import "cache.loam"
 
-fn NavItem(page: Signal<int>, id: int, label: string) {
-    zeus.Box(
-        padding_x = 12,
-        padding_y = 6,
-        radius = 8,
-        background = fn() -> string {
-        if page.get() == id {
-            return colors.wash()
-        }
-        return ""
-    },
+fn NavItem(page: Signal<int>, id: int, label: string) -> Node {
+    return zeus.Box(
+        style = merge(Style(padding = edges2(6, 12), radius = corners(8)), Style(background = if page.get() == id { colors.wash() } else { "" })),
         on_click = fn() => page.set(id)
     ) {
-        zeus.Text(label, color = zeus.ink(), font = 13)
+        zeus.Text(label, style = Style(font = 13, color = zeus.ink()))
     }
 }
 
-fn Nav(page: Signal<int>) {
-    zeus.Box(width = 240, align_direction = DIRECTION.Column, spacing = 4) {
+fn Nav(page: Signal<int>) -> Node {
+    return zeus.Box(style = Style(width = px(240), direction = Direction.Column, gap = 4)) {
         zui.Overline("Start")
         NavItem(page, 0, "Overview")
         NavItem(page, 1, "Install")
@@ -47,20 +39,19 @@ fn Nav(page: Signal<int>) {
     }
 }
 
-fn Block(id: int, page: Signal<int>) {
-    let n = zeus.Box(align_direction = DIRECTION.Column, spacing = 8) {
-        zeus.Text(cache.title(id), color = zeus.ink(), font = 22)
-        zeus.Text(cache.lead(id), color = colors.mute(), font = 14)
-        zeus.Text(cache.body(id), color = zeus.ink(), font = 13)
-        zeus.Box(background = colors.wash(), padding = 12, radius = 8) {
-            zeus.Text(cache.sample(id), color = zeus.ink(), font = 12)
+fn Block(id: int, page: Signal<int>) -> Node {
+    return zui.Show(when = page.get() == id, style = Style(gap = 8)) {
+        zeus.Text(cache.title(id), style = Style(font = 22, color = zeus.ink()))
+        zeus.Text(cache.lead(id), style = Style(font = 14, color = colors.mute()))
+        zeus.Text(cache.body(id), style = Style(font = 13, color = zeus.ink()))
+        zeus.Box(style = Style(padding = edges(12), radius = corners(8), background = colors.wash())) {
+            zeus.Text(cache.sample(id), style = Style(font = 12, color = zeus.ink()))
         }
     }
-    zeus.show_eq(n, page, id)
 }
 
-fn Article(page: Signal<int>) {
-    zeus.Box(align_direction = DIRECTION.Column, spacing = 16, grow = 1) {
+fn Article(page: Signal<int>) -> Node {
+    return zeus.Box(style = Style(direction = Direction.Column, gap = 16, grow = 1)) {
         let mut i = 0
         while i < cache.n() {
             Block(i, page)
@@ -69,13 +60,15 @@ fn Article(page: Signal<int>) {
     }
 }
 
-fn Screen(chip: string, page: Signal<int>) {
-    zeus.Box(align_direction = DIRECTION.Column, spacing = 16, padding = 28,
-             background = colors.paper()) {
+fn Screen(chip: string, page: Signal<int>) -> Node {
+    return zeus.Box(style = Style(direction = Direction.Column,
+                           gap = 16,
+                           padding = edges(28),
+                           background = colors.paper())) {
         zui.Row(8) {
-            zeus.Text("Loam", color = zeus.ink(), font = 22)
-            zui.Chip(chip, zeus.TINT.Ink)
-            zui.Badge("Docs.Page", zeus.TINT.Ok)
+            zeus.Text("Loam", style = Style(font = 22, color = zeus.ink()))
+            zui.Chip(chip, zeus.Tint.Ink)
+            zui.Badge("Docs.Page", zeus.Tint.Ok)
         }
         zui.Alert("RPC", "Sidebar writes a signal. Copy was fetched once over Docs.Page (gRPC-Web).")
         zui.Row(24) {

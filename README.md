@@ -123,7 +123,7 @@ Call imported items as `foo.bar(...)`.
 | Import | What it is |
 |---|---|
 | `std:fmt` | Stdout. `fmt.println` is compile-time lowering to length-based writes, not `printf`. |
-| `std:zeus` | UI toolkit + design system in one module: one `Node` tree, signals, `Box` / `Text` / `Button` / `App`, themed chrome (`Card`, `Button` with `LOOK` / `SIZE`, `Dialog`, `Tabs`, `Navbar`, charts, `DatePicker`). Same source on Cocoa, iOS, Android, and wasm Canvas2D (no HTML DOM). |
+| `std:zeus` | UI toolkit + design system in one module: one `Node` tree, signals, `Box` / `Text` / `Button` / `App`, themed chrome (`Card`, `Button` with `Look` / `Size`, `Dialog`, `Tabs`, `Navbar`, charts, `DatePicker`). Same source on Cocoa, iOS, Android, and wasm Canvas2D (no HTML DOM). |
 | `std:http` | Unary RPC over gRPC-Web (HTTP/1.1) and h2c. `#[proto]` structs, no REST routes. |
 | `std:maya` | Tiny 3D/2D engine. Scene and tracer in Loam; C is the event loop and present. |
 | `std:raygui` | Immediate-mode GUI: [raygui](https://github.com/raysan5/raygui) controls on [raylib](https://www.raylib.com). No retained tree; the frame loop lives in Loam. Host seam: `raygui_plat.c`; RAM probe included. |
@@ -142,23 +142,24 @@ flag, not an import. Web is Canvas2D wasm.
 
 ```loam
 import "std:zeus"
+import "std:zui"
 
 fn main() {
     let n = zeus.signal(0)
     zeus.App("Count", fn() {
-        zeus.Box(align_direction = DIRECTION.Column, padding = 16, spacing = 8) {
-            zeus.Text("Count", font = 22)
-            zeus.Text("{{n.get()}}", font = 28)
-            zeus.Box(align_direction = DIRECTION.Row, spacing = 8) {
-                zeus.Button("-", on_click = fn() => n.set(n.get() - 1))
-                zeus.Button("+", on_click = fn() => n.set(n.get() + 1))
+        zeus.Box(style = Style(padding = edges(16), gap = 8)) {
+            zeus.Text("Count", style = Style(font = 22))
+            zeus.Text("{{n.get()}}", style = Style(font = 28))
+            zeus.Box(style = Style(direction = Direction.Row, gap = 8)) {
+                zui.Button("-", on_click = fn() => n.set(n.get() - 1))
+                zui.Button("+", on_click = fn() => n.set(n.get() + 1))
             }
         }
     })
 }
 ```
 
-The themed look (zinc palette, `Card`, `Button` with `LOOK` / `SIZE`, dialogs,
+The themed look (zinc palette, `Card`, `Button` with `Look` / `Size`, dialogs,
 charts, `DatePicker`) ships inside [`std:zeus`](packages/zeus/std/zeus.loam).
 The catalog is [`examples/zeus/gallery`](examples/zeus/gallery). Zeus paints
 its own theme on every host; Cocoa / UIKit / Android widgets are not used.

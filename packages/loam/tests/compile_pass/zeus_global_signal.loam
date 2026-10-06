@@ -27,19 +27,16 @@ fn check(what: string, got: int, want: int) {
 
 fn main() {
     zeus.window("globals", 60, 30)
-    // Style props are plain data: evaluated once, at build.
-    let box = zeus.Box(width = 10, height = 10, background = shade())
-    check("prop evaluated at build", repaints, 1)
+    // A style that reads a signal follows it: the read happens inside the
+    // node's style effect.
+    zeus.Box(style = Style(width = px(10), height = px(10), background = shade()))
+    check("style evaluated at build", repaints, 1)
 
     dark.set(1)
     check("global set survives startup", dark.get(), 1)
-    check("plain prop is not re-evaluated", repaints, 1)
-
-    // Reactive styling is opt-in, through an effect on the node.
-    zeus.styled(box, || { zeus.set_background(box, zeus.parse_hex_color(shade())) })
-    check("effect ran once when attached", repaints, 2)
+    check("style re-ran on the global signal", repaints, 2)
     dark.set(0)
-    check("effect re-runs on the signal", repaints, 3)
+    check("and again", repaints, 3)
     dark.set(1)
 
     // A local signal must not be handed an id the global already owns.

@@ -12,12 +12,9 @@ fn expect(ok: bool, what: string) {
     sys.exit(1)
 }
 
-fn RowOf(i: int, s: string) {
-    let mut h = 20
-    if i % 2 == 1 {
-        h = 40
-    }
-    zeus.Box(height = h) {
+fn RowOf(i: int, s: string) -> Node {
+    let h = if i % 2 == 1 { 40 } else { 20 }
+    return zeus.Box(style = Style(height = px(h))) {
         zeus.Text(s)
     }
 }

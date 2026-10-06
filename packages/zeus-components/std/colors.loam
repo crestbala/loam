@@ -119,11 +119,11 @@ fn info_fill_hover() -> string { return role_token(ROLE.InfoS10) }
 
 fn tint_of(kind: int) -> string {
     match kind {
-        TINT.Ok => { return ok() }
-        TINT.Mute => { return mute() }
-        TINT.Dim => { return dim() }
-        TINT.Danger => { return danger() }
-        TINT.Warn => { return warn() }
+        Tint.Ok => { return ok() }
+        Tint.Mute => { return mute() }
+        Tint.Dim => { return dim() }
+        Tint.Danger => { return danger() }
+        Tint.Warn => { return warn() }
         _ => { return ink() }
     }
 }
@@ -551,10 +551,10 @@ fn ac(step: int) -> string {
 /// Text on the accent's solid fill — dark or light, whichever passes.
 /// Text on a semantic solid fill, picked per tier by contrast.
 fn on_tint(kind: int) -> string {
-    if kind == TINT.Ok { return role_token(ROLE.OnOk) }
-    if kind == TINT.Warn { return role_token(ROLE.OnWarn) }
-    if kind == TINT.Danger { return role_token(ROLE.OnDanger) }
-    if kind == TINT.Info { return role_token(ROLE.OnInfo) }
+    if kind == Tint.Ok { return role_token(ROLE.OnOk) }
+    if kind == Tint.Warn { return role_token(ROLE.OnWarn) }
+    if kind == Tint.Danger { return role_token(ROLE.OnDanger) }
+    if kind == Tint.Info { return role_token(ROLE.OnInfo) }
     return role_token(ROLE.OnAccent)
 }
 /// Elevation shadow colour.
@@ -563,39 +563,39 @@ fn on_tint(kind: int) -> string {
 
 
 
-/// Wash / border / ink for a `TINT`, so a widget takes one token and gets a
+/// Wash / border / ink for a `Tint`, so a widget takes one token and gets a
 /// consistent tier instead of picking three colours by hand.
 fn tint_bg(kind: int) -> string {
-    if kind == TINT.Ok { return ok_bg() }
-    if kind == TINT.Warn { return warn_bg() }
-    if kind == TINT.Danger { return danger_bg() }
-    if kind == TINT.Info { return info_bg() }
+    if kind == Tint.Ok { return ok_bg() }
+    if kind == Tint.Warn { return warn_bg() }
+    if kind == Tint.Danger { return danger_bg() }
+    if kind == Tint.Info { return info_bg() }
     return n(3)
 }
 
 fn tint_line(kind: int) -> string {
-    if kind == TINT.Ok { return ok_line() }
-    if kind == TINT.Warn { return warn_line() }
-    if kind == TINT.Danger { return danger_line() }
-    if kind == TINT.Info { return info_line() }
+    if kind == Tint.Ok { return ok_line() }
+    if kind == Tint.Warn { return warn_line() }
+    if kind == Tint.Danger { return danger_line() }
+    if kind == Tint.Info { return info_line() }
     return n(6)
 }
 
 fn tint_fill(kind: int) -> string {
-    if kind == TINT.Ok { return ok_fill_solid() }
-    if kind == TINT.Warn { return warn_fill_solid() }
-    if kind == TINT.Danger { return danger_fill_solid() }
-    if kind == TINT.Info { return info_fill_solid() }
+    if kind == Tint.Ok { return ok_fill_solid() }
+    if kind == Tint.Warn { return warn_fill_solid() }
+    if kind == Tint.Danger { return danger_fill_solid() }
+    if kind == Tint.Info { return info_fill_solid() }
     return n(9)
 }
 
 fn tint_ink(kind: int) -> string {
-    if kind == TINT.Ok { return ok_ink() }
-    if kind == TINT.Warn { return warn_ink() }
-    if kind == TINT.Danger { return danger_ink() }
-    if kind == TINT.Info { return info_ink() }
-    if kind == TINT.Mute { return n(11) }
-    if kind == TINT.Dim { return n(10) }
+    if kind == Tint.Ok { return ok_ink() }
+    if kind == Tint.Warn { return warn_ink() }
+    if kind == Tint.Danger { return danger_ink() }
+    if kind == Tint.Info { return info_ink() }
+    if kind == Tint.Mute { return n(11) }
+    if kind == Tint.Dim { return n(10) }
     return n(12)
 }
 
@@ -917,7 +917,7 @@ fn animate(sig: Signal<int>, to: int, ms: int) {
 
 /// 2D grid configuration.
 struct GridConfig {
-    /// Column count. In auto mode (see `auto_columns`) it is instead the cap
+    /// Column count. In auto mode (see `autoColumns`) it is instead the cap
     /// on the count, and `0` means no cap — the width alone decides.
     /// `GridConfig {}`, like any count `< 1`, is a single column.
     columns: int = 0,
@@ -926,7 +926,7 @@ struct GridConfig {
     /// The narrowest a cell may be, in points like `gap`. This is what makes
     /// the grid responsive: the count becomes how many cells at least this
     /// wide fit the width the grid is given, capped by `columns` and by the
-    /// child count. With `gap = 12` and `auto_columns = 220`, a grid with 1000
+    /// child count. With `gap = 12` and `autoColumns = 220`, a grid with 1000
     /// points of content width fits four cells (and `columns = 3` takes it back
     /// to three), 620 points fits two, 420 fits one. The gap is part of the
     /// cell, because `cols` cells leave `cols - 1` gaps.
@@ -938,7 +938,7 @@ struct GridConfig {
     ///
     /// A constant, not a signal: a cell width is a layout parameter, so
     /// re-resolving it every frame would buy nothing.
-    auto_columns: int = -1,
+    autoColumns: int = -1,
 }
 
 struct VirtWin {

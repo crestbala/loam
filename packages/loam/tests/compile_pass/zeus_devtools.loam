@@ -54,7 +54,7 @@ fn has_any(lines: []string, needle: string) -> int {
 fn main() {
     let count = zeus.signal(7)
     zeus.snapshot(480, 320, fn() -> Node {
-        zeus.Box(align_direction = DIRECTION.Column) {
+        zeus.Box(style = Style(direction = Direction.Column)) {
             zeus.Text("hello panel")
             zui.Button(label = "Action")
             devtools.Panel()

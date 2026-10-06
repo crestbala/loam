@@ -16,9 +16,9 @@ fn fail(what: string) {
     sys.exit(1)
 }
 
-fn Panel(n: Signal<int>) {
-    zeus.Box(align_direction = DIRECTION.Column, padding = 8, width = 220) {
-        zeus.Text("events: {{n.get()}}", font = 18)
+fn Panel(n: Signal<int>) -> Node {
+    return zeus.Box(style = Style(width = px(220), direction = Direction.Column, padding = edges(8))) {
+        zeus.Text("events: {{n.get()}}", style = Style(font = 18))
     }
 }
 
@@ -124,8 +124,8 @@ fn cli_main() {
     let n = zeus.signal(0)
     let se = zeus.signal(0)
     let we = zeus.signal(0)
-    zeus.App("stream", fn() {
-        Panel(n)
+    zeus.App("stream", fn() -> Node {
+        return Panel(n)
     }, 240, 90)
 
     // SSE: 5 events.

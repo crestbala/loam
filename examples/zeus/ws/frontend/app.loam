@@ -9,12 +9,12 @@ import "std:async"
 import "std:zeus"
 import "std:http"
 
-fn Panel(n: Signal<int>, last: Signal<string>, state: Signal<string>) {
-    zeus.Box(align_direction = DIRECTION.Column, padding = 20, width = 280) {
-        zeus.Text("Zeus ws demo", font = 20)
-        zeus.Text("messages: {{n.get()}}", font = 15)
-        zeus.Text("last: {{last.get()}}", font = 13)
-        zeus.Text("ws: {{state.get()}}", font = 13)
+fn Panel(n: Signal<int>, last: Signal<string>, state: Signal<string>) -> Node {
+    return zeus.Box(style = Style(width = px(280), direction = Direction.Column, padding = edges(20))) {
+        zeus.Text("Zeus ws demo", style = Style(font = 20))
+        zeus.Text("messages: {{n.get()}}", style = Style(font = 15))
+        zeus.Text("last: {{last.get()}}", style = Style(font = 13))
+        zeus.Text("ws: {{state.get()}}", style = Style(font = 13))
     }
 }
 
@@ -34,8 +34,8 @@ fn main() {
     let n = zeus.signal(0)
     let last = zeus.signal("(waiting)")
     let state = zeus.signal("connecting")
-    zeus.App("ws", fn() {
-        Panel(n, last, state)
+    zeus.App("ws", fn() -> Node {
+        return Panel(n, last, state)
     }, 300, 200)
     connect(n, last, state)
 }

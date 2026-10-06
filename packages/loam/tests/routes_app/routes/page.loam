@@ -1,8 +1,9 @@
 import "std:zeus"
 import "std:router"
 
-fn page(p: Params) {
-    zeus.Text("home")
+fn Page(p: Params) -> Node {
+    return zeus.Text("home")
+
 }
 
 fn meta(p: Params) -> Meta {

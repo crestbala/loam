@@ -14,7 +14,7 @@ import "tests/smoke.loam" as smoketest
 
 fn main() {
     blog_loader.start()
-    zeus.App("myapp", fn() {
-        approutes.app()
+    zeus.App("myapp", fn() -> Node {
+        return approutes.app()
     })
 }

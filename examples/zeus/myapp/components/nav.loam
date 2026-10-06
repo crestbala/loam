@@ -13,56 +13,64 @@ let mut ram_armed: int = 0
 
 /// Live host memory: resident set on desktop, wasm heap on web. Reads once at
 /// mount so the chip is never blank, then refreshes twice a second.
-fn RamChip() {
+fn RamChip() -> Node {
     let ram = zeus.signal(zeus.memory_kb())
     if ram_armed == 0 {
         ram_armed = 1
         async.interval(500, fn() { ram.set(zeus.memory_kb()) })
     }
-    zeus.Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
-             spacing = SPACE.Exxs, padding_x = 10, padding_y = 4, height = 26,
-             radius = spacing.RAD_FULL, background = colors.raised()) {
+    return zeus.Box(style = Style(height = px(26),
+                           direction = Direction.Row,
+                           gap = Space.Exxs,
+                           align = Align.Center,
+                           padding = edges2(4, 10),
+                           radius = corners(spacing.RAD_FULL),
+                           background = colors.raised())) {
         zeus.Text(fn() -> string {
             let mb = ram.get() / 1024
             return "RAM {{mb}} MB"
-        }, color = colors.mute(), font = spacing.FONT_CAPTION)
+        },
+style = Style(font = spacing.FONT_CAPTION, color = colors.mute()))
     }
 }
 
 /// One nav entry, mirroring `zui.NavTab` but driven by the URL instead of a
-/// tab index. The active test is a thunk, so `selected_chrome` re-runs it
-/// whenever `cur_path` changes: the highlight follows navigation even though
-/// the bar itself is retained and never rebuilds. Evaluating `path.get()`
-/// directly into a `look =` prop would bake the answer in at build time.
-fn NavLink(label: string, href: string) {
+/// tab index. `style` is a thunk, so the fill and the label colour re-run
+/// whenever the path moves: the highlight follows navigation even though the
+/// bar itself is retained and never rebuilds.
+fn NavLink(label: string, href: string) -> Node {
     let path = router.path_signal()
-    let item = zeus.Box(
-        align_direction = DIRECTION.Row,
-        align_items = ALIGN.Center,
-        spacing = SPACE.Exxs,
-        padding_x = 12,
-        height = 36,
-        radius = spacing.RAD_MD,
+    fn active() -> bool {
+        return path.get() == href
+    }
+    return zeus.Box(
+        style = Style(height = px(36),
+                      direction = Direction.Row,
+                      gap = Space.Exxs,
+                      align = Align.Center,
+                      padding = Edges(right = 12, left = 12),
+                      radius = corners(spacing.RAD_MD),
+                      cursor = "pointer",
+                      background = if active() { colors.raised() } else { "" }),
         on_click = fn() => router.navigate(href),
-        a11y_role = "button",
-        a11y_label = label,
-        cursor = "pointer")
-    zeus.ui_push(item.id)
-    let text = zeus.Text(label, font = spacing.FONT_BODY)
-    zeus.ui_pop()
-    zeus.selected_chrome(item, text, || { path.get() == href },
-                         colors.raised(), "", zeus.ink(), colors.mute())
+        role = "button",
+        label = label) {
+        zeus.Text(label, style = Style(font = spacing.FONT_BODY,
+                                       color = if active() { zeus.ink() } else { colors.mute() }))
+    }
 }
 
 /// Top bar: brand, route links, live RAM, and the light/dark switch. The
 /// switch drives `zeus.appearance()`, which every role token resolves against
 /// at paint — one toggle restyles the whole tree with no rebuild.
-fn Navbar() {
-    zui.Column(SPACE.None) {
-        zeus.Box(align_direction = DIRECTION.Row, spacing = SPACE.Md,
-                 align_items = ALIGN.Center, height = spacing.BAR) {
-            zeus.Box(width = 22, height = 22, radius = 6, background = zeus.ink())
-            zeus.Text("myapp", color = zeus.ink(), font = spacing.FONT_TITLE)
+fn Navbar() -> Node {
+    return zui.Column(Space.None) {
+        zeus.Box(style = Style(height = px(spacing.BAR),
+                               direction = Direction.Row,
+                               gap = Space.Md,
+                               align = Align.Center)) {
+            zeus.Box(style = Style(width = px(22), height = px(22), radius = corners(6), background = zeus.ink()))
+            zeus.Text("myapp", style = Style(font = spacing.FONT_TITLE, color = zeus.ink()))
             NavLink("Foundations", "/")
             NavLink("Components", "/components")
             NavLink("Patterns", "/patterns")
@@ -71,8 +79,8 @@ fn Navbar() {
             NavLink("Pricing", "/pricing")
             zui.Grow()
             RamChip()
-            zeus.Text("Dark", color = colors.mute(), font = spacing.FONT_CONTROL)
-            zui.Switch(zeus.appearance())
+            zeus.Text("Dark", style = Style(font = spacing.FONT_CONTROL, color = colors.mute()))
+            zui.ThemeSwitch()
         }
         zui.Separator()
     }

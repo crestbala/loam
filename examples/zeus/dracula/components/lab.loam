@@ -12,32 +12,41 @@ import "../core/walkforward.loam"
 import "book.loam" as book
 import "present.loam" as present
 
+/// What the backtest screen shows. One value per run: the screen reads the
+/// signal that holds it, so a run repaints the result and nothing else.
+struct BacktestView {
+    /// A run finished; false while idle, loading, or after a failure.
+    have: bool = false,
+    note: string = "",
+    /// Label, value, caption triples: the selected rule, buy and hold, SIP.
+    ending: []string,
+    score: string = "",
+    labels: []string,
+    vals: []int,
+    decimals: int = 0,
+    trades: []string,
+}
+
+/// What the walk-forward screen shows.
+struct WalkView {
+    have: bool = false,
+    note: string = "",
+    folds: []string,
+}
+
 let mut rule: Signal<int> = Signal { id: 0 }
 let mut pick: Signal<int> = Signal { id: 0 }
-let mut bt_gen: Signal<int> = Signal { id: 0 }
-let mut wf_gen: Signal<int> = Signal { id: 0 }
+let mut bt: Signal<BacktestView> = Signal { id: 0 }
+let mut wf: Signal<WalkView> = Signal { id: 0 }
 
 let mut pending = 0
 let mut pending_code = ""
 let mut pending_walk = 0
 let mut walk_code = ""
+// Run bookkeeping (not shown): which rule and scheme the shown result is for.
 let mut have = 0
 let mut shown_rule = -1
 let mut shown_code = ""
-let mut rule_line = ""
-let mut hold_line = ""
-let mut sip_line = ""
-let mut rule_name = ""
-let mut end_cells = []string {}
-let mut chart_decimals = 0
-let mut score = ""
-let mut note = ""
-let mut chart_labels = []string {}
-let mut chart_vals = []int {}
-let mut tx_cells = []string {}
-let mut walk_note = ""
-let mut walk_cells = []string {}
-let mut walk_have = 0
 let mut pending_book = 0
 let mut mom_acks = []int {}
 
@@ -72,12 +81,14 @@ fn pick_labels() -> []string {
     return out
 }
 
-fn backtest_gen() -> Signal<int> {
-    return bt_gen
+/// The backtest result. The screen matches on it.
+fn backtest() -> Signal<BacktestView> {
+    return bt
 }
 
-fn walk_gen() -> Signal<int> {
-    return wf_gen
+/// The walk-forward result.
+fn walk() -> Signal<WalkView> {
+    return wf
 }
 
 fn cash_sentence() -> string {
@@ -94,15 +105,20 @@ fn rule_labels() -> []string {
     return labels
 }
 
-fn bump_bt() {
-    if bt_gen.id != 0 {
-        bt_gen.set(bt_gen.get() + 1)
+/// An empty result carrying only a note (idle, loading, failed).
+fn bt_note(msg: string) -> BacktestView {
+    return BacktestView { note: msg, ending: []string {}, labels: []string {}, vals: []int {}, trades: []string {} }
+}
+
+fn show_bt(v: BacktestView) {
+    if bt.id != 0 {
+        bt.set(v)
     }
 }
 
-fn bump_wf() {
-    if wf_gen.id != 0 {
-        wf_gen.set(wf_gen.get() + 1)
+fn show_wf(v: WalkView) {
+    if wf.id != 0 {
+        wf.set(v)
     }
 }
 
@@ -137,37 +153,27 @@ fn compute_backtest(code: string, which: int) {
     if which == 2 {
         rep = cmp.sip
     }
-    rule_line = present.ended_line("200-day average", cmp.rule)
-    hold_line = present.ended_line("Buy and hold", cmp.buy_hold)
-    sip_line = present.ended_line("Monthly SIP", cmp.sip)
-    end_cells = present.end_cells("200-day average", cmp.rule, cmp.buy_hold, cmp.sip)
-    score = present.score_line(rep)
     let plot = present.plot_series(rep.curve_dates, rep.curve_paise, rep.ledger.fill_dates)
-    chart_labels = plot.labels
-    chart_vals = plot.vals
-    chart_decimals = present.decimals_for(present.scale_div(rep.curve_paise, present.keep_bars(rep.curve_dates, rep.curve_dates.len, 200, rep.ledger.fill_dates)))
     let mut codes = []string {}
     push(codes, code)
-    tx_cells = present.ledger_cells(rep.ledger, codes)
-    note = "The fill is the next published NAV after the signal. A signal on the last bar stays unfilled."
     shown_rule = which
     shown_code = code
     have = 1
-    bump_bt()
+    show_bt(BacktestView {
+        have: true,
+        note: "The fill is the next published NAV after the signal. A signal on the last bar stays unfilled.",
+        ending: present.end_cells("200-day average", cmp.rule, cmp.buy_hold, cmp.sip),
+        score: present.score_line(rep),
+        labels: plot.labels,
+        vals: plot.vals,
+        decimals: present.decimals_for(present.scale_div(rep.curve_paise, present.keep_bars(rep.curve_dates, rep.curve_dates.len, 200, rep.ledger.fill_dates))),
+        trades: present.ledger_cells(rep.ledger, codes),
+    })
 }
 
 fn fail_bt(msg: string) {
-    note = msg
     have = 0
-    rule_line = ""
-    hold_line = ""
-    sip_line = ""
-    score = ""
-    end_cells = []string {}
-    chart_labels = []string {}
-    chart_vals = []int {}
-    tx_cells = []string {}
-    bump_bt()
+    show_bt(bt_note(msg))
 }
 
 fn watch_settled() -> bool {
@@ -215,21 +221,20 @@ fn compute_momentum() {
     let top = strategy.momentum_top()
     let ran = strategy.momentum_book_each(p, 12, top, mom_acks, costs.equity(), cash)
     let cmp = strategy.compare_book(p, ran.orders, costs.equity(), cash)
-    rule_line = present.ended_line("12-month momentum", cmp.rule)
-    hold_line = present.ended_line("Buy and hold", cmp.buy_hold)
-    sip_line = present.ended_line("Monthly SIP", cmp.sip)
-    end_cells = present.end_cells("12-month momentum", cmp.rule, cmp.buy_hold, cmp.sip)
-    score = present.score_line(cmp.rule)
     let plot = present.plot_series(cmp.rule.curve_dates, cmp.rule.curve_paise, cmp.rule.ledger.fill_dates)
-    chart_labels = plot.labels
-    chart_vals = plot.vals
-    chart_decimals = present.decimals_for(present.scale_div(cmp.rule.curve_paise, present.keep_bars(cmp.rule.curve_dates, cmp.rule.curve_dates.len, 200, cmp.rule.ledger.fill_dates)))
-    tx_cells = present.ledger_cells(cmp.rule.ledger, p.codes)
-    note = "Ranked on the NAV already published, filled at the next one. Up to the top 5 of the watchlist, equal weight, on the last print of the month."
     shown_rule = 3
     shown_code = book.first_watch()
     have = 1
-    bump_bt()
+    show_bt(BacktestView {
+        have: true,
+        note: "Ranked on the NAV already published, filled at the next one. Up to the top 5 of the watchlist, equal weight, on the last print of the month.",
+        ending: present.end_cells("12-month momentum", cmp.rule, cmp.buy_hold, cmp.sip),
+        score: present.score_line(cmp.rule),
+        labels: plot.labels,
+        vals: plot.vals,
+        decimals: present.decimals_for(present.scale_div(cmp.rule.curve_paise, present.keep_bars(cmp.rule.curve_dates, cmp.rule.curve_dates.len, 200, cmp.rule.ledger.fill_dates))),
+        trades: present.ledger_cells(cmp.rule.ledger, p.codes),
+    })
 }
 
 fn arm_momentum() {
@@ -240,9 +245,8 @@ fn arm_momentum() {
     }
     pending = 0
     pending_book = 1
-    note = "Loading the watchlist."
     have = 0
-    bump_bt()
+    show_bt(bt_note("Loading the watchlist."))
     let mut i = 0
     while i < book.watch_count() {
         book.ensure(book.watch_code(i))
@@ -317,17 +321,11 @@ fn compute_walk(code: string) {
     let s = book.series_for(code)
     let ack = book.ack_for(code)
     let w = walkforward.sma(s, grid(), 365, 504, 252, ack, costs.equity(), present.opening_cash())
-    walk_note = w.note
-    walk_cells = present.walk_cells(w)
-    walk_have = 1
-    bump_wf()
+    show_wf(WalkView { have: true, note: w.note, folds: present.walk_cells(w) })
 }
 
 fn fail_walk(msg: string) {
-    walk_note = msg
-    walk_cells = []string {}
-    walk_have = 1
-    bump_wf()
+    show_wf(WalkView { have: true, note: msg, folds: []string {} })
 }
 
 fn try_walk() {
@@ -356,7 +354,7 @@ fn try_walk() {
 }
 
 fn arm_walk() {
-    if wf_gen.id == 0 {
+    if wf.id == 0 {
         return
     }
     let code = chosen_code()
@@ -370,67 +368,10 @@ fn arm_walk() {
     try_walk()
 }
 
-fn has_backtest() -> bool {
-    return have == 1
-}
-
-fn backtest_note() -> string {
-    return note
-}
-
-fn average_line() -> string {
-    return rule_line
-}
-
-fn hold_text() -> string {
-    return hold_line
-}
-
-fn sip_text() -> string {
-    return sip_line
-}
-
-fn score_text() -> string {
-    return score
-}
-
-fn equity_labels() -> []string {
-    return chart_labels
-}
-
-fn equity_vals() -> []int {
-    return chart_vals
-}
-
-fn equity_decimals() -> int {
-    return chart_decimals
-}
-
-/// Label, value, caption triples: the selected rule, buy and hold, SIP.
-fn ending_cells() -> []string {
-    return end_cells
-}
-
 fn equity_names() -> []string {
     let mut names = []string {}
     push(names, "Equity")
     return names
-}
-
-fn trade_cells() -> []string {
-    return tx_cells
-}
-
-fn has_walk() -> bool {
-    return walk_have == 1
-}
-
-fn walk_text() -> string {
-    return walk_note
-}
-
-fn fold_cells() -> []string {
-    return walk_cells
 }
 
 fn start() {
@@ -439,6 +380,6 @@ fn start() {
     }
     rule = zeus.signal(0)
     pick = zeus.signal(0)
-    bt_gen = zeus.signal(0)
-    wf_gen = zeus.signal(0)
+    bt = zeus.signal(bt_note(""))
+    wf = zeus.signal(WalkView { folds: []string {} })
 }

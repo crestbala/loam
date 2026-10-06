@@ -114,6 +114,37 @@ fn reset() {
     boot()
 }
 
+/* Effect rows allocated while a `View` frame is open, so the frame can move
+   the ones bound to its parent slot onto the root it builds. Only recorded
+   while `log_on > 0`. */
+let mut alloc_log: []int = []int {}
+let mut log_on: int = 0
+
+/// Start logging allocations; returns the log position to read from.
+fn log_begin() -> int {
+    log_on = log_on + 1
+    return alloc_log.len
+}
+
+/// Stop the frame that began at `start`: rebind every effect it allocated
+/// that is bound to `from` onto `to`, then drop its part of the log.
+fn log_end(start: int, from: int, to: int) {
+    let mut i = start
+    while i < alloc_log.len {
+        let e = alloc_log[i]
+        if e > 0 && e < node_ids.len && fn_ids[e] != 0 && node_ids[e] == from {
+            node_ids[e] = to
+        }
+        i = i + 1
+    }
+    while alloc_log.len > start {
+        pop(alloc_log)
+    }
+    if log_on > 0 {
+        log_on = log_on - 1
+    }
+}
+
 fn alloc(fn_id: int, node_id: int) -> int {
     boot()
     let mut idx = 0
@@ -141,6 +172,9 @@ fn alloc(fn_id: int, node_id: int) -> int {
     }
     // Parent is the computation whose body is running, if any.
     parent_eid[idx] = current_eid()
+    if log_on > 0 {
+        push(alloc_log, idx)
+    }
     return idx
 }
 
@@ -325,6 +359,19 @@ fn set_cleanup(effect_id: int, fn_id: int) {
     cleanup_fn[effect_id] = fn_id
 }
 
+/// Dependency edges `effect_id` recorded on its last run. 0 means it read no
+/// signal, so nothing can ever re-run it.
+fn dep_count(effect_id: int) -> int {
+    let mut n = 0
+    let m = dep_eff.len
+    for i in 0..m {
+        if dep_eff[i] == effect_id {
+            n = n + 1
+        }
+    }
+    return n
+}
+
 fn drop_eid_deps(effect_id: int) {
     run_cleanup(effect_id)
     let n = dep_sig.len
@@ -410,7 +457,10 @@ fn free_nodes_effects(ids: []int) {
        copies (those were ~200-260 KB per chart refit). */
     let mut i = 1
     while i < node_ids.len {
-        if member(node_ids[i], ids) != 0 {
+        // A disposed row (`fn_ids == 0`, waiting in `eid_free`) is compacted
+        // too: the free list is cleared below, so a hole left behind would
+        // never be reused.
+        if member(node_ids[i], ids) != 0 || fn_ids[i] == 0 {
             let last = node_ids.len - 1
             if i == last {
                 // Tail row is dead: pop it after dropping its edges.

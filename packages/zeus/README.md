@@ -8,28 +8,38 @@ this file is the public API map.
 
 ## The component model
 
-A **component** is a plain function. Hierarchy is a trailing block. Props are
-named arguments. There is no base class, no `impl View`, and no chain builder.
+A **component** is a plain function in four parts — state, controller, keys,
+and one returned tree. Hierarchy is a trailing block, props are
+named arguments, and look is one `style` (a CSS subset). There is no base
+class, no `View` keyword, no `impl View`, and no chain builder. The full model
+is [`docs/component-model.md`](docs/component-model.md).
 
 ```loam
 import "std:zeus"
+import "std:zui"
 
-fn Chip(label: string) {
-    zeus.Box(padding_x = 12, padding_y = 4, radius = 8, border = 1) {
-        zeus.Text(label, font = 12)
+struct TagProps {
+    label: string = "",
+}
+
+fn Tag(p: TagProps) -> Node {
+    return zeus.Box(style = Style(padding = edges2(4, 12), radius = corners(8),
+                                  border = line(1, zeus.ink()))) {
+        zeus.Text(p.label, style = Style(font = 12))
     }
 }
 
 fn main() {
     let n = zeus.signal(0)
     zeus.App("Count", fn() {
-        zeus.Box(align_direction = DIRECTION.Column, padding = 16, spacing = 8) {
-            zeus.Text("Count", font = 22)
-            zeus.Text("{{n.get()}}", font = 28)
-            zeus.Box(align_direction = DIRECTION.Row, spacing = 8) {
-                zeus.Button("-", on_click = fn() => n.set(n.get() - 1))
-                zeus.Button("+", on_click = fn() => n.set(n.get() + 1))
+        zeus.Box(style = Style(padding = edges(16), gap = 8)) {
+            zeus.Text("Count", style = Style(font = 22))
+            zeus.Text("{{n.get()}}", style = Style(font = 28))
+            zeus.Box(style = Style(direction = Direction.Row, gap = 8)) {
+                zui.Button("-", on_click = fn() => n.set(n.get() - 1))
+                zui.Button("+", on_click = fn() => n.set(n.get() + 1))
             }
+            Tag("signals")
         }
     })
 }

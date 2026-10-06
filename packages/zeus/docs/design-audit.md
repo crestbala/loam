@@ -264,7 +264,7 @@ Already there: `engine_a11y_dump` with roles/labels, relayed to a hidden DOM
 mirror on web and `NSAccessibilityElement`s on macOS; a focus ring
 (`chain_nodes` / `focus_ring` / `focus_step`) with tab / shift-tab; `kb_focus`
 gating so the ring is keyboard-only; a key-binding prop on every widget
-(`apply_key` / `install_key`); `plat_overlay_scroll()` already branches touch
+(`install_keys` / `install_key`); `plat_overlay_scroll()` already branches touch
 hosts away from desktop scrollbars and hover washes.
 
 Gaps against §5:

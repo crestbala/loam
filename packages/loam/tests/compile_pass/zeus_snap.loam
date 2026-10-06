@@ -6,8 +6,8 @@ import "std:zui"
 fn main() {
     let count = zeus.signal(0)
     zeus.snapshot(320, 200, fn() -> Node {
-        zeus.Box(align_direction = DIRECTION.Column, padding = 16, spacing = 12) {
-            zeus.Text("Hello", font = 22)
+        zeus.Box(style = Style(direction = Direction.Column, gap = 12, padding = edges(16))) {
+            zeus.Text("Hello", style = Style(font = 22))
             zui.Button("Click", on_click = fn() => count.set(count.get() + 1))
         }
     })

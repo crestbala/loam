@@ -20,22 +20,29 @@ fn must(ok: bool, what: string) {
 
 fn main() {
     zeus.window("overlays", 360, 300)
-    let open = zeus.signal(0)
-    let toast = zeus.signal(0)
+    let open = zeus.signal(false)
+    let toast = zeus.signal(false)
     let mut pop_id = 0
     let mut trig_id = 0
     let tree = zui.Page() {
         // Push the trigger near the bottom so the popover must flip above.
-        zeus.Box(height = 220)
-        let trigger = zui.Button("Menu", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
-        trig_id = trigger.id
-        let pop = zui.Popover(trigger, open = open, place = zui.PLACE.PlaceBelow, width = 180) {
-            zeus.Text("Rename", color = zeus.ink(), font = spacing.FONT_BODY)
-        }
-        pop_id = pop.id
-        zui.Tooltip(trigger, text = "Open the menu", delay = 0)
-        zui.Toast(toast, width = 160, ms = 0) {
-            zeus.Text("Saved", color = colors.on_ink(), font = spacing.FONT_BODY)
+        zeus.Box(style = Style(height = px(220)))
+        // One trigger, two floaters: the tooltip's trigger is the popover,
+        // whose trigger is the button.
+        zui.Tooltip(text = "Open the menu", delay = 0, trigger = || {
+            let pop = zui.Popover(open = open,
+                                  place = zui.Place.PlaceBelow,
+                                  style = Style(width = px(180)),
+                                  trigger = || {
+                let trigger = zui.Button("Menu", look = zeus.Look.Outline, size = zeus.Size.Md)
+                trig_id = trigger.id
+            }) {
+                zeus.Text("Rename", style = Style(font = spacing.FONT_BODY, color = zeus.ink()))
+            }
+            pop_id = zeus.child_at(pop, 2).id
+        })
+        zui.Toast(toast, style = Style(width = px(160)), ms = 0) {
+            zeus.Text("Saved", style = Style(font = spacing.FONT_BODY, color = colors.on_ink()))
         }
     }
     zeus.root(tree)
@@ -44,7 +51,7 @@ fn main() {
     must(!zeus.text_visible("Rename"), "popover starts closed")
 
     // Open: the panel flips above a bottom-edge trigger.
-    open.set(1)
+    open.set(true)
     zeus.engine_layout(360, 300)
     must(zeus.text_visible("Rename"), "popover open")
     must(zeus.node_y(pop_id) < zeus.node_y(trig_id), "popover flipped above the trigger")
@@ -66,7 +73,7 @@ fn main() {
     must(!zeus.text_visible("Open the menu"), "tooltip hidden on leave")
 
     // Toast is visible immediately when open, then auto-dismisses on its timer.
-    toast.set(1)
+    toast.set(true)
     must(zeus.text_visible("Saved"), "toast visible")
     zeus.engine_layout(360, 300)
     zeus.engine_layout(360, 300)

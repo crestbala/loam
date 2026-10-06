@@ -154,6 +154,15 @@ contradicts its comment, arity-3 tables, a `Navbar` that always ships Dark.
 - [x] `TableHead` / `TableRow` / `Breadcrumbs` take `[]string`.
 - [x] `Navbar(brand, dark = 1)`; pass `dark = 0` to omit the switch.
 - [x] `App` is the retained entry; `app` / `view` rebuild every layout.
+- [x] No `View { }` block. A component is a fn whose tail returns its tree
+      (`return Box(...) { ... }`); the parser opens the same view frame off
+      that returned element, so state is still owned by the root. `View` is no
+      longer a keyword.
+- [x] No void components. Every component returns `Node`; the framework
+      callbacks that mount subtrees (`Loop` / `For` / `Match` / `Boundary`,
+      `Route.build`, `zeus.App`) take `fn(...) -> Node`. A section that used to
+      emit several siblings flattens into a `Column(spacing.SECTION)` so the
+      section rhythm survives.
 - **Exit:** gallery DRAW goldens byte-identical at scale 1.0; `make test`
   green. **Green.**
 
@@ -210,7 +219,8 @@ tokens, and raw Box fields. No one overlay restyled a control.
 ## What will not change
 
 - Not HTML/DOM, not UIKit/AppKit/Material, not WebGPU.
-- Not a `View` trait. A component is a `fn`. `Node` is `{ id: int }`.
+- Not a `View` trait or keyword. A component is a `fn` that returns its tree.
+  `Node` is `{ id: int }`.
 - Not REST/JSON. Wire is `#[proto]` + gRPC-Web / h2c.
 - Not a multi-threaded UI. Completion returns to the one UI thread.
 - Not a Rust-shaped type system. See Language above.
