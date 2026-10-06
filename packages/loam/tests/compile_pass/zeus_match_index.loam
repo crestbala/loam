@@ -6,8 +6,8 @@ import "std:sys"
 import "std:zeus"
 import "std:zui"
 
-fn Item(i: int, s: string) {
-    zeus.Text(s)
+fn Item(i: int, s: string) -> Node {
+    return zeus.Text(s)
 }
 
 fn main() {
@@ -16,7 +16,7 @@ fn main() {
     zui.push_item(items, "a")
     zui.push_item(items, "b")
     zeus.snapshot(240, 160, fn() -> Node {
-        zeus.Box(align_direction = DIRECTION.Column) {
+        zeus.Box(style = Style(direction = Direction.Column)) {
             zui.Index(items, Item)
             zui.Match(tab, fn(t) {
                 if t == 0 {

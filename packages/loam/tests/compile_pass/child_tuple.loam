@@ -1,11 +1,11 @@
 import "std:zeus"
 
 fn main() {
-    zeus.App("Tuple", fn() {
-        zeus.Box(align_direction = DIRECTION.Column, padding = 8) {
+    zeus.App("Tuple", fn() -> Node {
+        return zeus.Box(style = Style(direction = Direction.Column, padding = edges(8))) {
             zeus.Text("a")
             zeus.Text("b")
-            zeus.Box(align_direction = DIRECTION.Row, spacing = 4) {
+            zeus.Box(style = Style(direction = Direction.Row, gap = 4)) {
                 zeus.Text("c")
                 zeus.Text("d")
             }

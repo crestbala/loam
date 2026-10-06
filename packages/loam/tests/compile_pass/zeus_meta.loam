@@ -27,16 +27,16 @@ fn must(ok: bool, what: string) {
     }
 }
 
-fn Home(p: Params) {
-    zeus.Text("home")
+fn Home(p: Params) -> Node {
+    return zeus.Text("home")
 }
 
-fn Post(p: Params) {
-    zeus.Text(router.param(p, "slug"))
+fn Post(p: Params) -> Node {
+    return zeus.Text(router.param(p, "slug"))
 }
 
-fn Plain(p: Params) {
-    zeus.Text("plain")
+fn Plain(p: Params) -> Node {
+    return zeus.Text("plain")
 }
 
 fn home_meta(p: Params) -> Meta {

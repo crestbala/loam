@@ -22,7 +22,7 @@ fn feed_at(step: string) {
 fn main() {
     zeus.window("virt-app", 900, 1400)
     zeus.view(fn() -> Node {
-        return zeus.Box(align_direction = DIRECTION.Column, grow = 1) {
+        return zeus.Box(style = Style(direction = Direction.Column, grow = 1)) {
             screen.Screen("virt-app", "head", "1", "2", "3", 0, 0)
         }
     })

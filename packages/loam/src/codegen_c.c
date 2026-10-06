@@ -1589,6 +1589,61 @@ static void emit_struct_type(FILE *o, Type *t) {
     fprintf(o, "} %s;\n\n", cn);
 }
 
+/* Struct definitions in by-value dependency order. A plain struct may hold a
+   generic instance inline (`w: Option<int>`), and C needs that instance's
+   definition first, so every definition goes through this list and its
+   inline field structs are emitted before it. */
+typedef struct {
+    Type *t;
+    char name[256];
+    int state; /* 0 = pending, 1 = emitting, 2 = emitted */
+} StructEmit;
+
+static StructEmit *se_list;
+static int se_n, se_cap;
+
+static int se_find(const char *cn) {
+    for (int i = 0; i < se_n; i++)
+        if (strcmp(se_list[i].name, cn) == 0) return i;
+    return -1;
+}
+
+static void se_add(Type *t) {
+    char cn[256];
+    type_c_name(t, cn, sizeof cn);
+    if (se_find(cn) >= 0) return;
+    if (se_n == se_cap) {
+        se_cap = se_cap ? se_cap * 2 : 64;
+        se_list = (StructEmit *)realloc(se_list, (size_t)se_cap * sizeof(StructEmit));
+        if (!se_list) loam_fatal("out of memory");
+    }
+    se_list[se_n].t = t;
+    memcpy(se_list[se_n].name, cn, sizeof cn);
+    se_list[se_n].state = 0;
+    se_n++;
+}
+
+static void se_emit(FILE *o, int i);
+
+/* A field stores a struct inline when it is one, or a fixed array of one. */
+static void se_emit_dep(FILE *o, Type *ft) {
+    while (ft && ft->kind == TY_ARRAY) ft = ft->elem;
+    if (!ft || ft->kind != TY_STRUCT) return;
+    char cn[256];
+    type_c_name(ft, cn, sizeof cn);
+    int j = se_find(cn);
+    if (j >= 0) se_emit(o, j);
+}
+
+static void se_emit(FILE *o, int i) {
+    if (se_list[i].state != 0) return;
+    se_list[i].state = 1;
+    Type *t = se_list[i].t;
+    for (size_t f = 0; f < t->field_count; f++) se_emit_dep(o, t->field_types[f]);
+    emit_struct_type(o, t);
+    se_list[i].state = 2;
+}
+
 static void emit_struct(FILE *o, AstNode *st) {
     if (st->as.strct.name && strcmp(st->as.strct.name, "Future") == 0) {
         fprintf(o, "typedef struct Future {\n    int64_t id;\n} Future;\n\n");
@@ -1599,8 +1654,7 @@ static void emit_struct(FILE *o, AstNode *st) {
         return;
     }
     if (st->as.strct.tparam_count) return;
-    if (st->ty)
-        emit_struct_type(o, st->ty);
+    if (st->ty) se_add(st->ty);
 }
 
 /* Modules that declare the Zeus handle types (`Node`, `Signal`). Those types
@@ -2262,6 +2316,16 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                     fprintf(o, "{ loam_str _sigv = %s; loam_str_retain(_sigv); "
                                "loam_zeus_sig_bind_str(%s, &_sigv, sizeof(_sigv)); }\n",
                             lv(in->args[0]), lv(in->dst));
+                } else if (vt && vt->kind == TY_STRUCT && type_needs_drop(vt)) {
+                    /* A struct that owns strings / lists: the cell takes its own
+                       reference to every owned leaf, or the caller's drop frees
+                       what the cell still points at. */
+                    fprintf(o, "{ ");
+                    emit_ctype(o, vt);
+                    fprintf(o, " _sigv = %s;\n", lv(in->args[0]));
+                    emit_nested_keeps(o, "_sigv", vt, 2);
+                    indent(o, 2);
+                    fprintf(o, "loam_zeus_sig_bind(%s, &_sigv, sizeof(_sigv)); }\n", lv(in->dst));
                 } else {
                     fprintf(o, "loam_zeus_sig_bind(%s, &%s, sizeof(", lv(in->dst), lv(in->args[0]));
                     emit_ctype(o, vt);
@@ -2281,6 +2345,11 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                     /* Loading hands out another reference to the cell's value. */
                     indent(o, 1);
                     fprintf(o, "loam_str_retain(%s);\n", lv(in->dst));
+                } else if (in->ty && in->ty->kind == TY_STRUCT && type_needs_drop(in->ty)) {
+                    /* The reader drops what it loaded: hand it its own references. */
+                    char dbuf[64];
+                    snprintf(dbuf, sizeof dbuf, "%s", lv(in->dst));
+                    emit_nested_keeps(o, dbuf, in->ty, 1);
                 }
                 break;
             }
@@ -2319,6 +2388,26 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                             lv(in->args[1]), lv(in->args[0]));
                     indent(o, 2);
                     fprintf(o, "loam_str_release(&_old); loam_arena_note_write(%s);\n", lv(in->args[0]));
+                    indent(o, 1);
+                    fprintf(o, "}\n");
+                } else if (vt && vt->kind == TY_STRUCT && type_needs_drop(vt)) {
+                    /* Same ownership as a `[]T` cell, leaf by leaf: the new value
+                       takes references for the cell, the old one is released. */
+                    fprintf(o, "if (loam_zeus_sig_changed(%s, &%s, sizeof(%s))) {\n",
+                            lv(in->args[0]), lv(in->args[1]), lv(in->args[1]));
+                    indent(o, 2);
+                    emit_ctype(o, vt);
+                    fprintf(o, " _old; loam_zeus_sig_load(%s, &_old, sizeof(_old));\n",
+                            lv(in->args[0]));
+                    indent(o, 2);
+                    emit_ctype(o, vt);
+                    fprintf(o, " _new = %s;\n", lv(in->args[1]));
+                    emit_nested_keeps(o, "_new", vt, 2);
+                    indent(o, 2);
+                    fprintf(o, "loam_zeus_sig_bind(%s, &_new, sizeof(_new));\n", lv(in->args[0]));
+                    emit_drop_place(o, "_old", vt, 2);
+                    indent(o, 2);
+                    fprintf(o, "loam_arena_note_write(%s);\n", lv(in->args[0]));
                     indent(o, 1);
                     fprintf(o, "}\n");
                 } else {
@@ -2807,7 +2896,7 @@ static void emit_ir_fn_body(FILE *o, const IrFn *fn, int is_main) {
         indent(o, 1);
         emit_var_decl_type(o, fn->locals[i].ty, lv(i));
         /* SSA temps on un-taken branches are still dropped at return. */
-        if (type_needs_drop(fn->locals[i].ty))
+        if (type_needs_drop(fn->locals[i].ty) || fn->locals[i].zero_init)
             fprintf(o, " = {0}");
         fprintf(o, ";\n");
     }
@@ -3155,6 +3244,7 @@ void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path)
         }
     }
 
+    se_n = 0;
     for (int m = 0; m < nmods; m++) {
         AstNode *p = mods[m].ast;
         if (!p) continue;
@@ -3175,8 +3265,9 @@ void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path)
             (strcmp(t->name, "Signal") == 0 || strcmp(t->name, "Future") == 0 ||
              strcmp(t->name, "Chan") == 0))
             continue;
-        if (t && struct_targs_concrete(t)) emit_struct_type(out, t);
+        if (t && struct_targs_concrete(t)) se_add(t);
     }
+    for (int i = 0; i < se_n; i++) se_emit(out, i);
 
     /* One prototype per possible hook id, not just the ones registered so far:
        monomorphization runs while bodies are being emitted and can register an
@@ -3255,7 +3346,10 @@ void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path)
         if (!p) continue;
         for (size_t i = 0; i < p->as.program.decl_count; i++) {
             AstNode *d = p->as.program.decls[i];
-            if (d->kind == AST_FN_DECL && d->as.fn.used_as_value && !d->as.fn.is_intrinsic &&
+            /* A user seam (`fn x() {}` outside std, implemented in app C) has
+               a prototype above, so it can be stored as a value too. */
+            if (d->kind == AST_FN_DECL && d->as.fn.used_as_value &&
+                (!d->as.fn.is_intrinsic || !loam_is_std_path(mods[m].path)) &&
                 !d->as.fn.tparam_count && loam_dce_keep(d))
                 emit_as_fn_tramp(out, d);
         }

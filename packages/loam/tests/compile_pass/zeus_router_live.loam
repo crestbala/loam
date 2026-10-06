@@ -15,8 +15,8 @@ let mut live_builds: int = 0
 let mut snap_builds: int = 0
 let mut live_label: int = 0
 
-fn Home(p: Params) {
-    zeus.Text("home")
+fn Home(p: Params) -> Node {
+    return zeus.Text("home")
 }
 
 fn slug_live() -> string {
@@ -24,17 +24,18 @@ fn slug_live() -> string {
 }
 
 /// Reads the slug live; never touches `p`.
-fn PostLive(p: Params) {
+fn PostLive(p: Params) -> Node {
     live_builds = live_builds + 1
     let t = zeus.Text("post {{slug_live()}}")
     live_label = t.id
+    return t
 }
 
 /// Takes the name as a snapshot.
-fn UserSnap(p: Params) {
+fn UserSnap(p: Params) -> Node {
     snap_builds = snap_builds + 1
     let name = router.param(p, "name")
-    zeus.Text("user {{name}}")
+    return zeus.Text("user {{name}}")
 }
 
 fn must(ok: bool, what: string) {
@@ -47,7 +48,7 @@ fn must(ok: bool, what: string) {
 
 fn main() {
     zeus.snapshot(240, 160, fn() -> Node {
-        zeus.Box(align_direction = DIRECTION.Column) {
+        zeus.Box(style = Style(direction = Direction.Column)) {
             zeus.Text("shell")
             router.Router([]Route {
                 Route { pattern: "/", build: Home },

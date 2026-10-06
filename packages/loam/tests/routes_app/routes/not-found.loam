@@ -1,5 +1,6 @@
 import "std:zeus"
 
-fn not_found() {
-    zeus.Text("nf")
+fn NotFound() -> Node {
+    return zeus.Text("nf")
+
 }

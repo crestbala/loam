@@ -1,0 +1,36 @@
+// `fn name(...) { }` inside a body is a local fn: a closure bound to a name.
+// It captures by copy, can call local fns declared before it, and passes on by
+// name like any fn value.
+import "std:fmt"
+
+fn run(f: fn(int) -> int, x: int) -> int {
+    return f(x)
+}
+
+fn main() {
+    let base = 10
+    fn add(d: int) -> int {
+        return base + d
+    }
+    fn twice(d: int) -> int {
+        return add(d) + add(d)
+    }
+    fn say() {
+        fmt.println("hello")
+    }
+    // A body ending in an `if` whose branches are calls returns nothing; the
+    // tail is a statement, not a void value.
+    let mut on = 0
+    fn report() {
+        if on == 0 {
+            fmt.println("off")
+        } else {
+            fmt.println("on")
+        }
+    }
+    fmt.println(add(5))
+    fmt.println(twice(1))
+    fmt.println(run(add, 32))
+    say()
+    report()
+}

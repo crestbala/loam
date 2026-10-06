@@ -12,12 +12,18 @@ fn main() {
     let open = zeus.signal(-1)
     let top = zeus.raw_scroll()
     zeus.slot(top, fn() {
-        zeus.Box(align_direction = zeus.DIRECTION.Column) {
-            zeus.Box(height = 300)
-            let trigger = zeus.Box(width = 120, height = 32, background = colors.plate(),
-                                   border = spacing.HAIRLINE, border_color = colors.rule())
+        zeus.Box(style = Style(direction = zeus.Direction.Column)) {
+            zeus.Box(style = Style(height = px(300)))
             let rows = []MenuRow { MenuRow(label = "Rename") }
-            zui.Menu(trigger, active = open, items = rows, width = 160)
+            zui.Menu(active = open,
+items = rows,
+style = Style(width = px(160)),
+trigger = || {
+                zeus.Box(style = Style(width = px(120),
+                                       height = px(32),
+                                       border = line(spacing.HAIRLINE, colors.rule()),
+                                       background = colors.plate()))
+            })
         }
     })
     zeus.root(top)

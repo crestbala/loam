@@ -2,6 +2,7 @@
 
 import "std:zeus"
 
-fn loading() {
-    zeus.Text("loading...")
+fn Loading() -> Node {
+    return zeus.Text("loading...")
+
 }

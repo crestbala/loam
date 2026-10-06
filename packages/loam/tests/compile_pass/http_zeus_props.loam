@@ -12,9 +12,9 @@ struct HelloResp {
     count: int,
 }
 
-fn Panel(initial: int) {
-    zeus.Box(align_direction = DIRECTION.Column) {
-        zeus.Text("{{initial}}", font = 18)
+fn Panel(initial: int) -> Node {
+    return zeus.Box(style = Style(direction = Direction.Column)) {
+        zeus.Text("{{initial}}", style = Style(font = 18))
     }
 }
 
@@ -38,7 +38,7 @@ fn main() {
         fail()
     }
     zeus.snapshot(480, 320, fn() -> Node {
-        zeus.Box(align_direction = DIRECTION.Column) {
+        zeus.Box(style = Style(direction = Direction.Column)) {
             Panel(initial)
         }
     })

@@ -7,11 +7,11 @@ import "std:sys"
 import "std:zeus"
 import "std:zui"
 
-fn Row(i: int, s: string) {
+fn Row(i: int, s: string) -> Node {
     let hot = zeus.signal(0)
-    zeus.Box(align_direction = DIRECTION.Row, spacing = 4) {
+    return zeus.Box(style = Style(direction = Direction.Row, gap = 4)) {
         zeus.Text("{{s}}")
-        zui.Button("up", on_click = fn() => hot.set(hot.get() + 1), width = 40)
+        zui.Button("up", on_click = fn() => hot.set(hot.get() + 1), style = Style(width = px(40)))
     }
 }
 

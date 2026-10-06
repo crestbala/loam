@@ -267,6 +267,9 @@ struct AstNode {
                NULL/0 when the literal relies on its expected type instead. */
             AstNode **targs;
             size_t targ_count;
+            /* 1 for a compiler-made literal whose fields left out are zero
+               (`none` → `Option { tag: None }`, `val` zeroed). */
+            int zero_rest;
         } struct_lit;
         struct {
             AstNode *elem_type;

@@ -1,7 +1,7 @@
 //! `zeus` — UI toolkit. Native Cocoa and WASM/Canvas2D run the same source.
 //!
 //! Widgets are `Box` / `Text` / `Button` / `Input` / `Grid` / `Overlay` /
-//! `Scroll` / `Svg` / `If` / `Loop` / `Each` / `For` / `VirtualList` /
+//! `Scroll` / `Svg` / `Show` / `Loop` / `Each` / `For` / `VirtualList` /
 //! `VirtualTable` / `App`. Hierarchy is a trailing block. Lists:
 //! `zeus.signal([]T {})` + `Each` / `For` (reactive, keyed) or `Loop` (static,
 //! one-shot) + `push_item` / `insert_item`. Windowed lists
@@ -32,32 +32,27 @@
 //! re-run disposes everything the body created — effect rows, output cells and
 //! stored bodies alike.
 //!
-//! Every widget is a `Component`: `slot` (parent stack), `bind`, `visible`,
-//! press, then attach. Trailing blocks are `slot`. Recipes extend `Comp` /
-//! `Box` — they do not call `ui_push` / `bind` / `show` themselves.
-//! Named props fill a last-param struct. Restyle without forking by passing
-//! the style prop straight to the widget — `Button("Go", radius = 4)`,
-//! `Card(padding = 12)`, `Chip("pill", TINT.Ok, radius = 6)`. `Button` /
-//! `Card` / `Chip` / `Comp` / `IconButton` / `Badge` / `Alert` / `Field` /
-//! `TextInput` all take the same twelve: `background`, `color`, `radius`,
-//! `padding`, `padding_x`, `padding_y`, `padding_top` / `_right` / `_bottom` /
-//! `_left`, `margin_*`, `gap` / `gap_row` / `gap_col`, `width`, `height`, `font`, `border`,
-//! `border_color`, `spacing`. Write them as plain data — `radius = 4`,
-//! `background = paper()`. Text is a thunk: write `Text("n = {{n.get()}}")`
-//! and the compiler lifts the expression, so a signal read inside it
-//! repaints just that label. (`Text(|| "{{n.get()}}")` says the same
-//! thing by hand.) Closures are for events: `on_click = fn() => ...`.
-//! Omit a prop and the recipe's own value stands.
-//! `Comp` is the function-widget primitive (`bind` / `visible` / `press` /
-//! slot). No `View` trait — write `fn MyThing(p: MyProps)` and call `Comp`.
+//! Every element is a `Component`: element props (`ref`, `role`, `label`,
+//! `keys`, events, `bind`, `visible`), one `style`, then attach. Trailing blocks
+//! are the children. Components are `View` components (see
+//! `docs/component-model.md`); they do not touch the arena.
+//! Named props fill a last-param struct. Look is one `style` prop, the CSS
+//! subset in `zeuscore/style.loam`, on elements and components alike:
+//! `Button("Go", style = Style(radius = corners(4)))`,
+//! `Card(style = Style(padding = edges(12)))`. A component merges it over its
+//! own look, so any key can be overridden. Write values as plain data; a
+//! signal read inside a style re-applies just the keys that changed. Text is
+//! a thunk: write `Text("n = {{n.get()}}")` and the compiler lifts the
+//! expression, so a signal read inside it repaints just that label. Closures
+//! are for events: `on_click = fn() => ...`.
+//! `Comp` is a `Box` that presses like a button when clicked.
 //! One UI-scale knob (`set_scale` percent) scales type and control chrome.
 //! It is applied centrally, where a prop lands on a node, so widgets and
 //! callers alike write plain design px — nothing calls a scale helper.
 //! It is the identity at 100, so goldens hold at 1.0.
-//! `Button` paints the themed chrome when you pass `look = LOOK.*` and
-//! `size = SIZE.*`; without them it is a plain clickable label whose
-//! background / color / width / height / `enabled` / `on_click` come from
-//! the props. Keyboard: every click target is a tab stop; Tab walks the
+//! `Button` paints the themed chrome when you pass `look = Look.*` and
+//! `size = Size.*`; without them it is a plain clickable label whose
+//! look comes from `style` and `enabled` / `on_click` from the props. Keyboard: every click target is a tab stop; Tab walks the
 //! focus ring in document order (Shift-Tab back), Enter/Space activate, and
 //! the focused control paints a 2px ring (keyboard focus only — pointer
 //! clicks clear it).
@@ -69,13 +64,13 @@
 //! fn main() {
 //!     let n = zeus.signal(0)
 //!     zeus.App("Count", fn() {
-//!         zeus.Box(align_direction = DIRECTION.Column, padding = 16, spacing = 8) {
-//!             zeus.Text("Count", font = 22)
-//!             zeus.Text("{{n.get()}}", font = 28)
-//!             zeus.Box(align_direction = DIRECTION.Row, spacing = 8) {
-//!                 zui.Button("-", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md,
+//!         zeus.Box(style = Style(padding = edges(16), gap = 8)) {
+//!             zeus.Text("Count", style = Style(font = 22))
+//!             zeus.Text("{{n.get()}}", style = Style(font = 28))
+//!             zeus.Box(style = Style(direction = Direction.Row, gap = 8)) {
+//!                 zui.Button("-", look = zeus.Look.Ghost, size = zeus.Size.Md,
 //!                             on_click = fn() => n.set(n.get() - 1))
-//!                 zui.Button("+", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
+//!                 zui.Button("+", look = zeus.Look.Solid, size = zeus.Size.Md,
 //!                             on_click = fn() => n.set(n.get() + 1))
 //!             }
 //!         }
@@ -86,8 +81,8 @@
 //! `zeus.App(title, build)` is the entry: retained tree, view size from
 //! the host (`window_size`); pass trailing `width`/`height` only to pin a
 //! macOS/wasm window. Per-frame rebuild is `zeus.view` / `zeus.app`.
-//! Hide live nodes with `If` / `show` (`Signal<int>` 0/1). `Box.show` is
-//! the bool-thunk form of the same flag. Internals: `packages/zeus/std/zeuscore/*.loam`.
+//! Reactive presence is `Show(when = cond) { ... }` (`lazy = true` builds on
+//! demand); a reactive `Style(display = ...)` hides one element. Internals: `packages/zeus/std/zeuscore/*.loam`.
 //! C is host FFI (`platform.loam`). `Node` is `{ id: int }`.
 //! See `docs/boundary.md`. `ZEUS_HEADLESS=1` layouts once and exits.
 
@@ -103,6 +98,7 @@ import "zeuscore/metrics.loam"
 import "zeuscore/scene.loam"
 import "zeuscore/input.loam"
 import "zeuscore/track.loam"
+import "zeuscore/style.loam"
 import "std:async"
 import "std:fmt"
 import "std:sys"
@@ -128,7 +124,7 @@ let mut view_fn: fn() -> Node = empty_view
 /// a bar appears when they overflow. A full-bleed `VirtualList` inside should
 /// `grow = 1` so it is the scrolling pane — nested momentum chaining is not
 /// this function.
-fn App(title: string, build: fn(), width: int = 0, height: int = 0) {
+fn App(title: string, build: fn() -> Node, width: int = 0, height: int = 0) {
     init()
     let mut w = width
     let mut h = height
@@ -146,8 +142,8 @@ fn App(title: string, build: fn(), width: int = 0, height: int = 0) {
     // ends short of the viewport, the revealed strip stays paper instead of
     // showing the host's clear color (black on a dark window / wasm page).
     // Root already takes host safe-area insets (`inset_here(root)`).
-    Component(top, background = role_token(ROLE.Paper))
-    slot(top, build)
+    Component(top, style = Style(background = role_token(ROLE.Paper)))
+    slot(top, || { build() })
     root(top)
     raw_run()
 }
@@ -336,6 +332,9 @@ fn engine_layout(width: int, height: int) {
     // the rebuild and layout below paint their effect this very frame. Hosts
     // call this per frame (mac drawRect, web rAF, headless pump).
     async.tick()
+    // Hover / press / focus / disabled moved since the last frame: the state
+    // styles that follow them re-run now, before layout and paint.
+    arena.state_sync()
     if arena.physics_step() != 0 {
         arena.mark_paint()
     }

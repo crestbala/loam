@@ -19,9 +19,9 @@ fn main() {
     let page = zeus.signal(1)
     let series = zeus.signal([]int { 3, 5, 4, 8, 7, 9 })
     zeus.root(zui.Column(8) {
-        zui.Stat("Revenue", "$12.4k", zeus.TINT.Ink, delta = "+12%",
-                  trend = zui.TREND.Up, spark = series)
-        zui.Stat("Errors", "2", zeus.TINT.Danger)
+        zui.Stat("Revenue", "$12.4k", zeus.Tint.Ink, delta = "+12%",
+                  trend = zui.Trend.Up, spark = series)
+        zui.Stat("Errors", "2", zeus.Tint.Danger)
         zui.Pagination(page, 20)
     })
     zeus.pump_frame()

@@ -4,8 +4,9 @@ import "loader.loam" as post_loader
 
 // `page_live`, not `page(p)`: the slug is read live, so going from one post
 // to the next swaps the text in place instead of rebuilding the page.
-fn page_live() {
-    zeus.Text(post_loader.get_post(router.param_live("slug")))
+fn PageLive() -> Node {
+    return zeus.Text(post_loader.get_post(router.param_live("slug")))
+
 }
 
 // Static routes are enumerated at build time from `paths()`.

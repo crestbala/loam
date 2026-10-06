@@ -22,8 +22,11 @@ fn main() {
 
     let mut id = 0
     zeus.root(zeus.Box() {
-        let b = zeus.Box(position = zeus.pos_absolute(), left = 300, top = 300,
-                         width = 20, height = 20, background = "#ff0000")
+        let b = zeus.Box(style = Style(width = px(20),
+                                       height = px(20),
+                                       position = zeus.pos_absolute(),
+                                       inset = Edges(top = 300, left = 300),
+                                       background = "#ff0000"))
         id = b.id
     })
     zeus.pump_frame()

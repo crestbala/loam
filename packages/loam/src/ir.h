@@ -105,6 +105,7 @@ typedef struct {
     int is_global;
     const char *cname;  /* C symbol when is_global */
     int needs_drop;     /* owns a box: dropped on every exit path */
+    int zero_init;      /* declared `= {0}`: a field a literal left out (`none`) */
 } IrLocal;
 
 typedef struct {

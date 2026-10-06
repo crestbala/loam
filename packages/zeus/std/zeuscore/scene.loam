@@ -1083,7 +1083,7 @@ fn paint_fill_box(id: int, wash: int) {
     if wash != 0 && int(arena.nodes[id].lift) == 0 {
         paint_hover_wash(id)
     }
-    if arena.nodes[id].press != 0 {
+    if arena.nodes[id].press != 0 && arena.state_watched(id) == 0 {
         let pa = int(arena.nodes[id].press_amt)
         if pa > 0 {
             fill_a(x, y, w, h, 0, r, pa * 36 / 100 * a / 255)

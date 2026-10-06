@@ -28,7 +28,7 @@ fn visit(path: string, want: string) {
 
 fn main() {
     zeus.snapshot(400, 300, fn() -> Node {
-        zeus.Box(align_direction = DIRECTION.Column) {
+        zeus.Box(style = Style(direction = Direction.Column)) {
             approutes.app()
         }
     })

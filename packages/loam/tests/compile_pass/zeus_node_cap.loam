@@ -22,10 +22,10 @@ fn main() {
     zeus.engine_set_node_cap(40)
     must(zeus.node_cap() == 40, "cap is tunable")
 
-    zeus.root(zeus.Box(align_direction = DIRECTION.Column) {
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column)) {
         let mut i = 0
         while i < 100 {
-            zui.Button("b", width = 60)
+            zui.Button("b", style = Style(width = px(60)))
             i = i + 1
         }
     })

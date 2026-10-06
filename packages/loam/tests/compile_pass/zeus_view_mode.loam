@@ -27,9 +27,9 @@ fn main() {
     let op = zeus.signal(100)
     zeus.view(|| {
         builds = builds + 1
-        zeus.root(zeus.Box(padding = 8, align_direction = DIRECTION.Column, spacing = 4) {
+        zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 4, padding = edges(8))) {
             zeus.Text("n={{n.get()}}")
-            let b = zeus.Box(width = 40, height = 20, background = "#ff0000")
+            let b = zeus.Box(style = Style(width = px(40), height = px(20), background = "#ff0000"))
             zeus.styled(b, || { zeus.set_prop_int(b, zeus.SET.Opacity, op.get()) })
         })
     })

@@ -20,11 +20,11 @@ fn main() {
     let w = zeus.signal(100)
     let seen = zeus.signal(-1)
     let mut box_id = 0
-    let tree = zeus.Box(align_direction = zeus.DIRECTION.Row) {
-        let box = zeus.Box(width = 100, height = 20, background = colors.plate())
+    let tree = zeus.Box(style = Style(direction = zeus.Direction.Row)) {
+        let box = zeus.Box(style = Style(width = px(100), height = px(20), background = colors.plate()))
         box_id = box.id
         zeus.styled(box, || { zeus.set_prop_int(box, zeus.SET.Width, w.get()) })
-        zeus.Box(width = 40, height = 20, background = colors.raised())
+        zeus.Box(style = Style(width = px(40), height = px(20), background = colors.raised()))
     }
     zeus.root(tree)
     zeus.pump_frame()

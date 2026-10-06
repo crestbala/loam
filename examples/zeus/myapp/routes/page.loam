@@ -6,10 +6,11 @@ import "../components/foundations.loam" as foundations
 
 // `zui.Match` (what the router mounts pages into) is a Column with no
 // spacing, so the page sets its own section rhythm.
-fn page(p: Params) {
-    zui.Column(spacing.SECTION) {
+fn Page(p: Params) -> Node {
+    return zui.Column(spacing.SECTION) {
         foundations.Foundations()
     }
+
 }
 
 fn meta(p: Params) -> Meta {

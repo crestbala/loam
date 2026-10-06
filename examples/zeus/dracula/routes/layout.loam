@@ -6,11 +6,10 @@ import "std:zui"
 import "../components/nav.loam" as nav
 import "../theme.loam" as theme
 
-fn layout(build: fn()) {
+fn Layout(build: fn()) -> Node {
     theme.install()
-    let page = zui.Page()
-    zeus.slot(page, fn() {
+    return zui.Page() {
         nav.Navbar()
-        zeus.slot(page, build)
-    })
+        build()
+    }
 }

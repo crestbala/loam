@@ -3,8 +3,8 @@ import "std:sys"
 import "std:zeus"
 import "std:zui"
 
-fn RowOf(i: int, s: string) {
-    zeus.Text(s)
+fn RowOf(i: int, s: string) -> Node {
+    return zeus.Text(s)
 }
 
 fn main() {
@@ -12,7 +12,7 @@ fn main() {
     zui.push_item(names, "Ada")
     zui.push_item(names, "Bea")
     zeus.snapshot(240, 160, fn() -> Node {
-        zeus.Box(align_direction = DIRECTION.Column) {
+        zeus.Box(style = Style(direction = Direction.Column)) {
             zui.For(names, fn(s) => s, RowOf)
             zui.Button("Add", on_click = fn() => zui.push_item(names, "Cyd"))
             zui.Loop(names.get(), fn(i, s) {

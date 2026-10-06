@@ -17,7 +17,7 @@ fn signal_spec() -> []TableCol {
 fn paint_missing(code: string) {
     zui.Empty(icon = zeus.IC_INFO, title = "No NAV file for {{code}}",
               body = "This code is not in the cached catalog. Search by name on Charts.") {
-        zui.Button(label = "Search funds", size = zeus.SIZE.Sm, on_click = fn() { router.navigate("/scheme") })
+        zui.Button(label = "Search funds", size = zeus.Size.Sm, on_click = fn() { router.navigate("/scheme") })
     }
 }
 
@@ -34,7 +34,7 @@ fn paint_chart() {
     let n = labels.len
     zui.Card(title = "NAV history, rupees", subtitle = "{{first}} to {{last}}. {{n}} points: the last NAV in each bucket and every signal date.") {
         zui.LineChart(labels, names, vals, 720, 300, fit = true, decimals = book.chart_decimals(),
-                      label_every = 0, dots = false)
+                      labelEvery = 0, dots = false)
     }
 }
 
@@ -57,27 +57,27 @@ fn paint_scheme(code: string) {
         zui.Title(name)
     }
     zui.Row(8) {
-        zui.Badge(code, zeus.TINT.Mute)
+        zui.Badge(code, zeus.Tint.Mute)
         let dormant = book.scheme_dormant_text()
         if dormant.len > 0 {
-            zui.Badge("Dormant, history kept", zeus.TINT.Warn)
+            zui.Badge("Dormant, history kept", zeus.Tint.Warn)
         }
         if book.watching(code) {
-            zui.Badge("On Holdings", zeus.TINT.Ok)
+            zui.Badge("On Holdings", zeus.Tint.Ok)
         } else {
-            zui.Button(label = "Add to Holdings", size = zeus.SIZE.Sm, on_click = fn() { book.add_watch(code) })
+            zui.Button(label = "Add to Holdings", size = zeus.Size.Sm, on_click = fn() { book.add_watch(code) })
         }
     }
     let status = book.scheme_status()
     if status.len > 0 {
-        zeus.Text(status, wrap = 1)
+        zeus.Text(status, style = Style(wrap = true))
     }
     let gap = book.scheme_gap_text()
     if gap.len > 0 {
         zui.Row(8) {
-            zeus.Text(gap, wrap = 1)
+            zeus.Text(gap, style = Style(wrap = true))
             if book.gap_open() {
-                zui.Button(label = "Acknowledge gap", size = zeus.SIZE.Sm, on_click = fn() { book.acknowledge() })
+                zui.Button(label = "Acknowledge gap", size = zeus.Size.Sm, on_click = fn() { book.acknowledge() })
             }
         }
     }
@@ -98,13 +98,13 @@ fn paint_scheme(code: string) {
     }
 }
 
-fn page(p: Params) {
+fn Page(p: Params) -> Node {
     let code = router.param(p, "code")
-    zui.Column(spacing.SECTION) {
+    return zui.Column(spacing.SECTION) {
         zui.Row(8) {
             zui.Heading("Scheme")
             zui.Grow()
-            zui.Button(label = "Search funds", look = zeus.LOOK.Ghost, on_click = fn() { router.navigate("/scheme") })
+            zui.Button(label = "Search funds", look = zeus.Look.Ghost, on_click = fn() { router.navigate("/scheme") })
         }
         if book.started() {
             book.focus(code)
@@ -123,6 +123,7 @@ fn page(p: Params) {
             zeus.Text("Loading")
         }
     }
+
 }
 
 fn meta(p: Params) -> Meta {

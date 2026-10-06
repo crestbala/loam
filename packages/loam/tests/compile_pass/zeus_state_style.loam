@@ -1,0 +1,80 @@
+// State styles: `hoverStyle` / `pressStyle` / `focusStyle` / `disabledStyle`
+// are paint-only overlays merged over `style` while the state holds. A key
+// only the overlay sets goes back to the base value when the state ends, and
+// a layout key in an overlay is ignored (hover never reflows). A literal
+// with one is a compile error (compile_fail/zeus_state_style_layout).
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn expect(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+const BLUE: int = 0x0000ff
+const RED: int = 0xff0000
+const GREEN: int = 0x00ff00
+const GREY: int = 0x808080
+
+fn main() {
+    let clicks = zeus.signal(0)
+    // Not a literal, so the compile-time check cannot see its `height`: the
+    // engine drops it at run time instead.
+    let hover_look = Style(background = "#ff0000", color = "#00ff00", height = px(80))
+    zeus.snapshot(300, 200, fn() -> Node {
+        return zeus.Box(style = Style(direction = Direction.Column, gap = 8, padding = edges(8))) {
+            zeus.Box(label = "btn",
+                     style = Style(width = px(100), height = px(40), background = "#0000ff"),
+                     hoverStyle = hover_look,
+                     pressStyle = Style(background = "#00ff00"),
+                     focusStyle = Style(border = line(2, "#ff0000")),
+                     on_click = fn() => clicks.set(clicks.get() + 1))
+            zeus.Box(label = "off", enabled = false,
+                     style = Style(width = px(100), height = px(40), background = "#0000ff"),
+                     disabledStyle = Style(background = "#808080"),
+                     hoverStyle = Style(background = "#ff0000"))
+        }
+    })
+    let btn = zeus.engine_find_text("btn")
+    let off = zeus.engine_find_text("off")
+    expect(btn > 0 && off > 0, "nodes found")
+    expect(zeus.node_background_rgb(btn) == BLUE, "base background at rest")
+    expect(zeus.node_background_rgb(off) == GREY, "disabled overlay from the start")
+
+    // Hover: the overlay paints; its layout key (height) is dropped.
+    let bx = zeus.node_x(btn) + 10
+    let by = zeus.node_y(btn) + 10
+    zeus.engine_hover(bx, by)
+    zeus.engine_layout(300, 200)
+    expect(zeus.node_background_rgb(btn) == RED, "hover background")
+    expect(zeus.node_color_rgb(btn) == GREEN, "hover color")
+    expect(zeus.node_height(btn) == 40, "hover layout key ignored")
+
+    // Press wins over hover while the button is down.
+    zeus.engine_click(bx, by)
+    zeus.engine_layout(300, 200)
+    expect(zeus.node_background_rgb(btn) == GREEN, "press background")
+    zeus.engine_mouseup()
+    zeus.engine_layout(300, 200)
+    expect(zeus.node_background_rgb(btn) == RED, "back to hover after release")
+    expect(clicks.get() == 1, "click still fires")
+
+    // Leaving restores the base, and the overlay-only color goes back too.
+    let rest_fg = zeus.node_color_rgb(off)
+    zeus.engine_hover(290, 190)
+    zeus.engine_layout(300, 200)
+    expect(zeus.node_background_rgb(btn) == BLUE, "base background after leave")
+    expect(zeus.node_color_rgb(btn) != GREEN, "overlay-only color released")
+
+    // A disabled element never hovers.
+    zeus.engine_hover(zeus.node_x(off) + 10, zeus.node_y(off) + 10)
+    zeus.engine_layout(300, 200)
+    expect(zeus.node_background_rgb(off) == GREY, "disabled ignores hover")
+    expect(zeus.node_color_rgb(off) == rest_fg, "disabled color untouched")
+    fmt.println("state style ok")
+}

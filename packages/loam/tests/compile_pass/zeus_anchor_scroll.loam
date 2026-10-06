@@ -22,14 +22,18 @@ fn main() {
     let mut trig = 0
     let top = zeus.raw_scroll()
     zeus.slot(top, fn() {
-        zeus.Box(align_direction = zeus.DIRECTION.Column) {
-            zeus.Box(height = 400)
-            let trigger = zeus.Box(width = 120, height = 32, background = colors.plate())
-            trig = trigger.id
+        zeus.Box(style = Style(direction = zeus.Direction.Column)) {
+            zeus.Box(style = Style(height = px(400)))
             let rows = []MenuRow { MenuRow(label = "Rename") }
-            let m = zui.Menu(trigger, active = open, items = rows, width = 160)
-            panel = m.id
-            zeus.Box(height = 800)
+            let m = zui.Menu(active = open,
+items = rows,
+style = Style(width = px(160)),
+trigger = || {
+                let trigger = zeus.Box(style = Style(width = px(120), height = px(32), background = colors.plate()))
+                trig = trigger.id
+            })
+            panel = zeus.child_at(m, 2).id
+            zeus.Box(style = Style(height = px(800)))
         }
     })
     zeus.root(top)

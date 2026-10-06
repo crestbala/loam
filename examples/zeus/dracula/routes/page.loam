@@ -9,7 +9,7 @@ fn hold_spec() -> []TableCol {
     let mut h = []TableCol {}
     push(h, TableCol { title: "Scheme", width: 0 })
     push(h, TableCol { title: "Code", width: 72 })
-    push(h, TableCol { title: "Last NAV", width: 96, align: ALIGN.End })
+    push(h, TableCol { title: "Last NAV", width: 96, align: Align.End })
     push(h, TableCol { title: "As of", width: 96 })
     push(h, TableCol { title: "Signal", width: 160 })
     return h
@@ -19,7 +19,7 @@ fn hit_spec() -> []TableCol {
     let mut h = []TableCol {}
     push(h, TableCol { title: "Scheme", width: 0 })
     push(h, TableCol { title: "Code", width: 72 })
-    push(h, TableCol { title: "Last NAV", width: 96, align: ALIGN.End })
+    push(h, TableCol { title: "Last NAV", width: 96, align: Align.End })
     push(h, TableCol { title: "As of", width: 150 })
     return h
 }
@@ -55,7 +55,7 @@ fn paint_hits() {
             if book.watching(code) {
                 zeus.Text("On the list")
             } else {
-                zui.Button(label = "Add", size = zeus.SIZE.Sm, on_click = fn() { book.add_watch(code) })
+                zui.Button(label = "Add", size = zeus.Size.Sm, on_click = fn() { book.add_watch(code) })
             }
         })
         i = i + 1
@@ -78,22 +78,22 @@ fn paint_rows() {
         let slot = i
         let code = book.watch_code(i)
         ui.LinkRowWithAction(book.holding_row(i), hold_spec(), "/scheme/{{code}}", fn() {
-            zui.Button(label = "Remove", look = zeus.LOOK.Ghost, size = zeus.SIZE.Sm,
+            zui.Button(label = "Remove", look = zeus.Look.Ghost, size = zeus.Size.Sm,
                        on_click = fn() { book.remove_at(slot) })
         })
         i = i + 1
     }
 }
 
-fn page(p: Params) {
-    zui.Column(spacing.SECTION) {
+fn Page(p: Params) -> Node {
+    return zui.Column(spacing.SECTION) {
         zui.Heading("Holdings")
         zui.Body("A signal names the rule and the NAV it saw. The fill is the next published NAV. Nothing on this page is an order. Click a row for its chart.")
         if book.started() {
             zui.Card(title = "Add a fund", subtitle = "Search the cached direct equity schemes by name or code.") {
                 zui.Row(8) {
-                    zui.TextInput(book.search_field(), "Fund name or scheme code", width = 360)
-                    zui.Button(label = "Add code", look = zeus.LOOK.Ghost, on_click = fn() { book.add_typed() })
+                    zui.TextInput(book.search_field(), "Fund name or scheme code", style = Style(width = px(360)))
+                    zui.Button(label = "Add code", look = zeus.Look.Ghost, on_click = fn() { book.add_typed() })
                 }
                 zeus.effect(fn() { book.search_tick() })
                 zui.Match(book.search_generation(), fn(g) {
@@ -111,6 +111,7 @@ fn page(p: Params) {
             zeus.Text("No holdings yet")
         }
     }
+
 }
 
 fn meta(p: Params) -> Meta {

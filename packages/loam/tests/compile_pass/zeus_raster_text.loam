@@ -66,7 +66,7 @@ fn main() {
     // --- a text scene -----------------------------------------------------
     zeus.window("zeus-raster-text", 160, 80)
     zeus.root(zui.Page() {
-        zeus.Text("ABC", font = 40, color = "#000000")
+        zeus.Text("ABC", style = Style(font = 40, color = "#000000"))
     })
     zeus.engine_layout(160, 80)
     zeus.engine_paint()
@@ -127,7 +127,7 @@ fn main() {
     // --- the same string at a larger size is bigger ink -------------------
     zeus.window("zeus-raster-text-big", 320, 160)
     zeus.root(zui.Page() {
-        zeus.Text("ABC", font = 80, color = "#000000")
+        zeus.Text("ABC", style = Style(font = 80, color = "#000000"))
     })
     zeus.engine_layout(320, 160)
     zeus.engine_paint()

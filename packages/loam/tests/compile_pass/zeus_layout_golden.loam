@@ -17,41 +17,41 @@ fn expect(ok: bool, what: string) {
 }
 
 fn main() {
-    let open = zeus.signal(0)
+    let open = zeus.signal(false)
     zeus.snapshot(480, 320, fn() -> Node {
         zui.Page() {
             // Fixed-width buttons: row gap 8.
-            zeus.Box(align_direction = DIRECTION.Row, spacing = 8) {
-                zui.Button("a", width = 80, height = 28, on_click = fn() {})
-                zui.Button("b", width = 120, height = 28, on_click = fn() {})
+            zeus.Box(style = Style(direction = Direction.Row, gap = 8)) {
+                zui.Button("a", style = Style(width = px(80), height = px(28)), on_click = fn() {})
+                zui.Button("b", style = Style(width = px(120), height = px(28)), on_click = fn() {})
             }
             // Right-aligned row pins its trailing child to the content edge.
-            zeus.Box(align_direction = DIRECTION.Row, justify = ALIGN.End, width = 416) {
-                zui.Button("c", width = 60, height = 24, on_click = fn() {})
+            zeus.Box(style = Style(width = px(416), direction = Direction.Row, justify = Align.End)) {
+                zui.Button("c", style = Style(width = px(60), height = px(24)), on_click = fn() {})
             }
             // 2x2 grid of fixed cells: columns then rows at gap 8.
             zui.Grid(config = colors.GridConfig(columns = 2, gap = 8)) {
-                zui.Button("g1", width = 70, height = 40, on_click = fn() {})
-                zui.Button("g2", width = 70, height = 40, on_click = fn() {})
-                zui.Button("g3", width = 70, height = 40, on_click = fn() {})
-                zui.Button("g4", width = 70, height = 40, on_click = fn() {})
+                zui.Button("g1", style = Style(width = px(70), height = px(40)), on_click = fn() {})
+                zui.Button("g2", style = Style(width = px(70), height = px(40)), on_click = fn() {})
+                zui.Button("g3", style = Style(width = px(70), height = px(40)), on_click = fn() {})
+                zui.Button("g4", style = Style(width = px(70), height = px(40)), on_click = fn() {})
             }
             // Responsive grid: a 130 dp floor at gap 8 has room for three
             // cells across the 416 point content width, but `columns = 2` is
             // the cap, so two 204 wide cells and the rest wrap.
-            zui.Grid(config = colors.GridConfig(columns = 2, auto_columns = 130, gap = 8)) {
-                zui.Button("a1", height = 20, on_click = fn() {})
-                zui.Button("a2", height = 20, on_click = fn() {})
-                zui.Button("a3", height = 20, on_click = fn() {})
-                zui.Button("a4", height = 20, on_click = fn() {})
+            zui.Grid(config = colors.GridConfig(columns = 2, autoColumns = 130, gap = 8)) {
+                zui.Button("a1", style = Style(height = px(20)), on_click = fn() {})
+                zui.Button("a2", style = Style(height = px(20)), on_click = fn() {})
+                zui.Button("a3", style = Style(height = px(20)), on_click = fn() {})
+                zui.Button("a4", style = Style(height = px(20)), on_click = fn() {})
             }
             // Same floor, no cap, half the width: the floor alone decides and
             // 200 points leaves a single column.
-            zui.Grid(config = colors.GridConfig(auto_columns = 130, gap = 8), width = 200) {
-                zui.Button("b1", height = 20, on_click = fn() {})
-                zui.Button("b2", height = 20, on_click = fn() {})
+            zui.Grid(config = colors.GridConfig(autoColumns = 130, gap = 8), style = Style(width = px(200))) {
+                zui.Button("b1", style = Style(height = px(20)), on_click = fn() {})
+                zui.Button("b2", style = Style(height = px(20)), on_click = fn() {})
             }
-            zui.Button("open", width = 60, height = 24, on_click = fn() => open.set(1))
+            zui.Button("open", style = Style(width = px(60), height = px(24)), on_click = fn() => open.set(true))
             zui.Dialog(open, title = "Golden") {
                 zui.Body("Fixed 440 wide card, centered over the dim.")
             }

@@ -17,12 +17,11 @@ fn main() {
     let open = zeus.signal(1)
     zeus.snapshot(200, 160, fn() -> Node {
         zui.Scroll() {
-            zeus.Box(height = 400) {
+            zeus.Box(style = Style(height = px(400))) {
                 zeus.Text("pad")
             }
             zeus.Box() {
-                let dim = zui.Overlay(on_click = fn() => open.set(0))
-                zeus.show(dim, open)
+                zui.Overlay(visible = open.get() != 0, on_click = fn() => open.set(0))
             }
         }
     })

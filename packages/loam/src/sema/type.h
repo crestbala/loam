@@ -46,6 +46,10 @@ struct Type {
     int must_check; /* TY_STRUCT: `#[must_check]` — see borrowck */
     int no_send;    /* TY_STRUCT: `#[no_send]` — never a Send capture/payload */
     int64_t array_len;
+    /* TY_STRUCT: the C name when it differs from `name` — a user struct named
+       like a struct of another module (`ChipProps` in an app and in std:zui)
+       is `<module>__<name>` in C, and is a different type. NULL = `name`. */
+    const char *cname;
 };
 
 Type *type_new(TypeKind k);

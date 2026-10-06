@@ -5,6 +5,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:zui"
 import "std:router"
 
 let mut log: []string = []string {}
@@ -45,18 +46,22 @@ fn must(ok: bool, what: string) {
     }
 }
 
-fn Home(p: Params) {
-    zeus.Text("home")
+fn Home(p: Params) -> Node {
+    return zeus.Text("home")
 }
 
-fn Post(p: Params) {
-    push(log, cat("build:", router.param(p, "slug")))
-    zeus.Text(router.param(p, "slug"))
+fn Post(p: Params) -> Node {
+    return Column(0) {
+        push(log, cat("build:", router.param(p, "slug")))
+        zeus.Text(router.param(p, "slug"))
+    }
 }
 
-fn Other(p: Params) {
-    push(log, "otherbuild")
-    zeus.Text("other")
+fn Other(p: Params) -> Node {
+    return Column(0) {
+        push(log, "otherbuild")
+        zeus.Text("other")
+    }
 }
 
 fn loader_a(p: Params) {

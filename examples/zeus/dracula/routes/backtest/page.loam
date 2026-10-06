@@ -13,38 +13,37 @@ fn spec() -> []TableCol {
     push(h, TableCol { title: "Fill", width: 0 })
     push(h, TableCol { title: "Side", width: 48 })
     push(h, TableCol { title: "Code", width: 64 })
-    push(h, TableCol { title: "NAV", width: 0, align: ALIGN.End })
-    push(h, TableCol { title: "Gross", width: 0, align: ALIGN.End })
-    push(h, TableCol { title: "Stamp", width: 0, align: ALIGN.End })
-    push(h, TableCol { title: "STT", width: 0, align: ALIGN.End })
-    push(h, TableCol { title: "Load", width: 0, align: ALIGN.End })
+    push(h, TableCol { title: "NAV", width: 0, align: Align.End })
+    push(h, TableCol { title: "Gross", width: 0, align: Align.End })
+    push(h, TableCol { title: "Stamp", width: 0, align: Align.End })
+    push(h, TableCol { title: "STT", width: 0, align: Align.End })
+    push(h, TableCol { title: "Load", width: 0, align: Align.End })
     return h
 }
 
-fn paint_result() {
-    if !lab.has_backtest() {
-        let note = lab.backtest_note()
-        if note.len > 0 {
-            zeus.Text(note, wrap = 1)
+fn paint_result(v: BacktestView) {
+    if !v.have {
+        if v.note.len > 0 {
+            zeus.Text(v.note, style = Style(wrap = true))
         } else {
             zeus.Text("Run a rule once a scheme has loaded.")
         }
         return
     }
-    ui.StatGrid(lab.ending_cells())
+    ui.StatGrid(v.ending)
     zeus.Text("Sharpe, drawdown, and the rest are for the selected rule.")
-    zeus.Text(lab.score_text(), wrap = 1)
-    zeus.Text(lab.backtest_note(), wrap = 1)
-    let labels = lab.equity_labels()
-    let vals = lab.equity_vals()
+    zeus.Text(v.score, style = Style(wrap = true))
+    zeus.Text(v.note, style = Style(wrap = true))
+    let labels = v.labels
+    let vals = v.vals
     let names = lab.equity_names()
     if labels.len > 0 && vals.len == labels.len * names.len {
         zui.Card(title = "Equity of the selected rule, rupees", subtitle = "Last equity in each bucket, and the equity on each fill date.") {
-            zui.LineChart(labels, names, vals, 720, 260, fit = true, decimals = lab.equity_decimals(),
-                          label_every = 0, dots = false)
+            zui.LineChart(labels, names, vals, 720, 260, fit = true, decimals = v.decimals,
+                          labelEvery = 0, dots = false)
         }
     }
-    let cells = lab.trade_cells()
+    let cells = v.trades
     if cells.len == 0 {
         zeus.Text("No fill.")
         return
@@ -63,7 +62,7 @@ fn paint_pick() {
     if book.watch_count() == 0 {
         zui.Empty(icon = zeus.IC_INFO, title = "Add a fund on Holdings first",
                   body = "A backtest runs on a scheme from your list.") {
-            zui.Button(label = "Go to Holdings", size = zeus.SIZE.Sm, on_click = fn() { router.navigate("/") })
+            zui.Button(label = "Go to Holdings", size = zeus.Size.Sm, on_click = fn() { router.navigate("/") })
         }
         return
     }
@@ -73,8 +72,8 @@ fn paint_pick() {
     }
 }
 
-fn page(p: Params) {
-    zui.Column(spacing.SECTION) {
+fn Page(p: Params) -> Node {
+    return zui.Column(spacing.SECTION) {
         zui.Heading("Backtest")
         zui.Body(fn() -> string { return lab.cash_sentence() })
         zui.Body("12-month momentum holds up to the top 5 names on the watchlist, equal weight, and rebalances on the last print of the month. Buy and hold and the monthly SIP use those same schemes and the same opening cash. The fund's own NAV history is on its chart page.")
@@ -86,15 +85,16 @@ fn page(p: Params) {
             })
             zui.Segmented(lab.rule_signal(), lab.rule_labels())
             zeus.effect(fn() { lab.try_backtest() })
-            zui.Match(lab.backtest_gen(), fn(g) {
-                if g >= 0 {
-                    paint_result()
+            zui.Match(lab.backtest(), fn(v) {
+                return zeus.Box(style = Style(direction = Direction.Column)) {
+                    paint_result(v)
                 }
             })
         } else {
             zeus.Text("Run a rule once a scheme has loaded.")
         }
     }
+
 }
 
 fn meta(p: Params) -> Meta {

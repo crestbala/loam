@@ -1854,6 +1854,53 @@ fn ig_one_surface() {
     ok("one surface (thin host stubs share one ui.loam)")
 }
 
+/// The component-model rule (`packages/zeus/docs/component-model.md` §6.1):
+/// app code never touches the arena. Elements own `ui_push` / `slot` / `raw_*`
+/// / `arena.*`; a component returns its tree. Comment lines are ignored.
+fn ig_arena_lint() {
+    mark("arena lint")
+    let l = tmpf("arena_lint.log")
+    // `show` / `show_eq` / … are element-layer visibility hooks: components
+    // and apps use `Show(when = …)` or a reactive `Style(display = …)`.
+    let re = "(^|[^A-Za-z0-9_])((ui_push|ui_pop|slot|raw_[a-z_]+|show|show_(eq|ne|ge|le))[(]|arena[.]|intern_[a-z]|prop_int|set_prop_[a-z])"
+    sh("grep -rnE {{shq(re)}} --include='*.loam' examples/zeus www | grep -v '/build/' | grep -vE ':[0-9]+:[[:space:]]*//' > {{shq(l)}}")
+    if is_nonempty(l) {
+        bad("arena lint (app code reaches into the element layer)", l)
+        return
+    }
+    // The library: a function may touch the arena only if it is element layer
+    // (an element, a list / match host, a chart internal, a native control).
+    // Everything else in these files is a component and must not.
+    let lib = "packages/zeus-components/std"
+    let mut files = []string {}
+    let mut allow = []string {}
+    push(files, "atoms")
+    push(allow, "virtual_refresh_keyed kfor_reconcile virtual_refresh virt_refresh_var kfor_refresh kfor_rebuild Boundary refit_refresh Progress virt_window_var scroll_to match_build keyed_spacer scroll_to_x drop_keyed_spacer refit chart_tooltip Match Index Each scroll_y scroll_to_index measured_width match_refresh chart_lines chart_cursor chart_bars chart_areas Svg Sparkline Scroll Overlay Image Icon Grid")
+    push(files, "molecules")
+    push(allow, "ThemeSwitch Switch Slider Input Button")
+    push(files, "organisms")
+    push(allow, "VirtualListVar VirtualListKeyed VirtualList LineChart Comp BarChart AreaChart")
+    push(files, "colors")
+    push(allow, "virtual_window find_scroller role_rgb_now animate")
+    let ll = tmpf("arena_lint_lib.log")
+    sys.write_file(ll, "")
+    // A hit names the enclosing top-level fn; it fails unless that fn is in
+    // the file's allow-list. Comment lines are skipped.
+    let prog = tmpf("arena_lint.awk")
+    sys.write_file(prog, "BEGIN { n = split(ALLOW, a, \" \"); for (k = 1; k <= n; k++) ok[a[k]] = 1 }\n/^fn / { match($0, /^fn [A-Za-z0-9_]+/); name = substr($0, 4, RLENGTH - 3) }\n$0 ~ RE && $0 !~ \"^[[:space:]]*//\" && !(name in ok) { print F \".loam:\" NR \": \" name \": \" $0 }\n")
+    for i in 0..files.len {
+        if !sh("awk -v RE={{shq(re)}} -v ALLOW={{shq(allow[i])}} -v F={{files[i]}} -f {{shq(prog)}} {{lib}}/{{files[i]}}.loam >> {{shq(ll)}} 2>&1") {
+            bad("arena lint (awk failed on {{files[i]}}.loam)", ll)
+            return
+        }
+    }
+    if is_nonempty(ll) {
+        bad("arena lint (a library component reaches into the element layer)", ll)
+        return
+    }
+    ok("arena lint (examples, www and library components use no ui_push / slot / arena / raw_*)")
+}
+
 fn ig_myapp() {
     ig_myapp_routes()
     ig_myapp_build()
@@ -1897,6 +1944,8 @@ fn stanza_dispatch(name: string) -> bool {
         ig_cost()
     } else if name == "one_surface" {
         ig_one_surface()
+    } else if name == "arena_lint" {
+        ig_arena_lint()
     } else {
         return false
     }
@@ -1927,6 +1976,7 @@ fn stanza_names() -> []string {
     push(v, "lsp")
     push(v, "cost")
     push(v, "one_surface")
+    push(v, "arena_lint")
     return v
 }
 
@@ -2001,6 +2051,7 @@ fn host_checks() -> int {
     ig_lsp()
     ig_cost()
     ig_one_surface()
+    ig_arena_lint()
     return N_FAIL - before
 }
 

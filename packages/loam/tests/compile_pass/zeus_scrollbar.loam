@@ -32,8 +32,8 @@ fn main() {
     zeus.window("scrollbar", 320, 180)
     let top = zeus.raw_scroll()
     zeus.slot(top, fn() {
-        zeus.Box(align_direction = DIRECTION.Column) {
-            zeus.Box(height = 900)
+        zeus.Box(style = Style(direction = Direction.Column)) {
+            zeus.Box(style = Style(height = px(900)))
         }
     })
     zeus.root(top)

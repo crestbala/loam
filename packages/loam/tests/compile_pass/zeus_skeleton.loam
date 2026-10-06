@@ -29,7 +29,7 @@ fn band_x() -> int {
 
 fn main() {
     zeus.window("skeleton", 320, 120)
-    zeus.root(zeus.Box(padding = 20) {
+    zeus.root(zeus.Box(style = Style(padding = edges(20))) {
         zui.Skeleton(200, 14, 7)
     })
     zeus.pump_frame()

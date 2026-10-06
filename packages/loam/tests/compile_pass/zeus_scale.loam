@@ -25,17 +25,17 @@ fn w_of(role: string) -> int {
 }
 
 fn main() {
-    let on = zeus.signal(1)
+    let on = zeus.signal(true)
     let name = zeus.signal("")
     let sel = zeus.signal(0)
     zeus.window("scale", 800, 600)
     zeus.view(fn() -> Node {
-        zeus.Box(padding = 24, align_direction = DIRECTION.Column, spacing = 12) {
+        zeus.Box(style = Style(direction = Direction.Column, gap = 12, padding = edges(24))) {
             zui.TextInput(name, "Name")
             zui.Checkbox("Agree", on)
             zui.Switch(on)
             zui.Tabs(sel, []string {"One", "Two"})
-            zui.Button("Save", look = zeus.LOOK.Solid, size = zeus.SIZE.Md,
+            zui.Button("Save", look = zeus.Look.Solid, size = zeus.Size.Md,
                         on_click = fn() {})
         }
     })

@@ -880,7 +880,14 @@ fn key(k: int) -> int {
                 let signal_id = arena.nodes[i].show_sig
                 if signal_id > 0 {
                     if arena.want_show(i) != 0 {
-                        arena.store_sig(signal_id, 0)
+                        // An overlay with a click handler dismisses itself
+                        // (the component's own state, e.g. a `Signal<bool>`);
+                        // a bare one is hidden through its show signal.
+                        if arena.nodes[i].click_fn > 0 {
+                            platform.plat_invoke_fn(arena.nodes[i].click_fn)
+                        } else {
+                            arena.store_sig(signal_id, 0)
+                        }
                         changed = 1
                     }
                 }

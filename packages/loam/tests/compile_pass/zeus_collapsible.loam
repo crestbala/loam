@@ -18,10 +18,11 @@ fn must(ok: bool, what: string) {
 
 fn main() {
     zeus.window("collapsible", 360, 260)
-    let open = zeus.signal(0)
+    let open = zeus.signal(false)
     let tree = zui.Page() {
-        zui.Collapsible(open = open, title = "Details", border_color = colors.rule()) {
-            zeus.Text("Hidden body", color = zeus.ink(), font = spacing.FONT_BODY)
+        zui.Collapsible(open = open, title = "Details",
+                        style = Style(border = line(spacing.HAIRLINE, colors.rule()))) {
+            zeus.Text("Hidden body", style = Style(font = spacing.FONT_BODY, color = zeus.ink()))
         }
     }
     zeus.root(tree)
@@ -31,7 +32,7 @@ fn main() {
     must(!zeus.text_visible("Hidden body"), "body starts closed")
     must(zeus.text_visible("Details"), "header is always visible")
 
-    open.set(1)
+    open.set(true)
     zeus.engine_layout(360, 260)
     must(zeus.text_visible("Hidden body"), "body open")
 

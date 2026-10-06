@@ -18,8 +18,8 @@ fn jobs_near(step: string) {
 }
 
 fn main() {
-    zeus.App("virt-app", fn() {
-        screen.Screen("virt-app", "head", "1", "2", "3", 0, 0)
+    zeus.App("virt-app", fn() -> Node {
+        return screen.Screen("virt-app", "head", "1", "2", "3", 0, 0)
     })
     // zeus.App headless runs one layout; continue driving frames ourselves.
     zeus.engine_layout(900, 1400)

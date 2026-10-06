@@ -10,12 +10,12 @@
 //! import "std:zeus"
 //! import "std:router"
 //!
-//! fn Home(p: Params) { zeus.Text("home") }
-//! fn Post(p: Params) { zeus.Text("post " + router.param(p, "slug")) }
+//! fn Home(p: Params) -> Node { return zeus.Text("home") }
+//! fn Post(p: Params) -> Node { return zeus.Text("post " + router.param(p, "slug")) }
 //!
 //! fn main() {
-//!     zeus.App("app", fn() {
-//!         zeus.Box(align_direction = DIRECTION.Column) {
+//!     zeus.App("app", fn() -> Node {
+//!         return zeus.Box(style = Style(direction = Direction.Column)) {
 //!             Navbar()                                  // retained shell
 //!             router.Router([]Route {
 //!                 Route { pattern: "/", build: Home },
@@ -49,7 +49,7 @@
 //! snapshot must.
 //!
 //! ```loam
-//! fn PostLive() { zeus.Text("post " + router.param_live("slug")) }
+//! fn PostLive() -> Node { return zeus.Text("post " + router.param_live("slug")) }
 //! Route { pattern: "/post/:slug", build: fn(p) { PostLive() }, live: true }
 //! ```
 //!
@@ -91,7 +91,7 @@ struct Meta {
 /// concrete URLs, and `meta()` gives each one its head.
 struct Route {
     pattern: string,
-    build: fn(Params),
+    build: fn(Params) -> Node,
     meta: fn(Params) -> Meta = router_default_meta,
     paths: fn() -> []string = router_default_paths,
     /// The page reads its params through `param_live` / `params_live` and so
@@ -132,16 +132,16 @@ struct LoaderEntry {
 /// Per-router fallbacks. Both default to a plain `Text`, so `RouterProps {}`
 /// works out of the box.
 struct RouterProps {
-    not_found: fn() = router_default_not_found,
-    error: fn(string) = router_default_error,
+    notFound: fn() -> Node = RouterDefaultNotFound,
+    error: fn(string) -> Node = RouterDefaultError,
 }
 
-fn router_default_not_found() {
-    zeus.Text("not found")
+fn RouterDefaultNotFound() -> Node {
+    return zeus.Text("not found")
 }
 
-fn router_default_error(msg: string) {
-    zeus.Text("route error")
+fn RouterDefaultError(msg: string) -> Node {
+    return zeus.Text("route error")
 }
 
 // --- byte helpers (strings are bytes) ---
@@ -432,7 +432,7 @@ fn on_load(pattern: string, load: fn(Params)) {
 
 /// Push a route's title to the host (window title / `document.title`). Empty
 /// titles are ignored, so routes without `meta` leave the title alone. Called
-/// from `router_page`, where the matched route is already in hand.
+/// from `RouterPage`, where the matched route is already in hand.
 fn apply_title(m: Meta) {
     if m.title.len > 0 {
         cur_title = m.title
@@ -503,15 +503,14 @@ fn engine_history_back() {
 // --- the router ---
 
 /// Mount the page for the resolved route (`cur_index` / `cur_params`).
-fn router_page(p: RouterProps) {
+fn RouterPage(p: RouterProps) -> Node {
     if cur_index < 0 {
-        p.not_found()
-        return
+        return p.notFound()
     }
     let i = cur_index
     let params = cur_params
     apply_title(cur_routes[i].meta(params))
-    zui.Boundary(fn() { cur_routes[i].build(params) }, fn(msg) { p.error(msg) })
+    return zui.Boundary(fn() { return cur_routes[i].build(params) }, fn(msg) { return p.error(msg) })
 }
 
 /// The page slot. Put it inside a retained shell: on navigation only this
@@ -526,5 +525,5 @@ fn Router(routes: []Route, p: RouterProps) -> Node {
         initial_loads_done = 1
         start_loaders(cur_path.get())
     }
-    return zui.Match(page_key, fn(k: int) { router_page(p) })
+    return zui.Match(page_key, fn(k: int) { return RouterPage(p) })
 }

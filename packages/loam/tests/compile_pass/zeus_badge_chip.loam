@@ -17,12 +17,13 @@ fn main() {
     let unread = zeus.signal(0)
     let keep = zeus.signal(1)
     zeus.root(zui.Row(8) {
-        zui.Badge("Live", zeus.TINT.Ok, dot = true)
-        zui.Badge("Plain", zeus.TINT.Mute)
-        zui.BadgeCount(unread, zeus.TINT.Danger)
-        let c = zui.Chip("Iris", zeus.TINT.Ink, on_remove = fn() => keep.set(0))
-        zeus.show(c, keep)
-        zui.Chip("Bare", zeus.TINT.Ok, dot = false)
+        zui.Badge("Live", zeus.Tint.Ok, dot = true)
+        zui.Badge("Plain", zeus.Tint.Mute)
+        zui.BadgeCount(unread, zeus.Tint.Danger)
+        zui.Show(when = keep.get() != 0) {
+            zui.Chip("Iris", zeus.Tint.Ink, on_remove = fn() => keep.set(0))
+        }
+        zui.Chip("Bare", zeus.Tint.Ok, dot = false)
     })
     zeus.pump_frame()
 

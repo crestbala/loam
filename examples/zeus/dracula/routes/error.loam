@@ -2,6 +2,7 @@
 
 import "std:zeus"
 
-fn error(msg: string) {
-    zeus.Text("something went wrong")
+fn Error(msg: string) -> Node {
+    return zeus.Text("something went wrong")
+
 }

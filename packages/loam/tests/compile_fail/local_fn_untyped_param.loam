@@ -1,0 +1,6 @@
+// A local fn has no expected type to infer from, so every parameter needs one.
+fn main() {
+    fn add(d) {
+        return
+    }
+}

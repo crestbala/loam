@@ -42,7 +42,7 @@ fn has(hay: string, needle: string) -> int {
 fn main() {
     let count = zeus.signal(42)
     zeus.snapshot(300, 200, fn() -> Node {
-        zeus.Box(align_direction = DIRECTION.Column) {
+        zeus.Box(style = Style(direction = Direction.Column)) {
             zeus.Text("inspect me")
             zui.Button(label = "Go")
         }

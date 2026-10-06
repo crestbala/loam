@@ -932,7 +932,7 @@ fn png_scale(v: int, depth: int) -> int {
     return (v * 255 + maxv / 2) / maxv
 }
 
-/// Reverse the PNG scanline filters IN PLACE, for a run of `h` rows starting at
+/// Reverse the PNG scanline filters IN Place, for a run of `h` rows starting at
 /// byte `base0`. The left and up neighbours are already reconstructed when they
 /// are read, which is what makes in-place correct. `stride` is bytes per
 /// scanline and `bpp` the filter's pixel distance (1 for sub-byte depths).

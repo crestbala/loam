@@ -1,0 +1,32 @@
+// C17: an app struct named like a library struct (`ChipProps`, also in
+// std:zui) is its own type with its own C name. Both are used in one program:
+// the app's in its own fn, the library's through `zui.Chip`.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+struct ChipProps {
+    who: string = "app",
+    n: int = 7,
+}
+
+fn describe(p: ChipProps) -> string {
+    return "{{p.who}} {{p.n}}"
+}
+
+fn main() {
+    let mine = ChipProps {}
+    if describe(mine) != "app 7" {
+        fmt.println("FAIL app struct")
+        sys.exit(1)
+    }
+    zeus.snapshot(200, 60, fn() -> Node {
+        return zui.Chip("lib", zeus.Tint.Ok)
+    })
+    if zeus.engine_find_text("lib") == 0 {
+        fmt.println("FAIL library chip")
+        sys.exit(1)
+    }
+    fmt.println("struct shadow ok")
+}

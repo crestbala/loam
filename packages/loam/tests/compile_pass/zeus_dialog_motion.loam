@@ -26,9 +26,9 @@ fn settle(w: int, h: int) {
 
 fn main() {
     zeus.window("dialog", 800, 600)
-    let open = zeus.signal(0)
-    zeus.root(zeus.Box(padding = 16) {
-        zui.Button("Open", on_click = fn() => open.set(1))
+    let open = zeus.signal(false)
+    zeus.root(zeus.Box(style = Style(padding = edges(16))) {
+        zui.Button("Open", on_click = fn() => open.set(true))
         zui.Dialog(open, title = "Confirm") {
             zeus.Text("Inside")
         }
@@ -56,7 +56,7 @@ fn main() {
     // Close: shrinks back while fading.
     zeus.engine_key(27)
     zeus.engine_layout(320, 600)
-    must(open.get() == 0, "escape closed")
+    must(!open.get(), "escape closed")
     settle(320, 600)
     must(zeus.motion_scale(zeus.node_handle(panel)) == 96, "rests at 96% closed")
     fmt.println("dialog motion ok")

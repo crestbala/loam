@@ -25,8 +25,8 @@ fn ItemKey(it: Item) -> string {
     return "k{{it.id}}"
 }
 
-fn ItemRow(i: int, it: Item) {
-    zeus.Box(align_direction = DIRECTION.Row, height = 20) {
+fn ItemRow(i: int, it: Item) -> Node {
+    return zeus.Box(style = Style(height = px(20), direction = Direction.Row)) {
         zeus.Text("item {{it.id}}")
     }
 }
@@ -34,7 +34,7 @@ fn ItemRow(i: int, it: Item) {
 /// Scroll `n` one-row shifts, returning `[allocs, live_nodes_at_end]`.
 fn scroll_n(items: Signal<[]Item>, keyed: bool, n: int) -> []int {
     zeus.snapshot(240, 300, fn() -> Node {
-        zeus.Box(align_direction = DIRECTION.Column) {
+        zeus.Box(style = Style(direction = Direction.Column)) {
             if keyed {
                 zui.VirtualListKeyed(items, 20, ItemKey, ItemRow)
             } else {

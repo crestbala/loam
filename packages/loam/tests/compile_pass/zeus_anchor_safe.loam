@@ -22,24 +22,34 @@ fn main() {
     // iPhone-style portrait insets: 47pt notch, 34pt home indicator.
     zeus.engine_set_insets(47, 0, 34, 0)
     let open = zeus.signal(-1)
-    let tall = zeus.signal(0)
+    let tall = zeus.signal(false)
     let mut panel = 0
     let mut pop = 0
     let mut trig = 0
     let top = zeus.raw_scroll()
     zeus.slot(top, fn() {
-        zeus.Box(align_direction = zeus.DIRECTION.Column) {
-            zeus.Box(height = 140)
-            let trigger = zeus.Box(width = 120, height = 32, background = colors.plate())
-            trig = trigger.id
+        zeus.Box(style = Style(direction = zeus.Direction.Column)) {
+            zeus.Box(style = Style(height = px(140)))
             let rows = []MenuRow { MenuRow(label = "Rename") }
-            let m = zui.Menu(trigger, active = open, items = rows, width = 160)
-            panel = m.id
-            let p = zui.Popover(trigger, open = tall, place = zui.PLACE.PlaceAbove, width = 160) {
-                zeus.Box(height = 140)
+            // The menu's trigger is the box; the popover's trigger is the
+            // menu, which hugs the same box.
+            let p = zui.Popover(open = tall,
+                                place = zui.Place.PlaceAbove,
+                                style = Style(width = px(160)),
+                                trigger = || {
+                let m = zui.Menu(active = open,
+items = rows,
+style = Style(width = px(160)),
+trigger = || {
+                    let trigger = zeus.Box(style = Style(width = px(120), height = px(32), background = colors.plate()))
+                    trig = trigger.id
+                })
+                panel = zeus.child_at(m, 2).id
+            }) {
+                zeus.Box(style = Style(height = px(140)))
             }
-            pop = p.id
-            zeus.Box(height = 800)
+            pop = zeus.child_at(p, 2).id
+            zeus.Box(style = Style(height = px(800)))
         }
     })
     zeus.root(top)
@@ -65,7 +75,7 @@ fn main() {
     // PlaceAbove of a tall panel lands at y = 7 with the old 0-origin clamp,
     // which is inside the notch. It must rest on the safe top instead.
     open.set(-1)
-    tall.set(1)
+    tall.set(true)
     zeus.engine_layout(360, 280)
     must(zeus.node_y(pop) == 47, "tall panel is clamped to the safe top, not the window top")
     must(zeus.node_y(pop) + zeus.node_height(pop) > zeus.node_y(trig),
@@ -73,7 +83,7 @@ fn main() {
 
     // Scroll the trigger out of the safe viewport: the panel goes with it
     // rather than pinning itself to the notch edge.
-    tall.set(0)
+    tall.set(false)
     open.set(0)
     zeus.engine_layout(360, 280)
     zui.scroll_to(top, 400)
@@ -85,7 +95,7 @@ fn main() {
     zui.scroll_to(top, 0)
     zeus.engine_set_insets(0, 34, 0, 47)
     open.set(0)
-    tall.set(0)
+    tall.set(false)
     zeus.engine_layout(360, 280)
     must(zeus.node_x(trig) == 47, "trigger x is the landscape safe origin")
     must(zeus.node_x(panel) == 47, "menu is not off by the left inset")

@@ -1,0 +1,69 @@
+// `Show(when = ...)` is reactive presence. The default keeps the body built
+// and toggles layout; `lazy = true` builds on the first true and frees the
+// body on false. A hidden `Show` takes no gap slot.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+let mut kept_builds = 0
+let mut lazy_builds = 0
+
+fn expect(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn KeptBody() -> Node {
+    kept_builds = kept_builds + 1
+    return zeus.Box(style = Style(height = px(10)), label = "kept")
+}
+
+fn LazyBody() -> Node {
+    lazy_builds = lazy_builds + 1
+    return zeus.Box(style = Style(height = px(10)), label = "lazy")
+}
+
+fn main() {
+    let tab = zeus.signal(0)
+    zeus.snapshot(300, 160, fn() -> Node {
+        return zeus.Box(style = Style(direction = Direction.Column, gap = 8)) {
+            zeus.Box(style = Style(height = px(10)), label = "top")
+            zui.Show(when = tab.get() == 1) {
+                KeptBody()
+            }
+            zui.Show(when = tab.get() == 1, lazy = true) {
+                LazyBody()
+            }
+            zeus.Box(style = Style(height = px(10)), label = "after")
+        }
+    })
+    let top = zeus.engine_find_text("top")
+    let after = zeus.engine_find_text("after")
+    expect(top > 0 && after > 0, "nodes found")
+    expect(zeus.engine_find_text("lazy") == 0, "lazy body absent at start")
+    expect(kept_builds == 1, "kept body built once up front")
+    expect(lazy_builds == 0, "lazy body not built while false")
+    expect(zeus.node_y(after) == zeus.node_y(top) + 10 + 8, "hidden Show takes no gap")
+
+    tab.set(1)
+    zeus.engine_layout(300, 160)
+    expect(zeus.engine_find_text("lazy") > 0, "lazy body built")
+    expect(zeus.node_y(after) == zeus.node_y(top) + 3 * (10 + 8), "both shown in flow")
+    expect(kept_builds == 1, "kept body not rebuilt")
+    expect(lazy_builds == 1, "lazy body built on first true")
+
+    tab.set(2)
+    zeus.engine_layout(300, 160)
+    expect(zeus.node_y(after) == zeus.node_y(top) + 10 + 8, "no gap after hide")
+
+    tab.set(1)
+    zeus.engine_layout(300, 160)
+    expect(kept_builds == 1, "kept body still built once")
+    expect(lazy_builds == 2, "lazy body rebuilt after a false")
+    fmt.println("show ok")
+}

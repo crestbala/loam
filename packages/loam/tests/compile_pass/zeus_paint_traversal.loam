@@ -51,24 +51,27 @@ fn main() {
     // A tree with depth: a header, a body, and a footer, each with children —
     // plus an always-visible floater (as a `Select`'s trigger or a sticky bar
     // is), which must not turn patching off for the whole window.
-    zeus.root(zeus.Box(padding = 8, align_direction = DIRECTION.Column, spacing = 6) {
-        zeus.Box(height = 30, background = "#102030", align_direction = DIRECTION.Row, spacing = 4) {
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 6, padding = edges(8))) {
+        zeus.Box(style = Style(height = px(30), direction = Direction.Row, gap = 4, background = "#102030")) {
             zeus.Text("header")
-            zeus.Box(width = 40, height = 20, background = "#203040")
+            zeus.Box(style = Style(width = px(40), height = px(20), background = "#203040"))
         }
-        zeus.Box(height = 60, align_direction = DIRECTION.Column, spacing = 2) {
+        zeus.Box(style = Style(height = px(60), direction = Direction.Column, gap = 2)) {
             zeus.Text("body")
-            let m = zeus.Box(width = 90, height = 24, background = "#ff0000")
+            let m = zeus.Box(style = Style(width = px(90), height = px(24), background = "#ff0000"))
             zeus.styled(m, || { zeus.set_prop_int(m, zeus.SET.Opacity, a.get()) })
             zeus.styled(m, || { zeus.set_prop_int(m, zeus.SET.Radius, b.get()) })
             zeus.styled(m, || { zeus.set_prop_int(m, zeus.SET.Width, w.get()) })
         }
-        zeus.Box(height = 30, background = "#304050", align_direction = DIRECTION.Row, spacing = 4) {
+        zeus.Box(style = Style(height = px(30), direction = Direction.Row, gap = 4, background = "#304050")) {
             zeus.Text("footer")
-            zeus.Box(width = 40, height = 20, background = "#405060")
+            zeus.Box(style = Style(width = px(40), height = px(20), background = "#405060"))
         }
-        let fl = zeus.Box(position = zeus.pos_absolute(), width = 60, height = 18,
-                          background = "#00ff00", z_index = 1)
+        let fl = zeus.Box(style = Style(width = px(60),
+                                        height = px(18),
+                                        position = zeus.pos_absolute(),
+                                        zIndex = 1,
+                                        background = "#00ff00"))
         zeus.set_prop_int(fl, zeus.SET.Opacity, 100)
     })
     zeus.pump_frame()

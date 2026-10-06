@@ -22,24 +22,36 @@ fn main() {
     zeus.snapshot(320, 200, fn() -> Node {
         // border = 0 pins the content origin to x + padding exactly (a Box's
         // default border prop applies -1, which shifts content by a px).
-        let host = zeus.Box(padding = 10, width = 300, height = 150, border = 0,
-                            background = "#ffffff", a11y_label = "host") {
-            zeus.Text("flow", color = "#000000")
+        let host = zeus.Box(style = Style(width = px(300),
+                                          height = px(150),
+                                          padding = edges(10),
+                                          border = Border(width = 0),
+                                          background = "#ffffff"),
+                            label = "host") {
+            zeus.Text("flow", style = Style(color = "#000000"))
             zeus.Box(
-                position = zeus.pos_absolute(),
-                left = 30, top = 40, width = 60, height = 20,
-                background = "#ff0000", z_index = 3, a11y_label = "pinned"
+                style = Style(width = px(60),
+                              height = px(20),
+                              position = zeus.pos_absolute(),
+                              zIndex = 3,
+                              inset = Edges(top = 40, left = 30),
+                              background = "#ff0000"),
+                label = "pinned"
             )
             zeus.Box(
-                position = zeus.pos_absolute(),
-                right = 8, bottom = 6, width = 20, height = 10,
-                background = "#0000ff", a11y_label = "rb"
+                style = Style(width = px(20),
+                              height = px(10),
+                              position = zeus.pos_absolute(),
+                              inset = Edges(right = 8, bottom = 6),
+                              background = "#0000ff"),
+                label = "rb"
             )
             // A pin that must follow a signal is an effect: style props are
             // plain data.
             let s = zeus.Text("slide",
-                              position = zeus.pos_absolute(),
-                              top = 90, color = "#000000")
+                              style = Style(position = zeus.pos_absolute(),
+                                            inset = Edges(top = 90),
+                                            color = "#000000"))
             zeus.styled(s, || { zeus.set_prop_int(s, zeus.SET.Left, slide.get()) })
         }
         return host

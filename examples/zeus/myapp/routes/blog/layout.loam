@@ -1,9 +1,10 @@
 import "std:zeus"
+import "std:zui"
+import "std:spacing"
 
-fn layout(build: fn()) {
-    let box = zeus.Box(align_direction = DIRECTION.Column, padding = 8, spacing = 4)
-    zeus.slot(box, fn() {
+fn Layout(build: fn()) -> Node {
+    return zeus.Box(style = Style(direction = Direction.Column, gap = 4, padding = edges(8))) {
         zeus.Text("blog")
-    })
-    zeus.slot(box, build)
+        build()
+    }
 }

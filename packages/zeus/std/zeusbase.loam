@@ -22,6 +22,8 @@ import "zeuscore/arena.loam"
 import "zeuscore/layout.loam"
 import "zeuscore/metrics.loam"
 import "zeuscore/track.loam"
+import "zeuscore/style.loam"
+import "std:result"
 
 // --- handles --------------------------------------------------------------
 
@@ -129,15 +131,7 @@ fn intern_str(h: fn() -> string) -> int {
 let mut ui_parents: []int = []int {}
 
 fn ui_push(id: int) {
-    let mut target = id
-    if id > 0 {
-        if id < arena.nodes.len {
-            if arena.nodes[id].slot_into > 0 {
-                target = arena.nodes[id].slot_into
-            }
-        }
-    }
-    push(ui_parents, target)
+    push(ui_parents, id)
 }
 
 fn ui_pop() {
@@ -819,7 +813,7 @@ fn set_max_height(node: Node, px: int) -> Node {
 /// many as the content allows, capped by `columns`. `px < 0` turns it off and
 /// restores the fixed `columns`.
 ///
-/// Reached from `GridConfig.auto_columns`; public so a caller building a node
+/// Reached from `GridConfig.autoColumns`; public so a caller building a node
 /// by hand can set it.
 fn set_auto_columns(node: Node, px: int) -> Node {
     // Both fields move together, so `grid_auto != 0` never leaves a stale
@@ -1108,51 +1102,72 @@ fn install_key(node: Node, spec: string, action: string, handler_fn: int,
     return node
 }
 
-/// Repaint selectable chrome as `is_on` flips. Style props are plain data,
-/// evaluated once at build, so a fill that tracks a selection has to be an
-/// effect — this is the shared one, so every selectable widget (tab, radio,
-/// toggle, nav item, page number) behaves identically. `label` may be
-/// `empty_view()` when there is no text to re-ink. The colors are role
-/// tokens, so light/dark still resolves at paint.
-fn selected_chrome(node: Node, label: Node, is_on: fn() -> bool,
-                   on_bg: string, off_bg: string,
-                   on_fg: string, off_fg: string) -> Node {
-    let fn_id = intern_bool(is_on)
-    let node_id = node.id
-    let label_id = label.id
-    styled(node, || {
-        let mut bg = off_bg
-        let mut fg = off_fg
-        if platform.plat_invoke_bool_fn(fn_id) != 0 {
-            bg = on_bg
-            fg = on_fg
-        }
-        if bg.len > 0 {
-            apply_str(node_id, SET.Background, bg)
-        }
-        if label_id > 0 {
-            if fg.len > 0 {
-                apply_str(label_id, SET.Color, fg)
-            }
-        }
-    })
-    return node
+// --- key bindings -----------------------------------------------------------
+// An element's keyboard actions are one prop, `keys: []KeyBind`. A component
+// appends the caller's bindings to its own (`keys_concat(own, p.keys)`), so
+// both stay active, and the list is data a devtools pane can show.
+
+/// One keyboard action on an element.
+struct KeyBind {
+    /// `"cmd+s"`, `"ctrl+shift+p"`, or a sequence like `"g d"`.
+    chord: string,
+    /// Name the chord resolves to, so an app can remap it with `remap_key`
+    /// without touching the element. `""` = `"key.<chord>"`.
+    action: string = "",
+    /// What the chord runs. Absent = the element's `on_click`, so a button and
+    /// its shortcut share one handler (`chord_click`).
+    run: Option<fn()> = none,
+    /// true = fires wherever focus is; false = only while focus is on this
+    /// element or inside it.
+    global: bool = false,
 }
 
-/// Install a widget's `key` prop. Every recipe calls this on the node it
-/// just built, which is what makes a shortcut available on any widget
-/// instead of only the ones that shipped a bespoke helper.
-fn apply_key(node: Node, spec: string, action: string, handler: fn(),
-             handler_set: bool, is_global: bool) -> Node {
-    if spec.len == 0 {
-        return node
+/// `spec` runs `run` while focus is on the element (or inside it).
+fn chord(spec: string, action: string, run: fn()) -> KeyBind {
+    return KeyBind(chord = spec, action = action, run = run)
+}
+
+/// `spec` runs `run` wherever focus is.
+fn chord_global(spec: string, action: string, run: fn()) -> KeyBind {
+    return KeyBind(chord = spec, action = action, run = run, global = true)
+}
+
+/// `spec` presses the element: it runs the element's `on_click`.
+fn chord_click(spec: string) -> KeyBind {
+    return KeyBind(chord = spec)
+}
+
+/// No bindings: the default of every `keys` prop.
+fn no_keys() -> []KeyBind {
+    return []KeyBind {}
+}
+
+/// `own` followed by `more`: a component's bindings plus its caller's.
+fn keys_concat(own: []KeyBind, more: []KeyBind) -> []KeyBind {
+    let mut out = []KeyBind {}
+    for i in 0..own.len {
+        push(out, own[i])
     }
-    let mut kfn = 0
-    match handler_set {
-        true => { kfn = intern_fn(handler) }
-        _ => { kfn = arena.nodes[node.id].click_fn }
+    for i in 0..more.len {
+        push(out, more[i])
     }
-    return install_key(node, spec, action, kfn, is_global)
+    return out
+}
+
+/// Install `keys` on `node`. A binding with no `run` uses the node's click
+/// handler, so install after `on_click`.
+fn install_keys(node: Node, keys: []KeyBind) -> Node {
+    for i in 0..keys.len {
+        let k = keys[i]
+        let mut kfn = 0
+        if result.is_some(k.run) {
+            kfn = intern_fn(k.run.val)
+        } else {
+            kfn = arena.nodes[node.id].click_fn
+        }
+        install_key(node, k.chord, k.action, kfn, k.global)
+    }
+    return node
 }
 
 fn key_context(node: Node, name: string) -> Node {
@@ -1206,23 +1221,6 @@ fn global_key_set(action: string, sig: Signal<int>, value: int) {
     on_action_global(action, sig, 2, value)
 }
 
-fn show_ge(node: Node, sig: Signal<int>, value: int) -> Node {
-    arena.nodes[node.id].show_sig = sig.id
-    arena.nodes[node.id].show_mode = 3
-    arena.nodes[node.id].show_val = value
-    arena.mark_sig_layout(sig.id)
-    arena.mark_chrome()
-    return node
-}
-fn show_le(node: Node, sig: Signal<int>, value: int) -> Node {
-    arena.nodes[node.id].show_sig = sig.id
-    arena.nodes[node.id].show_mode = 4
-    arena.nodes[node.id].show_val = value
-    arena.mark_sig_layout(sig.id)
-    arena.mark_chrome()
-    return node
-}
-
 fn hover(node: Node, sig: Signal<int>) -> Node {
     return raw_hover(node, sig)
 }
@@ -1242,6 +1240,22 @@ fn hover_fade(node: Node) -> Node {
 /// both. No layout pass reads the scale, so pressing never reflows.
 fn press_scale(node: Node) -> Node {
     arena.nodes[node.id].press_scale = 1
+    return node
+}
+
+/// Lift a node's shadow to elevation `level` while hovered (paint-only; the
+/// hover wash is dropped in favour of the lift). `Card(interactive = true)`
+/// sets it; any surface can take it.
+fn hover_lift(node: Node, level: int) -> Node {
+    let mut l = level
+    if l < 0 {
+        l = 0
+    }
+    if l > 4 {
+        l = 4
+    }
+    arena.nodes[node.id].lift = u8(l)
+    hover_fade(node)
     return node
 }
 
@@ -1598,6 +1612,13 @@ fn apply_int(node_id: int, setter: int, v: int) {
     if skip_unset(setter, v) {
         return
     }
+    apply_int_value(node_id, setter, v)
+}
+
+/// `apply_int` without the unset rule: `v` is always a real value. The
+/// `style` prop writes through here, since an `Option` key already says
+/// whether it was set, so `margin = Edges(left = -16)` is a bleed, not a skip.
+fn apply_int_value(node_id: int, setter: int, v: int) {
     if arena.anim_bind_on() != 0 {
         if setter_tweens_layout(setter) {
             let from = layout_read(node_id, setter)
@@ -1680,6 +1701,20 @@ fn apply_int(node_id: int, setter: int, v: int) {
                 _ => {}
             }
         }
+        SET.AlignSelf => { align_self(n, v) }
+        SET.Span => { span(n, v) }
+        SET.Overflow => { overflow(n, v) }
+        SET.WidthPct => { width_pct(n, v) }
+        SET.HeightPct => {
+            arena.nodes[node_id].explicit_height = -1
+            height_pct(n, v)
+        }
+        SET.Ellipsis => { arena.nodes[node_id].ellipsis = u8(v) }
+        SET.CornerTL => { arena.set_corner(node_id, 0, scaled(v)) }
+        SET.CornerTR => { arena.set_corner(node_id, 1, scaled(v)) }
+        SET.CornerBR => { arena.set_corner(node_id, 2, scaled(v)) }
+        SET.CornerBL => { arena.set_corner(node_id, 3, scaled(v)) }
+        SET.WrapFlag => { arena.nodes[node_id].wrap = u8(v) }
         SET.SvgFit => { arena.nodes[node_id].font = u16(v) }
         SET.SvgLazy => { arena.nodes[node_id].wrap = u8(v) }
         SET.Elevation => {
@@ -1711,7 +1746,8 @@ fn apply_int(node_id: int, setter: int, v: int) {
 fn setter_is_paint_only(setter: int) -> bool {
     match setter {
         SET.Radius | SET.RadiusTop | SET.RadiusBottom | SET.Opacity | SET.Background | SET.Color | SET.BorderColor |
-        SET.ZIndex | SET.SvgFit | SET.SvgLazy | SET.Elevation => { return true }
+        SET.ZIndex | SET.SvgFit | SET.SvgLazy | SET.Elevation |
+        SET.CornerTL | SET.CornerTR | SET.CornerBR | SET.CornerBL => { return true }
         _ => { return false }
     }
 }
@@ -1865,15 +1901,6 @@ struct KeyEvent {
     alt: bool,
 }
 
-/// Multi-value box sizing, passed as one `style =` prop.
-struct BoxStyle {
-    width: int = -1,
-    height: int = -1,
-    background: string = "",
-    padding: int = 0,
-    grow: int = 0,
-}
-
 /// `v` when the caller set it (>= 0), else the recipe's `fallback`. Both
 /// sides stay thunks, so a themed default repaints on a palette switch just
 /// like a caller-supplied one. This is how a recipe widget layers its own
@@ -1914,8 +1941,8 @@ fn empty_text() -> string {
     return ""
 }
 
-/// Default for an unset handler prop. Never installed: `on_x__set` says
-/// whether the caller passed one.
+/// Placeholder payload of an absent handler prop (`result.none(noop)`). Never
+/// installed: the `Option` says whether the caller passed one.
 fn noop() {
     return
 }
@@ -1925,122 +1952,79 @@ fn noop_int(i: int) {
     return
 }
 
-/// Shared props for `Component` / `Box`. Every widget passes these.
+/// The element props of `Box` / `Component`, the DOM-attribute half of an
+/// element: what it is, what it does, how it is reached. How it looks is one
+/// `style` (`zeuscore/style.loam`).
 struct BoxProps {
-    width: int = -1,
-    height: int = -1,
-    padding: int = -1,
-    padding_x: int = -1,
-    padding_y: int = -1,
-    /// Per-edge insets. Applied after `padding` / `padding_x` / `padding_y`.
-    /// Pass a `SPACE.*` step (`SPACE.Sm` = 16). `-1` = unset (the node stays
-    /// at `SPACE.None` = 0 unless a shorthand set it).
-    padding_top: int = -1,
-    padding_right: int = -1,
-    padding_bottom: int = -1,
-    padding_left: int = -1,
-    /// Outer gap around this node in the parent's packing. Same cascade as
-    /// padding: `margin`, then `margin_x` / `margin_y`, then per-edge.
-    /// `SPACE.*` values; `-1` = unset (`SPACE.None`).
-    margin: int = -1,
-    margin_x: int = -1,
-    margin_y: int = -1,
-    margin_top: int = -1,
-    margin_right: int = -1,
-    margin_bottom: int = -1,
-    margin_left: int = -1,
-    spacing: int = -1,
-    /// Space between children. Same field as `spacing`; `gap` wins if both
-    /// are set. Layout uses it on the main axis: a row gaps horizontally, a
-    /// column vertically. `gap_row` / `gap_col` override one axis (CSS
-    /// row-gap / column-gap). `SPACE.*`; `-1` = unset.
-    gap: int = -1,
-    gap_row: int = -1,
-    gap_col: int = -1,
-    radius: int = -1,
-    /// Round only the top / bottom pair of corners (both corners on that
-    /// edge), overriding the matching corners of `radius`; `-1` leaves them
-    /// to it. `radius = 8, radius_bottom = 0` is a top-rounded sheet.
-    radius_top: int = -1,
-    radius_bottom: int = -1,
-    border: int = -1,
-    border_color: string = "",
-    /// Elevation 0..4: paints a soft shadow under the surface. `-1` = none.
-    elevation: int = -1,
-    background: string = "",
-    color: string = "",
-    font: int = -1,
-    opacity: int = -1,
-    grow: int = -1,
-    shrink: int = -1,
-    show: bool = true,
-    align_direction: int = 1,
-    align_items: int = -1,
-    justify: int = -1,
-    wrap: int = 0,
-    min_width: int = -1,
-    max_width: int = -1,
-    min_height: int = -1,
-    max_height: int = -1,
-    position: int = -1,
-    left: int = -1,
-    top: int = -1,
-    right: int = -1,
-    bottom: int = -1,
-    z_index: int = -1,
-    safe: int = 0,
-    hover_off: bool = true,
-    cursor: string = "",
-    visible: Signal<int> = Signal { id: 0 },
-    visible__set: bool = false,
-    bind: Signal<int> = Signal { id: 0 },
-    bind__set: bool = false,
-    press: bool = false,
-    /// Label text. A thunk so a signal read inside it repaints just this
-    /// attribute; the compiler lifts a plain expression passed here —
-    /// `text = "n = {{count.get()}}"` — into that thunk. Nothing at the
-    /// call site is a closure unless the caller wants one.
-    text: fn() -> string = empty_text,
-    text__set: bool = false,
+    /// CSS-subset style. A thunk, so a signal read inside it re-applies just the
+    /// keys that changed.
+    style: Option<fn() -> Style> = none,
+    /// Filled with this element, for the controller (`ref()`, `focus(r)`).
+    ref: Option<Ref> = none,
+    /// Keyboard actions on this element (`chord(...)`, `chord_click(...)`).
+    keys: []KeyBind = no_keys(),
+    /// Accessibility role (`"button"`, `"dialog"`, ...).
+    role: string = "",
+    /// Accessible name. A thunk, so `label = "{{n}} items"` follows state.
+    label: Option<fn() -> string> = none,
+    /// `enabled = form_valid.get()` dims to 40% and disables the element.
     enabled: bool = true,
-    multiline: int = 0,
+    /// Busy: inert (no click, hover or press) while true.
+    loading: Option<fn() -> bool> = none,
+    /// Tab stop. A thunk, so `focusable = active()` follows state.
+    focusable: Option<fn() -> bool> = none,
+    /// Roving tab stop (one per tab list / radio group): focusable only while
+    /// true, and it takes focus when it becomes true.
+    roving: Option<fn() -> bool> = none,
+    /// Paint-only overlays merged over `style` while the element is hovered,
+    /// pressed, keyboard-focused or disabled (in that order; later wins).
+    /// Only background, color, opacity, border and elevation are honoured:
+    /// hover must not reflow. An element with any of them paints no default
+    /// hover wash or press overlay.
+    /// Thunks, like `style`: an overlay that reads a signal follows it, and a
+    /// thunk keeps `BoxProps` small (it is passed by value on every element).
+    hoverStyle: Option<fn() -> Style> = none,
+    pressStyle: Option<fn() -> Style> = none,
+    focusStyle: Option<fn() -> Style> = none,
+    disabledStyle: Option<fn() -> Style> = none,
+    /// Interaction chrome for elements without state styles: no hover wash
+    /// (`hoverOff`, the default), wash on hover (`hoverFade`), scale on press
+    /// (`pressScale`), rise on hover (`lift`, 0..4), press feedback (`press`).
+    hoverOff: bool = true,
+    hoverFade: bool = false,
+    pressScale: bool = false,
+    lift: int = -1,
+    press: bool = false,
+    /// Entrance motion when the element appears: `Enter.Fade`,
+    /// `Enter.Fade + Enter.Reveal`.
+    enter: int = 0,
+    /// Shown while true; the subtree is kept, and `enter` motion plays on
+    /// each show. A thunk, so `visible = open.get()` follows `open`.
+    visible: Option<fn() -> bool> = none,
+    /// The signal a toggle / slider / bound label shows and edits.
+    bind: Option<Signal<int>> = none,
+    /// Label text. A thunk so a signal read inside it repaints just this
+    /// attribute; the compiler lifts a plain expression into it.
+    text: Option<fn() -> string> = none,
+    /// Text input: the committed buffer, and Enter-inserts-newline.
+    edit: Option<Signal<string>> = none,
+    multiline: bool = false,
+    /// Image: `Fit.*`, and decode only once on screen.
     fit: int = 0,
-    lazy: int = 0,
-    edit: Signal<string> = Signal { id: 0 },
-    edit__set: bool = false,
-    row_h: int = 0,
-    rebuild: fn() = noop,
-    rebuild__set: bool = false,
-    a11y_label: string = "",
-    a11y_role: string = "",
-    style: BoxStyle = BoxStyle {},
-    style__set: bool = false,
-    on_click: fn() = noop,
-    on_click__set: bool = false,
-    on_mouse_down: fn() = noop,
-    on_mouse_down__set: bool = false,
-    on_mouse_up: fn() = noop,
-    on_mouse_up__set: bool = false,
-    /// Chord that activates this node: `"cmd+s"`, `"ctrl+shift+p"`, or a
-    /// sequence like `"g d"`. Every widget takes it, because `Component`
-    /// installs it — nothing here is specific to buttons or sliders.
-    key: string = "",
-    /// Name the chord resolves to, so an app can remap the shortcut with
-    /// `remap_key` without touching the widget. Defaults to `"key.<chord>"`.
-    key_action: string = "",
-    /// Handler for the chord. Omit it and the chord runs `on_click`, which
-    /// is what a button with a shortcut wants.
-    on_key: fn() = noop,
-    on_key__set: bool = false,
-    /// true = the chord fires wherever focus is. Default is node-scoped:
-    /// it fires only while this node (or a descendant) holds focus.
-    key_global: bool = false,
-    on_key_down: fn() = noop,
-    on_key_down__set: bool = false,
-    on_key_up: fn() = noop,
-    on_key_up__set: bool = false,
-    on_key_press: fn() = noop,
-    on_key_press__set: bool = false,
+    lazy: bool = false,
+    /// Keep the element inside the host's safe area (notch, home indicator).
+    safe: bool = false,
+    /// List hosts: fixed row height, and the hook that rebuilds the rows.
+    rowHeight: int = 0,
+    rebuild: Option<fn()> = none,
+    on_click: Option<fn()> = none,
+    on_mouse_down: Option<fn()> = none,
+    on_mouse_up: Option<fn()> = none,
+    /// Runs with `true` when the pointer enters and `false` when it leaves.
+    on_hover: Option<fn(bool)> = none,
+    on_key_down: Option<fn()> = none,
+    on_key_up: Option<fn()> = none,
+    on_key_press: Option<fn()> = none,
 }
 
 
@@ -2051,37 +2035,855 @@ struct BoxProps {
 // lower to `slot`. Recipes allocate a raw node (or call Box) and pass
 // props — they do not intern, write arena fields, or call prop_int.
 
-/// `show` as the 0/1 the arena stores. A plain bool prop, so it is read once
-/// at build; reactive hiding goes through the `visible` Signal instead.
-fn show_on(show: bool) -> int {
-    match show {
-        true => { return 1 }
-        _ => { return 0 }
-    }
-}
+// --- View frames -------------------------------------------------------------
+// A component is a fn whose tail returns its tree, `return Element(...) { … }`.
+// That tail lowers to a slot call, so the parser wraps the fn body in a frame:
+//
+//     let __zv = __view_begin()        // first statement of the fn
+//     ...state, controller, keys...
+//     return __view_end(__zv, || { slot(Element(...), || { … }) })
+//
+// The frame gives the component's state a pending owner (its root does not
+// exist yet), logs the effects it allocates, builds the tree, finds the one
+// root it attached, moves everything onto that root, and runs `on_mount`. A
+// component's state therefore dies with its root, wherever it was created.
 
-/// An explicit `shrink` wins; otherwise anything that grows may also shrink.
-/// Keeps a growing child from overflowing its row without the caller having
-/// to set both.
-fn shrink_weight(grow: int, shrink: int) -> int {
-    if shrink >= 0 {
-        return shrink
-    }
-    if grow > 0 {
-        return 1
+/// Open frames, innermost last.
+let mut vf_token: []int = []int {}
+let mut vf_prev_owner: []int = []int {}
+let mut vf_parent: []int = []int {}
+let mut vf_log: []int = []int {}
+let mut vf_mount_at: []int = []int {}
+let mut vf_root: []int = []int {}
+let mut vf_roots: []int = []int {}
+/// `on_mount` callbacks of every open frame, each frame's from `vf_mount_at`.
+let mut mount_fns: []fn() = []fn() {}
+
+/// The slot the next element attaches to (0 at the top level).
+fn current_slot() -> int {
+    if ui_parents.len > 0 {
+        return ui_parents[ui_parents.len - 1]
     }
     return 0
 }
 
-/// A disabled widget paints at 40% so "not available" reads without every
-/// recipe hand-dimming its own colors.
-fn enabled_opacity(enabled: bool, opacity: int) -> int {
-    match enabled {
-        false => { return 40 }
-        _ => { return opacity }
+/// Open a `View` frame. Emitted by the compiler; not called by hand.
+fn __view_begin() -> int {
+    arena.ensure()
+    let token = arena.own_begin()
+    push(vf_token, token)
+    push(vf_prev_owner, arena.get_scope_node())
+    push(vf_parent, current_slot())
+    push(vf_log, track.log_begin())
+    push(vf_mount_at, mount_fns.len)
+    push(vf_root, 0)
+    push(vf_roots, 0)
+    arena.set_scope_node(token)
+    return vf_token.len - 1
+}
+
+/// Build the view under frame `frame` and close it. Emitted by the compiler.
+fn __view_end(frame: int, build: fn()) -> Node {
+    build()
+    let top = vf_token.len - 1
+    if top != frame {
+        panic("View frames closed out of order")
+    }
+    let built = vf_roots[top]
+    if built != 1 {
+        panic("View must build exactly one root element, built {{built}}")
+    }
+    let root = vf_root[top]
+    // Mount callbacks run while the frame is still open, so whatever they
+    // create (an effect, a handler) is owned by the root too. Refs are filled
+    // by now: every element of the tree has been built.
+    let start = vf_mount_at[top]
+    let mut i = start
+    while i < mount_fns.len {
+        let f = mount_fns[i]
+        f()
+        i = i + 1
+    }
+    while mount_fns.len > start {
+        pop(mount_fns)
+    }
+    arena.set_scope_node(vf_prev_owner[top])
+    arena.own_end(vf_token[top], root)
+    track.log_end(vf_log[top], vf_parent[top], root)
+    let slot_id = vf_parent[top]
+    pop(vf_token)
+    pop(vf_prev_owner)
+    pop(vf_parent)
+    pop(vf_log)
+    pop(vf_mount_at)
+    pop(vf_root)
+    pop(vf_roots)
+    // A component whose View is another component (`Stat` is a `Card`): the
+    // inner frame saw the attach, so report the root to the enclosing frame.
+    view_note(root, slot_id)
+    return node_handle(root)
+}
+
+/// `Component` reports each element it attaches; the innermost frame counts
+/// the ones placed directly in its parent slot.
+fn view_note(node_id: int, slot_id: int) {
+    let top = vf_token.len - 1
+    if top < 0 {
+        return
+    }
+    if vf_parent[top] != slot_id {
+        return
+    }
+    if vf_roots[top] == 0 {
+        vf_root[top] = node_id
+    }
+    vf_roots[top] = vf_roots[top] + 1
+}
+
+/// Run `body` once the component's `View` has attached its root, so refs
+/// are filled. Outside a `View` component it runs now.
+fn on_mount(body: fn()) {
+    if vf_token.len == 0 {
+        body()
+        return
+    }
+    push(mount_fns, body)
+}
+
+/// Entrance motion for the `enter` prop.
+/// Flags; add them: `enter = Enter.Fade + Enter.Reveal`.
+enum Enter {
+    None = 0,
+    Fade = 1,
+    Reveal = 2,
+}
+
+/// The empty `Signal<int>`: the placeholder of optional signal props.
+fn no_signal() -> Signal<int> {
+    return Signal { id: 0 }
+}
+
+/// The 0/1 show signal the engine reads for a `visible` thunk: layout and
+/// the enter / exit tracks read it raw. One effect, owned by `node`. The
+/// engine may also write it (Escape on an overlay with no click handler).
+fn visible_signal(node: Node, when: fn() -> bool) -> Signal<int> {
+    let out = signal(0)
+    let fid = intern_fn(|| {
+        let v = if when() { 1 } else { 0 }
+        if out.peek() != v {
+            out.set(v)
+        }
+    })
+    track.run(track.alloc(fid, node.id))
+    return out
+}
+
+/// Placeholder for an absent `Option<Signal<bool>>`.
+fn no_flag_signal() -> Signal<bool> {
+    return Signal { id: 0 }
+}
+
+/// A 0/1 `Signal<int>` that follows `b`. For the engine paths that read an
+/// int signal raw — `visible`, `bind`, the enter / exit tracks — under a
+/// component whose public state is a `Signal<bool>`. One effect, owned by the
+/// component that calls it. Read-only for the engine: an overlay it shows is
+/// closed by Escape through the overlay's own `on_click`, which writes `b`.
+fn flag_int(b: Signal<bool>) -> Signal<int> {
+    let out = signal(0)
+    effect(|| {
+        let v = if b.get() { 1 } else { 0 }
+        if out.peek() != v {
+            out.set(v)
+        }
+    })
+    return out
+}
+
+/// `no_signal` for `Signal<string>` props.
+fn no_signal_str() -> Signal<string> {
+    return Signal { id: 0 }
+}
+
+/// `no_signal` for `Signal<[]int>` props.
+fn no_signal_ints() -> Signal<[]int> {
+    return Signal { id: 0 }
+}
+
+/// `h` when `on`, else no handler: a prop that only some instances install
+/// (`on_click = handler_if(sortable, cycle)`).
+fn handler_if(on: bool, h: fn()) -> Option<fn()> {
+    if on {
+        return result.some(h)
+    }
+    return result.none(noop)
+}
+
+/// Run an optional handler; nothing when it is absent.
+fn emit(h: Option<fn()>) {
+    if result.is_some(h) {
+        let f = h.val
+        f()
     }
 }
 
+/// `emit` for a handler that takes a value (`on_select(index)`).
+fn emit_with<T>(h: Option<fn(T)>, v: T) {
+    if result.is_some(h) {
+        let f = h.val
+        f(v)
+    }
+}
+
+/// Default of `on_hover`.
+fn no_hover(on: bool) {
+    return
+}
+
+/// Default of the optional `fn() -> bool` props.
+fn no_flag() -> bool {
+    return false
+}
+
+/// Run `body` as an effect bound to `node`; dropped after its first run when
+/// it read no signal, so a constant costs no graph.
+fn node_effect(node: Node, body: fn()) {
+    let fid = intern_fn(body)
+    let eid = track.alloc(fid, node.id)
+    track.run(eid)
+    if track.dep_count(eid) == 0 {
+        arena.forget_intern(fid)
+        track.dispose_eid(eid)
+    }
+}
+
+/// The behaviour props of `BoxProps` (focus, hover, press, entrance).
+fn install_behaviour(node: Node, p: BoxProps) {
+    let node_id = node.id
+    if result.is_some(p.focusable) {
+        let f = p.focusable.val
+        node_effect(node, || {
+            if f() {
+                arena.nodes[node_id].focusable = 1
+            } else {
+                arena.nodes[node_id].focusable = 0
+            }
+        })
+    }
+    if result.is_some(p.roving) {
+        let r = p.roving.val
+        node_effect(node, || {
+            if r() {
+                arena.nodes[node_id].focusable = 1
+                arena.claim_focus(node_id)
+            } else {
+                arena.nodes[node_id].focusable = 0
+            }
+        })
+    }
+    if p.hoverFade {
+        hover_fade(node)
+    }
+    if p.pressScale {
+        press_scale(node)
+    }
+    if p.lift >= 0 {
+        hover_lift(node, p.lift)
+    }
+    if p.enter % 2 == 1 {
+        enter_fade(node)
+    }
+    if (p.enter / 2) % 2 == 1 {
+        enter_reveal(node)
+    }
+    if result.is_some(p.label) {
+        let l = p.label.val
+        node_effect(node, || { apply_str(node_id, SET.A11yLabel, l()) })
+    }
+    if result.is_some(p.on_hover) {
+        let h = p.on_hover.val
+        let hs = signal(0)
+        let primed = signal(0)
+        hover(node, hs)
+        node_effect(node, || {
+            let on = hs.get() != 0
+            if primed.peek() == 1 {
+                h(on)
+            } else {
+                primed.set(1)
+            }
+        })
+    }
+    if result.is_some(p.loading) {
+        let b = p.loading.val
+        node_effect(node, || { loading(node_handle(node_id), b()) })
+    }
+}
+
+// --- refs ------------------------------------------------------------------------
+// A `Ref` is filled by the element given `ref = r`, so the controller can reach
+// that element (measure it, focus it) without building it by hand. It is a
+// signal cell: an effect that reads it re-runs when it fills.
+
+/// A handle to an element, filled when the element builds.
+struct Ref {
+    id: int = 0,
+}
+
+/// A new, empty `Ref`. Owned like any state the component creates.
+fn ref() -> Ref {
+    let cell = signal(0)
+    return Ref { id: cell.id }
+}
+
+/// The element `r` points at (`Node { id: 0 }` before it builds).
+fn ref_node(r: Ref) -> Node {
+    if r.id <= 0 {
+        return node_handle(0)
+    }
+    return node_handle(signal_handle(r.id).peek())
+}
+
+fn ref_id(r: Ref) -> int {
+    return ref_node(r).id
+}
+
+fn ref_fill(r: Ref, node_id: int) {
+    if r.id > 0 {
+        signal_handle(r.id).set(node_id)
+    }
+}
+
+/// A laid-out box: position and size in dp.
+struct Rect {
+    x: int = 0,
+    y: int = 0,
+    w: int = 0,
+    h: int = 0,
+}
+
+/// `r`'s box from the last layout (all zero before the first).
+fn rect(r: Ref) -> Rect {
+    let id = ref_id(r)
+    if id <= 0 {
+        return Rect {}
+    }
+    return Rect { x: arena.nodes[id].x, y: arena.nodes[id].y,
+                  w: arena.nodes[id].w, h: arena.nodes[id].h }
+}
+
+/// Number of children of `r`.
+fn child_total(r: Ref) -> int {
+    let id = ref_id(r)
+    if id <= 0 {
+        return 0
+    }
+    return arena.nodes[id].kids.len
+}
+
+/// The box of `r`'s child `i`, relative to `r`'s content box (inside its
+/// padding and border): where a pinned child of `r` would sit over it.
+fn child_rect(r: Ref, i: int) -> Rect {
+    let id = ref_id(r)
+    if id <= 0 || i < 0 || i >= arena.nodes[id].kids.len {
+        return Rect {}
+    }
+    let k = arena.nodes[id].kids[i]
+    return Rect { x: arena.nodes[k].x - arena.content_x(id),
+                  y: arena.nodes[k].y - arena.content_y(id),
+                  w: arena.nodes[k].w, h: arena.nodes[k].h }
+}
+
+/// Run `body` after any layout that changed `r`'s width, the first one
+/// included. Call from `on_mount`.
+fn on_resize(r: Ref, body: fn()) {
+    let id = ref_id(r)
+    if id <= 0 {
+        return
+    }
+    arena.nodes[id].list_fn = intern_fn(|| {
+        let w = arena.nodes[id].w
+        if w == arena.nodes[id].list_gen {
+            return
+        }
+        arena.nodes[id].list_gen = w
+        body()
+    })
+}
+
+/// A ref to child `i` of `r` (empty when there is none): the element a
+/// caller's slot built inside a component (`Popover`'s trigger). Call from
+/// `on_mount`, once the children exist.
+fn child_ref(r: Ref, i: int) -> Ref {
+    let out = ref()
+    let id = ref_id(r)
+    if id > 0 && i >= 0 && i < arena.nodes[id].kids.len {
+        ref_fill(out, arena.nodes[id].kids[i])
+    }
+    return out
+}
+
+/// Make `h` the click handler of `r`, replacing any it had: a `Menu` owns its
+/// trigger's click.
+fn set_on_click(r: Ref, h: fn()) {
+    let id = ref_id(r)
+    if id > 0 {
+        arena.nodes[id].click_fn = intern_fn(h)
+    }
+}
+
+/// Mirror `r`'s hover state into `sig` (1 while the pointer is over it).
+fn watch_hover(r: Ref, sig: Signal<int>) {
+    let id = ref_id(r)
+    if id > 0 {
+        hover(node_handle(id), sig)
+    }
+}
+
+/// Float `r` beside `target` on `side` (`Place.*`), `gap` dp away, flipping
+/// to the other side near a window edge. Call from `on_mount`.
+fn anchor(r: Ref, target: Ref, side: int, gap: int) {
+    let id = ref_id(r)
+    let t = ref_id(target)
+    if id > 0 && t > 0 {
+        arena.anchor_to(id, t, side, gap)
+    }
+}
+
+/// Jump `r`'s exit fade to its end, so a closing panel is gone this frame.
+fn skip_exit(r: Ref) {
+    arena.snap_exit(ref_id(r))
+}
+
+/// `skip_exit` for a node handle passed in from outside a component.
+fn skip_exit_node(n: Node) {
+    arena.snap_exit(n.id)
+}
+
+/// Children of the slot being built whose a11y role is `role`, so far: how a
+/// table row knows whether it is odd without a counter of its own.
+fn slot_count_role(role: string) -> int {
+    let pid = current_slot()
+    if pid <= 0 {
+        return 0
+    }
+    let mut n = 0
+    let kids = arena.nodes[pid].kids
+    for i in 0..kids.len {
+        if arena.nodes[kids[i]].a11y_role == role {
+            n = n + 1
+        }
+    }
+    return n
+}
+
+/// Move keyboard focus to `r`.
+fn focus(r: Ref) {
+    let id = ref_id(r)
+    if id > 0 {
+        arena.claim_focus(id)
+    }
+}
+
+/// Keep Tab inside `r` (a modal) until `release_focus_trap(r)`.
+fn trap_focus(r: Ref) {
+    let id = ref_id(r)
+    if id > 0 {
+        arena.claim_trap(id)
+    }
+}
+
+fn release_focus_trap(r: Ref) {
+    let id = ref_id(r)
+    if id > 0 {
+        arena.release_trap(id)
+    }
+}
+
+// --- the `style` prop ---------------------------------------------------------
+// One effect per element evaluates its `style` thunk and writes only the keys
+// whose value moved since the last run, through the same setters (and the same
+// targeted invalidation) as every other prop: a background change is paint-only
+// and damages one node. A style that read no signal on its first run is static:
+// its effect is dropped right there and nothing is kept, so a plain
+// `Style(gap = 8)` costs one write per key and no graph.
+
+/// Install `style` on `node`. Called last in `Component`, so a key in `style`
+/// wins over the matching flat prop and over kind chrome.
+fn install_style(node: Node, style: fn() -> Style) {
+    let node_id = node.id
+    let fid = intern_fn(|| { style_run(node_id, style) })
+    let eid = track.alloc(fid, node_id)
+    track.run(eid)
+    if track.dep_count(eid) == 0 {
+        arena.forget_intern(fid)
+        track.dispose_eid(eid)
+        arena.style_forget(node_id)
+    }
+}
+
+// --- state styles -------------------------------------------------------------
+// `hoverStyle` & co. are merged over the base style by the same effect, which
+// also reads the node's interaction mask (`arena.state_sync` writes it once a
+// frame when hover / press / focus / disabled moved). A key only an overlay
+// sets is restored, when the overlay lets go, to the value the node had under
+// its base style: `rest`, read off the node once at install.
+
+struct StateStyles {
+    hover: Option<fn() -> Style>,
+    press: Option<fn() -> Style>,
+    focus: Option<fn() -> Style>,
+    disabled: Option<fn() -> Style>,
+}
+
+fn has_state_styles(s: StateStyles) -> bool {
+    return result.is_some(s.hover) || result.is_some(s.press) ||
+        result.is_some(s.focus) || result.is_some(s.disabled)
+}
+
+/// The node's raw paint values, to restore a key an overlay set and released.
+struct PaintRest {
+    bg: int,
+    fg: int,
+    opacity: int,
+    border_w: int,
+    border_c: int,
+    elev: int,
+}
+
+fn paint_rest(id: int) -> PaintRest {
+    return PaintRest {
+        bg: arena.nodes[id].bg,
+        fg: arena.nodes[id].fg,
+        opacity: int(arena.nodes[id].opacity),
+        border_w: int(arena.nodes[id].border_w),
+        border_c: arena.nodes[id].border_c,
+        elev: int(arena.nodes[id].elev),
+    }
+}
+
+/// The overlay for interaction mask `m` (`arena.STATE_*` bits).
+fn state_overlay(s: StateStyles, m: int) -> Style {
+    let mut o = Style {}
+    if (m & arena.STATE_HOVER) != 0 && result.is_some(s.hover) {
+        o = merge(o, paint_only(s.hover.val()))
+    }
+    if (m & arena.STATE_FOCUS) != 0 && result.is_some(s.focus) {
+        o = merge(o, paint_only(s.focus.val()))
+    }
+    if (m & arena.STATE_PRESS) != 0 && result.is_some(s.press) {
+        o = merge(o, paint_only(s.press.val()))
+    }
+    if (m & arena.STATE_DISABLED) != 0 && result.is_some(s.disabled) {
+        o = merge(o, paint_only(s.disabled.val()))
+    }
+    return o
+}
+
+fn install_state_style(node: Node, base: fn() -> Style, states: StateStyles) {
+    let node_id = node.id
+    // Apply the base once so `rest` holds what the node looks like at rest.
+    style_apply(node_id, Style {}, base())
+    let rest = paint_rest(node_id)
+    let mask = signal(0)
+    let m0 = arena.state_watch(node_id, mask.id)
+    if m0 != 0 {
+        mask.set(m0)
+    }
+    let fid = intern_fn(|| { state_style_run(node_id, base, states, mask, rest) })
+    let eid = track.alloc(fid, node_id)
+    track.run(eid)
+}
+
+fn state_style_run(node_id: int, base: fn() -> Style, states: StateStyles,
+                   mask: Signal<int>, rest: PaintRest) {
+    let next = merge(base(), state_overlay(states, mask.get()))
+    let last = arena.style_last(node_id)
+    style_apply(node_id, last, next)
+    state_restore(node_id, last, next, rest)
+    arena.style_keep(node_id, next)
+}
+
+/// A paint key that was set last run and is absent now goes back to `rest`.
+fn state_restore(id: int, a: Style, b: Style, rest: PaintRest) {
+    if result.is_some(a.background) && !result.is_some(b.background) {
+        apply_int_value(id, SET.Background, rest.bg)
+    }
+    if result.is_some(a.color) && !result.is_some(b.color) {
+        apply_int_value(id, SET.Color, rest.fg)
+    }
+    if result.is_some(a.opacity) && !result.is_some(b.opacity) {
+        apply_int_value(id, SET.Opacity, rest.opacity)
+    }
+    if result.is_some(a.border) && !result.is_some(b.border) {
+        apply_int_value(id, SET.Border, rest.border_w)
+        apply_int_value(id, SET.BorderColor, rest.border_c)
+    }
+    if result.is_some(a.elevation) && !result.is_some(b.elevation) {
+        apply_int_value(id, SET.Elevation, rest.elev)
+    }
+}
+
+/// One run of a style effect: diff against the last written `Style`.
+fn style_run(node_id: int, style: fn() -> Style) {
+    let next = style()
+    style_apply(node_id, arena.style_last(node_id), next)
+    arena.style_keep(node_id, next)
+}
+
+/// Write every key of `b` that is present and differs from `a`. An absent key
+/// writes nothing, so a key that goes from present to absent keeps its last
+/// value: give both branches a value (`if on { x } else { y }`).
+fn style_apply(id: int, a: Style, b: Style) {
+    let kind = int(arena.nodes[id].kind)
+    st_int(id, SET.ShowOn, a.display, b.display)
+    // Direction re-kinds a label into a box, so only containers take it.
+    if kind == 1 || kind == 9 || kind == 11 {
+        st_int(id, SET.Direction, a.direction, b.direction)
+    }
+    st_bool(id, SET.WrapFlag, a.wrap, b.wrap)
+    st_int(id, SET.Spacing, a.gap, b.gap)
+    st_int(id, SET.GapRow, a.rowGap, b.rowGap)
+    st_int(id, SET.GapCol, a.columnGap, b.columnGap)
+    st_int(id, SET.AlignItems, a.align, b.align)
+    st_int(id, SET.Justify, a.justify, b.justify)
+    st_int(id, SET.AlignSelf, a.alignSelf, b.alignSelf)
+    st_int(id, SET.Grow, a.grow, b.grow)
+    st_int(id, SET.Shrink, a.shrink, b.shrink)
+    // Anything that grows may also shrink, unless the style says otherwise:
+    // keeps a growing child from overflowing its row.
+    if !result.is_some(b.shrink) && result.is_some(b.grow) && b.grow.val > 0 {
+        if !result.is_some(a.grow) || a.grow.val != b.grow.val {
+            apply_int_value(id, SET.Shrink, 1)
+        }
+    }
+    st_int(id, SET.Span, a.span, b.span)
+    st_len(id, SET.Width, SET.WidthPct, a.width, b.width)
+    st_len(id, SET.Height, SET.HeightPct, a.height, b.height)
+    st_int(id, SET.MinWidth, a.minWidth, b.minWidth)
+    st_int(id, SET.MaxWidth, a.maxWidth, b.maxWidth)
+    st_int(id, SET.MinHeight, a.minHeight, b.minHeight)
+    st_int(id, SET.MaxHeight, a.maxHeight, b.maxHeight)
+    st_ratio(id, a.aspect, b.aspect)
+    st_box_edges(id, SET.Padding, SET.PaddingX, SET.PaddingY,
+                 SET.PaddingTop, SET.PaddingRight, SET.PaddingBottom, SET.PaddingLeft,
+                 a.padding, b.padding)
+    st_box_edges(id, SET.Margin, SET.MarginX, SET.MarginY,
+                 SET.MarginTop, SET.MarginRight, SET.MarginBottom, SET.MarginLeft,
+                 a.margin, b.margin)
+    st_int(id, SET.Position, a.position, b.position)
+    st_edges(id, SET.Top, SET.Right, SET.Bottom, SET.Left, a.inset, b.inset)
+    st_int(id, SET.ZIndex, a.zIndex, b.zIndex)
+    st_int(id, SET.Overflow, a.overflow, b.overflow)
+    st_str(id, SET.Background, a.background, b.background)
+    st_str(id, SET.Color, a.color, b.color)
+    st_int(id, SET.Opacity, a.opacity, b.opacity)
+    st_corners(id, a.radius, b.radius)
+    st_border(id, kind, a.border, b.border)
+    st_int(id, SET.Elevation, a.elevation, b.elevation)
+    // An image keeps its fit in the font slot.
+    if kind != 14 {
+        st_int(id, SET.Font, a.font, b.font)
+    }
+    st_bool(id, SET.Ellipsis, a.ellipsis, b.ellipsis)
+    st_str(id, SET.Cursor, a.cursor, b.cursor)
+}
+
+fn st_int(id: int, setter: int, a: Option<int>, b: Option<int>) {
+    if !result.is_some(b) {
+        return
+    }
+    if result.is_some(a) && a.val == b.val {
+        return
+    }
+    apply_int_value(id, setter, b.val)
+}
+
+fn st_bool(id: int, setter: int, a: Option<bool>, b: Option<bool>) {
+    if !result.is_some(b) {
+        return
+    }
+    if result.is_some(a) && a.val == b.val {
+        return
+    }
+    if b.val {
+        apply_int_value(id, setter, 1)
+    } else {
+        apply_int_value(id, setter, 0)
+    }
+}
+
+/// A color or a name. `""` is a value too: a cleared background.
+fn st_str(id: int, setter: int, a: Option<string>, b: Option<string>) {
+    if !result.is_some(b) {
+        return
+    }
+    if result.is_some(a) && a.val == b.val {
+        return
+    }
+    match setter {
+        SET.Background | SET.Color | SET.BorderColor => {
+            apply_int_value(id, setter, parse_hex_color(b.val))
+        }
+        _ => { apply_str(id, setter, b.val) }
+    }
+}
+
+/// `px` pins the length and clears a percentage; `pct` does the reverse.
+fn st_len(id: int, px_setter: int, pct_setter: int, a: Option<Len>, b: Option<Len>) {
+    if !result.is_some(b) {
+        return
+    }
+    if result.is_some(a) && a.val.unit == b.val.unit && a.val.v == b.val.v {
+        return
+    }
+    if b.val.unit == LenUnit.Pct {
+        apply_int_value(id, pct_setter, b.val.v)
+        return
+    }
+    if px_setter == SET.Height {
+        apply_int_value(id, SET.HeightPct, -1)
+    }
+    apply_int_value(id, px_setter, b.val.v)
+}
+
+fn st_ratio(id: int, a: Option<Ratio>, b: Option<Ratio>) {
+    if !result.is_some(b) {
+        return
+    }
+    if result.is_some(a) && a.val.w == b.val.w && a.val.h == b.val.h {
+        return
+    }
+    aspect(node_handle(id), b.val.w, b.val.h)
+    arena.note_prop_write(id, 1)
+}
+
+/// Side by side: only the sides present in `b` and changed are written.
+fn st_edges(id: int, top: int, right: int, bottom: int, left: int,
+            a: Option<Edges>, b: Option<Edges>) {
+    if !result.is_some(b) {
+        return
+    }
+    let mut e = Edges {}
+    if result.is_some(a) {
+        e = a.val
+    }
+    st_int(id, top, e.top, b.val.top)
+    st_int(id, right, e.right, b.val.right)
+    st_int(id, bottom, e.bottom, b.val.bottom)
+    st_int(id, left, e.left, b.val.left)
+}
+
+fn st_corners(id: int, a: Option<Corners>, b: Option<Corners>) {
+    if !result.is_some(b) {
+        return
+    }
+    if result.is_some(a) && corners_eq(a.val, b.val) {
+        return
+    }
+    let c = b.val
+    // The uniform radius takes the shared field (and the uniform paint path);
+    // only corners that differ from it become overrides, as `radius` plus
+    // `radius_top` always did.
+    let mut base = -1
+    if result.is_some(c.br) {
+        base = c.br.val
+    } else if result.is_some(c.tl) {
+        base = c.tl.val
+    }
+    if base >= 0 {
+        apply_int_value(id, SET.Radius, base)
+    }
+    corner_override(id, SET.CornerTL, c.tl, base)
+    corner_override(id, SET.CornerTR, c.tr, base)
+    corner_override(id, SET.CornerBR, c.br, base)
+    corner_override(id, SET.CornerBL, c.bl, base)
+}
+
+fn corner_override(id: int, setter: int, v: Option<int>, base: int) {
+    if result.is_some(v) && v.val != base {
+        apply_int_value(id, setter, v.val)
+    }
+}
+
+fn corners_eq(a: Corners, b: Corners) -> bool {
+    return opt_int_eq(a.tl, b.tl) && opt_int_eq(a.tr, b.tr) && opt_int_eq(a.br, b.br) &&
+           opt_int_eq(a.bl, b.bl)
+}
+
+fn opt_int_eq(a: Option<int>, b: Option<int>) -> bool {
+    if result.is_some(a) != result.is_some(b) {
+        return false
+    }
+    return !result.is_some(a) || a.val == b.val
+}
+
+/// Padding or margin: all four equal is the `all` setter, equal pairs the axis
+/// setters, anything else per side, so a node's fields are written exactly as
+/// the matching flat props wrote them.
+fn st_box_edges(id: int, all: int, sx: int, sy: int, top: int, right: int, bottom: int,
+                left: int, a: Option<Edges>, b: Option<Edges>) {
+    if !result.is_some(b) {
+        return
+    }
+    let e = b.val
+    if result.is_some(a) && opt_int_eq(a.val.top, e.top) && opt_int_eq(a.val.right, e.right) &&
+       opt_int_eq(a.val.bottom, e.bottom) && opt_int_eq(a.val.left, e.left) {
+        return
+    }
+    let full = result.is_some(e.top) && result.is_some(e.right) && result.is_some(e.bottom) &&
+               result.is_some(e.left)
+    if full && e.top.val == e.right.val && e.top.val == e.bottom.val && e.top.val == e.left.val {
+        apply_int_value(id, all, e.top.val)
+        return
+    }
+    let mut done_x = false
+    let mut done_y = false
+    if result.is_some(e.left) && result.is_some(e.right) && e.left.val == e.right.val {
+        apply_int_value(id, sx, e.left.val)
+        done_x = true
+    }
+    if result.is_some(e.top) && result.is_some(e.bottom) && e.top.val == e.bottom.val {
+        apply_int_value(id, sy, e.top.val)
+        done_y = true
+    }
+    if !done_y {
+        if result.is_some(e.top) {
+            apply_int_value(id, top, e.top.val)
+        }
+        if result.is_some(e.bottom) {
+            apply_int_value(id, bottom, e.bottom.val)
+        }
+    }
+    if !done_x {
+        if result.is_some(e.left) {
+            apply_int_value(id, left, e.left.val)
+        }
+        if result.is_some(e.right) {
+            apply_int_value(id, right, e.right.val)
+        }
+    }
+}
+
+fn st_border(id: int, kind: int, a: Option<Border>, b: Option<Border>) {
+    if !result.is_some(b) {
+        return
+    }
+    let w = b.val.width
+    let c = b.val.color
+    let mut aw = result.none(0)
+    let mut ac = result.none("")
+    if result.is_some(a) {
+        aw = a.val.width
+        ac = a.val.color
+    }
+    // Only boxes and buttons carry a border width (it insets their content).
+    if kind == 1 || kind == 4 {
+        st_int(id, SET.Border, aw, w)
+    }
+    if result.is_some(c) && (!result.is_some(ac) || ac.val != c.val) {
+        apply_int_value(id, SET.BorderColor, parse_hex_color(c.val))
+    }
+}
 
 /// Apply every style, event, bind, visible, and press prop, then attach
 /// `node` to the current `slot` parent. Kind-specific chrome (native
@@ -2092,163 +2894,75 @@ fn Component(node: Node, p: BoxProps) -> Node {
     arena.component_runs = arena.component_runs + 1
     shrink(node, 0)
     let k = int(arena.nodes[node.id].kind)
-    if p.style__set {
-        if p.style.width >= 0 {
-            set_width(node, p.style.width)
-        }
-        if p.style.height >= 0 {
-            set_height(node, p.style.height)
-        }
-        if p.style.padding > 0 {
-            set_padding(node, p.style.padding)
-        }
-        if p.style.grow > 0 {
-            grow(node, p.style.grow)
-        }
-        let sbg = parse_hex_color(p.style.background)
-        if sbg >= 0 {
-            set_background(node, sbg)
-        }
+    // Containers lay out as a column unless their style says otherwise.
+    if k == 1 || k == 9 || k == 11 {
+        set_prop_int(node, SET.Direction, Direction.Column)
     }
-    if k == 1 {
-        set_prop_int(node, SET.Direction, p.align_direction)
-        set_prop_int(node, SET.Border, p.border)
-    }
-    if k == 4 {
-        set_prop_int(node, SET.Border, p.border)
-    }
-    if k == 9 {
-        set_prop_int(node, SET.Direction, p.align_direction)
-    }
-    if k == 11 {
-        set_prop_int(node, SET.Direction, p.align_direction)
-    }
-    set_prop_int(node, SET.Width, p.width)
-    set_prop_int(node, SET.Height, p.height)
-    set_prop_int(node, SET.Padding, p.padding)
-    set_prop_int(node, SET.PaddingX, p.padding_x)
-    set_prop_int(node, SET.PaddingY, p.padding_y)
-    set_prop_int(node, SET.PaddingTop, p.padding_top)
-    set_prop_int(node, SET.PaddingRight, p.padding_right)
-    set_prop_int(node, SET.PaddingBottom, p.padding_bottom)
-    set_prop_int(node, SET.PaddingLeft, p.padding_left)
-    set_prop_int(node, SET.Margin, p.margin)
-    set_prop_int(node, SET.MarginX, p.margin_x)
-    set_prop_int(node, SET.MarginY, p.margin_y)
-    set_prop_int(node, SET.MarginTop, p.margin_top)
-    set_prop_int(node, SET.MarginRight, p.margin_right)
-    set_prop_int(node, SET.MarginBottom, p.margin_bottom)
-    set_prop_int(node, SET.MarginLeft, p.margin_left)
-    let mut gap = p.spacing
-    if p.gap >= 0 {
-        gap = p.gap
-    }
-    set_prop_int(node, SET.Spacing, gap)
-    set_prop_int(node, SET.GapRow, p.gap_row)
-    set_prop_int(node, SET.GapCol, p.gap_col)
-    set_prop_int(node, SET.Radius, p.radius)
-    set_prop_int(node, SET.RadiusTop, p.radius_top)
-    set_prop_int(node, SET.RadiusBottom, p.radius_bottom)
-    set_prop_int(node, SET.Elevation, p.elevation)
-    set_prop_int(node, SET.Grow, p.grow)
-    let sw = shrink_weight(p.grow, p.shrink)
-    set_prop_int(node, SET.Shrink, sw)
-    set_prop_int(node, SET.AlignItems, p.align_items)
-    set_prop_int(node, SET.Justify, p.justify)
-    set_prop_int(node, SET.Wrap, p.wrap)
-    set_prop_int(node, SET.MinWidth, p.min_width)
-    set_prop_int(node, SET.MaxWidth, p.max_width)
-    set_prop_int(node, SET.MinHeight, p.min_height)
-    set_prop_int(node, SET.MaxHeight, p.max_height)
-    set_prop_int(node, SET.Safe, p.safe)
-    set_prop_int(node, SET.Position, p.position)
-    set_prop_int(node, SET.Left, p.left)
-    set_prop_int(node, SET.Top, p.top)
-    set_prop_int(node, SET.Right, p.right)
-    set_prop_int(node, SET.Bottom, p.bottom)
-    set_prop_int(node, SET.ZIndex, p.z_index)
-    let shown = show_on(p.show)
-    set_prop_int(node, SET.ShowOn, shown)
+    set_prop_int(node, SET.Safe, if p.safe { 1 } else { 0 })
     if k == 14 {
         set_prop_int(node, SET.SvgFit, p.fit)
-        set_prop_int(node, SET.SvgLazy, p.lazy)
-    } else {
-        set_prop_int(node, SET.Font, p.font)
+        set_prop_int(node, SET.SvgLazy, if p.lazy { 1 } else { 0 })
     }
-    let dim = enabled_opacity(p.enabled, p.opacity)
-    set_prop_int(node, SET.Opacity, dim)
-    // The shared state overlay records disabled once, so hover / press and any
-    // future invalid / loading chrome read one model instead of re-deriving it.
+    // A disabled element paints at 40% so "not available" reads without every
+    // recipe hand-dimming its colors (a style `opacity` still wins). The shared
+    // state overlay records disabled once, so hover / press read one model.
     if p.enabled {
         arena.set_disabled(node.id, 0)
     } else {
+        set_prop_int(node, SET.Opacity, 40)
         arena.set_disabled(node.id, 1)
     }
     if k == 10 {
-        set_prop_int(node, SET.Wrap, p.multiline)
+        set_prop_int(node, SET.Wrap, if p.multiline { 1 } else { 0 })
     }
-    set_prop_str(node, SET.Background, p.background)
-    set_prop_str(node, SET.Color, p.color)
-    set_prop_str(node, SET.BorderColor, p.border_color)
-    set_prop_str(node, SET.A11yLabel, p.a11y_label)
-    set_prop_str(node, SET.A11yRole, p.a11y_role)
-    set_prop_str(node, SET.Cursor, p.cursor)
-    if p.text__set {
-        prop_str(node, SET.Text, p.text)
+    set_prop_str(node, SET.A11yRole, p.role)
+    if result.is_some(p.text) {
+        prop_str(node, SET.Text, p.text.val)
     }
-    if p.on_click__set {
-        arena.nodes[node.id].click_fn = intern_fn(p.on_click)
+    if result.is_some(p.on_click) {
+        arena.nodes[node.id].click_fn = intern_fn(p.on_click.val)
         arena.nodes[node.id].focusable = 1
     }
-    if p.on_mouse_down__set {
-        arena.nodes[node.id].down_fn = intern_fn(p.on_mouse_down)
+    if result.is_some(p.on_mouse_down) {
+        arena.nodes[node.id].down_fn = intern_fn(p.on_mouse_down.val)
     }
-    if p.on_mouse_up__set {
-        arena.nodes[node.id].up_fn = intern_fn(p.on_mouse_up)
+    if result.is_some(p.on_mouse_up) {
+        arena.nodes[node.id].up_fn = intern_fn(p.on_mouse_up.val)
     }
-    // A `key` prop works on every widget: the chord runs `on_key`, or
-    // `on_click` when no separate handler was given. Installed after the
-    // click handler so that fallback has something to call.
-    if p.key.len > 0 {
-        let mut kfn = 0
-        if p.on_key__set {
-            kfn = intern_fn(p.on_key)
-        } else {
-            kfn = arena.nodes[node.id].click_fn
-        }
-        install_key(node, p.key, p.key_action, kfn, p.key_global)
-    }
-    if p.on_key_down__set {
-        arena.nodes[node.id].kdown_fn = intern_fn(p.on_key_down)
+    // Installed after the click handler, so a `chord_click` binding has
+    // something to call.
+    install_keys(node, p.keys)
+    if result.is_some(p.on_key_down) {
+        arena.nodes[node.id].kdown_fn = intern_fn(p.on_key_down.val)
         arena.nodes[node.id].focusable = 1
     }
-    if p.on_key_up__set {
-        arena.nodes[node.id].kup_fn = intern_fn(p.on_key_up)
+    if result.is_some(p.on_key_up) {
+        arena.nodes[node.id].kup_fn = intern_fn(p.on_key_up.val)
         arena.nodes[node.id].focusable = 1
     }
-    if p.on_key_press__set {
-        arena.nodes[node.id].kpress_fn = intern_fn(p.on_key_press)
+    if result.is_some(p.on_key_press) {
+        arena.nodes[node.id].kpress_fn = intern_fn(p.on_key_press.val)
         arena.nodes[node.id].focusable = 1
     }
-    // `hover_off` is a plain bool field, so interning a thunk here only to
+    // `hoverOff` is a plain bool field, so interning a thunk here only to
     // invoke it on the next line allocated a closure env capturing the whole
     // BoxProps (624 B) on every Component — and the env outlives the interned
     // copy, so it leaked once per node build. Read the field directly.
-    if p.hover_off {
+    if p.hoverOff {
         hover_off(node)
     }
-    if p.bind__set {
-        bind(node, p.bind)
+    if result.is_some(p.bind) {
+        bind(node, p.bind.val)
     }
-    if p.visible__set {
-        show(node, p.visible)
+    if result.is_some(p.visible) {
+        show(node, visible_signal(node, p.visible.val))
     }
     if p.press {
         arena.nodes[node.id].press = 1
     }
-    if p.edit__set {
-        if p.edit.id > 0 {
-            let sig = p.edit
+    if result.is_some(p.edit) {
+        if p.edit.val.id > 0 {
+            let sig = p.edit.val
             let node_id = node.id
             arena.nodes[node_id].edit_sig = sig.id
             arena.nodes[node_id].bind_fn = intern_fn(|| { set(sig, arena.input_committed(node_id)) })
@@ -2273,11 +2987,11 @@ fn Component(node: Node, p: BoxProps) -> Node {
             }
         }
     }
-    if p.row_h != 0 {
-        arena.nodes[node.id].row_h = p.row_h
+    if p.rowHeight != 0 {
+        arena.nodes[node.id].row_h = p.rowHeight
     }
-    if p.rebuild__set {
-        arena.nodes[node.id].list_fn = intern_fn(p.rebuild)
+    if result.is_some(p.rebuild) {
+        arena.nodes[node.id].list_fn = intern_fn(p.rebuild.val)
     }
     if k == 7 {
         set_background(node, role_color(ROLE.Rule))
@@ -2289,8 +3003,8 @@ fn Component(node: Node, p: BoxProps) -> Node {
         set_background(node, role_color(ROLE.Hard))
         set_color(node, role_color(ROLE.Ink))
         border_color(node, role_color(ROLE.Plate))
-        if p.bind__set {
-            keys(node, p.bind, 0, 100)
+        if result.is_some(p.bind) {
+            keys(node, p.bind.val, 0, 100)
         }
     }
     if k == 6 {
@@ -2304,9 +3018,9 @@ fn Component(node: Node, p: BoxProps) -> Node {
         z_index(node, 50)
     }
     if k == 11 {
-        if p.bind__set {
+        if result.is_some(p.bind) {
             let node_id = node.id
-            let signal_id = p.bind.id
+            let signal_id = p.bind.val.id
             styled(node, || {
                 let y = signal_handle(signal_id).get()
                 if arena.nodes[node_id].scroll_y != y {
@@ -2317,12 +3031,33 @@ fn Component(node: Node, p: BoxProps) -> Node {
             })
         }
     }
-    if ui_parents.len > 0 {
-        let pid = ui_parents[ui_parents.len - 1]
-        if pid > 0 {
-            child(node_handle(pid), node)
-        }
+    let states = StateStyles {
+        hover: p.hoverStyle,
+        press: p.pressStyle,
+        focus: p.focusStyle,
+        disabled: p.disabledStyle,
     }
+    if has_state_styles(states) {
+        if result.is_some(p.pressStyle) {
+            arena.nodes[node.id].press = 1
+        }
+        let mut base: fn() -> Style = no_style
+        if result.is_some(p.style) {
+            base = p.style.val
+        }
+        install_state_style(node, base, states)
+    } else if result.is_some(p.style) {
+        install_style(node, p.style.val)
+    }
+    install_behaviour(node, p)
+    if result.is_some(p.ref) {
+        ref_fill(p.ref.val, node.id)
+    }
+    let slot_id = current_slot()
+    if slot_id > 0 {
+        child(node_handle(slot_id), node)
+    }
+    view_note(node.id, slot_id)
     return node
 }
 
@@ -2344,43 +3079,19 @@ fn ui_emit(node: Node) -> Node {
 }
 
 struct TextProps {
-    color: string = "",
-    font: int = -1,
-    padding: int = -1,
-    opacity: int = -1,
-    // grow / shrink / show: as BoxProps. `grow = 1` text fills leftover row
-    // space and narrows before the row wraps; `show` hides without
-    // rebuilding.
-    grow: int = -1,
-    shrink: int = -1,
-    show: bool = true,
-    wrap: int = 0,
-    /// Truncate with a trailing `…` when the label is wider than its box.
-    /// Off by default: overflow (and `wrap`) stay the right answer for
-    /// pinned and rotated chart text.
-    ellipsis: bool = false,
-    // position / left / top / right / bottom / z_index: as BoxProps. Pinned
-    // labels are how axis ticks and rotated chart text place themselves.
-    position: int = -1,
-    left: int = -1,
-    top: int = -1,
-    right: int = -1,
-    bottom: int = -1,
-    z_index: int = -1,
-    a11y_label: string = "",
-    a11y_role: string = "",
-    /// Chord that activates this node: `"cmd+s"`, `"ctrl+shift+p"`, or a
-    /// sequence like `"g d"`. Every widget takes it — key binding is a prop,
-    /// not something a particular widget hard-codes.
-    key: string = "",
-    /// Name the chord resolves to, so an app can remap it with `remap_key`
-    /// without touching the widget. Defaults to `"key.<chord>"`.
-    key_action: string = "",
-    /// Handler for the chord; omit it and the chord runs `on_click`.
-    on_key: fn() = noop,
-    on_key__set: bool = false,
-    /// true = fires wherever focus is, instead of only on this node.
-    key_global: bool = false,
+    /// CSS-subset style: `color`, `font`, `wrap`, `ellipsis`, and the box keys
+    /// (`grow`, `inset` for pinned chart text, ...).
+    style: Option<fn() -> Style> = none,
+    /// Filled with this label; see `BoxProps.ref`.
+    ref: Option<Ref> = none,
+    /// Paint this integer signal's live value (cheaper than a text thunk: no
+    /// string is built per change).
+    bind: Option<Signal<int>> = none,
+    /// Accessibility role and name; see `BoxProps`.
+    role: string = "",
+    label: Option<fn() -> string> = none,
+    /// Keyboard actions on this element (`chord(...)`, `chord_click(...)`).
+    keys: []KeyBind = no_keys(),
 }
 /// A flex container. Trailing block is the slot.
 fn Box(p: BoxProps) -> Node {
@@ -2392,15 +3103,8 @@ fn Box(p: BoxProps) -> Node {
 /// this one node. The compiler lifts a plain expression —
 /// `Text("n={{count.get()}}")` — into that thunk, so callers write data.
 fn Text(label: fn() -> string, p: TextProps) -> Node {
-    let __n = Component(raw_label(""), text = label, color = p.color, font = p.font,
-                        padding = p.padding, opacity = p.opacity, grow = p.grow, shrink = p.shrink,
-                        show = p.show, wrap = p.wrap, position = p.position, left = p.left,
-                        top = p.top, right = p.right, bottom = p.bottom, z_index = p.z_index,
-                        a11y_label = p.a11y_label, a11y_role = p.a11y_role)
-    if p.ellipsis {
-        text_ellipsis(__n)
-    }
-    return apply_key(__n, p.key, p.key_action, p.on_key, p.on_key__set, p.key_global)
+    return Component(raw_label(""), text = label, style = p.style, ref = p.ref, bind = p.bind,
+                     label = p.label, role = p.role, keys = p.keys)
 }
 // --- elevation ------------------------------------------------------------
 // The curves and the `Elev` record live in the core (`arena`), because the
@@ -2427,7 +3131,7 @@ fn elev_now(level: int) -> Elev {
 // --- motion ---------------------------------------------------------------
 /// Transition durations in milliseconds. Anything that moves uses one of
 /// these three; a bespoke duration is a bug, not a refinement.
-enum MOTION {
+enum Motion {
     // Hover, press, focus — feedback that must feel instant.
     Fast = 100,
     // The default: state changes, indicators, switches.

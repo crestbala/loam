@@ -141,6 +141,9 @@ int type_eq(const Type *a, const Type *b) {
             return type_eq(a->elem, b->elem);
         case TY_STRUCT:
             if (!a->name || !b->name || strcmp(a->name, b->name) != 0) return 0;
+            if ((a->cname || b->cname) &&
+                (!a->cname || !b->cname || strcmp(a->cname, b->cname) != 0))
+                return 0;
             if (a->param_count != b->param_count) return 0;
             for (size_t i = 0; i < a->param_count; i++)
                 if (!type_eq(a->params[i], b->params[i])) return 0;
@@ -334,7 +337,7 @@ void type_c_name(const Type *t, char *buf, size_t cap) {
         snprintf(buf, cap, "int64_t");
         return;
     }
-    snprintf(buf, cap, "%s", t->name ? t->name : "struct");
+    snprintf(buf, cap, "%s", t->cname ? t->cname : t->name ? t->name : "struct");
     /* Signal<T> / Future<T> / Chan<T> are typed handles; the C layout is
        always { id }. */
     if (t->name && (strcmp(t->name, "Signal") == 0 || strcmp(t->name, "Future") == 0 ||
@@ -350,6 +353,12 @@ void type_c_name(const Type *t, char *buf, size_t cap) {
             char c = *p;
             if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))
                 buf[used++] = c;
+            /* Brackets are kept as letters: `Option<[]string>` and
+               `Option<string>` are different structs. */
+            else if (c == '[')
+                buf[used++] = 'L';
+            else if (c == ']')
+                buf[used++] = 'R';
             else if (used && buf[used - 1] != '_')
                 buf[used++] = '_';
         }

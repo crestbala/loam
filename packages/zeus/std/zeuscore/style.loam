@@ -1,0 +1,427 @@
+//! style — the CSS subset a Zeus element takes as one `style` prop.
+//!
+//! Every key is an `Option`: an absent key leaves the element's own value, and
+//! a present one wins, so a negative margin or a zero radius is an ordinary
+//! value rather than an "unset" sentinel. Keys are camelCase and follow the
+//! CSS property they stand for; values that CSS writes as a shorthand
+//! (`padding: 8px 12px`) have one constructor each (`edges2(8, 12)`).
+//!
+//! ```
+//! Box(style = Style(gap = 8, padding = edges2(8, 12), radius = corners(6),
+//!                   background = if on.get() { accent() } else { plate() }))
+//! ```
+//!
+//! A plain value is wrapped in `Some` by the compiler where an `Option` is
+//! expected, so a call site never writes `result.some(...)`. The element runs
+//! `style` in one effect and writes only the keys whose value changed; see
+//! `install_style` in `zeusbase`.
+//!
+//! This module holds data only, so the arena (which keeps the last `Style` of
+//! a reactive element) can import it without a cycle.
+
+import "std:result"
+
+/// `display`: `Flex` lays the element out, `None` hides it and takes it out
+/// of layout (the subtree is kept). The values are the arena's `show_on`.
+enum Display {
+    None = 0,
+    Flex = 1,
+}
+
+/// `position`. `Absolute` pins the element against its parent with `inset`.
+/// The values are the layout solver's.
+enum Position {
+    Relative = 0,
+    Absolute = 1,
+}
+
+/// `overflow`. The values are the layout solver's.
+enum Overflow {
+    Visible = 0,
+    Hidden = 1,
+    Scroll = 2,
+    Auto = 3,
+}
+
+/// Units a `Len` can carry.
+enum LenUnit {
+    Px = 0,
+    Pct = 1,
+}
+
+/// A length: `px(240)` or `pct(50)`.
+struct Len {
+    unit: int = 0,
+    v: int = 0,
+}
+
+/// Four sides, CSS order (top, right, bottom, left). Unset sides keep the
+/// element's own value: `Edges(top = 0)` changes only the top.
+struct Edges {
+    top: Option<int> = none,
+    right: Option<int> = none,
+    bottom: Option<int> = none,
+    left: Option<int> = none,
+}
+
+/// Four corners, CSS order (top-left, top-right, bottom-right, bottom-left).
+struct Corners {
+    tl: Option<int> = none,
+    tr: Option<int> = none,
+    br: Option<int> = none,
+    bl: Option<int> = none,
+}
+
+/// `border`: width in px and a color (role token or hex). Either may be left
+/// out: `Border(color = rule())` recolors without changing the width.
+struct Border {
+    width: Option<int> = none,
+    color: Option<string> = none,
+}
+
+/// `aspect-ratio`: `ratio(16, 9)`.
+struct Ratio {
+    w: int = 0,
+    h: int = 0,
+}
+
+/// The style of one element. Grouped as CSS groups them; every key is
+/// optional. `color` and `font` inherit into text, as in CSS.
+struct Style {
+    // display and flex
+    display: Option<int> = none,
+    /// `Direction.Row` / `Direction.Column`.
+    direction: Option<int> = none,
+    /// `flex-wrap` on a container; text wrapping on a label.
+    wrap: Option<bool> = none,
+    gap: Option<int> = none,
+    rowGap: Option<int> = none,
+    columnGap: Option<int> = none,
+    /// `align-items`: an `Align` code.
+    align: Option<int> = none,
+    /// `justify-content`: an `Align` code.
+    justify: Option<int> = none,
+    alignSelf: Option<int> = none,
+    grow: Option<int> = none,
+    shrink: Option<int> = none,
+
+    // grid child
+    /// `grid-column: span n`.
+    span: Option<int> = none,
+
+    // box
+    width: Option<Len> = none,
+    height: Option<Len> = none,
+    minWidth: Option<int> = none,
+    maxWidth: Option<int> = none,
+    minHeight: Option<int> = none,
+    maxHeight: Option<int> = none,
+    aspect: Option<Ratio> = none,
+    padding: Option<Edges> = none,
+    margin: Option<Edges> = none,
+
+    // position
+    position: Option<int> = none,
+    /// `top` / `right` / `bottom` / `left` for a positioned element.
+    inset: Option<Edges> = none,
+    zIndex: Option<int> = none,
+    overflow: Option<int> = none,
+
+    // paint
+    background: Option<string> = none,
+    color: Option<string> = none,
+    /// Percent, 0..100.
+    opacity: Option<int> = none,
+    radius: Option<Corners> = none,
+    border: Option<Border> = none,
+    /// Shadow level 0..4.
+    elevation: Option<int> = none,
+
+    // text
+    font: Option<int> = none,
+    /// `text-overflow: ellipsis`.
+    ellipsis: Option<bool> = none,
+
+    // interaction
+    /// CSS cursor name: `"pointer"`, `"text"`, … (`""` = arrow).
+    cursor: Option<string> = none,
+}
+
+// --- value constructors ------------------------------------------------------
+
+/// A length in design px (the UI scale is applied where it lands).
+fn px(v: int) -> Len {
+    return Len { unit: LenUnit.Px, v: v }
+}
+
+/// A length in percent of the parent.
+fn pct(v: int) -> Len {
+    return Len { unit: LenUnit.Pct, v: v }
+}
+
+/// `padding: 8px` — every side.
+fn edges(all: int) -> Edges {
+    return Edges(top = all, right = all, bottom = all, left = all)
+}
+
+/// `padding: 8px 12px` — vertical, then horizontal.
+fn edges2(y: int, x: int) -> Edges {
+    return Edges(top = y, right = x, bottom = y, left = x)
+}
+
+/// `padding: 1px 2px 3px 4px` — top, right, bottom, left.
+fn edges4(t: int, r: int, b: int, l: int) -> Edges {
+    return Edges(top = t, right = r, bottom = b, left = l)
+}
+
+/// `border-radius: 8px` — every corner.
+fn corners(all: int) -> Corners {
+    return Corners(tl = all, tr = all, br = all, bl = all)
+}
+
+/// Round the top pair only; the bottom corners keep the element's own.
+fn corners_top(r: int) -> Corners {
+    return Corners(tl = r, tr = r)
+}
+
+/// Round the bottom pair only; the top corners keep the element's own.
+fn corners_bottom(r: int) -> Corners {
+    return Corners(br = r, bl = r)
+}
+
+/// `border-radius: 1px 2px 3px 4px` — top-left, top-right, bottom-right,
+/// bottom-left.
+fn corners4(tl: int, tr: int, br: int, bl: int) -> Corners {
+    return Corners(tl = tl, tr = tr, br = br, bl = bl)
+}
+
+/// `border: 1px solid <color>`.
+fn line(width: int, color: string) -> Border {
+    return Border(width = width, color = color)
+}
+
+/// `aspect-ratio: w / h`.
+fn ratio(w: int, h: int) -> Ratio {
+    return Ratio { w: w, h: h }
+}
+
+/// `display` for a condition: `Display.Flex` while true, `Display.None`
+/// otherwise. `Style(display = shown(open.get()))`.
+fn shown(on: bool) -> int {
+    if on {
+        return Display.Flex
+    }
+    return Display.None
+}
+
+/// No style: the default of every `style` prop.
+fn no_style() -> Style {
+    return Style {}
+}
+
+// --- merge -------------------------------------------------------------------
+
+/// `b`'s key where `b` has one, else `a`'s. The whole cascade: a recipe writes
+/// `merge(base, p.style())` and the caller can override any key.
+/// The keys a state style may set: paint only, so hover or press never
+/// reflows. Every other key of `s` is dropped.
+fn paint_only(s: Style) -> Style {
+    return Style(background = s.background, color = s.color, opacity = s.opacity,
+                 border = s.border, elevation = s.elevation)
+}
+
+fn merge(a: Style, b: Style) -> Style {
+    return Style(
+        display = pick(a.display, b.display),
+        direction = pick(a.direction, b.direction),
+        wrap = pick(a.wrap, b.wrap),
+        gap = pick(a.gap, b.gap),
+        rowGap = pick(a.rowGap, b.rowGap),
+        columnGap = pick(a.columnGap, b.columnGap),
+        align = pick(a.align, b.align),
+        justify = pick(a.justify, b.justify),
+        alignSelf = pick(a.alignSelf, b.alignSelf),
+        grow = pick(a.grow, b.grow),
+        shrink = pick(a.shrink, b.shrink),
+        span = pick(a.span, b.span),
+        width = pick(a.width, b.width),
+        height = pick(a.height, b.height),
+        minWidth = pick(a.minWidth, b.minWidth),
+        maxWidth = pick(a.maxWidth, b.maxWidth),
+        minHeight = pick(a.minHeight, b.minHeight),
+        maxHeight = pick(a.maxHeight, b.maxHeight),
+        aspect = pick(a.aspect, b.aspect),
+        padding = merge_edges(a.padding, b.padding),
+        margin = merge_edges(a.margin, b.margin),
+        position = pick(a.position, b.position),
+        inset = merge_edges(a.inset, b.inset),
+        zIndex = pick(a.zIndex, b.zIndex),
+        overflow = pick(a.overflow, b.overflow),
+        background = pick(a.background, b.background),
+        color = pick(a.color, b.color),
+        opacity = pick(a.opacity, b.opacity),
+        radius = merge_corners(a.radius, b.radius),
+        border = pick(a.border, b.border),
+        elevation = pick(a.elevation, b.elevation),
+        font = pick(a.font, b.font),
+        ellipsis = pick(a.ellipsis, b.ellipsis),
+        cursor = pick(a.cursor, b.cursor))
+}
+
+/// `b` when present, else `a`.
+fn pick<T>(a: Option<T>, b: Option<T>) -> Option<T> {
+    if result.is_some(b) {
+        return b
+    }
+    return a
+}
+
+/// Side by side, so `merge(edges2(8, 12), Edges(top = 0))` keeps the other
+/// three sides.
+fn merge_edges(a: Option<Edges>, b: Option<Edges>) -> Option<Edges> {
+    if !result.is_some(b) {
+        return a
+    }
+    if !result.is_some(a) {
+        return b
+    }
+    return result.some(Edges(
+        top = pick(a.val.top, b.val.top),
+        right = pick(a.val.right, b.val.right),
+        bottom = pick(a.val.bottom, b.val.bottom),
+        left = pick(a.val.left, b.val.left)))
+}
+
+/// Corner by corner; see `merge_edges`.
+fn merge_corners(a: Option<Corners>, b: Option<Corners>) -> Option<Corners> {
+    if !result.is_some(b) {
+        return a
+    }
+    if !result.is_some(a) {
+        return b
+    }
+    return result.some(Corners(
+        tl = pick(a.val.tl, b.val.tl),
+        tr = pick(a.val.tr, b.val.tr),
+        br = pick(a.val.br, b.val.br),
+        bl = pick(a.val.bl, b.val.bl)))
+}
+
+/// The text keys of `s` (`color`, `font`): what a component passes on to the
+/// label inside it.
+fn text_part(s: Style) -> Style {
+    return Style(color = s.color, font = s.font)
+}
+
+/// Side `i` (0 top, 1 right, 2 bottom, 3 left) of `e`, or `d` when unset.
+fn edge_or(e: Option<Edges>, i: int, d: int) -> int {
+    if !result.is_some(e) {
+        return d
+    }
+    let mut v = e.val.top
+    if i == 1 {
+        v = e.val.right
+    } else if i == 2 {
+        v = e.val.bottom
+    } else if i == 3 {
+        v = e.val.left
+    }
+    return result.some_or(v, d)
+}
+
+/// A `Len` in px, or `d` when it is unset or a percentage.
+fn len_or(l: Option<Len>, d: int) -> int {
+    if result.is_some(l) && l.val.unit == LenUnit.Px {
+        return l.val.v
+    }
+    return d
+}
+
+/// The top-left corner of `c`, or `d` when unset.
+fn corner_or(c: Option<Corners>, d: int) -> int {
+    if !result.is_some(c) {
+        return d
+    }
+    return result.some_or(c.val.tl, d)
+}
+
+/// The `color` of `s`, or `d` when it has none: an icon tinted like the label.
+fn text_color(s: Style, d: string) -> string {
+    return result.some_or(s.color, d)
+}
+
+// --- optional values ---------------------------------------------------------
+// Data that can be absent but is not itself a style key — a theme color that is
+// `""` for some looks, a table column with no fixed width, a pin left unset —
+// becomes an absent key through one of these.
+
+/// A dimension where any negative is unset.
+fn opt_dim(v: int) -> Option<int> {
+    if v < 0 {
+        return result.none(0)
+    }
+    return result.some(v)
+}
+
+/// A pixel length where any negative is unset.
+fn len_px(v: int) -> Option<Len> {
+    if v < 0 {
+        return result.none(Len {})
+    }
+    return result.some(px(v))
+}
+
+/// A color or name where `""` is unset.
+fn opt_color(v: string) -> Option<string> {
+    if v.len == 0 {
+        return result.none("")
+    }
+    return result.some(v)
+}
+
+/// An edge from the cascade `side`, else `axis`, else `all` (negatives unset).
+fn edge_of(all: int, axis: int, side: int) -> Option<int> {
+    if side >= 0 {
+        return result.some(side)
+    }
+    if axis >= 0 {
+        return result.some(axis)
+    }
+    return opt_dim(all)
+}
+
+/// `padding` / `padding_x` / `padding_y` / `padding_top..left` as one `Edges`.
+fn edges_from(all: int, x: int, y: int, t: int, r: int, b: int, l: int) -> Option<Edges> {
+    let e = Edges(top = edge_of(all, y, t), right = edge_of(all, x, r),
+                  bottom = edge_of(all, y, b), left = edge_of(all, x, l))
+    if !result.is_some(e.top) && !result.is_some(e.right) && !result.is_some(e.bottom) &&
+       !result.is_some(e.left) {
+        return result.none(Edges {})
+    }
+    return result.some(e)
+}
+
+/// A pin, where only `-1` is unset (`left = -3` centres a ring on a dot).
+fn pin(v: int) -> Option<int> {
+    if v == -1 {
+        return result.none(0)
+    }
+    return result.some(v)
+}
+
+/// `top` / `right` / `bottom` / `left` as `inset`.
+fn inset_from(t: int, r: int, b: int, l: int) -> Option<Edges> {
+    if t == -1 && r == -1 && b == -1 && l == -1 {
+        return result.none(Edges {})
+    }
+    return result.some(Edges(top = pin(t), right = pin(r), bottom = pin(b), left = pin(l)))
+}
+
+/// The `Style` an optional style prop holds now (empty when absent).
+fn style_of(s: Option<fn() -> Style>) -> Style {
+    if result.is_some(s) {
+        let f = s.val
+        return f()
+    }
+    return Style {}
+}

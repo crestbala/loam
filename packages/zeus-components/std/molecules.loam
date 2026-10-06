@@ -7,6 +7,7 @@
 import "zeus:structs"
 import "zeus:enums"
 import "zeus:zeusbase"
+import "std:result"
 import "zeus-components:colors"
 import "zeus-components:spacing"
 import "zeus:zeus_constants"
@@ -17,7 +18,7 @@ import "zeus:zeuscore/geometry"
 import "zeus:zeuscore/platform"
 import "zeus:zeuscore/arena"
 
-/// Options for `Button`. Default `look = LOOK.Solid` (gallery "Primary")
+/// Options for `Button`. Default `look = Look.Solid` (gallery "Primary")
 /// paints themed chrome. `look = -1` is a plain clickable label styled by
 /// `background` / `color` / `font` / `padding` / `radius` / `width` /
 /// `height` / `enabled` (dims when false). `on_click` fires it.
@@ -25,128 +26,62 @@ struct ButtonProps {
     /// Label of the Button. A thunk, so `"n = {{count.get()}}"` keeps
     /// updating; the compiler lifts a plain expression into it.
     label: fn() -> string = empty_text,
-    /// `LOOK` token for themed chrome; `-1` = raw (props below decide the look).
-    look: int = LOOK.Solid,
-    /// `SIZE` token for themed chrome.
-    size: int = SIZE.Md,
-    /// Style props. Plain data — `radius = 4`, `background = paper()`. Each
-    /// is re-evaluated by the effect that owns that attribute, so it follows
-    /// a theme switch. `-1` / `""` keep the recipe's own value.
-    background: string = "",
-    color: string = "",
-    radius: int = -1,
-    padding: int = -1,
-    padding_x: int = -1,
-    padding_y: int = -1,
-    width: int = -1,
-    height: int = -1,
-    font: int = -1,
-    border: int = -1,
-    border_color: string = "",
-    spacing: int = -1,
-    // position / left / top / right / bottom / z_index: as BoxProps.
-    position: int = -1,
-    left: int = -1,
-    top: int = -1,
-    right: int = -1,
-    bottom: int = -1,
-    z_index: int = -1,
-    /// Visible when the thunk is true (signal shows win, as BoxProps).
-    show: bool = true,
+    /// `Look` token for themed chrome; `-1` = raw (props below decide the look).
+    look: int = Look.Solid,
+    /// `Size` token for themed chrome.
+    size: int = Size.Md,
+    /// Style, merged over the recipe's own: `style = Style(radius = corners(4))`.
+    style: Option<fn() -> Style> = none,
     /// `enabled = form_valid.get()` dims and disables reactively.
     enabled: bool = true,
-    /// 1 silences the gray hover wash (the default: flat chrome).
-    /// Set `hover_off = false` to let the button wash on hover.
-    hover_off: bool = false,
-    /// CSS cursor under the pointer (default `""` = arrow).
-    cursor: string = "",
-    /// Leading icon markup (`IC_PLUS`, ...). Sized to the `SIZE` token and
+    /// `true` silences the gray hover wash.
+    /// Set `hoverOff = false` to let the button wash on hover.
+    hoverOff: bool = false,
+    /// Leading icon markup (`IC_PLUS`, ...). Sized to the `Size` token and
     /// tinted like the label. Themed chrome only.
     icon: string = "",
-    /// 0/1 signal. While 1 the button is inert (no click, hover, or press),
-    /// dims, and a spinner takes the icon slot. Themed chrome only.
-    loading: Signal<int> = Signal { id: 0 },
-    loading__set: bool = false,
-    on_click: fn() = noop,
-    on_click__set: bool = false,
-    /// Chord that activates this node: `"cmd+s"`, `"ctrl+shift+p"`, or a
-    /// sequence like `"g d"`. Every widget takes it — key binding is a prop,
-    /// not something a particular widget hard-codes.
-    key: string = "",
-    /// Name the chord resolves to, so an app can remap it with `remap_key`
-    /// without touching the widget. Defaults to `"key.<chord>"`.
-    key_action: string = "",
-    /// Handler for the chord; omit it and the chord runs `on_click`.
-    on_key: fn() = noop,
-    on_key__set: bool = false,
-    /// true = fires wherever focus is, instead of only on this node.
-    key_global: bool = false,
+    /// While true the button is inert (no click, hover, or press), dims, and
+    /// a spinner takes the icon slot. Themed chrome only.
+    loading: Option<Signal<bool>> = none,
+    on_click: Option<fn()> = none,
+    /// Keyboard actions on this element (`chord(...)`, `chord_click(...)`).
+    keys: []KeyBind = no_keys(),
 }
 
 struct InputProps {
     placeholder: string = "",
-    width: int = -1,
-    height: int = -1,
-    // position / left / top / right / bottom / z_index: as BoxProps.
-    position: int = -1,
-    left: int = -1,
-    top: int = -1,
-    right: int = -1,
-    bottom: int = -1,
-    z_index: int = -1,
-    /// Visible when the thunk is true (signal shows win, as BoxProps).
-    show: bool = true,
-    color: string = "",
-    background: string = "",
-    font: int = -1,
-    padding: int = -1,
-    grow: int = -1,
-    bind: Signal<string> = Signal { id: 0 },
-    bind__set: bool = false,
-    /// CSS cursor under the pointer (default `""` = arrow; inputs usually
-    /// want `"text"` on their frame).
-    cursor: string = "",
-    a11y_label: string = "",
-    /// 1 = multiline (Enter inserts a newline, wrap + caret up/down).
-    multiline: int = 0,
-    on_key_down: fn() = noop,
-    on_key_down__set: bool = false,
-    on_key_up: fn() = noop,
-    on_key_up__set: bool = false,
-    on_key_press: fn() = noop,
-    on_key_press__set: bool = false,
-    /// Chord that activates this node: `"cmd+s"`, `"ctrl+shift+p"`, or a
-    /// sequence like `"g d"`. Every widget takes it — key binding is a prop,
-    /// not something a particular widget hard-codes.
-    key: string = "",
-    /// Name the chord resolves to, so an app can remap it with `remap_key`
-    /// without touching the widget. Defaults to `"key.<chord>"`.
-    key_action: string = "",
-    /// Handler for the chord; omit it and the chord runs `on_click`.
-    on_key: fn() = noop,
-    on_key__set: bool = false,
-    /// true = fires wherever focus is, instead of only on this node.
-    key_global: bool = false,
+    bind: Option<Signal<string>> = none,
+    label: Option<fn() -> string> = none,
+    /// Multiline: Enter inserts a newline, wrap + caret up/down.
+    multiline: bool = false,
+    style: Option<fn() -> Style> = none,
+    ref: Option<Ref> = none,
+    on_click: Option<fn()> = none,
+    on_key_down: Option<fn()> = none,
+    on_key_up: Option<fn()> = none,
+    on_key_press: Option<fn()> = none,
+    /// Keyboard actions on this element (`chord(...)`, `chord_click(...)`).
+    keys: []KeyBind = no_keys(),
 }
 
-/// Action button. Default `look = LOOK.Solid`. `look = -1` is a plain label.
+/// Action button. Default `look = Look.Solid`. `look = -1` is a plain label.
 fn Button(p: ButtonProps) -> Node {
     if p.look >= 0 {
-        return btn_look(p)
+        return BtnLook(p)
     }
-    let __n = Component(raw_button(""), text = p.label, color = p.color,
-                        background = p.background, font = p.font, padding = p.padding,
-                        radius = p.radius, width = p.width, height = p.height,
-                        position = p.position, left = p.left, top = p.top, right = p.right,
-                        bottom = p.bottom, z_index = p.z_index, show = p.show,
-                        enabled = p.enabled, cursor = p.cursor, on_click = p.on_click,
-                        hover_off = p.hover_off, a11y_role = "button", a11y_label = p.label(),
-                        press = p.on_click__set)
-    if p.hover_off == false {
-        hover_fade(__n)
-    }
-    press_scale(__n)
-    return apply_key(__n, p.key, p.key_action, p.on_key, p.on_key__set, p.key_global)
+    // A plain clickable label: the caller's style is the whole look.
+    return Component(raw_button(""),
+                     text = p.label,
+                     style = p.style,
+                     enabled = p.enabled,
+                     on_click = p.on_click,
+                     hoverOff = p.hoverOff,
+                     role = "button",
+                     label = p.label(),
+                     press = result.is_some(p.on_click),
+                     hoverFade = !p.hoverOff,
+                     pressScale = true,
+                     keys = p.keys)
 }
 
 /// Disabled fill for themed chrome: a muted plate instead of the accent at
@@ -154,86 +89,81 @@ fn Button(p: ButtonProps) -> Node {
 /// rather than a washed-out one. Outline keeps its ring on `rule()`.
 fn button_disabled_background(look: int) -> string {
     match look {
-        LOOK.Ghost | LOOK.Link => { return "" }
+        Look.Ghost | Look.Link => { return "" }
         _ => { return raised() }
     }
 }
 
-/// Icon size for a `SIZE` token; see `button_padding_x`.
+/// Icon size for a `Size` token; see `button_padding_x`.
 fn button_icon(size: int) -> int {
-    if size == SIZE.Sm { 14 } else { 16 }
+    if size == Size.Sm { 14 } else { 16 }
 }
 
-/// Text field. `multiline = 1` wraps and lets Enter insert a newline.
+/// Text field. `multiline = true` wraps and lets Enter insert a newline.
 /// `bind = sig` writes the committed buffer into a `Signal<string>` on every
 /// edit; the store notifies only on a real change.
 fn Input(p: InputProps) -> Node {
-    let __n = Component(raw_input(p.placeholder), width = p.width, height = p.height,
-                        position = p.position, left = p.left, top = p.top, right = p.right,
-                        bottom = p.bottom, z_index = p.z_index, show = p.show, color = p.color,
-                        background = p.background, font = p.font, padding = p.padding,
-                        grow = p.grow, a11y_label = p.a11y_label, cursor = p.cursor,
-                        multiline = p.multiline, a11y_role = "textbox", edit = p.bind,
-                        on_key_down = p.on_key_down, on_key_down__set = p.on_key_down__set,
-                        on_key_up = p.on_key_up, on_key_up__set = p.on_key_up__set,
-                        on_key_press = p.on_key_press, on_key_press__set = p.on_key_press__set)
-    return apply_key(__n, p.key, p.key_action, p.on_key, p.on_key__set, p.key_global)
+    return Component(raw_input(p.placeholder), style = p.style, label = p.label,
+                     multiline = p.multiline, role = "textbox", edit = p.bind,
+                     on_key_down = p.on_key_down, on_key_up = p.on_key_up,
+                     on_key_press = p.on_key_press, ref = p.ref, keys = p.keys,
+                     on_click = p.on_click)
 }
 
-/// Side padding for a `SIZE` token. Button geometry is a set of small
+/// Side padding for a `Size` token. Button geometry is a set of small
 /// pickers so a recipe reads one token and gets a consistent control.
 fn button_padding_x(size: int) -> int {
-    if size == SIZE.Sm { 12 } else if size == SIZE.Lg { 32 } else { 16 }
+    if size == Size.Sm { 12 } else if size == Size.Lg { 32 } else { 16 }
 }
 
-/// Control height for a `SIZE` token; see `button_padding_x`.
+/// Control height for a `Size` token; see `button_padding_x`.
 fn button_height(size: int) -> int {
-    if size == SIZE.Sm { 32 } else if size == SIZE.Lg { 40 } else { 36 }
+    if size == Size.Sm { 32 } else if size == Size.Lg { 40 } else { 36 }
 }
 
-/// Label size for a `SIZE` token; see `button_padding_x`.
+/// Label size for a `Size` token; see `button_padding_x`.
 fn button_font(size: int) -> int {
-    if size == SIZE.Sm { 12 } else { FONT_BODY }
+    if size == Size.Sm { 12 } else { FONT_BODY }
 }
 
-/// Corner radius for a `SIZE` token; see `button_padding_x`.
+/// Corner radius for a `Size` token; see `button_padding_x`.
 fn button_radius(size: int) -> int {
     return RAD_MD
 }
 
-/// Fill for a `LOOK` token. Returns a theme accessor result, so calling it
+/// Fill for a `Look` token. Returns a theme accessor result, so calling it
 /// inside a prop expression keeps the button following the palette.
 fn button_background(look: int) -> string {
     match look {
-        LOOK.Solid => { return accent() }
-        LOOK.Soft => { return raised() }
-        LOOK.Outline => { return plate() }
-        LOOK.Danger => { return danger_solid() }
+        Look.Solid => { return accent() }
+        Look.Soft => { return raised() }
+        Look.Outline => { return plate() }
+        Look.Danger => { return danger_solid() }
         _ => { return "" }
     }
 }
 
-/// Label color for a `LOOK` token; see `button_background`.
+/// Label color for a `Look` token; see `button_background`.
 fn button_color(look: int) -> string {
     match look {
-        LOOK.Solid => { return on_ink() }
-        LOOK.Danger => { return on_danger() }
+        Look.Solid => { return on_ink() }
+        Look.Danger => { return on_danger() }
         _ => { return ink() }
     }
 }
 
-/// Border width for a `LOOK` token — only the outline look carries one.
+/// Border width for a `Look` token — only the outline look carries one.
 fn button_border_width(look: int) -> int {
     match look {
-        LOOK.Outline => { return HAIRLINE }
+        Look.Outline => { return HAIRLINE }
         _ => { return 0 }
     }
 }
 
-/// Border color for a `LOOK` token; see `button_border_width`.
+/// Border color for a `Look` token; see `button_border_width`.
 fn button_border_color(look: int) -> string {
     match look {
-        LOOK.Outline => { return rule() }
+        Look.Outline => { return rule() }
         _ => { return "" }
     }
 }
@@ -241,230 +171,166 @@ fn button_border_color(look: int) -> string {
 /// Icon-only button: square, 16px glyph in the `look` chrome. `size` picks
 /// a 32 / 36 / 40px box. `on_click` is optional —
 /// omit it for a look-only demo
-/// (`IconButton(IC_X, LOOK.Ghost, SIZE.Md, "Close")`).
+/// (`IconButton(IC_X, Look.Ghost, Size.Md, "Close")`).
 struct IconButtonProps {
-    on_click: fn() = noop,
-    on_click__set: bool = false,
-    /// Style props. Plain data — `radius = 4`, `background = paper()`. Each
-    /// is re-evaluated by the effect that owns that attribute, so it follows
-    /// a theme switch. `-1` / `""` keep the recipe's own value.
-    background: string = "",
-    color: string = "",
-    radius: int = -1,
-    padding: int = -1,
-    padding_x: int = -1,
-    padding_y: int = -1,
-    width: int = -1,
-    height: int = -1,
-    font: int = -1,
-    border: int = -1,
-    border_color: string = "",
-    spacing: int = -1,
-    /// Chord that activates this node: `"cmd+s"`, `"ctrl+shift+p"`, or a
-    /// sequence like `"g d"`. Every widget takes it — key binding is a prop,
-    /// not something a particular widget hard-codes.
-    key: string = "",
-    /// Name the chord resolves to, so an app can remap it with `remap_key`
-    /// without touching the widget. Defaults to `"key.<chord>"`.
-    key_action: string = "",
-    /// Handler for the chord; omit it and the chord runs `on_click`.
-    on_key: fn() = noop,
-    on_key__set: bool = false,
-    /// true = fires wherever focus is, instead of only on this node.
-    key_global: bool = false,
+    on_click: Option<fn()> = none,
+    /// Style, merged over the recipe's own: `style = Style(radius = corners(4))`.
+    style: Option<fn() -> Style> = none,
+    /// Keyboard actions on this element (`chord(...)`, `chord_click(...)`).
+    keys: []KeyBind = no_keys(),
 }
 
 fn IconButton(markup: string, look: int, size: int, label: string,
               p: IconButtonProps) -> Node {
-    let n = Box(
-        align_direction = DIRECTION.Row,
-        align_items = ALIGN.Center,
-        justify = ALIGN.Center,
-        width = px_or_default(p.width, button_height(size)),
-        height = px_or_default(p.height, button_height(size)),
-        radius = px_or_default(p.radius, button_radius(size)),
-        background = str_or_default(p.background, button_background(look)),
-        border = px_or_default(p.border, button_border_width(look)),
-        border_color = str_or_default(p.border_color, button_border_color(look)),
+    return // `hoverFade`: the square stays a hover target without a handler.
+    Box(
+        style = merge(Style(width = px(button_height(size)), height = px(button_height(size)),
+                            direction = Direction.Row, align = Align.Center,
+                            justify = Align.Center, radius = corners(button_radius(size)),
+                            border = Border(width = button_border_width(look),
+                                            color = opt_color(button_border_color(look))),
+                            background = opt_color(button_background(look)),
+                            cursor = "pointer"),
+                      style_of(p.style)),
         on_click = p.on_click,
-        on_click__set = p.on_click__set,
-        a11y_role = "button",
-        a11y_label = label,
-        hover_off = false,
-        cursor = "pointer",
-        press = true
+        role = "button",
+        label = label,
+        hoverOff = false,
+        press = true,
+        hoverFade = true,
+        keys = p.keys
     ) {
-        Icon(markup, 16, str_or_default(p.color, button_color(look)))
+        Icon(markup, 16, text_color(style_of(p.style), button_color(look)))
     }
-    // Same as `btn_look`: the square stays a hover target without a handler.
-    hover_fade(n)
-    return n
 }
 
-/// Toggle `on` (0/1). Native toggle: off track = input, on track = primary,
+/// Toggle `on`. Native toggle: off track = input, on track = primary,
 /// thumb rides on `background`. Pass `appearance()` for Dark mode.
-fn Switch(on: Signal<int>) {
-    Component(raw_toggle(), bind = on, width = 36, height = 20,
-              radius = 10, on_click = fn() => on.set(1 - on.get()),
-              a11y_role = "switch", hover_off = true, cursor = "pointer")
+fn Switch(on: Signal<bool>) -> Node {
+    // The native thumb tweens off an int signal; `on` is the state.
+    let shown_on = flag_int(on)
+    return Component(raw_toggle(),
+                     bind = shown_on,
+                     style = Style(width = px(36), height = px(20), radius = corners(10), cursor = "pointer"),
+                     on_click = fn() => on.set(!on.get()),
+                     role = "switch",
+                     hoverOff = true)
+}
+
+/// The light / dark switch: the native toggle bound to `appearance()` (an
+/// engine-level 0/1 signal every role token resolves against at paint).
+fn ThemeSwitch() -> Node {
+    let dark = appearance()
+    return Component(raw_toggle(),
+                     bind = dark,
+                     style = Style(width = px(36), height = px(20), radius = corners(10), cursor = "pointer"),
+                     on_click = fn() => dark.set(1 - dark.get()),
+                     role = "switch",
+                     label = "Dark mode",
+                     hoverOff = true)
 }
 
 /// Slider. Track is `primary/20`-ish, filled range primary, thumb surface.
-fn Slider(value: Signal<int>) {
-    Component(raw_slider(), bind = value, width = 220, height = 20, radius = 10,
-              a11y_role = "slider", hover_off = true, cursor = "pointer")
+fn Slider(value: Signal<int>) -> Node {
+    return Component(raw_slider(),
+                     bind = value,
+                     style = Style(width = px(220), height = px(20), radius = corners(10), cursor = "pointer"),
+                     role = "slider",
+                     hoverOff = true)
 }
 
 /// Alert: rounded bordered panel, leading icon, title + description.
-/// Default is the info tier; `AlertDestructive` / `AlertWarning` /
-/// `AlertSuccess` pick the others. `dismiss` is a 0/1 signal (X sets 0).
-/// Trailing block is the action slot, under the body.
+/// `tone` picks the tier (`Tone.Info` default, `.Ok`, `.Warn`, `.Danger`).
+/// `dismiss` is a show signal (X sets it false). Trailing block is the action slot,
+/// under the body.
 struct AlertProps {
-    /// Style props. Plain data — `radius = 4`, `background = paper()`. Each
-    /// is re-evaluated by the effect that owns that attribute, so it follows
-    /// a theme switch. `-1` / `""` keep the recipe's own value.
-    background: string = "",
-    color: string = "",
-    radius: int = -1,
-    padding: int = -1,
-    padding_x: int = -1,
-    padding_y: int = -1,
-    width: int = -1,
-    height: int = -1,
-    font: int = -1,
-    border: int = -1,
-    border_color: string = "",
-    spacing: int = -1,
-    /// Override the function's tier (`ALERT.*`). `-1` keeps the function's.
-    kind: int = -1,
-    /// 0/1 show signal. When passed, an X in the title row sets it to 0.
-    dismiss: Signal<int> = Signal { id: 0 },
-    dismiss__set: bool = false,
-    /// Chord that activates this node: `"cmd+s"`, `"ctrl+shift+p"`, or a
-    /// sequence like `"g d"`. Every widget takes it — key binding is a prop,
-    /// not something a particular widget hard-codes.
-    key: string = "",
-    /// Name the chord resolves to, so an app can remap it with `remap_key`
-    /// without touching the widget. Defaults to `"key.<chord>"`.
-    key_action: string = "",
-    /// Handler for the chord; omit it and the chord runs `on_click`.
-    on_key: fn() = noop,
-    on_key__set: bool = false,
-    /// true = fires wherever focus is, instead of only on this node.
-    key_global: bool = false,
+    /// Style, merged over the recipe's own: `style = Style(radius = corners(4))`.
+    style: Option<fn() -> Style> = none,
+    /// Tone: `Tone.Info` (default), `Tone.Ok`, `Tone.Warn`, `Tone.Danger`.
+    tone: int = 0,
+    /// Show signal. When passed, the alert hides while it is false, and an X
+    /// in the title row sets it false.
+    dismiss: Option<Signal<bool>> = none,
+    /// Keyboard actions on this element (`chord(...)`, `chord_click(...)`).
+    keys: []KeyBind = no_keys(),
+    /// The trailing block: actions, under the body.
+    children: fn() = noop,
 }
 
 fn Alert(title: fn() -> string, body: fn() -> string, p: AlertProps) -> Node {
-    let mut k = ALERT.Info
-    if p.kind >= 0 {
-        k = p.kind
-    }
-    return alert_view(title, body, k, p)
-}
-
-/// Destructive variant of `Alert`.
-fn AlertDestructive(title: fn() -> string, body: fn() -> string, p: AlertProps) -> Node {
-    let mut k = ALERT.Danger
-    if p.kind >= 0 {
-        k = p.kind
-    }
-    return alert_view(title, body, k, p)
-}
-
-/// Warning variant of `Alert`: amber edge and icon.
-fn AlertWarning(title: fn() -> string, body: fn() -> string, p: AlertProps) -> Node {
-    let mut k = ALERT.Warn
-    if p.kind >= 0 {
-        k = p.kind
-    }
-    return alert_view(title, body, k, p)
-}
-
-/// Success variant of `Alert`: green edge and check icon.
-fn AlertSuccess(title: fn() -> string, body: fn() -> string, p: AlertProps) -> Node {
-    let mut k = ALERT.Ok
-    if p.kind >= 0 {
-        k = p.kind
-    }
-    return alert_view(title, body, k, p)
-}
-
-/// Explicit info variant; same as `Alert`.
-fn AlertInfo(title: fn() -> string, body: fn() -> string, p: AlertProps) -> Node {
-    return Alert(title, body, p)
+    return AlertView(title, body, p.tone, p)
 }
 
 fn alert_edge(kind: int) -> string {
     match kind {
-        ALERT.Danger => { return danger_edge() }
-        ALERT.Warn => { return warn_edge() }
-        ALERT.Ok => { return ok() }
+        Tone.Danger => { return danger_edge() }
+        Tone.Warn => { return warn_edge() }
+        Tone.Ok => { return ok() }
         _ => { return info_line() }
     }
 }
 
 fn alert_title_tint(kind: int) -> string {
     match kind {
-        ALERT.Danger => { return danger() }
-        ALERT.Warn => { return warn() }
-        ALERT.Ok => { return ok() }
+        Tone.Danger => { return danger() }
+        Tone.Warn => { return warn() }
+        Tone.Ok => { return ok() }
         _ => { return info_ink() }
     }
 }
 
 fn alert_body_tint(kind: int) -> string {
     match kind {
-        ALERT.Danger => { return danger() }
-        ALERT.Ok => { return ok() }
+        Tone.Danger => { return danger() }
+        Tone.Ok => { return ok() }
         _ => { return mute() }
     }
 }
 
 fn alert_icon(kind: int) {
     match kind {
-        ALERT.Danger => { Icon(IC_ALERT_CIRCLE, 16, danger()) }
-        ALERT.Warn => { Icon(IC_ALERT_CIRCLE, 16, warn()) }
-        ALERT.Ok => { Icon(IC_CHECK, 16, ok()) }
+        Tone.Danger => { Icon(IC_ALERT_CIRCLE, 16, danger()) }
+        Tone.Warn => { Icon(IC_ALERT_CIRCLE, 16, warn()) }
+        Tone.Ok => { Icon(IC_CHECK, 16, ok()) }
         _ => { Icon(IC_INFO, 16, info_ink()) }
     }
 }
 
-fn alert_view(title: fn() -> string, body: fn() -> string, kind: int, p: AlertProps) -> Node {
-    let shell = Box(align_direction = DIRECTION.Row,
-               spacing = px_or_default(p.spacing, 12),
-               align_items = ALIGN.Start,
-               background = str_or_default(p.background, plate()),
-               border = px_or_default(p.border, HAIRLINE),
-               border_color = str_or_default(p.border_color, alert_edge(kind)),
-               padding_x = px_or_default(p.padding_x, px_or_default(p.padding, 16)),
-               padding_y = px_or_default(p.padding_y, px_or_default(p.padding, 12)),
-               width = p.width,
-               height = p.height,
-               radius = px_or_default(p.radius, RAD_LG),
-               a11y_role = "alert",
-               visible = p.dismiss,
-               visible__set = p.dismiss__set) {
+fn AlertView(title: fn() -> string, body: fn() -> string, kind: int, p: AlertProps) -> Node {
+    let dismissable = result.is_some(p.dismiss)
+    let open = result.some_or(p.dismiss, no_flag_signal())
+    return Box(style = merge(Style(direction = Direction.Row, gap = 12, align = Align.Start,
+                                   padding = edges2(12, 16), radius = corners(RAD_LG),
+                                   border = line(HAIRLINE, alert_edge(kind)), background = plate()),
+                             style_of(p.style)),
+               role = "alert",
+               visible = !dismissable || open.get(),
+               keys = p.keys) {
         alert_icon(kind)
         Column(4) {
-            if p.dismiss__set {
-                Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center, spacing = SPACE.Exs) {
-                    Text(title, color = alert_title_tint(kind), font = FONT_BODY, grow = 1)
-                    let x = Box(width = 28, height = 28, radius = RAD_MD,
-                                align_items = ALIGN.Center, justify = ALIGN.Center,
-                                on_click = fn() { p.dismiss.set(0) },
-                                a11y_role = "button", a11y_label = "Dismiss",
-                                cursor = "pointer") {
+            if result.is_some(p.dismiss) {
+                Box(style = Style(direction = Direction.Row, gap = Space.Exs, align = Align.Center)) {
+                    Text(title, style = Style(grow = 1, font = FONT_BODY, color = alert_title_tint(kind)))
+                    Box(style = Style(width = px(28),
+                                      height = px(28),
+                                      align = Align.Center,
+                                      justify = Align.Center,
+                                      radius = corners(RAD_MD),
+                                      cursor = "pointer"),
+                        on_click = fn() { open.set(false) },
+                        role = "button",
+                        label = "Dismiss",
+                        focusable = true) {
                         Icon(IC_X, 16, mute())
                     }
-                    focusable(x)
                 }
             } else {
-                Text(title, color = alert_title_tint(kind), font = FONT_BODY)
+                Text(title, style = Style(font = FONT_BODY, color = alert_title_tint(kind)))
             }
-            Text(body, color = alert_body_tint(kind), font = FONT_CONTROL, wrap = 1)
+            Text(body, style = Style(wrap = true, font = FONT_CONTROL, color = alert_body_tint(kind)))
+            p.children()
         }
     }
-    return apply_key(shell, p.key, p.key_action, p.on_key, p.on_key__set, p.key_global)
 }
 
 /// Text input frame (themed; raw editing widget is `Input`): 36px tall,
@@ -473,189 +339,144 @@ fn alert_view(title: fn() -> string, body: fn() -> string, kind: int, p: AlertPr
 /// scrolls inside it instead of resizing the layout); -1 keeps the natural
 /// content width. Pin with `width = 200`; restyle with any style prop.
 struct TextInputProps {
-    /// Style props. Plain data — `radius = 4`, `background = paper()`. Each
-    /// is re-evaluated by the effect that owns that attribute, so it follows
-    /// a theme switch. `-1` / `""` keep the recipe's own value.
-    background: string = "",
-    color: string = "",
-    radius: int = -1,
-    padding: int = -1,
-    padding_x: int = -1,
-    padding_y: int = -1,
-    width: int = -1,
-    height: int = -1,
-    font: int = -1,
-    border: int = -1,
-    border_color: string = "",
-    spacing: int = -1,
-    /// Chord that activates this node: `"cmd+s"`, `"ctrl+shift+p"`, or a
-    /// sequence like `"g d"`. Every widget takes it — key binding is a prop,
-    /// not something a particular widget hard-codes.
-    key: string = "",
-    /// Name the chord resolves to, so an app can remap it with `remap_key`
-    /// without touching the widget. Defaults to `"key.<chord>"`.
-    key_action: string = "",
-    /// Handler for the chord; omit it and the chord runs `on_click`.
-    on_key: fn() = noop,
-    on_key__set: bool = false,
-    /// true = fires wherever focus is, instead of only on this node.
-    key_global: bool = false,
+    /// Style, merged over the recipe's own: `style = Style(radius = corners(4))`.
+    style: Option<fn() -> Style> = none,
+    /// Keyboard actions on this element (`chord(...)`, `chord_click(...)`).
+    keys: []KeyBind = no_keys(),
 }
 
 /// X control that appears while `value` is non-empty and clears the bound
 /// field. Shared by `TextInput` / `TextArea` / `Combobox`.
-fn input_clear(value: Signal<string>, field: Node) {
-    let on = signal(0)
-    effect(|| {
-        if value.get().len > 0 {
-            on.set(1)
-        } else {
-            on.set(0)
-        }
-    })
-    let btn = Box(width = 20, height = 20, radius = RAD_SM,
-                  align_items = ALIGN.Center, justify = ALIGN.Center,
-                  shrink = 0,
-                  on_click = fn() {
-                      value.set("")
-                      set_input(field, "")
-                      arena.claim_focus(field.id)
-                  },
-                  a11y_role = "button",
-                  a11y_label = "Clear",
-                  cursor = "pointer") {
+fn InputClear(value: Signal<string>, field: Ref) -> Node {
+    // controller
+    fn clear() {
+        value.set("")
+        set_input(ref_node(field), "")
+        focus(field)
+    }
+
+    // view. Pointer-only: keyboard users clear with Cmd/Ctrl+A then
+    // Backspace, so the X is not a tab stop between the field and the next
+    // control.
+    return Box(style = Style(width = px(20),
+                             height = px(20),
+                             shrink = 0,
+                             align = Align.Center,
+                             justify = Align.Center,
+                             radius = corners(RAD_SM),
+                             cursor = "pointer"),
+               on_click = clear,
+               role = "button",
+               label = "Clear",
+               focusable = false,
+               visible = value.get().len > 0) {
         Icon(IC_X, 12, mute())
     }
-    // Pointer-only: keyboard users clear with Cmd/Ctrl+A then Backspace, so
-    // the X is not a tab stop between the field and the next control.
-    arena.nodes[btn.id].focusable = 0
-    show(btn, on)
 }
 
 fn TextInput(value: Signal<string>, placeholder: string, p: TextInputProps) -> Node {
-    let __n = Box(
-        align_direction = DIRECTION.Row,
-        align_items = ALIGN.Center,
-        background = str_or_default(p.background, plate()),
-        border = px_or_default(p.border, HAIRLINE),
-        border_color = str_or_default(p.border_color, rule()),
-        radius = px_or_default(p.radius, RAD_MD),
-        padding_x = px_or_default(p.padding_x, px_or_default(p.padding, 12)),
-        padding_y = px_or_default(p.padding_y, px_or_default(p.padding, 8)),
-        width = p.width,
-        height = p.height,
-        spacing = px_or_default(p.spacing, 4),
-        cursor = "text"
-    )
-    ui_push(__n.id)
-    let fin = Input(bind = value, placeholder = placeholder,
-                    background = "", color = str_or_default(p.color, ink()),
-                    font = px_or_default(p.font, FONT_BODY),
-                    padding = 0, grow = 1, a11y_label = placeholder)
-    shrink(fin, 1)
-    on_click(__n, fn() { arena.claim_focus(fin.id) })
-    input_clear(value, fin)
-    ui_pop()
-    return apply_key(__n, p.key, p.key_action, p.on_key, p.on_key__set, p.key_global)
+    // state
+    let field = ref()
+
+    // view. A click anywhere on the frame focuses the field; the frame itself
+    // is not a tab stop.
+    return Box(
+        style = merge(Style(direction = Direction.Row, gap = 4, align = Align.Center,
+                            padding = edges2(8, 12), radius = corners(RAD_MD),
+                            border = line(HAIRLINE, rule()), background = plate(),
+                            cursor = "text"),
+                      style_of(p.style)),
+        on_click = fn() { focus(field) },
+        focusable = false,
+        keys = p.keys
+    ) {
+        Input(ref = field,
+              bind = value,
+              placeholder = placeholder,
+              style = merge(Style(grow = 1, font = FONT_BODY, padding = edges(0), color = ink()),
+                            text_part(style_of(p.style))),
+              label = placeholder)
+        InputClear(value, field)
+    }
 }
 
 /// Multiline compose field: min-height ~4 lines, same chrome as `TextInput`.
 /// `width >= 0` pins the field width; -1 keeps the natural content width.
 /// `on_edit` runs on key-up (autosave).
 fn TextArea(value: Signal<string>, placeholder: string, on_edit: fn() = noop,
-            width: int = -1) {
-    let node = Box(
-        align_direction = DIRECTION.Row,
-        align_items = ALIGN.Start,
-        background = plate(),
-        border = HAIRLINE,
-        border_color = rule(),
-        radius = RAD_MD,
-        padding_x = 12,
-        padding_y = 8,
-        min_height = 96,
-        spacing = 4,
-        cursor = "text"
-    )
-    ui_push(node.id)
-    let fin = Input(bind = value, placeholder = placeholder,
-                    background = "", color = ink(), font = FONT_BODY,
-                    padding = 0, multiline = 1, grow = 1, a11y_label = placeholder,
-                    on_key_up = on_edit)
-    on_click(node, fn() { arena.claim_focus(fin.id) })
-    input_clear(value, fin)
-    ui_pop()
-    if width >= 0 {
-        set_width(node, width)
+            width: int = -1) -> Node {
+    // state
+    let field = ref()
+
+    // view
+    return Box(
+        style = Style(width = len_px(width),
+                      direction = Direction.Row,
+                      gap = 4,
+                      align = Align.Start,
+                      minHeight = 96,
+                      padding = edges2(8, 12),
+                      radius = corners(RAD_MD),
+                      border = line(HAIRLINE, rule()),
+                      background = plate(),
+                      cursor = "text"),
+        on_click = fn() { focus(field) },
+        focusable = false
+    ) {
+        Input(ref = field,
+              bind = value,
+              placeholder = placeholder,
+              style = Style(grow = 1, font = FONT_BODY, padding = edges(0), color = ink()),
+              multiline = true,
+              label = placeholder,
+              on_key_up = on_edit)
+        InputClear(value, field)
     }
-    node
 }
 
 /// Label + input. Pin with `width = 200` so the row
 /// around it does not reflow while typing; restyle with any style prop —
 /// they all forward to the `TextInput` underneath.
 struct FieldProps {
-    /// Style props. Plain data — `radius = 4`, `background = paper()`. Each
-    /// is re-evaluated by the effect that owns that attribute, so it follows
-    /// a theme switch. `-1` / `""` keep the recipe's own value.
-    background: string = "",
-    color: string = "",
-    radius: int = -1,
-    padding: int = -1,
-    padding_x: int = -1,
-    padding_y: int = -1,
-    width: int = -1,
-    height: int = -1,
-    font: int = -1,
-    border: int = -1,
-    border_color: string = "",
-    spacing: int = -1,
-    /// Chord that activates this node: `"cmd+s"`, `"ctrl+shift+p"`, or a
-    /// sequence like `"g d"`. Every widget takes it — key binding is a prop,
-    /// not something a particular widget hard-codes.
-    key: string = "",
-    /// Name the chord resolves to, so an app can remap it with `remap_key`
-    /// without touching the widget. Defaults to `"key.<chord>"`.
-    key_action: string = "",
-    /// Handler for the chord; omit it and the chord runs `on_click`.
-    on_key: fn() = noop,
-    on_key__set: bool = false,
-    /// true = fires wherever focus is, instead of only on this node.
-    key_global: bool = false,
+    /// Style, merged over the recipe's own: `style = Style(radius = corners(4))`.
+    style: Option<fn() -> Style> = none,
+    /// Keyboard actions on this element (`chord(...)`, `chord_click(...)`).
+    keys: []KeyBind = no_keys(),
 }
 
 fn Field(label: string, value: Signal<string>, placeholder: string,
          p: FieldProps) -> Node {
-    return Column(SPACE.Exs) {
+    return Column(Space.Exs) {
         Label(label)
-        TextInput(value, placeholder,
-                  background = p.background, color = p.color, radius = p.radius,
-                  padding = p.padding, padding_x = p.padding_x,
-                  padding_y = p.padding_y, width = p.width, height = p.height,
-                  font = p.font, border = p.border,
-                  border_color = p.border_color, spacing = p.spacing)
+        TextInput(value, placeholder, style = p.style, keys = p.keys)
     }
 }
 
 /// Checkbox: 16px rounded box, 1px accent border, accent fill when checked
 /// with a white 16px SVG check.
-fn Checkbox(label: string, on: Signal<int>) {
-    Box(align_direction = DIRECTION.Row, spacing = SPACE.Exs,
-        align_items = ALIGN.Center,
-        on_click = fn() => on.set(1 - on.get()),
-        a11y_role = "checkbox",
-        a11y_label = label,
-        cursor = "pointer") {
-        let tick = Box(width = 16, height = 16, radius = RAD_SM,
-                       border = HAIRLINE,
-                       border_color = accent(),
-                       align_items = ALIGN.Center, justify = ALIGN.Center) {
-            Component(raw_svg(IC_CHECK), width = 16, height = 16,
-                      color = on_ink(), visible = on)
+fn Checkbox(label: string, on: Signal<bool>) -> Node {
+    // controller
+    fn toggle() {
+        on.set(!on.get())
+    }
+
+    // view
+    return Box(style = Style(direction = Direction.Row,
+                             gap = Space.Exs,
+                             align = Align.Center,
+                             cursor = "pointer"),
+               on_click = toggle,
+               role = "checkbox",
+               label = label) {
+        Box(style = merge(Style(width = px(16),
+                                height = px(16),
+                                align = Align.Center,
+                                justify = Align.Center,
+                                radius = corners(RAD_SM),
+                                border = line(HAIRLINE, accent())), Style(background = if on.get() { accent() } else { plate() }))) {
+            Icon(IC_CHECK, 16, on_ink(), style = Style(display = shown(on.get())))
         }
-        selected_chrome(tick, empty_view(), || { on.get() == 1 },
-                        accent(), plate(), "", "")
-        Text(label, color = ink(), font = FONT_BODY)
+        Text(label, style = Style(font = FONT_BODY, color = ink()))
     }
 }
 
@@ -665,27 +486,27 @@ struct UserProps {
 }
 
 /// Avatar + name + role column, the "user card" pattern.
-fn User(initials: string, name: string, role: string, p: UserProps) {
-    Row(SPACE.Xs) {
+fn User(initials: string, name: string, role: string, p: UserProps) -> Node {
+    return Row(Space.Xs) {
         Avatar(initials, 40, src = p.src, status = p.status)
         Column(2) {
-            Text(name, color = ink(), font = FONT_BODY)
-            Text(role, color = mute(), font = FONT_CAPTION)
+            Text(name, style = Style(font = FONT_BODY, color = ink()))
+            Text(role, style = Style(font = FONT_CAPTION, color = mute()))
         }
     }
 }
 
 /// Breadcrumb: items separated by chevron icons; last item is foreground.
-fn Breadcrumbs(items: []string) {
-    Row(6) {
+fn Breadcrumbs(items: []string) -> Node {
+    return Row(6) {
         Loop(items, fn(i, s) {
             if i > 0 {
                 Icon(IC_CHEV_RIGHT, 14, mute())
             }
             if i == items.len - 1 {
-                Text(s, color = ink(), font = FONT_BODY)
+                return Text(s, style = Style(font = FONT_BODY, color = ink()))
             } else {
-                Text(s, color = mute(), font = FONT_BODY)
+                return Text(s, style = Style(font = FONT_BODY, color = mute()))
             }
         })
     }
@@ -693,34 +514,44 @@ fn Breadcrumbs(items: []string) {
 
 /// One tab trigger. Active: card background, foreground text. Left / Right
 /// move the selection; only the selected tab is a tab stop.
-fn Tab(label: string, selected: Signal<int>, index: int, count: int = 0, plain: int = 0) {
-    let tab = Box(
-        align_direction = DIRECTION.Row,
-        align_items = ALIGN.Center,
-        spacing = SPACE.Exxs,
-        padding_x = 12,
-        padding_y = 5,
-        radius = RAD_MD,
-        on_click = fn() => selected.set(index),
-        a11y_role = "tab",
-        a11y_label = label,
-        cursor = "pointer"
-    )
-    ui_push(tab.id)
-    let text = Text(label, font = FONT_BODY, ellipsis = true)
-    ui_pop()
-    // `plain` = the tray's sliding indicator carries the fill; the trigger
-    // only swaps its label colour.
-    if plain != 0 {
-        selected_chrome(tab, text, || { selected.get() == index },
-                        "", "", ink(), mute())
-    } else {
-        selected_chrome(tab, text, || { selected.get() == index },
-                        plate(), raised(), ink(), mute())
+fn Tab(label: string, selected: Signal<int>, index: int, count: int = 0, plain: bool = false) -> Node {
+    // controller
+    fn active() -> bool {
+        return selected.get() == index
     }
-    apply_key(tab, "right", "tab.next", fn() { roving_step(selected, index, count, 1) }, true, false)
-    apply_key(tab, "left", "tab.prev", fn() { roving_step(selected, index, count, -1) }, true, false)
-    roving_focus(tab, selected, index)
+
+    // keys
+    let keys = []KeyBind {
+        chord("right", "tab.next", fn() { roving_step(selected, index, count, 1) }),
+        chord("left", "tab.prev", fn() { roving_step(selected, index, count, -1) }),
+    }
+
+    // view. `plain` = the tray's sliding indicator carries the fill; the
+    // trigger only swaps its label colour.
+    return Box(
+        style = merge(Style(direction = Direction.Row,
+                            gap = Space.Exxs,
+                            align = Align.Center,
+                            padding = edges2(5, 12),
+                            radius = corners(RAD_MD),
+                            cursor = "pointer"), style_of(tab_fill(plain, active()))),
+        on_click = fn() => selected.set(index),
+        role = "tab",
+        label = label,
+        keys = keys,
+        roving = active()
+    ) {
+        Text(label,
+             style = merge(Style(font = FONT_BODY, ellipsis = true), Style(color = if active() { ink() } else { mute() })))
+    }
+}
+
+/// A tab trigger's fill: none for `plain` (the tray's indicator paints it).
+fn tab_fill(plain: bool, on: bool) -> Style {
+    if plain {
+        return Style {}
+    }
+    return Style(background = if on { plate() } else { raised() })
 }
 
 /// Tabs: 36px muted tray, rounded, 4px inset, with a card-coloured trigger.
@@ -732,119 +563,116 @@ fn Tab(label: string, selected: Signal<int>, index: int, count: int = 0, plain: 
 /// `animate`s them (layout tweens the pins, batch 9.4), and the tray's refit
 /// hook re-places it instantly after the first layout or a resize, when the
 /// triggers' measured geometry moves.
-fn Tabs(selected: Signal<int>, labels: []string) {
-    Row(0) {
-        let tray = Box(
-            align_direction = DIRECTION.Row,
-            spacing = 2,
-            padding = 4,
-            background = raised(),
-            radius = RAD_LG,
-            align_items = ALIGN.Center
-        )
-        let ind_l = signal(0)
-        let ind_w = signal(0)
-        let ind_h = signal(0)
-        let n = labels.len
-        slot(tray, || {
-            // First child, so it paints under the triggers.
-            let ind = Box(position = pos_absolute(), top = 0,
-                          background = plate(), radius = RAD_MD)
-            arena.nodes[ind.id].a11y_role = "presentation"
-            prop_int(ind, SET.Left, fn() -> int { return ind_l.get() })
-            prop_int(ind, SET.Width, fn() -> int { return ind_w.get() })
-            prop_int(ind, SET.Height, fn() -> int { return ind_h.get() })
-            set_prop_int(ind, SET.Elevation, 1)
-            Loop(labels, fn(i, lab) {
-                Tab(lab, selected, i, n, 1)
-            })
-        })
-        let tid = tray.id
-        // Trigger ids: every tray kid after the indicator.
-        let mut ids = []int {}
-        let kids = arena.nodes[tid].kids
-        for i in 1..kids.len {
-            push(ids, kids[i])
-        }
-        // Refit: runs after any layout that changed the tray's width (the
-        // first one included), then a second layout applies the pins.
-        arena.nodes[tid].list_fn = intern_fn(|| {
-            let w = arena.nodes[tid].w
-            if w == arena.nodes[tid].list_gen {
-                return
-            }
-            arena.nodes[tid].list_gen = w
-            tabs_place(tid, ids, selected, ind_l, ind_w, ind_h, 0)
-        })
-        effect(|| {
-            tabs_place(tid, ids, selected, ind_l, ind_w, ind_h, MOTION.Base)
-        })
-    }
-}
+fn Tabs(selected: Signal<int>, labels: []string) -> Node {
+    // state
+    let tray = ref()
+    let ind_l = signal(0)
+    let ind_w = signal(0)
+    let ind_h = signal(0)
+    let n = labels.len
 
-/// Move the `Tabs` indicator to the selected trigger: pins in the tray's
-/// content box, tweened over `ms` (0 = jump). Skipped before the first
-/// layout, when the triggers have no width yet.
-fn tabs_place(tid: int, ids: []int, selected: Signal<int>,
-              ind_l: Signal<int>, ind_w: Signal<int>, ind_h: Signal<int>, ms: int) {
-    let sel = selected.get()
-    if sel < 0 || sel >= ids.len {
-        return
+    // controller. Move the indicator to the selected trigger, in the tray's
+    // content box, tweened over `ms` (0 = jump). Skipped before the first
+    // layout, when the triggers have no width yet. Trigger `i` is tray child
+    // `i + 1`: the indicator comes first, so it paints under them.
+    fn place(ms: int) {
+        let sel = selected.get()
+        if sel < 0 || sel >= n {
+            return
+        }
+        let t = child_rect(tray, sel + 1)
+        if t.w <= 0 {
+            return
+        }
+        if ms > 0 {
+            animate(ind_l, t.x, ms)
+            animate(ind_w, t.w, ms)
+        } else {
+            ind_l.set(t.x)
+            ind_w.set(t.w)
+        }
+        ind_h.set(t.h)
     }
-    let t = ids[sel]
-    if arena.nodes[t].w <= 0 {
-        return
+    on_mount(|| {
+        // Refit after any layout that changed the tray's width (the first one
+        // included); a second layout then applies the pins.
+        on_resize(tray, || { place(0) })
+        effect(|| { place(Motion.Base) })
+    })
+
+    // view. The tray sits in a row wrapper so it hugs its triggers instead of
+    // stretching to the column width.
+    return Row(0) {
+        Box(
+            ref = tray,
+            style = Style(direction = Direction.Row,
+                          gap = 2,
+                          align = Align.Center,
+                          padding = edges(4),
+                          radius = corners(RAD_LG),
+                          background = raised())
+        ) {
+            Box(style = merge(Style(elevation = 1,
+                                    position = pos_absolute(),
+                                    inset = Edges(top = 0),
+                                    radius = corners(RAD_MD),
+                                    background = plate()), Style(inset = Edges(left = ind_l.get()),
+                                                                 width = px(ind_w.get()), height = px(ind_h.get()))),
+                role = "presentation")
+            Loop(labels, fn(i, lab) {
+                return Tab(lab, selected, i, n, true)
+            })
+        }
     }
-    let l = arena.nodes[t].x - arena.content_x(tid)
-    if ms > 0 {
-        animate(ind_l, l, ms)
-        animate(ind_w, arena.nodes[t].w, ms)
-    } else {
-        ind_l.set(l)
-        ind_w.set(arena.nodes[t].w)
-    }
-    ind_h.set(arena.nodes[t].h)
 }
 
 /// One toggle-style choice row inside `Segmented` / `ToggleGroup`.
-fn Choice(label: string, value: Signal<int>, index: int, count: int = 0) {
-    let row = Box(
-        align_direction = DIRECTION.Row,
-        align_items = ALIGN.Center,
-        spacing = SPACE.Exxs,
-        padding_x = 12,
-        padding_y = 5,
-        radius = RAD_MD,
+fn Choice(label: string, value: Signal<int>, index: int, count: int = 0) -> Node {
+    // controller
+    fn active() -> bool {
+        return value.get() == index
+    }
+
+    // keys
+    let keys = []KeyBind {
+        chord("right", "choice.next", fn() { roving_step(value, index, count, 1) }),
+        chord("left", "choice.prev", fn() { roving_step(value, index, count, -1) }),
+    }
+
+    // view
+    return Box(
+        style = merge(Style(direction = Direction.Row,
+                            gap = Space.Exxs,
+                            align = Align.Center,
+                            padding = edges2(5, 12),
+                            radius = corners(RAD_MD),
+                            cursor = "pointer"), Style(background = if active() { plate() } else { raised() })),
         on_click = fn() => value.set(index),
-        a11y_role = "radio",
-        a11y_label = label,
-        cursor = "pointer"
-    )
-    ui_push(row.id)
-    let text = Text(label, font = FONT_BODY)
-    ui_pop()
-    selected_chrome(row, text, || { value.get() == index },
-                    plate(), raised(), ink(), mute())
-    apply_key(row, "right", "choice.next", fn() { roving_step(value, index, count, 1) }, true, false)
-    apply_key(row, "left", "choice.prev", fn() { roving_step(value, index, count, -1) }, true, false)
-    roving_focus(row, value, index)
+        role = "radio",
+        label = label,
+        keys = keys,
+        roving = active()
+    ) {
+        Text(label,
+             style = merge(Style(font = FONT_BODY), Style(color = if active() { ink() } else { mute() })))
+    }
 }
 
 /// Exclusive pick from `labels` as a Tabs-style tray. Same chrome as
 /// `Tabs`; kept for older callers.
-fn Segmented(value: Signal<int>, labels: []string) {
-    Row(0) {
+fn Segmented(value: Signal<int>, labels: []string) -> Node {
+    let n = labels.len
+    return Row(0) {
         Box(
-            align_direction = DIRECTION.Row,
-            spacing = 2,
-            padding = 4,
-            background = raised(),
-            radius = RAD_LG,
-            align_items = ALIGN.Center
+            style = Style(direction = Direction.Row,
+                          gap = 2,
+                          align = Align.Center,
+                          padding = edges(4),
+                          radius = corners(RAD_LG),
+                          background = raised())
         ) {
-            let n = labels.len
             Loop(labels, fn(i, lab) {
-                Choice(lab, value, i, n)
+                return Choice(lab, value, i, n)
             })
         }
     }
@@ -852,31 +680,38 @@ fn Segmented(value: Signal<int>, labels: []string) {
 
 /// One row of a `Select` menu: a check icon on the picked row and a raised fill
 /// on the active row (the keyboard highlight).
-fn SelectRow(value: Signal<int>, active: Signal<int>, index: int, label: string) {
-    let row = Box(
-        align_direction = DIRECTION.Row,
-        align_items = ALIGN.Center,
-        spacing = 4,
-        padding_x = 8,
-        padding_y = 6,
-        radius = RAD_SM,
-        on_click = fn() {
-            value.set(index)
-            active.set(-1)
-        },
-        a11y_role = "listitem",
-        a11y_label = label,
-        cursor = "pointer",
-        hover_off = false
-    )
-    ui_push(row.id)
-    Text(label, color = ink(), font = FONT_BODY, ellipsis = true)
-    Grow()
-    let mark = Icon(IC_CHECK, 16, ink())
-    show_eq(mark, value, index)
-    ui_pop()
-    selected_chrome(row, empty_view(), || { active.get() == index },
-                    raised(), "", "", "")
+fn SelectRow(value: Signal<int>, active: Signal<int>, index: int, label: string) -> Node {
+    // controller
+    fn pick() {
+        value.set(index)
+        active.set(-1)
+    }
+
+    // view
+    return Box(
+        style = merge(Style(direction = Direction.Row,
+                            gap = 4,
+                            align = Align.Center,
+                            padding = edges2(6, 8),
+                            radius = corners(RAD_SM),
+                            cursor = "pointer"), style_of(highlight(active.get() == index))),
+        on_click = pick,
+        role = "listitem",
+        label = label,
+        hoverOff = false
+    ) {
+        Text(label, style = Style(font = FONT_BODY, color = ink(), ellipsis = true))
+        Grow()
+        Icon(IC_CHECK, 16, ink(), style = Style(display = shown(value.get() == index)))
+    }
+}
+
+/// The keyboard highlight of a list row: a raised fill while on, none off.
+fn highlight(on: bool) -> Style {
+    if on {
+        return Style(background = raised())
+    }
+    return Style(background = "")
 }
 
 /// Dropdown. The trigger shows the current label; the menu is an anchored
@@ -884,358 +719,369 @@ fn SelectRow(value: Signal<int>, active: Signal<int>, index: int, label: string)
 /// trigger and follows it on scroll. Arrows move the highlight, Enter picks,
 /// Escape or an outside click closes. `active` (-1 = closed) is the menu's only
 /// extra state; the picked value stays in the caller's `value` signal.
-fn Select(value: Signal<int>, labels: []string) {
+fn Select(value: Signal<int>, labels: []string) -> Node {
+    // state. `active` (-1 = closed) is the menu's only state; the picked value
+    // stays in the caller's `value` signal.
     let active = signal(-1)
+    let trigger = ref()
+    let menu = ref()
     let n = labels.len
-    // Outside click closes. Created first so the trigger and menu draw over it.
-    let scrim = Overlay(on_click = fn() { active.set(-1) })
-    show_ge(scrim, active, 0)
-    z_index(scrim, Z_SCRIM)
-    let host = Box(align_direction = DIRECTION.Column)
-    ui_push(host.id)
-    let trigger = Box(
-        align_direction = DIRECTION.Row,
-        align_items = ALIGN.Center,
-        spacing = 4,
-        width = SELECT_W,
-        padding_x = 12,
-        padding_y = 8,
-        background = plate(),
-        border = HAIRLINE,
-        border_color = rule(),
-        radius = RAD_MD,
-        z_index = Z_FIELD,
-        on_click = fn() {
-            if active.get() >= 0 {
-                active.set(-1)
-            } else {
-                active.set(0)
-            }
-        },
-        a11y_role = "combobox",
-        cursor = "pointer",
-        hover_off = false,
-        press = true
-    )
-    ui_push(trigger.id)
-    Loop(labels, fn(i, lab) {
-        let t = Text(lab, color = ink(), font = FONT_BODY, ellipsis = true)
-        show_eq(t, value, i)
-    })
-    Grow()
-    Icon(IC_CHEV_DOWN, 16, dim())
-    ui_pop()
-    let menu = Box(
-        align_direction = DIRECTION.Column,
-        width = SELECT_W,
-        padding = 4,
-        spacing = 2,
-        background = plate(),
-        border = HAIRLINE,
-        border_color = rule(),
-        radius = RAD_MD,
-        position = pos_absolute(),
-        z_index = Z_POPUP,
-        elevation = 2
-    )
-    show_ge(menu, active, 0)
-    arena.anchor_to(menu.id, trigger.id, PLACE.PlaceBelow, 6)
-    enter_fade(menu)
-    apply_key(menu, "escape", "select.close", fn() { active.set(-1) }, true, false)
-    apply_key(menu, "down", "select.next", fn() {
+
+    // controller
+    fn close() {
+        active.set(-1)
+    }
+    fn toggle() {
+        if active.get() >= 0 {
+            active.set(-1)
+        } else {
+            active.set(0)
+        }
+    }
+    fn next() {
         if active.get() >= 0 {
             if active.get() + 1 < n {
                 active.set(active.get() + 1)
             }
         }
-    }, true, false)
-    apply_key(menu, "up", "select.prev", fn() {
+    }
+    fn prev() {
         if active.get() > 0 {
             active.set(active.get() - 1)
         }
-    }, true, false)
-    apply_key(menu, "enter", "select.pick", fn() {
+    }
+    fn pick() {
         if active.get() >= 0 {
             value.set(active.get())
             active.set(-1)
         }
-    }, true, false)
-    // The menu holds focus, so the arrows and Enter above reach it.
-    let mid = menu.id
-    effect(|| {
-        if active.get() >= 0 {
-            arena.claim_focus(mid)
+    }
+    on_mount(|| {
+        anchor(menu, trigger, Place.PlaceBelow, 6)
+        // The menu holds focus while open, so the arrows and Enter reach it.
+        effect(|| {
+            if active.get() >= 0 {
+                focus(menu)
+            }
+        })
+    })
+
+    // keys
+    let keys = []KeyBind {
+        chord("escape", "select.close", close),
+        chord("down", "select.next", next),
+        chord("up", "select.prev", prev),
+        chord("enter", "select.pick", pick),
+    }
+
+    // view. The scrim comes first so the trigger and menu draw over it; an
+    // outside click lands on it and closes.
+    return Box(style = merge(Style(direction = Direction.Column), Style(alignSelf = Align.Start))) {
+        Overlay(on_click = close,
+                style = Style(display = shown(active.get() >= 0), zIndex = Z_SCRIM))
+        Box(
+            ref = trigger,
+            style = Style(width = px(SELECT_W),
+                          direction = Direction.Row,
+                          gap = 4,
+                          align = Align.Center,
+                          zIndex = Z_FIELD,
+                          padding = edges2(8, 12),
+                          radius = corners(RAD_MD),
+                          border = line(HAIRLINE, rule()),
+                          background = plate(),
+                          cursor = "pointer"),
+            on_click = toggle,
+            role = "combobox",
+            hoverOff = false,
+            press = true
+        ) {
+            Loop(labels, fn(i, lab) {
+                return Text(lab,
+                            style = merge(Style(font = FONT_BODY, color = ink(), ellipsis = true), Style(display = shown(value.get() == i))))
+            })
+            Grow()
+            Icon(IC_CHEV_DOWN, 16, dim())
         }
-    })
-    ui_push(menu.id)
-    Loop(labels, fn(i, lab) {
-        SelectRow(value, active, i, lab)
-    })
-    ui_pop()
-    ui_pop()
-    align_self(host, ALIGN.Start)
+        Box(
+            ref = menu,
+            style = merge(Style(width = px(SELECT_W),
+                                direction = Direction.Column,
+                                gap = 2,
+                                elevation = 2,
+                                position = pos_absolute(),
+                                zIndex = Z_POPUP,
+                                padding = edges(4),
+                                radius = corners(RAD_MD),
+                                border = line(HAIRLINE, rule()),
+                                background = plate()), Style(display = shown(active.get() >= 0))),
+            keys = keys,
+            enter = Enter.Fade
+        ) {
+            Loop(labels, fn(i, lab) {
+                return SelectRow(value, active, i, lab)
+            })
+        }
+    }
 }
 
 /// Radio group: vertical stack of `Radio` rows, 8px apart. The picked row gets a
 /// filled primary dot. Arrows move the pick; only the selected row is a tab stop.
-fn Radio(label: string, value: Signal<int>, index: int, count: int = 0) {
-    let row = Box(align_direction = DIRECTION.Row, spacing = SPACE.Exs,
-        align_items = ALIGN.Center,
-        on_click = fn() => value.set(index),
-        a11y_role = "radio",
-        a11y_label = label,
-        cursor = "pointer") {
-        Box(width = 16, height = 16, radius = 8,
-            background = plate(), border = HAIRLINE,
-            border_color = accent(),
-            align_items = ALIGN.Center, justify = ALIGN.Center) {
-            let dot = Box(width = 14, height = 14, radius = 7)
-            selected_chrome(dot, empty_view(), || { value.get() == index },
-                            accent(), plate(), "", "")
-        }
-        Text(label, color = ink(), font = FONT_BODY)
+fn Radio(label: string, value: Signal<int>, index: int, count: int = 0) -> Node {
+    // controller
+    fn active() -> bool {
+        return value.get() == index
     }
-    apply_key(row, "down", "radio.next", fn() { roving_step(value, index, count, 1) }, true, false)
-    apply_key(row, "up", "radio.prev", fn() { roving_step(value, index, count, -1) }, true, false)
-    apply_key(row, "right", "radio.next", fn() { roving_step(value, index, count, 1) }, true, false)
-    apply_key(row, "left", "radio.prev", fn() { roving_step(value, index, count, -1) }, true, false)
-    roving_focus(row, value, index)
+
+    // keys
+    let keys = []KeyBind {
+        chord("down", "radio.next", fn() { roving_step(value, index, count, 1) }),
+        chord("up", "radio.prev", fn() { roving_step(value, index, count, -1) }),
+        chord("right", "radio.next", fn() { roving_step(value, index, count, 1) }),
+        chord("left", "radio.prev", fn() { roving_step(value, index, count, -1) }),
+    }
+
+    // view
+    return Box(style = Style(direction = Direction.Row,
+                             gap = Space.Exs,
+                             align = Align.Center,
+                             cursor = "pointer"),
+               on_click = fn() => value.set(index),
+               role = "radio",
+               label = label,
+               keys = keys,
+               roving = active()) {
+        Box(style = Style(width = px(16),
+                          height = px(16),
+                          align = Align.Center,
+                          justify = Align.Center,
+                          radius = corners(8),
+                          border = line(HAIRLINE, accent()),
+                          background = plate())) {
+            Box(style = merge(Style(width = px(14), height = px(14), radius = corners(7)), Style(background = if active() { accent() } else { plate() })))
+        }
+        Text(label, style = Style(font = FONT_BODY, color = ink()))
+    }
 }
 
 /// `RadioGroup(value, labels)`: one circle per option.
-fn RadioGroup(value: Signal<int>, labels: []string) {
+fn RadioGroup(value: Signal<int>, labels: []string) -> Node {
     let n = labels.len
-    Column(SPACE.Exs) {
+    return Column(Space.Exs) {
         Loop(labels, fn(i, lab) {
-            Radio(lab, value, i, n)
+            return Radio(lab, value, i, n)
         })
     }
 }
 
 /// Toggle: default variant, no border — a pressed state fills muted
 /// (accent fill), 36px tall and rounded.
-fn Toggle(label: string, on: Signal<int>) {
-    let btn = Box(
-        align_direction = DIRECTION.Row,
-        align_items = ALIGN.Center,
-        justify = ALIGN.Center,
-        spacing = SPACE.Exxs,
-        height = 36,
-        padding_x = 12,
-        radius = RAD_MD,
-        on_click = fn() => on.set(1 - on.get()),
-        a11y_role = "button",
-        a11y_label = label,
-        cursor = "pointer"
-    )
-    ui_push(btn.id)
-    let text = Text(label, font = FONT_BODY)
-    ui_pop()
-    selected_chrome(btn, text, || { on.get() == 1 },
-                    raised(), plate(), ink(), mute())
+fn Toggle(label: string, on: Signal<bool>) -> Node {
+    return Box(
+        style = merge(Style(height = px(36),
+                            direction = Direction.Row,
+                            gap = Space.Exxs,
+                            align = Align.Center,
+                            justify = Align.Center,
+                            padding = Edges(right = 12, left = 12),
+                            radius = corners(RAD_MD),
+                            cursor = "pointer"), Style(background = if on.get() { raised() } else { plate() })),
+        on_click = fn() => on.set(!on.get()),
+        role = "button",
+        label = label
+    ) {
+        Text(label,
+             style = merge(Style(font = FONT_BODY), Style(color = if on.get() { ink() } else { mute() })))
+    }
 }
 
 /// Toggle group: a 4px-gap row of single-choice toggles with outline
 /// chrome; the pressed state fills muted.
-fn ToggleGroup(value: Signal<int>, labels: []string) {
-    Row(4) {
+fn ToggleGroup(value: Signal<int>, labels: []string) -> Node {
+    return Row(4) {
         Loop(labels, fn(i, lab) {
-            let item = Box(
-                align_direction = DIRECTION.Row,
-                align_items = ALIGN.Center,
-                justify = ALIGN.Center,
-                height = 36,
-                padding_x = 12,
-                radius = RAD_MD,
-                border = HAIRLINE,
-                border_color = rule(),
+            return Box(
+                style = merge(Style(height = px(36),
+                                    direction = Direction.Row,
+                                    align = Align.Center,
+                                    justify = Align.Center,
+                                    padding = Edges(right = 12, left = 12),
+                                    radius = corners(RAD_MD),
+                                    border = line(HAIRLINE, rule()),
+                                    cursor = "pointer"), Style(background = if value.get() == i { raised() } else { plate() })),
                 on_click = fn() => value.set(i),
-                a11y_role = "button",
-                a11y_label = lab,
-                cursor = "pointer"
+                role = "button",
+                label = lab
             ) {
-                Text(lab, color = ink(), font = FONT_BODY)
+                Text(lab, style = Style(font = FONT_BODY, color = ink()))
             }
-            let ii = i
-            selected_chrome(item, empty_view(), || { value.get() == ii },
-                            raised(), plate(), "", "")
         })
     }
 }
 
 struct CollapsibleProps {
-    /// 0 = closed, anything else = open.
-    open: Signal<int> = Signal { id: 0 },
+    /// Open while true.
+    open: Signal<bool> = Signal { id: 0 },
     title: fn() -> string = empty_text,
     /// Optional leading icon markup.
     icon: string = "",
-    width: int = -1,
-    /// Optional surface. Leave both empty for a bare disclosure (no card).
-    background: string = "",
-    border_color: string = "",
-    radius: int = -1,
+    /// The trailing block: the body, placed by the component.
+    children: fn() = noop,
+    /// Style, merged over the recipe's own: `style = Style(radius = corners(4))`.
+    style: Option<fn() -> Style> = none,
 }
 
 /// One disclosure: a header row that toggles, and a body that fades in while
-/// `open`. `open` is a 0/1 signal and the *only* state; the chevron rotation and
+/// `open`. `open` is the *only* state; the chevron rotation and
 /// the body fade are paint-only tracks. Trailing block is the body.
 ///
 /// Self-contained like `Toast`: the header and a hideable body go into a
 /// wrapper, and the wrapper's body is what is returned, so the trailing block
 /// lands inside the part that hides.
 fn Collapsible(p: CollapsibleProps) -> Node {
+    // state
     let open = p.open
-    let mut bw = -1
-    if p.border_color.len > 0 {
-        bw = HAIRLINE
+    let chev = ref()
+
+    // controller
+    fn toggle() {
+        open.set(!open.get())
     }
-    let outer = Box(align_direction = DIRECTION.Column,
-                    width = p.width,
-                    background = p.background,
-                    border = bw,
-                    border_color = p.border_color,
-                    radius = px_or_default(p.radius, RAD_LG))
-    ui_push(outer.id)
-    let head = Box(align_direction = DIRECTION.Row,
-                   align_items = ALIGN.Center,
-                   spacing = SPACE.Xs,
-                   padding_x = 16,
-                   padding_y = 12,
-                   on_click = fn() {
-                       if open.get() != 0 {
-                           open.set(0)
-                       } else {
-                           open.set(1)
-                       }
-                   },
-                   a11y_role = "button",
-                   a11y_label = p.title(),
-                   cursor = "pointer",
-                   hover_off = false,
-                   press = true)
-    ui_push(head.id)
-    if p.icon.len > 0 {
-        Icon(p.icon, 16, dim())
-    }
-    Text(p.title, color = ink(), font = FONT_CONTROL, grow = 1)
-    let chev = Icon(IC_CHEV_DOWN, 16, dim())
-    styled(chev, || {
-        if open.get() != 0 {
-            animate_rotate(chev, 180, MOTION.Fast)
-        } else {
-            animate_rotate(chev, 0, MOTION.Fast)
-        }
+    on_mount(|| {
+        effect(|| {
+            if open.get() {
+                animate_rotate(ref_node(chev), 180, Motion.Fast)
+            } else {
+                animate_rotate(ref_node(chev), 0, Motion.Fast)
+            }
+        })
     })
-    ui_pop()
-    let body = Box(align_direction = DIRECTION.Column,
-                   padding_x = 16,
-                   padding_y = 12)
-    // No gap above the body: the header already carries the top inset.
-    set_padding_top(body, 0)
-    show(body, open)
-    enter_fade(body)
-    enter_reveal(body)
-    ui_pop()
-    return body
+
+    // view. No gap above the body: the header already carries the top inset.
+    return // A bare disclosure by default; a surface comes from the caller's style.
+    Box(style = merge(Style(direction = Direction.Column, radius = corners(RAD_LG)),
+                      style_of(p.style))) {
+        Box(style = Style(direction = Direction.Row,
+                          gap = Space.Xs,
+                          align = Align.Center,
+                          padding = edges2(12, 16),
+                          cursor = "pointer"),
+            on_click = toggle,
+            role = "button",
+            label = p.title(),
+            hoverOff = false,
+            press = true) {
+            if p.icon.len > 0 {
+                Icon(p.icon, 16, dim())
+            }
+            Text(p.title, style = Style(grow = 1, font = FONT_CONTROL, color = ink()))
+            Icon(IC_CHEV_DOWN, 16, dim(), ref = chev)
+        }
+        // The body is the part that hides.
+        Box(style = Style(direction = Direction.Column,
+                          padding = Edges(top = 0, right = 16, bottom = 12, left = 16)),
+            visible = open.get(),
+            enter = Enter.Fade + Enter.Reveal) {
+            p.children()
+        }
+    }
 }
 
 /// One page number for `Pagination`: ghost number; the current page is an
 /// outline button. The current page is an effect, not a prop, so the row
 /// repaints when `page` moves.
-fn PageButton(page: Signal<int>, n: int) {
-    let btn = Box(align_direction = DIRECTION.Row,
-                  width = 36,
-                  height = 36,
-                  radius = RAD_MD,
-                  align_items = ALIGN.Center,
-                  justify = ALIGN.Center,
-                  border_color = rule(),
-                  on_click = fn() => page.set(n),
-                  a11y_role = "button",
-                  a11y_label = "{{n}}",
-                  cursor = "pointer"
-                 )
-    ui_push(btn.id)
-    let text = Text("{{n}}", font = FONT_BODY)
-    ui_pop()
-    selected_chrome(btn, text, || { page.get() == n },
-                    plate(), paper(), ink(), mute())
-    // The outline only exists on the current page.
-    styled(btn, || {
-        let mut bw = 0
-        if page.get() == n {
-            bw = HAIRLINE
-        }
-        arena.nodes[btn.id].border_w = u16(bw)
-    })
+fn PageButton(page: Signal<int>, n: int) -> Node {
+    // controller
+    fn current() -> bool {
+        return page.get() == n
+    }
+
+    // view. The outline only exists on the current page.
+    return Box(style = merge(Style(width = px(36),
+                                   height = px(36),
+                                   direction = Direction.Row,
+                                   align = Align.Center,
+                                   justify = Align.Center,
+                                   radius = corners(RAD_MD),
+                                   border = Border(color = rule()),
+                                   cursor = "pointer"), style_of(page_chrome(current()))),
+               on_click = fn() => page.set(n),
+               role = "button",
+               label = "{{n}}") {
+        Text("{{n}}",
+             style = merge(Style(font = FONT_BODY), Style(color = if current() { ink() } else { mute() })))
+    }
+}
+
+/// The current page is an outline button on the plate; the rest are ghost
+/// numbers on the paper.
+fn page_chrome(on: bool) -> Style {
+    if on {
+        return Style(background = plate(), border = line(HAIRLINE, rule()))
+    }
+    return Style(background = paper(), border = line(0, rule()))
 }
 
 /// One slot of a collapsed `Pagination` row: the number it shows follows
 /// `current_value`, so the row never rebuilds; an ellipsis slot is inert.
-fn PageSlot(current_value: Signal<int>, pages: int, slot: int) {
-    let btn = Box(align_direction = DIRECTION.Row,
-                  width = 36,
-                  height = 36,
-                  radius = RAD_MD,
-                  align_items = ALIGN.Center,
-                  justify = ALIGN.Center,
-                  border_color = rule(),
-                  on_click = fn() {
-                      let n = page_at(current_value.get(), pages, slot)
-                      if n > 0 {
-                          current_value.set(n)
-                      }
-                  },
-                  a11y_role = "button",
-                  cursor = "pointer"
-                 )
-    ui_push(btn.id)
-    let text = Text(fn() -> string {
-        let n = page_at(current_value.get(), pages, slot)
-        if n == 0 {
-            return "…"
+fn PageSlot(current_value: Signal<int>, pages: int, slot: int) -> Node {
+    // controller. The number this slot shows follows `current_value`, so the
+    // row never rebuilds; an ellipsis slot (0) is inert.
+    fn shown_page() -> int {
+        return page_at(current_value.get(), pages, slot)
+    }
+    fn go() {
+        let n = shown_page()
+        if n > 0 {
+            current_value.set(n)
         }
-        return "{{n}}"
-    }, font = FONT_BODY)
-    ui_pop()
-    selected_chrome(btn, text, || { page_at(current_value.get(), pages, slot) == current_value.get() },
-                    plate(), paper(), ink(), mute())
-    styled(btn, || {
-        let n = page_at(current_value.get(), pages, slot)
-        let mut bw = 0
-        if n == current_value.get() {
-            bw = HAIRLINE
-        }
-        arena.nodes[btn.id].border_w = u16(bw)
-        if n == 0 {
-            arena.nodes[btn.id].a11y_label = "More pages"
-            arena.nodes[btn.id].cursor = ""
-        } else {
-            arena.nodes[btn.id].a11y_label = "{{n}}"
-            arena.nodes[btn.id].cursor = "pointer"
-        }
-    })
+    }
+
+    // view
+    return Box(style = merge(Style(width = px(36),
+                                   height = px(36),
+                                   direction = Direction.Row,
+                                   align = Align.Center,
+                                   justify = Align.Center,
+                                   radius = corners(RAD_MD),
+                                   border = Border(color = rule())), merge(page_chrome(shown_page() == current_value.get()),
+                                                                           Style(cursor = if shown_page() == 0 { "" } else { "pointer" }))),
+               on_click = go,
+               role = "button",
+               label = if shown_page() == 0 { "More pages" } else { "{{shown_page()}}" }) {
+        Text(if shown_page() == 0 { "…" } else { "{{shown_page()}}" },
+             style = merge(Style(font = FONT_BODY), Style(color = if shown_page() == current_value.get() { ink() } else { mute() })))
+    }
 }
 
 /// `Pagination(current_value, pages)`: `pages` is the 1-based page count. Past seven
 /// pages the row collapses to `1 … c-1 c c+1 … N` (see `page_at`).
-fn Pagination(current_value: Signal<int>, pages: int) {
-    Row(4) {
-        let previous = Box(
-            align_direction = DIRECTION.Row,
-            width = 36,
-            height = 36,
-            radius = RAD_MD,
-            align_items = ALIGN.Center,
-            justify = ALIGN.Center,
-            on_click = fn() {
-            if current_value.get() > 1 {
-                current_value.set(current_value.get() - 1)
-            }
-        },
-            a11y_role = "button",
-            a11y_label = "Previous page",
-            cursor = "pointer"
+fn Pagination(current_value: Signal<int>, pages: int) -> Node {
+    // controller
+    fn previous() {
+        if current_value.get() > 1 {
+            current_value.set(current_value.get() - 1)
+        }
+    }
+    fn next() {
+        if current_value.get() < pages {
+            current_value.set(current_value.get() + 1)
+        }
+    }
+
+    // view
+    return Row(4) {
+        Box(
+            style = Style(width = px(36),
+                          height = px(36),
+                          direction = Direction.Row,
+                          align = Align.Center,
+                          justify = Align.Center,
+                          radius = corners(RAD_MD),
+                          cursor = "pointer"),
+            on_click = previous,
+            role = "button",
+            label = "Previous page"
         ) {
             Icon(IC_CHEV_LEFT, 16, mute())
         }
@@ -1250,21 +1096,17 @@ fn Pagination(current_value: Signal<int>, pages: int) {
                 PageSlot(current_value, pages, slot)
             }
         }
-        let next = Box(
-            align_direction = DIRECTION.Row,
-            width = 36,
-            height = 36,
-            radius = RAD_MD,
-            align_items = ALIGN.Center,
-            justify = ALIGN.Center,
-            on_click = fn() {
-            if current_value.get() < pages {
-                current_value.set(current_value.get() + 1)
-            }
-        },
-            a11y_role = "button",
-            a11y_label = "Next page",
-            cursor = "pointer"
+        Box(
+            style = Style(width = px(36),
+                          height = px(36),
+                          direction = Direction.Row,
+                          align = Align.Center,
+                          justify = Align.Center,
+                          radius = corners(RAD_MD),
+                          cursor = "pointer"),
+            on_click = next,
+            role = "button",
+            label = "Next page"
         ) {
             Icon(IC_CHEV_RIGHT, 16, mute())
         }
@@ -1272,82 +1114,65 @@ fn Pagination(current_value: Signal<int>, pages: int) {
 }
 
 /// Themed chrome branch of `Button`.
-fn btn_look(p: ButtonProps) -> Node {
+fn BtnLook(p: ButtonProps) -> Node {
+    // state
     let look = p.look
     let size = p.size
-    let mut fill = str_or_default(p.background, button_background(look))
-    let mut ink_c = str_or_default(p.color, button_color(look))
-    let mut edge = str_or_default(p.border_color, button_border_color(look))
-    if p.enabled == false {
-        fill = str_or_default(p.background, button_disabled_background(look))
-        ink_c = str_or_default(p.color, mute())
-        edge = str_or_default(p.border_color, rule())
-    }
-    let n = Box(
-        align_direction = DIRECTION.Row,
-        align_items = ALIGN.Center,
-        justify = ALIGN.Center,
-        spacing = px_or_default(p.spacing, SPACE.Exs),
-        background = fill,
-        color = ink_c,
-        width = p.width,
-        height = px_or_default(p.height, button_height(size)),
-        padding_x = px_or_default(p.padding_x, px_or_default(p.padding, button_padding_x(size))),
-        radius = px_or_default(p.radius, button_radius(size)),
-        border = px_or_default(p.border, button_border_width(look)),
-        border_color = edge,
+    let on = p.enabled
+    let fill = if on { button_background(look) } else { button_disabled_background(look) }
+    let ink_c = if on { button_color(look) } else { mute() }
+    let edge = if on { button_border_color(look) } else { rule() }
+    let busy = result.is_some(p.loading)
+    let ls = result.some_or(p.loading, no_flag_signal())
+
+    // view. Disabled: the muted fill is the styling, the shared overlay turns
+    // hover / press / activation off, and a lighter 70% replaces the 40% dim
+    // `enabled` would apply. While loading, a spinner takes the icon slot and
+    // the button is inert at 70%. Chrome hover is explicit (`hoverFade`): a
+    // themed button stays a hover target even with no click handler. The
+    // caller's `color` / `font` reach the label and icon.
+    return Box(
+        style = merge(merge(Style(height = px(button_height(size)), direction = Direction.Row,
+                                  gap = Space.Exs, align = Align.Center, justify = Align.Center,
+                                  padding = Edges(left = button_padding_x(size),
+                                                  right = button_padding_x(size)),
+                                  radius = corners(button_radius(size)),
+                                  border = Border(width = button_border_width(look),
+                                                  color = opt_color(edge)),
+                                  background = opt_color(fill), color = ink_c,
+                                  cursor = "pointer"),
+                            style_of(p.style)),
+                      button_dim(on, busy && ls.get())),
         on_click = p.on_click,
-        on_click__set = p.on_click__set,
-        a11y_role = "button",
-        a11y_label = p.label(),
-        show = p.show,
-        padding_y = p.padding_y,
-        hover_off = p.hover_off,
-        cursor = "pointer",
-        press = true
-    )
-    // Disabled: the muted fill above is the styling; the shared overlay
-    // still turns hover / press / activation off. The 40% dim `enabled`
-    // would apply through `Component` is replaced by a lighter 70%, since
-    // the fill swap already carries the state.
-    if p.enabled == false {
-        disabled(n, true)
-        set_prop_int(n, SET.Opacity, 70)
-    }
-    ui_push(n.id)
-    if p.loading__set {
-        let sp = Spinner(size = button_icon(size), color = ink_c)
-        show(sp, p.loading)
-    }
-    if p.icon.len > 0 {
-        let ic = Icon(p.icon, button_icon(size), ink_c)
-        if p.loading__set {
-            // The spinner takes the icon slot while loading.
-            show_eq(ic, p.loading, 0)
+        role = "button",
+        label = p.label(),
+        hoverOff = p.hoverOff,
+        press = true,
+        hoverFade = !p.hoverOff,
+        pressScale = true,
+        keys = p.keys,
+        enabled = on,
+        loading = busy && ls.get()
+    ) {
+        if busy {
+            Spinner(size = button_icon(size), color = text_color(style_of(p.style), ink_c),
+                    style = Style(display = shown(ls.get())))
         }
+        if p.icon.len > 0 {
+            Icon(p.icon, button_icon(size), text_color(style_of(p.style), ink_c),
+                 style = Style(display = shown(!busy || !ls.get())))
+        }
+        Text(p.label, style = merge(Style(font = button_font(size), color = ink_c),
+                                    text_part(style_of(p.style))))
     }
-    Text(p.label, color = ink_c, font = px_or_default(p.font, button_font(size)))
-    ui_pop()
-    if p.loading__set {
-        let node_id = n.id
-        let ls = p.loading
-        effect(|| {
-            if ls.get() != 0 {
-                arena.set_loading(node_id, 1)
-                arena.nodes[node_id].opacity = i16(70)
-            } else {
-                arena.set_loading(node_id, 0)
-                arena.nodes[node_id].opacity = i16(100)
-            }
-        })
+}
+
+/// Opacity of themed chrome: 70% while disabled or loading, full otherwise.
+fn button_dim(enabled: bool, loading: bool) -> Style {
+    if !enabled || loading {
+        return Style(opacity = 70)
     }
-    // Chrome hover is explicit: a themed button stays a hover target even
-    // when it has no click handler (`is_hot` would otherwise require one).
-    if p.hover_off == false {
-        hover_fade(n)
-    }
-    press_scale(n)
-    return n
+    return Style(opacity = 100)
 }
 
 /// Page number shown in `slot` (0-based) of a `PAGE_SLOTS`-wide row, or 0
@@ -1387,4 +1212,3 @@ fn page_at(current_value: int, pages: int, slot: int) -> int {
     }
     return current_value + slot - 3
 }
-

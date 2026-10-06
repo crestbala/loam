@@ -22,19 +22,19 @@ struct Job {
     status: string,
 }
 
-fn Stat(label: string, value: string, kind: int) {
-    zui.Card() {
-        zeus.Box(width = TILE, height = 4, radius = 2, background = colors.tint_of(kind))
-        zeus.Text(label, color = colors.dim(), font = spacing.FONT_CAPTION)
-        zeus.Text(value, color = zeus.ink(), font = FONT_DISPLAY)
+fn Stat(label: string, value: string, kind: int) -> Node {
+    return zui.Card() {
+        zeus.Box(style = Style(width = px(TILE), height = px(4), radius = corners(2), background = colors.tint_of(kind)))
+        zeus.Text(label, style = Style(font = spacing.FONT_CAPTION, color = colors.dim()))
+        zeus.Text(value, style = Style(font = FONT_DISPLAY, color = zeus.ink()))
     }
 }
 
-fn StatCount(label: string, sig: Signal<int>, kind: int) {
-    zui.Card() {
-        zeus.Box(width = TILE, height = 4, radius = 2, background = colors.tint_of(kind))
-        zeus.Text(label, color = colors.dim(), font = spacing.FONT_CAPTION)
-        zeus.Text("{{sig.get()}}", color = zeus.ink(), font = FONT_DISPLAY)
+fn StatCount(label: string, sig: Signal<int>, kind: int) -> Node {
+    return zui.Card() {
+        zeus.Box(style = Style(width = px(TILE), height = px(4), radius = corners(2), background = colors.tint_of(kind)))
+        zeus.Text(label, style = Style(font = spacing.FONT_CAPTION, color = colors.dim()))
+        zeus.Text("{{sig.get()}}", style = Style(font = FONT_DISPLAY, color = zeus.ink()))
     }
 }
 
@@ -48,157 +48,163 @@ fn clamp(v: int) -> int {
     }
 }
 
-fn Bar(sig: Signal<int>) {
-    zeus.Box(height = BAR_H, radius = 2, background = colors.rule(), grow = 1) {
+fn Bar(sig: Signal<int>) -> Node {
+    return zeus.Box(style = Style(height = px(BAR_H), grow = 1, radius = corners(2), background = colors.rule())) {
         // Scale 2 → max 200px at 100, so the fill never overflows the row
         // (an overflowing flex child pushes the trailing buttons to a new
         // line instead of shrinking).
-        zeus.Box(height = BAR_H, radius = 2, background = zeus.ink(),
-                 width = clamp(sig.get()) * 2)
+        zeus.Box(style = Style(width = px(clamp(sig.get()) * 2),
+                               height = px(BAR_H),
+                               radius = corners(2),
+                               background = zeus.ink()))
     }
 }
 
-fn Header(title: string, chip: string) {
-    zui.Row(SPACE.Md) {
-        zeus.Box(width = 8, height = 24, radius = 4, background = zeus.ink())
-        zeus.Text(title, color = zeus.ink(), font = spacing.FONT_TITLE)
-        zui.Chip(chip, zeus.TINT.Mute)
-        zui.Badge("live", zeus.TINT.Ok)
+fn Header(title: string, chip: string) -> Node {
+    return zui.Row(Space.Md) {
+        zeus.Box(style = Style(width = px(8), height = px(24), radius = corners(4), background = zeus.ink()))
+        zeus.Text(title, style = Style(font = spacing.FONT_TITLE, color = zeus.ink()))
+        zui.Chip(chip, zeus.Tint.Mute)
+        zui.Badge("live", zeus.Tint.Ok)
         zui.Grow()
-        zeus.Text("Dark", color = colors.mute(), font = spacing.FONT_BODY)
-        zui.Switch(zeus.appearance())
+        zeus.Text("Dark", style = Style(font = spacing.FONT_BODY, color = colors.mute()))
+        zui.ThemeSwitch()
     }
 }
 
-fn Stats(users: string, jobs: string, uptime: string, count: Signal<int>) {
-    zui.Grid(config = GridConfig(columns = 2, gap = SPACE.Md)) {
-        Stat("Users", users, zeus.TINT.Ink)
-        Stat("Jobs", jobs, zeus.TINT.Mute)
-        Stat("Uptime", uptime, zeus.TINT.Ok)
-        StatCount("Count", count, zeus.TINT.Danger)
+fn Stats(users: string, jobs: string, uptime: string, count: Signal<int>) -> Node {
+    return zui.Grid(config = GridConfig(columns = 2, gap = Space.Md)) {
+        Stat("Users", users, zeus.Tint.Ink)
+        Stat("Jobs", jobs, zeus.Tint.Mute)
+        Stat("Uptime", uptime, zeus.Tint.Ok)
+        StatCount("Count", count, zeus.Tint.Danger)
     }
 }
 
-fn CountCard(count: Signal<int>, open: Signal<int>) {
-    zui.Card() {
+fn CountCard(count: Signal<int>, open: Signal<bool>) -> Node {
+    return zui.Card() {
         zui.Title("Count")
         zui.Note("Buttons write a signal. The starting value came from protobuf.")
-        zui.Row(SPACE.Sm) {
-            zui.Button("-1", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click = fn() => count.set(count.get() - 1))
+        zui.Row(Space.Sm) {
+            zui.Button("-1", look = zeus.Look.Ghost, size = zeus.Size.Md, on_click = fn() => count.set(count.get() - 1))
             // Fixed-width slot: digits may change, but the buttons beside the
             // value never slide left or right.
-            zeus.Box(align_direction = DIRECTION.Row, justify = ALIGN.Center, width = 64) {
-                zeus.Text("{{count.get()}}", color = zeus.ink(), font = 16)
+            zeus.Box(style = Style(width = px(64), direction = Direction.Row, justify = Align.Center)) {
+                zeus.Text("{{count.get()}}", style = Style(font = 16, color = zeus.ink()))
             }
-            zui.Button("+1", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => count.set(count.get() + 1))
+            zui.Button("+1", look = zeus.Look.Solid, size = zeus.Size.Md, on_click = fn() => count.set(count.get() + 1))
         }
         Bar(count)
         zui.Divider()
-        zui.Button("Open Dialog", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => open.set(1))
+        zui.Button("Open Dialog", look = zeus.Look.Solid, size = zeus.Size.Md, on_click = fn() => open.set(true))
     }
 }
 
-fn Load(load: Signal<int>) {
-    zui.Row(SPACE.Md) {
-        zeus.Text("Load", color = colors.dim(), font = spacing.FONT_BODY)
+fn Load(load: Signal<int>) -> Node {
+    return zui.Row(Space.Md) {
+        zeus.Text("Load", style = Style(font = spacing.FONT_BODY, color = colors.dim()))
         Bar(load)
         // Fixed-width slot so the trailing buttons do not shift with the digits.
-        zeus.Box(align_direction = DIRECTION.Row, justify = ALIGN.End, width = 44) {
-            zeus.Text("{{load.get()}}%", color = colors.mute(), font = spacing.FONT_BODY)
+        zeus.Box(style = Style(width = px(44), direction = Direction.Row, justify = Align.End)) {
+            zeus.Text("{{load.get()}}%", style = Style(font = spacing.FONT_BODY, color = colors.mute()))
         }
-        zui.Button("+10", look = zeus.LOOK.Soft, size = zeus.SIZE.Md, on_click = fn() => load.set(clamp(load.get() + 10)))
-        zui.Button("-10", look = zeus.LOOK.Soft, size = zeus.SIZE.Md, on_click = fn() => load.set(clamp(load.get() - 10)))
+        zui.Button("+10", look = zeus.Look.Soft, size = zeus.Size.Md, on_click = fn() => load.set(clamp(load.get() + 10)))
+        zui.Button("-10", look = zeus.Look.Soft, size = zeus.Size.Md, on_click = fn() => load.set(clamp(load.get() - 10)))
     }
 }
 
-fn FeedRow(i: int, s: string) {
-    zeus.Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
-             height = ROW_H, spacing = SPACE.Exs, padding_x = SPACE.Exs) {
-        zeus.Text(s, color = zeus.ink(), font = spacing.FONT_BODY, grow = 1)
+fn FeedRow(i: int, s: string) -> Node {
+    return zeus.Box(style = Style(height = px(ROW_H),
+                           direction = Direction.Row,
+                           gap = Space.Exs,
+                           align = Align.Center,
+                           padding = Edges(right = Space.Exs, left = Space.Exs))) {
+        zeus.Text(s, style = Style(grow = 1, font = spacing.FONT_BODY, color = zeus.ink()))
     }
 }
 
-fn JobRow(i: int, r: Job) {
-    zeus.Box(align_direction = DIRECTION.Row, align_items = ALIGN.Center,
-             height = ROW_H, spacing = SPACE.Sm, padding_x = SPACE.Exs) {
-        zeus.set_flex_basis_zero(zeus.Text(r.name, color = zeus.ink(), font = spacing.FONT_BODY, grow = 1))
-        zeus.set_flex_basis_zero(zeus.Text(r.role, color = colors.mute(), font = spacing.FONT_BODY, grow = 1))
-        zeus.set_flex_basis_zero(zeus.Text(r.status, color = colors.dim(), font = spacing.FONT_BODY, grow = 1))
+fn JobRow(i: int, r: Job) -> Node {
+    return zeus.Box(style = Style(height = px(ROW_H),
+                           direction = Direction.Row,
+                           gap = Space.Sm,
+                           align = Align.Center,
+                           padding = Edges(right = Space.Exs, left = Space.Exs))) {
+        zeus.set_flex_basis_zero(zeus.Text(r.name, style = Style(grow = 1, font = spacing.FONT_BODY, color = zeus.ink())))
+        zeus.set_flex_basis_zero(zeus.Text(r.role, style = Style(grow = 1, font = spacing.FONT_BODY, color = colors.mute())))
+        zeus.set_flex_basis_zero(zeus.Text(r.status, style = Style(grow = 1, font = spacing.FONT_BODY, color = colors.dim())))
     }
 }
 
-fn FeedCard(feed: Signal<[]string>) {
+fn FeedCard(feed: Signal<[]string>) -> Node {
     let list_id = zeus.signal(0)
-    zui.Card() {
+    return zui.Card() {
         zui.Title("Feed")
         zui.Note("{{feed.get().len}} windowed rows. Only the visible window is mounted.")
-        zui.Row(SPACE.Sm) {
-            zui.Button("Append", look = zeus.LOOK.Soft, size = zeus.SIZE.Md, on_click = fn() {
+        zui.Row(Space.Sm) {
+            zui.Button("Append", look = zeus.Look.Soft, size = zeus.Size.Md, on_click = fn() {
                 let n = feed.get().len
                 zui.push_item(feed, "msg {{n}}  appended")
             })
-            zui.Button("Insert", look = zeus.LOOK.Soft, size = zeus.SIZE.Md, on_click = fn() {
+            zui.Button("Insert", look = zeus.Look.Soft, size = zeus.Size.Md, on_click = fn() {
                 zui.insert_item(feed, 0, "msg inserted at top")
                 zui.scroll_to_index(Node { id: list_id.get() }, 0)
             })
-            zui.Button("Mid", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click = fn() {
+            zui.Button("Mid", look = zeus.Look.Ghost, size = zeus.Size.Md, on_click = fn() {
                 zui.scroll_to_index(Node { id: list_id.get() }, FEED_N / 2)
             })
-            zui.Button("Top", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click = fn() {
+            zui.Button("Top", look = zeus.Look.Ghost, size = zeus.Size.Md, on_click = fn() {
                 zui.scroll_to_index(Node { id: list_id.get() }, 0)
             })
         }
-        zeus.Box(height = LIST_H, border = 1, border_color = colors.rule(), radius = 8) {
+        zeus.Box(style = Style(height = px(LIST_H), radius = corners(8), border = line(1, colors.rule()))) {
             let list = zui.VirtualList(feed, ROW_H, FeedRow)
             list_id.set(list.id)
         }
     }
 }
 
-fn JobsCard(jobs: Signal<[]Job>, cols: []TableCol) {
-    zui.Card() {
+fn JobsCard(jobs: Signal<[]Job>, cols: []TableCol) -> Node {
+    return zui.Card() {
         zui.Title("Jobs")
         zui.Note("VirtualTable of Job structs. Columns are TableCol { title, width }.")
-        zeus.Box(height = LIST_H, border = 1, border_color = colors.rule(), radius = 8) {
+        zeus.Box(style = Style(height = px(LIST_H), radius = corners(8), border = line(1, colors.rule()))) {
             zui.VirtualTable(jobs, cols, ROW_H, JobRow)
         }
     }
 }
 
-fn Dialog(open: Signal<int>) {
-    let dim = zui.Overlay(
-        background = "#000000",
-        opacity = 55,
-        on_click = fn() => open.set(0)
+fn Dialog(open: Signal<bool>) -> Node {
+    return zui.Overlay(
+        style = Style(opacity = 55, background = "#000000",
+                      display = if open.get() { Display.Flex } else { Display.None }),
+        on_click = fn() => open.set(false)
     ) {
         zeus.Box(
-            width = 360,
-            padding = SPACE.Xl,
-            spacing = SPACE.Md,
-            background = colors.plate(),
-            border = 1,
-            border_color = colors.rule(),
-            radius = 16,
+            style = Style(width = px(360),
+                          gap = Space.Md,
+                          padding = edges(Space.Xl),
+                          radius = corners(16),
+                          border = line(1, colors.rule()),
+                          background = colors.plate()),
             on_click = fn() { return }
         ) {
             zui.Title("Dialog")
             zui.Body("How are you feeling today?")
-            zui.Row(SPACE.Sm) {
+            zui.Row(Space.Sm) {
                 zui.Grow()
-                zui.Button("Close", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click = fn() => open.set(0))
-                zui.Button("Save", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => open.set(0))
+                zui.Button("Close", look = zeus.Look.Ghost, size = zeus.Size.Md, on_click = fn() => open.set(false))
+                zui.Button("Save", look = zeus.Look.Solid, size = zeus.Size.Md, on_click = fn() => open.set(false))
             }
         }
     }
-    zeus.show(dim, open)
 }
 
 /// Page built once from RPC results. `chip` is the host label
 /// (Canvas2D / iOS / macOS / Android). Call from `zeus.App`.
-fn Screen(title: string, chip: string, users: string, jobs: string, uptime: string, load0: int, count0: int) {
+fn Screen(title: string, chip: string, users: string, jobs: string, uptime: string, load0: int, count0: int) -> Node {
     let count = zeus.signal(count0)
     let load = zeus.signal(load0)
-    let open = zeus.signal(0)
+    let open = zeus.signal(false)
 
     let mut feed_xs = []string {}
     let mut i = 0
@@ -224,15 +230,18 @@ fn Screen(title: string, chip: string, users: string, jobs: string, uptime: stri
     push(cols, TableCol { title: "Role", width: 0 })
     push(cols, TableCol { title: "Status", width: 0 })
 
-    zeus.Box(align_direction = DIRECTION.Column, spacing = SPACE.Exs,
-             padding = spacing.PAGE_PAD, background = colors.paper(), grow = 1) {
-        Header(title, chip),
-        zui.Alert("RPC", "Count is Counter.Hello. Cards are Counter.Stats."),
-        Stats(users, jobs, uptime, count),
-        CountCard(count, open),
-        Load(load),
-        FeedCard(feed),
-        JobsCard(job_rows, cols),
-        Dialog(open),
+    return zeus.Box(style = Style(direction = Direction.Column,
+                           gap = Space.Exs,
+                           grow = 1,
+                           padding = edges(spacing.PAGE_PAD),
+                           background = colors.paper())) {
+        Header(title, chip)
+        zui.Alert("RPC", "Count is Counter.Hello. Cards are Counter.Stats.")
+        Stats(users, jobs, uptime, count)
+        CountCard(count, open)
+        Load(load)
+        FeedCard(feed)
+        JobsCard(job_rows, cols)
+        Dialog(open)
     }
 }

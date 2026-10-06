@@ -29,7 +29,7 @@ fn main() {
     lab.start()
     data.start()
     stocks.start()
-    zeus.App("dracula", fn() {
-        approutes.app()
+    zeus.App("dracula", fn() -> Node {
+        return approutes.app()
     })
 }

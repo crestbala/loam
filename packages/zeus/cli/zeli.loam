@@ -956,12 +956,12 @@ fn generate(appdir: string) -> string {
             let src = sys.read_file(join(here, "page.loam"))
             push(page_meta, has_fn(src, "meta"))
             push(page_paths, has_fn(src, "paths"))
-            /* `fn page_live()` instead of `fn page(p: Params)`: the page reads
+            /* `fn PageLive()` instead of `fn Page(p: Params)`: the page reads
                its params through `router.param_live`, so the route is `live`
                and its slot is kept across a params-only navigation. The
                signature is the contract — a page without the argument cannot
                take a snapshot of it. */
-            push(page_live, has_fn(src, "page_live"))
+            push(page_live, has_fn(src, "PageLive"))
         }
         if sys.exists(join(here, "not-found.loam")) == 1 {
             let al = alias_for(rel, "not_found")
@@ -1012,21 +1012,21 @@ fn generate(appdir: string) -> string {
         let rel = pages[p]
         let al = page_alias[p]
         let stem = slice(al, 2, al.len)
-        let mut body = cat(al, ".page(p)")
+        let mut body = cat(al, ".Page(p)")
         if page_live[p] == 1 {
-            body = cat(al, ".page_live()")
+            body = cat(al, ".PageLive()")
         }
         /* Outside in: the page's own layout first, then each one above it. */
         let mut keep = segment_count(rel)
         while keep >= 1 {
             let idx = index_of(lay_rel, first_segments(rel, keep))
             if idx >= 0 {
-                body = cat(cat(cat(lay_alias[idx], ".layout(fn() { "), body), " })")
+                body = cat(cat(cat(lay_alias[idx], ".Layout(fn() { "), body), " })")
             }
             keep -= 1
         }
-        push(lines, cat(cat("fn b_", stem), "(p: Params) {"))
-        push(lines, cat("    ", body))
+        push(lines, cat(cat("fn b_", stem), "(p: Params) -> Node {"))
+        push(lines, cat("    return ", body))
         push(lines, "}")
         push(lines, "")
         if page_meta[p] == 1 {
@@ -1077,17 +1077,17 @@ fn generate(appdir: string) -> string {
        a root not-found overrides the router's default. */
     let mut props = ""
     if nf_root != "" {
-        props = cat(cat(" RouterProps { not_found: fn() { ", nf_root), ".not_found() } }")
+        props = cat(cat(" RouterProps { notFound: fn() { ", nf_root), ".NotFound() } }")
     }
     let router = cat(cat("router.Router(routes(),", props), ")")
     let root_lay = index_of(lay_rel, "")
-    push(lines, "fn app() {")
+    push(lines, "fn app() -> Node {")
     if root_lay >= 0 {
-        push(lines, cat(cat("    ", lay_alias[root_lay]), ".layout(fn() {"))
+        push(lines, cat(cat("    return ", lay_alias[root_lay]), ".Layout(fn() {"))
         push(lines, cat("        ", router))
         push(lines, "    })")
     } else {
-        push(lines, cat("    ", router))
+        push(lines, cat("    return ", router))
     }
     push(lines, "}")
 
@@ -2531,27 +2531,27 @@ fn scaffold_files(name: string) -> []ScaffoldFile {
     })
     push(out, ScaffoldFile {
         rel: "routes/layout.loam",
-        body: "//! Root shell: theme + nav. Retained across navigation, so its state\n//! survives — only the page slot rebuilds.\n\nimport \"std:zeus\"\nimport \"../theme.loam\" as theme\n\nfn layout(build: fn()) {\n    theme.install()\n    let box = zeus.Box(align_direction = DIRECTION.Column, padding = 12, spacing = 8)\n    zeus.slot(box, fn() {\n        zeus.Text(\"{{name}}\")\n    })\n    zeus.slot(box, build)\n}\n",
+        body: "//! Root shell: theme + nav. Retained across navigation, so its state\n//! survives — only the page slot rebuilds.\n\nimport \"std:zeus\"\nimport \"../theme.loam\" as theme\n\nfn Layout(build: fn()) -> Node {\n    theme.install()\n    return zeus.Box(style = Style(direction = Direction.Column, gap = 8, padding = edges(12))) {\n        zeus.Text(\"{{name}}\")\n        build()\n    }\n}\n",
     })
     push(out, ScaffoldFile {
         rel: "routes/page.loam",
-        body: "import \"std:zeus\"\nimport \"std:router\"\nimport \"../components/card.loam\" as card\n\nfn page(p: Params) {\n    card.Card(\"Welcome to {{name}}.\")\n}\n\nfn meta(p: Params) -> Meta {\n    return Meta { title: \"{{name}}\", description: \"A Zeus app.\" }\n}\n",
+        body: "import \"std:zeus\"\nimport \"std:router\"\nimport \"../components/card.loam\" as card\n\nfn Page(p: Params) -> Node {\n    return card.Card(\"Welcome to {{name}}.\")\n}\n\nfn meta(p: Params) -> Meta {\n    return Meta { title: \"{{name}}\", description: \"A Zeus app.\" }\n}\n",
     })
     push(out, ScaffoldFile {
         rel: "routes/loading.loam",
-        body: "//! Shown while a route's loaders are pending.\n\nimport \"std:zeus\"\n\nfn loading() {\n    zeus.Text(\"loading...\")\n}\n",
+        body: "//! Shown while a route's loaders are pending.\n\nimport \"std:zeus\"\n\nfn Loading() -> Node {\n    return zeus.Text(\"loading...\")\n}\n",
     })
     push(out, ScaffoldFile {
         rel: "routes/error.loam",
-        body: "//! Route error page. A trap in a page's build lands here (see zui.Boundary).\n\nimport \"std:zeus\"\n\nfn error(msg: string) {\n    zeus.Text(\"something went wrong\")\n}\n",
+        body: "//! Route error page. A trap in a page's build lands here (see zui.Boundary).\n\nimport \"std:zeus\"\n\nfn Error(msg: string) -> Node {\n    return zeus.Text(\"something went wrong\")\n}\n",
     })
     push(out, ScaffoldFile {
         rel: "routes/not-found.loam",
-        body: "import \"std:zeus\"\n\nfn not_found() {\n    zeus.Text(\"not found\")\n}\n",
+        body: "import \"std:zeus\"\n\nfn NotFound() -> Node {\n    return zeus.Text(\"not found\")\n}\n",
     })
     push(out, ScaffoldFile {
         rel: "routes/blog/layout.loam",
-        body: "import \"std:zeus\"\n\nfn layout(build: fn()) {\n    let box = zeus.Box(align_direction = DIRECTION.Column, padding = 8, spacing = 4)\n    zeus.slot(box, fn() {\n        zeus.Text(\"blog\")\n    })\n    zeus.slot(box, build)\n}\n",
+        body: "import \"std:zeus\"\n\nfn Layout(build: fn()) -> Node {\n    return zeus.Box(style = Style(direction = Direction.Column, gap = 4, padding = edges(8))) {\n        zeus.Text(\"blog\")\n        build()\n    }\n}\n",
     })
     push(out, ScaffoldFile {
         rel: "routes/blog/loader.loam",
@@ -2559,7 +2559,7 @@ fn scaffold_files(name: string) -> []ScaffoldFile {
     })
     push(out, ScaffoldFile {
         rel: "routes/blog/page.loam",
-        body: "import \"std:zeus\"\nimport \"std:router\"\nimport \"loader.loam\" as blog_loader\n\nfn page(p: Params) {\n    let ps = blog_loader.posts()\n    for i in 0..ps.len {\n        zeus.Text(ps[i])\n    }\n}\n\nfn meta(p: Params) -> Meta {\n    return Meta { title: \"Blog\" }\n}\n",
+        body: "import \"std:zeus\"\nimport \"std:router\"\nimport \"loader.loam\" as blog_loader\n\nfn Page(p: Params) -> Node {\n    return zeus.Box(style = Style(direction = Direction.Column)) {\n        let ps = blog_loader.posts()\n        for i in 0..ps.len {\n            zeus.Text(ps[i])\n        }\n    }\n}\n\nfn meta(p: Params) -> Meta {\n    return Meta { title: \"Blog\" }\n}\n",
     })
     push(out, ScaffoldFile {
         rel: "routes/blog/[slug]/loader.loam",
@@ -2567,23 +2567,23 @@ fn scaffold_files(name: string) -> []ScaffoldFile {
     })
     push(out, ScaffoldFile {
         rel: "routes/blog/[slug]/page.loam",
-        body: "import \"std:zeus\"\nimport \"std:router\"\nimport \"loader.loam\" as post_loader\n\nfn page(p: Params) {\n    let slug = router.param(p, \"slug\")\n    zeus.Text(post_loader.get_post(slug))\n}\n\n// Static routes are enumerated at build time from `paths()`.\nfn paths() -> []string {\n    return []string { \"/blog/hello-world\", \"/blog/second\" }\n}\n\nfn meta(p: Params) -> Meta {\n    return Meta { title: router.param(p, \"slug\") }\n}\n",
+        body: "import \"std:zeus\"\nimport \"std:router\"\nimport \"loader.loam\" as post_loader\n\nfn Page(p: Params) -> Node {\n    let slug = router.param(p, \"slug\")\n    return zeus.Text(post_loader.get_post(slug))\n}\n\n// Static routes are enumerated at build time from `paths()`.\nfn paths() -> []string {\n    return []string { \"/blog/hello-world\", \"/blog/second\" }\n}\n\nfn meta(p: Params) -> Meta {\n    return Meta { title: router.param(p, \"slug\") }\n}\n",
     })
     push(out, ScaffoldFile {
         rel: "routes/blog/[slug]/error.loam",
-        body: "import \"std:zeus\"\n\nfn error(msg: string) {\n    zeus.Text(\"post not available\")\n}\n",
+        body: "import \"std:zeus\"\n\nfn Error(msg: string) -> Node {\n    return zeus.Text(\"post not available\")\n}\n",
     })
     push(out, ScaffoldFile {
         rel: "routes/(marketing)/about/page.loam",
-        body: "import \"std:zeus\"\nimport \"std:router\"\n\nfn page(p: Params) {\n    zeus.Text(\"about\")\n}\n\nfn meta(p: Params) -> Meta {\n    return Meta { title: \"About\" }\n}\n",
+        body: "import \"std:zeus\"\nimport \"std:router\"\n\nfn Page(p: Params) -> Node {\n    return zeus.Text(\"about\")\n}\n\nfn meta(p: Params) -> Meta {\n    return Meta { title: \"About\" }\n}\n",
     })
     push(out, ScaffoldFile {
         rel: "routes/(marketing)/pricing/page.loam",
-        body: "import \"std:zeus\"\nimport \"std:router\"\n\nfn page(p: Params) {\n    zeus.Text(\"pricing\")\n}\n\nfn meta(p: Params) -> Meta {\n    return Meta { title: \"Pricing\" }\n}\n",
+        body: "import \"std:zeus\"\nimport \"std:router\"\n\nfn Page(p: Params) -> Node {\n    return zeus.Text(\"pricing\")\n}\n\nfn meta(p: Params) -> Meta {\n    return Meta { title: \"Pricing\" }\n}\n",
     })
     push(out, ScaffoldFile {
         rel: "components/card.loam",
-        body: "//! Shared component, no routing knowledge: a fn that builds into the\n//! current host.\n\nimport \"std:zeus\"\n\nfn Card(text: string) {\n    let box = zeus.Box(background = \"#FFFFFF\", padding = 12, spacing = 4)\n    zeus.slot(box, fn() {\n        zeus.Text(text)\n    })\n}\n",
+        body: "//! Shared component, no routing knowledge: a fn that builds into the\n//! current host.\n\nimport \"std:zeus\"\n\nfn Card(text: string) -> Node {\n    return zeus.Box(style = Style(gap = 4, padding = edges(12), background = \"#FFFFFF\")) {\n        zeus.Text(text)\n    }\n}\n",
     })
     push(out, ScaffoldFile {
         rel: "server/api.loam",

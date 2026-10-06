@@ -1,6 +1,7 @@
-// A key binding is a prop, so it goes on any widget — not just the ones that
-// happened to ship a helper. The chord runs `on_key`, or falls back to
-// `on_click` so a button and its shortcut share one handler.
+// Key bindings are one prop, `keys: []KeyBind`, on any widget — not just the
+// ones that happened to ship a helper. `chord` runs its own handler,
+// `chord_click` runs the element's `on_click` so a button and its shortcut
+// share one handler, and `chord_global` fires wherever focus is.
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
@@ -9,6 +10,8 @@ import "std:zui"
 let mut saves: int = 0
 let mut opens: int = 0
 let mut boxes: int = 0
+let mut cards: int = 0
+let mut icons: int = 0
 
 fn check(what: string, got: int, want: int) {
     if got != want {
@@ -22,14 +25,22 @@ fn main() {
     zeus.snapshot(300, 200, fn() -> Node {
         zui.Column(8) {
             // Button: the chord reuses on_click, no second handler.
-            zui.Button("Save", look = zeus.LOOK.Solid,
-                        key = "cmd+s", on_click = fn() { saves = saves + 1 })
+            zui.Button("Save", look = zeus.Look.Solid,
+                       keys = []KeyBind { chord_click("cmd+s") },
+                       on_click = fn() { saves = saves + 1 })
             // Plain Box: same prop, different widget.
-            zeus.Box(width = 20, height = 20, a11y_label = "panel",
-                     key = "cmd+b", on_key = fn() { boxes = boxes + 1 })
+            zeus.Box(style = Style(width = px(20), height = px(20)),
+                     label = "panel",
+                     keys = []KeyBind { chord("cmd+b", "", fn() { boxes = boxes + 1 }) })
             // Global chord: fires wherever focus is.
-            zeus.Text("hint", key = "cmd+k", key_global = true,
-                      on_key = fn() { opens = opens + 1 })
+            zeus.Text("hint",
+                      keys = []KeyBind { chord_global("cmd+k", "", fn() { opens = opens + 1 }) })
+            // Card and IconButton used to declare the prop without installing it.
+            zui.Card(title = "card",
+                     keys = []KeyBind { chord_global("cmd+j", "", fn() { cards = cards + 1 }) })
+            zui.IconButton(zeus.IC_X, zeus.Look.Ghost, zeus.Size.Md, "Close",
+                           keys = keys_concat([]KeyBind { chord_global("cmd+1", "", fn() { icons = icons + 1 }) },
+                                              []KeyBind { chord_global("cmd+2", "", fn() { icons = icons + 10 }) }))
         }
     })
 
@@ -40,11 +51,20 @@ fn main() {
     zeus.engine_key_ev(107, 8)
     check("global chord fired", opens, 1)
 
-    // Focus the button, then its chord runs the click handler.
+    // Focus the button (the click itself runs on_click once), then its chord
+    // runs the click handler again. A themed Button used to drop its chord.
     zeus.engine_click_text("Save")
+    check("the focusing click ran on_click", saves, 1)
     zeus.engine_key_ev(115, 8)
-    check("button chord ran on_click", saves, 1)
+    check("button chord ran on_click", saves, 2)
     check("button chord did not fire others", boxes, 0)
+
+    // 106 = j, 49 = 1, 50 = 2
+    zeus.engine_key_ev(106, 8)
+    check("card chord fired", cards, 1)
+    zeus.engine_key_ev(49, 8)
+    zeus.engine_key_ev(50, 8)
+    check("both concatenated chords fired", icons, 11)
 
     fmt.println("zeus key prop ok")
 }

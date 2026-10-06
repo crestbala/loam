@@ -15,7 +15,7 @@ fn fail(what: string) {
 
 fn main() {
     zeus.snapshot(320, 200, fn() -> Node {
-        zeus.Box(align_direction = DIRECTION.Column) {
+        zeus.Box(style = Style(direction = Direction.Column)) {
             approutes.app()
         }
     })

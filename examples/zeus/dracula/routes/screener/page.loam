@@ -7,10 +7,10 @@ import "../../components/ui.loam" as ui
 
 fn spec() -> []TableCol {
     let mut h = []TableCol {}
-    push(h, TableCol { title: "Rank", width: 48, align: ALIGN.End })
+    push(h, TableCol { title: "Rank", width: 48, align: Align.End })
     push(h, TableCol { title: "Scheme", width: 0 })
     push(h, TableCol { title: "Code", width: 72 })
-    push(h, TableCol { title: "12-month momentum", width: 150, align: ALIGN.End })
+    push(h, TableCol { title: "12-month momentum", width: 150, align: Align.End })
     push(h, TableCol { title: "Status", width: 170 })
     return h
 }
@@ -35,8 +35,8 @@ fn paint_ranks() {
     }
 }
 
-fn page(p: Params) {
-    zui.Column(spacing.SECTION) {
+fn Page(p: Params) -> Node {
+    return zui.Column(spacing.SECTION) {
         zui.Heading("Screener")
         zui.Body("Ranks the watchlist by 12-month momentum. A tie keeps the earlier scheme. Warm-up is not a rank. Click a row for its chart.")
         if book.started() {
@@ -49,6 +49,7 @@ fn page(p: Params) {
             zeus.Text("No schemes to rank.")
         }
     }
+
 }
 
 fn meta(p: Params) -> Meta {

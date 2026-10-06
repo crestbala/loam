@@ -5,7 +5,7 @@ import "std:zeus"
 import "std:zui"
 
 fn Card(text: string) -> Node {
-    return zeus.Box(background = "#FFFFFF", padding = 12, spacing = 4) {
+    return zeus.Box(style = Style(gap = 4, padding = edges(12), background = "#FFFFFF")) {
         zui.Body(text)
     }
 }

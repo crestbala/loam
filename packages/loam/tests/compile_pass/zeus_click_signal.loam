@@ -24,7 +24,7 @@ fn expect(got: int, want: int) {
 }
 
 fn wire(p: ClickProps) -> Node {
-    let n = zui.Button("+", width = 120, height = 40)
+    let n = zui.Button("+", style = Style(width = px(120), height = px(40)))
     return zeus.on_click(n, p.on_press)
 }
 

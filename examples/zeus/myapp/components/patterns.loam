@@ -5,95 +5,112 @@ import "std:zeus"
 import "std:colors"
 import "std:colors"
 import "std:zui"
+import "std:spacing"
 
 let mut chart_labs: []string = []string {}
 let mut chart_series: []string = []string {}
 let mut chart_vals: []int = []int {}
 
 fn NameRow(name: string) -> Node {
-    zui.Row(SPACE.Sm) {
+    zui.Row(Space.Sm) {
         zui.Pip(colors.mute(), 6)
         zui.Body(name)
     }
 }
 
-fn LiveList() {
+fn LiveList() -> Node {
     let n = zeus.signal(2)
-    zui.SectionHeader("Lists", "Growing rows",
-                       "Add and remove rows. Extra rows are shown, not rebuilt with zui.For.")
-    zui.Card() {
-        zeus.show_ge(NameRow("Ada"), n, 1)
-        zeus.show_ge(NameRow("Bea"), n, 2)
-        zeus.show_ge(NameRow("Row"), n, 3)
-        zeus.show_ge(NameRow("Row"), n, 4)
-        zui.Row(SPACE.Sm) {
-            zui.Button("Add row", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() {
-                if n.get() < 4 {
-                    n.set(n.get() + 1)
-                }
-            })
-            zui.Button("Remove", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click = fn() {
-                if n.get() > 0 {
-                    n.set(n.get() - 1)
-                }
-            })
-        }
-    }
-}
-
-fn Cards() {
-    zui.SectionTitle("Surfaces", "Cards")
-    // Responsive: a cell is as wide as the cards want to be, so three fit
-    // across a wide window and two or one as it narrows, never more than three.
-    zui.Grid(config = GridConfig(columns = 3, auto_columns = 200, gap = SPACE.Md)) {
-        zui.Card() { zui.Pip(zeus.accent(), 8) zui.Title("Small") zui.Body("Neutral primary on paper.") }
-        zui.Card() { zui.Pip(colors.ok(), 8) zui.Title("Medium") zui.Body("Rounded-xl is the card radius.") }
-        zui.Card() { zui.Pip(zeus.danger(), 8) zui.Title("Large") zui.Body("Badges and caps mark status.") }
-    }
-}
-
-fn Skeletons() {
-    zui.SectionHeader("Feedback", "Skeleton",
-                       "Placeholder fills while content loads. Radius matches the shape it replaces.")
-    zui.Card() {
-        zui.Row(SPACE.Md) {
-            zui.Skeleton(40, 40, 20)
-            zui.Column(SPACE.Exs) {
-                zui.Skeleton(220, 14, 7)
-                zui.Skeleton(160, 14, 7)
+    return Column(spacing.SECTION) {
+        zui.SectionHeader("Lists", "Growing rows",
+                           "Add and remove rows. Extra rows are shown, not rebuilt with zui.For.")
+        zui.Card() {
+            zui.Show(when = n.get() >= 1) {
+                NameRow("Ada")
+            }
+            zui.Show(when = n.get() >= 2) {
+                NameRow("Bea")
+            }
+            zui.Show(when = n.get() >= 3) {
+                NameRow("Row")
+            }
+            zui.Show(when = n.get() >= 4) {
+                NameRow("Row")
+            }
+            zui.Row(Space.Sm) {
+                zui.Button("Add row", look = zeus.Look.Solid, size = zeus.Size.Md, on_click = fn() {
+                    if n.get() < 4 {
+                        n.set(n.get() + 1)
+                    }
+                })
+                zui.Button("Remove", look = zeus.Look.Ghost, size = zeus.Size.Md, on_click = fn() {
+                    if n.get() > 0 {
+                        n.set(n.get() - 1)
+                    }
+                })
             }
         }
     }
 }
 
-fn Overlays() {
-    let open = zeus.signal(0)
-    let ask = zeus.signal(0)
-    zui.SectionTitle("Overlay", "Dialog and alert dialog")
-    zui.Row(SPACE.Sm) {
-        zui.Button("Dialog", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => open.set(1))
-        zui.Button("Alert dialog", look = zeus.LOOK.Outline, size = zeus.SIZE.Md, on_click = fn() => ask.set(1))
-    }
-    zui.Body("Dialog has a corner X; alert dialog does not. Cancel is ghost or outline; the destructive action closes.")
-    zui.Dialog(open, title = "Share the link?") {
-        zui.Body("Anyone with the link can view this project. You can revoke access later.")
-        zui.Row(SPACE.Sm) {
-            zui.Grow()
-            zui.Button("Cancel", look = zeus.LOOK.Ghost, size = zeus.SIZE.Md, on_click = fn() => open.set(0))
-            zui.Button("Share", look = zeus.LOOK.Solid, size = zeus.SIZE.Md, on_click = fn() => open.set(0))
-        }
-    }
-    zui.AlertDialog(ask, title = "Discard changes?") {
-        zui.Body("This cannot be undone. The working tree keeps whatever you have not saved.")
-        zui.Row(SPACE.Sm) {
-            zui.Grow()
-            zui.Button("Cancel", look = zeus.LOOK.Outline, size = zeus.SIZE.Md, on_click = fn() => ask.set(0))
-            zui.Button("Discard", look = zeus.LOOK.Danger, size = zeus.SIZE.Md, on_click = fn() => ask.set(0))
+fn Cards() -> Node {
+    return Column(spacing.SECTION) {
+        zui.SectionTitle("Surfaces", "Cards")
+        // Responsive: a cell is as wide as the cards want to be, so three fit
+        // across a wide window and two or one as it narrows, never more than three.
+        zui.Grid(config = GridConfig(columns = 3, autoColumns = 200, gap = Space.Md)) {
+            zui.Card() { zui.Pip(zeus.accent(), 8) zui.Title("Small") zui.Body("Neutral primary on paper.") }
+            zui.Card() { zui.Pip(colors.ok(), 8) zui.Title("Medium") zui.Body("Rounded-xl is the card radius.") }
+            zui.Card() { zui.Pip(zeus.danger(), 8) zui.Title("Large") zui.Body("Badges and caps mark status.") }
         }
     }
 }
 
-fn ChartCards() {
+fn Skeletons() -> Node {
+    return Column(spacing.SECTION) {
+        zui.SectionHeader("Feedback", "Skeleton",
+                           "Placeholder fills while content loads. Radius matches the shape it replaces.")
+        zui.Card() {
+            zui.Row(Space.Md) {
+                zui.Skeleton(40, 40, 20)
+                zui.Column(Space.Exs) {
+                    zui.Skeleton(220, 14, 7)
+                    zui.Skeleton(160, 14, 7)
+                }
+            }
+        }
+    }
+}
+
+fn Overlays() -> Node {
+    let open = zeus.signal(false)
+    let ask = zeus.signal(false)
+    return Column(spacing.SECTION) {
+        zui.SectionTitle("Overlay", "Dialog and alert dialog")
+        zui.Row(Space.Sm) {
+            zui.Button("Dialog", look = zeus.Look.Solid, size = zeus.Size.Md, on_click = fn() => open.set(true))
+            zui.Button("Alert dialog", look = zeus.Look.Outline, size = zeus.Size.Md, on_click = fn() => ask.set(true))
+        }
+        zui.Body("Dialog has a corner X; alert dialog does not. Cancel is ghost or outline; the destructive action closes.")
+        zui.Dialog(open, title = "Share the link?") {
+            zui.Body("Anyone with the link can view this project. You can revoke access later.")
+            zui.Row(Space.Sm) {
+                zui.Grow()
+                zui.Button("Cancel", look = zeus.Look.Ghost, size = zeus.Size.Md, on_click = fn() => open.set(false))
+                zui.Button("Share", look = zeus.Look.Solid, size = zeus.Size.Md, on_click = fn() => open.set(false))
+            }
+        }
+        zui.AlertDialog(ask, title = "Discard changes?") {
+            zui.Body("This cannot be undone. The working tree keeps whatever you have not saved.")
+            zui.Row(Space.Sm) {
+                zui.Grow()
+                zui.Button("Cancel", look = zeus.Look.Outline, size = zeus.Size.Md, on_click = fn() => ask.set(false))
+                zui.Button("Discard", look = zeus.Look.Danger, size = zeus.Size.Md, on_click = fn() => ask.set(false))
+            }
+        }
+    }
+}
+
+fn ChartCards() -> Node {
     if chart_labs.len == 0 {
         push(chart_labs, "Jan")
         push(chart_labs, "Feb")
@@ -134,29 +151,33 @@ fn ChartCards() {
         push(chart_vals, 170)
         push(chart_vals, 260)
     }
-    zui.SectionHeader("Data", "Charts",
-                       "Hover a column or a point: the floating tooltip lists every series value. The plot re-fits its card on window resize.")
-    zui.Card() {
-        zui.Title("Bar chart · Total visitors")
-        zui.Body("Desktop and mobile sessions by month, grouped per category.")
-        zui.BarChart(chart_labs, chart_series, chart_vals, 850, 216)
-    }
-    zui.Card() {
-        zui.Title("Line chart · Trend")
-        zui.Body("Straight segments with a dot on every data point; the stroke follows the series color.")
-        zui.LineChart(chart_labs, chart_series, chart_vals, 850, 216)
-    }
-    zui.Card() {
-        zui.Title("Area chart · Volume")
-        zui.Body("A tinted wash under the line; the fill restyles with the appearance.")
-        zui.AreaChart(chart_labs, chart_series, chart_vals, 850, 216)
+    return Column(spacing.SECTION) {
+        zui.SectionHeader("Data", "Charts",
+                           "Hover a column or a point: the floating tooltip lists every series value. The plot re-fits its card on window resize.")
+        zui.Card() {
+            zui.Title("Bar chart · Total visitors")
+            zui.Body("Desktop and mobile sessions by month, grouped per category.")
+            zui.BarChart(chart_labs, chart_series, chart_vals, 850, 216)
+        }
+        zui.Card() {
+            zui.Title("Line chart · Trend")
+            zui.Body("Straight segments with a dot on every data point; the stroke follows the series color.")
+            zui.LineChart(chart_labs, chart_series, chart_vals, 850, 216)
+        }
+        zui.Card() {
+            zui.Title("Area chart · Volume")
+            zui.Body("A tinted wash under the line; the fill restyles with the appearance.")
+            zui.AreaChart(chart_labs, chart_series, chart_vals, 850, 216)
+        }
     }
 }
 
-fn Patterns() {
-    LiveList()
-    Cards()
-    ChartCards()
-    Skeletons()
-    Overlays()
+fn Patterns() -> Node {
+    return Column(spacing.SECTION) {
+        LiveList()
+        Cards()
+        ChartCards()
+        Skeletons()
+        Overlays()
+    }
 }

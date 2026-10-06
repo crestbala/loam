@@ -26,19 +26,19 @@ fn scroller_of(id: int) -> int {
 
 fn main() {
     zeus.snapshot(240, 240, fn() -> Node {
-        zui.Scroll(height = 240) {
-            zeus.Box(height = 80) {
+        zui.Scroll(style = Style(height = px(240))) {
+            zeus.Box(style = Style(height = px(80))) {
                 zeus.Text("page-top")
             }
-            zui.Scroll(height = 80) {
-                zeus.Box(height = 400) {
+            zui.Scroll(style = Style(height = px(80))) {
+                zeus.Box(style = Style(height = px(400))) {
                     zeus.Text("inner-top")
-                    zeus.Box(height = 360) {
+                    zeus.Box(style = Style(height = px(360))) {
                         zeus.Text("inner-bot")
                     }
                 }
             }
-            zeus.Box(height = 200) {
+            zeus.Box(style = Style(height = px(200))) {
                 zeus.Text("page-bot")
             }
         }

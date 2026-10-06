@@ -1087,6 +1087,12 @@ static int lower_expr(AstNode *n) {
                             args[f] = lower_expr(n->as.struct_lit.fields[k].init);
                             break;
                         }
+                    /* `none`'s payload: a zeroed temp of the field's type. */
+                    if (args[f] < 0 && n->as.struct_lit.zero_rest) {
+                        int z = new_local(t->field_types[f], NULL, 0);
+                        F->locals[z].zero_init = 1;
+                        args[f] = z;
+                    }
                 }
             } else {
                 for (int k = 0; k < nf; k++)
@@ -1229,7 +1235,9 @@ static void lower_stmt(AstNode *n) {
                 }
                 int *args = (int *)calloc(1, sizeof(int));
                 args[0] = initv;
-                const char *callee = fn_returns_node() ? "loam_zeus_hook_signal" : "loam_zeus_signal";
+                /* One rule: a captured `let mut int` is a signal cell, in a component
+                   (owned by its frame) as anywhere else. */
+                const char *callee = "loam_zeus_signal";
                 int id = emit_named_call(callee, args, 1, sig_ty, n->loc);
                 if (id >= 0 && n->as.var.name) F->locals[id].name = n->as.var.name;
                 scope_push(n->as.var.name, id);

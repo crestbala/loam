@@ -1,0 +1,65 @@
+// A `Signal<T>` whose `T` is a struct that owns strings and lists keeps its
+// own references: setting it from a closure, a fn, or an async callback, then
+// dropping the value that was set, leaves the cell intact, and reading it
+// hands the reader its own references. Before, the cell shared the caller's
+// buffers and read freed memory.
+import "std:async"
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+struct View {
+    note: string,
+    rows: []string,
+    vals: []int,
+}
+
+fn make(n: int) -> View {
+    let mut rows = []string {}
+    let mut vals = []int {}
+    for i in 0..n {
+        push(rows, "row {{i}}")
+        push(vals, i * 10)
+    }
+    return View { note: "n={{n}}", rows: rows, vals: vals }
+}
+
+fn store(v: Signal<View>, n: int) {
+    v.set(make(n))
+}
+
+fn check(v: Signal<View>, n: int, what: string) {
+    let got = v.get()
+    if got.note != "n={{n}}" || got.rows.len != n || got.vals.len != n {
+        fmt.println("FAIL", what, got.note, got.rows.len)
+        sys.exit(1)
+    }
+    if n > 0 && (got.rows[n - 1] != "row {{n - 1}}" || got.vals[n - 1] != (n - 1) * 10) {
+        fmt.println("FAIL", what, "last row")
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    let v = zeus.signal(make(2))
+    check(v, 2, "initial")
+    let f = fn() { v.set(make(3)) }
+    f()
+    check(v, 3, "closure")
+    store(v, 4)
+    check(v, 4, "fn")
+    for k in 0..2000 {
+        v.set(make(k % 7))
+        check(v, k % 7, "churn")
+    }
+    zeus.snapshot(120, 40, fn() -> Node {
+        return zeus.Text(fn() -> string { return "{{v.get().rows.len}}" })
+    })
+    async.after(5, fn() { v.set(make(5)) })
+    for k in 0..30 {
+        zeus.engine_layout(120, 40)
+        async.sleep(2)
+    }
+    check(v, 5, "async")
+    fmt.println("struct signal ok")
+}

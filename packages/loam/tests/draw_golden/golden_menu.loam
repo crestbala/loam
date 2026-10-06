@@ -11,14 +11,17 @@ fn main() {
     let active = zeus.signal(1)
     zeus.snapshot(420, 260, fn() -> Node {
         zui.Page() {
-            let trigger = zui.Button("Actions", look = zeus.LOOK.Outline, size = zeus.SIZE.Md)
             let rows = []MenuRow {
                 MenuRow(label = "Rename"),
                 MenuRow(label = "Duplicate"),
-                MenuRow(label = "Delete", is_separated = true, danger = true),
+                MenuRow(label = "Delete", isSeparated = true, danger = true),
             }
-            zui.Menu(trigger, active = active, items = rows, label = "File",
-                      place = zui.PLACE.PlaceBelow, width = 180)
+            zui.Menu(active = active,
+                      items = rows,
+                      label = "File",
+                      trigger = || { zui.Button("Actions", look = zeus.Look.Outline, size = zeus.Size.Md) },
+                      place = zui.Place.PlaceBelow,
+                      style = Style(width = px(180)))
         }
     })
 }
