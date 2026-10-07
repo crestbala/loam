@@ -1193,6 +1193,9 @@
           },
           { signal }
         );
+        /* Sub-point wheel remainder per axis (see the wheel handler). */
+        let wheelRemX = 0;
+        let wheelRemY = 0;
         canvas.addEventListener(
           "wheel",
           (e) => {
@@ -1215,13 +1218,30 @@
             }
             const step = exp.zeus_scroll_step || exp.zeus_scroll;
             const fn = notch ? (exp.zeus_scroll_smooth || step) : step;
+            let dx = e.deltaX;
+            let dy = e.deltaY;
             if (e.deltaMode === 1) {
-              fn(p.x, p.y, e.deltaX * 16, e.deltaY * 16);
+              dx *= 16;
+              dy *= 16;
             } else if (e.deltaMode === 2) {
-              fn(p.x, p.y, e.deltaX * layoutW, e.deltaY * layoutH);
-            } else {
-              fn(p.x, p.y, e.deltaX, e.deltaY);
+              dx *= layoutW;
+              dy *= layoutH;
             }
+            /* The exports take whole points, but a trackpad on a HiDPI screen
+               reports fractions (0.5, 1.33…). Passing them straight through
+               truncated every one — a slow scroll froze then jumped, and fast
+               ones lost distance. Carry the remainder into the next event;
+               a direction change starts fresh. */
+            if (wheelRemX * dx < 0) wheelRemX = 0;
+            if (wheelRemY * dy < 0) wheelRemY = 0;
+            dx += wheelRemX;
+            dy += wheelRemY;
+            const ix = Math.trunc(dx);
+            const iy = Math.trunc(dy);
+            wheelRemX = dx - ix;
+            wheelRemY = dy - iy;
+            if (ix === 0 && iy === 0) return;
+            fn(p.x, p.y, ix, iy);
             schedule(0);
           },
           { passive: false, signal }
