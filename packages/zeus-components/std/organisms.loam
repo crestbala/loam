@@ -293,6 +293,12 @@ fn ComboRow(text: Signal<string>, active: Signal<int>, input: Ref, index: int, l
 /// no item owns state. Opening one closes the rest by construction — there is
 /// one index, so two items can never both match it.
 fn Accordion(open: Signal<int>, p: AccordionProps) -> Node {
+    // state. One ref per header, so up / down can hand focus to a sibling.
+    let mut heads = []Ref {}
+    for _ in 0..p.items.len {
+        push(heads, ref())
+    }
+
     // tree. Clip the rounded corners, so a body cannot spill past the card edge.
     return Box(style = merge(merge(Style(direction = Direction.Column,
                                          radius = corners(RAD_LG),
@@ -300,7 +306,8 @@ fn Accordion(open: Signal<int>, p: AccordionProps) -> Node {
                                          background = plate()), Style(overflow = Overflow.Hidden)), style_of(p.style)),
                bind = p.bind) {
         Loop(p.items, (index, item) => {
-            AccordionItem(open = open, index = index, title = item.title, body = item.body)
+            AccordionItem(open = open, index = index, title = item.title, body = item.body,
+                          heads = heads)
         })
     }
 }
@@ -323,6 +330,9 @@ struct AccordionItemProps {
     body: fn() -> string = empty_text,
     /// Optional leading icon markup.
     icon: string = "",
+    /// Every header in the accordion, by index (`Accordion` fills it). Up /
+    /// down / Home / End move focus along it; empty, the keys are off.
+    heads: []Ref = []Ref {},
 }
 
 /// One row of an `Accordion`. Reads the shared `open` signal and compares it to
@@ -342,6 +352,19 @@ fn AccordionItem(p: AccordionItemProps) -> Node {
             open.set(idx)
         }
     }
+    // Focus moves between headers; the open item does not follow it.
+    fn focus_head(i: int) {
+        if i >= 0 && i < p.heads.len {
+            focus(p.heads[i])
+        }
+    }
+    let keys = []KeyBind {
+        chord("down", "accordion.next", fn() { focus_head(idx + 1) }),
+        chord("up", "accordion.prev", fn() { focus_head(idx - 1) }),
+        chord("home", "accordion.first", fn() { focus_head(0) }),
+        chord("end", "accordion.last", fn() { focus_head(p.heads.len - 1) }),
+    }
+    let head = if idx < p.heads.len { p.heads[idx] } else { ref() }
     on_mount(|| {
         effect(|| {
             if open.get() == idx {
@@ -359,7 +382,9 @@ fn AccordionItem(p: AccordionItemProps) -> Node {
                           align = Align.Center,
                           padding = edges2(12, 16),
                           cursor = "pointer"),
+            ref = head,
             on_click = toggle,
+            keys = keys,
             role = "button",
             label = p.title(),
             hoverOff = false,
@@ -1455,7 +1480,8 @@ fn CalCell(y: Signal<int>, m: Signal<int>, d: Signal<int>, open: Signal<bool>, i
         }
     }
 
-    // tree
+    // tree. The picked day is the grid's one tab stop while the sheet is
+    // open, and takes focus as the pick moves (opening lands on it).
     return Box(style = merge(Style(width = px(CAL_CELL),
                                    height = px(CAL_CELL),
                                    direction = Direction.Row,
@@ -1466,7 +1492,9 @@ fn CalCell(y: Signal<int>, m: Signal<int>, d: Signal<int>, open: Signal<bool>, i
                                    cursor = "pointer"), Style(background = if picked() { accent() } else { plate() })),
                on_click = pick,
                role = "button",
-               label = if day() == 0 { "" } else { "{{day()}}" }) {
+               label = if day() == 0 { "" } else { "{{day()}}" },
+               roving = picked() && open.get(),
+               rovingGrab = true) {
         Text(if day() > 0 { "{{day()}}" } else { "" },
              style = merge(Style(font = FONT_BODY), Style(color = if picked() { on_ink() } else { ink() })))
     }
@@ -1485,24 +1513,101 @@ fn CalGrid(y: Signal<int>, m: Signal<int>, d: Signal<int>, open: Signal<bool>) -
 /// Calendar picker: label, input-like trigger with a calendar icon, and a
 /// floating sheet (kind-9 so the page scroller cannot clip it). Month and
 /// year rails step with chevron icons; picking a day closes the sheet.
+/// Keys, while the sheet is open: arrows move a day / a week (crossing
+/// months), PageUp / PageDown a month, Home / End to the week's ends, Enter
+/// picks, Escape closes.
 fn DatePicker(y: Signal<int>, m: Signal<int>, d: Signal<int>) -> Node {
     // state
     let open = signal(false)
 
-    // controller
-    fn prev_month() {
-        if m.get() <= 1 {
-            m.set(12)
-        } else {
-            m.set(m.get() - 1)
+    // controller. Every move lands on a real date: a month step clamps the
+    // day to the new month's length (Jan 31 → Feb 28). Steps only run while
+    // the sheet is open, in case focus outlives the close.
+    fn set_date(year: int, month: int, day: int) {
+        batch(|| {
+            y.set(year)
+            m.set(month)
+            d.set(day)
+        })
+    }
+    fn step_month(delta: int) {
+        if !open.get() {
+            return
         }
+        let mut yy = y.get()
+        let mut mm = m.get() + delta
+        while mm < 1 {
+            mm = mm + 12
+            yy = yy - 1
+        }
+        while mm > 12 {
+            mm = mm - 12
+            yy = yy + 1
+        }
+        let len = cal_len(yy, mm)
+        set_date(yy, mm, if d.get() > len { len } else { d.get() })
+    }
+    fn step_day(delta: int) {
+        if !open.get() {
+            return
+        }
+        let mut yy = y.get()
+        let mut mm = m.get()
+        let mut dd = d.get() + delta
+        while dd < 1 {
+            mm = mm - 1
+            if mm < 1 {
+                mm = 12
+                yy = yy - 1
+            }
+            dd = dd + cal_len(yy, mm)
+        }
+        while dd > cal_len(yy, mm) {
+            dd = dd - cal_len(yy, mm)
+            mm = mm + 1
+            if mm > 12 {
+                mm = 1
+                yy = yy + 1
+            }
+        }
+        set_date(yy, mm, dd)
+    }
+    // Monday-first, matching the grid: 0 = Mo … 6 = Su.
+    fn weekday() -> int {
+        return (cal_first_monday(y.get(), m.get()) + d.get() - 1) % 7
+    }
+    fn week_start() {
+        if !open.get() {
+            return
+        }
+        let to = d.get() - weekday()
+        d.set(if to < 1 { 1 } else { to })
+    }
+    fn week_end() {
+        if !open.get() {
+            return
+        }
+        let to = d.get() + 6 - weekday()
+        let len = cal_len(y.get(), m.get())
+        d.set(if to > len { len } else { to })
+    }
+    fn prev_month() {
+        step_month(-1)
     }
     fn next_month() {
-        if m.get() >= 12 {
-            m.set(1)
-        } else {
-            m.set(m.get() + 1)
-        }
+        step_month(1)
+    }
+
+    // keys. On the sheet, so they answer wherever focus sits inside it.
+    let keys = []KeyBind {
+        chord("left", "date.prev_day", fn() { step_day(-1) }),
+        chord("right", "date.next_day", fn() { step_day(1) }),
+        chord("up", "date.prev_week", fn() { step_day(-7) }),
+        chord("down", "date.next_week", fn() { step_day(7) }),
+        chord("pageup", "date.prev_month", prev_month),
+        chord("pagedown", "date.next_month", next_month),
+        chord("home", "date.week_start", week_start),
+        chord("end", "date.week_end", week_end),
     }
 
     // tree. An invisible full-window scrim closes the sheet on a click that
@@ -1547,6 +1652,7 @@ fn DatePicker(y: Signal<int>, m: Signal<int>, d: Signal<int>) -> Node {
                           background = plate()),
             role = "dialog",
             on_click = fn() { return },
+            keys = keys,
             visible = open.get()
         ) {
             Row(4) {
