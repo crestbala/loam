@@ -1342,23 +1342,24 @@ fn state_selected(node: Node) -> bool {
 // Transforms and appearance are interpolated on the animation track pool and
 // written into paint state only — no layout pass reads them, so an animation
 // never re-runs a component or a signal effect. Retargeting keeps the current
-// value as the new `from`.
+// value as the new `from`. `ease` is an `EASE` curve (`EASE.Standard` when
+// omitted); `EASE.Spring` overshoots and settles, for things that snap.
 
 /// Animate `node`'s scale to `to` percent (100 = identity) over `ms`.
-fn animate_scale(node: Node, to: int, ms: int) -> Node {
-    arena.anim_scale(node.id, to, ms)
+fn animate_scale(node: Node, to: int, ms: int, ease: int = 1) -> Node {
+    arena.anim_scale(node.id, to, ms, ease)
     return node
 }
 
 /// Animate a horizontal paint translation (dp).
-fn animate_x(node: Node, to: int, ms: int) -> Node {
-    arena.anim_translate_x(node.id, to, ms)
+fn animate_x(node: Node, to: int, ms: int, ease: int = 1) -> Node {
+    arena.anim_translate_x(node.id, to, ms, ease)
     return node
 }
 
 /// Animate a vertical paint translation (dp).
-fn animate_y(node: Node, to: int, ms: int) -> Node {
-    arena.anim_translate_y(node.id, to, ms)
+fn animate_y(node: Node, to: int, ms: int, ease: int = 1) -> Node {
+    arena.anim_translate_y(node.id, to, ms, ease)
     return node
 }
 
@@ -1369,8 +1370,8 @@ fn animate_rotate(node: Node, to: int, ms: int) -> Node {
 }
 
 /// Animate node opacity 0..100.
-fn animate_opacity(node: Node, to: int, ms: int) -> Node {
-    arena.anim_opacity(node.id, to, ms)
+fn animate_opacity(node: Node, to: int, ms: int, ease: int = 1) -> Node {
+    arena.anim_opacity(node.id, to, ms, ease)
     return node
 }
 
@@ -1974,8 +1975,13 @@ struct BoxProps {
     /// Tab stop. A thunk, so `focusable = active()` follows state.
     focusable: Option<fn() -> bool> = none,
     /// Roving tab stop (one per tab list / radio group): focusable only while
-    /// true, and it takes focus when it becomes true.
+    /// true, and it takes focus when it becomes true while focus is already in
+    /// the group (arrow keys); a pick made from outside leaves focus alone.
     roving: Option<fn() -> bool> = none,
+    /// With `roving`: take focus whenever the pick lands here, from anywhere.
+    /// For popups whose opening moves focus in (menu items), where the pick
+    /// only changes through the user (open, hover, keys).
+    rovingGrab: bool = false,
     /// Paint-only overlays merged over `style` while the element is hovered,
     /// pressed, keyboard-focused or disabled (in that order; later wins).
     /// Only background, color, opacity, border and elevation are honoured:
@@ -2271,10 +2277,15 @@ fn install_behaviour(node: Node, p: BoxProps) {
     }
     if result.is_some(p.roving) {
         let r = p.roving.val
+        let grab = p.rovingGrab
         node_effect(node, || {
             if r() {
                 arena.nodes[node_id].focusable = 1
-                arena.claim_focus(node_id)
+                if grab {
+                    arena.claim_focus(node_id)
+                } else {
+                    arena.claim_roving_focus(node_id)
+                }
             } else {
                 arena.nodes[node_id].focusable = 0
             }

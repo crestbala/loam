@@ -1550,6 +1550,37 @@ fn roving_step(value: Signal<int>, index: int, count: int, delta: int) {
     value.set(n)
 }
 
+/// Jump an exclusive pick to `target` (Home → 0, End → `count - 1`) if this
+/// row is the one that currently holds it — the same guard as `roving_step`,
+/// so only the focused row of a group answers the key.
+fn roving_jump(value: Signal<int>, index: int, target: int) {
+    if value.get() != index {
+        return
+    }
+    if target < 0 {
+        return
+    }
+    value.set(target)
+}
+
+/// The four bindings every roving group shares: the arrow pair along its
+/// axis, plus Home / End. `prefix` names the actions (`"tab"` → `tab.next`).
+/// `vertical` adds up / down beside left / right, for groups that stack.
+fn roving_keys(prefix: string, value: Signal<int>, index: int, count: int,
+               vertical: bool = false) -> []KeyBind {
+    let mut keys = []KeyBind {
+        chord("right", "{{prefix}}.next", fn() { roving_step(value, index, count, 1) }),
+        chord("left", "{{prefix}}.prev", fn() { roving_step(value, index, count, -1) }),
+        chord("home", "{{prefix}}.first", fn() { roving_jump(value, index, 0) }),
+        chord("end", "{{prefix}}.last", fn() { roving_jump(value, index, count - 1) }),
+    }
+    if vertical {
+        push(keys, chord("down", "{{prefix}}.next", fn() { roving_step(value, index, count, 1) }))
+        push(keys, chord("up", "{{prefix}}.prev", fn() { roving_step(value, index, count, -1) }))
+    }
+    return keys
+}
+
 /// Case-insensitive ASCII substring test, used to filter combobox options.
 fn ci_has(hay: string, needle: string) -> bool {
     let hn = hay.len

@@ -203,6 +203,7 @@ fn click(px: int, py: int) -> int {
     if arena.is_inert(id) != 0 {
         return 1
     }
+    arena.press_target = id
     arena.claim_focus(id)
     if int(arena.nodes[id].kind) == 10 {
         let slot = arena.edit_ready(id)
@@ -865,6 +866,8 @@ fn edit_del_grapheme(slot: int) -> int {
 }
 
 fn key(k: int) -> int {
+    // A key is not the press a roving pick may follow (`claim_roving_focus`).
+    arena.press_target = 0
     let handled = key_handlers(k, arena.ev_mods, 0)
     if k == 27 {
         let mut changed = 0
