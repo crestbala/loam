@@ -1,0 +1,158 @@
+// Keyboard model of the pick controls. Roving groups (Tabs, Segmented, Radio,
+// ToggleGroup) step on the arrows and jump on Home / End, answering only on
+// the row that holds the pick; Slider follows the ARIA slider keys; the
+// Pagination row takes arrows / Home / End wherever focus sits inside it. A
+// roving group only carries focus along with its pick when focus is already in
+// the group: mounting one, or setting its signal from code, leaves focus alone.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+const K_LEFT: int = 1000
+const K_RIGHT: int = 1001
+const K_UP: int = 1002
+const K_DOWN: int = 1003
+const K_PGUP: int = 1004
+const K_PGDN: int = 1005
+const K_HOME: int = 1006
+const K_END: int = 1007
+
+fn key(k: int) {
+    zeus.engine_key_ev(k, 0)
+    zeus.engine_layout(480, 640)
+}
+
+fn click(label: string) {
+    zeus.engine_click_text(label)
+    zeus.engine_mouseup()
+    zeus.engine_layout(480, 640)
+}
+
+fn main() {
+    zeus.window("roving", 480, 640)
+    let level = zeus.signal(40)
+    let tab = zeus.signal(0)
+    let seg = zeus.signal(0)
+    let radio = zeus.signal(0)
+    let tog = zeus.signal(0)
+    let page = zeus.signal(5)
+    let checked = zeus.signal(false)
+    let tree = zui.Page() {
+        zui.Slider(level)
+        zui.Tabs(tab, []string { "Alpha", "Beta", "Gamma", "Delta" })
+        zui.Segmented(seg, []string { "Day", "Week", "Month" })
+        zui.RadioGroup(radio, []string { "Red", "Green", "Blue" })
+        zui.ToggleGroup(tog, []string { "Left", "Center", "Right" })
+        zui.Pagination(page, 9)
+        zui.Checkbox("Remember me", checked)
+    }
+    zeus.root(tree)
+    zeus.pump_frame()
+    zeus.engine_layout(480, 640)
+
+    // Mounting a roving group does not take focus: the page boots unfocused.
+    must(zeus.engine_focus_id() == 0, "no roving group grabs focus at mount")
+
+    // Slider: a click on the track's centre focuses it and sets 50.
+    zeus.engine_click(32 + 110, 32 + 10)
+    zeus.engine_mouseup()
+    zeus.engine_layout(480, 640)
+    must(level.get() == 50, "slider click lands mid-track")
+    key(K_RIGHT)
+    must(level.get() == 51, "slider right steps +1 (native binding)")
+    key(K_UP)
+    must(level.get() == 52, "slider up steps +1")
+    key(K_DOWN)
+    key(K_DOWN)
+    must(level.get() == 50, "slider down steps -1")
+    key(K_PGUP)
+    must(level.get() == 60, "slider page up steps +10")
+    key(K_PGDN)
+    must(level.get() == 50, "slider page down steps -10")
+    key(K_END)
+    must(level.get() == 100, "slider end jumps to the max")
+    key(K_PGUP)
+    must(level.get() == 100, "slider clamps at the max")
+    key(K_HOME)
+    must(level.get() == 0, "slider home jumps to the min")
+
+    // Tabs: arrows step, Home / End jump.
+    click("Alpha")
+    key(K_RIGHT)
+    must(tab.get() == 1, "tabs right steps")
+    key(K_END)
+    must(tab.get() == 3, "tabs end jumps to the last")
+    key(K_RIGHT)
+    must(tab.get() == 3, "tabs clamp at the last")
+    key(K_HOME)
+    must(tab.get() == 0, "tabs home jumps to the first")
+
+    // Segmented: same keys, through the shared indicator tray.
+    click("Week")
+    must(seg.get() == 1, "segmented click picks")
+    key(K_END)
+    must(seg.get() == 2, "segmented end")
+    key(K_HOME)
+    must(seg.get() == 0, "segmented home")
+    key(K_RIGHT)
+    must(seg.get() == 1, "segmented right")
+    must(tab.get() == 0, "segmented keys do not leak into tabs")
+
+    // Radio: vertical too.
+    click("Red")
+    key(K_DOWN)
+    must(radio.get() == 1, "radio down steps")
+    key(K_END)
+    must(radio.get() == 2, "radio end")
+    key(K_UP)
+    must(radio.get() == 1, "radio up steps")
+    key(K_HOME)
+    must(radio.get() == 0, "radio home")
+
+    // ToggleGroup: now a roving group.
+    click("Left")
+    key(K_RIGHT)
+    must(tog.get() == 1, "toggle group right steps")
+    key(K_END)
+    must(tog.get() == 2, "toggle group end")
+    key(K_LEFT)
+    must(tog.get() == 1, "toggle group left steps")
+
+    // Pagination: keys on the row reach it from any page button.
+    click("5")
+    key(K_RIGHT)
+    must(page.get() == 6, "pagination right")
+    key(K_LEFT)
+    key(K_LEFT)
+    must(page.get() == 4, "pagination left")
+    key(K_END)
+    must(page.get() == 9, "pagination end")
+    key(K_HOME)
+    must(page.get() == 1, "pagination home")
+    key(K_LEFT)
+    must(page.get() == 1, "pagination clamps at the first page")
+
+    // A pick written from outside the group leaves focus where it is.
+    let held = zeus.engine_focus_id()
+    tab.set(2)
+    seg.set(2)
+    zeus.engine_layout(480, 640)
+    must(zeus.engine_focus_id() == held, "a pick set from code does not steal focus")
+
+    // Checkbox: Space toggles the focused box.
+    click("Remember me")
+    must(checked.get(), "checkbox click checks")
+    key(32)
+    must(!checked.get(), "space clears the focused checkbox")
+
+    fmt.println("roving keys ok")
+}

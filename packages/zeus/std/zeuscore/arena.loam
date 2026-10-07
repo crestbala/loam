@@ -287,6 +287,11 @@ let mut theme_d: []int = []int {}
 let mut size_buffer: []int = []int {}
 let mut size_layout: []int = []int {}
 let mut focus_id: int = 0
+/// The node the last pointer press landed on (0 after a key). A roving item
+/// that was clicked becomes the pick only once its handler runs, after the
+/// click's own focus claim found it not yet focusable; this lets the pick
+/// claim focus for the press that made it.
+let mut press_target: int = 0
 let mut focus_at: int = -1
 let mut chain_nodes: []int = []int {}
 let mut chain_ctxs: []int = []int {}
@@ -2168,24 +2173,24 @@ fn anim_schedule(node: int, prop: int, to: int, dur: int, easing: int) {
 }
 
 /// A paint transform: scale percent toward `to` (100 = identity).
-fn anim_scale(node: int, to: int, ms: int) {
-    anim_schedule(node, APROP.ScalePct, to, ms, ease_standard())
+fn anim_scale(node: int, to: int, ms: int, easing: int = 1) {
+    anim_schedule(node, APROP.ScalePct, to, ms, easing)
 }
 
-fn anim_translate_x(node: int, to: int, ms: int) {
-    anim_schedule(node, APROP.XlateX, to, ms, ease_standard())
+fn anim_translate_x(node: int, to: int, ms: int, easing: int = 1) {
+    anim_schedule(node, APROP.XlateX, to, ms, easing)
 }
 
-fn anim_translate_y(node: int, to: int, ms: int) {
-    anim_schedule(node, APROP.XlateY, to, ms, ease_standard())
+fn anim_translate_y(node: int, to: int, ms: int, easing: int = 1) {
+    anim_schedule(node, APROP.XlateY, to, ms, easing)
 }
 
 fn anim_rotate(node: int, to: int, ms: int) {
     anim_schedule(node, APROP.RotDeg, to, ms, ease_standard())
 }
 
-fn anim_opacity(node: int, to: int, ms: int) {
-    anim_schedule(node, APROP.OpacityAmt, to, ms, ease_standard())
+fn anim_opacity(node: int, to: int, ms: int, easing: int = 1) {
+    anim_schedule(node, APROP.OpacityAmt, to, ms, easing)
 }
 
 fn anim_radius(node: int, to: int, ms: int) {
@@ -5293,6 +5298,41 @@ fn claim_focus(id: int) {
         return
     }
     claim_focus(nodes[id].parent)
+}
+
+/// A roving group moved its pick to `id`: carry focus along only if focus is
+/// already in the group — on one of `id`'s siblings, or inside one — or the
+/// pointer just pressed `id`. A pick set from elsewhere (a button, a route,
+/// the group's own mount) must not pull focus away from where the user is.
+fn claim_roving_focus(id: int) {
+    if id <= 0 {
+        return
+    }
+    if id >= nodes.len {
+        return
+    }
+    // The press that made this the pick: walk up from the pressed node.
+    let mut t = press_target
+    let mut tguard = 0
+    while t > 0 && t < nodes.len && tguard < 64 {
+        if t == id {
+            claim_focus(id)
+            return
+        }
+        t = nodes[t].parent
+        tguard = tguard + 1
+    }
+    let group = nodes[id].parent
+    let mut f = focus_id
+    let mut guard = 0
+    while f > 0 && f < nodes.len && guard < 64 {
+        if nodes[f].parent == group {
+            claim_focus(id)
+            return
+        }
+        f = nodes[f].parent
+        guard = guard + 1
+    }
 }
 
 fn walk_focus_chain(id: int) {

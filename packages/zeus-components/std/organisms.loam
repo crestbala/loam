@@ -142,7 +142,7 @@ fn Comp(p: BoxProps) -> Node {
                      role = p.role, label = p.label,
                      on_click = p.on_click, hoverOff = p.hoverOff, bind = p.bind,
                      visible = p.visible, press = press, focusable = p.focusable,
-                     roving = p.roving, hoverFade = p.hoverFade, pressScale = p.pressScale,
+                     roving = p.roving, rovingGrab = p.rovingGrab, hoverFade = p.hoverFade, pressScale = p.pressScale,
                      lift = p.lift, enter = p.enter, label = p.label, loading = p.loading,
                      on_hover = p.on_hover)
 }
@@ -618,7 +618,8 @@ fn MenuItem(p: MenuItemProps) -> Node {
         }
     },
                keys = keys,
-               roving = active.get() == idx) {
+               roving = active.get() == idx,
+               rovingGrab = true) {
         if p.icon.len > 0 {
             Icon(p.icon, 16, dim())
         }

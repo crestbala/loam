@@ -230,12 +230,39 @@ fn ThemeSwitch() -> Node {
                      hoverOff = true)
 }
 
-/// Slider. Track is `primary/20`-ish, filled range primary, thumb surface.
+/// Slider over 0..100. Track is `primary/20`-ish, filled range primary, thumb
+/// surface. Keys follow the ARIA slider: the arrows step 1 (the native node
+/// binds left / right; up / down are added here), Page Up / Page Down step
+/// 10, and Home / End jump to the ends.
 fn Slider(value: Signal<int>) -> Node {
+    // controller
+    fn nudge(d: int) {
+        let mut v = value.get() + d
+        if v < 0 {
+            v = 0
+        }
+        if v > 100 {
+            v = 100
+        }
+        value.set(v)
+    }
+
+    // keys
+    let keys = []KeyBind {
+        chord("up", "slider.up", fn() { nudge(1) }),
+        chord("down", "slider.down", fn() { nudge(-1) }),
+        chord("pageup", "slider.page_up", fn() { nudge(10) }),
+        chord("pagedown", "slider.page_down", fn() { nudge(-10) }),
+        chord("home", "slider.min", fn() { value.set(0) }),
+        chord("end", "slider.max", fn() { value.set(100) }),
+    }
+
+    // view
     return Component(raw_slider(),
                      bind = value,
                      style = Style(width = px(220), height = px(20), radius = corners(10), cursor = "pointer"),
                      role = "slider",
+                     keys = keys,
                      hoverOff = true)
 }
 
@@ -453,12 +480,29 @@ fn Field(label: string, value: Signal<string>, placeholder: string,
 }
 
 /// Checkbox: 16px rounded box, 1px accent border, accent fill when checked
-/// with a white 16px SVG check.
+/// with a white 16px SVG check. The check springs in when ticked and shrinks
+/// away when cleared (paint-only, so a toggle never re-lays out); the first
+/// frame settles without motion, and reduced motion snaps.
 fn Checkbox(label: string, on: Signal<bool>) -> Node {
+    // state
+    let mark = ref()
+
     // controller
     fn toggle() {
         on.set(!on.get())
     }
+    on_mount(|| {
+        effect(|| {
+            let node = ref_node(mark)
+            if on.get() {
+                animate_scale(node, 100, Motion.Base, EASE.Spring)
+                animate_opacity(node, 100, Motion.Fast)
+            } else {
+                animate_scale(node, 60, Motion.Fast)
+                animate_opacity(node, 0, Motion.Fast)
+            }
+        })
+    })
 
     // view
     return Box(style = Style(direction = Direction.Row,
@@ -474,7 +518,9 @@ fn Checkbox(label: string, on: Signal<bool>) -> Node {
                                 justify = Align.Center,
                                 radius = corners(RAD_SM),
                                 border = line(HAIRLINE, accent())), Style(background = if on.get() { accent() } else { plate() }))) {
-            Icon(IC_CHECK, 16, on_ink(), style = Style(display = shown(on.get())))
+            // The tweens sit on the icon itself: opacity is per node, so a
+            // wrapper's fade would not reach the mark.
+            Icon(IC_CHECK, 16, on_ink(), ref = mark)
         }
         Text(label, style = Style(font = FONT_BODY, color = ink()))
     }
@@ -521,10 +567,7 @@ fn Tab(label: string, selected: Signal<int>, index: int, count: int = 0, plain: 
     }
 
     // keys
-    let keys = []KeyBind {
-        chord("right", "tab.next", fn() { roving_step(selected, index, count, 1) }),
-        chord("left", "tab.prev", fn() { roving_step(selected, index, count, -1) }),
-    }
+    let keys = roving_keys("tab", selected, index, count)
 
     // view. `plain` = the tray's sliding indicator carries the fill; the
     // trigger only swaps its label colour.
@@ -554,16 +597,20 @@ fn tab_fill(plain: bool, on: bool) -> Style {
     return Style(background = if on { plate() } else { raised() })
 }
 
-/// Tabs: 36px muted tray, rounded, 4px inset, with a card-coloured trigger.
-/// The tray sits in a row wrapper so it hugs its triggers instead of
-/// stretching to the column width (columns stretch children cross-axis).
 /// Tabs: 36px muted tray, rounded, 4px inset, with a card-coloured
-/// indicator that slides under the selected trigger. The indicator is an
-/// absolute box whose `left` / `width` pins are signals: a selection change
-/// `animate`s them (layout tweens the pins, batch 9.4), and the tray's refit
-/// hook re-places it instantly after the first layout or a resize, when the
-/// triggers' measured geometry moves.
+/// indicator that slides under the selected trigger (see `IndicatorTray`).
+/// Arrows step the selection, Home / End jump to the ends.
 fn Tabs(selected: Signal<int>, labels: []string) -> Node {
+    return IndicatorTray(selected, labels, false)
+}
+
+/// The tray `Tabs` and `Segmented` share. The indicator is an absolute box
+/// whose `left` / `width` pins are signals: a selection change `animate`s them
+/// (layout tweens the pins, batch 9.4), and the tray's refit hook re-places it
+/// instantly after the first layout or a resize, when the triggers' measured
+/// geometry moves. `radio` builds `Choice` triggers (role radio) instead of
+/// `Tab`s; the motion and the chrome are the same.
+fn IndicatorTray(selected: Signal<int>, labels: []string, radio: bool) -> Node {
     // state
     let tray = ref()
     let ind_l = signal(0)
@@ -620,24 +667,25 @@ fn Tabs(selected: Signal<int>, labels: []string) -> Node {
                                                                  width = px(ind_w.get()), height = px(ind_h.get()))),
                 role = "presentation")
             Loop(labels, fn(i, lab) {
+                if radio {
+                    return Choice(lab, selected, i, n, true)
+                }
                 return Tab(lab, selected, i, n, true)
             })
         }
     }
 }
 
-/// One toggle-style choice row inside `Segmented` / `ToggleGroup`.
-fn Choice(label: string, value: Signal<int>, index: int, count: int = 0) -> Node {
+/// One toggle-style choice row inside `Segmented` / `ToggleGroup`. `plain` =
+/// a tray's sliding indicator carries the fill; the row only swaps its ink.
+fn Choice(label: string, value: Signal<int>, index: int, count: int = 0, plain: bool = false) -> Node {
     // controller
     fn active() -> bool {
         return value.get() == index
     }
 
     // keys
-    let keys = []KeyBind {
-        chord("right", "choice.next", fn() { roving_step(value, index, count, 1) }),
-        chord("left", "choice.prev", fn() { roving_step(value, index, count, -1) }),
-    }
+    let keys = roving_keys("choice", value, index, count)
 
     // view
     return Box(
@@ -646,7 +694,7 @@ fn Choice(label: string, value: Signal<int>, index: int, count: int = 0) -> Node
                             align = Align.Center,
                             padding = edges2(5, 12),
                             radius = corners(RAD_MD),
-                            cursor = "pointer"), Style(background = if active() { plate() } else { raised() })),
+                            cursor = "pointer"), style_of(tab_fill(plain, active()))),
         on_click = fn() => value.set(index),
         role = "radio",
         label = label,
@@ -658,24 +706,10 @@ fn Choice(label: string, value: Signal<int>, index: int, count: int = 0) -> Node
     }
 }
 
-/// Exclusive pick from `labels` as a Tabs-style tray. Same chrome as
-/// `Tabs`; kept for older callers.
+/// Exclusive pick from `labels` as a Tabs-style tray: the same sliding
+/// indicator and keys as `Tabs`, with radio semantics for assistive tech.
 fn Segmented(value: Signal<int>, labels: []string) -> Node {
-    let n = labels.len
-    return Row(0) {
-        Box(
-            style = Style(direction = Direction.Row,
-                          gap = 2,
-                          align = Align.Center,
-                          padding = edges(4),
-                          radius = corners(RAD_LG),
-                          background = raised())
-        ) {
-            Loop(labels, fn(i, lab) {
-                return Choice(lab, value, i, n)
-            })
-        }
-    }
+    return IndicatorTray(value, labels, true)
 }
 
 /// One row of a `Select` menu: a check icon on the picked row and a raised fill
@@ -834,12 +868,7 @@ fn Radio(label: string, value: Signal<int>, index: int, count: int = 0) -> Node 
     }
 
     // keys
-    let keys = []KeyBind {
-        chord("down", "radio.next", fn() { roving_step(value, index, count, 1) }),
-        chord("up", "radio.prev", fn() { roving_step(value, index, count, -1) }),
-        chord("right", "radio.next", fn() { roving_step(value, index, count, 1) }),
-        chord("left", "radio.prev", fn() { roving_step(value, index, count, -1) }),
-    }
+    let keys = roving_keys("radio", value, index, count, true)
 
     // view
     return Box(style = Style(direction = Direction.Row,
@@ -896,26 +925,47 @@ fn Toggle(label: string, on: Signal<bool>) -> Node {
 }
 
 /// Toggle group: a 4px-gap row of single-choice toggles with outline
-/// chrome; the pressed state fills muted.
+/// chrome; the pressed state fills muted. One tab stop for the group (the
+/// picked item); arrows move the pick, Home / End jump to the ends.
 fn ToggleGroup(value: Signal<int>, labels: []string) -> Node {
+    let n = labels.len
     return Row(4) {
         Loop(labels, fn(i, lab) {
-            return Box(
-                style = merge(Style(height = px(36),
-                                    direction = Direction.Row,
-                                    align = Align.Center,
-                                    justify = Align.Center,
-                                    padding = Edges(right = 12, left = 12),
-                                    radius = corners(RAD_MD),
-                                    border = line(HAIRLINE, rule()),
-                                    cursor = "pointer"), Style(background = if value.get() == i { raised() } else { plate() })),
-                on_click = fn() => value.set(i),
-                role = "button",
-                label = lab
-            ) {
-                Text(lab, style = Style(font = FONT_BODY, color = ink()))
-            }
+            return ToggleItem(lab, value, i, n)
         })
+    }
+}
+
+/// One item of a `ToggleGroup`.
+fn ToggleItem(label: string, value: Signal<int>, index: int, count: int) -> Node {
+    // controller
+    fn active() -> bool {
+        return value.get() == index
+    }
+
+    // keys
+    let keys = roving_keys("toggle", value, index, count)
+
+    // view
+    return Box(
+        style = merge(Style(height = px(36),
+                            direction = Direction.Row,
+                            align = Align.Center,
+                            justify = Align.Center,
+                            padding = Edges(right = 12, left = 12),
+                            radius = corners(RAD_MD),
+                            border = line(HAIRLINE, rule()),
+                            cursor = "pointer"), Style(background = if active() { raised() } else { plate() })),
+        on_click = fn() => value.set(index),
+        role = "radio",
+        label = label,
+        keys = keys,
+        roving = active(),
+        hoverOff = false,
+        hoverFade = true,
+        press = true
+    ) {
+        Text(label, style = merge(Style(font = FONT_BODY), Style(color = if active() { ink() } else { mute() })))
     }
 }
 
@@ -1069,8 +1119,19 @@ fn Pagination(current_value: Signal<int>, pages: int) -> Node {
         }
     }
 
+    // keys. On the row, so they answer wherever focus sits inside it.
+    let keys = []KeyBind {
+        chord("left", "page.prev", previous),
+        chord("right", "page.next", next),
+        chord("home", "page.first", fn() { current_value.set(1) }),
+        chord("end", "page.last", fn() { current_value.set(pages) }),
+    }
+
     // view
-    return Row(4) {
+    return Box(style = Style(direction = Direction.Row, gap = 4, align = Align.Center),
+               role = "navigation",
+               label = "Pagination",
+               keys = keys) {
         Box(
             style = Style(width = px(36),
                           height = px(36),
