@@ -169,10 +169,9 @@ static void mac_fill_g(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
  * and letting the caller's fill cover it would look identical on an opaque
  * surface and wrong on a translucent one, which is exactly the case
  * elevation-on-glass needs. */
-static void mac_shadow(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
-                       int64_t radius, int64_t rgb, int64_t alpha, int64_t blur,
-                       int64_t dx, int64_t dy) {
-    (void)ctx;
+static void mac_shadow_direct(int64_t x, int64_t y, int64_t w, int64_t h,
+                              int64_t radius, int64_t rgb, int64_t alpha, int64_t blur,
+                              int64_t dx, int64_t dy) {
     NSRect r = NSMakeRect((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h);
     CGFloat a = alpha < 0 ? 0 : (alpha > 255 ? 1.0 : (CGFloat)alpha / 255.0);
     CGFloat pad = (CGFloat)(blur * 3 + (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy) + 8);
@@ -192,6 +191,166 @@ static void mac_shadow(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
     [mac_rrect(r, (CGFloat)radius) fill];
     [NSGraphicsContext restoreGraphicsState];
     [sh release];
+}
+
+/* Cached shadow. The direct path above runs a Gaussian blur over the whole
+ * padded rect on every call, and a scroll repaints every card each frame:
+ * with `ZEUS_FRAME_DEBUG=1` the gallery spent ~45 % of its frame in vImage
+ * convolution, which is what pushed the interval to 20-25 ms (a missed vsync
+ * every other frame — the scroll stagger).
+ *
+ * The blur of a rounded rect only varies near its corners. Along a straight
+ * edge, the shadow, the hole, and the offset are all translation-invariant,
+ * so one small template rendered by the direct path itself — with the same
+ * radius, blur, color, alpha, and offset — can be nine-sliced onto any rect at
+ * least as large as its corner region. The corners are drawn 1:1 and the edges
+ * stretch a band whose pixels are constant along the stretch, so the output
+ * matches the direct path. Rects too small to slice (and `ZEUS_SHADOW_DIRECT=1`)
+ * keep the direct path. */
+static NSMutableDictionary *g_shadow_cache;
+
+/* The template for one (radius, color, alpha, blur, offset, scale): a CGImage
+   of `side` x `side` points whose rows run top-down, with the shadowed rect
+   inset by `margin` and a straight band `inset` points in from every edge. */
+static CGImageRef mac_shadow_template(CGFloat scale, int64_t radius, int64_t rgb,
+                                      int64_t alpha, int64_t blur, int64_t dx,
+                                      int64_t dy, int64_t *inset, int64_t *margin,
+                                      int64_t *side_out) {
+    int64_t ax = dx < 0 ? -dx : dx, ay = dy < 0 ? -dy : dy;
+    int64_t d = ax > ay ? ax : ay;
+    /* The blur's reach past the shape. A Gaussian with this blur radius is
+       spent well inside 2x; the margin is what the template draws past the
+       rect, and must cover the visible tail plus the offset. */
+    int64_t reach = blur * 2 + 2;
+    int64_t m = reach + d;
+    /* The corner region inside the rect: radius plus the reach of the blur and
+       the offset. Past it, every row (column) of the edge is the same. */
+    int64_t k = m + radius + reach + d;
+    int64_t side = 2 * k + 2;
+    NSString *key = [NSString stringWithFormat:@"%lld,%lld,%lld,%lld,%lld,%lld,%.2f",
+                     (long long)radius, (long long)rgb, (long long)alpha,
+                     (long long)blur, (long long)dx, (long long)dy, (double)scale];
+    CGImageRef ci;
+    *inset = k;
+    *margin = m;
+    *side_out = side;
+    if (!g_shadow_cache) g_shadow_cache = [[NSMutableDictionary alloc] init];
+    ci = (CGImageRef)[g_shadow_cache objectForKey:key];
+    if (ci) return ci;
+    {
+        size_t pw = (size_t)((CGFloat)side * scale + 0.5);
+        CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+        CGContextRef bc = CGBitmapContextCreate(NULL, pw, pw, 8, 0, cs,
+                                                kCGImageAlphaPremultipliedFirst |
+                                                kCGBitmapByteOrder32Host);
+        NSGraphicsContext *prev = [NSGraphicsContext currentContext];
+        CGColorSpaceRelease(cs);
+        if (!bc) return NULL;
+        /* y-down, `scale` pixels per point: the space the view draws in, so the
+           direct path's blur and offset come out identical. */
+        CGContextTranslateCTM(bc, 0, (CGFloat)pw);
+        CGContextScaleCTM(bc, scale, -scale);
+        [NSGraphicsContext setCurrentContext:
+            [NSGraphicsContext graphicsContextWithCGContext:bc flipped:YES]];
+        mac_shadow_direct(m, m, side - 2 * m, side - 2 * m, radius, rgb, alpha, blur, dx, dy);
+        [NSGraphicsContext setCurrentContext:prev];
+        ci = CGBitmapContextCreateImage(bc);
+        CGContextRelease(bc);
+        if (!ci) return NULL;
+    }
+    /* Elevations come from a short token list, so the live set is small; the
+       bound is for an app that animates a shadow's blur or offset. */
+    if ([g_shadow_cache count] >= 256) [g_shadow_cache removeAllObjects];
+    [g_shadow_cache setObject:(id)ci forKey:key];
+    CGImageRelease(ci);
+    return ci;
+}
+
+/* One slice of the template, `src` in points from its top-left, drawn into
+   `dst` (user space). `CGContextDrawImage` puts an image's first row at the
+   rect's max y, so under a y-down transform the slice is flipped back. */
+static void mac_shadow_slice(CGContextRef cg, CGImageRef ci, CGFloat scale, int down,
+                             CGRect src, CGRect dst) {
+    CGImageRef part;
+    if (dst.size.width <= 0 || dst.size.height <= 0) return;
+    part = CGImageCreateWithImageInRect(ci, CGRectMake(src.origin.x * scale, src.origin.y * scale,
+                                                       src.size.width * scale, src.size.height * scale));
+    if (!part) return;
+    CGContextSaveGState(cg);
+    /* Corners land 1:1 and edges stretch a band that is constant along the
+       stretch, so no sample ever needs filtering: nearest is exact and skips
+       CoreGraphics' resampler, which otherwise cost as much as the blur did. */
+    CGContextSetInterpolationQuality(cg, kCGInterpolationNone);
+    if (down) {
+        CGContextTranslateCTM(cg, dst.origin.x, dst.origin.y + dst.size.height);
+        CGContextScaleCTM(cg, 1, -1);
+        CGContextDrawImage(cg, CGRectMake(0, 0, dst.size.width, dst.size.height), part);
+    } else {
+        CGContextDrawImage(cg, dst, part);
+    }
+    CGContextRestoreGState(cg);
+    CGImageRelease(part);
+}
+
+static void mac_shadow(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
+                       int64_t radius, int64_t rgb, int64_t alpha, int64_t blur,
+                       int64_t dx, int64_t dy) {
+    static int direct = -1;
+    NSGraphicsContext *gc = [NSGraphicsContext currentContext];
+    CGContextRef cg;
+    CGAffineTransform ctm;
+    CGFloat scale, K, S, X0, Y0, X1, Y1, W, H;
+    int64_t k = 0, m = 0, side = 0;
+    int down;
+    CGImageRef ci;
+    (void)ctx;
+    if (direct < 0) {
+        const char *e = getenv("ZEUS_SHADOW_DIRECT");
+        direct = (e && e[0] && e[0] != '0') ? 1 : 0;
+    }
+    if (direct || !gc || blur <= 0 || alpha <= 0) {
+        mac_shadow_direct(x, y, w, h, radius, rgb, alpha, blur, dx, dy);
+        return;
+    }
+    cg = [gc CGContext];
+    ctm = CGContextGetCTM(cg);
+    scale = fabs(ctm.a);
+    /* Zeus draws y-down (flipped view, flipped owned buffers): `d` < 0. */
+    down = ctm.d < 0;
+    /* A rotated or fractionally scaled context would resample the template;
+       only the plain pixel grid takes the cache. */
+    if (scale < 1.0 || ctm.b != 0 || ctm.c != 0 || fabs(fabs(ctm.d) - scale) > 0.001 ||
+        fabs(scale - floor(scale + 0.5)) > 0.001) {
+        mac_shadow_direct(x, y, w, h, radius, rgb, alpha, blur, dx, dy);
+        return;
+    }
+    ci = mac_shadow_template(scale, radius, rgb, alpha, blur, dx, dy, &k, &m, &side);
+    /* The edge band must exist on both axes: the rect has to be wider and
+       taller than the two corner regions, or slicing would invent pixels. */
+    if (!ci || w + 2 * m < 2 * k + 2 || h + 2 * m < 2 * k + 2) {
+        mac_shadow_direct(x, y, w, h, radius, rgb, alpha, blur, dx, dy);
+        return;
+    }
+    K = (CGFloat)k;
+    S = (CGFloat)side;
+    X0 = (CGFloat)(x - m);
+    Y0 = (CGFloat)(y - m);
+    W = (CGFloat)(w + 2 * m);
+    H = (CGFloat)(h + 2 * m);
+    X1 = X0 + W - K;
+    Y1 = Y0 + H - K;
+    /* corners, 1:1 */
+    mac_shadow_slice(cg, ci, scale, down, CGRectMake(0, 0, K, K), CGRectMake(X0, Y0, K, K));
+    mac_shadow_slice(cg, ci, scale, down, CGRectMake(S - K, 0, K, K), CGRectMake(X1, Y0, K, K));
+    mac_shadow_slice(cg, ci, scale, down, CGRectMake(0, S - K, K, K), CGRectMake(X0, Y1, K, K));
+    mac_shadow_slice(cg, ci, scale, down, CGRectMake(S - K, S - K, K, K), CGRectMake(X1, Y1, K, K));
+    /* edges: a 1-point band of the template stretched along the edge */
+    mac_shadow_slice(cg, ci, scale, down, CGRectMake(K, 0, 1, K), CGRectMake(X0 + K, Y0, W - 2 * K, K));
+    mac_shadow_slice(cg, ci, scale, down, CGRectMake(K, S - K, 1, K), CGRectMake(X0 + K, Y1, W - 2 * K, K));
+    mac_shadow_slice(cg, ci, scale, down, CGRectMake(0, K, K, 1), CGRectMake(X0, Y0 + K, K, H - 2 * K));
+    mac_shadow_slice(cg, ci, scale, down, CGRectMake(S - K, K, K, 1), CGRectMake(X1, Y0 + K, K, H - 2 * K));
+    /* The middle is the rect itself, which the direct path clips out: nothing
+       to draw. */
 }
 
 /* Ring stroke, inset by half the width so the line paints inside the rect —
@@ -1878,15 +2037,35 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
         dx = dy;
         dy = 0.0;
     }
+    /* The engine scrolls in whole points, but a trackpad reports fractions —
+       a slow drag or the tail of a momentum glide is a stream of 0.3-0.9 pt
+       deltas. Truncating each one dropped them all (the content froze, then
+       jumped when a delta finally crossed 1 pt) and shaved distance off every
+       fast one: the stagger. Carry the remainder into the next event instead,
+       and start fresh when a new gesture begins or the direction flips. */
+    static CGFloat rem_x, rem_y;
+    if (event.phase == NSEventPhaseBegan || event.phase == NSEventPhaseMayBegin ||
+        event.momentumPhase == NSEventPhaseBegan) {
+        rem_x = 0;
+        rem_y = 0;
+    }
+    if ((rem_x > 0 && dx < 0) || (rem_x < 0 && dx > 0)) rem_x = 0;
+    if ((rem_y > 0 && dy < 0) || (rem_y < 0 && dy > 0)) rem_y = 0;
+    dx += rem_x;
+    dy += rem_y;
+    int64_t ix = (int64_t)dx, iy = (int64_t)dy;
+    rem_x = dx - (CGFloat)ix;
+    rem_y = dy - (CGFloat)iy;
+    if (ix == 0 && iy == 0) return;
     /* No engine coast: a trackpad's inertia already arrives from AppKit as a
        stream of momentum-phase events, so precise deltas step exactly where
        they land. A mouse notch eases to its target instead, like a browser's
        smooth wheel scroll — bounded, and retargeted by the next notch. */
     int dirty;
     if (precise)
-        dirty = zeus_handle_scroll_step((int64_t)p.x, (int64_t)p.y, (int64_t)(-dx), (int64_t)(-dy));
+        dirty = zeus_handle_scroll_step((int64_t)p.x, (int64_t)p.y, -ix, -iy);
     else
-        dirty = zeus_handle_scroll_smooth((int64_t)p.x, (int64_t)p.y, (int64_t)(-dx), (int64_t)(-dy));
+        dirty = zeus_handle_scroll_smooth((int64_t)p.x, (int64_t)p.y, -ix, -iy);
     if (dirty) [self setNeedsDisplay:YES];
 }
 

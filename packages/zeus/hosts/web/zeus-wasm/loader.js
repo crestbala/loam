@@ -499,6 +499,11 @@
         canvas.style.cursor = cstr(cp) || "default";
       });
       canvas.addEventListener("pointerup", () => exp.zeus_pointer_up());
+      /* Sub-point wheel remainder per axis: the exports take whole points,
+         and a HiDPI trackpad reports fractions. Truncating each event froze a
+         slow scroll and then jumped it; the remainder carries instead. */
+      let wheelRemX = 0;
+      let wheelRemY = 0;
       canvas.addEventListener(
         "wheel",
         (e) => {
@@ -506,17 +511,32 @@
           const r = canvas.getBoundingClientRect();
           const x = e.clientX - r.left;
           const y = e.clientY - r.top;
-          /* Trackpads: pixel deltas per frame, momentum applies. Mouse
-             wheels: line/page clicks — scale to points, step without coast. */
+          /* Trackpads: pixel deltas. Mouse wheels: line/page clicks — scale
+             to points. Both step exactly where they land. */
+          let dx = e.deltaX;
+          let dy = e.deltaY;
           if (e.deltaMode === 1) {
-            const fn = exp.zeus_scroll_step || exp.zeus_scroll;
-            fn(x, y, e.deltaX * 16, e.deltaY * 16);
+            dx *= 16;
+            dy *= 16;
           } else if (e.deltaMode === 2) {
-            const fn = exp.zeus_scroll_step || exp.zeus_scroll;
-            fn(x, y, e.deltaX * window.innerWidth, e.deltaY * window.innerHeight);
-          } else {
-            exp.zeus_scroll(x, y, e.deltaX, e.deltaY);
+            dx *= window.innerWidth;
+            dy *= window.innerHeight;
           }
+          if (wheelRemX * dx < 0) wheelRemX = 0;
+          if (wheelRemY * dy < 0) wheelRemY = 0;
+          dx += wheelRemX;
+          dy += wheelRemY;
+          const ix = Math.trunc(dx);
+          const iy = Math.trunc(dy);
+          wheelRemX = dx - ix;
+          wheelRemY = dy - iy;
+          if (ix === 0 && iy === 0) return;
+          /* No engine coast for pixel deltas either: the OS already sends the
+             trackpad's inertia as wheel events, and coasting on top of them
+             moved the content twice between events — the vibration
+             `hosts/web/loader.js` removed the same way. */
+          const fn = exp.zeus_scroll_step || exp.zeus_scroll;
+          fn(x, y, ix, iy);
         },
         { passive: false }
       );
