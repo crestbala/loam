@@ -712,8 +712,8 @@ fn Segmented(value: Signal<int>, labels: []string) -> Node {
     return IndicatorTray(value, labels, true)
 }
 
-/// One row of a `Select` menu: a check icon on the picked row and a raised fill
-/// on the active row (the keyboard highlight).
+/// One row of a `Select` menu: a check icon on the picked row. The keyboard
+/// highlight is the menu's sliding fill, which sits under the active row.
 fn SelectRow(value: Signal<int>, active: Signal<int>, index: int, label: string) -> Node {
     // controller
     fn pick() {
@@ -723,12 +723,12 @@ fn SelectRow(value: Signal<int>, active: Signal<int>, index: int, label: string)
 
     // view
     return Box(
-        style = merge(Style(direction = Direction.Row,
-                            gap = 4,
-                            align = Align.Center,
-                            padding = edges2(6, 8),
-                            radius = corners(RAD_SM),
-                            cursor = "pointer"), style_of(highlight(active.get() == index))),
+        style = Style(direction = Direction.Row,
+                      gap = 4,
+                      align = Align.Center,
+                      padding = edges2(6, 8),
+                      radius = corners(RAD_SM),
+                      cursor = "pointer"),
         on_click = pick,
         role = "listitem",
         label = label,
@@ -760,6 +760,9 @@ fn Select(value: Signal<int>, labels: []string) -> Node {
     let trigger = ref()
     let menu = ref()
     let n = labels.len
+    let hl_y = signal(0)
+    let hl_w = signal(0)
+    let hl_h = signal(0)
 
     // controller
     fn close() {
@@ -769,6 +772,12 @@ fn Select(value: Signal<int>, labels: []string) -> Node {
         if active.get() >= 0 {
             active.set(-1)
         } else {
+            // Opening lands on the first row: snap the highlight there first,
+            // so it does not slide over from where the last open left it.
+            let t = child_rect(menu, 1)
+            if t.h > 0 {
+                hl_y.set(t.y)
+            }
             active.set(0)
         }
     }
@@ -790,8 +799,31 @@ fn Select(value: Signal<int>, labels: []string) -> Node {
             active.set(-1)
         }
     }
+    // Slide the highlight to the active row over `ms` (0 = jump). Row `i` is
+    // menu child `i + 1`: the highlight comes first, so it paints under them.
+    // Skipped while the menu has no layout (closed, or before the first).
+    fn place(ms: int) {
+        let a = active.get()
+        if a < 0 || a >= n {
+            return
+        }
+        let t = child_rect(menu, a + 1)
+        if t.h <= 0 {
+            return
+        }
+        if ms > 0 {
+            animate(hl_y, t.y, ms)
+        } else {
+            hl_y.set(t.y)
+        }
+        hl_w.set(t.w)
+        hl_h.set(t.h)
+    }
     on_mount(|| {
         anchor(menu, trigger, Place.PlaceBelow, 6)
+        // Opening re-lays the menu out from nothing: land on the row at once.
+        on_resize(menu, || { place(0) })
+        effect(|| { place(Motion.Fast) })
         // The menu holds focus while open, so the arrows and Enter reach it.
         effect(|| {
             if active.get() >= 0 {
@@ -852,6 +884,13 @@ fn Select(value: Signal<int>, labels: []string) -> Node {
             keys = keys,
             enter = Enter.Fade
         ) {
+            Box(style = merge(Style(position = pos_absolute(),
+                                    inset = Edges(left = 0),
+                                    radius = corners(RAD_SM),
+                                    background = raised()), Style(inset = Edges(top = hl_y.get()),
+                                                                  width = px(hl_w.get()),
+                                                                  height = px(hl_h.get()))),
+                role = "presentation")
             Loop(labels, fn(i, lab) {
                 return SelectRow(value, active, i, lab)
             })
@@ -862,10 +901,26 @@ fn Select(value: Signal<int>, labels: []string) -> Node {
 /// Radio group: vertical stack of `Radio` rows, 8px apart. The picked row gets a
 /// filled primary dot. Arrows move the pick; only the selected row is a tab stop.
 fn Radio(label: string, value: Signal<int>, index: int, count: int = 0) -> Node {
-    // controller
+    // state
+    let dot = ref()
+
+    // controller. The dot springs in when picked and shrinks away when the
+    // pick moves on (paint-only, like the Checkbox mark).
     fn active() -> bool {
         return value.get() == index
     }
+    on_mount(|| {
+        effect(|| {
+            let node = ref_node(dot)
+            if active() {
+                animate_scale(node, 100, Motion.Base, EASE.Spring)
+                animate_opacity(node, 100, Motion.Fast)
+            } else {
+                animate_scale(node, 40, Motion.Fast)
+                animate_opacity(node, 0, Motion.Fast)
+            }
+        })
+    })
 
     // keys
     let keys = roving_keys("radio", value, index, count, true)
@@ -887,7 +942,7 @@ fn Radio(label: string, value: Signal<int>, index: int, count: int = 0) -> Node 
                           radius = corners(8),
                           border = line(HAIRLINE, accent()),
                           background = plate())) {
-            Box(style = merge(Style(width = px(14), height = px(14), radius = corners(7)), Style(background = if active() { accent() } else { plate() })))
+            Box(ref = dot, style = Style(width = px(14), height = px(14), radius = corners(7), background = accent()))
         }
         Text(label, style = Style(font = FONT_BODY, color = ink()))
     }
@@ -917,7 +972,11 @@ fn Toggle(label: string, on: Signal<bool>) -> Node {
                             cursor = "pointer"), Style(background = if on.get() { raised() } else { plate() })),
         on_click = fn() => on.set(!on.get()),
         role = "button",
-        label = label
+        label = label,
+        hoverOff = false,
+        hoverFade = true,
+        press = true,
+        pressScale = true
     ) {
         Text(label,
              style = merge(Style(font = FONT_BODY), Style(color = if on.get() { ink() } else { mute() })))

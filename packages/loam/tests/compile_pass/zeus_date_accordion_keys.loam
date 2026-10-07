@@ -1,0 +1,134 @@
+// Keyboard model of DatePicker and Accordion. Opening the date sheet lands
+// focus on the picked day; arrows step a day / a week across month and year
+// edges, PageUp / PageDown step a month (clamping the day), Home / End go to
+// the week's ends, Enter picks and closes. Accordion headers pass focus along
+// on up / down / Home / End without opening anything.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+const K_ENTER: int = 13
+const K_LEFT: int = 1000
+const K_RIGHT: int = 1001
+const K_UP: int = 1002
+const K_DOWN: int = 1003
+const K_PGUP: int = 1004
+const K_PGDN: int = 1005
+const K_HOME: int = 1006
+const K_END: int = 1007
+
+fn key(k: int) {
+    zeus.engine_key_ev(k, 0)
+    zeus.engine_layout(480, 640)
+}
+
+fn click(label: string) {
+    zeus.engine_click_text(label)
+    zeus.engine_mouseup()
+    zeus.engine_layout(480, 640)
+}
+
+fn is(y: Signal<int>, m: Signal<int>, d: Signal<int>, yy: int, mm: int, dd: int) -> bool {
+    return y.get() == yy && m.get() == mm && d.get() == dd
+}
+
+fn main() {
+    zeus.window("datekeys", 480, 640)
+    let y = zeus.signal(2026)
+    let m = zeus.signal(1)
+    let d = zeus.signal(31)
+    zeus.root(zui.Page() {
+        zui.DatePicker(y, m, d)
+    })
+    zeus.pump_frame()
+    zeus.engine_layout(480, 640)
+
+    // Keys do nothing while the sheet is closed.
+    key(K_RIGHT)
+    must(is(y, m, d, 2026, 1, 31), "closed sheet ignores arrows")
+
+    // Opening lands focus on the picked day.
+    click("2026")
+    must(zeus.text_visible("January"), "trigger opened the sheet")
+    must(zeus.engine_focus_id() != 0, "opening focuses the picked day")
+
+    // Right crosses into February; left comes back.
+    key(K_RIGHT)
+    must(is(y, m, d, 2026, 2, 1), "right steps a day across the month edge")
+    key(K_LEFT)
+    must(is(y, m, d, 2026, 1, 31), "left steps back")
+
+    // PageDown clamps Jan 31 to Feb 28 (2026 is not a leap year).
+    key(K_PGDN)
+    must(is(y, m, d, 2026, 2, 28), "page down clamps to the month length")
+    key(K_PGUP)
+    must(is(y, m, d, 2026, 1, 28), "page up steps a month back")
+
+    // Up / down move a week, crossing the year edge.
+    key(K_UP)
+    must(is(y, m, d, 2026, 1, 21), "up steps a week back")
+    key(K_UP)
+    key(K_UP)
+    key(K_UP)
+    must(is(y, m, d, 2025, 12, 31), "up crosses into the previous year")
+    key(K_DOWN)
+    must(is(y, m, d, 2026, 1, 7), "down crosses into the next year")
+
+    // Jan 7 2026 is a Wednesday: Home → Mon 5, End → Sun 11.
+    key(K_HOME)
+    must(is(y, m, d, 2026, 1, 5), "home goes to Monday")
+    key(K_END)
+    must(is(y, m, d, 2026, 1, 11), "end goes to Sunday")
+    // Jan 1 2026 is a Thursday: the week's start clamps to the 1st.
+    key(K_UP)
+    key(K_HOME)
+    must(is(y, m, d, 2026, 1, 1), "home clamps to the first of the month")
+
+    // Enter picks the focused day and closes.
+    key(K_RIGHT)
+    key(K_ENTER)
+    must(!zeus.text_visible("January"), "enter closes the sheet")
+    must(is(y, m, d, 2026, 1, 2), "enter keeps the focused day")
+
+    // Accordion: focus moves between headers; the open item stays put.
+    let open = zeus.signal(-1)
+    let mut rows = []AccordionRow {}
+    push(rows, AccordionRow { title: "One", body: "first body" })
+    push(rows, AccordionRow { title: "Two", body: "second body" })
+    push(rows, AccordionRow { title: "Three", body: "third body" })
+    zeus.root(zui.Page() {
+        zui.Accordion(open, items = rows)
+    })
+    zeus.pump_frame()
+    zeus.engine_layout(480, 640)
+
+    click("One")
+    must(open.get() == 0, "click opens the first item")
+    key(K_DOWN)
+    must(open.get() == 0, "down moves focus, not the open item")
+    key(K_ENTER)
+    must(open.get() == 1, "down focused the second header")
+    key(K_END)
+    key(K_ENTER)
+    must(open.get() == 2, "end focused the last header")
+    key(K_DOWN)
+    key(K_ENTER)
+    must(open.get() == -1, "down at the end stays on the last header")
+    key(K_HOME)
+    key(K_ENTER)
+    must(open.get() == 0, "home focused the first header")
+    key(K_UP)
+    key(K_ENTER)
+    must(open.get() == -1, "up at the start stays on the first header")
+
+    fmt.println("date / accordion keys ok")
+}
