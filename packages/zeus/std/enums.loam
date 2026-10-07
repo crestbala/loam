@@ -124,8 +124,12 @@ enum Key {
     Right = 1001,
     Up = 1002,
     Down = 1003,
-    Home = 1004,
-    End = 1005,
+    // The runtime's codes (`zeus_key.h`), which every host sends: the page
+    // keys hold 1004 / 1005, so Home and End sit above them.
+    PageUp = 1004,
+    PageDown = 1005,
+    Home = 1006,
+    End = 1007,
 }
 
 /// Which node attribute a reactive prop writes. One effect per member, so a
