@@ -1875,9 +1875,9 @@ fn ig_arena_lint() {
     let mut files = []string {}
     let mut allow = []string {}
     push(files, "atoms")
-    push(allow, "virtual_refresh_keyed kfor_reconcile virtual_refresh virt_refresh_var kfor_refresh kfor_rebuild Boundary refit_refresh Progress virt_window_var scroll_to match_build keyed_spacer scroll_to_x drop_keyed_spacer refit chart_tooltip Match Index Each scroll_y scroll_to_index measured_width match_refresh chart_lines chart_cursor chart_bars chart_areas Svg Sparkline Scroll Overlay Image Icon Grid")
+    push(allow, "virtual_refresh_keyed kfor_reconcile virtual_refresh virt_refresh_var kfor_refresh kfor_rebuild Boundary refit_refresh refit_hook Progress virt_window_var scroll_to match_build keyed_spacer scroll_to_x drop_keyed_spacer refit chart_tooltip Match Index Each ProgressTrack RingArc scroll_y scroll_to_index measured_width match_refresh chart_lines chart_cursor chart_bars chart_areas Svg Sparkline Scroll Overlay Image Icon Grid")
     push(files, "molecules")
-    push(allow, "ThemeSwitch Switch Slider Input Button")
+    push(allow, "SwitchTrack ThemeSwitch Switch Slider Input Button")
     push(files, "organisms")
     push(allow, "VirtualListVar VirtualListKeyed VirtualList LineChart Comp BarChart AreaChart")
     push(files, "colors")

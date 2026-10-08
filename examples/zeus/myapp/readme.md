@@ -102,15 +102,15 @@ Careful with the two names: **`ZEUS_OWN_SURFACE`** (singular) selects the displa
 **`ZEUS_OWN_SURFACES`** (plural) sets how many buffers are in the set, 2..4. To
 make the singular forgiving, `ZEUS_OWN_SURFACE=2` there is read as the count as
 well, so it means "the surface path, two buffers". `ZEUS_OWN_SURFACES` wins if
-both are set. Unset selects the owned bitmap; `APP_KIT=1` AppKit's store.
+both are set. Unset selects the surface set; `APP_KIT=1` AppKit's store.
 
-**The owned bitmap is the default.** It is a single buffer that is both our draw
-target *and* the layer's `contents`; CoreAnimation reads it lazily, so a frame in
-flight and a frame being drawn can share the same bytes, and the fresh CGImage
-per frame costs a full-frame copy while CA builds a texture of its own. When you
-want our memory to *be* the layer's texture instead — 0 copies per frame, and
-each frame drawn into a surface `IOSurfaceIsInUse` says the compositor is not
-reading — pick the **owned IOSurface set** with `ZEUS_OWN_SURFACE=1`. `APP_KIT=1`
+**The owned IOSurface set is the default.** Our memory *is* the layer's texture
+— 0 copies per frame — and each frame is drawn into a surface `IOSurfaceIsInUse`
+says the compositor is not reading. `ZEUS_OWN_SURFACE=0` selects the **owned
+bitmap**: a single buffer that is both our draw target *and* the layer's
+`contents`; CoreAnimation reads it lazily, so a frame in flight and a frame being
+drawn can share the same bytes, and the fresh CGImage per frame costs a
+full-frame copy while CA builds a texture of its own. `APP_KIT=1`
 selects AppKit's own store: `drawRect:` paints straight into the window's backing
 store, so nothing is copied, at AppKit's larger footprint.
 
@@ -132,7 +132,7 @@ scrolling, the count can come down a step.
 | path | how it draws | copies per frame | IOSurface | measured (screen-filling) |
 |---|---|---|---|---|
 | **default** (owned bitmap, `ZEUS_OWN_SURFACE=0` / `ZEUS_OWN_BUFFER=1`) | paints into a bitmap handed to the layer as `contents` | **1** — CoreAnimation materialises the whole frame into its own texture | 1 (~18 MB) plus that texture | **60 fps** (16.6 ms) with the sRGB window, 39 fps (25.4 ms) with `ZEUS_WIDE_GAMUT=1`; 51–55 MB |
-| `ZEUS_OWN_SURFACE=1` (owned IOSurface set) | draws into a surface and hands the layer the SURFACE, so our memory *is* the texture | **0** | 3 surfaces, rotated (one is the layer's texture, one is being drawn) | **~70 MB** screen-filling (3 x 18.1 MB + ~16 MB baseline); ~52 MB with `ZEUS_OWN_SURFACE=2` |
+| `ZEUS_OWN_SURFACE=1` (owned IOSurface set) | draws into a surface and hands the layer the SURFACE, so our memory *is* the texture | **0** | 2 surfaces, rotated (one is the layer's texture, one is being drawn) | **~60 MB** screen-filling (2 x 21.5 MB + ~17 MB baseline); ~81 MB with `ZEUS_OWN_SURFACES=3` |
 | `APP_KIT=1` (AppKit's store) | `drawRect:` paints straight into the window's backing store, which the compositor reads | **0** | 3 buffers, 54 MB reserved | **60 fps** (16.7 ms); peak 103–137 MB |
 | `ZEUS_WIDE_GAMUT=1` | AppKit's store, but the window keeps the display's ICC profile | **0** | 3 buffers, 109 MB reserved | **60 fps** (16.6–16.7 ms); peak 176–219 MB |
 
@@ -148,12 +148,14 @@ trims ~18 MB and may skip; 4 costs one more buffer and skips essentially never.
 `sh packages/loam/tests/bench/own_buffer.sh` runs the paths and byte-compares
 their window crops.
 
-The **three surfaces** are not an optimisation: CoreAnimation holds a surface as the
+The **two surfaces** are not an optimisation: CoreAnimation holds a surface as the
 layer's texture while compositing, so writing the one it is reading is what makes a
 frame flash (this is the measured reason the earlier IOSurface experiment was not
 shipped). A frame is drawn only into a surface `IOSurfaceIsInUse` says the
-compositor is not reading; if it holds all of them, the frame is **skipped** rather
-than written over one in use — which the frame trace counts as `surf_skip`.
+compositor is not reading; if it holds both, the frame **waits** (polling every
+1 ms, up to 8 ms) for the compositor to release one rather than writing over one
+in use. The frame trace reports the wait as `surf_wait` and the polls as
+`surf_skip`.
 
 **Where the frames go.** Both paths run the same `ZeusDraw` callbacks. The engine's
 own work (layout + step + paint) is 1.4–2.5 ms on the AppKit path and 5.0–6.6 ms on

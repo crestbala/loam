@@ -50,7 +50,7 @@ fn Counter(p: CounterProps) -> Node {
 
     // keys
     let keys = []KeyBind {
-        chord_global("cmd+u", "counter.inc", || { add(1) }),
+        key_bind_global("cmd+u", "counter.inc", || { add(1) }),
     }
 
     // view

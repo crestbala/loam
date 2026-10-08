@@ -1,7 +1,7 @@
 // Key bindings are one prop, `keys: []KeyBind`, on any widget — not just the
-// ones that happened to ship a helper. `chord` runs its own handler,
-// `chord_click` runs the element's `on_click` so a button and its shortcut
-// share one handler, and `chord_global` fires wherever focus is.
+// ones that happened to ship a helper. `key_bind` runs its own handler,
+// `key_bind_click` runs the element's `on_click` so a button and its shortcut
+// share one handler, and `key_bind_global` fires wherever focus is.
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
@@ -26,21 +26,21 @@ fn main() {
         zui.Column(8) {
             // Button: the chord reuses on_click, no second handler.
             zui.Button("Save", look = zeus.Look.Solid,
-                       keys = []KeyBind { chord_click("cmd+s") },
+                       keys = []KeyBind { key_bind_click("cmd+s") },
                        on_click = fn() { saves = saves + 1 })
             // Plain Box: same prop, different widget.
             zeus.Box(style = Style(width = px(20), height = px(20)),
                      label = "panel",
-                     keys = []KeyBind { chord("cmd+b", "", fn() { boxes = boxes + 1 }) })
+                     keys = []KeyBind { key_bind("cmd+b", "", fn() { boxes = boxes + 1 }) })
             // Global chord: fires wherever focus is.
             zeus.Text("hint",
-                      keys = []KeyBind { chord_global("cmd+k", "", fn() { opens = opens + 1 }) })
+                      keys = []KeyBind { key_bind_global("cmd+k", "", fn() { opens = opens + 1 }) })
             // Card and IconButton used to declare the prop without installing it.
             zui.Card(title = "card",
-                     keys = []KeyBind { chord_global("cmd+j", "", fn() { cards = cards + 1 }) })
+                     keys = []KeyBind { key_bind_global("cmd+j", "", fn() { cards = cards + 1 }) })
             zui.IconButton(zeus.IC_X, zeus.Look.Ghost, zeus.Size.Md, "Close",
-                           keys = keys_concat([]KeyBind { chord_global("cmd+1", "", fn() { icons = icons + 1 }) },
-                                              []KeyBind { chord_global("cmd+2", "", fn() { icons = icons + 10 }) }))
+                           keys = keys_concat([]KeyBind { key_bind_global("cmd+1", "", fn() { icons = icons + 1 }) },
+                                              []KeyBind { key_bind_global("cmd+2", "", fn() { icons = icons + 10 }) }))
         }
     })
 

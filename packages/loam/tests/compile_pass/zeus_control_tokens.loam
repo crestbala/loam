@@ -1,0 +1,42 @@
+// Phase 0 size tokens: one control table keyed by `Size`, shifted by the
+// global `density()` knob; icon/avatar sizes are their own px; `Elevation`
+// members are the engine's shadow levels.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:spacing"
+import "std:colors"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("tokens", 200, 100)
+    must(colors.density().get() == zeus.Density.Standard, "standard by default")
+    must(spacing.control_h(zeus.Size.Sm) == 32, "sm height")
+    must(spacing.control_h(zeus.Size.Md) == 36, "md height")
+    must(spacing.control_h(zeus.Size.Lg) == 44, "lg height")
+    must(spacing.control_pad_x(zeus.Size.Md) == 16, "md pad")
+    must(spacing.control_icon(zeus.Size.Md) == zeus.IconSize.Md, "md icon")
+    must(spacing.switch_w(zeus.Size.Md) == 36 && spacing.switch_h(zeus.Size.Md) == 20, "md switch")
+    must(spacing.table_row() == 40, "standard row")
+
+    colors.density().set(zeus.Density.Compact)
+    must(spacing.control_h(zeus.Size.Md) == 32, "compact md height")
+    must(spacing.control_pad_x(zeus.Size.Md) == 14, "compact md pad")
+    must(spacing.table_row() == 32, "compact row")
+    colors.density().set(zeus.Density.Comfortable)
+    must(spacing.control_h(zeus.Size.Md) == 40, "comfortable md height")
+    must(spacing.table_row() == 48, "comfortable row")
+    colors.density().set(zeus.Density.Standard)
+
+    must(zeus.AvatarSize.Lg == 40, "avatar lg px")
+    must(zeus.IconSize.Xxl == 32, "icon xxl px")
+    must(zeus.Elevation.Modal == 4, "modal is engine level 4")
+    fmt.println("control tokens ok")
+}

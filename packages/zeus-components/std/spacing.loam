@@ -7,6 +7,9 @@
 //! set stays in `zeus_constants`, together with `VIRT_OVERSCAN` — the one
 //! constant `zeusbase` itself reads, so it cannot move above it.
 
+import "zeus:enums"
+import "zeus-components:colors"
+
 // --- type -----------------------------------------------------------------
 /// Line heights, as a percentage of the font size. Canvas hosts draw one
 /// weight, so hierarchy leans on size, colour, and leading — which makes the
@@ -17,14 +20,15 @@ const LEAD_NORMAL: int = 150
 const LEAD_RELAXED: int = 170
 
 /// Type scale. Canvas hosts draw one weight, so hierarchy leans on size and
-/// color. 14 is the body workhorse.
-const FONT_DISPLAY: int = 30
-const FONT_HEADING: int = 20
-const FONT_TITLE: int = 16
+/// color. 15 is the body workhorse: a size up from the usual 14, which suits
+/// the roomier pill controls.
+const FONT_DISPLAY: int = 32
+const FONT_HEADING: int = 22
+const FONT_TITLE: int = 17
 const FONT_BODY: int = 14
-const FONT_CONTROL: int = 13
-const FONT_CAPTION: int = 12
-const FONT_OVERLINE: int = 11
+const FONT_CONTROL: int = 12
+const FONT_CAPTION: int = 11
+const FONT_OVERLINE: int = 10
 
 const PAGE_PAD: int = 32
 const SECTION: int = 24
@@ -38,15 +42,96 @@ const FOCUS_WIDTH: int = 2
 const FOCUS_OFFSET: int = 2
 
 // --- radius ---------------------------------------------------------------
-/// Corner radii, small to extra large.
-const RAD_SM: int = 6
-const RAD_MD: int = 8
-const RAD_LG: int = 10
-const RAD_XL: int = 14
+/// Corner radii, small to extra large: surfaces (cards, menus, dialogs) and
+/// the rows inside them. Soft and generous; a nested radius is the outer one
+/// minus the padding between them.
+const RAD_SM: int = 8
+const RAD_MD: int = 12
+const RAD_LG: int = 16
+const RAD_XL: int = 20
 const RAD_FULL: int = 999
+/// Interactive controls (buttons, fields, triggers, tabs, toggles, badges)
+/// are pills: the shape that says "press me", told apart from surfaces at a
+/// glance.
+const RAD_CONTROL: int = RAD_FULL
+/// A checkbox stays a rounded square, so it never reads as a radio.
+const RAD_CHECK: int = 5
 /// No rounding. Named so a caller can say `RAD_NONE` instead of a bare 0 and
 /// mean it — `radius = 0` and "radius unset" were indistinguishable before.
 const RAD_NONE: int = 0
+
+// --- control scale --------------------------------------------------------
+/// One table every control reads, keyed by a `Size` token: Button, TextInput,
+/// Select, Combobox, Segmented, Toggle, pill Tabs, Pagination, the DatePicker
+/// trigger, and NumberInput all share it, so any two of them line up in a row.
+/// Height and side padding follow `density()`; type and icons do not.
+fn control_h(size: int) -> int {
+    let base = if size == Size.Sm { 32 } else if size == Size.Lg { 44 } else { 36 }
+    return base + density_delta()
+}
+
+fn control_pad_x(size: int) -> int {
+    let base = if size == Size.Sm { 12 } else if size == Size.Lg { 24 } else { 16 }
+    return base + density_delta() / 2
+}
+
+fn control_font(size: int) -> int {
+    if size == Size.Sm { 13 } else if size == Size.Lg { 15 } else { FONT_BODY }
+}
+
+fn control_icon(size: int) -> int {
+    if size == Size.Sm { IconSize.Sm } else if size == Size.Lg { 18 } else { IconSize.Md }
+}
+
+fn control_gap(size: int) -> int {
+    if size == Size.Sm { 6 } else { 8 }
+}
+
+/// Height shift for the current `density()`: −4 / 0 / +4.
+fn density_delta() -> int {
+    return (density().get() - Density.Standard) * 4
+}
+
+/// Switch track per `Size`: Sm 28×16, Md 36×20, Lg 44×24.
+fn switch_w(size: int) -> int {
+    if size == Size.Sm { 28 } else if size == Size.Lg { 44 } else { 36 }
+}
+
+fn switch_h(size: int) -> int {
+    if size == Size.Sm { 16 } else if size == Size.Lg { 24 } else { 20 }
+}
+
+/// Table row height per `density()`.
+fn table_row() -> int {
+    return 40 + density_delta() * 2
+}
+
+// --- named one-off metrics --------------------------------------------------
+/// Checkbox box and radio inner dot.
+const CHECK: int = 16
+const RADIO_DOT: int = 8
+const SLIDER_TRACK: int = 4
+const SLIDER_THUMB: int = 16
+const METER_TRACK: int = 6
+/// Progress ring diameter.
+const RING: int = 48
+const MENU_MIN_W: int = 200
+const TOOLTIP_MAX_W: int = 256
+const TOAST_W: int = 360
+/// Side sheet / drawer width.
+const SHEET_W: int = 380
+/// Measure for short prose blocks (empty states, descriptions).
+const PROSE_W: int = 320
+/// Page column caps (`Container`).
+const CONTAINER_SM: int = 640
+const CONTAINER_MD: int = 960
+const CONTAINER_LG: int = 1200
+/// `Sidebar` width open and collapsed to icons.
+const SIDEBAR_W: int = 240
+const SIDEBAR_RAIL: int = 56
+/// `SplitPane` handle thickness and the narrowest a pane may go.
+const SPLIT_HIT: int = 6
+const SPLIT_MIN: int = 160
 
 // --- control metrics ------------------------------------------------------
 const BAR: int = 52
@@ -58,7 +143,13 @@ const SELECT_W: int = 200
 /// menu is not covered by a Combobox later in the same card.
 const Z_SCRIM: int = 40
 const Z_FIELD: int = 50
+/// Hover floaters (tooltip, hover card): above the page, under an open popup.
+const Z_HOVER: int = 70
 const Z_POPUP: int = 80
+/// Default `HoverCard` panel width; a caller's `style` width replaces it.
+const HOVER_CARD_W: int = 280
+/// Width of a `DatePicker` sheet; the 7-column day grid divides it.
+const DATE_SHEET_W: int = 320
 
 // --- tooltip --------------------------------------------------------------
 /// Padding and caret size of a tooltip bubble. The caret's offset is derived

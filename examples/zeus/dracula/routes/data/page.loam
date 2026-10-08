@@ -31,7 +31,7 @@ fn paint() {
 fn paint_ready() {
     let err = data.error_text()
     if err.len > 0 {
-        zui.Alert("The last request did not finish", err, tone = Tone.Warn)
+        zui.Alert("The last request did not finish", err, tint = zeus.Tint.Warn)
     }
     if data.server_down() {
         ui.ServerDown(fn() { data.retry() })
@@ -83,7 +83,7 @@ fn stock_reject_spec() -> []TableCol {
 fn paint_stocks() {
     let err = stocks.walk_error()
     if err.len > 0 {
-        zui.Alert("The stock walk stopped", err, tone = Tone.Warn)
+        zui.Alert("The stock walk stopped", err, tint = zeus.Tint.Warn)
     }
     let progress = stocks.walk_text()
     if progress.len > 0 {

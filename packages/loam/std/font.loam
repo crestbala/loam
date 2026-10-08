@@ -283,26 +283,45 @@ fn advance_px(s: string, gid: int, px: int) -> int {
     return i32(i64(advance_units(s, gid)) * i64(px) / i64(upm))
 }
 
+/// `units` font units at size `px`, rounded up to a whole pixel: a box sized
+/// with it never clips the fractional extent the host draws.
+fn units_to_px_ceil(units: i64, px: int, upm: int) -> int {
+    let n = units * i64(px)
+    let q = n / i64(upm)
+    if q * i64(upm) < n {
+        return i32(q + 1)
+    }
+    return i32(q)
+}
+
 /// Pixel width of `text` at size `px` (unshaped: one glyph per grapheme
-/// cluster, approximated by the cluster's first code point).
+/// cluster, approximated by the cluster's first code point). Advances sum in
+/// font units and scale once, so the width is the run's true extent rounded
+/// up; truncating each glyph lost up to a pixel per character and sized
+/// boxes narrower than the text the host draws.
 fn text_width(s: string, px: int, text: string) -> int {
-    let mut w = 0
+    let upm = units_per_em(s)
+    if upm <= 0 {
+        return 0
+    }
+    let mut units = i64(0)
     let mut i = 0
     while i < text.len {
         let cp = unicode.codepoint(text, i)
-        w = w + advance_px(s, glyph_index(s, cp), px)
+        units = units + i64(advance_units(s, glyph_index(s, cp)))
         i = unicode.next_grapheme(text, i)
     }
-    return w
+    return units_to_px_ceil(units, px, upm)
 }
 
-/// Line height at size `px` from the font's ascent/descent/line gap.
+/// Line height at size `px` from the font's ascent/descent/line gap, rounded
+/// up as the hosts round their own line box.
 fn line_height(s: string, px: int) -> int {
     let upm = units_per_em(s)
     if upm <= 0 {
         return px
     }
-    let h = i32(i64(ascender(s) - descender(s) + line_gap(s)) * i64(px) / i64(upm))
+    let h = units_to_px_ceil(i64(ascender(s) - descender(s) + line_gap(s)), px, upm)
     if h < 1 {
         return px
     }
@@ -325,40 +344,51 @@ fn measure_wrap(s: string, px: int, text: string, max_w: int, w: &mut int, h: &m
         *h = lh
         return
     }
+    // Line widths accumulate in font units, like `text_width`, and convert
+    // to pixels only to compare against `max_w`.
+    let upm = units_per_em(s)
+    if upm <= 0 {
+        *w = 0
+        *h = lh
+        return
+    }
     let mut lines = 1
-    let mut line_w = 0
+    let mut line_u = i64(0)
     let mut best = 0
     let mut i = 0
     while i < text.len {
         let cp = unicode.codepoint(text, i)
         let j = unicode.next_grapheme(text, i)
         if cp == 10 {
-            if line_w > best {
-                best = line_w
+            let lw = units_to_px_ceil(line_u, px, upm)
+            if lw > best {
+                best = lw
             }
             lines = lines + 1
-            line_w = 0
+            line_u = i64(0)
             i = j
             continue
         }
-        let gw = advance_px(s, glyph_index(s, cp), px)
-        if line_w > 0 && line_w + gw > max_w {
-            if line_w > best {
-                best = line_w
+        let gu = i64(advance_units(s, glyph_index(s, cp)))
+        if line_u > i64(0) && units_to_px_ceil(line_u + gu, px, upm) > max_w {
+            let lw = units_to_px_ceil(line_u, px, upm)
+            if lw > best {
+                best = lw
             }
             lines = lines + 1
-            line_w = 0
+            line_u = i64(0)
             if cp == 32 {
                 // Do not start a wrapped line with the space we broke at.
                 i = j
                 continue
             }
         }
-        line_w = line_w + gw
+        line_u = line_u + gu
         i = j
     }
-    if line_w > best {
-        best = line_w
+    let lw = units_to_px_ceil(line_u, px, upm)
+    if lw > best {
+        best = lw
     }
     *w = best
     *h = lines * lh

@@ -118,7 +118,7 @@ fn test_line_height() {
     let s = font_bytes()
     // (800 - -200 + 200) / 1000 = 1.2em.
     test.assert_eq_int(font.line_height(s, 1000), 1200)
-    test.assert_eq_int(font.line_height(s, 16), 19)
+    test.assert_eq_int(font.line_height(s, 16), 20) // 19.2, rounded up
     // A font with no tables falls back to the pixel size.
     test.assert_eq_int(font.line_height("", 16), 16)
 }

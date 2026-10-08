@@ -142,13 +142,21 @@ fn Comp(p: BoxProps) -> Node {
                      role = p.role, label = p.label,
                      on_click = p.on_click, hoverOff = p.hoverOff, bind = p.bind,
                      visible = p.visible, press = press, focusable = p.focusable,
-                     roving = p.roving, rovingGrab = p.rovingGrab, hoverFade = p.hoverFade, pressScale = p.pressScale,
+                     roving = p.roving, rovingGrab = p.rovingGrab, checked = p.checked, hoverFade = p.hoverFade, pressScale = p.pressScale,
                      lift = p.lift, enter = p.enter, label = p.label, loading = p.loading,
                      on_hover = p.on_hover)
 }
 
 struct ComboboxProps {
     placeholder: string = "Search",
+    /// `Size` token: the field is `control_h(size)` tall.
+    size: int = Size.Md,
+    /// Draws the danger edge (a `Field` with an `error` sets it).
+    invalid: bool = false,
+    /// Dims the field and makes it inert.
+    disabled: bool = false,
+    /// Accessible name. Empty uses the placeholder.
+    label: string = "",
     /// Style, merged over the recipe's own: `style = Style(radius = corners(4))`.
     style: Option<fn() -> Style> = none,
 }
@@ -210,41 +218,28 @@ fn Combobox(text: Signal<string>, options: []string, p: ComboboxProps) -> Node {
                 style = Style(display = shown(active.get() >= 0), zIndex = Z_SCRIM))
         Box(
             ref = field,
-            style = merge(Style(width = px(w),
-                                direction = Direction.Row,
-                                gap = 4,
-                                align = Align.Center,
-                                zIndex = Z_FIELD,
-                                padding = edges2(8, 12),
-                                radius = corners(RAD_MD),
-                                border = line(HAIRLINE, rule()),
-                                background = plate(),
-                                cursor = "text"), style_of(p.style)),
+            style = merge(merge(merge(field_chrome(p.size), invalid_edge(p.invalid)),
+                                Style(width = px(w), zIndex = Z_FIELD, cursor = "text")),
+                          style_of(p.style)),
             on_click = open_list,
-            focusable = false
+            focusable = false,
+            enabled = !p.disabled
         ) {
             Input(ref = input,
                   bind = text,
                   placeholder = p.placeholder,
-                  style = Style(grow = 1, font = FONT_BODY, padding = edges(0), color = ink()),
-                  label = p.placeholder,
+                  style = Style(grow = 1, font = control_font(p.size), padding = edges(0),
+                                color = ink()),
+                  label = field_name(p.label, p.placeholder),
                   on_click = open_list,
                   on_key_down = list_key)
             InputClear(text, input)
-            Icon(IC_CHEV_DOWN, 16, dim())
+            Icon(IC_CHEV_DOWN, control_icon(p.size), dim())
         }
         Box(
             ref = list,
-            style = merge(Style(width = px(w),
-                                direction = Direction.Column,
-                                gap = 2,
-                                elevation = 2,
-                                position = pos_absolute(),
-                                zIndex = Z_POPUP,
-                                padding = edges(4),
-                                radius = corners(RAD_MD),
-                                border = line(HAIRLINE, rule()),
-                                background = plate()), Style(display = shown(active.get() >= 0))),
+            style = merge(merge(floating_panel(0, Elevation.Floating), Style(width = px(w))),
+                          Style(display = shown(active.get() >= 0))),
             enter = Enter.Fade
         ) {
             For(matches, fn(s) => s, fn(i, s) {
@@ -272,16 +267,24 @@ fn ComboRow(text: Signal<string>, active: Signal<int>, input: Ref, index: int, l
     // tree
     return Box(
         ref = row,
+        hoverStyle = Style(background = raised()),
         style = merge(Style(direction = Direction.Row,
-                            gap = 4,
-                            align = Align.Center,
-                            padding = edges2(6, 8),
-                            radius = corners(RAD_SM),
-                            cursor = "pointer"), style_of(highlight(active.get() == index))),
+                                     gap = 4,
+                                     align = Align.Center,
+                                     padding = edges2(6, 8),
+                                     radius = corners(RAD_SM),
+                                     cursor = "pointer"), style_of(highlight(active.get() == index))),
         role = "option",
         label = label,
+        checked = active.get() == index,
         hoverOff = false,
         on_click = pick,
+        // Hover moves the highlight, so the pointer and the keyboard share one row.
+        on_hover = fn(on: bool) {
+            if on {
+                active.set(index)
+            }
+        },
         focusable = false
     ) {
         Text(label, style = Style(font = FONT_BODY, color = ink()))
@@ -359,10 +362,10 @@ fn AccordionItem(p: AccordionItemProps) -> Node {
         }
     }
     let keys = []KeyBind {
-        chord("down", "accordion.next", fn() { focus_head(idx + 1) }),
-        chord("up", "accordion.prev", fn() { focus_head(idx - 1) }),
-        chord("home", "accordion.first", fn() { focus_head(0) }),
-        chord("end", "accordion.last", fn() { focus_head(p.heads.len - 1) }),
+        key_bind("down", "accordion.next", fn() { focus_head(idx + 1) }),
+        key_bind("up", "accordion.prev", fn() { focus_head(idx - 1) }),
+        key_bind("home", "accordion.first", fn() { focus_head(0) }),
+        key_bind("end", "accordion.last", fn() { focus_head(p.heads.len - 1) }),
     }
     let head = if idx < p.heads.len { p.heads[idx] } else { ref() }
     on_mount(|| {
@@ -442,7 +445,7 @@ fn Popover(p: PopoverProps) -> Node {
     })
 
     // keys
-    let keys = []KeyBind { chord(p.closeKey, "popover.close", close) }
+    let keys = []KeyBind { key_bind(p.closeKey, "popover.close", close) }
 
     // tree. The host holds only the trigger in flow; the transparent scrim
     // (outside click closes) and the anchored panel float.
@@ -450,15 +453,9 @@ fn Popover(p: PopoverProps) -> Node {
         p.trigger()
         Overlay(visible = open.get(), on_click = close, style = Style(zIndex = Z_SCRIM))
         Box(ref = panel,
-            style = merge(Style(direction = Direction.Column,
-                                gap = Space.Xs,
-                                elevation = 3,
-                                position = pos_absolute(),
-                                zIndex = Z_POPUP,
-                                padding = edges(Space.Sm),
-                                radius = corners(RAD_LG),
-                                border = line(HAIRLINE, rule()),
-                                background = plate()), style_of(p.style)),
+            style = merge(merge(floating_panel(0, Elevation.Floating),
+                                Style(gap = Space.Xs, padding = edges(Space.Sm))),
+                          style_of(p.style)),
             visible = open.get(),
             enter = Enter.Fade,
             keys = keys) {
@@ -518,7 +515,7 @@ fn Menu(p: MenuProps) -> Node {
     })
 
     // keys. Escape closes while focus is inside the menu.
-    let keys = []KeyBind { chord(p.closeKey, "menu.dismiss", close) }
+    let keys = []KeyBind { key_bind(p.closeKey, "menu.dismiss", close) }
 
     // tree
     return Box(ref = host) {
@@ -526,16 +523,9 @@ fn Menu(p: MenuProps) -> Node {
         Overlay(ref = scrim, on_click = close,
                 style = Style(display = shown(active.get() >= 0), zIndex = Z_SCRIM))
         Box(ref = panel,
-            style = merge(merge(Style(direction = Direction.Column,
-                                      gap = 2,
-                                      elevation = 3,
-                                      position = pos_absolute(),
-                                      zIndex = Z_POPUP,
-                                      padding = edges(4),
-                                      radius = corners(RAD_LG),
-                                      border = line(HAIRLINE, rule()),
-                                      background = plate(),
-                                      cursor = "pointer"), Style(display = shown(active.get() >= 0))), style_of(p.style)),
+            style = merge(merge(merge(floating_panel(MENU_MIN_W, Elevation.Floating),
+                                      Style(cursor = "pointer")),
+                                Style(display = shown(active.get() >= 0))), style_of(p.style)),
             role = "menu",
             enter = Enter.Fade,
             keys = keys) {
@@ -614,9 +604,9 @@ fn MenuItem(p: MenuItemProps) -> Node {
     // keys. Every handler is gated on `active`, so keys pressed after a close
     // are inert even if this (now hidden) row is still the focused one.
     let keys = []KeyBind {
-        chord("down", "menu.next", next),
-        chord("up", "menu.prev", prev),
-        chord("enter", "menu.activate", fn() {
+        key_bind("down", "menu.next", next),
+        key_bind("up", "menu.prev", prev),
+        key_bind("enter", "menu.activate", fn() {
             if active.get() == idx {
                 run()
             }
@@ -625,7 +615,9 @@ fn MenuItem(p: MenuItemProps) -> Node {
 
     // tree. Hover moves the highlight, so the pointer and the keyboard agree;
     // only the active row is a tab stop, and it takes focus as it activates.
+    // `hoverStyle` guarantees the same raised fill even before `on_hover` runs.
     return Box(ref = row,
+               hoverStyle = Style(background = raised()),
                style = merge(Style(direction = Direction.Row,
                                    gap = Space.Xs,
                                    align = Align.Center,
@@ -714,7 +706,7 @@ fn Drawer(open: Signal<bool>, p: DrawerProps) -> Node {
     })
 
     // keys
-    let keys = []KeyBind { chord(p.closeKey, "drawer.close", fn() { open.set(false) }) }
+    let keys = []KeyBind { key_bind(p.closeKey, "drawer.close", fn() { open.set(false) }) }
 
     // tree. The overlay pins the panel to the chosen edge (a row for the side
     // edges); the panel swallows clicks so a press inside does not close it.
@@ -868,9 +860,9 @@ fn Tooltip(p: TooltipProps) -> Node {
         p.trigger()
         Box(ref = panel,
             style = Style(direction = Direction.Column,
-                          elevation = 2,
+                          elevation = Elevation.Overlay,
                           position = pos_absolute(),
-                          zIndex = 70,
+                          zIndex = Z_HOVER,
                           padding = edges2(TOOLTIP_PAD_Y, TOOLTIP_PAD_X),
                           radius = corners(RAD_SM),
                           background = ink()),
@@ -947,15 +939,13 @@ fn HoverCard(p: HoverCardProps) -> Node {
     return Box(ref = host) {
         p.trigger()
         Box(ref = panel,
-            style = merge(Style(width = px(280), direction = Direction.Column,
-                                gap = Space.Xs,
-                                elevation = 2,
-                                position = pos_absolute(),
-                                zIndex = 70,
-                                padding = edges(Space.Sm),
-                                radius = corners(RAD_LG),
-                                border = line(HAIRLINE, rule()),
-                                background = plate()), style_of(p.style)),
+            // The shared floating surface, as `Popover` uses. `HOVER_CARD_W`
+            // is a default the caller's `style` width replaces: content-sized,
+            // a long body would stretch the card instead of wrapping.
+            style = merge(merge(floating_panel(0, Elevation.Floating),
+                                Style(width = px(HOVER_CARD_W), gap = Space.Xs,
+                                      padding = edges(Space.Sm), zIndex = Z_HOVER)),
+                          style_of(p.style)),
             visible = shown_sig.get() != 0,
             enter = Enter.Fade) {
             p.children()
@@ -1058,7 +1048,7 @@ fn DialogShell(open: Signal<bool>, close_x: bool, title: string, children: fn())
     })
 
     // keys
-    let keys = []KeyBind { chord("escape", "dialog.close", fn() { open.set(false) }) }
+    let keys = []KeyBind { key_bind("escape", "dialog.close", fn() { open.set(false) }) }
 
     // tree. Responsive: 92% of the window, capped at the desktop 440dp, so a
     // phone keeps a gutter instead of clipping the card. The panel swallows
@@ -1148,7 +1138,7 @@ fn NavTab(label: string, page: Signal<int>, index: int) -> Node {
                             gap = Space.Exxs,
                             align = Align.Center,
                             padding = Edges(right = 12, left = 12),
-                            radius = corners(RAD_MD),
+                            radius = corners(RAD_CONTROL),
                             cursor = "pointer"), Style(background = if active() { raised() } else { paper() })),
         on_click = fn() => page.set(index),
         role = "button",
@@ -1287,14 +1277,13 @@ struct TableProps {
 fn Table<T>(spec: []TableCol, rows: Signal<[]T>, cells: fn(T) -> []string,
             p: TableProps) -> Node {
     // state
-    let shown = signal(rows.get())
     let sort_set = result.is_some(p.sort)
     let sort = result.some_or(p.sort, no_signal())
 
-    // controller
-    effect(|| {
+    // derived: recompute sorted rows whenever sort or rows changes
+    let shown = computed(|| {
         let s = if sort_set { sort.get() } else { 0 }
-        shown.set(sort_cells(rows.get(), cells, s))
+        return sort_cells(rows.get(), cells, s)
     })
 
     // tree. One top-level child per item, so `For` can reorder rows.
@@ -1433,7 +1422,7 @@ fn CalStep(markup: string, label: string, press: fn()) -> Node {
                              direction = Direction.Row,
                              align = Align.Center,
                              justify = Align.Center,
-                             radius = corners(RAD_MD),
+                             radius = corners(RAD_CONTROL),
                              cursor = "pointer"),
                on_click = press,
                role = "button",
@@ -1510,15 +1499,32 @@ fn CalGrid(y: Signal<int>, m: Signal<int>, d: Signal<int>, open: Signal<bool>) -
     }
 }
 
+/// Options for `DatePicker`.
+struct DatePickerProps {
+    /// `Size` token: the trigger is `control_h(size)` tall.
+    size: int = Size.Md,
+    /// Draws the danger edge (a `Field` with an `error` sets it).
+    invalid: bool = false,
+    /// Dims the trigger and makes it inert.
+    disabled: bool = false,
+    /// The caption above the trigger, and its accessible name. Empty hides it.
+    label: string = "Date",
+    /// Style, merged over the trigger's own (`SELECT_W` wide by default).
+    style: Option<fn() -> Style> = none,
+}
+
 /// Calendar picker: label, input-like trigger with a calendar icon, and a
 /// floating sheet (kind-9 so the page scroller cannot clip it). Month and
 /// year rails step with chevron icons; picking a day closes the sheet.
 /// Keys, while the sheet is open: arrows move a day / a week (crossing
 /// months), PageUp / PageDown a month, Home / End to the week's ends, Enter
 /// picks, Escape closes.
-fn DatePicker(y: Signal<int>, m: Signal<int>, d: Signal<int>) -> Node {
+fn DatePicker(y: Signal<int>, m: Signal<int>, d: Signal<int>, p: DatePickerProps) -> Node {
     // state
     let open = signal(false)
+    let size = p.size
+    let trigger = ref()
+    let sheet = ref()
 
     // controller. Every move lands on a real date: a month step clamps the
     // day to the new month's length (Jan 31 → Feb 28). Steps only run while
@@ -1600,15 +1606,21 @@ fn DatePicker(y: Signal<int>, m: Signal<int>, d: Signal<int>) -> Node {
 
     // keys. On the sheet, so they answer wherever focus sits inside it.
     let keys = []KeyBind {
-        chord("left", "date.prev_day", fn() { step_day(-1) }),
-        chord("right", "date.next_day", fn() { step_day(1) }),
-        chord("up", "date.prev_week", fn() { step_day(-7) }),
-        chord("down", "date.next_week", fn() { step_day(7) }),
-        chord("pageup", "date.prev_month", prev_month),
-        chord("pagedown", "date.next_month", next_month),
-        chord("home", "date.week_start", week_start),
-        chord("end", "date.week_end", week_end),
+        key_bind("left", "date.prev_day", fn() { step_day(-1) }),
+        key_bind("right", "date.next_day", fn() { step_day(1) }),
+        key_bind("up", "date.prev_week", fn() { step_day(-7) }),
+        key_bind("down", "date.next_week", fn() { step_day(7) }),
+        key_bind("pageup", "date.prev_month", prev_month),
+        key_bind("pagedown", "date.next_month", next_month),
+        key_bind("home", "date.week_start", week_start),
+        key_bind("end", "date.week_end", week_end),
     }
+
+    // The sheet hangs under the trigger whatever the label and size make
+    // its height, and flips above it near the bottom of the window.
+    on_mount(|| {
+        anchor(sheet, trigger, Place.PlaceBelow, 4)
+    })
 
     // tree. An invisible full-window scrim closes the sheet on a click that
     // misses it; floaters hit-test in z order, so the scrim takes the Z_SCRIM
@@ -1617,39 +1629,31 @@ fn DatePicker(y: Signal<int>, m: Signal<int>, d: Signal<int>) -> Node {
         Overlay(style = Style(zIndex = Z_SCRIM),
                 visible = open.get(),
                 on_click = fn() => open.set(false))
-        Label("Date")
+        if p.label.len > 0 {
+            Label(p.label)
+        }
         Box(
-            style = Style(width = px(200),
-                          direction = Direction.Row,
-                          gap = 4,
-                          align = Align.Center,
-                          padding = edges2(8, 12),
-                          radius = corners(RAD_MD),
-                          border = line(HAIRLINE, rule()),
-                          background = plate(),
-                          cursor = "pointer"),
+            ref = trigger,
+            style = merge(merge(merge(field_chrome(size), invalid_edge(p.invalid)),
+                                Style(width = px(SELECT_W), alignSelf = Align.Start,
+                                      cursor = "pointer")),
+                          style_of(p.style)),
             on_click = fn() => open.set(!open.get()),
+            enabled = !p.disabled,
             role = "button",
             label = "Pick a date"
         ) {
-            Icon(IC_CALENDAR, 16, mute())
-            Text("{{y.get()}}", style = Style(font = FONT_BODY, color = ink()))
-            Text("-", style = Style(font = FONT_BODY, color = mute()))
-            Text("{{m.get()}}", style = Style(font = FONT_BODY, color = ink()))
-            Text("-", style = Style(font = FONT_BODY, color = mute()))
-            Text("{{d.get()}}", style = Style(font = FONT_BODY, color = ink()))
+            Icon(IC_CALENDAR, control_icon(size), mute())
+            Text("{{y.get()}}", style = Style(font = control_font(size), color = ink()))
+            Text("-", style = Style(font = control_font(size), color = mute()))
+            Text("{{m.get()}}", style = Style(font = control_font(size), color = ink()))
+            Text("-", style = Style(font = control_font(size), color = mute()))
+            Text("{{d.get()}}", style = Style(font = control_font(size), color = ink()))
         }
         Box(
-            style = Style(width = px(320),
-                          direction = Direction.Column,
-                          gap = Space.Exs,
-                          position = pos_absolute(),
-                          zIndex = Z_POPUP,
-                          padding = edges(12),
-                          inset = Edges(top = 68, left = 0),
-                          radius = corners(RAD_LG),
-                          border = line(HAIRLINE, rule()),
-                          background = plate()),
+            ref = sheet,
+            style = merge(floating_panel(0, Elevation.Floating),
+                          Style(width = px(DATE_SHEET_W), gap = Space.Exs, padding = edges(12))),
             role = "dialog",
             on_click = fn() { return },
             keys = keys,
@@ -1687,4 +1691,829 @@ fn Page() -> Node {
                              grow = 1,
                              padding = edges(PAGE_PAD),
                              background = paper()))
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Tier A organisms: menu hosts, dialog presets, sheet
+// ═══════════════════════════════════════════════════════════════════
+
+/// Options for `SplitButton`.
+struct SplitButtonProps {
+    look: int = Look.Solid,
+    size: int = Size.Md,
+    /// The main action.
+    on_click: Option<fn()> = none,
+    /// The caret's menu.
+    items: []MenuRow = no_menu_rows(),
+    on_select: Option<fn(int)> = none,
+    /// Accessible name of the caret.
+    menuLabel: string = "More options",
+}
+
+/// A primary action with a caret that opens a `Menu` of related ones
+/// ("Save" ▾ Save as… / Save a copy).
+fn SplitButton(label: string, p: SplitButtonProps) -> Node {
+    return Row(0) {
+        Box(style = Style(direction = Direction.Row), role = "group") {
+            GroupSegment(label, 0, 2, p.look, p.size, fn() => emit(p.on_click), true, "")
+            Menu(items = p.items, on_select = p.on_select, place = Place.PlaceBelow,
+                 trigger = fn() { SplitCaret(p.look, p.size, p.menuLabel) })
+        }
+    }
+}
+
+/// The caret half of a `SplitButton`: square, end corners round.
+fn SplitCaret(look: int, size: int, label: string) -> Node {
+    let bordered = button_border_width(look) > 0
+    return Box(style = Style(width = px(control_h(size)), height = px(control_h(size)),
+                             align = Align.Center, justify = Align.Center,
+                             margin = Edges(left = if bordered { -HAIRLINE } else { 1 }),
+                             radius = slot_corners(1, 2),
+                             border = Border(width = button_border_width(look),
+                                             color = opt_color(button_border_color(look))),
+                             background = opt_color(button_background(look)),
+                             cursor = "pointer"),
+               role = "button",
+               label = label,
+               press = true,
+               hoverFade = true) {
+        Icon(IC_CHEV_DOWN, control_icon(size), button_color(look))
+    }
+}
+
+/// Options for `DropdownMenu`.
+struct DropdownMenuProps {
+    look: int = Look.Outline,
+    size: int = Size.Md,
+    items: []MenuRow = no_menu_rows(),
+    on_select: Option<fn(int)> = none,
+    place: int = 0,
+}
+
+/// A button with a trailing chevron that opens a `Menu` of `items`.
+fn DropdownMenu(label: string, p: DropdownMenuProps) -> Node {
+    return Menu(items = p.items, on_select = p.on_select, place = p.place,
+                trigger = fn() { GroupSegment(label, 0, 1, p.look, p.size, noop, true, IC_CHEV_DOWN) })
+}
+
+/// Options for `ContextMenu`.
+struct ContextMenuProps {
+    items: []MenuRow = no_menu_rows(),
+    on_select: Option<fn(int)> = none,
+    disabled: bool = false,
+    /// The region that answers a right-click (or ctrl-click).
+    children: fn() = noop,
+}
+
+/// Wrap a region so a secondary click opens a `Menu` of `items` at the
+/// pointer. Escape, an outside click, or a pick closes it.
+fn ContextMenu(p: ContextMenuProps) -> Node {
+    // state
+    let active = signal(-1)
+    let region = ref()
+    let host = ref()
+    let at_x = signal(0)
+    let at_y = signal(0)
+
+    // controller. The menu anchors to a 1px point placed where the click
+    // landed, relative to the zero-height host the menu sits in.
+    on_mount(|| {
+        on_context_menu(region, fn() {
+            if p.disabled {
+                return
+            }
+            let m = current_mouse()
+            let r = rect(host)
+            at_x.set(m.x - r.x)
+            at_y.set(m.y - r.y)
+            active.set(0)
+        })
+    })
+
+    // view
+    return Box(ref = region, style = Style(direction = Direction.Column)) {
+        p.children()
+        Box(ref = host, style = Style(height = px(0))) {
+            Menu(active = active, items = p.items, on_select = p.on_select, gap = 0,
+                 trigger = fn() {
+                     Box(style = Style(position = pos_absolute(),
+                                       inset = Edges(left = at_x.get(), top = at_y.get()),
+                                       width = px(1), height = px(1)),
+                         role = "presentation")
+                 })
+        }
+    }
+}
+
+/// Options for `ConfirmDialog`.
+struct ConfirmDialogProps {
+    title: string = "Are you sure?",
+    body: string = "",
+    confirm: string = "Confirm",
+    cancel: string = "Cancel",
+    /// A destructive confirm: the button turns `Look.Danger`.
+    danger: bool = false,
+    on_confirm: Option<fn()> = none,
+    on_cancel: Option<fn()> = none,
+}
+
+/// A yes / no question over a scrim. Either button closes it.
+fn ConfirmDialog(open: Signal<bool>, p: ConfirmDialogProps) -> Node {
+    return AlertDialog(open, title = p.title) {
+        if p.body.len > 0 {
+            Text(p.body, style = Style(wrap = true, font = FONT_BODY, color = mute()))
+        }
+        Box(style = Style(direction = Direction.Row, gap = Space.Exs, justify = Align.End)) {
+            Button(p.cancel, look = Look.Outline, on_click = fn() {
+                open.set(false)
+                emit(p.on_cancel)
+            })
+            Button(p.confirm, look = if p.danger { Look.Danger } else { Look.Solid },
+                   on_click = fn() {
+                       open.set(false)
+                       emit(p.on_confirm)
+                   })
+        }
+    }
+}
+
+/// Options for `PromptDialog`.
+struct PromptDialogProps {
+    title: string = "",
+    body: string = "",
+    placeholder: string = "",
+    confirm: string = "OK",
+    cancel: string = "Cancel",
+    /// Runs with the text on OK (or Enter in the field).
+    on_submit: Option<fn(string)> = none,
+}
+
+/// A dialog that asks for one line of text, bound to `value`.
+fn PromptDialog(open: Signal<bool>, value: Signal<string>, p: PromptDialogProps) -> Node {
+    fn ok() {
+        open.set(false)
+        emit_with(p.on_submit, value.get())
+    }
+    return Dialog(open, title = p.title) {
+        if p.body.len > 0 {
+            Text(p.body, style = Style(wrap = true, font = FONT_BODY, color = mute()))
+        }
+        TextInput(value, p.placeholder, keys = []KeyBind { key_bind("enter", "prompt.ok", ok) })
+        Box(style = Style(direction = Direction.Row, gap = Space.Exs, justify = Align.End)) {
+            Button(p.cancel, look = Look.Outline, on_click = fn() { open.set(false) })
+            Button(p.confirm, look = Look.Solid, on_click = ok)
+        }
+    }
+}
+
+/// Options for `Sheet`.
+struct SheetProps {
+    /// Panel height.
+    size: int = 360,
+    title: string = "",
+    children: fn() = noop,
+}
+
+/// A bottom sheet: a `Drawer` from the bottom edge with a grip bar and an
+/// optional title. Outside click and Escape close it.
+fn Sheet(open: Signal<bool>, p: SheetProps) -> Node {
+    return Drawer(open, side = Side.SideBottom, size = p.size) {
+        Box(style = Style(direction = Direction.Row, justify = Align.Center)) {
+            Box(style = Style(width = px(36), height = px(4), radius = corners(2),
+                              background = hard()),
+                role = "presentation")
+        }
+        if p.title.len > 0 {
+            Title(p.title)
+        }
+        p.children()
+    }
+}
+
+// --- tier B organisms: tree, shell, palette, notifications ---------------
+
+/// True when `xs` holds `v`.
+fn int_has(xs: []int, v: int) -> bool {
+    for i in 0..xs.len {
+        if xs[i] == v {
+            return true
+        }
+    }
+    return false
+}
+
+/// `xs` with `v` added, or removed if it was already there.
+fn int_toggle(xs: []int, v: int) -> []int {
+    let mut out = []int {}
+    let mut found = false
+    for i in 0..xs.len {
+        if xs[i] == v {
+            found = true
+        } else {
+            push(out, xs[i])
+        }
+    }
+    if !found {
+        push(out, v)
+    }
+    return out
+}
+
+/// One row of a `Tree`. `parent` is the parent's index, or -1 for a root.
+/// `folder` draws a chevron before any child exists, so a caller can append
+/// children from `on_open`.
+struct TreeItem {
+    label: string = "",
+    parent: int = -1,
+    folder: bool = false,
+}
+
+/// Options for `Tree`.
+struct TreeProps {
+    /// Runs with the row index when a folder opens.
+    on_open: Option<fn(int)> = none,
+    label: string = "",
+    style: Option<fn() -> Style> = none,
+}
+
+/// A row is shown when every ancestor folder is open. Roots always are.
+fn tree_shown(rows: []TreeItem, opened: []int, index: int) -> bool {
+    let mut p = rows[index].parent
+    let mut guard = 0
+    while p >= 0 && guard < 32 {
+        if p >= rows.len || !int_has(opened, p) {
+            return false
+        }
+        p = rows[p].parent
+        guard = guard + 1
+    }
+    return true
+}
+
+fn tree_visible(rows: []TreeItem, opened: []int) -> []int {
+    let mut out = []int {}
+    for i in 0..rows.len {
+        if tree_shown(rows, opened, i) {
+            push(out, i)
+        }
+    }
+    return out
+}
+
+fn tree_depth(rows: []TreeItem, index: int) -> int {
+    let mut d = 0
+    let mut p = rows[index].parent
+    let mut guard = 0
+    while p >= 0 && p < rows.len && guard < 32 {
+        d = d + 1
+        p = rows[p].parent
+        guard = guard + 1
+    }
+    return d
+}
+
+/// A chevron is warranted when the row is marked `folder` or already has a child.
+fn tree_folder(rows: []TreeItem, index: int) -> bool {
+    if index < 0 || index >= rows.len {
+        return false
+    }
+    if rows[index].folder {
+        return true
+    }
+    for i in 0..rows.len {
+        if rows[i].parent == index {
+            return true
+        }
+    }
+    return false
+}
+
+/// Move the selection to the visible row `delta` steps away.
+fn tree_move(visible: Signal<[]int>, selected: Signal<int>, delta: int) {
+    let vs = visible.get()
+    let mut at = 0
+    for i in 0..vs.len {
+        if vs[i] == selected.get() {
+            at = i
+        }
+    }
+    let n = at + delta
+    if n >= 0 && n < vs.len {
+        selected.set(vs[n])
+    }
+}
+
+/// One visible tree row: chevron, label, indent of 16px per level.
+fn tree_noop(index: int) {
+    return
+}
+
+fn TreeRow(rows: []TreeItem, visible: Signal<[]int>, selected: Signal<int>, open: Signal<[]int>,
+           on_open: Option<fn(int)>, index: int) -> Node {
+    let name = rows[index].label
+    let folder = tree_folder(rows, index)
+    let depth = tree_depth(rows, index)
+    let opened = result.some_or(on_open, tree_noop)
+    fn toggle() {
+        let was = int_has(peek(open), index)
+        open.set(int_toggle(peek(open), index))
+        if !was {
+            opened(index)
+        }
+    }
+    let row_keys = []KeyBind {
+        key_bind("down", "tree.next", fn() {
+            if peek(selected) == index {
+                tree_move(visible, selected, 1)
+            }
+        }),
+        key_bind("up", "tree.prev", fn() {
+            if peek(selected) == index {
+                tree_move(visible, selected, -1)
+            }
+        }),
+        key_bind("right", "tree.open", fn() {
+            if peek(selected) == index && folder && !int_has(peek(open), index) {
+                toggle()
+            }
+        }),
+        key_bind("left", "tree.close", fn() {
+            if peek(selected) == index && folder && int_has(peek(open), index) {
+                toggle()
+            }
+        }),
+    }
+    return Box(style = Style(direction = Direction.Row, gap = 4, align = Align.Center,
+                             minHeight = control_h(Size.Md),
+                             padding = Edges(left = 8 + depth * 16),
+                             radius = corners(RAD_SM),
+                             background = if selected.get() == index { raised() } else { "" }),
+               role = "treeitem",
+               label = name,
+               focusable = true,
+               roving = fn() -> bool { return selected.get() == index },
+               keys = row_keys,
+               on_click = fn() { selected.set(index) }) {
+        if folder {
+            Box(style = Style(width = px(20), height = px(20), shrink = 0, align = Align.Center,
+                              justify = Align.Center, radius = corners(RAD_SM), cursor = "pointer"),
+                on_click = toggle,
+                role = "button",
+                label = fn() -> string {
+                    if int_has(open.get(), index) {
+                        return "Collapse {{name}}"
+                    }
+                    return "Expand {{name}}"
+                }) {
+                Icon(IC_CHEV_DOWN, IconSize.Sm, mute(),
+                     style = Style(display = shown(int_has(open.get(), index))))
+                Icon(IC_CHEV_RIGHT, IconSize.Sm, mute(),
+                     style = Style(display = shown(!int_has(open.get(), index))))
+            }
+        }
+        Text(name, style = Style(font = FONT_BODY, color = ink(), ellipsis = true))
+    }
+}
+
+/// Expand and collapse, 16px of indent per level, arrows move among the rows
+/// that are open. `open` holds the indices of expanded folders.
+fn Tree(items: Signal<[]TreeItem>, selected: Signal<int>, open: Signal<[]int>, p: TreeProps) -> Node {
+    let visible = signal([]int {})
+    effect(|| {
+        visible.set(tree_visible(items.get(), open.get()))
+    })
+    return Box(style = merge(Style(direction = Direction.Column), style_of(p.style)),
+               role = "tree",
+               label = p.label) {
+        For(visible, fn(i) => "{{i}}", fn(row, index) {
+            return TreeRow(items.get(), visible, selected, open, p.on_open, index)
+        })
+    }
+}
+
+/// Options for `Sidebar`.
+struct SidebarProps {
+    style: Option<fn() -> Style> = none,
+    children: fn() = noop,
+}
+
+/// A side rail: `SIDEBAR_W` (240) open, `SIDEBAR_RAIL` (56) collapsed.
+/// The chevron button is labelled Collapse / Expand.
+fn Sidebar(collapsed: Signal<bool>, p: SidebarProps) -> Node {
+    return Box(style = merge(Style(width = px(if collapsed.get() { SIDEBAR_RAIL } else { SIDEBAR_W }),
+                                   shrink = 0, direction = Direction.Column, gap = 4,
+                                   padding = edges(8), background = raised()),
+                             style_of(p.style)),
+               role = "navigation",
+               label = "Sidebar") {
+        // Centred on the rail, so the chevron lines up with the nav icons.
+        Box(style = Style(width = px(control_h(Size.Md)), height = px(control_h(Size.Md)),
+                          align = Align.Center, justify = Align.Center,
+                          alignSelf = if collapsed.get() { Align.Center } else { Align.Start },
+                          radius = corners(RAD_CONTROL), cursor = "pointer"),
+            on_click = fn() { collapsed.set(!collapsed.get()) },
+            role = "button",
+            label = fn() -> string {
+                if collapsed.get() {
+                    return "Expand"
+                }
+                return "Collapse"
+            }) {
+            Icon(IC_CHEV_LEFT, IconSize.Md, mute(),
+                 style = Style(display = shown(!collapsed.get())))
+            Icon(IC_CHEV_RIGHT, IconSize.Md, mute(),
+                 style = Style(display = shown(collapsed.get())))
+        }
+        p.children()
+    }
+}
+
+/// Options for `NavGroup`.
+struct NavGroupProps {
+    /// When this is true the heading hides (a collapsed rail).
+    collapsed: Option<Signal<bool>> = none,
+    children: fn() = noop,
+}
+
+/// A heading over a stack of `NavItem`s. Hidden while `collapsed` is set.
+fn NavGroup(title: string, p: NavGroupProps) -> Node {
+    let has = result.is_some(p.collapsed)
+    let col = result.some_or(p.collapsed, no_flag_signal())
+    return Column(4) {
+        Text(title, style = Style(font = FONT_OVERLINE, color = dim(),
+                                  padding = Edges(left = 8, top = 8),
+                                  display = shown(!has || !col.get())))
+        p.children()
+    }
+}
+
+/// One destination in a `Sidebar`. The label hides while `collapsed` is set;
+/// the icon stays, centred on the rail.
+fn NavItem(label: string, icon: string, page: Signal<int>, index: int, collapsed: Signal<bool>) -> Node {
+    return Box(style = Style(minHeight = control_h(Size.Md), direction = Direction.Row,
+                             gap = 8, align = Align.Center,
+                             justify = if collapsed.get() { Align.Center } else { Align.Start },
+                             padding = Edges(left = if collapsed.get() { 0 } else { 8 },
+                                             right = if collapsed.get() { 0 } else { 8 }),
+                             radius = corners(RAD_CONTROL), cursor = "pointer",
+                             background = if page.get() == index { plate() } else { "" }),
+               on_click = fn() { page.set(index) },
+               role = "button",
+               label = label) {
+        if icon.len > 0 {
+            Icon(icon, IconSize.Md, if page.get() == index { ink() } else { mute() })
+        }
+        Text(label, style = Style(ellipsis = true, font = FONT_BODY,
+                                  color = if page.get() == index { ink() } else { mute() },
+                                  display = shown(!collapsed.get())))
+    }
+}
+
+/// Options for `AppShell`.
+struct AppShellProps {
+    /// The side rail.
+    sidebar: fn() = noop,
+    /// A bar across the top of the main column.
+    header: fn() = noop,
+    style: Option<fn() -> Style> = none,
+    children: fn() = noop,
+}
+
+/// Sidebar, then a column of header and the page body. The header is inset
+/// by the same 16px as the body, so its label does not sit on the rail.
+fn AppShell(p: AppShellProps) -> Node {
+    return Box(style = merge(Style(direction = Direction.Row, align = Align.Stretch,
+                                   width = pct(100), minHeight = 200),
+                             style_of(p.style))) {
+        p.sidebar()
+        Box(style = Style(direction = Direction.Column, grow = 1, minWidth = 0)) {
+            Box(style = Style(padding = Edges(top = 16, right = 16, left = 16))) {
+                p.header()
+            }
+            Box(style = Style(grow = 1, padding = edges(16))) {
+                p.children()
+            }
+        }
+    }
+}
+
+/// Options for `MasterDetail`.
+struct MasterDetailProps {
+    master: fn() = noop,
+    /// Width of the master column.
+    masterWidth: int = 280,
+    style: Option<fn() -> Style> = none,
+    children: fn() = noop,
+}
+
+/// A fixed master column, a hairline, and the detail.
+fn MasterDetail(p: MasterDetailProps) -> Node {
+    let w = if p.masterWidth > 0 { p.masterWidth } else { 280 }
+    return Box(style = merge(Style(direction = Direction.Row, align = Align.Stretch,
+                                   width = pct(100), minHeight = 120),
+                             style_of(p.style))) {
+        Box(style = Style(width = px(w), shrink = 0, direction = Direction.Column,
+                          background = raised(), padding = edges(12))) {
+            p.master()
+        }
+        Box(style = Style(width = px(HAIRLINE), shrink = 0, alignSelf = Align.Stretch,
+                          background = rule()))
+        Box(style = Style(grow = 1, minWidth = 0, direction = Direction.Column,
+                          padding = edges(12))) {
+            p.children()
+        }
+    }
+}
+
+/// Options for `SplitPane`.
+struct SplitPaneProps {
+    /// The leading pane.
+    first: fn() = noop,
+    /// Leading pane's starting size, in px.
+    initial: int = 240,
+    /// Narrowest either pane may go (`SPLIT_MIN`).
+    min: int = SPLIT_MIN,
+    /// Stack the panes and drag vertically.
+    vertical: bool = false,
+    /// Cross size: the height of a horizontal split, the width of a vertical one.
+    size: int = 160,
+    style: Option<fn() -> Style> = none,
+    /// The trailing pane.
+    children: fn() = noop,
+}
+
+/// Two panes and a 6px drag handle. Neither pane goes below `min`.
+fn SplitPane(p: SplitPaneProps) -> Node {
+    let split = signal(if p.initial > 0 { p.initial } else { 240 })
+    let host = ref()
+    let handle = ref()
+    let vertical = p.vertical
+    let mn = if p.min > 0 { p.min } else { SPLIT_MIN }
+    on_mount(|| {
+        on_drag(handle, fn() {
+            let r = rect(host)
+            let v = if vertical { current_mouse().y - r.y } else { current_mouse().x - r.x }
+            let span = if vertical { r.h } else { r.w }
+            let cap = if span - mn > mn { span - mn } else { mn }
+            split.set(clamp_int(v, mn, cap))
+        })
+    })
+    return Box(ref = host,
+               style = merge(Style(direction = if vertical { Direction.Column } else { Direction.Row },
+                                   align = Align.Stretch, width = pct(100),
+                                   height = px(if vertical { 320 } else { p.size })),
+                             style_of(p.style)),
+               role = "group",
+               label = "Split") {
+        Box(style = Style(width = if vertical { pct(100) } else { px(split.get()) },
+                          height = if vertical { px(split.get()) } else { pct(100) },
+                          overflow = Overflow.Hidden, direction = Direction.Column),
+            role = "region",
+            label = "First pane") {
+            p.first()
+        }
+        Box(ref = handle,
+            style = Style(width = if vertical { pct(100) } else { px(SPLIT_HIT) },
+                          height = if vertical { px(SPLIT_HIT) } else { pct(100) },
+                          shrink = 0, align = Align.Center, justify = Align.Center,
+                          cursor = if vertical { "ns-resize" } else { "ew-resize" }),
+            role = "separator",
+            label = "Resize") {
+            Box(style = Style(width = if vertical { pct(100) } else { px(HAIRLINE) },
+                              height = if vertical { px(HAIRLINE) } else { pct(100) },
+                              shrink = 0, background = rule()))
+        }
+        Box(style = Style(grow = 1, minWidth = 0, minHeight = 0, overflow = Overflow.Hidden,
+                          direction = Direction.Column)) {
+            p.children()
+        }
+    }
+}
+
+/// One notice in a `NotificationCenter`.
+struct Notice {
+    title: string = "",
+    body: string = "",
+    tint: int = Tint.Info,
+}
+
+/// `xs` plus `n`.
+fn notice_plus(xs: []Notice, n: Notice) -> []Notice {
+    let mut out = []Notice {}
+    for i in 0..xs.len {
+        push(out, xs[i])
+    }
+    push(out, n)
+    return out
+}
+
+/// `xs` without index `drop`.
+fn notice_without(xs: []Notice, drop: int) -> []Notice {
+    let mut out = []Notice {}
+    for i in 0..xs.len {
+        if i != drop {
+            push(out, xs[i])
+        }
+    }
+    return out
+}
+
+/// A single notice card, `TOAST_W` wide. `on_dismiss` shows the X.
+fn Notification(title: fn() -> string, body: fn() -> string, tint: int, on_dismiss: fn()) -> Node {
+    return Box(style = Style(direction = Direction.Row, gap = 12, align = Align.Start,
+                             width = px(TOAST_W), padding = edges(12),
+                             radius = corners(RAD_LG), border = line(HAIRLINE, tint_line(tint)),
+                             background = tint_bg(tint), elevation = Elevation.Overlay),
+               role = "status",
+               label = title) {
+        Icon(tint_icon(tint), IconSize.Md, tint_ink(tint))
+        Box(style = Style(direction = Direction.Column, gap = 2, grow = 1)) {
+            Text(title, style = Style(font = FONT_BODY, color = tint_ink(tint)))
+            Text(body, style = Style(wrap = true, font = FONT_CONTROL, color = ink()))
+        }
+        Box(style = Style(width = px(28), height = px(28), shrink = 0, align = Align.Center,
+                          justify = Align.Center, radius = corners(RAD_CONTROL), cursor = "pointer"),
+            on_click = on_dismiss,
+            role = "button",
+            label = fn() -> string { return "Dismiss {{title()}}" }) {
+            Icon(IC_X, IconSize.Md, tint_ink(tint))
+        }
+    }
+}
+
+/// A read-only row in the notification history.
+fn NoticeHistory(title: string, body: string) -> Node {
+    return Box(style = Style(direction = Direction.Column, gap = 2, width = px(TOAST_W),
+                             padding = edges(12), radius = corners(RAD_MD), background = raised()),
+               role = "listitem",
+               label = title) {
+        Text(title, style = Style(font = FONT_BODY, color = ink()))
+        Text(body, style = Style(wrap = true, font = FONT_CONTROL, color = mute()))
+    }
+}
+
+/// The live stack (`TOAST_W`) and a History toggle. Dismissing a notice moves
+/// it into `history`.
+fn NotificationCenter(live: Signal<[]Notice>, history: Signal<[]Notice>) -> Node {
+    let show = signal(false)
+    fn dismiss(i: int) {
+        let xs = peek(live)
+        if i < 0 || i >= xs.len {
+            return
+        }
+        history.set(notice_plus(peek(history), xs[i]))
+        live.set(notice_without(xs, i))
+    }
+    return Box(style = Style(direction = Direction.Column, gap = 8, width = px(TOAST_W))) {
+        Box(style = Style(direction = Direction.Row, align = Align.Center)) {
+            Text("Notifications", style = Style(font = FONT_BODY, color = ink()))
+            Grow()
+            Button("History", look = Look.Ghost, size = Size.Sm,
+                   on_click = fn() { show.set(!show.get()) })
+        }
+        For(live, fn(n) => n.title, fn(i, n) {
+            return Notification(n.title, n.body, n.tint, fn() { dismiss(i) })
+        })
+        Show(when = show.get()) {
+            For(history, fn(n) => "{{n.title}} past", fn(i, n) {
+                return NoticeHistory(n.title, n.body)
+            })
+        }
+    }
+}
+
+/// One command in a `CommandPalette`. `section` groups a run of rows.
+struct CommandItem {
+    label: string = "",
+    section: string = "",
+}
+
+/// Options for `CommandPalette`.
+struct CommandPaletteProps {
+    placeholder: string = "Search commands",
+    on_select: Option<fn(int)> = none,
+}
+
+/// Indices of `items` whose label contains `q`.
+fn command_matches(items: []CommandItem, q: string) -> []int {
+    let mut out = []int {}
+    for i in 0..items.len {
+        if ci_has(items[i].label, q) {
+            push(out, i)
+        }
+    }
+    return out
+}
+
+/// One filtered command, with a section label when the group changes.
+fn CommandRow(items: []CommandItem, matches: Signal<[]int>, active: Signal<int>,
+              row: int, index: int, pick: fn(int)) -> Node {
+    let sec = items[index].section
+    let mut lead = false
+    if sec.len > 0 {
+        if row == 0 {
+            lead = true
+        } else {
+            let prev = matches.get()[row - 1]
+            lead = !fmt.eq(items[prev].section, sec)
+        }
+    }
+    return Box(style = Style(direction = Direction.Column, gap = 2)) {
+        if lead {
+            Text(sec, style = Style(font = FONT_CAPTION, color = dim(),
+                                    padding = Edges(left = 8, top = 6)))
+        }
+        Box(style = Style(direction = Direction.Row, align = Align.Center,
+                          padding = edges2(8, 10), radius = corners(RAD_SM), cursor = "pointer",
+                          background = if active.get() == row { raised() } else { "" }),
+            on_click = fn() { pick(index) },
+            role = "option",
+            label = items[index].label) {
+            Text(items[index].label, style = Style(font = FONT_BODY, color = ink()))
+        }
+    }
+}
+
+/// A modal command list, 600 wide and 400 tall. Type to filter (the same
+/// match `Combobox` uses); Up / Down move, Enter runs the highlighted command,
+/// Escape closes.
+fn CommandPalette(open: Signal<bool>, items: []CommandItem, p: CommandPaletteProps) -> Node {
+    let query = signal("")
+    let matches = signal([]int {})
+    let active = signal(0)
+    let input = ref()
+    let panel = ref()
+    let cmds = items
+    let choose = result.some_or(p.on_select, fn(index: int) { return })
+    effect(|| {
+        let ms = command_matches(cmds, query.get())
+        matches.set(ms)
+        if peek(active) >= ms.len {
+            active.set(if ms.len > 0 { 0 } else { -1 })
+        } else if peek(active) < 0 && ms.len > 0 {
+            active.set(0)
+        }
+    })
+    fn pick(index: int) {
+        choose(index)
+        open.set(false)
+    }
+    fn key() {
+        let k = current_key().key
+        let ms = peek(matches)
+        let n = ms.len
+        if k == Key.Escape {
+            open.set(false)
+        } else if k == Key.Down {
+            let a = peek(active)
+            if a + 1 < n {
+                active.set(a + 1)
+            }
+        } else if k == Key.Up {
+            let a = peek(active)
+            if a > 0 {
+                active.set(a - 1)
+            }
+        } else if k == Key.Enter {
+            let a = peek(active)
+            if a >= 0 && a < n {
+                pick(ms[a])
+            }
+        }
+    }
+    effect(|| {
+        if open.get() {
+            focus(input)
+            trap_focus(panel)
+        } else {
+            release_focus_trap(panel)
+        }
+    })
+    return Overlay(style = Style(opacity = 80, background = scrim()),
+                   visible = open.get(),
+                   on_click = fn() { open.set(false) }) {
+        Box(ref = panel,
+            style = merge(Style(direction = Direction.Column, gap = 8, elevation = Elevation.Modal,
+                                height = px(400), maxWidth = 600,
+                                padding = edges(12), radius = corners(RAD_LG),
+                                border = line(HAIRLINE, rule()), background = plate()),
+                          Style(width = pct(92))),
+            role = "dialog",
+            label = "Commands",
+            on_click = fn() { return }) {
+            Box(style = field_chrome(Size.Md)) {
+                Icon(IC_SEARCH, control_icon(Size.Md), dim())
+                Input(ref = input, bind = query, placeholder = p.placeholder,
+                      label = p.placeholder,
+                      style = Style(grow = 1, font = control_font(Size.Md), padding = edges(0),
+                                    color = ink()),
+                      on_key_down = key)
+            }
+            Scroll(style = Style(width = pct(100), height = px(320))) {
+                For(matches, fn(i) => "{{i}}", fn(row, index) {
+                    return CommandRow(cmds, matches, active, row, index, pick)
+                })
+            }
+        }
+    }
 }

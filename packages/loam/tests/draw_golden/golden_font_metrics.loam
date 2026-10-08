@@ -3,7 +3,8 @@
 // `zeus.use_font` binds packages/loam/tests/fonts/tiny.ttf. tiny.ttf's
 // space is 250/1000 em where the headless fallback charges 0.6em per byte, so:
 //   * `ABC` lands at a smaller x after `A A`, and
-//   * `AB AB AB` fits one 65px line in-tree but wraps to two without the font.
+//   * `AB AB AB` fits one 70px line in-tree (about 68px: advances sum in font
+//     units and round up) but wraps to two without the font.
 // The following Box marks the wrapped height. If the fixture font is missing
 // the bind fails and both revert — so this golden also guards the external-font
 // path. Keep this file free of prints: stdout is the golden.
@@ -19,7 +20,7 @@ fn main() {
                 zeus.Text("A A", style = Style(font = 16))
                 zeus.Text("ABC", style = Style(font = 16))
             }
-            zeus.Box(style = Style(width = px(65))) {
+            zeus.Box(style = Style(width = px(70))) {
                 zeus.Text("AB AB AB", style = Style(wrap = true, font = 16))
             }
             zeus.Box(style = Style(width = px(20), height = px(10)))

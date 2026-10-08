@@ -722,6 +722,17 @@ fn engine_click(px: int, py: int) -> int {
     return input.click(px, py)
 }
 
+/// Secondary click (right button / ctrl-click): runs the nearest
+/// `on_context_menu` handler. The hosts call it; tests drive it directly.
+fn engine_context_click(px: int, py: int) -> int {
+    return input.context_click(px, py)
+}
+
+/// The text the last `copy_text` put on the clipboard.
+fn clipboard_last() -> string {
+    return platform.plat_clipboard_last()
+}
+
 fn click_id(id: int) -> int {
     let mut i = id
     while i > 0 {
@@ -806,9 +817,69 @@ let mut A11Y_out: []int = []int {}
 fn a11y_push(s: string) {
     let mut i = 0
     while i < s.len {
-        push(A11Y_out, s[i])
+        // Tabs and newlines are the line format's separators: a label that
+        // carries one must not split its line.
+        let c = s[i]
+        if c == 9 || c == 10 || c == 13 {
+            push(A11Y_out, 32)
+        } else {
+            push(A11Y_out, c)
+        }
         i = i + 1
     }
+}
+
+/// Roles a user operates: their own label is what assistive tech announces,
+/// so the text drawn inside them is not listed again.
+fn a11y_control(role: string) -> bool {
+    return fmt.eq(role, "button") || fmt.eq(role, "checkbox") || fmt.eq(role, "radio") ||
+           fmt.eq(role, "switch") || fmt.eq(role, "tab") || fmt.eq(role, "option") ||
+           fmt.eq(role, "menuitem") || fmt.eq(role, "link") || fmt.eq(role, "combobox") ||
+           fmt.eq(role, "slider") || fmt.eq(role, "listitem")
+}
+
+/// true when `i` is plain text inside a labelled control (within three
+/// levels): the control's label already says it.
+fn a11y_redundant(i: int) -> bool {
+    let mut p = arena.nodes[i].parent
+    let mut up = 0
+    while p > 0 && up < 3 {
+        if arena.nodes[p].a11y_label.len > 0 && a11y_control(arena.nodes[p].a11y_role) {
+            return true
+        }
+        p = arena.nodes[p].parent
+        up = up + 1
+    }
+    return false
+}
+
+/// The state column: 1 focusable, 2 has an on/off state, 4 on, 8 disabled,
+/// 16 focused. On/off comes from the `checked` prop, else from a bound
+/// toggle (a switch's signal).
+fn a11y_state_bits(i: int) -> int {
+    let mut b = 0
+    if arena.is_focusable(i) != 0 {
+        b = b | 1
+    }
+    let st = int(arena.nodes[i].a11y_state)
+    if st != 0 {
+        b = b | 2
+        if st == 2 {
+            b = b | 4
+        }
+    } else if arena.nodes[i].bind_sig > 0 && fmt.eq(arena.nodes[i].a11y_role, "switch") {
+        b = b | 2
+        if arena.state_selected_of(i) != 0 {
+            b = b | 4
+        }
+    }
+    if arena.is_inert(i) != 0 {
+        b = b | 8
+    }
+    if arena.focus_id == i {
+        b = b | 16
+    }
+    return b
 }
 
 fn a11y_num(v: int) {
@@ -858,8 +929,11 @@ fn chrome_sync_count() -> int {
 }
 
 /// Serialize the visible **semantic tree** for an accessibility mirror (§2.3):
-/// one `depth<TAB>role<TAB>label<TAB>x<TAB>y<TAB>w<TAB>h` line per node
-/// carrying a role, a label, or visible text. Geometry lets a native host
+/// one `depth<TAB>role<TAB>label<TAB>x<TAB>y<TAB>w<TAB>h<TAB>id<TAB>state` line
+/// per node carrying a role, a label, or visible text (`state`: see
+/// `a11y_state_bits`; `id` is what `engine_a11y_activate` / `_focus` take).
+/// Decorative (`presentation`) nodes and the text inside a labelled control
+/// are left out — the control's label already says it. Geometry lets a native host
 /// place accessible frames; the web mirror uses role and label only. The UI
 /// stays canvas — hosts relay this to a visually-hidden DOM on web, or to
 /// `NSAccessibility` on native. A node with a label but no role is a `text`
@@ -885,11 +959,19 @@ fn a11y_build() {
     let n = arena.nodes.len
     let mut i = 1
     while i < n {
-        if arena.want_show(i) != 0 {
+        // Shown in the tree, not merely by its own flag: the items of a closed
+        // menu or a hidden panel are not on the page and must not be read.
+        if arena.shown_in_tree(i) != 0 {
             let role = arena.nodes[i].a11y_role
             let label = arena.nodes[i].a11y_label
             let txt = arena.nodes[i].text
-            if role.len > 0 || label.len > 0 || txt.len > 0 {
+            let mut keep = role.len > 0 || label.len > 0 || txt.len > 0
+            if fmt.eq(role, "presentation") {
+                keep = false
+            } else if role.len == 0 && label.len == 0 && a11y_redundant(i) {
+                keep = false
+            }
+            if keep {
                 let mut r = role
                 let mut l = label
                 if l.len == 0 {
@@ -917,11 +999,47 @@ fn a11y_build() {
                 a11y_num(arena.nodes[i].w)
                 push(A11Y_out, 9)
                 a11y_num(arena.nodes[i].h)
+                push(A11Y_out, 9)
+                a11y_num(i)
+                push(A11Y_out, 9)
+                a11y_num(a11y_state_bits(i))
                 push(A11Y_out, 10)
             }
         }
         i = i + 1
     }
+}
+
+/// Assistive tech activated node `id` (a screen reader's "press"): focus it
+/// and run what Enter would. Returns 1 when something ran.
+fn engine_a11y_activate(id: int) -> int {
+    if id <= 0 || id >= arena.nodes.len {
+        return 0
+    }
+    if arena.want_show(id) == 0 {
+        return 0
+    }
+    arena.claim_focus(id)
+    arena.kb_focus = 1
+    arena.mark_paint()
+    if arena.focus_id != id {
+        return 0
+    }
+    return input.press_focused()
+}
+
+/// Assistive tech moved focus to node `id`: follow it, so keys and the
+/// focus ring land where the screen reader is.
+fn engine_a11y_focus(id: int) {
+    if id <= 0 || id >= arena.nodes.len {
+        return
+    }
+    if arena.want_show(id) == 0 {
+        return
+    }
+    arena.claim_focus(id)
+    arena.kb_focus = 1
+    arena.mark_paint()
 }
 
 /// Inspector dump of the retained tree (devtools §2.4): one

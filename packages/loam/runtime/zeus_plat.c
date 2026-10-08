@@ -1266,6 +1266,20 @@ static char *edit_view[ZEUS_EDIT_SLOTS];
 static int edit_view_cap[ZEUS_EDIT_SLOTS];
 static int edit_wrap_w[ZEUS_EDIT_SLOTS];
 static int edit_font[ZEUS_EDIT_SLOTS];
+/* Masked slots (`PasswordInput`): shown as one bullet per code point, and
+   measured that way too, so the caret and clicks land on the bullets. */
+static int edit_secure[ZEUS_EDIT_SLOTS];
+
+#define EDIT_BULLET "\xe2\x80\xa2"
+
+/* Code points in `s[0..n)`: UTF-8 lead bytes only. */
+static int64_t utf8_count(const char *s, int64_t n) {
+    int64_t c = 0;
+    for (int64_t i = 0; i < n; i++)
+        if (((unsigned char)s[i] & 0xC0) != 0x80) c++;
+    return c;
+}
+
 
 static int edit_ok(int64_t slot) {
     return slot >= 0 && slot < ZEUS_EDIT_SLOTS;
@@ -1487,6 +1501,21 @@ loam_str loam_platform_plat_edit_shown(int64_t slot) {
     if (!edit_ok(slot)) return (loam_str){"", 0};
     n = edit_len[slot];
     m = edit_mark_len[slot];
+    if (edit_secure[slot]) {
+        int64_t c = edit_buf[slot] ? utf8_count(edit_buf[slot], n) : 0;
+        need = (int)(c * 3 + 1);
+        if (c <= 0) return (loam_str){"", 0};
+        if (need > edit_view_cap[slot]) {
+            v = (char *)realloc(edit_view[slot], (size_t)need);
+            if (!v) return (loam_str){"", 0};
+            edit_view[slot] = v;
+            edit_view_cap[slot] = need;
+        }
+        v = edit_view[slot];
+        for (int64_t k = 0; k < c; k++) memcpy(v + k * 3, EDIT_BULLET, 3);
+        v[c * 3] = '\0';
+        return (loam_str){v, c * 3};
+    }
     if (m <= 0) {
         if (n <= 0 || !edit_buf[slot]) return (loam_str){"", 0};
         return (loam_str){edit_buf[slot], n};
@@ -1515,6 +1544,24 @@ void loam_platform_plat_edit_metrics(int64_t slot, int64_t wrap_w, int64_t font)
     edit_font[slot] = font > 0 ? (int)font : 14;
 }
 
+/* `measure_span` as the slot shows it: plain text, or a bullet per code point. */
+static void edit_measure(int slot, const char *s, int64_t n, int64_t font, int64_t *w,
+                         int64_t *h) {
+    if (edit_secure[slot]) {
+        int64_t bw = 0, bh = 0;
+        measure_span(EDIT_BULLET, 3, font, &bw, &bh);
+        *w = bw * utf8_count(s, n);
+        *h = bh;
+        return;
+    }
+    measure_span(s, n, font, w, h);
+}
+
+void loam_platform_plat_edit_set_secure(int64_t slot, int64_t on) {
+    if (!edit_ok(slot)) return;
+    edit_secure[slot] = on ? 1 : 0;
+}
+
 static int edit_xy_to_pos(int slot, int x, int y, int wrap_w, int font) {
     const char *s = edit_buf[slot] ? edit_buf[slot] : "";
     int n = edit_len[slot], i = 0, best = 0;
@@ -1539,12 +1586,12 @@ static int edit_xy_to_pos(int slot, int x, int y, int wrap_w, int font) {
         j = i;
         while (j < n && s[j] != ' ' && s[j] != '\t' && s[j] != '\n') j++;
         if (j == i) {
-            measure_span(s + i, 1, font, &ww, &wh);
+            edit_measure(slot, s + i, 1, font, &ww, &wh);
             adv = utf8_next(s, n, i) - i;
             if (adv < 1) adv = 1;
             j = i + adv;
         } else {
-            measure_span(s + i, j - i, font, &ww, &wh);
+            edit_measure(slot, s + i, j - i, font, &ww, &wh);
         }
         if (line_w > 0 && line_w + ww > wrap_w) {
             if (y < yy + lh) return i;
@@ -1557,7 +1604,7 @@ static int edit_xy_to_pos(int slot, int x, int y, int wrap_w, int font) {
             while (k < j) {
                 int nk = utf8_next(s, n, k);
                 int64_t cw = 0, ch = 0;
-                measure_span(s + i, nk - i, font, &cw, &ch);
+                edit_measure(slot, s + i, nk - i, font, &cw, &ch);
                 if (x < line_w + cw) {
                     int64_t mid = (cx + line_w + cw) / 2;
                     return x < mid ? k : nk;
@@ -1597,7 +1644,7 @@ static void edit_pos_to_xy(int slot, int pos, int wrap_w, int font, int64_t *ox,
         while (j < n && j < pos && s[j] != ' ' && s[j] != '\t' && s[j] != '\n') j++;
         if (j == i) j = utf8_next(s, n, i);
         if (j > pos) j = pos;
-        measure_span(s + i, j - i, font, &ww, &wh);
+        edit_measure(slot, s + i, j - i, font, &ww, &wh);
         if (line_w > 0 && line_w + ww > wrap_w) {
             yy += lh;
             line_w = 0;
@@ -1679,6 +1726,7 @@ void loam_platform_plat_edit_reset(int64_t slot) {
     edit_len[slot] = 0;
     edit_pos[slot] = 0;
     edit_anchor[slot] = 0;
+    edit_secure[slot] = 0;
     edit_clear_mark((int)slot);
 }
 
@@ -1720,6 +1768,48 @@ void loam_platform_plat_set_title(loam_str title) {
     if (plat_title_fn) plat_title_fn(win_title ? win_title : "");
 #endif
 }
+/* Clipboard write (`CopyButton`). The runtime keeps the last string so a
+   headless run can read it back (`plat_clipboard_last`); a desktop host
+   registers a hook that hands it to the system pasteboard, and the web asks
+   `navigator.clipboard`. */
+static char *clip_last;
+static void (*plat_clip_fn)(const char *);
+void zeus_set_clipboard_hook(void (*fn)(const char *)) { plat_clip_fn = fn; }
+
+#ifdef __wasm32__
+__attribute__((import_module("zeus"), import_name("clipboard_write")))
+void zeus_js_clipboard_write(const char *t);
+__attribute__((import_module("zeus"), import_name("apple_keys")))
+int32_t zeus_js_apple_keys(void);
+#endif
+
+void loam_platform_plat_clipboard_write(loam_str text) {
+    free(clip_last);
+    clip_last = dup_ys(text);
+#ifdef __wasm32__
+    zeus_js_clipboard_write(clip_last);
+#else
+    if (plat_clip_fn) plat_clip_fn(clip_last);
+#endif
+}
+
+loam_str loam_platform_plat_clipboard_last(void) {
+    if (!clip_last) return (loam_str){"", 0};
+    return (loam_str){clip_last, (int64_t)strlen(clip_last)};
+}
+
+/* 1 when shortcuts follow Apple conventions (⌘ rather than Ctrl): macOS and
+   iOS builds, and a browser on an Apple platform. */
+int64_t loam_platform_plat_apple_keys(void) {
+#ifdef __wasm32__
+    return zeus_js_apple_keys();
+#elif defined(__APPLE__)
+    return 1;
+#else
+    return 0;
+#endif
+}
+
 int64_t loam_platform_plat_view_width(void) { return loam_zeus_plat_view_width(); }
 int64_t loam_platform_plat_view_height(void) { return loam_zeus_plat_view_height(); }
 
@@ -1976,6 +2066,16 @@ void zeus_paint(void *ctx, ZeusDraw draw) {
 
 int zeus_handle_click(int64_t x, int64_t y) {
     return (int)loam_zeus_engine_click(x, y);
+}
+
+/* Secondary click (right button, ctrl-click, long press): runs the nearest
+   `on_context_menu` handler under the point. */
+int zeus_handle_context_click(int64_t x, int64_t y) {
+#ifdef LOAM_HOST_BUILD
+    /* An app image built before the entry existed has none to bind. */
+    if (!zeus_app_api.context_click) return 0;
+#endif
+    return (int)loam_zeus_engine_context_click(x, y);
 }
 
 int zeus_handle_hover(int64_t x, int64_t y) {

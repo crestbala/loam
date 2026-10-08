@@ -20,13 +20,61 @@ enum Look {
     Ghost = 3,
     Danger = 4,
     Link = 5,
+    // A faint wash, quieter than `Soft`: toolbar and inline actions.
+    Subtle = 6,
+    // Filled with the ok tier: a confirming action ("Approve", "Publish").
+    Success = 7,
 }
 
-/// Button sizes, by control height: Sm 32px, Md 36px, Lg 40px.
+/// Control sizes, by height: Sm 32px, Md 36px, Lg 44px (see `control_h`).
 enum Size {
     Sm = 0,
     Md = 1,
     Lg = 2,
+}
+
+/// Control density: shifts every `control_h` by −4 / 0 / +4 px (and the side
+/// padding by half that). Read through `density()`, so it is one global knob.
+enum Density {
+    Compact = 0,
+    Standard = 1,
+    Comfortable = 2,
+}
+
+/// Icon sizes. Each member *is* its pixel size, so `Icon(markup, 16)` and
+/// `Icon(markup, IconSize.Md)` are the same call and SVG art can still pass a
+/// raw px.
+enum IconSize {
+    Xs = 12,
+    Sm = 14,
+    Md = 16,
+    Lg = 20,
+    Xl = 24,
+    Xxl = 32,
+}
+
+/// Avatar diameters. Like `IconSize`, the member is the px, so an existing
+/// `Avatar(initials, 40)` reads the same as `AvatarSize.Lg`. `Xxl` is for
+/// profile headers.
+enum AvatarSize {
+    Xs = 20,
+    Sm = 24,
+    Md = 32,
+    Lg = 40,
+    Xl = 56,
+    Xxl = 72,
+}
+
+/// Shadow levels, named by what floats. Each member is the engine's
+/// `elevation` level, so `Style(elevation = Elevation.Floating)` paints the
+/// cached shadow for that level directly. `Overlay` is the small lift under a
+/// tooltip, toast, or field dropdown; `Floating` is a menu or popover.
+enum Elevation {
+    Flat = 0,
+    Raised = 1,
+    Overlay = 2,
+    Floating = 3,
+    Modal = 4,
 }
 
 /// Status tints for chips, badges, stats, meters.

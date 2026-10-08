@@ -147,6 +147,12 @@ fn hit_node(id: int, px: int, py: int) -> int {
     if arena.nodes[id].up_fn > 0 {
         return id
     }
+    // So is one with a context-menu or drag hook (a region, a track).
+    if arena.hook_node.len > 0 {
+        if arena.hook_of(id, arena.HOOK_CONTEXT) > 0 || arena.hook_of(id, arena.HOOK_DRAG) > 0 {
+            return id
+        }
+    }
     if int(arena.nodes[id].kind) == 4 {
         return id
     }
@@ -175,6 +181,37 @@ fn hit_node(id: int, px: int, py: int) -> int {
         return id
     }
     return 0
+}
+
+/// Secondary click at (`px`, `py`): the nearest ancestor of the hit node with
+/// an `on_context_menu` handler runs, with the point in `current_mouse()`
+/// (`button` 2). Returns 1 when a handler ran, so the host suppresses its own
+/// menu.
+fn context_click(px: int, py: int) -> int {
+    arena.ensure()
+    arena.ptr_x = px
+    arena.ptr_y = py
+    if arena.root_id <= 0 || arena.hook_node.len == 0 {
+        return 0
+    }
+    let mut hit = hit_floaters(arena.root_id, px, py)
+    if hit <= 0 {
+        hit = hit_node(arena.root_id, px, py)
+    }
+    let id = arena.hook_owner(hit, arena.HOOK_CONTEXT)
+    if id <= 0 {
+        return 0
+    }
+    if arena.is_inert(id) != 0 {
+        return 1
+    }
+    arena.ev_x = px
+    arena.ev_y = py
+    arena.ev_button = 2
+    platform.plat_invoke_fn(arena.hook_of(id, arena.HOOK_CONTEXT))
+    arena.ev_button = 0
+    arena.mark_chrome()
+    return 1
 }
 
 fn click(px: int, py: int) -> int {
@@ -258,6 +295,25 @@ fn click(px: int, py: int) -> int {
             return 1
         }
     }
+    // An `on_drag` region (a range slider's track) takes the press as the
+    // first point of a drag; later points come through `drag`.
+    let dr = arena.hook_owner(id, arena.HOOK_DRAG)
+    if dr > 0 {
+        arena.drag_id = dr
+        arena.down_id = id
+        arena.ev_x = px
+        arena.ev_y = py
+        arena.ev_button = 0
+        platform.plat_invoke_fn(arena.hook_of(dr, arena.HOOK_DRAG))
+        arena.mark_chrome()
+        return 1
+    }
+    // Handlers read `current_mouse()` while they run. Set the point before
+    // the click, not after, or a half-star (or any hit that cares where the
+    // pointer landed) sees the previous event.
+    arena.ev_x = px
+    arena.ev_y = py
+    arena.ev_button = 0
     let c1 = Click { signal_id: arena.nodes[id].click_sig, mode: int(arena.nodes[id].click_mode), setv: arena.nodes[id].click_set }
     apply_click(c1)
     let c2 = Click { signal_id: arena.nodes[id].click2_sig, mode: int(arena.nodes[id].click2_mode), setv: arena.nodes[id].click2_set }
@@ -265,9 +321,6 @@ fn click(px: int, py: int) -> int {
     if arena.nodes[id].click_fn > 0 {
         platform.plat_invoke_fn(arena.nodes[id].click_fn)
     }
-    arena.ev_x = px
-    arena.ev_y = py
-    arena.ev_button = 0
     arena.down_id = id
     if arena.nodes[id].down_fn > 0 {
         platform.plat_invoke_fn(arena.nodes[id].down_fn)
@@ -513,6 +566,14 @@ fn drag(px: int, py: int) -> int {
         arena.drag_bar = 0
         return 0
     }
+    let df = arena.hook_of(arena.drag_id, arena.HOOK_DRAG)
+    if df > 0 {
+        arena.ev_x = px
+        arena.ev_y = py
+        platform.plat_invoke_fn(df)
+        arena.mark_chrome()
+        return 1
+    }
     let kind = int(arena.nodes[arena.drag_id].kind)
     if kind == 13 {
         let kd = 14
@@ -681,7 +742,7 @@ fn hover_walk(id: int, px: int, py: int, signal_id: int) -> int {
         let c = arena.nodes[id].kids[i]
         let mut hy = cy
         let mut hx = cx
-        if int(arena.nodes[c].kind) == 9 {
+        if int(arena.nodes[c].kind) == 9 || arena.nodes[c].anchor > 0 {
             hy = arena.ptr_y
             hx = arena.ptr_x
         }

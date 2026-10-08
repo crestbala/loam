@@ -1,0 +1,47 @@
+// Tests `lowercase`, `uppercase`, and case-insensitive sorting.
+// `str_cmp` uses `lowercase` for case-insensitive comparison, so
+// "apple" < "Banana" < "cherry" regardless of case.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("string", 400, 300)
+
+    // lowercase tests
+    must(fmt.eq(zui.lowercase("Hello"), "hello"), "lowercase Hello")
+    must(fmt.eq(zui.lowercase("WORLD"), "world"), "lowercase WORLD")
+    must(fmt.eq(zui.lowercase("apple"), "apple"), "lowercase apple")
+    must(fmt.eq(zui.lowercase(""), ""), "lowercase empty")
+    must(fmt.eq(zui.lowercase("ABC123"), "abc123"), "lowercase mixed")
+
+    // uppercase tests
+    must(fmt.eq(zui.uppercase("hello"), "HELLO"), "uppercase hello")
+    must(fmt.eq(zui.uppercase("world"), "WORLD"), "uppercase world")
+    must(fmt.eq(zui.uppercase("Apple"), "APPLE"), "uppercase Apple")
+    must(fmt.eq(zui.uppercase(""), ""), "uppercase empty")
+    must(fmt.eq(zui.uppercase("abc123"), "ABC123"), "uppercase mixed")
+
+    // str_cmp case-insensitive tests
+    must(zui.str_cmp("apple", "Banana") < 0, "apple < Banana")
+    must(zui.str_cmp("Banana", "cherry") < 0, "Banana < cherry")
+    must(zui.str_cmp("Hello", "hello") == 0, "Hello == hello")
+    must(zui.str_cmp("WORLD", "world") == 0, "WORLD == world")
+    must(zui.str_cmp("apple", "Apple") == 0, "apple == Apple")
+    must(zui.str_cmp("abc", "ABC") == 0, "abc == ABC")
+
+    // cell_cmp case-insensitive + numeric tests
+    must(zui.cell_cmp("apple", "Banana") < 0, "cell: apple < Banana")
+    must(zui.cell_cmp("10", "9") > 0, "cell: 10 > 9 (by value)")
+    must(zui.cell_cmp("-5", "3") < 0, "cell: -5 < 3")
+
+    fmt.println("string functions ok")
+}

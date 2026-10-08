@@ -2,11 +2,11 @@
 # own_buffer.sh — the macOS desktop display paths, measured side by side.
 #
 # The macOS desktop display paths, measured side by side. The DEFAULT is the
-# owned bitmap (`ZEUS_OWN_BUFFER=1`, see mac.m: one `CGBitmapContext` wrapped in a
-# fresh CGImage per frame and handed to the layer as its `contents`), so the first
-# run sets no variable and the other paths are the ones that have to ask:
+# owned IOSurface set (`ZEUS_OWN_SURFACE=1`, see mac.m: our pixels are the layer's
+# texture, rotated over two surfaces). Every run names its path explicitly, so
+# the comparison does not depend on which one the default is:
 #
-#   default (owned bitmap) | `ZEUS_OWN_SURFACE=1` (owned IOSurface set) |
+#   `ZEUS_OWN_SURFACE=0` (owned bitmap) | `ZEUS_OWN_SURFACE=1` (IOSurface set) |
 #   `APP_KIT=1` (AppKit's store) | `ZEUS_WIDE_GAMUT=1` (that store, display
 #   profile, which doubles its depth — see the colour-space note in
 #   hosts/desktop/mac.m)
@@ -248,8 +248,8 @@ if [ -s "$OUT/appkit.png" ] && [ -s "$OUT/owned.png" ]; then
 fi
 
 echo
-echo "owned  = the DEFAULT, ZEUS_OWN_BUFFER=1 (owned bitmap, single buffer)"
-echo "surf   = the owned IOSurface set (ZEUS_OWN_SURFACE=1, 3 surfaces)"
+echo "owned  = ZEUS_OWN_SURFACE=0 (owned bitmap, single buffer)"
+echo "surf   = the DEFAULT, the owned IOSurface set (ZEUS_OWN_SURFACE=1, 2 surfaces)"
 echo "appkit = APP_KIT=1             wide = ZEUS_WIDE_GAMUT=1 (display profile)"
 echo "raw: $OUT/<mode>.log and $OUT/<mode>.vmmap"
 echo

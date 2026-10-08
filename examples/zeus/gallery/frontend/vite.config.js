@@ -20,6 +20,7 @@ const buildDir = resolve(here, "build");
 const wasmFile = resolve(buildDir, "app.wasm");
 const loader = resolve(repo, "packages/zeus/hosts/web/loader.js");
 const app = resolve(here, "app.loam");
+const fontsDir = resolve(here, "../fonts");
 
 function newestMtime(dir, acc) {
   let ents;
@@ -193,6 +194,18 @@ export default defineConfig({
             res.setHeader("Content-Type", "application/wasm");
             res.setHeader("Cache-Control", "no-cache");
             createReadStream(wasmFile).pipe(res);
+            return;
+          }
+          // Gallery fonts live in ../fonts, shared with the native hosts.
+          if (url.startsWith("/fonts/")) {
+            const fontFile = resolve(fontsDir, url.slice("/fonts/".length));
+            if (!fontFile.startsWith(fontsDir + "/") || !existsSync(fontFile)) {
+              res.statusCode = 404;
+              res.end("missing font");
+              return;
+            }
+            res.setHeader("Content-Type", fontFile.endsWith(".otf") ? "font/otf" : "font/ttf");
+            createReadStream(fontFile).pipe(res);
             return;
           }
           next();

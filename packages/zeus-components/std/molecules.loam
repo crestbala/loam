@@ -44,7 +44,7 @@ struct ButtonProps {
     /// a spinner takes the icon slot. Themed chrome only.
     loading: Option<Signal<bool>> = none,
     on_click: Option<fn()> = none,
-    /// Keyboard actions on this element (`chord(...)`, `chord_click(...)`).
+    /// Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`).
     keys: []KeyBind = no_keys(),
 }
 
@@ -60,7 +60,7 @@ struct InputProps {
     on_key_down: Option<fn()> = none,
     on_key_up: Option<fn()> = none,
     on_key_press: Option<fn()> = none,
-    /// Keyboard actions on this element (`chord(...)`, `chord_click(...)`).
+    /// Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`).
     keys: []KeyBind = no_keys(),
 }
 
@@ -94,11 +94,6 @@ fn button_disabled_background(look: int) -> string {
     }
 }
 
-/// Icon size for a `Size` token; see `button_padding_x`.
-fn button_icon(size: int) -> int {
-    if size == Size.Sm { 14 } else { 16 }
-}
-
 /// Text field. `multiline = true` wraps and lets Enter insert a newline.
 /// `bind = sig` writes the committed buffer into a `Signal<string>` on every
 /// edit; the store notifies only on a real change.
@@ -110,35 +105,16 @@ fn Input(p: InputProps) -> Node {
                      on_click = p.on_click)
 }
 
-/// Side padding for a `Size` token. Button geometry is a set of small
-/// pickers so a recipe reads one token and gets a consistent control.
-fn button_padding_x(size: int) -> int {
-    if size == Size.Sm { 12 } else if size == Size.Lg { 32 } else { 16 }
-}
-
-/// Control height for a `Size` token; see `button_padding_x`.
-fn button_height(size: int) -> int {
-    if size == Size.Sm { 32 } else if size == Size.Lg { 40 } else { 36 }
-}
-
-/// Label size for a `Size` token; see `button_padding_x`.
-fn button_font(size: int) -> int {
-    if size == Size.Sm { 12 } else { FONT_BODY }
-}
-
-/// Corner radius for a `Size` token; see `button_padding_x`.
-fn button_radius(size: int) -> int {
-    return RAD_MD
-}
-
 /// Fill for a `Look` token. Returns a theme accessor result, so calling it
 /// inside a prop expression keeps the button following the palette.
 fn button_background(look: int) -> string {
     match look {
         Look.Solid => { return accent() }
         Look.Soft => { return raised() }
+        Look.Subtle => { return wash() }
         Look.Outline => { return plate() }
         Look.Danger => { return danger_solid() }
+        Look.Success => { return ok_solid() }
         _ => { return "" }
     }
 }
@@ -148,6 +124,7 @@ fn button_color(look: int) -> string {
     match look {
         Look.Solid => { return on_ink() }
         Look.Danger => { return on_danger() }
+        Look.Success => { return on_ok() }
         _ => { return ink() }
     }
 }
@@ -168,15 +145,15 @@ fn button_border_color(look: int) -> string {
     }
 }
 
-/// Icon-only button: square, 16px glyph in the `look` chrome. `size` picks
-/// a 32 / 36 / 40px box. `on_click` is optional —
+/// Icon-only button: a square `control_h(size)` box in the `look` chrome, with
+/// a `control_icon(size)` glyph. `on_click` is optional —
 /// omit it for a look-only demo
 /// (`IconButton(IC_X, Look.Ghost, Size.Md, "Close")`).
 struct IconButtonProps {
     on_click: Option<fn()> = none,
     /// Style, merged over the recipe's own: `style = Style(radius = corners(4))`.
     style: Option<fn() -> Style> = none,
-    /// Keyboard actions on this element (`chord(...)`, `chord_click(...)`).
+    /// Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`).
     keys: []KeyBind = no_keys(),
 }
 
@@ -184,9 +161,9 @@ fn IconButton(markup: string, look: int, size: int, label: string,
               p: IconButtonProps) -> Node {
     return // `hoverFade`: the square stays a hover target without a handler.
     Box(
-        style = merge(Style(width = px(button_height(size)), height = px(button_height(size)),
+        style = merge(Style(width = px(control_h(size)), height = px(control_h(size)),
                             direction = Direction.Row, align = Align.Center,
-                            justify = Align.Center, radius = corners(button_radius(size)),
+                            justify = Align.Center, radius = corners(RAD_CONTROL),
                             border = Border(width = button_border_width(look),
                                             color = opt_color(button_border_color(look))),
                             background = opt_color(button_background(look)),
@@ -200,125 +177,209 @@ fn IconButton(markup: string, look: int, size: int, label: string,
         hoverFade = true,
         keys = p.keys
     ) {
-        Icon(markup, 16, text_color(style_of(p.style), button_color(look)))
+        Icon(markup, control_icon(size), text_color(style_of(p.style), button_color(look)))
     }
 }
 
+/// Options for `Switch`.
+struct SwitchProps {
+    /// `Size` token: picks the `switch_w` × `switch_h` track.
+    size: int = Size.Md,
+    /// Dims the track and ignores clicks.
+    disabled: bool = false,
+    /// Accessible name, for a switch with no visible label beside it.
+    label: string = "",
+    /// Style, merged over the recipe's own.
+    style: Option<fn() -> Style> = none,
+}
+
 /// Toggle `on`. Native toggle: off track = input, on track = primary,
-/// thumb rides on `background`. Pass `appearance()` for Dark mode.
-fn Switch(on: Signal<bool>) -> Node {
+/// thumb rides on `background`.
+fn Switch(on: Signal<bool>, p: SwitchProps) -> Node {
     // The native thumb tweens off an int signal; `on` is the state.
-    let shown_on = flag_int(on)
-    return Component(raw_toggle(),
-                     bind = shown_on,
-                     style = Style(width = px(36), height = px(20), radius = corners(10), cursor = "pointer"),
-                     on_click = fn() => on.set(!on.get()),
-                     role = "switch",
-                     hoverOff = true)
+    return SwitchTrack(flag_int(on), fn() => on.set(!on.get()), p.size, p.label, !p.disabled,
+                       p.style)
 }
 
 /// The light / dark switch: the native toggle bound to `appearance()` (an
 /// engine-level 0/1 signal every role token resolves against at paint).
 fn ThemeSwitch() -> Node {
     let dark = appearance()
+    return SwitchTrack(dark, fn() => dark.set(1 - dark.get()), Size.Md, "Dark mode", true, none)
+}
+
+/// The native toggle both switches draw: `bind` is the 0/1 the thumb tweens
+/// off, `flip` writes the caller's state.
+fn SwitchTrack(bind: Signal<int>, flip: fn(), size: int, label: string, enabled: bool,
+               style: Option<fn() -> Style>) -> Node {
     return Component(raw_toggle(),
-                     bind = dark,
-                     style = Style(width = px(36), height = px(20), radius = corners(10), cursor = "pointer"),
-                     on_click = fn() => dark.set(1 - dark.get()),
+                     bind = bind,
+                     style = merge(Style(width = px(switch_w(size)), height = px(switch_h(size)),
+                                         radius = corners(RAD_FULL), cursor = "pointer"),
+                                   style_of(style)),
+                     enabled = enabled,
+                     on_click = flip,
                      role = "switch",
-                     label = "Dark mode",
+                     label = label,
                      hoverOff = true)
 }
 
-/// Slider over 0..100. Track is `primary/20`-ish, filled range primary, thumb
+/// Options for `Slider`.
+struct SliderProps {
+    /// Range and step of `value`. The defaults (0..100 by 1) bind the native
+    /// track directly; anything else maps it onto the range.
+    min: int = 0,
+    max: int = 100,
+    step: int = 1,
+    disabled: bool = false,
+    /// Accessible name.
+    label: string = "",
+    /// Style, merged over the recipe's own (`width = px(220)` pins it).
+    style: Option<fn() -> Style> = none,
+}
+
+/// Slider over `min..max` (0..100 by default); fills its parent's width. Track is `primary/20`-ish, filled range primary, thumb
 /// surface. Keys follow the ARIA slider: the arrows step 1 (the native node
 /// binds left / right; up / down are added here), Page Up / Page Down step
 /// 10, and Home / End jump to the ends.
-fn Slider(value: Signal<int>) -> Node {
+fn Slider(value: Signal<int>, p: SliderProps) -> Node {
+    // state. The native track runs 0..100; `pos` is that track when the
+    // caller's range differs, kept in step with `value` both ways.
+    let lo = p.min
+    let hi = if p.max > p.min { p.max } else { p.min + 1 }
+    let step = if p.step > 0 { p.step } else { 1 }
+    let direct = lo == 0 && hi == 100 && step == 1
+    let pos = if direct { value } else { signal(slider_pos(value.get(), lo, hi)) }
+    if !direct {
+        effect(|| { pos.set(slider_pos(value.get(), lo, hi)) })
+        // A track move that lands on the same snapped value still moves one
+        // step its way, so the native arrows (±1%) never stick on a coarse step.
+        effect(|| {
+            let at = pos.get()
+            let v = peek(value)
+            if at != slider_pos(v, lo, hi) {
+                let mut next = slider_snap(lo + (at * (hi - lo) + 50) / 100, lo, hi, step)
+                if next == v {
+                    next = slider_snap(if at > slider_pos(v, lo, hi) { v + step } else { v - step },
+                                       lo, hi, step)
+                }
+                value.set(next)
+            }
+        })
+    }
+
     // controller
     fn nudge(d: int) {
-        let mut v = value.get() + d
-        if v < 0 {
-            v = 0
-        }
-        if v > 100 {
-            v = 100
-        }
-        value.set(v)
+        value.set(slider_snap(value.get() + d, lo, hi, step))
     }
+    let page = slider_snap(lo + (hi - lo) / 10, lo, hi, step) - lo
 
     // keys
     let keys = []KeyBind {
-        chord("up", "slider.up", fn() { nudge(1) }),
-        chord("down", "slider.down", fn() { nudge(-1) }),
-        chord("pageup", "slider.page_up", fn() { nudge(10) }),
-        chord("pagedown", "slider.page_down", fn() { nudge(-10) }),
-        chord("home", "slider.min", fn() { value.set(0) }),
-        chord("end", "slider.max", fn() { value.set(100) }),
+        key_bind("up", "slider.up", fn() { nudge(step) }),
+        key_bind("down", "slider.down", fn() { nudge(-step) }),
+        key_bind("pageup", "slider.page_up", fn() { nudge(if page > step { page } else { step }) }),
+        key_bind("pagedown", "slider.page_down", fn() { nudge(-(if page > step { page } else { step })) }),
+        key_bind("home", "slider.min", fn() { value.set(lo) }),
+        key_bind("end", "slider.max", fn() { value.set(slider_snap(hi, lo, hi, step)) }),
     }
 
     // view
     return Component(raw_slider(),
-                     bind = value,
-                     style = Style(width = px(220), height = px(20), radius = corners(10), cursor = "pointer"),
+                     bind = pos,
+                     // Fills a column; `grow` takes the free width in a row,
+                     // where a bare 100% would be the (empty) content width.
+                     style = merge(Style(width = pct(100), grow = 1, height = px(20),
+                                         radius = corners(RAD_FULL), cursor = "pointer"),
+                                   style_of(p.style)),
                      role = "slider",
+                     label = p.label,
+                     enabled = !p.disabled,
                      keys = keys,
                      hoverOff = true)
 }
 
+/// Native track position (0..100) of `v` in `lo..hi`.
+fn slider_pos(v: int, lo: int, hi: int) -> int {
+    return clamp_int((v - lo) * 100 / (hi - lo), 0, 100)
+}
+
+fn clamp_int(v: int, lo: int, hi: int) -> int {
+    if v < lo {
+        return lo
+    }
+    if v > hi {
+        return hi
+    }
+    return v
+}
+
+/// `v` clamped to `lo..hi` and rounded to the nearest `step` from `lo`.
+fn slider_snap(v: int, lo: int, hi: int, step: int) -> int {
+    let c = clamp_int(v, lo, hi)
+    let k = (c - lo + step / 2) / step
+    let out = lo + k * step
+    if out > hi {
+        return out - step
+    }
+    return out
+}
+
 /// Alert: rounded bordered panel, leading icon, title + description.
-/// `tone` picks the tier (`Tone.Info` default, `.Ok`, `.Warn`, `.Danger`).
+/// `tint` picks the tier (`Tint.Info` default, `.Ok`, `.Warn`, `.Danger`).
 /// `dismiss` is a show signal (X sets it false). Trailing block is the action slot,
 /// under the body.
 struct AlertProps {
     /// Style, merged over the recipe's own: `style = Style(radius = corners(4))`.
     style: Option<fn() -> Style> = none,
-    /// Tone: `Tone.Info` (default), `Tone.Ok`, `Tone.Warn`, `Tone.Danger`.
-    tone: int = 0,
+    /// Status tier: `Tint.Info` (default), `Tint.Ok`, `Tint.Warn`, `Tint.Danger`.
+    tint: int = Tint.Info,
+    /// Deprecated spelling of `tint` (a `Tone` code); wins when set.
+    tone: int = -1,
     /// Show signal. When passed, the alert hides while it is false, and an X
     /// in the title row sets it false.
     dismiss: Option<Signal<bool>> = none,
-    /// Keyboard actions on this element (`chord(...)`, `chord_click(...)`).
+    /// Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`).
     keys: []KeyBind = no_keys(),
     /// The trailing block: actions, under the body.
     children: fn() = noop,
 }
 
 fn Alert(title: fn() -> string, body: fn() -> string, p: AlertProps) -> Node {
-    return AlertView(title, body, p.tone, p)
+    return AlertView(title, body, if p.tone >= 0 { tone_tint(p.tone) } else { p.tint }, p)
 }
 
 fn alert_edge(kind: int) -> string {
     match kind {
-        Tone.Danger => { return danger_edge() }
-        Tone.Warn => { return warn_edge() }
-        Tone.Ok => { return ok() }
+        Tint.Danger => { return danger_edge() }
+        Tint.Warn => { return warn_edge() }
+        Tint.Ok => { return ok() }
         _ => { return info_line() }
     }
 }
 
 fn alert_title_tint(kind: int) -> string {
     match kind {
-        Tone.Danger => { return danger() }
-        Tone.Warn => { return warn() }
-        Tone.Ok => { return ok() }
+        Tint.Danger => { return danger() }
+        Tint.Warn => { return warn() }
+        Tint.Ok => { return ok() }
         _ => { return info_ink() }
     }
 }
 
 fn alert_body_tint(kind: int) -> string {
     match kind {
-        Tone.Danger => { return danger() }
-        Tone.Ok => { return ok() }
+        Tint.Danger => { return danger() }
+        Tint.Ok => { return ok() }
         _ => { return mute() }
     }
 }
 
 fn alert_icon(kind: int) {
     match kind {
-        Tone.Danger => { Icon(IC_ALERT_CIRCLE, 16, danger()) }
-        Tone.Warn => { Icon(IC_ALERT_CIRCLE, 16, warn()) }
-        Tone.Ok => { Icon(IC_CHECK, 16, ok()) }
+        Tint.Danger => { Icon(IC_ALERT_CIRCLE, 16, danger()) }
+        Tint.Warn => { Icon(IC_ALERT_CIRCLE, 16, warn()) }
+        Tint.Ok => { Icon(IC_CHECK, 16, ok()) }
         _ => { Icon(IC_INFO, 16, info_ink()) }
     }
 }
@@ -366,10 +427,26 @@ fn AlertView(title: fn() -> string, body: fn() -> string, kind: int, p: AlertPro
 /// scrolls inside it instead of resizing the layout); -1 keeps the natural
 /// content width. Pin with `width = 200`; restyle with any style prop.
 struct TextInputProps {
+    /// `Size` token: the frame is `control_h(size)` tall.
+    size: int = Size.Md,
+    /// Draws the danger edge (a `Field` with an `error` sets it).
+    invalid: bool = false,
+    /// Dims the field and makes it inert.
+    disabled: bool = false,
+    /// Accessible name. Empty uses the placeholder.
+    label: string = "",
     /// Style, merged over the recipe's own: `style = Style(radius = corners(4))`.
     style: Option<fn() -> Style> = none,
-    /// Keyboard actions on this element (`chord(...)`, `chord_click(...)`).
+    /// Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`).
     keys: []KeyBind = no_keys(),
+}
+
+/// A field's accessible name: `label` when set, else the placeholder.
+fn field_name(label: string, placeholder: string) -> string {
+    if label.len > 0 {
+        return label
+    }
+    return placeholder
 }
 
 /// X control that appears while `value` is non-empty and clears the bound
@@ -401,6 +478,25 @@ fn InputClear(value: Signal<string>, field: Ref) -> Node {
     }
 }
 
+/// The frame every single-line field shares (`TextInput`, `Select`,
+/// `Combobox`): a `control_h(size)` pill with a hairline edge on the plate, so
+/// a field and a `Button` of the same size line up in a row.
+fn field_chrome(size: int) -> Style {
+    return Style(height = px(control_h(size)), direction = Direction.Row, gap = 4,
+                 align = Align.Center,
+                 padding = Edges(left = control_pad_x(size), right = control_pad_x(size)),
+                 radius = corners(RAD_CONTROL), border = line(HAIRLINE, rule()),
+                 background = plate())
+}
+
+/// The danger edge of an invalid field; an empty style otherwise.
+fn invalid_edge(invalid: bool) -> Style {
+    if invalid {
+        return Style(border = line(HAIRLINE, danger_edge()))
+    }
+    return Style {}
+}
+
 fn TextInput(value: Signal<string>, placeholder: string, p: TextInputProps) -> Node {
     // state
     let field = ref()
@@ -408,88 +504,176 @@ fn TextInput(value: Signal<string>, placeholder: string, p: TextInputProps) -> N
     // view. A click anywhere on the frame focuses the field; the frame itself
     // is not a tab stop.
     return Box(
-        style = merge(Style(direction = Direction.Row, gap = 4, align = Align.Center,
-                            padding = edges2(8, 12), radius = corners(RAD_MD),
-                            border = line(HAIRLINE, rule()), background = plate(),
-                            cursor = "text"),
+        style = merge(merge(merge(field_chrome(p.size), invalid_edge(p.invalid)),
+                            Style(cursor = "text")),
                       style_of(p.style)),
         on_click = fn() { focus(field) },
         focusable = false,
+        enabled = !p.disabled,
         keys = p.keys
     ) {
         Input(ref = field,
               bind = value,
               placeholder = placeholder,
-              style = merge(Style(grow = 1, font = FONT_BODY, padding = edges(0), color = ink()),
+              style = merge(Style(grow = 1, font = control_font(p.size), padding = edges(0),
+                                  color = ink()),
                             text_part(style_of(p.style))),
-              label = placeholder)
+              label = field_name(p.label, placeholder))
         InputClear(value, field)
     }
 }
 
+/// Options for `TextArea`.
+struct TextAreaProps {
+    /// Runs on key-up (autosave).
+    on_edit: fn() = noop,
+    /// Draws the danger edge (a `Field` with an `error` sets it).
+    invalid: bool = false,
+    /// Dims the field and makes it inert.
+    disabled: bool = false,
+    /// Accessible name. Empty uses the placeholder.
+    label: string = "",
+    /// Style, merged over the recipe's own: a `width` pins the field, which
+    /// otherwise fills its column.
+    style: Option<fn() -> Style> = none,
+}
+
 /// Multiline compose field: min-height ~4 lines, same chrome as `TextInput`.
-/// `width >= 0` pins the field width; -1 keeps the natural content width.
-/// `on_edit` runs on key-up (autosave).
-fn TextArea(value: Signal<string>, placeholder: string, on_edit: fn() = noop,
-            width: int = -1) -> Node {
+fn TextArea(value: Signal<string>, placeholder: string, p: TextAreaProps) -> Node {
     // state
     let field = ref()
 
     // view
     return Box(
-        style = Style(width = len_px(width),
-                      direction = Direction.Row,
-                      gap = 4,
-                      align = Align.Start,
-                      minHeight = 96,
-                      padding = edges2(8, 12),
-                      radius = corners(RAD_MD),
-                      border = line(HAIRLINE, rule()),
-                      background = plate(),
-                      cursor = "text"),
+        style = merge(merge(Style(direction = Direction.Row,
+                                  gap = 4,
+                                  align = Align.Start,
+                                  minHeight = 96,
+                                  padding = edges2(8, 12),
+                                  radius = corners(RAD_MD),
+                                  border = line(HAIRLINE, rule()),
+                                  background = plate(),
+                                  cursor = "text"),
+                            invalid_edge(p.invalid)),
+                      style_of(p.style)),
         on_click = fn() { focus(field) },
-        focusable = false
+        focusable = false,
+        enabled = !p.disabled
     ) {
         Input(ref = field,
               bind = value,
               placeholder = placeholder,
               style = Style(grow = 1, font = FONT_BODY, padding = edges(0), color = ink()),
               multiline = true,
-              label = placeholder,
-              on_key_up = on_edit)
+              label = field_name(p.label, placeholder),
+              on_key_up = p.on_edit)
         InputClear(value, field)
     }
 }
 
-/// Label + input. Pin with `width = 200` so the row
-/// around it does not reflow while typing; restyle with any style prop —
-/// they all forward to the `TextInput` underneath.
+/// Options for `FormField`.
+struct FormFieldProps {
+    /// Muted help line under the control. Hidden while `error` shows.
+    description: string = "",
+    /// Error line under the control, in the danger ink. A thunk, so
+    /// `error = if bad.get() { "Required" } else { "" }` follows state; empty
+    /// hides it.
+    error: fn() -> string = empty_text,
+    /// Adds a danger `*` after the label (and to its accessible name).
+    required: bool = false,
+    /// Style, merged over the column's own.
+    style: Option<fn() -> Style> = none,
+    /// The control: any input, select, group, or row of them.
+    children: fn() = noop,
+}
+
+/// Label, control, and a help or error line, for *any* control:
+/// `FormField("Plan", required = true) { Select(plan, plans) }`. The control
+/// is the caller's, so passing it `invalid` is too (`Field` does that for a
+/// `TextInput`).
+fn FormField(label: string, p: FormFieldProps) -> Node {
+    let has_help = p.description.len > 0
+    return Box(style = merge(Style(direction = Direction.Column, gap = Space.Exs),
+                             style_of(p.style))) {
+        Box(style = Style(direction = Direction.Row, gap = 2, align = Align.Center)) {
+            Label(label)
+            if p.required {
+                Text("*", style = Style(font = FONT_BODY, color = danger()),
+                     label = "required")
+            }
+        }
+        p.children()
+        if has_help {
+            Text(p.description,
+                 style = Style(wrap = true, font = FONT_CONTROL, color = mute(),
+                               display = shown(p.error().len == 0)))
+        }
+        Text(p.error,
+             style = Style(wrap = true, font = FONT_CONTROL, color = danger(),
+                           display = shown(p.error().len > 0)),
+             role = "alert")
+    }
+}
+
+/// Label + text input: a `FormField` around a `TextInput`. Pin with
+/// `width = 200` so the row around it does not reflow while typing; restyle
+/// with any style prop — they all forward to the `TextInput` underneath. An
+/// `error` draws the input's danger edge.
 struct FieldProps {
+    /// `Size` token for the input.
+    size: int = Size.Md,
+    description: string = "",
+    error: fn() -> string = empty_text,
+    required: bool = false,
     /// Style, merged over the recipe's own: `style = Style(radius = corners(4))`.
     style: Option<fn() -> Style> = none,
-    /// Keyboard actions on this element (`chord(...)`, `chord_click(...)`).
+    /// Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`).
     keys: []KeyBind = no_keys(),
 }
 
 fn Field(label: string, value: Signal<string>, placeholder: string,
          p: FieldProps) -> Node {
-    return Column(Space.Exs) {
-        Label(label)
-        TextInput(value, placeholder, style = p.style, keys = p.keys)
+    return FormField(label, description = p.description, error = p.error,
+                     required = p.required) {
+        TextInput(value, placeholder, size = p.size,
+                  style = merge(invalid_edge(p.error().len > 0), style_of(p.style)),
+                  keys = p.keys)
     }
 }
 
-/// Checkbox: 16px rounded box, 1px accent border, accent fill when checked
+/// Options for `Checkbox`.
+struct CheckboxProps {
+    /// `Size` token for the label type.
+    size: int = Size.Md,
+    disabled: bool = false,
+    /// Mixed state (a select-all over a partial pick): a dash replaces the
+    /// check while it is true. Clicking a mixed box checks it; clearing the
+    /// mix is the caller's job (usually it is derived from the children).
+    indeterminate: Option<Signal<bool>> = none,
+    /// Style, merged over the row's own.
+    style: Option<fn() -> Style> = none,
+}
+
+/// Checkbox: `CHECK` (16px) rounded box, 1px accent border, accent fill when checked
 /// with a white 16px SVG check. The check springs in when ticked and shrinks
 /// away when cleared (paint-only, so a toggle never re-lays out); the first
 /// frame settles without motion, and reduced motion snaps.
-fn Checkbox(label: string, on: Signal<bool>) -> Node {
+fn Checkbox(label: string, on: Signal<bool>, p: CheckboxProps) -> Node {
     // state
     let mark = ref()
+    let has_mix = result.is_some(p.indeterminate)
+    let mix = result.some_or(p.indeterminate, no_flag_signal())
+    fn mixed() -> bool {
+        return has_mix && mix.get()
+    }
 
     // controller
     fn toggle() {
-        on.set(!on.get())
+        if mixed() {
+            on.set(true)
+        } else {
+            on.set(!on.get())
+        }
     }
     on_mount(|| {
         effect(|| {
@@ -505,24 +689,30 @@ fn Checkbox(label: string, on: Signal<bool>) -> Node {
     })
 
     // view
-    return Box(style = Style(direction = Direction.Row,
-                             gap = Space.Exs,
-                             align = Align.Center,
-                             cursor = "pointer"),
+    return Box(style = merge(Style(direction = Direction.Row,
+                                   gap = Space.Exs,
+                                   align = Align.Center,
+                                   cursor = "pointer"), style_of(p.style)),
                on_click = toggle,
                role = "checkbox",
-               label = label) {
-        Box(style = merge(Style(width = px(16),
-                                height = px(16),
+               label = label,
+               enabled = !p.disabled,
+               checked = on.get() && !mixed()) {
+        Box(style = merge(Style(width = px(CHECK),
+                                height = px(CHECK),
                                 align = Align.Center,
                                 justify = Align.Center,
-                                radius = corners(RAD_SM),
-                                border = line(HAIRLINE, accent())), Style(background = if on.get() { accent() } else { plate() }))) {
+                                radius = corners(RAD_CHECK),
+                                border = line(HAIRLINE, accent())),
+                          Style(background = if on.get() || mixed() { accent() } else { plate() }))) {
             // The tweens sit on the icon itself: opacity is per node, so a
             // wrapper's fade would not reach the mark.
-            Icon(IC_CHECK, 16, on_ink(), ref = mark)
+            Icon(IC_CHECK, CHECK, on_ink(), ref = mark, style = Style(display = shown(!mixed())))
+            if has_mix {
+                Icon(IC_MINUS, CHECK, on_ink(), style = Style(display = shown(mixed())))
+            }
         }
-        Text(label, style = Style(font = FONT_BODY, color = ink()))
+        Text(label, style = Style(font = control_font(p.size), color = ink()))
     }
 }
 
@@ -534,7 +724,7 @@ struct UserProps {
 /// Avatar + name + role column, the "user card" pattern.
 fn User(initials: string, name: string, role: string, p: UserProps) -> Node {
     return Row(Space.Xs) {
-        Avatar(initials, 40, src = p.src, status = p.status)
+        Avatar(initials, AvatarSize.Lg, src = p.src, status = p.status)
         Column(2) {
             Text(name, style = Style(font = FONT_BODY, color = ink()))
             Text(role, style = Style(font = FONT_CAPTION, color = mute()))
@@ -560,7 +750,8 @@ fn Breadcrumbs(items: []string) -> Node {
 
 /// One tab trigger. Active: card background, foreground text. Left / Right
 /// move the selection; only the selected tab is a tab stop.
-fn Tab(label: string, selected: Signal<int>, index: int, count: int = 0, plain: bool = false) -> Node {
+fn Tab(label: string, selected: Signal<int>, index: int, count: int = 0, plain: bool = false,
+       size: int = Size.Md, underline: bool = false) -> Node {
     // controller
     fn active() -> bool {
         return selected.get() == index
@@ -572,21 +763,28 @@ fn Tab(label: string, selected: Signal<int>, index: int, count: int = 0, plain: 
     // view. `plain` = the tray's sliding indicator carries the fill; the
     // trigger only swaps its label colour.
     return Box(
-        style = merge(Style(direction = Direction.Row,
+        style = merge(Style(height = px(if underline { control_h(size) } else { tray_item_h(size) }),
+                            direction = Direction.Row,
                             gap = Space.Exxs,
                             align = Align.Center,
-                            padding = edges2(5, 12),
-                            radius = corners(RAD_MD),
+                            padding = Edges(left = 12, right = 12),
+                            radius = corners(RAD_CONTROL),
                             cursor = "pointer"), style_of(tab_fill(plain, active()))),
         on_click = fn() => selected.set(index),
         role = "tab",
         label = label,
+        checked = active(),
         keys = keys,
         roving = active()
     ) {
         Text(label,
-             style = merge(Style(font = FONT_BODY, ellipsis = true), Style(color = if active() { ink() } else { mute() })))
+             style = merge(Style(font = control_font(size), ellipsis = true), Style(color = if active() { ink() } else { mute() })))
     }
+}
+
+/// Trigger height inside a tray: the tray is `control_h(size)` with a 4px inset.
+fn tray_item_h(size: int) -> int {
+    return control_h(size) - 8
 }
 
 /// A tab trigger's fill: none for `plain` (the tray's indicator paints it).
@@ -597,11 +795,20 @@ fn tab_fill(plain: bool, on: bool) -> Style {
     return Style(background = if on { plate() } else { raised() })
 }
 
-/// Tabs: 36px muted tray, rounded, 4px inset, with a card-coloured
+/// Tabs: a `control_h(size)` muted tray, rounded, 4px inset, with a card-coloured
 /// indicator that slides under the selected trigger (see `IndicatorTray`).
-/// Arrows step the selection, Home / End jump to the ends.
-fn Tabs(selected: Signal<int>, labels: []string) -> Node {
-    return IndicatorTray(selected, labels, false)
+/// Arrows step the selection, Home / End jump to the ends. `look = Look.Link`
+/// is the underline variant: bare triggers over a hairline, with a 2px bar
+/// sliding under the selected one.
+struct TabsProps {
+    /// `Size` token: the tray is `control_h(size)` tall.
+    size: int = Size.Md,
+    /// `Look.Soft` (the pill tray) or `Look.Link` (underline).
+    look: int = Look.Soft,
+}
+
+fn Tabs(selected: Signal<int>, labels: []string, p: TabsProps) -> Node {
+    return IndicatorTray(selected, labels, false, p.size, p.look == Look.Link)
 }
 
 /// The tray `Tabs` and `Segmented` share. The indicator is an absolute box
@@ -610,7 +817,8 @@ fn Tabs(selected: Signal<int>, labels: []string) -> Node {
 /// instantly after the first layout or a resize, when the triggers' measured
 /// geometry moves. `radio` builds `Choice` triggers (role radio) instead of
 /// `Tab`s; the motion and the chrome are the same.
-fn IndicatorTray(selected: Signal<int>, labels: []string, radio: bool) -> Node {
+fn IndicatorTray(selected: Signal<int>, labels: []string, radio: bool,
+                 size: int = Size.Md, underline: bool = false) -> Node {
     // state
     let tray = ref()
     let ind_l = signal(0)
@@ -649,36 +857,68 @@ fn IndicatorTray(selected: Signal<int>, labels: []string, radio: bool) -> Node {
 
     // view. The tray sits in a row wrapper so it hugs its triggers instead of
     // stretching to the column width.
-    return Row(0) {
-        Box(
+    fn body() -> Node {
+        return Box(
             ref = tray,
-            style = Style(direction = Direction.Row,
-                          gap = 2,
-                          align = Align.Center,
-                          padding = edges(4),
-                          radius = corners(RAD_LG),
-                          background = raised())
+            style = tray_chrome(underline)
         ) {
-            Box(style = merge(Style(elevation = 1,
-                                    position = pos_absolute(),
-                                    inset = Edges(top = 0),
-                                    radius = corners(RAD_MD),
-                                    background = plate()), Style(inset = Edges(left = ind_l.get()),
-                                                                 width = px(ind_w.get()), height = px(ind_h.get()))),
+            Box(style = merge(indicator_chrome(underline),
+                              Style(inset = Edges(left = ind_l.get(),
+                                                  top = if underline { ind_h.get() - 2 } else { 0 }),
+                                    width = px(ind_w.get()),
+                                    height = px(if underline { 2 } else { ind_h.get() }))),
                 role = "presentation")
             Loop(labels, fn(i, lab) {
                 if radio {
-                    return Choice(lab, selected, i, n, true)
+                    return Choice(lab, selected, i, n, true, size)
                 }
-                return Tab(lab, selected, i, n, true)
+                return Tab(lab, selected, i, n, true, size, underline)
             })
+        }
+    }
+    // One return: the mount hooks above ride on it. Underline tabs run a
+    // hairline under every trigger; the bar slides over it.
+    return Row(0) {
+        if underline {
+            Column(0) {
+                body()
+                Separator()
+            }
+        } else {
+            body()
         }
     }
 }
 
+/// The tray behind the triggers: a raised pill with a 4px inset, or nothing
+/// for the underline tabs.
+fn tray_chrome(underline: bool) -> Style {
+    if underline {
+        return Style(direction = Direction.Row, gap = 2, align = Align.Center)
+    }
+    return Style(direction = Direction.Row,
+                 gap = 2,
+                 align = Align.Center,
+                 padding = edges(4),
+                 radius = corners(RAD_CONTROL),
+                 background = raised())
+}
+
+/// The sliding indicator: a lifted plate pill, or a 2px ink bar.
+fn indicator_chrome(underline: bool) -> Style {
+    if underline {
+        return Style(position = pos_absolute(), radius = corners(1), background = ink())
+    }
+    return Style(elevation = Elevation.Raised,
+                 position = pos_absolute(),
+                 radius = corners(RAD_CONTROL),
+                 background = plate())
+}
+
 /// One toggle-style choice row inside `Segmented` / `ToggleGroup`. `plain` =
 /// a tray's sliding indicator carries the fill; the row only swaps its ink.
-fn Choice(label: string, value: Signal<int>, index: int, count: int = 0, plain: bool = false) -> Node {
+fn Choice(label: string, value: Signal<int>, index: int, count: int = 0, plain: bool = false,
+          size: int = Size.Md) -> Node {
     // controller
     fn active() -> bool {
         return value.get() == index
@@ -689,27 +929,34 @@ fn Choice(label: string, value: Signal<int>, index: int, count: int = 0, plain: 
 
     // view
     return Box(
-        style = merge(Style(direction = Direction.Row,
+        style = merge(Style(height = px(tray_item_h(size)),
+                            direction = Direction.Row,
                             gap = Space.Exxs,
                             align = Align.Center,
-                            padding = edges2(5, 12),
-                            radius = corners(RAD_MD),
+                            padding = Edges(left = 12, right = 12),
+                            radius = corners(RAD_CONTROL),
                             cursor = "pointer"), style_of(tab_fill(plain, active()))),
         on_click = fn() => value.set(index),
         role = "radio",
         label = label,
+        checked = active(),
         keys = keys,
         roving = active()
     ) {
         Text(label,
-             style = merge(Style(font = FONT_BODY), Style(color = if active() { ink() } else { mute() })))
+             style = merge(Style(font = control_font(size)), Style(color = if active() { ink() } else { mute() })))
     }
 }
 
 /// Exclusive pick from `labels` as a Tabs-style tray: the same sliding
 /// indicator and keys as `Tabs`, with radio semantics for assistive tech.
-fn Segmented(value: Signal<int>, labels: []string) -> Node {
-    return IndicatorTray(value, labels, true)
+struct SegmentedProps {
+    /// `Size` token: the tray is `control_h(size)` tall.
+    size: int = Size.Md,
+}
+
+fn Segmented(value: Signal<int>, labels: []string, p: SegmentedProps) -> Node {
+    return IndicatorTray(value, labels, true, p.size)
 }
 
 /// One row of a `Select` menu: a check icon on the picked row. The keyboard
@@ -723,6 +970,7 @@ fn SelectRow(value: Signal<int>, active: Signal<int>, index: int, label: string)
 
     // view
     return Box(
+        hoverStyle = Style(background = raised()),
         style = Style(direction = Direction.Row,
                       gap = 4,
                       align = Align.Center,
@@ -740,6 +988,23 @@ fn SelectRow(value: Signal<int>, active: Signal<int>, index: int, label: string)
     }
 }
 
+/// The surface every floating list or panel shares (`Menu`, `Popover`,
+/// `Select`, `Combobox`): an absolute plate card on the popup layer with a
+/// hairline edge, `RAD_LG` corners, a 4px inset for its rows, and the
+/// `elevation` shadow. `min_w` 0 sizes it to its content.
+fn floating_panel(min_w: int, elevation: int) -> Style {
+    return Style(direction = Direction.Column,
+                 gap = 2,
+                 elevation = elevation,
+                 position = pos_absolute(),
+                 zIndex = Z_POPUP,
+                 minWidth = min_w,
+                 padding = edges(4),
+                 radius = corners(RAD_LG),
+                 border = line(HAIRLINE, rule()),
+                 background = plate())
+}
+
 /// The keyboard highlight of a list row: a raised fill while on, none off.
 fn highlight(on: bool) -> Style {
     if on {
@@ -753,7 +1018,22 @@ fn highlight(on: bool) -> Style {
 /// trigger and follows it on scroll. Arrows move the highlight, Enter picks,
 /// Escape or an outside click closes. `active` (-1 = closed) is the menu's only
 /// extra state; the picked value stays in the caller's `value` signal.
-fn Select(value: Signal<int>, labels: []string) -> Node {
+struct SelectProps {
+    /// `Size` token: the trigger is `control_h(size)` tall.
+    size: int = Size.Md,
+    /// Draws the danger edge (a `Field` with an `error` sets it).
+    invalid: bool = false,
+    /// Dims the trigger and makes it inert.
+    disabled: bool = false,
+    /// Accessible name of the trigger.
+    label: string = "",
+    /// Style, merged over the trigger's own. A px `width` also sizes the menu;
+    /// unset, both are `SELECT_W`.
+    style: Option<fn() -> Style> = none,
+}
+
+fn Select(value: Signal<int>, labels: []string, p: SelectProps) -> Node {
+    let size = p.size
     // state. `active` (-1 = closed) is the menu's only state; the picked value
     // stays in the caller's `value` signal.
     let active = signal(-1)
@@ -763,6 +1043,7 @@ fn Select(value: Signal<int>, labels: []string) -> Node {
     let hl_y = signal(0)
     let hl_w = signal(0)
     let hl_h = signal(0)
+    let w = len_or(style_of(p.style).width, SELECT_W)
 
     // controller
     fn close() {
@@ -834,10 +1115,10 @@ fn Select(value: Signal<int>, labels: []string) -> Node {
 
     // keys
     let keys = []KeyBind {
-        chord("escape", "select.close", close),
-        chord("down", "select.next", next),
-        chord("up", "select.prev", prev),
-        chord("enter", "select.pick", pick),
+        key_bind("escape", "select.close", close),
+        key_bind("down", "select.next", next),
+        key_bind("up", "select.prev", prev),
+        key_bind("enter", "select.pick", pick),
     }
 
     // view. The scrim comes first so the trigger and menu draw over it; an
@@ -847,40 +1128,28 @@ fn Select(value: Signal<int>, labels: []string) -> Node {
                 style = Style(display = shown(active.get() >= 0), zIndex = Z_SCRIM))
         Box(
             ref = trigger,
-            style = Style(width = px(SELECT_W),
-                          direction = Direction.Row,
-                          gap = 4,
-                          align = Align.Center,
-                          zIndex = Z_FIELD,
-                          padding = edges2(8, 12),
-                          radius = corners(RAD_MD),
-                          border = line(HAIRLINE, rule()),
-                          background = plate(),
-                          cursor = "pointer"),
+            style = merge(merge(merge(field_chrome(size), invalid_edge(p.invalid)),
+                                Style(width = px(w), zIndex = Z_FIELD, cursor = "pointer")),
+                          style_of(p.style)),
             on_click = toggle,
             role = "combobox",
+            label = p.label,
+            enabled = !p.disabled,
             hoverOff = false,
             press = true
         ) {
             Loop(labels, fn(i, lab) {
                 return Text(lab,
-                            style = merge(Style(font = FONT_BODY, color = ink(), ellipsis = true), Style(display = shown(value.get() == i))))
+                            style = merge(Style(font = control_font(size), color = ink(), ellipsis = true), Style(display = shown(value.get() == i))))
             })
             Grow()
-            Icon(IC_CHEV_DOWN, 16, dim())
+            Icon(IC_CHEV_DOWN, control_icon(size), dim())
         }
         Box(
             ref = menu,
-            style = merge(Style(width = px(SELECT_W),
-                                direction = Direction.Column,
-                                gap = 2,
-                                elevation = 2,
-                                position = pos_absolute(),
-                                zIndex = Z_POPUP,
-                                padding = edges(4),
-                                radius = corners(RAD_MD),
-                                border = line(HAIRLINE, rule()),
-                                background = plate()), Style(display = shown(active.get() >= 0))),
+            style = merge(merge(floating_panel(MENU_MIN_W, Elevation.Floating),
+                                Style(width = px(w))),
+                          Style(display = shown(active.get() >= 0))),
             keys = keys,
             enter = Enter.Fade
         ) {
@@ -900,7 +1169,18 @@ fn Select(value: Signal<int>, labels: []string) -> Node {
 
 /// Radio group: vertical stack of `Radio` rows, 8px apart. The picked row gets a
 /// filled primary dot. Arrows move the pick; only the selected row is a tab stop.
-fn Radio(label: string, value: Signal<int>, index: int, count: int = 0) -> Node {
+/// Options for `Radio`.
+struct RadioProps {
+    /// Size of the group, for the roving Home / End keys (0 = unknown).
+    count: int = 0,
+    /// `Size` token for the label type.
+    size: int = Size.Md,
+    disabled: bool = false,
+    /// Style, merged over the row's own.
+    style: Option<fn() -> Style> = none,
+}
+
+fn Radio(label: string, value: Signal<int>, index: int, p: RadioProps) -> Node {
     // state
     let dot = ref()
 
@@ -923,28 +1203,31 @@ fn Radio(label: string, value: Signal<int>, index: int, count: int = 0) -> Node 
     })
 
     // keys
-    let keys = roving_keys("radio", value, index, count, true)
+    let keys = roving_keys("radio", value, index, p.count, true)
 
     // view
-    return Box(style = Style(direction = Direction.Row,
-                             gap = Space.Exs,
-                             align = Align.Center,
-                             cursor = "pointer"),
+    return Box(style = merge(Style(direction = Direction.Row,
+                                   gap = Space.Exs,
+                                   align = Align.Center,
+                                   cursor = "pointer"), style_of(p.style)),
                on_click = fn() => value.set(index),
                role = "radio",
                label = label,
+               enabled = !p.disabled,
+               checked = active(),
                keys = keys,
                roving = active()) {
-        Box(style = Style(width = px(16),
-                          height = px(16),
+        Box(style = Style(width = px(CHECK),
+                          height = px(CHECK),
                           align = Align.Center,
                           justify = Align.Center,
-                          radius = corners(8),
+                          radius = corners(RAD_FULL),
                           border = line(HAIRLINE, accent()),
                           background = plate())) {
-            Box(ref = dot, style = Style(width = px(14), height = px(14), radius = corners(7), background = accent()))
+            Box(ref = dot, style = Style(width = px(RADIO_DOT), height = px(RADIO_DOT),
+                                         radius = corners(RAD_FULL), background = accent()))
         }
-        Text(label, style = Style(font = FONT_BODY, color = ink()))
+        Text(label, style = Style(font = control_font(p.size), color = ink()))
     }
 }
 
@@ -953,50 +1236,59 @@ fn RadioGroup(value: Signal<int>, labels: []string) -> Node {
     let n = labels.len
     return Column(Space.Exs) {
         Loop(labels, fn(i, lab) {
-            return Radio(lab, value, i, n)
+            return Radio(lab, value, i, count = n)
         })
     }
 }
 
 /// Toggle: default variant, no border — a pressed state fills muted
-/// (accent fill), 36px tall and rounded.
-fn Toggle(label: string, on: Signal<bool>) -> Node {
+/// (accent fill), `control_h(size)` tall and rounded.
+struct ToggleProps {
+    /// `Size` token: the toggle is `control_h(size)` tall.
+    size: int = Size.Md,
+}
+
+fn Toggle(label: string, on: Signal<bool>, p: ToggleProps) -> Node {
+    let size = p.size
     return Box(
-        style = merge(Style(height = px(36),
+        style = merge(Style(height = px(control_h(size)),
                             direction = Direction.Row,
                             gap = Space.Exxs,
                             align = Align.Center,
                             justify = Align.Center,
                             padding = Edges(right = 12, left = 12),
-                            radius = corners(RAD_MD),
+                            radius = corners(RAD_CONTROL),
                             cursor = "pointer"), Style(background = if on.get() { raised() } else { plate() })),
         on_click = fn() => on.set(!on.get()),
         role = "button",
         label = label,
+        checked = on.get(),
         hoverOff = false,
         hoverFade = true,
         press = true,
         pressScale = true
     ) {
         Text(label,
-             style = merge(Style(font = FONT_BODY), Style(color = if on.get() { ink() } else { mute() })))
+             style = merge(Style(font = control_font(size)), Style(color = if on.get() { ink() } else { mute() })))
     }
 }
 
 /// Toggle group: a 4px-gap row of single-choice toggles with outline
 /// chrome; the pressed state fills muted. One tab stop for the group (the
 /// picked item); arrows move the pick, Home / End jump to the ends.
-fn ToggleGroup(value: Signal<int>, labels: []string) -> Node {
+fn ToggleGroup(value: Signal<int>, labels: []string, p: ToggleProps) -> Node {
+    let size = p.size
     let n = labels.len
     return Row(4) {
         Loop(labels, fn(i, lab) {
-            return ToggleItem(lab, value, i, n)
+            return ToggleItem(lab, value, i, n, size)
         })
     }
 }
 
 /// One item of a `ToggleGroup`.
-fn ToggleItem(label: string, value: Signal<int>, index: int, count: int) -> Node {
+fn ToggleItem(label: string, value: Signal<int>, index: int, count: int,
+              size: int = Size.Md) -> Node {
     // controller
     fn active() -> bool {
         return value.get() == index
@@ -1007,24 +1299,25 @@ fn ToggleItem(label: string, value: Signal<int>, index: int, count: int) -> Node
 
     // view
     return Box(
-        style = merge(Style(height = px(36),
+        style = merge(Style(height = px(control_h(size)),
                             direction = Direction.Row,
                             align = Align.Center,
                             justify = Align.Center,
                             padding = Edges(right = 12, left = 12),
-                            radius = corners(RAD_MD),
+                            radius = corners(RAD_CONTROL),
                             border = line(HAIRLINE, rule()),
                             cursor = "pointer"), Style(background = if active() { raised() } else { plate() })),
         on_click = fn() => value.set(index),
         role = "radio",
         label = label,
+        checked = active(),
         keys = keys,
         roving = active(),
         hoverOff = false,
         hoverFade = true,
         press = true
     ) {
-        Text(label, style = merge(Style(font = FONT_BODY), Style(color = if active() { ink() } else { mute() })))
+        Text(label, style = merge(Style(font = control_font(size)), Style(color = if active() { ink() } else { mute() })))
     }
 }
 
@@ -1099,26 +1392,26 @@ fn Collapsible(p: CollapsibleProps) -> Node {
 /// One page number for `Pagination`: ghost number; the current page is an
 /// outline button. The current page is an effect, not a prop, so the row
 /// repaints when `page` moves.
-fn PageButton(page: Signal<int>, n: int) -> Node {
+fn PageButton(page: Signal<int>, n: int, size: int = Size.Md) -> Node {
     // controller
     fn current() -> bool {
         return page.get() == n
     }
 
     // view. The outline only exists on the current page.
-    return Box(style = merge(Style(width = px(36),
-                                   height = px(36),
+    return Box(style = merge(Style(width = px(control_h(size)),
+                                   height = px(control_h(size)),
                                    direction = Direction.Row,
                                    align = Align.Center,
                                    justify = Align.Center,
-                                   radius = corners(RAD_MD),
+                                   radius = corners(RAD_CONTROL),
                                    border = Border(color = rule()),
                                    cursor = "pointer"), style_of(page_chrome(current()))),
                on_click = fn() => page.set(n),
                role = "button",
                label = "{{n}}") {
         Text("{{n}}",
-             style = merge(Style(font = FONT_BODY), Style(color = if current() { ink() } else { mute() })))
+             style = merge(Style(font = control_font(size)), Style(color = if current() { ink() } else { mute() })))
     }
 }
 
@@ -1133,7 +1426,7 @@ fn page_chrome(on: bool) -> Style {
 
 /// One slot of a collapsed `Pagination` row: the number it shows follows
 /// `current_value`, so the row never rebuilds; an ellipsis slot is inert.
-fn PageSlot(current_value: Signal<int>, pages: int, slot: int) -> Node {
+fn PageSlot(current_value: Signal<int>, pages: int, slot: int, size: int = Size.Md) -> Node {
     // controller. The number this slot shows follows `current_value`, so the
     // row never rebuilds; an ellipsis slot (0) is inert.
     fn shown_page() -> int {
@@ -1147,25 +1440,31 @@ fn PageSlot(current_value: Signal<int>, pages: int, slot: int) -> Node {
     }
 
     // view
-    return Box(style = merge(Style(width = px(36),
-                                   height = px(36),
+    return Box(style = merge(Style(width = px(control_h(size)),
+                                   height = px(control_h(size)),
                                    direction = Direction.Row,
                                    align = Align.Center,
                                    justify = Align.Center,
-                                   radius = corners(RAD_MD),
+                                   radius = corners(RAD_CONTROL),
                                    border = Border(color = rule())), merge(page_chrome(shown_page() == current_value.get()),
                                                                            Style(cursor = if shown_page() == 0 { "" } else { "pointer" }))),
                on_click = go,
                role = "button",
                label = if shown_page() == 0 { "More pages" } else { "{{shown_page()}}" }) {
         Text(if shown_page() == 0 { "…" } else { "{{shown_page()}}" },
-             style = merge(Style(font = FONT_BODY), Style(color = if shown_page() == current_value.get() { ink() } else { mute() })))
+             style = merge(Style(font = control_font(size)), Style(color = if shown_page() == current_value.get() { ink() } else { mute() })))
     }
 }
 
 /// `Pagination(current_value, pages)`: `pages` is the 1-based page count. Past seven
 /// pages the row collapses to `1 … c-1 c c+1 … N` (see `page_at`).
-fn Pagination(current_value: Signal<int>, pages: int) -> Node {
+struct PaginationProps {
+    /// `Size` token: each page button is a `control_h(size)` square.
+    size: int = Size.Md,
+}
+
+fn Pagination(current_value: Signal<int>, pages: int, p: PaginationProps) -> Node {
+    let size = p.size
     // controller
     fn previous() {
         if current_value.get() > 1 {
@@ -1180,10 +1479,10 @@ fn Pagination(current_value: Signal<int>, pages: int) -> Node {
 
     // keys. On the row, so they answer wherever focus sits inside it.
     let keys = []KeyBind {
-        chord("left", "page.prev", previous),
-        chord("right", "page.next", next),
-        chord("home", "page.first", fn() { current_value.set(1) }),
-        chord("end", "page.last", fn() { current_value.set(pages) }),
+        key_bind("left", "page.prev", previous),
+        key_bind("right", "page.next", next),
+        key_bind("home", "page.first", fn() { current_value.set(1) }),
+        key_bind("end", "page.last", fn() { current_value.set(pages) }),
     }
 
     // view
@@ -1192,12 +1491,12 @@ fn Pagination(current_value: Signal<int>, pages: int) -> Node {
                label = "Pagination",
                keys = keys) {
         Box(
-            style = Style(width = px(36),
-                          height = px(36),
+            style = Style(width = px(control_h(size)),
+                          height = px(control_h(size)),
                           direction = Direction.Row,
                           align = Align.Center,
                           justify = Align.Center,
-                          radius = corners(RAD_MD),
+                          radius = corners(RAD_CONTROL),
                           cursor = "pointer"),
             on_click = previous,
             role = "button",
@@ -1208,21 +1507,21 @@ fn Pagination(current_value: Signal<int>, pages: int) -> Node {
         if pages <= PAGE_SLOTS {
             let mut i = 1
             while i <= pages {
-                PageButton(current_value, i)
+                PageButton(current_value, i, size)
                 i = i + 1
             }
         } else {
             for slot in 0..PAGE_SLOTS {
-                PageSlot(current_value, pages, slot)
+                PageSlot(current_value, pages, slot, size)
             }
         }
         Box(
-            style = Style(width = px(36),
-                          height = px(36),
+            style = Style(width = px(control_h(size)),
+                          height = px(control_h(size)),
                           direction = Direction.Row,
                           align = Align.Center,
                           justify = Align.Center,
-                          radius = corners(RAD_MD),
+                          radius = corners(RAD_CONTROL),
                           cursor = "pointer"),
             on_click = next,
             role = "button",
@@ -1251,12 +1550,16 @@ fn BtnLook(p: ButtonProps) -> Node {
     // the button is inert at 70%. Chrome hover is explicit (`hoverFade`): a
     // themed button stays a hover target even with no click handler. The
     // caller's `color` / `font` reach the label and icon.
+    // `width = pct(-1)` is content width. A button in a column otherwise
+    // fills the column; a caller's `width` still wins through the merge.
     return Box(
-        style = merge(merge(Style(height = px(button_height(size)), direction = Direction.Row,
-                                  gap = Space.Exs, align = Align.Center, justify = Align.Center,
-                                  padding = Edges(left = button_padding_x(size),
-                                                  right = button_padding_x(size)),
-                                  radius = corners(button_radius(size)),
+        style = merge(merge(Style(width = pct(-1), height = px(control_h(size)),
+                                  direction = Direction.Row,
+                                  gap = control_gap(size), align = Align.Center,
+                                  justify = Align.Center,
+                                  padding = Edges(left = control_pad_x(size),
+                                                  right = control_pad_x(size)),
+                                  radius = corners(RAD_CONTROL),
                                   border = Border(width = button_border_width(look),
                                                   color = opt_color(edge)),
                                   background = opt_color(fill), color = ink_c,
@@ -1275,14 +1578,14 @@ fn BtnLook(p: ButtonProps) -> Node {
         loading = busy && ls.get()
     ) {
         if busy {
-            Spinner(size = button_icon(size), color = text_color(style_of(p.style), ink_c),
+            Spinner(size = control_icon(size), color = text_color(style_of(p.style), ink_c),
                     style = Style(display = shown(ls.get())))
         }
         if p.icon.len > 0 {
-            Icon(p.icon, button_icon(size), text_color(style_of(p.style), ink_c),
+            Icon(p.icon, control_icon(size), text_color(style_of(p.style), ink_c),
                  style = Style(display = shown(!busy || !ls.get())))
         }
-        Text(p.label, style = merge(Style(font = button_font(size), color = ink_c),
+        Text(p.label, style = merge(Style(font = control_font(size), color = ink_c),
                                     text_part(style_of(p.style))))
     }
 }
@@ -1331,4 +1634,1578 @@ fn page_at(current_value: int, pages: int, slot: int) -> int {
         return 0
     }
     return current_value + slot - 3
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Tier A molecules
+// ═══════════════════════════════════════════════════════════════════
+
+/// Corners of slot `index` in a run of `count` attached controls (Ely's
+/// `Slot`): the outer ends round, the joins stay square.
+fn slot_corners(index: int, count: int) -> Corners {
+    let r = RAD_CONTROL
+    let first = index == 0
+    let last = index == count - 1
+    return Corners(tl = if first { r } else { 0 }, bl = if first { r } else { 0 },
+                   tr = if last { r } else { 0 }, br = if last { r } else { 0 })
+}
+
+/// One attached button: `look` chrome at `control_h(size)`, corners by slot.
+/// Bordered looks overlap their neighbour's hairline; filled ones leave a 1px
+/// seam. `trail` is an optional trailing icon (a dropdown's chevron).
+fn GroupSegment(label: string, index: int, count: int, look: int, size: int, on_click: fn(),
+                enabled: bool, trail: string) -> Node {
+    let bordered = button_border_width(look) > 0
+    let seam = if index == 0 { 0 } else if bordered { -HAIRLINE } else { 1 }
+    return Box(style = Style(height = px(control_h(size)), direction = Direction.Row,
+                             gap = control_gap(size), align = Align.Center,
+                             justify = Align.Center,
+                             padding = Edges(left = control_pad_x(size), right = control_pad_x(size)),
+                             margin = Edges(left = seam),
+                             radius = slot_corners(index, count),
+                             border = Border(width = button_border_width(look),
+                                             color = opt_color(button_border_color(look))),
+                             background = opt_color(button_background(look)),
+                             cursor = "pointer"),
+               on_click = on_click,
+               role = "button",
+               label = label,
+               enabled = enabled,
+               press = true,
+               hoverFade = true) {
+        Text(label, style = Style(font = control_font(size), color = button_color(look)))
+        if trail.len > 0 {
+            Icon(trail, control_icon(size), button_color(look))
+        }
+    }
+}
+
+/// Options for `ButtonGroup`.
+struct ButtonGroupProps {
+    look: int = Look.Outline,
+    size: int = Size.Md,
+    /// Runs with the pressed button's index.
+    on_click: Option<fn(int)> = none,
+    disabled: bool = false,
+    /// Accessible name of the group.
+    label: string = "",
+}
+
+/// Attached buttons sharing one pill: `ButtonGroup(["Day", "Week"], on_click
+/// = fn(i) => …)`. For a single *choice* use `Segmented` / `ToggleGroup`;
+/// this is a row of actions.
+fn ButtonGroup(labels: []string, p: ButtonGroupProps) -> Node {
+    let n = labels.len
+    return Row(0) {
+        Box(style = Style(direction = Direction.Row), role = "group", label = p.label) {
+            Loop(labels, fn(i, lab) {
+                return GroupSegment(lab, i, n, p.look, p.size, fn() => emit_with(p.on_click, i),
+                                    !p.disabled, "")
+            })
+        }
+    }
+}
+
+/// Options for `CopyButton`.
+struct CopyButtonProps {
+    look: int = Look.Ghost,
+    size: int = Size.Md,
+    /// Accessible name before and after the copy.
+    label: string = "Copy",
+    copiedLabel: string = "Copied",
+    /// How long the check stays, in ms.
+    holdMs: int = 1500,
+    style: Option<fn() -> Style> = none,
+}
+
+/// Square icon button that puts `text()` on the clipboard; the icon swaps to
+/// a check for `holdMs` and the accessible name to `copiedLabel`.
+fn CopyButton(text: fn() -> string, p: CopyButtonProps) -> Node {
+    let copied = signal(false)
+    let look = p.look
+    let size = p.size
+    fn copy() {
+        copy_text(text())
+        copied.set(true)
+        let timer = async.after(p.holdMs, fn() { copied.set(false) })
+    }
+    return Box(style = merge(Style(width = px(control_h(size)), height = px(control_h(size)),
+                                   direction = Direction.Row, align = Align.Center,
+                                   justify = Align.Center, radius = corners(RAD_CONTROL),
+                                   border = Border(width = button_border_width(look),
+                                                   color = opt_color(button_border_color(look))),
+                                   background = opt_color(button_background(look)),
+                                   cursor = "pointer"),
+                             style_of(p.style)),
+               on_click = copy,
+               role = "button",
+               label = if copied.get() { p.copiedLabel } else { p.label },
+               press = true,
+               hoverFade = true) {
+        Icon(IC_COPY, control_icon(size), button_color(look),
+             style = Style(display = shown(!copied.get())))
+        Icon(IC_CHECK, control_icon(size), ok(), style = Style(display = shown(copied.get())))
+    }
+}
+
+/// `s` as an int, or `fallback` when it is not one (optional `-`, digits only).
+fn parse_int_or(s: string, fallback: int) -> int {
+    if s.len == 0 {
+        return fallback
+    }
+    let neg = s[0] == 45
+    let start = if neg { 1 } else { 0 }
+    if start >= s.len {
+        return fallback
+    }
+    let mut v = 0
+    for i in start..s.len {
+        let d = s[i] - 48
+        if d < 0 || d > 9 {
+            return fallback
+        }
+        v = v * 10 + d
+    }
+    return if neg { -v } else { v }
+}
+
+/// Options for `NumberInput` and `Stepper`.
+struct NumberInputProps {
+    min: int = -1000000000,
+    max: int = 1000000000,
+    step: int = 1,
+    size: int = Size.Md,
+    disabled: bool = false,
+    invalid: bool = false,
+    /// Accessible name.
+    label: string = "",
+    style: Option<fn() -> Style> = none,
+}
+
+/// A small square ± button inside a field.
+fn StepButton(markup: string, label: string, size: int, on_click: fn(), enabled: bool) -> Node {
+    return Box(style = Style(width = px(control_h(size) - 8), height = px(control_h(size) - 8),
+                             shrink = 0, align = Align.Center, justify = Align.Center,
+                             radius = corners(RAD_CONTROL), cursor = "pointer"),
+               on_click = on_click,
+               role = "button",
+               label = label,
+               enabled = enabled,
+               focusable = false,
+               press = true,
+               hoverFade = true) {
+        Icon(markup, control_icon(size), ink())
+    }
+}
+
+/// Number field: − and + either side of an editable value. Up / Down step by
+/// `step`; Enter commits the typed text, clamped to `min..max`. A typed value
+/// already in range commits as you type; one out of range waits for Enter.
+fn NumberInput(value: Signal<int>, p: NumberInputProps) -> Node {
+    // state
+    let field = ref()
+    let text = signal("{{peek(value)}}")
+    let lo = p.min
+    let hi = if p.max >= p.min { p.max } else { p.min }
+    let step = if p.step > 0 { p.step } else { 1 }
+
+    // controller
+    fn put_text(v: int) {
+        let s = "{{v}}"
+        if !fmt.eq(peek(text), s) {
+            text.set(s)
+            set_input(ref_node(field), s)
+        }
+    }
+    fn commit(v: int) {
+        let c = clamp_int(v, lo, hi)
+        value.set(c)
+        put_text(c)
+    }
+    fn bump(d: int) {
+        commit(peek(value) + d)
+    }
+    fn key() {
+        let k = current_key().key
+        if k == Key.Up {
+            bump(step)
+        } else if k == Key.Down {
+            bump(-step)
+        } else if k == Key.Enter {
+            commit(parse_int_or(peek(text), peek(value)))
+        }
+    }
+    on_mount(|| {
+        set_input(ref_node(field), peek(text))
+        // A value set from outside shows in the field.
+        effect(|| {
+            let v = value.get()
+            if parse_int_or(peek(text), v + 1) != v {
+                put_text(v)
+            }
+        })
+        // Typing an in-range number commits it at once.
+        effect(|| {
+            let n = parse_int_or(text.get(), lo - 1)
+            if n >= lo && n <= hi && n != peek(value) {
+                value.set(n)
+            }
+        })
+    })
+
+    // view
+    return Box(style = merge(merge(merge(field_chrome(p.size), invalid_edge(p.invalid)),
+                                   Style(padding = Edges(left = 4, right = 4), gap = 2,
+                                         cursor = "text")),
+                             style_of(p.style)),
+               on_click = fn() { focus(field) },
+               focusable = false,
+               role = "group",
+               label = p.label) {
+        StepButton(IC_MINUS, "Decrease", p.size, fn() { bump(-step) },
+                   !p.disabled && value.get() > lo)
+        Input(ref = field,
+              bind = text,
+              style = Style(grow = 1, font = control_font(p.size), padding = edges(0), color = ink()),
+              label = p.label,
+              on_key_down = key)
+        StepButton(IC_PLUS, "Increase", p.size, fn() { bump(step) },
+                   !p.disabled && value.get() < hi)
+    }
+}
+
+/// Compact counter: − value + with no text field (quantities, guests). Up /
+/// Down and the buttons step by `step` within `min..max`.
+fn Stepper(value: Signal<int>, p: NumberInputProps) -> Node {
+    let lo = p.min
+    let hi = if p.max >= p.min { p.max } else { p.min }
+    let step = if p.step > 0 { p.step } else { 1 }
+    fn bump(d: int) {
+        value.set(clamp_int(value.get() + d, lo, hi))
+    }
+    let keys = []KeyBind {
+        key_bind("up", "stepper.up", fn() { bump(step) }),
+        key_bind("down", "stepper.down", fn() { bump(-step) }),
+        key_bind("right", "stepper.right", fn() { bump(step) }),
+        key_bind("left", "stepper.left", fn() { bump(-step) }),
+    }
+    // The row wrapper lets the control hug its content in a column.
+    return Row(0) {
+        Box(style = merge(Style(height = px(control_h(p.size)), direction = Direction.Row,
+                                gap = 4, align = Align.Center,
+                                padding = Edges(left = 4, right = 4),
+                                radius = corners(RAD_CONTROL), border = line(HAIRLINE, rule()),
+                                background = plate()),
+                          style_of(p.style)),
+            role = "spinbutton",
+            label = if p.label.len > 0 { "{{p.label}} {{value.get()}}" } else { "{{value.get()}}" },
+            keys = keys,
+            enabled = !p.disabled) {
+            StepButton(IC_MINUS, "Decrease", p.size, fn() { bump(-step) }, value.get() > lo)
+            Text("{{value.get()}}", style = Style(minWidth = 24, font = control_font(p.size),
+                                                   color = ink()))
+            StepButton(IC_PLUS, "Increase", p.size, fn() { bump(step) }, value.get() < hi)
+        }
+    }
+}
+
+/// Options for `SearchInput`.
+struct SearchInputProps {
+    placeholder: string = "Search",
+    size: int = Size.Md,
+    /// A global chord that focuses the field ("/", "cmd+k"); shown as a key
+    /// hint while the field is empty. Empty = none.
+    shortcut: string = "",
+    /// Enter runs this with the query.
+    on_submit: Option<fn(string)> = none,
+    invalid: bool = false,
+    disabled: bool = false,
+    /// Accessible name. Empty uses the placeholder.
+    label: string = "",
+    style: Option<fn() -> Style> = none,
+}
+
+/// Search field: a leading magnifier, the clear X, and an optional focus
+/// shortcut with its key hint. Escape clears; Enter submits.
+fn SearchInput(value: Signal<string>, p: SearchInputProps) -> Node {
+    let field = ref()
+    fn key() {
+        let k = current_key().key
+        if k == Key.Escape {
+            value.set("")
+            set_input(ref_node(field), "")
+        } else if k == Key.Enter {
+            emit_with(p.on_submit, value.get())
+        }
+    }
+    let keys = if p.shortcut.len > 0 {
+        []KeyBind { key_bind_global(p.shortcut, "search.focus", fn() { focus(field) }) }
+    } else {
+        no_keys()
+    }
+    return Box(style = merge(merge(merge(field_chrome(p.size), invalid_edge(p.invalid)),
+                                   Style(cursor = "text")),
+                             style_of(p.style)),
+               on_click = fn() { focus(field) },
+               focusable = false,
+               enabled = !p.disabled,
+               role = "search",
+               keys = keys) {
+        Icon(IC_SEARCH, control_icon(p.size), dim())
+        Input(ref = field,
+              bind = value,
+              placeholder = p.placeholder,
+              style = Style(grow = 1, font = control_font(p.size), padding = edges(0), color = ink()),
+              label = field_name(p.label, p.placeholder),
+              on_key_down = key)
+        InputClear(value, field)
+        if p.shortcut.len > 0 {
+            Box(style = Style(display = shown(value.get().len == 0))) {
+                KbdCombo(p.shortcut)
+            }
+        }
+    }
+}
+
+/// Options for `PasswordInput`.
+struct PasswordInputProps {
+    placeholder: string = "Password",
+    size: int = Size.Md,
+    invalid: bool = false,
+    disabled: bool = false,
+    /// Accessible name. Empty uses the placeholder.
+    label: string = "",
+    style: Option<fn() -> Style> = none,
+}
+
+/// Masked text field with a reveal toggle. The bound `value` is the real
+/// text; only the drawing is masked.
+fn PasswordInput(value: Signal<string>, p: PasswordInputProps) -> Node {
+    let field = ref()
+    let reveal = signal(false)
+    on_mount(|| {
+        effect(|| { set_secure(field, !reveal.get()) })
+    })
+    return Box(style = merge(merge(merge(field_chrome(p.size), invalid_edge(p.invalid)),
+                                   Style(cursor = "text", padding = Edges(right = 6))),
+                             style_of(p.style)),
+               on_click = fn() { focus(field) },
+               focusable = false,
+               enabled = !p.disabled) {
+        Input(ref = field,
+              bind = value,
+              placeholder = p.placeholder,
+              style = Style(grow = 1, font = control_font(p.size), padding = edges(0), color = ink()),
+              label = field_name(p.label, p.placeholder))
+        Box(style = Style(width = px(control_h(p.size) - 8), height = px(control_h(p.size) - 8),
+                          shrink = 0, align = Align.Center, justify = Align.Center,
+                          radius = corners(RAD_CONTROL), cursor = "pointer"),
+            on_click = fn() { reveal.set(!reveal.get()) },
+            role = "button",
+            label = if reveal.get() { "Hide password" } else { "Show password" },
+            checked = reveal.get(),
+            hoverFade = true) {
+            Icon(IC_EYE, control_icon(p.size), dim(), style = Style(display = shown(!reveal.get())))
+            Icon(IC_EYE_OFF, control_icon(p.size), dim(), style = Style(display = shown(reveal.get())))
+        }
+    }
+}
+
+/// Options for `InputGroup`.
+struct InputGroupProps {
+    /// Text before / after the value inside the frame ("https://", "kg").
+    prefix: string = "",
+    suffix: string = "",
+    /// Leading icon markup.
+    icon: string = "",
+    size: int = Size.Md,
+    invalid: bool = false,
+    disabled: bool = false,
+    /// Accessible name. Empty uses the placeholder.
+    label: string = "",
+    style: Option<fn() -> Style> = none,
+    keys: []KeyBind = no_keys(),
+}
+
+/// A text field with addons inside its chrome: a leading icon, a muted
+/// prefix and suffix, each set off from the value by a hairline.
+fn InputGroup(value: Signal<string>, placeholder: string, p: InputGroupProps) -> Node {
+    let field = ref()
+    return Box(style = merge(merge(merge(field_chrome(p.size), invalid_edge(p.invalid)),
+                                   Style(cursor = "text")),
+                             style_of(p.style)),
+               on_click = fn() { focus(field) },
+               focusable = false,
+               enabled = !p.disabled,
+               keys = p.keys) {
+        if p.icon.len > 0 {
+            Icon(p.icon, control_icon(p.size), dim())
+        }
+        if p.prefix.len > 0 {
+            Text(p.prefix, style = Style(font = control_font(p.size), color = mute()))
+            Box(style = Style(width = px(HAIRLINE), height = px(control_h(p.size) / 2),
+                              margin = Edges(left = 4, right = 4), background = rule()))
+        }
+        Input(ref = field,
+              bind = value,
+              placeholder = placeholder,
+              style = Style(grow = 1, font = control_font(p.size), padding = edges(0), color = ink()),
+              label = field_name(p.label, placeholder))
+        if p.suffix.len > 0 {
+            Box(style = Style(width = px(HAIRLINE), height = px(control_h(p.size) / 2),
+                              margin = Edges(left = 4, right = 4), background = rule()))
+            Text(p.suffix, style = Style(font = control_font(p.size), color = mute()))
+        }
+    }
+}
+
+/// Options for `CheckboxGroup`.
+struct CheckboxGroupProps {
+    /// Label of a select-all box above the options; empty = none. It is
+    /// mixed while some but not all are checked.
+    allLabel: string = "",
+    size: int = Size.Md,
+    disabled: bool = false,
+}
+
+/// A column of checkboxes, one per label, each bound to the caller's signal
+/// at the same index. `allLabel` adds a select-all row that checks or clears
+/// them all.
+fn CheckboxGroup(labels: []string, checked: []Signal<bool>, p: CheckboxGroupProps) -> Node {
+    let n = if labels.len < checked.len { labels.len } else { checked.len }
+    let all = signal(false)
+    let mixed = signal(false)
+    let items = checked
+    if p.allLabel.len > 0 {
+        // Children → select-all: all on, some on (mixed), or none.
+        effect(|| {
+            let mut c = 0
+            for i in 0..n {
+                if items[i].get() {
+                    c = c + 1
+                }
+            }
+            all.set(n > 0 && c == n)
+            mixed.set(c > 0 && c < n)
+        })
+        // Select-all → children, only when the user moved it away from what
+        // the children already say.
+        effect(|| {
+            let a = all.get()
+            let mut c = 0
+            for i in 0..n {
+                if peek(items[i]) {
+                    c = c + 1
+                }
+            }
+            if a && c < n {
+                for i in 0..n {
+                    items[i].set(true)
+                }
+            } else if !a && c == n && n > 0 {
+                for i in 0..n {
+                    items[i].set(false)
+                }
+            }
+        })
+    }
+    return Box(style = Style(direction = Direction.Column, gap = Space.Exs),
+               role = "group") {
+        if p.allLabel.len > 0 {
+            Checkbox(p.allLabel, all, indeterminate = mixed, size = p.size, disabled = p.disabled)
+        }
+        Box(style = Style(direction = Direction.Column, gap = Space.Exs,
+                          padding = Edges(left = if p.allLabel.len > 0 { 24 } else { 0 }))) {
+            for i in 0..n {
+                Checkbox(labels[i], items[i], size = p.size, disabled = p.disabled)
+            }
+        }
+    }
+}
+
+/// Options for `RangeSlider`.
+struct RangeSliderProps {
+    min: int = 0,
+    max: int = 100,
+    step: int = 1,
+    disabled: bool = false,
+    label: string = "",
+    style: Option<fn() -> Style> = none,
+}
+
+/// Two thumbs on one track, bound to `lo` and `hi` (`lo <= hi`). A press or
+/// drag moves the nearer thumb; a thumb never passes the other. Each thumb is
+/// a focusable slider: arrows step, Page keys step by a tenth, Home / End jump.
+fn RangeSlider(lo: Signal<int>, hi: Signal<int>, p: RangeSliderProps) -> Node {
+    // state
+    let track = ref()
+    let tw = signal(0)
+    let mn = p.min
+    let mx = if p.max > p.min { p.max } else { p.min + 1 }
+    let step = if p.step > 0 { p.step } else { 1 }
+    let page = if (mx - mn) / 10 > step { (mx - mn) / 10 } else { step }
+    let t = SLIDER_THUMB
+
+    // controller
+    fn pos(v: int) -> int {
+        return (clamp_int(v, mn, mx) - mn) * (tw.get() - t) / (mx - mn)
+    }
+    fn at(x: int) -> int {
+        let r = rect(track)
+        let travel = if r.w - t > 1 { r.w - t } else { 1 }
+        return slider_snap(mn + (x - r.x - t / 2) * (mx - mn) / travel, mn, mx, step)
+    }
+    fn set_lo(v: int) {
+        lo.set(clamp_int(slider_snap(v, mn, mx, step), mn, peek(hi)))
+    }
+    fn set_hi(v: int) {
+        hi.set(clamp_int(slider_snap(v, mn, mx, step), peek(lo), mx))
+    }
+    on_mount(|| {
+        on_resize(track, || { tw.set(rect(track).w) })
+        on_drag(track, fn() {
+            if p.disabled {
+                return
+            }
+            let v = at(current_mouse().x)
+            let a = peek(lo)
+            let b = peek(hi)
+            // The nearer thumb; on a tie the one on the side the point is.
+            let dl = if v > a { v - a } else { a - v }
+            let dh = if v > b { v - b } else { b - v }
+            if dl < dh || (dl == dh && v < a) {
+                set_lo(v)
+            } else {
+                set_hi(v)
+            }
+        })
+    })
+
+    // view
+    return Box(ref = track,
+               style = merge(Style(width = pct(100), grow = 1, height = px(20), cursor = "pointer"),
+                             style_of(p.style)),
+               role = "group",
+               label = p.label,
+               enabled = !p.disabled) {
+        Box(style = Style(position = pos_absolute(),
+                          inset = Edges(top = (20 - SLIDER_TRACK) / 2, left = t / 2),
+                          width = px(if tw.get() > t { tw.get() - t } else { 0 }),
+                          height = px(SLIDER_TRACK), radius = corners(RAD_FULL),
+                          background = raised()),
+            role = "presentation")
+        Box(style = Style(position = pos_absolute(),
+                          inset = Edges(top = (20 - SLIDER_TRACK) / 2, left = t / 2 + pos(lo.get())),
+                          width = px(pos(hi.get()) - pos(lo.get())),
+                          height = px(SLIDER_TRACK), radius = corners(RAD_FULL),
+                          background = accent()),
+            role = "presentation")
+        RangeThumb(lo, "Minimum", pos(lo.get()), fn(v: int) { set_lo(v) }, step, page, mn, mx)
+        RangeThumb(hi, "Maximum", pos(hi.get()), fn(v: int) { set_hi(v) }, step, page, mn, mx)
+    }
+}
+
+/// One thumb of a `RangeSlider`: a focusable slider at `left`.
+fn RangeThumb(value: Signal<int>, label: string, left: int, put: fn(int), step: int, page: int,
+              mn: int, mx: int) -> Node {
+    let keys = []KeyBind {
+        key_bind("right", "range.up", fn() { put(peek(value) + step) }),
+        key_bind("up", "range.up2", fn() { put(peek(value) + step) }),
+        key_bind("left", "range.down", fn() { put(peek(value) - step) }),
+        key_bind("down", "range.down2", fn() { put(peek(value) - step) }),
+        key_bind("pageup", "range.page_up", fn() { put(peek(value) + page) }),
+        key_bind("pagedown", "range.page_down", fn() { put(peek(value) - page) }),
+        key_bind("home", "range.min", fn() { put(mn) }),
+        key_bind("end", "range.max", fn() { put(mx) }),
+    }
+    return Box(style = Style(position = pos_absolute(),
+                             inset = Edges(top = (20 - SLIDER_THUMB) / 2, left = left),
+                             width = px(SLIDER_THUMB), height = px(SLIDER_THUMB),
+                             radius = corners(RAD_FULL), border = line(2, accent()),
+                             background = plate(), elevation = Elevation.Raised),
+               role = "slider",
+               label = "{{label}} {{value.get()}}",
+               focusable = true,
+               keys = keys)
+}
+
+/// Markup of the status icon for a `Tint`.
+fn tint_icon(kind: int) -> string {
+    match kind {
+        Tint.Ok => { return IC_CHECK }
+        Tint.Warn | Tint.Danger => { return IC_ALERT_CIRCLE }
+        _ => { return IC_INFO }
+    }
+}
+
+/// Options for `Banner`.
+struct BannerProps {
+    tint: int = Tint.Info,
+    /// Show signal: an X sets it false, and the bar hides while it is false.
+    dismiss: Option<Signal<bool>> = none,
+    /// Trailing actions (buttons, a link).
+    children: fn() = noop,
+    style: Option<fn() -> Style> = none,
+}
+
+/// Full-width message bar for the top of a page or a panel: icon, message,
+/// trailing actions, optional dismiss. Square, so it meets the edges.
+fn Banner(message: fn() -> string, p: BannerProps) -> Node {
+    let has_x = result.is_some(p.dismiss)
+    let open = result.some_or(p.dismiss, no_flag_signal())
+    return Box(style = merge(Style(direction = Direction.Row, gap = 12, align = Align.Center,
+                                   padding = edges2(10, 16), background = tint_bg(p.tint),
+                                   border = line(HAIRLINE, tint_line(p.tint))),
+                             style_of(p.style)),
+               role = "status",
+               visible = !has_x || open.get()) {
+        Icon(tint_icon(p.tint), IconSize.Md, tint_ink(p.tint))
+        Text(message, style = Style(grow = 1, wrap = true, font = FONT_CONTROL, color = tint_ink(p.tint)))
+        p.children()
+        if has_x {
+            Box(style = Style(width = px(28), height = px(28), shrink = 0, align = Align.Center,
+                              justify = Align.Center, radius = corners(RAD_CONTROL),
+                              cursor = "pointer"),
+                on_click = fn() { open.set(false) },
+                role = "button",
+                label = "Dismiss",
+                hoverFade = true) {
+                Icon(IC_X, IconSize.Md, tint_ink(p.tint))
+            }
+        }
+    }
+}
+
+/// Options for `Callout`.
+struct CalloutProps {
+    tint: int = Tint.Info,
+    /// Icon markup; empty uses the tint's own.
+    icon: string = "",
+    /// More content under the body.
+    children: fn() = noop,
+    style: Option<fn() -> Style> = none,
+}
+
+/// Boxed note inside content (docs, settings): tinted wash and edge, icon,
+/// title, body.
+fn Callout(title: fn() -> string, body: fn() -> string, p: CalloutProps) -> Node {
+    return Box(style = merge(Style(direction = Direction.Row, gap = 12, align = Align.Start,
+                                   padding = edges2(12, 16), radius = corners(RAD_MD),
+                                   border = line(HAIRLINE, tint_line(p.tint)),
+                                   background = tint_bg(p.tint)),
+                             style_of(p.style)),
+               role = "note") {
+        Icon(str_or_default(p.icon, tint_icon(p.tint)), IconSize.Md, tint_ink(p.tint))
+        Box(style = Style(direction = Direction.Column, gap = 4, grow = 1)) {
+            Text(title, style = Style(font = FONT_BODY, color = tint_ink(p.tint)))
+            Text(body, style = Style(wrap = true, font = FONT_CONTROL, color = ink()))
+            p.children()
+        }
+    }
+}
+
+/// One-line form message under a control: a small icon and caption text in
+/// the tint's ink. Empty text hides it.
+fn InlineMessage(text: fn() -> string, kind: int) -> Node {
+    return Box(style = Style(direction = Direction.Row, gap = 6, align = Align.Center,
+                             display = shown(text().len > 0)),
+               role = if kind == Tint.Danger { "alert" } else { "status" }) {
+        Icon(tint_icon(kind), IconSize.Sm, tint_ink(kind))
+        Text(text, style = Style(font = FONT_CONTROL, color = tint_ink(kind)))
+    }
+}
+
+/// One row of a `DescriptionList`.
+struct DescItem {
+    term: string = "",
+    detail: string = "",
+}
+
+/// Options for `DescriptionList`.
+struct DescriptionListProps {
+    /// Width of the term column.
+    termWidth: int = 160,
+    /// Hairlines between rows.
+    divided: bool = true,
+}
+
+/// Term / detail pairs (an order summary, a profile). The term column is
+/// `termWidth` wide; on a narrow width the detail wraps under its term.
+fn DescriptionList(items: []DescItem, p: DescriptionListProps) -> Node {
+    let n = items.len
+    return Box(style = Style(direction = Direction.Column), role = "list") {
+        Loop(items, fn(i, it) {
+            return Box(style = Style(direction = Direction.Column),
+                       role = "listitem",
+                       label = "{{it.term}}: {{it.detail}}") {
+                Box(style = Style(direction = Direction.Row, wrap = true, gap = 4,
+                                  align = Align.Start, padding = edges2(10, 0))) {
+                    Text(it.term, style = Style(width = px(p.termWidth), shrink = 0,
+                                                font = FONT_CONTROL, color = mute()))
+                    Text(it.detail, style = Style(grow = 1, minWidth = 160, wrap = true,
+                                                  font = FONT_BODY, color = ink()))
+                }
+                if p.divided && i < n - 1 {
+                    Separator()
+                }
+            }
+        })
+    }
+}
+
+/// The empty list a `[]string` prop defaults to.
+fn no_strings() -> []string {
+    return []string {}
+}
+
+/// Options for `Steps`.
+struct StepsProps {
+    /// Stack the steps (marker rail on the left) instead of a row.
+    vertical: bool = false,
+    /// A caption under each label, by index (missing = none).
+    descriptions: []string = no_strings(),
+    /// Done steps become buttons that run this with their index.
+    on_select: Option<fn(int)> = none,
+}
+
+/// Progress through a sequence: steps before `current` are done (a check),
+/// `current` is ringed, later ones are upcoming. Connectors fill as steps
+/// complete.
+fn Steps(current: Signal<int>, labels: []string, p: StepsProps) -> Node {
+    let n = labels.len
+    let descs = p.descriptions
+    return Box(style = Style(direction = if p.vertical { Direction.Column } else { Direction.Row },
+                             gap = 8, align = if p.vertical { Align.Stretch } else { Align.Center }),
+               role = "list",
+               label = "Step {{current.get() + 1}} of {{n}}") {
+        Loop(labels, fn(i, lab) {
+            return StepItem(current, i, n, lab, if i < descs.len { descs[i] } else { "" },
+                            p.vertical, p.on_select)
+        })
+    }
+}
+
+/// The state a step's accessible name ends with.
+fn step_state(done: bool, here: bool) -> string {
+    if done {
+        return ", done"
+    }
+    if here {
+        return ", current"
+    }
+    return ""
+}
+
+/// One step: marker, label (and caption), then the connector to the next.
+fn StepItem(current: Signal<int>, index: int, count: int, label: string, desc: string,
+            vertical: bool, pick: Option<fn(int)>) -> Node {
+    fn done() -> bool {
+        return index < current.get()
+    }
+    fn here() -> bool {
+        return index == current.get()
+    }
+    let clickable = result.is_some(pick)
+    let last = index == count - 1
+    return Box(style = Style(direction = Direction.Row,
+                             gap = 8, align = if vertical { Align.Stretch } else { Align.Center }),
+               role = "listitem",
+               label = "{{label}}{{step_state(done(), here())}}") {
+        Box(style = Style(direction = Direction.Column, gap = 4, align = Align.Center)) {
+            Box(style = Style(width = px(24), height = px(24), shrink = 0, align = Align.Center,
+                              justify = Align.Center, radius = corners(RAD_FULL),
+                              border = line(if done() { 0 } else { 2 },
+                                            if here() { accent() } else { rule() }),
+                              background = if done() { accent() } else { plate() },
+                              cursor = if clickable && done() { "pointer" } else { "" }),
+                on_click = fn() {
+                    if index < peek(current) {
+                        emit_with(pick, index)
+                    }
+                },
+                role = if clickable { "button" } else { "" },
+                label = label) {
+                Icon(IC_CHECK, IconSize.Sm, on_ink(), style = Style(display = shown(done())))
+                Text("{{index + 1}}", style = Style(display = shown(!done()), font = FONT_CAPTION,
+                                                    color = if here() { ink() } else { mute() }))
+            }
+            if vertical && !last {
+                Box(style = Style(width = px(2), grow = 1, minHeight = 16, radius = corners(1),
+                                  background = if done() { accent() } else { rule() }))
+            }
+        }
+        Box(style = Style(direction = Direction.Column, gap = 2,
+                          padding = Edges(bottom = if vertical && !last { 16 } else { 0 }))) {
+            Text(label, style = Style(font = FONT_CONTROL,
+                                      color = if here() || done() { ink() } else { mute() }))
+            if desc.len > 0 {
+                Text(desc, style = Style(font = FONT_CAPTION, color = mute()))
+            }
+        }
+        if !vertical && !last {
+            Box(style = Style(width = px(48), height = px(2), shrink = 0, radius = corners(1),
+                              background = if done() { accent() } else { rule() }))
+        }
+    }
+}
+
+// --- tier B molecules: fields, lists, feedback, navigation ---------------
+
+/// `true` only when `xs` holds `s`.
+fn str_has(xs: []string, s: string) -> bool {
+    for i in 0..xs.len {
+        if fmt.eq(xs[i], s) {
+            return true
+        }
+    }
+    return false
+}
+
+/// `xs` without every copy of `s`.
+fn str_without(xs: []string, s: string) -> []string {
+    let mut out = []string {}
+    for i in 0..xs.len {
+        if !fmt.eq(xs[i], s) {
+            push(out, xs[i])
+        }
+    }
+    return out
+}
+
+/// `xs` plus `s`, unless `s` is empty or already there.
+fn str_add(xs: []string, s: string) -> []string {
+    if s.len == 0 || str_has(xs, s) {
+        return xs
+    }
+    let mut out = []string {}
+    for i in 0..xs.len {
+        push(out, xs[i])
+    }
+    // The field's bind can alias the edit buffer. Copy before the clear
+    // that follows a commit, or the stored chip loses its first byte.
+    push(out, str_slice(s, 0, s.len))
+    return out
+}
+
+/// `xs` without its last item. Empty stays empty.
+fn str_drop_last(xs: []string) -> []string {
+    let mut out = []string {}
+    let n = xs.len
+    if n == 0 {
+        return out
+    }
+    for i in 0..n - 1 {
+        push(out, xs[i])
+    }
+    return out
+}
+
+/// Options still available in a `MultiSelect`: match `q`, skip what's picked.
+fn multi_filter(options: []string, selected: []string, q: string) -> []string {
+    let mut out = []string {}
+    for i in 0..options.len {
+        if ci_has(options[i], q) && !str_has(selected, options[i]) {
+            push(out, options[i])
+        }
+    }
+    return out
+}
+
+/// Digits of `s`, at most `n`.
+fn pin_clean(s: string, n: int) -> string {
+    let mut b = []int {}
+    for i in 0..s.len {
+        if b.len >= n {
+            break
+        }
+        let c = s[i]
+        if c >= 48 && c <= 57 {
+            push(b, c)
+        }
+    }
+    return string_from_bytes(b)
+}
+
+/// The character `PinInput` shows in cell `i` (a bullet when masked).
+fn pin_char(s: string, i: int, masked: bool) -> string {
+    if i < 0 || i >= s.len {
+        return ""
+    }
+    if masked {
+        return "•"
+    }
+    return str_slice(s, i, i + 1)
+}
+
+/// A `picked` that is never on, for `ListItem`'s default.
+fn never_on() -> bool {
+    return false
+}
+
+/// 0 empty, 1 half, 2 full. `value` is whole stars, or half-stars when `half`.
+fn star_kind(value: int, index: int, half: bool) -> int {
+    if half {
+        let full = (index + 1) * 2
+        if value >= full {
+            return 2
+        }
+        if value >= full - 1 {
+            return 1
+        }
+        return 0
+    }
+    if value > index {
+        return 2
+    }
+    return 0
+}
+
+/// Options for `MultiSelect`.
+struct MultiSelectProps {
+    placeholder: string = "Select",
+    size: int = Size.Md,
+    disabled: bool = false,
+    invalid: bool = false,
+    label: string = "",
+    style: Option<fn() -> Style> = none,
+}
+
+/// Chips for the current pick, plus a field that filters `options`. Choosing
+/// a row adds a chip; the chip's X removes it. Backspace in an empty field
+/// removes the last chip.
+fn MultiSelect(selected: Signal<[]string>, options: []string, p: MultiSelectProps) -> Node {
+    let query = signal("")
+    let open = signal(false)
+    let matches = signal([]string {})
+    let opts = options
+    let field = ref()
+    let input = ref()
+    effect(|| {
+        matches.set(multi_filter(opts, selected.get(), query.get()))
+    })
+    fn add(s: string) {
+        selected.set(str_add(peek(selected), s))
+        set_input(ref_node(input), "")
+        query.set("")
+    }
+    fn key() {
+        let k = current_key().key
+        if k == Key.Backspace && peek(query).len == 0 {
+            selected.set(str_drop_last(peek(selected)))
+        } else if k == Key.Enter {
+            let ms = peek(matches)
+            if ms.len > 0 {
+                add(ms[0])
+            }
+        } else if k == Key.Escape {
+            open.set(false)
+        } else if k == Key.Down {
+            open.set(true)
+        }
+    }
+    let size = p.size
+    return Box(style = merge(Style(direction = Direction.Column, alignSelf = Align.Start),
+                             style_of(p.style)),
+               role = "group",
+               label = p.label,
+               enabled = !p.disabled) {
+        Box(ref = field,
+            style = merge(Style(minHeight = control_h(size), direction = Direction.Row,
+                                wrap = true, gap = 4, align = Align.Center,
+                                padding = Edges(left = control_pad_x(size), right = control_pad_x(size)),
+                                radius = corners(RAD_CONTROL),
+                                border = line(HAIRLINE, if p.invalid { danger_edge() } else { rule() }),
+                                background = plate(), cursor = "text"),
+                          invalid_edge(p.invalid)),
+            on_click = fn() { open.set(true); focus(input) },
+            focusable = false) {
+            For(selected, fn(s) => s, fn(i, s) {
+                return Tag(s, on_remove = fn() { selected.set(str_without(peek(selected), s)) })
+            })
+            Input(ref = input, bind = query, placeholder = p.placeholder,
+                  label = p.placeholder,
+                  style = Style(grow = 1, minWidth = 48, font = control_font(size),
+                                padding = edges(0), color = ink()),
+                  on_key_down = key,
+                  on_click = fn() { open.set(true) })
+        }
+        Box(style = merge(floating_panel(MENU_MIN_W, Elevation.Floating),
+                          Style(display = shown(open.get()), position = Position.Relative))) {
+            For(matches, fn(s) => s, fn(i, s) {
+                return Box(style = Style(direction = Direction.Row, align = Align.Center,
+                                        padding = edges2(6, 8), radius = corners(RAD_SM),
+                                        cursor = "pointer"),
+                           hoverStyle = Style(background = raised()),
+                           on_click = fn() { add(s) },
+                           role = "option",
+                           label = s) {
+                    Text(s, style = Style(font = FONT_BODY, color = ink()))
+                }
+            })
+        }
+    }
+}
+
+/// Options for `TagInput`.
+struct TagInputProps {
+    placeholder: string = "Add a tag",
+    size: int = Size.Md,
+    disabled: bool = false,
+    invalid: bool = false,
+    label: string = "",
+    style: Option<fn() -> Style> = none,
+}
+
+/// Free-form chips. Enter commits the field; Backspace in an empty field
+/// removes the last chip.
+fn TagInput(tags: Signal<[]string>, p: TagInputProps) -> Node {
+    let draft = signal("")
+    let input = ref()
+    let size = p.size
+    fn commit() {
+        let t = peek(draft)
+        if t.len == 0 {
+            return
+        }
+        tags.set(str_add(peek(tags), t))
+        set_input(ref_node(input), "")
+        draft.set("")
+    }
+    fn key() {
+        let k = current_key().key
+        if k == Key.Enter {
+            commit()
+        } else if k == Key.Backspace && peek(draft).len == 0 {
+            tags.set(str_drop_last(peek(tags)))
+        }
+    }
+    return Box(style = merge(Style(minHeight = control_h(size), direction = Direction.Row,
+                                   wrap = true, gap = 4, align = Align.Center,
+                                   padding = Edges(left = control_pad_x(size), right = control_pad_x(size)),
+                                   radius = corners(RAD_CONTROL),
+                                   border = line(HAIRLINE, if p.invalid { danger_edge() } else { rule() }),
+                                   background = plate()),
+                             style_of(p.style)),
+               role = "group",
+               label = p.label,
+               enabled = !p.disabled,
+               on_click = fn() { focus(input) }) {
+        For(tags, fn(s) => s, fn(i, s) {
+            return Tag(s, on_remove = fn() { tags.set(str_without(peek(tags), s)) })
+        })
+        Input(ref = input, bind = draft, placeholder = p.placeholder, label = p.placeholder,
+              style = Style(grow = 1, minWidth = 80, font = control_font(size),
+                            padding = edges(0), color = ink()),
+              on_key_down = key)
+    }
+}
+
+/// Options for `PinInput`.
+struct PinInputProps {
+    /// How many cells.
+    length: int = 6,
+    /// Bullets instead of digits.
+    masked: bool = false,
+    size: int = Size.Md,
+    disabled: bool = false,
+    invalid: bool = false,
+    /// Accessible name of the field.
+    label: string = "Code",
+    style: Option<fn() -> Style> = none,
+}
+
+/// One cell of a `PinInput`: the digit (or a bullet), ringed when it's next.
+fn PinCell(value: Signal<string>, index: int, masked: bool, size: int, invalid: bool) -> Node {
+    let h = control_h(size)
+    return Box(style = Style(width = px(h), height = px(h), shrink = 0, align = Align.Center,
+                             justify = Align.Center, radius = corners(RAD_MD),
+                             border = line(HAIRLINE, if invalid { danger_edge() } else if value.get().len == index { accent() } else { rule() }),
+                             background = plate())) {
+        Text(fn() -> string { return pin_char(value.get(), index, masked) },
+             style = Style(font = control_font(size), color = ink()))
+    }
+}
+
+/// N cells, one value. Typing, pasting, and Backspace edit the whole code;
+/// extra characters and non-digits are dropped, and the next empty cell is ringed.
+fn PinInput(value: Signal<string>, p: PinInputProps) -> Node {
+    let n = if p.length > 0 && p.length <= 12 { p.length } else { 6 }
+    let field = ref()
+    let masked = p.masked
+    let size = p.size
+    effect(|| {
+        let s = value.get()
+        let c = pin_clean(s, n)
+        if !fmt.eq(s, c) {
+            value.set(c)
+            if ref_id(field) > 0 {
+                set_input(ref_node(field), c)
+            }
+        }
+    })
+    return Box(style = merge(Style(position = Position.Relative, direction = Direction.Row, gap = 8,
+                                   align = Align.Center),
+                             style_of(p.style)),
+               enabled = !p.disabled,
+               on_click = fn() { focus(field) }) {
+        for i in 0..n {
+            PinCell(value, i, masked, size, p.invalid)
+        }
+        Input(ref = field, bind = value, label = p.label,
+              style = Style(position = pos_absolute(),
+                            inset = Edges(top = 0, right = 0, bottom = 0, left = 0),
+                            opacity = 0, color = plate()))
+    }
+}
+
+/// Options for `Rating`.
+struct RatingProps {
+    /// Star count.
+    max: int = 5,
+    /// `value` counts half-stars (7 is three and a half) instead of whole stars.
+    half: bool = false,
+    readOnly: bool = false,
+    disabled: bool = false,
+    label: string = "Rating",
+    style: Option<fn() -> Style> = none,
+}
+
+/// One star. Kind 0/1/2 is empty, half, or full. A half is the filled glyph
+/// clipped to its left half, over the outline, so the right half stays empty.
+fn RatingStar(value: Signal<int>, index: int, half: bool, read_only: bool, put: fn(int)) -> Node {
+    let star = ref()
+    fn pick() {
+        if read_only {
+            return
+        }
+        let r = rect(star)
+        let local = current_mouse().x - r.x
+        let mut n = index + 1
+        if half && local < r.w / 2 {
+            n = index * 2 + 1
+        } else if half {
+            n = index * 2 + 2
+        }
+        put(n)
+    }
+    fn kind() -> int {
+        return star_kind(value.get(), index, half)
+    }
+    return Box(ref = star,
+               style = Style(width = px(20), height = px(20), shrink = 0, align = Align.Center,
+                             justify = Align.Center,
+                             cursor = if read_only { "" } else { "pointer" }),
+               on_click = pick,
+               role = "radio",
+               label = "Star {{index + 1}}",
+               checked = kind() == 2,
+               focusable = !read_only) {
+        Icon(IC_STAR_OFF, 20, mute(),
+             style = Style(display = shown(kind() < 2)))
+        Icon(IC_STAR, 20, accent(),
+             style = Style(display = shown(kind() == 2)))
+        // Absolute, so the 20px glyph is not squeezed into this 10px window.
+        // Overflow hidden paints only the left half.
+        Box(style = Style(position = pos_absolute(), inset = Edges(top = 0, left = 0),
+                          width = px(10), height = px(20), overflow = Overflow.Hidden,
+                          display = shown(kind() == 1))) {
+            Icon(IC_STAR, 20, accent(),
+                 style = Style(position = pos_absolute(), inset = Edges(top = 0, left = 0)))
+        }
+    }
+}
+
+/// A row of stars. `value` is the pick: whole stars, or half-stars when `half`.
+/// Left / right nudge it while the row is focused. `readOnly` draws it with no keys.
+fn Rating(value: Signal<int>, p: RatingProps) -> Node {
+    let max = if p.max > 0 { p.max } else { 5 }
+    let half = p.half
+    let cap = if half { max * 2 } else { max }
+    let read_only = p.readOnly || p.disabled
+    fn put(v: int) {
+        let mut n = v
+        if v < 0 {
+            n = 0
+        } else if v > cap {
+            n = cap
+        }
+        value.set(n)
+    }
+    let rate_keys = []KeyBind {
+        key_bind("right", "rate.up", fn() { put(peek(value) + 1) }),
+        key_bind("left", "rate.down", fn() { put(peek(value) - 1) }),
+        key_bind("home", "rate.min", fn() { put(0) }),
+        key_bind("end", "rate.max", fn() { put(cap) }),
+    }
+    return Box(style = merge(Style(direction = Direction.Row, gap = 2, align = Align.Center),
+                             style_of(p.style)),
+               role = "slider",
+               label = "{{p.label}} {{value.get()}}",
+               focusable = !read_only,
+               keys = if read_only { no_keys() } else { rate_keys }) {
+        for i in 0..max {
+            RatingStar(value, i, half, read_only, put)
+        }
+    }
+}
+
+/// Options for `CheckboxCard` and `RadioCard`.
+struct ChoiceCardProps {
+    disabled: bool = false,
+    style: Option<fn() -> Style> = none,
+}
+
+/// The square mark on a choice card.
+fn choice_mark(on: fn() -> bool, radio: bool) -> Node {
+    return Box(style = Style(width = px(CHECK), height = px(CHECK), shrink = 0,
+                             align = Align.Center, justify = Align.Center,
+                             radius = corners(if radio { RAD_FULL } else { RAD_CHECK }),
+                             border = line(HAIRLINE, if on() { accent() } else { rule() }),
+                             background = if on() && !radio { accent() } else { plate() })) {
+        Icon(IC_CHECK, 12, on_ink(), style = Style(display = shown(on() && !radio)))
+        Box(style = Style(width = px(RADIO_DOT), height = px(RADIO_DOT), radius = corners(RAD_FULL),
+                          background = accent(), display = shown(on() && radio)))
+    }
+}
+
+/// A selectable card: the whole surface toggles `on`. The mark is drawn, not a
+/// nested `Checkbox`, so the click happens once.
+fn CheckboxCard(title: string, body: string, on: Signal<bool>, p: ChoiceCardProps) -> Node {
+    fn picked() -> bool {
+        return on.get()
+    }
+    return Box(style = merge(Style(direction = Direction.Column, gap = 4, padding = edges(16),
+                                   radius = corners(RAD_LG), cursor = "pointer",
+                                   border = line(HAIRLINE, if picked() { accent() } else { rule() }),
+                                   background = if picked() { wash() } else { plate() },
+                                   opacity = if p.disabled { 60 } else { 100 }),
+                             style_of(p.style)),
+               on_click = fn() {
+                   if !p.disabled {
+                       on.set(!on.get())
+                   }
+               },
+               role = "checkbox",
+               label = title,
+               checked = picked,
+               enabled = !p.disabled) {
+        Box(style = Style(direction = Direction.Row, gap = 8, align = Align.Center)) {
+            choice_mark(picked, false)
+            Text(title, style = Style(font = FONT_BODY, color = ink()))
+        }
+        if body.len > 0 {
+            Text(body, style = Style(wrap = true, font = FONT_CONTROL, color = mute()))
+        }
+    }
+}
+
+/// A selectable card in a radio set. `index` is what `value` holds when this
+/// card is the pick.
+fn RadioCard(title: string, body: string, value: Signal<int>, index: int, p: ChoiceCardProps) -> Node {
+    fn picked() -> bool {
+        return value.get() == index
+    }
+    return Box(style = merge(Style(direction = Direction.Column, gap = 4, padding = edges(16),
+                                   radius = corners(RAD_LG), cursor = "pointer",
+                                   border = line(HAIRLINE, if picked() { accent() } else { rule() }),
+                                   background = if picked() { wash() } else { plate() }),
+                             style_of(p.style)),
+               on_click = fn() {
+                   if !p.disabled {
+                       value.set(index)
+                   }
+               },
+               role = "radio",
+               label = title,
+               checked = picked,
+               enabled = !p.disabled) {
+        Box(style = Style(direction = Direction.Row, gap = 8, align = Align.Center)) {
+            choice_mark(picked, true)
+            Text(title, style = Style(font = FONT_BODY, color = ink()))
+        }
+        if body.len > 0 {
+            Text(body, style = Style(wrap = true, font = FONT_CONTROL, color = mute()))
+        }
+    }
+}
+
+/// Options for `List`.
+struct ListProps {
+    label: string = "",
+    style: Option<fn() -> Style> = none,
+    children: fn() = noop,
+}
+
+/// A vertical list. Rows are `ListItem`.
+fn List(p: ListProps) -> Node {
+    return Box(style = merge(Style(direction = Direction.Column), style_of(p.style)),
+               role = "list",
+               label = p.label) {
+        p.children()
+    }
+}
+
+/// Options for `ListItem`.
+struct ListItemProps {
+    /// Leading icon markup. Empty skips it.
+    icon: string = "",
+    /// Muted text at the end of the row. Empty skips it.
+    trailing: fn() -> string = empty_text,
+    /// Raised wash while this returns true.
+    picked: fn() -> bool = never_on,
+    disabled: bool = false,
+    on_click: Option<fn()> = none,
+    size: int = Size.Md,
+    keys: []KeyBind = no_keys(),
+    /// The row holds the group's roving tab stop while this is true.
+    roving: fn() -> bool = never_on,
+    style: Option<fn() -> Style> = none,
+}
+
+/// A list row: optional icon, title, optional trailing text. The base for
+/// menus, settings, and `ListBox`.
+fn ListItem(title: fn() -> string, p: ListItemProps) -> Node {
+    return Box(style = merge(Style(minHeight = control_h(p.size), direction = Direction.Row,
+                                   gap = 8, align = Align.Center,
+                                   padding = Edges(left = 8, right = 8), radius = corners(RAD_MD),
+                                   background = if p.picked() { raised() } else { "" },
+                                   cursor = if p.disabled { "" } else { "pointer" }),
+                             style_of(p.style)),
+               on_click = p.on_click,
+               role = "listitem",
+               label = title,
+               enabled = !p.disabled,
+               focusable = true,
+               roving = p.roving,
+               keys = p.keys) {
+        if p.icon.len > 0 {
+            Icon(p.icon, control_icon(p.size), mute())
+        }
+        Text(title, style = Style(grow = 1, ellipsis = true, font = control_font(p.size), color = ink()))
+        Text(p.trailing, style = Style(font = FONT_CAPTION, color = mute(),
+                                      display = shown(p.trailing().len > 0)))
+    }
+}
+
+/// Options for `ListBox`.
+struct ListBoxProps {
+    label: string = "",
+    size: int = Size.Md,
+    disabled: bool = false,
+    style: Option<fn() -> Style> = none,
+}
+
+/// An always-open single choice. Arrows move the pick; Home and End jump.
+fn ListBox(value: Signal<int>, labels: []string, p: ListBoxProps) -> Node {
+    let n = labels.len
+    let size = p.size
+    return Box(style = merge(Style(direction = Direction.Column, gap = 2), style_of(p.style)),
+               role = "listbox",
+               label = p.label,
+               enabled = !p.disabled) {
+        Loop(labels, fn(i, lab) {
+            return ListItem(lab,
+                            picked = fn() -> bool { return value.get() == i },
+                            roving = fn() -> bool { return value.get() == i },
+                            size = size,
+                            disabled = p.disabled,
+                            on_click = fn() { value.set(i) },
+                            keys = roving_keys("list", value, i, n, true))
+        })
+    }
+}
+
+/// One event on a `Timeline`.
+struct TimelineItem {
+    title: string = "",
+    body: string = "",
+    time: string = "",
+}
+
+/// Dot, rail, and text. Done events (before the last) share the accent rail.
+fn Timeline(items: []TimelineItem) -> Node {
+    let n = items.len
+    return Box(style = Style(direction = Direction.Column), role = "list") {
+        Loop(items, fn(i, it) {
+            return Box(style = Style(direction = Direction.Row, gap = 12, align = Align.Stretch),
+                       role = "listitem",
+                       label = it.title) {
+                Box(style = Style(direction = Direction.Column, align = Align.Center, width = px(16))) {
+                    Box(style = Style(width = px(DOT), height = px(DOT), shrink = 0,
+                                      radius = corners(RAD_FULL),
+                                      background = if i == n - 1 { accent() } else { mute() }))
+                    if i < n - 1 {
+                        Box(style = Style(width = px(2), grow = 1, minHeight = 24, background = rule()))
+                    }
+                }
+                Box(style = Style(direction = Direction.Column, gap = 2,
+                                  padding = Edges(bottom = if i < n - 1 { 16 } else { 0 }))) {
+                    Box(style = Style(direction = Direction.Row, gap = 8, align = Align.Center)) {
+                        Text(it.title, style = Style(font = FONT_BODY, color = ink()))
+                        if it.time.len > 0 {
+                            Text(it.time, style = Style(font = FONT_CAPTION, color = dim()))
+                        }
+                    }
+                    if it.body.len > 0 {
+                        Text(it.body, style = Style(wrap = true, font = FONT_CONTROL, color = mute()))
+                    }
+                }
+            }
+        })
+    }
+}
+
+/// Arrow and caption for a delta. Empty text hides it. Up is ok, Down is danger.
+fn TrendIndicator(delta: fn() -> string, trend: int) -> Node {
+    return Box(style = Style(direction = Direction.Row, gap = 2, align = Align.Center,
+                             display = shown(delta().len > 0)),
+               role = "status") {
+        if trend == Trend.Up {
+            Icon(IC_TREND_UP, IconSize.Sm, trend_tint(trend))
+        }
+        if trend == Trend.Down {
+            Icon(IC_TREND_DOWN, IconSize.Sm, trend_tint(trend))
+        }
+        Text(delta, style = Style(font = FONT_CAPTION, color = trend_tint(trend)))
+    }
+}
+
+/// `Stat` with the sparkline fixed at 64×18. Same props: delta, trend, spark.
+fn KpiCard(label: fn() -> string, value: fn() -> string, kind: int, p: StatProps) -> Node {
+    return Card() {
+        Text(label, style = Style(font = FONT_CONTROL, color = mute()))
+        Row(Space.Xs) {
+            Text(value, style = Style(font = 26, color = tint_of(kind)))
+            if result.is_some(p.spark) {
+                Sparkline(p.spark.val, 64, 18, trend_tint(p.trend))
+            }
+        }
+        TrendIndicator(p.delta, p.trend)
+    }
+}
+
+/// Options for `EmptyState` and `ErrorView`.
+struct EmptyStateProps {
+    icon: string = "",
+    title: fn() -> string = empty_text,
+    body: fn() -> string = empty_text,
+    children: fn() = noop,
+    style: Option<fn() -> Style> = none,
+}
+
+/// Icon, title, prose capped at `PROSE_W`, then the trailing action.
+fn EmptyState(p: EmptyStateProps) -> Node {
+    return Box(style = merge(Style(direction = Direction.Column, gap = Space.Xs,
+                                   align = Align.Center, justify = Align.Center,
+                                   padding = edges(Space.Xl)),
+                             style_of(p.style))) {
+        if p.icon.len > 0 {
+            Box(style = Style(width = px(RING), height = px(RING), shrink = 0,
+                              align = Align.Center, justify = Align.Center,
+                              radius = corners(RAD_FULL), background = raised())) {
+                Icon(p.icon, IconSize.Xxl, dim())
+            }
+        }
+        Text(p.title, style = Style(width = pct(-1), font = FONT_TITLE, color = ink()))
+        Text(p.body, style = Style(wrap = true, maxWidth = PROSE_W, font = FONT_BODY, color = mute()))
+        p.children()
+    }
+}
+
+/// Options for `ErrorView`.
+struct ErrorViewProps {
+    on_retry: Option<fn()> = none,
+    style: Option<fn() -> Style> = none,
+}
+
+/// A failed load: alert icon, title, prose, and a Try again button when
+/// `on_retry` is set.
+fn ErrorView(title: fn() -> string, body: fn() -> string, p: ErrorViewProps) -> Node {
+    let has_retry = result.is_some(p.on_retry)
+    let retry = result.some_or(p.on_retry, noop)
+    return EmptyState(icon = IC_ALERT_CIRCLE, title = title, body = body, style = p.style) {
+        if has_retry {
+            Button("Try again", look = Look.Solid, on_click = retry)
+        }
+    }
+}
+
+/// Options for `LoadMore`.
+struct LoadMoreProps {
+    /// While true the button is inert and shows a spinner.
+    loading: Option<Signal<bool>> = none,
+    /// While true the button is replaced by "End of the list".
+    done: Option<Signal<bool>> = none,
+    on_load: Option<fn()> = none,
+    style: Option<fn() -> Style> = none,
+}
+
+/// A feed's next page. Hidden once `done` is set.
+fn LoadMore(p: LoadMoreProps) -> Node {
+    let has_done = result.is_some(p.done)
+    let done = result.some_or(p.done, no_flag_signal())
+    return Box(style = merge(Style(direction = Direction.Column, align = Align.Center, gap = 8),
+                             style_of(p.style))) {
+        Text("End of the list",
+             style = Style(font = FONT_CONTROL, color = mute(),
+                           display = shown(has_done && done.get())))
+        Box(style = Style(align = Align.Center, display = shown(!(has_done && done.get())))) {
+            Button("Load more", look = Look.Outline, loading = p.loading, on_click = p.on_load)
+        }
+    }
+}
+
+/// The empty list an `[]int` prop defaults to.
+fn no_ints() -> []int {
+    return []int {}
+}
+
+/// Options for `TableOfContents`.
+struct TocProps {
+    /// Document offset where each section starts. With `scroll`, the highlight
+    /// follows the reading position.
+    offsets: []int = no_ints(),
+    scroll: Option<Signal<int>> = none,
+    style: Option<fn() -> Style> = none,
+}
+
+/// One contents row.
+fn TocRow(current: Signal<int>, index: int, label: string) -> Node {
+    return Box(style = Style(padding = edges2(4, 8), radius = corners(RAD_SM), cursor = "pointer",
+                             background = if current.get() == index { raised() } else { "" }),
+               on_click = fn() { current.set(index) },
+               role = "link",
+               label = label) {
+        Text(label, style = Style(font = FONT_CONTROL,
+                                  color = if current.get() == index { ink() } else { mute() }))
+    }
+}
+
+/// Section links. Pass `scroll` and `offsets` and the highlight tracks the
+/// scroll offset (the last section whose offset the scroll has reached).
+fn TableOfContents(current: Signal<int>, labels: []string, p: TocProps) -> Node {
+    let offs = p.offsets
+    let spy = result.is_some(p.scroll) && offs.len > 0
+    let y = result.some_or(p.scroll, signal(0))
+    if spy {
+        effect(|| {
+            let at = y.get()
+            let mut cur = 0
+            for i in 0..offs.len {
+                if at >= offs[i] {
+                    cur = i
+                }
+            }
+            if peek(current) != cur {
+                current.set(cur)
+            }
+        })
+    }
+    return Box(style = merge(Style(direction = Direction.Column, gap = 2), style_of(p.style)),
+               role = "navigation",
+               label = "Contents") {
+        Loop(labels, fn(i, lab) {
+            return TocRow(current, i, lab)
+        })
+    }
 }

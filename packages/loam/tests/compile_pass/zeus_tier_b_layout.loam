@@ -1,0 +1,236 @@
+// Tier B layout and chrome: a tree expands and loads a child when a folder
+// opens; a split handle drag widens the first pane; the command palette
+// filters and Enter runs the match; the sidebar collapses 240 → 56; load-more,
+// notification history, and the contents spy follow their signals; a scroll
+// area fades the edge that still has content; the rest of the tier is on screen.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+const K_ENTER: int = 13
+
+fn frame() {
+    zeus.engine_layout(860, 2200)
+}
+
+fn key(k: int) {
+    zeus.engine_key_ev(k, 0)
+    frame()
+}
+
+fn tap(label: string) {
+    must(zeus.engine_click_text(label) != 0, "tap {{label}}")
+    zeus.engine_mouseup()
+    frame()
+}
+
+fn main() {
+    zeus.window("tier-b-layout", 860, 2200)
+    let mut seed = []TreeItem {}
+    push(seed, TreeItem(label = "src", parent = -1, folder = true))
+    push(seed, TreeItem(label = "main.loam", parent = 0))
+    push(seed, TreeItem(label = "lib", parent = -1, folder = true))
+    let rows = zeus.signal(seed)
+    let tree_sel = zeus.signal(0)
+    let tree_open = zeus.signal([]int {})
+    let cmds = zeus.signal(false)
+    let picked = zeus.signal(-1)
+    let collapsed = zeus.signal(false)
+    let loads = zeus.signal(0)
+    let loading = zeus.signal(false)
+    let feed_done = zeus.signal(false)
+    let live = zeus.signal([]Notice { Notice(title = "Build finished", body = "Gallery is current.", tint = zeus.Tint.Ok) })
+    let past = zeus.signal([]Notice {})
+    let toc = zeus.signal(0)
+    let scroll_y = zeus.signal(0)
+    let tries = zeus.signal(0)
+    let cpu = zeus.signal(95)
+    let score = zeus.signal(64)
+    let spark = zeus.signal([]int { 3, 5, 4, 8, 7, 9, 12 })
+    let nav = zeus.signal(0)
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 8, padding = edges(16))) {
+        zui.Tree(rows, tree_sel, tree_open, label = "Files", on_open = fn(i: int) {
+            if i != 2 {
+                return
+            }
+            let cur = rows.get()
+            let mut next = []TreeItem {}
+            for j in 0..cur.len {
+                push(next, cur[j])
+            }
+            push(next, TreeItem(label = "util.loam", parent = 2))
+            rows.set(next)
+        })
+        zui.SplitPane(first = fn() { zeus.Text("Left pane") }, initial = 200, size = 80) {
+            zeus.Text("Right pane")
+        }
+        zui.Button("Open commands", look = zeus.Look.Outline, on_click = fn() { cmds.set(true) })
+        zui.CommandPalette(cmds, []CommandItem {
+            CommandItem(label = "New file", section = "File"),
+            CommandItem(label = "Save", section = "File"),
+            CommandItem(label = "Quit", section = "File"),
+        }, on_select = fn(i: int) { picked.set(i) })
+        zui.Sidebar(collapsed) {
+            zeus.Text("Inbox")
+        }
+        zui.LoadMore(loading = loading, done = feed_done, on_load = fn() { loads.set(loads.get() + 1) })
+        zui.NotificationCenter(live, past)
+        zui.TableOfContents(toc, []string { "Intro", "Usage" },
+                            offsets = []int { 0, 100 }, scroll = scroll_y)
+        zui.ErrorView("Could not refresh", "The last request did not finish.",
+                      on_retry = fn() { tries.set(tries.get() + 1) })
+        zui.ScrollArea(height = 48) {
+            zeus.Text("Scroll one")
+            zeus.Text("Scroll two")
+            zeus.Text("Scroll three")
+            zeus.Text("Scroll four")
+            zeus.Text("Scroll five")
+            zeus.Text("Scroll six")
+        }
+        zui.UsageBar(cpu, label = "CPU")
+        zui.EmptyState(icon = zeus.IC_INFO, title = "Nothing queued", body = "New jobs land here.")
+        zui.Gauge(score, caption = "Score")
+        zui.KpiCard("Uptime", "99.9%", zeus.Tint.Ok, delta = "+0.2%", trend = zui.Trend.Up, spark = spark)
+        zui.Timeline([]TimelineItem { TimelineItem(title = "Shipped", body = "First public build", time = "Mar") })
+        zui.List(label = "Settings") {
+            zui.ListItem("Settings row")
+        }
+        zui.Container() {
+            zeus.Text("In container")
+        }
+        zui.SimpleGrid() {
+            zui.GridCell(2) { zeus.Text("Cell A") }
+            zui.GridCell(2) { zeus.Text("Cell B") }
+        }
+        zui.AspectRatio(2, 1) {
+            zeus.Text("Ratio mark")
+        }
+        zui.AppShell(sidebar = fn() {
+            zui.NavItem("Inbox", zeus.IC_INFO, nav, 0, collapsed)
+        }, header = fn() { zeus.Text("Shell header") }) {
+            zui.MasterDetail(master = fn() { zeus.Text("Master list") }) {
+                zeus.Text("Detail copy")
+            }
+        }
+    })
+    zeus.pump_frame()
+    frame()
+    frame()
+
+    // Tree: children stay hidden until the folder opens; opening lib appends one.
+    must(!zeus.text_visible("main.loam"), "child hidden while collapsed")
+    tap("Expand src")
+    must(zeus.text_visible("main.loam"), "expand shows the child")
+    must(!zeus.text_visible("util.loam"), "lazy child not loaded yet")
+    tap("Expand lib")
+    must(zeus.text_visible("util.loam"), "opening a folder appends its child")
+    must(rows.get().len == 4, "tree grew by one row")
+
+    // SplitPane: dragging the handle to the right widens the first pane.
+    let pane = zeus.engine_find_text("First pane")
+    must(pane > 0, "first pane")
+    let before = zeus.node_width(pane)
+    let handle = zeus.engine_find_text("Resize")
+    must(handle > 0, "resize handle")
+    let hx = zeus.node_x(handle) + zeus.node_width(handle) / 2
+    let hy = zeus.node_y(handle) + zeus.node_height(handle) / 2
+    must(zeus.engine_click(hx, hy) != 0, "grab the handle")
+    zeus.engine_drag(hx + 80, hy)
+    zeus.engine_mouseup()
+    frame()
+    must(zeus.node_width(pane) >= before + 40, "split grew")
+
+    // Command palette: a filter hides the misses; Enter runs the match.
+    tap("Open commands")
+    must(zeus.text_visible("New file") && zeus.text_visible("Save") && zeus.text_visible("Quit"), "commands open")
+    let field = zeus.engine_find_text("Search commands")
+    must(field > 0, "command field")
+    must(zeus.engine_click(zeus.node_x(field) + 8, zeus.node_y(field) + zeus.node_height(field) / 2) != 0, "focus command field")
+    zeus.engine_mouseup()
+    frame()
+    zeus.engine_insert("sa")
+    frame()
+    must(zeus.text_visible("Save"), "filter keeps Save")
+    must(!zeus.text_visible("Quit") && !zeus.text_visible("New file"), "filter hides the misses")
+    key(K_ENTER)
+    must(picked.get() == 1, "enter runs Save")
+    must(!cmds.get(), "palette closes")
+
+    // Sidebar width.
+    let side = zeus.engine_find_text("Sidebar")
+    must(side > 0, "sidebar")
+    must(zeus.node_width(side) == 240, "sidebar open width")
+    tap("Collapse")
+    must(zeus.node_width(zeus.engine_find_text("Sidebar")) == 56, "sidebar rail")
+
+    // Load more, then the end of the feed.
+    tap("Load more")
+    must(loads.get() == 1, "load more")
+    feed_done.set(true)
+    frame()
+    must(zeus.text_visible("End of the list"), "feed ended")
+    must(!zeus.text_visible("Load more"), "load button hides")
+
+    // Dismiss moves the notice into history.
+    tap("Dismiss Build finished")
+    must(live.get().len == 0, "notice left the live stack")
+    must(past.get().len == 1, "notice landed in history")
+    must(!zeus.text_visible("Build finished"), "dismissed title hides")
+    tap("History")
+    must(zeus.text_visible("Build finished"), "history shows the title")
+
+    // Contents follow the scroll offset, and a click sets the section.
+    scroll_y.set(150)
+    frame()
+    must(toc.get() == 1, "spy follows the offset")
+    tap("Intro")
+    must(toc.get() == 0, "contents click")
+
+    tap("Try again")
+    must(tries.get() == 1, "error retry")
+
+    // Scroll fades: below at rest, above once the pane moves.
+    must(zeus.text_visible("More below"), "more below")
+    must(!zeus.text_visible("More above"), "nothing above yet")
+    let line = zeus.engine_find_text("Scroll one")
+    must(line > 0, "scroll line")
+    must(zeus.engine_scroll_step(zeus.node_x(line) + 4, zeus.node_y(line) + 4, 0, 80) != 0, "scrolled")
+    frame()
+    must(zeus.text_visible("More above"), "more above after scroll")
+
+    must(zeus.text_visible("95%"), "usage percent")
+    must(zeus.text_visible("Nothing queued"), "empty title")
+    must(zeus.text_visible("Score"), "gauge caption")
+    must(zeus.text_visible("64%"), "gauge value")
+    must(zeus.text_visible("99.9%") && zeus.text_visible("+0.2%"), "kpi")
+    must(zeus.text_visible("Shipped"), "timeline")
+    must(zeus.text_visible("Settings row"), "list row")
+    must(zeus.text_visible("In container"), "container")
+    let cell_a = zeus.engine_find_text("Cell A")
+    let cell_b = zeus.engine_find_text("Cell B")
+    must(cell_a > 0 && cell_b > 0, "grid cells")
+    let wa = zeus.node_width(zeus.node_parent(cell_a))
+    let wb = zeus.node_width(zeus.node_parent(cell_b))
+    must(wa > 100 && wb > 100, "grid cells have width")
+    let diff = if wa > wb { wa - wb } else { wb - wa }
+    must(diff < 24, "grid cells share the row")
+    let mark = zeus.engine_find_text("Ratio mark")
+    must(mark > 0, "aspect child")
+    let box = zeus.node_parent(mark)
+    let bw = zeus.node_width(box)
+    let bh = zeus.node_height(box)
+    let gap = if bw > bh * 2 { bw - bh * 2 } else { bh * 2 - bw }
+    must(bw > 100 && gap <= 2, "aspect height follows 2:1")
+    must(zeus.text_visible("Shell header") && zeus.text_visible("Master list") && zeus.text_visible("Detail copy"), "shell")
+
+    fmt.println("tier b layout ok")
+}

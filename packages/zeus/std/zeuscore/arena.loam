@@ -231,6 +231,9 @@ struct UiNode {
     /// Interaction-state overlay flags (see `UISTATE` / `interaction_state`).
     /// Components do not reimplement these; one shared model reads them.
     disabled: u8,
+    /// Checked / selected / pressed, for assistive tech only: 0 = the role
+    /// has no such state, 1 = off, 2 = on. Set by the `checked` prop.
+    a11y_state: u8,
     loading: u8,
     invalid: u8,
     align: u8,
@@ -479,7 +482,7 @@ fn blank_node() -> UiNode {
         spin_ms: 900, spin: 0,
         anchor: 0, anchor_gap: 6, place: 0, flip: 1,
         elev: 0, elev_c: -1,
-        disabled: 0, loading: 0, invalid: 0,
+        disabled: 0, loading: 0, invalid: 0, a11y_state: 0,
         click_fn: 0, ui_size: 1, ui_look: 1, restyle_fn: 0,
         hover_fade: 0, hover_amt: 0, tween: -1, enter_fade: 0, show_amt: 0,
         down_fn: 0, up_fn: 0, kdown_fn: 0, kup_fn: 0, kpress_fn: 0, edit_sig: 0, bind_fn: 0,
@@ -976,6 +979,105 @@ fn key_keys(host: int) -> []string {
 /// recycle the slot. Freed slots are blanked so global scans (hover, cursor,
 /// refresh lists) treat them as empty. Effect cleanup is batched by the
 /// enclosing drop_children, so this only recurses and recycles.
+/// Masked text inputs (`PasswordInput`), by node id. Slots are re-stamped
+/// across nodes, so the flag is pushed to the slot each time it is used
+/// (`edit_sync_secure`) rather than stored on it once.
+let mut secure_ids: []int = []int {}
+
+fn secure_set(id: int, on: bool) {
+    let mut i = 0
+    while i < secure_ids.len {
+        if secure_ids[i] == id {
+            if !on {
+                secure_ids[i] = secure_ids[secure_ids.len - 1]
+                pop(secure_ids)
+                mark_paint()
+            }
+            return
+        }
+        i = i + 1
+    }
+    if on {
+        push(secure_ids, id)
+        mark_paint()
+    }
+}
+
+fn edit_sync_secure(id: int, slot: int) {
+    let mut on = 0
+    for i in 0..secure_ids.len {
+        if secure_ids[i] == id {
+            on = 1
+        }
+    }
+    platform.plat_edit_set_secure(slot, on)
+}
+
+/// Pointer hooks that only a few nodes carry — `on_context_menu` (kind
+/// `HOOK_CONTEXT`) and `on_drag` (`HOOK_DRAG`): node id → interned fn. A side
+/// table, not node fields, so the common node pays nothing. The fn's lifetime
+/// is its owner's, like any handler; a freed node drops its rows.
+const HOOK_CONTEXT: int = 1
+const HOOK_DRAG: int = 2
+let mut hook_node: []int = []int {}
+let mut hook_kind: []int = []int {}
+let mut hook_fn: []int = []int {}
+
+fn hook_set(id: int, kind: int, fn_id: int) {
+    for i in 0..hook_node.len {
+        if hook_node[i] == id && hook_kind[i] == kind {
+            hook_fn[i] = fn_id
+            return
+        }
+    }
+    push(hook_node, id)
+    push(hook_kind, kind)
+    push(hook_fn, fn_id)
+}
+
+/// The `kind` hook on `id`, or 0.
+fn hook_of(id: int, kind: int) -> int {
+    for i in 0..hook_node.len {
+        if hook_node[i] == id && hook_kind[i] == kind {
+            return hook_fn[i]
+        }
+    }
+    return 0
+}
+
+/// The nearest node at or above `id` carrying a `kind` hook, or 0.
+fn hook_owner(id: int, kind: int) -> int {
+    if hook_node.len == 0 {
+        return 0
+    }
+    let mut at = id
+    while at > 0 && at < nodes.len {
+        if hook_of(at, kind) > 0 {
+            return at
+        }
+        at = nodes[at].parent
+    }
+    return 0
+}
+
+/// Drop `id`'s rows when the node is freed, so a recycled id never inherits them.
+fn hook_forget(id: int) {
+    let mut i = 0
+    while i < hook_node.len {
+        if hook_node[i] == id {
+            let last = hook_node.len - 1
+            hook_node[i] = hook_node[last]
+            hook_kind[i] = hook_kind[last]
+            hook_fn[i] = hook_fn[last]
+            pop(hook_node)
+            pop(hook_kind)
+            pop(hook_fn)
+        } else {
+            i = i + 1
+        }
+    }
+}
+
 fn free_node(id: int) {
     if id <= 0 {
         return
@@ -997,6 +1099,12 @@ fn free_node(id: int) {
         release_sigs(id)
         release_fns(id)
         key_clear(id)
+    }
+    if hook_node.len > 0 {
+        hook_forget(id)
+    }
+    if secure_ids.len > 0 {
+        secure_set(id, false)
     }
     style_forget(id)
     state_unwatch(id)
@@ -2590,11 +2698,14 @@ fn sync_chrome_scan() {
             }
             anim_schedule(i, APROP.PressAmt, target_value, motion_fast(), ease_standard())
             if int(nodes[i].press_scale) != 0 {
-                let mut sc = 100
+                // Down sinks on the standard curve; the release springs back
+                // past 100 and settles, which is what makes a press feel
+                // physical rather than toggled.
                 if down_id == i {
-                    sc = PRESS_SCALE
+                    anim_schedule(i, APROP.ScalePct, PRESS_SCALE, motion_fast(), ease_standard())
+                } else {
+                    anim_schedule(i, APROP.ScalePct, 100, motion_base(), ease_spring())
                 }
-                anim_schedule(i, APROP.ScalePct, sc, motion_fast(), ease_standard())
             }
         }
         let k = int(nodes[i].kind)
@@ -2786,20 +2897,14 @@ fn damage_add(x: int, y: int, w: int, h: int) {
 /// changes layout, so all of this is read from the node as it stands.
 fn damage_node_pad(id: int) -> int {
     let mut p = AA_BLEED
-    let e = int(nodes[id].elev)
+    // The higher of the resting level and the hover lift: a lifted card's
+    // shadow reaches further than its resting one.
+    let mut e = int(nodes[id].elev)
+    if int(nodes[id].lift) > e {
+        e = int(nodes[id].lift)
+    }
     if e > 0 {
-        let v = elev_now(e)
-        p = p + v.blur
-        if v.dx < 0 {
-            p = p - v.dx
-        } else {
-            p = p + v.dx
-        }
-        if v.dy < 0 {
-            p = p - v.dy
-        } else {
-            p = p + v.dy
-        }
+        p = p + elev_reach(elev_now(e))
     }
     let tx = int(nodes[id].an_tx)
     let ty = int(nodes[id].an_ty)
@@ -3444,27 +3549,61 @@ fn paint_rgb(c: int) -> int {
 // Pure data, in the core so the paint pass can resolve a node's shadow without
 // depending on the component module. `zeus.elevation` / `elev_now` delegate
 // here, so the tokens have one home.
+//
+// Each level is two shadows: a tight KEY shadow that seats the surface on the
+// page (`alpha` / `blur` / `dx` / `dy`), and a wide, soft AMBIENT one under it
+// (`amb_*`) that carries the lift. Two layers are what make a surface read as
+// a soft physical object rather than a cut-out with a smudge.
 struct Elev {
     alpha: int,
     blur: int,
     dx: int,
     dy: int,
+    amb_alpha: int = 0,
+    amb_blur: int = 0,
+    amb_dy: int = 0,
 }
 
 fn elevation(level: int) -> Elev {
     if level <= 0 { return Elev(alpha = 0, blur = 0, dx = 0, dy = 0) }
-    if level == 1 { return Elev(alpha = 18, blur = 3, dx = 0, dy = 1) }
-    if level == 2 { return Elev(alpha = 24, blur = 8, dx = 0, dy = 2) }
-    if level == 3 { return Elev(alpha = 34, blur = 18, dx = 0, dy = 6) }
-    return Elev(alpha = 48, blur = 36, dx = 0, dy = 12)
+    if level == 1 { return Elev(alpha = 20, blur = 2, dx = 0, dy = 1, amb_alpha = 22, amb_blur = 16, amb_dy = 6) }
+    if level == 2 { return Elev(alpha = 22, blur = 4, dx = 0, dy = 2, amb_alpha = 20, amb_blur = 18, amb_dy = 8) }
+    if level == 3 { return Elev(alpha = 24, blur = 6, dx = 0, dy = 3, amb_alpha = 26, amb_blur = 32, amb_dy = 14) }
+    return Elev(alpha = 28, blur = 10, dx = 0, dy = 4, amb_alpha = 34, amb_blur = 52, amb_dy = 22)
 }
 
 fn elevation_dark(level: int) -> Elev {
     if level <= 0 { return Elev(alpha = 0, blur = 0, dx = 0, dy = 0) }
-    if level == 1 { return Elev(alpha = 60, blur = 3, dx = 0, dy = 1) }
-    if level == 2 { return Elev(alpha = 78, blur = 7, dx = 0, dy = 2) }
-    if level == 3 { return Elev(alpha = 105, blur = 15, dx = 0, dy = 5) }
-    return Elev(alpha = 140, blur = 30, dx = 0, dy = 10)
+    if level == 1 { return Elev(alpha = 70, blur = 2, dx = 0, dy = 1, amb_alpha = 50, amb_blur = 10, amb_dy = 4) }
+    if level == 2 { return Elev(alpha = 80, blur = 4, dx = 0, dy = 2, amb_alpha = 70, amb_blur = 18, amb_dy = 8) }
+    if level == 3 { return Elev(alpha = 90, blur = 6, dx = 0, dy = 3, amb_alpha = 95, amb_blur = 30, amb_dy = 13) }
+    return Elev(alpha = 110, blur = 10, dx = 0, dy = 4, amb_alpha = 125, amb_blur = 48, amb_dy = 20)
+}
+
+/// How far `e` reaches past the box on its widest side (blur plus offset,
+/// over both layers).
+fn elev_reach(e: Elev) -> int {
+    let mut dx = e.dx
+    if dx < 0 {
+        dx = 0 - dx
+    }
+    let mut dy = e.dy
+    if dy < 0 {
+        dy = 0 - dy
+    }
+    let mut key = e.blur + dy
+    if dx > dy {
+        key = e.blur + dx
+    }
+    let mut ady = e.amb_dy
+    if ady < 0 {
+        ady = 0 - ady
+    }
+    let amb = e.amb_blur + ady
+    if amb > key {
+        return amb
+    }
+    return key
 }
 
 /// Shadow for a node right now: its resting level, blended toward `lift`
@@ -3481,6 +3620,9 @@ fn elev_hover(id: int) -> Elev {
     }
     let top = elev_now(lift)
     return Elev(alpha = base.alpha + (top.alpha - base.alpha) * t / 100,
+                amb_alpha = base.amb_alpha + (top.amb_alpha - base.amb_alpha) * t / 100,
+                amb_blur = base.amb_blur + (top.amb_blur - base.amb_blur) * t / 100,
+                amb_dy = base.amb_dy + (top.amb_dy - base.amb_dy) * t / 100,
                 blur = base.blur + (top.blur - base.blur) * t / 100,
                 dx = base.dx + (top.dx - base.dx) * t / 100,
                 dy = base.dy + (top.dy - base.dy) * t / 100)
@@ -4164,7 +4306,7 @@ fn hover_rgb() -> int {
 }
 
 /// Scale a pressed `press_scale` node settles at (percent).
-const PRESS_SCALE: int = 97
+const PRESS_SCALE: int = 96
 
 /// 1 when the shared overlay says the node takes no activation: disabled or
 /// loading. Pointer clicks and Enter / Space consult this, so a component
@@ -4245,14 +4387,16 @@ fn ptr_in(id: int) -> int {
     }
     let mut px = ptr_x
     let mut py = ptr_y
+    // Overlays and anchored floaters are placed in window space, so the
+    // scroll of a pane above them does not apply (as in `hit_one_floater`).
     let mut skip = 0
-    if int(nodes[id].kind) == 9 {
+    if int(nodes[id].kind) == 9 || nodes[id].anchor > 0 {
         skip = 1
     }
     let mut p = nodes[id].parent
     for i in 0..32 {
         if p > 0 {
-            if int(nodes[p].kind) == 9 {
+            if int(nodes[p].kind) == 9 || nodes[p].anchor > 0 {
                 skip = 1
             }
             if skip == 0 {
@@ -5444,14 +5588,35 @@ fn input_shown(id: int) -> string {
     if slot < 0 {
         return nodes[id].text
     }
+    edit_sync_secure(id, slot)
     let shown = platform.plat_edit_shown(slot)
     if shown.len > 0 {
+        return shown
+    }
+    if secure_ids.len > 0 && platform.plat_edit_len(slot) > 0 {
         return shown
     }
     if platform.plat_edit_len(slot) > 0 {
         return platform.plat_edit_text(slot)
     }
     return nodes[id].text
+}
+
+/// 1 while an input paints its placeholder: no editor text and no masked
+/// display string. `paint_input` dims it so it does not read as a value.
+fn input_is_placeholder(id: int) -> int {
+    let slot = nodes[id].edit_slot
+    if slot < 0 {
+        return 1
+    }
+    edit_sync_secure(id, slot)
+    if platform.plat_edit_shown(slot).len > 0 {
+        return 0
+    }
+    if platform.plat_edit_len(slot) > 0 {
+        return 0
+    }
+    return 1
 }
 
 fn input_committed(id: int) -> string {
@@ -5487,6 +5652,7 @@ fn edit_ready(id: int) -> int {
     if slot < 0 {
         return -1
     }
+    edit_sync_secure(id, slot)
     let mut font = i32(nodes[id].font)
     if font < 8 {
         font = 14

@@ -1,0 +1,113 @@
+// Table sorting orders cells by what they say, not by their bytes or the
+// order the rows arrived in: numbers by value (signs, decimals, thousands
+// separators, currency / percent around them), text case-insensitively,
+// mixed cells chunk by chunk ("Item 9" < "Item 10"), ISO dates by date,
+// versions by part. Any starting order gives the same result, ascending and
+// descending, and empty cells stay last both ways.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn id(s: string) -> string {
+    return s
+}
+
+fn joined(xs: []string) -> string {
+    let mut out = ""
+    for i in 0..xs.len {
+        if i > 0 {
+            out = "{{out}} | {{xs[i]}}"
+        } else {
+            out = xs[i]
+        }
+    }
+    return out
+}
+
+fn sorted(xs: []string, desc: bool) -> string {
+    return joined(zui.sort_by(xs, id, desc))
+}
+
+// `want` is the ascending order; every rotation and the reverse of it must
+// sort back to `want`, and descending must be its exact reverse (empties
+// excepted, which stay last).
+fn check(name: string, want: []string) {
+    let n = want.len
+    let mut rev = []string {}
+    for i in 0..n {
+        push(rev, want[n - 1 - i])
+    }
+    // Odd positions first, then even: no element keeps its neighbours.
+    let mut mixed = []string {}
+    for i in 0..n {
+        if i % 2 == 1 {
+            push(mixed, want[i])
+        }
+    }
+    for i in 0..n {
+        if i % 2 == 0 {
+            push(mixed, want[i])
+        }
+    }
+    let mut starts = [][]string { want, rev, mixed }
+    for r in 1..n {
+        let mut rot = []string {}
+        for i in 0..n {
+            push(rot, want[(i + r) % n])
+        }
+        push(starts, rot)
+    }
+    let asc = joined(want)
+    let mut desc_list = []string {}
+    let mut empties = []string {}
+    for i in 0..n {
+        let v = want[n - 1 - i]
+        if v.len == 0 {
+            push(empties, v)
+        } else {
+            push(desc_list, v)
+        }
+    }
+    for i in 0..empties.len {
+        push(desc_list, empties[i])
+    }
+    let desc = joined(desc_list)
+    for k in 0..starts.len {
+        let got = sorted(starts[k], false)
+        if !fmt.eq(got, asc) {
+            fmt.println("  want", asc)
+            fmt.println("  got ", got)
+        }
+        must(fmt.eq(got, asc), "{{name}}: ascending from start {{k}}")
+        must(fmt.eq(sorted(starts[k], true), desc), "{{name}}: descending from start {{k}}")
+    }
+}
+
+fn main() {
+    check("integers", []string { "-12", "-3", "0", "2", "9", "10", "100" })
+    check("decimals", []string { "-0.55", "-0.5", "0.5", "0.55", "2", "2.5", "2.75", "10.1" })
+    check("thousands", []string { "999", "1,200", "12,000", "120,500" })
+    check("currency", []string { "$5", "$300", "$1,200", "$12,000.50" })
+    check("percent", []string { "-4%", "3.5%", "12%", "100%" })
+    check("text case", []string { "apple", "Banana", "cherry", "Date" })
+    check("same word", []string { "Apple", "apple", "APPLES" })
+    check("natural", []string { "Item 2", "Item 9", "Item 10", "Item 10b", "Item 100" })
+    check("dates", []string { "2025-12-31", "2026-01-02", "2026-01-10", "2026-10-07" })
+    check("versions", []string { "1.2.0", "1.9.0", "1.10.0", "1.10.2", "2.0.1" })
+    check("units", []string { "4 kg", "30 kg", "250 kg" })
+    check("numbers first", []string { "7", "42", "alpha", "beta" })
+    check("empty last", []string { "1", "2", "b", "" })
+
+    must(zui.str_cmp("apple", "Banana") < 0, "str_cmp is case-insensitive")
+    must(zui.str_cmp("Hello", "hello") == 0, "str_cmp ignores case")
+    fmt.println("natural sort ok")
+}
