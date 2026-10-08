@@ -354,6 +354,12 @@ void zeus_pointer_down(int32_t x, int32_t y) {
     zeus_handle_click(x, y);
 }
 
+/* Secondary click (`contextmenu`): the nearest `on_context_menu` handler. */
+__attribute__((export_name("zeus_context_click")))
+int32_t zeus_context_click(int32_t x, int32_t y) {
+    return zeus_handle_context_click(x, y);
+}
+
 __attribute__((export_name("zeus_pointer_move")))
 void zeus_pointer_move(int32_t x, int32_t y) {
     zeus_handle_hover(x, y);
@@ -379,34 +385,71 @@ const char *zeus_cursor_sync(void) {
     return wasm_cursor;
 }
 
-/* Copy the visible semantic tree (`depth\trole\tlabel` lines) into a static
-   buffer the loader reads to build a visually-hidden DOM mirror (§2.3).
-   The loader calls this after every paint; the dump allocates a string the
-   runtime never frees, so only re-dump when a layout pass ran since the last
-   one (NULL = unchanged, the loader keeps its mirror). */
-static char wasm_a11y_buf[16384];
+/* Copy the visible semantic tree (one line per node, see `engine_a11y_dump`)
+   into a buffer the loader reads to keep its visually-hidden DOM mirror in
+   sync (§2.3). The buffer grows to fit: a fixed one truncated large pages, so
+   a screen reader only ever heard their top part.
+
+   Re-dumped when a layout ran since the last call, or when the loader forces
+   it (`force`, a few times a second) — a checkbox flip or a focus move
+   changes the semantics without a layout. NULL = unchanged. */
+static char *wasm_a11y_buf;
+static size_t wasm_a11y_cap;
 int32_t loam_zeus_engine_layout_gen(void);
 loam_vec loam_zeus_engine_a11y_bytes(void);
+int32_t loam_zeus_engine_a11y_activate(int32_t id);
+void loam_zeus_engine_a11y_focus(int32_t id);
+int32_t loam_zeus_engine_focus_id(void);
 
 __attribute__((export_name("zeus_a11y_sync")))
-const char *zeus_a11y_sync(void) {
+const char *zeus_a11y_sync(int32_t force) {
     static int32_t a11y_gen = -1;
     int32_t gen = loam_zeus_engine_layout_gen();
     loam_vec b;
     const int32_t *el;
     size_t n, i;
-    if (gen == a11y_gen) return NULL;
+    if (gen == a11y_gen && !force) return NULL;
     a11y_gen = gen;
     /* Bytes, not a string: the vec is refcounted and dropped here, whereas a
        string from `engine_a11y_dump` would live forever (a per-frame leak). */
     b = loam_zeus_engine_a11y_bytes();
     el = (const int32_t *)b.ptr;
     n = b.len > 0 ? (size_t)b.len : 0;
-    if (n >= sizeof wasm_a11y_buf) n = sizeof wasm_a11y_buf - 1;
+    if (n + 1 > wasm_a11y_cap) {
+        size_t cap = wasm_a11y_cap ? wasm_a11y_cap : 16384;
+        char *p;
+        while (cap < n + 1) cap *= 2;
+        p = (char *)realloc(wasm_a11y_buf, cap);
+        if (!p) {
+            loam_vec_drop(&b);
+            return NULL;
+        }
+        wasm_a11y_buf = p;
+        wasm_a11y_cap = cap;
+    }
     for (i = 0; i < n; i++) wasm_a11y_buf[i] = (char)(el ? (el[i] & 255) : 0);
     wasm_a11y_buf[n] = '\0';
     loam_vec_drop(&b);
     return wasm_a11y_buf;
+}
+
+/* A screen reader pressed / focused mirror element `id` (the node id from the
+   dump): run it through the engine as Enter / a focus move would. */
+__attribute__((export_name("zeus_a11y_activate")))
+int32_t zeus_a11y_activate(int32_t id) {
+    return loam_zeus_engine_a11y_activate(id);
+}
+
+__attribute__((export_name("zeus_a11y_focus")))
+void zeus_a11y_focus(int32_t id) {
+    loam_zeus_engine_a11y_focus(id);
+}
+
+/* The engine's focused node (0 = none), so the mirror can move DOM focus with
+   it and a screen reader announces Tab / arrow moves made on the canvas. */
+__attribute__((export_name("zeus_focus_id")))
+int32_t zeus_focus_id(void) {
+    return loam_zeus_engine_focus_id();
 }
 
 /* Deep link / popstate: route the app to `path`. The loader passes a C string

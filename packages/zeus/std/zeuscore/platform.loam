@@ -56,6 +56,13 @@ fn plat_text_wrap(x: int, y: int, s: string, rgb: int, font: int, max_w: int) {}
 fn plat_set_window(title: string, width: int, height: int) {}
 /// Update the host window title without reopening it (router `Meta.title`).
 fn plat_set_title(title: string) {}
+/// Put `text` on the system clipboard (`CopyButton`). The runtime also keeps
+/// it, so `plat_clipboard_last` reads it back on a headless run.
+fn plat_clipboard_write(text: string) {}
+fn plat_clipboard_last() -> string {}
+/// 1 when shortcuts follow Apple conventions (⌘, ⌥, ⇧ glyphs): macOS, iOS,
+/// and a browser on an Apple platform.
+fn plat_apple_keys() -> int {}
 /// Host view size in points (browser canvas or native content view). On
 /// desktop hosts before the window exists this is the device screen's work
 /// area (window_size() → the default window is screen-filling); after the
@@ -115,6 +122,9 @@ fn plat_edit_del(slot: int) -> int {}
 fn plat_edit_len(slot: int) -> int {}
 fn plat_edit_text(slot: int) -> string {}
 fn plat_edit_shown(slot: int) -> string {}
+/// Mask a slot (password field): shown, measured, and hit-tested as one
+/// bullet per code point. The text itself is unchanged.
+fn plat_edit_set_secure(slot: int, on: int) {}
 fn plat_edit_set(slot: int, text: string) -> int {}
 fn plat_edit_insert(slot: int, text: string) -> int {}
 fn plat_edit_caret(slot: int) -> int {}

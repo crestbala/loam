@@ -1,0 +1,152 @@
+// Tier A display, feedback and overlays: Tag removes; DotBadge and Link
+// carry their roles; KbdCombo spells a chord per platform; ProgressRing
+// labels its value; the skeleton presets are busy placeholders; Banner
+// dismisses; InlineMessage hides when empty; DescriptionList wraps the detail
+// under its term on a narrow width; Steps marks done / current and lets a
+// done step be picked; ConfirmDialog, PromptDialog and Sheet open and close.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn frame() {
+    zeus.engine_layout(720, 1600)
+}
+
+fn tap(label: string) {
+    must(zeus.engine_click_text(label) != 0, "tap {{label}}")
+    zeus.engine_mouseup()
+    frame()
+}
+
+fn main() {
+    zeus.window("display", 720, 1600)
+    let tag_on = zeus.signal(true)
+    let opened = zeus.signal(0)
+    let ring = zeus.signal(25)
+    let banner = zeus.signal(true)
+    let msg = zeus.signal("")
+    let step = zeus.signal(2)
+    let confirm = zeus.signal(false)
+    let confirmed = zeus.signal(0)
+    let prompt = zeus.signal(false)
+    let name = zeus.signal("")
+    let submitted = zeus.signal("")
+    let sheet = zeus.signal(false)
+    zeus.root(zui.Page() {
+        zui.Show(when = tag_on.get()) {
+            zui.Tag("design", tint = zeus.Tint.Info, on_remove = fn() { tag_on.set(false) })
+        }
+        zui.DotBadge("Online", zeus.Tint.Ok)
+        zui.Link("Docs", fn() { opened.set(opened.get() + 1) }, external = true)
+        zui.Code("make test")
+        zui.Blockquote(cite = "Ada") { zeus.Text("Quoted words") }
+        zui.KbdCombo("cmd+shift+p", apple = 1)
+        zui.KbdCombo("cmd+shift+p", apple = 0)
+        zui.ProgressRing(ring)
+        zui.SkeletonText(2)
+        zui.SkeletonCard()
+        zui.Banner("Maintenance tonight", tint = zeus.Tint.Warn, dismiss = banner)
+        zui.Callout("Heads up", "Callout body", tint = zeus.Tint.Ok)
+        zui.InlineMessage(msg.get(), zeus.Tint.Danger)
+        zeus.Box(style = Style(width = px(240))) {
+            zui.DescriptionList([]DescItem { DescItem(term = "Plan", detail = "Pro"),
+                                             DescItem(term = "Seats", detail = "12") })
+        }
+        zui.Steps(step, []string { "Cart", "Ship", "Pay", "Done" },
+                  on_select = fn(i: int) { step.set(i) })
+        zui.Button("Remove project", on_click = fn() { confirm.set(true) })
+        zui.ConfirmDialog(confirm, title = "Delete project?", body = "This cannot be undone.",
+                          confirm = "Delete", danger = true,
+                          on_confirm = fn() { confirmed.set(confirmed.get() + 1) })
+        zui.Button("Rename", on_click = fn() { prompt.set(true) })
+        zui.PromptDialog(prompt, name, title = "New name", placeholder = "Name",
+                         on_submit = fn(s: string) { submitted.set(s) })
+        zui.Button("Open sheet", on_click = fn() { sheet.set(true) })
+        zui.Sheet(sheet, title = "Filters") { zeus.Text("Sheet body") }
+    })
+    zeus.pump_frame()
+    frame()
+
+    // Tag: the X runs on_remove.
+    must(zeus.text_visible("design"), "tag shown")
+    tap("Remove design")
+    must(!zeus.text_visible("design"), "tag removed")
+
+    // DotBadge / Link / Code / Blockquote.
+    must(zeus.engine_find_role("status") != 0, "dot badge role")
+    must(zeus.engine_find_role("link") != 0, "link role")
+    tap("Docs")
+    must(opened.get() == 1, "link click")
+    must(zeus.text_visible("make test"), "code text")
+    must(zeus.text_visible("— Ada"), "blockquote cite")
+
+    // KbdCombo: Apple glyphs vs spelled-out keys.
+    must(zeus.text_visible("⌘⇧P"), "apple combo")
+    must(zeus.text_visible("Ctrl") && zeus.text_visible("Shift"), "pc combo")
+
+    // ProgressRing.
+    must(zeus.text_visible("25%"), "ring label")
+    ring.set(60)
+    frame()
+    must(zeus.text_visible("60%"), "ring follows its value")
+
+    // Banner dismisses; InlineMessage shows only with text.
+    must(zeus.text_visible("Maintenance tonight"), "banner shown")
+    tap("Dismiss")
+    must(!zeus.text_visible("Maintenance tonight"), "banner dismissed")
+    must(zeus.text_visible("Heads up"), "callout")
+    msg.set("Required")
+    frame()
+    must(zeus.text_visible("Required"), "inline message shows")
+
+    // DescriptionList: at 240 wide the detail wraps under its 160px term.
+    let term = zeus.engine_find_text("Plan")
+    let detail = zeus.engine_find_text("Pro")
+    must(term > 0 && detail > 0, "description rows")
+    must(zeus.node_y(detail) > zeus.node_y(term), "detail wraps under the term when narrow")
+
+    // Steps: done / current, and a done step can be picked.
+    must(zeus.text_visible("Ship, done"), "done step")
+    must(zeus.text_visible("Pay, current"), "current step")
+    must(zeus.text_visible("Done"), "upcoming step")
+    must(zeus.engine_click_text("Cart") != 0, "pick a done step")
+    zeus.engine_mouseup()
+    frame()
+    must(step.get() == 0, "picking a done step moves back")
+
+    // ConfirmDialog.
+    tap("Remove project")
+    must(zeus.text_visible("Delete project?"), "confirm opens")
+    tap("Delete")
+    must(confirmed.get() == 1, "confirm runs")
+    must(!confirm.get(), "confirm closes")
+    tap("Remove project")
+    tap("Cancel")
+    must(confirmed.get() == 1 && !confirm.get(), "cancel closes without confirming")
+
+    // PromptDialog.
+    tap("Rename")
+    must(zeus.engine_click_text("Name") != 0, "focus prompt field")
+    zeus.engine_mouseup()
+    frame()
+    zeus.engine_insert("Atlas")
+    frame()
+    tap("OK")
+    must(fmt.eq(submitted.get(), "Atlas"), "prompt submits the text")
+    must(!prompt.get(), "prompt closes")
+
+    // Sheet.
+    tap("Open sheet")
+    must(sheet.get(), "sheet opens")
+    must(zeus.text_visible("Filters") && zeus.text_visible("Sheet body"), "sheet content")
+    fmt.println("tier a display ok")
+}

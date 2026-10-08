@@ -3,7 +3,20 @@
 import "std:zeus"
 import "screen.loam"
 
+/// The gallery typeface. `FONT_FAMILY` is the face's PostScript name: Cocoa
+/// looks the registered face up by it, and the web host uses it as the CSS
+/// family. `FONT_SRC` is relative to the gallery directory: the macOS run
+/// script starts there, and the Vite server maps `/fonts/` onto it.
+const FONT_FAMILY: string = "Inter28pt-Medium"
+const FONT_SRC: string = "fonts/Inter_28pt-Medium.ttf"
+
 fn start() {
+    // Draw with the face, and measure with the same bytes so layout matches
+    // what is painted. Missing font: both calls return 0 and the host default
+    // stays in effect.
+    if zeus.load_font(FONT_FAMILY, FONT_SRC) != 0 {
+        zeus.use_font(FONT_SRC)
+    }
     zeus.App("Zeus Gallery", fn() -> Node {
         return screen.Screen()
     })

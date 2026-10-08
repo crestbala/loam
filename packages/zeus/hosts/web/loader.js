@@ -108,6 +108,117 @@
      default, which is much larger than our small UI sizes). That is what made a
      just-shown tooltip paint one frame at the default size. Every restore in
      this file goes through here so the cache is dropped with the state. */
+  /* Cached nine-slice shadows, as the macOS host does (mac.m
+     `mac_shadow_template`). A live `shadowBlur` re-blurs the whole rect every
+     frame, and a frame repaints everything: a drawer or sheet (Modal
+     elevation, blur 52) sliding over the page re-ran a full-panel Gaussian on
+     each of its frames. A shadow depends only on (radius, color, alpha, blur,
+     offset) once the rect is large enough, so it is drawn once into a
+     template whose corners land 1:1 and whose edges are a band that is
+     constant along the stretch. A template too big to keep at the device
+     scale is built at a coarser one — a wide blur is a smooth ramp, so
+     upscaling it loses nothing visible, where falling back to the live blur
+     cost the frame. */
+  const SHADOW_TEMPLATE_MAX_PX = 768;
+  const shadowCache = new Map();
+  function shadowGeom(radius, blur, dx, dy) {
+    const d = Math.max(Math.abs(dx), Math.abs(dy));
+    const reach = blur * 2 + 2;
+    const m = reach + d;
+    const k = m + radius + reach + d;
+    return { m, k, side: 2 * k + 2 };
+  }
+  function roundRectPath(t, x, y, w, h, r) {
+    const rr = Math.max(0, Math.min(r, w / 2, h / 2));
+    t.beginPath();
+    t.moveTo(x + rr, y);
+    t.arcTo(x + w, y, x + w, y + h, rr);
+    t.arcTo(x + w, y + h, x, y + h, rr);
+    t.arcTo(x, y + h, x, y, rr);
+    t.arcTo(x, y, x + w, y, rr);
+    t.closePath();
+  }
+  function shadowTemplate(tsc, radius, color, a, blur, dx, dy, g) {
+    const key = `${radius},${color},${a},${blur},${dx},${dy},${tsc}`;
+    const hit = shadowCache.get(key);
+    if (hit) return hit;
+    const px = Math.max(1, Math.round(g.side * tsc));
+    const c = document.createElement("canvas");
+    c.width = px;
+    c.height = px;
+    const t = c.getContext("2d");
+    if (!t) return null;
+    /* The live path's trick, in the template: fill the shape off the left /
+       top edge so only its blur lands, shifted back by the shadow offset
+       (device pixels, so scaled by `tsc`). */
+    const off = g.side + 2 * blur + 64;
+    t.setTransform(tsc, 0, 0, tsc, 0, 0);
+    t.shadowColor = rgba(color, a);
+    t.shadowBlur = blur * tsc;
+    t.shadowOffsetX = tsc * (off + dx);
+    t.shadowOffsetY = tsc * (off + dy);
+    t.fillStyle = "#000";
+    roundRectPath(t, g.m - off, g.m - off, g.side - 2 * g.m, g.side - 2 * g.m, radius);
+    t.fill();
+    /* Elevations come from a short token list; the bound is for an app that
+       animates a blur or an offset. */
+    if (shadowCache.size >= 64) shadowCache.clear();
+    shadowCache.set(key, c);
+    return c;
+  }
+  /* Draws the shadow from a template and answers true, or answers false and
+     leaves it to the live path: a rotated or skewed paint transform, a rect
+     narrower than the two corner regions, or a template too large even at
+     one pixel per unit. */
+  function cachedShadow(p, radius, color, a, blur, dx, dy) {
+    if (blur <= 0 || a <= 0) return false;
+    const mt = ctx.getTransform();
+    const sc = mt.a;
+    if (!(sc > 0) || mt.b !== 0 || mt.c !== 0 || Math.abs(mt.d - sc) > 1e-6) return false;
+    /* A corner is no rounder than half the short side — pill controls carry
+       a nominal 999, which would key a huge template for nothing. */
+    const r = Math.max(0, Math.min(radius, Math.floor(p.w / 2), Math.floor(p.h / 2)));
+    const g = shadowGeom(r, blur, dx, dy);
+    if (p.w + 2 * g.m < 2 * g.k + 2 || p.h + 2 * g.m < 2 * g.k + 2) return false;
+    let tsc = sc;
+    if (g.side * tsc > SHADOW_TEMPLATE_MAX_PX) {
+      tsc = Math.floor(SHADOW_TEMPLATE_MAX_PX / g.side);
+      if (tsc < 1) return false;
+    }
+    const tpl = shadowTemplate(tsc, r, color, a, blur, dx, dy, g);
+    if (!tpl) return false;
+    const K = g.k, S = g.side;
+    /* Only a ring `T` deep: past the margin and the rounded corner the shadow
+       sits under the opaque panel, so the rest of each slice is pixels the
+       panel paints over (and the macOS host never draws them at all). */
+    const T = g.m + r;
+    const X0 = p.x - g.m, Y0 = p.y - g.m;
+    const W = p.w + 2 * g.m, H = p.h + 2 * g.m;
+    const X1 = X0 + W - K, Y1 = Y0 + H - K;
+    const sl = (sx0, sy0, sw, sh, x0, y0, w0, h0) => {
+      if (w0 <= 0 || h0 <= 0) return;
+      ctx.drawImage(tpl, sx0 * tsc, sy0 * tsc, sw * tsc, sh * tsc, x0, y0, w0, h0);
+    };
+    ctx.save();
+    /* 1:1 slices need no filtering; a coarser template is upscaled smoothly. */
+    ctx.imageSmoothingEnabled = tsc !== sc;
+    /* top and bottom strips: corners 1:1, a 1-unit column stretched between */
+    sl(0, 0, K, T, X0, Y0, K, T);
+    sl(K, 0, 1, T, X0 + K, Y0, W - 2 * K, T);
+    sl(S - K, 0, K, T, X1, Y0, K, T);
+    sl(0, S - T, K, T, X0, Y0 + H - T, K, T);
+    sl(K, S - T, 1, T, X0 + K, Y0 + H - T, W - 2 * K, T);
+    sl(S - K, S - T, K, T, X1, Y0 + H - T, K, T);
+    /* left and right strips between them: corner tails 1:1, a row stretched */
+    sl(0, T, T, K - T, X0, Y0 + T, T, K - T);
+    sl(0, K, T, 1, X0, Y0 + K, T, H - 2 * K);
+    sl(0, S - K, T, K - T, X0, Y1, T, K - T);
+    sl(S - T, T, T, K - T, X0 + W - T, Y0 + T, T, K - T);
+    sl(S - T, K, T, 1, X0 + W - T, Y0 + K, T, H - 2 * K);
+    sl(S - T, S - K, T, K - T, X0 + W - T, Y1, T, K - T);
+    popState();
+    return true;
+  }
   function popState() {
     ctx.restore();
     lastFontPx = 0;
@@ -420,6 +531,14 @@
       set_title: (t) => {
         document.title = cstr(t);
       },
+      /* `CopyButton`: best effort — the browser may refuse without a gesture. */
+      clipboard_write: (t) => {
+        const s = cstr(t);
+        if (navigator.clipboard) navigator.clipboard.writeText(s).catch(() => {});
+      },
+      /* ⌘-style shortcuts on Apple platforms (`KbdCombo`). */
+      apple_keys: () =>
+        /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent) ? 1 : 0,
       /* Router history mirror: the Loam stack is authoritative; these keep the
          browser's own back/forward in step and make URLs shareable. */
       history_push: (p) => {
@@ -531,6 +650,7 @@
          width to leave the screen. */
       shadow: (x, y, w, h, radius, color, a, blur, dx, dy) => {
         const p = snapRect(x, y, w, h);
+        if (cachedShadow(p, radius, color, a, blur, dx, dy)) return;
         /* Canvas2D's shadow applies to the next fill, so the rounded path is
            filled past the LEFT edge of the canvas and only its blur lands where
            the rect is — filling in place would paint over whatever the shadow
@@ -1097,39 +1217,144 @@
             ime.blur();
           }
         }
-        /* Accessibility mirror (§2.3): the UI stays canvas. This visually
-           hidden, never-painted DOM mirrors the semantic tree (roles, labels)
-           so a screen reader has something to read. It is an a11y surface, not
-           a render target. */
+        /* Accessibility mirror (§2.3): the UI stays canvas. A browser exposes
+           a canvas to assistive tech as one opaque image, so this visually
+           hidden, never-painted DOM mirrors the semantic tree — roles, labels,
+           checked / disabled state — for screen readers. It is an a11y
+           surface, not a render target.
+
+           Kept in sync by a keyed diff on the engine node id: an unchanged
+           node keeps its element (and the screen reader's place on it), and
+           only what changed is touched. A screen reader's "press" or focus
+           move on an element is sent back to the engine, and the engine's own
+           focus moves (Tab, arrows on the canvas) move DOM focus here, so the
+           reader announces them. Mirror elements are never in the Tab order:
+           the engine owns Tab. */
         canvas.setAttribute("aria-hidden", "true");
         const a11y = document.createElement("div");
         a11y.id = "zeus-a11y";
-        a11y.setAttribute("role", "application");
         a11y.style.cssText =
           "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);" +
           "clip-path:inset(50%);white-space:nowrap;border:0;padding:0;margin:-1px;";
         document.body.appendChild(a11y);
+        const a11yEls = new Map(); // engine node id -> element
         let a11yLast = "";
+        let a11yForceAt = 0;
+        let a11yFocusId = 0;
+        let a11yQuiet = false; // set while the loader itself moves DOM focus
+        // Roles whose on / off state is `aria-checked`; tabs and options use
+        // `aria-selected`; a button with a state is a toggle (`aria-pressed`).
+        const A11Y_CHECKED = new Set(["checkbox", "radio", "switch", "menuitemcheckbox", "menuitemradio"]);
+        const A11Y_SELECTED = new Set(["tab", "option", "row", "gridcell"]);
+        function a11yAttr(el, name, value) {
+          if (value === null) {
+            if (el.hasAttribute(name)) el.removeAttribute(name);
+          } else if (el.getAttribute(name) !== value) {
+            el.setAttribute(name, value);
+          }
+        }
+        function a11yElement(id, role) {
+          let el = a11yEls.get(id);
+          const tag = role === "button" ? "BUTTON" : "DIV";
+          if (el && el.tagName === tag && el.dataset.role === role) return el;
+          if (el) el.remove();
+          el = document.createElement(tag);
+          el.dataset.role = role;
+          if (tag === "BUTTON") el.type = "button";
+          else if (role !== "text") el.setAttribute("role", role);
+          el.addEventListener(
+            "click",
+            (e) => {
+              e.preventDefault();
+              if (!exp || !exp.zeus_a11y_activate) return;
+              exp.zeus_a11y_activate(id);
+              schedule(0);
+            },
+            { signal }
+          );
+          el.addEventListener(
+            "focus",
+            () => {
+              if (a11yQuiet || !exp || !exp.zeus_a11y_focus) return;
+              a11yFocusId = id;
+              exp.zeus_a11y_focus(id);
+              schedule(0);
+            },
+            { signal }
+          );
+          a11yEls.set(id, el);
+          return el;
+        }
         function syncA11y() {
           if (!exp || !exp.zeus_a11y_sync) return;
-          const ptr = exp.zeus_a11y_sync();
-          if (!ptr) return;
-          const s = cstr(ptr);
-          if (s === a11yLast) return;
-          a11yLast = s;
-          const frag = document.createDocumentFragment();
+          // A checkbox flip or a focus move changes the semantics without a
+          // layout, so re-dump a few times a second regardless.
+          const now = performance.now();
+          const force = now - a11yForceAt > 250;
+          if (force) a11yForceAt = now;
+          const ptr = exp.zeus_a11y_sync(force ? 1 : 0);
+          if (ptr) {
+            const s = cstr(ptr);
+            if (s !== a11yLast) {
+              a11yLast = s;
+              a11yApply(s);
+            }
+          }
+          a11yFollowFocus();
+        }
+        function a11yApply(s) {
+          const seen = new Set();
+          let k = 0;
           for (const line of s.split("\n")) {
             if (!line) continue;
+            // depth, role, label, x, y, w, h, id, state
             const parts = line.split("\t");
+            if (parts.length < 9) continue;
             const role = parts[1] || "text";
-            const label = parts.slice(2).join("\t");
-            const el = document.createElement(role === "button" ? "button" : "div");
-            if (el.tagName !== "BUTTON") el.setAttribute("role", role);
-            el.textContent = label;
-            el.setAttribute("aria-label", label);
-            frag.appendChild(el);
+            const label = parts[2];
+            const id = parts[7] | 0;
+            const state = parts[8] | 0;
+            if (!id || seen.has(id)) continue;
+            seen.add(id);
+            const el = a11yElement(id, role);
+            if (el.textContent !== label) el.textContent = label;
+            a11yAttr(el, "aria-label", role === "text" ? null : label);
+            // Focusable nodes take programmatic focus (so the engine's focus
+            // can follow); none are Tab stops.
+            a11yAttr(el, "tabindex", state & 1 || el.tagName === "BUTTON" ? "-1" : null);
+            const hasState = (state & 2) !== 0;
+            const on = (state & 4) !== 0 ? "true" : "false";
+            a11yAttr(el, "aria-checked", hasState && A11Y_CHECKED.has(role) ? on : null);
+            a11yAttr(el, "aria-selected", hasState && A11Y_SELECTED.has(role) ? on : null);
+            a11yAttr(el, "aria-pressed", hasState && role === "button" ? on : null);
+            a11yAttr(el, "aria-disabled", state & 8 ? "true" : null);
+            if (a11y.children[k] !== el) a11y.insertBefore(el, a11y.children[k] || null);
+            k++;
           }
-          a11y.replaceChildren(frag);
+          for (const [id, el] of a11yEls) {
+            if (!seen.has(id)) {
+              el.remove();
+              a11yEls.delete(id);
+            }
+          }
+        }
+        /* The engine's focus moved (Tab or arrows on the canvas, a click):
+           move DOM focus to the mirror element so a screen reader announces
+           it. Never while a text field holds focus — the IME textarea owns DOM
+           focus then — and never away from some other page element. */
+        function a11yFollowFocus() {
+          if (!exp.zeus_focus_id) return;
+          const id = exp.zeus_focus_id() | 0;
+          if (id === a11yFocusId) return;
+          a11yFocusId = id;
+          if (exp.zeus_captures_text && exp.zeus_captures_text()) return;
+          const el = a11yEls.get(id);
+          if (!el) return;
+          const active = document.activeElement;
+          if (active && active !== document.body && active !== canvas && !a11y.contains(active)) return;
+          a11yQuiet = true;
+          el.focus({ preventScroll: true });
+          a11yQuiet = false;
         }
         ime.addEventListener(
           "input",
@@ -1182,6 +1407,17 @@
             const cp = exp.zeus_cursor_sync ? exp.zeus_cursor_sync() : 0;
             canvas.style.cursor = cstr(cp) || "default";
             schedule(0);
+          },
+          { signal }
+        );
+        canvas.addEventListener(
+          "contextmenu",
+          (e) => {
+            const p = layoutPoint(e.clientX, e.clientY);
+            if (exp.zeus_context_click && exp.zeus_context_click(p.x, p.y)) {
+              e.preventDefault();
+              schedule(0);
+            }
           },
           { signal }
         );
@@ -1266,11 +1502,17 @@
             if (e.key === "ArrowRight") key = 1001;
             if (e.key === "ArrowUp") key = 1002;
             if (e.key === "ArrowDown") key = 1003;
+            if (e.key === "PageUp") key = 1004;
+            if (e.key === "PageDown") key = 1005;
             if (e.key === "Home") key = 1006;
             if (e.key === "End") key = 1007;
             exp.zeus_key(key, mods);
             schedule(0);
             if (e.key === "Tab") e.preventDefault();
+            // Focus on a mirror element: the engine just handled the key, so
+            // the browser must not also turn Enter / Space into a click on it.
+            if ((e.key === "Enter" || e.key === " ") && a11y.contains(document.activeElement))
+              e.preventDefault();
             if (e.key === "Enter" && exp.zeus_captures_text && exp.zeus_captures_text())
               e.preventDefault();
           },
@@ -1296,6 +1538,8 @@
             if (e.key === "ArrowRight") key = 1001;
             if (e.key === "ArrowUp") key = 1002;
             if (e.key === "ArrowDown") key = 1003;
+            if (e.key === "PageUp") key = 1004;
+            if (e.key === "PageDown") key = 1005;
             if (e.key === "Home") key = 1006;
             if (e.key === "End") key = 1007;
             if (exp.zeus_key_up) exp.zeus_key_up(key, mods);

@@ -1,0 +1,108 @@
+// Catalogue layout guards: a track in a row takes the free width (a bare 100%
+// there is the empty content width); a centred column centres its labels (the
+// gauge's percentage and caption, the empty state's title); two half-width
+// cells share a wrapping row's gap instead of wrapping apart; a select's
+// `style` width sizes its trigger. The field props (`disabled`, `label`,
+// `invalid`) and the components no other test mounts are on screen.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn frame() {
+    zeus.engine_layout(800, 1600)
+}
+
+/// Centre of node `id` along x.
+fn mid_x(id: int) -> int {
+    return zeus.node_x(id) + zeus.node_width(id) / 2
+}
+
+/// `a` and `b` share a horizontal centre, give or take a pixel of rounding.
+fn centred(a: int, b: int) -> bool {
+    let d = mid_x(a) - mid_x(b)
+    return d >= -1 && d <= 1
+}
+
+fn main() {
+    zeus.window("catalogue-layout", 800, 1600)
+    let load = zeus.signal(30)
+    let score = zeus.signal(64)
+    let pick = zeus.signal(0)
+    let text = zeus.signal("")
+    let note = zeus.signal("")
+    let y = zeus.signal(2026)
+    let m = zeus.signal(10)
+    let d = zeus.signal(8)
+    let rail = zeus.signal(true)
+    let nav = zeus.signal(0)
+    let shade = zeus.signal(true)
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 8, padding = edges(16))) {
+        // First, so it is the first progressbar `engine_find_role` meets.
+        zui.Row(Space.Sm) {
+            zeus.Text("Load")
+            zui.Progress(load)
+        }
+        zui.Gauge(score, caption = "Score")
+        zui.EmptyState(title = "Nothing queued", body = "New jobs will show up here, as they arrive.")
+        zui.SimpleGrid() {
+            zui.GridCell(2) { zeus.Text("Cell A") }
+            zui.GridCell(2) { zeus.Text("Cell B") }
+        }
+        zui.Select(pick, []string { "One", "Two" }, style = Style(width = px(260)),
+                   label = "Order", invalid = true)
+        zui.TextInput(text, "Name", disabled = true, label = "Your name")
+        zui.SearchInput(text, invalid = true)
+        zui.PasswordInput(text, disabled = true)
+        zui.InputGroup(text, "host", prefix = "https://", label = "Host")
+        zui.Combobox(text, []string { "a" }, disabled = true, label = "Letter")
+        zui.TextArea(note, "Message", invalid = true, on_edit = fn() { return })
+        zui.DatePicker(y, m, d, size = Size.Sm, label = "Due")
+        zui.SkeletonAvatar()
+        zui.TrendIndicator("+4%", zui.Trend.Up)
+        zui.Notification("Saved", "Gallery is current.", zeus.Tint.Ok, fn() { return })
+        zui.Sidebar(rail) {
+            zui.NavGroup("Work", collapsed = rail) {
+                zui.NavItem("Inbox", zeus.IC_INFO, nav, 0, rail)
+            }
+        }
+        zeus.Box(style = Style(position = Position.Relative, height = px(40))) {
+            zui.ScrollShadow(false, fn() -> bool { return shade.get() })
+        }
+    })
+    frame()
+
+    let bar = zeus.engine_find_role("progressbar")
+    must(bar > 0, "the progress track is mounted")
+    must(zeus.node_width(bar) > 600, "a progress track in a row takes the free width")
+
+    let pct = zeus.engine_find_text("64%")
+    must(pct > 0, "the gauge shows its value")
+    must(centred(pct, zeus.node_parent(pct)), "the gauge value is centred in its ring")
+    let cap = zeus.engine_find_text("Score")
+    must(centred(cap, zeus.node_parent(cap)), "the gauge caption is centred under it")
+
+    let title = zeus.engine_find_text("Nothing queued")
+    must(centred(title, zeus.node_parent(title)), "the empty state centres its title")
+
+    let a = zeus.engine_find_text("Cell A")
+    let b = zeus.engine_find_text("Cell B")
+    must(zeus.node_y(a) == zeus.node_y(b), "two half cells share one wrapping row")
+    must(zeus.node_x(b) > zeus.node_x(a), "the second cell sits to the right")
+
+    let one = zeus.engine_find_text("One")
+    must(zeus.node_width(zeus.node_parent(one)) == 260, "a select's style width sizes its trigger")
+
+    must(zeus.text_visible("Due"), "a date picker shows its label")
+    must(!zeus.text_visible("Work"), "a collapsed rail hides its group heading")
+    must(zeus.text_visible("+4%"), "a trend indicator shows its delta")
+    must(zeus.text_visible("Saved"), "a notification shows its title")
+}

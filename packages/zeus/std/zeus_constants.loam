@@ -63,3 +63,28 @@ const IC_TREND_DOWN: string =
 /// chords are under a tenth of a pixel from a true arc.
 const IC_LOADER: string =
 "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M21 12L20.69 14.33L19.79 16.5L18.36 18.36L16.5 19.79L14.33 20.69L12 21L9.67 20.69L7.5 19.79L5.64 18.36L4.21 16.5L3.31 14.33L3 12L3.31 9.67L4.21 7.5L5.64 5.64L7.5 4.21L9.67 3.31L12 3'/></svg>"
+
+/// Two offset sheets (`CopyButton`). Drawn as straight runs: the host SVG
+/// readers skip `rect` and arc commands.
+const IC_COPY: string =
+"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M9 9h11v11H9z'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M5 15H4V4h11v1'/></svg>"
+
+/// Magnifier (`SearchInput`).
+const IC_SEARCH: string =
+"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><circle cx='11' cy='11' r='7' fill='none' stroke='currentColor' stroke-width='1.5'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m20 20-4-4'/></svg>"
+
+/// Open eye / struck eye (`PasswordInput` reveal). The lid is a polyline.
+const IC_EYE: string =
+"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M2 12L5 8.2L8.5 5.8L12 5L15.5 5.8L19 8.2L22 12L19 15.8L15.5 18.2L12 19L8.5 18.2L5 15.8Z'/><circle cx='12' cy='12' r='3' fill='none' stroke='currentColor' stroke-width='1.5'/></svg>"
+const IC_EYE_OFF: string =
+"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M2 12L5 8.2L8.5 5.8L12 5L15.5 5.8L19 8.2L22 12L19 15.8L15.5 18.2L12 19L8.5 18.2L5 15.8Z'/><circle cx='12' cy='12' r='3' fill='none' stroke='currentColor' stroke-width='1.5'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M3 3l18 18'/></svg>"
+
+/// Arrow out of a box (`Link` to another site).
+const IC_EXTERNAL: string =
+"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M15 3h6v6'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M10 14 21 3'/><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M18 13v8H3V6h8'/></svg>"
+
+/// Five-point star (`Rating`). Filled and stroke-only; the host paints `fill`.
+const IC_STAR: string =
+"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='currentColor' stroke='currentColor' stroke-linejoin='round' stroke-width='1' d='M12 2 L14.9 8.6 L22 9.3 L16.8 14 L18.3 21.2 L12 17.6 L5.7 21.2 L7.2 14 L2 9.3 L9.1 8.6 Z'/></svg>"
+const IC_STAR_OFF: string =
+"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linejoin='round' stroke-width='1.5' d='M12 2 L14.9 8.6 L22 9.3 L16.8 14 L18.3 21.2 L12 17.6 L5.7 21.2 L7.2 14 L2 9.3 L9.1 8.6 Z'/></svg>"

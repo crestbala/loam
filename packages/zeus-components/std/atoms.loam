@@ -23,7 +23,7 @@ struct GridProps {
     /// CSS-subset style; see `BoxProps.style`.
     style: Option<fn() -> Style> = none,
     config: GridConfig = GridConfig {},
-    /// Keyboard actions on this element (`chord(...)`, `chord_click(...)`).
+    /// Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`).
     keys: []KeyBind = no_keys(),
 }
 
@@ -33,7 +33,7 @@ struct OverlayProps {
     /// Shown while true: `visible = open.get()`.
     visible: Option<fn() -> bool> = none,
     on_click: Option<fn()> = none,
-    /// Keyboard actions on this element (`chord(...)`, `chord_click(...)`).
+    /// Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`).
     keys: []KeyBind = no_keys(),
 }
 
@@ -43,7 +43,7 @@ struct ScrollProps {
     /// CSS-subset style; see `BoxProps.style`.
     style: Option<fn() -> Style> = none,
     bind: Option<Signal<int>> = none,
-    /// Keyboard actions on this element (`chord(...)`, `chord_click(...)`).
+    /// Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`).
     keys: []KeyBind = no_keys(),
 }
 
@@ -53,7 +53,7 @@ struct ScrollProps {
 struct SvgProps {
     /// CSS-subset style; see `BoxProps.style`.
     style: Option<fn() -> Style> = none,
-    /// Keyboard actions on this element (`chord(...)`, `chord_click(...)`).
+    /// Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`).
     keys: []KeyBind = no_keys(),
 }
 
@@ -73,7 +73,7 @@ struct ImageProps {
     /// Decode only once the node intersects the view (skip off-screen).
     lazy: bool = false,
     label: Option<fn() -> string> = none,
-    /// Keyboard actions on this element (`chord(...)`, `chord_click(...)`).
+    /// Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`).
     keys: []KeyBind = no_keys(),
 }
 
@@ -984,14 +984,26 @@ fn refit_refresh(node_id: int, build: fn()) {
     let previous = arena.rebuild_begin(node_id)
     slot(node_handle(node_id), build)
     arena.rebuild_end(previous)
+    // The rebuild released every handler the host owned — this hook among
+    // them — so register it again, or the host would refit once and then
+    // ignore every later resize.
+    arena.nodes[node_id].list_fn = refit_hook(node_id, build)
+}
+
+/// The host's refresh hook, owned by the host itself: freed with the host, and
+/// by each rebuild of it (which is why `refit_refresh` re-registers it).
+fn refit_hook(node_id: int, build: fn()) -> int {
+    let id = platform.plat_intern_fn(|| {
+        refit_refresh(node_id, build)
+    })
+    arena.record_intern(id, node_id)
+    return id
 }
 
 fn refit(host: Node, build: fn()) -> Node {
     arena.ensure()
     let node_id = host.id
-    arena.nodes[node_id].list_fn = intern_fn(|| {
-        refit_refresh(node_id, build)
-    })
+    arena.nodes[node_id].list_fn = refit_hook(node_id, build)
     return host
 }
 
@@ -1055,6 +1067,8 @@ struct IconProps {
     label: Option<fn() -> string> = none,
 }
 
+/// `px` is the glyph box: pass an `IconSize` (`IconSize.Md` is 16) or, for
+/// SVG art, any raw px.
 fn Icon(markup: string, px: int, tint: string, p: IconProps) -> Node {
     return Component(raw_svg(markup),
                      style = merge(Style(width = px(px), height = px(px), color = tint), style_of(p.style)),
@@ -1154,7 +1168,7 @@ struct ChipProps {
     /// `Remove <label>`). Hiding the chip is the caller's job — usually
     /// `show` on a signal the handler clears.
     on_remove: Option<fn()> = none,
-    /// Keyboard actions on this element (`chord(...)`, `chord_click(...)`).
+    /// Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`).
     keys: []KeyBind = no_keys(),
 }
 
@@ -1165,7 +1179,7 @@ fn Chip(label: fn() -> string, kind: int, p: ChipProps) -> Node {
     let removable = result.is_some(p.on_remove)
 
     // view. The label takes the caller's `color` / `font` when given.
-    return Box(style = merge(Style(height = px(26), direction = Direction.Row, gap = Space.Exxs,
+    return Box(style = merge(Style(height = px(chip_h()), direction = Direction.Row, gap = Space.Exxs,
                                    align = Align.Center,
                                    padding = edges4(5, if removable { 4 } else { 10 }, 5, 10),
                                    radius = corners(RAD_FULL), border = line(HAIRLINE, rule()),
@@ -1191,6 +1205,17 @@ fn Chip(label: fn() -> string, kind: int, p: ChipProps) -> Node {
     }
 }
 
+/// Chip height: a step under the smallest control, so a chip never out-sizes
+/// the field or button beside it.
+fn chip_h() -> int {
+    return control_h(Size.Sm) - 6
+}
+
+/// Badge height per `Size`: 18 / 20 / 22.
+fn badge_h(size: int) -> int {
+    if size == Size.Sm { 18 } else if size == Size.Lg { 22 } else { 20 }
+}
+
 /// Fill for a badge `Tint`. Split from the button pickers because badges
 /// use filled status colors where buttons use accent chrome.
 fn badge_background(kind: int) -> string {
@@ -1199,6 +1224,8 @@ fn badge_background(kind: int) -> string {
         Tint.Ok => { return ok_solid() }
         Tint.Danger => { return danger_solid() }
         Tint.Warn => { return warn_fill() }
+        // Outline: the border carries it, so no fill.
+        Tint.Dim => { return "" }
         _ => { return accent() }
     }
 }
@@ -1234,18 +1261,20 @@ fn badge_border_color(kind: int) -> string {
 /// Ok is a filled success badge. `dot = true` adds a leading status pip
 /// in the label colour; `BadgeCount` is the numeric variant.
 struct BadgeProps {
+    /// `Size` token: the pill is `badge_h(size)` tall.
+    size: int = Size.Md,
     /// Style, merged over the recipe's own: `style = Style(radius = corners(4))`.
     style: Option<fn() -> Style> = none,
     /// Leading status pip in the label colour.
     dot: bool = false,
-    /// Keyboard actions on this element (`chord(...)`, `chord_click(...)`).
+    /// Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`).
     keys: []KeyBind = no_keys(),
 }
 
 fn Badge(label: fn() -> string, kind: int, p: BadgeProps) -> Node {
-    return Box(style = merge(Style(direction = Direction.Row, gap = Space.Exxs,
-                                   align = Align.Center, justify = Align.Center,
-                                   padding = edges2(2, 10), radius = corners(RAD_MD),
+    return Box(style = merge(Style(height = px(badge_h(p.size)), direction = Direction.Row,
+                                   gap = Space.Exxs, align = Align.Center, justify = Align.Center,
+                                   padding = Edges(left = 10, right = 10), radius = corners(RAD_CONTROL),
                                    border = Border(width = badge_border_width(kind),
                                                    color = opt_color(badge_border_color(kind))),
                                    background = opt_color(badge_background(kind))),
@@ -1263,11 +1292,11 @@ fn Badge(label: fn() -> string, kind: int, p: BadgeProps) -> Node {
 /// capped at `max` ("99+"). Sits over an icon or after a nav label.
 fn BadgeCount(count: Signal<int>, kind: int, max: int = 99) -> Node {
     return Box(style = Style(display = shown(count.get() != 0),
-                             height = px(18),
+                             height = px(badge_h(Size.Sm)),
                              direction = Direction.Row,
                              align = Align.Center,
                              justify = Align.Center,
-                             minWidth = 18,
+                             minWidth = badge_h(Size.Sm),
                              padding = Edges(right = 5, left = 5),
                              radius = corners(RAD_FULL),
                              background = opt_color(badge_background(kind))),
@@ -1297,23 +1326,70 @@ fn Kbd(key: fn() -> string) {
     }
 }
 
-/// Progress: 8px track, rounded, filled with the accent. Value 0..100; a
+/// Options for `Progress`.
+struct ProgressProps {
+    /// `Size` token: a 4 / 8 / 12px track.
+    size: int = Size.Md,
+    /// Sweep a segment instead of showing `value` (a negative value does too).
+    indeterminate: bool = false,
+    /// Caption above the track, with the percentage at its right end.
+    label: string = "",
+    /// Style, merged over the track's own.
+    style: Option<fn() -> Style> = none,
+}
+
+/// Track height per `Size`.
+fn progress_h(size: int) -> int {
+    if size == Size.Sm { 4 } else if size == Size.Lg { 12 } else { 8 }
+}
+
+/// Progress: rounded track filled with the accent; fills its parent's width.
+/// Value 0..100; a
 /// plain `set` eases the fill over `Motion.Base` on the paint overlay (no
-/// effect re-runs per frame). A negative value is indeterminate: a segment
-/// sweeps the track on the frame clock until the value is 0..100 again.
-fn Progress(value: Signal<int>) -> Node {
+/// effect re-runs per frame). A negative value (or `indeterminate`) sweeps a
+/// segment along the track on the frame clock instead.
+fn Progress(value: Signal<int>, p: ProgressProps) -> Node {
+    if p.label.len == 0 {
+        return ProgressTrack(value, p)
+    }
+    return ProgressLabeled(value, p)
+}
+
+/// `Progress` with its caption row. Split out because a component that builds
+/// a tree must return it once, at the end: the compiler wraps that return in
+/// a view frame, and an early return would leave the frame open.
+fn ProgressLabeled(value: Signal<int>, p: ProgressProps) -> Node {
+    let sweep = p.indeterminate
+    return Box(style = Style(direction = Direction.Column, gap = 6)) {
+        Box(style = Style(direction = Direction.Row, align = Align.Center)) {
+            Text(p.label, style = Style(grow = 1, font = FONT_CONTROL, color = ink()))
+            Text(if sweep || value.get() < 0 { "" } else { "{{value.get()}}%" },
+                 style = Style(font = FONT_CONTROL, color = mute()))
+        }
+        ProgressTrack(value, p)
+    }
+}
+
+/// The native track `Progress` draws.
+fn ProgressTrack(value: Signal<int>, p: ProgressProps) -> Node {
+    let h = progress_h(p.size)
+    // Fills a column; `grow` takes the free width in a row, where a bare
+    // 100% would be the (empty) content width.
     let n = Component(raw_progress(),
                       bind = value,
-                      style = Style(width = px(220), height = px(8), radius = corners(4)),
+                      style = merge(Style(width = pct(100), grow = 1, height = px(h), radius = corners(h / 2)),
+                                    style_of(p.style)),
+                      label = p.label,
                       role = "progressbar")
     let node_id = n.id
     let signal_id = value.id
+    let sweep = p.indeterminate
     // `tween` holds the last state this bar was asked to show (-1 at build),
     // so the next write can ease from it.
     effect(|| {
         let v = value.get()
         let last = arena.nodes[node_id].tween
-        if v < 0 {
+        if v < 0 || sweep {
             arena.note_spin(node_id, 1400)
         } else {
             arena.clear_spin(node_id)
@@ -1333,12 +1409,23 @@ fn Meter(value: Signal<int>) -> Node {
     return Progress(value)
 }
 
-/// Which `Alert` variant is painting.
+/// Deprecated: `Alert` takes a `Tint` (`tint = Tint.Warn`), the one status
+/// enum. `tone = Tone.*` still works and maps through `tone_tint`.
 enum Tone {
     Info = 0,
     Danger = 1,
     Warn = 2,
     Ok = 3,
+}
+
+/// The `Tint` an old `Tone` code stands for.
+fn tone_tint(tone: int) -> int {
+    match tone {
+        Tone.Danger => { return Tint.Danger }
+        Tone.Warn => { return Tint.Warn }
+        Tone.Ok => { return Tint.Ok }
+        _ => { return Tint.Info }
+    }
 }
 
 /// Raised panel (no border). Prefer `Card` for the bordered look.
@@ -1375,8 +1462,8 @@ struct AvatarProps {
     style: Option<fn() -> Style> = none
 }
 
-/// Avatar: full-round with initials on muted. `size` is the diameter in px
-/// (40 is the common one). Pass `src` for a photo; initials remain the fallback
+/// Avatar: full-round with initials on muted. `size` is the diameter: an
+/// `AvatarSize` (`AvatarSize.Lg` is the common 40), or any raw px. Pass `src` for a photo; initials remain the fallback
 /// while the host loads. `status` is a `Tint` for the corner presence pip
 /// (`-1` = none). `User` composes it; `AvatarGroup` stacks several.
 fn Avatar(initials: string, size: int, p: AvatarProps) -> Node {
@@ -1411,7 +1498,7 @@ fn Avatar(initials: string, size: int, p: AvatarProps) -> Node {
 
 /// Overlapping row of avatars. Later faces sit on top; each one after the
 /// first pulls left by a third of `size`.
-fn AvatarGroup(labels: []string, size: int = 32) -> Node {
+fn AvatarGroup(labels: []string, size: int = AvatarSize.Md) -> Node {
     return Row(0) {
         Loop(labels, fn(i, label) {
             return Avatar(label, size, style = avatar_overlap(i, size))
@@ -1569,14 +1656,14 @@ fn roving_jump(value: Signal<int>, index: int, target: int) {
 fn roving_keys(prefix: string, value: Signal<int>, index: int, count: int,
                vertical: bool = false) -> []KeyBind {
     let mut keys = []KeyBind {
-        chord("right", "{{prefix}}.next", fn() { roving_step(value, index, count, 1) }),
-        chord("left", "{{prefix}}.prev", fn() { roving_step(value, index, count, -1) }),
-        chord("home", "{{prefix}}.first", fn() { roving_jump(value, index, 0) }),
-        chord("end", "{{prefix}}.last", fn() { roving_jump(value, index, count - 1) }),
+        key_bind("right", "{{prefix}}.next", fn() { roving_step(value, index, count, 1) }),
+        key_bind("left", "{{prefix}}.prev", fn() { roving_step(value, index, count, -1) }),
+        key_bind("home", "{{prefix}}.first", fn() { roving_jump(value, index, 0) }),
+        key_bind("end", "{{prefix}}.last", fn() { roving_jump(value, index, count - 1) }),
     }
     if vertical {
-        push(keys, chord("down", "{{prefix}}.next", fn() { roving_step(value, index, count, 1) }))
-        push(keys, chord("up", "{{prefix}}.prev", fn() { roving_step(value, index, count, -1) }))
+        push(keys, key_bind("down", "{{prefix}}.next", fn() { roving_step(value, index, count, 1) }))
+        push(keys, key_bind("up", "{{prefix}}.prev", fn() { roving_step(value, index, count, -1) }))
     }
     return keys
 }
@@ -1730,8 +1817,8 @@ fn Empty(p: EmptyProps) -> Node {
         if p.icon.len > 0 {
             Icon(p.icon, 28, dim())
         }
-        Text(p.title, style = Style(font = FONT_TITLE, color = ink()))
-        Text(p.body, style = Style(font = FONT_BODY, color = mute()))
+        Text(p.title, style = Style(width = pct(-1), font = FONT_TITLE, color = ink()))
+        Text(p.body, style = Style(width = pct(-1), font = FONT_BODY, color = mute()))
         p.children()
     }
 }
@@ -1772,6 +1859,11 @@ struct MenuRow {
     danger: bool = false,
 }
 
+/// The empty list a `[]MenuRow` prop defaults to.
+fn no_menu_rows() -> []MenuRow {
+    return []MenuRow {}
+}
+
 /// Which window edge a `Drawer` slides from.
 enum Side {
     // Slide in from the start (left) edge.
@@ -1800,8 +1892,200 @@ fn sort_desc(sort: int) -> bool {
     return sort < 0
 }
 
-/// Byte-wise string order: negative, 0, positive.
+/// A copy of `s` with ASCII letters lowercased ("Hello" → "hello").
+fn lowercase(s: string) -> string {
+    let mut b = []int {}
+    for i in 0..s.len {
+        push(b, lower_byte(s[i]))
+    }
+    return string_from_bytes(b)
+}
+
+/// A copy of `s` with ASCII letters uppercased ("hello" → "HELLO").
+fn uppercase(s: string) -> string {
+    let mut b = []int {}
+    for i in 0..s.len {
+        push(b, upper_byte(s[i]))
+    }
+    return string_from_bytes(b)
+}
+
+fn upper_byte(c: int) -> int {
+    if c >= 97 && c <= 122 {
+        return c - 32
+    }
+    return c
+}
+
+/// Case-insensitive string order: negative, 0, positive. "apple" < "Banana";
+/// "Hello" and "hello" compare equal.
 fn str_cmp(a: string, b: string) -> int {
+    let n = if a.len < b.len { a.len } else { b.len }
+    for i in 0..n {
+        let ca = lower_byte(a[i])
+        let cb = lower_byte(b[i])
+        if ca != cb {
+            return ca - cb
+        }
+    }
+    return a.len - b.len
+}
+
+// --- natural sort keys -----------------------------------------------------
+// A cell is ordered by what it says, not by its bytes: it splits into text
+// and number chunks, text compares case-insensitively, and a number compares
+// by value — sign, decimals and thousands separators included — so "9" <
+// "10", "$300" < "$1,200", "-5" < "3", "2.5" < "2.75", "Item 9" < "Item 10",
+// ISO dates by date, and "1.9.0" < "1.10.2" (a dotted run of more than two
+// numbers is a version, not a decimal). Numbers sort before text.
+//
+// Each cell becomes a key once — a flat []int that compares lexicographically
+// — so a sort costs one key build per row, not two parses per comparison.
+// Encoding, per chunk:
+//   number  KEY_NUM, sign (0 negative, 1 positive), then for a positive
+//           number: integer digit count, the digits, the fraction digits
+//           (trailing zeros dropped), and -1 to end the fraction. A negative
+//           number stores everything inverted (-count, 9 - digit) and ends
+//           with 10, so a larger magnitude sorts first.
+//   text    KEY_TEXT, the lowercased bytes, -1 to end the chunk.
+// A key that runs out first sorts first ("ab" < "abc").
+
+const KEY_NUM: int = 1
+const KEY_TEXT: int = 2
+
+fn is_digit(c: int) -> bool {
+    return c >= 48 && c <= 57
+}
+
+fn is_alnum(c: int) -> bool {
+    return is_digit(c) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122)
+}
+
+/// Index just past a digit run starting at `i`, skipping thousands commas
+/// ("1,200": a comma with exactly three digits after it and no digit after
+/// those).
+fn num_run_end(s: string, i: int) -> int {
+    let mut k = i
+    while k < s.len {
+        if is_digit(s[k]) {
+            k = k + 1
+        } else if thousands_comma(s, k) {
+            k = k + 4
+        } else {
+            break
+        }
+    }
+    return k
+}
+
+/// true when `s[k]` is a comma between digit groups: a digit before it,
+/// exactly three digits after it, then no fourth.
+fn thousands_comma(s: string, k: int) -> bool {
+    if s[k] != 44 || k == 0 || k + 3 >= s.len {
+        return false
+    }
+    if !is_digit(s[k - 1]) {
+        return false
+    }
+    if !is_digit(s[k + 1]) || !is_digit(s[k + 2]) || !is_digit(s[k + 3]) {
+        return false
+    }
+    return k + 4 >= s.len || !is_digit(s[k + 4])
+}
+
+/// The natural sort key of one cell (see the encoding above).
+fn sort_key(s: string) -> []int {
+    let mut key = []int {}
+    let mut i = 0
+    while i < s.len {
+        let c = s[i]
+        // A sign belongs to the number after it when nothing alphanumeric
+        // precedes it ("-5", "$-5", " -5"), never in "2026-10" or "A-1".
+        let mut neg = false
+        let mut at = i
+        if c == 45 && i + 1 < s.len && is_digit(s[i + 1]) && (i == 0 || !is_alnum(s[i - 1])) {
+            neg = true
+            at = i + 1
+        }
+        if is_digit(s[at]) {
+            let int_end = num_run_end(s, at)
+            let mut end = int_end
+            let mut frac_b = int_end
+            let mut frac_e = int_end
+            // One dot followed by digits is a decimal point — unless another
+            // dot-and-digits follows, which makes the run a version number.
+            if int_end + 1 < s.len && s[int_end] == 46 && is_digit(s[int_end + 1]) {
+                let mut f = int_end + 1
+                while f < s.len && is_digit(s[f]) {
+                    f = f + 1
+                }
+                let version = f + 1 < s.len && s[f] == 46 && is_digit(s[f + 1])
+                let follows_version = at > 1 && s[at - 1] == 46 && is_digit(s[at - 2])
+                if !version && !follows_version {
+                    frac_b = int_end + 1
+                    frac_e = f
+                    end = f
+                }
+            }
+            // Integer digits without separators or leading zeros.
+            let mut digits = []int {}
+            for k in at..int_end {
+                if is_digit(s[k]) {
+                    if digits.len > 0 || s[k] != 48 {
+                        push(digits, s[k] - 48)
+                    }
+                }
+            }
+            let mut fe = frac_e
+            while fe > frac_b && s[fe - 1] == 48 {
+                fe = fe - 1
+            }
+            if digits.len == 0 && fe == frac_b {
+                neg = false
+            }
+            push(key, KEY_NUM)
+            if neg {
+                push(key, 0)
+                push(key, -digits.len)
+                for k in 0..digits.len {
+                    push(key, 9 - digits[k])
+                }
+                for k in frac_b..fe {
+                    push(key, 9 - (s[k] - 48))
+                }
+                push(key, 10)
+            } else {
+                push(key, 1)
+                push(key, digits.len)
+                for k in 0..digits.len {
+                    push(key, digits[k])
+                }
+                for k in frac_b..fe {
+                    push(key, s[k] - 48)
+                }
+                push(key, -1)
+            }
+            i = end
+        } else {
+            push(key, KEY_TEXT)
+            while i < s.len {
+                let t = s[i]
+                if is_digit(t) {
+                    break
+                }
+                if t == 45 && i + 1 < s.len && is_digit(s[i + 1]) && (i == 0 || !is_alnum(s[i - 1])) {
+                    break
+                }
+                push(key, lower_byte(t))
+                i = i + 1
+            }
+            push(key, -1)
+        }
+    }
+    return key
+}
+
+fn key_cmp(a: []int, b: []int) -> int {
     let n = if a.len < b.len { a.len } else { b.len }
     for i in 0..n {
         if a[i] != b[i] {
@@ -1811,50 +2095,114 @@ fn str_cmp(a: string, b: string) -> int {
     return a.len - b.len
 }
 
-/// Order two cells: numerically when both parse, else by bytes.
-fn cell_cmp(a: string, b: string) -> int {
-    let na = cell_num(a)
-    let nb = cell_num(b)
-    if na.ok && nb.ok {
-        return na.v - nb.v
+/// Byte-wise order: only the final tie-break, so cells that read the same
+/// ("apple" / "Apple") still land in one fixed order whatever order they
+/// arrived in.
+fn byte_cmp(a: string, b: string) -> int {
+    let n = if a.len < b.len { a.len } else { b.len }
+    for i in 0..n {
+        if a[i] != b[i] {
+            return a[i] - b[i]
+        }
     }
-    return str_cmp(a, b)
+    return a.len - b.len
 }
 
-/// Stable sort of any items by a string key (numeric when the keys are
-/// numbers), for a `VirtualTable`'s `Signal<[]T>`:
-/// `rows.set(zeus.sort_by(base, fn(j) => j.name, zeus.sort_desc(sort.get())))`.
-/// `sort_cells` does the same from a `cells` mapper and a `sort` value.
-fn sort_by<T>(items: []T, key: fn(T) -> string, desc: bool) -> []T {
-    let mut out = []T {}
-    let n = items.len
-    for i in 0..n {
-        push(out, items[i])
+/// Order two cells naturally (see `sort_key`): by value where they hold
+/// numbers, case-insensitively where they hold text, bytes only to break a
+/// tie.
+fn cell_cmp(a: string, b: string) -> int {
+    let c = key_cmp(sort_key(a), sort_key(b))
+    if c != 0 {
+        return c
     }
-    for i in 1..n {
-        let mut j = i
-        while j > 0 {
-            let a = out[j - 1]
-            let b = out[j]
-            let mut c = cell_cmp(key(a), key(b))
-            if desc {
-                c = -c
+    return byte_cmp(a, b)
+}
+
+/// Sort of any items by a string key in natural order (see `sort_key`), for
+/// a `VirtualTable`'s `Signal<[]T>`:
+/// `rows.set(zeus.sort_by(base, fn(j) => j.name, zeus.sort_desc(sort.get())))`.
+/// The result depends only on the keys, never on the order the items came
+/// in; empty keys go last in both directions. `sort_cells` does the same from
+/// a `cells` mapper and a `sort` value.
+fn sort_by<T>(items: []T, key: fn(T) -> string, desc: bool) -> []T {
+    let n = items.len
+    let mut raw = []string {}
+    let mut keys = [][]int {}
+    let mut idx = []int {}
+    for i in 0..n {
+        let k = key(items[i])
+        push(raw, k)
+        push(keys, sort_key(k))
+        push(idx, i)
+    }
+    // Bottom-up merge sort over indices: O(n log n), stable.
+    let mut tmp = []int {}
+    for i in 0..n {
+        push(tmp, 0)
+    }
+    let mut width = 1
+    while width < n {
+        let mut lo = 0
+        while lo < n {
+            let mid = if lo + width < n { lo + width } else { n }
+            let hi = if lo + 2 * width < n { lo + 2 * width } else { n }
+            let mut a = lo
+            let mut b = mid
+            let mut o = lo
+            while a < mid || b < hi {
+                // Stable: the left run wins unless the right item is strictly
+                // before it.
+                let mut take_a = b >= hi
+                if a < mid && b < hi {
+                    take_a = !sort_before(raw, keys, idx[b], idx[a], desc)
+                }
+                if take_a {
+                    tmp[o] = idx[a]
+                    a = a + 1
+                } else {
+                    tmp[o] = idx[b]
+                    b = b + 1
+                }
+                o = o + 1
             }
-            if c <= 0 {
-                break
-            }
-            out[j - 1] = b
-            out[j] = a
-            j = j - 1
+            lo = hi
         }
+        for i in 0..n {
+            idx[i] = tmp[i]
+        }
+        width = width * 2
+    }
+    let mut out = []T {}
+    for i in 0..n {
+        push(out, items[idx[i]])
     }
     return out
 }
 
+/// true when row `x` sorts strictly before row `y`: empty keys last in both
+/// directions, then the natural key, then raw bytes — every step reversed
+/// for `desc` except the empty-last rule.
+fn sort_before(raw: []string, keys: [][]int, x: int, y: int, desc: bool) -> bool {
+    let ex = raw[x].len == 0
+    let ey = raw[y].len == 0
+    if ex != ey {
+        return ey
+    }
+    let mut c = key_cmp(keys[x], keys[y])
+    if c == 0 {
+        c = byte_cmp(raw[x], raw[y])
+    }
+    if desc {
+        return c > 0
+    }
+    return c < 0
+}
+
 /// Items ordered by a `sort` value (`TableColsProps`) over their `cells`:
-/// 0 returns them as given; otherwise a stable sort on that column, by
-/// value when the cells are numbers. `Table` derives its shown order with
-/// this; a `VirtualTable` app calls it in an effect on its sort signal.
+/// 0 returns them as given; otherwise sorted on that column in natural order
+/// (`sort_by`). `Table` derives its shown order with this; a `VirtualTable`
+/// app calls it in an effect on its sort signal.
 fn sort_cells<T>(items: []T, cells: fn(T) -> []string, sort: int) -> []T {
     let col = sort_col(sort)
     if col < 0 {
@@ -2347,14 +2695,59 @@ fn chart_axes(w: int, h: int, maxv: int) {
                                  background = hard()))
 }
 
+/// Tooltip width (dp) and the air between it and the mark it describes.
+const CHART_TIP_W: int = 128
+const CHART_TIP_GAP: int = 10
+
+/// Where the tooltip goes for a mark at (`mx`, `my`) whose body reaches
+/// `reach` dp either side of `mx`: beside the mark, top-aligned just above
+/// it, on the right unless that overflows the plot, then on the left — so the
+/// panel never covers the mark it describes. A plot too narrow for either side
+/// centres the panel over the mark instead, above it (below when there is no
+/// room above). Returns [left, top].
+fn chart_tip_place(mx: int, my: int, reach: int, tip_h: int, w: int, h: int) -> []int {
+    let side = reach + CHART_TIP_GAP
+    let mut top = my - tip_h / 3
+    if top < 0 {
+        top = 0
+    }
+    if top + tip_h > h {
+        top = h - tip_h
+    }
+    let right = mx + side
+    if right + CHART_TIP_W <= w {
+        return []int { right, top }
+    }
+    let left = mx - side - CHART_TIP_W
+    if left >= 0 {
+        return []int { left, top }
+    }
+    // Neither side fits: centre on the mark, clear of it vertically.
+    let mut x = mx - CHART_TIP_W / 2
+    if x + CHART_TIP_W > w {
+        x = w - CHART_TIP_W
+    }
+    if x < 0 {
+        x = 0
+    }
+    let mut y = my - CHART_TIP_GAP - tip_h
+    if y < 0 {
+        y = my + CHART_TIP_GAP
+    }
+    return []int { x, y }
+}
+
 /// One floating tooltip panel shared by every category: its content and
 /// position track the hovered column (`act` = category + 1, 0 = none)
 /// through an effect, instead of one pre-built panel per category. Style
 /// props are plain data, so a prop that must follow a signal gets `styled`.
+/// `ys` is each column's topmost mark (the anchor) and `reach` the mark's
+/// half-width, so the panel sits beside the mark rather than on it.
 fn chart_tooltip(labels: []string, names: []string, vals: []int, s: int, n: int,
-                 w: int, col_w: int, act: Signal<int>, pt: int, dec: int) {
+                 w: int, h: int, col_w: int, act: Signal<int>, pt: int, dec: int,
+                 ys: []int, reach: int) {
     let panel = Box(
-        style = Style(width = px(128),
+        style = Style(width = px(CHART_TIP_W),
                       direction = Direction.Column,
                       gap = 4,
                       position = pos_absolute(),
@@ -2369,24 +2762,27 @@ fn chart_tooltip(labels: []string, names: []string, vals: []int, s: int, n: int,
         visible = act.get() != 0
     )
     enter_fade(panel)
-    // Slide to the hovered mark; -1 (no pin) while `act` is 0, when the
-    // panel is hidden anyway.
+    // Follow the hovered mark; -1 (no pin) while `act` is 0, when the panel
+    // is hidden anyway. The height is the panel's last measured one (its row
+    // count never changes), estimated before the first layout.
     styled(panel, || {
         let a = act.get() - 1
         let mut x = -1
+        let mut y = 0
         if a >= 0 {
             if a < n {
-                x = chart_mx(pt, CHART_GUTTER, col_w, n, a) - 64
-                if x < CHART_GUTTER {
-                    x = CHART_GUTTER
+                let mut tip_h = arena.nodes[panel.id].h
+                if tip_h <= 0 {
+                    tip_h = 30 + s * 20
                 }
-                let max_l = w - 128 - CHART_GUTTER
-                if x > max_l {
-                    x = max_l
-                }
+                let at = chart_tip_place(chart_mx(pt, CHART_GUTTER, col_w, n, a), ys[a],
+                                         reach, tip_h, w, h)
+                x = at[0]
+                y = at[1]
             }
         }
         arena.nodes[panel.id].pin_l = x
+        arena.nodes[panel.id].pin_t = y
     })
     slot(panel, || {
         Text(fn() -> string {
@@ -2502,7 +2898,8 @@ fn chart_legend(names: []string) {
 }
 
 /// Hover cursor: a single hairline through the hovered mark (no wash band).
-/// `act` = category + 1; the line shows and slides with it.
+/// `act` = category + 1; the line shows and slides with it. Build it before
+/// the marks, so the line runs behind the dots and bars rather than over them.
 fn chart_cursor(act: Signal<int>, n: int, col_w: int, plot_h: int, pt: int) {
     let line = Box(style = Style(width = px(1),
                                  height = px(plot_h),
@@ -2511,7 +2908,8 @@ fn chart_cursor(act: Signal<int>, n: int, col_w: int, plot_h: int, pt: int) {
                                  inset = Edges(top = CHART_TOP),
                                  radius = corners(0),
                                  background = hard()),
-                   label = "cursor")
+                   label = "cursor",
+                   role = "presentation")
     styled(line, || {
         let a = act.get() - 1
         let mut x = -1
@@ -2525,18 +2923,20 @@ fn chart_cursor(act: Signal<int>, n: int, col_w: int, plot_h: int, pt: int) {
     show(line, act)
 }
 
-/// Hover zones + the shared cursor + the single following tooltip; call with
-/// the plot pushed. `act` is created by the chart builder so the marks can
-/// dim for the hovered column. `pt` = 1 for plot-spanning line/area charts
-/// (zone strips snap to the nearest mark), 0 for column-mode bar charts.
+/// Hover zones + the single following tooltip; call with the plot pushed,
+/// after the marks (the cursor goes in first, before them: `chart_cursor`).
+/// `act` is created by the chart builder so the marks can dim for the hovered
+/// column. `pt` = 1 for plot-spanning line/area charts (zone strips snap to
+/// the nearest mark), 0 for column-mode bar charts. `ys` / `reach`: see
+/// `chart_tooltip`.
 fn chart_tooltips(labels: []string, names: []string, vals: []int, s: int, n: int,
-                  h: int, w: int, col_w: int, act: Signal<int>, pt: int, dec: int = 0) {
+                  h: int, w: int, col_w: int, act: Signal<int>, pt: int, ys: []int,
+                  reach: int, dec: int = 0) {
     for i in 0..n {
         let hov = signal(0)
         chart_zone(i, hov, act, h, col_w, pt, n)
     }
-    chart_cursor(act, n, col_w, h - CHART_TOP - CHART_XLAB, pt)
-    chart_tooltip(labels, names, vals, s, n, w, col_w, act, pt, dec)
+    chart_tooltip(labels, names, vals, s, n, w, h, col_w, act, pt, dec, ys, reach)
 }
 
 /// Dim/restore a mark for the hovered column: full at rest or on its own
@@ -2554,30 +2954,59 @@ fn chart_dim(act: Signal<int>, i: int) -> int {
 
 /// Resolve the plot width: a measured host width wins (the host stretches
 /// with its parent, so the chart re-fits on window resize); before the first
-/// layout the caller's estimate is used.
+/// layout the caller's estimate is used. A measured width is used however
+/// small — falling back to the estimate there is what made a squeezed chart
+/// spill out of its card — floored only so the plot keeps a few pixels.
 fn chart_w(w: int, host: Node) -> int {
     let mw = measured_width(host)
-    if mw > CHART_GUTTER + 8 {
-        return mw
+    if mw > 0 {
+        return geometry.max2(mw, CHART_GUTTER + 8)
     }
     return w
+}
+
+/// Side inset of a bar group inside its column: 5 dp, less in a column too
+/// narrow to spare it.
+fn chart_bar_inset(col_w: int) -> int {
+    let i = col_w / 4
+    if i > 5 {
+        return 5
+    }
+    return i
 }
 
 fn chart_bars(labels: []string, names: []string, vals: []int, n: int, s: int,
               w: int, h: int, host: Node) {
     let gw = chart_w(w, host)
     let plot_h = h - CHART_TOP - CHART_XLAB
-    let col_w = (gw - CHART_GUTTER) / n
+    let col_w = geometry.max2((gw - CHART_GUTTER) / n, 1)
     let domain = chart_domain(vals, s, n)
     let base_y = CHART_TOP + plot_h
-    let bar_w = (col_w - 10) / s
+    let inset = chart_bar_inset(col_w)
+    let bar_w = geometry.max2((col_w - 2 * inset) / s, 1)
     // Shared hovered mark: zones, cursor, tooltip, and the marks read it.
     let act = signal(0)
+    // Each column's anchor for the tooltip: the top of its tallest bar.
+    let mut ys = []int {}
+    for i in 0..n {
+        let mut top = base_y
+        for j in 0..s {
+            let v = chart_val(vals, s, i, j)
+            if v > 0 {
+                let t = base_y - geometry.max2(v * plot_h / domain, 1)
+                if t < top {
+                    top = t
+                }
+            }
+        }
+        push(ys, top)
+    }
     let plot = Box(style = Style(width = px(gw), height = px(h)))
     slot(plot, || {
         chart_axes(gw, h, domain)
+        chart_cursor(act, n, col_w, plot_h, 0)
         for i in 0..n {
-            let x0 = chart_col_x(CHART_GUTTER, col_w, i) + 5
+            let x0 = chart_col_x(CHART_GUTTER, col_w, i) + inset
             let ii = i
             for j in 0..s {
                 let v = chart_val(vals, s, i, j)
@@ -2594,7 +3023,7 @@ fn chart_bars(labels: []string, names: []string, vals: []int, n: int, s: int,
             }
             chart_xlab(labels[i], i, col_w, plot_h, 0, n)
         }
-        chart_tooltips(labels, names, vals, s, n, h, gw, col_w, act, 0)
+        chart_tooltips(labels, names, vals, s, n, h, gw, col_w, act, 0, ys, bar_w * s / 2)
     })
     chart_legend(names)
 }
@@ -2603,7 +3032,7 @@ fn chart_lines(labels: []string, names: []string, vals: []int, n: int, s: int,
                w: int, h: int, host: Node, p: LineChartProps) {
     let gw = chart_w(w, host)
     let plot_h = h - CHART_TOP - CHART_XLAB
-    let col_w = (gw - CHART_GUTTER) / n
+    let col_w = geometry.max2((gw - CHART_GUTTER) / n, 1)
     let span = chart_span(vals, s, n, p.fit)
     let lo = span[0]
     let hi = span[1]
@@ -2612,9 +3041,25 @@ fn chart_lines(labels: []string, names: []string, vals: []int, n: int, s: int,
     let act = signal(0)
     // A 45° label longer than a few characters reaches below CHART_XLAB;
     // the extra height keeps the legend clear of it. Short labels add none.
+    // Each column's anchor for the tooltip: its highest drawn point.
+    let mut ys = []int {}
+    for i in 0..n {
+        let mut top = CHART_TOP + plot_h
+        for j in 0..s {
+            let v = chart_val(vals, s, i, j)
+            if v != CHART_GAP {
+                let y = chart_fy(lo, hi, plot_h, CHART_TOP, v)
+                if y < top {
+                    top = y
+                }
+            }
+        }
+        push(ys, top)
+    }
     let plot = Box(style = Style(width = px(gw), height = px(h + chart_xlab_extra(labels))))
     slot(plot, || {
         chart_faxes(gw, h, lo, hi, p.decimals)
+        chart_cursor(act, n, col_w, plot_h, 1)
         for j in 0..s {
             let d = chart_fline_d(vals, s, j, lo, hi, CHART_GUTTER, col_w, plot_h,
                                   CHART_TOP, n)
@@ -2643,7 +3088,7 @@ fn chart_lines(labels: []string, names: []string, vals: []int, n: int, s: int,
                 chart_xlab(labels[i], i, col_w, plot_h, 1, n)
             }
         }
-        chart_tooltips(labels, names, vals, s, n, h, gw, col_w, act, 1, p.decimals)
+        chart_tooltips(labels, names, vals, s, n, h, gw, col_w, act, 1, ys, 3, p.decimals)
     })
     chart_legend(names)
 }
@@ -2652,13 +3097,26 @@ fn chart_areas(labels: []string, names: []string, vals: []int, n: int, s: int,
                w: int, h: int, host: Node) {
     let gw = chart_w(w, host)
     let plot_h = h - CHART_TOP - CHART_XLAB
-    let col_w = (gw - CHART_GUTTER) / n
+    let col_w = geometry.max2((gw - CHART_GUTTER) / n, 1)
     let domain = chart_domain(vals, s, n)
     // Shared hovered mark: zones, cursor, tooltip, and the marks read it.
     let act = signal(0)
+    // Each column's anchor for the tooltip: its highest point.
+    let mut ys = []int {}
+    for i in 0..n {
+        let mut top = CHART_TOP + plot_h
+        for j in 0..s {
+            let y = chart_y(domain, plot_h, CHART_TOP, chart_val(vals, s, i, j))
+            if y < top {
+                top = y
+            }
+        }
+        push(ys, top)
+    }
     let plot = Box(style = Style(width = px(gw), height = px(h)))
     slot(plot, || {
         chart_axes(gw, h, domain)
+        chart_cursor(act, n, col_w, plot_h, 1)
         for j in 0..s {
             let d = chart_area_d(vals, s, j, domain, CHART_GUTTER, col_w, plot_h,
                                  CHART_TOP, n)
@@ -2690,7 +3148,7 @@ fn chart_areas(labels: []string, names: []string, vals: []int, n: int, s: int,
         for i in 0..n {
             chart_xlab(labels[i], i, col_w, plot_h, 1, n)
         }
-        chart_tooltips(labels, names, vals, s, n, h, gw, col_w, act, 1)
+        chart_tooltips(labels, names, vals, s, n, h, gw, col_w, act, 1, ys, 3)
     })
     chart_legend(names)
 }
@@ -2798,8 +3256,11 @@ struct CardProps {
     /// (role `button`). `on_click` alone implies it.
     interactive: bool = false,
     on_click: Option<fn()> = none,
-    /// Elevation the card lifts to on hover (default 3 when interactive,
-    /// 0 = no lift). Paint-only: the shadow blends on the hover track.
+    /// Resting shadow (`Elevation.*`); `Elevation.Flat` for a flat card.
+    elevation: int = Elevation.Raised,
+    /// Elevation the card lifts to on hover (default `Elevation.Floating`
+    /// when interactive, 0 = no lift). Paint-only: the shadow blends on the
+    /// hover track.
     lift: int = -1,
     /// Header row above the body: `title` (heading type) and `subtitle`
     /// (muted caption). Either empty = no header.
@@ -2812,7 +3273,7 @@ struct CardProps {
     /// Footer row under the body, separated by a hairline; built by this
     /// thunk (actions, a caption). Omit for none.
     footer: Option<fn()> = none,
-    /// Keyboard actions on this element (`chord(...)`, `chord_click(...)`).
+    /// Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`).
     keys: []KeyBind = no_keys(),
     /// CSS-subset style; a present key wins over the recipe's.
     style: Option<fn() -> Style> = none,
@@ -2830,11 +3291,11 @@ fn Card(p: CardProps) -> Node {
     let user = style_of(p.style)
     let bleed = edge_or(user.padding, 3, 20)
     let r = corner_or(user.radius, RAD_XL)
-    let lift = if interactive && p.lift >= 0 { p.lift } else if interactive { 3 } else if p.lift > 0 { p.lift } else { -1 }
+    let lift = if interactive && p.lift >= 0 { p.lift } else if interactive { Elevation.Floating } else if p.lift > 0 { p.lift } else { -1 }
 
     // view
     return Box(
-        style = merge(Style(direction = Direction.Column, gap = Space.Xs, elevation = 1,
+        style = merge(Style(direction = Direction.Column, gap = Space.Xs, elevation = p.elevation,
                             padding = edges4(if p.media.len > 0 { 0 } else { 16 }, 20, 16, 20),
                             radius = corners(RAD_XL), border = line(HAIRLINE, rule()),
                             background = plate(),
@@ -2859,26 +3320,55 @@ fn Card(p: CardProps) -> Node {
             }
         }
         if has_header {
-            Box(style = Style(direction = Direction.Column, gap = 2), role = "heading") {
-                if p.title.len > 0 {
-                    Text(p.title, style = Style(font = FONT_TITLE, color = ink()))
-                }
-                if p.subtitle.len > 0 {
-                    Text(p.subtitle, style = Style(font = FONT_CAPTION, color = mute()))
-                }
-            }
+            CardHeader(p.title, p.subtitle)
         }
         if result.is_some(p.footer) {
             // The body sits in its own column so the footer follows it.
             Box(style = Style(direction = Direction.Column, gap = Space.Xs)) {
                 p.children()
             }
-            Separator()
-            Box(style = Style(direction = Direction.Row, gap = Space.Exs, align = Align.Center),
-                role = "contentinfo") {
+            CardFooter() {
                 emit(p.footer)
             }
         } else {
+            p.children()
+        }
+    }
+}
+
+/// Options for `CardHeader`.
+struct CardHeaderProps {
+    /// Trailing slot, right-aligned on the title row (a menu, a badge).
+    action: Option<fn()> = none,
+}
+
+/// A card's header: `title` in title type, `description` muted under it, and
+/// an optional trailing `action`. `Card(title = …)` builds one; compose it
+/// yourself for a header with an action.
+fn CardHeader(title: string, description: string, p: CardHeaderProps) -> Node {
+    return Box(style = Style(direction = Direction.Row, gap = Space.Exs, align = Align.Start)) {
+        Box(style = Style(direction = Direction.Column, gap = 2, grow = 1), role = "heading") {
+            if title.len > 0 {
+                Text(title, style = Style(font = FONT_TITLE, color = ink()))
+            }
+            if description.len > 0 {
+                Text(description, style = Style(font = FONT_CAPTION, color = mute()))
+            }
+        }
+        emit(p.action)
+    }
+}
+
+/// A card's footer row: a hairline, then the trailing block laid out in a row
+/// (actions, a caption).
+struct CardFooterProps {
+    children: fn() = noop,
+}
+
+fn CardFooter(p: CardFooterProps) -> Node {
+    return Box(style = Style(direction = Direction.Column, gap = Space.Xs), role = "contentinfo") {
+        Separator()
+        Box(style = Style(direction = Direction.Row, gap = Space.Exs, align = Align.Center)) {
             p.children()
         }
     }
@@ -2921,4 +3411,595 @@ fn cell_num(s: string) -> CellNum {
 struct CellNum {
     ok: bool,
     v: int,
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Tier A atoms: tags, inline type, key combos, ring, skeleton presets
+// ═══════════════════════════════════════════════════════════════════
+
+/// Soft wash behind a `Tint` (tags, callouts, banners).
+fn tint_bg(kind: int) -> string {
+    match kind {
+        Tint.Ok => { return ok_bg() }
+        Tint.Warn => { return warn_bg() }
+        Tint.Danger => { return danger_bg() }
+        Tint.Info => { return info_bg() }
+        _ => { return raised() }
+    }
+}
+
+/// Edge for a `Tint`; see `tint_bg`.
+fn tint_line(kind: int) -> string {
+    match kind {
+        Tint.Ok => { return ok_line() }
+        Tint.Warn => { return warn_line() }
+        Tint.Danger => { return danger_line() }
+        Tint.Info => { return info_line() }
+        _ => { return rule() }
+    }
+}
+
+/// Text ink for a `Tint` that clears AA on its `tint_bg`.
+fn tint_ink(kind: int) -> string {
+    match kind {
+        Tint.Ok => { return ok_ink() }
+        Tint.Warn => { return warn_ink() }
+        Tint.Danger => { return danger_ink() }
+        Tint.Info => { return info_ink() }
+        Tint.Mute | Tint.Dim => { return mute() }
+        _ => { return ink() }
+    }
+}
+
+/// Options for `Tag`.
+struct TagProps {
+    /// `Tint` for the wash, edge, and ink.
+    tint: int = Tint.Mute,
+    /// `Size` token: the tag is `badge_h(size)` tall.
+    size: int = Size.Md,
+    /// Removable tag: a trailing X runs this (role `button`, label
+    /// `Remove <label>`). Hiding the tag is the caller's job.
+    on_remove: Option<fn()> = none,
+    style: Option<fn() -> Style> = none,
+}
+
+/// Tag: a soft-tinted label with a small radius — a category or filter value,
+/// told apart from the pill `Badge` (a status) and the dotted `Chip`.
+fn Tag(label: fn() -> string, p: TagProps) -> Node {
+    let removable = result.is_some(p.on_remove)
+    return Box(style = merge(Style(height = px(badge_h(p.size)), direction = Direction.Row,
+                                   gap = 4, align = Align.Center,
+                                   padding = Edges(left = 8, right = if removable { 2 } else { 8 }),
+                                   radius = corners(RAD_SM - 2),
+                                   border = line(HAIRLINE, tint_line(p.tint)),
+                                   background = tint_bg(p.tint)),
+                             style_of(p.style))) {
+        Text(label, style = merge(Style(font = FONT_CAPTION, color = tint_ink(p.tint), ellipsis = true),
+                                  text_part(style_of(p.style))))
+        if removable {
+            Box(style = Style(width = px(16), height = px(16), shrink = 0,
+                              align = Align.Center, justify = Align.Center,
+                              radius = corners(RAD_SM - 4), cursor = "pointer"),
+                on_click = p.on_remove,
+                role = "button",
+                label = "Remove {{label()}}",
+                hoverFade = true) {
+                Icon(IC_X, IconSize.Xs, tint_ink(p.tint))
+            }
+        }
+    }
+}
+
+/// Status dot + label, no chrome: "● Online" in a table cell or a header.
+fn DotBadge(label: fn() -> string, kind: int) -> Node {
+    return Box(style = Style(direction = Direction.Row, gap = 6, align = Align.Center),
+               role = "status",
+               label = label()) {
+        Pip(tint_of(kind), DOT)
+        Text(label, style = Style(font = FONT_CONTROL, color = ink()))
+    }
+}
+
+/// Options for `Link`.
+struct LinkProps {
+    /// A trailing arrow-out-of-box, for a link that leaves the app.
+    external: bool = false,
+    /// Type size; the surrounding text's, usually.
+    font: int = FONT_BODY,
+    style: Option<fn() -> Style> = none,
+}
+
+/// Inline link: accent ink, underlined while hovered, role `link`. Navigation
+/// is the caller's `on_click` (a router `go`, `open_url`, ...).
+fn Link(label: fn() -> string, on_click: fn(), p: LinkProps) -> Node {
+    let hot = signal(0)
+    let me = ref()
+    on_mount(|| { watch_hover(me, hot) })
+    return Row(0) {
+        Box(ref = me,
+            style = merge(Style(direction = Direction.Row, gap = 2, align = Align.Center,
+                                cursor = "pointer"),
+                          style_of(p.style)),
+            on_click = on_click,
+            role = "link",
+            label = label()) {
+            Box(style = Style(direction = Direction.Column)) {
+                Text(label, style = Style(font = p.font, color = accent()))
+                // The underline is a 1px rule under the text, shown on hover.
+                Box(style = Style(height = px(HAIRLINE), background = accent(),
+                                  opacity = if hot.get() != 0 { 100 } else { 0 }))
+            }
+            if p.external {
+                Icon(IC_EXTERNAL, p.font - 2, accent())
+            }
+        }
+    }
+}
+
+/// Inline code: mono-ish caption type on a raised wash.
+fn Code(text: fn() -> string) -> Node {
+    return Row(0) {
+        Box(style = Style(direction = Direction.Row,
+                          padding = Edges(left = 4, right = 4, top = 1, bottom = 1),
+                          radius = corners(4), background = raised())) {
+            Text(text, style = Style(font = FONT_CONTROL, color = ink()))
+        }
+    }
+}
+
+/// Quoted passage: a 3px rule down the start edge, muted body type.
+/// Trailing block is the quote (one or more `Text`s); `cite` adds a caption.
+struct BlockquoteProps {
+    cite: string = "",
+    children: fn() = noop,
+}
+
+fn Blockquote(p: BlockquoteProps) -> Node {
+    return Box(style = Style(direction = Direction.Row, gap = 12)) {
+        Box(style = Style(width = px(3), shrink = 0, radius = corners(2), background = hard()))
+        Box(style = Style(direction = Direction.Column, gap = 6, grow = 1)) {
+            p.children()
+            if p.cite.len > 0 {
+                Text("— {{p.cite}}", style = Style(font = FONT_CAPTION, color = mute()))
+            }
+        }
+    }
+}
+
+/// Options for `KbdCombo`.
+struct KbdComboProps {
+    /// Force a convention: 1 = Apple (⌘⇧P), 0 = everyone else
+    /// (Ctrl+Shift+P), -1 (default) = the host's (`apple_keys()`).
+    apple: int = -1,
+}
+
+/// A shortcut in the platform's own spelling: `KbdCombo("cmd+shift+p")` is
+/// ⌘⇧P on a Mac and Ctrl+Shift+P elsewhere. `spec` uses the keymap syntax
+/// (`cmd` / `ctrl` / `alt` / `shift`, `+` or `-` between, then the key).
+fn KbdCombo(spec: string, p: KbdComboProps) -> Node {
+    let apple = if p.apple >= 0 { p.apple == 1 } else { apple_keys() }
+    let parts = combo_parts(spec)
+    return Box(style = Style(direction = Direction.Row, gap = 4, align = Align.Center),
+               role = "group",
+               label = combo_text(parts, apple, "+")) {
+        if apple {
+            Kbd(combo_text(parts, true, ""))
+        } else {
+            Loop(parts, fn(i, part) {
+                return Box(style = Style(direction = Direction.Row, gap = 4, align = Align.Center)) {
+                    if i > 0 {
+                        Text("+", style = Style(font = 10, color = mute()))
+                    }
+                    Kbd(key_name(part, false))
+                }
+            })
+        }
+    }
+}
+
+/// `spec` split on `+` / `-` (a lone `-` or `+` key stays a key).
+fn combo_parts(spec: string) -> []string {
+    let mut out = []string {}
+    let mut b = []int {}
+    for i in 0..spec.len {
+        let c = spec[i]
+        if (c == 43 || c == 45) && b.len > 0 {
+            push(out, string_from_bytes(b))
+            b = []int {}
+        } else {
+            push(b, c)
+        }
+    }
+    if b.len > 0 {
+        push(out, string_from_bytes(b))
+    }
+    return out
+}
+
+fn combo_text(parts: []string, apple: bool, sep: string) -> string {
+    let mut s = ""
+    for i in 0..parts.len {
+        if i > 0 {
+            s = "{{s}}{{sep}}"
+        }
+        s = "{{s}}{{key_name(parts[i], apple)}}"
+    }
+    return s
+}
+
+/// One key of a combo, spelled for the platform.
+fn key_name(part: string, apple: bool) -> string {
+    let k = lowercase(part)
+    if fmt.eq(k, "cmd") || fmt.eq(k, "super") || fmt.eq(k, "mod") {
+        return if apple { "⌘" } else { "Ctrl" }
+    }
+    if fmt.eq(k, "ctrl") || fmt.eq(k, "control") {
+        return if apple { "⌃" } else { "Ctrl" }
+    }
+    if fmt.eq(k, "alt") || fmt.eq(k, "opt") {
+        return if apple { "⌥" } else { "Alt" }
+    }
+    if fmt.eq(k, "shift") {
+        return if apple { "⇧" } else { "Shift" }
+    }
+    if fmt.eq(k, "enter") || fmt.eq(k, "return") {
+        return if apple { "↩" } else { "Enter" }
+    }
+    if fmt.eq(k, "escape") || fmt.eq(k, "esc") {
+        return "Esc"
+    }
+    if fmt.eq(k, "backspace") {
+        return if apple { "⌫" } else { "Backspace" }
+    }
+    if fmt.eq(k, "tab") {
+        return "Tab"
+    }
+    if fmt.eq(k, "space") {
+        return "Space"
+    }
+    if fmt.eq(k, "up") {
+        return "↑"
+    }
+    if fmt.eq(k, "down") {
+        return "↓"
+    }
+    if fmt.eq(k, "left") {
+        return "←"
+    }
+    if fmt.eq(k, "right") {
+        return "→"
+    }
+    if k.len == 1 {
+        return uppercase(k)
+    }
+    return part
+}
+
+/// Options for `ProgressRing`.
+struct ProgressRingProps {
+    /// Diameter in px (`RING`, 48).
+    size: int = RING,
+    /// The percentage in the middle of the ring.
+    label: bool = true,
+    /// Arc ink (a role accessor); the accent by default.
+    color: string = "",
+}
+
+/// Circular progress over 0..100: a hairline track with the accent arc
+/// sweeping clockwise from the top, and the percentage in the middle.
+fn ProgressRing(value: Signal<int>, p: ProgressRingProps) -> Node {
+    let d = p.size
+    return Box(style = Style(width = px(d), height = px(d), shrink = 0,
+                             align = Align.Center, justify = Align.Center),
+               role = "progressbar",
+               label = "{{value.get()}}%") {
+        Svg(RING_TRACK, style = Style(width = px(d), height = px(d), position = pos_absolute(),
+                                      inset = Edges(top = 0, left = 0), color = rule()))
+        RingArc(value, d, str_or_default(p.color, accent()))
+        if p.label {
+            // Content width, so the ring's centring applies; a full-width
+            // label would paint from the ring's left edge.
+            Text("{{value.get()}}%", style = Style(width = pct(-1),
+                                                   font = if d >= 48 { FONT_CONTROL } else { 10 },
+                                                   color = ink()))
+        }
+    }
+}
+
+/// The ring's arc: an svg whose markup follows `value` (the node keeps its
+/// markup in its text, so a reactive text redraws it).
+fn RingArc(value: Signal<int>, d: int, tint: string) -> Node {
+    return Component(raw_svg(ring_markup(peek(value))),
+                     text = ring_markup(value.get()),
+                     style = Style(width = px(d), height = px(d), position = pos_absolute(),
+                                   inset = Edges(top = 0, left = 0), color = tint))
+}
+
+const RING_TRACK: string =
+"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><circle cx='12' cy='12' r='10' fill='none' stroke='currentColor' stroke-width='2.5'/></svg>"
+
+/// sin(10° × i) × 1000 for i = 0..36. cos(a) is sin(a + 90°).
+const SIN10: []int = []int {
+    0, 174, 342, 500, 643, 766, 866, 940, 985, 1000, 985, 940, 866, 766, 643, 500, 342, 174,
+    0, -174, -342, -500, -643, -766, -866, -940, -985, -1000, -985, -940, -866, -766, -643,
+    -500, -342, -174, 0,
+}
+
+/// sin of `deg` (0..360) × 1000, linear between the 10° table steps.
+fn sin1000(deg: int) -> int {
+    let a = ((deg % 360) + 360) % 360
+    let i = a / 10
+    let f = a % 10
+    return SIN10[i] + (SIN10[i + 1] - SIN10[i]) * f / 10
+}
+
+/// Thousandths as a decimal: 12345 → "12.345".
+fn milli(v: int) -> string {
+    let neg = v < 0
+    let a = if neg { -v } else { v }
+    let frac = a % 1000
+    let pad = if frac < 10 { "00" } else if frac < 100 { "0" } else { "" }
+    let sign = if neg { "-" } else { "" }
+    return "{{sign}}{{a / 1000}}.{{pad}}{{frac}}"
+}
+
+/// A clockwise arc of `pct` percent on the r = 10 circle, starting at the top,
+/// as a polyline (the host SVG readers skip arc commands).
+fn ring_markup(pct: int) -> string {
+    let v = clamp_pct(pct)
+    let end = v * 360 / 100
+    let mut d = "M12 2"
+    let mut a = 10
+    while a < end {
+        d = "{{d}}L{{milli(12000 + 10 * sin1000(a))}} {{milli(12000 - 10 * sin1000(a + 90))}}"
+        a = a + 10
+    }
+    if end > 0 {
+        d = "{{d}}L{{milli(12000 + 10 * sin1000(end))}} {{milli(12000 - 10 * sin1000(end + 90))}}"
+    }
+    let stroke = if v > 0 { "2.5" } else { "0" }
+    return "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='{{stroke}}' d='{{d}}'/></svg>"
+}
+
+fn clamp_pct(v: int) -> int {
+    if v < 0 {
+        return 0
+    }
+    if v > 100 {
+        return 100
+    }
+    return v
+}
+
+/// Lines of placeholder text: `lines` bars at body height, the last one
+/// shorter, like a paragraph's ragged end. Fills its parent's width.
+fn SkeletonText(lines: int = 3) -> Node {
+    return Box(style = Style(direction = Direction.Column, gap = 8),
+               role = "progressbar",
+               label = "Loading") {
+        for i in 0..lines {
+            pulse(Box(style = Style(width = pct(if i == lines - 1 && lines > 1 { 60 } else { 100 }),
+                                    height = px(12), radius = corners(4), background = bone())))
+        }
+    }
+}
+
+/// A round placeholder the size of an `Avatar`.
+fn SkeletonAvatar(size: int = AvatarSize.Lg) -> Node {
+    return Skeleton(size, size, size / 2)
+}
+
+/// A card-shaped placeholder: avatar and two lines over a short paragraph.
+fn SkeletonCard() -> Node {
+    return Box(style = Style(direction = Direction.Column, gap = 16, padding = edges(20),
+                             radius = corners(RAD_XL), border = line(HAIRLINE, rule()),
+                             background = plate()),
+               role = "progressbar",
+               label = "Loading") {
+        Box(style = Style(direction = Direction.Row, gap = 12, align = Align.Center)) {
+            SkeletonAvatar(AvatarSize.Lg)
+            Box(style = Style(direction = Direction.Column, gap = 8, grow = 1)) {
+                pulse(Box(style = Style(width = pct(50), height = px(12), radius = corners(4),
+                                        background = bone())))
+                pulse(Box(style = Style(width = pct(30), height = px(10), radius = corners(4),
+                                        background = bone())))
+            }
+        }
+        SkeletonText(3)
+    }
+}
+
+// --- tier B atoms: layout frames, scroll fades, gauges -------------------
+
+/// Bytes of `s` in `[from, to)`.
+fn str_slice(s: string, from: int, to: int) -> string {
+    let mut b = []int {}
+    let mut i = from
+    while i < to && i < s.len {
+        push(b, s[i])
+        i = i + 1
+    }
+    return string_from_bytes(b)
+}
+
+/// One band of an edge fade, strongest where `opacity` is highest.
+fn fade_strip(opacity: int) -> Node {
+    return Box(style = Style(height = px(8), background = plate(), opacity = opacity))
+}
+
+/// Edge fade over a scroller. `top` hugs the top edge; otherwise the bottom.
+/// `on` is read from layout (`shown`), so it follows the scroll offset.
+fn ScrollShadow(top: bool, on: fn() -> bool) -> Node {
+    return Box(style = Style(position = pos_absolute(),
+                             inset = if top { Edges(top = 0, left = 0, right = 0) } else { Edges(bottom = 0, left = 0, right = 0) },
+                             height = px(24), direction = Direction.Column, zIndex = 2,
+                             display = shown(on())),
+               role = "presentation",
+               label = if top { "More above" } else { "More below" }) {
+        fade_strip(if top { 100 } else { 25 })
+        fade_strip(60)
+        fade_strip(if top { 25 } else { 100 })
+    }
+}
+
+/// Options for `ScrollArea`.
+struct ScrollAreaProps {
+    /// Viewport height.
+    height: int = 240,
+    style: Option<fn() -> Style> = none,
+    children: fn() = noop,
+}
+
+/// Vertical scroller with edge fades. The thumb is the engine's 6px bar;
+/// a fade shows on each edge that still has content past it.
+fn ScrollArea(p: ScrollAreaProps) -> Node {
+    let y = signal(0)
+    let vh = signal(0)
+    let ch = signal(0)
+    let host = ref()
+    let body = ref()
+    let h = if p.height > 0 { p.height } else { 240 }
+    on_mount(|| {
+        on_resize(host, || { vh.set(rect(host).h) })
+        on_resize(body, || { ch.set(rect(body).h) })
+    })
+    return Box(ref = host,
+               style = merge(Style(position = Position.Relative, width = pct(100), height = px(h)),
+                             style_of(p.style))) {
+        Scroll(bind = y, style = Style(width = pct(100), height = px(h))) {
+            Box(ref = body, style = Style(direction = Direction.Column, gap = 8)) {
+                p.children()
+            }
+        }
+        ScrollShadow(true, fn() -> bool { return y.get() > 2 })
+        ScrollShadow(false, fn() -> bool { return y.get() + vh.get() + 2 < ch.get() })
+    }
+}
+
+/// Options for `Container`.
+struct ContainerProps {
+    /// Max width. 0 is `CONTAINER_MD` (960). `CONTAINER_SM` / `CONTAINER_LG`
+    /// are 640 / 1200.
+    width: int = 0,
+    style: Option<fn() -> Style> = none,
+    children: fn() = noop,
+}
+
+/// Centres a column and caps its width. A page measure, not a card.
+fn Container(p: ContainerProps) -> Node {
+    let w = if p.width > 0 { p.width } else { CONTAINER_MD }
+    return Box(style = merge(Style(width = pct(100), maxWidth = w, alignSelf = Align.Center,
+                                   direction = Direction.Column),
+                             style_of(p.style))) {
+        p.children()
+    }
+}
+
+/// Options for `AspectRatio`.
+struct AspectRatioProps {
+    style: Option<fn() -> Style> = none,
+    children: fn() = noop,
+}
+
+/// A frame whose height follows its width at `w`:`h` (pass 16 and 9, or 1 and 1).
+fn AspectRatio(w: int, h: int, p: AspectRatioProps) -> Node {
+    let host = ref()
+    let ht = signal(0)
+    let rw = if w > 0 { w } else { 1 }
+    let rh = if h > 0 { h } else { 1 }
+    on_mount(|| {
+        on_resize(host, || {
+            let bw = rect(host).w
+            if bw > 0 {
+                ht.set(bw * rh / rw)
+            }
+        })
+    })
+    return Box(ref = host,
+               style = merge(Style(width = pct(100), height = px(ht.get()), overflow = Overflow.Hidden),
+                             style_of(p.style)),
+               role = "presentation") {
+        p.children()
+    }
+}
+
+/// Options for `SimpleGrid`.
+struct SimpleGridProps {
+    gap: int = 12,
+    style: Option<fn() -> Style> = none,
+    children: fn() = noop,
+}
+
+/// A wrapping row. Each child is a `GridCell` with the same column count,
+/// so the cells share the row and wrap onto the next.
+fn SimpleGrid(p: SimpleGridProps) -> Node {
+    return Box(style = merge(Style(direction = Direction.Row, wrap = true, gap = p.gap,
+                                   align = Align.Stretch),
+                             style_of(p.style))) {
+        p.children()
+    }
+}
+
+/// Options for `GridCell`.
+struct GridCellProps {
+    style: Option<fn() -> Style> = none,
+    children: fn() = noop,
+}
+
+/// One cell of a `SimpleGrid`: `100 / columns` percent of the row.
+fn GridCell(columns: int, p: GridCellProps) -> Node {
+    let cols = if columns > 0 { columns } else { 1 }
+    return Box(style = merge(Style(width = pct(100 / cols), direction = Direction.Column),
+                             style_of(p.style))) {
+        p.children()
+    }
+}
+
+/// Options for `Gauge`.
+struct GaugeProps {
+    /// Ring diameter (`RING` is 48).
+    size: int = RING,
+    /// Caption under the ring. Empty hides it.
+    caption: fn() -> string = empty_text,
+    style: Option<fn() -> Style> = none,
+}
+
+/// A `ProgressRing` with a caption: one reading (a score, a capacity).
+fn Gauge(value: Signal<int>, p: GaugeProps) -> Node {
+    return Box(style = merge(Style(direction = Direction.Column, gap = 6, align = Align.Center),
+                             style_of(p.style))) {
+        ProgressRing(value, size = p.size, label = true)
+        Text(p.caption, style = Style(width = pct(-1), font = FONT_CAPTION, color = mute(),
+                                      display = shown(p.caption().len > 0)))
+    }
+}
+
+/// Options for `UsageBar`.
+struct UsageBarProps {
+    label: fn() -> string = empty_text,
+    /// At or above this percent the fill turns danger.
+    threshold: int = 90,
+    style: Option<fn() -> Style> = none,
+}
+
+/// Labelled meter on the 6px `METER_TRACK`. Accent until `threshold`, then danger.
+fn UsageBar(value: Signal<int>, p: UsageBarProps) -> Node {
+    return Box(style = merge(Style(direction = Direction.Column, gap = 6, width = pct(100)),
+                             style_of(p.style)),
+               role = "progressbar",
+               label = fn() -> string { return "{{p.label()}} {{clamp_pct(value.get())}}%" }) {
+        Box(style = Style(direction = Direction.Row, align = Align.Center)) {
+            Text(p.label, style = Style(font = FONT_CONTROL, color = mute()))
+            Grow()
+            Text(fn() -> string { return "{{clamp_pct(value.get())}}%" },
+                 style = Style(font = FONT_CONTROL,
+                               color = if clamp_pct(value.get()) >= p.threshold { danger() } else { ink() }))
+        }
+        Box(style = Style(width = pct(100), height = px(METER_TRACK), radius = corners(RAD_FULL),
+                          background = raised())) {
+            Box(style = Style(width = pct(clamp_pct(value.get())), height = pct(100),
+                              radius = corners(RAD_FULL),
+                              background = if clamp_pct(value.get()) >= p.threshold { danger() } else { accent() }))
+        }
+    }
 }

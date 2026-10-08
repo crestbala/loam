@@ -1,0 +1,188 @@
+// Tier A inputs: NumberInput steps, commits typed text and clamps; Stepper
+// counts within its range; SearchInput focuses on its shortcut, clears on
+// Escape, submits on Enter; PasswordInput draws bullets until revealed;
+// InputGroup shows its addons; CheckboxGroup's select-all follows and drives
+// its children; RangeSlider moves the nearer thumb and steps from the keys.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+const K_ENTER: int = 13
+const K_ESC: int = 27
+const K_RIGHT: int = 1001
+const K_UP: int = 1002
+const K_DOWN: int = 1003
+const K_END: int = 1007
+
+fn frame() {
+    zeus.engine_layout(640, 1000)
+}
+
+fn key(k: int) {
+    zeus.engine_key_ev(k, 0)
+    frame()
+}
+
+fn tap(label: string) {
+    must(zeus.engine_click_text(label) != 0, "tap {{label}}")
+    zeus.engine_mouseup()
+    frame()
+}
+
+/// True when some text draw of the last paint equals `s`.
+fn drawn(s: string) -> bool {
+    zeus.engine_paint()
+    for i in 0..zeus.draw_count() {
+        if fmt.eq(zeus.draw_text(i), s) {
+            return true
+        }
+    }
+    return false
+}
+
+fn main() {
+    zeus.window("inputs", 640, 1000)
+    let qty = zeus.signal(5)
+    let guests = zeus.signal(1)
+    let query = zeus.signal("")
+    let searched = zeus.signal("")
+    let pw = zeus.signal("")
+    let url = zeus.signal("")
+    let a = zeus.signal(false)
+    let b = zeus.signal(false)
+    let c = zeus.signal(false)
+    let lo = zeus.signal(20)
+    let hi = zeus.signal(80)
+    zeus.root(zui.Page() {
+        zui.NumberInput(qty, min = 0, max = 10, step = 2, label = "Quantity")
+        zui.Stepper(guests, min = 1, max = 3, label = "Guests")
+        zui.SearchInput(query, placeholder = "Find", shortcut = "/",
+                        on_submit = fn(q: string) { searched.set(q) })
+        zui.PasswordInput(pw, placeholder = "Secret")
+        zui.InputGroup(url, "site", prefix = "https://", suffix = ".com")
+        zui.CheckboxGroup([]string { "Alpha", "Beta", "Gamma" },
+                          []Signal<bool> { a, b, c }, allLabel = "All")
+        zui.RangeSlider(lo, hi, label = "Price")
+    })
+    zeus.pump_frame()
+    frame()
+
+    // NumberInput: buttons step, keys step, typing commits in range, Enter clamps.
+    tap("Increase")
+    must(qty.get() == 7, "plus steps by 2")
+    tap("Increase")
+    tap("Increase")
+    must(qty.get() == 10, "plus clamps at max")
+    tap("Decrease")
+    must(qty.get() == 8, "minus steps")
+    must(zeus.engine_click_text("Quantity") != 0, "focus the number field")
+    zeus.engine_mouseup()
+    frame()
+    key(K_DOWN)
+    must(qty.get() == 6, "down arrow steps")
+    zeus.engine_key(8)
+    zeus.engine_insert("3")
+    frame()
+    must(qty.get() == 3, "typed in-range value commits")
+    zeus.engine_insert("0")
+    frame()
+    must(qty.get() == 3, "out-of-range text waits")
+    key(K_ENTER)
+    must(qty.get() == 10, "enter clamps to max")
+
+    // Stepper.
+    tap("Increase")
+    let g = zeus.engine_find_role("spinbutton")
+    must(g > 0, "stepper role")
+    let before = guests.get()
+    zeus.engine_click(zeus.node_x(g) + zeus.node_width(g) - 10, zeus.node_y(g) + 10)
+    zeus.engine_mouseup()
+    frame()
+    must(guests.get() == before + 1, "stepper plus")
+    zeus.engine_click(zeus.node_x(g) + zeus.node_width(g) - 10, zeus.node_y(g) + 10)
+    zeus.engine_mouseup()
+    zeus.engine_click(zeus.node_x(g) + zeus.node_width(g) - 10, zeus.node_y(g) + 10)
+    zeus.engine_mouseup()
+    frame()
+    must(guests.get() == 3, "stepper clamps at max")
+
+    // SearchInput: the "/" shortcut focuses it; Enter submits; Escape clears.
+    must(zeus.text_visible("/"), "shortcut hint while empty")
+    key(47)
+    zeus.engine_insert("lamp")
+    frame()
+    must(fmt.eq(query.get(), "lamp"), "shortcut focused the search field")
+    must(!zeus.text_visible("/"), "hint hides once typing")
+    key(K_ENTER)
+    must(fmt.eq(searched.get(), "lamp"), "enter submits")
+    key(K_ESC)
+    must(query.get().len == 0, "escape clears")
+
+    // PasswordInput: bullets until revealed.
+    must(zeus.engine_click_text("Secret") != 0, "focus password")
+    zeus.engine_mouseup()
+    frame()
+    zeus.engine_insert("abc")
+    frame()
+    must(fmt.eq(pw.get(), "abc"), "the value is the real text")
+    must(drawn("•••"), "drawn as bullets")
+    must(!drawn("abc"), "plain text not drawn")
+    tap("Show password")
+    must(drawn("abc"), "revealed")
+    tap("Hide password")
+    must(drawn("•••"), "masked again")
+
+    // InputGroup addons.
+    must(zeus.text_visible("https://") && zeus.text_visible(".com"), "addons shown")
+
+    // CheckboxGroup: select-all drives the children, and follows them.
+    tap("Beta")
+    must(b.get(), "child checks")
+    tap("All")
+    must(a.get() && b.get() && c.get(), "mixed select-all checks every child")
+    tap("All")
+    must(!a.get() && !b.get() && !c.get(), "select-all clears every child")
+    tap("Alpha")
+    tap("Beta")
+    tap("Gamma")
+    tap("Gamma")
+    tap("Gamma")
+    must(a.get() && b.get() && c.get(), "children all on")
+
+    // RangeSlider: a press moves the nearer thumb; thumbs never cross.
+    let thumb = zeus.engine_find_text("Minimum 20")
+    must(thumb > 0, "min thumb")
+    let track = zeus.node_parent(thumb)
+    let tx = zeus.node_x(track)
+    let tw = zeus.node_width(track)
+    let ty = zeus.node_y(track) + 10
+    zeus.engine_click(tx + 8 + (tw - 16) * 10 / 100, ty)
+    zeus.engine_mouseup()
+    frame()
+    must(lo.get() == 10, "press near the min thumb moves it")
+    must(hi.get() == 80, "max thumb stays")
+    zeus.engine_click(tx + 8 + (tw - 16) * 90 / 100, ty)
+    zeus.engine_drag(tx + 8 + (tw - 16) * 95 / 100, ty)
+    zeus.engine_mouseup()
+    frame()
+    must(hi.get() == 95, "drag moves the max thumb")
+    let maxt = zeus.engine_find_text("Maximum 95")
+    must(maxt > 0, "max thumb relabelled")
+    zeus.engine_click(zeus.node_x(maxt) + 8, zeus.node_y(maxt) + 8)
+    zeus.engine_mouseup()
+    frame()
+    key(K_RIGHT)
+    must(hi.get() == 96, "thumb right arrow")
+    key(K_END)
+    must(hi.get() == 100, "thumb end")
+    fmt.println("tier a inputs ok")
+}

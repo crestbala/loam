@@ -563,6 +563,22 @@ fn row_child_w(id: int, c: int, inner_width: int) -> int {
     return geometry.fit_avail(arena.sized_w(c, inner_width, 1), avail)
 }
 
+/// A child's width in a WRAPPING row. A percent below 100 shares the row's
+/// gaps: `n` children at `100 / n` percent fill exactly one line, where a
+/// plain share of the width plus the gaps between them would overflow it and
+/// wrap every cell onto its own line (the reason CSS grids reach for
+/// `calc(50% - gap / 2)`). Everything else sizes as in any row.
+fn wrap_child_w(id: int, c: int, inner_width: int) -> int {
+    let pc = int(arena.nodes[c].w_pct)
+    if arena.nodes[c].explicit_width < 0 && pc > 0 && pc < 100 {
+        let gx = arena.gap_x(id)
+        let avail = inner_width - arena.nodes[c].m_l - arena.nodes[c].m_r
+        let w = (inner_width + gx) * pc / 100 - gx
+        return geometry.fit_avail(arena.clamp_w(c, geometry.max2(w, 0)), avail)
+    }
+    return row_child_w(id, c, inner_width)
+}
+
 /// A row child may give up main-axis width to keep the row on one line:
 /// flexible children (no explicit width) that are allowed to shrink. These
 /// are exactly the children `grow = 1` marks as elastic (with `shrink = 1`
@@ -655,7 +671,7 @@ fn wrap_row_h(id: int, outer_w: int) -> int {
     for i in 0..nk {
         let c = arena.nodes[id].kids[i]
         if arena.skip_flow(c) == 0 {
-            let cw = row_child_w(id, c, inner_width)
+            let cw = wrap_child_w(id, c, inner_width)
             let span = cw + arena.nodes[c].m_l + arena.nodes[c].m_r
             if nflow > 0 {
                 accw = accw + gx
@@ -697,7 +713,7 @@ fn wrap_row_h(id: int, outer_w: int) -> int {
     for i in 0..nk {
         let c = arena.nodes[id].kids[i]
         if arena.skip_flow(c) == 0 {
-            let cw = row_child_w(id, c, inner_width)
+            let cw = wrap_child_w(id, c, inner_width)
             let ch = arena.sized_h(c, line_h, cw)
             let span = cw + arena.nodes[c].m_l + arena.nodes[c].m_r
             if first == 0 {
@@ -757,8 +773,7 @@ fn layout_flex_row_wrap(id: int) {
     for i in 0..nk {
         let c = arena.nodes[id].kids[i]
         if arena.skip_flow(c) == 0 {
-            let avail = inner_width - arena.nodes[c].m_l - arena.nodes[c].m_r
-            let mut cw = geometry.fit_avail(arena.sized_w(c, inner_width, 1), avail)
+            let mut cw = wrap_child_w(id, c, inner_width)
             let mut ch = arena.sized_h(c, inner_height, cw)
             let span = cw + arena.nodes[c].m_l + arena.nodes[c].m_r
             if first == 0 {

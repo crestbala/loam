@@ -90,7 +90,7 @@ fn Field(name: Signal<string>, note: Signal<string>, st: Store) -> Node {
             zui.Field("Name", name, "Your name")
             zeus.Text(if name.get().len < 3 { "Name must be at least 3 characters." } else { "" },
                       style = Style(font = spacing.FONT_CONTROL, color = zeus.danger()))
-            zui.TextArea(note, "Draft — saved as you type", fn() => kv.set(st, "draft", note.get()))
+            zui.TextArea(note, "Draft — saved as you type", on_edit = fn() => kv.set(st, "draft", note.get()))
             zui.Note("{{note.get().len}} chars · std:kv under Application Support")
             zui.Button("Submit", look = zeus.Look.Solid, size = zeus.Size.Md, on_click = fn() => name.set(name.get()))
         }

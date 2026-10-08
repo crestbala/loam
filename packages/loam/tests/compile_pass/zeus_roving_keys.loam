@@ -62,8 +62,9 @@ fn main() {
     // Mounting a roving group does not take focus: the page boots unfocused.
     must(zeus.engine_focus_id() == 0, "no roving group grabs focus at mount")
 
-    // Slider: a click on the track's centre focuses it and sets 50.
-    zeus.engine_click(32 + 110, 32 + 10)
+    // Slider: a click on the track's centre focuses it and sets 50. The track
+    // fills the page's content box (480 - 2 * 32).
+    zeus.engine_click(32 + 208, 32 + 10)
     zeus.engine_mouseup()
     zeus.engine_layout(480, 640)
     must(level.get() == 50, "slider click lands mid-track")

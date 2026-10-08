@@ -75,7 +75,7 @@ fn Foundations() -> Node {
             zui.Kbd("⌘K")
         }
         zui.Alert("Heads up", "Signals update on click. Hover and press are engine fades — no DOM.")
-        zui.Alert("Session expired", "Sign back in to keep syncing. Your drafts are saved locally.", tone = Tone.Danger)
+        zui.Alert("Session expired", "Sign back in to keep syncing. Your drafts are saved locally.", tint = zeus.Tint.Danger)
         ProjectCard()
         Customize()
     }

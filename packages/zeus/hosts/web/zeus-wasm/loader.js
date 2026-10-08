@@ -208,6 +208,12 @@
     zeus: {
       request_frame: () => {},
       now_ms: () => BigInt(Math.floor(performance.now())),
+      clipboard_write: (t) => {
+        const s = cstr(t);
+        if (navigator.clipboard) navigator.clipboard.writeText(s).catch(() => {});
+      },
+      apple_keys: () =>
+        /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent) ? 1 : 0,
       write: (p, n) => {
         const t = bytes(p, n);
         if (t) console.log(t);
@@ -492,6 +498,12 @@
         const r = canvas.getBoundingClientRect();
         exp.zeus_pointer_down(e.clientX - r.left, e.clientY - r.top);
       });
+      canvas.addEventListener("contextmenu", (e) => {
+        const r = canvas.getBoundingClientRect();
+        if (exp.zeus_context_click && exp.zeus_context_click(e.clientX - r.left, e.clientY - r.top)) {
+          e.preventDefault();
+        }
+      });
       canvas.addEventListener("pointermove", (e) => {
         const r = canvas.getBoundingClientRect();
         exp.zeus_pointer_move(e.clientX - r.left, e.clientY - r.top);
@@ -555,6 +567,8 @@
         if (e.key === "ArrowRight") key = 1001;
         if (e.key === "ArrowUp") key = 1002;
         if (e.key === "ArrowDown") key = 1003;
+        if (e.key === "PageUp") key = 1004;
+        if (e.key === "PageDown") key = 1005;
         if (e.key === "Home") key = 1006;
         if (e.key === "End") key = 1007;
         exp.zeus_key(key, mods);

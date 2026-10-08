@@ -102,6 +102,9 @@ fn main() {
     must(zeus.raster_height() == 400, "physical height is logical * scale")
     let drawn = zeus.scene_rasterize(2, 255, 255, 255)
     must(drawn > 0, "ops were rasterized")
+    // The page paints first and covers the surface; its fill is the
+    // background the shapes sit on (the theme's canvas, not pure white).
+    let paper = zeus.draw_rgb(find_kind(0))
 
     // --- the rounded card, in device pixels -------------------------------
     let card = find_box(80, 60)
@@ -121,9 +124,9 @@ fn main() {
     must(zeus.raster_get(mx, my, 1) == fg, "card middle green channel")
     must(zeus.raster_get(mx, my, 0) == fb, "card middle blue channel")
     // The very corner of the bounding box is OUTSIDE the rounded shape.
-    must(zeus.raster_get(cx * 2 + 1, cy * 2 + 1, 2) == 255,
+    must(zeus.raster_get(cx * 2 + 1, cy * 2 + 1, 2) == red_of(paper),
          "the corner arc leaves the background")
-    must(zeus.raster_get(cx * 2 + 1, cy * 2 + 1, 1) == 255, "and it is untouched")
+    must(zeus.raster_get(cx * 2 + 1, cy * 2 + 1, 1) == green_of(paper), "and it is untouched")
     // Where the arc meets the top edge the fill has started.
     must(zeus.raster_get(cx * 2 + 24, cy * 2, 2) == fr, "the arc meets the top edge")
     // The arc is generated AT 2x, so it is smooth rather than stair-stepped:
@@ -136,7 +139,7 @@ fn main() {
         let mut gx = cx * 2
         while gx < (cx + 80) * 2 {
             let v = zeus.raster_get(gx, gy, 2)
-            if v != 255 {
+            if v != red_of(paper) {
                 if v != fr {
                     graded = graded + 1
                 }
@@ -158,7 +161,7 @@ fn main() {
     must(zeus.raster_get(sx, sy, 1) == green_of(s2), "with its own colour")
 
     // --- and the surface's own corner is background -----------------------
-    must(zeus.raster_get(479, 399, 0) == 255, "the corner of the surface is clear")
+    must(zeus.raster_get(479, 399, 0) == blue_of(paper), "the corner of the surface is clear")
 
     // --- nothing in this scene was skipped --------------------------------
     must(zeus.scene_raster_unhandled_total() == 0, "a shapes-only scene skips nothing")

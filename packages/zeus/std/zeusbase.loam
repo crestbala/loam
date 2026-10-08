@@ -1115,7 +1115,7 @@ struct KeyBind {
     /// without touching the element. `""` = `"key.<chord>"`.
     action: string = "",
     /// What the chord runs. Absent = the element's `on_click`, so a button and
-    /// its shortcut share one handler (`chord_click`).
+    /// its shortcut share one handler (`key_bind_click`).
     run: Option<fn()> = none,
     /// true = fires wherever focus is; false = only while focus is on this
     /// element or inside it.
@@ -1123,17 +1123,17 @@ struct KeyBind {
 }
 
 /// `spec` runs `run` while focus is on the element (or inside it).
-fn chord(spec: string, action: string, run: fn()) -> KeyBind {
+fn key_bind(spec: string, action: string, run: fn()) -> KeyBind {
     return KeyBind(chord = spec, action = action, run = run)
 }
 
 /// `spec` runs `run` wherever focus is.
-fn chord_global(spec: string, action: string, run: fn()) -> KeyBind {
+fn key_bind_global(spec: string, action: string, run: fn()) -> KeyBind {
     return KeyBind(chord = spec, action = action, run = run, global = true)
 }
 
 /// `spec` presses the element: it runs the element's `on_click`.
-fn chord_click(spec: string) -> KeyBind {
+fn key_bind_click(spec: string) -> KeyBind {
     return KeyBind(chord = spec)
 }
 
@@ -1962,7 +1962,7 @@ struct BoxProps {
     style: Option<fn() -> Style> = none,
     /// Filled with this element, for the controller (`ref()`, `focus(r)`).
     ref: Option<Ref> = none,
-    /// Keyboard actions on this element (`chord(...)`, `chord_click(...)`).
+    /// Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`).
     keys: []KeyBind = no_keys(),
     /// Accessibility role (`"button"`, `"dialog"`, ...).
     role: string = "",
@@ -1982,6 +1982,11 @@ struct BoxProps {
     /// For popups whose opening moves focus in (menu items), where the pick
     /// only changes through the user (open, hover, keys).
     rovingGrab: bool = false,
+    /// The on / off state assistive tech announces: checked for a checkbox,
+    /// radio or switch, selected for a tab, pressed for a toggle button. A
+    /// thunk, so `checked = on.get()` follows state. Semantics only — it
+    /// paints nothing.
+    checked: Option<fn() -> bool> = none,
     /// Paint-only overlays merged over `style` while the element is hovered,
     /// pressed, keyboard-focused or disabled (in that order; later wins).
     /// Only background, color, opacity, border and elevation are honoured:
@@ -2291,6 +2296,12 @@ fn install_behaviour(node: Node, p: BoxProps) {
             }
         })
     }
+    if result.is_some(p.checked) {
+        let c = p.checked.val
+        node_effect(node, || {
+            arena.nodes[node_id].a11y_state = u8(if c() { 2 } else { 1 })
+        })
+    }
     if p.hoverFade {
         hover_fade(node)
     }
@@ -2419,6 +2430,47 @@ fn on_resize(r: Ref, body: fn()) {
         arena.nodes[id].list_gen = w
         body()
     })
+}
+
+/// Run `body` on a secondary click (right button, ctrl-click) inside `r`;
+/// `current_mouse()` holds the point. The nearest handler up the tree wins,
+/// and the host's own menu is suppressed. Call from `on_mount`.
+fn on_context_menu(r: Ref, body: fn()) {
+    let id = ref_id(r)
+    if id <= 0 {
+        return
+    }
+    arena.hook_set(id, arena.HOOK_CONTEXT, intern_fn(body))
+}
+
+/// Run `body` when the pointer is pressed inside `r` and again on every move
+/// until it is released; `current_mouse()` holds the point. The press does
+/// not click anything under it. Call from `on_mount`.
+fn on_drag(r: Ref, body: fn()) {
+    let id = ref_id(r)
+    if id <= 0 {
+        return
+    }
+    arena.hook_set(id, arena.HOOK_DRAG, intern_fn(body))
+}
+
+/// Mask the text input `r` (one bullet per character) while `on`.
+fn set_secure(r: Ref, on: bool) {
+    let id = ref_id(r)
+    if id > 0 {
+        arena.secure_set(id, on)
+    }
+}
+
+/// Put `text` on the system clipboard.
+fn copy_text(text: string) {
+    platform.plat_clipboard_write(text)
+}
+
+/// True where shortcuts read ⌘ / ⌥ / ⇧ (Apple platforms), false where they
+/// read Ctrl / Alt / Shift.
+fn apple_keys() -> bool {
+    return platform.plat_apple_keys() != 0
 }
 
 /// A ref to child `i` of `r` (empty when there is none): the element a
@@ -2940,7 +2992,7 @@ fn Component(node: Node, p: BoxProps) -> Node {
     if result.is_some(p.on_mouse_up) {
         arena.nodes[node.id].up_fn = intern_fn(p.on_mouse_up.val)
     }
-    // Installed after the click handler, so a `chord_click` binding has
+    // Installed after the click handler, so a `key_bind_click` binding has
     // something to call.
     install_keys(node, p.keys)
     if result.is_some(p.on_key_down) {
@@ -3101,7 +3153,7 @@ struct TextProps {
     /// Accessibility role and name; see `BoxProps`.
     role: string = "",
     label: Option<fn() -> string> = none,
-    /// Keyboard actions on this element (`chord(...)`, `chord_click(...)`).
+    /// Keyboard actions on this element (`key_bind(...)`, `key_bind_click(...)`).
     keys: []KeyBind = no_keys(),
 }
 /// A flex container. Trailing block is the slot.

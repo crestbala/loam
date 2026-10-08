@@ -1,0 +1,84 @@
+// Phase 1 contract on the small form controls: Slider maps its native 0..100
+// track onto `min..max` by `step`; a mixed Checkbox shows a dash and checks on
+// click; a disabled Switch ignores clicks.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+const K_RIGHT: int = 1001
+const K_UP: int = 1002
+const K_DOWN: int = 1003
+const K_PGUP: int = 1004
+const K_HOME: int = 1006
+const K_END: int = 1007
+
+fn key(k: int) {
+    zeus.engine_key_ev(k, 0)
+    zeus.engine_layout(400, 400)
+}
+
+fn main() {
+    zeus.window("props", 400, 400)
+    let level = zeus.signal(20)
+    let all = zeus.signal(false)
+    let mixed = zeus.signal(true)
+    let sw = zeus.signal(false)
+    let tree = zui.Page() {
+        zui.Slider(level, min = 10, max = 50, step = 5, label = "Level")
+        zui.Checkbox("Select all", all, indeterminate = mixed)
+        zui.Switch(sw, disabled = true, label = "Locked")
+    }
+    zeus.root(tree)
+    zeus.pump_frame()
+    zeus.engine_layout(400, 400)
+
+    // Slider: focus it with a click at its left end (the minimum), then step.
+    zeus.engine_click(32 + 1, 32 + 10)
+    zeus.engine_mouseup()
+    zeus.engine_layout(400, 400)
+    must(level.get() == 10, "slider click at the left end lands on min")
+    key(K_UP)
+    must(level.get() == 15, "slider up steps by `step`")
+    key(K_RIGHT)
+    must(level.get() == 20, "native right (1%) still moves one whole step")
+    key(K_DOWN)
+    must(level.get() == 15, "slider down steps back")
+    key(K_PGUP)
+    must(level.get() > 15 && level.get() <= 50, "page up moves up")
+    must((level.get() - 10) % 5 == 0, "page up stays on the step grid")
+    key(K_END)
+    must(level.get() == 50, "end jumps to max")
+    key(K_HOME)
+    must(level.get() == 10, "home jumps to min")
+
+    // Checkbox: mixed shows the dash; a click checks it.
+    must(!all.get(), "starts unchecked")
+    zeus.engine_click_text("Select all")
+    zeus.engine_mouseup()
+    zeus.engine_layout(400, 400)
+    must(all.get(), "clicking a mixed box checks it")
+    mixed.set(false)
+    zeus.engine_click_text("Select all")
+    zeus.engine_mouseup()
+    zeus.engine_layout(400, 400)
+    must(!all.get(), "a plain checked box clears on click")
+
+    // Disabled switch: the click does nothing.
+    let s = zeus.engine_find_role("switch")
+    must(s > 0, "switch found")
+    must(zeus.node_label(s) == "Locked", "switch carries its a11y label")
+    zeus.engine_click(zeus.node_x(s) + 4, zeus.node_y(s) + 4)
+    zeus.engine_mouseup()
+    zeus.engine_layout(400, 400)
+    must(!sw.get(), "disabled switch ignores the click")
+    fmt.println("control props ok")
+}

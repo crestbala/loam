@@ -169,12 +169,15 @@ static void mac_fill_g(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
  * and letting the caller's fill cover it would look identical on an opaque
  * surface and wrong on a translucent one, which is exactly the case
  * elevation-on-glass needs. */
+/* `blur`, `dx`, `dy` are in the context's PIXELS: NSShadow ignores the CTM's
+ * scale (blur 20 reaches 19 pt at 1x and 9.5 pt at 2x), so a template built
+ * at a coarser scale passes them scaled down to match. */
 static void mac_shadow_direct(int64_t x, int64_t y, int64_t w, int64_t h,
-                              int64_t radius, int64_t rgb, int64_t alpha, int64_t blur,
-                              int64_t dx, int64_t dy) {
+                              int64_t radius, int64_t rgb, int64_t alpha, CGFloat blur,
+                              CGFloat dx, CGFloat dy) {
     NSRect r = NSMakeRect((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h);
     CGFloat a = alpha < 0 ? 0 : (alpha > 255 ? 1.0 : (CGFloat)alpha / 255.0);
-    CGFloat pad = (CGFloat)(blur * 3 + (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy) + 8);
+    CGFloat pad = blur * 3 + fabs(dx) + fabs(dy) + 8;
     NSShadow *sh = [[NSShadow alloc] init];
     NSBezierPath *hole = [NSBezierPath bezierPathWithRect:NSInsetRect(r, -pad, -pad)];
     [NSGraphicsContext saveGraphicsState];
@@ -183,8 +186,8 @@ static void mac_shadow_direct(int64_t x, int64_t y, int64_t w, int64_t h,
     [hole addClip];
     /* The view is flipped (y grows down), so a positive dy must read as
        "downward" here too — AppKit shadow offsets are in unflipped space. */
-    [sh setShadowOffset:NSMakeSize((CGFloat)dx, (CGFloat)-dy)];
-    [sh setShadowBlurRadius:(CGFloat)blur];
+    [sh setShadowOffset:NSMakeSize(dx, -dy)];
+    [sh setShadowBlurRadius:blur];
     [sh setShadowColor:[zeus_color(rgb) colorWithAlphaComponent:a]];
     [sh set];
     [[NSColor blackColor] setFill];
@@ -209,28 +212,51 @@ static void mac_shadow_direct(int64_t x, int64_t y, int64_t w, int64_t h,
  * keep the direct path. */
 static NSMutableDictionary *g_shadow_cache;
 
-/* The template for one (radius, color, alpha, blur, offset, scale): a CGImage
-   of `side` x `side` points whose rows run top-down, with the shadowed rect
-   inset by `margin` and a straight band `inset` points in from every edge. */
-static CGImageRef mac_shadow_template(CGFloat scale, int64_t radius, int64_t rgb,
-                                      int64_t alpha, int64_t blur, int64_t dx,
-                                      int64_t dy, int64_t *inset, int64_t *margin,
-                                      int64_t *side_out) {
+/* Template geometry for (radius, blur, offset): `margin` is how far the
+   template draws past the rect, `inset` the corner region (past it every row /
+   column of an edge is the same), `side` the template's edge in points. Pure
+   arithmetic, so a caller can reject a rect before any template is built. */
+static void mac_shadow_geom(int64_t radius, int64_t blur, int64_t dx, int64_t dy,
+                            int64_t *inset, int64_t *margin, int64_t *side) {
     int64_t ax = dx < 0 ? -dx : dx, ay = dy < 0 ? -dy : dy;
     int64_t d = ax > ay ? ax : ay;
     /* The blur's reach past the shape. A Gaussian with this blur radius is
-       spent well inside 2x; the margin is what the template draws past the
-       rect, and must cover the visible tail plus the offset. */
+       spent well inside 2x; the margin must cover the visible tail plus the
+       offset. */
     int64_t reach = blur * 2 + 2;
     int64_t m = reach + d;
-    /* The corner region inside the rect: radius plus the reach of the blur and
-       the offset. Past it, every row (column) of the edge is the same. */
     int64_t k = m + radius + reach + d;
-    int64_t side = 2 * k + 2;
-    NSString *key = [NSString stringWithFormat:@"%lld,%lld,%lld,%lld,%lld,%lld,%.2f",
+    *margin = m;
+    *inset = k;
+    *side = 2 * k + 2;
+}
+
+/* Largest template kept, in pixels per side (~2.3 MB at 4 bytes a pixel). A
+   template that would be bigger at the backing scale is built at a coarser
+   whole scale instead (1x on a 2x display): the Modal elevation's blur-52
+   template is 554 points, 1108 px at 2x, and the direct blur it used to fall
+   back to re-ran a full-panel Gaussian on every frame of a drawer or sheet
+   slide. A wide blur is a smooth ramp, so the upscale is invisible. Only a
+   template over the cap even at 1x takes the direct path. */
+#define SHADOW_TEMPLATE_MAX_PX 768
+
+/* The template for one (radius, color, alpha, blur, offset, scale): a CGImage
+   of `side` x `side` points whose rows run top-down, with the shadowed rect
+   inset by `margin` and a straight band `inset` points in from every edge.
+   `scale` is the template's pixels per point; `ratio` is that over the
+   backing scale (1 normally, 0.5 for a 1x template on a 2x display), which
+   the pixel-space blur and offset are multiplied by. */
+static CGImageRef mac_shadow_template(CGFloat scale, CGFloat ratio, int64_t radius, int64_t rgb,
+                                      int64_t alpha, int64_t blur, int64_t dx,
+                                      int64_t dy, int64_t *inset, int64_t *margin,
+                                      int64_t *side_out) {
+    int64_t k, m, side;
+    NSString *key = [NSString stringWithFormat:@"%lld,%lld,%lld,%lld,%lld,%lld,%.2f,%.3f",
                      (long long)radius, (long long)rgb, (long long)alpha,
-                     (long long)blur, (long long)dx, (long long)dy, (double)scale];
+                     (long long)blur, (long long)dx, (long long)dy, (double)scale,
+                     (double)ratio];
     CGImageRef ci;
+    mac_shadow_geom(radius, blur, dx, dy, &k, &m, &side);
     *inset = k;
     *margin = m;
     *side_out = side;
@@ -252,7 +278,8 @@ static CGImageRef mac_shadow_template(CGFloat scale, int64_t radius, int64_t rgb
         CGContextScaleCTM(bc, scale, -scale);
         [NSGraphicsContext setCurrentContext:
             [NSGraphicsContext graphicsContextWithCGContext:bc flipped:YES]];
-        mac_shadow_direct(m, m, side - 2 * m, side - 2 * m, radius, rgb, alpha, blur, dx, dy);
+        mac_shadow_direct(m, m, side - 2 * m, side - 2 * m, radius, rgb, alpha,
+                          (CGFloat)blur * ratio, (CGFloat)dx * ratio, (CGFloat)dy * ratio);
         [NSGraphicsContext setCurrentContext:prev];
         ci = CGBitmapContextCreateImage(bc);
         CGContextRelease(bc);
@@ -269,8 +296,8 @@ static CGImageRef mac_shadow_template(CGFloat scale, int64_t radius, int64_t rgb
 /* One slice of the template, `src` in points from its top-left, drawn into
    `dst` (user space). `CGContextDrawImage` puts an image's first row at the
    rect's max y, so under a y-down transform the slice is flipped back. */
-static void mac_shadow_slice(CGContextRef cg, CGImageRef ci, CGFloat scale, int down,
-                             CGRect src, CGRect dst) {
+static void mac_shadow_slice(CGContextRef cg, CGImageRef ci, CGFloat scale, int smooth,
+                             int down, CGRect src, CGRect dst) {
     CGImageRef part;
     if (dst.size.width <= 0 || dst.size.height <= 0) return;
     part = CGImageCreateWithImageInRect(ci, CGRectMake(src.origin.x * scale, src.origin.y * scale,
@@ -280,7 +307,7 @@ static void mac_shadow_slice(CGContextRef cg, CGImageRef ci, CGFloat scale, int 
     /* Corners land 1:1 and edges stretch a band that is constant along the
        stretch, so no sample ever needs filtering: nearest is exact and skips
        CoreGraphics' resampler, which otherwise cost as much as the blur did. */
-    CGContextSetInterpolationQuality(cg, kCGInterpolationNone);
+    CGContextSetInterpolationQuality(cg, smooth ? kCGInterpolationLow : kCGInterpolationNone);
     if (down) {
         CGContextTranslateCTM(cg, dst.origin.x, dst.origin.y + dst.size.height);
         CGContextScaleCTM(cg, 1, -1);
@@ -299,7 +326,8 @@ static void mac_shadow(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
     NSGraphicsContext *gc = [NSGraphicsContext currentContext];
     CGContextRef cg;
     CGAffineTransform ctm;
-    CGFloat scale, K, S, X0, Y0, X1, Y1, W, H;
+    CGFloat scale, tscale, K, S, T, X0, Y0, X1, Y1, W, H;
+    int smooth;
     int64_t k = 0, m = 0, side = 0;
     int down;
     CGImageRef ci;
@@ -312,6 +340,13 @@ static void mac_shadow(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
         mac_shadow_direct(x, y, w, h, radius, rgb, alpha, blur, dx, dy);
         return;
     }
+    /* A corner can be no rounder than half the rect's short side — that is
+       what gets drawn (CSS clamps the same way). Pill controls carry a huge
+       nominal radius (`RAD_CONTROL` = 999), and keying a template on it built
+       ~2000-point templates: tens of MB each, ~140 MB at start-up. */
+    if (radius > w / 2) radius = w / 2;
+    if (radius > h / 2) radius = h / 2;
+    if (radius < 0) radius = 0;
     cg = [gc CGContext];
     ctm = CGContextGetCTM(cg);
     scale = fabs(ctm.a);
@@ -324,33 +359,53 @@ static void mac_shadow(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
         mac_shadow_direct(x, y, w, h, radius, rgb, alpha, blur, dx, dy);
         return;
     }
-    ci = mac_shadow_template(scale, radius, rgb, alpha, blur, dx, dy, &k, &m, &side);
-    /* The edge band must exist on both axes: the rect has to be wider and
-       taller than the two corner regions, or slicing would invent pixels. */
-    if (!ci || w + 2 * m < 2 * k + 2 || h + 2 * m < 2 * k + 2) {
+    /* Decide before building: the edge band must exist on both axes (the rect
+       wider and taller than the two corner regions, or slicing would invent
+       pixels), and the template must be small enough to be worth keeping. A
+       rect that fails either never creates — or caches — a template. */
+    mac_shadow_geom(radius, blur, dx, dy, &k, &m, &side);
+    tscale = scale;
+    if ((CGFloat)side * tscale > (CGFloat)SHADOW_TEMPLATE_MAX_PX)
+        tscale = floor((CGFloat)SHADOW_TEMPLATE_MAX_PX / (CGFloat)side);
+    if (w + 2 * m < 2 * k + 2 || h + 2 * m < 2 * k + 2 || tscale < 1.0) {
+        mac_shadow_direct(x, y, w, h, radius, rgb, alpha, blur, dx, dy);
+        return;
+    }
+    smooth = tscale != scale;
+    ci = mac_shadow_template(tscale, tscale / scale, radius, rgb, alpha, blur, dx, dy,
+                             &k, &m, &side);
+    if (!ci) {
         mac_shadow_direct(x, y, w, h, radius, rgb, alpha, blur, dx, dy);
         return;
     }
     K = (CGFloat)k;
     S = (CGFloat)side;
+    /* Only a ring `T` deep is drawn: the template is transparent past the
+       margin and the rounded corner (the direct path clips the shape out), so
+       the rest of each corner square and edge band is blending zeros. On a
+       sheet that halves the pixels touched. `T` <= `K` by construction. */
+    T = (CGFloat)(m + radius);
     X0 = (CGFloat)(x - m);
     Y0 = (CGFloat)(y - m);
     W = (CGFloat)(w + 2 * m);
     H = (CGFloat)(h + 2 * m);
     X1 = X0 + W - K;
     Y1 = Y0 + H - K;
-    /* corners, 1:1 */
-    mac_shadow_slice(cg, ci, scale, down, CGRectMake(0, 0, K, K), CGRectMake(X0, Y0, K, K));
-    mac_shadow_slice(cg, ci, scale, down, CGRectMake(S - K, 0, K, K), CGRectMake(X1, Y0, K, K));
-    mac_shadow_slice(cg, ci, scale, down, CGRectMake(0, S - K, K, K), CGRectMake(X0, Y1, K, K));
-    mac_shadow_slice(cg, ci, scale, down, CGRectMake(S - K, S - K, K, K), CGRectMake(X1, Y1, K, K));
-    /* edges: a 1-point band of the template stretched along the edge */
-    mac_shadow_slice(cg, ci, scale, down, CGRectMake(K, 0, 1, K), CGRectMake(X0 + K, Y0, W - 2 * K, K));
-    mac_shadow_slice(cg, ci, scale, down, CGRectMake(K, S - K, 1, K), CGRectMake(X0 + K, Y1, W - 2 * K, K));
-    mac_shadow_slice(cg, ci, scale, down, CGRectMake(0, K, K, 1), CGRectMake(X0, Y0 + K, K, H - 2 * K));
-    mac_shadow_slice(cg, ci, scale, down, CGRectMake(S - K, K, K, 1), CGRectMake(X1, Y0 + K, K, H - 2 * K));
-    /* The middle is the rect itself, which the direct path clips out: nothing
-       to draw. */
+    /* top and bottom strips: corners 1:1, a 1-point column stretched between */
+    mac_shadow_slice(cg, ci, tscale, smooth, down, CGRectMake(0, 0, K, T), CGRectMake(X0, Y0, K, T));
+    mac_shadow_slice(cg, ci, tscale, smooth, down, CGRectMake(K, 0, 1, T), CGRectMake(X0 + K, Y0, W - 2 * K, T));
+    mac_shadow_slice(cg, ci, tscale, smooth, down, CGRectMake(S - K, 0, K, T), CGRectMake(X1, Y0, K, T));
+    mac_shadow_slice(cg, ci, tscale, smooth, down, CGRectMake(0, S - T, K, T), CGRectMake(X0, Y0 + H - T, K, T));
+    mac_shadow_slice(cg, ci, tscale, smooth, down, CGRectMake(K, S - T, 1, T), CGRectMake(X0 + K, Y0 + H - T, W - 2 * K, T));
+    mac_shadow_slice(cg, ci, tscale, smooth, down, CGRectMake(S - K, S - T, K, T), CGRectMake(X1, Y0 + H - T, K, T));
+    /* left and right strips, between those: corner tails 1:1, a 1-point row
+       stretched between */
+    mac_shadow_slice(cg, ci, tscale, smooth, down, CGRectMake(0, T, T, K - T), CGRectMake(X0, Y0 + T, T, K - T));
+    mac_shadow_slice(cg, ci, tscale, smooth, down, CGRectMake(0, K, T, 1), CGRectMake(X0, Y0 + K, T, H - 2 * K));
+    mac_shadow_slice(cg, ci, tscale, smooth, down, CGRectMake(0, S - K, T, K - T), CGRectMake(X0, Y1, T, K - T));
+    mac_shadow_slice(cg, ci, tscale, smooth, down, CGRectMake(S - T, T, T, K - T), CGRectMake(X0 + W - T, Y0 + T, T, K - T));
+    mac_shadow_slice(cg, ci, tscale, smooth, down, CGRectMake(S - T, K, T, 1), CGRectMake(X0 + W - T, Y0 + K, T, H - 2 * K));
+    mac_shadow_slice(cg, ci, tscale, smooth, down, CGRectMake(S - T, S - K, T, K - T), CGRectMake(X0 + W - T, Y1, T, K - T));
 }
 
 /* Ring stroke, inset by half the width so the line paints inside the rect —
@@ -1189,20 +1244,19 @@ static NSAccessibilityRole mac_a11y_role(NSString *r) {
 
    Display paths:
 
-     default              the owned IOSurface set below (three surfaces by
-                          default, `ZEUS_OWN_SURFACES` 2..4): our memory IS the
+     default              the owned IOSurface set below (two surfaces by
+     (ZEUS_OWN_SURFACE=1) default, `ZEUS_OWN_SURFACES` 2..4): our memory IS the
                           layer's texture, so a finished frame is never copied,
                           and each frame is drawn into a surface the compositor
-                          is not reading. No shared mutable buffer, which is what
-                          removed the shimmer under fast scroll that the
-                          single-buffer bitmap path showed.
+                          is not reading. No shared mutable buffer, so no
+                          shimmer under fast scroll.
      ZEUS_OWN_SURFACE=0   the owned bitmap: one buffer (~18 MB), wrapped in a
                           fresh CGImage per frame. CoreAnimation materialises
                           each frame into a texture of its own, so the frame
                           carries one full copy — and that one buffer is both
                           our draw target and the layer's contents, which a fast
-                          scroll can catch mid-draw. Kept as an escape hatch,
-                          not as the default.
+                          scroll can catch mid-draw. Also the fallback when a
+                          surface cannot be allocated.
      APP_KIT=1            AppKit's own store, window pinned to sRGB. `drawRect:`
                           paints straight into the surface the compositor reads,
                           so nothing is ever copied and a screen-filling window
@@ -1220,14 +1274,20 @@ static NSAccessibilityRole mac_a11y_role(NSString *r) {
    frame it is reading flickers; that is fixed by rotating over a few surfaces and
    drawing only into one `IOSurfaceIsInUse` says is free (never
    `kIOSurfaceLockAvoidSync`, which skips exactly that check and leaves the lock
-   state inconsistent with a plain unlock) — which is what makes it the default.
+   state inconsistent with a plain unlock).
 
-   Cost: one SCREEN-sized buffer per surface in the set, so ~3x18 MB on a Retina
+   Cost: one SCREEN-sized buffer per surface in the set, so ~2x21 MB on a Retina
    laptop display whatever the window's size — the set is sized to the screen,
    not the window, so a live resize never swaps surfaces (which is what blinked
    white; see `OWN_SURFACES_MAX`). `ZEUS_OWN_SURFACES=2` trims a buffer; watch
    the frame trace's `surf_skip`, which counts frames skipped because every
    surface was busy (a stutter, told apart from a slow frame).
+
+   Measured on the gallery (Retina, 2026-10-07): two surfaces with the
+   in-frame wait (`OWN_SURF_WAIT_MS`) and malloc relief hold 60 fps at ~60 MB,
+   of which 43 MB is the pair. Without the wait two surfaces ran at 30 fps —
+   the compositor lets go of the last-shown surface 2–10 ms after the refresh,
+   just after the link tick checked it. Three surfaces cost ~81 MB.
 
    No scale knob: the surface is always the display's own resolution. */
 static CGContextRef own_ctx;
@@ -1251,19 +1311,18 @@ static int env_truthy(const char *name) {
 
 /* The presentation path, chosen once, from the environment:
 
-     1  owned bitmap           DEFAULT — one `CGBitmapContext` wrapped in a fresh
-                              CGImage per frame, handed to the layer as its
-                              `contents`. Our own single buffer.
-     2  owned IOSurface pair   our pixels ARE the layer's texture, so a frame is
-                              never copied, and the pair is what lets the next
-                              frame be drawn while the compositor still reads the
-                              last one (`ZEUS_OWN_SURFACE=1`).
+     2  owned IOSurface set    DEFAULT — our pixels ARE the layer's texture, so
+                              a frame is never copied, and the set is what lets
+                              the next frame be drawn while the compositor still
+                              reads the last one (`ZEUS_OWN_SURFACE=1`).
+     1  owned bitmap           one `CGBitmapContext` wrapped in a fresh CGImage
+                              per frame, handed to the layer as its `contents`
+                              (`ZEUS_OWN_SURFACE=0`, `ZEUS_OWN_BUFFER=1`).
      0  AppKit's own store     `drawRect:` paints straight into the window's
                               backing store (`APP_KIT=1`, `ZEUS_OWN_BUFFER=0`).
 
-   The owned paths are the default; AppKit's store is opt-in (`APP_KIT=1`). The
-   IOSurface pair is the leaner owned path when you want zero copies — pick it
-   with `ZEUS_OWN_SURFACE=1`. */
+   The IOSurface set is the default; the bitmap and AppKit's store are opt-in,
+   and a surface allocation failure falls back to the bitmap. */
 static int display_path = -1;
 
 static int display_path_get(void) {
@@ -1278,7 +1337,7 @@ static int display_path_get(void) {
         else if (getenv("ZEUS_OWN_BUFFER"))
             display_path = env_truthy("ZEUS_OWN_BUFFER") ? 1 : 0;
         else
-            display_path = 1;
+            display_path = 2;
     }
     return display_path;
 }
@@ -1331,6 +1390,28 @@ static double frame_now_ms(void) {
 /* Frames the surface path skipped because the compositor held every surface.
    Printed by the frame trace, so a stutter can be told from a slow frame. */
 static int own_surf_skips;
+/* When every surface is busy, the frame is retried shortly instead of at the
+   next display refresh (see `zeusRenderSurface:`). `own_surf_wait_t0` is when
+   the current wait began (0 = not waiting); `own_surf_last_wait` is how long
+   the last drawn frame waited for a free surface, for the frame trace. */
+static double own_surf_wait_t0;
+static double own_surf_last_wait;
+
+/* Hand freed malloc pages back to the system. Start-up (font atlas, decoded
+   images, the first layouts) frees ~15 MB of large blocks that the zone keeps
+   dirty and the footprint keeps counting; relief returns them. Run once when
+   start-up has settled (frame 120), then whenever the window goes idle, at
+   most every 5 s — never per frame, since it walks every zone. */
+static void mac_memory_relief(int more) {
+    static int frames;
+    static double last;
+    double now = frame_now_ms();
+    frames++;
+    if (frames == 120 || (!more && now - last > 5000.0)) {
+        malloc_zone_pressure_relief(NULL, 0);
+        last = now;
+    }
+}
 
 static int frame_debug_on(void) {
     static int v = -1;
@@ -1351,9 +1432,9 @@ static void frame_trace(double t0, FramePhases p) {
     if ((n++ % 30) != 0) return;
     fprintf(stderr,
             "[frame] interval=%.1fms setup=%.2f engine=%.1f image=%.2f set=%.2f other=%.1f "
-            "more=%d next=%dms surf_skip=%d\n",
+            "more=%d next=%dms surf_skip=%d surf_wait=%.1f\n",
             interval, p.setup_ms, p.engine_ms, p.image_ms, p.set_ms, interval - work, p.more,
-            (int)loam_zeus_engine_next_ms(), own_surf_skips);
+            (int)loam_zeus_engine_next_ms(), own_surf_skips, own_surf_last_wait);
 }
 
 /* Reduced-motion preference (§3.2): reported once to the engine, which makes
@@ -1506,9 +1587,11 @@ static void mac_schedule_next(int more) {
  * ROTATING SET, picked per frame from the ones the compositor is NOT using, is
  * what makes the read and the write different memory with enough slack that a
  * free surface is available: the last-shown surface is usually still held, the
- * one before it may be, and the next one after that is free. Three by default;
- * `ZEUS_OWN_SURFACES` moves it between 2 and 4 (2 is the leanest and can skip a
- * frame when the compositor still holds both; 4 is the most slack).
+ * one before it may be, and the next one after that is free. Two by default:
+ * when both are held, the frame waits a few milliseconds for the compositor to
+ * release one (`OWN_SURF_WAIT_MS`) rather than dropping to the next refresh.
+ * `ZEUS_OWN_SURFACES` moves it between 2 and 4 (3 and 4 trade ~21 MB each
+ * for never waiting).
  *
  * "Not using" is `IOSurfaceIsInUse`, which answers whether another client (the
  * WindowServer) has the surface — the one non-blocking probe the IOSurface API
@@ -1520,9 +1603,8 @@ static void mac_schedule_next(int more) {
  * unlock, and contends with nobody because the surface was just found free.
  *
  * `ZEUS_OWN_SURFACE=1` selects it: it is the only path with neither a per-frame
- * copy nor a buffer shared with the compositor. It is opt-in here — the owned
- * bitmap is the default — and `ZEUS_OWN_SURFACE=0` selects the bitmap,
- * `ZEUS_OWN_BUFFER=1` the same. The pixels are identical to the other paths by
+ * copy nor a buffer shared with the compositor, and it is the default;
+ * `ZEUS_OWN_SURFACE=0` selects the bitmap, `ZEUS_OWN_BUFFER=1` the same. The pixels are identical to the other paths by
  * construction: `own_draw` runs the same engine the same way, in the same
  * format, at the same physical size — only the memory differs.
  *
@@ -1535,14 +1617,17 @@ static void mac_schedule_next(int more) {
  * only the size change does it). So the set is allocated once at the screen's
  * own backing size, the frame is drawn into its top-left `px_w x px_h`, and
  * `layer.contentsRect` shows exactly that region. A resize then changes a
- * rectangle, never the surface, and the same three surfaces serve the whole
+ * rectangle, never the surface, and the same surfaces serve the whole
  * drag. Reallocation is left for the cases a drag cannot reach: the window
- * landing on a bigger screen, or a scale change. Cost: three screen-sized
- * buffers whatever the window's size — which is the footprint documented for
- * the default, screen-filling window, so a smaller window is the only one that
- * pays for the headroom. */
+ * landing on a bigger screen, or a scale change. Cost: one screen-sized buffer
+ * per surface whatever the window's size, so a smaller window pays for the
+ * headroom. */
 #define OWN_SURFACES_MAX 4
-#define OWN_SURFACES_DEFAULT 3
+#define OWN_SURFACES_DEFAULT 2
+/* How long a frame may wait for a free surface before it gives up until the
+   next refresh: half a 60 Hz frame, so a frame that waits still has the other
+   half to draw in. */
+#define OWN_SURF_WAIT_MS 8.0
 /* 'BGRA' — the same 4-byte premultiplied layout `CGBitmapContextCreate` and the
    layer already use, so nothing converts on the way out. */
 #define OWN_SURF_BGRA 0x42475241u
@@ -1554,7 +1639,7 @@ static int own_surf_cur;
 static int own_surf_n;
 static int own_surf_w, own_surf_h;
 
-/* How many surfaces to rotate over. 3 by default; the count is clamped to 2..4
+/* How many surfaces to rotate over. 2 by default; the count is clamped to 2..4
    and read once, so a frame never re-parses the environment.
 
    `ZEUS_OWN_SURFACE` and `ZEUS_OWN_SURFACES` differ by one letter and mean
@@ -1884,6 +1969,7 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
     }
     p.set_ms = frame_now_ms() - tprev;
     frame_trace(t0, p);
+    mac_memory_relief(p.more);
     mac_schedule_next(p.more);
 }
 
@@ -1926,10 +2012,9 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
     /* Rotate to a surface the compositor is NOT using, then draw into it. This is
        the whole point of having more than one: the surface in `layer.contents`
        is being read, and writing it mid-scanout is what shows as a flash or a
-       tear. `IOSurfaceIsInUse` is the only non-blocking probe for that, and with
-       three surfaces one is always free in practice; if none is (the compositor
-       is holding all of them), skip the frame rather than write over one it is
-       reading — a skipped frame is one frame of animation, a torn one is a
+       tear. `IOSurfaceIsInUse` is the only non-blocking probe for that. If none
+       is free (the compositor is holding all of them), never write over one it
+       is reading — a late frame is one frame of animation, a torn one is a
        visible flash. */
     i = own_surf_cur;
     int tries = 0;
@@ -1939,10 +2024,29 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
         tries++;
     }
     if (tries == ns) {
+        /* The compositor lets go of the surface it showed last a little after
+           the refresh that replaced it — usually just after the link tick that
+           brought us here. Waiting for the next tick would drop a whole frame,
+           so poll again in 1 ms, for up to `OWN_SURF_WAIT_MS`, and only then
+           fall back to the next refresh. */
+        double now = frame_now_ms();
         own_surf_skips++;
-        mac_schedule_next(1);
+        if (own_surf_wait_t0 == 0.0) own_surf_wait_t0 = now;
+        if (now - own_surf_wait_t0 < OWN_SURF_WAIT_MS) {
+            /* Render directly: `setNeedsDisplay:` would be coalesced to the
+               next refresh, which is exactly the frame this wait saves. */
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)NSEC_PER_MSEC),
+                           dispatch_get_main_queue(), ^{
+                [self zeusRender];
+            });
+        } else {
+            own_surf_wait_t0 = 0.0;
+            mac_schedule_next(1);
+        }
         return 1;
     }
+    own_surf_last_wait = (own_surf_wait_t0 == 0.0) ? 0.0 : frame_now_ms() - own_surf_wait_t0;
+    own_surf_wait_t0 = 0.0;
     /* Only for the CPU write now, and it contends with nobody: the surface was
        just found unused. A blocking lock is correct here (and its options must
        match the unlock's, which `kIOSurfaceLockAvoidSync` did not). */
@@ -1981,6 +2085,7 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
     p.set_ms = frame_now_ms() - tprev;
     own_surf_cur = (i + 1) % own_surf_count(); /* next frame starts past this one */
     frame_trace(t0, p);
+    mac_memory_relief(more);
     mac_schedule_next(more);
     return 1;
 }
@@ -2006,8 +2111,23 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
 - (void)mouseDown:(NSEvent *)event {
     [[self window] makeFirstResponder:self];
     NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
+    /* Control-click is the Mac's secondary click. */
+    if (([event modifierFlags] & NSEventModifierFlagControl) &&
+        zeus_handle_context_click((int64_t)p.x, (int64_t)p.y)) {
+        [self setNeedsDisplay:YES];
+        return;
+    }
     if (zeus_handle_click((int64_t)p.x, (int64_t)p.y))
         [self setNeedsDisplay:YES];
+}
+
+- (void)rightMouseDown:(NSEvent *)event {
+    [[self window] makeFirstResponder:self];
+    NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
+    if (zeus_handle_context_click((int64_t)p.x, (int64_t)p.y))
+        [self setNeedsDisplay:YES];
+    else
+        [super rightMouseDown:event];
 }
 
 - (void)mouseDragged:(NSEvent *)event {
@@ -2299,6 +2419,13 @@ static void mac_apply_title(const char *t) {
     [g_win setTitle:(t && t[0]) ? [NSString stringWithUTF8String:t] : @"Zeus"];
 }
 
+/* `plat_clipboard_write` (`CopyButton`): the general pasteboard. */
+static void mac_clipboard_write(const char *t) {
+    NSPasteboard *pb = [NSPasteboard generalPasteboard];
+    [pb clearContents];
+    [pb setString:[NSString stringWithUTF8String:t ? t : ""] forType:NSPasteboardTypeString];
+}
+
 static void mac_run(void) {
     @autoreleasepool {
         [NSApplication sharedApplication];
@@ -2318,6 +2445,7 @@ static void mac_run(void) {
         [win setTitle:t ? [NSString stringWithUTF8String:t] : @"Zeus"];
         g_win = win;
         zeus_set_title_hook(mac_apply_title);
+        zeus_set_clipboard_hook(mac_clipboard_write);
         /* The window clears to white until the engine's first paper fill, so
            scroll edges / the first frame never flash black. */
         [win setBackgroundColor:[NSColor whiteColor]];
@@ -2438,6 +2566,7 @@ static int host_load_image(void) {
     ZEUS_BIND(insert, "loam_zeus_engine_insert");
     ZEUS_BIND(marked, "loam_zeus_engine_marked");
     ZEUS_BIND(picked_image, "loam_zeus_engine_picked_image");
+    ZEUS_BIND(context_click, "loam_zeus_engine_context_click");
     if (!zeus_app_api.layout || !zeus_app_api.paint) {
         fprintf(stderr, "zeli: host: %s is not a Loam app image\n", g_image_path);
         return 0;
@@ -2529,6 +2658,8 @@ void loam_mac_host_run(const char *path) {
             [win setTitle:t ? [NSString stringWithUTF8String:t] : @"Zeus"];
             g_win = win;
             zeus_set_title_hook(mac_apply_title);
+            zeus_set_clipboard_hook(mac_clipboard_write);
+        zeus_set_clipboard_hook(mac_clipboard_write);
             [win setBackgroundColor:[NSColor whiteColor]];
             ZeusView *view = [[ZeusView alloc] initWithFrame:frame];
             g_view = view;

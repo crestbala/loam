@@ -71,6 +71,10 @@ exp.zeus_start();
 const a11yPtr = exp.zeus_a11y_sync() as number;
 const a11y = cstr(a11yPtr);
 must(a11y.length > 0, "a11y dump is non-empty");
+must(a11y.split("\n")[0].split("\t").length === 9, "a11y lines carry id and state columns");
+must(typeof exp.zeus_a11y_activate === "function", "module exports zeus_a11y_activate");
+must(typeof exp.zeus_a11y_focus === "function", "module exports zeus_a11y_focus");
+must(typeof exp.zeus_focus_id === "function", "module exports zeus_focus_id");
 
 // Deep link: routes the app; must not trap.
 exp.zeus_open_url(0);
@@ -94,13 +98,13 @@ const heapKb = () => (exp.zeus_heap_kb ? (exp.zeus_heap_kb() as number) : 0);
 for (let f = 0; f < 120; f++) {
   clock += 16;
   exp.zeus_paint();
-  exp.zeus_a11y_sync();
+  exp.zeus_a11y_sync(1);
 }
 const warm = heapKb();
 for (let f = 0; f < 600; f++) {
   clock += 16;
   exp.zeus_paint();
-  exp.zeus_a11y_sync();
+  exp.zeus_a11y_sync(1); // forced: the loader's periodic re-dump, every frame here
 }
 const grown = heapKb() - warm;
 must(grown <= 8, "live heap flat over 600 frames (grew " + grown + " KB)");

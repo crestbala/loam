@@ -1,0 +1,98 @@
+// Phase 1 component contract: `FormField` wraps any control with a required
+// mark and a help / error line that follows state; `Field` draws the danger
+// edge on error; `Alert` takes a `Tint` (and still a legacy `Tone`); `Card`
+// composes from `CardHeader` / `CardFooter`; `Progress` takes a label; `Tabs`
+// has an underline look whose bar sits under the picked trigger.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:colors"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("contract", 480, 900)
+    let name = zeus.signal("")
+    let plan = zeus.signal(0)
+    let tab = zeus.signal(1)
+    let load = zeus.signal(40)
+    zeus.root(zui.Page() {
+        zui.Field("Name", name, "Ada", required = true, description = "As on your card",
+                  error = if name.get().len == 0 { "Name is required" } else { "" })
+        zui.FormField("Plan", description = "Change any time") {
+            zui.Select(plan, []string { "Free", "Pro" })
+        }
+        zui.Alert("New", "Tinted.", tint = zeus.Tint.Warn)
+        zui.Alert("Old", "Toned.", tone = zui.Tone.Danger)
+        zui.Card() {
+            zui.CardHeader("Usage", "This month", action = fn() { zui.Badge("Team", zeus.Tint.Ok) })
+            zeus.Text("Body")
+            zui.CardFooter() { zeus.Text("Footnote") }
+        }
+        zui.Progress(load, label = "Upload")
+        zui.Tabs(tab, []string { "One", "Two", "Three" }, look = zeus.Look.Link)
+    })
+    zeus.pump_frame()
+    zeus.engine_layout(480, 900)
+
+    // Field: required mark, error while empty, help line once valid.
+    must(zeus.text_visible("*"), "required mark")
+    must(zeus.text_visible("Name is required"), "error shows while empty")
+    must(!zeus.text_visible("As on your card"), "help hides behind the error")
+    name.set("Ada")
+    zeus.pump_frame()
+    zeus.engine_layout(480, 900)
+    must(!zeus.text_visible("Name is required"), "error clears")
+    must(zeus.text_visible("As on your card"), "help returns")
+    must(zeus.text_visible("Change any time"), "FormField wraps a Select")
+
+    // Alert: both spellings build.
+    must(zeus.text_visible("Tinted."), "tint alert")
+    must(zeus.text_visible("Toned."), "legacy tone alert")
+
+    // Card pieces: header action on the title row, footer under the body.
+    let title = zeus.engine_find_text("Usage")
+    let badge = zeus.engine_find_text("Team")
+    must(title > 0 && badge > 0, "header and action built")
+    must(zeus.node_x(badge) > zeus.node_x(title), "action trails the title")
+    must(zeus.node_y(zeus.engine_find_text("Footnote")) > zeus.node_y(zeus.engine_find_text("Body")),
+         "footer under the body")
+
+    // Progress label with its percentage.
+    must(zeus.text_visible("Upload"), "progress label")
+    must(zeus.text_visible("40%"), "progress percentage")
+
+    // Underline tabs: the bar sits under the picked trigger, at its bottom.
+    // Let the mount-time slide land before measuring.
+    let mut f = 0
+    while f < 30 {
+        zeus.engine_layout(480, 900)
+        zeus.engine_step_dt(16)
+        zeus.engine_paint()
+        f = f + 1
+    }
+    // The tab carries its label, so the lookup lands on the trigger itself.
+    let two = zeus.engine_find_text("Two")
+    let tray = zeus.node_parent(two)
+    // The indicator is built after the tray and before the triggers.
+    let mut b = 0
+    let mut i = two - 1
+    while i > tray {
+        if zeus.node_parent(i) == tray && zeus.node_height(i) == 2 {
+            b = i
+        }
+        i = i - 1
+    }
+    must(b > 0, "bar inside the tray")
+    must(zeus.node_x(b) == zeus.node_x(two), "bar under the picked trigger")
+    must(zeus.node_width(b) == zeus.node_width(two), "bar spans the trigger")
+    must(zeus.node_y(b) + 2 == zeus.node_y(two) + zeus.node_height(two), "bar on the trigger's bottom edge")
+    fmt.println("contract ok")
+}

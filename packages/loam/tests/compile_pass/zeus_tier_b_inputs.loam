@@ -1,0 +1,109 @@
+// Tier B fields: MultiSelect adds and removes a chip; TagInput commits on
+// Enter and drops the last chip on Backspace; PinInput keeps digits only;
+// Rating's left half is a half star and a star's centre is a full one;
+// CheckboxCard toggles; RadioCard selects; ListBox moves with Down.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+const K_ENTER: int = 13
+const K_BACKSPACE: int = 8
+const K_DOWN: int = 1003
+
+fn frame() {
+    zeus.engine_layout(640, 900)
+}
+
+fn key(k: int) {
+    zeus.engine_key_ev(k, 0)
+    frame()
+}
+
+fn tap(label: string) {
+    must(zeus.engine_click_text(label) != 0, "tap {{label}}")
+    zeus.engine_mouseup()
+    frame()
+}
+
+fn main() {
+    zeus.window("tier-b-inputs", 640, 900)
+    let picked = zeus.signal([]string {})
+    let tags = zeus.signal([]string {})
+    let code = zeus.signal("")
+    let stars = zeus.signal(0)
+    let pro = zeus.signal(false)
+    let plan = zeus.signal(0)
+    let which = zeus.signal(0)
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 12, padding = edges(16))) {
+        zui.MultiSelect(picked, []string { "Red", "Green", "Blue" }, placeholder = "Colors", label = "Colors")
+        zui.TagInput(tags, placeholder = "Add a tag")
+        zui.PinInput(code, length = 6, label = "Code")
+        zui.Rating(stars, half = true, label = "Score")
+        zui.CheckboxCard("Pro plan", "Unlimited projects", pro)
+        zui.RadioCard("Monthly plan", "Billed each month", plan, 0)
+        zui.RadioCard("Yearly plan", "Two months free", plan, 1)
+        zui.ListBox(which, []string { "First", "Second", "Third" }, label = "Order")
+    })
+    zeus.pump_frame()
+    frame()
+
+    // MultiSelect: open, pick, remove the chip.
+    tap("Colors")
+    must(zeus.text_visible("Red"), "options open")
+    tap("Red")
+    must(picked.get().len == 1, "chip added")
+    must(fmt.eq(picked.get()[0], "Red"), "red selected")
+    tap("Remove Red")
+    must(picked.get().len == 0, "chip removed")
+
+    // TagInput: Enter commits, Backspace on an empty draft drops the last tag.
+    tap("Add a tag")
+    zeus.engine_insert("red")
+    frame()
+    key(K_ENTER)
+    must(tags.get().len == 1, "enter commits a tag")
+    must(fmt.eq(tags.get()[0], "red"), "committed red")
+    key(K_BACKSPACE)
+    must(tags.get().len == 0, "backspace drops the last tag")
+
+    // PinInput: paste fills the cells and drops letters and extras.
+    tap("Code")
+    zeus.engine_insert("12a3456789")
+    frame()
+    must(fmt.eq(code.get(), "123456"), "pin keeps six digits")
+
+    // Rating: the left of star 1 is a half; the centre of star 2 is two wholes.
+    let star = zeus.engine_find_text("Star 1")
+    must(star > 0, "star 1")
+    zeus.engine_click(zeus.node_x(star) + 2, zeus.node_y(star) + zeus.node_height(star) / 2)
+    zeus.engine_mouseup()
+    frame()
+    must(stars.get() == 1, "left half is a half star")
+    tap("Star 2")
+    must(stars.get() == 4, "center of star 2 is two full stars")
+
+    // Choice cards.
+    tap("Pro plan")
+    must(pro.get(), "checkbox card checks")
+    tap("Pro plan")
+    must(!pro.get(), "checkbox card clears")
+    tap("Yearly plan")
+    must(plan.get() == 1, "radio card selects")
+
+    // ListBox: click, then Down moves to the next row.
+    tap("Second")
+    must(which.get() == 1, "list pick")
+    key(K_DOWN)
+    must(which.get() == 2, "list down")
+
+    fmt.println("tier b inputs ok")
+}

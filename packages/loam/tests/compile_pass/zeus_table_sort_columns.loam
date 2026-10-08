@@ -1,0 +1,134 @@
+// Sorting reorders rows. `Table` derives the shown order from its rows
+// signal and the sort signal (numeric columns by value, stable, existing
+// row nodes move rather than rebuild); `VirtualTable` wires the header and
+// the app reorders its `Signal<[]T>` with `sort_cells`.
+//
+// Regression test: column switches must show the new sort order immediately
+// after a single click (not require multiple clicks or layout passes).
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:colors"
+import "std:zui"
+
+struct Job {
+    name: string,
+    qty: int,
+}
+
+fn cells(j: Job) -> []string {
+    return []string { j.name, "{{j.qty}}" }
+}
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn JobRow(i: int, j: Job) -> Node {
+    return zui.Row(8) {
+        zeus.set_flex_basis_zero(zeus.grow(zeus.Text(j.name), 1))
+        zeus.set_flex_basis_zero(zeus.grow(zeus.Text("{{j.qty}}"), 1))
+    }
+}
+
+fn y(label: string) -> int {
+    return zeus.node_y(zeus.engine_find_text(label))
+}
+
+fn main() {
+    zeus.window("sort", 480, 400)
+    let sort = zeus.signal(0)
+    let mut spec = []TableCol {}
+    push(spec, TableCol { title: "Name", width: 0, sortable: true })
+    push(spec, TableCol { title: "Qty", width: 60, align: zeus.Align.End, sortable: true })
+
+    // Data where Name and Qty have different orders, so column switches
+    // must visibly reorder rows.
+    let mut data = []Job {}
+    push(data, Job { name: "Cal", qty: 12 })
+    push(data, Job { name: "Ada", qty: 30 })
+    push(data, Job { name: "Bea", qty: 7 })
+    let rows = zeus.signal(data)
+    let picked = zeus.signal(-1)
+
+    // VirtualTable side: the app sorts its structs from the same signal.
+    let vsort = zeus.signal(0)
+    let mut base = []Job {}
+    push(base, Job { name: "zed", qty: 2 })
+    push(base, Job { name: "amy", qty: 9 })
+    let jobs = zeus.signal(base)
+    zeus.effect(|| {
+        jobs.set(zui.sort_cells(base, cells, vsort.get()))
+    })
+
+    zeus.root(zui.Column(8) {
+        zui.Table(spec, rows, cells, sort = sort, zebra = true,
+                   on_pick = fn(i: int) => picked.set(i))
+        zeus.Box(style = Style(height = px(120))) {
+            zui.VirtualTable(jobs, spec, 24, JobRow, sort = vsort)
+        }
+    })
+    zeus.pump_frame()
+
+    // Unsorted: data order (Cal, Ada, Bea).
+    must(y("Cal") < y("Ada"), "data order")
+    let n0 = zeus.arena_nodes()
+    let ada = zeus.engine_find_text("Ada")
+
+    // Name asc: Ada, Bea, Cal. Same nodes, reordered.
+    must(zeus.engine_click_text("Sort by Name") != 0, "sort name")
+    zeus.engine_layout(480, 400)
+    must(y("Ada") < y("Bea") && y("Bea") < y("Cal"), "name asc")
+    must(zeus.engine_find_text("Ada") == ada, "row nodes moved, not rebuilt")
+    must(zeus.arena_nodes() == n0, "no growth on sort")
+
+    // Column switch in ONE click: Qty asc (Bea=7, Cal=12, Ada=30).
+    must(zeus.engine_click_text("Sort by Qty") != 0, "qty asc")
+    zeus.engine_layout(480, 400)
+    must(sort.get() == 2, "qty asc signal")
+    must(y("Bea") < y("Cal") && y("Cal") < y("Ada"), "qty asc by value")
+
+    // Switch BACK to Name asc in ONE click (the regression: effect vs computed).
+    must(zeus.engine_click_text("Sort by Name") != 0, "back to name")
+    zeus.engine_layout(480, 400)
+    must(sort.get() == 1, "name asc signal")
+    must(y("Ada") < y("Bea") && y("Bea") < y("Cal"), "name asc after column switch")
+
+    // Qty desc in TWO clicks: 30, 12, 7 — by value, not by string.
+    must(zeus.engine_click_text("Sort by Qty") != 0, "qty asc 2")
+    must(zeus.engine_click_text("Sort by Qty") != 0, "qty desc 2")
+    zeus.engine_layout(480, 400)
+    must(y("Ada") < y("Cal") && y("Cal") < y("Bea"), "qty desc by value")
+
+    // Row click hands back the index in the caller's data (Bea = 2).
+    must(zeus.engine_click_text("Bea") != 0, "row click")
+    must(picked.get() == 2, "on_pick gives the data index")
+
+    // Pushing a row keeps the current sort.
+    zui.push_item(rows, Job { name: "Dee", qty: 50 })
+    zeus.engine_layout(480, 400)
+    must(y("Dee") < y("Ada"), "new row sorted in")
+
+    // VirtualTable: qty asc keeps zed (2) above amy (9); name asc flips it.
+    must(y("zed") < y("amy"), "virtual data order")
+    vsort.set(2)
+    zeus.engine_layout(480, 400)
+    must(y("zed") < y("amy"), "qty asc: zed(2) first")
+    vsort.set(1)
+    zeus.engine_layout(480, 400)
+    must(y("amy") < y("zed"), "name asc: amy first")
+    // The virtual header drives that same signal: one click = Name asc → desc.
+    let first = zeus.engine_find_text("Sort by Name")
+    let mut h2 = first + 1
+    while !(zeus.node_kind(h2) == 1 && fmt.eq(zeus.node_label(h2), "Sort by Name")) {
+        h2 = h2 + 1
+    }
+    must(zeus.click_node(h2) != 0, "virtual header click")
+    must(vsort.get() == -1, "header cycles the app's signal")
+    zeus.engine_layout(480, 400)
+    must(y("zed") < y("amy"), "name desc: zed first")
+    fmt.println("table sort ok")
+}

@@ -1,0 +1,123 @@
+// The accessibility mirror's data: one line per semantic node with its id and
+// state (`depth role label x y w h id state`). Checked state follows the
+// control's signal; a control's label is not repeated by the text drawn
+// inside it; decorative nodes are left out; and a screen reader's press /
+// focus on a node id reaches the engine like Enter / a focus move.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn split(s: string, sep: int) -> []string {
+    let mut out = []string {}
+    let mut cur = []int {}
+    for i in 0..s.len {
+        if s[i] == sep {
+            push(out, string_from_bytes(cur))
+            cur = []int {}
+        } else {
+            push(cur, s[i])
+        }
+    }
+    push(out, string_from_bytes(cur))
+    return out
+}
+
+fn to_int(s: string) -> int {
+    let mut v = 0
+    for i in 0..s.len {
+        if s[i] >= 48 && s[i] <= 57 {
+            v = v * 10 + (s[i] - 48)
+        }
+    }
+    return v
+}
+
+// Column `col` of the first line whose role is `role` and label `label`
+// ("" when there is none).
+fn field(dump: string, role: string, label: string, col: int) -> string {
+    let lines = split(dump, 10)
+    for i in 0..lines.len {
+        let parts = split(lines[i], 9)
+        if parts.len >= 9 && fmt.eq(parts[1], role) && fmt.eq(parts[2], label) {
+            return parts[col]
+        }
+    }
+    return ""
+}
+
+fn count(dump: string, role: string, label: string) -> int {
+    let lines = split(dump, 10)
+    let mut n = 0
+    for i in 0..lines.len {
+        let parts = split(lines[i], 9)
+        if parts.len >= 3 && fmt.eq(parts[1], role) && fmt.eq(parts[2], label) {
+            n = n + 1
+        }
+    }
+    return n
+}
+
+fn state(role: string, label: string) -> int {
+    return to_int(field(zeus.engine_a11y_dump(), role, label, 8))
+}
+
+fn main() {
+    zeus.window("a11y", 480, 400)
+    let on = zeus.signal(false)
+    let pick = zeus.signal(0)
+    let hits = zeus.signal(0)
+    zeus.root(zui.Page() {
+        zui.Checkbox("Remember me", on)
+        zui.RadioGroup(pick, []string { "Red", "Green" })
+        zui.Button(label = "Save", on_click = fn() { hits.set(hits.get() + 1) })
+        zui.Show(when = false) {
+            zui.Button(label = "Hidden away")
+        }
+    })
+    zeus.pump_frame()
+    zeus.engine_layout(480, 400)
+
+    let mut dump = zeus.engine_a11y_dump()
+    let lines = split(dump, 10)
+    must(split(lines[0], 9).len == 9, "nine columns per line")
+
+    // Checked state: bit 2 = has a state, bit 4 = on.
+    must((state("checkbox", "Remember me") & 6) == 2, "checkbox starts unchecked")
+    must((state("radio", "Red") & 6) == 6, "picked radio is checked")
+    must((state("radio", "Green") & 6) == 2, "other radio is not")
+    on.set(true)
+    pick.set(1)
+    zeus.engine_layout(480, 400)
+    must((state("checkbox", "Remember me") & 6) == 6, "checkbox follows its signal")
+    must((state("radio", "Green") & 6) == 6, "radio follows the pick")
+    must((state("button", "Save") & 2) == 0, "a plain button has no on / off state")
+
+    // A control's label is not read twice by the text inside it.
+    dump = zeus.engine_a11y_dump()
+    must(count(dump, "button", "Save") == 1, "button listed once")
+    must(count(dump, "text", "Save") == 0, "button text not repeated")
+    must(count(dump, "text", "Remember me") == 0, "checkbox text not repeated")
+    must(count(dump, "button", "Hidden away") == 0, "a hidden subtree is not listed")
+
+    // A screen reader's press runs the control; its focus move moves focus.
+    let save = to_int(field(dump, "button", "Save", 7))
+    must(save > 0, "button id")
+    must(zeus.engine_a11y_activate(save) == 1, "activate ran the button")
+    must(hits.get() == 1, "activate pressed Save once")
+    must(zeus.engine_focus_id() == save, "activate focused it")
+    must((state("button", "Save") & 16) == 16, "focused bit set")
+    let box = to_int(field(dump, "checkbox", "Remember me", 7))
+    zeus.engine_a11y_focus(box)
+    must(zeus.engine_focus_id() == box, "focus move followed")
+    must(zeus.engine_a11y_activate(9999999) == 0, "a stale id does nothing")
+    fmt.println("a11y mirror ok")
+}

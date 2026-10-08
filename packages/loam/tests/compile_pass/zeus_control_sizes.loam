@@ -1,0 +1,66 @@
+// Phase 0 size system: every control reads one `control_h` table, so at each
+// `Size` a Button, a field, a Select, a Toggle, a ToggleGroup item, a tray
+// (Tabs / Segmented), and a page button all measure the same height.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:spacing"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+/// Height of the box that owns the text `label` (the control around it).
+fn owner_h(label: string) -> int {
+    let t = zeus.engine_find_text(label)
+    must(t > 0, "found {{label}}")
+    return zeus.node_height(zeus.node_parent(t))
+}
+
+fn check(size: int, tag: string) {
+    let name = zeus.signal("")
+    let sel = zeus.signal(0)
+    let on = zeus.signal(false)
+    let pick = zeus.signal(0)
+    let tab = zeus.signal(0)
+    let page = zeus.signal(1)
+    zeus.root(zui.Page() {
+        zui.Row(8) {
+            zui.Button("Btn{{tag}}", look = zeus.Look.Solid, size = size)
+            zui.TextInput(name, "Field{{tag}}", size = size)
+            zui.Select(sel, []string { "Sel{{tag}}" }, size = size)
+            zui.Toggle("Tog{{tag}}", on, size = size)
+        }
+        zui.ToggleGroup(pick, []string { "Grp{{tag}}", "Other{{tag}}" }, size = size)
+        zui.Segmented(tab, []string { "Seg{{tag}}", "Two{{tag}}" }, size = size)
+        // A distinct last page per size, so its label is unique across trees.
+        zui.Pagination(page, size + 2, size = size)
+    })
+    zeus.pump_frame()
+    zeus.engine_layout(900, 400)
+    let h = spacing.control_h(size)
+    must(owner_h("Btn{{tag}}") == h, "{{tag}} button is control_h")
+    must(owner_h("Sel{{tag}}") == h, "{{tag}} select is control_h")
+    must(owner_h("Tog{{tag}}") == h, "{{tag}} toggle is control_h")
+    must(owner_h("Grp{{tag}}") == h, "{{tag}} toggle group item is control_h")
+    // A tray trigger sits 4px inside the tray, so the tray is control_h.
+    let seg = zeus.node_parent(zeus.engine_find_text("Seg{{tag}}"))
+    must(zeus.node_height(zeus.node_parent(seg)) == h, "{{tag}} segmented tray is control_h")
+    must(owner_h("{{size + 2}}") == h, "{{tag}} page button is control_h")
+    let field = zeus.engine_find_text("Field{{tag}}")
+    must(field > 0, "{{tag}} field found")
+    must(zeus.node_height(zeus.node_parent(field)) == h, "{{tag}} text input is control_h")
+}
+
+fn main() {
+    zeus.window("sizes", 900, 400)
+    check(zeus.Size.Sm, "S")
+    check(zeus.Size.Md, "M")
+    check(zeus.Size.Lg, "L")
+    fmt.println("control sizes ok")
+}

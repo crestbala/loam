@@ -44,7 +44,7 @@ fn wash() -> string { return role_token(ROLE.Wash) }
 fn on_ink() -> string { return role_token(ROLE.OnInk) }
 
 /// Primary: fills for default buttons, switches, selection. The accent ramp's
-/// solid step (`register_accent`), blue by default.
+/// solid step (`register_accent`), iris by default.
 
 /// Soft accent surface (`secondary`): soft buttons, pressed toggles.
 fn accent_soft() -> string { return role_token(ROLE.AccentSoft) }
@@ -170,7 +170,7 @@ fn pick_by_appearance(lit: string, dim: string) -> string {
 /// Soft fill for code blocks and inset panels.
 /// Text on `accent` (primary-foreground).
 /// Primary: fills for default buttons, switches, selection. The accent ramp's
-/// solid step (`register_accent`), blue by default.
+/// solid step (`register_accent`), iris by default.
 /// Soft accent surface (`secondary`): soft buttons, pressed toggles.
 /// Destructive text (errors, destructive alerts).
 /// Destructive fill (destructive buttons, filled danger badges).
@@ -220,29 +220,31 @@ fn scale_at(sc: Scale, step: int) -> string {
     return sc.s12
 }
 
-/// Neutral ramp, light. Zinc-derived, spaced so 3/4/5 read as distinct
-/// component states on a white page rather than three shades of the same
-/// grey.
+/// Neutral ramp, light. Cool greys with a faint iris tint, so the chrome
+/// belongs to the accent instead of reading as stock zinc. Step 1 is the
+/// white card; the page sits one step down (`paper` = 2), so cards lift off
+/// it by tone and shadow rather than by a border alone.
 const NEUTRAL_L: Scale = Scale(
-    s1 = "#ffffff", s2 = "#fafafa", s3 = "#f4f4f5", s4 = "#ececee",
-    s5 = "#e4e4e7", s6 = "#dcdce0", s7 = "#d4d4d8", s8 = "#b9b9c0",
-    s9 = "#71717a", s10 = "#62626b", s11 = "#52525b", s12 = "#18181b"
+    s1 = "#ffffff", s2 = "#f6f6fb", s3 = "#efeff6", s4 = "#e8e8f1",
+    s5 = "#e1e1ec", s6 = "#d9d9e5", s7 = "#cfcfdd", s8 = "#b5b5c8",
+    s9 = "#737389", s10 = "#63637a", s11 = "#52526a", s12 = "#17172a"
 )
 
 /// Neutral ramp, dark. Not the light ramp reversed: the dark end needs
 /// tighter steps near the background (1-5) so surfaces separate at all, and
-/// looser steps at the text end so 11 and 12 stay distinguishable.
+/// looser steps at the text end so 11 and 12 stay distinguishable. Tinted
+/// like the light ramp: a blue-black page, cards a visible step above it.
 const NEUTRAL_D: Scale = Scale(
-    s1 = "#09090b", s2 = "#101012", s3 = "#18181b", s4 = "#1f1f23",
-    s5 = "#26262a", s6 = "#2e2e33", s7 = "#3f3f46", s8 = "#52525b",
-    s9 = "#71717a", s10 = "#7e7e87", s11 = "#a1a1aa", s12 = "#ededef"
+    s1 = "#0b0b12", s2 = "#111119", s3 = "#181822", s4 = "#20202c",
+    s5 = "#272734", s6 = "#2f2f3d", s7 = "#3e3e50", s8 = "#525268",
+    s9 = "#72728a", s10 = "#808098", s11 = "#a3a3b8", s12 = "#ededf5"
 )
 
 // --- accent ramps ---------------------------------------------------------
 // One per pickable accent. Step 9 is the brand value; 1-8 are tints of it
 // over the page background, 10 is the pressed solid, 11-12 are inks.
 
-/// Sunset — the xAI brand orange (`#ff6308`), and the default accent.
+/// Sunset — the xAI brand orange (`#ff6308`).
 const ACCENT_SUNSET_L: Scale = Scale(
     s1 = "#fffaf7", s2 = "#fff4ed", s3 = "#ffe8db", s4 = "#ffdcc7",
     s5 = "#ffceb0", s6 = "#ffbc94", s7 = "#ffa46f", s8 = "#fb8340",
@@ -254,7 +256,7 @@ const ACCENT_SUNSET_D: Scale = Scale(
     s9 = "#ff6308", s10 = "#ff7a2b", s11 = "#ffa06b", s12 = "#ffdcc7"
 )
 
-/// Blue — the default accent. Step 9 is `#2563eb`, deep enough that white
+/// Blue. Step 9 is `#2563eb`, deep enough that white
 /// is the ink `best_on` picks in both appearances, which is what keeps the
 /// primary button reading as a primary button.
 const ACCENT_BLUE_L: Scale = Scale(
@@ -304,6 +306,20 @@ const ACCENT_ROSE_D: Scale = Scale(
     s9 = "#e11d48", s10 = "#ef3560", s11 = "#ff8ca6", s12 = "#ffe4ea"
 )
 
+/// Iris — Zeus's own accent, and the default: a saturated blue-violet that
+/// sits between the stock blue and indigo every other kit ships. White holds
+/// on step 9 in both appearances (5.9:1 light, 4.6:1 dark).
+const ACCENT_IRIS_L: Scale = Scale(
+    s1 = "#fcfbff", s2 = "#f7f6fe", s3 = "#efecfe", s4 = "#e5e1fd",
+    s5 = "#d9d4fc", s6 = "#ccc5fa", s7 = "#bab1f9", s8 = "#9d8ff6",
+    s9 = "#5b45f0", s10 = "#503dd3", s11 = "#3e2fa3", s12 = "#1d164d"
+)
+const ACCENT_IRIS_D: Scale = Scale(
+    s1 = "#0f0e1b", s2 = "#121123", s3 = "#17152e", s4 = "#1c193a",
+    s5 = "#211d46", s6 = "#282257", s7 = "#322a6e", s8 = "#423897",
+    s9 = "#6e5bff", s10 = "#8272ff", s11 = "#afa5ff", s12 = "#e9e6ff"
+)
+
 /// Accent choices, in picker order. `set_accent` takes one of these.
 enum ACCENT {
     Blue = 0,
@@ -311,9 +327,11 @@ enum ACCENT {
     Teal = 2,
     Rose = 3,
     Sunset = 4,
+    Iris = 5,
 }
 
 fn accent_scale_light(which: int) -> Scale {
+    if which == ACCENT.Iris { return ACCENT_IRIS_L }
     if which == ACCENT.Indigo { return ACCENT_INDIGO_L }
     if which == ACCENT.Teal { return ACCENT_TEAL_L }
     if which == ACCENT.Rose { return ACCENT_ROSE_L }
@@ -322,6 +340,7 @@ fn accent_scale_light(which: int) -> Scale {
 }
 
 fn accent_scale_dark(which: int) -> Scale {
+    if which == ACCENT.Iris { return ACCENT_IRIS_D }
     if which == ACCENT.Indigo { return ACCENT_INDIGO_D }
     if which == ACCENT.Teal { return ACCENT_TEAL_D }
     if which == ACCENT.Rose { return ACCENT_ROSE_D }
@@ -339,7 +358,7 @@ fn accent_name(which: int) -> string {
 }
 
 fn accent_count() -> int {
-    return 5
+    return 6
 }
 
 // --- semantic tiers -------------------------------------------------------
@@ -470,7 +489,7 @@ fn best_on(bg: int) -> int {
 }
 
 // --- the live accent ------------------------------------------------------
-let mut accent_which: int = 0
+let mut accent_which: int = 5
 
 /// The accent in effect. Changing it re-registers the twelve A-slots, so the
 /// next paint picks up the new ramp with no rebuild and no effect runs — the
@@ -641,9 +660,10 @@ fn ensure_role_colors() {
     theme(ROLE.OnWarn, best_on(parse_hex_color(WARN_L.fill)), best_on(parse_hex_color(WARN_D.fill)))
     theme(ROLE.OnDanger, best_on(parse_hex_color(DANGER_L.fill)), best_on(parse_hex_color(DANGER_D.fill)))
     theme(ROLE.OnInfo, best_on(parse_hex_color(INFO_L.fill)), best_on(parse_hex_color(INFO_D.fill)))
-    // Light shadows are a soft near-black; dark ones are true black, because
-    // a tinted shadow over a near-black surface reads as haze, not lift.
-    theme(ROLE.Shadow, parse_hex_color("#1a1a22"), parse_hex_color("#000000"))
+    // Light shadows are a deep iris-tinted ink, so lift reads as part of the
+    // palette rather than grey smudge; dark ones are true black, because a
+    // tinted shadow over a near-black surface reads as haze, not lift.
+    theme(ROLE.Shadow, parse_hex_color("#1c1648"), parse_hex_color("#000000"))
     register_accent()
 
     // The flat role names every existing call site uses now resolve onto the
@@ -652,8 +672,10 @@ fn ensure_role_colors() {
     // `#a9b2bc`, which is 2.15:1 on white and failed AA everywhere it was
     // used for captions and placeholders. It is now step 10 (6.1:1) and
     // `mute` is step 11 (7.6:1); both clear AA on steps 1-3.
-    theme(ROLE.Paper, parse_hex_color(NEUTRAL_L.s1), parse_hex_color(NEUTRAL_D.s1))
-    theme(ROLE.Plate, parse_hex_color(NEUTRAL_L.s2), parse_hex_color(NEUTRAL_D.s3))
+    // Light: a tinted page (2) under white cards (1). Dark: the page is the
+    // deepest step and cards rise two steps above it.
+    theme(ROLE.Paper, parse_hex_color(NEUTRAL_L.s2), parse_hex_color(NEUTRAL_D.s1))
+    theme(ROLE.Plate, parse_hex_color(NEUTRAL_L.s1), parse_hex_color(NEUTRAL_D.s3))
     theme(ROLE.Raised, parse_hex_color(NEUTRAL_L.s3), parse_hex_color(NEUTRAL_D.s4))
     theme(ROLE.Wash, parse_hex_color(NEUTRAL_L.s2), parse_hex_color(NEUTRAL_D.s2))
     theme(ROLE.Rule, parse_hex_color(NEUTRAL_L.s6), parse_hex_color(NEUTRAL_D.s6))
@@ -985,6 +1007,19 @@ fn virtual_window(node_id: int, n: int, row_h: int) -> VirtWin {
     }
     return VirtWin { first: first, last: last }
 }
+/// Control density (`Density.*`), one global knob next to `appearance()`.
+/// `control_h` and friends read it, so reading them inside a style closure
+/// keeps a control live to a density switch.
+let mut density_sid: int = 0
+
+fn density() -> Signal<int> {
+    if density_sid == 0 {
+        let s = signal(Density.Standard)
+        density_sid = s.id
+    }
+    return signal_handle(density_sid)
+}
+
 let mut pick_dest: Signal<string> = Signal { id: 0 }
 let mut pick_w: Signal<int> = Signal { id: 0 }
 let mut pick_h: Signal<int> = Signal { id: 0 }

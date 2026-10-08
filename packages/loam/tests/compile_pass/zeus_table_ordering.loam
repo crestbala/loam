@@ -1,0 +1,66 @@
+// Case-insensitive string sorting and correct numeric ordering.
+// `str_cmp` now lowercases both sides before comparing, so "apple" < "Banana" < "cherry"
+// instead of the byte-wise "Banana" < "apple" < "cherry". Numbers still sort by value.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:colors"
+import "std:zui"
+
+struct Item {
+    label: string,
+    value: string,
+}
+
+fn cells(item: Item) -> []string {
+    return []string { item.label, item.value }
+}
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn y(label: string) -> int {
+    return zeus.node_y(zeus.engine_find_text(label))
+}
+
+fn main() {
+    zeus.window("ordering", 480, 400)
+    let sort = zeus.signal(0)
+    let mut spec = []TableCol {}
+    push(spec, TableCol { title: "Label", width: 0, sortable: true })
+    push(spec, TableCol { title: "Value", width: 80, align: zeus.Align.End, sortable: true })
+
+    // Mixed case strings and numbers
+    let mut data = []Item {}
+    push(data, Item { label: "alpha", value: "10" })
+    push(data, Item { label: "Beta", value: "-5" })
+    push(data, Item { label: "gamma", value: "3" })
+    push(data, Item { label: "Delta", value: "100" })
+    push(data, Item { label: "epsilon", value: "0" })
+
+    let rows = zeus.signal(data)
+
+    zeus.root(zui.Column(8) {
+        zui.Table(spec, rows, cells, sort = sort, zebra = true)
+    })
+    zeus.pump_frame()
+
+    // Sort Value ascending: -5, 0, 3, 10, 100
+    must(zeus.engine_click_text("Sort by Value") != 0, "click value")
+    zeus.engine_layout(480, 400)
+    must(y("Beta") < y("epsilon") && y("epsilon") < y("gamma") && y("gamma") < y("alpha") && y("alpha") < y("Delta"),
+         "numeric ascending: -5 < 0 < 3 < 10 < 100")
+
+    // Switch to Label: case-insensitive alpha < Beta < Delta < epsilon < gamma
+    must(zeus.engine_click_text("Sort by Label") != 0, "click label")
+    zeus.engine_layout(480, 400)
+    must(sort.get() == 1, "label asc signal")
+    must(y("alpha") < y("Beta") && y("Beta") < y("Delta") && y("Delta") < y("epsilon") && y("epsilon") < y("gamma"),
+         "case-insensitive: alpha < Beta < Delta < epsilon < gamma")
+
+    fmt.println("ordering ok")
+}

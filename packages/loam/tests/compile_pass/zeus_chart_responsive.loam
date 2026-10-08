@@ -1,0 +1,161 @@
+// Charts follow their container on every resize, not just the first layout,
+// and the hover tooltip sits beside the hovered point — right of it, flipping
+// left at the plot's right edge — without covering it. The cursor hairline
+// paints before the dots, so it runs behind them.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+const W: int = 900
+const H: int = 420
+
+fn layout(w: int) {
+    for _ in 0..3 {
+        zeus.engine_layout(w, H)
+    }
+}
+
+// The 6x6 dots, left to right (one series). Sorted by x: a refit recycles
+// node ids, so id order is not plot order.
+fn dots() -> []int {
+    let mut out = []int {}
+    for id in 1..zeus.arena_nodes() {
+        if zeus.node_width(id) == 6 && zeus.node_height(id) == 6 && zeus.node_visible(id) == 1 {
+            push(out, id)
+        }
+    }
+    for i in 1..out.len {
+        let mut k = i
+        while k > 0 && zeus.node_x(out[k - 1]) > zeus.node_x(out[k]) {
+            let t = out[k - 1]
+            out[k - 1] = out[k]
+            out[k] = t
+            k = k - 1
+        }
+    }
+    return out
+}
+
+// The rightmost edge any dot reaches.
+fn dots_right() -> int {
+    let d = dots()
+    let mut r = 0
+    for i in 0..d.len {
+        let e = zeus.node_x(d[i]) + zeus.node_width(d[i])
+        if e > r {
+            r = e
+        }
+    }
+    return r
+}
+
+fn overlaps(a: int, b: int) -> bool {
+    let ax = zeus.node_x(a)
+    let ay = zeus.node_y(a)
+    let bx = zeus.node_x(b)
+    let by = zeus.node_y(b)
+    return ax < bx + zeus.node_width(b) && bx < ax + zeus.node_width(a) &&
+           ay < by + zeus.node_height(b) && by < ay + zeus.node_height(a)
+}
+
+fn hover_dot(d: int, w: int) {
+    zeus.engine_hover(zeus.node_x(d) + 3, zeus.node_y(d) + 3)
+    layout(w)
+}
+
+fn main() {
+    zeus.window("chart responsive", W, H)
+    let labs = []string { "Jan", "Feb", "Mar", "Apr", "May", "Jun" }
+    let vals = []int { 120, 180, 150, 210, 170, 240 }
+    zeus.root(zui.Page() {
+        zui.Card() {
+            zui.LineChart(labs, []string { "Visits" }, vals, 850, 216)
+        }
+    })
+    zeus.pump_frame()
+    layout(W)
+    must(dots().len == 6, "six dots")
+    let wide_right = dots_right()
+    must(wide_right > 700, "wide plot spans the card")
+
+    // Shrink: the plot refits to the narrow card (it used to keep its first
+    // width and spill past the card).
+    layout(320)
+    let narrow_right = dots_right()
+    must(narrow_right < 320 - 32, "narrow plot fits inside the page padding")
+    must(dots().len == 6, "still six dots after the shrink")
+
+    // Grow again: a second refit, so the hook survived the first one.
+    layout(W)
+    must(dots_right() == wide_right, "growing back refits to the wide plot")
+
+    // Tooltip beside the point: right of an early point...
+    let d = dots()
+    hover_dot(d[1], W)
+    let tip = zeus.engine_find_role("dialog")
+    must(tip > 0 && zeus.node_visible(tip) == 1, "tooltip shows on hover")
+    must(!overlaps(tip, d[1]), "tooltip does not cover the hovered point")
+    must(zeus.node_x(tip) > zeus.node_x(d[1]), "tooltip sits right of an early point")
+    must(zeus.node_y(tip) < zeus.node_y(d[1]) + 6, "tooltip top is level with or above the point")
+
+    // ...and left of the last one, where the right side would overflow.
+    hover_dot(d[5], W)
+    must(!overlaps(tip, d[5]), "tooltip does not cover the last point")
+    must(zeus.node_x(tip) + zeus.node_width(tip) <= zeus.node_x(d[5]), "tooltip flips left at the edge")
+
+    // Narrow plot: still clear of the point.
+    layout(320)
+    let nd = dots()
+    hover_dot(nd[2], 320)
+    must(zeus.node_visible(tip) == 1, "tooltip shows on the narrow plot")
+    must(!overlaps(tip, nd[2]), "narrow tooltip does not cover the point")
+
+    // A squeezed window: the plot still follows the card instead of falling
+    // back to its 850 dp estimate, and a bar chart keeps positive bars.
+    zeus.root(zui.Page() {
+        zui.Card() {
+            zui.BarChart(labs, []string { "Visits" }, vals, 850, 216)
+        }
+    })
+    zeus.pump_frame()
+    layout(140)
+    for id in 1..zeus.arena_nodes() {
+        if zeus.node_visible(id) == 1 && zeus.node_height(id) > 1 {
+            must(zeus.node_width(id) >= 0, "no negative widths")
+            must(zeus.node_width(id) < 400, "nothing keeps the wide estimate")
+        }
+    }
+    zeus.root(zui.Page() {
+        zui.Card() {
+            zui.LineChart(labs, []string { "Visits" }, vals, 850, 216)
+        }
+    })
+    zeus.pump_frame()
+    layout(320)
+    hover_dot(dots()[2], 320)
+
+    // The cursor (a 1px-wide fill) paints before every dot.
+    zeus.engine_paint()
+    let mut cursor_at = -1
+    let mut first_dot = -1
+    for i in 0..zeus.draw_count() {
+        if zeus.draw_w(i) == 1 && zeus.draw_h(i) > 40 && cursor_at < 0 {
+            cursor_at = i
+        }
+        if zeus.draw_w(i) == 6 && zeus.draw_h(i) == 6 && first_dot < 0 {
+            first_dot = i
+        }
+    }
+    must(cursor_at >= 0 && first_dot >= 0, "cursor and dots painted")
+    must(cursor_at < first_dot, "cursor paints behind the dots")
+    fmt.println("chart responsive ok")
+}

@@ -22,4 +22,6 @@ if [ ! -x "$REPO/bin/loamc" ]; then
   make -C "$REPO" -j4
 fi
 echo "macos: Cocoa desktop"
+# Assets (fonts/) are referenced relative to the gallery directory.
+cd "$HERE/.."
 exec "$REPO/bin/loamc" --target=native --run "$HERE/app.loam"

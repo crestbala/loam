@@ -1,0 +1,105 @@
+// Tier A actions: ButtonGroup reports the pressed index; SplitButton runs its
+// main action and opens its caret menu; DropdownMenu opens and picks;
+// CopyButton puts text on the clipboard and swaps to "Copied" for a moment;
+// ContextMenu opens at a secondary click and picks.
+
+import "std:fmt"
+import "std:sys"
+import "std:async"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn frame() {
+    zeus.engine_layout(640, 700)
+}
+
+fn tap(label: string) {
+    must(zeus.engine_click_text(label) != 0, "tap {{label}}")
+    zeus.engine_mouseup()
+    frame()
+}
+
+fn main() {
+    zeus.window("actions", 640, 700)
+    let pressed = zeus.signal(-1)
+    let saved = zeus.signal(0)
+    let picked = zeus.signal(-1)
+    let dropped = zeus.signal(-1)
+    let ctx = zeus.signal(-1)
+    let menu = []MenuRow { MenuRow(label = "Save as"), MenuRow(label = "Save copy") }
+    zeus.root(zui.Page() {
+        zui.ButtonGroup([]string { "Left", "Middle", "Right" },
+                        on_click = fn(i: int) { pressed.set(i) }, label = "Align")
+        zui.SplitButton("Save", on_click = fn() { saved.set(saved.get() + 1) }, items = menu,
+                        on_select = fn(i: int) { picked.set(i) })
+        zui.DropdownMenu("Sort", items = []MenuRow { MenuRow(label = "Newest"),
+                                                         MenuRow(label = "Oldest") },
+                         on_select = fn(i: int) { dropped.set(i) })
+        zui.CopyButton("sk-123", holdMs = 20)
+        zui.ContextMenu(items = []MenuRow { MenuRow(label = "Rename"),
+                                                MenuRow(label = "Delete", danger = true) },
+                        on_select = fn(i: int) { ctx.set(i) }) {
+            zeus.Box(style = Style(height = px(80))) {
+                zeus.Text("Right-click me")
+            }
+        }
+    })
+    zeus.pump_frame()
+    frame()
+
+    // ButtonGroup: attached segments, each reports its index.
+    tap("Middle")
+    must(pressed.get() == 1, "group middle")
+    tap("Right")
+    must(pressed.get() == 2, "group right")
+    let l = zeus.engine_find_text("Left")
+    let m = zeus.engine_find_text("Middle")
+    must(zeus.node_x(m) <= zeus.node_x(l) + zeus.node_width(l), "segments are attached")
+
+    // SplitButton: the main half acts; the caret opens the menu.
+    tap("Save")
+    must(saved.get() == 1, "split main action")
+    must(!zeus.text_visible("Save as"), "split menu closed")
+    tap("More options")
+    must(zeus.text_visible("Save as"), "caret opens the menu")
+    tap("Save copy")
+    must(picked.get() == 1, "split menu pick")
+
+    // DropdownMenu.
+    tap("Sort")
+    must(zeus.text_visible("Oldest"), "dropdown opens")
+    tap("Oldest")
+    must(dropped.get() == 1, "dropdown pick")
+
+    // CopyButton: clipboard, then the check for `holdMs`.
+    tap("Copy")
+    must(fmt.eq(zeus.clipboard_last(), "sk-123"), "copied to the clipboard")
+    must(zeus.text_visible("Copied"), "label swaps to Copied")
+    async.sleep(40)
+    frame()
+    frame()
+    must(zeus.text_visible("Copy"), "label swaps back")
+
+    // ContextMenu: nothing on a plain click; a secondary click opens the menu.
+    let area = zeus.engine_find_text("Right-click me")
+    let ax = zeus.node_x(area) + 10
+    let ay = zeus.node_y(area) + 5
+    must(!zeus.text_visible("Rename"), "context menu starts closed")
+    must(zeus.engine_context_click(ax, ay) != 0, "secondary click handled")
+    frame()
+    frame()
+    must(zeus.text_visible("Rename"), "context menu opens")
+    let item = zeus.engine_find_text("Rename")
+    must(zeus.node_y(item) >= ay - 2, "menu opens at the pointer")
+    tap("Delete")
+    must(ctx.get() == 1, "context pick")
+    must(zeus.engine_context_click(4, 4) == 0, "outside the region nothing answers")
+    fmt.println("tier a actions ok")
+}

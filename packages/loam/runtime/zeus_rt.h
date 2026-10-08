@@ -348,6 +348,10 @@ void loam_platform_plat_text_wrap(int64_t x, int64_t y, loam_str s, int64_t rgb,
                                   int64_t max_w);
 void loam_platform_plat_set_window(loam_str title, int64_t width, int64_t height);
 void loam_platform_plat_set_title(loam_str title);
+void loam_platform_plat_clipboard_write(loam_str text);
+loam_str loam_platform_plat_clipboard_last(void);
+int64_t loam_platform_plat_apple_keys(void);
+void loam_platform_plat_edit_set_secure(int64_t slot, int64_t on);
 int64_t loam_platform_plat_view_width(void);
 int64_t loam_platform_plat_view_height(void);
 void loam_platform_plat_svg(int64_t x, int64_t y, int64_t w, int64_t h, loam_str markup,
@@ -438,6 +442,7 @@ void loam_zeus_engine_set_reduced_motion(int32_t on);
 /* ms until the next async timer is due (0 = none; -1 = a spawn waits). */
 int32_t loam_zeus_engine_next_ms(void);
 int32_t loam_zeus_engine_click(int32_t x, int32_t y);
+int32_t loam_zeus_engine_context_click(int32_t x, int32_t y);
 int32_t loam_zeus_engine_scroll(int32_t x, int32_t y, int32_t dx, int32_t dy);
 int32_t loam_zeus_engine_scroll_step(int32_t x, int32_t y, int32_t dx, int32_t dy);
 int32_t loam_zeus_engine_scroll_smooth(int32_t x, int32_t y, int32_t dx, int32_t dy);
@@ -478,6 +483,8 @@ void zeus_layout(int64_t width, int64_t height);
 int zeus_step(float dt);
 void zeus_paint(void *ctx, ZeusDraw draw);
 int zeus_handle_click(int64_t x, int64_t y);
+/** Secondary click at a point: the nearest `on_context_menu` handler runs. */
+int zeus_handle_context_click(int64_t x, int64_t y);
 int zeus_handle_hover(int64_t x, int64_t y);
 int zeus_over_button(void);
 /** CSS cursor name under the pointer; "" or unknown = default arrow. */
@@ -501,6 +508,9 @@ const char *zeus_window_title(void);
 /** Live title updates: a host registers a callback so `plat_set_title` can
  *  retitle the open window (router `Meta.title` on navigation). */
 void zeus_set_title_hook(void (*fn)(const char *));
+/** Clipboard writes (`plat_clipboard_write`): a desktop host registers the
+ *  system pasteboard here. Unset, the runtime only remembers the text. */
+void zeus_set_clipboard_hook(void (*fn)(const char *));
 int64_t zeus_window_width(void);
 int64_t zeus_window_height(void);
 void zeus_set_window_size(int64_t width, int64_t height);
@@ -568,6 +578,7 @@ typedef struct {
     int32_t (*insert)(loam_str text);
     int32_t (*marked)(loam_str text);
     void (*picked_image)(loam_str src, int32_t w, int32_t h);
+    int32_t (*context_click)(int32_t x, int32_t y);
 } ZeusAppApi;
 
 extern ZeusAppApi zeus_app_api;
@@ -612,6 +623,7 @@ void zeus_set_host_hooks(void (*run)(const char *path));
 #define loam_zeus_engine_insert zeus_app_api.insert
 #define loam_zeus_engine_marked zeus_app_api.marked
 #define loam_zeus_engine_picked_image zeus_app_api.picked_image
+#define loam_zeus_engine_context_click zeus_app_api.context_click
 #endif /* LOAM_HOST_BUILD */
 
 #endif

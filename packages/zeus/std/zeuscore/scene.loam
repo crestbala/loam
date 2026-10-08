@@ -1034,9 +1034,13 @@ fn paint_fill_box(id: int, wash: int) {
     let elev = int(arena.nodes[id].elev)
     if elev > 0 || int(arena.nodes[id].lift) > 0 {
         let e = arena.elev_hover(id)
+        let sc = arena.paint_rgb(arena.nodes[id].elev_c)
+        // Ambient first, so the tight key shadow sits on top of it.
+        if e.amb_alpha > 0 {
+            shadow(x, y, w, h, r, sc, e.amb_alpha, e.amb_blur, 0, e.amb_dy)
+        }
         if e.alpha > 0 {
-            shadow(x, y, w, h, r, arena.paint_rgb(arena.nodes[id].elev_c),
-                   e.alpha, e.blur, e.dx, e.dy)
+            shadow(x, y, w, h, r, sc, e.alpha, e.blur, e.dx, e.dy)
         }
     }
     let rgb = arena.paint_rgb(arena.nodes[id].bg)
@@ -1121,7 +1125,12 @@ fn paint_input(id: int) {
             fill(cx, cy, 1, lh, sel, 0)
         }
     }
-    let ta = arena.paint_alpha(id)
+    let mut ta = arena.paint_alpha(id)
+    // The placeholder shares the field's ink; at half alpha it reads as a
+    // hint, not a typed value, in either appearance.
+    if arena.input_is_placeholder(id) != 0 {
+        ta = ta * 50 / 100
+    }
     if inner > 0 {
         text_wrap(tx, ty, shown, fg, i32(arena.nodes[id].font), inner, ta)
     } else {
