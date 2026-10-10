@@ -117,6 +117,13 @@ int64_t loam_zeus_sig_changed(int64_t id, const void *src, int64_t n) {
     return memcmp(g_cells[id].p, src, (size_t)n) != 0;
 }
 
+/* 1 when cell `id` holds a value of `n` bytes — one a by-value comparison can
+   load and read (a fresh cell, or one of another type, holds none). */
+int64_t loam_zeus_sig_sized(int64_t id, int64_t n) {
+    if (id < 0 || (size_t)id >= g_ncells || !g_cells[id].p || n <= 0) return 0;
+    return g_cells[id].n == (size_t)n;
+}
+
 int64_t loam_zeus_sig_gen(int64_t id) {
     if (id < 0 || (size_t)id >= g_ncells) return 0;
     return g_cells[id].gen;
@@ -2230,10 +2237,62 @@ void loam_zeusbase_remap_key(loam_str spec, loam_str action, loam_str ctx) {
    is one line. It used to carry the setjmp arm plus a copy of the trap-state
    contract in a comment, which made Zeuss the owner of a language-runtime
    facility. The verb is generic: any library that wants a recoverable region
-   calls the same one. On wasm it runs the body unprotected and a trap aborts,
-   as before. */
+   calls the same one. On wasm it runs the body unprotected: a trap unwinds to
+   the host, which calls `zeus_recover` (see `engine_recover`). */
 loam_str loam_platform_plat_boundary(loam_fn build) {
     return loam_trap_guard(build);
+}
+
+/* Invoke interned void handler `id` under a trap arm: "" when it returned, else
+   the panic message. A handler or effect inside a `Boundary` runs through this,
+   so a trap swaps that boundary to its fallback instead of killing the app. */
+loam_str loam_platform_plat_guard_fn(int64_t id) {
+    loam_str none = { "", 0, 0 };
+    if (id <= 0 || id >= nclick_fns) return none;
+    if (!click_fns[id].h.fn) return none;
+    if (!intern_kind_matches((int)id, ZEUS_FN_VOID)) return none;
+    return loam_trap_guard(click_fns[id].h);
+}
+
+/* Boundaries a previous wasm instance trapped in during startup, pre-seeded
+   by the loader before `zeus_start`. Kept here rather than in Loam because
+   module globals are initialised when `main` starts. */
+#define ZEUS_BND_PRESETS 16
+static int32_t g_bnd_pre_seq[ZEUS_BND_PRESETS];
+static loam_str g_bnd_pre_msg[ZEUS_BND_PRESETS];
+static int g_bnd_pre_n;
+
+void zeus_boundary_preset_add(int32_t seq, const char *msg, size_t n) {
+    char *p;
+    if (g_bnd_pre_n >= ZEUS_BND_PRESETS) return;
+    p = (char *)malloc(n + 1);
+    if (!p) return;
+    if (n) memcpy(p, msg, n);
+    p[n] = 0;
+    g_bnd_pre_seq[g_bnd_pre_n] = seq;
+    g_bnd_pre_msg[g_bnd_pre_n].ptr = p;
+    g_bnd_pre_msg[g_bnd_pre_n].len = (int64_t)n;
+    g_bnd_pre_msg[g_bnd_pre_n].own = 0;
+    g_bnd_pre_n++;
+}
+
+loam_str loam_platform_plat_boundary_preset(int64_t seq) {
+    loam_str none = { "", 0, 0 };
+    int i;
+    for (i = 0; i < g_bnd_pre_n; i++) {
+        if (g_bnd_pre_seq[i] == (int32_t)seq) return g_bnd_pre_msg[i];
+    }
+    return none;
+}
+
+/* The message of the last panic (empty before any). Static storage: copy it
+   before another panic can overwrite it. */
+loam_str loam_platform_plat_trap_msg(void) {
+    loam_str msg;
+    msg.ptr = loam_jmp_msg;
+    msg.len = (int64_t)strlen(loam_jmp_msg);
+    msg.own = 0;
+    return msg;
 }
 
 /* Router host entry points. A build that never imports `std:router` has no

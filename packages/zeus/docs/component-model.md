@@ -169,7 +169,7 @@ and the caller's are not kept apart, and you cannot list a component's
 shortcuts without reading the code.
 
 `key` also collides with the name every other UI system uses for list
-identity (React `key`, our own `For(items, key, ...)`).
+identity (React `key`, our own `Each(items, ...)`).
 
 ### D7. Two reactivity rules for props
 
@@ -270,7 +270,7 @@ Rules:
   leave sections out, but never reorders them.
 - **The tree is a return.** `return Element(...) { ... }` — the single element
   the component builds, with its children as a trailing block. In the tree you
-  can call elements and components, use `Show`, `For`, `Match`, `Loop`, and
+  can call elements and components, use `Show`, `Each`, `Match`, and
   write plain `if` / `let` for *build-time* decisions. You **cannot** declare
   signals, effects, named `fn` handlers or key tables there. Those go above.
 - **One root.** The returned element is the one root. A component that
@@ -278,7 +278,7 @@ Rules:
 - **No void components.** A component always returns `Node`. A function that
   builds UI must `return` it; there is no "emit into the caller's slot and
   return nothing" form. Framework callbacks that mount subtrees
-  (`Loop` / `For` / `Match` / `Boundary`, `Route.build`, `zeus.App`) all take
+  (`Each` / `Match` / `Boundary`, `Route.build`, `zeus.App`) all take
   `fn(...) -> Node` for the same reason — a plain `fn` returning nothing is
   still accepted there, but a real component is `-> Node`.
 - **Handlers are local `fn` declarations** in the controller:
@@ -432,8 +432,7 @@ What the tree can express:
 | Reactive show/hide, keep subtree | `Show(when = open.get()) { ... }` | `when` changes. Toggles layout only, the subtree is kept (today's `If`) |
 | Reactive show/hide, build on demand | `Show(when = open.get(), lazy = true) { ... }` | Builds on first true, frees on false |
 | One-of-N | `Match(tab, fn(t) { ... })` | `tab` changes. Only the current arm is mounted |
-| Fixed list | `Loop(items, fn(i, it) { ... })` | never |
-| Reactive list | `For(items, key = |it| it.id, fn(i, it) { ... })` | O(changes), rows move with their state |
+| List (fixed or reactive) | `Each(items, fn(i, it) { ... })` — `items` is an array or a read like `todos.get()` | when what `items` reads changes; O(changes): a row whose value stays is moved, a changed value replaces only that row. No wrapper node |
 | Reactive text | `Text("{{count.get()}} items")` | the signal |
 | Reactive style | `style = Style(color = if on() { ink() } else { mute() })` | the signals it reads, per attribute (§4.4) |
 | Children / named slots | `p.children()`, `p.footer()` | — |
@@ -860,7 +859,7 @@ fn Tabs(p: TabsProps) -> Node {
             inset = Edges(top = 0, left = ind.get().x),   // unset edges stay auto
             width = px(ind.get().w), height = px(ind.get().h),
             background = plate(), radius = corners(RAD_MD), elevation = 1))
-        Loop(p.labels, fn(i, label) {
+        Each(p.labels, fn(i, label) {
             Tab(label = label, active = p.selected.get() == i,
                 on_click = fn() => select(i))
         })
@@ -963,7 +962,7 @@ let search_state: Signal<Load> = ...           // Idle | Loading | Ready | Faile
 // tree
 Match(search_state, fn(s) {
     match s {
-        Load.Ready => { For(hits, key = |h| h.sym, fn(i, h) { HitRow(hit = h) }) }
+        Load.Ready => { Each(hits.get(), fn(i, h) { HitRow(hit = h) }) }
         Load.Failed => { ServerDown(retry = search) }
         _ => { Spinner() }
     }
@@ -990,7 +989,7 @@ for), which the screens never read. `book.loam`'s `load_gen` /
 
 | Layer | Lives in | May use the arena? |
 |---|---|---|
-| **Elements**: `Box`, `Row`, `Column`, `Grid`, `Text`, `Input`, `Image`, `Svg`, `Scroll`, `Portal` (today's `Overlay`), plus the hosts `Show`, `For`, `Match`, `Boundary`, `VirtualList` | `zeusbase` / `atoms` | Yes. This is the only code that calls `raw_*`, `Component`, `slot`, `ui_push`, `intern_*`, `arena.*` |
+| **Elements**: `Box`, `Row`, `Column`, `Grid`, `Text`, `Input`, `Image`, `Svg`, `Scroll`, `Portal` (today's `Overlay`), plus the hosts `Show`, `Each`, `Match`, `Boundary`, `VirtualList` | `zeusbase` / `atoms` | Yes. This is the only code that calls `raw_*`, `Component`, `slot`, `ui_push`, `intern_*`, `arena.*` |
 | **Components**: everything else in `zeus-components`, and all app code | `atoms` / `molecules` / `organisms` / apps | **No.** State, controller, keys, view only |
 
 The rule can be checked mechanically: a lint that fails when a file under
@@ -1082,7 +1081,7 @@ bytes: the mark lives beside the node table. Consequences:
   before the first element. This is the leak in D10.
 - Ownership no longer depends on `ui_parents`, so the build stack is only about
   structure and is entirely the compiler's business.
-- Nested components nest owners naturally. A `For` row's scope still owns
+- Nested components nest owners naturally. An `Each` row's scope still owns
   everything its `build` creates (phase 2), now including that row's
   components' state.
 
@@ -1109,7 +1108,7 @@ Probed on this branch with `bin/loamc` rebuilt at `d37c026d`. Phases 1 to 7 have
 | **C16** | A fn's signature is resolved in the module that declares it, not in the caller's, so an app that declares its own `ChipProps` no longer changes what `zui.Chip` takes | Same type names in app and library | **Landed (phase 7)** |
 | **C17** | Struct names are global in the generated C: an app struct named like a library struct (`ChipProps`) still clashes at the C level. Module-qualify struct C names | Same type names in app and library | **Landed.** A struct in a user module whose name another module also declares gets `Type.cname = <module>__<Name>`, and it is a distinct type (`type_eq` compares `cname`). A struct literal built against an expected type (the C7 props fill) uses that type's declaration. Library structs keep their names, because the runtime C uses them. Test: `compile_pass/zeus_struct_shadow` |
 | **C18** | Monomorph and generic-struct C names dropped `[` `]`, so `Option<[]string>` and `Option<string>` shared one C struct, and so did `Option<Signal<[]int>>` and `Option<Signal<int>>`. Both manglers (`type_c_name`, `cname_append_ty`) now spell brackets `L` / `R` | Found while testing C4 | **Landed** |
-| **R7** | Runtime bugs the phase-7 volume of static styles exposed: a disposed static effect's interned handler was freed twice (once by `dispose_eid`, again with its owner, after the id was reused, e.g. by a `For` host's rebuild hook), and effect-table compaction left disposed rows as permanent holes (one leaked row per mount). Both fixed (`arena.forget_intern`, compaction of `fn_ids == 0` rows) | Correctness | **Landed (phase 7)** |
+| **R7** | Runtime bugs the phase-7 volume of static styles exposed: a disposed static effect's interned handler was freed twice (once by `dispose_eid`, again with its owner, after the id was reused, e.g. by an `Each` host's rebuild hook), and effect-table compaction left disposed rows as permanent holes (one leaked row per mount). Both fixed (`arena.forget_intern`, compaction of `fn_ids == 0` rows) | Correctness | **Landed (phase 7)** |
 | R1 | `Style`, `Len`, `Edges`, `Corners`, `Border`, `merge`, value constructors | §4.3–4.5 | **Landed (phase 2)** |
 | R2 | Style effect with field diff; a zero-dependency effect is dropped after its first run | §4.4 | **Landed (phase 2)** |
 | R3 | `KeyBind`, `chord`, `chord_global`, `chord_click`, `keys_concat`, `install_keys`; delete the key block and `apply_key` | §3.3 | **Landed (phase 3)** |
@@ -1212,7 +1211,7 @@ last caller moves, so no step is a flag day.
 - [ ] No `__set`, no `-1` / `""` sentinels in public fields.
 - [ ] Root style is `merge(base, style_of(p.style))`. Keys are `keys_concat(own, p.keys)`.
 - [ ] Booleans are `bool` / `Signal<bool>` / `fn() -> bool`.
-- [ ] Reactive visuals go in `style` (and `hoverStyle` & co. for interaction states), reactive presence in `Show` / `Match` / `For`.
+- [ ] Reactive visuals go in `style` (and `hoverStyle` & co. for interaction states), reactive presence in `Show` / `Match` / `Each`.
 - [ ] No `ui_push`, `ui_pop`, `slot(`, `arena.`, `intern_`, `prop_int`, `raw_`.
 - [ ] A handle, when needed, is a `ref()`, used in `on_mount` / `effect` through ref verbs.
 - [ ] Extra regions are named `fn()` slots. The trailing block is `children`.

@@ -22,7 +22,7 @@ fn LiveList() -> Node {
     let n = zeus.signal(2)
     return Column(spacing.SECTION) {
         zui.SectionHeader("Lists", "Growing rows",
-                           "Add and remove rows. Extra rows are shown, not rebuilt with zui.For.")
+                           "Add and remove rows. Extra rows are shown, not rebuilt with zui.Each.")
         zui.Card() {
             zui.Show(when = n.get() >= 1) {
                 NameRow("Ada")

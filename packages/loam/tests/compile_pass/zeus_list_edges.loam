@@ -1,0 +1,72 @@
+// List and match edge cases: an `Each` row builder that mounts two top-level
+// nodes is wrapped, so the list stays keyed (an insert builds one row, not all
+// of them); and `MatchKeep` keeps an arm's state across a switch where `Match`
+// would rebuild it.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+let mut builds: int = 0
+let mut arm_builds: int = 0
+
+fn expect(cond: bool, msg: string) {
+    if cond == false {
+        fmt.println("FAIL", msg, builds, arm_builds)
+        sys.exit(1)
+    }
+}
+
+fn TwoRoots(i: int, s: string) -> Node {
+    builds = builds + 1
+    zeus.Text("a-{{s}}")
+    return zeus.Text("b-{{s}}")
+}
+
+fn Counter(name: string) -> Node {
+    arm_builds = arm_builds + 1
+    let c = zeus.signal(0)
+    return zeus.Box(style = Style(direction = Direction.Row, gap = 4)) {
+        zeus.Text(name)
+        zui.Button("inc-{{name}}", on_click = fn() => c.set(c.get() + 1), style = Style(width = px(60)))
+        zeus.Text("{{name}}={{c.get()}}")
+    }
+}
+
+fn main() {
+    let names = zeus.signal([]string {})
+    zui.push_item(names, "x")
+    zui.push_item(names, "y")
+    let tab = zeus.signal(0)
+    zeus.snapshot(320, 240, fn() -> Node {
+        zeus.Box(style = Style(direction = Direction.Column)) {
+            zui.Each(names.get(), TwoRoots)
+            zui.MatchKeep(tab, fn(t) => "{{t}}", fn(t: int) {
+                if t == 0 {
+                    Counter("one")
+                } else {
+                    Counter("two")
+                }
+            })
+        }
+    })
+    expect(builds == 2, "initial rows")
+    zui.insert_item(names, 1, "z")
+    zeus.engine_layout(320, 240)
+    expect(builds == 3, "multi-root insert rebuilt every row")
+    expect(zeus.engine_find_text("b-z") != 0, "second root of inserted row missing")
+
+    expect(zeus.engine_click_text("inc-one") != 0, "click inc-one")
+    zeus.engine_layout(320, 240)
+    expect(zeus.engine_find_text("one=1") != 0, "counter did not increment")
+    tab.set(1)
+    zeus.engine_layout(320, 240)
+    expect(zeus.text_visible("two=0"), "second arm not shown")
+    expect(zeus.text_visible("one=1") == false, "first arm still shown")
+    tab.set(0)
+    zeus.engine_layout(320, 240)
+    expect(zeus.text_visible("one=1"), "first arm lost its state")
+    expect(arm_builds == 2, "an arm was rebuilt")
+    fmt.println("list edges ok")
+}

@@ -609,7 +609,10 @@
         else if (t) console.log(t);
       },
       panic: (p, n) => {
-        throw new Error(bytes(p, n) || cstr(p) || "zeus panic");
+        const e = new Error(bytes(p, n) || cstr(p) || "zeus panic");
+        /* Marks a Loam trap for `guardExports` (a RuntimeError is the other kind). */
+        e.zeusPanic = true;
+        throw e;
       },
       view_w: () => Math.max(1, Math.round(canvas.clientWidth || window.innerWidth || 1)),
       view_h: () => Math.max(1, Math.round(canvas.clientHeight || window.innerHeight || 1)),
@@ -1093,9 +1096,74 @@
       ac.abort();
     }
 
+    /* Wasm has no setjmp, so a Loam panic (bounds, overflow, `panic`) cannot be
+       caught inside the module: it traps, and the RuntimeError unwinds out of
+       whichever export JS called. Every export goes through this wrapper. At the
+       outermost call it puts the shadow stack pointer back (the trap skipped
+       every epilogue that would have) and asks the program to recover: the
+       innermost `Boundary` that was at work takes the trap and shows its
+       fallback on the next frame. A trap no boundary covers is rethrown. */
+    /* Boundaries that trapped during startup, carried across re-instantiation. */
+    const bootPresets = [];
+    let wasmModule = null;
+
+    function cstrIn(raw, ptr) {
+      if (!ptr) return "";
+      const u8 = new Uint8Array(raw.memory.buffer);
+      let end = ptr;
+      while (end < u8.length && u8[end] !== 0) end++;
+      return new TextDecoder().decode(u8.subarray(ptr, end));
+    }
+
+    function guardExports(raw) {
+      const sp = raw.__stack_pointer;
+      const spBase = sp ? sp.value : 0;
+      let depth = 0;
+      const out = {};
+      for (const k of Object.keys(raw)) {
+        const v = raw[k];
+        if (typeof v !== "function" || k === "zeus_recover") {
+          out[k] = v;
+          continue;
+        }
+        out[k] = function (...args) {
+          depth++;
+          try {
+            return v.apply(null, args);
+          } catch (e) {
+            const trap = e instanceof WebAssembly.RuntimeError || (e && e.zeusPanic);
+            if (depth > 1 || !trap) throw e;
+            if (sp) sp.value = spBase;
+            let ok = 0;
+            try {
+              ok = raw.zeus_recover ? raw.zeus_recover() | 0 : 0;
+            } catch (e2) {
+              ok = 0;
+            }
+            if (!ok) throw e;
+            if (ok === 2) {
+              /* The trap hit a Boundary while `main` was building the app: the
+                 rest of that build is gone, so start over from a fresh
+                 instance with this boundary pre-seeded as failed. */
+              bootPresets.push({ seq: raw.zeus_trap_seq() | 0, msg: cstrIn(raw, raw.zeus_trap_msg()) });
+              const r = new Error("zeus: restart after a trap during startup");
+              r.zeusRestart = true;
+              throw r;
+            }
+            console.warn("zeus: a Boundary caught a trap in " + k, e);
+            if (schedule) schedule(0);
+            return 0;
+          } finally {
+            depth--;
+          }
+        };
+      }
+      return out;
+    }
+
     function start(instance) {
         if (stopped) return;
-        exp = instance.exports;
+        exp = guardExports(instance.exports);
         mem = exp.memory;
         const sz = sizeCanvas();
         function frame() {
@@ -1134,7 +1202,26 @@
         };
         /* Tree build only — layout waits for the first paint so the tab can
            finish loading and input listeners can attach. */
-        exp.zeus_start();
+        /* Pre-seed the boundaries a previous instance trapped in at startup. */
+        if (exp.zeus_boundary_preset && exp.zeus_text_buf) {
+          for (const p of bootPresets) {
+            const ptr = exp.zeus_text_buf();
+            const cap = exp.zeus_text_buf_cap ? exp.zeus_text_buf_cap() : 0;
+            const b = new TextEncoder().encode(p.msg);
+            const n = Math.min(b.length, Math.max(0, cap - 1));
+            new Uint8Array(mem.buffer, ptr, n).set(b.subarray(0, n));
+            new Uint8Array(mem.buffer, ptr + n, 1)[0] = 0;
+            exp.zeus_boundary_preset(p.seq, ptr);
+          }
+        }
+        try {
+          exp.zeus_start();
+        } catch (e) {
+          if (e && e.zeusRestart && wasmModule && bootPresets.length <= 16) {
+            return WebAssembly.instantiate(wasmModule, imports).then((inst) => start(inst));
+          }
+          throw e;
+        }
         if (exp.zeus_resize) exp.zeus_resize(sz.w, sz.h);
         /* Reduced motion (§3.2): animations jump to their final value, and a
            change of preference takes effect immediately. */
@@ -1482,30 +1569,47 @@
           },
           { passive: false, signal }
         );
+        function keyMods(e) {
+          let mods = 0;
+          if (e.shiftKey) mods |= 1;
+          if (e.ctrlKey) mods |= 2;
+          if (e.altKey) mods |= 4;
+          if (e.metaKey) mods |= 8;
+          return mods;
+        }
+        const KEY_CODES = {
+          Enter: 13, Tab: 9, Backspace: 8, Delete: 127, Escape: 27,
+          ArrowLeft: 1000, ArrowRight: 1001, ArrowUp: 1002, ArrowDown: 1003,
+          PageUp: 1004, PageDown: 1005, Home: 1006, End: 1007,
+        };
+        function keyCode(e) {
+          if (e.key in KEY_CODES) return KEY_CODES[e.key];
+          return e.key.length === 1 ? e.key.charCodeAt(0) : 0;
+        }
+        /* Whether a key event goes to the engine. A page form control keeps its
+           keys. The IME textarea is different: it holds DOM focus while a Zeus
+           text field is being edited, but only to receive typed text (`input`)
+           and compositions. Its printable keys arrive through `input`, so they
+           stay out (they would insert twice); everything else — Backspace,
+           Delete, arrows, Home / End, Enter, Tab, Escape, Cmd / Ctrl chords such
+           as select-all — must reach the engine, or a field could be typed into
+           but never edited or cleared. Nothing goes mid-composition. */
+        function keyForEngine(e) {
+          const active = document.activeElement;
+          if (active === ime) {
+            if (e.isComposing || e.keyCode === 229) return false;
+            if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) return false;
+            return true;
+          }
+          const tag = (active && active.tagName) || "";
+          return !(tag === "TEXTAREA" || tag === "INPUT" || tag === "SELECT");
+        }
         window.addEventListener(
           "keydown",
           (e) => {
-            const tag = (document.activeElement && document.activeElement.tagName) || "";
-            if (tag === "TEXTAREA" || tag === "INPUT" || tag === "SELECT") return;
-            let mods = 0;
-            if (e.shiftKey) mods |= 1;
-            if (e.ctrlKey) mods |= 2;
-            if (e.altKey) mods |= 4;
-            if (e.metaKey) mods |= 8;
-            let key = e.key.length === 1 ? e.key.charCodeAt(0) : 0;
-            if (e.key === "Enter") key = 13;
-            if (e.key === "Tab") key = 9;
-            if (e.key === "Backspace") key = 8;
-            if (e.key === "Delete") key = 127;
-            if (e.key === "Escape") key = 27;
-            if (e.key === "ArrowLeft") key = 1000;
-            if (e.key === "ArrowRight") key = 1001;
-            if (e.key === "ArrowUp") key = 1002;
-            if (e.key === "ArrowDown") key = 1003;
-            if (e.key === "PageUp") key = 1004;
-            if (e.key === "PageDown") key = 1005;
-            if (e.key === "Home") key = 1006;
-            if (e.key === "End") key = 1007;
+            if (!keyForEngine(e)) return;
+            const mods = keyMods(e);
+            const key = keyCode(e);
             exp.zeus_key(key, mods);
             schedule(0);
             if (e.key === "Tab") e.preventDefault();
@@ -1521,27 +1625,9 @@
         window.addEventListener(
           "keyup",
           (e) => {
-            const tag = (document.activeElement && document.activeElement.tagName) || "";
-            if (tag === "TEXTAREA" || tag === "INPUT" || tag === "SELECT") return;
-            let mods = 0;
-            if (e.shiftKey) mods |= 1;
-            if (e.ctrlKey) mods |= 2;
-            if (e.altKey) mods |= 4;
-            if (e.metaKey) mods |= 8;
-            let key = e.key.length === 1 ? e.key.charCodeAt(0) : 0;
-            if (e.key === "Enter") key = 13;
-            if (e.key === "Tab") key = 9;
-            if (e.key === "Backspace") key = 8;
-            if (e.key === "Delete") key = 127;
-            if (e.key === "Escape") key = 27;
-            if (e.key === "ArrowLeft") key = 1000;
-            if (e.key === "ArrowRight") key = 1001;
-            if (e.key === "ArrowUp") key = 1002;
-            if (e.key === "ArrowDown") key = 1003;
-            if (e.key === "PageUp") key = 1004;
-            if (e.key === "PageDown") key = 1005;
-            if (e.key === "Home") key = 1006;
-            if (e.key === "End") key = 1007;
+            if (!keyForEngine(e)) return;
+            const mods = keyMods(e);
+            const key = keyCode(e);
             if (exp.zeus_key_up) exp.zeus_key_up(key, mods);
             schedule(0);
           },
@@ -1575,7 +1661,10 @@
     }
 
     function boot(wasmBuffer) {
-      return WebAssembly.instantiate(wasmBuffer, imports).then((r) => start(r.instance));
+      return WebAssembly.instantiate(wasmBuffer, imports).then((r) => {
+        wasmModule = r.module;
+        return start(r.instance);
+      });
     }
 
     function bootUrl(url) {
@@ -1583,7 +1672,10 @@
         if (!r.ok) throw new Error("failed to load " + url + " (" + r.status + ")");
         const ct = (r.headers.get("content-type") || "").toLowerCase();
         if (typeof WebAssembly.instantiateStreaming === "function" && ct.indexOf("wasm") >= 0) {
-          return WebAssembly.instantiateStreaming(r, imports).then((x) => start(x.instance));
+          return WebAssembly.instantiateStreaming(r, imports).then((x) => {
+            wasmModule = x.module;
+            return start(x.instance);
+          });
         }
         return r.arrayBuffer().then(boot);
       });

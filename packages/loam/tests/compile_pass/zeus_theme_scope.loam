@@ -1,0 +1,97 @@
+// `zui.Scope`: a dark subtree in a light app resolves role colors against dark
+// at paint time, and a compact subtree sizes its controls from its own density
+// while the rest of the app keeps the global one. An accent scope repaints the
+// accent roles for its subtree only; scopes nest per knob, so a dark scope
+// inside an accent scope keeps the accent and switches appearance.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:colors"
+import "std:zui"
+import "zeus:zeuscore/arena"
+
+fn expect(cond: bool, msg: string) {
+    if cond == false {
+        fmt.println("FAIL", msg)
+        sys.exit(1)
+    }
+}
+
+fn rgb_in(id: int) -> int {
+    let prev = arena.paint_scheme_enter(id)
+    let c = arena.paint_rgb(arena.nodes[id].bg)
+    arena.paint_scheme_leave(prev)
+    return c
+}
+
+fn swatch() -> Node {
+    return zeus.Box(style = Style(width = px(20), height = px(20), background = colors.accent()))
+}
+
+// The accent's soft step differs between light and dark (the solid step is
+// often the same in both).
+fn soft() -> Node {
+    return zeus.Box(style = Style(width = px(20), height = px(20), background = colors.accent_soft()))
+}
+
+fn main() {
+    let mut outer = 0
+    let mut inner = 0
+    let mut plain = 0
+    let mut rose = 0
+    let mut teal = 0
+    let mut rose_soft = 0
+    let mut rose_dark = 0
+    let mut plain_dark = 0
+    zeus.snapshot(320, 240, fn() -> Node {
+        return zeus.Box(style = Style(direction = Direction.Column)) {
+            let a = zeus.Box(style = Style(width = px(100), height = px(20), background = colors.plate()))
+            outer = a.id
+            zui.Button("big")
+            zui.Scope(dark = 1, density = Density.Compact) {
+                let b = zeus.Box(style = Style(width = px(100), height = px(20), background = colors.plate()))
+                inner = b.id
+                zui.Button("small")
+            }
+            plain = swatch().id
+            zui.Scope(accent = colors.ACCENT.Rose) {
+                rose = swatch().id
+                rose_soft = soft().id
+                zui.Scope(accent = colors.ACCENT.Teal) {
+                    teal = swatch().id
+                }
+                zui.Scope(dark = 1) {
+                    rose_dark = soft().id
+                }
+            }
+            zui.Scope(dark = 1) {
+                plain_dark = soft().id
+            }
+        }
+    })
+    expect(outer > 0 && inner > 0, "boxes built")
+    let lo = rgb_in(outer)
+    let hi = rgb_in(inner)
+    expect(lo != hi, "dark scope did not change the role color")
+    // Paint still resolves the global scheme outside the scope afterwards.
+    expect(rgb_in(outer) == lo, "scheme leaked out of the scope")
+
+    let a0 = rgb_in(plain)
+    let ar = rgb_in(rose)
+    expect(ar != a0, "accent scope did not change accent()")
+    expect(rgb_in(teal) != ar, "nested accent scope did not win")
+    let ard = rgb_in(rose_dark)
+    expect(ard != rgb_in(rose_soft), "dark scope inside an accent scope kept the light accent")
+    expect(ard != rgb_in(plain_dark), "dark scope dropped the outer accent")
+    expect(rgb_in(plain) == a0, "accent leaked out of the scope")
+    zeus.appearance().set(2)
+    zeus.engine_layout(320, 240)
+    zeus.engine_paint()
+
+    let big = zeus.engine_find_text("big")
+    let small = zeus.engine_find_text("small")
+    expect(big > 0 && small > 0, "buttons built")
+    expect(arena.nodes[small].h < arena.nodes[big].h, "compact scope did not shrink its control")
+    fmt.println("theme scope ok")
+}

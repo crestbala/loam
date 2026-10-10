@@ -150,6 +150,7 @@ static void emit_cond(FILE *o, AstNode *n);
 static void emit_stmt(FILE *o, AstNode *n, int ind);
 static void emit_block_body(FILE *o, AstNode *b, int ind, int is_main);
 static IrFn *find_ir_fn(const char *cname);
+static void lit_template_use(const IrInst *in, const char *cn);
 static const char *c_assignop(int op);
 
 /** C type for a Loam Type (int64_t, loam_str, loam_fn, T*, …). */
@@ -279,6 +280,268 @@ static void emit_var_decl_type(FILE *o, Type *t, const char *name) {
     emit_ctype(o, t);
     fprintf(o, " %s", name);
     if (t && t->kind == TY_ARRAY) fprintf(o, "[%lld]", (long long)t->array_len);
+}
+
+/* `__value_key(x)` — a string that matches iff the value matches.
+   Strings use their bytes. Structs walk fields. Vecs and arrays walk
+   elements. A cycle (a struct that holds a vec of itself) stops at `~`
+   so the key stays stable instead of naming a stack temporary. */
+static const char *env_tag(int id, const char *cname, char *buf, size_t n);
+static Type *vk_stack[24];
+static int vk_depth;
+static int vk_tmp;
+
+static int vk_has_param(const Type *t) {
+    size_t i;
+    if (!t) return 0;
+    if (t->kind == TY_PARAM) return 1;
+    if (t->elem && vk_has_param(t->elem)) return 1;
+    if (t->ret && vk_has_param(t->ret)) return 1;
+    for (i = 0; i < t->param_count; i++)
+        if (vk_has_param(t->params[i])) return 1;
+    for (i = 0; i < t->field_count; i++)
+        if (vk_has_param(t->field_types[i])) return 1;
+    return 0;
+}
+
+static Type *vk_resolve(Type *t) {
+    if (t && subst_n && vk_has_param(t))
+        t = typecheck_subst(t, subst_names, subst_args, subst_n);
+    return t;
+}
+
+static int vk_seen(const Type *t) {
+    int i;
+    for (i = 0; i < vk_depth; i++)
+        if (vk_stack[i] == t) return 1;
+    return 0;
+}
+
+static void emit_value_key(FILE *o, Type *t, const char *place) {
+    int compound;
+    int id;
+    t = vk_resolve(t);
+    if (!t || !place) {
+        fprintf(o, "loam_key_static(\"~\", 1)");
+        return;
+    }
+    compound = t->kind == TY_STRUCT || t->kind == TY_VEC || t->kind == TY_ARRAY;
+    if (compound && (vk_depth >= 24 || vk_seen(t))) {
+        fprintf(o, "loam_key_static(\"~\", 1)");
+        return;
+    }
+    if (compound) vk_stack[vk_depth++] = t;
+    id = vk_tmp++;
+    switch (t->kind) {
+        case TY_STRING:
+            fprintf(o, "loam_key_str(%s)", place);
+            break;
+        case TY_BOOL:
+            fprintf(o, "loam_key_static((%s) ? \"b1\" : \"b0\", 2)", place);
+            break;
+        case TY_INT:
+            if (t->is_unsigned)
+                fprintf(o, "loam_key_int((int64_t)(uint64_t)(%s), %d, 1)", place,
+                        t->bits ? t->bits : 64);
+            else
+                fprintf(o, "loam_key_int((int64_t)(%s), %d, 0)", place,
+                        t->bits ? t->bits : 64);
+            break;
+        case TY_FLOAT:
+            fprintf(o, "loam_key_fbits(&(%s), %d)", place, t->bits ? t->bits : 64);
+            break;
+        case TY_PTR:
+            fprintf(o, "loam_key_addr((uint64_t)(uintptr_t)(%s), 'p')", place);
+            break;
+        case TY_BOX:
+            fprintf(o, "loam_key_addr((uint64_t)(uintptr_t)(%s), 'x')", place);
+            break;
+        case TY_PROC:
+            fprintf(o, "loam_key_addr((uint64_t)(uintptr_t)(%s).fn, 'F')", place);
+            break;
+        case TY_STRUCT: {
+            size_t fi;
+            fprintf(o, "({ loam_str _a%d = loam_key_tag('R', %lld, '{'); ", id,
+                    (long long)t->field_count);
+            for (fi = 0; fi < t->field_count; fi++) {
+                char child[1024];
+                if (!t->field_names[fi]) continue;
+                snprintf(child, sizeof child, "%s.%s", place, t->field_names[fi]);
+                fprintf(o, "{ loam_str _k%d_%zu = ", id, fi);
+                emit_value_key(o, t->field_types[fi], child);
+                fprintf(o, "; _a%d = loam_key_cat(_a%d, _k%d_%zu); } ", id, id, id, fi);
+            }
+            fprintf(o, "_a%d = loam_key_cat(_a%d, loam_key_static(\"}\", 1)); _a%d; })",
+                    id, id, id);
+            break;
+        }
+        case TY_VEC:
+        case TY_ARRAY: {
+            Type *elem = t->elem;
+            int is_vec = t->kind == TY_VEC;
+            int64_t alen = t->array_len > 0 ? t->array_len : 0;
+            char ename[32];
+            snprintf(ename, sizeof ename, "_e%d", id);
+            if (is_vec)
+                fprintf(o, "({ loam_str _a%d = loam_key_tag('V', %s.len, '['); int64_t _i%d; ",
+                        id, place, id);
+            else
+                fprintf(o, "({ loam_str _a%d = loam_key_tag('A', %lld, '['); int64_t _i%d; ",
+                        id, (long long)alen, id);
+            if (is_vec)
+                fprintf(o, "for (_i%d = 0; _i%d < %s.len; _i%d++) { ", id, id, place, id);
+            else
+                fprintf(o, "for (_i%d = 0; _i%d < %lld; _i%d++) { ", id, id,
+                        (long long)alen, id);
+            emit_var_decl_type(o, elem, ename);
+            fprintf(o, " = {0}; ");
+            if (is_vec) {
+                fprintf(o, "if (%s.ptr) memcpy(&%s, (const char *)%s.ptr + (size_t)_i%d * sizeof(%s), sizeof(%s)); ",
+                        place, ename, place, id, ename, ename);
+            } else {
+                fprintf(o, "memcpy(&%s, &(%s)[_i%d], sizeof(%s)); ", ename, place, id, ename);
+            }
+            fprintf(o, "{ loam_str _k%d = ", id);
+            emit_value_key(o, elem, ename);
+            fprintf(o, "; _a%d = loam_key_cat(_a%d, _k%d); } } ", id, id, id);
+            fprintf(o, "_a%d = loam_key_cat(_a%d, loam_key_static(\"]\", 1)); _a%d; })",
+                    id, id, id);
+            break;
+        }
+        default:
+            fprintf(o, "loam_key_static(\"~\", 1)");
+            break;
+    }
+    if (compound) vk_depth--;
+}
+
+/* Value equality for a signal write: the bytes of a `string`, `[]T` or a
+   struct holding one name storage, not the value, so two equal strings in
+   different buffers compared unequal and a write of an equal value re-ran
+   every reader. `emit_value_eq` is the by-value test `__value_key` implies —
+   strings by bytes, structs by field, vecs and arrays by element — as a C
+   expression over two lvalues. A cycle falls back to the bytes (unequal reads
+   as a change, which only costs a re-run). */
+static int ve_deep(Type *t) {
+    size_t i;
+    t = vk_resolve(t);
+    if (!t) return 0;
+    if (t->kind == TY_STRING || t->kind == TY_VEC) return 1;
+    if (vk_seen(t)) return 0;
+    if (t->kind == TY_ARRAY) {
+        int r;
+        vk_stack[vk_depth++] = t;
+        r = ve_deep(t->elem);
+        vk_depth--;
+        return r;
+    }
+    if (t->kind == TY_STRUCT) {
+        if (vk_depth >= 24) return 0;
+        vk_stack[vk_depth++] = t;
+        for (i = 0; i < t->field_count; i++) {
+            if (t->field_names[i] && ve_deep(t->field_types[i])) {
+                vk_depth--;
+                return 1;
+            }
+        }
+        vk_depth--;
+    }
+    return 0;
+}
+
+static void emit_value_eq(FILE *o, Type *t, const char *a, const char *b) {
+    int id;
+    t = vk_resolve(t);
+    if (!t || !ve_deep(t) || vk_depth >= 24 || vk_seen(t)) {
+        fprintf(o, "(memcmp(&(%s), &(%s), sizeof(%s)) == 0)", a, b, a);
+        return;
+    }
+    id = vk_tmp++;
+    switch (t->kind) {
+        case TY_STRING:
+            fprintf(o, "((%s).len == (%s).len && ((%s).ptr == (%s).ptr || (%s).len == 0 || "
+                       "memcmp((%s).ptr, (%s).ptr, (size_t)(%s).len) == 0))",
+                    a, b, a, b, a, a, b, a);
+            break;
+        case TY_STRUCT: {
+            size_t fi;
+            vk_stack[vk_depth++] = t;
+            fprintf(o, "(1");
+            for (fi = 0; fi < t->field_count; fi++) {
+                char ca[1024], cb[1024];
+                if (!t->field_names[fi]) continue;
+                snprintf(ca, sizeof ca, "%s.%s", a, t->field_names[fi]);
+                snprintf(cb, sizeof cb, "%s.%s", b, t->field_names[fi]);
+                fprintf(o, " && ");
+                emit_value_eq(o, t->field_types[fi], ca, cb);
+            }
+            fprintf(o, ")");
+            vk_depth--;
+            break;
+        }
+        case TY_VEC:
+        case TY_ARRAY: {
+            Type *elem = t->elem;
+            int is_vec = t->kind == TY_VEC;
+            char ea[32], eb[32], len[1100];
+            snprintf(ea, sizeof ea, "_qa%d", id);
+            snprintf(eb, sizeof eb, "_qb%d", id);
+            if (is_vec)
+                snprintf(len, sizeof len, "(%s).len", a);
+            else
+                snprintf(len, sizeof len, "%lld", (long long)(t->array_len > 0 ? t->array_len : 0));
+            vk_stack[vk_depth++] = t;
+            fprintf(o, "({ int _qr%d = 1; int64_t _qi%d; ", id, id);
+            if (is_vec)
+                fprintf(o, "_qr%d = (%s).len == (%s).len; if (_qr%d && (%s).ptr != (%s).ptr) ",
+                        id, a, b, id, a, b);
+            fprintf(o, "for (_qi%d = 0; _qr%d && _qi%d < %s; _qi%d++) { ", id, id, id, len, id);
+            emit_var_decl_type(o, elem, ea);
+            fprintf(o, " = {0}; ");
+            emit_var_decl_type(o, elem, eb);
+            fprintf(o, " = {0}; ");
+            if (is_vec) {
+                fprintf(o, "memcpy(&%s, (const char *)(%s).ptr + (size_t)_qi%d * sizeof(%s), sizeof(%s)); ",
+                        ea, a, id, ea, ea);
+                fprintf(o, "memcpy(&%s, (const char *)(%s).ptr + (size_t)_qi%d * sizeof(%s), sizeof(%s)); ",
+                        eb, b, id, eb, eb);
+            } else {
+                fprintf(o, "memcpy(&%s, &(%s)[_qi%d], sizeof(%s)); ", ea, a, id, ea);
+                fprintf(o, "memcpy(&%s, &(%s)[_qi%d], sizeof(%s)); ", eb, b, id, eb);
+            }
+            fprintf(o, "_qr%d = ", id);
+            emit_value_eq(o, elem, ea, eb);
+            fprintf(o, "; } _qr%d; })", id);
+            vk_depth--;
+            break;
+        }
+        default:
+            fprintf(o, "(memcmp(&(%s), &(%s), sizeof(%s)) == 0)", a, b, a);
+            break;
+    }
+}
+
+/* `loam_zeus_sig_changed(id, &val, sizeof val)`, refined by value for a type
+   whose bytes name storage: when the bytes differ but the cell holds a value
+   of this type, the write is a change only if the values differ. */
+static void emit_sig_changed(FILE *o, Type *t, const char *id, const char *val) {
+    int k;
+    if (!ve_deep(t)) {
+        fprintf(o, "loam_zeus_sig_changed(%s, &%s, sizeof(%s))", id, val, val);
+        return;
+    }
+    k = vk_tmp++;
+    fprintf(o, "({ int64_t _chg%d = loam_zeus_sig_changed(%s, &%s, sizeof(%s)); "
+               "if (_chg%d && loam_zeus_sig_sized(%s, sizeof(%s))) { ",
+            k, id, val, val, k, id, val);
+    {
+        char cur[32];
+        snprintf(cur, sizeof cur, "_cur%d", k);
+        emit_var_decl_type(o, t, cur);
+        fprintf(o, "; loam_zeus_sig_load(%s, &%s, sizeof(%s)); _chg%d = !", id, cur, cur, k);
+        emit_value_eq(o, t, cur, val);
+        fprintf(o, "; } _chg%d; })", k);
+    }
 }
 
 static const char *src_file(AstNode *n) {
@@ -987,7 +1250,9 @@ static void emit_expr(FILE *o, AstNode *n) {
                     emit_expr(o, n->as.call.args[1]);
                     fprintf(o, "; int64_t _sid = ");
                     emit_expr(o, n->as.call.args[0]);
-                    fprintf(o, "; if (loam_zeus_sig_changed(_sid, &_sv, sizeof(_sv))) { "
+                    fprintf(o, "; if (");
+                    emit_sig_changed(o, vt, "_sid", "_sv");
+                    fprintf(o, ") { "
                                "loam_vec _old; loam_zeus_sig_load(_sid, &_old, sizeof(_old)); "
                                "_old = loam_vec_retain(&_old); "
                                "loam_vec _new = loam_vec_retain(&_sv); "
@@ -1000,7 +1265,9 @@ static void emit_expr(FILE *o, AstNode *n) {
                     emit_expr(o, n->as.call.args[1]);
                     fprintf(o, "; int64_t _sid = ");
                     emit_expr(o, n->as.call.args[0]);
-                    fprintf(o, "; if (loam_zeus_sig_changed(_sid, &_sv, sizeof(_sv))) { "
+                    fprintf(o, "; if (");
+                    emit_sig_changed(o, vt, "_sid", "_sv");
+                    fprintf(o, ") { "
                                "loam_zeus_sig_bind(_sid, &_sv, sizeof(_sv)); loam_arena_note_write(_sid); "
                                "} 0; })");
                 }
@@ -1118,6 +1385,16 @@ static void emit_expr(FILE *o, AstNode *n) {
                 fprintf(o, "loam_ch_ready(");
                 emit_expr(o, n->as.call.args[0]);
                 fprintf(o, ")");
+                break;
+            }
+            if (n->as.call.value_key && n->as.call.arg_count == 1) {
+                fprintf(o, "({ ");
+                emit_ctype(o, n->as.call.args[0]->ty);
+                fprintf(o, " _vk = ");
+                emit_expr(o, n->as.call.args[0]);
+                fprintf(o, "; ");
+                emit_value_key(o, n->as.call.args[0]->ty, "_vk");
+                fprintf(o, "; })");
                 break;
             }
             if (n->as.call.is_sizeof && n->as.call.arg_count == 1) {
@@ -1752,7 +2029,9 @@ static void emit_ir_place(FILE *o, const IrPlace *p) {
         case IR_PL_FIELD:
             if (CF && CF->clos_id && CF->env_local >= 0 && p->base &&
                 p->base->kind == IR_PL_LOCAL && p->base->local == CF->env_local) {
-                fprintf(o, "((struct loam_env_%d *)%s)->%s", CF->clos_id, lv(CF->env_local),
+                char tag[300];
+                env_tag(CF->clos_id, CF->cname, tag, sizeof tag);
+                fprintf(o, "((struct %s *)%s)->%s", tag, lv(CF->env_local),
                         p->field ? p->field : "?");
             } else if (is_ptrish_ty(p->base ? p->base->ty : NULL)) {
                 fprintf(o, "(");
@@ -1833,8 +2112,68 @@ static const char *c_assignop(int op) {
     }
 }
 
+/* Out-of-line ownership helpers. A struct with several owning leaves (a
+   `Style` is a dozen `Option<string>`s) expands to one retain, release or
+   clear per leaf at every copy, drop and move — most of a component's code.
+   Such a struct gets `loam_keep__T` / `loam_rel__T` / `loam_steal__T` once
+   (`emit_own_helpers`), and those sites call them instead. */
+#define OWN_HELPER_BUCKETS 4096
+static const char *own_helper_tab[OWN_HELPER_BUCKETS];
+
+static unsigned own_helper_hash(const char *s) {
+    unsigned h = 2166136261u;
+    for (; *s; s++) h = (h ^ (unsigned char)*s) * 16777619u;
+    return h & (OWN_HELPER_BUCKETS - 1);
+}
+
+static int own_helper_has(const char *cn) {
+    for (unsigned h = own_helper_hash(cn);; h = (h + 1) & (OWN_HELPER_BUCKETS - 1)) {
+        if (!own_helper_tab[h]) return 0;
+        if (strcmp(own_helper_tab[h], cn) == 0) return 1;
+    }
+}
+
+static int own_helper_add(const char *cn) {
+    unsigned h = own_helper_hash(cn);
+    for (int n = 0; n < OWN_HELPER_BUCKETS - 1; n++, h = (h + 1) & (OWN_HELPER_BUCKETS - 1)) {
+        if (!own_helper_tab[h]) {
+            own_helper_tab[h] = loam_dup(cn);
+            return 1;
+        }
+        if (strcmp(own_helper_tab[h], cn) == 0) return 1;
+    }
+    return 0; /* table full: callers inline */
+}
+
+/** Owning leaves (string, vec, box, fn) a value of `t` holds inline. */
+static int own_leaves(Type *t) {
+    if (!t || !type_needs_drop(t)) return 0;
+    if (t->kind == TY_STRUCT) {
+        int n = 0;
+        for (size_t i = 0; i < t->field_count; i++) n += own_leaves(t->field_types[i]);
+        return n;
+    }
+    if (t->kind == TY_ARRAY) return 2;
+    return 1;
+}
+
+/** Writes `t`'s C name to `cn` and returns 1 when `t` has helpers. */
+static int own_helper_for(Type *t, char *cn, size_t cap) {
+    if (!t || t->kind != TY_STRUCT) return 0;
+    type_c_name(t, cn, cap);
+    return own_helper_has(cn);
+}
+
 static void emit_steal(FILE *o, const char *place, Type *t, int ind) {
     if (!t || !place) return;
+    {
+        char cn[256];
+        if (own_helper_for(t, cn, sizeof cn)) {
+            indent(o, ind);
+            fprintf(o, "loam_steal__%s(&%s);\n", cn, place);
+            return;
+        }
+    }
     if (t->kind == TY_BOX) {
         indent(o, ind);
         fprintf(o, "%s = NULL;\n", place);
@@ -1879,6 +2218,14 @@ static void emit_steal(FILE *o, const char *place, Type *t, int ind) {
 
 static void emit_drop_place(FILE *o, const char *place, Type *t, int ind) {
     if (!type_needs_drop(t) || !place) return;
+    {
+        char cn[256];
+        if (own_helper_for(t, cn, sizeof cn)) {
+            indent(o, ind);
+            fprintf(o, "loam_rel__%s(&%s);\n", cn, place);
+            return;
+        }
+    }
     if (t->kind == TY_BOX) {
         indent(o, ind);
         fprintf(o, "loam_drop((void **)&%s);\n", place);
@@ -1952,6 +2299,14 @@ static void emit_drop_place(FILE *o, const char *place, Type *t, int ind) {
  * callee will drop; the callee's param drops then release exactly these. */
 static void emit_nested_keeps(FILE *o, const char *place, Type *t, int ind) {
     if (!t || !type_needs_drop(t)) return;
+    {
+        char cn[256];
+        if (own_helper_for(t, cn, sizeof cn)) {
+            indent(o, ind);
+            fprintf(o, "loam_keep__%s(&%s);\n", cn, place);
+            return;
+        }
+    }
     if (t->kind == TY_STRING) {
         /* The place keeps its own reference; the temporary takes one too. */
         indent(o, ind);
@@ -2294,6 +2649,13 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
             break;
         case IR_CALL:
         case IR_CALL_VAL: {
+            if (in->op == IR_CALL && in->callee && strcmp(in->callee, "loam_value_key") == 0 &&
+                in->nargs >= 1 && in->dst >= 0) {
+                fprintf(o, "%s = ", lv(in->dst));
+                emit_value_key(o, in->ty, lv(in->args[0]));
+                fprintf(o, ";\n");
+                break;
+            }
             if (in->op == IR_CALL && in->callee && strcmp(in->callee, "loam_sig_push") == 0 &&
                 in->nargs >= 1 && in->dst >= 0) {
                 Type *vt = in->ty;
@@ -2362,8 +2724,9 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                     fprintf(o, "loam_arena_store_sig(%s, %s);\n", lv(in->args[0]),
                             lv(in->args[1]));
                 } else if (type_is_copy_vec(vt)) {
-                    fprintf(o, "if (loam_zeus_sig_changed(%s, &%s, sizeof(%s))) {\n",
-                            lv(in->args[0]), lv(in->args[1]), lv(in->args[1]));
+                    fprintf(o, "if (");
+                    emit_sig_changed(o, vt, lv(in->args[0]), lv(in->args[1]));
+                    fprintf(o, ") {\n");
                     indent(o, 2);
                     fprintf(o, "loam_vec _old; loam_zeus_sig_load(%s, &_old, sizeof(_old)); _old = loam_vec_retain(&_old);\n",
                             lv(in->args[0]));
@@ -2377,8 +2740,9 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                 } else if (type_is_refcounted(vt)) {
                     /* New value takes a reference for the cell; the bytes the
                        cell held are released as bind overwrites them. */
-                    fprintf(o, "if (loam_zeus_sig_changed(%s, &%s, sizeof(%s))) {\n",
-                            lv(in->args[0]), lv(in->args[1]), lv(in->args[1]));
+                    fprintf(o, "if (");
+                    emit_sig_changed(o, vt, lv(in->args[0]), lv(in->args[1]));
+                    fprintf(o, ") {\n");
                     indent(o, 2);
                     fprintf(o, "loam_str _old; loam_zeus_sig_load(%s, &_old, sizeof(_old));\n",
                             lv(in->args[0]));
@@ -2393,8 +2757,9 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                 } else if (vt && vt->kind == TY_STRUCT && type_needs_drop(vt)) {
                     /* Same ownership as a `[]T` cell, leaf by leaf: the new value
                        takes references for the cell, the old one is released. */
-                    fprintf(o, "if (loam_zeus_sig_changed(%s, &%s, sizeof(%s))) {\n",
-                            lv(in->args[0]), lv(in->args[1]), lv(in->args[1]));
+                    fprintf(o, "if (");
+                    emit_sig_changed(o, vt, lv(in->args[0]), lv(in->args[1]));
+                    fprintf(o, ") {\n");
                     indent(o, 2);
                     emit_ctype(o, vt);
                     fprintf(o, " _old; loam_zeus_sig_load(%s, &_old, sizeof(_old));\n",
@@ -2681,21 +3046,45 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                 type_c_name(t, cn, sizeof cn);
             else
                 snprintf(cn, sizeof cn, "%s", t && t->name ? t->name : "struct");
-            fprintf(o, "%s = (%s){ ", lv(in->dst), cn);
-            for (int k = 0; k < in->nargs; k++) {
-                if (k) fprintf(o, ", ");
-                if (t && k < (int)t->field_count && t->field_names[k])
-                    fprintf(o, ".%s = %s", t->field_names[k], lv(in->args[k]));
-                else
-                    fprintf(o, "%s", lv(in->args[k]));
+            if (in->lit_dflt) {
+                /* Start from the struct's default template (`emit_lit_templates`)
+                   and store only the fields the template does not supply. */
+                char dbuf[64];
+                snprintf(dbuf, sizeof dbuf, "%s", lv(in->dst));
+                lit_template_use(in, cn);
+                fprintf(o, "%s = loam_dflt_%s;\n", dbuf, cn);
+                for (int k = 0; k < in->nargs; k++) {
+                    if (in->args[k] < 0) continue;
+                    indent(o, 1);
+                    fprintf(o, "%s.%s = %s;\n", dbuf, t->field_names[k], lv(in->args[k]));
+                }
+            } else {
+                fprintf(o, "%s = (%s){ ", lv(in->dst), cn);
+                for (int k = 0; k < in->nargs; k++) {
+                    if (k) fprintf(o, ", ");
+                    if (t && k < (int)t->field_count && t->field_names[k])
+                        fprintf(o, ".%s = %s", t->field_names[k], lv(in->args[k]));
+                    else
+                        fprintf(o, "%s", lv(in->args[k]));
+                }
+                fprintf(o, " };\n");
             }
-            fprintf(o, " };\n");
             /* An owned string field takes a reference; its source keeps its own
                and drops normally (see the matching change in ir.c). */
             if (type_string_owns() && t && t->kind == TY_STRUCT && type_owns_string(t)) {
                 char dbuf[64];
                 snprintf(dbuf, sizeof dbuf, "%s", lv(in->dst));
-                emit_nested_keeps(o, dbuf, t, 1);
+                if (in->lit_dflt) {
+                    /* Template fields are static literals: nothing to retain. */
+                    for (int k = 0; k < in->nargs; k++) {
+                        if (in->args[k] < 0) continue;
+                        char fbuf[320];
+                        snprintf(fbuf, sizeof fbuf, "%s.%s", dbuf, t->field_names[k]);
+                        emit_nested_keeps(o, fbuf, t->field_types[k], 1);
+                    }
+                } else {
+                    emit_nested_keeps(o, dbuf, t, 1);
+                }
             }
             break;
         }
@@ -2744,10 +3133,12 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
             } else {
                 int id = (int)in->imm;
                 IrFn *cf = find_ir_fn(in->callee);
+                char tag[300];
+                env_tag(id, in->callee, tag, sizeof tag);
                 fprintf(o, "{\n");
                 indent(o, 2);
-                fprintf(o, "struct loam_env_%d *_ce = (struct loam_env_%d *)loam_new(sizeof(struct loam_env_%d), ",
-                        id, id, id);
+                fprintf(o, "struct %s *_ce = (struct %s *)loam_new(sizeof(struct %s), ",
+                        tag, tag, tag);
                 emit_ir_loc(o, in->loc);
                 fprintf(o, ");\n");
                 for (int k = 0; k < in->nargs; k++) {
@@ -2778,8 +3169,8 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                     }
                 }
                 indent(o, 2);
-                fprintf(o, "%s = ((loam_fn){(void *)%s, _ce, sizeof(struct loam_env_%d)});\n",
-                        dbuf, in->callee ? in->callee : "unknown", id);
+                fprintf(o, "%s = ((loam_fn){(void *)%s, _ce, sizeof(struct %s)});\n",
+                        dbuf, in->callee ? in->callee : "unknown", tag);
                 indent(o, 1);
                 fprintf(o, "}\n");
             }
@@ -3088,6 +3479,176 @@ static void emit_clos_env(FILE *o, AstNode *fn) {
     fprintf(o, "};\n");
 }
 
+/** Prototypes, then bodies, of the ownership helpers for every emitted struct
+ *  with two or more owning leaves. A body expands its own fields inline and
+ *  calls the helpers of nested structs. */
+static void emit_own_helpers(FILE *o) {
+    for (int h = 0; h < OWN_HELPER_BUCKETS; h++) {
+        free((void *)own_helper_tab[h]);
+        own_helper_tab[h] = NULL;
+    }
+    int *want = se_n ? (int *)calloc((size_t)se_n, sizeof(int)) : NULL;
+    for (int i = 0; i < se_n; i++) {
+        if (se_list[i].state != 2 || own_leaves(se_list[i].t) < 2) continue;
+        if (!own_helper_add(se_list[i].name)) continue;
+        want[i] = 1;
+        const char *cn = se_list[i].name;
+        fprintf(o, "static void loam_keep__%s(%s *p);\n", cn, cn);
+        fprintf(o, "static void loam_rel__%s(%s *p);\n", cn, cn);
+        fprintf(o, "static void loam_steal__%s(%s *p);\n", cn, cn);
+    }
+    for (int i = 0; i < se_n; i++) {
+        if (!want[i]) continue;
+        Type *t = se_list[i].t;
+        const char *cn = se_list[i].name;
+        static const char *kinds[3] = {"keep", "rel", "steal"};
+        for (int k = 0; k < 3; k++) {
+            fprintf(o, "__attribute__((unused)) static void loam_%s__%s(%s *p) {\n", kinds[k], cn, cn);
+            for (size_t f = 0; f < t->field_count; f++) {
+                if (!type_needs_drop(t->field_types[f])) continue;
+                char buf[256];
+                snprintf(buf, sizeof buf, "p->%s", t->field_names[f]);
+                if (k == 0) emit_nested_keeps(o, buf, t->field_types[f], 1);
+                else if (k == 1) emit_drop_place(o, buf, t->field_types[f], 1);
+                else emit_steal(o, buf, t->field_types[f], 1);
+            }
+            fprintf(o, "}\n");
+        }
+    }
+    if (se_n) fprintf(o, "\n");
+    free(want);
+}
+
+/** A constant default (`ir_static_const`) as a C static initializer. */
+static void emit_const_init(FILE *o, const AstNode *e) {
+    const char *fnv = ir_const_fn_val(e);
+    if (fnv) {
+        fprintf(o, "{(void *)%s__as_fn, NULL, 0}", fnv);
+        return;
+    }
+    if (ir_const_empty_vec(e)) {
+        fprintf(o, "{0}");
+        return;
+    }
+    switch (e->kind) {
+        case AST_NUMBER:
+            fprintf(o, "%lld", (long long)e->as.lit.value);
+            break;
+        case AST_FLOAT:
+            fprintf(o, "%.17g", e->as.lit.f);
+            break;
+        case AST_BOOL:
+            fprintf(o, "%d", e->as.lit.b ? 1 : 0);
+            break;
+        case AST_STRING: {
+            const char *s = e->as.lit.str;
+            fprintf(o, "{(const char *)\"");
+            emit_c_string_body(o, s);
+            fprintf(o, "\", %lld}", (long long)(s ? strlen(s) : 0));
+            break;
+        }
+        case AST_STRUCT_LIT:
+            if (!e->as.struct_lit.field_count) {
+                fprintf(o, "{0}");
+                break;
+            }
+            fprintf(o, "{ ");
+            for (size_t k = 0; k < e->as.struct_lit.field_count; k++) {
+                if (k) fprintf(o, ", ");
+                fprintf(o, ".%s = ", e->as.struct_lit.fields[k].name);
+                emit_const_init(o, e->as.struct_lit.fields[k].init);
+            }
+            fprintf(o, " }");
+            break;
+        default:
+            fprintf(o, "0");
+            break;
+    }
+}
+
+/* Default templates, one `static const T loam_dflt_T` per struct whose
+   literals start from one (`IrInst.lit_dflt`). Every site of a struct takes
+   its defaults from the same declaration, so the template is the union of the
+   constant defaults of the sites emitted; a site overwrites what it passes.
+
+   `emit_lit_template_decls` declares (tentatively) every template the IR could
+   use, before any body; the bodies record the sites they actually emit
+   (`lit_template_use`); `emit_lit_template_defs` writes the initializers at
+   the end of the file. Only emitted sites count, so a default naming a fn
+   (`= noop`) never refers to the trampoline of a fn DCE dropped. */
+typedef struct {
+    char cn[256];
+    Type *t;
+    AstNode **d;
+} LitTmpl;
+static LitTmpl *lit_tmpls;
+static int lit_tmpl_n, lit_tmpl_cap;
+
+static int lit_tmpl_find(const char *cn) {
+    for (int j = 0; j < lit_tmpl_n; j++)
+        if (strcmp(lit_tmpls[j].cn, cn) == 0) return j;
+    return -1;
+}
+
+static int lit_tmpl_add(Type *t, const char *cn) {
+    int j = lit_tmpl_find(cn);
+    if (j >= 0) return j;
+    if (lit_tmpl_n == lit_tmpl_cap) {
+        lit_tmpl_cap = lit_tmpl_cap ? lit_tmpl_cap * 2 : 64;
+        lit_tmpls = (LitTmpl *)realloc(lit_tmpls, (size_t)lit_tmpl_cap * sizeof(LitTmpl));
+        if (!lit_tmpls) loam_fatal("out of memory");
+    }
+    LitTmpl *lt = &lit_tmpls[lit_tmpl_n];
+    snprintf(lt->cn, sizeof lt->cn, "%s", cn);
+    lt->t = t;
+    lt->d = NULL;
+    return lit_tmpl_n++;
+}
+
+static void lit_template_use(const IrInst *in, const char *cn) {
+    int j = lit_tmpl_add(in->ty, cn);
+    LitTmpl *lt = &lit_tmpls[j];
+    if (!lt->d) lt->d = (AstNode **)calloc(in->ty->field_count, sizeof(AstNode *));
+    for (int k = 0; k < in->nargs && k < (int)in->ty->field_count; k++)
+        if (in->lit_dflt[k] && !lt->d[k]) lt->d[k] = in->lit_dflt[k];
+}
+
+static void emit_lit_template_decls(FILE *o) {
+    for (int j = 0; j < lit_tmpl_n; j++) free(lit_tmpls[j].d);
+    lit_tmpl_n = 0;
+    for (int f = 0; f < emit_ir_mod->nfns; f++) {
+        IrFn *fn = &emit_ir_mod->fns[f];
+        if (!fn->lowered) continue;
+        for (int b = 0; b < fn->nblocks; b++)
+            for (int i = 0; i < fn->blocks[b].ninsts; i++) {
+                IrInst *in = &fn->blocks[b].insts[i];
+                if (in->op != IR_STRUCT_LIT || !in->lit_dflt) continue;
+                char cn[256];
+                type_c_name(in->ty, cn, sizeof cn);
+                if (lit_tmpl_find(cn) >= 0) continue;
+                lit_tmpl_add(in->ty, cn);
+                fprintf(o, "__attribute__((unused)) static const %s loam_dflt_%s;\n", cn, cn);
+            }
+    }
+    if (lit_tmpl_n) fprintf(o, "\n");
+}
+
+static void emit_lit_template_defs(FILE *o) {
+    for (int j = 0; j < lit_tmpl_n; j++) {
+        LitTmpl *lt = &lit_tmpls[j];
+        if (!lt->d) continue; /* no emitted site: the tentative zero stands */
+        fprintf(o, "static const %s loam_dflt_%s = { ", lt->cn, lt->cn);
+        int first = 1;
+        for (size_t k = 0; k < lt->t->field_count; k++) {
+            if (!lt->d[k]) continue;
+            fprintf(o, "%s.%s = ", first ? "" : ", ", lt->t->field_names[k]);
+            emit_const_init(o, lt->d[k]);
+            first = 0;
+        }
+        fprintf(o, " };\n");
+    }
+}
+
 /** Closures lowered from a generic instance: `loam_clos_<id>_<mono>`. */
 static int is_mono_clos(const IrFn *fn) {
     if (!fn || !fn->cname) return 0;
@@ -3097,6 +3658,23 @@ static int is_mono_clos(const IrFn *fn) {
     return *p == '_';
 }
 
+/* The C struct name of a closure's environment. A closure inside a generic fn
+   is lowered once per instance (`loam_clos_<id>_<inst>`), and its captures are
+   typed per instance — a capture of a `T` is a different C type in each — so
+   each instance gets its own env (`loam_env_<id>_<inst>`), not one shared by
+   the AST id. */
+static const char *env_tag(int id, const char *cname, char *buf, size_t n) {
+    char pre[40];
+    size_t pl;
+    snprintf(pre, sizeof pre, "loam_clos_%d_", id);
+    pl = strlen(pre);
+    if (cname && strncmp(cname, pre, pl) == 0 && cname[pl])
+        snprintf(buf, n, "loam_env_%d_%s", id, cname + pl);
+    else
+        snprintf(buf, n, "loam_env_%d", id);
+    return buf;
+}
+
 static int clos_id_in_nodes(int id) {
     for (int i = 0; i < nclos_nodes; i++)
         if (clos_nodes[i] && clos_nodes[i]->as.fn.clos_id == id) return 1;
@@ -3104,12 +3682,24 @@ static int clos_id_in_nodes(int id) {
 }
 
 static void emit_mono_clos_env(FILE *o, const IrFn *fn, int *seen, int *nseen, int nseen_cap) {
+    char tag[300];
+    int inst;
     if (!fn->ncaps) return;
-    if (clos_id_in_nodes(fn->clos_id)) return;
-    for (int i = 0; i < *nseen; i++)
-        if (seen[i] == fn->clos_id) return;
-    if (*nseen < nseen_cap) seen[(*nseen)++] = fn->clos_id;
-    fprintf(o, "struct loam_env_%d {\n", fn->clos_id);
+    env_tag(fn->clos_id, fn->cname, tag, sizeof tag);
+    /* A per-instance env (`loam_env_<id>_<inst>`) is emitted once per instance;
+       only a shared one can already exist from the AST closure list. */
+    {
+        char shared[40];
+        snprintf(shared, sizeof shared, "loam_env_%d", fn->clos_id);
+        inst = strcmp(tag, shared) != 0;
+    }
+    if (!inst) {
+        if (clos_id_in_nodes(fn->clos_id)) return;
+        for (int i = 0; i < *nseen; i++)
+            if (seen[i] == fn->clos_id) return;
+        if (*nseen < nseen_cap) seen[(*nseen)++] = fn->clos_id;
+    }
+    fprintf(o, "struct %s {\n", tag);
     for (int k = 0; k < fn->ncaps; k++) {
         fprintf(o, "    ");
         emit_var_decl_type(o, fn->cap_types ? fn->cap_types[k] : ty_int(),
@@ -3277,6 +3867,7 @@ void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path)
         fprintf(out, "static void loam_elem_retain_%d(void *p);\n"
                      "static void loam_elem_release_%d(void *p);\n", i, i);
     fprintf(out, "\n");
+    emit_own_helpers(out);
 
     for (int i = 0; i < typecheck_global_count(); i++) {
         AstNode *gv = typecheck_global_var(i);
@@ -3355,6 +3946,8 @@ void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path)
         }
     }
 
+    emit_lit_template_decls(out);
+
     cur_is_main_mod = 1;
     for (int i = 0; i < nclos_nodes; i++) emit_closure_fn(out, clos_nodes[i]);
     if (emit_ir_mod) {
@@ -3421,6 +4014,7 @@ void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path)
         emit_drop_place(out, "(*_e)", ht, 1);
         fprintf(out, "}\n");
     }
+    emit_lit_template_defs(out);
 
     if (test_mode) {
         /* The runner is thin: it names each test through `test.begin`, calls

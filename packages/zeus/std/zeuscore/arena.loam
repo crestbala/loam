@@ -21,6 +21,9 @@ struct UiNode {
 
     // --- 16-byte block: slices and strings --------------------------------
     kids: []int,
+    /// A `Each` marker's rows, in order (see `frag_set`). They live in the
+    /// marker's parent's `kids`, not in this node's.
+    frag: []int,
     text: string,
     a11y_label: string,
     a11y_role: string,
@@ -112,7 +115,31 @@ struct UiNode {
     bind_fn: int,
     list_fn: int,
     list_gen: int,
-    /// Windowed `For` / `VirtualList`: first rendered index, exclusive last,
+    /// How the frame reaches `list_fn` (see `set_list_fn`): 0 not yet
+    /// registered, 1 polled after every layout / scroll, 2 push-only (runs when
+    /// a bound signal is written), 4 push-only and queued for this frame.
+    list_mode: int,
+    /// 1 on a `Boundary` host: a trap in a handler or effect owned by a node
+    /// under it swaps it to its fallback (`invoke_on`).
+    bnd: int,
+    /// Exit transition (`exit_fade` / `exit_slide` / `exit_scale`): 0 none,
+    /// 1 fade, 2 fade + slide by `exit_arg` dp, 3 fade + scale to `exit_arg`%.
+    exit_fx: int,
+    exit_ms: int,
+    exit_arg: int,
+    /// 1 while the node plays its exit transition: inert, frozen, freed when
+    /// the transition ends (`exit_or_free`).
+    exiting: int,
+    /// Scoped appearance for the subtree (`set_scheme`): `scheme % 4` is 0
+    /// inherit, 1 light, 2 dark; `scheme / 4` is a scoped role palette
+    /// (`set_palette`), 0 none. Resolved at paint time, so it costs nothing
+    /// until used.
+    scheme: int,
+    /// Scoped density signal for the subtree (`set_density_scope`), 0 none.
+    dens_sid: int,
+    /// The `Each` marker whose rows include this node (0 = none).
+    frag_of: int,
+    /// Windowed `Each` / `VirtualList`: first rendered index, exclusive last,
     /// live item count, and the fixed row height used for spacers. `row_h`
     /// 0 means "not windowed" (build every child).
     list_lo: int,
@@ -332,7 +359,7 @@ let mut safe_b: int = 0
 let mut safe_l: int = 0
 
 // --- rebuild-scope bookkeeping ---
-// `For` / `refit` hosts rebuild their subtree from a builder. Anything the
+// `Each` / `refit` hosts rebuild their subtree from a builder. Anything the
 // builder allocates — signals (`sig_new`) and interned handlers (recorded via
 // `record_intern`) — is owned by the host node for as long as the build
 // stands; tearing the host down (rebuild or drop) frees those ids and makes
@@ -381,6 +408,12 @@ let mut paint_all: int = 0
    Cleared whenever the tree or a node changes hands (`mark_tree`, node alloc /
    free), because a span is keyed by node id. */
 let mut paint_spans_ok: int = 0
+/* 1 when a `view` app's last build may be out of date: a write no effect, bound
+   node or host consumed (the view read the signal while it built, untracked), or
+   a frame-wide structural mark. Targeted layout / paint / host dirt leaves it
+   clear — the retained tree already follows those — so only this (or a resize
+   the view read) rebuilds the view and resets the graph. */
+let mut view_stale: int = 1
 /// Nodes that only have a paint-marked *descendant* (bit 3). Kept so the bit can
 /// be cleared at the end of the frame like the PAINT marks are.
 let mut dirty_desc: []int = []int {}
@@ -402,7 +435,7 @@ let mut chrome_sync_count: int = 0
 // `bind` reads it (a switch's tween is read by the chrome pass, not an effect).
 let mut bind_sig: []int = []int {}
 let mut bind_node: []int = []int {}
-/// Host consumers of a signal (a `Match` on its tag, a `For` / `Index` on its
+/// Host consumers of a signal (a `Match` on its tag, an `Each` on its
 /// items): the host's refresh hook, not an effect, reads the signal, so a write
 /// would otherwise be unattributable and mark the whole frame. Indexed like
 /// `bind_*`; `hosts_for_signal` asks the frame to run the host refresh pass.
@@ -462,7 +495,7 @@ let mut mem_frames: int = 0
 
 fn blank_node() -> UiNode {
     return UiNode {
-        kind: 0, dir: 0, kids: []int {}, pad: 0, padx: 0, pady: 0,
+        kind: 0, dir: 0, kids: []int {}, frag: []int {}, pad: 0, padx: 0, pady: 0,
         pad_t: 0, pad_r: 0, pad_b: 0, pad_l: 0, gap: 0, grow: 0, shrink: 1,
         bg: -1, bg2: -1, fg: -1, radius: 0, rad_tl: 65535, rad_tr: 65535, rad_br: 65535, rad_bl: 65535, explicit_width: -1, explicit_height: -1, font: 0, justify: 0, align: 0,
         min_w: -1, max_w: -1, min_h: -1, max_h: -1, w_pct: 100, h_pct: -1,
@@ -486,7 +519,7 @@ fn blank_node() -> UiNode {
         click_fn: 0, ui_size: 1, ui_look: 1, restyle_fn: 0,
         hover_fade: 0, hover_amt: 0, tween: -1, enter_fade: 0, show_amt: 0,
         down_fn: 0, up_fn: 0, kdown_fn: 0, kup_fn: 0, kpress_fn: 0, edit_sig: 0, bind_fn: 0,
-        safe: 0, list_fn: 0, list_gen: 0,
+        safe: 0, list_fn: 0, list_gen: 0, list_mode: 0, bnd: 0, exit_fx: 0, exit_ms: 0, exit_arg: 0, exiting: 0, scheme: 0, dens_sid: 0, frag_of: 0,
         list_lo: 0, list_hi: 0, list_n: 0, row_h: 0, vel_x: 0, vel_y: 0, measure_stamp: 0,
         a11y_label: "", a11y_role: "", cursor: "", text_rot: 0,
     }
@@ -607,6 +640,8 @@ fn ensure() {
     // A re-running `scope` frees the arena cells it owned; `track` cannot name
     // this module, so it calls back through this hook.
     track.set_scope_disposer(fn(eid: int) { release_owner(0 - eid) })
+    track.set_guard_hook(fn(fid: int, node: int) -> string { return invoke_on(fid, node) })
+    track.set_memo_stale_hook(fn(sid: int) { memo_host_hits = memo_host_hits + hosts_for_signal(sid) })
     anim_ensure()
 }
 
@@ -855,7 +890,7 @@ fn release_fns(node_id: int) {
 /// Re-attribute the allocations made since a mark from `host` to `row`. An
 /// incremental list reconcile sets the build scope to the host, builds one row,
 /// then hands that row its own signals and interned handlers so removing the row
-/// frees exactly them. Entries a nested scope already claimed (a `For` inside the
+/// frees exactly them. Entries a nested scope already claimed (an `Each` inside the
 /// row) keep their owner and are left alone.
 fn adopt_records(host: int, row: int, s_mark: int, f_mark: int) {
     if row <= 0 {
@@ -878,20 +913,85 @@ fn adopt_records(host: int, row: int, s_mark: int, f_mark: int) {
 }
 
 // --- keyed-list identity ---
-// Keyed `For` mounts one child per unique key and reuses it across reorders,
-// so focus and per-row state survive a move. `keyed_node[i]` is the top-level
-// child mounted for `keyed_key[i]` under host `keyed_host[i]`; entries live only
-// while the host is alive (cleared by `key_clear` on teardown).
-let mut keyed_host: []int = []int {}
-let mut keyed_key: []string = []string {}
-let mut keyed_node: []int = []int {}
+// Keyed `Each` mounts one child per unique key and reuses it across reorders,
+// so focus and per-row state survive a move. The table maps `(host, key)` to
+// the top-level child mounted for that key; entries live only while the host
+// is alive (cleared by `key_clear` on teardown).
+//
+// Shape: one open-addressed hash table over parallel slot arrays (linear
+// probing, power-of-two capacity, tombstones, 0.75 load), so a lookup costs
+// O(1) no matter how many lists the app has mounted. Each host's slots are
+// also threaded on a doubly linked chain (`kt_next` / `kt_prev`, head in
+// `key_head[host]`), so a host's count is O(1) and its key list and teardown
+// are O(its own keys), never O(every key in the app). A slot only moves on a
+// grow, which rebuilds the chains.
+let mut kt_used: []int = []int {}
+let mut kt_hash: []int = []int {}
+let mut kt_host: []int = []int {}
+let mut kt_key: []string = []string {}
+let mut kt_node: []int = []int {}
+let mut kt_next: []int = []int {}
+let mut kt_prev: []int = []int {}
+/// Insertion serial of each slot. `release` drops every entry newer than its
+/// mark, which is what the old append-only table got from truncation.
+let mut kt_serial: []int = []int {}
+/// Live entries, and live + tombstones (decides whether growing helps).
+let mut kt_len: int = 0
+let mut kt_filled: int = 0
+let mut key_serial: int = 0
+/// Per host node id: first slot of its chain (-1 = none) and its entry count.
+let mut key_head: []int = []int {}
+let mut key_cnt: []int = []int {}
 
-fn key_index(host: int, k: string) -> int {
+/// FNV-1a over the key's bytes, seeded with the host. Computed in `i64` and
+/// folded to 26 bits: `int` multiply is checked, so a full-width FNV step would
+/// trap (same reasoning as `std:map`'s `hash_str`). Never 0.
+fn kt_hash_of(host: int, k: string) -> int {
+    let mut h: i64 = (531216261 ^ i64(host)) & 67108863
     let mut i = 0
-    while i < keyed_host.len {
-        if keyed_host[i] == host {
-            if keyed_key[i] == k {
-                return i
+    while i < k.len {
+        let mut b = k[i]
+        if b < 0 {
+            b = 0 - b
+        }
+        h = h ^ i64(b)
+        h = (h * 16777619) & 67108863
+        i = i + 1
+    }
+    let out = i32(h)
+    if out == 0 {
+        return 1
+    }
+    return out
+}
+
+/// Slot of `(host, k)`, or -1.
+fn kt_find(host: int, k: string) -> int {
+    let cap = kt_used.len
+    if cap == 0 {
+        return -1
+    }
+    if host < 0 || host >= key_cnt.len {
+        return -1
+    }
+    if key_cnt[host] == 0 {
+        return -1
+    }
+    let h = kt_hash_of(host, k)
+    let mut i = 0
+    while i < cap {
+        let s = (h + i) & (cap - 1)
+        let u = kt_used[s]
+        if u == 0 {
+            return -1
+        }
+        if u == 1 {
+            if kt_hash[s] == h {
+                if kt_host[s] == host {
+                    if kt_key[s] == k {
+                        return s
+                    }
+                }
             }
         }
         i = i + 1
@@ -899,80 +999,392 @@ fn key_index(host: int, k: string) -> int {
     return -1
 }
 
-fn key_node(host: int, k: string) -> int {
-    let i = key_index(host, k)
-    if i < 0 {
-        return 0
+fn key_host_ensure(host: int) {
+    while key_head.len <= host {
+        push(key_head, -1)
+        push(key_cnt, 0)
     }
-    return keyed_node[i]
 }
 
-fn key_set(host: int, k: string, node: int) {
-    let i = key_index(host, k)
-    if i >= 0 {
-        keyed_node[i] = node
-        return
+/// Put `s` at the front of its host's chain.
+fn kt_link(s: int) {
+    let host = kt_host[s]
+    key_host_ensure(host)
+    let head = key_head[host]
+    kt_prev[s] = -1
+    kt_next[s] = head
+    if head >= 0 {
+        kt_prev[head] = s
     }
-    push(keyed_host, host)
-    push(keyed_key, k)
-    push(keyed_node, node)
+    key_head[host] = s
+    key_cnt[host] = key_cnt[host] + 1
 }
 
-fn key_count(host: int) -> int {
-    let mut c = 0
+/// Take live slot `s` off its host's chain and leave a tombstone, so probe
+/// chains through it stay intact.
+fn kt_unlink(s: int) {
+    let host = kt_host[s]
+    let p = kt_prev[s]
+    let n = kt_next[s]
+    if p >= 0 {
+        kt_next[p] = n
+    } else {
+        key_head[host] = n
+    }
+    if n >= 0 {
+        kt_prev[n] = p
+    }
+    key_cnt[host] = key_cnt[host] - 1
+    kt_used[s] = 2
+    kt_hash[s] = 0
+    kt_host[s] = 0
+    kt_key[s] = ""
+    kt_node[s] = 0
+    kt_next[s] = -1
+    kt_prev[s] = -1
+    kt_len = kt_len - 1
+}
+
+/// Write a new entry into the first free slot on its probe; the caller has
+/// checked it is absent and that the table has room.
+fn kt_place(host: int, k: string, node: int, serial: int) {
+    let cap = kt_used.len
+    let h = kt_hash_of(host, k)
     let mut i = 0
-    while i < keyed_host.len {
-        if keyed_host[i] == host {
-            c = c + 1
+    while i < cap {
+        let s = (h + i) & (cap - 1)
+        let u = kt_used[s]
+        if u != 1 {
+            if u == 0 {
+                kt_filled = kt_filled + 1
+            }
+            kt_used[s] = 1
+            kt_hash[s] = h
+            kt_host[s] = host
+            kt_key[s] = k
+            kt_node[s] = node
+            kt_serial[s] = serial
+            kt_link(s)
+            kt_len = kt_len + 1
+            return
         }
         i = i + 1
     }
-    return c
 }
 
-fn key_clear(host: int) {
+/// Resize to `cap` slots and re-insert every live entry (dropping
+/// tombstones). Chains are rebuilt from scratch.
+fn kt_rehash(cap: int) {
+    let o_used = kt_used
+    let o_host = kt_host
+    let o_key = kt_key
+    let o_node = kt_node
+    let o_serial = kt_serial
+    kt_used = []int {}
+    kt_hash = []int {}
+    kt_host = []int {}
+    kt_key = []string {}
+    kt_node = []int {}
+    kt_next = []int {}
+    kt_prev = []int {}
+    kt_serial = []int {}
     let mut i = 0
-    while i < keyed_host.len {
-        if keyed_host[i] == host {
-            let last = keyed_host.len - 1
-            keyed_host[i] = keyed_host[last]
-            keyed_key[i] = keyed_key[last]
-            keyed_node[i] = keyed_node[last]
-            pop(keyed_host)
-            pop(keyed_key)
-            pop(keyed_node)
-        } else {
-            i = i + 1
+    while i < cap {
+        push(kt_used, 0)
+        push(kt_hash, 0)
+        push(kt_host, 0)
+        push(kt_key, "")
+        push(kt_node, 0)
+        push(kt_next, -1)
+        push(kt_prev, -1)
+        push(kt_serial, 0)
+        i = i + 1
+    }
+    let hn = key_head.len
+    for j in 0..hn {
+        key_head[j] = -1
+        key_cnt[j] = 0
+    }
+    kt_len = 0
+    kt_filled = 0
+    let on = o_used.len
+    for j in 0..on {
+        if o_used[j] == 1 {
+            kt_place(o_host[j], o_key[j], o_node[j], o_serial[j])
         }
     }
 }
 
-/// Drop one keyed entry. Table order is irrelevant, so swap-remove.
-fn key_forget(host: int, k: string) {
-    let i = key_index(host, k)
-    if i < 0 {
+/// Make room for one more entry. A table that is mostly tombstones is rebuilt
+/// at the same capacity, so add / remove churn does not grow it without bound.
+fn kt_reserve() {
+    let cap = kt_used.len
+    if cap == 0 {
+        kt_rehash(16)
         return
     }
-    let last = keyed_host.len - 1
-    keyed_host[i] = keyed_host[last]
-    keyed_key[i] = keyed_key[last]
-    keyed_node[i] = keyed_node[last]
-    pop(keyed_host)
-    pop(keyed_key)
-    pop(keyed_node)
+    if (kt_filled + 1) * 4 < cap * 3 {
+        return
+    }
+    if kt_len * 4 < cap {
+        kt_rehash(cap)
+    } else {
+        kt_rehash(cap * 2)
+    }
+}
+
+fn key_node(host: int, k: string) -> int {
+    let s = kt_find(host, k)
+    if s < 0 {
+        return 0
+    }
+    return kt_node[s]
+}
+
+fn key_set(host: int, k: string, node: int) {
+    let s = kt_find(host, k)
+    if s >= 0 {
+        kt_node[s] = node
+        return
+    }
+    if host <= 0 {
+        return
+    }
+    kt_reserve()
+    key_serial = key_serial + 1
+    kt_place(host, k, node, key_serial)
+}
+
+fn key_count(host: int) -> int {
+    if host < 0 || host >= key_cnt.len {
+        return 0
+    }
+    return key_cnt[host]
+}
+
+fn key_clear(host: int) {
+    if host < 0 || host >= key_head.len {
+        return
+    }
+    while key_head[host] >= 0 {
+        kt_unlink(key_head[host])
+    }
+}
+
+/// Drop one keyed entry.
+fn key_forget(host: int, k: string) {
+    let s = kt_find(host, k)
+    if s >= 0 {
+        kt_unlink(s)
+    }
 }
 
 /// Every key currently mounted under `host`, in no particular order. An
 /// incremental reconcile diffs this against the new key set to find removals.
 fn key_keys(host: int) -> []string {
     let mut out = []string {}
-    let n = keyed_host.len
-    for i in 0..n {
-        if keyed_host[i] == host {
-            push(out, keyed_key[i])
-        }
+    if host < 0 || host >= key_head.len {
+        return out
+    }
+    let mut s = key_head[host]
+    while s >= 0 {
+        push(out, kt_key[s])
+        s = kt_next[s]
     }
     return out
+}
+
+/// Drop every entry inserted after serial `serial` (a `Boundary` rollback).
+fn key_drop_after(serial: int) {
+    let cap = kt_used.len
+    for s in 0..cap {
+        if kt_used[s] == 1 {
+            if kt_serial[s] > serial {
+                kt_unlink(s)
+            }
+        }
+    }
+    key_serial = serial
+}
+
+fn key_reset() {
+    kt_used = []int {}
+    kt_hash = []int {}
+    kt_host = []int {}
+    kt_key = []string {}
+    kt_node = []int {}
+    kt_next = []int {}
+    kt_prev = []int {}
+    kt_serial = []int {}
+    kt_len = 0
+    kt_filled = 0
+    key_head = []int {}
+    key_cnt = []int {}
+}
+
+/// 1 when `keys` holds no duplicate. One hash per key into a scratch table of
+/// indices, so O(n) where a pairwise scan is O(n^2).
+fn keys_unique(keys: []string) -> int {
+    let n = keys.len
+    if n < 2 {
+        return 1
+    }
+    let mut cap = 8
+    while cap < n * 2 {
+        cap = cap * 2
+    }
+    let mut slot = []int {}
+    for i in 0..cap {
+        push(slot, 0)
+    }
+    let mut hs = []int {}
+    for i in 0..n {
+        let h = kt_hash_of(0, keys[i])
+        push(hs, h)
+        let mut j = 0
+        while j < cap {
+            let s = (h + j) & (cap - 1)
+            if slot[s] == 0 {
+                slot[s] = i + 1
+                break
+            }
+            let o = slot[s] - 1
+            if hs[o] == h {
+                if keys[o] == keys[i] {
+                    return 0
+                }
+            }
+            j = j + 1
+        }
+    }
+    return 1
+}
+
+// --- fragments: keyed lists without a wrapper -------------------------------
+// `Each` adds no box around its rows: they are ordinary children of the node
+// the `Each` sits in, so a list in a row lays out as a row, in a grid as grid
+// cells. The `Each` itself is one hidden marker node (it takes no space and no
+// gap slot) placed right after its rows; it owns the key table, the refresh
+// hook and the row order (`frag`). Freeing the parent frees rows and marker
+// together, like any children.
+
+/// The node a fragment `host`'s rows live in: its parent, or the host itself
+/// when it has none (an `Each` used as a root).
+fn frag_parent(host: int) -> int {
+    let p = nodes[host].parent
+    if p > 0 && p < nodes.len {
+        return p
+    }
+    return host
+}
+
+/// Make `order` (then any of the host's rows still playing an exit) the
+/// host's rows, laid into its parent directly before the marker. Nodes the
+/// host held before and no longer lists leave the parent's children; freed
+/// ids are dropped.
+fn frag_set(host: int, order: []int) {
+    let parent = frag_parent(host)
+    let old = nodes[host].frag
+    let g = stamp_begin()
+    let on = old.len
+    for i in 0..on {
+        let r = old[i]
+        if r > 0 && r < nodes.len {
+            if nodes[r].frag_of == host {
+                stamp_set(r, g)
+            }
+        }
+    }
+    let n = order.len
+    for i in 0..n {
+        stamp_set(order[i], g)
+    }
+    let mut rows = order
+    for i in 0..on {
+        let r = old[i]
+        if r > 0 && r < nodes.len {
+            if nodes[r].frag_of == host && nodes[r].exiting != 0 && int(nodes[r].kind) != 0 {
+                if kfor_in(order, r) == 0 {
+                    push(rows, r)
+                }
+            }
+        }
+    }
+    let rn = rows.len
+    for i in 0..rn {
+        nodes[rows[i]].parent = parent
+        nodes[rows[i]].frag_of = host
+    }
+    nodes[host].frag = rows
+    if parent == host {
+        nodes[host].kids = rows
+        mark_tree_at(host)
+        return
+    }
+    let cur = nodes[parent].kids
+    let cn = cur.len
+    let mut out = []int {}
+    let mut placed = 0
+    for i in 0..cn {
+        let k = cur[i]
+        if k == host {
+            for j in 0..rn {
+                push(out, rows[j])
+            }
+            push(out, host)
+            placed = 1
+        } else if k > 0 && k < nodes.len {
+            if stamp_has(k, g) == false && int(nodes[k].kind) != 0 {
+                push(out, k)
+            }
+        }
+    }
+    if placed == 0 {
+        for j in 0..rn {
+            push(out, rows[j])
+        }
+    }
+    nodes[parent].kids = out
+    mark_tree_at(parent)
+}
+
+fn kfor_in(ids: []int, v: int) -> int {
+    let n = ids.len
+    for i in 0..n {
+        if ids[i] == v {
+            return 1
+        }
+    }
+    return 0
+}
+
+// --- id stamps ---
+// A membership test over node ids without a nested scan: `stamp_begin` opens a
+// fresh generation, `stamp_set` marks an id, `stamp_has` asks. O(1) each, and
+// opening a generation clears every earlier mark for free.
+let mut stamp_at: []int = []int {}
+let mut stamp_gen: int = 0
+
+fn stamp_begin() -> int {
+    stamp_gen = stamp_gen + 1
+    return stamp_gen
+}
+
+fn stamp_set(id: int, g: int) {
+    if id < 0 {
+        return
+    }
+    while stamp_at.len <= id {
+        push(stamp_at, 0)
+    }
+    stamp_at[id] = g
+}
+
+fn stamp_has(id: int, g: int) -> bool {
+    if id < 0 || id >= stamp_at.len {
+        return false
+    }
+    return stamp_at[id] == g
 }
 
 /// Tear down a node: free its subtree (sigs, interned handlers, effects) and
@@ -1088,9 +1500,14 @@ fn free_node(id: int) {
     if int(nodes[id].kind) == 0 {
         return
     }
-    // The id is about to change hands, so any draw-op span keyed by it is stale.
-    paint_spans_ok = 0
-    paint_all = 1
+    // Its ops sit inside its parent's run: re-record that run (the paint pass
+    // splices it) rather than the frame. The freed id's own span is never read
+    // again — whatever reuses the id is attached under a parent that
+    // `mark_tree_at` marks, so its run is re-recorded with a fresh span.
+    let par = nodes[id].parent
+    if par > 0 && par < nodes.len && int(nodes[par].kind) != 0 {
+        mark_paint_id(par)
+    }
     let n = nodes[id].kids.len
     for i in 0..n {
         free_node(nodes[id].kids[i])
@@ -1136,8 +1553,13 @@ fn free_node(id: int) {
     }
     bind_forget(id)
     host_forget(id)
+    if nodes[id].list_mode == 1 {
+        poll_forget(id)
+    }
+    geo_forget(id)
     push(drop_pool, id)
     nodes[id].kids = []int {}
+    nodes[id].frag = []int {}
     nodes[id] = blank_node()
     push(free_nodes, id)
 }
@@ -1160,6 +1582,20 @@ fn reset_tree() {
     dirty_chrome_nodes = []int {}
     bind_sig = []int {}
     bind_node = []int {}
+    poll_hosts = []int {}
+    host_queue = []int {}
+    geo_on = []int {}
+    geo_force = []int {}
+    geo_w = []int {}
+    geo_h = []int {}
+    geo_sx = []int {}
+    geo_sy = []int {}
+    bnd_msg = []string {}
+    trap_trim(0)
+    exit_nodes = []int {}
+    exit_until = []int {}
+    exit_hide = []int {}
+    exit_save = [][]int {}
     physics_ms = now_ms
     root_id = 0
     focus_id = 0
@@ -1179,9 +1615,7 @@ fn reset_tree() {
     rec_fowner = []int {}
     free_nodes = []int {}
     drop_pool = []int {}
-    keyed_host = []int {}
-    keyed_key = []string {}
-    keyed_node = []int {}
+    key_reset()
     anim_reset()
     mark_tree()
 }
@@ -1466,9 +1900,7 @@ struct ArenaMark {
     rec_o: int,
     rec_f: int,
     rec_fo: int,
-    kh: int,
-    khk: int,
-    khn: int,
+    keys: int,
     scope: int,
     root: int,
     focus: int,
@@ -1482,7 +1914,7 @@ fn mark() -> ArenaMark {
         nodes: nodes.len, sigs: sigs.len, free: free_nodes.len,
         rec_s: rec_sid.len, rec_o: rec_owner.len,
         rec_f: rec_fid.len, rec_fo: rec_fowner.len,
-        kh: keyed_host.len, khk: keyed_key.len, khn: keyed_node.len,
+        keys: key_serial,
         scope: scope_node, root: root_id, focus: focus_id,
         down: down_id, drag: drag_id, drag_bar: drag_bar,
     }
@@ -1510,9 +1942,7 @@ fn release(m: ArenaMark) {
     while rec_owner.len > m.rec_o { pop(rec_owner) }
     while rec_fid.len > m.rec_f { pop(rec_fid) }
     while rec_fowner.len > m.rec_fo { pop(rec_fowner) }
-    while keyed_host.len > m.kh { pop(keyed_host) }
-    while keyed_key.len > m.khk { pop(keyed_key) }
-    while keyed_node.len > m.khn { pop(keyed_node) }
+    key_drop_after(m.keys)
     while sigs.len > m.sigs { pop(sigs) }
     while free_nodes.len > m.free { pop(free_nodes) }
     while nodes.len > m.nodes { pop(nodes) }
@@ -1579,6 +2009,7 @@ let mut prop_layout: int = 0
 /// (until phase 5).
 fn note_prop_write(node_id: int, layout: int) {
     prop_writes = prop_writes + 1
+    track.reports = track.reports + 1
     if layout != 0 {
         prop_layout = prop_layout + 1
         invalidate(node_id, INV.Layout)
@@ -1693,6 +2124,13 @@ fn hosts_for_signal(sig_id: int) -> int {
                 if nd < nodes.len {
                     if nodes[nd].list_fn > 0 {
                         hits = hits + 1
+                        if nodes[nd].list_mode == 2 {
+                            nodes[nd].list_mode = 4
+                            push(host_queue, nd)
+                        } else if nd < geo_force.len {
+                            // A polled geometry host reads it too: run it.
+                            geo_force[nd] = 1
+                        }
                     }
                 }
             }
@@ -1702,6 +2140,677 @@ fn hosts_for_signal(sig_id: int) -> int {
         virtual_dirty = 1
     }
     return hits
+}
+
+// --- error boundaries at run time ---
+// `Boundary` catches a trap in its own build directly (`plat_boundary`). A trap
+// later — in a click handler, a key handler, an effect — happens long after
+// that build returned, so it is caught here instead: every handler / effect
+// invocation goes through `invoke_on`, which runs it behind a trap arm when its
+// node sits under a boundary. A caught trap records the message on the
+// boundary host and queues the host's refresh hook, which rebuilds it with the
+// fallback at the next refresh pass — never mid-handler, while the subtree that
+// trapped may still be on the stack.
+
+/// 1 once any boundary exists: until then `invoke_on` skips the parent walk.
+let mut bnd_any: int = 0
+/// Pending fallback message per boundary host id ("" = healthy).
+let mut bnd_msg: []string = []string {}
+/// Guarded work in flight, innermost last: a handler / effect / refresh hook
+/// under a boundary (`trap_build` 0), or a boundary's own build (1, with the
+/// arena mark it rolls back to). Native traps are caught in-process and never
+/// need this; on wasm a trap unwinds the whole stack to the host, which calls
+/// `recover_trap` to find the boundary that should take it.
+let mut trap_host: []int = []int {}
+let mut trap_build: []int = []int {}
+let mut trap_marks: []ArenaMark = []ArenaMark {}
+/// Build-order number of each frame's boundary (0 for a handler frame).
+let mut trap_seqs: []int = []int {}
+
+/// Boundaries are numbered in build order (`boundary_next_seq`). A wasm trap
+/// during startup cannot be recovered in place — the build that was cut short
+/// is the whole app — so the web loader re-instantiates the module and
+/// pre-seeds the failed boundary's number and message in the C seam (module
+/// globals are re-initialised when `main` starts); that boundary then builds
+/// its fallback without running `build` at all (`boundary_preset_msg`).
+let mut bnd_seq: int = 0
+/// The build-order number of the boundary the last `recover_trap` failed in
+/// its build (0 when the trap was in a handler / effect / refresh).
+let mut last_trap_seq: int = 0
+
+fn boundary_next_seq() -> int {
+    bnd_seq = bnd_seq + 1
+    return bnd_seq
+}
+
+/// The pre-seeded message for boundary `seq`, or "".
+fn boundary_preset_msg(seq: int) -> string {
+    return platform.plat_boundary_preset(seq)
+}
+
+/// Mark `id` as a boundary host. Its refresh hook (push-only) builds the
+/// fallback when a run-time trap is recorded against it.
+fn boundary_open(id: int) {
+    if id <= 0 || id >= nodes.len {
+        return
+    }
+    nodes[id].bnd = 1
+    bnd_any = 1
+    while bnd_msg.len <= id {
+        push(bnd_msg, "")
+    }
+    bnd_msg[id] = ""
+}
+
+/// Nearest boundary host at or above `node`, or 0.
+fn boundary_of(node: int) -> int {
+    let mut id = node
+    let mut hops = 0
+    while id > 0 && id < nodes.len && hops < 4096 {
+        if nodes[id].bnd != 0 {
+            return id
+        }
+        id = nodes[id].parent
+        hops = hops + 1
+    }
+    return 0
+}
+
+/// Record a run-time trap against boundary `host` and queue its refresh. The
+/// first message wins until the fallback is built.
+fn boundary_fail(host: int, msg: string) {
+    if host <= 0 || host >= nodes.len {
+        return
+    }
+    if nodes[host].bnd == 0 {
+        return
+    }
+    while bnd_msg.len <= host {
+        push(bnd_msg, "")
+    }
+    if bnd_msg[host].len > 0 {
+        return
+    }
+    // A copy: `msg` may point at the runtime's static panic buffer.
+    bnd_msg[host] = "{{msg}}"
+    if nodes[host].list_mode == 2 {
+        nodes[host].list_mode = 4
+        push(host_queue, host)
+    }
+    virtual_dirty = 1
+    paint_dirty = 1
+}
+
+/// Take (and clear) the pending fallback message of boundary `host`.
+fn boundary_take(host: int) -> string {
+    if host <= 0 || host >= bnd_msg.len {
+        return ""
+    }
+    let m = bnd_msg[host]
+    bnd_msg[host] = ""
+    return m
+}
+
+/// Invoke handler / effect body `fid` on behalf of `node`. Under a boundary it
+/// runs behind a trap arm; a trap fails the boundary and returns the message.
+/// Elsewhere it is a plain call, and a trap aborts as it always has.
+fn invoke_on(fid: int, node: int) -> string {
+    if fid <= 0 {
+        return ""
+    }
+    if bnd_any == 0 {
+        platform.plat_invoke_fn(fid)
+        return ""
+    }
+    let b = boundary_of(node)
+    if b == 0 {
+        platform.plat_invoke_fn(fid)
+        return ""
+    }
+    let depth = trap_host.len
+    push(trap_host, b)
+    push(trap_build, 0)
+    push(trap_marks, mark())
+    push(trap_seqs, 0)
+    let scope0 = scope_node
+    let ui0 = ui_depth_hook()
+    let tm = track.mark()
+    let msg = platform.plat_guard_fn(fid)
+    trap_trim(depth)
+    if msg.len > 0 {
+        // The trap skipped every pop the body would have done.
+        scope_node = scope0
+        ui_trim_hook(ui0)
+        track.unwind(tm)
+        boundary_fail(b, msg)
+    }
+    return msg
+}
+
+/// The component layer's build stack (`zeusbase.ui_parents`), which this module
+/// cannot name: its depth, and a trim back to a depth. Installed by zeusbase
+/// on its first `ui_push`.
+let mut ui_depth_hook: fn() -> int = fn() -> int { return 0 }
+let mut ui_trim_hook: fn(int) = fn(d: int) {}
+
+fn set_ui_hooks(depth: fn() -> int, trim: fn(int)) {
+    ui_depth_hook = depth
+    ui_trim_hook = trim
+}
+
+/// A handler call site: run `fid` for `node` through the guard.
+fn invoke_handler(fid: int, node: int) {
+    invoke_on(fid, node)
+}
+
+fn trap_trim(depth: int) {
+    while trap_host.len > depth {
+        pop(trap_host)
+        pop(trap_build)
+        pop(trap_marks)
+        pop(trap_seqs)
+    }
+}
+
+/// Boundary number `seq`'s build is starting (`m` is its rollback mark). Pair
+/// with `build_leave`.
+fn build_enter(host: int, m: ArenaMark, seq: int) {
+    push(trap_host, host)
+    push(trap_build, 1)
+    push(trap_marks, m)
+    push(trap_seqs, seq)
+}
+
+fn build_leave() {
+    if trap_host.len > 0 {
+        trap_trim(trap_host.len - 1)
+    }
+}
+
+/// A trap unwound the whole call stack to the host (wasm). Hand it to the
+/// innermost boundary that was at work — rolling back its partial build if the
+/// trap hit there — and reset the transient state every export starts from.
+/// Returns 1 when a boundary took it, 0 when nothing could (the app is in an
+/// unknown state and the host should stop).
+fn recover_trap(msg: string) -> int {
+    let mut ok = 0
+    let n = trap_host.len
+    last_trap_seq = 0
+    if n > 0 {
+        let host = trap_host[n - 1]
+        if trap_build[n - 1] != 0 {
+            last_trap_seq = trap_seqs[n - 1]
+            rollback(host, trap_marks[n - 1])
+        }
+        boundary_fail(host, msg)
+        ok = 1
+    }
+    trap_trim(0)
+    scope_node = 0
+    ui_trim_hook(0)
+    track.unwind(track.mark_zero())
+    mark_tree()
+    return ok
+}
+
+// --- presence: exit transitions ---------------------------------------------
+// A node that declares an exit transition is not freed the moment `Each`,
+// `Match` or a lazy `Show` removes it. It is pinned (absolutely positioned at
+// the box it last laid out in, so its siblings reflow at once), made inert
+// (no hit testing, no keys), frozen (its effects are disposed: it shows its
+// last state), and its exit track runs. When the transition's time is up,
+// `exit_tick` detaches and frees it. A removal that the host does by full
+// rebuild still frees at once.
+let mut exit_nodes: []int = []int {}
+let mut exit_until: []int = []int {}
+// Parallel to `exit_nodes`: 1 for a hide-exit (`exit_or_hide`), and the state
+// it puts back when the transition ends.
+let mut exit_hide: []int = []int {}
+let mut exit_save: [][]int = [][]int {}
+
+/// Declare `id`'s exit transition (see `UiNode.exit_fx`).
+fn set_exit(id: int, fx: int, arg: int, ms: int) {
+    if id <= 0 || id >= nodes.len {
+        return
+    }
+    nodes[id].exit_fx = fx
+    nodes[id].exit_arg = arg
+    nodes[id].exit_ms = ms
+}
+
+/// Collect `id`'s subtree ids into `out`.
+fn subtree_ids(id: int, out: &mut []int) {
+    if id <= 0 || id >= nodes.len {
+        return
+    }
+    push(out, id)
+    let n = nodes[id].kids.len
+    for i in 0..n {
+        subtree_ids(nodes[id].kids[i], out)
+    }
+}
+
+/// A control-flow host is removing child `id`. With no exit transition (or
+/// under reduced motion, or before the first frame) it is freed now and this
+/// returns 0. Otherwise it starts exiting and returns 1: the caller keeps it
+/// among the host's children until `exit_tick` frees it.
+fn exit_or_free(id: int) -> int {
+    if id <= 0 || id >= nodes.len {
+        return 0
+    }
+    if nodes[id].exiting != 0 {
+        // Already leaving. A hide-exit becomes a removal: freed at the end.
+        let n = exit_nodes.len
+        for i in 0..n {
+            if exit_nodes[i] == id {
+                exit_hide[i] = 0
+            }
+        }
+        return 1
+    }
+    let fx = nodes[id].exit_fx
+    if fx == 0 || anim_reduced() != 0 || anim_booted == 0 || nodes[id].exit_ms <= 0 {
+        free_subtree(id)
+        return 0
+    }
+    exit_start(id, 0, []int {})
+    return 1
+}
+
+/// Start `id`'s exit: pin it where it laid out, make it inert, and run its
+/// exit track. `hide` 1 keeps it alive (its effects too): when the track ends
+/// it is hidden and `save` (from `exit_snapshot`) is put back.
+fn exit_start(id: int, hide: int, save: []int) {
+    let fx = nodes[id].exit_fx
+    let parent = nodes[id].parent
+    if parent > 0 && parent < nodes.len {
+        // Pin where it is: siblings take its slot at once.
+        let x = nodes[id].x - content_x(parent)
+        let y = nodes[id].y - content_y(parent)
+        nodes[id].pos = u8(1)
+        nodes[id].pin_l = x
+        nodes[id].pin_t = y
+        nodes[id].pin_r = -1
+        nodes[id].pin_b = -1
+        nodes[id].explicit_width = nodes[id].w
+        nodes[id].explicit_height = nodes[id].h
+    }
+    nodes[id].exiting = 1
+    if focus_id > 0 && in_exiting(focus_id) != 0 {
+        focus_id = 0
+    }
+    if hide == 0 {
+        // Freeze: nothing inside may re-run against signals its host is about
+        // to free.
+        let mut ids = []int {}
+        subtree_ids(id, &mut ids)
+        track.free_nodes_effects(ids)
+    }
+    let ms = nodes[id].exit_ms
+    anim_opacity(id, 0, ms, 1)
+    if fx == 2 {
+        anim_translate_y(id, nodes[id].exit_arg, ms, 1)
+    } else if fx == 3 {
+        anim_scale(id, nodes[id].exit_arg, ms, 1)
+    }
+    push(exit_nodes, id)
+    push(exit_until, now_ms + ms)
+    push(exit_hide, hide)
+    push(exit_save, save)
+    if parent > 0 {
+        mark_tree_at(parent)
+    }
+}
+
+/// What an exit changes on `id`: position, pins, explicit size, and the
+/// paint tracks it animates.
+fn exit_snapshot(id: int) -> []int {
+    return []int {
+        i32(nodes[id].pos), nodes[id].pin_l, nodes[id].pin_t, nodes[id].pin_r, nodes[id].pin_b,
+        nodes[id].explicit_width, nodes[id].explicit_height,
+        int(nodes[id].opacity), int(nodes[id].an_scale), int(nodes[id].an_ty),
+    }
+}
+
+/// Put back what `exit_snapshot` saved; `id` stops exiting.
+fn exit_restore(id: int, save: []int) {
+    nodes[id].exiting = 0
+    if save.len < 10 {
+        return
+    }
+    nodes[id].pos = u8(save[0])
+    nodes[id].pin_l = save[1]
+    nodes[id].pin_t = save[2]
+    nodes[id].pin_r = save[3]
+    nodes[id].pin_b = save[4]
+    nodes[id].explicit_width = save[5]
+    nodes[id].explicit_height = save[6]
+    anim_schedule(id, APROP.OpacityAmt, save[7], 0, 0)
+    anim_schedule(id, APROP.ScalePct, save[8], 0, 0)
+    anim_schedule(id, APROP.XlateY, save[9], 0, 0)
+    let parent = nodes[id].parent
+    if parent > 0 && parent < nodes.len {
+        mark_tree_at(parent)
+    }
+}
+
+/// A host is hiding (not removing) child `id` — a `MatchKeep` arm moving
+/// out of view. With no exit transition (or under reduced motion, or before
+/// the first frame) this returns 0 and the caller hides it now. Otherwise it
+/// plays its exit pinned and inert, stays alive, and is hidden — its layout
+/// and paint state put back — when the transition ends; returns 1.
+fn exit_or_hide(id: int) -> int {
+    if id <= 0 || id >= nodes.len {
+        return 0
+    }
+    if nodes[id].exiting != 0 {
+        return 1
+    }
+    if nodes[id].exit_fx == 0 || anim_reduced() != 0 || anim_booted == 0 || nodes[id].exit_ms <= 0 {
+        return 0
+    }
+    exit_start(id, 1, exit_snapshot(id))
+    return 1
+}
+
+/// Stop a hide-exit started by `exit_or_hide` (the host shows `id` again
+/// before its exit ended): it snaps back, shown. 0 if `id` was not hiding.
+fn exit_cancel(id: int) -> int {
+    let n = exit_nodes.len
+    for i in 0..n {
+        if exit_nodes[i] == id && exit_hide[i] != 0 {
+            let save = exit_save[i]
+            exit_drop_at(i)
+            exit_restore(id, save)
+            return 1
+        }
+    }
+    return 0
+}
+
+/// Remove entry `at` from the exit lists.
+fn exit_drop_at(at: int) {
+    let mut kn = []int {}
+    let mut kt = []int {}
+    let mut kh = []int {}
+    let mut ks = [][]int {}
+    let n = exit_nodes.len
+    for i in 0..n {
+        if i != at {
+            push(kn, exit_nodes[i])
+            push(kt, exit_until[i])
+            push(kh, exit_hide[i])
+            push(ks, exit_save[i])
+        }
+    }
+    exit_nodes = kn
+    exit_until = kt
+    exit_hide = kh
+    exit_save = ks
+}
+
+/// Free every node whose exit transition has run its course. Called once per
+/// frame, before layout.
+fn exit_tick() {
+    if exit_nodes.len == 0 {
+        return
+    }
+    let mut keep_n = []int {}
+    let mut keep_t = []int {}
+    let mut keep_h = []int {}
+    let mut keep_s = [][]int {}
+    let n = exit_nodes.len
+    let mut done = []int {}
+    let mut hidden = []int {}
+    let mut hidden_s = [][]int {}
+    for i in 0..n {
+        let id = exit_nodes[i]
+        if id > 0 && id < nodes.len && nodes[id].exiting != 0 {
+            if now_ms < exit_until[i] {
+                push(keep_n, id)
+                push(keep_t, exit_until[i])
+                push(keep_h, exit_hide[i])
+                push(keep_s, exit_save[i])
+            } else if exit_hide[i] != 0 {
+                push(hidden, id)
+                push(hidden_s, exit_save[i])
+            } else {
+                push(done, id)
+            }
+        }
+    }
+    exit_nodes = keep_n
+    exit_until = keep_t
+    exit_hide = keep_h
+    exit_save = keep_s
+    // A hide-exit ends hidden, with its layout and paint state put back for
+    // the next time it is shown.
+    let hn = hidden.len
+    for i in 0..hn {
+        let id = hidden[i]
+        nodes[id].show_on = u8(0)
+        exit_restore(id, hidden_s[i])
+    }
+    let dn = done.len
+    for i in 0..dn {
+        let id = done[i]
+        // A parent freed in this same pass already took it.
+        if nodes[id].exiting != 0 {
+            let parent = nodes[id].parent
+            let host = nodes[id].frag_of
+            if host > 0 && host < nodes.len {
+                let fr = nodes[host].frag
+                let mut keep = []int {}
+                let fn2 = fr.len
+                for j in 0..fn2 {
+                    if fr[j] != id {
+                        push(keep, fr[j])
+                    }
+                }
+                nodes[host].frag = keep
+            }
+            child_detach(id)
+            free_subtree(id)
+            if parent > 0 && parent < nodes.len {
+                mark_tree_at(parent)
+            }
+        }
+    }
+}
+
+/// Exits still playing (the host keeps frames coming until they end).
+fn exit_live() -> int {
+    return exit_nodes.len
+}
+
+// --- host refresh registry ---
+// A host refresh hook (`list_fn`) used to be found by walking every arena node
+// on every layout. Now each hook is reachable from one of two lists:
+//
+// * `poll_hosts` — hooks whose input is geometry (a refit's measured width, a
+//   windowed list's scroll window, `on_resize`). They still run after every
+//   layout / scroll, but the walk is O(those hosts), not O(nodes).
+// * `host_queue` — push-only hosts (`host_push`: `Each`,
+//   `Match`), whose only input is a bound signal. `hosts_for_signal` queues one
+//   when that signal is written; an unwritten list is never visited.
+let mut poll_hosts: []int = []int {}
+let mut host_queue: []int = []int {}
+/* Geometry hosts (`host_geo`): a polled hook whose only inputs are its own box,
+   its own scroll offset and the signals bound to it (`bind_host`). Its hook
+   runs only when one of those moved — the box / scroll last seen is kept per
+   node — or a bound signal was written (`geo_force`). Indexed by node id;
+   0 / -1 = not a geometry host / never seen. */
+let mut geo_on: []int = []int {}
+let mut geo_force: []int = []int {}
+let mut geo_w: []int = []int {}
+let mut geo_h: []int = []int {}
+let mut geo_sx: []int = []int {}
+let mut geo_sy: []int = []int {}
+/// Polled hooks run, and geometry hooks skipped because nothing they read
+/// moved (diagnostics).
+let mut poll_runs: int = 0
+let mut geo_skips: int = 0
+
+/// Declare polled host `id` a geometry host (see `geo_on`): its hook reads
+/// only its own box and scroll, and its bound signals. Call after `set_list_fn`.
+fn host_geo(id: int) {
+    if id <= 0 || id >= nodes.len {
+        return
+    }
+    while geo_on.len <= id {
+        push(geo_on, 0)
+        push(geo_force, 0)
+        push(geo_w, -1)
+        push(geo_h, -1)
+        push(geo_sx, -1)
+        push(geo_sy, -1)
+    }
+    if geo_on[id] != 0 {
+        return
+    }
+    geo_on[id] = 1
+    geo_force[id] = 1
+}
+
+fn geo_forget(id: int) {
+    if id > 0 && id < geo_on.len {
+        geo_on[id] = 0
+        geo_force[id] = 0
+        geo_w[id] = -1
+        geo_h[id] = -1
+        geo_sx[id] = -1
+        geo_sy[id] = -1
+    }
+}
+
+/// 1 when geometry host `id` must run its hook: forced, or its box or scroll
+/// moved since it last ran. Records what it saw. Non-geometry hosts always run.
+fn geo_due(id: int) -> int {
+    if id >= geo_on.len {
+        return 1
+    }
+    if geo_on[id] == 0 {
+        return 1
+    }
+    let w = nodes[id].w
+    let h = nodes[id].h
+    let sx = nodes[id].scroll_x
+    let sy = nodes[id].scroll_y
+    if geo_force[id] == 0 && geo_w[id] == w && geo_h[id] == h && geo_sx[id] == sx && geo_sy[id] == sy {
+        geo_skips = geo_skips + 1
+        return 0
+    }
+    geo_force[id] = 0
+    geo_w[id] = w
+    geo_h[id] = h
+    geo_sx[id] = sx
+    geo_sy[id] = sy
+    return 1
+}
+
+/// Install `fid` as `id`'s refresh hook. A host not marked push-only is
+/// registered for polling the first time it gets a hook.
+fn set_list_fn(id: int, fid: int) {
+    if id <= 0 || id >= nodes.len {
+        return
+    }
+    nodes[id].list_fn = fid
+    if nodes[id].list_mode == 0 {
+        nodes[id].list_mode = 1
+        push(poll_hosts, id)
+    }
+}
+
+/// Mark `id` as a push-only host: its hook runs only when a signal bound with
+/// `bind_host` is written. Call before the hook is installed. The host must
+/// build its initial content itself — no pass runs it until the first write.
+fn host_push(id: int) {
+    if id <= 0 || id >= nodes.len {
+        return
+    }
+    if nodes[id].list_mode == 1 {
+        poll_forget(id)
+    }
+    nodes[id].list_mode = 2
+}
+
+fn poll_forget(id: int) {
+    let mut i = 0
+    while i < poll_hosts.len {
+        if poll_hosts[i] == id {
+            poll_hosts[i] = poll_hosts[poll_hosts.len - 1]
+            pop(poll_hosts)
+        } else {
+            i = i + 1
+        }
+    }
+}
+
+/// Run the refresh hooks this frame needs: every polled host, then every
+/// queued push host. A hook may write a signal that queues another host (or
+/// rebuild a subtree holding new hosts), so the queue drains until empty; the
+/// round cap only guards against two hosts writing each other's signal
+/// forever.
+fn refresh_hosts() {
+    // Ids can go stale under a hook (a rebuild frees and recycles nodes), so
+    // each entry is re-checked at the moment it runs, and duplicates (a
+    // rolled-back id registered again) are skipped by flipping the mode while
+    // the pass is on it.
+    let polled = poll_hosts
+    let mut live = []int {}
+    let n = polled.len
+    for i in 0..n {
+        let id = polled[i]
+        if id > 0 && id < nodes.len {
+            if nodes[id].list_mode == 1 {
+                nodes[id].list_mode = 3
+                push(live, id)
+            }
+        }
+    }
+    poll_hosts = live
+    let ln = live.len
+    for i in 0..ln {
+        let id = live[i]
+        if id < nodes.len {
+            if nodes[id].list_mode == 3 {
+                nodes[id].list_mode = 1
+                if nodes[id].list_fn > 0 && geo_due(id) != 0 {
+                    poll_runs = poll_runs + 1
+                    invoke_hook(id)
+                }
+            }
+        }
+    }
+    let mut rounds = 0
+    while host_queue.len > 0 && rounds < 64 {
+        let q = host_queue
+        host_queue = []int {}
+        let qn = q.len
+        for i in 0..qn {
+            let id = q[i]
+            if id > 0 && id < nodes.len {
+                if nodes[id].list_mode == 4 {
+                    nodes[id].list_mode = 2
+                    if nodes[id].list_fn > 0 {
+                        invoke_hook(id)
+                    }
+                }
+            }
+        }
+        rounds = rounds + 1
+    }
+}
+
+/// Run host `id`'s refresh hook through the trap guard. A boundary host's own
+/// hook (which builds its fallback) is guarded by the boundary *above* it, so a
+/// trapping fallback fails the outer boundary instead of re-queuing itself.
+fn invoke_hook(id: int) {
+    let mut owner = id
+    if nodes[id].bnd != 0 {
+        owner = nodes[id].parent
+    }
+    invoke_on(nodes[id].list_fn, owner)
 }
 
 /// Drop a freed node's host entries so a recycled id cannot be queued for an
@@ -1812,17 +2921,51 @@ fn store_sig(id: int, value: int) {
 /// Signal writes `note_write` attributed to their own nodes, ever. A nested
 /// write that was attributed lets the outer write count as attributed too.
 let mut targeted_writes: int = 0
+/// Hosts queued through a `computed` the write made stale (`Each(xs.get(), ...)`
+/// binds its host to that computed, not to `xs`), counted by the memo hook.
+let mut memo_host_hits: int = 0
 
 fn note_write(id: int) {
+    if track.batch_depth > 0 {
+        // `notify` only schedules inside a `batch`: settle once the deferred
+        // effects ran (`batch_end`).
+        track.notify(id)
+        let n = batch_sigs.len
+        for i in 0..n {
+            if batch_sigs[i] == id {
+                // One settle covers every write of `id`: drop this one's `wrote`.
+                track.consume_wrote()
+                return
+            }
+        }
+        push(batch_sigs, id)
+        return
+    }
     let ran0 = track.runs
     let pw0 = prop_writes
     let tw0 = targeted_writes
+    let mh0 = memo_host_hits
     track.notify(id)
     let ran = track.runs - ran0
     // An effect that only forwarded the value to another signal whose own
     // write was attributed (`flag_int`, `Show`) is as surgical as a prop
     // write: count those writes with the prop writes.
     let pw = prop_writes - pw0 + targeted_writes - tw0
+    settle_write(id, ran, pw, memo_host_hits - mh0)
+}
+
+/// Decide what a write that ran `ran` effects (`pw` of them reported a node)
+/// leaves dirty. Every node an effect touched marked itself as it wrote — a
+/// prop setter or a chaining setter run from an effect (`zeusbase.touched`),
+/// a scroll, a structural operator — so an effect run that reported nothing
+/// touched nothing: a pure side effect, a forward to a signal that did not
+/// move, a `style` whose keys all held. That costs no dirt (it used to cost
+/// a frame-wide paint, chrome and layout). What still falls back:
+/// - a signal layout reads *directly*, with no effect in between: frame-wide
+///   layout;
+/// - a write nothing consumed — no effect, bound node or host: frame-wide
+///   paint, and a `view` app rebuilds (its build may have read it untracked).
+fn settle_write(id: int, ran: int, pw: int, memo_hits: int) {
     // A prop write marked its own path (`note_prop_write` -> `mark_layout_path`),
     // so its dirt is already recorded. Only a signal layout reads *directly* —
     // with no effect in between — needs a frame-wide layout mark here.
@@ -1833,17 +2976,20 @@ fn note_write(id: int) {
         }
     }
     // A bound node's tween / selection is read by the chrome pass, not an effect,
-    // so mark those nodes' chrome directly. A host (Match / For / Index) reads
+    // so mark those nodes' chrome directly. A host (Match / Each) reads
     // its signal from its refresh hook: ask the frame to run the hooks, and the
     // host that rebuilds marks itself.
     let bound = chrome_for_signal(id)
-    let hosts = hosts_for_signal(id)
+    let hosts = hosts_for_signal(id) + memo_hits
+    if pw < ran {
+        silent_runs = silent_runs + ran - pw
+    }
     let mut targeted = 0
     if direct_layout != 0 {
         mark_layout()
-    } else if ran > 0 && pw >= ran {
+    } else if ran > 0 {
         targeted = 1
-    } else if ran == 0 && (bound > 0 || hosts > 0) {
+    } else if bound > 0 || hosts > 0 {
         // No effect consumed the write, but a bound node or a host did:
         // targeted too.
         targeted = 1
@@ -1854,12 +3000,44 @@ fn note_write(id: int) {
         // frame neither forces a layout nor walks every chrome target.
         track.consume_wrote()
     } else {
+        frame_wide_writes = frame_wide_writes + 1
         if direct_layout == 0 {
             mark_paint()
         }
         mark_chrome()
+        // Nothing reported the write, so a `view` build may have read it.
+        view_stale = 1
     }
 }
+
+/// Signals written inside the open `batch`, settled by `batch_end`.
+let mut batch_sigs: []int = []int {}
+
+/// Close a `batch`: the outermost one runs every deferred effect once, then
+/// settles each write it deferred. A batch runs its effects together, so a
+/// write counts as consumed when anything still reads it.
+fn batch_end() {
+    if track.batch_depth != 1 {
+        track.batch_end()
+        return
+    }
+    let mh0 = memo_host_hits
+    track.batch_end()
+    let ids = batch_sigs
+    batch_sigs = []int {}
+    let n = ids.len
+    for i in 0..n {
+        let r = track.reader_count(ids[i])
+        // Diagnostics only: a batch cannot say which run reported what.
+        settle_write(ids[i], r, r, memo_host_hits - mh0)
+    }
+}
+
+/// Effect runs that reported no node (and so, now, left no dirt), and writes
+/// that still fell back to a frame-wide mark. Diagnostics: a patch test holds
+/// the second at zero.
+let mut silent_runs: int = 0
+let mut frame_wide_writes: int = 0
 
 /// A paint-only signal write: the value moved but nothing about the tree's
 /// geometry did (scroll offsets, drag positions). Effects still run — one that
@@ -1885,8 +3063,10 @@ fn store_sig_paint(id: int, value: int) {
     let lay = prop_layout - lay0
     // A layout prop the effect wrote marked its own path; otherwise fall back to
     // a frame-wide paint mark when the effect could not be attributed.
-    if lay == 0 {
-        if ran == 0 || pw < ran {
+    if ran == 0 || pw < ran {
+        // Unattributed: a `view` build may have read it.
+        view_stale = 1
+        if lay == 0 {
             mark_paint()
         }
     }
@@ -3219,6 +4399,10 @@ fn queue_layout(id: int, structural: int) {
 /// onto the host: it is the unit of change, and it is queued once.
 fn mark_tree_at(id: int) {
     tree_dirty = 1
+    // The node whose kid list moved re-records its run (spliced into the
+    // retained list), so a new child is painted and a dropped one is not,
+    // without a full record.
+    mark_paint_id(id)
     // Hover / press targets may have moved with the structure.
     chrome_dirty = 1
     let mut at = id
@@ -3278,6 +4462,7 @@ fn mark_layout() {
 
 fn mark_tree() {
     tree_dirty = 1
+    view_stale = 1
     layout_dirty = 1
     paint_dirty = 1
     chrome_dirty = 1
@@ -3353,7 +4538,7 @@ fn alloc_node(kind: int) -> int {
     // the attach (`zeusbase.child`, `child_insert`) marks the parent. A recycled
     // id's stale draw-op span is never read: the parent's paint mark stops the
     // patch walk above it, and the run it re-records writes the node a fresh
-    // span (`free_node` also drops the spans outright).
+    // span.
     if free_nodes.len > 0 {
         let id = free_nodes[free_nodes.len - 1]
         pop(free_nodes)
@@ -3368,7 +4553,7 @@ fn alloc_node(kind: int) -> int {
     // or raises the cap on purpose.
     if nodes.len >= node_cap {
         if node_overflow == 0 {
-            fmt.println("zeus: node arena exhausted at", node_cap, "nodes — virtualize the list (each / For / VirtualList) or raise node_cap")
+            fmt.println("zeus: node arena exhausted at", node_cap, "nodes — virtualize the list (Each / VirtualList) or raise node_cap")
         }
         node_overflow = 1
         return 0
@@ -3434,12 +4619,12 @@ fn mem_sig_bytes() -> i64 {
     return i64(sigs.len) * i64(__sizeof(nodes[0].bind_sig))
 }
 
-/// Bytes held by the rebuild-scope / keyed-`For` interning tables.
+/// Bytes held by the rebuild-scope / keyed-`Each` interning tables.
 fn mem_intern_bytes() -> i64 {
     let sz = i64(__sizeof(nodes[0].node_id))
     let ssz = i64(__sizeof(nodes[0].text))
-    let ints = rec_sid.len + rec_owner.len + rec_fid.len + rec_fowner.len + keyed_host.len + keyed_node.len
-    return i64(ints) * sz + i64(keyed_key.len) * ssz
+    let ints = rec_sid.len + rec_owner.len + rec_fid.len + rec_fowner.len + kt_used.len * 7 + key_head.len * 2
+    return i64(ints) * sz + i64(kt_key.len) * ssz
 }
 
 /// Bytes held by the animation tables (tracks, their free list, and the paint
@@ -3514,8 +4699,173 @@ fn theme_grow(slot: int) {
     }
 }
 
+// --- scoped theme and density ----------------------------------------------
+// The role colors and the density knob are app-wide signals. A node can
+// override either for its subtree: `scheme` (light / dark) is resolved at
+// paint time — the painter enters each node's effective scheme — and the
+// density signal is resolved by `density_at` from the node being built or the
+// node whose style effect is running. Both are skipped entirely (one int test)
+// until some node sets an override.
+
+/// 1 once any node has set `scheme`; 1 once any has set `dens_sid`.
+let mut scheme_scoped: int = 0
+let mut dens_scoped: int = 0
+/// The scheme paint is resolving against: -1 = follow `appearance()`, 0 light,
+/// 1 dark.
+let mut paint_dark: int = -1
+/// The scoped role palette paint is resolving against (0 = none).
+let mut paint_pal: int = 0
+
+// Scoped role palettes, by id (index 0 unused): each is a short list of role
+// slots with the light / dark rgb that replaces the app-wide one inside a
+// subtree that names it (`zui.Scope(accent = ...)`).
+let mut pal_slot: [][]int = [][]int { []int {} }
+let mut pal_l: [][]int = [][]int { []int {} }
+let mut pal_d: [][]int = [][]int { []int {} }
+
+fn set_scheme(id: int, s: int) {
+    if id <= 0 || id >= nodes.len {
+        return
+    }
+    nodes[id].scheme = nodes[id].scheme / 4 * 4 + s
+    scheme_scoped = 1
+    mark_paint()
+}
+
+/// A new, empty role palette; returns its id.
+fn palette_new() -> int {
+    push(pal_slot, []int {})
+    push(pal_l, []int {})
+    push(pal_d, []int {})
+    return pal_slot.len - 1
+}
+
+/// Palette `p` paints role `slot` as `light` / `dark` (packed rgb).
+fn palette_set(p: int, slot: int, light: int, dark: int) {
+    if p <= 0 || p >= pal_slot.len {
+        return
+    }
+    let n = pal_slot[p].len
+    for i in 0..n {
+        if pal_slot[p][i] == slot {
+            pal_l[p][i] = light
+            pal_d[p][i] = dark
+            mark_paint()
+            return
+        }
+    }
+    push(pal_slot[p], slot)
+    push(pal_l[p], light)
+    push(pal_d[p], dark)
+    mark_paint()
+}
+
+/// `id`'s subtree paints its roles from palette `p` (0 clears it).
+fn set_palette(id: int, p: int) {
+    if id <= 0 || id >= nodes.len {
+        return
+    }
+    nodes[id].scheme = nodes[id].scheme % 4 + p * 4
+    scheme_scoped = 1
+    mark_paint()
+}
+
+/// The palette `id` paints with: its own or the nearest ancestor's, 0 none.
+fn palette_of(id: int) -> int {
+    let mut c = id
+    let mut hops = 0
+    while c > 0 && c < nodes.len && hops < 4096 {
+        let p = nodes[c].scheme / 4
+        if p > 0 {
+            return p
+        }
+        c = nodes[c].parent
+        hops = hops + 1
+    }
+    return 0
+}
+
+fn set_density_scope(id: int, sid: int) {
+    if id <= 0 || id >= nodes.len {
+        return
+    }
+    nodes[id].dens_sid = sid
+    dens_scoped = 1
+}
+
+/// The scheme `id` paints with: its own override or the nearest ancestor's,
+/// -1 when none sets one.
+fn scheme_of(id: int) -> int {
+    let mut c = id
+    let mut hops = 0
+    while c > 0 && c < nodes.len && hops < 4096 {
+        let s = nodes[c].scheme % 4
+        if s == 1 {
+            return 0
+        }
+        if s == 2 {
+            return 1
+        }
+        c = nodes[c].parent
+        hops = hops + 1
+    }
+    return -1
+}
+
+/// The painter is entering node `id`: resolve against its scheme. Returns the
+/// value to hand back to `paint_scheme_leave` after its subtree.
+fn paint_scheme_enter(id: int) -> int {
+    let prev = paint_dark + 1 + paint_pal * 4
+    if scheme_scoped != 0 {
+        paint_dark = scheme_of(id)
+        paint_pal = palette_of(id)
+    }
+    return prev
+}
+
+fn paint_scheme_leave(prev: int) {
+    paint_dark = prev % 4 - 1
+    paint_pal = prev / 4
+}
+
+/// The density signal for a node: the nearest scoped one at or above `node`,
+/// continuing from `slot` (its build parent) when `node` is not attached yet —
+/// a style effect first runs before its node joins the tree. 0 = the global.
+fn density_at(node: int, slot: int) -> int {
+    if dens_scoped == 0 {
+        return 0
+    }
+    let mut c = node
+    let mut next_slot = slot
+    if c <= 0 {
+        c = next_slot
+        next_slot = 0
+    }
+    let mut hops = 0
+    while c > 0 && c < nodes.len && hops < 4096 {
+        if nodes[c].dens_sid > 0 {
+            return nodes[c].dens_sid
+        }
+        let p = nodes[c].parent
+        if p > 0 {
+            c = p
+        } else {
+            c = next_slot
+            next_slot = 0
+        }
+        hops = hops + 1
+    }
+    return 0
+}
+
+/// The node whose effect is running now (0 outside any effect).
+fn effect_node_now() -> int {
+    return track.current_node()
+}
+
 /// Paint-time color. The app registers light/dark RGB per slot; paint
-/// resolves against appearance().
+/// resolves against appearance(), or against the scheme a scoped subtree
+/// set (`paint_scheme_enter`).
 fn paint_rgb(c: int) -> int {
     if c < 0 {
         return 0
@@ -3528,9 +4878,23 @@ fn paint_rgb(c: int) -> int {
         return 0
     }
     let mut dark = 0
-    if appearance_sid > 0 {
+    if paint_dark >= 0 {
+        dark = paint_dark
+    } else if appearance_sid > 0 {
         if appearance_sid < sigs.len {
             dark = sigs[appearance_sid]
+        }
+    }
+    if paint_pal > 0 && paint_pal < pal_slot.len {
+        let ps = pal_slot[paint_pal]
+        let pn = ps.len
+        for i in 0..pn {
+            if ps[i] == slot {
+                if dark != 0 {
+                    return pal_d[paint_pal][i]
+                }
+                return pal_l[paint_pal][i]
+            }
         }
     }
     if dark != 0 {
@@ -4324,6 +5688,25 @@ fn is_inert(id: int) -> int {
     if int(nodes[id].loading) != 0 {
         return 1
     }
+    if exit_nodes.len > 0 {
+        if in_exiting(id) != 0 {
+            return 1
+        }
+    }
+    return 0
+}
+
+/// 1 when `id` or an ancestor is playing its exit transition.
+fn in_exiting(id: int) -> int {
+    let mut c = id
+    let mut hops = 0
+    while c > 0 && c < nodes.len && hops < 4096 {
+        if nodes[c].exiting != 0 {
+            return 1
+        }
+        c = nodes[c].parent
+        hops = hops + 1
+    }
     return 0
 }
 
@@ -4435,6 +5818,11 @@ fn paint_alpha(id: int) -> int {
             if int(nodes[p].enter_fade) != 0 {
                 a = a * int(nodes[p].show_amt) / 100
             }
+        }
+        // An exit transition fades the node's own opacity; the subtree it
+        // takes with it fades along (a row root's labels, a kept arm's body).
+        if nodes[p].exiting != 0 {
+            a = a * int(nodes[p].opacity) / 100
         }
         p = nodes[p].parent
         guard = guard + 1

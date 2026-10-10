@@ -14,38 +14,42 @@ fn spec() -> []TableCol {
     return h
 }
 
-fn paint_hits() {
-    let st = book.search_status()
-    if st == 0 {
-        zui.Empty(icon = zeus.IC_INFO, title = "Search the cached funds",
-                  body = "Type part of a fund name, such as quantum value, or a scheme code.")
-        return
+/// The results for one search state; the rows are an `Each` over the hits (see
+/// the stock search).
+fn arm(v: Signal<FundSearch>) -> Node {
+    let x = v.peek()
+    if x.state == 0 {
+        return zui.Empty(icon = zeus.IC_INFO, title = "Search the cached funds",
+                         body = "Type part of a fund name, such as quantum value, or a scheme code.")
     }
-    if st == 1 {
-        zeus.Text("Searching the cached catalog.")
-        return
+    if x.state == 1 {
+        return zeus.Text("Searching the cached catalog.")
     }
-    if st == 3 {
-        ui.ServerDown(fn() { book.search_retry() })
-        return
+    if x.state == 3 {
+        return ui.ServerDown(fn() { book.search_retry() })
     }
-    let n = book.hit_count()
-    let q = book.search_query()
-    if n == 0 {
-        zeus.Text("No cached scheme matches \"{{q}}\".")
-        return
+    if x.hits.len == 0 {
+        return zeus.Text(fn() -> string { return "No cached scheme matches \"{{v.get().query}}\"." })
     }
-    let total = book.hit_total_count()
-    if total > n {
-        zeus.Text("First {{n}} of {{total}} matches. Add a word to narrow it.")
-    }
-    zui.TableCols(spec())
-    let mut i = 0
-    while i < n {
-        let code = book.hit_code(i)
-        zui.TableRowCols(book.hit_cells(i), spec(), hover = true,
-                         on_click = fn() { router.navigate("/scheme/{{code}}") })
-        i = i + 1
+    return hits(v)
+}
+
+fn more_line(x: FundSearch) -> string {
+    let n = x.hits.len
+    let total = x.total
+    return "First {{n}} of {{total}} matches. Add a word to narrow it."
+}
+
+fn hits(v: Signal<FundSearch>) -> Node {
+    return zui.Column(0) {
+        zeus.Text(fn() -> string { return more_line(v.get()) },
+                  style = Style(display = zeus.shown(v.get().total > v.get().hits.len)))
+        zui.TableCols(spec())
+        zui.Each(v.get().hits, fn(i: int, h: FundHit) -> Node {
+            let code = h.code
+            return zui.TableRowCols(h.cells, spec(), hover = true,
+                                    on_click = fn() { router.navigate("/scheme/{{code}}") })
+        })
     }
 }
 
@@ -56,11 +60,8 @@ fn Page(p: Params) -> Node {
         if book.started() {
             zui.TextInput(book.search_field(), "Fund name or scheme code", style = Style(width = px(360)))
             zeus.effect(fn() { book.search_tick() })
-            zui.Match(book.search_generation(), fn(g) {
-                if g >= 0 {
-                    paint_hits()
-                }
-            })
+            zui.MatchBy(book.search(), fn(x: FundSearch) -> string { return "{{x.state}}:{{x.hits.len == 0}}" },
+                        fn(v: Signal<FundSearch>) -> Node { return arm(v) })
         } else {
             zeus.Text("Search the cached funds")
         }

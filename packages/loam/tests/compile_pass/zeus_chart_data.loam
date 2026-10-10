@@ -1,0 +1,121 @@
+// Charts over live data. `LineChartOf` / `BarChartOf` / `AreaChartOf` take a
+// `Signal<ChartData>`: new values with the same shape move the marks, the y
+// ticks and the paths through effects — the same nodes, no effect or node
+// allocated. Only a change in the number of categories or series rebuilds.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn frame() {
+    for _ in 0..3 {
+        zeus.engine_layout(700, 600)
+    }
+    zeus.engine_paint()
+}
+
+/// The visible 6x6 dots, left to right.
+fn dots() -> []int {
+    let mut out = []int {}
+    for id in 1..zeus.arena_nodes() {
+        if zeus.node_width(id) == 6 && zeus.node_height(id) == 6 && zeus.node_visible(id) == 1 {
+            push(out, id)
+        }
+    }
+    for i in 1..out.len {
+        let mut k = i
+        while k > 0 && zeus.node_x(out[k - 1]) > zeus.node_x(out[k]) {
+            let t = out[k - 1]
+            out[k - 1] = out[k]
+            out[k] = t
+            k = k - 1
+        }
+    }
+    return out
+}
+
+fn main() {
+    zeus.window("chart data", 700, 600)
+    let line = zeus.signal(ChartData {
+        labels: []string { "a", "b", "c", "d" },
+        names: []string { "s" },
+        vals: []int { 10, 20, 30, 40 },
+    })
+    let bars = zeus.signal(ChartData {
+        labels: []string { "x", "y" },
+        names: []string { "p", "q" },
+        vals: []int { 5, 6, 7, 8 },
+    })
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column, width = px(640))) {
+        zui.LineChartOf(line, 600, 220)
+        zui.BarChartOf(bars, 600, 220)
+    })
+    zeus.pump_frame()
+    frame()
+    let d0 = dots()
+    must(d0.len == 4, "four dots")
+    let y_last0 = zeus.node_y(d0[3])
+    must(zeus.engine_find_text("40") != 0, "the top tick reads the max")
+
+    // Same shape, new values: marks move, nothing is built.
+    let nodes0 = zeus.arena_nodes()
+    let rows0 = zeus.reactive_rows()
+    line.set(ChartData {
+        labels: []string { "a", "b", "c", "d" },
+        names: []string { "s" },
+        vals: []int { 40, 30, 20, 10 },
+    })
+    frame()
+    let d1 = dots()
+    must(d1.len == 4, "still four dots")
+    must(d1[0] == d0[0] && d1[3] == d0[3], "the same dot nodes")
+    must(zeus.node_y(d1[3]) > y_last0, "the last dot moved down with its value")
+    must(zeus.arena_nodes() == nodes0, "no node built")
+    must(zeus.reactive_rows() == rows0, "no effect built")
+
+    // A label change lands in place too.
+    line.set(ChartData {
+        labels: []string { "a", "b", "c", "zz" },
+        names: []string { "s" },
+        vals: []int { 40, 30, 20, 10 },
+    })
+    frame()
+    must(zeus.engine_find_text("zz") != 0, "the new label shows")
+    must(zeus.arena_nodes() == nodes0, "and builds nothing")
+
+    // A bar going to 0 hides; coming back shows it again, same node.
+    let bar_nodes0 = zeus.arena_nodes()
+    bars.set(ChartData {
+        labels: []string { "x", "y" },
+        names: []string { "p", "q" },
+        vals: []int { 5, 0, 7, 8 },
+    })
+    frame()
+    bars.set(ChartData {
+        labels: []string { "x", "y" },
+        names: []string { "p", "q" },
+        vals: []int { 50, 60, 70, 80 },
+    })
+    frame()
+    must(zeus.arena_nodes() == bar_nodes0, "bar data moves bars without building")
+    must(zeus.engine_find_text("80") != 0, "and the domain follows it")
+
+    // A new category: the chart rebuilds for the new shape.
+    line.set(ChartData {
+        labels: []string { "a", "b", "c", "d", "e" },
+        names: []string { "s" },
+        vals: []int { 1, 2, 3, 4, 5 },
+    })
+    frame()
+    must(dots().len == 5, "a new shape rebuilds with five dots")
+
+    fmt.println("chart data ok")
+}

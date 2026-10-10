@@ -24,6 +24,29 @@ fn StatGrid(cells: []string) -> Node {
     }
 }
 
+/// `StatGrid` over live cells: a write that keeps the number of cards moves
+/// their text in place; only a different count rebuilds the grid.
+fn StatGridOf(cells: Signal<[]string>) -> Node {
+    return zui.MatchBy(cells, fn(c: []string) -> string { return "{{c.len / 3}}" }, fn(p: Signal<[]string>) -> Node {
+        return stat_grid_live(p)
+    })
+}
+
+fn stat_grid_live(p: Signal<[]string>) -> Node {
+    let n = p.peek().len / 3
+    return zui.RowWrap(Space.Sm) {
+        let mut i = 0
+        while i < n {
+            let at = i * 3
+            zeus.Box(style = Style(width = px(190), direction = Direction.Column)) {
+                zui.Stat(fn() -> string { return p.get()[at] }, fn() -> string { return p.get()[at + 1] },
+                         zeus.Tint.Ink, delta = fn() -> string { return p.get()[at + 2] })
+            }
+            i = i + 1
+        }
+    }
+}
+
 /// What a dead RPC looks like on a page, with the way out.
 fn ServerDown(retry: fn()) -> Node {
     return zui.Empty(icon = zeus.IC_INFO, title = "The data server did not answer",

@@ -1,0 +1,101 @@
+// Reactivity gaps §3: `EachKeyed` splits row identity (the key) from row
+// content (the item). A row whose key survives a refresh is patched in place —
+// its item and index cells take the new value — instead of being torn down
+// and rebuilt, so its local signals, focus and scroll stay.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+struct Todo {
+    id: int,
+    title: string,
+}
+
+let mut builds: int = 0
+let mut locals: []int = []int {}
+
+fn frame() {
+    zeus.engine_layout(300, 200)
+    zeus.engine_paint()
+}
+
+fn main() {
+    zeus.window("eachkeyed", 300, 200)
+    let todos = zeus.signal([]Todo {
+        Todo { id: 1, title: "milk" },
+        Todo { id: 2, title: "eggs" },
+        Todo { id: 3, title: "rice" },
+    })
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column)) {
+        zui.EachKeyed(todos.get(), fn(t: Todo) -> string { return "{{t.id}}" },
+                      fn(i: Signal<int>, t: Signal<Todo>) -> Node {
+            builds = builds + 1
+            // Row-local state: a rebuild would recreate it at 0.
+            let mark = zeus.signal(0)
+            push(locals, mark.id)
+            return zeus.Box() {
+                zeus.Text("{{i.get()}}:{{t.get().title}}:{{mark.get()}}")
+            }
+        })
+    })
+    frame()
+    must(builds == 3, "three rows built")
+    must(zeus.engine_find_text("0:milk:0") != 0, "row 0 shows its item")
+    let eggs_row = zeus.engine_find_text("1:eggs:0")
+    must(eggs_row != 0, "row 1 shows its item")
+
+    // Give row `eggs` local state.
+    let mark_eggs = Signal<int> { id: locals[1] }
+    mark_eggs.set(7)
+    frame()
+    must(zeus.engine_find_text("1:eggs:7") != 0, "the local signal shows")
+
+    // Same key, new title: patched, not rebuilt.
+    let rows0 = zeus.reactive_rows()
+    let p0 = zui.each_patched()
+    // The unchanged items keep their values (equal by value, so writing them
+    // again is not a change: only `eggs` is patched).
+    let cur = todos.peek()
+    todos.set([]Todo { cur[0], Todo { id: 2, title: "EGGS" }, cur[2] })
+    frame()
+    must(builds == 3, "a changed item does not rebuild its row")
+    must(zui.each_patched() == p0 + 1, "it is patched in place")
+    must(zeus.engine_find_text("1:EGGS:7") != 0, "the row shows the new title and keeps its local state")
+    must(zeus.engine_find_text("1:EGGS:7") == eggs_row, "on the same node")
+    must(zeus.reactive_rows() == rows0, "and allocates no effect")
+
+    // Reorder: rows move, their index cells follow.
+    todos.set([]Todo {
+        Todo { id: 3, title: "rice" },
+        Todo { id: 2, title: "EGGS" },
+        Todo { id: 1, title: "milk" },
+    })
+    frame()
+    must(builds == 3, "a reorder builds nothing")
+    must(zeus.engine_find_text("0:rice:0") != 0, "rice moved to the top")
+    must(zeus.engine_find_text("2:milk:0") != 0, "milk moved to the bottom")
+    must(zeus.engine_find_text("1:EGGS:7") == eggs_row, "eggs kept its node and state")
+
+    // A new key builds one row; a dropped key frees one.
+    todos.set([]Todo {
+        Todo { id: 3, title: "rice" },
+        Todo { id: 2, title: "EGGS" },
+        Todo { id: 4, title: "salt" },
+    })
+    frame()
+    must(builds == 4, "a new key builds one row")
+    must(zeus.engine_find_text("2:salt:0") != 0, "the new row shows")
+    must(zeus.engine_find_text("2:milk:0") == 0, "the dropped row is gone")
+
+    fmt.println("each keyed ok")
+}

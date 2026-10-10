@@ -15,23 +15,27 @@ fn spec() -> []TableCol {
     return h
 }
 
-fn paint_ranks() {
-    if book.rank_count() == 0 {
-        zui.Empty(icon = zeus.IC_INFO, title = "No schemes to rank.",
-                  body = "Add funds on Holdings. The screener ranks that list.")
-        return
+/// The ranks: one arm while the list is empty or not; the rows are an `Each`,
+/// so a re-rank moves the rows instead of rebuilding them.
+fn arm(v: Signal<RowList>) -> Node {
+    if v.peek().rows.len == 0 {
+        return zui.Empty(icon = zeus.IC_INFO, title = "No schemes to rank.",
+                         body = "Add funds on Holdings. The screener ranks that list.")
     }
-    if book.any_down() {
-        ui.ServerDown(fn() { book.retry() })
-    }
-    zui.TableCols(spec())
-    let n = book.rank_count()
-    let mut i = 0
-    while i < n {
-        let code = book.rank_code(i)
-        zui.TableRowCols(book.rank_cells(i), spec(), hover = true,
-                         on_click = fn() { router.navigate("/scheme/{{code}}") })
-        i = i + 1
+    return rank_rows(v)
+}
+
+fn rank_rows(v: Signal<RowList>) -> Node {
+    return zui.Column(0) {
+        zeus.Box(style = Style(display = zeus.shown(v.get().down))) {
+            ui.ServerDown(fn() { book.retry() })
+        }
+        zui.TableCols(spec())
+        zui.Each(v.get().rows, fn(i: int, r: CodeRow) -> Node {
+            let code = r.code
+            return zui.TableRowCols(r.cells, spec(), hover = true,
+                                    on_click = fn() { router.navigate("/scheme/{{code}}") })
+        })
     }
 }
 
@@ -40,11 +44,8 @@ fn Page(p: Params) -> Node {
         zui.Heading("Screener")
         zui.Body("Ranks the watchlist by 12-month momentum. A tie keeps the earlier scheme. Warm-up is not a rank. Click a row for its chart.")
         if book.started() {
-            zui.Match(book.load_gen(), fn(g) {
-                if g >= 0 {
-                    paint_ranks()
-                }
-            })
+            zui.MatchBy(book.ranks(), fn(x: RowList) -> string { return "{{x.rows.len == 0}}" },
+                        fn(v: Signal<RowList>) -> Node { return arm(v) })
         } else {
             zeus.Text("No schemes to rank.")
         }

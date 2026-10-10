@@ -13,9 +13,9 @@ fn main() {
     zui.push_item(names, "Bea")
     zeus.snapshot(240, 160, fn() -> Node {
         zeus.Box(style = Style(direction = Direction.Column)) {
-            zui.For(names, fn(s) => s, RowOf)
+            zui.Each(names.get(), RowOf)
             zui.Button("Add", on_click = fn() => zui.push_item(names, "Cyd"))
-            zui.Loop(names.get(), fn(i, s) {
+            zui.Each(names.get(), fn(i, s) {
                 zeus.Text(s)
             })
         }

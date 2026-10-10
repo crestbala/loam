@@ -14,39 +14,45 @@ fn spec() -> []TableCol {
     return h
 }
 
-fn paint_hits() {
-    let st = stocks.search_status()
-    if st == 0 {
-        zui.Empty(icon = zeus.IC_INFO, title = "Search the cached stocks",
-                  body = "Type an NSE symbol such as RELIANCE, or part of a company name.")
-        return
+/// The results for one search state. `MatchBy` keeps the arm while the state
+/// (and whether any row matched) holds; inside it the rows are an `Each` over
+/// the hits, so a refined query keeps the rows that still match and builds
+/// only the new ones.
+fn arm(v: Signal<StockSearch>) -> Node {
+    let x = v.peek()
+    if x.state == 0 {
+        return zui.Empty(icon = zeus.IC_INFO, title = "Search the cached stocks",
+                         body = "Type an NSE symbol such as RELIANCE, or part of a company name.")
     }
-    if st == 1 {
-        zeus.Text("Searching the cached symbols.")
-        return
+    if x.state == 1 {
+        return zeus.Text("Searching the cached symbols.")
     }
-    if st == 3 {
-        ui.ServerDown(fn() { stocks.search_retry() })
-        return
+    if x.state == 3 {
+        return ui.ServerDown(fn() { stocks.search_retry() })
     }
-    let n = stocks.hit_count()
-    let q = stocks.search_query()
-    if n == 0 {
-        zui.Empty(icon = zeus.IC_INFO, title = "No cached stock matches \"{{q}}\"",
-                  body = "Only symbols in a fetched NSE bhavcopy are here. Load closes on the Data page.")
-        return
+    if x.hits.len == 0 {
+        return zui.Empty(icon = zeus.IC_INFO, title = fn() -> string { return "No cached stock matches \"{{v.get().query}}\"" },
+                         body = "Only symbols in a fetched NSE bhavcopy are here. Load closes on the Data page.")
     }
-    let total = stocks.hit_total_count()
-    if total > n {
-        zeus.Text("First {{n}} of {{total}} matches. Add a word to narrow it.")
-    }
-    zui.TableCols(spec())
-    let mut i = 0
-    while i < n {
-        let sym = stocks.hit_symbol(i)
-        zui.TableRowCols(stocks.hit_cells(i), spec(), hover = true,
-                         on_click = fn() { router.navigate("/stocks/{{sym}}") })
-        i = i + 1
+    return hits(v)
+}
+
+fn more_line(x: StockSearch) -> string {
+    let n = x.hits.len
+    let total = x.total
+    return "First {{n}} of {{total}} matches. Add a word to narrow it."
+}
+
+fn hits(v: Signal<StockSearch>) -> Node {
+    return zui.Column(0) {
+        zeus.Text(fn() -> string { return more_line(v.get()) },
+                  style = Style(display = zeus.shown(v.get().total > v.get().hits.len)))
+        zui.TableCols(spec())
+        zui.Each(v.get().hits, fn(i: int, h: StockHit) -> Node {
+            let sym = h.sym
+            return zui.TableRowCols(h.cells, spec(), hover = true,
+                                    on_click = fn() { router.navigate("/stocks/{{sym}}") })
+        })
     }
 }
 
@@ -57,11 +63,8 @@ fn Page(p: Params) -> Node {
         if stocks.started() {
             zui.TextInput(stocks.search_field(), "Symbol or company name", style = Style(width = px(360)))
             zeus.effect(fn() { stocks.search_tick() })
-            zui.Match(stocks.search_generation(), fn(g) {
-                if g >= 0 {
-                    paint_hits()
-                }
-            })
+            zui.MatchBy(stocks.search(), fn(x: StockSearch) -> string { return "{{x.state}}:{{x.hits.len == 0}}" },
+                        fn(v: Signal<StockSearch>) -> Node { return arm(v) })
         } else {
             zeus.Text("Search the cached stocks")
         }

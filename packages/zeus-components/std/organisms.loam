@@ -15,9 +15,6 @@ import "std:async"
 import "std:fmt"
 import "zeus-components:atoms"
 import "zeus-components:molecules"
-import "zeus:zeuscore/geometry"
-import "zeus:zeuscore/platform"
-import "zeus:zeuscore/arena"
 
 /// One column of a `VirtualTable`. `width` 0 means the column takes an equal
 /// share of the row (pair cells with `set_flex_basis_zero(...).grow(1)`); a positive value
@@ -51,67 +48,15 @@ struct TableRowProps {
     on_click: Option<fn()> = none,
 }
 
-/// Vertical scroller that window-renders `items`. `row_h` is the fixed row
-/// height in points (spacers use it so `scroll_max` matches the full list).
-/// `build(i, item)` is the row. 10k rows stay a few dozen nodes.
-fn VirtualList<T>(items: Signal<[]T>, row_h: int, build: fn(int, T) -> Node) -> Node {
-    let n = raw_scroll()
-    let node_id = n.id
-    arena.bind_host(items.id, node_id)
-    virtual_refresh(node_id, items, build, row_h)
-    return Component(n,
-                     style = Style(grow = 1),
-                     role = "list",
-                     rowHeight = row_h,
-                     rebuild = || { virtual_refresh(node_id, items, build, row_h) })
-}
-
-/// Keyed windowed list: `VirtualList` with a stable `key(item)`. Scrolling
-/// **moves** the rows whose key stays in the window instead of rebuilding every
-/// visible row, so a scroll allocates only the rows entering it — the fix for
-/// the `docs/mem-baseline.md` §5.1 per-scroll growth. `key` must be stable and
-/// unique among the items. Row state that must follow the item should read a
-/// signal inside the row, not `i`. Falls back to the unkeyed path if a key is
-/// empty or duplicated.
-fn VirtualListKeyed<T>(items: Signal<[]T>, row_h: int, key: fn(T) -> string,
-                       build: fn(int, T) -> Node) -> Node {
-    let n = raw_scroll()
-    let node_id = n.id
-    arena.bind_host(items.id, node_id)
-    virtual_refresh_keyed(node_id, items, key, build, row_h)
-    return Component(n,
-                     style = Style(grow = 1),
-                     role = "list",
-                     rowHeight = row_h,
-                     rebuild = || { virtual_refresh_keyed(node_id, items, key, build, row_h) })
-}
-
-/// Windowed list with per-row heights. `heights[i]` is row `i` in points
-/// (0 / missing uses `fallback`). Spacers use the prefix sum so `scroll_max`
-/// matches the real list.
-fn VirtualListVar<T>(items: Signal<[]T>, heights: Signal<[]int>, fallback: int,
-                     build: fn(int, T) -> Node) -> Node {
-    let n = raw_scroll()
-    let node_id = n.id
-    arena.bind_host(items.id, node_id)
-    arena.bind_host(heights.id, node_id)
-    virt_refresh_var(node_id, items, build, fallback, heights)
-    return Component(n,
-                     style = Style(grow = 1),
-                     role = "list",
-                     rowHeight = fallback,
-                     rebuild = || { virt_refresh_var(node_id, items, build, fallback, heights) })
-}
-
 /// Windowed table. `rows` is `zeus.signal([]T {})` where `T` is a row struct;
 /// `cols` is `[]TableCol` (title + width) for the header. The body is a
 /// `VirtualList` of `build(i, row)` — only visible rows are mounted. The
 /// themed header (`TableCols`) shares its gutter with body rows; build every
 /// cell with `set_flex_basis_zero(...).grow(1)` (or a fixed `.set_width(px)` matching the column)
 /// so body columns line up under the header.
-/// Extras for `VirtualTable`: `sort` wires the header's sortable columns
-/// (see `TableColsProps`). Rows are the app's `Signal<[]T>`, so the app
-/// reorders them — `sort_by` with a key per column — in an effect on `sort`.
+/// Extras for `VirtualTable`: `sort` wires the header (see `TableColsProps`).
+/// The window owns its row builder, so the app sets the row order:
+/// `rows.set(sort_cells(rows.get(), cells, sort.get()))`.
 struct VirtualTableProps {
     sort: Option<Signal<int>> = none,
 }
@@ -166,7 +111,7 @@ struct ComboboxProps {
 /// option. Up / Down move the highlight, Enter picks the highlighted option into
 /// the field, Escape or an outside click closes. `text` is the one piece of state
 /// and belongs to the caller. Options should be unique: the list is keyed by
-/// label (`zeus.For`).
+/// label (`zeus.Each`).
 fn Combobox(text: Signal<string>, options: []string, p: ComboboxProps) -> Node {
     // state
     let active = signal(-1)
@@ -242,7 +187,7 @@ fn Combobox(text: Signal<string>, options: []string, p: ComboboxProps) -> Node {
                           Style(display = shown(active.get() >= 0))),
             enter = Enter.Fade
         ) {
-            For(matches, fn(s) => s, fn(i, s) {
+            Each(matches.get(), fn(i, s) {
                 return ComboRow(text, active, input, i, s, scrim)
             })
         }
@@ -308,7 +253,7 @@ fn Accordion(open: Signal<int>, p: AccordionProps) -> Node {
                                          border = line(HAIRLINE, rule()),
                                          background = plate()), Style(overflow = Overflow.Hidden)), style_of(p.style)),
                bind = p.bind) {
-        Loop(p.items, (index, item) => {
+        Each(p.items, (index, item) => {
             AccordionItem(open = open, index = index, title = item.title, body = item.body,
                           heads = heads)
         })
@@ -532,9 +477,17 @@ fn Menu(p: MenuProps) -> Node {
             if p.label.len > 0 {
                 MenuLabel(p.label)
             }
-            Loop(p.items, fn(index, item) {
+            Each(p.items, fn(index, item) {
                 if item.isSeparated {
-                    MenuSeparator()
+                    // One root per row: the separator rides with its item,
+                    // spaced as if both were rows of the panel.
+                    return Column(PANEL_GAP) {
+                        MenuSeparator()
+                        MenuItem(active = active, index = index, count = p.items.len,
+                                 label = item.label, danger = item.danger,
+                                 scrim = scrim,
+                                 on_click = fn() => emit_with(p.on_select, index))
+                    }
                 }
                 return MenuItem(active = active, index = index, count = p.items.len,
                                 label = item.label, danger = item.danger,
@@ -1158,7 +1111,7 @@ fn TableHead(cols: []string) -> Node {
                           gap = Space.Sm,
                           align = Align.Center,
                           padding = Edges(right = Space.Exs, left = Space.Exs))) {
-            Loop(cols, fn(i, t) {
+            Each(cols, fn(i, t) {
                 return TableCell(t, 0, Align.Start, mute())
             })
         }
@@ -1218,7 +1171,7 @@ fn table_share(width: int) -> Style {
 /// `zebra` / `hover` / `on_click` are `TableRowProps`.
 fn TableRow(cols: []string, p: TableRowProps) -> Node {
     let shell = TableRowShell(p) {
-        Loop(cols, fn(i, t) {
+        Each(cols, fn(i, t) {
             return TableCell(t, 0, Align.Start, ink())
         })
     }
@@ -1231,7 +1184,7 @@ fn TableRow(cols: []string, p: TableRowProps) -> Node {
 /// row, start-aligned.
 fn TableRowCols(cols: []string, spec: []TableCol, p: TableRowProps) -> Node {
     let shell = TableRowShell(p) {
-        Loop(cols, fn(i, t) {
+        Each(cols, fn(i, t) {
             let w = if i < spec.len { spec[i].width } else { 0 }
             let al = if i < spec.len { spec[i].align } else { Align.Start }
             return TableCell(t, w, al, ink())
@@ -1245,8 +1198,22 @@ fn TableRowCols(cols: []string, spec: []TableCol, p: TableRowProps) -> Node {
 /// "12", "-3", "30 kg" all count; "" and "abc" do not). Returns the value
 /// and whether it parsed, so numeric columns sort by value.
 
-/// Position of the row whose cells key is `k` in the caller's data
-/// (-1 when it is gone).
+/// true when `a` and `b` show the same cells in the same order.
+fn rows_in_order<T>(a: []T, b: []T, cells: fn(T) -> []string) -> bool {
+    if a.len != b.len {
+        return false
+    }
+    for i in 0..a.len {
+        if !fmt.eq(cells_key(cells(a[i])), cells_key(cells(b[i]))) {
+            return false
+        }
+    }
+    return true
+}
+
+/// Index of the row whose cells key is `k` in `rows` (-1 when it is gone).
+/// Resolved at click time: a sort moves the row node, so the index it was
+/// built with is not where it sits now.
 fn table_index_of<T>(rows: Signal<[]T>, cells: fn(T) -> []string, k: string) -> int {
     let xs = rows.get()
     for i in 0..xs.len {
@@ -1259,37 +1226,42 @@ fn table_index_of<T>(rows: Signal<[]T>, cells: fn(T) -> []string, k: string) -> 
 
 /// Extras for `Table`.
 struct TableProps {
-    /// Sort state (see `TableColsProps`); rows reorder when it changes.
+    /// Sort state (see `TableColsProps`). A change rewrites `rows` into that
+    /// column's ascending or descending order.
     sort: Option<Signal<int>> = none,
     zebra: bool = false,
     hover: bool = false,
-    /// Row click: receives the row's index in the caller's `rows` (not the
-    /// sorted order), so `rows.get()[i]` is the item.
+    /// Row click: index into `rows` as they stand, so `rows.get()[i]` is the item.
     on_pick: Option<fn(int)> = none,
 }
 
 /// Data table: a `TableCols` header over rows from a `Signal<[]T>`, each
-/// row's text from `cells(t)` (one string per column). Rows are keyed by
-/// their cells, so a sort moves the existing nodes instead of rebuilding
-/// them. Pass `sort` and the shown order follows it (`sort_cells`) without
-/// touching the caller's data; `zebra` / `hover` / `on_pick` go to every
-/// row. A long list wants `VirtualTable` (windowed) instead.
+/// row's text from `cells(t)` (one string per column). Pass `sort` and a
+/// header click writes `rows` into that column's order (`sort_cells`):
+/// ascending, then descending. Rows are keyed by value, so the reorder moves
+/// the existing nodes. A later push is placed by the same column. Clearing
+/// the sort (the third click) leaves the rows where the last column put them.
+/// `zebra` / `hover` / `on_pick` go to every row. A long list wants
+/// `VirtualTable` (windowed) instead.
 fn Table<T>(spec: []TableCol, rows: Signal<[]T>, cells: fn(T) -> []string,
             p: TableProps) -> Node {
-    // state
     let sort_set = result.is_some(p.sort)
     let sort = result.some_or(p.sort, no_signal())
 
-    // derived: recompute sorted rows whenever sort or rows changes
-    let shown = computed(|| {
-        let s = if sort_set { sort.get() } else { 0 }
-        return sort_cells(rows.get(), cells, s)
+    effect(|| {
+        if sort_set {
+            let cur = rows.get()
+            let next = sort_cells(cur, cells, sort.get())
+            if !rows_in_order(cur, next, cells) {
+                rows.set(next)
+            }
+        }
     })
 
-    // tree. One top-level child per item, so `For` can reorder rows.
+    // One top-level child per item, so `Each` can reorder rows.
     return Box(style = Style(direction = Direction.Column, gap = 0), role = "table") {
         TableCols(spec, sort = p.sort)
-        For(shown, fn(t: T) -> string { return cells_key(cells(t)) }, fn(i: int, t: T) {
+        Each(rows.get(), fn(i: int, t: T) {
             return Column(0) {
                 if result.is_some(p.on_pick) {
                     TableRowCols(cells(t), spec, zebra = p.zebra, hover = p.hover,
@@ -1315,7 +1287,7 @@ fn TableCols(cols: []TableCol, p: TableColsProps) -> Node {
                           gap = Space.Sm,
                           align = Align.Center,
                           padding = Edges(right = Space.Exs, left = Space.Exs))) {
-            Loop(cols, fn(i, c) {
+            Each(cols, fn(i, c) {
                 return TableColHead(c, i, c.sortable && result.is_some(p.sort), result.some_or(p.sort, no_signal()))
             })
         }
@@ -1350,25 +1322,25 @@ fn TableColHead(c: TableCol, i: int, sortable: bool, sort: Signal<int>) -> Node 
 /// (`1 … 4 5 6 … 20`), collapsing the ellipsis at either end.
 
 /// Grouped bar chart. One shared y domain.
-/// The plot re-fits the container: pass the intended width, and the chart
-/// re-lays out whenever its card measures a different width.
+/// The plot follows the container: pass the intended width, and the marks
+/// move in place whenever its card measures a different width (nothing is
+/// rebuilt).
 fn BarChart(labels: []string, names: []string, vals: []int, w: int, h: int) -> Node {
-    let n = labels.len
-    let s = names.len
-    if n == 0 {
-        return Column(Space.Exs)
-    }
-    if s == 0 {
-        return Column(Space.Exs)
-    }
+    return BarChartOf(signal(ChartData { labels: labels, names: names, vals: vals }), w, h)
+}
+
+/// `BarChart` over live data: a write to `data` moves the bars, ticks and
+/// labels through effects. Only a change in the number of categories or
+/// series rebuilds the chart.
+fn BarChartOf(data: Signal<ChartData>, w: int, h: int) -> Node {
     let host = Column(Space.Exs)
     let node_id = host.id
-    refit(host, fn() {
-        chart_bars(labels, names, vals, n, s, w, h, host)
-    })
-    // Render immediately with the requested width; the next layout refits.
+    // Built once: the marks follow the host's width through `gw`.
+    let gw = chart_w(w, host)
     return slot(node_handle(node_id), || {
-        chart_bars(labels, names, vals, n, s, w, h, host)
+        MatchBy(data, chart_shape, fn(d: Signal<ChartData>) -> Node {
+            return chart_arm_bars(d, gw, h)
+        })
     })
 }
 
@@ -1377,42 +1349,81 @@ fn BarChart(labels: []string, names: []string, vals: []int, w: int, h: int) -> N
 /// is not drawn and breaks its line.
 fn LineChart(labels: []string, names: []string, vals: []int, w: int, h: int,
              p: LineChartProps) -> Node {
-    let n = labels.len
-    let s = names.len
-    if n == 0 {
-        return Column(Space.Exs)
-    }
-    if s == 0 {
-        return Column(Space.Exs)
-    }
+    return LineChartOf(signal(ChartData { labels: labels, names: names, vals: vals }), w, h,
+                       fit = p.fit, decimals = p.decimals, labelEvery = p.labelEvery, dots = p.dots)
+}
+
+/// `LineChart` over live data (see `BarChartOf`).
+fn LineChartOf(data: Signal<ChartData>, w: int, h: int, p: LineChartProps) -> Node {
     let host = Column(Space.Exs)
     let node_id = host.id
-    refit(host, fn() {
-        chart_lines(labels, names, vals, n, s, w, h, host, p)
-    })
+    let gw = chart_w(w, host)
     return slot(node_handle(node_id), || {
-        chart_lines(labels, names, vals, n, s, w, h, host, p)
+        MatchBy(data, chart_shape, fn(d: Signal<ChartData>) -> Node {
+            return chart_arm_lines(d, gw, h, p)
+        })
     })
 }
 
 /// Area chart: tinted fill under the line (fill follows appearance).
 fn AreaChart(labels: []string, names: []string, vals: []int, w: int, h: int) -> Node {
-    let n = labels.len
-    let s = names.len
-    if n == 0 {
-        return Column(Space.Exs)
-    }
-    if s == 0 {
-        return Column(Space.Exs)
-    }
+    return AreaChartOf(signal(ChartData { labels: labels, names: names, vals: vals }), w, h)
+}
+
+/// `AreaChart` over live data (see `BarChartOf`).
+fn AreaChartOf(data: Signal<ChartData>, w: int, h: int) -> Node {
     let host = Column(Space.Exs)
     let node_id = host.id
-    refit(host, fn() {
-        chart_areas(labels, names, vals, n, s, w, h, host)
-    })
+    let gw = chart_w(w, host)
     return slot(node_handle(node_id), || {
-        chart_areas(labels, names, vals, n, s, w, h, host)
+        MatchBy(data, chart_shape, fn(d: Signal<ChartData>) -> Node {
+            return chart_arm_areas(d, gw, h)
+        })
     })
+}
+
+/// One chart arm: the plot for the shape `d` holds, or nothing when the data
+/// is empty or ragged. Dispatchers, so no builder returns early.
+fn chart_arm_bars(d: Signal<ChartData>, gw: Signal<int>, h: int) -> Node {
+    if chart_drawable(d.peek()) {
+        return chart_col_bars(d, gw, h)
+    }
+    return Column(Space.Exs)
+}
+
+fn chart_arm_lines(d: Signal<ChartData>, gw: Signal<int>, h: int, p: LineChartProps) -> Node {
+    if chart_drawable(d.peek()) {
+        return chart_col_lines(d, gw, h, p)
+    }
+    return Column(Space.Exs)
+}
+
+fn chart_arm_areas(d: Signal<ChartData>, gw: Signal<int>, h: int) -> Node {
+    if chart_drawable(d.peek()) {
+        return chart_col_areas(d, gw, h)
+    }
+    return Column(Space.Exs)
+}
+
+fn chart_col_bars(d: Signal<ChartData>, gw: Signal<int>, h: int) -> Node {
+    let x = d.peek()
+    return Column(Space.Exs) {
+        chart_bars(d, x.labels.len, x.names.len, gw, h)
+    }
+}
+
+fn chart_col_lines(d: Signal<ChartData>, gw: Signal<int>, h: int, p: LineChartProps) -> Node {
+    let x = d.peek()
+    return Column(Space.Exs) {
+        chart_lines(d, x.labels.len, x.names.len, gw, h, p)
+    }
+}
+
+fn chart_col_areas(d: Signal<ChartData>, gw: Signal<int>, h: int) -> Node {
+    let x = d.peek()
+    return Column(Space.Exs) {
+        chart_areas(d, x.labels.len, x.names.len, gw, h)
+    }
 }
 
 /// Ghost icon step button for the month/year rails.
@@ -2085,7 +2096,7 @@ fn Tree(items: Signal<[]TreeItem>, selected: Signal<int>, open: Signal<[]int>, p
     return Box(style = merge(Style(direction = Direction.Column), style_of(p.style)),
                role = "tree",
                label = p.label) {
-        For(visible, fn(i) => "{{i}}", fn(row, index) {
+        Each(visible.get(), fn(row, index) {
             return TreeRow(items.get(), visible, selected, open, p.on_open, index)
         })
     }
@@ -2371,11 +2382,11 @@ fn NotificationCenter(live: Signal<[]Notice>, history: Signal<[]Notice>) -> Node
             Button("History", look = Look.Ghost, size = Size.Sm,
                    on_click = fn() { show.set(!show.get()) })
         }
-        For(live, fn(n) => n.title, fn(i, n) {
+        Each(live.get(), fn(i, n) {
             return Notification(n.title, n.body, n.tint, fn() { dismiss(i) })
         })
         Show(when = show.get()) {
-            For(history, fn(n) => "{{n.title}} past", fn(i, n) {
+            Each(history.get(), fn(i, n) {
                 return NoticeHistory(n.title, n.body)
             })
         }
@@ -2510,7 +2521,7 @@ fn CommandPalette(open: Signal<bool>, items: []CommandItem, p: CommandPalettePro
                       on_key_down = key)
             }
             Scroll(style = Style(width = pct(100), height = px(320))) {
-                For(matches, fn(i) => "{{i}}", fn(row, index) {
+                Each(matches.get(), fn(row, index) {
                     return CommandRow(cmds, matches, active, row, index, pick)
                 })
             }

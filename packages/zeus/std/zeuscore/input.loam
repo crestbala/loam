@@ -208,7 +208,7 @@ fn context_click(px: int, py: int) -> int {
     arena.ev_x = px
     arena.ev_y = py
     arena.ev_button = 2
-    platform.plat_invoke_fn(arena.hook_of(id, arena.HOOK_CONTEXT))
+    arena.invoke_handler(arena.hook_of(id, arena.HOOK_CONTEXT), id)
     arena.ev_button = 0
     arena.mark_chrome()
     return 1
@@ -304,7 +304,7 @@ fn click(px: int, py: int) -> int {
         arena.ev_x = px
         arena.ev_y = py
         arena.ev_button = 0
-        platform.plat_invoke_fn(arena.hook_of(dr, arena.HOOK_DRAG))
+        arena.invoke_handler(arena.hook_of(dr, arena.HOOK_DRAG), dr)
         arena.mark_chrome()
         return 1
     }
@@ -319,11 +319,11 @@ fn click(px: int, py: int) -> int {
     let c2 = Click { signal_id: arena.nodes[id].click2_sig, mode: int(arena.nodes[id].click2_mode), setv: arena.nodes[id].click2_set }
     apply_click(c2)
     if arena.nodes[id].click_fn > 0 {
-        platform.plat_invoke_fn(arena.nodes[id].click_fn)
+        arena.invoke_handler(arena.nodes[id].click_fn, id)
     }
     arena.down_id = id
     if arena.nodes[id].down_fn > 0 {
-        platform.plat_invoke_fn(arena.nodes[id].down_fn)
+        arena.invoke_handler(arena.nodes[id].down_fn, id)
     }
     arena.mark_chrome()
     return 1
@@ -570,7 +570,7 @@ fn drag(px: int, py: int) -> int {
     if df > 0 {
         arena.ev_x = px
         arena.ev_y = py
-        platform.plat_invoke_fn(df)
+        arena.invoke_handler(df, arena.drag_id)
         arena.mark_chrome()
         return 1
     }
@@ -645,7 +645,7 @@ fn mouseup() {
     }
     if arena.nodes[id].up_fn > 0 {
         arena.ev_button = 0
-        platform.plat_invoke_fn(arena.nodes[id].up_fn)
+        arena.invoke_handler(arena.nodes[id].up_fn, id)
     }
 }
 
@@ -684,7 +684,7 @@ fn press_focused() -> int {
         ran = 1
     }
     if arena.nodes[id].click_fn > 0 {
-        platform.plat_invoke_fn(arena.nodes[id].click_fn)
+        arena.invoke_handler(arena.nodes[id].click_fn, id)
         ran = 1
     }
     return ran
@@ -703,17 +703,17 @@ fn key_handlers(k: int, mods: int, up: int) -> int {
     let mut ran = 0
     if up != 0 {
         if arena.nodes[id].kup_fn > 0 {
-            platform.plat_invoke_fn(arena.nodes[id].kup_fn)
+            arena.invoke_handler(arena.nodes[id].kup_fn, id)
             ran = 1
         }
         if arena.nodes[id].kpress_fn > 0 {
-            platform.plat_invoke_fn(arena.nodes[id].kpress_fn)
+            arena.invoke_handler(arena.nodes[id].kpress_fn, id)
             ran = 1
         }
         return ran
     }
     if arena.nodes[id].kdown_fn > 0 {
-        platform.plat_invoke_fn(arena.nodes[id].kdown_fn)
+        arena.invoke_handler(arena.nodes[id].kdown_fn, id)
         ran = 1
     }
     return ran
@@ -948,7 +948,7 @@ fn key(k: int) -> int {
                         // (the component's own state, e.g. a `Signal<bool>`);
                         // a bare one is hidden through its show signal.
                         if arena.nodes[i].click_fn > 0 {
-                            platform.plat_invoke_fn(arena.nodes[i].click_fn)
+                            arena.invoke_handler(arena.nodes[i].click_fn, i)
                         } else {
                             arena.store_sig(signal_id, 0)
                         }
@@ -1076,7 +1076,7 @@ fn key(k: int) -> int {
         }
         if write != 0 {
             if arena.nodes[id].bind_fn > 0 {
-                platform.plat_invoke_fn(arena.nodes[id].bind_fn)
+                arena.invoke_handler(arena.nodes[id].bind_fn, id)
             }
         }
         return 1
@@ -1098,7 +1098,7 @@ fn insert_text(s: string) -> int {
         return 0
     }
     if arena.nodes[id].bind_fn > 0 {
-        platform.plat_invoke_fn(arena.nodes[id].bind_fn)
+        arena.invoke_handler(arena.nodes[id].bind_fn, id)
     }
     // Mac/iOS type through insertText, not key_ev. Combobox opens on its
     // kdown handler, so replay a printable key after the insert.
@@ -1108,7 +1108,7 @@ fn insert_text(s: string) -> int {
             k = s[0]
         }
         arena.ev_key = k
-        platform.plat_invoke_fn(arena.nodes[id].kdown_fn)
+        arena.invoke_handler(arena.nodes[id].kdown_fn, id)
     }
     return 1
 }

@@ -12,8 +12,7 @@
 import "zeus:structs"
 import "zeus:enums"
 import "zeus:zeusbase"
-import "zeus:zeuscore/platform"
-import "zeus:zeuscore/arena"
+import "zeus:flow"
 
 fn paper() -> string { return role_token(ROLE.Paper) }
 
@@ -526,6 +525,37 @@ fn register_tier(base: int, light: Tier, dark: Tier) {
     theme(base + 4, parse_hex_color(light.ink), parse_hex_color(dark.ink))
 }
 
+/// The role palette `Scope(accent = which)` paints with: the same roles
+/// `register_accent` sets app-wide, built once per accent.
+let mut accent_pals: []int = []int {}
+
+fn accent_palette(which: int) -> int {
+    if which < 0 || which >= accent_count() {
+        return 0
+    }
+    while accent_pals.len < accent_count() {
+        push(accent_pals, 0)
+    }
+    if accent_pals[which] > 0 {
+        return accent_pals[which]
+    }
+    let al = accent_scale_light(which)
+    let ad = accent_scale_dark(which)
+    let p = palette_new()
+    for i in 0..12 {
+        palette_role(p, ROLE.A1 + i, parse_hex_color(scale_at(al, i + 1)),
+                     parse_hex_color(scale_at(ad, i + 1)))
+    }
+    let on_l = best_on(parse_hex_color(al.s9))
+    let on_d = best_on(parse_hex_color(ad.s9))
+    palette_role(p, ROLE.OnAccent, on_l, on_d)
+    palette_role(p, ROLE.Accent, parse_hex_color(al.s9), parse_hex_color(ad.s9))
+    palette_role(p, ROLE.AccentSoft, parse_hex_color(al.s3), parse_hex_color(ad.s3))
+    palette_role(p, ROLE.OnInk, on_l, on_d)
+    accent_pals[which] = p
+    return p
+}
+
 fn register_accent() {
     let al = accent_scale_light(accent_which)
     let ad = accent_scale_dark(accent_which)
@@ -628,6 +658,7 @@ fn ensure_role_colors() {
         return
     }
     roles_ready = 1
+    set_accent_palette_hook(accent_palette)
     // Palette-derived roles the neutral ramp below does not cover: the accent,
     // the chart / fill series, the scrim, and the ink that sits on a solid fill.
     // Everything the ramp does cover — surfaces, text, rules, and the status
@@ -777,7 +808,7 @@ fn role_rgb_now(slot: int) -> int {
     // The roles are registered lazily, and a caller outside the paint path
     // (a test, a contrast check, an accent picker) may be the first to ask.
     ensure_role_colors()
-    return arena.paint_rgb(role_color(slot))
+    return paint_rgb(role_color(slot))
 }
 
 
@@ -919,22 +950,6 @@ const DARK: Palette = Palette(
 fn empty_view() -> Node {
     return Node { id: 0 }
 }
-/// Move `sig` toward `to` over `ms` milliseconds.
-///
-/// **Behaviour change (Phase 3):** the signal's *state* moves to `to` once —
-/// every effect bound to `sig` re-runs once — and the moving value is a
-/// paint-only overlay interpolated on the animation track pool. Effects no
-/// longer re-run per frame, and nothing re-runs inside the tick at all. A new
-/// call retargets an in-flight animation from its current value. `ms == 0`
-/// jumps; before the first frame it jumps too (nothing animates at boot).
-///
-/// A layout prop the write lands on (width / height / a pin) does not jump
-/// to `to`: it stays at its current length and tweens on the same track,
-/// reflowing each frame. Paint-only readers (`Progress`, `anim_paint`) still
-/// use the overlay. Hover / press never reflow.
-fn animate(sig: Signal<int>, to: int, ms: int) {
-    arena.anim_signal(sig.id, to, ms)
-}
 
 
 /// 2D grid configuration.
@@ -963,50 +978,6 @@ struct GridConfig {
     autoColumns: int = -1,
 }
 
-struct VirtWin {
-    first: int,
-    last: int,
-}
-/// Visible index window for a windowed list. `row_h` is the fixed row height
-/// used to turn `scroll_y` into indices; overscan keeps a few extra rows
-/// mounted so a small flick does not rebuild.
-fn virtual_window(node_id: int, n: int, row_h: int) -> VirtWin {
-    let mut first = 0
-    let mut last = n
-    if row_h <= 0 {
-        return VirtWin { first: first, last: last }
-    }
-    let signal_id = find_scroller(node_id)
-    let mut view_h = 240
-    let mut local = 0
-    if signal_id > 0 {
-        if arena.nodes[signal_id].h > 0 {
-            view_h = arena.nodes[signal_id].h
-        }
-        if node_id == signal_id {
-            local = arena.nodes[signal_id].scroll_y
-        } else {
-            local = arena.nodes[signal_id].scroll_y - (arena.nodes[node_id].y - arena.nodes[signal_id].y)
-        }
-    } else if arena.nodes[node_id].h > 0 {
-        view_h = arena.nodes[node_id].h
-    }
-    if local < 0 {
-        local = 0
-    }
-    first = local / row_h - VIRT_OVERSCAN
-    last = (local + view_h) / row_h + VIRT_OVERSCAN + 1
-    if first < 0 {
-        first = 0
-    }
-    if last > n {
-        last = n
-    }
-    if last < first {
-        last = first
-    }
-    return VirtWin { first: first, last: last }
-}
 /// Control density (`Density.*`), one global knob next to `appearance()`.
 /// `control_h` and friends read it, so reading them inside a style closure
 /// keeps a control live to a density switch.
@@ -1014,33 +985,16 @@ let mut density_sid: int = 0
 
 fn density() -> Signal<int> {
     if density_sid == 0 {
-        let s = signal(Density.Standard)
+        let s = global_signal(Density.Standard)
         density_sid = s.id
+    }
+    // A `zui.Scope(density = ...)` subtree has its own: resolved from the node
+    // whose style is running, or the node being built.
+    let sid = scoped_density_sid()
+    if sid > 0 {
+        return signal_handle(sid)
     }
     return signal_handle(density_sid)
 }
 
-let mut pick_dest: Signal<string> = Signal { id: 0 }
-let mut pick_w: Signal<int> = Signal { id: 0 }
-let mut pick_h: Signal<int> = Signal { id: 0 }
-
-fn find_scroller(id: int) -> int {
-    if id <= 0 {
-        return 0
-    }
-    if id >= arena.nodes.len {
-        return 0
-    }
-    if int(arena.nodes[id].kind) == 11 {
-        return id
-    }
-    let mut p = arena.nodes[id].parent
-    while p > 0 {
-        if int(arena.nodes[p].kind) == 11 {
-            return p
-        }
-        p = arena.nodes[p].parent
-    }
-    return 0
-}
 

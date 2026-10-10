@@ -1,0 +1,110 @@
+//! The stock page binds to `stocks.view()` with `MatchBy` on the load state:
+//! new closes or a range change land in the mounted arm (chart, header,
+//! stats) without rebuilding it. The data server is not running, so the test
+//! publishes the views itself once the dead-server reply has settled.
+//!
+//!     ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/dracula/tests/live_views.loam -o /tmp/l && /tmp/l
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+import "std:router"
+import "../components/stocks.loam" as stocks
+import "../routes/stocks/[symbol]/page.loam" as stock_page
+import "../routes/stocks/page.loam" as search_page
+
+fn fail(what: string) {
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn frames() {
+    for _ in 0..4 {
+        zeus.engine_layout(900, 1200)
+    }
+    zeus.engine_paint()
+}
+
+fn view(state: int, name: string, vals: []int, stats: []string) -> StockView {
+    return StockView {
+        state: state,
+        sym: "ACME",
+        name: name,
+        isin: "INE000A01001",
+        chart: ChartData {
+            labels: []string { "Jan", "Feb", "Mar", "Apr" },
+            names: []string { "Close" },
+            vals: vals,
+        },
+        decimals: 2,
+        stats: stats,
+    }
+}
+
+fn main() {
+    stocks.start()
+    zeus.snapshot(900, 1200, fn() -> Node {
+        return stock_page.Page(Params { keys: []string { "symbol" }, vals: []string { "ACME" } })
+    })
+    frames()
+    // The dead server answered: the page is on its server-down arm. Load it.
+    stocks.view().set(view(1, "Acme Ltd", []int { 10000, 12000, 11000, 15000 },
+                           []string { "Last", "150.00", "Apr", "High", "150.00", "Apr" }))
+    frames()
+    if zeus.engine_find_text("Acme Ltd") == 0 {
+        fail("loaded arm shows the name")
+    }
+    if zeus.engine_find_text("150.00") == 0 {
+        fail("loaded arm shows the stats")
+    }
+
+    // New closes and stats, same shape: the arm, chart and grid update in place.
+    let nodes0 = zeus.arena_nodes()
+    let rows0 = zeus.reactive_rows()
+    stocks.view().set(view(1, "Acme Limited", []int { 9000, 9500, 9700, 9900 },
+                           []string { "Last", "99.00", "Apr", "High", "99.00", "Apr" }))
+    frames()
+    if zeus.engine_find_text("Acme Limited") == 0 {
+        fail("the name follows the view")
+    }
+    if zeus.engine_find_text("99.00") == 0 {
+        fail("the stats follow the view")
+    }
+    if zeus.arena_nodes() != nodes0 {
+        fail("a same-shape update built nodes ({{nodes0}} -> {{zeus.arena_nodes()}})")
+    }
+    if zeus.reactive_rows() != rows0 {
+        fail("a same-shape update built effects")
+    }
+
+    // A state change swaps the arm.
+    stocks.view().set(view(2, "", []int { 9000, 9500, 9700, 9900 }, []string {}))
+    frames()
+    if zeus.engine_find_text("No cached closes for ACME") == 0 {
+        fail("the not-cached arm shows")
+    }
+    // The search: rows that survive a refined result set are kept.
+    zeus.snapshot(900, 1200, fn() -> Node {
+        return search_page.Page(Params { keys: []string {}, vals: []string {} })
+    })
+    frames()
+    let a = StockHit { sym: "AAA", cells: []string { "Aaa Ltd", "AAA", "10.00", "2026-01-02" } }
+    let b = StockHit { sym: "BBB", cells: []string { "Bbb Ltd", "BBB", "20.00", "2026-01-02" } }
+    let c = StockHit { sym: "CCC", cells: []string { "Ccc Ltd", "CCC", "30.00", "2026-01-02" } }
+    stocks.search().set(StockSearch { state: 2, query: "a", total: 2, hits: []StockHit { a, b } })
+    frames()
+    let row_b = zeus.engine_find_text("Bbb Ltd")
+    if row_b == 0 {
+        fail("search rows show")
+    }
+    stocks.search().set(StockSearch { state: 2, query: "ab", total: 3, hits: []StockHit { c, b, a } })
+    frames()
+    if zeus.engine_find_text("Ccc Ltd") == 0 {
+        fail("the new row shows")
+    }
+    if zeus.engine_find_text("Bbb Ltd") != row_b {
+        fail("a surviving row was rebuilt")
+    }
+    fmt.println("dracula live views ok")
+}

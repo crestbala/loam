@@ -1,0 +1,41 @@
+// Stale captures are an error (`nob` "stale capture"). A closure captures
+// `let mut` bindings by copy; a write after the capture is invisible to it, so
+// `name`, `xs`, `n` and `buf` (written through `&mut`) each report once.
+// `fine` is written before the closure that reads it, which is the intended
+// snapshot: no error. `own` is only read by its closure (copied into a local
+// that is written through `&mut`): no error either.
+
+import "std:fmt"
+
+fn run(f: fn()) {
+    f()
+}
+
+fn fill(b: &mut []int) {
+    push(b, 7)
+}
+
+fn main() {
+    let mut name = "a"
+    let mut xs = []int {}
+    let mut n = 0
+    let mut buf = []int {}
+    let show = fn() {
+        fmt.println(name, xs.len, n, buf.len)
+    }
+    name = "b"
+    name = "c"
+    push(xs, 1)
+    n = 3
+    fill(&mut buf)
+    let mut fine = "x"
+    fine = "y"
+    run(fn() { fmt.println(fine) })
+    let mut own = []int {}
+    run(fn() {
+        let mut mine = own
+        fill(&mut mine)
+        fmt.println(mine.len)
+    })
+    show()
+}

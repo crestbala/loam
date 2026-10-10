@@ -30,7 +30,7 @@ Every existing draw golden still passes unchanged (§5).
 Phase 2 splits the arena into a persistent and a scratch arena. Phase 0 has
 one growable store made of independent global vectors, so the report groups
 them the way Phase 2 will: `tree` (nodes + child vectors), `signals`,
-`interning` (rebuild-scope records, keyed-`For` index), `animation` (tracks +
+`interning` (rebuild-scope records, keyed-`Each` index), `animation` (tracks +
 layout anims), and `misc` (theme slots, focus chains, dirty lists, free lists).
 
 ## 2. Method

@@ -1,4 +1,4 @@
-// A keyed `For` moves rows on reorder, so the focused node keeps focus.
+// A keyed `Each` moves rows on reorder, so the focused node keeps focus.
 // A rebuild would free the old node (clearing `focus_id`) and the assertion
 // would fail.
 
@@ -20,7 +20,7 @@ fn main() {
     zui.push_item(names, "Bea")
     zeus.snapshot(240, 160, fn() -> Node {
         zeus.Box(style = Style(direction = Direction.Column)) {
-            zui.For(names, fn(s) => s, Row)
+            zui.Each(names.get(), Row)
         }
     })
     zeus.engine_fill_focus()

@@ -49,6 +49,7 @@ void loam_zeus_sig_bind(int64_t id, const void *src, int64_t n);
 void loam_zeus_sig_bind_str(int64_t id, const void *src, int64_t n);
 void loam_zeus_sig_load(int64_t id, void *dst, int64_t n);
 int64_t loam_zeus_sig_changed(int64_t id, const void *src, int64_t n);
+int64_t loam_zeus_sig_sized(int64_t id, int64_t n);
 int64_t loam_zeus_sig_gen(int64_t id);
 Signal loam_zeus_appearance(void);
 void loam_zeus_theme(int32_t slot, int32_t light, int32_t dark);
@@ -421,6 +422,14 @@ void loam_platform_plat_edit_reset(int64_t slot);
 void loam_platform_plat_intern_free(int64_t id);
 /* Recoverable trap (`zeus.Boundary`): "" on success, else the panic message. */
 loam_str loam_platform_plat_boundary(loam_fn build);
+/* Guarded handler invoke: "" when `id` returned, else the panic message. */
+loam_str loam_platform_plat_guard_fn(int64_t id);
+/* The last panic's message (static storage). */
+loam_str loam_platform_plat_trap_msg(void);
+/* Boundary `seq` trapped during a previous instance's startup (wasm restart):
+   its message, or "". `zeus_boundary_preset_add` records one. */
+loam_str loam_platform_plat_boundary_preset(int64_t seq);
+void zeus_boundary_preset_add(int32_t seq, const char *msg, size_t n);
 /* Router history mirror (host back stack). */
 void loam_platform_plat_history_push(loam_str path);
 void loam_platform_plat_history_replace(loam_str path);
@@ -441,6 +450,10 @@ int32_t loam_zeus_engine_step_dt(int32_t dt_ms);
 void loam_zeus_engine_set_reduced_motion(int32_t on);
 /* ms until the next async timer is due (0 = none; -1 = a spawn waits). */
 int32_t loam_zeus_engine_next_ms(void);
+/* wasm: a trap unwound out of an export; hand it to the innermost Boundary.
+   1 = recovered, 0 = nothing could take it. */
+int32_t loam_zeus_engine_recover(void);
+int32_t loam_zeus_engine_trap_seq(void);
 int32_t loam_zeus_engine_click(int32_t x, int32_t y);
 int32_t loam_zeus_engine_context_click(int32_t x, int32_t y);
 int32_t loam_zeus_engine_scroll(int32_t x, int32_t y, int32_t dx, int32_t dy);

@@ -191,6 +191,59 @@ static void add_cap(AstNode *clos, const char *name, Type *ty) {
     clos->as.fn.cap_count = n + 1;
 }
 
+/* --- stale captures ------------------------------------------------------
+   A closure captures a Copy value by copy: its env is a snapshot taken when
+   the closure is created. A `let mut` that the enclosing code assigns *after*
+   that point is therefore stale inside the closure — the React "stale closure"
+   bug. (`let mut int` is exempt: a captured one becomes a signal cell, see
+   `cap_type_for`, so the closure reads it live.) Typecheck walks in source
+   order, so "after" is simply "seen after the capture was recorded". */
+#define LOAM_MAX_STALE 1024
+typedef struct {
+    AstNode *decl;
+    SourceLoc cap;
+    int reported;
+} StaleCap;
+static StaleCap stale_caps[LOAM_MAX_STALE];
+static int nstale;
+
+/** A closure captured `decl` (a `let mut`) by copy at `at`. */
+static void stale_note_capture(AstNode *decl, SourceLoc at) {
+    if (!decl || decl->kind != AST_VAR_DECL || !decl->as.var.is_mut) return;
+    if (decl->flags & ASTF_STATE) return;
+    for (int i = 0; i < nstale; i++)
+        if (stale_caps[i].decl == decl) return;
+    if (nstale >= LOAM_MAX_STALE) return;
+    stale_caps[nstale].decl = decl;
+    stale_caps[nstale].cap = at;
+    stale_caps[nstale].reported = 0;
+    nstale++;
+}
+
+/** `place` (an assignment target, the array of a push / pop, or the operand
+ *  of `&mut`) is being written at `at`. An error (once per binding) when its
+ *  root binding was captured by copy earlier and this write is in the
+ *  binding's own scope, not inside a closure holding a copy. */
+static void stale_check_write(AstNode *place, SourceLoc at) {
+    AstNode *r = place;
+    while (r && (r->kind == AST_FIELD || r->kind == AST_INDEX)) r = r->as.access.target;
+    if (!r || r->kind != AST_IDENT || !r->as.ident.resolved) return;
+    AstNode *decl = r->as.ident.resolved;
+    for (int i = 0; i < nstale; i++) {
+        if (stale_caps[i].decl != decl || stale_caps[i].reported) continue;
+        Scope *found = scope_find_s(r->as.ident.name, NULL, NULL, NULL, NULL, NULL);
+        if (clos_depth > 0 && found && !scope_is_inside(found, clos_scope_stack[clos_depth - 1]))
+            return; /* written inside a closure: that is its own copy */
+        stale_caps[i].reported = 1;
+        err(at,
+            "'%s' is assigned after a closure captured it by copy (line %d); the "
+            "closure would still see the old value — hold it in a signal, or copy it "
+            "into a new `let` before the closure if the snapshot is intended",
+            r->as.ident.name, stale_caps[i].cap.line);
+        return;
+    }
+}
+
 /** 1 if `n` is a capturing closure or a local that holds one. */
 static int expr_is_cap_fn(AstNode *n) {
     if (!n) return 0;
@@ -1586,7 +1639,14 @@ static Type *finish_proc_call(AstNode *n, Type *ft, AstNode *named) {
         Type *expect = pt;
         if (nt) {
             expect = subst_type(pt, named->as.fn.tparams, bound, nt);
-            if (type_has_param(expect)) expect = NULL;
+            if (type_has_param(expect)) {
+                /* `fn() -> []T` still unbound: a plain value is wrapped in a
+                   thunk all the same, and `T` is inferred from what it returns
+                   (`Each(xs, ...)` and `Each(sig.get(), ...)` alike). */
+                if (wants_thunk(pt, n->as.call.args[i]))
+                    n->as.call.args[i] = make_thunk(n->as.call.args[i]);
+                expect = NULL;
+            }
         }
         Type *at = check_arg_ty(&n->as.call.args[i], expect);
         arg = n->as.call.args[i];
@@ -1700,6 +1760,7 @@ static int try_vec_builtin(AstNode *n) {
             return 1;
         }
         Type *vt = check_expr(n->as.call.args[0]);
+        stale_check_write(n->as.call.args[0], n->loc);
         Type *xt = check_expr(n->as.call.args[1]);
         Type *vec = peel_ref(vt);
         if (!vec || vec->kind != TY_VEC) {
@@ -1722,6 +1783,7 @@ static int try_vec_builtin(AstNode *n) {
         return 1;
     }
     Type *vt = check_expr(n->as.call.args[0]);
+    stale_check_write(n->as.call.args[0], n->loc);
     Type *vec = peel_ref(vt);
     if (!vec || vec->kind != TY_VEC) {
         err(n->loc, "pop requires []T, got %s", type_name(vt));
@@ -1969,6 +2031,19 @@ static Type *check_call(AstNode *n, Type *expect) {
             (void)at;
             n->as.call.is_sizeof = 1;
             n->ty = ty_int();
+            return n->ty;
+        }
+        /* Content key of a value. `Each` uses it so a list is (array, row)
+           with no user key function. Strings key by bytes, not the header. */
+        if (strcmp(nm, "__value_key") == 0) {
+            if (n->as.call.arg_count != 1) {
+                err(n->loc, "__value_key expects 1 argument");
+                return ty_void();
+            }
+            check_expr(n->as.call.args[0]);
+            n->as.call.value_key = 1;
+            n->ty = ty_string();
+            n->place_mut = 0;
             return n->ty;
         }
         /* `panic(msg)` — trap with `msg` at the call site. The one primitive
@@ -2717,6 +2792,7 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
                             break;
                         }
                         add_cap(clos_stack[c], n->as.ident.name, cap_type_for(dnode, ty));
+                        stale_note_capture(dnode, n->loc);
                     }
                 }
                 n->ty = ty;
@@ -2971,6 +3047,9 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
             Type *t = check_expr(n->as.access.target);
             if (n->as.access.is_mut && !n->as.access.target->place_mut)
                 err(n->loc, "cannot take &mut of immutable place");
+            /* `&mut x` hands `x` to code that writes it: as stale as an
+               assignment if a closure copied `x` earlier. */
+            if (n->as.access.is_mut) stale_check_write(n->as.access.target, n->loc);
             n->ty = type_ptr(t, n->as.access.is_mut);
             n->place_mut = 0;
             return n->ty;
@@ -3220,6 +3299,7 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
                 if (!nt && !type_eq(dt, tmpl->field_types[f]))
                     err(n->loc, "default for '%s' has type %s, expected %s", fname,
                         type_name(dt), type_name(tmpl->field_types[f]));
+                cp->flags |= ASTF_DEFAULT;
                 n->as.struct_lit.fields = (FieldInit *)realloc(
                     n->as.struct_lit.fields,
                     (n->as.struct_lit.field_count + 1) * sizeof(FieldInit));
@@ -3317,6 +3397,7 @@ static void check_stmt(AstNode *n) {
         }
         case AST_ASSIGN: {
             Type *l = check_expr(n->as.assign.left);
+            stale_check_write(n->as.assign.left, n->loc);
             TokenKind aop = n->as.assign.op;
             Type *r = check_expr_ty(n->as.assign.right,
                                     (aop == TOK_EQ || type_is_numeric(l)) ? l : NULL);
@@ -4507,6 +4588,7 @@ int typecheck_global_mod(int i) { return (i >= 0 && i < ngvars) ? gvars[i].mod :
 
 /** Free mono tables and the type pool. */
 void typecheck_cleanup(void) {
+    nstale = 0;
     for (int i = 0; i < nmono; i++) {
         free(monos[i].args);
         free(monos[i].cname);

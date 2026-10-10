@@ -205,11 +205,12 @@ the entire advantage of a retained tree + signals: it loses focus, loses scroll
 position, loses animation state, and allocates a full subtree on every update.
 
 The fix is the control-flow primitive set every fine-grained framework has, and
-Zeus must have all four before any list-heavy app is written:
+Zeus must have these before any list-heavy app is written:
 
-- `For(items, key, build)` — keyed, diffs by key, **moves** nodes rather than
-  rebuilding them. Key is required, not optional.
-- `Index(items, build)` — positional; for when items are stable and keys are noise.
+- `Each(items, build)` — the one list primitive, for a fixed array or a signal
+  read. Identity is the item value. It **moves** a row whose value stays and
+  replaces a row whose value changes. `For`, `ForLive`, and `Index` are not
+  separate primitives.
 - `If(cond, then, else)` / `Show` — toggles a subtree without touching siblings.
 - `Switch` / `Match(signal, arms)` — one arm mounted at a time.
 
@@ -562,7 +563,7 @@ None of those consequences follow.
 | Stable callbacks | `useCallback` + dependency array | Nothing. Fns aren't identity-compared because nothing re-renders | **have it** |
 | Skipping needless work | `React.memo`, reconciliation bailouts | Nothing. Only the changed node updates | **have it** (finish §2.1) |
 | Side effects | `useEffect` + deps + cleanup + timing rules | `effect(fn)` after commit; cycles reported by name | **to build** |
-| Lists | `key` prop, runtime warning if missing | `For` requires a key **at the type level** — no key, no compile | **to build** |
+| Lists | `key` prop, runtime warning if missing | `Each` requires a key **at the type level** — no key, no compile | **to build** |
 | Context | Provider re-renders the whole subtree | Lookup walks the arena parent chain; reading subscribes to one signal | **to build** |
 | Error boundaries | Class component + `componentDidCatch` | `Boundary` with arena mark/release (§2.2) | **to build** |
 | Suspense / loading UI | Thrown promises, concurrent scheduler | `resource` signal with `LOADING/READY/ERROR` (§5.5) | **to build** |
@@ -1250,7 +1251,7 @@ caret movement through a Tamil string moves one grapheme per press (**green** �
 
 ### Phase 14 — Closures, boundaries, control flow
 Refcounted closure envs owned by their Node. Stale-capture diagnostic.
-`Boundary` with arena mark/release. `For` (keyed, required), `Index`, `If`,
+`Boundary` with arena mark/release. `Each` (keyed, required; a fixed array or a signal read), `If`,
 `Switch`.
 **Exit:** no `drop_children` outside `zeus/core`; a trap inside a `Boundary`
 paints the fallback and the app keeps running; a keyed list reorder preserves

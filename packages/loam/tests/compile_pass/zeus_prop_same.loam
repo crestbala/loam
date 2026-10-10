@@ -1,0 +1,58 @@
+// A prop write of the value a node already holds is no write. An effect that
+// re-runs because some other part of its input moved (a struct field it does
+// not show, a list it reads one element of) used to rewrite every prop it set
+// — the label's text re-measured and its boundary re-solved, the box repainted
+// — even though nothing it showed changed.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+struct Row {
+    title: string,
+    shade: int,
+    note: int,
+}
+
+fn main() {
+    zeus.window("same", 300, 200)
+    let row = zeus.signal(Row { title: "milk", shade: 40, note: 0 })
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column, padding = edges(8))) {
+        zeus.Text("{{row.get().title}}")
+        let b = zeus.Box(style = Style(width = px(40), height = px(20), background = "#ff0000"))
+        zeus.styled(b, || { zeus.set_prop_int(b, zeus.SET.Opacity, row.get().shade) })
+    })
+    zeus.pump_frame()
+    zeus.engine_layout(300, 200)
+    zeus.engine_paint()
+
+    // Only `note` moves: both effects re-run, neither writes.
+    let gen0 = zeus.engine_layout_gen()
+    let full0 = zeus.paint_full_frames()
+    let patch0 = zeus.paint_patch_frames()
+    let fw0 = zeus.frame_wide_writes()
+    row.set(Row { title: "milk", shade: 40, note: 1 })
+    zeus.engine_layout(300, 200)
+    zeus.engine_paint()
+    must(zeus.engine_layout_gen() == gen0, "an unchanged text runs no layout")
+    must(zeus.paint_full_frames() == full0, "and no full paint")
+    must(zeus.paint_patch_frames() == patch0, "and re-records nothing")
+    must(zeus.frame_wide_writes() == fw0, "and is not a frame-wide write")
+
+    // A field it shows still lands.
+    row.set(Row { title: "eggs", shade: 40, note: 1 })
+    zeus.engine_layout(300, 200)
+    zeus.engine_paint()
+    must(zeus.engine_find_text("eggs") != 0, "a changed title lands")
+    must(zeus.engine_layout_gen() > gen0, "and runs a layout")
+
+    fmt.println("prop same ok")
+}

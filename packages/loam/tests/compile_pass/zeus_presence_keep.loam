@@ -1,0 +1,122 @@
+// `MatchKeep` arms play their exit transition as they hide. The leaving arm
+// stays painted (pinned, inert, alive) while it fades, then hides with its
+// layout and opacity put back, so the next visit shows it whole. Switching
+// back mid-exit snaps it in. An arm without one hides at once. The fade
+// covers the arm's whole subtree, not just its root. Overlays
+// (`Dialog`) fade out on close through their `Enter.Fade` panel.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn expect(cond: bool, msg: string) {
+    if cond == false {
+        fmt.println("FAIL", msg)
+        sys.exit(1)
+    }
+}
+
+fn frames(n: int) {
+    for i in 0..n {
+        zeus.engine_step_dt(16)
+        zeus.engine_layout(320, 240)
+    }
+}
+
+fn text_draws() -> int {
+    zeus.engine_paint()
+    let mut n = 0
+    for i in 0..zeus.draw_count() {
+        if zeus.draw_op(i) == 2 {
+            n = n + 1
+        }
+    }
+    return n
+}
+
+fn min_text_alpha() -> int {
+    zeus.engine_paint()
+    let mut a = 255
+    for i in 0..zeus.draw_count() {
+        if zeus.draw_op(i) == 2 && zeus.draw_alpha(i) < a {
+            a = zeus.draw_alpha(i)
+        }
+    }
+    return a
+}
+
+fn Arm(t: int) -> Node {
+    if t == 0 {
+        return zeus.exit_fade(zeus.Text("arm zero"), 120)
+    }
+    if t == 1 {
+        return zeus.Text("arm one")
+    }
+    return zeus.Text("arm two")
+}
+
+fn main() {
+    let tab = zeus.signal(0)
+    let open = zeus.signal(false)
+    let mut kept = 0
+    zeus.snapshot(320, 240, fn() -> Node {
+        zeus.Box(style = Style(direction = Direction.Column)) {
+            zui.MatchKeep(tab, fn(t) => "{{t}}", fn(t: int) {
+                if t == 0 {
+                    // Arm state survives a switch.
+                    kept = kept + 1
+                }
+                Arm(t)
+            })
+            zui.Dialog(open, title = "Hello") {
+                zui.Body("dialog body")
+            }
+        }
+    })
+    frames(2)
+
+    // Leaving arm 0 plays its fade: still shown while the new arm is up.
+    tab.set(1)
+    frames(1)
+    expect(zeus.text_visible("arm one"), "new arm missing")
+    expect(zeus.text_visible("arm zero"), "leaving arm hidden at once")
+    frames(4)
+    // The arm column fades; its text goes with it.
+    expect(min_text_alpha() < 230, "leaving arm's text did not fade")
+    frames(10)
+    expect(zeus.text_visible("arm zero") == false, "leaving arm never hid")
+
+    // Back to arm 0: the same arm (not rebuilt), shown whole again.
+    tab.set(0)
+    frames(1)
+    expect(kept == 1, "kept arm was rebuilt")
+    expect(zeus.text_visible("arm zero"), "kept arm not shown")
+    expect(zeus.text_visible("arm one") == false, "arm without exit lingered")
+    expect(min_text_alpha() > 200, "kept arm came back faded")
+
+    // Leave and come straight back: the exit is cancelled, the arm stays.
+    tab.set(2)
+    frames(1)
+    tab.set(0)
+    frames(14)
+    expect(zeus.text_visible("arm zero"), "cancelled exit still hid the arm")
+
+    // A second exit starts from the arm's full opacity, not where the first
+    // one left it.
+    tab.set(1)
+    frames(1)
+    expect(min_text_alpha() > 150, "second exit started faded")
+    frames(14)
+
+    // A Dialog keeps painting while it fades out, then stops.
+    open.set(true)
+    frames(30)
+    let opened = text_draws()
+    open.set(false)
+    frames(1)
+    expect(text_draws() == opened, "dialog vanished without its exit fade")
+    frames(40)
+    expect(text_draws() < opened, "dialog never finished closing")
+    fmt.println("presence keep ok")
+}

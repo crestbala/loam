@@ -1,4 +1,4 @@
-// Phase 5: windowed For / VirtualList / VirtualTable + scroll physics.
+// Phase 5: windowed VirtualList / VirtualTable + scroll physics.
 // A 10k-row feed must stay under a node budget while scrolling; items paint
 // on demand. Table items are row structs; columns are TableCol structs.
 

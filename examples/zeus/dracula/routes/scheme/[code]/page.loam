@@ -14,87 +14,106 @@ fn signal_spec() -> []TableCol {
     return h
 }
 
-fn paint_missing(code: string) {
-    zui.Empty(icon = zeus.IC_INFO, title = "No NAV file for {{code}}",
-              body = "This code is not in the cached catalog. Search by name on Charts.") {
+/// The page for one load state. `MatchBy` keeps the arm while the state holds:
+/// a range change, a fetch that lands, adding to Holdings or acknowledging a
+/// gap updates the mounted arm through its view signal instead of rebuilding.
+/// The signal table is keyed by its row count, so it rebuilds only when that
+/// moves.
+fn arm(code: string, v: Signal<SchemeView>) -> Node {
+    let st = v.peek().state
+    if st == 1 {
+        return loaded(code, v)
+    }
+    if st == 3 {
+        return ui.ServerDown(fn() { book.retry() })
+    }
+    if st == 2 {
+        return missing(code)
+    }
+    return zeus.Text("Loading the NAV history for {{code}}.")
+}
+
+fn missing(code: string) -> Node {
+    return zui.Empty(icon = zeus.IC_INFO, title = "No NAV file for {{code}}",
+                     body = "This code is not in the cached catalog. Search by name on Charts.") {
         zui.Button(label = "Search funds", size = zeus.Size.Sm, on_click = fn() { router.navigate("/scheme") })
     }
 }
 
-fn paint_chart() {
-    let labels = book.chart_labels()
-    let vals = book.chart_vals()
-    let names = book.chart_names()
-    if labels.len == 0 || names.len == 0 || vals.len != labels.len * names.len {
-        zeus.Text("No published NAV in this range.")
-        return
+fn has_chart(x: SchemeView) -> bool {
+    let c = x.chart
+    return c.labels.len > 0 && c.names.len > 0 && c.vals.len == c.labels.len * c.names.len
+}
+
+fn chart_note(x: SchemeView) -> string {
+    let labels = x.chart.labels
+    if labels.len == 0 {
+        return ""
     }
     let first = labels[0]
     let last = labels[labels.len - 1]
     let n = labels.len
-    zui.Card(title = "NAV history, rupees", subtitle = "{{first}} to {{last}}. {{n}} points: the last NAV in each bucket and every signal date.") {
-        zui.LineChart(labels, names, vals, 720, 300, fit = true, decimals = book.chart_decimals(),
-                      labelEvery = 0, dots = false)
+    return "{{first}} to {{last}}. {{n}} points: the last NAV in each bucket and every signal date."
+}
+
+fn loaded(code: string, v: Signal<SchemeView>) -> Node {
+    let chart = zeus.computed(fn() -> ChartData { return v.get().chart })
+    let stats = zeus.computed(fn() -> []string { return v.get().stats })
+    let signals = zeus.computed(fn() -> []string { return v.get().signals })
+    return zui.Column(0) {
+        zeus.Box(style = Style(display = zeus.shown(v.get().name.len > 0))) {
+            zui.Title(fn() -> string { return v.get().name })
+        }
+        zui.Row(8) {
+            zui.Badge(code, zeus.Tint.Mute)
+            zui.Badge("Dormant, history kept", zeus.Tint.Warn,
+                      style = Style(display = zeus.shown(v.get().dormant.len > 0)))
+            zui.Badge("On Holdings", zeus.Tint.Ok,
+                      style = Style(display = zeus.shown(v.get().watching)))
+            zeus.Box(style = Style(display = zeus.shown(!v.get().watching))) {
+                zui.Button(label = "Add to Holdings", size = zeus.Size.Sm, on_click = fn() { book.add_watch(code) })
+            }
+        }
+        zeus.Text(fn() -> string { return v.get().status },
+                  style = Style(wrap = true, display = zeus.shown(v.get().status.len > 0)))
+        zeus.Box(style = Style(display = zeus.shown(v.get().gap.len > 0))) {
+            zui.Row(8) {
+                zeus.Text(fn() -> string { return v.get().gap }, style = Style(wrap = true))
+                zeus.Box(style = Style(display = zeus.shown(v.get().gap_open))) {
+                    zui.Button(label = "Acknowledge gap", size = zeus.Size.Sm, on_click = fn() { book.acknowledge() })
+                }
+            }
+        }
+        zeus.Text("No published NAV in this range.",
+                  style = Style(display = zeus.shown(!has_chart(v.get()))))
+        zui.Card(title = "NAV history, rupees", subtitle = fn() -> string { return chart_note(v.get()) },
+                 style = Style(display = zeus.shown(has_chart(v.get())))) {
+            zui.LineChartOf(chart, 720, 300, fit = true, decimals = v.peek().decimals,
+                            labelEvery = 0, dots = false)
+        }
+        ui.StatGridOf(stats)
+        zui.Title("200-day average signals")
+        zui.MatchBy(signals, fn(c: []string) -> string { return "{{c.len / 3}}" },
+                    fn(c: Signal<[]string>) -> Node { return signal_table(c) })
     }
 }
 
-fn paint_scheme(code: string) {
-    let st = book.focus_state()
-    if st == 0 {
-        zeus.Text("Loading the NAV history for {{code}}.")
-        return
+fn signal_table(c: Signal<[]string>) -> Node {
+    if c.peek().len == 0 {
+        return zeus.Text("The 200-day average has not signalled on this history.")
     }
-    if st == 3 {
-        ui.ServerDown(fn() { book.retry() })
-        return
-    }
-    if st == 2 {
-        paint_missing(code)
-        return
-    }
-    let name = book.scheme_title()
-    if name.len > 0 {
-        zui.Title(name)
-    }
-    zui.Row(8) {
-        zui.Badge(code, zeus.Tint.Mute)
-        let dormant = book.scheme_dormant_text()
-        if dormant.len > 0 {
-            zui.Badge("Dormant, history kept", zeus.Tint.Warn)
+    return signal_rows(c)
+}
+
+fn signal_rows(c: Signal<[]string>) -> Node {
+    let rows = c.peek().len / 3
+    return zui.Column(0) {
+        zui.TableCols(signal_spec())
+        let mut r = 0
+        while r < rows {
+            zui.TableRowCols(present.row_at(c.peek(), 3, r), signal_spec(), zebra = true)
+            r = r + 1
         }
-        if book.watching(code) {
-            zui.Badge("On Holdings", zeus.Tint.Ok)
-        } else {
-            zui.Button(label = "Add to Holdings", size = zeus.Size.Sm, on_click = fn() { book.add_watch(code) })
-        }
-    }
-    let status = book.scheme_status()
-    if status.len > 0 {
-        zeus.Text(status, style = Style(wrap = true))
-    }
-    let gap = book.scheme_gap_text()
-    if gap.len > 0 {
-        zui.Row(8) {
-            zeus.Text(gap, style = Style(wrap = true))
-            if book.gap_open() {
-                zui.Button(label = "Acknowledge gap", size = zeus.Size.Sm, on_click = fn() { book.acknowledge() })
-            }
-        }
-    }
-    paint_chart()
-    ui.StatGrid(book.stat_cells())
-    zui.Title("200-day average signals")
-    let cells = book.history_cells()
-    if cells.len == 0 {
-        zeus.Text("The 200-day average has not signalled on this history.")
-        return
-    }
-    zui.TableCols(signal_spec())
-    let rows = cells.len / 3
-    let mut r = 0
-    while r < rows {
-        zui.TableRowCols(present.row_at(cells, 3, r), signal_spec(), zebra = true)
-        r = r + 1
     }
 }
 
@@ -110,11 +129,10 @@ fn Page(p: Params) -> Node {
             book.focus(code)
             zui.Segmented(book.range_signal(), present.range_labels())
             zeus.effect(fn() { book.range_tick() })
-            zui.Match(book.scheme_generation(), fn(g) {
-                if g >= 0 {
-                    paint_scheme(code)
-                }
-            })
+            // Keyed by the load state and the decimals the chart was built
+            // with: everything else updates the mounted arm in place.
+            zui.MatchBy(book.view(), fn(x: SchemeView) -> string { return "{{x.state}}:{{x.decimals}}" },
+                        fn(v: Signal<SchemeView>) -> Node { return arm(code, v) })
             zui.Body("The line keeps the last published NAV in each bucket and every bar that produced a signal. The 200-day average starts where it has 200 prints; before that it is a gap, not a zero. Nothing here is an order.")
         } else {
             if code.len > 0 {

@@ -159,7 +159,7 @@ contradicts its comment, arity-3 tables, a `Navbar` that always ships Dark.
       that returned element, so state is still owned by the root. `View` is no
       longer a keyword.
 - [x] No void components. Every component returns `Node`; the framework
-      callbacks that mount subtrees (`Loop` / `For` / `Match` / `Boundary`,
+      callbacks that mount subtrees (`Each` / `Match` / `Boundary`,
       `Route.build`, `zeus.App`) take `fn(...) -> Node`. A section that used to
       emit several siblings flattens into a `Column(spacing.SECTION)` so the
       section rhythm survives.

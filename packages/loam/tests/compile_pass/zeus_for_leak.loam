@@ -1,4 +1,4 @@
-// Phase 14 exit: no leak after 10k rebuild cycles. A keyed `For` whose key set
+// Phase 14 exit: no leak after 10k rebuild cycles. A keyed `Each` whose key set
 // changes on every mutation must recycle nodes, row-owned signals, and interned
 // handlers instead of growing the arena.
 
@@ -19,7 +19,7 @@ fn main() {
     let names = zeus.signal([]string {})
     zui.push_item(names, "r0")
     zeus.snapshot(240, 160, fn() -> Node {
-        zui.For(names, fn(s) => s, Row)
+        zui.Each(names.get(), Row)
     })
     // Reach the high-water mark, then hold it for 10k cycles.
     let mut cyc = 0

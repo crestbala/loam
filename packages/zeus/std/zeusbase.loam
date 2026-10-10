@@ -42,7 +42,7 @@ fn signal_handle(id: int) -> Signal<int> {
 /// let count = zeus.signal(0)
 /// zui.Button("+", on_click = fn() => count.set(count.get() + 1))
 /// ```
-/// Allocations made while a `For` / `refit` rebuild is running are owned by
+/// Allocations made while an `Each` / `refit` rebuild is running are owned by
 /// that host (the C alloc hook records them) and are freed when the host
 /// rebuilds or is torn down, so builders that create state do not grow the
 /// signal arena.
@@ -53,6 +53,18 @@ fn signal<T>(value: T) -> Signal<T> {
     // `scope` whose body is running if there is one, so a re-run frees it with
     // everything else the body created. One record, one owner, always.
     arena.record_sig(arena.owner_now(), id)
+    return Signal { id: id }
+}
+
+/// A process-lifetime signal, owned by no build scope or computation. For
+/// lazily created app-wide state (`appearance()`, `density()`): created by
+/// `signal` inside a list row's build, it would be filed under that row and
+/// freed with it, leaving the global pointing at a recycled cell.
+fn global_signal<T>(value: T) -> Signal<T> {
+    arena.ensure()
+    let previous = arena.scope_begin(0)
+    let id = __sig_push(value)
+    arena.scope_end(previous)
     return Signal { id: id }
 }
 
@@ -95,7 +107,7 @@ fn untrack(body: fn()) {
 // --- interned handlers ----------------------------------------------------
 
 /// Intern a handler or thunk, and record it as owned by the open rebuild
-/// scope if there is one. A `For`/`refit` rebuild interns fresh closures per
+/// scope if there is one. A `Each`/`refit` rebuild interns fresh closures per
 /// row; when the host is torn down the recorded ids are freed and recycled,
 /// so streaming lists do not leak handler envs.
 fn intern_fn(h: fn()) -> int {
@@ -130,8 +142,22 @@ fn intern_str(h: fn() -> string) -> int {
 /// with the component's subtree instead of outliving it.
 let mut ui_parents: []int = []int {}
 
+let mut ui_hooks_set: int = 0
+
 fn ui_push(id: int) {
+    if ui_hooks_set == 0 {
+        // The engine unwinds this stack after a trap it caught (`arena.invoke_on`).
+        ui_hooks_set = 1
+        arena.set_ui_hooks(fn() -> int { return ui_parents.len }, fn(d: int) { ui_trim(d) })
+    }
     push(ui_parents, id)
+}
+
+/// Pop the build stack back to `depth` (trap recovery).
+fn ui_trim(depth: int) {
+    while ui_parents.len > depth {
+        pop(ui_parents)
+    }
 }
 
 fn ui_pop() {
@@ -279,7 +305,7 @@ fn effect_eid(body: fn()) -> int {
 fn batch(body: fn()) {
     track.batch_begin()
     body()
-    track.batch_end()
+    arena.batch_end()
 }
 
 /// Run `body` in a nested computation scope: it runs now and re-runs whenever a
@@ -622,10 +648,12 @@ fn root(node: Node) -> Node {
 
 fn grow(node: Node, weight: int) -> Node {
     arena.nodes[node.id].grow = weight
+    touched(node.id, 1)
     return node
 }
 fn shrink(node: Node, weight: int) -> Node {
     arena.nodes[node.id].shrink = weight
+    touched(node.id, 1)
     return node
 }
 
@@ -637,6 +665,7 @@ fn set_padding(node: Node, all: int) -> Node {
     arena.nodes[node.id].pad_r = u16(all)
     arena.nodes[node.id].pad_b = u16(all)
     arena.nodes[node.id].pad_l = u16(all)
+    touched(node.id, 1)
     return node
 }
 /// Inset left and right only — the common case for control chrome, where
@@ -644,33 +673,39 @@ fn set_padding(node: Node, all: int) -> Node {
 fn set_padding_x(node: Node, px: int) -> Node {
     arena.nodes[node.id].pad_l = u16(px)
     arena.nodes[node.id].pad_r = u16(px)
+    touched(node.id, 1)
     return node
 }
 /// Inset top and bottom only, the vertical half of `set_padding_x`.
 fn set_padding_y(node: Node, py: int) -> Node {
     arena.nodes[node.id].pad_t = u16(py)
     arena.nodes[node.id].pad_b = u16(py)
+    touched(node.id, 1)
     return node
 }
 /// Inset one edge. The per-edge setters exist so a recipe can override a
 /// single side without restating the other three.
 fn set_padding_top(node: Node, px: int) -> Node {
     arena.nodes[node.id].pad_t = u16(px)
+    touched(node.id, 1)
     return node
 }
 /// Inset one edge; see `set_padding_top`.
 fn set_padding_right(node: Node, px: int) -> Node {
     arena.nodes[node.id].pad_r = u16(px)
+    touched(node.id, 1)
     return node
 }
 /// Inset one edge; see `set_padding_top`.
 fn set_padding_bottom(node: Node, px: int) -> Node {
     arena.nodes[node.id].pad_b = u16(px)
+    touched(node.id, 1)
     return node
 }
 /// Inset one edge; see `set_padding_top`.
 fn set_padding_left(node: Node, px: int) -> Node {
     arena.nodes[node.id].pad_l = u16(px)
+    touched(node.id, 1)
     return node
 }
 fn margin(node: Node, all: int) -> Node {
@@ -678,32 +713,39 @@ fn margin(node: Node, all: int) -> Node {
     arena.nodes[node.id].m_r = all
     arena.nodes[node.id].m_b = all
     arena.nodes[node.id].m_l = all
+    touched(node.id, 1)
     return node
 }
 fn marginX(node: Node, px: int) -> Node {
     arena.nodes[node.id].m_l = px
     arena.nodes[node.id].m_r = px
+    touched(node.id, 1)
     return node
 }
 fn marginY(node: Node, py: int) -> Node {
     arena.nodes[node.id].m_t = py
     arena.nodes[node.id].m_b = py
+    touched(node.id, 1)
     return node
 }
 fn marginTop(node: Node, px: int) -> Node {
     arena.nodes[node.id].m_t = px
+    touched(node.id, 1)
     return node
 }
 fn marginRight(node: Node, px: int) -> Node {
     arena.nodes[node.id].m_r = px
+    touched(node.id, 1)
     return node
 }
 fn marginBottom(node: Node, px: int) -> Node {
     arena.nodes[node.id].m_b = px
+    touched(node.id, 1)
     return node
 }
 fn marginLeft(node: Node, px: int) -> Node {
     arena.nodes[node.id].m_l = px
+    touched(node.id, 1)
     return node
 }
 fn border(node: Node, width: int) -> Node {
@@ -714,10 +756,12 @@ fn border(node: Node, width: int) -> Node {
     } else {
         arena.nodes[node.id].border_w = 0
     }
+    touched(node.id, 1)
     return node
 }
 fn border_color(node: Node, rgb: int) -> Node {
     arena.nodes[node.id].border_c = rgb
+    touched(node.id, 0)
     return node
 }
 
@@ -725,17 +769,20 @@ fn border_color(node: Node, rgb: int) -> Node {
 /// margin, so adding or removing a child cannot leave a stray edge gap.
 fn set_spacing(node: Node, g: int) -> Node {
     arena.nodes[node.id].gap = u16(g)
+    touched(node.id, 1)
     return node
 }
 /// Row-axis gap for wrapped and grid layouts, where the two axes need
 /// different spacing and one `set_spacing` cannot express it.
 fn set_spacing_row(node: Node, g: int) -> Node {
     arena.nodes[node.id].gap_row = u16(g)
+    touched(node.id, 1)
     return node
 }
 /// Column-axis gap; the other half of `set_spacing_row`.
 fn set_spacing_col(node: Node, g: int) -> Node {
     arena.nodes[node.id].gap_col = u16(g)
+    touched(node.id, 1)
     return node
 }
 
@@ -749,6 +796,7 @@ fn set_width(node: Node, px: int) -> Node {
         arena.nodes[node.id].explicit_width = px
         arena.nodes[node.id].w_pct = -1
     }
+    touched(node.id, 1)
     return node
 }
 /// Pin a pixel height, clearing any percentage. The chaining form of the
@@ -756,6 +804,7 @@ fn set_width(node: Node, px: int) -> Node {
 /// paths) and cannot go back through a props struct.
 fn set_height(node: Node, px: int) -> Node {
     arena.nodes[node.id].explicit_height = px
+    touched(node.id, 1)
     return node
 }
 
@@ -766,6 +815,7 @@ fn set_height(node: Node, px: int) -> Node {
 /// must keep a fixed pixel width use `.set_width(px)` instead.
 fn set_flex_basis_zero(node: Node) -> Node {
     arena.nodes[node.id].w_pct = 0
+    touched(node.id, 1)
     return node
 }
 /// `.set_width(px).set_height(px)` in one call. Named `size_px`, not `size`: themed widgets
@@ -779,31 +829,37 @@ fn size_px(node: Node, px: int) -> Node {
 fn width_pct(node: Node, percent_value: int) -> Node {
     arena.nodes[node.id].explicit_width = -1
     arena.nodes[node.id].w_pct = i8(percent_value)
+    touched(node.id, 1)
     return node
 }
 fn height_pct(node: Node, percent_value: int) -> Node {
     arena.nodes[node.id].h_pct = i8(percent_value)
+    touched(node.id, 1)
     return node
 }
 /// Floor the width. Min/max bounds are how a flexible child stays readable
 /// when its parent shrinks, without giving up `grow`.
 fn set_min_width(node: Node, px: int) -> Node {
     arena.nodes[node.id].min_w = px
+    touched(node.id, 1)
     return node
 }
 /// Cap the width, so a growing child cannot run past a comfortable measure.
 fn set_max_width(node: Node, px: int) -> Node {
     arena.nodes[node.id].max_w = px
+    touched(node.id, 1)
     return node
 }
 /// Floor the height; the vertical counterpart of `set_min_width`.
 fn set_min_height(node: Node, px: int) -> Node {
     arena.nodes[node.id].min_h = px
+    touched(node.id, 1)
     return node
 }
 /// Cap the height, so scrollable content clips instead of stretching.
 fn set_max_height(node: Node, px: int) -> Node {
     arena.nodes[node.id].max_h = px
+    touched(node.id, 1)
     return node
 }
 /// Make a grid responsive. `px > 0` is a minimum *cell* width, in dp like
@@ -826,11 +882,13 @@ fn set_auto_columns(node: Node, px: int) -> Node {
     if px < 0 {
         arena.nodes[node.id].grid_auto = 0
     }
+    touched(node.id, 1)
     return node
 }
 fn aspect(node: Node, aw: int, ah: int) -> Node {
     arena.nodes[node.id].aspect_w = aw
     arena.nodes[node.id].aspect_h = ah
+    touched(node.id, 1)
     return node
 }
 
@@ -844,6 +902,7 @@ fn flex_row(node: Node) -> Node {
     }
     arena.nodes[node.id].dir = 0
     arena.nodes[node.id].reverse = 0
+    touched(node.id, 1)
     return node
 }
 fn flex_col(node: Node) -> Node {
@@ -856,62 +915,76 @@ fn flex_col(node: Node) -> Node {
     }
     arena.nodes[node.id].dir = 1
     arena.nodes[node.id].reverse = 0
+    touched(node.id, 1)
     return node
 }
 fn flex_row_reverse(node: Node) -> Node {
     arena.nodes[node.id].dir = 0
     arena.nodes[node.id].reverse = 1
+    touched(node.id, 1)
     return node
 }
 fn flex_col_reverse(node: Node) -> Node {
     arena.nodes[node.id].dir = 1
     arena.nodes[node.id].reverse = 1
+    touched(node.id, 1)
     return node
 }
 fn flex_wrap(node: Node) -> Node {
     arena.nodes[node.id].wrap = 1
+    touched(node.id, 1)
     return node
 }
 fn align_self(node: Node, mode: int) -> Node {
     arena.nodes[node.id].align_self = i8(mode)
+    touched(node.id, 1)
     return node
 }
 fn span(node: Node, columns: int) -> Node {
     arena.nodes[node.id].span = u16(columns)
+    touched(node.id, 1)
     return node
 }
 
 fn justify(node: Node, mode: int) -> Node {
     arena.nodes[node.id].justify = u8(mode)
+    touched(node.id, 1)
     return node
 }
 fn align(node: Node, mode: int) -> Node {
     arena.nodes[node.id].align = u8(mode)
+    touched(node.id, 1)
     return node
 }
 
 fn position(node: Node, mode: int) -> Node {
     arena.nodes[node.id].pos = u8(mode)
+    touched(node.id, 1)
     return node
 }
 fn top(node: Node, px: int) -> Node {
     arena.nodes[node.id].pin_t = px
+    touched(node.id, 1)
     return node
 }
 fn right(node: Node, px: int) -> Node {
     arena.nodes[node.id].pin_r = px
+    touched(node.id, 1)
     return node
 }
 fn bottom(node: Node, px: int) -> Node {
     arena.nodes[node.id].pin_b = px
+    touched(node.id, 1)
     return node
 }
 fn left(node: Node, px: int) -> Node {
     arena.nodes[node.id].pin_l = px
+    touched(node.id, 1)
     return node
 }
 fn z_index(node: Node, z: int) -> Node {
     arena.nodes[node.id].z_index = i16(z)
+    touched(node.id, 0)
     return node
 }
 
@@ -920,22 +993,26 @@ fn z_index(node: Node, z: int) -> Node {
 /// through the `background` prop and `parse_hex_color` converts once.
 fn set_background(node: Node, rgb: int) -> Node {
     arena.nodes[node.id].bg = rgb
+    touched(node.id, 0)
     return node
 }
 
 /// Second stop of a vertical gradient (`bg` → `bg2`). Solid fill when unset.
 fn set_background_end(node: Node, rgb: int) -> Node {
     arena.nodes[node.id].bg2 = rgb
+    touched(node.id, 0)
     return node
 }
 /// Foreground (text and glyph) color as a packed rgb int; the `color` prop
 /// is the string-facing form.
 fn set_color(node: Node, rgb: int) -> Node {
     arena.nodes[node.id].fg = rgb
+    touched(node.id, 0)
     return node
 }
 fn radius(node: Node, px: int) -> Node {
     arena.nodes[node.id].radius = u16(px)
+    touched(node.id, 0)
     return node
 }
 
@@ -969,14 +1046,17 @@ fn radius_bottom(node: Node, px: int) -> Node {
 
 fn opacity(node: Node, percent_value: int) -> Node {
     arena.nodes[node.id].opacity = i16(percent_value)
+    touched(node.id, 0)
     return node
 }
 fn overflow(node: Node, mode: int) -> Node {
     arena.nodes[node.id].overflow = u8(mode)
+    touched(node.id, 1)
     return node
 }
 fn font(node: Node, px: int) -> Node {
     arena.nodes[node.id].font = u16(px)
+    touched(node.id, 1)
     return node
 }
 
@@ -984,6 +1064,7 @@ fn font(node: Node, px: int) -> Node {
 /// (0 = horizontal). Used for chart axis labels that must not collide.
 fn text_rot(node: Node, deg: int) -> Node {
     arena.nodes[node.id].text_rot = u16(deg)
+    touched(node.id, 0)
     return node
 }
 
@@ -994,6 +1075,7 @@ fn text_rot(node: Node, deg: int) -> Node {
 /// narrow rather than pushing siblings onto a second line.
 fn text_ellipsis(node: Node) -> Node {
     arena.nodes[node.id].ellipsis = 1
+    touched(node.id, 1)
     return node
 }
 
@@ -1176,6 +1258,7 @@ fn key_context(node: Node, name: string) -> Node {
 }
 fn focusable(node: Node) -> Node {
     arena.nodes[node.id].focusable = 1
+    touched(node.id, 1)
     return node
 }
 fn capture_text(node: Node) -> Node {
@@ -1232,6 +1315,7 @@ fn pulse(node: Node) -> Node {
 
 fn hover_fade(node: Node) -> Node {
     arena.nodes[node.id].hover_fade = 1
+    touched(node.id, 0)
     return node
 }
 
@@ -1240,6 +1324,7 @@ fn hover_fade(node: Node) -> Node {
 /// both. No layout pass reads the scale, so pressing never reflows.
 fn press_scale(node: Node) -> Node {
     arena.nodes[node.id].press_scale = 1
+    touched(node.id, 0)
     return node
 }
 
@@ -1256,17 +1341,40 @@ fn hover_lift(node: Node, level: int) -> Node {
     }
     arena.nodes[node.id].lift = u8(l)
     hover_fade(node)
+    touched(node.id, 0)
     return node
 }
 
 fn hover_off(node: Node) -> Node {
     arena.nodes[node.id].hover_fade = -1
+    touched(node.id, 0)
+    return node
+}
+
+/// Exit transition: when `Each`, `Match`, or a lazy `Show` removes `node`, it
+/// fades out over `ms` — pinned where it was, inert — before it is freed. Its
+/// siblings take its place at once. Put it on the row / arm root.
+fn exit_fade(node: Node, ms: int = 160) -> Node {
+    arena.set_exit(node.id, 1, 0, ms)
+    return node
+}
+
+/// Exit transition: fade out while sliding `dy` dp (down when positive).
+fn exit_slide(node: Node, dy: int = 8, ms: int = 200) -> Node {
+    arena.set_exit(node.id, 2, dy, ms)
+    return node
+}
+
+/// Exit transition: fade out while scaling to `to` percent.
+fn exit_scale(node: Node, to: int = 95, ms: int = 160) -> Node {
+    arena.set_exit(node.id, 3, to, ms)
     return node
 }
 
 fn enter_fade(node: Node) -> Node {
     arena.nodes[node.id].enter_fade = 1
     arena.mark_chrome()
+    touched(node.id, 0)
     return node
 }
 
@@ -1277,6 +1385,7 @@ fn enter_fade(node: Node) -> Node {
 fn enter_reveal(node: Node) -> Node {
     arena.nodes[node.id].reveal = 1
     arena.mark_chrome()
+    touched(node.id, 0)
     return node
 }
 
@@ -1476,7 +1585,7 @@ fn center(node: Node) -> Node {
 fn appearance() -> Signal<int> {
     arena.ensure()
     if arena.appearance_sid == 0 {
-        let s = signal(1)
+        let s = global_signal(1)
         arena.appearance_sid = s.id
     }
     return signal_handle(arena.appearance_sid)
@@ -1609,6 +1718,25 @@ fn apply_layout_anims() {
     arena.mark_layout()
 }
 
+/// `apply_int_value` / `apply_str` are running: they report the write
+/// themselves, once, so the chaining setters they call stay quiet.
+let mut apply_depth: int = 0
+
+/// A chaining setter (`opacity`, `left`, `set_width`, ...) wrote `id`. Inside a
+/// running effect, report it like a prop write (`layout` = 1 when it can move
+/// the box model), so the signal write that ran the effect is attributed to
+/// this node instead of falling back to a frame-wide mark. At build time there
+/// is no write to attribute and nothing to do.
+fn touched(id: int, layout: int) {
+    if apply_depth != 0 {
+        return
+    }
+    if track.current_eid() == 0 {
+        return
+    }
+    arena.note_prop_write(id, layout)
+}
+
 fn apply_int(node_id: int, setter: int, v: int) {
     if skip_unset(setter, v) {
         return
@@ -1629,7 +1757,14 @@ fn apply_int_value(node_id: int, setter: int, v: int) {
             }
         }
     }
+    // A write of what the node already holds changes nothing: no setter, no
+    // report, no paint or layout dirt. An effect that re-ran because another
+    // field of its input moved lands here for every prop it did not change.
+    if apply_holds(node_id, setter, v) {
+        return
+    }
     let n = node_handle(node_id)
+    apply_depth = apply_depth + 1
     // The UI-scale knob is applied here, once, so recipes and callers both
     // write plain design px and never call `scaled` themselves. Only
     // geometry and type scale; weights, flags, colors and z-order do not —
@@ -1732,12 +1867,34 @@ fn apply_int_value(node_id: int, setter: int, v: int) {
         }
         _ => {}
     }
+    apply_depth = apply_depth - 1
     // Report the write so the frame marks this node (a paint-only property) or
     // layout, instead of the whole surface. See `arena.note_prop_write`.
     if setter_is_paint_only(setter) {
         arena.note_prop_write(node_id, 0)
     } else {
         arena.note_prop_write(node_id, 1)
+    }
+}
+
+/// Does `node_id` already hold what `apply_int_value(node_id, setter, v)` would
+/// write? Only the props that land on one field as-is are checked; anything
+/// else answers false and is written.
+fn apply_holds(node_id: int, setter: int, v: int) -> bool {
+    match setter {
+        SET.Opacity => { return int(arena.nodes[node_id].opacity) == v }
+        SET.Background => { return arena.nodes[node_id].bg == v }
+        SET.Color => { return arena.nodes[node_id].fg == v }
+        SET.BorderColor => { return arena.nodes[node_id].border_c == v }
+        SET.ZIndex => { return int(arena.nodes[node_id].z_index) == v }
+        SET.Grow => { return arena.nodes[node_id].grow == v }
+        SET.Font => { return v > 0 && int(arena.nodes[node_id].font) == scaled(v) }
+        SET.Height => { return v >= 0 && arena.nodes[node_id].explicit_height == scaled(v) }
+        SET.Width => {
+            return v >= 0 && arena.nodes[node_id].explicit_width == scaled(v) &&
+                   int(arena.nodes[node_id].w_pct) == -1
+        }
+        _ => { return false }
     }
 }
 
@@ -1756,11 +1913,26 @@ fn setter_is_paint_only(setter: int) -> bool {
 fn apply_str(node_id: int, setter: int, v: string) {
     match setter {
         SET.Text => {
+            // The same text again (a thunk that re-ran for another reason) is
+            // no write: no re-measure, no layout, no repaint.
+            if arena.nodes[node_id].text == v {
+                return
+            }
             arena.nodes[node_id].text = v
             arena.note_prop_write(node_id, 1)
         }
-        SET.A11yLabel => { arena.nodes[node_id].a11y_label = v }
-        SET.A11yRole => { arena.nodes[node_id].a11y_role = v }
+        // The semantic tree is re-dumped when layout ran (`engine_layout_gen`),
+        // so a label or role reports as a layout write: its boundary re-solves
+        // and the mirror sees the change.
+        SET.A11yLabel => {
+            arena.nodes[node_id].a11y_label = v
+            arena.note_prop_write(node_id, 1)
+        }
+        SET.A11yRole => {
+            arena.nodes[node_id].a11y_role = v
+            arena.note_prop_write(node_id, 1)
+        }
+        // Read under the pointer, never painted: nothing to mark.
         SET.Cursor => { arena.nodes[node_id].cursor = v }
         _ => { apply_int(node_id, setter, parse_hex_color(v)) }
     }
@@ -1794,8 +1966,8 @@ fn prop_str(node: Node, setter: int, thunk: fn() -> string) -> Node {
 /// Scale in percent; 100 is the design system's 1.0. Clamped to 50..200.
 /// Applied once, in `apply_int`, as each geometry or type prop lands on a
 /// node — so no widget multiplies anything itself. Read at build time, so
-/// set it before building a retained tree; a `zeus.view` app re-reads it
-/// every frame (zoom reacts live there).
+/// set it before building a retained tree; a `zeus.view` app rebuilds when it
+/// changes (zoom reacts live there).
 let mut roles_ready: int = 0
 let mut ui_scale: int = 100
 
@@ -1807,7 +1979,13 @@ fn set_scale(percent_value: int) {
     if v > 200 {
         v = 200
     }
+    if v == ui_scale {
+        return
+    }
     ui_scale = v
+    // Every scaled prop landed at build time, so only a rebuild re-reads it.
+    arena.view_stale = 1
+    arena.mark_layout()
 }
 /// A design px scaled by the UI-scale knob: `scaled(16)` is 16 at 100%,
 /// 20 at 125%. Internal — `apply_int` calls it for every geometry and type
@@ -2267,17 +2445,23 @@ fn node_effect(node: Node, body: fn()) {
     }
 }
 
+/// Set `id`'s focusable flag from an effect, reporting the node when it moved
+/// (the semantic tree carries it, and follows layout).
+fn set_focusable(id: int, on: int) {
+    if int(arena.nodes[id].focusable) == on {
+        return
+    }
+    arena.nodes[id].focusable = u8(on)
+    arena.note_prop_write(id, 1)
+}
+
 /// The behaviour props of `BoxProps` (focus, hover, press, entrance).
 fn install_behaviour(node: Node, p: BoxProps) {
     let node_id = node.id
     if result.is_some(p.focusable) {
         let f = p.focusable.val
         node_effect(node, || {
-            if f() {
-                arena.nodes[node_id].focusable = 1
-            } else {
-                arena.nodes[node_id].focusable = 0
-            }
+            set_focusable(node_id, if f() { 1 } else { 0 })
         })
     }
     if result.is_some(p.roving) {
@@ -2285,21 +2469,26 @@ fn install_behaviour(node: Node, p: BoxProps) {
         let grab = p.rovingGrab
         node_effect(node, || {
             if r() {
-                arena.nodes[node_id].focusable = 1
+                set_focusable(node_id, 1)
                 if grab {
                     arena.claim_focus(node_id)
                 } else {
                     arena.claim_roving_focus(node_id)
                 }
             } else {
-                arena.nodes[node_id].focusable = 0
+                set_focusable(node_id, 0)
             }
         })
     }
     if result.is_some(p.checked) {
         let c = p.checked.val
         node_effect(node, || {
-            arena.nodes[node_id].a11y_state = u8(if c() { 2 } else { 1 })
+            let st = if c() { 2 } else { 1 }
+            if int(arena.nodes[node_id].a11y_state) != st {
+                arena.nodes[node_id].a11y_state = u8(st)
+                // The semantic tree follows layout (see `apply_str`).
+                arena.note_prop_write(node_id, 1)
+            }
         })
     }
     if p.hoverFade {
@@ -2422,14 +2611,15 @@ fn on_resize(r: Ref, body: fn()) {
     if id <= 0 {
         return
     }
-    arena.nodes[id].list_fn = intern_fn(|| {
+    arena.set_list_fn(id, intern_fn(|| {
         let w = arena.nodes[id].w
         if w == arena.nodes[id].list_gen {
             return
         }
         arena.nodes[id].list_gen = w
         body()
-    })
+    }))
+    arena.host_geo(id)
 }
 
 /// Run `body` on a secondary click (right button, ctrl-click) inside `r`;
@@ -3054,7 +3244,7 @@ fn Component(node: Node, p: BoxProps) -> Node {
         arena.nodes[node.id].row_h = p.rowHeight
     }
     if result.is_some(p.rebuild) {
-        arena.nodes[node.id].list_fn = intern_fn(p.rebuild.val)
+        arena.set_list_fn(node.id, intern_fn(p.rebuild.val))
     }
     if k == 7 {
         set_background(node, role_color(ROLE.Rule))

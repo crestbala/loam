@@ -297,6 +297,11 @@ static void bind_canvas(void) {
     zeus_bind_draw(d);
 }
 
+/* 1 while `main` runs (the initial build). A trap then cannot be recovered in
+   place — what was cut short is the whole app — so `zeus_recover` reports 2
+   and the loader re-instantiates with the failed boundary pre-seeded. */
+static int wasm_booting;
+
 __attribute__((export_name("zeus_start")))
 void zeus_start(void) {
     zeus_set_platform(wasm_run, wasm_measure, wasm_redraw);
@@ -305,7 +310,9 @@ void zeus_start(void) {
     zeus_set_font_hooks(wasm_load_font, wasm_set_font_family);
     zeus_set_font_bytes_hook(wasm_font_bytes);
     bind_canvas();
+    wasm_booting = 1;
     main();
+    wasm_booting = 0;
 }
 
 /* Live wasm heap in KB (allocated minus the free list), for the RAM chip and
@@ -341,6 +348,37 @@ int32_t zeus_wasm_paint(void) {
     if (due < 0) return 1;
     if (due > 2147483647) return 2147483647;
     return (int32_t)due;
+}
+
+/* A trap (a Loam panic: bounds, overflow, `panic`) unwound out of an export:
+   wasm has no setjmp, so the loader catches the RuntimeError, restores the
+   shadow stack pointer, and calls this. The innermost `Boundary` that was at
+   work takes the trap and shows its fallback on the next frame. 1 = recovered
+   (keep running), 0 = no boundary could take it. */
+__attribute__((export_name("zeus_recover")))
+int32_t zeus_recover(void) {
+    int32_t r = loam_zeus_engine_recover();
+    if (r && wasm_booting) return loam_zeus_engine_trap_seq() > 0 ? 2 : 0;
+    return r;
+}
+
+/* After `zeus_recover` returned 2: the failed boundary's build-order number,
+   and the panic message (a C string in static storage). */
+__attribute__((export_name("zeus_trap_seq")))
+int32_t zeus_trap_seq(void) {
+    return loam_zeus_engine_trap_seq();
+}
+
+__attribute__((export_name("zeus_trap_msg")))
+const char *zeus_trap_msg(void) {
+    return loam_jmp_msg;
+}
+
+/* On a fresh instance, before `zeus_start`: pre-seed boundary `seq` as failed
+   with `msg`, so it builds its fallback without running its body. */
+__attribute__((export_name("zeus_boundary_preset")))
+void zeus_boundary_preset(int32_t seq, const char *msg) {
+    zeus_boundary_preset_add(seq, msg ? msg : "", msg ? strlen(msg) : 0);
 }
 
 /* The loader reports `prefers-reduced-motion` (and re-reports on change). */

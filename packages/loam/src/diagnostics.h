@@ -34,6 +34,13 @@ typedef struct {
 /** Report a compile error at `loc`. Captured if loam_diag_capture(1). */
 void loam_error(SourceLoc loc, const char *fmt, ...);
 
+/** Report a compile warning at `loc`: printed as `warning:` and never fails
+ *  the build. Captured apart from errors (`loam_warn_take`) when capturing. */
+void loam_warning(SourceLoc loc, const char *fmt, ...);
+
+/** Steal the captured warnings; caller must loam_diag_free. */
+void loam_warn_take(LoamDiag **out, int *n);
+
 /** Unrecoverable failure (typically OOM). Prints to stderr and exits. */
 void loam_fatal(const char *fmt, ...);
 

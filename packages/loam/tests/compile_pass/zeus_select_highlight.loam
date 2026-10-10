@@ -25,6 +25,16 @@ fn row(label: string) -> int {
     return 0
 }
 
+// The lowest-id child of `parent`: the first one built.
+fn first_child(parent: int) -> int {
+    for id in 1..zeus.arena_nodes() {
+        if zeus.node_parent(id) == parent {
+            return id
+        }
+    }
+    return 0
+}
+
 fn layout() {
     zeus.engine_layout(360, 420)
 }
@@ -50,8 +60,9 @@ fn main() {
     layout()
     let small = row("Small")
     let medium = row("Medium")
-    // The highlight is the menu's first child, built just before the rows.
-    let hl = small - 1
+    // The highlight is the menu's first child, built before the rows. Not
+    // `small - 1`: the rows' `Each` marker is also a menu child, built between.
+    let hl = first_child(zeus.node_parent(small))
     must(small > 0 && medium > 0, "menu rows found")
     must(zeus.node_parent(hl) == zeus.node_parent(small), "highlight sits in the menu")
     must(zeus.node_y(hl) == zeus.node_y(small), "opening lands on the first row")

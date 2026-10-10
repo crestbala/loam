@@ -1,4 +1,4 @@
-// The keyed `For` full-rebuild fallback must release records an in-place
+// The keyed `Each` full-rebuild fallback must release records an in-place
 // reconcile adopted onto rows, or the fallback leaks them. Duplicate keys force
 // the fallback; alternating them with a unique key exercises both paths and must
 // leave the arena flat.
@@ -21,7 +21,7 @@ fn main() {
     zui.push_item(names, "solo")
     zeus.snapshot(240, 200, fn() -> Node {
         zeus.Box(style = Style(direction = Direction.Column)) {
-            zui.For(names, fn(s) => s, Row)
+            zui.Each(names.get(), Row)
         }
     })
     let mut cyc = 0

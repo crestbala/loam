@@ -8,10 +8,14 @@ file:
 |---|---|---|
 | Reactive core + layout | `packages/zeus/std/zeuscore/*` | almost never |
 | Primitives + public vocabulary | `packages/zeus/std/zeusbase.loam` | rarely |
+| Control flow (`Each`, `Match`, `Show`, `Boundary`, `Scope`, `VirtualList*`) | `packages/zeus/std/flow.loam` | rarely |
 | **Design system** (this package) | `packages/zeus-components/std/*` | constantly (restyle / re-theme) |
 
-Dependency direction is one-way: `zeuscore` ← `zeusbase` ← `zeus-components` ←
-`zeus` (facade). Components import `std:zeusbase`; they never import `std:zeus`.
+Dependency direction is one-way: `zeuscore` ← `zeusbase` / `flow` ←
+`zeus-components` ← `zeus` (facade). Components import `zeus:zeusbase` and
+`zeus:flow`; they never import `std:zeus` or `zeuscore/*` (the `nob` arena lint
+fails the build if they do). `atoms` imports `flow`, so `zui.Each` /
+`zui.Match` resolve through the facade as before.
 
 ## Taxonomy
 

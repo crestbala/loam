@@ -9,12 +9,130 @@ import "platform.loam"
 let mut stack: []int = []int {}
 let mut fn_ids: []int = []int {}
 let mut node_ids: []int = []int {}
-let mut dep_sig: []int = []int {}
-let mut dep_eff: []int = []int {}
-/* The generation `plat_sig_gen` reported for `dep_sig[i]` when the edge was
-   recorded. A lazy memo compares these against the live generations to skip a
-   recompute whose inputs did not actually move — the check-clean pass. */
-let mut dep_gen: []int = []int {}
+/* Dependency edges, an indexed pool. Edge `e` says effect `e_eff[e]` read
+   signal `e_sig[e]`; `e_gen[e]` is the generation `plat_sig_gen` reported when
+   it was recorded (a lazy memo compares it against the live one to skip a
+   recompute whose inputs did not move — the check-clean pass). Every edge is
+   on two doubly linked lists — its signal's readers and its effect's inputs —
+   so a write walks only that signal's readers, a re-run drops only that
+   effect's edges, and a read dedupes against that effect's inputs: no
+   operation scans the whole graph. -1 ends a list; a freed edge has
+   `e_sig == 0` and waits in `e_free`. Lists keep insertion order. */
+let mut e_sig: []int = []int {}
+let mut e_eff: []int = []int {}
+let mut e_gen: []int = []int {}
+let mut e_sn: []int = []int {}
+let mut e_sp: []int = []int {}
+let mut e_en: []int = []int {}
+let mut e_ep: []int = []int {}
+let mut e_free: []int = []int {}
+/* Per signal id: first / last reader edge. Per effect id: first / last input
+   edge. Grown on demand; -1 = none. */
+let mut sig_head: []int = []int {}
+let mut sig_tail: []int = []int {}
+let mut eff_head: []int = []int {}
+let mut eff_tail: []int = []int {}
+/// Live edges (diagnostics).
+let mut edge_count: int = 0
+
+fn sig_lists(signal_id: int) {
+    while sig_head.len <= signal_id {
+        push(sig_head, -1)
+        push(sig_tail, -1)
+    }
+}
+
+fn eff_lists(effect_id: int) {
+    while eff_head.len <= effect_id {
+        push(eff_head, -1)
+        push(eff_tail, -1)
+    }
+}
+
+/// Record edge `signal_id -> effect_id` at the tail of both lists.
+fn edge_add(signal_id: int, effect_id: int, gen: int) {
+    sig_lists(signal_id)
+    eff_lists(effect_id)
+    let mut e = 0
+    if e_free.len > 0 {
+        e = e_free[e_free.len - 1]
+        pop(e_free)
+        e_sig[e] = signal_id
+        e_eff[e] = effect_id
+        e_gen[e] = gen
+    } else {
+        e = e_sig.len
+        push(e_sig, signal_id)
+        push(e_eff, effect_id)
+        push(e_gen, gen)
+        push(e_sn, -1)
+        push(e_sp, -1)
+        push(e_en, -1)
+        push(e_ep, -1)
+    }
+    e_sn[e] = -1
+    e_sp[e] = sig_tail[signal_id]
+    if sig_tail[signal_id] >= 0 {
+        e_sn[sig_tail[signal_id]] = e
+    } else {
+        sig_head[signal_id] = e
+    }
+    sig_tail[signal_id] = e
+    e_en[e] = -1
+    e_ep[e] = eff_tail[effect_id]
+    if eff_tail[effect_id] >= 0 {
+        e_en[eff_tail[effect_id]] = e
+    } else {
+        eff_head[effect_id] = e
+    }
+    eff_tail[effect_id] = e
+    edge_count = edge_count + 1
+}
+
+/// Unlink edge `e` from both lists and free it.
+fn edge_drop(e: int) {
+    let sg = e_sig[e]
+    let ef = e_eff[e]
+    if e_sp[e] >= 0 {
+        e_sn[e_sp[e]] = e_sn[e]
+    } else {
+        sig_head[sg] = e_sn[e]
+    }
+    if e_sn[e] >= 0 {
+        e_sp[e_sn[e]] = e_sp[e]
+    } else {
+        sig_tail[sg] = e_sp[e]
+    }
+    if e_ep[e] >= 0 {
+        e_en[e_ep[e]] = e_en[e]
+    } else {
+        eff_head[ef] = e_en[e]
+    }
+    if e_en[e] >= 0 {
+        e_ep[e_en[e]] = e_ep[e]
+    } else {
+        eff_tail[ef] = e_ep[e]
+    }
+    e_sig[e] = 0
+    e_eff[e] = 0
+    push(e_free, e)
+    edge_count = edge_count - 1
+}
+
+/// The effects that read `signal_id`, in edge order (each once: a read is
+/// deduped per effect when it is recorded).
+fn readers_of(signal_id: int) -> []int {
+    let mut out = []int {}
+    if signal_id <= 0 || signal_id >= sig_head.len {
+        return out
+    }
+    let mut e = sig_head[signal_id]
+    while e >= 0 {
+        push(out, e_eff[e])
+        e = e_sn[e]
+    }
+    return out
+}
 let mut ready: int = 0
 /* Untracked-read depth. `peek` / `untrack` raise it so reads inside a
    reactive scope do not become dependency edges — a setter that reads the
@@ -54,6 +172,11 @@ let mut is_scope: []int = []int {}
 /// Rows disposed by a scope re-run, reused by `alloc`, so a scope that re-runs on
 /// every change does not grow the effect table.
 let mut eid_free: []int = []int {}
+/* Node reports (`arena.note_prop_write`) so far. `run` compares it across a
+   body to find effect runs that reported nothing: `silent_of[e]` counts them
+   per effect, the dev counter that shows which effects leave no dirt. */
+let mut reports: int = 0
+let mut silent_of: []int = []int {}
 
 // --- lazy memos -----------------------------------------------------------
 // `computed<T>` is a *memo*: an effect whose body computes a value into an
@@ -76,6 +199,60 @@ fn set_scope_disposer(f: fn(int)) {
     scope_disposer = f
 }
 
+/// How an effect body is invoked: `(fn id, owner node) -> panic message`. The
+/// default just calls it; `arena` installs one that runs bodies owned by a node
+/// under a `Boundary` behind a trap arm, so a trapping effect swaps that
+/// boundary to its fallback instead of aborting.
+let mut guard_hook: fn(int, int) -> string = fn(fid: int, node: int) -> string {
+    platform.plat_invoke_fn(fid)
+    return ""
+}
+
+fn set_guard_hook(f: fn(int, int) -> string) {
+    guard_hook = f
+}
+
+/// Called with a memo's output signal when the memo goes stale. `arena` queues
+/// the push hosts bound to it (an `Each` over a `computed`), which pull it.
+let mut memo_stale_hook: fn(int) = fn(sid: int) {}
+
+fn set_memo_stale_hook(f: fn(int)) {
+    memo_stale_hook = f
+}
+
+/// The tracker's own stacks, as a trap must find them again: a trap unwinds
+/// past whatever nested runs, `untrack`s and batches the body had opened.
+struct TrackMark {
+    stack: int,
+    mute: int,
+    batch: int,
+    flushing: int,
+}
+
+fn mark() -> TrackMark {
+    return TrackMark { stack: stack.len, mute: mute, batch: batch_depth, flushing: flushing }
+}
+
+/// The state every host entry point starts from: nothing running.
+fn mark_zero() -> TrackMark {
+    return TrackMark { stack: 0, mute: 0, batch: 0, flushing: 0 }
+}
+
+fn unwind(m: TrackMark) {
+    while stack.len > m.stack {
+        pop(stack)
+    }
+    mute = m.mute
+    batch_depth = m.batch
+    flushing = m.flushing
+}
+
+/// Invoke effect `effect_id`'s body through the guard (`guard_hook` restores
+/// the tracker itself when the body traps).
+fn invoke_body(effect_id: int) {
+    guard_hook(fn_ids[effect_id], node_ids[effect_id])
+}
+
 fn boot() {
     if ready != 0 {
         return
@@ -89,14 +266,26 @@ fn boot() {
     push(is_scope, 0)
     push(memo_out, 0)
     push(memo_state, 0)
+    push(silent_of, 0)
 }
 
 fn reset() {
     stack = []int {}
     fn_ids = []int {}
     node_ids = []int {}
-    dep_sig = []int {}
-    dep_eff = []int {}
+    e_sig = []int {}
+    e_eff = []int {}
+    e_gen = []int {}
+    e_sn = []int {}
+    e_sp = []int {}
+    e_en = []int {}
+    e_ep = []int {}
+    e_free = []int {}
+    sig_head = []int {}
+    sig_tail = []int {}
+    eff_head = []int {}
+    eff_tail = []int {}
+    edge_count = 0
     rank = []int {}
     produced_by = []int {}
     batch_depth = 0
@@ -105,9 +294,9 @@ fn reset() {
     parent_eid = []int {}
     is_scope = []int {}
     eid_free = []int {}
-    dep_gen = []int {}
     memo_out = []int {}
     memo_state = []int {}
+    silent_of = []int {}
     flushing = 0
     mute = 0
     ready = 0
@@ -159,6 +348,7 @@ fn alloc(fn_id: int, node_id: int) -> int {
         is_scope[idx] = 0
         memo_out[idx] = 0
         memo_state[idx] = 0
+        silent_of[idx] = 0
     } else {
         push(fn_ids, fn_id)
         push(node_ids, node_id)
@@ -168,6 +358,7 @@ fn alloc(fn_id: int, node_id: int) -> int {
         push(is_scope, 0)
         push(memo_out, 0)
         push(memo_state, 0)
+        push(silent_of, 0)
         idx = fn_ids.len - 1
     }
     // Parent is the computation whose body is running, if any.
@@ -214,6 +405,15 @@ fn current_eid() -> int {
         return 0
     }
     return stack[stack.len - 1]
+}
+
+/// The node that owns the running effect (0 outside any effect).
+fn current_node() -> int {
+    let e = current_eid()
+    if e <= 0 || e >= node_ids.len {
+        return 0
+    }
+    return node_ids[e]
 }
 
 fn current_rank() -> int {
@@ -308,17 +508,17 @@ fn note_read(signal_id: int) {
         return
     }
     let effect_id = stack[stack.len - 1]
-    let n = dep_sig.len
-    for i in 0..n {
-        if dep_sig[i] == signal_id {
-            if dep_eff[i] == effect_id {
+    // Dedupe against this effect's own inputs, not the whole graph.
+    if effect_id < eff_head.len {
+        let mut e = eff_head[effect_id]
+        while e >= 0 {
+            if e_sig[e] == signal_id {
                 return
             }
+            e = e_en[e]
         }
     }
-    push(dep_sig, signal_id)
-    push(dep_eff, effect_id)
-    push(dep_gen, platform.plat_sig_gen(signal_id))
+    edge_add(signal_id, effect_id, platform.plat_sig_gen(signal_id))
     /* A new edge onto a signal an effect writes: read the derived value only
        after the producer has recomputed it. */
     if signal_id < produced_by.len {
@@ -361,38 +561,46 @@ fn set_cleanup(effect_id: int, fn_id: int) {
 
 /// Dependency edges `effect_id` recorded on its last run. 0 means it read no
 /// signal, so nothing can ever re-run it.
-fn dep_count(effect_id: int) -> int {
+/// Effects that read `signal_id`.
+fn reader_count(signal_id: int) -> int {
     let mut n = 0
-    let m = dep_eff.len
-    for i in 0..m {
-        if dep_eff[i] == effect_id {
-            n = n + 1
-        }
+    if signal_id <= 0 || signal_id >= sig_head.len {
+        return 0
+    }
+    let mut e = sig_head[signal_id]
+    while e >= 0 {
+        n = n + 1
+        e = e_sn[e]
     }
     return n
 }
 
-fn drop_eid_deps(effect_id: int) {
-    run_cleanup(effect_id)
-    let n = dep_sig.len
-    if n == 0 {
+fn dep_count(effect_id: int) -> int {
+    let mut n = 0
+    if effect_id <= 0 || effect_id >= eff_head.len {
+        return 0
+    }
+    let mut e = eff_head[effect_id]
+    while e >= 0 {
+        n = n + 1
+        e = e_en[e]
+    }
+    return n
+}
+
+/// Drop every input edge of `effect_id`.
+fn drop_eff_edges(effect_id: int) {
+    if effect_id <= 0 || effect_id >= eff_head.len {
         return
     }
-    /* Swap-remove every edge of `effect_id` in one pass (no keep-list rebuilds). */
-    let mut i = 0
-    while i < dep_sig.len {
-        if dep_eff[i] == effect_id {
-            let last = dep_sig.len - 1
-            dep_sig[i] = dep_sig[last]
-            dep_eff[i] = dep_eff[last]
-            dep_gen[i] = dep_gen[last]
-            pop(dep_sig)
-            pop(dep_eff)
-            pop(dep_gen)
-        } else {
-            i = i + 1
-        }
+    while eff_head[effect_id] >= 0 {
+        edge_drop(eff_head[effect_id])
     }
+}
+
+fn drop_eid_deps(effect_id: int) {
+    run_cleanup(effect_id)
+    drop_eff_edges(effect_id)
 }
 
 /// Drop every dependency edge on a freed signal. A live effect must never
@@ -405,23 +613,11 @@ fn drop_sig(signal_id: int) {
     if signal_id < produced_by.len {
         produced_by[signal_id] = 0
     }
-    let n = dep_sig.len
-    if n == 0 {
+    if signal_id >= sig_head.len {
         return
     }
-    let mut i = 0
-    while i < dep_sig.len {
-        if dep_sig[i] == signal_id {
-            let last = dep_sig.len - 1
-            dep_sig[i] = dep_sig[last]
-            dep_eff[i] = dep_eff[last]
-            dep_gen[i] = dep_gen[last]
-            pop(dep_sig)
-            pop(dep_eff)
-            pop(dep_gen)
-        } else {
-            i = i + 1
-        }
+    while sig_head[signal_id] >= 0 {
+        edge_drop(sig_head[signal_id])
     }
 }
 
@@ -439,6 +635,15 @@ fn member(v: int, ids: []int) -> int {
         }
     }
     return 0
+}
+
+/// Forget effect row `last`'s list heads (its edges are gone or moved).
+fn pop_eff_lists(last: int) {
+    eff_lists(last)
+    while eff_head.len > last {
+        pop(eff_head)
+        pop(eff_tail)
+    }
 }
 
 fn free_nodes_effects(ids: []int) {
@@ -464,20 +669,8 @@ fn free_nodes_effects(ids: []int) {
             let last = node_ids.len - 1
             if i == last {
                 // Tail row is dead: pop it after dropping its edges.
-                let mut e = 0
-                while e < dep_sig.len {
-                    if dep_eff[e] == i {
-                        let el = dep_sig.len - 1
-                        dep_sig[e] = dep_sig[el]
-                        dep_eff[e] = dep_eff[el]
-                        dep_gen[e] = dep_gen[el]
-                        pop(dep_sig)
-                        pop(dep_eff)
-                        pop(dep_gen)
-                    } else {
-                        e = e + 1
-                    }
-                }
+                drop_eff_edges(i)
+                pop_eff_lists(last)
                 for q in 0..produced_by.len {
                     if produced_by[q] == last {
                         produced_by[q] = 0
@@ -491,28 +684,20 @@ fn free_nodes_effects(ids: []int) {
                 pop(is_scope)
                 pop(memo_out)
                 pop(memo_state)
+                pop(silent_of)
             } else {
                 // Drop the dead row's edges first, then fill the hole with
                 // the tail row and follow its edges to the new position.
-                let mut e = 0
-                while e < dep_sig.len {
-                    if dep_eff[e] == i {
-                        let el = dep_sig.len - 1
-                        dep_sig[e] = dep_sig[el]
-                        dep_eff[e] = dep_eff[el]
-                        dep_gen[e] = dep_gen[el]
-                        pop(dep_sig)
-                        pop(dep_eff)
-                        pop(dep_gen)
-                    } else {
-                        e = e + 1
-                    }
+                drop_eff_edges(i)
+                eff_lists(last)
+                let mut e = eff_head[last]
+                while e >= 0 {
+                    e_eff[e] = i
+                    e = e_en[e]
                 }
-                for q in 0..dep_sig.len {
-                    if dep_eff[q] == last {
-                        dep_eff[q] = i
-                    }
-                }
+                eff_head[i] = eff_head[last]
+                eff_tail[i] = eff_tail[last]
+                pop_eff_lists(last)
                 // A child's parent is an effect index too, so it moves with the
                 // row it names. `produced_by` names a memo row the same way, and
                 // `pull` reads it, so it moves too.
@@ -534,6 +719,7 @@ fn free_nodes_effects(ids: []int) {
                 is_scope[i] = is_scope[last]
                 memo_out[i] = memo_out[last]
                 memo_state[i] = memo_state[last]
+                silent_of[i] = silent_of[last]
                 pop(fn_ids)
                 pop(node_ids)
                 pop(rank)
@@ -542,6 +728,7 @@ fn free_nodes_effects(ids: []int) {
                 pop(is_scope)
                 pop(memo_out)
                 pop(memo_state)
+                pop(silent_of)
             }
             // The row swapped into `i` may itself be dead: re-check it.
         } else {
@@ -638,7 +825,11 @@ fn run(effect_id: int) {
     runs = runs + 1
     drop_eid_deps(effect_id)
     push(stack, effect_id)
-    platform.plat_invoke_fn(fn_ids[effect_id])
+    let r0 = reports
+    invoke_body(effect_id)
+    if reports == r0 && effect_id < silent_of.len {
+        silent_of[effect_id] = silent_of[effect_id] + 1
+    }
     if stack.len > 0 {
         pop(stack)
     }
@@ -653,7 +844,7 @@ fn memo_body(effect_id: int) {
     runs = runs + 1
     drop_eid_deps(effect_id)
     push(stack, effect_id)
-    platform.plat_invoke_fn(fn_ids[effect_id])
+    invoke_body(effect_id)
     if stack.len > 0 {
         pop(stack)
     }
@@ -668,10 +859,11 @@ fn inputs_changed(effect_id: int) -> int {
     // 1. Collect the inputs, and bring any upstream memo up to date before
     //    comparing, so a stale generation is not mistaken for an unchanged one.
     let mut ins = []int {}
-    let n = dep_sig.len
-    for i in 0..n {
-        if dep_eff[i] == effect_id {
-            push(ins, dep_sig[i])
+    if effect_id > 0 && effect_id < eff_head.len {
+        let mut e = eff_head[effect_id]
+        while e >= 0 {
+            push(ins, e_sig[e])
+            e = e_en[e]
         }
     }
     let m = ins.len
@@ -687,13 +879,14 @@ fn inputs_changed(effect_id: int) -> int {
     //    then already fresh, and it must not run a second time.
     let mut changed = 0
     let mut any = 0
-    let k = dep_sig.len
-    for i in 0..k {
-        if dep_eff[i] == effect_id {
+    if effect_id > 0 && effect_id < eff_head.len {
+        let mut e = eff_head[effect_id]
+        while e >= 0 {
             any = 1
-            if platform.plat_sig_gen(dep_sig[i]) != dep_gen[i] {
+            if platform.plat_sig_gen(e_sig[e]) != e_gen[e] {
                 changed = 1
             }
+            e = e_en[e]
         }
     }
     if any == 0 {
@@ -789,23 +982,7 @@ fn notify_at(signal_id: int, mark: int) {
     if mark != 0 {
         wrote = wrote + 1
     }
-    let mut hit = []int {}
-    let n = dep_sig.len
-    for i in 0..n {
-        if dep_sig[i] == signal_id {
-            let e = dep_eff[i]
-            let mut seen = 0
-            let h = hit.len
-            for j in 0..h {
-                if hit[j] == e {
-                    seen = 1
-                }
-            }
-            if seen == 0 {
-                push(hit, e)
-            }
-        }
-    }
+    let hit = readers_of(signal_id)
     let h = hit.len
     if batch_depth > 0 {
         for i in 0..h {
@@ -890,23 +1067,10 @@ fn step(effect_id: int) {
     }
     memo_state[effect_id] = 1
     let out = memo_out[effect_id]
-    let mut hit = []int {}
-    let n = dep_sig.len
-    for i in 0..n {
-        if dep_sig[i] == out {
-            let r = dep_eff[i]
-            let mut seen = 0
-            let h = hit.len
-            for j in 0..h {
-                if hit[j] == r {
-                    seen = 1
-                }
-            }
-            if seen == 0 {
-                push(hit, r)
-            }
-        }
-    }
+    // Nothing writes a lazy memo's cell until it is pulled, so a list host bound
+    // to it would never hear of the change: tell the engine now.
+    memo_stale_hook(out)
+    let hit = readers_of(out)
     let h = hit.len
     for i in 0..h {
         schedule(hit[i])

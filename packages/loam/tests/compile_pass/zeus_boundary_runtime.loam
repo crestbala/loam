@@ -1,0 +1,81 @@
+// A trap after the build — in a click handler, or in an effect re-run by a
+// signal write — is caught by the enclosing `Boundary`: its subtree is replaced
+// by the fallback on the next refresh, and siblings outside it keep working.
+// A trap in an `Each` row built by a later refresh is caught the same way.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn expect(cond: bool, msg: string) {
+    if cond == false {
+        fmt.println("FAIL", msg)
+        sys.exit(1)
+    }
+}
+
+fn bad_index(n: int) -> int {
+    let a = []int { 1, 2 }
+    return a[n]
+}
+
+fn main() {
+    let n = zeus.signal(0)
+    let rows = zeus.signal([]int {})
+    let outside = zeus.signal(0)
+    zeus.snapshot(320, 240, fn() -> Node {
+        zeus.Box(style = Style(direction = Direction.Column)) {
+            zui.Boundary(fn() -> Node {
+                return zeus.Box(style = Style(direction = Direction.Column)) {
+                    zui.Button("explode", on_click = fn() => bad_index(5))
+                    zeus.Text("live A")
+                }
+            }, fn(msg) {
+                zeus.Text("fallback A")
+            })
+            zui.Boundary(fn() -> Node {
+                return zeus.Box(style = Style(direction = Direction.Column)) {
+                    zeus.Text("value {{bad_index(n.get())}}")
+                }
+            }, fn(msg) {
+                zeus.Text("fallback B")
+            })
+            zui.Boundary(fn() -> Node {
+                return zui.Each(rows.get(), fn(i, r) {
+                    zeus.Text("row {{bad_index(r)}}")
+                })
+            }, fn(msg) {
+                zeus.Text("fallback C")
+            })
+            zui.Button("outside", on_click = fn() => outside.set(outside.get() + 1))
+        }
+    })
+    expect(zeus.text_visible("live A"), "A built")
+    expect(zeus.text_visible("value 1"), "B built")
+
+    // Handler trap.
+    expect(zeus.engine_click_text("explode") != 0, "click explode")
+    zeus.engine_layout(320, 240)
+    expect(zeus.text_visible("fallback A"), "handler trap not caught")
+    expect(zeus.text_visible("live A") == false, "A subtree survived")
+
+    // Effect trap: the text thunk re-runs with an out-of-range index.
+    n.set(7)
+    zeus.engine_layout(320, 240)
+    expect(zeus.text_visible("fallback B"), "effect trap not caught")
+
+    // Row-builder trap during a list refresh.
+    let mut xs = []int {}
+    push(xs, 1)
+    push(xs, 9)
+    rows.set(xs)
+    zeus.engine_layout(320, 240)
+    expect(zeus.text_visible("fallback C"), "row trap not caught")
+
+    // The rest of the app still works.
+    expect(zeus.engine_click_text("outside") != 0, "click outside")
+    zeus.engine_layout(320, 240)
+    expect(outside.get() == 1, "sibling handler did not run")
+    fmt.println("boundary runtime ok")
+}

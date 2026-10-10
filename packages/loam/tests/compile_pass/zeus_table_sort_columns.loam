@@ -1,7 +1,7 @@
-// Sorting reorders rows. `Table` derives the shown order from its rows
-// signal and the sort signal (numeric columns by value, stable, existing
-// row nodes move rather than rebuild); `VirtualTable` wires the header and
-// the app reorders its `Signal<[]T>` with `sort_cells`.
+// Sorting reorders rows. `Table` writes its `Signal<[]T>` into the clicked
+// column's order (numeric columns by value, stable, existing row nodes move
+// rather than rebuild). `VirtualTable` wires the header and the app sets
+// its signal with `sort_cells`.
 //
 // Regression test: column switches must show the new sort order immediately
 // after a single click (not require multiple clicks or layout passes).
@@ -103,9 +103,9 @@ fn main() {
     zeus.engine_layout(480, 400)
     must(y("Ada") < y("Cal") && y("Cal") < y("Bea"), "qty desc by value")
 
-    // Row click hands back the index in the caller's data (Bea = 2).
+    // Qty desc order is Ada, Cal, Bea, so Bea sits at index 2.
     must(zeus.engine_click_text("Bea") != 0, "row click")
-    must(picked.get() == 2, "on_pick gives the data index")
+    must(picked.get() == 2, "on_pick is the index in rows")
 
     // Pushing a row keeps the current sort.
     zui.push_item(rows, Job { name: "Dee", qty: 50 })

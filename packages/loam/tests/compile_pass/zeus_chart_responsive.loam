@@ -88,13 +88,31 @@ fn main() {
     must(wide_right > 700, "wide plot spans the card")
 
     // Shrink: the plot refits to the narrow card (it used to keep its first
-    // width and spill past the card).
+    // width and spill past the card). It moves its marks in place: the same
+    // dot nodes, no node or effect allocated (the chart is not rebuilt).
+    let ids0 = dots()
+    let nodes0 = zeus.arena_nodes()
+    let rows0 = zeus.reactive_rows()
     layout(320)
+    let ids1 = dots()
+    let mut same = ids1.len == ids0.len
+    for i in 0..ids1.len {
+        let mut hit = false
+        for k in 0..ids0.len {
+            if ids0[k] == ids1[i] {
+                hit = true
+            }
+        }
+        same = same && hit
+    }
+    must(same, "a resize keeps the dot nodes")
+    must(zeus.arena_nodes() == nodes0, "and allocates no node")
+    must(zeus.reactive_rows() == rows0, "and no effect")
     let narrow_right = dots_right()
     must(narrow_right < 320 - 32, "narrow plot fits inside the page padding")
     must(dots().len == 6, "still six dots after the shrink")
 
-    // Grow again: a second refit, so the hook survived the first one.
+    // Grow again: the width signal follows a second resize too.
     layout(W)
     must(dots_right() == wide_right, "growing back refits to the wide plot")
 

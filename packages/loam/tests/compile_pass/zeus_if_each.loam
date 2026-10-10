@@ -7,7 +7,7 @@ let mut names: []string = []string {}
 
 fn Files() -> Node {
     return Column(0) {
-        zui.Loop(names, fn(i, s) {
+        zui.Each(names, fn(i, s) {
             return zeus.Text(s)
         })
     }

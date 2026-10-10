@@ -1,0 +1,64 @@
+// A signal write is a change only when the *value* changed. Strings, lists and
+// structs holding them used to compare by bytes — the string header, not its
+// text — so writing an equal value built in a fresh buffer re-ran every reader
+// (and a keyed row patch counted it as a change). Now the write compares by
+// value: strings by text, structs by field, lists by element.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+struct Todo {
+    id: int,
+    title: string,
+    tags: []string,
+}
+
+let mut s_runs: int = 0
+let mut t_runs: int = 0
+let mut l_runs: int = 0
+
+/// A string with the same text in a new heap buffer.
+fn fresh(s: string, n: int) -> string {
+    return "{{s}}{{n}}"
+}
+
+fn main() {
+    zeus.window("valeq", 100, 100)
+    let name = zeus.signal(fresh("ann", 1))
+    let todo = zeus.signal(Todo { id: 1, title: fresh("milk", 1), tags: []string { fresh("a", 1) } })
+    let list = zeus.signal([]string { fresh("x", 1), fresh("y", 1) })
+    zeus.effect(|| { let v = name.get(); s_runs = s_runs + 1 })
+    zeus.effect(|| { let v = todo.get(); t_runs = t_runs + 1 })
+    zeus.effect(|| { let v = list.get(); l_runs = l_runs + 1 })
+    must(s_runs == 1 && t_runs == 1 && l_runs == 1, "each effect ran once")
+
+    // Equal values in fresh buffers: no change.
+    name.set(fresh("ann", 1))
+    todo.set(Todo { id: 1, title: fresh("milk", 1), tags: []string { fresh("a", 1) } })
+    list.set([]string { fresh("x", 1), fresh("y", 1) })
+    must(s_runs == 1, "an equal string is not a change")
+    must(t_runs == 1, "an equal struct is not a change")
+    must(l_runs == 1, "an equal list is not a change")
+
+    // Real changes still are.
+    name.set(fresh("ann", 2))
+    must(s_runs == 2, "a different string is a change")
+    todo.set(Todo { id: 1, title: fresh("milk", 1), tags: []string { fresh("b", 1) } })
+    must(t_runs == 2, "a nested field change is a change")
+    list.set([]string { fresh("x", 1) })
+    must(l_runs == 2, "a shorter list is a change")
+    list.set([]string { fresh("x", 1), fresh("z", 1) })
+    must(l_runs == 3, "a different element is a change")
+    must(name.get() == "ann2", "the cell holds the new value")
+
+    fmt.println("value eq ok")
+}

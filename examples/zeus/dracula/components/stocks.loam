@@ -8,14 +8,20 @@
 import "std:date"
 import "std:http"
 import "std:zeus"
+import "std:zui"
 import "../server/api.loam"
 import "../core/series.loam"
 import "present.loam" as present
 
 let mut gen: Signal<int> = Signal { id: 0 }
+/// The focused stock as one value: the page binds to it (`MatchBy` on the
+/// state), and every field it shows updates in place when this is written.
+let mut focus_view: Signal<StockView> = Signal { id: 0 }
 let mut range_sel: Signal<int> = Signal { id: 0 }
 let mut search_input: Signal<string> = Signal { id: 0 }
 let mut search_gen: Signal<int> = Signal { id: 0 }
+/// The search as one value (see `StockSearch`).
+let mut search_view: Signal<StockSearch> = Signal { id: 0 }
 let mut data_gen: Signal<int> = Signal { id: 0 }
 let mut from_input: Signal<string> = Signal { id: 0 }
 let mut to_input: Signal<string> = Signal { id: 0 }
@@ -57,6 +63,39 @@ let mut walk_days = []int {}
 let mut walk_cached = 0
 let mut progress = ""
 
+/// What the stock page shows. `state`: 0 loading, 1 loaded, 2 not cached,
+/// 3 server down.
+struct StockView {
+    state: int,
+    sym: string,
+    name: string,
+    isin: string,
+    chart: ChartData,
+    decimals: int,
+    stats: []string,
+}
+
+fn view() -> Signal<StockView> {
+    return focus_view
+}
+
+/// Publish the focus globals as the view value. A write of an equal value is
+/// no change, so a bump that moved nothing the page shows re-runs nothing.
+fn publish_view() {
+    if focus_view.id == 0 {
+        return
+    }
+    focus_view.set(StockView {
+        state: focus_state,
+        sym: focus_sym,
+        name: focus_name,
+        isin: focus_isin,
+        chart: ChartData { labels: chart_labels, names: chart_names, vals: chart_vals },
+        decimals: chart_decimals,
+        stats: stat_texts,
+    })
+}
+
 fn started() -> bool {
     return gen.id != 0
 }
@@ -94,6 +133,7 @@ fn bump() {
         gen_n = gen_n + 1
         gen.set(gen_n)
     }
+    publish_view()
 }
 
 fn bump_search() {
@@ -101,6 +141,38 @@ fn bump_search() {
         search_n = search_n + 1
         search_gen.set(search_n)
     }
+    publish_search()
+}
+
+/// One search result row: the symbol it opens and its table cells.
+struct StockHit {
+    sym: string,
+    cells: []string,
+}
+
+/// What the stock search shows. `state`: 0 no query, 1 asking, 2 answered,
+/// 3 server down.
+struct StockSearch {
+    state: int,
+    query: string,
+    total: int,
+    hits: []StockHit,
+}
+
+fn search() -> Signal<StockSearch> {
+    return search_view
+}
+
+fn publish_search() {
+    if search_view.id == 0 {
+        return
+    }
+    let mut hits = []StockHit {}
+    let n = hit_syms.len
+    for i in 0..n {
+        push(hits, StockHit { sym: hit_syms[i], cells: hit_cells(i) })
+    }
+    search_view.set(StockSearch { state: search_state, query: asked_query, total: hit_total, hits: hits })
 }
 
 fn bump_data() {
@@ -541,9 +613,15 @@ fn start() {
         return
     }
     gen = zeus.signal(0)
+    focus_view = zeus.signal(StockView {
+        state: 0, sym: "", name: "", isin: "",
+        chart: ChartData { labels: []string {}, names: []string {}, vals: []int {} },
+        decimals: 0, stats: []string {},
+    })
     range_sel = zeus.signal(2)
     search_input = zeus.signal("")
     search_gen = zeus.signal(0)
+    search_view = zeus.signal(StockSearch { state: 0, query: "", total: 0, hits: []StockHit {} })
     data_gen = zeus.signal(0)
     from_input = zeus.signal("")
     to_input = zeus.signal("")

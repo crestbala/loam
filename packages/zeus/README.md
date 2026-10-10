@@ -46,11 +46,11 @@ fn main() {
 ```
 
 Public widgets in `std:zeus`: `App`, `Box`, `Text`, `Button`, `Input`, `Grid`,
-`Overlay`, `Scroll`, `Svg`, `If`, `Loop`, `Each`, `For`. The themed design
+`Overlay`, `Scroll`, `Svg`, `Show`, `Each`. The themed design
 system (look + palette + `Card` / `Dialog` / `Tabs` / charts / `DatePicker`)
 lives in the same module. Growing lists:
-`zeus.signal([]string {})` + `zui.Each` / `zui.For` (reactive, keyed by a string)
-+ `zeus.push_item` / `zeus.insert_item`; `zui.Loop` is the static, one-shot form.
+`zeus.signal([]string {})` + `zui.Each(names.get(), Row)` (the same `Each` takes a
+fixed array) + `zeus.push_item` / `zeus.insert_item`.
 SVG path strings live in [`lib/ui/display/icons.loam`](lib/ui/display/icons.loam).
 Theme tokens live in [`lib/theme.loam`](lib/theme.loam) and `std:zeus`.
 Web is **Canvas2D wasm** — not HTML/DOM.
