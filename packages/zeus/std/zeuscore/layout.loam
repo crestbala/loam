@@ -1368,8 +1368,8 @@ fn wraps_under_column(p: int) -> int {
 }
 
 /// The boundary for one dirty node: the nearest ancestor (itself included when
-/// `own` is 1) whose box the change cannot have moved. 0 when the change can
-/// reach the root, or the node is not under it.
+/// `own` is 1) whose box the change cannot have moved — the root when no
+/// ancestor below it holds. 0 when the node is not under the root.
 fn find_boundary(d: int, own: int) -> int {
     let root = arena.root_id
     // The path root -> d, so the axis test can run top-down.
@@ -1451,6 +1451,9 @@ fn find_boundary(d: int, own: int) -> int {
             }
             if w_ok == 0 && h_ok == 0 {
                 // Nothing below can recover an axis the parent does not impose.
+                if best == 0 {
+                    return root
+                }
                 return best
             }
         }
@@ -1459,6 +1462,11 @@ fn find_boundary(d: int, own: int) -> int {
         }
         i = i - 1
     }
+    // Nothing below holds: the root does. Its box is the window, which only a
+    // resize moves, and a resize solves the whole tree anyway.
+    if best == 0 {
+        return root
+    }
     return best
 }
 
@@ -1466,14 +1474,59 @@ fn find_boundary(d: int, own: int) -> int {
 /// `arena.take_dirty_layout_nodes()`: a structural entry is `-id`. Returns 0
 /// when a change can reach the root (or a floater is anchored), leaving the
 /// caller to re-solve the whole tree.
+/// Boundaries whose box did not hold, so `relayout` re-solved their parent
+/// instead of the whole tree, and re-solves that reached the root (the
+/// root's box is the window, so it always holds) (diagnostics).
+let mut relayout_climbs: int = 0
+let mut root_relayouts: int = 0
+
+/* The boxes of a subtree about to be re-solved, so the nodes it moved can be
+   paint-marked afterwards: id, x, y, w, h, ext_w, ext_h per entry. */
+let mut snap_box: []int = []int {}
+
+fn box_snapshot(id: int) {
+    if id <= 0 || id >= arena.nodes.len {
+        return
+    }
+    push(snap_box, id)
+    push(snap_box, arena.nodes[id].x)
+    push(snap_box, arena.nodes[id].y)
+    push(snap_box, arena.nodes[id].w)
+    push(snap_box, arena.nodes[id].h)
+    push(snap_box, arena.nodes[id].ext_w)
+    push(snap_box, arena.nodes[id].ext_h)
+    let kids = arena.nodes[id].kids
+    let n = kids.len
+    for i in 0..n {
+        box_snapshot(kids[i])
+    }
+}
+
+/// Paint-mark every snapshotted node whose box moved, then drop the snapshot.
+fn box_mark_moved() {
+    let n = snap_box.len
+    let mut i = 0
+    while i + 6 < n {
+        let id = snap_box[i]
+        if id > 0 && id < arena.nodes.len {
+            if arena.nodes[id].x != snap_box[i + 1] || arena.nodes[id].y != snap_box[i + 2] ||
+               arena.nodes[id].w != snap_box[i + 3] || arena.nodes[id].h != snap_box[i + 4] ||
+               arena.nodes[id].ext_w != snap_box[i + 5] || arena.nodes[id].ext_h != snap_box[i + 6] {
+                arena.mark_paint_id(id)
+            }
+        }
+        i = i + 7
+    }
+    snap_box = []int {}
+}
+
 fn relayout(dirty: []int) -> int {
     let n = dirty.len
     if n == 0 {
         return 0
     }
-    if arena.live_anchors > 0 {
-        return 0
-    }
+    // Anchored floaters are re-placed after the re-solve (`place_anchored`
+    // below), so a floater on screen does not force the whole tree.
     let root = arena.root_id
     if root <= 0 {
         return 0
@@ -1572,21 +1625,45 @@ fn relayout(dirty: []int) -> int {
         if arena.want_show(a) == 0 {
             continue
         }
-        let bx = arena.nodes[a].x
-        let by = arena.nodes[a].y
-        let bw = arena.nodes[a].w
-        let bh = arena.nodes[a].h
-        layout_node(a, bx, by, bw, arena.nodes[a].lay_h)
-        if arena.nodes[a].w != bw {
-            return 0
+        // A box that did not hold means the change reaches above the boundary:
+        // re-solve its parent from the parent's own call, and so on up until
+        // a box holds. Only reaching the root falls back to the whole tree.
+        let mut at = a
+        let mut held = 0
+        let mut climb = 0
+        while held == 0 {
+            if at <= 0 || climb > 256 {
+                return 0
+            }
+            let bx = arena.nodes[at].x
+            let by = arena.nodes[at].y
+            let bw = arena.nodes[at].w
+            let bh = arena.nodes[at].h
+            box_snapshot(at)
+            if at == root {
+                // The root's box is the window (as `layout` places it), not
+                // whatever it last held: a root just installed has none yet.
+                layout_node(at, 0, 0, arena.win_w, arena.win_h)
+            } else {
+                layout_node(at, bx, by, bw, arena.nodes[at].lay_h)
+            }
+            // Overlays under it are placed against the window, not the flow.
+            layout_overlays(at)
+            if at == root || (arena.nodes[at].w == bw && arena.nodes[at].h == bh) {
+                held = 1
+            } else {
+                at = arena.nodes[at].parent
+                climb = climb + 1
+                relayout_climbs = relayout_climbs + 1
+            }
         }
-        if arena.nodes[a].h != bh {
-            return 0
+        if at == root {
+            root_relayouts = root_relayouts + 1
         }
-        // Everything the re-solve can have moved is inside the boundary: mark
-        // it so the damage pass repaints that subtree rather than falling back
-        // to full.
-        arena.mark_paint_id(a)
+        // Repaint what the re-solve actually moved: a node whose box (or
+        // scroll extent) changed re-records its run; one that held keeps its
+        // ops. A content change marked its own node when it was written.
+        box_mark_moved()
     }
     arena.live_anchors = 0
     place_anchored(arena.root_id)

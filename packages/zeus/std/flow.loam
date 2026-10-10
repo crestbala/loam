@@ -1,0 +1,1595 @@
+//! flow — the framework's control-flow primitives: `Each`, `Match` /
+//! `MatchKeep`, `Show`, `Boundary`, `Scope`, the windowed lists
+//! (`VirtualList*`), `refit`, `scroll_to`, and `animate`. They own arena
+//! bookkeeping (row keys, build scopes, adoption, exit transitions), so they
+//! live beside `zeusbase`, not in the design system.
+//!
+//! `zeus-components` reaches these through `atoms` (which imports this module),
+//! so callers keep writing `zui.Each` / `zui.Match`. A component library at the
+//! same level as `zeus-components` needs only `zeusbase` and this module; it
+//! never imports `zeuscore/*` (`nob check-layers` enforces that).
+
+import "structs.loam"
+import "enums.loam"
+import "zeusbase.loam"
+import "zeus_constants.loam"
+import "std:fmt"
+import "zeuscore/platform.loam"
+import "zeuscore/arena.loam"
+
+struct ShowProps {
+    /// Re-read when a signal it reads moves: `when = tab.get() == 2`.
+    when: fn() -> bool,
+    /// false: the body is built once and kept; `when` toggles layout only.
+    /// true: the body is built on the first true and freed on each false.
+    lazy: bool = false,
+    /// The trailing block: the body.
+    children: fn() = noop,
+    /// Style, merged over the host column's own.
+    style: Option<fn() -> Style> = none,
+}
+
+/// Reactive presence. A column that skips layout (and takes no gap slot)
+/// while `when` is false. Unlike a build-time `if`, it follows `when`.
+fn Show(p: ShowProps) -> Node {
+    // A plain signal, written by an effect: layout and the `Match` host read
+    // `on` raw, and a `computed` is only refreshed when something pulls it.
+    let on = signal(0)
+    effect(fn() {
+        let v = if p.when() { 1 } else { 0 }
+        if on.peek() != v {
+            on.set(v)
+        }
+    })
+    return Box(style = merge(Style(direction = Direction.Column), style_of(p.style)),
+               visible = on.get() == 1) {
+        if p.lazy {
+            Match(on, fn(v: int) {
+                if v == 1 {
+                    p.children()
+                }
+            })
+        } else {
+            p.children()
+        }
+    }
+}
+
+struct ScopeProps {
+    /// Appearance for the subtree: -1 inherit, 0 light, 1 dark. Role colors
+    /// inside resolve against it at paint time (a dark sidebar in a light app).
+    dark: int = -1,
+    /// Density for the subtree (`Density.*`), -1 to inherit. Controls inside
+    /// size from it instead of the app-wide `density()`.
+    density: int = -1,
+    /// Accent for the subtree (`ACCENT.*`), -1 to inherit: the accent ramp
+    /// and the roles on it (`accent()`, `on_accent()`, ...) as `set_accent`
+    /// would set them app-wide.
+    accent: int = -1,
+    /// Any role palette (`palette_new` + `palette_role`), 0 for none. Applied
+    /// over `accent`'s.
+    palette: int = 0,
+    /// The trailing block: the subtree.
+    children: fn() = noop,
+    /// Style, merged over the host column's own.
+    style: Option<fn() -> Style> = none,
+}
+
+/// Scoped theme / density. A column whose subtree resolves role colors against
+/// `dark` (and `accent` / `palette`) and sizes controls from `density`, instead
+/// of the app-wide `appearance()` / `accent` / `density()`. Scopes nest; for
+/// each knob the nearest scope that sets it wins (a palette replaces an outer
+/// one whole).
+///
+/// ```
+/// zui.Scope(dark = 1) {
+///     Sidebar()
+/// }
+/// zui.Scope(density = Density.Compact) {
+///     zui.Table(...)
+/// }
+/// zui.Scope(accent = ACCENT.Rose) {
+///     zui.Button("Delete", on_click = drop)
+/// }
+/// ```
+fn Scope(p: ScopeProps) -> Node {
+    let host = raw_box()
+    if p.dark >= 0 {
+        arena.set_scheme(host.id, if p.dark == 1 { 2 } else { 1 })
+    }
+    if p.density >= 0 {
+        let d = signal(p.density)
+        arena.set_density_scope(host.id, d.id)
+    }
+    let mut pal = p.palette
+    if pal == 0 && p.accent >= 0 {
+        pal = accent_palette_hook(p.accent)
+    }
+    if pal > 0 {
+        arena.set_palette(host.id, pal)
+    }
+    Component(host, style = merge(Style(direction = Direction.Column), style_of(p.style)))
+    ui_push(host.id)
+    p.children()
+    ui_pop()
+    return host
+}
+
+/// Append `v` to a live list signal and notify. Use with `Each` / `VirtualList`.
+/// A windowed list only rebuilds the visible window, not every row.
+fn push_item<T>(sig: Signal<[]T>, v: T) {
+    let mut xs = sig.get()
+    push(xs, v)
+    sig.set(xs)
+}
+
+/// Insert `v` at index `i` (clamped to `0..len`). Use with `Each` / `VirtualList`.
+fn insert_item<T>(sig: Signal<[]T>, i: int, v: T) {
+    let xs = sig.get()
+    let n = xs.len
+    let mut at = i
+    if at < 0 {
+        at = 0
+    }
+    if at > n {
+        at = n
+    }
+    let mut out = []T {}
+    let mut j = 0
+    while j < at {
+        push(out, xs[j])
+        j = j + 1
+    }
+    push(out, v)
+    while j < n {
+        push(out, xs[j])
+        j = j + 1
+    }
+    sig.set(out)
+}
+
+/// Remove the item at index `i`. No-op if `i` is out of range.
+fn remove_item<T>(sig: Signal<[]T>, i: int) {
+    let xs = sig.get()
+    let n = xs.len
+    if i < 0 {
+        return
+    }
+    if i >= n {
+        return
+    }
+    let mut out = []T {}
+    let mut j = 0
+    while j < n {
+        if j != i {
+            push(out, xs[j])
+        }
+        j = j + 1
+    }
+    sig.set(out)
+}
+
+/// Remove the last item from a live list signal. No-op if empty.
+fn pop_item<T>(sig: Signal<[]T>) {
+    let mut xs = sig.get()
+    if xs.len > 0 {
+        pop(xs)
+        sig.set(xs)
+    }
+}
+
+fn virtual_refresh<T>(node_id: int, items: Signal<[]T>, build: fn(int, T) -> Node, row_h: int) {
+    let xs = items.get()
+    let m = xs.len
+    let gen = platform.plat_sig_gen(items.id)
+    let mut first = 0
+    let mut last = m
+    if row_h > 0 {
+        let w = virtual_window(node_id, m, row_h)
+        first = w.first
+        last = w.last
+    }
+    if gen == arena.nodes[node_id].list_gen {
+        if first == arena.nodes[node_id].list_lo {
+            if last == arena.nodes[node_id].list_hi {
+                if arena.nodes[node_id].kids.len > 0 {
+                    return
+                }
+                if m == 0 {
+                    arena.nodes[node_id].list_n = 0
+                    return
+                }
+            }
+        }
+    }
+    arena.nodes[node_id].list_gen = gen
+    arena.nodes[node_id].list_lo = first
+    arena.nodes[node_id].list_hi = last
+    arena.nodes[node_id].list_n = m
+    arena.nodes[node_id].row_h = row_h
+    // Everything the builder allocated last time is owned by this host:
+    // signals and interned handlers are freed (and their ids recycled) on
+    // the next rebuild, so streaming data does not grow the arena. A
+    // windowed list only (re)builds the visible rows — append / insert
+    // outside the window is a spacer resize, not O(n) widgets.
+    let previous = arena.rebuild_begin(node_id)
+    ui_push(node_id)
+    if row_h > 0 {
+        if first > 0 {
+            let top = raw_spacer()
+            set_height(top, first * row_h)
+            Component(top)
+        }
+    }
+    let mut i = first
+    while i < last {
+        build(i, xs[i])
+        i = i + 1
+    }
+    if row_h > 0 {
+        if last < m {
+            let bot = raw_spacer()
+            set_height(bot, (m - last) * row_h)
+            Component(bot)
+        }
+    }
+    ui_pop()
+    arena.rebuild_end(previous)
+}
+
+/// A spacer row under `node_id` keyed by `k`, reused across shifts: only its
+/// height changes, so a scroll does not reallocate it. Returns the node id.
+fn keyed_spacer(node_id: int, k: string, px: int) -> int {
+    let id = arena.key_node(node_id, k)
+    if id > 0 {
+        set_height(node_handle(id), px)
+        return id
+    }
+    let s = raw_spacer()
+    set_height(s, px)
+    arena.nodes[s.id].parent = node_id
+    arena.key_set(node_id, k, s.id)
+    return s.id
+}
+
+/// Free a spacer keyed `k` under `node_id` when the window reaches the end.
+fn drop_keyed_spacer(node_id: int, k: string) {
+    let id = arena.key_node(node_id, k)
+    if id > 0 {
+        arena.key_forget(node_id, k)
+        arena.free_subtree(id)
+    }
+}
+
+/// Keyed windowed refresh. Like `virtual_refresh`, but a one-row scroll shift
+/// **moves** the rows whose key is still in the window and builds only the row
+/// entering it, instead of rebuilding every visible row. That is what keeps a
+/// scroll from allocating a fresh closure per visible row per frame (the
+/// `docs/mem-baseline.md` §5.1 growth): the delta is O(rows entering/leaving),
+/// not O(window). `key(item)` must be stable and unique.
+fn virtual_refresh_keyed<T>(node_id: int, items: Signal<[]T>, key: fn(T) -> string,
+                            build: fn(int, T) -> Node, row_h: int) {
+    let xs = items.get()
+    let m = xs.len
+    let w = virtual_window(node_id, m, row_h)
+    let first = w.first
+    let last = w.last
+    let gen = platform.plat_sig_gen(items.id)
+    if gen == arena.nodes[node_id].list_gen {
+        if first == arena.nodes[node_id].list_lo {
+            if last == arena.nodes[node_id].list_hi {
+                if arena.nodes[node_id].kids.len > 0 {
+                    return
+                }
+                if m == 0 {
+                    arena.nodes[node_id].list_n = 0
+                    return
+                }
+            }
+        }
+    }
+    // Fall back to the plain (rebuild-all) path if any row is unkeyed or two
+    // visible rows share a key: the move is only sound with a clean key set.
+    let mut keys = []string {}
+    let mut i = first
+    let mut ok = 1
+    while i < last {
+        let k = key(xs[i])
+        if kfor_has(keys, k) == 1 {
+            ok = 0
+            break
+        }
+        push(keys, k)
+        i = i + 1
+    }
+    if ok == 0 {
+        virtual_refresh(node_id, items, build, row_h)
+        return
+    }
+    // Existing keyed rows (from a previous keyed refresh) that are still visible
+    // are kept in place; everything else is built or freed below.
+    let old = arena.key_keys(node_id)
+    let mut o = 0
+    while o < old.len {
+        if arena.key_node(node_id, old[o]) <= 0 {
+            ok = 0
+            break
+        }
+        o = o + 1
+    }
+    if ok == 0 {
+        virtual_refresh(node_id, items, build, row_h)
+        return
+    }
+    arena.nodes[node_id].list_gen = gen
+    arena.nodes[node_id].list_lo = first
+    arena.nodes[node_id].list_hi = last
+    arena.nodes[node_id].list_n = m
+    arena.nodes[node_id].row_h = row_h
+    // Build the rows entering the window, under the host's build scope, so each
+    // row owns only what it allocated.
+    let previous = arena.scope_begin(node_id)
+    ui_push(node_id)
+    i = first
+    while i < last {
+        if arena.key_node(node_id, keys[i - first]) <= 0 {
+            let before = arena.nodes[node_id].kids.len
+            let s_mark = arena.rec_sid.len
+            let f_mark = arena.rec_fid.len
+            build(i, xs[i])
+            let after = arena.nodes[node_id].kids.len
+            if after == before + 1 {
+                let row = arena.nodes[node_id].kids[before]
+                arena.adopt_records(node_id, row, s_mark, f_mark)
+                arena.key_set(node_id, keys[i - first], row)
+            } else {
+                arena.key_set(node_id, keys[i - first], 0)
+            }
+        }
+        i = i + 1
+    }
+    ui_pop()
+    arena.scope_end(previous)
+    // Free the rows whose key left the window. The spacer keys are not rows;
+    // they are kept and updated below.
+    o = 0
+    while o < old.len {
+        if old[o] != "@top" {
+            if old[o] != "@bot" {
+                if kfor_has(keys, old[o]) == 0 {
+                    let row = arena.key_node(node_id, old[o])
+                    arena.key_forget(node_id, old[o])
+                    if row > 0 {
+                        arena.free_subtree(row)
+                    }
+                }
+            }
+        }
+        o = o + 1
+    }
+    // Order the children: top spacer (rows before the window), the visible
+    // keyed rows in list order, then the bottom spacer (rows after the window).
+    // A spacer is itself keyed (`@top` / `@bot`) and reused across shifts so a
+    // scroll only resizes it, never reallocates it.
+    let mut order = []int {}
+    if row_h > 0 {
+        if first > 0 {
+            let top = keyed_spacer(node_id, "@top", first * row_h)
+            push(order, top)
+        } else {
+            drop_keyed_spacer(node_id, "@top")
+        }
+    }
+    i = 0
+    while i < keys.len {
+        let row = arena.key_node(node_id, keys[i])
+        if row > 0 {
+            arena.nodes[row].parent = node_id
+            push(order, row)
+        }
+        i = i + 1
+    }
+    if row_h > 0 {
+        if last < m {
+            let bot = keyed_spacer(node_id, "@bot", (m - last) * row_h)
+            push(order, bot)
+        } else {
+            drop_keyed_spacer(node_id, "@bot")
+        }
+    }
+    // Free any current child the new order does not keep (a replaced spacer or
+    // a row already freed above leaves a stale id here).
+    let cur = arena.nodes[node_id].kids
+    let mut c = 0
+    while c < cur.len {
+        let child = cur[c]
+        if child > 0 {
+            if kfor_has_id(order, child) == 0 {
+                arena.free_subtree(child)
+            }
+        }
+        c = c + 1
+    }
+    arena.nodes[node_id].kids = order
+    arena.mark_tree_at(node_id)
+}
+
+fn virtual_row_h(heights: []int, i: int, fallback: int) -> int {
+    if i >= 0 {
+        if i < heights.len {
+            if heights[i] > 0 {
+                return heights[i]
+            }
+        }
+    }
+    return fallback
+}
+
+fn virtual_prefix(heights: []int, n: int, fallback: int) -> int {
+    let mut y = 0
+    let mut i = 0
+    while i < n {
+        y = y + virtual_row_h(heights, i, fallback)
+        i = i + 1
+    }
+    return y
+}
+
+fn virt_window_var(node_id: int, n: int, heights: []int, fallback: int) -> VirtWin {
+    if heights.len == 0 {
+        return virtual_window(node_id, n, fallback)
+    }
+    let signal_id = find_scroller(node_id)
+    let mut view_h = 240
+    let mut local = 0
+    if signal_id > 0 {
+        if arena.nodes[signal_id].h > 0 {
+            view_h = arena.nodes[signal_id].h
+        }
+        if node_id == signal_id {
+            local = arena.nodes[signal_id].scroll_y
+        } else {
+            local = arena.nodes[signal_id].scroll_y - (arena.nodes[node_id].y - arena.nodes[signal_id].y)
+        }
+    } else if arena.nodes[node_id].h > 0 {
+        view_h = arena.nodes[node_id].h
+    }
+    if local < 0 {
+        local = 0
+    }
+    let mut acc = 0
+    let mut first = n
+    let mut last = n
+    let mut i = 0
+    while i < n {
+        let rh = virtual_row_h(heights, i, fallback)
+        if acc + rh > local {
+            first = i
+            break
+        }
+        acc = acc + rh
+        i = i + 1
+    }
+    first = first - VIRT_OVERSCAN
+    if first < 0 {
+        first = 0
+    }
+    acc = virtual_prefix(heights, first, fallback)
+    last = first
+    while last < n {
+        if acc >= local + view_h {
+            last = last + VIRT_OVERSCAN
+            if last > n {
+                last = n
+            }
+            return VirtWin { first: first, last: last }
+        }
+        acc = acc + virtual_row_h(heights, last, fallback)
+        last = last + 1
+    }
+    return VirtWin { first: first, last: last }
+}
+
+fn virt_refresh_var<T>(node_id: int, items: Signal<[]T>, build: fn(int, T) -> Node, fallback: int,
+                       heights: Signal<[]int>) {
+    let xs = items.get()
+    let hs = heights.get()
+    let m = xs.len
+    let gen = platform.plat_sig_gen(items.id) + platform.plat_sig_gen(heights.id)
+    let w = virt_window_var(node_id, m, hs, fallback)
+    let first = w.first
+    let last = w.last
+    if gen == arena.nodes[node_id].list_gen {
+        if first == arena.nodes[node_id].list_lo {
+            if last == arena.nodes[node_id].list_hi {
+                if arena.nodes[node_id].kids.len > 0 {
+                    return
+                }
+                if m == 0 {
+                    arena.nodes[node_id].list_n = 0
+                    return
+                }
+            }
+        }
+    }
+    arena.nodes[node_id].list_gen = gen
+    arena.nodes[node_id].list_lo = first
+    arena.nodes[node_id].list_hi = last
+    arena.nodes[node_id].list_n = m
+    arena.nodes[node_id].row_h = fallback
+    let previous = arena.rebuild_begin(node_id)
+    ui_push(node_id)
+    if first > 0 {
+        let top = raw_spacer()
+        set_height(top, virtual_prefix(hs, first, fallback))
+        Component(top)
+    }
+    let mut i = first
+    while i < last {
+        build(i, xs[i])
+        i = i + 1
+    }
+    if last < m {
+        let bot = raw_spacer()
+        set_height(bot, virtual_prefix(hs, m, fallback) - virtual_prefix(hs, last, fallback))
+        Component(bot)
+    }
+    ui_pop()
+    arena.rebuild_end(previous)
+}
+
+fn kfor_has(keys: []string, k: string) -> int {
+    let n = keys.len
+    for i in 0..n {
+        if keys[i] == k {
+            return 1
+        }
+    }
+    return 0
+}
+
+fn kfor_has_id(ids: []int, v: int) -> int {
+    let n = ids.len
+    for i in 0..n {
+        if ids[i] == v {
+            return 1
+        }
+    }
+    return 0
+}
+
+/// The list primitive — one row per item.
+///
+/// ```
+/// zui.Each(names, fn(i, s) {
+///     zeus.Text(s)
+/// })
+/// zui.Each(todos.get(), TodoRow)   // follows the signal
+/// ```
+///
+/// * `each` is any expression yielding the array: a plain `[]T` (fixed), or a
+///   read like `todos.get()` / `filtered()` — the list follows whatever it reads.
+/// * `build(index, item)` is the row. Return one root node per row.
+/// * A row's identity is the item's value. The same value **moves** (focus,
+///   scroll, and the row's own signals stay). A changed value replaces that
+///   row. Two equal values are not unique, so the list rebuilds.
+/// * No wrapper: rows are plain children of the node the `Each` sits in, so an
+///   `Each` in a row lays out as a row. Several roots are wrapped in a column,
+///   with a warning.
+///
+/// `For`, `ForLive`, and `Index` are not separate primitives. A fixed array
+/// and a signal read are the same call. A language `for` walks a slice; it
+/// does not mount a keyed row list.
+///
+/// A refresh runs only when something `each` reads is written, and costs
+/// O(rows) to tell the rows apart; an untouched list costs nothing.
+fn Each<T>(each: fn() -> []T, build: fn(int, T) -> Node) -> Node {
+    let items = computed(each)
+    let marker = raw_box()
+    let host = marker.id
+    // -1 marks a list marker (a row root that is one must be wrapped).
+    arena.nodes[host].frag_of = -1
+    arena.bind_host(items.id, host)
+    arena.host_push(host)
+    // Each row keeps a cell holding the item it was built from; a refresh
+    // writes the current item into it, and a moved generation means the value
+    // changed (a byte-equal write is a no-op).
+    let row = fn(i: int, item: T) -> Node {
+        let cell = signal(item)
+        let r = build(i, item)
+        // Read by the engine right after this row builds (`live_note`); set
+        // last, so a list nested inside the row cannot overwrite it.
+        live_pending_item = cell.id
+        return r
+    }
+    Component(marker, rebuild = || { kfor_refresh(host, items, row) })
+    // The marker is bookkeeping only: hidden, it takes no space or gap slot.
+    // With no parent (an `Each` as the root) it is the rows' container instead.
+    if arena.nodes[host].parent > 0 {
+        set_prop_int(marker, SET.ShowOn, 0)
+    }
+    kfor_refresh(host, items, row)
+    return marker
+}
+
+/// `Each` with identity split from content: `key(item)` names the row, and a
+/// row whose key survives a refresh is **kept and patched**, never rebuilt.
+///
+/// ```
+/// zui.EachKeyed(todos.get(), fn(t: Todo) => "{{t.id}}", fn(i: Signal<int>, t: Signal<Todo>) {
+///     zeus.Text("{{i.get() + 1}}. {{t.get().title}}")
+/// })
+/// ```
+///
+/// * `build(index, item)` gets two signals the row owns. A refresh writes the
+///   item's current value into `item` and its position into `index`, so only
+///   the effects that read a moved field re-run; the row's own signals, its
+///   focus and its scroll stay. (A byte-equal item is a no-op write.)
+/// * New keys build rows, vanished keys free (or exit) theirs, and moved keys
+///   move their row — as in `Each`. Duplicate keys rebuild the list.
+/// * Read the item through `item.get()` inside effects (text thunks, props,
+///   `style`). A value copied out at build time is a snapshot.
+fn EachKeyed<T>(each: fn() -> []T, key: fn(T) -> string, build: fn(Signal<int>, Signal<T>) -> Node) -> Node {
+    let items = computed(each)
+    let marker = raw_box()
+    let host = marker.id
+    arena.nodes[host].frag_of = -1
+    arena.bind_host(items.id, host)
+    arena.host_push(host)
+    let row = fn(i: int, item: T) -> Node {
+        let cell = signal(item)
+        let at = signal(i)
+        let r = build(at, cell)
+        live_pending_item = cell.id
+        live_pending_index = at.id
+        return r
+    }
+    Component(marker, rebuild = || { kby_refresh(host, items, key, row) })
+    if arena.nodes[host].parent > 0 {
+        set_prop_int(marker, SET.ShowOn, 0)
+    }
+    kby_refresh(host, items, key, row)
+    return marker
+}
+
+fn kby_refresh<T>(host: int, items: Signal<[]T>, key: fn(T) -> string, build: fn(int, T) -> Node) {
+    let xs = items.get()
+    let m = xs.len
+    if platform.plat_sig_gen(items.id) == arena.nodes[host].list_gen {
+        if arena.nodes[host].list_n == m {
+            return
+        }
+    }
+    arena.nodes[host].list_gen = platform.plat_sig_gen(items.id)
+    arena.nodes[host].list_n = m
+    let mut nk = []string {}
+    for i in 0..m {
+        kfor_derivations = kfor_derivations + 1
+        push(nk, key(xs[i]))
+    }
+    let mk = fn(j: int) -> Node { return build(j, xs[j]) }
+    // A kept row is patched in place: its item and index cells take the new
+    // value and position, and the row is never rebuilt.
+    let patch = fn(r: int, j: int) -> int {
+        if kfor_item_changed(r, xs[j]) != 0 {
+            kby_patched = kby_patched + 1
+        }
+        kby_index_set(r, j)
+        return 0
+    }
+    if arena.keys_unique(nk) == 1 {
+        if kfor_reconcile(host, m, nk, mk, patch) != 0 {
+            return
+        }
+    }
+    kfor_rebuild(host, m, nk, mk)
+}
+
+/// Rows `EachKeyed` patched in place (item value moved, row kept). Tests.
+let mut kby_patched: int = 0
+
+fn each_patched() -> int {
+    return kby_patched
+}
+
+/// Write position `j` into `row`'s index cell (a no-op when it held).
+fn kby_index_set(row: int, j: int) {
+    if row <= 0 || row >= live_index_sig.len {
+        return
+    }
+    let c = live_index_sig[row]
+    if c <= 0 {
+        return
+    }
+    live_cell(c, j).set(j)
+}
+
+// The item cell of each keyed row, by row node id (0 = none). Written for
+// every row as it mounts, so it is never stale for a row the key table names.
+let mut live_item_sig: []int = []int {}
+let mut live_pending_item: int = 0
+/// `EachKeyed`'s index cell per row, filed with the item cell.
+let mut live_index_sig: []int = []int {}
+let mut live_pending_index: int = 0
+
+/// File the item cell the row builder just created against `row`.
+fn live_note(row: int) {
+    if row <= 0 {
+        live_pending_item = 0
+        live_pending_index = 0
+        return
+    }
+    while live_item_sig.len <= row {
+        push(live_item_sig, 0)
+    }
+    while live_index_sig.len <= row {
+        push(live_index_sig, 0)
+    }
+    live_item_sig[row] = live_pending_item
+    live_index_sig[row] = live_pending_index
+    live_pending_item = 0
+    live_pending_index = 0
+}
+
+fn live_cell<T>(id: int, like: T) -> Signal<T> {
+    return Signal { id: id }
+}
+
+/// Write `x` into `row`'s item cell; 1 when the value changed.
+fn kfor_item_changed<T>(row: int, x: T) -> int {
+    if row <= 0 || row >= live_item_sig.len {
+        return 0
+    }
+    let c = live_item_sig[row]
+    if c <= 0 {
+        return 0
+    }
+    let g0 = platform.plat_sig_gen(c)
+    live_cell(c, x).set(x)
+    if platform.plat_sig_gen(c) != g0 {
+        return 1
+    }
+    return 0
+}
+
+/// Build row `i` (key `k`) into the host's parent, under the host's build
+/// scope, and key it. Returns the row id. `mk(i)` builds the row for item `i`.
+///
+/// The row machinery below is not generic: `kfor_refresh<T>` hands it `mk` and
+/// `changed`, the only two things that touch a `T`, so each item type adds one
+/// small `kfor_refresh` instance instead of a copy of all of it.
+fn kfor_build_row(host: int, i: int, k: string, mk: fn(int) -> Node) -> int {
+    let parent = arena.frag_parent(host)
+    let previous = arena.scope_begin(host)
+    ui_push(parent)
+    let before = arena.nodes[parent].kids.len
+    let s_mark = arena.rec_sid.len
+    let f_mark = arena.rec_fid.len
+    mk(i)
+    let after = arena.nodes[parent].kids.len
+    let mut r = 0
+    if after == before + 1 && arena.nodes[arena.nodes[parent].kids[before]].frag_of != -1 {
+        r = arena.nodes[parent].kids[before]
+    } else {
+        // Zero or several roots — or a nested list's marker, whose rows are
+        // its siblings — cannot be moved as one row: wrap them.
+        r = kfor_wrap(parent, before)
+    }
+    ui_pop()
+    arena.scope_end(previous)
+    arena.adopt_records(host, r, s_mark, f_mark)
+    arena.key_set(host, k, r)
+    live_note(r)
+    return r
+}
+
+/// How many items `Each` has walked since startup. An untouched list does not
+/// add to this (`zeus_list_key_guard`).
+let mut kfor_derivations: int = 0
+
+fn each_scanned() -> int {
+    return kfor_derivations
+}
+
+fn kfor_refresh<T>(host: int, items: Signal<[]T>, build: fn(int, T) -> Node) {
+    let xs = items.get()
+    let m = xs.len
+    // Fast path 0: nothing it reads has moved since it built these `m` items.
+    // (Compared by item count, not key count: duplicate values share an entry.)
+    if platform.plat_sig_gen(items.id) == arena.nodes[host].list_gen {
+        if arena.nodes[host].list_n == m {
+            return
+        }
+    }
+    arena.nodes[host].list_gen = platform.plat_sig_gen(items.id)
+    arena.nodes[host].list_n = m
+    // Identity is the item value. Equal text matches; the string header does not.
+    let mut nk = []string {}
+    let mut i = 0
+    while i < m {
+        kfor_derivations = kfor_derivations + 1
+        push(nk, __value_key(xs[i]))
+        i = i + 1
+    }
+    let mk = fn(j: int) -> Node { return build(j, xs[j]) }
+    let changed = fn(r: int, j: int) -> int { return kfor_item_changed(r, xs[j]) }
+    if arena.keys_unique(nk) == 1 {
+        if kfor_reconcile(host, m, nk, mk, changed) != 0 {
+            return
+        }
+    }
+    // Duplicate keys (or a row lost from under the host): rebuild every row.
+    kfor_rebuild(host, m, nk, mk)
+}
+
+/// Reconcile the host's `m` rows against the items (keyed by `nk`, already
+/// unique; `changed(row, j)` writes item `j` into the row's cell):
+/// keep the rows whose key survives (rebuilding any whose item changed),
+/// build the new keys, free (or exit) the vanished ones, then lay the rows
+/// into the parent in the new order. O(changes) in rows built or freed.
+/// Returns 0 when an existing key has no row, so the caller rebuilds.
+fn kfor_reconcile(host: int, m: int, nk: []string, mk: fn(int) -> Node, changed: fn(int, int) -> int) -> int {
+    let old = arena.key_keys(host)
+    let on = old.len
+    for o in 0..on {
+        if arena.key_node(host, old[o]) <= 0 {
+            return 0
+        }
+    }
+    // Rows for new keys, and fresh rows for kept keys whose item changed. The
+    // replaced rows are freed after every new row has built.
+    let mut stale = []int {}
+    for j in 0..m {
+        let r = arena.key_node(host, nk[j])
+        if r <= 0 {
+            kfor_build_row(host, j, nk[j], mk)
+        } else if changed(r, j) != 0 {
+            push(stale, r)
+            kfor_build_row(host, j, nk[j], mk)
+        }
+    }
+    let g = arena.stamp_begin()
+    let mut order = []int {}
+    for j in 0..m {
+        let r = arena.key_node(host, nk[j])
+        arena.stamp_set(r, g)
+        push(order, r)
+    }
+    // Vanished keys: free the row, or let it play its exit transition.
+    for o in 0..on {
+        let r = arena.key_node(host, old[o])
+        if arena.stamp_has(r, g) == false {
+            arena.key_forget(host, old[o])
+            if r > 0 {
+                arena.exit_or_free(r)
+            }
+        }
+    }
+    let sn = stale.len
+    for s in 0..sn {
+        arena.free_subtree(stale[s])
+    }
+    // A row the key table no longer names (the earlier of two rows a duplicate
+    // key mapped to) would be dropped from the tree but never freed: free every
+    // row of this host the new order does not keep, except one playing an exit.
+    let fr = arena.nodes[host].frag
+    let frn = fr.len
+    for k in 0..frn {
+        let r = fr[k]
+        if r > 0 && r < arena.nodes.len {
+            if arena.nodes[r].frag_of == host && int(arena.nodes[r].kind) != 0 {
+                if arena.stamp_has(r, g) == false && arena.nodes[r].exiting == 0 {
+                    arena.free_subtree(r)
+                }
+            }
+        }
+    }
+    arena.frag_set(host, order)
+    return 1
+}
+
+let mut multi_root_warned: int = 0
+
+/// A row builder mounted zero or several top-level nodes into `parent` after
+/// child `before`: move them into one new column, which becomes the row.
+/// Without it the row could not be keyed or moved. Warns once, because the
+/// wrapper is a layout node the author did not write.
+fn kfor_wrap(parent: int, before: int) -> int {
+    let n = arena.nodes[parent].kids.len - before
+    if multi_root_warned == 0 {
+        multi_root_warned = 1
+        fmt.println("zeus: an Each row builder mounted", n, "top-level nodes; the row was wrapped in a column. Return a single root node from the row builder.")
+    }
+    let w = raw_box()
+    // Appended to the open build parent, after the row's nodes.
+    Component(w, style = Style(direction = Direction.Column))
+    let kids = arena.nodes[parent].kids
+    let last = kids.len - 1
+    let mut keep = []int {}
+    for i in 0..before {
+        push(keep, kids[i])
+    }
+    let mut inner = []int {}
+    for i in before..last {
+        push(inner, kids[i])
+        arena.nodes[kids[i]].parent = w.id
+    }
+    push(keep, w.id)
+    arena.nodes[w.id].kids = inner
+    arena.nodes[parent].kids = keep
+    arena.mark_tree_at(parent)
+    return w.id
+}
+
+/// Full rebuild: free every row and re-create them all. The fallback for
+/// duplicate keys, which cannot be matched one-to-one.
+fn kfor_rebuild(host: int, m: int, nk: []string, mk: fn(int) -> Node) {
+    let olds = arena.nodes[host].frag
+    arena.key_clear(host)
+    // Free what the host's earlier builds left it owning, then every row
+    // (each releases what it adopted).
+    let previous = arena.rebuild_begin(host)
+    arena.rebuild_end(previous)
+    let on = olds.len
+    for o in 0..on {
+        let r = olds[o]
+        if r > 0 && r < arena.nodes.len {
+            if arena.nodes[r].frag_of == host && int(arena.nodes[r].kind) != 0 {
+                arena.free_subtree(r)
+            }
+        }
+    }
+    let mut order = []int {}
+    for j in 0..m {
+        // A duplicate key maps to the last row built for it; every row is
+        // still laid out, in item order.
+        push(order, kfor_build_row(host, j, nk[j], mk))
+    }
+    arena.frag_set(host, order)
+}
+
+/// One arm mounted at a time. `on` is a live signal; `build(value)` rebuilds
+/// the host whenever `on` changes, so only the current arm is in the tree.
+/// Pair with an integer tag signal for a switch/match.
+fn Match<T>(on: Signal<T>, build: fn(T) -> Node) -> Node {
+    let n = raw_box()
+    let node_id = n.id
+    // A write to `on` swaps the mounted arm. The host's refresh hook is what
+    // reads `on`, not an effect, so bind it: the write is attributed to this
+    // node — a scoped layout, and the frame runs the hooks — instead of being
+    // paint-only (or, read by a paint effect elsewhere, consumed by that).
+    arena.bind_host(on.id, node_id)
+    arena.host_push(node_id)
+    match_build(node_id, on, build)
+    return Component(n,
+                     style = Style(direction = Direction.Column),
+                     rebuild = || { match_refresh(node_id, on, build) })
+}
+
+/// Tear the subtree down and rebuild it for the current value of `on`.
+/// `list_gen` records the slot it was built from, so `match_refresh` can tell
+/// a real change from a bare refresh sweep.
+fn match_build<T>(node_id: int, on: Signal<T>, build: fn(T) -> Node) {
+    match_rebuild(node_id, on.id, || { build(on.get()) })
+}
+
+/// `match_build`'s body, shared with `MatchBy`: tear the arm down and run
+/// `body` under the host's rebuild scope, recording `on`'s generation.
+fn match_rebuild(node_id: int, on_id: int, body: fn()) {
+    arena.nodes[node_id].list_gen = platform.plat_sig_gen(on_id)
+    // The outgoing arm's roots that declare an exit transition leave the
+    // host's children before the rebuild drops them, play their exit pinned
+    // where they were, and are put back (last, out of flow) after the new arm.
+    let mut leaving = []int {}
+    let cur = arena.nodes[node_id].kids
+    let cn = cur.len
+    let mut kept = []int {}
+    for i in 0..cn {
+        let c = cur[i]
+        if c > 0 && c < arena.nodes.len && (arena.nodes[c].exit_fx != 0 || arena.nodes[c].exiting != 0) {
+            if arena.exit_or_free(c) != 0 {
+                push(leaving, c)
+            }
+        } else {
+            push(kept, c)
+        }
+    }
+    arena.nodes[node_id].kids = kept
+    let previous = arena.rebuild_begin(node_id)
+    ui_push(node_id)
+    body()
+    ui_pop()
+    arena.rebuild_end(previous)
+    let ln = leaving.len
+    for i in 0..ln {
+        push(arena.nodes[node_id].kids, leaving[i])
+        arena.nodes[leaving[i]].parent = node_id
+    }
+}
+
+/// A host hook can run when `on` has not moved (a queued refresh after a write
+/// that left the generation where the host built it). Rebuilding
+/// unconditionally once meant each refresh ran `rebuild_begin` — which calls
+/// `release_sigs` — and every `zeus.signal` the page declared was freed and re-created at its
+/// initial value. Page state reset on any repaint, which reads as "signals
+/// don't work" in a routed app. Rebuild only when `on` actually moved.
+fn match_refresh<T>(node_id: int, on: Signal<T>, build: fn(T) -> Node) {
+    // Pull first: a `computed` is recomputed on read, and its generation only
+    // moves once it is.
+    let cur = on.peek()
+    if platform.plat_sig_gen(on.id) == arena.nodes[node_id].list_gen {
+        return
+    }
+    match_build(node_id, on, build)
+}
+
+/// `Match` that updates an arm in place. `arm(value)` names the arm a value
+/// selects; while it keeps naming the same arm, a write to `on` lands in the
+/// arm's `payload` signal instead of rebuilding it, so only the effects that
+/// read the payload re-run and the arm's own signals, focus and scroll stay.
+/// A write that selects another arm tears the old one down and builds the new
+/// one, as `Match` does.
+///
+/// ```
+/// zui.MatchBy(state, fn(s: Load) => "{{s.tag}}", fn(p: Signal<Load>) {
+///     if p.peek().tag == 1 { zeus.Text("{{p.get().pct}}%") } else { zeus.Text("idle") }
+/// })
+/// ```
+///
+/// Branch on the arm at build time with `peek()` (the arm cannot change
+/// without a rebuild); read the fields that move with `get()` in effects.
+fn MatchBy<T>(on: Signal<T>, arm: fn(T) -> string, build: fn(Signal<T>) -> Node) -> Node {
+    let n = raw_box()
+    let node_id = n.id
+    mby_forget(node_id)
+    arena.bind_host(on.id, node_id)
+    arena.host_push(node_id)
+    match_by_refresh(node_id, on, arm, build)
+    return Component(n,
+                     style = Style(direction = Direction.Column),
+                     rebuild = || { match_by_refresh(node_id, on, arm, build) })
+}
+
+/// The arm each `MatchBy` host has mounted and its payload cell, by host id.
+let mut mby_arm: []string = []string {}
+let mut mby_cell: []int = []int {}
+/// Writes `MatchBy` landed in a mounted arm's payload instead of a rebuild.
+let mut mby_patched: int = 0
+
+fn match_patched() -> int {
+    return mby_patched
+}
+
+fn mby_forget(node_id: int) {
+    while mby_cell.len <= node_id {
+        push(mby_cell, 0)
+        push(mby_arm, "")
+    }
+    mby_cell[node_id] = 0
+    mby_arm[node_id] = ""
+}
+
+fn match_by_refresh<T>(node_id: int, on: Signal<T>, arm: fn(T) -> string, build: fn(Signal<T>) -> Node) {
+    // Pull first: a `computed` is recomputed on read, and its generation only
+    // moves once it is.
+    let v = on.peek()
+    let gen = platform.plat_sig_gen(on.id)
+    if gen == arena.nodes[node_id].list_gen && mby_cell[node_id] > 0 {
+        return
+    }
+    let k = arm(v)
+    if mby_cell[node_id] > 0 && fmt.eq(k, mby_arm[node_id]) {
+        // Same arm: hand it the new value.
+        arena.nodes[node_id].list_gen = gen
+        live_cell(mby_cell[node_id], v).set(v)
+        mby_patched = mby_patched + 1
+        return
+    }
+    match_rebuild(node_id, on.id, || {
+        // Owned by the host's rebuild scope: the next arm change frees it.
+        let cell = signal(v)
+        mby_cell[node_id] = cell.id
+        mby_arm[node_id] = k
+        build(cell)
+    })
+}
+
+/// `Match` that keeps its arms alive. Each arm is built the first time `on`
+/// selects it (named by `key(value)`) and is then hidden, not freed, when `on`
+/// moves away, so signals declared inside an arm, its scroll offset and its
+/// focus survive a switch. Every arm sits in its own column under the host.
+/// Arms are freed with the host. Use plain `Match` when an arm should start
+/// fresh on every visit, or when the arm set is unbounded. An arm whose root
+/// declares `exit_fade` / `exit_slide` / `exit_scale` plays it as it hides
+/// (switching back mid-exit snaps it in).
+///
+/// ```
+/// zui.MatchKeep(tab, fn(t) => "{{t}}", fn(t: int) {
+///     if t == 0 { Inbox() } else { Settings() }
+/// })
+/// ```
+fn MatchKeep<T>(on: Signal<T>, key: fn(T) -> string, build: fn(T) -> Node) -> Node {
+    let n = raw_box()
+    let node_id = n.id
+    arena.bind_host(on.id, node_id)
+    arena.host_push(node_id)
+    match_keep_refresh(node_id, on, key, build)
+    return Component(n,
+                     style = Style(direction = Direction.Column),
+                     rebuild = || { match_keep_refresh(node_id, on, key, build) })
+}
+
+fn match_keep_refresh<T>(node_id: int, on: Signal<T>, key: fn(T) -> string, build: fn(T) -> Node) {
+    // Pull first (see `match_refresh`).
+    let pulled = on.peek()
+    let gen = platform.plat_sig_gen(on.id)
+    if gen == arena.nodes[node_id].list_gen {
+        if arena.nodes[node_id].kids.len > 0 {
+            return
+        }
+    }
+    arena.nodes[node_id].list_gen = gen
+    let v = on.get()
+    let k = key(v)
+    let mut arm = arena.key_node(node_id, k)
+    if arm <= 0 {
+        let previous = arena.scope_begin(node_id)
+        ui_push(node_id)
+        let s_mark = arena.rec_sid.len
+        let f_mark = arena.rec_fid.len
+        let a = raw_box()
+        ui_push(a.id)
+        build(v)
+        ui_pop()
+        Component(a, style = Style(direction = Direction.Column))
+        ui_pop()
+        arena.scope_end(previous)
+        arena.adopt_records(node_id, a.id, s_mark, f_mark)
+        arm = a.id
+        arena.key_set(node_id, k, arm)
+        // An exit transition on the arm's root plays when the arm is hidden:
+        // the host toggles the arm column, so the column carries it.
+        let ak = arena.nodes[arm].kids
+        if ak.len == 1 && arena.nodes[ak[0]].exit_fx != 0 {
+            let r = ak[0]
+            arena.set_exit(arm, arena.nodes[r].exit_fx, arena.nodes[r].exit_arg, arena.nodes[r].exit_ms)
+        }
+    }
+    let kids = arena.nodes[node_id].kids
+    let kn = kids.len
+    for i in 0..kn {
+        let c = kids[i]
+        if c == arm {
+            arena.exit_cancel(c)
+            if i32(arena.nodes[c].show_on) != 1 {
+                set_prop_int(node_handle(c), SET.ShowOn, 1)
+            }
+        } else if i32(arena.nodes[c].show_on) != 0 && arena.nodes[c].exiting == 0 {
+            // The arm leaving plays its exit (pinned, inert, still alive)
+            // before it hides; without one it hides now.
+            if arena.exit_or_hide(c) == 0 {
+                set_prop_int(node_handle(c), SET.ShowOn, 0)
+            }
+        }
+    }
+    arena.mark_tree_at(node_id)
+}
+
+/// Error boundary. `build()` runs under a recoverable trap; if it traps, the
+/// partial subtree is discarded, the arena is rolled back to its entry mark,
+/// and `fallback(message)` is built in its place, so the rest of the app keeps
+/// running.
+///
+/// A trap *after* the build — in a handler, a key binding, an effect, or a list
+/// refresh owned by a node inside the boundary — is caught too: the whole
+/// subtree is replaced by `fallback(message)` at the next refresh pass. A trap
+/// in `fallback` itself goes to the next boundary up.
+///
+/// Recovers UI state only: C-seam side effects (I/O, network) are not undone.
+/// On wasm, where there is no `setjmp`, the trap unwinds to the web host, which
+/// calls `zeus_recover` (`engine_recover`): the boundary still gets its
+/// fallback, but the rest of the interrupted call (the remainder of an
+/// enclosing build, or of the event) is lost rather than resumed.
+fn Boundary(build: fn() -> Node, fallback: fn(string) -> Node) -> Node {
+    let host = raw_box()
+    let hid = host.id
+    arena.boundary_open(hid)
+    arena.host_push(hid)
+    // Attach the host before building into it (the position among its
+    // siblings is the same either way): if a wasm trap cuts the enclosing build
+    // short, the host is still in the tree to show its fallback.
+    Component(host, style = Style(direction = Direction.Column),
+              rebuild = || { boundary_refresh(hid, fallback) })
+    let seq = arena.boundary_next_seq()
+    let pre = arena.boundary_preset_msg(seq)
+    if pre.len > 0 {
+        // A previous instance trapped here during startup (wasm restart).
+        ui_push(hid)
+        fallback(pre)
+        ui_pop()
+        return host
+    }
+    let m = arena.mark()
+    let previous = arena.scope_begin(hid)
+    ui_push(hid)
+    let stack0 = ui_parents.len
+    arena.build_enter(hid, m, seq)
+    let msg = platform.plat_boundary(|| { build() })
+    arena.build_leave()
+    arena.scope_end(previous)
+    if msg.len == 0 {
+        ui_pop()
+    } else {
+        // A trap skipped the normal pop: unwind the build stack by hand.
+        while ui_parents.len > stack0 {
+            pop(ui_parents)
+        }
+        ui_pop()
+        arena.rollback(hid, m)
+        ui_push(hid)
+        fallback(msg)
+        ui_pop()
+    }
+    return host
+}
+
+/// The boundary host's refresh hook: a run-time trap recorded against it
+/// (`arena.boundary_fail`) replaces the subtree with `fallback(message)`.
+fn boundary_refresh(hid: int, fallback: fn(string) -> Node) {
+    let msg = arena.boundary_take(hid)
+    if msg.len == 0 {
+        return
+    }
+    // Rows may hold records adopted from the host; hand them back so the
+    // rebuild frees them with the rest.
+    arena.release_children_ownership(hid)
+    let previous = arena.rebuild_begin(hid)
+    ui_push(hid)
+    fallback(msg)
+    ui_pop()
+    arena.rebuild_end(previous)
+}
+
+/// Jump `n` (a `Scroll` / `VirtualList`) to vertical offset `y`. Clears
+/// residual velocity so physics does not coast past the target. Clamped.
+fn scroll_to(n: Node, y: int) -> Node {
+    arena.nodes[n.id].vel_y = 0
+    arena.nodes[n.id].scroll_y = y
+    arena.clamp_scroll(n.id)
+    if arena.nodes[n.id].bind_sig > 0 {
+        arena.store_sig(arena.nodes[n.id].bind_sig, arena.nodes[n.id].scroll_y)
+    }
+    return n
+}
+
+/// Jump `n` to horizontal offset `x`.
+fn scroll_to_x(n: Node, x: int) -> Node {
+    arena.nodes[n.id].vel_x = 0
+    arena.nodes[n.id].scroll_x = x
+    arena.clamp_scroll(n.id)
+    return n
+}
+
+/// Jump a windowed list so item `i` is at the top of the viewport.
+fn scroll_to_index(n: Node, i: int) -> Node {
+    let mut rh = arena.nodes[n.id].row_h
+    if rh < 1 {
+        rh = 1
+    }
+    let mut at = i
+    if at < 0 {
+        at = 0
+    }
+    return scroll_to(n, at * rh)
+}
+
+/// Live `scroll_y` of `n`.
+fn scroll_y(n: Node) -> int {
+    return arena.nodes[n.id].scroll_y
+}
+
+/// Width a node measured by the last layout pass (0 until the first one).
+fn measured_width(n: Node) -> int {
+    return arena.nodes[n.id].w
+}
+
+/// Re-run `build` into `host` whenever the host's measured width changes
+/// (window resize, card reflow). `host` must be widthless so it stretches
+/// with its parent. Pixel-exact widgets — charts, plots — lay out their
+/// children from the measured width, so they stay glued to the container.
+/// Rebuilds happen on the layout after a size change.
+fn refit_refresh(node_id: int, build: fn()) {
+    let w = arena.nodes[node_id].w
+    if w == arena.nodes[node_id].list_gen {
+        return
+    }
+    // A zero-width host (hidden tab, or not laid out yet) defers its rebuild
+    // until it is measured at a real width. Syncing `list_gen` here keeps it
+    // from refitting on every resize frame while off-screen.
+    if w == 0 {
+        arena.nodes[node_id].list_gen = 0
+        return
+    }
+    arena.nodes[node_id].list_gen = w
+    let previous = arena.rebuild_begin(node_id)
+    slot(node_handle(node_id), build)
+    arena.rebuild_end(previous)
+    // The rebuild released every handler the host owned — this hook among
+    // them — so register it again, or the host would refit once and then
+    // ignore every later resize.
+    arena.set_list_fn(node_id, refit_hook(node_id, build))
+}
+
+/// The host's refresh hook, owned by the host itself: freed with the host, and
+/// by each rebuild of it (which is why `refit_refresh` re-registers it).
+fn refit_hook(node_id: int, build: fn()) -> int {
+    let id = platform.plat_intern_fn(|| {
+        refit_refresh(node_id, build)
+    })
+    arena.record_intern(id, node_id)
+    return id
+}
+
+fn refit(host: Node, build: fn()) -> Node {
+    arena.ensure()
+    let node_id = host.id
+    arena.set_list_fn(node_id, refit_hook(node_id, build))
+    // Its hook reads only its width: run it when the box moves, not per layout.
+    arena.host_geo(node_id)
+    return host
+}
+
+/// A signal of `host`'s laid-out width: `estimate` until the first layout
+/// measures it, then the measured width whenever the box moves. The reactive
+/// form of `refit`: a body that reads the signal inside effects (a `style`
+/// thunk, a text or svg thunk) follows the width through those effects, and
+/// nothing is torn down. A geometry host, so the hook runs only when the box
+/// moved.
+fn width_signal(host: Node, estimate: int) -> Signal<int> {
+    arena.ensure()
+    let out = signal(estimate)
+    let node_id = host.id
+    let id = platform.plat_intern_fn(|| {
+        let w = arena.nodes[node_id].w
+        // A zero width is a host not laid out yet (or hidden): keep the last.
+        if w > 0 && out.peek() != w {
+            out.set(w)
+        }
+    })
+    arena.record_intern(id, node_id)
+    arena.set_list_fn(node_id, id)
+    arena.host_geo(node_id)
+    return out
+}
+
+/// Open a host file picker (PNG / JPEG / WebP / GIF). Writes the chosen src
+/// into `dest` and the image's intrinsic size into `dw` / `dh`. Native hosts
+/// return from the dialog; wasm and mobile finish via `engine_picked_image`.
+fn pick_image(dest: Signal<string>, dw: Signal<int>, dh: Signal<int>) {
+    pick_dest = dest
+    pick_w = dw
+    pick_h = dh
+    let mut w = 0
+    let mut h = 0
+    let src = platform.plat_pick_image(&mut w, &mut h)
+    if src.len > 0 {
+        set(dest, src)
+        set(dw, w)
+        set(dh, h)
+        pick_dest = Signal { id: 0 }
+        pick_w = Signal { id: 0 }
+        pick_h = Signal { id: 0 }
+    }
+}
+
+/// Vertical scroller that window-renders `items`. `row_h` is the fixed row
+/// height in points (spacers use it so `scroll_max` matches the full list).
+/// `build(i, item)` is the row. 10k rows stay a few dozen nodes.
+fn VirtualList<T>(items: Signal<[]T>, row_h: int, build: fn(int, T) -> Node) -> Node {
+    let n = raw_scroll()
+    let node_id = n.id
+    arena.bind_host(items.id, node_id)
+    virtual_refresh(node_id, items, build, row_h)
+    let c = Component(n,
+                      style = Style(grow = 1),
+                      role = "list",
+                      rowHeight = row_h,
+                      rebuild = || { virtual_refresh(node_id, items, build, row_h) })
+    // A windowed list reads its own box and scroll, and its bound signals.
+    arena.host_geo(node_id)
+    return c
+}
+
+/// Keyed windowed list: `VirtualList` with a stable `key(item)`. Scrolling
+/// **moves** the rows whose key stays in the window instead of rebuilding every
+/// visible row, so a scroll allocates only the rows entering it — the fix for
+/// the `docs/mem-baseline.md` §5.1 per-scroll growth. `key` must be stable and
+/// unique among the items. Row state that must follow the item should read a
+/// signal inside the row, not `i`. Falls back to the unkeyed path if a key is
+/// empty or duplicated.
+fn VirtualListKeyed<T>(items: Signal<[]T>, row_h: int, key: fn(T) -> string,
+                       build: fn(int, T) -> Node) -> Node {
+    let n = raw_scroll()
+    let node_id = n.id
+    arena.bind_host(items.id, node_id)
+    virtual_refresh_keyed(node_id, items, key, build, row_h)
+    let c = Component(n,
+                      style = Style(grow = 1),
+                      role = "list",
+                      rowHeight = row_h,
+                      rebuild = || { virtual_refresh_keyed(node_id, items, key, build, row_h) })
+    // A windowed list reads its own box and scroll, and its bound signals.
+    arena.host_geo(node_id)
+    return c
+}
+
+/// Windowed list with per-row heights. `heights[i]` is row `i` in points
+/// (0 / missing uses `fallback`). Spacers use the prefix sum so `scroll_max`
+/// matches the real list.
+fn VirtualListVar<T>(items: Signal<[]T>, heights: Signal<[]int>, fallback: int,
+                     build: fn(int, T) -> Node) -> Node {
+    let n = raw_scroll()
+    let node_id = n.id
+    arena.bind_host(items.id, node_id)
+    arena.bind_host(heights.id, node_id)
+    virt_refresh_var(node_id, items, build, fallback, heights)
+    let c = Component(n,
+                      style = Style(grow = 1),
+                      role = "list",
+                      rowHeight = fallback,
+                      rebuild = || { virt_refresh_var(node_id, items, build, fallback, heights) })
+    // A windowed list reads its own box and scroll, and its bound signals.
+    arena.host_geo(node_id)
+    return c
+}
+
+/// Move `sig` toward `to` over `ms` milliseconds.
+///
+/// **Behaviour change (Phase 3):** the signal's *state* moves to `to` once —
+/// every effect bound to `sig` re-runs once — and the moving value is a
+/// paint-only overlay interpolated on the animation track pool. Effects no
+/// longer re-run per frame, and nothing re-runs inside the tick at all. A new
+/// call retargets an in-flight animation from its current value. `ms == 0`
+/// jumps; before the first frame it jumps too (nothing animates at boot).
+///
+/// A layout prop the write lands on (width / height / a pin) does not jump
+/// to `to`: it stays at its current length and tweens on the same track,
+/// reflowing each frame. Paint-only readers (`Progress`, `anim_paint`) still
+/// use the overlay. Hover / press never reflow.
+fn animate(sig: Signal<int>, to: int, ms: int) {
+    arena.anim_signal(sig.id, to, ms)
+}
+
+struct VirtWin {
+    first: int,
+    last: int,
+}
+/// Visible index window for a windowed list. `row_h` is the fixed row height
+/// used to turn `scroll_y` into indices; overscan keeps a few extra rows
+/// mounted so a small flick does not rebuild.
+fn virtual_window(node_id: int, n: int, row_h: int) -> VirtWin {
+    let mut first = 0
+    let mut last = n
+    if row_h <= 0 {
+        return VirtWin { first: first, last: last }
+    }
+    let signal_id = find_scroller(node_id)
+    let mut view_h = 240
+    let mut local = 0
+    if signal_id > 0 {
+        if arena.nodes[signal_id].h > 0 {
+            view_h = arena.nodes[signal_id].h
+        }
+        if node_id == signal_id {
+            local = arena.nodes[signal_id].scroll_y
+        } else {
+            local = arena.nodes[signal_id].scroll_y - (arena.nodes[node_id].y - arena.nodes[signal_id].y)
+        }
+    } else if arena.nodes[node_id].h > 0 {
+        view_h = arena.nodes[node_id].h
+    }
+    if local < 0 {
+        local = 0
+    }
+    first = local / row_h - VIRT_OVERSCAN
+    last = (local + view_h) / row_h + VIRT_OVERSCAN + 1
+    if first < 0 {
+        first = 0
+    }
+    if last > n {
+        last = n
+    }
+    if last < first {
+        last = first
+    }
+    return VirtWin { first: first, last: last }
+}
+
+let mut pick_dest: Signal<string> = Signal { id: 0 }
+let mut pick_w: Signal<int> = Signal { id: 0 }
+let mut pick_h: Signal<int> = Signal { id: 0 }
+
+fn find_scroller(id: int) -> int {
+    if id <= 0 {
+        return 0
+    }
+    if id >= arena.nodes.len {
+        return 0
+    }
+    if int(arena.nodes[id].kind) == 11 {
+        return id
+    }
+    let mut p = arena.nodes[id].parent
+    while p > 0 {
+        if int(arena.nodes[p].kind) == 11 {
+            return p
+        }
+        p = arena.nodes[p].parent
+    }
+    return 0
+}
+
+/// Builds the role palette for `Scope(accent = which)`. The theme registers it
+/// (`set_accent_palette_hook`); the framework does not know the accent ramps.
+let mut accent_palette_hook: fn(int) -> int = no_palette
+
+fn no_palette(which: int) -> int {
+    return 0
+}
+
+fn set_accent_palette_hook(f: fn(int) -> int) {
+    accent_palette_hook = f
+}
+
+/// A new, empty role palette for `Scope(palette = ...)`.
+fn palette_new() -> int {
+    return arena.palette_new()
+}
+
+/// Palette `p` paints `role` (a `ROLE.*` slot) as `light` / `dark`, packed rgb
+/// (`parse_hex_color("#ff6308")`). Returns `p`, for chaining.
+fn palette_role(p: int, role: int, light: int, dark: int) -> int {
+    arena.palette_set(p, role, light, dark)
+    return p
+}
+
+/// Height a node measured by the last layout pass (0 until the first one).
+fn measured_height(n: Node) -> int {
+    return arena.nodes[n.id].h
+}
+
+/// Paint-side progress for a bar node (`raw_progress`) bound to signal
+/// `signal_id`, given the value `v` just read. A negative value or `sweep`
+/// spins; otherwise a plain `set` eases from the last value the bar showed
+/// (a `zeus.animate` write brings its own track). Call from the bar's effect.
+fn progress_tween(n: Node, signal_id: int, v: int, sweep: bool) {
+    let node_id = n.id
+    let last = arena.nodes[node_id].tween
+    if v < 0 || sweep {
+        arena.note_spin(node_id, 1400)
+    } else {
+        arena.clear_spin(node_id)
+        if last >= 0 && arena.anim_bind_on() == 0 {
+            arena.anim_paint_from(signal_id, last, Motion.Base)
+        }
+    }
+    if last != v {
+        arena.nodes[node_id].tween = v
+        // Called from the bar's effect: report the node it repaints.
+        arena.note_prop_write(node_id, 0)
+    }
+}
+
+/// The density signal a `Scope(density = ...)` sets for the node whose style
+/// is running (or the node being built), or 0 outside any scope.
+fn scoped_density_sid() -> int {
+    if arena.dens_scoped == 0 {
+        return 0
+    }
+    return arena.density_at(arena.effect_node_now(), current_slot())
+}
+
+/// Packed rgb a color handle paints as in the appearance now in effect.
+fn paint_rgb(color: int) -> int {
+    return arena.paint_rgb(color)
+}

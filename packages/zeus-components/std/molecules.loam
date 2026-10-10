@@ -14,9 +14,6 @@ import "zeus:zeus_constants"
 import "std:async"
 import "std:fmt"
 import "zeus-components:atoms"
-import "zeus:zeuscore/geometry"
-import "zeus:zeuscore/platform"
-import "zeus:zeuscore/arena"
 
 /// Options for `Button`. Default `look = Look.Solid` (gallery "Primary")
 /// paints themed chrome. `look = -1` is a plain clickable label styled by
@@ -735,14 +732,14 @@ fn User(initials: string, name: string, role: string, p: UserProps) -> Node {
 /// Breadcrumb: items separated by chevron icons; last item is foreground.
 fn Breadcrumbs(items: []string) -> Node {
     return Row(6) {
-        Loop(items, fn(i, s) {
-            if i > 0 {
-                Icon(IC_CHEV_RIGHT, 14, mute())
-            }
-            if i == items.len - 1 {
-                return Text(s, style = Style(font = FONT_BODY, color = ink()))
-            } else {
-                return Text(s, style = Style(font = FONT_BODY, color = mute()))
+        Each(items, fn(i, s) {
+            // One root per crumb: the chevron rides with the item after it, in
+            // a row with the same gap as the trail.
+            return Row(6) {
+                if i > 0 {
+                    Icon(IC_CHEV_RIGHT, 14, mute())
+                }
+                Text(s, style = Style(font = FONT_BODY, color = if i == items.len - 1 { ink() } else { mute() }))
             }
         })
     }
@@ -868,7 +865,7 @@ fn IndicatorTray(selected: Signal<int>, labels: []string, radio: bool,
                                     width = px(ind_w.get()),
                                     height = px(if underline { 2 } else { ind_h.get() }))),
                 role = "presentation")
-            Loop(labels, fn(i, lab) {
+            Each(labels, fn(i, lab) {
                 if radio {
                     return Choice(lab, selected, i, n, true, size)
                 }
@@ -992,9 +989,12 @@ fn SelectRow(value: Signal<int>, active: Signal<int>, index: int, label: string)
 /// `Select`, `Combobox`): an absolute plate card on the popup layer with a
 /// hairline edge, `RAD_LG` corners, a 4px inset for its rows, and the
 /// `elevation` shadow. `min_w` 0 sizes it to its content.
+/// Space between a floating panel's rows (menus, selects, comboboxes).
+const PANEL_GAP: int = 2
+
 fn floating_panel(min_w: int, elevation: int) -> Style {
     return Style(direction = Direction.Column,
-                 gap = 2,
+                 gap = PANEL_GAP,
                  elevation = elevation,
                  position = pos_absolute(),
                  zIndex = Z_POPUP,
@@ -1138,7 +1138,7 @@ fn Select(value: Signal<int>, labels: []string, p: SelectProps) -> Node {
             hoverOff = false,
             press = true
         ) {
-            Loop(labels, fn(i, lab) {
+            Each(labels, fn(i, lab) {
                 return Text(lab,
                             style = merge(Style(font = control_font(size), color = ink(), ellipsis = true), Style(display = shown(value.get() == i))))
             })
@@ -1160,7 +1160,7 @@ fn Select(value: Signal<int>, labels: []string, p: SelectProps) -> Node {
                                                                   width = px(hl_w.get()),
                                                                   height = px(hl_h.get()))),
                 role = "presentation")
-            Loop(labels, fn(i, lab) {
+            Each(labels, fn(i, lab) {
                 return SelectRow(value, active, i, lab)
             })
         }
@@ -1235,7 +1235,7 @@ fn Radio(label: string, value: Signal<int>, index: int, p: RadioProps) -> Node {
 fn RadioGroup(value: Signal<int>, labels: []string) -> Node {
     let n = labels.len
     return Column(Space.Exs) {
-        Loop(labels, fn(i, lab) {
+        Each(labels, fn(i, lab) {
             return Radio(lab, value, i, count = n)
         })
     }
@@ -1280,7 +1280,7 @@ fn ToggleGroup(value: Signal<int>, labels: []string, p: ToggleProps) -> Node {
     let size = p.size
     let n = labels.len
     return Row(4) {
-        Loop(labels, fn(i, lab) {
+        Each(labels, fn(i, lab) {
             return ToggleItem(lab, value, i, n, size)
         })
     }
@@ -1698,7 +1698,7 @@ fn ButtonGroup(labels: []string, p: ButtonGroupProps) -> Node {
     let n = labels.len
     return Row(0) {
         Box(style = Style(direction = Direction.Row), role = "group", label = p.label) {
-            Loop(labels, fn(i, lab) {
+            Each(labels, fn(i, lab) {
                 return GroupSegment(lab, i, n, p.look, p.size, fn() => emit_with(p.on_click, i),
                                     !p.disabled, "")
             })
@@ -2200,14 +2200,18 @@ fn RangeSlider(lo: Signal<int>, hi: Signal<int>, p: RangeSliderProps) -> Node {
                           height = px(SLIDER_TRACK), radius = corners(RAD_FULL),
                           background = accent()),
             role = "presentation")
-        RangeThumb(lo, "Minimum", pos(lo.get()), fn(v: int) { set_lo(v) }, step, page, mn, mx)
-        RangeThumb(hi, "Maximum", pos(hi.get()), fn(v: int) { set_hi(v) }, step, page, mn, mx)
+        RangeThumb(lo, "Minimum", fn() -> int { return pos(lo.get()) }, fn(v: int) { set_lo(v) },
+                   step, page, mn, mx)
+        RangeThumb(hi, "Maximum", fn() -> int { return pos(hi.get()) }, fn(v: int) { set_hi(v) },
+                   step, page, mn, mx)
     }
 }
 
-/// One thumb of a `RangeSlider`: a focusable slider at `left`.
-fn RangeThumb(value: Signal<int>, label: string, left: int, put: fn(int), step: int, page: int,
-              mn: int, mx: int) -> Node {
+/// One thumb of a `RangeSlider`: a focusable slider at `left()`. A thunk, read
+/// inside the style, so the thumb follows its value and the track's measured
+/// width (0 at build time).
+fn RangeThumb(value: Signal<int>, label: string, left: fn() -> int, put: fn(int), step: int,
+              page: int, mn: int, mx: int) -> Node {
     let keys = []KeyBind {
         key_bind("right", "range.up", fn() { put(peek(value) + step) }),
         key_bind("up", "range.up2", fn() { put(peek(value) + step) }),
@@ -2219,7 +2223,7 @@ fn RangeThumb(value: Signal<int>, label: string, left: int, put: fn(int), step: 
         key_bind("end", "range.max", fn() { put(mx) }),
     }
     return Box(style = Style(position = pos_absolute(),
-                             inset = Edges(top = (20 - SLIDER_THUMB) / 2, left = left),
+                             inset = Edges(top = (20 - SLIDER_THUMB) / 2, left = left()),
                              width = px(SLIDER_THUMB), height = px(SLIDER_THUMB),
                              radius = corners(RAD_FULL), border = line(2, accent()),
                              background = plate(), elevation = Elevation.Raised),
@@ -2334,7 +2338,7 @@ struct DescriptionListProps {
 fn DescriptionList(items: []DescItem, p: DescriptionListProps) -> Node {
     let n = items.len
     return Box(style = Style(direction = Direction.Column), role = "list") {
-        Loop(items, fn(i, it) {
+        Each(items, fn(i, it) {
             return Box(style = Style(direction = Direction.Column),
                        role = "listitem",
                        label = "{{it.term}}: {{it.detail}}") {
@@ -2378,7 +2382,7 @@ fn Steps(current: Signal<int>, labels: []string, p: StepsProps) -> Node {
                              gap = 8, align = if p.vertical { Align.Stretch } else { Align.Center }),
                role = "list",
                label = "Step {{current.get() + 1}} of {{n}}") {
-        Loop(labels, fn(i, lab) {
+        Each(labels, fn(i, lab) {
             return StepItem(current, i, n, lab, if i < descs.len { descs[i] } else { "" },
                             p.vertical, p.on_select)
         })
@@ -2412,7 +2416,8 @@ fn StepItem(current: Signal<int>, index: int, count: int, label: string, desc: s
                role = "listitem",
                label = "{{label}}{{step_state(done(), here())}}") {
         Box(style = Style(direction = Direction.Column, gap = 4, align = Align.Center)) {
-            Box(style = Style(width = px(24), height = px(24), shrink = 0, align = Align.Center,
+            Box(style = Style(width = px(24), height = px(24), shrink = 0,
+                              direction = Direction.Row, align = Align.Center,
                               justify = Align.Center, radius = corners(RAD_FULL),
                               border = line(if done() { 0 } else { 2 },
                                             if here() { accent() } else { rule() }),
@@ -2619,7 +2624,7 @@ fn MultiSelect(selected: Signal<[]string>, options: []string, p: MultiSelectProp
                           invalid_edge(p.invalid)),
             on_click = fn() { open.set(true); focus(input) },
             focusable = false) {
-            For(selected, fn(s) => s, fn(i, s) {
+            Each(selected.get(), fn(i, s) {
                 return Tag(s, on_remove = fn() { selected.set(str_without(peek(selected), s)) })
             })
             Input(ref = input, bind = query, placeholder = p.placeholder,
@@ -2631,7 +2636,7 @@ fn MultiSelect(selected: Signal<[]string>, options: []string, p: MultiSelectProp
         }
         Box(style = merge(floating_panel(MENU_MIN_W, Elevation.Floating),
                           Style(display = shown(open.get()), position = Position.Relative))) {
-            For(matches, fn(s) => s, fn(i, s) {
+            Each(matches.get(), fn(i, s) {
                 return Box(style = Style(direction = Direction.Row, align = Align.Center,
                                         padding = edges2(6, 8), radius = corners(RAD_SM),
                                         cursor = "pointer"),
@@ -2690,7 +2695,7 @@ fn TagInput(tags: Signal<[]string>, p: TagInputProps) -> Node {
                label = p.label,
                enabled = !p.disabled,
                on_click = fn() { focus(input) }) {
-        For(tags, fn(s) => s, fn(i, s) {
+        Each(tags.get(), fn(i, s) {
             return Tag(s, on_remove = fn() { tags.set(str_without(peek(tags), s)) })
         })
         Input(ref = input, bind = draft, placeholder = p.placeholder, label = p.placeholder,
@@ -3003,7 +3008,7 @@ fn ListBox(value: Signal<int>, labels: []string, p: ListBoxProps) -> Node {
                role = "listbox",
                label = p.label,
                enabled = !p.disabled) {
-        Loop(labels, fn(i, lab) {
+        Each(labels, fn(i, lab) {
             return ListItem(lab,
                             picked = fn() -> bool { return value.get() == i },
                             roving = fn() -> bool { return value.get() == i },
@@ -3026,7 +3031,7 @@ struct TimelineItem {
 fn Timeline(items: []TimelineItem) -> Node {
     let n = items.len
     return Box(style = Style(direction = Direction.Column), role = "list") {
-        Loop(items, fn(i, it) {
+        Each(items, fn(i, it) {
             return Box(style = Style(direction = Direction.Row, gap = 12, align = Align.Stretch),
                        role = "listitem",
                        label = it.title) {
@@ -3204,7 +3209,7 @@ fn TableOfContents(current: Signal<int>, labels: []string, p: TocProps) -> Node 
     return Box(style = merge(Style(direction = Direction.Column, gap = 2), style_of(p.style)),
                role = "navigation",
                label = "Contents") {
-        Loop(labels, fn(i, lab) {
+        Each(labels, fn(i, lab) {
             return TocRow(current, i, lab)
         })
     }

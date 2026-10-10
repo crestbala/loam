@@ -547,6 +547,7 @@ static int check_expr(AstNode *n, int as_move) {
                     a->ty->kind != TY_PTR)
                     move_arg = 1;
                 if (n->as.call.is_println || n->as.call.is_box_new) move_arg = 0;
+                if (n->as.call.value_key) move_arg = 0;
                 if (n->as.call.is_box_new) {
                     /* move non-copy into the box */
                     if (a->ty && !type_is_copy(a->ty)) move_arg = 1;

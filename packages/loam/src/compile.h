@@ -33,6 +33,9 @@ typedef struct {
     int nmods;
     LoamDiag *diags;
     int ndiag;
+    /* Warnings from the same check; never make it fail. */
+    LoamDiag *warns;
+    int nwarn;
 } LoamSession;
 
 void loam_session_init(LoamSession *s);

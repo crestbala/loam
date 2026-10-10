@@ -1,0 +1,96 @@
+// `Each` is the one list primitive. Rows are keyed: a reorder moves them (no
+// rebuild); an item that keeps its key but changes its value rebuilds only
+// that row, with the new value; a plain array works the same as a signal
+// read. Rows are direct children of the `Each`'s parent (no wrapper), so an
+// `Each` in a row lays its items out side by side.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+struct Todo {
+    id: int,
+    done: int,
+}
+
+let mut builds: int = 0
+
+fn expect(cond: bool, msg: string) {
+    if cond == false {
+        fmt.println("FAIL", msg, builds)
+        sys.exit(1)
+    }
+}
+
+fn Row(i: int, t: Todo) -> Node {
+    builds = builds + 1
+    return zeus.Text("id{{t.id}} done{{t.done}}")
+}
+
+fn x(label: string) -> int {
+    return zeus.node_x(zeus.engine_find_text(label))
+}
+
+fn y(label: string) -> int {
+    return zeus.node_y(zeus.engine_find_text(label))
+}
+
+fn main() {
+    let mut xs = []Todo {}
+    push(xs, Todo { id: 1, done: 0 })
+    push(xs, Todo { id: 2, done: 0 })
+    push(xs, Todo { id: 3, done: 0 })
+    let todos = zeus.signal(xs)
+    zeus.snapshot(400, 200, fn() -> Node {
+        zeus.Box(style = Style(direction = Direction.Column)) {
+            zui.Each(todos.get(), Row)
+            zeus.Box(style = Style(direction = Direction.Row, gap = 8)) {
+                zui.Each([]string { "left", "right" }, fn(i, s) {
+                    zeus.Text(s)
+                })
+            }
+        }
+    })
+    expect(builds == 3, "initial build")
+    expect(y("id1 done0") < y("id2 done0"), "initial order")
+    // No wrapper: the static list in a row lays out horizontally.
+    expect(x("left") < x("right"), "rows of an Each in a row are side by side")
+    expect(y("left") == y("right"), "rows of an Each in a row share a line")
+
+    // Edit one item: that row is replaced, the others stay.
+    let mut ed = []Todo {}
+    push(ed, xs[0])
+    push(ed, Todo { id: 2, done: 1 })
+    push(ed, xs[2])
+    todos.set(ed)
+    zeus.engine_layout(400, 200)
+    expect(builds == 4, "edit rebuilt more than the edited row")
+    expect(zeus.engine_find_text("id2 done1") != 0, "edit not shown")
+    expect(zeus.engine_find_text("id2 done0") == 0, "old row still shown")
+
+    // Reorder: rows move, none rebuilds.
+    let one = zeus.engine_find_text("id1 done0")
+    let mut rv = []Todo {}
+    push(rv, ed[2])
+    push(rv, ed[1])
+    push(rv, ed[0])
+    todos.set(rv)
+    zeus.engine_layout(400, 200)
+    expect(builds == 4, "reorder rebuilt a row")
+    expect(y("id3 done0") < y("id2 done1") && y("id2 done1") < y("id1 done0"), "reorder not shown")
+    expect(zeus.engine_find_text("id1 done0") == one, "row node not kept across the move")
+
+    // Insert alongside an edit: one new row, one rebuilt row.
+    let mut ins = []Todo {}
+    push(ins, Todo { id: 3, done: 1 })
+    push(ins, rv[1])
+    push(ins, rv[2])
+    push(ins, Todo { id: 4, done: 0 })
+    todos.set(ins)
+    zeus.engine_layout(400, 200)
+    expect(builds == 6, "insert + edit built more than two rows")
+    expect(zeus.engine_find_text("id3 done1") != 0, "edit with insert not shown")
+    expect(zeus.engine_find_text("id4 done0") != 0, "inserted row missing")
+    fmt.println("for edit ok")
+}

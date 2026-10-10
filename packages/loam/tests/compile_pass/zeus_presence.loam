@@ -1,0 +1,82 @@
+// Exit transitions: an `Each` row and a `Match` arm that declare `exit_fade` stay
+// in the tree — pinned, inert — while they fade, and are freed when the
+// transition ends. Without one, removal is immediate.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+let mut clicks: int = 0
+
+fn bump() {
+    clicks = clicks + 1
+}
+
+fn Row(i: int, s: string) -> Node {
+    if s == "plain" {
+        return zeus.Text("row {{s}}")
+    }
+    return zeus.exit_fade(zui.Button("row {{s}}", on_click = bump), 120)
+}
+
+fn Arm(t: int) -> Node {
+    if t == 0 {
+        return zeus.exit_slide(zeus.Text("arm zero"), 8, 120)
+    }
+    return zeus.Text("arm one")
+}
+
+fn expect(cond: bool, msg: string) {
+    if cond == false {
+        fmt.println("FAIL", msg)
+        sys.exit(1)
+    }
+}
+
+fn frames(n: int) {
+    for i in 0..n {
+        zeus.engine_step_dt(16)
+        zeus.engine_layout(320, 240)
+    }
+}
+
+fn main() {
+    let rows = zeus.signal([]string {})
+    zui.push_item(rows, "keep")
+    zui.push_item(rows, "gone")
+    zui.push_item(rows, "plain")
+    let tab = zeus.signal(0)
+    zeus.snapshot(320, 240, fn() -> Node {
+        zeus.Box(style = Style(direction = Direction.Column)) {
+            zui.Each(rows.get(), Row)
+            zui.Match(tab, Arm)
+        }
+    })
+    frames(2)
+
+    // Removing a row with an exit transition keeps it while it fades.
+    zui.remove_item(rows, 1)
+    zeus.engine_layout(320, 240)
+    expect(zeus.text_visible("row gone"), "exiting row removed at once")
+    // It is inert: a click on it does nothing.
+    expect(zeus.engine_click_text("row gone") == 0 || clicks == 0, "exiting row took a click")
+    expect(clicks == 0, "exiting row handler ran")
+    frames(12)
+    expect(zeus.text_visible("row gone") == false, "exiting row never freed")
+    expect(zeus.text_visible("row keep"), "surviving row lost")
+
+    // A row without one goes at once.
+    zui.remove_item(rows, 1)
+    zeus.engine_layout(320, 240)
+    expect(zeus.text_visible("row plain") == false, "plain row lingered")
+
+    // A Match arm with an exit transition stays while the new arm shows.
+    tab.set(1)
+    zeus.engine_layout(320, 240)
+    expect(zeus.text_visible("arm one"), "new arm missing")
+    expect(zeus.text_visible("arm zero"), "old arm removed at once")
+    frames(12)
+    expect(zeus.text_visible("arm zero") == false, "old arm never freed")
+    fmt.println("presence ok")
+}

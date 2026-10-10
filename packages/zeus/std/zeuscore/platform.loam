@@ -178,8 +178,17 @@ fn plat_edit_reset(slot: int) {}
 /// reusable. No-op for ids that are already free.
 fn plat_intern_free(id: int) {}
 /// Run `build` under a recoverable trap (`zui.Boundary`). Returns "" when the
-/// build completed, else the panic message. Empty on wasm, where a trap aborts.
+/// build completed, else the panic message. On wasm a trap is not caught here;
+/// it unwinds to the host, which recovers through `zeus.engine_recover`.
 fn plat_boundary(build: fn()) -> string {}
+/// Invoke interned handler `id` under a trap arm: "" when it returned, else the
+/// panic message. On wasm a trap is not caught here; it unwinds to the host.
+fn plat_guard_fn(id: int) -> string {}
+/// The last panic's message, "" before any. Static storage: copy before keeping.
+fn plat_trap_msg() -> string {}
+/// The message boundary number `seq` trapped with during a previous wasm
+/// instance's startup (pre-seeded by the web loader), or "".
+fn plat_boundary_preset(seq: int) -> string {}
 /// Router history: mirror a pushed / replaced entry into the host's own
 /// back stack (browser history, Cocoa/Android back button).
 fn plat_history_push(path: string) {}

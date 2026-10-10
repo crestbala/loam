@@ -11,6 +11,9 @@
 static int capturing;
 static LoamDiag *cap;
 static int ncap, cap_max;
+/* Warnings, kept apart so a capture-mode build does not count them as errors. */
+static LoamDiag *wcap;
+static int nwcap, wcap_max;
 
 /** When enable != 0, loam_error appends to the capture list. */
 void loam_diag_capture(int enable) { capturing = enable; }
@@ -71,6 +74,38 @@ void loam_error(SourceLoc loc, const char *fmt, ...) {
         fprintf(stderr, "%s:%d:%d: error: %s\n",
                 loc.file ? loc.file : "<unknown>", loc.line, loc.col, buf);
     }
+}
+
+void loam_warning(SourceLoc loc, const char *fmt, ...) {
+    char buf[1024];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof buf, fmt, ap);
+    va_end(ap);
+    if (!capturing) {
+        fprintf(stderr, "%s:%d:%d: warning: %s\n",
+                loc.file ? loc.file : "<unknown>", loc.line, loc.col, buf);
+        return;
+    }
+    if (nwcap >= wcap_max) {
+        wcap_max = wcap_max ? wcap_max * 2 : 16;
+        wcap = (LoamDiag *)realloc(wcap, (size_t)wcap_max * sizeof(LoamDiag));
+    }
+    wcap[nwcap].file = loam_dup(loc.file ? loc.file : "");
+    wcap[nwcap].line = loc.line;
+    wcap[nwcap].col = loc.col;
+    wcap[nwcap].end_line = loc.end_line;
+    wcap[nwcap].end_col = loc.end_col;
+    wcap[nwcap].msg = loam_dup(buf);
+    nwcap++;
+}
+
+void loam_warn_take(LoamDiag **out, int *n) {
+    *out = wcap;
+    *n = nwcap;
+    wcap = NULL;
+    nwcap = 0;
+    wcap_max = 0;
 }
 
 /** Print to stderr and exit(1). */

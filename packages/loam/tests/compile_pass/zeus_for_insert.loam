@@ -1,4 +1,4 @@
-// A keyed `For` reconciles in place on a middle insert / remove: the rows whose
+// A keyed `Each` reconciles in place on a middle insert / remove: the rows whose
 // key survives keep their node, their signals, and their state; only the new row
 // is built and only the gone row is freed. The old slow path rebuilt every row,
 // which reset per-row state on any key-set change and re-created the tree.
@@ -24,7 +24,7 @@ fn main() {
     zui.push_item(names, "C")
     zeus.snapshot(240, 200, fn() -> Node {
         zeus.Box(style = Style(direction = Direction.Column)) {
-            zui.For(names, fn(s) => s, Row)
+            zui.Each(names.get(), Row)
         }
     })
     // Increment A (the first row).

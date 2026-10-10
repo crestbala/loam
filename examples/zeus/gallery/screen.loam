@@ -71,7 +71,7 @@ fn AccentDots() -> Node {
         push(idx, i)
     }
     return zui.Row(Space.Exxs) {
-        zui.Loop(idx, fn(i, k) {
+        zui.Each(idx, fn(i, k) {
             let dot = zeus.Box(style = Style(width = px(16),
                                              height = px(16),
                                              radius = corners(spacing.RAD_FULL),
@@ -742,7 +742,7 @@ fn LiveList() -> Node {
     return Column(spacing.SECTION) {
         let n = zeus.signal(2)
         zui.SectionHeader("Lists", "Growing rows",
-                           "Add and remove rows. Extra rows are shown, not rebuilt with zui.For.")
+                           "Add and remove rows. Extra rows are shown, not rebuilt with zui.Each.")
         zui.Card() {
             zui.Show(when = n.get() >= 1) {
                 NameRow("Ada")

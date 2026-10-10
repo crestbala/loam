@@ -29,7 +29,7 @@
 //!
 //! `start()` is called from `app.loam` before `zeus.App`, not from the page:
 //! `call_async` registers connection state, and anything allocated during a
-//! `Match` / `For` rebuild belongs to that host, which frees it on its next
+//! `Match` / `Each` rebuild belongs to that host, which frees it on its next
 //! rebuild.
 
 import "std:http"

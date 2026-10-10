@@ -1,0 +1,42 @@
+// A closure inside a generic fn that captures a `T` gets one environment per
+// instance. The environment struct used to be named by the closure's AST id
+// alone, so two instances (here `T = A` and `T = B`) shared one struct whose
+// capture field had the first instance's type, and the C did not compile.
+
+import "std:fmt"
+import "std:sys"
+
+struct A {
+    x: int,
+    s: string,
+}
+
+struct B {
+    y: []int,
+}
+
+fn run(f: fn() -> int) -> int {
+    return f()
+}
+
+fn size_a(a: A) -> int {
+    return a.x + a.s.len
+}
+
+fn size_b(b: B) -> int {
+    return b.y.len
+}
+
+fn cap<T>(v: T, f: fn(T) -> int) -> int {
+    return run(|| { return f(v) })
+}
+
+fn main() {
+    let a = cap(A { x: 2, s: "abc" }, size_a)
+    let b = cap(B { y: []int { 1, 2, 3, 4 } }, size_b)
+    if a != 5 || b != 4 {
+        fmt.println("FAIL", a, b)
+        sys.exit(1)
+    }
+    fmt.println("generic closure capture ok")
+}

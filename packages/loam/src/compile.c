@@ -409,6 +409,9 @@ void loam_session_free(LoamSession *s) {
     loam_diag_free(s->diags, s->ndiag);
     s->diags = NULL;
     s->ndiag = 0;
+    loam_diag_free(s->warns, s->nwarn);
+    s->warns = NULL;
+    s->nwarn = 0;
     typecheck_cleanup();
 }
 
@@ -437,6 +440,8 @@ int loam_session_check(LoamSession *s, const char *path, const char *src) {
     }
 
     loam_diag_take(&s->diags, &s->ndiag);
+    loam_diag_free(s->warns, s->nwarn);
+    loam_warn_take(&s->warns, &s->nwarn);
     loam_diag_capture(0);
     CUR = NULL;
     main_override_src = NULL;

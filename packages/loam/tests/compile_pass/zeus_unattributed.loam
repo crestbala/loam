@@ -1,0 +1,114 @@
+// Reactivity gaps §2: an effect that reports no node touched nothing, so it
+// leaves no dirt. A write used to fall back to a frame-wide paint, chrome and
+// layout whenever any effect it ran did not report a node: a logging effect,
+// a forward that did not move, a `style` whose keys all held. Now every
+// internal writer reports — the chaining setters (`opacity`, `left`, ...) do
+// when called from an effect — and only a write nothing consumed (no effect,
+// bound node or host) still marks the frame.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+import "zeus:zeuscore/arena"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+let mut logged: int = 0
+
+/// One quiet frame: layout + paint, so the next write starts clean.
+fn frame() {
+    zeus.engine_layout(260, 180)
+    zeus.engine_paint()
+}
+
+fn main() {
+    zeus.window("unattributed", 260, 180)
+    let n = zeus.signal(1)
+    let fade = zeus.signal(100)
+    let tone = zeus.signal(0)
+    let orphan = zeus.signal(0)
+    let a = zeus.signal(0)
+    let b = zeus.signal(0)
+    let mut box_id = 0
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 4, padding = edges(8))) {
+        zeus.Text("label")
+        let bx = zeus.Box(style = Style(width = px(40), height = px(20), background = "#ff0000"))
+        box_id = bx.id
+        // A chaining setter from an effect: reports its node.
+        zeus.effect(|| { zeus.opacity(bx, fade.get()) })
+        // A `style` whose key does not depend on `tone`'s value: re-runs, writes
+        // nothing.
+        zeus.Box(style = || { let t = tone.get(); return Style(width = px(10 + t * 0), height = px(10)) })
+        zeus.Text("{{a.get()}}/{{b.get()}}")
+    })
+    // A pure side effect.
+    zeus.effect(|| {
+        let v = n.get()
+        logged = logged + v
+    })
+    frame()
+    frame()
+
+    // 1. A logging effect: no dirt, no layout, no full paint.
+    let fw0 = zeus.frame_wide_writes()
+    let gen0 = zeus.engine_layout_gen()
+    let full0 = zeus.paint_full_frames()
+    let silent0 = zeus.silent_runs()
+    n.set(5)
+    frame()
+    must(logged == 6, "the side effect ran")
+    must(zeus.frame_wide_writes() == fw0, "a side-effect write is not frame-wide")
+    must(zeus.engine_layout_gen() == gen0, "and runs no layout")
+    must(zeus.paint_full_frames() == full0, "and records no full paint")
+    must(zeus.silent_runs() == silent0 + 1, "the run is counted as silent")
+    let per = zeus.silent_runs_by_effect()
+    let mut any = 0
+    for i in 0..per.len {
+        if per[i] > 0 {
+            any = any + 1
+        }
+    }
+    must(any > 0, "the per-effect counter names it")
+
+    // 2. A `style` that re-ran but moved no key: no dirt either.
+    tone.set(3)
+    frame()
+    must(zeus.frame_wide_writes() == fw0, "a no-op style run is not frame-wide")
+    must(zeus.engine_layout_gen() == gen0, "and runs no layout")
+    must(zeus.paint_full_frames() == full0, "and records no full paint")
+
+    // 3. `opacity(bx, ...)` from an effect: targeted to its node.
+    fade.set(40)
+    zeus.engine_layout(260, 180)
+    must(zeus.frame_wide_writes() == fw0, "a chaining setter in an effect is attributed")
+    must(zeus.engine_layout_gen() == gen0, "a paint-only setter runs no layout")
+    zeus.engine_paint()
+    must(zeus.damage_full() == 0, "and damages locally")
+    must(zeus.paint_full_frames() == full0, "and patches the paint")
+    must(int(arena.nodes[box_id].opacity) == 40, "the opacity landed")
+
+    // 4. A batch of writes the label reads: settled after the batch, targeted.
+    zeus.batch(|| {
+        a.set(1)
+        b.set(2)
+        a.set(3)
+    })
+    frame()
+    must(zeus.frame_wide_writes() == fw0, "a batch of read writes is targeted")
+    must(zeus.engine_find_text("3/2") != 0, "and the label follows it")
+
+    // 5. A write nothing reads still marks the frame (a `view` build or the
+    //    paint pass may read it raw).
+    orphan.set(1)
+    frame()
+    must(zeus.frame_wide_writes() == fw0 + 1, "an unread write falls back")
+
+    fmt.println("unattributed ok")
+}

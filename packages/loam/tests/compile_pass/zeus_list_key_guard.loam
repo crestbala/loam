@@ -1,9 +1,8 @@
-// Phase 11: an untouched list costs O(1) per layout. `kfor_refresh` re-derived
-// every row key on every layout — and the uniqueness and lookup passes over them
-// are O(rows) and O(rows^2) — so a page with a list paid for the whole key set on
-// every frame, whether or not the list had moved. `virtual_refresh` (Index,
-// VirtualList) and `match_refresh` already guarded on the signal generation; the
-// keyed list did not.
+// An untouched list costs O(1) per layout. `kfor_refresh` used to walk every
+// item on every layout — and the uniqueness pass over those keys is O(rows) —
+// so a page with a list paid for the whole list on every frame, whether or
+// not it had moved. The refresh now returns when the list signal's generation
+// and the item count are unchanged. `each_scanned` counts the items walked.
 
 import "std:fmt"
 import "std:sys"
@@ -18,13 +17,6 @@ fn must(ok: bool, what: string) {
     sys.exit(1)
 }
 
-let mut keycalls: int = 0
-
-fn key_of(s: string) -> string {
-    keycalls = keycalls + 1
-    return s
-}
-
 fn Row(i: int, s: string) -> Node {
     return zeus.Text(s)
 }
@@ -34,7 +26,7 @@ fn main() {
     let items = zeus.signal([]string {})
     let mut host = 0
     zeus.root(zeus.Box(style = Style(direction = Direction.Column, padding = edges(8))) {
-        let h = zui.Each(items, key_of, Row)
+        let h = zui.Each(items.get(), Row)
         host = h.id
     })
     zui.push_item(items, "a")
@@ -42,21 +34,21 @@ fn main() {
     zeus.engine_layout(240, 160)
     must(zeus.engine_find_text("b") != 0, "the rows mounted")
 
-    // Settle, then hold the list still: no layout may re-derive a key.
+    // Settle, then hold the list still: no layout may walk the items again.
     zeus.engine_layout(240, 160)
-    let settled = keycalls
-    must(settled > 0, "the key function ran while the list changed")
+    let settled = zui.each_scanned()
+    must(settled > 0, "the list was walked while it changed")
     let mut i = 0
     while i < 20 {
         zeus.engine_layout(240, 160)
         i = i + 1
     }
-    must(keycalls == settled, "an unchanged list derives no key")
+    must(zui.each_scanned() == settled, "an unchanged list walks no items")
 
     // A real change still reconciles, and only then.
     zui.push_item(items, "c")
     zeus.engine_layout(240, 160)
-    must(keycalls > settled, "a change derives keys again")
+    must(zui.each_scanned() > settled, "a change walks the items again")
     must(zeus.engine_find_text("c") != 0, "and mounts the new row")
     must(zeus.engine_find_text("a") != 0, "keeping the old ones")
 

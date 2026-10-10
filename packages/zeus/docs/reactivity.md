@@ -28,10 +28,10 @@ commit per phase. Line anchors are for the tree at `feat/zeus-upgrade-v2`.
   (`virtual_refresh`, `match_refresh`); the keyed list had not, so it re-derived
   every row key — with an O(rows^2) uniqueness pass — on every layout. It now
   guards on the list signal's generation, which makes an untouched list O(1) per
-  layout. `Each` and `For` were already one keyed engine (phase 3). What remains
+  layout. The keyed list is `Each` (phase 3); `For`, `ForLive`, and `Index` are not separate primitives. What remains
   coarse by design: a write the engine cannot attribute still rebuilds, and a
   structural change still rebuilds the host it lands in.
-- **A host's signal was unattributable.** `Match` / `For` / `Index` read their
+- **A host's signal was unattributable.** `Match` / `Each` read their
   signal from a refresh hook, not an effect, so a write to it was a write nothing
   consumed: paint-only, or — when a paint effect elsewhere also read it — consumed
   by that effect, and the host never ran (the router's page slot did not swap).
@@ -41,11 +41,11 @@ commit per phase. Line anchors are for the tree at `feat/zeus-upgrade-v2`.
   compared a width against a field that held a signal generation for every host
   but refit); every hook returns early on its own, and a second layout runs only
   when a host marked one.
-- **`Each` is not reactive.** It was a plain one-shot loop (`atoms.loam:201-206`).
-  Phase 3 makes `Each` the reactive keyed list and moves the static loop to
-  `Loop`. A positional list cannot reconcile correctly without value equality
-  (Loam rejects `==` on a generic `T`: "cannot compare T"), so identity comes
-  from a key — the same contract as `For`.
+- **`Each` is the list primitive, reactive or not.** It was a plain one-shot
+  loop. It is now `Each(items, build)` for a fixed array and a signal read
+  alike. Loam rejects `==` on a generic `T`, so the compiler derives row
+  identity from the value (string bytes, struct fields, list elements).
+  `For`, `ForLive`, and `Index` are not entry points.
 
 ### B — Invalidation & scheduling granularity
 - **Targeted per-node invalidation.** Writes set global flags — `paint_dirty` /
@@ -166,8 +166,13 @@ commit per phase. Line anchors are for the tree at `feat/zeus-upgrade-v2`.
 | 10 | B | Dependency-driven paint traversal: per-node draw-op runs, an ancestor paint bit, and a patch path that re-records only the dirty subtrees — with a full record as the fallback when a run's length changes | landed |
 | 11 | A | One model: a `view` app rebuilds only when the tree can have changed, so non-structural frames keep the retained tree and its live effect graph; and the keyed list guards on its signal generation, making an untouched list O(1) per layout | landed |
 | 12 | B | Scoped structural layout: a host binds to its signal so the write is attributed to it; a tree edit marks the host it lands in, not the frame; and `relayout` finds the boundary by whether the box holds (natural size or an imposed axis, top-down), verifies it, and works under a scroller | landed |
+| 13 | A | `view` rebuilds only when its build is out of date (`arena.view_stale`: a write nothing consumed, a frame-wide tree mark, `set_scale`, or a resize the build read through `window_size`); targeted layout dirt keeps the tree and the graph | landed |
+| 14 | B | Attribution without fallback: the chaining setters report their node when run from an effect (`zeusbase.touched`), so an effect run that reports nothing touched nothing and leaves no dirt; `batch` settles its writes after the flush; dev counters `silent_runs`, `silent_runs_by_effect`, `frame_wide_writes` | landed |
+| 15 | A | In-place updates: `EachKeyed(each, key, build(index, item))` patches a kept row through its item / index signals; `MatchBy(on, arm, build(payload))` patches a kept arm through its payload signal | landed |
+| 16 | B | Push geometry: polled geometry hosts (`host_geo`: refit, `on_resize`, windowed lists) run only when their box or scroll moved or a bound signal was written; charts read their width from `width_signal` and move their marks through effects instead of refitting | landed |
+| 17 | B | Fallbacks narrowed: `relayout` climbs from a boundary whose box did not hold instead of solving the whole tree; a paint run that changed length is spliced into the retained list (spans remapped) instead of a full record; the floaters section reuses unchanged floaters' runs. Counters `full_layouts_count`, `relayout_climbs`, `paint_splice_frames`, `paint_floaters_reused` | landed |
 
-Phases 1–3 are additive over the current model: existing `For` / `Index` /
+Phases 1–3 are additive over the current model: `Each` /
 `VirtualList` keep working while gaining a per-node fast path. Phases 4–7 change
 the engine's scheduling, so each lands behind the existing golden/draw suites.
 

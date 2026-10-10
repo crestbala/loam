@@ -1,0 +1,129 @@
+// Reactivity gaps §6: a patched paint frame whose re-recorded run changed
+// length used to fall back to a full record. Now the run is spliced into the
+// retained list — the ops after it shift, every span is remapped — and the
+// result must still be byte-for-byte a full record of the same state, on that
+// frame and on the patched frames after it (which land on remapped spans).
+// The floaters section reuses the run of a floater that did not change.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn draw_sum() -> int {
+    let n = zeus.draw_count()
+    let mut s = 0
+    for i in 0..n {
+        s = (s * 31 + zeus.draw_op(i)) % 1000003
+        s = (s * 31 + zeus.draw_x(i)) % 1000003
+        s = (s * 31 + zeus.draw_y(i)) % 1000003
+        s = (s * 31 + zeus.draw_w(i)) % 1000003
+        s = (s * 31 + zeus.draw_h(i)) % 1000003
+        s = (s * 31 + zeus.draw_rgb(i)) % 1000003
+        s = (s * 31 + zeus.draw_radius(i)) % 1000003
+        s = (s * 31 + zeus.draw_alpha(i)) % 1000003
+        s = (s * 31 + zeus.draw_font(i)) % 1000003
+        s = (s * 31 + zeus.draw_value(i)) % 1000003
+        let t = zeus.draw_text(i)
+        s = (s * 31 + t.len) % 1000003
+    }
+    return s
+}
+
+/// Paint the current state patched, then force a full record of the same
+/// state; the two op lists must agree.
+fn check(what: string) {
+    zeus.engine_layout(300, 240)
+    zeus.engine_paint()
+    let patched = draw_sum()
+    let n = zeus.draw_count()
+    zeus.paint_force_full()
+    zeus.engine_paint()
+    must(zeus.draw_count() == n, "{{what}}: same op count as a full record")
+    must(draw_sum() == patched, "{{what}}: same ops as a full record")
+}
+
+fn main() {
+    zeus.window("splice", 300, 240)
+    let elev = zeus.signal(0)
+    let top_op = zeus.signal(100)
+    let foot_op = zeus.signal(100)
+    let fl_op = zeus.signal(100)
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 6, padding = edges(8))) {
+        let head = zeus.Box(style = Style(height = px(30), background = "#102030")) {
+            zeus.Text("header")
+        }
+        zeus.styled(head, || { zeus.set_prop_int(head, zeus.SET.Opacity, top_op.get()) })
+        zeus.Box(style = Style(height = px(60), direction = Direction.Column, gap = 2)) {
+            zeus.Text("body")
+            // Elevation 0 paints no shadow; 2 does: the run changes length.
+            let card = zeus.Box(style = Style(width = px(90), height = px(24), background = "#ff0000"))
+            zeus.styled(card, || { zeus.set_prop_int(card, zeus.SET.Elevation, elev.get()) })
+        }
+        let foot = zeus.Box(style = Style(height = px(30), background = "#304050")) {
+            zeus.Text("footer")
+        }
+        zeus.styled(foot, || { zeus.set_prop_int(foot, zeus.SET.Opacity, foot_op.get()) })
+        // An always-visible floater: the floaters section is the list's tail.
+        let fl = zeus.Box(style = Style(width = px(60),
+                                        height = px(18),
+                                        position = zeus.pos_absolute(),
+                                        zIndex = 1,
+                                        background = "#00ff00"))
+        zeus.styled(fl, || { zeus.set_prop_int(fl, zeus.SET.Opacity, fl_op.get()) })
+    })
+    zeus.pump_frame()
+    zeus.engine_layout(300, 240)
+    zeus.engine_paint()
+    zeus.engine_layout(300, 240)
+    zeus.engine_paint()
+
+    // Grow a run: spliced, not a full record.
+    let lay0 = zeus.full_layouts_count()
+    let full0 = zeus.paint_full_frames()
+    let sp0 = zeus.paint_splice_frames()
+    let n0 = zeus.draw_count()
+    elev.set(2)
+    zeus.engine_layout(300, 240)
+    zeus.engine_paint()
+    must(zeus.draw_count() > n0, "the shadow added ops")
+    must(zeus.paint_splice_frames() == sp0 + 1, "the longer run was spliced")
+    must(zeus.paint_full_frames() == full0, "without a full record")
+    zeus.paint_force_full()
+    let patched = draw_sum()
+    zeus.engine_paint()
+    must(draw_sum() == patched, "the spliced list equals a full record")
+
+    // Patches after the splice land on remapped spans: one after the grown
+    // run, one before it.
+    foot_op.set(50)
+    check("a patch after the spliced run")
+    top_op.set(60)
+    check("a patch before the spliced run")
+
+    // Shrink it again, then patch around it.
+    elev.set(0)
+    check("a shrunk run")
+    foot_op.set(70)
+    check("a patch after the shrunk run")
+
+    // A patch outside the floater reuses its run from the last section; a
+    // patch on it re-records it.
+    let r0 = zeus.paint_floaters_reused()
+    foot_op.set(80)
+    check("a patch beside an unchanged floater")
+    must(zeus.paint_floaters_reused() > r0, "the unchanged floater's run was reused")
+    fl_op.set(40)
+    check("a patch on the floater")
+
+    must(zeus.full_layouts_count() == lay0, "no write here needed a whole-tree layout")
+
+    fmt.println("paint splice ok")
+}

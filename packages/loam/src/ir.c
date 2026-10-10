@@ -497,6 +497,19 @@ static int lower_call(AstNode *n) {
         i->ty = ir_subst(n->ty);
         return dst;
     }
+    if (n->as.call.value_key && n->as.call.arg_count == 1) {
+        int arg = lower_expr(n->as.call.args[0]);
+        int *args = (int *)calloc(1, sizeof(int));
+        args[0] = arg;
+        IrInst *i = emit(IR_CALL, n->loc);
+        i->dst = dst;
+        i->args = args;
+        i->nargs = 1;
+        /* ty is the value's type; codegen walks it. The dest local is a string. */
+        i->ty = ir_subst(n->as.call.args[0]->ty);
+        i->callee = "loam_value_key";
+        return dst;
+    }
     if (n->as.call.sig_cell) {
         size_t ac = n->as.call.arg_count;
         int *args = ac ? (int *)calloc(ac, sizeof(int)) : NULL;
@@ -690,6 +703,88 @@ static int lower_call(AstNode *n) {
             F->locals[a].needs_drop = 0;
     }
     return dst;
+}
+
+/** The non-generic fn a callee or fn-value names, when typecheck bound it. */
+static const AstNode *bound_fn(const AstNode *e) {
+    const AstNode *d = NULL;
+    if (e && e->kind == AST_IDENT) d = e->as.ident.resolved;
+    else if (e && e->kind == AST_FIELD) d = e->as.access.resolved;
+    if (!d || d->kind != AST_FN_DECL || !d->as.fn.cname || d->as.fn.tparam_count) return NULL;
+    return d;
+}
+
+/** `fn no_keys() -> []T { return []T {} }`: a call to it is the empty vec. */
+static int returns_empty_vec(const AstNode *fn) {
+    const AstNode *b = fn->as.fn.body;
+    if (!b || b->kind != AST_BLOCK || b->as.block.stmt_count != 1) return 0;
+    const AstNode *r = b->as.block.stmts[0];
+    if (!r || r->kind != AST_RETURN || !r->as.ret.expr) return 0;
+    const AstNode *a = r->as.ret.expr;
+    return a->kind == AST_ARRAY_LIT && a->as.array_lit.count == 0 && a->ty &&
+           a->ty->kind == TY_VEC;
+}
+
+const char *ir_const_fn_val(const AstNode *e) {
+    if (!e || e->kind != AST_IDENT || !(e->flags & ASTF_FN_VAL)) return NULL;
+    const AstNode *d = bound_fn(e);
+    return d ? d->as.fn.cname : NULL;
+}
+
+int ir_const_empty_vec(const AstNode *e) {
+    if (!e || e->kind != AST_CALL || e->as.call.arg_count || e->as.call.is_fn_val) return 0;
+    if (!e->ty || e->ty->kind != TY_VEC) return 0;
+    const AstNode *d = bound_fn(e->as.call.callee);
+    return d && returns_empty_vec(d);
+}
+
+int ir_static_const(const AstNode *e) {
+    if (!e) return 0;
+    if (ir_const_fn_val(e) || ir_const_empty_vec(e)) return 1;
+    switch (e->kind) {
+        case AST_NUMBER:
+        case AST_BOOL:
+        case AST_STRING:
+            return 1;
+        case AST_FLOAT: /* finite only: %.17g of inf/nan is not C */
+            return e->as.lit.f - e->as.lit.f == 0;
+        case AST_STRUCT_LIT:
+            if (!e->ty || e->ty->kind != TY_STRUCT) return 0;
+            for (size_t k = 0; k < e->as.struct_lit.field_count; k++)
+                if (!ir_static_const(e->as.struct_lit.fields[k].init)) return 0;
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+/** A props literal written with few fields carries every other field's
+ *  default, cloned in by typecheck — `Text(s)` builds six `none`s and a "" at
+ *  each call site. When two or more of those defaults are constants, the
+ *  literal starts from one static template of the struct (emitted once by the
+ *  C backend) and only the remaining fields are stored. Returns field-indexed
+ *  constant defaults, or NULL to lower every field. Generic instances are
+ *  left alone: their C type can be registered after the templates go out. */
+static AstNode **lit_template(AstNode *n, Type *t) {
+    if (!t || t->kind != TY_STRUCT || t->param_count || !t->field_count) return NULL;
+    AstNode **d = (AstNode **)calloc(t->field_count, sizeof(AstNode *));
+    int nd = 0;
+    for (size_t f = 0; f < t->field_count; f++)
+        for (size_t k = 0; k < n->as.struct_lit.field_count; k++) {
+            FieldInit *fi = &n->as.struct_lit.fields[k];
+            if (!t->field_names[f] || !fi->name || strcmp(t->field_names[f], fi->name) != 0)
+                continue;
+            if (fi->init && (fi->init->flags & ASTF_DEFAULT) && ir_static_const(fi->init)) {
+                d[f] = fi->init;
+                nd++;
+            }
+            break;
+        }
+    if (nd < 2) {
+        free(d);
+        return NULL;
+    }
+    return d;
 }
 
 /** Lower an expression, returning the local holding its value. */
@@ -1078,17 +1173,20 @@ static int lower_expr(AstNode *n) {
             int nf = t && t->kind == TY_STRUCT ? (int)t->field_count
                                                : (int)n->as.struct_lit.field_count;
             int *args = nf ? (int *)calloc((size_t)nf, sizeof(int)) : NULL;
+            AstNode **dflt = lit_template(n, t);
             if (t && t->kind == TY_STRUCT) {
                 for (int f = 0; f < nf; f++) {
                     args[f] = -1;
+                    if (dflt && dflt[f]) continue; /* from the template */
                     for (size_t k = 0; k < n->as.struct_lit.field_count; k++)
                         if (t->field_names[f] && n->as.struct_lit.fields[k].name &&
                             strcmp(t->field_names[f], n->as.struct_lit.fields[k].name) == 0) {
                             args[f] = lower_expr(n->as.struct_lit.fields[k].init);
                             break;
                         }
-                    /* `none`'s payload: a zeroed temp of the field's type. */
-                    if (args[f] < 0 && n->as.struct_lit.zero_rest) {
+                    /* `none`'s payload: a zeroed temp of the field's type (the
+                       template is already zero there). */
+                    if (args[f] < 0 && n->as.struct_lit.zero_rest && !dflt) {
                         int z = new_local(t->field_types[f], NULL, 0);
                         F->locals[z].zero_init = 1;
                         args[f] = z;
@@ -1104,6 +1202,7 @@ static int lower_expr(AstNode *n) {
             i->args = args;
             i->nargs = nf;
             i->ty = t;
+            i->lit_dflt = dflt;
             for (int k = 0; k < nf; k++) {
                 if (args[k] < 0 || args[k] >= F->nlocals) continue;
                 if (!type_needs_drop(F->locals[args[k]].ty)) continue;
@@ -2025,8 +2124,12 @@ static void print_inst(FILE *o, const IrInst *i) {
         case IR_STRUCT_LIT:
         case IR_ARRAY_LIT:
             fprintf(o, "%s {", i->op == IR_STRUCT_LIT ? "struct" : "array");
-            for (int k = 0; k < i->nargs; k++)
-                fprintf(o, "%s%%%d", k ? ", " : "", i->args[k]);
+            for (int k = 0; k < i->nargs; k++) {
+                if (i->args[k] < 0 && i->lit_dflt)
+                    fprintf(o, "%sdefault", k ? ", " : "");
+                else
+                    fprintf(o, "%s%%%d", k ? ", " : "", i->args[k]);
+            }
             fprintf(o, "}");
             break;
         case IR_FN_VAL:
@@ -2117,7 +2220,8 @@ static int verify_fn(const IrFn *fn) {
                 bad = 1;
             }
             for (int k = 0; k < in->nargs; k++)
-                if (in->args[k] >= fn->nlocals || in->args[k] < 0) {
+                if (in->args[k] >= fn->nlocals ||
+                    (in->args[k] < 0 && !(in->op == IR_STRUCT_LIT && in->lit_dflt))) {
                     fprintf(stderr, "ir: %s bb%d inst %d bad arg %d\n", fn->cname, bb->id,
                             i, k);
                     bad = 1;

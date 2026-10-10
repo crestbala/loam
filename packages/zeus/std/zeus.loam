@@ -1,12 +1,12 @@
 //! `zeus` — UI toolkit. Native Cocoa and WASM/Canvas2D run the same source.
 //!
 //! Widgets are `Box` / `Text` / `Button` / `Input` / `Grid` / `Overlay` /
-//! `Scroll` / `Svg` / `Show` / `Loop` / `Each` / `For` / `VirtualList` /
-//! `VirtualTable` / `App`. Hierarchy is a trailing block. Lists:
-//! `zeus.signal([]T {})` + `Each` / `For` (reactive, keyed) or `Loop` (static,
-//! one-shot) + `push_item` / `insert_item`. Windowed lists
-//! (`VirtualList`, `For(..., row_h)`, `VirtualTable`) render visible rows
-//! only; table rows and columns are structs.
+//! `Scroll` / `Svg` / `Show` / `Each` / `VirtualList` / `VirtualTable` /
+//! `App`. Hierarchy is a trailing block. Lists: one `Each(items, build)` for
+//! fixed arrays and signal reads alike (`Each(todos.get(), Row)`),
+//! with `push_item` / `insert_item` on a `zeus.signal([]T {})`. Windowed lists
+//! (`VirtualList`, `VirtualTable`) render visible rows only; table rows and
+//! columns are structs.
 //!
 //! Reactivity is fine-grained, and the whole model is five rules:
 //!
@@ -106,10 +106,17 @@ import "zeus_constants.loam"
 import "structs.loam"
 import "enums.loam"
 import "zeusbase.loam"
+import "flow.loam"
 import "zeus-components:colors"
 
 let mut has_view: int = 0
 let mut view_fn: fn() -> Node = empty_view
+/// 1 while `view_fn` runs, and whether that build read `window_size()`: only
+/// then does a resize rebuild the view (layout already follows a resize).
+let mut view_building: int = 0
+let mut view_reads_size: int = 0
+/// Times a `view` app rebuilt its tree (diagnostics for tests).
+let mut view_builds: int = 0
 
 
 /// Open a window and build the tree once. The tree is retained: signals
@@ -210,6 +217,9 @@ struct WindowSize {
 }
 
 fn window_size() -> WindowSize {
+    if view_building != 0 {
+        view_reads_size = 1
+    }
     return WindowSize {
         width: platform.plat_view_width(),
         height: platform.plat_view_height(),
@@ -308,20 +318,32 @@ fn engine_key_apply(signal_id: int, mode: int, value: int, lo: int, hi: int) {
     arena.store_sig(signal_id, next)
 }
 
-/// Run every host's refresh hook (Match, For, Index, refit). Each hook decides
-/// for itself whether its input moved — a signal generation, a virtual window,
-/// a measured width — and returns early when it did not, so an untouched host
-/// costs O(1). The engine does not pre-judge staleness here: what `list_gen`
-/// means is the host's business (a generation for the signal hosts, a width for
-/// refit), and a host that does rebuild marks the tree, which is what the caller
-/// keys the follow-up layout on.
+/// Run the host refresh hooks this frame needs (`arena.refresh_hosts`): the
+/// geometry hosts (refit, windowed lists, `on_resize`) are polled, and each
+/// decides for itself whether its window or width moved; the signal hosts
+/// (Match, Each) run only when a write to their bound signal queued
+/// them. A host that does rebuild marks the tree, which is what the caller keys
+/// the follow-up layout on.
 fn refresh_lists() {
-    let n = arena.nodes.len
-    for i in 1..n {
-        if arena.nodes[i].list_fn > 0 {
-            platform.plat_invoke_fn(arena.nodes[i].list_fn)
-        }
-    }
+    arena.refresh_hosts()
+}
+
+/// Web host: a trap unwound out of an export (wasm has no `setjmp`, so
+/// `Boundary` cannot catch it in-process). The innermost boundary that was
+/// building, or whose handler / effect / list refresh was running, takes the
+/// panic message and shows its fallback on the next frame; the transient state
+/// every entry point starts from (build stack, tracking stack, scope) is reset.
+/// Returns 1 when a boundary took the trap, 0 when none was at work.
+fn engine_recover() -> int {
+    view_building = 0
+    return arena.recover_trap(platform.plat_trap_msg())
+}
+
+/// Build-order number of the boundary the last `engine_recover` failed in its
+/// build, 0 when the trap was not in a boundary's build. The web loader reads
+/// it after a trap during startup, re-instantiates, and pre-seeds it.
+fn engine_trap_seq() -> int {
+    return arena.last_trap_seq
 }
 
 fn engine_layout(width: int, height: int) {
@@ -338,6 +360,8 @@ fn engine_layout(width: int, height: int) {
     if arena.physics_step() != 0 {
         arena.mark_paint()
     }
+    // Nodes whose exit transition has finished leave the tree now.
+    arena.exit_tick()
     let mut resized = 0
     if width != arena.win_w {
         resized = 1
@@ -346,22 +370,21 @@ fn engine_layout(width: int, height: int) {
         resized = 1
     }
     // A `view` app builds its tree from the view function. That is the coarse
-    // path, and it is only needed when the tree can actually have changed: a frame
-    // whose dirt is purely *attributable paint* — an interaction state, a
-    // paint-only prop, a scroll, an animation track — cannot have moved structure,
-    // because a structural change marks the tree or the layout. Skipping the
-    // rebuild on those frames is what lets a `view` app run the same fine-grained
-    // model a retained tree does: the effects the previous build created stay
-    // alive and update their own nodes, instead of the whole graph being torn down
-    // (`track.reset`) and rebuilt every frame.
+    // path, and it is only needed when the build itself is out of date: a write
+    // nothing reported (the view read the signal untracked while it built —
+    // `arena.view_stale`), a frame-wide structural mark, or a resize when the
+    // build read the window size. Every other frame — attributable paint, a
+    // targeted layout write (a label's text, a `w` / `padding` prop), a host's
+    // own structural change — is already followed by the retained tree: the
+    // effects the previous build created update their own nodes, layout
+    // re-solves from the written node's boundary, and the graph is not torn
+    // down (`track.reset`).
     let mut rebuild_view = 0
     if has_view != 0 {
-        rebuild_view = 1
-        if resized == 0 && arena.tree_dirty == 0 && arena.layout_dirty == 0 {
-            if arena.paint_all == 0 {
-                // Attributable paint only: nothing structural moved.
-                rebuild_view = 0
-            }
+        if arena.view_stale != 0 {
+            rebuild_view = 1
+        } else if resized != 0 && view_reads_size != 0 {
+            rebuild_view = 1
         }
     }
     if rebuild_view != 0 {
@@ -370,11 +393,15 @@ fn engine_layout(width: int, height: int) {
         arena.reset_tree()
         platform.plat_key_reset()
         track.reset()
+        view_reads_size = 0
+        view_building = 1
         let n = view_fn()
+        view_building = 0
         arena.root_id = n.id
         arena.restore_scroll()
         arena.restore_focus()
         arena.mark_tree()
+        view_builds = view_builds + 1
     }
     // A non-int signal write (array / string / bool) never passes through
     // `store_sig`, so its dirt is noted on the tracking module and drained here.
@@ -407,6 +434,7 @@ fn engine_layout(width: int, height: int) {
     last_whole = whole
     if whole != 0 {
         arena.damage_all()
+        full_layouts = full_layouts + 1
     }
     if lay != 0 {
         arena.stamp_edits()
@@ -428,7 +456,7 @@ fn engine_layout(width: int, height: int) {
     }
     // Windowed lists size their window from the scroller's laid-out height and
     // its scroll, refit hosts (charts) rebuild when this frame's layout moved
-    // their width, and the signal hosts (Match, For, Index) rebuild when their
+    // their width, and the signal hosts (Match, Each) rebuild when their
     // signal moved (`arena.hosts_for_signal` asks for the pass). One refresh
     // pass covers all of them, after the layout that measured them, so a refit
     // sees the width it will paint this very frame. `layout_dirty` is clear at
@@ -437,7 +465,7 @@ fn engine_layout(width: int, height: int) {
     // when its box held. A pure scroll frame that stays inside the mounted
     // window, or a frame where every host returns early, pays the sweep and
     // nothing else.
-    if lay != 0 || arena.virtual_dirty != 0 {
+    if lay != 0 || arena.virtual_dirty != 0 || arena.host_queue.len > 0 {
         refresh_lists()
         if arena.layout_dirty != 0 {
             // Same rule as the first pass: a host that rebuilt marked itself,
@@ -454,6 +482,7 @@ fn engine_layout(width: int, height: int) {
                 layout.layout(width, height)
                 arena.mark_paint()
                 last_whole = 1
+                full_layouts = full_layouts + 1
             } else {
                 arena.mark_paint_targeted()
             }
@@ -480,6 +509,10 @@ fn engine_layout(width: int, height: int) {
     if arena.mem_stats_on() != 0 {
         arena.mem_sample()
     }
+    // The view build is current. Whatever this frame's own build, layout and
+    // host refresh marked (the build's `mark_tree`, a host's attach) is not a
+    // new outside write, so it must not rebuild the view again next frame.
+    arena.view_stale = 0
 }
 
 fn engine_fill_focus() {
@@ -619,6 +652,9 @@ fn engine_next_ms() -> int {
         return 16
     }
     if arena.spin_live() != 0 {
+        return 16
+    }
+    if arena.exit_live() != 0 {
         return 16
     }
     // A shown scrollbar thumb needs one wake at its hide deadline.
@@ -919,6 +955,27 @@ fn engine_layout_gen() -> int {
 
 fn layout_was_full() -> int {
     return last_whole
+}
+
+/// Whole-tree layout solves over the session: a resize, a structural or
+/// frame-wide mark, or a targeted write whose change reached the root. A
+/// patch test holds this flat across its targeted writes (diagnostics).
+let mut full_layouts: int = 0
+
+fn full_layouts_count() -> int {
+    return full_layouts
+}
+
+/// Re-solves `relayout` ran from the root: a change no box below the root
+/// contained. Still scoped — clean subtrees keep their measure, and paint
+/// re-records only the nodes the re-solve moved.
+fn root_relayouts() -> int {
+    return layout.root_relayouts
+}
+
+/// Boundaries `relayout` climbed past because their box did not hold.
+fn relayout_climbs() -> int {
+    return layout.relayout_climbs
 }
 
 /// Nodes the last interaction-state (chrome) pass visited, then reset. A write
@@ -1338,7 +1395,7 @@ fn node_scroll_max(id: int) -> int {
 }
 
 /// Live slot counts (diagnostics for tests). `nodes` includes dead slots
-/// waiting to be recycled; `sigs` is the same for signals. A streaming `For`
+/// waiting to be recycled; `sigs` is the same for signals. A streaming `Each`
 /// that rebuilds without growing the tree keeps both constant.
 fn arena_nodes() -> int {
     return arena.nodes.len
@@ -1349,9 +1406,52 @@ fn arena_sigs() -> int {
 }
 
 /// Live rows in the shared interned-handler table (diagnostics for tests). A
-/// streaming `For` or a re-running `scope` recycles handlers, so this stays flat.
+/// streaming `Each` or a re-running `scope` recycles handlers, so this stays flat.
 fn intern_count() -> int {
     return platform.plat_intern_live_count()
+}
+
+/// Polled host hooks run, and geometry-host hooks skipped because their box,
+/// scroll and bound signals held (diagnostics).
+fn poll_runs() -> int {
+    return arena.poll_runs
+}
+
+fn geo_skips() -> int {
+    return arena.geo_skips
+}
+
+/// Effect runs that reported no node, and so left no dirt (diagnostics).
+fn silent_runs() -> int {
+    return arena.silent_runs
+}
+
+/// Signal writes that fell back to a frame-wide mark: nothing consumed them
+/// (no effect, bound node or host), or layout reads the signal directly. A
+/// test that expects targeted updates holds this flat (diagnostics).
+fn frame_wide_writes() -> int {
+    return arena.frame_wide_writes
+}
+
+/// Per effect id, the runs that reported no node (`track.silent_of`): the dev
+/// counter for finding an effect that touches the arena without reporting.
+/// Pair with `effect_owner_node` to find where it was created.
+fn silent_runs_by_effect() -> []int {
+    return track.silent_of
+}
+
+/// The node an effect id is owned by (0 for a top-level effect).
+fn effect_owner_node(eid: int) -> int {
+    if eid <= 0 || eid >= track.node_ids.len {
+        return 0
+    }
+    return track.node_ids[eid]
+}
+
+/// Times a `view` app rebuilt its tree and reset the graph (diagnostics for
+/// tests): a frame whose dirt the retained tree follows leaves it flat.
+fn view_rebuilds() -> int {
+    return view_builds
 }
 
 /// Frames whose paint re-recorded only the dirty subtrees and reused the rest of
@@ -1363,6 +1463,17 @@ fn paint_patch_frames() -> int {
 /// Frames whose paint re-recorded every op.
 fn paint_full_frames() -> int {
     return scene.paint_full_frames()
+}
+
+/// Patched frames where a run changed length and was spliced into the
+/// retained list instead of forcing a full record.
+fn paint_splice_frames() -> int {
+    return scene.paint_splice_frames()
+}
+
+/// Floater runs a patched frame reused from the previous floaters section.
+fn paint_floaters_reused() -> int {
+    return scene.paint_floaters_reused()
 }
 
 /// Op runs re-recorded rather than reused, over the whole session.

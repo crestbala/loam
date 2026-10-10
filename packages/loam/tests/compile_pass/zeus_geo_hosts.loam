@@ -1,0 +1,72 @@
+// Reactivity gaps §5: geometry hosts (refit charts, windowed lists,
+// `on_resize`) used to run their hook after every layout and decide for
+// themselves whether anything moved. Now a geometry host's hook runs only when
+// its own box or scroll moved, or a signal bound to it was written.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn frame(w: int) {
+    zeus.engine_layout(w, 300)
+    zeus.engine_paint()
+}
+
+fn main() {
+    zeus.window("geo", 400, 300)
+    let mut rows = []int {}
+    for i in 0..500 {
+        push(rows, i)
+    }
+    let items = zeus.signal(rows)
+    let label = zeus.signal("a")
+    let mut list_id = 0
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column, grow = 1)) {
+        zeus.Text("{{label.get()}}")
+        let l = zui.VirtualList(items, 20, fn(i: int, v: int) -> Node {
+            return zeus.Text("row {{v}}")
+        })
+        list_id = l.id
+    })
+    frame(400)
+    frame(400)
+
+    // A layout write outside the list: the list's hook does not run.
+    let runs0 = zeus.poll_runs()
+    let skips0 = zeus.geo_skips()
+    label.set("a much longer label")
+    frame(400)
+    must(zeus.poll_runs() == runs0, "an unrelated layout write runs no geometry hook")
+    must(zeus.geo_skips() > skips0, "the list was skipped")
+
+    // A resize moves the list's box: its hook runs.
+    frame(500)
+    must(zeus.poll_runs() > runs0, "a resize runs the geometry hook")
+
+    // A write to the list's items runs it too, and the rows follow.
+    let runs1 = zeus.poll_runs()
+    let mut more = []int {}
+    for i in 0..500 {
+        push(more, 1000 + i)
+    }
+    items.set(more)
+    frame(500)
+    must(zeus.poll_runs() > runs1, "a bound write runs the geometry hook")
+    must(zeus.engine_find_text("row 1000") != 0, "and the rows follow it")
+
+    // A scroll moves its window.
+    zeus.scroll_to(zeus.node_handle(list_id), 2000)
+    frame(500)
+    must(zeus.engine_find_text("row 1100") != 0, "a scroll moves the window")
+
+    fmt.println("geo hosts ok")
+}

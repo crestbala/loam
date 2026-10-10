@@ -1,0 +1,33 @@
+// Fixture for the wasm trap test (`hosts/web/wasm_trap.ts`): one boundary whose
+// build traps during startup, one whose click handler traps later, and a
+// sibling outside both. Wasm has no setjmp, so both traps unwind to the host.
+
+import "std:zeus"
+import "std:zui"
+
+fn bad_index(n: int) -> int {
+    let a = []int { 1, 2 }
+    return a[n]
+}
+
+fn main() {
+    let n = zeus.signal(9)
+    zeus.snapshot(320, 240, fn() -> Node {
+        zeus.Box(style = Style(direction = Direction.Column)) {
+            zui.Boundary(fn() -> Node {
+                return zeus.Text("startup {{bad_index(n.peek())}}")
+            }, fn(msg) {
+                zeus.Text("fallback startup")
+            })
+            zui.Boundary(fn() -> Node {
+                return zeus.Box(style = Style(direction = Direction.Column)) {
+                    zui.Button("explode", on_click = fn() => bad_index(5))
+                    zeus.Text("live handler")
+                }
+            }, fn(msg) {
+                zeus.Text("fallback handler")
+            })
+            zeus.Text("sibling")
+        }
+    })
+}

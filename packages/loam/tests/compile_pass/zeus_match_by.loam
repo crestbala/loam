@@ -1,0 +1,91 @@
+// Reactivity gaps §4: `MatchBy` keeps a mounted arm while `on` keeps
+// selecting it, and hands it the new value through a payload signal. Only a
+// write that selects another arm rebuilds.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+struct Load {
+    tag: int,
+    pct: int,
+}
+
+let mut builds: int = 0
+let mut local_id: int = 0
+
+fn frame() {
+    zeus.engine_layout(300, 200)
+    zeus.engine_paint()
+}
+
+fn main() {
+    zeus.window("matchby", 300, 200)
+    let state = zeus.signal(Load { tag: 1, pct: 10 })
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column)) {
+        zui.MatchBy(state, fn(s: Load) -> string { return "{{s.tag}}" }, fn(p: Signal<Load>) -> Node {
+            builds = builds + 1
+            let local = zeus.signal(0)
+            local_id = local.id
+            if p.peek().tag == 1 {
+                return zeus.Text("loading {{p.get().pct}}% {{local.get()}}")
+            }
+            return zeus.Text("done {{local.get()}}")
+        })
+    })
+    frame()
+    must(builds == 1, "the first arm builds")
+    let t0 = zeus.engine_find_text("loading 10% 0")
+    must(t0 != 0, "and shows its payload")
+    Signal<int> { id: local_id }.set(5)
+    frame()
+
+    // Same arm, new payload: patched in place.
+    let p0 = zui.match_patched()
+    state.set(Load { tag: 1, pct: 60 })
+    frame()
+    must(builds == 1, "the same arm does not rebuild")
+    must(zui.match_patched() == p0 + 1, "the write lands in the payload")
+    must(zeus.engine_find_text("loading 60% 5") == t0, "on the same node, local state kept")
+
+    // Another arm: rebuilt, fresh state.
+    state.set(Load { tag: 2, pct: 100 })
+    frame()
+    must(builds == 2, "an arm change rebuilds")
+    must(zeus.engine_find_text("done 0") != 0, "the new arm shows")
+
+    // A write that leaves the value where it was runs nothing.
+    state.set(Load { tag: 2, pct: 100 })
+    frame()
+    must(builds == 2, "an equal write rebuilds nothing")
+
+    // Over a `computed`: the memo is pulled before its generation is compared
+    // (it only moves once read), so the host does refresh.
+    let base = zeus.signal(1)
+    let doubled = zeus.computed(fn() -> int { return base.get() * 2 })
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column)) {
+        zui.MatchBy(doubled, fn(d: int) -> string { return "one" }, fn(p: Signal<int>) -> Node {
+            return zeus.Text("twice {{p.get()}}")
+        })
+        zui.Match(doubled, fn(d: int) {
+            zeus.Text("match {{d}}")
+        })
+    })
+    frame()
+    must(zeus.engine_find_text("twice 2") != 0, "MatchBy over a computed builds")
+    base.set(5)
+    frame()
+    must(zeus.engine_find_text("twice 10") != 0, "MatchBy over a computed follows it")
+    must(zeus.engine_find_text("match 10") != 0, "Match over a computed follows it")
+
+    fmt.println("match by ok")
+}

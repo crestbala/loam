@@ -612,8 +612,11 @@ static void send_diagnostics(const char *uri, const char *path, int opened) {
     free(eu);
 
     int first = 1;
-    for (int i = 0; i < Gsess.ndiag; i++) {
-        LoamDiag *d = &Gsess.diags[i];
+    /* Errors (severity 1), then warnings (2). */
+    int total = Gsess.ndiag + Gsess.nwarn;
+    for (int i = 0; i < total; i++) {
+        int is_warn = i >= Gsess.ndiag;
+        LoamDiag *d = is_warn ? &Gsess.warns[i - Gsess.ndiag] : &Gsess.diags[i];
         if (!diag_for_file(d, path, opened)) continue;
         SourceLoc loc;
         loc.file = d->file;
@@ -628,8 +631,8 @@ static void send_diagnostics(const char *uri, const char *path, int opened) {
         int m = snprintf(item, sizeof item,
                          "%s{\"range\":{\"start\":{\"line\":%d,\"character\":%d},"
                          "\"end\":{\"line\":%d,\"character\":%d}},"
-                         "\"severity\":1,\"source\":\"loam\",\"message\":\"%s\"}",
-                         first ? "" : ",", sl, sc, el, ec, em ? em : "");
+                         "\"severity\":%d,\"source\":\"loam\",\"message\":\"%s\"}",
+                         first ? "" : ",", sl, sc, el, ec, is_warn ? 2 : 1, em ? em : "");
         first = 0;
         free(em);
         if (n + (size_t)m + 8 >= cap) {
@@ -1310,15 +1313,21 @@ static void handle_doc(const char *msg, const char *method) {
             char *saved_uri = Guri, *saved_path = Gpath;
             int saved_n = Gsess.ndiag;
             LoamDiag *saved_d = Gsess.diags;
+            int saved_wn = Gsess.nwarn;
+            LoamDiag *saved_w = Gsess.warns;
             Guri = uri;
             Gpath = path;
             Gsess.ndiag = 0;
             Gsess.diags = NULL;
+            Gsess.nwarn = 0;
+            Gsess.warns = NULL;
             send_diagnostics(uri, path, 1);
             Guri = saved_uri;
             Gpath = saved_path;
             Gsess.ndiag = saved_n;
             Gsess.diags = saved_d;
+            Gsess.nwarn = saved_wn;
+            Gsess.warns = saved_w;
         }
         if (Guri && strcmp(Guri, uri) == 0) {
             loam_session_free(&Gsess);

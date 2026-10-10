@@ -76,6 +76,11 @@ typedef struct {
     int is_mut;         /* IR_ADDR */
     int conv_mode;      /* IR_CAST: 0 = trap, 1 = wrapping, 2 = saturating */
     int checked;        /* IR_BIN: overflow/div trap required */
+    /* IR_STRUCT_LIT: non-NULL when the literal starts from the struct's
+       static default template; `lit_dflt[k]` is field k's constant default
+       (in the template) and `args[k]` is -1 for every field the template
+       supplies. NULL = every field is in `args`. */
+    struct AstNode **lit_dflt;
     Type *ty;
     SourceLoc loc;
 } IrInst;
@@ -134,6 +139,14 @@ typedef struct {
 IrModule *ir_lower(LoamModule *mods, int nmods);
 void ir_print(FILE *out, const IrModule *m);
 int ir_verify(const IrModule *m);
+/** 1 if `e` (a typechecked expression) is a C constant initializer: a number,
+ *  bool, string literal, named fn value, empty-vec call, or a struct literal
+ *  of those (`none`). */
+int ir_static_const(const AstNode *e);
+/** The C name of the fn a constant fn-value default (`= noop`) names, or NULL. */
+const char *ir_const_fn_val(const AstNode *e);
+/** 1 if `e` is a call that always returns the empty vec (`no_keys()`). */
+int ir_const_empty_vec(const AstNode *e);
 void ir_free(IrModule *m);
 
 #endif

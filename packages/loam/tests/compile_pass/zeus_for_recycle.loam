@@ -1,4 +1,4 @@
-// A streaming `For` must not grow the arena: every rebuild drops the old
+// A streaming `Each` must not grow the arena: every rebuild drops the old
 // rows and re-creates them, so node ids, row-owned signals, and interned
 // handlers are recycled instead of appended for the life of the app.
 // Regression for the arena-compaction work.
@@ -22,12 +22,12 @@ fn main() {
     let names = zeus.signal([]string {})
     zui.push_item(names, "r0")
     zeus.snapshot(240, 160, fn() -> Node {
-        zui.For(names, fn(s) => s, Row)
+        zui.Each(names.get(), Row)
     })
     let base_nodes = zeus.arena_nodes()
     let base_sigs = zeus.arena_sigs()
     // Stream: alternate push/pop so the live row count returns to one each
-    // cycle. Each mutation changes the list generation, so the `For` host
+    // cycle. Each mutation changes the list generation, so the `Each` host
     // drops its rows and rebuilds them on the next layout. Slots reach a
     // high-water mark after the first cycle, then must stay flat forever.
     let mut cyc = 0

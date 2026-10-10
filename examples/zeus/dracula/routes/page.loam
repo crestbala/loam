@@ -24,64 +24,79 @@ fn hit_spec() -> []TableCol {
     return h
 }
 
-fn paint_hits() {
-    let st = book.search_status()
-    if st == 0 {
-        return
+/// The search results under the card. `MatchBy` keeps the arm while the
+/// search state (and whether anything matched) holds; the rows are an `Each`
+/// over the hits, so a refined query keeps the rows that still match, and
+/// adding a fund swaps only that row's action.
+fn hits_arm(v: Signal<FundSearch>) -> Node {
+    let x = v.peek()
+    if x.state == 0 {
+        return zui.Column(0)
     }
-    if st == 1 {
-        zeus.Text("Searching the cached catalog.")
-        return
+    if x.state == 1 {
+        return zeus.Text("Searching the cached catalog.")
     }
-    if st == 3 {
-        ui.ServerDown(fn() { book.search_retry() })
-        return
+    if x.state == 3 {
+        return ui.ServerDown(fn() { book.search_retry() })
     }
-    let n = book.hit_count()
-    let q = book.search_query()
-    if n == 0 {
-        zeus.Text("No cached scheme matches \"{{q}}\".")
-        return
+    if x.hits.len == 0 {
+        return zeus.Text(fn() -> string { return "No cached scheme matches \"{{v.get().query}}\"." })
     }
-    let total = book.hit_total_count()
-    if total > n {
-        zeus.Text("First {{n}} of {{total}} matches. Add a word to narrow it.")
-    }
-    ui.HeadWithAction(hit_spec())
-    let mut i = 0
-    while i < n {
-        let code = book.hit_code(i)
-        ui.LinkRowWithAction(book.hit_cells(i), hit_spec(), "/scheme/{{code}}", fn() {
-            if book.watching(code) {
-                zeus.Text("On the list")
-            } else {
-                zui.Button(label = "Add", size = zeus.Size.Sm, on_click = fn() { book.add_watch(code) })
-            }
+    return hit_rows(v)
+}
+
+fn more_line(x: FundSearch) -> string {
+    let n = x.hits.len
+    let total = x.total
+    return "First {{n}} of {{total}} matches. Add a word to narrow it."
+}
+
+fn hit_rows(v: Signal<FundSearch>) -> Node {
+    return zui.Column(0) {
+        zeus.Text(fn() -> string { return more_line(v.get()) },
+                  style = Style(display = zeus.shown(v.get().total > v.get().hits.len)))
+        ui.HeadWithAction(hit_spec())
+        zui.Each(v.get().hits, fn(i: int, h: FundHit) -> Node {
+            let code = h.code
+            let on = h.watching
+            return ui.LinkRowWithAction(h.cells, hit_spec(), "/scheme/{{code}}", fn() {
+                hit_action(code, on)
+            })
         })
-        i = i + 1
     }
 }
 
-fn paint_rows() {
-    if book.watch_count() == 0 {
-        zui.Empty(icon = zeus.IC_INFO, title = "No holdings yet",
-                  body = "Search above by fund name or scheme code, then Add.")
-        return
+fn hit_action(code: string, on: bool) {
+    if on {
+        zeus.Text("On the list")
+    } else {
+        zui.Button(label = "Add", size = zeus.Size.Sm, on_click = fn() { book.add_watch(code) })
     }
-    if book.any_down() {
-        ui.ServerDown(fn() { book.retry() })
+}
+
+/// The holdings table: one arm while the list is empty or not; the rows are an
+/// `Each`, so a fetch that changes one row's NAV rebuilds that row only.
+fn rows_arm(v: Signal<RowList>) -> Node {
+    if v.peek().rows.len == 0 {
+        return zui.Empty(icon = zeus.IC_INFO, title = "No holdings yet",
+                         body = "Search above by fund name or scheme code, then Add.")
     }
-    ui.HeadWithAction(hold_spec())
-    let n = book.watch_count()
-    let mut i = 0
-    while i < n {
-        let slot = i
-        let code = book.watch_code(i)
-        ui.LinkRowWithAction(book.holding_row(i), hold_spec(), "/scheme/{{code}}", fn() {
-            zui.Button(label = "Remove", look = zeus.Look.Ghost, size = zeus.Size.Sm,
-                       on_click = fn() { book.remove_at(slot) })
+    return hold_rows(v)
+}
+
+fn hold_rows(v: Signal<RowList>) -> Node {
+    return zui.Column(0) {
+        zeus.Box(style = Style(display = zeus.shown(v.get().down))) {
+            ui.ServerDown(fn() { book.retry() })
+        }
+        ui.HeadWithAction(hold_spec())
+        zui.Each(v.get().rows, fn(i: int, r: CodeRow) -> Node {
+            let code = r.code
+            return ui.LinkRowWithAction(r.cells, hold_spec(), "/scheme/{{code}}", fn() {
+                zui.Button(label = "Remove", look = zeus.Look.Ghost, size = zeus.Size.Sm,
+                           on_click = fn() { book.remove_code(code) })
+            })
         })
-        i = i + 1
     }
 }
 
@@ -96,17 +111,11 @@ fn Page(p: Params) -> Node {
                     zui.Button(label = "Add code", look = zeus.Look.Ghost, on_click = fn() { book.add_typed() })
                 }
                 zeus.effect(fn() { book.search_tick() })
-                zui.Match(book.search_generation(), fn(g) {
-                    if g >= 0 {
-                        paint_hits()
-                    }
-                })
+                zui.MatchBy(book.search(), fn(x: FundSearch) -> string { return "{{x.state}}:{{x.hits.len == 0}}" },
+                            fn(v: Signal<FundSearch>) -> Node { return hits_arm(v) })
             }
-            zui.Match(book.load_gen(), fn(g) {
-                if g >= 0 {
-                    paint_rows()
-                }
-            })
+            zui.MatchBy(book.holdings(), fn(x: RowList) -> string { return "{{x.rows.len == 0}}" },
+                        fn(v: Signal<RowList>) -> Node { return rows_arm(v) })
         } else {
             zeus.Text("No holdings yet")
         }

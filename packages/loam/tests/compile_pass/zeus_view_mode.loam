@@ -1,9 +1,11 @@
-// Phase 11: one model. A `view` app used to rebuild its whole tree — and
-// `track.reset()` its reactive graph — on every frame, so the fine-grained path
-// only ever ran within a single frame. Now the rebuild happens only when the tree
-// can have changed (a structural or layout frame, or a resize); a frame whose dirt
-// is attributable paint keeps the tree and lets the effects the previous build
-// created update their own nodes, exactly as a retained `App` tree does.
+// Phase 11 / reactivity gaps §1: one model. A `view` app used to rebuild its
+// whole tree — and `track.reset()` its reactive graph — on every frame, then on
+// every frame with layout dirt. Now it rebuilds only when its build is out of
+// date: a write nothing reported (the view read the signal untracked while it
+// built), a frame-wide structural mark, or a resize the build read. A paint
+// write, a label's text, a `w` prop — all targeted — keep the tree and let the
+// effects the previous build created update their own nodes, exactly as a
+// retained `App` tree does.
 
 import "std:fmt"
 import "std:sys"
@@ -19,36 +21,68 @@ fn must(ok: bool, what: string) {
 }
 
 let mut builds: int = 0
+/// Created by the view's build, so a rebuild would recreate it at 0.
+let mut local: Signal<int> = Signal { id: 0 }
 
 fn main() {
     zeus.window("viewmode", 260, 180)
-    // A view app. `n` lives outside the view so its value survives a rebuild.
+    // A view app. Signals outside the view survive a rebuild; `local` does not.
     let n = zeus.signal(1)
     let op = zeus.signal(100)
+    let wide = zeus.signal(40)
+    let big = zeus.signal(0)
     zeus.view(|| {
         builds = builds + 1
+        local = zeus.signal(0)
+        let shape = big.get()
         zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 4, padding = edges(8))) {
             zeus.Text("n={{n.get()}}")
-            let b = zeus.Box(style = Style(width = px(40), height = px(20), background = "#ff0000"))
-            zeus.styled(b, || { zeus.set_prop_int(b, zeus.SET.Opacity, op.get()) })
+            zeus.Text("local={{local.get()}}")
+            // A fixed slot, so `b`'s width cannot move its siblings: the re-solve
+            // stays inside the slot.
+            zeus.Box(style = Style(width = px(200), height = px(20))) {
+                let b = zeus.Box(style = Style(width = px(40), height = px(20), background = "#ff0000"))
+                zeus.styled(b, || { zeus.set_prop_int(b, zeus.SET.Opacity, op.get()) })
+                zeus.styled(b, || { zeus.set_prop_int(b, zeus.SET.Width, wide.get()) })
+            }
+            if shape > 0 {
+                zeus.Text("big")
+            }
         })
     })
     zeus.pump_frame()
     zeus.engine_layout(260, 180)
     must(builds == 1, "the first frame builds the view")
+    must(zeus.view_rebuilds() == 1, "the counter saw it")
     let nodes0 = zeus.arena_nodes()
-
-    // A structural write rebuilds the view (the tree can differ).
-    n.set(2)
+    local.set(7)
     zeus.engine_layout(260, 180)
-    must(builds == 2, "a structural write rebuilds the view")
-    must(zeus.engine_find_text("n=2") != 0, "the view shows the new value")
-
-    // A paint-only prop write does NOT rebuild: the effect the build created
-    // updates its node, and the tree is retained.
     zeus.engine_paint()
-    let b0 = builds
+    must(zeus.engine_find_text("local=7") != 0, "a local signal shows its write")
+
+    // A text write that resizes a label is targeted layout dirt: the label's
+    // effect updates it, layout re-solves its boundary, and the view is kept.
     let rows0 = zeus.reactive_rows()
+    let fns0 = zeus.intern_count()
+    n.set(222)
+    zeus.engine_layout(260, 180)
+    zeus.engine_paint()
+    must(builds == 1, "a text write does not rebuild the view")
+    must(zeus.view_rebuilds() == 1, "and the counter stays flat")
+    must(zeus.engine_find_text("n=222") != 0, "the label shows the new value")
+    must(zeus.engine_find_text("local=7") != 0, "and the local signal kept its value")
+    must(zeus.reactive_rows() == rows0, "the reactive graph was not reset")
+    must(zeus.intern_count() == fns0, "and interned nothing")
+
+    // A layout prop write (`w`) is targeted too.
+    wide.set(90)
+    zeus.engine_layout(260, 180)
+    zeus.engine_paint()
+    must(builds == 1, "a width write does not rebuild the view")
+    must(zeus.layout_was_full() == 0, "and re-solves only its boundary")
+
+    // A paint-only prop write does NOT rebuild either.
+    let b0 = builds
     op.set(40)
     zeus.engine_layout(260, 180)
     zeus.engine_paint()
@@ -57,27 +91,37 @@ fn main() {
     must(zeus.layout_was_full() == 0, "and needs no layout")
     must(zeus.damage_full() == 0, "and damages locally")
 
-    // Repeated paint-only frames keep both the view and the graph untouched, so a
+    // Repeated targeted frames keep both the view and the graph untouched, so a
     // view app holds a stable arena instead of re-creating it per frame.
     let sigs0 = zeus.arena_sigs()
-    let fns0 = zeus.intern_count()
     let mut i = 0
     while i < 30 {
         op.set(30 + i)
+        n.set(300 + i)
         zeus.engine_layout(260, 180)
         zeus.engine_paint()
         i = i + 1
     }
-    must(builds == b0, "thirty paint-only frames rebuild nothing")
+    must(builds == b0, "thirty targeted frames rebuild nothing")
     must(zeus.arena_sigs() == sigs0, "and allocate no signal")
     must(zeus.intern_count() == fns0, "and intern no handler")
     must(zeus.arena_nodes() == nodes0, "and keep the node table")
 
-    // A structural write still rebuilds, and the tree follows.
-    n.set(3)
-    zeus.engine_layout(260, 180)
-    must(builds == b0 + 1, "a later structural write still rebuilds")
-    must(zeus.engine_find_text("n=3") != 0, "and the tree follows it")
+    // A resize the build did not read keeps the tree: layout follows it.
+    zeus.engine_layout(300, 200)
+    zeus.engine_paint()
+    must(builds == b0, "a resize the view did not read does not rebuild")
+
+    // A signal the view read while it built (untracked) still rebuilds, and the
+    // tree follows it.
+    big.set(1)
+    zeus.engine_layout(300, 200)
+    must(builds == b0 + 1, "an untracked read rebuilds the view")
+    must(zeus.view_rebuilds() == 2, "and the counter saw it")
+    must(zeus.engine_find_text("big") != 0, "and the tree follows it")
+    zeus.engine_paint()
+    zeus.engine_layout(300, 200)
+    must(builds == b0 + 1, "and the next quiet frame keeps it")
 
     fmt.println("view mode ok")
 }

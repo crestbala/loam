@@ -1,6 +1,5 @@
-// `Each` is the reactive form of the list primitive: it takes the same keyed
-// engine as `For`, so a signal-driven list reconciles in place and per-row state
-// survives a change. `Loop` is the static, one-shot counterpart.
+// `Each` over a signal read reconciles in place: per-row state survives an
+// insert, because existing rows are moved, not rebuilt.
 
 import "std:fmt"
 import "std:sys"
@@ -22,7 +21,7 @@ fn main() {
     zui.push_item(names, "B")
     zeus.snapshot(240, 160, fn() -> Node {
         zeus.Box(style = Style(direction = Direction.Column)) {
-            zui.Each(names, fn(s) => s, Row)
+            zui.Each(names.get(), Row)
         }
     })
     // The list reacts to the signal without a manual rebuild.
@@ -52,6 +51,5 @@ fn main() {
         fmt.println("FAIL insert rebuilt the rows (state lost)")
         sys.exit(1)
     }
-    // `Loop` is the static counterpart: it emits its rows at build time.
     fmt.println("each reactive ok")
 }

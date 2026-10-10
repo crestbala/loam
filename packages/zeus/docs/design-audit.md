@@ -115,8 +115,8 @@ Rebuilds that remain:
    swap-remove optimizations in `release_sigs` / `free_nodes_effects` /
    `drop_eid_deps` were written to rescue (the comments cite "~25 ms per chart
    refit"), which is evidence the rebuild is the problem, not the cleanup.
-2. **`For` / `Index` / `VirtualList` / `VirtualTable`** — keyed `For` moves nodes
-   (good), but `Index` and the virtual windows rebuild through
+2. **`Each` / `VirtualList` / `VirtualTable`** — keyed `Each` moves nodes
+   (good), but the virtual windows rebuild through
    `rebuild_begin`/`rebuild_end` whenever the window or generation moves.
 3. **`zeus.view` mode** — `engine_layout` under `has_view != 0` calls
    `arena.reset_tree()` + `track.reset()` + full re-build **every frame**. Not the
@@ -777,20 +777,20 @@ the Menu already share.
 - **`Combobox(text, options)`.** A text field with a filtered option list below
   it, on the same floater. The options are filtered by a case-insensitive ASCII
   substring match (`ci_has`) into a `Signal<[]string>`, and the list is rendered
-  with `zeus.For` keyed by label (so options should be unique). Typing filters
+  with `zeus.Each` (options should be unique; identity is the option text). Typing filters
   and opens; Up / Down move the highlight; Enter writes the highlighted option
   back into the field; Escape or an outside click closes.
 - **Why the keys are not in the keymap.** A focused text field consumes Enter
   before any chord resolves (`zeus_key_dispatch`'s text-capture check), so the
   list keys are handled in the field's `on_key_down` and read through the
   engine's staged `current_key()`.
-- **`For` reachability (compiler fix, separate commit).** Landing `Combobox`
+- **`Each` reachability (compiler fix, separate commit).** Landing `Combobox`
   exposed a DCE bug: `kfor_refresh<T>`'s instantiated body was emitted while its
   non-generic callees (`arena.key_count`, `key_node`, `key_set`, `key_clear`)
   were pruned, because the pass that walks pruned-but-instantiated generics ran
-  *after* the reachability worklist had already finished. A test using `For`
+  *after* the reachability worklist had already finished. A test using `Each`
   compiled, but a test merely *importing* a module that defines an
-  `For`-using function did not. The worklist now runs last, to a fixed point.
+  `Each`-using function did not. The worklist now runs last, to a fixed point.
 - New `zeus_select.loam` (open / arrow / pick / Escape / outside click) and
   `zeus_combobox.loam` (filter, open on type, pick into the field). The gallery
   shows both. No draw golden changed: a closed `Select` paints identically, and
@@ -1162,10 +1162,11 @@ Truncation stays host-blocked. `zeus_table.loam`.
 ### Phase 4 fix — sorting actually reorders rows (batch 22.1)
 
 Batch 22's header cycled the sort signal and nothing moved: the demo rows
-were static. Now `Table(spec, rows, cells, sort = …)` derives the shown
-order (`sort_cells`, numeric-aware, stable) and renders through a keyed
-`For`, so a sort moves nodes; `VirtualTable` takes `sort` for its header
-and the app sorts its `Signal<[]T>` (`sort_cells` / `sort_by`). Rows are
+were static. Now `Table(spec, rows, cells, sort = …)` writes `rows` into
+that column's order (`sort_cells`, numeric-aware, stable) and renders them
+through a keyed `Each`, so a sort moves nodes; `VirtualTable` takes `sort`
+for its header and the app sets its `Signal<[]T>` (`sort_cells` / `sort_by`).
+Rows are
 structs with a `cells` mapper, not `[][]string`: pushing an inner array
 moves it out of the outer one in Loam, so nested arrays hollow out.
 

@@ -15,6 +15,7 @@
 #ifndef __wasm32__
 #include <time.h>
 #include <setjmp.h>
+#endif
 /* Recoverable traps. A panic that would abort instead winds the stack back to
    the innermost arm installed through `loam_trap_guard`, which returns the
    panic message in place of its body's result.
@@ -28,16 +29,21 @@
    had installed an arm.
 
    Exactly one translation unit defines the storage: the generated program
-   (codegen_c.c emits `#define LOAM_RT_DEFINE_JMP`) on native, and nobody on
-   wasm, where setjmp does not exist and a trap aborts as it always has. An
-   arm leaves the state NULL, so a trap with no guard still aborts. */
+   (codegen_c.c emits `#define LOAM_RT_DEFINE_JMP`). On wasm there is no
+   setjmp, so only the message exists: a panic records it and traps, and the
+   host (the web loader) catches the trap at the export boundary and asks the
+   program to recover (`zeus_recover`), which reads it back. An arm leaves the
+   state NULL, so a trap with no guard still aborts. */
 #ifndef __wasm32__
 typedef struct LoamJmp {
     jmp_buf jb;
     struct LoamJmp *prev;
 } LoamJmp;
+#endif
 #ifdef LOAM_RT_DEFINE_JMP
+#ifndef __wasm32__
 LoamJmp *loam_jmp_top = NULL;
+#endif
 char loam_jmp_msg[512];
 void loam_jmp_set_msg(const char *msg, int64_t len) {
     int64_t n = len;
@@ -48,11 +54,11 @@ void loam_jmp_set_msg(const char *msg, int64_t len) {
     loam_jmp_msg[n] = 0;
 }
 #else
+#ifndef __wasm32__
 extern LoamJmp *loam_jmp_top;
+#endif
 extern char loam_jmp_msg[512];
 void loam_jmp_set_msg(const char *msg, int64_t len);
-#endif
-#endif
 #endif
 
 typedef struct {
@@ -188,11 +194,9 @@ static inline bool loam_fmt_eq(loam_str a, loam_str b) {
 static inline void loam_panic(const char *file, int line, const char *msg) {
     fflush(stdout);
     fprintf(stderr, "%s:%d: panic: %s\n", file, line, msg);
+    loam_jmp_set_msg(msg, (int64_t)strlen(msg));
 #ifndef __wasm32__
-    if (loam_jmp_top) {
-        loam_jmp_set_msg(msg, (int64_t)strlen(msg));
-        longjmp(loam_jmp_top->jb, 1);
-    }
+    if (loam_jmp_top) longjmp(loam_jmp_top->jb, 1);
 #endif
     abort();
 }
@@ -203,11 +207,9 @@ static inline void loam_panic_str(const char *file, int line, loam_str msg) {
     fflush(stdout);
     fprintf(stderr, "%s:%d: panic: %.*s\n", file, line,
             (int)(msg.len > 0 ? msg.len : 0), msg.ptr ? msg.ptr : "");
+    loam_jmp_set_msg(msg.ptr ? msg.ptr : "", msg.len);
 #ifndef __wasm32__
-    if (loam_jmp_top) {
-        loam_jmp_set_msg(msg.ptr ? msg.ptr : "", msg.len);
-        longjmp(loam_jmp_top->jb, 1);
-    }
+    if (loam_jmp_top) longjmp(loam_jmp_top->jb, 1);
 #endif
     abort();
 }
@@ -969,6 +971,140 @@ static inline loam_str loam_str_concat(loam_str a, loam_str b) {
     if (b.ptr) memcpy(p + an, b.ptr, (size_t)bn);
     p[an + bn] = 0;
     return loam_str_owned(p, an + bn);
+}
+
+/* Content keys for `Each`. The compiler emits these from `__value_key`.
+   A string keys by its bytes, not the `loam_str` header (two copies of the
+   same text are one row). `loam_key_cat` releases both inputs. A static
+   piece has `own = 0`, so releasing it is a no-op and the copy lives in
+   the result. */
+
+static inline loam_str loam_key_static(const char *p, int64_t n) {
+    loam_str s;
+    s.ptr = p ? p : "";
+    s.len = n > 0 ? n : 0;
+    s.own = 0;
+    return s;
+}
+
+static inline loam_str loam_key_cat(loam_str a, loam_str b) {
+    loam_str r = loam_str_concat(a, b);
+    loam_str_release(&a);
+    loam_str_release(&b);
+    return r;
+}
+
+static inline int loam_u64_dec(char *dst, uint64_t u) {
+    char rev[32];
+    int r = 0;
+    int i;
+    if (u == 0) rev[r++] = '0';
+    else while (u && r < 32) {
+        rev[r++] = (char)('0' + (u % 10));
+        u /= 10;
+    }
+    for (i = 0; i < r; i++) dst[i] = rev[r - 1 - i];
+    return r;
+}
+
+static inline loam_str loam_key_tag(char kind, int64_t n, char end) {
+    char nb[24];
+    loam_str ns = loam_fmt_itoa(nb, n);
+    int64_t total = 1 + (ns.len > 0 ? ns.len : 0) + 1;
+    char *p = loam_str_bytes(total);
+    int64_t o = 0;
+    p[o++] = kind;
+    if (ns.len > 0 && ns.ptr) {
+        memcpy(p + o, ns.ptr, (size_t)ns.len);
+        o += ns.len;
+    }
+    p[o++] = end;
+    p[total] = 0;
+    return loam_str_owned(p, total);
+}
+
+static inline loam_str loam_key_str(loam_str s) {
+    int64_t n = s.len > 0 ? s.len : 0;
+    char nb[24];
+    loam_str ns = loam_fmt_itoa(nb, n);
+    int64_t total = 1 + (ns.len > 0 ? ns.len : 0) + 1 + n;
+    char *p = loam_str_bytes(total);
+    int64_t o = 0;
+    p[o++] = 'S';
+    if (ns.len > 0 && ns.ptr) {
+        memcpy(p + o, ns.ptr, (size_t)ns.len);
+        o += ns.len;
+    }
+    p[o++] = ':';
+    if (n > 0 && s.ptr) memcpy(p + o, s.ptr, (size_t)n);
+    p[total] = 0;
+    return loam_str_owned(p, total);
+}
+
+static inline loam_str loam_key_int(int64_t v, int bits, int unsig) {
+    char nb[24], vb[32];
+    loam_str ns = loam_fmt_itoa(nb, bits);
+    int vl;
+    if (unsig) vl = loam_u64_dec(vb, (uint64_t)v);
+    else {
+        loam_str vs = loam_fmt_itoa(vb, v);
+        vl = vs.len > 0 ? (int)vs.len : 0;
+        if (vl > 0 && vs.ptr && vs.ptr != vb) memmove(vb, vs.ptr, (size_t)vl);
+    }
+    int64_t total = 1 + (ns.len > 0 ? ns.len : 0) + 2 + vl;
+    char *p = loam_str_bytes(total);
+    int64_t o = 0;
+    p[o++] = 'i';
+    if (ns.len > 0 && ns.ptr) {
+        memcpy(p + o, ns.ptr, (size_t)ns.len);
+        o += ns.len;
+    }
+    p[o++] = unsig ? 'u' : 's';
+    p[o++] = ':';
+    if (vl > 0) memcpy(p + o, vb, (size_t)vl);
+    p[total] = 0;
+    return loam_str_owned(p, total);
+}
+
+static inline loam_str loam_key_fbits(const void *p, int bits) {
+    unsigned char raw[8];
+    int n = bits <= 32 ? 4 : 8;
+    int o = 0;
+    int i;
+    char buf[24];
+    char *out;
+    static const char hexd[] = "0123456789abcdef";
+    memset(raw, 0, sizeof raw);
+    if (p) memcpy(raw, p, (size_t)n);
+    buf[o++] = 'f';
+    if (bits >= 100) buf[o++] = (char)('0' + (bits / 100) % 10);
+    if (bits >= 10) buf[o++] = (char)('0' + (bits / 10) % 10);
+    buf[o++] = (char)('0' + (bits % 10));
+    buf[o++] = ':';
+    for (i = 0; i < n; i++) {
+        buf[o++] = hexd[raw[i] >> 4];
+        buf[o++] = hexd[raw[i] & 15];
+    }
+    out = loam_str_bytes(o);
+    memcpy(out, buf, (size_t)o);
+    out[o] = 0;
+    return loam_str_owned(out, o);
+}
+
+static inline loam_str loam_key_addr(uint64_t bits, char kind) {
+    char buf[20];
+    int o = 0;
+    int i;
+    char *out;
+    static const char hexd[] = "0123456789abcdef";
+    buf[o++] = kind;
+    buf[o++] = ':';
+    for (i = 15; i >= 0; i--)
+        buf[o++] = hexd[(bits >> (i * 4)) & 15];
+    out = loam_str_bytes(o);
+    memcpy(out, buf, (size_t)o);
+    out[o] = 0;
+    return loam_str_owned(out, o);
 }
 
 static inline loam_str loam_str_of_int(int64_t v) {

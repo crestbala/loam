@@ -15,6 +15,7 @@ import "std:date"
 import "std:http"
 import "std:kv"
 import "std:zeus"
+import "std:zui"
 import "../server/api.loam"
 import "../core/series.loam"
 // The C backend emits a module's structs before it walks that module's
@@ -26,6 +27,13 @@ import "present.loam" as present
 
 let mut gen: Signal<int> = Signal { id: 0 }
 let mut scheme_gen: Signal<int> = Signal { id: 0 }
+/// The focused scheme as one value (see `SchemeView`).
+let mut scheme_view: Signal<SchemeView> = Signal { id: 0 }
+/// The fund search, the holdings and the screener ranks as values: the pages
+/// bind to these, and a write that left a row as it was keeps that row.
+let mut search_view: Signal<FundSearch> = Signal { id: 0 }
+let mut holdings_view: Signal<RowList> = Signal { id: 0 }
+let mut ranks_view: Signal<RowList> = Signal { id: 0 }
 let mut range_sel: Signal<int> = Signal { id: 0 }
 let mut search_input: Signal<string> = Signal { id: 0 }
 let mut search_gen: Signal<int> = Signal { id: 0 }
@@ -100,12 +108,150 @@ fn bump_scheme() {
         scheme_n = scheme_n + 1
         scheme_gen.set(scheme_n)
     }
+    publish_scheme_view()
+}
+
+/// The load generation moved (a fetch landed, the watchlist changed): the
+/// focused scheme's state and badges may have too.
+fn bump_load() {
+    if gen.id != 0 {
+        gen.set(gen.get() + 1)
+    }
+    publish_scheme_view()
+    publish_lists()
+}
+
+/// What the scheme page shows. `state`: 0 loading, 1 loaded, 2 missing,
+/// 3 server down.
+struct SchemeView {
+    state: int,
+    code: string,
+    name: string,
+    status: string,
+    gap: string,
+    gap_open: bool,
+    dormant: string,
+    watching: bool,
+    chart: ChartData,
+    decimals: int,
+    stats: []string,
+    signals: []string,
+}
+
+fn view() -> Signal<SchemeView> {
+    return scheme_view
+}
+
+fn empty_scheme_view() -> SchemeView {
+    return SchemeView {
+        state: 0, code: "", name: "", status: "", gap: "", gap_open: false, dormant: "",
+        watching: false,
+        chart: ChartData { labels: []string {}, names: []string {}, vals: []int {} },
+        decimals: 0, stats: []string {}, signals: []string {},
+    }
+}
+
+/// Publish the focus globals as the view value. Equal values are no write, so
+/// a publish that moved nothing the page shows re-runs nothing.
+fn publish_scheme_view() {
+    if scheme_view.id == 0 {
+        return
+    }
+    scheme_view.set(SchemeView {
+        state: focus_state(),
+        code: focus_code,
+        name: scheme_name,
+        status: scheme_line,
+        gap: scheme_gap,
+        gap_open: gap_open(),
+        dormant: scheme_dormant,
+        watching: watching(focus_code),
+        chart: ChartData { labels: nav_labels, names: nav_names, vals: nav_vals },
+        decimals: nav_decimals,
+        stats: stat_texts,
+        signals: signal_cells,
+    })
 }
 
 fn bump_search() {
     if search_gen.id != 0 {
         search_n = search_n + 1
         search_gen.set(search_n)
+    }
+    publish_lists()
+}
+
+/// A fund search row: the code it opens, its cells, and whether it is on the
+/// watchlist (the row's action).
+struct FundHit {
+    code: string,
+    cells: []string,
+    watching: bool,
+}
+
+/// What the fund search shows. `state`: 0 no query, 1 asking, 2 answered,
+/// 3 server down.
+struct FundSearch {
+    state: int,
+    query: string,
+    total: int,
+    hits: []FundHit,
+}
+
+/// A table row that opens a scheme.
+struct CodeRow {
+    code: string,
+    cells: []string,
+}
+
+/// A list of scheme rows, and whether a fetch behind them failed.
+struct RowList {
+    down: bool,
+    rows: []CodeRow,
+}
+
+fn search() -> Signal<FundSearch> {
+    return search_view
+}
+
+fn holdings() -> Signal<RowList> {
+    return holdings_view
+}
+
+fn ranks() -> Signal<RowList> {
+    return ranks_view
+}
+
+/// Publish the search, holdings and ranks as values. Equal values are no
+/// write, so a bump that moved none of them re-runs nothing.
+fn publish_lists() {
+    if search_view.id == 0 {
+        return
+    }
+    let mut hits = []FundHit {}
+    for i in 0..hit_count() {
+        let code = hit_code(i)
+        push(hits, FundHit { code: code, cells: hit_cells(i), watching: watching(code) })
+    }
+    search_view.set(FundSearch { state: search_status(), query: search_query(), total: hit_total_count(), hits: hits })
+    let mut held = []CodeRow {}
+    for i in 0..watch_count() {
+        push(held, CodeRow { code: watch_code(i), cells: holding_row(i) })
+    }
+    holdings_view.set(RowList { down: any_down(), rows: held })
+    let mut ranked = []CodeRow {}
+    for i in 0..rank_count() {
+        push(ranked, CodeRow { code: rank_code(i), cells: rank_cells(i) })
+    }
+    ranks_view.set(RowList { down: any_down(), rows: ranked })
+}
+
+/// Remove `code` from the watchlist (by code, so a row that moved still
+/// removes itself).
+fn remove_code(code: string) {
+    let at = find_str(watch_codes, code)
+    if at >= 0 {
+        remove_at(at)
     }
 }
 
@@ -381,9 +527,7 @@ fn server_down(code: string) {
     }
     cache_found = put_int(cache_found, at, 3)
     rerank()
-    if gen.id != 0 {
-        gen.set(gen.get() + 1)
-    }
+    bump_load()
     if code == focus_code {
         publish_scheme(code)
     }
@@ -405,9 +549,7 @@ fn retry() {
         bump_scheme()
     }
     rerank()
-    if gen.id != 0 {
-        gen.set(gen.get() + 1)
-    }
+    bump_load()
 }
 
 fn got_scheme(reply: SchemeResp) {
@@ -429,9 +571,7 @@ fn got_scheme(reply: SchemeResp) {
         cache_navs = put_str(cache_navs, at, present.join_ws(reply.navs))
     }
     rerank()
-    if gen.id != 0 {
-        gen.set(gen.get() + 1)
-    }
+    bump_load()
     if reply.code == focus_code {
         publish_scheme(reply.code)
     }
@@ -735,9 +875,7 @@ fn add_watch(code: string) {
     save_watch()
     ensure_cache(code)
     rerank()
-    if gen.id != 0 {
-        gen.set(gen.get() + 1)
-    }
+    bump_load()
     // Search rows and the scheme page show whether a code is on the list.
     bump_search()
     bump_scheme()
@@ -763,9 +901,7 @@ fn remove_at(i: int) {
     watch_codes = drop_at(watch_codes, i)
     save_watch()
     rerank()
-    if gen.id != 0 {
-        gen.set(gen.get() + 1)
-    }
+    bump_load()
     bump_search()
     bump_scheme()
 }
@@ -864,9 +1000,7 @@ fn acknowledge() {
         cache_ack = put_int(cache_ack, at, 1)
         rerank()
         publish_scheme(code)
-        if gen.id != 0 {
-            gen.set(gen.get() + 1)
-        }
+        bump_load()
     })
 }
 
@@ -876,6 +1010,10 @@ fn start() {
     }
     gen = zeus.signal(0)
     scheme_gen = zeus.signal(0)
+    scheme_view = zeus.signal(empty_scheme_view())
+    search_view = zeus.signal(FundSearch { state: 0, query: "", total: 0, hits: []FundHit {} })
+    holdings_view = zeus.signal(RowList { down: false, rows: []CodeRow {} })
+    ranks_view = zeus.signal(RowList { down: false, rows: []CodeRow {} })
     range_sel = zeus.signal(2)
     search_input = zeus.signal("")
     search_gen = zeus.signal(0)
@@ -887,4 +1025,5 @@ fn start() {
     }
     rerank()
     gen.set(1)
+    publish_lists()
 }

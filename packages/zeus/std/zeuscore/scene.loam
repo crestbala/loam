@@ -58,6 +58,17 @@ let mut patch_ops: []Draw = []Draw {}
 let mut patch_dst: []int = []int {}
 let mut patch_src: []int = []int {}
 let mut patch_len: []int = []int {}
+/* The length each patched run had in the retained list. A run that re-records
+   to another length is *spliced*: the ops after it shift, and every span is
+   remapped (`splice_frame`) instead of the frame falling back to a full record. */
+let mut patch_len0: []int = []int {}
+/* Spans set while re-recording a run are in that run's coordinates (rebased
+   onto its old start). `rerec_patch[id]` names the patch that set node `id`'s
+   span this frame (valid when `rerec_stamp[id] == rerec_gen`), so the remap
+   shifts it by the patches before that one only. */
+let mut rerec_stamp: []int = []int {}
+let mut rerec_patch: []int = []int {}
+let mut rerec_gen: int = 0
 /* Where the floaters section starts in `draws`. Everything from here on is the
    floaters pass. A floater's ops follow its trigger's screen rect rather than
    only its own subtree, and its set can change from frame to frame, so the
@@ -71,6 +82,12 @@ let mut fl_section_start: int = 0
 let mut patch_frames: int = 0
 let mut full_frames: int = 0
 let mut patch_runs: int = 0
+/// Patched frames where a run changed length and was spliced in.
+let mut splice_frames: int = 0
+
+fn paint_splice_frames() -> int {
+    return splice_frames
+}
 
 fn paint_patch_frames() -> int {
     return patch_frames
@@ -110,6 +127,13 @@ fn set_span(id: int, from: int, len: int) {
     grow_span(id)
     if rec_mode != 0 {
         op_start[id] = rec_base + (from - rec_from)
+        while rerec_stamp.len <= id {
+            push(rerec_stamp, 0)
+            push(rerec_patch, 0)
+        }
+        rerec_stamp[id] = rerec_gen
+        // The patch this run will be filed as: the next one pushed.
+        rerec_patch[id] = patch_dst.len
     } else {
         op_start[id] = from
     }
@@ -1331,7 +1355,15 @@ fn paint_node_shaped(id: int) {
     }
 }
 
+/// Paint `id` and its subtree under its effective scheme (a scoped light /
+/// dark subtree), restoring the parent's for whatever it paints after.
 fn paint_node_body(id: int) {
+    let prev = arena.paint_scheme_enter(id)
+    paint_node_body_in(id)
+    arena.paint_scheme_leave(prev)
+}
+
+fn paint_node_body_in(id: int) {
     if id <= 0 {
         return
     }
@@ -1643,20 +1675,33 @@ fn paint_floaters_paint() {
 /// changed — the retained list would have to shift, so the frame falls back to a
 /// full record. Nothing is written to `draws` until every patch is known to fit.
 fn patch_run(id: int) -> int {
-    let from0 = op_start[id]
-    let len0 = op_len[id]
+    let from0 = op_start_span(id)
+    let len0 = op_len_len(id)
+    // A span in the floaters section belongs to a node painted as (or inside) a
+    // floater on an earlier frame — that section is re-recorded, so the span
+    // is stale here: record in full.
+    if from0 + len0 > fl_section_start {
+        return 0
+    }
     rec_from = patch_ops.len
     rec_base = from0
     rec_mode = 1
     paint_node(id)
     rec_mode = 0
-    let len = patch_ops.len - rec_from
-    if len != len0 {
+    return file_patch(from0, len0, patch_ops.len - rec_from)
+}
+
+/// File the run just re-recorded (`len` ops at `rec_from`) over the retained
+/// `len0` ops at `from0`. A changed length is spliced at apply time, except a
+/// run that had no ops: with no span to anchor it, the frame records in full.
+fn file_patch(from0: int, len0: int, len: int) -> int {
+    if len != len0 && len0 == 0 {
         return 0
     }
     push(patch_dst, from0)
     push(patch_src, rec_from)
     push(patch_len, len)
+    push(patch_len0, len0)
     patch_runs = patch_runs + 1
     return 1
 }
@@ -1684,9 +1729,21 @@ fn patch_node(id: int) -> int {
         return 1
     }
     if arena.want_paint(id) == 0 {
-        // It had ops and must now emit none: the run shrank, so shift is needed.
-        if op_len_len(id) != 0 {
-            return 0
+        // It had ops and must now emit none: splice its run out.
+        let len0 = op_len_len(id)
+        if len0 != 0 {
+            rec_from = patch_ops.len
+            // Filed as re-recorded (to nothing), so its descendants' spans are
+            // dropped by the remap.
+            while rerec_stamp.len <= id {
+                push(rerec_stamp, 0)
+                push(rerec_patch, 0)
+            }
+            rerec_stamp[id] = rerec_gen
+            rerec_patch[id] = patch_dst.len
+            let ok = file_patch(op_start_span(id), len0, 0)
+            op_len[id] = 0
+            return ok
         }
         return 1
     }
@@ -1712,15 +1769,7 @@ fn patch_shell(id: int) -> int {
     rec_mode = 1
     paint_node_shaped(id)
     rec_mode = 0
-    let len = patch_ops.len - rec_from
-    if len != len0 {
-        return 0
-    }
-    push(patch_dst, from0)
-    push(patch_src, rec_from)
-    push(patch_len, len)
-    patch_runs = patch_runs + 1
-    return 1
+    return file_patch(from0, len0, patch_ops.len - rec_from)
 }
 
 fn op_start_span(id: int) -> int {
@@ -1752,10 +1801,12 @@ fn patch_frame() -> int {
         pop(patch_dst)
         pop(patch_src)
         pop(patch_len)
+        pop(patch_len0)
     }
     while patch_ops.len > 0 {
         pop(patch_ops)
     }
+    rerec_gen = rerec_gen + 1
     arena.paint_skip_z = 1
     let ok = patch_node(arena.root_id)
     arena.paint_skip_z = 0
@@ -1763,12 +1814,24 @@ fn patch_frame() -> int {
         return 0
     }
     let n = patch_dst.len
+    let mut moved = 0
     for i in 0..n {
-        let dst = patch_dst[i]
-        let src = patch_src[i]
-        let len = patch_len[i]
-        for k in 0..len {
-            draws[dst + k] = patch_ops[src + k]
+        if patch_len[i] != patch_len0[i] {
+            moved = 1
+        }
+    }
+    if moved != 0 {
+        if splice_frame() == 0 {
+            return 0
+        }
+    } else {
+        for i in 0..n {
+            let dst = patch_dst[i]
+            let src = patch_src[i]
+            let len = patch_len[i]
+            for k in 0..len {
+                draws[dst + k] = patch_ops[src + k]
+            }
         }
     }
     // The floaters section is re-recorded whole: it is the tail of the list, so it
@@ -1776,6 +1839,125 @@ fn patch_frame() -> int {
     paint_floaters_section(1)
     patch_frames = patch_frames + 1
     return 1
+}
+
+/// Apply this frame's patches when at least one run changed length: rebuild the
+/// main region with each run swapped in (the ops between runs are copied, not
+/// re-resolved), then remap every span. A node a patch re-recorded has its span
+/// in that run's coordinates, so it shifts by the patches *before* that run; any
+/// other span maps both ends through every patch that ends at or before them —
+/// which also stretches an ancestor whose run brackets a patch.
+fn splice_frame() -> int {
+    let n = patch_dst.len
+    // Patches in list order (z-sorted siblings can file them out of order).
+    let mut ord = []int {}
+    for i in 0..n {
+        push(ord, i)
+    }
+    for i in 1..n {
+        let mut k = i
+        while k > 0 && patch_dst[ord[k - 1]] > patch_dst[ord[k]] {
+            let t = ord[k - 1]
+            ord[k - 1] = ord[k]
+            ord[k] = t
+            k = k - 1
+        }
+    }
+    // Patches must tile disjoint ranges of the main region. Two that overlap
+    // mean a span was stale (it named ops another run owns): splicing would
+    // duplicate or drop ops, so record in full instead.
+    let mut end = 0
+    for k in 0..n {
+        let i = ord[k]
+        if patch_dst[i] < end || patch_dst[i] + patch_len0[i] > fl_section_start {
+            return 0
+        }
+        end = patch_dst[i] + patch_len0[i]
+    }
+    splice_frames = splice_frames + 1
+    // `before[i]` = the shift every op at or after patch `i`'s start sees from
+    // the patches ahead of it.
+    let mut before = []int {}
+    for i in 0..n {
+        push(before, 0)
+    }
+    let mut cum = 0
+    for k in 0..n {
+        let i = ord[k]
+        before[i] = cum
+        cum = cum + patch_len[i] - patch_len0[i]
+    }
+    let mut out = []Draw {}
+    let mut pos = 0
+    for k in 0..n {
+        let i = ord[k]
+        let dst = patch_dst[i]
+        while pos < dst {
+            push(out, draws[pos])
+            pos = pos + 1
+        }
+        let src = patch_src[i]
+        for j in 0..patch_len[i] {
+            push(out, patch_ops[src + j])
+        }
+        pos = dst + patch_len0[i]
+    }
+    // The floaters section is re-recorded after this, so the copy stops there.
+    while pos < fl_section_start {
+        push(out, draws[pos])
+        pos = pos + 1
+    }
+    draws = out
+    fl_section_start = draws.len
+    let m = op_start.len
+    for id in 1..m {
+        if id < rerec_stamp.len && rerec_stamp[id] == rerec_gen && rerec_patch[id] < n {
+            op_start[id] = op_start[id] + before[rerec_patch[id]]
+        } else if under_rerec(id) != 0 {
+            // Under a run that was re-recorded without it (it no longer
+            // paints, or painted in the floaters section): its old span is
+            // gone. A later patch of it alone sees no span and records in full.
+            op_start[id] = 0
+            op_len[id] = 0
+        } else if op_len[id] > 0 || op_start[id] > 0 {
+            let s0 = op_start[id]
+            let s1 = splice_map(s0, ord)
+            op_len[id] = splice_map(s0 + op_len[id], ord) - s1
+            op_start[id] = s1
+        }
+    }
+    return 1
+}
+
+/// 1 when an ancestor of `id` had its run re-recorded this frame.
+fn under_rerec(id: int) -> int {
+    if id >= arena.nodes.len {
+        return 0
+    }
+    let mut p = arena.nodes[id].parent
+    let mut guard = 0
+    while p > 0 && p < arena.nodes.len && guard < 256 {
+        if p < rerec_stamp.len && rerec_stamp[p] == rerec_gen {
+            return 1
+        }
+        p = arena.nodes[p].parent
+        guard = guard + 1
+    }
+    return 0
+}
+
+/// Where retained offset `p` lands after the splice: shifted by every patch
+/// that ends at or before it.
+fn splice_map(p: int, ord: []int) -> int {
+    let mut q = p
+    let n = ord.len
+    for k in 0..n {
+        let i = ord[k]
+        if patch_dst[i] + patch_len0[i] <= p {
+            q = q + patch_len[i] - patch_len0[i]
+        }
+    }
+    return q
 }
 
 /// Re-record the whole frame. The fallback, and the frame that establishes the
@@ -1805,19 +1987,97 @@ fn record_frame() {
 fn paint_floaters_section(truncate: int) {
     if arena.root_id > 0 {
         if int(arena.nodes[arena.root_id].kind) != 11 {
+            // A patched frame keeps the old section to reuse unchanged runs.
+            let mut old = []Draw {}
+            let old_base = fl_section_start
             if truncate != 0 {
-                let keep = fl_section_start
-                while draws.len > keep {
+                let n = draws.len
+                for i in old_base..n {
+                    push(old, draws[i])
+                }
+                while draws.len > old_base {
                     pop(draws)
                 }
             }
             fl_section_start = draws.len
             collect_floaters(arena.root_id)
-            paint_floaters_paint()
+            paint_floaters_runs(old, old_base, truncate)
             return
         }
     }
     fl_section_start = draws.len
+    fl_clear()
+}
+
+/* The floaters section as runs: per floater, in section order, the run it
+   recorded and what it was recorded against (its box and screen origin). A
+   patched frame reuses a run whose floater is at the same place in the order,
+   has not moved, and carries no paint dirt; only the others re-record. */
+let mut fl_ids: []int = []int {}
+let mut fl_start: []int = []int {}
+let mut fl_len: []int = []int {}
+let mut fl_geo: []int = []int {}
+/// Floater runs a patched frame reused instead of re-recording (diagnostics).
+let mut fl_reused: int = 0
+
+fn paint_floaters_reused() -> int {
+    return fl_reused
+}
+
+fn fl_clear() {
+    fl_ids = []int {}
+    fl_start = []int {}
+    fl_len = []int {}
+    fl_geo = []int {}
+}
+
+/// Paint the gathered floaters as the section's runs. `reuse` = 1 on a patched
+/// frame: `old` holds the previous section (which started at `old_base`).
+fn paint_floaters_runs(old: []Draw, old_base: int, reuse: int) {
+    let n = arena.floater_id.len
+    let mut ids = []int {}
+    let mut starts = []int {}
+    let mut lens = []int {}
+    let mut geo = []int {}
+    for i in 0..n {
+        let f = arena.floater_id[i]
+        let sx = arena.floater_screen_x[i]
+        let sy = arena.floater_screen_y[i]
+        let g = []int { arena.nodes[f].x, arena.nodes[f].y, arena.nodes[f].w, arena.nodes[f].h, sx, sy }
+        let from = draws.len
+        let mut kept = 0
+        if reuse != 0 && i < fl_ids.len && fl_ids[i] == f && arena.node_paint_bits(f) == 0 {
+            let mut same = 1
+            for k in 0..6 {
+                if fl_geo[i * 6 + k] != g[k] {
+                    same = 0
+                }
+            }
+            let a = fl_start[i] - old_base
+            if same != 0 && a >= 0 && a + fl_len[i] <= old.len {
+                for k in 0..fl_len[i] {
+                    push(draws, old[a + k])
+                }
+                kept = 1
+                fl_reused = fl_reused + 1
+            }
+        }
+        if kept == 0 {
+            cur_floater = f
+            paint_one_floater(f, sx, sy)
+            cur_floater = 0
+        }
+        push(ids, f)
+        push(starts, from)
+        push(lens, draws.len - from)
+        for k in 0..6 {
+            push(geo, g[k])
+        }
+    }
+    fl_ids = ids
+    fl_start = starts
+    fl_len = lens
+    fl_geo = geo
 }
 
 /// Collect the visible floaters of `root` in z order.

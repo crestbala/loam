@@ -1,0 +1,82 @@
+// Keyed lists at scale: a 2000-row `Each` reorders, inserts and removes without
+// rebuilding rows, and two lists that use the same keys do not see each other's
+// rows (the key table is per host). Builds are counted to tell a move from a
+// rebuild.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+let mut builds: int = 0
+
+fn Row(i: int, s: string) -> Node {
+    builds = builds + 1
+    return zeus.Text(s)
+}
+
+fn expect(cond: bool, msg: string) {
+    if cond == false {
+        fmt.println("FAIL", msg, builds)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    let n = 2000
+    let mut xs = []string {}
+    for i in 0..n {
+        push(xs, "r{{i}}")
+    }
+    let a = zeus.signal(xs)
+    let b = zeus.signal(xs)
+    zeus.snapshot(240, 160, fn() -> Node {
+        zeus.Box(style = Style(direction = Direction.Column)) {
+            zui.Each(a.get(), Row)
+            zui.Each(b.get(), Row)
+        }
+    })
+    expect(builds == 2 * n, "initial build")
+
+    // Reverse: every key survives, so every row moves and none rebuilds.
+    let mut rev = []string {}
+    let mut i = n - 1
+    while i >= 0 {
+        push(rev, xs[i])
+        i = i - 1
+    }
+    a.set(rev)
+    zeus.engine_layout(240, 160)
+    expect(builds == 2 * n, "reverse rebuilt rows")
+
+    // Remove one, insert one: only the new key builds.
+    zui.remove_item(a, 0)
+    zeus.engine_layout(240, 160)
+    expect(builds == 2 * n, "remove rebuilt rows")
+    zui.insert_item(a, 5, "fresh")
+    zeus.engine_layout(240, 160)
+    expect(builds == 2 * n + 1, "insert built more than the new row")
+    expect(zeus.engine_find_text("fresh") != 0, "inserted row missing")
+
+    // The other list, same keys, is untouched and still keyed on its own host.
+    zui.remove_item(b, n - 1)
+    zeus.engine_layout(240, 160)
+    expect(builds == 2 * n + 1, "second list remove rebuilt rows")
+
+    // An unrelated write does not refresh either list.
+    let other = zeus.signal(0)
+    other.set(1)
+    zeus.engine_layout(240, 160)
+    expect(builds == 2 * n + 1, "unrelated write rebuilt rows")
+
+    // Duplicate keys cannot be keyed: the list falls back to a full rebuild.
+    let mut dup = []string {}
+    push(dup, "x")
+    push(dup, "x")
+    push(dup, "y")
+    a.set(dup)
+    zeus.engine_layout(240, 160)
+    expect(builds == 2 * n + 4, "duplicate keys did not rebuild")
+    expect(zeus.engine_find_text("y") != 0, "row after duplicates missing")
+    fmt.println("for scale ok")
+}

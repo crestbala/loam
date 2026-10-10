@@ -364,7 +364,7 @@ static void android_app_id(const char *stem, char *out, size_t n) {
     snprintf(out, n, "com.loam.%s", suf);
 }
 
-static int android_write_cmake(const char *path, int uses_http) {
+static int android_write_cmake(const char *path, int uses_http, int string_owns) {
     FILE *f;
     if (ensure_parent_dir(path) != 0) return 1;
     f = fopen(path, "w");
@@ -383,11 +383,11 @@ static int android_write_cmake(const char *path, int uses_http) {
     fprintf(f,
             ")\n"
             "target_include_directories(zeus PRIVATE \"%s\")\n"
-            "target_compile_definitions(zeus PRIVATE LOAM_ANDROID LOAM_ALLOC_TRACE)\n"
+            "target_compile_definitions(zeus PRIVATE LOAM_ANDROID LOAM_ALLOC_TRACE%s)\n"
             "target_compile_options(zeus PRIVATE -std=gnu99 -O1 -ffp-contract=off "
             "-fno-asynchronous-unwind-tables)\n"
             "target_link_libraries(zeus android log)\n",
-            LOAM_RUNTIME_DIR);
+            LOAM_RUNTIME_DIR, string_owns ? " LOAM_STRING_OWNS" : "");
     fclose(f);
     return 0;
 }
@@ -441,7 +441,7 @@ static int android_copy(const char *src, const char *dst) {
 }
 
 static int android_emit_project(const char *proj, const char *cpath, const char *app_id,
-                                int uses_http) {
+                                int uses_http, int string_owns) {
     char src[1536], dst[1536], sdk[1024];
     if (mkdir_p(proj) != 0) return 1;
     snprintf(src, sizeof src, "%s/hosts/android/java/com/loam/zeus/ZeusActivity.java", LOAM_ZEUS_DIR);
@@ -468,7 +468,7 @@ static int android_emit_project(const char *proj, const char *cpath, const char 
     snprintf(dst, sizeof dst, "%s/app/src/main/cpp/app.c", proj);
     if (android_copy(cpath, dst) != 0) return 1;
     snprintf(dst, sizeof dst, "%s/app/src/main/cpp/CMakeLists.txt", proj);
-    if (android_write_cmake(dst, uses_http) != 0) return 1;
+    if (android_write_cmake(dst, uses_http, string_owns) != 0) return 1;
     snprintf(dst, sizeof dst, "%s/app/build.gradle", proj);
     if (android_write_app_gradle(dst, app_id) != 0) return 1;
     if (find_android_sdk(sdk, sizeof sdk) == 0) {
@@ -530,6 +530,16 @@ static int android_run(const char *proj, const char *pkg) {
              "adb shell am start -n %s/com.loam.zeus.ZeusActivity",
              java_export, sdk, sdk, sdk, proj, gradle, pkg);
     return system(cmd) != 0;
+}
+
+/** Print session warnings to stderr (a build with warnings still succeeds). */
+static void print_warns(LoamSession *s) {
+    for (int i = 0; i < s->nwarn; i++) {
+        LoamDiag *d = &s->warns[i];
+        fprintf(stderr, "%s:%d:%d: warning: %s\n",
+                d->file && d->file[0] ? d->file : "<unknown>",
+                d->line, d->col, d->msg);
+    }
 }
 
 /** Print session diagnostics to stderr. */
@@ -739,7 +749,9 @@ int main(int argc, char **argv) {
     double t0 = now_sec();
     LoamSession sess;
     loam_session_init(&sess);
-    if (loam_session_check(&sess, in_path, NULL) != 0) {
+    int check_rc = loam_session_check(&sess, in_path, NULL);
+    print_warns(&sess);
+    if (check_rc != 0) {
         print_diags(&sess);
         loam_session_free(&sess);
         return 1;
@@ -926,6 +938,11 @@ int main(int argc, char **argv) {
        the images it loads call into. */
     if (env_on("LOAM_HOST")) uses_zeus = 1;
 
+    /* Empty concat shares the other operand and retains it only under this
+       define. Codegen releases that operand, so every target must match or
+       the release frees a string the next piece still reads. */
+    const char *owns_def = string_owns ? " -DLOAM_STRING_OWNS" : "";
+
     char http_link[768] = "";
     if (uses_http) {
         snprintf(http_link, sizeof http_link, " \"%s/net.c\"", LOAM_RUNTIME_DIR);
@@ -984,7 +1001,10 @@ int main(int argc, char **argv) {
         /* --fatal-warnings: wasm-ld downgrades a C prototype that disagrees with
            the generated definition to a warning and links a trapping stub, so
            the program builds and then dies with a bare "unreachable" at the
-           first call. Fail the build instead. */
+           first call. Fail the build instead.
+           -Oz, not -O2: the engine's JIT inlines and unrolls on its own, so
+           clang's -O2 inlining only bloats the download (the gallery: 3.3 MB
+           at -O2, 2.0 MB at -Oz). */
         {
             char http_w[512] = "";
             if (uses_http || uses_net)
@@ -992,20 +1012,23 @@ int main(int argc, char **argv) {
             if (uses_zeus) {
                 snprintf(cmdw, sizeof cmdw,
                          "\"%s\" --target=wasm32 -nostdlib -ffreestanding "
-                         "-fno-stack-protector -O2 -ffp-contract=off -DLOAM_ALLOC_TRACE -I\"%s/wasm_inc\" -I\"%s\" "
+                         "-fno-stack-protector -Oz -ffp-contract=off -DLOAM_ALLOC_TRACE%s -I\"%s/wasm_inc\" -I\"%s\" "
                          "-Wl,--no-entry -Wl,--export-dynamic -Wl,--fatal-warnings "
+                         /* The loader resets the shadow stack after a trap
+                            unwinds an export (`guardExports` in loader.js). */
+                         "-Wl,--export=__stack_pointer "
                          "-x c \"%s\" -x none "
                          "\"%s/zeus_wasm_libc.c\" \"%s/hosts/web/wasm.c\" "
                          "\"%s/zeus_plat.c\" \"%s/zeus_key.c\"%s -o \"%s\"",
-                         cc, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR, cpath, LOAM_RUNTIME_DIR,
+                         cc, owns_def, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR, cpath, LOAM_RUNTIME_DIR,
                          LOAM_ZEUS_DIR, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR, http_w, binpath);
             } else {
                 snprintf(cmdw, sizeof cmdw,
                          "\"%s\" --target=wasm32 -nostdlib -ffreestanding "
-                         "-fno-stack-protector -O2 -ffp-contract=off -I\"%s/wasm_inc\" -I\"%s\" "
+                         "-fno-stack-protector -Oz -ffp-contract=off%s -I\"%s/wasm_inc\" -I\"%s\" "
                          "-Wl,--no-entry -Wl,--export-dynamic -Wl,--export=main -Wl,--fatal-warnings "
                          "-x c \"%s\" -x none \"%s/zeus_wasm_libc.c\"%s -o \"%s\"",
-                         cc, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR, cpath, LOAM_RUNTIME_DIR,
+                         cc, owns_def, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR, cpath, LOAM_RUNTIME_DIR,
                          http_w, binpath);
             }
         }
@@ -1085,13 +1108,13 @@ int main(int argc, char **argv) {
             snprintf(http_ios, sizeof http_ios, " \"%s/net.c\"", LOAM_RUNTIME_DIR);
         snprintf(cmdios, sizeof cmdios,
                  "xcrun clang -isysroot \"%s\" -target %s-apple-ios16.0-simulator "
-                 "-O1 -ffp-contract=off -DLOAM_ALLOC_TRACE -fno-asynchronous-unwind-tables -DLOAM_IOS -I\"%s\" "
+                 "-O1 -ffp-contract=off -DLOAM_ALLOC_TRACE -fno-asynchronous-unwind-tables -DLOAM_IOS%s -I\"%s\" "
                  "-x c -std=gnu99 \"%s\" \"%s/zeus_plat.c\" \"%s/zeus_key.c\"%s "
                  "-x objective-c -fno-objc-arc \"%s/hosts/ios/ios.m\" "
                  "-framework UIKit -framework Foundation -framework CoreGraphics "
                  "-framework CoreText -framework QuartzCore "
                  "-framework Security -framework CoreFoundation -o \"%s\"",
-                 sdk, arch, LOAM_RUNTIME_DIR, cpath, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR,
+                 sdk, arch, owns_def, LOAM_RUNTIME_DIR, cpath, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR,
                  http_ios, LOAM_ZEUS_DIR, exe);
         t0 = now_sec();
         if (env_on("LOAM_TIME")) fprintf(stderr, "loam: cc ios\n");
@@ -1137,7 +1160,7 @@ int main(int argc, char **argv) {
             loam_session_free(&sess);
             return 1;
         }
-        if (android_emit_project(binpath, cpath, pkg, uses_http) != 0) {
+        if (android_emit_project(binpath, cpath, pkg, uses_http, string_owns) != 0) {
             fprintf(stderr, "loam: cannot write Android project to %s\n", binpath);
             if (cpath_is_temp) unlink(cpath);
             free(stem);
@@ -1189,9 +1212,7 @@ int main(int argc, char **argv) {
              /* Phase 0 arena instrumentation: the app's own C, so the flag
                 reaches `platform.plat_mem_stats()` on every frame. */
              env_on("ZEUS_MEM_STATS") ? " -DZEUS_MEM_STATS" : "",
-             /* Ownership mode: the pasted runtime's constructors/drops change
-                shape, so the generated C must compile with the same switch. */
-             string_owns ? " -DLOAM_STRING_OWNS" : "");
+             owns_def);
     const char *copt = copt_buf;
 #if defined(__APPLE__)
     const char *ld = (headless || dev) ? "" : "-Wl,-dead_strip";

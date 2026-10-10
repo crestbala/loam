@@ -1,0 +1,100 @@
+// Structural changes paint locally. Attaching or freeing a node used to set a
+// frame-wide paint mark (and drop every retained span), so a list insert, a
+// row removal or a `Match` swap re-recorded the whole frame. Now the node
+// whose kid list moved re-records its own run, spliced into the retained list,
+// and the result is byte-for-byte a full record of the same state.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn draw_sum() -> int {
+    let n = zeus.draw_count()
+    let mut s = 0
+    for i in 0..n {
+        s = (s * 31 + zeus.draw_op(i)) % 1000003
+        s = (s * 31 + zeus.draw_x(i)) % 1000003
+        s = (s * 31 + zeus.draw_y(i)) % 1000003
+        s = (s * 31 + zeus.draw_w(i)) % 1000003
+        s = (s * 31 + zeus.draw_h(i)) % 1000003
+        s = (s * 31 + zeus.draw_rgb(i)) % 1000003
+        s = (s * 31 + zeus.draw_alpha(i)) % 1000003
+        let t = zeus.draw_text(i)
+        s = (s * 31 + t.len) % 1000003
+    }
+    return s
+}
+
+/// One frame for the current state: it must patch (no full record), and the
+/// patched list must equal a full record of the same state.
+fn step(what: string) {
+    zeus.engine_layout(320, 400)
+    let full0 = zeus.paint_full_frames()
+    zeus.engine_paint()
+    must(zeus.paint_full_frames() == full0, "{{what}}: patched, not a full record")
+    let patched = draw_sum()
+    let n = zeus.draw_count()
+    zeus.paint_force_full()
+    zeus.engine_paint()
+    must(zeus.draw_count() == n, "{{what}}: same op count as a full record")
+    must(draw_sum() == patched, "{{what}}: same ops as a full record")
+}
+
+fn main() {
+    zeus.window("structure", 320, 400)
+    let items = zeus.signal([]string { "a", "b", "c" })
+    let tab = zeus.signal(0)
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 4, padding = edges(8))) {
+        zeus.Text("header")
+        zeus.Box(style = Style(direction = Direction.Column, gap = 2, background = "#eeeeee")) {
+            zui.Each(items.get(), fn(i: int, s: string) -> Node {
+                return zeus.Box(style = Style(height = px(18), background = "#3366cc")) {
+                    zeus.Text(s)
+                }
+            })
+        }
+        zui.Match(tab, fn(t: int) {
+            if t == 0 {
+                zeus.Text("tab zero")
+            } else {
+                zeus.Box(style = Style(height = px(30), background = "#cc3366")) {
+                    zeus.Text("tab one")
+                }
+            }
+        })
+        zeus.Text("footer")
+    })
+    zeus.pump_frame()
+    zeus.engine_layout(320, 400)
+    zeus.engine_paint()
+    zeus.engine_layout(320, 400)
+    zeus.engine_paint()
+
+    items.set([]string { "a", "b", "c", "d" })
+    step("append a row")
+    items.set([]string { "x", "a", "b", "c", "d" })
+    step("insert at the front")
+    items.set([]string { "x", "a", "c", "d" })
+    step("remove from the middle")
+    items.set([]string { "d", "c", "a", "x" })
+    step("reorder")
+    items.set([]string { "d", "c", "q", "x" })
+    step("replace a row")
+    tab.set(1)
+    step("swap a match arm")
+    tab.set(0)
+    step("swap it back")
+    items.set([]string {})
+    step("empty the list")
+
+    fmt.println("paint structure ok")
+}

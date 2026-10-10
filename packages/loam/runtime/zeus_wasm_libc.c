@@ -175,8 +175,8 @@ int32_t zeus_heap_used(void) {
 
 void abort(void) {
     zeus_js_panic("abort", 5);
-    for (;;) {
-    }
+    /* The host import normally throws; if it returns, trap rather than spin. */
+    __builtin_trap();
 }
 
 void exit(int c) {

@@ -1,4 +1,4 @@
-// A keyed `For` moves rows on reorder instead of rebuilding them, so per-row
+// A keyed `Each` moves rows on reorder instead of rebuilding them, so per-row
 // state survives. Here each row owns a signal that a button increments; if a
 // reorder rebuilt the row, the signal would reset and the "1" label would
 // disappear. (The streaming push/pop case is covered by zeus_for_recycle.)
@@ -6,8 +6,11 @@
 // The moved rows must also *land*: a reorder (and a remove-only reconcile)
 // changes no node's parent, so the host itself marks the tree, and the frame
 // keys its follow-up layout on that mark. Positions are asserted after each.
-// A reorder leaves the host's box as it was, so it re-solves only the host's
-// subtree; the write is attributed to the host (`bind_host`), not the frame.
+// A reorder leaves the rows' parent box as it was, so it re-solves only that
+// subtree; the write is attributed to the host (`bind_host`, through the
+// `computed` that `Each(names.get(), ...)` reads), not the frame. `Each` adds no
+// wrapper, so the rows sit in an inner column: rows directly under the root
+// would make "the parent's subtree" the whole tree.
 
 import "std:fmt"
 import "std:sys"
@@ -29,7 +32,9 @@ fn main() {
     zui.push_item(names, "Bea")
     zeus.snapshot(240, 160, fn() -> Node {
         zeus.Box(style = Style(direction = Direction.Column)) {
-            zui.For(names, fn(s) => s, Row)
+            zeus.Box(style = Style(direction = Direction.Column)) {
+                zui.Each(names.get(), Row)
+            }
         }
     })
     // Increment the first row's counter ("Ada").

@@ -370,15 +370,15 @@ lays cells out by the same `[]TableCol` spec as `TableCols`, so fixed widths
 and `align` (`Align.End` for numbers) match the header. `TableCols(cols,
 sort = sig)` makes `sortable` columns buttons that cycle none → asc → desc
 (`i + 1` / `-(i + 1)` / 0) and marks the sorted one with an arrow. The
-header only writes the signal; the rows follow it in one of two ways.
-`Table(spec, rows, cells, sort = sig)` takes a `Signal<[]T>` and a `cells`
-mapper (`fn(T) -> []string`), derives the shown order with `sort_cells`
-(numeric when the cells parse as numbers, stable), and renders through a
-keyed `For`, so a sort moves the existing row nodes; `on_pick` gets the
-index into the caller's `rows`. `VirtualTable(rows, cols, row_h, build,
-sort = sig)` wires the header the same way, and the app reorders its own
-signal in an effect (`rows.set(sort_cells(base, cells, sort.get()))`, or
-`sort_by` with a key fn) because the windowed list owns the row builder.
+header only writes the signal. `Table(spec, rows, cells, sort = sig)` takes
+a `Signal<[]T>` and a `cells` mapper (`fn(T) -> []string`) and writes `rows`
+into that column's order (`sort_cells`: numeric when the cells parse as
+numbers, stable). The body is a keyed `Each` over `rows`, so a sort moves
+the existing row nodes; `on_pick` is the index in `rows` at click time
+(`rows.get()[i]` is the item). Clearing the sort leaves the last order.
+`VirtualTable(rows, cols, row_h, build, sort = sig)` wires the header the
+same way; the window owns the row builder, so the app sets the order
+(`rows.set(sort_cells(rows.get(), cells, sort.get()))`, or `sort_by`).
 Cells, select triggers and rows, chips, tabs, and nav items truncate with a
 trailing `…` (`Text(label, ellipsis = true)`). `metrics.ellipsize`
 binary-searches the longest grapheme prefix whose width plus the mark fits the

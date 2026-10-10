@@ -6,54 +6,69 @@ import "../../../components/present.loam" as present
 import "../../../components/stocks.loam" as stocks
 import "../../../components/ui.loam" as ui
 
-fn paint_chart() {
-    let labels = stocks.labels()
-    let vals = stocks.vals()
-    let names = stocks.names()
-    if labels.len == 0 || names.len == 0 || vals.len != labels.len * names.len {
-        zeus.Text("No cached close in this range.")
-        return
+/// The page for one load state. `MatchBy` keeps the arm while the state holds,
+/// so new closes or a range change land in the arm's view signal: the chart,
+/// header and stats update in place, and only a state change (loading ->
+/// loaded, a dead server) builds another arm.
+fn arm(sym: string, v: Signal<StockView>) -> Node {
+    let st = v.peek().state
+    if st == 1 {
+        return loaded(v)
+    }
+    if st == 3 {
+        return ui.ServerDown(fn() { stocks.retry() })
+    }
+    if st == 2 {
+        return not_cached(sym)
+    }
+    return zeus.Text("Loading the cached closes for {{sym}}.")
+}
+
+fn not_cached(sym: string) -> Node {
+    return zui.Empty(icon = zeus.IC_INFO, title = "No cached closes for {{sym}}",
+                     body = "The symbol is not in a fetched NSE bhavcopy. Search, or load closes on the Data page.") {
+        zui.Button(label = "Search stocks", size = zeus.Size.Sm, on_click = fn() { router.navigate("/stocks") })
+    }
+}
+
+fn has_chart(x: StockView) -> bool {
+    let c = x.chart
+    return c.labels.len > 0 && c.names.len > 0 && c.vals.len == c.labels.len * c.names.len
+}
+
+fn chart_note(x: StockView) -> string {
+    let labels = x.chart.labels
+    if labels.len == 0 {
+        return ""
     }
     let first = labels[0]
     let last = labels[labels.len - 1]
     let n = labels.len
-    zui.Card(title = "Daily close, rupees", subtitle = "{{first}} to {{last}}. {{n}} points: the last close in each bucket. Unadjusted.") {
-        zui.LineChart(labels, names, vals, 720, 300, fit = true, decimals = stocks.decimals(),
-                      labelEvery = 0, dots = false)
-    }
+    return "{{first}} to {{last}}. {{n}} points: the last close in each bucket. Unadjusted."
 }
 
-fn paint(sym: string) {
-    let st = stocks.state()
-    if st == 0 {
-        zeus.Text("Loading the cached closes for {{sym}}.")
-        return
-    }
-    if st == 3 {
-        ui.ServerDown(fn() { stocks.retry() })
-        return
-    }
-    if st == 2 {
-        zui.Empty(icon = zeus.IC_INFO, title = "No cached closes for {{sym}}",
-                  body = "The symbol is not in a fetched NSE bhavcopy. Search, or load closes on the Data page.") {
-            zui.Button(label = "Search stocks", size = zeus.Size.Sm, on_click = fn() { router.navigate("/stocks") })
+fn loaded(v: Signal<StockView>) -> Node {
+    let chart = zeus.computed(fn() -> ChartData { return v.get().chart })
+    let stats = zeus.computed(fn() -> []string { return v.get().stats })
+    return zui.Column(0) {
+        zeus.Box(style = Style(display = zeus.shown(v.get().name.len > 0))) {
+            zui.Title(fn() -> string { return v.get().name })
         }
-        return
-    }
-    let name = stocks.name()
-    if name.len > 0 {
-        zui.Title(name)
-    }
-    zui.Row(8) {
-        zui.Badge(sym, zeus.Tint.Mute)
-        let isin = stocks.isin()
-        if isin.len > 0 {
-            zui.Badge(isin, zeus.Tint.Mute)
+        zui.Row(8) {
+            zui.Badge(fn() -> string { return v.get().sym }, zeus.Tint.Mute)
+            zui.Badge(fn() -> string { return v.get().isin }, zeus.Tint.Mute,
+                      style = Style(display = zeus.shown(v.get().isin.len > 0)))
+            zui.Badge("NSE close, not a fund", zeus.Tint.Warn)
         }
-        zui.Badge("NSE close, not a fund", zeus.Tint.Warn)
+        zeus.Text("No cached close in this range.",
+                  style = Style(display = zeus.shown(!has_chart(v.get()))))
+        zui.Card(title = "Daily close, rupees", subtitle = fn() -> string { return chart_note(v.get()) },
+                 style = Style(display = zeus.shown(has_chart(v.get())))) {
+            zui.LineChartOf(chart, 720, 300, fit = true, decimals = v.peek().decimals,
+                            labelEvery = 0, dots = false)
+        }
+        ui.StatGridOf(stats)
     }
-    paint_chart()
-    ui.StatGrid(stocks.stat_cells())
 }
 
 fn Page(p: Params) -> Node {
@@ -68,11 +83,10 @@ fn Page(p: Params) -> Node {
             stocks.focus(sym)
             zui.Segmented(stocks.range_signal(), present.range_labels())
             zeus.effect(fn() { stocks.range_tick() })
-            zui.Match(stocks.generation(), fn(g) {
-                if g >= 0 {
-                    paint(sym)
-                }
-            })
+            // Keyed by the load state and the decimals the chart was built
+            // with: everything else updates the mounted arm in place.
+            zui.MatchBy(stocks.view(), fn(x: StockView) -> string { return "{{x.state}}:{{x.decimals}}" },
+                        fn(v: Signal<StockView>) -> Node { return arm(sym, v) })
             zui.Body("The line keeps the last close in each bucket; nothing is averaged. Fund rules, exit load, stamp duty, and STT do not apply here.")
         } else {
             if sym.len > 0 {

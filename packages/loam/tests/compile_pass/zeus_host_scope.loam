@@ -1,11 +1,12 @@
-// A host (Match / For / Index) reads its signal from its refresh hook, not an
+// A host (Match / Each) reads its signal from its refresh hook, not an
 // effect, so the arena binds the host to the signal (`bind_host`): a write is
 // attributed to the host, the frame runs the hooks, and the host that rebuilds
 // marks itself. The layout that follows is then scoped to the nearest box the
-// rebuild cannot have moved — or the whole tree when there is none.
+// rebuild cannot have moved — or the root (whose box is the window) when there
+// is none, which is still a scoped re-solve, not a whole-tree solve.
 //
 // Three cases: a Match arm swap of equal size inside a fixed card (scoped); a
-// swap to a taller arm under a plain column (whole tree, and the sibling below
+// swap to a taller arm under a plain column (from the root, and the sibling below
 // moves); a keyed reorder inside a scroller (scoped, and the scroll extent is
 // untouched — a box that held cannot have changed what the scroller contains).
 
@@ -58,7 +59,7 @@ fn main() {
         let below = zeus.Text("below")
         below_id = below.id
         let sc = zui.Scroll(style = Style(height = px(20))) {
-            zui.For(names, fn(s) => s, Row)
+            zui.Each(names.get(), Row)
         }
         scroll_id = sc.id
     })
@@ -78,7 +79,7 @@ fn main() {
     let y0 = zeus.node_y(below_id)
     tall.set(1)
     zeus.engine_layout(300, 400)
-    must(zeus.layout_was_full() == 1, "a taller arm with no stable box above solves the whole tree")
+    must(zeus.layout_was_full() == 0, "a taller arm with no stable box above is not a whole-tree solve")
     must(zeus.node_y(below_id) == y0 + 30, "the sibling below moved with the taller arm")
 
     // 3. Reorder inside a scroller: scoped to the host, extent unchanged.

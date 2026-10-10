@@ -1,0 +1,62 @@
+// A struct literal that leaves two or more fields at constant defaults starts
+// from one static template of the struct (`IrInst.lit_dflt`) and stores only
+// the rest. Every kind of constant default must survive the template: numbers
+// (negative too), floats, bools, strings with escapes, `none`, a field the
+// site overrides, and a default that is not a constant (a call).
+
+import "std:fmt"
+import "std:sys"
+import "std:result"
+
+fn expect(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn no_tags() -> []string {
+    return []string{}
+}
+
+struct Props {
+    size: int = 3,
+    lift: int = -1,
+    scale: float = 1.5,
+    on: bool = true,
+    label: string = "a \"b\"\n",
+    hint: Option<string> = none,
+    pick: Option<fn() -> int> = none,
+    tags: []string = no_tags(),
+}
+
+fn make(p: Props) -> Props {
+    return p
+}
+
+fn main() {
+    let a = make(Props {})
+    expect(a.size == 3, "number default")
+    expect(a.lift == -1, "negative default")
+    expect(a.scale == 1.5, "float default")
+    expect(a.on, "bool default")
+    expect(a.label == "a \"b\"\n", "escaped string default")
+    expect(a.label.len == 6, "string default length")
+    expect(!result.is_some(a.hint), "none default")
+    expect(!result.is_some(a.pick), "none fn default")
+    expect(a.tags.len == 0, "call default")
+
+    let b = make(Props { size: 9, hint: result.some("h"), pick: result.some(fn() -> int { return 4 }) })
+    expect(b.size == 9, "override number")
+    expect(b.lift == -1, "default beside override")
+    expect(result.unwrap_some(b.hint) == "h", "override option")
+    let pick = result.unwrap_some(b.pick)
+    expect(pick() == 4, "override fn option")
+    expect(b.label == "a \"b\"\n", "string default beside override")
+
+    // The template is shared: one site's overrides never leak into the next.
+    let c = make(Props {})
+    expect(c.size == 3 && !result.is_some(c.hint), "template unchanged after override")
+    fmt.println("default template ok")
+}

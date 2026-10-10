@@ -1,0 +1,67 @@
+// RangeSlider thumbs sit on the ends of the fill, and follow their values
+// after the first layout (they were placed once at build, when the track had
+// no width yet, so both stuck at the left). Steps numbers are centred in their
+// circles (a column stretched the label to the circle's width, drawn left).
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn by_label(label: string) -> int {
+    for id in 1..zeus.arena_nodes() {
+        if zeus.node_label(id) == label {
+            return id
+        }
+    }
+    return 0
+}
+
+fn centre_x(id: int) -> int {
+    return zeus.node_x(id) + zeus.node_width(id) / 2
+}
+
+fn main() {
+    let cur = zeus.signal(0)
+    let lo = zeus.signal(20)
+    let hi = zeus.signal(80)
+    zeus.snapshot(600, 300, fn() -> Node {
+        zui.Page() {
+            zui.Steps(cur, []string { "Account", "Plan", "Review" })
+            zui.RangeSlider(lo, hi, label = "Price")
+        }
+    })
+    zeus.engine_layout(600, 300)
+
+    // Steps: the number is its own width, centred in the circle. (A label
+    // stretched across the circle has the same box centre but draws its glyph
+    // at the left edge.)
+    let one = zeus.engine_find_text("1")
+    let ring = zeus.node_parent(one)
+    must(zeus.node_width(one) < zeus.node_width(ring) / 2, "step number stretched across its circle")
+    let d = centre_x(one) - centre_x(ring)
+    must(d >= -1 && d <= 1, "step number is not centred in its circle")
+
+    // Range: thumbs apart, the low one left of the high one, on the track.
+    let a = by_label("Minimum 20")
+    let b = by_label("Maximum 80")
+    must(a > 0 && b > 0, "thumbs found")
+    let track = zeus.node_parent(a)
+    let tw = zeus.node_width(track)
+    must(zeus.node_x(a) > zeus.node_x(track) + tw / 10, "low thumb stuck at the left")
+    must(zeus.node_x(b) > zeus.node_x(a) + tw / 2, "high thumb not at 80%")
+
+    // A later value moves its thumb.
+    let x0 = zeus.node_x(a)
+    lo.set(50)
+    zeus.engine_layout(600, 300)
+    must(zeus.node_x(a) > x0, "low thumb did not follow its value")
+    fmt.println("range steps ok")
+}

@@ -1,10 +1,12 @@
 //! atoms — the smallest Zeus pieces plus the declarative primitives every other
 //! recipe builds on: labels and hairlines, badges / chips / avatars, meters and
-//! stats, spinners and skeletons, the tree primitives (If / Loop / Each / For /
-//! Index / Match / Boundary / Grid / Overlay / Scroll / Svg / Image), and the
-//! shared helpers they need.
+//! stats, spinners and skeletons, the layout primitives (Grid / Overlay /
+//! Scroll / Svg / Image), and the shared helpers they need. The control-flow
+//! primitives (`Each`, `Match`, `Show`, `Boundary`, `Scope`, ...) live in
+//! `zeus:flow`; importing it here is what makes `zui.Each` resolve.
 //!
-//! Lowest component tier: imports nothing but `zeusbase` and the leaves below it.
+//! Lowest component tier: imports `zeusbase`, `flow`, and the leaves below
+//! them, never `zeuscore/*`.
 
 import "zeus:structs"
 import "zeus:enums"
@@ -15,9 +17,7 @@ import "zeus-components:spacing"
 import "zeus:zeus_constants"
 import "std:async"
 import "std:fmt"
-import "zeus:zeuscore/geometry"
-import "zeus:zeuscore/platform"
-import "zeus:zeuscore/arena"
+import "zeus:flow"
 
 struct GridProps {
     /// CSS-subset style; see `BoxProps.style`.
@@ -98,914 +98,7 @@ fn Overlay(p: OverlayProps) -> Node {
                      ref = p.ref, keys = p.keys)
 }
 
-struct ShowProps {
-    /// Re-read when a signal it reads moves: `when = tab.get() == 2`.
-    when: fn() -> bool,
-    /// false: the body is built once and kept; `when` toggles layout only.
-    /// true: the body is built on the first true and freed on each false.
-    lazy: bool = false,
-    /// The trailing block: the body.
-    children: fn() = noop,
-    /// Style, merged over the host column's own.
-    style: Option<fn() -> Style> = none,
-}
 
-/// Reactive presence. A column that skips layout (and takes no gap slot)
-/// while `when` is false. Unlike a build-time `if`, it follows `when`.
-fn Show(p: ShowProps) -> Node {
-    // A plain signal, written by an effect: layout and the `Match` host read
-    // `on` raw, and a `computed` is only refreshed when something pulls it.
-    let on = signal(0)
-    effect(fn() {
-        let v = if p.when() { 1 } else { 0 }
-        if on.peek() != v {
-            on.set(v)
-        }
-    })
-    return Box(style = merge(Style(direction = Direction.Column), style_of(p.style)),
-               visible = on.get() == 1) {
-        if p.lazy {
-            Match(on, fn(v: int) {
-                if v == 1 {
-                    p.children()
-                }
-            })
-        } else {
-            p.children()
-        }
-    }
-}
-
-/// Run `build(i, item)` for each element, once, at build time. `[]T` is Copy
-/// when `T` is Copy, so this is safe inside a trailing block. This is the
-/// *static* loop — the sequence is fixed at build time. For a list that follows
-/// a signal, use `Each`.
-fn Loop<T>(items: []T, build: fn(int, T) -> Node) {
-    let n = items.len
-    for i in 0..n {
-        build(i, items[i])
-    }
-}
-
-/// Append `v` to a live list signal and notify. Use with `For` / `VirtualList`.
-/// A windowed list only rebuilds the visible window, not every row.
-fn push_item<T>(sig: Signal<[]T>, v: T) {
-    let mut xs = sig.get()
-    push(xs, v)
-    sig.set(xs)
-}
-
-/// Insert `v` at index `i` (clamped to `0..len`). Use with `For` / `VirtualList`.
-fn insert_item<T>(sig: Signal<[]T>, i: int, v: T) {
-    let xs = sig.get()
-    let n = xs.len
-    let mut at = i
-    if at < 0 {
-        at = 0
-    }
-    if at > n {
-        at = n
-    }
-    let mut out = []T {}
-    let mut j = 0
-    while j < at {
-        push(out, xs[j])
-        j = j + 1
-    }
-    push(out, v)
-    while j < n {
-        push(out, xs[j])
-        j = j + 1
-    }
-    sig.set(out)
-}
-
-/// Remove the item at index `i`. No-op if `i` is out of range.
-fn remove_item<T>(sig: Signal<[]T>, i: int) {
-    let xs = sig.get()
-    let n = xs.len
-    if i < 0 {
-        return
-    }
-    if i >= n {
-        return
-    }
-    let mut out = []T {}
-    let mut j = 0
-    while j < n {
-        if j != i {
-            push(out, xs[j])
-        }
-        j = j + 1
-    }
-    sig.set(out)
-}
-
-/// Remove the last item from a live list signal. No-op if empty.
-fn pop_item<T>(sig: Signal<[]T>) {
-    let mut xs = sig.get()
-    if xs.len > 0 {
-        pop(xs)
-        sig.set(xs)
-    }
-}
-
-fn virtual_refresh<T>(node_id: int, items: Signal<[]T>, build: fn(int, T) -> Node, row_h: int) {
-    let xs = items.get()
-    let m = xs.len
-    let gen = platform.plat_sig_gen(items.id)
-    let mut first = 0
-    let mut last = m
-    if row_h > 0 {
-        let w = virtual_window(node_id, m, row_h)
-        first = w.first
-        last = w.last
-    }
-    if gen == arena.nodes[node_id].list_gen {
-        if first == arena.nodes[node_id].list_lo {
-            if last == arena.nodes[node_id].list_hi {
-                if arena.nodes[node_id].kids.len > 0 {
-                    return
-                }
-                if m == 0 {
-                    arena.nodes[node_id].list_n = 0
-                    return
-                }
-            }
-        }
-    }
-    arena.nodes[node_id].list_gen = gen
-    arena.nodes[node_id].list_lo = first
-    arena.nodes[node_id].list_hi = last
-    arena.nodes[node_id].list_n = m
-    arena.nodes[node_id].row_h = row_h
-    // Everything the builder allocated last time is owned by this host:
-    // signals and interned handlers are freed (and their ids recycled) on
-    // the next rebuild, so streaming data does not grow the arena. A
-    // windowed list only (re)builds the visible rows — append / insert
-    // outside the window is a spacer resize, not O(n) widgets.
-    let previous = arena.rebuild_begin(node_id)
-    ui_push(node_id)
-    if row_h > 0 {
-        if first > 0 {
-            let top = raw_spacer()
-            set_height(top, first * row_h)
-            Component(top)
-        }
-    }
-    let mut i = first
-    while i < last {
-        build(i, xs[i])
-        i = i + 1
-    }
-    if row_h > 0 {
-        if last < m {
-            let bot = raw_spacer()
-            set_height(bot, (m - last) * row_h)
-            Component(bot)
-        }
-    }
-    ui_pop()
-    arena.rebuild_end(previous)
-}
-
-/// A spacer row under `node_id` keyed by `k`, reused across shifts: only its
-/// height changes, so a scroll does not reallocate it. Returns the node id.
-fn keyed_spacer(node_id: int, k: string, px: int) -> int {
-    let id = arena.key_node(node_id, k)
-    if id > 0 {
-        set_height(node_handle(id), px)
-        return id
-    }
-    let s = raw_spacer()
-    set_height(s, px)
-    arena.nodes[s.id].parent = node_id
-    arena.key_set(node_id, k, s.id)
-    return s.id
-}
-
-/// Free a spacer keyed `k` under `node_id` when the window reaches the end.
-fn drop_keyed_spacer(node_id: int, k: string) {
-    let id = arena.key_node(node_id, k)
-    if id > 0 {
-        arena.key_forget(node_id, k)
-        arena.free_subtree(id)
-    }
-}
-
-/// Keyed windowed refresh. Like `virtual_refresh`, but a one-row scroll shift
-/// **moves** the rows whose key is still in the window and builds only the row
-/// entering it, instead of rebuilding every visible row. That is what keeps a
-/// scroll from allocating a fresh closure per visible row per frame (the
-/// `docs/mem-baseline.md` §5.1 growth): the delta is O(rows entering/leaving),
-/// not O(window). `key(item)` must be stable and unique.
-fn virtual_refresh_keyed<T>(node_id: int, items: Signal<[]T>, key: fn(T) -> string,
-                            build: fn(int, T) -> Node, row_h: int) {
-    let xs = items.get()
-    let m = xs.len
-    let w = virtual_window(node_id, m, row_h)
-    let first = w.first
-    let last = w.last
-    let gen = platform.plat_sig_gen(items.id)
-    if gen == arena.nodes[node_id].list_gen {
-        if first == arena.nodes[node_id].list_lo {
-            if last == arena.nodes[node_id].list_hi {
-                if arena.nodes[node_id].kids.len > 0 {
-                    return
-                }
-                if m == 0 {
-                    arena.nodes[node_id].list_n = 0
-                    return
-                }
-            }
-        }
-    }
-    // Fall back to the plain (rebuild-all) path if any row is unkeyed or two
-    // visible rows share a key: the move is only sound with a clean key set.
-    let mut keys = []string {}
-    let mut i = first
-    let mut ok = 1
-    while i < last {
-        let k = key(xs[i])
-        if kfor_has(keys, k) == 1 {
-            ok = 0
-            break
-        }
-        push(keys, k)
-        i = i + 1
-    }
-    if ok == 0 {
-        virtual_refresh(node_id, items, build, row_h)
-        return
-    }
-    // Existing keyed rows (from a previous keyed refresh) that are still visible
-    // are kept in place; everything else is built or freed below.
-    let old = arena.key_keys(node_id)
-    let mut o = 0
-    while o < old.len {
-        if arena.key_node(node_id, old[o]) <= 0 {
-            ok = 0
-            break
-        }
-        o = o + 1
-    }
-    if ok == 0 {
-        virtual_refresh(node_id, items, build, row_h)
-        return
-    }
-    arena.nodes[node_id].list_gen = gen
-    arena.nodes[node_id].list_lo = first
-    arena.nodes[node_id].list_hi = last
-    arena.nodes[node_id].list_n = m
-    arena.nodes[node_id].row_h = row_h
-    // Build the rows entering the window, under the host's build scope, so each
-    // row owns only what it allocated.
-    let previous = arena.scope_begin(node_id)
-    ui_push(node_id)
-    i = first
-    while i < last {
-        if arena.key_node(node_id, keys[i - first]) <= 0 {
-            let before = arena.nodes[node_id].kids.len
-            let s_mark = arena.rec_sid.len
-            let f_mark = arena.rec_fid.len
-            build(i, xs[i])
-            let after = arena.nodes[node_id].kids.len
-            if after == before + 1 {
-                let row = arena.nodes[node_id].kids[before]
-                arena.adopt_records(node_id, row, s_mark, f_mark)
-                arena.key_set(node_id, keys[i - first], row)
-            } else {
-                arena.key_set(node_id, keys[i - first], 0)
-            }
-        }
-        i = i + 1
-    }
-    ui_pop()
-    arena.scope_end(previous)
-    // Free the rows whose key left the window. The spacer keys are not rows;
-    // they are kept and updated below.
-    o = 0
-    while o < old.len {
-        if old[o] != "@top" {
-            if old[o] != "@bot" {
-                if kfor_has(keys, old[o]) == 0 {
-                    let row = arena.key_node(node_id, old[o])
-                    arena.key_forget(node_id, old[o])
-                    if row > 0 {
-                        arena.free_subtree(row)
-                    }
-                }
-            }
-        }
-        o = o + 1
-    }
-    // Order the children: top spacer (rows before the window), the visible
-    // keyed rows in list order, then the bottom spacer (rows after the window).
-    // A spacer is itself keyed (`@top` / `@bot`) and reused across shifts so a
-    // scroll only resizes it, never reallocates it.
-    let mut order = []int {}
-    if row_h > 0 {
-        if first > 0 {
-            let top = keyed_spacer(node_id, "@top", first * row_h)
-            push(order, top)
-        } else {
-            drop_keyed_spacer(node_id, "@top")
-        }
-    }
-    i = 0
-    while i < keys.len {
-        let row = arena.key_node(node_id, keys[i])
-        if row > 0 {
-            arena.nodes[row].parent = node_id
-            push(order, row)
-        }
-        i = i + 1
-    }
-    if row_h > 0 {
-        if last < m {
-            let bot = keyed_spacer(node_id, "@bot", (m - last) * row_h)
-            push(order, bot)
-        } else {
-            drop_keyed_spacer(node_id, "@bot")
-        }
-    }
-    // Free any current child the new order does not keep (a replaced spacer or
-    // a row already freed above leaves a stale id here).
-    let cur = arena.nodes[node_id].kids
-    let mut c = 0
-    while c < cur.len {
-        let child = cur[c]
-        if child > 0 {
-            if kfor_has_id(order, child) == 0 {
-                arena.free_subtree(child)
-            }
-        }
-        c = c + 1
-    }
-    arena.nodes[node_id].kids = order
-    arena.mark_tree_at(node_id)
-}
-
-fn virtual_row_h(heights: []int, i: int, fallback: int) -> int {
-    if i >= 0 {
-        if i < heights.len {
-            if heights[i] > 0 {
-                return heights[i]
-            }
-        }
-    }
-    return fallback
-}
-
-fn virtual_prefix(heights: []int, n: int, fallback: int) -> int {
-    let mut y = 0
-    let mut i = 0
-    while i < n {
-        y = y + virtual_row_h(heights, i, fallback)
-        i = i + 1
-    }
-    return y
-}
-
-fn virt_window_var(node_id: int, n: int, heights: []int, fallback: int) -> VirtWin {
-    if heights.len == 0 {
-        return virtual_window(node_id, n, fallback)
-    }
-    let signal_id = find_scroller(node_id)
-    let mut view_h = 240
-    let mut local = 0
-    if signal_id > 0 {
-        if arena.nodes[signal_id].h > 0 {
-            view_h = arena.nodes[signal_id].h
-        }
-        if node_id == signal_id {
-            local = arena.nodes[signal_id].scroll_y
-        } else {
-            local = arena.nodes[signal_id].scroll_y - (arena.nodes[node_id].y - arena.nodes[signal_id].y)
-        }
-    } else if arena.nodes[node_id].h > 0 {
-        view_h = arena.nodes[node_id].h
-    }
-    if local < 0 {
-        local = 0
-    }
-    let mut acc = 0
-    let mut first = n
-    let mut last = n
-    let mut i = 0
-    while i < n {
-        let rh = virtual_row_h(heights, i, fallback)
-        if acc + rh > local {
-            first = i
-            break
-        }
-        acc = acc + rh
-        i = i + 1
-    }
-    first = first - VIRT_OVERSCAN
-    if first < 0 {
-        first = 0
-    }
-    acc = virtual_prefix(heights, first, fallback)
-    last = first
-    while last < n {
-        if acc >= local + view_h {
-            last = last + VIRT_OVERSCAN
-            if last > n {
-                last = n
-            }
-            return VirtWin { first: first, last: last }
-        }
-        acc = acc + virtual_row_h(heights, last, fallback)
-        last = last + 1
-    }
-    return VirtWin { first: first, last: last }
-}
-
-fn virt_refresh_var<T>(node_id: int, items: Signal<[]T>, build: fn(int, T) -> Node, fallback: int,
-                       heights: Signal<[]int>) {
-    let xs = items.get()
-    let hs = heights.get()
-    let m = xs.len
-    let gen = platform.plat_sig_gen(items.id) + platform.plat_sig_gen(heights.id)
-    let w = virt_window_var(node_id, m, hs, fallback)
-    let first = w.first
-    let last = w.last
-    if gen == arena.nodes[node_id].list_gen {
-        if first == arena.nodes[node_id].list_lo {
-            if last == arena.nodes[node_id].list_hi {
-                if arena.nodes[node_id].kids.len > 0 {
-                    return
-                }
-                if m == 0 {
-                    arena.nodes[node_id].list_n = 0
-                    return
-                }
-            }
-        }
-    }
-    arena.nodes[node_id].list_gen = gen
-    arena.nodes[node_id].list_lo = first
-    arena.nodes[node_id].list_hi = last
-    arena.nodes[node_id].list_n = m
-    arena.nodes[node_id].row_h = fallback
-    let previous = arena.rebuild_begin(node_id)
-    ui_push(node_id)
-    if first > 0 {
-        let top = raw_spacer()
-        set_height(top, virtual_prefix(hs, first, fallback))
-        Component(top)
-    }
-    let mut i = first
-    while i < last {
-        build(i, xs[i])
-        i = i + 1
-    }
-    if last < m {
-        let bot = raw_spacer()
-        set_height(bot, virtual_prefix(hs, m, fallback) - virtual_prefix(hs, last, fallback))
-        Component(bot)
-    }
-    ui_pop()
-    arena.rebuild_end(previous)
-}
-
-/// Positional list. `items` is `zeus.signal([]T {})` (`T` Copy). Rows are
-/// rebuilt in place on every change; use `For` when a row must keep its state
-/// across a reorder.
-fn Index<T>(items: Signal<[]T>, build: fn(int, T) -> Node) -> Node {
-    let n = raw_box()
-    let node_id = n.id
-    arena.bind_host(items.id, node_id)
-    virtual_refresh(node_id, items, build, 0)
-    return Component(n,
-                     style = Style(direction = Direction.Column),
-                     rebuild = || { virtual_refresh(node_id, items, build, 0) })
-}
-
-fn kfor_unique<T>(xs: []T, key: fn(T) -> string, m: int) -> int {
-    let mut i = 0
-    while i < m {
-        let mut j = i + 1
-        while j < m {
-            if key(xs[i]) == key(xs[j]) {
-                return 0
-            }
-            j = j + 1
-        }
-        i = i + 1
-    }
-    return 1
-}
-
-fn kfor_unique_keys(keys: []string, m: int) -> int {
-    let mut i = 0
-    while i < m {
-        let mut j = i + 1
-        while j < m {
-            if keys[i] == keys[j] {
-                return 0
-            }
-            j = j + 1
-        }
-        i = i + 1
-    }
-    return 1
-}
-
-fn kfor_has(keys: []string, k: string) -> int {
-    let n = keys.len
-    for i in 0..n {
-        if keys[i] == k {
-            return 1
-        }
-    }
-    return 0
-}
-
-fn kfor_has_id(ids: []int, v: int) -> int {
-    let n = ids.len
-    for i in 0..n {
-        if ids[i] == v {
-            return 1
-        }
-    }
-    return 0
-}
-
-/// Keyed reactive list: the general form of `For`, and the reactive `Each`.
-/// `items` is `zeus.signal([]T {})` (`T` Copy); `key(item)` must return a
-/// stable, unique string. Rows mount once per key and **move** on reorder, so
-/// focus and per-row state survive, and an insert or remove builds or frees only
-/// the affected row — O(changes) in rows, where a rebuild would be O(rows).
-/// `build(i, item)` runs at mount; for content that follows the item, read a
-/// signal inside the row instead of `i`.
-fn Each<T>(items: Signal<[]T>, key: fn(T) -> string, build: fn(int, T) -> Node) -> Node {
-    let n = raw_box()
-    let node_id = n.id
-    arena.bind_host(items.id, node_id)
-    kfor_refresh(node_id, items, key, build)
-    return Component(n,
-                     style = Style(direction = Direction.Column),
-                     rebuild = || { kfor_refresh(node_id, items, key, build) })
-}
-
-/// Keyed list. Same engine as `Each`; `For` reads as the list widget, `Each` as
-/// the broadcast case. Reach for `Loop` when the sequence is fixed at build
-/// time and no host node is wanted.
-fn For<T>(items: Signal<[]T>, key: fn(T) -> string, build: fn(int, T) -> Node) -> Node {
-    return Each(items, key, build)
-}
-
-fn kfor_refresh<T>(node_id: int, items: Signal<[]T>, key: fn(T) -> string, build: fn(int, T) -> Node) {
-    let xs = items.get()
-    let m = xs.len
-    // Fast path 0: the list has not moved and still has a row per key. The key
-    // functions are arbitrary (usually building a string), and the uniqueness and
-    // lookup passes below are O(rows) and O(rows^2), so this guard is what makes an
-    // untouched list cost O(1) per layout instead of re-deriving every key. The
-    // count check catches a row freed out from under the host.
-    if platform.plat_sig_gen(items.id) == arena.nodes[node_id].list_gen {
-        if arena.key_count(node_id) == m {
-            return
-        }
-    }
-    // Fast path: the key set is unchanged, so move the existing rows into the
-    // new order. Node ids, focus, scroll and row state all survive; nothing is
-    // allocated. A changed key set (or duplicate keys) falls through.
-    if arena.key_count(node_id) == m {
-        if kfor_unique(xs, key, m) == 1 {
-            let mut ok = 1
-            let mut i = 0
-            while i < m {
-                if arena.key_node(node_id, key(xs[i])) <= 0 {
-                    ok = 0
-                    break
-                }
-                i = i + 1
-            }
-            if ok == 1 {
-                let mut order = []int {}
-                let mut j = 0
-                while j < m {
-                    push(order, arena.key_node(node_id, key(xs[j])))
-                    j = j + 1
-                }
-                arena.nodes[node_id].kids = order
-                arena.nodes[node_id].list_gen = platform.plat_sig_gen(items.id)
-                // Rows moved without any child insert / drop, so nothing has
-                // marked the tree yet; the frame keys its follow-up layout on
-                // that mark.
-                arena.mark_tree_at(node_id)
-                return
-            }
-        }
-    }
-    // Incremental path: keep the rows whose key survives, build only the new
-    // keys, free only the rows whose key is gone. This is O(changes) in rows,
-    // where the full rebuild below is O(rows).
-    if kfor_reconcile(node_id, xs, key, build) != 0 {
-        arena.nodes[node_id].list_gen = platform.plat_sig_gen(items.id)
-        return
-    }
-    // Slow path: rebuild the host; every row is re-created and recycled.
-    kfor_rebuild(node_id, xs, key, build)
-    arena.nodes[node_id].list_gen = platform.plat_sig_gen(items.id)
-}
-
-/// Reconcile the host's rows against `xs` in place: move the shared rows, build
-/// the new keys, free the removed ones. Returns 0 when the shape is not
-/// reconcilable — duplicate keys, a row builder that mounts zero or several
-/// top-level children, or an existing unkeyed row — leaving the caller to fall
-/// back to a full rebuild.
-///
-/// Nothing is torn down until every new row has built cleanly and every key
-/// resolves to a row, so a fallback cannot leak a half-adopted row: the rows
-/// built here stay owned by the host until `adopt_records` hands each its own
-/// signals and handlers, and a fallback's `rebuild_begin` releases host-owned
-/// records exactly as before.
-fn kfor_reconcile<T>(node_id: int, xs: []T, key: fn(T) -> string, build: fn(int, T) -> Node) -> int {
-    let m = xs.len
-    let mut nk = []string {}
-    let mut i = 0
-    while i < m {
-        push(nk, key(xs[i]))
-        i = i + 1
-    }
-    if kfor_unique_keys(nk, m) == 0 {
-        return 0
-    }
-    let old = arena.key_keys(node_id)
-    let mut o = 0
-    while o < old.len {
-        if arena.key_node(node_id, old[o]) <= 0 {
-            return 0
-        }
-        o = o + 1
-    }
-    // Build the rows whose key is new, under the host's build scope. Each row's
-    // allocations are handed to it the moment it builds, so a later row cannot
-    // claim them (an unbounded later sweep would).
-    let previous = arena.scope_begin(node_id)
-    ui_push(node_id)
-    let mut ok = 1
-    i = 0
-    while i < m {
-        if ok != 0 {
-            if arena.key_node(node_id, nk[i]) <= 0 {
-                let before = arena.nodes[node_id].kids.len
-                let s_mark = arena.rec_sid.len
-                let f_mark = arena.rec_fid.len
-                build(i, xs[i])
-                let after = arena.nodes[node_id].kids.len
-                if after == before + 1 {
-                    let row = arena.nodes[node_id].kids[before]
-                    arena.adopt_records(node_id, row, s_mark, f_mark)
-                    arena.key_set(node_id, nk[i], row)
-                } else {
-                    // A row that is not a single top-level child cannot be
-                    // moved or keyed; rebuild rather than reorder a partial row.
-                    arena.key_set(node_id, nk[i], 0)
-                    ok = 0
-                }
-            }
-        }
-        i = i + 1
-    }
-    ui_pop()
-    arena.scope_end(previous)
-    if ok == 0 {
-        return 0
-    }
-    // Free the rows whose key is gone. Only now that a fallback is impossible.
-    o = 0
-    while o < old.len {
-        if kfor_has(nk, old[o]) == 0 {
-            let row = arena.key_node(node_id, old[o])
-            arena.key_forget(node_id, old[o])
-            if row > 0 {
-                arena.free_subtree(row)
-            }
-        }
-        o = o + 1
-    }
-    // Order the kids by the new key sequence. Every key resolves now, so the
-    // array holds only live rows.
-    let mut order = []int {}
-    i = 0
-    while i < m {
-        push(order, arena.key_node(node_id, nk[i]))
-        i = i + 1
-    }
-    // A duplicate key overwrites its key entry, so the earlier row is a child
-    // the table no longer names. Replacing `kids` would orphan it — free every
-    // current child that the new order does not keep.
-    let cur = arena.nodes[node_id].kids
-    let mut c = 0
-    while c < cur.len {
-        let child = cur[c]
-        if child > 0 {
-            if kfor_has_id(order, child) == 0 {
-                arena.free_subtree(child)
-            }
-        }
-        c = c + 1
-    }
-    arena.nodes[node_id].kids = order
-    // A remove-only reconcile frees rows without inserting any, and a freed
-    // node does not mark the tree; the host does, so the frame re-lays out.
-    arena.mark_tree_at(node_id)
-    return 1
-}
-
-/// Full rebuild: free everything the host owned and re-create every row. The
-/// fallback whenever a reconcile cannot be done in place.
-fn kfor_rebuild<T>(node_id: int, xs: []T, key: fn(T) -> string, build: fn(int, T) -> Node) {
-    let m = xs.len
-    // A prior reconcile may have adopted records onto the rows; hand them back
-    // so `rebuild_begin` frees them with the rest.
-    arena.release_children_ownership(node_id)
-    arena.key_clear(node_id)
-    let previous = arena.rebuild_begin(node_id)
-    ui_push(node_id)
-    let mut i = 0
-    while i < m {
-        let before = arena.nodes[node_id].kids.len
-        build(i, xs[i])
-        let after = arena.nodes[node_id].kids.len
-        // A row must be a single top-level child to be movable. If the builder
-        // mounted zero or several, record nothing so the next update rebuilds
-        // rather than reorders a partial row.
-        if after == before + 1 {
-            arena.key_set(node_id, key(xs[i]), arena.nodes[node_id].kids[before])
-        } else {
-            arena.key_set(node_id, key(xs[i]), 0)
-        }
-        i = i + 1
-    }
-    ui_pop()
-    arena.rebuild_end(previous)
-}
-
-/// One arm mounted at a time. `on` is a live signal; `build(value)` rebuilds
-/// the host whenever `on` changes, so only the current arm is in the tree.
-/// Pair with an integer tag signal for a switch/match.
-fn Match<T>(on: Signal<T>, build: fn(T) -> Node) -> Node {
-    let n = raw_box()
-    let node_id = n.id
-    // A write to `on` swaps the mounted arm. The host's refresh hook is what
-    // reads `on`, not an effect, so bind it: the write is attributed to this
-    // node — a scoped layout, and the frame runs the hooks — instead of being
-    // paint-only (or, read by a paint effect elsewhere, consumed by that).
-    arena.bind_host(on.id, node_id)
-    match_build(node_id, on, build)
-    return Component(n,
-                     style = Style(direction = Direction.Column),
-                     rebuild = || { match_refresh(node_id, on, build) })
-}
-
-/// Tear the subtree down and rebuild it for the current value of `on`.
-/// `list_gen` records the slot it was built from, so `match_refresh` can tell
-/// a real change from a bare refresh sweep.
-fn match_build<T>(node_id: int, on: Signal<T>, build: fn(T) -> Node) {
-    arena.nodes[node_id].list_gen = platform.plat_sig_gen(on.id)
-    let previous = arena.rebuild_begin(node_id)
-    ui_push(node_id)
-    build(on.get())
-    ui_pop()
-    arena.rebuild_end(previous)
-}
-
-/// `refresh_lists` invokes every node that has a `list_fn`, on every layout.
-/// The refit and For/Index hosts all return early when nothing changed; Match
-/// did not, so each layout ran `rebuild_begin` — which calls `release_sigs` —
-/// and every `zeus.signal` the page declared was freed and re-created at its
-/// initial value. Page state reset on any repaint, which reads as "signals
-/// don't work" in a routed app. Rebuild only when `on` actually moved.
-fn match_refresh<T>(node_id: int, on: Signal<T>, build: fn(T) -> Node) {
-    if platform.plat_sig_gen(on.id) == arena.nodes[node_id].list_gen {
-        return
-    }
-    match_build(node_id, on, build)
-}
-
-/// Error boundary. `build()` runs under a recoverable trap; if it traps, the
-/// partial subtree is discarded, the arena is rolled back to its entry mark,
-/// and `fallback(message)` is built in its place, so the rest of the app keeps
-/// running. Recovers UI state only: C-seam side effects (I/O, network) are not
-/// undone, and a trap raised outside `build` (e.g. in a later layout effect) is
-/// not caught. On wasm there is no `setjmp`, so a trap still aborts.
-fn Boundary(build: fn() -> Node, fallback: fn(string) -> Node) -> Node {
-    let host = raw_box()
-    let hid = host.id
-    let m = arena.mark()
-    let previous = arena.scope_begin(hid)
-    ui_push(hid)
-    let stack0 = ui_parents.len
-    let msg = platform.plat_boundary(|| { build() })
-    arena.scope_end(previous)
-    if msg.len == 0 {
-        ui_pop()
-    } else {
-        // A trap skipped the normal pop: unwind the build stack by hand.
-        while ui_parents.len > stack0 {
-            pop(ui_parents)
-        }
-        ui_pop()
-        arena.rollback(hid, m)
-        ui_push(hid)
-        fallback(msg)
-        ui_pop()
-    }
-    return Component(host, style = Style(direction = Direction.Column))
-}
-
-/// Jump `n` (a `Scroll` / `VirtualList`) to vertical offset `y`. Clears
-/// residual velocity so physics does not coast past the target. Clamped.
-fn scroll_to(n: Node, y: int) -> Node {
-    arena.nodes[n.id].vel_y = 0
-    arena.nodes[n.id].scroll_y = y
-    arena.clamp_scroll(n.id)
-    if arena.nodes[n.id].bind_sig > 0 {
-        arena.store_sig(arena.nodes[n.id].bind_sig, arena.nodes[n.id].scroll_y)
-    }
-    return n
-}
-
-/// Jump `n` to horizontal offset `x`.
-fn scroll_to_x(n: Node, x: int) -> Node {
-    arena.nodes[n.id].vel_x = 0
-    arena.nodes[n.id].scroll_x = x
-    arena.clamp_scroll(n.id)
-    return n
-}
-
-/// Jump a windowed list so item `i` is at the top of the viewport.
-fn scroll_to_index(n: Node, i: int) -> Node {
-    let mut rh = arena.nodes[n.id].row_h
-    if rh < 1 {
-        rh = 1
-    }
-    let mut at = i
-    if at < 0 {
-        at = 0
-    }
-    return scroll_to(n, at * rh)
-}
-
-/// Live `scroll_y` of `n`.
-fn scroll_y(n: Node) -> int {
-    return arena.nodes[n.id].scroll_y
-}
-
-/// Width a node measured by the last layout pass (0 until the first one).
-fn measured_width(n: Node) -> int {
-    return arena.nodes[n.id].w
-}
-
-/// Re-run `build` into `host` whenever the host's measured width changes
-/// (window resize, card reflow). `host` must be widthless so it stretches
-/// with its parent. Pixel-exact widgets — charts, plots — lay out their
-/// children from the measured width, so they stay glued to the container.
-/// Rebuilds happen on the layout after a size change.
-fn refit_refresh(node_id: int, build: fn()) {
-    let w = arena.nodes[node_id].w
-    if w == arena.nodes[node_id].list_gen {
-        return
-    }
-    // A zero-width host (hidden tab, or not laid out yet) defers its rebuild
-    // until it is measured at a real width. Syncing `list_gen` here keeps it
-    // from refitting on every resize frame while off-screen.
-    if w == 0 {
-        arena.nodes[node_id].list_gen = 0
-        return
-    }
-    arena.nodes[node_id].list_gen = w
-    let previous = arena.rebuild_begin(node_id)
-    slot(node_handle(node_id), build)
-    arena.rebuild_end(previous)
-    // The rebuild released every handler the host owned — this hook among
-    // them — so register it again, or the host would refit once and then
-    // ignore every later resize.
-    arena.nodes[node_id].list_fn = refit_hook(node_id, build)
-}
-
-/// The host's refresh hook, owned by the host itself: freed with the host, and
-/// by each rebuild of it (which is why `refit_refresh` re-registers it).
-fn refit_hook(node_id: int, build: fn()) -> int {
-    let id = platform.plat_intern_fn(|| {
-        refit_refresh(node_id, build)
-    })
-    arena.record_intern(id, node_id)
-    return id
-}
-
-fn refit(host: Node, build: fn()) -> Node {
-    arena.ensure()
-    let node_id = host.id
-    arena.nodes[node_id].list_fn = refit_hook(node_id, build)
-    return host
-}
 
 /// Vertical scroller. Children keep intrinsic height; a bar appears on overflow.
 /// `bind` is an optional two-way `scroll_y` signal (`scroll_to` writes it).
@@ -1032,25 +125,6 @@ fn Image(src: fn() -> string, p: ImageProps) -> Node {
                      label = p.label, role = "img", keys = p.keys)
 }
 
-/// Open a host file picker (PNG / JPEG / WebP / GIF). Writes the chosen src
-/// into `dest` and the image's intrinsic size into `dw` / `dh`. Native hosts
-/// return from the dialog; wasm and mobile finish via `engine_picked_image`.
-fn pick_image(dest: Signal<string>, dw: Signal<int>, dh: Signal<int>) {
-    pick_dest = dest
-    pick_w = dw
-    pick_h = dh
-    let mut w = 0
-    let mut h = 0
-    let src = platform.plat_pick_image(&mut w, &mut h)
-    if src.len > 0 {
-        set(dest, src)
-        set(dw, w)
-        set(dh, h)
-        pick_dest = Signal { id: 0 }
-        pick_w = Signal { id: 0 }
-        pick_h = Signal { id: 0 }
-    }
-}
 
 /// `markup` painted at `px` square and tinted by `tint`. Returns the node so
 /// callers can bind visibility.
@@ -1381,25 +455,12 @@ fn ProgressTrack(value: Signal<int>, p: ProgressProps) -> Node {
                                     style_of(p.style)),
                       label = p.label,
                       role = "progressbar")
-    let node_id = n.id
     let signal_id = value.id
     let sweep = p.indeterminate
-    // `tween` holds the last state this bar was asked to show (-1 at build),
-    // so the next write can ease from it.
+    // The bar remembers the last state it was asked to show, so the next
+    // write can ease from it.
     effect(|| {
-        let v = value.get()
-        let last = arena.nodes[node_id].tween
-        if v < 0 || sweep {
-            arena.note_spin(node_id, 1400)
-        } else {
-            arena.clear_spin(node_id)
-            // A write from `zeus.animate` brings its own track and duration;
-            // only a plain `set` gets the default ease.
-            if last >= 0 && arena.anim_bind_on() == 0 {
-                arena.anim_paint_from(signal_id, last, Motion.Base)
-            }
-        }
-        arena.nodes[node_id].tween = v
+        progress_tween(n, signal_id, value.get(), sweep)
     })
     return n
 }
@@ -1500,7 +561,7 @@ fn Avatar(initials: string, size: int, p: AvatarProps) -> Node {
 /// first pulls left by a third of `size`.
 fn AvatarGroup(labels: []string, size: int = AvatarSize.Md) -> Node {
     return Row(0) {
-        Loop(labels, fn(i, label) {
+        Each(labels, fn(i, label) {
             return Avatar(label, size, style = avatar_overlap(i, size))
         })
     }
@@ -2200,9 +1261,10 @@ fn sort_before(raw: []string, keys: [][]int, x: int, y: int, desc: bool) -> bool
 }
 
 /// Items ordered by a `sort` value (`TableColsProps`) over their `cells`:
-/// 0 returns them as given; otherwise sorted on that column in natural order
-/// (`sort_by`). `Table` derives its shown order with this; a `VirtualTable`
-/// app calls it in an effect on its sort signal.
+/// 0 returns them as given; otherwise that column, ascending or descending,
+/// in natural order (`sort_by`). `Table` writes this order back onto its
+/// rows signal. A `VirtualTable` app does the same:
+/// `rows.set(sort_cells(rows.get(), cells, sort.get()))`.
 fn sort_cells<T>(items: []T, cells: fn(T) -> []string, sort: int) -> []T {
     let col = sort_col(sort)
     if col < 0 {
@@ -2350,6 +1412,27 @@ fn bytes_i(b: []int, v: int) -> []int {
         out.push(digits[m - 1 - i])
     }
     return out
+}
+
+/// What a chart plots: category labels, series names, and the values
+/// row-major (`vals[i * names.len + j]` is category `i`, series `j`). Hand a
+/// chart a `Signal<ChartData>` (`BarChartOf`, `LineChartOf`, `AreaChartOf`)
+/// and new data moves its marks, ticks, labels and paths through effects; only
+/// a change in the number of categories or series rebuilds it.
+struct ChartData {
+    labels: []string,
+    names: []string,
+    vals: []int,
+}
+
+/// The chart arm a value selects: its shape, and whether it is drawable.
+fn chart_shape(x: ChartData) -> string {
+    let ok = x.labels.len > 0 && x.names.len > 0 && x.vals.len == x.labels.len * x.names.len
+    return "{{x.labels.len}}x{{x.names.len}}:{{ok}}"
+}
+
+fn chart_drawable(x: ChartData) -> bool {
+    return x.labels.len > 0 && x.names.len > 0 && x.vals.len == x.labels.len * x.names.len
 }
 
 /// Value at category `i`, series `j` in the row-major flat array.
@@ -2516,33 +1599,40 @@ fn chart_fline_d(vals: []int, s: int, j: int, lo: int, hi: int, gutter: int, col
 }
 
 /// Gridlines, y ticks from `hi` down to `lo`, and the baseline.
-fn chart_faxes(w: int, h: int, lo: int, hi: int, dec: int) {
+fn chart_faxes(gw: Signal<int>, h: int, sp: Signal<[]int>, dec: int) {
     let plot_h = h - CHART_TOP - CHART_XLAB
     let base_y = CHART_TOP + plot_h
     for k in 0..4 {
-        let line = Box(style = Style(width = px(w - CHART_GUTTER),
-                                     height = px(1),
-                                     opacity = 45,
-                                     position = pos_absolute(),
-                                     inset = Edges(top = CHART_TOP + k * plot_h / 4, left = CHART_GUTTER),
-                                     background = rule()))
+        let line = Box(style = || {
+            return Style(width = px(chart_gw(gw) - CHART_GUTTER),
+                         height = px(1),
+                         opacity = 45,
+                         position = pos_absolute(),
+                         inset = Edges(top = CHART_TOP + k * plot_h / 4, left = CHART_GUTTER),
+                         background = rule())
+        })
     }
     for k in 0..5 {
-        let tv = hi - int(i64(k) * i64(hi - lo) / i64(4))
         let lab = Box(style = Style(width = px(CHART_GUTTER - 6),
                                     height = px(12),
                                     direction = Direction.Row,
                                     justify = Align.End,
                                     position = pos_absolute(),
                                     inset = Edges(top = CHART_TOP + k * plot_h / 4 - 6, left = 0))) {
-            Text(chart_tick(tv, dec, hi - lo), style = Style(font = FONT_CAPTION, color = mute()))
+            Text(fn() -> string {
+                let lh = sp.get()
+                let tv = lh[1] - int(i64(k) * i64(lh[1] - lh[0]) / i64(4))
+                return chart_tick(tv, dec, lh[1] - lh[0])
+            }, style = Style(font = FONT_CAPTION, color = mute()))
         }
     }
-    let axis = Box(style = Style(width = px(w - CHART_GUTTER),
-                                 height = px(1),
-                                 position = pos_absolute(),
-                                 inset = Edges(top = base_y, left = CHART_GUTTER),
-                                 background = hard()))
+    let axis = Box(style = || {
+        return Style(width = px(chart_gw(gw) - CHART_GUTTER),
+                     height = px(1),
+                     position = pos_absolute(),
+                     inset = Edges(top = base_y, left = CHART_GUTTER),
+                     background = hard())
+    })
 }
 
 /// A y tick. Once a quarter of the span is a whole unit or more, the
@@ -2617,6 +1707,18 @@ fn ChartLayer(markup: string, w: int, h: int) -> Node {
                              inset = Edges(top = 0, left = 0)))
 }
 
+/// `ChartLayer` that follows the plot width: the markup and the box are
+/// thunks over `gw`, so a resize rewrites the path in place.
+fn chart_layer_live(markup: fn() -> string, gw: Signal<int>, h: int) -> Node {
+    return Component(raw_svg(""), text = markup,
+                     style = || {
+                         return Style(width = px(chart_gw(gw)),
+                                      height = px(h),
+                                      position = pos_absolute(),
+                                      inset = Edges(top = 0, left = 0))
+                     })
+}
+
 /// Polyline for series `j` (straight segments — recharts default linear).
 fn chart_line_d(vals: []int, s: int, j: int, maxv: int, gutter: int, col_w: int,
                 plot_h: int, top: int, n: int) -> string {
@@ -2663,41 +1765,51 @@ fn chart_area_d(vals: []int, s: int, j: int, maxv: int, gutter: int, col_w: int,
 }
 
 /// Gridlines + y tick labels + baseline. Call with the plot pushed.
-fn chart_axes(w: int, h: int, maxv: int) {
+fn chart_axes(gw: Signal<int>, h: int, maxv: Signal<int>) {
     let plot_h = h - CHART_TOP - CHART_XLAB
     let base_y = CHART_TOP + plot_h
     // Gridlines above the baseline (top = max value).
     for k in 0..4 {
-        let line = Box(style = Style(width = px(w - CHART_GUTTER),
-                                     height = px(1),
-                                     opacity = 45,
-                                     position = pos_absolute(),
-                                     inset = Edges(top = CHART_TOP + k * plot_h / 4, left = CHART_GUTTER),
-                                     background = rule()))
+        let line = Box(style = || {
+            return Style(width = px(chart_gw(gw) - CHART_GUTTER),
+                         height = px(1),
+                         opacity = 45,
+                         position = pos_absolute(),
+                         inset = Edges(top = CHART_TOP + k * plot_h / 4, left = CHART_GUTTER),
+                         background = rule())
+        })
     }
     // Y tick labels, max .. 0 (bottom 0 sits above the baseline).
     for k in 0..5 {
-        let tv = maxv - k * maxv / 4
         let lab = Box(style = Style(width = px(CHART_GUTTER - 6),
                                     height = px(12),
                                     direction = Direction.Row,
                                     justify = Align.End,
                                     position = pos_absolute(),
                                     inset = Edges(top = CHART_TOP + k * plot_h / 4 - 6, left = 0))) {
-            Text("{{tv}}", style = Style(font = FONT_CAPTION, color = mute()))
+            Text(fn() -> string {
+                let m = maxv.get()
+                let tv = m - k * m / 4
+                return "{{tv}}"
+            }, style = Style(font = FONT_CAPTION, color = mute()))
         }
     }
     // Baseline axis.
-    let axis = Box(style = Style(width = px(w - CHART_GUTTER),
-                                 height = px(1),
-                                 position = pos_absolute(),
-                                 inset = Edges(top = base_y, left = CHART_GUTTER),
-                                 background = hard()))
+    let axis = Box(style = || {
+        return Style(width = px(chart_gw(gw) - CHART_GUTTER),
+                     height = px(1),
+                     position = pos_absolute(),
+                     inset = Edges(top = base_y, left = CHART_GUTTER),
+                     background = hard())
+    })
 }
 
 /// Tooltip width (dp) and the air between it and the mark it describes.
 const CHART_TIP_W: int = 128
 const CHART_TIP_GAP: int = 10
+/// `reach` for a bar chart's tooltip: half the bar group, which depends on the
+/// live column width, so the tooltip derives it as it places itself.
+const CHART_REACH_BARS: int = -1
 
 /// Where the tooltip goes for a mark at (`mx`, `my`) whose body reaches
 /// `reach` dp either side of `mx`: beside the mark, top-aligned just above
@@ -2743,9 +1855,9 @@ fn chart_tip_place(mx: int, my: int, reach: int, tip_h: int, w: int, h: int) -> 
 /// props are plain data, so a prop that must follow a signal gets `styled`.
 /// `ys` is each column's topmost mark (the anchor) and `reach` the mark's
 /// half-width, so the panel sits beside the mark rather than on it.
-fn chart_tooltip(labels: []string, names: []string, vals: []int, s: int, n: int,
-                 w: int, h: int, col_w: int, act: Signal<int>, pt: int, dec: int,
-                 ys: []int, reach: int) {
+fn chart_tooltip(d: Signal<ChartData>, s: int, n: int,
+                 gw: Signal<int>, h: int, act: Signal<int>, pt: int, dec: int,
+                 ys: fn(int) -> int, reach: int) {
     let panel = Box(
         style = Style(width = px(CHART_TIP_W),
                       direction = Direction.Column,
@@ -2771,25 +1883,30 @@ fn chart_tooltip(labels: []string, names: []string, vals: []int, s: int, n: int,
         let mut y = 0
         if a >= 0 {
             if a < n {
-                let mut tip_h = arena.nodes[panel.id].h
+                let mut tip_h = measured_height(panel)
                 if tip_h <= 0 {
                     tip_h = 30 + s * 20
                 }
-                let at = chart_tip_place(chart_mx(pt, CHART_GUTTER, col_w, n, a), ys[a],
-                                         reach, tip_h, w, h)
+                let col_w = chart_colw(gw, n)
+                let mut r = reach
+                if r == CHART_REACH_BARS {
+                    r = max2((col_w - 2 * chart_bar_inset(col_w)) / s, 1) * s / 2
+                }
+                let at = chart_tip_place(chart_mx(pt, CHART_GUTTER, col_w, n, a), ys(a),
+                                         r, tip_h, chart_gw(gw), h)
                 x = at[0]
                 y = at[1]
             }
         }
-        arena.nodes[panel.id].pin_l = x
-        arena.nodes[panel.id].pin_t = y
+        left(panel, x)
+        top(panel, y)
     })
     slot(panel, || {
         Text(fn() -> string {
             let a = act.get() - 1
             if a >= 0 {
                 if a < n {
-                    return labels[a]
+                    return d.get().labels[a]
                 }
             }
             return ""
@@ -2802,13 +1919,13 @@ fn chart_tooltip(labels: []string, names: []string, vals: []int, s: int, n: int,
                                   height = px(8),
                                   radius = corners(2),
                                   background = chart_color(jj)))
-                Text(names[jj], style = Style(font = FONT_CAPTION, color = mute()))
+                Text(fn() -> string { return d.get().names[jj] }, style = Style(font = FONT_CAPTION, color = mute()))
                 Grow()
                 Text(fn() -> string {
                     let a = act.get() - 1
                     if a >= 0 {
                         if a < n {
-                            return chart_fmt(vals[a * s + jj], dec)
+                            return chart_fmt(d.get().vals[a * s + jj], dec)
                         }
                     }
                     return ""
@@ -2825,8 +1942,29 @@ fn chart_tooltip(labels: []string, names: []string, vals: []int, s: int, n: int,
 /// previous mark to the midpoint of the next (the ends reach the plot
 /// edges), so the pointer always lands on the nearest mark; column mode
 /// keeps the full-band coverage of the bar columns.
-fn chart_zone(i: int, hov: Signal<int>, act: Signal<int>, h: int, col_w: int, pt: int,
+fn chart_zone(i: int, hov: Signal<int>, act: Signal<int>, h: int, gw: Signal<int>, pt: int,
               n: int) {
+    let zone = Box(style = || {
+        let lw = chart_zone_lw(i, chart_colw(gw, n), pt, n)
+        return Style(width = px(lw[1]),
+                     height = px(h),
+                     position = pos_absolute(),
+                     inset = Edges(top = 0, left = lw[0]))
+    })
+    hover(zone, hov)
+    styled(zone, || {
+        if hov.get() > 0 {
+            act.set(i + 1)
+        } else {
+            if act.get() == i + 1 {
+                act.set(0)
+            }
+        }
+    })
+}
+
+/// [left, width] of category `i`'s hover zone at column width `col_w`.
+fn chart_zone_lw(i: int, col_w: int, pt: int, n: int) -> []int {
     let mut zl = 0
     let mut zw = col_w
     if pt != 0 {
@@ -2850,42 +1988,32 @@ fn chart_zone(i: int, hov: Signal<int>, act: Signal<int>, h: int, col_w: int, pt
     } else {
         zl = chart_col_x(CHART_GUTTER, col_w, i)
     }
-    let zone = Box(style = Style(width = px(zw),
-                                 height = px(h),
-                                 position = pos_absolute(),
-                                 inset = Edges(top = 0, left = zl)))
-    hover(zone, hov)
-    styled(zone, || {
-        if hov.get() > 0 {
-            act.set(i + 1)
-        } else {
-            if act.get() == i + 1 {
-                act.set(0)
-            }
-        }
-    })
+    return []int { zl, zw }
 }
 
 /// X category label under the plot, rotated 45° clockwise around its top-left.
 /// Rotated labels are parallel diagonal strips, so they never collide with
 /// each other however narrow the plot gets; CHART_XLAB reserves their room.
-fn chart_xlab(label: string, i: int, col_w: int, plot_h: int, pt: int, n: int) {
+fn chart_xlab(d: Signal<ChartData>, i: int, gw: Signal<int>, plot_h: int, pt: int, n: int) {
     // 8px of air below the baseline axis: the rotated strip starts below the
     // line, not on it (the pivot corner is the strip's top edge). Span mode
     // labels sit just left of their mark so the strip stays inside the plot.
-    let x = if pt != 0 { chart_pt_x(CHART_GUTTER, col_w, n, i) - 4 } else { chart_col_x(CHART_GUTTER, col_w, i) + 3 }
-    let lab = Text(label,
-                   style = Style(position = pos_absolute(),
-                                 font = FONT_CAPTION,
-                                 inset = Edges(top = CHART_TOP + plot_h + 8, left = x),
-                                 color = mute()))
+    let lab = Text(fn() -> string { return d.get().labels[i] },
+                   style = || {
+                       let col_w = chart_colw(gw, n)
+                       let x = if pt != 0 { chart_pt_x(CHART_GUTTER, col_w, n, i) - 4 } else { chart_col_x(CHART_GUTTER, col_w, i) + 3 }
+                       return Style(position = pos_absolute(),
+                                    font = FONT_CAPTION,
+                                    inset = Edges(top = CHART_TOP + plot_h + 8, left = x),
+                                    color = mute())
+                   })
     text_rot(lab, 45)
 }
 
 /// Bottom-centered legend, 16px between entries.
-fn chart_legend(names: []string) {
+fn chart_legend(d: Signal<ChartData>) {
     Box(style = Style(direction = Direction.Row, wrap = true, gap = 16, justify = Align.Center)) {
-        Loop(names, fn(j, name) {
+        Each(d.get().names, fn(j, name) {
             return Row(Space.Exxs) {
                 Box(style = Style(width = px(8),
                                   height = px(8),
@@ -2900,7 +2028,7 @@ fn chart_legend(names: []string) {
 /// Hover cursor: a single hairline through the hovered mark (no wash band).
 /// `act` = category + 1; the line shows and slides with it. Build it before
 /// the marks, so the line runs behind the dots and bars rather than over them.
-fn chart_cursor(act: Signal<int>, n: int, col_w: int, plot_h: int, pt: int) {
+fn chart_cursor(act: Signal<int>, n: int, gw: Signal<int>, plot_h: int, pt: int) {
     let line = Box(style = Style(width = px(1),
                                  height = px(plot_h),
                                  opacity = 55,
@@ -2915,10 +2043,10 @@ fn chart_cursor(act: Signal<int>, n: int, col_w: int, plot_h: int, pt: int) {
         let mut x = -1
         if a >= 0 {
             if a < n {
-                x = chart_mx(pt, CHART_GUTTER, col_w, n, a)
+                x = chart_mx(pt, CHART_GUTTER, chart_colw(gw, n), n, a)
             }
         }
-        arena.nodes[line.id].pin_l = x
+        left(line, x)
     })
     show(line, act)
 }
@@ -2929,14 +2057,14 @@ fn chart_cursor(act: Signal<int>, n: int, col_w: int, plot_h: int, pt: int) {
 /// column. `pt` = 1 for plot-spanning line/area charts (zone strips snap to
 /// the nearest mark), 0 for column-mode bar charts. `ys` / `reach`: see
 /// `chart_tooltip`.
-fn chart_tooltips(labels: []string, names: []string, vals: []int, s: int, n: int,
-                  h: int, w: int, col_w: int, act: Signal<int>, pt: int, ys: []int,
+fn chart_tooltips(d: Signal<ChartData>, s: int, n: int,
+                  h: int, gw: Signal<int>, act: Signal<int>, pt: int, ys: fn(int) -> int,
                   reach: int, dec: int = 0) {
     for i in 0..n {
         let hov = signal(0)
-        chart_zone(i, hov, act, h, col_w, pt, n)
+        chart_zone(i, hov, act, h, gw, pt, n)
     }
-    chart_tooltip(labels, names, vals, s, n, w, h, col_w, act, pt, dec, ys, reach)
+    chart_tooltip(d, s, n, gw, h, act, pt, dec, ys, reach)
 }
 
 /// Dim/restore a mark for the hovered column: full at rest or on its own
@@ -2952,17 +2080,25 @@ fn chart_dim(act: Signal<int>, i: int) -> int {
     return 40
 }
 
-/// Resolve the plot width: a measured host width wins (the host stretches
-/// with its parent, so the chart re-fits on window resize); before the first
-/// layout the caller's estimate is used. A measured width is used however
-/// small — falling back to the estimate there is what made a squeezed chart
-/// spill out of its card — floored only so the plot keeps a few pixels.
-fn chart_w(w: int, host: Node) -> int {
-    let mw = measured_width(host)
-    if mw > 0 {
-        return geometry.max2(mw, CHART_GUTTER + 8)
-    }
-    return w
+/// The plot width as a signal: the caller's estimate before the first layout,
+/// then the host's measured width (the host stretches with its parent). The
+/// marks read it in their `style` / markup thunks, so a resize moves them in
+/// place — the chart is built once, never refit. A measured width is used
+/// however small — falling back to the estimate there is what made a
+/// squeezed chart spill out of its card — floored (`chart_gw`) only so the
+/// plot keeps a few pixels.
+fn chart_w(w: int, host: Node) -> Signal<int> {
+    return width_signal(host, w)
+}
+
+/// The plot width `gw` holds, floored so a squeezed plot keeps a few pixels.
+fn chart_gw(gw: Signal<int>) -> int {
+    return max2(gw.get(), CHART_GUTTER + 8)
+}
+
+/// Column width for `n` categories across the plot `gw` holds.
+fn chart_colw(gw: Signal<int>, n: int) -> int {
+    return max2((chart_gw(gw) - CHART_GUTTER) / n, 1)
 }
 
 /// Side inset of a bar group inside its column: 5 dp, less in a column too
@@ -2975,182 +2111,214 @@ fn chart_bar_inset(col_w: int) -> int {
     return i
 }
 
-fn chart_bars(labels: []string, names: []string, vals: []int, n: int, s: int,
-              w: int, h: int, host: Node) {
-    let gw = chart_w(w, host)
+fn chart_bars(d: Signal<ChartData>, n: int, s: int, gw: Signal<int>, h: int) {
     let plot_h = h - CHART_TOP - CHART_XLAB
-    let col_w = geometry.max2((gw - CHART_GUTTER) / n, 1)
-    let domain = chart_domain(vals, s, n)
     let base_y = CHART_TOP + plot_h
-    let inset = chart_bar_inset(col_w)
-    let bar_w = geometry.max2((col_w - 2 * inset) / s, 1)
+    // The shared y domain follows the values.
+    let domain = computed(fn() -> int { return chart_domain(d.get().vals, s, n) })
     // Shared hovered mark: zones, cursor, tooltip, and the marks read it.
     let act = signal(0)
-    // Each column's anchor for the tooltip: the top of its tallest bar.
-    let mut ys = []int {}
-    for i in 0..n {
+    // Each column's tooltip anchor: the top of its tallest bar.
+    let ys = fn(i: int) -> int {
+        let vals = d.get().vals
+        let dom = domain.get()
         let mut top = base_y
         for j in 0..s {
             let v = chart_val(vals, s, i, j)
             if v > 0 {
-                let t = base_y - geometry.max2(v * plot_h / domain, 1)
+                let t = base_y - max2(v * plot_h / dom, 1)
                 if t < top {
                     top = t
                 }
             }
         }
-        push(ys, top)
+        return top
     }
-    let plot = Box(style = Style(width = px(gw), height = px(h)))
+    let plot = Box(style = || { return Style(width = px(chart_gw(gw)), height = px(h)) })
     slot(plot, || {
         chart_axes(gw, h, domain)
-        chart_cursor(act, n, col_w, plot_h, 0)
+        chart_cursor(act, n, gw, plot_h, 0)
         for i in 0..n {
-            let x0 = chart_col_x(CHART_GUTTER, col_w, i) + inset
             let ii = i
             for j in 0..s {
-                let v = chart_val(vals, s, i, j)
-                let bh = geometry.max2(v * plot_h / domain, 1)
-                if v > 0 {
-                    let bar = Box(style = Style(width = px(bar_w),
-                                                height = px(bh),
-                                                position = pos_absolute(),
-                                                inset = Edges(top = base_y - bh, left = x0 + j * bar_w),
-                                                radius = corners(3),
-                                                background = chart_color(j)))
-                    styled(bar, || { opacity(bar, chart_dim(act, ii)) })
-                }
+                // One bar per (category, series), whatever its value: a value
+                // at or below 0 hides it, so new data moves bars instead of
+                // rebuilding them.
+                let bar = Box(style = || {
+                    let v = chart_val(d.get().vals, s, ii, j)
+                    let bh = max2(v * plot_h / domain.get(), 1)
+                    let col_w = chart_colw(gw, n)
+                    let inset = chart_bar_inset(col_w)
+                    let bar_w = max2((col_w - 2 * inset) / s, 1)
+                    let x0 = chart_col_x(CHART_GUTTER, col_w, ii) + inset
+                    return Style(width = px(bar_w),
+                                 height = px(bh),
+                                 position = pos_absolute(),
+                                 inset = Edges(top = base_y - bh, left = x0 + j * bar_w),
+                                 radius = corners(3),
+                                 display = shown(v > 0),
+                                 background = chart_color(j))
+                })
+                styled(bar, || { opacity(bar, chart_dim(act, ii)) })
             }
-            chart_xlab(labels[i], i, col_w, plot_h, 0, n)
+            chart_xlab(d, i, gw, plot_h, 0, n)
         }
-        chart_tooltips(labels, names, vals, s, n, h, gw, col_w, act, 0, ys, bar_w * s / 2)
+        // The tooltip clears the bar group, half its width either side, at
+        // whatever width the plot has when it shows (`CHART_REACH_BARS`).
+        chart_tooltips(d, s, n, h, gw, act, 0, ys, CHART_REACH_BARS)
     })
-    chart_legend(names)
+    chart_legend(d)
 }
 
-fn chart_lines(labels: []string, names: []string, vals: []int, n: int, s: int,
-               w: int, h: int, host: Node, p: LineChartProps) {
-    let gw = chart_w(w, host)
+fn chart_lines(d: Signal<ChartData>, n: int, s: int, gw: Signal<int>, h: int, p: LineChartProps) {
     let plot_h = h - CHART_TOP - CHART_XLAB
-    let col_w = geometry.max2((gw - CHART_GUTTER) / n, 1)
-    let span = chart_span(vals, s, n, p.fit)
-    let lo = span[0]
-    let hi = span[1]
+    let fit = p.fit
+    // [lo, hi] of the y axis, following the values.
+    let sp = computed(fn() -> []int { return chart_span(d.get().vals, s, n, fit) })
     let every = chart_every(p.labelEvery, n)
     // Shared hovered mark: zones, cursor, tooltip, and the marks read it.
     let act = signal(0)
-    // A 45° label longer than a few characters reaches below CHART_XLAB;
-    // the extra height keeps the legend clear of it. Short labels add none.
-    // Each column's anchor for the tooltip: its highest drawn point.
-    let mut ys = []int {}
-    for i in 0..n {
+    // Each column's tooltip anchor: its highest drawn point.
+    let ys = fn(i: int) -> int {
+        let vals = d.get().vals
+        let lh = sp.get()
         let mut top = CHART_TOP + plot_h
         for j in 0..s {
             let v = chart_val(vals, s, i, j)
             if v != CHART_GAP {
-                let y = chart_fy(lo, hi, plot_h, CHART_TOP, v)
+                let y = chart_fy(lh[0], lh[1], plot_h, CHART_TOP, v)
                 if y < top {
                     top = y
                 }
             }
         }
-        push(ys, top)
+        return top
     }
-    let plot = Box(style = Style(width = px(gw), height = px(h + chart_xlab_extra(labels))))
+    // A 45° label longer than a few characters reaches below CHART_XLAB;
+    // the extra height keeps the legend clear of it. Short labels add none.
+    let plot = Box(style = || {
+        return Style(width = px(chart_gw(gw)), height = px(h + chart_xlab_extra(d.get().labels)))
+    })
     slot(plot, || {
-        chart_faxes(gw, h, lo, hi, p.decimals)
-        chart_cursor(act, n, col_w, plot_h, 1)
+        chart_faxes(gw, h, sp, p.decimals)
+        chart_cursor(act, n, gw, plot_h, 1)
         for j in 0..s {
-            let d = chart_fline_d(vals, s, j, lo, hi, CHART_GUTTER, col_w, plot_h,
-                                  CHART_TOP, n)
-            let line_l = ChartLayer(chart_svg(d, gw, h, "none", chart_stroke_light(j), 2), gw, h)
-            let line_d = ChartLayer(chart_svg(d, gw, h, "none", chart_stroke_dark(j), 2), gw, h)
+            let jj = j
+            let path = fn() -> string {
+                let lh = sp.get()
+                return chart_fline_d(d.get().vals, s, jj, lh[0], lh[1], CHART_GUTTER, chart_colw(gw, n), plot_h,
+                                     CHART_TOP, n)
+            }
+            let line_l = chart_layer_live(fn() -> string {
+                return chart_svg(path(), chart_gw(gw), h, "none", chart_stroke_light(jj), 2)
+            }, gw, h)
+            let line_d = chart_layer_live(fn() -> string {
+                return chart_svg(path(), chart_gw(gw), h, "none", chart_stroke_dark(jj), 2)
+            }, gw, h)
             show_eq(line_l, appearance(), 0)
             show_eq(line_d, appearance(), 1)
             if p.dots {
                 for i in 0..n {
-                    let v = chart_val(vals, s, i, j)
-                    if v != CHART_GAP {
-                        let x = chart_pt_x(CHART_GUTTER, col_w, n, i)
-                        let y = chart_fy(lo, hi, plot_h, CHART_TOP, v)
-                        let dot = Box(style = Style(width = px(6),
-                                                    height = px(6),
-                                                    position = pos_absolute(),
-                                                    inset = Edges(top = y - 3, left = x - 3),
-                                                    radius = corners(3),
-                                                    background = chart_color(j)))
-                    }
+                    let ii = i
+                    // Hidden while its value is a gap.
+                    let dot = Box(style = || {
+                        let v = chart_val(d.get().vals, s, ii, jj)
+                        let lh = sp.get()
+                        let x = chart_pt_x(CHART_GUTTER, chart_colw(gw, n), n, ii)
+                        let mut y = CHART_TOP
+                        if v != CHART_GAP {
+                            y = chart_fy(lh[0], lh[1], plot_h, CHART_TOP, v)
+                        }
+                        return Style(width = px(6),
+                                     height = px(6),
+                                     position = pos_absolute(),
+                                     inset = Edges(top = y - 3, left = x - 3),
+                                     radius = corners(3),
+                                     display = shown(v != CHART_GAP),
+                                     background = chart_color(jj))
+                    })
                 }
             }
         }
         for i in 0..n {
             if i % every == 0 {
-                chart_xlab(labels[i], i, col_w, plot_h, 1, n)
+                chart_xlab(d, i, gw, plot_h, 1, n)
             }
         }
-        chart_tooltips(labels, names, vals, s, n, h, gw, col_w, act, 1, ys, 3, p.decimals)
+        chart_tooltips(d, s, n, h, gw, act, 1, ys, 3, p.decimals)
     })
-    chart_legend(names)
+    chart_legend(d)
 }
 
-fn chart_areas(labels: []string, names: []string, vals: []int, n: int, s: int,
-               w: int, h: int, host: Node) {
-    let gw = chart_w(w, host)
+fn chart_areas(d: Signal<ChartData>, n: int, s: int, gw: Signal<int>, h: int) {
     let plot_h = h - CHART_TOP - CHART_XLAB
-    let col_w = geometry.max2((gw - CHART_GUTTER) / n, 1)
-    let domain = chart_domain(vals, s, n)
+    let domain = computed(fn() -> int { return chart_domain(d.get().vals, s, n) })
     // Shared hovered mark: zones, cursor, tooltip, and the marks read it.
     let act = signal(0)
-    // Each column's anchor for the tooltip: its highest point.
-    let mut ys = []int {}
-    for i in 0..n {
+    // Each column's tooltip anchor: its highest point.
+    let ys = fn(i: int) -> int {
+        let vals = d.get().vals
+        let dom = domain.get()
         let mut top = CHART_TOP + plot_h
         for j in 0..s {
-            let y = chart_y(domain, plot_h, CHART_TOP, chart_val(vals, s, i, j))
+            let y = chart_y(dom, plot_h, CHART_TOP, chart_val(vals, s, i, j))
             if y < top {
                 top = y
             }
         }
-        push(ys, top)
+        return top
     }
-    let plot = Box(style = Style(width = px(gw), height = px(h)))
+    let plot = Box(style = || { return Style(width = px(chart_gw(gw)), height = px(h)) })
     slot(plot, || {
         chart_axes(gw, h, domain)
-        chart_cursor(act, n, col_w, plot_h, 1)
+        chart_cursor(act, n, gw, plot_h, 1)
         for j in 0..s {
-            let d = chart_area_d(vals, s, j, domain, CHART_GUTTER, col_w, plot_h,
-                                 CHART_TOP, n)
-            let fd = chart_svg(d, gw, h, chart_fd(j), "none", 0)
-            let fl = chart_svg(d, gw, h, chart_fl(j), "none", 0)
-            let area_l = ChartLayer(fl, gw, h)
-            let area_d = ChartLayer(fd, gw, h)
+            let jj = j
+            let fill_d = fn() -> string {
+                return chart_area_d(d.get().vals, s, jj, domain.get(), CHART_GUTTER, chart_colw(gw, n), plot_h,
+                                    CHART_TOP, n)
+            }
+            let area_l = chart_layer_live(fn() -> string {
+                return chart_svg(fill_d(), chart_gw(gw), h, chart_fl(jj), "none", 0)
+            }, gw, h)
+            let area_d = chart_layer_live(fn() -> string {
+                return chart_svg(fill_d(), chart_gw(gw), h, chart_fd(jj), "none", 0)
+            }, gw, h)
             show_eq(area_l, appearance(), 0)
             show_eq(area_d, appearance(), 1)
-            let dl = chart_line_d(vals, s, j, domain, CHART_GUTTER, col_w, plot_h,
-                                  CHART_TOP, n)
-            let line_l = ChartLayer(chart_svg(dl, gw, h, "none", chart_stroke_light(j), 2), gw, h)
-            let line_d = ChartLayer(chart_svg(dl, gw, h, "none", chart_stroke_dark(j), 2), gw, h)
+            let line_d_of = fn() -> string {
+                return chart_line_d(d.get().vals, s, jj, domain.get(), CHART_GUTTER, chart_colw(gw, n), plot_h,
+                                    CHART_TOP, n)
+            }
+            let line_l = chart_layer_live(fn() -> string {
+                return chart_svg(line_d_of(), chart_gw(gw), h, "none", chart_stroke_light(jj), 2)
+            }, gw, h)
+            let line_d = chart_layer_live(fn() -> string {
+                return chart_svg(line_d_of(), chart_gw(gw), h, "none", chart_stroke_dark(jj), 2)
+            }, gw, h)
             show_eq(line_l, appearance(), 0)
             show_eq(line_d, appearance(), 1)
             for i in 0..n {
-                let x = chart_pt_x(CHART_GUTTER, col_w, n, i)
-                let y = chart_y(domain, plot_h, CHART_TOP, chart_val(vals, s, i, j))
-                let dot = Box(style = Style(width = px(6),
-                                            height = px(6),
-                                            position = pos_absolute(),
-                                            inset = Edges(top = y - 3, left = x - 3),
-                                            radius = corners(3),
-                                            background = chart_color(j)))
                 let ii = i
+                let dot = Box(style = || {
+                    let x = chart_pt_x(CHART_GUTTER, chart_colw(gw, n), n, ii)
+                    let y = chart_y(domain.get(), plot_h, CHART_TOP, chart_val(d.get().vals, s, ii, jj))
+                    return Style(width = px(6),
+                                 height = px(6),
+                                 position = pos_absolute(),
+                                 inset = Edges(top = y - 3, left = x - 3),
+                                 radius = corners(3),
+                                 background = chart_color(jj))
+                })
                 styled(dot, || { opacity(dot, chart_dim(act, ii)) })
             }
         }
         for i in 0..n {
-            chart_xlab(labels[i], i, col_w, plot_h, 1, n)
+            chart_xlab(d, i, gw, plot_h, 1, n)
         }
-        chart_tooltips(labels, names, vals, s, n, h, gw, col_w, act, 1, ys, 3)
+        chart_tooltips(d, s, n, h, gw, act, 1, ys, 3)
     })
-    chart_legend(names)
+    chart_legend(d)
 }
 
 fn cal_leap(year: int) -> int {
@@ -3263,9 +2431,10 @@ struct CardProps {
     /// hover track.
     lift: int = -1,
     /// Header row above the body: `title` (heading type) and `subtitle`
-    /// (muted caption). Either empty = no header.
-    title: string = "",
-    subtitle: string = "",
+    /// (muted caption). Either empty (when the card builds) = no header.
+    /// Thunks, so a signal read inside updates the header in place.
+    title: fn() -> string = empty_text,
+    subtitle: fn() -> string = empty_text,
     /// Media strip above everything: an image `src` at `mediaHeight` dp,
     /// bleeding to the card edge under the top corners.
     media: string = "",
@@ -3287,7 +2456,7 @@ fn Card(p: CardProps) -> Node {
     // state. The media strip bleeds through the side padding, so it reads the
     // padding the caller's style gives the card.
     let interactive = p.interactive || result.is_some(p.on_click)
-    let has_header = p.title.len > 0 || p.subtitle.len > 0
+    let has_header = p.title().len > 0 || p.subtitle().len > 0
     let user = style_of(p.style)
     let bleed = edge_or(user.padding, 3, 20)
     let r = corner_or(user.radius, RAD_XL)
@@ -3345,13 +2514,13 @@ struct CardHeaderProps {
 /// A card's header: `title` in title type, `description` muted under it, and
 /// an optional trailing `action`. `Card(title = …)` builds one; compose it
 /// yourself for a header with an action.
-fn CardHeader(title: string, description: string, p: CardHeaderProps) -> Node {
+fn CardHeader(title: fn() -> string, description: fn() -> string, p: CardHeaderProps) -> Node {
     return Box(style = Style(direction = Direction.Row, gap = Space.Exs, align = Align.Start)) {
         Box(style = Style(direction = Direction.Column, gap = 2, grow = 1), role = "heading") {
-            if title.len > 0 {
+            if title().len > 0 {
                 Text(title, style = Style(font = FONT_TITLE, color = ink()))
             }
-            if description.len > 0 {
+            if description().len > 0 {
                 Text(description, style = Style(font = FONT_CAPTION, color = mute()))
             }
         }
@@ -3585,7 +2754,7 @@ fn KbdCombo(spec: string, p: KbdComboProps) -> Node {
         if apple {
             Kbd(combo_text(parts, true, ""))
         } else {
-            Loop(parts, fn(i, part) {
+            Each(parts, fn(i, part) {
                 return Box(style = Style(direction = Direction.Row, gap = 4, align = Align.Center)) {
                     if i > 0 {
                         Text("+", style = Style(font = 10, color = mute()))

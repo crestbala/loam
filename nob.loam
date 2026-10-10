@@ -340,6 +340,27 @@ fn now_s() -> int {
     return int_of(sys.exec("date +%s"))
 }
 
+/// Non-overlapping occurrences of `needle` in `hay`.
+fn count_of(hay: string, needle: string) -> int {
+    let mut n = 0
+    let mut i = 0
+    while needle.len > 0 && i + needle.len <= hay.len {
+        let mut same = true
+        for j in 0..needle.len {
+            if hay[i + j] != needle[j] {
+                same = false
+            }
+        }
+        if same {
+            n = n + 1
+            i = i + needle.len
+        } else {
+            i = i + 1
+        }
+    }
+    return n
+}
+
 fn contains_str(hay: string, needle: string) -> bool {
     if needle.len > hay.len {
         return false
@@ -1650,6 +1671,16 @@ fn ig_wasm_smoke() {
     } else {
         bad2("wasm smoke", rl, bl)
     }
+    mark("wasm trap")
+    let twasm = tmpf("wasm_trap.wasm")
+    let tbl = tmpf("wasm_trap_build.log")
+    let trl = tmpf("wasm_trap.log")
+    let tgood = sh("{{shq(LOAMC)}} --target=wasm32 packages/loam/tests/wasm_smoke/trap_app.loam -o {{shq(twasm)}} > {{shq(tbl)}} 2>&1") && sh("DENO_DIR={{shq(denodir)}} deno run --quiet --allow-read packages/zeus/hosts/web/wasm_trap.ts {{shq(twasm)}} > {{shq(trl)}} 2>&1")
+    if tgood {
+        ok("wasm trap (Boundary recovery: startup restart, handler in place)")
+    } else {
+        bad2("wasm trap", trl, tbl)
+    }
 }
 
 fn ig_myapp_build() {
@@ -1715,6 +1746,34 @@ fn ig_lsp() {
 /// bounds/overflow traps the compiler can prove redundant must report fewer of
 /// them (the elision is the language's whole point for speed). The numbers are
 /// compared, not a golden string, so a diagnostic reformat does not break it.
+fn ig_stale_capture() {
+    mark("stale capture")
+    let src = "{{TESTS}}/compile_fail/stale_capture.loam"
+    let out_c = tmpf("stale_capture.c")
+    let o = sys.exec("{{shq(LOAMC)}} --emit-c {{shq(src)}} -o {{shq(out_c)}} 2>&1")
+    if sys.exec_status() == 0 {
+        bad("stale capture (a write after a copy-capture must fail the build)", o)
+        return
+    }
+    let want = []string { "'name' is assigned after a closure captured it", "'xs' is assigned after", "'n' is assigned after", "'buf' is assigned after" }
+    for i in 0..want.len {
+        let w = want[i]
+        if !contains_str(o, w) {
+            bad("stale capture (missing: {{w}})", o)
+            return
+        }
+    }
+    if contains_str(o, "'fine'") || contains_str(o, "'own'") || contains_str(o, "'mine'") {
+        bad("stale capture (a write before the capture, or to a closure's own copy, was reported)", o)
+        return
+    }
+    if count_of(o, "'name' is assigned") != 1 {
+        bad("stale capture (reported more than once per binding)", o)
+        return
+    }
+    ok("stale capture (copy-captured let mut written later, incl. through &mut, is an error)")
+}
+
 fn ig_cost() {
     mark("cost report")
     let d = tmpf("cost_probe")
@@ -1872,16 +1931,25 @@ fn ig_arena_lint() {
     // (an element, a list / match host, a chart internal, a native control).
     // Everything else in these files is a component and must not.
     let lib = "packages/zeus-components/std"
+    // Layering: the design system builds on `zeusbase` and `zeus:flow` only.
+    // Engine internals (`zeuscore/*`: the arena, the platform seam) are not
+    // public API, so no allow-list reaches them.
+    let lay = tmpf("arena_lint_layers.log")
+    sh("grep -nE '^import \"zeus:zeuscore/|(^|[^A-Za-z0-9_])(arena|platform|geometry)[.]' {{lib}}/*.loam | grep -vE ':[0-9]+:[[:space:]]*//' > {{shq(lay)}}")
+    if is_nonempty(lay) {
+        bad("arena lint (zeus-components imports or names zeuscore internals)", lay)
+        return
+    }
     let mut files = []string {}
     let mut allow = []string {}
     push(files, "atoms")
-    push(allow, "virtual_refresh_keyed kfor_reconcile virtual_refresh virt_refresh_var kfor_refresh kfor_rebuild Boundary refit_refresh refit_hook Progress virt_window_var scroll_to match_build keyed_spacer scroll_to_x drop_keyed_spacer refit chart_tooltip Match Index Each ProgressTrack RingArc scroll_y scroll_to_index measured_width match_refresh chart_lines chart_cursor chart_bars chart_areas Svg Sparkline Scroll Overlay Image Icon Grid")
+    push(allow, "Progress chart_tooltip ProgressTrack RingArc chart_lines chart_cursor chart_bars chart_areas chart_layer_live Svg Sparkline Scroll Overlay Image Icon Grid")
     push(files, "molecules")
     push(allow, "SwitchTrack ThemeSwitch Switch Slider Input Button")
     push(files, "organisms")
-    push(allow, "VirtualListVar VirtualListKeyed VirtualList LineChart Comp BarChart AreaChart")
+    push(allow, "LineChart Comp BarChart AreaChart LineChartOf BarChartOf AreaChartOf")
     push(files, "colors")
-    push(allow, "virtual_window find_scroller role_rgb_now animate")
+    push(allow, "")
     let ll = tmpf("arena_lint_lib.log")
     sys.write_file(ll, "")
     // A hit names the enclosing top-level fn; it fails unless that fn is in
@@ -1898,7 +1966,7 @@ fn ig_arena_lint() {
         bad("arena lint (a library component reaches into the element layer)", ll)
         return
     }
-    ok("arena lint (examples, www and library components use no ui_push / slot / arena / raw_*)")
+    ok("arena lint (examples, www and library components use no ui_push / slot / arena / raw_*; components import no zeuscore)")
 }
 
 fn ig_myapp() {
@@ -1942,6 +2010,8 @@ fn stanza_dispatch(name: string) -> bool {
         ig_lsp()
     } else if name == "cost" {
         ig_cost()
+    } else if name == "stale_capture" {
+        ig_stale_capture()
     } else if name == "one_surface" {
         ig_one_surface()
     } else if name == "arena_lint" {
@@ -2050,6 +2120,7 @@ fn host_checks() -> int {
     ig_server_split()
     ig_lsp()
     ig_cost()
+    ig_stale_capture()
     ig_one_surface()
     ig_arena_lint()
     return N_FAIL - before

@@ -77,7 +77,7 @@ static const char *const c_roots_zeus[] = {
     "engine_focus_node", "engine_focus_ctx", "engine_focus_step",
     "engine_focus_captures_text", "engine_key", "engine_key_up",
     "engine_set_mods", "engine_insert", "engine_marked", "engine_picked_image",
-    "engine_context_click",
+    "engine_context_click", "engine_recover", "engine_trap_seq",
     "on_action", "on_action_global", "on_range", "map_key", "remap_key",
     "get", "set", "signal",
     NULL,
