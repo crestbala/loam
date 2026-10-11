@@ -1,0 +1,7 @@
+//! Route error page. A trap in a page's build lands here (see zui.Boundary).
+
+import "std:zeus"
+
+fn Error(msg: string) -> Node {
+    return zeus.Text("something went wrong")
+}

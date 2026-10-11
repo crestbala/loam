@@ -1,0 +1,437 @@
+//! Byte-level string helpers for the engine. There is no `std:str`, and Loam
+//! has no `+` on strings, so every shape the engine needs (search, slice,
+//! split, quote) lives here, written on bytes like `packages/zeus/cli/zeli.loam`.
+
+/// `s[a..b]` as a new string; clamped, empty when the range is.
+fn slice(s: string, a: int, b: int) -> string {
+    let mut lo = a
+    let mut hi = b
+    if lo < 0 {
+        lo = 0
+    }
+    if hi > s.len {
+        hi = s.len
+    }
+    let mut x = []int {}
+    if lo < hi {
+        for i in lo..hi {
+            push(x, s[i])
+        }
+    }
+    return string_from_bytes(x)
+}
+
+/// First index of `needle` in `s` at or after `from`, or -1.
+fn index_from(s: string, needle: string, from: int) -> int {
+    if needle.len == 0 {
+        return from
+    }
+    let mut i = from
+    if i < 0 {
+        i = 0
+    }
+    while i + needle.len <= s.len {
+        let mut k = 0
+        while k < needle.len && s[i + k] == needle[k] {
+            k += 1
+        }
+        if k == needle.len {
+            return i
+        }
+        i += 1
+    }
+    return -1
+}
+
+fn index_of(s: string, needle: string) -> int {
+    return index_from(s, needle, 0)
+}
+
+fn contains(s: string, needle: string) -> bool {
+    return index_of(s, needle) >= 0
+}
+
+fn starts_with(s: string, prefix: string) -> bool {
+    if prefix.len > s.len {
+        return false
+    }
+    for i in 0..prefix.len {
+        if s[i] != prefix[i] {
+            return false
+        }
+    }
+    return true
+}
+
+fn ends_with(s: string, suffix: string) -> bool {
+    if suffix.len > s.len {
+        return false
+    }
+    let off = s.len - suffix.len
+    for i in 0..suffix.len {
+        if s[off + i] != suffix[i] {
+            return false
+        }
+    }
+    return true
+}
+
+fn lower_byte(c: int) -> int {
+    if c >= 65 && c <= 90 {
+        return c + 32
+    }
+    return c
+}
+
+fn lower(s: string) -> string {
+    let mut x = []int {}
+    for i in 0..s.len {
+        push(x, lower_byte(s[i]))
+    }
+    return string_from_bytes(x)
+}
+
+fn is_space(c: int) -> bool {
+    return c == 32 || c == 9 || c == 10 || c == 13
+}
+
+fn trim(s: string) -> string {
+    let mut a = 0
+    let mut b = s.len
+    while a < b && is_space(s[a]) {
+        a += 1
+    }
+    while b > a && is_space(s[b - 1]) {
+        b -= 1
+    }
+    return slice(s, a, b)
+}
+
+/// `s` split on `\n`, `\r` dropped, no trailing empty line.
+fn lines(s: string) -> []string {
+    let mut out = []string {}
+    let mut cur = []int {}
+    for i in 0..s.len {
+        let c = s[i]
+        if c == 10 {
+            push(out, string_from_bytes(cur))
+            cur = []int {}
+        } else if c != 13 {
+            push(cur, c)
+        }
+    }
+    if cur.len > 0 {
+        push(out, string_from_bytes(cur))
+    }
+    return out
+}
+
+/// `s` split on single spaces (runs of spaces yield no empty pieces).
+fn words(s: string) -> []string {
+    let mut out = []string {}
+    let mut cur = []int {}
+    for i in 0..s.len {
+        let c = s[i]
+        if c == 32 {
+            if cur.len > 0 {
+                push(out, string_from_bytes(cur))
+                cur = []int {}
+            }
+        } else {
+            push(cur, c)
+        }
+    }
+    if cur.len > 0 {
+        push(out, string_from_bytes(cur))
+    }
+    return out
+}
+
+/// Does `s` hold `w` starting at byte `i`? Compares only there: a search
+/// (`index_from(s, w, i) == i`) would scan the rest of `s` on every miss and
+/// make a replace over a page quadratic.
+fn at(s: string, i: int, w: string) -> bool {
+    if i < 0 || i + w.len > s.len {
+        return false
+    }
+    for k in 0..w.len {
+        if s[i + k] != w[k] {
+            return false
+        }
+    }
+    return true
+}
+
+/// Every `from` in `s` replaced by `to`. Linear: unescaping a 300 KB page
+/// runs this ten times.
+fn replace(s: string, from: string, to: string) -> string {
+    if from.len == 0 {
+        return s
+    }
+    let mut x = []int {}
+    let mut i = 0
+    while i < s.len {
+        if at(s, i, from) {
+            for k in 0..to.len {
+                push(x, to[k])
+            }
+            i += from.len
+        } else {
+            push(x, s[i])
+            i += 1
+        }
+    }
+    return string_from_bytes(x)
+}
+
+/// `s` as one word for `sh`: single-quoted, an embedded `'` closed,
+/// escaped and reopened. Every URL and path reaches the shell through this.
+fn shell_quote(s: string) -> string {
+    let mut b = []int {}
+    push(b, 39)
+    for i in 0..s.len {
+        let c = s[i]
+        if c == 39 {
+            push(b, 39)
+            push(b, 92)
+            push(b, 39)
+            push(b, 39)
+        } else {
+            push(b, c)
+        }
+    }
+    push(b, 39)
+    return string_from_bytes(b)
+}
+
+/// Decimal digits of `s` as an int; -1 when `s` is empty or not all digits.
+/// Stops before overflowing i32 (returns the clamp).
+fn to_int(s: string) -> int {
+    let t = trim(s)
+    if t.len == 0 {
+        return -1
+    }
+    let mut n = 0
+    for i in 0..t.len {
+        let c = t[i]
+        if c < 48 || c > 57 {
+            return -1
+        }
+        if n > 214748363 {
+            return 2147483647
+        }
+        n = n * 10 + (c - 48)
+    }
+    return n
+}
+
+/// A byte count (`12345`, `12345.0`, or a non-number) as KiB; -1 when absent.
+/// Byte counts outgrow i32, so the integer part is folded in as i64.
+fn bytes_to_kib(s: string) -> int {
+    let t = trim(s)
+    let mut n: i64 = i64(0)
+    let mut seen = false
+    for i in 0..t.len {
+        let c = t[i]
+        if c == 46 {
+            break
+        }
+        if c < 48 || c > 57 {
+            return -1
+        }
+        seen = true
+        n = n * i64(10) + i64(c - 48)
+    }
+    if !seen {
+        return -1
+    }
+    return int(n / i64(1024))
+}
+
+/// A float-ish number (`12.5`, `NA`) truncated to an int; -1 when absent.
+fn num_int(s: string) -> int {
+    let t = trim(s)
+    let mut cut = t.len
+    let dot = index_of(t, ".")
+    if dot >= 0 {
+        cut = dot
+    }
+    return to_int(slice(t, 0, cut))
+}
+
+fn is_http_url(s: string) -> bool {
+    let t = lower(trim(s))
+    return starts_with(t, "http://") || starts_with(t, "https://")
+}
+
+/// The URL path's last segment, without query or fragment. A trailing slash
+/// (`file.mp4/?token`, the shape a player uses for a file) is not part of the name.
+fn url_file(url: string) -> string {
+    let mut end = url.len
+    let q = index_of(url, "?")
+    if q >= 0 {
+        end = q
+    }
+    let h = index_of(url, "#")
+    if h >= 0 && h < end {
+        end = h
+    }
+    while end > 0 && url[end - 1] == 47 {
+        end -= 1
+    }
+    let mut start = 0
+    for i in 0..end {
+        if url[i] == 47 {
+            start = i + 1
+        }
+    }
+    return slice(url, start, end)
+}
+
+/// Lower-case extension of the URL's file (`mp4`, `m3u8`), or "".
+fn url_ext(url: string) -> string {
+    let f = url_file(url)
+    let mut dot = -1
+    for i in 0..f.len {
+        if f[i] == 46 {
+            dot = i
+        }
+    }
+    if dot < 0 {
+        return ""
+    }
+    return lower(slice(f, dot + 1, f.len))
+}
+
+/// A human size for a KiB count: `812 KB`, `14.2 MB`, `1.31 GB`.
+fn human_kib(kib: int) -> string {
+    if kib < 0 {
+        return "?"
+    }
+    if kib < 1024 {
+        return "{{kib}} KB"
+    }
+    if kib < 1048576 {
+        let mb10 = kib * 10 / 1024
+        let whole = mb10 / 10
+        let frac = mb10 % 10
+        return "{{whole}}.{{frac}} MB"
+    }
+    let gb100 = kib / 1024 * 100 / 1024
+    let whole = gb100 / 100
+    let frac = gb100 % 100
+    if frac < 10 {
+        return "{{whole}}.0{{frac}} GB"
+    }
+    return "{{whole}}.{{frac}} GB"
+}
+
+/// aria2c's own progress, from its last readout line in the log:
+/// `[#be93c8 173MiB/629MiB(27%) CN:16 DL:5.4MiB ETA:1m24s]`. aria2c counts
+/// what it has received; bytes on disk lag behind by its write cache (16 MiB
+/// by default), so `du` alone moves in jumps with the speed reading 0 between.
+struct Readout {
+    ok: bool,
+    done_kib: int,
+    total_kib: int,
+    speed_kib: int,
+    eta: int,
+}
+
+fn aria_readout(ls: []string) -> Readout {
+    let mut i = ls.len - 1
+    while i >= 0 {
+        let l = trim(ls[i])
+        if starts_with(l, "[#") {
+            let w = words(replace(replace(l, "[", " "), "]", " "))
+            let mut r = no_readout()
+            for k in 0..w.len {
+                let t = w[k]
+                let slash = index_of(t, "/")
+                if slash > 0 && r.done_kib < 0 {
+                    let paren = index_of(t, "(")
+                    let end = if paren > slash { paren } else { t.len }
+                    r.done_kib = size_kib(slice(t, 0, slash))
+                    r.total_kib = size_kib(slice(t, slash + 1, end))
+                } else if starts_with(t, "DL:") {
+                    r.speed_kib = size_kib(slice(t, 3, t.len))
+                } else if starts_with(t, "ETA:") {
+                    r.eta = clock_secs(slice(t, 4, t.len))
+                }
+            }
+            r.ok = r.done_kib >= 0
+            return r
+        }
+        i -= 1
+    }
+    return no_readout()
+}
+
+fn no_readout() -> Readout {
+    return Readout { ok: false, done_kib: -1, total_kib: -1, speed_kib: 0, eta: -1 }
+}
+
+/// `5.4MiB` / `512KiB` / `1.2GiB` / `900B` as KiB; -1 when unreadable.
+fn size_kib(t: string) -> int {
+    let mut whole = 0
+    let mut tenths = 0
+    let mut frac = false
+    let mut digits = 0
+    let mut at = 0
+    while at < t.len && ((t[at] >= 48 && t[at] <= 57) || t[at] == 46) {
+        if t[at] == 46 {
+            frac = true
+        } else if frac {
+            if tenths == 0 {
+                tenths = t[at] - 48
+            }
+            digits += 1
+        } else {
+            whole = whole * 10 + (t[at] - 48)
+            digits += 1
+        }
+        at += 1
+    }
+    if digits == 0 {
+        return -1
+    }
+    let unit = slice(t, at, t.len)
+    if unit == "GiB" {
+        return whole * 1048576 + tenths * 104857
+    }
+    if unit == "MiB" {
+        return whole * 1024 + tenths * 102
+    }
+    if unit == "KiB" {
+        return whole
+    }
+    return whole / 1024
+}
+
+/// `1h2m3s` / `1m24s` / `45s` as seconds; -1 when unreadable.
+fn clock_secs(t: string) -> int {
+    let mut total = 0
+    let mut n = 0
+    let mut any = false
+    for i in 0..t.len {
+        let c = t[i]
+        if c >= 48 && c <= 57 {
+            n = n * 10 + (c - 48)
+        } else if c == 104 {
+            total += n * 3600
+            n = 0
+            any = true
+        } else if c == 109 {
+            total += n * 60
+            n = 0
+            any = true
+        } else if c == 115 {
+            total += n
+            n = 0
+            any = true
+        } else {
+            return -1
+        }
+    }
+    return if any { total } else { -1 }
+}

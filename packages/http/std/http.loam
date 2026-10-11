@@ -29,6 +29,7 @@
 import "std:net"
 import "std:async"
 import "std:fmt"
+import "std:log"
 import "std:sys"
 import "std:result"
 import "httpcore/wire.loam"
@@ -1957,6 +1958,7 @@ fn bearer_of(hdrs: string) -> string {
 fn serve_h1(app: App, raw: string) -> string {
     let req = parse_http11(raw)
     if req.err != 0 {
+        log.warn("http.server", "bad request -> {{req.err}} {{reason_phrase(req.err)}}")
         return http_reply(req.err, "text/plain; charset=utf-8", reason_phrase(req.err))
     }
     req_tok = bearer_of(req.hdrs)
@@ -1975,10 +1977,18 @@ fn serve_h1(app: App, raw: string) -> string {
     }
     // Optional REST/JSON routes: only reachable when the app registered one
     // with `app.json`. Anything else stays a 404 as before.
+    let t0 = async.now_ms()
     let jbody = serve_json(app, req.method, req.path, req.body)
     if json_status != 0 {
+        let msg = "{{req.method}} {{req.path}} -> {{json_status}} · {{log.bytes(jbody.len)}} · {{int(async.now_ms() - t0)}} ms"
+        if json_status >= 400 {
+            log.warn("http.server", msg)
+        } else {
+            log.info("http.server", msg)
+        }
         return http_reply(json_status, json_ctype, jbody)
     }
+    log.warn("http.server", "{{req.method}} {{req.path}} -> 404 (no route)")
     return http_reply(404, "text/plain; charset=utf-8", "Not Found")
 }
 
@@ -2385,6 +2395,10 @@ fn serve_conn(app: App, fd: int) {
     if acc.len == 0 {
         return
     }
+    if watch_accept(app, fd, acc) != 0 {
+        conn_kept = 1
+        return
+    }
     let resp = serve_h1(app, acc)
     let n = net.tcp_write(fd, resp)
     if n < 0 {
@@ -2605,11 +2619,22 @@ fn listen(app: App, port: int) {
     fmt.write_int(p)
     fmt.writeln()
     for k in 0..2147483647 {
+        // An open stream needs its ticks while nobody connects.
+        if watchers.len > 0 {
+            if net.tcp_poll(fd, 1, STREAM_MS) <= 0 {
+                watch_tick()
+                continue
+            }
+        }
         let c = net.tcp_accept(fd)
         if c >= 0 {
+            conn_kept = 0
             serve_conn(app, c)
-            net.tcp_close(c)
+            if conn_kept == 0 {
+                net.tcp_close(c)
+            }
         }
+        watch_tick()
     }
     net.tcp_close(fd)
 }
@@ -2778,6 +2803,121 @@ fn rpc(app: App, name: string, handler: fn(string) -> string) -> App {
     return app
 }
 
+/// How often an open stream's handler is asked for the current message.
+const STREAM_MS: int = 500
+
+/// Register a server-streaming RPC: the reply stays open. The client gets
+/// `handler(req)` at once, then again each time its bytes change (asked every
+/// `STREAM_MS`), until it disconnects; read it with `client.watch`. For state
+/// a client would otherwise poll. Plain `rpc`s are still served in between.
+fn stream(app: App, name: string, handler: fn(string) -> string) -> App {
+    let hid = intern_handler(handler)
+    streams.push(RpcEntry { app: app.id, name: name, hid: hid })
+    return app
+}
+
+/// An open `stream` reply: its socket, the request it answers, and the last
+/// message sent (the next goes out only when it differs).
+struct Watcher {
+    fd: int,
+    hid: int,
+    req: string,
+    last: string,
+    name: string,
+    t0: i64,
+    sent: int,
+}
+
+let mut streams: []RpcEntry = []RpcEntry {}
+let mut watchers: []Watcher = []Watcher {}
+let mut watch_last: i64 = 0
+/// Set by `serve_conn` when it handed the connection to a stream, so `listen`
+/// leaves it open.
+let mut conn_kept: int = 0
+
+/// Hand `fd` to a registered stream when `raw` is a gRPC-Web POST for one:
+/// write the head and the first message, then keep it. Returns 1 when the
+/// request was a stream (served or refused), 0 to serve it as usual.
+fn watch_accept(app: App, fd: int, raw: string) -> int {
+    if streams.len == 0 {
+        return 0
+    }
+    let req = parse_http11(raw)
+    if req.err != 0 || !eq(req.method, "POST") || ctype_grpc_web(req.ctype) == 0 {
+        return 0
+    }
+    let name = path_to_name(req.path)
+    for i in 0..streams.len {
+        if streams[i].app == app.id && eq(streams[i].name, name) {
+            req_tok = bearer_of(req.hdrs)
+            let mut b = unframe_str(req.body)
+            gate = 0
+            for m in 0..mws.len {
+                if mws[m].app == app.id {
+                    b = invoke_mw(mws[m].hid, name, b)
+                }
+            }
+            if gate != 0 {
+                log.warn("http.server", "{{name}} stream rejected by middleware (unauthenticated)")
+                net.tcp_write(fd, http_reply(200, "application/grpc-web+proto", grpc_web_frame("", 16)))
+                net.tcp_close(fd)
+                return 1
+            }
+            let first = invoke_handler(streams[i].hid, b)
+            let head = "HTTP/1.1 200 OK\r\nContent-Type: application/grpc-web+proto\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n"
+            if net.tcp_write(fd, concat_str(head, frame_str(first))) < 0 {
+                net.tcp_close(fd)
+                return 1
+            }
+            push(watchers, Watcher { fd: fd, hid: streams[i].hid, req: b, last: first, name: name,
+                t0: async.now_ms(), sent: 1 })
+            log.info("http.server", "{{name}} stream open · {{watchers.len}} open")
+            return 1
+        }
+    }
+    return 0
+}
+
+/// Push to every open stream whose message changed, and drop the ones whose
+/// client went away. At most once per `STREAM_MS`.
+fn watch_tick() {
+    let now = async.now_ms()
+    if int(now - watch_last) < STREAM_MS {
+        return
+    }
+    watch_last = now
+    let mut keep = []Watcher {}
+    for i in 0..watchers.len {
+        let mut w = watchers[i]
+        let mut alive = true
+        // The client sends nothing after its request, so readable means it
+        // closed (or the socket failed).
+        if net.tcp_poll(w.fd, 1, 0) != 0 {
+            if net.tcp_read(w.fd, 512).len == 0 {
+                alive = false
+            }
+        }
+        if alive {
+            let out = invoke_handler(w.hid, w.req)
+            if !eq(out, w.last) {
+                if net.tcp_write(w.fd, frame_str(out)) < 0 {
+                    alive = false
+                } else {
+                    w.last = out
+                    w.sent += 1
+                }
+            }
+        }
+        if alive {
+            push(keep, w)
+        } else {
+            net.tcp_close(w.fd)
+            log.info("http.server", "{{w.name}} stream closed · {{w.sent}} messages · {{int(now - w.t0) / 1000}} s")
+        }
+    }
+    watchers = keep
+}
+
 /// Middleware: `(name, body) -> body` before the RPC handler.
 fn use(app: App, hook: fn(string, string) -> string) -> App {
     let hid = intern_mw(hook)
@@ -2789,8 +2929,13 @@ fn last_rpc_status() -> int {
     return last_status
 }
 
-/// Look up `name` and run middleware + handler.
+/// A handler slower than this is logged as a warning.
+const SLOW_MS: int = 1000
+
+/// Look up `name` and run middleware + handler. Every call is logged under
+/// `http.server` (see `std:log`): name, outcome, sizes and time.
 fn dispatch(app: App, name: string, body: string) -> string {
+    let t0 = async.now_ms()
     let mut b = body
     last_status = 12
     gate = 0
@@ -2802,16 +2947,26 @@ fn dispatch(app: App, name: string, body: string) -> string {
     if gate != 0 {
         // a `before` hook rejected: unauthenticated, handler skipped
         last_status = 16
+        log.warn("http.server", "{{name}} rejected by middleware (unauthenticated)")
         return ""
     }
     for i in 0..rpcs.len {
         if rpcs[i].app == app.id {
             if eq(rpcs[i].name, name) {
                 last_status = 0
-                return invoke_handler(rpcs[i].hid, b)
+                let out = invoke_handler(rpcs[i].hid, b)
+                let ms = int(async.now_ms() - t0)
+                let msg = "{{name}} ok · {{log.bytes(body.len)}} -> {{log.bytes(out.len)}} · {{ms}} ms"
+                if ms >= SLOW_MS {
+                    log.warn("http.server", "{{msg}} (slow)")
+                } else {
+                    log.info("http.server", msg)
+                }
+                return out
             }
         }
     }
+    log.warn("http.server", "{{name}}: no such RPC (unimplemented)")
     return ""
 }
 
@@ -2917,7 +3072,9 @@ fn client(addr: string = "") -> Client {
 /// or use `res.or` / `res.or_trap`. An empty reply body is reported as a
 /// failure (`r.ok` false), since the transport exposes no `grpc-status`.
 fn call(c: Client, name: string, body: string) -> Res<string> {
+    let t0 = async.now_ms()
     let out = rt_call(c.addr, name, body)
+    log_call(name, c.addr, body.len, out, "", t0)
     if out.len == 0 {
         return result.err("rpc: empty response", "")
     }
@@ -2929,9 +3086,21 @@ fn call(c: Client, name: string, body: string) -> Res<string> {
 /// the await pumps the one-thread async world until the response lands.
 fn async_call(c: Client, name: string, body: string) -> Future<string> {
     let f = async.future_str()
+    // `await` pumps without yielding to the browser, so on wasm this one call
+    // takes a blocking fetch; `call_async` itself never blocks the page.
+    fetch_sync = 1
     call_async(c, name, body, fn(out) { async.resolve(f, out) })
+    fetch_sync = 0
     return f
 }
+
+/// How long a wasm fetch may take. Longer than the socket path's 8 s: the
+/// request waits behind a slow handler on a one-request-at-a-time server,
+/// and the page keeps running meanwhile.
+const FETCH_TIMEOUT_MS: int = 30000
+
+/// 1 while `async_call` is starting its call: the wasm fetch blocks.
+let mut fetch_sync: int = 0
 
 // --- Async unary client (`call_async`) -------------------------------
 //
@@ -2956,6 +3125,13 @@ struct RpcCall {
     acc: string,
     cbid: int,
     at: i64,
+    /// For the `http.client` log line: RPC name, address, start time.
+    name: string,
+    addr: string,
+    t0: i64,
+    size: int,
+    /// Wasm fetch slot (stage 4), else -1.
+    slot: int,
 }
 
 let mut acalls: []RpcCall = []RpcCall {}
@@ -2999,7 +3175,10 @@ fn acall_remove(idx: int) {
 /// count, drop the callback slot, then run the callback with `out`. The
 /// callback value is retained before the table is rebuilt, so the drop and
 /// the id remap cannot free it.
-fn acall_finish(idx: int, out: string) {
+/// End call `idx` with `out` and run its callback. `why` says what went
+/// wrong ("" when the reply arrived), for the `http.client` log line.
+fn acall_finish(idx: int, out: string, why: string) {
+    log_call(acalls[idx].name, acalls[idx].addr, acalls[idx].size, out, why, acalls[idx].t0)
     let fd = acalls[idx].fd
     let cbid = acalls[idx].cbid
     let cb = acbs[cbid]
@@ -3023,7 +3202,7 @@ fn acall_advance(idx: int) -> int {
         if stage == 5 {
             let r = net.tls_nb_ready(acalls[idx].fd)
             if r < 0 {
-                acall_finish(idx, "")
+                acall_finish(idx, "", "TLS handshake failed")
                 return 1
             }
             if r == 0 {
@@ -3035,14 +3214,14 @@ fn acall_advance(idx: int) -> int {
             let fd = acalls[idx].fd
             let p = net.tcp_poll(fd, 2, 0)
             if p < 0 {
-                acall_finish(idx, "")
+                acall_finish(idx, "", "could not connect")
                 return 1
             }
             if p == 0 {
                 return 0
             }
             if net.tcp_so_error(fd) != 0 {
-                acall_finish(idx, "")
+                acall_finish(idx, "", "connection refused (is the server running?)")
                 return 1
             }
             acalls[idx].stage = 2
@@ -3050,7 +3229,7 @@ fn acall_advance(idx: int) -> int {
         if stage == 2 {
             let n = net.tcp_send(acalls[idx].fd, acalls[idx].req, acalls[idx].sent)
             if n < 0 {
-                acall_finish(idx, "")
+                acall_finish(idx, "", "send failed")
                 return 1
             }
             if n == 0 {
@@ -3067,7 +3246,7 @@ fn acall_advance(idx: int) -> int {
             let fd = acalls[idx].fd
             let p = net.tcp_poll(fd, 1, 0)
             if p < 0 {
-                acall_finish(idx, "")
+                acall_finish(idx, "", "read failed")
                 return 1
             }
             if p == 0 {
@@ -3079,21 +3258,33 @@ fn acall_advance(idx: int) -> int {
                     return 0
                 }
                 // EOF: the server closed after the body (Connection: close).
-                acall_finish(idx, unframe_str(http_payload(acalls[idx].acc)))
+                acall_finish(idx, unframe_str(http_payload(acalls[idx].acc)), "")
                 return 1
             }
             acalls[idx].acc = concat_str(acalls[idx].acc, chunk)
             if acalls[idx].acc.len > 1048576 {
-                acall_finish(idx, "")
+                acall_finish(idx, "", "reply over 1 MB")
                 return 1
             }
         }
         if stage == 4 {
-            if net.fetch_ready() != 0 {
-                acall_finish(idx, unframe_str(net.fetch_take()))
-                return 1
+            // This call's own slot: replies may finish in any order.
+            let slot = acalls[idx].slot
+            if net.fetch_slot_done(slot) == 0 {
+                return 0
             }
-            return 0
+            let status = net.fetch_slot_status(slot)
+            let out = net.fetch_slot_take(slot)
+            if status == 200 {
+                acall_finish(idx, unframe_str(out), "")
+            } else if status == 0 {
+                acall_finish(idx, "", "no response (server or proxy unreachable)")
+            } else if status >= 500 {
+                acall_finish(idx, "", "HTTP {{status}} (behind a dev proxy: is the backend running?)")
+            } else {
+                acall_finish(idx, "", "HTTP {{status}}")
+            }
+            return 1
         }
         if stage <= 0 {
             return 0
@@ -3108,7 +3299,10 @@ fn io_pump() {
     while i < acalls.len {
         if acalls[i].at > 0 {
             if async.now_ms() > acalls[i].at {
-                acall_finish(i, "")
+                if acalls[i].stage == 4 {
+                    net.fetch_slot_drop(acalls[i].slot)
+                }
+                acall_finish(i, "", "timed out after {{int(acalls[i].at - acalls[i].t0) / 1000}} s")
                 continue
             }
         }
@@ -3123,8 +3317,10 @@ fn io_pump() {
 /// non-blocking TCP, pumped per frame. Wasm: JS fetch slots (`http.client("")`
 /// is same-origin). Prefer `await c.async_call(...)` inside an `async fn`.
 fn call_async(c: Client, name: string, body: string, cb: fn(string)) {
+    let t0 = async.now_ms()
     let path = name_to_path(name)
     if path.len == 0 {
+        log_call(name, c.addr, body.len, "", "not a Service.Method name", t0)
         cb("")
         return
     }
@@ -3141,7 +3337,7 @@ fn call_async(c: Client, name: string, body: string, cb: fn(string)) {
         if fd >= 0 {
             let req = client_post(hp.host, hp.port, path, framed)
             push(acalls, RpcCall { req: req, sent: 0, fd: fd, stage: 5, acc: "",
-                cbid: cbid, at: async.now_ms() + 15000 })
+                cbid: cbid, at: async.now_ms() + 15000, name: name, addr: c.addr, t0: t0, size: body.len, slot: -1 })
             async.io_open()
             return
         }
@@ -3151,21 +3347,40 @@ fn call_async(c: Client, name: string, body: string, cb: fn(string)) {
         if fd >= 0 {
             let req = client_post(hp.host, hp.port, path, framed)
             push(acalls, RpcCall { req: req, sent: 0, fd: fd, stage: 1, acc: "",
-                cbid: cbid, at: async.now_ms() + 8000 })
+                cbid: cbid, at: async.now_ms() + 8000, name: name, addr: c.addr, t0: t0, size: body.len, slot: -1 })
             async.io_open()
             return
         }
     }
     // Wasm: no TCP. Empty addr is same-origin (`http.client("")`); a host:port
     // still falls through to the JS fetch slots. Native connect failure is "".
-    if net.fetch_issue(path, framed) >= 0 {
+    let slot = net.fetch_start(path, framed, fetch_sync)
+    if slot >= 0 {
         push(acalls, RpcCall { req: "", sent: 0, fd: -1, stage: 4, acc: "",
-            cbid: cbid, at: async.now_ms() + 8000 })
+            cbid: cbid, at: async.now_ms() + i64(FETCH_TIMEOUT_MS), name: name, addr: c.addr, t0: t0, size: body.len, slot: slot })
         async.io_open()
         return
     }
     acb_drop(cbid)
+    log_call(name, c.addr, body.len, "", "could not connect (or four wasm fetches already in flight)", t0)
     cb("")
+}
+
+/// One `http.client` log line for a finished call. An empty reply is a
+/// warning: it is what a down server or a proxy error looks like, though an
+/// all-default message also encodes to nothing.
+fn log_call(name: string, addr: string, sent: int, out: string, why: string, t0: i64) {
+    let ms = int(async.now_ms() - t0)
+    let at = if addr.len > 0 { addr } else { "same origin" }
+    if why.len > 0 {
+        log.error("http.client", "{{name}} failed · {{why}} · {{at}} · {{ms}} ms")
+        return
+    }
+    if out.len == 0 {
+        log.warn("http.client", "{{name}} empty reply · no answer (server down, proxy error) or an all-default message · {{ms}} ms")
+        return
+    }
+    log.info("http.client", "{{name}} ok · {{log.bytes(sent)}} -> {{log.bytes(out.len)}} · {{ms}} ms")
 }
 
 // --- Streaming clients + server push (Phase 1b) -------------------------
@@ -3454,6 +3669,263 @@ fn sse_pump() {
             continue
         }
         if sse_advance(i) == 0 {
+            i = i + 1
+        }
+    }
+}
+
+/// One open `watch`. `stage`: 1 connecting, 2 sending, 3 reading the
+/// response head, 4 reading messages, 6 the wasm stream bridge (`slot`).
+struct WatchCall {
+    req: string,
+    sent: int,
+    fd: int,
+    stage: int,
+    acc: string,
+    on_msg: fn(string),
+    on_end: fn(),
+    /// Deadline for the head (0 once the stream is open: it may stay quiet).
+    at: i64,
+    name: string,
+    addr: string,
+    t0: i64,
+    msgs: int,
+    slot: int,
+}
+
+let mut watch_calls: []WatchCall = []WatchCall {}
+let mut watch_on: int = 0
+let mut watch_waking: int = 0
+
+/// How often an open, quiet stream is read. A pending request keeps the host
+/// drawing every frame (`async.io_open`); an open stream only needs a wake
+/// this often, so an idle app does not spin.
+const WATCH_WAKE_MS: int = 100
+
+/// Open a server-streaming RPC (`app.stream` on the server). `on_msg` runs
+/// with each message as it arrives, on the UI thread inside a frame's async
+/// tick; `on_end` runs once when the stream closes or cannot open. Native:
+/// one socket, read per frame. Wasm: the loader's streaming XHR, same-origin
+/// for `http.client("")`.
+fn watch(c: Client, name: string, body: string, on_msg: fn(string), on_end: fn()) {
+    let t0 = async.now_ms()
+    let path = name_to_path(name)
+    if path.len == 0 {
+        log_call(name, c.addr, body.len, "", "not a Service.Method name", t0)
+        on_end()
+        return
+    }
+    let framed = frame_str(body)
+    let hp = parse_addr(c.addr)
+    if watch_on == 0 {
+        watch_on = 1
+        async.add_step(|| { watch_pump() })
+    }
+    if hp.tls == 1 {
+        log_call(name, c.addr, body.len, "", "streams over TLS are not supported", t0)
+        on_end()
+        return
+    }
+    if hp.port != 0 {
+        let fd = net.tcp_nb_connect(hp.host, hp.port)
+        if fd >= 0 {
+            push(watch_calls, WatchCall { req: client_post(hp.host, hp.port, path, framed), sent: 0, fd: fd,
+                stage: 1, acc: "", on_msg: on_msg, on_end: on_end, at: async.now_ms() + 8000, name: name,
+                addr: c.addr, t0: t0, msgs: 0, slot: -1 })
+            async.io_open()
+            return
+        }
+    }
+    let slot = net.stream_open(path, framed)
+    if slot >= 0 {
+        push(watch_calls, WatchCall { req: "", sent: 0, fd: -1, stage: 6, acc: "", on_msg: on_msg,
+            on_end: on_end, at: 0, name: name, addr: c.addr, t0: t0, msgs: 0, slot: slot })
+        watch_wake()
+        return
+    }
+    log_call(name, c.addr, body.len, "", "could not connect", t0)
+    on_end()
+}
+
+/// Keep the host waking while a stream is open (see `WATCH_WAKE_MS`).
+fn watch_wake() {
+    if watch_waking != 0 {
+        return
+    }
+    watch_waking = 1
+    async.after(WATCH_WAKE_MS, || {
+        watch_waking = 0
+        if watch_calls.len > 0 {
+            watch_wake()
+        }
+    })
+}
+
+/// End stream `idx`: close it, log it, drop it, then run its `on_end`.
+fn watch_finish(idx: int, why: string) {
+    let done = watch_calls[idx].on_end
+    let fd = watch_calls[idx].fd
+    let slot = watch_calls[idx].slot
+    let name = watch_calls[idx].name
+    let addr = watch_calls[idx].addr
+    let msgs = watch_calls[idx].msgs
+    if fd >= 0 {
+        net.tcp_close(fd)
+    }
+    if slot >= 0 {
+        net.stream_close(slot)
+    }
+    if watch_calls[idx].stage <= 3 {
+        async.io_close()
+    }
+    let ms = int(async.now_ms() - watch_calls[idx].t0)
+    let at = if addr.len > 0 { addr } else { "same origin" }
+    if why.len > 0 {
+        log.error("http.client", "{{name}} stream failed · {{why}} · {{at}} · {{ms}} ms")
+    } else {
+        log.info("http.client", "{{name}} stream closed · {{msgs}} messages · {{ms / 1000}} s")
+    }
+    let mut keep = []WatchCall {}
+    for i in 0..watch_calls.len {
+        if i != idx {
+            push(keep, watch_calls[i])
+        }
+    }
+    watch_calls = keep
+    done()
+}
+
+/// Run `on_msg` for every complete gRPC data frame in `acc` (trailer frames
+/// are skipped); returns the bytes of a frame still arriving.
+fn watch_deliver(idx: int, acc: string) -> string {
+    let mut rest = acc
+    while rest.len >= 5 {
+        let n = rest[1] * 16777216 + rest[2] * 65536 + rest[3] * 256 + rest[4]
+        if rest.len < 5 + n {
+            break
+        }
+        let flags = rest[0]
+        let msg = str_slice(rest, 5, 5 + n)
+        rest = str_slice(rest, 5 + n, rest.len)
+        if wrapping_and(flags, 128) == 0 {
+            watch_calls[idx].msgs = watch_calls[idx].msgs + 1
+            let cb = watch_calls[idx].on_msg
+            cb(msg)
+        }
+    }
+    return rest
+}
+
+/// Advance stream `idx` as far as its socket allows now. Returns 1 when it
+/// ended (its record is gone and `on_end` ran).
+fn watch_advance(idx: int) -> int {
+    let mut guard = 0
+    while guard < 8 {
+        guard = guard + 1
+        let stage = watch_calls[idx].stage
+        if stage == 6 {
+            let chunk = net.stream_take(watch_calls[idx].slot, 65536)
+            if chunk.len > 0 {
+                watch_calls[idx].acc = watch_deliver(idx, concat_str(watch_calls[idx].acc, chunk))
+                continue
+            }
+            let st = net.stream_state(watch_calls[idx].slot)
+            if st == 1 {
+                watch_finish(idx, "")
+                return 1
+            }
+            if st == 2 {
+                watch_finish(idx, "no response (server or proxy unreachable)")
+                return 1
+            }
+            return 0
+        }
+        let fd = watch_calls[idx].fd
+        if stage == 1 {
+            let p = net.tcp_poll(fd, 2, 0)
+            if p < 0 {
+                watch_finish(idx, "could not connect")
+                return 1
+            }
+            if p == 0 {
+                return 0
+            }
+            if net.tcp_so_error(fd) != 0 {
+                watch_finish(idx, "connection refused (is the server running?)")
+                return 1
+            }
+            watch_calls[idx].stage = 2
+        }
+        if stage == 2 {
+            let n = net.tcp_send(fd, watch_calls[idx].req, watch_calls[idx].sent)
+            if n < 0 {
+                watch_finish(idx, "send failed")
+                return 1
+            }
+            if n == 0 {
+                return 0
+            }
+            watch_calls[idx].sent = watch_calls[idx].sent + n
+            if watch_calls[idx].sent < watch_calls[idx].req.len {
+                return 0
+            }
+            watch_calls[idx].stage = 3
+        }
+        if stage == 3 || stage == 4 {
+            let p = net.tcp_poll(fd, 1, 0)
+            if p < 0 {
+                watch_finish(idx, "read failed")
+                return 1
+            }
+            if p == 0 {
+                return 0
+            }
+            let chunk = net.tcp_read(fd, 65536)
+            if chunk.len == 0 {
+                if net.tcp_wouldblock() != 0 {
+                    return 0
+                }
+                // EOF: the server ended the stream (or went away).
+                watch_finish(idx, "")
+                return 1
+            }
+            let acc = concat_str(watch_calls[idx].acc, chunk)
+            if watch_calls[idx].stage == 3 {
+                let at = find_dbl_crlf(acc)
+                if at < 0 {
+                    watch_calls[idx].acc = acc
+                    continue
+                }
+                if http_status(acc) != 200 {
+                    watch_finish(idx, "HTTP {{http_status(acc)}}")
+                    return 1
+                }
+                // Open: from here the stream may stay quiet for as long as
+                // nothing changes, so it neither times out nor keeps the host
+                // drawing every frame.
+                watch_calls[idx].stage = 4
+                watch_calls[idx].at = 0
+                async.io_close()
+                watch_wake()
+                log.info("http.client", "{{watch_calls[idx].name}} stream open · {{int(async.now_ms() - watch_calls[idx].t0)}} ms")
+                watch_calls[idx].acc = watch_deliver(idx, str_slice(acc, at + 4, acc.len))
+                continue
+            }
+            watch_calls[idx].acc = watch_deliver(idx, acc)
+        }
+    }
+    return 0
+}
+
+/// Per-frame stepper for every open `watch`.
+fn watch_pump() {
+    let mut i = 0
+    while i < watch_calls.len {
+        if watch_calls[i].at > 0 && async.now_ms() > watch_calls[i].at {
+            watch_finish(i, "timed out after {{int(watch_calls[i].at - watch_calls[i].t0) / 1000}} s")
+            continue
+        }
+        if watch_advance(i) == 0 {
             i = i + 1
         }
     }

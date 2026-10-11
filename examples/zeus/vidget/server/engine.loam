@@ -1,0 +1,1144 @@
+//! The download engine. Native only — it runs in the backend, never in a UI.
+//!
+//! Extraction is Loam; transfer is aria2c (curl when it is missing); joining
+//! and converting is ffmpeg. Nothing else is required.
+//!
+//! - **Direct files** (`.mp4`, `.webm`, `.mov`, …): aria2c `-x/-s` split
+//!   connections on one file.
+//! - **HLS** (`.m3u8`): `hls.loam` reads the playlist; every segment (plus
+//!   key and init files) goes into one aria2c input list fetched `-j N` in
+//!   parallel, then ffmpeg joins the local playlist with a stream copy —
+//!   decrypting AES-128 and turning `.ts` into `.mp4` on the way.
+//! - **Pages and webpack apps**: `extract.loam` finds the media URL in the
+//!   markup, inline JSON, or a same-origin script bundle.
+//! - **DASH, live HLS, byte-range HLS**: ffmpeg reads the URL itself.
+//!
+//! Every job runs detached in its own process group (`set -m`), writing a
+//! `log` and, when it exits, a `status` file in its job directory. A poll
+//! (`refresh`) measures bytes on disk and reads the log tail, so the RPC loop
+//! never blocks on a transfer, and Cancel kills the whole group at once.
+
+import "std:async"
+import "std:log"
+import "std:sys"
+import "api.loam"
+import "extract.loam"
+import "hls.loam"
+import "text.loam"
+
+/// GUI-launched processes get a bare PATH; Homebrew tools live here.
+const PFX: string = "PATH=/opt/homebrew/bin:/usr/local/bin:$PATH; export PATH; "
+
+/// A desktop browser's agent: some CDNs refuse curl's default one.
+const UA: string = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+
+/// How a job moves bytes, which decides how `refresh` measures it.
+const MODE_FILE: int = 0
+const MODE_SEGMENTS: int = 1
+const MODE_FFMPEG: int = 2
+
+/// Options that let ffmpeg read a local playlist whose segments carry odd
+/// extensions and whose key is a local file.
+const LOCAL_PL: string = "-allowed_extensions ALL -protocol_whitelist file,crypto,data"
+
+/// One download. `dir` holds `log`, `status`, `cmd` and, for HLS, `seg/`.
+/// `watch` is what `du` measures; `pid` leads the job's process group.
+struct Job {
+    id: int,
+    url: string,
+    /// What Start asked for; a second Start for the same three while this
+    /// job still runs gets this job back instead of a duplicate download.
+    format: string,
+    container: int,
+    title: string,
+    dir: string,
+    file: string,
+    watch: string,
+    pid: int,
+    mode: int,
+    segments: int,
+    state: int,
+    done_kib: int,
+    total_kib: int,
+    speed_kib: int,
+    eta: int,
+    stage: string,
+    error: string,
+    last_kib: int,
+    last_ms: i64,
+}
+
+/// What `plan` decided to download.
+struct Plan {
+    ok: bool,
+    error: string,
+    kind: int,
+    /// Direct file or ffmpeg input.
+    media: string,
+    /// HLS video (or muxed) playlist and its separate audio playlist ("" none).
+    video_pl: string,
+    audio_pl: string,
+    title: string,
+}
+
+let mut jobs: []Job = []Job {}
+let mut next_id: int = 1
+
+let mut tools_known: bool = false
+let mut has_aria2: bool = false
+let mut has_ffmpeg: bool = false
+/// Distinct names for aria2c page fetches (curl's TLS is refused by some hosts).
+let mut fetch_seq: int = 0
+
+fn have(name: string) -> bool {
+    let out = sys.exec("{{PFX}}command -v {{name}} 2>/dev/null")
+    return text.trim(out) != ""
+}
+
+fn detect() {
+    if tools_known {
+        return
+    }
+    tools_known = true
+    // `VIDGET_NO_ARIA2=1` exercises the curl path on a machine that has aria2c.
+    has_aria2 = sys.env("VIDGET_NO_ARIA2") == "" && have("aria2c")
+    has_ffmpeg = have("ffmpeg")
+}
+
+/// "aria2c ffmpeg curl" — what this machine will use.
+fn tools() -> string {
+    detect()
+    let mut t = ""
+    if has_aria2 {
+        t = "aria2c "
+    }
+    if has_ffmpeg {
+        t = "{{t}}ffmpeg "
+    }
+    return "{{t}}curl"
+}
+
+/// Where finished files land: `$VIDGET_DIR`, else `~/Downloads/Vidget`.
+fn out_dir() -> string {
+    let o = sys.env("VIDGET_DIR")
+    if o != "" {
+        return o
+    }
+    let home = sys.env("HOME")
+    if home == "" {
+        return "/tmp/Vidget"
+    }
+    return "{{home}}/Downloads/Vidget"
+}
+
+fn q(s: string) -> string {
+    return text.shell_quote(s)
+}
+
+/// GET `url` via aria2c into a temp file. Used when curl's TLS stack is reset
+/// before any bytes (Apple SecureTransport against some nginx hosts). The body
+/// is dropped when it is over 8 MB so a mis-aimed fetch cannot become a video.
+fn fetch_via_aria(url: string, secs: int) -> string {
+    fetch_seq += 1
+    let dir = "{{out_dir()}}/.vidget"
+    sys.mkdir(dir)
+    let name = "fetch-{{fetch_seq}}.body"
+    let path = "{{dir}}/{{name}}"
+    let ctl = "{{path}}.aria2"
+    sys.exec("rm -f {{q(path)}} {{q(ctl)}}")
+    sys.exec("{{PFX}}aria2c -q --allow-overwrite=true --auto-file-renaming=false --file-allocation=none --max-tries=3 --retry-wait=1 --timeout={{secs}} --connect-timeout=4 --summary-interval=0 --download-result=hide --console-log-level=error -U {{q(UA)}} -d {{q(dir)}} -o {{q(name)}} {{q(url)}} >/dev/null 2>&1")
+    let n = text.to_int(sys.exec("wc -c < {{q(path)}} 2>/dev/null"))
+    let mut body = ""
+    if n > 0 && n <= 8000000 {
+        body = sys.read_file(path)
+    }
+    sys.exec("rm -f {{q(path)}} {{q(ctl)}}")
+    return body
+}
+
+/// GET `url` as text (pages, playlists, bundles), capped at 8 MB and `secs`.
+fn fetch_for(url: string, secs: int) -> string {
+    detect()
+    let via = sys.exec("curl -sL --compressed --connect-timeout 4 --max-time {{secs}} --max-filesize 8000000 -A {{q(UA)}} {{q(url)}} 2>/dev/null")
+    if via != "" || !has_aria2 {
+        return via
+    }
+    return fetch_via_aria(url, secs)
+}
+
+fn fetch(url: string) -> string {
+    return fetch_for(url, 8)
+}
+
+// --- probe ------------------------------------------------------------------
+//
+// A probe answers from the network once per URL: the reply is cached, and
+// `plan` reads the cache, so a Start after a Probe costs no request at all.
+// Anything slow — the ffmpeg frame grab, ffprobe — runs as a detached
+// background job that `thumb` polls, never inside an RPC.
+
+let mut cache_urls: []string = []string {}
+let mut cache_resps: []ProbeResp = []ProbeResp {}
+/// The media URL a thumbnail is grabbed from, per cache entry ("" none).
+let mut cache_previews: []string = []string {}
+/// The thumbnail job directory per cache entry ("" not started).
+let mut cache_thumb_dirs: []string = []string {}
+let mut thumb_seq: int = 0
+
+fn cache_find(url: string) -> int {
+    for i in 0..cache_urls.len {
+        if cache_urls[i] == url {
+            return i
+        }
+    }
+    return -1
+}
+
+fn cache_put(url: string, r: ProbeResp, preview: string) {
+    let i = cache_find(url)
+    if i >= 0 {
+        cache_resps[i] = r
+        cache_previews[i] = preview
+        cache_thumb_dirs[i] = ""
+        return
+    }
+    // Small and bounded: the last 64 links.
+    if cache_urls.len >= 64 {
+        let mut u = []string {}
+        let mut r2 = []ProbeResp {}
+        let mut p = []string {}
+        let mut t = []string {}
+        for k in 1..cache_urls.len {
+            push(u, cache_urls[k])
+            push(r2, cache_resps[k])
+            push(p, cache_previews[k])
+            push(t, cache_thumb_dirs[k])
+        }
+        cache_urls = u
+        cache_resps = r2
+        cache_previews = p
+        cache_thumb_dirs = t
+    }
+    push(cache_urls, url)
+    push(cache_resps, r)
+    push(cache_previews, preview)
+    push(cache_thumb_dirs, "")
+}
+
+fn empty_probe(err: string) -> ProbeResp {
+    return ProbeResp {
+        ok: 0, error: err, kind: api.kind_page(), title: "", description: "", thumbnail: "",
+        duration: 0, site: "", formats: []string {}, labels: []string {},
+    }
+}
+
+/// Classify by extension alone; `kind_page` also means "unknown".
+fn kind_of_url(url: string) -> int {
+    let e = text.url_ext(url)
+    if e == "m3u8" || e == "mpd" {
+        return api.kind_stream()
+    }
+    if e == "mp4" || e == "m4v" || e == "webm" || e == "mov" || e == "mkv" || e == "ts" || e == "flv" ||
+        e == "avi" || e == "mp3" || e == "m4a" || e == "ogv" || e == "ogg" || e == "3gp" {
+        return api.kind_direct()
+    }
+    return api.kind_page()
+}
+
+/// The value of the last `name:` header in a `curl -I -L` dump (redirects
+/// print one block each; the final block is the file's).
+fn last_header(dump: string, name: string) -> string {
+    let ls = text.lines(dump)
+    let want = text.lower(name)
+    let mut v = ""
+    for i in 0..ls.len {
+        let l = ls[i]
+        let c = text.index_of(l, ":")
+        if c > 0 && text.lower(text.slice(l, 0, c)) == want {
+            v = text.trim(text.slice(l, c + 1, l.len))
+        }
+    }
+    return v
+}
+
+/// The kind by content type, else by extension.
+fn head_kind(url: string, head: string) -> int {
+    let ctype = text.lower(last_header(head, "content-type"))
+    if text.contains(ctype, "mpegurl") || text.contains(ctype, "dash+xml") {
+        return api.kind_stream()
+    }
+    if text.starts_with(ctype, "video/") || text.starts_with(ctype, "audio/") {
+        return api.kind_direct()
+    }
+    if text.contains(ctype, "text/html") {
+        return api.kind_page()
+    }
+    return kind_of_url(url)
+}
+
+/// HEAD, following redirects.
+fn head(url: string) -> string {
+    return sys.exec("curl -sIL --connect-timeout 3 --max-time 5 -A {{q(UA)}} {{q(url)}} 2>/dev/null")
+}
+
+/// Formats for an HLS URL: each variant, then each separate audio track.
+/// Returns the playlist to preview from ("" when unreadable).
+fn add_hls(r: &mut ProbeResp, url: string, prefix: string) -> string {
+    let body = fetch(url)
+    if !hls.is_playlist(body) {
+        return ""
+    }
+    if !hls.is_master(body) {
+        let l = hls.localize(body, url, "v")
+        if r.duration == 0 {
+            r.duration = l.duration
+        }
+        push(r.formats, "hls:{{url}}")
+        if l.live {
+            push(r.labels, "{{prefix}}Live stream (ffmpeg records until cancelled)")
+        } else {
+            push(r.labels, "{{prefix}}Stream · {{l.segments}} segments")
+        }
+        return url
+    }
+    let m = hls.parse_master(body, url)
+    for i in 0..m.variants.len {
+        let v = m.variants[i]
+        let a = hls.audio_for(m, v)
+        push(r.formats, "hls:{{v.url}} {{a}}")
+        push(r.labels, "{{prefix}}{{hls.variant_label(v)}}")
+    }
+    for i in 0..m.audios.len {
+        let a = m.audios[i]
+        push(r.formats, "audio:{{a.url}}")
+        push(r.labels, "{{prefix}}Audio only · {{a.name}}")
+    }
+    if m.variants.len == 0 {
+        return ""
+    }
+    return m.variants[0].url
+}
+
+/// What a URL holds and the formats it can be saved in, from the cache when
+/// it was probed before. The first format is always "" — "best" — so a paste
+/// can start before the user picks. The thumbnail may come later: see `thumb`.
+/// Logged under `engine`.
+fn probe(url: string) -> ProbeResp {
+    let cached = cache_find(text.trim(url)) >= 0
+    let r = probe_url(url)
+    if cached {
+        log.debug("engine", "probe {{url}} (cached)")
+    } else if r.ok == 1 {
+        log.info("engine", "probe {{url}} -> {{kind_label(r.kind)}} · {{r.formats.len}} formats · {{r.title}}")
+    } else {
+        log.warn("engine", "probe {{url}}: {{r.error}}")
+    }
+    return r
+}
+
+fn kind_label(kind: int) -> string {
+    if kind == api.kind_direct() {
+        return "file"
+    }
+    if kind == api.kind_stream() {
+        return "stream"
+    }
+    return "page"
+}
+
+fn probe_url(url: string) -> ProbeResp {
+    detect()
+    let u = text.trim(url)
+    if !text.is_http_url(u) {
+        return empty_probe("not an http(s) URL")
+    }
+    let c = cache_find(u)
+    if c >= 0 {
+        return cache_resps[c]
+    }
+    let mut r = empty_probe("")
+    r.title = text.url_file(u)
+    r.site = extract.origin(u)
+    push(r.formats, "")
+    push(r.labels, "Best quality")
+    // The extension decides without a request when it can.
+    let mut kind = kind_of_url(u)
+    let mut size = ""
+    if kind == api.kind_page() {
+        let h = head(u)
+        kind = head_kind(u, h)
+        size = last_header(h, "content-length")
+    }
+    r.kind = kind
+    if kind == api.kind_direct() {
+        r.ok = 1
+        let kib = text.bytes_to_kib(size)
+        push(r.formats, "url:{{u}}")
+        if kib > 0 {
+            push(r.labels, "Original file · {{text.human_kib(kib)}}")
+        } else {
+            push(r.labels, "Original file")
+        }
+        cache_put(u, r, u)
+        return r
+    }
+    if kind == api.kind_stream() {
+        if text.url_ext(u) == "mpd" {
+            r.ok = 1
+            push(r.formats, "url:{{u}}")
+            push(r.labels, "DASH stream (ffmpeg)")
+            cache_put(u, r, u)
+            return r
+        }
+        let pl = add_hls(&mut r, u, "")
+        if pl == "" {
+            return empty_probe("not a readable HLS playlist")
+        }
+        r.ok = 1
+        cache_put(u, r, pl)
+        return r
+    }
+
+    // A page: metadata, then media in the markup or in a script bundle.
+    let html = fetch(u)
+    if html == "" {
+        return empty_probe("could not fetch the page (no answer within 8 s)")
+    }
+    let x = extract.page(html, u)
+    let mut media = x.media
+    if media.len == 0 {
+        let js = extract.scripts(html, u)
+        let mut n = 0
+        for i in 0..js.len {
+            if n >= 4 || media.len > 0 {
+                break
+            }
+            if extract.origin(js[i]) != extract.origin(u) {
+                continue
+            }
+            n += 1
+            media = extract.media_urls(fetch_for(js[i], 5), u)
+        }
+    }
+    if x.title != "" {
+        r.title = x.title
+    }
+    r.description = x.description
+    r.thumbnail = x.thumbnail
+    if media.len == 0 {
+        r.error = "no video found on this page"
+        return r
+    }
+    r.ok = 1
+    let mut preview = ""
+    for i in 0..media.len {
+        if i >= 12 {
+            break
+        }
+        let m = media[i]
+        let file = text.url_file(m)
+        if text.url_ext(m) == "m3u8" {
+            r.kind = api.kind_stream()
+            let pl = add_hls(&mut r, m, "{{file}} · ")
+            if preview == "" {
+                preview = pl
+            }
+        } else {
+            push(r.formats, "url:{{m}}")
+            push(r.labels, "{{text.url_ext(m)}} · {{file}}")
+            if preview == "" {
+                preview = m
+            }
+        }
+    }
+    let title = r.title
+    cache_put(u, r, preview)
+    let back = cache_resps[cache_find(u)]
+    if back.title != title {
+        return r
+    }
+    return back
+}
+
+// --- thumbnail --------------------------------------------------------------
+
+/// The preview frame and length for a probed URL. The first call starts a
+/// detached ffmpeg + ffprobe job and answers `ready = 0`; later calls answer
+/// from its files. A page with an `og:image` answers at once.
+fn thumb(url: string) -> ThumbResp {
+    detect()
+    let u = text.trim(url)
+    let c = cache_find(u)
+    if c < 0 {
+        return ThumbResp { ready: 1, thumbnail: "", duration: 0 }
+    }
+    let r = cache_resps[c]
+    if r.thumbnail != "" || cache_previews[c] == "" || !has_ffmpeg {
+        return ThumbResp { ready: 1, thumbnail: r.thumbnail, duration: r.duration }
+    }
+    let media = cache_previews[c]
+    let mut dir = cache_thumb_dirs[c]
+    if dir == "" {
+        thumb_seq += 1
+        let stamp = text.trim(sys.exec("date +%s"))
+        dir = "{{out_dir()}}/.vidget/thumb-{{thumb_seq}}-{{stamp}}"
+        sys.mkdir(dir)
+        cache_thumb_dirs[c] = dir
+        let jpg = "{{dir}}/thumb"
+        let dur = "{{dir}}/dur"
+        let done = "{{dir}}/done"
+        let grab = "ffmpeg -hide_banner -loglevel error -nostdin -rw_timeout 6000000 -user_agent {{q(UA)}} -referer {{q(u)}} -ss 1 -i {{q(media)}} -frames:v 1 -vf scale=480:-2 -f image2pipe -c:v mjpeg -q:v 5 - 2>/dev/null | base64 | tr -d '\\n' > {{q(jpg)}}"
+        let len = "ffprobe -v error -rw_timeout 6000000 -show_entries format=duration -of csv=p=0 {{q(media)}} > {{q(dur)}} 2>/dev/null"
+        // A watchdog ends the pair after 20 s whatever the network does.
+        let work = "( {{grab}} ) & G=$!; ( {{len}} ) & P=$!; ( sleep 20; kill -9 $G $P 2>/dev/null ) & W=$!; wait $G $P; kill $W 2>/dev/null; echo 1 > {{q(done)}}"
+        sys.exec("set -m; ( {{PFX}}{{work}} ) </dev/null >/dev/null 2>&1 &")
+        return ThumbResp { ready: 0, thumbnail: "", duration: r.duration }
+    }
+    if sys.exists("{{dir}}/done") == 0 {
+        return ThumbResp { ready: 0, thumbnail: "", duration: r.duration }
+    }
+    let b64 = text.trim(sys.read_file("{{dir}}/thumb"))
+    let mut duration = r.duration
+    if duration == 0 {
+        let d = text.num_int(sys.read_file("{{dir}}/dur"))
+        if d > 0 {
+            duration = d
+        }
+    }
+    let mut img = ""
+    if b64.len >= 100 {
+        img = "data:image/jpeg;base64,{{b64}}"
+    }
+    // Keep it, so the next ask (and a re-probe) answers from memory.
+    let mut keep = r
+    keep.thumbnail = img
+    keep.duration = duration
+    cache_resps[c] = keep
+    cache_previews[c] = ""
+    return ThumbResp { ready: 1, thumbnail: img, duration: duration }
+}
+
+// --- plan -------------------------------------------------------------------
+
+fn fail_plan(err: string) -> Plan {
+    return Plan { ok: false, error: err, kind: 0, media: "", video_pl: "", audio_pl: "", title: "" }
+}
+
+fn stream_plan(v: string, a: string) -> Plan {
+    return Plan { ok: true, error: "", kind: api.kind_stream(), media: v, video_pl: v, audio_pl: a, title: "" }
+}
+
+fn direct_plan(m: string) -> Plan {
+    return Plan { ok: true, error: "", kind: api.kind_direct(), media: m, video_pl: "", audio_pl: "", title: "" }
+}
+
+/// Turn a URL plus a `ProbeResp.formats` id into the concrete thing to fetch.
+/// Network only when neither the format id, the extension, nor the probe
+/// cache says what the URL is. `depth` stops a page that links a page.
+fn plan(url: string, format: string, depth: int) -> Plan {
+    if text.starts_with(format, "hls:") {
+        let rest = text.slice(format, 4, format.len)
+        let sp = text.index_of(rest, " ")
+        if sp < 0 {
+            return stream_plan(rest, "")
+        }
+        return stream_plan(text.slice(rest, 0, sp), text.trim(text.slice(rest, sp + 1, rest.len)))
+    }
+    if text.starts_with(format, "audio:") {
+        return stream_plan(text.slice(format, 6, format.len), "")
+    }
+    let mut target = url
+    if text.starts_with(format, "url:") {
+        target = text.slice(format, 4, format.len)
+    }
+    let mut kind = kind_of_url(target)
+    let c = cache_find(target)
+    if kind == api.kind_page() && c >= 0 {
+        kind = cache_resps[c].kind
+        // A page that held a stream is still a page to plan from.
+        if cache_resps[c].formats.len > 1 && text.url_ext(target) != "m3u8" {
+            let f1 = cache_resps[c].formats[1]
+            if text.starts_with(f1, "hls:") || text.starts_with(f1, "url:") {
+                if f1 != "url:{{target}}" {
+                    kind = api.kind_page()
+                }
+            }
+        }
+    } else if kind == api.kind_page() {
+        kind = head_kind(target, head(target))
+    }
+    if kind == api.kind_direct() {
+        return direct_plan(target)
+    }
+    if kind == api.kind_stream() {
+        if text.url_ext(target) == "mpd" {
+            return Plan { ok: true, error: "", kind: kind, media: target, video_pl: "", audio_pl: "", title: "" }
+        }
+        let body = fetch(target)
+        if !hls.is_playlist(body) {
+            // DASH, or a playlist this reader does not know: ffmpeg's job.
+            return Plan { ok: true, error: "", kind: kind, media: target, video_pl: "", audio_pl: "", title: "" }
+        }
+        if !hls.is_master(body) {
+            return stream_plan(target, "")
+        }
+        let m = hls.parse_master(body, target)
+        if m.variants.len == 0 {
+            return fail_plan("the playlist lists no variants")
+        }
+        let v = m.variants[0]
+        let a = hls.audio_for(m, v)
+        return stream_plan(v.url, a)
+    }
+    if depth > 0 {
+        return fail_plan("no video found on this page")
+    }
+    let p = probe(target)
+    if p.ok == 0 || p.formats.len < 2 {
+        if p.error == "" {
+            return fail_plan("no video found on this page")
+        }
+        return fail_plan(p.error)
+    }
+    let title = p.title
+    let mut inner = plan(target, p.formats[1], depth + 1)
+    if inner.title == "" {
+        inner.title = title
+    }
+    return inner
+}
+
+// --- start ------------------------------------------------------------------
+
+/// A file-name-safe title: no `/`, `:`, control bytes, or leading dots,
+/// at most 100 bytes.
+fn safe_name(t: string) -> string {
+    let mut b = []int {}
+    for i in 0..t.len {
+        if b.len >= 100 {
+            break
+        }
+        let c = t[i]
+        if c < 32 || c == 47 || c == 58 || c == 92 || c == 34 || c == 42 || c == 63 || c == 60 || c == 62 || c == 124 {
+            push(b, 95)
+        } else if c == 46 && b.len == 0 {
+            continue
+        } else {
+            push(b, c)
+        }
+    }
+    let s = text.trim(string_from_bytes(b))
+    if s == "" {
+        return "video"
+    }
+    return s
+}
+
+/// `od/base.ext`, or `od/base (n).ext` when taken.
+fn unique_path(od: string, base: string, ext: string) -> string {
+    let first = "{{od}}/{{base}}.{{ext}}"
+    if sys.exists(first) == 0 {
+        return first
+    }
+    let mut n = 2
+    while n < 1000 {
+        let p = "{{od}}/{{base}} ({{n}}).{{ext}}"
+        if sys.exists(p) == 0 {
+            return p
+        }
+        n += 1
+    }
+    return first
+}
+
+/// `name` without its extension.
+fn stem(name: string) -> string {
+    let mut dot = -1
+    for i in 0..name.len {
+        if name[i] == 46 {
+            dot = i
+        }
+    }
+    if dot <= 0 {
+        return name
+    }
+    return text.slice(name, 0, dot)
+}
+
+/// The extension a container index writes; "" keeps the source's.
+fn container_ext(container: int) -> string {
+    let exts = []string { "", "mp4", "mkv", "webm", "mp3", "m4a" }
+    if container < 0 || container >= exts.len {
+        return ""
+    }
+    return exts[container]
+}
+
+/// ffmpeg codec arguments for `container`: a stream copy where any codec
+/// fits, an encode for WebM and the audio formats.
+fn ffmpeg_codec(container: int) -> string {
+    if container == 1 {
+        return "-c copy -bsf:a aac_adtstoasc -movflags +faststart"
+    }
+    if container == 3 {
+        return "-c:v libvpx-vp9 -b:v 0 -crf 33 -row-mt 1 -deadline good -cpu-used 4 -c:a libopus"
+    }
+    if container == 4 {
+        return "-vn -c:a libmp3lame -q:a 0"
+    }
+    if container == 5 {
+        return "-vn -c:a aac -b:a 192k"
+    }
+    return "-c copy"
+}
+
+/// The aria2c (or curl) command that fetches `dir/list` into `dir`.
+/// `referer` is the page the stream was found on; some CDNs reject a bare fetch.
+fn fetch_list_cmd(dir: string, conns: int, referer: string) -> string {
+    if has_aria2 {
+        let lst = "{{dir}}/list"
+        return "aria2c -i {{q(lst)}} -d {{q(dir)}} -j {{conns}} -x 1 -s 1 --file-allocation=none --console-log-level=error --summary-interval=0 --download-result=hide --auto-file-renaming=false --allow-overwrite=true --max-tries=5 --retry-wait=1 -U {{q(UA)}} --referer={{q(referer)}}"
+    }
+    let one = "curl -sSfL --retry 3 -A \"$VG_UA\" -e \"$VG_REF\" -o \"$0\" \"$1\""
+    return "cd {{q(dir)}} && VG_UA={{q(UA)}} VG_REF={{q(referer)}} xargs -P {{conns}} -n 2 sh -c {{q(one)}} < clist"
+}
+
+/// HLS: write the local playlists and lists, return fetch + join. Sets the
+/// job's mode, segment count and output file. "" when the playlist needs
+/// ffmpeg itself (live or byte-range).
+fn segments_cmd(job: &mut Job, p: Plan, container: int, conns: int) -> string {
+    let seg = "{{job.dir}}/seg"
+    sys.mkdir(seg)
+    let lv = hls.localize(fetch(p.video_pl), p.video_pl, "v")
+    if lv.segments == 0 || lv.live || lv.byterange {
+        return ""
+    }
+    let mut urls = lv.urls
+    let mut names = lv.names
+    let last_name = names[names.len - 1]
+    let mut total = lv.segments
+    sys.write_file("{{seg}}/v.m3u8", lv.local)
+    let mut audio = false
+    if p.audio_pl != "" {
+        let la = hls.localize(fetch(p.audio_pl), p.audio_pl, "a")
+        if la.segments > 0 && !la.live && !la.byterange {
+            audio = true
+            sys.write_file("{{seg}}/a.m3u8", la.local)
+            for i in 0..la.urls.len {
+                push(urls, la.urls[i])
+                push(names, la.names[i])
+            }
+            total += la.segments
+        }
+    }
+    sys.write_file("{{seg}}/list", hls.aria2_list(urls, names))
+    sys.write_file("{{seg}}/clist", hls.curl_list(urls, names))
+    job.mode = MODE_SEGMENTS
+    job.segments = total
+    job.watch = seg
+
+    let mut ext = container_ext(container)
+    if ext == "" {
+        // Original: TS segments stay a .ts; fMP4 segments are an .mp4.
+        ext = if text.ends_with(last_name, ".ts") { "ts" } else { "mp4" }
+    }
+    job.file = unique_path(out_dir(), safe_name(job.title), ext)
+    let vpl = "{{seg}}/v.m3u8"
+    let mut inputs = "{{LOCAL_PL}} -i {{q(vpl)}}"
+    if audio {
+        let apl = "{{seg}}/a.m3u8"
+        inputs = "{{inputs}} {{LOCAL_PL}} -i {{q(apl)}} -map 0:v:0? -map 1:a:0"
+    }
+    let mut codec = ffmpeg_codec(container)
+    if ext == "ts" {
+        codec = "-c copy"
+    }
+    let join = "ffmpeg -hide_banner -loglevel error -nostdin -y {{inputs}} {{codec}} {{q(job.file)}}"
+    return "{{fetch_list_cmd(seg, conns, job.url)}} && echo VGSTAGE Joining && {{join}} && rm -rf {{q(seg)}}"
+}
+
+/// Direct: split-connection fetch, then a remux/convert when asked.
+fn direct_cmd(job: &mut Job, p: Plan, container: int, conns: int) -> string {
+    let od = out_dir()
+    let mut src_ext = text.url_ext(p.media)
+    if src_ext == "" {
+        src_ext = "mp4"
+    }
+    let raw = unique_path(od, safe_name(job.title), src_ext)
+    job.mode = MODE_FILE
+    job.watch = raw
+    job.file = raw
+    let name = text.url_file(raw)
+    let lenf = "{{job.dir}}/len"
+    // The size comes from a HEAD inside the job, so Start never waits on it.
+    let size = "curl -sIL --connect-timeout 3 --max-time 6 -A {{q(UA)}} -e {{q(job.url)}} {{q(p.media)}} 2>/dev/null | awk 'tolower($1)==\"content-length:\"{l=$2} END{print l+0}' > {{q(lenf)}}; "
+    let mut get = ""
+    if has_aria2 {
+        get = "aria2c -x {{conns}} -s {{conns}} -k 1M --file-allocation=none --console-log-level=error --summary-interval=0 --download-result=hide --auto-file-renaming=false --allow-overwrite=true --max-tries=5 --retry-wait=1 -U {{q(UA)}} --referer={{q(job.url)}} -d {{q(od)}} -o {{q(name)}} {{q(p.media)}}"
+    } else {
+        get = "curl -sSfL --retry 3 -A {{q(UA)}} -e {{q(job.url)}} -o {{q(raw)}} {{q(p.media)}}"
+    }
+    // The HEAD runs next to the download, not before it: a slow server would
+    // otherwise hold the transfer back for up to its 6 s timeout.
+    get = "( {{size}}) & {{get}}"
+    let ext = container_ext(container)
+    if ext == "" || ext == src_ext || !has_ffmpeg {
+        return get
+    }
+    let out = unique_path(od, stem(name), ext)
+    job.file = out
+    return "{{get}} && echo VGSTAGE Converting && ffmpeg -hide_banner -loglevel error -nostdin -y -i {{q(raw)}} {{ffmpeg_codec(container)}} {{q(out)}} && rm -f {{q(raw)}}"
+}
+
+/// ffmpeg reading the URL itself: DASH, live and byte-range HLS.
+fn ffmpeg_cmd(job: &mut Job, p: Plan, container: int) -> string {
+    let mut ext = container_ext(container)
+    if ext == "" {
+        ext = "mp4"
+    }
+    job.mode = MODE_FFMPEG
+    let out = unique_path(out_dir(), safe_name(job.title), ext)
+    job.file = out
+    job.watch = out
+    if !has_ffmpeg {
+        return "echo 'error: this stream needs ffmpeg (brew install ffmpeg)' >&2; exit 1"
+    }
+    let mut src = p.media
+    if p.video_pl != "" {
+        src = p.video_pl
+    }
+    return "ffmpeg -hide_banner -loglevel error -nostdin -y -user_agent {{q(UA)}} -referer {{q(job.url)}} -i {{q(src)}} {{ffmpeg_codec(container)}} {{q(out)}}"
+}
+
+/// Launch a job; returns its id (0 with an error on failure).
+fn start(req: StartReq) -> StartResp {
+    detect()
+    let url = text.trim(req.url)
+    if !text.is_http_url(url) {
+        return StartResp { id: 0, error: "not an http(s) URL" }
+    }
+    let mut conns = req.connections
+    if conns < 1 {
+        conns = 16
+    }
+    if conns > 32 {
+        conns = 32
+    }
+    // A repeated Save (a double click, or a retry after a reply that timed
+    // out) must not download the same file twice.
+    for i in 0..jobs.len {
+        let j = jobs[i]
+        let live = j.state == api.st_running() || j.state == api.st_queued()
+        if live && j.url == url && j.format == req.format && j.container == req.container {
+            log.info("engine", "start {{url}}: already job {{j.id}}")
+            return StartResp { id: j.id, error: "" }
+        }
+    }
+    let p = plan(url, req.format, 0)
+    if !p.ok {
+        log.warn("engine", "start {{url}}: {{p.error}}")
+        return StartResp { id: 0, error: p.error }
+    }
+    let id = next_id
+    next_id += 1
+    let od = out_dir()
+    sys.mkdir(od)
+    let stamp = text.trim(sys.exec("date +%s"))
+    let jdir = "{{od}}/.vidget/{{id}}-{{stamp}}"
+    sys.mkdir(jdir)
+    let mut title = req.title
+    if title == "" {
+        title = p.title
+    }
+    if title == "" {
+        title = stem(text.url_file(p.media))
+    }
+    let mut job = Job {
+        id: id, url: url, format: req.format, container: req.container, title: title, dir: jdir, file: "", watch: "", pid: 0, mode: MODE_FILE,
+        segments: 0, state: api.st_running(), done_kib: 0, total_kib: -1, speed_kib: 0, eta: -1,
+        stage: "Starting", error: "", last_kib: 0, last_ms: async.now_ms(),
+    }
+    let kind = p.kind
+    let mut work = ""
+    if p.video_pl != "" {
+        work = segments_cmd(&mut job, p, req.container, conns)
+    }
+    if work == "" {
+        if kind == api.kind_direct() {
+            work = direct_cmd(&mut job, p, req.container, conns)
+        } else {
+            work = ffmpeg_cmd(&mut job, p, req.container)
+        }
+    }
+    sys.write_file("{{jdir}}/cmd", work)
+    let logf = q("{{jdir}}/log")
+    let status = q("{{jdir}}/status")
+    let bg = "set -m; ( {{PFX}}( {{work}} ) > {{logf}} 2>&1; echo $? > {{status}} ) </dev/null >/dev/null 2>&1 & echo $!"
+    let pid = text.to_int(sys.exec(bg))
+    if pid <= 0 {
+        log.error("engine", "job {{id}}: could not launch the downloader")
+        return StartResp { id: 0, error: "could not launch the downloader" }
+    }
+    job.pid = pid
+    log.info("engine", "job {{id}} started · {{mode_label(job.mode)}} · {{conns}} connections · {{job.file}}")
+    push(jobs, job)
+    return StartResp { id: id, error: "" }
+}
+
+fn mode_label(mode: int) -> string {
+    if mode == MODE_SEGMENTS {
+        return "segments"
+    }
+    if mode == MODE_FFMPEG {
+        return "ffmpeg"
+    }
+    return "file"
+}
+
+// --- progress ---------------------------------------------------------------
+
+/// KiB on disk under `path` (a file or a directory), or -1.
+fn du_kib(path: string) -> int {
+    if path == "" {
+        return -1
+    }
+    let out = sys.exec("du -sk {{q(path)}} 2>/dev/null")
+    let w = text.words(text.replace(out, "\t", " "))
+    if w.len == 0 {
+        return -1
+    }
+    return text.to_int(w[0])
+}
+
+/// Finished segments in `seg`: files named like segments, less the ones
+/// aria2c still holds a `.aria2` control file for.
+fn segments_done(seg: string) -> int {
+    let out = sys.exec("ls {{q(seg)}} 2>/dev/null | awk '/^[va][0-9]+\\./{n++} /\\.aria2$/{a++} END{print n-a+0}'")
+    let n = text.to_int(out)
+    if n < 0 {
+        return 0
+    }
+    return n
+}
+
+/// The line that best explains a failure: the last that mentions an error,
+/// else the last non-empty one.
+fn error_line(ls: []string) -> string {
+    let mut last = ""
+    let mut err = ""
+    for i in 0..ls.len {
+        let l = text.trim(ls[i])
+        if l == "" || text.starts_with(l, "VGSTAGE") {
+            continue
+        }
+        last = l
+        let lo = text.lower(l)
+        if text.contains(lo, "error") || text.contains(lo, "failed") || text.contains(lo, "curl:") ||
+            text.contains(lo, "denied") || text.contains(lo, "not found") {
+            err = l
+        }
+    }
+    if err != "" {
+        return err
+    }
+    return last
+}
+
+/// Measure a running job: bytes on disk, segment count, speed, stage, exit.
+fn refresh(job: &mut Job) {
+    if job.state != api.st_running() {
+        return
+    }
+    let logf = "{{job.dir}}/log"
+    // aria2c ends its readouts with `\r` on a terminal; split on both.
+    let ls = text.lines(text.replace(sys.exec("tail -c 4000 {{q(logf)}} 2>/dev/null"), "\r", "\n"))
+    let mut joining = false
+    for i in 0..ls.len {
+        if text.starts_with(ls[i], "VGSTAGE ") {
+            job.stage = text.slice(ls[i], 8, ls[i].len)
+            joining = true
+        }
+    }
+    let ro = if !joining && job.mode == MODE_FILE && has_aria2 { text.aria_readout(ls) } else {
+        text.no_readout()
+    }
+    if ro.ok {
+        job.stage = "Downloading · aria2c"
+        job.done_kib = ro.done_kib
+        if ro.total_kib > 0 {
+            job.total_kib = ro.total_kib
+        }
+        job.speed_kib = ro.speed_kib
+        job.eta = ro.eta
+    } else if !joining {
+        let k = du_kib(job.watch)
+        let now = async.now_ms()
+        if k >= 0 {
+            let dt = int(now - job.last_ms)
+            if dt >= 300 {
+                let dk = k - job.last_kib
+                job.speed_kib = if dk > 0 { dk * 1000 / dt } else { 0 }
+                job.last_kib = k
+                job.last_ms = now
+            }
+            job.done_kib = k
+        }
+        if job.mode == MODE_SEGMENTS {
+            let n = segments_done(job.watch)
+            job.stage = "Downloading · {{n}}/{{job.segments}} segments"
+            if n > 0 && job.done_kib > 0 {
+                // Size so far scaled to the whole playlist.
+                job.total_kib = job.done_kib / n * job.segments
+                if job.total_kib < job.done_kib {
+                    job.total_kib = job.done_kib
+                }
+            }
+        } else if job.mode == MODE_FFMPEG {
+            job.stage = "Recording with ffmpeg"
+        } else {
+            job.stage = if has_aria2 { "Downloading · aria2c" } else { "Downloading · curl" }
+            if job.total_kib <= 0 {
+                let lenf = "{{job.dir}}/len"
+                let t = text.bytes_to_kib(sys.read_file(lenf))
+                if t > 0 {
+                    job.total_kib = t
+                }
+            }
+        }
+        if job.speed_kib > 0 && job.total_kib > job.done_kib {
+            job.eta = (job.total_kib - job.done_kib) / job.speed_kib
+        } else {
+            job.eta = -1
+        }
+    }
+    let st = text.trim(sys.read_file("{{job.dir}}/status"))
+    if st == "" {
+        return
+    }
+    job.speed_kib = 0
+    job.eta = 0
+    if st == "0" && sys.exists(job.file) == 1 {
+        job.state = api.st_done()
+        job.stage = "Done"
+        job.error = ""
+        let k = du_kib(job.file)
+        if k >= 0 {
+            job.done_kib = k
+            job.total_kib = k
+        }
+        log.info("engine", "job {{job.id}} done · {{text.human_kib(job.done_kib)}} · {{job.file}}")
+        return
+    }
+    job.state = api.st_failed()
+    job.stage = "Failed"
+    let e = error_line(text.lines(sys.read_file(logf)))
+    job.error = if e == "" { "downloader exited with status {{st}}" } else { e }
+    log.error("engine", "job {{job.id}} failed (exit {{st}}): {{job.error}}")
+}
+
+/// Every job, newest first, refreshed.
+///
+/// `jobs[i] = j` moves `j`, so it is stored back only after every read: a read
+/// after the move is not rejected today and yields empty strings.
+fn snapshot() -> JobsResp {
+    let mut ids = []int {}
+    let mut titles = []string {}
+    let mut states = []int {}
+    let mut done = []int {}
+    let mut total = []int {}
+    let mut speed = []int {}
+    let mut eta = []int {}
+    let mut stages = []string {}
+    let mut files = []string {}
+    let mut errors = []string {}
+    let mut i = jobs.len - 1
+    while i >= 0 {
+        let mut j = jobs[i]
+        refresh(&mut j)
+        push(ids, j.id)
+        push(titles, j.title)
+        push(states, j.state)
+        push(done, j.done_kib)
+        push(total, j.total_kib)
+        push(speed, j.speed_kib)
+        push(eta, j.eta)
+        push(stages, j.stage)
+        push(files, j.file)
+        push(errors, j.error)
+        jobs[i] = j
+        i -= 1
+    }
+    return JobsResp {
+        ids: ids, titles: titles, states: states, done_kib: done, total_kib: total,
+        speed_kib: speed, eta: eta, stages: stages, files: files, errors: errors,
+        tools: tools(), out_dir: out_dir(),
+    }
+}
+
+fn find(id: int) -> int {
+    for i in 0..jobs.len {
+        if jobs[i].id == id {
+            return i
+        }
+    }
+    return -1
+}
+
+/// Kill the job's whole process group (aria2c / curl / ffmpeg) and drop
+/// its partial files.
+fn cancel(id: int) -> int {
+    let i = find(id)
+    if i < 0 {
+        return 0
+    }
+    if jobs[i].state == api.st_running() {
+        let pid = jobs[i].pid
+        sys.exec("kill -TERM -- -{{pid}} 2>/dev/null; kill -TERM {{pid}} 2>/dev/null")
+        let seg = "{{jobs[i].dir}}/seg"
+        let f = jobs[i].file
+        let w = jobs[i].watch
+        let ctl = "{{w}}.aria2"
+        sys.exec("sleep 0.2; rm -rf {{q(seg)}} {{q(f)}} {{q(w)}} {{q(ctl)}} 2>/dev/null")
+        jobs[i].state = api.st_cancelled()
+        jobs[i].stage = "Cancelled"
+        log.info("engine", "job {{id}} cancelled")
+        jobs[i].speed_kib = 0
+        jobs[i].eta = 0
+    }
+    return 1
+}
+
+/// Show the finished file in Finder (the folder when there is no file yet).
+fn reveal(id: int) -> int {
+    let i = find(id)
+    let od = out_dir()
+    if i < 0 {
+        sys.exec("open {{q(od)}} >/dev/null 2>&1")
+        return 1
+    }
+    let f = jobs[i].file
+    if f != "" && sys.exists(f) == 1 {
+        sys.exec("open -R {{q(f)}} >/dev/null 2>&1")
+    } else {
+        sys.exec("open {{q(od)}} >/dev/null 2>&1")
+    }
+    return 1
+}
+
+/// Drop a row (a running one is cancelled first).
+fn remove(id: int) -> int {
+    let i = find(id)
+    if i < 0 {
+        return 0
+    }
+    cancel(id)
+    let mut keep = []Job {}
+    for k in 0..jobs.len {
+        if k != i {
+            push(keep, jobs[k])
+        }
+    }
+    jobs = keep
+    log.info("engine", "job {{id}} removed")
+    return 1
+}

@@ -1,0 +1,442 @@
+//! Page extractor. Reads a page's `og:` / `<title>` metadata and every
+//! media URL it mentions — in markup, in inline JSON (`https:\/\/…`), or in a
+//! bundled script (a webpack chunk that carries an `.m3u8` string is the
+//! common case).
+
+import "text.loam"
+
+/// Page metadata plus the media URLs found in it, best first.
+struct Extracted {
+    title: string,
+    description: string,
+    thumbnail: string,
+    media: []string,
+}
+
+/// The extensions a media URL may end in. `ts` is last: it only counts when
+/// the URL plainly ends there, so `.tsx` and `.tsv` never match.
+fn media_exts() -> []string {
+    return []string { "m3u8", "mpd", "mp4", "m4v", "webm", "mov", "mkv", "ogv", "ogg", "flv", "avi", "ts" }
+}
+
+/// `&amp;`, `&quot;`, `&#39;`, `&lt;`, `&gt;` and the JSON escapes a URL
+/// picks up inside a script (`\/`, `/`, `&`).
+fn unescape(s: string) -> string {
+    let mut t = text.replace(s, "\\/", "/")
+    t = text.replace(t, "\\u002F", "/")
+    t = text.replace(t, "\\u002f", "/")
+    t = text.replace(t, "\\u0026", "&")
+    t = text.replace(t, "&amp;", "&")
+    t = text.replace(t, "&quot;", "\"")
+    t = text.replace(t, "&#39;", "'")
+    t = text.replace(t, "&#x27;", "'")
+    t = text.replace(t, "&lt;", "<")
+    t = text.replace(t, "&gt;", ">")
+    return t
+}
+
+/// `scheme://host` of `url`, or "".
+fn origin(url: string) -> string {
+    let sep = text.index_of(url, "://")
+    if sep < 0 {
+        return ""
+    }
+    let slash = text.index_from(url, "/", sep + 3)
+    if slash < 0 {
+        return url
+    }
+    return text.slice(url, 0, slash)
+}
+
+/// `url`'s directory, with its trailing `/`.
+fn dir_url(url: string) -> string {
+    let mut end = url.len
+    let q = text.index_of(url, "?")
+    if q >= 0 {
+        end = q
+    }
+    let mut cut = -1
+    for i in 0..end {
+        if url[i] == 47 {
+            cut = i
+        }
+    }
+    if cut < 0 {
+        return url
+    }
+    return text.slice(url, 0, cut + 1)
+}
+
+/// `ref` made absolute against `base` (a page or playlist URL).
+fn resolve(base: string, ref: string) -> string {
+    if text.is_http_url(ref) {
+        return ref
+    }
+    if text.starts_with(ref, "//") {
+        let sep = text.index_of(base, "://")
+        if sep < 0 {
+            return "https:{{ref}}"
+        }
+        return "{{text.slice(base, 0, sep)}}:{{ref}}"
+    }
+    if text.starts_with(ref, "/") {
+        return "{{origin(base)}}{{ref}}"
+    }
+    return "{{dir_url(base)}}{{ref}}"
+}
+
+/// A byte that ends a URL in markup, JSON or JS.
+fn url_stop(c: int) -> bool {
+    return c == 34 || c == 39 || c == 96 || c == 32 || c == 10 || c == 13 || c == 9 || c == 60 ||
+        c == 62 || c == 40 || c == 41 || c == 44 || c == 123 || c == 125 || c == 91 || c == 93
+}
+
+/// The quoted `content` value of the `<meta>` tag that names `key`.
+fn meta(html: string, key: string) -> string {
+    let mut from = 0
+    while true {
+        let at = text.index_from(html, key, from)
+        if at < 0 {
+            return ""
+        }
+        from = at + key.len
+        // The tag around the hit.
+        let mut open = at
+        while open > 0 && html[open] != 60 {
+            open -= 1
+        }
+        let close = text.index_from(html, ">", at)
+        if close < 0 {
+            return ""
+        }
+        let tag = text.slice(html, open, close)
+        if !text.starts_with(text.lower(tag), "<meta") {
+            continue
+        }
+        let c = text.index_of(tag, "content=")
+        if c < 0 {
+            continue
+        }
+        let q = tag[c + 8]
+        if q != 34 && q != 39 {
+            continue
+        }
+        let mut end = c + 9
+        while end < tag.len && tag[end] != q {
+            end += 1
+        }
+        return text.trim(unescape(text.slice(tag, c + 9, end)))
+    }
+    return ""
+}
+
+fn title_tag(html: string) -> string {
+    let lo = text.lower(html)
+    let a = text.index_of(lo, "<title")
+    if a < 0 {
+        return ""
+    }
+    let gt = text.index_from(lo, ">", a)
+    let b = text.index_from(lo, "</title>", a)
+    if gt < 0 || b < 0 || b < gt {
+        return ""
+    }
+    return text.trim(unescape(text.slice(html, gt + 1, b)))
+}
+
+/// Does `lo` (a lower-cased URL) point at media? The extension must end the
+/// path: next comes the end, `?`, `#`, or `&` (a URL nested in a query).
+fn media_ext_at(lo: string) -> int {
+    let exts = media_exts()
+    for e in 0..exts.len {
+        let dot = ".{{exts[e]}}"
+        let mut from = 0
+        while true {
+            let at = text.index_from(lo, dot, from)
+            if at < 0 {
+                break
+            }
+            let after = at + dot.len
+            if after == lo.len || lo[after] == 63 || lo[after] == 35 || lo[after] == 38 {
+                return e
+            }
+            from = at + 1
+        }
+    }
+    return -1
+}
+
+/// Rank: streams first (they carry every quality), then by container.
+fn rank(url: string) -> int {
+    let e = media_ext_at(text.lower(url))
+    if e < 0 {
+        return 99
+    }
+    return e
+}
+
+fn has(list: []string, s: string) -> bool {
+    for i in 0..list.len {
+        if list[i] == s {
+            return true
+        }
+    }
+    return false
+}
+
+/// Is the token at `a` a quoted attribute value (`src="clip.mp4"`)? Only
+/// there is a bare relative path a URL; elsewhere it is just text.
+fn attr_value(src: string, a: int) -> bool {
+    if a < 2 {
+        return false
+    }
+    let qc = src[a - 1]
+    return (qc == 34 || qc == 39) && src[a - 2] == 61
+}
+
+/// Every media URL in `body`, absolute against `base`, best first.
+fn media_urls(body: string, base: string) -> []string {
+    let src = unescape(body)
+    let lo = text.lower(src)
+    let mut found = []string {}
+    let exts = media_exts()
+    for e in 0..exts.len {
+        let dot = ".{{exts[e]}}"
+        let mut from = 0
+        while true {
+            let at = text.index_from(lo, dot, from)
+            if at < 0 {
+                break
+            }
+            from = at + dot.len
+            // Grow both ways to the delimiters around the token.
+            let mut a = at
+            while a > 0 && !url_stop(src[a - 1]) {
+                a -= 1
+            }
+            let mut b = at + dot.len
+            while b < src.len && !url_stop(src[b]) {
+                b += 1
+            }
+            let tok = text.slice(src, a, b)
+            if media_ext_at(text.lower(tok)) < 0 {
+                continue
+            }
+            let ok = text.is_http_url(tok) || text.starts_with(tok, "//") || text.starts_with(tok, "/") ||
+                attr_value(src, a)
+            if !ok {
+                continue
+            }
+            let abs = resolve(base, tok)
+            if !has(found, abs) {
+                push(found, abs)
+            }
+        }
+    }
+    // Stable sort by rank (insertion; a page lists a handful).
+    let mut out = []string {}
+    for r in 0..100 {
+        for i in 0..found.len {
+            if rank(found[i]) == r {
+                push(out, found[i])
+            }
+        }
+        if out.len == found.len {
+            break
+        }
+    }
+    return out
+}
+
+fn ident_char(c: int) -> bool {
+    return (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95
+}
+
+fn space_char(c: int) -> bool {
+    return c == 32 || c == 9 || c == 10 || c == 13
+}
+
+/// kt_player / KVS `flashvars`: `video_url` is the lowest rendition and
+/// `video_alt_url`, `video_alt_url2`, … climb. The file is `name.mp4/?token`,
+/// which a plain extension scan misses, and the page is full of unrelated
+/// `.mp4/` search links. Best quality first.
+fn player_media(html: string, base: string) -> []string {
+    let src = unescape(html)
+    let mut ranks = []int {}
+    let mut urls = []string {}
+    let mut from = 0
+    let alt_key = "video_alt_url"
+    let base_key = "video_url"
+    while from < src.len {
+        let alt_at = text.index_from(src, alt_key, from)
+        let base_at = text.index_from(src, base_key, from)
+        let mut at = -1
+        let mut alt = false
+        if alt_at >= 0 && (base_at < 0 || alt_at <= base_at) {
+            at = alt_at
+            alt = true
+        } else if base_at >= 0 {
+            at = base_at
+        } else {
+            break
+        }
+        let key_len = if alt { alt_key.len } else { base_key.len }
+        if at > 0 && ident_char(src[at - 1]) {
+            from = at + 1
+            continue
+        }
+        let mut i = at + key_len
+        let mut rank = 0
+        if alt {
+            rank = 1
+            let mut n = 0
+            let mut any = false
+            while i < src.len && src[i] >= 48 && src[i] <= 57 {
+                any = true
+                n = n * 10 + (src[i] - 48)
+                i += 1
+            }
+            if any {
+                rank = n
+            }
+        }
+        // `video_url_text`, `video_alt_url2_hd`, `video_alt_url3_4k`.
+        if i < src.len && src[i] == 95 {
+            from = i
+            continue
+        }
+        if i < src.len && (src[i] == 34 || src[i] == 39) {
+            i += 1
+        }
+        while i < src.len && space_char(src[i]) {
+            i += 1
+        }
+        if i >= src.len || (src[i] != 58 && src[i] != 61) {
+            from = at + key_len
+            continue
+        }
+        i += 1
+        while i < src.len && space_char(src[i]) {
+            i += 1
+        }
+        if i >= src.len || (src[i] != 34 && src[i] != 39) {
+            from = at + key_len
+            continue
+        }
+        let q = src[i]
+        i += 1
+        let mut end = i
+        while end < src.len && src[end] != q {
+            end += 1
+        }
+        let tok = text.trim(text.slice(src, i, end))
+        from = if end < src.len { end + 1 } else { end }
+        if tok == "" {
+            continue
+        }
+        let abs = resolve(base, tok)
+        if text.url_ext(abs) == "" || has(urls, abs) {
+            continue
+        }
+        let mut nr = []int {}
+        let mut nu = []string {}
+        let mut placed = false
+        for k in 0..urls.len {
+            if !placed && rank > ranks[k] {
+                push(nr, rank)
+                push(nu, abs)
+                placed = true
+            }
+            push(nr, ranks[k])
+            push(nu, urls[k])
+        }
+        if !placed {
+            push(nr, rank)
+            push(nu, abs)
+        }
+        ranks = nr
+        urls = nu
+    }
+    return urls
+}
+
+/// Metadata and media from one HTML page fetched from `base`.
+fn page(html: string, base: string) -> Extracted {
+    let mut title = meta(html, "og:title")
+    if title == "" {
+        title = meta(html, "twitter:title")
+    }
+    if title == "" {
+        title = title_tag(html)
+    }
+    let mut desc = meta(html, "og:description")
+    if desc == "" {
+        desc = meta(html, "\"description\"")
+    }
+    let mut thumb = meta(html, "og:image")
+    if thumb == "" {
+        thumb = meta(html, "twitter:image")
+    }
+    if thumb != "" {
+        thumb = resolve(base, thumb)
+    }
+    let mut media = []string {}
+    let ogv = meta(html, "og:video:secure_url")
+    if ogv != "" {
+        push(media, resolve(base, ogv))
+    }
+    let og2 = meta(html, "og:video")
+    if og2 != "" && !has(media, resolve(base, og2)) {
+        push(media, resolve(base, og2))
+    }
+    let player = player_media(html, base)
+    for i in 0..player.len {
+        if !has(media, player[i]) {
+            push(media, player[i])
+        }
+    }
+    let more = media_urls(html, base)
+    for i in 0..more.len {
+        if !has(media, more[i]) {
+            push(media, more[i])
+        }
+    }
+    return Extracted { title: title, description: desc, thumbnail: thumb, media: media }
+}
+
+/// `src` URLs of the `<script>` tags in `html`, absolute — where a webpack
+/// app keeps the stream URL its player loads.
+fn scripts(html: string, base: string) -> []string {
+    let lo = text.lower(html)
+    let mut out = []string {}
+    let mut from = 0
+    while true {
+        let at = text.index_from(lo, "<script", from)
+        if at < 0 {
+            break
+        }
+        let gt = text.index_from(lo, ">", at)
+        if gt < 0 {
+            break
+        }
+        from = gt
+        let tag = text.slice(html, at, gt)
+        let s = text.index_of(text.lower(tag), "src=")
+        if s < 0 {
+            continue
+        }
+        let q = tag[s + 4]
+        if q != 34 && q != 39 {
+            continue
+        }
+        let mut end = s + 5
+        while end < tag.len && tag[end] != q {
+            end += 1
+        }
+        let src = unescape(text.slice(tag, s + 5, end))
+        if src != "" {
+            push(out, resolve(base, src))
+        }
+    }
+    return out
+}

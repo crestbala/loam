@@ -1,0 +1,34 @@
+//! Module-level `zeus.signal` in an imported module. `initorder_ui` imports
+//! zeus first, so module inits must follow the import graph, not the order
+//! modules were first visited: run in visit order, the store's signals were
+//! allocated before the arena initialised, then wiped and their ids reused.
+//! The suite only checks the exit code, so every mismatch panics.
+
+import "std:fmt"
+import "std:zeus"
+import "../mod/initorder_ui.loam"
+import "../mod/initorder_store.loam"
+
+fn expect(ok: bool, what: string) {
+    if !ok {
+        panic("module_signal_init: {{what}}")
+    }
+}
+
+fn main() {
+    let later = zeus.signal(42)
+    expect(initorder_ui.label() == "ui", "ui module")
+    expect(initorder_store.name.get() == "vidget", "string signal")
+    expect(initorder_store.count.get() == 7, "int signal")
+    expect(!initorder_store.open.get(), "bool signal")
+    let ls = initorder_store.labels.get()
+    expect(ls.len == 2 && ls[0] == "MP4" && ls[1] == "MKV", "list signal")
+    expect(later.get() == 42, "signal made in main")
+    expect(later.id != initorder_store.count.id, "distinct ids")
+    initorder_store.labels.set([]string { "WebM" })
+    initorder_store.count.set(8)
+    expect(initorder_store.labels.get()[0] == "WebM", "list set")
+    expect(initorder_store.count.get() == 8, "int set")
+    expect(later.get() == 42, "neighbour untouched")
+    fmt.println(initorder_store.name.get(), initorder_store.count.get(), later.get())
+}

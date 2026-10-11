@@ -1,0 +1,16 @@
+//! Root shell: theme, header, and a centred column for the page.
+
+import "std:zeus"
+import "../theme.loam" as theme
+import "../components/views.loam" as views
+
+fn Layout(build: fn()) -> Node {
+    theme.install()
+    return zeus.Box(style = Style(direction = Direction.Column, align = Align.Center, padding = edges(20),
+                                  background = zeus.paper())) {
+        zeus.Box(style = Style(direction = Direction.Column, gap = Space.Md, width = pct(100), maxWidth = 920)) {
+            views.Header()
+            build()
+        }
+    }
+}

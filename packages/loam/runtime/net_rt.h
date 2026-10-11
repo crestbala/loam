@@ -27,10 +27,19 @@ loam_str loam_net_fetch_rpc(loam_str path, loam_str body);
 int64_t loam_net_fetch_issue(loam_str path, loam_str body);
 int64_t loam_net_fetch_ready(void);
 loam_str loam_net_fetch_take(void);
+int64_t loam_net_fetch_start(loam_str path, loam_str body, int64_t sync);
+int64_t loam_net_fetch_slot_done(int64_t slot);
+int64_t loam_net_fetch_slot_status(int64_t slot);
+loam_str loam_net_fetch_slot_take(int64_t slot);
+void loam_net_fetch_slot_drop(int64_t slot);
 int64_t loam_net_ws_issue(loam_str url);
 int64_t loam_net_ws_state(int64_t slot);
 int64_t loam_net_ws_count(int64_t slot);
 loam_str loam_net_ws_copy(int64_t slot, int64_t max);
 void loam_net_ws_close(int64_t slot);
+int64_t loam_net_stream_open(loam_str path, loam_str body);
+int64_t loam_net_stream_state(int64_t slot);
+loam_str loam_net_stream_take(int64_t slot, int64_t max);
+void loam_net_stream_close(int64_t slot);
 
 #endif

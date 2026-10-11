@@ -189,13 +189,14 @@ listing is now true, and `date` joins it.
   `server/main.loam` are imported by nothing a client compiles;
   `app_routes.loam` and the page modules import only `server/api.loam`.
 
-**Signals — two traps that cost `myapp` real debugging time**
+**Signals — what cost `myapp` real debugging time**
 
-- **Never create a signal at module scope.** It segfaults inside
-  `zeus.snapshot` while building the tree. Create it inside a `start()` called
-  from `app.loam` before `zeus.App`, and use the zero handle
-  (`Signal { id: 0 }`) as both the uninitialised marker and the
-  already-started latch — the pattern `myapp/routes/blog/loader.loam` uses.
+- **Module-scope signals are fine:** `let url = zeus.signal("")` in a store
+  module. Module inits run after the inits of everything they import, so the
+  arena is live first (this used to segfault inside `zeus.snapshot` when an
+  imported module's init ran before zeus's). `examples/zeus/vidget` uses it;
+  `myapp/routes/blog/loader.loam` keeps the older zero-handle latch
+  (`Signal { id: 0 }`, created in `start()`).
 - **`Signal<struct owning a list>` loses the list's elements** when the store
   happens inside an async callback: the value reads back fine and nothing
   paints. One signal per field.

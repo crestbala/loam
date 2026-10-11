@@ -1,0 +1,72 @@
+//! Drive the engine without a server or window:
+//!
+//!   ./bin/loamc examples/zeus/vidget/tests/engine_cli.loam -o /tmp/vg && /tmp/vg probe <url>
+//!   /tmp/vg get <url> [format] [container]     # downloads, printing progress
+//!
+//! `VIDGET_DIR=/tmp/vg-out` keeps test downloads out of ~/Downloads.
+
+import "std:async"
+import "std:fmt"
+import "std:sys"
+import "../server/api.loam"
+import "../server/engine.loam"
+import "../server/text.loam"
+
+fn main() {
+    let argv = sys.args()
+    if argv.len < 3 {
+        fmt.println("usage: engine_cli probe|get <url> [format] [container]")
+        sys.exit(2)
+    }
+    let url = argv[2]
+    let t0 = async.now_ms()
+    if argv[1] == "probe" || argv[1] == "get" {
+        let r = engine.probe(url)
+        let t1 = async.now_ms()
+        fmt.println("probe: {{int(t1 - t0)}} ms")
+        fmt.println("ok={{r.ok}} kind={{r.kind}} site={{r.site}} duration={{r.duration}}")
+        fmt.println("title: {{r.title}}")
+        fmt.println("og:image: {{text.slice(r.thumbnail, 0, 80)}}")
+        fmt.println("desc:  {{text.slice(r.description, 0, 120)}}")
+        if r.error != "" {
+            fmt.println("error: {{r.error}}")
+        }
+        for i in 0..r.formats.len {
+            fmt.println("  [{{r.formats[i]}}] {{r.labels[i]}}")
+        }
+        if argv[1] == "probe" {
+            let mut th = engine.thumb(url)
+            while th.ready == 0 {
+                async.sleep(100)
+                th = engine.thumb(url)
+            }
+            fmt.println("thumb: {{int(async.now_ms() - t1)}} ms in background, {{th.thumbnail.len}} bytes, duration {{th.duration}} s")
+            sys.exit(if r.ok == 1 { 0 } else { 1 })
+        }
+    }
+    let ts = async.now_ms()
+    let mut format = ""
+    let mut container = 1
+    if argv.len > 3 {
+        format = argv[3]
+    }
+    if argv.len > 4 {
+        container = text.to_int(argv[4])
+    }
+    let s = engine.start(StartReq { url: url, format: format, container: container, connections: 16, title: "" })
+    if s.id == 0 {
+        fmt.println("start failed: {{s.error}}")
+        sys.exit(1)
+    }
+    fmt.println("start: {{int(async.now_ms() - ts)}} ms (job {{s.id}}, tools: {{engine.tools()}})")
+    while true {
+        async.sleep(200)
+        let j = engine.snapshot()
+        let st = j.states[0]
+        fmt.println("{{int(async.now_ms() - ts)}}ms state={{st}} {{text.human_kib(j.done_kib[0])}}/{{text.human_kib(j.total_kib[0])}} {{j.speed_kib[0]}}KiB/s eta={{j.eta[0]}} [{{j.stages[0]}}] {{j.errors[0]}}")
+        if st != api.st_running() {
+            fmt.println("file: {{j.files[0]}}")
+            sys.exit(if st == api.st_done() { 0 } else { 1 })
+        }
+    }
+}

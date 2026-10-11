@@ -1,0 +1,356 @@
+//! HLS playlists, read in Loam so a stream downloads the aria2c way: every
+//! segment of the chosen variant goes into one aria2c input list and arrives
+//! over parallel connections, then ffmpeg joins the local copy.
+//!
+//! A master playlist lists variants (`#EXT-X-STREAM-INF`) and alternate
+//! audio (`#EXT-X-MEDIA:TYPE=AUDIO`); a media playlist lists segments. The
+//! local rewrite keeps every tag and swaps each URI — segment, `EXT-X-MAP`
+//! init, `EXT-X-KEY` key — for a file name in the job directory, so ffmpeg
+//! decrypts and joins exactly what the server would have streamed.
+
+import "text.loam"
+import "extract.loam"
+
+struct Variant {
+    url: string,
+    bandwidth: int,
+    width: int,
+    height: int,
+    codecs: string,
+    audio: string,
+}
+
+struct Audio {
+    url: string,
+    group: string,
+    name: string,
+    is_default: bool,
+}
+
+struct Master {
+    variants: []Variant,
+    audios: []Audio,
+}
+
+/// A media playlist rewritten for local files. `urls[i]` downloads to
+/// `names[i]`; `local` is the playlist text that points at those names.
+struct Local {
+    local: string,
+    urls: []string,
+    names: []string,
+    segments: int,
+    duration: int,
+    /// No `#EXT-X-ENDLIST`: a live stream, which only ffmpeg can follow.
+    live: bool,
+    /// `#EXT-X-BYTERANGE` segments share a file; left to ffmpeg too.
+    byterange: bool,
+}
+
+fn is_playlist(body: string) -> bool {
+    return text.starts_with(text.trim(body), "#EXTM3U")
+}
+
+fn is_master(body: string) -> bool {
+    return text.contains(body, "#EXT-X-STREAM-INF")
+}
+
+/// The value of `key` in an attribute list (`KEY=v` or `KEY="v"`), or "".
+fn attr(line: string, key: string) -> string {
+    let mut from = 0
+    while true {
+        let at = text.index_from(line, "{{key}}=", from)
+        if at < 0 {
+            return ""
+        }
+        from = at + 1
+        // Whole key only: preceded by `:` or `,` (BANDWIDTH vs AVERAGE-BANDWIDTH).
+        if at > 0 && line[at - 1] != 58 && line[at - 1] != 44 {
+            continue
+        }
+        let v = at + key.len + 1
+        if v < line.len && line[v] == 34 {
+            let end = text.index_from(line, "\"", v + 1)
+            if end < 0 {
+                return text.slice(line, v + 1, line.len)
+            }
+            return text.slice(line, v + 1, end)
+        }
+        let mut end = v
+        while end < line.len && line[end] != 44 {
+            end += 1
+        }
+        return text.slice(line, v, end)
+    }
+    return ""
+}
+
+/// `640x360` -> (640, 360); -1s when absent.
+fn res_w(r: string) -> int {
+    let x = text.index_of(r, "x")
+    if x < 0 {
+        return -1
+    }
+    return text.to_int(text.slice(r, 0, x))
+}
+
+fn res_h(r: string) -> int {
+    let x = text.index_of(r, "x")
+    if x < 0 {
+        return -1
+    }
+    return text.to_int(text.slice(r, x + 1, r.len))
+}
+
+fn parse_master(body: string, base: string) -> Master {
+    let ls = text.lines(body)
+    let mut vs = []Variant {}
+    let mut auds = []Audio {}
+    let mut i = 0
+    while i < ls.len {
+        let l = text.trim(ls[i])
+        if text.starts_with(l, "#EXT-X-STREAM-INF:") {
+            // The URI is the next line that is not a tag or blank.
+            let mut k = i + 1
+            while k < ls.len && (text.trim(ls[k]) == "" || text.starts_with(text.trim(ls[k]), "#")) {
+                k += 1
+            }
+            if k < ls.len {
+                let r = attr(l, "RESOLUTION")
+                push(vs, Variant {
+                    url: extract.resolve(base, text.trim(ls[k])),
+                    bandwidth: text.to_int(attr(l, "BANDWIDTH")),
+                    width: res_w(r),
+                    height: res_h(r),
+                    codecs: attr(l, "CODECS"),
+                    audio: attr(l, "AUDIO"),
+                })
+            }
+            i = k
+        } else if text.starts_with(l, "#EXT-X-MEDIA:") && attr(l, "TYPE") == "AUDIO" {
+            let uri = attr(l, "URI")
+            if uri != "" {
+                push(auds, Audio {
+                    url: extract.resolve(base, uri),
+                    group: attr(l, "GROUP-ID"),
+                    name: attr(l, "NAME"),
+                    is_default: attr(l, "DEFAULT") == "YES",
+                })
+            }
+        }
+        i += 1
+    }
+    // Best first: by bandwidth, high to low (selection sort; a handful).
+    for a in 0..vs.len {
+        let mut best = a
+        let next = a + 1
+        for b in next..vs.len {
+            if vs[b].bandwidth > vs[best].bandwidth {
+                best = b
+            }
+        }
+        if best != a {
+            let t = vs[a]
+            vs[a] = vs[best]
+            vs[best] = t
+        }
+    }
+    return Master { variants: vs, audios: auds }
+}
+
+/// The audio rendition a variant names (its group's default, else the
+/// group's first), or "" when the variant carries its own audio.
+fn audio_for(m: Master, v: Variant) -> string {
+    if v.audio == "" {
+        return ""
+    }
+    let mut first = ""
+    for i in 0..m.audios.len {
+        let a = m.audios[i]
+        if a.group == v.audio {
+            if a.is_default {
+                return a.url
+            }
+            if first == "" {
+                first = a.url
+            }
+        }
+    }
+    return first
+}
+
+/// `URI="…"` in `line` replaced by `URI="name"`.
+fn swap_uri(line: string, name: string) -> string {
+    let a = text.index_of(line, "URI=\"")
+    if a < 0 {
+        return line
+    }
+    let end = text.index_from(line, "\"", a + 5)
+    if end < 0 {
+        return line
+    }
+    return "{{text.slice(line, 0, a + 5)}}{{name}}{{text.slice(line, end, line.len)}}"
+}
+
+/// Zero-padded `n` (5 digits), so segment names sort in playlist order.
+fn pad5(n: int) -> string {
+    if n < 10 {
+        return "0000{{n}}"
+    }
+    if n < 100 {
+        return "000{{n}}"
+    }
+    if n < 1000 {
+        return "00{{n}}"
+    }
+    if n < 10000 {
+        return "0{{n}}"
+    }
+    return "{{n}}"
+}
+
+/// The extension a segment keeps locally (ffmpeg's HLS demuxer checks it).
+fn seg_ext(url: string) -> string {
+    let e = text.url_ext(url)
+    if e == "ts" || e == "m4s" || e == "mp4" || e == "aac" || e == "m4a" || e == "mp3" || e == "vtt" {
+        return e
+    }
+    return "ts"
+}
+
+/// Rewrite media playlist `body` (fetched from `base`) to local names with
+/// prefix `tag` (`v` video, `a` audio) so two playlists share one directory.
+fn localize(body: string, base: string, tag: string) -> Local {
+    let ls = text.lines(body)
+    let mut out = []string {}
+    let mut urls = []string {}
+    let mut names = []string {}
+    let mut segs = 0
+    let mut keys = 0
+    let mut maps = 0
+    let mut dur_ms = 0
+    let mut live = true
+    let mut byterange = false
+    for i in 0..ls.len {
+        let l = text.trim(ls[i])
+        if l == "" {
+            continue
+        }
+        if text.starts_with(l, "#") {
+            if text.starts_with(l, "#EXT-X-ENDLIST") || text.contains(l, "PLAYLIST-TYPE:VOD") {
+                live = false
+            }
+            if text.starts_with(l, "#EXT-X-BYTERANGE") {
+                byterange = true
+            }
+            if text.starts_with(l, "#EXTINF:") {
+                let comma = text.index_of(l, ",")
+                let mut end = l.len
+                if comma > 0 {
+                    end = comma
+                }
+                let secs = text.slice(l, 8, end)
+                let dot = text.index_of(secs, ".")
+                let mut whole = secs
+                let mut frac = 0
+                if dot >= 0 {
+                    whole = text.slice(secs, 0, dot)
+                    if dot + 1 < secs.len {
+                        frac = secs[dot + 1] - 48
+                    }
+                }
+                let w = text.to_int(whole)
+                if w >= 0 {
+                    dur_ms += w * 1000 + frac * 100
+                }
+            }
+            let uri = attr(l, "URI")
+            if text.starts_with(l, "#EXT-X-KEY:") && uri != "" && attr(l, "METHOD") != "NONE" {
+                let name = "{{tag}}key{{keys}}.key"
+                keys += 1
+                push(urls, extract.resolve(base, uri))
+                push(names, name)
+                push(out, swap_uri(l, name))
+            } else if text.starts_with(l, "#EXT-X-MAP:") && uri != "" {
+                let src = extract.resolve(base, uri)
+                let name = "{{tag}}init{{maps}}.{{seg_ext(src)}}"
+                maps += 1
+                push(urls, src)
+                push(names, name)
+                push(out, swap_uri(l, name))
+            } else {
+                push(out, l)
+            }
+            continue
+        }
+        let src = extract.resolve(base, l)
+        let name = "{{tag}}{{pad5(segs)}}.{{seg_ext(src)}}"
+        segs += 1
+        push(urls, src)
+        push(names, name)
+        push(out, name)
+    }
+    let mut body_out = ""
+    let mut b = []int {}
+    for i in 0..out.len {
+        let s = out[i]
+        for k in 0..s.len {
+            push(b, s[k])
+        }
+        push(b, 10)
+    }
+    body_out = string_from_bytes(b)
+    return Local {
+        local: body_out, urls: urls, names: names, segments: segs, duration: dur_ms / 1000,
+        live: live, byterange: byterange,
+    }
+}
+
+/// aria2c input-file text: each URL, then its indented `out=` option.
+fn aria2_list(urls: []string, names: []string) -> string {
+    let mut b = []int {}
+    for i in 0..urls.len {
+        let line = "{{urls[i]}}\n  out={{names[i]}}\n"
+        for k in 0..line.len {
+            push(b, line[k])
+        }
+    }
+    return string_from_bytes(b)
+}
+
+/// `xargs -n 2` input for the curl fallback: `name url` per line.
+fn curl_list(urls: []string, names: []string) -> string {
+    let mut b = []int {}
+    for i in 0..urls.len {
+        let line = "{{names[i]}} {{urls[i]}}\n"
+        for k in 0..line.len {
+            push(b, line[k])
+        }
+    }
+    return string_from_bytes(b)
+}
+
+/// "1080p · 5.2 Mbps · avc1" for a variant.
+fn variant_label(v: Variant) -> string {
+    let mut l = ""
+    if v.height > 0 {
+        l = "{{v.height}}p"
+    } else {
+        l = "Variant"
+    }
+    if v.bandwidth > 0 {
+        let k = v.bandwidth / 1000
+        if k >= 1000 {
+            let m10 = k / 100
+            l = "{{l}} · {{m10 / 10}}.{{m10 % 10}} Mbps"
+        } else {
+            l = "{{l}} · {{k}} kbps"
+        }
+    }
+    if v.width > 0 && v.height > 0 {
+        l = "{{l}} · {{v.width}}x{{v.height}}"
+    }
+    if v.audio != "" {
+        l = "{{l}} · + audio track"
+    }
+    return l
+}
