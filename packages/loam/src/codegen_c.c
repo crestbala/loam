@@ -97,6 +97,8 @@ static AstNode *clos_hoist_node[64];
 static int clos_hoist_tid[64];
 static int clos_hoist_n;
 static IrModule *emit_ir_mod;
+static LoamModule *emit_mods;
+static int emit_nmods;
 static const IrFn *CF;
 /* Phase 12: `loam test` — emit a runner `main` that calls every `#[test]` fn
    and skips the program's own `main`. */
@@ -3265,22 +3267,28 @@ static void emit_main_args(FILE *o) {
                "#endif\n");
 }
 
+/* Call every module's `__init`, each after the inits of everything it
+   imports (load finish order, `done_rank`). A global initialised with
+   `zeus.signal(0)` must not run before the arena it allocates into, or the
+   arena's own initialiser wipes the slot and the ids are handed out again. */
+static void emit_init_calls(FILE *o) {
+    for (int r = 0; r < emit_nmods; r++) {
+        for (int i = 0; i < emit_ir_mod->nfns; i++) {
+            IrFn *g = &emit_ir_mod->fns[i];
+            if (!g->name || strcmp(g->name, "__init") != 0 || !g->cname) continue;
+            if (g->init_mod < 0 || g->init_mod >= emit_nmods) continue;
+            if (emit_mods[g->init_mod].done_rank == r) fprintf(o, "    %s();\n", g->cname);
+        }
+    }
+}
+
 static void emit_ir_fn_body(FILE *o, const IrFn *fn, int is_main) {
     CF = fn;
     fprintf(o, " {\n");
     if (fn->is_main) emit_main_args(o);
     if (fn->clos_id && fn->ncaps == 0) fprintf(o, "    (void)_env;\n");
     if (fn->is_main && emit_ir_mod) {
-        /* Imports first, main module last. Modules are lowered importer-
-           before-imported, so walking back puts a module's dependencies
-           ahead of it: a global initialised with `zeus.signal(0)` must not
-           run before the arena it allocates into, or the arena's own
-           initialiser wipes the slot and every later write is dropped. */
-        for (int i = emit_ir_mod->nfns - 1; i >= 0; i--) {
-            IrFn *g = &emit_ir_mod->fns[i];
-            if (g->name && strcmp(g->name, "__init") == 0 && g->cname)
-                fprintf(o, "    %s();\n", g->cname);
-        }
+        emit_init_calls(o);
     }
     for (int i = 0; i < fn->nlocals; i++) {
         if (fn->locals[i].is_param || fn->locals[i].is_global) continue;
@@ -3799,6 +3807,8 @@ void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path)
     IrModule *ir = ir_lower(mods, nmods);
     (void)ir_verify(ir);
     emit_ir_mod = ir;
+    emit_mods = mods;
+    emit_nmods = nmods;
     line_map_file = NULL;
     line_map_no = 0;
     elem_hook_n = 0;
@@ -4025,13 +4035,7 @@ void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path)
         /* Module-level `let` initializers run in per-module `__init` fns that
            the program's own `main` would call; the runner replaces `main`, so
            it must call them too (std tables, arena, etc.). */
-        if (emit_ir_mod) {
-            for (int i = emit_ir_mod->nfns - 1; i >= 0; i--) {
-                IrFn *g = &emit_ir_mod->fns[i];
-                if (g->name && strcmp(g->name, "__init") == 0 && g->cname)
-                    fprintf(out, "    %s();\n", g->cname);
-            }
-        }
+        if (emit_ir_mod) emit_init_calls(out);
         for (int m = 0; m < nmods; m++) {
             AstNode *p = mods[m].ast;
             if (!p) continue;

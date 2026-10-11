@@ -1,0 +1,195 @@
+//! The screen, in four pieces: header, link bar, preview dialog and downloads.
+//! Every piece reads `store.loam`; none talks to the engine directly. Logs go
+//! to the terminal running `zeli serve`, not the window.
+
+import "std:zeus"
+import "std:zui"
+import "std:colors"
+import "std:spacing"
+import "../server/api.loam"
+import "store.loam"
+
+/// A down-arrow into a tray, 24-unit viewBox like the zui icon set.
+const IC_DOWNLOAD: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 3v12\"/><path d=\"M7 10l5 5 5-5\"/><path d=\"M5 21h14\"/></svg>"
+
+fn Header() -> Node {
+    return zui.Row(Space.Sm) {
+        zeus.Box(style = Style(width = px(28), height = px(28), radius = corners(8), background = zeus.accent(),
+                               align = Align.Center, justify = Align.Center)) {
+            zui.Icon(IC_DOWNLOAD, 16, colors.on_accent())
+        }
+        zeus.Text("Vidget", style = Style(font = spacing.FONT_HEADING, color = zeus.ink()))
+        zui.Chip("{{store.active()}} active", zeus.Tint.Info)
+        zui.Grow()
+        zeus.Text(fn() -> string {
+            if !store.online.get() {
+                return "engine offline — run zeli serve examples/zeus/vidget"
+            }
+            return "engine: {{store.tools.get()}}"
+        }, style = Style(font = spacing.FONT_CAPTION, color = colors.mute()))
+        zui.ThemeSwitch()
+    }
+}
+
+/// URL field, Download, and the options a paste uses.
+fn LinkBar() -> Node {
+    // A pasted link opens the preview dialog; nothing downloads until Save.
+    zeus.effect(fn() {
+        let v = store.url.get()
+        zeus.untrack(fn() { store.url_changed(v) })
+    })
+    return zui.Card() {
+        zui.Row(Space.Xs) {
+            zui.TextInput(store.url, "Paste a video, stream (.m3u8 / .mpd) or page link",
+                          size = zeus.Size.Lg, label = "Video URL",
+                          style = Style(grow = 1),
+                          keys = []KeyBind { zeus.key_bind("enter", "vidget.download", fn() { store.download() }) })
+            zui.Button("Download", look = zeus.Look.Solid, size = zeus.Size.Lg, icon = IC_DOWNLOAD,
+                       on_click = fn() { store.download() })
+        }
+        zui.RowWrap(Space.Sm) {
+            zui.Segmented(store.container, api.containers(), size = zeus.Size.Sm)
+            zui.Select(store.conns_idx, store.conn_labels(), size = zeus.Size.Sm, label = "Connections",
+                       style = Style(width = px(160)))
+        }
+        zui.Show(when = store.notice.get() != "") {
+            zui.Alert("Heads up", store.notice.get(), tint = zeus.Tint.Warn)
+        }
+    }
+}
+
+/// What the link holds, before anything downloads: thumbnail, title, site,
+/// length and the format list, with Cancel and Save.
+///
+/// One `Match` on the probe state, so exactly one arm is mounted: sibling
+/// `Show`s left the loading skeleton painted next to the result when the
+/// state flipped inside the reply's `zeus.batch`. A new probe passes through
+/// LOADING, so the ready arm (and its format list) rebuilds each time.
+fn PreviewDialog() -> Node {
+    // The X, Escape or the scrim close it too: drop the probe the same way.
+    zeus.effect(fn() {
+        if !store.dialog.get() {
+            zeus.untrack(fn() { store.close_dialog() })
+        }
+    })
+    return zui.Dialog(store.dialog, title = "Download video") {
+        zui.Match(store.probe_state, fn(st: int) -> Node {
+            return PreviewArm(st)
+        })
+        // `enabled` is read once, so the row is rebuilt per probe state.
+        zui.Match(store.probe_state, fn(st: int) -> Node {
+            return DialogActions(st)
+        })
+    }
+}
+
+fn DialogActions(st: int) -> Node {
+    return zui.Row(Space.Sm) {
+        zui.Grow()
+        zui.Button("Cancel", look = zeus.Look.Ghost, on_click = fn() { store.close_dialog() })
+        zui.Button("Save", look = zeus.Look.Solid, icon = IC_DOWNLOAD, enabled = store.is_probe_ready(st),
+                   on_click = fn() { store.save() })
+    }
+}
+
+fn PreviewArm(st: int) -> Node {
+    return zeus.Box(style = Style(direction = Direction.Column)) {
+        if store.is_probe_ready(st) {
+            PreviewBody()
+        } else if store.is_probe_error(st) {
+            zui.Alert("Nothing to download here", store.p_error.get(), tint = zeus.Tint.Danger)
+        } else {
+            zeus.Box(style = Style(direction = Direction.Column, gap = 10)) {
+                zui.Skeleton(392, 220, 8)
+                zui.SkeletonText(2)
+                zui.Note("Reading the link…")
+            }
+        }
+    }
+}
+
+fn PreviewBody() -> Node {
+    return zeus.Box(style = Style(direction = Direction.Column, gap = 10)) {
+        zeus.Box(style = Style(width = pct(100), height = px(220), radius = corners(8), background = colors.raised(),
+                               overflow = Overflow.Hidden, align = Align.Center, justify = Align.Center)) {
+            zui.Show(when = store.p_thumb.get() != "") {
+                zui.Image(store.p_thumb.get(), style = Style(width = pct(100), height = px(220)), fit = Fit.Cover,
+                          label = "Video thumbnail")
+            }
+            zui.Show(when = store.p_thumb.get() == "") {
+                zui.Icon(IC_DOWNLOAD, 28, colors.mute())
+            }
+        }
+        zeus.Text(store.p_title.get(), style = Style(font = spacing.FONT_TITLE, color = zeus.ink(), ellipsis = true))
+        zui.Row(Space.Exxs) {
+            zui.Badge(store.kind_name(store.p_kind.get()), zeus.Tint.Info)
+            zui.Show(when = store.p_duration.get() > 0) {
+                zui.Badge(store.clock(store.p_duration.get()), zeus.Tint.Mute)
+            }
+            zeus.Text(store.p_site.get(), style = Style(font = spacing.FONT_CAPTION, color = colors.mute(), ellipsis = true))
+        }
+        zui.Show(when = store.p_desc.get() != "") {
+            zeus.Text(store.p_desc.get(), style = Style(font = spacing.FONT_BODY, color = colors.mute(), wrap = true,
+                                                        maxHeight = 60))
+        }
+        zui.Select(store.fmt_idx, store.p_labels.peek(), label = "Format", style = Style(width = pct(100)))
+    }
+}
+
+fn Downloads() -> Node {
+    return zui.Card(title = "Downloads", subtitle = "Saved to {{store.out_dir.get()}}") {
+        zui.Show(when = store.rows.get().len == 0) {
+            zui.Empty(icon = IC_DOWNLOAD, title = "No downloads yet",
+                      body = "Paste a link above. Direct files split over parallel connections; streams fetch every segment at once.")
+        }
+        zui.EachKeyed(fn() -> []Row { return store.rows.get() }, fn(r: Row) -> string { return "{{r.id}}" },
+                      fn(i: Signal<int>, item: Signal<Row>) -> Node {
+            return JobRow(item)
+        })
+    }
+}
+
+fn JobRow(item: Signal<Row>) -> Node {
+    let pct = zeus.signal(0)
+    zeus.effect(fn() {
+        let p = store.percent(item.get())
+        zeus.untrack(fn() { pct.set(p) })
+    })
+    return zeus.Box(style = Style(direction = Direction.Column, gap = 6, padding = edges2(10, 0))) {
+        zui.Row(Space.Exxs) {
+            zeus.Text(item.get().title, style = Style(font = spacing.FONT_BODY, color = zeus.ink(), grow = 1, ellipsis = true))
+            zui.Show(when = store.is_running(item.get().state)) {
+                zui.Button("Cancel", look = zeus.Look.Ghost, size = zeus.Size.Sm,
+                           on_click = fn() { store.cancel(item.peek().id) })
+            }
+            zui.Show(when = store.is_done(item.get().state)) {
+                zui.Button("Show in Finder", look = zeus.Look.Soft, size = zeus.Size.Sm,
+                           on_click = fn() { store.reveal(item.peek().id) })
+            }
+            zui.Show(when = !store.is_running(item.get().state)) {
+                zui.Button("Remove", look = zeus.Look.Ghost, size = zeus.Size.Sm,
+                           on_click = fn() { store.remove(item.peek().id) })
+            }
+        }
+        zui.Show(when = store.is_running(item.get().state)) {
+            zui.Progress(pct, size = zeus.Size.Sm)
+        }
+        zui.Row(Space.Exxs) {
+            zui.Show(when = store.is_done(item.get().state)) {
+                zui.Badge("Done", zeus.Tint.Ok, dot = true)
+            }
+            zui.Show(when = store.is_failed(item.get().state)) {
+                zui.Badge("Failed", zeus.Tint.Danger, dot = true)
+            }
+            zui.Show(when = store.is_cancelled(item.get().state)) {
+                zui.Badge("Cancelled", zeus.Tint.Mute, dot = true)
+            }
+            zui.Show(when = store.is_running(item.get().state)) {
+                zeus.Text(item.get().stage, style = Style(font = spacing.FONT_CAPTION, color = zeus.accent()))
+            }
+            zeus.Text(store.detail(item.get()), style = Style(font = spacing.FONT_CAPTION, color = colors.mute(),
+                                                              grow = 1, ellipsis = true))
+        }
+        zui.Divider()
+    }
+}

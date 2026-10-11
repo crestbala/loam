@@ -9,11 +9,10 @@
 //!     let mut cur_path: Signal<string> = Signal { id: 0 }
 //!     fn ensure_path() { if cur_path.id == 0 { cur_path = zeus.signal("/") } }
 //!
-//! **Creating a signal at module-init time is unsafe, not just unconventional.**
-//! Bisected against this loader: with `zeus.signal(...)` at module scope the app
-//! segfaults inside `zeus.snapshot` while building the tree; with the creation
-//! inside `start()` the same program runs to completion. `state.id == 0` doubles
-//! as the "already started" latch, so there is no `started` flag either.
+//! `state.id == 0` doubles as the "already started" latch, so there is no
+//! `started` flag either. A module-level `let state = zeus.signal(...)` also
+//! works (module inits run after the inits of everything they import; see
+//! examples/zeus/vidget/components/store.loam), but it would need that flag.
 //!
 //! Two signals and not one `Signal<Feed>`: a signal holding a struct that owns a
 //! list loses the list's *elements* when the store happens inside an async

@@ -1,0 +1,64 @@
+//! vidget's backend: the download engine behind `server/api.loam`.
+//!
+//! `zeli serve` (any target) builds and starts this on 127.0.0.1:8080 before the UI on every target, so both the macOS
+//! window (h2c) and the browser (gRPC-Web through the dev server) reach the
+//! same engine. Files land in `$VIDGET_DIR` or `~/Downloads/Vidget`.
+
+import "std:http"
+import "std:sys"
+import "api.loam"
+import "engine.loam"
+import "text.loam"
+
+fn main() {
+    let app = http.app()
+
+    app.rpc(api.probe_rpc(), |body| {
+        let req = api.decode_ProbeReq(body)
+        api.encode_ProbeResp(engine.probe(req.url))
+    })
+
+    app.rpc(api.thumb_rpc(), |body| {
+        let req = api.decode_ThumbReq(body)
+        api.encode_ThumbResp(engine.thumb(req.url))
+    })
+
+    app.rpc(api.start_rpc(), |body| {
+        let req = api.decode_StartReq(body)
+        api.encode_StartResp(engine.start(req))
+    })
+
+    app.rpc(api.jobs_rpc(), |body| {
+        let req = api.decode_JobsReq(body)
+        api.encode_JobsResp(engine.snapshot())
+    })
+
+    // What the UI reads: pushed whenever a job moves, so it never polls.
+    app.stream(api.jobs_watch_rpc(), |body| {
+        let req = api.decode_JobsReq(body)
+        api.encode_JobsResp(engine.snapshot())
+    })
+
+    app.rpc(api.cancel_rpc(), |body| {
+        let req = api.decode_JobReq(body)
+        api.encode_JobResp(JobResp { ok: engine.cancel(req.id) })
+    })
+
+    app.rpc(api.reveal_rpc(), |body| {
+        let req = api.decode_JobReq(body)
+        api.encode_JobResp(JobResp { ok: engine.reveal(req.id) })
+    })
+
+    app.rpc(api.remove_rpc(), |body| {
+        let req = api.decode_JobReq(body)
+        api.encode_JobResp(JobResp { ok: engine.remove(req.id) })
+    })
+
+    // `VIDGET_PORT` moves it off 8080 (tests next to a running engine; the UI
+    // then needs `LOAM_RPC_ADDR=127.0.0.1:<port>`).
+    let mut port = text.to_int(sys.env("VIDGET_PORT"))
+    if port <= 0 {
+        port = 8080
+    }
+    app.listen(port)
+}

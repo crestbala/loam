@@ -25,6 +25,51 @@
     /* Browser WebSockets (wasm `http.ws_open`): the socket and an inbound
        message queue live here per slot; wasm polls and copies out. */
     let wsSlots = new Array(8).fill(null);
+    /* Streaming gRPC-Web replies (`rs_*`): one open XHR per slot. */
+    let rsSlots = new Array(4).fill(null);
+    /* Console text waiting for its newline (see `write`). */
+    let consoleLine = "";
+    /* Log lines go to the terminal running the dev server (`zeli serve`, or an
+       app's Vite config), posted in batches to `/__zeus/log`, not to the
+       console. Without such a server (a static deploy) the first post fails
+       and the lines, that batch included, fall back to the console. */
+    const logRelay = { on: true, queue: [], timer: 0 };
+    const consoleOut = (line) => {
+      if (/^\+\d+\.\d{3}s ERROR /.test(line)) console.error(line);
+      else if (/^\+\d+\.\d{3}s WARN /.test(line)) console.warn(line);
+      else console.log(line);
+    };
+    const relayFlush = () => {
+      logRelay.timer = 0;
+      const batch = logRelay.queue;
+      logRelay.queue = [];
+      if (!batch.length) return;
+      const back = () => {
+        logRelay.on = false;
+        for (const l of batch) consoleOut(l);
+        for (const l of logRelay.queue.splice(0)) consoleOut(l);
+      };
+      try {
+        fetch("/__zeus/log", {
+          method: "POST",
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+          body: batch.join("\n") + "\n",
+          keepalive: true,
+        }).then((r) => {
+          if (!r.ok) back();
+        }, back);
+      } catch (e) {
+        back();
+      }
+    };
+    const logLine = (line) => {
+      if (!logRelay.on || typeof fetch !== "function") {
+        consoleOut(line);
+        return;
+      }
+      logRelay.queue.push(line);
+      if (!logRelay.timer) logRelay.timer = setTimeout(relayFlush, 100);
+    };
     const imgCache = new Map();
     let fileInput = null;
     const te = typeof TextEncoder !== "undefined" ? new TextEncoder() : null;
@@ -603,10 +648,94 @@
         }
         wsSlots[slot] = null;
       },
+      /* Streaming gRPC-Web bridge: POST once, keep the reply open, queue the
+         bytes as they arrive (`onprogress`); wasm drains them per frame and
+         splits the frames itself. State: 0 open, 1 ended, 2 failed. An XHR
+         keeps its whole `responseText`, so a long stream is ended past a cap
+         and the caller reopens it. */
+      rs_open: (pathPtr, pathLen, bodyPtr, bodyLen, slot) => {
+        try {
+          if (slot < 0 || slot >= rsSlots.length) return -1;
+          const path = bytes(pathPtr, pathLen) || "/";
+          const body =
+            bodyLen > 0 ? u8().slice(bodyPtr, bodyPtr + bodyLen) : new Uint8Array(0);
+          const xhr = new XMLHttpRequest();
+          const r = { xhr: xhr, seen: 0, pending: "", state: 0 };
+          rsSlots[slot] = r;
+          const pull = () => {
+            const t = xhr.responseText || "";
+            if (t.length > r.seen) {
+              r.pending += t.slice(r.seen);
+              r.seen = t.length;
+            }
+            if (r.seen > 4194304 && r.state === 0) {
+              r.state = 1;
+              xhr.abort();
+            }
+          };
+          xhr.open("POST", path, true);
+          xhr.overrideMimeType("text/plain; charset=x-user-defined");
+          xhr.setRequestHeader("Content-Type", "application/grpc-web+proto");
+          xhr.setRequestHeader("Accept", "application/grpc-web+proto");
+          xhr.onprogress = pull;
+          xhr.onloadend = () => {
+            if (r.state !== 0) return;
+            if (xhr.status === 200) {
+              pull();
+              r.state = 1;
+            } else {
+              r.state = 2;
+            }
+          };
+          xhr.send(body);
+          return 0;
+        } catch (e) {
+          console.warn("rs_open", e);
+          rsSlots[slot] = null;
+          return -1;
+        }
+      },
+      rs_state: (slot) => {
+        const r = rsSlots[slot];
+        if (!r) return 2;
+        /* Ended still reads as open until wasm has drained the last bytes. */
+        if (r.state !== 0 && r.pending.length > 0) return 0;
+        return r.state;
+      },
+      rs_copy: (slot, ptr, cap) => {
+        const r = rsSlots[slot];
+        if (!r || !r.pending.length) return 0;
+        const n = Math.min(r.pending.length, Math.max(cap, 0));
+        const dst = u8();
+        for (let i = 0; i < n; i++) dst[ptr + i] = r.pending.charCodeAt(i) & 0xff;
+        r.pending = r.pending.slice(n);
+        return n;
+      },
+      rs_close: (slot) => {
+        const r = rsSlots[slot];
+        if (r && r.xhr && r.state === 0) {
+          r.state = 1;
+          try {
+            r.xhr.abort();
+          } catch (e) {}
+        }
+        rsSlots[slot] = null;
+      },
       write: (p, n) => {
         const t = bytes(p, n);
-        if (opts.onWrite) opts.onWrite(t);
-        else if (t) console.log(t);
+        if (opts.onWrite) {
+          opts.onWrite(t);
+          return;
+        }
+        /* `fmt.println` arrives in pieces: buffer to the newline so a line is
+           one log line (see `logLine`). */
+        consoleLine += t;
+        let nl;
+        while ((nl = consoleLine.indexOf("\n")) >= 0) {
+          const line = consoleLine.slice(0, nl);
+          consoleLine = consoleLine.slice(nl + 1);
+          logLine(line);
+        }
       },
       panic: (p, n) => {
         const e = new Error(bytes(p, n) || cstr(p) || "zeus panic");
@@ -1032,28 +1161,46 @@
         }
         popState();
       },
-      fetch_rpc_async: (pathPtr, pathLen, bodyPtr, bodyLen, outPtr, cap, handle) => {
-        /* Sync XHR: `await` pumps on this thread (`tick` + `sleep`). An async
-           XHR never completes while that loop holds the JS event loop. */
-        try {
-          const path = bytes(pathPtr, pathLen) || "/";
-          const body =
-            bodyLen > 0 ? u8().slice(bodyPtr, bodyPtr + bodyLen) : new Uint8Array(0);
-          const xhr = new XMLHttpRequest();
-          xhr.open("POST", path, false);
-          xhr.overrideMimeType("text/plain; charset=x-user-defined");
-          xhr.setRequestHeader("Content-Type", "application/grpc-web+proto");
-          xhr.setRequestHeader("Accept", "application/grpc-web+proto");
-          xhr.send(body);
+      fetch_rpc_async: (pathPtr, pathLen, bodyPtr, bodyLen, outPtr, cap, handle, sync) => {
+        /* `sync` 1: a blocking XHR, for `await` (its pump loop holds this
+           thread, so an async XHR would never complete under it). `sync` 0:
+           a real async XHR, so the page keeps painting while the server
+           works; the reply lands in the slot on a later frame. `zeus_fetch_done`
+           gets the byte count, -1 for no response, or -(1000 + status). */
+        const finish = (xhr) => {
+          if (!exp || !exp.zeus_fetch_done) return;
           if (xhr.status !== 200) {
-            if (exp && exp.zeus_fetch_done) exp.zeus_fetch_done(handle, -1);
-            return 0;
+            exp.zeus_fetch_done(handle, xhr.status > 0 ? -(1000 + xhr.status) : -1);
+            return;
           }
           const t = xhr.responseText || "";
           const n = Math.min(t.length, Math.max(cap, 0));
           const dst = u8();
           for (let i = 0; i < n; i++) dst[outPtr + i] = t.charCodeAt(i) & 0xff;
-          if (exp && exp.zeus_fetch_done) exp.zeus_fetch_done(handle, n);
+          exp.zeus_fetch_done(handle, n);
+        };
+        try {
+          const path = bytes(pathPtr, pathLen) || "/";
+          const body =
+            bodyLen > 0 ? u8().slice(bodyPtr, bodyPtr + bodyLen) : new Uint8Array(0);
+          const xhr = new XMLHttpRequest();
+          xhr.open("POST", path, !sync);
+          xhr.overrideMimeType("text/plain; charset=x-user-defined");
+          xhr.setRequestHeader("Content-Type", "application/grpc-web+proto");
+          xhr.setRequestHeader("Accept", "application/grpc-web+proto");
+          if (sync) {
+            xhr.send(body);
+            finish(xhr);
+            return 0;
+          }
+          xhr.onloadend = () => {
+            try {
+              finish(xhr);
+            } catch (e) {
+              console.warn("fetch_rpc_async", e);
+            }
+          };
+          xhr.send(body);
           return 0;
         } catch (e) {
           console.warn("fetch_rpc_async", e);

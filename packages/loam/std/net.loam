@@ -67,16 +67,35 @@ fn tcp_peek(fd: int, max: int) -> string {}
 /// Same-origin gRPC-Web POST (wasm). Native returns empty.
 fn fetch_rpc(path: string, body: string) -> string {}
 
-/// Start an async gRPC-Web POST (wasm; native returns `-1`): the XHR runs in
-/// JS and the response lands in the next frame's `tick`. At most four in
-/// flight; `-1` when busy or native. Poll `fetch_ready`, then `fetch_take`.
+/// Start a gRPC-Web POST in a fetch slot (wasm; native returns `-1`) and
+/// return the slot. `sync` 0 is a real async XHR: the page keeps running and
+/// the reply lands on a later frame. `sync` 1 blocks until the reply is in,
+/// for `await` (its pump loop never yields to the JS event loop). At most four
+/// in flight; `-1` when busy or native. Poll `fetch_slot_done(slot)`, then
+/// `fetch_slot_take(slot)`.
+fn fetch_start(path: string, body: string, sync: int) -> int {}
+
+/// 1 once slot `slot` has its reply (or its failure), else 0.
+fn fetch_slot_done(slot: int) -> int {}
+
+/// HTTP status of a done slot: 200, the error status, or 0 when no response
+/// came back at all (network error, server down behind no proxy).
+fn fetch_slot_status(slot: int) -> int {}
+
+/// Take slot `slot`'s reply (empty on failure) and free the slot.
+fn fetch_slot_take(slot: int) -> string {}
+
+/// Give up on slot `slot` (a timeout); it frees itself once the XHR ends.
+fn fetch_slot_drop(slot: int) {}
+
+/// `fetch_start(path, body, 1)`, kept for single-fetch callers.
 fn fetch_issue(path: string, body: string) -> int {}
 
-/// Number of completed async fetches waiting for `fetch_take` (wasm; native 0).
+/// Number of completed fetches waiting (wasm; native 0).
 fn fetch_ready() -> int {}
 
-/// Take one completed async fetch response (ownership moves). Empty on error
-/// or when nothing is ready.
+/// Take any one completed response. Only safe with a single fetch in flight;
+/// per-call code uses `fetch_slot_take`.
 fn fetch_take() -> string {}
 
 /// Open a same-origin WebSocket over the browser bridge (wasm; native
@@ -95,3 +114,17 @@ fn ws_copy(slot: int, max: int) -> string {}
 
 /// Close the socket and free `slot`.
 fn ws_close(slot: int) {}
+
+/// Open a same-origin streaming gRPC-Web POST over the browser bridge (wasm;
+/// native returns -1). The reply stays open; drain it with `stream_take`.
+fn stream_open(path: string, body: string) -> int {}
+
+/// State of stream `slot`: 0 = open, 1 = ended, 2 = failed (wasm; native 2).
+fn stream_state(slot: int) -> int {}
+
+/// The reply bytes that arrived since the last take, up to `max`. Empty when
+/// nothing new has come in.
+fn stream_take(slot: int, max: int) -> string {}
+
+/// Abort the request and free `slot`.
+fn stream_close(slot: int) {}

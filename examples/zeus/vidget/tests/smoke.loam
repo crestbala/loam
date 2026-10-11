@@ -1,0 +1,97 @@
+//! `#[test]` fns for the pure parsers (no network, no tools):
+//!
+//!   ZEUS_HEADLESS=1 ./bin/loamc test examples/zeus/vidget/app.loam
+
+import "std:test"
+import "../server/extract.loam"
+import "../server/hls.loam"
+import "../server/text.loam"
+
+#[test]
+fn attr_matches_whole_keys() {
+    let l = "#EXT-X-STREAM-INF:AVERAGE-BANDWIDTH=10,BANDWIDTH=20,RESOLUTION=640x360,CODECS=\"a,b\""
+    assert_eq_int(text.to_int(hls.attr(l, "BANDWIDTH")), 20)
+    assert(hls.attr(l, "CODECS") == "a,b")
+    assert_eq_int(hls.res_h(hls.attr(l, "RESOLUTION")), 360)
+}
+
+#[test]
+fn master_sorts_best_first() {
+    let m = hls.parse_master("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=300\nlo.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=900\nhi.m3u8\n",
+                             "https://cdn.test/v/master.m3u8")
+    assert_eq_int(m.variants.len, 2)
+    assert(m.variants[0].url == "https://cdn.test/v/hi.m3u8")
+}
+
+#[test]
+fn localize_rewrites_key_and_segments() {
+    let pl = "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"/k.key\"\n#EXTINF:2.0,\nseg0.ts\n#EXTINF:2.5,\nseg1.ts\n#EXT-X-ENDLIST\n"
+    let l = hls.localize(pl, "https://cdn.test/a/index.m3u8", "v")
+    assert_eq_int(l.segments, 2)
+    assert_eq_int(l.urls.len, 3)
+    assert(l.urls[0] == "https://cdn.test/k.key")
+    assert(l.names[1] == "v00000.ts")
+    assert(text.contains(l.local, "URI=\"vkey0.key\""))
+    assert(!l.live)
+}
+
+#[test]
+fn page_finds_escaped_stream_and_meta() {
+    let html = "<meta property=\"og:title\" content=\"A &amp; B\"><script>x={\"u\":\"https:\\/\\/c.test\\/m.m3u8?t=1\"}</script><video src=\"/f.mp4\">"
+    let x = extract.page(html, "https://site.test/watch")
+    assert(x.title == "A & B")
+    assert_eq_int(x.media.len, 2)
+    assert(x.media[0] == "https://c.test/m.m3u8?t=1")
+    assert(x.media[1] == "https://site.test/f.mp4")
+}
+
+#[test]
+fn shell_quote_closes_quotes() {
+    assert(text.shell_quote("it's") == "'it'\\''s'")
+}
+
+#[test]
+fn page_prefers_highest_player_rendition() {
+    let html = "<meta property=\"og:title\" content=\"Clip\"><script>var flashvars = { video_url: 'https://cdn.test/get_file/1/a/10.mp4/?t=1', video_url_text: '480p', video_alt_url: 'https://cdn.test/get_file/1/b/10_720p.mp4/?t=2', video_alt_url_text: '720p', video_alt_url2: 'https://cdn.test/get_file/1/c/10_1080p.mp4/?t=3', video_alt_url2_text: '1080p' };</script><a href=\"https://site.test/search/name.mp4/\">x</a><img src=\"https://cdn.test/preview.mp4.jpg\">"
+    let x = extract.page(html, "https://site.test/videos/10/clip/")
+    assert_eq_int(x.media.len, 3)
+    assert(x.media[0] == "https://cdn.test/get_file/1/c/10_1080p.mp4/?t=3")
+    assert(x.media[1] == "https://cdn.test/get_file/1/b/10_720p.mp4/?t=2")
+    assert(x.media[2] == "https://cdn.test/get_file/1/a/10.mp4/?t=1")
+    assert(text.url_ext(x.media[0]) == "mp4")
+    assert(text.url_file(x.media[0]) == "10_1080p.mp4")
+}
+
+#[test]
+fn page_resolves_relative_source_tags() {
+    let html = "<video controls><source src=\"mov_bbb.mp4\" type=\"video/mp4\"><source src='mov_bbb.ogg'></video><p>see clip.mp4 here</p>"
+    let x = extract.page(html, "https://www.site.test/html/page.asp")
+    assert_eq_int(x.media.len, 2)
+    assert(x.media[0] == "https://www.site.test/html/mov_bbb.mp4")
+    assert(x.media[1] == "https://www.site.test/html/mov_bbb.ogg")
+}
+
+#[test]
+fn replace_is_exact() {
+    assert(text.replace("a\\/b\\/c", "\\/", "/") == "a/b/c")
+    assert(text.replace("aaa", "aa", "b") == "ba")
+}
+
+#[test]
+fn aria_readout_reads_the_last_progress_line() {
+    let ls = text.lines(text.replace("[#be93c8 144KiB/629MiB(0%) CN:16 DL:504KiB ETA:21m16s]\r[#be93c8 178MiB/629MiB(28%) CN:16 DL:5.4MiB ETA:1m23s]\n", "\r", "\n"))
+    let r = text.aria_readout(ls)
+    assert(r.ok)
+    assert_eq_int(r.done_kib, 178 * 1024)
+    assert_eq_int(r.total_kib, 629 * 1024)
+    assert_eq_int(r.speed_kib, 5 * 1024 + 4 * 102)
+    assert_eq_int(r.eta, 83)
+}
+
+#[test]
+fn aria_readout_without_a_line_is_not_ok() {
+    assert(!text.aria_readout(text.lines("aria2 will resume download if the transfer is restarted.\n")).ok)
+    assert_eq_int(text.clock_secs("1h2m3s"), 3723)
+    assert_eq_int(text.size_kib("1.5GiB"), 1048576 + 5 * 104857)
+    assert_eq_int(text.size_kib("2048B"), 2)
+}

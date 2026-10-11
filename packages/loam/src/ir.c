@@ -1989,6 +1989,7 @@ IrModule *ir_lower(LoamModule *mods, int nmods) {
             F->cname = loam_dup(buf);
         }
         F->name = "__init";
+        F->init_mod = mi;
         F->lowered = 1;
         Gcur = mi;
         scopes = NULL;

@@ -1,0 +1,25 @@
+// std:log records render live in `devtools.LogPanel`, warnings and errors included.
+import "std:fmt"
+import "std:sys"
+import "std:async"
+import "std:log"
+import "std:zeus"
+import "std:devtools"
+
+fn main() {
+    log.set_print(false)
+    log.info("app", "first record")
+    zeus.snapshot(640, 400, fn() -> Node {
+        return zeus.Box(style = Style(direction = Direction.Column)) {
+            devtools.LogPanel(height = 300)
+        }
+    })
+    for i in 0..3 { zeus.pump_frame() }
+    log.warn("app", "a warning")
+    log.error("http.client", "Vidget.Jobs failed · connection refused")
+    for i in 0..5 { zeus.pump_frame() async.sleep(10) }
+    let ok1 = zeus.text_visible(log.line(log.records()[0]))
+    let ok3 = zeus.text_visible(log.line(log.records()[2]))
+    fmt.println("panel first", ok1, "panel third", ok3)
+    if !ok1 || !ok3 { sys.exit(1) }
+}

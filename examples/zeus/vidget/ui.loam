@@ -1,0 +1,13 @@
+//! The app, as every host starts it: the store first (signals and the job
+//! stream live outside any rebuild), then the generated route table.
+
+import "std:zeus"
+import "app_routes.loam" as approutes
+import "components/store.loam" as store
+
+fn start() {
+    store.start()
+    zeus.App("Vidget", fn() -> Node {
+        return approutes.app()
+    })
+}

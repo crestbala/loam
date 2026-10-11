@@ -1,0 +1,12 @@
+//! vidget — native entry (macOS window). The web entry is web/app.loam; both
+//! run the same `ui.start()`.
+//!
+//!   zeli serve examples/zeus/vidget --target macos   # this window + the engine
+//!   zeli serve examples/zeus/vidget --target web     # web/app.loam under Vite + the engine
+
+import "ui.loam"
+import "tests/smoke.loam" as smoketest
+
+fn main() {
+    ui.start()
+}

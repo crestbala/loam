@@ -1,0 +1,10 @@
+//! Theme tokens: palette roles. `zeus.theme(ROLE.X, light, dark)` sets
+//! both appearances; widgets resolve the role per appearance at paint time.
+
+import "std:zeus"
+
+fn install() {
+    zeus.theme(ROLE.Accent, 0x2563EB, 0x60A5FA)
+    zeus.theme(ROLE.Paper, 0xFFFFFF, 0x111318)
+    zeus.theme(ROLE.Ink, 0x111318, 0xF3F4F6)
+}

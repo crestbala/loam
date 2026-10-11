@@ -1,0 +1,132 @@
+// Server-streaming RPC (`app.stream` / `client.watch`). A child process of
+// this same binary (LOAM_HS_SRV=1) serves a counter that steps every 300 ms
+// up to 5, plus a plain RPC. The client must get each new value once, in
+// order, over one request; a unary call must still be answered while the
+// stream is open; an open, quiet stream must not keep the host busy (it would
+// draw every frame); and killing the server must end the stream.
+
+import "std:async"
+import "std:fmt"
+import "std:http"
+import "std:net"
+import "std:sys"
+
+fn fail(what: string) {
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+let mut srv_t0: i64 = 0
+
+fn srv_main() {
+    srv_t0 = async.now_ms()
+    let app = http.app()
+    app.rpc("T.Ping", |body| { "pong" })
+    app.stream("T.Count", |body| {
+        let mut n = int(async.now_ms() - srv_t0) / 300
+        if n > 5 {
+            n = 5
+        }
+        "n{{n}}"
+    })
+    app.listen(text_int(sys.env("LOAM_HS_PORT")))
+}
+
+fn text_int(s: string) -> int {
+    let mut v = 0
+    for i in 0..s.len {
+        if s[i] >= 48 && s[i] <= 57 {
+            v = v * 10 + s[i] - 48
+        }
+    }
+    return v
+}
+
+let mut msgs: []string = []string {}
+let mut ended: int = 0
+let mut pong: string = ""
+
+/// Pump the async steps until `done()` or `ms` pass.
+fn pump(ms: int, done: fn() -> bool) -> bool {
+    let mut left = ms
+    while left > 0 {
+        async.tick()
+        if done() {
+            return true
+        }
+        async.sleep(5)
+        left -= 5
+    }
+    return false
+}
+
+fn cli_main() {
+    let l = net.tcp_listen(0)
+    let port = net.tcp_bound_port(l)
+    net.tcp_close(l)
+    // The suite runs headless, and a headless `listen` only self-tests; the
+    // child has to really serve.
+    let pid = sys.exec("env -u ZEUS_HEADLESS -u LOAM_HEADLESS -u LOAM_HTTP_SELFTEST LOAM_HS_SRV=1 LOAM_HS_PORT={{port}} packages/loam/tests/tmp/http_stream >/dev/null 2>&1 & echo $!")
+    let mut up = false
+    for i in 0..200 {
+        if !up {
+            let fd = net.tcp_connect("127.0.0.1", port)
+            if fd >= 0 {
+                net.tcp_close(fd)
+                up = true
+            } else {
+                async.sleep(10)
+            }
+        }
+    }
+    if !up {
+        fail("server never listened")
+    }
+    let c = http.client("127.0.0.1:{{port}}")
+    c.watch("T.Count", "", fn(m) { push(msgs, m) }, || { ended = 1 })
+
+    if !pump(3000, || { msgs.len > 0 }) {
+        fail("no first message")
+    }
+    if async.busy() != 0 {
+        fail("an open stream keeps the host busy (it would draw every frame)")
+    }
+
+    // A unary call while the stream is open.
+    c.call_async("T.Ping", "", fn(out) { pong = out })
+    if !pump(3000, || { pong != "" }) {
+        fail("a unary call was not answered while a stream was open")
+    }
+    if pong != "pong" {
+        fail("unary reply {{pong}}")
+    }
+
+    if !pump(6000, || { msgs.len > 0 && msgs[msgs.len - 1] == "n5" }) {
+        fail("stream did not reach n5 (got {{msgs.len}} messages)")
+    }
+    for i in 1..msgs.len {
+        if msgs[i] == msgs[i - 1] {
+            fail("an unchanged value was pushed twice: {{msgs[i]}}")
+        }
+        if text_int(msgs[i]) < text_int(msgs[i - 1]) {
+            fail("out of order: {{msgs[i - 1]}} then {{msgs[i]}}")
+        }
+    }
+    if ended != 0 {
+        fail("stream ended while the server was up")
+    }
+
+    sys.exec("kill {{pid}}")
+    if !pump(3000, || { ended == 1 }) {
+        fail("stream did not end when the server went away")
+    }
+    fmt.println("http stream ok · {{msgs.len}} messages")
+}
+
+fn main() {
+    if sys.env_set("LOAM_HS_SRV") != 0 {
+        srv_main()
+        return
+    }
+    cli_main()
+}

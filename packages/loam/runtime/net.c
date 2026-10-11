@@ -23,10 +23,14 @@ int32_t zeus_js_fetch_rpc(const char *path, int32_t path_len, const char *body, 
                          char *out, int32_t out_cap);
 
 /* Async fetch: JS starts an XHR and later calls the `zeus_fetch_done` export
-   below with this handle. `out`/`out_cap` is the slot buffer JS writes into. */
+   below with this handle. `out`/`out_cap` is the slot buffer JS writes into.
+   `sync` 1 asks for a blocking XHR that completes before this returns (what
+   `await` needs: its pump loop never yields to the JS event loop); 0 is a
+   real async XHR whose completion lands on a later frame. */
 __attribute__((import_module("zeus"), import_name("fetch_rpc_async")))
 int32_t zeus_js_fetch_rpc_async(const char *path, int32_t path_len, const char *body,
-                               int32_t body_len, char *out, int32_t out_cap, int32_t handle);
+                               int32_t body_len, char *out, int32_t out_cap, int32_t handle,
+                               int32_t sync);
 
 #define ASYNC_FETCH_SLOTS 4
 #define ASYNC_FETCH_CAP 65536
@@ -109,28 +113,127 @@ void loam_net_ws_close(int64_t slot) {
     g_ws_used[slot] = 0;
 }
 
+/* Streaming gRPC-Web bridge (wasm): JS posts the request and keeps the reply
+   open, queueing each chunk that arrives; wasm copies out whatever has come
+   in since the last copy, once per frame, and frames the messages itself. */
+
+__attribute__((import_module("zeus"), import_name("rs_open")))
+int32_t zeus_js_rs_open(const char *path, int32_t path_len, const char *body, int32_t body_len,
+                        int32_t slot);
+
+__attribute__((import_module("zeus"), import_name("rs_state")))
+int32_t zeus_js_rs_state(int32_t slot);
+
+__attribute__((import_module("zeus"), import_name("rs_copy")))
+int32_t zeus_js_rs_copy(int32_t slot, char *out, int32_t cap);
+
+__attribute__((import_module("zeus"), import_name("rs_close")))
+void zeus_js_rs_close(int32_t slot);
+
+#define RS_SLOTS 4
+#define RS_CAP 65536
+
+static char *g_rs_buf[RS_SLOTS];
+static int g_rs_used[RS_SLOTS];
+
+int64_t loam_net_stream_open(loam_str path, loam_str body) {
+    int i;
+    if (path.len <= 0 || !path.ptr) return -1;
+    for (i = 0; i < RS_SLOTS; i++) {
+        if (g_rs_used[i]) continue;
+        g_rs_buf[i] = (char *)malloc(RS_CAP);
+        if (!g_rs_buf[i]) return -1;
+        if (zeus_js_rs_open(path.ptr, (int32_t)path.len, body.ptr ? body.ptr : "",
+                            (int32_t)(body.len > 0 ? body.len : 0), (int32_t)i) < 0) {
+            free(g_rs_buf[i]);
+            g_rs_buf[i] = NULL;
+            return -1;
+        }
+        g_rs_used[i] = 1;
+        return (int64_t)i;
+    }
+    return -1;
+}
+
+int64_t loam_net_stream_state(int64_t slot) {
+    if (slot < 0 || slot >= RS_SLOTS || !g_rs_used[slot]) return 2;
+    return (int64_t)zeus_js_rs_state((int32_t)slot);
+}
+
+loam_str loam_net_stream_take(int64_t slot, int64_t max) {
+    char *p;
+    int32_t n;
+    if (slot < 0 || slot >= RS_SLOTS || !g_rs_used[slot]) {
+        return (loam_str){ .ptr = "", .len = 0 };
+    }
+    if (max < 1) max = 1;
+    if (max > RS_CAP - 1) max = RS_CAP - 1;
+    n = zeus_js_rs_copy((int32_t)slot, g_rs_buf[slot], (int32_t)max);
+    if (n <= 0) return (loam_str){ .ptr = "", .len = 0 };
+    p = (char *)malloc((size_t)n + 1);
+    if (!p) return (loam_str){ .ptr = "", .len = 0 };
+    memcpy(p, g_rs_buf[slot], (size_t)n);
+    p[n] = 0;
+    return (loam_str){ .ptr = p, .len = (int64_t)n };
+}
+
+void loam_net_stream_close(int64_t slot) {
+    if (slot < 0 || slot >= RS_SLOTS || !g_rs_used[slot]) return;
+    zeus_js_rs_close((int32_t)slot);
+    free(g_rs_buf[slot]);
+    g_rs_buf[slot] = NULL;
+    g_rs_used[slot] = 0;
+}
+
+/* One async fetch slot. `done` flips when JS reports back; `len` is the body
+   length (0 on failure) and `status` the HTTP status (0: no response at all).
+   An `abandoned` slot (its caller gave up) keeps its buffer until JS is done
+   writing into it, then frees itself. */
 typedef struct {
     int used;
+    int done;
+    int abandoned;
     int32_t handle;
     char *buf;
     int32_t len;
+    int32_t status;
 } AsyncFetch;
 
 static AsyncFetch g_fetches[ASYNC_FETCH_SLOTS];
 static int32_t g_fetch_handle;
 
+static void fetch_slot_free(int i) {
+    free(g_fetches[i].buf);
+    g_fetches[i].buf = NULL;
+    g_fetches[i].used = 0;
+    g_fetches[i].done = 0;
+    g_fetches[i].abandoned = 0;
+}
+
+/* `n` >= 0: a 200 reply of `n` bytes. -1: no response (network error).
+   <= -1000: HTTP status `-n - 1000`. */
 __attribute__((export_name("zeus_fetch_done")))
 void zeus_fetch_done(int32_t handle, int32_t n) {
     int i;
     for (i = 0; i < ASYNC_FETCH_SLOTS; i++) {
-        if (g_fetches[i].used && g_fetches[i].handle == handle) {
-            g_fetches[i].len = n;
+        if (!g_fetches[i].used || g_fetches[i].handle != handle) continue;
+        if (g_fetches[i].abandoned) {
+            fetch_slot_free(i);
             return;
         }
+        g_fetches[i].done = 1;
+        if (n >= 0) {
+            g_fetches[i].len = n;
+            g_fetches[i].status = 200;
+        } else {
+            g_fetches[i].len = 0;
+            g_fetches[i].status = n <= -1000 ? -n - 1000 : 0;
+        }
+        return;
     }
 }
 
-int64_t loam_net_fetch_issue(loam_str path, loam_str body) {
+int64_t loam_net_fetch_start(loam_str path, loam_str body, int64_t sync) {
     int i;
     if (path.len <= 0 || !path.ptr) return -1;
     for (i = 0; i < ASYNC_FETCH_SLOTS; i++) {
@@ -138,16 +241,17 @@ int64_t loam_net_fetch_issue(loam_str path, loam_str body) {
         g_fetches[i].buf = (char *)malloc(ASYNC_FETCH_CAP);
         if (!g_fetches[i].buf) return -1;
         g_fetches[i].used = 1;
-        g_fetches[i].len = -1;
+        g_fetches[i].done = 0;
+        g_fetches[i].abandoned = 0;
+        g_fetches[i].len = 0;
+        g_fetches[i].status = 0;
         g_fetches[i].handle = ++g_fetch_handle;
         if (zeus_js_fetch_rpc_async(path.ptr, (int32_t)path.len,
                                     body.ptr ? body.ptr : "",
                                     (int32_t)(body.len > 0 ? body.len : 0),
                                     g_fetches[i].buf, ASYNC_FETCH_CAP - 1,
-                                    g_fetches[i].handle) < 0) {
-            free(g_fetches[i].buf);
-            g_fetches[i].buf = NULL;
-            g_fetches[i].used = 0;
+                                    g_fetches[i].handle, sync ? 1 : 0) < 0) {
+            fetch_slot_free(i);
             return -1;
         }
         return (int64_t)i;
@@ -155,28 +259,61 @@ int64_t loam_net_fetch_issue(loam_str path, loam_str body) {
     return -1;
 }
 
+int64_t loam_net_fetch_issue(loam_str path, loam_str body) {
+    return loam_net_fetch_start(path, body, 1);
+}
+
+static int fetch_slot_live(int64_t slot) {
+    return slot >= 0 && slot < ASYNC_FETCH_SLOTS && g_fetches[slot].used && !g_fetches[slot].abandoned;
+}
+
+int64_t loam_net_fetch_slot_done(int64_t slot) {
+    return fetch_slot_live(slot) && g_fetches[slot].done ? 1 : 0;
+}
+
+int64_t loam_net_fetch_slot_status(int64_t slot) {
+    return fetch_slot_live(slot) && g_fetches[slot].done ? (int64_t)g_fetches[slot].status : 0;
+}
+
+/* Hands slot `slot`'s response to Loam (ownership of the buffer moves; Loam
+   frees it when the string drops) and frees the slot. Empty on failure. */
+loam_str loam_net_fetch_slot_take(int64_t slot) {
+    if (!fetch_slot_live(slot) || !g_fetches[slot].done) return (loam_str){ .ptr = "", .len = 0 };
+    if (g_fetches[slot].len > 0) {
+        char *p = g_fetches[slot].buf;
+        int32_t n = g_fetches[slot].len;
+        p[n] = 0;
+        g_fetches[slot].buf = NULL;
+        fetch_slot_free((int)slot);
+        return (loam_str){ .ptr = p, .len = n };
+    }
+    fetch_slot_free((int)slot);
+    return (loam_str){ .ptr = "", .len = 0 };
+}
+
+/* The caller gave up (timeout): free now if JS is done, else when it is. */
+void loam_net_fetch_slot_drop(int64_t slot) {
+    if (!fetch_slot_live(slot)) return;
+    if (g_fetches[slot].done) {
+        fetch_slot_free((int)slot);
+        return;
+    }
+    g_fetches[slot].abandoned = 1;
+}
+
 int64_t loam_net_fetch_ready(void) {
     int i, n = 0;
     for (i = 0; i < ASYNC_FETCH_SLOTS; i++)
-        if (g_fetches[i].used && g_fetches[i].len >= 0) n++;
+        if (fetch_slot_live(i) && g_fetches[i].done) n++;
     return (int64_t)n;
 }
 
-/* Hands one completed response to Loam (ownership of the slot buffer moves;
-   Loam frees it when the string drops). Errors come back empty. */
+/* Any one completed response, for callers with a single fetch in flight;
+   per-call code uses `fetch_slot_take`. */
 loam_str loam_net_fetch_take(void) {
     int i;
-    for (i = 0; i < ASYNC_FETCH_SLOTS; i++) {
-        if (!g_fetches[i].used || g_fetches[i].len < 0) continue;
-        g_fetches[i].used = 0;
-        if (g_fetches[i].len > 0) {
-            g_fetches[i].buf[g_fetches[i].len] = 0;
-            return (loam_str){ .ptr = g_fetches[i].buf, .len = g_fetches[i].len };
-        }
-        free(g_fetches[i].buf);
-        g_fetches[i].buf = NULL;
-        return (loam_str){ .ptr = "", .len = 0 };
-    }
+    for (i = 0; i < ASYNC_FETCH_SLOTS; i++)
+        if (fetch_slot_live(i) && g_fetches[i].done) return loam_net_fetch_slot_take(i);
     return (loam_str){ .ptr = "", .len = 0 };
 }
 
@@ -293,6 +430,14 @@ loam_str loam_net_fetch_rpc(loam_str path, loam_str body) {
 #include <arpa/inet.h>
 #include <errno.h>
 
+/* Every socket is close-on-exec: a child the program spawns (a downloader, a
+   shell) must not inherit the listener, or the port stays bound after the
+   server exits and connections queue on it with nobody accepting. */
+static void net_cloexec(int fd) {
+    int fl = fcntl(fd, F_GETFD, 0);
+    if (fl >= 0) (void)fcntl(fd, F_SETFD, fl | FD_CLOEXEC);
+}
+
 #if defined(__APPLE__)
 #include <netdb.h>
 #include <CoreFoundation/CoreFoundation.h>
@@ -335,6 +480,7 @@ int64_t loam_net_tcp_connect(loam_str host, int64_t port) {
     name[host.len] = '\0';
     fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) return -1;
+    net_cloexec(fd);
     memset(&sa, 0, sizeof sa);
     sa.sin_family = AF_INET;
     sa.sin_port = htons((uint16_t)port);
@@ -466,6 +612,7 @@ int64_t loam_net_tcp_listen(int64_t port) {
     if (port > 0 && port < 65536) p = (uint16_t)port;
     fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) return -1;
+    net_cloexec(fd);
     (void)setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
     memset(&sa, 0, sizeof sa);
     sa.sin_family = AF_INET;
@@ -488,6 +635,7 @@ int64_t loam_net_tcp_accept(int64_t fd) {
     if (fd < 0) return -1;
     c = accept((int)fd, NULL, NULL);
     if (c < 0) return -1;
+    net_cloexec(c);
     tv.tv_sec = 5;
     tv.tv_usec = 0;
     (void)setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
@@ -597,6 +745,7 @@ static int tls_connect_tcp(const char *name, uint16_t port) {
     for (ai = res; ai && fd < 0; ai = ai->ai_next) {
         int f = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
         if (f < 0) continue;
+        net_cloexec(f);
         {
             int yes = 1;
 #ifdef SO_NOSIGPIPE
@@ -710,6 +859,7 @@ int64_t loam_net_tls_nb_connect(loam_str host, int64_t port) {
     for (ai = res; ai && fd < 0; ai = ai->ai_next) {
         int f = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
         if (f < 0) continue;
+        net_cloexec(f);
         flags = fcntl(f, F_GETFL, 0);
         if (flags < 0 || fcntl(f, F_SETFL, flags | O_NONBLOCK) != 0) {
             close(f);
@@ -832,6 +982,7 @@ int64_t loam_net_tcp_nb_connect(loam_str host, int64_t port) {
     name[host.len] = '\0';
     fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) return -1;
+    net_cloexec(fd);
     flags = fcntl(fd, F_GETFL, 0);
     if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) != 0) {
         close(fd);
@@ -967,6 +1118,32 @@ loam_str loam_net_fetch_take(void) {
     return (loam_str){ .ptr = "", .len = 0 };
 }
 
+int64_t loam_net_fetch_start(loam_str path, loam_str body, int64_t sync) {
+    (void)path;
+    (void)body;
+    (void)sync;
+    return -1;
+}
+
+int64_t loam_net_fetch_slot_done(int64_t slot) {
+    (void)slot;
+    return 0;
+}
+
+int64_t loam_net_fetch_slot_status(int64_t slot) {
+    (void)slot;
+    return 0;
+}
+
+loam_str loam_net_fetch_slot_take(int64_t slot) {
+    (void)slot;
+    return (loam_str){ .ptr = "", .len = 0 };
+}
+
+void loam_net_fetch_slot_drop(int64_t slot) {
+    (void)slot;
+}
+
 /* Browser WebSocket bridge is wasm-only. */
 int64_t loam_net_ws_issue(loam_str url) {
     (void)url;
@@ -990,6 +1167,26 @@ loam_str loam_net_ws_copy(int64_t slot, int64_t max) {
 }
 
 void loam_net_ws_close(int64_t slot) { (void)slot; }
+
+/* Native streams use a plain socket (`std:http` `watch`); the bridge is wasm-only. */
+int64_t loam_net_stream_open(loam_str path, loam_str body) {
+    (void)path;
+    (void)body;
+    return -1;
+}
+
+int64_t loam_net_stream_state(int64_t slot) {
+    (void)slot;
+    return 2;
+}
+
+loam_str loam_net_stream_take(int64_t slot, int64_t max) {
+    (void)slot;
+    (void)max;
+    return (loam_str){ .ptr = "", .len = 0 };
+}
+
+void loam_net_stream_close(int64_t slot) { (void)slot; }
 
 loam_str loam_net_fetch_rpc(loam_str path, loam_str body) {
     (void)path;

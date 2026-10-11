@@ -1,0 +1,17 @@
+//! The one screen: paste a link, see what it holds, watch it download.
+
+import "std:zeus"
+import "std:router"
+import "../components/views.loam" as views
+
+fn Page(p: Params) -> Node {
+    return zeus.Box(style = Style(direction = Direction.Column, gap = Space.Sm)) {
+        views.LinkBar()
+        views.PreviewDialog()
+        views.Downloads()
+    }
+}
+
+fn meta(p: Params) -> Meta {
+    return Meta { title: "Vidget", description: "Fast video downloader: files, HLS/DASH streams, and pages." }
+}

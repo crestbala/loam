@@ -17,6 +17,7 @@ typedef struct {
     char *src;    /* owned source text */
     AstNode *ast; /* program root */
     int loading;  /* 1 while parsing (cycle detect) */
+    int done_rank; /* post-order: every import finished loading before this */
 } LoamModule;
 
 #endif

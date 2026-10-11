@@ -1492,6 +1492,7 @@ fn ensure_backend(appdir: string) -> int {
     }
     guard_app(self_pid(), pid)
     fmt.println("zeli: rpc backend {{addr}} (pid {{pid}})")
+    tail_add(log, "server")
     return pid
 }
 
@@ -1540,9 +1541,156 @@ fn serve(appdir: string, target: string, port: int, build_only: bool) -> int {
         return 1
     }
     if target == "web" {
+        let vite = vite_host(appdir)
+        if vite != "" {
+            return serve_vite(appdir, vite, port)
+        }
         return serve_web(appdir, port)
     }
     return serve_native(appdir, target, stem)
+}
+
+// --- serve: an app's own Vite host ---
+//
+// An app that ships `web/vite.config.js` owns its web dev server: the config
+// compiles `web/app.loam`, watches the sources, reloads the page, and proxies
+// its RPC paths. `serve` still does the rest — the compiler check, the backend,
+// and tying the server's life to its own — so `zeli serve --target web` is the
+// one command either way.
+
+/// `<appdir>/web` when it holds a `vite.config.js`, else "".
+fn vite_host(appdir: string) -> string {
+    let dir = join(appdir, "web")
+    if sys.exists(join(dir, "vite.config.js")) == 1 {
+        return dir
+    }
+    return ""
+}
+
+/// Run the app's Vite server on `port` until it exits or `serve` does, echoing
+/// its output. `npm install` runs first when `node_modules` is missing.
+fn serve_vite(appdir: string, webdir: string, port: int) -> int {
+    if sys.exists(join(webdir, "node_modules")) == 0 {
+        fmt.println("zeli: npm install (vite) in {{rel_to(repo_root(), webdir)}}…")
+        let out = sys.exec("cd {{shell_quote(webdir)}} && npm install 2>&1")
+        if sys.exec_status() != 0 {
+            fmt.println(trim(out))
+            fmt.println("zeli: npm install failed")
+            return 1
+        }
+    }
+    let log = app_log(appdir, "web", "vite")
+    sys.mkdir(dir_of(log))
+    sys.write_file(log, "")
+    // `exec` so the pid is Vite's own and `guard_app` reaches it.
+    let cmd = "cd {{shell_quote(webdir)}} && exec ./node_modules/.bin/vite --port {{port}} --strictPort"
+    let self = self_pid()
+    let pid = launch_app(cmd, log)
+    if pid <= 0 {
+        return 1
+    }
+    guard_app(self, pid)
+    let addr = "127.0.0.1:{{port}}"
+    let mut shown = 0
+    let mut waited = 0
+    // The config compiles the wasm before it listens; give it a minute.
+    while waited < 600 && !backend_listening(addr) {
+        shown = echo_log(log, shown)
+        if !pid_alive(pid) {
+            fmt.println("zeli: vite exited before it listened on {{addr}}")
+            return 1
+        }
+        async.sleep(100)
+        waited += 1
+    }
+    fmt.println("zeli: serve on http://{{addr}} (Vite, pid {{pid}})  (Ctrl-C to stop)")
+    while pid_alive(pid) {
+        shown = echo_log(log, shown)
+        tail_pump()
+        async.sleep(250)
+    }
+    echo_log(log, shown)
+    fmt.println("zeli: vite exited (pid {{pid}})")
+    return 1
+}
+
+// --- serve: logs in the terminal ---
+//
+// Everything an app logs lands in this terminal, labelled by where it came
+// from: the native app's and the backend's output files are followed here, and
+// a browser build posts its lines to `log_path()` on the dev server. Nothing is
+// shown in the app's window or the browser console.
+
+let mut tail_paths: []string = []string {}
+let mut tail_tags: []string = []string {}
+let mut tail_from: []int = []int {}
+let mut tail_at: i64 = 0
+
+/// Follow `path` from its current end, printing new lines as `tag │ line`.
+/// A path already followed keeps its place (a restarted app appends to it).
+fn tail_add(path: string, tag: string) {
+    for i in 0..tail_paths.len {
+        if tail_paths[i] == path {
+            return
+        }
+    }
+    push(tail_paths, path)
+    push(tail_tags, tag)
+    push(tail_from, sys.read_file(path).len)
+}
+
+/// Print the complete lines each followed file gained; a partial last line
+/// waits for its newline.
+fn tail_pump() {
+    let now = async.now_ms()
+    if int(now - tail_at) < 200 {
+        return
+    }
+    tail_at = now
+    for i in 0..tail_paths.len {
+        let body = sys.read_file(tail_paths[i])
+        if body.len < tail_from[i] {
+            // Truncated (a fresh log): start over.
+            tail_from[i] = 0
+        }
+        let mut end = body.len
+        while end > tail_from[i] && body[end - 1] != 10 {
+            end -= 1
+        }
+        if end > tail_from[i] {
+            print_tagged(tail_tags[i], slice(body, tail_from[i], end))
+            tail_from[i] = end
+        }
+    }
+}
+
+/// Each non-empty line of `text` as `tag │ line`.
+fn print_tagged(tag: string, text: string) {
+    let ls = split_lines(text)
+    for i in 0..ls.len {
+        if trim(ls[i]) != "" {
+            fmt.println("{{tag}} │ {{ls[i]}}")
+        }
+    }
+}
+
+/// Where a browser build posts its log lines (`std:log` and `fmt.println`),
+/// newline-separated. Served by `serve_web`; an app's own Vite config serves it
+/// too (see examples/zeus/vidget/web/vite.config.js).
+fn log_path() -> string {
+    return "/__zeus/log"
+}
+
+/// Print what `log` gained past byte `from`; returns the new length.
+fn echo_log(log: string, from: int) -> int {
+    let body = sys.read_file(log)
+    if body.len > from {
+        let fresh = trim(slice(body, from, body.len))
+        if fresh != "" {
+            fmt.println(fresh)
+        }
+    }
+    return body.len
 }
 
 // --- serve: watching the sources ---
@@ -1875,6 +2023,12 @@ fn serve_http_one(fd: int, web: string, snippet: string, rev: int) {
         live_subscribe(fd, rev)
         return
     }
+    if req.method == "POST" && req.path == log_path() {
+        print_tagged("web", req.body)
+        net.tcp_write(fd, serve_http_reply(204, "text/plain; charset=utf-8", ""))
+        net.tcp_close(fd)
+        return
+    }
     /* The app's RPC is same-origin (for wasm `default_addr()` returns ""), so a
        browser build POSTs its gRPC-Web call here rather than to the backend.
        Without this it would be answered by the SPA fallback below. */
@@ -2021,6 +2175,7 @@ fn serve_web(appdir: string, port: int) -> int {
     let mut rev = 1
     fmt.println("zeli: serve on http://127.0.0.1:{{port}}  (Ctrl-C to stop)")
     while true {
+        tail_pump()
         let batch = watch_batch(h, roots, 50)
         if batch.len > 0 {
             fmt.println("zeli: {{batch.len}} source file(s) changed, rebuilding…")
@@ -2086,10 +2241,12 @@ fn serve_native(appdir: string, target: string, stem: string) -> int {
         return 1
     }
     guard_app(self, pid)
-    fmt.println("zeli: serve on {{target}} (pid {{pid}}) — output: {{rel_to(repo_root(), log)}}  (Ctrl-C to stop)")
+    tail_add(log, target)
+    fmt.println("zeli: serve on {{target}} (pid {{pid}}) — logs below, also in {{rel_to(repo_root(), log)}}  (Ctrl-C to stop)")
     let mut said_exited = false
     let mut tick = 0
     while true {
+        tail_pump()
         let batch = watch_batch(h, roots, 50)
         if batch.len > 0 {
             fmt.println("zeli: {{batch.len}} source file(s) changed, rebuilding…")

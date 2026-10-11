@@ -1,0 +1,233 @@
+//! `log` — leveled, scoped log lines (std:log).
+//!
+//! One line per record on stdout, which is the terminal for a server or a
+//! native app and the browser console for wasm:
+//!
+//! ```
+//! +12.345s INFO  http.server  Vidget.Jobs ok · 0 B -> 312 B · 4 ms
+//! ```
+//!
+//! The time is milliseconds since the first record (the hosts only expose a
+//! monotonic clock). `scope` names where the line comes from: `http.server`
+//! and `http.client` are written by `std:http` for every RPC; apps pick
+//! their own (`"engine"`, `"store"`).
+//!
+//! ```
+//! import "std:log"
+//!
+//! log.info("engine", "job 3 started")
+//! log.error("engine", "job 3 failed: {{why}}")
+//! ```
+//!
+//! The level comes from `LOAM_LOG` (`debug`, `info`, `warn`, `error`, `off`;
+//! default `info`) on hosts with an environment, or `log.set_level("debug")`
+//! from code. The last `KEEP` records stay in memory for `records()`, and
+//! `listen(cb)` sees each one as it is written (`devtools.LogPanel` does).
+//! Records are plain module state: write them from the UI / main thread, not
+//! from `std:thread` workers.
+
+import "std:async"
+import "std:fmt"
+import "std:sys"
+
+/// One log record. `ms` is milliseconds since the first record.
+struct Record {
+    seq: int,
+    ms: int,
+    level: int,
+    scope: string,
+    msg: string,
+}
+
+/// Records kept in memory for `records()`.
+const KEEP: int = 500
+
+const L_DEBUG: int = 0
+const L_INFO: int = 1
+const L_WARN: int = 2
+const L_ERROR: int = 3
+const L_OFF: int = 4
+
+let mut threshold: int = L_INFO
+let mut configured: bool = false
+let mut t0: i64 = 0
+let mut seq: int = 0
+let mut kept: []Record = []Record {}
+let mut sinks: []fn(Record) = []fn(Record) {}
+let mut printing: bool = true
+
+/// Level number for `name` (`"debug"` … `"off"`), or -1.
+fn level_of(name: string) -> int {
+    if fmt.eq(name, "debug") {
+        return L_DEBUG
+    }
+    if fmt.eq(name, "info") {
+        return L_INFO
+    }
+    if fmt.eq(name, "warn") {
+        return L_WARN
+    }
+    if fmt.eq(name, "error") {
+        return L_ERROR
+    }
+    if fmt.eq(name, "off") {
+        return L_OFF
+    }
+    return -1
+}
+
+/// `"DEBUG"`, `"INFO"`, `"WARN"`, `"ERROR"` for a record's `level`.
+fn level_name(level: int) -> string {
+    if level == L_DEBUG {
+        return "DEBUG"
+    }
+    if level == L_WARN {
+        return "WARN"
+    }
+    if level == L_ERROR {
+        return "ERROR"
+    }
+    return "INFO"
+}
+
+fn is_debug(level: int) -> bool {
+    return level == L_DEBUG
+}
+
+fn is_warn(level: int) -> bool {
+    return level == L_WARN
+}
+
+fn is_error(level: int) -> bool {
+    return level == L_ERROR
+}
+
+fn configure() {
+    if configured {
+        return
+    }
+    configured = true
+    t0 = async.now_ms()
+    let l = level_of(sys.env("LOAM_LOG"))
+    if l >= 0 {
+        threshold = l
+    }
+}
+
+/// Lowest level written: `"debug"`, `"info"`, `"warn"`, `"error"` or `"off"`.
+/// Overrides `LOAM_LOG`. An unknown name is ignored.
+fn set_level(name: string) {
+    configure()
+    let l = level_of(name)
+    if l >= 0 {
+        threshold = l
+    }
+}
+
+/// Whether a record at `name`'s level would be written — check before
+/// building an expensive message.
+fn enabled(name: string) -> bool {
+    configure()
+    let l = level_of(name)
+    return l >= 0 && l >= threshold && threshold < L_OFF
+}
+
+/// Stop (or resume) printing; records are still kept and sent to listeners.
+fn set_print(on: bool) {
+    printing = on
+}
+
+fn debug(scope: string, msg: string) {
+    write(L_DEBUG, scope, msg)
+}
+
+fn info(scope: string, msg: string) {
+    write(L_INFO, scope, msg)
+}
+
+fn warn(scope: string, msg: string) {
+    write(L_WARN, scope, msg)
+}
+
+fn error(scope: string, msg: string) {
+    write(L_ERROR, scope, msg)
+}
+
+/// Write one record at `level` (0 debug … 3 error).
+fn write(level: int, scope: string, msg: string) {
+    configure()
+    if level < threshold || threshold >= L_OFF {
+        return
+    }
+    seq += 1
+    let r = Record { seq: seq, ms: int(async.now_ms() - t0), level: level, scope: scope, msg: msg }
+    if printing {
+        fmt.write(line(r))
+        fmt.writeln()
+    }
+    push(kept, r)
+    // Trim in batches so a busy log is not a copy per record.
+    if kept.len >= KEEP * 2 {
+        let mut keep = []Record {}
+        for i in kept.len - KEEP..kept.len {
+            push(keep, kept[i])
+        }
+        kept = keep
+    }
+    for i in 0..sinks.len {
+        let cb = sinks[i]
+        cb(r)
+    }
+}
+
+/// `+12.345s INFO  scope  msg`.
+fn line(r: Record) -> string {
+    let mut name = level_name(r.level)
+    while name.len < 5 {
+        name = "{{name}} "
+    }
+    return "{{stamp(r.ms)}} {{name}} {{r.scope}}  {{r.msg}}"
+}
+
+/// `+12.345s` for `ms` since the first record.
+fn stamp(ms: int) -> string {
+    let frac = ms % 1000
+    let mut f = "{{frac}}"
+    while f.len < 3 {
+        f = "0{{f}}"
+    }
+    return "+{{ms / 1000}}.{{f}}s"
+}
+
+/// The most recent records (up to `KEEP`), oldest first.
+fn records() -> []Record {
+    if kept.len <= KEEP {
+        return kept
+    }
+    let mut out = []Record {}
+    for i in kept.len - KEEP..kept.len {
+        push(out, kept[i])
+    }
+    return out
+}
+
+/// Drop the kept records (listeners and the level are unchanged).
+fn clear() {
+    kept = []Record {}
+}
+
+/// Call `cb` with every record written from now on.
+fn listen(cb: fn(Record)) {
+    push(sinks, cb)
+}
+
+/// `n` bytes as `512 B`, `3.4 KB`, `1.2 MB`.
+fn bytes(n: int) -> string {
+    if n < 1024 {
+        return "{{n}} B"
+    }
+    if n < 1048576 {
+        return "{{n / 1024}}.{{n % 1024 * 10 / 1024}} KB"
+    }
+    return "{{n / 1048576}}.{{n % 1048576 * 10 / 1048576}} MB"
+}

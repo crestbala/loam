@@ -1,0 +1,71 @@
+//! Headless end-to-end: the real screen, a pasted link, a finished download.
+//! Needs the engine and the fixtures running:
+//!
+//!   sh examples/zeus/vidget/tests/fixtures.sh &              # :8765
+//!   VIDGET_DIR=/tmp/vg-ui ./bin/loamc --run examples/zeus/vidget/server/main.loam &
+//!   ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/vidget/tests/ui_e2e.loam -o /tmp/vg-ui && /tmp/vg-ui
+
+import "std:async"
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "../app_routes.loam" as approutes
+import "../components/store.loam" as store
+
+fn fail(what: string) {
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+/// Pump frames until `label` paints, for up to `ms`.
+fn wait_for(label: string, ms: int) -> bool {
+    let mut left = ms
+    while left > 0 {
+        zeus.pump_frame()
+        if zeus.engine_find_text(label) != 0 {
+            return true
+        }
+        async.sleep(50)
+        left -= 50
+    }
+    return false
+}
+
+fn main() {
+    store.start()
+    zeus.snapshot(960, 900, fn() -> Node {
+        return zeus.Box(style = Style(direction = Direction.Column)) {
+            approutes.app()
+        }
+    })
+    if !wait_for("Vidget", 1000) {
+        fail("header")
+    }
+    if !wait_for("No downloads yet", 3000) {
+        fail("empty state (is the engine on :8080?)")
+    }
+    // A paste: the whole link lands at once, which opens the preview dialog.
+    store.url.set("http://127.0.0.1:8765/page.html")
+    if !wait_for("Test Pattern & Tone", 10000) {
+        fail("preview title")
+    }
+    if !wait_for("Three seconds of colour bars.", 1000) {
+        fail("preview description")
+    }
+    // The loading arm must be gone once the preview is in.
+    zeus.pump_frame()
+    if zeus.engine_find_text("Reading the link…") != 0 {
+        fail("loading skeleton still painted next to the preview")
+    }
+    if zeus.engine_find_text("No downloads yet") == 0 {
+        fail("a download started before Save")
+    }
+    store.save()
+    if !wait_for("Done", 15000) {
+        fail("download finished")
+    }
+    if !wait_for("Show in Finder", 1000) {
+        fail("finished row actions")
+    }
+    fmt.println("ok: paste -> preview dialog -> save -> download done")
+}

@@ -1,0 +1,169 @@
+//! RPC surface shared by the backend (`server/main.loam`) and every client
+//! (`components/store.loam`): `#[proto]` payloads plus the method names.
+//!
+//! `#[proto]` fields are `int`, `string`, or a list of those, so a list of
+//! jobs or formats travels as parallel lists indexed together. Byte counts are
+//! KiB: `int` is i32 and a video outgrows 2 GB.
+
+import "std:http"
+
+#[proto]
+struct ProbeReq {
+    url: string,
+}
+
+/// What a URL holds. `kind` is a `KIND_*` code; `formats` and `labels` pair up
+/// (the id is what `StartReq.format` takes back).
+#[proto]
+struct ProbeResp {
+    ok: int,
+    error: string,
+    kind: int,
+    title: string,
+    description: string,
+    thumbnail: string,
+    duration: int,
+    site: string,
+    formats: []string,
+    labels: []string,
+}
+
+/// The preview frame for a probed URL; `ready = 0` means "ask again".
+#[proto]
+struct ThumbReq {
+    url: string,
+}
+
+#[proto]
+struct ThumbResp {
+    ready: int,
+    thumbnail: string,
+    duration: int,
+}
+
+#[proto]
+struct StartReq {
+    url: string,
+    /// A `ProbeResp.formats` id, or "" for best video + audio.
+    format: string,
+    /// `CONTAINERS` index: original, mp4, mkv, webm, mp3, m4a.
+    container: int,
+    /// Parallel connections / fragments, 1..32.
+    connections: int,
+    /// Title hint for the row while the engine has none yet.
+    title: string,
+}
+
+#[proto]
+struct StartResp {
+    id: int,
+    error: string,
+}
+
+#[proto]
+struct JobsReq {
+}
+
+/// Every job, newest first, as parallel lists.
+#[proto]
+struct JobsResp {
+    ids: []int,
+    titles: []string,
+    states: []int,
+    done_kib: []int,
+    total_kib: []int,
+    speed_kib: []int,
+    eta: []int,
+    stages: []string,
+    files: []string,
+    errors: []string,
+    tools: string,
+    out_dir: string,
+}
+
+#[proto]
+struct JobReq {
+    id: int,
+}
+
+#[proto]
+struct JobResp {
+    ok: int,
+}
+
+/// `ProbeResp.kind`.
+fn kind_page() -> int {
+    return 0
+}
+
+fn kind_direct() -> int {
+    return 1
+}
+
+fn kind_stream() -> int {
+    return 2
+}
+
+/// Job states, in `JobsResp.states`.
+fn st_queued() -> int {
+    return 0
+}
+
+fn st_running() -> int {
+    return 1
+}
+
+fn st_done() -> int {
+    return 2
+}
+
+fn st_failed() -> int {
+    return 3
+}
+
+fn st_cancelled() -> int {
+    return 4
+}
+
+/// Output containers, indexed by `StartReq.container`.
+fn containers() -> []string {
+    return []string { "Original", "MP4", "MKV", "WebM", "MP3", "M4A" }
+}
+
+fn probe_rpc() -> string {
+    return "Vidget.Probe"
+}
+
+fn thumb_rpc() -> string {
+    return "Vidget.Thumb"
+}
+
+fn start_rpc() -> string {
+    return "Vidget.Start"
+}
+
+fn jobs_rpc() -> string {
+    return "Vidget.Jobs"
+}
+
+/// The job list as a stream: one request, a new `JobsResp` whenever it changes.
+fn jobs_watch_rpc() -> string {
+    return "Vidget.JobsWatch"
+}
+
+fn cancel_rpc() -> string {
+    return "Vidget.Cancel"
+}
+
+fn reveal_rpc() -> string {
+    return "Vidget.Reveal"
+}
+
+fn remove_rpc() -> string {
+    return "Vidget.Remove"
+}
+
+/// Keeps `std:http` imported here so the codecs it injects resolve.
+fn ping() -> string {
+    return http.concat_str("vid", "get")
+}

@@ -13,7 +13,13 @@
 //!     devtools.Panel()
 //! }
 //! ```
+//!
+//! `LogPanel()` is the live `std:log` viewer: every API call `std:http`
+//! makes or serves, plus the app's own records, newest last, warnings and
+//! errors tinted.
 
+import "std:async"
+import "std:log"
 import "std:zeus"
 
 /// Bytes `s[a..b)` as a string.
@@ -117,4 +123,68 @@ fn Panel() -> Node {
         }
     })
     return root
+}
+
+/// Bumped (a tick later, coalesced) after each `std:log` record.
+let mut log_rev: Signal<int> = Signal { id: 0 }
+let mut log_bump_pending: bool = false
+
+/// Records shown by `LogPanel`, newest last.
+const LOG_ROWS: int = 200
+
+/// The log records, oldest first, as display rows.
+fn log_rows() -> []Record {
+    let rs = log.records()
+    if rs.len <= LOG_ROWS {
+        return rs
+    }
+    let mut out = []Record {}
+    for i in rs.len - LOG_ROWS..rs.len {
+        push(out, rs[i])
+    }
+    return out
+}
+
+fn log_color(level: int) -> string {
+    if log.is_error(level) {
+        return zeus.danger()
+    }
+    if log.is_warn(level) {
+        return zeus.warn_ink()
+    }
+    return zeus.ink()
+}
+
+/// Named extras for `LogPanel`.
+struct LogPanelProps {
+    /// Height of the scrolling list, in points.
+    height: int = 240,
+}
+
+/// Live log viewer: `devtools.LogPanel(height = 320)`. The listener only
+/// schedules a refresh, so a record written while the tree is building does
+/// not touch a signal then.
+fn LogPanel(p: LogPanelProps) -> Node {
+    if log_rev.id == 0 {
+        log_rev = zeus.signal(0)
+        log.listen(fn(r: Record) {
+            if !log_bump_pending {
+                log_bump_pending = true
+                async.spawn(fn() {
+                    log_bump_pending = false
+                    log_rev.set(log_rev.peek() + 1)
+                })
+            }
+        })
+    }
+    return zeus.Component(zeus.raw_scroll(), style = Style(direction = Direction.Column, height = px(p.height),
+                                                           padding = edges(8), gap = 2)) {
+        zeus.Text("log")
+        zeus.Each(fn() -> []Record {
+            let v = log_rev.get()
+            return log_rows()
+        }, fn(i: int, r: Record) -> Node {
+            return zeus.Text(log.line(r), style = Style(color = log_color(r.level), wrap = true))
+        })
+    }
 }

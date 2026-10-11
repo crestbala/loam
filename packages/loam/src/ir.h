@@ -129,6 +129,7 @@ typedef struct {
     const char **caps;
     Type **cap_types;
     int ncaps;
+    int init_mod;       /* `__init`: the module index its globals belong to */
 } IrFn;
 
 typedef struct {

@@ -386,6 +386,14 @@ static int load_module(const char *path, const char *name) {
         }
     }
     if (load_imports(&CUR->mods[idx])) return 1;
+    /* Finish order is a topological order of the import graph (cycles are
+       rejected above): module-level `let` initializers run in it, so a
+       module's globals are set before any module that imports it reads or
+       allocates into them. */
+    int rank = 0;
+    for (int i = 0; i < CUR->nmods; i++)
+        if (i != idx && CUR->mods[i].ast && !CUR->mods[i].loading) rank++;
+    CUR->mods[idx].done_rank = rank;
     CUR->mods[idx].loading = 0;
     return 0;
 }
