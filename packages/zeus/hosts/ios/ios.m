@@ -7,6 +7,9 @@
  */
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
+#import <AVFoundation/AVFoundation.h>
+#import <CoreVideo/CoreVideo.h>
+#import <VideoToolbox/VideoToolbox.h>
 #include "zeus_rt.h"
 #include "zeus_key.h"
 #include <string.h>
@@ -846,11 +849,20 @@ static UIImage *ios_img_get(const char *src) {
     return img;
 }
 
+/* Media frames ride the image op (see the media section below). */
+static int64_t ios_media_slot_of(const char *src);
+static int64_t ios_media_get(int64_t slot, int64_t what);
+
 static void ios_image_size(const char *src, int64_t *w, int64_t *h) {
     UIImage *img;
     if (w) *w = 0;
     if (h) *h = 0;
     if (!src) return;
+    if (ios_media_slot_of(src) >= 0) {
+        if (w) *w = ios_media_get(ios_media_slot_of(src), 4);
+        if (h) *h = ios_media_get(ios_media_slot_of(src), 5);
+        return;
+    }
     img = ios_img_get(src);
     if (!img) return;
     if (w) *w = (int64_t)(img.size.width + 0.5);
@@ -874,6 +886,339 @@ static CGRect ios_image_dest(int64_t x, int64_t y, int64_t w, int64_t h,
                       (CGFloat)dw, (CGFloat)dh);
 }
 
+/* ── media playback (`plat_media_*`) ─────────────────────────────────────
+   The macOS host's player (hosts/desktop/mac.m), on UIKit: one AVPlayer per
+   slot, frames out of an AVPlayerItemVideoOutput, each new one turned into a
+   CGImage that `ios_image` draws for a `media:<slot>` src. The display link
+   already redraws every tick, so playback needs no extra frame requests. */
+enum { MEDIA_SLOTS_MAX = 8 };
+typedef struct {
+    AVPlayer *player;
+    AVPlayerItem *item;
+    AVPlayerItemVideoOutput *out;
+    id end_obs;
+    CGImageRef frame;
+    int64_t fw, fh;
+    float rate;
+    int loop, ended, seeking;
+    int64_t pending_seek;
+    char err[256];
+} IosMedia;
+static IosMedia g_media[MEDIA_SLOTS_MAX];
+static int g_media_init;
+
+static IosMedia *ios_media_at(int64_t slot) {
+    int i;
+    if (!g_media_init) {
+        for (i = 0; i < MEDIA_SLOTS_MAX; i++) {
+            g_media[i].rate = 1.0f;
+            g_media[i].pending_seek = -1;
+        }
+        g_media_init = 1;
+        /* Play sound with the ring / silent switch off, like any video app. */
+        [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayback error:nil];
+        [[AVAudioSession sharedInstance] setActive:YES error:nil];
+    }
+    if (slot <= 0 || slot >= MEDIA_SLOTS_MAX) return NULL;
+    return &g_media[slot];
+}
+
+static void ios_media_release(IosMedia *m) {
+    if (m->end_obs) {
+        [[NSNotificationCenter defaultCenter] removeObserver:m->end_obs];
+        [m->end_obs release];
+        m->end_obs = nil;
+    }
+    if (m->player) {
+        [m->player pause];
+        [m->player replaceCurrentItemWithPlayerItem:nil];
+        [m->player release];
+        m->player = nil;
+    }
+    if (m->item && m->out) [m->item removeOutput:m->out];
+    [m->out release];
+    m->out = nil;
+    [m->item release];
+    m->item = nil;
+    if (m->frame) CGImageRelease(m->frame);
+    m->frame = NULL;
+    m->fw = m->fh = 0;
+    m->ended = 0;
+    m->seeking = 0;
+    m->pending_seek = -1;
+    m->err[0] = 0;
+}
+
+static void ios_media_seek_now(IosMedia *m, int64_t ms);
+
+static void ios_media_seek_done(IosMedia *m) {
+    int64_t next = m->pending_seek;
+    m->seeking = 0;
+    if (next >= 0) {
+        m->pending_seek = -1;
+        ios_media_seek_now(m, next);
+    }
+}
+
+static void ios_media_seek_now(IosMedia *m, int64_t ms) {
+    if (!m->player) return;
+    m->seeking = 1;
+    m->ended = 0;
+    [m->player seekToTime:CMTimeMake(ms, 1000)
+          toleranceBefore:kCMTimeZero
+           toleranceAfter:kCMTimeZero
+        completionHandler:^(BOOL finished) {
+        (void)finished;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            ios_media_seek_done(m);
+        });
+    }];
+}
+
+static int64_t ios_media_open(int64_t slot, const char *src) {
+    IosMedia *m = ios_media_at(slot);
+    NSString *s;
+    NSURL *url;
+    NSDictionary *attrs;
+    if (!m) return 0;
+    ios_media_release(m);
+    if (!src || !src[0]) return 0;
+    s = [NSString stringWithUTF8String:src];
+    if ([s hasPrefix:@"http://"] || [s hasPrefix:@"https://"] || [s hasPrefix:@"file://"])
+        url = [NSURL URLWithString:s];
+    else
+        url = [NSURL fileURLWithPath:s];
+    if (!url) {
+        snprintf(m->err, sizeof m->err, "Not a valid path or URL.");
+        return 0;
+    }
+    m->item = [[AVPlayerItem alloc] initWithURL:url];
+    attrs = @{
+        (id)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA),
+        (id)kCVPixelBufferIOSurfacePropertiesKey : @{},
+    };
+    m->out = [[AVPlayerItemVideoOutput alloc] initWithPixelBufferAttributes:attrs];
+    [m->item addOutput:m->out];
+    m->player = [[AVPlayer alloc] initWithPlayerItem:m->item];
+    m->player.actionAtItemEnd = AVPlayerActionAtItemEndPause;
+    m->end_obs = [[[NSNotificationCenter defaultCenter]
+        addObserverForName:AVPlayerItemDidPlayToEndTimeNotification
+                    object:m->item
+                     queue:[NSOperationQueue mainQueue]
+                usingBlock:^(NSNotification *n) {
+        (void)n;
+        if (m->loop && m->player) {
+            [m->player seekToTime:kCMTimeZero];
+            m->player.rate = m->rate;
+        } else {
+            m->ended = 1;
+        }
+    }] retain];
+    return 1;
+}
+
+static void ios_media_cmd(int64_t slot, int64_t cmd, int64_t value) {
+    IosMedia *m = ios_media_at(slot);
+    if (!m || !m->player) return;
+    switch (cmd) {
+    case 1:
+        if (m->ended) {
+            m->ended = 0;
+            [m->player seekToTime:kCMTimeZero];
+        }
+        m->player.rate = m->rate;
+        break;
+    case 2:
+        [m->player pause];
+        break;
+    case 3:
+        if (value < 0) value = 0;
+        if (m->seeking) m->pending_seek = value;
+        else ios_media_seek_now(m, value);
+        break;
+    case 4:
+        m->rate = (float)value / 100.0f;
+        if (m->rate < 0.0625f) m->rate = 0.0625f;
+        if (m->rate > 16.0f) m->rate = 16.0f;
+        if (@available(iOS 16.0, *)) m->player.defaultRate = m->rate;
+        if (m->player.rate != 0.0f) m->player.rate = m->rate;
+        break;
+    case 5:
+        m->player.volume = (float)(value < 0 ? 0 : (value > 100 ? 100 : value)) / 100.0f;
+        break;
+    case 6:
+        m->player.muted = value ? YES : NO;
+        break;
+    case 7:
+        m->loop = value ? 1 : 0;
+        break;
+    case 8:
+        ios_media_release(m);
+        break;
+    }
+}
+
+static int64_t ios_media_ms(CMTime t) {
+    if (!CMTIME_IS_NUMERIC(t)) return 0;
+    return (int64_t)(CMTimeGetSeconds(t) * 1000.0 + 0.5);
+}
+
+static int64_t ios_media_state(IosMedia *m) {
+    if (!m->player || !m->item) return m->err[0] ? 5 : 0;
+    if (m->item.status == AVPlayerItemStatusFailed) {
+        if (!m->err[0]) {
+            NSError *e = m->item.error;
+            NSString *why = e ? (e.localizedFailureReason ?: e.localizedDescription) : nil;
+            snprintf(m->err, sizeof m->err, "%s",
+                     why ? [why UTF8String] : "This file could not be played.");
+        }
+        return 5;
+    }
+    if (m->item.status != AVPlayerItemStatusReadyToPlay) return 1;
+    if (m->ended) return 4;
+    if (m->player.timeControlStatus == AVPlayerTimeControlStatusPlaying) return m->seeking ? 6 : 3;
+    if (m->player.timeControlStatus == AVPlayerTimeControlStatusWaitingToPlayAtSpecifiedRate) return 6;
+    return 2;
+}
+
+static int64_t ios_media_get(int64_t slot, int64_t what) {
+    IosMedia *m = ios_media_at(slot);
+    if (!m) return 0;
+    if (what == 3) return ios_media_state(m);
+    if (!m->player || !m->item) return 0;
+    switch (what) {
+    case 1:
+        return ios_media_ms([m->player currentTime]);
+    case 2:
+        return m->item.status == AVPlayerItemStatusReadyToPlay ? ios_media_ms(m->item.duration) : 0;
+    case 4:
+        return (int64_t)(m->item.presentationSize.width + 0.5);
+    case 5:
+        return (int64_t)(m->item.presentationSize.height + 0.5);
+    case 6: {
+        CMTime now = [m->player currentTime];
+        for (NSValue *v in m->item.loadedTimeRanges) {
+            CMTimeRange r = [v CMTimeRangeValue];
+            if (CMTimeRangeContainsTime(r, now)) return ios_media_ms(CMTimeRangeGetEnd(r));
+        }
+        return ios_media_ms(now);
+    }
+    }
+    return 0;
+}
+
+static void ios_media_text(int64_t slot, int64_t what, char *out, int cap) {
+    IosMedia *m = ios_media_at(slot);
+    if (!out || cap <= 0) return;
+    out[0] = 0;
+    if (!m || what != 0) return;
+    (void)ios_media_state(m);
+    snprintf(out, (size_t)cap, "%s", m->err);
+}
+
+static CGImageRef ios_media_frame(IosMedia *m) {
+    CMTime t;
+    CVPixelBufferRef pb;
+    CGImageRef img = NULL;
+    if (!m->out) return NULL;
+    t = [m->out itemTimeForHostTime:CACurrentMediaTime()];
+    if ([m->out hasNewPixelBufferForItemTime:t]) {
+        pb = [m->out copyPixelBufferForItemTime:t itemTimeForDisplay:NULL];
+        if (pb) {
+            if (VTCreateCGImageFromCVPixelBuffer(pb, NULL, &img) == noErr && img) {
+                if (m->frame) CGImageRelease(m->frame);
+                m->frame = img;
+                m->fw = (int64_t)CGImageGetWidth(img);
+                m->fh = (int64_t)CGImageGetHeight(img);
+            }
+            CVPixelBufferRelease(pb);
+        }
+    }
+    return m->frame;
+}
+
+static int64_t ios_media_slot_of(const char *src) {
+    if (!src || strncmp(src, "media:", 6) != 0) return -1;
+    return (int64_t)atoi(src + 6);
+}
+
+static void ios_media_draw(int64_t x, int64_t y, int64_t w, int64_t h, int64_t slot,
+                           int64_t radius, int64_t alpha, int64_t fit) {
+    IosMedia *m = ios_media_at(slot);
+    CGImageRef img;
+    CGContextRef cg = UIGraphicsGetCurrentContext();
+    CGRect box, dest;
+    CGFloat rad;
+    int64_t iw, ih;
+    if (!m || !cg) return;
+    img = ios_media_frame(m);
+    if (!img) return;
+    iw = (int64_t)(m->item.presentationSize.width + 0.5);
+    ih = (int64_t)(m->item.presentationSize.height + 0.5);
+    if (iw <= 0 || ih <= 0) {
+        iw = m->fw;
+        ih = m->fh;
+    }
+    box = CGRectMake((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h);
+    dest = ios_image_dest(x, y, w, h, iw, ih, fit);
+    CGContextSaveGState(cg);
+    if (radius > 0) {
+        rad = (CGFloat)radius;
+        if (rad > box.size.width / 2) rad = box.size.width / 2;
+        if (rad > box.size.height / 2) rad = box.size.height / 2;
+        [[UIBezierPath bezierPathWithRoundedRect:box cornerRadius:rad] addClip];
+    } else {
+        CGContextClipToRect(cg, box);
+    }
+    if (alpha >= 0 && alpha < 255) CGContextSetAlpha(cg, (CGFloat)alpha / 255.0);
+    CGContextSetInterpolationQuality(cg, kCGInterpolationHigh);
+    /* UIKit's context is y-down; CGContextDrawImage paints row 0 at the
+       bottom of its rect, so flip about the destination. */
+    CGContextTranslateCTM(cg, dest.origin.x, dest.origin.y + dest.size.height);
+    CGContextScaleCTM(cg, 1.0, -1.0);
+    CGContextDrawImage(cg, CGRectMake(0, 0, dest.size.width, dest.size.height), img);
+    CGContextRestoreGState(cg);
+}
+
+/* The picker: Files (which also reaches iCloud Drive and Downloads). A pick
+   is copied into the app's tmp inbox, so the path stays readable. */
+@interface ZeusMediaPicker : NSObject <UIDocumentPickerDelegate>
+@end
+@implementation ZeusMediaPicker
+- (void)documentPicker:(UIDocumentPickerViewController *)c didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+    NSURL *u = [urls firstObject];
+    (void)c;
+    if (!u || ![u path]) return;
+    zeus_media_picked([[[u path] lastPathComponent] UTF8String], [[u path] UTF8String]);
+}
+- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)c {
+    (void)c;
+}
+@end
+static ZeusMediaPicker *g_media_picker;
+
+static void ios_media_pick(void) {
+    UIViewController *vc = g_window ? g_window.rootViewController : nil;
+    UIDocumentPickerViewController *p;
+    if (!vc) return;
+    if (!g_media_picker) g_media_picker = [[ZeusMediaPicker alloc] init];
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    p = [[UIDocumentPickerViewController alloc]
+        initWithDocumentTypes:@[ @"public.movie", @"public.audio" ]
+                       inMode:UIDocumentPickerModeImport];
+#pragma clang diagnostic pop
+    p.delegate = g_media_picker;
+    [vc presentViewController:p animated:YES completion:nil];
+    [p release];
+}
+
+/* An iOS app is always full screen. */
+static int64_t ios_fullscreen(int64_t on) {
+    (void)on;
+    return 1;
+}
+
 static void ios_image(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
                       const char *src, int64_t radius, int64_t alpha, int64_t fit) {
     UIImage *img;
@@ -881,6 +1226,10 @@ static void ios_image(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
     CGFloat a, rad;
     (void)ctx;
     if (w <= 0 || h <= 0) return;
+    if (ios_media_slot_of(src) >= 0) {
+        ios_media_draw(x, y, w, h, ios_media_slot_of(src), radius, alpha, fit);
+        return;
+    }
     img = ios_img_get(src);
     if (!img) return;
     a = alpha < 0 ? 0 : (alpha > 255 ? 1.0 : (CGFloat)alpha / 255.0);
@@ -1197,4 +1546,15 @@ static void zeus_ios_register(void) {
     zeus_set_platform(ios_run, ios_measure, ios_redraw);
     zeus_set_pick_image(ios_pick_image);
     zeus_set_image_size(ios_image_size);
+    {
+        ZeusMedia media;
+        memset(&media, 0, sizeof media);
+        media.open = ios_media_open;
+        media.cmd = ios_media_cmd;
+        media.get = ios_media_get;
+        media.text = ios_media_text;
+        media.pick = ios_media_pick;
+        media.fullscreen = ios_fullscreen;
+        zeus_set_media(media);
+    }
 }

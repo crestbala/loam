@@ -1,0 +1,109 @@
+//! The keyboard and gestures sheet: sections of shortcuts, each key drawn as
+//! a keycap. Two columns when the window has room, one (scrolling) when not.
+
+import "std:zeus"
+import "std:zui"
+import "std:str"
+import "../player/store.loam" as player
+import "../player/keys.loam" as shortcuts
+import "icons.loam"
+import { WHITE, SOFT, FAINT, GLASS, ACCENT } from "../theme.loam"
+import { Round } from "kit.loam"
+
+/// Two columns from this stage width up.
+const TWO_COLUMNS: int = 780
+const KEYS_W: int = 132
+
+fn two_columns() -> bool {
+    return player.stage_w.get() >= TWO_COLUMNS
+}
+
+fn Help() -> Node {
+    return zeus.Box(style = Style(position = pos_absolute(), inset = Edges(top = 0, left = 0, right = 0, bottom = 0),
+                                  align = Align.Center, justify = Align.Center, background = "#000000", opacity = 60),
+                    visible = player.help.get(),
+                    enter = Enter.Fade,
+                    on_click = fn() { player.help.set(false) }) {
+        zeus.Box(style = Style(direction = Direction.Column, gap = 18, padding = Edges(top = 20, bottom = 22, left = 26, right = 22),
+                               width = px(if two_columns() { 720 } else { 400 }),
+                               maxHeight = player.stage_h.get() - 40,
+                               radius = corners(20), background = GLASS, border = line(1, "#2C303B"),
+                               elevation = Elevation.Modal),
+                 enter = Enter.Fade + Enter.Reveal,
+                 on_click = fn() { player.wake() }) {
+            zeus.Box(style = Style(direction = if two_columns() { Direction.Row } else { Direction.Column }, align = Align.Center)) {
+                zeus.Box(style = Style(width = px(34), height = px(34), radius = corners(10), background = ACCENT,
+                                       align = Align.Center, justify = Align.Center)) {
+                    zui.Icon(icons.KEYBOARD, 18, WHITE)
+                }
+                zeus.Text("Keyboard & gestures", style = Style(font = 17, color = WHITE, margin = Edges(left = 12)))
+                zui.Grow()
+                Round(icons.CLOSE, "Close", fn() { player.help.set(false) })
+            }
+            zui.Scroll(style = Style(grow = 1)) {
+                zeus.Box(style = Style(direction = if two_columns() { Direction.Row } else { Direction.Column },
+                                       gap = if two_columns() { 36 } else { 18 })) {
+                    SheetColumn(0)
+                    SheetColumn(1)
+                }
+            }
+        }
+    }
+}
+
+/// Column `col` (0 or 1) of the sheet: the sections before or after `##`.
+fn SheetColumn(col: int) -> Node {
+    let rs = shortcuts.rows()
+    // The sheet's inner width is its width less 48 padding and 2 border; two
+    // columns share it around the 36 gap. A row wraps a child that does not
+    // fit, so one dp over stacks the columns.
+    return zeus.Box(style = Style(direction = Direction.Column, gap = 4,
+                                  width = px(if two_columns() { (720 - 50 - 36) / 2 } else { 400 - 50 }))) {
+        let mut c = 0
+        for i in 0..rs.len / 2 {
+            let k = rs[i * 2]
+            let what = rs[i * 2 + 1]
+            if k == "##" {
+                c += 1
+            } else if c == col {
+                if k == "#" {
+                    Section(what, i == 0 || rs[i * 2 - 2] == "##")
+                } else {
+                    Shortcut(k, what)
+                }
+            }
+        }
+    }
+}
+
+/// A section title: small caps in the accent, with air above all but the first.
+fn Section(title: string, first: bool) -> Node {
+    return zeus.Text(title.to_upper(), style = Style(font = 11, color = ACCENT,
+                                                    margin = Edges(top = if first { 0 } else { 14 }, bottom = 4)))
+}
+
+/// One shortcut: its keycaps in a fixed-width lane, then what it does.
+fn Shortcut(keys: string, what: string) -> Node {
+    let range = keys.contains("~")
+    let caps = if range { str.split(keys, "~") } else { str.split(keys, "|") }
+    return zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 14, height = px(32))) {
+        zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 5, width = px(KEYS_W))) {
+            for i in 0..caps.len {
+                if i > 0 && range {
+                    zeus.Text("–", style = Style(font = 12, color = FAINT))
+                }
+                Keycap(caps[i])
+            }
+        }
+        zeus.Text(what, style = Style(font = 13, color = SOFT, grow = 1, ellipsis = true))
+    }
+}
+
+/// A key as a raised cap, sized to its label.
+fn Keycap(label: string) -> Node {
+    return zeus.Box(style = Style(direction = Direction.Row, justify = Align.Center, align = Align.Center,
+                                  minWidth = 26, height = px(24), padding = edges2(0, 8), radius = corners(6),
+                                  background = "#2A2E39", border = line(1, "#3B404D"))) {
+        zeus.Text(label, style = Style(font = 12, color = WHITE))
+    }
+}

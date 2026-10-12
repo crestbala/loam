@@ -1,0 +1,35 @@
+//! Names for media sources: what to show for a path or URL, and its format.
+//! Pure string work on `std:str`.
+
+import "std:str"
+
+/// Last path segment of a path or URL, without its query or fragment:
+/// `https://x.com/a/clip.mp4?t=3` → `clip.mp4`. A source with no segment
+/// (`https://x.com/`) comes back whole.
+fn file_name(u: string) -> string {
+    let mut end = u.len
+    let q = str.index_of_byte(u, 63 /* ? */)
+    let h = str.index_of_byte(u, 35 /* # */)
+    if q >= 0 {
+        end = q
+    }
+    if h >= 0 && h < end {
+        end = h
+    }
+    let path = u.slice(0, end)
+    let start = str.last_index_of_byte(path, 47 /* / */) + 1
+    if start >= end {
+        return u
+    }
+    return path.slice_from(start)
+}
+
+/// Upper-case extension of a name (`movie.mkv` → `MKV`), or `""` when it has
+/// none.
+fn ext_of(name: string) -> string {
+    let dot = str.last_index_of_byte(name, 46 /* . */)
+    if dot < 0 || dot + 1 >= name.len {
+        return ""
+    }
+    return name.slice_from(dot + 1).to_upper()
+}

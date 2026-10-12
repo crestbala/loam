@@ -239,6 +239,31 @@ void zeus_set_image_size(void (*size)(const char *src, int64_t *w, int64_t *h));
 void zeus_picked_image(const char *src, int64_t w, int64_t h);
 void zeus_bind_draw(ZeusDraw draw);
 
+/* Media playback seam (`platform.plat_media_*`). A native host registers one
+   table; the web routes the same calls to JS imports. With no host (headless)
+   the runtime keeps a null player: open reports ready, play/pause move the
+   state, and the clock never advances — enough for layout and state tests.
+   Frames reach the screen through the ordinary `image` draw op with a
+   `"media:<slot>"` src, which the host recognises. `text` writes at most
+   `cap - 1` bytes plus a NUL into `out`. `picked` is the host telling the
+   runtime a picker or a drop produced a file. */
+typedef struct {
+    int64_t (*open)(int64_t slot, const char *src);
+    void (*cmd)(int64_t slot, int64_t cmd, int64_t value);
+    int64_t (*get)(int64_t slot, int64_t what);
+    void (*text)(int64_t slot, int64_t what, char *out, int cap);
+    void (*pick)(void);
+    int64_t (*fullscreen)(int64_t on);
+} ZeusMedia;
+void zeus_set_media(ZeusMedia media);
+void zeus_media_picked(const char *name, const char *src);
+int64_t loam_platform_plat_media_open(int64_t slot, loam_str src);
+void loam_platform_plat_media_cmd(int64_t slot, int64_t cmd, int64_t value);
+int64_t loam_platform_plat_media_get(int64_t slot, int64_t what);
+loam_str loam_platform_plat_media_text(int64_t slot, int64_t what);
+void loam_platform_plat_media_pick(void);
+int64_t loam_platform_plat_fullscreen(int64_t on);
+
 /* Phase 4: the ONE blit of a frame Zeus rasterized itself — the sole place a
    host may touch our pixels.
 
@@ -349,6 +374,9 @@ void loam_platform_plat_text_wrap(int64_t x, int64_t y, loam_str s, int64_t rgb,
                                   int64_t max_w);
 void loam_platform_plat_set_window(loam_str title, int64_t width, int64_t height);
 void loam_platform_plat_set_title(loam_str title);
+void loam_platform_plat_set_chrome(int64_t mode);
+void loam_platform_plat_set_titlebar_box(int64_t height, int64_t lead, int64_t trail);
+void loam_platform_plat_titlebar_get(loam_vec *out);
 void loam_platform_plat_clipboard_write(loam_str text);
 loam_str loam_platform_plat_clipboard_last(void);
 int64_t loam_platform_plat_apple_keys(void);
@@ -456,6 +484,7 @@ int32_t loam_zeus_engine_recover(void);
 int32_t loam_zeus_engine_trap_seq(void);
 int32_t loam_zeus_engine_click(int32_t x, int32_t y);
 int32_t loam_zeus_engine_context_click(int32_t x, int32_t y);
+int32_t loam_zeus_engine_window_drag_at(int32_t x, int32_t y);
 int32_t loam_zeus_engine_scroll(int32_t x, int32_t y, int32_t dx, int32_t dy);
 int32_t loam_zeus_engine_scroll_step(int32_t x, int32_t y, int32_t dx, int32_t dy);
 int32_t loam_zeus_engine_scroll_smooth(int32_t x, int32_t y, int32_t dx, int32_t dy);
@@ -521,6 +550,14 @@ const char *zeus_window_title(void);
 /** Live title updates: a host registers a callback so `plat_set_title` can
  *  retitle the open window (router `Meta.title` on navigation). */
 void zeus_set_title_hook(void (*fn)(const char *));
+/** Window chrome: 0 the host's title bar, 1 app-drawn (`zeus.window_chrome`).
+ *  A desktop host reads it when it opens the window. */
+int64_t zeus_window_chrome(void);
+/** The host's title-bar box in points, written every frame under app-drawn
+ *  chrome: bar height, the window buttons' room on the left, and on the right. */
+void zeus_set_titlebar_box(int64_t height, int64_t lead, int64_t trail);
+/** 1 when a press at (x, y) lands on a `TitleBar` and no control in it. */
+int zeus_window_drag_at(int64_t x, int64_t y);
 /** Clipboard writes (`plat_clipboard_write`): a desktop host registers the
  *  system pasteboard here. Unset, the runtime only remembers the text. */
 void zeus_set_clipboard_hook(void (*fn)(const char *));
@@ -592,6 +629,7 @@ typedef struct {
     int32_t (*marked)(loam_str text);
     void (*picked_image)(loam_str src, int32_t w, int32_t h);
     int32_t (*context_click)(int32_t x, int32_t y);
+    int32_t (*window_drag_at)(int32_t x, int32_t y);
 } ZeusAppApi;
 
 extern ZeusAppApi zeus_app_api;
@@ -637,6 +675,7 @@ void zeus_set_host_hooks(void (*run)(const char *path));
 #define loam_zeus_engine_marked zeus_app_api.marked
 #define loam_zeus_engine_picked_image zeus_app_api.picked_image
 #define loam_zeus_engine_context_click zeus_app_api.context_click
+#define loam_zeus_engine_window_drag_at zeus_app_api.window_drag_at
 #endif /* LOAM_HOST_BUILD */
 
 #endif

@@ -485,8 +485,16 @@ LOAM_DEBUG=1 ./bin/loamc app.loam -o app
 
 ### 8. Text, Unicode, and fonts
 
-`string` is bytes: `s[i]` is one byte and `s.len` is a byte count. Two std
-modules sit above that for the "text in-tree" work:
+`string` is bytes: `s[i]` is one byte and `s.len` is a byte count. Three std
+modules sit above that:
+
+- `std:str` — byte-level helpers: `slice`, `starts_with`, `ends_with`,
+  `index_of` / `last_index_of` (and `_byte` forms), `contains`, `count`,
+  `trim` (and `_start` / `_end`), `strip_prefix` / `strip_suffix`, ASCII
+  `to_upper` / `to_lower` / `eq_fold`, `split`, `lines`, `join`,
+  `replace_all`, `repeat`, `pad_start` / `pad_end`, `shell_quote`. Method
+  calls rewrite to it, so `url.trim().ends_with(".m3u8")` works after
+  `import "std:str"`. Tests: `packages/loam/tests/inlang/str_tests.loam`.
 
 - `std:unicode` — UTF-8 decode and **extended grapheme clusters** (UAX #29):
   `codepoint`, `next_cp`, `prev_cp`, `next_grapheme`, `prev_grapheme`,

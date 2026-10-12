@@ -1,0 +1,52 @@
+//! Player glyphs, 24-unit viewBox. Only `path` (M/L/H/V/C/Q/Z) and `circle`:
+//! the subset every Zeus host's SVG painter draws (no arcs, no `rect`).
+//! Filled shapes for the transport, strokes for everything else.
+
+const PLAY: string = "<svg viewBox=\"0 0 24 24\"><path fill=\"currentColor\" d=\"M8 5.6V18.4C8 19.2 8.9 19.7 9.6 19.3L19.6 12.9C20.2 12.5 20.2 11.6 19.6 11.2L9.6 4.8C8.9 4.3 8 4.8 8 5.6Z\"/></svg>"
+
+const PAUSE: string = "<svg viewBox=\"0 0 24 24\"><path fill=\"currentColor\" d=\"M7.5 5H9Q10 5 10 6V18Q10 19 9 19H7.5Q6.5 19 6.5 18V6Q6.5 5 7.5 5Z\"/><path fill=\"currentColor\" d=\"M15 5H16.5Q17.5 5 17.5 6V18Q17.5 19 16.5 19H15Q14 19 14 18V6Q14 5 15 5Z\"/></svg>"
+
+/// Ended: play it again.
+const REPLAY: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M4 12C4 16.4 7.6 20 12 20C16.4 20 20 16.4 20 12C20 7.6 16.4 4 12 4C9.5 4 7.3 5.1 5.8 6.9\"/><path d=\"M5 3V7.5H9.5\"/></svg>"
+
+/// Circular arrows for -10 s / +10 s; the "10" is a label laid over them.
+const BACK: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 3.5C16.7 3.5 20.5 7.3 20.5 12C20.5 16.7 16.7 20.5 12 20.5C7.3 20.5 3.5 16.7 3.5 12C3.5 10.3 4 8.8 4.8 7.5\"/><path d=\"M13 1L10 3.6L13 6.2\"/></svg>"
+
+const FWD: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 3.5C7.3 3.5 3.5 7.3 3.5 12C3.5 16.7 7.3 20.5 12 20.5C16.7 20.5 20.5 16.7 20.5 12C20.5 10.3 20 8.8 19.2 7.5\"/><path d=\"M11 1L14 3.6L11 6.2\"/></svg>"
+
+const PREV: string = "<svg viewBox=\"0 0 24 24\"><path fill=\"currentColor\" d=\"M18 6.2V17.8C18 18.6 17.1 19.1 16.4 18.6L8.6 13C8 12.5 8 11.5 8.6 11L16.4 5.4C17.1 4.9 18 5.4 18 6.2Z\"/><path fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" d=\"M6 5.5V18.5\"/></svg>"
+
+const NEXT: string = "<svg viewBox=\"0 0 24 24\"><path fill=\"currentColor\" d=\"M6 6.2V17.8C6 18.6 6.9 19.1 7.6 18.6L15.4 13C16 12.5 16 11.5 15.4 11L7.6 5.4C6.9 4.9 6 5.4 6 6.2Z\"/><path fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" d=\"M18 5.5V18.5\"/></svg>"
+
+const VOL_HIGH: string = "<svg viewBox=\"0 0 24 24\"><path fill=\"currentColor\" d=\"M3.5 9.6V14.4C3.5 15 3.9 15.4 4.5 15.4H7.5L11.6 18.9C12.2 19.4 13.2 19 13.2 18.1V5.9C13.2 5 12.2 4.6 11.6 5.1L7.5 8.6H4.5C3.9 8.6 3.5 9 3.5 9.6Z\"/><path fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" d=\"M16.2 9Q17.6 10.3 17.6 12Q17.6 13.7 16.2 15\"/><path fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" d=\"M18.6 6.4Q21 8.8 21 12Q21 15.2 18.6 17.6\"/></svg>"
+
+const VOL_LOW: string = "<svg viewBox=\"0 0 24 24\"><path fill=\"currentColor\" d=\"M3.5 9.6V14.4C3.5 15 3.9 15.4 4.5 15.4H7.5L11.6 18.9C12.2 19.4 13.2 19 13.2 18.1V5.9C13.2 5 12.2 4.6 11.6 5.1L7.5 8.6H4.5C3.9 8.6 3.5 9 3.5 9.6Z\"/><path fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" d=\"M16.2 9Q17.6 10.3 17.6 12Q17.6 13.7 16.2 15\"/></svg>"
+
+const VOL_MUTE: string = "<svg viewBox=\"0 0 24 24\"><path fill=\"currentColor\" d=\"M3.5 9.6V14.4C3.5 15 3.9 15.4 4.5 15.4H7.5L11.6 18.9C12.2 19.4 13.2 19 13.2 18.1V5.9C13.2 5 12.2 4.6 11.6 5.1L7.5 8.6H4.5C3.9 8.6 3.5 9 3.5 9.6Z\"/><path fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" d=\"M16.5 9.5L21.5 14.5M21.5 9.5L16.5 14.5\"/></svg>"
+
+const FULL: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M4 9V6Q4 4 6 4H9M15 4H18Q20 4 20 6V9M20 15V18Q20 20 18 20H15M9 20H6Q4 20 4 18V15\"/></svg>"
+
+const FULL_EXIT: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M9 4V7Q9 9 7 9H4M20 9H17Q15 9 15 7V4M15 20V17Q15 15 17 15H20M4 15H7Q9 15 9 17V20\"/></svg>"
+
+const FOLDER: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M3 7.5Q3 5.5 5 5.5H9L11 7.5H19Q21 7.5 21 9.5V17Q21 19 19 19H5Q3 19 3 17Z\"/></svg>"
+
+const GLOBE: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M3 12H21\"/><path d=\"M12 3Q16 7.5 16 12Q16 16.5 12 21Q8 16.5 8 12Q8 7.5 12 3Z\"/></svg>"
+
+const LOOP: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M17 2.5L20 5.5L17 8.5\"/><path d=\"M4 11.5V10Q4 5.5 8.5 5.5H20\"/><path d=\"M7 21.5L4 18.5L7 15.5\"/><path d=\"M20 12.5V14Q20 18.5 15.5 18.5H4\"/></svg>"
+
+const ASPECT: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M3 7.5Q3 5.5 5 5.5H19Q21 5.5 21 7.5V16.5Q21 18.5 19 18.5H5Q3 18.5 3 16.5Z\"/><path d=\"M7 12V9H10\"/><path d=\"M17 12V15H14\"/></svg>"
+
+const SPEED: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M4.2 17.5Q3 15.4 3 13Q3 5 12 4Q21 5 21 13Q21 15.4 19.8 17.5\"/><path d=\"M12 13.5L16 8.5\"/><circle cx=\"12\" cy=\"13.5\" r=\"1.3\" fill=\"currentColor\"/></svg>"
+
+const KEYBOARD: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M2.5 7.5Q2.5 5.5 4.5 5.5H19.5Q21.5 5.5 21.5 7.5V16.5Q21.5 18.5 19.5 18.5H4.5Q2.5 18.5 2.5 16.5Z\"/><path d=\"M6.5 9.5H6.6M10 9.5H10.1M13.9 9.5H14M17.4 9.5H17.5M8 14.5H16\"/></svg>"
+
+const LIST: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M9 6H20M9 12H20M9 18H15\"/><path d=\"M4.5 6H4.6M4.5 12H4.6M4.5 18H4.6\"/><path d=\"M18 15.5V20.5L21.5 18Z\" fill=\"currentColor\"/></svg>"
+
+const CLOSE: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"><path d=\"M6 6L18 18M18 6L6 18\"/></svg>"
+
+const CHECK: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M5 12.5L10 17.5L19 7\"/></svg>"
+
+const ALERT: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M12 7.5V13\"/><path d=\"M12 16.4H12.1\"/></svg>"
+
+/// The app mark: a play triangle in a rounded frame.
+const LOGO: string = "<svg viewBox=\"0 0 24 24\"><path fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" d=\"M2.5 7Q2.5 3.5 6 3.5H18Q21.5 3.5 21.5 7V17Q21.5 20.5 18 20.5H6Q2.5 20.5 2.5 17Z\"/><path fill=\"currentColor\" d=\"M10 8.6V15.4C10 16 10.6 16.3 11.1 16L16.4 12.6C16.9 12.3 16.9 11.7 16.4 11.4L11.1 8C10.6 7.7 10 8 10 8.6Z\"/></svg>"

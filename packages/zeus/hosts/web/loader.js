@@ -72,6 +72,97 @@
     };
     const imgCache = new Map();
     let fileInput = null;
+    /* Media players (`plat_media_*`): one <video> per slot, never in the DOM.
+       Its frames reach the canvas through `drawImage` when the draw list hands
+       `image` a `media:<slot>` src, and `frame` keeps rAF running while any
+       of them plays, so the picture moves with no signal write. Audio-only
+       sources play through the same element. */
+    const media = new Array(8).fill(null);
+    const mediaPicked = { seq: 0, name: "", src: "" };
+    let mediaInput = null;
+    const MEDIA_ACCEPT =
+      "video/*,audio/*,.mp4,.m4v,.mov,.webm,.mkv,.ogv,.ogg,.mp3,.m4a,.aac,.wav,.flac,.opus,.m3u8,.ts,.3gp";
+    function mediaEl(slot) {
+      let m = media[slot];
+      if (m) return m;
+      const v = document.createElement("video");
+      v.preload = "auto";
+      v.playsInline = true;
+      v.crossOrigin = "anonymous";
+      m = { el: v, error: "", waiting: false, seeking: false, src: "" };
+      const wake = () => schedule(0);
+      for (const ev of ["loadedmetadata", "loadeddata", "canplay", "play", "pause", "ended",
+                        "seeked", "progress", "ratechange", "volumechange", "durationchange",
+                        "emptied"]) {
+        v.addEventListener(ev, wake);
+      }
+      v.addEventListener("waiting", () => { m.waiting = true; wake(); });
+      v.addEventListener("playing", () => { m.waiting = false; wake(); });
+      v.addEventListener("seeking", () => { m.seeking = true; wake(); });
+      v.addEventListener("seeked", () => { m.seeking = false; wake(); });
+      v.addEventListener("error", () => {
+        const c = v.error ? v.error.code : 0;
+        m.error = c === 4 ? "This browser cannot play this format."
+          : c === 3 ? "The file could not be decoded."
+          : c === 2 ? "A network error stopped the download."
+          : "The media could not be loaded.";
+        /* Cross-origin hosts without CORS headers refuse an anonymous load;
+           retry once without it (the frame still paints, the canvas is
+           merely tainted, which this host never reads back). */
+        if (v.crossOrigin && m.src && /^https?:/.test(m.src) && c !== 4) {
+          m.error = "";
+          v.removeAttribute("crossorigin");
+          v.src = m.src;
+          v.load();
+        }
+        wake();
+      });
+      media[slot] = m;
+      return m;
+    }
+    function mediaState(m) {
+      if (!m || !m.src) return 0;
+      const v = m.el;
+      if (m.error) return 5;
+      if (v.readyState < 1) return 1;
+      if (v.ended) return 4;
+      if (v.paused) return 2;
+      if (m.waiting || m.seeking || v.readyState < 3) return 6;
+      return 3;
+    }
+    /* A frame is wanted while a player plays or settles a seek. */
+    function mediaLive() {
+      for (const m of media) {
+        if (m && m.src && !m.error && ((!m.el.paused && !m.el.ended) || m.seeking)) return true;
+      }
+      return false;
+    }
+    function mediaPick(f) {
+      if (!f) return;
+      mediaPicked.seq++;
+      mediaPicked.name = f.name || "media";
+      mediaPicked.src = URL.createObjectURL(f);
+      schedule(0);
+    }
+    function mediaFile(dt) {
+      if (!dt || !dt.files) return null;
+      for (const f of dt.files) {
+        if (/^(video|audio)\//.test(f.type) || /\.(mkv|m3u8|ts|flac|opus|ogv|m4v|mov)$/i.test(f.name)) return f;
+      }
+      return null;
+    }
+    canvas.addEventListener("dragover", (e) => {
+      if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files")) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+      }
+    });
+    canvas.addEventListener("drop", (e) => {
+      const f = mediaFile(e.dataTransfer);
+      if (!f) return;
+      e.preventDefault();
+      mediaPick(f);
+    });
     const te = typeof TextEncoder !== "undefined" ? new TextEncoder() : null;
     const ac = new AbortController();
     const signal = ac.signal;
@@ -994,26 +1085,39 @@
       image: (x, y, w, h, ptr, radius, alpha, fit) => {
         const src = cstr(ptr);
         if (!src || w <= 0 || h <= 0) return;
-        let rec = imgCache.get(src);
-        if (rec === "fail") return;
-        if (!rec) {
-          const im = new Image();
-          /* Tiny `data:` catalog shots should decode on this paint, not the
-             next rAF. `decoding = "sync"` is a hint; we still draw if
-             `complete` after setting `src`. */
-          if ("decoding" in im) im.decoding = "sync";
-          im.onload = () => schedule(0);
-          im.onerror = () => {
-            imgCache.set(src, "fail");
-          };
-          im.src = src;
-          imgCache.set(src, im);
-          rec = im;
+        let rec = null;
+        let iw = 0;
+        let ih = 0;
+        if (src.startsWith("media:")) {
+          /* A player's current frame (see `media`). Nothing until the first
+             frame decodes; the poster is the app's business. */
+          const m = media[parseInt(src.slice(6), 10) | 0];
+          if (!m || !m.src || m.error || m.el.readyState < 2 || !m.el.videoWidth) return;
+          rec = m.el;
+          iw = rec.videoWidth;
+          ih = rec.videoHeight;
+        } else {
+          rec = imgCache.get(src);
+          if (rec === "fail") return;
+          if (!rec) {
+            const im = new Image();
+            /* Tiny `data:` catalog shots should decode on this paint, not the
+               next rAF. `decoding = "sync"` is a hint; we still draw if
+               `complete` after setting `src`. */
+            if ("decoding" in im) im.decoding = "sync";
+            im.onload = () => schedule(0);
+            im.onerror = () => {
+              imgCache.set(src, "fail");
+            };
+            im.src = src;
+            imgCache.set(src, im);
+            rec = im;
+          }
+          if (!rec.complete || !rec.naturalWidth) return;
+          iw = rec.naturalWidth;
+          ih = rec.naturalHeight;
         }
-        if (!rec.complete || !rec.naturalWidth) return;
         const p = snapRect(x, y, w, h);
-        const iw = rec.naturalWidth;
-        const ih = rec.naturalHeight;
         let dx = p.x, dy = p.y, dw = p.w, dh = p.h;
         if (fit === 3) {
           dw = iw;
@@ -1060,6 +1164,13 @@
         view.setInt32(hPtr, 0, true);
         const src = cstr(ptr);
         if (!src) return;
+        if (src.startsWith("media:")) {
+          const m = media[parseInt(src.slice(6), 10) | 0];
+          if (!m || !m.src || !m.el.videoWidth) return;
+          view.setInt32(wPtr, m.el.videoWidth, true);
+          view.setInt32(hPtr, m.el.videoHeight, true);
+          return;
+        }
         let rec = imgCache.get(src);
         if (rec === "fail") return;
         if (!rec) {
@@ -1076,6 +1187,126 @@
         if (!rec.complete || !rec.naturalWidth) return;
         view.setInt32(wPtr, rec.naturalWidth, true);
         view.setInt32(hPtr, rec.naturalHeight, true);
+      },
+      /* `plat_media_*`: see `media` above. Codes match zeus_plat.c. */
+      media_open: (slot, ptr) => {
+        if (slot <= 0 || slot >= media.length) return 0;
+        const src = cstr(ptr);
+        const m = mediaEl(slot);
+        m.error = "";
+        m.waiting = false;
+        m.seeking = false;
+        m.src = src;
+        if (!src) {
+          m.el.removeAttribute("src");
+          m.el.load();
+          return 0;
+        }
+        /* Blob URLs and same-origin files never need CORS; keep the
+           anonymous mode only where it can matter. */
+        if (/^https?:/.test(src)) m.el.crossOrigin = "anonymous";
+        else m.el.removeAttribute("crossorigin");
+        m.el.src = src;
+        m.el.load();
+        schedule(0);
+        return 1;
+      },
+      media_cmd: (slot, cmd, value) => {
+        const m = media[slot];
+        if (!m) return;
+        const v = m.el;
+        if (cmd === 1) {
+          if (v.ended) v.currentTime = 0;
+          const pr = v.play();
+          /* Autoplay policy: a play outside a gesture is refused with
+             sound; retry muted rather than leave the UI saying "playing". */
+          if (pr && pr.catch) pr.catch((e) => {
+            if (e && e.name === "NotAllowedError" && !v.muted) {
+              v.muted = true;
+              v.play().catch(() => {});
+            }
+            schedule(0);
+          });
+        } else if (cmd === 2) v.pause();
+        else if (cmd === 3) {
+          const d = Number.isFinite(v.duration) ? v.duration : Infinity;
+          const t = Math.max(0, Math.min(value / 1000, d));
+          v.currentTime = t;
+        } else if (cmd === 4) {
+          const r = Math.max(0.0625, Math.min(16, value / 100));
+          v.playbackRate = r;
+          v.defaultPlaybackRate = r;
+          v.preservesPitch = true;
+        } else if (cmd === 5) v.volume = Math.max(0, Math.min(1, value / 100));
+        else if (cmd === 6) v.muted = !!value;
+        else if (cmd === 7) v.loop = !!value;
+        else if (cmd === 8) {
+          v.pause();
+          v.removeAttribute("src");
+          v.load();
+          m.src = "";
+          m.error = "";
+        }
+        schedule(0);
+      },
+      media_get: (slot, what) => {
+        if (what === 7) return mediaPicked.seq;
+        const m = media[slot];
+        if (!m) return 0;
+        const v = m.el;
+        if (what === 1) return Math.round((v.currentTime || 0) * 1000);
+        if (what === 2) return Number.isFinite(v.duration) ? Math.round(v.duration * 1000) : 0;
+        if (what === 3) return mediaState(m);
+        if (what === 4) return v.videoWidth | 0;
+        if (what === 5) return v.videoHeight | 0;
+        if (what === 6) {
+          const b = v.buffered;
+          const t = v.currentTime || 0;
+          for (let i = 0; i < b.length; i++) {
+            if (b.start(i) <= t + 0.5 && b.end(i) >= t) return Math.round(b.end(i) * 1000);
+          }
+          return Math.round(t * 1000);
+        }
+        return 0;
+      },
+      media_text: (slot, what, out, cap) => {
+        let s = "";
+        if (what === 1) {
+          if (mediaPicked.seq) s = mediaPicked.name + "\n" + mediaPicked.src;
+        } else if (media[slot]) s = media[slot].error;
+        if (!s || !te || cap <= 1) return 0;
+        const b = te.encode(s);
+        const n = Math.min(b.length, cap - 1);
+        u8().set(b.subarray(0, n), out);
+        return n;
+      },
+      media_pick: () => {
+        if (!mediaInput) {
+          mediaInput = document.createElement("input");
+          mediaInput.type = "file";
+          mediaInput.accept = MEDIA_ACCEPT;
+          mediaInput.style.display = "none";
+          document.body.appendChild(mediaInput);
+          mediaInput.addEventListener("change", () => {
+            const f = mediaInput.files && mediaInput.files[0];
+            mediaInput.value = "";
+            mediaPick(f);
+          });
+        }
+        mediaInput.click();
+      },
+      fullscreen: (on) => {
+        const d = document;
+        const el = d.documentElement;
+        if (on === 1 && !d.fullscreenElement && el.requestFullscreen) {
+          el.requestFullscreen().catch(() => {});
+          return 1;
+        }
+        if (on === 0 && d.fullscreenElement && d.exitFullscreen) {
+          d.exitFullscreen().catch(() => {});
+          return 0;
+        }
+        return d.fullscreenElement ? 1 : 0;
       },
       svg: (x, y, w, h, ptr, color, alpha) => {
         const markup = cstr(ptr);
@@ -1241,6 +1472,9 @@
       if (wakeTimer) clearTimeout(wakeTimer);
       wakeTimer = 0;
       ac.abort();
+      for (const m of media) {
+        if (m) m.el.pause();
+      }
     }
 
     /* Wasm has no setjmp, so a Loam panic (bounds, overflow, `panic`) cannot be
@@ -1328,6 +1562,7 @@
             console.error("zeus_paint", e);
             return;
           }
+          if (mediaLive()) next = 1;
           if (next) schedule(next <= 1 ? 0 : next);
         }
         schedule = function (ms) {

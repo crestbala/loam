@@ -2604,19 +2604,23 @@ fn child_rect(r: Ref, i: int) -> Rect {
                   w: arena.nodes[k].w, h: arena.nodes[k].h }
 }
 
-/// Run `body` after any layout that changed `r`'s width, the first one
-/// included. Call from `on_mount`.
+/// Run `body` after any layout that changed `r`'s width or height, the first
+/// one included. It runs in the same frame, before paint: a signal it writes
+/// re-lays the affected nodes in that frame's second pass, so a size derived
+/// from `r` never paints a frame late (a host's full-screen zoom snapshots
+/// that first frame). Call from `on_mount`.
 fn on_resize(r: Ref, body: fn()) {
     let id = ref_id(r)
     if id <= 0 {
         return
     }
     arena.set_list_fn(id, intern_fn(|| {
-        let w = arena.nodes[id].w
-        if w == arena.nodes[id].list_gen {
+        // Both sides in one stamp: a height-only resize counts too.
+        let key = arena.nodes[id].w * 65536 + arena.nodes[id].h
+        if key == arena.nodes[id].list_gen {
             return
         }
-        arena.nodes[id].list_gen = w
+        arena.nodes[id].list_gen = key
         body()
     }))
     arena.host_geo(id)
@@ -3547,3 +3551,41 @@ fn role_token(slot: int) -> string {
     return "@{{slot}}"
 }
 
+// --- app-drawn title bar (`zeus.window_chrome`) ---
+
+/// The host title bar's box under `CHROME_CUSTOM`, in points: `height` of the
+/// strip (0 in full screen and on hosts without one), and `lead` / `trail`,
+/// the room the window buttons take on each side. Reading it in a build
+/// tracks it, so the bar follows full screen and resizes.
+struct Titlebar {
+    height: int,
+    lead: int,
+    trail: int,
+}
+
+let mut titlebar_sig: Signal<int> = Signal { id: 0 }
+
+/// The box as one int (height, lead, trail: 10 bits each).
+fn titlebar_packed() -> int {
+    let mut b = []int { 0, 0, 0 }
+    platform.plat_titlebar_get(b)
+    return b[0] % 1024 * 1048576 + b[1] % 1024 * 1024 + b[2] % 1024
+}
+
+/// Engine, once per frame before layout: publish a moved box.
+fn titlebar_refresh() {
+    if titlebar_sig.id != 0 {
+        let tb = titlebar_packed()
+        if tb != titlebar_sig.peek() {
+            titlebar_sig.set(tb)
+        }
+    }
+}
+
+fn titlebar() -> Titlebar {
+    if titlebar_sig.id == 0 {
+        titlebar_sig = signal(titlebar_packed())
+    }
+    let v = titlebar_sig.get()
+    return Titlebar { height: v / 1048576, lead: v / 1024 % 1024, trail: v % 1024 }
+}

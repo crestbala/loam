@@ -1,0 +1,13 @@
+//! Headless layout probe: the draw list of the player with a source loaded.
+//!   ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/vidy/tests/probe_layout.loam -o /tmp/vp && /tmp/vp
+import "std:zeus"
+import "../app_routes.loam" as approutes
+import "../player/store.loam" as player
+
+fn main() {
+    player.start()
+    player.enqueue("sample.mp4", "/tmp/sample.mp4", true)
+    zeus.snapshot(1180, 720, fn() -> Node {
+        return approutes.app()
+    })
+}

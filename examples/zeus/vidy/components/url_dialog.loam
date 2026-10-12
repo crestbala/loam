@@ -1,0 +1,20 @@
+//! The Open URL dialog.
+
+import "std:zeus"
+import "std:zui"
+import "../player/store.loam" as player
+
+fn UrlDialog() -> Node {
+    return zui.Dialog(player.url_open, title = "Open a URL") {
+        zeus.Box(style = Style(direction = Direction.Column, gap = 12, width = px(460))) {
+            zui.Note("A direct video or audio link, or an HLS playlist (.m3u8).")
+            zui.TextInput(player.url_text, "https://example.com/video.mp4", label = "Video URL",
+                          keys = []KeyBind { zeus.key_bind("enter", "vidy.url_open", fn() { player.open_url() }) })
+            zeus.Box(style = Style(direction = Direction.Row, gap = 8)) {
+                zui.Grow()
+                zui.Button("Cancel", look = zeus.Look.Ghost, on_click = fn() { player.url_open.set(false) })
+                zui.Button("Open", look = zeus.Look.Solid, on_click = fn() { player.open_url() })
+            }
+        }
+    }
+}

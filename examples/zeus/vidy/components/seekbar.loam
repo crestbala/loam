@@ -1,0 +1,58 @@
+//! The seek bar: buffered range, played range and thumb over a tall hit area.
+
+import "std:zeus"
+import "../player/store.loam" as player
+import "../lib/timecode.loam" as timecode
+import { WHITE, ACCENT, TRACK } from "../theme.loam"
+
+/// Buffered range, played range and thumb, over a tall hit area. Press or drag
+/// anywhere on it to seek; hovering shows the time under the pointer.
+fn SeekBar() -> Node {
+    let bw = zeus.signal(0)
+    zeus.on_mount(fn() {
+        zeus.on_resize(player.bar_ref, fn() { bw.set(zeus.rect(player.bar_ref).w) })
+        zeus.on_drag(player.bar_ref, fn() { player.scrub(zeus.current_mouse().x) })
+        zeus.watch_hover(player.bar_ref, player.bar_hover)
+    })
+    zeus.effect(fn() {
+        if player.bar_hover.get() != 0 {
+            zeus.untrack(fn() { player.hover_bar(zeus.pointer_x()) })
+        }
+    })
+    return zeus.Box(style = Style(direction = Direction.Column)) {
+        // Time under the pointer, riding above the bar.
+        zeus.Box(style = Style(height = px(0))) {
+            zeus.Box(style = Style(position = pos_absolute(),
+                                   inset = Edges(top = -30, left = player.hover_x.get() - 28),
+                                   width = px(56), height = px(22), radius = corners(6), background = "#000000",
+                                   opacity = 85, direction = Direction.Row, align = Align.Center, justify = Align.Center),
+                     visible = player.bar_hover.get() != 0 && player.dur.get() > 0) {
+                zeus.Text(timecode.clock(player.hover_ms.get()), style = Style(font = 11, color = WHITE))
+            }
+        }
+        zeus.Box(ref = player.bar_ref,
+                 style = Style(width = pct(100), height = px(20), cursor = "pointer"),
+                 role = "slider", label = "Seek") {
+            zeus.Box(style = Style(position = pos_absolute(),
+                                   inset = Edges(top = if player.bar_hover.get() != 0 || player.scrubbing.get() { 7 } else { 8 }, left = 0),
+                                   width = px(bw.get()),
+                                   height = px(if player.bar_hover.get() != 0 || player.scrubbing.get() { 6 } else { 4 }),
+                                   radius = corners(3), background = TRACK, opacity = 18))
+            zeus.Box(style = Style(position = pos_absolute(),
+                                   inset = Edges(top = if player.bar_hover.get() != 0 || player.scrubbing.get() { 7 } else { 8 }, left = 0),
+                                   width = px(player.bar_px(player.buffered.get(), bw.get())),
+                                   height = px(if player.bar_hover.get() != 0 || player.scrubbing.get() { 6 } else { 4 }),
+                                   radius = corners(3), background = TRACK, opacity = 34))
+            zeus.Box(style = Style(position = pos_absolute(),
+                                   inset = Edges(top = if player.bar_hover.get() != 0 || player.scrubbing.get() { 7 } else { 8 }, left = 0),
+                                   width = px(player.bar_px(player.pos.get(), bw.get())),
+                                   height = px(if player.bar_hover.get() != 0 || player.scrubbing.get() { 6 } else { 4 }),
+                                   radius = corners(3), background = ACCENT))
+            zeus.Box(style = Style(position = pos_absolute(),
+                                   inset = Edges(top = 3, left = player.bar_px(player.pos.get(), bw.get()) - 7),
+                                   width = px(14), height = px(14), radius = corners(7), background = WHITE,
+                                   elevation = Elevation.Raised),
+                     visible = player.bar_hover.get() != 0 || player.scrubbing.get())
+        }
+    }
+}

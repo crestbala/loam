@@ -1,0 +1,37 @@
+//! Root shell: the title bar, then the player filling the rest. Dark theme,
+//! whatever the system appearance — a video wants a black room.
+
+import "std:zeus"
+import "std:zui"
+import "../theme.loam" as theme
+
+fn Layout(build: fn()) -> Node {
+    theme.install()
+    return zeus.Box(style = Style(direction = Direction.Column, width = pct(100), height = pct(100),
+                                  background = "#000000")) {
+        TitleBar()
+        build()
+    }
+}
+
+/// The window's title bar (`zeus.window_chrome(CHROME_CUSTOM)` in app.loam):
+/// the logo's red washed over the black, edge to edge under the window
+/// buttons, and the name centred on the whole window — the layer is pulled
+/// out over the bar's padding (the buttons' room) so it centres on the full
+/// width. Takes no space in full screen and on hosts without a title bar.
+fn TitleBar() -> Node {
+    return zui.TitleBar(style = Style(background = theme.TITLEBAR)) {
+        zeus.Box(style = Style(position = pos_absolute(),
+                               inset = Edges(top = 0, bottom = 0, left = -zeus.titlebar().lead,
+                                             right = -titlebar_trail()),
+                               direction = Direction.Row, align = Align.Center, justify = Align.Center)) {
+            zeus.Text("Vidy", style = Style(font = 13, color = theme.WHITE))
+        }
+    }
+}
+
+/// The bar's right padding (`zui.TitleBar` keeps 12 dp clear at least).
+fn titlebar_trail() -> int {
+    let t = zeus.titlebar().trail
+    return if t > 12 { t } else { 12 }
+}

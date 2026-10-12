@@ -1,0 +1,102 @@
+//! Unit tests for vidy's pure helpers (`lib/`). No window, no host player.
+//!
+//!   ./bin/loamc test examples/zeus/vidy/tests/unit.loam
+
+import "std:test"
+import "std:str"
+import "std:sys"
+import "../lib/aspect.loam" as ar
+import "../lib/media_name.loam" as names
+import "../lib/timecode.loam" as timecode
+import "../lib/transcode.loam" as transcode
+
+#[test]
+fn clock_formats() {
+    test.assert_eq_str(timecode.clock(0), "0:00")
+    test.assert_eq_str(timecode.clock(-5000), "0:00")
+    test.assert_eq_str(timecode.clock(9999), "0:09")
+    test.assert_eq_str(timecode.clock(65000), "1:05")
+    test.assert_eq_str(timecode.clock(3600000 + 2 * 60000 + 3000), "1:02:03")
+}
+
+#[test]
+fn rate_labels() {
+    test.assert_eq_str(timecode.rate_label(100), "1×")
+    test.assert_eq_str(timecode.rate_label(300), "3×")
+    test.assert_eq_str(timecode.rate_label(150), "1.5×")
+    test.assert_eq_str(timecode.rate_label(25), "0.25×")
+    test.assert_eq_str(timecode.rate_label(105), "1.05×")
+}
+
+#[test]
+fn file_names() {
+    test.assert_eq_str(names.file_name("/Users/me/Movies/a b.mkv"), "a b.mkv")
+    test.assert_eq_str(names.file_name("https://x.com/v/clip.mp4?t=3#x"), "clip.mp4")
+    test.assert_eq_str(names.file_name("https://x.com/v/clip.mp4#t=3?x"), "clip.mp4")
+    test.assert_eq_str(names.file_name("movie.mov"), "movie.mov")
+    test.assert_eq_str(names.file_name("https://x.com/"), "https://x.com/")
+}
+
+#[test]
+fn extensions() {
+    test.assert_eq_str(names.ext_of("movie.mkv"), "MKV")
+    test.assert_eq_str(names.ext_of("a.b.WebM"), "WEBM")
+    test.assert_eq_str(names.ext_of("noext"), "")
+    test.assert_eq_str(names.ext_of("trailing."), "")
+}
+
+#[test]
+fn mode_labels() {
+    test.assert_eq_int(ar.count(), 9)
+    test.assert_eq_str(ar.label(ar.FIT), "Fit")
+    test.assert_eq_str(ar.label(ar.R21_9), "21:9")
+    test.assert_eq_str(ar.label(99), "Fit")
+}
+
+#[test]
+fn mode_boxes() {
+    // Fit / Fill / Stretch keep the stage.
+    let a = ar.fit_box(ar.FIT, 1000, 500, 1920, 1080)
+    test.assert_eq_int(a.w, 1000)
+    test.assert_eq_int(a.h, 500)
+    // A fixed ratio: as large as the stage allows, either way round.
+    let b = ar.fit_box(ar.R16_9, 1000, 500, 0, 0)
+    test.assert_eq_int(b.w, 888)
+    test.assert_eq_int(b.h, 500)
+    let c = ar.fit_box(ar.R4_3, 400, 1000, 0, 0)
+    test.assert_eq_int(c.w, 400)
+    test.assert_eq_int(c.h, 300)
+    // Original: the video's own size, or the stage until it is known.
+    let d = ar.fit_box(ar.ORIGINAL, 1000, 500, 640, 360)
+    test.assert_eq_int(d.w, 640)
+    test.assert_eq_int(d.h, 360)
+    let e = ar.fit_box(ar.ORIGINAL, 1000, 500, 0, 0)
+    test.assert_eq_int(e.w, 1000)
+    // No stage yet: no division by zero.
+    let f = ar.fit_box(ar.R1_1, 0, 0, 0, 0)
+    test.assert_eq_int(f.w, 0)
+}
+
+#[test]
+fn ffmpeg_job_command() {
+    let cmd = transcode.command("/m/it's.mkv", "/tmp/o.mp4")
+    test.assert(cmd.contains("-i '/m/it'\\''s.mkv'"))
+    test.assert(cmd.contains("-c copy"))
+    test.assert(cmd.contains("libx264"))
+    test.assert(cmd.ends_with("touch '/tmp/o.mp4'.done || touch '/tmp/o.mp4'.fail"))
+    let out = transcode.temp_out("vidy", 42)
+    test.assert(out.ends_with("/vidy-42.mp4"))
+    test.assert(!out.contains("//"))
+}
+
+#[test]
+fn ffmpeg_job_markers() {
+    let out = transcode.temp_out("vidy-unit", 7)
+    test.assert_eq_int(transcode.check(out), transcode.PENDING)
+    sys.write_file("{{out}}.done", "")
+    test.assert_eq_int(transcode.check(out), transcode.DONE)
+    // Reported once: the marker is gone.
+    test.assert_eq_int(transcode.check(out), transcode.PENDING)
+    sys.write_file("{{out}}.fail", "")
+    test.assert_eq_int(transcode.check(out), transcode.FAILED)
+}

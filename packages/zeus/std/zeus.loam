@@ -107,6 +107,7 @@ import "structs.loam"
 import "enums.loam"
 import "zeusbase.loam"
 import "flow.loam"
+import "media.loam"
 import "zeus-components:colors"
 
 let mut has_view: int = 0
@@ -229,6 +230,59 @@ fn window_size() -> WindowSize {
 /// Host process memory in KB for diagnostics UI: Apple phys_footprint
 /// (Xcode's memory-gauge number), Linux/Android resident set, live wasm
 /// heap on the web host (0 = unknown).
+/// Window chrome (`window_chrome`): the host's own title bar, or one the app
+/// draws with `zui.TitleBar`.
+const CHROME_SYSTEM: int = 0
+const CHROME_CUSTOM: int = 1
+
+/// `CHROME_CUSTOM` hands the title bar to the app: on macOS the content runs
+/// up under a transparent bar, the system title goes, and the window buttons
+/// stay. Draw it with `zui.TitleBar`, which sizes itself from `titlebar()` and
+/// moves the window when dragged. Hosts without a title bar (web, iOS,
+/// Android) report a zero box, so the same tree is just a header-less page
+/// there. Call before `App`, or any time after.
+fn window_chrome(mode: int) {
+    platform.plat_set_chrome(mode)
+}
+
+/// Test hook: the box a desktop host would report (see `titlebar`).
+fn engine_set_titlebar(height: int, lead: int, trail: int) {
+    platform.plat_set_titlebar_box(height, lead, trail)
+}
+
+/// Host call: 1 when a press at (`px`, `py`) should move the window — it is
+/// on a `TitleBar` (role "titlebar") and on no control inside it.
+fn engine_window_drag_at(px: int, py: int) -> int {
+    if arena.root_id <= 0 {
+        return 0
+    }
+    if input.hit_floaters(arena.root_id, px, py) > 0 {
+        return 0
+    }
+    let h = input.hit_node(arena.root_id, px, py)
+    // A scroll pane hit-tests as itself; the app's root is one.
+    if h > 0 && int(arena.nodes[h].kind) != 11 {
+        return 0
+    }
+    for i in 1..arena.nodes.len {
+        if fmt.eq(arena.nodes[i].a11y_role, "titlebar") && arena.shown_in_tree(i) != 0 &&
+           arena.in_box(i, px, py) != 0 {
+            return 1
+        }
+    }
+    return 0
+}
+
+/// Enter (true) or leave (false) full screen; returns whether the window is
+/// full screen now. On the web the browser may refuse outside a user gesture.
+fn fullscreen(on: bool) -> bool {
+    return platform.plat_fullscreen(if on { 1 } else { 0 }) != 0
+}
+
+fn is_fullscreen() -> bool {
+    return platform.plat_fullscreen(-1) != 0
+}
+
 fn memory_kb() -> int {
     arena.ensure()
     return platform.plat_mem_kb()
@@ -354,6 +408,9 @@ fn engine_layout(width: int, height: int) {
     // the rebuild and layout below paint their effect this very frame. Hosts
     // call this per frame (mac drawRect, web rAF, headless pump).
     async.tick()
+    // The host's title-bar box moved (full screen, a resize): readers of
+    // `titlebar()` rebuild this frame, before layout.
+    zeusbase.titlebar_refresh()
     // Hover / press / focus / disabled moved since the last frame: the state
     // styles that follow them re-run now, before layout and paint.
     arena.state_sync()
@@ -1257,6 +1314,16 @@ fn engine_mouseup() {
 
 fn engine_hover(px: int, py: int) -> int {
     return input.hover(px, py)
+}
+
+/// Last pointer position the host reported (hover, press or drag), in dp.
+/// A player polls it to wake its controls on any mouse movement.
+fn pointer_x() -> int {
+    return arena.ptr_x
+}
+
+fn pointer_y() -> int {
+    return arena.ptr_y
 }
 
 fn engine_over_button() -> int {

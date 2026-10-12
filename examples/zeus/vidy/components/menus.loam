@@ -1,0 +1,63 @@
+//! The speed and aspect popovers above the control panel.
+
+import "std:zeus"
+import "std:zui"
+import "../player/store.loam" as player
+import "../lib/timecode.loam" as timecode
+import "../lib/aspect.loam" as ar
+import "icons.loam"
+import { WHITE, SOFT, FAINT, GLASS, ACCENT } from "../theme.loam"
+
+/// A glass list panel pinned above the control panel's right side.
+fn Popover(which: int, title: string, right: int, build: fn()) -> Node {
+    return zeus.Box(style = Style(position = pos_absolute(), inset = Edges(bottom = 118, right = right),
+                                  direction = Direction.Column, width = px(188), padding = edges(6),
+                                  radius = corners(14), background = GLASS, opacity = 94,
+                                  border = line(1, "#2C303B"), elevation = Elevation.Overlay),
+                    visible = player.menu.get() == which && player.controls.get(),
+                    enter = Enter.Fade + Enter.Reveal,
+                    on_click = fn() { player.wake() }) {
+        zeus.Text(title, style = Style(font = 11, color = FAINT, padding = Edges(left = 10, top = 6, bottom = 6)))
+        build()
+    }
+}
+
+/// One row of a popover list, with a check when it is the current pick.
+fn Choice(text: string, picked: fn() -> bool, run: fn()) -> Node {
+    return zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 8, height = px(32),
+                                  padding = edges2(0, 10), radius = corners(8), cursor = "pointer"),
+                    hoverStyle = Style(background = "#FFFFFF", opacity = 10),
+                    role = "menuitemradio", label = text, checked = picked(),
+                    on_click = fn() {
+                        run()
+                        player.menu.set(player.MENU_NONE)
+                    }) {
+        zeus.Text(text, style = Style(font = 13, color = if picked() { WHITE } else { SOFT }))
+        zui.Grow()
+        zeus.Box(visible = picked()) {
+            zui.Icon(icons.CHECK, 16, ACCENT)
+        }
+    }
+}
+
+fn SpeedMenu() -> Node {
+    return Popover(player.MENU_SPEED, "Playback speed", 150, fn() {
+        let ss = player.speeds()
+        for i in 0..ss.len {
+            let s = ss[i]
+            Choice(if s == 100 { "Normal" } else { timecode.rate_label(s) },
+                   fn() -> bool { return player.rate.get() == s },
+                   fn() { player.set_rate(s) })
+        }
+    })
+}
+
+fn AspectMenu() -> Node {
+    return Popover(player.MENU_ASPECT, "Aspect ratio", 80, fn() {
+        let ls = ar.labels()
+        for i in 0..ls.len {
+            let a = i
+            Choice(ls[i], fn() -> bool { return player.aspect.get() == a }, fn() { player.set_aspect(a) })
+        }
+    })
+}

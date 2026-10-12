@@ -1,0 +1,196 @@
+//! The floating glass control panel: seek bar over one row of transport,
+//! volume, time, and the loop / speed / aspect / open / full screen buttons.
+
+import "std:zeus"
+import "std:zui"
+import "../player/store.loam" as player
+import "../lib/timecode.loam" as timecode
+import "../lib/aspect.loam" as ar
+import "icons.loam"
+import { SeekBar } from "seekbar.loam"
+import { WHITE, SOFT, GLASS, ACCENT, TRACK } from "../theme.loam"
+import { Glyph, When } from "kit.loam"
+
+/// Narrow windows drop the least-used controls instead of overflowing:
+/// below `WIDE` the secondary transport and the volume slider go, below
+/// `NARROW` the skip buttons and the chip labels too.
+const WIDE: int = 780
+
+const NARROW: int = 560
+
+fn wide() -> bool {
+    return player.stage_w.get() >= WIDE
+}
+
+fn roomy() -> bool {
+    return player.stage_w.get() >= NARROW
+}
+
+/// The floating glass panel: seek bar over one row of controls.
+fn Panel() -> Node {
+    return zeus.Box(style = Style(position = pos_absolute(), inset = Edges(left = 0, right = 0, bottom = 0),
+                                  align = Align.Center,
+                                  padding = if roomy() { Edges(left = 16, right = 16, bottom = 16) }
+                                            else { Edges(left = 8, right = 8, bottom = 8) }),
+                    visible = player.src.get() != "" && player.controls.get(),
+                    enter = Enter.Fade + Enter.Reveal) {
+        zeus.Box(style = Style(direction = Direction.Column, gap = 4, width = pct(100), maxWidth = 1100,
+                               padding = Edges(top = 10, bottom = 8, left = 14, right = 14),
+                               radius = corners(18), background = GLASS, opacity = 84,
+                               border = line(1, "#2A2E38"), elevation = Elevation.Floating),
+                 on_click = fn() { player.wake() },
+                 on_hover = fn(on: bool) { player.over_panel.set(if on { 1 } else { 0 }) }) {
+            SeekBar()
+            zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 2)) {
+                When(fn() -> bool { return wide() }, fn() { Ctl(icons.PREV, "Previous (P)", 20, fn() { player.prev() }) })
+                PlayPause()
+                When(fn() -> bool { return wide() }, fn() { Ctl(icons.NEXT, "Next (N)", 20, fn() { player.next() }) })
+                When(fn() -> bool { return roomy() }, fn() {
+                    Skip(-1)
+                    Skip(1)
+                })
+                Volume()
+                zeus.Text("{{timecode.clock(player.pos.get())}} / {{timecode.clock(player.dur.get())}}",
+                          style = Style(font = 12, color = SOFT, margin = Edges(left = 10)))
+                zui.Grow()
+                Toggle(icons.LOOP, "Loop (R)", fn() -> bool { return player.looping.get() }, fn() { player.toggle_loop() })
+                Chip(icons.SPEED, fn() -> string { return timecode.rate_label(player.rate.get()) }, "Speed",
+                     player.MENU_SPEED)
+                Chip(icons.ASPECT, fn() -> string { return ar.label(player.aspect.get()) }, "Aspect ratio (A)",
+                     player.MENU_ASPECT)
+                When(fn() -> bool { return wide() }, fn() { Ctl(icons.FOLDER, "Open file (O)", 20, fn() { player.pick() }) })
+                FullBtn()
+            }
+        }
+    }
+}
+
+/// A transport icon button: a 40 dp hit target with a soft hover disc.
+fn Ctl(icon: string, label: string, size: int, run: fn()) -> Node {
+    return zeus.Box(style = Style(width = px(40), height = px(40), radius = corners(20),
+                                  align = Align.Center, justify = Align.Center, cursor = "pointer"),
+                    hoverStyle = Style(background = "#FFFFFF", opacity = 12),
+                    pressScale = true,
+                    role = "button", label = label,
+                    on_click = fn() {
+                        run()
+                        player.wake()
+                    }) {
+        zui.Icon(icon, size, WHITE)
+    }
+}
+
+fn PlayPause() -> Node {
+    return zeus.Box(style = Style(width = px(44), height = px(44), radius = corners(22),
+                                  align = Align.Center, justify = Align.Center, cursor = "pointer",
+                                  background = WHITE, margin = Edges(left = 2, right = 2)),
+                    hoverStyle = Style(background = "#E6E8EE"),
+                    pressScale = true,
+                    role = "button",
+                    label = if player.playing() { "Pause (Space)" } else { "Play (Space)" },
+                    on_click = fn() { player.toggle() }) {
+        Glyph(fn() -> bool { return player.playing() }, icons.PAUSE, 22, "#0B0C10", 44)
+        Glyph(fn() -> bool { return !player.playing() && player.state.get() != zeus.MEDIA_ENDED },
+              icons.PLAY, 22, "#0B0C10", 44)
+        Glyph(fn() -> bool { return player.state.get() == zeus.MEDIA_ENDED }, icons.REPLAY, 20, "#0B0C10", 44)
+    }
+}
+
+/// -10 s / +10 s: a circular arrow with "10" inside.
+fn Skip(dir: int) -> Node {
+    return zeus.Box(style = Style(width = px(40), height = px(40), radius = corners(20),
+                                  align = Align.Center, justify = Align.Center, cursor = "pointer"),
+                    hoverStyle = Style(background = "#FFFFFF", opacity = 12),
+                    pressScale = true,
+                    role = "button",
+                    label = if dir < 0 { "Back 10 seconds (J)" } else { "Forward 10 seconds (L)" },
+                    on_click = fn() { player.skip(dir * player.SKIP_MS) }) {
+        zui.Icon(if dir < 0 { icons.BACK } else { icons.FWD }, 24, WHITE)
+        zeus.Box(style = Style(position = pos_absolute(), inset = Edges(top = 0, left = 0),
+                               width = px(40), height = px(40), direction = Direction.Row,
+                               align = Align.Center, justify = Align.Center, padding = Edges(top = 1))) {
+            zeus.Text("10", style = Style(font = 8, color = WHITE))
+        }
+    }
+}
+
+/// Mute button and a draggable level.
+fn Volume() -> Node {
+    let tw = 76
+    return zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 4)) {
+        zeus.Box(style = Style(width = px(40), height = px(40), radius = corners(20),
+                               align = Align.Center, justify = Align.Center, cursor = "pointer"),
+                 hoverStyle = Style(background = "#FFFFFF", opacity = 12),
+                 role = "button", label = "Mute (M)",
+                 on_click = fn() { player.toggle_mute() }) {
+            Glyph(fn() -> bool { return player.muted.get() || player.volume.get() == 0 }, icons.VOL_MUTE, 20, WHITE, 40)
+            Glyph(fn() -> bool { return !player.muted.get() && player.volume.get() > 0 && player.volume.get() < 50 },
+                  icons.VOL_LOW, 20, WHITE, 40)
+            Glyph(fn() -> bool { return !player.muted.get() && player.volume.get() >= 50 }, icons.VOL_HIGH, 20, WHITE, 40)
+        }
+        When(fn() -> bool { return wide() }, fn() { VolumeBar(tw) })
+    }
+}
+
+fn VolumeBar(tw: int) -> Node {
+    zeus.on_mount(fn() {
+        zeus.on_drag(player.vol_ref, fn() { player.vol_drag(zeus.current_mouse().x) })
+    })
+    return zeus.Box(ref = player.vol_ref,
+                    style = Style(width = px(tw), height = px(24), cursor = "pointer"),
+                    role = "slider", label = "Volume") {
+        zeus.Box(style = Style(position = pos_absolute(), inset = Edges(top = 10, left = 0),
+                               width = px(tw), height = px(4), radius = corners(2), background = TRACK, opacity = 22))
+        zeus.Box(style = Style(position = pos_absolute(), inset = Edges(top = 10, left = 0),
+                               width = px(if player.muted.get() { 0 } else { player.volume.get() * tw / 100 }),
+                               height = px(4), radius = corners(2), background = WHITE))
+        zeus.Box(style = Style(position = pos_absolute(),
+                               inset = Edges(top = 6, left = (if player.muted.get() { 0 } else { player.volume.get() * tw / 100 }) - 6),
+                               width = px(12), height = px(12), radius = corners(6), background = WHITE,
+                               elevation = Elevation.Raised))
+    }
+}
+
+/// An on / off icon button (loop).
+fn Toggle(icon: string, label: string, on: fn() -> bool, run: fn()) -> Node {
+    return zeus.Box(style = Style(width = px(40), height = px(40), radius = corners(20),
+                                  align = Align.Center, justify = Align.Center, cursor = "pointer"),
+                    hoverStyle = Style(background = "#FFFFFF", opacity = 12),
+                    pressScale = true,
+                    role = "button", label = label,
+                    checked = on(),
+                    on_click = run) {
+        zui.Icon(icon, 19, if on() { ACCENT } else { WHITE })
+        zeus.Box(visible = on(),
+                 style = Style(position = pos_absolute(), inset = Edges(bottom = 5, left = 18),
+                               width = px(4), height = px(4), radius = corners(2), background = ACCENT))
+    }
+}
+
+/// A labelled chip that opens popover `which` (speed, aspect).
+fn Chip(icon: string, text: fn() -> string, label: string, which: int) -> Node {
+    return zeus.Box(style = Style(direction = Direction.Row, gap = 6, align = Align.Center, height = px(32),
+                                  padding = edges2(0, 11), radius = corners(16), cursor = "pointer",
+                                  margin = Edges(left = 2, right = 2),
+                                  background = if player.menu.get() == which { "#FFFFFF" } else { "#2A2E39" },
+                                  opacity = if player.menu.get() == which { 16 } else { 100 }),
+                    hoverStyle = Style(background = "#353A47", opacity = 100),
+                    pressScale = true,
+                    role = "button", label = label,
+                    on_click = fn() { player.toggle_menu(which) }) {
+        zui.Icon(icon, 16, SOFT)
+        When(fn() -> bool { return roomy() }, fn() { zeus.Text(text(), style = Style(font = 12, color = WHITE)) })
+    }
+}
+
+fn FullBtn() -> Node {
+    return zeus.Box(style = Style(width = px(40), height = px(40), radius = corners(20),
+                                  align = Align.Center, justify = Align.Center, cursor = "pointer"),
+                    hoverStyle = Style(background = "#FFFFFF", opacity = 12),
+                    pressScale = true,
+                    role = "button", label = "Full screen (F)",
+                    on_click = fn() { player.toggle_full() }) {
+        Glyph(fn() -> bool { return !player.full.get() }, icons.FULL, 20, WHITE, 40)
+        Glyph(fn() -> bool { return player.full.get() }, icons.FULL_EXIT, 20, WHITE, 40)
+    }
+}

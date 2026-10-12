@@ -1,0 +1,62 @@
+//! ffmpeg fallback for formats the host player refuses (native only).
+//!
+//! AVFoundation plays MP4 / MOV / M4V / HLS. MKV, WebM, AVI, FLV, WMV and the
+//! rest are rewritten by ffmpeg into a temporary MP4: a stream copy when the
+//! codecs already fit (seconds), a re-encode when they don't. The job runs
+//! detached so the UI keeps going; `<out>.done` / `<out>.fail` report how it
+//! went and `check` reads them.
+
+import "std:str"
+import "std:sys"
+
+/// An app opened from Finder gets launchd's PATH (`/usr/bin:/bin:…`), which
+/// misses Homebrew; every command runs with its bin dirs appended.
+const PATH_FIX: string = "PATH=\"$PATH:/opt/homebrew/bin:/usr/local/bin\"; "
+
+const PENDING: int = 0
+const DONE: int = 1
+const FAILED: int = -1
+
+/// True when `ffmpeg` is on the PATH.
+fn available() -> bool {
+    return !str.is_blank(sys.exec("{{PATH_FIX}}command -v ffmpeg 2>/dev/null"))
+}
+
+/// A fresh output path under `$TMPDIR` (or `/tmp`): `<dir>/<prefix>-<stamp>.mp4`.
+fn temp_out(prefix: string, stamp: int) -> string {
+    let mut tmp = sys.env("TMPDIR")
+    if tmp == "" {
+        tmp = "/tmp"
+    }
+    return "{{tmp.trim_end_byte(47)}}/{{prefix}}-{{stamp}}.mp4"
+}
+
+/// The `sh` job that writes `out` from `src`: copy first, re-encode only if
+/// the copy is refused, then touch the marker.
+fn command(src: string, out: string) -> string {
+    let q = str.shell_quote(src)
+    let o = str.shell_quote(out)
+    let maps = "-map 0:v:0? -map 0:a:0?"
+    let copy = "ffmpeg -nostdin -v error -y -i {{q}} {{maps}} -c copy -movflags +faststart {{o}}"
+    let enc = "ffmpeg -nostdin -v error -y -i {{q}} {{maps}} -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p -c:a aac -b:a 192k -movflags +faststart {{o}}"
+    return "{{PATH_FIX}}({{copy}} || {{enc}}) && touch {{o}}.done || touch {{o}}.fail"
+}
+
+/// Start converting `src` into `out` in the background.
+fn start(src: string, out: string) {
+    sys.exec("sh -c {{str.shell_quote(command(src, out))}} >/dev/null 2>&1 &")
+}
+
+/// `DONE`, `FAILED` or `PENDING` for the job writing `out`. A finished job's
+/// marker is removed, so each outcome is reported once.
+fn check(out: string) -> int {
+    if sys.exists("{{out}}.done") == 1 {
+        sys.remove_path("{{out}}.done")
+        return DONE
+    }
+    if sys.exists("{{out}}.fail") == 1 {
+        sys.remove_path("{{out}}.fail")
+        return FAILED
+    }
+    return PENDING
+}

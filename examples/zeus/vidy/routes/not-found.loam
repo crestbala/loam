@@ -1,0 +1,5 @@
+import "std:zeus"
+
+fn NotFound() -> Node {
+    return zeus.Text("not found")
+}

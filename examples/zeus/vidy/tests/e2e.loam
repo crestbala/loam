@@ -1,0 +1,281 @@
+//! Headless end-to-end: the real screen, driven the way a person drives it —
+//! keys and clicks in, painted text and store state out. No window and no
+//! media: the runtime's null player stands in for AVFoundation / <video>, so
+//! open, play, pause and seek all move its state like a real host would.
+//!
+//!   ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/vidy/tests/e2e.loam -o /tmp/vidy-e2e && /tmp/vidy-e2e
+//!
+//! (or `sh examples/zeus/vidy/tests/run.sh` for everything)
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "../app_routes.loam" as approutes
+import "../player/store.loam" as player
+import "../lib/aspect.loam" as ar
+
+const SPACE: int = 32
+const ESC: int = 27
+
+let mut steps: int = 0
+
+fn fail(what: string) {
+    fmt.println("FAIL {{what}}")
+    sys.exit(1)
+}
+
+/// A few frames: one for the poller, one for effects, one to paint.
+fn frames() {
+    for i in 0..3 {
+        zeus.pump_frame()
+    }
+}
+
+fn press(key: int) {
+    zeus.engine_key_ev(key, 0)
+    frames()
+}
+
+fn click(label: string) {
+    if zeus.engine_click_text(label) == 0 {
+        fail("nothing to click labelled '{{label}}'")
+    }
+    frames()
+}
+
+fn shows(label: string) {
+    if !zeus.text_visible(label) {
+        fail("'{{label}}' is not on screen")
+    }
+}
+
+fn hides(label: string) {
+    if zeus.text_visible(label) {
+        fail("'{{label}}' is still on screen")
+    }
+}
+
+/// Exactly one host frame at `w`×`h`, the way a full-screen toggle arrives.
+fn one_frame(w: int, h: int) {
+    zeus.engine_layout(w, h)
+    zeus.engine_paint()
+}
+
+/// The video image's laid-out rect, as painted this frame.
+fn picture_is(what: string, x: int, y: int, w: int, h: int) {
+    let id = zeus.engine_find_text("Video")
+    if id <= 0 {
+        fail("{{what}}: no video image")
+    }
+    let gx = zeus.node_x(id)
+    let gy = zeus.node_y(id)
+    let gw = zeus.node_width(id)
+    let gh = zeus.node_height(id)
+    if gx != x || gy != y || gw != w || gh != h {
+        fail("{{what}}: picture at {{gx}},{{gy}} {{gw}}x{{gh}}, want {{x}},{{y}} {{w}}x{{h}}")
+    }
+}
+
+/// The "Vidy" label inside the title bar (the welcome screen has one too).
+fn bar_title(bar: int) -> int {
+    let mut id = bar + 1
+    while id < bar + 8 {
+        if zeus.node_label(id) == "Vidy" {
+            return id
+        }
+        id += 1
+    }
+    return 0
+}
+
+fn check(what: string, ok: bool) {
+    if !ok {
+        fail(what)
+    }
+}
+
+fn step(name: string) {
+    steps += 1
+    fmt.println("ok   {{name}}")
+}
+
+fn main() {
+    player.start()
+    zeus.window("vidy-e2e", 1180, 720)
+    zeus.root(approutes.app())
+    frames()
+
+    // The app-drawn title bar. No host bar yet (as on the web): it takes no
+    // space. A 28 dp bar with the window buttons' 78 dp on the left (macOS):
+    // the bar fills it edge to edge, the stage starts under it, and a press on
+    // the bar (not on a control) moves the window.
+    check("no bar without a host bar", zeus.engine_find_role("titlebar") == 0)
+    zeus.engine_set_titlebar(28, 78, 0)
+    frames()
+    let bar = zeus.engine_find_role("titlebar")
+    check("title bar shown", bar > 0)
+    check("title bar spans the window", zeus.node_x(bar) == 0 && zeus.node_width(bar) == 1180 &&
+                                        zeus.node_height(bar) == 28)
+    let title = bar_title(bar)
+    check("title centred on the window", zeus.node_x(title) + zeus.node_width(title) / 2 == 590)
+    check("stage under the bar", zeus.rect(player.stage_ref).y == 28 && zeus.rect(player.stage_ref).h == 692)
+    check("drag on the bar", zeus.engine_window_drag_at(300, 14) == 1)
+    check("drag on the title text", zeus.engine_window_drag_at(590, 14) == 1)
+    check("no drag on the stage", zeus.engine_window_drag_at(300, 300) == 0)
+    // Full screen: the host reports no bar, and the stage takes the window.
+    zeus.engine_set_titlebar(0, 0, 0)
+    frames()
+    check("bar gone in full screen", zeus.engine_find_role("titlebar") == 0)
+    check("stage fills full screen", zeus.rect(player.stage_ref).y == 0 && zeus.rect(player.stage_ref).h == 720)
+    check("no drag without a bar", zeus.engine_window_drag_at(300, 14) == 0)
+    zeus.engine_set_titlebar(28, 78, 0)
+    frames()
+    step("title bar")
+    zeus.engine_set_titlebar(0, 0, 0)
+    frames()
+
+    // Nothing loaded: the welcome, and no player chrome.
+    shows("Drop a video here, or open one.")
+    shows("Open file")
+    shows("Open URL")
+    hides("Close video")
+    step("empty state")
+
+    // Opening a file plays it and brings up the chrome.
+    player.enqueue("first.mp4", "/tmp/vidy-e2e/first.mp4", true)
+    frames()
+    shows("first.mp4")
+    shows("Pause (Space)")
+    shows("Close video")
+    hides("Drop a video here, or open one.")
+    check("playing after open", player.state.peek() == zeus.MEDIA_PLAYING)
+    step("open plays")
+
+    // Space pauses: feedback, the big play button, the store.
+    press(SPACE)
+    check("paused after space", player.state.peek() == zeus.MEDIA_PAUSED)
+    shows("Paused")
+    shows("Play")
+    shows("Play (Space)")
+    press(SPACE)
+    check("playing again after space", player.state.peek() == zeus.MEDIA_PLAYING)
+    step("space toggles play")
+
+    // L skips 10 s; the clock follows the host position.
+    press(108 /* l */)
+    check("position after L", player.pos.peek() == 10000)
+    shows("0:10 / 0:00")
+    shows("+10s")
+    press(112 /* p: past 3 s, "previous" restarts */)
+    check("restart after P", player.pos.peek() == 0)
+    step("seek keys")
+
+    // Speed: ] steps up, the chip shows it; the popover sets it back.
+    press(93 /* ] */)
+    check("rate after ]", player.rate.peek() == 125)
+    shows("1.25×")
+    click("Speed")
+    shows("Playback speed")
+    click("Normal")
+    check("rate from menu", player.rate.peek() == 100)
+    hides("Playback speed")
+    step("speed key and menu")
+
+    // Aspect: A cycles, the picture box follows.
+    press(97 /* a */)
+    check("aspect after A", player.aspect.peek() == ar.FILL)
+    shows("Aspect: Fill")
+    click("Aspect ratio (A)")
+    click("16:9")
+    check("aspect from menu", player.aspect.peek() == ar.R16_9)
+    check("16:9 box is 1180x663", player.box_w() == 1180 && player.box_h() == 663)
+    step("aspect key and menu")
+
+    // Full screen resizes the window in one step, and macOS zooms from a
+    // snapshot of that first frame: the picture must be right in it, not a
+    // poll later. One layout at the new size, then measure.
+    player.set_aspect(ar.FIT)
+    frames()
+    one_frame(1470, 920)
+    picture_is("fit, entering full screen", 0, 0, 1470, 920)
+    player.set_aspect(ar.R9_16)
+    frames()
+    picture_is("9:16 in full screen", (1470 - 517) / 2, 0, 517, 920)
+    one_frame(1180, 720)
+    picture_is("9:16, leaving full screen", (1180 - 405) / 2, 0, 405, 720)
+    player.set_aspect(ar.FIT)
+    frames()
+    step("picture follows a full-screen resize in the same frame")
+
+    // Mute by key, unmute by button; loop by key.
+    press(109 /* m */)
+    check("muted after M", player.muted.peek())
+    shows("Muted")
+    click("Mute (M)")
+    check("unmuted by button", !player.muted.peek())
+    press(114 /* r */)
+    check("looping after R", player.looping.peek())
+    shows("Loop on")
+    press(114 /* r */)
+    step("mute and loop")
+
+    // Playlist: queue a second file, switch to it, step back, remove it.
+    player.enqueue("second.mov", "/tmp/vidy-e2e/second.mov", false)
+    press(113 /* q */)
+    shows("Playlist")
+    shows("2 items")
+    click("second.mov")
+    check("second is current", player.cur.peek() == 1)
+    shows("second.mov")
+    press(112 /* p */)
+    check("back to first", player.cur.peek() == 0)
+    click("Remove second.mov")
+    shows("1 items")
+    press(ESC)
+    hides("1 items")
+    step("playlist")
+
+    // Shortcut sheet: H opens it, Escape closes it.
+    press(104 /* h */)
+    shows("Keyboard & gestures")
+    shows("Cycle aspect ratio")
+    // Two columns side by side on a wide window: View sits right of Playback,
+    // level with it (a row that overflows by a dp wraps them into one).
+    let play = zeus.engine_find_text("PLAYBACK")
+    let view = zeus.engine_find_text("VIEW")
+    check("help sections exist", play > 0 && view > 0)
+    check("help columns side by side", zeus.node_x(view) > zeus.node_x(play) + 200 &&
+                                       zeus.node_y(view) == zeus.node_y(play))
+    // The sheet stays inside the window either way.
+    let sheet = zeus.node_parent(zeus.node_parent(zeus.engine_find_text("Keyboard & gestures")))
+    check("help sheet fits a wide window", zeus.node_y(sheet) + zeus.node_height(sheet) <= 720)
+    one_frame(640, 480)
+    frames()
+    check("help sheet fits a small window", zeus.node_y(sheet) + zeus.node_height(sheet) <= 480)
+    one_frame(1180, 720)
+    frames()
+    press(ESC)
+    hides("Keyboard & gestures")
+    step("help sheet")
+
+    // Open URL: U opens the dialog; Open adds and plays the link.
+    press(117 /* u */)
+    shows("Open a URL")
+    player.url_text.set("  https://example.com/live/clip.m3u8?token=1  ")
+    frames()
+    click("Open")
+    hides("Open a URL")
+    check("url queued", player.pl_srcs.peek().len == 2)
+    check("url is current", player.cur.peek() == 1)
+    shows("clip.m3u8")
+    step("open url")
+
+    // Close drops the video and returns to the welcome.
+    click("Close video")
+    check("closed", player.src.peek() == "" && player.cur.peek() == -1)
+    shows("Drop a video here, or open one.")
+    hides("Close video")
+    step("close")
+
+    fmt.println("vidy e2e: {{steps}} steps ok")
+}
