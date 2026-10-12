@@ -1,0 +1,95 @@
+//! Keyboard: every shortcut, and the rows the help sheet shows for them.
+//! Bindings call into the store; nothing here holds state.
+
+import "std:zeus"
+import "store.loam" as player
+
+const K_LEFT: int = 1000
+const K_RIGHT: int = 1001
+const K_UP: int = 1002
+const K_DOWN: int = 1003
+
+/// Arrow keys are global shortcuts, but a focused text field (the URL box)
+/// still needs them for its caret: hand the key back in that case.
+fn arrow(key: int, run: fn()) {
+    if zeus.engine_focus_captures_text() != 0 {
+        zeus.engine_key(key)
+        return
+    }
+    run()
+}
+
+fn keymap() -> []KeyBind {
+    let mut ks = []KeyBind {
+        zeus.key_bind_global("space", "vidy.toggle", fn() { player.toggle() }),
+        zeus.key_bind_global("k", "vidy.toggle_k", fn() { player.toggle() }),
+        zeus.key_bind_global("left", "vidy.back", fn() { arrow(K_LEFT, fn() { player.skip(-player.NUDGE_MS) }) }),
+        zeus.key_bind_global("right", "vidy.fwd", fn() { arrow(K_RIGHT, fn() { player.skip(player.NUDGE_MS) }) }),
+        zeus.key_bind_global("j", "vidy.back10", fn() { player.skip(-player.SKIP_MS) }),
+        zeus.key_bind_global("l", "vidy.fwd10", fn() { player.skip(player.SKIP_MS) }),
+        zeus.key_bind_global("up", "vidy.vol_up", fn() { arrow(K_UP, fn() { player.nudge_volume(5) }) }),
+        zeus.key_bind_global("down", "vidy.vol_down", fn() { arrow(K_DOWN, fn() { player.nudge_volume(-5) }) }),
+        zeus.key_bind_global("m", "vidy.mute", fn() { player.toggle_mute() }),
+        zeus.key_bind_global("f", "vidy.full", fn() { player.toggle_full() }),
+        zeus.key_bind_global("escape", "vidy.escape", fn() { player.escape() }),
+        zeus.key_bind_global("home", "vidy.home", fn() { player.seek_to(0) }),
+        zeus.key_bind_global("end", "vidy.end", fn() { player.seek_to(player.dur.peek() - 500) }),
+        zeus.key_bind_global(",", "vidy.frame_back", fn() { player.step_frame(-1) }),
+        zeus.key_bind_global(".", "vidy.frame_fwd", fn() { player.step_frame(1) }),
+        zeus.key_bind_global("[", "vidy.slower", fn() { player.step_rate(-1) }),
+        zeus.key_bind_global("]", "vidy.faster", fn() { player.step_rate(1) }),
+        zeus.key_bind_global("shift+,", "vidy.slower2", fn() { player.step_rate(-1) }),
+        zeus.key_bind_global("shift+.", "vidy.faster2", fn() { player.step_rate(1) }),
+        zeus.key_bind_global("=", "vidy.rate_reset", fn() { player.set_rate(100) }),
+        zeus.key_bind_global("a", "vidy.aspect", fn() { player.cycle_aspect() }),
+        zeus.key_bind_global("r", "vidy.loop", fn() { player.toggle_loop() }),
+        zeus.key_bind_global("o", "vidy.open", fn() { player.pick() }),
+        zeus.key_bind_global("cmd+o", "vidy.open_cmd", fn() { player.pick() }),
+        zeus.key_bind_global("ctrl+o", "vidy.open_ctrl", fn() { player.pick() }),
+        zeus.key_bind_global("u", "vidy.url", fn() { player.url_open.set(true) }),
+        zeus.key_bind_global("n", "vidy.next", fn() { player.next() }),
+        zeus.key_bind_global("p", "vidy.prev", fn() { player.prev() }),
+        zeus.key_bind_global("q", "vidy.list", fn() { player.list_open.set(!player.list_open.peek()) }),
+        zeus.key_bind_global("shift+/", "vidy.help", fn() { player.help.set(!player.help.peek()) }),
+        zeus.key_bind_global("h", "vidy.help_h", fn() { player.help.set(!player.help.peek()) }),
+    }
+    for n in 0..10 {
+        push(ks, zeus.key_bind_global("{{n}}", "vidy.jump{{n}}", fn() { player.jump_tenth(n) }))
+    }
+    return ks
+}
+
+/// The help sheet, as flat pairs: (keys, what they do). Keys are keycaps
+/// split by `|`; `~` between two caps reads as a range ("0 – 9"). A `#` key
+/// opens a section (its pair is the title) and `##` starts the second column.
+fn rows() -> []string {
+    return []string {
+        "#", "Playback",
+        "Space|K", "Play / pause",
+        "←|→", "Back / forward 5 s",
+        "J|L", "Back / forward 10 s",
+        ",|.", "Previous / next frame",
+        "0~9", "Jump to 0–90%",
+        "Home|End", "Start / end",
+        "#", "Speed & sound",
+        "[|]", "Slower / faster",
+        "<|>", "Slower / faster",
+        "=", "Normal speed",
+        "↑|↓", "Volume up / down",
+        "M", "Mute",
+        "##", "",
+        "#", "View",
+        "F", "Full screen",
+        "A", "Cycle aspect ratio",
+        "R", "Loop",
+        "H|?", "This sheet",
+        "Esc", "Close menu / exit full screen",
+        "#", "Files & playlist",
+        "O|U", "Open file / open URL",
+        "N|P", "Next / previous",
+        "Q", "Playlist",
+        "#", "Mouse & touch",
+        "Double-click", "Full screen",
+        "Double-tap side", "Back / forward 10 s",
+    }
+}

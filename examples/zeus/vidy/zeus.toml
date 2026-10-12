@@ -1,0 +1,8 @@
+name = "vidy"
+title = "Vidy"
+bundle_id = "com.loam.vidy"
+version = "1.0"
+targets = ["web", "macos", "ios"]
+routes = "routes"
+theme = "theme.loam"
+revalidate = 60

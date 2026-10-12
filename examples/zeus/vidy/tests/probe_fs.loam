@@ -1,0 +1,24 @@
+import "std:zeus"
+import "std:fmt"
+import "../app_routes.loam" as approutes
+import "../player/store.loam" as player
+
+fn frame(w: int, h: int) {
+    for i in 0..3 {
+        zeus.engine_layout(w, h)
+        zeus.engine_paint()
+    }
+    let id = zeus.engine_find_text("Video")
+    let r = zeus.rect(player.stage_ref)
+    fmt.println("win {{w}}x{{h}} stage {{r.w}}x{{r.h}} box {{player.box_w()}}x{{player.box_h()}} image {{zeus.node_x(id)}},{{zeus.node_y(id)}} {{zeus.node_width(id)}}x{{zeus.node_height(id)}}")
+}
+
+fn main() {
+    player.start()
+    player.enqueue("v.mp4", "/tmp/v.mp4", true)
+    zeus.window("t", 1180, 720)
+    let rt = zeus.root(approutes.app())
+    frame(1180, 720)
+    frame(1512, 982)
+    frame(1180, 720)
+}

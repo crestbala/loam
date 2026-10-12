@@ -4492,8 +4492,13 @@ int typecheck_modules(LoamModule *mods, int nmods) {
         }
     }
 
-    /* pass 2a: type every module `let` so `mod.global` can see imported state. */
+    /* pass 2a: type every module `let` so `mod.global` can see imported state.
+       Imports first (`done_rank` is the load post-order): a global initialised
+       from an imported one (`let s = zeus.signal(ar.FIT)`) needs that type
+       already, or it reads as void. */
+    for (int r = 0; r < nmods; r++)
     for (int m = 0; m < nmods; m++) {
+        if (mods[m].done_rank != r) continue;
         Gcur = m;
         cur_mod_name = mods[m].name;
         AstNode *p = mods[m].ast;

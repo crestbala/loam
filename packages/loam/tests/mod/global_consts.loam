@@ -1,0 +1,7 @@
+// Constants and a global that an importer's module-level `let`s read
+// (`golden/module_global_from_import.loam`).
+
+const START: int = 4
+const LABEL: string = "four"
+
+let table = []int { 1, 2, 3 }

@@ -56,6 +56,13 @@ fn plat_text_wrap(x: int, y: int, s: string, rgb: int, font: int, max_w: int) {}
 fn plat_set_window(title: string, width: int, height: int) {}
 /// Update the host window title without reopening it (router `Meta.title`).
 fn plat_set_title(title: string) {}
+/// Window chrome: 0 the host's title bar, 1 drawn by the app (`TitleBar`).
+fn plat_set_chrome(mode: int) {}
+/// The host title bar's box under app-drawn chrome: [height, lead, trail] in
+/// points (window buttons' room on the left / right). Zero without one.
+fn plat_titlebar_get(out: &mut []int) {}
+/// Write the title-bar box (desktop hosts do; tests through `engine_set_titlebar`).
+fn plat_set_titlebar_box(height: int, lead: int, trail: int) {}
 /// Put `text` on the system clipboard (`CopyButton`). The runtime also keeps
 /// it, so `plat_clipboard_last` reads it back on a headless run.
 fn plat_clipboard_write(text: string) {}
@@ -84,6 +91,25 @@ fn plat_image_size(src: string, w: &mut int, h: &mut int) {}
 /// if the host completes later via `engine_picked_image`. `w`/`h` are the
 /// image's intrinsic size in layout points (0 if still loading).
 fn plat_pick_image(w: &mut int, h: &mut int) -> string {}
+/// Media playback (video and audio), decoded and played by the host: an
+/// HTMLVideoElement on the web, AVPlayer on macOS. `slot` (1..7) names one
+/// player. An `Image` whose src is `"media:<slot>"` paints that player's
+/// current frame, and hosts keep frames coming while one plays. Returns 1
+/// when the host accepted the source (it may still fail to load later:
+/// watch `plat_media_get(slot, MEDIA_STATE)`).
+fn plat_media_open(slot: int, src: string) -> int {}
+/// Play / pause / seek / rate / volume / mute / loop / close (`MEDIA_CMD_*`).
+fn plat_media_cmd(slot: int, cmd: int, value: int) {}
+/// Position, duration, state, video size, buffered end (`MEDIA_GET_*`).
+fn plat_media_get(slot: int, what: int) -> int {}
+/// Text about a player: 0 = last error, 1 = last picked file as
+/// `"name\nsrc"` (slot ignored; `MEDIA_GET_PICKED` counts picks).
+fn plat_media_text(slot: int, what: int) -> string {}
+/// Open the host's file picker (or accept a dropped file) for media. The
+/// result arrives later: `plat_media_get(0, MEDIA_GET_PICKED)` moves.
+fn plat_media_pick() {}
+/// Enter (1) or leave (0) full screen, or ask (-1). Returns 1 when full screen.
+fn plat_fullscreen(on: int) -> int {}
 fn plat_save() {}
 /// The one blit of a finished frame, and the only place a host may touch our
 /// pixels: `buf` is the framebuffer Zeus rasterized itself (`physical_w *

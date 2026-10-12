@@ -1,0 +1,54 @@
+//! The player screen: a black stage holding the picture, with the chrome
+//! floating over it. Each layer lives in its own file; every one reads
+//! `player/store.loam` and none talks to the host player directly.
+
+import "std:zeus"
+import "../player/store.loam" as player
+import "../player/keys.loam" as shortcuts
+import { Picture, Empty, Busy, Osd, TapBubble, ErrorCard, CenterPlay } from "overlays.loam"
+import { TopBar } from "topbar.loam"
+import { Panel } from "controls.loam"
+import { SpeedMenu, AspectMenu } from "menus.loam"
+import { Playlist } from "playlist.loam"
+import { Help } from "help.loam"
+import { UrlDialog } from "url_dialog.loam"
+
+/// The whole window.
+fn Player() -> Node {
+    // The router hosts the page in two plain column boxes (its `Match` and
+    // `Boundary`) that size to their content; a player has none, so it asks
+    // every ancestor to stretch and the stage gets the full window.
+    zeus.on_mount(fn() {
+        let mut n = zeus.parent_of(zeus.ref_node(player.stage_ref))
+        while n.id > 0 {
+            zeus.grow(n, 1)
+            n = zeus.parent_of(n)
+        }
+        // Size-derived layout (the ratio modes' picture box, the narrow-window
+        // breakpoints) follows a resize in the same frame, not a poll later.
+        zeus.on_resize(player.stage_ref, fn() { player.measure_stage() })
+    })
+    return zeus.Box(ref = player.stage_ref,
+                    style = Style(grow = 1, width = pct(100), height = pct(100), overflow = Overflow.Hidden,
+                                  background = "#000000", align = Align.Center, justify = Align.Center,
+                                  cursor = if player.controls.get() || !player.playing() { "default" } else { "none" }),
+                    keys = shortcuts.keymap(),
+                    label = "Video player",
+                    on_click = fn() { player.stage_click() }) {
+        Picture()
+        Empty()
+        Busy()
+        Osd()
+        TapBubble(-1)
+        TapBubble(1)
+        ErrorCard()
+        TopBar()
+        CenterPlay()
+        Panel()
+        SpeedMenu()
+        AspectMenu()
+        Playlist()
+        Help()
+        UrlDialog()
+    }
+}

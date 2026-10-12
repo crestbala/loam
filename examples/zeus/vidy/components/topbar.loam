@@ -1,0 +1,34 @@
+//! The title pill and the round buttons along the top edge.
+
+import "std:zeus"
+import "std:zui"
+import "../player/store.loam" as player
+import "icons.loam"
+import { WHITE, FAINT, GLASS, ACCENT } from "../theme.loam"
+import { Round } from "kit.loam"
+
+fn TopBar() -> Node {
+    return zeus.Box(style = Style(position = pos_absolute(), inset = Edges(top = 0, left = 0, right = 0),
+                                  direction = Direction.Row, align = Align.Center, gap = 10, padding = edges2(12, 16)),
+                    visible = player.src.get() != "" && player.controls.get(),
+                    enter = Enter.Fade) {
+        zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 10, padding = edges2(7, 14),
+                               radius = corners(999), background = GLASS, opacity = 72, maxWidth = 640),
+                 on_click = fn() { player.wake() }) {
+            zui.Icon(icons.LOGO, 18, ACCENT)
+            zeus.Text(player.title.get(), style = Style(font = 13, color = WHITE, ellipsis = true))
+            zeus.Text(fn() -> string {
+                let w = player.vid_w.get()
+                let h = player.vid_h.get()
+                if w <= 0 {
+                    return ""
+                }
+                return "{{w}}×{{h}}"
+            }, style = Style(font = 11, color = FAINT))
+        }
+        zui.Grow()
+        Round(icons.LIST, "Playlist (Q)", fn() { player.list_open.set(!player.list_open.peek()) })
+        Round(icons.KEYBOARD, "Shortcuts (H)", fn() { player.help.set(true) })
+        Round(icons.CLOSE, "Close video", fn() { player.close() })
+    }
+}

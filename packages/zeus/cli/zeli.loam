@@ -2672,7 +2672,7 @@ fn scaffold_files(name: string) -> []ScaffoldFile {
     let mut out = []ScaffoldFile {}
     push(out, ScaffoldFile {
         rel: "zeus.toml",
-        body: "name = \"{{name}}\"\ntargets = [\"web\", \"macos\", \"ios\", \"android\", \"server\"]\nroutes = \"routes\"\ntheme = \"theme.loam\"\nrevalidate = 60\n",
+        body: "name = \"{{name}}\"\ntargets = [\"web\", \"macos\", \"ios\"]\nroutes = \"routes\"\ntheme = \"theme.loam\"\nrevalidate = 60\n",
     })
     push(out, ScaffoldFile {
         rel: ".gitignore",
@@ -2832,6 +2832,35 @@ fn known_target(t: string) -> bool {
     return false
 }
 
+/// The targets an app declares in `zeus.toml` (`targets = ["web", "macos"]`),
+/// which is what `zeli build` builds when no `--targets` is given. Every target
+/// comes out of the one entry, so declaring one is all it takes to get it; with
+/// no `zeus.toml` or no `targets` line, all of them. An unknown name is fatal,
+/// like a misspelt `--targets`.
+fn app_targets(appdir: string) -> []string {
+    let toml = sys.read_file(join(appdir, "zeus.toml"))
+    let lines = split_on(toml, 10)
+    for i in 0..lines.len {
+        let l = trim(lines[i])
+        if starts_with(l, "targets") {
+            let eq = split_on(l, 61 /* = */)
+            if eq.len >= 2 {
+                let mut names = []int {}
+                let v = eq[1]
+                for j in 0..v.len {
+                    let c = v[j]
+                    // Keep the names and their commas; drop brackets, quotes, spaces.
+                    if c != 91 && c != 93 && c != 34 && c != 39 && c != 32 {
+                        push(names, c)
+                    }
+                }
+                return parse_targets(string_from_bytes(names), true)
+            }
+        }
+    }
+    return all_targets()
+}
+
 /// `--targets a,b` as a list. An unknown name is fatal; with no argument at all
 /// every target is built.
 fn parse_targets(arg: string, given: bool) -> []string {
@@ -2872,6 +2901,163 @@ fn out_name(t: string, stem: string) -> string {
         return cat(stem, ".wasm")
     }
     return stem
+}
+
+// --- macos: an app bundle next to the binary ---
+//
+// A bare Mach-O opens in Terminal when double-clicked; Finder launches an app
+// only from a `.app` bundle. So a macos build also writes
+// `build/macos/<Title>.app`: Info.plist, the binary, an icon, an ad-hoc
+// signature. From zeus.toml: `title` (bundle and menu name; default the
+// capitalised `name`) and `bundle_id` (default `com.loam.<name>`). From the
+// app dir: `assets/icon.icns`, or `assets/icon.svg` rendered with the system's
+// own tools; `macos/Info.plist.part`, raw plist keys added to the dict (document
+// types, usage strings).
+
+/// A string setting from zeus.toml (`key = "value"`), or "".
+fn toml_str(appdir: string, key: string) -> string {
+    let lines = split_on(sys.read_file(join(appdir, "zeus.toml")), 10)
+    for i in 0..lines.len {
+        let kv = split_on(lines[i], 61 /* = */)
+        if kv.len >= 2 && trim(kv[0]) == key {
+            let v = trim(kv[1])
+            if v.len >= 2 && v[0] == 34 && v[v.len - 1] == 34 {
+                return slice_str(v, 1, v.len - 1)
+            }
+            return v
+        }
+    }
+    return ""
+}
+
+fn slice_str(s: string, a: int, b: int) -> string {
+    let mut x = []int {}
+    for i in a..b {
+        push(x, s[i])
+    }
+    return string_from_bytes(x)
+}
+
+/// The app's display name: `title`, else `name` with its first letter raised.
+fn bundle_title(appdir: string) -> string {
+    let t = toml_str(appdir, "title")
+    if t != "" {
+        return t
+    }
+    let mut n = toml_str(appdir, "name")
+    if n == "" {
+        n = base_name(appdir)
+    }
+    let mut x = []int {}
+    for i in 0..n.len {
+        let c = n[i]
+        push(x, if i == 0 && c >= 97 && c <= 122 { c - 32 } else { c })
+    }
+    return string_from_bytes(x)
+}
+
+fn bundle_id(appdir: string) -> string {
+    let id = toml_str(appdir, "bundle_id")
+    if id != "" {
+        return id
+    }
+    let mut n = toml_str(appdir, "name")
+    if n == "" {
+        n = base_name(appdir)
+    }
+    let mut x = []int {}
+    for i in 0..n.len {
+        let c = n[i]
+        if (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 45 {
+            push(x, c)
+        } else if c >= 65 && c <= 90 {
+            push(x, c + 32)
+        }
+    }
+    return cat("com.loam.", string_from_bytes(x))
+}
+
+/// AppKit draws an SVG into a transparent square PNG (macOS 14+ reads SVG).
+/// Quick Look's thumbnailer would paint it on white, which shows in the Dock.
+fn icon_render_js() -> string {
+    return "ObjC.import('AppKit')\nfunction run(argv) {\n    var size = parseInt(argv[2], 10)\n    var img = $.NSImage.alloc.initWithContentsOfFile(argv[0])\n    if (!img || img.isNil()) { throw new Error('cannot read ' + argv[0]) }\n    var rep = $.NSBitmapImageRep.alloc.initWithBitmapDataPlanesPixelsWidePixelsHighBitsPerSampleSamplesPerPixelHasAlphaIsPlanarColorSpaceNameBytesPerRowBitsPerPixel(null, size, size, 8, 4, true, false, $.NSDeviceRGBColorSpace, 0, 0)\n    $.NSGraphicsContext.saveGraphicsState\n    $.NSGraphicsContext.setCurrentContext($.NSGraphicsContext.graphicsContextWithBitmapImageRep(rep))\n    img.drawInRectFromRectOperationFraction($.NSMakeRect(0, 0, size, size), $.NSZeroRect, $.NSCompositingOperationSourceOver, 1)\n    $.NSGraphicsContext.restoreGraphicsState\n    var png = rep.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $())\n    if (!png.writeToFileAtomically(argv[1], true)) { throw new Error('cannot write ' + argv[1]) }\n}\n"
+}
+
+/// `svg` → `.icns` at `out`: render at 1024, scale an iconset with `sips`,
+/// pack it with `iconutil`. False (and no file) when any step fails.
+fn render_icns(svg: string, out: string) -> bool {
+    let work = trim(sys.exec("mktemp -d \"${TMPDIR:-/tmp}/zeli-icon.XXXXXX\""))
+    if work == "" {
+        return false
+    }
+    let js = join(work, "render.js")
+    sys.write_file(js, icon_render_js())
+    let png = join(work, "icon.png")
+    let set = join(work, "icon.iconset")
+    let mut script = "set -e; mkdir -p {{shell_quote(set)}}; osascript -l JavaScript {{shell_quote(js)}} {{shell_quote(svg)}} {{shell_quote(png)}} 1024 >/dev/null; "
+    let sizes = []int { 16, 32, 128, 256, 512 }
+    for i in 0..sizes.len {
+        let s = sizes[i]
+        let d = s * 2
+        script = cat(script, "sips -z {{s}} {{s}} {{shell_quote(png)}} --out {{shell_quote(set)}}/icon_{{s}}x{{s}}.png >/dev/null; ")
+        script = cat(script, "sips -z {{d}} {{d}} {{shell_quote(png)}} --out {{shell_quote(set)}}/icon_{{s}}x{{s}}@2x.png >/dev/null; ")
+    }
+    script = cat(script, "iconutil -c icns {{shell_quote(set)}} -o {{shell_quote(out)}}")
+    sys.exec("sh -c {{shell_quote(script)}} 2>/dev/null")
+    let ok = sys.exec_status() == 0 && sys.exists(out) == 1
+    sys.exec("rm -rf {{shell_quote(work)}}")
+    return ok
+}
+
+/// Wrap the macos binary `bin` into `build/macos/<Title>.app`; the bundle's
+/// path, or "" when it could not be written.
+fn macos_bundle(appdir: string, bin: string) -> string {
+    let title = bundle_title(appdir)
+    if title == "" {
+        return ""
+    }
+    let app = join(join(join(appdir, "build"), "macos"), cat(title, ".app"))
+    let contents = join(app, "Contents")
+    let res = join(contents, "Resources")
+    let macos = join(contents, "MacOS")
+    let exe = join(macos, title)
+    sys.exec("rm -rf {{shell_quote(app)}} && mkdir -p {{shell_quote(macos)}} {{shell_quote(res)}} && cp {{shell_quote(bin)}} {{shell_quote(exe)}}")
+    if sys.exec_status() != 0 {
+        return ""
+    }
+    sys.write_file(join(contents, "PkgInfo"), "APPL????")
+    let mut icon_key = ""
+    let icns = join(res, cat(title, ".icns"))
+    let given = join(join(appdir, "assets"), "icon.icns")
+    let svg = join(join(appdir, "assets"), "icon.svg")
+    if sys.exists(given) == 1 {
+        sys.exec("cp {{shell_quote(given)}} {{shell_quote(icns)}}")
+    } else if sys.exists(svg) == 1 && !render_icns(svg, icns) {
+        fmt.println("zeli: macos: could not render assets/icon.svg; the app has no icon")
+    }
+    if sys.exists(icns) == 1 {
+        icon_key = "    <key>CFBundleIconFile</key><string>{{title}}</string>\n"
+    }
+    let part = join(join(appdir, "macos"), "Info.plist.part")
+    let mut extra = ""
+    if sys.exists(part) == 1 {
+        extra = sys.read_file(part)
+    }
+    let mut version = toml_str(appdir, "version")
+    if version == "" {
+        version = "1.0"
+    }
+    let plist = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n    <key>CFBundleName</key><string>{{title}}</string>\n    <key>CFBundleDisplayName</key><string>{{title}}</string>\n    <key>CFBundleIdentifier</key><string>{{bundle_id(appdir)}}</string>\n    <key>CFBundleExecutable</key><string>{{title}}</string>\n    <key>CFBundlePackageType</key><string>APPL</string>\n    <key>CFBundleShortVersionString</key><string>{{version}}</string>\n    <key>CFBundleVersion</key><string>{{version}}</string>\n{{icon_key}}    <key>LSMinimumSystemVersion</key><string>11.0</string>\n    <key>NSHighResolutionCapable</key><true/>\n    <key>NSSupportsAutomaticGraphicsSwitching</key><true/>\n{{extra}}</dict>\n</plist>\n"
+    let info = join(contents, "Info.plist")
+    sys.write_file(info, plist)
+    sys.exec("plutil -lint -s {{shell_quote(info)}}")
+    if sys.exec_status() != 0 {
+        fmt.println("zeli: macos: Info.plist is not valid (check macos/Info.plist.part)")
+        return ""
+    }
+    // Ad-hoc: lets Gatekeeper and Apple silicon run the locally built bundle.
+    sys.exec("codesign --force --sign - {{shell_quote(app)}} >/dev/null 2>&1")
+    return app
 }
 
 /// `<appdir>/app.loam`, else `<appdir>/<dirname>.loam`, else `main.loam`.
@@ -2951,6 +3137,12 @@ fn build(appdir: string, targets: []string, base: string) -> int {
             built += 1
             if t == "web" && sys.exists(join(appdir, "routes")) == 1 {
                 emit_web_shell(appdir, stem, base)
+            }
+            if t == "macos" && sys.target() == "native" && sys.exists("/usr/bin/codesign") == 1 {
+                let bundle = macos_bundle(appdir, out)
+                if bundle != "" {
+                    fmt.println("zeli: macos app -> {{rel_to(repo_root(), bundle)}}")
+                }
             }
         } else {
             let body = trim(log)
@@ -3277,6 +3469,7 @@ fn main() {
     }
     if cmd == "build" {
         let mut targets = all_targets()
+        let mut given = false
         let mut base = ""
         let mut rest = []string {}
         let mut i = 2
@@ -3289,6 +3482,7 @@ fn main() {
                 } else {
                     targets = parse_targets("", false)
                 }
+                given = true
             } else {
                 if a == "--base" {
                     if i + 1 < argv.len {
@@ -3304,7 +3498,11 @@ fn main() {
         if rest.len < 1 {
             die("usage: zeli build <appdir> [--targets a,b] [--base https://host]")
         }
-        sys.exit(build(abs_path(rest[0]), targets, base))
+        let appdir = abs_path(rest[0])
+        if !given {
+            targets = app_targets(appdir)
+        }
+        sys.exit(build(appdir, targets, base))
     }
     if cmd == "pkg" {
         if argv.len < 3 || argv[2] != "sync" {

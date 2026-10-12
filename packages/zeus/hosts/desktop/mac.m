@@ -2,6 +2,9 @@
 #import <Cocoa/Cocoa.h>
 #import <QuartzCore/QuartzCore.h>
 #import <IOSurface/IOSurface.h>
+#import <AVFoundation/AVFoundation.h>
+#import <CoreVideo/CoreVideo.h>
+#import <VideoToolbox/VideoToolbox.h>
 #include "zeus_rt.h"
 #include "zeus_key.h"
 #include <string.h>
@@ -1098,6 +1101,12 @@ static NSImage *mac_img_get(const char *src) {
     return img;
 }
 
+/* Media frames ride the image op (see the media section below). */
+static int64_t mac_media_slot_of(const char *src);
+static int64_t mac_media_get(int64_t slot, int64_t what);
+static void mac_media_draw(int64_t x, int64_t y, int64_t w, int64_t h, int64_t slot,
+                           int64_t radius, int64_t alpha, int64_t fit);
+
 static NSRect mac_image_dest(int64_t x, int64_t y, int64_t w, int64_t h,
                              int64_t iw, int64_t ih, int64_t fit) {
     int64_t dw, dh;
@@ -1123,6 +1132,10 @@ static void mac_image(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
     CGFloat a, rad;
     (void)ctx;
     if (w <= 0 || h <= 0) return;
+    if (mac_media_slot_of(src) >= 0) {
+        mac_media_draw(x, y, w, h, mac_media_slot_of(src), radius, alpha, fit);
+        return;
+    }
     img = mac_img_get(src);
     if (!img) return;
     a = alpha < 0 ? 0 : (alpha > 255 ? 1.0 : (CGFloat)alpha / 255.0);
@@ -1179,11 +1192,360 @@ static void mac_image_size(const char *src, int64_t *w, int64_t *h) {
     if (w) *w = 0;
     if (h) *h = 0;
     if (!src) return;
+    if (mac_media_slot_of(src) >= 0) {
+        if (w) *w = mac_media_get(mac_media_slot_of(src), 4);
+        if (h) *h = mac_media_get(mac_media_slot_of(src), 5);
+        return;
+    }
     img = mac_img_get(src);
     if (!img) return;
     sz = [img size];
     if (w) *w = (int64_t)(sz.width + 0.5);
     if (h) *h = (int64_t)(sz.height + 0.5);
+}
+
+/* ── media playback (`plat_media_*`) ─────────────────────────────────────
+   One AVPlayer per slot. Frames come out of an AVPlayerItemVideoOutput as
+   BGRA pixel buffers; each NEW buffer becomes one CGImage (VideoToolbox, no
+   copy of ours) that `mac_image` draws for a `media:<slot>` src, so the video
+   is just another image op in the draw list and composites under the
+   controls like anything else. The previous frame is kept and redrawn until
+   a newer one is due. `mac_frame` asks for frames while a player runs. */
+enum { MEDIA_SLOTS_MAX = 8 };
+typedef struct {
+    AVPlayer *player;
+    AVPlayerItem *item;
+    AVPlayerItemVideoOutput *out;
+    id end_obs;
+    CGImageRef frame;
+    int64_t fw, fh;
+    float rate;
+    int loop, ended, seeking;
+    int64_t pending_seek; /* -1 = none; a scrub coalesces to the latest point */
+    char err[256];
+} MacMedia;
+static MacMedia g_media[MEDIA_SLOTS_MAX];
+static int g_media_init;
+
+static MacMedia *mac_media_at(int64_t slot) {
+    int i;
+    if (!g_media_init) {
+        for (i = 0; i < MEDIA_SLOTS_MAX; i++) {
+            g_media[i].rate = 1.0f;
+            g_media[i].pending_seek = -1;
+        }
+        g_media_init = 1;
+    }
+    if (slot <= 0 || slot >= MEDIA_SLOTS_MAX) return NULL;
+    return &g_media[slot];
+}
+
+static void mac_media_release(MacMedia *m) {
+    if (m->end_obs) {
+        [[NSNotificationCenter defaultCenter] removeObserver:m->end_obs];
+        [m->end_obs release];
+        m->end_obs = nil;
+    }
+    if (m->player) {
+        [m->player pause];
+        [m->player replaceCurrentItemWithPlayerItem:nil];
+        [m->player release];
+        m->player = nil;
+    }
+    if (m->item && m->out) [m->item removeOutput:m->out];
+    [m->out release];
+    m->out = nil;
+    [m->item release];
+    m->item = nil;
+    if (m->frame) CGImageRelease(m->frame);
+    m->frame = NULL;
+    m->fw = m->fh = 0;
+    m->ended = 0;
+    m->seeking = 0;
+    m->pending_seek = -1;
+    m->err[0] = 0;
+}
+
+static void mac_media_seek_now(MacMedia *m, int64_t ms);
+
+static void mac_media_seek_done(MacMedia *m) {
+    int64_t next = m->pending_seek;
+    m->seeking = 0;
+    if (next >= 0) {
+        m->pending_seek = -1;
+        mac_media_seek_now(m, next);
+    }
+    if (g_view) [g_view setNeedsDisplay:YES];
+}
+
+static void mac_media_seek_now(MacMedia *m, int64_t ms) {
+    CMTime t = CMTimeMake(ms, 1000);
+    if (!m->player) return;
+    m->seeking = 1;
+    m->ended = 0;
+    [m->player seekToTime:t
+          toleranceBefore:kCMTimeZero
+           toleranceAfter:kCMTimeZero
+        completionHandler:^(BOOL finished) {
+        (void)finished;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            mac_media_seek_done(m);
+        });
+    }];
+}
+
+static NSURL *mac_media_url(const char *src) {
+    NSString *s = [NSString stringWithUTF8String:src];
+    if (!s) return nil;
+    if ([s hasPrefix:@"http://"] || [s hasPrefix:@"https://"] || [s hasPrefix:@"file://"])
+        return [NSURL URLWithString:s];
+    return [NSURL fileURLWithPath:[s stringByExpandingTildeInPath]];
+}
+
+static int64_t mac_media_open(int64_t slot, const char *src) {
+    MacMedia *m = mac_media_at(slot);
+    NSURL *url;
+    NSDictionary *attrs;
+    if (!m) return 0;
+    mac_media_release(m);
+    if (!src || !src[0]) return 0;
+    url = mac_media_url(src);
+    if (!url) {
+        snprintf(m->err, sizeof m->err, "Not a valid path or URL.");
+        return 0;
+    }
+    m->item = [[AVPlayerItem alloc] initWithURL:url];
+    attrs = @{
+        (id)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA),
+        (id)kCVPixelBufferIOSurfacePropertiesKey : @{},
+    };
+    m->out = [[AVPlayerItemVideoOutput alloc] initWithPixelBufferAttributes:attrs];
+    [m->item addOutput:m->out];
+    m->player = [[AVPlayer alloc] initWithPlayerItem:m->item];
+    m->player.actionAtItemEnd = AVPlayerActionAtItemEndPause;
+    m->end_obs = [[[NSNotificationCenter defaultCenter]
+        addObserverForName:AVPlayerItemDidPlayToEndTimeNotification
+                    object:m->item
+                     queue:[NSOperationQueue mainQueue]
+                usingBlock:^(NSNotification *n) {
+        (void)n;
+        if (m->loop && m->player) {
+            [m->player seekToTime:kCMTimeZero];
+            m->player.rate = m->rate;
+        } else {
+            m->ended = 1;
+        }
+        if (g_view) [g_view setNeedsDisplay:YES];
+    }] retain];
+    return 1;
+}
+
+static void mac_media_cmd(int64_t slot, int64_t cmd, int64_t value) {
+    MacMedia *m = mac_media_at(slot);
+    if (!m || !m->player) return;
+    switch (cmd) {
+    case 1: /* play: from the top again once it has ended */
+        if (m->ended) {
+            m->ended = 0;
+            [m->player seekToTime:kCMTimeZero];
+        }
+        m->player.rate = m->rate;
+        break;
+    case 2:
+        [m->player pause];
+        break;
+    case 3:
+        if (value < 0) value = 0;
+        if (m->seeking) m->pending_seek = value;
+        else mac_media_seek_now(m, value);
+        break;
+    case 4:
+        m->rate = (float)value / 100.0f;
+        if (m->rate < 0.0625f) m->rate = 0.0625f;
+        if (m->rate > 16.0f) m->rate = 16.0f;
+        if (@available(macOS 13.0, *)) m->player.defaultRate = m->rate;
+        if (m->player.rate != 0.0f) m->player.rate = m->rate;
+        break;
+    case 5:
+        m->player.volume = (float)(value < 0 ? 0 : (value > 100 ? 100 : value)) / 100.0f;
+        break;
+    case 6:
+        m->player.muted = value ? YES : NO;
+        break;
+    case 7:
+        m->loop = value ? 1 : 0;
+        break;
+    case 8:
+        mac_media_release(m);
+        break;
+    }
+    if (g_view) [g_view setNeedsDisplay:YES];
+}
+
+static int64_t mac_media_ms(CMTime t) {
+    if (!CMTIME_IS_NUMERIC(t)) return 0;
+    return (int64_t)(CMTimeGetSeconds(t) * 1000.0 + 0.5);
+}
+
+static int64_t mac_media_state(MacMedia *m) {
+    if (!m->player || !m->item) return m->err[0] ? 5 : 0;
+    if (m->item.status == AVPlayerItemStatusFailed) {
+        if (!m->err[0]) {
+            NSError *e = m->item.error;
+            NSString *why = e ? (e.localizedFailureReason ?: e.localizedDescription) : nil;
+            snprintf(m->err, sizeof m->err, "%s",
+                     why ? [why UTF8String] : "This file could not be played.");
+        }
+        return 5;
+    }
+    if (m->item.status != AVPlayerItemStatusReadyToPlay) return 1;
+    if (m->ended) return 4;
+    if (m->player.timeControlStatus == AVPlayerTimeControlStatusPlaying) return m->seeking ? 6 : 3;
+    if (m->player.timeControlStatus == AVPlayerTimeControlStatusWaitingToPlayAtSpecifiedRate) return 6;
+    return 2;
+}
+
+static int64_t mac_media_get(int64_t slot, int64_t what) {
+    MacMedia *m = mac_media_at(slot);
+    if (!m) return 0;
+    if (what == 3) return mac_media_state(m);
+    if (!m->player || !m->item) return 0;
+    switch (what) {
+    case 1:
+        return mac_media_ms([m->player currentTime]);
+    case 2:
+        return m->item.status == AVPlayerItemStatusReadyToPlay ? mac_media_ms(m->item.duration) : 0;
+    case 4:
+        return (int64_t)(m->item.presentationSize.width + 0.5);
+    case 5:
+        return (int64_t)(m->item.presentationSize.height + 0.5);
+    case 6: {
+        CMTime now = [m->player currentTime];
+        for (NSValue *v in m->item.loadedTimeRanges) {
+            CMTimeRange r = [v CMTimeRangeValue];
+            if (CMTimeRangeContainsTime(r, now)) return mac_media_ms(CMTimeRangeGetEnd(r));
+        }
+        return mac_media_ms(now);
+    }
+    }
+    return 0;
+}
+
+static void mac_media_text(int64_t slot, int64_t what, char *out, int cap) {
+    MacMedia *m = mac_media_at(slot);
+    if (!out || cap <= 0) return;
+    out[0] = 0;
+    if (!m || what != 0) return;
+    (void)mac_media_state(m); /* fills `err` from a failed item */
+    snprintf(out, (size_t)cap, "%s", m->err);
+}
+
+/* True while any player wants frames: playing, waiting for data, or seeking. */
+static int mac_media_live(void) {
+    int i;
+    if (!g_media_init) return 0;
+    for (i = 1; i < MEDIA_SLOTS_MAX; i++) {
+        MacMedia *m = &g_media[i];
+        if (!m->player) continue;
+        if (m->seeking || m->player.rate != 0.0f) return 1;
+    }
+    return 0;
+}
+
+/* The newest frame for `slot`, or the last one while no newer is due. */
+static CGImageRef mac_media_frame(int64_t slot) {
+    MacMedia *m = mac_media_at(slot);
+    CMTime t;
+    CVPixelBufferRef pb;
+    CGImageRef img = NULL;
+    if (!m || !m->out) return NULL;
+    t = [m->out itemTimeForHostTime:CACurrentMediaTime()];
+    if ([m->out hasNewPixelBufferForItemTime:t]) {
+        pb = [m->out copyPixelBufferForItemTime:t itemTimeForDisplay:NULL];
+        if (pb) {
+            if (VTCreateCGImageFromCVPixelBuffer(pb, NULL, &img) == noErr && img) {
+                if (m->frame) CGImageRelease(m->frame);
+                m->frame = img;
+                m->fw = (int64_t)CGImageGetWidth(img);
+                m->fh = (int64_t)CGImageGetHeight(img);
+            }
+            CVPixelBufferRelease(pb);
+        }
+    }
+    return m->frame;
+}
+
+static void mac_media_draw(int64_t x, int64_t y, int64_t w, int64_t h, int64_t slot,
+                           int64_t radius, int64_t alpha, int64_t fit) {
+    CGImageRef img = mac_media_frame(slot);
+    MacMedia *m = mac_media_at(slot);
+    CGContextRef cg;
+    NSRect box, dest;
+    CGFloat rad;
+    int64_t iw, ih;
+    if (!img || !m) return;
+    /* Fit by the display size (anamorphic sources), not the coded size. */
+    iw = (int64_t)(m->item.presentationSize.width + 0.5);
+    ih = (int64_t)(m->item.presentationSize.height + 0.5);
+    if (iw <= 0 || ih <= 0) {
+        iw = m->fw;
+        ih = m->fh;
+    }
+    cg = [[NSGraphicsContext currentContext] CGContext];
+    if (!cg) return;
+    box = NSMakeRect((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h);
+    dest = mac_image_dest(x, y, w, h, iw, ih, fit);
+    CGContextSaveGState(cg);
+    if (radius > 0) {
+        rad = (CGFloat)radius;
+        if (rad > box.size.width / 2) rad = box.size.width / 2;
+        if (rad > box.size.height / 2) rad = box.size.height / 2;
+        CGPathRef path = CGPathCreateWithRoundedRect(NSRectToCGRect(box), rad, rad, NULL);
+        CGContextAddPath(cg, path);
+        CGPathRelease(path);
+        CGContextClip(cg);
+    } else {
+        CGContextClipToRect(cg, NSRectToCGRect(box));
+    }
+    if (alpha >= 0 && alpha < 255) CGContextSetAlpha(cg, (CGFloat)alpha / 255.0);
+    CGContextSetInterpolationQuality(cg, kCGInterpolationHigh);
+    /* The view is flipped (y down); CGContextDrawImage paints row 0 at the
+       bottom of its rect, so flip about the destination. */
+    CGContextTranslateCTM(cg, dest.origin.x, dest.origin.y + dest.size.height);
+    CGContextScaleCTM(cg, 1.0, -1.0);
+    CGContextDrawImage(cg, CGRectMake(0, 0, dest.size.width, dest.size.height), img);
+    CGContextRestoreGState(cg);
+}
+
+static int64_t mac_media_slot_of(const char *src) {
+    if (!src || strncmp(src, "media:", 6) != 0) return -1;
+    return (int64_t)atoi(src + 6);
+}
+
+static void mac_media_pick(void) {
+    NSOpenPanel *p = [NSOpenPanel openPanel];
+    NSString *path;
+    [p setCanChooseFiles:YES];
+    [p setCanChooseDirectories:NO];
+    [p setAllowsMultipleSelection:NO];
+    [p setAllowedFileTypes:@[ @"mp4", @"m4v", @"mov", @"mkv", @"webm", @"avi", @"wmv", @"flv",
+                              @"ogv", @"ogg", @"ts", @"mts", @"m2ts", @"3gp", @"mpg", @"mpeg",
+                              @"m3u8", @"mp3", @"m4a", @"aac", @"wav", @"flac", @"opus" ]];
+    if ([p runModal] != NSModalResponseOK) return;
+    path = [[p URL] path];
+    if (!path) return;
+    zeus_media_picked([[path lastPathComponent] UTF8String], [path UTF8String]);
+}
+
+static int64_t mac_fullscreen(int64_t on) {
+    int is;
+    if (!g_win) return 0;
+    is = ([g_win styleMask] & NSWindowStyleMaskFullScreen) ? 1 : 0;
+    if (on >= 0 && (on ? 1 : 0) != is) {
+        [g_win toggleFullScreen:nil];
+        return on ? 1 : 0;
+    }
+    return is;
 }
 
 /* CSS cursor name (from `cursor = "pointer"` props) → AppKit cursor.
@@ -1457,6 +1819,46 @@ static void mac_sync_reduced_motion(void) {
 /* One engine frame: layout, step, and paint through the host's draw callbacks.
    Both display paths share it so they stay frame-for-frame identical. Returns 1
    when the engine wants another frame (animation running, async work pending). */
+/* App-drawn chrome (`zeus.window_chrome(CHROME_CUSTOM)`): the content view
+   runs under a transparent title bar with the system title hidden, and the
+   window buttons stay where they are. The app's `TitleBar` paints the strip;
+   this reports its box each frame — the bar's height (0 in full screen, where
+   the system bar slides in over the content on its own) and the room the
+   buttons take — and a press on the bar, off any control, moves the window
+   (`mouseDown`). Checked every frame, so it does not matter whether the app
+   asked before or after the window opened. */
+static void mac_sync_chrome(void) {
+    NSWindow *w = g_win;
+    NSRect lr;
+    CGFloat h, lead = 0, trail = 0;
+    if (!w) return;
+    if (zeus_window_chrome() != 1) {
+        zeus_set_titlebar_box(0, 0, 0);
+        return;
+    }
+    if (!([w styleMask] & NSWindowStyleMaskFullSizeContentView)) {
+        [w setStyleMask:[w styleMask] | NSWindowStyleMaskFullSizeContentView];
+        [w setTitlebarAppearsTransparent:YES];
+        [w setTitleVisibility:NSWindowTitleHidden];
+    }
+    if ([w styleMask] & NSWindowStyleMaskFullScreen) {
+        zeus_set_titlebar_box(0, 0, 0);
+        return;
+    }
+    lr = [w contentLayoutRect];
+    h = [[w contentView] bounds].size.height - lr.size.height;
+    {
+        NSButton *zoom = [w standardWindowButton:NSWindowZoomButton];
+        NSButton *close = [w standardWindowButton:NSWindowCloseButton];
+        NSView *last = zoom ? zoom : close;
+        if (last && ![last isHidden]) {
+            NSRect r = [[w contentView] convertRect:[last bounds] fromView:last];
+            lead = NSMaxX(r) + 12.0;
+        }
+    }
+    zeus_set_titlebar_box((int64_t)(h + 0.5), (int64_t)(lead + 0.5), (int64_t)(trail + 0.5));
+}
+
 static int mac_frame(int64_t vw, int64_t vh) {
     static CFAbsoluteTime last;
     CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
@@ -1468,6 +1870,7 @@ static int mac_frame(int64_t vw, int64_t vh) {
     if (dt < 0.001f) dt = 1.f / 60.f;
     mac_sync_reduced_motion();
     mac_mem_debug();
+    mac_sync_chrome();
     zeus_layout(vw, vh);
     more = zeus_step(dt);
     memset(&d, 0, sizeof d);
@@ -1487,6 +1890,7 @@ static int mac_frame(int64_t vw, int64_t vh) {
     d.svg = mac_svg;
     d.image = mac_image;
     zeus_paint(NULL, d);
+    if (mac_media_live()) more = 1;
     return more;
 }
 
@@ -1788,6 +2192,28 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
 
 @implementation ZeusView
 - (BOOL)isFlipped { return YES; }
+
+/* A file dropped on the window goes where the media picker's result goes
+   (`zeus_media_picked`); the app decides what to do with it. */
+- (void)viewDidMoveToWindow {
+    [super viewDidMoveToWindow];
+    if ([self window]) [self registerForDraggedTypes:@[ NSPasteboardTypeFileURL ]];
+}
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
+    NSArray *urls = [[sender draggingPasteboard]
+        readObjectsForClasses:@[ [NSURL class] ]
+                      options:@{NSPasteboardURLReadingFileURLsOnlyKey : @YES}];
+    return [urls count] ? NSDragOperationCopy : NSDragOperationNone;
+}
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
+    NSArray *urls = [[sender draggingPasteboard]
+        readObjectsForClasses:@[ [NSURL class] ]
+                      options:@{NSPasteboardURLReadingFileURLsOnlyKey : @YES}];
+    NSURL *u = [urls count] ? [urls objectAtIndex:0] : nil;
+    if (!u || ![u path]) return NO;
+    zeus_media_picked([[[u path] lastPathComponent] UTF8String], [[u path] UTF8String]);
+    return YES;
+}
 /* The engine paints every pixel of the viewport — the root scroller carries the
    page background, so scroll edges and short pages stay paper. Saying so lets
    the compositor copy the window instead of blending it, which is one fewer
@@ -2117,6 +2543,19 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
         [self setNeedsDisplay:YES];
         return;
     }
+    /* An app-drawn title bar moves the window like the system's: drag it
+       anywhere off its controls, double-click to zoom (or whatever the user
+       chose for title-bar double-clicks in System Settings). */
+    if (zeus_window_drag_at((int64_t)p.x, (int64_t)p.y)) {
+        if ([event clickCount] == 2) {
+            NSString *act = [[NSUserDefaults standardUserDefaults] stringForKey:@"AppleActionOnDoubleClick"];
+            if ([act isEqualToString:@"Minimize"]) [[self window] performMiniaturize:nil];
+            else if (![act isEqualToString:@"None"]) [[self window] performZoom:nil];
+        } else {
+            [[self window] performWindowDragWithEvent:event];
+        }
+        return;
+    }
     if (zeus_handle_click((int64_t)p.x, (int64_t)p.y))
         [self setNeedsDisplay:YES];
 }
@@ -2407,6 +2846,18 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
     (void)app;
     return YES;
 }
+/* Finder's Open / Open With and a drop on the Dock icon, for a bundled app
+   that declares document types: each file goes where a picked or dropped one
+   does (`zeus_media_picked`), in order. */
+- (void)application:(NSApplication *)app openURLs:(NSArray<NSURL *> *)urls {
+    (void)app;
+    for (NSURL *u in urls) {
+        if ([u isFileURL])
+            zeus_media_picked([[[u path] lastPathComponent] UTF8String], [[u path] UTF8String]);
+        else
+            zeus_media_picked([[[u path] lastPathComponent] UTF8String], [[u absoluteString] UTF8String]);
+    }
+}
 @end
 
 static NSRect mac_screen_visible(void);
@@ -2567,6 +3018,7 @@ static int host_load_image(void) {
     ZEUS_BIND(marked, "loam_zeus_engine_marked");
     ZEUS_BIND(picked_image, "loam_zeus_engine_picked_image");
     ZEUS_BIND(context_click, "loam_zeus_engine_context_click");
+    ZEUS_BIND(window_drag_at, "loam_zeus_engine_window_drag_at");
     if (!zeus_app_api.layout || !zeus_app_api.paint) {
         fprintf(stderr, "zeli: host: %s is not a Loam app image\n", g_image_path);
         return 0;
@@ -2840,6 +3292,17 @@ static void zeus_mac_register(void) {
 #endif
     zeus_set_pick_image(mac_pick_image);
     zeus_set_image_size(mac_image_size);
+    {
+        ZeusMedia media;
+        memset(&media, 0, sizeof media);
+        media.open = mac_media_open;
+        media.cmd = mac_media_cmd;
+        media.get = mac_media_get;
+        media.text = mac_media_text;
+        media.pick = mac_media_pick;
+        media.fullscreen = mac_fullscreen;
+        zeus_set_media(media);
+    }
     zeus_set_font_hooks(mac_load_font, NULL);
     /* The one blit of a frame: the engine hands its own BGRA8 buffer over, and
        this wraps it in a CGImage over a reused data provider. */

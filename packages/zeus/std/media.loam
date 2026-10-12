@@ -1,0 +1,196 @@
+//! media — video and audio playback, played by the host (an HTMLVideoElement
+//! on the web, AVPlayer on macOS) and painted through the ordinary `Image`
+//! draw op: an `Image` whose src is `media_src(p)` shows the player's current
+//! frame, scaled by its `fit`. Hosts keep frames coming while a player plays,
+//! so the picture moves without any signal write.
+//!
+//! The host owns time. A UI reads position / duration / state by polling
+//! these getters (each frame while playing, on a timer otherwise) and copying
+//! them into its own signals; there are no callbacks, so the same code runs on
+//! every host and headless, where a null player stands in.
+//!
+//! ```
+//! let p = zeus.media_player(1)
+//! zeus.media_open(p, "/path/movie.mp4")
+//! zeus.media_play(p)
+//! zui.Image(fn() => zeus.media_src(p), fit = Fit.Contain)
+//! ```
+
+import "zeuscore/platform.loam"
+
+/// Player states (`media_state`).
+const MEDIA_EMPTY: int = 0
+const MEDIA_LOADING: int = 1
+const MEDIA_PAUSED: int = 2
+const MEDIA_PLAYING: int = 3
+const MEDIA_ENDED: int = 4
+const MEDIA_ERROR: int = 5
+const MEDIA_WAITING: int = 6
+
+const MEDIA_CMD_PLAY: int = 1
+const MEDIA_CMD_PAUSE: int = 2
+const MEDIA_CMD_SEEK: int = 3
+const MEDIA_CMD_RATE: int = 4
+const MEDIA_CMD_VOLUME: int = 5
+const MEDIA_CMD_MUTE: int = 6
+const MEDIA_CMD_LOOP: int = 7
+const MEDIA_CMD_CLOSE: int = 8
+
+const MEDIA_GET_POS: int = 1
+const MEDIA_GET_DUR: int = 2
+const MEDIA_GET_STATE: int = 3
+const MEDIA_GET_W: int = 4
+const MEDIA_GET_H: int = 5
+const MEDIA_GET_BUFFERED: int = 6
+const MEDIA_GET_PICKED: int = 7
+
+/// One host player. `slot` is 1..7; two `Player`s on one slot are one player.
+struct Player {
+    slot: int = 1,
+}
+
+/// A handle on host player `slot` (1..7).
+fn media_player(slot: int) -> Player {
+    let mut s = slot
+    if s < 1 || s > 7 {
+        s = 1
+    }
+    return Player { slot: s }
+}
+
+/// The `Image` src that paints `p`'s current frame.
+fn media_src(p: Player) -> string {
+    return "media:{{p.slot}}"
+}
+
+/// Load `src` (a path, `file://`, `http(s)://`, or a picked file's src).
+/// Starts paused at 0. False when the host refused it outright; a source
+/// that fails later shows as `MEDIA_ERROR` with `media_error`.
+fn media_open(p: Player, src: string) -> bool {
+    return platform.plat_media_open(p.slot, src) != 0
+}
+
+fn media_play(p: Player) {
+    platform.plat_media_cmd(p.slot, MEDIA_CMD_PLAY, 0)
+}
+
+fn media_pause(p: Player) {
+    platform.plat_media_cmd(p.slot, MEDIA_CMD_PAUSE, 0)
+}
+
+/// Jump to `ms` (clamped by the host to the media's length).
+fn media_seek(p: Player, ms: int) {
+    let mut at = ms
+    if at < 0 {
+        at = 0
+    }
+    platform.plat_media_cmd(p.slot, MEDIA_CMD_SEEK, at)
+}
+
+/// Playback rate in percent: 100 is normal, 50 half speed, 200 double.
+fn media_rate(p: Player, pct: int) {
+    platform.plat_media_cmd(p.slot, MEDIA_CMD_RATE, pct)
+}
+
+/// Volume 0..100.
+fn media_volume(p: Player, v: int) {
+    let mut vol = v
+    if vol < 0 {
+        vol = 0
+    }
+    if vol > 100 {
+        vol = 100
+    }
+    platform.plat_media_cmd(p.slot, MEDIA_CMD_VOLUME, vol)
+}
+
+fn media_mute(p: Player, on: bool) {
+    platform.plat_media_cmd(p.slot, MEDIA_CMD_MUTE, if on { 1 } else { 0 })
+}
+
+fn media_loop(p: Player, on: bool) {
+    platform.plat_media_cmd(p.slot, MEDIA_CMD_LOOP, if on { 1 } else { 0 })
+}
+
+/// Stop and release the source; the slot paints nothing until the next open.
+fn media_close(p: Player) {
+    platform.plat_media_cmd(p.slot, MEDIA_CMD_CLOSE, 0)
+}
+
+fn media_position(p: Player) -> int {
+    return platform.plat_media_get(p.slot, MEDIA_GET_POS)
+}
+
+/// Length in ms; 0 while unknown (loading) and for live streams.
+fn media_duration(p: Player) -> int {
+    return platform.plat_media_get(p.slot, MEDIA_GET_DUR)
+}
+
+fn media_state(p: Player) -> int {
+    return platform.plat_media_get(p.slot, MEDIA_GET_STATE)
+}
+
+/// Decoded picture size in pixels (0 for audio or while loading).
+fn media_width(p: Player) -> int {
+    return platform.plat_media_get(p.slot, MEDIA_GET_W)
+}
+
+fn media_height(p: Player) -> int {
+    return platform.plat_media_get(p.slot, MEDIA_GET_H)
+}
+
+/// End of the buffered range that contains the playhead, in ms.
+fn media_buffered(p: Player) -> int {
+    return platform.plat_media_get(p.slot, MEDIA_GET_BUFFERED)
+}
+
+fn media_error(p: Player) -> string {
+    return platform.plat_media_text(p.slot, 0)
+}
+
+/// Open the host's media picker. Poll `media_picks()`: when it moves,
+/// `media_picked_name()` / `media_picked_src()` hold the file. Files dropped
+/// on the window arrive the same way.
+fn media_pick() {
+    platform.plat_media_pick()
+}
+
+/// How many files the picker (or a drop) has produced so far.
+fn media_picks() -> int {
+    return platform.plat_media_get(0, MEDIA_GET_PICKED)
+}
+
+fn media_picked_name() -> string {
+    let t = platform.plat_media_text(0, 1)
+    let nl = media_nl(t)
+    if nl < 0 {
+        return t
+    }
+    return media_cut(t, 0, nl)
+}
+
+fn media_picked_src() -> string {
+    let t = platform.plat_media_text(0, 1)
+    let nl = media_nl(t)
+    if nl < 0 {
+        return t
+    }
+    return media_cut(t, nl + 1, t.len)
+}
+
+fn media_cut(s: string, a: int, b: int) -> string {
+    let mut x = []int {}
+    for i in a..b {
+        push(x, s[i])
+    }
+    return string_from_bytes(x)
+}
+
+fn media_nl(t: string) -> int {
+    for i in 0..t.len {
+        if t[i] == 10 {
+            return i
+        }
+    }
+    return -1
+}

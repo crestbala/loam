@@ -1,0 +1,38 @@
+    <!-- Added to Vidy.app's Info.plist by `zeli build`. Video and audio files
+         list Vidy under Open With; formats AVFoundation refuses are converted
+         by ffmpeg on open. -->
+    <key>LSApplicationCategoryType</key><string>public.app-category.video</string>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key><string>Video</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>LSHandlerRank</key><string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>public.movie</string>
+                <string>public.mpeg-4</string>
+                <string>com.apple.quicktime-movie</string>
+                <string>public.avi</string>
+                <string>org.matroska.mkv</string>
+                <string>org.webmproject.webm</string>
+            </array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key><string>Audio</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>LSHandlerRank</key><string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array><string>public.audio</string></array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key><string>Other video</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>LSHandlerRank</key><string>Alternate</string>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>mkv</string><string>webm</string><string>flv</string>
+                <string>wmv</string><string>ts</string><string>m3u8</string>
+            </array>
+        </dict>
+    </array>

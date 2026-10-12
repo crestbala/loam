@@ -1,0 +1,18 @@
+// A module-level `let` initialised from an imported module's const or global.
+// Module lets used to be typed in module-index order (the entry first), so
+// `consts.START` had no type yet and read as void: "let type int does not
+// match initializer void". They are typed in import post-order now.
+import "std:fmt"
+import "../mod/global_consts.loam" as consts
+
+let start: int = consts.START
+let doubled = consts.START * 2
+let label = consts.LABEL
+let n = consts.table.len
+
+fn main() {
+    fmt.println(start)
+    fmt.println(doubled)
+    fmt.println(label)
+    fmt.println(n)
+}

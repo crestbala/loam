@@ -1,0 +1,42 @@
+//! Headless resize probe: lay out big, shrink the window, and check the stage
+//! and the picture follow it (nothing may overflow and scroll).
+//!   ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/vidy/tests/probe_resize.loam -o /tmp/vr && /tmp/vr
+import "std:zeus"
+import "std:fmt"
+import "../app_routes.loam" as approutes
+import "../player/store.loam" as player
+import "../lib/aspect.loam" as ar
+
+fn frame(rt: Node, w: int, h: int) {
+    // Two passes: the first lets the poller see the new stage size.
+    for i in 0..3 {
+        zeus.engine_layout(w, h)
+        zeus.engine_paint()
+    }
+    let r = zeus.rect(player.stage_ref)
+    // Nothing painted may reach past the window's right edge (the controls
+    // must fit, not overflow sideways).
+    let mut right = 0
+    for i in 0..zeus.draw_count() {
+        let e = zeus.draw_x(i) + zeus.draw_w(i)
+        if zeus.draw_w(i) > 0 && e > right {
+            right = e
+        }
+    }
+    fmt.println("window {{w}}x{{h}} stage {{r.x}},{{r.y}} {{r.w}}x{{r.h}} picture {{player.box_w()}}x{{player.box_h()}} root {{zeus.node_height(rt.id)}} tall, scroll_max {{zeus.node_scroll_max(rt.id)}} right_edge {{right}}")
+}
+
+fn main() {
+    player.start()
+    player.enqueue("s.mp4", "/tmp/s.mp4", true)
+    player.vid_w.set(1280)
+    player.vid_h.set(720)
+    zeus.window("t", 1180, 720)
+    let rt = zeus.root(approutes.app())
+    frame(rt, 1180, 720)
+    frame(rt, 640, 400)
+    frame(rt, 1400, 900)
+    player.aspect.set(ar.ORIGINAL)
+    frame(rt, 640, 400)
+    frame(rt, 420, 300)
+}

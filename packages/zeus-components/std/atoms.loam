@@ -106,6 +106,37 @@ fn Scroll(p: ScrollProps) -> Node {
     return Component(raw_scroll(), style = p.style, bind = p.bind, keys = p.keys)
 }
 
+/// Optional extras for `TitleBar`.
+struct TitleBarProps {
+    /// CSS-subset style over the bar's own (a row, centred vertically):
+    /// `background`, `opacity`, a bottom `border`, `gap`…
+    style: Option<fn() -> Style> = none,
+}
+
+/// The window's title bar, drawn by the app: after
+/// `zeus.window_chrome(zeus.CHROME_CUSTOM)`, a row exactly as tall as the
+/// host's bar, padded clear of the window buttons, that moves the window when
+/// dragged anywhere off its controls (and zooms on a double-click). The
+/// trailing block is its content. Where the host has no bar — full screen,
+/// the web, mobile — it takes no space.
+///
+/// ```
+/// zui.TitleBar(style = Style(background = "#FF3D5A", opacity = 35)) {
+///     zui.Grow()
+///     zeus.Text("Vidy")
+///     zui.Grow()
+/// }
+/// ```
+fn TitleBar(p: TitleBarProps) -> Node {
+    return Box(style = merge(Style(direction = Direction.Row, align = Align.Center, gap = 8,
+                                   height = px(titlebar().height),
+                                   padding = Edges(left = titlebar().lead,
+                                                   right = if titlebar().trail > 12 { titlebar().trail } else { 12 })),
+                             style_of(p.style)),
+               visible = titlebar().height > 0,
+               role = "titlebar")
+}
+
 /// Inline SVG. `currentColor` follows the node's foreground. Geometry props:
 /// `width`, `height` (an svg is otherwise measured like a label), plus the
 /// usual `position` / pins / `z_index` for layered plots.

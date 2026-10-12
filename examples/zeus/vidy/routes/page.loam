@@ -1,0 +1,13 @@
+//! The one screen: the player.
+
+import "std:zeus"
+import "std:router"
+import "../components/screen.loam" as screen
+
+fn Page(p: Params) -> Node {
+    return screen.Player()
+}
+
+fn meta(p: Params) -> Meta {
+    return Meta { title: "Vidy", description: "A smooth video player for mouse, keyboard and touch." }
+}

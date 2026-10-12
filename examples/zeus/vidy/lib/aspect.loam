@@ -1,0 +1,77 @@
+//! Aspect modes: how a picture maps onto a stage, and the box it gets.
+//! Pure: the store feeds it the stage and video sizes.
+
+/// Fit and Fill keep the stage box and let the image's `fit` do the work;
+/// Stretch fills it; Original uses the video's own size; the rest are fixed
+/// ratios, as large as the stage allows.
+const FIT: int = 0
+const FILL: int = 1
+const STRETCH: int = 2
+const ORIGINAL: int = 3
+const R16_9: int = 4
+const R4_3: int = 5
+const R21_9: int = 6
+const R1_1: int = 7
+const R9_16: int = 8
+
+struct BoxSize {
+    w: int,
+    h: int,
+}
+
+fn labels() -> []string {
+    return []string { "Fit", "Fill", "Stretch", "Original", "16:9", "4:3", "21:9", "1:1", "9:16" }
+}
+
+fn count() -> int {
+    return labels().len
+}
+
+/// The menu label for mode `a`; an unknown mode reads as `Fit`.
+fn label(a: int) -> string {
+    let ls = labels()
+    if a >= 0 && a < ls.len {
+        return ls[a]
+    }
+    return "Fit"
+}
+
+/// `[w, h]` of a fixed-ratio mode, `[0, 0]` for the rest.
+fn ratio(a: int) -> []int {
+    if a == R16_9 {
+        return []int { 16, 9 }
+    }
+    if a == R4_3 {
+        return []int { 4, 3 }
+    }
+    if a == R21_9 {
+        return []int { 21, 9 }
+    }
+    if a == R1_1 {
+        return []int { 1, 1 }
+    }
+    if a == R9_16 {
+        return []int { 9, 16 }
+    }
+    return []int { 0, 0 }
+}
+
+/// The picture's box for mode `a` on a `sw`×`sh` stage, for a `vw`×`vh`
+/// video (0 when not known yet: Original then falls back to the stage).
+fn fit_box(a: int, sw: int, sh: int, vw: int, vh: int) -> BoxSize {
+    if a == ORIGINAL && vw > 0 && vh > 0 {
+        return BoxSize { w: vw, h: vh }
+    }
+    let r = ratio(a)
+    if r[0] == 0 || sw <= 0 || sh <= 0 {
+        return BoxSize { w: sw, h: sh }
+    }
+    // The largest r[0]:r[1] box inside the stage.
+    let mut w = sw
+    let mut h = sw * r[1] / r[0]
+    if h > sh {
+        h = sh
+        w = sh * r[0] / r[1]
+    }
+    return BoxSize { w: w, h: h }
+}

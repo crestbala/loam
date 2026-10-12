@@ -1,0 +1,59 @@
+//! The playlist drawer on the right.
+
+import "std:zeus"
+import "std:zui"
+import "../player/store.loam" as player
+import "icons.loam"
+import { WHITE, FAINT, GLASS, ACCENT } from "../theme.loam"
+import { Glyph, Pill } from "kit.loam"
+
+fn Playlist() -> Node {
+    return zeus.Box(style = Style(position = pos_absolute(), inset = Edges(top = 64, right = 16, bottom = 130),
+                                  direction = Direction.Column, width = px(300), padding = edges(8), gap = 2,
+                                  radius = corners(16), background = GLASS, opacity = 94,
+                                  border = line(1, "#2C303B"), elevation = Elevation.Overlay),
+                    visible = player.list_open.get(),
+                    enter = Enter.Fade + Enter.Reveal,
+                    on_click = fn() { player.wake() }) {
+        zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, padding = edges2(4, 8))) {
+            zeus.Text("Playlist", style = Style(font = 14, color = WHITE))
+            zui.Grow()
+            zeus.Text("{{player.pl_srcs.get().len}} items", style = Style(font = 11, color = FAINT))
+        }
+        zui.Scroll(style = Style(grow = 1)) {
+            zui.Each(player.pl_names.get(), fn(i: int, name: string) -> Node {
+                return Row(i, name)
+            })
+        }
+        zeus.Box(style = Style(direction = Direction.Row, gap = 8, padding = Edges(top = 6))) {
+            Pill(icons.FOLDER, "Add file", false, fn() { player.pick() })
+            Pill(icons.GLOBE, "URL", false, fn() { player.url_open.set(true) })
+        }
+    }
+}
+
+fn Row(i: int, name: string) -> Node {
+    return zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 10, height = px(40),
+                                  padding = edges2(0, 8), radius = corners(10), cursor = "pointer",
+                                  background = if player.cur.get() == i { "#FFFFFF" } else { GLASS },
+                                  opacity = if player.cur.get() == i { 10 } else { 0 }),
+                    hoverStyle = Style(background = "#FFFFFF", opacity = 7),
+                    role = "button", label = name,
+                    on_click = fn() { player.play_index(i) }) {
+        zeus.Box(style = Style(width = px(22), height = px(22), justify = Align.Center)) {
+            Glyph(fn() -> bool { return player.cur.get() == i }, icons.PLAY, 14, ACCENT, 22)
+            zeus.Box(style = Style(direction = Direction.Row, justify = Align.Center, width = px(22)),
+                     visible = player.cur.get() != i) {
+                zeus.Text("{{i + 1}}", style = Style(font = 12, color = FAINT))
+            }
+        }
+        zeus.Text(name, style = Style(font = 13, color = WHITE, ellipsis = true, grow = 1))
+        zeus.Box(style = Style(width = px(26), height = px(26), radius = corners(13), align = Align.Center,
+                               justify = Align.Center, cursor = "pointer"),
+                 hoverStyle = Style(background = "#FFFFFF", opacity = 14),
+                 role = "button", label = "Remove {{name}}",
+                 on_click = fn() { player.remove_at(i) }) {
+            zui.Icon(icons.CLOSE, 13, FAINT)
+        }
+    }
+}

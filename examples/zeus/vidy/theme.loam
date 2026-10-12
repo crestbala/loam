@@ -1,0 +1,27 @@
+//! Theme tokens. Vidy is dark in both appearances; the accent is the
+//! player's red, used by the few zui widgets it borrows (the URL dialog).
+//! The palette consts are what vidy's own components paint with.
+
+import "std:zeus"
+
+const WHITE: string = "#FFFFFF"
+/// Secondary text: times, descriptions.
+const SOFT: string = "#C9CDD6"
+/// Tertiary text: captions, counts.
+const FAINT: string = "#8B90A0"
+/// The panels' base colour, drawn at partial opacity over the picture.
+const GLASS: string = "#14161C"
+const ACCENT: string = "#FF3D5A"
+/// The accent as 0xRRGGBB, for the theme role.
+const ACCENT_RGB: int = 0xFF3D5A
+/// The title bar: the accent washed thin over the window's black (34%), as
+/// one solid colour so the white title on it stays solid.
+const TITLEBAR: string = "#57151F"
+/// Seek and volume track (at low opacity).
+const TRACK: string = "#FFFFFF"
+
+fn install() {
+    zeus.theme(ROLE.Accent, ACCENT_RGB, ACCENT_RGB)
+    zeus.theme(ROLE.Paper, 0x14161C, 0x14161C)
+    zeus.theme(ROLE.Ink, 0xF3F4F6, 0xF3F4F6)
+}

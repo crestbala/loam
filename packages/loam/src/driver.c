@@ -1113,6 +1113,8 @@ int main(int argc, char **argv) {
                  "-x objective-c -fno-objc-arc \"%s/hosts/ios/ios.m\" "
                  "-framework UIKit -framework Foundation -framework CoreGraphics "
                  "-framework CoreText -framework QuartzCore "
+                 "-framework AVFoundation -framework CoreMedia -framework CoreVideo "
+                 "-framework VideoToolbox "
                  "-framework Security -framework CoreFoundation -o \"%s\"",
                  sdk, arch, owns_def, LOAM_RUNTIME_DIR, cpath, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR,
                  http_ios, LOAM_ZEUS_DIR, exe);
@@ -1309,6 +1311,8 @@ int main(int argc, char **argv) {
             snprintf(cmd, sizeof cmd,
                      "cc %s %s -o \"%s\" -I\"%s\" -x c \"%s\" -x none \"%s\" \"%s\" \"%s\"%s%s "
                      "-framework Cocoa -framework QuartzCore -framework IOSurface -framework Security "
+                     "-framework AVFoundation -framework CoreMedia -framework CoreVideo "
+                     "-framework VideoToolbox "
                      "-framework CoreFoundation -lm",
                      copt, ld, binpath, LOAM_RUNTIME_DIR, cpath, plat_o, key_o, mac_o, http_link,
                      extra_link);

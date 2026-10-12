@@ -1,0 +1,813 @@
+//! The player's state and every action on it. Views read these signals and
+//! call these fns; nothing else talks to the host player.
+//!
+//! The host owns time, so `poll` copies position / duration / state into
+//! signals every frame while something plays (`async.add_step`) and a few
+//! times a second otherwise (`async.interval`). Commands go straight to the
+//! host and the next poll shows their effect.
+//!
+//! Signals live at module scope (created once at init), so a route rebuild
+//! never drops them. The pure pieces (time labels, aspect boxes, names, the
+//! ffmpeg job) live in `lib/`; the key bindings in `keys.loam`.
+
+import "std:zeus"
+import "std:async"
+import "std:str"
+import "std:sys"
+import "../lib/aspect.loam" as ar
+import "../lib/media_name.loam" as names
+import "../lib/timecode.loam" as timecode
+import "../lib/transcode.loam" as transcode
+
+/// Which popover is open over the control bar.
+const MENU_NONE: int = 0
+const MENU_SPEED: int = 1
+const MENU_ASPECT: int = 2
+
+/// Controls hide after this much stillness while playing.
+const IDLE_MS: int = 2600
+/// A second press within this reads as a double click / double tap.
+const DOUBLE_MS: int = 320
+const SKIP_MS: int = 10000
+const NUDGE_MS: int = 5000
+/// One frame at 30 fps: `,` / `.` step while paused.
+const FRAME_MS: int = 33
+
+/// The host player this app drives (slot 1).
+let host = zeus.media_player(1)
+
+/// What is loaded: the src handed to the host, and the name shown for it.
+let src = zeus.signal("")
+let title = zeus.signal("")
+let state = zeus.signal(0)
+let pos = zeus.signal(0)
+let dur = zeus.signal(0)
+let buffered = zeus.signal(0)
+let vid_w = zeus.signal(0)
+let vid_h = zeus.signal(0)
+let error = zeus.signal("")
+/// A long-running step the user should know about ("Converting …").
+let status = zeus.signal("")
+
+let volume = zeus.signal(80)
+let muted = zeus.signal(false)
+/// Playback rate in percent.
+let rate = zeus.signal(100)
+let looping = zeus.signal(false)
+let aspect = zeus.signal(ar.FIT)
+let full = zeus.signal(false)
+
+/// Chrome: control bar shown, which popover, help sheet, URL dialog, playlist.
+let controls = zeus.signal(true)
+let menu = zeus.signal(MENU_NONE)
+let help = zeus.signal(false)
+let url_open = zeus.signal(false)
+let url_text = zeus.signal("")
+let list_open = zeus.signal(false)
+/// The pointer is over the control panel: never hide under it.
+let over_panel = zeus.signal(0)
+
+/// Seek bar: dragging, and the time under the finger / pointer.
+let scrubbing = zeus.signal(false)
+let scrub_ms = zeus.signal(0)
+let bar_hover = zeus.signal(0)
+let hover_ms = zeus.signal(0)
+let hover_x = zeus.signal(0)
+
+/// On-screen feedback: a short text, and a side bubble for double taps
+/// (-1 left, 1 right, 0 none).
+let osd = zeus.signal("")
+let osd_icon = zeus.signal("")
+let tap_side = zeus.signal(0)
+
+/// Stage size in dp, from the last layout.
+let stage_w = zeus.signal(0)
+let stage_h = zeus.signal(0)
+let stage_ref = zeus.ref()
+let bar_ref = zeus.ref()
+let vol_ref = zeus.ref()
+
+/// Playlist: names and srcs, parallel (a struct-with-list signal loses its
+/// list when set from a callback). `cur` is the playing index, -1 for none.
+let pl_names = zeus.signal([]string {})
+let pl_srcs = zeus.signal([]string {})
+let cur = zeus.signal(-1)
+
+let mut started: bool = false
+let mut t0: i64 = 0
+let mut last_act: int = 0
+let mut last_px: int = -1
+let mut last_py: int = -1
+let mut last_pick: int = 0
+let mut osd_timer: int = 0
+let mut tap_timer: int = 0
+let mut last_click: int = -100000
+let mut last_drag: int = 0
+/// ffmpeg fallback: the file being written, and the source it replaces.
+let mut conv_out: string = ""
+let mut conv_tried: string = ""
+
+fn start() {
+    if started {
+        return
+    }
+    started = true
+    t0 = async.now_ms()
+    last_pick = zeus.media_picks()
+    zeus.media_volume(host, volume.peek())
+    async.add_step(fn() { poll() })
+    async.interval(200, fn() { poll() })
+}
+
+fn now() -> int {
+    return int(async.now_ms() - t0)
+}
+
+// --- polling ----------------------------------------------------------------
+
+fn put_int(s: Signal<int>, v: int) {
+    if s.peek() != v {
+        s.set(v)
+    }
+}
+
+fn poll() {
+    poll_pick()
+    poll_stage()
+    poll_pointer()
+    poll_convert()
+    if src.peek() == "" {
+        return
+    }
+    let st = zeus.media_state(host)
+    let was = state.peek()
+    put_int(state, st)
+    if !scrubbing.peek() {
+        put_int(pos, zeus.media_position(host))
+    }
+    put_int(dur, zeus.media_duration(host))
+    put_int(buffered, zeus.media_buffered(host))
+    put_int(vid_w, zeus.media_width(host))
+    put_int(vid_h, zeus.media_height(host))
+    if st == zeus.MEDIA_ERROR && was != zeus.MEDIA_ERROR {
+        on_error()
+    }
+    if st == zeus.MEDIA_ENDED && was != zeus.MEDIA_ENDED {
+        on_ended()
+    }
+    // A drag that stopped moving has ended (the engine reports presses and
+    // moves, not the release).
+    if scrubbing.peek() && now() - last_drag > 250 {
+        scrubbing.set(false)
+    }
+    poll_idle(st)
+}
+
+/// The picker and drag-and-drop both land here.
+fn poll_pick() {
+    let n = zeus.media_picks()
+    if n == last_pick {
+        return
+    }
+    last_pick = n
+    let s = zeus.media_picked_src()
+    if s == "" {
+        return
+    }
+    enqueue(zeus.media_picked_name(), s, true)
+}
+
+fn poll_stage() {
+    measure_stage()
+    let fs = zeus.is_fullscreen()
+    if full.peek() != fs {
+        full.set(fs)
+    }
+}
+
+/// Copy the stage's laid-out size into `stage_w` / `stage_h`. The stage's
+/// `on_resize` calls this in the frame the size changes; the poll is the
+/// fallback.
+fn measure_stage() {
+    let r = zeus.rect(stage_ref)
+    put_int(stage_w, r.w)
+    put_int(stage_h, r.h)
+}
+
+/// Pointer movement wakes the controls. Leaving the window (the host reports
+/// -1, -1) is not movement, and neither is a dp or two of trackpad jitter.
+fn poll_pointer() {
+    let x = zeus.pointer_x()
+    let y = zeus.pointer_y()
+    if x < 0 || y < 0 {
+        return
+    }
+    if last_px < 0 {
+        last_px = x
+        last_py = y
+        return
+    }
+    let dx = if x > last_px { x - last_px } else { last_px - x }
+    let dy = if y > last_py { y - last_py } else { last_py - y }
+    if dx + dy >= 3 {
+        last_px = x
+        last_py = y
+        wake()
+    }
+}
+
+fn poll_idle(st: int) {
+    if !controls.peek() {
+        return
+    }
+    if st != zeus.MEDIA_PLAYING {
+        return
+    }
+    if menu.peek() != MENU_NONE || over_panel.peek() != 0 || scrubbing.peek() || list_open.peek() {
+        return
+    }
+    if now() - last_act > IDLE_MS {
+        controls.set(false)
+    }
+}
+
+/// User activity: show the controls and restart the idle clock.
+fn wake() {
+    last_act = now()
+    if !controls.peek() {
+        controls.set(true)
+    }
+}
+
+// --- loading ----------------------------------------------------------------
+
+/// Add a file to the playlist; `play_now` opens it at once.
+fn enqueue(name: string, s: string, play_now: bool) {
+    let mut names = pl_names.peek()
+    let mut srcs = pl_srcs.peek()
+    let mut at = -1
+    for i in 0..srcs.len {
+        if srcs[i] == s {
+            at = i
+        }
+    }
+    if at < 0 {
+        push(names, name)
+        push(srcs, s)
+        at = srcs.len - 1
+        pl_names.set(names)
+        pl_srcs.set(srcs)
+    }
+    if play_now {
+        play_index(at)
+    }
+}
+
+fn play_index(i: int) {
+    let srcs = pl_srcs.peek()
+    let names = pl_names.peek()
+    if i < 0 || i >= srcs.len {
+        return
+    }
+    cur.set(i)
+    load(names[i], srcs[i])
+    play()
+}
+
+/// Open `s` (path, URL or picked file) and show `name` for it.
+fn load(name: string, s: string) {
+    error.set("")
+    status.set("")
+    conv_out = ""
+    title.set(name)
+    src.set(s)
+    pos.set(0)
+    dur.set(0)
+    put_int(state, zeus.MEDIA_LOADING)
+    if !zeus.media_open(host, s) {
+        error.set("This source could not be opened.")
+        return
+    }
+    apply_settings()
+    wake()
+}
+
+/// A freshly opened source starts with the host's defaults; carry the user's
+/// volume, mute, speed and loop over.
+fn apply_settings() {
+    zeus.media_volume(host, volume.peek())
+    zeus.media_mute(host, muted.peek())
+    zeus.media_rate(host, rate.peek())
+    zeus.media_loop(host, looping.peek())
+}
+
+/// The URL dialog's Open.
+fn open_url() {
+    let u = url_text.peek().trim()
+    if u == "" {
+        return
+    }
+    url_open.set(false)
+    enqueue(names.file_name(u), u, true)
+}
+
+fn pick() {
+    zeus.media_pick()
+}
+
+fn close() {
+    zeus.media_close(host)
+    src.set("")
+    title.set("")
+    error.set("")
+    status.set("")
+    cur.set(-1)
+    put_int(state, zeus.MEDIA_EMPTY)
+    controls.set(true)
+}
+
+fn on_ended() {
+    controls.set(true)
+    if looping.peek() {
+        return
+    }
+    let i = cur.peek()
+    if i >= 0 && i + 1 < pl_srcs.peek().len {
+        play_index(i + 1)
+    }
+}
+
+fn next() {
+    play_index(cur.peek() + 1)
+}
+
+fn prev() {
+    // Past the first few seconds, "previous" means "from the top".
+    if pos.peek() > 3000 || cur.peek() <= 0 {
+        seek_to(0)
+        return
+    }
+    play_index(cur.peek() - 1)
+}
+
+/// Remove playlist row `i`; removing the playing row stops it.
+fn remove_at(i: int) {
+    let names = pl_names.peek()
+    let srcs = pl_srcs.peek()
+    let mut nn = []string {}
+    let mut ns = []string {}
+    for j in 0..srcs.len {
+        if j != i {
+            push(nn, names[j])
+            push(ns, srcs[j])
+        }
+    }
+    pl_names.set(nn)
+    pl_srcs.set(ns)
+    let c = cur.peek()
+    if i == c {
+        close()
+    } else if i < c {
+        cur.set(c - 1)
+    }
+}
+
+// --- format fallback (native) ---------------------------------------------
+//
+// A format the host refuses is rewritten by ffmpeg (`lib/transcode.loam`) and
+// the result opened in its place. The browser has no ffmpeg; it reports the
+// error instead.
+
+fn on_error() {
+    let s = src.peek()
+    let why = zeus.media_error(host)
+    if sys.target() != "native" || s == conv_tried || s.starts_with("blob:") {
+        fail(why)
+        return
+    }
+    if !transcode.available() {
+        fail("{{why}} Install ffmpeg to play this format.")
+        return
+    }
+    conv_tried = s
+    let out = transcode.temp_out("vidy", now())
+    transcode.start(s, out)
+    conv_out = out
+    error.set("")
+    let mut ext = names.ext_of(title.peek())
+    if ext == "" {
+        ext = "this file"
+    }
+    status.set("Converting {{ext}} for playback…")
+}
+
+fn poll_convert() {
+    if conv_out == "" {
+        return
+    }
+    let st = transcode.check(conv_out)
+    if st == transcode.DONE {
+        let out = conv_out
+        let at = pos.peek()
+        conv_out = ""
+        status.set("")
+        src.set(out)
+        zeus.media_open(host, out)
+        apply_settings()
+        if at > 0 {
+            zeus.media_seek(host, at)
+        }
+        zeus.media_play(host)
+    } else if st == transcode.FAILED {
+        conv_out = ""
+        status.set("")
+        fail("ffmpeg could not convert this file.")
+    }
+}
+
+fn fail(why: string) {
+    let mut w = why
+    if w == "" {
+        w = "This file could not be played."
+    }
+    error.set(w)
+    controls.set(true)
+}
+
+// --- transport ----------------------------------------------------------------
+
+fn has_media() -> bool {
+    return src.peek() != "" && error.peek() == ""
+}
+
+fn playing() -> bool {
+    let st = state.get()
+    return st == zeus.MEDIA_PLAYING || st == zeus.MEDIA_WAITING
+}
+
+fn play() {
+    if !has_media() {
+        return
+    }
+    zeus.media_play(host)
+    put_int(state, zeus.MEDIA_PLAYING)
+}
+
+fn pause() {
+    zeus.media_pause(host)
+    if src.peek() != "" {
+        put_int(state, zeus.MEDIA_PAUSED)
+    }
+    controls.set(true)
+}
+
+fn toggle() {
+    if src.peek() == "" {
+        pick()
+        return
+    }
+    let st = state.peek()
+    if st == zeus.MEDIA_PLAYING || st == zeus.MEDIA_WAITING {
+        pause()
+        flash(PAUSE_GLYPH, "Paused")
+    } else {
+        play()
+        flash(PLAY_GLYPH, "")
+    }
+    wake()
+}
+
+const PLAY_GLYPH: string = "play"
+const PAUSE_GLYPH: string = "pause"
+
+fn seek_to(ms: int) {
+    if !has_media() {
+        return
+    }
+    let mut t = ms
+    let d = dur.peek()
+    if d > 0 && t > d {
+        t = d
+    }
+    if t < 0 {
+        t = 0
+    }
+    zeus.media_seek(host, t)
+    pos.set(t)
+}
+
+fn skip(delta: int) {
+    seek_to(pos.peek() + delta)
+    let s = delta / 1000
+    if s > 0 {
+        flash("", "+{{s}}s")
+    } else {
+        flash("", "{{s}}s")
+    }
+    wake()
+}
+
+/// `,` / `.`: one frame, paused.
+fn step_frame(dir: int) {
+    if !has_media() {
+        return
+    }
+    pause()
+    seek_to(pos.peek() + dir * FRAME_MS)
+}
+
+/// 0..9 jump to 0%..90%.
+fn jump_tenth(n: int) {
+    let d = dur.peek()
+    if d > 0 {
+        seek_to(d / 10 * n)
+        flash("", "{{n * 10}}%")
+    }
+}
+
+// --- volume, speed, aspect --------------------------------------------------
+
+fn set_volume(v: int) {
+    let mut x = v
+    if x < 0 {
+        x = 0
+    }
+    if x > 100 {
+        x = 100
+    }
+    volume.set(x)
+    zeus.media_volume(host, x)
+    if muted.peek() && x > 0 {
+        muted.set(false)
+        zeus.media_mute(host, false)
+    }
+}
+
+fn nudge_volume(d: int) {
+    set_volume(volume.peek() + d)
+    flash("vol", "Volume {{volume.peek()}}%")
+    wake()
+}
+
+fn toggle_mute() {
+    let m = !muted.peek()
+    muted.set(m)
+    zeus.media_mute(host, m)
+    if m {
+        flash("vol", "Muted")
+    } else {
+        flash("vol", "Volume {{volume.peek()}}%")
+    }
+    wake()
+}
+
+/// The speeds the menu offers, in percent.
+fn speeds() -> []int {
+    return []int { 25, 50, 75, 100, 125, 150, 175, 200, 300 }
+}
+
+fn set_rate(pct: int) {
+    rate.set(pct)
+    zeus.media_rate(host, pct)
+    flash("", timecode.rate_label(pct))
+}
+
+/// One step faster (`dir` 1) or slower (-1) through `speeds()`.
+fn step_rate(dir: int) {
+    let ss = speeds()
+    let r = rate.peek()
+    let mut at = 3
+    for i in 0..ss.len {
+        if ss[i] == r {
+            at = i
+        }
+    }
+    let n = at + dir
+    if n >= 0 && n < ss.len {
+        set_rate(ss[n])
+    }
+    wake()
+}
+
+fn set_aspect(a: int) {
+    aspect.set(a)
+    flash("", "Aspect: {{ar.label(a)}}")
+}
+
+fn cycle_aspect() {
+    set_aspect((aspect.peek() + 1) % ar.count())
+    wake()
+}
+
+fn toggle_loop() {
+    let l = !looping.peek()
+    looping.set(l)
+    zeus.media_loop(host, l)
+    if l {
+        flash("", "Loop on")
+    } else {
+        flash("", "Loop off")
+    }
+}
+
+fn toggle_full() {
+    let on = !full.peek()
+    full.set(zeus.fullscreen(on))
+    wake()
+}
+
+fn exit_full() {
+    if full.peek() {
+        full.set(zeus.fullscreen(false))
+    }
+}
+
+fn toggle_menu(m: int) {
+    if menu.peek() == m {
+        menu.set(MENU_NONE)
+    } else {
+        menu.set(m)
+    }
+    wake()
+}
+
+/// Escape closes the innermost thing that is open.
+fn escape() {
+    if menu.peek() != MENU_NONE {
+        menu.set(MENU_NONE)
+    } else if help.peek() {
+        help.set(false)
+    } else if list_open.peek() {
+        list_open.set(false)
+    } else {
+        exit_full()
+    }
+}
+
+// --- the picture's box --------------------------------------------------------
+
+/// `Fit` value for the video `Image` under the current aspect mode.
+fn fit_mode() -> int {
+    let a = aspect.get()
+    if a == ar.FILL {
+        return Fit.Cover
+    }
+    if a == ar.FIT {
+        return Fit.Contain
+    }
+    return Fit.Stretch
+}
+
+/// The picture's box in dp for the current mode, stage and video size.
+fn picture_box() -> BoxSize {
+    return ar.fit_box(aspect.get(), stage_w.get(), stage_h.get(), vid_w.get(), vid_h.get())
+}
+
+fn box_w() -> int {
+    return picture_box().w
+}
+
+fn box_h() -> int {
+    return picture_box().h
+}
+
+// --- seek bar -------------------------------------------------------------------
+
+/// Map a pointer x (window dp) on the seek bar to a time.
+fn bar_time(x: int) -> int {
+    let r = zeus.rect(bar_ref)
+    let d = dur.peek()
+    if r.w <= 0 || d <= 0 {
+        return 0
+    }
+    let mut f = x - r.x
+    if f < 0 {
+        f = 0
+    }
+    if f > r.w {
+        f = r.w
+    }
+    // i64: an hour of ms times a wide bar overflows i32.
+    return int(i64(d) * i64(f) / i64(r.w))
+}
+
+fn scrub(x: int) {
+    if !has_media() {
+        return
+    }
+    last_drag = now()
+    let t = bar_time(x)
+    scrub_ms.set(t)
+    if !scrubbing.peek() {
+        scrubbing.set(true)
+    }
+    zeus.media_seek(host, t)
+    pos.set(t)
+    wake()
+}
+
+fn hover_bar(x: int) {
+    let r = zeus.rect(bar_ref)
+    put_int(hover_x, x - r.x)
+    put_int(hover_ms, bar_time(x))
+}
+
+/// Fraction of the bar (0..w) for `ms`.
+fn bar_px(ms: int, w: int) -> int {
+    let d = dur.get()
+    if d <= 0 || w <= 0 {
+        return 0
+    }
+    let mut t = ms
+    if t > d {
+        t = d
+    }
+    if t < 0 {
+        t = 0
+    }
+    return int(i64(t) * i64(w) / i64(d))
+}
+
+fn vol_drag(x: int) {
+    let r = zeus.rect(vol_ref)
+    if r.w <= 0 {
+        return
+    }
+    set_volume((x - r.x) * 100 / r.w)
+    wake()
+}
+
+// --- stage gestures ---------------------------------------------------------
+//
+// One press toggles play at once (so a click never feels late). A second press
+// within `DOUBLE_MS` is a double: on the outer thirds it skips ±10 s (the touch
+// gesture), in the middle it toggles full screen. The first press's toggle is
+// undone by the second's, so play state is unchanged by a double.
+
+fn stage_click() {
+    let t = now()
+    let x = zeus.current_mouse().x
+    let r = zeus.rect(stage_ref)
+    if menu.peek() != MENU_NONE {
+        menu.set(MENU_NONE)
+        return
+    }
+    if t - last_click < DOUBLE_MS && has_media() {
+        last_click = -100000
+        toggle_quiet()
+        let third = r.w / 3
+        if x < r.x + third {
+            tap(-1)
+        } else if x > r.x + r.w - third {
+            tap(1)
+        } else {
+            toggle_full()
+        }
+        return
+    }
+    last_click = t
+    if !has_media() {
+        return
+    }
+    toggle()
+}
+
+/// Undo the first press of a double without a flash.
+fn toggle_quiet() {
+    let st = state.peek()
+    if st == zeus.MEDIA_PLAYING || st == zeus.MEDIA_WAITING {
+        zeus.media_pause(host)
+        put_int(state, zeus.MEDIA_PAUSED)
+    } else {
+        zeus.media_play(host)
+        put_int(state, zeus.MEDIA_PLAYING)
+    }
+    osd.set("")
+    osd_icon.set("")
+}
+
+fn tap(side: int) {
+    seek_to(pos.peek() + side * SKIP_MS)
+    tap_side.set(side)
+    if tap_timer != 0 {
+        async.cancel(tap_timer)
+    }
+    tap_timer = async.after(650, fn() {
+        tap_side.set(0)
+        tap_timer = 0
+    })
+}
+
+/// Show `text` (and a glyph: "play" / "pause" / "vol" / "") for a moment.
+fn flash(icon: string, text: string) {
+    osd.set(text)
+    osd_icon.set(icon)
+    if osd_timer != 0 {
+        async.cancel(osd_timer)
+    }
+    osd_timer = async.after(800, fn() {
+        osd.set("")
+        osd_icon.set("")
+        osd_timer = 0
+    })
+}

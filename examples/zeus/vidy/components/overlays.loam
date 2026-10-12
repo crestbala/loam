@@ -1,0 +1,156 @@
+//! Layers over the stage: the picture itself, and what floats on it when the
+//! controls do not — the empty state, the spinner, the big play button, the
+//! on-screen feedback, the double-tap ripples and the error card.
+
+import "std:zeus"
+import "std:zui"
+import "../player/store.loam" as player
+import "icons.loam"
+import { WHITE, SOFT, FAINT, GLASS, ACCENT } from "../theme.loam"
+import { Centered, Glyph, Pill } from "kit.loam"
+
+/// The host paints the current frame into this `Image` (`media:<slot>`). Its
+/// box follows the aspect mode; `fit` does the rest. `fit` is read once, so
+/// the image is rebuilt when the mode changes.
+///
+/// Out of flow, centred by offsets: a box in flow sized from the last stage
+/// size held the stage at its old size when the window shrank, so the page
+/// overflowed and scrolled. Absolute, only the window sizes the stage. The
+/// stage size it reads is refreshed by the stage's `on_resize` in the frame
+/// the window changes size (see `screen.loam`), so entering or leaving full
+/// screen never paints a frame sized for the old window.
+fn Picture() -> Node {
+    return zeus.Box(style = Style(position = pos_absolute(),
+                                  inset = Edges(left = (player.stage_w.get() - player.box_w()) / 2,
+                                                top = (player.stage_h.get() - player.box_h()) / 2),
+                                  width = px(player.box_w()), height = px(player.box_h()),
+                                  overflow = Overflow.Hidden),
+                    visible = player.src.get() != "" && player.error.get() == "") {
+        zui.Match(player.aspect, fn(a: int) -> Node {
+            return zui.Image(fn() -> string { return zeus.media_src(player.host) },
+                             fit = player.fit_mode(),
+                             label = "Video",
+                             style = Style(width = px(player.box_w()), height = px(player.box_h())))
+        })
+    }
+}
+
+/// Nothing loaded: the logo, Open, Open URL, and the drop hint.
+fn Empty() -> Node {
+    return zeus.Box(style = Style(direction = Direction.Column, align = Align.Center, gap = 18,
+                                  position = pos_absolute(), inset = Edges(top = 0, left = 0, right = 0, bottom = 0),
+                                  justify = Align.Center),
+                    visible = player.src.get() == "",
+                    enter = Enter.Fade) {
+        zeus.Box(style = Style(width = px(84), height = px(84), radius = corners(26), background = ACCENT,
+                               align = Align.Center, justify = Align.Center, elevation = Elevation.Floating)) {
+            zui.Icon(icons.LOGO, 46, WHITE)
+        }
+        Centered(fn() { zeus.Text("Vidy", style = Style(font = 30, color = WHITE)) })
+        Centered(fn() { zeus.Text("Drop a video here, or open one.", style = Style(font = 14, color = FAINT)) })
+        zeus.Box(style = Style(direction = Direction.Row, justify = Align.Center, gap = 10, margin = Edges(top = 6),
+                               width = pct(100))) {
+            Pill(icons.FOLDER, "Open file", true, fn() { player.pick() })
+            Pill(icons.GLOBE, "Open URL", false, fn() { player.url_open.set(true) })
+        }
+        Centered(fn() {
+            zeus.Text("MP4 · MOV · M4V · WebM · MKV · AVI · HLS · MP3 · M4A · WAV · FLAC",
+                      style = Style(font = 11, color = "#5D6272", margin = Edges(top = 10)))
+        })
+        zeus.Box(style = Style(direction = Direction.Row, justify = Align.Center, gap = 6, align = Align.Center,
+                               width = pct(100), cursor = "pointer"),
+                 on_click = fn() { player.help.set(true) }) {
+            zui.Icon(icons.KEYBOARD, 14, "#5D6272")
+            zeus.Text("Press H for shortcuts", style = Style(font = 11, color = "#5D6272"))
+        }
+    }
+}
+
+/// Loading or waiting for data.
+fn Busy() -> Node {
+    return zeus.Box(style = Style(position = pos_absolute(), inset = Edges(top = 0, left = 0, right = 0, bottom = 0),
+                                  align = Align.Center, justify = Align.Center),
+                    visible = player.src.get() != "" && player.error.get() == "" &&
+                              (player.state.get() == zeus.MEDIA_LOADING || player.state.get() == zeus.MEDIA_WAITING ||
+                               player.status.get() != "")) {
+        zeus.Box(style = Style(direction = Direction.Column, gap = 12, width = px(360))) {
+            Centered(fn() { zui.Spinner(size = 34, color = WHITE) })
+            Centered(fn() { zeus.Text(player.status.get(), style = Style(font = 13, color = SOFT)) })
+        }
+    }
+}
+
+/// Big centred play button while paused (and the replay glyph once ended).
+fn CenterPlay() -> Node {
+    return zeus.Box(style = Style(position = pos_absolute(), inset = Edges(top = 0, left = 0, right = 0, bottom = 0),
+                                  align = Align.Center, justify = Align.Center),
+                    visible = player.src.get() != "" && player.error.get() == "" && player.status.get() == "" &&
+                              (player.state.get() == zeus.MEDIA_PAUSED || player.state.get() == zeus.MEDIA_ENDED),
+                    enter = Enter.Fade) {
+        zeus.Box(style = Style(width = px(76), height = px(76), radius = corners(38), background = GLASS, opacity = 70,
+                               align = Align.Center, justify = Align.Center, cursor = "pointer",
+                               border = line(1, "#3A3E4A")),
+                 hoverStyle = Style(background = ACCENT, opacity = 92),
+                 pressScale = true,
+                 role = "button", label = "Play",
+                 on_click = fn() { player.toggle() }) {
+            Glyph(fn() -> bool { return player.state.get() != zeus.MEDIA_ENDED }, icons.PLAY, 32, WHITE, 76)
+            Glyph(fn() -> bool { return player.state.get() == zeus.MEDIA_ENDED }, icons.REPLAY, 32, WHITE, 76)
+        }
+    }
+}
+
+/// Short feedback for a key or gesture ("1.5×", "Volume 60%", "+5s").
+fn Osd() -> Node {
+    return zeus.Box(style = Style(position = pos_absolute(), inset = Edges(top = 64, left = 0, right = 0),
+                                  direction = Direction.Row, justify = Align.Center),
+                    visible = player.osd.get() != "",
+                    enter = Enter.Fade) {
+        zeus.Box(style = Style(direction = Direction.Row, gap = 8, align = Align.Center, padding = edges2(9, 16),
+                               radius = corners(999), background = GLASS, opacity = 82,
+                               border = line(1, "#30343F"))) {
+            zeus.Box(visible = player.osd_icon.get() == "vol") {
+                zui.Icon(icons.VOL_HIGH, 18, WHITE)
+            }
+            zeus.Text(player.osd.get(), style = Style(font = 14, color = WHITE))
+        }
+    }
+}
+
+/// The double-tap ripple on one side: « 10s / 10s ».
+fn TapBubble(side: int) -> Node {
+    return zeus.Box(style = Style(position = pos_absolute(),
+                                  inset = if side < 0 { Edges(top = 0, bottom = 0, left = 0) }
+                                          else { Edges(top = 0, bottom = 0, right = 0) },
+                                  width = pct(33), align = Align.Center, justify = Align.Center,
+                                  background = "#FFFFFF", opacity = 7),
+                    visible = player.tap_side.get() == side,
+                    enter = Enter.Fade) {
+        zeus.Box(style = Style(direction = Direction.Column, align = Align.Center, gap = 6,
+                               width = px(92), height = px(92), radius = corners(46), justify = Align.Center,
+                               background = GLASS, opacity = 60)) {
+            Centered(fn() { zui.Icon(if side < 0 { icons.BACK } else { icons.FWD }, 30, WHITE) })
+            Centered(fn() { zeus.Text("10 seconds", style = Style(font = 11, color = WHITE)) })
+        }
+    }
+}
+
+fn ErrorCard() -> Node {
+    return zeus.Box(style = Style(position = pos_absolute(), inset = Edges(top = 0, left = 0, right = 0, bottom = 0),
+                                  align = Align.Center, justify = Align.Center),
+                    visible = player.error.get() != "") {
+        zeus.Box(style = Style(direction = Direction.Column, align = Align.Center, gap = 12, padding = edges2(26, 30),
+                               radius = corners(18), background = GLASS, width = px(440),
+                               border = line(1, "#2C303B")),
+                 on_click = fn() { player.wake() }) {
+            Centered(fn() { zui.Icon(icons.ALERT, 34, ACCENT) })
+            Centered(fn() { zeus.Text("Can't play {{player.title.get()}}", style = Style(font = 16, color = WHITE)) })
+            Centered(fn() { zeus.Text(player.error.get(), style = Style(font = 13, color = SOFT)) })
+            zeus.Box(style = Style(direction = Direction.Row, justify = Align.Center, gap = 10, margin = Edges(top = 6),
+                                   width = pct(100))) {
+                Pill(icons.FOLDER, "Open another", true, fn() { player.pick() })
+                Pill(icons.CLOSE, "Close", false, fn() { player.close() })
+            }
+        }
+    }
+}

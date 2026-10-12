@@ -1775,6 +1775,36 @@ void loam_platform_plat_set_title(loam_str title) {
     if (plat_title_fn) plat_title_fn(win_title ? win_title : "");
 #endif
 }
+/* Window chrome (`zeus.window_chrome`). 0: the host's own title bar. 1: the
+   app draws it (`TitleBar`): a desktop host runs the content under a
+   transparent bar, keeps the window buttons, and reports the bar's box here —
+   height, the room the buttons take on the left, and on the right — every
+   frame. Hosts without a title bar (web, mobile, headless) leave it zero, so a
+   `TitleBar` there takes no space. Tests write the box through
+   `zeus.engine_set_titlebar`. */
+static int64_t chrome_mode;
+static int64_t titlebar_box[3];
+
+void loam_platform_plat_set_chrome(int64_t mode) { chrome_mode = mode; }
+int64_t zeus_window_chrome(void) { return chrome_mode; }
+
+void zeus_set_titlebar_box(int64_t height, int64_t lead, int64_t trail) {
+    titlebar_box[0] = height < 0 ? 0 : height;
+    titlebar_box[1] = lead < 0 ? 0 : lead;
+    titlebar_box[2] = trail < 0 ? 0 : trail;
+}
+void loam_platform_plat_set_titlebar_box(int64_t height, int64_t lead, int64_t trail) {
+    zeus_set_titlebar_box(height, lead, trail);
+}
+void loam_platform_plat_titlebar_get(loam_vec *out) {
+    int32_t *p;
+    if (!out || !out->ptr || out->len < 3) return;
+    p = (int32_t *)out->ptr;
+    p[0] = (int32_t)titlebar_box[0];
+    p[1] = (int32_t)titlebar_box[1];
+    p[2] = (int32_t)titlebar_box[2];
+}
+
 /* Clipboard write (`CopyButton`). The runtime keeps the last string so a
    headless run can read it back (`plat_clipboard_last`); a desktop host
    registers a hook that hands it to the system pasteboard, and the web asks
@@ -1803,6 +1833,156 @@ void loam_platform_plat_clipboard_write(loam_str text) {
 loam_str loam_platform_plat_clipboard_last(void) {
     if (!clip_last) return (loam_str){"", 0};
     return (loam_str){clip_last, (int64_t)strlen(clip_last)};
+}
+
+/* ---- media playback (`plat_media_*`) ------------------------------------
+   The host plays; this file only routes. Codes match `zeus_media.loam`:
+   cmd 1 play, 2 pause, 3 seek ms, 4 rate %, 5 volume %, 6 mute, 7 loop,
+   8 close; get 1 position ms, 2 duration ms, 3 state, 4/5 video size,
+   6 buffered end ms, 7 picks so far. State 0 empty, 1 loading, 2 paused,
+   3 playing, 4 ended, 5 error, 6 waiting for data.
+
+   The web keeps its players and its pick result in JS (an import per verb).
+   A native host registers a `ZeusMedia` table; with none (headless, Linux,
+   iOS, Android) a null player stands in so the UI's state logic still runs. */
+#define MEDIA_SLOTS 8
+
+#ifdef __wasm32__
+__attribute__((import_module("zeus"), import_name("media_open")))
+int32_t zeus_js_media_open(int32_t slot, const char *src);
+__attribute__((import_module("zeus"), import_name("media_cmd")))
+void zeus_js_media_cmd(int32_t slot, int32_t cmd, int32_t value);
+__attribute__((import_module("zeus"), import_name("media_get")))
+int32_t zeus_js_media_get(int32_t slot, int32_t what);
+__attribute__((import_module("zeus"), import_name("media_text")))
+int32_t zeus_js_media_text(int32_t slot, int32_t what, char *out, int32_t cap);
+__attribute__((import_module("zeus"), import_name("media_pick")))
+void zeus_js_media_pick(void);
+__attribute__((import_module("zeus"), import_name("fullscreen")))
+int32_t zeus_js_fullscreen(int32_t on);
+#endif
+
+static ZeusMedia media_host;
+static int64_t null_state[MEDIA_SLOTS];
+static int64_t null_pos[MEDIA_SLOTS];
+static int64_t null_full;
+static int64_t picked_seq;
+static char *picked_text;
+
+void zeus_set_media(ZeusMedia media) { media_host = media; }
+
+void zeus_media_picked(const char *name, const char *src) {
+    size_t a = name ? strlen(name) : 0, b = src ? strlen(src) : 0;
+    char *p = (char *)malloc(a + b + 2);
+    if (!p) return;
+    if (a) memcpy(p, name, a);
+    p[a] = '\n';
+    if (b) memcpy(p + a + 1, src, b);
+    p[a + 1 + b] = 0;
+    free(picked_text);
+    picked_text = p;
+    picked_seq++;
+    if (plat_redraw) plat_redraw();
+}
+
+static int media_slot_ok(int64_t slot) { return slot >= 0 && slot < MEDIA_SLOTS; }
+
+int64_t loam_platform_plat_media_open(int64_t slot, loam_str src) {
+    char *p;
+    int64_t r = 0;
+    if (!media_slot_ok(slot) || slot == 0) return 0;
+    p = dup_ys(src);
+#ifdef __wasm32__
+    r = zeus_js_media_open((int32_t)slot, p);
+#else
+    if (media_host.open) {
+        r = media_host.open(slot, p);
+    } else {
+        null_state[slot] = p[0] ? 2 : 0;
+        null_pos[slot] = 0;
+        r = p[0] ? 1 : 0;
+    }
+#endif
+    free(p);
+    return r;
+}
+
+void loam_platform_plat_media_cmd(int64_t slot, int64_t cmd, int64_t value) {
+    if (!media_slot_ok(slot)) return;
+#ifdef __wasm32__
+    zeus_js_media_cmd((int32_t)slot, (int32_t)cmd, (int32_t)value);
+#else
+    if (media_host.cmd) {
+        media_host.cmd(slot, cmd, value);
+        return;
+    }
+    if (null_state[slot] == 0) return;
+    if (cmd == 1) null_state[slot] = 3;
+    else if (cmd == 2) null_state[slot] = 2;
+    else if (cmd == 3) null_pos[slot] = value < 0 ? 0 : value;
+    else if (cmd == 8) null_state[slot] = 0;
+#endif
+}
+
+int64_t loam_platform_plat_media_get(int64_t slot, int64_t what) {
+    if (!media_slot_ok(slot)) return 0;
+#ifdef __wasm32__
+    return zeus_js_media_get((int32_t)slot, (int32_t)what);
+#else
+    if (what == 7) return picked_seq;
+    if (media_host.get) return media_host.get(slot, what);
+    if (what == 1) return null_pos[slot];
+    if (what == 3) return null_state[slot];
+    return 0;
+#endif
+}
+
+loam_str loam_platform_plat_media_text(int64_t slot, int64_t what) {
+    char buf[4096];
+    size_t n;
+    char *p;
+    buf[0] = 0;
+#ifdef __wasm32__
+    {
+        int32_t got = zeus_js_media_text((int32_t)slot, (int32_t)what, buf, (int32_t)sizeof buf);
+        if (got < 0) got = 0;
+        if (got >= (int32_t)sizeof buf) got = (int32_t)sizeof buf - 1;
+        buf[got] = 0;
+    }
+#else
+    if (what == 1) {
+        if (picked_text) {
+            strncpy(buf, picked_text, sizeof buf - 1);
+            buf[sizeof buf - 1] = 0;
+        }
+    } else if (media_host.text && media_slot_ok(slot)) {
+        media_host.text(slot, what, buf, (int)sizeof buf);
+        buf[sizeof buf - 1] = 0;
+    }
+#endif
+    n = strlen(buf);
+    if (n == 0) return (loam_str){"", 0};
+    p = (char *)loam_new(n + 1, "media_text", 0);
+    memcpy(p, buf, n + 1);
+    return (loam_str){p, (int64_t)n};
+}
+
+void loam_platform_plat_media_pick(void) {
+#ifdef __wasm32__
+    zeus_js_media_pick();
+#else
+    if (media_host.pick) media_host.pick();
+#endif
+}
+
+int64_t loam_platform_plat_fullscreen(int64_t on) {
+#ifdef __wasm32__
+    return zeus_js_fullscreen((int32_t)on);
+#else
+    if (media_host.fullscreen) return media_host.fullscreen(on);
+    if (on >= 0) null_full = on ? 1 : 0;
+    return null_full;
+#endif
 }
 
 /* 1 when shortcuts follow Apple conventions (⌘ rather than Ctrl): macOS and
@@ -2073,6 +2253,15 @@ void zeus_paint(void *ctx, ZeusDraw draw) {
 
 int zeus_handle_click(int64_t x, int64_t y) {
     return (int)loam_zeus_engine_click(x, y);
+}
+
+/* 1 when a press at (x, y) should move the window: it lands on an app-drawn
+   `TitleBar` and on no control inside it. */
+int zeus_window_drag_at(int64_t x, int64_t y) {
+#ifdef LOAM_HOST_BUILD
+    if (!zeus_app_api.window_drag_at) return 0;
+#endif
+    return (int)loam_zeus_engine_window_drag_at((int32_t)x, (int32_t)y);
 }
 
 /* Secondary click (right button, ctrl-click, long press): runs the nearest

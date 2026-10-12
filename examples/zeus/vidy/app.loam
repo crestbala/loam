@@ -1,0 +1,40 @@
+//! vidy — a video player. One entry, every host.
+//!
+//!   zeli serve examples/zeus/vidy --target macos   # native window (AVFoundation)
+//!   zeli serve examples/zeus/vidy --target web     # wasm + <video> in the browser
+//!   sh examples/zeus/vidy/scripts/install.sh       # Vidy.app in ~/Applications
+//!
+//! `zeli routes` generates app_routes.loam from routes/; this file mounts it.
+//!
+//!   lib/         pure helpers (time labels, aspect boxes, names, ffmpeg job)
+//!   player/      the store (signals + actions) and the key bindings
+//!   components/  the widgets; each reads the store
+//!   tests/       unit tests, the headless e2e, layout probes
+
+import "std:zeus"
+import "std:str"
+import "std:sys"
+import "app_routes.loam" as approutes
+import "player/store.loam" as player
+import "lib/media_name.loam" as names
+
+fn main() {
+    player.start()
+    // A path or URL on the command line opens straight away (macOS). iOS apps
+    // get no arguments, so `VIDY_OPEN` does the same there:
+    //   SIMCTL_CHILD_VIDY_OPEN=/path/movie.mp4 xcrun simctl launch booted com.loam.app
+    // Finder's "Open With" reaches the store through the host's pick channel.
+    let args = sys.args()
+    let mut open = sys.env("VIDY_OPEN")
+    if args.len > 1 && !args[1].starts_with("-psn_") {
+        open = args[1]
+    }
+    if open != "" {
+        player.enqueue(names.file_name(open), open, true)
+    }
+    // Vidy draws its own title bar (routes/layout.loam).
+    zeus.window_chrome(zeus.CHROME_CUSTOM)
+    zeus.App("Vidy", fn() {
+        approutes.app()
+    }, 1180, 720)
+}
