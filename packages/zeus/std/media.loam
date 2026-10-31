@@ -150,12 +150,44 @@ fn media_error(p: Player) -> string {
 
 /// Open the host's media picker. Poll `media_picks()`: when it moves,
 /// `media_picked_name()` / `media_picked_src()` hold the file. Files dropped
-/// on the window arrive the same way.
+/// on the window arrive the same way. A drop of several files queues; each
+/// read of `media_picks()` that follows a read of the current file publishes
+/// the next one.
 fn media_pick() {
     platform.plat_media_pick()
 }
 
-/// How many files the picker (or a drop) has produced so far.
+/// Open a panel for audio files. On macOS this is a Finder open panel that
+/// accepts several files. Other hosts use `media_pick`. Each file is
+/// published the same way as a drop: poll `media_picks()` and read the name
+/// and path before the next call.
+fn media_pick_audio() {
+    platform.plat_media_pick_audio()
+}
+
+/// Deliver one file the way a drop does. Tests use this; the window drop and
+/// Open With call the same queue.
+fn media_dropped(name: string, src: string) {
+    platform.plat_media_dropped(name, src)
+}
+
+/// Find where a voice is in the audio file `src`, in the background. On macOS
+/// this is Apple's sound classifier: `out` gets one line per 1.5 s window
+/// (hop 0.75 s), `start_ms end_ms voice`, voice the highest singing / speech
+/// confidence 0..100. Then `out.done` appears, or `out.fail` holding the
+/// reason. False when this host cannot do it.
+fn media_voice_map(src: string, out: string) -> bool {
+    return platform.plat_media_voice(1, src, out) == 1
+}
+
+/// Write `src` minus its voice to `out` (32-bit float WAV), in the background.
+/// On macOS 13+ an ML voice isolator finds the voice. Then `out.done`
+/// appears, or `out.fail`. False when this host cannot do it.
+fn media_voice_split(src: string, out: string) -> bool {
+    return platform.plat_media_voice(2, src, out) == 1
+}
+
+/// How many files the picker (or a drop) has published so far.
 fn media_picks() -> int {
     return platform.plat_media_get(0, MEDIA_GET_PICKED)
 }

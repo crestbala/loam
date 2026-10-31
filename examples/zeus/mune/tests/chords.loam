@@ -1,0 +1,95 @@
+//! Chord reading, scored. Not a test: Mune renders a piece of every style
+//! (two seeds, one minute, no recordings), so every bar's chord is known
+//! (`Score.bar_ch`, a whole step up in a lifted drop), then hears the render
+//! the way it hears a recording and counts the bars each reader names
+//! right: each bar alone (`key.best_chord`) and the decoded sequence
+//! (`key.chord_path`). Bars that split or lean on sus4 or add9 are left out.
+//! Renders are kept in the folder, so a second run only listens.
+//!
+//!   ./bin/loamc examples/zeus/mune/tests/chords.loam -o /tmp/mune-chords-eval && /tmp/mune-chords-eval [/tmp/mune-chords-work]
+//!
+//! `MISS=1` prints every bar the sequence names wrong.
+
+import "std:fmt"
+import "std:sys"
+import "../core/arrange.loam" as arrange
+import "../core/graph.loam" as graph
+import "../core/jobs.loam" as jobs
+import "../core/key.loam" as key
+import "../core/sound.loam" as sound
+import "../core/styles.loam" as styles
+import "../core/time.loam" as time
+
+/// Render style `st` with `seed` into `dir` and its 5512 Hz copy, unless
+/// it is there already. Returns the score.
+fn rendered(dir: string, st: int, seed: int) -> Score {
+    sys.mkdir(dir)
+    let mut s = sound.preset(st)
+    s.length_ix = 0
+    s.seed = seed
+    let sc = arrange.arrange([]Source {}, s)
+    if sys.exists("{{dir}}/pcm.raw") == 1 {
+        return sc
+    }
+    let out = "{{dir}}/take.wav"
+    let g = graph.build(sc, s, []string {}, []string {}, []bool {}, dir)
+    sys.write_file("{{dir}}/graph.txt", g.text)
+    graph.render_voices(sc, s, g, dir)
+    sys.write_file("{{dir}}/render.sh", jobs.render_script(dir, g.inputs, out, "{{dir}}/peaks.raw"))
+    sys.exec("sh '{{dir}}/render.sh'")
+    sys.exec("ffmpeg -nostdin -v error -y -i '{{out}}' -af 'pan=mono|c0=0.5*c0+0.5*c1,aresample=5512' -f s16le -acodec pcm_s16le '{{dir}}/pcm.raw'")
+    return sc
+}
+
+fn main() -> int {
+    let a = sys.args()
+    let root = if a.len > 1 { a[1] } else { "/tmp/mune-chords-work" }
+    sys.mkdir(root)
+    let miss = sys.env("MISS").len > 0
+    let mut all_old = 0
+    let mut all_new = 0
+    let mut all_n = 0
+    for st in 0..styles.COUNT {
+        for seed in 0..2 {
+            let dir = "{{root}}/s{{st}}_{{seed}}"
+            let sc = rendered(dir, st, seed)
+            let pcm = sys.read_file("{{dir}}/pcm.raw")
+            let frames = key.chroma_frames(pcm)
+            let k = key.key_of_frames(frames)
+            let path = key.chord_path(frames, key.bass_frames(pcm), k.tonic, k.minor)
+            let mut ok_old = 0
+            let mut ok_new = 0
+            let mut n = 0
+            for b in 0..sc.bars {
+                if sc.bar_split[b] >= 0 || sc.bar_col[b] >= 2 {
+                    continue
+                }
+                let mut want = sc.bar_ch[b]
+                if sc.lift_from >= 0 && b >= sc.lift_from && b < sc.lift_to {
+                    want = key.chord_code(key.chord_root(want) + 2, key.chord_minor(want))
+                }
+                let at = time.LEAD_S + b * sc.bar_s
+                let blk = key.phrase_chroma(frames, []int { at }, []int { sc.bar_s }, []int { 1 })
+                let old = key.best_chord(blk, 0, k.tonic, k.minor)
+                let now = key.phrase_chords(path, []int { at }, []int { sc.bar_s }, []int { 1 })[0]
+                n = n + 1
+                if old == want {
+                    ok_old = ok_old + 1
+                }
+                if now == want {
+                    ok_new = ok_new + 1
+                } else if miss {
+                    fmt.println("  bar {{b}}: {{key.chord_name(want)}}, heard {{key.chord_name(now)}} (alone {{key.chord_name(old)}})")
+                }
+            }
+            fmt.println("{{styles.name(st)}} {{seed}}: {{n}} bars, alone {{ok_old}}, sequence {{ok_new}}")
+            all_old = all_old + ok_old
+            all_new = all_new + ok_new
+            all_n = all_n + n
+        }
+    }
+    if all_n > 0 {
+        fmt.println("all {{all_n}} bars: alone {{all_old * 100 / all_n}}%, sequence {{all_new * 100 / all_n}}%")
+    }
+    return 0
+}

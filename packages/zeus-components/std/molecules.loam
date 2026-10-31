@@ -233,6 +233,10 @@ struct SliderProps {
     label: string = "",
     /// Style, merged over the recipe's own (`width = px(220)` pins it).
     style: Option<fn() -> Style> = none,
+    /// Extra keyboard actions, installed ahead of the slider's own, so a binding
+    /// on the same action replaces it: `slider.inc` / `slider.dec` take over
+    /// the native left / right, `slider.up` / `slider.down` the arrows below.
+    keys: []KeyBind = no_keys(),
 }
 
 /// Slider over `min..max` (0..100 by default); fills its parent's width. Track is `primary/20`-ish, filled range primary, thumb
@@ -292,7 +296,7 @@ fn Slider(value: Signal<int>, p: SliderProps) -> Node {
                      role = "slider",
                      label = p.label,
                      enabled = !p.disabled,
-                     keys = keys,
+                     keys = keys_concat(p.keys, keys),
                      hoverOff = true)
 }
 
@@ -1032,8 +1036,26 @@ struct SelectProps {
     style: Option<fn() -> Style> = none,
 }
 
+/// Which `Select` is open: its token, 0 for none. Opening one closes the
+/// rest. Each trigger sits above the scrim (so a second click on it closes
+/// its own menu), which also means a click on another trigger never reached
+/// the open menu's scrim, and several menus stayed open over each other.
+let mut select_open_sid: int = 0
+let mut select_seq: int = 0
+
+fn select_open() -> Signal<int> {
+    if select_open_sid == 0 {
+        let s = global_signal(0)
+        select_open_sid = s.id
+    }
+    return signal_handle(select_open_sid)
+}
+
 fn Select(value: Signal<int>, labels: []string, p: SelectProps) -> Node {
     let size = p.size
+    select_seq = select_seq + 1
+    let token = select_seq
+    let open = select_open()
     // state. `active` (-1 = closed) is the menu's only state; the picked value
     // stays in the caller's `value` signal.
     let active = signal(-1)
@@ -1060,6 +1082,7 @@ fn Select(value: Signal<int>, labels: []string, p: SelectProps) -> Node {
                 hl_y.set(t.y)
             }
             active.set(0)
+            open.set(token)
         }
     }
     fn next() {
@@ -1100,6 +1123,12 @@ fn Select(value: Signal<int>, labels: []string, p: SelectProps) -> Node {
         hl_w.set(t.w)
         hl_h.set(t.h)
     }
+    // Another Select opened: close this one.
+    effect(|| {
+        if open.get() != token && active.peek() >= 0 {
+            active.set(-1)
+        }
+    })
     on_mount(|| {
         anchor(menu, trigger, Place.PlaceBelow, 6)
         // Opening re-lays the menu out from nothing: land on the row at once.

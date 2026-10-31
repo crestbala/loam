@@ -1,0 +1,92 @@
+// A node inside a SCROLLED scroller that is re-recorded on its own (a patched
+// frame) must land where a full record puts it. `paint_node` adds a scroller's
+// offset on the way down to its children; the patch walk reached them without
+// going through `paint_node`, so a child re-recorded alone was drawn at its
+// unscrolled position: a switch toggled while the page was scrolled jumped out
+// of its row, and the old one stayed behind. Every frame of an app that keeps
+// painting (a media player running) takes the patch path, so it showed there.
+
+import "std:async"
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn draw_sum() -> int {
+    let n = zeus.draw_count()
+    let mut s = 0
+    for i in 0..n {
+        s = (s * 31 + zeus.draw_op(i)) % 1000003
+        s = (s * 31 + zeus.draw_x(i)) % 1000003
+        s = (s * 31 + zeus.draw_y(i)) % 1000003
+        s = (s * 31 + zeus.draw_w(i)) % 1000003
+        s = (s * 31 + zeus.draw_h(i)) % 1000003
+        s = (s * 31 + zeus.draw_rgb(i)) % 1000003
+        s = (s * 31 + zeus.draw_alpha(i)) % 1000003
+    }
+    return s
+}
+
+fn frame() {
+    zeus.engine_layout(300, 200)
+    zeus.engine_paint()
+}
+
+/// The y of the fill painted with `rgb`, or -9999.
+fn fill_y(rgb: int) -> int {
+    for i in 0..zeus.draw_count() {
+        if zeus.draw_rgb(i) == rgb && zeus.draw_w(i) == 90 {
+            return zeus.draw_y(i)
+        }
+    }
+    return -9999
+}
+
+fn main() {
+    zeus.window("patch scrolled", 300, 200)
+    let a = zeus.signal(100)
+    let mut m = 0
+    zeus.root(zui.Scroll(style = Style(width = px(300), height = px(200))) {
+        zeus.Box(style = Style(direction = Direction.Column, gap = 6, padding = edges(8))) {
+            zeus.Box(style = Style(height = px(240)))
+            let b = zeus.Box(style = Style(width = px(90), height = px(24), background = "#ff0000"))
+            zeus.styled(b, || { zeus.set_prop_int(b, zeus.SET.Opacity, a.get()) })
+            m = b.id
+            zeus.Box(style = Style(height = px(240)))
+        }
+    })
+    frame()
+    frame()
+    zeus.engine_scroll_step(150, 100, 0, 200)
+    frame()
+    // Let the scrollbar fade finish: while it runs every frame records in full.
+    async.sleep(600)
+    zeus.engine_step()
+    frame()
+    frame()
+    let rgb = 16711680
+    let at = fill_y(rgb)
+    must(at != -9999, "the box is painted")
+    must(at == zeus.node_y(m) - 200, "the box sits at its scrolled position ({{at}})")
+
+    let p0 = zeus.paint_patch_frames()
+    a.set(40)
+    frame()
+    must(zeus.paint_patch_frames() > p0, "a paint-only write inside the scroller is patched")
+    let patched = draw_sum()
+    let moved = fill_y(rgb)
+    zeus.paint_force_full()
+    zeus.engine_paint()
+    must(fill_y(rgb) == at, "a full record keeps the box at {{at}}")
+    must(moved == at, "the patched box stays at its scrolled position ({{moved}}, want {{at}})")
+    must(draw_sum() == patched, "a patched frame in a scrolled scroller matches a full record")
+    fmt.println("patch scrolled ok")
+}

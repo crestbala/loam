@@ -1,0 +1,145 @@
+//! The styles and the three energies. A style sets the tempo used when no
+//! recording has a pulse, the swing, the drum kit and patterns, the bass,
+//! the progression, and the default sound (`sound.preset`).
+
+const DREAM: int = 0
+const LOFI: int = 1
+const HOUSE: int = 2
+const CINEMA: int = 3
+const WAVE: int = 4
+const TRAP: int = 5
+const FUTURE: int = 6
+const AFRO: int = 7
+const COUNT: int = 8
+
+const CALM: int = 0
+const FLOW: int = 1
+const DRIVE: int = 2
+
+fn names() -> []string {
+    return []string { "Dream", "Lo-fi", "House", "Cinematic", "Synthwave", "Trap", "Future bass", "Afrobeats" }
+}
+
+fn blurbs() -> []string {
+    return []string {
+        "Slow pads, bells, and a lot of air",
+        "Swung drums, warm keys, tape and crackle",
+        "Four on the floor, offbeat bass, pump",
+        "Legato strings, low ostinato, taiko, and a braam on the drop",
+        "Eighth-note bass, saw arps, chorus",
+        "808 bass, half-time snare, rolling hats",
+        "Supersaw chord stabs, half-time drums, pump",
+        "Tresillo kick, shaker and congas, log-drum bass, mallets",
+    }
+}
+
+fn name(s: int) -> string {
+    let ns = names()
+    if s < 0 || s >= ns.len {
+        return ns[0]
+    }
+    return ns[s]
+}
+
+fn energy_names() -> []string {
+    return []string { "Calm", "Flow", "Drive" }
+}
+
+fn energy_name(e: int) -> string {
+    let ns = energy_names()
+    if e < 0 || e >= ns.len {
+        return ns[1]
+    }
+    return ns[e]
+}
+
+/// Centi-BPM when no recording sets the tempo.
+fn default_bpm_c(s: int) -> int {
+    if s == LOFI {
+        return 8200
+    }
+    if s == HOUSE {
+        return 12200
+    }
+    if s == CINEMA {
+        return 9000
+    }
+    if s == WAVE {
+        return 10000
+    }
+    if s == TRAP {
+        return 14000
+    }
+    if s == FUTURE {
+        return 15000
+    }
+    if s == AFRO {
+        return 10600
+    }
+    return 8400
+}
+
+/// The tempo a style sits in. A recording's pulse is folded by octaves
+/// into this range, so lo-fi does not run at 160.
+fn bpm_range_c(s: int) -> []int {
+    if s == LOFI {
+        return []int { 7000, 9800 }
+    }
+    if s == HOUSE {
+        return []int { 11400, 13000 }
+    }
+    if s == CINEMA {
+        return []int { 7000, 12000 }
+    }
+    if s == WAVE {
+        return []int { 8400, 12000 }
+    }
+    if s == TRAP {
+        return []int { 12000, 16000 }
+    }
+    if s == FUTURE {
+        return []int { 13000, 16000 }
+    }
+    if s == AFRO {
+        return []int { 9400, 11800 }
+    }
+    return []int { 6600, 10400 }
+}
+
+/// Late sixteenths as a share of a sixteenth (0..30).
+fn swing(s: int) -> int {
+    if s == LOFI {
+        return 16
+    }
+    if s == AFRO {
+        return 9
+    }
+    if s == DREAM {
+        return 6
+    }
+    return 0
+}
+
+/// Snare on beat three, not two and four: the half-time styles.
+fn half_time(s: int) -> bool {
+    return s == TRAP || s == FUTURE
+}
+
+/// Which progression (`theory.progression`) a style starts from.
+fn progression_pick(s: int) -> int {
+    if s == LOFI || s == FUTURE {
+        return 1
+    }
+    if s == HOUSE || s == DREAM {
+        return 2
+    }
+    if s == CINEMA || s == AFRO {
+        return 3
+    }
+    return 0
+}
+
+/// Chords that carry a seventh.
+fn sevenths(s: int) -> bool {
+    return s == LOFI || s == DREAM || s == FUTURE || s == AFRO
+}

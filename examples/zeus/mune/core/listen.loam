@@ -1,0 +1,899 @@
+//! Hear one recording: pulse, bar grid, and the phrases worth looping.
+//!
+//! Input is what the decode job wrote: a 100 Hz envelope in three bands
+//! (low under 180 Hz, mid 200 Hz – 3.5 kHz, high over 5 kHz), and the voice
+//! map when the host has one. Loam never holds the recording itself.
+//!
+//! 1. Onsets. Each band is log-compressed, its positive rise is the flux,
+//!    and the bands sum (high at 0.8). A 0.3 s moving mean is subtracted so
+//!    a loud passage does not read as one long onset.
+//! 2. Tempo. Autocorrelation of the onset curve between 60 and 180 BPM,
+//!    each lag also counting its double, weighted toward 120 BPM so a
+//!    half or double tempo does not win by accident. No clear peak means
+//!    free time.
+//! 3. Grid. The tempo is refined to 0.01 BPM by folding the whole onset
+//!    curve onto one beat and keeping the sharpest fold. The fold's peak is
+//!    the beat phase. The downbeat is the beat of the bar with the most low
+//!    band (the kick usually lands on one). Players drift: a band that
+//!    wanders a little reads as no pulse over the whole file, so a weak
+//!    fold is checked again over 20 s windows, each with its own phase.
+//! 4. Bar lines. From the downbeat, each bar line is predicted one bar on
+//!    and pulled halfway to where the next two bars' beats land best, so
+//!    the grid follows a drifting band instead of sliding off it.
+//! 5. Phrases. Every 1, 2, and 4 bar span is a candidate. A good loop is
+//!    steady, not quiet, and the bar after it looks like its first bar, so
+//!    the seam is where the music already repeats. Voice, when mapped,
+//!    excludes a span.
+
+import "std:math"
+import "std:str"
+import "num.loam" as num
+import "time.loam" as time
+
+/// Analysis stops here. A phrase is never cut from audio we did not hear.
+const MAX_ENV: int = 48000
+
+const KIND_GROOVE: int = 0
+const KIND_TEXTURE: int = 1
+
+/// A window is voice-free below this confidence (0..100).
+const VOICE_FREE: int = 12
+
+/// Candidates kept per recording.
+const MAX_PHRASES: int = 44
+
+/// One recording, heard. Phrase columns are parallel; times are samples at
+/// 48 kHz in the decoded file.
+struct Heard {
+    dur_ms: int,
+    /// Centi-BPM (12000 is 120 BPM). 0 is free time.
+    bpm_c: int,
+    /// 0..100, how clearly the pulse stands out.
+    pulse: int,
+    onsets: int,
+    /// First bar line, in samples.
+    bar0_s: int,
+    /// Bar length in samples at the recording's own tempo.
+    bar_s: int,
+    /// Total voice-free time, ms. -1 when there is no voice map.
+    free_ms: int,
+    ph_start: []int,
+    ph_len: []int,
+    ph_bars: []int,
+    ph_kind: []int,
+    ph_score: []int,
+    ph_voice: []int,
+    /// Brightness, 0..100: the share of the mid and high bands.
+    ph_bright: []int,
+    /// Level, 0..100 against the recording's loudest phrase.
+    ph_level: []int,
+    /// Share of the low band, 0..100: bass and kick.
+    ph_low: []int,
+    /// Onset density: the onset curve's mean over the phrase, ×1000.
+    ph_dense: []int,
+    /// Four blocks of twelve pitch classes per phrase (`key.phrase_chroma`).
+    /// `hear` leaves it empty; the analysis fills it from the PCM copy.
+    ph_chroma: []int,
+    /// Four chords per phrase, one per block, decoded as a sequence over
+    /// the whole recording (`key.phrase_chords`), −1 where none holds.
+    /// Empty when only the chroma is known.
+    ph_chord: []int,
+}
+
+struct Grid {
+    bpm_c: int,
+    pulse: int,
+    /// Beat phase and period in envelope samples (10 ms).
+    phase: f64,
+    period: f64,
+    downbeat: int,
+}
+
+fn no_heard() -> Heard {
+    return Heard {
+        dur_ms: 0, bpm_c: 0, pulse: 0, onsets: 0, bar0_s: 0, bar_s: 0, free_ms: -1,
+        ph_start: []int {}, ph_len: []int {}, ph_bars: []int {}, ph_kind: []int {},
+        ph_score: []int {}, ph_voice: []int {}, ph_bright: []int {}, ph_level: []int {},
+        ph_low: []int {}, ph_dense: []int {}, ph_chroma: []int {}, ph_chord: []int {},
+    }
+}
+
+/// Brightness, level, low share, and onset density of each phrase, from
+/// the three-band envelope and the onset curve. Columns `[bright, level,
+/// low, dense]`, parallel to `starts`.
+fn timbre(bands: [][]int, on: []f64, starts: []int, lens: []int) -> [][]int {
+    let mut bright = []int {}
+    let mut low = []int {}
+    let mut dense = []int {}
+    let mut raw = []int {}
+    let mut top = 1
+    for p in 0..starts.len {
+        let a = starts[p] / 480
+        let b = (starts[p] + lens[p]) / 480
+        let lo = mean_range(bands[0], a, b)
+        let mid = mean_range(bands[1], a, b)
+        let hi = mean_range(bands[2], a, b)
+        let total = lo + mid + hi
+        push(bright, if total > 0 { (mid * 55 + hi * 100) / total } else { 0 })
+        push(low, if total > 0 { lo * 100 / total } else { 0 })
+        push(dense, if b > a { i32(sum_range(on, a, b) * 1000.0 / f64(b - a)) } else { 0 })
+        push(raw, total)
+        if total > top {
+            top = total
+        }
+    }
+    let mut level = []int {}
+    for p in 0..raw.len {
+        push(level, raw[p] * 100 / top)
+    }
+    return [][]int { bright, level, low, dense }
+}
+
+/// Little-endian s16 frames of `channels` → one array per channel, absolute.
+fn parse_bands(b: string, channels: int) -> [][]int {
+    let mut out = [][]int {}
+    let ch = if channels < 1 { 1 } else { channels }
+    for c in 0..ch {
+        push(out, []int {})
+    }
+    let mut n = b.len / (2 * ch)
+    if n > MAX_ENV {
+        n = MAX_ENV
+    }
+    for i in 0..n {
+        for c in 0..ch {
+            let at = (i * ch + c) * 2
+            let u = b[at] + b[at + 1] * 256
+            let mut v = u
+            if u >= 32768 {
+                v = 65536 - u
+            }
+            push(out[c], v)
+        }
+    }
+    return out
+}
+
+/// The three-band envelope summed into one level curve.
+fn level_curve(bands: [][]int) -> []int {
+    let mut out = []int {}
+    if bands.len == 0 {
+        return out
+    }
+    let n = bands[0].len
+    for i in 0..n {
+        let mut s = 0
+        for c in 0..bands.len {
+            if i < bands[c].len {
+                s = s + bands[c][i]
+            }
+        }
+        push(out, s)
+    }
+    return out
+}
+
+fn band_flux(env: []int) -> []f64 {
+    let mut out = []f64 {}
+    let mut prev: f64 = 0.0
+    for i in 0..env.len {
+        let c = math.ln(1.0 + f64(env[i]) / 64.0)
+        let mut d = c - prev
+        if i == 0 || d < 0.0 {
+            d = 0.0
+        }
+        push(out, d)
+        prev = c
+    }
+    return out
+}
+
+/// The onset curve: band fluxes summed, local mean removed, rectified.
+fn onset_curve(bands: [][]int) -> []f64 {
+    let mut raw = []f64 {}
+    if bands.len == 0 {
+        return raw
+    }
+    let n = bands[0].len
+    for i in 0..n {
+        push(raw, f64(0))
+    }
+    for c in 0..bands.len {
+        let w: f64 = if c == 2 { 0.8 } else { 1.0 }
+        let f = band_flux(bands[c])
+        for i in 0..n {
+            if i < f.len {
+                raw[i] = raw[i] + w * f[i]
+            }
+        }
+    }
+    return minus_local_mean(raw, 15)
+}
+
+fn minus_local_mean(x: []f64, half: int) -> []f64 {
+    let n = x.len
+    let mut prefix = []f64 {}
+    let mut acc: f64 = 0.0
+    push(prefix, f64(0))
+    for i in 0..n {
+        acc = acc + x[i]
+        push(prefix, acc)
+    }
+    let mut out = []f64 {}
+    for i in 0..n {
+        let a = num.clampi(i - half, 0, n)
+        let b = num.clampi(i + half + 1, 0, n)
+        let mut m: f64 = 0.0
+        if b > a {
+            m = (prefix[b] - prefix[a]) / f64(b - a)
+        }
+        let mut v = x[i] - m
+        if v < 0.0 {
+            v = 0.0
+        }
+        push(out, v)
+    }
+    return out
+}
+
+/// Low band flux alone, for the downbeat.
+fn low_curve(bands: [][]int) -> []f64 {
+    if bands.len == 0 {
+        return []f64 {}
+    }
+    return minus_local_mean(band_flux(bands[0]), 15)
+}
+
+fn acf(on: []f64, lag: int) -> f64 {
+    let n = on.len - lag
+    if n <= 0 || lag <= 0 {
+        return 0.0
+    }
+    let mut acc: f64 = 0.0
+    for i in 0..n {
+        acc = acc + on[i] * on[i + lag]
+    }
+    return acc / f64(n)
+}
+
+/// Preference for tempos near 120 BPM, one octave wide.
+fn tempo_prior(bpm: f64) -> f64 {
+    let o = math.ln(bpm / 120.0) / math.LOG2 / 0.9
+    return math.exp(-0.5 * o * o)
+}
+
+/// Rough tempo in BPM from the autocorrelation, and its clarity (peak over
+/// mean). 0 when there is no pulse.
+fn coarse_tempo(on: []f64) -> []f64 {
+    let fs = f64(time.ENV_HZ)
+    let lo = i32(fs * 60.0 / 180.0)
+    let hi = i32(fs * 60.0 / 60.0)
+    let none = []f64 { 0.0, 0.0 }
+    if on.len < hi * 6 {
+        return none
+    }
+    let mut raw = []f64 {}
+    for lag in 0..(2 * hi + 2) {
+        if lag < lo {
+            push(raw, f64(0))
+        } else {
+            push(raw, acf(on, lag))
+        }
+    }
+    let mut best = -1
+    let mut best_v: f64 = 0.0
+    let mut sum: f64 = 0.0
+    let mut count = 0
+    for lag in lo..(hi + 1) {
+        let s = raw[lag] + 0.5 * raw[lag * 2]
+        sum = sum + raw[lag]
+        count = count + 1
+        let w = s * tempo_prior(fs * 60.0 / f64(lag))
+        if best < 0 || w > best_v {
+            best = lag
+            best_v = w
+        }
+    }
+    if best < 0 || count == 0 {
+        return none
+    }
+    let mean = sum / f64(count)
+    if mean <= 0.0 {
+        return none
+    }
+    let clarity = raw[best] / mean
+    // A parabola through the peak and its neighbours, for a sub-lag period.
+    let mut period = f64(best)
+    if best > lo && best < hi {
+        let a = raw[best - 1]
+        let b = raw[best]
+        let c = raw[best + 1]
+        let den = a - 2.0 * b + c
+        if den < 0.0 {
+            period = f64(best) + num.clampf(0.5 * (a - c) / den, -0.5, 0.5)
+        }
+    }
+    return []f64 { fs * 60.0 / period, clarity }
+}
+
+/// Fold the onset curve onto one beat of `period` samples. Returns the
+/// peak bin's share over the mean (sharpness) and the phase in samples.
+fn fold(on: []f64, period: f64) -> []f64 {
+    let bins = 48
+    let mut h = []f64 {}
+    for b in 0..bins {
+        push(h, f64(0))
+    }
+    for i in 0..on.len {
+        if on[i] > 0.0 {
+            let ph = f64(i) / period
+            let frac = ph - math.floor(ph)
+            let b = num.clampi(i32(frac * f64(bins)), 0, bins - 1)
+            h[b] = h[b] + on[i]
+        }
+    }
+    let mut best = 0
+    let mut best_v: f64 = -1.0
+    let mut total: f64 = 0.0
+    for b in 0..bins {
+        let v = h[(b + bins - 1) % bins] * 0.5 + h[b] + h[(b + 1) % bins] * 0.5
+        total = total + h[b]
+        if v > best_v {
+            best_v = v
+            best = b
+        }
+    }
+    if total <= 0.0 {
+        return []f64 { 0.0, 0.0 }
+    }
+    let sharp = best_v / (2.0 * total / f64(bins))
+    return []f64 { sharp, (f64(best) + 0.5) * period / f64(bins) }
+}
+
+/// Linear-interpolated value of `x` at fractional index `at`.
+fn at_f(x: []f64, at: f64) -> f64 {
+    if at < 0.0 {
+        return 0.0
+    }
+    let i = i32(math.floor(at))
+    if i + 1 >= x.len {
+        return 0.0
+    }
+    let t = at - f64(i)
+    return x[i] * (1.0 - t) + x[i + 1] * t
+}
+
+/// Tempo, phase, and downbeat for the curve. bpm_c 0 is free time.
+fn find_grid(on: []f64, low: []f64) -> Grid {
+    let free = Grid { bpm_c: 0, pulse: 0, phase: 0.0, period: 0.0, downbeat: 0 }
+    let coarse = coarse_tempo(on)
+    let bpm0 = coarse[0]
+    if bpm0 <= 0.0 || coarse[1] < 1.08 {
+        return free
+    }
+    let fs = f64(time.ENV_HZ)
+    let mut best_bpm = bpm0
+    let mut best_sharp: f64 = 0.0
+    let mut best_phase: f64 = 0.0
+    // ±3% in 0.02 BPM steps covers a coarse lag error at 180 BPM.
+    let steps = i32(bpm0 * 0.06 / 0.02)
+    for k in 0..(steps + 1) {
+        let bpm = bpm0 * 0.97 + f64(k) * 0.02
+        let r = fold(on, fs * 60.0 / bpm)
+        if r[0] > best_sharp {
+            best_sharp = r[0]
+            best_bpm = bpm
+            best_phase = r[1]
+        }
+    }
+    let period = fs * 60.0 / best_bpm
+    if best_sharp < 1.5 || coarse[1] < 1.22 {
+        // Weak over the whole file. A band that drifts still has a clear
+        // pulse in every stretch of it; noise does not.
+        let local = windowed_sharpness(on, period)
+        if local < 1.65 {
+            return free
+        }
+        if local > best_sharp {
+            best_sharp = local
+        }
+    }
+    // The bar starts on the beat with the most kick under it.
+    let mut down = 0
+    let mut down_v: f64 = -1.0
+    for o in 0..4 {
+        let mut s: f64 = 0.0
+        let mut at = best_phase + f64(o) * period
+        while at < f64(low.len) {
+            s = s + at_f(low, at) + 0.3 * at_f(on, at)
+            at = at + 4.0 * period
+        }
+        if s > down_v {
+            down_v = s
+            down = o
+        }
+    }
+    let pulse = num.clampi(i32((best_sharp - 1.5) * 40.0), 1, 100)
+    return Grid {
+        bpm_c: num.roundi(best_bpm * 100.0),
+        pulse: pulse,
+        phase: best_phase,
+        period: period,
+        downbeat: down,
+    }
+}
+
+/// Median fold sharpness over 20 s windows, each folded on its own and at
+/// its own tempo (within 2% of `period`), so a band that drifts or
+/// breathes is not blurred by the stretches around it.
+fn windowed_sharpness(on: []f64, period: f64) -> f64 {
+    let w = 20 * time.ENV_HZ
+    let mut vals = []int {}
+    let mut a = 0
+    while a + w <= on.len {
+        let mut seg = []f64 {}
+        for i in a..(a + w) {
+            push(seg, on[i])
+        }
+        let mut best: f64 = 0.0
+        for k in 0..41 {
+            let r = fold(seg, period * (0.98 + 0.001 * f64(k)))
+            if r[0] > best {
+                best = r[0]
+            }
+        }
+        push(vals, i32(best * 1000.0))
+        a = a + w / 2
+    }
+    if vals.len < 2 {
+        return 0.0
+    }
+    return f64(num.percentile(vals, 50)) / 1000.0
+}
+
+/// How well beats land at `at`, `at + period`, … for `beats` beats: the
+/// onset curve there, the bar line counting a little more.
+fn beat_fit(on: []f64, at: f64, period: f64, beats: int) -> f64 {
+    let mut s: f64 = 0.0
+    for q in 0..beats {
+        let w: f64 = if q % 4 == 0 { 1.3 } else { 1.0 }
+        let x = at + f64(q) * period
+        s = s + w * (at_f(on, x - 1.0) * 0.5 + at_f(on, x) + at_f(on, x + 1.0) * 0.5)
+    }
+    return s
+}
+
+/// Bar lines in envelope samples from the first downbeat to the end, one
+/// more than there are whole bars (the last is the end of the last bar).
+/// Each line is predicted a bar on from the one before and pulled halfway
+/// to the offset (up to ±60 ms) where the next two bars' beats land best.
+fn track_bars(g: Grid, on: []f64) -> []f64 {
+    let bar = g.period * 4.0
+    let mut out = []f64 {}
+    let mut at = g.phase + f64(g.downbeat) * g.period
+    let n = f64(on.len)
+    while at + bar <= n {
+        push(out, at)
+        let pred = at + bar
+        let mut best_d = 0
+        let mut best_v: f64 = -1.0
+        for d in -6..7 {
+            let v = beat_fit(on, pred + f64(d), g.period, 8) * (1.0 - 0.015 * f64(num.absi(d)))
+            if v > best_v {
+                best_v = v
+                best_d = d
+            }
+        }
+        at = pred + 0.5 * f64(best_d)
+    }
+    if out.len > 0 {
+        push(out, at)
+    }
+    return out
+}
+
+fn count_onsets(on: []f64) -> int {
+    let mut sum: f64 = 0.0
+    for i in 0..on.len {
+        sum = sum + on[i]
+    }
+    if on.len < 3 {
+        return 0
+    }
+    let thresh = 3.0 * sum / f64(on.len)
+    let mut n = 0
+    let mut last = -100
+    for i in 1..(on.len - 1) {
+        if on[i] > thresh && on[i] >= on[i - 1] && on[i] > on[i + 1] && i - last >= 8 {
+            n = n + 1
+            last = i
+        }
+    }
+    return n
+}
+
+/// Voice map text (`start_ms end_ms voice` per line) → columns.
+struct VoiceMap {
+    start: []int,
+    end: []int,
+    voice: []int,
+}
+
+fn parse_voice(text: string) -> VoiceMap {
+    let mut m = VoiceMap { start: []int {}, end: []int {}, voice: []int {} }
+    let lines = str.split(text, "\n")
+    for i in 0..lines.len {
+        let parts = str.split(str.trim(lines[i]), " ")
+        if parts.len >= 3 {
+            push(m.start, int_of(parts[0]))
+            push(m.end, int_of(parts[1]))
+            push(m.voice, int_of(parts[2]))
+        }
+    }
+    return m
+}
+
+fn int_of(s: string) -> int {
+    let t = str.trim(s)
+    let mut v = 0
+    let mut neg = false
+    for i in 0..t.len {
+        let c = t[i]
+        if i == 0 && c == 45 {
+            neg = true
+        } else if c >= 48 && c <= 57 {
+            v = v * 10 + (c - 48)
+        } else {
+            break
+        }
+    }
+    if neg {
+        return -v
+    }
+    return v
+}
+
+/// Highest voice confidence in `a_ms..b_ms`, widened by a guard so a reverb
+/// tail counts as voice too. -1 when there is no map.
+fn voice_in(m: VoiceMap, a_ms: int, b_ms: int) -> int {
+    if m.start.len == 0 {
+        return -1
+    }
+    let guard = 400
+    let mut v = 0
+    for i in 0..m.start.len {
+        if m.end[i] > a_ms - guard && m.start[i] < b_ms + guard {
+            if m.voice[i] > v {
+                v = m.voice[i]
+            }
+        }
+    }
+    return v
+}
+
+fn free_time(m: VoiceMap, dur_ms: int) -> int {
+    if m.start.len == 0 {
+        return -1
+    }
+    // Windows overlap by half; count each hop once.
+    let mut total = 0
+    for i in 0..m.start.len {
+        if m.voice[i] < VOICE_FREE && m.start[i] < dur_ms {
+            total = total + (m.end[i] - m.start[i]) / 2
+        }
+    }
+    return total
+}
+
+fn mean_range(x: []int, a: int, b: int) -> int {
+    let lo = num.clampi(a, 0, x.len)
+    let hi = num.clampi(b, 0, x.len)
+    if hi <= lo {
+        return 0
+    }
+    let mut s: i64 = i64(0)
+    for i in lo..hi {
+        s = s + i64(x[i])
+    }
+    return i32(s / i64(hi - lo))
+}
+
+fn sum_range(x: []f64, a: int, b: int) -> f64 {
+    let lo = num.clampi(a, 0, x.len)
+    let hi = num.clampi(b, 0, x.len)
+    let mut s: f64 = 0.0
+    for i in lo..hi {
+        s = s + x[i]
+    }
+    return s
+}
+
+/// Correlation of two equal-length stretches of the onset curve.
+fn likeness(on: []f64, a: int, b: int, n: int) -> f64 {
+    if n <= 1 || a < 0 || b < 0 || a + n > on.len || b + n > on.len {
+        return 0.0
+    }
+    let mut ma: f64 = 0.0
+    let mut mb: f64 = 0.0
+    for i in 0..n {
+        ma = ma + on[a + i]
+        mb = mb + on[b + i]
+    }
+    ma = ma / f64(n)
+    mb = mb / f64(n)
+    let mut num_v: f64 = 0.0
+    let mut da: f64 = 0.0
+    let mut db: f64 = 0.0
+    for i in 0..n {
+        let x = on[a + i] - ma
+        let y = on[b + i] - mb
+        num_v = num_v + x * y
+        da = da + x * x
+        db = db + y * y
+    }
+    if da <= 0.0 || db <= 0.0 {
+        return 0.0
+    }
+    return num_v / math.sqrt(da * db)
+}
+
+/// A voiced phrase ranks below every voice-free one. Hearing is shared by
+/// both voice choices, so a phrase's `ph_score` leaves this out; the pool
+/// keeps the best voice-free phrases with it and the best overall without,
+/// and the arranger takes it off only when voices are removed.
+fn voice_penalty(voice: int) -> int {
+    if voice < VOICE_FREE {
+        return if voice > 0 { voice / 2 } else { 0 }
+    }
+    return 100 + voice
+}
+
+struct Pool {
+    start: []int,
+    len: []int,
+    bars: []int,
+    kind: []int,
+    score: []int,
+    voice: []int,
+}
+
+fn empty_pool() -> Pool {
+    return Pool { start: []int {}, len: []int {}, bars: []int {}, kind: []int {}, score: []int {}, voice: []int {} }
+}
+
+fn overlaps(p: &Pool, s: int, len: int) -> bool {
+    for i in 0..p.start.len {
+        let a = p.start[i]
+        let b = a + p.len[i]
+        // Half a phrase of overlap is fine; the same phrase twice is not.
+        if s < b - p.len[i] / 2 && s + len > a + p.len[i] / 2 {
+            return true
+        }
+    }
+    return false
+}
+
+/// Pick the best-scored candidates, at most `cap`, without near-duplicates
+/// of each other or of what `into` already holds. `voiceless` ranks by the
+/// score less `voice_penalty`, so voice-free phrases come first.
+fn keep_best(c: Pool, cap: int, voiceless: bool, into: &mut Pool) {
+    let mut order = []int {}
+    let mut rank = []int {}
+    for i in 0..c.score.len {
+        push(order, i)
+        push(rank, if voiceless { c.score[i] - voice_penalty(c.voice[i]) } else { c.score[i] })
+    }
+    // Highest rank first. Insertion sort on a few hundred entries.
+    let mut i = 1
+    while i < order.len {
+        let v = order[i]
+        let mut j = i
+        while j > 0 && rank[order[j - 1]] < rank[v] {
+            order[j] = order[j - 1]
+            j = j - 1
+        }
+        order[j] = v
+        i = i + 1
+    }
+    let mut kept = 0
+    for k in 0..order.len {
+        if kept >= cap {
+            return
+        }
+        let at = order[k]
+        if !overlaps(into, c.start[at], c.len[at]) {
+            push(into.start, c.start[at])
+            push(into.len, c.len[at])
+            push(into.bars, c.bars[at])
+            push(into.kind, c.kind[at])
+            push(into.score, c.score[at])
+            push(into.voice, c.voice[at])
+            kept = kept + 1
+        }
+    }
+}
+
+/// Bar-aligned candidates for a recording with a pulse.
+fn pulse_phrases(g: Grid, on: []f64, level: []int, vm: VoiceMap, dur_ms: int) -> Pool {
+    // Bar lines in envelope samples (`bars`, for features) and exact audio
+    // samples at 48 kHz (`bars_s`, for the cut). One more line than bars.
+    let lines = track_bars(g, on)
+    let mut bars = []int {}
+    let mut bars_s = []int {}
+    for k in 0..lines.len {
+        push(bars, i32(math.floor(lines[k] + 0.5)))
+        push(bars_s, i32(math.floor(lines[k] * 480.0 + 0.5)))
+    }
+    let nb = bars.len - 1
+    if nb < 2 {
+        return empty_pool()
+    }
+    let bar_i = i32(math.floor(g.period * 4.0 + 0.5))
+    let mut energies = []int {}
+    let mut density = []int {}
+    for j in 0..nb {
+        push(energies, mean_range(level, bars[j], bars[j + 1]))
+        push(density, i32(sum_range(on, bars[j], bars[j + 1]) * 1000.0))
+    }
+    let floor_e = num.percentile(energies, 50) * 35 / 100
+    let max_e = num.percentile(energies, 95)
+    let mid_d = num.percentile(density, 50)
+    // Each length keeps its own share of the pool: otherwise the many
+    // one-bar loops crowd out the longer phrases that overlap them.
+    let mut out = empty_pool()
+    let lens = []int { 1, 2, 4 }
+    for li in 0..lens.len {
+        let l = lens[li]
+        let mut cands = empty_pool()
+        let mut j = 0
+        while j + l <= nb {
+            let a = bars[j]
+            let e = mean_range(level, a, bars[j + l])
+            let mut low_bar = false
+            for k in 0..l {
+                if energies[j + k] < floor_e {
+                    low_bar = true
+                }
+            }
+            if !low_bar && e > 0 {
+                let a_ms = a * 10
+                let b_ms = bars[j + l] * 10
+                let voice = voice_in(vm, a_ms, b_ms)
+                // The seam: does the bar after the loop look like its first bar?
+                let mut seam: f64 = 0.3
+                if j + l < nb {
+                    seam = likeness(on, a, bars[j + l], bar_i)
+                }
+                let mut steady = 100
+                for k in 0..l {
+                    let d = num.absi(energies[j + k] - e) * 100 / (e + 1)
+                    steady = steady - d / l
+                }
+                let loud = num.clampi(e * 100 / (max_e + 1), 0, 100)
+                let mut d_sum = 0
+                for k in 0..l {
+                    d_sum = d_sum + density[j + k]
+                }
+                let kind = if d_sum / l >= mid_d { KIND_GROOVE } else { KIND_TEXTURE }
+                let score = i32(num.clampf(seam, -1.0, 1.0) * 40.0) + loud * 30 / 100 + num.clampi(steady, 0, 100) * 20 / 100
+                push(cands.start, bars_s[j])
+                push(cands.len, bars_s[j + l] - bars_s[j])
+                push(cands.bars, l)
+                push(cands.kind, kind)
+                push(cands.score, score)
+                push(cands.voice, voice)
+            }
+            j = j + 1
+        }
+        let mut kept = empty_pool()
+        keep_best(cands, MAX_PHRASES / 3, true, kept)
+        keep_best(cands, MAX_PHRASES / 6, false, kept)
+        for k in 0..kept.start.len {
+            push(out.start, kept.start[k])
+            push(out.len, kept.len[k])
+            push(out.bars, kept.bars[k])
+            push(out.kind, kept.kind[k])
+            push(out.score, kept.score[k])
+            push(out.voice, kept.voice[k])
+        }
+    }
+    return out
+}
+
+/// Windows for free time: four and eight seconds of steady sound.
+fn free_phrases(level: []int, vm: VoiceMap) -> Pool {
+    let mut cands = empty_pool()
+    let n = level.len
+    let floor_e = num.percentile(level, 50) * 35 / 100
+    let max_e = num.percentile(level, 95)
+    let spans = []int { 400, 800 }
+    for si in 0..spans.len {
+        let w = spans[si]
+        let mut a = 0
+        while a + w <= n {
+            let e = mean_range(level, a, a + w)
+            let half1 = mean_range(level, a, a + w / 2)
+            let half2 = mean_range(level, a + w / 2, a + w)
+            if e > floor_e && e > 0 {
+                let steady = 100 - num.absi(half1 - half2) * 100 / (e + 1)
+                let voice = voice_in(vm, a * 10, (a + w) * 10)
+                let score = num.clampi(e * 100 / (max_e + 1), 0, 100) * 40 / 100 + num.clampi(steady, 0, 100) * 40 / 100
+                push(cands.start, a * 480)
+                push(cands.len, w * 480)
+                push(cands.bars, 0)
+                push(cands.kind, KIND_TEXTURE)
+                push(cands.score, score)
+                push(cands.voice, voice)
+            }
+            a = a + w / 4
+        }
+    }
+    let mut out = empty_pool()
+    keep_best(cands, MAX_PHRASES / 2, true, out)
+    keep_best(cands, MAX_PHRASES / 4, false, out)
+    return out
+}
+
+/// Everything about one recording the arranger needs.
+/// `env` is the three-band envelope bytes, `voice_text` the voice map (or
+/// empty), `probed_ms` the decoded length.
+fn hear(env: string, voice_text: string, probed_ms: int) -> Heard {
+    let bands = parse_bands(env, 3)
+    if bands.len == 0 || bands[0].len < 50 {
+        return no_heard()
+    }
+    let level = level_curve(bands)
+    let mut dur = level.len * 10
+    if probed_ms > 0 && probed_ms < dur {
+        dur = probed_ms
+    }
+    let on = onset_curve(bands)
+    let low = low_curve(bands)
+    let vm = parse_voice(voice_text)
+    let g = find_grid(on, low)
+    let mut pool = empty_pool()
+    if g.bpm_c > 0 {
+        pool = pulse_phrases(g, on, level, vm, dur)
+    }
+    if pool.start.len < 4 {
+        let extra = free_phrases(level, vm)
+        for i in 0..extra.start.len {
+            if !overlaps(pool, extra.start[i], extra.len[i]) {
+                push(pool.start, extra.start[i])
+                push(pool.len, extra.len[i])
+                push(pool.bars, extra.bars[i])
+                push(pool.kind, extra.kind[i])
+                push(pool.score, extra.score[i])
+                push(pool.voice, extra.voice[i])
+            }
+        }
+    }
+    let tb = timbre(bands, on, pool.start, pool.len)
+    let mut bar0 = 0
+    let mut bar_s = 0
+    if g.bpm_c > 0 {
+        bar0 = i32((g.phase + f64(g.downbeat) * g.period) * 480.0)
+        bar_s = i32(g.period * 4.0 * 480.0)
+    }
+    return Heard {
+        dur_ms: dur,
+        bpm_c: g.bpm_c,
+        pulse: g.pulse,
+        onsets: count_onsets(on),
+        bar0_s: bar0,
+        bar_s: bar_s,
+        free_ms: free_time(vm, dur),
+        ph_start: pool.start,
+        ph_len: pool.len,
+        ph_bars: pool.bars,
+        ph_kind: pool.kind,
+        ph_score: pool.score,
+        ph_voice: pool.voice,
+        ph_bright: tb[0],
+        ph_level: tb[1],
+        ph_low: tb[2],
+        ph_dense: tb[3],
+        ph_chroma: []int {},
+        ph_chord: []int {},
+    }
+}

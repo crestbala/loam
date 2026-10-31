@@ -1,0 +1,12 @@
+//! Full-bleed dark room. The page supplies the column.
+
+import "std:zeus"
+import "../theme.loam" as theme
+
+fn Layout(build: fn()) -> Node {
+    theme.install()
+    return zeus.Box(style = Style(direction = Direction.Column, width = pct(100), height = pct(100),
+                                  background = theme.PAPER)) {
+        build()
+    }
+}

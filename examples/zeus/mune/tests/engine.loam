@@ -1,0 +1,1949 @@
+//! The engine without a window: chords heard in audio, the progression,
+//! the energy arc, the Markov walk, the arranged score, and the filter
+//! graph. `loamc test` runs these.
+
+import "std:math"
+import "std:str"
+import "std:sys"
+import "std:test"
+import "../core/arrange.loam" as arrange
+import "../core/wav.loam" as wav
+import "../core/dsp.loam" as dsp
+import "../core/voices.loam" as voices
+import "../core/chain.loam" as chain
+import "../core/graph.loam" as graph
+import "../core/key.loam" as key
+import "../core/listen.loam" as listen
+import "../core/motif.loam" as motif
+import "../core/num.loam" as num
+import "../core/plan.loam" as plan
+import "../core/sound.loam" as sound
+import "../core/styles.loam" as styles
+import "../core/synth.loam" as synth
+import "../core/theory.loam" as theory
+import "../core/time.loam" as time
+
+fn eq(what: string, got: int, want: int) {
+    if got != want {
+        test.fail("{{what}}: got {{got}}, want {{want}}")
+    }
+}
+
+fn has(text: string, needle: string) {
+    if !str.contains(text, needle) {
+        test.fail("missing {{needle}}")
+    }
+}
+
+/// `sec` of the MIDI `notes` sounding together, as the decode job's
+/// 5512 Hz s16le copy. No notes is a hiss.
+fn chord_pcm(notes: []int, sec: int) -> string {
+    let mut b = []int {}
+    let n = key.RATE * sec
+    for i in 0..n {
+        let mut v = 0
+        if notes.len == 0 {
+            v = num.hash(i, 7) % 12001 - 6000
+        }
+        for k in 0..notes.len {
+            v = v + num.roundi(5000.0 * num.sin(num.TAU * num.midi_hz(notes[k]) * f64(i) / f64(key.RATE)))
+        }
+        let u = if v < 0 { v + 65536 } else { v }
+        push(b, u % 256)
+        push(b, u / 256)
+    }
+    return string_from_bytes(b)
+}
+
+/// Twelve pitch classes with the triad of `chord` loud and the rest a floor.
+fn block(chord: int) -> []int {
+    let mut out = []int {}
+    let t = key.chord_tones(chord)
+    for pc in 0..12 {
+        push(out, if pc == t[0] || pc == t[1] || pc == t[2] { 1000 } else { 150 })
+    }
+    return out
+}
+
+/// A phrase's four blocks, one chord a bar.
+fn blocks(chords: []int) -> []int {
+    let mut out = []int {}
+    for b in 0..key.BLOCKS {
+        let c = block(chords[b % chords.len])
+        for i in 0..12 {
+            push(out, c[i])
+        }
+    }
+    return out
+}
+
+/// A recording with a pulse at 120 BPM: six two-bar phrases back to back,
+/// their level rising with the index (listed out of order so order is not
+/// a hint), each playing Am F C G.
+fn source(role: int) -> Source {
+    let bar = time.bar_samples(12000)
+    let levels = []int { 90, 40, 70, 20, 55, 100 }
+    let prog = []int { key.chord_code(9, true), key.chord_code(5, false), key.chord_code(0, false), key.chord_code(7, false) }
+    let mut h = listen.no_heard()
+    h.dur_ms = 60000
+    h.bpm_c = 12000
+    h.pulse = 60
+    h.onsets = 200
+    h.bar_s = bar
+    h.free_ms = -1
+    for p in 0..levels.len {
+        push(h.ph_start, p * 2 * bar)
+        push(h.ph_len, 2 * bar)
+        push(h.ph_bars, 2)
+        push(h.ph_kind, listen.KIND_GROOVE)
+        push(h.ph_score, 40)
+        push(h.ph_voice, -1)
+        push(h.ph_bright, 30 + levels[p] / 4)
+        push(h.ph_level, levels[p])
+        push(h.ph_low, 30)
+        push(h.ph_dense, levels[p] * 2)
+        let c = blocks([]int { prog[0], prog[1] })
+        for i in 0..c.len {
+            push(h.ph_chroma, c[i])
+        }
+    }
+    return Source {
+        heard: h, key: Tonality { tonic: 9, minor: true, sure: 60 }, role: role, lufs_c: 0,
+        mono: false, has_map: false, has_split: false,
+    }
+}
+
+#[test]
+fn clocks() {
+    test.assert_eq_str(time.clock(0), "0:00")
+    test.assert_eq_str(time.clock(65000), "1:05")
+    eq("bar at 120", time.bar_samples(12000), 96000)
+}
+
+#[test]
+fn chords_are_heard() {
+    // C E G, then A C E, one bar (two seconds) each, as one two-bar phrase.
+    let c = chord_pcm([]int { 60, 64, 67 }, 2)
+    let am = chord_pcm([]int { 57, 60, 64 }, 2)
+    let pcm = string_from_bytes([]int {})
+    let frames_c = key.chroma_frames(c)
+    let frames_am = key.chroma_frames(am)
+    let mut frames = []f64 {}
+    for i in 0..frames_c.len {
+        push(frames, frames_c[i])
+    }
+    for i in 0..frames_am.len {
+        push(frames, frames_am[i])
+    }
+    let half = frames_c.len / 12 * key.FRAME * 48000 / key.RATE
+    let ch = key.phrase_chroma(frames, []int { 0 }, []int { half * 2 }, []int { 2 })
+    eq("blocks", ch.len, key.BLOCKS * 12)
+    eq("bar 1", key.best_chord(ch, 0, 0, false), key.chord_code(0, false))
+    eq("bar 2", key.best_chord(ch, 12, 0, false), key.chord_code(9, true))
+    // A two-bar phrase loops: bar 3 is bar 1 again.
+    eq("bar 3", key.best_chord(ch, 24, 0, false), key.chord_code(0, false))
+    if key.tonal(ch, 0) < 300 {
+        test.fail("a triad is not tonal: {{key.tonal(ch, 0)}}")
+    }
+    if key.fit(ch, 0, key.chord_code(0, false), 0, false) <= key.fit(ch, 0, key.chord_code(6, false), 0, false) {
+        test.fail("C fits F♯ as well as C")
+    }
+    // Hiss has no chord.
+    let hiss = key.chroma_frames(chord_pcm([]int {}, 2))
+    let hc = key.phrase_chroma(hiss, []int { 0 }, []int { 48000 * 2 }, []int { 1 })
+    eq("hiss", key.best_chord(hc, 0, 0, false), -1)
+    // The key of the frames.
+    let k = key.key_of_frames(frames)
+    if k.tonic != 0 && !(k.tonic == 9 && k.minor) {
+        test.fail("C and Am read as {{key.name(k)}}")
+    }
+    eq("silence", key.chroma_frames(pcm).len, 0)
+}
+
+#[test]
+fn chord_codes_voice_in_key() {
+    let f = key.chord_code(5, false)
+    let v = voiced(f)
+    eq("notes", v.len, 3)
+    for i in 0..v.len {
+        let pc = v[i] % 12
+        if pc != 5 && pc != 9 && pc != 0 {
+            test.fail("F voiced with pitch class {{pc}}")
+        }
+    }
+}
+
+fn voiced(c: int) -> []int {
+    let g = Groove {
+        bar_sec: 2.0, tonic: 0, minor: false, prog: []int { c }, style: styles.HOUSE, energy: styles.FLOW,
+        seed: 0, lift: 0, bars: 4, den: 1000, dyn: 1000, color: []int {}, split: -1, kick: true,
+        ending: plan.OPEN, peak: -1, tight: false, kind: plan.VERSE,
+    }
+    return synth.bar_chord(g, 0, 60)
+}
+
+#[test]
+fn ranks_and_energies() {
+    let r = chain.ranks([]int { 30, 10, -1, 20 })
+    eq("r0", r[0], 1000)
+    eq("r1", r[1], 0)
+    eq("unknown", r[2], -1)
+    eq("r3", r[3], 500)
+    let e = chain.energies([]int { 20, 90, 50 }, []int { 10, 90, 50 }, []int { 30, 60, 40 })
+    if !(e[0] < e[2] && e[2] < e[1]) {
+        test.fail("energy does not order: {{e[0]}} {{e[1]}} {{e[2]}}")
+    }
+}
+
+/// `n` units, energies spread evenly, shuffled so the walk cannot win by
+/// reading the list in order. Unit audio does not overlap.
+fn ladder(n: int) -> Units {
+    let mut u = chain.no_units()
+    for k in 0..n {
+        let i = (k * 7) % n
+        push(u.energy, i * 1000 / (n - 1))
+        push(u.bright, 50)
+        push(u.level, 70)
+        push(u.kind, 0)
+        push(u.quality, 30)
+        push(u.clash, 0)
+        push(u.bars, 2)
+        push(u.next, -1)
+        push(u.src, 0)
+        push(u.start, k * 100)
+        push(u.len, 100)
+    }
+    return u
+}
+
+#[test]
+fn walk_follows_the_energy() {
+    let u = ladder(10)
+    let mut slots = chain.no_slots()
+    // Ten one-slot sections, rising.
+    for k in 0..10 {
+        chain.add_slot(slots, k * 4, 4, k * 1000 / 9, k, k, -1, 0)
+    }
+    for seed in 0..6 {
+        let w = chain.walk(u, slots, seed)
+        eq("slots", w.len, 10)
+        if u.energy[w[0]] > 250 {
+            test.fail("seed {{seed}}: opens loud ({{u.energy[w[0]]}})")
+        }
+        if u.energy[w[9]] < 650 {
+            test.fail("seed {{seed}}: ends quiet ({{u.energy[w[9]]}})")
+        }
+    }
+    let a = chain.walk(u, slots, 1)
+    let b = chain.walk(u, slots, 1)
+    let mut same = true
+    for k in 0..a.len {
+        if a[k] != b[k] {
+            same = false
+        }
+    }
+    if !same {
+        test.fail("the same seed walked differently")
+    }
+}
+
+#[test]
+fn walk_avoids_a_clash() {
+    let mut u = ladder(6)
+    // Every unit sits at the target; only the clash differs.
+    for j in 0..6 {
+        u.energy[j] = 500
+        u.clash[j] = if j == 4 { 0 } else { 500 }
+    }
+    let mut slots = chain.no_slots()
+    chain.add_slot(slots, 0, 4, 500, 0, arrange.VERSE, -1, 0)
+    let mut hits = 0
+    for seed in 0..20 {
+        let w = chain.walk(u, slots, seed)
+        if w[0] == 4 {
+            hits = hits + 1
+        }
+    }
+    if hits < 18 {
+        test.fail("the unit that fits the chords won {{hits}} of 20")
+    }
+}
+
+#[test]
+fn walk_plays_on_and_brings_themes_back() {
+    let mut u = ladder(8)
+    for j in 0..8 {
+        u.energy[j] = 500
+    }
+    // Unit 2 is followed by unit 5 in its recording.
+    u.next[2] = 5
+    u.quality[2] = 90
+    let mut slots = chain.no_slots()
+    // Drop (two slots, two labels), a new label on the break, then the
+    // drop's labels return. The two slots of the first drop are different
+    // labels, so playing on still beats the theme.
+    chain.add_slot(slots, 0, 4, 500, 0, arrange.DROP, 0, 0)
+    chain.add_slot(slots, 4, 4, 500, 0, arrange.DROP, 1, 0)
+    chain.add_slot(slots, 8, 4, 500, 1, arrange.BREAK, 2, 0)
+    chain.add_slot(slots, 12, 4, 500, 2, arrange.DROP, 0, 1)
+    chain.add_slot(slots, 16, 4, 500, 2, arrange.DROP, 1, 1)
+    let mut on = 0
+    let mut themes = 0
+    let mut count = 0
+    for seed in 0..30 {
+        let w = chain.walk(u, slots, seed)
+        if w[0] == 2 {
+            count = count + 1
+            if w[1] == 5 {
+                on = on + 1
+            }
+        }
+        if w[3] == w[0] && w[4] == w[1] {
+            themes = themes + 1
+        }
+    }
+    if count < 15 {
+        test.fail("the best loop opened only {{count}} of 30 takes")
+    }
+    if on * 3 < count * 2 {
+        test.fail("the recording played on in {{on}} of {{count}}")
+    }
+    if themes < 24 {
+        test.fail("the second drop brought the first back in {{themes}} of 30")
+    }
+}
+
+#[test]
+fn walk_respects_slot_length() {
+    let mut u = ladder(4)
+    u.bars[0] = 4
+    u.bars[1] = 4
+    u.bars[2] = 4
+    u.bars[3] = 3
+    let mut slots = chain.no_slots()
+    chain.add_slot(slots, 0, 2, 0, 0, arrange.VERSE, -1, 0)
+    let w = chain.walk(u, slots, 0)
+    eq("nothing fits", w[0], -1)
+}
+
+#[test]
+fn successors_prefer_the_same_length() {
+    let s = chain.successors([]int { 0, 0, 0, 0 }, []int { 0, 100, 100, 300 }, []int { 100, 100, 200, 100 })
+    eq("after 0", s[0], 1)
+    eq("after 1", s[1], -1)
+    eq("after 2", s[2], 3)
+}
+
+#[test]
+fn arranged_piece_has_form() {
+    let srcs = []Source { source(arrange.RHYTHM), source(arrange.MOTIF) }
+    // House keeps 120 BPM, so a recording bar is a piece bar.
+    let mut s = sound.preset(styles.HOUSE)
+    s.length_ix = 2
+    let sc = arrange.arrange(srcs, s)
+    if !arrange.has_sound(sc) {
+        test.fail("empty score")
+    }
+    eq("path per bar", sc.path.len, sc.bars)
+    eq("heard per bar", sc.heard.len, sc.bars)
+    // The progression is the recordings' own.
+    if !sc.prog_heard {
+        test.fail("the progression was not heard")
+    }
+    eq("chord 1", sc.prog[0], key.chord_code(9, true))
+    eq("chord 2", sc.prog[1], key.chord_code(5, false))
+    // The arc: verse under drop, break under verse.
+    let mut verse = -1
+    let mut drop = -1
+    let mut brk = -1
+    for i in 0..sc.sec_kind.len {
+        let mid = chain.path_at(sc.path, sc.sec_bar[i], sc.sec_bars[i])
+        if sc.sec_kind[i] == arrange.VERSE {
+            verse = mid
+        } else if sc.sec_kind[i] == arrange.DROP {
+            drop = mid
+        } else if sc.sec_kind[i] == arrange.BREAK {
+            brk = mid
+        }
+    }
+    if !(brk < verse && verse < drop) {
+        test.fail("arc out of order: break {{brk}}, verse {{verse}}, drop {{drop}}")
+    }
+    // What plays in the drops is louder than what plays in the verses.
+    let mut v_sum = 0
+    let mut v_n = 0
+    let mut d_sum = 0
+    let mut d_n = 0
+    for b in 0..sc.bars {
+        let h = sc.heard[b]
+        let kind = sc.sec_kind[arrange.section_of(sc.sec_bar, b)]
+        if h >= 0 && kind == arrange.VERSE {
+            v_sum = v_sum + h
+            v_n = v_n + 1
+        }
+        if h >= 0 && kind == arrange.DROP {
+            d_sum = d_sum + h
+            d_n = d_n + 1
+        }
+    }
+    if v_n == 0 || d_n == 0 || d_sum / d_n <= v_sum / v_n {
+        test.fail("drops are not fuller than verses")
+    }
+    // Every loop sits on a bar and fills whole repeats.
+    for i in 0..sc.lp_src.len {
+        if sc.lp_bus[i] != arrange.AIR && sc.lp_unit[i] % sc.bar_s != 0 {
+            test.fail("loop {{i}} is not whole bars")
+        }
+    }
+    // The recordings carry the groove, so the synth drums are hats only.
+    for i in 0..sc.sy_layer.len {
+        if sc.sy_layer[i] == arrange.L_DRUMS && sc.sy_variant[i] != synth.TOPS && sc.sy_variant[i] != synth.INTRO {
+            test.fail("full synth drums over a recorded groove at bar {{sc.sy_bar[i]}}")
+        }
+    }
+    // The harmony lifts as the energy rises.
+    let mut first_lift = -1
+    let mut top_lift = -1
+    for i in 0..sc.sy_layer.len {
+        if sc.sy_layer[i] == arrange.L_PAD {
+            if first_lift < 0 {
+                first_lift = sc.sy_variant[i]
+            }
+            if sc.sy_variant[i] > top_lift {
+                top_lift = sc.sy_variant[i]
+            }
+        }
+    }
+    if first_lift < 0 || top_lift <= first_lift {
+        test.fail("pad does not lift: {{first_lift}} → {{top_lift}}")
+    }
+    // Phrases tile the piece, and the second drop repeats the first.
+    eq("a melody score per phrase", sc.ph_mel.len, sc.ph_bar.len)
+    eq("nine terms a phrase", sc.ph_term.len, sc.ph_bar.len * 9)
+    let mut covered = 0
+    for i in 0..sc.ph_bar.len {
+        if i > 0 && sc.ph_bar[i] != sc.ph_bar[i - 1] + sc.ph_bars[i - 1] {
+            test.fail("phrases leave a gap at bar {{sc.ph_bar[i]}}")
+        }
+        covered = covered + sc.ph_bars[i]
+    }
+    eq("phrases cover the piece", covered, sc.bars)
+    let mut d0 = -1
+    let mut d1 = -1
+    for i in 0..sc.sec_kind.len {
+        if sc.sec_kind[i] == arrange.DROP {
+            if d0 < 0 {
+                d0 = i
+            } else {
+                d1 = i
+            }
+        }
+    }
+    if d1 >= 0 {
+        let mut a = []int {}
+        let mut b = []int {}
+        for i in 0..sc.ph_sec.len {
+            if sc.ph_sec[i] == d0 {
+                push(a, sc.ph_label[i])
+                push(a, sc.ph_var[i])
+                push(a, sc.ph_end[i])
+            }
+            if sc.ph_sec[i] == d1 {
+                push(b, sc.ph_label[i])
+                push(b, sc.ph_var[i])
+                push(b, sc.ph_end[i])
+            }
+        }
+        eq("drop phrases", a.len, b.len)
+        for i in 0..a.len {
+            if a[i] != b[i] {
+                test.fail("second drop phrase {{i}} is {{b[i]}}, the first is {{a[i]}}")
+            }
+        }
+    }
+    if sc.mo_deg.len < 3 || sc.mo_deg.len > 6 {
+        test.fail("motif is {{sc.mo_deg.len}} notes")
+    }
+    if sc.hook_src < 0 {
+        test.fail("the hook was not kept")
+    }
+    let last = if d1 >= 0 { d1 } else { d0 }
+    for i in 0..sc.lp_bar.len {
+        let sec = arrange.section_of(sc.sec_bar, sc.lp_bar[i])
+        let want = if sec == last { 2 } else { 0 }
+        if sc.lp_semis[i] != want {
+            test.fail("loop {{i}} shifts by {{sc.lp_semis[i]}}, want {{want}}")
+        }
+    }
+    for i in 0..sc.sy_layer.len {
+        if sc.sy_layer[i] == arrange.L_BELLS {
+            test.fail("house sang a bell line")
+        }
+    }
+    if sc.wk_n.len == 0 {
+        test.fail("no walk was scored")
+    }
+}
+
+#[test]
+fn forms_land_on_their_length() {
+    let tempos = []int { 7000, 9000, 12000, 17000 }
+    for t in 0..tempos.len {
+        let bar_s = time.bar_samples(tempos[t])
+        for ix in 0..3 {
+            let want = sound.length_ms(ix)
+            let f = arrange.form(want, bar_s)
+            let mut bars = 0
+            for i in 0..f[1].len {
+                bars = bars + f[1][i]
+            }
+            let got = time.ms_of_samples(bars * bar_s)
+            // Within a four-bar phrase of the length asked for.
+            let slack = time.ms_of_samples(4 * bar_s)
+            if num.absi(got - want) > slack {
+                test.fail("{{tempos[t]}} cBPM, {{want}} ms: the form lasts {{got}} ms")
+            }
+        }
+    }
+}
+
+#[test]
+fn the_style_progression_stands_in() {
+    // No chroma: nothing to hear the chords from.
+    let mut src = source(arrange.RHYTHM)
+    src.heard.ph_chroma = []int {}
+    let sc = arrange.arrange([]Source { src }, sound.preset(styles.HOUSE))
+    if sc.prog_heard {
+        test.fail("chords heard in silence")
+    }
+    eq("four chords", sc.prog.len, 4)
+}
+
+#[test]
+fn a_recording_is_not_played_against_itself() {
+    // One recording: it is rhythm, nothing else borrows it while it plays.
+    let srcs = []Source { source(arrange.RHYTHM) }
+    for seed in 0..4 {
+        let mut s = sound.preset(styles.DREAM)
+        s.seed = seed
+        let sc = arrange.arrange(srcs, s)
+        for i in 0..sc.lp_src.len {
+            if sc.lp_bus[i] == arrange.MOTIF {
+                test.fail("seed {{seed}}: a motif from the rhythm recording")
+            }
+            for j in 0..sc.lp_src.len {
+                if sc.lp_bus[i] == arrange.RHYTHM && sc.lp_bus[j] == arrange.AIR {
+                    let a0 = sc.lp_bar[i] * sc.bar_s
+                    let a1 = a0 + sc.lp_unit[i] * sc.lp_reps[i]
+                    let b0 = sc.lp_bar[j] * sc.bar_s
+                    let b1 = b0 + sc.lp_unit[j]
+                    if a0 < b1 && b0 < a1 {
+                        test.fail("seed {{seed}}: air plays the rhythm recording over itself at bar {{sc.lp_bar[j]}}")
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn graph_renders_the_score() {
+    let srcs = []Source { source(arrange.RHYTHM) }
+    let s = sound.preset(styles.HOUSE)
+    let sc = arrange.arrange(srcs, s)
+    let g = graph.build(sc, s, []string { "/tmp/a.wav" }, []string { "" }, []bool { false }, "/tmp/mune-graph")
+    eq("one recording", g.inputs.len - g.voice_path.len, 1)
+    if g.voice_path.len == 0 {
+        test.fail("no instrument voices")
+    }
+    for i in 0..g.voice_path.len {
+        if g.inputs[g.inputs.len - g.voice_path.len + i] != g.voice_path[i] {
+            test.fail("voice {{i}} is not its input")
+        }
+    }
+    has(g.text, "atrim=start_sample=")
+    has(g.text, "adelay=delays=")
+    has(g.text, "[pre]")
+    // Each pad register renders its own loop.
+    let mut pads = 0
+    for i in 0..sc.sy_layer.len {
+        if sc.sy_layer[i] == arrange.L_PAD {
+            pads = pads + 1
+        }
+    }
+    if pads > 1 && !str.contains(g.text, "[g2") {
+        test.fail("no pad generator")
+    }
+}
+
+/// One recording cut the way `listen` cuts it: one-, two-, and four-bar
+/// phrases over the same bars, so the shorter ones sit inside the longer.
+fn nested_source() -> Source {
+    let bar = time.bar_samples(12000)
+    let mut h = listen.no_heard()
+    h.dur_ms = 120000
+    h.bpm_c = 12000
+    h.pulse = 60
+    h.onsets = 200
+    h.bar_s = bar
+    h.free_ms = -1
+    let lens = []int { 1, 2, 4 }
+    for li in 0..lens.len {
+        let l = lens[li]
+        let mut b = 0
+        while b + l <= 24 {
+            push(h.ph_start, b * bar)
+            push(h.ph_len, l * bar)
+            push(h.ph_bars, l)
+            push(h.ph_kind, if b % 3 == 0 { listen.KIND_TEXTURE } else { listen.KIND_GROOVE })
+            push(h.ph_score, 30 + (b * 7 + l * 5) % 20)
+            push(h.ph_voice, -1)
+            push(h.ph_bright, 30 + (b * 11) % 40)
+            push(h.ph_level, 40 + (b * 13) % 60)
+            push(h.ph_low, 30)
+            push(h.ph_dense, 100 + (b * 17) % 90)
+            b = b + l
+        }
+    }
+    return Source {
+        heard: h, key: Tonality { tonic: 9, minor: true, sure: 60 }, role: arrange.RHYTHM, lufs_c: 0,
+        mono: false, has_map: false, has_split: false,
+    }
+}
+
+#[test]
+fn buses_never_share_audio() {
+    let srcs = []Source { nested_source() }
+    let mut s = sound.preset(styles.HOUSE)
+    for seed in 0..4 {
+        s.seed = seed
+        let sc = arrange.arrange(srcs, s)
+        for i in 0..sc.lp_src.len {
+            for j in 0..sc.lp_src.len {
+                if sc.lp_bus[i] < sc.lp_bus[j] && sc.lp_src[i] == sc.lp_src[j] {
+                    let a = sc.lp_in[i]
+                    let b = sc.lp_in[j]
+                    if a < b + sc.lp_len[j] && b < a + sc.lp_len[i] {
+                        test.fail("seed {{seed}}: buses {{sc.lp_bus[i]}} and {{sc.lp_bus[j]}} both play {{a}}..{{a + sc.lp_len[i]}} / {{b}}..{{b + sc.lp_len[j]}}")
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A corpus cut like `listen` cuts one recording: one-, two-, and four-bar
+/// units over the same bars, energy rising with the bar, so the units
+/// inside a longer one sit right next to it on the arc.
+fn nested_units() -> Units {
+    let mut u = chain.no_units()
+    let lens = []int { 1, 2, 4 }
+    for li in 0..lens.len {
+        let l = lens[li]
+        let mut b = 0
+        while b + l <= 32 {
+            push(u.energy, (b * 2 + l) * 1000 / 68)
+            push(u.bright, 40 + (b * 3) % 10)
+            push(u.level, 70)
+            push(u.kind, 0)
+            push(u.quality, 20 + l * 4)
+            push(u.clash, 0)
+            push(u.bars, l)
+            push(u.src, 0)
+            push(u.start, b)
+            push(u.len, l)
+            b = b + l
+        }
+    }
+    u.next = chain.successors(u.src, u.start, u.len)
+    return u
+}
+
+/// Slots in the last three that replay audio slot `k` plays, counting a
+/// unit nested in (or around) a recent one, but not the same unit again.
+fn nested_repeats(u: Units, w: []int, k: int) -> int {
+    let mut n = 0
+    let back = if k >= 3 { k - 3 } else { 0 }
+    for r in back..k {
+        if w[r] >= 0 && w[k] >= 0 && w[r] != w[k] && chain.same_audio(u, w[r], w[k]) {
+            n = n + 1
+        }
+    }
+    return n
+}
+
+#[test]
+fn walk_moves_off_nested_audio() {
+    let u = nested_units()
+    let mut slots = chain.no_slots()
+    // Four sections of four slots, rising.
+    for k in 0..16 {
+        chain.add_slot(slots, k * 4, 4, k * 1000 / 15, k / 4, arrange.VERSE + k / 4, -1, 0)
+    }
+    let fitted = chain.fit_range(slots, u)
+    let mut nested = 0
+    let mut total = 0
+    for seed in 0..40 {
+        let w = chain.walk(u, fitted, seed)
+        for k in 0..w.len {
+            nested = nested + nested_repeats(u, w, k)
+            total = total + 1
+        }
+    }
+    // The repeat cost is soft, so a near unit still wins now and then.
+    if nested * 8 > total {
+        test.fail("the walk replays nested audio in {{nested}} of {{total}} slots")
+    }
+}
+
+fn section_phrases(ph_sec: []int, ph_label: []int, ph_var: []int, ph_end: []int, sec: int) -> []int {
+    let mut out = []int {}
+    for i in 0..ph_sec.len {
+        if ph_sec[i] == sec {
+            push(out, ph_label[i])
+            push(out, ph_var[i])
+            push(out, ph_end[i])
+        }
+    }
+    return out
+}
+
+#[test]
+fn phrases_follow_the_plan() {
+    eq("intro kind", plan.INTRO, arrange.INTRO)
+    eq("build kind", chain.BUILD, arrange.BUILD)
+    let f = arrange.form(180000, time.bar_samples(12000))
+    eq("form rows", f.len, 3)
+    let unit = f[2][0]
+    if unit != 2 && unit != 4 {
+        test.fail("phrase unit {{unit}}")
+    }
+    let ph = plan.phrases(f[0], f[1], unit)
+    let mut bar = 0
+    for s in 0..f[0].len {
+        let mut sum = 0
+        let mut seen = false
+        for i in 0..ph.sec.len {
+            if ph.sec[i] == s {
+                if !seen {
+                    eq("section {{s}} starts", ph.bar[i], bar)
+                    seen = true
+                }
+                sum = sum + ph.bars[i]
+            }
+        }
+        eq("section {{s}}", sum, f[1][s])
+        bar = bar + f[1][s]
+    }
+    let mut d0 = -1
+    let mut d1 = -1
+    for s in 0..f[0].len {
+        if f[0][s] == plan.DROP {
+            if d0 < 0 {
+                d0 = s
+            } else {
+                d1 = s
+            }
+        }
+    }
+    if d1 < 0 {
+        test.fail("a long piece has one drop")
+    }
+    let a = section_phrases(ph.sec, ph.label, ph.varn, ph.end, d0)
+    let b = section_phrases(ph.sec, ph.label, ph.varn, ph.end, d1)
+    eq("second drop", a.len, b.len)
+    for i in 0..a.len {
+        if a[i] != b[i] {
+            test.fail("drop phrase {{i}}: {{b[i]}} against {{a[i]}}")
+        }
+    }
+    for i in 0..ph.sec.len {
+        if ph.sec[i] == 0 {
+            eq("intro label", ph.label[i], 0)
+            eq("intro ending", ph.end[i], plan.OPEN)
+        }
+        if f[0][ph.sec[i]] == plan.BUILD && ph.end[i] != plan.OPEN {
+            test.fail("a build phrase closes")
+        }
+    }
+}
+
+#[test]
+fn a_repeated_label_returns_its_unit() {
+    let mut u = ladder(6)
+    for j in 0..6 {
+        u.energy[j] = 500
+    }
+    let mut slots = chain.no_slots()
+    chain.add_slot(slots, 0, 4, 500, 0, arrange.VERSE, 0, 0)
+    chain.add_slot(slots, 4, 4, 500, 1, arrange.DROP, 0, 1)
+    for seed in 0..12 {
+        let w = chain.walk(u, slots, seed)
+        if w[1] != w[0] {
+            test.fail("seed {{seed}} played {{w[0]}} then {{w[1]}}")
+        }
+    }
+}
+
+#[test]
+fn a_build_prefers_the_hook_fragment() {
+    let mut u = ladder(4)
+    for j in 0..4 {
+        u.energy[j] = 500
+        u.bars[j] = 1
+        push(u.hook, if j == 1 { 1 } else { 0 })
+    }
+    let mut slots = chain.no_slots()
+    chain.add_slot(slots, 0, 1, 500, 0, chain.BUILD, -1, 0)
+    let mut hits = 0
+    for seed in 0..20 {
+        let w = chain.walk(u, slots, seed)
+        if w[0] == 1 {
+            hits = hits + 1
+        }
+    }
+    if hits < 18 {
+        test.fail("the hook fragment won {{hits}} of 20")
+    }
+}
+
+#[test]
+fn the_best_walk_is_kept() {
+    let u = ladder(8)
+    let mut slots = chain.no_slots()
+    for k in 0..8 {
+        let varn = if k < 2 { 0 } else { 1 }
+        chain.add_slot(slots, k * 4, 4, k * 1000 / 7, k, arrange.VERSE, k % 2, varn)
+    }
+    let avoid = chain.no_avoid()
+    let c = chain.select(u, slots, 4, avoid)
+    let w0 = chain.walk(u, slots, num.hash(4, 0))
+    let best = chain.assess(u, slots, c.out, avoid)
+    let first = chain.assess(u, slots, w0, avoid)
+    if best > first {
+        test.fail("selected {{best}}, walk 0 scored {{first}}")
+    }
+    let again = chain.select(u, slots, 4, avoid)
+    eq("slots", c.out.len, again.out.len)
+    for k in 0..c.out.len {
+        if c.out[k] != again.out[k] {
+            test.fail("the same seed picked a different walk")
+        }
+    }
+    if c.top_score.len == 0 {
+        test.fail("no walk was kept")
+    }
+    for i in 1..c.top_score.len {
+        if c.top_score[i] < c.top_score[i - 1] {
+            test.fail("the top walks are out of order")
+        }
+    }
+    let w = chain.walk(u, slots, 1)
+    if w[0] >= 0 {
+        let mut bad = chain.no_avoid()
+        push(bad.src, u.src[w[0]])
+        push(bad.start, u.start[w[0]])
+        push(bad.len, u.len[w[0]])
+        push(bad.bar, 0)
+        push(bad.bars, 4)
+        let clean = chain.assess(u, slots, w, avoid)
+        let dirty = chain.assess(u, slots, w, bad)
+        if dirty < clean + 500 {
+            test.fail("sharing audio scored {{dirty}} against {{clean}}")
+        }
+    }
+}
+
+#[test]
+fn motif_transforms_are_exact() {
+    let m = motif.from([]int { 0, 2, 4, 3 }, []int { 0, 4, 8, 12 }, []int { 4, 4, 4, 4 })
+    if !motif.same(motif.invert(motif.invert(m)), m) {
+        test.fail("invert did not undo")
+    }
+    if !motif.same(motif.retrograde(motif.retrograde(m, true), true), m) {
+        test.fail("retrograde did not undo")
+    }
+    if !motif.same(motif.retrograde(motif.retrograde(m, false), false), m) {
+        test.fail("degree retrograde did not undo")
+    }
+    let t = motif.transpose(m, 3)
+    for i in 0..t.deg.len {
+        if !key.in_scale(motif.pc_of(t.deg[i], 9, true), 9, true) {
+            test.fail("degree {{t.deg[i]}} left the scale")
+        }
+    }
+    let st = motif.statement(m, 0, 0, plan.VERSE, 3)
+    let line = motif.plan_line(m, 0, 0, plan.VERSE, plan.OPEN, 64, 3, 0)
+    if line.deg.len < st.deg.len {
+        test.fail("the line is shorter than its statement")
+    }
+    for i in 0..st.deg.len {
+        if line.deg[i] != st.deg[i] || line.at[i] != st.at[i] {
+            test.fail("the line does not open with its statement")
+        }
+    }
+}
+
+#[test]
+fn melody_terms_and_the_chosen_line() {
+    eq("weights", motif.weighted(1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000), 1000)
+    eq("same row", motif.edit_dist([]int { 1, 2, 3 }, []int { 1, 2, 3 }), 0)
+    let steps = motif.from([]int { 0, 1, 2 }, []int { 0, 4, 8 }, []int { 4, 4, 4 })
+    eq("no leaps", motif.term_leaps(steps, true), 1000)
+    eq("within a ninth", motif.term_range(steps, true), 1000)
+    eq("one length", motif.term_rhythm(motif.from([]int { 0, 1 }, []int { 0, 4 }, []int { 4, 4 })), 300)
+    eq("a few lengths", motif.term_rhythm(motif.from([]int { 0, 1, 2 }, []int { 0, 2, 6 }, []int { 2, 4, 6 })), 1000)
+    eq("a copy", motif.term_motif(0), 200)
+    eq("a development", motif.term_motif(3), 1000)
+    eq("repeated on purpose", motif.term_fresh(0, true), 1000)
+    eq("a copy when it should move", motif.term_fresh(0, false), 0)
+    eq("new", motif.term_fresh(2, false), 1000)
+    let closed = motif.from([]int { 2, 0 }, []int { 0, 48 }, []int { 4, 8 })
+    if !motif.cadence_ok(closed, plan.CLOSED, 64) {
+        test.fail("a held tonic was not a close")
+    }
+    let open = motif.from([]int { 0, 1 }, []int { 0, 58 }, []int { 4, 10 })
+    if !motif.cadence_ok(open, plan.OPEN, 64) {
+        test.fail("an open ending was refused")
+    }
+    if motif.cadence_ok(motif.from([]int { 0 }, []int { 48 }, []int { 8 }), plan.OPEN, 64) {
+        test.fail("an open phrase ended on the tonic")
+    }
+    let chord = key.chord_code(9, true)
+    let m = motif.draw(7, true, chord, 9)
+    let prog = []int { chord, key.chord_code(5, false), key.chord_code(0, false), key.chord_code(7, false) }
+    let a = motif.choose(m, 0, 0, plan.VERSE, plan.CLOSED, 64, 0, prog, []int {}, 9, true, 7, []int {}, false, 0)
+    let b = motif.choose(m, 0, 0, plan.VERSE, plan.CLOSED, 64, 0, prog, []int {}, 9, true, 7, []int {}, false, 0)
+    if a.total < 0 {
+        test.fail("the chosen line missed its cadence")
+    }
+    if !motif.cadence_ok(motif.from(a.deg, a.at, a.len), plan.CLOSED, 64) {
+        test.fail("choose kept a line that does not cadence")
+    }
+    if a.deg.len != b.deg.len || a.at.len != b.at.len || a.len.len != b.len.len {
+        test.fail("the same seed chose two lines")
+    }
+    for i in 0..a.deg.len {
+        if a.deg[i] != b.deg[i] || a.at[i] != b.at[i] || a.len[i] != b.len[i] {
+            test.fail("the same seed chose two lines")
+        }
+    }
+    let planned = motif.plan_line(m, 0, 0, plan.VERSE, plan.CLOSED, 64, 7, 0)
+    let canon = motif.judge(motif.snap(planned, 0, prog, 9, true), motif.statement(m, 0, 0, plan.VERSE, 7), []int {}, false,
+                            0, prog, []int {}, 9, true, plan.CLOSED, 64)
+    if canon.total >= 0 && a.total < canon.total {
+        test.fail("choose scored {{a.total}}, the plan scored {{canon.total}}")
+    }
+    for seed in 0..4 {
+        let closed_line = motif.choose(m, 0, seed, plan.VERSE, plan.CLOSED, 64, 0, prog, []int {}, 9, true, seed, []int {}, false, 0)
+        if !motif.cadence_ok(motif.from(closed_line.deg, closed_line.at, closed_line.len), plan.CLOSED, 64) {
+            test.fail("seed {{seed}}: a closed line did not end on 1 or 3")
+        }
+        let open_line = motif.choose(m, 0, seed, plan.VERSE, plan.OPEN, 64, 0, prog, []int {}, 9, true, seed, []int {}, false, 0)
+        if !motif.cadence_ok(motif.from(open_line.deg, open_line.at, open_line.len), plan.OPEN, 64) {
+            test.fail("seed {{seed}}: an open line ended on 1, or missed its cadence")
+        }
+    }
+}
+
+fn groove_at(bars: int, energy: int) -> Groove {
+    return Groove {
+        bar_sec: 2.0, tonic: 9, minor: true, prog: []int { key.chord_code(9, true), key.chord_code(5, false), key.chord_code(0, false), key.chord_code(7, false) },
+        style: styles.HOUSE, energy: energy, seed: 3, lift: 0, bars: bars,
+        den: 1000, dyn: 1000, color: []int {}, split: -1, kick: true,
+        ending: plan.OPEN, peak: -1, tight: false, kind: plan.VERSE,
+    }
+}
+
+fn midi_of(f: f64) -> int {
+    return num.roundi(12.0 * math.ln(f / 440.0) / math.LOG2) + 69
+}
+
+fn step_of(g: Groove, at: f64) -> int {
+    return num.roundi(at / (g.bar_sec / 16.0))
+}
+
+/// Cadence bars of phrase `p`: the last bar when open, the last two when
+/// closed. A free drop downbeat is the tonic. A free odd bar may hold the
+/// previous chord when the harmonic rhythm asks for two bars. A tonal bar
+/// keeps the heard chord, the style's voice, and a single chord.
+fn cadence_holds(sc: &mut Score, srcs: []Source) {
+    eq("a chord per bar", sc.bar_ch.len, sc.bars)
+    eq("a colour per bar", sc.bar_col.len, sc.bars)
+    eq("a split per bar", sc.bar_split.len, sc.bars)
+    let dom = theory.degree_chord(sc.tonic, sc.minor, 4)
+    let home = theory.degree_chord(sc.tonic, sc.minor, 0)
+    for p in 0..sc.ph_bar.len {
+        let n = sc.ph_bars[p]
+        if n < 1 {
+            continue
+        }
+        let b0 = sc.ph_bar[p]
+        for i in 0..n {
+            let b = b0 + i
+            let prog = sc.prog[b % sc.prog.len]
+            let tonal = arrange.bar_tonal(sc, srcs, b)
+            if tonal {
+                if sc.bar_ch[b] != prog || sc.bar_col[b] >= 0 || sc.bar_split[b] >= 0 {
+                    test.fail("bar {{b}} changed under a tonal recording")
+                }
+                continue
+            }
+            let sec = arrange.section_of(sc.sec_bar, b)
+            let drop = sec >= 0 && sec < sc.sec_kind.len && sc.sec_kind[sec] == arrange.DROP && sc.sec_bar[sec] == b
+            if drop {
+                if sc.bar_ch[b] != home {
+                    test.fail("bar {{b}}: drop downbeat {{sc.bar_ch[b]}}, want {{home}}")
+                }
+                continue
+            }
+            let mut cadence = false
+            let mut want = prog
+            if sc.ph_end[p] == plan.OPEN && i == n - 1 {
+                cadence = true
+                want = dom
+            }
+            if sc.ph_end[p] == plan.CLOSED && n >= 2 && i == n - 2 {
+                cadence = true
+                want = dom
+            }
+            if sc.ph_end[p] == plan.CLOSED && i == n - 1 {
+                cadence = true
+                want = home
+            }
+            if cadence && sc.bar_ch[b] != want {
+                test.fail("bar {{b}}: cadence {{sc.bar_ch[b]}}, want {{want}}")
+            }
+            if !cadence && sc.bar_ch[b] != prog {
+                let held = b % 2 == 1 && b > 0 && b < sc.tn_harm.len && sc.tn_harm[b] >= 32 && sc.bar_ch[b] == sc.bar_ch[b - 1]
+                if !held {
+                    test.fail("bar {{b}} moved without a cadence")
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn cadence_chords_follow_the_recording() {
+    let mut silent = arrange.arrange([]Source {}, sound.preset(styles.HOUSE))
+    cadence_holds(silent, []Source {})
+    let mut heard = arrange.arrange([]Source { source(arrange.RHYTHM) }, sound.preset(styles.HOUSE))
+    cadence_holds(heard, []Source { source(arrange.RHYTHM) })
+}
+
+#[test]
+fn tension_channels_follow_the_arc() {
+    eq("register rests", plan.register(0), 0)
+    eq("register tops an octave", plan.register(1000), 12)
+    eq("density is the path", plan.density(640), 640)
+    eq("a drop downbeat is consonant", plan.dissonance(1000, plan.DROP, 0), 0)
+    eq("a build carries the path", plan.dissonance(800, plan.BUILD, 2), 800)
+    eq("the bed is quiet", plan.dynamics(0), -600)
+    eq("the bed is open", plan.dynamics(1000), 0)
+    eq("two chords in the last build bar", plan.harm_hold(500, plan.BUILD, true), 8)
+    eq("one chord a bar", plan.harm_hold(700, plan.VERSE, false), 16)
+    eq("a chord across two bars", plan.harm_hold(400, plan.VERSE, false), 32)
+    eq("rest is a triad", plan.tension_color(0, plan.BUILD), 0)
+    eq("a build leans on sus4", plan.tension_color(600, plan.BUILD), 2)
+    eq("a build adds the ninth", plan.tension_color(800, plan.BUILD), 3)
+    let sus = theory.colored(key.chord_code(0, false), 2, 0, false, 60)
+    eq("sus4 notes", sus.len, 3)
+    for i in 0..sus.len {
+        let pc = sus[i] % 12
+        if pc != 0 && pc != 5 && pc != 7 {
+            test.fail("sus4 voiced with pitch class {{pc}}")
+        }
+    }
+    let add9 = theory.colored(key.chord_code(0, false), 3, 0, false, 60)
+    eq("add9 notes", add9.len, 4)
+    let sc = arrange.arrange([]Source {}, sound.preset(styles.HOUSE))
+    eq("register per bar", sc.tn_reg.len, sc.bars)
+    eq("density per bar", sc.tn_den.len, sc.bars)
+    let mut builds = 0
+    let mut drops = 0
+    for s in 0..sc.sec_kind.len {
+        let b0 = sc.sec_bar[s]
+        let nb = sc.sec_bars[s]
+        if sc.sec_kind[s] == arrange.BUILD && nb > 1 {
+            builds = builds + 1
+            for b in b0..(b0 + nb - 1) {
+                if sc.tn_den[b + 1] <= sc.tn_den[b] {
+                    test.fail("density fell through the build at bar {{b}}")
+                }
+                if sc.tn_reg[b + 1] < sc.tn_reg[b] {
+                    test.fail("register fell through the build at bar {{b}}")
+                }
+            }
+            let last = b0 + nb - 1
+            if sc.bar_split[last] < 0 {
+                test.fail("the build's last bar held one chord")
+            }
+            let mut kickless = false
+            let mut bass_on_last = false
+            for i in 0..sc.sy_layer.len {
+                let at = sc.sy_bar[i]
+                let end = at + sc.sy_bars[i]
+                if sc.sy_layer[i] == arrange.L_DRUMS && at == last && sc.sy_bars[i] == 1 && sc.sy_kick[i] == 0 {
+                    kickless = true
+                }
+                if sc.sy_layer[i] == arrange.L_BASS && at < end && last >= at && last < end {
+                    bass_on_last = true
+                }
+            }
+            if !kickless {
+                test.fail("the build's last bar still has a kick")
+            }
+            if bass_on_last {
+                test.fail("the build's last bar still has a bass")
+            }
+        }
+        if sc.sec_kind[s] == arrange.DROP {
+            drops = drops + 1
+            if sc.tn_diss[b0] != 0 {
+                test.fail("drop downbeat dissonance is {{sc.tn_diss[b0]}}")
+            }
+        }
+    }
+    if builds < 1 || drops < 1 {
+        test.fail("the piece has no build or no drop")
+    }
+    let m = motif.from([]int { 0, 2, 4, 3 }, []int { 0, 4, 8, 12 }, []int { 4, 4, 4, 4 })
+    let stated = motif.plan_line(m, 0, 0, plan.VERSE, plan.OPEN, 64, 3, 0)
+    let busy = motif.plan_line(m, 0, 0, plan.VERSE, plan.OPEN, 64, 3, 800)
+    if busy.at.len < 2 || stated.at.len < 2 || busy.at[1] >= stated.at[1] {
+        test.fail("a dense line did not diminish")
+    }
+}
+
+#[test]
+fn phrase_breath() {
+    let drive = groove_at(4, styles.DRIVE)
+    let arp = synth.arp_hits(drive, synth.ARP_PLUCK)
+    let mut late = 0
+    for i in 0..arp.at.len {
+        let step = step_of(drive, arp.at[i])
+        if step >= 56 {
+            late = late + 1
+            if step % 2 == 1 {
+                test.fail("arp sixteenth {{step}} survived the breath")
+            }
+        }
+    }
+    if late < 1 {
+        test.fail("the arp rested the whole last half-bar")
+    }
+    let kit = groove_at(2, styles.FLOW)
+    let kick = synth.drum_phrase(kit, synth.KICK, synth.FULL)
+    for i in 0..kick.at.len {
+        if step_of(kit, kick.at[i]) >= 24 {
+            test.fail("a kick landed in the fill")
+        }
+    }
+    let snare = synth.drum_phrase(kit, synth.SNARE, synth.FULL)
+    let mut fill = 0
+    for i in 0..snare.at.len {
+        if step_of(kit, snare.at[i]) >= 24 {
+            fill = fill + 1
+        }
+    }
+    if fill < 2 {
+        test.fail("the snare did not fill")
+    }
+    let bells = groove_at(4, styles.FLOW)
+    let line = arrange.line_hits(bells, []int { 0, 1, 4 }, []int { 0, 58, 62 }, []int { 4, 4, 8 }, 0, 3, 76, 8.0)
+    eq("cadence and the opening", line.at.len, 2)
+    if step_of(bells, line.at[0]) != 0 || step_of(bells, line.at[1]) < 60 {
+        test.fail("the bells kept a note in the breath")
+    }
+}
+
+#[test]
+fn a_line_is_sung_per_phrase() {
+    let srcs = []Source { source(arrange.RHYTHM) }
+    let s = sound.preset(styles.DREAM)
+    let sc = arrange.arrange(srcs, s)
+    let mut lines = 0
+    for i in 0..sc.sy_layer.len {
+        if sc.sy_layer[i] == arrange.L_BELLS && i < sc.sy_line.len && sc.sy_line[i] >= 0 {
+            lines = lines + 1
+            if sc.sy_bars[i] < 1 {
+                test.fail("a bell line has no bars")
+            }
+        }
+    }
+    if lines < 1 {
+        test.fail("no melody was placed")
+    }
+    let mut sung = 0
+    for i in 0..sc.ph_mel.len {
+        if sc.ph_mel[i] >= 0 {
+            sung = sung + 1
+        }
+    }
+    if sung < 1 {
+        test.fail("no phrase was scored")
+    }
+    let g = graph.build(sc, s, []string { "/tmp/a.wav" }, []string { "" }, []bool { false }, "/tmp/mune-graph")
+    if !str.contains(g.text, "[g8000]") {
+        test.fail("the phrase line has no generator")
+    }
+}
+
+fn apart(a: f64, b: f64, loop: f64) -> f64 {
+    let mut d = a - b
+    if d < 0.0 {
+        d = -d
+    }
+    if loop > 0.0 {
+        let w = loop - d
+        if w < d {
+            return w
+        }
+    }
+    return d
+}
+
+/// Every humanized hit matches one grid hit, within `bound_s` on the loop.
+fn covers(got: Hits, grid: Hits, loop: f64, bound_s: f64) {
+    if got.at.len != grid.at.len || got.at.len == 0 {
+        test.fail("humanize changed the count")
+        return
+    }
+    let mut used = []bool {}
+    for i in 0..grid.at.len {
+        push(used, false)
+    }
+    let mut moved = false
+    for i in 0..got.at.len {
+        if got.vel[i] <= 0.0 || got.vel[i] > 1.0 {
+            test.fail("velocity out of range")
+        }
+        let mut at = -1
+        for k in 0..grid.at.len {
+            if !used[k] && apart(got.at[i], grid.at[k], loop) <= bound_s {
+                at = k
+            }
+        }
+        if at < 0 {
+            test.fail("a hit left its grid")
+            return
+        }
+        if apart(got.at[i], grid.at[at], loop) > 0.0000001 {
+            moved = true
+        }
+        used[at] = true
+    }
+    if !moved {
+        test.fail("every hit sat on the grid")
+    }
+}
+
+fn grid_hits(g: Groove) -> Hits {
+    let mut h = synth.no_hits()
+    for i in 0..8 {
+        let step = i * 4
+        let vel: f64 = if i == 0 { 1.0 } else { 0.8 }
+        synth.add(h, synth.step_time(g, step), vel, 220.0 + f64(i) * 20.0, 0.1)
+    }
+    return h
+}
+
+#[test]
+fn humanize_stays_within_the_bound() {
+    let mut g = groove_at(4, styles.FLOW)
+    g.peak = 8
+    let parts = []int { synth.KICK, synth.SNARE, synth.HAT, synth.OPEN_HAT, synth.P_BASS, synth.P_LEAD, synth.P_COUNTER, synth.P_PAD, synth.P_ARP }
+    for p in 0..parts.len {
+        let part = parts[p]
+        let raw = grid_hits(g)
+        let a = synth.humanize(raw, g, part, 3)
+        let b = synth.humanize(raw, g, part, 3)
+        if a.at.len != b.at.len {
+            test.fail("the same seed changed the count")
+        }
+        for i in 0..a.at.len {
+            if a.at[i] != b.at[i] || a.vel[i] != b.vel[i] {
+                test.fail("the same seed moved")
+            }
+        }
+        let other = synth.humanize(raw, g, part, 4)
+        let mut same = true
+        for i in 0..a.at.len {
+            if i >= other.at.len || a.at[i] != other.at[i] {
+                same = false
+            }
+        }
+        if same {
+            test.fail("a new phrase repeated the offsets")
+        }
+        let loop = synth.play_loop(g, part)
+        covers(a, raw, loop, synth.bound_ms(g, part) / 1000.0 + 0.000002)
+    }
+    g.tight = true
+    let hats = grid_hits(g)
+    let close = synth.humanize(hats, g, synth.HAT, 1)
+    covers(close, hats, synth.play_loop(g, synth.HAT), 0.004 + 0.000002)
+    if synth.bound_ms(g, synth.HAT) > 4.1 {
+        test.fail("recorded hats may flam")
+    }
+    g.tight = false
+    let wide = synth.kit_hits(g, synth.HAT, synth.TOPS)
+    let raw_hats = synth.drum_phrase(g, synth.HAT, synth.TOPS)
+    covers(wide, raw_hats, synth.play_loop(g, synth.HAT), 0.004 + 0.000002)
+
+    let mut open = g
+    open.ending = plan.OPEN
+    open.peak = 0
+    let lead = grid_hits(open)
+    let sung = synth.humanize(lead, open, synth.P_LEAD, 2)
+    let mut closed = open
+    closed.ending = plan.CLOSED
+    let answered = synth.humanize(lead, closed, synth.P_LEAD, 2)
+    let mut softer = 0
+    for i in 0..sung.vel.len {
+        if i >= answered.vel.len {
+            test.fail("a closed phrase lost a note")
+            return
+        }
+        if answered.vel[i] < sung.vel[i] - 0.001 {
+            softer = softer + 1
+            let ratio = answered.vel[i] / sung.vel[i]
+            if ratio < 0.5 || ratio > 0.6 {
+                test.fail("the last note was not the softer one")
+            }
+        } else if answered.vel[i] > sung.vel[i] + 0.001 || answered.vel[i] < sung.vel[i] - 0.001 {
+            test.fail("an open note changed when the phrase closed")
+        }
+    }
+    eq("one softer note", softer, 1)
+
+    let mut calm = groove_at(1, styles.CALM)
+    calm.kind = plan.VERSE
+    let s16 = calm.bar_sec / 16.0
+    let late = synth.step_time(calm, 1) - s16
+    let pct = late / s16 * 100.0
+    if pct < 1.9 || pct > 4.1 {
+        test.fail("a calm straight style did not lay back")
+    }
+    calm.kind = plan.DROP
+    let drop_late = synth.step_time(calm, 1) - s16
+    if drop_late > 0.0001 || drop_late < -0.0001 {
+        test.fail("a drop added swing")
+    }
+    calm.kind = plan.VERSE
+    calm.style = styles.LOFI
+    let lofi = synth.step_time(calm, 1) - s16
+    let lofi_pct = lofi / s16 * 100.0
+    if lofi_pct < 15.9 || lofi_pct > 16.1 {
+        test.fail("lo-fi swing was rewritten")
+    }
+}
+
+#[test]
+fn a_calm_drop_keeps_its_own_loop() {
+    let mut sc = arrange.empty_score()
+    push(sc.sec_kind, plan.VERSE)
+    push(sc.sec_bar, 0)
+    push(sc.sec_kind, plan.DROP)
+    push(sc.sec_bar, 1)
+    push(sc.tn_den, 500)
+    push(sc.tn_den, 500)
+    push(sc.tn_dyn, 0)
+    push(sc.tn_dyn, 0)
+    arrange.part(sc, arrange.L_BASS, 0, 0, 1, 0)
+    arrange.part(sc, arrange.L_BASS, 0, 1, 1, 0)
+    arrange.part(sc, arrange.L_DRUMS, synth.TOPS, 0, 1, 0)
+    arrange.part(sc, arrange.L_DRUMS, synth.TOPS, 1, 1, 0)
+    arrange.part(sc, arrange.L_PAD, 0, 0, 1, 0)
+    arrange.part(sc, arrange.L_PAD, 0, 1, 1, 0)
+    let mut s = sound.preset(styles.HOUSE)
+    s.energy = styles.CALM
+    if graph.gen_key(sc, s, 0) == graph.gen_key(sc, s, 1) {
+        test.fail("a calm drop shared the verse bass")
+    }
+    if graph.gen_key(sc, s, 2) == graph.gen_key(sc, s, 3) {
+        test.fail("a calm drop shared the verse hats")
+    }
+    eq("a held pad still shares", graph.gen_key(sc, s, 4), graph.gen_key(sc, s, 5))
+    s.energy = styles.DRIVE
+    eq("drive bass shares", graph.gen_key(sc, s, 0), graph.gen_key(sc, s, 1))
+    s.energy = styles.CALM
+    s.pad_tone = synth.PAD_KEYS
+    if graph.gen_key(sc, s, 4) == graph.gen_key(sc, s, 5) {
+        test.fail("stabbed pads shared a swung verse with the drop")
+    }
+}
+
+/// Distinct layers sounding at `bar`: synth layers (not the riser or the
+/// impact) and recorded buses.
+fn layers_at(sc: Score, bar: int) -> int {
+    let mut seen = []int {}
+    for i in 0..sc.sy_layer.len {
+        let l = sc.sy_layer[i]
+        if l == arrange.L_RISER || l == arrange.L_IMPACT {
+            continue
+        }
+        if bar >= sc.sy_bar[i] && bar < sc.sy_bar[i] + sc.sy_bars[i] && num.index_of(seen, l) < 0 {
+            push(seen, l)
+        }
+    }
+    for i in 0..sc.lp_bar.len {
+        let nb = if sc.bar_s > 0 { sc.lp_unit[i] * sc.lp_reps[i] / sc.bar_s } else { 0 }
+        let tag = 100 + sc.lp_bus[i]
+        if bar >= sc.lp_bar[i] && bar < sc.lp_bar[i] + nb && num.index_of(seen, tag) < 0 {
+            push(seen, tag)
+        }
+    }
+    return seen.len
+}
+
+/// Most layers sounding at once in section `sec`.
+fn fullest_in(sc: Score, sec: int) -> int {
+    let mut most = 0
+    for b in sc.sec_bar[sec]..(sc.sec_bar[sec] + sc.sec_bars[sec]) {
+        let n = layers_at(sc, b)
+        if n > most {
+            most = n
+        }
+    }
+    return most
+}
+
+#[test]
+fn layers_enter_by_phrase() {
+    let srcs = []Source { source(arrange.RHYTHM), source(arrange.MOTIF) }
+    let mut sc = arrange.arrange(srcs, sound.preset(styles.HOUSE))
+    let mut verses = 0
+    for i in 0..sc.sec_kind.len {
+        if sc.sec_kind[i] != arrange.VERSE {
+            continue
+        }
+        let mut first = -1
+        let mut second = -1
+        for p in 0..sc.ph_sec.len {
+            if sc.ph_sec[p] == i {
+                if first < 0 {
+                    first = p
+                } else if second < 0 {
+                    second = p
+                }
+            }
+        }
+        if second < 0 {
+            continue
+        }
+        verses = verses + 1
+        let a = layers_at(sc, sc.ph_bar[first])
+        let b = layers_at(sc, sc.ph_bar[second])
+        if b <= a {
+            test.fail("verse {{i}}: {{a}} layers, then {{b}} on its second phrase")
+        }
+    }
+    if verses < 1 {
+        test.fail("no verse had two phrases")
+    }
+    // The drop is the fullest section; the break is stripped.
+    let mut full = arrange.arrange(srcs, sound.preset(styles.FUTURE))
+    let mut drop = 0
+    for i in 0..full.sec_kind.len {
+        if full.sec_kind[i] == arrange.DROP {
+            let n = fullest_in(full, i)
+            if n > drop {
+                drop = n
+            }
+        }
+    }
+    for i in 0..full.sec_kind.len {
+        let n = fullest_in(full, i)
+        if full.sec_kind[i] != arrange.DROP && n >= drop {
+            test.fail("{{arrange.section_name(full.sec_kind[i])}} has {{n}} layers, the drop {{drop}}")
+        }
+    }
+    for i in 0..full.sy_layer.len {
+        let k = full.sec_kind[arrange.section_of(full.sec_bar, full.sy_bar[i])]
+        let l = full.sy_layer[i]
+        if k == arrange.BREAK && l != arrange.L_PAD && l != arrange.L_BELLS && l != arrange.L_COUNTER {
+            test.fail("the break kept layer {{l}}")
+        }
+    }
+    // The outro lets go in reverse order: a layer that came in later never
+    // outlasts one that came in before it.
+    let rows = []int { arrange.L_PAD, arrange.L_DRUMS, arrange.L_BASS, arrange.L_ARP, arrange.L_BELLS }
+    for r in 1..rows.len {
+        if arrange.entry_tension(rows[r]) < arrange.entry_tension(rows[r - 1]) {
+            test.fail("entry tension out of order at row {{rows[r]}}")
+        }
+    }
+}
+
+#[test]
+fn the_counter_answers_the_lead() {
+    let lead = motif.from([]int { 0, 2, 4, 3, 1, 4 }, []int { 0, 4, 8, 16, 24, 48 }, []int { 4, 4, 8, 8, 8, 16 })
+    let prog = []int { key.chord_code(9, true), key.chord_code(5, false), key.chord_code(0, false), key.chord_code(7, false) }
+    let base = motif.anchor(lead.deg, 9, true, 76, arrange.LEAD_TOP)
+    let a = motif.counter(lead, 64, 0, prog, 9, true, base, 11)
+    let b = motif.counter(lead, 64, 0, prog, 9, true, base, 11)
+    if a.total < 0 || a.deg.len < 3 {
+        test.fail("no counter-line")
+        return
+    }
+    eq("the same seed", a.total, b.total)
+    eq("four terms", a.term.len, 4)
+    eq("strong beats consonant", a.term[1], 1000)
+    for i in 0..a.deg.len {
+        if a.at[i] % 4 != 0 {
+            continue
+        }
+        let li = motif.sounding(lead, a.at[i])
+        if li < 0 {
+            continue
+        }
+        let hi = motif.note(lead.deg[li], true, base)
+        let lo = motif.note(a.deg[i], true, base)
+        if !motif.consonant(hi, lo) {
+            test.fail("step {{a.at[i]}}: {{lo}} against {{hi}}")
+        }
+        if lo > hi {
+            test.fail("the counter crossed above the lead at step {{a.at[i]}}")
+        }
+    }
+    let mut apart = 0
+    for i in 0..a.at.len {
+        if !motif.attacks(lead, a.at[i]) {
+            apart = apart + 1
+        }
+    }
+    if apart == 0 {
+        test.fail("the counter only moved with the lead")
+    }
+    // Placed: in a drop's second phrase or later, or the break's, and never
+    // in an intro.
+    let srcs = []Source { source(arrange.RHYTHM), source(arrange.MOTIF) }
+    let mut sc = arrange.arrange(srcs, sound.preset(styles.FUTURE))
+    let mut placed = 0
+    for i in 0..sc.sy_layer.len {
+        if sc.sy_layer[i] != arrange.L_COUNTER {
+            continue
+        }
+        placed = placed + 1
+        let mut p = -1
+        for k in 0..sc.ph_bar.len {
+            if sc.ph_bar[k] == sc.sy_bar[i] {
+                p = k
+            }
+        }
+        if p < 0 {
+            test.fail("a counter off the phrase grid at bar {{sc.sy_bar[i]}}")
+            continue
+        }
+        let kind = sc.sec_kind[sc.ph_sec[p]]
+        if (kind != arrange.DROP && kind != arrange.BREAK) || arrange.phrase_index(sc, p) < 1 {
+            test.fail("a counter in {{arrange.section_name(kind)}} phrase {{arrange.phrase_index(sc, p)}}")
+        }
+        if sc.sy_line[i] < 0 {
+            test.fail("a counter without its line")
+        }
+    }
+    if placed < 1 {
+        test.fail("no counter-melody was placed")
+    }
+    eq("a counter score per phrase", sc.ph_ctr.len, sc.ph_bar.len)
+    for p in 0..sc.ph_ctr.len {
+        if sc.ph_ctr[p] >= 0 && sc.ph_cterm[p * 4 + 1] != 1000 {
+            test.fail("phrase {{p}}: counter consonance {{sc.ph_cterm[p * 4 + 1]}}")
+        }
+    }
+    let g = graph.build(sc, sound.preset(styles.FUTURE), []string { "/tmp/a.wav", "/tmp/b.wav" }, []string { "", "" },
+                        []bool { false, false }, "/tmp/mune-graph")
+    has(g.text, "highpass=f=140,lowpass=f=7000")
+}
+
+#[test]
+fn the_bass_walks_into_the_next_chord() {
+    // House keeps its offbeats; the last one leads into the next root.
+    let house = groove_at(4, styles.FLOW)
+    let h = synth.bass_hits(house)
+    eq("house offbeats", h.at.len, 16)
+    for i in 0..h.at.len {
+        if step_of(house, h.at[i]) % 4 != 2 {
+            test.fail("house bass left its offbeats at step {{step_of(house, h.at[i])}}")
+        }
+    }
+    for b in 0..4 {
+        let next = theory.bass_at(house.prog[(b + 1) % 4], 40)
+        let mut found = false
+        for i in 0..h.at.len {
+            if step_of(house, h.at[i]) == b * 16 + 14 {
+                found = true
+                let m = num.roundi(12.0 * math.ln(h.freq[i] / 440.0) / math.LOG2) + 69
+                let d = num.absi(m - next)
+                if d < 1 || d > 2 {
+                    test.fail("bar {{b}}: approach {{m}} into {{next}}")
+                }
+            }
+        }
+        if !found {
+            test.fail("bar {{b}} has no approach")
+        }
+    }
+    // A held bass gains a walk on beat four, and its root is cut to make room.
+    let mut held = groove_at(4, styles.FLOW)
+    held.style = styles.CINEMA
+    let c = synth.bass_hits(held)
+    eq("root and approach a bar", c.at.len, 8)
+    for i in 0..c.at.len {
+        let step = step_of(held, c.at[i]) % 16
+        if step != 0 && step != 12 {
+            test.fail("a held bass note on step {{step}}")
+        }
+        if step == 0 && c.at[i] + c.gate[i] > synth.step_time(held, step_of(held, c.at[i]) + 12) {
+            test.fail("the root rang over its approach")
+        }
+    }
+    // Against the lead: down into the bars before the peak, up after it.
+    let mut early = held
+    early.peak = 60
+    let mut late = held
+    late.peak = 4
+    if !synth.bass_falls(early, 0) || synth.bass_falls(late, 0) {
+        test.fail("the bass does not move against the lead")
+    }
+}
+
+#[test]
+fn a_line_keeps_its_contour_and_its_register() {
+    // A scale up an octave renders as steps up, not folded around a centre.
+    let g = groove_at(4, styles.FLOW)
+    let deg = []int { 0, 1, 2, 3, 4, 5, 6, 7 }
+    let at = []int { 0, 4, 8, 12, 16, 20, 24, 28 }
+    let len = []int { 4, 4, 4, 4, 4, 4, 4, 4 }
+    let h = arrange.line_hits(g, deg, at, len, 0, 8, 76, 8.0)
+    eq("eight notes", h.at.len, 8)
+    for i in 1..h.freq.len {
+        let d = midi_of(h.freq[i]) - midi_of(h.freq[i - 1])
+        if d < 1 || d > 2 {
+            test.fail("step {{i}} moved {{d}} semitones")
+        }
+    }
+    // However high the drop asks, a line stays under the ceiling.
+    let high = arrange.line_hits(g, deg, at, len, 0, 8, 110, 8.0)
+    for i in 0..high.freq.len {
+        if midi_of(high.freq[i]) > arrange.LEAD_TOP {
+            test.fail("a line reached MIDI {{midi_of(high.freq[i])}}")
+        }
+    }
+    // A line played once never wraps a nudged note to its other end.
+    let mut early = synth.no_hits()
+    synth.add(early, 0.0, 0.8, 440.0, 0.1)
+    synth.add(early, 7.99, 0.8, 440.0, 0.1)
+    for ph in 0..20 {
+        let o = synth.humanize_once(early, g, synth.P_LEAD, ph)
+        if o.at[0] > 0.1 || o.at[o.at.len - 1] < 7.9 || o.at[o.at.len - 1] >= 8.0 {
+            test.fail("phrase {{ph}}: a line note wrapped")
+        }
+    }
+    // Every sung note of every style stays under the ceiling.
+    for st in 0..styles.COUNT {
+        let mut s = sound.preset(st)
+        s.bells_on = true
+        let sc = arrange.arrange([]Source {}, s)
+        for k in 0..sc.ln_freq.len {
+            if midi_of(sc.ln_freq[k]) > arrange.LEAD_TOP {
+                test.fail("style {{st}}: a sung note at MIDI {{midi_of(sc.ln_freq[k])}}")
+            }
+        }
+    }
+}
+
+#[test]
+fn the_lifted_drop_lifts_the_synths_too() {
+    let srcs = []Source { source(arrange.RHYTHM) }
+    let s = sound.preset(styles.FUTURE)
+    let sc = arrange.arrange(srcs, s)
+    let mut up = 0
+    for i in 0..sc.lp_semis.len {
+        if sc.lp_semis[i] == 2 {
+            up = up + 1
+        }
+    }
+    if up == 0 {
+        test.fail("nothing was lifted")
+        return
+    }
+    if sc.lift_from < 0 || sc.lift_to <= sc.lift_from {
+        test.fail("the recordings rose and the synths did not")
+    }
+    let mut pads = 0
+    for i in 0..sc.sy_layer.len {
+        let inside = sc.sy_bar[i] >= sc.lift_from && sc.sy_bar[i] < sc.lift_to
+        let l = sc.sy_layer[i]
+        if inside && (l == arrange.L_PAD || l == arrange.L_BASS || l == arrange.L_ARP) {
+            pads = pads + 1
+            if !graph.raised(sc, i) {
+                test.fail("layer {{l}} at bar {{sc.sy_bar[i]}} stayed in the old key")
+            }
+        }
+        if !inside && graph.raised(sc, i) {
+            test.fail("layer {{l}} at bar {{sc.sy_bar[i]}} rose outside the drop")
+        }
+        if l == arrange.L_DRUMS && graph.raised(sc, i) {
+            test.fail("the drums were transposed")
+        }
+    }
+    if pads == 0 {
+        test.fail("no harmony in the lifted drop")
+    }
+    eq("a chord a whole step up", graph.up_tone(key.chord_code(9, true)), key.chord_code(11, true))
+}
+
+#[test]
+fn the_instruments_render_in_loam() {
+    let s = sound.preset(styles.FUTURE)
+    let sc = arrange.arrange([]Source {}, s)
+    let dir = "/tmp/mune-voices-test"
+    sys.mkdir(dir)
+    let g = graph.build(sc, s, []string {}, []string {}, []bool {}, dir)
+    if str.contains(g.text, "aevalsrc=exprs='ld(") {
+        test.fail("an instrument is still an ffmpeg expression")
+    }
+    eq("voices written", graph.render_voices(sc, s, g, dir), 0)
+    for k in 0..g.voice_path.len {
+        let buf = graph.voice_samples(sc, s, g, k)
+        let unit = graph.unit_of(sc, g.voice_layer[k], g.voice_part[k])
+        eq("voice {{k}} fills its loop", buf.len, unit)
+        let mut peak: f64 = 0.0
+        for i in 0..buf.len {
+            let a = if buf[i] < 0.0 { 0.0 - buf[i] } else { buf[i] }
+            if a > peak {
+                peak = a
+            }
+        }
+        if peak <= 0.0001 {
+            test.fail("voice {{k}} (layer {{g.voice_layer[k]}}) is silent")
+        }
+        if peak * graph.VOICE_WRITE >= 1.0 {
+            test.fail("voice {{k}} (layer {{g.voice_layer[k]}}) clips: peak {{peak}}")
+        }
+        let info = wav.inspect(g.voice_path[k])
+        if !info.ok || info.rate != 48000 || info.bits != 24 || info.channels != 1 {
+            test.fail("voice {{k}} is not a 24-bit mono WAV")
+        }
+    }
+    // A band-limited saw has no step: its largest jump is far under 2.
+    let dt: f64 = 3000.0 / 48000.0
+    let mut jump: f64 = 0.0
+    let mut prev = dsp.saw(0.0, dt)
+    for i in 1..4800 {
+        let v = dsp.saw(f64(i) * dt, dt)
+        let d = if v > prev { v - prev } else { prev - v }
+        if d > jump {
+            jump = d
+        }
+        prev = v
+    }
+    if jump > 1.0 {
+        test.fail("the saw steps by {{jump}}")
+    }
+    // A loop's tail folds onto its start, so the wrap has no seam.
+    let mut gg = groove_at(4, styles.FLOW)
+    gg.style = styles.HOUSE
+    let pad = voices.pad(gg, synth.PAD_WARM)
+    let edge = pad[pad.len - 1] - pad[0]
+    if edge > 0.2 || edge < -0.2 {
+        test.fail("the pad loop jumps {{edge}} at its wrap")
+    }
+}
+
+/// `n` frames of chroma: `tones` at 1, every other pitch class at `floor`.
+fn frames_of(tones: []int, floor: f64, n: int) -> []f64 {
+    let mut out = []f64 {}
+    for f in 0..n {
+        for pc in 0..12 {
+            let mut v = floor
+            for t in 0..tones.len {
+                if tones[t] == pc {
+                    v = 1.0
+                }
+            }
+            push(out, v)
+        }
+    }
+    return out
+}
+
+fn append(dst: &mut []f64, src: []f64) {
+    for i in 0..src.len {
+        push(dst, src[i])
+    }
+}
+
+#[test]
+fn chords_are_decoded_as_a_sequence() {
+    let c_maj = []int { 0, 4, 7 }
+    let a_min = []int { 9, 0, 4 }
+    let f_sharp = []int { 6, 10, 1 }
+    // Eight frames of C, one smeared frame that leans to F♯ (a drum hit
+    // over a passing chord), eight of C: the path holds C through it, where
+    // a frame-by-frame reading would take F♯.
+    let mut blip = []f64 {}
+    append(blip, frames_of(c_maj, 0.1, 8))
+    let mut smear = frames_of(f_sharp, 0.45, 1)
+    for pc in 0..12 {
+        smear[pc] = smear[pc] + 0.1 * f64(num.hash(pc, 5) % 10) / 10.0
+    }
+    let alone = key.emissions(smear, []f64 {})
+    let mut top = 0
+    for k in 1..24 {
+        if alone[k] > alone[top] {
+            top = k
+        }
+    }
+    eq("the smeared frame alone reads F♯", top, key.chord_code(6, false))
+    append(blip, smear)
+    append(blip, frames_of(c_maj, 0.1, 8))
+    let path = key.chord_path(blip, []f64 {}, 0, false)
+    eq("a frame each", path.len, 17)
+    for f in 0..path.len {
+        if path[f] != key.chord_code(0, false) {
+            test.fail("frame {{f}} left C for {{key.chord_name(path[f])}}")
+        }
+    }
+    // Two clean frames of F♯ are a chord, out of the key or not.
+    let mut held = []f64 {}
+    append(held, frames_of(c_maj, 0.1, 8))
+    append(held, frames_of(f_sharp, 0.1, 2))
+    append(held, frames_of(c_maj, 0.1, 8))
+    eq("a held chord is taken", key.chord_path(held, []f64 {}, 0, false)[8], key.chord_code(6, false))
+    // The bass names the root: C E G over A in the bass is Am, not C.
+    let mut low = []f64 {}
+    for pc in 0..12 {
+        let v: f64 = if pc == 9 { 1.0 } else { 0.1 }
+        push(low, v)
+    }
+    let mut amb = []f64 {}
+    for pc in 0..12 {
+        let v: f64 = if pc == 0 || pc == 4 || pc == 7 || pc == 9 { 1.0 } else { 0.1 }
+        push(amb, v)
+    }
+    let with_bass = key.emissions(amb, low)
+    if with_bass[key.chord_code(9, true)] <= with_bass[key.chord_code(0, false)] {
+        test.fail("an A in the bass did not make the chord Am")
+    }
+    // A real change, held, is taken.
+    let mut change = []f64 {}
+    append(change, frames_of(c_maj, 0.1, 8))
+    append(change, frames_of(a_min, 0.1, 8))
+    let moved = key.chord_path(change, []f64 {}, 0, false)
+    eq("C first", moved[2], key.chord_code(0, false))
+    eq("Am after", moved[13], key.chord_code(9, true))
+    // A bar of hiss and drums names no chord: its frames are flat.
+    let mut noisy = []f64 {}
+    append(noisy, frames_of(c_maj, 0.1, 6))
+    for f in 0..6 {
+        for pc in 0..12 {
+            push(noisy, 0.7 + 0.3 * f64(num.hash(f, pc) % 100) / 100.0)
+        }
+    }
+    let np = key.chord_path(noisy, []f64 {}, 0, false)
+    let mut named = 0
+    for f in 6..12 {
+        if np[f] >= 0 && np[f] != key.chord_code(0, false) {
+            named = named + 1
+        }
+    }
+    if named > 0 {
+        test.fail("noise was named as a chord in {{named}} frames")
+    }
+    eq("silence has no chord", key.chord_path(frames_of([]int {}, 0.0, 3), []f64 {}, 0, false)[1], -1)
+    // A two-bar phrase over real audio, C then Am, loops as C Am C Am.
+    let fc = key.chroma_frames(chord_pcm([]int { 60, 64, 67 }, 2))
+    let fa = key.chroma_frames(chord_pcm([]int { 57, 60, 64 }, 2))
+    let mut frames = []f64 {}
+    append(frames, fc)
+    append(frames, fa)
+    let half = fc.len / 12 * key.FRAME * 48000 / key.RATE
+    let ch = key.phrase_chords(key.chord_path(frames, []f64 {}, 0, false), []int { 0 }, []int { half * 2 }, []int { 2 })
+    eq("four blocks", ch.len, 4)
+    eq("bar 1", ch[0], key.chord_code(0, false))
+    eq("bar 2", ch[1], key.chord_code(9, true))
+    eq("bar 3", ch[2], key.chord_code(0, false))
+    let hiss = key.chroma_frames(chord_pcm([]int {}, 2))
+    let hc = key.phrase_chords(key.chord_path(hiss, []f64 {}, 0, false), []int { 0 }, []int { 48000 * 2 }, []int { 1 })
+    eq("hiss", hc[0], -1)
+    // The arranger takes the decoded chords, moved by the recording's shift.
+    let mut src = source(arrange.RHYTHM)
+    for p in 0..src.heard.ph_start.len {
+        push(src.heard.ph_chord, key.chord_code(9, true))
+        push(src.heard.ph_chord, key.chord_code(2, true))
+        push(src.heard.ph_chord, key.chord_code(9, true))
+        push(src.heard.ph_chord, key.chord_code(2, true))
+    }
+    let got = arrange.heard_chords(src, 0, 2, 2, []int {}, 9, true)
+    eq("decoded, moved up two", got[0], key.chord_code(11, true))
+    eq("its second bar", got[1], key.chord_code(4, true))
+    let sc = arrange.arrange([]Source { src }, sound.preset(styles.HOUSE))
+    eq("progression from the decoded chords", sc.prog[1], key.chord_code(2, true))
+}
+
+/// Voices kept: a voiced phrase is chosen for how it plays, and plays as
+/// recorded. Removed: every voiced phrase that still plays is cleaned.
+#[test]
+fn keep_voices_uses_the_voiced_phrases() {
+    let mut src = source(arrange.RHYTHM)
+    src.has_map = true
+    let voiced = []int { 60, 60, 60, 0, 0, 60 }
+    for p in 0..voiced.len {
+        src.heard.ph_voice[p] = voiced[p]
+        src.heard.ph_score[p] = if voiced[p] > 0 { 60 } else { 30 }
+    }
+    let span = 2 * src.heard.bar_s
+    let mut keep = sound.preset(styles.HOUSE)
+    keep.voices = sound.VOICES_KEEP
+    let sc = arrange.arrange([]Source { src }, keep)
+    let mut sung = 0
+    for k in 0..sc.lp_src.len {
+        if voiced[num.clampi(sc.lp_in[k] / span, 0, voiced.len - 1)] > 0 {
+            sung = sung + 1
+        }
+        eq("kept voices are not cleaned", sc.lp_clean[k], arrange.CLEAN_NONE)
+    }
+    test.assert(sung > 0)
+
+    let mut rm = sound.preset(styles.HOUSE)
+    rm.voices = sound.VOICES_REMOVE
+    let sr = arrange.arrange([]Source { src }, rm)
+    for k in 0..sr.lp_src.len {
+        if voiced[num.clampi(sr.lp_in[k] / span, 0, voiced.len - 1)] > 0 {
+            test.assert(sr.lp_clean[k] != arrange.CLEAN_NONE)
+        }
+    }
+}
+
+/// Hearing serves both voice choices: the pool keeps voice-free phrases
+/// first, and still the best voiced ones, without the voice in their score.
+#[test]
+fn the_pool_keeps_voiced_phrases_too() {
+    let mut c = listen.empty_pool()
+    for p in 0..12 {
+        push(c.start, p * 1000)
+        push(c.len, 1000)
+        push(c.bars, 2)
+        push(c.kind, listen.KIND_GROOVE)
+        push(c.score, if p % 2 == 0 { 80 } else { 20 })
+        push(c.voice, if p % 2 == 0 { 50 } else { 0 })
+    }
+    let mut kept = listen.empty_pool()
+    listen.keep_best(c, 4, true, kept)
+    listen.keep_best(c, 2, false, kept)
+    eq("kept", kept.start.len, 6)
+    let mut sung = 0
+    for i in 0..kept.start.len {
+        if kept.voice[i] > 0 {
+            sung = sung + 1
+            eq("score is the playing alone", kept.score[i], 80)
+        }
+    }
+    eq("voiced kept", sung, 2)
+    eq("voice-free first", kept.voice[0], 0)
+}

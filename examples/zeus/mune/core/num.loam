@@ -1,0 +1,217 @@
+//! Small f64 helpers the analysis and the graph share.
+//!
+//! `std:math` has no trigonometry, so `sin` / `cos` are here: range
+//! reduction to ±π/4 and a short Taylor series, good to ~1e-12. Filter
+//! text never uses Loam's own float printing; `fixed` writes plain decimals
+//! (ffmpeg's parser takes `0.000010`, not `1e-05`).
+
+import "std:math"
+
+let PI: f64 = 3.141592653589793
+let TAU: f64 = 6.283185307179586
+let HALF_PI: f64 = 1.5707963267948966
+let QUARTER_PI: f64 = 0.7853981633974483
+
+fn sin_core(x: f64) -> f64 {
+    let x2 = x * x
+    let mut term = x
+    let mut sum = x
+    let mut k = 1
+    while k < 9 {
+        term = -term * x2 / f64((2 * k) * (2 * k + 1))
+        sum = sum + term
+        k = k + 1
+    }
+    return sum
+}
+
+fn cos_core(x: f64) -> f64 {
+    let x2 = x * x
+    let mut term: f64 = 1.0
+    let mut sum: f64 = 1.0
+    let mut k = 1
+    while k < 9 {
+        term = -term * x2 / f64((2 * k - 1) * (2 * k))
+        sum = sum + term
+        k = k + 1
+    }
+    return sum
+}
+
+fn sin(x: f64) -> f64 {
+    let q = math.floor(x / HALF_PI + 0.5)
+    let r = x - q * HALF_PI
+    let mut quadrant = i32(q - math.floor(q / 4.0) * 4.0)
+    if quadrant < 0 {
+        quadrant = quadrant + 4
+    }
+    if quadrant == 0 {
+        return sin_core(r)
+    }
+    if quadrant == 1 {
+        return cos_core(r)
+    }
+    if quadrant == 2 {
+        return -sin_core(r)
+    }
+    return -cos_core(r)
+}
+
+fn cos(x: f64) -> f64 {
+    return sin(x + HALF_PI)
+}
+
+fn clampf(x: f64, lo: f64, hi: f64) -> f64 {
+    if x < lo {
+        return lo
+    }
+    if x > hi {
+        return hi
+    }
+    return x
+}
+
+fn clampi(x: int, lo: int, hi: int) -> int {
+    if x < lo {
+        return lo
+    }
+    if x > hi {
+        return hi
+    }
+    return x
+}
+
+fn absi(x: int) -> int {
+    if x < 0 {
+        return -x
+    }
+    return x
+}
+
+fn roundi(x: f64) -> int {
+    return i32(math.floor(x + 0.5))
+}
+
+/// Frequency ratio of `semis` semitones (12 is 2.0).
+fn semitone_ratio(semis: f64) -> f64 {
+    return math.pow(2.0, semis / 12.0)
+}
+
+/// Equal-temperament frequency of MIDI note `m` (69 is A4, 440 Hz).
+fn midi_hz(m: int) -> f64 {
+    return 440.0 * semitone_ratio(f64(m - 69))
+}
+
+fn pad_left(s: string, width: int) -> string {
+    let mut out = s
+    while out.len < width {
+        out = "0{{out}}"
+    }
+    return out
+}
+
+/// `x` as plain decimal text with `digits` places: fixed(1.5, 3) is "1.500".
+fn fixed(x: f64, digits: int) -> string {
+    let mut scale: i64 = i64(1)
+    let mut d = 0
+    while d < digits {
+        scale = scale * i64(10)
+        d = d + 1
+    }
+    let mut v = x
+    let mut sign = ""
+    if v < 0.0 {
+        sign = "-"
+        v = -v
+    }
+    let scaled = i64(math.floor(v * f64(scale) + 0.5))
+    let whole = scaled / scale
+    let frac = scaled % scale
+    if digits <= 0 {
+        return "{{sign}}{{whole}}"
+    }
+    if whole == i64(0) && frac == i64(0) {
+        sign = ""
+    }
+    let ft = pad_left("{{frac}}", digits)
+    return "{{sign}}{{whole}}.{{ft}}"
+}
+
+/// Six places, enough for a filter time or a gain.
+fn f6(x: f64) -> string {
+    return fixed(x, 6)
+}
+
+fn f3(x: f64) -> string {
+    return fixed(x, 3)
+}
+
+/// Linear gain for `db` decibels.
+fn db_gain(db: f64) -> f64 {
+    return math.pow(10.0, db / 20.0)
+}
+
+/// A deterministic hash in 0..1000002, for seeded choices (melodies,
+/// phrase order). Arithmetic only, so it never overflows.
+fn hash(a: int, b: int) -> int {
+    let p: i64 = i64(1000003)
+    let mut h: i64 = (i64(absi(a)) * i64(7919) + i64(absi(b)) * i64(104729) + i64(12345)) % p
+    h = (h * h + i64(absi(b)) * i64(31) + i64(7)) % p
+    h = (h * i64(48271) + i64(absi(a))) % p
+    return i32(h)
+}
+
+fn mean_i(xs: []int) -> int {
+    if xs.len == 0 {
+        return 0
+    }
+    let mut s: i64 = i64(0)
+    for i in 0..xs.len {
+        s = s + i64(xs[i])
+    }
+    return i32(s / i64(xs.len))
+}
+
+/// The `pct` percentile (0..100) of `xs`, by a sorted copy.
+fn percentile(xs: []int, pct: int) -> int {
+    if xs.len == 0 {
+        return 0
+    }
+    let mut s = []int {}
+    for i in 0..xs.len {
+        push(s, xs[i])
+    }
+    sort_ints(s)
+    let mut at = (s.len - 1) * pct / 100
+    at = clampi(at, 0, s.len - 1)
+    return s[at]
+}
+
+/// Shell sort; the arrays here are a few thousand long at most.
+fn sort_ints(xs: &mut []int) {
+    let n = xs.len
+    let mut gap = n / 2
+    while gap > 0 {
+        let mut i = gap
+        while i < n {
+            let v = xs[i]
+            let mut j = i
+            while j >= gap && xs[j - gap] > v {
+                xs[j] = xs[j - gap]
+                j = j - gap
+            }
+            xs[j] = v
+            i = i + 1
+        }
+        gap = gap / 2
+    }
+}
+
+fn index_of(xs: []int, v: int) -> int {
+    for i in 0..xs.len {
+        if xs[i] == v {
+            return i
+        }
+    }
+    return -1
+}

@@ -1,0 +1,225 @@
+//! Every choice that shapes a piece, as one value. The screen edits these
+//! through signals (`studio/store.loam`); the arranger and the graph read a
+//! snapshot. Levels and amounts are 0..100.
+
+import "styles.loam" as styles
+import "synth.loam" as synth
+
+const VOICES_REMOVE: int = 0
+const VOICES_KEEP: int = 1
+
+const MOD_NONE: int = 0
+const MOD_CHORUS: int = 1
+const MOD_PHASER: int = 2
+const MOD_FLANGER: int = 3
+
+const SPACE_ROOM: int = 0
+const SPACE_HALL: int = 1
+const SPACE_VAST: int = 2
+
+/// Echo time: an eighth, a dotted eighth, a quarter, a half note.
+const ECHO_8: int = 0
+const ECHO_8D: int = 1
+const ECHO_4: int = 2
+const ECHO_2: int = 3
+
+struct Sound {
+    style: int,
+    energy: int,
+    /// 0 is 1 min, 1 is 3 min, 2 is 4 min.
+    length_ix: int,
+    /// BPM, or 0 to follow the recordings.
+    tempo: int,
+    /// Semitones, -12..12, applied to everything.
+    pitch: int,
+    voices: int,
+    rec_on: bool,
+    rec_lvl: int,
+    drums_on: bool,
+    drums_lvl: int,
+    bass_on: bool,
+    bass_lvl: int,
+    pad_on: bool,
+    pad_lvl: int,
+    pad_tone: int,
+    arp_on: bool,
+    arp_lvl: int,
+    arp_tone: int,
+    bells_on: bool,
+    bells_lvl: int,
+    echo: int,
+    echo_time: int,
+    reverb: int,
+    space: int,
+    mod_kind: int,
+    mod_amt: int,
+    lofi: int,
+    warmth: int,
+    width: int,
+    pump: bool,
+    /// Variation: a new take moves this.
+    seed: int,
+}
+
+fn length_names() -> []string {
+    return []string { "1 min", "3 min", "4 min" }
+}
+
+fn length_ms(ix: int) -> int {
+    if ix <= 0 {
+        return 60000
+    }
+    if ix >= 2 {
+        return 240000
+    }
+    return 180000
+}
+
+fn mod_names() -> []string {
+    return []string { "None", "Chorus", "Phaser", "Flanger" }
+}
+
+fn space_names() -> []string {
+    return []string { "Room", "Hall", "Vast" }
+}
+
+fn echo_names() -> []string {
+    return []string { "1/8", "1/8.", "1/4", "1/2" }
+}
+
+fn voice_names() -> []string {
+    return []string { "Remove", "Keep" }
+}
+
+/// The starting point for a style. Length, tempo, pitch, voices, and the
+/// seed are the listener's and survive a style change (`with_style`).
+fn preset(s: int) -> Sound {
+    let mut v = Sound {
+        style: s, energy: styles.FLOW, length_ix: 1, tempo: 0, pitch: 0, voices: VOICES_REMOVE,
+        rec_on: true, rec_lvl: 70,
+        drums_on: true, drums_lvl: 70,
+        bass_on: true, bass_lvl: 70,
+        pad_on: true, pad_lvl: 70, pad_tone: synth.PAD_WARM,
+        arp_on: true, arp_lvl: 60, arp_tone: synth.ARP_PLUCK,
+        bells_on: true, bells_lvl: 60,
+        echo: 35, echo_time: ECHO_8D, reverb: 40, space: SPACE_HALL,
+        mod_kind: MOD_NONE, mod_amt: 40, lofi: 0, warmth: 25, width: 30, pump: false,
+        seed: 0,
+    }
+    if s == styles.DREAM {
+        v.energy = styles.CALM
+        v.drums_lvl = 45
+        v.pad_tone = synth.PAD_GLASS
+        v.arp_on = false
+        v.bells_lvl = 70
+        v.echo = 50
+        v.echo_time = ECHO_4
+        v.reverb = 70
+        v.space = SPACE_VAST
+        v.mod_kind = MOD_CHORUS
+        v.width = 55
+    } else if s == styles.LOFI {
+        v.pad_tone = synth.PAD_KEYS
+        v.pad_lvl = 72
+        v.arp_on = false
+        v.bells_lvl = 45
+        v.echo = 25
+        v.reverb = 30
+        v.space = SPACE_ROOM
+        v.lofi = 55
+        v.warmth = 45
+        v.width = 20
+    } else if s == styles.HOUSE {
+        v.energy = styles.DRIVE
+        v.drums_lvl = 78
+        v.pad_tone = synth.PAD_WARM
+        v.arp_tone = synth.ARP_PLUCK
+        v.bells_on = false
+        v.echo = 30
+        v.reverb = 30
+        v.pump = true
+        v.width = 35
+    } else if s == styles.CINEMA {
+        v.pad_tone = synth.PAD_STRINGS
+        v.pad_lvl = 78
+        v.arp_tone = synth.ARP_STRINGS
+        v.arp_lvl = 64
+        v.bells_lvl = 55
+        v.echo = 25
+        v.echo_time = ECHO_4
+        v.reverb = 60
+        v.space = SPACE_VAST
+        v.warmth = 20
+        v.width = 50
+    } else if s == styles.WAVE {
+        v.energy = styles.DRIVE
+        v.pad_tone = synth.PAD_WARM
+        v.arp_tone = synth.ARP_SAW
+        v.arp_lvl = 62
+        v.bells_on = false
+        v.echo = 40
+        v.reverb = 45
+        v.mod_kind = MOD_CHORUS
+        v.mod_amt = 55
+        v.width = 45
+        v.pump = true
+    } else if s == styles.TRAP {
+        v.drums_lvl = 74
+        v.bass_lvl = 74
+        v.pad_tone = synth.PAD_GLASS
+        v.pad_lvl = 56
+        v.arp_on = false
+        v.bells_lvl = 64
+        v.echo = 30
+        v.reverb = 30
+        v.warmth = 35
+        v.width = 35
+    } else if s == styles.FUTURE {
+        v.energy = styles.DRIVE
+        v.pad_tone = synth.PAD_SUPER
+        v.pad_lvl = 72
+        v.arp_lvl = 52
+        v.bells_lvl = 50
+        v.echo = 35
+        v.reverb = 45
+        v.mod_kind = MOD_CHORUS
+        v.mod_amt = 35
+        v.width = 60
+        v.pump = true
+    } else if s == styles.AFRO {
+        v.pad_tone = synth.PAD_KEYS
+        v.pad_lvl = 66
+        v.arp_tone = synth.ARP_MALLET
+        v.arp_lvl = 58
+        v.bells_on = false
+        v.echo = 25
+        v.reverb = 30
+        v.space = SPACE_ROOM
+        v.warmth = 30
+        v.width = 40
+    }
+    return v
+}
+
+/// `cur` with the style's sound, keeping the listener's own choices.
+fn with_style(cur: Sound, s: int) -> Sound {
+    let mut v = preset(s)
+    v.length_ix = cur.length_ix
+    v.tempo = cur.tempo
+    v.pitch = cur.pitch
+    v.voices = cur.voices
+    v.seed = cur.seed
+    return v
+}
+
+/// A level slider (0..100, 70 is the default) as decibels: 0 is silent,
+/// 70 is 0 dB, 100 is +6 dB.
+fn level_db(v: int) -> f64 {
+    if v <= 0 {
+        return -90.0
+    }
+    if v >= 70 {
+        return f64(v - 70) * 0.2
+    }
+    return -30.0 * (1.0 - f64(v) / 70.0) * (1.0 - f64(v) / 70.0) - f64(70 - v) * 0.12
+}

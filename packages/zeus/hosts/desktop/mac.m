@@ -3,6 +3,8 @@
 #import <QuartzCore/QuartzCore.h>
 #import <IOSurface/IOSurface.h>
 #import <AVFoundation/AVFoundation.h>
+#import <AudioToolbox/AudioToolbox.h>
+#import <SoundAnalysis/SoundAnalysis.h>
 #import <CoreVideo/CoreVideo.h>
 #import <VideoToolbox/VideoToolbox.h>
 #include "zeus_rt.h"
@@ -1537,6 +1539,337 @@ static void mac_media_pick(void) {
     zeus_media_picked([[path lastPathComponent] UTF8String], [path UTF8String]);
 }
 
+/* Mune's recordings panel. Separate from `mac_media_pick`, which stays a
+   single video-or-audio file for Vidy. Several audio files publish through
+   the same queue a drop uses. */
+static void mac_audio_pick(void) {
+    NSOpenPanel *p = [NSOpenPanel openPanel];
+    NSArray *urls;
+    NSUInteger i, n;
+    [p setCanChooseFiles:YES];
+    [p setCanChooseDirectories:NO];
+    [p setAllowsMultipleSelection:YES];
+    [p setMessage:@"Select the recordings to build a new piece from."];
+    [p setPrompt:@"Add"];
+    [p setAllowedFileTypes:@[ @"public.audio",
+                              @"mp3", @"m4a", @"aac", @"wav", @"aiff", @"aif", @"aifc",
+                              @"flac", @"caf", @"opus", @"ogg", @"alac", @"m4b" ]];
+    if ([p runModal] != NSModalResponseOK) return;
+    urls = [p URLs];
+    n = [urls count];
+    for (i = 0; i < n; i++) {
+        NSString *path = [[urls objectAtIndex:i] path];
+        if (!path) continue;
+        zeus_media_picked([[path lastPathComponent] UTF8String], [path UTF8String]);
+    }
+}
+
+/* Voice tools for audio apps (Mune). Both run on one serial background queue
+   and never touch the UI. Each writes its result, then `<out>.done`, or the
+   reason to `<out>.fail`. The app polls for the marker.
+
+   ZEUS_VOICE_MAP: Apple's sound classifier over 1.5 s windows (hop 0.75 s).
+   `out` is text, one line per window: `start_ms end_ms voice` where voice is
+   the highest confidence (0..100) of any singing, speech, or other voice
+   label.
+
+   ZEUS_VOICE_SPLIT: AUSoundIsolation isolates the voice, and the file minus
+   that voice (latency aligned) is written to `out` as 32-bit float WAV. The
+   model masks the spectrum, so the subtraction leaves the music. */
+#define ZEUS_VOICE_MAP 1
+#define ZEUS_VOICE_SPLIT 2
+
+static NSString *const zeus_voice_labels[] = {
+    @"speech", @"singing", @"choir_singing", @"humming", @"rapping", @"yodeling",
+    @"whispering", @"shout", @"screaming", @"children_shouting", @"battle_cry",
+    @"laughter", @"belly_laugh", @"crying_sobbing", @"babble", @"crowd", @"cheering",
+};
+
+static dispatch_queue_t zeus_voice_queue(void) {
+    static dispatch_queue_t q;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        q = dispatch_queue_create("zeus.voice", DISPATCH_QUEUE_SERIAL);
+    });
+    return q;
+}
+
+static void zeus_voice_mark(NSString *out, NSString *why) {
+    if (why) {
+        [why writeToFile:[out stringByAppendingString:@".fail"] atomically:YES
+                encoding:NSUTF8StringEncoding error:NULL];
+        return;
+    }
+    [@"" writeToFile:[out stringByAppendingString:@".done"] atomically:YES
+            encoding:NSUTF8StringEncoding error:NULL];
+}
+
+API_AVAILABLE(macos(12.0))
+@interface ZeusVoiceObserver : NSObject <SNResultsObserving> {
+@public
+    NSMutableString *rows;
+    NSString *failure;
+}
+@end
+
+@implementation ZeusVoiceObserver
+- (instancetype)init {
+    if ((self = [super init])) rows = [[NSMutableString alloc] init];
+    return self;
+}
+- (void)request:(id<SNRequest>)request didProduceResult:(id<SNResult>)result {
+    SNClassificationResult *r = (SNClassificationResult *)result;
+    double voice = 0;
+    size_t i;
+    CMTimeRange span;
+    (void)request;
+    if (![r isKindOfClass:[SNClassificationResult class]]) return;
+    for (i = 0; i < sizeof zeus_voice_labels / sizeof zeus_voice_labels[0]; i++) {
+        SNClassification *c = [r classificationForIdentifier:zeus_voice_labels[i]];
+        if (c && c.confidence > voice) voice = c.confidence;
+    }
+    span = r.timeRange;
+    [rows appendFormat:@"%lld %lld %d\n", (long long)llround(CMTimeGetSeconds(span.start) * 1000.0),
+                       (long long)llround(CMTimeGetSeconds(CMTimeRangeGetEnd(span)) * 1000.0),
+                       (int)llround(voice * 100.0)];
+}
+- (void)request:(id<SNRequest>)request didFailWithError:(NSError *)error {
+    (void)request;
+    [failure release];
+    failure = [[error localizedDescription] copy];
+}
+- (void)requestDidComplete:(id<SNRequest>)request {
+    (void)request;
+}
+- (void)dealloc {
+    [rows release];
+    [failure release];
+    [super dealloc];
+}
+@end
+
+static NSString *zeus_voice_map_run(NSString *src, NSString *out) API_AVAILABLE(macos(12.0)) {
+    NSError *err = nil;
+    SNClassifySoundRequest *req;
+    SNAudioFileAnalyzer *an;
+    ZeusVoiceObserver *obs;
+    NSString *why = nil;
+    req = [[SNClassifySoundRequest alloc] initWithClassifierIdentifier:SNClassifierIdentifierVersion1
+                                                                 error:&err];
+    if (!req) return [err localizedDescription] ?: @"The sound classifier is not available.";
+    req.windowDuration = CMTimeMakeWithSeconds(1.5, 48000);
+    req.overlapFactor = 0.5;
+    an = [[SNAudioFileAnalyzer alloc] initWithURL:[NSURL fileURLWithPath:src] error:&err];
+    if (!an) {
+        [req release];
+        return [err localizedDescription] ?: @"Could not open the recording.";
+    }
+    obs = [[ZeusVoiceObserver alloc] init];
+    if (![an addRequest:req withObserver:obs error:&err]) {
+        why = [err localizedDescription] ?: @"Could not start the classifier.";
+    } else {
+        [an analyze];
+        if (obs->failure) why = [[obs->failure copy] autorelease];
+        else if (![obs->rows writeToFile:out atomically:YES encoding:NSUTF8StringEncoding error:&err])
+            why = [err localizedDescription] ?: @"Could not write the voice map.";
+    }
+    [obs release];
+    [an release];
+    [req release];
+    return why;
+}
+
+/* Pass 1 renders the isolated voice to `<out>.voice.caf`; pass 2 subtracts it
+   from the source, `latency` frames later, into `out`. */
+static NSString *zeus_voice_split_run(NSString *src, NSString *out) API_AVAILABLE(macos(13.0)) {
+    AudioComponentDescription d = {kAudioUnitType_Effect, kAudioUnitSubType_AUSoundIsolation,
+                                   kAudioUnitManufacturer_Apple, 0, 0};
+    __block AVAudioUnit *unit = nil;
+    __block NSString *why = nil;
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    NSString *voice_path = [out stringByAppendingString:@".voice.caf"];
+    NSError *err = nil;
+    AVAudioFile *in_f = nil, *voice_f = nil, *a = nil, *b = nil, *music_f = nil;
+    AVAudioEngine *eng = nil;
+    AVAudioPlayerNode *player = nil;
+    AVAudioPCMBuffer *buf = nil, *ba = nil, *bb = nil;
+    AVAudioFormat *fmt;
+    Float64 lat = 0;
+    UInt32 sz = sizeof lat;
+    AVAudioFramePosition total, lat_frames;
+
+    [AVAudioUnit instantiateWithComponentDescription:d options:0
+                                   completionHandler:^(AVAudioUnit *u, NSError *e) {
+        if (u) unit = [u retain];
+        else why = [[e localizedDescription] copy];
+        dispatch_semaphore_signal(sem);
+    }];
+    dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+    dispatch_release(sem);
+    if (!unit) return why ? [why autorelease] : @"Voice isolation is not available.";
+
+    in_f = [[AVAudioFile alloc] initForReading:[NSURL fileURLWithPath:src] error:&err];
+    if (!in_f) {
+        why = [err localizedDescription] ?: @"Could not open the recording.";
+        goto done;
+    }
+    fmt = in_f.processingFormat;
+    AudioUnitSetParameter(unit.audioUnit, kAUSoundIsolationParam_WetDryMixPercent,
+                          kAudioUnitScope_Global, 0, 100.0f, 0);
+    if (@available(macOS 15.0, *))
+        AudioUnitSetParameter(unit.audioUnit, kAUSoundIsolationParam_SoundToIsolate,
+                              kAudioUnitScope_Global, 0,
+                              (AudioUnitParameterValue)kAUSoundIsolationSoundType_HighQualityVoice, 0);
+    AudioUnitGetProperty(unit.audioUnit, kAudioUnitProperty_Latency, kAudioUnitScope_Global, 0, &lat, &sz);
+    lat_frames = (AVAudioFramePosition)llround(lat * fmt.sampleRate);
+
+    eng = [[AVAudioEngine alloc] init];
+    player = [[AVAudioPlayerNode alloc] init];
+    [eng attachNode:player];
+    [eng attachNode:unit];
+    [eng connect:player to:unit format:fmt];
+    [eng connect:unit to:eng.mainMixerNode format:fmt];
+    if (![eng enableManualRenderingMode:AVAudioEngineManualRenderingModeOffline format:fmt
+                      maximumFrameCount:4096 error:&err] ||
+        ![eng startAndReturnError:&err]) {
+        why = [err localizedDescription] ?: @"Could not start voice isolation.";
+        goto done;
+    }
+    [player scheduleFile:in_f atTime:nil completionHandler:nil];
+    [player play];
+    {
+        /* A file is always interleaved; saying otherwise only logs a warning. */
+        NSMutableDictionary *vs = [[fmt.settings mutableCopy] autorelease];
+        vs[AVLinearPCMIsNonInterleaved] = @NO;
+        voice_f = [[AVAudioFile alloc] initForWriting:[NSURL fileURLWithPath:voice_path] settings:vs
+                                         commonFormat:fmt.commonFormat interleaved:fmt.isInterleaved
+                                                error:&err];
+    }
+    if (!voice_f) {
+        why = [err localizedDescription] ?: @"Could not write the voice.";
+        goto done;
+    }
+    buf = [[AVAudioPCMBuffer alloc] initWithPCMFormat:eng.manualRenderingFormat
+                                        frameCapacity:eng.manualRenderingMaximumFrameCount];
+    total = in_f.length + lat_frames;
+    while (eng.manualRenderingSampleTime < total) {
+        AVAudioFrameCount n = (AVAudioFrameCount)MIN((AVAudioFramePosition)buf.frameCapacity,
+                                                     total - eng.manualRenderingSampleTime);
+        AVAudioEngineManualRenderingStatus st = [eng renderOffline:n toBuffer:buf error:&err];
+        if (st == AVAudioEngineManualRenderingStatusError) {
+            why = [err localizedDescription] ?: @"Voice isolation stopped.";
+            goto done;
+        }
+        if (st == AVAudioEngineManualRenderingStatusSuccess && ![voice_f writeFromBuffer:buf error:&err]) {
+            why = [err localizedDescription] ?: @"Could not write the voice.";
+            goto done;
+        }
+    }
+    [player stop];
+    [eng stop];
+    [voice_f release];
+    voice_f = nil;
+
+    {
+        NSDictionary *wav = @{
+            AVFormatIDKey : @(kAudioFormatLinearPCM),
+            AVSampleRateKey : @(fmt.sampleRate),
+            AVNumberOfChannelsKey : @(fmt.channelCount),
+            AVLinearPCMBitDepthKey : @32,
+            AVLinearPCMIsFloatKey : @YES,
+            AVLinearPCMIsBigEndianKey : @NO,
+            AVLinearPCMIsNonInterleaved : @NO,
+        };
+        AVAudioFrameCount cap = 16384;
+        AVAudioChannelCount ch, c;
+        a = [[AVAudioFile alloc] initForReading:[NSURL fileURLWithPath:src] error:&err];
+        b = a ? [[AVAudioFile alloc] initForReading:[NSURL fileURLWithPath:voice_path] error:&err] : nil;
+        music_f = b ? [[AVAudioFile alloc] initForWriting:[NSURL fileURLWithPath:out] settings:wav
+                                             commonFormat:AVAudioPCMFormatFloat32 interleaved:NO error:&err]
+                    : nil;
+        if (!music_f) {
+            why = [err localizedDescription] ?: @"Could not write the music.";
+            goto done;
+        }
+        b.framePosition = lat_frames;
+        ba = [[AVAudioPCMBuffer alloc] initWithPCMFormat:a.processingFormat frameCapacity:cap];
+        bb = [[AVAudioPCMBuffer alloc] initWithPCMFormat:b.processingFormat frameCapacity:cap];
+        ch = a.processingFormat.channelCount;
+        for (;;) {
+            AVAudioFrameCount k, n;
+            if (![a readIntoBuffer:ba error:&err] || ba.frameLength == 0) break;
+            bb.frameLength = 0;
+            if (b.framePosition < b.length) [b readIntoBuffer:bb frameCount:ba.frameLength error:NULL];
+            n = MIN(ba.frameLength, bb.frameLength);
+            for (c = 0; c < ch && c < b.processingFormat.channelCount; c++) {
+                float *x = ba.floatChannelData[c];
+                const float *v = bb.floatChannelData[c];
+                for (k = 0; k < n; k++) x[k] -= v[k];
+            }
+            if (![music_f writeFromBuffer:ba error:&err]) {
+                why = [err localizedDescription] ?: @"Could not write the music.";
+                goto done;
+            }
+        }
+    }
+
+done:
+    [[NSFileManager defaultManager] removeItemAtPath:voice_path error:NULL];
+    [ba release];
+    [bb release];
+    [a release];
+    [b release];
+    [music_f release];
+    [buf release];
+    [voice_f release];
+    [player release];
+    [eng release];
+    [in_f release];
+    [unit release];
+    return why;
+}
+
+static int64_t mac_media_voice(int64_t what, const char *src, const char *out) {
+    NSString *s, *o;
+    if (!src || !out || !*src || !*out) return 0;
+    if (what == ZEUS_VOICE_MAP) {
+        if (@available(macOS 12.0, *)) {
+        } else {
+            return 0;
+        }
+    } else if (what == ZEUS_VOICE_SPLIT) {
+        if (@available(macOS 13.0, *)) {
+        } else {
+            return 0;
+        }
+    } else {
+        return 0;
+    }
+    s = [[NSString alloc] initWithUTF8String:src];
+    o = [[NSString alloc] initWithUTF8String:out];
+    if (!s || !o) {
+        [s release];
+        [o release];
+        return 0;
+    }
+    [[NSFileManager defaultManager] removeItemAtPath:[o stringByAppendingString:@".done"] error:NULL];
+    [[NSFileManager defaultManager] removeItemAtPath:[o stringByAppendingString:@".fail"] error:NULL];
+    dispatch_async(zeus_voice_queue(), ^{
+        @autoreleasepool {
+            NSString *why = nil;
+            if (what == ZEUS_VOICE_MAP) {
+                if (@available(macOS 12.0, *)) why = zeus_voice_map_run(s, o);
+            } else {
+                if (@available(macOS 13.0, *)) why = zeus_voice_split_run(s, o);
+            }
+            zeus_voice_mark(o, why);
+        }
+        [s release];
+        [o release];
+    });
+    return 1;
+}
+
 static int64_t mac_fullscreen(int64_t on) {
     int is;
     if (!g_win) return 0;
@@ -2209,10 +2542,13 @@ static int own_draw(CGContextRef ctx, NSGraphicsContext *gc, int ctx_h, CGFloat 
     NSArray *urls = [[sender draggingPasteboard]
         readObjectsForClasses:@[ [NSURL class] ]
                       options:@{NSPasteboardURLReadingFileURLsOnlyKey : @YES}];
-    NSURL *u = [urls count] ? [urls objectAtIndex:0] : nil;
-    if (!u || ![u path]) return NO;
-    zeus_media_picked([[[u path] lastPathComponent] UTF8String], [[u path] UTF8String]);
-    return YES;
+    BOOL any = NO;
+    for (NSURL *u in urls) {
+        if (![u isFileURL] || ![u path]) continue;
+        zeus_media_picked([[[u path] lastPathComponent] UTF8String], [[u path] UTF8String]);
+        any = YES;
+    }
+    return any;
 }
 /* The engine paints every pixel of the viewport — the root scroller carries the
    page background, so scroll edges and short pages stay paper. Saying so lets
@@ -3300,6 +3636,8 @@ static void zeus_mac_register(void) {
         media.get = mac_media_get;
         media.text = mac_media_text;
         media.pick = mac_media_pick;
+        media.pick_audio = mac_audio_pick;
+        media.voice = mac_media_voice;
         media.fullscreen = mac_fullscreen;
         zeus_set_media(media);
     }

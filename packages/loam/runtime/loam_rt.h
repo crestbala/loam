@@ -566,6 +566,19 @@ static inline loam_str loam_str_owned(char *p, int64_t n) {
     return s;
 }
 
+/** An owned copy of `n` bytes at `src`. Every runtime fn that hands Loam
+ *  bytes it produced goes through here (or `loam_str_bytes`): a bare
+ *  `(loam_str){malloc'd, n}` has `own == 0`, so the drop the compiler emits
+ *  is a no-op and the buffer leaks. Empty for `n <= 0`. */
+static inline loam_str loam_str_copy(const char *src, int64_t n) {
+    char *p;
+    if (n <= 0 || !src) return (loam_str){"", 0, 0};
+    p = loam_str_bytes(n);
+    memcpy(p, src, (size_t)n);
+    p[n] = 0;
+    return loam_str_owned(p, n);
+}
+
 /** Take another reference to `s` (no-op for a literal). */
 static inline void loam_str_retain(loam_str s) {
     if (s.own && s.ptr)
@@ -1298,16 +1311,13 @@ static inline loam_str loam_sys_env(loam_str name) {
     char buf[256];
     const char *v;
     size_t n;
-    char *p;
     if (!name.ptr || name.len <= 0 || name.len >= 256) return (loam_str){"", 0};
     memcpy(buf, name.ptr, (size_t)name.len);
     buf[name.len] = 0;
     v = getenv(buf);
     if (!v) return (loam_str){"", 0};
     n = strlen(v);
-    p = (char *)loam_new(n + 1, "sys_env", 0);
-    memcpy(p, v, n + 1);
-    return (loam_str){p, (int64_t)n};
+    return loam_str_copy(v, (int64_t)n);
 }
 
 static inline int64_t loam_sys_write_file(loam_str path, loam_str body) {
@@ -1369,8 +1379,11 @@ static inline loam_str loam_sys_exec(loam_str cmd) {
     if (st == -1) loam_sys_last_status = 1;
     else if (WIFEXITED(st)) loam_sys_last_status = WEXITSTATUS(st);
     else loam_sys_last_status = 1;
-    out[n] = 0;
-    return (loam_str){out, (int64_t)n};
+    {
+        loam_str r = loam_str_copy(out, (int64_t)n);
+        free(out);
+        return r;
+    }
 }
 
 static inline int64_t loam_sys_exec_status(void) { return loam_sys_last_status; }
@@ -1387,7 +1400,9 @@ static inline loam_str loam_sys_read_file(loam_str path) {
     long sz;
     char *p;
     size_t n;
-    const size_t max_n = 16u * 1024u * 1024u;
+    /* Loam's `int` indexes a string, so a file has to fit in an i32 length.
+       1 GiB leaves headroom; past it the read is empty, as documented. */
+    const size_t max_n = (size_t)1u << 30;
     if (!path.ptr || path.len <= 0 || path.len >= 4095) return (loam_str){"", 0};
     memcpy(pbuf, path.ptr, (size_t)path.len);
     pbuf[path.len] = 0;
@@ -1403,11 +1418,16 @@ static inline loam_str loam_sys_read_file(loam_str path) {
         return (loam_str){"", 0};
     }
     rewind(f);
-    p = (char *)loam_new((size_t)sz + 1, "sys_read_file", 0);
+    p = loam_str_bytes((int64_t)sz);
     n = fread(p, 1, (size_t)sz, f);
     fclose(f);
     p[n] = 0;
-    return (loam_str){p, (int64_t)n};
+    if (n == 0) {
+        loam_str e = loam_str_owned(p, 0);
+        loam_str_release(&e);
+        return (loam_str){"", 0};
+    }
+    return loam_str_owned(p, (int64_t)n);
 }
 
 #include <sys/stat.h>
@@ -1514,10 +1534,7 @@ static inline loam_str loam_sys_dir_entry(loam_str path, int64_t idx) {
     if (loam_sys_cpath(path, buf, sizeof buf)) return out;
     n = loam_dir_names(buf, &names);
     if (idx >= 0 && idx < n) {
-        size_t len = strlen(names[idx]);
-        char *p = (char *)loam_new(len + 1, "sys_dir_entry", 0);
-        memcpy(p, names[idx], len + 1);
-        out = (loam_str){p, (int64_t)len};
+        out = loam_str_copy(names[idx], (int64_t)strlen(names[idx]));
     }
     loam_dir_free(names, n);
     return out;
@@ -1572,12 +1589,9 @@ static inline int64_t loam_sys_rename(loam_str from, loam_str to) {
 static inline loam_str loam_sys_cwd(void) {
     char buf[4096];
     size_t n;
-    char *p;
     if (!getcwd(buf, sizeof buf)) return (loam_str){"", 0};
     n = strlen(buf);
-    p = (char *)loam_new(n + 1, "sys_cwd", 0);
-    memcpy(p, buf, n + 1);
-    return (loam_str){p, (int64_t)n};
+    return loam_str_copy(buf, (int64_t)n);
 }
 
 /* --- sys.watch_*: the kernel half of change-driven reload ---

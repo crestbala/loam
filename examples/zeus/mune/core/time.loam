@@ -1,0 +1,112 @@
+//! Clocks, rates, and the fixed spans of a piece.
+//!
+//! Positions in a piece are whole samples at 48 kHz, so every bar line
+//! lands on the same sample in every layer.
+
+import "std:str"
+
+/// The rate of every file Mune writes.
+const RATE: int = 48000
+
+/// Envelope rate. One sample is 10 ms.
+const ENV_HZ: int = 100
+
+/// The decode keeps this much of each recording, in seconds.
+const MAX_SEC: int = 480
+
+/// Silence before bar one, so a cut can start a little before its bar.
+const LEAD_S: int = 2400
+
+/// A recording's cut starts this many samples before its bar line, so the
+/// first transient is whole.
+const PREROLL_S: int = 720
+
+/// Room after the last bar for echoes and the reverb to ring out.
+const TAIL_S: int = 192000
+
+/// `ms` as `m:ss`.
+fn clock(ms: int) -> string {
+    let mut v = ms
+    if v < 0 {
+        v = 0
+    }
+    let total = v / 1000
+    let m = total / 60
+    let s = total % 60
+    if s < 10 {
+        return "{{m}}:0{{s}}"
+    }
+    return "{{m}}:{{s}}"
+}
+
+fn ms_of_samples(s: int) -> int {
+    return i32(i64(s) * i64(1000) / i64(RATE))
+}
+
+/// Samples in one bar of 4/4 at `bpm_c` centi-BPM.
+fn bar_samples(bpm_c: int) -> int {
+    if bpm_c <= 0 {
+        return RATE * 2
+    }
+    return i32((i64(RATE) * i64(240) * i64(100) + i64(bpm_c / 2)) / i64(bpm_c))
+}
+
+/// `12034` → `120.3`, `9000` → `90`.
+fn bpm_text(bpm_c: int) -> string {
+    let whole = bpm_c / 100
+    let tenth = (bpm_c % 100 + 5) / 10
+    if tenth == 0 {
+        return "{{whole}}"
+    }
+    if tenth >= 10 {
+        return "{{whole + 1}}"
+    }
+    return "{{whole}}.{{tenth}}"
+}
+
+/// A decimal-seconds string (ffprobe's duration) as milliseconds.
+/// Empty or non-numeric text is 0.
+fn ms_of_seconds(text: string) -> int {
+    let s = str.trim(text)
+    if s.len == 0 {
+        return 0
+    }
+    let mut i = 0
+    let mut neg = false
+    if s[0] == 45 {
+        neg = true
+        i = 1
+    }
+    let mut whole = 0
+    while i < s.len {
+        let c = s[i]
+        if c < 48 || c > 57 {
+            break
+        }
+        whole = whole * 10 + (c - 48)
+        i = i + 1
+    }
+    let mut frac = 0
+    let mut digits = 0
+    if i < s.len && s[i] == 46 {
+        i = i + 1
+        while i < s.len && digits < 3 {
+            let c = s[i]
+            if c < 48 || c > 57 {
+                break
+            }
+            frac = frac * 10 + (c - 48)
+            digits = digits + 1
+            i = i + 1
+        }
+    }
+    while digits < 3 {
+        frac = frac * 10
+        digits = digits + 1
+    }
+    let v = whole * 1000 + frac
+    if neg {
+        return -v
+    }
+    return v
+}

@@ -1,0 +1,86 @@
+// A struct signal that owns lists and strings releases them when the signal
+// is freed: a keyed row that unmounts frees its row-owned signals, and their
+// payloads go with them. Each row here holds 1 MB; 300 rows come and go.
+// `set` releases the value it replaces too.
+
+import "std:fmt"
+import "std:str"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+struct Rec {
+    name: string,
+    xs: []int,
+    tags: []string,
+}
+
+let held = zeus.signal(Rec { name: "", xs: []int {}, tags: []string {} })
+
+fn big(n: int) -> []int {
+    let mut v = []int {}
+    for i in 0..n {
+        push(v, i)
+    }
+    return v
+}
+
+fn rec(i: int) -> Rec {
+    return Rec { name: "row {{i}}", xs: big(250000), tags: []string { "a{{i}}", "b{{i}}" } }
+}
+
+fn rss_mb() -> int {
+    let t = str.trim(sys.exec("ps -o rss= -p $PPID"))
+    let mut n = 0
+    for i in 0..t.len {
+        let c = t[i]
+        if c >= 48 && c <= 57 {
+            n = n * 10 + (c - 48)
+        }
+    }
+    return n / 1024
+}
+
+fn Row(i: int, s: string) -> Node {
+    let r = zeus.signal(rec(i))
+    return zeus.Box(style = Style(direction = Direction.Row, gap = 4)) {
+        zeus.Text("{{s}} {{r.get().xs.len}}")
+    }
+}
+
+fn check(what: string, before: int) {
+    let d = rss_mb() - before
+    if d > 120 {
+        fmt.println("{{what}} leaked: +{{d}} MB")
+        sys.exit(1)
+    }
+    fmt.println("{{what}} ok")
+}
+
+fn main() {
+    let names = zeus.signal([]string {})
+    zeus.snapshot(240, 160, fn() -> Node {
+        zui.Each(names.get(), Row)
+    })
+    for c in 0..5 {
+        zui.push_item(names, "r{{c}}")
+        zeus.engine_layout(240, 160)
+        zui.pop_item(names)
+        zeus.engine_layout(240, 160)
+        held.set(rec(c))
+    }
+    let mut r = rss_mb()
+    for c in 0..300 {
+        zui.push_item(names, "r{{c}}")
+        zeus.engine_layout(240, 160)
+        zui.pop_item(names)
+        zeus.engine_layout(240, 160)
+    }
+    check("row struct signals", r)
+    r = rss_mb()
+    for c in 0..300 {
+        held.set(rec(c))
+    }
+    check("struct signal set", r)
+    fmt.println("{{held.peek().name}} {{held.peek().tags[1]}}")
+}

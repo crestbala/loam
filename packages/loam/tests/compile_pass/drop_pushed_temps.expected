@@ -1,0 +1,5 @@
+push(rows, f()) ok
+push(rows, row) ok
+[][]int { f() } ok
+Named { name, xs: f() } ok
+sys.read_file ok

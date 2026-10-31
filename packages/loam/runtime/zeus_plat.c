@@ -41,6 +41,15 @@ typedef struct {
     /* 1 when the payload is an owned `loam_str` holding a reference the cell
        must release when the cell dies or is reused for another type. */
     int owns_str;
+    /* 1 when the payload is a `loam_vec` handle holding a reference: freeing
+       the cell drops it, releasing elements through `vec_rel` (NULL for plain
+       elements) when that was the buffer's last reference. */
+    int owns_vec;
+    size_t vec_esz;
+    loam_elem_fn vec_rel;
+    /* Set for a struct payload with owned leaves: drops the value in place
+       (the compiler's per-type release hook) when the cell is freed. */
+    loam_elem_fn drop;
 } ZeusCell;
 
 static ZeusCell *g_cells;
@@ -88,6 +97,8 @@ void loam_zeus_sig_bind(int64_t id, const void *src, int64_t n) {
     /* A plain bind takes over the cell for a non-string payload; the caller
        has already released any string it held (see the store path). */
     c->owns_str = 0;
+    c->owns_vec = 0;
+    c->drop = NULL;
     c->gen++;
 }
 
@@ -97,6 +108,26 @@ void loam_zeus_sig_bind(int64_t id, const void *src, int64_t n) {
 void loam_zeus_sig_bind_str(int64_t id, const void *src, int64_t n) {
     loam_zeus_sig_bind(id, src, n);
     if (id >= 0 && (size_t)id < g_ncells) g_cells[id].owns_str = 1;
+}
+
+/* Bind a `loam_vec` handle: the cell keeps the reference the caller took and
+   drops it when the cell is freed. `esz` and `rel` are the element size and
+   release hook, as `loam_vec_drop_owned` takes them. */
+void loam_zeus_sig_bind_vec(int64_t id, const void *src, int64_t n, int64_t esz, loam_elem_fn rel) {
+    loam_zeus_sig_bind(id, src, n);
+    if (id >= 0 && (size_t)id < g_ncells && n == (int64_t)sizeof(loam_vec)) {
+        g_cells[id].owns_vec = 1;
+        g_cells[id].vec_esz = (size_t)esz;
+        g_cells[id].vec_rel = rel;
+    }
+}
+
+/* Bind a value that owns strings / lists (a struct): the cell keeps the
+   references the caller took for it, and `drop` releases them when the cell
+   is freed. */
+void loam_zeus_sig_bind_owned(int64_t id, const void *src, int64_t n, loam_elem_fn drop) {
+    loam_zeus_sig_bind(id, src, n);
+    if (id >= 0 && (size_t)id < g_ncells) g_cells[id].drop = drop;
 }
 
 void loam_zeus_sig_load(int64_t id, void *dst, int64_t n) {
@@ -241,11 +272,16 @@ void loam_zeus_sig_free(int64_t id) {
        the slot that stored the handle. */
     if (g_cells[id].owns_str && g_cells[id].p)
         loam_str_release((loam_str *)g_cells[id].p);
+    if (g_cells[id].owns_vec && g_cells[id].p)
+        loam_vec_drop_owned((loam_vec *)g_cells[id].p, g_cells[id].vec_esz, g_cells[id].vec_rel);
+    if (g_cells[id].drop && g_cells[id].p) g_cells[id].drop(g_cells[id].p);
     free(g_cells[id].p);
     g_cells[id].p = NULL;
     g_cells[id].n = 0;
     g_cells[id].gen = 0;
     g_cells[id].owns_str = 0;
+    g_cells[id].owns_vec = 0;
+    g_cells[id].drop = NULL;
     free_sig_push(id);
 }
 
@@ -350,13 +386,7 @@ void zeus_set_blit(void *ctx, ZeusBlit fn) {
 }
 
 static loam_str pick_dup(const char *src) {
-    size_t n = src ? strlen(src) : 0;
-    char *p;
-    if (n == 0) return (loam_str){"", 0};
-    p = (char *)loam_new(n + 1, "pick_image", 0);
-    memcpy(p, src, n);
-    p[n] = 0;
-    return (loam_str){p, (int64_t)n};
+    return loam_str_copy(src, src ? (int64_t)strlen(src) : 0);
 }
 
 /* ---- intrinsic image size fallback ------------------------------------
@@ -1832,7 +1862,8 @@ void loam_platform_plat_clipboard_write(loam_str text) {
 
 loam_str loam_platform_plat_clipboard_last(void) {
     if (!clip_last) return (loam_str){"", 0};
-    return (loam_str){clip_last, (int64_t)strlen(clip_last)};
+    /* A copy: the next clipboard write frees `clip_last`. */
+    return loam_str_copy(clip_last, (int64_t)strlen(clip_last));
 }
 
 /* ---- media playback (`plat_media_*`) ------------------------------------
@@ -1866,23 +1897,60 @@ static ZeusMedia media_host;
 static int64_t null_state[MEDIA_SLOTS];
 static int64_t null_pos[MEDIA_SLOTS];
 static int64_t null_full;
+/* One published pick, plus a queue. A drop of several files used to overwrite
+   the single slot, so only the last survived. `media_picks` publishes the next
+   queued file once the current one has been read (or once the app has already
+   been told the current count and ignored it). */
+#define PICK_Q 64
 static int64_t picked_seq;
+static int64_t picked_told = -1;
+static int picked_taken;
 static char *picked_text;
+static char *pick_q[PICK_Q];
+static int pick_q_n;
 
 void zeus_set_media(ZeusMedia media) { media_host = media; }
 
-void zeus_media_picked(const char *name, const char *src) {
+static char *pack_pick(const char *name, const char *src) {
     size_t a = name ? strlen(name) : 0, b = src ? strlen(src) : 0;
     char *p = (char *)malloc(a + b + 2);
-    if (!p) return;
+    if (!p) return NULL;
     if (a) memcpy(p, name, a);
     p[a] = '\n';
     if (b) memcpy(p + a + 1, src, b);
     p[a + 1 + b] = 0;
+    return p;
+}
+
+static void publish_pick(char *owned, int redraw) {
     free(picked_text);
-    picked_text = p;
+    picked_text = owned;
     picked_seq++;
-    if (plat_redraw) plat_redraw();
+    picked_taken = 0;
+    if (redraw && plat_redraw) plat_redraw();
+}
+
+static void promote_pick(void) {
+    char *p;
+    if (pick_q_n <= 0) return;
+    p = pick_q[0];
+    pick_q_n--;
+    if (pick_q_n > 0) memmove(pick_q, pick_q + 1, (size_t)pick_q_n * sizeof(char *));
+    publish_pick(p, 0);
+}
+
+void zeus_media_picked(const char *name, const char *src) {
+    char *p = pack_pick(name, src);
+    if (!p) return;
+    if (!picked_text) {
+        publish_pick(p, 1);
+        return;
+    }
+    if (pick_q_n < PICK_Q) {
+        pick_q[pick_q_n++] = p;
+        return;
+    }
+    free(p);
 }
 
 static int media_slot_ok(int64_t slot) { return slot >= 0 && slot < MEDIA_SLOTS; }
@@ -1929,7 +1997,15 @@ int64_t loam_platform_plat_media_get(int64_t slot, int64_t what) {
 #ifdef __wasm32__
     return zeus_js_media_get((int32_t)slot, (int32_t)what);
 #else
-    if (what == 7) return picked_seq;
+    if (what == 7) {
+        /* Advance only when the app has read this file, or has already been
+           told its count and left it (a start-up snapshot). Otherwise the
+           first unread file would be skipped. */
+        if (pick_q_n > 0 && (picked_taken || picked_told == picked_seq))
+            promote_pick();
+        picked_told = picked_seq;
+        return picked_seq;
+    }
     if (media_host.get) return media_host.get(slot, what);
     if (what == 1) return null_pos[slot];
     if (what == 3) return null_state[slot];
@@ -1940,7 +2016,6 @@ int64_t loam_platform_plat_media_get(int64_t slot, int64_t what) {
 loam_str loam_platform_plat_media_text(int64_t slot, int64_t what) {
     char buf[4096];
     size_t n;
-    char *p;
     buf[0] = 0;
 #ifdef __wasm32__
     {
@@ -1951,6 +2026,7 @@ loam_str loam_platform_plat_media_text(int64_t slot, int64_t what) {
     }
 #else
     if (what == 1) {
+        picked_taken = 1;
         if (picked_text) {
             strncpy(buf, picked_text, sizeof buf - 1);
             buf[sizeof buf - 1] = 0;
@@ -1961,10 +2037,15 @@ loam_str loam_platform_plat_media_text(int64_t slot, int64_t what) {
     }
 #endif
     n = strlen(buf);
-    if (n == 0) return (loam_str){"", 0};
-    p = (char *)loam_new(n + 1, "media_text", 0);
-    memcpy(p, buf, n + 1);
-    return (loam_str){p, (int64_t)n};
+    return loam_str_copy(buf, (int64_t)n);
+}
+
+void loam_platform_plat_media_dropped(loam_str name, loam_str src) {
+    char *n = dup_ys(name);
+    char *s = dup_ys(src);
+    zeus_media_picked(n, s);
+    free(n);
+    free(s);
 }
 
 void loam_platform_plat_media_pick(void) {
@@ -1972,6 +2053,34 @@ void loam_platform_plat_media_pick(void) {
     zeus_js_media_pick();
 #else
     if (media_host.pick) media_host.pick();
+#endif
+}
+
+void loam_platform_plat_media_pick_audio(void) {
+#ifdef __wasm32__
+    zeus_js_media_pick();
+#else
+    if (media_host.pick_audio) media_host.pick_audio();
+    else if (media_host.pick) media_host.pick();
+#endif
+}
+
+int64_t loam_platform_plat_media_voice(int64_t what, loam_str src, loam_str out) {
+#ifdef __wasm32__
+    (void)what;
+    (void)src;
+    (void)out;
+    return 0;
+#else
+    char *s, *o;
+    int64_t started = 0;
+    if (!media_host.voice) return 0;
+    s = dup_ys(src);
+    o = dup_ys(out);
+    if (s && o) started = media_host.voice(what, s, o);
+    free(s);
+    free(o);
+    return started;
 #endif
 }
 

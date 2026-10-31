@@ -1,0 +1,102 @@
+// A `[]T` pushed into a `[][]T`, or put in a struct beside a string, is
+// retained by its new home and still dropped by its source. Each case here
+// used to leak one reference per iteration: 1 MB each, 300 times over.
+// `sys.read_file` and `sys.exec` hand back owned strings, freed on drop.
+
+import "std:fmt"
+import "std:str"
+import "std:sys"
+
+struct Named {
+    name: string,
+    xs: []int,
+}
+
+fn big(n: int) -> []int {
+    let mut v = []int {}
+    for i in 0..n {
+        push(v, i)
+    }
+    return v
+}
+
+fn rss_mb() -> int {
+    let t = str.trim(sys.exec("ps -o rss= -p $PPID"))
+    let mut n = 0
+    for i in 0..t.len {
+        let c = t[i]
+        if c >= 48 && c <= 57 {
+            n = n * 10 + (c - 48)
+        }
+    }
+    return n / 1024
+}
+
+fn grew(what: string, before: int) {
+    let d = rss_mb() - before
+    if d > 120 {
+        fmt.println("{{what}} leaked: +{{d}} MB")
+        sys.exit(1)
+    } else {
+        fmt.println("{{what}} ok")
+    }
+}
+
+fn push_temp() -> int {
+    let mut rows = [][]int {}
+    push(rows, big(250000))
+    return rows[0].len
+}
+
+fn push_local() -> int {
+    let mut rows = [][]int {}
+    let row = big(250000)
+    push(rows, row)
+    return rows.len + row.len
+}
+
+fn array_lit() -> int {
+    let rows = [][]int { big(250000) }
+    return rows[0].len
+}
+
+fn struct_lit(i: int) -> int {
+    let s = Named { name: "n{{i}}", xs: big(250000) }
+    return s.xs.len + s.name.len
+}
+
+fn main() {
+    let path = "/tmp/loam_drop_pushed_temps.bin"
+    sys.write_file(path, str.repeat("x", 1000000))
+    // Warm up so allocator caching does not count as growth.
+    for i in 0..5 {
+        let n = push_temp() + push_local() + array_lit() + struct_lit(i)
+    }
+    let mut r = rss_mb()
+    for i in 0..300 {
+        let n = push_temp()
+    }
+    grew("push(rows, f())", r)
+    r = rss_mb()
+    for i in 0..300 {
+        let n = push_local()
+    }
+    grew("push(rows, row)", r)
+    r = rss_mb()
+    for i in 0..300 {
+        let n = array_lit()
+    }
+    grew("[][]int { f() }", r)
+    r = rss_mb()
+    for i in 0..300 {
+        let n = struct_lit(i)
+    }
+    grew("Named { name, xs: f() }", r)
+    r = rss_mb()
+    for i in 0..300 {
+        let s = sys.read_file(path)
+        let n = s.len
+    }
+    grew("sys.read_file", r)
+    sys.remove_path(path)
+}

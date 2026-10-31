@@ -1,0 +1,11 @@
+import "std:router"
+import "std:zeus"
+import "../components/screen.loam" as screen
+
+fn Page(p: Params) -> Node {
+    return screen.Home()
+}
+
+fn meta(p: Params) -> Meta {
+    return Meta { title: "Mune", description: "Your recordings, made into a new piece." }
+}

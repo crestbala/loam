@@ -1,0 +1,154 @@
+//! The whole pipeline from the command line, no window: decode, listen,
+//! arrange, render. Prints the score so a take can be read as well as heard.
+//!
+//!   ./bin/loamc examples/zeus/mune/tests/bench.loam -o /tmp/mune-bench
+//!   /tmp/mune-bench OUT_DIR STYLE LENGTH SEED a.mp3 b.mp3 …
+//!
+//! STYLE is 0 Dream, 1 Lo-fi, 2 House, 3 Cinematic, 4 Synthwave; LENGTH
+//! is 0 (1 min), 1 (3 min), or 2 (4 min). The take is OUT_DIR/take.wav.
+
+import "std:fmt"
+import "std:sys"
+import "../core/arrange.loam" as arrange
+import "../core/graph.loam" as graph
+import "../core/jobs.loam" as jobs
+import "../core/key.loam" as key
+import "../core/listen.loam" as listen
+import "../core/sound.loam" as sound
+import "../core/time.loam" as time
+
+fn int_of(s: string) -> int {
+    return listen.int_of(s)
+}
+
+fn main() -> int {
+    let a = sys.args()
+    if a.len < 6 {
+        fmt.println("usage: bench OUT_DIR STYLE LENGTH SEED files…")
+        return 2
+    }
+    let dir = a[1]
+    let mut s = sound.preset(int_of(a[2]))
+    s.length_ix = int_of(a[3])
+    s.seed = int_of(a[4])
+    let mut paths = []string {}
+    for i in 5..a.len {
+        push(paths, a[i])
+    }
+    sys.mkdir(dir)
+    sys.write_file("{{dir}}/decode.sh", jobs.decode_script(dir, paths))
+    sys.exec("sh '{{dir}}/decode.sh'")
+    let mut srcs = []Source {}
+    let mut src_paths = []string {}
+    let mut splits = []string {}
+    let mut mono = []bool {}
+    for i in 0..paths.len {
+        let info = jobs.read_info(dir, i)
+        let pcm = sys.read_file(jobs.pcm_raw(dir, i))
+        let src = arrange.source_of(sys.read_file(jobs.env_raw(dir, i)), "", info[1], pcm, info[2], info[0] == 1, false)
+        let h = src.heard
+        let k = src.key
+        fmt.println("src {{i}}: {{time.bpm_text(h.bpm_c)}} BPM pulse {{h.pulse}} key {{key.name(k)}} ({{k.sure}}) phrases {{h.ph_start.len}} onsets {{h.onsets}}")
+        for p in 0..h.ph_start.len {
+            let mut chords = ""
+            let mut alone = ""
+            let mut tonal = ""
+            for b in 0..key.BLOCKS {
+                let at = (p * key.BLOCKS + b) * 12
+                let ci = p * key.BLOCKS + b
+                let c = if ci < h.ph_chord.len { h.ph_chord[ci] } else { -1 }
+                chords = "{{chords}} {{key.chord_name(c)}}"
+                alone = "{{alone}} {{key.chord_name(key.best_chord(h.ph_chroma, at, k.tonic, k.minor))}}"
+                tonal = "{{tonal}} {{key.tonal(h.ph_chroma, at)}}"
+            }
+            fmt.println("  ph {{p}} @{{h.ph_start[p] / 480}}cs {{h.ph_bars[p]}}b score {{h.ph_score[p]}} lvl {{h.ph_level[p]}} low {{h.ph_low[p]}} dense {{h.ph_dense[p]}} bright {{h.ph_bright[p]}} chords{{chords}} (alone{{alone}}) tonal{{tonal}}")
+        }
+        push(srcs, src)
+        push(src_paths, jobs.src_wav(dir, i))
+        push(splits, "")
+        push(mono, info[0] == 1)
+    }
+    let mut heard = []Heard {}
+    for i in 0..srcs.len {
+        push(heard, srcs[i].heard)
+    }
+    let rs = arrange.roles_for(heard)
+    for i in 0..srcs.len {
+        srcs[i].role = rs[i]
+        fmt.println("src {{i}} role {{arrange.role_name(rs[i])}}")
+    }
+    let sc = arrange.arrange(srcs, s)
+    fmt.println("piece {{time.bpm_text(sc.bpm_c)}} BPM, {{key.name(Tonality { tonic: sc.tonic, minor: sc.minor, sure: 100 })}}, {{sc.bars}} bars")
+    for i in 0..sc.sec_kind.len {
+        fmt.println("  {{arrange.section_name(sc.sec_kind[i])}} @{{sc.sec_bar[i]}} ×{{sc.sec_bars[i]}}")
+    }
+    let mut prog = ""
+    for i in 0..sc.prog.len {
+        prog = "{{prog}} {{key.chord_name(sc.prog[i])}}"
+    }
+    fmt.println("progression:{{prog}} (heard {{sc.prog_heard}})")
+    let mut motif = ""
+    let mut rhythm = ""
+    for i in 0..sc.mo_deg.len {
+        motif = "{{motif}} {{sc.mo_deg[i]}}"
+        let at = if i < sc.mo_at.len { sc.mo_at[i] } else { 0 }
+        let ln = if i < sc.mo_len.len { sc.mo_len[i] } else { 0 }
+        rhythm = "{{rhythm}} {{at}}:{{ln}}"
+    }
+    fmt.println("motif:{{motif}}")
+    fmt.println("motif rhythm:{{rhythm}}")
+    for i in 0..sc.ph_bar.len {
+        let mel = if i < sc.ph_mel.len { sc.ph_mel[i] } else { -1 }
+        fmt.println("  phrase @{{sc.ph_bar[i]}} ×{{sc.ph_bars[i]}} label {{sc.ph_label[i]}} var {{sc.ph_var[i]}} end {{sc.ph_end[i]}} score {{mel}}")
+        if mel >= 0 {
+            let mut terms = ""
+            for t in 0..9 {
+                let at = i * 9 + t
+                let v = if at < sc.ph_term.len { sc.ph_term[at] } else { 0 }
+                terms = "{{terms}} {{v}}"
+            }
+            fmt.println("    terms:{{terms}}")
+        }
+        let ctr = if i < sc.ph_ctr.len { sc.ph_ctr[i] } else { -1 }
+        if ctr >= 0 {
+            let mut terms = ""
+            for t in 0..4 {
+                let at = i * 4 + t
+                let v = if at < sc.ph_cterm.len { sc.ph_cterm[at] } else { 0 }
+                terms = "{{terms}} {{v}}"
+            }
+            fmt.println("    counter {{ctr}} (motion, consonance, fill, steps):{{terms}}")
+        }
+    }
+    for i in 0..sc.wk_bus.len {
+        let n = if i < sc.wk_n.len { sc.wk_n[i] } else { -1 }
+        let scw = if i < sc.wk_score.len { sc.wk_score[i] } else { -1 }
+        fmt.println("  walk bus {{sc.wk_bus[i]}} n {{n}} score {{scw}}")
+    }
+    for i in 0..sc.sec_kind.len {
+        fmt.println("  sec {{i}} groove {{sc.sec_groove[i]}} low {{sc.sec_low[i]}}")
+    }
+    for i in 0..sc.sy_layer.len {
+        let line = if i < sc.sy_line.len { sc.sy_line[i] } else { -1 }
+        fmt.println("  part layer {{sc.sy_layer[i]}} variant {{sc.sy_variant[i]}} bar {{sc.sy_bar[i]}} ×{{sc.sy_bars[i]}} line {{line}}")
+    }
+    for i in 0..sc.lp_src.len {
+        fmt.println("  loop bus {{sc.lp_bus[i]}} bar {{sc.lp_bar[i]}} src {{sc.lp_src[i]}} at {{sc.lp_in[i] / 480}}cs unit {{sc.lp_unit[i] / sc.bar_s}}b ×{{sc.lp_reps[i]}} semis {{sc.lp_semis[i]}} db {{sc.lp_db[i]}}")
+    }
+    let g = graph.build(sc, s, src_paths, splits, mono, dir)
+    sys.write_file("{{dir}}/graph.txt", g.text)
+    if graph.render_voices(sc, s, g, dir) != 0 {
+        fmt.println("could not write the instruments")
+        return 1
+    }
+    let out = "{{dir}}/take.wav"
+    sys.write_file("{{dir}}/render.sh", jobs.render_script(dir, g.inputs, out, "{{dir}}/peaks.raw"))
+    sys.exec("sh '{{dir}}/render.sh'")
+    if sys.exists("{{out}}.done") != 1 {
+        fmt.println("render failed:")
+        fmt.println(sys.read_file("{{dir}}/log.txt"))
+        return 1
+    }
+    fmt.println("wrote {{out}}")
+    return 0
+}

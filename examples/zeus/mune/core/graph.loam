@@ -1,0 +1,1042 @@
+//! The filter graph for a score: one ffmpeg run renders the premaster.
+//!
+//! Each recording is decoded once and split. A loop is cut on the sample,
+//! cleaned when it has to be, shifted and stretched onto the piece, locked
+//! to a whole number of bars, faded a few milliseconds at the seam,
+//! repeated with `aloop`, and delayed onto its bar. Each synth loop is
+//! rendered once and shared the same way. Buses get their EQ and
+//! character, the echo and reverb are sends, and the master glues, limits,
+//! and fades. Every placement is in samples, so nothing drifts.
+
+import "std:math"
+import "std:str"
+import "std:sys"
+import "arrange.loam" as arrange
+import "dsp.loam" as dsp
+import "fx.loam" as fx
+import "key.loam" as key
+import "num.loam" as num
+import "plan.loam" as plan
+import "sound.loam" as sound
+import "styles.loam" as styles
+import "synth.loam" as synth
+import "time.loam" as time
+import "voices.loam" as voices
+
+struct Graph {
+    text: string,
+    /// `-i` paths in order; `[0:a]` is the first. The recordings, then the
+    /// instrument voices.
+    inputs: []string,
+    /// One row per instrument voice the graph reads: the WAV `render_voices`
+    /// writes, and what to render into it. `voice_drum` is the kit piece of
+    /// a drum voice, or −1.
+    voice_path: []string,
+    voice_layer: []int,
+    voice_variant: []int,
+    voice_part: []int,
+    voice_drum: []int,
+}
+
+/// Voices are written at a quarter of their level (−12 dB of headroom in
+/// the 24-bit file) and brought back up as they are read.
+const VOICE_WRITE: f64 = 0.25
+const VOICE_READ: string = "4"
+
+/// Each layer's level (dB) before the listener's slider, so the defaults
+/// sit together: recordings near -18.5 LUFS alone, drums -19, bass -21,
+/// pads -23, arp and bells -25. Measured on stems rendered alone.
+fn layer_db(layer: int, s: Sound) -> f64 {
+    if layer == arrange.L_DRUMS {
+        if s.style == styles.DREAM {
+            return -6.0
+        }
+        return -8.5
+    }
+    if layer == arrange.L_BASS {
+        return -9.0
+    }
+    if layer == arrange.L_PAD {
+        if s.pad_tone == synth.PAD_KEYS {
+            return -7.5
+        }
+        if s.pad_tone == synth.PAD_GLASS {
+            return -13.0
+        }
+        return -12.5
+    }
+    if layer == arrange.L_ARP {
+        if s.arp_tone == synth.ARP_SAW {
+            return -9.0
+        }
+        if s.arp_tone == synth.ARP_SQUARE {
+            return -6.5
+        }
+        return -4.5
+    }
+    if layer == arrange.L_BELLS {
+        return -7.0
+    }
+    if layer == arrange.L_COUNTER {
+        // Under the lead it answers.
+        return -10.0
+    }
+    if layer == arrange.L_RISER {
+        return -15.0
+    }
+    return -10.0
+}
+
+/// Per style, tenths of a dB on top of `layer_db`, from `tests/stems.loam`:
+/// each instrument rendered alone at 70 and brought to its style's target
+/// (drums -21.9, bass -23.9, pad -25.9, arp and bells -27.9 LUFS on the
+/// premaster, which the render then lifts to -14 as a whole; except where a
+/// style leans on one: trap's 808 and bell lead, cinematic's strings,
+/// ostinato and piano, future bass's supersaw, afrobeats' keys and
+/// mallets, each 2 dB over its target). Measured on the voices Loam
+/// renders (`voices.loam`).
+fn style_trim(style: int, layer: int) -> int {
+    let mut t = []int { 0, 0, 0, 0, 0 }
+    if style == styles.DREAM {
+        t = []int { -7, 21, 8, 21, -23 }
+    } else if style == styles.LOFI {
+        t = []int { 38, 19, 4, 22, -39 }
+    } else if style == styles.HOUSE {
+        t = []int { -5, 31, 21, -2, -47 }
+    } else if style == styles.CINEMA {
+        t = []int { -13, 61, 64, 23, 71 }
+    } else if style == styles.WAVE {
+        t = []int { 17, 10, 21, 18, -48 }
+    } else if style == styles.TRAP {
+        t = []int { 16, 28, 10, -3, -8 }
+    } else if style == styles.FUTURE {
+        t = []int { 11, 12, 73, -12, -47 }
+    } else if style == styles.AFRO {
+        t = []int { 17, 64, 10, 33, -33 }
+    }
+    let at = if layer == arrange.L_DRUMS { 0 } else if layer == arrange.L_BASS { 1 } else if layer == arrange.L_PAD { 2 } else if layer == arrange.L_ARP { 3 } else if layer == arrange.L_BELLS { 4 } else { -1 }
+    return if at >= 0 { t[at] } else { 0 }
+}
+
+fn slider_db(layer: int, s: Sound) -> f64 {
+    if layer == arrange.L_DRUMS || layer == arrange.L_RISER || layer == arrange.L_IMPACT {
+        return sound.level_db(s.drums_lvl)
+    }
+    if layer == arrange.L_BASS {
+        return sound.level_db(s.bass_lvl)
+    }
+    if layer == arrange.L_PAD || layer == arrange.L_COUNTER {
+        return sound.level_db(s.pad_lvl)
+    }
+    if layer == arrange.L_ARP {
+        return sound.level_db(s.arp_lvl)
+    }
+    return sound.level_db(s.bells_lvl)
+}
+
+fn labels(xs: []string) -> string {
+    let mut parts = []string {}
+    for i in 0..xs.len {
+        let x = xs[i]
+        push(parts, "[{{x}}]")
+    }
+    return str.join(parts, "")
+}
+
+/// `n` copies of `[from]`: `[from_0]` … `[from_{n-1}]`.
+fn split(from: string, n: int) -> string {
+    if n <= 1 {
+        return "[{{from}}]anull[{{from}}_0]"
+    }
+    let mut outs = []string {}
+    for k in 0..n {
+        push(outs, "{{from}}_{{k}}")
+    }
+    return "[{{from}}]asplit={{n}}{{labels(outs)}}"
+}
+
+/// A plain sum (no normalising, no ducking) of `xs` into `[dest]`.
+fn sum(xs: []string, dest: string) -> string {
+    if xs.len == 1 {
+        let x = xs[0]
+        return "[{{x}}]anull[{{dest}}]"
+    }
+    return "{{labels(xs)}}amix=inputs={{xs.len}}:normalize=0:dropout_transition=0:duration=longest[{{dest}}]"
+}
+
+fn seconds(samples: int) -> f64 {
+    return f64(samples) / f64(time.RATE)
+}
+
+/// Shift by `semis` and stretch by `tempo` (×1e6), or nothing.
+fn shift_stretch(semis: int, tempo: int) -> string {
+    let t = f64(tempo) / 1000000.0
+    let mut parts = []string {}
+    let mut factor = t
+    if semis != 0 {
+        let rate = num.roundi(f64(time.RATE) * num.semitone_ratio(f64(semis)))
+        push(parts, "asetrate={{rate}},aresample=48000:filter_size=64:phase_shift=10")
+        factor = t * f64(time.RATE) / f64(rate)
+    }
+    if factor < 0.999 || factor > 1.001 {
+        if factor < 0.5 {
+            push(parts, "atempo=0.5")
+            factor = factor * 2.0
+        }
+        push(parts, "atempo={{num.f6(factor)}}")
+    }
+    return str.join(parts, ",")
+}
+
+fn sweep(name: string, kind: string, from: f64, to: f64, sec: f64) -> string {
+    let steps = 16
+    let mut cmds = []string {}
+    for k in 0..(steps + 1) {
+        let frac = f64(k) / f64(steps)
+        // Even steps in log frequency, so the sweep sounds even.
+        let f = from * num.semitone_ratio(12.0 * frac * log2(to / from))
+        push(cmds, "{{num.f3(sec * frac)}} {{kind}}@{{name}} f {{num.roundi(f)}}")
+    }
+    let joined = str.join(cmds, ";")
+    return "asendcmd=c='{{joined}}',{{kind}}@{{name}}=f={{num.roundi(from)}}"
+}
+
+fn log2(x: f64) -> f64 {
+    return math.ln(x) / math.LOG2
+}
+
+/// One recording loop, from `[from]` to `[lp{i}]`.
+fn loop_line(sc: Score, i: int, from: string, src_mono: bool) -> string {
+    let unit = sc.lp_unit[i]
+    let reps = sc.lp_reps[i]
+    let len = unit * reps
+    let mut start = sc.lp_in[i] - time.PREROLL_S
+    if start < 0 {
+        start = 0
+    }
+    let end = start + sc.lp_len[i] + time.PREROLL_S
+    let mut parts = []string {}
+    push(parts, "[{{from}}]atrim=start_sample={{start}}:end_sample={{end}},asetpts=PTS-STARTPTS")
+    let clean = sc.lp_clean[i]
+    if clean != arrange.CLEAN_NONE && !src_mono {
+        push(parts, fx.centre_mask())
+    }
+    if clean == arrange.CLEAN_HARD {
+        push(parts, fx.voice_duck())
+    }
+    let ss = shift_stretch(sc.lp_semis[i], sc.lp_tempo[i])
+    if ss.len > 0 {
+        push(parts, ss)
+    }
+    push(parts, "apad=whole_len={{unit}},atrim=end_sample={{unit}}")
+    let fade = sc.lp_fade[i]
+    if fade == 0 {
+        push(parts, "afade=t=in:ns=192,afade=t=out:ss={{unit - 480}}:ns=480")
+    } else {
+        let ns = num.clampi(fade * 48, 96, unit / 3)
+        push(parts, "afade=t=in:ns={{ns}}:curve=qsin,afade=t=out:ss={{unit - ns}}:ns={{ns}}:curve=qsin")
+    }
+    push(parts, "volume={{num.f3(f64(sc.lp_db[i]) / 100.0)}}dB")
+    if reps > 1 {
+        push(parts, "aloop=loop={{reps - 1}}:size={{unit}}")
+    }
+    let tone = sc.lp_tone[i]
+    let sec = seconds(len)
+    if tone == arrange.TONE_DARK {
+        push(parts, "lowpass=f=1300")
+        let two = num.clampi(sc.bar_s * 2, 480, len)
+        push(parts, "afade=t=out:ss={{len - two}}:ns={{two}}")
+    } else if tone == arrange.TONE_RISE {
+        push(parts, sweep("rise{{i}}", "highpass", 40.0, 1100.0, sec))
+    } else if tone == arrange.TONE_OPEN {
+        push(parts, sweep("open{{i}}", "lowpass", 350.0, 15000.0, sec))
+    }
+    let at = time.LEAD_S + sc.lp_bar[i] * sc.bar_s - (sc.lp_in[i] - start)
+    push(parts, "adelay=delays={{at}}S:all=1")
+    let joined = str.join(parts, ",")
+    return "{{joined}}[lp{{i}}]"
+}
+
+fn groove_of(sc: Score, s: Sound) -> Groove {
+    return Groove {
+        bar_sec: seconds(sc.bar_s),
+        tonic: sc.tonic,
+        minor: sc.minor,
+        prog: sc.prog,
+        style: s.style,
+        energy: s.energy,
+        seed: s.seed,
+        lift: 0,
+        bars: 0,
+        den: 1000,
+        dyn: 1000,
+        color: []int {},
+        split: -1,
+        kick: true,
+        ending: plan.OPEN,
+        peak: -1,
+        tight: false,
+        kind: plan.VERSE,
+    }
+}
+
+/// Four chords for part `i`, or the piece progression when it has no row.
+fn prog_of(sc: Score, i: int) -> []int {
+    if i < 0 || i >= sc.sy_pg.len || sc.sy_pg[i] < 0 {
+        return sc.prog
+    }
+    let at = sc.sy_pg[i] * 9
+    let mut out = []int {}
+    for k in 0..4 {
+        push(out, if at + k < sc.pg.len { sc.pg[at + k] } else { 0 })
+    }
+    return out
+}
+
+/// Four colours for part `i`. Empty when the part keeps the style's voice.
+fn color_of(sc: Score, i: int) -> []int {
+    if i < 0 || i >= sc.sy_pg.len || sc.sy_pg[i] < 0 {
+        return []int {}
+    }
+    let at = sc.sy_pg[i] * 9 + 4
+    let mut out = []int {}
+    for k in 0..4 {
+        push(out, if at + k < sc.pg.len { sc.pg[at + k] } else { -1 })
+    }
+    return out
+}
+
+/// Split chord of part `i`, or −1.
+fn split_of(sc: Score, i: int) -> int {
+    if i < 0 || i >= sc.sy_pg.len || sc.sy_pg[i] < 0 {
+        return -1
+    }
+    let at = sc.sy_pg[i] * 9 + 8
+    if at < 0 || at >= sc.pg.len {
+        return -1
+    }
+    return sc.pg[at]
+}
+
+fn channel_mean(xs: []int, bar: int, n: int, fallback: int) -> int {
+    if n < 1 || xs.len == 0 {
+        return fallback
+    }
+    let mut s = 0
+    let mut c = 0
+    for b in bar..(bar + n) {
+        if b >= 0 && b < xs.len {
+            s = s + xs[b]
+            c = c + 1
+        }
+    }
+    if c == 0 {
+        return fallback
+    }
+    return s / c
+}
+
+fn bucket(v: int) -> int {
+    return num.clampi(v, 0, 1000) / 100
+}
+
+fn line_of(sc: Score, part: int) -> int {
+    if part < 0 || part >= sc.sy_line.len {
+        return -1
+    }
+    return sc.sy_line[part]
+}
+
+/// Samples one generated loop of `layer` lasts. A phrase line is the phrase.
+fn unit_of(sc: Score, layer: int, part: int) -> int {
+    if line_of(sc, part) >= 0 {
+        let b = if part < sc.sy_bars.len && sc.sy_bars[part] > 0 { sc.sy_bars[part] } else { 1 }
+        return sc.bar_s * b
+    }
+    if layer == arrange.L_DRUMS {
+        if part >= 0 && part < sc.sy_bars.len && sc.sy_bars[part] == 1 {
+            return sc.bar_s
+        }
+        let u = if sc.unit >= 2 { sc.unit } else { 2 }
+        return sc.bar_s * u
+    }
+    if layer == arrange.L_BASS || layer == arrange.L_PAD || layer == arrange.L_ARP {
+        if part >= 0 && part < sc.sy_pg.len && sc.sy_pg[part] >= 0 {
+            let b = if part < sc.sy_bars.len { sc.sy_bars[part] } else { 4 }
+            if b >= 1 && b <= 4 {
+                return sc.bar_s * b
+            }
+        }
+        return sc.bar_s * 4
+    }
+    if layer == arrange.L_RISER {
+        return sc.sy_bars[part] * sc.bar_s
+    }
+    if layer == arrange.L_IMPACT {
+        return sc.bar_s * 2
+    }
+    return sc.bar_s * 4
+}
+
+fn kind_at(sc: Score, bar: int) -> int {
+    let sec = arrange.section_of(sc.sec_bar, bar)
+    if sec < 0 || sec >= sc.sec_kind.len {
+        return plan.INTRO
+    }
+    return sc.sec_kind[sec]
+}
+
+/// 1 when this part is swung past the style: a straight style, played
+/// calmly, outside a drop. That swing is baked into the loop, so a drop
+/// does not share the verse's generator.
+fn swing_bit(sc: Score, s: Sound, i: int) -> int {
+    if styles.swing(s.style) != 0 || s.energy != styles.CALM {
+        return 0
+    }
+    let bar = if i < sc.sy_bar.len { sc.sy_bar[i] } else { 0 }
+    if kind_at(sc, bar) == plan.DROP {
+        return 0
+    }
+    return 1
+}
+
+/// Grid sixteenth of the melody covering `bar`, or −1. A line that starts
+/// on `bar` wins; otherwise any line that plays there.
+fn line_peak(sc: Score, bar: int) -> int {
+    let mut peak = -1
+    for i in 0..sc.sy_layer.len {
+        if sc.sy_layer[i] != arrange.L_BELLS {
+            continue
+        }
+        if i >= sc.sy_line.len || sc.sy_line[i] < 0 {
+            continue
+        }
+        let b0 = if i < sc.sy_bar.len { sc.sy_bar[i] } else { -1 }
+        let nb = if i < sc.sy_bars.len && sc.sy_bars[i] > 0 { sc.sy_bars[i] } else { 1 }
+        if bar < b0 || bar >= b0 + nb {
+            continue
+        }
+        let line = sc.sy_line[i]
+        let p = if line < sc.ln_peak.len { sc.ln_peak[line] } else { -1 }
+        if b0 == bar {
+            return p
+        }
+        peak = p
+    }
+    return peak
+}
+
+/// True when part `i` sits in the lifted drop and plays pitches: it
+/// renders a whole step up, with the recordings there.
+fn raised(sc: Score, i: int) -> bool {
+    if sc.lift_from < 0 || i < 0 || i >= sc.sy_bar.len {
+        return false
+    }
+    let layer = sc.sy_layer[i]
+    if layer == arrange.L_DRUMS || layer == arrange.L_RISER {
+        return false
+    }
+    return sc.sy_bar[i] >= sc.lift_from && sc.sy_bar[i] < sc.lift_to
+}
+
+/// A chord code a whole step up.
+fn up_tone(code: int) -> int {
+    if code < 0 {
+        return code
+    }
+    return key.chord_code(key.chord_root(code) + 2, key.chord_minor(code))
+}
+
+fn gen_key(sc: Score, s: Sound, i: int) -> int {
+    let line = line_of(sc, i)
+    if line >= 0 {
+        // Above the riser keys (`1000 + part`). A sung line already
+        // carries its own humanize and its own key.
+        return 8000 + line
+    }
+    // A loop in the lifted drop is its own generator, a key above the rest.
+    let up = if raised(sc, i) { 100000000 } else { 0 }
+    return up + loop_key(sc, s, i)
+}
+
+fn loop_key(sc: Score, s: Sound, i: int) -> int {
+    let layer = sc.sy_layer[i]
+    let variant = sc.sy_variant[i]
+    let bar = if i < sc.sy_bar.len { sc.sy_bar[i] } else { 0 }
+    let mut nb = if i < sc.sy_bars.len && sc.sy_bars[i] > 0 { sc.sy_bars[i] } else { 1 }
+    let den_b = bucket(channel_mean(sc.tn_den, bar, nb, 1000))
+    let dyn_b = bucket(plan.dyn_amt(channel_mean(sc.tn_dyn, bar, nb, 0)))
+    let swing = swing_bit(sc, s, i)
+    if layer == arrange.L_DRUMS {
+        // The kick flag sits above the dynamics bucket so two kits that
+        // differ only there do not share a loop. Calm swing sits above
+        // the variants (400), still under the riser keys.
+        let kick = if i < sc.sy_kick.len && sc.sy_kick[i] == 0 { 20 } else { 0 }
+        return 10 + variant * 40 + dyn_b + kick + swing * 400
+    }
+    if layer == arrange.L_RISER {
+        return 1000 + i
+    }
+    // Bass and arp bake the step, the velocities, and the calm swing; the
+    // bass also bakes which way its approaches run, from the bar the lead
+    // peaks in. Each field has its own radix, above every other range.
+    // Pads leave density and dynamics out: the bed is a volume, and
+    // identical chords still share. A stabbed pad bakes its onsets, so
+    // only then does the swing bit split a drop from a verse.
+    if layer == arrange.L_BASS || layer == arrange.L_ARP {
+        let row = if i < sc.sy_pg.len && sc.sy_pg[i] >= 0 { sc.sy_pg[i] + 1 } else { 0 }
+        let bars = if row > 0 { num.clampi(nb, 1, 4) } else { 0 }
+        let peak = line_peak(sc, bar)
+        let rise = if layer == arrange.L_BASS && peak >= 0 { num.clampi(peak / 16, 0, 3) + 1 } else { 0 }
+        let mut k = row * 2 + swing
+        k = k * 5 + bars
+        k = k * 16 + num.clampi(variant, 0, 15)
+        k = k * 11 + den_b
+        k = k * 11 + dyn_b
+        k = k * 5 + rise
+        k = k * 2 + (if layer == arrange.L_ARP { 1 } else { 0 })
+        return 200000 + k
+    }
+    let mut pad_bit = 0
+    if layer == arrange.L_PAD && synth.pad_stabs(s.style, s.pad_tone) {
+        pad_bit = swing
+    }
+    // A cadence row does not share a generator with the hook's loop, nor
+    // with a phrase of a different length. Above the riser keys.
+    if i < sc.sy_pg.len && sc.sy_pg[i] >= 0 {
+        if nb > 4 {
+            nb = 4
+        }
+        return 3000 + pad_bit * 10000 + sc.sy_pg[i] * 80 + nb * 20 + layer * 16 + variant
+    }
+    // Pads carry their lift: one loop per register.
+    return layer * 100 + variant + pad_bit * 40
+}
+
+fn hits_of_line(sc: Score, line: int) -> Hits {
+    let mut h = synth.no_hits()
+    if line < 0 || line >= sc.ln_from.len || line >= sc.ln_n.len {
+        return h
+    }
+    let from = sc.ln_from[line]
+    let n = sc.ln_n[line]
+    for i in from..(from + n) {
+        if i < sc.ln_at.len && i < sc.ln_vel.len && i < sc.ln_freq.len && i < sc.ln_gate.len {
+            synth.add(h, sc.ln_at[i], sc.ln_vel[i], sc.ln_freq[i], sc.ln_gate[i])
+        }
+    }
+    return h
+}
+
+/// The groove generator `part` renders with: the piece's, narrowed to the
+/// part's bars, chords, density, dynamics, lift, and key.
+fn groove_for(sc: Score, g0: Groove, layer: int, variant: int, part: int) -> Groove {
+    let unit = unit_of(sc, layer, part)
+    let mut g = g0
+    let bar = if part >= 0 && part < sc.sy_bar.len { sc.sy_bar[part] } else { 0 }
+    let nb = if part >= 0 && part < sc.sy_bars.len && sc.sy_bars[part] > 0 { sc.sy_bars[part] } else { 1 }
+    g.den = channel_mean(sc.tn_den, bar, nb, 1000)
+    g.dyn = plan.dyn_amt(channel_mean(sc.tn_dyn, bar, nb, 0))
+    g.kick = part < 0 || part >= sc.sy_kick.len || sc.sy_kick[part] != 0
+    if layer == arrange.L_PAD || layer == arrange.L_ARP || layer == arrange.L_BELLS {
+        g.lift = variant
+    }
+    if layer == arrange.L_DRUMS {
+        if nb == 1 {
+            g.bars = 1
+        } else {
+            g.bars = if sc.unit >= 2 { sc.unit } else { 2 }
+        }
+    } else if layer == arrange.L_BASS || layer == arrange.L_PAD || layer == arrange.L_ARP {
+        let b = if sc.bar_s > 0 { unit / sc.bar_s } else { 4 }
+        g.bars = if b >= 1 && b <= 4 { b } else { 4 }
+        let pr = prog_of(sc, part)
+        if pr.len > 0 {
+            g.prog = pr
+        }
+        g.color = color_of(sc, part)
+        g.split = split_of(sc, part)
+    }
+    if raised(sc, part) {
+        g.tonic = (g.tonic + 2) % 12
+        let mut pr = []int {}
+        for k in 0..g.prog.len {
+            push(pr, up_tone(g.prog[k]))
+        }
+        g.prog = pr
+        g.split = up_tone(g.split)
+    }
+    g.kind = kind_at(sc, bar)
+    g.ending = plan.OPEN
+    g.tight = layer == arrange.L_DRUMS && variant == synth.TOPS
+    g.peak = line_peak(sc, bar)
+    return g
+}
+
+/// A voice the graph reads from a WAV: its input, at its level, exactly
+/// `unit` samples long. Returns the head of the chain.
+fn voice_src(gr: &mut Graph, dir: string, name: string, layer: int, variant: int, part: int, drum: int,
+             unit: int) -> string {
+    let k = gr.inputs.len
+    let path = "{{dir}}/voices/{{name}}.wav"
+    push(gr.inputs, path)
+    push(gr.voice_path, path)
+    push(gr.voice_layer, layer)
+    push(gr.voice_variant, variant)
+    push(gr.voice_part, part)
+    push(gr.voice_drum, drum)
+    return "[{{k}}:a]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=mono,volume={{VOICE_READ}},apad=whole_len={{unit}},atrim=end_sample={{unit}}"
+}
+
+/// Lines that play generator `key` to `[g{key}]`, one loop long, from the
+/// voices `render_voices` writes.
+fn generator(lines: &mut []string, gr: &mut Graph, dir: string, sc: Score, s: Sound, g0: Groove, key: int, layer: int,
+             variant: int, part: int) {
+    let unit = unit_of(sc, layer, part)
+    let g = groove_for(sc, g0, layer, variant, part)
+    let tag = "g{{key}}"
+    if layer == arrange.L_DRUMS {
+        let parts = []int { synth.KICK, synth.SNARE, synth.HAT, synth.OPEN_HAT }
+        let mut kit = []string {}
+        for p in 0..parts.len {
+            if synth.kit_hits(g, parts[p], variant).at.len == 0 {
+                continue
+            }
+            let mut chain = voice_src(gr, dir, "{{tag}}v{{p}}", layer, variant, part, parts[p], unit)
+            if parts[p] == synth.SNARE {
+                // A high taiko keeps its body; a rim loses its thud.
+                let hp = if s.style == styles.CINEMA { 80 } else if s.style == styles.AFRO { 220 } else { 170 }
+                chain = "{{chain}},highpass=f={{hp}},pan=stereo|c0=c0|c1=c0"
+            } else if parts[p] == synth.HAT {
+                let hp = if s.style == styles.AFRO { 4500 } else { 7000 }
+                chain = "{{chain}},highpass=f={{hp}},pan=stereo|c0=0.8*c0|c1=c0"
+            } else if parts[p] == synth.OPEN_HAT {
+                // Afrobeats' open voice is a conga, panned off centre.
+                let hp = if s.style == styles.AFRO { 120 } else { 6000 }
+                chain = "{{chain}},highpass=f={{hp}},pan=stereo|c0=c0|c1=0.6*c0"
+            } else {
+                chain = "{{chain}},pan=stereo|c0=c0|c1=c0"
+            }
+            let v = "{{tag}}v{{p}}"
+            push(lines, "{{chain}}[{{v}}]")
+            push(kit, v)
+        }
+        if kit.len == 0 {
+            push(lines, "anullsrc=r=48000:cl=stereo,atrim=end_sample={{unit}}[{{tag}}]")
+            return
+        }
+        push(lines, sum(kit, "{{tag}}m"))
+        push(lines, "[{{tag}}m]atrim=end_sample={{unit}}[{{tag}}]")
+        return
+    }
+    let mut filt = ""
+    if layer == arrange.L_BASS {
+        let st = s.style
+        let cut = if st == styles.WAVE { 1600 } else if st == styles.TRAP { 2400 } else if st == styles.AFRO { 1400 } else if st == styles.CINEMA { 750 } else { 950 }
+        filt = "lowpass=f={{cut}},pan=stereo|c0=c0|c1=c0"
+    } else if layer == arrange.L_PAD {
+        let pt = s.pad_tone
+        let cut = if pt == synth.PAD_GLASS || pt == synth.PAD_SUPER { 9000 } else if pt == synth.PAD_KEYS { 6500 } else if pt == synth.PAD_STRINGS { 5200 } else { 2800 }
+        filt = "lowpass=f={{cut}},pan=stereo|c0=c0|c1=c0,adelay=delays=0|11:all=0"
+    } else if layer == arrange.L_ARP {
+        let at = s.arp_tone
+        let band = if at == synth.ARP_STRINGS { "highpass=f=60,lowpass=f=3400" } else if at == synth.ARP_MALLET { "highpass=f=150,lowpass=f=8000" } else { "highpass=f=240,lowpass=f=6500" }
+        filt = "{{band}},pan=stereo|c0=c0|c1=0.7*c0"
+    } else if layer == arrange.L_COUNTER {
+        filt = "highpass=f=140,lowpass=f=7000,pan=stereo|c0=c0|c1=0.75*c0,adelay=delays=0|9:all=0"
+    } else if layer == arrange.L_BELLS {
+        let hp = if s.style == styles.CINEMA { 120 } else { 380 }
+        // The FM bell's top partials are glare, not tone.
+        filt = "highpass=f={{hp}},lowpass=f=7500,pan=stereo|c0=0.75*c0|c1=c0,adelay=delays=7|0:all=0"
+    } else if layer == arrange.L_RISER {
+        // The noise opens as it rises, rather than hissing to the top of the
+        // band from its first bar.
+        let open = sweep("riser{{key}}", "lowpass", 1200.0, 9000.0, seconds(unit))
+        filt = "highpass=f=450,{{open}},pan=stereo|c0=c0|c1=0.85*c0"
+    } else {
+        filt = if s.style == styles.CINEMA { "lowpass=f=4500,pan=stereo|c0=c0|c1=c0" } else { "pan=stereo|c0=c0|c1=c0" }
+    }
+    let head = voice_src(gr, dir, tag, layer, variant, part, -1, unit)
+    push(lines, "{{head}},{{filt}},atrim=end_sample={{unit}}[{{tag}}]")
+}
+
+/// The samples of voice `k` of `gr`.
+fn voice_samples(sc: Score, s: Sound, gr: Graph, k: int) -> []f64 {
+    let layer = gr.voice_layer[k]
+    let variant = gr.voice_variant[k]
+    let part = gr.voice_part[k]
+    let unit = unit_of(sc, layer, part)
+    let g = groove_for(sc, groove_of(sc, s), layer, variant, part)
+    if layer == arrange.L_DRUMS {
+        return voices.drum(g, gr.voice_drum[k], variant)
+    }
+    if layer == arrange.L_BASS {
+        return voices.bass(g)
+    }
+    if layer == arrange.L_PAD {
+        return voices.pad(g, s.pad_tone)
+    }
+    if layer == arrange.L_ARP {
+        return voices.arp(g, s.arp_tone)
+    }
+    if layer == arrange.L_COUNTER {
+        return voices.counter(hits_of_line(sc, line_of(sc, part)), seconds(unit), s.pad_tone)
+    }
+    if layer == arrange.L_BELLS {
+        let line = line_of(sc, part)
+        if line >= 0 {
+            return voices.line(hits_of_line(sc, line), seconds(unit), s.style)
+        }
+        return voices.bells(g)
+    }
+    if layer == arrange.L_RISER {
+        return voices.riser(seconds(unit), s.seed + part)
+    }
+    return voices.impact(g, seconds(unit))
+}
+
+/// Render every instrument voice `gr` reads to its WAV. `0` when all were
+/// written. Runs before the render job, in this process.
+///
+/// A take has dozens of voices and each costs up to a second, so a UI
+/// thread must not call this: it walks `render_voice` one tick at a time.
+fn render_voices(sc: Score, s: Sound, gr: Graph, dir: string) -> int {
+    let mut failed = 0
+    for k in 0..gr.voice_path.len {
+        if render_voice(sc, s, gr, dir, k) != 0 {
+            failed = 1
+        }
+    }
+    return failed
+}
+
+/// Render voice `k` of `gr` to its WAV. `0` when it was written.
+fn render_voice(sc: Score, s: Sound, gr: Graph, dir: string, k: int) -> int {
+    if k == 0 {
+        sys.mkdir("{{dir}}/voices")
+    }
+    let buf = voice_samples(sc, s, gr, k)
+    return dsp.write_wav(gr.voice_path[k], buf, VOICE_WRITE)
+}
+
+/// A graph with nothing in it, for a variable that holds one later.
+fn empty() -> Graph {
+    return Graph {
+        text: "",
+        inputs: []string {},
+        voice_path: []string {},
+        voice_layer: []int {},
+        voice_variant: []int {},
+        voice_part: []int {},
+        voice_drum: []int {},
+    }
+}
+
+/// One synth part from copy `[from]` of its generator to `[sy{i}]`.
+fn part_line(sc: Score, s: Sound, i: int, from: string) -> string {
+    let layer = sc.sy_layer[i]
+    let unit = unit_of(sc, layer, i)
+    let len = sc.sy_bars[i] * sc.bar_s
+    let mut parts = []string {}
+    let reps = (len + unit - 1) / unit
+    let mut chain = "[{{from}}]"
+    if reps > 1 {
+        push(parts, "aloop=loop={{reps - 1}}:size={{unit}}")
+    }
+    push(parts, "atrim=end_sample={{len}}")
+    // Strings swell in over their first bar; everything else starts clean.
+    let swell = layer == arrange.L_PAD && s.pad_tone == synth.PAD_STRINGS
+    let fade_in = if swell { num.clampi(sc.bar_s, 96, len / 2) } else { 96 }
+    push(parts, "afade=t=in:ns={{fade_in}}:curve=qsin,afade=t=out:ss={{len - 480}}:ns=480")
+    let db = layer_db(layer, s) + f64(style_trim(s.style, layer)) / 10.0 + slider_db(layer, s) + f64(sc.sy_db[i]) / 100.0
+    push(parts, "volume={{num.f3(db)}}dB")
+    let at = time.LEAD_S + sc.sy_bar[i] * sc.bar_s
+    push(parts, "adelay=delays={{at}}S:all=1")
+    let joined = str.join(parts, ",")
+    return "{{chain}}{{joined}}[sy{{i}}]"
+}
+
+/// A bus: its members summed, then `fx` (may be empty), to `[dest]`.
+fn bus(lines: &mut []string, members: []string, dest: string, chain: string) -> bool {
+    if members.len == 0 {
+        return false
+    }
+    if chain.len == 0 {
+        push(lines, sum(members, dest))
+        return true
+    }
+    push(lines, sum(members, "{{dest}}_sum"))
+    push(lines, "[{{dest}}_sum]{{chain}}[{{dest}}]")
+    return true
+}
+
+fn joined_fx(xs: []string) -> string {
+    let mut parts = []string {}
+    for i in 0..xs.len {
+        if xs[i].len > 0 {
+            push(parts, xs[i])
+        }
+    }
+    return str.join(parts, ",")
+}
+
+/// The graph for `sc`. `paths` are the decoded recordings, `splits` their
+/// voice-free stems (same index; may be empty strings), `mono` per source.
+/// `dir` is the work folder the instrument voices go in (`render_voices`).
+fn build(sc: Score, s: Sound, paths: []string, splits: []string, mono: []bool, dir: string) -> Graph {
+    let mut lines = []string {}
+    let mut inputs = []string {}
+    let mut loop_in = []int {}
+    for i in 0..sc.lp_src.len {
+        let si = sc.lp_src[i]
+        let mut p = paths[si]
+        if sc.lp_split[i] == 1 && si < splits.len && splits[si].len > 0 {
+            p = splits[si]
+        }
+        let mut at = -1
+        for k in 0..inputs.len {
+            if inputs[k] == p {
+                at = k
+            }
+        }
+        if at < 0 {
+            push(inputs, p)
+            at = inputs.len - 1
+        }
+        push(loop_in, at)
+    }
+    let mut uses = []int {}
+    for k in 0..inputs.len {
+        push(uses, 0)
+    }
+    for i in 0..loop_in.len {
+        uses[loop_in[i]] = uses[loop_in[i]] + 1
+    }
+    for k in 0..inputs.len {
+        push(lines, "[{{k}}:a]aformat=sample_fmts=fltp:channel_layouts=stereo:sample_rates=48000[in{{k}}]")
+        push(lines, split("in{{k}}", uses[k]))
+    }
+    let mut cursor = []int {}
+    for k in 0..inputs.len {
+        push(cursor, 0)
+    }
+    let mut rhythm = []string {}
+    let mut motif = []string {}
+    let mut air = []string {}
+    for i in 0..sc.lp_src.len {
+        let k = loop_in[i]
+        let from = "in{{k}}_{{cursor[k]}}"
+        cursor[k] = cursor[k] + 1
+        let si = sc.lp_src[i]
+        let is_mono = si < mono.len && mono[si]
+        push(lines, loop_line(sc, i, from, is_mono))
+        let tag = "lp{{i}}"
+        if sc.lp_bus[i] == arrange.RHYTHM {
+            push(rhythm, tag)
+        } else if sc.lp_bus[i] == arrange.MOTIF {
+            push(motif, tag)
+        } else {
+            push(air, tag)
+        }
+    }
+
+    // Synth generators, each shared by the parts that use it. Their voices
+    // are inputs after the recordings.
+    let mut gr = Graph {
+        text: "", inputs: inputs, voice_path: []string {}, voice_layer: []int {}, voice_variant: []int {},
+        voice_part: []int {}, voice_drum: []int {},
+    }
+    let g = groove_of(sc, s)
+    let mut keys = []int {}
+    let mut counts = []int {}
+    for i in 0..sc.sy_layer.len {
+        let key = gen_key(sc, s, i)
+        let at = num.index_of(keys, key)
+        if at < 0 {
+            push(keys, key)
+            push(counts, 1)
+            generator(lines, gr, dir, sc, s, g, key, sc.sy_layer[i], sc.sy_variant[i], i)
+        } else {
+            counts[at] = counts[at] + 1
+        }
+    }
+    for k in 0..keys.len {
+        push(lines, split("g{{keys[k]}}", counts[k]))
+    }
+    let mut taken = []int {}
+    for k in 0..keys.len {
+        push(taken, 0)
+    }
+    let mut drums = []string {}
+    let mut bass_l = []string {}
+    let mut pad_l = []string {}
+    let mut arp_l = []string {}
+    let mut bells_l = []string {}
+    let mut hits = []string {}
+    for i in 0..sc.sy_layer.len {
+        let at = num.index_of(keys, gen_key(sc, s, i))
+        let from = "g{{keys[at]}}_{{taken[at]}}"
+        taken[at] = taken[at] + 1
+        push(lines, part_line(sc, s, i, from))
+        let tag = "sy{{i}}"
+        let layer = sc.sy_layer[i]
+        if layer == arrange.L_DRUMS {
+            push(drums, tag)
+        } else if layer == arrange.L_BASS {
+            push(bass_l, tag)
+        } else if layer == arrange.L_PAD {
+            push(pad_l, tag)
+        } else if layer == arrange.L_ARP {
+            push(arp_l, tag)
+        } else if layer == arrange.L_BELLS || layer == arrange.L_COUNTER {
+            push(bells_l, tag)
+        } else {
+            push(hits, tag)
+        }
+    }
+
+    // Buses.
+    let modu = fx.modulation(s.mod_kind, s.mod_amt)
+    let has_r = bus(lines, rhythm, "br", "highpass=f=35")
+    let has_m = bus(lines, motif, "bm", "highpass=f=140")
+    let has_a = bus(lines, air, "ba", "highpass=f=110,lowpass=f=9500")
+    let has_d = bus(lines, drums, "bd", "acompressor=threshold=0.3:ratio=2.5:attack=6:release=90:makeup=1.1")
+    let has_b = bus(lines, bass_l, "bb", "")
+    let has_p = bus(lines, pad_l, "bp", modu)
+    let has_q = bus(lines, arp_l, "bq", modu)
+    let has_l = bus(lines, bells_l, "bl", "")
+    let has_x = bus(lines, hits, "bx", "")
+
+    let echo_on = s.echo > 0 && (has_m || has_q || has_l)
+    let verb_on = s.reverb > 0
+    let pump = s.pump && has_d && (has_b || has_p)
+    let mut mix = []string {}
+    let mut echo_in = []string {}
+    let mut verb_in = []string {}
+
+    // Each bus is copied once per consumer: the mix, the echo, the reverb,
+    // and (drums) the pump's key.
+    if has_r {
+        push(lines, "[br]anull[br_0]")
+        push(mix, "br_0")
+    }
+    if has_m {
+        let n = 1 + (if echo_on { 1 } else { 0 }) + (if verb_on { 1 } else { 0 })
+        push(lines, split("bm", n))
+        push(mix, "bm_0")
+        let mut k = 1
+        if echo_on {
+            push(echo_in, "bm_{{k}}")
+            k = k + 1
+        }
+        if verb_on {
+            push(verb_in, "bm_{{k}}")
+        }
+    }
+    if has_a {
+        let n = 1 + (if verb_on { 1 } else { 0 })
+        push(lines, split("ba", n))
+        push(mix, "ba_0")
+        if verb_on {
+            push(verb_in, "ba_1")
+        }
+    }
+    let mut keys_out = []string {}
+    if has_d {
+        let n_keys = if pump { (if has_b { 1 } else { 0 }) + (if has_p { 1 } else { 0 }) } else { 0 }
+        let n = 1 + (if verb_on { 1 } else { 0 }) + n_keys
+        push(lines, split("bd", n))
+        push(mix, "bd_0")
+        let mut k = 1
+        if verb_on {
+            push(lines, "[bd_{{k}}]volume=-9dB[bdv]")
+            push(verb_in, "bdv")
+            k = k + 1
+        }
+        for j in 0..n_keys {
+            push(lines, "[bd_{{k}}]lowpass=f=160[key{{j}}]")
+            push(keys_out, "key{{j}}")
+            k = k + 1
+        }
+    }
+    let mut key_at = 0
+    if has_b {
+        if pump {
+            let key = keys_out[key_at]
+            key_at = key_at + 1
+            push(lines, "[bb][{{key}}]sidechaincompress=threshold=0.04:ratio=6:attack=2:release=170:makeup=1[bb_0]")
+        } else {
+            push(lines, "[bb]anull[bb_0]")
+        }
+        push(mix, "bb_0")
+    }
+    if has_p {
+        let mut src_label = "bp"
+        if pump {
+            let key = keys_out[key_at]
+            key_at = key_at + 1
+            push(lines, "[bp][{{key}}]sidechaincompress=threshold=0.05:ratio=5:attack=3:release=200:makeup=1[bpd]")
+            src_label = "bpd"
+        }
+        let n = 1 + (if verb_on { 1 } else { 0 })
+        push(lines, split(src_label, n))
+        push(mix, "{{src_label}}_0")
+        if verb_on {
+            push(verb_in, "{{src_label}}_1")
+        }
+    }
+    let melodic = []bool { has_q, has_l }
+    let melodic_names = []string { "bq", "bl" }
+    for m in 0..2 {
+        if melodic[m] {
+            let nm = melodic_names[m]
+            let n = 1 + (if echo_on { 1 } else { 0 }) + (if verb_on { 1 } else { 0 })
+            push(lines, split(nm, n))
+            push(mix, "{{nm}}_0")
+            let mut k = 1
+            if echo_on {
+                push(echo_in, "{{nm}}_{{k}}")
+                k = k + 1
+            }
+            if verb_on {
+                push(verb_in, "{{nm}}_{{k}}")
+            }
+        }
+    }
+    if has_x {
+        let n = 1 + (if verb_on { 1 } else { 0 })
+        push(lines, split("bx", n))
+        push(mix, "bx_0")
+        if verb_on {
+            push(verb_in, "bx_1")
+        }
+    }
+    if echo_on && echo_in.len > 0 {
+        push(lines, sum(echo_in, "echo_in"))
+        let el = fx.echo_lines("echo_in", "echo", s.echo, s.echo_time, sc.bpm_c)
+        for i in 0..el.len {
+            push(lines, el[i])
+        }
+        push(mix, "echo")
+    }
+    if verb_on && verb_in.len > 0 {
+        push(lines, sum(verb_in, "verb_in"))
+        let vl = fx.reverb_lines("verb_in", "verb", s.reverb, s.space)
+        for i in 0..vl.len {
+            push(lines, vl[i])
+        }
+        push(mix, "verb")
+    }
+    if s.lofi > 0 {
+        push(lines, "{{fx.vinyl(s.lofi, seconds(sc.total_s), synth.crackle_expr())}}[vinyl]")
+        push(mix, "vinyl")
+    }
+    // A silent bed sets the length: the tail rings out to the end.
+    push(lines, "anullsrc=r=48000:cl=stereo,atrim=end_sample={{sc.total_s}}[bed]")
+    push(mix, "bed")
+    push(lines, sum(mix, "mix"))
+    let character = joined_fx([]string { fx.lofi(s.lofi), fx.warmth(s.warmth), fx.width(s.width), fx.master(sc.total_s) })
+    push(lines, "[mix]{{character}}[pre]")
+    gr.text = str.join(lines, ";\n")
+    return gr
+}

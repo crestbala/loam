@@ -47,6 +47,12 @@ void loam_zeus_sig_bind(int64_t id, const void *src, int64_t n);
 /* Bind an owned `loam_str` payload: the cell keeps a reference and releases it
    when the cell dies or is rebound to another type (see zeus_plat.c). */
 void loam_zeus_sig_bind_str(int64_t id, const void *src, int64_t n);
+/* Bind a `loam_vec` handle: the cell keeps a reference and drops it (elements
+   through `rel`) when the cell is freed. */
+void loam_zeus_sig_bind_vec(int64_t id, const void *src, int64_t n, int64_t esz, loam_elem_fn rel);
+/* Bind a struct that owns strings / lists: `drop` releases them when the cell
+   is freed. */
+void loam_zeus_sig_bind_owned(int64_t id, const void *src, int64_t n, loam_elem_fn drop);
 void loam_zeus_sig_load(int64_t id, void *dst, int64_t n);
 int64_t loam_zeus_sig_changed(int64_t id, const void *src, int64_t n);
 int64_t loam_zeus_sig_sized(int64_t id, int64_t n);
@@ -253,6 +259,12 @@ typedef struct {
     int64_t (*get)(int64_t slot, int64_t what);
     void (*text)(int64_t slot, int64_t what, char *out, int cap);
     void (*pick)(void);
+    /* Audio files, several at once. NULL falls back to `pick`. */
+    void (*pick_audio)(void);
+    /* Voice tools, async: 1 maps where a voice is, 2 writes the file minus
+       its voice. Returns 1 when the job started; the result is `out`, then
+       `out.done` or `out.fail`. NULL (or 0) means this host has neither. */
+    int64_t (*voice)(int64_t what, const char *src, const char *out);
     int64_t (*fullscreen)(int64_t on);
 } ZeusMedia;
 void zeus_set_media(ZeusMedia media);
@@ -261,7 +273,10 @@ int64_t loam_platform_plat_media_open(int64_t slot, loam_str src);
 void loam_platform_plat_media_cmd(int64_t slot, int64_t cmd, int64_t value);
 int64_t loam_platform_plat_media_get(int64_t slot, int64_t what);
 loam_str loam_platform_plat_media_text(int64_t slot, int64_t what);
+void loam_platform_plat_media_dropped(loam_str name, loam_str src);
 void loam_platform_plat_media_pick(void);
+void loam_platform_plat_media_pick_audio(void);
+int64_t loam_platform_plat_media_voice(int64_t what, loam_str src, loam_str out);
 int64_t loam_platform_plat_fullscreen(int64_t on);
 
 /* Phase 4: the ONE blit of a frame Zeus rasterized itself — the sole place a

@@ -1,0 +1,381 @@
+//! The phrase plan and the energy arc.
+//!
+//! A section is a row of phrases, each `unit` bars (four, or two when a
+//! slow minute has no room for four — the same unit `form` already uses).
+//! A phrase has a label shared across the piece (`0` is a, `1` is b), how
+//! many times that label has been heard (`0` is a, `1` is a′, `2` is a″),
+//! and an ending: open (a question) or closed (an answer). The same label
+//! is the same idea; only the ending, and later the motif's transform,
+//! changes.
+//!
+//!     intro   a open
+//!     verse   a open, a′ closed
+//!     build   b open, b′ open
+//!     drop    A open, A′ closed, B open, A″ closed
+//!     break   b open, a closed
+//!     outro   a closed
+//!
+//! A drop's A is the verse's a. A section longer than its plan repeats the
+//! last two phrases; a shorter one keeps the first and the last. The
+//! second drop copies the first drop's phrases, so the return is the same
+//! labels and the same variations.
+
+import "chain.loam" as chain
+import "num.loam" as num
+
+/// Section kinds. The same numbers as `arrange`.
+const INTRO: int = 0
+const VERSE: int = 1
+const BUILD: int = 2
+const DROP: int = 3
+const BREAK: int = 4
+const OUTRO: int = 5
+
+/// A phrase ending. Open is a half cadence; closed is a full one.
+const OPEN: int = 0
+const CLOSED: int = 1
+
+/// One phrase row. `varn` is how many times `label` was heard before the
+/// repeats that fill a long section — those repeats keep the variation
+/// they copy, so they share its line.
+struct Phrases {
+    bar: []int,
+    bars: []int,
+    sec: []int,
+    label: []int,
+    varn: []int,
+    end: []int,
+}
+
+fn no_phrases() -> Phrases {
+    return Phrases {
+        bar: []int {}, bars: []int {}, sec: []int {}, label: []int {}, varn: []int {}, end: []int {},
+    }
+}
+
+fn spec_len(kind: int) -> int {
+    if kind == INTRO || kind == OUTRO {
+        return 1
+    }
+    if kind == DROP {
+        return 4
+    }
+    return 2
+}
+
+/// `0` is a (and the drop's A); `1` is b (and the drop's B).
+fn spec_label(kind: int, i: int) -> int {
+    if kind == BUILD {
+        return 1
+    }
+    if kind == BREAK {
+        return if i == 0 { 1 } else { 0 }
+    }
+    if kind == DROP && i == 2 {
+        return 1
+    }
+    return 0
+}
+
+fn spec_end(kind: int, i: int) -> int {
+    if kind == INTRO || kind == BUILD {
+        return OPEN
+    }
+    if kind == OUTRO {
+        return CLOSED
+    }
+    if kind == VERSE || kind == BREAK {
+        return if i == 0 { OPEN } else { CLOSED }
+    }
+    // Drop: open, closed, open, closed.
+    if i % 2 == 0 {
+        return OPEN
+    }
+    return CLOSED
+}
+
+/// Which plan entry fills phrase `i` of `n`. A long section plays the plan
+/// and then its last two entries again. A short one keeps the first and
+/// the last, with the middle spread between them.
+fn spec_index(i: int, n: int, p: int) -> int {
+    if p <= 1 || n <= 1 {
+        return 0
+    }
+    if n >= p {
+        if i < p {
+            return i
+        }
+        let tail = if p >= 2 { 2 } else { 1 }
+        let k = (i - p) % tail
+        return p - tail + k
+    }
+    let mut idx = (2 * i * (p - 1) + (n - 1)) / (2 * (n - 1))
+    if idx < 0 {
+        idx = 0
+    }
+    if idx >= p {
+        idx = p - 1
+    }
+    return idx
+}
+
+fn push_phrase(p: &mut Phrases, bar: int, bars: int, sec: int, label: int, varn: int, end: int) {
+    push(p.bar, bar)
+    push(p.bars, bars)
+    push(p.sec, sec)
+    push(p.label, label)
+    push(p.varn, varn)
+    push(p.end, end)
+}
+
+/// Phrases for a piece whose sections are `kinds` and `bars` long, each
+/// phrase `unit` bars. The rows tile the sections.
+fn phrases(kinds: []int, bars: []int, unit: int) -> Phrases {
+    let mut out = no_phrases()
+    let step0 = if unit > 0 { unit } else { 4 }
+    let mut heard = []int { 0, 0, 0, 0 }
+    let mut drop_l = []int {}
+    let mut drop_v = []int {}
+    let mut drop_e = []int {}
+    let mut have_drop = false
+    let mut bar = 0
+    for sec in 0..kinds.len {
+        let kind = kinds[sec]
+        let nb = if sec < bars.len { bars[sec] } else { step0 }
+        let mut n = nb / step0
+        if n < 1 {
+            n = 1
+        }
+        let copy = kind == DROP && have_drop
+        if kind == DROP {
+            have_drop = true
+        }
+        let p = spec_len(kind)
+        let mut assigned = []int { -1, -1, -1, -1 }
+        let mut left = nb
+        for i in 0..n {
+            let mut len = step0
+            if i == n - 1 {
+                len = left
+            }
+            if len < 1 {
+                len = 1
+            }
+            let mut label = 0
+            let mut varn = 0
+            let mut end = OPEN
+            if copy && drop_l.len > 0 {
+                let idx = spec_index(i, n, drop_l.len)
+                label = drop_l[idx]
+                varn = drop_v[idx]
+                end = drop_e[idx]
+            } else {
+                let idx = spec_index(i, n, p)
+                label = spec_label(kind, idx)
+                end = spec_end(kind, idx)
+                if idx >= 0 && idx < assigned.len && assigned[idx] >= 0 {
+                    varn = assigned[idx]
+                } else {
+                    let h = if label >= 0 && label < heard.len { heard[label] } else { 0 }
+                    varn = h
+                    if label >= 0 && label < heard.len {
+                        heard[label] = h + 1
+                    }
+                    if idx >= 0 && idx < assigned.len {
+                        assigned[idx] = varn
+                    }
+                }
+                if kind == DROP && !copy {
+                    push(drop_l, label)
+                    push(drop_v, varn)
+                    push(drop_e, end)
+                }
+            }
+            push_phrase(out, bar, len, sec, label, varn, end)
+            bar = bar + len
+            left = left - len
+        }
+    }
+    return out
+}
+
+/// Section kinds and lengths for `length_ms` at `bar_s` samples a bar.
+/// A minute is one climb to one drop; longer pieces have two of each with
+/// a break between. Sections are scaled to the length, then trimmed or
+/// grown a phrase at a time so the piece lands within a phrase of it.
+/// The third row is the phrase unit, in bars.
+fn form(length_ms: int, bar_s: int) -> [][]int {
+    let target = num.clampi(num.roundi(f64(length_ms) * 48.0 / f64(bar_s)), 12, 200)
+    let mut kinds = []int {}
+    let mut bars = []int {}
+    if length_ms <= 60000 {
+        kinds = []int { INTRO, VERSE, BUILD, DROP, OUTRO }
+        bars = []int { 4, 4, 4, 8, 4 }
+    } else {
+        kinds = []int { INTRO, VERSE, BUILD, DROP, BREAK, VERSE, BUILD, DROP, OUTRO }
+        bars = []int { 8, 8, 4, 16, 8, 8, 4, 16, 8 }
+    }
+    let mut total = 0
+    for i in 0..bars.len {
+        total = total + bars[i]
+    }
+    let factor = f64(target) / f64(total)
+    // Four-bar phrases, or two when a slow minute has no room for them.
+    let unit = if factor >= 1.0 { 4 } else { 2 }
+    let mut out_bars = []int {}
+    for i in 0..bars.len {
+        let mut b = num.roundi(f64(bars[i]) * factor / f64(unit)) * unit
+        if b < unit {
+            b = unit
+        }
+        push(out_bars, b)
+    }
+    let mut sum = 0
+    for i in 0..out_bars.len {
+        sum = sum + out_bars[i]
+    }
+    // Too long: shorten the longest section that is not a drop.
+    while sum - target >= unit {
+        let mut at = -1
+        for i in 0..out_bars.len {
+            if kinds[i] != DROP && out_bars[i] > unit && (at < 0 || out_bars[i] > out_bars[at]) {
+                at = i
+            }
+        }
+        if at < 0 {
+            break
+        }
+        out_bars[at] = out_bars[at] - unit
+        sum = sum - unit
+    }
+    // Too short: the drops grow, the last first.
+    let mut turn = 0
+    while target - sum >= unit {
+        let mut drops = []int {}
+        for i in 0..kinds.len {
+            if kinds[i] == DROP {
+                push(drops, i)
+            }
+        }
+        let at = drops[drops.len - 1 - turn % drops.len]
+        out_bars[at] = out_bars[at] + unit
+        sum = sum + unit
+        turn = turn + 1
+    }
+    return [][]int { kinds, out_bars, []int { unit } }
+}
+
+/// The energy arc, one target a bar, 0..1000. `kinds` and `bars` are the
+/// sections. The intro rises out of near-silence, a verse sits in the
+/// middle, a build climbs to the drop, a drop is full (the last one
+/// fullest), a break falls away, and the outro settles.
+fn arc(kinds: []int, bars: []int) -> []int {
+    let mut out = []int {}
+    let mut last_drop = -1
+    for i in 0..kinds.len {
+        if kinds[i] == DROP {
+            last_drop = i
+        }
+    }
+    for i in 0..kinds.len {
+        let kind = kinds[i]
+        let nb = if i < bars.len { bars[i] } else { 4 }
+        for b in 0..nb {
+            // The centre of the bar, through the section, 0..1000.
+            let x = (2 * b + 1) * 1000 / (2 * nb)
+            let mut v = 500
+            if kind == INTRO {
+                v = 80 + chain.ease(x) * 220 / 1000
+            } else if kind == VERSE {
+                v = 420 + x * 100 / 1000
+            } else if kind == BUILD {
+                v = 560 + chain.ease(x) * 300 / 1000
+            } else if kind == DROP {
+                v = if i == last_drop { 1000 } else { 920 }
+            } else if kind == BREAK {
+                v = 300 - x * 80 / 1000
+            } else {
+                v = 560 - chain.ease(x) * 420 / 1000
+            }
+            push(out, v)
+        }
+    }
+    return out
+}
+
+fn clamp_path(path: int) -> int {
+    return num.clampi(path, 0, 1000)
+}
+
+/// Semitones the lead sits above its home: whole tones, 0 at rest and 12
+/// when the path is full. The same curve the pad lift has always used.
+fn register(path: int) -> int {
+    return num.roundi(f64(clamp_path(path)) * 6.0 / 1000.0) * 2
+}
+
+/// How busy the bar is, 0..1000. The path itself, so a build climbs.
+fn density(path: int) -> int {
+    return clamp_path(path)
+}
+
+/// How far the harmony leans, 0..1000. A build carries the path; a drop's
+/// first bar is 0 so the downbeat can resolve; later drop bars sit halfway
+/// up; everything else stays near triads.
+fn dissonance(path: int, kind: int, bar: int) -> int {
+    if kind == DROP && bar == 0 {
+        return 0
+    }
+    let p = clamp_path(path)
+    if kind == BUILD {
+        return p
+    }
+    if kind == DROP {
+        return p / 2
+    }
+    return p / 5
+}
+
+/// Synth-bed level in centi-dB. Rest is −6 dB; a full bar is 0 dB.
+fn dynamics(path: int) -> int {
+    let p = clamp_path(path)
+    return -600 + p * 600 / 1000
+}
+
+/// 0..1000 back from a `dynamics` level, for velocities and generator keys.
+fn dyn_amt(db: int) -> int {
+    return num.clampi((db + 600) * 1000 / 600, 0, 1000)
+}
+
+/// Sixteenths one chord is held. A quiet bar holds two bars (32). A high
+/// bar changes every bar (16). The last bar of a build changes at the half
+/// (8).
+fn harm_hold(path: int, kind: int, last_bar: bool) -> int {
+    if kind == BUILD && last_bar {
+        return 8
+    }
+    if clamp_path(path) >= 700 {
+        return 16
+    }
+    return 32
+}
+
+/// How `diss` colours a free bar. 0 is a triad, 1 a seventh, 2 sus4, 3 add9.
+/// A build earns sus4 and add9; other sections stop at the seventh.
+fn tension_color(diss: int, kind: int) -> int {
+    if diss <= 0 {
+        return 0
+    }
+    if kind == BUILD {
+        if diss >= 800 {
+            return 3
+        }
+        if diss >= 550 {
+            return 2
+        }
+        return 1
+    }
+    if diss >= 400 {
+        return 1
+    }
+    return 0
+}

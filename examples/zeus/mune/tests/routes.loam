@@ -1,0 +1,213 @@
+//! The screen, headless. Does not start the poller and does not open the picker.
+//!
+//!   ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/mune/tests/routes.loam -o /tmp/mune-routes && /tmp/mune-routes
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "../components/screen.loam" as screen
+import "../core/sound.loam" as sound
+import "../core/styles.loam" as styles
+import "../core/synth.loam" as synth
+import "../studio/controls.loam" as controls
+
+const W: int = 1280
+const H: int = 900
+
+fn fail(what: string) {
+    fmt.println("FAIL {{what}}")
+    sys.exit(1)
+}
+
+fn need(label: string) {
+    if zeus.engine_find_text(label) <= 0 {
+        fail("missing '{{label}}'")
+    }
+}
+
+fn frame() {
+    zeus.engine_layout(W, H)
+    zeus.engine_paint()
+}
+
+/// Open the dropdown named `label` and pick the row reading `option`.
+fn choose(label: string, option: string) {
+    let id = zeus.engine_find_text(label)
+    if id <= 0 {
+        fail("no dropdown '{{label}}'")
+    }
+    zeus.engine_click(zeus.node_x(id) + 10, zeus.node_y(id) + 10)
+    zeus.engine_mouseup()
+    frame()
+    let mut row = -1
+    for i in 0..zeus.draw_count() {
+        if zeus.draw_text(i) == option && zeus.draw_y(i) > zeus.node_y(id) + zeus.node_height(id) {
+            row = i
+        }
+    }
+    if row < 0 {
+        fail("'{{label}}' did not open onto '{{option}}'")
+    }
+    zeus.engine_click(zeus.draw_x(row) + 4, zeus.draw_y(row) + 4)
+    zeus.engine_mouseup()
+    frame()
+}
+
+/// Click the dropdown named `label` open.
+fn open_menu(label: string) {
+    let id = zeus.engine_find_text(label)
+    if id <= 0 {
+        fail("no dropdown '{{label}}'")
+    }
+    zeus.engine_click(zeus.node_x(id) + 10, zeus.node_y(id) + 10)
+    zeus.engine_mouseup()
+    frame()
+}
+
+/// Colour of the first fill as large as the window: the room itself.
+fn room_rgb() -> int {
+    for i in 0..zeus.draw_count() {
+        let k = zeus.draw_op(i)
+        if (k == 0 || k == 1 || k == 14) && zeus.draw_w(i) >= W && zeus.draw_h(i) >= H {
+            return zeus.draw_rgb(i)
+        }
+    }
+    return -1
+}
+
+/// Luminance-ish brightness of a packed rgb, 0..255.
+fn bright(rgb: int) -> int {
+    return (rgb / 65536 % 256 * 3 + rgb / 256 % 256 * 6 + rgb % 256) / 10
+}
+
+/// Colour of the text op that reads `label`.
+fn text_rgb(label: string) -> int {
+    for i in 0..zeus.draw_count() {
+        if zeus.draw_text(i) == label {
+            return zeus.draw_rgb(i)
+        }
+    }
+    return -1
+}
+
+fn main() -> int {
+    zeus.window("mune", W, H)
+    zeus.root(screen.Home())
+    frame()
+    need("Mune")
+    need("Your recordings, made into a new piece.")
+    need("Add a recording to begin.")
+    need("Choose recordings in Finder, or drop audio files on the window.")
+    need("Add path")
+    need("Generate")
+    need("New take")
+    need("Recordings")
+    need("Piece")
+    need("Sound")
+    need("INSTRUMENTS")
+    need("EFFECTS")
+    need("Energy arc")
+    need("1 min")
+    need("3 min")
+    need("4 min")
+    need("Lo-fi")
+    need("Dark")
+    let title = zeus.engine_find_text("Mune")
+    let title_y = zeus.node_y(title)
+    if title_y < 0 || title_y > 80 {
+        fail("Mune sits outside the top of the room, y {{title_y}}")
+    }
+
+    // The appearance switch repaints everything: the room goes light and
+    // the ink goes dark. A colour baked in as hex would not move.
+    let dark_room = room_rgb()
+    let dark_ink = text_rgb("Recordings")
+    if dark_room < 0 || bright(dark_room) > 60 {
+        fail("dark room is not dark: {{dark_room}}")
+    }
+    if zeus.engine_click_text("Dark") == 0 {
+        fail("no appearance toggle")
+    }
+    frame()
+    need("Light")
+    let light_room = room_rgb()
+    let light_ink = text_rgb("Recordings")
+    if bright(light_room) < 200 {
+        fail("light room is not light: {{light_room}}")
+    }
+    if bright(light_ink) > 90 || bright(dark_ink) < 180 {
+        fail("ink did not follow the appearance: {{dark_ink}} → {{light_ink}}")
+    }
+    // Slider keys step the value, not the 1% track: a twentieth of a level,
+    // one with Shift, and the drag still reaches the end.
+    let bells = zeus.engine_find_text("Bells level")
+    zeus.engine_click(zeus.node_x(bells) + zeus.node_width(bells) / 2, zeus.node_y(bells) + 10)
+    zeus.engine_mouseup()
+    frame()
+    let at = controls.bells_lvl.peek()
+    zeus.engine_key_ev(1001, 0)
+    frame()
+    if controls.bells_lvl.peek() != at + 5 {
+        fail("right arrow moved the level {{at}} → {{controls.bells_lvl.peek()}}, want +5")
+    }
+    zeus.engine_key_ev(1000, 1)
+    frame()
+    if controls.bells_lvl.peek() != at + 4 {
+        fail("shift+left moved the level to {{controls.bells_lvl.peek()}}, want {{at + 4}}")
+    }
+    zeus.engine_click(zeus.node_x(bells) + 2, zeus.node_y(bells) + 10)
+    zeus.engine_drag(zeus.node_x(bells) + zeus.node_width(bells) - 2, zeus.node_y(bells) + 10)
+    zeus.engine_mouseup()
+    frame()
+    if controls.bells_lvl.peek() != 100 {
+        fail("a drag to the end left the level at {{controls.bells_lvl.peek()}}")
+    }
+
+    // Every choice is a dropdown. A pick sets its control; a style pick
+    // loads that style's preset too.
+    choose("Piece length", "1 min")
+    if controls.length_ix.peek() != 0 {
+        fail("Length dropdown left {{controls.length_ix.peek()}}, want 0")
+    }
+    choose("Reverb kind", "Vast")
+    if controls.space.peek() != sound.SPACE_VAST {
+        fail("Space dropdown left {{controls.space.peek()}}")
+    }
+    choose("Pad tone", "Glass")
+    if controls.pad_tone.peek() != synth.PAD_GLASS {
+        fail("Pad tone dropdown left {{controls.pad_tone.peek()}}")
+    }
+    choose("Sound style", "House")
+    if controls.style.peek() != styles.HOUSE {
+        fail("Style dropdown left {{controls.style.peek()}}")
+    }
+    let house = sound.preset(styles.HOUSE)
+    if controls.reverb.peek() != house.reverb || controls.length_ix.peek() != 0 {
+        fail("a style pick should load the preset and keep the length")
+    }
+    // One menu at a time: opening another dropdown closes the open one.
+    // Its trigger sits above the open menu's scrim, so this used to leave
+    // both menus up, stacked over each other.
+    open_menu("Piece length")
+    if !zeus.text_visible("4 min") {
+        fail("the Length menu did not open")
+    }
+    open_menu("Echo kind")
+    if zeus.text_visible("4 min") {
+        fail("opening Echo left the Length menu open")
+    }
+    if !zeus.text_visible("1/4") {
+        fail("the Echo menu did not open")
+    }
+    open_menu("Piece energy")
+    if zeus.text_visible("1/4") {
+        fail("opening Energy left the Echo menu open")
+    }
+    if !zeus.text_visible("Calm") {
+        fail("the Energy menu did not open")
+    }
+    zeus.engine_key_ev(27, 0)
+    frame()
+    fmt.println("mune screen ok")
+    return 0
+}

@@ -1,0 +1,211 @@
+//! Sample-level building blocks for the instruments (`voices.loam`).
+//!
+//! Phases are in cycles. Oscillators are band-limited: a saw or a square
+//! is the naive wave with a PolyBLEP step at each jump, so a note high on
+//! the keyboard does not alias into whistles the way a sum of harmonics
+//! cut off in an ffmpeg expression could. Decays are a per-sample factor
+//! multiplied in, not an `exp` per sample. Noise is a seeded LCG, so a
+//! take renders the same twice.
+
+import "std:math"
+import "std:sys"
+import "num.loam" as num
+
+const RATE: int = 48000
+const SINE_N: int = 4096
+
+/// −80 dB: a note that has decayed this far is over.
+const FLOOR_LN: f64 = 9.21
+
+let mut sine_t: []f64 = []f64 {}
+
+fn sine_table() -> []f64 {
+    if sine_t.len == 0 {
+        let mut t = []f64 {}
+        for i in 0..(SINE_N + 1) {
+            push(t, num.sin(num.TAU * f64(i) / f64(SINE_N)))
+        }
+        sine_t = t
+    }
+    return sine_t
+}
+
+fn frac(x: f64) -> f64 {
+    return x - math.floor(x)
+}
+
+/// sin(2π·ph), from the table with linear interpolation.
+///
+/// Reads `sine_t` in place: a local copy retains and drops the table on
+/// every call, and this runs for every sample of every oscillator.
+fn sine(ph: f64) -> f64 {
+    if sine_t.len == 0 {
+        sine_table()
+    }
+    let x: f64 = frac(ph) * f64(SINE_N)
+    let k = int(x)
+    let fr: f64 = x - f64(k)
+    return sine_t[k] + (sine_t[k + 1] - sine_t[k]) * fr
+}
+
+/// The PolyBLEP correction at phase `t` for a step of size 2, increment `dt`.
+fn blep(t: f64, dt: f64) -> f64 {
+    if dt <= 0.0 {
+        return 0.0
+    }
+    if t < dt {
+        let x: f64 = t / dt
+        return x + x - x * x - 1.0
+    }
+    if t > 1.0 - dt {
+        let x: f64 = (t - 1.0) / dt
+        return x * x + x + x + 1.0
+    }
+    return 0.0
+}
+
+/// A band-limited rising saw in −1..1 at phase `ph`, `dt` cycles a sample.
+fn saw(ph: f64, dt: f64) -> f64 {
+    let t = frac(ph)
+    return 2.0 * t - 1.0 - blep(t, dt)
+}
+
+/// A band-limited square in −1..1.
+fn square(ph: f64, dt: f64) -> f64 {
+    let t = frac(ph)
+    let mut v: f64 = if t < 0.5 { 1.0 } else { -1.0 }
+    v = v + blep(t, dt)
+    v = v - blep(frac(t + 0.5), dt)
+    return v
+}
+
+/// Per-sample factor of a decay of `rate` per second (exp(−rate·t)).
+fn decay(rate: f64) -> f64 {
+    if rate <= 0.0 {
+        return 1.0
+    }
+    return math.exp(-rate / f64(RATE))
+}
+
+/// Seconds until a decay of `rate` per second is down 80 dB, at most `cap`.
+fn ring(rate: f64, cap: f64) -> f64 {
+    if rate <= 0.0 {
+        return cap
+    }
+    let s: f64 = FLOOR_LN / rate
+    return if s < cap { s } else { cap }
+}
+
+struct Rng {
+    s: i64,
+}
+
+fn rng(seed: int) -> Rng {
+    return Rng { s: i64(num.hash(seed, 77)) + i64(1) }
+}
+
+/// White noise in −1..1: the top bits of a 31-bit LCG, which never
+/// overflows in 64 bits.
+fn noise(r: &mut Rng) -> f64 {
+    r.s = (r.s * i64(1103515245) + i64(12345)) % i64(2147483647)
+    return f64(r.s) / 1073741823.5 - 1.0
+}
+
+/// A state-variable filter, Chamberlin form, low-pass out.
+struct Svf {
+    low: f64,
+    band: f64,
+    f: f64,
+    q: f64,
+}
+
+/// A low-pass at `cut` Hz, damping `q` (1.4 is gentle, 0.6 resonant).
+fn svf(cut: f64, q: f64) -> Svf {
+    let c = num.clampf(cut, 20.0, 12000.0)
+    return Svf { low: 0.0, band: 0.0, f: 2.0 * num.sin(num.TAU * c / (2.0 * f64(RATE))), q: q }
+}
+
+fn lowpass(s: &mut Svf, x: f64) -> f64 {
+    s.low = s.low + s.f * s.band
+    let high: f64 = x - s.low - s.q * s.band
+    s.band = s.band + s.f * high
+    return s.low
+}
+
+/// `n` samples of silence.
+fn zeros(n: int) -> []f64 {
+    let mut b = []f64 {}
+    for i in 0..n {
+        push(b, f64(0))
+    }
+    return b
+}
+
+/// Add `v` at sample `at`. A loop folds what runs past its end back to its
+/// start, so a tail rings across the wrap; a part played once drops it.
+fn put(buf: &mut []f64, at: int, v: f64, wrap: bool) {
+    let n = buf.len
+    if n == 0 {
+        return
+    }
+    let mut i = at
+    if wrap {
+        i = ((i % n) + n) % n
+    } else if i < 0 || i >= n {
+        return
+    }
+    buf[i] = buf[i] + v
+}
+
+fn push_byte3(b: &mut []int, v: int) {
+    let u = if v < 0 { v + 16777216 } else { v }
+    push(b, u % 256)
+    push(b, (u / 256) % 256)
+    push(b, (u / 65536) % 256)
+}
+
+fn push_le(b: &mut []int, v: int, bytes: int) {
+    let mut x = v
+    for k in 0..bytes {
+        push(b, x % 256)
+        x = x / 256
+    }
+}
+
+/// 24-bit mono WAV of `buf` times `gain`, clipped to full scale. `0` when
+/// the file was written.
+fn write_wav(path: string, buf: []f64, gain: f64) -> int {
+    let n = buf.len
+    let data_n = n * 3
+    let mut b = []int {}
+    push(b, 82)
+    push(b, 73)
+    push(b, 70)
+    push(b, 70)
+    push_le(b, 36 + data_n, 4)
+    push(b, 87)
+    push(b, 65)
+    push(b, 86)
+    push(b, 69)
+    push(b, 102)
+    push(b, 109)
+    push(b, 116)
+    push(b, 32)
+    push_le(b, 16, 4)
+    push_le(b, 1, 2)
+    push_le(b, 1, 2)
+    push_le(b, RATE, 4)
+    push_le(b, RATE * 3, 4)
+    push_le(b, 3, 2)
+    push_le(b, 24, 2)
+    push(b, 100)
+    push(b, 97)
+    push(b, 116)
+    push(b, 97)
+    push_le(b, data_n, 4)
+    for i in 0..n {
+        let x = num.clampf(buf[i] * gain, -1.0, 1.0)
+        push_byte3(b, num.roundi(x * 8388607.0))
+    }
+    return sys.write_file(path, string_from_bytes(b))
+}

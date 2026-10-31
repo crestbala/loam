@@ -108,6 +108,17 @@ fn plat_media_text(slot: int, what: int) -> string {}
 /// Open the host's file picker (or accept a dropped file) for media. The
 /// result arrives later: `plat_media_get(0, MEDIA_GET_PICKED)` moves.
 fn plat_media_pick() {}
+/// Open a Finder-style panel limited to audio, several files at once.
+/// Hosts without one fall back to `plat_media_pick`.
+fn plat_media_pick_audio() {}
+/// One file arrived, the way a drop does. Several calls queue. The pick
+/// counter advances one file at a time, after the previous file's text has
+/// been read.
+fn plat_media_dropped(name: string, src: string) {}
+/// Voice tools, async. `what` 1 maps where a voice is in `src`, 2 writes
+/// `src` minus its voice. 1 when started; `out`, then `out.done` or
+/// `out.fail`, appear later. 0 when the host has no such tool.
+fn plat_media_voice(what: int, src: string, out: string) -> int {}
 /// Enter (1) or leave (0) full screen, or ask (-1). Returns 1 when full screen.
 fn plat_fullscreen(on: int) -> int {}
 fn plat_save() {}
