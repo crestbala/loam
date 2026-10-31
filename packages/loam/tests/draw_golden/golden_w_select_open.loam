@@ -1,0 +1,29 @@
+// DRAW-list golden: the Select and MultiSelect menus, closed on the first
+// frame and then open. The Select trigger is clicked open, so the second dump
+// shows its floating list below the trigger with the picked row marked. Keep
+// this file free of prints: stdout is the golden.
+
+import "std:zeus"
+import "std:zui"
+
+fn main() {
+    let size = zeus.signal(1)
+    let picked = zeus.signal([]string { "Red" })
+    zeus.snapshot(420, 360, fn() -> Node {
+        zui.Page() {
+            zui.Select(size, []string { "Small", "Medium", "Large" })
+            zui.MultiSelect(picked, []string { "Red", "Green", "Blue" }, placeholder = "Colours")
+        }
+    })
+    zeus.engine_click_text("Medium")
+    zeus.engine_mouseup()
+    let mut i = 0
+    while i < 8 {
+        zeus.pump_frame()
+        zeus.engine_step_dt(64)
+        i = i + 1
+    }
+    zeus.engine_layout(420, 360)
+    zeus.engine_paint()
+    zeus.dump_draw_list()
+}

@@ -803,6 +803,8 @@ fn Tooltip(p: TooltipProps) -> Node {
         let trigger = child_ref(host, 0)
         watch_hover(trigger, hovered)
         anchor(panel, trigger, p.place, p.gap)
+        // A tooltip never takes the pointer from its trigger.
+        pointer_through(panel)
     })
 
     // tree. The caret is a square rotated 45°, straddling the edge that faces

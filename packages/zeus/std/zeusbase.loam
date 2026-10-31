@@ -19,6 +19,7 @@ import "zeus_constants.loam"
 import "zeuscore/geometry.loam"
 import "zeuscore/platform.loam"
 import "zeuscore/arena.loam"
+import "zeuscore/nodes.loam"
 import "zeuscore/layout.loam"
 import "zeuscore/metrics.loam"
 import "zeuscore/track.loam"
@@ -420,12 +421,12 @@ fn node_handle(id: int) -> Node {
 
 fn raw_row() -> Node {
     let id = arena.alloc_node(1)
-    arena.nodes[id].dir = 0
+    nodes.lay[id].dir = 0
     return node_handle(id)
 }
 fn raw_col() -> Node {
     let id = arena.alloc_node(1)
-    arena.nodes[id].dir = 1
+    nodes.lay[id].dir = 1
     return node_handle(id)
 }
 fn raw_box() -> Node {
@@ -433,12 +434,12 @@ fn raw_box() -> Node {
 }
 fn raw_label(text: string) -> Node {
     let id = arena.alloc_node(3)
-    arena.nodes[id].text = text
+    nodes.look[id].text = text
     return node_handle(id)
 }
 fn raw_button(text: string) -> Node {
     let id = arena.alloc_node(4)
-    arena.nodes[id].text = text
+    nodes.look[id].text = text
     return node_handle(id)
 }
 fn raw_spacer() -> Node {
@@ -455,47 +456,47 @@ fn raw_toggle() -> Node {
 }
 fn raw_check(markup: string) -> Node {
     let id = arena.alloc_node(8)
-    arena.nodes[id].text = markup
+    nodes.look[id].text = markup
     return node_handle(id)
 }
 fn raw_overlay() -> Node {
     let id = arena.alloc_node(9)
-    arena.nodes[id].pos = 1
-    arena.nodes[id].enter_fade = 1
+    nodes.pin[id].pos = 1
+    nodes.anim[id].enter_fade = 1
     arena.mark_chrome()
     return node_handle(id)
 }
 fn raw_input(placeholder: string) -> Node {
     let id = arena.alloc_node(10)
-    arena.nodes[id].text = placeholder
-    arena.nodes[id].focusable = 1
-    arena.nodes[id].capture_text = 1
+    nodes.look[id].text = placeholder
+    nodes.ui[id].focusable = 1
+    nodes.ui[id].capture_text = 1
     return node_handle(id)
 }
 fn raw_scroll() -> Node {
     let id = arena.alloc_node(11)
-    arena.nodes[id].dir = 1
-    arena.nodes[id].overflow = 2
+    nodes.lay[id].dir = 1
+    nodes.lay[id].overflow = 2
     return node_handle(id)
 }
 fn raw_svg(markup: string) -> Node {
     let id = arena.alloc_node(12)
-    arena.nodes[id].text = markup
+    nodes.look[id].text = markup
     return node_handle(id)
 }
 fn raw_image(src: string) -> Node {
     let id = arena.alloc_node(14)
-    arena.nodes[id].text = src
+    nodes.look[id].text = src
     return node_handle(id)
 }
 fn raw_grid(columns: int, gap: int) -> Node {
     let id = arena.alloc_node(2)
-    arena.nodes[id].grid_cols = u16(columns)
-    arena.nodes[id].gap = u16(gap)
+    nodes.pin[id].grid_cols = u16(columns)
+    nodes.lay[id].gap = u16(gap)
     return node_handle(id)
 }
 fn raw_hover(node: Node, sig: Signal<int>) -> Node {
-    arena.nodes[node.id].hover_sig = sig.id
+    nodes.ui[node.id].hover_sig = sig.id
     return node
 }
 
@@ -506,10 +507,10 @@ fn input_value(node: Node) -> string {
 
 /// Replace the typed buffer for `node`. No-op if it is not an input.
 fn set_input(node: Node, text: string) -> Node {
-    let mut slot = arena.nodes[node.id].edit_slot
+    let mut slot = nodes.ui[node.id].edit_slot
     if slot < 0 {
         arena.stamp_edits()
-        slot = arena.nodes[node.id].edit_slot
+        slot = nodes.ui[node.id].edit_slot
     }
     if slot >= 0 {
         platform.plat_edit_set(slot, text)
@@ -533,8 +534,8 @@ fn intern_kind_mismatch_count() -> int {
 /// Attach `node` under `parent`. Used by `ui_emit` for trailing blocks.
 fn child(parent: Node, node: Node) -> Node {
     arena.ensure()
-    push(arena.nodes[parent.id].kids, node.id)
-    arena.nodes[node.id].parent = parent.id
+    push(nodes.tree[parent.id].kids, node.id)
+    nodes.tree[node.id].parent = parent.id
     arena.mark_tree_at(parent.id)
     return parent
 }
@@ -561,10 +562,10 @@ fn child_count(node: Node) -> int {
     if node.id <= 0 {
         return 0
     }
-    if node.id >= arena.nodes.len {
+    if node.id >= nodes.tree.len {
         return 0
     }
-    return arena.nodes[node.id].kids.len
+    return nodes.tree[node.id].kids.len
 }
 
 /// The `i`-th direct child of `node` (0-based), or the empty handle when out of
@@ -574,22 +575,22 @@ fn child_at(node: Node, i: int) -> Node {
     if node.id <= 0 {
         return node_handle(0)
     }
-    if node.id >= arena.nodes.len {
+    if node.id >= nodes.tree.len {
         return node_handle(0)
     }
     if i < 0 {
         return node_handle(0)
     }
-    if i >= arena.nodes[node.id].kids.len {
+    if i >= nodes.tree[node.id].kids.len {
         return node_handle(0)
     }
-    return node_handle(arena.nodes[node.id].kids[i])
+    return node_handle(nodes.tree[node.id].kids[i])
 }
 
 /// Position of `node` in `parent`'s children, or -1 when it is not one of them.
 fn child_index(parent: Node, node: Node) -> int {
     arena.ensure()
-    return arena.child_index(parent.id, node.id)
+    return nodes.child_index(parent.id, node.id)
 }
 
 /// The parent of `node`, or the empty handle at the root.
@@ -598,10 +599,10 @@ fn parent_of(node: Node) -> Node {
     if node.id <= 0 {
         return node_handle(0)
     }
-    if node.id >= arena.nodes.len {
+    if node.id >= nodes.tree.len {
         return node_handle(0)
     }
-    return node_handle(arena.nodes[node.id].parent)
+    return node_handle(nodes.tree[node.id].parent)
 }
 
 /// Attach `node` under `parent` at `index` (clamped to `0..child_count`).
@@ -619,8 +620,8 @@ fn remove_child(parent: Node, node: Node) -> Node {
     arena.ensure()
     if parent.id > 0 {
         if node.id > 0 {
-            if node.id < arena.nodes.len {
-                if arena.nodes[node.id].parent == parent.id {
+            if node.id < nodes.tree.len {
+                if nodes.tree[node.id].parent == parent.id {
                     arena.child_detach(node.id)
                 }
             }
@@ -647,12 +648,12 @@ fn root(node: Node) -> Node {
 /// Field writers used by `Box` / `apply_int`. Not app-facing.
 
 fn grow(node: Node, weight: int) -> Node {
-    arena.nodes[node.id].grow = weight
+    nodes.lay[node.id].grow = weight
     touched(node.id, 1)
     return node
 }
 fn shrink(node: Node, weight: int) -> Node {
-    arena.nodes[node.id].shrink = weight
+    nodes.lay[node.id].shrink = weight
     touched(node.id, 1)
     return node
 }
@@ -660,91 +661,91 @@ fn shrink(node: Node, weight: int) -> Node {
 /// Inset all four edges. Padding lives on the node rather than on a wrapper
 /// box so a widget stays one node and layout stays one pass.
 fn set_padding(node: Node, all: int) -> Node {
-    arena.nodes[node.id].pad = u16(all)
-    arena.nodes[node.id].pad_t = u16(all)
-    arena.nodes[node.id].pad_r = u16(all)
-    arena.nodes[node.id].pad_b = u16(all)
-    arena.nodes[node.id].pad_l = u16(all)
+    nodes.lay[node.id].pad = u16(all)
+    nodes.lay[node.id].pad_t = u16(all)
+    nodes.lay[node.id].pad_r = u16(all)
+    nodes.lay[node.id].pad_b = u16(all)
+    nodes.lay[node.id].pad_l = u16(all)
     touched(node.id, 1)
     return node
 }
 /// Inset left and right only — the common case for control chrome, where
 /// horizontal breathing room is set independently of height.
 fn set_padding_x(node: Node, px: int) -> Node {
-    arena.nodes[node.id].pad_l = u16(px)
-    arena.nodes[node.id].pad_r = u16(px)
+    nodes.lay[node.id].pad_l = u16(px)
+    nodes.lay[node.id].pad_r = u16(px)
     touched(node.id, 1)
     return node
 }
 /// Inset top and bottom only, the vertical half of `set_padding_x`.
 fn set_padding_y(node: Node, py: int) -> Node {
-    arena.nodes[node.id].pad_t = u16(py)
-    arena.nodes[node.id].pad_b = u16(py)
+    nodes.lay[node.id].pad_t = u16(py)
+    nodes.lay[node.id].pad_b = u16(py)
     touched(node.id, 1)
     return node
 }
 /// Inset one edge. The per-edge setters exist so a recipe can override a
 /// single side without restating the other three.
 fn set_padding_top(node: Node, px: int) -> Node {
-    arena.nodes[node.id].pad_t = u16(px)
+    nodes.lay[node.id].pad_t = u16(px)
     touched(node.id, 1)
     return node
 }
 /// Inset one edge; see `set_padding_top`.
 fn set_padding_right(node: Node, px: int) -> Node {
-    arena.nodes[node.id].pad_r = u16(px)
+    nodes.lay[node.id].pad_r = u16(px)
     touched(node.id, 1)
     return node
 }
 /// Inset one edge; see `set_padding_top`.
 fn set_padding_bottom(node: Node, px: int) -> Node {
-    arena.nodes[node.id].pad_b = u16(px)
+    nodes.lay[node.id].pad_b = u16(px)
     touched(node.id, 1)
     return node
 }
 /// Inset one edge; see `set_padding_top`.
 fn set_padding_left(node: Node, px: int) -> Node {
-    arena.nodes[node.id].pad_l = u16(px)
+    nodes.lay[node.id].pad_l = u16(px)
     touched(node.id, 1)
     return node
 }
 fn margin(node: Node, all: int) -> Node {
-    arena.nodes[node.id].m_t = all
-    arena.nodes[node.id].m_r = all
-    arena.nodes[node.id].m_b = all
-    arena.nodes[node.id].m_l = all
+    nodes.pin[node.id].m_t = all
+    nodes.pin[node.id].m_r = all
+    nodes.pin[node.id].m_b = all
+    nodes.pin[node.id].m_l = all
     touched(node.id, 1)
     return node
 }
 fn marginX(node: Node, px: int) -> Node {
-    arena.nodes[node.id].m_l = px
-    arena.nodes[node.id].m_r = px
+    nodes.pin[node.id].m_l = px
+    nodes.pin[node.id].m_r = px
     touched(node.id, 1)
     return node
 }
 fn marginY(node: Node, py: int) -> Node {
-    arena.nodes[node.id].m_t = py
-    arena.nodes[node.id].m_b = py
+    nodes.pin[node.id].m_t = py
+    nodes.pin[node.id].m_b = py
     touched(node.id, 1)
     return node
 }
 fn marginTop(node: Node, px: int) -> Node {
-    arena.nodes[node.id].m_t = px
+    nodes.pin[node.id].m_t = px
     touched(node.id, 1)
     return node
 }
 fn marginRight(node: Node, px: int) -> Node {
-    arena.nodes[node.id].m_r = px
+    nodes.pin[node.id].m_r = px
     touched(node.id, 1)
     return node
 }
 fn marginBottom(node: Node, px: int) -> Node {
-    arena.nodes[node.id].m_b = px
+    nodes.pin[node.id].m_b = px
     touched(node.id, 1)
     return node
 }
 fn marginLeft(node: Node, px: int) -> Node {
-    arena.nodes[node.id].m_l = px
+    nodes.pin[node.id].m_l = px
     touched(node.id, 1)
     return node
 }
@@ -752,15 +753,15 @@ fn border(node: Node, width: int) -> Node {
     // A negative width is the "unset" sentinel; a non-positive width means no
     // border, so it maps to 0 rather than a u16 trap.
     if width > 0 {
-        arena.nodes[node.id].border_w = u16(width)
+        nodes.lay[node.id].border_w = u16(width)
     } else {
-        arena.nodes[node.id].border_w = 0
+        nodes.lay[node.id].border_w = 0
     }
     touched(node.id, 1)
     return node
 }
 fn border_color(node: Node, rgb: int) -> Node {
-    arena.nodes[node.id].border_c = rgb
+    nodes.look[node.id].border_c = rgb
     touched(node.id, 0)
     return node
 }
@@ -768,20 +769,20 @@ fn border_color(node: Node, rgb: int) -> Node {
 /// Space between children. Gap belongs to the parent, not to each child's
 /// margin, so adding or removing a child cannot leave a stray edge gap.
 fn set_spacing(node: Node, g: int) -> Node {
-    arena.nodes[node.id].gap = u16(g)
+    nodes.lay[node.id].gap = u16(g)
     touched(node.id, 1)
     return node
 }
 /// Row-axis gap for wrapped and grid layouts, where the two axes need
 /// different spacing and one `set_spacing` cannot express it.
 fn set_spacing_row(node: Node, g: int) -> Node {
-    arena.nodes[node.id].gap_row = u16(g)
+    nodes.lay[node.id].gap_row = u16(g)
     touched(node.id, 1)
     return node
 }
 /// Column-axis gap; the other half of `set_spacing_row`.
 fn set_spacing_col(node: Node, g: int) -> Node {
-    arena.nodes[node.id].gap_col = u16(g)
+    nodes.lay[node.id].gap_col = u16(g)
     touched(node.id, 1)
     return node
 }
@@ -790,11 +791,11 @@ fn set_spacing_col(node: Node, g: int) -> Node {
 /// and clears the percentage. `.set_width(-1)` restores the 100% default.
 fn set_width(node: Node, px: int) -> Node {
     if px < 0 {
-        arena.nodes[node.id].explicit_width = -1
-        arena.nodes[node.id].w_pct = 100
+        nodes.lay[node.id].explicit_width = -1
+        nodes.lay[node.id].w_pct = 100
     } else {
-        arena.nodes[node.id].explicit_width = px
-        arena.nodes[node.id].w_pct = -1
+        nodes.lay[node.id].explicit_width = px
+        nodes.lay[node.id].w_pct = -1
     }
     touched(node.id, 1)
     return node
@@ -803,7 +804,7 @@ fn set_width(node: Node, px: int) -> Node {
 /// `height` prop, for code that already holds a `Node` (recipes, engine
 /// paths) and cannot go back through a props struct.
 fn set_height(node: Node, px: int) -> Node {
-    arena.nodes[node.id].explicit_height = px
+    nodes.lay[node.id].explicit_height = px
     touched(node.id, 1)
     return node
 }
@@ -814,7 +815,7 @@ fn set_height(node: Node, px: int) -> Node {
 /// boundary comes from the row width alone, not from text lengths. Cells that
 /// must keep a fixed pixel width use `.set_width(px)` instead.
 fn set_flex_basis_zero(node: Node) -> Node {
-    arena.nodes[node.id].w_pct = 0
+    nodes.lay[node.id].w_pct = 0
     touched(node.id, 1)
     return node
 }
@@ -827,38 +828,38 @@ fn size_px(node: Node, px: int) -> Node {
     return node.set_width(px).set_height(px)
 }
 fn width_pct(node: Node, percent_value: int) -> Node {
-    arena.nodes[node.id].explicit_width = -1
-    arena.nodes[node.id].w_pct = i8(percent_value)
+    nodes.lay[node.id].explicit_width = -1
+    nodes.lay[node.id].w_pct = i8(percent_value)
     touched(node.id, 1)
     return node
 }
 fn height_pct(node: Node, percent_value: int) -> Node {
-    arena.nodes[node.id].h_pct = i8(percent_value)
+    nodes.lay[node.id].h_pct = i8(percent_value)
     touched(node.id, 1)
     return node
 }
 /// Floor the width. Min/max bounds are how a flexible child stays readable
 /// when its parent shrinks, without giving up `grow`.
 fn set_min_width(node: Node, px: int) -> Node {
-    arena.nodes[node.id].min_w = px
+    nodes.lay[node.id].min_w = px
     touched(node.id, 1)
     return node
 }
 /// Cap the width, so a growing child cannot run past a comfortable measure.
 fn set_max_width(node: Node, px: int) -> Node {
-    arena.nodes[node.id].max_w = px
+    nodes.lay[node.id].max_w = px
     touched(node.id, 1)
     return node
 }
 /// Floor the height; the vertical counterpart of `set_min_width`.
 fn set_min_height(node: Node, px: int) -> Node {
-    arena.nodes[node.id].min_h = px
+    nodes.lay[node.id].min_h = px
     touched(node.id, 1)
     return node
 }
 /// Cap the height, so scrollable content clips instead of stretching.
 fn set_max_height(node: Node, px: int) -> Node {
-    arena.nodes[node.id].max_h = px
+    nodes.lay[node.id].max_h = px
     touched(node.id, 1)
     return node
 }
@@ -874,116 +875,116 @@ fn set_max_height(node: Node, px: int) -> Node {
 fn set_auto_columns(node: Node, px: int) -> Node {
     // Both fields move together, so `grid_auto != 0` never leaves a stale
     // floor behind for `grid_cols_at` to pick up.
-    arena.nodes[node.id].grid_auto = 1
-    arena.nodes[node.id].grid_min = 0
+    nodes.pin[node.id].grid_auto = 1
+    nodes.pin[node.id].grid_min = 0
     if px > 0 {
-        arena.nodes[node.id].grid_min = u16(px)
+        nodes.pin[node.id].grid_min = u16(px)
     }
     if px < 0 {
-        arena.nodes[node.id].grid_auto = 0
+        nodes.pin[node.id].grid_auto = 0
     }
     touched(node.id, 1)
     return node
 }
 fn aspect(node: Node, aw: int, ah: int) -> Node {
-    arena.nodes[node.id].aspect_w = aw
-    arena.nodes[node.id].aspect_h = ah
+    nodes.lay[node.id].aspect_w = aw
+    nodes.lay[node.id].aspect_h = ah
     touched(node.id, 1)
     return node
 }
 
 fn flex_row(node: Node) -> Node {
-    if int(arena.nodes[node.id].kind) != 2 {
-        if int(arena.nodes[node.id].kind) != 9 {
-            if int(arena.nodes[node.id].kind) != 11 {
-                arena.nodes[node.id].kind = 1
+    if int(nodes.tree[node.id].kind) != 2 {
+        if int(nodes.tree[node.id].kind) != 9 {
+            if int(nodes.tree[node.id].kind) != 11 {
+                nodes.tree[node.id].kind = 1
             }
         }
     }
-    arena.nodes[node.id].dir = 0
-    arena.nodes[node.id].reverse = 0
+    nodes.lay[node.id].dir = 0
+    nodes.lay[node.id].reverse = 0
     touched(node.id, 1)
     return node
 }
 fn flex_col(node: Node) -> Node {
-    if int(arena.nodes[node.id].kind) != 2 {
-        if int(arena.nodes[node.id].kind) != 9 {
-            if int(arena.nodes[node.id].kind) != 11 {
-                arena.nodes[node.id].kind = 1
+    if int(nodes.tree[node.id].kind) != 2 {
+        if int(nodes.tree[node.id].kind) != 9 {
+            if int(nodes.tree[node.id].kind) != 11 {
+                nodes.tree[node.id].kind = 1
             }
         }
     }
-    arena.nodes[node.id].dir = 1
-    arena.nodes[node.id].reverse = 0
+    nodes.lay[node.id].dir = 1
+    nodes.lay[node.id].reverse = 0
     touched(node.id, 1)
     return node
 }
 fn flex_row_reverse(node: Node) -> Node {
-    arena.nodes[node.id].dir = 0
-    arena.nodes[node.id].reverse = 1
+    nodes.lay[node.id].dir = 0
+    nodes.lay[node.id].reverse = 1
     touched(node.id, 1)
     return node
 }
 fn flex_col_reverse(node: Node) -> Node {
-    arena.nodes[node.id].dir = 1
-    arena.nodes[node.id].reverse = 1
+    nodes.lay[node.id].dir = 1
+    nodes.lay[node.id].reverse = 1
     touched(node.id, 1)
     return node
 }
 fn flex_wrap(node: Node) -> Node {
-    arena.nodes[node.id].wrap = 1
+    nodes.lay[node.id].wrap = 1
     touched(node.id, 1)
     return node
 }
 fn align_self(node: Node, mode: int) -> Node {
-    arena.nodes[node.id].align_self = i8(mode)
+    nodes.pin[node.id].align_self = i8(mode)
     touched(node.id, 1)
     return node
 }
 fn span(node: Node, columns: int) -> Node {
-    arena.nodes[node.id].span = u16(columns)
+    nodes.pin[node.id].span = u16(columns)
     touched(node.id, 1)
     return node
 }
 
 fn justify(node: Node, mode: int) -> Node {
-    arena.nodes[node.id].justify = u8(mode)
+    nodes.lay[node.id].justify = u8(mode)
     touched(node.id, 1)
     return node
 }
 fn align(node: Node, mode: int) -> Node {
-    arena.nodes[node.id].align = u8(mode)
+    nodes.lay[node.id].align = u8(mode)
     touched(node.id, 1)
     return node
 }
 
 fn position(node: Node, mode: int) -> Node {
-    arena.nodes[node.id].pos = u8(mode)
+    nodes.pin[node.id].pos = u8(mode)
     touched(node.id, 1)
     return node
 }
 fn top(node: Node, px: int) -> Node {
-    arena.nodes[node.id].pin_t = px
+    nodes.pin[node.id].pin_t = px
     touched(node.id, 1)
     return node
 }
 fn right(node: Node, px: int) -> Node {
-    arena.nodes[node.id].pin_r = px
+    nodes.pin[node.id].pin_r = px
     touched(node.id, 1)
     return node
 }
 fn bottom(node: Node, px: int) -> Node {
-    arena.nodes[node.id].pin_b = px
+    nodes.pin[node.id].pin_b = px
     touched(node.id, 1)
     return node
 }
 fn left(node: Node, px: int) -> Node {
-    arena.nodes[node.id].pin_l = px
+    nodes.pin[node.id].pin_l = px
     touched(node.id, 1)
     return node
 }
 fn z_index(node: Node, z: int) -> Node {
-    arena.nodes[node.id].z_index = i16(z)
+    nodes.pin[node.id].z_index = i16(z)
     touched(node.id, 0)
     return node
 }
@@ -992,26 +993,26 @@ fn z_index(node: Node, z: int) -> Node {
 /// is the post-parse form the scene writes — call sites pass `"#rrggbb"`
 /// through the `background` prop and `parse_hex_color` converts once.
 fn set_background(node: Node, rgb: int) -> Node {
-    arena.nodes[node.id].bg = rgb
+    nodes.look[node.id].bg = rgb
     touched(node.id, 0)
     return node
 }
 
 /// Second stop of a vertical gradient (`bg` → `bg2`). Solid fill when unset.
 fn set_background_end(node: Node, rgb: int) -> Node {
-    arena.nodes[node.id].bg2 = rgb
+    nodes.look[node.id].bg2 = rgb
     touched(node.id, 0)
     return node
 }
 /// Foreground (text and glyph) color as a packed rgb int; the `color` prop
 /// is the string-facing form.
 fn set_color(node: Node, rgb: int) -> Node {
-    arena.nodes[node.id].fg = rgb
+    nodes.look[node.id].fg = rgb
     touched(node.id, 0)
     return node
 }
 fn radius(node: Node, px: int) -> Node {
-    arena.nodes[node.id].radius = u16(px)
+    nodes.look[node.id].radius = u16(px)
     touched(node.id, 0)
     return node
 }
@@ -1019,43 +1020,43 @@ fn radius(node: Node, px: int) -> Node {
 /// All four corners at once, clockwise from the top-left. `radius` stays the
 /// uniform fallback for anything not set here.
 fn radius4(node: Node, tl: int, tr: int, br: int, bl: int) -> Node {
-    arena.set_corners(node.id, tl, tr, br, bl)
+    nodes.set_corners(node.id, tl, tr, br, bl)
     return node
 }
 
 /// One corner: 0 top-left, 1 top-right, 2 bottom-right, 3 bottom-left.
 fn radius_corner(node: Node, corner: int, px: int) -> Node {
-    arena.set_corner(node.id, corner, px)
+    nodes.set_corner(node.id, corner, px)
     return node
 }
 
 /// Round the top pair of corners, near `radius`'s bookkeeping: a top-rounded
 /// sheet / tab header, with the bottom left square or whatever `radius` says.
 fn radius_top(node: Node, px: int) -> Node {
-    arena.set_corner(node.id, 0, px)
-    arena.set_corner(node.id, 1, px)
+    nodes.set_corner(node.id, 0, px)
+    nodes.set_corner(node.id, 1, px)
     return node
 }
 
 /// Round the bottom pair of corners.
 fn radius_bottom(node: Node, px: int) -> Node {
-    arena.set_corner(node.id, 2, px)
-    arena.set_corner(node.id, 3, px)
+    nodes.set_corner(node.id, 2, px)
+    nodes.set_corner(node.id, 3, px)
     return node
 }
 
 fn opacity(node: Node, percent_value: int) -> Node {
-    arena.nodes[node.id].opacity = i16(percent_value)
+    nodes.look[node.id].opacity = i16(percent_value)
     touched(node.id, 0)
     return node
 }
 fn overflow(node: Node, mode: int) -> Node {
-    arena.nodes[node.id].overflow = u8(mode)
+    nodes.lay[node.id].overflow = u8(mode)
     touched(node.id, 1)
     return node
 }
 fn font(node: Node, px: int) -> Node {
-    arena.nodes[node.id].font = u16(px)
+    nodes.look[node.id].font = u16(px)
     touched(node.id, 1)
     return node
 }
@@ -1063,7 +1064,7 @@ fn font(node: Node, px: int) -> Node {
 /// Rotate a text node `deg` clockwise on screen around its top-left corner
 /// (0 = horizontal). Used for chart axis labels that must not collide.
 fn text_rot(node: Node, deg: int) -> Node {
-    arena.nodes[node.id].text_rot = u16(deg)
+    nodes.look[node.id].text_rot = u16(deg)
     touched(node.id, 0)
     return node
 }
@@ -1074,7 +1075,7 @@ fn text_rot(node: Node, deg: int) -> Node {
 /// a row deficit, so `Table` cells, `Select` triggers, chips, and tabs
 /// narrow rather than pushing siblings onto a second line.
 fn text_ellipsis(node: Node) -> Node {
-    arena.nodes[node.id].ellipsis = 1
+    nodes.look[node.id].ellipsis = 1
     touched(node.id, 1)
     return node
 }
@@ -1084,13 +1085,13 @@ fn text_ellipsis(node: Node) -> Node {
 /// layout when the predicate is false.
 
 fn bind(label: Node, sig: Signal<int>) -> Node {
-    arena.nodes[label.id].bind_sig = sig.id
+    nodes.ui[label.id].bind_sig = sig.id
     /* A bound number is measured as text on a label / button / input, so a
        write can change the box; flag it so the write re-runs layout. Elsewhere
        (a switch's tween, a scroll offset) the bind is paint-only. */
-    let k = int(arena.nodes[label.id].kind)
+    let k = int(nodes.tree[label.id].kind)
     if k == 3 || k == 4 || k == 10 {
-        arena.mark_sig_layout(sig.id)
+        arena.mark_sig_layout_node(sig.id, label.id)
     }
     // The chrome pass reads a bind (a switch's tween) with no effect in between,
     // so index it: a write marks the bound node, not the whole frame.
@@ -1107,7 +1108,7 @@ fn click() -> int {
 /// `on_click`; event codes keep the arena free of per-event fields.
 fn on_event(node: Node, event: int, handler: fn()) -> Node {
     if event == 1 {
-        arena.nodes[node.id].click_fn = intern_fn(handler)
+        nodes.ui[node.id].click_fn = intern_fn(handler)
     }
     return node
 }
@@ -1118,25 +1119,25 @@ fn on_click(node: Node, handler: fn()) -> Node {
 }
 
 fn show(node: Node, sig: Signal<int>) -> Node {
-    arena.nodes[node.id].show_sig = sig.id
-    arena.nodes[node.id].show_mode = 0
-    arena.mark_sig_layout(sig.id)
+    nodes.tree[node.id].show_sig = sig.id
+    nodes.tree[node.id].show_mode = 0
+    arena.mark_sig_layout_node(sig.id, node.id)
     arena.mark_chrome()
     return node
 }
 fn show_eq(node: Node, sig: Signal<int>, value: int) -> Node {
-    arena.nodes[node.id].show_sig = sig.id
-    arena.nodes[node.id].show_mode = 1
-    arena.nodes[node.id].show_val = value
-    arena.mark_sig_layout(sig.id)
+    nodes.tree[node.id].show_sig = sig.id
+    nodes.tree[node.id].show_mode = 1
+    nodes.tree[node.id].show_val = value
+    arena.mark_sig_layout_node(sig.id, node.id)
     arena.mark_chrome()
     return node
 }
 fn show_ne(node: Node, sig: Signal<int>, value: int) -> Node {
-    arena.nodes[node.id].show_sig = sig.id
-    arena.nodes[node.id].show_mode = 2
-    arena.nodes[node.id].show_val = value
-    arena.mark_sig_layout(sig.id)
+    nodes.tree[node.id].show_sig = sig.id
+    nodes.tree[node.id].show_mode = 2
+    nodes.tree[node.id].show_val = value
+    arena.mark_sig_layout_node(sig.id, node.id)
     arena.mark_chrome()
     return node
 }
@@ -1245,7 +1246,7 @@ fn install_keys(node: Node, keys: []KeyBind) -> Node {
         if result.is_some(k.run) {
             kfn = intern_fn(k.run.val)
         } else {
-            kfn = arena.nodes[node.id].click_fn
+            kfn = nodes.ui[node.id].click_fn
         }
         install_key(node, k.chord, k.action, kfn, k.global)
     }
@@ -1253,17 +1254,17 @@ fn install_keys(node: Node, keys: []KeyBind) -> Node {
 }
 
 fn key_context(node: Node, name: string) -> Node {
-    arena.nodes[node.id].key_ctx = platform.plat_key_intern(name)
+    nodes.ui[node.id].key_ctx = platform.plat_key_intern(name)
     return node
 }
 fn focusable(node: Node) -> Node {
-    arena.nodes[node.id].focusable = 1
+    nodes.ui[node.id].focusable = 1
     touched(node.id, 1)
     return node
 }
 fn capture_text(node: Node) -> Node {
-    arena.nodes[node.id].capture_text = 1
-    arena.nodes[node.id].focusable = 1
+    nodes.ui[node.id].capture_text = 1
+    nodes.ui[node.id].focusable = 1
     return node
 }
 
@@ -1272,15 +1273,15 @@ fn capture_text(node: Node) -> Node {
 /// Implies `.focusable()` — a node with a key binding needs focus to receive
 /// it, so components don't chain both.
 fn key(node: Node, spec: string, action: string) -> Node {
-    let mut ctx = arena.nodes[node.id].key_ctx
+    let mut ctx = nodes.ui[node.id].key_ctx
     if ctx == 0 {
         ctx = platform.plat_key_intern_action(action)
-        arena.nodes[node.id].key_ctx = ctx
+        nodes.ui[node.id].key_ctx = ctx
     }
     if ctx != 0 {
         platform.plat_map_key(spec, action, ctx)
     }
-    arena.nodes[node.id].focusable = 1
+    nodes.ui[node.id].focusable = 1
     return node
 }
 
@@ -1297,7 +1298,7 @@ fn on_key_toggle(node: Node, action: string, sig: Signal<int>) -> Node {
 }
 
 fn on_key_fn(node: Node, action: string) -> Node {
-    return on_action(node, action, signal_handle(0), 5, arena.nodes[node.id].click_fn)
+    return on_action(node, action, signal_handle(0), 5, nodes.ui[node.id].click_fn)
 }
 
 fn global_key_set(action: string, sig: Signal<int>, value: int) {
@@ -1314,7 +1315,7 @@ fn pulse(node: Node) -> Node {
 }
 
 fn hover_fade(node: Node) -> Node {
-    arena.nodes[node.id].hover_fade = 1
+    nodes.anim[node.id].hover_fade = 1
     touched(node.id, 0)
     return node
 }
@@ -1323,7 +1324,7 @@ fn hover_fade(node: Node) -> Node {
 /// top of the press wash. Needs `press = true` on the node; `Button` sets
 /// both. No layout pass reads the scale, so pressing never reflows.
 fn press_scale(node: Node) -> Node {
-    arena.nodes[node.id].press_scale = 1
+    nodes.anim[node.id].press_scale = 1
     touched(node.id, 0)
     return node
 }
@@ -1339,14 +1340,14 @@ fn hover_lift(node: Node, level: int) -> Node {
     if l > 4 {
         l = 4
     }
-    arena.nodes[node.id].lift = u8(l)
+    nodes.look[node.id].lift = u8(l)
     hover_fade(node)
     touched(node.id, 0)
     return node
 }
 
 fn hover_off(node: Node) -> Node {
-    arena.nodes[node.id].hover_fade = -1
+    nodes.anim[node.id].hover_fade = -1
     touched(node.id, 0)
     return node
 }
@@ -1372,7 +1373,7 @@ fn exit_scale(node: Node, to: int = 95, ms: int = 160) -> Node {
 }
 
 fn enter_fade(node: Node) -> Node {
-    arena.nodes[node.id].enter_fade = 1
+    nodes.anim[node.id].enter_fade = 1
     arena.mark_chrome()
     touched(node.id, 0)
     return node
@@ -1383,7 +1384,7 @@ fn enter_fade(node: Node) -> Node {
 /// gives the box its full height at once, so an opening disclosure never runs
 /// the layout pass per frame. Hiding snaps (there is no reveal-out).
 fn enter_reveal(node: Node) -> Node {
-    arena.nodes[node.id].reveal = 1
+    nodes.anim[node.id].reveal = 1
     arena.mark_chrome()
     touched(node.id, 0)
     return node
@@ -1501,30 +1502,30 @@ fn spin(node: Node, period: int) -> Node {
 /// Current animated paint values (tests / the inspector). Layout never reads
 /// these, so reading one cannot cause a layout change.
 fn motion_scale(node: Node) -> int {
-    return int(arena.nodes[node.id].an_scale)
+    return int(nodes.anim[node.id].an_scale)
 }
 fn motion_x(node: Node) -> int {
-    return int(arena.nodes[node.id].an_tx)
+    return int(nodes.anim[node.id].an_tx)
 }
 fn motion_y(node: Node) -> int {
-    return int(arena.nodes[node.id].an_ty)
+    return int(nodes.anim[node.id].an_ty)
 }
 fn motion_rot(node: Node) -> int {
-    return int(arena.nodes[node.id].an_rot)
+    return int(nodes.anim[node.id].an_rot)
 }
 /// The rotation a spinner paints right now (frame-clock phase).
 fn motion_spin(node: Node) -> int {
-    let per = int(arena.nodes[node.id].spin_ms)
+    let per = int(nodes.look[node.id].spin_ms)
     if per <= 0 {
         return 0
     }
     return (arena.now_ms % per) * 360 / per
 }
 fn motion_opacity(node: Node) -> int {
-    return int(arena.nodes[node.id].opacity)
+    return int(nodes.look[node.id].opacity)
 }
 fn motion_radius(node: Node) -> int {
-    return int(arena.nodes[node.id].radius)
+    return int(nodes.look[node.id].radius)
 }
 fn keys(node: Node, sig: Signal<int>, lo: int, hi: int) -> Node {
     return node.key("right", "slider.inc").key("left", "slider.dec").focusable().on_range("slider.inc", sig, 1, lo, hi).on_range("slider.dec", sig, -1, lo, hi)
@@ -1664,25 +1665,25 @@ fn layout_target_px(setter: int, v: int) -> int {
 fn layout_read(node_id: int, setter: int) -> int {
     match setter {
         SET.Width => {
-            if arena.nodes[node_id].explicit_width >= 0 {
-                return arena.nodes[node_id].explicit_width
+            if nodes.lay[node_id].explicit_width >= 0 {
+                return nodes.lay[node_id].explicit_width
             }
-            return arena.nodes[node_id].w
+            return nodes.box[node_id].w
         }
         SET.Height => {
-            if arena.nodes[node_id].explicit_height >= 0 {
-                return arena.nodes[node_id].explicit_height
+            if nodes.lay[node_id].explicit_height >= 0 {
+                return nodes.lay[node_id].explicit_height
             }
-            return arena.nodes[node_id].h
+            return nodes.box[node_id].h
         }
-        SET.MinWidth => { return arena.nodes[node_id].min_w }
-        SET.MaxWidth => { return arena.nodes[node_id].max_w }
-        SET.MinHeight => { return arena.nodes[node_id].min_h }
-        SET.MaxHeight => { return arena.nodes[node_id].max_h }
-        SET.Left => { return arena.nodes[node_id].pin_l }
-        SET.Top => { return arena.nodes[node_id].pin_t }
-        SET.Right => { return arena.nodes[node_id].pin_r }
-        SET.Bottom => { return arena.nodes[node_id].pin_b }
+        SET.MinWidth => { return nodes.lay[node_id].min_w }
+        SET.MaxWidth => { return nodes.lay[node_id].max_w }
+        SET.MinHeight => { return nodes.lay[node_id].min_h }
+        SET.MaxHeight => { return nodes.lay[node_id].max_h }
+        SET.Left => { return nodes.pin[node_id].pin_l }
+        SET.Top => { return nodes.pin[node_id].pin_t }
+        SET.Right => { return nodes.pin[node_id].pin_r }
+        SET.Bottom => { return nodes.pin[node_id].pin_b }
         _ => { return 0 }
     }
 }
@@ -1696,10 +1697,10 @@ fn apply_int_px(node_id: int, setter: int, v: int) {
         SET.MaxWidth => { set_max_width(n, v) }
         SET.MinHeight => { set_min_height(n, v) }
         SET.MaxHeight => { set_max_height(n, v) }
-        SET.Left => { arena.nodes[node_id].pin_l = v }
-        SET.Top => { arena.nodes[node_id].pin_t = v }
-        SET.Right => { arena.nodes[node_id].pin_r = v }
-        SET.Bottom => { arena.nodes[node_id].pin_b = v }
+        SET.Left => { nodes.pin[node_id].pin_l = v }
+        SET.Top => { nodes.pin[node_id].pin_t = v }
+        SET.Right => { nodes.pin[node_id].pin_r = v }
+        SET.Bottom => { nodes.pin[node_id].pin_b = v }
         _ => {}
     }
 }
@@ -1793,7 +1794,7 @@ fn apply_int_value(node_id: int, setter: int, v: int) {
         SET.Radius => { radius(n, scaled(v)) }
         SET.RadiusTop => { radius_top(n, scaled(v)) }
         SET.RadiusBottom => { radius_bottom(n, scaled(v)) }
-        SET.Border => { arena.nodes[node_id].border_w = u16(v) }
+        SET.Border => { nodes.lay[node_id].border_w = u16(v) }
         SET.Grow => { grow(n, v) }
         SET.AlignItems => { align(n, v) }
         SET.Justify => { justify(n, v) }
@@ -1820,20 +1821,20 @@ fn apply_int_value(node_id: int, setter: int, v: int) {
         }
         SET.Safe => {
             match v {
-                0 => { arena.nodes[node_id].safe = u8(0) }
-                _ => { arena.nodes[node_id].safe = u8(1) }
+                0 => { nodes.pin[node_id].safe = u8(0) }
+                _ => { nodes.pin[node_id].safe = u8(1) }
             }
         }
-        SET.Position => { arena.nodes[node_id].pos = u8(v) }
-        SET.Left => { arena.nodes[node_id].pin_l = scaled(v) }
-        SET.Top => { arena.nodes[node_id].pin_t = scaled(v) }
-        SET.Right => { arena.nodes[node_id].pin_r = scaled(v) }
-        SET.Bottom => { arena.nodes[node_id].pin_b = scaled(v) }
-        SET.ZIndex => { arena.nodes[node_id].z_index = i16(v) }
+        SET.Position => { nodes.pin[node_id].pos = u8(v) }
+        SET.Left => { nodes.pin[node_id].pin_l = scaled(v) }
+        SET.Top => { nodes.pin[node_id].pin_t = scaled(v) }
+        SET.Right => { nodes.pin[node_id].pin_r = scaled(v) }
+        SET.Bottom => { nodes.pin[node_id].pin_b = scaled(v) }
+        SET.ZIndex => { nodes.pin[node_id].z_index = i16(v) }
         SET.Shrink => { shrink(n, v) }
         SET.ShowOn => {
             match v {
-                0 | 1 => { arena.nodes[node_id].show_on = u8(v) }
+                0 | 1 => { nodes.tree[node_id].show_on = u8(v) }
                 _ => {}
             }
         }
@@ -1842,27 +1843,47 @@ fn apply_int_value(node_id: int, setter: int, v: int) {
         SET.Overflow => { overflow(n, v) }
         SET.WidthPct => { width_pct(n, v) }
         SET.HeightPct => {
-            arena.nodes[node_id].explicit_height = -1
+            nodes.lay[node_id].explicit_height = -1
             height_pct(n, v)
         }
-        SET.Ellipsis => { arena.nodes[node_id].ellipsis = u8(v) }
-        SET.CornerTL => { arena.set_corner(node_id, 0, scaled(v)) }
-        SET.CornerTR => { arena.set_corner(node_id, 1, scaled(v)) }
-        SET.CornerBR => { arena.set_corner(node_id, 2, scaled(v)) }
-        SET.CornerBL => { arena.set_corner(node_id, 3, scaled(v)) }
-        SET.WrapFlag => { arena.nodes[node_id].wrap = u8(v) }
-        SET.SvgFit => { arena.nodes[node_id].font = u16(v) }
-        SET.SvgLazy => { arena.nodes[node_id].wrap = u8(v) }
+        SET.Ellipsis => { nodes.look[node_id].ellipsis = u8(v) }
+        SET.CornerTL => { nodes.set_corner(node_id, 0, scaled(v)) }
+        SET.CornerTR => { nodes.set_corner(node_id, 1, scaled(v)) }
+        SET.CornerBR => { nodes.set_corner(node_id, 2, scaled(v)) }
+        SET.CornerBL => { nodes.set_corner(node_id, 3, scaled(v)) }
+        SET.WrapFlag => { nodes.lay[node_id].wrap = u8(v) }
+        SET.FloatTo => {
+            // A floating box is out of flow: the solver sizes it as an
+            // absolute child, then `place_float` moves it to its target.
+            nodes.pin[node_id].fl_to = u8(v)
+            nodes.pin[node_id].pos = u8(if v != 0 { 1 } else { 0 })
+        }
+        SET.FloatPoints => { nodes.pin[node_id].fl_pts = u8(v) }
+        SET.FloatX => { nodes.pin[node_id].fl_x = i16(scaled(v)) }
+        SET.FloatY => { nodes.pin[node_id].fl_y = i16(scaled(v)) }
+        SET.FloatExpandW => { nodes.pin[node_id].fl_ew = i16(scaled(v)) }
+        SET.FloatExpandH => { nodes.pin[node_id].fl_eh = i16(scaled(v)) }
+        SET.FloatClip => { nodes.pin[node_id].fl_clip = u8(v) }
+        SET.PointerPass => { nodes.ui[node_id].ptr_pass = u8(v) }
+        SET.Flip => { nodes.pin[node_id].flip = u8(v) }
+        SET.TextAlign => { nodes.look[node_id].t_align = u8(v) }
+        SET.BorderTop => { nodes.look[node_id].bd_t = u8(scaled(v)) }
+        SET.BorderRight => { nodes.look[node_id].bd_r = u8(scaled(v)) }
+        SET.BorderBottom => { nodes.look[node_id].bd_b = u8(scaled(v)) }
+        SET.BorderLeft => { nodes.look[node_id].bd_l = u8(scaled(v)) }
+        SET.BorderBetween => { nodes.look[node_id].bd_between = u8(scaled(v)) }
+        SET.SvgFit => { nodes.look[node_id].font = u16(v) }
+        SET.SvgLazy => { nodes.lay[node_id].wrap = u8(v) }
         SET.Elevation => {
             if v <= 0 {
-                arena.nodes[node_id].elev = u8(0)
+                nodes.look[node_id].elev = u8(0)
             } else {
                 let mut lv = v
                 if lv > 4 {
                     lv = 4
                 }
-                arena.nodes[node_id].elev = u8(lv)
-                arena.nodes[node_id].elev_c = role_color(ROLE.Shadow)
+                nodes.look[node_id].elev = u8(lv)
+                nodes.look[node_id].elev_c = role_color(ROLE.Shadow)
             }
         }
         _ => {}
@@ -1882,17 +1903,17 @@ fn apply_int_value(node_id: int, setter: int, v: int) {
 /// else answers false and is written.
 fn apply_holds(node_id: int, setter: int, v: int) -> bool {
     match setter {
-        SET.Opacity => { return int(arena.nodes[node_id].opacity) == v }
-        SET.Background => { return arena.nodes[node_id].bg == v }
-        SET.Color => { return arena.nodes[node_id].fg == v }
-        SET.BorderColor => { return arena.nodes[node_id].border_c == v }
-        SET.ZIndex => { return int(arena.nodes[node_id].z_index) == v }
-        SET.Grow => { return arena.nodes[node_id].grow == v }
-        SET.Font => { return v > 0 && int(arena.nodes[node_id].font) == scaled(v) }
-        SET.Height => { return v >= 0 && arena.nodes[node_id].explicit_height == scaled(v) }
+        SET.Opacity => { return int(nodes.look[node_id].opacity) == v }
+        SET.Background => { return nodes.look[node_id].bg == v }
+        SET.Color => { return nodes.look[node_id].fg == v }
+        SET.BorderColor => { return nodes.look[node_id].border_c == v }
+        SET.ZIndex => { return int(nodes.pin[node_id].z_index) == v }
+        SET.Grow => { return nodes.lay[node_id].grow == v }
+        SET.Font => { return v > 0 && int(nodes.look[node_id].font) == scaled(v) }
+        SET.Height => { return v >= 0 && nodes.lay[node_id].explicit_height == scaled(v) }
         SET.Width => {
-            return v >= 0 && arena.nodes[node_id].explicit_width == scaled(v) &&
-                   int(arena.nodes[node_id].w_pct) == -1
+            return v >= 0 && nodes.lay[node_id].explicit_width == scaled(v) &&
+                   int(nodes.lay[node_id].w_pct) == -1
         }
         _ => { return false }
     }
@@ -1905,7 +1926,9 @@ fn setter_is_paint_only(setter: int) -> bool {
     match setter {
         SET.Radius | SET.RadiusTop | SET.RadiusBottom | SET.Opacity | SET.Background | SET.Color | SET.BorderColor |
         SET.ZIndex | SET.SvgFit | SET.SvgLazy | SET.Elevation |
-        SET.CornerTL | SET.CornerTR | SET.CornerBR | SET.CornerBL => { return true }
+        SET.CornerTL | SET.CornerTR | SET.CornerBR | SET.CornerBL |
+        SET.TextAlign | SET.PointerPass | SET.BorderTop | SET.BorderRight | SET.BorderBottom |
+        SET.BorderLeft | SET.BorderBetween => { return true }
         _ => { return false }
     }
 }
@@ -1915,25 +1938,25 @@ fn apply_str(node_id: int, setter: int, v: string) {
         SET.Text => {
             // The same text again (a thunk that re-ran for another reason) is
             // no write: no re-measure, no layout, no repaint.
-            if arena.nodes[node_id].text == v {
+            if nodes.look[node_id].text == v {
                 return
             }
-            arena.nodes[node_id].text = v
+            nodes.look[node_id].text = v
             arena.note_prop_write(node_id, 1)
         }
         // The semantic tree is re-dumped when layout ran (`engine_layout_gen`),
         // so a label or role reports as a layout write: its boundary re-solves
         // and the mirror sees the change.
         SET.A11yLabel => {
-            arena.nodes[node_id].a11y_label = v
+            nodes.ui[node_id].a11y_label = v
             arena.note_prop_write(node_id, 1)
         }
         SET.A11yRole => {
-            arena.nodes[node_id].a11y_role = v
+            nodes.ui[node_id].a11y_role = v
             arena.note_prop_write(node_id, 1)
         }
         // Read under the pointer, never painted: nothing to mark.
-        SET.Cursor => { arena.nodes[node_id].cursor = v }
+        SET.Cursor => { nodes.look[node_id].cursor = v }
         _ => { apply_int(node_id, setter, parse_hex_color(v)) }
     }
 }
@@ -2448,10 +2471,10 @@ fn node_effect(node: Node, body: fn()) {
 /// Set `id`'s focusable flag from an effect, reporting the node when it moved
 /// (the semantic tree carries it, and follows layout).
 fn set_focusable(id: int, on: int) {
-    if int(arena.nodes[id].focusable) == on {
+    if int(nodes.ui[id].focusable) == on {
         return
     }
-    arena.nodes[id].focusable = u8(on)
+    nodes.ui[id].focusable = u8(on)
     arena.note_prop_write(id, 1)
 }
 
@@ -2484,8 +2507,8 @@ fn install_behaviour(node: Node, p: BoxProps) {
         let c = p.checked.val
         node_effect(node, || {
             let st = if c() { 2 } else { 1 }
-            if int(arena.nodes[node_id].a11y_state) != st {
-                arena.nodes[node_id].a11y_state = u8(st)
+            if int(nodes.ui[node_id].a11y_state) != st {
+                nodes.ui[node_id].a11y_state = u8(st)
                 // The semantic tree follows layout (see `apply_str`).
                 arena.note_prop_write(node_id, 1)
             }
@@ -2578,8 +2601,8 @@ fn rect(r: Ref) -> Rect {
     if id <= 0 {
         return Rect {}
     }
-    return Rect { x: arena.nodes[id].x, y: arena.nodes[id].y,
-                  w: arena.nodes[id].w, h: arena.nodes[id].h }
+    return Rect { x: nodes.box[id].x, y: nodes.box[id].y,
+                  w: nodes.box[id].w, h: nodes.box[id].h }
 }
 
 /// Number of children of `r`.
@@ -2588,20 +2611,20 @@ fn child_total(r: Ref) -> int {
     if id <= 0 {
         return 0
     }
-    return arena.nodes[id].kids.len
+    return nodes.tree[id].kids.len
 }
 
 /// The box of `r`'s child `i`, relative to `r`'s content box (inside its
 /// padding and border): where a pinned child of `r` would sit over it.
 fn child_rect(r: Ref, i: int) -> Rect {
     let id = ref_id(r)
-    if id <= 0 || i < 0 || i >= arena.nodes[id].kids.len {
+    if id <= 0 || i < 0 || i >= nodes.tree[id].kids.len {
         return Rect {}
     }
-    let k = arena.nodes[id].kids[i]
-    return Rect { x: arena.nodes[k].x - arena.content_x(id),
-                  y: arena.nodes[k].y - arena.content_y(id),
-                  w: arena.nodes[k].w, h: arena.nodes[k].h }
+    let k = nodes.tree[id].kids[i]
+    return Rect { x: nodes.box[k].x - arena.content_x(id),
+                  y: nodes.box[k].y - arena.content_y(id),
+                  w: nodes.box[k].w, h: nodes.box[k].h }
 }
 
 /// Run `body` after any layout that changed `r`'s width or height, the first
@@ -2616,11 +2639,11 @@ fn on_resize(r: Ref, body: fn()) {
     }
     arena.set_list_fn(id, intern_fn(|| {
         // Both sides in one stamp: a height-only resize counts too.
-        let key = arena.nodes[id].w * 65536 + arena.nodes[id].h
-        if key == arena.nodes[id].list_gen {
+        let key = nodes.box[id].w * 65536 + nodes.box[id].h
+        if key == nodes.tree[id].list_gen {
             return
         }
-        arena.nodes[id].list_gen = key
+        nodes.tree[id].list_gen = key
         body()
     }))
     arena.host_geo(id)
@@ -2673,8 +2696,8 @@ fn apple_keys() -> bool {
 fn child_ref(r: Ref, i: int) -> Ref {
     let out = ref()
     let id = ref_id(r)
-    if id > 0 && i >= 0 && i < arena.nodes[id].kids.len {
-        ref_fill(out, arena.nodes[id].kids[i])
+    if id > 0 && i >= 0 && i < nodes.tree[id].kids.len {
+        ref_fill(out, nodes.tree[id].kids[i])
     }
     return out
 }
@@ -2684,7 +2707,7 @@ fn child_ref(r: Ref, i: int) -> Ref {
 fn set_on_click(r: Ref, h: fn()) {
     let id = ref_id(r)
     if id > 0 {
-        arena.nodes[id].click_fn = intern_fn(h)
+        nodes.ui[id].click_fn = intern_fn(h)
     }
 }
 
@@ -2706,6 +2729,27 @@ fn anchor(r: Ref, target: Ref, side: int, gap: int) {
     }
 }
 
+/// Let the pointer pass through `r` to what lies beneath: it takes no hit
+/// and never occludes hover. For tooltips and
+/// decorations floated over their own trigger.
+fn pointer_through(r: Ref) {
+    let id = ref_id(r)
+    if id > 0 {
+        nodes.ui[id].ptr_pass = u8(1)
+    }
+}
+
+/// Name the node a `Style(floating = Float(to = FloatTo.Anchor, ...))` box
+/// attaches to. Call from `on_mount`.
+fn float_on(r: Ref, target: Ref) {
+    let id = ref_id(r)
+    let t = ref_id(target)
+    if id > 0 && t > 0 {
+        nodes.pin[id].anchor = t
+        arena.mark_layout()
+    }
+}
+
 /// Jump `r`'s exit fade to its end, so a closing panel is gone this frame.
 fn skip_exit(r: Ref) {
     arena.snap_exit(ref_id(r))
@@ -2724,9 +2768,9 @@ fn slot_count_role(role: string) -> int {
         return 0
     }
     let mut n = 0
-    let kids = arena.nodes[pid].kids
+    let kids = nodes.tree[pid].kids
     for i in 0..kids.len {
-        if arena.nodes[kids[i]].a11y_role == role {
+        if nodes.ui[kids[i]].a11y_role == role {
             n = n + 1
         }
     }
@@ -2809,12 +2853,12 @@ struct PaintRest {
 
 fn paint_rest(id: int) -> PaintRest {
     return PaintRest {
-        bg: arena.nodes[id].bg,
-        fg: arena.nodes[id].fg,
-        opacity: int(arena.nodes[id].opacity),
-        border_w: int(arena.nodes[id].border_w),
-        border_c: arena.nodes[id].border_c,
-        elev: int(arena.nodes[id].elev),
+        bg: nodes.look[id].bg,
+        fg: nodes.look[id].fg,
+        opacity: int(nodes.look[id].opacity),
+        border_w: int(nodes.lay[id].border_w),
+        border_c: nodes.look[id].border_c,
+        elev: int(nodes.look[id].elev),
     }
 }
 
@@ -2891,7 +2935,7 @@ fn style_run(node_id: int, style: fn() -> Style) {
 /// writes nothing, so a key that goes from present to absent keeps its last
 /// value: give both branches a value (`if on { x } else { y }`).
 fn style_apply(id: int, a: Style, b: Style) {
-    let kind = int(arena.nodes[id].kind)
+    let kind = int(nodes.tree[id].kind)
     st_int(id, SET.ShowOn, a.display, b.display)
     // Direction re-kinds a label into a box, so only containers take it.
     if kind == 1 || kind == 9 || kind == 11 {
@@ -2931,6 +2975,7 @@ fn style_apply(id: int, a: Style, b: Style) {
     st_edges(id, SET.Top, SET.Right, SET.Bottom, SET.Left, a.inset, b.inset)
     st_int(id, SET.ZIndex, a.zIndex, b.zIndex)
     st_int(id, SET.Overflow, a.overflow, b.overflow)
+    st_float(id, a.floating, b.floating)
     st_str(id, SET.Background, a.background, b.background)
     st_str(id, SET.Color, a.color, b.color)
     st_int(id, SET.Opacity, a.opacity, b.opacity)
@@ -2942,6 +2987,7 @@ fn style_apply(id: int, a: Style, b: Style) {
         st_int(id, SET.Font, a.font, b.font)
     }
     st_bool(id, SET.Ellipsis, a.ellipsis, b.ellipsis)
+    st_int(id, SET.TextAlign, a.textAlign, b.textAlign)
     st_str(id, SET.Cursor, a.cursor, b.cursor)
 }
 
@@ -3140,6 +3186,46 @@ fn st_border(id: int, kind: int, a: Option<Border>, b: Option<Border>) {
     if result.is_some(c) && (!result.is_some(ac) || ac.val != c.val) {
         apply_int_value(id, SET.BorderColor, parse_hex_color(c.val))
     }
+    // Side borders and rules between children: paint only.
+    let mut asd = result.none(Edges {})
+    let mut abt = result.none(0)
+    if result.is_some(a) {
+        asd = a.val.sides
+        abt = a.val.between
+    }
+    st_edges(id, SET.BorderTop, SET.BorderRight, SET.BorderBottom, SET.BorderLeft, asd, b.val.sides)
+    st_int(id, SET.BorderBetween, abt, b.val.between)
+}
+
+/// `Style.floating`: write the fields that differ. A present `Float` is the
+/// whole config, so every field is compared and written.
+fn st_float(id: int, a: Option<Float>, b: Option<Float>) {
+    if !result.is_some(b) {
+        return
+    }
+    let f = b.val
+    let pts = 1 + f.at * 9 + f.on
+    let mut fresh = true
+    if result.is_some(a) {
+        let o = a.val
+        fresh = o.to != f.to || o.at != f.at || o.on != f.on || o.x != f.x || o.y != f.y ||
+                o.expandW != f.expandW || o.expandH != f.expandH || o.flip != f.flip ||
+                o.clip != f.clip || o.passthrough != f.passthrough
+    }
+    if !fresh {
+        return
+    }
+    apply_int_value(id, SET.FloatTo, f.to)
+    apply_int_value(id, SET.FloatPoints, pts)
+    apply_int_value(id, SET.FloatX, f.x)
+    apply_int_value(id, SET.FloatY, f.y)
+    apply_int_value(id, SET.FloatExpandW, f.expandW)
+    apply_int_value(id, SET.FloatExpandH, f.expandH)
+    apply_int_value(id, SET.FloatClip, if f.clip { 1 } else { 0 })
+    apply_int_value(id, SET.PointerPass, if f.passthrough { 1 } else { 0 })
+    if f.to != FloatTo.None {
+        apply_int_value(id, SET.Flip, if f.flip { 1 } else { 0 })
+    }
 }
 
 /// Apply every style, event, bind, visible, and press prop, then attach
@@ -3150,7 +3236,7 @@ fn Component(node: Node, p: BoxProps) -> Node {
     arena.ensure()
     arena.component_runs = arena.component_runs + 1
     shrink(node, 0)
-    let k = int(arena.nodes[node.id].kind)
+    let k = int(nodes.tree[node.id].kind)
     // Containers lay out as a column unless their style says otherwise.
     if k == 1 || k == 9 || k == 11 {
         set_prop_int(node, SET.Direction, Direction.Column)
@@ -3177,29 +3263,29 @@ fn Component(node: Node, p: BoxProps) -> Node {
         prop_str(node, SET.Text, p.text.val)
     }
     if result.is_some(p.on_click) {
-        arena.nodes[node.id].click_fn = intern_fn(p.on_click.val)
-        arena.nodes[node.id].focusable = 1
+        nodes.ui[node.id].click_fn = intern_fn(p.on_click.val)
+        nodes.ui[node.id].focusable = 1
     }
     if result.is_some(p.on_mouse_down) {
-        arena.nodes[node.id].down_fn = intern_fn(p.on_mouse_down.val)
+        nodes.ui[node.id].down_fn = intern_fn(p.on_mouse_down.val)
     }
     if result.is_some(p.on_mouse_up) {
-        arena.nodes[node.id].up_fn = intern_fn(p.on_mouse_up.val)
+        nodes.ui[node.id].up_fn = intern_fn(p.on_mouse_up.val)
     }
     // Installed after the click handler, so a `key_bind_click` binding has
     // something to call.
     install_keys(node, p.keys)
     if result.is_some(p.on_key_down) {
-        arena.nodes[node.id].kdown_fn = intern_fn(p.on_key_down.val)
-        arena.nodes[node.id].focusable = 1
+        nodes.ui[node.id].kdown_fn = intern_fn(p.on_key_down.val)
+        nodes.ui[node.id].focusable = 1
     }
     if result.is_some(p.on_key_up) {
-        arena.nodes[node.id].kup_fn = intern_fn(p.on_key_up.val)
-        arena.nodes[node.id].focusable = 1
+        nodes.ui[node.id].kup_fn = intern_fn(p.on_key_up.val)
+        nodes.ui[node.id].focusable = 1
     }
     if result.is_some(p.on_key_press) {
-        arena.nodes[node.id].kpress_fn = intern_fn(p.on_key_press.val)
-        arena.nodes[node.id].focusable = 1
+        nodes.ui[node.id].kpress_fn = intern_fn(p.on_key_press.val)
+        nodes.ui[node.id].focusable = 1
     }
     // `hoverOff` is a plain bool field, so interning a thunk here only to
     // invoke it on the next line allocated a closure env capturing the whole
@@ -3215,14 +3301,21 @@ fn Component(node: Node, p: BoxProps) -> Node {
         show(node, visible_signal(node, p.visible.val))
     }
     if p.press {
-        arena.nodes[node.id].press = 1
+        nodes.anim[node.id].press = 1
     }
     if result.is_some(p.edit) {
         if p.edit.val.id > 0 {
             let sig = p.edit.val
             let node_id = node.id
-            arena.nodes[node_id].edit_sig = sig.id
-            arena.nodes[node_id].bind_fn = intern_fn(|| { set(sig, arena.input_committed(node_id)) })
+            nodes.ui[node_id].edit_sig = sig.id
+            nodes.ui[node_id].bind_fn = intern_fn(|| {
+                // The field shows its own buffer, so the commit marks the field
+                // (its text can resize it) and is settled as targeted.
+                arena.invalidate(node_id, INV.Layout)
+                arena.edit_commit = arena.edit_commit + 1
+                set(sig, arena.input_committed(node_id))
+                arena.edit_commit = arena.edit_commit - 1
+            })
             /* Seed the edit buffer from the bound signal. The signal is the
                field's text until the user edits it, and the C-side buffer is
                what every read goes through (`input_shown`, the caret, and the
@@ -3245,7 +3338,7 @@ fn Component(node: Node, p: BoxProps) -> Node {
         }
     }
     if p.rowHeight != 0 {
-        arena.nodes[node.id].row_h = p.rowHeight
+        nodes.tree[node.id].row_h = p.rowHeight
     }
     if result.is_some(p.rebuild) {
         arena.set_list_fn(node.id, intern_fn(p.rebuild.val))
@@ -3254,7 +3347,7 @@ fn Component(node: Node, p: BoxProps) -> Node {
         set_background(node, role_color(ROLE.Rule))
         set_color(node, role_color(ROLE.Ink))
         border_color(node, role_color(ROLE.Plate))
-        arena.nodes[node.id].focusable = 1
+        nodes.ui[node.id].focusable = 1
     }
     if k == 13 {
         set_background(node, role_color(ROLE.Hard))
@@ -3270,7 +3363,7 @@ fn Component(node: Node, p: BoxProps) -> Node {
         border_color(node, role_color(ROLE.Plate))
     }
     if k == 9 {
-        arena.nodes[node.id].dir = 1
+        nodes.lay[node.id].dir = 1
         center(node)
         z_index(node, 50)
     }
@@ -3280,9 +3373,9 @@ fn Component(node: Node, p: BoxProps) -> Node {
             let signal_id = p.bind.val.id
             styled(node, || {
                 let y = signal_handle(signal_id).get()
-                if arena.nodes[node_id].scroll_y != y {
-                    arena.nodes[node_id].vel_y = 0
-                    arena.nodes[node_id].scroll_y = y
+                if nodes.scrl[node_id].scroll_y != y {
+                    nodes.scrl[node_id].vel_y = 0
+                    nodes.scrl[node_id].scroll_y = y
                     arena.clamp_scroll(node_id)
                 }
             })
@@ -3296,7 +3389,7 @@ fn Component(node: Node, p: BoxProps) -> Node {
     }
     if has_state_styles(states) {
         if result.is_some(p.pressStyle) {
-            arena.nodes[node.id].press = 1
+            nodes.anim[node.id].press = 1
         }
         let mut base: fn() -> Style = no_style
         if result.is_some(p.style) {
@@ -3434,6 +3527,7 @@ fn line_height(font: int, lead: int) -> int {
 fn set_font_family(name: string) {
     arena.ensure()
     platform.plat_set_font_family(name)
+    metrics.reset_cache()
 }
 
 /// Register a font the host does not ship, then make it current. `src` is a
@@ -3451,6 +3545,7 @@ fn load_font(family: string, src: string) -> int {
     let ok = platform.plat_load_font(family, src)
     if ok != 0 {
         platform.plat_set_font_family(family)
+        metrics.reset_cache()
     }
     return ok
 }

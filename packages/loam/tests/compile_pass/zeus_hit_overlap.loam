@@ -1,0 +1,94 @@
+// One pointer model, in paint order: a floater over
+// the page takes the click and occludes hover beneath it, an `overflow` box
+// clips what it hits as it clips what it paints, and an anchored popup inside
+// a scrolled page hits only where it is drawn — never at its unscrolled spot.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:colors"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("hit", 320, 260)
+    let row_clicks = zeus.signal(0)
+    let float_clicks = zeus.signal(0)
+    let wide_clicks = zeus.signal(0)
+    let row_hover = zeus.signal(0)
+    let open = zeus.signal(-1)
+    let mut panel = 0
+    let top = zeus.raw_scroll()
+    zeus.slot(top, fn() {
+        zeus.Box(style = Style(direction = zeus.Direction.Column)) {
+            // A clickable, hover-tracked row with a z-indexed card over its
+            // right half.
+            let row = zeus.Box(style = Style(height = px(40), background = colors.plate())) {
+                let card = zeus.Box(style = Style(position = Position.Absolute, inset = edges4(0, 0, -1, 160),
+                                                  width = px(120), height = px(40), zIndex = 10,
+                                                  background = "#ffffff"))
+                zeus.on_click(card, fn() => float_clicks.set(float_clicks.get() + 1))
+            }
+            zeus.on_click(row, fn() => row_clicks.set(row_clicks.get() + 1))
+            zeus.hover(row, row_hover)
+            // A 100px clip holding a 300px clickable child.
+            let clipbox = zeus.Box(style = Style(width = px(100), height = px(40), overflow = Overflow.Hidden)) {
+                let wide = zeus.Box(style = Style(width = px(300), height = px(40), background = "#cccccc"))
+                zeus.on_click(wide, fn() => wide_clicks.set(wide_clicks.get() + 1))
+            }
+            zeus.Box(style = Style(height = px(20)))
+            let rows = []MenuRow { MenuRow(label = "Rename") }
+            let m = zui.Menu(active = open, items = rows, style = Style(width = px(160)),
+                trigger = || {
+                    zeus.Box(style = Style(width = px(120), height = px(32), background = colors.plate()))
+                })
+            panel = zeus.child_at(m, 2).id
+            zeus.Box(style = Style(height = px(900)))
+        }
+    })
+    zeus.root(top)
+    zeus.pump_frame()
+    zeus.engine_layout(320, 260)
+    zeus.engine_paint()
+
+    // The floater takes the click; the row under it does not.
+    zeus.engine_click(200, 20)
+    must(float_clicks.get() == 1, "z-indexed card took the click")
+    must(row_clicks.get() == 0, "row under the card did not")
+    zeus.engine_click(40, 20)
+    must(row_clicks.get() == 1, "row outside the card is clickable")
+
+    // Hover: the card occludes the row.
+    zeus.engine_hover(40, 20)
+    zeus.engine_layout(320, 260)
+    must(row_hover.get() == 1, "row hovered where it is uncovered")
+    zeus.engine_hover(200, 20)
+    zeus.engine_layout(320, 260)
+    must(row_hover.get() == 0, "row not hovered under the card")
+
+    // The overflow box clips hits.
+    zeus.engine_click(50, 60)
+    must(wide_clicks.get() == 1, "clipped child is clickable inside the clip")
+    zeus.engine_click(200, 60)
+    must(wide_clicks.get() == 1, "clipped child is not clickable outside the clip")
+
+    // An anchored popup in a scrolled page hits where it is drawn.
+    open.set(0)
+    zeus.engine_layout(320, 260)
+    zeus.engine_paint()
+    zui.scroll_to(top, 30)
+    zeus.engine_layout(320, 260)
+    zeus.engine_paint()
+    let py = zeus.node_y(panel)
+    let px0 = zeus.node_x(panel)
+    let ph = zeus.node_height(panel)
+    must(zeus.is_under(zeus.engine_hit(px0 + 10, py + ph - 4), panel) == 1, "popup hit at its drawn position")
+    must(zeus.is_under(zeus.engine_hit(px0 + 10, py + ph - 4 + 30), panel) == 0,
+         "no ghost hit at the unscrolled position")
+    fmt.println("hit overlap ok")
+}

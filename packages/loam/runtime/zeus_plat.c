@@ -20,8 +20,9 @@ extern loam_vec loam_arena_sigs;
 /* Rebuild-scope ownership (arena.loam): while `scope_node` is non-zero, a
    signal allocation is recorded against it so teardown can recycle the id. */
 extern int32_t loam_arena_scope_node;
-extern loam_vec loam_arena_rec_sid;
-extern loam_vec loam_arena_rec_owner;
+/* `fn record_sig(owner: int, signal_id: int)` in arena.loam: files the id on
+   the owner's record list. */
+void loam_arena_record_sig(int32_t owner, int32_t signal_id);
 void loam_arena_ensure(void);
 void loam_arena_store_sig(int32_t id, int32_t value);
 /* `fn note_read(sid: int)` / `fn notify(sid: int)` in zeuscore/track.loam, and
@@ -244,10 +245,7 @@ static int64_t sig_slot_zero(void) {
         id = loam_arena_sigs.len - 1;
     }
     if (loam_arena_scope_node > 0) {
-        int32_t sid32 = (int32_t)id;
-        int32_t owner32 = loam_arena_scope_node;
-        loam_vec_push(&loam_arena_rec_sid, &sid32, sizeof(int32_t), __FILE__, __LINE__);
-        loam_vec_push(&loam_arena_rec_owner, &owner32, sizeof(int32_t), __FILE__, __LINE__);
+        loam_arena_record_sig(loam_arena_scope_node, (int32_t)id);
     }
     return id;
 }

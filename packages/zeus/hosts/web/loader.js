@@ -988,6 +988,7 @@
           face.load().then((f) => {
             document.fonts.add(f);
             resetFontCaches();
+            if (exp && exp.zeus_fonts_changed) exp.zeus_fonts_changed();
             schedule(0);
           }).catch(() => {});
           return 1;

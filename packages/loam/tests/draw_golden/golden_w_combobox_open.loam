@@ -1,0 +1,28 @@
+// DRAW-list golden: the Combobox, closed on the first frame and then open
+// after its field is clicked, with the option list floating under it. Keep
+// this file free of prints: stdout is the golden.
+
+import "std:zeus"
+import "std:zui"
+
+fn main() {
+    let query = zeus.signal("")
+    zeus.snapshot(400, 320, fn() -> Node {
+        zui.Page() {
+            zui.Combobox(query, []string { "Apple", "Apricot", "Banana", "Cherry" },
+                         style = Style(width = px(200)))
+        }
+    })
+    // The field sits at the page inset (32, 32); click inside its text area.
+    zeus.engine_click(60, 48)
+    zeus.engine_mouseup()
+    let mut i = 0
+    while i < 8 {
+        zeus.pump_frame()
+        zeus.engine_step_dt(64)
+        i = i + 1
+    }
+    zeus.engine_layout(400, 320)
+    zeus.engine_paint()
+    zeus.dump_draw_list()
+}

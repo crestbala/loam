@@ -1,0 +1,81 @@
+// Interaction paths stay proportional to what changed. Counts, not wall time,
+// so the budgets never flake.
+//
+// - A keystroke in a text field is a targeted frame: the field marks itself
+//   and the layout memo skips the rest of the tree, even when nothing else
+//   reads the bound signal.
+// - Replacing every row of an `Each` frees the old rows with one sweep of
+//   the effect table, not one per row (that was quadratic: ~400 ms for 1000
+//   rows), and releases exactly the records the rows owned.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+import "zeus:zeuscore/arena"
+import "zeus:zeuscore/track"
+
+struct Item {
+    id: int,
+    name: string,
+}
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn items_named(tag: string) -> []Item {
+    let mut v = []Item {}
+    for k in 0..200 {
+        push(v, Item(id = k, name = "{{tag}} {{k}}"))
+    }
+    return v
+}
+
+fn main() {
+    zeus.window("perf", 800, 600)
+    let draft = zeus.signal("")
+    let items = zeus.signal(items_named("a"))
+    zeus.root(zeus.Box(style = Style(direction = zeus.Direction.Column)) {
+        zui.Input(bind = draft, placeholder = "type")
+        zui.Each(items.get(), fn(i, r) {
+            zeus.Box(style = Style(direction = zeus.Direction.Row, gap = 4)) {
+                zeus.Text(r.name)
+                zui.Button(label = "Edit")
+            }
+        })
+        for i in 0..300 {
+            zeus.Text("static {{i}}")
+        }
+    })
+    zeus.pump_frame()
+    let nodes = zeus.arena_nodes() - 1
+
+    // Typing.
+    let id = zeus.engine_find_role("textbox")
+    zeus.engine_click(zeus.node_x(id) + 8, zeus.node_y(id) + 8)
+    zeus.pump_frame()
+    let v0 = zeus.layout_visits()
+    let f0 = zeus.full_layouts_count()
+    zeus.engine_key(104)
+    zeus.engine_key(105)
+    zeus.pump_frame()
+    must(draft.get() == "hi", "the field committed its text ({{draft.get()}})")
+    must(zeus.full_layouts_count() == f0, "typing is never an untargeted frame")
+    let kv = zeus.layout_visits() - v0
+    must(kv <= nodes / 50, "typing lays out its path, not the tree ({{kv}} of {{nodes}})")
+
+    // Replacing every row.
+    let r0 = arena.owned_records()
+    let s0 = track.sweeps
+    items.set(items_named("b"))
+    zeus.pump_frame()
+    let sw = track.sweeps - s0
+    must(sw <= 2, "one effect sweep frees all the replaced rows ({{sw}})")
+    must(zeus.engine_find_text("b 199") > 0, "the new rows are mounted")
+    must(zeus.engine_find_text("a 199") <= 0, "the old rows are gone")
+    must(arena.owned_records() == r0, "records stay flat across a replace ({{r0}} -> {{arena.owned_records()}})")
+    fmt.println("perf paths ok")
+}

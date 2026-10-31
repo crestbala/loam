@@ -1,0 +1,79 @@
+// Scrolling stays cheap (culling + scroll applied at position time): a long
+// list records draw ops only for the rows inside its viewport, and a scroll
+// with an anchored popup open re-places the popup without re-solving the tree.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:colors"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn find_text_y(s: string) -> int {
+    for i in 0..zeus.draw_count() {
+        if zeus.draw_op(i) == 2 && zeus.draw_text(i) == s {
+            return zeus.draw_y(i)
+        }
+    }
+    return -99999
+}
+
+fn main() {
+    zeus.window("cull", 320, 260)
+    let open = zeus.signal(-1)
+    let mut panel = 0
+    let mut trig = 0
+    let top = zeus.raw_scroll()
+    zeus.slot(top, fn() {
+        zeus.Box(style = Style(direction = zeus.Direction.Column)) {
+            let rows = []MenuRow { MenuRow(label = "Rename") }
+            let m = zui.Menu(active = open, items = rows, style = Style(width = px(160)),
+                trigger = || {
+                    let t = zeus.Box(style = Style(width = px(120), height = px(32), background = colors.plate()))
+                    trig = t.id
+                })
+            panel = zeus.child_at(m, 2).id
+            for i in 0..2000 {
+                zeus.Box(style = Style(height = px(24), direction = zeus.Direction.Row, gap = 4,
+                                       background = "#eeeeee")) {
+                    zeus.Text("row {{i}}")
+                    zeus.Text("detail")
+                }
+            }
+        }
+    })
+    zeus.root(top)
+    zeus.pump_frame()
+
+    // ~10 rows fit; 2000 are laid out. Only the visible ones paint.
+    must(zeus.draw_count() < 200, "off-screen rows record no ops ({{zeus.draw_count()}})")
+    must(find_text_y("row 3") >= 0, "a visible row paints")
+    must(find_text_y("row 500") == -99999, "a far row does not")
+
+    // Scrolling brings rows in and out of the cull.
+    zui.scroll_to(top, 24 * 500)
+    zeus.pump_frame()
+    must(find_text_y("row 3") == -99999, "row 3 culled after the scroll")
+    let y500 = find_text_y("row 500")
+    must(y500 >= 0 && y500 < 260, "row 500 paints inside the viewport")
+    must(zeus.draw_count() < 200, "still only the viewport's ops")
+
+    // Popup open: scroll frames re-place it but never re-solve the tree.
+    zui.scroll_to(top, 0)
+    open.set(0)
+    zeus.pump_frame()
+    let f0 = zeus.full_layouts_count()
+    for i in 0..20 {
+        zui.scroll_to(top, 4 + i * 5)
+        zeus.pump_frame()
+        let ty = zeus.node_y(trig) - zui.scroll_y(top)
+        must(zeus.node_y(panel) > ty, "popup stays below its trigger")
+    }
+    must(zeus.full_layouts_count() == f0, "no full layout while scrolling under a popup")
+    fmt.println("scroll cull ok")
+}

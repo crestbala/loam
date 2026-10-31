@@ -1,0 +1,19 @@
+// DRAW-list golden: the three charts on one small dataset (two series, four
+// months): BarChart, LineChart and AreaChart. Keep this file free of prints:
+// stdout is the golden.
+
+import "std:zeus"
+import "std:zui"
+
+fn main() {
+    let labs = []string { "Jan", "Feb", "Mar", "Apr" }
+    let names = []string { "Desktop", "Mobile" }
+    let vals = []int { 186, 82, 305, 134, 130, 170, 160, 210 }
+    zeus.snapshot(480, 760, fn() -> Node {
+        zui.Page() {
+            zui.BarChart(labs, names, vals, 400, 180)
+            zui.LineChart(labs, names, vals, 400, 180)
+            zui.AreaChart(labs, names, vals, 400, 180)
+        }
+    })
+}

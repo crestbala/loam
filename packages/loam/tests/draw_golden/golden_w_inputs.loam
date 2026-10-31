@@ -1,0 +1,35 @@
+// DRAW-list golden: the text-entry family at rest. Input, TextInput, Field,
+// FormField, TextArea, SearchInput, PasswordInput (masked), InputGroup with a
+// prefix and suffix, NumberInput, Stepper, PinInput and TagInput. Keep this
+// file free of prints: stdout is the golden.
+
+import "std:zeus"
+import "std:zui"
+
+fn main() {
+    let name = zeus.signal("Ada")
+    let empty = zeus.signal("")
+    let pw = zeus.signal("secret")
+    let host = zeus.signal("zeus")
+    let note = zeus.signal("Two\nlines")
+    let n = zeus.signal(3)
+    let pin = zeus.signal("12")
+    let tags = zeus.signal([]string { "design", "ui" })
+    zeus.snapshot(560, 900, fn() -> Node {
+        zui.Page() {
+            zui.Input(bind = name, placeholder = "Input", style = Style(width = px(200)))
+            zui.TextInput(empty, "Placeholder")
+            zui.Field("Name", name, "Your name")
+            zui.FormField("Guests", description = "One to eight.") {
+                zui.Stepper(n, min = 1, max = 8, label = "Guests")
+            }
+            zui.TextArea(note, "Message")
+            zui.SearchInput(empty, placeholder = "Search the docs")
+            zui.PasswordInput(pw, placeholder = "Password")
+            zui.InputGroup(host, "host", prefix = "https://", suffix = ".com")
+            zui.NumberInput(n, min = 0, max = 10, label = "Count")
+            zui.PinInput(pin, length = 4, label = "Pin")
+            zui.TagInput(tags, placeholder = "Add a tag")
+        }
+    })
+}

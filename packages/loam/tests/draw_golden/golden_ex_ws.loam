@@ -1,0 +1,17 @@
+// DRAW-list golden: the first frame of examples/zeus/ws (the WebSocket demo),
+// before its socket connects. Keep this file free of prints: stdout is the
+// golden.
+
+import "std:zeus"
+import "../../../../examples/zeus/ws/frontend/app.loam" as ws
+
+fn main() {
+    let n = zeus.signal(0)
+    let last = zeus.signal("(waiting)")
+    let state = zeus.signal("connecting")
+    zeus.App("ws", fn() -> Node {
+        return ws.Panel(n, last, state)
+    }, 300, 200)
+    zeus.engine_paint()
+    zeus.dump_draw_list()
+}

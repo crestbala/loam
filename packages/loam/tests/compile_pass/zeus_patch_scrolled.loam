@@ -67,8 +67,9 @@ fn main() {
     frame()
     zeus.engine_scroll_step(150, 100, 0, 200)
     frame()
-    // Let the scrollbar fade finish: while it runs every frame records in full.
-    async.sleep(600)
+    // Let the scrollbar linger and fade finish (800 + 300 ms): while it runs
+    // every frame records in full.
+    async.sleep(1300)
     zeus.engine_step()
     frame()
     frame()

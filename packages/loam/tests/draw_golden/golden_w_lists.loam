@@ -1,0 +1,60 @@
+// DRAW-list golden: lists and tables. List with ListItems (one picked),
+// DescriptionList, the static TableHead / TableRow, a sortable zebra Table,
+// TableCols, and a Tree with its folder open. Keep this file free of prints:
+// stdout is the golden.
+
+import "std:zeus"
+import "std:zui"
+
+struct Member {
+    name: string,
+    role: string,
+    qty: int,
+}
+
+fn member_cells(m: Member) -> []string {
+    return []string { m.name, m.role, "{{m.qty}}" }
+}
+
+fn main() {
+    let picked_row = zeus.signal(0)
+    let sort = zeus.signal(0)
+    let mut spec = []TableCol {}
+    push(spec, TableCol { title: "Name", width: 0, sortable: true })
+    push(spec, TableCol { title: "Role", width: 0, sortable: true })
+    push(spec, TableCol { title: "Qty", width: 64, align: Align.End, sortable: true })
+    let mut members = []Member {}
+    push(members, Member { name: "Ada", role: "Operator", qty: 12 })
+    push(members, Member { name: "Bea", role: "Editor", qty: 7 })
+    push(members, Member { name: "Cal", role: "Viewer", qty: 30 })
+    let rows = zeus.signal(members)
+    let tree_sel = zeus.signal(1)
+    let tree_open = zeus.signal([]int { 0 })
+    let mut seed = []TreeItem {}
+    push(seed, TreeItem(label = "src", parent = -1, folder = true))
+    push(seed, TreeItem(label = "app.loam", parent = 0))
+    push(seed, TreeItem(label = "ui.loam", parent = 0))
+    let tree = zeus.signal(seed)
+    zeus.snapshot(560, 1000, fn() -> Node {
+        zui.Page() {
+            zui.List(label = "Settings", style = Style(maxWidth = 420)) {
+                zui.ListItem("Account", icon = zeus.IC_INFO, trailing = fn() -> string { return "ada@zeus.dev" },
+                             picked = fn() -> bool { return picked_row.get() == 0 })
+                zui.ListItem("Copies", icon = zeus.IC_COPY, trailing = fn() -> string { return "3" },
+                             picked = fn() -> bool { return picked_row.get() == 1 })
+            }
+            zui.DescriptionList([]DescItem { DescItem(term = "Plan", detail = "Pro"),
+                                             DescItem(term = "Seats", detail = "12") })
+            zui.Card() {
+                zui.TableHead([]string { "Name", "Role", "Status" })
+                zui.TableRow([]string { "Ada", "Operator", "Active" })
+                zui.TableRow([]string { "Bea", "Editor", "Away" })
+            }
+            zui.Card() {
+                zui.Table(spec, rows, member_cells, sort = sort, zebra = true)
+            }
+            zui.TableCols(spec)
+            zui.Tree(tree, tree_sel, tree_open, style = Style(maxWidth = 420))
+        }
+    })
+}

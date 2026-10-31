@@ -1,0 +1,22 @@
+// DRAW-list golden: the first frame of examples/zeus/myapp, the root route in
+// the app's own theme and page frame (`routes/layout.loam`), without the
+// blog loader's start-up. The navbar is left out: its RAM chip shows live
+// process memory, which is not the same on every machine. Keep this file free
+// of prints: stdout is the golden.
+
+import "std:zeus"
+import "std:router"
+import "std:zui"
+import "../../../../examples/zeus/myapp/app_routes.loam" as approutes
+import "../../../../examples/zeus/myapp/theme.loam" as theme
+
+fn main() {
+    zeus.App("myapp", fn() -> Node {
+        theme.install()
+        return zui.Page() {
+            router.Router(approutes.routes(), RouterProps { notFound: fn() {} })
+        }
+    })
+    zeus.engine_paint()
+    zeus.dump_draw_list()
+}

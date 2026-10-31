@@ -1,0 +1,40 @@
+// DRAW-list golden: the status atoms. Chips (one removable), badges (one with
+// a dot), BadgeCount, Tag, DotBadge, avatars and a User row, then the meters:
+// Progress, ProgressLabeled, Meter, ProgressRing, Gauge, UsageBar. Keep this
+// file free of prints: stdout is the golden.
+
+import "std:zeus"
+import "std:zui"
+
+fn main() {
+    let unread = zeus.signal(12)
+    let load = zeus.signal(40)
+    let ring = zeus.signal(65)
+    zeus.snapshot(560, 560, fn() -> Node {
+        zui.Page() {
+            zui.RowWrap(Space.Sm) {
+                zui.Chip("Stable", zeus.Tint.Ok)
+                zui.Chip("Iris", zeus.Tint.Ink, on_remove = fn() {})
+                zui.Badge("zeus", zeus.Tint.Mute)
+                zui.Badge("Live", zeus.Tint.Ok, dot = true)
+                zui.BadgeCount(unread, zeus.Tint.Danger)
+                zui.Tag("design", tint = zeus.Tint.Info, on_remove = fn() {})
+                zui.DotBadge("Online", zeus.Tint.Ok)
+            }
+            zui.Row(Space.Sm) {
+                zui.Avatar("AP", 32, status = zeus.Tint.Ok)
+                zui.Avatar("BL", 40)
+                zui.AvatarGroup([]string { "AP", "BL", "CD" }, 32)
+            }
+            zui.User("AP", "Ada Park", "Operator", status = zeus.Tint.Ok)
+            zui.Progress(load)
+            zui.ProgressLabeled(load)
+            zui.Meter(load)
+            zui.Row(Space.Lg) {
+                zui.ProgressRing(ring, label = true)
+                zui.Gauge(ring, caption = "Score")
+            }
+            zui.UsageBar(load, label = "CPU")
+        }
+    })
+}

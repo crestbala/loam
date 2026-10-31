@@ -1,0 +1,14 @@
+// DRAW-list golden: the first frame of examples/zeus/counter. The screen is
+// built from fixed RPC results (the hosts fetch them from the backend), so no
+// server runs. Keep this file free of prints: stdout is the golden.
+
+import "std:zeus"
+import "../../../../examples/zeus/counter/screen.loam" as screen
+
+fn main() {
+    zeus.App("Zeus", fn() -> Node {
+        return screen.Screen("API", "macOS", "12", "3", "4h", 42, 7)
+    })
+    zeus.engine_paint()
+    zeus.dump_draw_list()
+}

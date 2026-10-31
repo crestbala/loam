@@ -1,0 +1,42 @@
+// BOX golden: floating and scrolled boxes. Floaters attached to their parent,
+// to the root and to an anchor, with offsets, then a scroller scrolled by 60
+// with the floaters inside it. In the second dump flow boxes keep their
+// content coordinates (a scroll applies when boxes are positioned for paint,
+// never in layout) while every floater has moved by the scroll in window
+// space, following its target.
+// Keep this file free of prints: stdout is the golden.
+
+import "std:fmt"
+import "std:zeus"
+import "std:zui"
+
+fn main() {
+    zeus.window("box", 400, 400)
+    let target = zeus.ref()
+    let pop = zeus.ref()
+    let top = zeus.raw_scroll()
+    zeus.slot(top, fn() {
+        zeus.Box(style = Style(direction = Direction.Column, gap = 10, padding = edges(12))) {
+            zeus.Box(style = Style(width = px(120), height = px(60))) {
+                zeus.Box(style = Style(width = px(10), height = px(10),
+                                       floating = float_parent(Attach.CenterCenter, Attach.RightTop, 0, 0)))
+            }
+            zeus.Box(style = Style(width = px(48), height = px(48),
+                                   floating = float_root(Attach.RightBottom, Attach.RightBottom, -16, -16)))
+            zeus.Box(ref = target, style = Style(width = px(100), height = px(30)))
+            zeus.Box(ref = pop, style = Style(width = px(80), height = px(40),
+                                              floating = float_anchor(Attach.LeftTop, Attach.LeftBottom, 0, 4)))
+            for i in 0..20 {
+                zeus.Box(style = Style(height = px(30)))
+            }
+        }
+    })
+    zeus.root(top)
+    zeus.float_on(pop, target)
+    zeus.pump_frame()
+    zeus.dump_boxes()
+    fmt.println("--- scrolled 60")
+    zui.scroll_to(top, 60)
+    zeus.pump_frame()
+    zeus.dump_boxes()
+}

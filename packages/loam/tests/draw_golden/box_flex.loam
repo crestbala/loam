@@ -1,0 +1,48 @@
+// BOX golden: every node's `id x y w h` after layout (`zeus.dump_boxes`), for
+// the flex cases a layout rewrite must reproduce. Rows and columns with gap,
+// padding and margins; grow and shrink; fixed, percent and fit sizes with min
+// and max; main and cross alignment and alignSelf; a wrapping row; wrapped
+// text in a fixed-width column; aspect ratio. Keep this file free of prints:
+// stdout is the golden.
+
+import "std:zeus"
+
+fn main() {
+    zeus.window("box", 480, 640)
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column, padding = edges(10), gap = 6)) {
+        zeus.Box(style = Style(direction = Direction.Row, gap = 4, height = px(40))) {
+            zeus.Box(style = Style(width = px(50)))
+            zeus.Box(style = Style(grow = 1))
+            zeus.Box(style = Style(grow = 2, maxWidth = 120))
+            zeus.Box(style = Style(width = pct(20)))
+        }
+        zeus.Box(style = Style(direction = Direction.Row, justify = Align.Center, align = Align.End,
+                               height = px(50), padding = edges4(2, 4, 6, 8))) {
+            zeus.Box(style = Style(width = px(30), height = px(20)))
+            zeus.Box(style = Style(width = px(30), height = px(30), alignSelf = Align.Start))
+            zeus.Text("label")
+        }
+        zeus.Box(style = Style(direction = Direction.Row, justify = Align.Between)) {
+            zeus.Text("left")
+            zeus.Text("right")
+        }
+        zeus.Box(style = Style(direction = Direction.Row, wrap = true, gap = 5, width = px(200))) {
+            for i in 0..7 {
+                zeus.Box(style = Style(width = px(44), height = px(16)))
+            }
+        }
+        zeus.Box(style = Style(width = px(140), padding = edges(4))) {
+            zeus.Text("wrapped text that needs more than one line here", style = Style(wrap = true))
+        }
+        zeus.Box(style = Style(direction = Direction.Row, width = px(200))) {
+            zeus.Box(style = Style(width = px(150), shrink = 1, minWidth = 80))
+            zeus.Box(style = Style(width = px(150), shrink = 1))
+        }
+        zeus.Box(style = Style(width = px(160), aspect = ratio(16, 9)))
+        zeus.Box(style = Style(margin = edges2(4, 20), minHeight = 24, maxWidth = 300)) {
+            zeus.Text("margins and min height")
+        }
+    })
+    zeus.pump_frame()
+    zeus.dump_boxes()
+}

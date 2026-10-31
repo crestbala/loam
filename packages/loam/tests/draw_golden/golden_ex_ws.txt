@@ -1,0 +1,9 @@
+DRAW 8
+fill 0 0 300 200 16185083 0
+save
+clip 0 0 300 200
+text 20 20 0 20 Zeus ws demo
+text 20 44 0 15 messages: 0
+text 20 63 0 13 last: (waiting)
+text 20 80 0 13 ws: connecting
+restore

@@ -1,0 +1,34 @@
+DRAW 33
+fill 0 0 560 740 16185083 0
+text 32 32 6513530 10 Overline
+text 32 70 1513258 32 Display
+text 32 130 1513258 22 Heading
+text 32 180 1513258 17 Title
+text_wrap 32 225 496 Body copy that is long enough to wrap onto a second line at this width, which the golden records.
+text 32 285 6513530 11 Note
+text 32 324 6513530 10 Section
+text 32 342 1513258 22 Header
+text 32 372 5395050 14 A section header with a description.
+text 32 414 6513530 10 Section
+text 32 432 1513258 22 Title
+text 32 482 1513258 14 Label
+fill 32 524 496 1 14277093 0
+text 32 549 5981680 14 Read the docs
+fill_a 32 567 104 1 5981680 0
+svg 138 552 12 12 5981680
+fill 166 550 71 18 15724534 4
+text 170 551 1513258 12 make test
+fill 253 549 32 20 15724534 4
+stroke 253 549 32 20 14277093 4 1 255
+text 260 552 5395050 10 Esc
+fill 301 549 56 20 15724534 4
+stroke 301 549 56 20 14277093 4 1 255
+text 308 552 5395050 10 ⌘⇧P
+fill 32 593 496 1 14277093 0
+fill 32 624 8 8 5981680 4
+svg 56 620 16 16 1513258
+svg 88 618 20 20 0
+text 510 620 6513530 11 end
+fill 32 662 3 0 11908552 2
+text 47 662 5395050 14 The engine weaves algebraic patterns.
+text 47 686 5395050 11 — Ada Lovelace

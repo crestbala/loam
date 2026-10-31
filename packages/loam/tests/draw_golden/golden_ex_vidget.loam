@@ -1,0 +1,14 @@
+// DRAW-list golden: the first frame of examples/zeus/vidget, its route table at
+// the root path, without the host-side start-up (loaders, stores, servers).
+// Keep this file free of prints: stdout is the golden.
+
+import "std:zeus"
+import "../../../../examples/zeus/vidget/app_routes.loam" as approutes
+
+fn main() {
+    zeus.App("vidget", fn() -> Node {
+        return approutes.app()
+    })
+    zeus.engine_paint()
+    zeus.dump_draw_list()
+}

@@ -1,9 +1,11 @@
-// Scrollbar thumb: shown by a scroll, faded in over `BAR_FADE_IN` ms, held at
-// full opacity for `BAR_LINGER`, then faded out over `BAR_FADE_OUT` — a quick
-// clear once the scroll stops, with no track and no live frames of its own.
-// The timestamps are on the wall clock so the timeline holds across an idle
-// host sleep (the engine clock lags after a wake); `engine_next_ms` reports 16
-// while a fade is in flight, so the host wakes for the fade frames.
+// Scrollbar thumb: shown by a scroll with an ease-out fade-in (`BAR_FADE_IN`),
+// held at full opacity for `BAR_LINGER`, then an ease-in-out fade-out over
+// `BAR_FADE_OUT`. A scroll during the fade-out fades back in from the live
+// alpha (no pop). Pointing at the bar's edge strip makes it hot: the thumb
+// widens, the track appears, and it does not fade until the pointer leaves.
+// No track and no live frames of its own: the timestamps are on the wall
+// clock so the timeline holds across an idle host sleep, and `engine_next_ms`
+// reports 16 while anything is in flight so the host wakes for those frames.
 
 import "std:fmt"
 import "std:sys"
@@ -28,6 +30,28 @@ fn run_ms(ms: int) {
     }
 }
 
+/// Width and alpha of the widest translucent fill at the right edge (x >= 300):
+/// the thumb (and the track when shown).
+fn thumb_w() -> int {
+    let mut w = 0
+    for i in 0..zeus.draw_count() {
+        if zeus.draw_x(i) >= 300 && zeus.draw_w(i) > w {
+            w = zeus.draw_w(i)
+        }
+    }
+    return w
+}
+
+/// Alpha of the thumb fill at the right edge, 0 when none is painted.
+fn thumb_a() -> int {
+    for i in 0..zeus.draw_count() {
+        if zeus.draw_x(i) >= 300 {
+            return zeus.draw_alpha(i)
+        }
+    }
+    return 0
+}
+
 fn main() {
     zeus.window("scrollbar", 320, 180)
     let top = zeus.raw_scroll()
@@ -44,25 +68,69 @@ fn main() {
     must(zeus.proof_anim_live() == 0, "settled")
     must(zeus.engine_next_ms() == 0, "idle wants no wake")
 
-    // A wheel step fades the thumb in: the first frame is at (near) alpha 0, a
-    // wake is scheduled for the fade, but no track is created.
+    // A wheel step fades the thumb in: a wake is scheduled for the fade, but no
+    // track is created.
     zeus.engine_scroll_step(100, 100, 0, 40)
     zeus.pump_frame()
-    must(zeus.draw_count() <= idle + 2, "first frame is the fade-in start")
+    must(zeus.draw_count() <= idle + 1, "first frame is the fade-in start")
     must(zeus.proof_anim_live() == 0, "no fade track")
     let wake = zeus.engine_next_ms()
     must(wake > 0 && wake <= 16, "host woken for the fade frames")
 
-    // Once the fade-in window has passed the thumb is fully shown, and the fade
-    // still asks for no live frames of its own.
-    run_ms(140)
-    must(zeus.draw_count() == idle + 2, "thumb + track painted once faded in")
+    // Faded in: the thumb alone (the track is for hover), and while it sits at
+    // full opacity the host is woken once, at the start of the fade-out.
+    run_ms(160)
+    must(zeus.draw_count() == idle + 1, "thumb painted once faded in, no track")
     must(zeus.engine_step_dt(16) == 0, "the fade needs no live frames")
+    must(zeus.engine_next_ms() > 16, "one wake at the fade-out, not a busy loop")
+    must(thumb_w() == 6, "resting thumb is 6dp")
+
+    // Still shown well into the linger: a slow wheel does not blink it.
+    run_ms(400)
+    must(zeus.draw_count() == idle + 1, "thumb lingers between notches")
+
+    // Mid fade-out, a new scroll fades back in from the live alpha: no jump
+    // to full, no drop to zero, and it climbs from there.
+    // Step frames until the fade-out is visibly under way (wall-clock frames
+    // run long, so wait on the alpha rather than a frame count).
+    let mut guard = 0
+    while thumb_a() >= 150 && guard < 200 {
+        run_ms(16)
+        guard = guard + 1
+    }
+    let a_fading = thumb_a()
+    must(a_fading > 0 && a_fading < 255, "thumb is mid fade-out ({{a_fading}})")
+    zeus.engine_scroll_step(100, 100, 0, 10)
+    zeus.pump_frame()
+    let a_back = thumb_a()
+    must(a_back >= a_fading - 8 && a_back < 255, "re-show starts from the live alpha ({{a_fading}} -> {{a_back}})")
+    run_ms(200)
+    must(thumb_a() > a_back, "and fades back in")
 
     // After linger + fade-out (wall clock), the deadline clears it.
-    run_ms(420)
+    run_ms(1300)
     must(zeus.draw_count() == idle, "thumb hidden after the fade")
     must(zeus.engine_next_ms() == 0, "nothing pending once hidden")
+
+    // Hover the bar's edge strip: the bar turns hot — wider thumb, a track —
+    // and it holds there without fading.
+    zeus.engine_scroll_step(100, 100, 0, 40)
+    run_ms(160)
+    zeus.engine_hover(315, 60)
+    run_ms(200)
+    must(zeus.draw_count() == idle + 2, "hot bar paints the track and the thumb")
+    must(thumb_w() == 10, "hot thumb widened to 10dp")
+    run_ms(1400)
+    must(zeus.draw_count() == idle + 2, "hot bar does not fade")
+    must(zeus.engine_next_ms() == 0, "a resting hot bar needs no wakes")
+
+    // Leave: it narrows back, lingers, then fades out and is gone.
+    zeus.engine_hover(100, 60)
+    run_ms(200)
+    must(thumb_w() == 6, "thumb narrowed after the pointer left")
+    must(zeus.draw_count() == idle + 1, "track gone, thumb lingering")
+    run_ms(1200)
+    must(zeus.draw_count() == idle, "faded out after leaving")
 
     fmt.println("scrollbar ok")
 }

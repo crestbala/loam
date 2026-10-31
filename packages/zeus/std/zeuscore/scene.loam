@@ -3,6 +3,7 @@
 //! other consumer of the same list: the Loam rasterizer, into the buffer we own.
 
 import "arena.loam"
+import "nodes.loam"
 import "atlas.loam"
 import "geometry.loam"
 import "image.loam"
@@ -1010,7 +1011,7 @@ fn paint_hover_wash(id: int) {
             a = t * 8 / 100
         }
         a = a * arena.paint_alpha(id) / 255
-        fill_a(arena.draw_x(id), arena.draw_y(id), arena.nodes[id].w, arena.nodes[id].h, arena.hover_rgb(), i32(arena.nodes[id].radius), a)
+        fill_a(arena.draw_x(id), arena.draw_y(id), nodes.box[id].w, nodes.box[id].h, arena.hover_rgb(), i32(nodes.look[id].radius), a)
     }
 }
 
@@ -1021,7 +1022,7 @@ fn paint_shimmer(id: int, x: int, y: int, w: int, h: int, r: int, a: int) {
     if w <= 0 {
         return
     }
-    let base = arena.paint_rgb(arena.nodes[id].bg)
+    let base = arena.paint_rgb(nodes.look[id].bg)
     // Theme slot 2 is Plate (the card surface): a hair lighter than Bone in
     // light, a hair lighter in dark too.
     let hi = arena.paint_rgb(2130706432 + 2)
@@ -1041,23 +1042,23 @@ fn paint_shimmer(id: int, x: int, y: int, w: int, h: int, r: int, a: int) {
 fn paint_fill_box(id: int, wash: int) {
     let x = arena.draw_x(id)
     let y = arena.draw_y(id)
-    let w = arena.nodes[id].w
-    let h = arena.nodes[id].h
+    let w = nodes.box[id].w
+    let h = nodes.box[id].h
     let a = arena.paint_alpha(id)
     // Per-corner radii. An untouched node resolves all four to its uniform
     // `radius`, so `uniform` is true and every op below is the one it always
     // was — the per-corner path only opens when a corner actually differs.
-    let tl = arena.radius_at(id, 0)
-    let tr = arena.radius_at(id, 1)
-    let br = arena.radius_at(id, 2)
-    let bl = arena.radius_at(id, 3)
+    let tl = nodes.radius_at(id, 0)
+    let tr = nodes.radius_at(id, 1)
+    let br = nodes.radius_at(id, 2)
+    let bl = nodes.radius_at(id, 3)
     let uniform = tl == tr && tr == br && br == bl
-    let r = i32(if uniform { tl } else { arena.radius_max(id) })
+    let r = i32(if uniform { tl } else { nodes.radius_max(id) })
     // Elevation paints under the surface, so the fill and its border sit on it.
-    let elev = int(arena.nodes[id].elev)
-    if elev > 0 || int(arena.nodes[id].lift) > 0 {
+    let elev = int(nodes.look[id].elev)
+    if elev > 0 || int(nodes.look[id].lift) > 0 {
         let e = arena.elev_hover(id)
-        let sc = arena.paint_rgb(arena.nodes[id].elev_c)
+        let sc = arena.paint_rgb(nodes.look[id].elev_c)
         // Ambient first, so the tight key shadow sits on top of it.
         if e.amb_alpha > 0 {
             shadow(x, y, w, h, r, sc, e.amb_alpha, e.amb_blur, 0, e.amb_dy)
@@ -1066,14 +1067,14 @@ fn paint_fill_box(id: int, wash: int) {
             shadow(x, y, w, h, r, sc, e.alpha, e.blur, e.dx, e.dy)
         }
     }
-    let rgb = arena.paint_rgb(arena.nodes[id].bg)
-    let has_border = arena.nodes[id].border_w > 0 && arena.nodes[id].border_c >= 0
+    let rgb = arena.paint_rgb(nodes.look[id].bg)
+    let has_border = nodes.lay[id].border_w > 0 && nodes.look[id].border_c >= 0
     let mut ring_done = 0
-    if arena.nodes[id].bg >= 0 {
-        if arena.nodes[id].bg2 >= 0 {
+    if nodes.look[id].bg >= 0 {
+        if nodes.look[id].bg2 >= 0 {
             // Gradients have no per-corner form, so a rounded gradient uses the
             // largest corner; per-corner surfaces are flat fills.
-            let c1 = arena.paint_rgb(arena.nodes[id].bg2)
+            let c1 = arena.paint_rgb(nodes.look[id].bg2)
             fill_g(x, y, w, h, rgb, c1, 0, r, a)
         } else if !uniform {
             // Per-corner surface. There is no per-corner stroke op, so a border
@@ -1082,8 +1083,8 @@ fn paint_fill_box(id: int, wash: int) {
             // (a translucent per-corner bordered surface stays square-bordered
             // under the uniform path, which keeps its anti-aliased ring).
             if has_border {
-                let b = i32(arena.nodes[id].border_w)
-                fill4(x, y, w, h, arena.paint_rgb(arena.nodes[id].border_c), a, tl, tr, br, bl)
+                let b = i32(nodes.lay[id].border_w)
+                fill4(x, y, w, h, arena.paint_rgb(nodes.look[id].border_c), a, tl, tr, br, bl)
                 fill4(x + b, y + b, w - b * 2, h - b * 2, rgb, a,
                       geometry.max2(tl - b, 0), geometry.max2(tr - b, 0),
                       geometry.max2(br - b, 0), geometry.max2(bl - b, 0))
@@ -1101,38 +1102,100 @@ fn paint_fill_box(id: int, wash: int) {
     // This is what lets a bordered surface be translucent or carry a gradient.
     // The per-corner branch above paints its own ring.
     if has_border && ring_done == 0 {
-        stroke(x, y, w, h, arena.paint_rgb(arena.nodes[id].border_c), r,
-               i32(arena.nodes[id].border_w), a)
+        stroke(x, y, w, h, arena.paint_rgb(nodes.look[id].border_c), r,
+               i32(nodes.lay[id].border_w), a)
     }
-    if int(arena.nodes[id].pulse) != 0 {
+    paint_side_borders(id, x, y, w, h, a)
+    if int(nodes.look[id].pulse) != 0 {
         paint_shimmer(id, x, y, w, h, r, a)
     }
-    if wash != 0 && int(arena.nodes[id].lift) == 0 {
+    if wash != 0 && int(nodes.look[id].lift) == 0 {
         paint_hover_wash(id)
     }
-    if arena.nodes[id].press != 0 && arena.state_watched(id) == 0 {
-        let pa = int(arena.nodes[id].press_amt)
+    if nodes.anim[id].press != 0 && arena.state_watched(id) == 0 {
+        let pa = int(nodes.anim[id].press_amt)
         if pa > 0 {
             fill_a(x, y, w, h, 0, r, pa * 36 / 100 * a / 255)
         }
     }
 }
 
+/// Side borders: per-side widths drawn inside the box (no layout space).
+fn paint_side_borders(id: int, x: int, y: int, w: int, h: int, a: int) {
+    if nodes.look[id].border_c < 0 {
+        return
+    }
+    let t = int(nodes.look[id].bd_t)
+    let rr = int(nodes.look[id].bd_r)
+    let b = int(nodes.look[id].bd_b)
+    let l = int(nodes.look[id].bd_l)
+    if t + rr + b + l == 0 {
+        return
+    }
+    let c = arena.paint_rgb(nodes.look[id].border_c)
+    if t > 0 {
+        fill_alpha(x, y, w, t, c, 0, a)
+    }
+    if b > 0 {
+        fill_alpha(x, y + h - b, w, b, c, 0, a)
+    }
+    if l > 0 {
+        fill_alpha(x, y + t, l, h - t - b, c, 0, a)
+    }
+    if rr > 0 {
+        fill_alpha(x + w - rr, y + t, rr, h - t - b, c, 0, a)
+    }
+}
+
+/// `Border.between`: a rule centred in the gap between consecutive flow
+/// children, across the content box. Painted over the children.
+fn paint_between(id: int) {
+    let bw = int(nodes.look[id].bd_between)
+    if bw <= 0 || nodes.look[id].border_c < 0 {
+        return
+    }
+    let c = arena.paint_rgb(nodes.look[id].border_c)
+    let a = arena.paint_alpha(id)
+    let row = int(nodes.lay[id].dir) == 0
+    let cx = arena.draw_x(id) + i32(nodes.lay[id].pad_l) + i32(nodes.lay[id].border_w)
+    let cy = arena.draw_y(id) + i32(nodes.lay[id].pad_t) + i32(nodes.lay[id].border_w)
+    let iw = arena.inner_w(id)
+    let ih = arena.inner_h(id)
+    let mut prev = 0
+    let nk = nodes.tree[id].kids.len
+    for i in 0..nk {
+        let k = nodes.tree[id].kids[i]
+        if arena.skip_flow(k) != 0 {
+            continue
+        }
+        if prev > 0 {
+            if row {
+                let mid = (arena.draw_x(prev) + nodes.box[prev].w + arena.draw_x(k)) / 2
+                fill_alpha(mid - bw / 2, cy, bw, ih, c, 0, a)
+            } else {
+                let mid = (arena.draw_y(prev) + nodes.box[prev].h + arena.draw_y(k)) / 2
+                fill_alpha(cx, mid - bw / 2, iw, bw, c, 0, a)
+            }
+        }
+        prev = k
+    }
+}
+
 fn paint_input(id: int) {
     let x = arena.draw_x(id)
     let y = arena.draw_y(id)
-    let w = arena.nodes[id].w
-    let h = arena.nodes[id].h
-    let tx = x + i32(arena.nodes[id].pad_l) + i32(arena.nodes[id].border_w)
-    let ty = y + i32(arena.nodes[id].pad_t) + i32(arena.nodes[id].border_w)
+    let w = nodes.box[id].w
+    let h = nodes.box[id].h
+    let tx = x + i32(nodes.lay[id].pad_l) + i32(nodes.lay[id].border_w)
+    let ty = y + i32(nodes.lay[id].pad_t) + i32(nodes.lay[id].border_w)
     let fg = arena.fg_of(id)
     let shown = arena.input_shown(id)
     let inner = arena.inner_w(id)
-    let slot = arena.nodes[id].edit_slot
+    let slot = nodes.ui[id].edit_slot
     save()
     clip(x, y, w, h, 0)
     if slot >= 0 {
-        let mut font = i32(arena.nodes[id].font)
+        let mut font = i32(nodes.look[id].font)
         if font < 8 {
             font = 14
         }
@@ -1155,9 +1218,9 @@ fn paint_input(id: int) {
         ta = ta * 50 / 100
     }
     if inner > 0 {
-        text_wrap(tx, ty, shown, fg, i32(arena.nodes[id].font), inner, ta)
+        text_wrap(tx, ty, shown, fg, i32(nodes.look[id].font), inner, ta)
     } else {
-        text(tx, ty, shown, fg, i32(arena.nodes[id].font), ta)
+        text(tx, ty, shown, fg, i32(nodes.look[id].font), ta)
     }
     if arena.focus_id == id {
         if slot >= 0 {
@@ -1170,62 +1233,74 @@ fn paint_input(id: int) {
     restore()
 }
 
+/// `textAlign` shift for a single line `tw` wide in content width `inner`.
+fn align_dx(id: int, inner: int, tw: int) -> int {
+    let al = int(nodes.look[id].t_align)
+    if al == 0 || inner <= tw {
+        return 0
+    }
+    if al == 1 {
+        return (inner - tw) / 2
+    }
+    return inner - tw
+}
+
 fn paint_label(id: int) {
-    let x = arena.draw_x(id) + i32(arena.nodes[id].pad_l) + i32(arena.nodes[id].border_w)
+    let x = arena.draw_x(id) + i32(nodes.lay[id].pad_l) + i32(nodes.lay[id].border_w)
     let fg = arena.fg_of(id)
     let a = arena.paint_alpha(id)
-    let rotation_degrees = int(arena.nodes[id].text_rot)
+    let rotation_degrees = int(nodes.look[id].text_rot)
     if rotation_degrees != 0 {
-        text_rot(x, arena.draw_y(id) + i32(arena.nodes[id].pad_t) + i32(arena.nodes[id].border_w),
-                 arena.nodes[id].text, fg, i32(arena.nodes[id].font), rotation_degrees, a)
+        text_rot(x, arena.draw_y(id) + i32(nodes.lay[id].pad_t) + i32(nodes.lay[id].border_w),
+                 nodes.look[id].text, fg, i32(nodes.look[id].font), rotation_degrees, a)
         return
     }
-    if arena.has_bound_num(id) != 0 {
-        let y = arena.draw_y(id) + i32(arena.nodes[id].pad_t) + geometry.max2(arena.nodes[id].h - i32(arena.nodes[id].pad_t) - i32(arena.nodes[id].pad_b) - arena.nodes[id].text_height, 0) / 2
-        text_int(x, y, arena.bound_num(id), fg, i32(arena.nodes[id].font), a)
+    if nodes.has_bound_num(id) != 0 {
+        let y = arena.draw_y(id) + i32(nodes.lay[id].pad_t) + geometry.max2(nodes.box[id].h - i32(nodes.lay[id].pad_t) - i32(nodes.lay[id].pad_b) - nodes.box[id].text_height, 0) / 2
+        text_int(x, y, arena.bound_num(id), fg, i32(nodes.look[id].font), a)
         return
     }
     let inner = arena.inner_w(id)
-    if int(arena.nodes[id].ellipsis) != 0 {
+    if int(nodes.look[id].ellipsis) != 0 {
         // Truncate rather than overflow: the longest prefix plus `…` that
         // still fits the content box. `text_width` is the full measured width, so
         // the measure is skipped when the label already fits.
         if inner > 0 {
-            if inner < arena.nodes[id].text_width {
+            if inner < nodes.box[id].text_width {
                 let mut explicit_width = 0
                 let mut explicit_height = 0
-                let shown = metrics.ellipsize(arena.nodes[id].text, i32(arena.nodes[id].font), inner, arena.nodes[id].text_width, &mut explicit_width, &mut explicit_height)
-                let ey = arena.draw_y(id) + i32(arena.nodes[id].pad_t) + i32(arena.nodes[id].border_w) + geometry.max2(arena.nodes[id].h - i32(arena.nodes[id].pad_t) - i32(arena.nodes[id].pad_b) - arena.nodes[id].text_height, 0) / 2
-                text(x, ey, shown, fg, i32(arena.nodes[id].font), a)
+                let shown = metrics.ellipsize(nodes.look[id].text, i32(nodes.look[id].font), inner, nodes.box[id].text_width, &mut explicit_width, &mut explicit_height)
+                let ey = arena.draw_y(id) + i32(nodes.lay[id].pad_t) + i32(nodes.lay[id].border_w) + geometry.max2(nodes.box[id].h - i32(nodes.lay[id].pad_t) - i32(nodes.lay[id].pad_b) - nodes.box[id].text_height, 0) / 2
+                text(x, ey, shown, fg, i32(nodes.look[id].font), a)
                 return
             }
         }
     }
-    if int(arena.nodes[id].wrap) != 0 {
+    if int(nodes.lay[id].wrap) != 0 {
         if inner > 0 {
-            if inner < arena.nodes[id].text_width {
-                text_wrap(x, arena.draw_y(id) + i32(arena.nodes[id].pad_t) + i32(arena.nodes[id].border_w), arena.nodes[id].text, fg, i32(arena.nodes[id].font), inner, a)
+            if inner < nodes.box[id].text_width {
+                text_wrap(x, arena.draw_y(id) + i32(nodes.lay[id].pad_t) + i32(nodes.lay[id].border_w), nodes.look[id].text, fg, i32(nodes.look[id].font), inner, a)
                 return
             }
         }
     }
-    let y = arena.draw_y(id) + i32(arena.nodes[id].pad_t) + geometry.max2(arena.nodes[id].h - i32(arena.nodes[id].pad_t) - i32(arena.nodes[id].pad_b) - arena.nodes[id].text_height, 0) / 2
-    text(x, y, arena.nodes[id].text, fg, i32(arena.nodes[id].font), a)
+    let y = arena.draw_y(id) + i32(nodes.lay[id].pad_t) + geometry.max2(nodes.box[id].h - i32(nodes.lay[id].pad_t) - i32(nodes.lay[id].pad_b) - nodes.box[id].text_height, 0) / 2
+    text(x + align_dx(id, inner, nodes.box[id].text_width), y, nodes.look[id].text, fg, i32(nodes.look[id].font), a)
 }
 
 fn paint_button(id: int) {
     let a = arena.paint_alpha(id)
-    if arena.nodes[id].bg >= 0 {
-        fill_alpha(arena.draw_x(id), arena.draw_y(id), arena.nodes[id].w, arena.nodes[id].h, arena.paint_rgb(arena.nodes[id].bg), i32(arena.nodes[id].radius), a)
+    if nodes.look[id].bg >= 0 {
+        fill_alpha(arena.draw_x(id), arena.draw_y(id), nodes.box[id].w, nodes.box[id].h, arena.paint_rgb(nodes.look[id].bg), i32(nodes.look[id].radius), a)
     }
-    let text_width = arena.nodes[id].text_width
-    let text_height = arena.nodes[id].text_height
-    let tx = arena.draw_x(id) + geometry.max2(arena.nodes[id].w - text_width, 0) / 2
-    let ty = arena.draw_y(id) + geometry.max2(arena.nodes[id].h - text_height, 0) / 2
-    if arena.has_bound_num(id) != 0 {
-        text_int(tx, ty, arena.bound_num(id), arena.fg_of(id), i32(arena.nodes[id].font), a)
+    let text_width = nodes.box[id].text_width
+    let text_height = nodes.box[id].text_height
+    let tx = arena.draw_x(id) + geometry.max2(nodes.box[id].w - text_width, 0) / 2
+    let ty = arena.draw_y(id) + geometry.max2(nodes.box[id].h - text_height, 0) / 2
+    if nodes.has_bound_num(id) != 0 {
+        text_int(tx, ty, arena.bound_num(id), arena.fg_of(id), i32(nodes.look[id].font), a)
     } else {
-        text(tx, ty, arena.nodes[id].text, arena.fg_of(id), i32(arena.nodes[id].font), a)
+        text(tx, ty, nodes.look[id].text, arena.fg_of(id), i32(nodes.look[id].font), a)
     }
     paint_hover_wash(id)
 }
@@ -1245,24 +1320,23 @@ fn paint_scrollbar(id: int) {
     let ox = arena.draw_x(id)
     let oy = arena.draw_y(id)
     let rgb = arena.hover_rgb()
-    let ta = a * 36 / 180
+    // The track only shows while the bar is hot or dragged, on exactly the
+    // span the thumb travels.
+    let ta = arena.bar_track_alpha(id)
+    let bw = arena.bar_w_of(id)
     if arena.bar_visible(id) != 0 {
-        let text_width = arena.bar_w()
         let tx = arena.bar_x(id, ox)
-        let thh = arena.bar_thumb_h(id)
-        let thy = arena.bar_thumb_y(id, oy)
-        let track_h = geometry.max2(arena.nodes[id].h - 16, 8)
         if ta > 0 {
-            fill_a(tx, oy + 8, text_width, track_h, rgb, text_width / 2, ta)
+            fill_a(tx, arena.bar_y(id, oy), bw, arena.bar_track_h(id), rgb, bw / 2, ta)
         }
-        fill_a(tx, thy, text_width, thh, rgb, text_width / 2, a)
+        fill_a(tx, arena.bar_thumb_y(id, oy), bw, arena.bar_thumb_h(id), rgb, bw / 2, a)
     }
     if arena.bar_visible_x(id) != 0 {
-        let text_height = arena.bar_w()
         let ty = arena.bar_hy(id, oy)
-        let thw = arena.bar_thumb_w(id)
-        let tx = arena.bar_thumb_x(id, ox)
-        fill_a(tx, ty, thw, text_height, rgb, text_height / 2, a)
+        if ta > 0 {
+            fill_a(arena.bar_hx(id, ox), ty, arena.bar_track_w(id), bw, rgb, bw / 2, ta)
+        }
+        fill_a(arena.bar_thumb_x(id, ox), ty, arena.bar_thumb_w(id), bw, rgb, bw / 2, a)
     }
 }
 
@@ -1273,6 +1347,92 @@ fn paint_scrollbar(id: int) {
 /// it contribute a damage rect. A dirty container must repaint its children —
 /// they composite over its new fill — so the capture covers the subtree, not
 /// just the node.
+// --- culling ---------------------------------------------------------------
+//
+// The rule: an element whose box lies wholly outside the clip it paints
+// under emits no render commands. Every clip container (a scroller, an
+// `overflow` box) narrows the active cull rect for its subtree, and
+// `paint_node` skips a node outside it — with its whole subtree — so a
+// 2000-row list records only the rows in its viewport and the host replays
+// only those. A culled node keeps an empty span at the place it would have
+// recorded; when it later needs ops, the patch sees a length change from zero
+// and the frame records in full, re-deciding every cull.
+
+/// Slack around the clip rect, in dp: shadows, focus rings and anti-aliasing
+/// paint a little outside a node's box.
+const CULL_PAD: int = 48
+
+/// The active cull rect in draw space; `cull_on` 0 = no clip above.
+let mut cull_on: int = 0
+let mut cull_x0: int = 0
+let mut cull_y0: int = 0
+let mut cull_x1: int = 0
+let mut cull_y1: int = 0
+
+/// Nodes skipped by culling this session (diagnostics).
+let mut culled_count: int = 0
+
+fn paint_culled_count() -> int {
+    return culled_count
+}
+
+/// Narrow the cull rect to (`x`, `y`, `w`, `h`). The caller saved the five
+/// fields first and restores them after the subtree.
+fn cull_enter(x: int, y: int, w: int, h: int) {
+    if cull_on == 0 {
+        cull_on = 1
+        cull_x0 = x
+        cull_y0 = y
+        cull_x1 = x + w
+        cull_y1 = y + h
+        return
+    }
+    cull_x0 = geometry.max2(cull_x0, x)
+    cull_y0 = geometry.max2(cull_y0, y)
+    cull_x1 = geometry.min2(cull_x1, x + w)
+    cull_y1 = geometry.min2(cull_y1, y + h)
+}
+
+/// 1 when a node paints away from its laid-out box (an animated transform),
+/// so neither it nor its subtree can be culled by box.
+fn moves_off_box(id: int) -> int {
+    if int(nodes.anim[id].an_scale) != 100 || int(nodes.anim[id].an_tx) != 0 ||
+       int(nodes.anim[id].an_ty) != 0 || int(nodes.anim[id].an_rot) != 0 ||
+       int(nodes.look[id].spin) != 0 {
+        return 1
+    }
+    return 0
+}
+
+/// 1 when `id`, at the current scroll offsets, lies wholly outside the active
+/// cull rect. Floaters paint in their own pass and are never culled here.
+fn node_culled(id: int) -> int {
+    if cull_on == 0 {
+        return 0
+    }
+    if nodes.is_floater(id) != 0 {
+        return 0
+    }
+    if moves_off_box(id) != 0 {
+        return 0
+    }
+    let x = arena.draw_x(id)
+    let y = arena.draw_y(id)
+    if x + nodes.box[id].w + CULL_PAD <= cull_x0 {
+        return 1
+    }
+    if y + nodes.box[id].h + CULL_PAD <= cull_y0 {
+        return 1
+    }
+    if x - CULL_PAD >= cull_x1 {
+        return 1
+    }
+    if y - CULL_PAD >= cull_y1 {
+        return 1
+    }
+    return 0
+}
+
 fn paint_node(id: int) {
     if id <= 0 {
         return
@@ -1283,9 +1443,14 @@ fn paint_node(id: int) {
         set_span(id, 0, 0)
         return
     }
+    if node_culled(id) != 0 {
+        culled_count = culled_count + 1
+        set_span(id, rec_here(), 0)
+        return
+    }
     let from = rec_here()
     let cap_prev = arena.damage_cap
-    if (int(arena.nodes[id].dirty) & 1) != 0 {
+    if (int(nodes.tree[id].dirty) & 1) != 0 {
         arena.damage_cap = arena.damage_cap + 1
     }
     paint_node_shaped(id)
@@ -1304,15 +1469,15 @@ fn paint_node_shaped(id: int) {
     if arena.want_paint(id) == 0 {
         return
     }
-    let sc = int(arena.nodes[id].an_scale)
-    let tx = int(arena.nodes[id].an_tx)
-    let mut ty = int(arena.nodes[id].an_ty)
-    let mut rotation_degrees = int(arena.nodes[id].an_rot)
+    let sc = int(nodes.anim[id].an_scale)
+    let tx = int(nodes.anim[id].an_tx)
+    let mut ty = int(nodes.anim[id].an_ty)
+    let mut rotation_degrees = int(nodes.anim[id].an_rot)
     // A spinning progress bar (kind 6) sweeps instead of rotating: the
     // flag only keeps the frame loop alive for it.
-    if int(arena.nodes[id].spin) != 0 && int(arena.nodes[id].kind) != 6 {
+    if int(nodes.look[id].spin) != 0 && int(nodes.tree[id].kind) != 6 {
         if arena.spin_live() != 0 {
-            let per = int(arena.nodes[id].spin_ms)
+            let per = int(nodes.look[id].spin_ms)
             if per > 0 {
                 rotation_degrees = (arena.now_ms % per) * 360 / per
             }
@@ -1320,14 +1485,14 @@ fn paint_node_shaped(id: int) {
     }
     // Reveal: clip to the shown share of the box and slide the content up by
     // the rest, so it comes down from under whatever sits above it.
-    let rv = int(arena.nodes[id].an_reveal)
+    let rv = int(nodes.anim[id].an_reveal)
     let mut clipped = 0
     if rv < 100 {
-        let h = arena.nodes[id].h
+        let h = nodes.box[id].h
         let shown = h * rv / 100
         clipped = 1
         save()
-        clip(arena.draw_x(id), arena.draw_y(id), arena.nodes[id].w, shown, 0)
+        clip(arena.draw_x(id), arena.draw_y(id), nodes.box[id].w, shown, 0)
         ty = ty + shown - h
     }
     if sc == 100 {
@@ -1343,11 +1508,14 @@ fn paint_node_shaped(id: int) {
             }
         }
     }
-    let cx = arena.draw_x(id) + arena.nodes[id].w / 2
-    let cy = arena.draw_y(id) + arena.nodes[id].h / 2
+    let cx = arena.draw_x(id) + nodes.box[id].w / 2
+    let cy = arena.draw_y(id) + nodes.box[id].h / 2
     save()
     xform(tx, ty, sc, rotation_degrees, cx, cy)
+    let c_on = cull_on
+    cull_on = 0
     paint_node_body(id)
+    cull_on = c_on
     restore()
     if clipped != 0 {
         restore()
@@ -1367,55 +1535,66 @@ fn paint_node_body_in(id: int) {
         return
     }
     if arena.paint_skip_z != 0 {
-        if arena.is_floater(id) != 0 {
+        if nodes.is_floater(id) != 0 {
             return
         }
     }
     if arena.want_paint(id) == 0 {
         return
     }
-    let k = int(arena.nodes[id].kind)
+    let k = int(nodes.tree[id].kind)
     let x = arena.draw_x(id)
     let y = arena.draw_y(id)
-    let w = arena.nodes[id].w
-    let h = arena.nodes[id].h
+    let w = nodes.box[id].w
+    let h = nodes.box[id].h
     // Damage capture: the node's own rect, in the same window space the draw
     // list records, expanded for shadow / transform / AA.
     arena.damage_visit(id, x, y, w, h)
     if k == 9 {
-        if arena.nodes[id].bg >= 0 {
-            fill_a(x, y, w, h, arena.paint_rgb(arena.nodes[id].bg), 0, arena.paint_alpha(id))
+        if nodes.look[id].bg >= 0 {
+            fill_a(x, y, w, h, arena.paint_rgb(nodes.look[id].bg), 0, arena.paint_alpha(id))
         }
-        let nk = arena.nodes[id].kids.len
+        let nk = nodes.tree[id].kids.len
         for i in 0..nk {
-            paint_node(arena.nodes[id].kids[i])
+            paint_node(nodes.tree[id].kids[i])
         }
         return
     }
     if k == 11 {
-        if arena.nodes[id].bg >= 0 {
-            fill(x, y, w, h, arena.paint_rgb(arena.nodes[id].bg), i32(arena.nodes[id].radius))
+        if nodes.look[id].bg >= 0 {
+            fill(x, y, w, h, arena.paint_rgb(nodes.look[id].bg), i32(nodes.look[id].radius))
         }
         save()
         clip(x, y, w, h, 0)
+        let c_on = cull_on
+        let c_x0 = cull_x0
+        let c_y0 = cull_y0
+        let c_x1 = cull_x1
+        let c_y1 = cull_y1
+        cull_enter(x, y, w, h)
         let prev_y = arena.paint_sy
         let prev_x = arena.paint_sx
-        arena.paint_sy = arena.paint_sy + arena.nodes[id].scroll_y
-        arena.paint_sx = arena.paint_sx + arena.nodes[id].scroll_x
-        let nk = arena.nodes[id].kids.len
+        arena.paint_sy = arena.paint_sy + nodes.scrl[id].scroll_y
+        arena.paint_sx = arena.paint_sx + nodes.scrl[id].scroll_x
+        let nk = nodes.tree[id].kids.len
         for i in 0..nk {
-            let c = arena.nodes[id].kids[i]
-            if int(arena.nodes[c].kind) != 9 {
+            let c = nodes.tree[id].kids[i]
+            if int(nodes.tree[c].kind) != 9 {
                 paint_node(c)
             }
         }
         arena.paint_sy = prev_y
         arena.paint_sx = prev_x
+        cull_on = c_on
+        cull_x0 = c_x0
+        cull_y0 = c_y0
+        cull_x1 = c_x1
+        cull_y1 = c_y1
         restore()
         paint_scrollbar(id)
         let saved_skip = arena.paint_skip_z
-        arena.paint_sy = arena.paint_sy + arena.nodes[id].scroll_y
-        arena.paint_sx = arena.paint_sx + arena.nodes[id].scroll_x
+        arena.paint_sy = arena.paint_sy + nodes.scrl[id].scroll_y
+        arena.paint_sx = arena.paint_sx + nodes.scrl[id].scroll_x
         arena.paint_skip_z = 0
         paint_floaters(id)
         arena.paint_skip_z = saved_skip
@@ -1427,30 +1606,30 @@ fn paint_node_body_in(id: int) {
         paint_button(id)
     } else if k == 6 {
         let mut track = 0
-        if arena.nodes[id].bg >= 0 {
-            track = arena.paint_rgb(arena.nodes[id].bg)
+        if nodes.look[id].bg >= 0 {
+            track = arena.paint_rgb(nodes.look[id].bg)
         }
-        fill(x, y, w, h, track, i32(arena.nodes[id].radius))
-        if int(arena.nodes[id].spin) != 0 {
+        fill(x, y, w, h, track, i32(nodes.look[id].radius))
+        if int(nodes.look[id].spin) != 0 {
             // Indeterminate: a 30% segment sweeps left to right on the
             // frame clock (`spin_ms` per pass), clipped to the track. Reduced
             // motion parks it a third of the way in.
             let seg = w * 3 / 10
             let mut sx = x + (w - seg) / 3
             if arena.spin_live() != 0 {
-                let per = int(arena.nodes[id].spin_ms)
+                let per = int(nodes.look[id].spin_ms)
                 if per > 0 {
                     sx = x - seg + (w + seg) * (arena.now_ms % per) / per
                 }
             }
             save()
-            clip(x, y, w, h, i32(arena.nodes[id].radius))
-            fill(sx, y, seg, h, arena.fg_of(id), i32(arena.nodes[id].radius))
+            clip(x, y, w, h, i32(nodes.look[id].radius))
+            fill(sx, y, seg, h, arena.fg_of(id), i32(nodes.look[id].radius))
             restore()
         } else {
             let fw = w * arena.bind_pct(id) / 100
             if fw > 0 {
-                fill(x, y, fw, h, arena.fg_of(id), i32(arena.nodes[id].radius))
+                fill(x, y, fw, h, arena.fg_of(id), i32(nodes.look[id].radius))
             }
         }
         paint_hover_wash(id)
@@ -1467,8 +1646,8 @@ fn paint_node_body_in(id: int) {
         let travel = geometry.max2(w - kd, 0)
         let kx = x + travel * arena.bind_pct(id) / 100
         let mut track = 0
-        if arena.nodes[id].bg >= 0 {
-            track = arena.paint_rgb(arena.nodes[id].bg)
+        if nodes.look[id].bg >= 0 {
+            track = arena.paint_rgb(nodes.look[id].bg)
         }
         fill(x, ty, w, text_height, track, text_height / 2)
         let fw = kx + kd / 2 - x
@@ -1476,24 +1655,24 @@ fn paint_node_body_in(id: int) {
             fill(x, ty, fw, text_height, arena.fg_of(id), text_height / 2)
         }
         let mut knob = arena.fg_of(id)
-        if arena.nodes[id].border_c >= 0 {
-            knob = arena.paint_rgb(arena.nodes[id].border_c)
+        if nodes.look[id].border_c >= 0 {
+            knob = arena.paint_rgb(nodes.look[id].border_c)
         }
         // The knob grows 2dp on hover (hover_amt track) and sits on a soft
         // shadow so it reads as a thumb above the track, not a dot on it.
-        let grow = int(arena.nodes[id].hover_amt) * 2 / 100
+        let grow = int(nodes.anim[id].hover_amt) * 2 / 100
         let kw = kd + grow
         let kxx = kx - grow / 2
         let kyy = y + (h - kw) / 2
         shadow(kxx, kyy, kw, kw, kw / 2, 0, 40, 4, 0, 1)
         fill(kxx, kyy, kw, kw, knob, kw / 2)
         // Hover wash on the knob only, not the whole track.
-        let ha = int(arena.nodes[id].hover_amt)
+        let ha = int(nodes.anim[id].hover_amt)
         if ha > 0 {
             fill_a(kxx, kyy, kw, kw, arena.hover_rgb(), kw / 2, ha * 16 / 100)
         }
     } else if k == 7 {
-        let mut on = arena.nodes[id].tween
+        let mut on = nodes.anim[id].tween
         if on < 0 {
             on = 0
             if arena.bind_pct(id) > 0 {
@@ -1501,15 +1680,15 @@ fn paint_node_body_in(id: int) {
             }
         }
         let mut track = 0
-        if arena.nodes[id].bg >= 0 {
-            track = arena.paint_rgb(arena.nodes[id].bg)
+        if nodes.look[id].bg >= 0 {
+            track = arena.paint_rgb(nodes.look[id].bg)
         }
         if on > 50 {
-            if arena.nodes[id].fg >= 0 {
-                track = arena.paint_rgb(arena.nodes[id].fg)
+            if nodes.look[id].fg >= 0 {
+                track = arena.paint_rgb(nodes.look[id].fg)
             }
         }
-        fill(x, y, w, h, track, i32(arena.nodes[id].radius))
+        fill(x, y, w, h, track, i32(nodes.look[id].radius))
         let pad = geometry.max2(h / 6, 1)
         let text_height = geometry.max2(h - pad * 2, 1)
         let t0 = x + pad
@@ -1519,36 +1698,36 @@ fn paint_node_body_in(id: int) {
         }
         let tx = t0 + (t1 - t0) * on / 100
         let mut knob = 0
-        if arena.nodes[id].border_c >= 0 {
-            knob = arena.paint_rgb(arena.nodes[id].border_c)
+        if nodes.look[id].border_c >= 0 {
+            knob = arena.paint_rgb(nodes.look[id].border_c)
         }
         fill(tx, y + (h - text_height) / 2, text_height, text_height, knob, text_height / 2)
         paint_hover_wash(id)
     } else if k == 8 {
         let mut fillc = 0
-        if arena.nodes[id].bg >= 0 {
-            fillc = arena.paint_rgb(arena.nodes[id].bg)
+        if nodes.look[id].bg >= 0 {
+            fillc = arena.paint_rgb(nodes.look[id].bg)
         }
-        let mut twn = arena.nodes[id].tween
+        let mut twn = nodes.anim[id].tween
         if twn < 0 {
             twn = 0
-            if arena.sig_val(arena.nodes[id].bind_sig) != 0 {
+            if arena.sig_val(nodes.ui[id].bind_sig) != 0 {
                 twn = 100
             }
         }
         if twn > 50 {
             fillc = arena.fg_of(id)
         }
-        fill(x, y, w, h, fillc, i32(arena.nodes[id].radius))
+        fill(x, y, w, h, fillc, i32(nodes.look[id].radius))
         if twn > 0 {
-            svg(x, y, w, h, arena.nodes[id].text, arena.paint_rgb(arena.nodes[id].border_c), arena.paint_alpha(id) * twn / 100)
+            svg(x, y, w, h, nodes.look[id].text, arena.paint_rgb(nodes.look[id].border_c), arena.paint_alpha(id) * twn / 100)
         }
         paint_hover_wash(id)
     } else if k == 12 {
-        svg(x, y, w, h, arena.nodes[id].text, arena.fg_of(id), arena.paint_alpha(id))
+        svg(x, y, w, h, nodes.look[id].text, arena.fg_of(id), arena.paint_alpha(id))
     } else if k == 14 {
         let mut draw = 1
-        if int(arena.nodes[id].wrap) != 0 {
+        if int(nodes.lay[id].wrap) != 0 {
             let vw = platform.plat_view_width()
             let vh = platform.plat_view_height()
             if x + w < 0 {
@@ -1565,8 +1744,8 @@ fn paint_node_body_in(id: int) {
             }
         }
         if draw != 0 {
-            image(x, y, w, h, arena.nodes[id].text, i32(arena.nodes[id].radius), arena.paint_alpha(id),
-                  i32(arena.nodes[id].font))
+            image(x, y, w, h, nodes.look[id].text, i32(nodes.look[id].radius), arena.paint_alpha(id),
+                  i32(nodes.look[id].font))
         }
     } else {
         // Text inputs paint flat: no hover/press wash, so clicking never
@@ -1584,24 +1763,38 @@ fn paint_node_body_in(id: int) {
     if k != 9 {
         if k != 11 {
             let mut clip = 0
-            if arena.nodes[id].overflow == 1 {
+            let c_on = cull_on
+            let c_x0 = cull_x0
+            let c_y0 = cull_y0
+            let c_x1 = cull_x1
+            let c_y1 = cull_y1
+            if nodes.lay[id].overflow == 1 {
                 clip = 1
                 save()
                 clip(x, y, w, h, 0)
+                cull_enter(x, y, w, h)
             }
-            let nk = arena.nodes[id].kids.len
+            let nk = nodes.tree[id].kids.len
             for i in 0..nk {
-                let c = arena.nodes[id].kids[i]
+                let c = nodes.tree[id].kids[i]
                 if clip == 0 {
                     paint_node(c)
                 }
                 if clip != 0 {
-                    if int(arena.nodes[c].kind) != 9 {
+                    if int(nodes.tree[c].kind) != 9 {
                         paint_node(c)
                     }
                 }
             }
+            if int(nodes.look[id].bd_between) != 0 {
+                paint_between(id)
+            }
             if clip != 0 {
+                cull_on = c_on
+                cull_x0 = c_x0
+                cull_y0 = c_y0
+                cull_x1 = c_x1
+                cull_y1 = c_y1
                 restore()
             }
         }
@@ -1636,7 +1829,19 @@ fn paint_node_body_in(id: int) {
 fn paint_one_floater(id: int, sx: int, sy: int) {
     let prev_y = arena.paint_sy
     let prev_x = arena.paint_sx
-    if int(arena.nodes[id].kind) == 9 || arena.nodes[id].anchor > 0 {
+    let c_on = cull_on
+    cull_on = 0
+    // `Float.clip`: clipped by whatever clips its parent, as in flow.
+    let mut fclip = 0
+    if int(nodes.pin[id].fl_clip) != 0 {
+        if arena.parent_clip_rect(id) != 0 {
+            fclip = 1
+            save()
+            clip(arena.clip_x0, arena.clip_y0, geometry.max2(arena.clip_x1 - arena.clip_x0, 0),
+                 geometry.max2(arena.clip_y1 - arena.clip_y0, 0), 0)
+        }
+    }
+    if nodes.is_window_floater(id) != 0 {
         // Anchored floaters and overlays are in window coordinates.
         arena.paint_sy = 0
         arena.paint_sx = 0
@@ -1645,6 +1850,10 @@ fn paint_one_floater(id: int, sx: int, sy: int) {
         arena.paint_sx = sx
     }
     paint_node(id)
+    if fclip != 0 {
+        restore()
+    }
+    cull_on = c_on
     arena.paint_sy = prev_y
     arena.paint_sx = prev_x
 }
@@ -1726,10 +1935,10 @@ fn patch_node(id: int) -> int {
     if id <= 0 {
         return 1
     }
-    if arena.is_floater(id) != 0 {
+    if nodes.is_floater(id) != 0 {
         return patch_shell(id)
     }
-    let bits = arena.node_paint_bits(id)
+    let bits = nodes.node_paint_bits(id)
     if bits == 0 {
         return 1
     }
@@ -1761,7 +1970,7 @@ fn patch_node(id: int) -> int {
     // look of the last full record: a Select menu froze mid-fade, and a
     // closed one stayed on screen, translucent, over the controls below.
     // Re-record the scroller whole when something under it changed.
-    if int(arena.nodes[id].kind) == 11 && has_floater_inside(id) != 0 {
+    if int(nodes.tree[id].kind) == 11 && has_floater_inside(id) != 0 {
         return patch_run(id)
     }
     // A scroller's children paint shifted by its offset: `paint_node` adds it
@@ -1772,18 +1981,38 @@ fn patch_node(id: int) -> int {
     // everything around it.
     let prev_y = arena.paint_sy
     let prev_x = arena.paint_sx
-    if int(arena.nodes[id].kind) == 11 {
-        arena.paint_sy = prev_y + arena.nodes[id].scroll_y
-        arena.paint_sx = prev_x + arena.nodes[id].scroll_x
+    // The cull rect the record painted this subtree under (`node_culled`): a
+    // culled node has no ops to patch, and its subtree none either.
+    let c_on = cull_on
+    let c_x0 = cull_x0
+    let c_y0 = cull_y0
+    let c_x1 = cull_x1
+    let c_y1 = cull_y1
+    if moves_off_box(id) != 0 {
+        cull_on = 0
+    } else if int(nodes.tree[id].kind) == 11 || nodes.lay[id].overflow == 1 {
+        cull_enter(arena.draw_x(id), arena.draw_y(id), nodes.box[id].w, nodes.box[id].h)
     }
-    let kids = arena.nodes[id].kids
+    if int(nodes.tree[id].kind) == 11 {
+        arena.paint_sy = prev_y + nodes.scrl[id].scroll_y
+        arena.paint_sx = prev_x + nodes.scrl[id].scroll_x
+    }
+    let kids = nodes.tree[id].kids
     let n = kids.len
     let mut ok = 1
     for i in 0..n {
+        if op_len_len(kids[i]) == 0 && node_culled(kids[i]) != 0 {
+            continue
+        }
         if ok != 0 && patch_node(kids[i]) == 0 {
             ok = 0
         }
     }
+    cull_on = c_on
+    cull_x0 = c_x0
+    cull_y0 = c_y0
+    cull_x1 = c_x1
+    cull_y1 = c_y1
     arena.paint_sy = prev_y
     arena.paint_sx = prev_x
     return ok
@@ -1791,11 +2020,11 @@ fn patch_node(id: int) -> int {
 
 /// 1 when a floater (a z-indexed node or an overlay) lives under `id`.
 fn has_floater_inside(id: int) -> int {
-    let kids = arena.nodes[id].kids
+    let kids = nodes.tree[id].kids
     for i in 0..kids.len {
         let c = kids[i]
         if c > 0 {
-            if arena.is_floater(c) != 0 {
+            if nodes.is_floater(c) != 0 {
                 return 1
             }
             if has_floater_inside(c) != 0 {
@@ -1853,6 +2082,7 @@ fn patch_frame() -> int {
         pop(patch_ops)
     }
     rerec_gen = rerec_gen + 1
+    cull_on = 0
     arena.paint_skip_z = 1
     let ok = patch_node(arena.root_id)
     arena.paint_skip_z = 0
@@ -1977,16 +2207,16 @@ fn splice_frame() -> int {
 
 /// 1 when an ancestor of `id` had its run re-recorded this frame.
 fn under_rerec(id: int) -> int {
-    if id >= arena.nodes.len {
+    if id >= nodes.tree.len {
         return 0
     }
-    let mut p = arena.nodes[id].parent
+    let mut p = nodes.tree[id].parent
     let mut guard = 0
-    while p > 0 && p < arena.nodes.len && guard < 256 {
+    while p > 0 && p < nodes.tree.len && guard < 256 {
         if p < rerec_stamp.len && rerec_stamp[p] == rerec_gen {
             return 1
         }
-        p = arena.nodes[p].parent
+        p = nodes.tree[p].parent
         guard = guard + 1
     }
     return 0
@@ -2016,6 +2246,7 @@ fn record_frame() {
         pop(draws)
     }
     clear_spans()
+    cull_on = 0
     arena.paint_skip_z = 1
     if arena.root_id > 0 {
         paint_node(arena.root_id)
@@ -2032,7 +2263,7 @@ fn record_frame() {
 /// is empty and the start lands at the frame's end.
 fn paint_floaters_section(truncate: int) {
     if arena.root_id > 0 {
-        if int(arena.nodes[arena.root_id].kind) != 11 {
+        if int(nodes.tree[arena.root_id].kind) != 11 {
             // A patched frame keeps the old section to reuse unchanged runs.
             let mut old = []Draw {}
             let old_base = fl_section_start
@@ -2089,10 +2320,10 @@ fn paint_floaters_runs(old: []Draw, old_base: int, reuse: int) {
         let f = arena.floater_id[i]
         let sx = arena.floater_screen_x[i]
         let sy = arena.floater_screen_y[i]
-        let g = []int { arena.nodes[f].x, arena.nodes[f].y, arena.nodes[f].w, arena.nodes[f].h, sx, sy }
+        let g = []int { nodes.box[f].x, nodes.box[f].y, nodes.box[f].w, nodes.box[f].h, sx, sy }
         let from = draws.len
         let mut kept = 0
-        if reuse != 0 && i < fl_ids.len && fl_ids[i] == f && arena.node_paint_bits(f) == 0 {
+        if reuse != 0 && i < fl_ids.len && fl_ids[i] == f && nodes.node_paint_bits(f) == 0 {
             let mut same = 1
             for k in 0..6 {
                 if fl_geo[i * 6 + k] != g[k] {

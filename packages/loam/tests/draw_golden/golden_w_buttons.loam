@@ -1,0 +1,48 @@
+// DRAW-list golden: the button family at rest. Every look at Md, the three
+// sizes, the icon slot and loading, IconButton, ButtonGroup, CopyButton, and
+// the closed SplitButton / DropdownMenu triggers, plus Toggle and ToggleGroup.
+// Keep this file free of prints: stdout is the golden.
+
+import "std:zeus"
+import "std:zui"
+
+fn main() {
+    let busy = zeus.signal(true)
+    let bold = zeus.signal(true)
+    let group = zeus.signal(1)
+    zeus.snapshot(640, 520, fn() -> Node {
+        zui.Page() {
+            zui.RowWrap(Space.Sm) {
+                zui.Button("Solid", look = zeus.Look.Solid, size = zeus.Size.Md)
+                zui.Button("Soft", look = zeus.Look.Soft, size = zeus.Size.Md)
+                zui.Button("Outline", look = zeus.Look.Outline, size = zeus.Size.Md)
+                zui.Button("Ghost", look = zeus.Look.Ghost, size = zeus.Size.Md)
+                zui.Button("Danger", look = zeus.Look.Danger, size = zeus.Size.Md)
+                zui.Button("Success", look = zeus.Look.Success, size = zeus.Size.Md)
+                zui.Button("Subtle", look = zeus.Look.Subtle, size = zeus.Size.Md)
+                zui.Button("Link", look = zeus.Look.Link, size = zeus.Size.Md)
+            }
+            zui.Row(Space.Sm) {
+                zui.Button("Small", look = zeus.Look.Solid, size = zeus.Size.Sm)
+                zui.Button("Large", look = zeus.Look.Solid, size = zeus.Size.Lg)
+                zui.Button("Add", look = zeus.Look.Solid, size = zeus.Size.Md, icon = zeus.IC_PLUS)
+                zui.Button("Saving", look = zeus.Look.Solid, size = zeus.Size.Md, loading = busy)
+            }
+            zui.Row(Space.Sm) {
+                zui.IconButton(zeus.IC_PLUS, zeus.Look.Solid, zeus.Size.Sm, "Add")
+                zui.IconButton(zeus.IC_X, zeus.Look.Outline, zeus.Size.Md, "Close")
+                zui.IconButton(zeus.IC_ALERT_CIRCLE, zeus.Look.Danger, zeus.Size.Lg, "Warn")
+            }
+            zui.RowWrap(Space.Sm) {
+                zui.ButtonGroup([]string { "Day", "Week", "Month" })
+                zui.CopyButton(fn() -> string { return "zeus" })
+                zui.SplitButton("Save", items = []MenuRow { MenuRow(label = "Save as") })
+                zui.DropdownMenu("Sort", items = []MenuRow { MenuRow(label = "Newest"), MenuRow(label = "Oldest") })
+            }
+            zui.Row(Space.Sm) {
+                zui.Toggle("Bold", bold)
+                zui.ToggleGroup(group, []string { "Left", "Center", "Right" })
+            }
+        }
+    })
+}

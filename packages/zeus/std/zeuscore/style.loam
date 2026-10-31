@@ -43,6 +43,76 @@ enum Overflow {
     Auto = 3,
 }
 
+/// A point on a box, for `Float.at` / `Float.on`:
+/// horizontal Left / Center / Right by vertical Top / Center / Bottom.
+enum Attach {
+    LeftTop = 0,
+    LeftCenter = 1,
+    LeftBottom = 2,
+    CenterTop = 3,
+    CenterCenter = 4,
+    CenterBottom = 5,
+    RightTop = 6,
+    RightCenter = 7,
+    RightBottom = 8,
+}
+
+/// What a floating box attaches to.
+/// `None` is in flow; `Parent` is its parent's box; `Root` the window (the
+/// safe area); `Anchor` the node named by `zeus.float_on(r, target)`.
+enum FloatTo {
+    None = 0,
+    Parent = 1,
+    Root = 2,
+    Anchor = 3,
+}
+
+/// `text-align` for a single-line label inside a wider box.
+enum TextAlign {
+    Left = 0,
+    Center = 1,
+    Right = 2,
+}
+
+/// A floating box: out of flow, placed by joining
+/// point `at` on itself to point `on` of its target, then moved by
+/// (`x`, `y`). It paints and hit-tests above the page in `zIndex` order and
+/// follows its target through every scroll without a layout.
+struct Float {
+    to: int = 1,
+    at: int = 0,
+    on: int = 0,
+    x: int = 0,
+    y: int = 0,
+    /// Grow the box by this many dp on each axis.
+    expandW: int = 0,
+    expandH: int = 0,
+    /// Jump to the opposite side when the preferred one leaves the window.
+    flip: bool = false,
+    /// Clip to whatever clips its parent (a scroller's viewport), as an
+    /// in-flow child would be.
+    clip: bool = false,
+    /// The pointer passes through to what lies beneath:
+    /// for tooltips and decorations that must not steal hover.
+    passthrough: bool = false,
+}
+
+/// `floating`: attach to the parent at `on`, by our `at`, offset (`x`, `y`).
+fn float_parent(at: int, on: int, x: int, y: int) -> Float {
+    return Float { to: FloatTo.Parent, at: at, on: on, x: x, y: y }
+}
+
+/// `floating`: pin to a point of the window (toasts, FABs, HUDs).
+fn float_root(at: int, on: int, x: int, y: int) -> Float {
+    return Float { to: FloatTo.Root, at: at, on: on, x: x, y: y }
+}
+
+/// `floating`: attach to the anchor node (`zeus.float_on`), flipping to stay on
+/// screen — a dropdown is `float_anchor(Attach.LeftTop, Attach.LeftBottom, 0, 4)`.
+fn float_anchor(at: int, on: int, x: int, y: int) -> Float {
+    return Float { to: FloatTo.Anchor, at: at, on: on, x: x, y: y, flip: true }
+}
+
 /// Units a `Len` can carry.
 enum LenUnit {
     Px = 0,
@@ -77,6 +147,11 @@ struct Corners {
 struct Border {
     width: Option<int> = none,
     color: Option<string> = none,
+    /// Per-side widths, drawn inside the box over the padding (it takes no
+    /// layout space). Unset sides draw nothing.
+    sides: Option<Edges> = none,
+    /// A rule of this width between flow children, centred in the gap.
+    between: Option<int> = none,
 }
 
 /// `aspect-ratio`: `ratio(16, 9)`.
@@ -126,6 +201,8 @@ struct Style {
     inset: Option<Edges> = none,
     zIndex: Option<int> = none,
     overflow: Option<int> = none,
+    /// Out of flow, attached to a target by points (`Float`).
+    floating: Option<Float> = none,
 
     // paint
     background: Option<string> = none,
@@ -141,6 +218,8 @@ struct Style {
     font: Option<int> = none,
     /// `text-overflow: ellipsis`.
     ellipsis: Option<bool> = none,
+    /// `TextAlign.*` for a single-line label in a wider box.
+    textAlign: Option<int> = none,
 
     // interaction
     /// CSS cursor name: `"pointer"`, `"text"`, … (`""` = arrow).
@@ -257,6 +336,7 @@ fn merge(a: Style, b: Style) -> Style {
         inset = merge_edges(a.inset, b.inset),
         zIndex = pick(a.zIndex, b.zIndex),
         overflow = pick(a.overflow, b.overflow),
+        floating = pick(a.floating, b.floating),
         background = pick(a.background, b.background),
         color = pick(a.color, b.color),
         opacity = pick(a.opacity, b.opacity),
@@ -265,6 +345,7 @@ fn merge(a: Style, b: Style) -> Style {
         elevation = pick(a.elevation, b.elevation),
         font = pick(a.font, b.font),
         ellipsis = pick(a.ellipsis, b.ellipsis),
+        textAlign = pick(a.textAlign, b.textAlign),
         cursor = pick(a.cursor, b.cursor))
 }
 

@@ -1,0 +1,88 @@
+// Layout cost is linear in the tree: a whole-tree layout of a 5000-node tree
+// (flex rows and columns, wrapped text, a grid) calls `layout_node` at most
+// twice per node and measures each node at most twice. Counts, not wall time,
+// so the budget never flakes. A pass that re-lays-out subtrees per child (the
+// quadratic trap) blows the budget long before it shows up on a clock.
+//
+// A targeted write is cheaper still: the layout memo skips every subtree laid
+// out with the same box as last time and nothing invalidated inside, so one
+// label write visits its path and the boxes that actually moved.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("visits", 800, 600)
+    let status = zeus.signal("ready")
+    let top = zeus.raw_scroll()
+    zeus.slot(top, fn() {
+        zeus.Box(style = Style(direction = zeus.Direction.Column, gap = 2)) {
+            zeus.Text("{{status.get()}}")
+            // 250 rows of 12 nodes: the row, 3 cells with a label each, a
+            // wrapped note in a fixed box, and a column of two labels.
+            for i in 0..250 {
+                zeus.Box(style = Style(direction = zeus.Direction.Row, gap = 4)) {
+                    for k in 0..3 {
+                        zeus.Box(style = Style(grow = 1, padding = edges(2))) {
+                            zeus.Text("cell {{i}}.{{k}}")
+                        }
+                    }
+                    zeus.Box(style = Style(width = px(120))) {
+                        zeus.Text("a note long enough to wrap onto lines", style = Style(wrap = true))
+                    }
+                    zeus.Box(style = Style(direction = zeus.Direction.Column)) {
+                        zeus.Text("a")
+                        zeus.Text("b")
+                    }
+                }
+            }
+            // A 6-column grid of 290 boxes with a label each.
+            zui.Grid(config = GridConfig(columns = 6, gap = 4)) {
+                for i in 0..290 {
+                    zeus.Box(style = Style(padding = edges(2))) {
+                        zeus.Text("g{{i}}")
+                    }
+                }
+            }
+            // Top up past 5000 with plain leaves (today: 5083 nodes, 1 visit each).
+            for i in 0..1500 {
+                zeus.Box(style = Style(height = px(2)))
+            }
+        }
+    })
+    zeus.root(top)
+    let l0 = zeus.layout_visits()
+    let m0 = zeus.measure_visits()
+    zeus.pump_frame()
+    let nodes = zeus.arena_nodes() - 1
+    let lv = zeus.layout_visits() - l0
+    let mv = zeus.measure_visits() - m0
+    must(nodes >= 5000, "tree has 5000 nodes ({{nodes}})")
+    must(zeus.layout_was_full() == 1, "the first frame is a whole-tree layout")
+    must(lv >= nodes / 2, "layout visited the tree ({{lv}})")
+    must(lv <= 2 * nodes, "layout visits <= 2 x nodes ({{lv}} for {{nodes}})")
+    must(mv <= 2 * nodes, "measure visits <= 2 x nodes ({{mv}} for {{nodes}})")
+
+    // A second frame with nothing dirty lays out nothing.
+    let l1 = zeus.layout_visits()
+    zeus.pump_frame()
+    must(zeus.layout_visits() == l1, "a clean frame visits no node ({{zeus.layout_visits() - l1}})")
+
+    // A label write at the top of the column: same height, so no row moves.
+    let l2 = zeus.layout_visits()
+    status.set("busy")
+    zeus.pump_frame()
+    let wv = zeus.layout_visits() - l2
+    must(zeus.layout_was_full() == 0, "the write is a targeted frame")
+    must(wv > 0, "the write laid out its path")
+    must(wv <= nodes / 50, "a targeted write visits <= 2% of the tree ({{wv}} of {{nodes}})")
+    fmt.println("layout visits ok")
+}

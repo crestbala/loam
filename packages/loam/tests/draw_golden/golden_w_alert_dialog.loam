@@ -1,0 +1,33 @@
+// DRAW-list golden: an open AlertDialog (no corner X) and, in the second dump,
+// the same page after it closes, so the scrim and panel must leave no ops
+// behind. Keep this file free of prints: stdout is the golden.
+
+import "std:zeus"
+import "std:zui"
+
+fn main() {
+    let ask = zeus.signal(true)
+    zeus.snapshot(480, 360, fn() -> Node {
+        zui.Page() {
+            zui.Title("Behind the dialog")
+            zui.AlertDialog(ask, title = "Discard changes?") {
+                zui.Body("This cannot be undone.")
+                zui.Row(Space.Sm) {
+                    zui.Grow()
+                    zui.Button("Cancel", look = zeus.Look.Outline, size = zeus.Size.Md)
+                    zui.Button("Discard", look = zeus.Look.Danger, size = zeus.Size.Md)
+                }
+            }
+        }
+    })
+    ask.set(false)
+    let mut i = 0
+    while i < 12 {
+        zeus.pump_frame()
+        zeus.engine_step_dt(64)
+        i = i + 1
+    }
+    zeus.engine_layout(480, 360)
+    zeus.engine_paint()
+    zeus.dump_draw_list()
+}

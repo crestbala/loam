@@ -245,6 +245,23 @@ enum SET {
     CornerBL = 59,
     // Exact 0/1 wrap flag (`Wrap` only ever turns wrapping on).
     WrapFlag = 60,
+    // Floating boxes (`Style.floating`).
+    FloatTo = 61,
+    FloatPoints = 62,
+    FloatX = 63,
+    FloatY = 64,
+    FloatExpandW = 65,
+    FloatExpandH = 66,
+    FloatClip = 67,
+    PointerPass = 68,
+    Flip = 69,
+    TextAlign = 70,
+    // Side borders and rules (`Border.sides` / `Border.between`): paint only.
+    BorderTop = 71,
+    BorderRight = 72,
+    BorderBottom = 73,
+    BorderLeft = 74,
+    BorderBetween = 75,
     Text = 100,
     A11yLabel = 101,
     A11yRole = 102,

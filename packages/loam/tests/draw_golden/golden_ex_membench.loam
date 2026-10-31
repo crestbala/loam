@@ -1,0 +1,12 @@
+// DRAW-list golden: the first frame of examples/zeus/membench in its default
+// ("empty") mode. Keep this file free of prints: stdout is the golden.
+
+import "std:zeus"
+import "../../../../examples/zeus/membench/membench.loam" as membench
+
+fn main() {
+    let n = membench.count_for("empty")
+    zeus.App("membench", fn() -> Node { return membench.Screen(n) }, 320, 240)
+    zeus.engine_paint()
+    zeus.dump_draw_list()
+}

@@ -1,0 +1,43 @@
+// DRAW-list golden: the type and inline atoms. Overline / Display / Heading /
+// Title / Body / Note, the section headers, Label, Link, Code, Blockquote,
+// Kbd, KbdCombo, the separators, Pip, Icon and Svg, inside Row / RowWrap /
+// Column / Grow. Keep this file free of prints: stdout is the golden.
+
+import "std:zeus"
+import "std:zui"
+
+fn main() {
+    zeus.snapshot(560, 740, fn() -> Node {
+        zui.Page() {
+            zui.Overline("Overline")
+            zui.Display("Display")
+            zui.Heading("Heading")
+            zui.Title("Title")
+            zui.Body("Body copy that is long enough to wrap onto a second line at this width, which the golden records.")
+            zui.Note("Note")
+            zui.SectionHeader("Section", "Header", "A section header with a description.")
+            zui.SectionTitle("Section", "Title")
+            zui.Label("Label")
+            zui.Separator()
+            zui.RowWrap(Space.Sm) {
+                zui.Link("Read the docs", fn() {}, external = true)
+                zui.Code("make test")
+                zui.Kbd("Esc")
+                zui.KbdCombo("cmd+shift+p")
+            }
+            zui.Divider()
+            zui.Row(Space.Sm) {
+                zui.Pip(zeus.accent(), 8)
+                zui.Icon(zeus.IC_INFO, 16, zeus.ink())
+                zui.Svg(zeus.IC_CHECK, style = Style(width = px(20), height = px(20)))
+                zui.Grow()
+                zui.Note("end")
+            }
+            zui.Column(Space.Exs) {
+                zui.Blockquote(cite = "Ada Lovelace") {
+                    zui.Body("The engine weaves algebraic patterns.")
+                }
+            }
+        }
+    })
+}

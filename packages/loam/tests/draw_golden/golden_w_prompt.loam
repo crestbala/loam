@@ -1,0 +1,16 @@
+// DRAW-list golden: the PromptDialog preset, open, with its text field
+// prefilled from the bound signal. Keep this file free of prints: stdout is
+// the golden.
+
+import "std:zeus"
+import "std:zui"
+
+fn main() {
+    let open = zeus.signal(true)
+    let name = zeus.signal("Gallery")
+    zeus.snapshot(480, 360, fn() -> Node {
+        zui.Page() {
+            zui.PromptDialog(open, name, title = "New name", placeholder = "Name")
+        }
+    })
+}

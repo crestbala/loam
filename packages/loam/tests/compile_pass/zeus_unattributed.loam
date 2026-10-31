@@ -11,6 +11,7 @@ import "std:sys"
 import "std:zeus"
 import "std:zui"
 import "zeus:zeuscore/arena"
+import "zeus:zeuscore/nodes"
 
 fn must(ok: bool, what: string) {
     if ok {
@@ -92,7 +93,7 @@ fn main() {
     zeus.engine_paint()
     must(zeus.damage_full() == 0, "and damages locally")
     must(zeus.paint_full_frames() == full0, "and patches the paint")
-    must(int(arena.nodes[box_id].opacity) == 40, "the opacity landed")
+    must(int(nodes.look[box_id].opacity) == 40, "the opacity landed")
 
     // 4. A batch of writes the label reads: settled after the batch, targeted.
     zeus.batch(|| {

@@ -1,0 +1,158 @@
+// Responsive layout depends only on the current window size, never on the
+// resize history. A screen using every responsive tool (percent widths,
+// grow / shrink, wrapping rows and text, an auto-column grid, ellipsis, a
+// scroller, an `on_resize` breakpoint that drops the sidebar under 640 dp) is
+// dragged through a sequence of widths. At each checkpoint every box must equal
+// a fresh build laid out once at that size, and the draw list must equal a
+// full repaint. The layout memo, subtree shifts and the text cache all sit on
+// this path, so this is what keeps them honest across window sizes.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+import "zeus:zeuscore/arena"
+import "zeus:zeuscore/nodes"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn Screen() -> Node {
+    let wide = zeus.signal(1)
+    let shell = zeus.ref()
+    zeus.on_mount(fn() {
+        zeus.on_resize(shell, fn() {
+            let w = zeus.node_width(zeus.ref_node(shell).id)
+            let want = if w >= 640 { 1 } else { 0 }
+            if wide.get() != want {
+                wide.set(want)
+            }
+        })
+    })
+    return zeus.Box(ref = shell, style = Style(direction = Direction.Row, width = pct(100), grow = 1)) {
+        zui.Show(when = wide.get() == 1) {
+            zeus.Box(style = Style(direction = Direction.Column, width = px(180), padding = edges(8), gap = 4,
+                                   background = "#eeeeee")) {
+                for i in 0..6 {
+                    zeus.Text("nav item {{i}}", style = Style(ellipsis = true))
+                }
+            }
+        }
+        zeus.Box(style = Style(direction = Direction.Column, grow = 1, shrink = 1, padding = edges(12), gap = 8)) {
+            zeus.Box(style = Style(direction = Direction.Row, gap = 8, wrap = true)) {
+                for i in 0..9 {
+                    zui.Button(label = "Action {{i}}")
+                }
+            }
+            zeus.Text("A paragraph long enough to wrap onto several lines at every width the window takes, so wrapped text height follows the width.", style = Style(wrap = true))
+            zeus.Box(style = Style(direction = Direction.Row, gap = 8)) {
+                zeus.Box(style = Style(width = pct(30), height = px(24), background = "#ccccff"))
+                zeus.Box(style = Style(grow = 1, height = px(24), background = "#ccffcc")) {
+                    zeus.Text("a label that truncates when the row gets narrow", style = Style(ellipsis = true))
+                }
+                zeus.Box(style = Style(width = px(60), height = px(24), background = "#ffcccc"))
+            }
+            zui.Grid(config = GridConfig(columns = 6, gap = 8, autoColumns = 140)) {
+                for i in 0..14 {
+                    zeus.Box(style = Style(padding = edges(6), background = "#f4f4f4")) {
+                        zeus.Text("card {{i}} with some text", style = Style(wrap = true))
+                    }
+                }
+            }
+            zui.Scroll(style = Style(height = px(200))) {
+                zeus.Box(style = Style(direction = Direction.Column, gap = 2)) {
+                    for i in 0..40 {
+                        zeus.Box(style = Style(direction = Direction.Row, gap = 6)) {
+                            zeus.Text("row {{i}}")
+                            zeus.Text("detail that may wrap at narrow widths", style = Style(wrap = true, grow = 1, shrink = 1))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Shown boxes of the subtree at `id`, in tree order.
+fn boxes(id: int, out: &mut []string) {
+    if id <= 0 || arena.want_show(id) == 0 {
+        return
+    }
+    push(out, "{{nodes.tree[id].kind}} {{nodes.box[id].x}} {{nodes.box[id].y}} {{nodes.box[id].w}} {{nodes.box[id].h}}")
+    for i in 0..nodes.tree[id].kids.len {
+        boxes(nodes.tree[id].kids[i], out)
+    }
+}
+
+fn draws() -> []string {
+    let mut out = []string {}
+    for i in 0..zeus.draw_count() {
+        push(out, "{{zeus.draw_op(i)}} {{zeus.draw_x(i)}} {{zeus.draw_y(i)}} {{zeus.draw_w(i)}} {{zeus.draw_h(i)}} {{zeus.draw_rgb(i)}} {{zeus.draw_text(i)}}")
+    }
+    return out
+}
+
+fn same(a: []string, b: []string, what: string) {
+    must(a.len == b.len, "{{what}}: {{a.len}} entries vs {{b.len}}")
+    for i in 0..a.len {
+        must(a[i] == b[i], "{{what}}: entry {{i}} differs: '{{a[i]}}' vs fresh '{{b[i]}}'")
+    }
+}
+
+fn settle(w: int, h: int) {
+    for k in 0..3 {
+        zeus.engine_step_dt(16)
+        zeus.engine_layout(w, h)
+        zeus.engine_paint()
+    }
+}
+
+fn main() {
+    zeus.window("responsive", 1000, 700)
+    let live = Screen()
+    zeus.root(live)
+    settle(1000, 700)
+    // A live drag: shrink, overshoot, grow, settle, with checkpoints.
+    let path = []int { 1000, 920, 840, 760, 700, 640, 639, 600, 520, 440, 360, 320, 400, 560, 641, 800, 1100, 1280, 900, 700 }
+    let checks = []int { 760, 639, 360, 641, 1280, 700 }
+    for p in 0..path.len {
+        let w = path[p]
+        let h = 500 + (w % 7) * 20
+        settle(w, h)
+        let mut is_check = false
+        for c in 0..checks.len {
+            if checks[c] == w {
+                is_check = true
+            }
+        }
+        if is_check {
+            // The breakpoint followed the width, and the grid re-flowed.
+            let nav = zeus.engine_find_text("nav item 0")
+            must((nav > 0 && arena.shown_in_tree(nav) != 0) == (w >= 640),
+                 "the sidebar follows the 640 breakpoint at {{w}}")
+            let c0 = zeus.engine_find_text("card 0 with some text")
+            let c1 = zeus.engine_find_text("card 1 with some text")
+            let side = nodes.box[c1].y == nodes.box[c0].y
+            must(side == (w >= 360), "grid cells sit side by side when two fit ({{w}})")
+            let mut got = []string {}
+            boxes(live.id, &mut got)
+            let full_a = draws()
+            arena.mark_paint()
+            zeus.engine_paint()
+            same(full_a, draws(), "draw list at {{w}}")
+            // A fresh screen, laid out once at this size.
+            let fresh = Screen()
+            zeus.root(fresh)
+            settle(w, h)
+            let mut want = []string {}
+            boxes(fresh.id, &mut want)
+            same(got, want, "boxes at {{w}}x{{h}}")
+            zeus.root(live)
+            settle(w, h)
+        }
+    }
+    fmt.println("responsive ok")
+}

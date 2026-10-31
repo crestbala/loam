@@ -1,0 +1,34 @@
+// BOX golden: grid and absolute layout. A fixed 3-column grid with a span,
+// an auto-columns grid, absolute children pinned by inset on each side, and a
+// z-indexed overlap. Keep this file free of prints: stdout is the golden.
+
+import "std:zeus"
+import "std:zui"
+
+fn main() {
+    zeus.window("box", 480, 520)
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column, padding = edges(8), gap = 8)) {
+        zui.Grid(config = GridConfig(columns = 3, gap = 6, padding = 4)) {
+            zeus.Box(style = Style(height = px(20), span = 2))
+            for i in 0..5 {
+                zeus.Box(style = Style(height = px(20 + i * 4)))
+            }
+        }
+        zui.Grid(config = GridConfig(columns = 4, autoColumns = 100, gap = 8)) {
+            for i in 0..6 {
+                zeus.Text("cell {{i}}")
+            }
+        }
+        zeus.Box(style = Style(height = px(140))) {
+            zeus.Box(style = Style(width = px(40), height = px(30), position = zeus.pos_absolute(),
+                                   inset = Edges(top = 5, left = 5)))
+            zeus.Box(style = Style(width = px(40), height = px(30), position = zeus.pos_absolute(),
+                                   inset = Edges(right = 5, bottom = 5)))
+            zeus.Box(style = Style(position = zeus.pos_absolute(), inset = Edges(top = 40, left = 60, right = 60, bottom = 40),
+                                   zIndex = 3))
+            zeus.Text("in flow")
+        }
+    })
+    zeus.pump_frame()
+    zeus.dump_boxes()
+}
