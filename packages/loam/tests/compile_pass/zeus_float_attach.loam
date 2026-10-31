@@ -1,0 +1,138 @@
+// Floating boxes: `Style(floating = Float(...))` takes a box
+// out of flow and joins point `at` of it to point `on` of its target (parent,
+// window, or an anchor node), plus an offset. It follows its target through a
+// scroll with no layout, `clip` keeps it inside its parent's clip, and
+// `passthrough` lets the pointer reach what lies beneath. Also per-side
+// / between-children borders and single-line `textAlign`.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn has_fill(x: int, y: int, w: int, h: int) -> bool {
+    for i in 0..zeus.draw_count() {
+        if (zeus.draw_op(i) == 0 || zeus.draw_op(i) == 1) && zeus.draw_x(i) == x && zeus.draw_y(i) == y &&
+           zeus.draw_w(i) == w && zeus.draw_h(i) == h {
+            return true
+        }
+    }
+    return false
+}
+
+fn text_x(s: string) -> int {
+    for i in 0..zeus.draw_count() {
+        if zeus.draw_op(i) == 2 && zeus.draw_text(i) == s {
+            return zeus.draw_x(i)
+        }
+    }
+    return -99999
+}
+
+fn main() {
+    zeus.window("float", 320, 260)
+    let mut host = 0
+    let mut badge = 0
+    let mut fab = 0
+    let mut tip = 0
+    let mut under = 0
+    let mut clipped = 0
+    let mut card = 0
+    let mut label = 0
+    let under_clicks = zeus.signal(0)
+    let top = zeus.raw_scroll()
+    zeus.slot(top, fn() {
+        zeus.Box(style = Style(direction = zeus.Direction.Column)) {
+            zeus.Box(style = Style(height = px(50)))
+            // A badge on the parent's top-right corner, centred on it.
+            let h = zeus.Box(style = Style(width = px(100), height = px(40), background = "#dddddd")) {
+                let b = zeus.Box(style = Style(width = px(10), height = px(10), background = "#ff0000",
+                                               floating = float_parent(Attach.CenterCenter, Attach.RightTop, 0, 0)))
+                badge = b.id
+            }
+            host = h.id
+            // A passthrough tooltip over a clickable box.
+            let u = zeus.Box(style = Style(width = px(100), height = px(40), background = "#cccccc")) {
+                let t = zeus.Box(style = Style(width = px(60), height = px(20), background = "#000000",
+                                               floating = Float(at = Attach.LeftTop, on = Attach.LeftTop,
+                                                                x = 10, y = 10, passthrough = true)))
+                tip = t.id
+            }
+            zeus.on_click(u, fn() => under_clicks.set(under_clicks.get() + 1))
+            under = u.id
+            // A clipped floater hanging out of a 60px-tall clip box.
+            zeus.Box(style = Style(width = px(100), height = px(60), overflow = Overflow.Hidden)) {
+                let c = zeus.Box(style = Style(width = px(40), height = px(40), background = "#00ff00",
+                                               floating = Float(at = Attach.LeftTop, on = Attach.LeftBottom,
+                                                                y = -20, clip = true)))
+                clipped = c.id
+            }
+            // Borders: a top / left side and rules between three children.
+            let cd = zeus.Box(style = Style(direction = zeus.Direction.Row, gap = 10, width = px(200), height = px(30),
+                                            border = Border(color = "#123456", sides = edges4(2, 0, 0, 3), between = 2))) {
+                zeus.Box(style = Style(width = px(40), height = px(30)))
+                zeus.Box(style = Style(width = px(40), height = px(30)))
+                zeus.Box(style = Style(width = px(40), height = px(30)))
+            }
+            card = cd.id
+            let lb = zeus.Text("mid", style = Style(width = px(200), textAlign = TextAlign.Center))
+            label = lb.id
+            zeus.Box(style = Style(height = px(900)))
+        }
+        // A FAB pinned 16dp in from the window's bottom-right.
+        let f = zeus.Box(style = Style(width = px(40), height = px(40), background = "#0000ff",
+                                       floating = float_root(Attach.RightBottom, Attach.RightBottom, -16, -16)))
+        fab = f.id
+    })
+    zeus.root(top)
+    zeus.pump_frame()
+
+    // Badge centre on the host's top-right corner.
+    let hx = zeus.node_x(host) + zeus.node_width(host)
+    let hy = zeus.node_y(host)
+    must(zeus.node_x(badge) == hx - 5 && zeus.node_y(badge) == hy - 5, "badge centred on the parent's corner")
+    // The host keeps its size: the badge takes no flow space.
+    must(zeus.node_height(host) == 40, "floating child takes no space")
+
+    // FAB in the window corner.
+    must(zeus.node_x(fab) == 320 - 16 - 40 && zeus.node_y(fab) == 260 - 16 - 40, "FAB pinned to the window")
+
+    // Scroll: the badge follows, the FAB stays, and nothing re-lays out.
+    let f0 = zeus.full_layouts_count()
+    zui.scroll_to(top, 30)
+    zeus.pump_frame()
+    must(zeus.node_y(badge) == hy - 5 - 30, "badge followed the scroll")
+    must(zeus.node_y(fab) == 260 - 16 - 40, "FAB did not scroll")
+    must(zeus.full_layouts_count() == f0, "scroll stayed layout-free")
+
+    // Passthrough: a click on the tooltip reaches the box under it.
+    let tx = zeus.node_x(tip) + 5
+    let ty = zeus.node_y(tip) + 5
+    zeus.engine_click(tx, ty)
+    must(under_clicks.get() == 1, "click passed through the tooltip")
+    must(zeus.engine_hit(tx, ty) == under, "hit lands on the box beneath")
+
+    // Clip: the part of the floater outside its parent's clip is not hit.
+    let cx = zeus.node_x(clipped) + 5
+    let cy = zeus.node_y(clipped)
+    must(zeus.engine_hit(cx, cy + 30) != clipped, "no hit outside the parent's clip")
+
+    // Borders: the top side, the left side, and two rules between three kids.
+    let bx = zeus.node_x(card)
+    let by = zeus.node_y(card) - 30
+    must(has_fill(bx, by, 200, 2), "top border side")
+    must(has_fill(bx, by + 2, 3, 28), "left border side")
+    must(has_fill(bx + 40 + 4, by, 2, 30), "first rule between children")
+    must(has_fill(bx + 90 + 4, by, 2, 30), "second rule between children")
+
+    // Text align: centred in its 200px box.
+    let lx = text_x("mid") - zeus.node_x(label)
+    must(lx > 60 && lx < 140, "label centred ({{lx}})")
+    fmt.println("float attach ok")
+}

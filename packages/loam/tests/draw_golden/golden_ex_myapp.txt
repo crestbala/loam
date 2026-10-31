@@ -1,0 +1,50 @@
+DRAW 49
+fill 0 0 640 480 16777215 0
+save
+clip 0 0 640 480
+fill 0 0 640 986 16777215 0
+text 32 32 5395050 14 myapp
+svg 78 34 14 14 5395050
+text 98 32 5395050 14 Examples
+svg 168 34 14 14 5395050
+text 188 32 1119000 14 Foundations
+text 32 74 1119000 32 Build interfaces with Zeus
+text 32 118 5395050 14 One entry, every host. Dark inverts every token that reads appearance.
+fill 32 160 72 27 15724534 999
+stroke 32 160 72 27 14277093 999 1 255
+fill 43 170 6 6 1207859 3
+text 57 166 1207859 11 Stable
+fill 120 160 84 27 15724534 999
+stroke 120 160 84 27 14277093 999 1 255
+fill 131 170 6 6 1119000 3
+text 145 166 1119000 11 Canvas2D
+fill 220 163 44 20 15724534 999
+text 230 165 1119000 11 zeus
+fill 280 163 38 20 15724534 4
+stroke 280 163 38 20 14277093 4 1 255
+text 287 166 5395050 10 ⌘K
+fill 32 211 576 64 16777215 16
+stroke 32 211 576 64 11783671 16 1 255
+svg 49 224 16 16 1920728
+text 77 224 1920728 14 Heads up
+text 77 246 5395050 12 Signals update on click. Hover and press are engine fades — no DOM.
+fill 32 299 576 64 16777215 16
+stroke 32 299 576 64 16102837 16 1 255
+svg 49 312 16 16 11739167
+text 77 312 11739167 14 Session expired
+text 77 334 11739167 12 Sign back in to keep syncing. Your drafts are saved locally.
+shadow 32 387 576 151 1840712 20 22 16 0 6
+shadow 32 387 576 151 1840712 20 20 2 0 1
+fill 32 387 576 151 16777215 20
+stroke 32 387 576 151 14277093 20 1 255
+text 53 404 1119000 17 Project card
+fill 501 404 86 20 1483594 999
+text 511 406 16777215 11 In progress
+text_wrap 53 437 534 A card with a title, supporting copy, and a footer of actions. Rounded-xl, hairline border, paper surface.
+fill 53 485 82 36 16777215 999
+stroke 53 485 82 36 14277093 999 1 255
+text 70 494 1119000 14 Cancel
+fill 151 485 64 36 2450411 999
+text 167 494 16777215 14 Save
+text 581 495 5395050 11 0
+restore

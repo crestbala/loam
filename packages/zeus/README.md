@@ -61,6 +61,12 @@ read it. `zeus.view` / `zeus.app` rebuild every layout if you need that.
 Visibility: `zeus.show(node, sig)` / `show_eq` hide a node from layout without
 unmounting it.
 
+Layout model: floating boxes attached by points
+(`Style(floating = float_parent(...))`, `float_root`, `float_anchor`),
+per-side borders, viewport culling, and one pointer model in paint order. See
+[`docs/layout.md`](docs/layout.md) for the feature reference and the frame
+pipeline.
+
 ## Recipe: add a backend service (grpc/http)
 
 Zeus apps talk to a backend through `std:http`, with the wire contract living

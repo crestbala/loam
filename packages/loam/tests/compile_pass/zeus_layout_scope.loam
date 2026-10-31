@@ -1,12 +1,9 @@
-// Phase 5: dependency-driven layout. A layout prop that lands inside a
-// size-stable box re-solves only that subtree — the card's box is explicit, so
-// nothing above it can move. A change with no size-stable ancestor re-solves
-// from the root, whose box is the window: still not a whole-tree solve (clean
-// subtrees keep their measure, and paint re-records only what moved).
-//
-// A box is not its own boundary when the write changed the size its parent
-// lays it out from: widening the first box of a row must move the second, so
-// that write reaches the row and, with nothing stable above it, the root.
+// Targeted layout frames. A layout prop write names its node, so the frame is
+// targeted: the tree is solved from the root (clean subtrees keep their
+// measure) and paint re-records only the nodes whose box moved. It is never an
+// untargeted, whole-surface frame, wherever in the tree the write lands: inside
+// a fixed-size card, on an auto-sized label, or on the first box of a row,
+// whose sibling must move with it.
 
 import "std:fmt"
 import "std:sys"
@@ -52,17 +49,17 @@ fn main() {
     must(zeus.layout_was_full() == 1, "the first frame solves the whole tree")
     must(zeus.node_width(inner_id) == 40, "inner starts at 40")
 
-    // A width write inside the fixed-size card: subtree re-solve.
+    // A width write inside the fixed-size card.
     w.set(90)
     zeus.engine_layout(300, 200)
-    must(zeus.layout_was_full() == 0, "a change inside a fixed-size box is a subtree re-solve")
-    must(zeus.node_width(inner_id) == 90, "the subtree re-solve landed the new width")
+    must(zeus.layout_was_full() == 0, "a change inside a fixed-size box is a targeted frame")
+    must(zeus.node_width(inner_id) == 90, "the targeted frame landed the new width")
 
-    // A text write with no size-stable ancestor: re-solved from the root.
+    // A text write with no size-stable ancestor.
     let roots0 = zeus.root_relayouts()
     label.set("aaaa")
     zeus.engine_layout(300, 200)
-    must(zeus.layout_was_full() == 0, "a change with no size-stable ancestor is not a whole-tree solve")
+    must(zeus.layout_was_full() == 0, "a change with no size-stable ancestor is still targeted")
     must(zeus.root_relayouts() == roots0 + 1, "it re-solves from the root")
 
     // The card is still laid out correctly after both.
@@ -72,7 +69,7 @@ fn main() {
     let bx0 = zeus.node_x(second_id)
     first.set(90)
     zeus.engine_layout(300, 200)
-    must(zeus.layout_was_full() == 0, "widening a row's first box reaches above the box, not the whole tree")
+    must(zeus.layout_was_full() == 0, "widening a row's first box is still targeted")
     must(zeus.root_relayouts() == roots0 + 2, "it re-solves from the root")
     must(zeus.node_x(second_id) == bx0 + 50, "the row sibling moved by the width change")
 

@@ -68,7 +68,7 @@ static void add_set(DceSet *s, AstNode *d) {
  *  module are ignored. Keep in sync when hosts grow new entry points. */
 static const char *const c_roots_zeus[] = {
     "engine_layout", "engine_paint", "engine_step", "engine_step_dt",
-    "engine_set_reduced_motion", "engine_next_ms",
+    "engine_set_reduced_motion", "engine_next_ms", "engine_fonts_changed",
     "engine_click", "engine_scroll", "engine_scroll_step", "engine_scroll_smooth", "engine_drag",
     "engine_hover", "engine_mouseup", "engine_over_button", "engine_cursor",
     "engine_a11y_dump", "engine_a11y_bytes", "engine_layout_gen", "engine_signals_dump", "engine_state_load",

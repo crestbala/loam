@@ -1969,6 +1969,32 @@ fn ig_arena_lint() {
     ok("arena lint (examples, www and library components use no ui_push / slot / arena / raw_*; components import no zeuscore)")
 }
 
+/// The public-surface freeze (`packages/zeus/docs/api-freeze.md`): every name
+/// the freeze lists must still exist. `zeus.x` / `zui.x` / `value.x` are
+/// top-level fns in the public zeus files, the component tiers, and
+/// `zeuscore/style.loam`; `Style.k` (and `Float` / `Border` / `Edges` /
+/// `Corners`) are struct fields there. Adding API never trips it; removing or
+/// renaming a listed name does, until the freeze is edited on purpose.
+fn ig_api_freeze() {
+    mark("api freeze")
+    let doc = "packages/zeus/docs/api-freeze.md"
+    let zs = "packages/zeus/std"
+    let cs = "packages/zeus-components/std"
+    let l = tmpf("api_freeze.log")
+    let prog = tmpf("api_freeze.awk")
+    sys.write_file(prog, "FNR == 1 { st = \"\"; cat = \"zeus\"; if (FILENAME ~ /api-freeze[.]md$/) cat = \"doc\"; else if (FILENAME ~ /zeus-components/) cat = \"zui\"; else if (FILENAME ~ /style[.]loam$/) cat = \"value\" }\ncat != \"doc\" && /^(pub )?fn [A-Za-z_]/ { n = $0; sub(/^(pub )?fn /, \"\", n); match(n, /^[A-Za-z0-9_]+/); have[cat \".\" substr(n, 1, RLENGTH)] = 1 }\ncat == \"value\" && /^struct [A-Za-z]+ [{]/ { st = $2; next }\ncat == \"value\" && st != \"\" && /^[}]/ { st = \"\" }\ncat == \"value\" && st != \"\" && /^    [A-Za-z_][A-Za-z0-9_]*:/ { k = $1; sub(/:.*/, \"\", k); have[st \".\" k] = 1 }\ncat == \"doc\" && /^- `[A-Za-z]+[.][A-Za-z0-9_]+`$/ { e = $0; sub(/^- `/, \"\", e); sub(/`$/, \"\", e); seen++; if (!(e in have)) print \"api-freeze.md:\" FNR \": \" e \" is listed but no longer defined\" }\nEND { if (seen == 0) print \"api-freeze.md: no entries found\" }\n")
+    let srcs = "{{zs}}/zeus.loam {{zs}}/zeusbase.loam {{zs}}/flow.loam {{zs}}/media.loam {{cs}}/atoms.loam {{cs}}/molecules.loam {{cs}}/organisms.loam {{zs}}/zeuscore/style.loam"
+    if !sh("awk -f {{shq(prog)}} {{srcs}} {{doc}} > {{shq(l)}} 2>&1") {
+        bad("api freeze (awk failed)", l)
+        return
+    }
+    if is_nonempty(l) {
+        bad("api freeze (a frozen zeus / zui / Style name disappeared)", l)
+        return
+    }
+    ok("api freeze (every name in packages/zeus/docs/api-freeze.md still exists)")
+}
+
 fn ig_myapp() {
     ig_myapp_routes()
     ig_myapp_build()
@@ -2016,6 +2042,8 @@ fn stanza_dispatch(name: string) -> bool {
         ig_one_surface()
     } else if name == "arena_lint" {
         ig_arena_lint()
+    } else if name == "api_freeze" {
+        ig_api_freeze()
     } else {
         return false
     }
@@ -2047,6 +2075,7 @@ fn stanza_names() -> []string {
     push(v, "cost")
     push(v, "one_surface")
     push(v, "arena_lint")
+    push(v, "api_freeze")
     return v
 }
 
@@ -2123,6 +2152,7 @@ fn host_checks() -> int {
     ig_stale_capture()
     ig_one_surface()
     ig_arena_lint()
+    ig_api_freeze()
     return N_FAIL - before
 }
 

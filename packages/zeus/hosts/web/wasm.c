@@ -381,6 +381,14 @@ void zeus_boundary_preset(int32_t seq, const char *msg) {
     zeus_boundary_preset_add(seq, msg ? msg : "", msg ? strlen(msg) : 0);
 }
 
+void loam_zeus_engine_fonts_changed(void);
+
+/* A web font landed after frames were measured with the fallback face. */
+__attribute__((export_name("zeus_fonts_changed")))
+void zeus_fonts_changed(void) {
+    loam_zeus_engine_fonts_changed();
+}
+
 /* The loader reports `prefers-reduced-motion` (and re-reports on change). */
 __attribute__((export_name("zeus_reduced_motion")))
 void zeus_reduced_motion(int32_t on) {

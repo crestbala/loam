@@ -167,6 +167,36 @@ let mut cleanup_fn: []int = []int {}
 /// `scope` re-run disposes its children first, so a nested computation never
 /// outlives the run that created it.
 let mut parent_eid: []int = []int {}
+/* `kids_n[e]` = rows whose `parent_eid` is `e`, so `dispose_children` skips
+   the table scan for a computation that created none (nearly all of them). */
+let mut kids_n: []int = []int {}
+
+fn kid_add(p: int) {
+    if p <= 0 {
+        return
+    }
+    while kids_n.len <= p {
+        push(kids_n, 0)
+    }
+    kids_n[p] = kids_n[p] + 1
+}
+
+fn kid_sub(p: int) {
+    if p > 0 && p < kids_n.len && kids_n[p] > 0 {
+        kids_n[p] = kids_n[p] - 1
+    }
+}
+
+/// Rebuild `kids_n` from `parent_eid` (after a compaction moved rows).
+fn kids_recount() {
+    for i in 0..kids_n.len {
+        kids_n[i] = 0
+    }
+    let n = parent_eid.len
+    for i in 1..n {
+        kid_add(parent_eid[i])
+    }
+}
 /// 1 for an effect created by `scope`: re-running it disposes its children.
 let mut is_scope: []int = []int {}
 /// Rows disposed by a scope re-run, reused by `alloc`, so a scope that re-runs on
@@ -292,6 +322,7 @@ fn reset() {
     pending = []int {}
     cleanup_fn = []int {}
     parent_eid = []int {}
+    kids_n = []int {}
     is_scope = []int {}
     eid_free = []int {}
     memo_out = []int {}
@@ -362,7 +393,9 @@ fn alloc(fn_id: int, node_id: int) -> int {
         idx = fn_ids.len - 1
     }
     // Parent is the computation whose body is running, if any.
+    kid_sub(parent_eid[idx])
     parent_eid[idx] = current_eid()
+    kid_add(parent_eid[idx])
     if log_on > 0 {
         push(alloc_log, idx)
     }
@@ -646,6 +679,15 @@ fn pop_eff_lists(last: int) {
     }
 }
 
+/* `free_nodes_effects` marks the batch's node ids here (with a fresh stamp per
+   call) so "is this row's node being freed" is one read, not a scan of the
+   batch per row. */
+let mut dead_stamp: []int = []int {}
+let mut dead_gen: int = 0
+/// Effect-table sweeps run (`free_nodes_effects` calls that did work). A list
+/// reconcile shares one sweep across all its freed rows (diagnostics).
+let mut sweeps: int = 0
+
 fn free_nodes_effects(ids: []int) {
     boot()
     let k = ids.len
@@ -656,6 +698,24 @@ fn free_nodes_effects(ids: []int) {
     if n <= 1 {
         return
     }
+    sweeps = sweeps + 1
+    dead_gen = dead_gen + 1
+    for j in 0..k {
+        let v = ids[j]
+        if v >= 0 {
+            while dead_stamp.len <= v {
+                push(dead_stamp, 0)
+            }
+            dead_stamp[v] = dead_gen
+        }
+    }
+    /* References to rows (`parent_eid`, `produced_by`) follow the slot they name:
+       when the tail moves into hole `i`, everything naming the tail now names
+       `i`; when a dead tail is popped, a `produced_by` naming it becomes 0.
+       Rewriting every reference per move was O(rows) a move, so the moves are
+       recorded in a union-find over slots and every reference is resolved in
+       one pass at the end, to the same values. */
+    uf_init(n)
     /* Allocation-free compaction: dead rows are swap-removed in place.
        Per removal, edges pointing at the dead row are dropped and edges of
        the tail row that filled the hole are rewritten — no per-drop table
@@ -665,17 +725,14 @@ fn free_nodes_effects(ids: []int) {
         // A disposed row (`fn_ids == 0`, waiting in `eid_free`) is compacted
         // too: the free list is cleared below, so a hole left behind would
         // never be reused.
-        if member(node_ids[i], ids) != 0 || fn_ids[i] == 0 {
+        let nd = node_ids[i]
+        if (nd >= 0 && nd < dead_stamp.len && dead_stamp[nd] == dead_gen) || fn_ids[i] == 0 {
             let last = node_ids.len - 1
             if i == last {
                 // Tail row is dead: pop it after dropping its edges.
                 drop_eff_edges(i)
                 pop_eff_lists(last)
-                for q in 0..produced_by.len {
-                    if produced_by[q] == last {
-                        produced_by[q] = 0
-                    }
-                }
+                uf_pop[uf_find(uf_at[last])] = 1
                 pop(fn_ids)
                 pop(node_ids)
                 pop(rank)
@@ -701,16 +758,7 @@ fn free_nodes_effects(ids: []int) {
                 // A child's parent is an effect index too, so it moves with the
                 // row it names. `produced_by` names a memo row the same way, and
                 // `pull` reads it, so it moves too.
-                for q in 0..parent_eid.len {
-                    if parent_eid[q] == last {
-                        parent_eid[q] = i
-                    }
-                }
-                for q in 0..produced_by.len {
-                    if produced_by[q] == last {
-                        produced_by[q] = i
-                    }
-                }
+                uf_move(last, i)
                 fn_ids[i] = fn_ids[last]
                 node_ids[i] = node_ids[last]
                 rank[i] = rank[last]
@@ -735,10 +783,78 @@ fn free_nodes_effects(ids: []int) {
             i = i + 1
         }
     }
+    // Resolve every reference through the recorded moves.
+    for q in 0..parent_eid.len {
+        let v = parent_eid[q]
+        if v > 0 && v < n {
+            parent_eid[q] = uf_val[uf_find(uf_at[v])]
+        }
+    }
+    for q in 0..produced_by.len {
+        let v = produced_by[q]
+        if v > 0 && v < n {
+            let c = uf_find(uf_at[v])
+            if uf_pop[c] != 0 {
+                produced_by[q] = 0
+            } else {
+                produced_by[q] = uf_val[c]
+            }
+        }
+    }
+    kids_recount()
     // Compaction moved rows, so any recycled index no longer names a row.
     while eid_free.len > 0 {
         pop(eid_free)
     }
+}
+
+/* Union-find over effect slots for `free_nodes_effects`. A class is the set of
+   reference values that now name the same slot; `uf_val` is that slot, and
+   `uf_pop` is set when it was popped. `uf_at[p]` is the class whose value is
+   `p`: initially each slot is its own class. Scratch, reused across calls. */
+let mut uf_par: []int = []int {}
+let mut uf_val: []int = []int {}
+let mut uf_pop: []int = []int {}
+let mut uf_at: []int = []int {}
+
+fn uf_init(n: int) {
+    while uf_par.len < n {
+        push(uf_par, 0)
+        push(uf_val, 0)
+        push(uf_pop, 0)
+        push(uf_at, 0)
+    }
+    for p in 0..n {
+        uf_par[p] = p
+        uf_val[p] = p
+        uf_pop[p] = 0
+        uf_at[p] = p
+    }
+}
+
+fn uf_find(c: int) -> int {
+    let mut r = c
+    while uf_par[r] != r {
+        r = uf_par[r]
+    }
+    let mut x = c
+    while uf_par[x] != r {
+        let nx = uf_par[x]
+        uf_par[x] = r
+        x = nx
+    }
+    return r
+}
+
+/// The row in slot `from` moved to slot `to`: references naming `from` now
+/// name `to`, alongside those already naming `to`.
+fn uf_move(from: int, to: int) {
+    let cf = uf_find(uf_at[from])
+    let ct = uf_find(uf_at[to])
+    if cf != ct {
+        uf_par[cf] = ct
+    }
+    uf_val[ct] = to
 }
 
 /// Dispose `e`'s nested computations (recursively), then `e` itself: free the
@@ -766,6 +882,7 @@ fn dispose_eid(e: int) {
     node_ids[e] = 0
     rank[e] = 0
     cleanup_fn[e] = 0
+    kid_sub(parent_eid[e])
     parent_eid[e] = 0
     is_scope[e] = 0
     memo_out[e] = 0
@@ -783,6 +900,9 @@ fn effect_rows() -> int {
 /// Dispose every computation whose body `e` allocated. Collected first, because
 /// disposing rewrites the tables the scan reads.
 fn dispose_children(e: int) {
+    if e <= 0 || e >= kids_n.len || kids_n[e] == 0 {
+        return
+    }
     let mut kids = []int {}
     let n = parent_eid.len
     for i in 1..n {

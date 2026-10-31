@@ -1,0 +1,28 @@
+// DRAW-list golden: messages. Alert in its tones, AlertView, Banner, Callout,
+// InlineMessage, EmptyState, ErrorView, LoadMore, and a NotificationCenter
+// with one live notice. Keep this file free of prints: stdout is the golden.
+
+import "std:zeus"
+import "std:zui"
+
+fn main() {
+    let loading = zeus.signal(false)
+    let done = zeus.signal(false)
+    let live = zeus.signal([]Notice { Notice(title = "Build finished", body = "Gallery is current.", tint = zeus.Tint.Ok) })
+    let past = zeus.signal([]Notice {})
+    zeus.snapshot(560, 1200, fn() -> Node {
+        zui.Page() {
+            zui.Alert("Heads up", "Signals update on click.")
+            zui.Alert("Low disk", "The volume is almost full.", tone = Tone.Warn)
+            zui.Alert("Expired", "Sign back in.", tint = zeus.Tint.Danger)
+            zui.AlertView("Saved", "All changes are stored.", zeus.Tint.Ok)
+            zui.Banner("A new version is ready.")
+            zui.Callout("Heads up", "Drafts stay on this device.")
+            zui.InlineMessage("Name is required.", zeus.Tint.Danger)
+            zui.EmptyState(icon = zeus.IC_INFO, title = "Nothing queued", body = "New jobs show up here.")
+            zui.ErrorView("Could not refresh", "The last request did not finish.", on_retry = fn() {})
+            zui.LoadMore(loading = loading, done = done, on_load = fn() {})
+            zui.NotificationCenter(live, past)
+        }
+    })
+}

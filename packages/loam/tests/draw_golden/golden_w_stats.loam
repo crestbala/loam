@@ -1,0 +1,28 @@
+// DRAW-list golden: the number cards. Stat (with a sparkline and a trend),
+// StatCount, KpiCard, TrendIndicator and a bare Sparkline. Keep this file
+// free of prints: stdout is the golden.
+
+import "std:zeus"
+import "std:zui"
+
+fn main() {
+    let spark = zeus.signal([]int { 3, 5, 4, 8, 7, 9, 12 })
+    let jobs = zeus.signal(42)
+    zeus.snapshot(640, 420, fn() -> Node {
+        zui.Page() {
+            zui.Row(Space.Md) {
+                zui.Stat("Uptime", "99.9%", zeus.Tint.Ok, delta = "+0.2%", trend = zui.Trend.Up, spark = spark)
+                zui.Stat("Errors", "2", zeus.Tint.Danger, delta = "-3 today", trend = zui.Trend.Down)
+            }
+            zui.Row(Space.Md) {
+                zui.StatCount("Jobs", jobs, zeus.Tint.Ink)
+                zui.KpiCard("Revenue", "$12k", zeus.Tint.Ok, delta = "+4%", trend = zui.Trend.Up, spark = spark)
+            }
+            zui.Row(Space.Md) {
+                zui.TrendIndicator("+12%", zui.Trend.Up)
+                zui.TrendIndicator("-3%", zui.Trend.Down)
+                zui.Sparkline(spark, 120, 32, zeus.accent())
+            }
+        }
+    })
+}

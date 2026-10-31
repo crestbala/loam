@@ -1,0 +1,30 @@
+// DRAW-list golden: navigation. Navbar with NavTabs, Breadcrumbs, a short and
+// a collapsed Pagination, Steps, TableOfContents and a Timeline. Keep this file
+// free of prints: stdout is the golden.
+
+import "std:zeus"
+import "std:zui"
+
+fn main() {
+    let page = zeus.signal(0)
+    let cur = zeus.signal(3)
+    let far = zeus.signal(9)
+    let step = zeus.signal(1)
+    let toc = zeus.signal(1)
+    zeus.snapshot(640, 700, fn() -> Node {
+        zui.Page() {
+            zui.Navbar("Zeus")
+            zui.Row(Space.Sm) {
+                zui.NavTab("Home", page, 0)
+                zui.NavTab("Docs", page, 1)
+            }
+            zui.Breadcrumbs([]string { "Zeus", "Examples", "Gallery" })
+            zui.Pagination(cur, 5)
+            zui.Pagination(far, 20)
+            zui.Steps(step, []string { "Account", "Plan", "Review" })
+            zui.TableOfContents(toc, []string { "Intro", "Usage", "API" }, style = Style(maxWidth = 420))
+            zui.Timeline([]TimelineItem { TimelineItem(title = "Shipped", body = "First build", time = "Mar"),
+                                          TimelineItem(title = "Today", body = "Refresh", time = "Now") })
+        }
+    })
+}

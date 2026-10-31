@@ -1,0 +1,30 @@
+// DRAW-list golden: hover states. The first dump is at rest; the second moves
+// the pointer over the Outline button and settles the hover fade, so its fill
+// changes and nothing else does. Keep this file free of prints: stdout is the
+// golden.
+
+import "std:zeus"
+import "std:zui"
+
+fn main() {
+    zeus.snapshot(420, 200, fn() -> Node {
+        zui.Page() {
+            zui.Row(Space.Sm) {
+                zui.Button("Solid", look = zeus.Look.Solid, size = zeus.Size.Md)
+                zui.Button("Outline", look = zeus.Look.Outline, size = zeus.Size.Md)
+                zui.Button("Ghost", look = zeus.Look.Ghost, size = zeus.Size.Md)
+            }
+        }
+    })
+    let id = zeus.engine_find_text("Outline")
+    zeus.engine_hover(zeus.node_x(id) + 4, zeus.node_y(id) + 4)
+    let mut i = 0
+    while i < 8 {
+        zeus.pump_frame()
+        zeus.engine_step_dt(64)
+        i = i + 1
+    }
+    zeus.engine_layout(420, 200)
+    zeus.engine_paint()
+    zeus.dump_draw_list()
+}

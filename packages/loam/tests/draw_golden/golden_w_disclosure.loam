@@ -1,0 +1,42 @@
+// DRAW-list golden: disclosure, closed then open. An Accordion with every row
+// closed and two Collapsibles, one closed and one open; the second dump opens
+// the first accordion row and settles its fade. Keep this file free of prints:
+// stdout is the golden.
+
+import "std:zeus"
+import "std:colors"
+import "std:spacing"
+import "std:zui"
+
+fn main() {
+    let open = zeus.signal(-1)
+    let shut = zeus.signal(false)
+    let shown = zeus.signal(true)
+    zeus.snapshot(420, 520, fn() -> Node {
+        zui.Page() {
+            let rows = []AccordionRow {
+                AccordionRow { title: "Shipping", body: "Ships in 2-3 days." },
+                AccordionRow { title: "Returns", body: "30-day return window." },
+            }
+            zui.Accordion(open, items = rows)
+            zui.Collapsible(open = shut, title = "Closed options",
+                            style = Style(border = line(spacing.HAIRLINE, colors.rule()))) {
+                zui.Body("Hidden body.")
+            }
+            zui.Collapsible(open = shown, title = "Open options",
+                            style = Style(border = line(spacing.HAIRLINE, colors.rule()))) {
+                zui.Body("Visible body.")
+            }
+        }
+    })
+    open.set(0)
+    let mut i = 0
+    while i < 8 {
+        zeus.pump_frame()
+        zeus.engine_step_dt(64)
+        i = i + 1
+    }
+    zeus.engine_layout(420, 520)
+    zeus.engine_paint()
+    zeus.dump_draw_list()
+}

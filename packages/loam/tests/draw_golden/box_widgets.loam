@@ -1,0 +1,41 @@
+// BOX golden: the boxes of a typical form screen built from zeus-components
+// (navbar, card, fields, choice controls, buttons, tabs, an open select), so
+// a layout refactor is checked against real widget trees, not just plain
+// boxes. Keep this file free of prints: stdout is the golden.
+
+import "std:zeus"
+import "std:zui"
+
+fn main() {
+    let name = zeus.signal("Ada")
+    let on = zeus.signal(true)
+    let vol = zeus.signal(40)
+    let tab = zeus.signal(1)
+    let size = zeus.signal(0)
+    zeus.window("box", 560, 640)
+    zeus.root(zui.Page() {
+        zui.Navbar("Zeus")
+        zui.Card(title = "Profile", subtitle = "Public details") {
+            zui.Field("Name", name, "Your name")
+            zui.Row(Space.Md) {
+                zui.Checkbox("Notify", on)
+                zui.Switch(on)
+                zui.Grow()
+                zui.Badge("new", zeus.Tint.Ok)
+            }
+            zui.Slider(vol)
+            zui.Tabs(tab, []string { "One", "Two", "Three" })
+            zui.Select(size, []string { "Small", "Large" })
+            zui.Row(Space.Sm) {
+                zui.Grow()
+                zui.Button("Cancel", look = zeus.Look.Ghost, size = zeus.Size.Md)
+                zui.Button("Save", look = zeus.Look.Solid, size = zeus.Size.Md)
+            }
+        }
+    })
+    zeus.pump_frame()
+    zeus.engine_click_text("Small")
+    zeus.engine_mouseup()
+    zeus.pump_frame()
+    zeus.dump_boxes()
+}

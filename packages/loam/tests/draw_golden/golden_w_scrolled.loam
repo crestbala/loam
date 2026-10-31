@@ -1,0 +1,46 @@
+// DRAW-list golden: scrolled content. A ScrollArea with its fades and a bare
+// Scroll, both at rest and then scrolled by the wheel over each; the second
+// dump shows the shifted rows, the culled ones gone, and the edge fades, once
+// the scrollbars have faded out.
+// Keep this file free of prints: stdout is the golden.
+
+import "std:async"
+import "std:zeus"
+import "std:zui"
+
+fn main() {
+    zeus.snapshot(420, 420, fn() -> Node {
+        zui.Page() {
+            zui.ScrollArea(height = 96) {
+                zui.Body("One")
+                zui.Body("Two")
+                zui.Body("Three")
+                zui.Body("Four")
+                zui.Body("Five")
+                zui.Body("Six")
+                zui.Body("Seven")
+            }
+            zui.Scroll(style = Style(height = px(120))) {
+                for i in 0..20 {
+                    zui.Body("Row {{i}}")
+                }
+            }
+        }
+    })
+    let a = zeus.engine_find_text("Two")
+    zeus.engine_scroll(zeus.node_x(a) + 4, zeus.node_y(a) + 4, 0, 40)
+    let b = zeus.engine_find_text("Row 1")
+    zeus.engine_scroll(zeus.node_x(b) + 4, zeus.node_y(b) + 4, 0, 90)
+    let mut i = 0
+    while i < 16 {
+        zeus.pump_frame()
+        zeus.engine_step_dt(64)
+        i = i + 1
+    }
+    // The scrollbar fades on the wall clock and is gone 1100 ms after the last
+    // scroll; wait past that so its alpha is always 0 in the dump.
+    async.sleep(1200)
+    zeus.engine_layout(420, 420)
+    zeus.engine_paint()
+    zeus.dump_draw_list()
+}

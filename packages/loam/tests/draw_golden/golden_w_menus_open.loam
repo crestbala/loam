@@ -1,0 +1,59 @@
+// DRAW-list golden: the menu presets, opened. The DropdownMenu is clicked open
+// (second dump), then closed by an outside click and the SplitButton's caret
+// menu opened (third dump), then the ContextMenu opened by a right-click
+// (fourth dump).
+// Keep this file free of prints: stdout is the golden.
+
+import "std:zeus"
+import "std:spacing"
+import "std:colors"
+import "std:zui"
+
+fn settle() {
+    let mut i = 0
+    while i < 8 {
+        zeus.pump_frame()
+        zeus.engine_step_dt(64)
+        i = i + 1
+    }
+    zeus.engine_layout(480, 420)
+    zeus.engine_paint()
+    zeus.dump_draw_list()
+}
+
+/// Close whatever menu is open with a click on empty page space.
+fn dismiss() {
+    zeus.engine_click(460, 400)
+    zeus.engine_mouseup()
+    zeus.pump_frame()
+}
+
+fn main() {
+    zeus.snapshot(480, 420, fn() -> Node {
+        zui.Page() {
+            zui.Row(Space.Sm) {
+                zui.DropdownMenu("Sort", items = []MenuRow { MenuRow(label = "Newest"), MenuRow(label = "Oldest") })
+                zui.SplitButton("Save", items = []MenuRow { MenuRow(label = "Save as") })
+            }
+            zui.ContextMenu(items = []MenuRow { MenuRow(label = "Rename"),
+                                                MenuRow(label = "Delete", danger = true) }) {
+                zeus.Box(style = Style(height = px(72), align = zeus.Align.Center, justify = zeus.Align.Center,
+                                       border = line(spacing.HAIRLINE, colors.rule()))) {
+                    zui.Note("Right-click here")
+                }
+            }
+        }
+    })
+    zeus.engine_click_text("Sort")
+    zeus.engine_mouseup()
+    settle()
+    dismiss()
+    let caret = zeus.engine_find_text("More options")
+    zeus.engine_click(zeus.node_x(caret) + 4, zeus.node_y(caret) + 4)
+    zeus.engine_mouseup()
+    settle()
+    dismiss()
+    let area = zeus.engine_find_text("Right-click here")
+    zeus.engine_context_click(zeus.node_x(area), zeus.node_y(area))
+    settle()
+}

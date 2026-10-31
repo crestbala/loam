@@ -1,0 +1,37 @@
+// DRAW-list golden: the disabled and invalid states. Disabled buttons in four
+// looks, and the inputs and choice controls that take `disabled` /
+// `invalid`, each beside nothing else so the dimmed chrome is easy to read.
+// Keep this file free of prints: stdout is the golden.
+
+import "std:zeus"
+import "std:zui"
+
+fn main() {
+    let text = zeus.signal("ada@lovelace.dev")
+    let bad = zeus.signal("not-an-email")
+    let on = zeus.signal(true)
+    let vol = zeus.signal(30)
+    let pick = zeus.signal(0)
+    let n = zeus.signal(3)
+    zeus.snapshot(560, 620, fn() -> Node {
+        zui.Page() {
+            zui.RowWrap(Space.Sm) {
+                zui.Button("Solid", look = zeus.Look.Solid, size = zeus.Size.Md, enabled = false)
+                zui.Button("Outline", look = zeus.Look.Outline, size = zeus.Size.Md, enabled = false)
+                zui.Button("Ghost", look = zeus.Look.Ghost, size = zeus.Size.Md, enabled = false)
+                zui.Button("Link", look = zeus.Look.Link, size = zeus.Size.Md, enabled = false)
+            }
+            zui.TextInput(text, "Email", disabled = true)
+            zui.TextInput(bad, "Email", invalid = true)
+            zui.Row(Space.Md) {
+                zui.Switch(on, disabled = true)
+                zui.Checkbox("Notify", on, disabled = true)
+                zui.Radio("First", pick, 0, disabled = true)
+            }
+            zui.Slider(vol, disabled = true)
+            zui.Select(pick, []string { "Small", "Medium" }, disabled = true)
+            zui.NumberInput(n, min = 0, max = 9, label = "Count", disabled = true)
+            zui.ButtonGroup([]string { "Day", "Week" }, disabled = true)
+        }
+    })
+}

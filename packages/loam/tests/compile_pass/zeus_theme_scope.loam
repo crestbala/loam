@@ -10,6 +10,7 @@ import "std:zeus"
 import "std:colors"
 import "std:zui"
 import "zeus:zeuscore/arena"
+import "zeus:zeuscore/nodes"
 
 fn expect(cond: bool, msg: string) {
     if cond == false {
@@ -20,7 +21,7 @@ fn expect(cond: bool, msg: string) {
 
 fn rgb_in(id: int) -> int {
     let prev = arena.paint_scheme_enter(id)
-    let c = arena.paint_rgb(arena.nodes[id].bg)
+    let c = arena.paint_rgb(nodes.look[id].bg)
     arena.paint_scheme_leave(prev)
     return c
 }
@@ -92,6 +93,6 @@ fn main() {
     let big = zeus.engine_find_text("big")
     let small = zeus.engine_find_text("small")
     expect(big > 0 && small > 0, "buttons built")
-    expect(arena.nodes[small].h < arena.nodes[big].h, "compact scope did not shrink its control")
+    expect(nodes.box[small].h < nodes.box[big].h, "compact scope did not shrink its control")
     fmt.println("theme scope ok")
 }

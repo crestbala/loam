@@ -1,0 +1,13 @@
+// BOX golden: every node's box in the first frame of examples/zeus/dashboard,
+// a whole app's tree at its own window size. Keep this file free of prints:
+// stdout is the golden.
+
+import "std:zeus"
+import "../../../../examples/zeus/dashboard/dashboard.loam" as dashboard
+
+fn main() {
+    zeus.App("Zeus Dashboard", fn() -> Node {
+        return dashboard.Dashboard()
+    }, 920, 720)
+    zeus.dump_boxes()
+}

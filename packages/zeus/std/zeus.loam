@@ -90,6 +90,7 @@ import "zeuscore/geometry.loam"
 import "zeuscore/platform.loam"
 import "zeuscore/memory.loam"
 import "zeuscore/arena.loam"
+import "zeuscore/nodes.loam"
 import "zeuscore/raster.loam"
 import "zeuscore/atlas.loam"
 import "zeuscore/image.loam"
@@ -261,11 +262,11 @@ fn engine_window_drag_at(px: int, py: int) -> int {
     }
     let h = input.hit_node(arena.root_id, px, py)
     // A scroll pane hit-tests as itself; the app's root is one.
-    if h > 0 && int(arena.nodes[h].kind) != 11 {
+    if h > 0 && int(nodes.tree[h].kind) != 11 {
         return 0
     }
-    for i in 1..arena.nodes.len {
-        if fmt.eq(arena.nodes[i].a11y_role, "titlebar") && arena.shown_in_tree(i) != 0 &&
+    for i in 1..nodes.tree.len {
+        if fmt.eq(nodes.ui[i].a11y_role, "titlebar") && arena.shown_in_tree(i) != 0 &&
            arena.in_box(i, px, py) != 0 {
             return 1
         }
@@ -434,8 +435,8 @@ fn engine_layout(width: int, height: int) {
     // targeted layout write (a label's text, a `w` / `padding` prop), a host's
     // own structural change — is already followed by the retained tree: the
     // effects the previous build created update their own nodes, layout
-    // re-solves from the written node's boundary, and the graph is not torn
-    // down (`track.reset`).
+    // re-solves and repaints only what moved, and the graph is not torn down
+    // (`track.reset`).
     let mut rebuild_view = 0
     if has_view != 0 {
         if arena.view_stale != 0 {
@@ -471,15 +472,16 @@ fn engine_layout(width: int, height: int) {
     // Layout runs only when the box model can have moved: a resize, a tree
     // build, or a discrete write that touched a layout prop. A frame whose
     // only dirt is PAINT — every animation frame — skips it entirely. When it
-    // does run, a write that invalidated only a subpath of the tree can re-solve
-    // that subtree instead of the whole surface (`layout.relayout`).
+    // does run, a write that names its nodes is a targeted frame: the tree is
+    // solved from the root (clean subtrees keep their measure) and paint
+    // re-records only the nodes whose box moved (`layout.relayout`).
     let mut lay = 0
     if resized != 0 || arena.layout_dirty != 0 {
         lay = 1
     }
     let full = arena.take_layout_full()
     let dirty = arena.take_dirty_layout_nodes()
-    // `whole` = re-solve the entire tree (and so repaint the whole surface).
+    // `whole` = an untargeted frame: solve and repaint the whole surface.
     let mut whole = 1
     if lay == 0 {
         whole = 0
@@ -504,12 +506,20 @@ fn engine_layout(width: int, height: int) {
             // it.
             arena.mark_paint()
         } else {
-            // A subtree re-solve already marked the boundary it re-placed
-            // (`layout.relayout`), and nothing outside it can have moved, so
-            // paint may reuse the retained ops everywhere else.
+            // A targeted frame already paint-marked every node it moved
+            // (`layout.relayout`), so paint may reuse the retained ops
+            // everywhere else.
             arena.mark_paint_targeted()
         }
         layout_gen = layout_gen + 1
+    }
+    // A scroll under an open popup: re-place the anchored floaters only. A
+    // layout above already re-placed them.
+    if arena.anchors_dirty != 0 {
+        if lay == 0 {
+            layout.replace_anchored()
+        }
+        arena.anchors_dirty = 0
     }
     // Windowed lists size their window from the scroller's laid-out height and
     // its scroll, refit hosts (charts) rebuild when this frame's layout moved
@@ -526,7 +536,7 @@ fn engine_layout(width: int, height: int) {
         refresh_lists()
         if arena.layout_dirty != 0 {
             // Same rule as the first pass: a host that rebuilt marked itself,
-            // so the re-solve is scoped to its boundary when one exists.
+            // so the frame stays targeted.
             let full2 = arena.take_layout_full()
             let dirty2 = arena.take_dirty_layout_nodes()
             let mut whole2 = 1
@@ -787,6 +797,15 @@ fn engine_set_reduced_motion(on: int) {
     arena.reduced = on
 }
 
+/// Host trampoline: the host's text metrics changed under the engine (a web
+/// font finished loading after the first frames measured with the fallback).
+/// Drops cached text measurements and re-lays out the whole tree.
+fn engine_fonts_changed() {
+    arena.ensure()
+    metrics.reset_cache()
+    arena.mark_layout()
+}
+
 /// Host trampoline and test hook: set the safe-area insets the next layout
 /// pass will read (`plat_inset_*`). iOS / Android already call the C setter
 /// from the view; tests use this so a notched viewport is deterministic.
@@ -815,6 +834,56 @@ fn engine_click(px: int, py: int) -> int {
     return input.click(px, py)
 }
 
+/// The node a press at (`px`, `py`) would land on, without pressing: floaters
+/// first, top `zIndex` first, then the page — the order paint stacks them. 0
+/// when nothing hit-testable is there.
+fn engine_hit(px: int, py: int) -> int {
+    if arena.root_id <= 0 {
+        return 0
+    }
+    arena.ptr_x = px
+    arena.ptr_y = py
+    let h = input.hit_floaters(arena.root_id, px, py)
+    if h > 0 {
+        return h
+    }
+    return input.hit_node(arena.root_id, px, py)
+}
+
+/// 1 while the pointer is over node `id`: inside its box and every clip above
+/// it, and not covered by a floater outside its subtree.
+fn pointer_over(id: int) -> int {
+    if id <= 0 || id >= nodes.tree.len {
+        return 0
+    }
+    return arena.ptr_in(id)
+}
+
+/// Node `id`'s on-screen position: its laid-out box minus every scroll above
+/// it. `node_x` / `node_y` are content
+/// coordinates; floaters and overlays are already in window space.
+fn screen_x(id: int) -> int {
+    if id <= 0 || id >= nodes.tree.len {
+        return 0
+    }
+    return layout.screen_origin(id).x
+}
+
+fn screen_y(id: int) -> int {
+    if id <= 0 || id >= nodes.tree.len {
+        return 0
+    }
+    return layout.screen_origin(id).y
+}
+
+/// 1 when node `id` is `top` or one of its descendants.
+fn is_under(id: int, top: int) -> int {
+    if id <= 0 || top <= 0 || id >= nodes.tree.len {
+        return 0
+    }
+    return nodes.is_or_under(id, top)
+}
+
 /// Secondary click (right button / ctrl-click): runs the nearest
 /// `on_context_menu` handler. The hosts call it; tests drive it directly.
 fn engine_context_click(px: int, py: int) -> int {
@@ -829,42 +898,42 @@ fn clipboard_last() -> string {
 fn click_id(id: int) -> int {
     let mut i = id
     while i > 0 {
-        if arena.nodes[i].click_fn > 0 {
+        if nodes.ui[i].click_fn > 0 {
             return click_node(i)
         }
-        i = arena.nodes[i].parent
+        i = nodes.tree[i].parent
     }
     return click_node(id)
 }
 
-/// Click the centre of `id`, in *window* coordinates: `nodes[id].x/y` are
+/// Click the centre of `id`, in *window* coordinates: `box[id].x/y` are
 /// content coordinates, so a scrolled node needs its scrollers' offsets
 /// removed or the point lands off screen.
 fn click_node(id: int) -> int {
     if id <= 0 {
         return 0
     }
-    if id >= arena.nodes.len {
+    if id >= nodes.tree.len {
         return 0
     }
     let o = layout.screen_origin(id)
-    let x = o.x + arena.nodes[id].w / 2
-    let y = o.y + arena.nodes[id].h / 2
+    let x = o.x + nodes.box[id].w / 2
+    let y = o.y + nodes.box[id].h / 2
     return input.click(x, y)
 }
 
 /// Node id whose `text` or `a11y_label` equals `label` (tests, headless
 /// hosts). 0 when nothing visible matches. Hidden nodes are skipped.
 fn engine_find_text(label: string) -> int {
-    let n = arena.nodes.len
+    let n = nodes.tree.len
     for i in 1..n {
         if arena.want_show(i) == 0 {
             continue
         }
-        if fmt.eq(arena.nodes[i].text, label) {
+        if fmt.eq(nodes.look[i].text, label) {
             return i
         }
-        if fmt.eq(arena.nodes[i].a11y_label, label) {
+        if fmt.eq(nodes.ui[i].a11y_label, label) {
             return i
         }
     }
@@ -875,15 +944,15 @@ fn engine_find_text(label: string) -> int {
 /// all visible carries `label`. `engine_find_text` only checks the node's own
 /// visibility, so it cannot see a child of a hidden container.
 fn text_visible(label: string) -> bool {
-    let n = arena.nodes.len
+    let n = nodes.tree.len
     for i in 1..n {
         if arena.shown_in_tree(i) == 0 {
             continue
         }
-        if fmt.eq(arena.nodes[i].text, label) {
+        if fmt.eq(nodes.look[i].text, label) {
             return true
         }
-        if fmt.eq(arena.nodes[i].a11y_label, label) {
+        if fmt.eq(nodes.ui[i].a11y_label, label) {
             return true
         }
     }
@@ -893,12 +962,12 @@ fn text_visible(label: string) -> bool {
 /// Node id whose `a11y_role` equals `role` (tests, headless hosts); the
 /// first match in tree order, 0 when none is visible.
 fn engine_find_role(role: string) -> int {
-    let n = arena.nodes.len
+    let n = nodes.tree.len
     for i in 1..n {
         if arena.want_show(i) == 0 {
             continue
         }
-        if fmt.eq(arena.nodes[i].a11y_role, role) {
+        if fmt.eq(nodes.ui[i].a11y_role, role) {
             return i
         }
     }
@@ -934,13 +1003,13 @@ fn a11y_control(role: string) -> bool {
 /// true when `i` is plain text inside a labelled control (within three
 /// levels): the control's label already says it.
 fn a11y_redundant(i: int) -> bool {
-    let mut p = arena.nodes[i].parent
+    let mut p = nodes.tree[i].parent
     let mut up = 0
     while p > 0 && up < 3 {
-        if arena.nodes[p].a11y_label.len > 0 && a11y_control(arena.nodes[p].a11y_role) {
+        if nodes.ui[p].a11y_label.len > 0 && a11y_control(nodes.ui[p].a11y_role) {
             return true
         }
-        p = arena.nodes[p].parent
+        p = nodes.tree[p].parent
         up = up + 1
     }
     return false
@@ -954,13 +1023,13 @@ fn a11y_state_bits(i: int) -> int {
     if arena.is_focusable(i) != 0 {
         b = b | 1
     }
-    let st = int(arena.nodes[i].a11y_state)
+    let st = int(nodes.ui[i].a11y_state)
     if st != 0 {
         b = b | 2
         if st == 2 {
             b = b | 4
         }
-    } else if arena.nodes[i].bind_sig > 0 && fmt.eq(arena.nodes[i].a11y_role, "switch") {
+    } else if nodes.ui[i].bind_sig > 0 && fmt.eq(nodes.ui[i].a11y_role, "switch") {
         b = b | 2
         if arena.state_selected_of(i) != 0 {
             b = b | 4
@@ -1002,8 +1071,9 @@ fn a11y_num(v: int) {
 /// every call and strings are never freed, so dumping per paint frame leaked
 /// ~16 KB a frame on the web host.
 let mut layout_gen: int = 0
-/// 1 when the last `engine_layout` re-solved the whole tree, 0 when it re-solved
-/// only a subtree (Phase 5). Exposed for tests as `layout_was_full`.
+/// 1 when the last `engine_layout` was untargeted (solved and repainted the
+/// whole surface), 0 when it repainted only what moved. Exposed for tests as
+/// `layout_was_full`.
 let mut last_whole: int = 1
 
 fn engine_layout_gen() -> int {
@@ -1014,25 +1084,39 @@ fn layout_was_full() -> int {
     return last_whole
 }
 
-/// Whole-tree layout solves over the session: a resize, a structural or
-/// frame-wide mark, or a targeted write whose change reached the root. A
-/// patch test holds this flat across its targeted writes (diagnostics).
+/// Untargeted layout frames over the session: a resize, or a structural or
+/// frame-wide mark. They repaint the whole surface. A targeted write (one
+/// that names its nodes) never counts here, and a scroll runs no layout at
+/// all. A patch test holds this flat across its targeted writes
+/// (diagnostics).
 let mut full_layouts: int = 0
 
 fn full_layouts_count() -> int {
     return full_layouts
 }
 
-/// Re-solves `relayout` ran from the root: a change no box below the root
-/// contained. Still scoped — clean subtrees keep their measure, and paint
-/// re-records only the nodes the re-solve moved.
+/// Targeted layout frames: solved from the root, but clean subtrees keep their
+/// measure and paint re-records only the nodes whose box moved.
 fn root_relayouts() -> int {
     return layout.root_relayouts
 }
 
-/// Boundaries `relayout` climbed past because their box did not hold.
+/// Always 0: the subtree re-solve that climbed past boundaries is gone
+/// (kept for the frozen API).
 fn relayout_climbs() -> int {
     return layout.relayout_climbs
+}
+
+/// `layout_node` calls over the session (perf probes: a whole-tree layout
+/// stays within two visits per node).
+fn layout_visits() -> int {
+    return layout.layout_visits
+}
+
+/// Nodes the measure pass measured over the session; cached subtrees it
+/// skipped are not counted.
+fn measure_visits() -> int {
+    return layout.measure_visits
 }
 
 /// Nodes the last interaction-state (chrome) pass visited, then reset. A write
@@ -1070,15 +1154,15 @@ fn engine_a11y_bytes() -> []int {
 
 fn a11y_build() {
     A11Y_out = []int {}
-    let n = arena.nodes.len
+    let n = nodes.tree.len
     let mut i = 1
     while i < n {
         // Shown in the tree, not merely by its own flag: the items of a closed
         // menu or a hidden panel are not on the page and must not be read.
         if arena.shown_in_tree(i) != 0 {
-            let role = arena.nodes[i].a11y_role
-            let label = arena.nodes[i].a11y_label
-            let txt = arena.nodes[i].text
+            let role = nodes.ui[i].a11y_role
+            let label = nodes.ui[i].a11y_label
+            let txt = nodes.look[i].text
             let mut keep = role.len > 0 || label.len > 0 || txt.len > 0
             if fmt.eq(role, "presentation") {
                 keep = false
@@ -1095,10 +1179,10 @@ fn a11y_build() {
                     r = "text"
                 }
                 let mut d = 0
-                let mut p = arena.nodes[i].parent
+                let mut p = nodes.tree[i].parent
                 while p > 0 {
                     d = d + 1
-                    p = arena.nodes[p].parent
+                    p = nodes.tree[p].parent
                 }
                 a11y_num(d)
                 push(A11Y_out, 9)
@@ -1106,13 +1190,13 @@ fn a11y_build() {
                 push(A11Y_out, 9)
                 a11y_push(l)
                 push(A11Y_out, 9)
-                a11y_num(arena.nodes[i].x)
+                a11y_num(nodes.box[i].x)
                 push(A11Y_out, 9)
-                a11y_num(arena.nodes[i].y)
+                a11y_num(nodes.box[i].y)
                 push(A11Y_out, 9)
-                a11y_num(arena.nodes[i].w)
+                a11y_num(nodes.box[i].w)
                 push(A11Y_out, 9)
-                a11y_num(arena.nodes[i].h)
+                a11y_num(nodes.box[i].h)
                 push(A11Y_out, 9)
                 a11y_num(i)
                 push(A11Y_out, 9)
@@ -1127,7 +1211,7 @@ fn a11y_build() {
 /// Assistive tech activated node `id` (a screen reader's "press"): focus it
 /// and run what Enter would. Returns 1 when something ran.
 fn engine_a11y_activate(id: int) -> int {
-    if id <= 0 || id >= arena.nodes.len {
+    if id <= 0 || id >= nodes.tree.len {
         return 0
     }
     if arena.want_show(id) == 0 {
@@ -1145,7 +1229,7 @@ fn engine_a11y_activate(id: int) -> int {
 /// Assistive tech moved focus to node `id`: follow it, so keys and the
 /// focus ring land where the screen reader is.
 fn engine_a11y_focus(id: int) {
-    if id <= 0 || id >= arena.nodes.len {
+    if id <= 0 || id >= nodes.tree.len {
         return
     }
     if arena.want_show(id) == 0 {
@@ -1161,29 +1245,29 @@ fn engine_a11y_focus(id: int) {
 /// node, in tree order. Geometry is what the last layout pass produced.
 fn engine_tree_dump() -> string {
     A11Y_out = []int {}
-    let n = arena.nodes.len
+    let n = nodes.tree.len
     let mut i = 1
     while i < n {
         if arena.want_show(i) != 0 {
             a11y_num(i)
             push(A11Y_out, 9)
-            a11y_num(arena.nodes[i].parent)
+            a11y_num(nodes.tree[i].parent)
             push(A11Y_out, 9)
-            a11y_num(arena.nodes[i].x)
+            a11y_num(nodes.box[i].x)
             push(A11Y_out, 9)
-            a11y_num(arena.nodes[i].y)
+            a11y_num(nodes.box[i].y)
             push(A11Y_out, 9)
-            a11y_num(arena.nodes[i].w)
+            a11y_num(nodes.box[i].w)
             push(A11Y_out, 9)
-            a11y_num(arena.nodes[i].h)
+            a11y_num(nodes.box[i].h)
             push(A11Y_out, 9)
-            a11y_push(arena.nodes[i].a11y_role)
+            a11y_push(nodes.ui[i].a11y_role)
             push(A11Y_out, 9)
-            let l = arena.nodes[i].a11y_label
+            let l = nodes.ui[i].a11y_label
             if l.len > 0 {
                 a11y_push(l)
             } else {
-                a11y_push(arena.nodes[i].text)
+                a11y_push(nodes.look[i].text)
             }
             push(A11Y_out, 10)
         }
@@ -1272,7 +1356,7 @@ fn node_visible(id: int) -> int {
     if id <= 0 {
         return 0
     }
-    if id >= arena.nodes.len {
+    if id >= nodes.tree.len {
         return 0
     }
     return arena.want_show(id)
@@ -1338,12 +1422,18 @@ fn engine_cursor() -> string {
 
 /// Set a cursor name directly on any node (native thumbs have no props).
 fn cursor(n: Node, s: string) -> Node {
-    arena.nodes[n.id].cursor = s
+    nodes.look[n.id].cursor = s
     return n
 }
 
 fn draw_count() -> int {
     return scene.draws.len
+}
+
+/// Clip-container children the paint pass skipped as wholly outside their
+/// clip, over the session (tests, perf checks).
+fn culled_count() -> int {
+    return scene.paint_culled_count()
 }
 
 /// Op kind of draw `i` (tests): 1 fill, 2 text, 7 clip, 11 gradient, 12 shadow.
@@ -1395,7 +1485,7 @@ fn draw_text(i: int) -> string {
 /// Layout results for tests: the box of the node that matched
 /// `engine_find_text`. Positions are window-space after the last layout.
 fn node_x(id: int) -> int {
-    return arena.nodes[id].x
+    return nodes.box[id].x
 }
 
 /// A node's fill as the paint pass sees it: a stored role token resolved
@@ -1403,15 +1493,15 @@ fn node_x(id: int) -> int {
 /// repaints without re-running any prop.
 fn node_background_rgb(id: int) -> int {
     arena.ensure()
-    return arena.paint_rgb(arena.nodes[id].bg)
+    return arena.paint_rgb(nodes.look[id].bg)
 }
 
 /// A node's accessible label (or its text when it has none), for tests.
 fn node_label(id: int) -> string {
-    if arena.nodes[id].a11y_label.len > 0 {
-        return arena.nodes[id].a11y_label
+    if nodes.ui[id].a11y_label.len > 0 {
+        return nodes.ui[id].a11y_label
     }
-    return arena.nodes[id].text
+    return nodes.look[id].text
 }
 
 /// Resolved foreground (text / icon tint) of a node id, as `node_background_rgb`.
@@ -1423,37 +1513,37 @@ fn node_color_rgb(id: int) -> int {
 /// Laid-out top edge of a node id. The id-based accessors exist for tests
 /// and engine code that hold an id rather than a `Node`.
 fn node_y(id: int) -> int {
-    return arena.nodes[id].y
+    return nodes.box[id].y
 }
 
 /// Laid-out width of a node id; see `node_y`.
 fn node_width(id: int) -> int {
-    return arena.nodes[id].w
+    return nodes.box[id].w
 }
 
 /// Laid-out height of a node id; see `node_y`.
 fn node_height(id: int) -> int {
-    return arena.nodes[id].h
+    return nodes.box[id].h
 }
 
 /// Parent id in the retained tree (0 = root). Tests walk scroll chains with this.
 fn node_parent(id: int) -> int {
-    return arena.nodes[id].parent
+    return nodes.tree[id].parent
 }
 
 /// Engine kind: 11 is a scroll pane.
 fn node_kind(id: int) -> int {
-    return int(arena.nodes[id].kind)
+    return int(nodes.tree[id].kind)
 }
 
 /// Current vertical scroll offset of node `id` (tests, `scroll_to`).
 fn node_scroll_y(id: int) -> int {
-    return arena.nodes[id].scroll_y
+    return nodes.scrl[id].scroll_y
 }
 
 /// Current horizontal scroll offset of node `id`.
 fn node_scroll_x(id: int) -> int {
-    return arena.nodes[id].scroll_x
+    return nodes.scrl[id].scroll_x
 }
 
 /// Max vertical scroll of node `id` (`content - viewport`, 0 if no overflow).
@@ -1465,7 +1555,7 @@ fn node_scroll_max(id: int) -> int {
 /// waiting to be recycled; `sigs` is the same for signals. A streaming `Each`
 /// that rebuilds without growing the tree keeps both constant.
 fn arena_nodes() -> int {
-    return arena.nodes.len
+    return nodes.tree.len
 }
 
 fn arena_sigs() -> int {
@@ -1557,24 +1647,24 @@ fn paint_force_full() {
 /// Byte size of one arena node record (diagnostics for the Phase 11 layout
 /// steps).
 fn node_bytes() -> int {
-    if arena.nodes.len == 0 {
+    if nodes.tree.len == 0 {
         return 0
     }
-    return __sizeof(arena.nodes[0])
+    return nodes.node_record_bytes()
 }
 
 /// Total bytes held by live arena node records.
 fn arena_bytes() -> i64 {
-    if arena.nodes.len == 0 {
+    if nodes.tree.len == 0 {
         return 0
     }
-    return i64(arena.nodes.len) * i64(__sizeof(arena.nodes[0]))
+    return i64(nodes.tree.len) * i64(nodes.node_record_bytes())
 }
 
 /// Phase 0 diagnostics: live (non-recycled) node count. Additive; no
 /// allocation behavior reads it. See `docs/mem-baseline.md`.
 fn mem_live_nodes() -> int {
-    return arena.mem_live_nodes()
+    return nodes.mem_live_nodes()
 }
 
 /// Phase 0 diagnostics: total arena bytes across every bucket (nodes, signals,
@@ -2348,6 +2438,36 @@ fn dump_draw_list() {
                          d.value % 65536, d.value / 65536)
         } else if d.kind == 15 {
             fmt.println("xform", d.x, d.y, d.w, d.h, d.radius, d.font)
+        }
+    }
+}
+
+/// 1 when `id` is live, it and every ancestor is shown, and the chain reaches
+/// the root (a built but unmounted subtree is not on screen).
+fn box_shown(id: int) -> bool {
+    let mut cur = id
+    let mut guard = 0
+    while cur > 0 && guard < 256 {
+        if int(nodes.tree[cur].kind) == 0 || arena.want_show(cur) == 0 {
+            return false
+        }
+        if cur == arena.root_id {
+            return true
+        }
+        cur = nodes.tree[cur].parent
+        guard = guard + 1
+    }
+    return false
+}
+
+/// Print each shown node's box after layout, one `id x y w h` line per node in
+/// id order. The box goldens diff this text, so layout refactors can prove
+/// they place every node where today's solver does.
+fn dump_boxes() {
+    let n = nodes.tree.len
+    for i in 1..n {
+        if box_shown(i) {
+            fmt.println(i, nodes.box[i].x, nodes.box[i].y, nodes.box[i].w, nodes.box[i].h)
         }
     }
 }

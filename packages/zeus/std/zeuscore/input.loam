@@ -6,6 +6,7 @@
 //! 2 = horizontal. Hit tests add `scroll_x`/`scroll_y` when walking into a pane.
 
 import "arena.loam"
+import "nodes.loam"
 import "geometry.loam"
 import "platform.loam"
 import "std:unicode"
@@ -16,11 +17,45 @@ struct Click {
     setv: int,
 }
 
+/// 1 while a hit walk runs inside a floater (`hit_one_floater`): nested
+/// floaters are then part of the walk. Outside it, the tree walk skips every
+/// floater — `hit_floaters` already tested them, above the page, in z order,
+/// exactly as paint stacks them.
+let mut hit_in_floater: int = 0
+
 fn hit_one_floater(id: int, sx: int, sy: int) -> int {
-    if int(arena.nodes[id].kind) == 9 || arena.nodes[id].anchor > 0 {
-        return hit_node(id, arena.ptr_x, arena.ptr_y)
+    if int(nodes.ui[id].ptr_pass) != 0 {
+        return 0
     }
-    return hit_node(id, arena.ptr_x + sx, arena.ptr_y + sy)
+    if arena.ptr_in_float_clip(id) == 0 {
+        return 0
+    }
+    let was = hit_in_floater
+    hit_in_floater = 1
+    let mut h = 0
+    if nodes.is_window_floater(id) != 0 {
+        h = hit_node(id, arena.ptr_x, arena.ptr_y)
+    } else {
+        h = hit_node(id, arena.ptr_x + sx, arena.ptr_y + sy)
+    }
+    hit_in_floater = was
+    return h
+}
+
+/// The point a child walk should test `c` with: window coordinates for an
+/// overlay or anchored popup, the parent's content coordinates otherwise.
+fn kid_px(c: int, cx: int) -> int {
+    if nodes.is_window_floater(c) != 0 {
+        return arena.ptr_x
+    }
+    return cx
+}
+
+fn kid_py(c: int, cy: int) -> int {
+    if nodes.is_window_floater(c) != 0 {
+        return arena.ptr_y
+    }
+    return cy
 }
 
 fn hit_floaters(id: int, px: int, py: int) -> int {
@@ -47,9 +82,9 @@ fn hit_scrollbar(id: int, px: int, py: int) -> int {
     if arena.bar_visible(id) == 0 {
         return 0
     }
-    let tx = arena.bar_x(id, arena.nodes[id].x)
-    let text_width = arena.bar_w()
-    let ty = arena.bar_thumb_y(id, arena.nodes[id].y)
+    let tx = arena.bar_x(id, nodes.box[id].x)
+    let text_width = arena.bar_w_of(id)
+    let ty = arena.bar_thumb_y(id, nodes.box[id].y)
     let text_height = arena.bar_thumb_h(id)
     if px < tx {
         return 0
@@ -73,10 +108,10 @@ fn hit_h_scrollbar(id: int, px: int, py: int) -> int {
     if arena.bar_visible_x(id) == 0 {
         return 0
     }
-    let tx = arena.bar_thumb_x(id, arena.nodes[id].x)
+    let tx = arena.bar_thumb_x(id, nodes.box[id].x)
     let text_width = arena.bar_thumb_w(id)
-    let ty = arena.bar_hy(id, arena.nodes[id].y)
-    let text_height = arena.bar_w()
+    let ty = arena.bar_hy(id, nodes.box[id].y)
+    let text_height = arena.bar_w_of(id)
     if px < tx {
         return 0
     }
@@ -99,7 +134,7 @@ fn hit_node(id: int, px: int, py: int) -> int {
     if arena.want_show(id) == 0 {
         return 0
     }
-    if int(arena.nodes[id].kind) == 11 {
+    if int(nodes.tree[id].kind) == 11 {
         if arena.in_box(id, px, py) == 0 {
             return 0
         }
@@ -110,22 +145,25 @@ fn hit_node(id: int, px: int, py: int) -> int {
             return id
         }
     }
+    // An `overflow` box clips what it paints, so it clips what it hits.
+    if nodes.lay[id].overflow == 1 {
+        if arena.in_box(id, px, py) == 0 {
+            return 0
+        }
+    }
     let mut cx = px
     let mut cy = py
-    if int(arena.nodes[id].kind) == 11 {
-        cx = px + arena.nodes[id].scroll_x
-        cy = py + arena.nodes[id].scroll_y
+    if int(nodes.tree[id].kind) == 11 {
+        cx = px + nodes.scrl[id].scroll_x
+        cy = py + nodes.scrl[id].scroll_y
     }
-    let nk = arena.nodes[id].kids.len
+    let nk = nodes.tree[id].kids.len
     for j in 0..nk {
-        let c = arena.nodes[id].kids[nk - 1 - j]
-        let mut hx = cx
-        let mut hy = cy
-        if int(arena.nodes[c].kind) == 9 {
-            hx = arena.ptr_x
-            hy = arena.ptr_y
+        let c = nodes.tree[id].kids[nk - 1 - j]
+        if hit_in_floater == 0 && nodes.is_floater(c) != 0 {
+            continue
         }
-        let h = hit_node(c, hx, hy)
+        let h = hit_node(c, kid_px(c, cx), kid_py(c, cy))
         if h != 0 {
             return h
         }
@@ -133,18 +171,21 @@ fn hit_node(id: int, px: int, py: int) -> int {
     if arena.in_box(id, px, py) == 0 {
         return 0
     }
-    if arena.nodes[id].click_sig > 0 {
+    if int(nodes.ui[id].ptr_pass) != 0 {
+        return 0
+    }
+    if nodes.ui[id].click_sig > 0 {
         return id
     }
-    if arena.nodes[id].click_fn > 0 {
+    if nodes.ui[id].click_fn > 0 {
         return id
     }
     // A node carrying only a pointer handler is hit-testable; children are
     // tried first, so this doubles as event bubbling.
-    if arena.nodes[id].down_fn > 0 {
+    if nodes.ui[id].down_fn > 0 {
         return id
     }
-    if arena.nodes[id].up_fn > 0 {
+    if nodes.ui[id].up_fn > 0 {
         return id
     }
     // So is one with a context-menu or drag hook (a region, a track).
@@ -153,31 +194,31 @@ fn hit_node(id: int, px: int, py: int) -> int {
             return id
         }
     }
-    if int(arena.nodes[id].kind) == 4 {
+    if int(nodes.tree[id].kind) == 4 {
         return id
     }
-    if int(arena.nodes[id].kind) == 13 {
-        if arena.nodes[id].bind_sig > 0 {
+    if int(nodes.tree[id].kind) == 13 {
+        if nodes.ui[id].bind_sig > 0 {
             return id
         }
     }
-    if int(arena.nodes[id].kind) == 7 {
-        if arena.nodes[id].click_sig > 0 {
+    if int(nodes.tree[id].kind) == 7 {
+        if nodes.ui[id].click_sig > 0 {
             return id
         }
     }
-    if int(arena.nodes[id].kind) == 8 {
-        if arena.nodes[id].click_sig > 0 {
+    if int(nodes.tree[id].kind) == 8 {
+        if nodes.ui[id].click_sig > 0 {
             return id
         }
     }
-    if int(arena.nodes[id].kind) == 11 {
+    if int(nodes.tree[id].kind) == 11 {
         return id
     }
-    if int(arena.nodes[id].kind) == 10 {
+    if int(nodes.tree[id].kind) == 10 {
         return id
     }
-    if int(arena.nodes[id].focusable) != 0 {
+    if int(nodes.ui[id].focusable) != 0 {
         return id
     }
     return 0
@@ -242,19 +283,19 @@ fn click(px: int, py: int) -> int {
     }
     arena.press_target = id
     arena.claim_focus(id)
-    if int(arena.nodes[id].kind) == 10 {
+    if int(nodes.tree[id].kind) == 10 {
         let slot = arena.edit_ready(id)
         if slot >= 0 {
-            let relx = px - arena.nodes[id].x - i32(arena.nodes[id].pad_l) - i32(arena.nodes[id].border_w)
-            let rely = py - arena.nodes[id].y - i32(arena.nodes[id].pad_t) - i32(arena.nodes[id].border_w)
-            let mut font = i32(arena.nodes[id].font)
+            let relx = px - nodes.box[id].x - i32(nodes.lay[id].pad_l) - i32(nodes.lay[id].border_w)
+            let rely = py - nodes.box[id].y - i32(nodes.lay[id].pad_t) - i32(nodes.lay[id].border_w)
+            let mut font = i32(nodes.look[id].font)
             if font < 8 {
                 font = 14
             }
             platform.plat_edit_click(slot, relx, rely, arena.input_inner_w(id), font)
         }
     }
-    if int(arena.nodes[id].kind) == 11 {
+    if int(nodes.tree[id].kind) == 11 {
         if hit_h_scrollbar(id, px, py) != 0 {
             // Grab the thumb where it is: the drag moves it from its current
             // scroll, so the content never jumps under the pointer.
@@ -262,7 +303,7 @@ fn click(px: int, py: int) -> int {
             arena.drag_id = id
             arena.drag_bar = 2
             arena.drag_ay = px
-            arena.drag_as = arena.nodes[id].scroll_x
+            arena.drag_as = nodes.scrl[id].scroll_x
             return 1
         }
         if hit_scrollbar(id, px, py) != 0 {
@@ -273,15 +314,15 @@ fn click(px: int, py: int) -> int {
             arena.drag_id = id
             arena.drag_bar = 1
             arena.drag_ay = py
-            arena.drag_as = arena.nodes[id].scroll_y
+            arena.drag_as = nodes.scrl[id].scroll_y
             return 1
         }
     }
-    if int(arena.nodes[id].kind) == 13 {
-        if arena.nodes[id].bind_sig > 0 {
+    if int(nodes.tree[id].kind) == 13 {
+        if nodes.ui[id].bind_sig > 0 {
             let kd = 14
-            let travel = geometry.max2(arena.nodes[id].w - kd, 1)
-            let mut rel = px - arena.nodes[id].x - kd / 2
+            let travel = geometry.max2(nodes.box[id].w - kd, 1)
+            let mut rel = px - nodes.box[id].x - kd / 2
             if rel < 0 {
                 rel = 0
             }
@@ -289,7 +330,7 @@ fn click(px: int, py: int) -> int {
                 rel = travel
             }
             let v = (rel * 100 + travel / 2) / travel
-            let signal_id = arena.nodes[id].bind_sig
+            let signal_id = nodes.ui[id].bind_sig
             arena.store_sig_paint(signal_id, v)
             arena.drag_id = id
             return 1
@@ -314,16 +355,16 @@ fn click(px: int, py: int) -> int {
     arena.ev_x = px
     arena.ev_y = py
     arena.ev_button = 0
-    let c1 = Click { signal_id: arena.nodes[id].click_sig, mode: int(arena.nodes[id].click_mode), setv: arena.nodes[id].click_set }
+    let c1 = Click { signal_id: nodes.ui[id].click_sig, mode: int(nodes.ui[id].click_mode), setv: nodes.ui[id].click_set }
     apply_click(c1)
-    let c2 = Click { signal_id: arena.nodes[id].click2_sig, mode: int(arena.nodes[id].click2_mode), setv: arena.nodes[id].click2_set }
+    let c2 = Click { signal_id: nodes.ui[id].click2_sig, mode: int(nodes.ui[id].click2_mode), setv: nodes.ui[id].click2_set }
     apply_click(c2)
-    if arena.nodes[id].click_fn > 0 {
-        arena.invoke_handler(arena.nodes[id].click_fn, id)
+    if nodes.ui[id].click_fn > 0 {
+        arena.invoke_handler(nodes.ui[id].click_fn, id)
     }
     arena.down_id = id
-    if arena.nodes[id].down_fn > 0 {
-        arena.invoke_handler(arena.nodes[id].down_fn, id)
+    if nodes.ui[id].down_fn > 0 {
+        arena.invoke_handler(nodes.ui[id].down_fn, id)
     }
     arena.mark_chrome()
     return 1
@@ -365,29 +406,26 @@ fn find_scroll_axis(id: int, px: int, py: int, horiz: int) -> int {
     }
     let mut cy = py
     let mut cx = px
-    if int(arena.nodes[id].kind) == 11 {
-        cy = py + arena.nodes[id].scroll_y
-        cx = px + arena.nodes[id].scroll_x
+    if int(nodes.tree[id].kind) == 11 {
+        cy = py + nodes.scrl[id].scroll_y
+        cx = px + nodes.scrl[id].scroll_x
     }
-    let nk = arena.nodes[id].kids.len
+    let nk = nodes.tree[id].kids.len
     for j in 0..nk {
-        let c = arena.nodes[id].kids[nk - 1 - j]
-        let mut hy = cy
-        let mut hx = cx
-        if int(arena.nodes[c].kind) == 9 {
-            hy = py
-            hx = px
+        let c = nodes.tree[id].kids[nk - 1 - j]
+        if hit_in_floater == 0 && nodes.is_floater(c) != 0 {
+            continue
         }
-        let s = find_scroll_axis(c, hx, hy, horiz)
+        let s = find_scroll_axis(c, kid_px(c, cx), kid_py(c, cy), horiz)
         if s != 0 {
             return s
         }
     }
-    if int(arena.nodes[id].kind) != 11 {
+    if int(nodes.tree[id].kind) != 11 {
         return 0
     }
     if horiz != 0 {
-        if arena.scrolls_x(id) == 0 {
+        if nodes.scrolls_x(id) == 0 {
             return 0
         }
         if arena.scroll_max_x(id) > 0 {
@@ -401,22 +439,46 @@ fn find_scroll_axis(id: int, px: int, py: int, horiz: int) -> int {
     return 0
 }
 
+/// The scroller a wheel at the pointer drives: one inside the topmost floater
+/// under the pointer first (a long Select list over a scrolled page), else one
+/// in the page. A capturing floater with no scroller of its own takes the
+/// wheel and drives nothing, so the page under a popup does not slide.
+fn scroll_target(px: int, py: int, horiz: int) -> int {
+    arena.ptr_x = px
+    arena.ptr_y = py
+    arena.update_ptr_cover()
+    let f = arena.ptr_cover
+    if f > 0 {
+        let was = hit_in_floater
+        hit_in_floater = 1
+        let mut s = 0
+        if nodes.is_window_floater(f) != 0 {
+            s = find_scroll_axis(f, px, py, horiz)
+        } else {
+            s = find_scroll_axis(f, px + arena.ptr_cover_sx, py + arena.ptr_cover_sy, horiz)
+        }
+        hit_in_floater = was
+        return s
+    }
+    return find_scroll_axis(arena.root_id, px, py, horiz)
+}
+
 /// Next overflowing scroller above `id` on the same axis (nested chaining).
 fn parent_scroll(id: int, horiz: int) -> int {
     if id <= 0 {
         return 0
     }
-    if id >= arena.nodes.len {
+    if id >= nodes.tree.len {
         return 0
     }
-    let mut p = arena.nodes[id].parent
+    let mut p = nodes.tree[id].parent
     while p > 0 {
-        if p >= arena.nodes.len {
+        if p >= nodes.tree.len {
             return 0
         }
-        if int(arena.nodes[p].kind) == 11 {
+        if int(nodes.tree[p].kind) == 11 {
             if horiz != 0 {
-                if arena.scrolls_x(p) != 0 {
+                if nodes.scrolls_x(p) != 0 {
                     if arena.scroll_max_x(p) > 0 {
                         return p
                     }
@@ -427,7 +489,7 @@ fn parent_scroll(id: int, horiz: int) -> int {
                 }
             }
         }
-        p = arena.nodes[p].parent
+        p = nodes.tree[p].parent
     }
     return 0
 }
@@ -438,7 +500,7 @@ fn chain_axis(px: int, py: int, delta: int, horiz: int, momentum: int) -> int {
     if delta == 0 {
         return 0
     }
-    let mut s = find_scroll_axis(arena.root_id, px, py, horiz)
+    let mut s = scroll_target(px, py, horiz)
     let mut rem = delta
     let mut changed = 0
     while s > 0 {
@@ -447,18 +509,18 @@ fn chain_axis(px: int, py: int, delta: int, horiz: int, momentum: int) -> int {
         }
         let mut before = 0
         if horiz != 0 {
-            before = arena.nodes[s].scroll_x
+            before = nodes.scrl[s].scroll_x
             arena.apply_delta_x(s, rem, momentum)
-            let used = arena.nodes[s].scroll_x - before
+            let used = nodes.scrl[s].scroll_x - before
             if used != 0 {
                 changed = 1
                 arena.bar_on(s)
             }
             rem = rem - used
         } else {
-            before = arena.nodes[s].scroll_y
+            before = nodes.scrl[s].scroll_y
             arena.apply_delta_y(s, rem, momentum)
-            let used = arena.nodes[s].scroll_y - before
+            let used = nodes.scrl[s].scroll_y - before
             if used != 0 {
                 changed = 1
                 arena.bar_on(s)
@@ -508,7 +570,7 @@ fn scroll_smooth(px: int, py: int, dx: int, dy: int) -> int {
     }
     let mut changed = 0
     if dy != 0 {
-        let mut s = find_scroll_axis(arena.root_id, px, py, 0)
+        let mut s = scroll_target(px, py, 0)
         let mut rem = dy
         while s > 0 && rem != 0 {
             let used = arena.apply_smooth_y(s, rem)
@@ -520,7 +582,7 @@ fn scroll_smooth(px: int, py: int, dx: int, dy: int) -> int {
         }
     }
     if dx != 0 {
-        let mut s = find_scroll_axis(arena.root_id, px, py, 1)
+        let mut s = scroll_target(px, py, 1)
         let mut rem = dx
         while s > 0 && rem != 0 {
             let used = arena.apply_smooth_x(s, rem)
@@ -561,7 +623,7 @@ fn drag(px: int, py: int) -> int {
     if arena.drag_id <= 0 {
         return 0
     }
-    if arena.drag_id >= arena.nodes.len {
+    if arena.drag_id >= nodes.tree.len {
         arena.drag_id = 0
         arena.drag_bar = 0
         return 0
@@ -574,11 +636,11 @@ fn drag(px: int, py: int) -> int {
         arena.mark_chrome()
         return 1
     }
-    let kind = int(arena.nodes[arena.drag_id].kind)
+    let kind = int(nodes.tree[arena.drag_id].kind)
     if kind == 13 {
         let kd = 14
-        let travel = geometry.max2(arena.nodes[arena.drag_id].w - kd, 1)
-        let mut rel = px - arena.nodes[arena.drag_id].x - kd / 2
+        let travel = geometry.max2(nodes.box[arena.drag_id].w - kd, 1)
+        let mut rel = px - nodes.box[arena.drag_id].x - kd / 2
         if rel < 0 {
             rel = 0
         }
@@ -586,7 +648,7 @@ fn drag(px: int, py: int) -> int {
             rel = travel
         }
         let v = (rel * 100 + travel / 2) / travel
-        let signal_id = arena.nodes[arena.drag_id].bind_sig
+        let signal_id = nodes.ui[arena.drag_id].bind_sig
         arena.store_sig_paint(signal_id, v)
         return 1
     }
@@ -609,7 +671,7 @@ fn drag(px: int, py: int) -> int {
         if nx > maxs {
             nx = maxs
         }
-        arena.nodes[arena.drag_id].scroll_x = nx
+        nodes.scrl[arena.drag_id].scroll_x = nx
         arena.bar_on(arena.drag_id)
         arena.mark_scroll_node(arena.drag_id)
         return 1
@@ -625,13 +687,21 @@ fn drag(px: int, py: int) -> int {
     if ny > maxs {
         ny = maxs
     }
-    arena.nodes[arena.drag_id].scroll_y = ny
+    nodes.scrl[arena.drag_id].scroll_y = ny
     arena.bar_on(arena.drag_id)
     arena.mark_scroll_node(arena.drag_id)
     return 1
 }
 
 fn mouseup() {
+    // A released thumb lingers and fades like any scroll, instead of
+    // vanishing the moment the pointer lets go.
+    if arena.drag_bar != 0 && arena.drag_id > 0 {
+        let held = arena.drag_id
+        arena.drag_id = 0
+        arena.drag_bar = 0
+        arena.bar_on(held)
+    }
     arena.drag_id = 0
     arena.drag_bar = 0
     let id = arena.down_id
@@ -640,12 +710,12 @@ fn mouseup() {
     if id <= 0 {
         return
     }
-    if id >= arena.nodes.len {
+    if id >= nodes.tree.len {
         return
     }
-    if arena.nodes[id].up_fn > 0 {
+    if nodes.ui[id].up_fn > 0 {
         arena.ev_button = 0
-        arena.invoke_handler(arena.nodes[id].up_fn, id)
+        arena.invoke_handler(nodes.ui[id].up_fn, id)
     }
 }
 
@@ -660,7 +730,7 @@ fn press_focused() -> int {
     if id <= 0 {
         return 0
     }
-    if id >= arena.nodes.len {
+    if id >= nodes.tree.len {
         return 0
     }
     if arena.want_show(id) == 0 {
@@ -669,22 +739,22 @@ fn press_focused() -> int {
     if arena.is_inert(id) != 0 {
         return 1
     }
-    if int(arena.nodes[id].kind) == 10 {
+    if int(nodes.tree[id].kind) == 10 {
         return 0
     }
     let mut ran = 0
-    let c1 = Click { signal_id: arena.nodes[id].click_sig, mode: int(arena.nodes[id].click_mode), setv: arena.nodes[id].click_set }
+    let c1 = Click { signal_id: nodes.ui[id].click_sig, mode: int(nodes.ui[id].click_mode), setv: nodes.ui[id].click_set }
     if c1.signal_id > 0 {
         apply_click(c1)
         ran = 1
     }
-    let c2 = Click { signal_id: arena.nodes[id].click2_sig, mode: int(arena.nodes[id].click2_mode), setv: arena.nodes[id].click2_set }
+    let c2 = Click { signal_id: nodes.ui[id].click2_sig, mode: int(nodes.ui[id].click2_mode), setv: nodes.ui[id].click2_set }
     if c2.signal_id > 0 {
         apply_click(c2)
         ran = 1
     }
-    if arena.nodes[id].click_fn > 0 {
-        arena.invoke_handler(arena.nodes[id].click_fn, id)
+    if nodes.ui[id].click_fn > 0 {
+        arena.invoke_handler(nodes.ui[id].click_fn, id)
         ran = 1
     }
     return ran
@@ -695,67 +765,51 @@ fn key_handlers(k: int, mods: int, up: int) -> int {
     if id <= 0 {
         return 0
     }
-    if id >= arena.nodes.len {
+    if id >= nodes.tree.len {
         return 0
     }
     arena.ev_key = k
     arena.ev_mods = mods
     let mut ran = 0
     if up != 0 {
-        if arena.nodes[id].kup_fn > 0 {
-            arena.invoke_handler(arena.nodes[id].kup_fn, id)
+        if nodes.ui[id].kup_fn > 0 {
+            arena.invoke_handler(nodes.ui[id].kup_fn, id)
             ran = 1
         }
-        if arena.nodes[id].kpress_fn > 0 {
-            arena.invoke_handler(arena.nodes[id].kpress_fn, id)
+        if nodes.ui[id].kpress_fn > 0 {
+            arena.invoke_handler(nodes.ui[id].kpress_fn, id)
             ran = 1
         }
         return ran
     }
-    if arena.nodes[id].kdown_fn > 0 {
-        arena.invoke_handler(arena.nodes[id].kdown_fn, id)
+    if nodes.ui[id].kdown_fn > 0 {
+        arena.invoke_handler(nodes.ui[id].kdown_fn, id)
         ran = 1
     }
     return ran
 }
 
-fn hover_walk(id: int, px: int, py: int, signal_id: int) -> int {
-    if id <= 0 {
-        return 0
+/// The pointer is on a shown scrollbar's edge strip: make that bar hot (wider
+/// thumb, visible track, no fade while it stays there). Desktop only.
+fn bar_hover(px: int, py: int) {
+    if platform.plat_overlay_scroll() != 0 {
+        return
     }
-    if arena.want_show(id) == 0 {
-        return 0
-    }
-    if int(arena.nodes[id].kind) == 11 {
-        if arena.in_box(id, px, py) == 0 {
-            return 0
+    let mut hot = 0
+    let s = scroll_target(px, py, 0)
+    if arena.bar_strip_at(s, px, py) != 0 {
+        hot = s
+    } else {
+        let sx = scroll_target(px, py, 1)
+        if arena.bar_strip_at(sx, px, py) != 0 {
+            hot = sx
         }
     }
-    let mut cy = py
-    let mut cx = px
-    if int(arena.nodes[id].kind) == 11 {
-        cy = py + arena.nodes[id].scroll_y
-        cx = px + arena.nodes[id].scroll_x
+    // A drag keeps the bar it holds.
+    if arena.drag_bar != 0 {
+        return
     }
-    let nk = arena.nodes[id].kids.len
-    for i in 0..nk {
-        let c = arena.nodes[id].kids[i]
-        let mut hy = cy
-        let mut hx = cx
-        if int(arena.nodes[c].kind) == 9 || arena.nodes[c].anchor > 0 {
-            hy = arena.ptr_y
-            hx = arena.ptr_x
-        }
-        if hover_walk(c, hx, hy, signal_id) != 0 {
-            return 1
-        }
-    }
-    if arena.nodes[id].hover_sig == signal_id {
-        if arena.in_box(id, px, py) != 0 {
-            return 1
-        }
-    }
-    return 0
+    arena.bar_set_hot(hot)
 }
 
 fn hover(px: int, py: int) -> int {
@@ -765,44 +819,58 @@ fn hover(px: int, py: int) -> int {
     if arena.root_id <= 0 {
         return 0
     }
+    // One pointer model for every hover consumer: `ptr_in` maps through the
+    // scroll offsets, honours clips, and is occluded by the topmost capturing
+    // floater (`ptr_cover`). A hover signal is 1 while the pointer is over any
+    // node bound to it, so a single pass over the nodes settles all of them.
+    arena.update_ptr_cover()
+    bar_hover(px, py)
+    let mut sids = []int {}
+    let mut overs = []int {}
+    let mut changed = []int {}
     let mut dirty = 0
-    let n = arena.nodes.len
+    let n = nodes.tree.len
     for i in 1..n {
-        let signal_id = arena.nodes[i].hover_sig
+        let signal_id = nodes.ui[i].hover_sig
+        let hot = arena.is_hot(i)
+        if signal_id <= 0 && hot == 0 {
+            continue
+        }
+        let over = arena.ptr_in(i)
         if signal_id > 0 {
-            let mut first = 1
-            for j in 1..i {
-                if arena.nodes[j].hover_sig == signal_id {
-                    first = 0
+            let mut at = -1
+            for k in 0..sids.len {
+                if sids[k] == signal_id {
+                    at = k
                 }
             }
-            if first != 0 {
-                let over = hover_walk(arena.root_id, px, py, signal_id)
-                if arena.sig_val(signal_id) != over {
-                    arena.store_sig(signal_id, over)
-                    dirty = 1
-                }
+            if at < 0 {
+                push(sids, signal_id)
+                push(overs, over)
+            } else if over != 0 {
+                overs[at] = 1
             }
         }
-        if arena.is_hot(i) != 0 {
-            let over = arena.ptr_in(i)
-            let a = int(arena.nodes[i].hover_amt)
-            if over != 0 {
-                if a < 100 {
-                    dirty = 1
-                }
-            }
-            if over == 0 {
-                if a > 0 {
-                    dirty = 1
-                }
+        if hot != 0 {
+            // A node whose wash is off target, or still easing toward some
+            // target (which may be the one the pointer just left), re-syncs.
+            let a = int(nodes.anim[i].hover_amt)
+            if (over != 0 && a < 100) || (over == 0 && a > 0) || arena.hover_easing(i) != 0 {
+                push(changed, i)
+                dirty = 1
             }
         }
     }
-    if dirty != 0 {
-        // Retarget the shared chrome tracks once the pointer settles; the
-        // per-frame path only ticks them.
-        arena.mark_chrome()
+    for k in 0..sids.len {
+        if arena.sig_val(sids[k]) != overs[k] {
+            arena.store_sig(sids[k], overs[k])
+            dirty = 1
+        }
+    }
+    // Retarget just the nodes whose hover changed: a pointer move moves no
+    // box, so nothing else in the interaction-state pass can have changed.
+    for k in 0..changed.len {
+        arena.mark_chrome_id(changed[k])
     }
     return dirty
 }
@@ -813,7 +881,7 @@ fn hover(px: int, py: int) -> int {
 /// boxes and native thumbs claim the hand, while full-surface click
 /// swallows (dialogs, picker panels) keep the arrow.
 fn over_button() -> int {
-    let n = arena.nodes.len
+    let n = nodes.tree.len
     for i in 1..n {
         if arena.want_show(i) == 0 {
             continue
@@ -821,7 +889,7 @@ fn over_button() -> int {
         if arena.ptr_in(i) == 0 {
             continue
         }
-        let k = int(arena.nodes[i].kind)
+        let k = int(nodes.tree[i].kind)
         if k == 9 {
             continue
         }
@@ -833,15 +901,15 @@ fn over_button() -> int {
             return 1
         }
         // Explicit hover opt-in (Boxes with hover_off = false still wash).
-        if int(arena.nodes[i].hover_fade) > 0 {
+        if int(nodes.anim[i].hover_fade) > 0 {
             return 1
         }
         // Click swallows that cover a whole surface act like the page,
         // not a control — no hand cursor over a dialog body.
-        if arena.nodes[i].a11y_role == "dialog" {
+        if nodes.ui[i].a11y_role == "dialog" {
             continue
         }
-        if arena.nodes[i].click_sig > 0 || arena.nodes[i].click_fn > 0 {
+        if nodes.ui[i].click_sig > 0 || nodes.ui[i].click_fn > 0 {
             return 1
         }
     }
@@ -855,7 +923,7 @@ fn cursor_at() -> string {
     if platform.plat_overlay_scroll() != 0 {
         return ""
     }
-    let n = arena.nodes.len
+    let n = nodes.tree.len
     for i in 1..n {
         let id = n - i
         if arena.want_show(id) == 0 {
@@ -864,15 +932,15 @@ fn cursor_at() -> string {
         if arena.ptr_in(id) == 0 {
             continue
         }
-        let k = int(arena.nodes[id].kind)
+        let k = int(nodes.tree[id].kind)
         if k == 9 {
             continue
         }
         if k == 11 {
             continue
         }
-        if arena.nodes[id].cursor.len > 0 {
-            return arena.nodes[id].cursor
+        if nodes.look[id].cursor.len > 0 {
+            return nodes.look[id].cursor
         }
     }
     return ""
@@ -938,17 +1006,17 @@ fn key(k: int) -> int {
             changed = 1
             arena.mark_paint()
         }
-        let n = arena.nodes.len
+        let n = nodes.tree.len
         for i in 1..n {
-            if int(arena.nodes[i].kind) == 9 {
-                let signal_id = arena.nodes[i].show_sig
+            if int(nodes.tree[i].kind) == 9 {
+                let signal_id = nodes.tree[i].show_sig
                 if signal_id > 0 {
                     if arena.want_show(i) != 0 {
                         // An overlay with a click handler dismisses itself
                         // (the component's own state, e.g. a `Signal<bool>`);
                         // a bare one is hidden through its show signal.
-                        if arena.nodes[i].click_fn > 0 {
-                            arena.invoke_handler(arena.nodes[i].click_fn, i)
+                        if nodes.ui[i].click_fn > 0 {
+                            arena.invoke_handler(nodes.ui[i].click_fn, i)
                         } else {
                             arena.store_sig(signal_id, 0)
                         }
@@ -970,9 +1038,9 @@ fn key(k: int) -> int {
         if arena.focus_captures_text() != 0 {
             let focus_node_id = arena.focus_id
             if focus_node_id > 0 {
-                if focus_node_id < arena.nodes.len {
-                    if int(arena.nodes[focus_node_id].kind) == 10 {
-                        if int(arena.nodes[focus_node_id].wrap) != 0 {
+                if focus_node_id < nodes.tree.len {
+                    if int(nodes.tree[focus_node_id].kind) == 10 {
+                        if int(nodes.lay[focus_node_id].wrap) != 0 {
                             insert = 1
                         }
                     }
@@ -1002,7 +1070,7 @@ fn key(k: int) -> int {
     if id <= 0 {
         return 0
     }
-    if int(arena.nodes[id].kind) != 10 {
+    if int(nodes.tree[id].kind) != 10 {
         return 0
     }
     let slot = arena.edit_ready(id)
@@ -1041,11 +1109,11 @@ fn key(k: int) -> int {
     } else if k == 9 {
         edited = platform.plat_edit_append(slot, 9)
     } else if k == 10 {
-        if int(arena.nodes[id].wrap) != 0 {
+        if int(nodes.lay[id].wrap) != 0 {
             edited = platform.plat_edit_append(slot, 10)
         }
     } else if k == 13 {
-        if int(arena.nodes[id].wrap) != 0 {
+        if int(nodes.lay[id].wrap) != 0 {
             edited = platform.plat_edit_append(slot, 10)
         }
     } else if k == 1000 {
@@ -1075,8 +1143,8 @@ fn key(k: int) -> int {
             }
         }
         if write != 0 {
-            if arena.nodes[id].bind_fn > 0 {
-                arena.invoke_handler(arena.nodes[id].bind_fn, id)
+            if nodes.ui[id].bind_fn > 0 {
+                arena.invoke_handler(nodes.ui[id].bind_fn, id)
             }
         }
         return 1
@@ -1097,18 +1165,18 @@ fn insert_text(s: string) -> int {
     if platform.plat_edit_insert(slot, s) == 0 {
         return 0
     }
-    if arena.nodes[id].bind_fn > 0 {
-        arena.invoke_handler(arena.nodes[id].bind_fn, id)
+    if nodes.ui[id].bind_fn > 0 {
+        arena.invoke_handler(nodes.ui[id].bind_fn, id)
     }
     // Mac/iOS type through insertText, not key_ev. Combobox opens on its
     // kdown handler, so replay a printable key after the insert.
-    if arena.nodes[id].kdown_fn > 0 {
+    if nodes.ui[id].kdown_fn > 0 {
         let mut k = 32
         if s.len > 0 {
             k = s[0]
         }
         arena.ev_key = k
-        arena.invoke_handler(arena.nodes[id].kdown_fn, id)
+        arena.invoke_handler(nodes.ui[id].kdown_fn, id)
     }
     return 1
 }

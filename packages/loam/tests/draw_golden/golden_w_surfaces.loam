@@ -1,0 +1,60 @@
+// DRAW-list golden: surfaces and layout frames. Surface, Card (plain, header
+// and footer slots, CardHeader / CardFooter), Comp, Container, SimpleGrid with
+// GridCell, AspectRatio, Grid, and the skeleton presets. Keep this file free
+// of prints: stdout is the golden.
+
+import "std:zeus"
+import "std:colors"
+import "std:spacing"
+import "std:zui"
+
+fn main() {
+    zeus.snapshot(600, 1000, fn() -> Node {
+        zui.Page() {
+            zui.Surface() {
+                zui.Body("On a surface")
+            }
+            zui.Card(title = "Plan", subtitle = "Billed monthly", footer = fn() {
+                zui.Grow()
+                zui.Button("Upgrade", look = zeus.Look.Solid, size = zeus.Size.Sm)
+            }) {
+                zui.Body("Header and footer slots.")
+            }
+            zui.Card() {
+                zui.CardHeader("Usage", "This month", action = fn() { zui.Badge("Team", zeus.Tint.Ok) })
+                zui.CardFooter() {
+                    zui.Note("Footer")
+                }
+            }
+            zui.Comp(style = Style(direction = Direction.Row, gap = 8, padding = edges(12),
+                                   radius = corners(10), background = colors.raised())) {
+                zui.Pip(zeus.accent(), 8)
+                zui.Body("Comp")
+            }
+            zui.Container(width = spacing.CONTAINER_SM) {
+                zui.SimpleGrid() {
+                    zui.GridCell(2) {
+                        zui.AspectRatio(16, 9, style = Style(background = colors.raised())) {
+                            zui.Note("16:9")
+                        }
+                    }
+                    zui.GridCell(2) {
+                        zui.Note("cell")
+                    }
+                }
+            }
+            zui.Grid(config = GridConfig(columns = 3, gap = Space.Md)) {
+                zui.Card() { zui.Title("A") }
+                zui.Card() { zui.Title("B") }
+                zui.Card() { zui.Title("C") }
+            }
+            zui.Row(Space.Md) {
+                zui.SkeletonAvatar()
+                zeus.Box(style = Style(grow = 1)) {
+                    zui.SkeletonText(2)
+                }
+            }
+            zui.SkeletonCard()
+        }
+    })
+}

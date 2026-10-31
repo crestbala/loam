@@ -1,0 +1,49 @@
+// DRAW-list golden: the choice controls. Checkbox (on and off),
+// CheckboxGroup with an "all" row, CheckboxCard, Radio, RadioGroup,
+// RadioCard, Switch, ThemeSwitch, Slider, RangeSlider, Rating (half stars),
+// Segmented, Tabs and ListBox. Keep this file free of prints: stdout is the
+// golden.
+
+import "std:zeus"
+import "std:zui"
+
+fn main() {
+    let on = zeus.signal(true)
+    let off = zeus.signal(false)
+    let a = zeus.signal(true)
+    let b = zeus.signal(false)
+    let pick = zeus.signal(1)
+    let vol = zeus.signal(42)
+    let lo = zeus.signal(20)
+    let hi = zeus.signal(80)
+    let stars = zeus.signal(7)
+    let tab = zeus.signal(0)
+    zeus.snapshot(600, 940, fn() -> Node {
+        zui.Page() {
+            zui.Row(Space.Md) {
+                zui.Checkbox("On", on)
+                zui.Checkbox("Off", off)
+                zui.Switch(on)
+                zui.Switch(off)
+                zui.ThemeSwitch()
+            }
+            zui.CheckboxGroup([]string { "Alpha", "Beta" }, []Signal<bool> { a, b }, allLabel = "All")
+            zui.RowWrap(Space.Sm) {
+                zui.CheckboxCard("Pro", "Unlimited projects", on)
+                zui.RadioCard("Monthly", "Billed each month", pick, 0)
+                zui.RadioCard("Yearly", "Two months free", pick, 1)
+            }
+            zui.Row(Space.Md) {
+                zui.Radio("Solo", pick, 0)
+                zui.RadioGroup(pick, []string { "Default", "Comfortable" })
+            }
+            zui.Slider(vol)
+            zui.RangeSlider(lo, hi, label = "Price")
+            zui.Rating(stars, half = true)
+            zui.Segmented(pick, []string { "A", "B", "C" })
+            zui.Tabs(tab, []string { "One", "Two", "Three" })
+            zui.ListBox(pick, []string { "First", "Second", "Third" }, label = "Order",
+                        style = Style(maxWidth = 420))
+        }
+    })
+}

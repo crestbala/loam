@@ -1,0 +1,53 @@
+// DRAW-list golden: public widgets that are usually built inside another one,
+// used on their own. TitleBar, the signal-driven charts (BarChartOf /
+// LineChartOf / AreaChartOf), ChartLayer, a standalone Notification,
+// ProgressTrack, Tab and Choice, the menu parts (MenuLabel / MenuItem /
+// MenuSeparator), and an Overlay scrim. Keep this file free of prints: stdout
+// is the golden.
+
+import "std:zeus"
+import "std:zui"
+
+fn main() {
+    let data = zeus.signal(ChartData { labels: []string { "Q1", "Q2", "Q3" },
+                                       names: []string { "Sales" },
+                                       vals: []int { 40, 70, 55 } })
+    let load = zeus.signal(60)
+    let tab = zeus.signal(1)
+    let pick = zeus.signal(0)
+    let active = zeus.signal(0)
+    let scrim = zeus.signal(true)
+    // A host title bar 28 high with 72 of window buttons on the left, so the
+    // TitleBar takes space (with no bar it collapses to nothing).
+    zeus.engine_set_titlebar(28, 72, 0)
+    zeus.snapshot(480, 1000, fn() -> Node {
+        zui.Page() {
+            zui.TitleBar() {
+                zui.Title("Title bar")
+            }
+            zui.BarChartOf(data, 360, 120)
+            zui.LineChartOf(data, 360, 120, dots = false)
+            zui.AreaChartOf(data, 360, 120)
+            zeus.Box(style = Style(width = px(80), height = px(40))) {
+                zui.ChartLayer(zeus.IC_CHECK, 80, 40)
+            }
+            zui.Notification(fn() -> string { return "Deployed" }, fn() -> string { return "v2 is live." },
+                             zeus.Tint.Ok, fn() {})
+            zui.ProgressTrack(load)
+            zui.Row(Space.Sm) {
+                zui.Tab("Alpha", tab, 0)
+                zui.Tab("Beta", tab, 1)
+                zui.Choice("One", pick, 0)
+                zui.Choice("Two", pick, 1)
+            }
+            zui.Column(Space.None) {
+                zui.MenuLabel(fn() -> string { return "Group" })
+                zui.MenuItem(active = active, index = 0, count = 2, label = fn() -> string { return "First" })
+                zui.MenuSeparator()
+                zui.MenuItem(active = active, index = 1, count = 2, label = fn() -> string { return "Second" })
+            }
+            zui.Overlay(visible = fn() -> bool { return scrim.get() },
+                        style = Style(background = "#00000040"))
+        }
+    })
+}

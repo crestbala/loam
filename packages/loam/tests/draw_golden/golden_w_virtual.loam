@@ -1,0 +1,42 @@
+// DRAW-list golden: a VirtualTable over 500 rows. Only the rows inside its
+// viewport are built and painted; the second dump wheels it down until it
+// stops at the last rows.
+// Keep this file free of prints: stdout is the golden.
+
+import "std:async"
+import "std:zeus"
+import "std:zui"
+
+fn main() {
+    let mut data = []int {}
+    for i in 0..500 {
+        push(data, i)
+    }
+    let rows = zeus.signal(data)
+    let mut cols = []TableCol {}
+    push(cols, TableCol { title: "Row", width: 0 })
+    push(cols, TableCol { title: "Square", width: 96, align: Align.End })
+    zeus.snapshot(420, 360, fn() -> Node {
+        zui.Page() {
+            zeus.Box(style = Style(height = px(220))) {
+                zui.VirtualTable(rows, cols, 28, fn(i: int, v: int) -> Node {
+                    return zui.TableRow([]string { "row {{v}}", "{{v * v}}" })
+                })
+            }
+        }
+    })
+    let r = zeus.engine_find_text("row 1")
+    zeus.engine_scroll(zeus.node_x(r) + 4, zeus.node_y(r) + 4, 0, 28 * 300)
+    let mut i = 0
+    while i < 16 {
+        zeus.pump_frame()
+        zeus.engine_step_dt(64)
+        i = i + 1
+    }
+    // The scrollbar fades on the wall clock and is gone 1100 ms after the last
+    // scroll; wait past that so its alpha is always 0 in the dump.
+    async.sleep(1200)
+    zeus.engine_layout(420, 360)
+    zeus.engine_paint()
+    zeus.dump_draw_list()
+}

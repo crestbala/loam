@@ -1,0 +1,44 @@
+// DRAW-list golden: hover-triggered floaters. At rest the Tooltip and the
+// HoverCard are closed; the second dump hovers the tooltip's trigger and lets
+// the fade settle; the third moves to the hover card's trigger. Both use
+// `delay = 0`, so they open on the next frame with no wall-clock timer.
+// Keep this file free of prints: stdout is the golden.
+
+import "std:zeus"
+import "std:zui"
+
+fn settle() {
+    let mut i = 0
+    while i < 24 {
+        zeus.pump_frame()
+        zeus.engine_step_dt(64)
+        i = i + 1
+    }
+    zeus.engine_layout(480, 320)
+    zeus.engine_paint()
+    zeus.dump_draw_list()
+}
+
+fn main() {
+    zeus.snapshot(480, 320, fn() -> Node {
+        zui.Page() {
+            zui.Row(Space.Lg) {
+                zui.Tooltip(text = "Saves the draft", delay = 0, trigger = || {
+                    zui.Button("Save", look = zeus.Look.Solid, size = zeus.Size.Md)
+                })
+                zui.HoverCard(style = Style(width = px(220)), delay = 0, trigger = || {
+                    zui.Button("Profile", look = zeus.Look.Outline, size = zeus.Size.Md)
+                }) {
+                    zui.Title("Ada Lovelace")
+                    zui.Body("Wrote the first algorithm.")
+                }
+            }
+        }
+    })
+    let save = zeus.engine_find_text("Save")
+    zeus.engine_hover(zeus.node_x(save) + 4, zeus.node_y(save) + 4)
+    settle()
+    let prof = zeus.engine_find_text("Profile")
+    zeus.engine_hover(zeus.node_x(prof) + 4, zeus.node_y(prof) + 4)
+    settle()
+}

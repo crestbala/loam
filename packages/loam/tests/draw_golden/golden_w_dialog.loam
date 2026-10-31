@@ -1,0 +1,23 @@
+// DRAW-list golden: an open Dialog over its scrim, with the corner close X, a
+// body and an action row. Settled on the first frame. Keep this file free of
+// prints: stdout is the golden.
+
+import "std:zeus"
+import "std:zui"
+
+fn main() {
+    let open = zeus.signal(true)
+    zeus.snapshot(480, 360, fn() -> Node {
+        zui.Page() {
+            zui.Title("Behind the dialog")
+            zui.Dialog(open, title = "Share the link?") {
+                zui.Body("Anyone with the link can view this project.")
+                zui.Row(Space.Sm) {
+                    zui.Grow()
+                    zui.Button("Cancel", look = zeus.Look.Ghost, size = zeus.Size.Md)
+                    zui.Button("Share", look = zeus.Look.Solid, size = zeus.Size.Md)
+                }
+            }
+        }
+    })
+}

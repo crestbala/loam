@@ -1,0 +1,16 @@
+// DRAW-list golden: the first frame of examples/zeus/vidy at its own window
+// size with its custom title bar, the route table at the root path and an
+// empty queue (no player start-up, nothing opened). Keep this file free of
+// prints: stdout is the golden.
+
+import "std:zeus"
+import "../../../../examples/zeus/vidy/app_routes.loam" as approutes
+
+fn main() {
+    zeus.window_chrome(zeus.CHROME_CUSTOM)
+    zeus.App("Vidy", fn() {
+        approutes.app()
+    }, 1180, 720)
+    zeus.engine_paint()
+    zeus.dump_draw_list()
+}

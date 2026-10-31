@@ -1,0 +1,14 @@
+// DRAW-list golden: the first frame of examples/zeus/mune at its own window
+// size, its route table at the root path, without the store's start-up (no
+// poller, no picker). Keep this file free of prints: stdout is the golden.
+
+import "std:zeus"
+import "../../../../examples/zeus/mune/app_routes.loam" as approutes
+
+fn main() {
+    zeus.App("Mune", fn() {
+        approutes.app()
+    }, 1280, 900)
+    zeus.engine_paint()
+    zeus.dump_draw_list()
+}

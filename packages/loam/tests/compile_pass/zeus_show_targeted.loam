@@ -1,0 +1,95 @@
+// A `show` write is a targeted frame: layout reads the predicate directly, so
+// the write queues just the nodes that read the signal (and their parents for
+// paint) instead of the whole tree. Paint stays exact: after each toggle the
+// targeted frame's draw list is identical to a full repaint of the same state.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+import "zeus:zeuscore/arena"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn snap() -> []string {
+    let mut out = []string {}
+    for i in 0..zeus.draw_count() {
+        push(out, "{{zeus.draw_op(i)}} {{zeus.draw_x(i)}} {{zeus.draw_y(i)}} {{zeus.draw_w(i)}} {{zeus.draw_h(i)}} {{zeus.draw_rgb(i)}} {{zeus.draw_alpha(i)}} {{zeus.draw_value(i)}} {{zeus.draw_text(i)}}")
+    }
+    return out
+}
+
+/// The current frame's draw list must equal a forced full repaint.
+fn same_as_full(what: string) {
+    let a = snap()
+    arena.mark_paint()
+    zeus.engine_paint()
+    let b = snap()
+    must(a.len == b.len, "{{what}}: targeted paint has {{a.len}} ops, full has {{b.len}}")
+    for i in 0..a.len {
+        must(a[i] == b[i], "{{what}}: op {{i}} differs: '{{a[i]}}' vs '{{b[i]}}'")
+    }
+}
+
+fn frame() {
+    for k in 0..30 {
+        zeus.engine_step_dt(16)
+        zeus.pump_frame()
+    }
+}
+
+fn main() {
+    zeus.window("show-targeted", 400, 300)
+    let open = zeus.signal(false)
+    let tab = zeus.signal(0)
+    let count = zeus.signal(7)
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 4, padding = edges(8))) {
+        zeus.Text("head")
+        zeus.bind(zeus.Text("0"), count)
+        for i in 0..200 {
+            zeus.Text("row {{i}}")
+        }
+        // After the rows, so showing it moves nothing else.
+        zui.Show(when = tab.get() == 1) {
+            zeus.Box(style = Style(height = px(20), background = "#ff0000")) {
+                zeus.Text("tab one")
+            }
+        }
+        zui.Dialog(open, title = "Confirm") {
+            zui.Button("Inside")
+        }
+    })
+    frame()
+    let nodes = zeus.arena_nodes() - 1
+
+    let f0 = zeus.full_layouts_count()
+    let v0 = zeus.layout_visits()
+    tab.set(1)
+    zeus.pump_frame()
+    must(zeus.engine_find_text("tab one") > 0, "the shown body is laid out")
+    must(zeus.full_layouts_count() == f0, "a show write is a targeted frame")
+    let sv = zeus.layout_visits() - v0
+    must(sv <= nodes / 10, "a show write lays out its path, not the tree ({{sv}} of {{nodes}})")
+    frame()
+    same_as_full("show on")
+    tab.set(0)
+    frame()
+    same_as_full("show off")
+
+    count.set(123456)
+    frame()
+    same_as_full("bound number")
+
+    open.set(true)
+    frame()
+    must(zeus.full_layouts_count() == f0, "opening a dialog is a targeted frame")
+    same_as_full("dialog open")
+    open.set(false)
+    frame()
+    same_as_full("dialog closed")
+    fmt.println("show targeted ok")
+}
