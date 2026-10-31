@@ -1,0 +1,39 @@
+import "std:fmt"
+
+fn big() -> []f64 {
+    let mut b = []f64 {}
+    for i in 0..100000 {
+        push(b, f64(i))
+    }
+    return b
+}
+
+fn bytes() -> string {
+    let mut b = []int {}
+    for i in 0..300000 {
+        push(b, 65 + i % 26)
+    }
+    return string_from_bytes(b)
+}
+
+fn d_void() {
+    let b = big()
+}
+
+fn r_len() -> int {
+    let b = big()
+    return b.len
+}
+
+fn s_len() -> int {
+    let s = bytes()
+    let t = s
+    return t.len
+}
+
+fn main() {
+    for i in 0..10 {
+        let n = s_len()
+    }
+    fmt.println("{{s_len()}}")
+}

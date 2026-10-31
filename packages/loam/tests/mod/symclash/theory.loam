@@ -1,0 +1,17 @@
+//! Fixture for C symbol collisions: `theory.voicing` is `loam_theory_voicing`,
+//! the same symbol a main-module `theory_voicing` would get.
+
+let mut level: int = 10
+
+fn voicing() -> int {
+    return 1
+}
+
+fn b_c() -> int {
+    return 3
+}
+
+fn bump() -> int {
+    level = level + 1
+    return level
+}

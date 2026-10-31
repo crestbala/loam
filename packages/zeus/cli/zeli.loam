@@ -1522,6 +1522,9 @@ fn serve(appdir: string, target: string, port: int, build_only: bool) -> int {
     }
     let entry = find_entry(appdir)
     let stem = drop_suffix(base_name(entry), ".loam")
+    // Start from an empty `build/<target>`; the watch rebuilds that follow
+    // write over it in place, so the running app and its log stay put.
+    fresh_target_dir(appdir, target)
     fmt.println("zeli: initial build…")
     if target == "ios" || target == "android" {
         return serve_device(appdir, target, stem, entry, build_only)
@@ -3097,10 +3100,27 @@ fn check_entry(entry: string) -> bool {
     return false
 }
 
+/// Remove `<appdir>/build/<target>` if a previous build left it, and make it
+/// again empty, so nothing from an older build (a stale binary, a bundle, a
+/// log) survives into this one. Only ever a directory under `build/`.
+fn fresh_target_dir(appdir: string, target: string) -> string {
+    let dir = join(join(appdir, "build"), target)
+    if target != "" && sys.exists(dir) == 1 {
+        if sys.remove_path(dir) != 0 {
+            fmt.println("zeli: could not remove {{rel_to(repo_root(), dir)}}")
+        } else {
+            fmt.println("zeli: removed previous {{rel_to(repo_root(), dir)}}")
+        }
+    }
+    sys.mkdir(dir)
+    return dir
+}
+
 /// `zeli build <appdir> [--targets web,macos,...] [--base https://host]`
 ///
 /// Generates the route table when `routes/` exists, then compiles the app for
-/// each target into `<appdir>/build/<target>/`. After a successful web build it
+/// each target into `<appdir>/build/<target>/`, which is removed first when a
+/// previous build left it. After a successful web build it
 /// emits one HTML shell per route plus `sitemap.xml` / `robots.txt`.
 ///
 /// Targets whose host toolchain is missing (iOS/Android SDKs) fail individually
@@ -3123,8 +3143,7 @@ fn build(appdir: string, targets: []string, base: string) -> int {
     let mut built = 0
     for i in 0..targets.len {
         let t = targets[i]
-        let dir = join(join(appdir, "build"), t)
-        sys.mkdir(dir)
+        let dir = fresh_target_dir(appdir, t)
         let out = join(dir, out_name(t, stem))
         let mut args = cat(cat(shell_quote(entry), " -o "), shell_quote(out))
         let flags = target_flags(t)
@@ -3388,7 +3407,7 @@ fn emit_web_shell(appdir: string, stem: string, base: string) {
 }
 
 fn usage() {
-    fmt.println("usage: zeli new <name> [dir] | zeli routes <appdir> | zeli build <appdir> [--targets a,b] [--base https://host] | zeli serve <appdir> [--target {{target_list()}}] [--port N] [--build-only] | zeli fmt [dir] | zeli pkg sync <appdir>")
+    fmt.println("usage: zeli new <name> [dir] | zeli routes <appdir> | zeli build <appdir> [--targets a,b | --target a] [--base https://host] | zeli serve <appdir> [--target {{target_list()}}] [--port N] [--build-only] | zeli fmt [dir] | zeli pkg sync <appdir>")
 }
 
 fn main() {
@@ -3475,7 +3494,7 @@ fn main() {
         let mut i = 2
         while i < argv.len {
             let a = argv[i]
-            if a == "--targets" {
+            if a == "--targets" || a == "--target" {
                 if i + 1 < argv.len {
                     i += 1
                     targets = parse_targets(argv[i], true)
@@ -3496,7 +3515,7 @@ fn main() {
             i += 1
         }
         if rest.len < 1 {
-            die("usage: zeli build <appdir> [--targets a,b] [--base https://host]")
+            die("usage: zeli build <appdir> [--targets a,b | --target a] [--base https://host]")
         }
         let appdir = abs_path(rest[0])
         if !given {

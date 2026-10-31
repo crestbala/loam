@@ -1,0 +1,1160 @@
+//! The piece's motif, and the line each phrase makes of it.
+//!
+//! A motif is a few scale degrees with onsets and lengths in sixteenths,
+//! drawn once from the seed: at most a sixth across, at most one leap,
+//! starting on a chord tone, and fitting in a bar or two. Transforms are
+//! pure. A phrase's line is the motif (or the label's transform of it), a
+//! response, and a cadence tail — open phrases end on 2, 5, or 7, closed
+//! phrases on 1 or 3. Strong beats snap to the bar's chord; weak beats
+//! keep the degree.
+//!
+//! The line that plays is not the first draw. `choose` scores 128 seeded
+//! candidates and keeps the best. The same seed picks the same line.
+
+import "key.loam" as key
+import "num.loam" as num
+import "plan.loam" as plan
+import "theory.loam" as theory
+
+/// How many lines a phrase draws before it keeps one.
+const CANDIDATES: int = 128
+
+struct Motif {
+    deg: []int,
+    at: []int,
+    len: []int,
+}
+
+/// A scored line. `term` is steps, leaps, range, chord, record, contour,
+/// rhythm, motif, fresh, each 0..1000. `total` is their weighted sum, or
+/// -1 when the cadence fails.
+struct Line {
+    deg: []int,
+    at: []int,
+    len: []int,
+    total: int,
+    term: []int,
+}
+
+fn no_motif() -> Motif {
+    return Motif { deg: []int {}, at: []int {}, len: []int {} }
+}
+
+fn no_line() -> Line {
+    return Line { deg: []int {}, at: []int {}, len: []int {}, total: -1, term: []int {} }
+}
+
+fn from(deg: []int, at: []int, len: []int) -> Motif {
+    let mut o = no_motif()
+    for i in 0..deg.len {
+        push(o.deg, deg[i])
+        push(o.at, if i < at.len { at[i] } else { 0 })
+        push(o.len, if i < len.len { len[i] } else { 1 })
+    }
+    return o
+}
+
+fn clone(m: Motif) -> Motif {
+    return from(m.deg, m.at, m.len)
+}
+
+fn same(a: Motif, b: Motif) -> bool {
+    if a.deg.len != b.deg.len || a.at.len != b.at.len || a.len.len != b.len.len {
+        return false
+    }
+    for i in 0..a.deg.len {
+        if a.deg[i] != b.deg[i] || a.at[i] != b.at[i] || a.len[i] != b.len[i] {
+            return false
+        }
+    }
+    return true
+}
+
+fn end_at(m: Motif) -> int {
+    if m.at.len == 0 || m.len.len == 0 {
+        return 0
+    }
+    let last = m.at.len - 1
+    let l = if last < m.len.len { m.len[last] } else { 0 }
+    return m.at[last] + l
+}
+
+fn transpose(m: Motif, d: int) -> Motif {
+    let mut o = clone(m)
+    for i in 0..o.deg.len {
+        o.deg[i] = o.deg[i] + d
+    }
+    return o
+}
+
+/// Intervals mirrored around the first note.
+fn invert(m: Motif) -> Motif {
+    let mut o = clone(m)
+    if o.deg.len == 0 {
+        return o
+    }
+    let z = m.deg[0]
+    for i in 0..o.deg.len {
+        o.deg[i] = z - (m.deg[i] - z)
+    }
+    return o
+}
+
+/// Notes reversed. `flip` mirrors the rhythm in time as well; otherwise
+/// the onsets and lengths stay where they are.
+fn retrograde(m: Motif, flip: bool) -> Motif {
+    let n = m.deg.len
+    let mut o = no_motif()
+    if n == 0 {
+        return o
+    }
+    if !flip {
+        for i in 0..n {
+            push(o.deg, m.deg[n - 1 - i])
+            push(o.at, m.at[i])
+            push(o.len, m.len[i])
+        }
+        return o
+    }
+    let last = n - 1
+    let span = m.at[last] + m.len[last]
+    for i in 0..n {
+        let j = n - 1 - i
+        push(o.deg, m.deg[j])
+        push(o.len, m.len[j])
+        push(o.at, span - (m.at[j] + m.len[j]))
+    }
+    return o
+}
+
+fn augment(m: Motif) -> Motif {
+    let mut o = clone(m)
+    for i in 0..o.len.len {
+        o.at[i] = o.at[i] * 2
+        o.len[i] = o.len[i] * 2
+    }
+    return o
+}
+
+fn diminish(m: Motif) -> Motif {
+    let mut o = clone(m)
+    for i in 0..o.len.len {
+        o.at[i] = o.at[i] / 2
+        let l = o.len[i] / 2
+        o.len[i] = if l < 1 { 1 } else { l }
+    }
+    return o
+}
+
+fn fragment(m: Motif, n: int) -> Motif {
+    let mut k = n
+    if k < 1 {
+        k = 1
+    }
+    if k > m.deg.len {
+        k = m.deg.len
+    }
+    let mut o = no_motif()
+    for i in 0..k {
+        push(o.deg, m.deg[i])
+        push(o.at, m.at[i])
+        push(o.len, m.len[i])
+    }
+    return o
+}
+
+/// One passing or neighbour tone, seeded, in the second half of a note.
+fn ornament(m: Motif, seed: int) -> Motif {
+    if m.deg.len < 2 {
+        return clone(m)
+    }
+    let i = num.hash(seed, 3) % (m.deg.len - 1)
+    let step = m.deg[i + 1] - m.deg[i]
+    let mut mid = m.deg[i] + 1
+    if step < 0 {
+        mid = m.deg[i] - 1
+    }
+    if num.absi(step) >= 2 {
+        mid = m.deg[i] + step / 2
+    }
+    let mut o = no_motif()
+    for k in 0..m.deg.len {
+        if k == i {
+            let half = m.len[k] / 2
+            let rest = m.len[k] - half
+            let a = if half > 0 { half } else { 1 }
+            let b = if rest > 0 { rest } else { 1 }
+            push(o.deg, m.deg[k])
+            push(o.at, m.at[k])
+            push(o.len, a)
+            push(o.deg, mid)
+            push(o.at, m.at[k] + a)
+            push(o.len, b)
+        } else {
+            push(o.deg, m.deg[k])
+            push(o.at, m.at[k])
+            push(o.len, m.len[k])
+        }
+    }
+    return o
+}
+
+fn append_at(dst: Motif, src: Motif, shift: int) -> Motif {
+    let mut o = clone(dst)
+    for i in 0..src.deg.len {
+        push(o.deg, src.deg[i])
+        push(o.at, src.at[i] + shift)
+        push(o.len, src.len[i])
+    }
+    return o
+}
+
+fn with_tail(m: Motif, at: int, len: int, deg: int) -> Motif {
+    let mut o = no_motif()
+    for i in 0..m.deg.len {
+        if m.at[i] >= at {
+            continue
+        }
+        let mut l = m.len[i]
+        if m.at[i] + l > at {
+            l = at - m.at[i]
+        }
+        if l < 1 {
+            continue
+        }
+        push(o.deg, m.deg[i])
+        push(o.at, m.at[i])
+        push(o.len, l)
+    }
+    let tl = if len < 1 { 1 } else { len }
+    push(o.deg, deg)
+    push(o.at, at)
+    push(o.len, tl)
+    return o
+}
+
+fn squeeze(m: Motif) -> Motif {
+    let mut o = clone(m)
+    let n = o.len.len
+    if n < 2 {
+        return o
+    }
+    let last = n - 1
+    for i in 0..last {
+        if o.at[i + 1] > o.at[i] && o.at[i] + o.len[i] > o.at[i + 1] {
+            o.len[i] = o.at[i + 1] - o.at[i]
+        }
+    }
+    return o
+}
+
+/// Pitch class of scale degree `deg` in the piece key.
+fn pc_of(deg: int, tonic: int, minor: bool) -> int {
+    let s = theory.degree_semis(minor, deg)
+    let mut p = (tonic + s) % 12
+    if p < 0 {
+        p = p + 12
+    }
+    return p
+}
+
+/// MIDI note of `deg` nearest `centre`. Only the pitch class is kept; a
+/// line is placed with `anchor` and `note`, so its contour survives.
+fn midi(deg: int, tonic: int, minor: bool, centre: int) -> int {
+    return theory.nearest(pc_of(deg, tonic, minor), centre)
+}
+
+/// The tonic, as a MIDI note, a line of degrees is built on: the octave
+/// that puts the middle of the line nearest `centre`, lowered while its
+/// highest note would pass `top`. Every note keeps its octave from there,
+/// so a step stays a step.
+fn anchor(deg: []int, tonic: int, minor: bool, centre: int, top: int) -> int {
+    if deg.len == 0 {
+        return theory.nearest(tonic, centre)
+    }
+    let mut lo = theory.degree_semis(minor, deg[0])
+    let mut hi = lo
+    for i in 1..deg.len {
+        let v = theory.degree_semis(minor, deg[i])
+        if v < lo {
+            lo = v
+        }
+        if v > hi {
+            hi = v
+        }
+    }
+    let mut a = theory.nearest(tonic, centre - (lo + hi) / 2)
+    while a + hi > top {
+        a = a - 12
+    }
+    return a
+}
+
+/// MIDI note of degree `deg` over the tonic note `anchor`.
+fn note(deg: int, minor: bool, anchor: int) -> int {
+    return anchor + theory.degree_semis(minor, deg)
+}
+
+fn chord_degrees(chord: int, tonic: int, minor: bool) -> []int {
+    let mut out = []int {}
+    if chord < 0 {
+        return out
+    }
+    let tones = key.chord_tones(chord)
+    for d in 0..7 {
+        let pc = pc_of(d, tonic, minor)
+        for t in 0..tones.len {
+            if tones[t] == pc {
+                push(out, d)
+            }
+        }
+    }
+    return out
+}
+
+fn is_chord_degree(deg: int, chord: int, tonic: int, minor: bool) -> bool {
+    if chord < 0 {
+        return false
+    }
+    let pc = pc_of(deg, tonic, minor)
+    let tones = key.chord_tones(chord)
+    for i in 0..tones.len {
+        if tones[i] == pc {
+            return true
+        }
+    }
+    return false
+}
+
+/// Scale degrees near `deg` that belong to `chord`; `deg` itself when none
+/// is close. The melody stays diatonic.
+fn snap_one(deg: int, chord: int, tonic: int, minor: bool) -> int {
+    if chord < 0 {
+        return deg
+    }
+    let mut best = deg
+    let mut best_d = 99
+    let mut d = deg - 4
+    while d <= deg + 4 {
+        if is_chord_degree(d, chord, tonic, minor) {
+            let dist = num.absi(d - deg)
+            if dist < best_d {
+                best_d = dist
+                best = d
+            }
+        }
+        d = d + 1
+    }
+    if best_d > 4 {
+        return deg
+    }
+    return best
+}
+
+/// Strong beats (every quarter) move to a chord tone. The last note is the
+/// cadence and stays put.
+fn snap(m: Motif, start_bar: int, prog: []int, tonic: int, minor: bool) -> Motif {
+    let mut o = clone(m)
+    if o.deg.len == 0 || prog.len == 0 {
+        return o
+    }
+    let last = o.deg.len - 1
+    for i in 0..last {
+        if o.at[i] % 4 == 0 {
+            let bar = start_bar + o.at[i] / 16
+            let c = prog[((bar % prog.len) + prog.len) % prog.len]
+            o.deg[i] = snap_one(o.deg[i], c, tonic, minor)
+        }
+    }
+    return o
+}
+
+/// One motif for the take. `chord` is bar 0, as a chord code.
+fn draw(seed: int, minor: bool, chord: int, tonic: int) -> Motif {
+    let tones = chord_degrees(chord, tonic, minor)
+    let start = if tones.len > 0 { tones[num.hash(seed, 2) % tones.len] } else { 0 }
+    let n = 3 + num.hash(seed, 3) % 4
+    let choices = []int { 2, 4, 4, 6 }
+    let mut o = no_motif()
+    push(o.deg, start)
+    push(o.at, 0)
+    push(o.len, choices[num.hash(seed, 4) % 4])
+    let mut leaps = 0
+    let mut lo = start
+    let mut hi = start
+    let mut i = 1
+    while i < n && end_at(o) < 28 {
+        let mut step = (num.hash(seed, 10 + i) % 5) - 2
+        if step == 0 {
+            step = 1
+        }
+        if num.absi(step) >= 2 && leaps >= 1 {
+            step = if step > 0 { 1 } else { -1 }
+        }
+        let mut d = o.deg[o.deg.len - 1] + step
+        let nlo = if d < lo { d } else { lo }
+        let nhi = if d > hi { d } else { hi }
+        if nhi - nlo > 5 {
+            step = if step > 0 { 1 } else { -1 }
+            d = o.deg[o.deg.len - 1] + step
+        }
+        let nlo2 = if d < lo { d } else { lo }
+        let nhi2 = if d > hi { d } else { hi }
+        if nhi2 - nlo2 > 5 {
+            d = o.deg[o.deg.len - 1]
+            step = 0
+        }
+        if num.absi(step) >= 2 {
+            leaps = leaps + 1
+        }
+        if d < lo {
+            lo = d
+        }
+        if d > hi {
+            hi = d
+        }
+        let mut l = choices[num.hash(seed, 20 + i) % 4]
+        if end_at(o) + l > 32 {
+            l = 32 - end_at(o)
+        }
+        if l < 1 {
+            l = 1
+        }
+        let at = end_at(o)
+        push(o.deg, d)
+        push(o.at, at)
+        push(o.len, l)
+        i = i + 1
+    }
+    return o
+}
+
+fn deg_mod(d: int) -> int {
+    let mut k = d
+    while k < 0 {
+        k = k + 7
+    }
+    while k >= 7 {
+        k = k - 7
+    }
+    return k
+}
+
+fn tail_degree(ending: int, seed: int) -> int {
+    if ending == plan.CLOSED {
+        return if num.hash(seed, 11) % 2 == 0 { 0 } else { 2 }
+    }
+    let opts = []int { 1, 4, 6 }
+    return opts[num.hash(seed, 11) % 3]
+}
+
+/// Onset and length of the cadence, in sixteenths. Closed sits on beat 1
+/// of the last bar and holds; open sits off the beat and rings across the
+/// barline.
+fn tail_place(ending: int, span: int) -> []int {
+    if ending == plan.CLOSED {
+        let mut at = if span >= 16 { span - 16 } else { 0 }
+        if at < 0 {
+            at = 0
+        }
+        let mut len = span - at
+        if len < 4 {
+            len = 4
+        }
+        return []int { at, len }
+    }
+    let mut at = span - 6
+    if at < 2 {
+        at = 2
+    }
+    if at % 4 == 0 {
+        at = at + 2
+    }
+    if at >= span {
+        at = if span > 1 { span - 2 } else { 0 }
+    }
+    if at < 0 {
+        at = 0
+    }
+    let len = span - at + 4
+    return []int { at, len }
+}
+
+fn build_seq(m: Motif, varn: int, seed: int, tail_at: int) -> Motif {
+    let nfrag = 2 + num.hash(seed, 5) % 2
+    let mut frag = diminish(fragment(m, nfrag))
+    if varn > 0 {
+        frag = transpose(frag, 1)
+    }
+    let mut line = no_motif()
+    if frag.deg.len == 0 || end_at(frag) < 1 {
+        return line
+    }
+    let mut step = 0
+    while step < 16 && end_at(line) < tail_at {
+        let chunk = transpose(frag, step)
+        let at = end_at(line)
+        line = append_at(line, chunk, at)
+        step = step + 1
+    }
+    return line
+}
+
+/// The idea a phrase starts from, before its response and its tail.
+fn statement(m: Motif, label: int, varn: int, kind: int, seed: int) -> Motif {
+    if kind == plan.BUILD {
+        let nfrag = 2 + num.hash(seed, 5) % 2
+        let mut frag = diminish(fragment(m, nfrag))
+        if varn > 0 {
+            frag = transpose(frag, 1)
+        }
+        return frag
+    }
+    if kind == plan.OUTRO {
+        return augment(m)
+    }
+    if kind == plan.BREAK && label == 1 {
+        return retrograde(m, true)
+    }
+    if label == 1 {
+        return invert(m)
+    }
+    let mut st = clone(m)
+    if varn >= 2 {
+        st = ornament(st, seed)
+    }
+    return st
+}
+
+/// Statement, response, and cadence, before chord snapping. At density 700
+/// or more the body is diminished, except a build (it already sequences
+/// the fragment) and an intro (it stays stated). The cadence stays put.
+fn plan_line(m: Motif, label: int, varn: int, kind: int, ending: int, span: int, seed: int, den: int) -> Motif {
+    let place = tail_place(ending, span)
+    let tail_at = place[0]
+    let tail_len = place[1]
+    let tail_deg = tail_degree(ending, seed)
+    let mut line = no_motif()
+    if kind == plan.BUILD {
+        line = build_seq(m, varn, seed, tail_at)
+    } else if kind == plan.OUTRO || kind == plan.INTRO || (kind == plan.BREAK && label == 1) {
+        line = statement(m, label, varn, kind, seed)
+    } else if label == 1 {
+        let st = statement(m, label, varn, kind, seed)
+        let resp = retrograde(clone(st), varn > 0)
+        let at = end_at(st)
+        line = append_at(st, resp, at)
+    } else {
+        let st = statement(m, label, varn, kind, seed)
+        let resp = transpose(clone(st), 1)
+        let at = end_at(st)
+        line = append_at(st, resp, at)
+    }
+    if den >= 700 && kind != plan.BUILD && kind != plan.INTRO {
+        line = diminish(line)
+    }
+    return with_tail(line, tail_at, tail_len, tail_deg)
+}
+
+fn vary(m: Motif, seed: int) -> Motif {
+    let h = num.hash(seed, 1)
+    let mut o = clone(m)
+    if o.deg.len < 2 {
+        return o
+    }
+    if h % 4 == 1 {
+        o = ornament(o, seed)
+    }
+    if o.at.len < 2 || o.deg.len < 2 {
+        return squeeze(o)
+    }
+    let tail_i = o.at.len - 1
+    if h % 4 == 2 {
+        let tail = o.at[tail_i]
+        for i in 0..tail_i {
+            if o.at[i] + 1 < tail {
+                o.at[i] = o.at[i] + 1
+            }
+        }
+    }
+    if h % 5 == 3 && tail_i <= o.deg.len {
+        for i in 0..tail_i {
+            o.deg[i] = o.deg[i] + 1
+        }
+    }
+    return squeeze(o)
+}
+
+/// Levenshtein distance on the degree rows.
+fn edit_dist(a: []int, b: []int) -> int {
+    let n = a.len
+    let m = b.len
+    let w = m + 1
+    let mut d = []int {}
+    let cells = (n + 1) * w
+    for i in 0..cells {
+        push(d, 0)
+    }
+    for i in 0..(n + 1) {
+        d[i * w] = i
+    }
+    for j in 0..(m + 1) {
+        d[j] = j
+    }
+    for i in 1..(n + 1) {
+        for j in 1..(m + 1) {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 }
+            let del = d[(i - 1) * w + j] + 1
+            let ins = d[i * w + (j - 1)] + 1
+            let sub = d[(i - 1) * w + (j - 1)] + cost
+            let mut best = del
+            if ins < best {
+                best = ins
+            }
+            if sub < best {
+                best = sub
+            }
+            d[i * w + j] = best
+        }
+    }
+    return d[n * w + m]
+}
+
+fn semis_of(m: Motif, minor: bool) -> []int {
+    let mut out = []int {}
+    for i in 0..m.deg.len {
+        push(out, theory.degree_semis(minor, m.deg[i]))
+    }
+    return out
+}
+
+fn term_steps(m: Motif, minor: bool) -> int {
+    if m.deg.len < 2 {
+        return 1000
+    }
+    let s = semis_of(m, minor)
+    let mut steps = 0
+    let mut n = 0
+    for i in 1..s.len {
+        if num.absi(s[i] - s[i - 1]) <= 2 {
+            steps = steps + 1
+        }
+        n = n + 1
+    }
+    if n == 0 {
+        return 1000
+    }
+    return band(steps * 100 / n, 65, 85)
+}
+
+fn term_leaps(m: Motif, minor: bool) -> int {
+    let s = semis_of(m, minor)
+    let mut leaps = 0
+    let mut ok = 0
+    for i in 1..s.len {
+        let d = s[i] - s[i - 1]
+        if num.absi(d) > 4 {
+            leaps = leaps + 1
+            if i + 1 < s.len {
+                let n = s[i + 1] - s[i]
+                if num.absi(n) <= 2 && n * d < 0 {
+                    ok = ok + 1
+                }
+            }
+        }
+    }
+    if leaps == 0 {
+        return 1000
+    }
+    return ok * 1000 / leaps
+}
+
+fn span_semis(m: Motif, minor: bool) -> int {
+    if m.deg.len == 0 {
+        return 0
+    }
+    let s = semis_of(m, minor)
+    let mut lo = s[0]
+    let mut hi = s[0]
+    for i in 1..s.len {
+        if s[i] < lo {
+            lo = s[i]
+        }
+        if s[i] > hi {
+            hi = s[i]
+        }
+    }
+    return hi - lo
+}
+
+fn term_range(m: Motif, minor: bool) -> int {
+    let span = span_semis(m, minor)
+    if span <= 14 {
+        return 1000
+    }
+    let score = 1000 - (span - 14) * 80
+    if score < 0 {
+        return 0
+    }
+    return score
+}
+
+fn term_chords(m: Motif, start_bar: int, prog: []int, tonic: int, minor: bool) -> int {
+    if prog.len == 0 || m.deg.len == 0 {
+        return 1000
+    }
+    let mut n = 0
+    let mut hit = 0
+    for i in 0..m.deg.len {
+        if m.at[i] % 4 == 0 {
+            n = n + 1
+            let bar = start_bar + m.at[i] / 16
+            let c = prog[((bar % prog.len) + prog.len) % prog.len]
+            if is_chord_degree(m.deg[i], c, tonic, minor) {
+                hit = hit + 1
+            }
+        }
+    }
+    if n == 0 {
+        return 1000
+    }
+    return hit * 1000 / n
+}
+
+fn term_record(m: Motif, start_bar: int, chroma: []int, tonic: int, minor: bool) -> int {
+    if chroma.len < 48 || m.deg.len == 0 {
+        return 1000
+    }
+    let mut n = 0
+    let mut ok = 0
+    for i in 0..m.deg.len {
+        if m.at[i] % 4 == 0 {
+            n = n + 1
+            let local = (start_bar + m.at[i] / 16) % 4
+            let pc = pc_of(m.deg[i], tonic, minor)
+            let mut peak = 0
+            for p in 0..12 {
+                let v = chroma[local * 12 + p]
+                if v > peak {
+                    peak = v
+                }
+            }
+            let heard = chroma[local * 12 + pc]
+            if peak <= 0 || heard * 2 >= peak {
+                ok = ok + 1
+            }
+        }
+    }
+    if n == 0 {
+        return 1000
+    }
+    return ok * 1000 / n
+}
+
+fn term_contour(m: Motif) -> int {
+    if m.deg.len == 0 || m.at.len == 0 {
+        return 0
+    }
+    let mut peak = 0
+    for i in 1..m.deg.len {
+        if m.deg[i] > m.deg[peak] {
+            peak = i
+        }
+    }
+    let end = m.at[m.at.len - 1] + 1
+    if end <= 0 {
+        return 0
+    }
+    let frac = m.at[peak] * 100 / end
+    return band(frac, 55, 75)
+}
+
+fn term_rhythm(m: Motif) -> int {
+    let mut seen = []int {}
+    for i in 0..m.len.len {
+        if num.index_of(seen, m.len[i]) < 0 {
+            push(seen, m.len[i])
+        }
+    }
+    if seen.len >= 2 && seen.len <= 4 {
+        return 1000
+    }
+    if seen.len == 1 {
+        return 300
+    }
+    return 500
+}
+
+fn term_motif(dist: int) -> int {
+    if dist >= 1 && dist <= 8 {
+        return 1000
+    }
+    if dist <= 0 {
+        return 200
+    }
+    let score = 1000 - (dist - 8) * 120
+    if score < 0 {
+        return 0
+    }
+    return score
+}
+
+fn term_fresh(dist: int, repeat: bool) -> int {
+    if repeat {
+        return if dist == 0 { 1000 } else { 0 }
+    }
+    return if dist > 0 { 1000 } else { 0 }
+}
+
+fn band(pct: int, lo: int, hi: int) -> int {
+    if pct >= lo && pct <= hi {
+        return 1000
+    }
+    let d = if pct < lo { lo - pct } else { pct - hi }
+    let score = 1000 - d * 30
+    if score < 0 {
+        return 0
+    }
+    return score
+}
+
+fn cadence_ok(m: Motif, ending: int, span: int) -> bool {
+    if m.deg.len == 0 || m.at.len == 0 || m.len.len == 0 {
+        return false
+    }
+    let last = m.deg.len - 1
+    let rel = deg_mod(m.deg[last])
+    if ending == plan.CLOSED {
+        if rel != 0 && rel != 2 {
+            return false
+        }
+        let bar0 = if span >= 16 { span - 16 } else { 0 }
+        if m.at[last] != bar0 {
+            return false
+        }
+        if m.len[last] < 4 {
+            return false
+        }
+        return true
+    }
+    if rel == 0 || (rel != 1 && rel != 4 && rel != 6) {
+        return false
+    }
+    let weak = m.at[last] % 4 != 0
+    let held = m.at[last] + m.len[last] >= span
+    return weak || held
+}
+
+fn weighted(steps: int, leaps: int, range: int, chord: int, rec: int, contour: int, rhythm: int, mot: int, fresh: int) -> int {
+    return (20 * steps + 15 * leaps + 5 * range + 20 * chord + 10 * rec + 10 * contour + 5 * rhythm + 10 * mot + 5 * fresh) / 100
+}
+
+fn as_line(m: Motif, total: int, term: []int) -> Line {
+    return Line { deg: m.deg, at: m.at, len: m.len, total: total, term: term }
+}
+
+fn judge(m: Motif, refm: Motif, prev: []int, repeat: bool, start_bar: int, prog: []int, chroma: []int, tonic: int, minor: bool, ending: int, span: int) -> Line {
+    if !cadence_ok(m, ending, span) {
+        return as_line(m, -1, []int {})
+    }
+    let steps = term_steps(m, minor)
+    let leaps = term_leaps(m, minor)
+    let range = term_range(m, minor)
+    let chord = term_chords(m, start_bar, prog, tonic, minor)
+    let rec = term_record(m, start_bar, chroma, tonic, minor)
+    let contour = term_contour(m)
+    let rhythm = term_rhythm(m)
+    let mot = term_motif(edit_dist(m.deg, refm.deg))
+    let fresh = term_fresh(edit_dist(m.deg, prev), repeat)
+    let total = weighted(steps, leaps, range, chord, rec, contour, rhythm, mot, fresh)
+    return as_line(m, total, []int { steps, leaps, range, chord, rec, contour, rhythm, mot, fresh })
+}
+
+/// The best line for one phrase. Candidate 0 is the plan; the rest ornament
+/// it, nudge a rhythm, or step the answer up. A line that misses its
+/// cadence is dropped. Ties keep the earlier candidate.
+fn choose(m: Motif, label: int, varn: int, kind: int, ending: int, span: int, start_bar: int, prog: []int, chroma: []int, tonic: int, minor: bool, seed: int, prev: []int, repeat: bool, den: int) -> Line {
+    let base = plan_line(m, label, varn, kind, ending, span, seed, den)
+    let refm = statement(m, label, varn, kind, seed)
+    let mut best = judge(snap(base, start_bar, prog, tonic, minor), refm, prev, repeat, start_bar, prog, chroma, tonic, minor, ending, span)
+    if best.total < 0 {
+        best = as_line(base, 0, []int { 0, 0, 0, 0, 0, 0, 0, 0, 0 })
+    }
+    for c in 1..CANDIDATES {
+        let varied = vary(base, seed + c * 17)
+        let snapped = snap(varied, start_bar, prog, tonic, minor)
+        let got = judge(snapped, refm, prev, repeat, start_bar, prog, chroma, tonic, minor, ending, span)
+        if got.total > best.total {
+            best = got
+        }
+    }
+    return best
+}
+
+// ---- Counter-melody --------------------------------------------------------
+
+/// Index of the lead note sounding at sixteenth `step`, or −1 when it rests.
+/// The latest onset wins where two overlap.
+fn sounding(m: Motif, step: int) -> int {
+    let mut at = -1
+    for i in 0..m.deg.len {
+        if i < m.at.len && i < m.len.len && m.at[i] <= step && step < m.at[i] + m.len[i] {
+            at = i
+        }
+    }
+    return at
+}
+
+fn attacks(m: Motif, step: int) -> bool {
+    for i in 0..m.at.len {
+        if m.at[i] == step {
+            return true
+        }
+    }
+    return false
+}
+
+/// Octaves, thirds, and sixths, as semitones between two notes, either way up.
+fn consonant(a: int, b: int) -> bool {
+    let d = ((a - b) % 12 + 12) % 12
+    return d == 0 || d == 3 || d == 4 || d == 8 || d == 9
+}
+
+fn chord_of(prog: []int, start_bar: int, step: int) -> int {
+    if prog.len == 0 {
+        return -1
+    }
+    let bar = start_bar + step / 16
+    return prog[((bar % prog.len) + prog.len) % prog.len]
+}
+
+/// Of `opts`, the one whose note lies nearest `prev` (MIDI), seeded among
+/// the two nearest so candidates differ. `prev` below 0 picks by seed alone.
+fn closest(opts: []int, prev: int, minor: bool, base: int, seed: int) -> int {
+    if opts.len == 0 {
+        return 0
+    }
+    if prev < 0 {
+        return opts[seed % opts.len]
+    }
+    let mut best = 0
+    let mut second = -1
+    for i in 1..opts.len {
+        let d = num.absi(note(opts[i], minor, base) - prev)
+        if d < num.absi(note(opts[best], minor, base) - prev) {
+            second = best
+            best = i
+        } else if second < 0 || d < num.absi(note(opts[second], minor, base) - prev) {
+            second = i
+        }
+    }
+    if second >= 0 && seed % 3 == 0 {
+        return opts[second]
+    }
+    return opts[best]
+}
+
+/// Degrees a third, a sixth, and an octave under lead degree `lead`; those
+/// in `chord` first. Every one is consonant with the lead and under it.
+fn under(lead: int, chord: int, tonic: int, minor: bool) -> []int {
+    let all = []int { lead - 2, lead - 5, lead - 7 }
+    let mut out = []int {}
+    for i in 0..all.len {
+        if is_chord_degree(all[i], chord, tonic, minor) {
+            push(out, all[i])
+        }
+    }
+    if out.len == 0 {
+        return all
+    }
+    return out
+}
+
+/// The lead note nearest in time to `step`: the one sounding, else the last
+/// one struck before it, else the first.
+fn lead_near(m: Motif, step: int) -> int {
+    let at = sounding(m, step)
+    if at >= 0 {
+        return at
+    }
+    let mut last = -1
+    for i in 0..m.at.len {
+        if m.at[i] <= step && (last < 0 || m.at[i] >= m.at[last]) {
+            last = i
+        }
+    }
+    return if last >= 0 { last } else { 0 }
+}
+
+/// Chord degrees within a fifth of `prev_deg`, at or under `ceiling`.
+fn chord_near(prev_deg: int, ceiling: int, chord: int, tonic: int, minor: bool) -> []int {
+    let mut out = []int {}
+    let mut d = prev_deg - 4
+    while d <= prev_deg + 4 {
+        if d <= ceiling && is_chord_degree(d, chord, tonic, minor) {
+            push(out, d)
+        }
+        d = d + 1
+    }
+    return out
+}
+
+/// One seeded counter-line, in the lead's degrees over the same tonic note.
+/// Beats 1 and 3 always sound; beats 2 and 4 sound mostly where the lead
+/// does not strike; an off-beat eighth only where the lead rests, a step
+/// from the last note. Where the lead sounds on a beat, the counter sits a
+/// third, a sixth, or an octave under it; where it rests, on a chord tone
+/// at least a third under the lead's last note. The last note is the
+/// downbeat of the last bar, held.
+fn counter_draw(lead: Motif, span: int, start_bar: int, prog: []int, tonic: int, minor: bool, base: int, seed: int) -> Motif {
+    let tail = if span >= 16 { span - 16 } else { 0 }
+    let mut onsets = []int {}
+    let mut step = 0
+    while step < tail {
+        let h = num.hash(seed, 300 + step)
+        if step % 8 == 0 {
+            push(onsets, step)
+        } else if step % 4 == 0 {
+            if (!attacks(lead, step) && h % 3 != 0) || h % 5 == 0 {
+                push(onsets, step)
+            }
+        } else if sounding(lead, step) < 0 && h % 3 == 0 {
+            push(onsets, step)
+        }
+        step = step + 2
+    }
+    push(onsets, tail)
+    let mut o = no_motif()
+    let mut prev = -1
+    let mut prev_deg = lead.deg[0] - 5
+    for k in 0..onsets.len {
+        let at = onsets[k]
+        let c = chord_of(prog, start_bar, at)
+        let li = sounding(lead, at)
+        let ceiling = lead.deg[lead_near(lead, at)] - 2
+        let h = num.hash(seed, 500 + k)
+        let mut d = prev_deg
+        if at % 4 == 0 && li >= 0 {
+            d = closest(under(lead.deg[li], c, tonic, minor), prev, minor, base, h)
+        } else if at % 4 == 0 {
+            let tones = chord_near(prev_deg, ceiling, c, tonic, minor)
+            d = if tones.len > 0 { closest(tones, prev, minor, base, h) } else { ceiling }
+        } else {
+            d = prev_deg + (if h % 2 == 0 { 1 } else { -1 })
+            if d > ceiling {
+                d = prev_deg - 1
+            }
+        }
+        let next = if k + 1 < onsets.len { onsets[k + 1] } else { span }
+        push(o.deg, d)
+        push(o.at, at)
+        push(o.len, if next - at > 0 { next - at } else { 1 })
+        prev = note(d, minor, base)
+        prev_deg = d
+    }
+    return o
+}
+
+/// Contrary or oblique motion against the lead, as a share of the moves
+/// where the lead sounds at both ends. Parallel octaves count against.
+fn term_motion(c: Motif, lead: Motif, minor: bool, base: int) -> int {
+    let mut n = 0
+    let mut good = 0
+    for i in 1..c.deg.len {
+        let a = sounding(lead, c.at[i - 1])
+        let b = sounding(lead, c.at[i])
+        if a < 0 || b < 0 {
+            continue
+        }
+        let la = note(lead.deg[a], minor, base)
+        let lb = note(lead.deg[b], minor, base)
+        let ca = note(c.deg[i - 1], minor, base)
+        let cb = note(c.deg[i], minor, base)
+        let dl = lb - la
+        let dc = cb - ca
+        n = n + 1
+        if dl * dc < 0 || (dl == 0) != (dc == 0) {
+            good = good + 1
+        } else if dl != 0 && (lb - cb) % 12 == 0 && (la - ca) % 12 == 0 {
+            good = good - 1
+        }
+    }
+    if n == 0 {
+        return 1000
+    }
+    return num.clampi(good * 1000 / n, 0, 1000)
+}
+
+/// Beats (every quarter) where both sound and the two are consonant.
+fn term_consonance(c: Motif, lead: Motif, minor: bool, base: int) -> int {
+    let mut n = 0
+    let mut ok = 0
+    for i in 0..c.deg.len {
+        if c.at[i] % 4 != 0 {
+            continue
+        }
+        let li = sounding(lead, c.at[i])
+        if li < 0 {
+            continue
+        }
+        n = n + 1
+        if consonant(note(lead.deg[li], minor, base), note(c.deg[i], minor, base)) {
+            ok = ok + 1
+        }
+    }
+    if n == 0 {
+        return 1000
+    }
+    return ok * 1000 / n
+}
+
+/// Onsets that fall where the lead does not strike: the counter moves
+/// while the lead holds or rests.
+fn term_fill(c: Motif, lead: Motif) -> int {
+    if c.at.len == 0 {
+        return 0
+    }
+    let mut apart = 0
+    for i in 0..c.at.len {
+        if !attacks(lead, c.at[i]) {
+            apart = apart + 1
+        }
+    }
+    return band(apart * 100 / c.at.len, 50, 85)
+}
+
+fn term_counter_steps(c: Motif, minor: bool, base: int) -> int {
+    if c.deg.len < 2 {
+        return 1000
+    }
+    let mut steps = 0
+    for i in 1..c.deg.len {
+        if num.absi(note(c.deg[i], minor, base) - note(c.deg[i - 1], minor, base)) <= 4 {
+            steps = steps + 1
+        }
+    }
+    return band(steps * 100 / (c.deg.len - 1), 60, 100)
+}
+
+/// The counter-line under `lead` for one phrase, the best of `CANDIDATES`.
+/// `term` is motion, consonance, fill, and steps, each 0..1000. Ties keep
+/// the earlier candidate. Both lines are read over the tonic note `base`
+/// (`anchor`), so the counter's beats sit under the lead and never cross.
+fn counter(lead: Motif, span: int, start_bar: int, prog: []int, tonic: int, minor: bool, base: int, seed: int) -> Line {
+    let mut best = no_line()
+    if lead.deg.len == 0 || span < 1 {
+        return best
+    }
+    for c in 0..CANDIDATES {
+        let m = counter_draw(lead, span, start_bar, prog, tonic, minor, base, seed + c * 17)
+        let motion = term_motion(m, lead, minor, base)
+        let cons = term_consonance(m, lead, minor, base)
+        let fill = term_fill(m, lead)
+        let steps = term_counter_steps(m, minor, base)
+        let total = (35 * motion + 30 * cons + 20 * fill + 15 * steps) / 100
+        if total > best.total {
+            best = as_line(m, total, []int { motion, cons, fill, steps })
+        }
+    }
+    return best
+}

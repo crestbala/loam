@@ -357,6 +357,13 @@ fn raster_blend(x: int, y: int, r: int, g: int, b: int, a: int) {
     if a <= 0 {
         return
     }
+    // Glyphs blend here directly, not through a clipped tile, so the clip
+    // is checked here too: text in a scroller stays inside it.
+    if clip_on != 0 {
+        if x < clip_x0 || y < clip_y0 || x >= clip_x1 || y >= clip_y1 {
+            return
+        }
+    }
     if a >= 255 {
         raster_set(x, y, r, g, b)
         return

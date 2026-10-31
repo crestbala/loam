@@ -1,0 +1,1166 @@
+//! What the instruments play: the notes, not the sound.
+//!
+//! Each instrument is a loop (a phrase of drums, up to four bars of
+//! harmony) at the piece tempo, as a list of hits — time, velocity,
+//! frequency, gate — with its humanize. `voices.loam` renders those hits to
+//! samples and the graph repeats each loop with `aloop`. Sustained pads are
+//! not hits but chords a bar (`pad_chords`), held on the loop's own clock.
+//!
+//! Each style has its own kit and players (see `styles.loam`): taiko,
+//! legato strings, a low ostinato, and a braam for cinematic; an 808 for
+//! trap; supersaw stabs for future bass; shaker, congas, rim, a log-drum
+//! bass, and mallets for afrobeats. Hats keep their decay in the gate; a
+//! snare hit with a gate above 0 decays at that rate (a build roll).
+
+import "key.loam" as key
+import "num.loam" as num
+import "plan.loam" as plan
+import "styles.loam" as styles
+import "theory.loam" as theory
+
+const KICK: int = 0
+const SNARE: int = 1
+const HAT: int = 2
+const OPEN_HAT: int = 3
+
+const LIGHT: int = 0
+const FULL: int = 1
+const BUILD: int = 2
+const INTRO: int = 3
+/// Hats only (and congas, for afrobeats): the recording already carries
+/// the kick and the snare.
+const TOPS: int = 4
+
+/// Players besides the kit.
+const P_BASS: int = 10
+const P_LEAD: int = 11
+const P_COUNTER: int = 12
+const P_PAD: int = 13
+const P_ARP: int = 14
+
+const PAD_WARM: int = 0
+const PAD_GLASS: int = 1
+const PAD_STRINGS: int = 2
+const PAD_KEYS: int = 3
+const PAD_SUPER: int = 4
+
+const ARP_PLUCK: int = 0
+const ARP_SAW: int = 1
+const ARP_SQUARE: int = 2
+/// Short bowed strings, low: the cinematic ostinato.
+const ARP_STRINGS: int = 3
+const ARP_MALLET: int = 4
+
+fn pad_names() -> []string {
+    return []string { "Warm", "Glass", "Strings", "Keys", "Super" }
+}
+
+fn arp_names() -> []string {
+    return []string { "Pluck", "Saw", "Square", "Strings", "Mallet" }
+}
+
+/// What every instrument needs to agree on.
+struct Groove {
+    bar_sec: f64,
+    tonic: int,
+    minor: bool,
+    /// Four chords, one a bar, as `key.chord_code`s.
+    prog: []int,
+    style: int,
+    energy: int,
+    seed: int,
+    /// Semitones the harmony voices sit above their home register. The
+    /// arranger raises it with the energy; the bass stays down.
+    lift: int,
+    /// Phrase length in bars for this loop. 0 is the part's old default
+    /// (four bars of harmony, two of drums). 1 is the build's last bar.
+    bars: int,
+    /// How busy the loop is, 0..1000 (`plan.density`). Arp step follows it.
+    den: int,
+    /// How hard the hits land, 0..1000 (`plan.dyn_amt`). 1000 is full.
+    dyn: int,
+    /// One colour a bar from `plan.tension_color`, or empty. A missing bar,
+    /// or a value below 0, keeps the style's own voicing (triads, or
+    /// sevenths where the style uses them). 0 forces a triad.
+    color: []int,
+    /// Chord code for the first half of the last bar, or -1 when the bar
+    /// holds one chord. The second half is `prog`.
+    split: int,
+    /// False on the build's last bar: the kit plays, the kick does not.
+    kick: bool,
+    /// `plan.OPEN` or `plan.CLOSED`. A closed lead's last note is softer.
+    /// Loops leave this open, so one phrase's ending is not baked in.
+    ending: int,
+    /// Sixteenth where the melody is highest, or −1 for the middle of the loop.
+    peak: int,
+    /// Hats over a recorded groove (`TOPS`) stay within ±4 ms.
+    tight: bool,
+    /// Section kind. Straight styles swing a little when the energy is calm,
+    /// and a drop does not.
+    kind: int,
+}
+
+struct Hits {
+    at: []f64,
+    vel: []f64,
+    freq: []f64,
+    gate: []f64,
+}
+
+fn no_hits() -> Hits {
+    return Hits { at: []f64 {}, vel: []f64 {}, freq: []f64 {}, gate: []f64 {} }
+}
+
+fn add(h: &mut Hits, at: f64, vel: f64, freq: f64, gate: f64) {
+    push(h.at, at)
+    push(h.vel, vel)
+    push(h.freq, freq)
+    push(h.gate, gate)
+}
+
+/// Sort hits by time (insertion sort; a loop holds a few dozen).
+fn sorted(h: Hits) -> Hits {
+    let mut idx = []int {}
+    for i in 0..h.at.len {
+        push(idx, i)
+    }
+    let mut i = 1
+    while i < idx.len {
+        let v = idx[i]
+        let mut j = i
+        while j > 0 && h.at[idx[j - 1]] > h.at[v] {
+            idx[j] = idx[j - 1]
+            j = j - 1
+        }
+        idx[j] = v
+        i = i + 1
+    }
+    let mut out = no_hits()
+    for k in 0..idx.len {
+        let s = idx[k]
+        add(out, h.at[s], h.vel[s], h.freq[s], h.gate[s])
+    }
+    return out
+}
+
+fn sixteenth(g: Groove) -> f64 {
+    return g.bar_sec / 16.0
+}
+
+/// Extra swing, as a percent of a sixteenth. The style's own swing is the
+/// feel; this is only for a straight style played calmly, and a drop stays
+/// straight. The amount is chosen once per take.
+fn extra_swing(g: Groove) -> int {
+    if styles.swing(g.style) != 0 {
+        return 0
+    }
+    if g.energy != styles.CALM {
+        return 0
+    }
+    if g.kind == plan.DROP {
+        return 0
+    }
+    return 2 + num.hash(g.seed, 4242) % 3
+}
+
+/// Start of sixteenth `k`, swung: odd sixteenths land late.
+fn step_time(g: Groove, k: int) -> f64 {
+    let s = sixteenth(g)
+    let mut t = f64(k) * s
+    if k % 2 == 1 {
+        t = t + s * f64(styles.swing(g.style) + extra_swing(g)) / 100.0
+    }
+    return t
+}
+
+/// Bars a harmony loop renders. `g.bars` is the phrase (1..4); 0 is the
+/// old four-bar loop.
+fn span_bars(g: Groove) -> int {
+    if g.bars >= 1 && g.bars <= 4 {
+        return g.bars
+    }
+    return 4
+}
+
+/// Bars of one drum loop: the phrase, so its last half-bar is the breath.
+/// One bar is the build's dip, and it breathes on its own back half.
+fn drum_bars(g: Groove) -> int {
+    if g.bars >= 1 {
+        return g.bars
+    }
+    return 2
+}
+
+/// Sixteenth nearest `at`. Swing shifts an odd step by less than half, so
+/// the round trip lands on the step that was asked for.
+fn hit_step(g: Groove, at: f64) -> int {
+    let s = sixteenth(g)
+    if s <= 0.0 {
+        return 0
+    }
+    let n = num.roundi(at / s)
+    if n < 0 {
+        return 0
+    }
+    return n
+}
+
+/// The last half-bar of a phrase keeps eighths and drops the rest.
+fn keep_step(g: Groove, step: int) -> bool {
+    let start = span_bars(g) * 16 - 8
+    if step >= start && step % 2 == 1 {
+        return false
+    }
+    return true
+}
+
+// ---- Drums ---------------------------------------------------------------
+
+/// A hit on sixteenth `step`, a little uneven in velocity, the way a
+/// player is.
+fn hit(h: &mut Hits, g: Groove, step: int, vel: f64, decay: f64) {
+    let wobble = f64(num.hash(g.seed * 31 + step, h.at.len + 7) % 1000) / 1000.0
+    add(h, step_time(g, step), vel * (0.9 + 0.1 * wobble), 0.0, decay)
+}
+
+/// A hit at `at` seconds into the loop, for rolls between the sixteenths.
+fn hit_at(h: &mut Hits, at: f64, vel: f64, decay: f64) {
+    add(h, at, vel, 0.0, decay)
+}
+
+/// Every step in `steps`, at `vel`.
+fn hits(h: &mut Hits, g: Groove, steps: []int, vel: f64, decay: f64) {
+    for i in 0..steps.len {
+        hit(h, g, steps[i], vel, decay)
+    }
+}
+
+/// Two bars of `part` for the style, at `variant` intensity.
+fn drum_hits(g: Groove, part: int, variant: int) -> Hits {
+    let mut h = no_hits()
+    let full = variant == FULL || (variant == LIGHT && g.energy == styles.DRIVE)
+    let calm = g.energy == styles.CALM
+    let s = g.style
+    if variant == INTRO {
+        if part == HAT {
+            for k in 0..8 {
+                hit(h, g, k * 4 + 2, 0.35, 70.0)
+            }
+        }
+        return h
+    }
+    if variant == TOPS {
+        if part != HAT && part != OPEN_HAT {
+            return h
+        }
+        // The style's full hats, a little under, on top of the groove.
+        let fh = drum_hits(g, part, FULL)
+        for i in 0..fh.at.len {
+            add(h, fh.at[i], fh.vel[i] * 0.8, fh.freq[i], fh.gate[i])
+        }
+        return h
+    }
+    if variant == BUILD {
+        if part == KICK {
+            for k in 0..8 {
+                hit(h, g, k * 4, 0.9, 0.0)
+            }
+        }
+        if part == SNARE {
+            // Eighths, then sixteenths, rising, each short enough to be heard.
+            for k in 0..8 {
+                hit(h, g, k * 2, 0.35 + 0.04 * f64(k), 24.0)
+            }
+            for k in 16..32 {
+                hit(h, g, k, 0.5 + 0.03 * f64(k - 16), 34.0)
+            }
+        }
+        if part == HAT {
+            for k in 0..16 {
+                hit(h, g, k * 2, 0.3, 80.0)
+            }
+        }
+        return h
+    }
+    if s == styles.HOUSE {
+        if part == KICK {
+            for k in 0..8 {
+                hit(h, g, k * 4, 1.0, 0.0)
+            }
+        }
+        if part == SNARE && !calm {
+            for k in 0..4 {
+                hit(h, g, k * 8 + 4, 0.8, 0.0)
+            }
+        }
+        if part == HAT {
+            for k in 0..32 {
+                if k % 4 == 2 {
+                    hit(h, g, k, if full { 0.3 } else { 0.45 }, if full { 75.0 } else { 60.0 })
+                } else if full && k % 2 == 1 {
+                    hit(h, g, k, 0.18, 95.0)
+                }
+            }
+        }
+        if part == OPEN_HAT && full {
+            for k in 0..8 {
+                hit(h, g, k * 4 + 2, 0.32, 11.0)
+            }
+        }
+        return h
+    }
+    if s == styles.LOFI {
+        if part == KICK {
+            hit(h, g, 0, 1.0, 0.0)
+            hit(h, g, 10, 0.85, 0.0)
+            if full {
+                hit(h, g, 7, 0.45, 0.0)
+                hit(h, g, 19, 0.5, 0.0)
+            }
+            hit(h, g, 16, 1.0, 0.0)
+            hit(h, g, 26, 0.8, 0.0)
+        }
+        if part == SNARE {
+            for k in 0..4 {
+                hit(h, g, k * 8 + 4, if calm { 0.55 } else { 0.85 }, 0.0)
+            }
+        }
+        if part == HAT {
+            for k in 0..16 {
+                let accent: f64 = if k % 2 == 0 { 0.32 } else { 0.2 }
+                if full || k % 2 == 0 {
+                    hit(h, g, k * 2, accent, 55.0)
+                }
+            }
+        }
+        return h
+    }
+    if s == styles.WAVE {
+        if part == KICK {
+            hits(h, g, []int { 0, 16 }, 1.0, 0.0)
+            hits(h, g, []int { 8, 24 }, 0.9, 0.0)
+            if full {
+                hits(h, g, []int { 10, 26 }, 0.55, 0.0)
+            }
+        }
+        if part == SNARE && !calm {
+            for k in 0..4 {
+                hit(h, g, k * 8 + 4, 0.95, 0.0)
+            }
+        }
+        if part == HAT {
+            for k in 0..16 {
+                hit(h, g, k * 2, if k % 2 == 0 { 0.28 } else { 0.38 }, 65.0)
+            }
+        }
+        return h
+    }
+    if s == styles.TRAP {
+        if part == KICK {
+            hits(h, g, []int { 0, 16 }, 1.0, 0.0)
+            hits(h, g, []int { 11, 22, 27 }, 0.85, 0.0)
+            if full {
+                hit(h, g, 7, 0.6, 0.0)
+            }
+        }
+        if part == SNARE {
+            hits(h, g, []int { 8, 24 }, 0.95, 0.0)
+            if full {
+                hit(h, g, 31, 0.3, 0.0)
+            }
+        }
+        if part == HAT {
+            let sx = sixteenth(g)
+            for k in 0..32 {
+                // Eighths, sixteenths into the snare, and rolls: thirty-
+                // seconds at the end of bar one, triplets in bar two.
+                if k % 2 == 0 && !(k >= 20 && k < 24 && full) {
+                    hit(h, g, k, if k % 4 == 0 { 0.32 } else { 0.24 }, 85.0)
+                } else if k == 7 || k == 23 || (full && (k == 13 || k == 29)) {
+                    hit(h, g, k, 0.18, 95.0)
+                }
+            }
+            if !calm {
+                for i in 0..8 {
+                    hit_at(h, 12.0 * sx + f64(i) * sx / 2.0, 0.14 + 0.02 * f64(i), 110.0)
+                }
+            }
+            if full {
+                for i in 0..6 {
+                    hit_at(h, 20.0 * sx + f64(i) * 4.0 * sx / 6.0, 0.2, 100.0)
+                }
+            }
+        }
+        if part == OPEN_HAT && full {
+            hit(h, g, 30, 0.22, 9.0)
+        }
+        return h
+    }
+    if s == styles.FUTURE {
+        if part == KICK {
+            hits(h, g, []int { 0, 16 }, 1.0, 0.0)
+            if full {
+                hits(h, g, []int { 10, 19, 26 }, 0.7, 0.0)
+            }
+        }
+        if part == SNARE {
+            hits(h, g, []int { 8, 24 }, 1.0, 0.0)
+        }
+        if part == HAT {
+            for k in 0..32 {
+                if k % 2 == 0 {
+                    hit(h, g, k, if k % 4 == 2 { 0.3 } else { 0.2 }, 80.0)
+                } else if full {
+                    hit(h, g, k, 0.12, 110.0)
+                }
+            }
+        }
+        if part == OPEN_HAT && full {
+            hits(h, g, []int { 4, 12, 20, 28 }, 0.18, 10.0)
+        }
+        return h
+    }
+    if s == styles.AFRO {
+        if part == KICK {
+            // Tresillo: three, three, two.
+            hits(h, g, []int { 0, 6, 12, 16, 22, 28 }, 0.95, 0.0)
+            if full {
+                hit(h, g, 30, 0.5, 0.0)
+            }
+        }
+        if part == SNARE && !calm {
+            hits(h, g, []int { 3, 7, 10, 19, 23, 26, 30 }, 0.6, 0.0)
+        }
+        if part == HAT {
+            let shake = []f64 { 0.14, 0.08, 0.22, 0.09 }
+            for k in 0..32 {
+                if full || k % 2 == 0 {
+                    hit(h, g, k, shake[k % 4], 38.0)
+                }
+            }
+        }
+        if part == OPEN_HAT {
+            if full {
+                hits(h, g, []int { 2, 10, 14, 18, 26, 29 }, 0.5, 0.0)
+            } else if !calm {
+                hits(h, g, []int { 10, 26 }, 0.45, 0.0)
+            }
+        }
+        return h
+    }
+    if s == styles.CINEMA {
+        if part == KICK {
+            if full {
+                // The war-drum figure, accents on the bar.
+                hits(h, g, []int { 0, 16 }, 1.0, 0.0)
+                hits(h, g, []int { 3, 6, 8, 11, 14, 19, 22, 24, 26, 28, 30 }, 0.62, 0.0)
+            } else {
+                hits(h, g, []int { 0, 16 }, 0.9, 0.0)
+                if !calm {
+                    hits(h, g, []int { 6, 22 }, 0.55, 0.0)
+                }
+            }
+        }
+        if part == SNARE {
+            if full {
+                hits(h, g, []int { 4, 12, 20, 28 }, 0.75, 0.0)
+                hits(h, g, []int { 29, 31 }, 0.5, 0.0)
+            } else if !calm {
+                hits(h, g, []int { 12, 28 }, 0.45, 0.0)
+            }
+        }
+        if part == HAT && full {
+            for k in 0..16 {
+                hit(h, g, k * 2, if k % 2 == 0 { 0.1 } else { 0.06 }, 90.0)
+            }
+        }
+        return h
+    }
+    // Dream: a soft heartbeat and a shaker.
+    if part == KICK {
+        hits(h, g, []int { 0, 16 }, 0.75, 0.0)
+        if full {
+            hit(h, g, 10, 0.4, 0.0)
+        }
+    }
+    if part == SNARE && !calm {
+        hits(h, g, []int { 12, 28 }, 0.35, 0.0)
+    }
+    if part == HAT {
+        for k in 0..32 {
+            if full || k % 2 == 0 {
+                hit(h, g, k, if k % 4 == 2 { 0.14 } else { 0.08 }, 45.0)
+            }
+        }
+    }
+    return h
+}
+
+/// Hits of `h` whose step is in `[0, limit)`, with a breath from `start`:
+/// the kick rests, hats fall to eighths, and a snare that was playing fills.
+fn breathe(g: Groove, part: int, h: Hits, start: int, limit: int) -> Hits {
+    let mut out = no_hits()
+    let mut had_snare = false
+    for i in 0..h.at.len {
+        let step = hit_step(g, h.at[i])
+        if part == SNARE {
+            had_snare = true
+        }
+        if step >= limit {
+            continue
+        }
+        if step >= start {
+            if part == KICK || part == OPEN_HAT {
+                continue
+            }
+            if part == SNARE {
+                continue
+            }
+            if part == HAT && step % 2 == 1 {
+                continue
+            }
+        }
+        add(out, h.at[i], h.vel[i], h.freq[i], h.gate[i])
+    }
+    if part == SNARE && had_snare {
+        let n = (limit - start) / 2
+        for k in 0..n {
+            hit(out, g, start + k * 2, 0.5 + 0.12 * f64(k), 24.0)
+        }
+    }
+    return out
+}
+
+/// The two-bar pattern tiled across the phrase, then a breath on the last
+/// half-bar. A one-bar loop is the first bar of the pattern, breathing on
+/// its own back half: the build's last bar.
+fn drum_phrase(g: Groove, part: int, variant: int) -> Hits {
+    let bars = drum_bars(g)
+    let cell = drum_hits(g, part, variant)
+    if bars <= 1 {
+        return breathe(g, part, cell, 8, 16)
+    }
+    let mut h = no_hits()
+    let mut b = 0
+    while b + 2 <= bars {
+        for i in 0..cell.at.len {
+            add(h, cell.at[i] + g.bar_sec * f64(b), cell.vel[i], cell.freq[i], cell.gate[i])
+        }
+        b = b + 2
+    }
+    return breathe(g, part, h, bars * 16 - 8, bars * 16)
+}
+
+/// Velocities follow the dynamics channel. Full is unchanged; rest is half.
+fn scaled(h: Hits, g: Groove) -> Hits {
+    let gain = 0.5 + 0.5 * f64(num.clampi(g.dyn, 0, 1000)) / 1000.0
+    let mut o = no_hits()
+    for i in 0..h.at.len {
+        add(o, h.at[i], h.vel[i] * gain, h.freq[i], h.gate[i])
+    }
+    return o
+}
+
+/// How long `part` loops. The kit uses the drum phrase; everyone else the
+/// harmony span.
+fn play_loop(g: Groove, part: int) -> f64 {
+    if part == KICK || part == SNARE || part == HAT || part == OPEN_HAT {
+        return g.bar_sec * f64(drum_bars(g))
+    }
+    return g.bar_sec * f64(span_bars(g))
+}
+
+fn loop_steps(g: Groove, part: int) -> int {
+    let s = sixteenth(g)
+    if s <= 0.0 {
+        return 1
+    }
+    let n = num.roundi(play_loop(g, part) / s)
+    if n < 1 {
+        return 1
+    }
+    return n
+}
+
+/// Sixteenth of the highest note, or −1 when the line is empty. Call this
+/// on the grid times, before `humanize` moves them.
+fn peak_step(g: Groove, h: Hits) -> int {
+    if h.at.len == 0 || h.freq.len == 0 {
+        return -1
+    }
+    let n = if h.freq.len < h.at.len { h.freq.len } else { h.at.len }
+    let mut best = 0
+    for i in 1..n {
+        if h.freq[i] > h.freq[best] {
+            best = i
+        }
+    }
+    return hit_step(g, h.at[best])
+}
+
+/// Random half-width, in milliseconds. The snare and the lead also sit late
+/// (`bias_ms`); `bound_ms` is how far the sum may land from the grid.
+fn half_ms(g: Groove, part: int) -> f64 {
+    if part == KICK {
+        return 2.0
+    }
+    if part == SNARE {
+        return 6.0
+    }
+    if part == HAT || part == OPEN_HAT {
+        if g.tight {
+            return 4.0
+        }
+        return 8.0
+    }
+    if part == P_BASS {
+        return 6.0
+    }
+    if part == P_LEAD || part == P_COUNTER {
+        return 15.0
+    }
+    if part == P_PAD {
+        return 20.0
+    }
+    return 8.0
+}
+
+fn bias_ms(part: int) -> f64 {
+    if part == SNARE {
+        return 3.0
+    }
+    if part == P_LEAD || part == P_COUNTER {
+        return 5.0
+    }
+    return 0.0
+}
+
+/// Furthest a hit of `part` may sit from its grid time, in milliseconds.
+fn bound_ms(g: Groove, part: int) -> f64 {
+    return half_ms(g, part) + bias_ms(part)
+}
+
+fn offset_ms(g: Groove, part: int, phrase: int, i: int) -> f64 {
+    let half = half_ms(g, part)
+    let h = num.hash(g.seed, 80011 + phrase * 131 + part * 17 + i)
+    let u = h % 10001
+    let rnd = (f64(u) / 10000.0 * 2.0 - 1.0) * half
+    return bias_ms(part) + rnd
+}
+
+/// Downbeat, the other quarters, the eighths, then the off-sixteenths.
+fn accent_of(step: int) -> f64 {
+    let s = ((step % 16) + 16) % 16
+    if s == 0 {
+        return 1.0
+    }
+    if s % 4 == 0 {
+        return 0.94
+    }
+    if s % 2 == 0 {
+        return 0.88
+    }
+    return 0.82
+}
+
+fn wrap_time(t0: f64, loop: f64) -> f64 {
+    if loop <= 0.0 {
+        return t0
+    }
+    let mut t = t0
+    while t < 0.0 {
+        t = t + loop
+    }
+    while t >= loop {
+        t = t - loop
+    }
+    return t
+}
+
+/// Timing and velocity, after the hits exist and after `scaled`. Seeded by
+/// the take, the part, and the phrase: a loop repeats its own feel, and the
+/// next phrase draws again. Times fold into the loop so the wrap stays one
+/// gesture. Velocity is the hit, times the phrase arch (loudest where the
+/// melody peaks), times the beat, times a seeded ±8%, then clamped to (0, 1].
+/// The last note of a closed lead is softer.
+fn humanize(h: Hits, g: Groove, part: int, phrase: int) -> Hits {
+    return humanize_of(h, g, part, phrase, true)
+}
+
+/// `humanize` for a line played once: a note nudged before the start or
+/// past the end stays inside the phrase instead of wrapping to the other
+/// end of it.
+fn humanize_once(h: Hits, g: Groove, part: int, phrase: int) -> Hits {
+    return humanize_of(h, g, part, phrase, false)
+}
+
+fn humanize_of(h: Hits, g: Groove, part: int, phrase: int, wrap: bool) -> Hits {
+    if h.at.len == 0 {
+        return h
+    }
+    let loop = play_loop(g, part)
+    let span = loop_steps(g, part)
+    let mut peak = span / 2
+    if g.peak >= 0 {
+        peak = g.peak % span
+    }
+    let mut far = peak
+    let other = span - 1 - peak
+    if other > far {
+        far = other
+    }
+    if far < 1 {
+        far = 1
+    }
+    let mut last = 0
+    for i in 1..h.at.len {
+        if h.at[i] >= h.at[last] {
+            last = i
+        }
+    }
+    let soften = (part == P_LEAD || part == P_COUNTER) && g.ending == plan.CLOSED
+    let mut out = no_hits()
+    for i in 0..h.at.len {
+        let grid = h.at[i]
+        let step = hit_step(g, grid)
+        let mut dist = step - peak
+        if dist < 0 {
+            dist = -dist
+        }
+        let arch = 0.82 + 0.18 * (1.0 - f64(dist) / f64(far))
+        let wob = (num.hash(g.seed, 70001 + phrase * 131 + part * 17 + i) % 1601) - 800
+        let mut vel = h.vel[i] * arch * accent_of(step) * (1.0 + f64(wob) / 10000.0)
+        if soften && i == last {
+            vel = vel * 0.55
+        }
+        if vel > 1.0 {
+            vel = 1.0
+        }
+        if vel < 0.001 {
+            vel = 0.001
+        }
+        let freq: f64 = if i < h.freq.len { h.freq[i] } else { 0.0 }
+        let gate: f64 = if i < h.gate.len { h.gate[i] } else { 0.0 }
+        let moved = grid + offset_ms(g, part, phrase, i) / 1000.0
+        let t = if wrap { wrap_time(moved, loop) } else { num.clampf(moved, 0.0, loop - 0.001) }
+        add(out, t, vel, freq, gate)
+    }
+    return sorted(out)
+}
+
+/// One phrase of one drum voice, humanized. Empty when the pattern is, or
+/// when the kick sits out the bar before a drop. Hats over `TOPS` stay close
+/// enough that they do not flam the recording.
+fn kit_hits(g: Groove, part: int, variant: int) -> Hits {
+    if part == KICK && !g.kick {
+        return no_hits()
+    }
+    let mut gg = g
+    if variant == TOPS {
+        gg.tight = true
+    }
+    return humanize(scaled(drum_phrase(gg, part, variant), gg), gg, part, 0)
+}
+
+// ---- Harmony -------------------------------------------------------------
+
+/// Chord code sounding at sixteenth `local` of bar `b`. The last bar's
+/// first half can be `g.split`.
+fn code_at(g: Groove, b: int, local: int) -> int {
+    if g.prog.len == 0 {
+        return 0
+    }
+    if g.split >= 0 && b == span_bars(g) - 1 && local < 8 {
+        return g.split
+    }
+    return g.prog[b % g.prog.len]
+}
+
+/// Colour of bar `b`: below 0 keeps the style's voicing.
+fn color_at(g: Groove, b: int) -> int {
+    if b >= 0 && b < g.color.len {
+        return g.color[b]
+    }
+    return -1
+}
+
+/// `code` voiced around `centre`. A colour of 0 or more replaces the style.
+fn voiced_code(g: Groove, code: int, bar: int, centre: int) -> []int {
+    let color = color_at(g, bar)
+    if color >= 0 {
+        return theory.colored(code, color, g.tonic, g.minor, centre)
+    }
+    return theory.voicing(code, styles.sevenths(g.style), g.tonic, g.minor, centre)
+}
+
+/// Chord tones of bar `b` as MIDI notes around `centre`. This is the bar's
+/// own chord: on a split bar, the second half. The first half is `g.split`.
+fn bar_chord(g: Groove, b: int, centre: int) -> []int {
+    if g.prog.len == 0 {
+        return []int {}
+    }
+    return voiced_code(g, g.prog[b % g.prog.len], b, centre)
+}
+
+fn bar_root(g: Groove, b: int, centre: int) -> int {
+    if g.prog.len == 0 {
+        return centre
+    }
+    return theory.bass_at(g.prog[b % g.prog.len], centre)
+}
+
+fn root_hz(g: Groove, b: int, local: int, centre: int) -> f64 {
+    return num.midi_hz(theory.bass_at(code_at(g, b, local), centre))
+}
+
+/// A styled figure keeps its rhythm; its approach lands on the last
+/// eighth. A held bass walks on beat four.
+fn approach_step(style: int) -> int {
+    if style == styles.HOUSE || style == styles.WAVE || style == styles.LOFI || style == styles.TRAP || style == styles.AFRO {
+        return 14
+    }
+    return 12
+}
+
+/// The scale tone a step from MIDI `m` in direction `dir` (±1).
+fn scale_step(m: int, dir: int, tonic: int, minor: bool) -> int {
+    let scale = theory.scale(minor)
+    for k in 1..3 {
+        let n = m + dir * k
+        let pc = ((n - tonic) % 12 + 12) % 12
+        for i in 0..scale.len {
+            if scale[i] == pc {
+                return n
+            }
+        }
+    }
+    return m + dir
+}
+
+/// Does the bass come down into bar `b + 1`? It moves against the lead:
+/// down while the melody is still climbing to its peak, up after it.
+fn bass_falls(g: Groove, b: int) -> bool {
+    let peak = if g.peak >= 0 { g.peak } else { span_bars(g) * 8 }
+    return (b + 1) * 16 <= peak
+}
+
+/// The note that leads into bar `b + 1`'s root: a diatonic step above when
+/// the bass falls, else a semitone or a scale step below. −1 when the next
+/// bar keeps this bar's root, so the figure plays on.
+fn approach_note(g: Groove, b: int, centre: int) -> int {
+    let n = span_bars(g)
+    let here = theory.bass_at(code_at(g, b, approach_step(g.style)), centre)
+    let target = theory.bass_at(code_at(g, (b + 1) % n, 0), centre)
+    if (here - target) % 12 == 0 {
+        return -1
+    }
+    if bass_falls(g, b) {
+        return scale_step(target, 1, g.tonic, g.minor)
+    }
+    if num.hash(g.seed, 9100 + b) % 2 == 0 {
+        return target - 1
+    }
+    return scale_step(target, -1, g.tonic, g.minor)
+}
+
+/// Bar `b`'s hits from index `first` gain the approach: a hit already on
+/// the approach step takes its pitch, otherwise one is added there and the
+/// note before it is cut to make room.
+fn approach(h: &mut Hits, g: Groove, b: int, first: int, centre: int) {
+    let m = approach_note(g, b, centre)
+    if m < 0 {
+        return
+    }
+    let s = sixteenth(g)
+    let ap = approach_step(g.style)
+    let at = step_time(g, b * 16 + ap)
+    for i in first..h.at.len {
+        if hit_step(g, h.at[i]) == b * 16 + ap {
+            h.freq[i] = num.midi_hz(m)
+            return
+        }
+    }
+    for i in first..h.at.len {
+        if h.at[i] < at && h.at[i] + h.gate[i] > at - 0.02 {
+            h.gate[i] = at - h.at[i] - 0.02
+        }
+    }
+    add(h, at, 0.75, num.midi_hz(m), s * f64(16 - ap) - 0.02)
+}
+
+/// Root on the downbeat, the style's figure, then an approach into the
+/// next bar's chord.
+fn bass_hits(g: Groove) -> Hits {
+    let mut h = no_hits()
+    let s = sixteenth(g)
+    let st = g.style
+    let centre = if st == styles.TRAP { 35 } else { 40 }
+    for b in 0..span_bars(g) {
+        let base = b * 16
+        let first = h.at.len
+        let split = g.split >= 0 && b == span_bars(g) - 1
+        if st == styles.HOUSE {
+            for k in 0..4 {
+                let local = k * 4 + 2
+                add(h, step_time(g, base + local), 0.9, root_hz(g, b, local, centre), s * 1.6)
+            }
+        } else if st == styles.WAVE {
+            for k in 0..8 {
+                let oct: f64 = if k % 2 == 1 && g.energy == styles.DRIVE { 2.0 } else { 1.0 }
+                let local = k * 2
+                add(h, step_time(g, base + local), if k % 2 == 0 { 0.95 } else { 0.75 }, root_hz(g, b, local, centre) * oct, s * 1.7)
+            }
+        } else if st == styles.LOFI {
+            add(h, step_time(g, base), 0.95, root_hz(g, b, 0, centre), s * 6.0)
+            add(h, step_time(g, base + 7), 0.6, root_hz(g, b, 7, centre), s * 2.0)
+            add(h, step_time(g, base + 10), 0.8, root_hz(g, b, 10, centre), s * 4.5)
+        } else if st == styles.TRAP {
+            // The 808 follows the kick and rings to the next hit; every
+            // other bar it jumps the octave on its last note.
+            let steps = if b % 2 == 0 { []int { 0, 11 } } else { []int { 0, 6, 11 } }
+            for i in 0..steps.len {
+                let next = if i + 1 < steps.len { steps[i + 1] } else { 16 }
+                let up: f64 = if b % 2 == 1 && i == steps.len - 1 { 2.0 } else { 1.0 }
+                add(h, step_time(g, base + steps[i]), 1.0, root_hz(g, b, steps[i], centre) * up, s * f64(next - steps[i]) - 0.02)
+            }
+        } else if st == styles.AFRO {
+            // A log drum: root, root, fifth, and a pickup.
+            let steps = []int { 0, 3, 6, 10, 14 }
+            let notes = []f64 { 1.0, 1.0, 1.4983, 1.0, 2.0 }
+            for i in 0..steps.len {
+                add(h, step_time(g, base + steps[i]), if i == 0 { 1.0 } else { 0.8 }, root_hz(g, b, steps[i], centre) * notes[i], s * 2.0)
+            }
+        } else if split {
+            let half = g.bar_sec * 0.5
+            add(h, step_time(g, base), 0.9, root_hz(g, b, 0, centre), half - 0.04)
+            add(h, step_time(g, base + 8), 0.9, root_hz(g, b, 8, centre), half - 0.04)
+        } else {
+            add(h, step_time(g, base), 0.9, root_hz(g, b, 0, centre), g.bar_sec - 0.08)
+        }
+        approach(h, g, b, first, centre)
+    }
+    return h
+}
+
+/// Does this tone play rhythm (stabs) rather than hold its chords?
+fn pad_stabs(style: int, tone: int) -> bool {
+    return tone == PAD_KEYS || (tone == PAD_SUPER && style == styles.FUTURE)
+}
+
+/// Does the pad play rhythm (stabs) rather than hold its chords?
+fn stabbed(g: Groove, tone: int) -> bool {
+    return pad_stabs(g.style, tone)
+}
+
+/// Sixteenths a bar the pad strikes on, when it plays rhythm.
+fn stab_steps(g: Groove, tone: int) -> []int {
+    let st = g.style
+    if tone == PAD_SUPER {
+        return []int { 0, 3, 6, 10, 12, 14 }
+    }
+    if st == styles.HOUSE {
+        return []int { 2, 6, 10, 14 }
+    }
+    if st == styles.AFRO {
+        return []int { 0, 3, 6, 10, 12 }
+    }
+    if st == styles.LOFI {
+        return []int { 0, 7, 10 }
+    }
+    return []int { 0, 8 }
+}
+
+fn pad_centre(tone: int, lift: int) -> int {
+    return (if tone == PAD_KEYS { 62 } else { 60 }) + lift
+}
+
+fn pad_chords(g: Groove, tone: int) -> [][]int {
+    let centre = pad_centre(tone, g.lift)
+    let mut chords = [][]int {}
+    for b in 0..span_bars(g) {
+        push(chords, bar_chord(g, b, centre))
+    }
+    return chords
+}
+
+/// The first half of the last bar, when that bar holds two chords.
+fn split_chord(g: Groove, tone: int) -> []int {
+    if g.split < 0 {
+        return []int {}
+    }
+    let bar = span_bars(g) - 1
+    return voiced_code(g, g.split, bar, pad_centre(tone, g.lift))
+}
+
+fn most_notes(chords: [][]int) -> int {
+    let mut most = 0
+    for b in 0..chords.len {
+        if chords[b].len > most {
+            most = chords[b].len
+        }
+    }
+    return most
+}
+
+/// Note `v` of a chord; a triad in a seventh progression doubles its root.
+fn note_of(c: []int, v: int) -> int {
+    return if v < c.len { c[v] } else { c[0] + 12 }
+}
+
+/// One bar of stab times, nudged like any other pad onset and folded back
+/// into the bar. The bar repeats, and the last stab still ends on the bar
+/// line so a chord change stays clean.
+fn stab_onsets(g: Groove, tone: int) -> []f64 {
+    let steps = stab_steps(g, tone)
+    let mut h = no_hits()
+    for i in 0..steps.len {
+        add(h, step_time(g, steps[i]), 0.8, 1.0, 0.05)
+    }
+    let mut one = g
+    one.bars = 1
+    one.ending = plan.OPEN
+    let o = humanize(h, one, P_PAD, 0)
+    let mut at = []f64 {}
+    for i in 0..o.at.len {
+        push(at, o.at[i])
+    }
+    return at
+}
+
+/// Sixteenths between arp attacks. Below 340 the line is quarters, below
+/// 670 eighths, and above that sixteenths.
+fn arp_step(g: Groove) -> int {
+    if g.den < 340 {
+        return 4
+    }
+    if g.den < 670 {
+        return 2
+    }
+    return 1
+}
+
+fn arp_steps(g: Groove) -> []int {
+    let mut steps = []int {}
+    if g.style == styles.AFRO {
+        if g.den < 340 {
+            return []int { 0, 6, 11 }
+        }
+        return []int { 0, 3, 6, 8, 11, 14 }
+    }
+    let step = arp_step(g)
+    let mut k = 0
+    while k < 16 {
+        push(steps, k)
+        k = k + step
+    }
+    return steps
+}
+
+/// Highest arp note (E6, 1.3 kHz). The register lift and the arp's second
+/// octave would otherwise climb past 2.5 kHz, where a saw turns to a whistle.
+const ARP_TOP: int = 88
+
+/// Chord tones at sixteenth `local` of bar `b`, across two octaves. A tone
+/// over `ARP_TOP` folds down an octave.
+fn arp_tones(g: Groove, b: int, local: int, centre: int) -> []int {
+    let c = voiced_code(g, code_at(g, b, local), b, centre)
+    let mut tones = []int {}
+    for oct in 0..2 {
+        for i in 0..3 {
+            if i < c.len {
+                let mut m = c[i] + oct * 12
+                while m > ARP_TOP {
+                    m = m - 12
+                }
+                push(tones, m)
+            }
+        }
+    }
+    if tones.len == 0 {
+        push(tones, centre)
+    }
+    return tones
+}
+
+/// The arpeggio's notes. Density picks the step; a split bar changes chord
+/// at the half.
+fn arp_hits(g: Groove, tone: int) -> Hits {
+    let mut h = no_hits()
+    let s = sixteenth(g)
+    let st = g.style
+    for b in 0..span_bars(g) {
+        if tone == ARP_STRINGS {
+            // The low ostinato: root, root, fifth, root, octave …
+            let order = []int { 0, 0, 2, 0, 3, 0, 2, 1 }
+            let step = arp_step(g)
+            let mut k = 0
+            let mut n = 0
+            while k < 16 {
+                let at = b * 16 + k
+                if keep_step(g, at) {
+                    let code = code_at(g, b, k)
+                    let r = theory.bass_at(code, 47)
+                    let third = r + (if key.chord_minor(code) { 3 } else { 4 })
+                    let tones = []int { r, third, r + 7, r + 12 }
+                    let vel: f64 = if k % 4 == 0 { 1.0 } else { 0.7 }
+                    add(h, step_time(g, at), vel, num.midi_hz(tones[order[n % order.len]]), s * f64(step))
+                }
+                k = k + step
+                n = n + 1
+            }
+            continue
+        }
+        let centre = (if st == styles.AFRO { 72 } else if st == styles.FUTURE { 74 } else { 66 }) + g.lift
+        let steps = arp_steps(g)
+        let order = []int { 0, 1, 2, 3, 4, 5, 4, 2 }
+        for n in 0..steps.len {
+            let local = steps[n]
+            let at = b * 16 + local
+            if !keep_step(g, at) {
+                continue
+            }
+            let tones = arp_tones(g, b, local, centre)
+            let m = tones[order[n % order.len] % tones.len]
+            let vel: f64 = if local % 4 == 0 { 0.9 } else { 0.62 }
+            add(h, step_time(g, at), vel, num.midi_hz(m), s)
+        }
+    }
+    return h
+}
+
+/// A seeded melody on the chord tones, high, with space between phrases.
+fn bell_hits(g: Groove) -> Hits {
+    let mut h = no_hits()
+    let rhythms = [][]int { []int { 0, 6, 10 }, []int { 0, 4, 8, 14 }, []int { 2, 8, 12 }, []int { 0, 10 } }
+    let scale = theory.scale(g.minor)
+    let centre = (if g.style == styles.CINEMA { 70 } else { 76 }) + g.lift
+    for b in 0..span_bars(g) {
+        let c = bar_chord(g, b, centre)
+        let r = rhythms[num.hash(g.seed, b) % rhythms.len]
+        for i in 0..r.len {
+            let pick = num.hash(g.seed * 7 + b, i)
+            let mut m = c[pick % c.len]
+            // Off the first onset, step to a neighbouring scale tone now and then.
+            if i > 0 && pick % 3 == 0 {
+                let pc = ((m - g.tonic) % 12 + 12) % 12
+                let mut d = 0
+                for k in 0..scale.len {
+                    if scale[k] == pc {
+                        d = k
+                    }
+                }
+                m = m - pc + scale[(d + 1) % scale.len] + (if d + 1 >= scale.len { 12 } else { 0 })
+            }
+            let vel: f64 = if i == 0 { 0.9 } else { 0.65 }
+            add(h, step_time(g, b * 16 + r[i]), vel, num.midi_hz(m), 2.0)
+        }
+    }
+    return h
+}
+
+// ---- One-shots -----------------------------------------------------------
+
+/// Sparse clicks for the vinyl layer.
+fn crackle_expr() -> string {
+    return "if(gt(random(9),0.9993),(random(8)-0.5)*1.4,0)"
+}

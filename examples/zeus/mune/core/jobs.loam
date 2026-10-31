@@ -1,0 +1,304 @@
+//! The shell jobs: decode, render, export. Each runs in the background
+//! and ends by touching `<name>.done` (or `<name>.fail`); the store polls.
+//! ffmpeg reads and writes every recording; Loam only reads the small
+//! envelope, pitch, and level files the decode leaves.
+
+import "std:str"
+import "std:sys"
+import "time.loam" as time
+
+/// Finder's PATH misses Homebrew.
+const PATH_FIX: string = "PATH=\"$PATH:/opt/homebrew/bin:/usr/local/bin\""
+
+const TARGET_LUFS: string = "-14"
+const TARGET_TP: string = "-1.0"
+/// The limiter's ceiling: -1.5 dBFS on the sample, about -1 dBTP.
+const LIMIT: string = "0.84"
+/// Loudness the limiter takes off a typical take, given back in the gain.
+const LIMIT_LOSS: string = "0.4"
+
+fn q(s: string) -> string {
+    return str.shell_quote(s)
+}
+
+fn tool_ready() -> bool {
+    if sys.target() != "native" {
+        return false
+    }
+    let ffmpeg = sys.exec("{{PATH_FIX}}; command -v ffmpeg 2>/dev/null")
+    let ffprobe = sys.exec("{{PATH_FIX}}; command -v ffprobe 2>/dev/null")
+    return !str.is_blank(ffmpeg) && !str.is_blank(ffprobe)
+}
+
+fn mp3_ready() -> bool {
+    let out = sys.exec("{{PATH_FIX}}; ffmpeg -hide_banner -encoders 2>/dev/null | grep -c libmp3lame")
+    return str.trim(out) != "" && str.trim(out) != "0"
+}
+
+fn src_wav(dir: string, i: int) -> string {
+    return "{{dir}}/src{{i}}.wav"
+}
+
+fn env_raw(dir: string, i: int) -> string {
+    return "{{dir}}/env{{i}}.raw"
+}
+
+fn pcm_raw(dir: string, i: int) -> string {
+    return "{{dir}}/pcm{{i}}.raw"
+}
+
+fn info_txt(dir: string, i: int) -> string {
+    return "{{dir}}/info{{i}}.txt"
+}
+
+fn voice_map(dir: string, i: int) -> string {
+    return "{{dir}}/voice{{i}}.map"
+}
+
+fn split_wav(dir: string, i: int) -> string {
+    return "{{dir}}/music{{i}}.wav"
+}
+
+/// The 100 Hz three-band envelope: absolute value first, so a transient
+/// that swings both ways is not averaged away.
+fn env_band(filters: string) -> string {
+    return "{{filters}}aeval=abs(val(0)),aresample=100:resampler=swr:filter_size=32:phase_shift=6,aformat=sample_fmts=s16:sample_rates=100:channel_layouts=mono"
+}
+
+/// One recording: 48 kHz stereo WAV (first 8 minutes), the envelope, a
+/// 5512 Hz mono copy for the key, and `channels`, `ms`, `lufs` in info.
+fn decode_one(dir: string, i: int, path: string) -> []string {
+    let in_q = q(path)
+    let wav = q(src_wav(dir, i))
+    let env = q(env_raw(dir, i))
+    let pcm = q(pcm_raw(dir, i))
+    let info = q(info_txt(dir, i))
+    let low = env_band("lowpass=f=180,lowpass=f=180,")
+    let mid = env_band("highpass=f=200,lowpass=f=3500,")
+    let high = env_band("highpass=f=5000,")
+    let graph = "[0:a]aformat=sample_fmts=fltp:channel_layouts=stereo,aresample=48000,asplit=3[w][e][k];[w]aformat=sample_fmts=s16[wav];[e]pan=mono|c0=0.5*c0+0.5*c1,asplit=3[e0][e1][e2];[e0]{{low}}[b0];[e1]{{mid}}[b1];[e2]{{high}}[b2];[b0][b1][b2]amerge=inputs=3[env];[k]pan=mono|c0=0.5*c0+0.5*c1,aresample=5512,aformat=sample_fmts=s16[pcm]"
+    let mut out = []string {}
+    push(out, "(")
+    push(out, "ch=$(ffprobe -v error -select_streams a:0 -show_entries stream=channels -of csv=p=0 {{in_q}} | head -n 1 | tr -cd 0-9)")
+    push(out, "[ -z \"$ch\" ] && ch=0")
+    push(out, "if [ \"$ch\" -gt 0 ] && ffmpeg -nostdin -v error -y -t {{time.MAX_SEC}} -i {{in_q}} -vn -filter_complex '{{graph}}' -map '[wav]' -c:a pcm_s16le {{wav}} -map '[env]' -f s16le {{env}} -map '[pcm]' -f s16le {{pcm}}; then")
+    push(out, "  ms=$(ffprobe -v error -show_entries format=duration -of csv=p=0 {{wav}} | awk '{ printf \"%d\", $1 * 1000 }')")
+    push(out, "  lufs=$(ffmpeg -nostdin -v info -i {{wav}} -af ebur128 -f null - 2>&1 | sed -n 's/^ *I: *\\(-*[0-9.]*\\) LUFS.*/\\1/p' | tail -n 1)")
+    push(out, "  printf 'channels %s\\nms %s\\nlufs %s\\n' \"$ch\" \"$ms\" \"$lufs\" > {{info}}")
+    push(out, "else")
+    let shown = str.replace_all(path, "'", "")
+    push(out, "  echo 'could not read {{shown}}'")
+    push(out, "  rm -f {{wav}} {{env}} {{pcm}}")
+    push(out, "  printf 'channels 0\\nms 0\\nlufs\\n' > {{info}}")
+    push(out, "fi")
+    push(out, ") &")
+    return out
+}
+
+/// Decode every recording, three at a time, then touch `decode.done`.
+fn decode_script(dir: string, paths: []string) -> string {
+    let log = q("{{dir}}/log.txt")
+    let done = q("{{dir}}/decode.done")
+    let fail = q("{{dir}}/decode.fail")
+    let mut lines = []string {}
+    push(lines, PATH_FIX)
+    push(lines, "{")
+    push(lines, "if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then echo 'ffmpeg is not installed. brew install ffmpeg'; touch {{fail}}; exit 1; fi")
+    for i in 0..paths.len {
+        let one = decode_one(dir, i, paths[i])
+        for k in 0..one.len {
+            push(lines, one[k])
+        }
+        if i % 3 == 2 {
+            push(lines, "wait")
+        }
+    }
+    push(lines, "wait")
+    push(lines, "} >> {{log}} 2>&1")
+    push(lines, "touch {{done}}")
+    return str.join(lines, "\n")
+}
+
+/// `info{i}.txt` → [channels, ms, centi-LUFS]. Missing values are 0.
+fn read_info(dir: string, i: int) -> []int {
+    let text = sys.read_file(info_txt(dir, i))
+    let lines = str.split(text, "\n")
+    let mut ch = 0
+    let mut ms = 0
+    let mut lufs = 0
+    for k in 0..lines.len {
+        let parts = str.split(str.trim(lines[k]), " ")
+        if parts.len >= 2 {
+            let v = parts[1]
+            if parts[0] == "channels" {
+                ch = whole(v)
+            } else if parts[0] == "ms" {
+                ms = whole(v)
+            } else if parts[0] == "lufs" {
+                // Seconds parsing reads "-14.2" as -14200 thousandths.
+                lufs = time.ms_of_seconds(v) / 10
+            }
+        }
+    }
+    return []int { ch, ms, lufs }
+}
+
+/// The leading digits of `s` as an int (0 when there are none).
+fn whole(s: string) -> int {
+    let t = str.trim(s)
+    let mut v = 0
+    for i in 0..t.len {
+        let c = t[i]
+        if c < 48 || c > 57 {
+            return v
+        }
+        v = v * 10 + (c - 48)
+    }
+    return v
+}
+
+/// Premaster from `graph.txt`, two-pass loudness to −14 LUFS, 24-bit WAV
+/// at `out`, a waveform overview at `peaks`, then `out.done`.
+/// `progress.txt` follows the render; `stage.txt` says which pass runs.
+fn render_script(dir: string, inputs: []string, out: string, peaks: string) -> string {
+    let mut ins = []string {}
+    for i in 0..inputs.len {
+        push(ins, "-i {{q(inputs[i])}}")
+    }
+    let in_text = str.join(ins, " ")
+    let log = q("{{dir}}/log.txt")
+    let graph = q("{{dir}}/graph.txt")
+    let pre = q("{{dir}}/premaster.wav")
+    let measure = q("{{dir}}/measure.txt")
+    let progress = q("{{dir}}/progress.txt")
+    let stage = q("{{dir}}/stage.txt")
+    let out_q = q(out)
+    let peaks_q = q(peaks)
+    let done = q("{{out}}.done")
+    let fail = q("{{out}}.fail")
+    let target = "I={{TARGET_LUFS}}:TP={{TARGET_TP}}:LRA=11"
+    let dither = "aresample=48000:dither_method=triangular_hp:out_sample_fmt=s32"
+    let mut lines = []string {}
+    push(lines, PATH_FIX)
+    push(lines, "ok=1")
+    push(lines, "{")
+    push(lines, "command -v ffmpeg >/dev/null 2>&1 || { echo 'ffmpeg is not installed. brew install ffmpeg'; ok=0; }")
+    push(lines, "if [ \"$ok\" -eq 1 ]; then")
+    push(lines, "echo 1 > {{stage}}")
+    push(lines, "ffmpeg -nostdin -v error -y -progress {{progress}} {{in_text}} -/filter_complex {{graph}} -map '[pre]' -c:a pcm_f32le -ar 48000 {{pre}} || ok=0")
+    push(lines, "fi")
+    push(lines, "if [ \"$ok\" -eq 1 ]; then")
+    push(lines, "echo 2 > {{stage}}")
+    push(lines, "ffmpeg -nostdin -v info -i {{pre}} -af loudnorm={{target}}:print_format=json -f null - > {{measure}} 2>&1 || true")
+    // Mastering: gain onto the target, then a fast peak limiter. A
+    // compressor here pumped with every kick, and loudnorm's dynamic mode
+    // rides the gain over seconds; a limiter only touches the peaks.
+    push(lines, "II=$(sed -n 's/.*\"input_i\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p' {{measure}} | head -n 1)")
+    push(lines, "G=$(awk -v i=\"$II\" 'BEGIN { if (i == \"\" || i ~ /inf/) print \"0.00\"; else printf \"%.2f\", {{TARGET_LUFS}} - i + {{LIMIT_LOSS}} }')")
+    push(lines, "AF=\"volume=${G}dB,alimiter=limit={{LIMIT}}:attack=1:release=60:level=0,{{dither}}\"")
+    push(lines, "echo 3 > {{stage}}")
+    push(lines, "ffmpeg -nostdin -v error -y -i {{pre}} -af \"$AF\" -c:a pcm_s24le -ar 48000 -map_metadata -1 -metadata title=Mune {{out_q}} || ok=0")
+    push(lines, "fi")
+    push(lines, "if [ \"$ok\" -eq 1 ]; then")
+    push(lines, "ffmpeg -nostdin -v error -y -i {{out_q}} -af 'pan=mono|c0=0.5*c0+0.5*c1,aeval=abs(val(0)),aresample=50:resampler=swr:filter_size=16,aformat=sample_fmts=s16' -f s16le {{peaks_q}} || true")
+    push(lines, "rm -f {{pre}}")
+    push(lines, "fi")
+    push(lines, "} >> {{log}} 2>&1")
+    push(lines, "if [ \"$ok\" -eq 1 ]; then touch {{done}}; else rm -f {{out_q}}; touch {{fail}}; exit 1; fi")
+    return str.join(lines, "\n")
+}
+
+/// Copy or encode the take to `dest`, then `dest.done`. `format` is
+/// "wav", "m4a", or "mp3".
+fn export_script(take: string, dest: string, format: string) -> string {
+    let in_q = q(take)
+    let tmp = q("{{dest}}.part")
+    let out_q = q(dest)
+    let done = q("{{dest}}.done")
+    let fail = q("{{dest}}.fail")
+    let mut cmd = "cp {{in_q}} {{tmp}}"
+    if format == "m4a" {
+        cmd = "ffmpeg -nostdin -v error -y -i {{in_q}} -c:a aac -b:a 256k -movflags +faststart -metadata title=Mune -f mp4 {{tmp}}"
+    } else if format == "mp3" {
+        cmd = "ffmpeg -nostdin -v error -y -i {{in_q}} -c:a libmp3lame -b:a 320k -id3v2_version 3 -metadata title=Mune -f mp3 {{tmp}}"
+    }
+    let mut lines = []string {}
+    push(lines, PATH_FIX)
+    push(lines, "if {{cmd}} && mv -f {{tmp}} {{out_q}}; then touch {{done}}; else rm -f {{tmp}}; echo 'export failed' > {{fail}}; fi")
+    return str.join(lines, "\n")
+}
+
+/// Run a script in the background, detached from the app.
+fn launch(script: string) {
+    sys.exec("nohup sh {{q(script)}} >/dev/null 2>&1 &")
+}
+
+/// The last line of `log.txt`, for an error message.
+fn last_log(dir: string, fallback: string) -> string {
+    let text = str.trim(sys.read_file("{{dir}}/log.txt"))
+    if text.len == 0 {
+        return fallback
+    }
+    let i = str.last_index_of_byte(text, 10)
+    let mut line = text
+    if i >= 0 && i + 1 < text.len {
+        line = str.slice(text, i + 1, text.len)
+    }
+    if str.is_blank(line) {
+        return fallback
+    }
+    return line
+}
+
+/// Render progress 0..100 from `stage.txt` and ffmpeg's `progress.txt`.
+fn progress(dir: string, total_ms: int) -> int {
+    let st = str.trim(sys.read_file("{{dir}}/stage.txt"))
+    if st == "2" {
+        return 82
+    }
+    if st == "3" {
+        return 92
+    }
+    if st != "1" || total_ms <= 0 {
+        return 0
+    }
+    let text = sys.read_file("{{dir}}/progress.txt")
+    let key = "out_time_us="
+    let at = last_index(text, key)
+    if at < 0 {
+        return 2
+    }
+    let mut us: i64 = i64(0)
+    let mut i = at + key.len
+    while i < text.len && text[i] >= 48 && text[i] <= 57 {
+        us = us * i64(10) + i64(text[i] - 48)
+        i = i + 1
+    }
+    let pct = i32(us / i64(1000) * i64(80) / i64(total_ms))
+    if pct < 2 {
+        return 2
+    }
+    if pct > 80 {
+        return 80
+    }
+    return pct
+}
+
+fn last_index(s: string, needle: string) -> int {
+    let n = needle.len
+    let mut i = s.len - n
+    while i >= 0 {
+        let mut same = true
+        for k in 0..n {
+            if s[i + k] != needle[k] {
+                same = false
+                break
+            }
+        }
+        if same {
+            return i
+        }
+        i = i - 1
+    }
+    return -1
+}

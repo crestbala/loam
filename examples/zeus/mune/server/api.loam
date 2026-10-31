@@ -1,0 +1,229 @@
+//! RPC surface shared by the backend (`server/main.loam`) and every client
+//! (`studio/store.loam`): `#[proto]` payloads plus the method names.
+//!
+//! The browser has no ffmpeg and no voice tools, so the wasm build cannot
+//! render a piece itself. It talks to `server/main.loam` — the native engine
+//! that owns ffmpeg, the voice classifiers, and the file writes — over
+//! gRPC-Web, exactly the way vidget's UI talks to its download engine. The
+//! macOS window and the browser run the same calls; zeli starts the backend
+//! before the UI on any target (`zeli serve`, see `server/main.loam`).
+//!
+//! `#[proto]` fields are `int`, `string`, or a list of those, so a list of
+//! numbers or labels travels as parallel lists indexed together. Byte counts
+//! travel as KiB: `int` is i32.
+
+import "std:http"
+
+/// How many recordings the running session holds, and whether ffmpeg and the
+/// voice tools are present. `scan` moves when the recordings change.
+#[proto]
+struct StateReq {
+}
+
+#[proto]
+struct StateResp {
+    live: int,
+    scan: int,
+    tools: int,
+    voice: int,
+    recordings: int,
+}
+
+/// One recording added to the session. Several arrive as separate calls.
+#[proto]
+struct AddReq {
+    name: string,
+    path: string,
+}
+
+#[proto]
+struct AddResp {
+    scan: int,
+    recordings: int,
+    error: string,
+}
+
+#[proto]
+struct ResetReq {
+}
+
+#[proto]
+struct ResetResp {
+    scan: int,
+}
+
+/// Ask for a piece: `style`, `length`, `energy`, `tempo`, `pitch`, `voices`,
+/// the seed, and the on/off flags of the instruments and effects. Parallel
+/// lists keep the contract to `int` / `string`.
+#[proto]
+struct GenerateReq {
+    scan: int,
+    seed: int,
+    style: int,
+    length: int,
+    energy: int,
+    tempo: int,
+    pitch: int,
+    voices: int,
+    inst_on: []int,
+    inst_level: []int,
+    fx_on: []int,
+    fx_amount: []int,
+}
+
+#[proto]
+struct GenerateResp {
+    ok: int,
+    error: string,
+}
+
+/// The running stage. `stage` is a `ST_*` code. `saving` is 1 while a save
+/// job runs; `saved` is the file the last one wrote.
+#[proto]
+struct PollReq {
+}
+
+#[proto]
+struct PollResp {
+    live: int,
+    stage: int,
+    percent: int,
+    status: string,
+    error: string,
+    notice: string,
+    saving: int,
+    saved: string,
+}
+
+/// The finished take. `path` is the WAV, `peaks` the 4..100 waveform bars,
+/// `sections` the kind/‰-start/‰-length triples, `path_target` /
+/// `path_height` the pitch path per bar.
+#[proto]
+struct TakeReq {
+}
+
+#[proto]
+struct TakeResp {
+    live: int,
+    ready: int,
+    id: int,
+    ms: int,
+    line: string,
+    path: string,
+    peaks: []int,
+    sections: []int,
+    path_target: []int,
+    path_height: []int,
+    detail: []string,
+    role: []int,
+}
+
+/// Save the current take to `~/Documents/Mune` under `title`, as `format`
+/// (`FMT_*`).
+#[proto]
+struct SaveReq {
+    id: int,
+    title: string,
+    format: int,
+}
+
+#[proto]
+struct SaveResp {
+    ok: int,
+    done: int,
+    path: string,
+    error: string,
+}
+
+#[proto]
+struct RevealReq {
+    path: string,
+}
+
+#[proto]
+struct RevealResp {
+    ok: int,
+}
+
+#[proto]
+struct CancelReq {
+}
+
+#[proto]
+struct CancelResp {
+    ok: int,
+}
+
+/// `PollResp.stage`.
+fn st_idle() -> int {
+    return 0
+}
+
+fn st_running() -> int {
+    return 1
+}
+
+fn st_ready() -> int {
+    return 2
+}
+
+fn st_error() -> int {
+    return 3
+}
+
+/// Export formats, indexed by `SaveReq.format`.
+fn fmt_wav() -> int {
+    return 0
+}
+
+fn fmt_m4a() -> int {
+    return 1
+}
+
+fn fmt_mp3() -> int {
+    return 2
+}
+
+fn state_rpc() -> string {
+    return "Mune.State"
+}
+
+/// One poll: advances the engine and answers its stage, progress, and the
+/// status line. The client calls it on its timer (the store already polls),
+/// so it is a plain unary call, not a stream.
+fn poll_rpc() -> string {
+    return "Mune.Poll"
+}
+
+fn add_rpc() -> string {
+    return "Mune.Add"
+}
+
+fn reset_rpc() -> string {
+    return "Mune.Reset"
+}
+
+fn generate_rpc() -> string {
+    return "Mune.Generate"
+}
+
+fn take_rpc() -> string {
+    return "Mune.Take"
+}
+
+fn save_rpc() -> string {
+    return "Mune.Save"
+}
+
+fn reveal_rpc() -> string {
+    return "Mune.Reveal"
+}
+
+fn cancel_rpc() -> string {
+    return "Mune.Cancel"
+}
+
+/// Keeps `std:http` imported here so the codecs it injects resolve.
+fn ping() -> string {
+    return http.concat_str("mu", "ne")
+}

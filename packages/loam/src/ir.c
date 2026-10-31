@@ -485,6 +485,19 @@ static int lower_println(AstNode *n) {
     return -1;
 }
 
+/** A pushed element of type `t` is moved into the slot (its local no longer
+ *  drops) when it holds a `Box`: the push retains refcounted leaves but takes
+ *  a Box as-is, so dropping the local after would free the slot's Box. */
+static int push_moves(const Type *t) {
+    if (!t) return 0;
+    if (t->kind == TY_BOX) return 1;
+    if (t->kind == TY_ARRAY) return push_moves(t->elem);
+    if (t->kind == TY_STRUCT)
+        for (size_t i = 0; i < t->field_count; i++)
+            if (push_moves(t->field_types[i])) return 1;
+    return 0;
+}
+
 static int lower_call(AstNode *n) {
     int dst = -1;
     if (n->ty && n->ty->kind != TY_VOID) dst = new_local(n->ty, NULL, 0);
@@ -587,10 +600,13 @@ static int lower_call(AstNode *n) {
         i->ty = n->as.call.arg_count > 1 && n->as.call.args[1]
                     ? ir_subst(n->as.call.args[1]->ty)
                     : ty_int();
-        /* An element that owns a string keeps its own reference (the push takes
-           one for the slot), so it still drops; a plain element is moved in. */
+        /* `loam_vec_push_owned` retains every refcounted leaf (`[]T`, an owned
+           string) for the slot, so an element made of those keeps its own
+           reference and still drops: `push(rows, row_of(i))` used to leak the
+           row. A `Box` leaf is not retained, only moved in, so an element
+           holding one is handed over whole. */
         if (args[1] >= 0 && args[1] < F->nlocals && type_needs_drop(F->locals[args[1]].ty) &&
-            !(type_string_owns() && type_owns_string(F->locals[args[1]].ty)))
+            push_moves(F->locals[args[1]].ty))
             F->locals[args[1]].needs_drop = 0;
         return -1;
     }
@@ -1208,8 +1224,14 @@ static int lower_expr(AstNode *n) {
                 if (!type_needs_drop(F->locals[args[k]].ty)) continue;
                 /* An owned string (or a struct/array that holds one) is copied
                    in — the container retains and the source keeps its own
-                   reference, so it must still drop. */
+                   reference, so it must still drop. A struct that owns a string
+                   retains every refcounted leaf (codegen's IR_STRUCT_LIT), so a
+                   `[]T` beside the string keeps its drop too; clearing it
+                   leaked the list once per literal. A Box is moved either way. */
                 if (type_string_owns() && type_owns_string(F->locals[args[k]].ty))
+                    continue;
+                if (type_string_owns() && t && t->kind == TY_STRUCT && type_owns_string(t) &&
+                    !push_moves(F->locals[args[k]].ty))
                     continue;
                 F->locals[args[k]].needs_drop = 0;
             }
@@ -1229,11 +1251,10 @@ static int lower_expr(AstNode *n) {
                 for (int k = 0; k < nf; k++) {
                     if (args[k] < 0 || args[k] >= F->nlocals) continue;
                     if (!type_needs_drop(F->locals[args[k]].ty)) continue;
-                    /* Same as a struct field: the vec's copy retains nested
-                       strings, so the element's source keeps and drops its
-                       own reference. */
-                    if (type_string_owns() && type_owns_string(F->locals[args[k]].ty))
-                        continue;
+                    /* Same as `push`: each slot retains the element's
+                       refcounted leaves, so its source keeps and drops its own
+                       reference; only an element holding a Box moves in. */
+                    if (!push_moves(F->locals[args[k]].ty)) continue;
                     F->locals[args[k]].needs_drop = 0;
                 }
             }
@@ -1280,13 +1301,22 @@ static int lower_expr(AstNode *n) {
  * because `loam_move_ptr` NULLs the source and `loam_drop` skips NULL — a
  * runtime check standing in for a static fact. Stating it here means a backend
  * that does not null on move is still correct.
+ *
+ * Only a move of a non-Copy value transfers. An IR_MOVE of a Copy value — a
+ * Copy `[]T`, a string, a struct of Copy fields — is a copy: the backend
+ * gives the destination its own reference and the source keeps its own, so
+ * the source still needs its drop. Clearing it leaked one reference per
+ * `let x = f()` on every function exit (block exits, which drop as they
+ * close, were already right).
  */
 static void transfer_moved(void) {
     for (int b = 0; b < F->nblocks; b++)
         for (int i = 0; i < F->blocks[b].ninsts; i++) {
             IrInst *in = &F->blocks[b].insts[i];
-            if (in->op == IR_MOVE && in->a >= 0 && in->a < F->nlocals)
-                F->locals[in->a].needs_drop = 0;
+            if (in->op != IR_MOVE || in->a < 0 || in->a >= F->nlocals) continue;
+            Type *ty = in->ty ? in->ty : (in->dst >= 0 && in->dst < F->nlocals ? F->locals[in->dst].ty : NULL);
+            if (ty && type_is_copy(ty)) continue;
+            F->locals[in->a].needs_drop = 0;
         }
 }
 

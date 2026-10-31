@@ -89,7 +89,6 @@ int64_t loam_net_ws_count(int64_t slot) {
 }
 
 loam_str loam_net_ws_copy(int64_t slot, int64_t max) {
-    char *p;
     int32_t n;
     if (slot < 0 || slot >= WS_SLOTS || !g_ws_used[slot]) {
         return (loam_str){ .ptr = "", .len = 0 };
@@ -98,11 +97,7 @@ loam_str loam_net_ws_copy(int64_t slot, int64_t max) {
     if (max > WS_CAP - 1) max = WS_CAP - 1;
     n = zeus_js_ws_copy((int32_t)slot, g_ws_buf[slot], (int32_t)max);
     if (n <= 0) return (loam_str){ .ptr = "", .len = 0 };
-    p = (char *)malloc((size_t)n + 1);
-    if (!p) return (loam_str){ .ptr = "", .len = 0 };
-    memcpy(p, g_ws_buf[slot], (size_t)n);
-    p[n] = 0;
-    return (loam_str){ .ptr = p, .len = (int64_t)n };
+    return loam_str_copy(g_ws_buf[slot], (int64_t)n);
 }
 
 void loam_net_ws_close(int64_t slot) {
@@ -161,7 +156,6 @@ int64_t loam_net_stream_state(int64_t slot) {
 }
 
 loam_str loam_net_stream_take(int64_t slot, int64_t max) {
-    char *p;
     int32_t n;
     if (slot < 0 || slot >= RS_SLOTS || !g_rs_used[slot]) {
         return (loam_str){ .ptr = "", .len = 0 };
@@ -170,11 +164,7 @@ loam_str loam_net_stream_take(int64_t slot, int64_t max) {
     if (max > RS_CAP - 1) max = RS_CAP - 1;
     n = zeus_js_rs_copy((int32_t)slot, g_rs_buf[slot], (int32_t)max);
     if (n <= 0) return (loam_str){ .ptr = "", .len = 0 };
-    p = (char *)malloc((size_t)n + 1);
-    if (!p) return (loam_str){ .ptr = "", .len = 0 };
-    memcpy(p, g_rs_buf[slot], (size_t)n);
-    p[n] = 0;
-    return (loam_str){ .ptr = p, .len = (int64_t)n };
+    return loam_str_copy(g_rs_buf[slot], (int64_t)n);
 }
 
 void loam_net_stream_close(int64_t slot) {
@@ -275,17 +265,14 @@ int64_t loam_net_fetch_slot_status(int64_t slot) {
     return fetch_slot_live(slot) && g_fetches[slot].done ? (int64_t)g_fetches[slot].status : 0;
 }
 
-/* Hands slot `slot`'s response to Loam (ownership of the buffer moves; Loam
-   frees it when the string drops) and frees the slot. Empty on failure. */
+/* Hands slot `slot`'s response to Loam as an owned string and frees the
+   slot. Empty on failure. */
 loam_str loam_net_fetch_slot_take(int64_t slot) {
     if (!fetch_slot_live(slot) || !g_fetches[slot].done) return (loam_str){ .ptr = "", .len = 0 };
     if (g_fetches[slot].len > 0) {
-        char *p = g_fetches[slot].buf;
-        int32_t n = g_fetches[slot].len;
-        p[n] = 0;
-        g_fetches[slot].buf = NULL;
+        loam_str r = loam_str_copy(g_fetches[slot].buf, g_fetches[slot].len);
         fetch_slot_free((int)slot);
-        return (loam_str){ .ptr = p, .len = n };
+        return r;
     }
     fetch_slot_free((int)slot);
     return (loam_str){ .ptr = "", .len = 0 };
@@ -413,9 +400,8 @@ loam_str loam_net_fetch_rpc(loam_str path, loam_str body) {
     n = zeus_js_fetch_rpc(path.ptr, (int32_t)path.len, body.ptr ? body.ptr : "",
                           (int32_t)(body.len > 0 ? body.len : 0), buf, 65535);
     if (n < 0) n = 0;
-    out.ptr = buf;
-    out.len = (int64_t)n;
-    buf[n] = 0;
+    out = loam_str_copy(buf, (int64_t)n);
+    free(buf);
     return out;
 }
 
@@ -564,8 +550,9 @@ loam_str loam_net_tcp_read(int64_t fd, int64_t max) {
                 return (loam_str){ .ptr = "", .len = 0 };
             }
             if (got > 0) {
-                p[got] = 0;
-                return (loam_str){ .ptr = p, .len = (int64_t)got };
+                loam_str r = loam_str_copy(p, (int64_t)got);
+                free(p);
+                return r;
             }
             free(p);
             return (loam_str){ .ptr = "", .len = 0 };
@@ -580,8 +567,11 @@ loam_str loam_net_tcp_read(int64_t fd, int64_t max) {
             free(p);
             return (loam_str){ .ptr = "", .len = 0 };
         }
-        p[n] = 0;
-        return (loam_str){ .ptr = p, .len = n };
+        {
+            loam_str r = loam_str_copy(p, (int64_t)n);
+            free(p);
+            return r;
+        }
     }
 }
 
@@ -669,8 +659,11 @@ loam_str loam_net_tcp_peek(int64_t fd, int64_t max) {
         free(p);
         return (loam_str){ .ptr = "", .len = 0 };
     }
-    p[n] = 0;
-    return (loam_str){ .ptr = p, .len = n };
+    {
+        loam_str r = loam_str_copy(p, (int64_t)n);
+        free(p);
+        return r;
+    }
 }
 
 #if defined(__APPLE__)

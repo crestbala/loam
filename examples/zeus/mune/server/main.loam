@@ -1,0 +1,101 @@
+//! Mune's backend: the piece is made here, behind `server/api.loam`.
+//!
+//! `zeli serve` (any target) builds and starts this on 127.0.0.1:8080 before
+//! the UI, so the macOS window (h2c) and the browser (gRPC-Web through the
+//! Vite proxy) reach the same engine — the one place with ffmpeg, the voice
+//! tools, and the file writes. The wasm build cannot render a piece itself,
+//! so its store makes these calls; the macOS store can too.
+//!
+//!   `MUNE_PORT` moves it off 8080 (tests next to a running engine; the UI
+//!   then needs `LOAM_RPC_ADDR=127.0.0.1:<port>`).
+
+import "std:http"
+import "std:str"
+import "std:sys"
+import "api.loam"
+import "engine.loam"
+
+fn port_from(env: string) -> int {
+    let t = str.trim(env)
+    let mut n = 0
+    for i in 0..t.len {
+        let c = t[i]
+        if c < 48 || c > 57 {
+            break
+        }
+        n = n * 10 + (c - 48)
+    }
+    return n
+}
+
+fn main() {
+    engine.start()
+    let app = http.app()
+
+    app.rpc(api.state_rpc(), |body| {
+        let req = api.decode_StateReq(body)
+        let s = engine.state()
+        api.encode_StateResp(StateResp {
+            live: 1, scan: s[0], tools: s[1], voice: s[2], recordings: s[3],
+        })
+    })
+
+    app.rpc(api.add_rpc(), |body| {
+        let req = api.decode_AddReq(body)
+        engine.add_file(req.path, req.name)
+        let s = engine.state()
+        api.encode_AddResp(AddResp { scan: s[0], recordings: s[3], error: "" })
+    })
+
+    app.rpc(api.reset_rpc(), |body| {
+        let req = api.decode_ResetReq(body)
+        engine.reset()
+        api.encode_ResetResp(ResetResp { scan: engine.state()[0] })
+    })
+
+    app.rpc(api.generate_rpc(), |body| {
+        let req = api.decode_GenerateReq(body)
+        let e = engine.generate(req.scan, req.seed, req.style, req.length, req.energy,
+                                req.tempo, req.pitch, req.voices,
+                                req.inst_on, req.inst_level, req.fx_on, req.fx_amount)
+        api.encode_GenerateResp(GenerateResp { ok: if e == "" { 1 } else { 0 }, error: e })
+    })
+
+    app.rpc(api.take_rpc(), |body| {
+        let req = api.decode_TakeReq(body)
+        api.encode_TakeResp(engine.take_resp())
+    })
+
+    app.rpc(api.save_rpc(), |body| {
+        let req = api.decode_SaveReq(body)
+        let e = engine.save(req.id, req.title, req.format)
+        api.encode_SaveResp(SaveResp { ok: if e == "" { 1 } else { 0 }, done: 0, path: "", error: e })
+    })
+
+    app.rpc(api.reveal_rpc(), |body| {
+        let req = api.decode_RevealReq(body)
+        engine.reveal(req.path)
+        api.encode_RevealResp(RevealResp { ok: 1 })
+    })
+
+    app.rpc(api.cancel_rpc(), |body| {
+        let req = api.decode_CancelReq(body)
+        engine.cancel()
+        api.encode_CancelResp(CancelResp { ok: 1 })
+    })
+
+    // One poll: advance the engine a step and answer its stage. The client
+    // calls this on its timer, so it is a plain unary call.
+    app.rpc(api.poll_rpc(), |body| {
+        let req = api.decode_PollReq(body)
+        engine.poll()
+        engine.poll_save()
+        api.encode_PollResp(engine.poll_state())
+    })
+
+    let mut port = port_from(sys.env("MUNE_PORT"))
+    if port <= 0 {
+        port = 8080
+    }
+    app.listen(port)
+}

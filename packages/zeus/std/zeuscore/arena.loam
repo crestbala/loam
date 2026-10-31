@@ -464,6 +464,15 @@ let mut floater_id: []int = []int {}
 let mut floater_z: []int = []int {}
 let mut floater_screen_x: []int = []int {}
 let mut floater_screen_y: []int = []int {}
+/// Paint-pass filters for `floater_collect`, set by `scene` per collection.
+/// A floater inside a scroller is painted once: an in-place one (a z-indexed
+/// field) by its nearest scroller, inline, shifted and clipped with it; a
+/// window-level one (an overlay, an anchored popup) by the floaters section
+/// on top of everything, or by the root when the root is the scroller.
+/// `fc_skip_window` drops window-level floaters from this collection;
+/// `fc_nested` is set while the walk is inside a scroller below the start.
+let mut fc_skip_window: int = 0
+let mut fc_nested: int = 0
 /// Nodes with an indeterminate spin (`Spinner`) currently alive.
 let mut spin_count: int = 0
 /// Component-function runs (`Component`) and reactive-effect runs (`track.run`)
@@ -6598,6 +6607,14 @@ fn is_floater(id: int) -> int {
     return 0
 }
 
+/// An overlay or an anchored popup: placed in window coordinates.
+fn is_window_floater(id: int) -> int {
+    if int(nodes[id].kind) == 9 || nodes[id].anchor > 0 {
+        return 1
+    }
+    return 0
+}
+
 fn floater_clear() {
     let n = floater_id.len
     for i in 0..n {
@@ -6629,7 +6646,15 @@ fn floater_collect(id: int, sx: int, sy: int, paint: int) {
         }
     }
     if is_floater(id) != 0 {
-        floater_push(id, sx, sy)
+        if paint == 0 {
+            floater_push(id, sx, sy)
+        } else if is_window_floater(id) != 0 {
+            if fc_skip_window == 0 {
+                floater_push(id, sx, sy)
+            }
+        } else if fc_nested == 0 {
+            floater_push(id, sx, sy)
+        }
         return
     }
     let mut cx = sx
@@ -6649,7 +6674,16 @@ fn floater_collect(id: int, sx: int, sy: int, paint: int) {
     }
     let nk = nodes[id].kids.len
     for i in 0..nk {
-        floater_collect(nodes[id].kids[i], cx, cy, paint)
+        let c = nodes[id].kids[i]
+        if paint != 0 && c > 0 && int(nodes[c].kind) == 11 {
+            // That scroller paints its own in-place floaters.
+            let was = fc_nested
+            fc_nested = 1
+            floater_collect(c, cx, cy, paint)
+            fc_nested = was
+        } else {
+            floater_collect(c, cx, cy, paint)
+        }
     }
 }
 

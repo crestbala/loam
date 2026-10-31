@@ -1,0 +1,167 @@
+//! The screen, driven like a person: a drop of two files, a pasted path,
+//! then Generate. The piece is the real ffmpeg render. Skips the render
+//! when ffmpeg is missing, and still checks the list.
+//!
+//! The melody recording plays one note a bar over a click, in a shuffled
+//! order of pitches. The take must place its phrases and follow the energy
+//! arc: quiet at the start, full in the middle.
+//!
+//!   ZEUS_HEADLESS=1 ./bin/loamc examples/zeus/mune/tests/session.loam -o /tmp/mune-session && /tmp/mune-session
+
+import "std:async"
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "../components/screen.loam" as screen
+import "../core/jobs.loam" as jobs
+import "../core/num.loam" as num
+import "../core/wav.loam" as wav
+import "../studio/store.loam" as store
+
+const DIR: string = "/tmp/mune-flow"
+const RATE: int = 48000
+/// 120 BPM: a beat is half a second, a bar two.
+const BEAT: int = 24000
+
+fn fail(what: string) {
+    fmt.println("FAIL {{what}}")
+    fmt.println("phase {{store.phase.peek()}} error {{store.error.peek()}}")
+    sys.exit(1)
+}
+
+fn frames() {
+    for i in 0..3 {
+        zeus.pump_frame()
+    }
+}
+
+fn shows(label: string) {
+    if !zeus.text_visible(label) {
+        fail("missing '{{label}}'")
+    }
+}
+
+fn hides(label: string) {
+    if zeus.text_visible(label) {
+        fail("'{{label}}' is still on screen")
+    }
+}
+
+fn click(label: string) {
+    if zeus.engine_click_text(label) == 0 {
+        fail("nothing to click labelled '{{label}}'")
+    }
+    frames()
+}
+
+/// A short noisy click at the start of every beat.
+fn click_at(i: int) -> int {
+    let pos = i % BEAT
+    if pos >= 600 {
+        return 0
+    }
+    let amp = 14000 - pos * 20
+    let n = (i * 17 + 13) % 200
+    let mag = amp * (40 + n % 60) / 100
+    return if n % 2 == 0 { mag } else { -mag }
+}
+
+/// Clicks, and one held note per bar in a shuffled order of pitches.
+fn write_melody(path: string) {
+    let notes = []int { 62, 50, 69, 57, 74, 53, 65, 60, 71, 55, 67, 48 }
+    let mut samples = []int {}
+    for i in 0..(notes.len * 4 * BEAT) {
+        let bar = i / (4 * BEAT)
+        let into = i % (4 * BEAT)
+        let f = num.midi_hz(notes[bar])
+        let env = if into < 480 { into * 100 / 480 } else { 100 }
+        let tone = num.roundi(5000.0 * num.sin(num.TAU * f * f64(i) / f64(RATE))) * env / 100
+        push(samples, num.clampi(tone + click_at(i) / 2, -32000, 32000))
+    }
+    if wav.write_mono(path, RATE, samples) != 0 {
+        fail("could not write {{path}}")
+    }
+}
+
+/// A steady low hum, for the air bus.
+fn write_pad(path: string) {
+    let mut samples = []int {}
+    let f = num.midi_hz(45)
+    for i in 0..(RATE * 16) {
+        push(samples, num.roundi(3000.0 * num.sin(num.TAU * f * f64(i) / f64(RATE))))
+    }
+    if wav.write_mono(path, RATE, samples) != 0 {
+        fail("could not write {{path}}")
+    }
+}
+
+fn paste(path: string) {
+    let id = zeus.engine_find_text("Paste a file path")
+    if id <= 0 {
+        fail("no path field")
+    }
+    zeus.engine_click(zeus.node_x(id) + 8, zeus.node_y(id) + 8)
+    zeus.engine_insert(path)
+    frames()
+    click("Add path")
+}
+
+fn main() -> int {
+    sys.remove_path(DIR)
+    if sys.mkdir(DIR) != 0 {
+        fail("mkdir")
+    }
+    let melody_path = "{{DIR}}/melody.wav"
+    let pad_path = "{{DIR}}/pad.wav"
+    write_melody(melody_path)
+    write_pad(pad_path)
+
+    store.start()
+    zeus.window("mune", 1280, 900)
+    zeus.root(screen.Home())
+    frames()
+    shows("Add a recording to begin.")
+    shows("Generate")
+
+    zeus.media_dropped("melody.wav", melody_path)
+    zeus.media_dropped("pad.wav", pad_path)
+    frames()
+    shows("melody.wav")
+    shows("pad.wav")
+    hides("Add a recording to begin.")
+
+    paste(melody_path)
+    if store.path_text.peek() != "" {
+        fail("pasted path was not cleared")
+    }
+    if store.names.peek().len != 2 {
+        fail("duplicate path was added")
+    }
+
+    if !jobs.tool_ready() {
+        fmt.println("skip: ffmpeg is not installed")
+        return 0
+    }
+
+    for t in 0..3 {
+        let t0 = async.now_ms()
+        click(if t == 0 { "Generate" } else { "New take" })
+        let mut last = -1
+        for i in 0..3000 {
+            let p = store.phase.peek()
+            if p != last {
+                fmt.println("take {{t}} t+{{async.now_ms() - t0}}ms phase {{p}}")
+                last = p
+            }
+            if i > 2 && (p == store.PHASE_READY || p == store.PHASE_ERR) {
+                break
+            }
+            async.sleep(100)
+            zeus.pump_frame()
+        }
+        let rss = sys.exec("ps -o rss= -p $PPID")
+        fmt.println("take {{t}} done phase {{store.phase.peek()}} in {{async.now_ms() - t0}} ms rss {{rss}}")
+        frames()
+    }
+    return 0
+}

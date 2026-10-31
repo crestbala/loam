@@ -1,0 +1,652 @@
+//! Concatenative synthesis with a Markov chain: which phrase plays next.
+//!
+//! The corpus is the phrases the listener's recordings offer (`listen`
+//! cuts them on the pulse; `key.phrase_chroma` hears their chords). Each
+//! phrase is a unit with descriptors: energy, brightness, level, kind
+//! (groove or texture), loop quality, and how much it clashes with the
+//! piece's progression. The piece is a row of slots on the bar grid; every
+//! slot belongs to a section and has a target energy from the arc the
+//! arranger draws (quiet intro, verse, rising build, full drop, …).
+//!
+//! The walk is a Markov chain over the units. From the unit that played
+//! last, the chance of each next unit is
+//!
+//!     P(j | i, k) ∝ exp(−(energy(j, k) + clash(j) − quality(j) + move(i, j, k)) / T)
+//!
+//! `energy` is how far the unit sits from slot k's target. `clash` is how
+//! far its chords stray from the progression the synths play, so what the
+//! recordings play and what the instruments play agree. `move` is what
+//! makes it music rather than a shuffle:
+//!
+//! - Inside a section, the unit that followed `i` in its own recording is
+//!   cheapest: the piece plays on the way the record did. Playing `i` once
+//!   more is cheap too (four bars, then the same four bars, is how a hook
+//!   works); a third time costs. Jumping elsewhere costs, and more the
+//!   further its sound is from `i`.
+//! - A label heard before brings its theme back: a phrase with `varn > 0`
+//!   plays the unit the first phrase of that label played. The second `a`
+//!   is the first `a` again. A new label at a section boundary still costs,
+//!   so a new section is a change.
+//! - In a build, a one- or two-bar cut from inside the hook is cheap, and
+//!   the cost of having heard that audio lately is waived.
+//! - Audio heard in the last three slots costs (a one-bar phrase from
+//!   inside the four bars just heard is a repeat, not a new idea), unless
+//!   it is the theme coming back or the recording playing on.
+//!
+//! The draw is seeded, so a take is repeatable and a new take walks
+//! elsewhere.
+//!
+//! Every input is a parallel column so this file knows nothing about
+//! recordings or buses; `arrange` builds the columns.
+
+import "std:math"
+import "num.loam" as num
+
+/// Cost units are permille. T sets how adventurous the walk is: lower
+/// follows the cheapest path, higher wanders.
+const TEMPERATURE: f64 = 45.0
+
+/// Excluded: the unit does not fit the slot.
+const NEVER: int = 1000000
+
+/// The recording playing on, inside a section.
+const ON_BONUS: int = 180
+/// A section's theme returning.
+const THEME_BONUS: int = 300
+/// Leaving the unit just heard for an unrelated one, inside a section.
+const JUMP_COST: int = 80
+/// A build playing a one- or two-bar cut of the hook (`arrange.BUILD`).
+const BUILD: int = 2
+const FRAGMENT_BONUS: int = 160
+/// Walks drawn per bus before the best is kept.
+const WALKS: int = 48
+
+/// The corpus as the walk sees it. Parallel columns, one entry per unit.
+struct Units {
+    /// 0..1000, rank of energy (level, onset density, brightness) on the
+    /// piece's shared scale.
+    energy: []int,
+    bright: []int,
+    level: []int,
+    kind: []int,
+    /// The phrase's own score from `listen`; higher is a better loop.
+    quality: []int,
+    /// 0..1000: how far the unit's chords stray from the progression,
+    /// already weighted by how tonal it is (a drum loop clashes with
+    /// nothing).
+    clash: []int,
+    /// Bars the unit fills on the piece grid, 0 for free time.
+    bars: []int,
+    /// Index of the unit that followed this one in its recording, or -1.
+    next: []int,
+    /// Where the unit's audio comes from: recording, start, and length (any
+    /// one time unit). A column shorter than the corpus, or a recording
+    /// below zero, means unknown, and the unit overlaps only itself.
+    src: []int,
+    start: []int,
+    len: []int,
+    /// 1 when the unit is a one- or two-bar cut from inside the hook.
+    hook: []int,
+}
+
+/// One row of slots for a bus: where each sits, what it aims for, and the
+/// section it belongs to.
+struct Slots {
+    bar: []int,
+    bars: []int,
+    /// 0..1000 target energy.
+    target: []int,
+    /// Index of the slot's section, and the section's kind.
+    sec: []int,
+    kind: []int,
+    /// Phrase label (`0` is a, `1` is b), or -1 when the slot has none.
+    /// `varn` is how many times that label was heard; above zero, the slot
+    /// wants the label's first unit back.
+    label: []int,
+    varn: []int,
+}
+
+/// Audio already placed on another bus, so a walk can be scored for sharing it.
+struct Avoid {
+    src: []int,
+    start: []int,
+    len: []int,
+    bar: []int,
+    bars: []int,
+}
+
+fn no_units() -> Units {
+    return Units {
+        energy: []int {}, bright: []int {}, level: []int {}, kind: []int {}, quality: []int {},
+        clash: []int {}, bars: []int {}, next: []int {}, src: []int {}, start: []int {}, len: []int {},
+        hook: []int {},
+    }
+}
+
+fn no_slots() -> Slots {
+    return Slots {
+        bar: []int {}, bars: []int {}, target: []int {}, sec: []int {}, kind: []int {},
+        label: []int {}, varn: []int {},
+    }
+}
+
+fn no_avoid() -> Avoid {
+    return Avoid { src: []int {}, start: []int {}, len: []int {}, bar: []int {}, bars: []int {} }
+}
+
+fn add_slot(s: &mut Slots, bar: int, bars: int, target: int, sec: int, kind: int, label: int, varn: int) {
+    push(s.bar, bar)
+    push(s.bars, bars)
+    push(s.target, target)
+    push(s.sec, sec)
+    push(s.kind, kind)
+    push(s.label, label)
+    push(s.varn, varn)
+}
+
+/// Smoothstep, both ends flat: 0..1000 in, 0..1000 out.
+fn ease(x: int) -> int {
+    let t = f64(num.clampi(x, 0, 1000)) / 1000.0
+    return num.roundi(t * t * (3.0 - 2.0 * t) * 1000.0)
+}
+
+/// Mean of `path` across `bars` from `bar`.
+fn path_at(p: []int, bar: int, bars: int) -> int {
+    let mut s = 0
+    let mut n = 0
+    for b in bar..(bar + bars) {
+        if b >= 0 && b < p.len {
+            s = s + p[b]
+            n = n + 1
+        }
+    }
+    if n == 0 {
+        return 0
+    }
+    return s / n
+}
+
+/// The slots with their targets moved into the units' own span of
+/// energies, so every bus reaches its own quietest and fullest phrases.
+fn fit_range(s: Slots, u: Units) -> Slots {
+    let mut lo = 1000
+    let mut hi = 0
+    for j in 0..u.energy.len {
+        lo = if u.energy[j] < lo { u.energy[j] } else { lo }
+        hi = if u.energy[j] > hi { u.energy[j] } else { hi }
+    }
+    if hi < lo {
+        return s
+    }
+    let mut out = no_slots()
+    for k in 0..s.target.len {
+        let label = if k < s.label.len { s.label[k] } else { -1 }
+        let varn = if k < s.varn.len { s.varn[k] } else { 0 }
+        add_slot(out, s.bar[k], s.bars[k], lo + s.target[k] * (hi - lo) / 1000, s.sec[k], s.kind[k], label, varn)
+    }
+    return out
+}
+
+/// Rank of each value among `xs` as 0..1000 (ties share the mean rank).
+/// Entries below zero are unknown and stay -1.
+fn ranks(xs: []int) -> []int {
+    let mut out = []int {}
+    let mut known = 0
+    for i in 0..xs.len {
+        if xs[i] >= 0 {
+            known = known + 1
+        }
+    }
+    for i in 0..xs.len {
+        if xs[i] < 0 {
+            push(out, -1)
+            continue
+        }
+        if known <= 1 {
+            push(out, 500)
+            continue
+        }
+        let mut below = 0
+        let mut same = 0
+        for j in 0..xs.len {
+            if xs[j] >= 0 {
+                if xs[j] < xs[i] {
+                    below = below + 1
+                } else if xs[j] == xs[i] {
+                    same = same + 1
+                }
+            }
+        }
+        // Mean rank of the tie group, scaled so the lowest is 0.
+        let r2 = 2 * below + same - 1
+        push(out, r2 * 1000 / (2 * (known - 1)))
+    }
+    return out
+}
+
+/// Energy of each unit, 0..1000: level (45%), onset density (35%), and
+/// brightness (20%), each ranked across the whole corpus.
+fn energies(level: []int, dense: []int, bright: []int) -> []int {
+    let rl = ranks(level)
+    let rd = ranks(dense)
+    let rb = ranks(bright)
+    let mut out = []int {}
+    for i in 0..level.len {
+        push(out, (45 * rl[i] + 35 * rd[i] + 20 * rb[i]) / 100)
+    }
+    return out
+}
+
+/// For each unit, the unit that began where it ended in the same recording
+/// (within an eighth of its length), or -1: the order the recordings
+/// themselves teach the chain. A unit of the same length wins a near tie,
+/// so four bars play on into four bars.
+fn successors(src: []int, start: []int, len: []int) -> []int {
+    let mut out = []int {}
+    for i in 0..src.len {
+        let end = start[i] + len[i]
+        let slack = len[i] / 8
+        let mut best = -1
+        let mut best_d = 2 * slack + 1
+        for j in 0..src.len {
+            if j != i && src[j] == src[i] {
+                let d = num.absi(start[j] - end)
+                if d <= slack {
+                    let cost = d + (if num.absi(len[j] - len[i]) > slack { slack } else { 0 })
+                    if cost < best_d {
+                        best_d = cost
+                        best = j
+                    }
+                }
+            }
+        }
+        push(out, best)
+    }
+    return out
+}
+
+/// Can unit `u` fill a slot of `slot_bars`? Free-time units and slots
+/// without a length (air) always can; a looped unit must divide the slot.
+fn fits(u: Units, j: int, slot_bars: int) -> bool {
+    let b = u.bars[j]
+    if slot_bars <= 0 || b <= 0 {
+        return true
+    }
+    return b <= slot_bars && slot_bars % b == 0
+}
+
+/// Do units `i` and `j` play any of the same audio?
+fn same_audio(u: Units, i: int, j: int) -> bool {
+    if i == j {
+        return true
+    }
+    if i < 0 || j < 0 || i >= u.src.len || j >= u.src.len || i >= u.start.len || j >= u.start.len ||
+       i >= u.len.len || j >= u.len.len {
+        return false
+    }
+    if u.src[i] < 0 || u.src[i] != u.src[j] {
+        return false
+    }
+    return u.start[i] < u.start[j] + u.len[j] && u.start[j] < u.start[i] + u.len[i]
+}
+
+/// Leaving `i` for an unrelated `j` inside a section: the jump itself, and
+/// the step in brightness, level, and kind.
+fn jump_cost(u: Units, i: int, j: int) -> int {
+    let mut c = JUMP_COST
+    c = c + num.absi(u.bright[j] - u.bright[i]) * 3
+    c = c + num.absi(u.level[j] - u.level[i]) * 2
+    if u.kind[j] != u.kind[i] {
+        c = c + 40
+    }
+    return c
+}
+
+/// Seeded uniform draw in [0, 1). A seed from `num.hash` can be too big to
+/// multiply in an `int`; those are folded. Smaller seeds are unchanged.
+fn draw(seed: int, k: int) -> f64 {
+    let mut s = seed
+    if s < 0 || s > 250000 {
+        s = num.absi(s) % 250000
+    }
+    return f64(num.hash(s * 7919 + k * 31 + 5, k + 17)) / 1000003.0
+}
+
+/// The first slot of slot `k`'s section.
+fn section_first(slots: Slots, k: int) -> int {
+    let mut f = k
+    while f > 0 && slots.sec[f - 1] == slots.sec[k] {
+        f = f - 1
+    }
+    return f
+}
+
+/// The unit an earlier slot with the same label played, or -1. Only a
+/// phrase that has heard the label before (`varn > 0`) has one: the second
+/// `a` plays the first `a`'s audio. A label of -1 is not a phrase.
+fn theme_for(slots: Slots, out: []int, k: int) -> int {
+    if k >= slots.label.len || k >= slots.varn.len || slots.label[k] < 0 || slots.varn[k] <= 0 {
+        return -1
+    }
+    let lab = slots.label[k]
+    for r in 0..out.len {
+        if r < slots.label.len && slots.label[r] == lab && r < out.len && out[r] >= 0 {
+            return out[r]
+        }
+    }
+    return -1
+}
+
+fn hook_fragment(u: Units, j: int) -> bool {
+    return j >= 0 && j < u.hook.len && u.hook[j] == 1
+}
+
+/// How many slots in a row, ending at the last, played `j`.
+fn run_of(out: []int, j: int) -> int {
+    let mut n = 0
+    let mut r = out.len - 1
+    while r >= 0 && out[r] == j {
+        n = n + 1
+        r = r - 1
+    }
+    return n
+}
+
+/// What it costs for unit `j` to fill slot `k` after the walk so far.
+fn cost(u: Units, slots: Slots, out: []int, k: int, j: int) -> int {
+    let mut c = num.absi(u.energy[j] - slots.target[k]) + u.clash[j] - u.quality[j] * 2
+    let prev = if out.len > 0 { out[out.len - 1] } else { -1 }
+    let same_sec = k > 0 && slots.sec[k - 1] == slots.sec[k]
+    let theme = theme_for(slots, out, k)
+    let on = prev >= 0 && u.next[prev] == j
+    let frag = slots.kind[k] == BUILD && hook_fragment(u, j)
+    if j == theme {
+        c = c - THEME_BONUS
+    }
+    if frag {
+        c = c - FRAGMENT_BONUS
+    }
+    if prev >= 0 && same_sec {
+        if on {
+            c = c - ON_BONUS
+        } else if j == prev {
+            c = c + (if run_of(out, j) >= 2 { 200 } else { -40 })
+        } else {
+            c = c + jump_cost(u, prev, j)
+        }
+    } else if prev >= 0 && j == prev {
+        // A new label at a section boundary is a change. A label already
+        // heard is the theme coming back, and pays nothing extra.
+        let fresh = k >= slots.label.len || slots.label[k] < 0 || slots.varn[k] <= 0
+        if fresh {
+            c = c + 150
+        }
+    }
+    if j != prev && j != theme && !on && !frag {
+        // Heard lately — this unit or one sharing its audio: move on.
+        let back = num.clampi(out.len - 3, 0, out.len)
+        for r in back..out.len {
+            if out[r] >= 0 && same_audio(u, out[r], j) {
+                c = c + 130
+            }
+        }
+    }
+    return c
+}
+
+/// One unit per slot, or -1 where nothing fits. The walk starts from no
+/// unit, so the first slot is chosen by its target and its fit alone.
+fn walk(u: Units, slots: Slots, seed: int) -> []int {
+    let mut out = []int {}
+    let n = u.energy.len
+    for k in 0..slots.target.len {
+        let mut costs = []int {}
+        let mut least = NEVER
+        for j in 0..n {
+            let c = if fits(u, j, slots.bars[k]) { cost(u, slots, out, k, j) } else { NEVER }
+            push(costs, c)
+            if c < least {
+                least = c
+            }
+        }
+        if least >= NEVER {
+            push(out, -1)
+            continue
+        }
+        let mut total: f64 = 0.0
+        let mut weights = []f64 {}
+        for j in 0..n {
+            let mut w: f64 = 0.0
+            if costs[j] < NEVER {
+                w = math.exp(-f64(costs[j] - least) / TEMPERATURE)
+            }
+            push(weights, w)
+            total = total + w
+        }
+        let mut r = draw(seed, k) * total
+        let mut pick = -1
+        for j in 0..n {
+            if pick < 0 && weights[j] > 0.0 {
+                r = r - weights[j]
+                if r <= 0.0 {
+                    pick = j
+                }
+            }
+        }
+        if pick < 0 {
+            // Rounding left a sliver: the last unit with any weight.
+            for j in 0..n {
+                if weights[j] > 0.0 {
+                    pick = j
+                }
+            }
+        }
+        push(out, pick)
+    }
+    return out
+}
+
+/// One bus's chosen walk, and the three lowest scores that were drawn
+/// (`top_n` is the walk index, `top_score` is what `assess` returned).
+struct Choice {
+    out: []int,
+    top_n: []int,
+    top_score: []int,
+}
+
+fn no_choice() -> Choice {
+    return Choice { out: []int {}, top_n: []int {}, top_score: []int {} }
+}
+
+/// A repeated label that did not play its first statement's unit.
+fn form_misses(slots: Slots, out: []int) -> int {
+    let mut n = 0
+    for k in 0..out.len {
+        if k >= slots.label.len || k >= slots.varn.len || slots.label[k] < 0 || slots.varn[k] <= 0 {
+            continue
+        }
+        let lab = slots.label[k]
+        let mut theme = -1
+        for r in 0..k {
+            if r < out.len && out[r] >= 0 && r < slots.label.len && slots.label[r] == lab {
+                theme = out[r]
+                break
+            }
+        }
+        if theme >= 0 && out[k] != theme {
+            n = n + 1
+        }
+    }
+    return n
+}
+
+fn placed_bars(bars: int) -> int {
+    if bars <= 0 {
+        return 4
+    }
+    return bars
+}
+
+fn bars_overlap(a: int, ab: int, b: int, bb: int) -> bool {
+    return a < b + placed_bars(bb) && b < a + placed_bars(ab)
+}
+
+fn overlaps_placed(u: Units, j: int, avoid: Avoid, i: int) -> bool {
+    if j < 0 || i < 0 || j >= u.src.len || i >= avoid.src.len {
+        return false
+    }
+    if u.src[j] < 0 || u.src[j] != avoid.src[i] {
+        return false
+    }
+    if j >= u.start.len || j >= u.len.len || i >= avoid.start.len || i >= avoid.len.len {
+        return false
+    }
+    return u.start[j] < avoid.start[i] + avoid.len[i] && avoid.start[i] < u.start[j] + u.len[j]
+}
+
+/// Slots whose unit plays audio another bus already placed, in the same bars.
+fn cross_bus(u: Units, slots: Slots, out: []int, avoid: Avoid) -> int {
+    let mut n = 0
+    for k in 0..out.len {
+        let j = out[k]
+        if j < 0 || k >= slots.bar.len {
+            continue
+        }
+        let mut hit = false
+        for i in 0..avoid.src.len {
+            if !hit && i < avoid.bar.len && overlaps_placed(u, j, avoid, i) &&
+               bars_overlap(slots.bar[k], slots.bars[k], avoid.bar[i], if i < avoid.bars.len { avoid.bars[i] } else { 0 }) {
+                hit = true
+            }
+        }
+        if hit {
+            n = n + 1
+        }
+    }
+    return n
+}
+
+/// Mean |energy − target|. An empty slot counts as a full miss.
+fn arc_cost(u: Units, slots: Slots, out: []int) -> int {
+    let mut s = 0
+    let mut n = 0
+    for k in 0..out.len {
+        if k >= slots.target.len {
+            continue
+        }
+        n = n + 1
+        if out[k] >= 0 && out[k] < u.energy.len {
+            s = s + num.absi(u.energy[out[k]] - slots.target[k])
+        } else {
+            s = s + 1000
+        }
+    }
+    if n == 0 {
+        return 1000
+    }
+    return s / n
+}
+
+/// Mean jump between neighbours, quartered so a seam cannot outvote the arc.
+fn seam_cost(u: Units, out: []int) -> int {
+    let mut seam = 0
+    let mut n = 0
+    for k in 1..out.len {
+        let a = out[k - 1]
+        let b = out[k]
+        if a >= 0 && b >= 0 && a < u.energy.len && b < u.energy.len {
+            n = n + 1
+            let follows = a < u.next.len && u.next[a] == b
+            if a != b && !follows {
+                seam = seam + jump_cost(u, a, b)
+            }
+        }
+    }
+    if n == 0 {
+        return 0
+    }
+    return (seam / n) / 4
+}
+
+/// Distinct units over placed slots, outside a band of about a fifth to
+/// two thirds. One slot has nothing to vary.
+fn variety_cost(out: []int) -> int {
+    let mut placed = 0
+    let mut seen = []int {}
+    for k in 0..out.len {
+        if out[k] >= 0 {
+            placed = placed + 1
+            if num.index_of(seen, out[k]) < 0 {
+                push(seen, out[k])
+            }
+        }
+    }
+    if placed <= 1 {
+        return 0
+    }
+    let ratio = seen.len * 1000 / placed
+    if ratio < 200 {
+        return 200 - ratio
+    }
+    if ratio > 700 {
+        return ratio - 700
+    }
+    return 0
+}
+
+/// Lower is better. The arc is the mean energy miss; a repeated label that
+/// plays a new unit costs 40; seams and variety are small; sharing audio
+/// with another bus costs 500 a slot.
+fn assess(u: Units, slots: Slots, out: []int, avoid: Avoid) -> int {
+    return arc_cost(u, slots, out) + form_misses(slots, out) * 40 + seam_cost(u, out) + variety_cost(out) +
+           cross_bus(u, slots, out, avoid) * 500
+}
+
+/// Insert `n` among the three lowest scores. Ties keep the earlier walk.
+fn with_top(ns: []int, scores: []int, n: int, score: int) -> [][]int {
+    let mut at = ns.len
+    for i in 0..ns.len {
+        if at == ns.len && (score < scores[i] || (score == scores[i] && n < ns[i])) {
+            at = i
+        }
+    }
+    if at >= 3 {
+        return [][]int { ns, scores }
+    }
+    let mut nn = []int {}
+    let mut ss = []int {}
+    for i in 0..at {
+        push(nn, ns[i])
+        push(ss, scores[i])
+    }
+    push(nn, n)
+    push(ss, score)
+    for i in at..ns.len {
+        if nn.len < 3 {
+            push(nn, ns[i])
+            push(ss, scores[i])
+        }
+    }
+    return [][]int { nn, ss }
+}
+
+/// `WALKS` seeded walks. The lowest score wins; a tie keeps the earliest
+/// walk, so walk 0 wins a tie. The seed of walk `n` is `num.hash(seed, n)`.
+fn select(u: Units, slots: Slots, seed: int, avoid: Avoid) -> Choice {
+    let mut best_score = NEVER
+    let mut best = []int {}
+    let mut top_n = []int {}
+    let mut top_score = []int {}
+    for n in 0..WALKS {
+        let w = walk(u, slots, num.hash(seed, n))
+        let sc = assess(u, slots, w, avoid)
+        let kept = with_top(top_n, top_score, n, sc)
+        top_n = kept[0]
+        top_score = kept[1]
+        if n == 0 || sc < best_score {
+            best_score = sc
+            best = w
+        }
+    }
+    return Choice { out: best, top_n: top_n, top_score: top_score }
+}

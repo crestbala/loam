@@ -1,0 +1,171 @@
+//! The pieces every Mune panel uses: icons, the panel shell, a labelled
+//! control row, and a value readout. Theme colours only; nothing here reads
+//! the store.
+
+import "std:zeus"
+import "std:zui"
+import "../theme.loam" as theme
+
+const IC_NOTE: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M9 18V5l12-2v13\"/><circle cx=\"6\" cy=\"18\" r=\"3\"/><circle cx=\"18\" cy=\"16\" r=\"3\"/></svg>"
+const IC_UPLOAD: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 16V4\"/><path d=\"M7 9l5-5 5 5\"/><path d=\"M4 20h16\"/></svg>"
+const IC_PLAY: string = "<svg viewBox=\"0 0 24 24\" fill=\"currentColor\"><path d=\"M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z\"/></svg>"
+const IC_PAUSE: string = "<svg viewBox=\"0 0 24 24\" fill=\"currentColor\"><rect x=\"6\" y=\"5\" width=\"4\" height=\"14\" rx=\"1\"/><rect x=\"14\" y=\"5\" width=\"4\" height=\"14\" rx=\"1\"/></svg>"
+const IC_SPARK: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 3l1.9 5.6L19.5 10.5l-5.6 1.9L12 18l-1.9-5.6L4.5 10.5l5.6-1.9z\"/><path d=\"M19 3v4\"/><path d=\"M21 5h-4\"/></svg>"
+const IC_SHUFFLE: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M16 3h5v5\"/><path d=\"M4 20L21 3\"/><path d=\"M21 16v5h-5\"/><path d=\"M15 15l6 6\"/><path d=\"M4 4l5 5\"/></svg>"
+const IC_SAVE: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 4v12\"/><path d=\"M7 11l5 5 5-5\"/><path d=\"M5 20h14\"/></svg>"
+const IC_FOLDER: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M3 7C3 5.9 3.9 5 5 5H9L11 7H19C20.1 7 21 7.9 21 9V17C21 18.1 20.1 19 19 19H5C3.9 19 3 18.1 3 17Z\"/></svg>"
+const IC_WAVE: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"><path d=\"M3 12h2\"/><path d=\"M7 8v8\"/><path d=\"M11 4v16\"/><path d=\"M15 7v10\"/><path d=\"M19 10v4\"/><path d=\"M21 12h0\"/></svg>"
+const IC_X: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"><path d=\"M6 6l12 12\"/><path d=\"M18 6L6 18\"/></svg>"
+const IC_SUN: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"><circle cx=\"12\" cy=\"12\" r=\"4\"/><path d=\"M12 2v2\"/><path d=\"M12 20v2\"/><path d=\"M4.9 4.9l1.4 1.4\"/><path d=\"M17.7 17.7l1.4 1.4\"/><path d=\"M2 12h2\"/><path d=\"M20 12h2\"/><path d=\"M4.9 19.1l1.4-1.4\"/><path d=\"M17.7 6.3l1.4-1.4\"/></svg>"
+const IC_MOON: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M20 14.5C18.9 15 17.7 15.3 16.4 15.3C11.9 15.3 8.7 12.1 8.7 7.6C8.7 6.3 9 5.1 9.5 4C6.3 5.1 4 8.2 4 11.8C4 16.4 7.6 20 12.2 20C15.8 20 18.9 17.7 20 14.5Z\"/></svg>"
+const IC_CLIMB: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M3 19c4 0 5-3 8-7s5-7 10-7\"/><path d=\"M17 5h4v4\"/></svg>"
+const IC_VOICE_OFF: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M9 11V5C9 3.3 10.3 2 12 2C13.7 2 15 3.3 15 5V11\"/><path d=\"M5 10C5 13.9 8.1 17 12 17C13.7 17 15.3 16.4 16.5 15.4\"/><path d=\"M12 19v2\"/><path d=\"M3 3l18 18\"/></svg>"
+
+/// A panel: a raised card with a heading, an optional caption, the body.
+fn Panel(title: string, caption: fn() -> string, body: fn()) -> Node {
+    return zeus.Box(style = Style(direction = Direction.Column, gap = 12, padding = edges(16), radius = corners(14),
+                                  background = theme.PANEL, border = line(1, theme.LINE))) {
+        zeus.Box(style = Style(direction = Direction.Column, gap = 3)) {
+            zeus.Text(title, style = Style(font = 15, color = theme.INK))
+            zeus.Text(caption(), style = Style(font = 12, color = theme.FAINT, wrap = true))
+        }
+        body()
+    }
+}
+
+/// A small heading inside a panel: "INSTRUMENTS".
+fn Heading(text: string) -> Node {
+    return zeus.Text(text, style = Style(font = 11, color = theme.FAINT, padding = Edges(top = 4)))
+}
+
+/// Label at the left, the control in the middle, a readout at the right.
+/// Every row in a panel shares the two edge columns, so controls line up.
+fn Row(label: string, value: fn() -> string, control: fn()) -> Node {
+    return zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 12, minHeight = 34)) {
+        zeus.Text(label, style = Style(font = 13, color = theme.MUTE, width = px(76)))
+        zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, grow = 1, shrink = 1, minWidth = 0)) {
+            control()
+        }
+        zeus.Box(style = Style(direction = Direction.Row, justify = Align.End, width = px(52))) {
+            zeus.Text(value(), style = Style(font = 12, color = theme.FAINT))
+        }
+    }
+}
+
+/// Width of a dropdown at the end of a control line (a tone, an echo time).
+const TAIL_W: int = 104
+
+/// A dropdown of `labels`, `width` px wide, bound to `value`. The menu opens
+/// under it at the same width.
+fn Choice(value: Signal<int>, labels: []string, label: string, width: int) -> Node {
+    return zui.Select(value, labels, size = zeus.Size.Sm, label = label, style = Style(width = px(width)))
+}
+
+/// A slider in the room's colours: accent fill and knob on a quiet track.
+///
+/// The track always runs 0..100 and follows the pointer continuously; the
+/// value is that position mapped onto `lo..hi`. `zui.Slider` with its own
+/// range snaps the knob to whole steps and nudges a step on every move,
+/// which on a short range (pitch is 25 steps) makes the knob lag behind
+/// the pointer and jump.
+///
+/// Keys move the value, not the track: the native arrows step the track by
+/// 1%, which is a quarter of a semitone on pitch and a crawl on a level.
+/// Arrows step a twentieth of the range (at least one), Shift+arrows one,
+/// Page Up / Page Down a tenth, Home / End the ends. They go in through
+/// `zui.Slider`'s `keys`, named after its own actions so they replace them.
+fn Slider(value: Signal<int>, lo: int, hi: int, label: string, off: bool) -> Node {
+    let span = if hi > lo { hi - lo } else { 1 }
+    let pos = zeus.signal(track_pos(value.peek(), lo, span))
+    // Value → track only when the value moved for another reason (a style
+    // preset, the tempo following the recordings, a key): a drag that stays
+    // inside one step keeps the knob where the pointer is.
+    zeus.effect(fn() {
+        let v = value.get()
+        if track_value(pos.peek(), lo, span) != v {
+            pos.set(track_pos(v, lo, span))
+        }
+    })
+    zeus.effect(fn() {
+        let v = track_value(pos.get(), lo, span)
+        if v != value.peek() {
+            value.set(v)
+        }
+    })
+    let step = key_step(span)
+    let page = if span / 10 > step { span / 10 } else { step }
+    let keys = []KeyBind {
+        zeus.key_bind("right", "slider.inc", fn() { nudge(value, step, lo, hi) }),
+        zeus.key_bind("left", "slider.dec", fn() { nudge(value, -step, lo, hi) }),
+        zeus.key_bind("up", "slider.up", fn() { nudge(value, step, lo, hi) }),
+        zeus.key_bind("down", "slider.down", fn() { nudge(value, -step, lo, hi) }),
+        zeus.key_bind("shift+right", "slider.fine_inc", fn() { nudge(value, 1, lo, hi) }),
+        zeus.key_bind("shift+left", "slider.fine_dec", fn() { nudge(value, -1, lo, hi) }),
+        zeus.key_bind("shift+up", "slider.fine_up", fn() { nudge(value, 1, lo, hi) }),
+        zeus.key_bind("shift+down", "slider.fine_down", fn() { nudge(value, -1, lo, hi) }),
+        zeus.key_bind("pageup", "slider.page_up", fn() { nudge(value, page, lo, hi) }),
+        zeus.key_bind("pagedown", "slider.page_down", fn() { nudge(value, -page, lo, hi) }),
+        zeus.key_bind("home", "slider.min", fn() { value.set(lo) }),
+        zeus.key_bind("end", "slider.max", fn() { value.set(hi) }),
+    }
+    return zui.Slider(pos, label = label, disabled = off, keys = keys,
+                      style = Style(color = if off { theme.FAINT } else { theme.ACCENT }, background = theme.TILE_HI))
+}
+
+/// Arrow step for a range: one unit on a short one (pitch), a twentieth on
+/// a long one (levels, tempo).
+fn key_step(span: int) -> int {
+    if span <= 30 {
+        return 1
+    }
+    return span / 20
+}
+
+fn nudge(value: Signal<int>, d: int, lo: int, hi: int) {
+    let v = value.peek() + d
+    value.set(if v < lo { lo } else if v > hi { hi } else { v })
+}
+
+fn track_pos(v: int, lo: int, span: int) -> int {
+    let p = ((v - lo) * 100 + span / 2) / span
+    return if p < 0 { 0 } else if p > 100 { 100 } else { p }
+}
+
+fn track_value(p: int, lo: int, span: int) -> int {
+    return lo + (p * span + 50) / 100
+}
+
+/// Light or dark. The whole window repaints: every colour is a role.
+fn ThemeToggle() -> Node {
+    return zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, justify = Align.Center, gap = 6,
+                                  height = px(28), width = px(76), radius = corners(14), background = theme.TILE,
+                                  border = line(1, theme.LINE), cursor = "pointer"),
+                    role = "button", label = "Appearance",
+                    on_click = fn() { theme.toggle() }) {
+        zeus.Box(visible = theme.is_dark(), style = Style(direction = Direction.Row)) {
+            zui.Icon(IC_MOON, 14, theme.ACCENT)
+        }
+        zeus.Box(visible = !theme.is_dark(), style = Style(direction = Direction.Row)) {
+            zui.Icon(IC_SUN, 14, theme.WARN)
+        }
+        zeus.Text(fn() -> string { return if theme.is_dark() { "Dark" } else { "Light" } },
+                  style = Style(font = 12, color = theme.MUTE))
+    }
+}
+
+/// A small round colour mark.
+fn Pip(color: string, size: int) -> Node {
+    return zeus.Box(style = Style(width = px(size), height = px(size), radius = corners(size / 2), background = color))
+}
+
+/// Text and a value, both small: "Echo · 35".
+fn percent(v: int) -> string {
+    return "{{v}}"
+}
+
+fn signed(v: int, unit: string) -> string {
+    if v > 0 {
+        return "+{{v}}{{unit}}"
+    }
+    return "{{v}}{{unit}}"
+}

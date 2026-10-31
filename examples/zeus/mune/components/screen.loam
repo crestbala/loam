@@ -1,0 +1,63 @@
+//! The studio: a header, the recordings and the piece on the left, the
+//! sound on the right, and the player bar pinned under both.
+
+import "std:zeus"
+import "std:zui"
+import "../studio/store.loam" as store
+import "../theme.loam" as theme
+import "kit.loam" as kit
+import "piece.loam" as piece
+import "player.loam" as player
+import "recordings.loam" as recordings
+import "sound.loam" as sound
+
+fn Home() -> Node {
+    theme.install()
+    return zeus.Box(style = Style(direction = Direction.Column, width = pct(100), height = pct(100),
+                                  background = theme.PAPER)) {
+        Header()
+        zui.Scroll(style = Style(grow = 1, shrink = 1)) {
+            zeus.Box(style = Style(direction = Direction.Row, gap = 18, padding = Edges(left = 22, right = 22, top = 4, bottom = 22),
+                                   align = Align.Start)) {
+                zeus.Box(style = Style(direction = Direction.Column, gap = 18, width = px(400))) {
+                    recordings.Recordings()
+                    piece.Piece()
+                }
+                zeus.Box(style = Style(direction = Direction.Column, gap = 18, grow = 1, shrink = 1, minWidth = 0)) {
+                    sound.Sound()
+                }
+            }
+        }
+        player.PlayerBar()
+    }
+}
+
+fn Header() -> Node {
+    return zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 12, padding = edges2(16, 22))) {
+        zeus.Box(style = Style(width = px(36), height = px(36), radius = corners(10), background = theme.ACCENT,
+                               align = Align.Center, justify = Align.Center)) {
+            zui.Icon(kit.IC_NOTE, 18, theme.ON_ACCENT)
+        }
+        zeus.Box(style = Style(direction = Direction.Column, gap = 1)) {
+            zeus.Text("Mune", style = Style(font = 22, color = theme.INK))
+            zeus.Text("Your recordings, made into a new piece.", style = Style(font = 12, color = theme.FAINT))
+        }
+        zui.Grow()
+        zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 6, height = px(28),
+                               padding = edges2(0, 12), radius = corners(14), background = theme.TILE)) {
+            kit.Pip(if store.tools_ok.get() { theme.OK } else { theme.WARN }, 7)
+            zeus.Text(fn() -> string {
+                if !store.engine_up.get() {
+                    return "engine offline — start it with zeli serve"
+                }
+                if store.tools_ok.get() {
+                    return "ffmpeg ready"
+                }
+                return "ffmpeg missing — brew install ffmpeg"
+            }, style = Style(font = 12, color = theme.MUTE))
+        }
+        kit.ThemeToggle()
+        zui.Button(label = "Saved pieces", icon = kit.IC_FOLDER, look = zeus.Look.Ghost, size = zeus.Size.Sm,
+                   on_click = fn() { store.reveal_saved() })
+    }
+}

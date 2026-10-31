@@ -1,0 +1,812 @@
+//! The backend engine: the piece is made here, on the machine that has
+//! ffmpeg, the voice tools, and the file writes.
+//!
+//! The wasm build cannot decode, separate voices, or render — a browser has
+//! no ffmpeg — so `studio/store.loam` forwards every step to this engine
+//! over gRPC-Web (see `server/main.loam`), the way vidget's UI talks to its
+//! download engine. The macOS window talks to the same engine, so both
+//! targets behave alike.
+//!
+//! The pipeline is the same one `DESIGN.md` describes, with the signals
+//! replaced by plain fields:
+//!
+//!   decode   ffmpeg: 48 kHz copies, envelopes, pitch copies, loudness
+//!   voices   the host's classifier maps where anyone sings or speaks
+//!   analyze  Loam: tempo, grid, key, phrases and their pitch
+//!   split    the host removes the voice from recordings that have almost
+//!            no voice-free phrase (only when voices are removed)
+//!   render   ffmpeg: the graph, loudness, 24-bit WAV, the waveform
+//!
+//! Every call is cheap: the shell jobs run detached and `poll` reports the
+//! stage, so the client's UI keeps moving while ffmpeg works.
+
+import "std:async"
+import "std:str"
+import "std:sys"
+import "std:zeus"
+import "api.loam"
+import "../core/arrange.loam" as arrange
+import "../core/graph.loam" as graph
+import "../core/jobs.loam" as jobs
+import "../core/key.loam" as key
+import "../core/listen.loam" as listen
+import "../core/sound.loam" as sound
+import "../core/styles.loam" as styles
+import "../core/time.loam" as time
+import "../studio/files.loam" as files
+
+/// Bars in the waveform overview.
+const WAVE_BARS: int = 120
+
+/// Stages `PollResp.stage` carries.
+const ST_IDLE: int = 0
+const ST_RUNNING: int = 1
+const ST_READY: int = 2
+const ST_ERROR: int = 3
+
+// The running phase behind `ST_RUNNING`.
+const PH_IDLE: int = 0
+const PH_DECODE: int = 1
+const PH_VOICES: int = 2
+const PH_ANALYZE: int = 3
+const PH_SPLIT: int = 4
+const PH_RENDER: int = 5
+
+// ---- Session state -----------------------------------------------------------
+
+let mut names: []string = []string {}
+let mut paths: []string = []string {}
+let mut session: string = ""
+let mut session_n: int = 0
+let mut scan: int = 0
+
+let mut sources: []Source = []Source {}
+let mut has_map: []bool = []bool {}
+let mut has_split: []bool = []bool {}
+let mut mono: []bool = []bool {}
+
+let mut voice_at: int = 0
+let mut split_queue: []int = []int {}
+let mut split_at: int = 0
+let mut analyze_at: int = 0
+
+// The job.
+let mut stage: int = ST_IDLE
+let mut run_phase: int = PH_IDLE
+let mut percent: int = 0
+let mut status: string = ""
+let mut err: string = ""
+let mut notice: string = ""
+let mut tools_ok: bool = false
+let mut voice_ok: bool = false
+
+// The take.
+let mut take_n: int = 0
+let mut take_ms: int = 0
+let mut take_line: string = ""
+let mut peaks: []int = []int {}
+let mut sections: []int = []int {}
+let mut path_target: []int = []int {}
+let mut path_height: []int = []int {}
+let mut render_score: Score = arrange.empty_score()
+let mut dirty: bool = false
+
+// Saving.
+let mut saving: bool = false
+let mut save_target: string = ""
+let mut saved: string = ""
+let mut save_err: string = ""
+
+// The sound of the run in flight, so `render` reuses it.
+let mut sound_now: Sound = sound.preset(styles.LOFI)
+let mut sound_ready: bool = false
+
+fn start() {
+    tools_ok = jobs.tool_ready()
+    voice_ok = sys.target() == "native"
+    files.reset_work()
+    session_new()
+}
+
+/// A fresh session for the current recordings; the takes stay (see
+/// `files.takes_dir`). `reset` and every `add` start one.
+fn session_new() {
+    session_n = session_n + 1
+    session = files.session_dir(session_n)
+    sys.mkdir(session)
+    sources = []Source {}
+    has_map = []bool {}
+    has_split = []bool {}
+    mono = []bool {}
+    voice_at = 0
+    split_queue = []int {}
+    split_at = 0
+    analyze_at = 0
+    stage = ST_IDLE
+    run_phase = PH_IDLE
+    percent = 0
+    status = ""
+    err = ""
+    notice = ""
+    scan = scan + 1
+}
+
+/// `[scan, tools, voice, recordings]`.
+fn state() -> []int {
+    return []int { scan, b2i(tools_ok), b2i(voice_ok), paths.len }
+}
+
+fn b2i(b: bool) -> int {
+    if b {
+        return 1
+    }
+    return 0
+}
+
+// ---- Recordings --------------------------------------------------------------
+
+/// Add `name`/`path`. A duplicate path is ignored, so a re-drop of the same
+/// file (or a paste of it) does not build the recording twice.
+fn add_file(path: string, name: string) {
+    let p = str.trim(path)
+    if p.len == 0 {
+        return
+    }
+    for i in 0..paths.len {
+        if paths[i] == p {
+            return
+        }
+    }
+    let mut nm = str.trim(name)
+    if nm.len == 0 {
+        nm = files.base_name(p)
+    }
+    push(names, nm)
+    push(paths, p)
+    session_new()
+}
+
+fn reset() {
+    names = []string {}
+    paths = []string {}
+    session_new()
+}
+
+// ---- Generate ----------------------------------------------------------------
+
+/// Start a run for these recordings and this sound. The empty string is
+/// success; anything else is the message to show.
+fn generate(scan_in: int, seed: int, style: int, length: int, energy: int,
+            tempo: int, pitch: int, voices: int,
+            inst_on: []int, inst_lvl: []int, fx_on: []int, fx_amt: []int) -> string {
+    if run_phase != PH_IDLE {
+        return "A piece is already being made."
+    }
+    if paths.len == 0 {
+        return "Add a recording first."
+    }
+    tools_ok = jobs.tool_ready()
+    if !tools_ok {
+        err = "Mune needs ffmpeg to render: brew install ffmpeg"
+        stage = ST_ERROR
+        return err
+    }
+    if scan_in != scan {
+        return "The recordings changed; ask again."
+    }
+    err = ""
+    notice = ""
+    dirty = false
+    sound_now = build_sound(seed, style, length, energy, tempo, pitch, voices,
+                            inst_on, inst_lvl, fx_on, fx_amt)
+    sound_ready = true
+    if stage == ST_READY && sources.len == paths.len {
+        // The recordings are unchanged and already heard: arrange and render
+        // again with this sound. Returning the old take here left the client
+        // waiting on a take that never came, and the new voice choice unused.
+        stage = ST_RUNNING
+        percent = 55
+        status = "Arranging…"
+        after_listen()
+        return ""
+    }
+    begin_listen()
+    return ""
+}
+
+fn build_sound(seed: int, style: int, length: int, energy: int, tempo: int,
+               pitch: int, voices: int,
+               i: []int, l: []int, f: []int, a: []int) -> Sound {
+    return Sound {
+        style: style, energy: energy, length_ix: length, tempo: tempo,
+        pitch: pitch, voices: voices,
+        rec_on: on(i, 0), rec_lvl: lvl(l, 0),
+        drums_on: on(i, 1), drums_lvl: lvl(l, 1),
+        bass_on: on(i, 2), bass_lvl: lvl(l, 2),
+        pad_on: on(i, 3), pad_lvl: lvl(l, 3), pad_tone: pick(a, 10, 0),
+        arp_on: on(i, 4), arp_lvl: lvl(l, 4), arp_tone: pick(a, 11, 0),
+        bells_on: on(i, 5), bells_lvl: lvl(l, 5),
+        echo: fx_amt(f, a, 0), echo_time: pick(a, 2, sound.ECHO_8D),
+        reverb: fx_amt(f, a, 1), space: pick(a, 3, sound.SPACE_HALL),
+        mod_kind: pick(a, 4, sound.MOD_NONE), mod_amt: pick(a, 5, 40),
+        lofi: pick(a, 6, 0), warmth: pick(a, 7, 25), width: pick(a, 8, 30),
+        pump: pick(a, 9, 0) != 0,
+        seed: seed,
+    }
+}
+
+fn on(xs: []int, i: int) -> bool {
+    return pick(xs, i, 0) != 0
+}
+
+fn lvl(xs: []int, i: int) -> int {
+    return pick(xs, i, 70)
+}
+
+/// The effect amount `i`, 0 when the effect is off.
+fn fx_amt(on_xs: []int, a: []int, i: int) -> int {
+    if i >= on_xs.len || on_xs[i] == 0 {
+        return 0
+    }
+    return pick(a, i, 0)
+}
+
+fn pick(xs: []int, i: int, d: int) -> int {
+    if i < 0 || i >= xs.len {
+        return d
+    }
+    return xs[i]
+}
+
+fn begin_listen() {
+    session_new()
+    let script = "{{session}}/decode.sh"
+    if sys.write_file(script, jobs.decode_script(session, paths)) != 0 {
+        errored("Could not write the decode job.")
+        return
+    }
+    run_phase = PH_DECODE
+    stage = ST_RUNNING
+    percent = 2
+    status = "Reading {{paths.len}} recording(s)…"
+    jobs.launch(script)
+}
+
+
+
+// ---- Poll --------------------------------------------------------------------
+
+/// Advance one step. Cheap; the client polls (or watches the stream).
+fn poll() {
+    if stage != ST_RUNNING {
+        return
+    }
+    if run_phase == PH_DECODE {
+        poll_decode()
+    } else if run_phase == PH_VOICES {
+        poll_voices()
+    } else if run_phase == PH_ANALYZE {
+        step_analyze()
+    } else if run_phase == PH_SPLIT {
+        poll_split()
+    } else if run_phase == PH_RENDER {
+        poll_render()
+    }
+}
+
+fn poll_decode() {
+    if sys.exists("{{session}}/decode.done") != 1 {
+        if sys.exists("{{session}}/decode.fail") == 1 {
+            errored(jobs.last_log(session, "ffmpeg could not read the recordings."))
+        }
+        return
+    }
+    for i in 0..paths.len {
+        if sys.exists(jobs.src_wav(session, i)) != 1 {
+            errored(jobs.last_log(session, "ffmpeg could not read the recordings."))
+            return
+        }
+    }
+    begin_voices()
+}
+
+fn begin_voices() {
+    has_map = []bool {}
+    has_split = []bool {}
+    mono = []bool {}
+    for i in 0..paths.len {
+        push(has_map, false)
+        push(has_split, false)
+        push(mono, false)
+    }
+    voice_at = -1
+    analyze_at = 0
+    run_phase = PH_VOICES
+    percent = 8
+    status = "Finding the voices…"
+    next_voice()
+}
+
+fn next_voice() {
+    let n = paths.len
+    voice_at = voice_at + 1
+    while voice_at < n {
+        let wav = jobs.src_wav(session, voice_at)
+        if sys.exists(wav) == 1 {
+            if voice_ok && !zeus.media_voice_map(wav, jobs.voice_map(session, voice_at)) {
+                // No classifier answer: every phrase counts as unknown.
+                begin_analyze()
+                return
+            }
+            if voice_ok {
+                return
+            }
+        }
+        voice_at = voice_at + 1
+    }
+    begin_analyze()
+}
+
+fn poll_voices() {
+    let m = jobs.voice_map(session, voice_at)
+    let done = sys.exists("{{m}}.done") == 1
+    let failed = sys.exists("{{m}}.fail") == 1
+    if !done && !failed {
+        return
+    }
+    if done && voice_at >= 0 && voice_at < has_map.len {
+        has_map[voice_at] = sys.read_file(m).len > 0
+    }
+    next_voice()
+}
+
+fn begin_analyze() {
+    analyze_at = 0
+    sources = []Source {}
+    run_phase = PH_ANALYZE
+    percent = 40
+    status = "Listening for tempo, key, and phrases…"
+}
+
+/// One recording per tick, so the client's window stays live.
+fn step_analyze() {
+    let n = paths.len
+    if analyze_at >= n {
+        finish_analyze()
+        return
+    }
+    let i = analyze_at
+    analyze_at = analyze_at + 1
+    let info = jobs.read_info(session, i)
+    let vm = if has_map[i] { sys.read_file(jobs.voice_map(session, i)) } else { "" }
+    let pcm = sys.read_file(jobs.pcm_raw(session, i))
+    mono[i] = info[0] == 1
+    push(sources, arrange.source_of(sys.read_file(jobs.env_raw(session, i)), vm, info[1], pcm, info[2], mono[i],
+                                    has_map[i]))
+    percent = 40 + 12 * analyze_at / n
+}
+
+fn finish_analyze() {
+    let n = sources.len
+    let mut heard = []Heard {}
+    for i in 0..n {
+        push(heard, sources[i].heard)
+    }
+    let rs = arrange.roles_for(heard)
+    for i in 0..n {
+        sources[i].role = rs[i]
+    }
+    after_listen()
+}
+
+fn free_phrases(s: Source) -> int {
+    let mut n = 0
+    for p in 0..s.heard.ph_voice.len {
+        let v = s.heard.ph_voice[p]
+        if v >= 0 && v < listen.VOICE_FREE {
+            n = n + 1
+        }
+    }
+    return n
+}
+
+fn after_listen() {
+    split_queue = []int {}
+    if sound_now.voices == sound.VOICES_REMOVE {
+        for i in 0..sources.len {
+            if sources[i].has_map && !has_split[i] && free_phrases(sources[i]) < 3 &&
+                sources[i].heard.dur_ms > 0 {
+                push(split_queue, i)
+            }
+        }
+    }
+    split_at = -1
+    if split_queue.len > 0 {
+        run_phase = PH_SPLIT
+        next_split()
+        return
+    }
+    render()
+}
+
+fn next_split() {
+    split_at = split_at + 1
+    if split_at >= split_queue.len {
+        render()
+        return
+    }
+    let i = split_queue[split_at]
+    if !voice_ok || !zeus.media_voice_split(jobs.src_wav(session, i), jobs.split_wav(session, i)) {
+        // No isolator: those phrases are cleaned in the graph alone.
+        render()
+        return
+    }
+    percent = 52 + 8 * split_at / split_queue.len
+    status = "Separating the voice from {{name_at(i)}}…"
+}
+
+fn poll_split() {
+    let i = split_queue[split_at]
+    let out = jobs.split_wav(session, i)
+    let done = sys.exists("{{out}}.done") == 1
+    if !done && sys.exists("{{out}}.fail") != 1 {
+        return
+    }
+    if done {
+        has_split[i] = true
+        sources[i].has_split = true
+    }
+    next_split()
+}
+
+fn name_at(i: int) -> string {
+    if i < 0 || i >= names.len {
+        return "a recording"
+    }
+    return names[i]
+}
+
+// ---- Render ------------------------------------------------------------------
+
+let mut pending_take: int = 0
+let mut pending_ms: int = 0
+/// The render's graph while its voices are being written, a slice of them
+/// per poll; `voicing` until the last is on disk.
+let mut render_graph: Graph = graph.empty()
+let mut render_snd: Sound = sound.preset(styles.LOFI)
+let mut voicing: bool = false
+let mut voicing_at: int = 0
+
+/// Milliseconds of voice synthesis per poll, so a poll answers promptly.
+const VOICE_SLICE_MS: int = 40
+
+fn render() {
+    let sc = arrange.arrange(sources, sound_now)
+    if !arrange.has_sound(sc) {
+        errored("Nothing to play: turn on an instrument or the recordings.")
+        return
+    }
+    let mut src_paths = []string {}
+    let mut split_paths = []string {}
+    for i in 0..sources.len {
+        push(src_paths, jobs.src_wav(session, i))
+        push(split_paths, if has_split[i] { jobs.split_wav(session, i) } else { "" })
+    }
+    let g = graph.build(sc, sound_now, src_paths, split_paths, mono, session)
+    if sys.write_file("{{session}}/graph.txt", g.text) != 0 {
+        errored("Could not write the mix graph.")
+        return
+    }
+    // The voices are written a slice per poll (`step_voices`): all at once
+    // they hold the engine, and every poll waiting on it, for many seconds.
+    render_score = sc
+    render_graph = g
+    render_snd = sound_now
+    voicing = true
+    voicing_at = 0
+    run_phase = PH_RENDER
+    stage = ST_RUNNING
+    percent = 60
+    status = "Playing the instruments…"
+}
+
+/// Write the next voices, then start the render once the last is written.
+fn step_voices() {
+    let g = render_graph
+    let n = g.voice_path.len
+    let t0 = async.now_ms()
+    while voicing_at < n {
+        if graph.render_voice(render_score, render_snd, g, session, voicing_at) != 0 {
+            errored("Could not write the instruments.")
+            return
+        }
+        voicing_at = voicing_at + 1
+        if async.now_ms() - t0 >= i64(VOICE_SLICE_MS) {
+            break
+        }
+    }
+    if voicing_at < n {
+        percent = 60 + 10 * voicing_at / n
+        return
+    }
+    voicing = false
+    launch_render()
+}
+
+/// The voices are on disk: write the render job and start ffmpeg.
+fn launch_render() {
+    let sc = render_score
+    let g = render_graph
+    let n = take_n + 1
+    let out = files.take_wav(n)
+    files.drop_take(n)
+    sys.remove_path("{{session}}/stage.txt")
+    sys.remove_path("{{session}}/progress.txt")
+    let script = "{{session}}/render.sh"
+    if sys.write_file(script, jobs.render_script(session, g.inputs, out, files.take_peaks(n))) != 0 {
+        errored("Could not write the render job.")
+        return
+    }
+    render_graph = graph.empty()
+    pending_take = n
+    pending_ms = time.ms_of_samples(sc.total_s)
+    percent = 70
+    status = "Rendering…"
+    jobs.launch(script)
+}
+
+fn poll_render() {
+    if voicing {
+        step_voices()
+        return
+    }
+    let n = pending_take
+    let out = files.take_wav(n)
+    if sys.exists("{{out}}.fail") == 1 {
+        errored(jobs.last_log(session, "The render failed."))
+        return
+    }
+    if sys.exists("{{out}}.done") != 1 {
+        let pct = jobs.progress(session, pending_ms)
+        let shown = 70 + pct * 30 / 100
+        if shown != percent {
+            percent = shown
+        }
+        return
+    }
+    finish_render(n)
+}
+
+fn finish_render(n: int) {
+    let old = take_n
+    take_n = n
+    files.drop_take(old)
+    take_ms = pending_ms
+    peaks = load_peaks(files.take_peaks(n), WAVE_BARS)
+    sections = section_marks(render_score)
+    path_target = render_score.path
+    path_height = render_score.heard
+    let sc = render_score
+    let k = key.name(Tonality { tonic: sc.tonic, minor: sc.minor, sure: 100 })
+    let st = styles.name(sound_now.style)
+    take_line = "{{st}} · {{time.bpm_text(sc.bpm_c)}} BPM · {{k}} · {{arrange.chords_text(sc)}} · {{time.clock(take_ms)}}"
+    stage = ST_READY
+    run_phase = PH_IDLE
+    percent = 100
+    status = ""
+    saved = ""
+}
+
+/// "F♯m" → "F#m", for a file name.
+fn plain_key(k: string) -> string {
+    return str.replace_all(str.replace_all(k, "♯", "#"), "♭", "b")
+}
+
+fn errored(msg: string) {
+    voicing = false
+    err = msg
+    status = ""
+    percent = 0
+    stage = ST_ERROR
+    run_phase = PH_IDLE
+}
+
+/// The waveform: `bars` peaks of the 50 Hz overview, 4..100.
+fn load_peaks(path: string, bars: int) -> []int {
+    let b = sys.read_file(path)
+    let n = b.len / 2
+    let mut out = []int {}
+    if n == 0 {
+        return out
+    }
+    let mut raw = []int {}
+    let mut top = 1
+    for k in 0..bars {
+        let a = k * n / bars
+        let e = (k + 1) * n / bars
+        let mut m = 0
+        let mut i = a
+        while i < e {
+            let u = b[i * 2] + b[i * 2 + 1] * 256
+            let v = if u >= 32768 { 65536 - u } else { u }
+            if v > m {
+                m = v
+            }
+            i = i + 1
+        }
+        push(raw, m)
+        if m > top {
+            top = m
+        }
+    }
+    for k in 0..raw.len {
+        let h = raw[k] * 100 / top
+        push(out, if h < 4 { 4 } else { h })
+    }
+    return out
+}
+
+fn section_marks(sc: Score) -> []int {
+    let mut out = []int {}
+    let total = sc.total_s
+    if total <= 0 {
+        return out
+    }
+    for i in 0..sc.sec_kind.len {
+        let a = time.LEAD_S + sc.sec_bar[i] * sc.bar_s
+        let len = sc.sec_bars[i] * sc.bar_s
+        push(out, sc.sec_kind[i])
+        push(out, i32(i64(a) * i64(1000) / i64(total)))
+        push(out, i32(i64(len) * i64(1000) / i64(total)))
+    }
+    return out
+}
+
+// ---- Save --------------------------------------------------------------------
+
+/// Copy the take to `~/Documents/Mune` under `title`, in `format`
+/// (`FMT_*`). The job is detached; `poll_save` reports it.
+fn save(id: int, title: string, format: int) -> string {
+    if take_n <= 0 || id != take_n {
+        return "There is no take to save."
+    }
+    if saving {
+        return "A save is already running."
+    }
+    let fmt = fmt_ext(format)
+    if fmt == "mp3" && !jobs.mp3_ready() {
+        return "This ffmpeg has no MP3 encoder. Save as WAV or M4A."
+    }
+    let dest = files.unique_path(files.export_dir(), files.safe_name(title), fmt)
+    let script = "{{files.work_root()}}/export.sh"
+    if sys.write_file(script, jobs.export_script(files.take_wav(take_n), dest, fmt)) != 0 {
+        return "Could not write the save job."
+    }
+    sys.remove_path("{{dest}}.done")
+    sys.remove_path("{{dest}}.fail")
+    save_target = dest
+    save_err = ""
+    saving = true
+    saved = ""
+    notice = ""
+    jobs.launch(script)
+    return ""
+}
+
+fn fmt_ext(f: int) -> string {
+    if f == 1 {
+        return "m4a"
+    }
+    if f == 2 {
+        return "mp3"
+    }
+    return "wav"
+}
+
+fn poll_save() {
+    if !saving {
+        return
+    }
+    let dest = save_target
+    if sys.exists("{{dest}}.done") == 1 {
+        sys.remove_path("{{dest}}.done")
+        saving = false
+        saved = dest
+        return
+    }
+    if sys.exists("{{dest}}.fail") == 1 {
+        sys.remove_path("{{dest}}.fail")
+        saving = false
+        save_err = "The piece could not be saved to {{files.short(files.export_dir())}}."
+        notice = save_err
+    }
+}
+
+/// Show `path` in Finder (a no-op away from macOS).
+fn reveal(path: string) {
+    files.reveal(path)
+}
+
+/// Stop the run in flight: the markers are dropped and the shell jobs are
+/// left to finish their ffmpeg quietly (they write to a session folder that
+/// the next run clears).
+fn cancel() {
+    if saving {
+        return
+    }
+    run_phase = PH_IDLE
+    stage = ST_IDLE
+    status = ""
+    percent = 0
+}
+
+// ---- Wire --------------------------------------------------------------------
+
+/// The stage as `PollResp`.
+fn poll_state() -> PollResp {
+    return PollResp {
+        live: 1, stage: stage, percent: percent, status: status,
+        error: err, notice: notice, saving: b2i(saving), saved: saved,
+    }
+}
+
+/// The finished take as `TakeResp`. `id` 0 until a take exists. `detail` and
+/// `role` describe the recordings, so the client shows the list without a
+/// second call.
+fn take_resp() -> TakeResp {
+    let mut ds = []string {}
+    let mut rs = []int {}
+    for i in 0..sources.len {
+        push(ds, describe(sources[i]))
+        push(rs, sources[i].role)
+    }
+    let mut id = 0
+    let mut path = ""
+    if take_n > 0 && stage == ST_READY {
+        id = take_n
+        path = files.take_wav(take_n)
+    }
+    return TakeResp {
+        live: 1, ready: if id > 0 { 1 } else { 0 }, id: id, ms: take_ms, line: take_line,
+        path: path, peaks: copy_ints(peaks), sections: copy_ints(sections),
+        path_target: copy_ints(path_target), path_height: copy_ints(path_height),
+        detail: ds, role: rs,
+    }
+}
+
+/// "110 BPM · F♯m · 4:38 · 1:21 voice-free"
+fn describe(s: Source) -> string {
+    let h = s.heard
+    if h.dur_ms <= 0 {
+        return "Could not be read"
+    }
+    let mut parts = []string {}
+    if h.bpm_c > 0 {
+        push(parts, "{{time.bpm_text(h.bpm_c)}} BPM")
+    } else {
+        push(parts, "Free time")
+    }
+    if s.key.tonic >= 0 {
+        push(parts, key.name(s.key))
+    }
+    push(parts, time.clock(h.dur_ms))
+    if h.free_ms >= 0 {
+        if h.free_ms < 1000 {
+            push(parts, "voice throughout")
+        } else {
+            push(parts, "{{time.clock(h.free_ms)}} voice-free")
+        }
+    } else if s.mono {
+        push(parts, "mono")
+    }
+    return str.join(parts, " · ")
+}
+
+fn copy_ints(xs: []int) -> []int {
+    let mut out = []int {}
+    for i in 0..xs.len {
+        push(out, xs[i])
+    }
+    return out
+}
+

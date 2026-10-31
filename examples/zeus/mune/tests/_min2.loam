@@ -1,0 +1,73 @@
+import "std:fmt"
+import "std:sys"
+import "std:str"
+import "../core/listen.loam" as listen
+
+fn big() -> []f64 {
+    let mut b = []f64 {}
+    for i in 0..1000000 {
+        push(b, f64(i))
+    }
+    return b
+}
+
+fn a_expr() -> int {
+    let b = big()
+    return b.len
+}
+
+fn b_let() -> int {
+    let b = big()
+    let n = b.len
+    return n
+}
+
+fn c_literal() -> int {
+    let b = big()
+    return 0
+}
+
+fn d_void() {
+    let b = big()
+}
+
+fn e_call_arg() -> int {
+    let b = big()
+    return count(b)
+}
+
+fn count(xs: []f64) -> int {
+    return xs.len
+}
+
+fn rss() -> int {
+    return listen.int_of(str.trim(sys.exec("ps -o rss= -p $PPID"))) / 1024
+}
+
+fn main() {
+    let mut r = rss()
+    for i in 0..40 {
+        let n = a_expr()
+    }
+    fmt.println("return b.len: +{{rss() - r}} MB")
+    r = rss()
+    for i in 0..40 {
+        let n = b_let()
+    }
+    fmt.println("let n then return n: +{{rss() - r}} MB")
+    r = rss()
+    for i in 0..40 {
+        let n = c_literal()
+    }
+    fmt.println("return 0: +{{rss() - r}} MB")
+    r = rss()
+    for i in 0..40 {
+        d_void()
+    }
+    fmt.println("no return: +{{rss() - r}} MB")
+    r = rss()
+    for i in 0..40 {
+        let n = e_call_arg()
+    }
+    fmt.println("return count(b): +{{rss() - r}} MB")
+}

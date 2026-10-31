@@ -1,0 +1,25 @@
+// Two different fns (or globals) that would share one C symbol: the main
+// module's `theory_voicing` and `theory.voicing` are both
+// `loam_theory_voicing`, and `theory_b.c` meets `theory.b_c`. Each keeps
+// its own body.
+
+import "std:fmt"
+import "../mod/symclash/theory.loam" as theory
+import "../mod/symclash/other.loam" as theory_b
+
+let mut theory_level: int = 100
+
+fn theory_voicing() -> int {
+    return 2
+}
+
+fn theory_bump() -> int {
+    theory_level = theory_level + 5
+    return theory_level
+}
+
+fn main() {
+    fmt.println("{{theory.voicing()}} {{theory_voicing()}}")
+    fmt.println("{{theory.b_c()}} {{theory_b.c()}}")
+    fmt.println("{{theory.bump()}} {{theory_bump()}}")
+}

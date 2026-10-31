@@ -1,0 +1,122 @@
+//! Level calibration, not a test: every style's instruments rendered one
+//! at a time (slider at 70, no effects) and measured on the premaster,
+//! against the base targets of `graph.style_trim` (styles that lean on an
+//! instrument sit above them). Prints the trim each one needs. Given a
+//! recording too, it measures the recordings alone the same way.
+//!
+//!   ./bin/loamc examples/zeus/mune/tests/stems.loam -o /tmp/mune-stems && /tmp/mune-stems /tmp/stems [song.mp3]
+
+import "std:fmt"
+import "std:str"
+import "std:sys"
+import "../core/arrange.loam" as arrange
+import "../core/graph.loam" as graph
+import "../core/jobs.loam" as jobs
+import "../core/sound.loam" as sound
+import "../core/styles.loam" as styles
+
+/// Integrated loudness of `wav` in LUFS ×10, or -999 when silent.
+fn lufs(wav: string) -> int {
+    let out = sys.exec("ffmpeg -nostdin -v info -i '{{wav}}' -af ebur128 -f null - 2>&1 | sed -n 's/^ *I: *\\(-*[0-9.]*\\) LUFS.*/\\1/p' | tail -n 1")
+    let t = str.trim(out)
+    if t.len == 0 || str.contains(t, "inf") {
+        return -999
+    }
+    let neg = t[0] == 45
+    let mut v = 0
+    let mut frac = false
+    for i in 0..t.len {
+        let c = t[i]
+        if c >= 48 && c <= 57 {
+            v = v * 10 + (c - 48)
+            if frac {
+                break
+            }
+        } else if c == 46 {
+            frac = true
+        }
+    }
+    return if neg { -v } else { v }
+}
+
+fn only(base: Sound, layer: int) -> Sound {
+    let mut s = base
+    s.rec_on = false
+    s.drums_on = layer == arrange.L_DRUMS
+    s.bass_on = layer == arrange.L_BASS
+    s.pad_on = layer == arrange.L_PAD
+    s.arp_on = layer == arrange.L_ARP
+    s.bells_on = layer == arrange.L_BELLS
+    s.drums_lvl = 70
+    s.bass_lvl = 70
+    s.pad_lvl = 70
+    s.arp_lvl = 70
+    s.bells_lvl = 70
+    s.echo = 0
+    s.reverb = 0
+    s.mod_kind = sound.MOD_NONE
+    s.lofi = 0
+    s.warmth = 0
+    s.width = 0
+    s.pump = false
+    return s
+}
+
+/// `-i` for every input the graph reads.
+fn inputs(g: Graph) -> string {
+    let mut out = ""
+    for i in 0..g.inputs.len {
+        out = "{{out}} -i '{{g.inputs[i]}}'"
+    }
+    return out
+}
+
+fn main() -> int {
+    let a = sys.args()
+    let dir = if a.len > 1 { a[1] } else { "/tmp/mune-stems" }
+    sys.mkdir(dir)
+    let layers = []int { arrange.L_DRUMS, arrange.L_BASS, arrange.L_PAD, arrange.L_ARP, arrange.L_BELLS }
+    let names = []string { "drums", "bass", "pad", "arp", "bells" }
+    if a.len > 2 {
+        sys.write_file("{{dir}}/decode.sh", jobs.decode_script(dir, []string { a[2] }))
+        sys.exec("sh '{{dir}}/decode.sh'")
+        let info = jobs.read_info(dir, 0)
+        let mut src = arrange.source_of(sys.read_file(jobs.env_raw(dir, 0)), "", info[1],
+                                        sys.read_file(jobs.pcm_raw(dir, 0)), info[2], info[0] == 1, false)
+        src.role = arrange.RHYTHM
+        let s = only(sound.preset(styles.HOUSE), -1)
+        let mut r = s
+        r.rec_on = true
+        r.rec_lvl = 70
+        let sc = arrange.arrange([]Source { src }, r)
+        let g = graph.build(sc, r, []string { jobs.src_wav(dir, 0) }, []string { "" }, []bool { info[0] == 1 }, dir)
+        graph.render_voices(sc, r, g, dir)
+        let gp = "{{dir}}/grec.txt"
+        sys.write_file(gp, g.text)
+        let wav = "{{dir}}/rec.wav"
+        sys.exec("ffmpeg -nostdin -v error -y {{inputs(g)}} -/filter_complex '{{gp}}' -map '[pre]' -c:a pcm_f32le '{{wav}}'")
+        fmt.println("recordings {{lufs(wav)}} (target -214)")
+    }
+    let targets = []int { -219, -239, -259, -279, -279 }
+    for st in 0..styles.COUNT {
+        let mut line = "{{styles.name(st)}}:"
+        for li in 0..layers.len {
+            let s = only(sound.preset(st), layers[li])
+            let sc = arrange.arrange([]Source {}, s)
+            if !arrange.has_sound(sc) {
+                continue
+            }
+            let g = graph.build(sc, s, []string {}, []string {}, []bool {}, dir)
+            graph.render_voices(sc, s, g, dir)
+            let gp = "{{dir}}/g{{st}}_{{li}}.txt"
+            let wav = "{{dir}}/s{{st}}_{{li}}.wav"
+            sys.write_file(gp, g.text)
+            sys.exec("ffmpeg -nostdin -v error -y {{inputs(g)}} -/filter_complex '{{gp}}' -map '[pre]' -c:a pcm_f32le '{{wav}}'")
+            let l = lufs(wav)
+            let trim = targets[li] - l
+            line = "{{line}}  {{names[li]}} {{l}} (trim {{trim}})"
+        }
+        fmt.println(line)
+    }
+    return 0
+}

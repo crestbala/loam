@@ -657,7 +657,11 @@ fn rs_apply_clip() {
     raster.raster_clip_box(rs_clip[o], rs_clip[o + 1], rs_clip[o + 2], rs_clip[o + 3])
 }
 
-/// Intersect the top clip with a logical rect at the current scale.
+/// Intersect the top clip with a logical rect at the current scale, in
+/// place. A clip is canvas-style: `save` (op 6) pushes a level, the clip
+/// narrows that level, and one `restore` pops it. Pushing here as well left
+/// every save + clip + restore one level deep, so whatever painted after a
+/// nested clip stayed clipped to it.
 fn rs_clip_push(x: int, y: int, w: int, h: int, radius: int, scale: int) {
     let o = (rs_clip_depth - 1) * 4
     let nx0 = rs_clip[o]
@@ -668,11 +672,7 @@ fn rs_clip_push(x: int, y: int, w: int, h: int, radius: int, scale: int) {
     let cy0 = y * scale
     let cx1 = (x + w) * scale
     let cy1 = (y + h) * scale
-    let mut d = rs_clip_depth
-    if d > 63 {
-        d = 63
-    }
-    let no = d * 4
+    let no = o
     let mut ax0 = nx0
     if cx0 > ax0 {
         ax0 = cx0
@@ -699,7 +699,6 @@ fn rs_clip_push(x: int, y: int, w: int, h: int, radius: int, scale: int) {
     rs_clip[no + 1] = ay0
     rs_clip[no + 2] = ax1
     rs_clip[no + 3] = ay1
-    rs_clip_depth = d + 1
     if radius > 0 {
         rs_rounded_clips = rs_rounded_clips + 1
     }
@@ -1655,7 +1654,13 @@ fn paint_floaters(id: int) {
         return
     }
     arena.floater_clear()
+    // Inline for this scroller: its in-place floaters. Window-level ones go
+    // in the floaters section, unless this scroller is the root (then there
+    // is no section and it paints them).
+    arena.fc_skip_window = if id == arena.root_id { 0 } else { 1 }
+    arena.fc_nested = 0
     arena.floater_collect(id, arena.paint_sx, arena.paint_sy, 1)
+    arena.fc_skip_window = 0
     arena.floater_sort(0)
     paint_floaters_paint()
 }
@@ -1750,14 +1755,55 @@ fn patch_node(id: int) -> int {
     if (bits & 1) != 0 {
         return patch_run(id)
     }
+    // A scroller paints the floaters inside it into its own run, after its
+    // content (`paint_floaters` in `paint_node`). The walk below patches a
+    // floater's shell only (`paint_skip_z`), so that inline copy kept the
+    // look of the last full record: a Select menu froze mid-fade, and a
+    // closed one stayed on screen, translucent, over the controls below.
+    // Re-record the scroller whole when something under it changed.
+    if int(arena.nodes[id].kind) == 11 && has_floater_inside(id) != 0 {
+        return patch_run(id)
+    }
+    // A scroller's children paint shifted by its offset: `paint_node` adds it
+    // on the way down. This walk reaches them without going through
+    // `paint_node`, so it adds the offset itself. Without it, a child
+    // re-recorded on its own (a switch toggled, a hover, a colour change while
+    // the page is scrolled) landed at its unscrolled position, off from
+    // everything around it.
+    let prev_y = arena.paint_sy
+    let prev_x = arena.paint_sx
+    if int(arena.nodes[id].kind) == 11 {
+        arena.paint_sy = prev_y + arena.nodes[id].scroll_y
+        arena.paint_sx = prev_x + arena.nodes[id].scroll_x
+    }
     let kids = arena.nodes[id].kids
     let n = kids.len
+    let mut ok = 1
     for i in 0..n {
-        if patch_node(kids[i]) == 0 {
-            return 0
+        if ok != 0 && patch_node(kids[i]) == 0 {
+            ok = 0
         }
     }
-    return 1
+    arena.paint_sy = prev_y
+    arena.paint_sx = prev_x
+    return ok
+}
+
+/// 1 when a floater (a z-indexed node or an overlay) lives under `id`.
+fn has_floater_inside(id: int) -> int {
+    let kids = arena.nodes[id].kids
+    for i in 0..kids.len {
+        let c = kids[i]
+        if c > 0 {
+            if arena.is_floater(c) != 0 {
+                return 1
+            }
+            if has_floater_inside(c) != 0 {
+                return 1
+            }
+        }
+    }
+    return 0
 }
 
 /// Re-record a floater's main-region shell (no body: `paint_skip_z` is set).
@@ -2083,6 +2129,8 @@ fn paint_floaters_runs(old: []Draw, old_base: int, reuse: int) {
 /// Collect the visible floaters of `root` in z order.
 fn collect_floaters(root: int) {
     arena.floater_clear()
+    arena.fc_skip_window = 0
+    arena.fc_nested = 0
     arena.floater_collect(root, arena.paint_sx, arena.paint_sy, 1)
     arena.floater_sort(0)
 }

@@ -1,0 +1,54 @@
+//! The shape of the piece: length, energy, tempo, pitch, and voices.
+
+import "std:zeus"
+import "std:zui"
+import "../core/sound.loam" as sound
+import "../core/styles.loam" as styles
+import "../studio/controls.loam" as controls
+import "../theme.loam" as theme
+import "kit.loam" as kit
+
+fn Piece() -> Node {
+    return kit.Panel("Piece", fn() -> string {
+        return "Intro, verse, build, drop, break, outro. Phrases start low and climb to the last drop."
+    }, fn() {
+        kit.Row("Length", fn() -> string { return "" }, fn() {
+            kit.Choice(controls.length_ix, sound.length_names(), "Piece length", 140)
+        })
+        kit.Row("Energy", fn() -> string { return "" }, fn() {
+            kit.Choice(controls.energy, styles.energy_names(), "Piece energy", 140)
+        })
+        kit.Row("Tempo", fn() -> string {
+            if controls.tempo_auto.get() {
+                return "Auto"
+            }
+            return "{{controls.tempo.get()}} BPM"
+        }, fn() {
+            zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 10, grow = 1, minWidth = 0)) {
+                zui.Switch(controls.tempo_auto, label = "Follow the recordings")
+                zeus.Box(visible = !controls.tempo_auto.get(), style = Style(direction = Direction.Row, grow = 1)) {
+                    kit.Slider(controls.tempo, 60, 170, "Tempo", false)
+                }
+                zeus.Box(visible = controls.tempo_auto.get(), style = Style(direction = Direction.Row, grow = 1)) {
+                    zeus.Text("Follows the recordings", style = Style(font = 12, color = theme.FAINT))
+                }
+            }
+        })
+        kit.Row("Pitch", fn() -> string { return kit.signed(controls.pitch.get(), " st") }, fn() {
+            kit.Slider(controls.pitch, -12, 12, "Pitch", false)
+        })
+        kit.Row("Voices", fn() -> string { return "" }, fn() {
+            kit.Choice(controls.voices, sound.voice_names(), "Voice handling", 140)
+        })
+        zeus.Box(style = Style(direction = Direction.Row, gap = 8, align = Align.Center, padding = edges2(8, 10),
+                               radius = corners(10), background = theme.TILE)) {
+            zui.Icon(kit.IC_VOICE_OFF, 14, if controls.voices.get() == sound.VOICES_REMOVE { theme.OK } else { theme.FAINT })
+            zeus.Text(fn() -> string {
+                if controls.voices.get() == sound.VOICES_REMOVE {
+                    return "Only passages where nobody sings or speaks are used."
+                }
+                return "Voices stay in the recordings."
+            }, style = Style(font = 11, color = theme.MUTE, wrap = true))
+        }
+    })
+}

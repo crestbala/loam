@@ -35,7 +35,11 @@ static int drop_n[64];
    shares the elements, and they are released exactly once, when the last
    buffer reference goes. Without it a shared `[]T` parameter drop zeroed the
    caller's element slots (legacy `[]Node`-of-`[]int` corruption). */
-static Type *elem_hook_types[64];
+/* One retain/release hook pair per element type that owns something. The
+   prototypes are emitted for every id up front (monomorphization registers
+   more while bodies are emitted), so the table is a fixed size. */
+#define ELEM_HOOK_MAX 256
+static Type *elem_hook_types[ELEM_HOOK_MAX];
 static int elem_hook_n;
 
 static int struct_targs_concrete(Type *t);
@@ -45,7 +49,11 @@ static int elem_hook_id(Type *t) {
     if (!t) return 0;
     for (i = 0; i < elem_hook_n; i++)
         if (type_eq(elem_hook_types[i], t)) return i + 1;
-    if (elem_hook_n >= 64) return elem_hook_n;
+    if (elem_hook_n >= ELEM_HOOK_MAX) {
+        /* Handing out another type's hook would release the wrong layout. */
+        fprintf(stderr, "loam: more than %d owning element types in one program\n", ELEM_HOOK_MAX);
+        exit(1);
+    }
     elem_hook_types[elem_hook_n] = t;
     return ++elem_hook_n;
 }
@@ -61,6 +69,30 @@ static void elem_hook_cnames(Type *elem, char *retain, size_t rc, char *release,
         retain[0] = '\0';
         release[0] = '\0';
     }
+}
+
+/** `loam_zeus_sig_bind_vec(id, &val, …)`: a `[]T` cell keeps the reference in
+ *  `val` and drops it, elements through their release hook, when it is freed. */
+static void format_ctype(char *buf, size_t cap, Type *t);
+static void emit_drop_place(FILE *o, const char *place, Type *t, int ind);
+static void emit_nested_keeps(FILE *o, const char *place, Type *t, int ind);
+static void emit_sig_bind_vec(FILE *o, Type *vt, const char *id, const char *val) {
+    char rr[64], rl[64], cn[256];
+    elem_hook_cnames(vt ? vt->elem : NULL, rr, sizeof rr, rl, sizeof rl);
+    if (vt && vt->elem) format_ctype(cn, sizeof cn, vt->elem);
+    else snprintf(cn, sizeof cn, "char");
+    fprintf(o, "loam_zeus_sig_bind_vec(%s, &%s, sizeof(%s), sizeof(%s), %s);", id, val, val, cn,
+            rl[0] ? rl : "NULL");
+}
+
+/** `loam_zeus_sig_bind_owned(id, &val, …)`: a struct cell keeps the references
+ *  taken for `val` and releases them, through `vt`'s own release hook, when it
+ *  is freed. */
+static void emit_sig_bind_owned(FILE *o, Type *vt, const char *id, const char *val) {
+    char rr[64], rl[64];
+    elem_hook_cnames(vt, rr, sizeof rr, rl, sizeof rl);
+    fprintf(o, "loam_zeus_sig_bind_owned(%s, &%s, sizeof(%s), %s);", id, val, val,
+            rl[0] ? rl : "NULL");
 }
 
 /** Pre-register every element type a vec in this program will need a hook for,
@@ -1220,8 +1252,18 @@ static void emit_expr(FILE *o, AstNode *n) {
                     fprintf(o, " _sv = ");
                     emit_expr(o, n->as.call.args[0]);
                     fprintf(o, "; ");
-                    if (type_is_copy_vec(n->as.call.args[0]->ty))
-                        fprintf(o, "{ loam_vec _kept = loam_vec_retain(&_sv); loam_zeus_sig_bind(_sid, &_kept, sizeof(_kept)); } ");
+                    if (n->as.call.args[0]->ty && n->as.call.args[0]->ty->kind == TY_STRUCT &&
+                        type_needs_drop(n->as.call.args[0]->ty)) {
+                        /* As the IR form: the cell takes its own references. */
+                        emit_nested_keeps(o, "_sv", n->as.call.args[0]->ty, 0);
+                        emit_sig_bind_owned(o, n->as.call.args[0]->ty, "_sid", "_sv");
+                        fprintf(o, " ");
+                    } else if (type_is_copy_vec(n->as.call.args[0]->ty))
+                    {
+                        fprintf(o, "{ loam_vec _kept = loam_vec_retain(&_sv); ");
+                        emit_sig_bind_vec(o, n->as.call.args[0]->ty, "_sid", "_kept");
+                        fprintf(o, " } ");
+                    }
                     else
                         fprintf(o, "loam_zeus_sig_bind(_sid, &_sv, sizeof(_sv)); ");
                 }
@@ -1236,6 +1278,8 @@ static void emit_expr(FILE *o, AstNode *n) {
                 fprintf(o, ", &_sv, sizeof(_sv)); ");
                 if (type_is_copy_vec(n->ty))
                     fprintf(o, "_sv = loam_vec_retain(&_sv); ");
+                else if (n->ty && n->ty->kind == TY_STRUCT && type_needs_drop(n->ty))
+                    emit_nested_keeps(o, "_sv", n->ty, 0);
                 fprintf(o, "_sv; })");
                 break;
             }
@@ -1247,6 +1291,27 @@ static void emit_expr(FILE *o, AstNode *n) {
                     fprintf(o, ", ");
                     emit_expr(o, n->as.call.args[1]);
                     fprintf(o, "), 0)");
+                } else if (vt && vt->kind == TY_STRUCT && type_needs_drop(vt)) {
+                    /* As the IR form: the new value takes references for the
+                       cell, the one it held is released. */
+                    fprintf(o, "({ ");
+                    emit_ctype(o, vt);
+                    fprintf(o, " _sv = ");
+                    emit_expr(o, n->as.call.args[1]);
+                    fprintf(o, "; int64_t _sid = ");
+                    emit_expr(o, n->as.call.args[0]);
+                    fprintf(o, "; if (");
+                    emit_sig_changed(o, vt, "_sid", "_sv");
+                    fprintf(o, ") { ");
+                    emit_ctype(o, vt);
+                    fprintf(o, " _old; loam_zeus_sig_load(_sid, &_old, sizeof(_old)); ");
+                    emit_ctype(o, vt);
+                    fprintf(o, " _new = _sv;\n");
+                    emit_nested_keeps(o, "_new", vt, 0);
+                    emit_sig_bind_owned(o, vt, "_sid", "_new");
+                    fprintf(o, "\n");
+                    emit_drop_place(o, "_old", vt, 0);
+                    fprintf(o, "loam_arena_note_write(_sid); } 0; })");
                 } else if (type_is_copy_vec(vt)) {
                     fprintf(o, "({ loam_vec _sv = ");
                     emit_expr(o, n->as.call.args[1]);
@@ -1254,12 +1319,17 @@ static void emit_expr(FILE *o, AstNode *n) {
                     emit_expr(o, n->as.call.args[0]);
                     fprintf(o, "; if (");
                     emit_sig_changed(o, vt, "_sid", "_sv");
+                    /* `_old` is the cell's own reference: the new value takes
+                       its reference first (it may be the same buffer), then the
+                       old one is dropped. Retaining `_old` as well leaked every
+                       list a signal ever held. */
                     fprintf(o, ") { "
                                "loam_vec _old; loam_zeus_sig_load(_sid, &_old, sizeof(_old)); "
-                               "_old = loam_vec_retain(&_old); "
-                               "loam_vec _new = loam_vec_retain(&_sv); "
-                               "loam_zeus_sig_bind(_sid, &_new, sizeof(_new)); "
-                               "loam_vec_drop(&_old); loam_arena_note_write(_sid); } 0; })");
+                               "loam_vec _new = loam_vec_retain(&_sv); ");
+                    emit_sig_bind_vec(o, vt, "_sid", "_new");
+                    fprintf(o, "\n");
+                    emit_drop_place(o, "_old", vt, 0);
+                    fprintf(o, "loam_arena_note_write(_sid); } 0; })");
                 } else {
                     fprintf(o, "({ ");
                     emit_ctype(o, vt);
@@ -2672,8 +2742,9 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                 }
                 indent(o, 1);
                 if (type_is_copy_vec(vt)) {
-                    fprintf(o, "{ loam_vec _sigv = loam_vec_retain(&%s); loam_zeus_sig_bind(%s, &_sigv, sizeof(_sigv)); }\n",
-                            lv(in->args[0]), lv(in->dst));
+                    fprintf(o, "{ loam_vec _sigv = loam_vec_retain(&%s); ", lv(in->args[0]));
+                    emit_sig_bind_vec(o, vt, lv(in->dst), "_sigv");
+                    fprintf(o, " }\n");
                 } else if (type_is_refcounted(vt)) {
                     /* The cell takes its own reference to the string, and is
                        released when the cell dies or changes type. */
@@ -2689,7 +2760,8 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                     fprintf(o, " _sigv = %s;\n", lv(in->args[0]));
                     emit_nested_keeps(o, "_sigv", vt, 2);
                     indent(o, 2);
-                    fprintf(o, "loam_zeus_sig_bind(%s, &_sigv, sizeof(_sigv)); }\n", lv(in->dst));
+                    emit_sig_bind_owned(o, vt, lv(in->dst), "_sigv");
+                    fprintf(o, " }\n");
                 } else {
                     fprintf(o, "loam_zeus_sig_bind(%s, &%s, sizeof(", lv(in->dst), lv(in->args[0]));
                     emit_ctype(o, vt);
@@ -2730,13 +2802,17 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                     emit_sig_changed(o, vt, lv(in->args[0]), lv(in->args[1]));
                     fprintf(o, ") {\n");
                     indent(o, 2);
-                    fprintf(o, "loam_vec _old; loam_zeus_sig_load(%s, &_old, sizeof(_old)); _old = loam_vec_retain(&_old);\n",
+                    /* `_old` is the cell's own reference (see the expression
+                       form): take the new one first, then drop it. */
+                    fprintf(o, "loam_vec _old; loam_zeus_sig_load(%s, &_old, sizeof(_old));\n",
                             lv(in->args[0]));
                     indent(o, 2);
-                    fprintf(o, "loam_vec _new = loam_vec_retain(&%s); loam_zeus_sig_bind(%s, &_new, sizeof(_new));\n",
-                            lv(in->args[1]), lv(in->args[0]));
+                    fprintf(o, "loam_vec _new = loam_vec_retain(&%s); ", lv(in->args[1]));
+                    emit_sig_bind_vec(o, vt, lv(in->args[0]), "_new");
+                    fprintf(o, "\n");
+                    emit_drop_place(o, "_old", vt, 2);
                     indent(o, 2);
-                    fprintf(o, "loam_vec_drop(&_old); loam_arena_note_write(%s);\n", lv(in->args[0]));
+                    fprintf(o, "loam_arena_note_write(%s);\n", lv(in->args[0]));
                     indent(o, 1);
                     fprintf(o, "}\n");
                 } else if (type_is_refcounted(vt)) {
@@ -2771,7 +2847,8 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                     fprintf(o, " _new = %s;\n", lv(in->args[1]));
                     emit_nested_keeps(o, "_new", vt, 2);
                     indent(o, 2);
-                    fprintf(o, "loam_zeus_sig_bind(%s, &_new, sizeof(_new));\n", lv(in->args[0]));
+                    emit_sig_bind_owned(o, vt, lv(in->args[0]), "_new");
+                    fprintf(o, "\n");
                     emit_drop_place(o, "_old", vt, 2);
                     indent(o, 2);
                     fprintf(o, "loam_arena_note_write(%s);\n", lv(in->args[0]));
@@ -3071,8 +3148,9 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
                 }
                 fprintf(o, " };\n");
             }
-            /* An owned string field takes a reference; its source keeps its own
-               and drops normally (see the matching change in ir.c). */
+            /* A struct that owns a string retains every refcounted leaf of the
+               fields it was given; their sources keep their own references and
+               drop normally (ir.c keeps those drops, see AST_STRUCT_LIT). */
             if (type_string_owns() && t && t->kind == TY_STRUCT && type_owns_string(t)) {
                 char dbuf[64];
                 snprintf(dbuf, sizeof dbuf, "%s", lv(in->dst));
@@ -3873,7 +3951,7 @@ void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path)
        monomorphization runs while bodies are being emitted and can register an
        element type (e.g. a `[]Member` instantiated inside a generic) after this
        point, and its call sites still need the declaration. */
-    for (int i = 1; i <= 64; i++)
+    for (int i = 1; i <= ELEM_HOOK_MAX; i++)
         fprintf(out, "static void loam_elem_retain_%d(void *p);\n"
                      "static void loam_elem_release_%d(void *p);\n", i, i);
     fprintf(out, "\n");

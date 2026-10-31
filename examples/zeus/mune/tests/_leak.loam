@@ -1,0 +1,36 @@
+import "std:fmt"
+import "std:sys"
+import "../core/arrange.loam" as arrange
+import "../core/dsp.loam" as dsp
+import "../core/graph.loam" as graph
+import "../core/sound.loam" as sound
+import "../core/styles.loam" as styles
+
+fn rss() -> string {
+    return sys.exec("ps -o rss= -p $PPID")
+}
+
+fn main() -> int {
+    let s = sound.preset(styles.FUTURE)
+    let sc = arrange.arrange([]Source {}, s)
+    let g = graph.build(sc, s, []string {}, []string {}, []bool {}, "/tmp/leak")
+    fmt.println("start {{rss()}}")
+    for i in 0..3 {
+        let b = dsp.zeros(48000 * 8)
+        fmt.println("zeros {{i}} {{rss()}}")
+    }
+    for i in 0..3 {
+        let b = dsp.zeros(48000 * 8)
+        dsp.write_wav("/tmp/leak/x.wav", b, 0.25)
+        fmt.println("wav {{i}} {{rss()}}")
+    }
+    for i in 0..3 {
+        let b = graph.voice_samples(sc, s, g, 0)
+        fmt.println("voice {{i}} {{rss()}}")
+    }
+    for i in 0..3 {
+        graph.render_voices(sc, s, g, "/tmp/leak")
+        fmt.println("all {{i}} {{rss()}}")
+    }
+    return 0
+}

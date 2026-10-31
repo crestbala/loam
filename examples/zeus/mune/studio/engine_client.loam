@@ -1,0 +1,273 @@
+//! The client to the native engine (`server/main.loam`).
+//!
+//! The wasm build has no ffmpeg and no voice tools, so it cannot make a
+//! piece itself. These calls reach the engine the way vidget's store reaches
+//! its download engine: `http.client()` is h2c to loopback on macOS and
+//! same-origin (through the dev server's `/Mune/*` proxy) in the browser.
+//!
+//! The store uses this on every target except native — where it keeps its
+//! in-process path — so the same UI drives either. `remote()` is the switch.
+
+import "std:http"
+import "std:sys"
+import "std:zeus"
+import "../server/api.loam" as api
+
+/// Whether to make the piece through the engine rather than in this process.
+/// The browser always does; the macOS window keeps its own path (zeli starts
+/// the engine for it only when the app asks). `MUNE_ENGINE=1` forces it.
+fn remote() -> bool {
+    if sys.env("MUNE_ENGINE") == "1" {
+        return true
+    }
+    return sys.target() == "wasm"
+}
+
+// Every call is async: `call_async` returns at once and its callback runs on
+// a later frame. Nothing here hands back a reply's value. Each callback
+// stores what came back, and the store reads these fields on its next poll.
+
+let mut state_ok: bool = false
+let mut state_scan: int = 0
+let mut state_tools: int = 0
+let mut state_voice: int = 0
+let mut state_busy: bool = false
+
+/// Bumped by every call that changes the engine (sync, generate, save,
+/// cancel). A poll sent before it changed answers for the old engine, so
+/// its reply is dropped.
+let mut epoch: int = 0
+/// Changing calls still on the wire. No poll goes out while any is.
+let mut pending: int = 0
+
+// Sync: the engine's recordings follow the client's list. Reset, then one
+// add after another, each sent from the previous one's callback so they
+// arrive in order. A newer list restarts the chain.
+let mut sync_names: []string = []string {}
+let mut sync_paths: []string = []string {}
+let mut sync_gen: int = 0
+let mut sync_busy: bool = false
+
+/// Bumped on each generate reply; `gen_ok` / `gen_error` describe it.
+let mut gen_seq: int = 0
+let mut gen_ok: bool = false
+let mut gen_error: string = ""
+
+/// Bumped on each poll reply that belongs to the current epoch.
+let mut poll_seq: int = 0
+let mut poll_stage: int = 0
+let mut poll_percent: int = 0
+let mut poll_status: string = ""
+let mut poll_error: string = ""
+let mut poll_notice: string = ""
+let mut poll_saving: bool = false
+let mut poll_saved: string = ""
+
+let mut take_ready: bool = false
+let mut take_id: int = 0
+let mut take_ms: int = 0
+let mut take_line: string = ""
+let mut take_path: string = ""
+let mut take_peaks: []int = []int {}
+let mut take_sections: []int = []int {}
+let mut take_path_target: []int = []int {}
+let mut take_path_height: []int = []int {}
+let mut take_detail: []string = []string {}
+let mut take_role: []int = []int {}
+let mut taking: bool = false
+
+/// Set while a poll is on the wire; the store's tick skips when it is. The
+/// browser allows only four fetches at once, so one poll at a time.
+let mut polling: bool = false
+
+/// Bumped on each save reply; `save_error` is why the engine refused.
+let mut save_seq: int = 0
+let mut save_error: string = ""
+
+fn changing() {
+    epoch = epoch + 1
+    pending = pending + 1
+}
+
+fn settled() {
+    if pending > 0 {
+        pending = pending - 1
+    }
+}
+
+/// Ask the engine how it stands. One request at a time.
+fn state() {
+    if state_busy {
+        return
+    }
+    state_busy = true
+    http.client().call_async(api.state_rpc(), api.encode_StateReq(StateReq {}), fn(raw) {
+        let r = api.decode_StateResp(raw)
+        state_busy = false
+        state_ok = r.live == 1
+        state_tools = r.tools
+        state_voice = r.voice
+        // Mid-sync the engine's scan is about to move again; the sync's own
+        // replies carry it.
+        if state_ok && !sync_busy {
+            state_scan = r.scan
+        }
+    })
+}
+
+/// Make the engine hold exactly these recordings, in this order.
+fn sync(names: []string, paths: []string) {
+    let mut ns = []string {}
+    let mut ps = []string {}
+    for i in 0..paths.len {
+        push(ns, names[i])
+        push(ps, paths[i])
+    }
+    sync_names = ns
+    sync_paths = ps
+    sync_gen = sync_gen + 1
+    if !sync_busy {
+        sync_busy = true
+        changing()
+        sync_send(sync_gen, -1)
+    }
+}
+
+fn synced() -> bool {
+    return !sync_busy
+}
+
+/// Step `i` of sync `gen`: -1 resets, then each recording is added.
+fn sync_send(gen: int, i: int) {
+    if gen != sync_gen {
+        // The list moved while this chain ran: start over with the new one.
+        sync_send(sync_gen, -1)
+        return
+    }
+    if i < 0 {
+        http.client().call_async(api.reset_rpc(), api.encode_ResetReq(ResetReq {}), fn(raw) {
+            let r = api.decode_ResetResp(raw)
+            state_scan = r.scan
+            sync_send(gen, 0)
+        })
+        return
+    }
+    if i >= sync_paths.len {
+        sync_busy = false
+        settled()
+        return
+    }
+    let req = AddReq { name: sync_names[i], path: sync_paths[i] }
+    http.client().call_async(api.add_rpc(), api.encode_AddReq(req), fn(raw) {
+        let r = api.decode_AddResp(raw)
+        state_scan = r.scan
+        sync_send(gen, i + 1)
+    })
+}
+
+/// Ask for a piece. The reply bumps `gen_seq`; `gen_ok` false means the
+/// engine refused and `gen_error` says why.
+fn generate(scan: int, seed: int, style: int, length: int, energy: int,
+            tempo: int, pitch: int, voices: int,
+            inst_on: []int, inst_lvl: []int, fx_on: []int, fx_amt: []int) {
+    changing()
+    http.client().call_async(api.generate_rpc(),
+        api.encode_GenerateReq(GenerateReq {
+            scan: scan, seed: seed, style: style, length: length, energy: energy,
+            tempo: tempo, pitch: pitch, voices: voices,
+            inst_on: inst_on, inst_level: inst_lvl, fx_on: fx_on, fx_amount: fx_amt,
+        }), fn(raw) {
+        let r = api.decode_GenerateResp(raw)
+        gen_ok = r.ok == 1
+        gen_error = r.error
+        if !gen_ok && gen_error.len == 0 {
+            gen_error = "The engine did not answer."
+        }
+        gen_seq = gen_seq + 1
+        settled()
+    })
+}
+
+/// One poll step: advances the engine and copies its stage out. Does nothing
+/// while the previous poll is still on the wire, so at most one is in flight,
+/// or while a changing call is, so a reply never describes the engine before
+/// that call.
+fn poll() {
+    if polling || pending > 0 {
+        return
+    }
+    polling = true
+    let at = epoch
+    http.client().call_async(api.poll_rpc(), api.encode_PollReq(PollReq {}), fn(raw) {
+        polling = false
+        if at != epoch {
+            return
+        }
+        let r = api.decode_PollResp(raw)
+        if r.live != 1 {
+            return
+        }
+        poll_stage = r.stage
+        poll_percent = r.percent
+        poll_status = r.status
+        poll_error = r.error
+        poll_notice = r.notice
+        poll_saving = r.saving == 1
+        poll_saved = r.saved
+        poll_seq = poll_seq + 1
+    })
+}
+
+/// Fetch the finished take. `take_ready` false until the engine has one;
+/// `take_id` tells one take from the next.
+fn take() {
+    if taking {
+        return
+    }
+    taking = true
+    http.client().call_async(api.take_rpc(), api.encode_TakeReq(TakeReq {}), fn(raw) {
+        let r = api.decode_TakeResp(raw)
+        taking = false
+        take_ready = r.ready == 1
+        take_id = r.id
+        take_ms = r.ms
+        take_line = r.line
+        take_path = r.path
+        take_peaks = r.peaks
+        take_sections = r.sections
+        take_path_target = r.path_target
+        take_path_height = r.path_height
+        take_detail = r.detail
+        take_role = r.role
+    })
+}
+
+/// Save take `id` as `title`, `format` (`FMT_*`). The reply bumps
+/// `save_seq`; the job's end shows in the polls (`poll_saving`).
+fn save(id: int, title: string, format: int) {
+    changing()
+    http.client().call_async(api.save_rpc(),
+        api.encode_SaveReq(SaveReq { id: id, title: title, format: format }), fn(raw) {
+        let r = api.decode_SaveResp(raw)
+        save_error = r.error
+        if r.ok != 1 && save_error.len == 0 {
+            save_error = "The engine did not answer."
+        }
+        save_seq = save_seq + 1
+        settled()
+    })
+}
+
+fn reveal(path: string) {
+    http.client().call_async(api.reveal_rpc(), api.encode_RevealReq(RevealReq { path: path }), fn(raw) {
+        let r = api.decode_RevealResp(raw)
+    })
+}
+
+fn cancel() {
+    changing()
+    http.client().call_async(api.cancel_rpc(), api.encode_CancelReq(CancelReq {}), fn(raw) {
+        let r = api.decode_CancelResp(raw)
+        settled()
+    })
+}

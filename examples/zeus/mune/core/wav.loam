@@ -1,0 +1,216 @@
+//! WAV for the tests. `write_mono` is 16-bit PCM. `inspect` also reads
+//! the 24-bit stereo file the mixer writes.
+
+import "std:sys"
+
+struct WavInfo {
+    ok: bool,
+    rate: int,
+    channels: int,
+    bits: int,
+    duration_ms: int,
+    mean_abs: int,
+}
+
+fn no_wav() -> WavInfo {
+    return WavInfo { ok: false, rate: 0, channels: 0, bits: 0, duration_ms: 0, mean_abs: 0 }
+}
+
+fn push16(b: &mut []int, v: int) {
+    let mut x = v
+    if x > 32767 {
+        x = 32767
+    }
+    if x < -32768 {
+        x = -32768
+    }
+    if x < 0 {
+        x = x + 65536
+    }
+    push(b, x % 256)
+    push(b, (x / 256) % 256)
+}
+
+fn push32(b: &mut []int, v: int) {
+    let mut x = v
+    if x < 0 {
+        x = 0
+    }
+    push(b, x % 256)
+    push(b, (x / 256) % 256)
+    push(b, (x / 65536) % 256)
+    push(b, (x / 16777216) % 256)
+}
+
+/// 16-bit mono PCM. `0` when the file was written.
+fn write_mono(path: string, rate: int, samples: []int) -> int {
+    let mut rate_v = rate
+    if rate_v <= 0 {
+        rate_v = 48000
+    }
+    let n = samples.len
+    let data_n = n * 2
+    let mut b = []int {}
+    push(b, 82)
+    push(b, 73)
+    push(b, 70)
+    push(b, 70)
+    push32(b, 36 + data_n)
+    push(b, 87)
+    push(b, 65)
+    push(b, 86)
+    push(b, 69)
+    push(b, 102)
+    push(b, 109)
+    push(b, 116)
+    push(b, 32)
+    push32(b, 16)
+    push16(b, 1)
+    push16(b, 1)
+    push32(b, rate_v)
+    push32(b, rate_v * 2)
+    push16(b, 2)
+    push16(b, 16)
+    push(b, 100)
+    push(b, 97)
+    push(b, 116)
+    push(b, 97)
+    push32(b, data_n)
+    let mut i = 0
+    while i < n {
+        push16(b, samples[i])
+        i = i + 1
+    }
+    return sys.write_file(path, string_from_bytes(b))
+}
+
+fn u16at(b: string, i: int) -> int {
+    if i < 0 || i + 1 >= b.len {
+        return 0
+    }
+    return b[i] + b[i + 1] * 256
+}
+
+fn u32at(b: string, i: int) -> int {
+    if i < 0 || i + 3 >= b.len {
+        return 0
+    }
+    return b[i] + b[i + 1] * 256 + b[i + 2] * 65536 + b[i + 3] * 16777216
+}
+
+fn sample_at(b: string, i: int, bits: int) -> int {
+    if bits == 24 {
+        if i + 2 >= b.len {
+            return 0
+        }
+        let u = b[i] + b[i + 1] * 256 + b[i + 2] * 65536
+        if u >= 8388608 {
+            return u - 16777216
+        }
+        return u
+    }
+    let u = u16at(b, i)
+    if u >= 32768 {
+        return u - 65536
+    }
+    return u
+}
+
+/// Header, rate, channels, bit depth, duration, and mean absolute sample.
+fn inspect(path: string) -> WavInfo {
+    let b = sys.read_file(path)
+    if b.len < 44 {
+        return no_wav()
+    }
+    if b[0] != 82 || b[1] != 73 || b[2] != 70 || b[3] != 70 {
+        return no_wav()
+    }
+    if b[8] != 87 || b[9] != 65 || b[10] != 86 || b[11] != 69 {
+        return no_wav()
+    }
+    let mut rate = 0
+    let mut channels = 0
+    let mut bits = 0
+    let mut fmt_ok = false
+    let mut data_at = -1
+    let mut data_n = 0
+    let mut i = 12
+    while i + 8 <= b.len {
+        let sz = u32at(b, i + 4)
+        let body = i + 8
+        if body > b.len {
+            break
+        }
+        let fmt = b[i] == 102 && b[i + 1] == 109 && b[i + 2] == 116 && b[i + 3] == 32
+        let data = b[i] == 100 && b[i + 1] == 97 && b[i + 2] == 116 && b[i + 3] == 97
+        if fmt && body + 16 <= b.len {
+            let format = u16at(b, body)
+            let mut pcm = format == 1
+            // ffmpeg writes 24-bit stereo as extensible PCM (0xFFFE).
+            if format == 65534 && body + 28 <= b.len {
+                pcm = b[body + 24] == 1 && b[body + 25] == 0
+            }
+            if pcm {
+                channels = u16at(b, body + 2)
+                rate = u32at(b, body + 4)
+                bits = u16at(b, body + 14)
+                fmt_ok = true
+            }
+        }
+        if data {
+            data_at = body
+            data_n = sz
+            if data_at + data_n > b.len {
+                data_n = b.len - data_at
+            }
+        }
+        let mut step = sz
+        if step % 2 == 1 {
+            step = step + 1
+        }
+        let next = body + step
+        if next <= i {
+            break
+        }
+        i = next
+    }
+    if !fmt_ok || data_at < 0 || rate <= 0 || channels <= 0 {
+        return no_wav()
+    }
+    if bits != 16 && bits != 24 {
+        return no_wav()
+    }
+    let bps = bits / 8
+    let frame = channels * bps
+    if frame <= 0 {
+        return no_wav()
+    }
+    let frames = data_n / frame
+    let mut sum: i64 = i64(0)
+    let mut n = 0
+    let mut p = data_at
+    let end = data_at + frames * frame
+    while p + bps <= end && p + bps <= b.len {
+        let v = sample_at(b, p, bits)
+        let mut a = v
+        if a < 0 {
+            a = -a
+        }
+        sum = sum + i64(a)
+        n = n + 1
+        p = p + bps
+    }
+    let mut mean = 0
+    if n > 0 {
+        mean = int(sum / i64(n))
+    }
+    let dur = int(i64(frames) * i64(1000) / i64(rate))
+    return WavInfo {
+        ok: true,
+        rate: rate,
+        channels: channels,
+        bits: bits,
+        duration_ms: dur,
+        mean_abs: mean,
+    }
+}

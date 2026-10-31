@@ -1,0 +1,1213 @@
+//! The session: recordings in, a take out. Views read these signals and
+//! call these functions; the work runs in the background and `poll` moves
+//! it along.
+//!
+//! Generate walks the stages. A stage that is already done for these
+//! recordings is skipped, so a new take or a changed effect only renders.
+//!
+//!   decode   ffmpeg: 48 kHz copies, envelopes, pitch copies, loudness
+//!   voices   the host's classifier maps where anyone sings or speaks
+//!   analyze  Loam: tempo, grid, key, phrases and their pitch (one
+//!            recording per tick)
+//!   split    the host removes the voice from recordings that have almost
+//!            no voice-free phrase (only when voices are removed)
+//!   render   ffmpeg: the graph, loudness, 24-bit WAV, the waveform
+
+import "std:async"
+import "std:str"
+import "std:sys"
+import "std:zeus"
+import "../core/arrange.loam" as arrange
+import "../core/graph.loam" as graph
+import "../core/jobs.loam" as jobs
+import "../core/key.loam" as key
+import "../core/listen.loam" as listen
+import "../core/sound.loam" as sound
+import "../core/styles.loam" as styles
+import "../core/time.loam" as time
+import "controls.loam" as controls
+import "engine_client.loam" as engine
+import "files.loam" as files
+
+const PHASE_IDLE: int = 0
+const PHASE_DECODE: int = 1
+const PHASE_VOICES: int = 2
+const PHASE_ANALYZE: int = 3
+const PHASE_SPLIT: int = 4
+const PHASE_RENDER: int = 5
+const PHASE_READY: int = 6
+const PHASE_ERR: int = 7
+
+/// Bars in the waveform overview.
+const WAVE_BARS: int = 120
+
+/// Export formats, in the order of the picker.
+const FMT_WAV: int = 0
+const FMT_M4A: int = 1
+const FMT_MP3: int = 2
+
+// Recordings, in the order they were added.
+let names = zeus.signal([]string {})
+let paths = zeus.signal([]string {})
+/// One line per recording once heard: tempo, key, length, voice-free time.
+let details = zeus.signal([]string {})
+let roles = zeus.signal([]int {})
+let listened = zeus.signal(false)
+let path_text = zeus.signal("")
+
+// The job.
+let phase = zeus.signal(PHASE_IDLE)
+let status = zeus.signal("")
+let error = zeus.signal("")
+let notice = zeus.signal("")
+let progress = zeus.signal(0)
+
+// The take.
+let take = zeus.signal("")
+let take_ms = zeus.signal(0)
+let take_line = zeus.signal("")
+let peaks = zeus.signal([]int {})
+/// Sections for the waveform: kind, start ‰, length ‰, repeated.
+let sections = zeus.signal([]int {})
+/// The energy arc, one entry per bar: the target (0..1000) and the energy
+/// of the phrase the chain put there (-1 for none).
+let path = zeus.signal([]int {})
+let path_heard = zeus.signal([]int {})
+let playing = zeus.signal(false)
+let pos = zeus.signal(0)
+
+// Saving.
+let title = zeus.signal("")
+let export_fmt = zeus.signal(FMT_WAV)
+let saving = zeus.signal(false)
+let saved = zeus.signal("")
+
+let tools_ok = zeus.signal(true)
+/// The wasm build only: whether the engine answered. False shows "engine
+/// offline" rather than a missing ffmpeg that may well be installed.
+let engine_up = zeus.signal(true)
+
+let host = zeus.media_player(1)
+
+let mut started: bool = false
+/// When `poll_job` last returned. `poll` runs from the per-frame step and
+/// from the interval, and both can fire in one tick: a step that costs a
+/// second must not run twice before the window draws.
+let mut job_at: i64 = 0
+const JOB_GAP_MS: int = 10
+let mut last_pick: int = 0
+/// The engine's take this client last showed (`TakeResp.id`).
+let mut rem_take: int = 0
+/// The last generate / poll / save reply this client acted on.
+let mut rem_gen: int = 0
+let mut rem_poll: int = 0
+let mut rem_save: int = 0
+/// When the engine's state was last asked for, so a down engine is asked
+/// again once a second rather than every frame.
+let mut rem_state_at: i64 = 0
+/// A Generate asked for while the recordings were still being sent.
+let mut rem_gen_wait: bool = false
+let mut session: string = ""
+let mut session_n: int = 0
+let mut take_n: int = 0
+let mut sources: []Source = []Source {}
+let mut voice_at: int = 0
+let mut analyze_at: int = 0
+let mut split_queue: []int = []int {}
+let mut split_at: int = 0
+let mut has_map: []bool = []bool {}
+let mut has_split: []bool = []bool {}
+let mut mono: []bool = []bool {}
+let mut roles_pinned: bool = false
+let mut dirty: bool = false
+let mut render_ms: int = 0
+let mut render_score: Score = arrange.empty_score()
+/// The render's graph and sound while its voices are being written, one
+/// slice of them per tick; `voicing` until the last is on disk.
+let mut render_graph: Graph = graph.empty()
+let mut render_snd: Sound = sound.preset(styles.LOFI)
+let mut voicing: bool = false
+let mut voicing_at: int = 0
+let mut auto_title: string = ""
+let mut save_target: string = ""
+
+fn start() {
+    if started {
+        return
+    }
+    started = true
+    controls.install()
+    last_pick = zeus.media_picks()
+    zeus.media_volume(host, 85)
+    if engine.remote() {
+        /* The piece is made by the engine on another process. Reset its
+           session and learn what it holds before the first Generate. */
+        engine.sync([]string {}, []string {})
+        engine.state()
+        rem_state_at = async.now_ms()
+    } else {
+        files.reset_work()
+        tools_ok.set(jobs.tool_ready())
+    }
+    async.add_step(fn() { poll() })
+    async.interval(150, fn() { poll() })
+}
+
+fn poll() {
+    poll_pick()
+    if engine.remote() {
+        poll_remote()
+    } else if async.now_ms() - job_at >= i64(JOB_GAP_MS) {
+        poll_job()
+        job_at = async.now_ms()
+    }
+    poll_save()
+    poll_player()
+}
+
+/// Read the engine's replies into the local signals. The engine does the
+/// decode / voices / analyze / split / render; this only mirrors it.
+///
+/// Polls go out only while a piece is being made or saved: the engine
+/// advances one step per poll, and an idle client asking every frame would
+/// keep a fetch in flight and the page redrawing for nothing.
+fn poll_remote() {
+    let now = async.now_ms()
+    if engine.state_ok {
+        tools_ok.set(engine.state_tools == 1)
+    } else {
+        tools_ok.set(false)
+    }
+    engine_up.set(engine.state_ok)
+    if !engine.state_ok && now - rem_state_at >= i64(1000) {
+        rem_state_at = now
+        engine.state()
+    }
+    if engine.gen_seq != rem_gen {
+        rem_gen = engine.gen_seq
+        if !engine.gen_ok && busy() {
+            fail(engine.gen_error)
+        }
+    }
+    if engine.save_seq != rem_save {
+        rem_save = engine.save_seq
+        if engine.save_error.len > 0 && saving.peek() {
+            saving.set(false)
+            notice.set(engine.save_error)
+        }
+    }
+    if engine.take_ready && engine.take_id != rem_take {
+        rem_take = engine.take_id
+        adopt_take()
+        say("", 0)
+        phase.set(PHASE_READY)
+    }
+    if !busy() && !saving.peek() {
+        return
+    }
+    send_generate()
+    engine.poll()
+    if engine.poll_seq == rem_poll {
+        return
+    }
+    rem_poll = engine.poll_seq
+    let st = engine.poll_stage
+    if busy() {
+        if st == 1 {
+            phase.set(PHASE_RENDER)
+        } else if st == 2 {
+            // Done: the take arrives on a later tick and ends the run.
+            engine.take()
+        } else if st == 3 {
+            fail(engine.poll_error)
+        }
+        if busy() {
+            if engine.poll_status.len > 0 {
+                status.set(engine.poll_status)
+            }
+            progress.set(engine.poll_percent)
+        }
+    }
+    if engine.poll_notice.len > 0 {
+        notice.set(engine.poll_notice)
+    }
+    if saving.peek() && !engine.poll_saving {
+        saving.set(false)
+        if engine.poll_saved.len > 0 {
+            saved.set(engine.poll_saved)
+        }
+    }
+}
+
+/// The engine's finished take, into the player.
+fn adopt_take() {
+    let out = engine.take_path
+    playing.set(false)
+    zeus.media_pause(host)
+    let opened = zeus.media_open(host, out)
+    take.set(out)
+    saved.set("")
+    take_ms.set(engine.take_ms)
+    take_line.set(engine.take_line)
+    peaks.set(engine.take_peaks)
+    sections.set(engine.take_sections)
+    path.set(engine.take_path_target)
+    path_heard.set(engine.take_path_height)
+    let n = engine.take_detail.len
+    let mut ds = []string {}
+    let mut rs = []int {}
+    for i in 0..n {
+        push(ds, engine.take_detail[i])
+        push(rs, engine.take_role[i])
+    }
+    details.set(ds)
+    roles.set(rs)
+    listened.set(true)
+    if title.peek().len == 0 || title.peek() == auto_title {
+        let suggestion = suggest_title(engine.take_line)
+        title.set(suggestion)
+        auto_title = suggestion
+    }
+    if opened {
+        zeus.media_play(host)
+        playing.set(true)
+    }
+}
+
+/// "LoFi · 110 BPM · F#m · 4:38" → a title for the take.
+fn suggest_title(line: string) -> string {
+    let parts = str.split(line, " · ")
+    if parts.len < 3 {
+        return "Mune"
+    }
+    return "{{parts[0]}} in {{plain_key_of(parts[2])}}"
+}
+
+fn plain_key_of(k: string) -> string {
+    return str.replace_all(str.replace_all(k, "♯", "#"), "♭", "b")
+}
+
+// ---- Recordings ------------------------------------------------------------
+
+fn poll_pick() {
+    let mut guard = 0
+    while guard < 64 {
+        guard = guard + 1
+        let n = zeus.media_picks()
+        if n == last_pick {
+            return
+        }
+        last_pick = n
+        let src = zeus.media_picked_src()
+        if src != "" {
+            add_file(src, zeus.media_picked_name())
+        }
+    }
+}
+
+fn pick() {
+    zeus.media_pick_audio()
+}
+
+fn add_typed() {
+    let raw = path_text.peek()
+    let copy = str.slice(raw, 0, raw.len)
+    path_text.set("")
+    add_file(copy, "")
+}
+
+fn add_file(path: string, name: string) {
+    let trimmed = str.trim(path)
+    if trimmed.len == 0 || has_path(trimmed) {
+        return
+    }
+    let copy = str.slice(trimmed, 0, trimmed.len)
+    let mut nm = str.trim(name)
+    if nm.len == 0 {
+        nm = files.base_name(copy)
+    }
+    let mut ns = copy_strs(names.peek())
+    let mut ps = copy_strs(paths.peek())
+    push(ns, str.slice(nm, 0, nm.len))
+    push(ps, copy)
+    names.set(ns)
+    paths.set(ps)
+    recordings_changed()
+    if engine.remote() {
+        engine.sync(names.peek(), paths.peek())
+    }
+}
+
+fn remove_at(ix: int) {
+    let n = names.peek().len
+    if ix < 0 || ix >= n {
+        return
+    }
+    names.set(drop_str(names.peek(), ix))
+    paths.set(drop_str(paths.peek(), ix))
+    recordings_changed()
+    if engine.remote() {
+        engine.sync(names.peek(), paths.peek())
+    }
+}
+
+/// What was heard belongs to the old list. A running listen stops at its
+/// next step; a finished take keeps playing.
+fn recordings_changed() {
+    let n = names.peek().len
+    sources = []Source {}
+    has_map = []bool {}
+    has_split = []bool {}
+    mono = []bool {}
+    roles_pinned = false
+    listened.set(false)
+    details.set(blank_strs(n))
+    roles.set(zeros(n))
+    if listening() {
+        dirty = true
+    } else if phase.peek() == PHASE_ERR {
+        phase.set(if take.peek().len > 0 { PHASE_READY } else { PHASE_IDLE })
+        error.set("")
+    }
+}
+
+/// Rhythm → motif → air for recording `ix`, kept for the next take.
+fn cycle_role(ix: int) {
+    let cur = roles.peek()
+    if ix < 0 || ix >= cur.len || !listened.peek() {
+        return
+    }
+    let mut next = []int {}
+    for i in 0..cur.len {
+        push(next, if i == ix { (cur[i] + 1) % 3 } else { cur[i] })
+    }
+    roles.set(next)
+    roles_pinned = true
+    for i in 0..sources.len {
+        if i < next.len {
+            sources[i].role = next[i]
+        }
+    }
+}
+
+fn role_label(ix: int) -> string {
+    let rs = roles.get()
+    if ix < 0 || ix >= rs.len || !listened.get() {
+        return ""
+    }
+    return arrange.role_name(rs[ix])
+}
+
+fn detail_at(ix: int) -> string {
+    let ds = details.get()
+    if ix < 0 || ix >= ds.len {
+        return ""
+    }
+    return ds[ix]
+}
+
+fn name_at(ix: int) -> string {
+    let ns = names.get()
+    if ix < 0 || ix >= ns.len {
+        return ""
+    }
+    return ns[ix]
+}
+
+// ---- State -------------------------------------------------------------------
+
+fn listening() -> bool {
+    let p = phase.peek()
+    return p == PHASE_DECODE || p == PHASE_VOICES || p == PHASE_ANALYZE || p == PHASE_SPLIT
+}
+
+fn busy() -> bool {
+    let p = phase.get()
+    return p == PHASE_DECODE || p == PHASE_VOICES || p == PHASE_ANALYZE || p == PHASE_SPLIT ||
+        p == PHASE_RENDER
+}
+
+fn can_generate() -> bool {
+    return names.get().len > 0 && !busy() && tools_ok.get()
+}
+
+fn has_take() -> bool {
+    return take.get().len > 0
+}
+
+fn fail(msg: string) {
+    rem_gen_wait = false
+    voicing = false
+    error.set(msg)
+    status.set("")
+    progress.set(0)
+    phase.set(PHASE_ERR)
+}
+
+fn say(msg: string, pct: int) {
+    status.set(msg)
+    progress.set(pct)
+}
+
+// ---- Generate ----------------------------------------------------------------
+
+/// Listen if these recordings have not been heard, then render.
+fn generate() {
+    if busy() {
+        return
+    }
+    if paths.peek().len == 0 {
+        fail("Add a recording first.")
+        return
+    }
+    if engine.remote() {
+        generate_remote()
+        return
+    }
+    if !jobs.tool_ready() {
+        tools_ok.set(false)
+        fail("Mune needs ffmpeg to render: brew install ffmpeg")
+        return
+    }
+    tools_ok.set(true)
+    error.set("")
+    notice.set("")
+    dirty = false
+    if listened.peek() && sources.len == paths.peek().len && session.len > 0 {
+        after_listen()
+        return
+    }
+    begin_listen()
+}
+
+/// The remote path: build the flat `GenerateReq` from the sound controls and
+/// hand it to the engine. The engine's progress is read back in `poll_remote`.
+fn generate_remote() {
+    error.set("")
+    notice.set("")
+    dirty = false
+    phase.set(PHASE_DECODE)
+    status.set("Asking the engine…")
+    progress.set(2)
+    rem_gen_wait = true
+    send_generate()
+}
+
+/// Send the waiting generate once the engine holds the current list; until
+/// then `poll_remote` calls this again each tick.
+fn send_generate() {
+    if !rem_gen_wait || !engine.synced() {
+        return
+    }
+    rem_gen_wait = false
+    let s = controls.snapshot()
+    engine.generate(engine.state_scan, s.seed, s.style, s.length_ix, s.energy, s.tempo, s.pitch, s.voices,
+                    inst_on(s), inst_lvl(s), fx_on(s), fx_amt(s))
+}
+
+/// Instrument on/off, `[rec, drums, bass, pad, arp, bells]`, for the wire.
+fn inst_on(s: Sound) -> []int {
+    return []int { b(s.rec_on), b(s.drums_on), b(s.bass_on), b(s.pad_on), b(s.arp_on), b(s.bells_on) }
+}
+
+fn inst_lvl(s: Sound) -> []int {
+    return []int { s.rec_lvl, s.drums_lvl, s.bass_lvl, s.pad_lvl, s.arp_lvl, s.bells_lvl }
+}
+
+/// Effect on/off, `[echo, reverb, mod]`.
+fn fx_on(s: Sound) -> []int {
+    return []int { g(s.echo), g(s.reverb), if s.mod_kind != sound.MOD_NONE { 1 } else { 0 } }
+}
+
+/// The effect amounts, then the pad/arp tones and the remaining values.
+fn fx_amt(s: Sound) -> []int {
+    return []int { s.echo, s.reverb, s.echo_time, s.space, s.mod_kind, s.mod_amt,
+                   s.lofi, s.warmth, s.width, b(s.pump), s.pad_tone, s.arp_tone }
+}
+
+fn b(v: bool) -> int {
+    if v {
+        return 1
+    }
+    return 0
+}
+
+fn g(v: int) -> int {
+    if v > 0 {
+        return 1
+    }
+    return 0
+}
+
+/// The same recordings and sound, other phrases and another melody.
+fn new_take() {
+    if busy() {
+        return
+    }
+    controls.seed = controls.seed + 1
+    generate()
+}
+
+fn begin_listen() {
+    if session.len > 0 {
+        sys.remove_path(session)
+    }
+    session_n = session_n + 1
+    session = files.session_dir(session_n)
+    sys.remove_path(session)
+    if sys.mkdir(session) != 0 {
+        fail("Could not open a work folder.")
+        return
+    }
+    let script = "{{session}}/decode.sh"
+    if sys.write_file(script, jobs.decode_script(session, paths.peek())) != 0 {
+        fail("Could not write the decode job.")
+        return
+    }
+    sources = []Source {}
+    phase.set(PHASE_DECODE)
+    let n = paths.peek().len
+    say(if n == 1 { "Reading the recording…" } else { "Reading {{n}} recordings…" }, 4)
+    jobs.launch(script)
+}
+
+fn poll_job() {
+    let p = phase.peek()
+    if p == PHASE_DECODE {
+        poll_decode()
+    } else if p == PHASE_VOICES {
+        poll_voices()
+    } else if p == PHASE_ANALYZE {
+        step_analyze()
+    } else if p == PHASE_SPLIT {
+        poll_split()
+    } else if p == PHASE_RENDER {
+        poll_render()
+    }
+}
+
+/// A listen stage ended while the list changed: stop and say so.
+fn stale() -> bool {
+    if !dirty {
+        return false
+    }
+    dirty = false
+    phase.set(if take.peek().len > 0 { PHASE_READY } else { PHASE_IDLE })
+    say("", 0)
+    notice.set("The recordings changed. Generate again to hear them.")
+    return true
+}
+
+fn poll_decode() {
+    if sys.exists("{{session}}/decode.fail") == 1 {
+        fail(jobs.last_log(session, "ffmpeg could not read the recordings."))
+        return
+    }
+    if sys.exists("{{session}}/decode.done") != 1 {
+        return
+    }
+    if stale() {
+        return
+    }
+    let n = paths.peek().len
+    has_map = []bool {}
+    has_split = []bool {}
+    mono = []bool {}
+    for i in 0..n {
+        push(has_map, false)
+        push(has_split, false)
+        push(mono, false)
+    }
+    voice_at = -1
+    phase.set(PHASE_VOICES)
+    next_voice()
+}
+
+/// Start the next voice map, or move on when there is none (or no tool).
+fn next_voice() {
+    let n = paths.peek().len
+    voice_at = voice_at + 1
+    while voice_at < n {
+        let wav = jobs.src_wav(session, voice_at)
+        if sys.exists(wav) == 1 {
+            if !zeus.media_voice_map(wav, jobs.voice_map(session, voice_at)) {
+                // No classifier on this host: every phrase counts as unknown.
+                begin_analyze()
+                return
+            }
+            let nm = name_at_peek(voice_at)
+            say("Finding the voices in {{nm}}…", 8 + 30 * voice_at / n)
+            return
+        }
+        voice_at = voice_at + 1
+    }
+    begin_analyze()
+}
+
+fn poll_voices() {
+    let m = jobs.voice_map(session, voice_at)
+    let done = sys.exists("{{m}}.done") == 1
+    let failed = sys.exists("{{m}}.fail") == 1
+    if !done && !failed {
+        return
+    }
+    if stale() {
+        return
+    }
+    if done && voice_at < has_map.len {
+        has_map[voice_at] = sys.read_file(m).len > 0
+    }
+    next_voice()
+}
+
+fn begin_analyze() {
+    analyze_at = 0
+    sources = []Source {}
+    phase.set(PHASE_ANALYZE)
+    say("Listening for tempo, key, and phrases…", 40)
+}
+
+/// One recording per tick, so the window stays live.
+fn step_analyze() {
+    if stale() {
+        return
+    }
+    let n = paths.peek().len
+    if analyze_at >= n {
+        finish_analyze()
+        return
+    }
+    let i = analyze_at
+    analyze_at = analyze_at + 1
+    let info = jobs.read_info(session, i)
+    let vm = if has_map[i] { sys.read_file(jobs.voice_map(session, i)) } else { "" }
+    let pcm = sys.read_file(jobs.pcm_raw(session, i))
+    mono[i] = info[0] == 1
+    push(sources, arrange.source_of(sys.read_file(jobs.env_raw(session, i)), vm, info[1], pcm, info[2], mono[i],
+                                    has_map[i]))
+    progress.set(40 + 12 * analyze_at / n)
+}
+
+fn finish_analyze() {
+    let n = sources.len
+    let mut heard = []Heard {}
+    for i in 0..n {
+        push(heard, sources[i].heard)
+    }
+    let mut rs = roles.peek()
+    if !roles_pinned || rs.len != n {
+        rs = arrange.roles_for(heard)
+        roles.set(rs)
+    }
+    let mut ds = []string {}
+    for i in 0..n {
+        sources[i].role = rs[i]
+        push(ds, describe(sources[i]))
+    }
+    details.set(ds)
+    listened.set(true)
+    after_listen()
+}
+
+/// "110 BPM · F♯m · 4:38 · 1:21 voice-free"
+fn describe(s: Source) -> string {
+    let h = s.heard
+    if h.dur_ms <= 0 {
+        return "Could not be read"
+    }
+    let mut parts = []string {}
+    if h.bpm_c > 0 {
+        push(parts, "{{time.bpm_text(h.bpm_c)}} BPM")
+    } else {
+        push(parts, "Free time")
+    }
+    if s.key.tonic >= 0 {
+        push(parts, key.name(s.key))
+    }
+    push(parts, time.clock(h.dur_ms))
+    if h.free_ms >= 0 {
+        if h.free_ms < 1000 {
+            push(parts, "voice throughout")
+        } else {
+            push(parts, "{{time.clock(h.free_ms)}} voice-free")
+        }
+    } else if s.mono {
+        push(parts, "mono")
+    }
+    return str.join(parts, " · ")
+}
+
+/// Voice-free phrases a recording offers.
+fn free_phrases(s: Source) -> int {
+    let mut n = 0
+    for p in 0..s.heard.ph_voice.len {
+        let v = s.heard.ph_voice[p]
+        if v >= 0 && v < listen.VOICE_FREE {
+            n = n + 1
+        }
+    }
+    return n
+}
+
+/// Splits wanted for this sound, then the render.
+fn after_listen() {
+    split_queue = []int {}
+    if controls.voices.peek() == sound.VOICES_REMOVE {
+        for i in 0..sources.len {
+            if sources[i].has_map && !has_split[i] && free_phrases(sources[i]) < 3 &&
+                sources[i].heard.dur_ms > 0 {
+                push(split_queue, i)
+            }
+        }
+    }
+    split_at = -1
+    if split_queue.len > 0 {
+        phase.set(PHASE_SPLIT)
+        next_split()
+        return
+    }
+    render()
+}
+
+fn next_split() {
+    split_at = split_at + 1
+    if split_at >= split_queue.len {
+        render()
+        return
+    }
+    let i = split_queue[split_at]
+    if !zeus.media_voice_split(jobs.src_wav(session, i), jobs.split_wav(session, i)) {
+        // No isolator: those phrases are cleaned in the graph alone.
+        render()
+        return
+    }
+    let nm = name_at_peek(i)
+    say("Separating the voice from {{nm}}…", 52 + 8 * split_at / split_queue.len)
+}
+
+fn poll_split() {
+    let i = split_queue[split_at]
+    let out = jobs.split_wav(session, i)
+    let done = sys.exists("{{out}}.done") == 1
+    if !done && sys.exists("{{out}}.fail") != 1 {
+        return
+    }
+    if stale() {
+        return
+    }
+    if done {
+        has_split[i] = true
+        sources[i].has_split = true
+    }
+    next_split()
+}
+
+// ---- Render ------------------------------------------------------------------
+
+fn render() {
+    let snd = controls.snapshot()
+    let sc = arrange.arrange(sources, snd)
+    if !arrange.has_sound(sc) {
+        fail("Nothing to play: turn on an instrument or the recordings.")
+        return
+    }
+    let mut src_paths = []string {}
+    let mut split_paths = []string {}
+    for i in 0..sources.len {
+        push(src_paths, jobs.src_wav(session, i))
+        push(split_paths, if has_split[i] { jobs.split_wav(session, i) } else { "" })
+    }
+    let g = graph.build(sc, snd, src_paths, split_paths, mono, session)
+    if sys.write_file("{{session}}/graph.txt", g.text) != 0 {
+        fail("Could not write the mix graph.")
+        return
+    }
+    // The voices are written a slice per tick (`step_voices`): all at once
+    // they hold the window for many seconds.
+    render_score = sc
+    render_snd = snd
+    render_graph = g
+    voicing = true
+    voicing_at = 0
+    phase.set(PHASE_RENDER)
+    say("Playing the instruments…", 60)
+}
+
+/// Milliseconds of voice synthesis per tick before the window gets it back.
+const VOICE_SLICE_MS: int = 40
+
+/// Write the next voices, then start the render once the last is written.
+fn step_voices() {
+    let g = render_graph
+    let n = g.voice_path.len
+    let t0 = async.now_ms()
+    while voicing_at < n {
+        if graph.render_voice(render_score, render_snd, g, session, voicing_at) != 0 {
+            fail("Could not write the instruments.")
+            return
+        }
+        voicing_at = voicing_at + 1
+        if async.now_ms() - t0 >= i64(VOICE_SLICE_MS) {
+            break
+        }
+    }
+    if voicing_at < n {
+        progress.set(60 + 10 * voicing_at / n)
+        return
+    }
+    voicing = false
+    launch_render()
+}
+
+/// The voices are on disk: write the render job and start ffmpeg.
+fn launch_render() {
+    let sc = render_score
+    let g = render_graph
+    let n = take_n + 1
+    let out = files.take_wav(n)
+    files.drop_take(n)
+    sys.remove_path("{{session}}/stage.txt")
+    sys.remove_path("{{session}}/progress.txt")
+    let script = "{{session}}/render.sh"
+    if sys.write_file(script, jobs.render_script(session, g.inputs, out, files.take_peaks(n))) != 0 {
+        fail("Could not write the render job.")
+        return
+    }
+    render_graph = graph.empty()
+    render_ms = time.ms_of_samples(sc.total_s)
+    controls.follow_tempo(sc.bpm_c / 100)
+    note_voices(sc)
+    say("Rendering…", 70)
+    jobs.launch(script)
+}
+
+/// Say when a recording had to give voiced phrases.
+fn note_voices(sc: Score) {
+    if controls.voices.peek() != sound.VOICES_REMOVE {
+        return
+    }
+    let mut hard = []string {}
+    for i in 0..sources.len {
+        let mut used_hard = false
+        for k in 0..sc.lp_src.len {
+            if sc.lp_src[k] == i && sc.lp_clean[k] == arrange.CLEAN_HARD {
+                used_hard = true
+            }
+        }
+        if used_hard {
+            push(hard, name_at_peek(i))
+        }
+    }
+    if hard.len > 0 {
+        let who = str.join(hard, ", ")
+        notice.set("{{who}}: almost no voice-free passage, so its quietest-voiced phrases were separated and cleaned.")
+    }
+}
+
+fn poll_render() {
+    if voicing {
+        step_voices()
+        return
+    }
+    let n = take_n + 1
+    let out = files.take_wav(n)
+    if sys.exists("{{out}}.fail") == 1 {
+        fail(jobs.last_log(session, "The render failed."))
+        return
+    }
+    if sys.exists("{{out}}.done") != 1 {
+        let pct = jobs.progress(session, render_ms)
+        let shown = 70 + pct * 30 / 100
+        if shown != progress.peek() {
+            progress.set(shown)
+        }
+        return
+    }
+    finish_render(n)
+}
+
+fn finish_render(n: int) {
+    let out = files.take_wav(n)
+    let old = take_n
+    take_n = n
+    // Play the new take first, then forget the old one: only the newest
+    // unsaved take stays on disk.
+    playing.set(false)
+    zeus.media_pause(host)
+    let opened = zeus.media_open(host, out)
+    files.drop_take(old)
+    take.set(out)
+    saved.set("")
+    take_ms.set(render_ms)
+    peaks.set(load_peaks(files.take_peaks(n), WAVE_BARS))
+    sections.set(section_marks(render_score))
+    path.set(render_score.path)
+    path_heard.set(render_score.heard)
+    let sc = render_score
+    let k = key.name(Tonality { tonic: sc.tonic, minor: sc.minor, sure: 100 })
+    let st = styles.name(controls.style.peek())
+    take_line.set("{{st}} · {{time.bpm_text(sc.bpm_c)}} BPM · {{k}} · {{arrange.chords_text(sc)}} · {{time.clock(render_ms)}}")
+    let suggestion = "{{st}} in {{plain_key(k)}}"
+    if title.peek().len == 0 || title.peek() == auto_title {
+        title.set(suggestion)
+    }
+    auto_title = suggestion
+    phase.set(PHASE_READY)
+    say("", 100)
+    if opened {
+        zeus.media_play(host)
+        playing.set(true)
+    }
+}
+
+/// "F♯m" → "F#m", for a file name.
+fn plain_key(k: string) -> string {
+    return str.replace_all(str.replace_all(k, "♯", "#"), "♭", "b")
+}
+
+/// The waveform: `bars` peaks of the 50 Hz overview, 4..100.
+fn load_peaks(path: string, bars: int) -> []int {
+    let b = sys.read_file(path)
+    let n = b.len / 2
+    let mut out = []int {}
+    if n == 0 {
+        return out
+    }
+    let mut raw = []int {}
+    let mut top = 1
+    for k in 0..bars {
+        let a = k * n / bars
+        let e = (k + 1) * n / bars
+        let mut m = 0
+        let mut i = a
+        while i < e {
+            let u = b[i * 2] + b[i * 2 + 1] * 256
+            let v = if u >= 32768 { 65536 - u } else { u }
+            if v > m {
+                m = v
+            }
+            i = i + 1
+        }
+        push(raw, m)
+        if m > top {
+            top = m
+        }
+    }
+    for k in 0..raw.len {
+        let h = raw[k] * 100 / top
+        push(out, if h < 4 { 4 } else { h })
+    }
+    return out
+}
+
+fn section_marks(sc: Score) -> []int {
+    let mut out = []int {}
+    let total = sc.total_s
+    if total <= 0 {
+        return out
+    }
+    for i in 0..sc.sec_kind.len {
+        let a = time.LEAD_S + sc.sec_bar[i] * sc.bar_s
+        let len = sc.sec_bars[i] * sc.bar_s
+        push(out, sc.sec_kind[i])
+        push(out, i32(i64(a) * i64(1000) / i64(total)))
+        push(out, i32(i64(len) * i64(1000) / i64(total)))
+    }
+    return out
+}
+
+// ---- Playback ----------------------------------------------------------------
+
+fn poll_player() {
+    if take.peek().len == 0 {
+        return
+    }
+    let st = zeus.media_state(host)
+    let on = st == zeus.MEDIA_PLAYING
+    if on != playing.peek() && (st == zeus.MEDIA_PLAYING || st == zeus.MEDIA_PAUSED || st == zeus.MEDIA_ENDED) {
+        playing.set(on)
+    }
+    let at = zeus.media_position(host)
+    if at != pos.peek() {
+        pos.set(at)
+    }
+}
+
+fn toggle_play() {
+    let t = take.peek()
+    if t.len == 0 {
+        return
+    }
+    if playing.peek() {
+        zeus.media_pause(host)
+        playing.set(false)
+        return
+    }
+    if zeus.media_src(host) != t {
+        zeus.media_open(host, t)
+    }
+    if zeus.media_state(host) == zeus.MEDIA_ENDED {
+        zeus.media_seek(host, 0)
+    }
+    zeus.media_play(host)
+    playing.set(true)
+}
+
+/// Jump to `permille` of the take.
+fn seek(permille: int) {
+    let ms = take_ms.peek()
+    if ms <= 0 || take.peek().len == 0 {
+        return
+    }
+    let at = i32(i64(ms) * i64(permille) / i64(1000))
+    zeus.media_seek(host, at)
+    pos.set(at)
+}
+
+fn position_permille() -> int {
+    let ms = take_ms.get()
+    if ms <= 0 {
+        return 0
+    }
+    let p = pos.get() * 1000 / ms
+    if p > 1000 {
+        return 1000
+    }
+    return p
+}
+
+// ---- Save --------------------------------------------------------------------
+
+fn format_ext(f: int) -> string {
+    if f == FMT_M4A {
+        return "m4a"
+    }
+    if f == FMT_MP3 {
+        return "mp3"
+    }
+    return "wav"
+}
+
+fn format_names() -> []string {
+    return []string { "WAV", "M4A", "MP3" }
+}
+
+/// Copy the take to `~/Documents/Mune` under the title, in the format.
+fn save() {
+    let t = take.peek()
+    if t.len == 0 || saving.peek() {
+        return
+    }
+    if engine.remote() {
+        saving.set(true)
+        saved.set("")
+        notice.set("")
+        engine.save(rem_take, title.peek(), export_fmt.peek())
+        return
+    }
+    let fmt = format_ext(export_fmt.peek())
+    if fmt == "mp3" && !jobs.mp3_ready() {
+        notice.set("This ffmpeg has no MP3 encoder. Save as WAV or M4A.")
+        return
+    }
+    let dest = files.unique_path(files.export_dir(), files.safe_name(title.peek()), fmt)
+    let script = "{{files.work_root()}}/export.sh"
+    if sys.write_file(script, jobs.export_script(t, dest, fmt)) != 0 {
+        notice.set("Could not write the save job.")
+        return
+    }
+    sys.remove_path("{{dest}}.done")
+    sys.remove_path("{{dest}}.fail")
+    save_target = dest
+    saving.set(true)
+    saved.set("")
+    jobs.launch(script)
+}
+
+fn poll_save() {
+    if !saving.peek() {
+        return
+    }
+    let dest = save_target
+    if sys.exists("{{dest}}.done") == 1 {
+        sys.remove_path("{{dest}}.done")
+        saving.set(false)
+        saved.set(dest)
+        notice.set("")
+        return
+    }
+    if sys.exists("{{dest}}.fail") == 1 {
+        sys.remove_path("{{dest}}.fail")
+        saving.set(false)
+        notice.set("The piece could not be saved to {{files.short(files.export_dir())}}.")
+    }
+}
+
+fn reveal_saved() {
+    let s = saved.peek()
+    if engine.remote() {
+        engine.reveal(s)
+        return
+    }
+    if s.len > 0 {
+        files.reveal(s)
+        return
+    }
+    files.reveal(files.export_dir())
+}
+
+// ---- Small helpers -------------------------------------------------------------
+
+fn name_at_peek(i: int) -> string {
+    let ns = names.peek()
+    if i < 0 || i >= ns.len {
+        return "a recording"
+    }
+    return ns[i]
+}
+
+fn has_path(p: string) -> bool {
+    let xs = paths.peek()
+    for i in 0..xs.len {
+        if xs[i] == p {
+            return true
+        }
+    }
+    return false
+}
+
+fn zeros(n: int) -> []int {
+    let mut out = []int {}
+    for i in 0..n {
+        push(out, 0)
+    }
+    return out
+}
+
+fn blank_strs(n: int) -> []string {
+    let mut out = []string {}
+    for i in 0..n {
+        push(out, "")
+    }
+    return out
+}
+
+fn copy_strs(xs: []string) -> []string {
+    let mut out = []string {}
+    for i in 0..xs.len {
+        let s = xs[i]
+        push(out, str.slice(s, 0, s.len))
+    }
+    return out
+}
+
+fn drop_str(xs: []string, drop: int) -> []string {
+    let mut out = []string {}
+    for i in 0..xs.len {
+        if i != drop {
+            let s = xs[i]
+            push(out, str.slice(s, 0, s.len))
+        }
+    }
+    return out
+}

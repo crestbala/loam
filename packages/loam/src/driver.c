@@ -1312,7 +1312,7 @@ int main(int argc, char **argv) {
                      "cc %s %s -o \"%s\" -I\"%s\" -x c \"%s\" -x none \"%s\" \"%s\" \"%s\"%s%s "
                      "-framework Cocoa -framework QuartzCore -framework IOSurface -framework Security "
                      "-framework AVFoundation -framework CoreMedia -framework CoreVideo "
-                     "-framework VideoToolbox "
+                     "-framework VideoToolbox -framework AudioToolbox -weak_framework SoundAnalysis "
                      "-framework CoreFoundation -lm",
                      copt, ld, binpath, LOAM_RUNTIME_DIR, cpath, plat_o, key_o, mac_o, http_link,
                      extra_link);

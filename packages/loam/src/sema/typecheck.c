@@ -4423,6 +4423,83 @@ static void check_selective_imports(AstNode *p) {
     }
 }
 
+/* C symbol names are `loam_<fn>` in the main module and `loam_<mod>_<fn>`
+ * elsewhere, so two different fns can land on one symbol: a main-module
+ * `theory_voicing` and `theory.voicing`, or `a_b.c` and `a.b_c`. std and
+ * seam names are the link boundary and keep theirs; a user symbol that
+ * collides with a name already taken gets a numbered suffix. Calls and
+ * globals read the recorded cname, so the rename reaches every use. */
+typedef struct {
+    const char **slot;
+    size_t cap;
+} CnameSet;
+
+static size_t cname_hash(const char *s) {
+    size_t h = 1469598103934665603u;
+    for (; *s; s++) h = (h ^ (unsigned char)*s) * 1099511628211u;
+    return h;
+}
+
+static int cname_has(CnameSet *set, const char *s) {
+    size_t i = cname_hash(s) & (set->cap - 1);
+    while (set->slot[i]) {
+        if (strcmp(set->slot[i], s) == 0) return 1;
+        i = (i + 1) & (set->cap - 1);
+    }
+    return 0;
+}
+
+static void cname_add(CnameSet *set, const char *s) {
+    size_t i = cname_hash(s) & (set->cap - 1);
+    while (set->slot[i]) {
+        if (strcmp(set->slot[i], s) == 0) return;
+        i = (i + 1) & (set->cap - 1);
+    }
+    set->slot[i] = s;
+}
+
+/** `*cname` unique in `set` (renamed when taken), then claimed. */
+static void cname_claim(CnameSet *set, const char **cname) {
+    if (cname_has(set, *cname)) {
+        size_t ln = strlen(*cname) + 16;
+        char *nn = malloc(ln);
+        for (int k = 2;; k++) {
+            snprintf(nn, ln, "%s_%d", *cname, k);
+            if (!cname_has(set, nn)) break;
+        }
+        *cname = nn;
+    }
+    cname_add(set, *cname);
+}
+
+static int user_symbol_mod(LoamModule *mod, int m) {
+    return m == 0 || (mod->path && user_seam_mod(mod->path) && !is_ffi_mod(mod->name));
+}
+
+/** Pass 1 tail: std and seam fns claim their names first, then user fns. */
+static void dedupe_fn_cnames(LoamModule *mods, int nmods, CnameSet *set) {
+    for (int pass = 0; pass < 2; pass++)
+    for (int m = 0; m < nmods; m++) {
+        AstNode *p = mods[m].ast;
+        if (!p) continue;
+        int user = user_symbol_mod(&mods[m], m);
+        for (size_t i = 0; i < p->as.program.decl_count; i++) {
+            AstNode *d = p->as.program.decls[i];
+            if (pass == 0 && !user && d->kind == AST_VAR_DECL) {
+                /* A std global's symbol, claimed before pass 2a names it. */
+                size_t ln = 5 + strlen(mods[m].name) + 1 + strlen(d->as.var.name) + 1;
+                char *gn = malloc(ln);
+                snprintf(gn, ln, "loam_%s_%s", mods[m].name, d->as.var.name);
+                cname_add(set, gn);
+            }
+            if (d->kind != AST_FN_DECL || !d->as.fn.cname) continue;
+            int fixed = !user || d->as.fn.is_intrinsic || strcmp(d->as.fn.cname, "main") == 0;
+            if (pass == 0 && fixed) cname_add(set, d->as.fn.cname);
+            if (pass == 1 && !fixed) cname_claim(set, &d->as.fn.cname);
+        }
+    }
+}
+
 int typecheck_modules(LoamModule *mods, int nmods) {
     Gmods = mods;
     Gn = nmods;
@@ -4492,6 +4569,14 @@ int typecheck_modules(LoamModule *mods, int nmods) {
         }
     }
 
+    size_t nsyms = (size_t)LOAM_MAX_GLOBALS;
+    for (int m = 0; m < nmods; m++)
+        if (mods[m].ast) nsyms += mods[m].ast->as.program.decl_count;
+    CnameSet syms = {NULL, 64};
+    while (syms.cap < nsyms * 2) syms.cap <<= 1;
+    syms.slot = calloc(syms.cap, sizeof *syms.slot);
+    dedupe_fn_cnames(mods, nmods, &syms);
+
     /* pass 2a: type every module `let` so `mod.global` can see imported state.
        Imports first (`done_rank` is the load post-order): a global initialised
        from an imported one (`let s = zeus.signal(ar.FIT)`) needs that type
@@ -4519,6 +4604,12 @@ int typecheck_modules(LoamModule *mods, int nmods) {
                     snprintf(buf, sizeof buf, "loam_%s_%s", mods[m].name, d->as.var.name);
                 gvars[ngvars].var = d;
                 gvars[ngvars].cname = loam_dup(buf);
+                if (user_symbol_mod(&mods[m], m)) {
+                    const char *gn = gvars[ngvars].cname;
+                    cname_claim(&syms, &gn);
+                    gvars[ngvars].cname = (char *)gn;
+                } else
+                    cname_add(&syms, gvars[ngvars].cname);
                 gvars[ngvars].mod = m;
                 ngvars++;
             }

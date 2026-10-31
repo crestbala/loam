@@ -1,0 +1,8 @@
+name = "mune"
+title = "Mune"
+bundle_id = "com.loam.mune"
+version = "1.0"
+targets = ["web", "macos", "ios", "server"]
+routes = "routes"
+theme = "theme.loam"
+revalidate = 60

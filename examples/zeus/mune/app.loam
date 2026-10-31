@@ -1,0 +1,18 @@
+//! Mune — a new piece made from recordings you already have, with
+//! instruments and effects played in their key and tempo.
+//!
+//!   ./bin/zeli serve examples/zeus/mune --target macos
+//!
+//! `zeli routes` generates app_routes.loam. Render runs on the macOS app,
+//! where ffmpeg, the voice tools, and the file writes live.
+
+import "std:zeus"
+import "app_routes.loam" as approutes
+import "studio/store.loam" as store
+
+fn main() {
+    store.start()
+    zeus.App("Mune", fn() {
+        approutes.app()
+    }, 1280, 900)
+}

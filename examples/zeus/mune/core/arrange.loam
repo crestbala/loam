@@ -1,0 +1,2251 @@
+//! Roles, the form, and the score.
+//!
+//! The piece takes its tempo and key from the rhythm recording (or the
+//! listener's choice). Every recording is moved onto that grid and key:
+//! a phrase is stretched by at most 25% and shifted by at most six
+//! semitones plus the pitch control. The form is intro, verse, build,
+//! drop, break, (verse, build, drop,) outro, scaled to the length asked
+//! for.
+//!
+//! The harmony comes from the recordings. The hook — the strongest,
+//! most tonal four bars the rhythm and motif recordings offer — keeps the
+//! chords its recording was decoded to as a sequence (`key.chord_path`,
+//! one Viterbi path over the whole file), and they become the progression
+//! the synths play. Only when nothing is tonal enough does the style's own
+//! progression stand in. A phrase whose recording is quieter than that, or
+//! silent, cadences: the last bar of an open phrase becomes the dominant,
+//! and a closed phrase's last two bars move dominant then tonic. Under a
+//! tonal recording the chords stay as heard and only the melody cadences.
+//! The same free bars take the tension curve: a colour (triad, seventh,
+//! sus4, add9), a slower or faster harmonic rhythm, and two chords in the
+//! last bar of a build. That bar also drops the kick and the bass. The
+//! drop's first downbeat, when it is free, is the tonic.
+//!
+//! Which phrase plays where is concatenative synthesis: every phrase is a
+//! unit, every bus is a row of slots on the bar grid, and a Markov chain
+//! (`chain.loam`) walks the units slot by slot. The target is an energy
+//! arc: a quiet intro, a verse, a build that climbs, a full drop, a break
+//! that falls away, an outro that settles. Units that clash with the
+//! progression cost, so the recordings and the instruments agree. A slot
+//! loops its unit to fill four bars, because repetition is what makes a
+//! groove; the chain prefers to play on as the recording did, and a phrase
+//! label heard before brings that phrase's unit back. Several walks are
+//! drawn and the one that best fits the arc, the labels, and the other
+//! buses is kept.
+//!
+//! One recording is never played against itself: a bus only draws from
+//! recordings in its own role, and air that has to borrow the rhythm
+//! recording only plays where the rhythm bus is silent. Where a recording
+//! already carries a drum groove, the synth drums thin to hats; where it
+//! carries a bass, the synth bass stays out.
+//!
+//! Which layer plays where is one table (`entry`): the phrase of each
+//! section a layer comes in on, recorded buses included, and an entry
+//! tension that orders them, so a verse builds a phrase at a time and the
+//! outro lets the last layer in go first.
+//!
+//! With voices removed, a phrase is only taken where the voice map says
+//! nobody sings or speaks. A recording that has almost no such phrase gives
+//! its least-voiced ones, cleaned hard (`CLEAN_HARD`).
+
+import "chain.loam" as chain
+import "key.loam" as key
+import "listen.loam" as listen
+import "motif.loam" as motif
+import "num.loam" as num
+import "plan.loam" as plan
+import "sound.loam" as sound
+import "styles.loam" as styles
+import "synth.loam" as synth
+import "theory.loam" as theory
+import "time.loam" as time
+
+const RHYTHM: int = 0
+const MOTIF: int = 1
+const AIR: int = 2
+
+const INTRO: int = 0
+const VERSE: int = 1
+const BUILD: int = 2
+const DROP: int = 3
+const BREAK: int = 4
+const OUTRO: int = 5
+
+const L_DRUMS: int = 0
+const L_BASS: int = 1
+const L_PAD: int = 2
+const L_ARP: int = 3
+const L_BELLS: int = 4
+const L_RISER: int = 5
+const L_IMPACT: int = 6
+/// A second line under the lead, on the pad's timbre.
+const L_COUNTER: int = 7
+
+/// Highest note a sung line may reach (A6, 1.76 kHz). The bell is an FM
+/// voice whose partials run to about seven times the note; above this they
+/// pass half the sample rate and fold back as whistles.
+const LEAD_TOP: int = 93
+
+/// How a phrase is cleaned before it plays.
+const CLEAN_NONE: int = 0
+/// Spectral centre removal (no voice map, stereo).
+const CLEAN_CENTER: int = 1
+/// Voice stem removed, centre removed, and the voice band lowered.
+const CLEAN_HARD: int = 2
+
+/// A recording phrase with this much low band (0..100) already has a bass
+/// line; the synth bass stays out of its section.
+const BASS_FULL: int = 55
+
+/// A recording whose pulse (0..100) is this clear carries a drum kit.
+const GROOVE_PULSE: int = 30
+
+/// A unit at least this tonal (0..1000) keeps the chords under it. Below
+/// it, or where nothing plays, the phrase may cadence. The same line the
+/// hook uses when it decides a recording has harmony at all.
+const TONAL_MIN: int = 300
+
+const TONE_NONE: int = 0
+/// Low-passed, for an outro.
+const TONE_DARK: int = 1
+/// A rising high-pass across the section, for a build.
+const TONE_RISE: int = 2
+/// A low-pass opening across the section, for an intro.
+const TONE_OPEN: int = 3
+
+/// One recording as the arranger sees it.
+struct Source {
+    heard: Heard,
+    key: Tonality,
+    role: int,
+    /// Integrated loudness in centi-LUFS, 0 when unknown.
+    lufs_c: int,
+    mono: bool,
+    has_map: bool,
+    /// A voice-free stem was written for this recording.
+    has_split: bool,
+}
+
+/// The arranged piece. Loop and part columns are parallel. Positions are
+/// bar indexes; lengths are samples unless named otherwise.
+struct Score {
+    bpm_c: int,
+    bar_s: int,
+    bars: int,
+    /// Phrase length in bars (two or four). Drum loops are this long, so
+    /// the breath at the end of the loop is the end of every phrase.
+    unit: int,
+    total_s: int,
+    tonic: int,
+    minor: bool,
+    /// Four chords, one a bar, as `key.chord_code`s. The hook, looping.
+    prog: []int,
+    /// The progression was heard in a recording, not the style's.
+    prog_heard: bool,
+    /// The chord that actually plays on each bar: `prog`, with a cadence
+    /// written on phrases where no tonal recording is playing.
+    bar_ch: []int,
+    sec_kind: []int,
+    sec_bar: []int,
+    sec_bars: []int,
+    lp_src: []int,
+    lp_in: []int,
+    lp_len: []int,
+    lp_unit: []int,
+    lp_reps: []int,
+    lp_bar: []int,
+    lp_db: []int,
+    lp_bus: []int,
+    lp_semis: []int,
+    /// Tempo factor ×1e6 (1000000 is unchanged).
+    lp_tempo: []int,
+    lp_clean: []int,
+    lp_split: []int,
+    lp_tone: []int,
+    /// 0 for a seamless loop, else a fade in and out of this many ms.
+    lp_fade: []int,
+    sy_layer: []int,
+    sy_variant: []int,
+    sy_bar: []int,
+    sy_bars: []int,
+    sy_db: []int,
+    /// Index into the line columns, or -1 when the part is a looped generator.
+    sy_line: []int,
+    /// Index into `pg`, or -1 to loop `prog` with the style's voicing. A
+    /// phrase whose chords, colours, or split differ gets its own row.
+    sy_pg: []int,
+    /// 0 when this drum part leaves the kick out. Other layers keep 1.
+    sy_kick: []int,
+    /// Interned rows, nine ints each: four chord codes, four colours, and
+    /// the split chord of the row's last bar (−1 when the bar is one chord).
+    pg: []int,
+    /// Target energy of each bar, 0..1000 (`plan.arc`).
+    path: []int,
+    /// Tension, one value a bar. Register is semitones (0..12, whole
+    /// tones). Density and dissonance are 0..1000. Dynamics is the synth
+    /// bed in centi-dB. Harmonic rhythm is the sixteenths one chord is held.
+    tn_reg: []int,
+    tn_den: []int,
+    tn_diss: []int,
+    tn_dyn: []int,
+    tn_harm: []int,
+    /// Voicing colour of each bar (`plan.tension_color`). Below 0 keeps
+    /// the style's own voice. 0 forces a triad.
+    bar_col: []int,
+    /// Chord code for the first half of the bar, or −1 when it holds one.
+    /// `bar_ch` stays the second half, which is where a cadence lands.
+    bar_split: []int,
+    /// Energy of the phrase heard at each bar, 0..1000, or -1 for none.
+    heard: []int,
+    /// Per section: a recording plays a drum groove there, and how much
+    /// low band (bass and kick, 0..100) it carries.
+    sec_groove: []bool,
+    sec_low: []int,
+    /// Phrases. `ph_label` 0 is a, 1 is b. `ph_var` is how many times that
+    /// label was heard. `ph_end` is open or closed (`plan`).
+    ph_bar: []int,
+    ph_bars: []int,
+    ph_sec: []int,
+    ph_label: []int,
+    ph_var: []int,
+    ph_end: []int,
+    /// Bars `[lift_from, lift_to)` play a whole step up: the last drop,
+    /// recordings and synths together. `lift_from` -1 when nothing moved.
+    lift_from: int,
+    lift_to: int,
+    /// The hook the progression was heard in, or `hook_src` -1.
+    hook_src: int,
+    hook_in: int,
+    hook_len: int,
+    /// The motif, in scale degrees and sixteenths.
+    mo_deg: []int,
+    mo_at: []int,
+    mo_len: []int,
+    /// Melody hits, concatenated. `ln_from[line]` and `ln_n[line]` slice them.
+    ln_at: []f64,
+    ln_vel: []f64,
+    ln_freq: []f64,
+    ln_gate: []f64,
+    ln_from: []int,
+    ln_n: []int,
+    /// Grid sixteenth of each line's highest note, or −1. Humanize reads
+    /// this so the arch peaks with the melody, not with a nudged time.
+    ln_peak: []int,
+    /// Winning melody score per phrase, or -1 when that phrase has no line.
+    /// `ph_term` is nine terms per phrase: steps, leaps, range, chord,
+    /// record, contour, rhythm, motif, fresh.
+    ph_mel: []int,
+    ph_term: []int,
+    /// Winning counter-line score per phrase, or -1 when no counter plays.
+    /// `ph_cterm` is four terms per phrase: motion, consonance, fill, steps.
+    ph_ctr: []int,
+    ph_cterm: []int,
+    /// The three best walks per bus: bus, walk index, score. Best first.
+    wk_bus: []int,
+    wk_n: []int,
+    wk_score: []int,
+}
+
+fn role_names() -> []string {
+    return []string { "Rhythm", "Motif", "Air" }
+}
+
+fn role_name(r: int) -> string {
+    let ns = role_names()
+    if r < 0 || r >= ns.len {
+        return ns[0]
+    }
+    return ns[r]
+}
+
+fn section_name(k: int) -> string {
+    let ns = []string { "Intro", "Verse", "Build", "Drop", "Break", "Outro" }
+    if k < 0 || k >= ns.len {
+        return ""
+    }
+    return ns[k]
+}
+
+fn empty_score() -> Score {
+    return Score {
+        bpm_c: 0, bar_s: 0, bars: 0, unit: 4, total_s: 0, tonic: 9, minor: true,
+        prog: []int {}, prog_heard: false, bar_ch: []int {},
+        sec_kind: []int {}, sec_bar: []int {}, sec_bars: []int {},
+        lp_src: []int {}, lp_in: []int {}, lp_len: []int {}, lp_unit: []int {}, lp_reps: []int {},
+        lp_bar: []int {}, lp_db: []int {}, lp_bus: []int {}, lp_semis: []int {}, lp_tempo: []int {},
+        lp_clean: []int {}, lp_split: []int {}, lp_tone: []int {}, lp_fade: []int {},
+        sy_layer: []int {}, sy_variant: []int {}, sy_bar: []int {}, sy_bars: []int {}, sy_db: []int {},
+        sy_line: []int {}, sy_pg: []int {}, sy_kick: []int {}, pg: []int {},
+        path: []int {}, tn_reg: []int {}, tn_den: []int {}, tn_diss: []int {}, tn_dyn: []int {},
+        tn_harm: []int {}, bar_col: []int {}, bar_split: []int {},
+        heard: []int {}, sec_groove: []bool {}, sec_low: []int {},
+        ph_bar: []int {}, ph_bars: []int {}, ph_sec: []int {}, ph_label: []int {}, ph_var: []int {},
+        ph_end: []int {},
+        lift_from: -1, lift_to: -1,
+        hook_src: -1, hook_in: 0, hook_len: 0,
+        mo_deg: []int {}, mo_at: []int {}, mo_len: []int {},
+        ln_at: []f64 {}, ln_vel: []f64 {}, ln_freq: []f64 {}, ln_gate: []f64 {},
+        ln_from: []int {}, ln_n: []int {}, ln_peak: []int {},
+        ph_mel: []int {}, ph_term: []int {}, ph_ctr: []int {}, ph_cterm: []int {},
+        wk_bus: []int {}, wk_n: []int {}, wk_score: []int {},
+    }
+}
+
+/// Most onsets with a pulse is rhythm, fewest (or no pulse) is air, the
+/// rest motif. One recording is rhythm. Of two, the second is motif when it
+/// has a pulse (it can play along on the grid) and air when it has none.
+fn roles_for(heard: []Heard) -> []int {
+    let n = heard.len
+    let mut out = []int {}
+    for i in 0..n {
+        push(out, MOTIF)
+    }
+    if n == 0 {
+        return out
+    }
+    let mut hi = -1
+    for i in 0..n {
+        let h = heard[i]
+        if h.bpm_c > 0 && (hi < 0 || h.onsets > heard[hi].onsets) {
+            hi = i
+        }
+    }
+    if hi < 0 {
+        hi = 0
+        for i in 1..n {
+            if heard[i].onsets > heard[hi].onsets {
+                hi = i
+            }
+        }
+    }
+    out[hi] = RHYTHM
+    if n == 1 {
+        return out
+    }
+    let mut lo = -1
+    for i in 0..n {
+        if i != hi {
+            let h = heard[i]
+            let score = h.onsets + (if h.bpm_c > 0 { 100000 } else { 0 })
+            if lo < 0 {
+                lo = i
+            } else {
+                let l = heard[lo]
+                let best = l.onsets + (if l.bpm_c > 0 { 100000 } else { 0 })
+                if score < best {
+                    lo = i
+                }
+            }
+        }
+    }
+    if lo >= 0 && !(n == 2 && heard[lo].bpm_c > 0) {
+        out[lo] = AIR
+    }
+    return out
+}
+
+/// `bpm_c` doubled or halved to the octave nearest `range` (inside it
+/// when one fits), so 110 BPM stays 110 for lo-fi rather than 55.
+fn fold_into(bpm_c: int, range: []int) -> int {
+    let mut best = bpm_c
+    let mut best_d: f64 = 1000.0
+    let mut v = bpm_c / 4
+    for k in 0..5 {
+        let mut d: f64 = 0.0
+        if v < range[0] {
+            d = f64(range[0]) / f64(v)
+        } else if v > range[1] {
+            d = f64(v) / f64(range[1])
+        } else {
+            d = 1.0
+        }
+        if d < best_d {
+            best_d = d
+            best = v
+        }
+        v = v * 2
+    }
+    return best
+}
+
+fn piece_bpm_c(srcs: []Source, s: Sound) -> int {
+    if s.tempo > 0 {
+        return num.clampi(s.tempo, 50, 200) * 100
+    }
+    let range = styles.bpm_range_c(s.style)
+    for i in 0..srcs.len {
+        if srcs[i].role == RHYTHM && srcs[i].heard.bpm_c > 0 {
+            return fold_into(srcs[i].heard.bpm_c, range)
+        }
+    }
+    for i in 0..srcs.len {
+        if srcs[i].heard.bpm_c > 0 {
+            return fold_into(srcs[i].heard.bpm_c, range)
+        }
+    }
+    return styles.default_bpm_c(s.style)
+}
+
+/// The rhythm recording's key, or the surest one, or A minor.
+fn piece_key(srcs: []Source) -> Tonality {
+    for i in 0..srcs.len {
+        if srcs[i].role == RHYTHM && srcs[i].key.tonic >= 0 && srcs[i].key.sure >= 20 {
+            return srcs[i].key
+        }
+    }
+    let mut best = -1
+    for i in 0..srcs.len {
+        let k = srcs[i].key
+        if k.tonic >= 0 && (best < 0 || k.sure > srcs[best].key.sure) {
+            best = i
+        }
+    }
+    if best >= 0 && srcs[best].key.sure >= 10 {
+        return srcs[best].key
+    }
+    return Tonality { tonic: 9, minor: true, sure: 0 }
+}
+
+/// Semitones that move recording `src` into the piece key, plus the pitch
+/// control.
+fn shift_for(src: Source, piece: Tonality, pitch: int) -> int {
+    let mut d = 0
+    if src.key.tonic >= 0 && src.key.sure >= 20 {
+        d = key.shift_between(src.key, piece)
+    }
+    return num.clampi(d + pitch, -12, 12)
+}
+
+/// How a recording sits on the piece grid: octave fold `k` (its beat
+/// counts 2^k piece beats) and the stretch, ×1e6. 0 stretch: no grid.
+fn grid_fit(src: Source, piece_bpm: int) -> []int {
+    let b = src.heard.bpm_c
+    if b <= 0 {
+        return []int { 0, 0 }
+    }
+    let mut best_k = 0
+    let mut best_d: f64 = 99.0
+    let mut k = -1
+    while k <= 1 {
+        let eff = if k < 0 { f64(b) / 2.0 } else if k > 0 { f64(b) * 2.0 } else { f64(b) }
+        let t = f64(piece_bpm) / eff
+        let d = if t > 1.0 { t } else { 1.0 / t }
+        if d < best_d {
+            best_d = d
+            best_k = k
+        }
+        k = k + 1
+    }
+    if best_d > 1.26 {
+        return []int { best_k, 0 }
+    }
+    let eff = if best_k < 0 { f64(b) / 2.0 } else if best_k > 0 { f64(b) * 2.0 } else { f64(b) }
+    return []int { best_k, num.roundi(f64(piece_bpm) / eff * 1000000.0) }
+}
+
+/// Bars a source phrase fills in the piece, given its octave fold.
+fn piece_bars(ph_bars: int, k: int) -> int {
+    if ph_bars <= 0 {
+        return 0
+    }
+    if k > 0 {
+        return ph_bars * 2
+    }
+    if k < 0 {
+        if ph_bars % 2 != 0 {
+            return 0
+        }
+        return ph_bars / 2
+    }
+    return ph_bars
+}
+
+/// Phrases one bus may use. Parallel columns.
+struct Cands {
+    src: []int,
+    ph: []int,
+    bars: []int,
+    tempo: []int,
+    score: []int,
+    clean: []int,
+}
+
+fn no_cands() -> Cands {
+    return Cands { src: []int {}, ph: []int {}, bars: []int {}, tempo: []int {}, score: []int {}, clean: []int {} }
+}
+
+fn cand_add(c: &mut Cands, src: int, ph: int, bars: int, tempo: int, score: int, clean: int) {
+    push(c.src, src)
+    push(c.ph, ph)
+    push(c.bars, bars)
+    push(c.tempo, tempo)
+    push(c.score, score)
+    push(c.clean, clean)
+}
+
+/// Sources a bus draws from: those in its role. Rhythm and air fall back
+/// to every source when none has their role; motif does not, because a
+/// motif from the rhythm recording would play it against itself.
+fn bus_sources(srcs: []Source, bus: int) -> []int {
+    let mut out = []int {}
+    for i in 0..srcs.len {
+        if srcs[i].role == bus {
+            push(out, i)
+        }
+    }
+    if out.len > 0 || bus == MOTIF {
+        return out
+    }
+    for i in 0..srcs.len {
+        push(out, i)
+    }
+    return out
+}
+
+/// Does `bus` borrow a recording that also plays on `other`?
+fn borrows(srcs: []Source, bus: int, other: int) -> bool {
+    let a = bus_sources(srcs, bus)
+    let b = bus_sources(srcs, other)
+    for i in 0..a.len {
+        if num.index_of(b, a[i]) >= 0 {
+            return true
+        }
+    }
+    return false
+}
+
+/// Phrases for `bus`. Looped buses (rhythm, motif) need the grid and whole
+/// bars; air takes anything and is placed with long fades. `strict` keeps
+/// only voice-free phrases; otherwise voiced ones come in, cleaned hard.
+fn gather(srcs: []Source, bus: int, piece_bpm: int, s: Sound, strict: bool) -> Cands {
+    let mut c = no_cands()
+    let from = bus_sources(srcs, bus)
+    let piece_bar = time.bar_samples(piece_bpm)
+    for fi in 0..from.len {
+        let si = from[fi]
+        let src = srcs[si]
+        let h = src.heard
+        let fit = grid_fit(src, piece_bpm)
+        for p in 0..h.ph_start.len {
+            let mut bars = piece_bars(h.ph_bars[p], fit[0])
+            let mut tempo = fit[1]
+            let looped = bus != AIR
+            if looped && (tempo == 0 || bars <= 0 || bars > 4) {
+                continue
+            }
+            if tempo != 0 && bars > 0 {
+                // The phrase's own length, not the nominal one: the bar
+                // lines follow the band, so each phrase stretches exactly
+                // onto its bars.
+                tempo = num.roundi(f64(h.ph_len[p]) * 1000000.0 / (f64(bars) * f64(piece_bar)))
+                if tempo < 790000 || tempo > 1260000 {
+                    continue
+                }
+            }
+            if !looped && (tempo == 0 || bars <= 0) {
+                // Free time: no stretch, placed by length.
+                tempo = 1000000
+                bars = 0
+            }
+            let mut clean = CLEAN_NONE
+            let v = h.ph_voice[p]
+            if s.voices == sound.VOICES_REMOVE {
+                if src.has_map {
+                    if v >= listen.VOICE_FREE {
+                        if strict {
+                            continue
+                        }
+                        clean = CLEAN_HARD
+                    }
+                } else if !src.mono {
+                    clean = CLEAN_CENTER
+                }
+            }
+            // Voiced phrases rank last only when voices are removed; kept,
+            // a phrase is chosen for how it plays, sung or not.
+            let mut score = h.ph_score[p]
+            if s.voices == sound.VOICES_REMOVE {
+                score = score - listen.voice_penalty(v)
+            }
+            let kind = h.ph_kind[p]
+            if bus == RHYTHM && kind == listen.KIND_GROOVE {
+                score = score + 20
+            }
+            if bus == MOTIF && kind == listen.KIND_TEXTURE {
+                score = score + 10
+            }
+            if bus == AIR && kind == listen.KIND_TEXTURE {
+                score = score + 25
+            }
+            // Longer loops carry a phrase, not just a bar: one bar four
+            // times over is a drone, four bars once is a line.
+            if looped && bars == 2 {
+                score = score + 18
+            }
+            if looped && bars == 4 {
+                score = score + 36
+            }
+            if clean == CLEAN_HARD {
+                score = score - 40 - v / 2
+            }
+            cand_add(c, si, p, bars, tempo, score, clean)
+        }
+    }
+    return c
+}
+
+/// Strict first; voiced phrases only when strict leaves fewer than two.
+fn candidates(srcs: []Source, bus: int, piece_bpm: int, s: Sound) -> Cands {
+    let strict = gather(srcs, bus, piece_bpm, s, true)
+    if strict.src.len >= 2 || s.voices == sound.VOICES_KEEP {
+        return strict
+    }
+    return gather(srcs, bus, piece_bpm, s, false)
+}
+
+/// Candidate indexes, best first.
+fn ranked(c: Cands) -> []int {
+    let mut order = []int {}
+    for i in 0..c.score.len {
+        push(order, i)
+    }
+    let mut i = 1
+    while i < order.len {
+        let v = order[i]
+        let mut j = i
+        while j > 0 && c.score[order[j - 1]] < c.score[v] {
+            order[j] = order[j - 1]
+            j = j - 1
+        }
+        order[j] = v
+        i = i + 1
+    }
+    return order
+}
+
+/// Section kinds, lengths, and the phrase unit. See `plan.form`.
+fn form(length_ms: int, bar_s: int) -> [][]int {
+    return plan.form(length_ms, bar_s)
+}
+
+/// Rows of the entry table for the recorded buses: `REC + RHYTHM`, and so on.
+const REC: int = 10
+
+/// The entry table. One row per layer (`L_*`, or `REC + bus` for a
+/// recorded bus), one column per section kind: the phrase of the section
+/// the layer comes in on (0 is the first), or -1 when it sits the section
+/// out. A verse opens on drums, bass, and pad, and the arp joins on its
+/// second phrase; a drop starts full and adds the counter-melody on its
+/// second; a break strips to pad and the lead; the outro lets layers go
+/// in reverse order of entry (`entry_tension`). The style only decides
+/// which cells are filled.
+fn entry(row: int, kind: int, s: Sound) -> int {
+    let st = s.style
+    let drive = s.energy == styles.DRIVE
+    //          intro verse build drop break outro
+    let mut r = []int { -1, -1, -1, -1, -1, -1 }
+    if row == L_DRUMS {
+        r = []int { -1, 0, 0, 0, -1, -1 }
+        if drive && st != styles.DREAM && st != styles.CINEMA {
+            r[INTRO] = 0
+        }
+        if st == styles.DREAM {
+            r[VERSE] = if drive { 0 } else { -1 }
+            r[BUILD] = -1
+        }
+        if st == styles.LOFI || st == styles.AFRO || (drive && (st == styles.HOUSE || st == styles.WAVE)) {
+            r[OUTRO] = 0
+        }
+    } else if row == L_BASS {
+        r = []int { -1, 0, 0, 0, -1, -1 }
+        if st == styles.LOFI || st == styles.AFRO {
+            r[OUTRO] = 0
+        }
+    } else if row == L_PAD {
+        r = []int { 0, 0, 0, 0, 0, 0 }
+    } else if row == L_ARP {
+        r = []int { -1, 1, 0, 0, -1, -1 }
+    } else if row == L_BELLS {
+        if st == styles.CINEMA {
+            // The piano speaks where the orchestra is quiet.
+            r = []int { 0, 0, -1, -1, 0, 0 }
+        } else if st == styles.TRAP {
+            // The bell is trap's lead.
+            r = []int { -1, 0, -1, 0, 0, 0 }
+        } else if st == styles.DREAM {
+            r = []int { -1, 0, -1, 0, 0, 0 }
+        } else {
+            r = []int { -1, -1, -1, 0, 0, -1 }
+        }
+    } else if row == L_COUNTER {
+        r = []int { -1, -1, -1, 1, 1, -1 }
+    } else if row == REC + RHYTHM {
+        r = []int { 0, 0, 0, 0, -1, 0 }
+        if st == styles.DREAM || st == styles.CINEMA {
+            // All air: the groove does not open the piece.
+            r[INTRO] = -1
+        }
+    } else if row == REC + MOTIF {
+        r = []int { -1, if drive { 1 } else { -1 }, 0, 0, 0, -1 }
+    } else if row == REC + AIR {
+        r = []int { 0, -1, -1, if st == styles.DREAM || st == styles.CINEMA { 0 } else { -1 }, 0, 0 }
+    }
+    if kind < 0 || kind >= r.len {
+        return -1
+    }
+    return r[kind]
+}
+
+/// The order layers come in, as the lowest path (0..1000) a layer holds
+/// out to. The outro lets a layer go once its phrase starts below this, so
+/// the last in is the first out.
+fn entry_tension(row: int) -> int {
+    if row == L_PAD || row == REC + AIR {
+        return 0
+    }
+    if row == REC + RHYTHM {
+        return 100
+    }
+    if row == L_DRUMS {
+        return 150
+    }
+    if row == L_BASS {
+        return 250
+    }
+    if row == L_ARP || row == REC + MOTIF {
+        return 400
+    }
+    if row == L_BELLS {
+        return 450
+    }
+    return 600
+}
+
+/// Drum pattern for a section the drums play, or -1 for none.
+fn drums_in(kind: int, s: Sound) -> int {
+    if entry(L_DRUMS, kind, s) < 0 {
+        return -1
+    }
+    let st = s.style
+    if kind == INTRO {
+        return synth.INTRO
+    }
+    if kind == BUILD {
+        if st == styles.LOFI {
+            return synth.LIGHT
+        }
+        return synth.BUILD
+    }
+    if kind == DROP {
+        if st == styles.DREAM {
+            return synth.LIGHT
+        }
+        return synth.FULL
+    }
+    return synth.LIGHT
+}
+
+/// Phrase `p`'s place in its section: 0 is the first.
+fn phrase_index(sc: &mut Score, p: int) -> int {
+    let mut n = 0
+    for i in 0..p {
+        if sc.ph_sec[i] == sc.ph_sec[p] {
+            n = n + 1
+        }
+    }
+    return n
+}
+
+/// Does `row` play phrase `p`? From its entry phrase on; in the outro,
+/// after the first phrase, only while the path holds its entry tension.
+fn layer_on(sc: &mut Score, s: Sound, row: int, p: int) -> bool {
+    if p < 0 || p >= sc.ph_sec.len {
+        return false
+    }
+    let sec = sc.ph_sec[p]
+    let kind = sc.sec_kind[sec]
+    let at = entry(row, kind, s)
+    let idx = phrase_index(sc, p)
+    if at < 0 || idx < at {
+        return false
+    }
+    if kind == OUTRO && idx > 0 {
+        let b = sc.ph_bar[p]
+        let path = if b >= 0 && b < sc.path.len { sc.path[b] } else { 0 }
+        return path >= entry_tension(row)
+    }
+    return true
+}
+
+/// Bars `[from, to)` of section `sec` that `row` plays: from the phrase it
+/// enters on to the phrase it leaves on. `from == to` when it sits out.
+fn layer_span(sc: &mut Score, s: Sound, row: int, sec: int) -> []int {
+    let mut from = -1
+    let mut to = -1
+    for p in 0..sc.ph_bar.len {
+        if sc.ph_sec[p] != sec {
+            continue
+        }
+        if layer_on(sc, s, row, p) {
+            if from < 0 {
+                from = sc.ph_bar[p]
+            }
+            if to < 0 || to == sc.ph_bar[p] {
+                to = sc.ph_bar[p] + sc.ph_bars[p]
+            }
+        }
+    }
+    if from < 0 {
+        let b0 = if sec >= 0 && sec < sc.sec_bar.len { sc.sec_bar[sec] } else { 0 }
+        return []int { b0, b0 }
+    }
+    return []int { from, to }
+}
+
+fn part(sc: &mut Score, layer: int, variant: int, bar: int, bars: int, db: int) {
+    push(sc.sy_layer, layer)
+    push(sc.sy_variant, variant)
+    push(sc.sy_bar, bar)
+    push(sc.sy_bars, bars)
+    push(sc.sy_db, db)
+    push(sc.sy_line, -1)
+    push(sc.sy_pg, -1)
+    push(sc.sy_kick, 1)
+}
+
+/// Centi-dB that brings a recording to about -17.9 LUFS, which puts a
+/// looped phrase at the premaster level the synths are trimmed to
+/// (`tests/stems.loam`).
+fn norm_db(src: Source) -> int {
+    if src.lufs_c == 0 {
+        return 0
+    }
+    return num.clampi(-1790 - src.lufs_c, -1200, 1200)
+}
+
+/// One looped phrase across `bars` from `bar`.
+fn place_loop(sc: &mut Score, srcs: []Source, c: Cands, at: int, bus: int, bar: int, bars: int, db: int,
+              tone: int, piece: Tonality, pitch: int) {
+    let si = c.src[at]
+    let src = srcs[si]
+    let h = src.heard
+    let p = c.ph[at]
+    let unit_bars = c.bars[at]
+    if unit_bars <= 0 || bars < unit_bars {
+        return
+    }
+    let reps = bars / unit_bars
+    push(sc.lp_src, si)
+    push(sc.lp_in, h.ph_start[p])
+    push(sc.lp_len, h.ph_len[p])
+    push(sc.lp_unit, unit_bars * sc.bar_s)
+    push(sc.lp_reps, reps)
+    push(sc.lp_bar, bar)
+    push(sc.lp_db, db + norm_db(src))
+    push(sc.lp_bus, bus)
+    push(sc.lp_semis, shift_for(src, piece, pitch))
+    push(sc.lp_tempo, c.tempo[at])
+    push(sc.lp_clean, c.clean[at])
+    push(sc.lp_split, if c.clean[at] == CLEAN_HARD && src.has_split { 1 } else { 0 })
+    push(sc.lp_tone, tone)
+    push(sc.lp_fade, 0)
+}
+
+/// One air phrase from `bar`, given `room_bars` before the next one ends.
+/// Free-time phrases keep their own length (stretch 1.0); each fades
+/// slowly in and out and overlaps the next by a bar.
+fn place_air_one(sc: &mut Score, srcs: []Source, c: Cands, at: int, bar: int, room_bars: int, db: int,
+                 piece: Tonality, pitch: int) -> bool {
+    let si = c.src[at]
+    let src = srcs[si]
+    let h = src.heard
+    let p = c.ph[at]
+    let mut unit = room_bars * sc.bar_s
+    let tempo = c.tempo[at]
+    let natural = i32(i64(h.ph_len[p]) * i64(1000000) / i64(tempo))
+    if natural < unit {
+        unit = natural
+    }
+    if unit <= sc.bar_s / 2 {
+        return false
+    }
+    push(sc.lp_src, si)
+    push(sc.lp_in, h.ph_start[p])
+    push(sc.lp_len, h.ph_len[p])
+    push(sc.lp_unit, unit)
+    push(sc.lp_reps, 1)
+    push(sc.lp_bar, bar)
+    push(sc.lp_db, db + norm_db(src))
+    push(sc.lp_bus, AIR)
+    push(sc.lp_semis, shift_for(src, piece, pitch))
+    push(sc.lp_tempo, tempo)
+    push(sc.lp_clean, c.clean[at])
+    push(sc.lp_split, if c.clean[at] == CLEAN_HARD && src.has_split { 1 } else { 0 })
+    push(sc.lp_tone, TONE_NONE)
+    push(sc.lp_fade, 450)
+    return true
+}
+
+/// The best `cap` candidates of a bus, skipping audio another bus already
+/// plays (unless that would leave fewer than two). Phrases of different
+/// lengths overlap — a one-bar phrase can sit inside a four-bar one — so a
+/// candidate is taken when its span shares any audio with a played phrase
+/// of the same recording, not only when it is that phrase.
+fn pool(srcs: []Source, c: Cands, cap: int, used: []int) -> []int {
+    let order = ranked(c)
+    let mut fresh = []int {}
+    for k in 0..order.len {
+        let at = order[k]
+        let mut dup = false
+        let mut t = 0
+        while t + 1 < used.len {
+            if used[t] == c.src[at] && shares_audio(srcs[used[t]].heard, used[t + 1], c.ph[at]) {
+                dup = true
+            }
+            t = t + 2
+        }
+        if !dup && fresh.len < cap {
+            push(fresh, at)
+        }
+    }
+    if fresh.len >= 2 {
+        return fresh
+    }
+    let mut all = []int {}
+    for k in 0..order.len {
+        if all.len < cap {
+            push(all, order[k])
+        }
+    }
+    return all
+}
+
+/// Do phrases `a` and `b` of one recording play any of the same audio?
+fn shares_audio(h: Heard, a: int, b: int) -> bool {
+    if a == b {
+        return true
+    }
+    if a < 0 || b < 0 || a >= h.ph_start.len || b >= h.ph_start.len {
+        return false
+    }
+    return h.ph_start[a] < h.ph_start[b] + h.ph_len[b] && h.ph_start[b] < h.ph_start[a] + h.ph_len[a]
+}
+
+/// Energy of every phrase of every recording on one scale, 0..1000:
+/// `out[src][ph]`. One scale for all buses means a quiet pad and a quiet
+/// groove both read as quiet.
+fn all_energy(srcs: []Source) -> [][]int {
+    let mut lv = []int {}
+    let mut dn = []int {}
+    let mut br = []int {}
+    for i in 0..srcs.len {
+        let h = srcs[i].heard
+        for p in 0..h.ph_start.len {
+            push(lv, if p < h.ph_level.len { h.ph_level[p] } else { 50 })
+            push(dn, if p < h.ph_dense.len { h.ph_dense[p] } else { 0 })
+            push(br, if p < h.ph_bright.len { h.ph_bright[p] } else { 50 })
+        }
+    }
+    let flat = chain.energies(lv, dn, br)
+    let mut out = [][]int {}
+    let mut at = 0
+    for i in 0..srcs.len {
+        let mut row = []int {}
+        for p in 0..srcs[i].heard.ph_start.len {
+            push(row, flat[at])
+            at = at + 1
+        }
+        push(out, row)
+    }
+    return out
+}
+
+/// The four blocks of a phrase's chroma as the piece will hear them: moved
+/// by the phrase's shift, and with a recording folded an octave (`k`), a
+/// piece bar mapped back onto its own bar. Flattened, 48 values; empty
+/// when the phrase has no chroma.
+fn piece_chroma(src: Source, p: int, piece_bars_n: int, semis: int) -> []int {
+    let h = src.heard
+    let mut out = []int {}
+    let at = p * key.BLOCKS * 12
+    if at + key.BLOCKS * 12 > h.ph_chroma.len {
+        return out
+    }
+    let own = if h.ph_bars[p] > 0 { h.ph_bars[p] } else { key.BLOCKS }
+    let mine = if piece_bars_n > 0 { piece_bars_n } else { key.BLOCKS }
+    for b in 0..key.BLOCKS {
+        // Piece bar b of the slot plays bar (b % mine) of the unit: its own
+        // bars from (b % mine) * own / mine, more than one when the
+        // recording was folded down an octave.
+        let first = (b % mine) * own / mine
+        let span = if own > mine { own / mine } else { 1 }
+        let mut sum = []int {}
+        for i in 0..12 {
+            push(sum, 0)
+        }
+        for k in 0..span {
+            let blk = key.rotate(h.ph_chroma, at + ((first + k) % key.BLOCKS) * 12, semis)
+            for i in 0..12 {
+                sum[i] = sum[i] + blk[i] / span
+            }
+        }
+        for i in 0..12 {
+            push(out, sum[i])
+        }
+    }
+    return out
+}
+
+/// How tonal a phrase is, 0..1000: the mean over its blocks.
+fn tonal_of(ch: []int) -> int {
+    if ch.len < key.BLOCKS * 12 {
+        return 0
+    }
+    let mut t = 0
+    for b in 0..key.BLOCKS {
+        t = t + key.tonal(ch, b * 12)
+    }
+    return t / key.BLOCKS
+}
+
+/// How far a phrase strays from `prog`, 0..1000, each bar weighted by how
+/// tonal it is: a drum bar clashes with nothing.
+fn clash_of(ch: []int, prog: []int, tonic: int, minor: bool) -> int {
+    if ch.len < key.BLOCKS * 12 || prog.len == 0 {
+        return 0
+    }
+    let mut c = 0
+    for b in 0..key.BLOCKS {
+        let f = key.fit(ch, b * 12, prog[b % prog.len], tonic, minor)
+        c = c + (1000 - f) * key.tonal(ch, b * 12) / 1000
+    }
+    return c / key.BLOCKS
+}
+
+/// The four chords phrase `p` plays as the piece hears it, mapped the way
+/// `piece_chroma` maps its bars and moved by `semis`. They come from the
+/// decoded sequence (`Heard.ph_chord`); a recording known only by its
+/// chroma (`ch`, the phrase's `piece_chroma`) names each bar alone.
+fn heard_chords(src: Source, p: int, piece_bars_n: int, semis: int, ch: []int, tonic: int, minor: bool) -> []int {
+    let h = src.heard
+    let mut out = []int {}
+    let at = p * key.BLOCKS
+    if at + key.BLOCKS <= h.ph_chord.len {
+        let own = if h.ph_bars[p] > 0 { h.ph_bars[p] } else { key.BLOCKS }
+        let mine = if piece_bars_n > 0 { piece_bars_n } else { key.BLOCKS }
+        for b in 0..key.BLOCKS {
+            let c = h.ph_chord[at + ((b % mine) * own / mine) % key.BLOCKS]
+            push(out, if c < 0 { -1 } else { key.chord_code(key.chord_root(c) + semis, key.chord_minor(c)) })
+        }
+        return out
+    }
+    for b in 0..key.BLOCKS {
+        push(out, key.best_chord(ch, b * 12, tonic, minor))
+    }
+    return out
+}
+
+/// How many different chords `chords` names.
+fn chord_changes(chords: []int) -> int {
+    let mut seen = []int {}
+    for b in 0..chords.len {
+        let c = chords[b]
+        if c >= 0 && num.index_of(seen, c) < 0 {
+            push(seen, c)
+        }
+    }
+    return if seen.len > 0 { seen.len } else { 1 }
+}
+
+/// The chords, and the phrase they were heard in.
+struct Prog {
+    chords: []int,
+    heard: bool,
+    hook_src: int,
+    hook_in: int,
+    hook_len: int,
+}
+
+/// The piece's four chords. The hook is the candidate of the rhythm and
+/// motif buses that loops best, is fullest, and is most tonal; its bars are
+/// heard as chords. A bar too vague to name keeps the chord before it.
+/// When nothing is tonal enough, the style's progression stands in and
+/// `hook_src` is -1.
+fn progression_for(srcs: []Source, s: Sound, piece: Tonality, tonic: int, energy: [][]int, bpm: int) -> Prog {
+    let style = theory.chords_of(tonic, piece.minor, theory.progression(piece.minor, styles.progression_pick(s.style) + s.seed))
+    let mut best_v = -100000
+    let mut best = []int {}
+    let mut best_chords = []int {}
+    let mut hook_src = -1
+    let mut hook_in = 0
+    let mut hook_len = 0
+    let buses = []int { RHYTHM, MOTIF }
+    for bi in 0..buses.len {
+        let c = candidates(srcs, buses[bi], bpm, s)
+        for at in 0..c.src.len {
+            let src = srcs[c.src[at]]
+            let semis = shift_for(src, piece, s.pitch)
+            let ch = piece_chroma(src, c.ph[at], c.bars[at], semis)
+            let t = tonal_of(ch)
+            if t >= TONAL_MIN {
+                let named = heard_chords(src, c.ph[at], c.bars[at], semis, ch, tonic, piece.minor)
+                // Harmony that moves carries a piece; one chord held for
+                // four bars is a drone, so a hook with changes wins a near
+                // tie.
+                let v = c.score[at] * 4 + energy[c.src[at]][c.ph[at]] / 4 + t / 3 +
+                        (if c.bars[at] == 4 { 60 } else { 0 }) + 50 * (chord_changes(named) - 1)
+                if v > best_v {
+                    best_v = v
+                    best = ch
+                    best_chords = named
+                    hook_src = c.src[at]
+                    let p = c.ph[at]
+                    hook_in = src.heard.ph_start[p]
+                    hook_len = src.heard.ph_len[p]
+                }
+            }
+        }
+    }
+    if best.len == 0 {
+        return Prog { chords: style, heard: false, hook_src: -1, hook_in: 0, hook_len: 0 }
+    }
+    let mut chords = []int {}
+    let mut named = 0
+    for b in 0..key.BLOCKS {
+        let c = if b < best_chords.len { best_chords[b] } else { -1 }
+        if c >= 0 {
+            named = named + 1
+        }
+        push(chords, c)
+    }
+    if named == 0 {
+        return Prog { chords: style, heard: false, hook_src: -1, hook_in: 0, hook_len: 0 }
+    }
+    // Fill vague bars from the chord before (wrapping), so the loop holds.
+    for round in 0..2 {
+        for b in 0..key.BLOCKS {
+            if chords[b] < 0 {
+                chords[b] = chords[(b + key.BLOCKS - 1) % key.BLOCKS]
+            }
+        }
+    }
+    return Prog { chords: chords, heard: true, hook_src: hook_src, hook_in: hook_in, hook_len: hook_len }
+}
+
+/// The chain's view of a pool: descriptors per unit. A one- or two-bar
+/// unit cut from inside the hook is marked, so a build can favour it.
+fn units_of(srcs: []Source, c: Cands, pick: []int, energy: [][]int, looped: bool, prog: []int, tonic: int,
+            piece: Tonality, pitch: int, hook_src: int, hook_in: int, hook_len: int) -> Units {
+    let mut u = chain.no_units()
+    for k in 0..pick.len {
+        let at = pick[k]
+        let src = srcs[c.src[at]]
+        let h = src.heard
+        let p = c.ph[at]
+        let ch = piece_chroma(src, p, c.bars[at], shift_for(src, piece, pitch))
+        let start = h.ph_start[p]
+        let len = h.ph_len[p]
+        let bars = c.bars[at]
+        push(u.energy, energy[c.src[at]][p])
+        push(u.bright, if p < h.ph_bright.len { h.ph_bright[p] } else { 50 })
+        push(u.level, if p < h.ph_level.len { h.ph_level[p] } else { 50 })
+        push(u.kind, h.ph_kind[p])
+        push(u.quality, c.score[at])
+        push(u.clash, clash_of(ch, prog, tonic, piece.minor))
+        push(u.bars, if looped { bars } else { 0 })
+        push(u.src, c.src[at])
+        push(u.start, start)
+        push(u.len, len)
+        let mut frag = 0
+        if hook_src >= 0 && c.src[at] == hook_src && (bars == 1 || bars == 2) && len < hook_len {
+            if start >= hook_in && start + len <= hook_in + hook_len {
+                frag = 1
+            }
+        }
+        push(u.hook, frag)
+    }
+    u.next = chain.successors(u.src, u.start, u.len)
+    return u
+}
+
+/// Label and variation of the phrase that covers `bar`, or -1, 0.
+fn phrase_at(sc: &mut Score, bar: int) -> []int {
+    for i in 0..sc.ph_bar.len {
+        if bar >= sc.ph_bar[i] && bar < sc.ph_bar[i] + sc.ph_bars[i] {
+            return []int { sc.ph_label[i], sc.ph_var[i] }
+        }
+    }
+    return []int { -1, 0 }
+}
+
+/// Sections cut into slots of four bars (the last may be shorter), over
+/// the bars the entry table gives the bus (`layer_span`). An intro, a
+/// build, or an outro is one slot, so its sweep or its fade spans it. The
+/// slot carries the phrase that starts it.
+fn loop_slots(sc: &mut Score, s: Sound, bus: int, wants: []bool) -> Slots {
+    let mut out = chain.no_slots()
+    for i in 0..sc.sec_kind.len {
+        if !wants[i] {
+            continue
+        }
+        let kind = sc.sec_kind[i]
+        let span = layer_span(sc, s, REC + bus, i)
+        let b0 = span[0]
+        let nb = span[1] - span[0]
+        if nb < 1 {
+            continue
+        }
+        if kind == INTRO || kind == BUILD || kind == OUTRO {
+            let lab = phrase_at(sc, b0)
+            chain.add_slot(out, b0, nb, chain.path_at(sc.path, b0, nb), i, kind, lab[0], lab[1])
+            continue
+        }
+        let mut at = 0
+        while at < nb {
+            let len = num.clampi(nb - at, 1, 4)
+            let lab = phrase_at(sc, b0 + at)
+            chain.add_slot(out, b0 + at, len, chain.path_at(sc.path, b0 + at, len), i, kind, lab[0], lab[1])
+            at = at + len
+        }
+    }
+    return out
+}
+
+/// Index of the section that holds `bar`.
+fn section_of(starts: []int, bar: int) -> int {
+    let mut at = 0
+    for i in 0..starts.len {
+        if starts[i] <= bar {
+            at = i
+        }
+    }
+    return at
+}
+
+fn mark_heard(sc: &mut Score, bar: int, bars: int, h: int, over: bool) {
+    for b in bar..(bar + bars) {
+        if b >= 0 && b < sc.heard.len && (over || sc.heard[b] < 0) {
+            sc.heard[b] = h
+        }
+    }
+}
+
+/// The arc of a typical 3 min piece in `cols` columns, for the strip
+/// before the first take.
+fn sketch(cols: int) -> []int {
+    let f = form(180000, time.bar_samples(12000))
+    let a = plan.arc(f[0], f[1])
+    let mut out = []int {}
+    for k in 0..cols {
+        push(out, a[k * a.len / cols])
+    }
+    return out
+}
+
+/// Audio already on the score, so the next bus can be scored for sharing it.
+fn avoid_of(sc: &mut Score) -> Avoid {
+    let mut a = chain.no_avoid()
+    for i in 0..sc.lp_src.len {
+        push(a.src, sc.lp_src[i])
+        push(a.start, sc.lp_in[i])
+        push(a.len, sc.lp_len[i])
+        push(a.bar, sc.lp_bar[i])
+        let bars = if sc.bar_s > 0 { sc.lp_unit[i] * sc.lp_reps[i] / sc.bar_s } else { 0 }
+        push(a.bars, bars)
+    }
+    return a
+}
+
+fn note_walks(sc: &mut Score, bus: int, c: Choice) {
+    for i in 0..c.top_n.len {
+        push(sc.wk_bus, bus)
+        push(sc.wk_n, c.top_n[i])
+        push(sc.wk_score, c.top_score[i])
+    }
+}
+
+/// Walk one looped bus along its slots and place what it picks. Returns
+/// the (src, ph) pairs it played. Several walks are drawn; the best is kept.
+fn place_bus(sc: &mut Score, srcs: []Source, c: Cands, bus: int, wants: []bool, used: []int, s: Sound,
+             piece: Tonality, energy: [][]int, rec_db: int, seed: int) -> []int {
+    let mut played = []int {}
+    if c.src.len == 0 {
+        return played
+    }
+    let pick = pool(srcs, c, 32, used)
+    let u = units_of(srcs, c, pick, energy, true, sc.prog, sc.tonic, piece, s.pitch, sc.hook_src, sc.hook_in, sc.hook_len)
+    let slots = chain.fit_range(loop_slots(sc, s, bus, wants), u)
+    let choice = chain.select(u, slots, seed, avoid_of(sc))
+    note_walks(sc, bus, choice)
+    let walked = choice.out
+    for k in 0..walked.len {
+        if walked[k] < 0 {
+            continue
+        }
+        let at = pick[walked[k]]
+        let bar = slots.bar[k]
+        let sec = slots.sec[k]
+        let kind = sc.sec_kind[sec]
+        let mut tone = TONE_NONE
+        let mut db = 0
+        if bus == RHYTHM {
+            if kind == INTRO {
+                tone = TONE_OPEN
+                db = -300
+            } else if kind == VERSE {
+                db = -100
+            } else if kind == BUILD {
+                tone = TONE_RISE
+            } else if kind == OUTRO {
+                tone = TONE_DARK
+                db = -200
+            }
+            let h = srcs[c.src[at]].heard
+            let p = c.ph[at]
+            // A recording with a strong pulse has drums in every phrase,
+            // the sparser ones too.
+            if h.ph_kind[p] == listen.KIND_GROOVE || h.pulse >= GROOVE_PULSE {
+                sc.sec_groove[sec] = true
+            }
+            let low = if p < h.ph_low.len { h.ph_low[p] } else { 0 }
+            if low > sc.sec_low[sec] {
+                sc.sec_low[sec] = low
+            }
+        } else {
+            db = if kind == VERSE { -700 } else { -300 }
+        }
+        place_loop(sc, srcs, c, at, bus, bar, slots.bars[k], db + rec_db, tone, piece, s.pitch)
+        mark_heard(sc, bar, slots.bars[k], u.energy[walked[k]], bus == MOTIF)
+        push(played, c.src[at])
+        push(played, c.ph[at])
+    }
+    return played
+}
+
+/// Air: a phrase every four bars of its sections, walked like the others.
+fn place_air_bus(sc: &mut Score, srcs: []Source, c: Cands, wants: []bool, used: []int, s: Sound,
+                 piece: Tonality, energy: [][]int, rec_db: int, seed: int) {
+    if c.src.len == 0 {
+        return
+    }
+    let pick = pool(srcs, c, 32, used)
+    let u = units_of(srcs, c, pick, energy, false, sc.prog, sc.tonic, piece, s.pitch, sc.hook_src, sc.hook_in, sc.hook_len)
+    let mut slots = chain.no_slots()
+    let mut room = []int {}
+    for i in 0..sc.sec_kind.len {
+        let span = layer_span(sc, s, REC + AIR, i)
+        if wants[i] && span[1] > span[0] {
+            let b0 = span[0]
+            let nb = span[1] - span[0]
+            let mut j = 0
+            while j * 4 < nb {
+                let lab = phrase_at(sc, b0 + j * 4)
+                chain.add_slot(slots, b0 + j * 4, 0, chain.path_at(sc.path, b0 + j * 4, 4), i, sc.sec_kind[i], lab[0], lab[1])
+                push(room, num.clampi(nb - j * 4 + 1, 1, 5))
+                j = j + 1
+            }
+        }
+    }
+    let choice = chain.select(u, chain.fit_range(slots, u), seed, avoid_of(sc))
+    note_walks(sc, AIR, choice)
+    let walked = choice.out
+    for k in 0..walked.len {
+        if walked[k] < 0 {
+            continue
+        }
+        let bar = slots.bar[k]
+        let kind = sc.sec_kind[section_of(sc.sec_bar, bar)]
+        let db = if kind == DROP { -1100 } else { -500 }
+        if place_air_one(sc, srcs, c, pick[walked[k]], bar, room[k], db + rec_db, piece, s.pitch) {
+            mark_heard(sc, bar, num.clampi(room[k], 1, 4), u.energy[walked[k]], false)
+        }
+    }
+}
+
+fn last_drop(sc: &mut Score) -> int {
+    let mut last = -1
+    for i in 0..sc.sec_kind.len {
+        if sc.sec_kind[i] == DROP {
+            last = i
+        }
+    }
+    return last
+}
+
+/// The final drop moves up a whole step when every loop there can take it
+/// and stay within six semitones. No loops still lifts the synths. A loop
+/// that cannot blocks the lift, synths included. The synths change key
+/// with the recordings (`lift_from`, read by the graph and the melody);
+/// only moving the voicing centre would leave them a tone under.
+fn maybe_lift_last_drop(sc: &mut Score) -> bool {
+    let last = last_drop(sc)
+    if last < 0 {
+        return false
+    }
+    let b0 = sc.sec_bar[last]
+    let b1 = b0 + sc.sec_bars[last]
+    for i in 0..sc.lp_bar.len {
+        if sc.lp_bar[i] >= b0 && sc.lp_bar[i] < b1 {
+            let n = sc.lp_semis[i] + 2
+            if n > 6 || n < -6 {
+                return false
+            }
+        }
+    }
+    for i in 0..sc.lp_bar.len {
+        if sc.lp_bar[i] >= b0 && sc.lp_bar[i] < b1 {
+            sc.lp_semis[i] = sc.lp_semis[i] + 2
+        }
+    }
+    sc.lift_from = b0
+    sc.lift_to = b1
+    return true
+}
+
+fn push_ctr(sc: &mut Score, total: int, term: []int) {
+    push(sc.ph_ctr, total)
+    for t in 0..4 {
+        push(sc.ph_cterm, if t < term.len { term[t] } else { 0 })
+    }
+}
+
+fn push_mel(sc: &mut Score, total: int, term: []int) {
+    push(sc.ph_mel, total)
+    for t in 0..9 {
+        push(sc.ph_term, if t < term.len { term[t] } else { 0 })
+    }
+}
+
+/// Bars of the piece loop `i` fills.
+fn placed_bars(sc: &mut Score, i: int) -> int {
+    if sc.bar_s <= 0 || i < 0 || i >= sc.lp_unit.len || i >= sc.lp_reps.len {
+        return 0
+    }
+    return sc.lp_unit[i] * sc.lp_reps[i] / sc.bar_s
+}
+
+/// Chroma of loop `i`, already shifted by its semis. Empty when the loop
+/// is not a phrase of a recording.
+fn loop_chroma(sc: &mut Score, srcs: []Source, i: int) -> []int {
+    if i < 0 || i >= sc.lp_bus.len {
+        return []int {}
+    }
+    if sc.lp_src[i] < 0 || sc.lp_src[i] >= srcs.len {
+        return []int {}
+    }
+    let src = srcs[sc.lp_src[i]]
+    let h = src.heard
+    let mut p = -1
+    for k in 0..h.ph_start.len {
+        if h.ph_start[k] == sc.lp_in[i] && (k >= h.ph_len.len || h.ph_len[k] == sc.lp_len[i]) {
+            p = k
+        }
+    }
+    if p < 0 {
+        return []int {}
+    }
+    let nb = placed_bars(sc, i)
+    return piece_chroma(src, p, if nb > 0 { nb } else { 4 }, sc.lp_semis[i])
+}
+
+/// Chroma of a rhythm or motif loop under `bar`, already shifted by the
+/// loop's semis. The first covering loop wins.
+fn chroma_under(sc: &mut Score, srcs: []Source, bar: int) -> []int {
+    for i in 0..sc.lp_bar.len {
+        if sc.lp_bus[i] != RHYTHM && sc.lp_bus[i] != MOTIF {
+            continue
+        }
+        let nb = placed_bars(sc, i)
+        if bar < sc.lp_bar[i] || bar >= sc.lp_bar[i] + nb {
+            continue
+        }
+        let ch = loop_chroma(sc, srcs, i)
+        if ch.len > 0 {
+            return ch
+        }
+    }
+    return []int {}
+}
+
+/// A tonal recording covers `bar`. Air counts: a tonal pad keeps its
+/// chords, a hiss does not.
+fn bar_tonal(sc: &mut Score, srcs: []Source, bar: int) -> bool {
+    for i in 0..sc.lp_bar.len {
+        let nb = placed_bars(sc, i)
+        if bar < sc.lp_bar[i] || bar >= sc.lp_bar[i] + nb {
+            continue
+        }
+        if tonal_of(loop_chroma(sc, srcs, i)) >= TONAL_MIN {
+            return true
+        }
+    }
+    return false
+}
+
+/// Write the progression onto every bar, then cadence the phrases that
+/// have no tonal recording under the bars that would move. An open phrase's
+/// last bar becomes V. A closed phrase's last two bars become V then I.
+fn lay_cadence(sc: &mut Score, srcs: []Source) {
+    if sc.prog.len == 0 || sc.bars <= 0 {
+        return
+    }
+    for b in 0..sc.bars {
+        push(sc.bar_ch, sc.prog[b % sc.prog.len])
+    }
+    let dom = theory.degree_chord(sc.tonic, sc.minor, 4)
+    let home = theory.degree_chord(sc.tonic, sc.minor, 0)
+    for p in 0..sc.ph_bar.len {
+        let n = sc.ph_bars[p]
+        if n < 1 {
+            continue
+        }
+        let last = sc.ph_bar[p] + n - 1
+        if last < 0 || last >= sc.bar_ch.len {
+            continue
+        }
+        if sc.ph_end[p] == plan.OPEN {
+            if !bar_tonal(sc, srcs, last) {
+                sc.bar_ch[last] = dom
+            }
+        } else {
+            if n >= 2 && !bar_tonal(sc, srcs, last - 1) {
+                sc.bar_ch[last - 1] = dom
+            }
+            if !bar_tonal(sc, srcs, last) {
+                sc.bar_ch[last] = home
+            }
+        }
+    }
+}
+
+/// Four chords starting at `bar`, repeating the phrase's own bars to fill
+/// the loop. The synth renders at most four.
+fn phrase_chords(sc: &mut Score, bar: int, bars: int) -> []int {
+    let n = if bars > 0 { bars } else { 1 }
+    let mut out = []int {}
+    for i in 0..4 {
+        let b = bar + (i % n)
+        let mut c = 0
+        if b >= 0 && b < sc.bar_ch.len {
+            c = sc.bar_ch[b]
+        } else if sc.prog.len > 0 {
+            c = sc.prog[(b % sc.prog.len + sc.prog.len) % sc.prog.len]
+        }
+        push(out, c)
+    }
+    return out
+}
+
+/// True when these bars still play `prog` in the style's own voice, so the
+/// phrase can share that looping generator.
+fn same_prog(sc: &mut Score, bar: int, bars: int) -> bool {
+    if bars != 4 || sc.prog.len == 0 || bar < 0 {
+        return false
+    }
+    for i in 0..4 {
+        let b = bar + i
+        if b >= sc.bar_ch.len || sc.bar_ch[b] != sc.prog[b % sc.prog.len] {
+            return false
+        }
+        if b < sc.bar_col.len && sc.bar_col[b] >= 0 {
+            return false
+        }
+        if b < sc.bar_split.len && sc.bar_split[b] >= 0 {
+            return false
+        }
+    }
+    return true
+}
+
+/// Nine ints for the synth: four chords, four colours, and the split on
+/// the chunk's last bar.
+fn phrase_row(sc: &mut Score, bar: int, bars: int) -> []int {
+    let chords = phrase_chords(sc, bar, bars)
+    let n = if bars > 0 { bars } else { 1 }
+    let mut row = []int {}
+    for i in 0..4 {
+        push(row, if i < chords.len { chords[i] } else { 0 })
+    }
+    for i in 0..4 {
+        let b = bar + (i % n)
+        let mut c = -1
+        if b >= 0 && b < sc.bar_col.len {
+            c = sc.bar_col[b]
+        }
+        push(row, c)
+    }
+    let last = bar + n - 1
+    let mut split = -1
+    if last >= 0 && last < sc.bar_split.len {
+        split = sc.bar_split[last]
+    }
+    push(row, split)
+    return row
+}
+
+/// Row of nine ints in `pg`, interned.
+fn prog_row_id(sc: &mut Score, row: []int) -> int {
+    let n = sc.pg.len / 9
+    for i in 0..n {
+        let mut same = true
+        for k in 0..9 {
+            let got = if i * 9 + k < sc.pg.len { sc.pg[i * 9 + k] } else { -2 }
+            let want = if k < row.len { row[k] } else { 0 }
+            if got != want {
+                same = false
+            }
+        }
+        if same {
+            return i
+        }
+    }
+    for k in 0..9 {
+        push(sc.pg, if k < row.len { row[k] } else { 0 })
+    }
+    return n
+}
+
+/// One harmony part. A phrase that still plays `prog` shares the looping
+/// generator; a cadence, a colour, or a split gets its own row.
+fn place_harmony(sc: &mut Score, layer: int, variant: int, bar: int, bars: int, db: int) {
+    let mut at = 0
+    let span = if bars > 0 { bars } else { 1 }
+    while at < span {
+        let mut n = span - at
+        if n > 4 {
+            n = 4
+        }
+        part(sc, layer, variant, bar + at, n, db)
+        if !same_prog(sc, bar + at, n) {
+            let row = phrase_row(sc, bar + at, n)
+            let id = prog_row_id(sc, row)
+            sc.sy_pg[sc.sy_pg.len - 1] = id
+        }
+        at = at + n
+    }
+}
+
+/// The five tension channels, one value a bar, from the arc and the section.
+fn lay_channels(sc: &mut Score) {
+    for b in 0..sc.bars {
+        let sec = section_of(sc.sec_bar, b)
+        let kind = if sec >= 0 && sec < sc.sec_kind.len { sc.sec_kind[sec] } else { INTRO }
+        let start = if sec >= 0 && sec < sc.sec_bar.len { sc.sec_bar[sec] } else { 0 }
+        let nb = if sec >= 0 && sec < sc.sec_bars.len && sc.sec_bars[sec] > 0 { sc.sec_bars[sec] } else { 1 }
+        let local = b - start
+        let p = if b < sc.path.len { sc.path[b] } else { 0 }
+        push(sc.tn_reg, plan.register(p))
+        push(sc.tn_den, plan.density(p))
+        push(sc.tn_diss, plan.dissonance(p, kind, local))
+        push(sc.tn_dyn, plan.dynamics(p))
+        push(sc.tn_harm, plan.harm_hold(p, kind, local == nb - 1))
+    }
+}
+
+/// True when `b` is the first bar of a drop.
+fn drop_downbeat(sc: &mut Score, b: int) -> bool {
+    for i in 0..sc.sec_kind.len {
+        if sc.sec_kind[i] == DROP && sc.sec_bar[i] == b {
+            return true
+        }
+    }
+    return false
+}
+
+/// True when a phrase cadences on `b`: the last bar of an open phrase, or
+/// either of the last two bars of a closed one.
+fn cadence_at(sc: &mut Score, b: int) -> bool {
+    for p in 0..sc.ph_bar.len {
+        let n = sc.ph_bars[p]
+        let at = sc.ph_bar[p]
+        if n < 1 || b < at || b >= at + n {
+            continue
+        }
+        let i = b - at
+        if sc.ph_end[p] == plan.OPEN {
+            return i == n - 1
+        }
+        if i == n - 1 {
+            return true
+        }
+        return n >= 2 && i == n - 2
+    }
+    return false
+}
+
+/// Colour, harmonic rhythm, and the drop's tonic, only where no tonal
+/// recording is playing. `bar_ch` stays the bar's chord (the second half,
+/// when the bar splits). A tonal bar keeps colour −1 and no split.
+fn lay_tension(sc: &mut Score, srcs: []Source) {
+    for b in 0..sc.bars {
+        let sec = section_of(sc.sec_bar, b)
+        let kind = if sec >= 0 && sec < sc.sec_kind.len { sc.sec_kind[sec] } else { INTRO }
+        let diss = if b < sc.tn_diss.len { sc.tn_diss[b] } else { 0 }
+        if bar_tonal(sc, srcs, b) {
+            push(sc.bar_col, -1)
+        } else {
+            push(sc.bar_col, plan.tension_color(diss, kind))
+        }
+        push(sc.bar_split, -1)
+    }
+    let home = theory.degree_chord(sc.tonic, sc.minor, 0)
+    for i in 0..sc.sec_kind.len {
+        if sc.sec_kind[i] != DROP {
+            continue
+        }
+        let b = sc.sec_bar[i]
+        if b >= 0 && b < sc.bar_ch.len && !bar_tonal(sc, srcs, b) {
+            sc.bar_ch[b] = home
+        }
+    }
+    for b in 1..sc.bars {
+        if b >= sc.bar_ch.len || bar_tonal(sc, srcs, b) {
+            continue
+        }
+        if cadence_at(sc, b) || drop_downbeat(sc, b) {
+            continue
+        }
+        let hold = if b < sc.tn_harm.len { sc.tn_harm[b] } else { 16 }
+        if hold >= 32 && b % 2 == 1 {
+            let prev = sc.bar_ch[b - 1]
+            sc.bar_ch[b] = prev
+            if b < sc.bar_col.len {
+                let col = sc.bar_col[b - 1]
+                sc.bar_col[b] = col
+            }
+        }
+    }
+    for i in 0..sc.sec_kind.len {
+        if sc.sec_kind[i] != BUILD {
+            continue
+        }
+        let nb = sc.sec_bars[i]
+        if nb < 1 {
+            continue
+        }
+        let b = sc.sec_bar[i] + nb - 1
+        if b < 0 || b >= sc.bar_ch.len || bar_tonal(sc, srcs, b) {
+            continue
+        }
+        let second = sc.bar_ch[b]
+        let mut first = second
+        if sc.prog.len > 0 {
+            first = sc.prog[(b % sc.prog.len + sc.prog.len) % sc.prog.len]
+        }
+        if first == second && b > 0 && b - 1 < sc.bar_ch.len {
+            first = sc.bar_ch[b - 1]
+        }
+        if first != second && b < sc.bar_split.len {
+            sc.bar_split[b] = first
+        }
+    }
+}
+
+fn take_motif(sc: &mut Score, s: Sound) {
+    let chord = if sc.prog.len > 0 { sc.prog[0] } else { -1 }
+    let m = motif.draw(num.hash(s.seed, 17), sc.minor, chord, sc.tonic)
+    for i in 0..m.deg.len {
+        push(sc.mo_deg, m.deg[i])
+        push(sc.mo_at, if i < m.at.len { m.at[i] } else { 0 })
+        push(sc.mo_len, if i < m.len.len { m.len[i] } else { 1 })
+    }
+}
+
+/// Hits for notes `from .. from+n` of the cached line, still on the grid.
+/// `humanize` softens a closed phrase's last note. Notes that fall outside
+/// the phrase are dropped. The last half-bar rests: only the cadence, the
+/// latest note, is allowed to speak there.
+fn line_hits(g: Groove, deg: []int, at: []int, len: []int, from: int, n: int, centre: int, loop: f64) -> Hits {
+    let base = motif.anchor(slice_of(deg, from, n), g.tonic, g.minor, centre, LEAD_TOP)
+    return line_hits_on(g, deg, at, len, from, n, base, loop)
+}
+
+/// `line_hits` over the tonic note `base` (`motif.anchor`), so a counter
+/// can share its lead's octave.
+fn line_hits_on(g: Groove, deg: []int, at: []int, len: []int, from: int, n: int, base: int, loop: f64) -> Hits {
+    let mut h = synth.no_hits()
+    let sixteenth = g.bar_sec / 16.0
+    let breath = loop - g.bar_sec * 0.5
+    let gain = 0.5 + 0.5 * f64(num.clampi(g.dyn, 0, 1000)) / 1000.0
+    let mut last = from
+    let mut last_at = -1
+    for i in from..(from + n) {
+        if i < at.len && at[i] >= last_at {
+            last_at = at[i]
+            last = i
+        }
+    }
+    for i in from..(from + n) {
+        if i >= deg.len || i >= at.len {
+            continue
+        }
+        let t = synth.step_time(g, at[i])
+        if t < 0.0 || t >= loop {
+            continue
+        }
+        if t >= breath && i != last {
+            continue
+        }
+        let mut vel: f64 = if at[i] % 4 == 0 { 0.85 } else { 0.62 }
+        vel = vel * gain
+        let samples = if i < len.len { len[i] } else { 4 }
+        let m = motif.note(deg[i], g.minor, base)
+        synth.add(h, t, vel, num.midi_hz(m), sixteenth * f64(samples))
+    }
+    return h
+}
+
+fn store_line(sc: &mut Score, h: Hits, peak: int) -> int {
+    let from = sc.ln_at.len
+    for i in 0..h.at.len {
+        push(sc.ln_at, h.at[i])
+        push(sc.ln_vel, h.vel[i])
+        push(sc.ln_freq, h.freq[i])
+        push(sc.ln_gate, h.gate[i])
+    }
+    let line = sc.ln_from.len
+    push(sc.ln_from, from)
+    push(sc.ln_n, h.at.len)
+    push(sc.ln_peak, peak)
+    return line
+}
+
+fn cache_hit(label: []int, varn: []int, kind: []int, bars: []int, chord: []int, lab: int, v: int, k: int, b: int, ch: int) -> int {
+    for i in 0..label.len {
+        if label[i] == lab && varn[i] == v && kind[i] == k && bars[i] == b && chord[i] == ch {
+            return i
+        }
+    }
+    return -1
+}
+
+/// The phrase's chords packed into one int, so two phrases that cadence
+/// differently do not share a snapped line.
+fn chord_key(sc: &mut Score, bar: int, bars: int) -> int {
+    let mut k = 0
+    let n = if bars > 0 { bars } else { 1 }
+    for i in 0..n {
+        let b = bar + i
+        let mut c = 0
+        if b >= 0 && b < sc.bar_ch.len {
+            c = sc.bar_ch[b]
+        }
+        if c < 0 {
+            c = 0
+        }
+        k = k * 24 + (c % 24)
+    }
+    return k
+}
+
+fn slice_of(xs: []int, from: int, n: int) -> []int {
+    let mut out = []int {}
+    for k in from..(from + n) {
+        if k >= 0 && k < xs.len {
+            push(out, xs[k])
+        }
+    }
+    return out
+}
+
+/// The counter-line under phrase `i`'s lead, placed as its own part, on
+/// the lead's tonic note `base`, so it sits within an octave under it. It
+/// is seeded by the lead's cache entry `lead_key`, so a lead line that
+/// returns brings its counter back with it.
+fn lay_counter(sc: &mut Score, s: Sound, g: Groove, i: int, lead: Motif, base: int, lift: int, lead_key: int) -> bool {
+    let bars = sc.ph_bars[i]
+    let span = if bars > 0 { bars * 16 } else { 16 }
+    let mel_prog = if sc.bar_ch.len > 0 { sc.bar_ch } else { sc.prog }
+    let line = motif.counter(lead, span, sc.ph_bar[i], mel_prog, sc.tonic, sc.minor, base,
+                             num.hash(s.seed, 4000 + lead_key))
+    if line.total < 0 {
+        return false
+    }
+    let loop = g.bar_sec * f64(if bars > 0 { bars } else { 1 })
+    let raw = line_hits_on(g, line.deg, line.at, line.len, 0, line.deg.len, base, loop)
+    if raw.at.len == 0 {
+        return false
+    }
+    push_ctr(sc, line.total, line.term)
+    let h = synth.humanize_once(raw, g, synth.P_COUNTER, i)
+    let id = store_line(sc, h, g.peak)
+    let db = plan.dynamics(chain.path_at(sc.path, sc.ph_bar[i], bars))
+    part(sc, L_COUNTER, lift, sc.ph_bar[i], if bars > 0 { bars } else { 1 }, db)
+    sc.sy_line[sc.sy_line.len - 1] = id
+    return true
+}
+
+/// One bell line per phrase that sings, and a counter-line under it where
+/// the entry table brings one in. The same label and variation, in the
+/// same kind of section and the same length, share a line; the last drop
+/// renders that line from a higher centre.
+fn lay_melody(sc: &mut Score, srcs: []Source, s: Sound, lifted: bool) {
+    let base = motif.from(sc.mo_deg, sc.mo_at, sc.mo_len)
+    let drop_i = last_drop(sc)
+    let mut g = Groove {
+        bar_sec: f64(sc.bar_s) / f64(time.RATE),
+        tonic: sc.tonic,
+        minor: sc.minor,
+        prog: sc.prog,
+        style: s.style,
+        energy: s.energy,
+        seed: s.seed,
+        lift: 0,
+        bars: 4,
+        den: 1000,
+        dyn: 1000,
+        color: []int {},
+        split: -1,
+        kick: true,
+        ending: plan.OPEN,
+        peak: -1,
+        tight: false,
+        kind: plan.VERSE,
+    }
+    let mel_prog = if sc.bar_ch.len > 0 { sc.bar_ch } else { sc.prog }
+    let mut ck_label = []int {}
+    let mut ck_var = []int {}
+    let mut ck_kind = []int {}
+    let mut ck_bars = []int {}
+    let mut ck_ch = []int {}
+    let mut ck_from = []int {}
+    let mut ck_n = []int {}
+    let mut ck_total = []int {}
+    let mut ck_term = []int {}
+    let mut cd = []int {}
+    let mut ca = []int {}
+    let mut cl = []int {}
+    let mut prev = []int {}
+    let mut prev_label = -2
+    let mut prev_var = -2
+    for i in 0..sc.ph_bar.len {
+        let sec = sc.ph_sec[i]
+        let kind = if sec >= 0 && sec < sc.sec_kind.len { sc.sec_kind[sec] } else { INTRO }
+        let label = sc.ph_label[i]
+        let varn = sc.ph_var[i]
+        let bars = sc.ph_bars[i]
+        let ending = sc.ph_end[i]
+        if !s.bells_on || !layer_on(sc, s, L_BELLS, i) {
+            push_mel(sc, -1, []int {})
+            push_ctr(sc, -1, []int {})
+            continue
+        }
+        let pden = plan.density(chain.path_at(sc.path, sc.ph_bar[i], bars))
+        let lift = plan.register(chain.path_at(sc.path, sc.ph_bar[i], bars))
+        let mut centre = (if s.style == styles.CINEMA { 70 } else { 76 }) + lift
+        if kind == DROP && label == 0 {
+            centre = centre + 12
+        }
+        let span = if bars > 0 { bars * 16 } else { 16 }
+        let loop = g.bar_sec * f64(if bars > 0 { bars } else { 1 })
+        let ch = chord_key(sc, sc.ph_bar[i], bars) + (pden / 100) * 400000
+        let at = cache_hit(ck_label, ck_var, ck_kind, ck_bars, ck_ch, label, varn, kind, bars, ch)
+        let mut from = 0
+        let mut n = 0
+        let mut total = 0
+        let mut term = []int {}
+        if at >= 0 {
+            from = ck_from[at]
+            n = ck_n[at]
+            total = ck_total[at]
+            for t in 0..9 {
+                let src = at * 9 + t
+                push(term, if src < ck_term.len { ck_term[src] } else { 0 })
+            }
+        } else {
+            let repeat = prev_label == label && prev_var == varn
+            let chroma = chroma_under(sc, srcs, sc.ph_bar[i])
+            let chosen = motif.choose(base, label, varn, kind, ending, span, sc.ph_bar[i], mel_prog, chroma, sc.tonic,
+                                      sc.minor, num.hash(s.seed, 1000 + i), prev, repeat, pden)
+            from = cd.len
+            n = chosen.deg.len
+            for k in 0..n {
+                push(cd, chosen.deg[k])
+                push(ca, if k < chosen.at.len { chosen.at[k] } else { 0 })
+                push(cl, if k < chosen.len.len { chosen.len[k] } else { 1 })
+            }
+            total = chosen.total
+            for t in 0..9 {
+                let v = if t < chosen.term.len { chosen.term[t] } else { 0 }
+                push(term, v)
+                push(ck_term, v)
+            }
+            push(ck_label, label)
+            push(ck_var, varn)
+            push(ck_kind, kind)
+            push(ck_bars, bars)
+            push(ck_ch, ch)
+            push(ck_from, from)
+            push(ck_n, n)
+            push(ck_total, total)
+        }
+        push_mel(sc, total, term)
+        g.den = pden
+        // The lifted drop sings the same degrees a whole step up.
+        g.tonic = if lifted && sec == drop_i { (sc.tonic + 2) % 12 } else { sc.tonic }
+        g.dyn = plan.dyn_amt(plan.dynamics(chain.path_at(sc.path, sc.ph_bar[i], bars)))
+        g.kind = kind
+        g.ending = ending
+        g.peak = -1
+        g.tight = false
+        let base = motif.anchor(slice_of(cd, from, n), g.tonic, g.minor, centre, LEAD_TOP)
+        let raw = line_hits_on(g, cd, ca, cl, from, n, base, loop)
+        let peak = synth.peak_step(g, raw)
+        g.peak = peak
+        let h = synth.humanize_once(raw, g, synth.P_LEAD, i)
+        let mut countered = false
+        if h.at.len > 0 {
+            let line = store_line(sc, h, peak)
+            let db = (if kind == VERSE { -300 } else { 0 }) + plan.dynamics(chain.path_at(sc.path, sc.ph_bar[i], bars))
+            part(sc, L_BELLS, lift, sc.ph_bar[i], if bars > 0 { bars } else { 1 }, db)
+            sc.sy_line[sc.sy_line.len - 1] = line
+            if s.pad_on && layer_on(sc, s, L_COUNTER, i) {
+                let lead_key = if at >= 0 { at } else { ck_label.len - 1 }
+                let lead = motif.from(slice_of(cd, from, n), slice_of(ca, from, n), slice_of(cl, from, n))
+                countered = lay_counter(sc, s, g, i, lead, base, lift, lead_key)
+            }
+        }
+        if !countered {
+            push_ctr(sc, -1, []int {})
+        }
+        prev = []int {}
+        for k in from..(from + n) {
+            if k < cd.len {
+                push(prev, cd[k])
+            }
+        }
+        prev_label = label
+        prev_var = varn
+    }
+}
+
+/// The piece for these recordings and this sound. An empty score (no
+/// loops, no parts) means there was nothing to play.
+fn arrange(srcs: []Source, s: Sound) -> Score {
+    let mut sc = empty_score()
+    let bpm = piece_bpm_c(srcs, s)
+    let bar_s = time.bar_samples(bpm)
+    // Recordings shift onto `piece` plus the pitch control; the synths play
+    // in the result.
+    let piece = piece_key(srcs)
+    let tonic = ((piece.tonic + s.pitch) % 12 + 12) % 12
+    sc.bpm_c = bpm
+    sc.bar_s = bar_s
+    sc.tonic = tonic
+    sc.minor = piece.minor
+    let f = form(sound.length_ms(s.length_ix), bar_s)
+    let kinds = f[0]
+    let lens = f[1]
+    let mut bar = 0
+    for i in 0..kinds.len {
+        push(sc.sec_kind, kinds[i])
+        push(sc.sec_bar, bar)
+        push(sc.sec_bars, lens[i])
+        bar = bar + lens[i]
+    }
+    sc.bars = bar
+    sc.total_s = time.LEAD_S + bar * bar_s + time.TAIL_S
+    let unit = if f.len >= 3 && f[2].len > 0 { f[2][0] } else { 4 }
+    sc.unit = if unit >= 2 { unit } else { 4 }
+    let ph = plan.phrases(kinds, lens, unit)
+    for i in 0..ph.bar.len {
+        push(sc.ph_bar, ph.bar[i])
+        push(sc.ph_bars, ph.bars[i])
+        push(sc.ph_sec, ph.sec[i])
+        push(sc.ph_label, ph.label[i])
+        push(sc.ph_var, ph.varn[i])
+        push(sc.ph_end, ph.end[i])
+    }
+
+    sc.path = plan.arc(sc.sec_kind, sc.sec_bars)
+    lay_channels(sc)
+    for b in 0..sc.bars {
+        push(sc.heard, -1)
+    }
+    for i in 0..sc.sec_kind.len {
+        push(sc.sec_groove, false)
+        push(sc.sec_low, 0)
+    }
+    let energy = all_energy(srcs)
+    let recs = s.rec_on && srcs.len > 0
+    if recs {
+        let pr = progression_for(srcs, s, piece, tonic, energy, bpm)
+        sc.prog_heard = pr.heard
+        sc.hook_src = pr.hook_src
+        sc.hook_in = pr.hook_in
+        sc.hook_len = pr.hook_len
+        for i in 0..pr.chords.len {
+            push(sc.prog, pr.chords[i])
+        }
+    } else {
+        sc.prog = theory.chords_of(tonic, piece.minor,
+                                   theory.progression(piece.minor, styles.progression_pick(s.style) + s.seed))
+    }
+
+    if recs {
+        let rec_db = num.roundi(sound.level_db(s.rec_lvl) * 100.0)
+        let mut r_want = []bool {}
+        let mut m_want = []bool {}
+        let mut a_want = []bool {}
+        let air_borrows = borrows(srcs, AIR, RHYTHM)
+        for i in 0..sc.sec_kind.len {
+            let kind = sc.sec_kind[i]
+            let r = entry(REC + RHYTHM, kind, s) >= 0
+            push(r_want, r)
+            push(m_want, entry(REC + MOTIF, kind, s) >= 0)
+            // Air that borrows the rhythm recording only plays where the
+            // rhythm bus is silent.
+            push(a_want, entry(REC + AIR, kind, s) >= 0 && !(air_borrows && r))
+        }
+        let mut used = []int {}
+        let r_played = place_bus(sc, srcs, candidates(srcs, RHYTHM, bpm, s), RHYTHM, r_want, used, s, piece,
+                                 energy, rec_db, s.seed)
+        for k in 0..r_played.len {
+            push(used, r_played[k])
+        }
+        let m_played = place_bus(sc, srcs, candidates(srcs, MOTIF, bpm, s), MOTIF, m_want, used, s, piece,
+                                 energy, rec_db, s.seed + 101)
+        for k in 0..m_played.len {
+            push(used, m_played[k])
+        }
+        place_air_bus(sc, srcs, candidates(srcs, AIR, bpm, s), a_want, used, s, piece, energy, rec_db,
+                      s.seed + 202)
+    }
+    lay_cadence(sc, srcs)
+    lay_tension(sc, srcs)
+
+    for i in 0..sc.sec_kind.len {
+        let kind = sc.sec_kind[i]
+        let b0 = sc.sec_bar[i]
+        let nb = sc.sec_bars[i]
+        if s.drums_on {
+            let kit = layer_span(sc, s, L_DRUMS, i)
+            let mut v = if kit[1] > kit[0] { drums_in(kind, s) } else { -1 }
+            if v >= 0 && v != synth.INTRO && sc.sec_groove[i] {
+                // The recording carries the kick and the snare; a second
+                // pattern on top would fight it.
+                v = synth.TOPS
+            }
+            if v >= 0 {
+                let k0 = kit[0]
+                let kn = kit[1] - kit[0]
+                let drum_db = if kind == VERSE { -150 } else { 0 }
+                let dip = kind == BUILD && v != synth.TOPS && v != synth.INTRO && kit[1] == b0 + nb
+                if dip && kn > 1 {
+                    let main = kn - 1
+                    let main_bed = plan.dynamics(chain.path_at(sc.path, k0, main))
+                    part(sc, L_DRUMS, v, k0, main, drum_db + main_bed)
+                    let last = k0 + main
+                    let dip_bed = plan.dynamics(chain.path_at(sc.path, last, 1))
+                    part(sc, L_DRUMS, v, last, 1, drum_db + dip_bed)
+                    let kix = sc.sy_kick.len - 1
+                    sc.sy_kick[kix] = 0
+                } else {
+                    let bed = plan.dynamics(chain.path_at(sc.path, k0, kn))
+                    part(sc, L_DRUMS, v, k0, kn, drum_db + bed)
+                    if dip {
+                        let kix = sc.sy_kick.len - 1
+                        sc.sy_kick[kix] = 0
+                    }
+                }
+            }
+            if kind == BUILD && s.style != styles.LOFI && s.style != styles.DREAM {
+                let bed = plan.dynamics(chain.path_at(sc.path, b0, nb))
+                part(sc, L_RISER, 0, b0, nb, bed)
+            }
+            if kind == DROP && s.style != styles.LOFI {
+                let n = if nb < 2 { nb } else { 2 }
+                let bed = plan.dynamics(chain.path_at(sc.path, b0, n))
+                part(sc, L_IMPACT, 0, b0, n, bed)
+            }
+        }
+        let bass_db = if kind == VERSE { -100 } else { 0 }
+        let pad_db = if kind == DROP { -150 } else if kind == INTRO || kind == BREAK { 100 } else { 0 }
+        let arp_db = if kind == BUILD { -200 } else { 0 }
+        let want_bass = s.bass_on && sc.sec_low[i] < BASS_FULL
+        for p in 0..sc.ph_bar.len {
+            if sc.ph_sec[p] != i {
+                continue
+            }
+            let at = sc.ph_bar[p]
+            let len = sc.ph_bars[p]
+            if want_bass && layer_on(sc, s, L_BASS, p) {
+                let mut n = len
+                if kind == BUILD {
+                    let room = b0 + nb - 1 - at
+                    if room < n {
+                        n = room
+                    }
+                }
+                if n >= 1 {
+                    let bed = plan.dynamics(chain.path_at(sc.path, at, n))
+                    place_harmony(sc, L_BASS, 0, at, n, bass_db + bed)
+                }
+            }
+            let reg = plan.register(chain.path_at(sc.path, at, len))
+            let bed = plan.dynamics(chain.path_at(sc.path, at, len))
+            if s.pad_on && layer_on(sc, s, L_PAD, p) {
+                place_harmony(sc, L_PAD, reg, at, len, pad_db + bed)
+            }
+            if s.arp_on && layer_on(sc, s, L_ARP, p) {
+                place_harmony(sc, L_ARP, reg, at, len, arp_db + bed)
+            }
+        }
+    }
+    let lifted = maybe_lift_last_drop(sc)
+    take_motif(sc, s)
+    lay_melody(sc, srcs, s, lifted)
+    return sc
+}
+
+/// One recording, heard: its envelope, voice map text, decoded length, and
+/// the 5512 Hz copy (`pcm`) its key and chords are read from.
+fn source_of(env: string, voice: string, probed_ms: int, pcm: string, lufs_c: int, mono: bool,
+             has_map: bool) -> Source {
+    let mut h = listen.hear(env, voice, probed_ms)
+    let frames = key.chroma_frames(pcm)
+    let k = key.key_of_frames(frames)
+    h.ph_chroma = key.phrase_chroma(frames, h.ph_start, h.ph_len, h.ph_bars)
+    h.ph_chord = key.phrase_chords(key.chord_path(frames, key.bass_frames(pcm), k.tonic, k.minor), h.ph_start, h.ph_len, h.ph_bars)
+    return Source {
+        heard: h, key: k, role: MOTIF, lufs_c: lufs_c, mono: mono,
+        has_map: has_map, has_split: false,
+    }
+}
+
+/// The progression as chord names: "Bm F♯m Bm Bm".
+fn chords_text(sc: Score) -> string {
+    let mut out = ""
+    for i in 0..sc.prog.len {
+        let c = key.chord_name(sc.prog[i])
+        out = if i == 0 { c } else { "{{out}} {{c}}" }
+    }
+    return out
+}
+
+fn has_sound(sc: Score) -> bool {
+    return sc.lp_src.len + sc.sy_layer.len > 0
+}
+
+/// Recording indexes the score reads, lowest first.
+fn used_sources(sc: Score) -> []int {
+    let mut out = []int {}
+    for i in 0..sc.lp_src.len {
+        if num.index_of(out, sc.lp_src[i]) < 0 {
+            push(out, sc.lp_src[i])
+        }
+    }
+    num.sort_ints(out)
+    return out
+}
+
+/// How many phrases of each recording were voice-free.
+fn voice_free_count(sc: Score, src: int) -> int {
+    let mut n = 0
+    for i in 0..sc.lp_src.len {
+        if sc.lp_src[i] == src && sc.lp_clean[i] != CLEAN_HARD {
+            n = n + 1
+        }
+    }
+    return n
+}
