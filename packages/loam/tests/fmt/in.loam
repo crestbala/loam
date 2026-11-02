@@ -48,3 +48,33 @@ fn shapes() {
 fn after() {
     return 1
 }
+
+// Width: a group that does not fit breaks one item a line with a trailing
+// comma; a `fn` parameter list takes none; a trailing block stays on the line.
+fn wide(first_argument: Signal<string>, second_argument: Signal<[]int>, third: Option<Signal<T>>) -> Node {
+    return Box(style = Style(direction = Direction.Row, gap = Space.Sm, align = Align.Center), label = "Row") {
+        Text(first_argument)
+    }
+}
+
+fn hugs() {
+    Each(items, fn(i: int, x: string) -> Node {
+        return Text(x)
+    })
+    push(points, RPoint { x: current_value.x + t * (nxt.x - current_value.x), y: current_value.y + t * (nxt.y - current_value.y) })
+    let color = if invalid_state_flag { danger_edge_color() } else if value.get().len == index_of_cell { accent() } else { rule() }
+    if first_condition_is_true && second_condition_is_also_true && the_third_one_matters_too && fourth {
+        go()
+    }
+}
+
+// Spacing: unary, generics, closures, ranges.
+fn spacing(x: &mut int) -> Option<Signal<T>> {
+    let a = -x+pct(-1)*!flag
+    let f = |v: int| { v*2 }
+    let g = computed(|| { a.get() })
+    for i in 0..n-1 {
+        xs[i]=i<n
+    }
+    return none
+}

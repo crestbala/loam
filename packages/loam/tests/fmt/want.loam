@@ -4,16 +4,16 @@ import "std:sys"
 // a messy fixture for loam-fmt
 fn add(a: int, b: int) -> int {
     // inner comment
-    return a+b
+    return a + b
 }
 
 fn main() {
-    let xs = []int {1, 2, 3}
+    let xs = []int { 1, 2, 3 }
     let mut t = 0
     for i in 0..xs.len {
-        t+=xs[i]
+        t += xs[i]
     }
-    if t>0 {
+    if t > 0 {
         fmt.println("sum", xs[0], t) // trailing comment
     } else {
         fmt.println("nope")
@@ -27,16 +27,11 @@ fn shapes() {
     zeus.App("x", fn() -> Node {
         return body(1)
     })
-    let hreq = http.concat_str(
-        "pre",
-        http.concat_str(
-            http.h2_frame(1),
-            http.h2_frame(2)),
-    )
-    let a = []string {"One", "Two"}
+    let hreq = http.concat_str("pre", http.concat_str(http.h2_frame(1), http.h2_frame(2)))
+    let a = []string { "One", "Two" }
     let b = Posts { loaded: 0, titles: []string {} }
     let c = if x { "On" } else { "Off" }
-    let d = g(1, 2,)
+    let d = g(1, 2)
     let e = Foo { a: 1 }
 }
 
@@ -46,4 +41,53 @@ fn shapes() {
  */
 fn after() {
     return 1
+}
+
+// Width: a group that does not fit breaks one item a line with a trailing
+// comma; a `fn` parameter list takes none; a trailing block stays on the line.
+fn wide(
+    first_argument: Signal<string>,
+    second_argument: Signal<[]int>,
+    third: Option<Signal<T>>
+) -> Node {
+    return Box(
+        style = Style(direction = Direction.Row, gap = Space.Sm, align = Align.Center),
+        label = "Row",
+    ) {
+        Text(first_argument)
+    }
+}
+
+fn hugs() {
+    Each(items, fn(i: int, x: string) -> Node {
+        return Text(x)
+    })
+    push(points, RPoint {
+        x: current_value.x + t * (nxt.x - current_value.x),
+        y: current_value.y + t * (nxt.y - current_value.y),
+    })
+    let color = if invalid_state_flag {
+        danger_edge_color()
+    } else if value.get().len == index_of_cell {
+        accent()
+    } else {
+        rule()
+    }
+    if first_condition_is_true &&
+        second_condition_is_also_true &&
+        the_third_one_matters_too &&
+        fourth {
+        go()
+    }
+}
+
+// Spacing: unary, generics, closures, ranges.
+fn spacing(x: &mut int) -> Option<Signal<T>> {
+    let a = -x + pct(-1) * !flag
+    let f = |v: int| { v * 2 }
+    let g = computed(|| { a.get() })
+    for i in 0..n - 1 {
+        xs[i] = i < n
+    }
+    return none
 }
