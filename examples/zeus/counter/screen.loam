@@ -24,7 +24,12 @@ struct Job {
 
 fn Stat(label: string, value: string, kind: int) -> Node {
     return zui.Card() {
-        zeus.Box(style = Style(width = px(TILE), height = px(4), radius = 2, background = colors.tint_of(kind)))
+        zeus.Box(style = Style(
+            width = px(TILE),
+            height = px(4),
+            radius = 2,
+            background = colors.tint_of(kind),
+        ))
         zeus.Text(label, style = Style(font = spacing.FONT_CAPTION, color = colors.dim()))
         zeus.Text(value, style = Style(font = FONT_DISPLAY, color = zeus.ink()))
     }
@@ -32,7 +37,12 @@ fn Stat(label: string, value: string, kind: int) -> Node {
 
 fn StatCount(label: string, sig: Signal<int>, kind: int) -> Node {
     return zui.Card() {
-        zeus.Box(style = Style(width = px(TILE), height = px(4), radius = 2, background = colors.tint_of(kind)))
+        zeus.Box(style = Style(
+            width = px(TILE),
+            height = px(4),
+            radius = 2,
+            background = colors.tint_of(kind),
+        ))
         zeus.Text(label, style = Style(font = spacing.FONT_CAPTION, color = colors.dim()))
         zeus.Text("{{sig.get()}}", style = Style(font = FONT_DISPLAY, color = zeus.ink()))
     }
@@ -49,14 +59,21 @@ fn clamp(v: int) -> int {
 }
 
 fn Bar(sig: Signal<int>) -> Node {
-    return zeus.Box(style = Style(height = px(BAR_H), grow = 1, radius = 2, background = colors.rule())) {
+    return zeus.Box(style = Style(
+        height = px(BAR_H),
+        grow = 1,
+        radius = 2,
+        background = colors.rule(),
+    )) {
         // Scale 2 → max 200px at 100, so the fill never overflows the row
         // (an overflowing flex child pushes the trailing buttons to a new
         // line instead of shrinking).
-        zeus.Box(style = Style(width = px(clamp(sig.get()) * 2),
-                               height = px(BAR_H),
-                               radius = 2,
-                               background = zeus.ink()))
+        zeus.Box(style = Style(
+            width = px(clamp(sig.get()) * 2),
+            height = px(BAR_H),
+            radius = 2,
+            background = zeus.ink(),
+        ))
     }
 }
 
@@ -86,17 +103,36 @@ fn CountCard(count: Signal<int>, open: Signal<bool>) -> Node {
         zui.Title("Count")
         zui.Note("Buttons write a signal. The starting value came from protobuf.")
         zui.Row(Space.Sm) {
-            zui.Button("-1", look = zeus.Look.Ghost, size = zeus.Size.Md, on_click = fn() => count.set(count.get() - 1))
+            zui.Button(
+                "-1",
+                look = zeus.Look.Ghost,
+                size = zeus.Size.Md,
+                on_click = fn() => count.set(count.get() - 1),
+            )
             // Fixed-width slot: digits may change, but the buttons beside the
             // value never slide left or right.
-            zeus.Box(style = Style(width = px(64), direction = Direction.Row, justify = Align.Center)) {
+            zeus.Box(style = Style(
+                width = px(64),
+                direction = Direction.Row,
+                justify = Align.Center,
+            )) {
                 zeus.Text("{{count.get()}}", style = Style(font = 16, color = zeus.ink()))
             }
-            zui.Button("+1", look = zeus.Look.Solid, size = zeus.Size.Md, on_click = fn() => count.set(count.get() + 1))
+            zui.Button(
+                "+1",
+                look = zeus.Look.Solid,
+                size = zeus.Size.Md,
+                on_click = fn() => count.set(count.get() + 1),
+            )
         }
         Bar(count)
         zui.Divider()
-        zui.Button("Open Dialog", look = zeus.Look.Solid, size = zeus.Size.Md, on_click = fn() => open.set(true))
+        zui.Button(
+            "Open Dialog",
+            look = zeus.Look.Solid,
+            size = zeus.Size.Md,
+            on_click = fn() => open.set(true),
+        )
     }
 }
 
@@ -106,32 +142,58 @@ fn Load(load: Signal<int>) -> Node {
         Bar(load)
         // Fixed-width slot so the trailing buttons do not shift with the digits.
         zeus.Box(style = Style(width = px(44), direction = Direction.Row, justify = Align.End)) {
-            zeus.Text("{{load.get()}}%", style = Style(font = spacing.FONT_BODY, color = colors.mute()))
+            zeus.Text(
+                "{{load.get()}}%",
+                style = Style(font = spacing.FONT_BODY, color = colors.mute()),
+            )
         }
-        zui.Button("+10", look = zeus.Look.Soft, size = zeus.Size.Md, on_click = fn() => load.set(clamp(load.get() + 10)))
-        zui.Button("-10", look = zeus.Look.Soft, size = zeus.Size.Md, on_click = fn() => load.set(clamp(load.get() - 10)))
+        zui.Button(
+            "+10",
+            look = zeus.Look.Soft,
+            size = zeus.Size.Md,
+            on_click = fn() => load.set(clamp(load.get() + 10)),
+        )
+        zui.Button(
+            "-10",
+            look = zeus.Look.Soft,
+            size = zeus.Size.Md,
+            on_click = fn() => load.set(clamp(load.get() - 10)),
+        )
     }
 }
 
 fn FeedRow(i: int, s: string) -> Node {
-    return zeus.Box(style = Style(height = px(ROW_H),
-                           direction = Direction.Row,
-                           gap = Space.Exs,
-                           align = Align.Center,
-                           paddingX = Space.Exs)) {
+    return zeus.Box(style = Style(
+        height = px(ROW_H),
+        direction = Direction.Row,
+        gap = Space.Exs,
+        align = Align.Center,
+        paddingX = Space.Exs,
+    )) {
         zeus.Text(s, style = Style(grow = 1, font = spacing.FONT_BODY, color = zeus.ink()))
     }
 }
 
 fn JobRow(i: int, r: Job) -> Node {
-    return zeus.Box(style = Style(height = px(ROW_H),
-                           direction = Direction.Row,
-                           gap = Space.Sm,
-                           align = Align.Center,
-                           paddingX = Space.Exs)) {
-        zeus.set_flex_basis_zero(zeus.Text(r.name, style = Style(grow = 1, font = spacing.FONT_BODY, color = zeus.ink())))
-        zeus.set_flex_basis_zero(zeus.Text(r.role, style = Style(grow = 1, font = spacing.FONT_BODY, color = colors.mute())))
-        zeus.set_flex_basis_zero(zeus.Text(r.status, style = Style(grow = 1, font = spacing.FONT_BODY, color = colors.dim())))
+    return zeus.Box(style = Style(
+        height = px(ROW_H),
+        direction = Direction.Row,
+        gap = Space.Sm,
+        align = Align.Center,
+        paddingX = Space.Exs,
+    )) {
+        zeus.set_flex_basis_zero(zeus.Text(
+            r.name,
+            style = Style(grow = 1, font = spacing.FONT_BODY, color = zeus.ink()),
+        ))
+        zeus.set_flex_basis_zero(zeus.Text(
+            r.role,
+            style = Style(grow = 1, font = spacing.FONT_BODY, color = colors.mute()),
+        ))
+        zeus.set_flex_basis_zero(zeus.Text(
+            r.status,
+            style = Style(grow = 1, font = spacing.FONT_BODY, color = colors.dim()),
+        ))
     }
 }
 
@@ -156,7 +218,12 @@ fn FeedCard(feed: Signal<[]string>) -> Node {
                 zui.scroll_to_index(Node { id: list_id.get() }, 0)
             })
         }
-        zeus.Box(style = Style(height = px(LIST_H), radius = 8, borderWidth = 1, borderColor = colors.rule())) {
+        zeus.Box(style = Style(
+            height = px(LIST_H),
+            radius = 8,
+            borderWidth = 1,
+            borderColor = colors.rule(),
+        )) {
             let list = zui.VirtualList(feed, ROW_H, FeedRow)
             list_id.set(list.id)
         }
@@ -167,7 +234,12 @@ fn JobsCard(jobs: Signal<[]Job>, cols: []TableCol) -> Node {
     return zui.Card() {
         zui.Title("Jobs")
         zui.Note("VirtualTable of Job structs. Columns are TableCol { title, width }.")
-        zeus.Box(style = Style(height = px(LIST_H), radius = 8, borderWidth = 1, borderColor = colors.rule())) {
+        zeus.Box(style = Style(
+            height = px(LIST_H),
+            radius = 8,
+            borderWidth = 1,
+            borderColor = colors.rule(),
+        )) {
             zui.VirtualTable(jobs, cols, ROW_H, JobRow)
         }
     }
@@ -175,25 +247,41 @@ fn JobsCard(jobs: Signal<[]Job>, cols: []TableCol) -> Node {
 
 fn Dialog(open: Signal<bool>) -> Node {
     return zui.Overlay(
-        style = Style(opacity = 55, background = "#000000",
-                      display = if open.get() { Display.Flex } else { Display.None }),
-        on_click = fn() => open.set(false)
+        style = Style(opacity = 55, background = "#000000", display = if open.get() {
+            Display.Flex
+        } else {
+            Display.None
+        }),
+        on_click = fn() => open.set(false),
     ) {
         zeus.Box(
-            style = Style(width = px(360),
-                          gap = Space.Md,
-                          padding = Space.Xl,
-                          radius = 16,
-                          borderWidth = 1, borderColor = colors.rule(),
-                          background = colors.plate()),
-            on_click = fn() { return }
+            style = Style(
+                width = px(360),
+                gap = Space.Md,
+                padding = Space.Xl,
+                radius = 16,
+                borderWidth = 1,
+                borderColor = colors.rule(),
+                background = colors.plate(),
+            ),
+            on_click = fn() { return },
         ) {
             zui.Title("Dialog")
             zui.Body("How are you feeling today?")
             zui.Row(Space.Sm) {
                 zui.Grow()
-                zui.Button("Close", look = zeus.Look.Ghost, size = zeus.Size.Md, on_click = fn() => open.set(false))
-                zui.Button("Save", look = zeus.Look.Solid, size = zeus.Size.Md, on_click = fn() => open.set(false))
+                zui.Button(
+                    "Close",
+                    look = zeus.Look.Ghost,
+                    size = zeus.Size.Md,
+                    on_click = fn() => open.set(false),
+                )
+                zui.Button(
+                    "Save",
+                    look = zeus.Look.Solid,
+                    size = zeus.Size.Md,
+                    on_click = fn() => open.set(false),
+                )
             }
         }
     }
@@ -201,7 +289,15 @@ fn Dialog(open: Signal<bool>) -> Node {
 
 /// Page built once from RPC results. `chip` is the host label
 /// (Canvas2D / iOS / macOS / Android). Call from `zeus.App`.
-fn Screen(title: string, chip: string, users: string, jobs: string, uptime: string, load0: int, count0: int) -> Node {
+fn Screen(
+    title: string,
+    chip: string,
+    users: string,
+    jobs: string,
+    uptime: string,
+    load0: int,
+    count0: int
+) -> Node {
     let count = zeus.signal(count0)
     let load = zeus.signal(load0)
     let open = zeus.signal(false)
@@ -230,11 +326,13 @@ fn Screen(title: string, chip: string, users: string, jobs: string, uptime: stri
     push(cols, TableCol { title: "Role", width: 0 })
     push(cols, TableCol { title: "Status", width: 0 })
 
-    return zeus.Box(style = Style(direction = Direction.Column,
-                           gap = Space.Exs,
-                           grow = 1,
-                           padding = spacing.PAGE_PAD,
-                           background = colors.paper())) {
+    return zeus.Box(style = Style(
+        direction = Direction.Column,
+        gap = Space.Exs,
+        grow = 1,
+        padding = spacing.PAGE_PAD,
+        background = colors.paper(),
+    )) {
         Header(title, chip)
         zui.Alert("RPC", "Count is Counter.Hello. Cards are Counter.Stats.")
         Stats(users, jobs, uptime, count)

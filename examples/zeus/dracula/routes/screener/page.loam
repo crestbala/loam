@@ -19,8 +19,11 @@ fn spec() -> []TableCol {
 /// so a re-rank moves the rows instead of rebuilding them.
 fn arm(v: Signal<RowList>) -> Node {
     if v.peek().rows.len == 0 {
-        return zui.Empty(icon = zeus.IC_INFO, title = "No schemes to rank.",
-                         body = "Add funds on Holdings. The screener ranks that list.")
+        return zui.Empty(
+            icon = zeus.IC_INFO,
+            title = "No schemes to rank.",
+            body = "Add funds on Holdings. The screener ranks that list.",
+        )
     }
     return rank_rows(v)
 }
@@ -33,8 +36,9 @@ fn rank_rows(v: Signal<RowList>) -> Node {
         zui.TableCols(spec())
         zui.Each(v.get().rows, fn(i: int, r: CodeRow) -> Node {
             let code = r.code
-            return zui.TableRowCols(r.cells, spec(), hover = true,
-                                    on_click = fn() { router.navigate("/scheme/{{code}}") })
+            return zui.TableRowCols(r.cells, spec(), hover = true, on_click = fn() {
+                router.navigate("/scheme/{{code}}")
+            })
         })
     }
 }
@@ -42,15 +46,19 @@ fn rank_rows(v: Signal<RowList>) -> Node {
 fn Page(p: Params) -> Node {
     return zui.Column(spacing.SECTION) {
         zui.Heading("Screener")
-        zui.Body("Ranks the watchlist by 12-month momentum. A tie keeps the earlier scheme. Warm-up is not a rank. Click a row for its chart.")
+        zui.Body(
+            "Ranks the watchlist by 12-month momentum. A tie keeps the earlier scheme. Warm-up is not a rank. Click a row for its chart.",
+        )
         if book.started() {
-            zui.MatchBy(book.ranks(), fn(x: RowList) -> string { return "{{x.rows.len == 0}}" },
-                        fn(v: Signal<RowList>) -> Node { return arm(v) })
+            zui.MatchBy(
+                book.ranks(),
+                fn(x: RowList) -> string { return "{{x.rows.len == 0}}" },
+                fn(v: Signal<RowList>) -> Node { return arm(v) },
+            )
         } else {
             zeus.Text("No schemes to rank.")
         }
     }
-
 }
 
 fn meta(p: Params) -> Meta {

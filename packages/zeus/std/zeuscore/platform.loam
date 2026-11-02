@@ -9,13 +9,34 @@ fn plat_fill_a(x: int, y: int, w: int, h: int, rgb: int, radius: int, alpha: int
 /// Linear gradient. `axis` 0 = top `c0` → bottom `c1`, 1 = left → right.
 /// `radius` rounds the corners and `alpha` is 0..255 — before both existed
 /// every gradient background painted square-cornered and fully opaque.
-fn plat_fill_g(x: int, y: int, w: int, h: int, c0: int, c1: int, axis: int, radius: int, alpha: int) {}
+fn plat_fill_g(
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    c0: int,
+    c1: int,
+    axis: int,
+    radius: int,
+    alpha: int
+) {}
 /// Soft drop shadow of a rounded rect, painted under the fill it belongs to.
 /// `blur` is the blur radius in dp, `dx`/`dy` the offset, `alpha` 0..255.
 /// Elevation cannot be expressed without it: every other primitive here has
 /// a hard edge. Hosts that cannot blur skip it, so a surface reads flat
 /// rather than gaining a hard black rectangle.
-fn plat_shadow(x: int, y: int, w: int, h: int, radius: int, rgb: int, alpha: int, blur: int, dx: int, dy: int) {}
+fn plat_shadow(
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    radius: int,
+    rgb: int,
+    alpha: int,
+    blur: int,
+    dx: int,
+    dy: int
+) {}
 /// Anti-aliased ring stroke, inset by `width`/2 so it paints inside the rect
 /// — the box model layout already assumes when it insets content by the
 /// border width. Replaces drawing a larger filled rect underneath, which
@@ -24,7 +45,18 @@ fn plat_shadow(x: int, y: int, w: int, h: int, radius: int, rgb: int, alpha: int
 fn plat_stroke(x: int, y: int, w: int, h: int, rgb: int, radius: int, width: int, alpha: int) {}
 /// Per-corner radius fill, clockwise from the top-left. Grouped button runs,
 /// top-rounded sheets, and rounded table headers need corners to differ.
-fn plat_fill4(x: int, y: int, w: int, h: int, rgb: int, alpha: int, tl: int, tr: int, br: int, bl: int) {}
+fn plat_fill4(
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    rgb: int,
+    alpha: int,
+    tl: int,
+    tr: int,
+    br: int,
+    bl: int
+) {}
 /// Translate by (`dx`, `dy`), then scale and rotate about (`ox`, `oy`).
 /// `scale` is a percent (100 = identity), `rot` clockwise degrees. Applies
 /// within the current `plat_save` / `plat_restore` level.

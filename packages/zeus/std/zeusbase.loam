@@ -1222,8 +1222,7 @@ fn key_action_name(spec: string, action: string) -> string {
 
 /// Install a `key` prop: map the chord to an action, then bind the action to
 /// `handler_fn` (an interned id). Node-scoped unless `is_global`.
-fn install_key(node: Node, spec: string, action: string, handler_fn: int,
-               is_global: bool) -> Node {
+fn install_key(node: Node, spec: string, action: string, handler_fn: int, is_global: bool) -> Node {
     if spec.len == 0 {
         return node
     }
@@ -1588,10 +1587,20 @@ fn motion_radius(node: Node) -> int {
     return int(nodes.look[node.id].radius)
 }
 fn keys(node: Node, sig: Signal<int>, lo: int, hi: int) -> Node {
-    return node.key("right", "slider.inc").key("left", "slider.dec").focusable().on_range("slider.inc", sig, 1, lo, hi).on_range("slider.dec", sig, -1, lo, hi)
+    return node.key("right", "slider.inc").key("left", "slider.dec").focusable().on_range(
+        "slider.inc",
+        sig,
+        1,
+        lo,
+        hi,
+    ).on_range("slider.dec", sig, -1, lo, hi)
 }
 fn keys_page(node: Node, sig: Signal<int>) -> Node {
-    return node.key("right", "page.next").key("left", "page.prev").focusable().on_key_add("page.next", sig, 1).on_key_add("page.prev", sig, -1)
+    return node.key("right", "page.next").key("left", "page.prev").focusable().on_key_add(
+        "page.next",
+        sig,
+        1,
+    ).on_key_add("page.prev", sig, -1)
 }
 
 // --- flex constants (public; implemented in geometry) ---
@@ -1680,7 +1689,6 @@ fn role_color(slot: int) -> int {
 // effect calls the thunk and re-applies one setter, so setting a signal
 // repaints exactly the props that read it.
 
-
 /// Does this write carry no value? Most props use -1 for "the caller did not
 /// pass this", so one rule here replaces the same `if v >= 0` repeated in
 /// every arm below. The flag-like setters opt out: they mean something at 0
@@ -1706,18 +1714,16 @@ fn skip_unset(setter: int, v: int) -> bool {
 /// show) still jump: they are not a continuous length.
 fn setter_tweens_layout(setter: int) -> bool {
     match setter {
-        SET.Width | SET.Height | SET.MinWidth | SET.MaxWidth |
-        SET.MinHeight | SET.MaxHeight | SET.Left | SET.Top | SET.Right |
-        SET.Bottom => { return true }
+        SET.Width | SET.Height | SET.MinWidth | SET.MaxWidth | SET.MinHeight | SET.MaxHeight |
+            SET.Left | SET.Top | SET.Right | SET.Bottom => { return true }
         _ => { return false }
     }
 }
 
 fn layout_target_px(setter: int, v: int) -> int {
     match setter {
-        SET.Width | SET.Height | SET.MinWidth | SET.MaxWidth |
-        SET.MinHeight | SET.MaxHeight | SET.Left | SET.Top | SET.Right |
-        SET.Bottom => { return scaled(v) }
+        SET.Width | SET.Height | SET.MinWidth | SET.MaxWidth | SET.MinHeight | SET.MaxHeight |
+            SET.Left | SET.Top | SET.Right | SET.Bottom => { return scaled(v) }
         _ => { return v }
     }
 }
@@ -1972,8 +1978,9 @@ fn apply_holds(node_id: int, setter: int, v: int) -> bool {
         SET.Font => { return v > 0 && int(nodes.look[node_id].font) == scaled(v) }
         SET.Height => { return v >= 0 && nodes.lay[node_id].explicit_height == scaled(v) }
         SET.Width => {
-            return v >= 0 && nodes.lay[node_id].explicit_width == scaled(v) &&
-                   int(nodes.lay[node_id].w_pct) == -1
+            return v >= 0 &&
+                nodes.lay[node_id].explicit_width == scaled(v) &&
+                int(nodes.lay[node_id].w_pct) == -1
         }
         _ => { return false }
     }
@@ -1984,11 +1991,11 @@ fn apply_holds(node_id: int, setter: int, v: int) -> bool {
 /// border, text, font, position, show) can move the box model.
 fn setter_is_paint_only(setter: int) -> bool {
     match setter {
-        SET.Radius | SET.RadiusTop | SET.RadiusBottom | SET.Opacity | SET.Background | SET.Color | SET.BorderColor |
-        SET.ZIndex | SET.SvgFit | SET.SvgLazy | SET.Elevation |
-        SET.CornerTL | SET.CornerTR | SET.CornerBR | SET.CornerBL |
-        SET.TextAlign | SET.PointerPass | SET.BorderTop | SET.BorderRight | SET.BorderBottom |
-        SET.BorderLeft | SET.BorderBetween => { return true }
+        SET.Radius | SET.RadiusTop | SET.RadiusBottom | SET.Opacity | SET.Background | SET.Color |
+            SET.BorderColor | SET.ZIndex | SET.SvgFit | SET.SvgLazy | SET.Elevation | SET.CornerTL |
+            SET.CornerTR | SET.CornerBR | SET.CornerBL | SET.TextAlign | SET.PointerPass |
+            SET.BorderTop | SET.BorderRight | SET.BorderBottom | SET.BorderLeft |
+            SET.BorderBetween => { return true }
         _ => { return false }
     }
 }
@@ -2182,7 +2189,6 @@ fn str_or_default(v: string, fallback: string) -> string {
     return fallback
 }
 
-
 /// The event payload for the handler now running. A handler is invoked with
 /// no arguments, so `fn(e: MouseEvent)` is lowered to a `let` of this.
 fn current_mouse() -> MouseEvent {
@@ -2332,8 +2338,6 @@ struct Anchor {
     place: int = 0,
     gap: int = 6,
 }
-
-
 
 // --- Component ---
 // Every widget is `Component(node, props)`: style thunks, events, bind,
@@ -2626,8 +2630,10 @@ fn install_mounted(node: Node, p: BoxProps) {
     if result.is_some(p.on_resize) {
         let h = p.on_resize.val
         on_resize_id(node_id, || {
-            h(Rect { x: nodes.box[node_id].x, y: nodes.box[node_id].y,
-                     w: nodes.box[node_id].w, h: nodes.box[node_id].h })
+            h(Rect {
+                x: nodes.box[node_id].x, y: nodes.box[node_id].y,
+                w: nodes.box[node_id].w, h: nodes.box[node_id].h
+            })
         })
     }
     if result.is_some(p.on_drag) {
@@ -2636,8 +2642,10 @@ fn install_mounted(node: Node, p: BoxProps) {
     if result.is_some(p.on_context_menu) {
         arena.hook_set(node_id, arena.HOOK_CONTEXT, intern_fn(p.on_context_menu.val))
     }
-    if !result.is_some(p.anchor) && !result.is_some(p.autofocus) &&
-        !result.is_some(p.trap) && !result.is_some(p.secure) {
+    if !result.is_some(p.anchor) &&
+        !result.is_some(p.autofocus) &&
+        !result.is_some(p.trap) &&
+        !result.is_some(p.secure) {
         return
     }
     let me = ref()
@@ -2816,8 +2824,10 @@ fn rect(r: Ref) -> Rect {
     if id <= 0 {
         return Rect {}
     }
-    return Rect { x: nodes.box[id].x, y: nodes.box[id].y,
-                  w: nodes.box[id].w, h: nodes.box[id].h }
+    return Rect {
+        x: nodes.box[id].x, y: nodes.box[id].y,
+        w: nodes.box[id].w, h: nodes.box[id].h
+    }
 }
 
 /// Number of children of `r`.
@@ -2837,9 +2847,11 @@ fn child_rect(r: Ref, i: int) -> Rect {
         return Rect {}
     }
     let k = nodes.tree[id].kids[i]
-    return Rect { x: nodes.box[k].x - arena.content_x(id),
-                  y: nodes.box[k].y - arena.content_y(id),
-                  w: nodes.box[k].w, h: nodes.box[k].h }
+    return Rect {
+        x: nodes.box[k].x - arena.content_x(id),
+        y: nodes.box[k].y - arena.content_y(id),
+        w: nodes.box[k].w, h: nodes.box[k].h
+    }
 }
 
 /// Run `body` after any layout that changed `r`'s width or height, the first
@@ -2855,15 +2867,18 @@ fn on_resize_id(id: int, body: fn()) {
     if id <= 0 {
         return
     }
-    arena.set_list_fn(id, intern_fn(|| {
-        // Both sides in one stamp: a height-only resize counts too.
-        let key = nodes.box[id].w * 65536 + nodes.box[id].h
-        if key == nodes.tree[id].list_gen {
-            return
-        }
-        nodes.tree[id].list_gen = key
-        body()
-    }))
+    arena.set_list_fn(
+        id,
+        intern_fn(|| {
+            // Both sides in one stamp: a height-only resize counts too.
+            let key = nodes.box[id].w * 65536 + nodes.box[id].h
+            if key == nodes.tree[id].list_gen {
+                return
+            }
+            nodes.tree[id].list_gen = key
+            body()
+        }),
+    )
     arena.host_geo(id)
 }
 
@@ -3055,8 +3070,10 @@ struct StateStyles {
 }
 
 fn has_state_styles(s: StateStyles) -> bool {
-    return result.is_some(s.hover) || result.is_some(s.press) ||
-        result.is_some(s.focus) || result.is_some(s.disabled)
+    return result.is_some(s.hover) ||
+        result.is_some(s.press) ||
+        result.is_some(s.focus) ||
+        result.is_some(s.disabled)
 }
 
 /// The node's raw paint values, to restore a key an overlay set and released.
@@ -3113,8 +3130,13 @@ fn install_state_style(node: Node, base: fn() -> Style, states: StateStyles) {
     track.run(eid)
 }
 
-fn state_style_run(node_id: int, base: fn() -> Style, states: StateStyles,
-                   mask: Signal<int>, rest: PaintRest) {
+fn state_style_run(
+    node_id: int,
+    base: fn() -> Style,
+    states: StateStyles,
+    mask: Signal<int>,
+    rest: PaintRest
+) {
     let next = merge(base(), state_overlay(states, mask.get()))
     let last = arena.style_last(node_id)
     style_apply(node_id, last, next)
@@ -3336,39 +3358,94 @@ fn opt_int_eq(a: Option<int>, b: Option<int>) -> bool {
 }
 
 fn st_padding(id: int, a: Style, b: Style) {
-    st_box(id, SET.Padding, SET.PaddingX, SET.PaddingY,
-           SET.PaddingTop, SET.PaddingRight, SET.PaddingBottom, SET.PaddingLeft,
-           a.padding, a.paddingX, a.paddingY, a.paddingTop, a.paddingRight, a.paddingBottom,
-           a.paddingLeft,
-           b.padding, b.paddingX, b.paddingY, b.paddingTop, b.paddingRight, b.paddingBottom,
-           b.paddingLeft)
+    st_box(
+        id,
+        SET.Padding,
+        SET.PaddingX,
+        SET.PaddingY,
+        SET.PaddingTop,
+        SET.PaddingRight,
+        SET.PaddingBottom,
+        SET.PaddingLeft,
+        a.padding,
+        a.paddingX,
+        a.paddingY,
+        a.paddingTop,
+        a.paddingRight,
+        a.paddingBottom,
+        a.paddingLeft,
+        b.padding,
+        b.paddingX,
+        b.paddingY,
+        b.paddingTop,
+        b.paddingRight,
+        b.paddingBottom,
+        b.paddingLeft,
+    )
 }
 
 fn st_margin(id: int, a: Style, b: Style) {
-    st_box(id, SET.Margin, SET.MarginX, SET.MarginY,
-           SET.MarginTop, SET.MarginRight, SET.MarginBottom, SET.MarginLeft,
-           a.margin, a.marginX, a.marginY, a.marginTop, a.marginRight, a.marginBottom,
-           a.marginLeft,
-           b.margin, b.marginX, b.marginY, b.marginTop, b.marginRight, b.marginBottom,
-           b.marginLeft)
+    st_box(
+        id,
+        SET.Margin,
+        SET.MarginX,
+        SET.MarginY,
+        SET.MarginTop,
+        SET.MarginRight,
+        SET.MarginBottom,
+        SET.MarginLeft,
+        a.margin,
+        a.marginX,
+        a.marginY,
+        a.marginTop,
+        a.marginRight,
+        a.marginBottom,
+        a.marginLeft,
+        b.margin,
+        b.marginX,
+        b.marginY,
+        b.marginTop,
+        b.marginRight,
+        b.marginBottom,
+        b.marginLeft,
+    )
 }
 
 /// Padding or margin. The keys overlap (`padding` writes the sides that
 /// `paddingTop` writes), so when any of them changed every present one is
 /// written again, shorthand first, then axis, then side: a side key keeps
 /// winning when the shorthand under it moves.
-fn st_box(id: int, s_all: int, s_x: int, s_y: int, s_t: int, s_r: int, s_b: int, s_l: int,
-          a_all: Option<int>, a_x: Option<int>, a_y: Option<int>, a_t: Option<int>,
-          a_r: Option<int>, a_b: Option<int>, a_l: Option<int>,
-          b_all: Option<int>, b_x: Option<int>, b_y: Option<int>, b_t: Option<int>,
-          b_r: Option<int>, b_b: Option<int>, b_l: Option<int>) {
+fn st_box(
+    id: int,
+    s_all: int,
+    s_x: int,
+    s_y: int,
+    s_t: int,
+    s_r: int,
+    s_b: int,
+    s_l: int,
+    a_all: Option<int>,
+    a_x: Option<int>,
+    a_y: Option<int>,
+    a_t: Option<int>,
+    a_r: Option<int>,
+    a_b: Option<int>,
+    a_l: Option<int>,
+    b_all: Option<int>,
+    b_x: Option<int>,
+    b_y: Option<int>,
+    b_t: Option<int>,
+    b_r: Option<int>,
+    b_b: Option<int>,
+    b_l: Option<int>
+) {
     let changed = (result.is_some(b_all) && !opt_int_eq(a_all, b_all)) ||
-                  (result.is_some(b_x) && !opt_int_eq(a_x, b_x)) ||
-                  (result.is_some(b_y) && !opt_int_eq(a_y, b_y)) ||
-                  (result.is_some(b_t) && !opt_int_eq(a_t, b_t)) ||
-                  (result.is_some(b_r) && !opt_int_eq(a_r, b_r)) ||
-                  (result.is_some(b_b) && !opt_int_eq(a_b, b_b)) ||
-                  (result.is_some(b_l) && !opt_int_eq(a_l, b_l))
+        (result.is_some(b_x) && !opt_int_eq(a_x, b_x)) ||
+        (result.is_some(b_y) && !opt_int_eq(a_y, b_y)) ||
+        (result.is_some(b_t) && !opt_int_eq(a_t, b_t)) ||
+        (result.is_some(b_r) && !opt_int_eq(a_r, b_r)) ||
+        (result.is_some(b_b) && !opt_int_eq(a_b, b_b)) ||
+        (result.is_some(b_l) && !opt_int_eq(a_l, b_l))
     if !changed {
         return
     }
@@ -3398,9 +3475,16 @@ fn st_float(id: int, a: Option<Float>, b: Option<Float>) {
     let mut fresh = true
     if result.is_some(a) {
         let o = a.val
-        fresh = o.to != f.to || o.at != f.at || o.on != f.on || o.x != f.x || o.y != f.y ||
-                o.expandW != f.expandW || o.expandH != f.expandH || o.flip != f.flip ||
-                o.clip != f.clip || o.passthrough != f.passthrough
+        fresh = o.to != f.to ||
+            o.at != f.at ||
+            o.on != f.on ||
+            o.x != f.x ||
+            o.y != f.y ||
+            o.expandW != f.expandW ||
+            o.expandH != f.expandH ||
+            o.flip != f.flip ||
+            o.clip != f.clip ||
+            o.passthrough != f.passthrough
     }
     if !fresh {
         return
@@ -3683,9 +3767,17 @@ fn Box(p: BoxProps) -> Node {
 /// this one node. The compiler lifts a plain expression —
 /// `Text("n={{count.get()}}")` — into that thunk, so callers write data.
 fn Text(label: fn() -> string, p: TextProps) -> Node {
-    return Component(raw_label(""), text = label, style = p.style, restyle = p.restyle,
-                     ref = p.ref, bind = p.bind,
-                     label = p.label, role = p.role, keys = p.keys)
+    return Component(
+        raw_label(""),
+        text = label,
+        style = p.style,
+        restyle = p.restyle,
+        ref = p.ref,
+        bind = p.bind,
+        label = p.label,
+        role = p.role,
+        keys = p.keys,
+    )
 }
 // --- elevation ------------------------------------------------------------
 // The curves and the `Elev` record live in the core (`arena`), because the
@@ -3737,7 +3829,6 @@ enum EASE {
     // cubic-bezier(0.34, 1.56, 0.64, 1) (ease-out-back).
     Spring = 3,
 }
-
 
 /// Line box for `font` px at a `LEAD_*` percentage.
 fn line_height(font: int, lead: int) -> int {
@@ -3811,7 +3902,6 @@ fn use_font_bytes(bytes: string) -> int {
 fn clear_font() {
     metrics.unbind()
 }
-
 
 /// Theme roles. `accent` is the live ramp's solid step — ink by
 /// default, and whatever `set_accent` picks after that. Status tints stay

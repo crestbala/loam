@@ -45,10 +45,20 @@ fn main() -> int {
     for i in 0..paths.len {
         let info = jobs.read_info(dir, i)
         let pcm = sys.read_file(jobs.pcm_raw(dir, i))
-        let src = arrange.source_of(sys.read_file(jobs.env_raw(dir, i)), "", info[1], pcm, info[2], info[0] == 1, false)
+        let src = arrange.source_of(
+            sys.read_file(jobs.env_raw(dir, i)),
+            "",
+            info[1],
+            pcm,
+            info[2],
+            info[0] == 1,
+            false,
+        )
         let h = src.heard
         let k = src.key
-        fmt.println("src {{i}}: {{time.bpm_text(h.bpm_c)}} BPM pulse {{h.pulse}} key {{key.name(k)}} ({{k.sure}}) phrases {{h.ph_start.len}} onsets {{h.onsets}}")
+        fmt.println(
+            "src {{i}}: {{time.bpm_text(h.bpm_c)}} BPM pulse {{h.pulse}} key {{key.name(k)}} ({{k.sure}}) phrases {{h.ph_start.len}} onsets {{h.onsets}}",
+        )
         for p in 0..h.ph_start.len {
             let mut chords = ""
             let mut alone = ""
@@ -61,7 +71,9 @@ fn main() -> int {
                 alone = "{{alone}} {{key.chord_name(key.best_chord(h.ph_chroma, at, k.tonic, k.minor))}}"
                 tonal = "{{tonal}} {{key.tonal(h.ph_chroma, at)}}"
             }
-            fmt.println("  ph {{p}} @{{h.ph_start[p] / 480}}cs {{h.ph_bars[p]}}b score {{h.ph_score[p]}} lvl {{h.ph_level[p]}} low {{h.ph_low[p]}} dense {{h.ph_dense[p]}} bright {{h.ph_bright[p]}} chords{{chords}} (alone{{alone}}) tonal{{tonal}}")
+            fmt.println(
+                "  ph {{p}} @{{h.ph_start[p] / 480}}cs {{h.ph_bars[p]}}b score {{h.ph_score[p]}} lvl {{h.ph_level[p]}} low {{h.ph_low[p]}} dense {{h.ph_dense[p]}} bright {{h.ph_bright[p]}} chords{{chords}} (alone{{alone}}) tonal{{tonal}}",
+            )
         }
         push(srcs, src)
         push(src_paths, jobs.src_wav(dir, i))
@@ -78,9 +90,13 @@ fn main() -> int {
         fmt.println("src {{i}} role {{arrange.role_name(rs[i])}}")
     }
     let sc = arrange.arrange(srcs, s)
-    fmt.println("piece {{time.bpm_text(sc.bpm_c)}} BPM, {{key.name(Tonality { tonic: sc.tonic, minor: sc.minor, sure: 100 })}}, {{sc.bars}} bars")
+    fmt.println(
+        "piece {{time.bpm_text(sc.bpm_c)}} BPM, {{key.name(Tonality { tonic: sc.tonic, minor: sc.minor, sure: 100 })}}, {{sc.bars}} bars",
+    )
     for i in 0..sc.sec_kind.len {
-        fmt.println("  {{arrange.section_name(sc.sec_kind[i])}} @{{sc.sec_bar[i]}} ×{{sc.sec_bars[i]}}")
+        fmt.println(
+            "  {{arrange.section_name(sc.sec_kind[i])}} @{{sc.sec_bar[i]}} ×{{sc.sec_bars[i]}}",
+        )
     }
     let mut prog = ""
     for i in 0..sc.prog.len {
@@ -99,7 +115,9 @@ fn main() -> int {
     fmt.println("motif rhythm:{{rhythm}}")
     for i in 0..sc.ph_bar.len {
         let mel = if i < sc.ph_mel.len { sc.ph_mel[i] } else { -1 }
-        fmt.println("  phrase @{{sc.ph_bar[i]}} ×{{sc.ph_bars[i]}} label {{sc.ph_label[i]}} var {{sc.ph_var[i]}} end {{sc.ph_end[i]}} score {{mel}}")
+        fmt.println(
+            "  phrase @{{sc.ph_bar[i]}} ×{{sc.ph_bars[i]}} label {{sc.ph_label[i]}} var {{sc.ph_var[i]}} end {{sc.ph_end[i]}} score {{mel}}",
+        )
         if mel >= 0 {
             let mut terms = ""
             for t in 0..9 {
@@ -130,10 +148,14 @@ fn main() -> int {
     }
     for i in 0..sc.sy_layer.len {
         let line = if i < sc.sy_line.len { sc.sy_line[i] } else { -1 }
-        fmt.println("  part layer {{sc.sy_layer[i]}} variant {{sc.sy_variant[i]}} bar {{sc.sy_bar[i]}} ×{{sc.sy_bars[i]}} line {{line}}")
+        fmt.println(
+            "  part layer {{sc.sy_layer[i]}} variant {{sc.sy_variant[i]}} bar {{sc.sy_bar[i]}} ×{{sc.sy_bars[i]}} line {{line}}",
+        )
     }
     for i in 0..sc.lp_src.len {
-        fmt.println("  loop bus {{sc.lp_bus[i]}} bar {{sc.lp_bar[i]}} src {{sc.lp_src[i]}} at {{sc.lp_in[i] / 480}}cs unit {{sc.lp_unit[i] / sc.bar_s}}b ×{{sc.lp_reps[i]}} semis {{sc.lp_semis[i]}} db {{sc.lp_db[i]}}")
+        fmt.println(
+            "  loop bus {{sc.lp_bus[i]}} bar {{sc.lp_bar[i]}} src {{sc.lp_src[i]}} at {{sc.lp_in[i] / 480}}cs unit {{sc.lp_unit[i] / sc.bar_s}}b ×{{sc.lp_reps[i]}} semis {{sc.lp_semis[i]}} db {{sc.lp_db[i]}}",
+        )
     }
     let g = graph.build(sc, s, src_paths, splits, mono, dir)
     sys.write_file("{{dir}}/graph.txt", g.text)

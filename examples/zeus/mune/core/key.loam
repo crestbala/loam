@@ -483,7 +483,9 @@ fn best_chord(ch: []int, at: int, tonic: int, minor: bool) -> int {
     for c in 0..24 {
         let t = chord_tones(c)
         let mut v = x[t[0]] * 10 + x[t[1]] * 8 + x[t[2]] * 7
-        if in_scale(t[0], tonic, minor) && in_scale(t[1], tonic, minor) && in_scale(t[2], tonic, minor) {
+        if in_scale(t[0], tonic, minor) &&
+            in_scale(t[1], tonic, minor) &&
+            in_scale(t[2], tonic, minor) {
             v = v + v / 12
         }
         if v > best_v {
@@ -604,7 +606,9 @@ fn emissions(c: []f64, bass: []f64) -> []f64 {
 
 fn in_key(k: int, tonic: int, minor: bool) -> bool {
     let t = chord_tones(k)
-    return in_scale(t[0], tonic, minor) && in_scale(t[1], tonic, minor) && in_scale(t[2], tonic, minor)
+    return in_scale(t[0], tonic, minor) &&
+        in_scale(t[1], tonic, minor) &&
+        in_scale(t[2], tonic, minor)
 }
 
 /// What it costs to go from state `a` to state `b`.
@@ -654,7 +658,11 @@ fn chord_path(frames: []f64, bass: []f64, tonic: int, minor: bool) -> []int {
     let e0 = emissions(c, if has_bass { lowc } else { []f64 {} })
     for k in 0..STATES {
         // Starting outside the key costs what moving there would.
-        let start: f64 = if k == NO_CHORD || in_key(k, tonic, minor) { 0.0 } else { MOVE_OUT_KEY - MOVE_IN_KEY }
+        let start: f64 = if k == NO_CHORD || in_key(k, tonic, minor) {
+            0.0
+        } else {
+            MOVE_OUT_KEY - MOVE_IN_KEY
+        }
         push(score, e0[k] - start)
         push(back, k)
     }

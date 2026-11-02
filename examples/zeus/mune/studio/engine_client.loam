@@ -167,25 +167,39 @@ fn sync_send(gen: int, i: int) {
 
 /// Ask for a piece. The reply bumps `gen_seq`; `gen_ok` false means the
 /// engine refused and `gen_error` says why.
-fn generate(scan: int, seed: int, style: int, length: int, energy: int,
-            tempo: int, pitch: int, voices: int,
-            inst_on: []int, inst_lvl: []int, fx_on: []int, fx_amt: []int) {
+fn generate(
+    scan: int,
+    seed: int,
+    style: int,
+    length: int,
+    energy: int,
+    tempo: int,
+    pitch: int,
+    voices: int,
+    inst_on: []int,
+    inst_lvl: []int,
+    fx_on: []int,
+    fx_amt: []int
+) {
     changing()
-    http.client().call_async(api.generate_rpc(),
+    http.client().call_async(
+        api.generate_rpc(),
         api.encode_GenerateReq(GenerateReq {
             scan: scan, seed: seed, style: style, length: length, energy: energy,
             tempo: tempo, pitch: pitch, voices: voices,
             inst_on: inst_on, inst_level: inst_lvl, fx_on: fx_on, fx_amount: fx_amt,
-        }), fn(raw) {
-        let r = api.decode_GenerateResp(raw)
-        gen_ok = r.ok == 1
-        gen_error = r.error
-        if !gen_ok && gen_error.len == 0 {
-            gen_error = "The engine did not answer."
-        }
-        gen_seq = gen_seq + 1
-        settled()
-    })
+        }),
+        fn(raw) {
+            let r = api.decode_GenerateResp(raw)
+            gen_ok = r.ok == 1
+            gen_error = r.error
+            if !gen_ok && gen_error.len == 0 {
+                gen_error = "The engine did not answer."
+            }
+            gen_seq = gen_seq + 1
+            settled()
+        },
+    )
 }
 
 /// One poll step: advances the engine and copies its stage out. Does nothing
@@ -246,20 +260,25 @@ fn take() {
 /// `save_seq`; the job's end shows in the polls (`poll_saving`).
 fn save(id: int, title: string, format: int) {
     changing()
-    http.client().call_async(api.save_rpc(),
-        api.encode_SaveReq(SaveReq { id: id, title: title, format: format }), fn(raw) {
-        let r = api.decode_SaveResp(raw)
-        save_error = r.error
-        if r.ok != 1 && save_error.len == 0 {
-            save_error = "The engine did not answer."
-        }
-        save_seq = save_seq + 1
-        settled()
-    })
+    http.client().call_async(
+        api.save_rpc(),
+        api.encode_SaveReq(SaveReq { id: id, title: title, format: format }),
+        fn(raw) {
+            let r = api.decode_SaveResp(raw)
+            save_error = r.error
+            if r.ok != 1 && save_error.len == 0 {
+                save_error = "The engine did not answer."
+            }
+            save_seq = save_seq + 1
+            settled()
+        },
+    )
 }
 
 fn reveal(path: string) {
-    http.client().call_async(api.reveal_rpc(), api.encode_RevealReq(RevealReq { path: path }), fn(raw) {
+    http.client().call_async(api.reveal_rpc(), api.encode_RevealReq(RevealReq { path: path }), fn(
+        raw
+    ) {
         let r = api.decode_RevealResp(raw)
     })
 }

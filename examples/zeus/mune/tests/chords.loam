@@ -37,7 +37,9 @@ fn rendered(dir: string, st: int, seed: int) -> Score {
     graph.render_voices(sc, s, g, dir)
     sys.write_file("{{dir}}/render.sh", jobs.render_script(dir, g.inputs, out, "{{dir}}/peaks.raw"))
     sys.exec("sh '{{dir}}/render.sh'")
-    sys.exec("ffmpeg -nostdin -v error -y -i '{{out}}' -af 'pan=mono|c0=0.5*c0+0.5*c1,aresample=5512' -f s16le -acodec pcm_s16le '{{dir}}/pcm.raw'")
+    sys.exec(
+        "ffmpeg -nostdin -v error -y -i '{{out}}' -af 'pan=mono|c0=0.5*c0+0.5*c1,aresample=5512' -f s16le -acodec pcm_s16le '{{dir}}/pcm.raw'",
+    )
     return sc
 }
 
@@ -79,17 +81,23 @@ fn main() -> int {
                 if now == want {
                     ok_new = ok_new + 1
                 } else if miss {
-                    fmt.println("  bar {{b}}: {{key.chord_name(want)}}, heard {{key.chord_name(now)}} (alone {{key.chord_name(old)}})")
+                    fmt.println(
+                        "  bar {{b}}: {{key.chord_name(want)}}, heard {{key.chord_name(now)}} (alone {{key.chord_name(old)}})",
+                    )
                 }
             }
-            fmt.println("{{styles.name(st)}} {{seed}}: {{n}} bars, alone {{ok_old}}, sequence {{ok_new}}")
+            fmt.println(
+                "{{styles.name(st)}} {{seed}}: {{n}} bars, alone {{ok_old}}, sequence {{ok_new}}",
+            )
             all_old = all_old + ok_old
             all_new = all_new + ok_new
             all_n = all_n + n
         }
     }
     if all_n > 0 {
-        fmt.println("all {{all_n}} bars: alone {{all_old * 100 / all_n}}%, sequence {{all_new * 100 / all_n}}%")
+        fmt.println(
+            "all {{all_n}} bars: alone {{all_old * 100 / all_n}}%, sequence {{all_new * 100 / all_n}}%",
+        )
     }
     return 0
 }

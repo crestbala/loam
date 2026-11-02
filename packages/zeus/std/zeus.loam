@@ -127,7 +127,6 @@ let mut view_reads_size: int = 0
 /// Times a `view` app rebuilt its tree (diagnostics for tests).
 let mut view_builds: int = 0
 
-
 /// Open a window and build the tree once. The tree is retained: signals
 /// update the props that read them, never a whole subtree.
 /// Size comes from the host (`window_size`): on desktop that is the device
@@ -273,8 +272,9 @@ fn engine_window_drag_at(px: int, py: int) -> int {
         return 0
     }
     for i in 1..nodes.tree.len {
-        if fmt.eq(nodes.ui[i].a11y_role, "titlebar") && arena.shown_in_tree(i) != 0 &&
-           arena.in_box(i, px, py) != 0 {
+        if fmt.eq(nodes.ui[i].a11y_role, "titlebar") &&
+            arena.shown_in_tree(i) != 0 &&
+            arena.in_box(i, px, py) != 0 {
             return 1
         }
     }
@@ -1003,10 +1003,17 @@ fn a11y_push(s: string) {
 /// Roles a user operates: their own label is what assistive tech announces,
 /// so the text drawn inside them is not listed again.
 fn a11y_control(role: string) -> bool {
-    return fmt.eq(role, "button") || fmt.eq(role, "checkbox") || fmt.eq(role, "radio") ||
-           fmt.eq(role, "switch") || fmt.eq(role, "tab") || fmt.eq(role, "option") ||
-           fmt.eq(role, "menuitem") || fmt.eq(role, "link") || fmt.eq(role, "combobox") ||
-           fmt.eq(role, "slider") || fmt.eq(role, "listitem")
+    return fmt.eq(role, "button") ||
+        fmt.eq(role, "checkbox") ||
+        fmt.eq(role, "radio") ||
+        fmt.eq(role, "switch") ||
+        fmt.eq(role, "tab") ||
+        fmt.eq(role, "option") ||
+        fmt.eq(role, "menuitem") ||
+        fmt.eq(role, "link") ||
+        fmt.eq(role, "combobox") ||
+        fmt.eq(role, "slider") ||
+        fmt.eq(role, "listitem")
 }
 
 /// true when `i` is plain text inside a labelled control (within three
@@ -1782,53 +1789,132 @@ fn raster_checksum() -> int {
 }
 
 /// Fill a rounded rectangle as one region (whole surface).
-fn raster_fill_round_rect_whole(x: int, y: int, w: int, h: int, rad: int,
-                                cr: int, cg: int, cb: int, alpha: int) {
+fn raster_fill_round_rect_whole(
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    rad: int,
+    cr: int,
+    cg: int,
+    cb: int,
+    alpha: int
+) {
     raster.raster_round_rect(float(x), float(y), float(w), float(h), float(rad))
     raster.raster_fill_whole(cr, cg, cb, alpha)
 }
 
 /// Fill the same rounded rectangle in 256x256 tiles. Byte-identical to
 /// `_whole` is the seam guarantee.
-fn raster_fill_round_rect_tiled(x: int, y: int, w: int, h: int, rad: int,
-                                cr: int, cg: int, cb: int, alpha: int) {
+fn raster_fill_round_rect_tiled(
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    rad: int,
+    cr: int,
+    cg: int,
+    cb: int,
+    alpha: int
+) {
     raster.raster_round_rect(float(x), float(y), float(w), float(h), float(rad))
     raster.raster_fill_tiled(cr, cg, cb, alpha)
 }
 
 /// Fill a rounded rectangle with a linear gradient from `c0` to `c1`.
 /// `axis` 0 is top-to-bottom, 1 is left-to-right.
-fn raster_fill_round_rect_gradient(x: int, y: int, w: int, h: int, rad: int,
-                                   c0: int, c1: int, axis: int, alpha: int) {
+fn raster_fill_round_rect_gradient(
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    rad: int,
+    c0: int,
+    c1: int,
+    axis: int,
+    alpha: int
+) {
     raster.raster_round_rect(float(x), float(y), float(w), float(h), float(rad))
     raster.raster_fill_gradient_tiled(c0, c1, axis, alpha, x, y, x + w, y + h)
 }
 
 /// Draw a rounded-rect border. `bw` is the device-pixel thickness; a hairline
 /// (<= 1px) snaps to the pixel grid.
-fn raster_stroke_round_rect(x: int, y: int, w: int, h: int, rad: int, bw: int,
-                            cr: int, cg: int, cb: int, alpha: int) {
-    raster.raster_stroke_round_rect(float(x), float(y), float(w), float(h),
-                                    float(rad), float(bw), cr, cg, cb, alpha)
+fn raster_stroke_round_rect(
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    rad: int,
+    bw: int,
+    cr: int,
+    cg: int,
+    cb: int,
+    alpha: int
+) {
+    raster.raster_stroke_round_rect(
+        float(x),
+        float(y),
+        float(w),
+        float(h),
+        float(rad),
+        float(bw),
+        cr,
+        cg,
+        cb,
+        alpha,
+    )
 }
 
 /// The same border in DEVICE coordinates (float) for callers that compute
 /// `logical * scale`, where edges are fractional. This is the path the renderer
 /// uses, and the one hairline snapping exists for.
-fn raster_stroke_round_rect_dev(x: float, y: float, w: float, h: float,
-                                rad: float, bw: float,
-                                cr: int, cg: int, cb: int, alpha: int) {
+fn raster_stroke_round_rect_dev(
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    rad: float,
+    bw: float,
+    cr: int,
+    cg: int,
+    cb: int,
+    alpha: int
+) {
     raster.raster_stroke_round_rect(x, y, w, h, rad, bw, cr, cg, cb, alpha)
 }
 
 /// Draw a drop shadow for a rounded rect, under whatever is drawn next.
 /// `dx`/`dy` are the device offset, `blur` the device blur radius, `alpha` the
 /// peak opacity (0..255).
-fn raster_shadow_rect(x: int, y: int, w: int, h: int, rad: int,
-                      dx: int, dy: int, blur: int,
-                      cr: int, cg: int, cb: int, alpha: int) {
-    raster.raster_shadow_rect(float(x), float(y), float(w), float(h), float(rad),
-                              float(dx), float(dy), float(blur), alpha, cr, cg, cb)
+fn raster_shadow_rect(
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    rad: int,
+    dx: int,
+    dy: int,
+    blur: int,
+    cr: int,
+    cg: int,
+    cb: int,
+    alpha: int
+) {
+    raster.raster_shadow_rect(
+        float(x),
+        float(y),
+        float(w),
+        float(h),
+        float(rad),
+        float(dx),
+        float(dy),
+        float(blur),
+        alpha,
+        cr,
+        cg,
+        cb,
+    )
 }
 
 /// Clear the damage clip: the next tiled draws cover the whole surface again.
@@ -1921,8 +2007,15 @@ fn raster_fill_multi(cr: int, cg: int, cb: int, alpha: int) {
 /// Add a glyph's contours to the multi-contour set. Points are in FONT UNITS;
 /// `sc` is px/unitsPerEm and `(pen_x, pen_y)` the device-space baseline origin.
 /// Winding signs are derived from contour orientation, so no sign is passed.
-fn raster_multi_add_glyph(xs: []int, ys: []int, on: []int, ends: []int,
-                          pen_x: float, pen_y: float, sc: float) {
+fn raster_multi_add_glyph(
+    xs: []int,
+    ys: []int,
+    on: []int,
+    ends: []int,
+    pen_x: float,
+    pen_y: float,
+    sc: float
+) {
     raster.raster_multi_add_glyph(xs, ys, on, ends, pen_x, pen_y, sc)
 }
 
@@ -1974,8 +2067,17 @@ fn atlas_lookup(font: int, gid: int, size: int, subx: int) -> int {
 /// or -1 when it cannot be atlased. `size` is the DEVICE pixel size; `subx` a
 /// bucket from `atlas_subx_bucket`. The mask is stored relative to the pen, so
 /// blit it at the integer pen position.
-fn atlas_intern(font: int, gid: int, size: int, subx: int,
-                xs: []int, ys: []int, on: []int, ends: []int, upm: int) -> int {
+fn atlas_intern(
+    font: int,
+    gid: int,
+    size: int,
+    subx: int,
+    xs: []int,
+    ys: []int,
+    on: []int,
+    ends: []int,
+    upm: int
+) -> int {
     return atlas.atlas_intern(font, gid, size, subx, xs, ys, on, ends, upm)
 }
 
@@ -2437,14 +2539,35 @@ fn dump_draw_list() {
         } else if d.kind == 11 {
             fmt.println("grad", d.x, d.y, d.w, d.h, d.rgb, d.value, d.radius)
         } else if d.kind == 12 {
-            fmt.println("shadow", d.x, d.y, d.w, d.h, d.rgb, d.radius, d.alpha, d.font,
-                         d.value % 256 - 128, d.value / 256 - 128)
+            fmt.println(
+                "shadow",
+                d.x,
+                d.y,
+                d.w,
+                d.h,
+                d.rgb,
+                d.radius,
+                d.alpha,
+                d.font,
+                d.value % 256 - 128,
+                d.value / 256 - 128,
+            )
         } else if d.kind == 13 {
             fmt.println("stroke", d.x, d.y, d.w, d.h, d.rgb, d.radius, d.font, d.alpha)
         } else if d.kind == 14 {
-            fmt.println("fill4", d.x, d.y, d.w, d.h, d.rgb, d.alpha,
-                         d.radius % 65536, d.radius / 65536,
-                         d.value % 65536, d.value / 65536)
+            fmt.println(
+                "fill4",
+                d.x,
+                d.y,
+                d.w,
+                d.h,
+                d.rgb,
+                d.alpha,
+                d.radius % 65536,
+                d.radius / 65536,
+                d.value % 65536,
+                d.value / 65536,
+            )
         } else if d.kind == 15 {
             fmt.println("xform", d.x, d.y, d.w, d.h, d.radius, d.font)
         }

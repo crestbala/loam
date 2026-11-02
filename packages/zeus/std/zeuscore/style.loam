@@ -280,9 +280,14 @@ fn no_style() -> Style {
 /// The keys a state style may set: paint only, so hover or press never
 /// reflows. Every other key of `s` is dropped.
 fn paint_only(s: Style) -> Style {
-    return Style(background = s.background, color = s.color, opacity = s.opacity,
-                 borderWidth = s.borderWidth, borderColor = s.borderColor,
-                 elevation = s.elevation)
+    return Style(
+        background = s.background,
+        color = s.color,
+        opacity = s.opacity,
+        borderWidth = s.borderWidth,
+        borderColor = s.borderColor,
+        elevation = s.elevation,
+    )
 }
 
 /// `b`'s key where `b` has one, else `a`'s. The engine's cascade: an
@@ -366,7 +371,8 @@ fn merge(a: Style, b: Style) -> Style {
         font = pick(a.font, b.font),
         ellipsis = pick(a.ellipsis, b.ellipsis),
         textAlign = pick(a.textAlign, b.textAlign),
-        cursor = pick(a.cursor, b.cursor))
+        cursor = pick(a.cursor, b.cursor),
+    )
 }
 
 /// `b` when present, else `a`.

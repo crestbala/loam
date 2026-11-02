@@ -23,12 +23,20 @@ fn keymap() -> []KeyBind {
     let mut ks = []KeyBind {
         zeus.key_bind_global("space", "vidy.toggle", fn() { player.toggle() }),
         zeus.key_bind_global("k", "vidy.toggle_k", fn() { player.toggle() }),
-        zeus.key_bind_global("left", "vidy.back", fn() { arrow(K_LEFT, fn() { player.skip(-player.NUDGE_MS) }) }),
-        zeus.key_bind_global("right", "vidy.fwd", fn() { arrow(K_RIGHT, fn() { player.skip(player.NUDGE_MS) }) }),
+        zeus.key_bind_global("left", "vidy.back", fn() {
+            arrow(K_LEFT, fn() { player.skip(-player.NUDGE_MS) })
+        }),
+        zeus.key_bind_global("right", "vidy.fwd", fn() {
+            arrow(K_RIGHT, fn() { player.skip(player.NUDGE_MS) })
+        }),
         zeus.key_bind_global("j", "vidy.back10", fn() { player.skip(-player.SKIP_MS) }),
         zeus.key_bind_global("l", "vidy.fwd10", fn() { player.skip(player.SKIP_MS) }),
-        zeus.key_bind_global("up", "vidy.vol_up", fn() { arrow(K_UP, fn() { player.nudge_volume(5) }) }),
-        zeus.key_bind_global("down", "vidy.vol_down", fn() { arrow(K_DOWN, fn() { player.nudge_volume(-5) }) }),
+        zeus.key_bind_global("up", "vidy.vol_up", fn() {
+            arrow(K_UP, fn() { player.nudge_volume(5) })
+        }),
+        zeus.key_bind_global("down", "vidy.vol_down", fn() {
+            arrow(K_DOWN, fn() { player.nudge_volume(-5) })
+        }),
         zeus.key_bind_global("m", "vidy.mute", fn() { player.toggle_mute() }),
         zeus.key_bind_global("f", "vidy.full", fn() { player.toggle_full() }),
         zeus.key_bind_global("escape", "vidy.escape", fn() { player.escape() }),
@@ -49,7 +57,9 @@ fn keymap() -> []KeyBind {
         zeus.key_bind_global("u", "vidy.url", fn() { player.url_open.set(true) }),
         zeus.key_bind_global("n", "vidy.next", fn() { player.next() }),
         zeus.key_bind_global("p", "vidy.prev", fn() { player.prev() }),
-        zeus.key_bind_global("q", "vidy.list", fn() { player.list_open.set(!player.list_open.peek()) }),
+        zeus.key_bind_global("q", "vidy.list", fn() {
+            player.list_open.set(!player.list_open.peek())
+        }),
         zeus.key_bind_global("shift+/", "vidy.help", fn() { player.help.set(!player.help.peek()) }),
         zeus.key_bind_global("h", "vidy.help_h", fn() { player.help.set(!player.help.peek()) }),
     }

@@ -19,8 +19,11 @@ fn spec() -> []TableCol {
 fn arm(v: Signal<FundSearch>) -> Node {
     let x = v.peek()
     if x.state == 0 {
-        return zui.Empty(icon = zeus.IC_INFO, title = "Search the cached funds",
-                         body = "Type part of a fund name, such as quantum value, or a scheme code.")
+        return zui.Empty(
+            icon = zeus.IC_INFO,
+            title = "Search the cached funds",
+            body = "Type part of a fund name, such as quantum value, or a scheme code.",
+        )
     }
     if x.state == 1 {
         return zeus.Text("Searching the cached catalog.")
@@ -29,7 +32,9 @@ fn arm(v: Signal<FundSearch>) -> Node {
         return ui.ServerDown(fn() { book.search_retry() })
     }
     if x.hits.len == 0 {
-        return zeus.Text(fn() -> string { return "No cached scheme matches \"{{v.get().query}}\"." })
+        return zeus.Text(fn() -> string {
+            return "No cached scheme matches \"{{v.get().query}}\"."
+        })
     }
     return hits(v)
 }
@@ -42,13 +47,16 @@ fn more_line(x: FundSearch) -> string {
 
 fn hits(v: Signal<FundSearch>) -> Node {
     return zui.Column(0) {
-        zeus.Text(fn() -> string { return more_line(v.get()) },
-                  style = Style(display = zeus.shown(v.get().total > v.get().hits.len)))
+        zeus.Text(
+            fn() -> string { return more_line(v.get()) },
+            style = Style(display = zeus.shown(v.get().total > v.get().hits.len)),
+        )
         zui.TableCols(spec())
         zui.Each(v.get().hits, fn(i: int, h: FundHit) -> Node {
             let code = h.code
-            return zui.TableRowCols(h.cells, spec(), hover = true,
-                                    on_click = fn() { router.navigate("/scheme/{{code}}") })
+            return zui.TableRowCols(h.cells, spec(), hover = true, on_click = fn() {
+                router.navigate("/scheme/{{code}}")
+            })
         })
     }
 }
@@ -56,17 +64,25 @@ fn hits(v: Signal<FundSearch>) -> Node {
 fn Page(p: Params) -> Node {
     return zui.Column(spacing.SECTION) {
         zui.Heading("Charts")
-        zui.Body("Every cached direct equity fund has a NAV history chart. Search by name or code and click a row.")
+        zui.Body(
+            "Every cached direct equity fund has a NAV history chart. Search by name or code and click a row.",
+        )
         if book.started() {
-            zui.TextInput(book.search_field(), "Fund name or scheme code", style = Style(width = px(360)))
+            zui.TextInput(
+                book.search_field(),
+                "Fund name or scheme code",
+                style = Style(width = px(360)),
+            )
             zeus.effect(fn() { book.search_tick() })
-            zui.MatchBy(book.search(), fn(x: FundSearch) -> string { return "{{x.state}}:{{x.hits.len == 0}}" },
-                        fn(v: Signal<FundSearch>) -> Node { return arm(v) })
+            zui.MatchBy(
+                book.search(),
+                fn(x: FundSearch) -> string { return "{{x.state}}:{{x.hits.len == 0}}" },
+                fn(v: Signal<FundSearch>) -> Node { return arm(v) },
+            )
         } else {
             zeus.Text("Search the cached funds")
         }
     }
-
 }
 
 fn meta(p: Params) -> Meta {

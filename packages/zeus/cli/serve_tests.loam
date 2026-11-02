@@ -132,7 +132,10 @@ let snip = "<!--LIVE-->"
 fn fixture(root: string) {
     sys.remove_path(root)
     sys.mkdir(cat(root, "/blog"))
-    sys.write_file(cat(root, "/index.html"), "<html><body><canvas id=\"zeus\"></canvas></body></html>")
+    sys.write_file(
+        cat(root, "/index.html"),
+        "<html><body><canvas id=\"zeus\"></canvas></body></html>",
+    )
     sys.write_file(cat(root, "/blog/index.html"), "<html><body><h1>blog</h1></body></html>")
     /* `.wasm` and `.js` are told apart by suffix, so the bytes only have to be
        something the suffix does not explain away. */
@@ -206,10 +209,13 @@ fn an_id_is_read_out_of_a_tagged_text() {
     let plist = "<key>CFBundleExecutable</key><string>app</string>\n<key>CFBundleIdentifier</key><string>com.loam.demo</string>\n"
     test.assert(zeli.idx_of(plist, "CFBundleIdentifier") > 0)
     test.assert_eq_int(zeli.idx_of(plist, "nope"), -1)
-    test.assert_eq_str(zeli.between(plist, "<key>CFBundleIdentifier</key><string>", 60 /* < */), "com.loam.demo")
+    test.assert_eq_str(
+        zeli.between(plist, "<key>CFBundleIdentifier</key><string>", 60 /* < */ ),
+        "com.loam.demo",
+    )
     test.assert_eq_str(zeli.between(plist, "<key>NotThere</key><string>", 60), "")
     let gradle = "android {\n    namespace 'com.loam.zeus'\n    defaultConfig {\n        applicationId \"com.loam.myapp\"\n"
-    test.assert_eq_str(zeli.between(gradle, "applicationId \"", 34 /* " */), "com.loam.myapp")
+    test.assert_eq_str(zeli.between(gradle, "applicationId \"", 34 /* " */ ), "com.loam.myapp")
 }
 
 #[test]
@@ -220,8 +226,10 @@ fn the_simulator_id_comes_from_the_bundle() {
     sys.remove_path(root)
     sys.mkdir(cat(root, "/build/ios/app.app"))
     test.assert_eq_str(zeli.ios_bundle_id(root, "app"), "")
-    sys.write_file(cat(root, "/build/ios/app.app/Info.plist"),
-                   "<key>CFBundleIdentifier</key><string>com.loam.app</string>")
+    sys.write_file(
+        cat(root, "/build/ios/app.app/Info.plist"),
+        "<key>CFBundleIdentifier</key><string>com.loam.app</string>",
+    )
     test.assert_eq_str(zeli.ios_bundle_id(root, "app"), "com.loam.app")
 }
 
@@ -231,8 +239,10 @@ fn the_device_id_comes_from_the_gradle_tree() {
     sys.remove_path(root)
     sys.mkdir(cat(root, "/build/android/app/app"))
     test.assert_eq_str(zeli.android_app_id(root, "app"), "")
-    sys.write_file(cat(root, "/build/android/app/app/build.gradle"),
-                   "    defaultConfig {\n        applicationId \"com.loam.app\"\n    }\n")
+    sys.write_file(
+        cat(root, "/build/android/app/app/build.gradle"),
+        "    defaultConfig {\n        applicationId \"com.loam.app\"\n    }\n",
+    )
     test.assert_eq_str(zeli.android_app_id(root, "app"), "com.loam.app")
 }
 

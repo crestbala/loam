@@ -471,7 +471,14 @@ struct Cands {
 }
 
 fn no_cands() -> Cands {
-    return Cands { src: []int {}, ph: []int {}, bars: []int {}, tempo: []int {}, score: []int {}, clean: []int {} }
+    return Cands {
+        src: []int {},
+        ph: []int {},
+        bars: []int {},
+        tempo: []int {},
+        score: []int {},
+        clean: []int {},
+    }
 }
 
 fn cand_add(c: &mut Cands, src: int, ph: int, bars: int, tempo: int, score: int, clean: int) {
@@ -653,7 +660,9 @@ fn entry(row: int, kind: int, s: Sound) -> int {
             r[VERSE] = if drive { 0 } else { -1 }
             r[BUILD] = -1
         }
-        if st == styles.LOFI || st == styles.AFRO || (drive && (st == styles.HOUSE || st == styles.WAVE)) {
+        if st == styles.LOFI ||
+            st == styles.AFRO ||
+            (drive && (st == styles.HOUSE || st == styles.WAVE)) {
             r[OUTRO] = 0
         }
     } else if row == L_BASS {
@@ -688,7 +697,14 @@ fn entry(row: int, kind: int, s: Sound) -> int {
     } else if row == REC + MOTIF {
         r = []int { -1, if drive { 1 } else { -1 }, 0, 0, 0, -1 }
     } else if row == REC + AIR {
-        r = []int { 0, -1, -1, if st == styles.DREAM || st == styles.CINEMA { 0 } else { -1 }, 0, 0 }
+        r = []int {
+            0,
+            -1,
+            -1,
+            if st == styles.DREAM || st == styles.CINEMA { 0 } else { -1 },
+            0,
+            0,
+        }
     }
     if kind < 0 || kind >= r.len {
         return -1
@@ -824,8 +840,19 @@ fn norm_db(src: Source) -> int {
 }
 
 /// One looped phrase across `bars` from `bar`.
-fn place_loop(sc: &mut Score, srcs: []Source, c: Cands, at: int, bus: int, bar: int, bars: int, db: int,
-              tone: int, piece: Tonality, pitch: int) {
+fn place_loop(
+    sc: &mut Score,
+    srcs: []Source,
+    c: Cands,
+    at: int,
+    bus: int,
+    bar: int,
+    bars: int,
+    db: int,
+    tone: int,
+    piece: Tonality,
+    pitch: int
+) {
     let si = c.src[at]
     let src = srcs[si]
     let h = src.heard
@@ -854,8 +881,17 @@ fn place_loop(sc: &mut Score, srcs: []Source, c: Cands, at: int, bus: int, bar: 
 /// One air phrase from `bar`, given `room_bars` before the next one ends.
 /// Free-time phrases keep their own length (stretch 1.0); each fades
 /// slowly in and out and overlaps the next by a bar.
-fn place_air_one(sc: &mut Score, srcs: []Source, c: Cands, at: int, bar: int, room_bars: int, db: int,
-                 piece: Tonality, pitch: int) -> bool {
+fn place_air_one(
+    sc: &mut Score,
+    srcs: []Source,
+    c: Cands,
+    at: int,
+    bar: int,
+    room_bars: int,
+    db: int,
+    piece: Tonality,
+    pitch: int
+) -> bool {
     let si = c.src[at]
     let src = srcs[si]
     let h = src.heard
@@ -928,7 +964,8 @@ fn shares_audio(h: Heard, a: int, b: int) -> bool {
     if a < 0 || b < 0 || a >= h.ph_start.len || b >= h.ph_start.len {
         return false
     }
-    return h.ph_start[a] < h.ph_start[b] + h.ph_len[b] && h.ph_start[b] < h.ph_start[a] + h.ph_len[a]
+    return h.ph_start[a] < h.ph_start[b] + h.ph_len[b] &&
+        h.ph_start[b] < h.ph_start[a] + h.ph_len[a]
 }
 
 /// Energy of every phrase of every recording on one scale, 0..1000:
@@ -1026,7 +1063,15 @@ fn clash_of(ch: []int, prog: []int, tonic: int, minor: bool) -> int {
 /// `piece_chroma` maps its bars and moved by `semis`. They come from the
 /// decoded sequence (`Heard.ph_chord`); a recording known only by its
 /// chroma (`ch`, the phrase's `piece_chroma`) names each bar alone.
-fn heard_chords(src: Source, p: int, piece_bars_n: int, semis: int, ch: []int, tonic: int, minor: bool) -> []int {
+fn heard_chords(
+    src: Source,
+    p: int,
+    piece_bars_n: int,
+    semis: int,
+    ch: []int,
+    tonic: int,
+    minor: bool
+) -> []int {
     let h = src.heard
     let mut out = []int {}
     let at = p * key.BLOCKS
@@ -1035,7 +1080,11 @@ fn heard_chords(src: Source, p: int, piece_bars_n: int, semis: int, ch: []int, t
         let mine = if piece_bars_n > 0 { piece_bars_n } else { key.BLOCKS }
         for b in 0..key.BLOCKS {
             let c = h.ph_chord[at + ((b % mine) * own / mine) % key.BLOCKS]
-            push(out, if c < 0 { -1 } else { key.chord_code(key.chord_root(c) + semis, key.chord_minor(c)) })
+            push(out, if c < 0 {
+                -1
+            } else {
+                key.chord_code(key.chord_root(c) + semis, key.chord_minor(c))
+            })
         }
         return out
     }
@@ -1071,8 +1120,19 @@ struct Prog {
 /// heard as chords. A bar too vague to name keeps the chord before it.
 /// When nothing is tonal enough, the style's progression stands in and
 /// `hook_src` is -1.
-fn progression_for(srcs: []Source, s: Sound, piece: Tonality, tonic: int, energy: [][]int, bpm: int) -> Prog {
-    let style = theory.chords_of(tonic, piece.minor, theory.progression(piece.minor, styles.progression_pick(s.style) + s.seed))
+fn progression_for(
+    srcs: []Source,
+    s: Sound,
+    piece: Tonality,
+    tonic: int,
+    energy: [][]int,
+    bpm: int
+) -> Prog {
+    let style = theory.chords_of(
+        tonic,
+        piece.minor,
+        theory.progression(piece.minor, styles.progression_pick(s.style) + s.seed),
+    )
     let mut best_v = -100000
     let mut best = []int {}
     let mut best_chords = []int {}
@@ -1093,7 +1153,7 @@ fn progression_for(srcs: []Source, s: Sound, piece: Tonality, tonic: int, energy
                 // four bars is a drone, so a hook with changes wins a near
                 // tie.
                 let v = c.score[at] * 4 + energy[c.src[at]][c.ph[at]] / 4 + t / 3 +
-                        (if c.bars[at] == 4 { 60 } else { 0 }) + 50 * (chord_changes(named) - 1)
+                    (if c.bars[at] == 4 { 60 } else { 0 }) + 50 * (chord_changes(named) - 1)
                 if v > best_v {
                     best_v = v
                     best = ch
@@ -1129,13 +1189,31 @@ fn progression_for(srcs: []Source, s: Sound, piece: Tonality, tonic: int, energy
             }
         }
     }
-    return Prog { chords: chords, heard: true, hook_src: hook_src, hook_in: hook_in, hook_len: hook_len }
+    return Prog {
+        chords: chords,
+        heard: true,
+        hook_src: hook_src,
+        hook_in: hook_in,
+        hook_len: hook_len,
+    }
 }
 
 /// The chain's view of a pool: descriptors per unit. A one- or two-bar
 /// unit cut from inside the hook is marked, so a build can favour it.
-fn units_of(srcs: []Source, c: Cands, pick: []int, energy: [][]int, looped: bool, prog: []int, tonic: int,
-            piece: Tonality, pitch: int, hook_src: int, hook_in: int, hook_len: int) -> Units {
+fn units_of(
+    srcs: []Source,
+    c: Cands,
+    pick: []int,
+    energy: [][]int,
+    looped: bool,
+    prog: []int,
+    tonic: int,
+    piece: Tonality,
+    pitch: int,
+    hook_src: int,
+    hook_in: int,
+    hook_len: int
+) -> Units {
     let mut u = chain.no_units()
     for k in 0..pick.len {
         let at = pick[k]
@@ -1204,7 +1282,16 @@ fn loop_slots(sc: &mut Score, s: Sound, bus: int, wants: []bool) -> Slots {
         while at < nb {
             let len = num.clampi(nb - at, 1, 4)
             let lab = phrase_at(sc, b0 + at)
-            chain.add_slot(out, b0 + at, len, chain.path_at(sc.path, b0 + at, len), i, kind, lab[0], lab[1])
+            chain.add_slot(
+                out,
+                b0 + at,
+                len,
+                chain.path_at(sc.path, b0 + at, len),
+                i,
+                kind,
+                lab[0],
+                lab[1],
+            )
             at = at + len
         }
     }
@@ -1266,14 +1353,38 @@ fn note_walks(sc: &mut Score, bus: int, c: Choice) {
 
 /// Walk one looped bus along its slots and place what it picks. Returns
 /// the (src, ph) pairs it played. Several walks are drawn; the best is kept.
-fn place_bus(sc: &mut Score, srcs: []Source, c: Cands, bus: int, wants: []bool, used: []int, s: Sound,
-             piece: Tonality, energy: [][]int, rec_db: int, seed: int) -> []int {
+fn place_bus(
+    sc: &mut Score,
+    srcs: []Source,
+    c: Cands,
+    bus: int,
+    wants: []bool,
+    used: []int,
+    s: Sound,
+    piece: Tonality,
+    energy: [][]int,
+    rec_db: int,
+    seed: int
+) -> []int {
     let mut played = []int {}
     if c.src.len == 0 {
         return played
     }
     let pick = pool(srcs, c, 32, used)
-    let u = units_of(srcs, c, pick, energy, true, sc.prog, sc.tonic, piece, s.pitch, sc.hook_src, sc.hook_in, sc.hook_len)
+    let u = units_of(
+        srcs,
+        c,
+        pick,
+        energy,
+        true,
+        sc.prog,
+        sc.tonic,
+        piece,
+        s.pitch,
+        sc.hook_src,
+        sc.hook_in,
+        sc.hook_len,
+    )
     let slots = chain.fit_range(loop_slots(sc, s, bus, wants), u)
     let choice = chain.select(u, slots, seed, avoid_of(sc))
     note_walks(sc, bus, choice)
@@ -1323,13 +1434,36 @@ fn place_bus(sc: &mut Score, srcs: []Source, c: Cands, bus: int, wants: []bool, 
 }
 
 /// Air: a phrase every four bars of its sections, walked like the others.
-fn place_air_bus(sc: &mut Score, srcs: []Source, c: Cands, wants: []bool, used: []int, s: Sound,
-                 piece: Tonality, energy: [][]int, rec_db: int, seed: int) {
+fn place_air_bus(
+    sc: &mut Score,
+    srcs: []Source,
+    c: Cands,
+    wants: []bool,
+    used: []int,
+    s: Sound,
+    piece: Tonality,
+    energy: [][]int,
+    rec_db: int,
+    seed: int
+) {
     if c.src.len == 0 {
         return
     }
     let pick = pool(srcs, c, 32, used)
-    let u = units_of(srcs, c, pick, energy, false, sc.prog, sc.tonic, piece, s.pitch, sc.hook_src, sc.hook_in, sc.hook_len)
+    let u = units_of(
+        srcs,
+        c,
+        pick,
+        energy,
+        false,
+        sc.prog,
+        sc.tonic,
+        piece,
+        s.pitch,
+        sc.hook_src,
+        sc.hook_in,
+        sc.hook_len,
+    )
     let mut slots = chain.no_slots()
     let mut room = []int {}
     for i in 0..sc.sec_kind.len {
@@ -1340,7 +1474,16 @@ fn place_air_bus(sc: &mut Score, srcs: []Source, c: Cands, wants: []bool, used: 
             let mut j = 0
             while j * 4 < nb {
                 let lab = phrase_at(sc, b0 + j * 4)
-                chain.add_slot(slots, b0 + j * 4, 0, chain.path_at(sc.path, b0 + j * 4, 4), i, sc.sec_kind[i], lab[0], lab[1])
+                chain.add_slot(
+                    slots,
+                    b0 + j * 4,
+                    0,
+                    chain.path_at(sc.path, b0 + j * 4, 4),
+                    i,
+                    sc.sec_kind[i],
+                    lab[0],
+                    lab[1],
+                )
                 push(room, num.clampi(nb - j * 4 + 1, 1, 5))
                 j = j + 1
             }
@@ -1631,7 +1774,11 @@ fn lay_channels(sc: &mut Score) {
         let sec = section_of(sc.sec_bar, b)
         let kind = if sec >= 0 && sec < sc.sec_kind.len { sc.sec_kind[sec] } else { INTRO }
         let start = if sec >= 0 && sec < sc.sec_bar.len { sc.sec_bar[sec] } else { 0 }
-        let nb = if sec >= 0 && sec < sc.sec_bars.len && sc.sec_bars[sec] > 0 { sc.sec_bars[sec] } else { 1 }
+        let nb = if sec >= 0 && sec < sc.sec_bars.len && sc.sec_bars[sec] > 0 {
+            sc.sec_bars[sec]
+        } else {
+            1
+        }
         let local = b - start
         let p = if b < sc.path.len { sc.path[b] } else { 0 }
         push(sc.tn_reg, plan.register(p))
@@ -1755,17 +1902,35 @@ fn take_motif(sc: &mut Score, s: Sound) {
 /// `humanize` softens a closed phrase's last note. Notes that fall outside
 /// the phrase are dropped. The last half-bar rests: only the cadence, the
 /// latest note, is allowed to speak there.
-fn line_hits(g: Groove, deg: []int, at: []int, len: []int, from: int, n: int, centre: int, loop: f64) -> Hits {
+fn line_hits(
+    g: Groove,
+    deg: []int,
+    at: []int,
+    len: []int,
+    from: int,
+    n: int,
+    centre: int,
+    loop: f64
+) -> Hits {
     let base = motif.anchor(slice_of(deg, from, n), g.tonic, g.minor, centre, LEAD_TOP)
     return line_hits_on(g, deg, at, len, from, n, base, loop)
 }
 
 /// `line_hits` over the tonic note `base` (`motif.anchor`), so a counter
 /// can share its lead's octave.
-fn line_hits_on(g: Groove, deg: []int, at: []int, len: []int, from: int, n: int, base: int, loop: f64) -> Hits {
+fn line_hits_on(
+    g: Groove,
+    deg: []int,
+    at: []int,
+    len: []int,
+    from: int,
+    n: int,
+    base: int,
+    loop: f64
+) -> Hits {
     let mut h = synth.no_hits()
     let sixteenth = g.bar_sec / 16.0
-    let breath = loop - g.bar_sec * 0.5
+    let breath = loop -g.bar_sec * 0.5
     let gain = 0.5 + 0.5 * f64(num.clampi(g.dyn, 0, 1000)) / 1000.0
     let mut last = from
     let mut last_at = -1
@@ -1810,7 +1975,18 @@ fn store_line(sc: &mut Score, h: Hits, peak: int) -> int {
     return line
 }
 
-fn cache_hit(label: []int, varn: []int, kind: []int, bars: []int, chord: []int, lab: int, v: int, k: int, b: int, ch: int) -> int {
+fn cache_hit(
+    label: []int,
+    varn: []int,
+    kind: []int,
+    bars: []int,
+    chord: []int,
+    lab: int,
+    v: int,
+    k: int,
+    b: int,
+    ch: int
+) -> int {
     for i in 0..label.len {
         if label[i] == lab && varn[i] == v && kind[i] == k && bars[i] == b && chord[i] == ch {
             return i
@@ -1852,12 +2028,29 @@ fn slice_of(xs: []int, from: int, n: int) -> []int {
 /// the lead's tonic note `base`, so it sits within an octave under it. It
 /// is seeded by the lead's cache entry `lead_key`, so a lead line that
 /// returns brings its counter back with it.
-fn lay_counter(sc: &mut Score, s: Sound, g: Groove, i: int, lead: Motif, base: int, lift: int, lead_key: int) -> bool {
+fn lay_counter(
+    sc: &mut Score,
+    s: Sound,
+    g: Groove,
+    i: int,
+    lead: Motif,
+    base: int,
+    lift: int,
+    lead_key: int
+) -> bool {
     let bars = sc.ph_bars[i]
     let span = if bars > 0 { bars * 16 } else { 16 }
     let mel_prog = if sc.bar_ch.len > 0 { sc.bar_ch } else { sc.prog }
-    let line = motif.counter(lead, span, sc.ph_bar[i], mel_prog, sc.tonic, sc.minor, base,
-                             num.hash(s.seed, 4000 + lead_key))
+    let line = motif.counter(
+        lead,
+        span,
+        sc.ph_bar[i],
+        mel_prog,
+        sc.tonic,
+        sc.minor,
+        base,
+        num.hash(s.seed, 4000 + lead_key),
+    )
     if line.total < 0 {
         return false
     }
@@ -1955,8 +2148,23 @@ fn lay_melody(sc: &mut Score, srcs: []Source, s: Sound, lifted: bool) {
         } else {
             let repeat = prev_label == label && prev_var == varn
             let chroma = chroma_under(sc, srcs, sc.ph_bar[i])
-            let chosen = motif.choose(base, label, varn, kind, ending, span, sc.ph_bar[i], mel_prog, chroma, sc.tonic,
-                                      sc.minor, num.hash(s.seed, 1000 + i), prev, repeat, pden)
+            let chosen = motif.choose(
+                base,
+                label,
+                varn,
+                kind,
+                ending,
+                span,
+                sc.ph_bar[i],
+                mel_prog,
+                chroma,
+                sc.tonic,
+                sc.minor,
+                num.hash(s.seed, 1000 + i),
+                prev,
+                repeat,
+                pden,
+            )
             from = cd.len
             n = chosen.deg.len
             for k in 0..n {
@@ -1996,12 +2204,17 @@ fn lay_melody(sc: &mut Score, srcs: []Source, s: Sound, lifted: bool) {
         let mut countered = false
         if h.at.len > 0 {
             let line = store_line(sc, h, peak)
-            let db = (if kind == VERSE { -300 } else { 0 }) + plan.dynamics(chain.path_at(sc.path, sc.ph_bar[i], bars))
+            let db = (if kind == VERSE { -300 } else { 0 }) +
+                plan.dynamics(chain.path_at(sc.path, sc.ph_bar[i], bars))
             part(sc, L_BELLS, lift, sc.ph_bar[i], if bars > 0 { bars } else { 1 }, db)
             sc.sy_line[sc.sy_line.len - 1] = line
             if s.pad_on && layer_on(sc, s, L_COUNTER, i) {
                 let lead_key = if at >= 0 { at } else { ck_label.len - 1 }
-                let lead = motif.from(slice_of(cd, from, n), slice_of(ca, from, n), slice_of(cl, from, n))
+                let lead = motif.from(
+                    slice_of(cd, from, n),
+                    slice_of(ca, from, n),
+                    slice_of(cl, from, n),
+                )
                 countered = lay_counter(sc, s, g, i, lead, base, lift, lead_key)
             }
         }
@@ -2078,8 +2291,11 @@ fn arrange(srcs: []Source, s: Sound) -> Score {
             push(sc.prog, pr.chords[i])
         }
     } else {
-        sc.prog = theory.chords_of(tonic, piece.minor,
-                                   theory.progression(piece.minor, styles.progression_pick(s.style) + s.seed))
+        sc.prog = theory.chords_of(
+            tonic,
+            piece.minor,
+            theory.progression(piece.minor, styles.progression_pick(s.style) + s.seed),
+        )
     }
 
     if recs {
@@ -2098,18 +2314,50 @@ fn arrange(srcs: []Source, s: Sound) -> Score {
             push(a_want, entry(REC + AIR, kind, s) >= 0 && !(air_borrows && r))
         }
         let mut used = []int {}
-        let r_played = place_bus(sc, srcs, candidates(srcs, RHYTHM, bpm, s), RHYTHM, r_want, used, s, piece,
-                                 energy, rec_db, s.seed)
+        let r_played = place_bus(
+            sc,
+            srcs,
+            candidates(srcs, RHYTHM, bpm, s),
+            RHYTHM,
+            r_want,
+            used,
+            s,
+            piece,
+            energy,
+            rec_db,
+            s.seed,
+        )
         for k in 0..r_played.len {
             push(used, r_played[k])
         }
-        let m_played = place_bus(sc, srcs, candidates(srcs, MOTIF, bpm, s), MOTIF, m_want, used, s, piece,
-                                 energy, rec_db, s.seed + 101)
+        let m_played = place_bus(
+            sc,
+            srcs,
+            candidates(srcs, MOTIF, bpm, s),
+            MOTIF,
+            m_want,
+            used,
+            s,
+            piece,
+            energy,
+            rec_db,
+            s.seed + 101,
+        )
         for k in 0..m_played.len {
             push(used, m_played[k])
         }
-        place_air_bus(sc, srcs, candidates(srcs, AIR, bpm, s), a_want, used, s, piece, energy, rec_db,
-                      s.seed + 202)
+        place_air_bus(
+            sc,
+            srcs,
+            candidates(srcs, AIR, bpm, s),
+            a_want,
+            used,
+            s,
+            piece,
+            energy,
+            rec_db,
+            s.seed + 202,
+        )
     }
     lay_cadence(sc, srcs)
     lay_tension(sc, srcs)
@@ -2160,7 +2408,13 @@ fn arrange(srcs: []Source, s: Sound) -> Score {
             }
         }
         let bass_db = if kind == VERSE { -100 } else { 0 }
-        let pad_db = if kind == DROP { -150 } else if kind == INTRO || kind == BREAK { 100 } else { 0 }
+        let pad_db = if kind == DROP {
+            -150
+        } else if kind == INTRO || kind == BREAK {
+            100
+        } else {
+            0
+        }
         let arp_db = if kind == BUILD { -200 } else { 0 }
         let want_bass = s.bass_on && sc.sec_low[i] < BASS_FULL
         for p in 0..sc.ph_bar.len {
@@ -2200,13 +2454,25 @@ fn arrange(srcs: []Source, s: Sound) -> Score {
 
 /// One recording, heard: its envelope, voice map text, decoded length, and
 /// the 5512 Hz copy (`pcm`) its key and chords are read from.
-fn source_of(env: string, voice: string, probed_ms: int, pcm: string, lufs_c: int, mono: bool,
-             has_map: bool) -> Source {
+fn source_of(
+    env: string,
+    voice: string,
+    probed_ms: int,
+    pcm: string,
+    lufs_c: int,
+    mono: bool,
+    has_map: bool
+) -> Source {
     let mut h = listen.hear(env, voice, probed_ms)
     let frames = key.chroma_frames(pcm)
     let k = key.key_of_frames(frames)
     h.ph_chroma = key.phrase_chroma(frames, h.ph_start, h.ph_len, h.ph_bars)
-    h.ph_chord = key.phrase_chords(key.chord_path(frames, key.bass_frames(pcm), k.tonic, k.minor), h.ph_start, h.ph_len, h.ph_bars)
+    h.ph_chord = key.phrase_chords(
+        key.chord_path(frames, key.bass_frames(pcm), k.tonic, k.minor),
+        h.ph_start,
+        h.ph_len,
+        h.ph_bars,
+    )
     return Source {
         heard: h, key: k, role: MOTIF, lufs_c: lufs_c, mono: mono,
         has_map: has_map, has_split: false,

@@ -17,8 +17,7 @@ import "std:http"
 /// How many recordings the running session holds, and whether ffmpeg and the
 /// voice tools are present. `scan` moves when the recordings change.
 #[proto]
-struct StateReq {
-}
+struct StateReq {}
 
 #[proto]
 struct StateResp {
@@ -44,8 +43,7 @@ struct AddResp {
 }
 
 #[proto]
-struct ResetReq {
-}
+struct ResetReq {}
 
 #[proto]
 struct ResetResp {
@@ -80,8 +78,7 @@ struct GenerateResp {
 /// The running stage. `stage` is a `ST_*` code. `saving` is 1 while a save
 /// job runs; `saved` is the file the last one wrote.
 #[proto]
-struct PollReq {
-}
+struct PollReq {}
 
 #[proto]
 struct PollResp {
@@ -99,8 +96,7 @@ struct PollResp {
 /// `sections` the kind/‰-start/‰-length triples, `path_target` /
 /// `path_height` the pitch path per bar.
 #[proto]
-struct TakeReq {
-}
+struct TakeReq {}
 
 #[proto]
 struct TakeResp {
@@ -146,8 +142,7 @@ struct RevealResp {
 }
 
 #[proto]
-struct CancelReq {
-}
+struct CancelReq {}
 
 #[proto]
 struct CancelResp {

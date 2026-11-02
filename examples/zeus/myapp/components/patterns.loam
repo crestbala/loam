@@ -21,8 +21,11 @@ fn NameRow(name: string) -> Node {
 fn LiveList() -> Node {
     let n = zeus.signal(2)
     return Column(spacing.SECTION) {
-        zui.SectionHeader("Lists", "Growing rows",
-                           "Add and remove rows. Extra rows are shown, not rebuilt with zui.Each.")
+        zui.SectionHeader(
+            "Lists",
+            "Growing rows",
+            "Add and remove rows. Extra rows are shown, not rebuilt with zui.Each.",
+        )
         zui.Card() {
             zui.Show(when = n.get() >= 1) {
                 NameRow("Ada")
@@ -58,17 +61,30 @@ fn Cards() -> Node {
         // Responsive: a cell is as wide as the cards want to be, so three fit
         // across a wide window and two or one as it narrows, never more than three.
         zui.Grid(config = GridConfig(columns = 3, autoColumns = 200, gap = Space.Md)) {
-            zui.Card() { zui.Pip(zeus.accent(), 8) zui.Title("Small") zui.Body("Neutral primary on paper.") }
-            zui.Card() { zui.Pip(colors.ok(), 8) zui.Title("Medium") zui.Body("Rounded-xl is the card radius.") }
-            zui.Card() { zui.Pip(zeus.danger(), 8) zui.Title("Large") zui.Body("Badges and caps mark status.") }
+            zui.Card() {
+                zui.Pip(zeus.accent(), 8) zui.Title("Small") zui.Body("Neutral primary on paper.")
+            }
+            zui.Card() {
+                zui.Pip(colors.ok(), 8) zui.Title("Medium") zui.Body(
+                    "Rounded-xl is the card radius.",
+                )
+            }
+            zui.Card() {
+                zui.Pip(zeus.danger(), 8) zui.Title("Large") zui.Body(
+                    "Badges and caps mark status.",
+                )
+            }
         }
     }
 }
 
 fn Skeletons() -> Node {
     return Column(spacing.SECTION) {
-        zui.SectionHeader("Feedback", "Skeleton",
-                           "Placeholder fills while content loads. Radius matches the shape it replaces.")
+        zui.SectionHeader(
+            "Feedback",
+            "Skeleton",
+            "Placeholder fills while content loads. Radius matches the shape it replaces.",
+        )
         zui.Card() {
             zui.Row(Space.Md) {
                 zui.Skeleton(40, 40, 20)
@@ -87,24 +103,56 @@ fn Overlays() -> Node {
     return Column(spacing.SECTION) {
         zui.SectionTitle("Overlay", "Dialog and alert dialog")
         zui.Row(Space.Sm) {
-            zui.Button("Dialog", look = zeus.Look.Solid, size = zeus.Size.Md, on_click = fn() => open.set(true))
-            zui.Button("Alert dialog", look = zeus.Look.Outline, size = zeus.Size.Md, on_click = fn() => ask.set(true))
+            zui.Button(
+                "Dialog",
+                look = zeus.Look.Solid,
+                size = zeus.Size.Md,
+                on_click = fn() => open.set(true),
+            )
+            zui.Button(
+                "Alert dialog",
+                look = zeus.Look.Outline,
+                size = zeus.Size.Md,
+                on_click = fn() => ask.set(true),
+            )
         }
-        zui.Body("Dialog has a corner X; alert dialog does not. Cancel is ghost or outline; the destructive action closes.")
+        zui.Body(
+            "Dialog has a corner X; alert dialog does not. Cancel is ghost or outline; the destructive action closes.",
+        )
         zui.Dialog(open, title = "Share the link?") {
             zui.Body("Anyone with the link can view this project. You can revoke access later.")
             zui.Row(Space.Sm) {
                 zui.Grow()
-                zui.Button("Cancel", look = zeus.Look.Ghost, size = zeus.Size.Md, on_click = fn() => open.set(false))
-                zui.Button("Share", look = zeus.Look.Solid, size = zeus.Size.Md, on_click = fn() => open.set(false))
+                zui.Button(
+                    "Cancel",
+                    look = zeus.Look.Ghost,
+                    size = zeus.Size.Md,
+                    on_click = fn() => open.set(false),
+                )
+                zui.Button(
+                    "Share",
+                    look = zeus.Look.Solid,
+                    size = zeus.Size.Md,
+                    on_click = fn() => open.set(false),
+                )
             }
         }
         zui.AlertDialog(ask, title = "Discard changes?") {
             zui.Body("This cannot be undone. The working tree keeps whatever you have not saved.")
             zui.Row(Space.Sm) {
                 zui.Grow()
-                zui.Button("Cancel", look = zeus.Look.Outline, size = zeus.Size.Md, on_click = fn() => ask.set(false))
-                zui.Button("Discard", look = zeus.Look.Danger, size = zeus.Size.Md, on_click = fn() => ask.set(false))
+                zui.Button(
+                    "Cancel",
+                    look = zeus.Look.Outline,
+                    size = zeus.Size.Md,
+                    on_click = fn() => ask.set(false),
+                )
+                zui.Button(
+                    "Discard",
+                    look = zeus.Look.Danger,
+                    size = zeus.Size.Md,
+                    on_click = fn() => ask.set(false),
+                )
             }
         }
     }
@@ -152,8 +200,11 @@ fn ChartCards() -> Node {
         push(chart_vals, 260)
     }
     return Column(spacing.SECTION) {
-        zui.SectionHeader("Data", "Charts",
-                           "Hover a column or a point: the floating tooltip lists every series value. The plot re-fits its card on window resize.")
+        zui.SectionHeader(
+            "Data",
+            "Charts",
+            "Hover a column or a point: the floating tooltip lists every series value. The plot re-fits its card on window resize.",
+        )
         zui.Card() {
             zui.Title("Bar chart · Total visitors")
             zui.Body("Desktop and mobile sessions by month, grouped per category.")
@@ -161,7 +212,9 @@ fn ChartCards() -> Node {
         }
         zui.Card() {
             zui.Title("Line chart · Trend")
-            zui.Body("Straight segments with a dot on every data point; the stroke follows the series color.")
+            zui.Body(
+                "Straight segments with a dot on every data point; the stroke follows the series color.",
+            )
             zui.LineChart(chart_labs, chart_series, chart_vals, 850, 216)
         }
         zui.Card() {

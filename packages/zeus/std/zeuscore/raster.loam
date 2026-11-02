@@ -185,7 +185,10 @@ fn raster_build() {
     let mut i = 0
     while i < 256 {
         let c = float(i) / 255.0
-        push(srgb_to_lin, raster_clamp_lin(i32(raster_srgb_to_lin01(c) * float(RASTER_LIN_MAX) + 0.5)))
+        push(
+            srgb_to_lin,
+            raster_clamp_lin(i32(raster_srgb_to_lin01(c) * float(RASTER_LIN_MAX) + 0.5)),
+        )
         i = i + 1
     }
     i = 0
@@ -528,7 +531,8 @@ fn raster_sin_kernel(t: float) -> float {
 
 fn raster_cos_kernel(t: float) -> float {
     let z = t * t
-    return 1.0 - z * (RASTER_R2 - z * (RASTER_R4 - z * (RASTER_R6 - z * (RASTER_R8 - z * RASTER_R10))))
+    return 1.0 -
+        z * (RASTER_R2 - z * (RASTER_R4 - z * (RASTER_R6 - z * (RASTER_R8 - z * RASTER_R10))))
 }
 
 fn raster_sin(x: float) -> float {
@@ -758,7 +762,10 @@ fn raster_clip_global(axis: int, bound: float, keep_ge: int) {
         }
         if cin != nin {
             let t = (bound - cv) / (nv - cv)
-            push(rp_clip_out, RPoint { x: current_value.x + t * (nxt.x - current_value.x), y: current_value.y + t * (nxt.y - current_value.y) })
+            push(rp_clip_out, RPoint {
+                x: current_value.x + t * (nxt.x - current_value.x),
+                y: current_value.y + t * (nxt.y - current_value.y),
+            })
         }
         i = i + 1
     }
@@ -955,8 +962,14 @@ fn raster_blend_grad(x: int, y: int, a: int) {
     // is about 16 linear units, so +/-8 straddles the boundary and the band
     // becomes a dithered blend instead of a visible edge.
     let d = (raster_dither(x, y) - 31) * 16 / 64
-    raster_blend_lin(x, y, raster_clamp_lin(lr + d), raster_clamp_lin(lg + d),
-                     raster_clamp_lin(lb + d), a)
+    raster_blend_lin(
+        x,
+        y,
+        raster_clamp_lin(lr + d),
+        raster_clamp_lin(lg + d),
+        raster_clamp_lin(lb + d),
+        a,
+    )
 }
 
 /// Composite a colour already in the 12-bit linear domain.
@@ -970,8 +983,12 @@ fn raster_blend_lin(x: int, y: int, lr: int, lg: int, lb: int, a: int) {
     let i = raster_pixel_index(x, y)
     let sa = float(a) / 255.0
     let inv = 1.0 - sa
-    let ol_r = raster_clamp_lin(i32(float(lr) * sa + float(srgb_to_lin[int(fb[i + 2])]) * inv + 0.5))
-    let ol_g = raster_clamp_lin(i32(float(lg) * sa + float(srgb_to_lin[int(fb[i + 1])]) * inv + 0.5))
+    let ol_r = raster_clamp_lin(i32(
+        float(lr) * sa + float(srgb_to_lin[int(fb[i + 2])]) * inv + 0.5,
+    ))
+    let ol_g = raster_clamp_lin(i32(
+        float(lg) * sa + float(srgb_to_lin[int(fb[i + 1])]) * inv + 0.5,
+    ))
     let ol_b = raster_clamp_lin(i32(float(lb) * sa + float(srgb_to_lin[int(fb[i])]) * inv + 0.5))
     fb[i] = u8(lin_to_srgb[ol_b])
     fb[i + 1] = u8(lin_to_srgb[ol_g])
@@ -982,8 +999,16 @@ fn raster_blend_lin(x: int, y: int, lr: int, lg: int, lb: int, a: int) {
 /// Fill the current path with a gradient, tiled and damage-clipped like any
 /// other fill. The gradient's span is the SHAPE's box (device pixels), not the
 /// surface: a gradient runs corner to corner of the thing it fills.
-fn raster_fill_gradient_tiled(c0: int, c1: int, axis: int, alpha: int,
-                              gx0: int, gy0: int, gx1: int, gy1: int) {
+fn raster_fill_gradient_tiled(
+    c0: int,
+    c1: int,
+    axis: int,
+    alpha: int,
+    gx0: int,
+    gy0: int,
+    gx1: int,
+    gy1: int
+) {
     raster_build()
     raster_grad_arm(c0, c1, axis, gx0, gy0, gx1, gy1)
     let mut ty = 0
@@ -1308,8 +1333,16 @@ fn raster_set_rect(x: float, y: float, w: float, h: float) {
 }
 
 /// Set the path to a quad (four points, convex).
-fn raster_set_quad(ax: float, ay: float, bx: float, by: float,
-                   cx: float, cy: float, dx: float, dy: float) {
+fn raster_set_quad(
+    ax: float,
+    ay: float,
+    bx: float,
+    by: float,
+    cx: float,
+    cy: float,
+    dx: float,
+    dy: float
+) {
     while rp_path.len > 0 {
         pop(rp_path)
     }
@@ -1383,7 +1416,16 @@ fn raster_accum_path(tx: int, ty: int, text_width: int, text_height: int, sign: 
 }
 
 /// Composite the accumulated coverage for a region onto the framebuffer.
-fn raster_composite_cov(tx: int, ty: int, text_width: int, text_height: int, cr: int, cg: int, cb: int, alpha: int) {
+fn raster_composite_cov(
+    tx: int,
+    ty: int,
+    text_width: int,
+    text_height: int,
+    cr: int,
+    cg: int,
+    cb: int,
+    alpha: int
+) {
     if alpha <= 0 {
         return
     }
@@ -1411,8 +1453,18 @@ fn raster_composite_cov(tx: int, ty: int, text_width: int, text_height: int, cr:
 /// Accumulate one quarter-ring: the band between radius `ro` and `ri` over the
 /// angle range [a0,a1], as a series of convex quads (the arc is flattened to the
 /// same device tolerance as `raster_round_rect`).
-fn raster_accum_corner(ccx: float, ccy: float, ro: float, ri: float,
-                       a0: float, a1: float, tx: int, ty: int, text_width: int, text_height: int) {
+fn raster_accum_corner(
+    ccx: float,
+    ccy: float,
+    ro: float,
+    ri: float,
+    a0: float,
+    a1: float,
+    tx: int,
+    ty: int,
+    text_width: int,
+    text_height: int
+) {
     let mut theta = raster_sqrt(8.0 * RASTER_FLAT_TOL / ro)
     if theta < 0.05 {
         theta = 0.05
@@ -1444,8 +1496,18 @@ fn raster_accum_corner(ccx: float, ccy: float, ro: float, ri: float,
 /// Accumulate a rounded-rect border RING of thickness `bw` into the coverage
 /// buffer, for region [tx,tx+text_width) x [ty,ty+text_height). Four straight runs plus four
 /// corner quarter-rings; accumulated, so shared edges never double-blend.
-fn raster_accum_ring(x: float, y: float, w: float, h: float, rad: float, bw: float,
-                     tx: int, ty: int, text_width: int, text_height: int) {
+fn raster_accum_ring(
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    rad: float,
+    bw: float,
+    tx: int,
+    ty: int,
+    text_width: int,
+    text_height: int
+) {
     let short = raster_min_f(w, h) * 0.5
     let mut ro = rad
     if ro > short {
@@ -1476,18 +1538,72 @@ fn raster_accum_ring(x: float, y: float, w: float, h: float, rad: float, bw: flo
         raster_accum_path(tx, ty, text_width, text_height, 1)
     }
     if ro > 0.0 {
-        raster_accum_corner(x + w - ro, y + ro, ro, ri, 0.0 - RASTER_HALF_PI, 0.0, tx, ty, text_width, text_height)
-        raster_accum_corner(x + w - ro, y + h - ro, ro, ri, 0.0, RASTER_HALF_PI, tx, ty, text_width, text_height)
-        raster_accum_corner(x + ro, y + h - ro, ro, ri, RASTER_HALF_PI, RASTER_PI, tx, ty, text_width, text_height)
-        raster_accum_corner(x + ro, y + ro, ro, ri, RASTER_PI, RASTER_PI + RASTER_HALF_PI, tx, ty, text_width, text_height)
+        raster_accum_corner(
+            x + w - ro,
+            y + ro,
+            ro,
+            ri,
+            0.0 - RASTER_HALF_PI,
+            0.0,
+            tx,
+            ty,
+            text_width,
+            text_height,
+        )
+        raster_accum_corner(
+            x + w - ro,
+            y + h - ro,
+            ro,
+            ri,
+            0.0,
+            RASTER_HALF_PI,
+            tx,
+            ty,
+            text_width,
+            text_height,
+        )
+        raster_accum_corner(
+            x + ro,
+            y + h - ro,
+            ro,
+            ri,
+            RASTER_HALF_PI,
+            RASTER_PI,
+            tx,
+            ty,
+            text_width,
+            text_height,
+        )
+        raster_accum_corner(
+            x + ro,
+            y + ro,
+            ro,
+            ri,
+            RASTER_PI,
+            RASTER_PI + RASTER_HALF_PI,
+            tx,
+            ty,
+            text_width,
+            text_height,
+        )
     }
 }
 
 /// Draw a rounded-rect border, tiled. A border whose device width rounds to one
 /// pixel or less snaps its outer edges to the pixel grid, so it lands as one
 /// crisp row instead of two half-lit ones (quality rule 8).
-fn raster_stroke_round_rect(x: float, y: float, w: float, h: float, rad: float, bw: float,
-                            cr: int, cg: int, cb: int, alpha: int) {
+fn raster_stroke_round_rect(
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    rad: float,
+    bw: float,
+    cr: int,
+    cg: int,
+    cb: int,
+    alpha: int
+) {
     raster_build()
     raster_cov_ensure()
     let hair = bw <= 1.5
@@ -1687,9 +1803,20 @@ fn raster_box_v(w: int, h: int, r: int) {
 /// coverage blurred by three separable box passes, composited under whatever
 /// the caller draws next. `blur` is the device-pixel blur radius, `alpha` the
 /// peak shadow opacity (0..255).
-fn raster_shadow_rect(x: float, y: float, w: float, h: float, rad: float,
-                      dx: float, dy: float, blur: float, alpha: int,
-                      cr: int, cg: int, cb: int) {
+fn raster_shadow_rect(
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    rad: float,
+    dx: float,
+    dy: float,
+    blur: float,
+    alpha: int,
+    cr: int,
+    cg: int,
+    cb: int
+) {
     raster_build()
     if alpha <= 0 {
         return
@@ -1922,8 +2049,15 @@ let mut tt_uy: []float = []float {}
 /// `sc` is px/unitsPerEm, `(pen_x, pen_y)` the device-space baseline origin.
 /// Y flips (font Y is up, device Y is down); every contour's orientation flips
 /// with it, so the relative winding test still separates the counter.
-fn raster_multi_add_glyph(xs: []int, ys: []int, on: []int, ends: []int,
-                          pen_x: float, pen_y: float, sc: float) {
+fn raster_multi_add_glyph(
+    xs: []int,
+    ys: []int,
+    on: []int,
+    ends: []int,
+    pen_x: float,
+    pen_y: float,
+    sc: float
+) {
     while tt_ux.len > 0 {
         pop(tt_ux)
     }

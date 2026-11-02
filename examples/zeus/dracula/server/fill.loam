@@ -74,7 +74,9 @@ fn main() {
         let accepted = r.accepted
         let rejected = r.rejected
         let err = r.err
-        fmt.println("{{num}}/{{n}} {{a}} {{b}} ok {{ok}} accepted {{accepted}} rejected {{rejected}} {{err}}")
+        fmt.println(
+            "{{num}}/{{n}} {{a}} {{b}} ok {{ok}} accepted {{accepted}} rejected {{rejected}} {{err}}",
+        )
         if r.ok == 0 {
             sys.exit(1)
         }

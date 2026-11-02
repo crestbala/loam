@@ -258,7 +258,9 @@ fn ensure() {
     // this module, so it calls back through this hook.
     track.set_scope_disposer(fn(eid: int) { release_owner(0 - eid) })
     track.set_guard_hook(fn(fid: int, node: int) -> string { return invoke_on(fid, node) })
-    track.set_memo_stale_hook(fn(sid: int) { memo_host_hits = memo_host_hits + hosts_for_signal(sid) })
+    track.set_memo_stale_hook(fn(sid: int) {
+        memo_host_hits = memo_host_hits + hosts_for_signal(sid)
+    })
     anim_ensure()
 }
 
@@ -999,7 +1001,9 @@ fn frag_set(host: int, order: []int) {
     for i in 0..on {
         let r = old[i]
         if r > 0 && r < nodes.tree.len {
-            if nodes.tree[r].frag_of == host && nodes.tree[r].exiting != 0 && int(nodes.tree[r].kind) != 0 {
+            if nodes.tree[r].frag_of == host &&
+                nodes.tree[r].exiting != 0 &&
+                int(nodes.tree[r].kind) != 0 {
                 if kfor_in(order, r) == 0 {
                     push(rows, r)
                 }
@@ -2228,7 +2232,8 @@ fn exit_start(id: int, hide: int, save: []int) {
 /// paint tracks it animates.
 fn exit_snapshot(id: int) -> []int {
     return []int {
-        i32(nodes.pin[id].pos), nodes.pin[id].pin_l, nodes.pin[id].pin_t, nodes.pin[id].pin_r, nodes.pin[id].pin_b,
+        i32(nodes.pin[id].pos), nodes.pin[id].pin_l, nodes.pin[id].pin_t, nodes.pin[id].pin_r,
+        nodes.pin[id].pin_b,
         nodes.lay[id].explicit_width, nodes.lay[id].explicit_height,
         int(nodes.look[id].opacity), int(nodes.anim[id].an_scale), int(nodes.anim[id].an_ty),
     }
@@ -2268,7 +2273,10 @@ fn exit_or_hide(id: int) -> int {
     if nodes.tree[id].exiting != 0 {
         return 1
     }
-    if nodes.anim[id].exit_fx == 0 || anim_reduced() != 0 || anim_booted == 0 || nodes.anim[id].exit_ms <= 0 {
+    if nodes.anim[id].exit_fx == 0 ||
+        anim_reduced() != 0 ||
+        anim_booted == 0 ||
+        nodes.anim[id].exit_ms <= 0 {
         return 0
     }
     exit_start(id, 1, exit_snapshot(id))
@@ -2461,7 +2469,11 @@ fn geo_due(id: int) -> int {
     let h = nodes.box[id].h
     let sx = nodes.scrl[id].scroll_x
     let sy = nodes.scrl[id].scroll_y
-    if geo_force[id] == 0 && geo_w[id] == w && geo_h[id] == h && geo_sx[id] == sx && geo_sy[id] == sy {
+    if geo_force[id] == 0 &&
+        geo_w[id] == w &&
+        geo_h[id] == h &&
+        geo_sx[id] == sx &&
+        geo_sy[id] == sy {
         geo_skips = geo_skips + 1
         return 0
     }
@@ -2951,7 +2963,17 @@ fn anim_ensure() {
         return
     }
     for i in 0..TRACK_CAP {
-        push(tracks, Track { node: 0, prop: 0, from: 0, to: 0, current_value: 0, elapsed: 0, dur: 0, easing: 0, state: 0 })
+        push(tracks, Track {
+            node: 0,
+            prop: 0,
+            from: 0,
+            to: 0,
+            current_value: 0,
+            elapsed: 0,
+            dur: 0,
+            easing: 0,
+            state: 0,
+        })
     }
     let mut i = 0
     while i < TRACK_CAP {
@@ -4384,7 +4406,11 @@ fn alloc_node(kind: int) -> int {
     // or raises the cap on purpose.
     if nodes.tree.len >= node_cap {
         if node_overflow == 0 {
-            fmt.println("zeus: node arena exhausted at", node_cap, "nodes — virtualize the list (Each / VirtualList) or raise node_cap")
+            fmt.println(
+                "zeus: node arena exhausted at",
+                node_cap,
+                "nodes — virtualize the list (Each / VirtualList) or raise node_cap",
+            )
         }
         node_overflow = 1
         return 0
@@ -4430,7 +4456,8 @@ fn mem_sig_bytes() -> i64 {
 fn mem_intern_bytes() -> i64 {
     let sz = i64(__sizeof(nodes.tree[0].node_id))
     let ssz = i64(__sizeof(nodes.look[0].text))
-    let ints = r_key.len * 6 + sig_rec.len + fn_rec.len + own_node.len + own_eff.len + own_tok.len + kt_used.len * 7 + key_head.len * 2
+    let ints = r_key.len * 6 + sig_rec.len + fn_rec.len + own_node.len + own_eff.len + own_tok.len +
+        kt_used.len * 7 + key_head.len * 2
     return i64(ints) * sz + i64(kt_key.len) * ssz
 }
 
@@ -4460,7 +4487,8 @@ fn mem_misc_bytes() -> i64 {
 /// Arena bytes across every bucket above, plus the glyph atlas and the image
 /// cache (the draw list lives in `scene`).
 fn mem_total_bytes() -> i64 {
-    return nodes.mem_tree_bytes() + mem_sig_bytes() + mem_intern_bytes() + mem_anim_bytes() + mem_misc_bytes() + atlas.atlas_mem_bytes() + image.img_mem_bytes()
+    return nodes.mem_tree_bytes() + mem_sig_bytes() + mem_intern_bytes() + mem_anim_bytes() +
+        mem_misc_bytes() + atlas.atlas_mem_bytes() + image.img_mem_bytes()
 }
 
 /// Update the high-water marks. Called once per layout while stats are on.
@@ -4480,11 +4508,43 @@ fn mem_sample() {
 /// and the host footprint. One line per bucket so `docs/mem-baseline.md` can
 /// quote it verbatim.
 fn mem_report() {
-    fmt.println("ZEUS_MEM live_nodes=", nodes.mem_live_nodes(), " node_slots=", nodes.tree.len, " frames=", mem_frames)
-    fmt.println("ZEUS_MEM bytes tree=", nodes.mem_tree_bytes(), " signals=", mem_sig_bytes(), " interning=", mem_intern_bytes(), " animation=", mem_anim_bytes(), " misc=", mem_misc_bytes())
+    fmt.println(
+        "ZEUS_MEM live_nodes=",
+        nodes.mem_live_nodes(),
+        " node_slots=",
+        nodes.tree.len,
+        " frames=",
+        mem_frames,
+    )
+    fmt.println(
+        "ZEUS_MEM bytes tree=",
+        nodes.mem_tree_bytes(),
+        " signals=",
+        mem_sig_bytes(),
+        " interning=",
+        mem_intern_bytes(),
+        " animation=",
+        mem_anim_bytes(),
+        " misc=",
+        mem_misc_bytes(),
+    )
     fmt.println("ZEUS_MEM bytes total=", mem_total_bytes())
-    fmt.println("ZEUS_MEM bytes glyphs=", atlas.atlas_mem_bytes(), " atlas_entries=", atlas.atlas_entry_count(), " glyph_rasters=", atlas.atlas_raster_count())
-    fmt.println("ZEUS_MEM bytes images=", image.img_mem_bytes(), " image_entries=", image.img_cache_count(), " image_decodes=", image.src_decode_count())
+    fmt.println(
+        "ZEUS_MEM bytes glyphs=",
+        atlas.atlas_mem_bytes(),
+        " atlas_entries=",
+        atlas.atlas_entry_count(),
+        " glyph_rasters=",
+        atlas.atlas_raster_count(),
+    )
+    fmt.println(
+        "ZEUS_MEM bytes images=",
+        image.img_mem_bytes(),
+        " image_entries=",
+        image.img_cache_count(),
+        " image_decodes=",
+        image.src_decode_count(),
+    )
     fmt.println("ZEUS_MEM peak_nodes=", mem_peak_nodes, " peak_bytes=", mem_peak_bytes)
     fmt.println("ZEUS_MEM node_record_bytes=", nodes.node_record_bytes())
 }
@@ -4737,17 +4797,45 @@ struct Elev {
 
 fn elevation(level: int) -> Elev {
     if level <= 0 { return Elev(alpha = 0, blur = 0, dx = 0, dy = 0) }
-    if level == 1 { return Elev(alpha = 20, blur = 2, dx = 0, dy = 1, amb_alpha = 22, amb_blur = 16, amb_dy = 6) }
-    if level == 2 { return Elev(alpha = 22, blur = 4, dx = 0, dy = 2, amb_alpha = 20, amb_blur = 18, amb_dy = 8) }
-    if level == 3 { return Elev(alpha = 24, blur = 6, dx = 0, dy = 3, amb_alpha = 26, amb_blur = 32, amb_dy = 14) }
+    if level == 1 {
+        return Elev(alpha = 20, blur = 2, dx = 0, dy = 1, amb_alpha = 22, amb_blur = 16, amb_dy = 6)
+    }
+    if level == 2 {
+        return Elev(alpha = 22, blur = 4, dx = 0, dy = 2, amb_alpha = 20, amb_blur = 18, amb_dy = 8)
+    }
+    if level == 3 {
+        return Elev(
+            alpha = 24,
+            blur = 6,
+            dx = 0,
+            dy = 3,
+            amb_alpha = 26,
+            amb_blur = 32,
+            amb_dy = 14,
+        )
+    }
     return Elev(alpha = 28, blur = 10, dx = 0, dy = 4, amb_alpha = 34, amb_blur = 52, amb_dy = 22)
 }
 
 fn elevation_dark(level: int) -> Elev {
     if level <= 0 { return Elev(alpha = 0, blur = 0, dx = 0, dy = 0) }
-    if level == 1 { return Elev(alpha = 70, blur = 2, dx = 0, dy = 1, amb_alpha = 50, amb_blur = 10, amb_dy = 4) }
-    if level == 2 { return Elev(alpha = 80, blur = 4, dx = 0, dy = 2, amb_alpha = 70, amb_blur = 18, amb_dy = 8) }
-    if level == 3 { return Elev(alpha = 90, blur = 6, dx = 0, dy = 3, amb_alpha = 95, amb_blur = 30, amb_dy = 13) }
+    if level == 1 {
+        return Elev(alpha = 70, blur = 2, dx = 0, dy = 1, amb_alpha = 50, amb_blur = 10, amb_dy = 4)
+    }
+    if level == 2 {
+        return Elev(alpha = 80, blur = 4, dx = 0, dy = 2, amb_alpha = 70, amb_blur = 18, amb_dy = 8)
+    }
+    if level == 3 {
+        return Elev(
+            alpha = 90,
+            blur = 6,
+            dx = 0,
+            dy = 3,
+            amb_alpha = 95,
+            amb_blur = 30,
+            amb_dy = 13,
+        )
+    }
     return Elev(alpha = 110, blur = 10, dx = 0, dy = 4, amb_alpha = 125, amb_blur = 48, amb_dy = 20)
 }
 
@@ -4790,13 +4878,15 @@ fn elev_hover(id: int) -> Elev {
         return base
     }
     let top = elev_now(lift)
-    return Elev(alpha = base.alpha + (top.alpha - base.alpha) * t / 100,
-                amb_alpha = base.amb_alpha + (top.amb_alpha - base.amb_alpha) * t / 100,
-                amb_blur = base.amb_blur + (top.amb_blur - base.amb_blur) * t / 100,
-                amb_dy = base.amb_dy + (top.amb_dy - base.amb_dy) * t / 100,
-                blur = base.blur + (top.blur - base.blur) * t / 100,
-                dx = base.dx + (top.dx - base.dx) * t / 100,
-                dy = base.dy + (top.dy - base.dy) * t / 100)
+    return Elev(
+        alpha = base.alpha + (top.alpha - base.alpha) * t / 100,
+        amb_alpha = base.amb_alpha + (top.amb_alpha - base.amb_alpha) * t / 100,
+        amb_blur = base.amb_blur + (top.amb_blur - base.amb_blur) * t / 100,
+        amb_dy = base.amb_dy + (top.amb_dy - base.amb_dy) * t / 100,
+        blur = base.blur + (top.blur - base.blur) * t / 100,
+        dx = base.dx + (top.dx - base.dx) * t / 100,
+        dy = base.dy + (top.dy - base.dy) * t / 100,
+    )
 }
 
 fn elev_now(level: int) -> Elev {
@@ -5745,7 +5835,11 @@ fn physics_live() -> int {
             if int(nodes.scrl[i].smooth) != 0 {
                 return 1
             }
-            if physics_axis_live(nodes.scrl[i].scroll_x, nodes.scrl[i].vel_x, scroll_max_x(i)) != 0 {
+            if physics_axis_live(
+                nodes.scrl[i].scroll_x,
+                nodes.scrl[i].vel_x,
+                scroll_max_x(i),
+            ) != 0 {
                 return 1
             }
             if physics_axis_live(nodes.scrl[i].scroll_y, nodes.scrl[i].vel_y, scroll_max(i)) != 0 {
@@ -5875,7 +5969,12 @@ fn physics_step() -> int {
             let panned_x = sm2 & 8
             nodes.scrl[i].smooth = u8(sm2 & 3)
             if panned_y == 0 {
-                let ay = physics_axis(nodes.scrl[i].scroll_y, nodes.scrl[i].vel_y, scroll_max(i), dt)
+                let ay = physics_axis(
+                    nodes.scrl[i].scroll_y,
+                    nodes.scrl[i].vel_y,
+                    scroll_max(i),
+                    dt,
+                )
                 nodes.scrl[i].scroll_y = ay.pos
                 nodes.scrl[i].vel_y = ay.vel
                 if ay.dirty != 0 {
@@ -5888,7 +5987,12 @@ fn physics_step() -> int {
                 }
             }
             if panned_x == 0 {
-                let ax = physics_axis(nodes.scrl[i].scroll_x, nodes.scrl[i].vel_x, scroll_max_x(i), dt)
+                let ax = physics_axis(
+                    nodes.scrl[i].scroll_x,
+                    nodes.scrl[i].vel_x,
+                    scroll_max_x(i),
+                    dt,
+                )
                 nodes.scrl[i].scroll_x = ax.pos
                 nodes.scrl[i].vel_x = ax.vel
                 if ax.dirty != 0 {
@@ -7602,4 +7706,3 @@ fn state_sync() {
 fn state_watch_count() -> int {
     return state_ids.len
 }
-

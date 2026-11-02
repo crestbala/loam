@@ -116,8 +116,14 @@ fn ollama_pipeline(model: string) -> FrontierPipeline {
 }
 
 /// Any OpenAI-style chat endpoint (Bearer key when non-empty).
-fn openai_chat_pipeline(model: string, host: string, path: string,
-                        key: string, port: int, tls: int) -> FrontierPipeline {
+fn openai_chat_pipeline(
+    model: string,
+    host: string,
+    path: string,
+    key: string,
+    port: int,
+    tls: int
+) -> FrontierPipeline {
     return FrontierPipeline {
         model: model,
         host: host,

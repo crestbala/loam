@@ -510,7 +510,9 @@ fn RouterPage(p: RouterProps) -> Node {
     let i = cur_index
     let params = cur_params
     apply_title(cur_routes[i].meta(params))
-    return zui.Boundary(fn() { return cur_routes[i].build(params) }, fn(msg) { return p.error(msg) })
+    return zui.Boundary(fn() { return cur_routes[i].build(params) }, fn(msg) {
+        return p.error(msg)
+    })
 }
 
 /// The page slot. Put it inside a retained shell: on navigation only this

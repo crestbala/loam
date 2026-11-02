@@ -7,8 +7,12 @@ import "../theme.loam" as theme
 
 fn Layout(build: fn()) -> Node {
     theme.install()
-    return zeus.Box(style = Style(direction = Direction.Column, width = pct(100), height = pct(100),
-                                  background = "#000000")) {
+    return zeus.Box(style = Style(
+        direction = Direction.Column,
+        width = pct(100),
+        height = pct(100),
+        background = "#000000",
+    )) {
         TitleBar()
         build()
     }
@@ -21,9 +25,16 @@ fn Layout(build: fn()) -> Node {
 /// width. Takes no space in full screen and on hosts without a title bar.
 fn TitleBar() -> Node {
     return zui.TitleBar(style = Style(background = theme.TITLEBAR)) {
-        zeus.Box(style = Style(position = pos_absolute(),
-                               top = 0, bottom = 0, left = -zeus.titlebar().lead, right = -titlebar_trail(),
-                               direction = Direction.Row, align = Align.Center, justify = Align.Center)) {
+        zeus.Box(style = Style(
+            position = pos_absolute(),
+            top = 0,
+            bottom = 0,
+            left = -zeus.titlebar().lead,
+            right = -titlebar_trail(),
+            direction = Direction.Row,
+            align = Align.Center,
+            justify = Align.Center,
+        )) {
             zeus.Text("Vidy", style = Style(font = 13, color = theme.WHITE))
         }
     }

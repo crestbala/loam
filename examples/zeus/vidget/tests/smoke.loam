@@ -17,8 +17,10 @@ fn attr_matches_whole_keys() {
 
 #[test]
 fn master_sorts_best_first() {
-    let m = hls.parse_master("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=300\nlo.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=900\nhi.m3u8\n",
-                             "https://cdn.test/v/master.m3u8")
+    let m = hls.parse_master(
+        "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=300\nlo.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=900\nhi.m3u8\n",
+        "https://cdn.test/v/master.m3u8",
+    )
     assert_eq_int(m.variants.len, 2)
     assert(m.variants[0].url == "https://cdn.test/v/hi.m3u8")
 }
@@ -79,7 +81,11 @@ fn replace_is_exact() {
 
 #[test]
 fn aria_readout_reads_the_last_progress_line() {
-    let ls = text.lines(text.replace("[#be93c8 144KiB/629MiB(0%) CN:16 DL:504KiB ETA:21m16s]\r[#be93c8 178MiB/629MiB(28%) CN:16 DL:5.4MiB ETA:1m23s]\n", "\r", "\n"))
+    let ls = text.lines(text.replace(
+        "[#be93c8 144KiB/629MiB(0%) CN:16 DL:504KiB ETA:21m16s]\r[#be93c8 178MiB/629MiB(28%) CN:16 DL:5.4MiB ETA:1m23s]\n",
+        "\r",
+        "\n",
+    ))
     let r = text.aria_readout(ls)
     assert(r.ok)
     assert_eq_int(r.done_kib, 178 * 1024)
@@ -90,7 +96,9 @@ fn aria_readout_reads_the_last_progress_line() {
 
 #[test]
 fn aria_readout_without_a_line_is_not_ok() {
-    assert(!text.aria_readout(text.lines("aria2 will resume download if the transfer is restarted.\n")).ok)
+    assert(
+        !text.aria_readout(text.lines("aria2 will resume download if the transfer is restarted.\n")).ok,
+    )
     assert_eq_int(text.clock_secs("1h2m3s"), 3723)
     assert_eq_int(text.size_kib("1.5GiB"), 1048576 + 5 * 104857)
     assert_eq_int(text.size_kib("2048B"), 2)

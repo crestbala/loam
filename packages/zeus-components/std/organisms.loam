@@ -61,8 +61,13 @@ struct VirtualTableProps {
     sort: Option<Signal<int>> = none,
 }
 
-fn VirtualTable<T>(rows: Signal<[]T>, cols: []TableCol, row_h: int, build: fn(int, T) -> Node,
-                   p: VirtualTableProps) -> Node {
+fn VirtualTable<T>(
+    rows: Signal<[]T>,
+    cols: []TableCol,
+    row_h: int,
+    build: fn(int, T) -> Node,
+    p: VirtualTableProps
+) -> Node {
     return Box(style = Style(direction = Direction.Column, grow = 1), role = "table") {
         TableCols(cols, sort = p.sort)
         VirtualList(rows, row_h, build)
@@ -75,13 +80,30 @@ fn VirtualTable<T>(rows: Signal<[]T>, cols: []TableCol, row_h: int, build: fn(in
 fn Comp(p: BoxProps) -> Node {
     // A clickable custom widget presses like a button.
     let press = p.press || result.is_some(p.on_click)
-    return Component(raw_box(), style = p.style, ref = p.ref, keys = p.keys,
-                     role = p.role, label = p.label,
-                     on_click = p.on_click, hoverOff = p.hoverOff, bind = p.bind,
-                     visible = p.visible, press = press, focusable = p.focusable,
-                     roving = p.roving, rovingGrab = p.rovingGrab, checked = p.checked, hoverFade = p.hoverFade, pressScale = p.pressScale,
-                     lift = p.lift, enter = p.enter, label = p.label, loading = p.loading,
-                     on_hover = p.on_hover)
+    return Component(
+        raw_box(),
+        style = p.style,
+        ref = p.ref,
+        keys = p.keys,
+        role = p.role,
+        label = p.label,
+        on_click = p.on_click,
+        hoverOff = p.hoverOff,
+        bind = p.bind,
+        visible = p.visible,
+        press = press,
+        focusable = p.focusable,
+        roving = p.roving,
+        rovingGrab = p.rovingGrab,
+        checked = p.checked,
+        hoverFade = p.hoverFade,
+        pressScale = p.pressScale,
+        lift = p.lift,
+        enter = p.enter,
+        label = p.label,
+        loading = p.loading,
+        on_hover = p.on_hover,
+    )
 }
 
 struct ComboboxProps {
@@ -150,24 +172,28 @@ fn Combobox(text: Signal<string>, options: []string, p: ComboboxProps) -> Node {
 
     // view. The scrim comes first so the field and list draw over it.
     return Box(style = Style(direction = Direction.Column, alignSelf = Align.Start)) {
-        Overlay(on_click = fn() { active.set(-1) }, ref = scrim,
-                style = Style(display = shown(open()), zIndex = Z_SCRIM))
+        Overlay(
+            on_click = fn() { active.set(-1) },
+            ref = scrim,
+            style = Style(display = shown(open()), zIndex = Z_SCRIM),
+        )
         Box(
             ref = field,
             style = field_chrome(p.size, invalid = p.invalid, width = w, zIndex = Z_FIELD),
             restyle = p.style,
             on_click = open_list,
             focusable = false,
-            enabled = !p.disabled
+            enabled = !p.disabled,
         ) {
-            Input(ref = input,
-                  bind = text,
-                  placeholder = p.placeholder,
-                  style = Style(grow = 1, font = control_font(p.size), padding = 0,
-                                color = ink()),
-                  label = field_name(p.label, p.placeholder),
-                  on_click = open_list,
-                  on_key_down = list_key)
+            Input(
+                ref = input,
+                bind = text,
+                placeholder = p.placeholder,
+                style = Style(grow = 1, font = control_font(p.size), padding = 0, color = ink()),
+                label = field_name(p.label, p.placeholder),
+                on_click = open_list,
+                on_key_down = list_key,
+            )
             InputClear(text, input)
             Icon(IC_CHEV_DOWN, control_icon(p.size), dim())
         }
@@ -176,7 +202,7 @@ fn Combobox(text: Signal<string>, options: []string, p: ComboboxProps) -> Node {
             style = floating_panel(0, width = w),
             anchor = Anchor(to = field, place = Place.PlaceBelow, gap = Space.Exxxs),
             visible = open(),
-            enter = Enter.Fade
+            enter = Enter.Fade,
         ) {
             Each(matches.get(), fn(i, s) {
                 return ComboRow(text, active, input, i, s, scrim)
@@ -186,8 +212,14 @@ fn Combobox(text: Signal<string>, options: []string, p: ComboboxProps) -> Node {
 }
 
 /// One option row of a `Combobox`. Picking writes the label into the field.
-fn ComboRow(text: Signal<string>, active: Signal<int>, input: Ref, index: int, label: string,
-            scrim: Ref) -> Node {
+fn ComboRow(
+    text: Signal<string>,
+    active: Signal<int>,
+    input: Ref,
+    index: int,
+    label: string,
+    scrim: Ref
+) -> Node {
     // state
     let row = ref()
 
@@ -204,9 +236,16 @@ fn ComboRow(text: Signal<string>, active: Signal<int>, input: Ref, index: int, l
         ref = row,
         // Hover moves `active` (below), so one fill marks the pointer's row
         // and the keyboard's.
-        style = Style(direction = Direction.Row, gap = Space.Exxxs, align = Align.Center,
-                      paddingY = 6, paddingX = Space.Exs, radius = RAD_SM,
-                      background = row_fill(active.get() == index), cursor = "pointer"),
+        style = Style(
+            direction = Direction.Row,
+            gap = Space.Exxxs,
+            align = Align.Center,
+            paddingY = 6,
+            paddingX = Space.Exs,
+            radius = RAD_SM,
+            background = row_fill(active.get() == index),
+            cursor = "pointer",
+        ),
         role = "option",
         label = label,
         checked = active.get() == index,
@@ -217,7 +256,7 @@ fn ComboRow(text: Signal<string>, active: Signal<int>, input: Ref, index: int, l
                 active.set(index)
             }
         },
-        focusable = false
+        focusable = false,
     ) {
         Text(label, style = Style(font = FONT_BODY, color = ink()))
     }
@@ -235,14 +274,26 @@ fn Accordion(open: Signal<int>, p: AccordionProps) -> Node {
     }
 
     // view. Clip the rounded corners, so a body cannot spill past the card edge.
-    return Box(style = Style(direction = Direction.Column, radius = RAD_LG,
-                             borderWidth = HAIRLINE, borderColor = rule(), background = plate(),
-                             overflow = Overflow.Hidden),
-               restyle = p.style,
-               bind = p.bind) {
+    return Box(
+        style = Style(
+            direction = Direction.Column,
+            radius = RAD_LG,
+            borderWidth = HAIRLINE,
+            borderColor = rule(),
+            background = plate(),
+            overflow = Overflow.Hidden,
+        ),
+        restyle = p.style,
+        bind = p.bind,
+    ) {
         Each(p.items, (index, item) => {
-            AccordionItem(open = open, index = index, title = item.title, body = item.body,
-                          heads = heads)
+            AccordionItem(
+                open = open,
+                index = index,
+                title = item.title,
+                body = item.body,
+                heads = heads,
+            )
         })
     }
 }
@@ -350,13 +401,15 @@ fn Popover(p: PopoverProps) -> Node {
     return Box(ref = host) {
         p.trigger()
         Overlay(visible = open.get(), on_click = close, style = Style(zIndex = Z_SCRIM))
-        Box(style = floating_panel(0, gap = Space.Xs, padding = Space.Sm),
+        Box(
+            style = floating_panel(0, gap = Space.Xs, padding = Space.Sm),
             restyle = p.style,
             anchor = Anchor(to = host, place = p.place, gap = p.gap),
             autofocus = open.get(),
             visible = open.get(),
             enter = Enter.Fade,
-            keys = keys) {
+            keys = keys,
+        ) {
             p.children()
         }
     }
@@ -413,15 +466,20 @@ fn Menu(p: MenuProps) -> Node {
     // what the pointer hits.
     return Box(ref = host) {
         click_built(p.trigger, toggle)
-        Overlay(ref = scrim, on_click = close,
-                style = Style(display = shown(open()), zIndex = Z_SCRIM))
-        Box(style = floating_panel(MENU_MIN_W, cursor = "pointer"),
+        Overlay(
+            ref = scrim,
+            on_click = close,
+            style = Style(display = shown(open()), zIndex = Z_SCRIM),
+        )
+        Box(
+            style = floating_panel(MENU_MIN_W, cursor = "pointer"),
             restyle = p.style,
             anchor = Anchor(to = host, place = p.place, gap = p.gap),
             visible = open(),
             role = "menu",
             enter = Enter.Fade,
-            keys = keys) {
+            keys = keys,
+        ) {
             if p.label.len > 0 {
                 MenuLabel(p.label)
             }
@@ -431,16 +489,26 @@ fn Menu(p: MenuProps) -> Node {
                     // spaced as if both were rows of the panel.
                     return Column(PANEL_GAP) {
                         MenuSeparator()
-                        MenuItem(active = active, index = index, count = p.items.len,
-                                 label = item.label, danger = item.danger,
-                                 scrim = scrim,
-                                 on_click = fn() => emit_with(p.on_select, index))
+                        MenuItem(
+                            active = active,
+                            index = index,
+                            count = p.items.len,
+                            label = item.label,
+                            danger = item.danger,
+                            scrim = scrim,
+                            on_click = fn() => emit_with(p.on_select, index),
+                        )
                     }
                 }
-                return MenuItem(active = active, index = index, count = p.items.len,
-                                label = item.label, danger = item.danger,
-                                scrim = scrim,
-                                on_click = fn() => emit_with(p.on_select, index))
+                return MenuItem(
+                    active = active,
+                    index = index,
+                    count = p.items.len,
+                    label = item.label,
+                    danger = item.danger,
+                    scrim = scrim,
+                    on_click = fn() => emit_with(p.on_select, index),
+                )
             })
             p.children()
         }
@@ -517,24 +585,33 @@ fn MenuItem(p: MenuItemProps) -> Node {
     // view. Hover moves the highlight, so the pointer and the keyboard agree;
     // only the active row is a tab stop, and it takes focus as it activates.
     // `hoverStyle` gives the same raised fill before `on_hover` runs.
-    return Box(ref = row,
-               hoverStyle = Style(background = raised()),
-               style = Style(direction = Direction.Row, gap = Space.Xs, align = Align.Center,
-                             paddingY = 7, paddingX = 10, radius = RAD_SM,
-                             background = row_fill(active.get() == idx), cursor = "pointer"),
-               role = "menuitem",
-               label = p.label.get(),
-               enabled = !off,
-               press = true,
-               on_click = run,
-               on_hover = fn(on: bool) {
-                   if on {
-                       active.set(idx)
-                   }
-               },
-               keys = keys,
-               roving = active.get() == idx,
-               rovingGrab = true) {
+    return Box(
+        ref = row,
+        hoverStyle = Style(background = raised()),
+        style = Style(
+            direction = Direction.Row,
+            gap = Space.Xs,
+            align = Align.Center,
+            paddingY = 7,
+            paddingX = 10,
+            radius = RAD_SM,
+            background = row_fill(active.get() == idx),
+            cursor = "pointer",
+        ),
+        role = "menuitem",
+        label = p.label.get(),
+        enabled = !off,
+        press = true,
+        on_click = run,
+        on_hover = fn(on: bool) {
+            if on {
+                active.set(idx)
+            }
+        },
+        keys = keys,
+        roving = active.get() == idx,
+        rovingGrab = true,
+    ) {
         if p.icon.len > 0 {
             Icon(p.icon, 16, dim())
         }
@@ -596,26 +673,47 @@ fn Drawer(open: Signal<bool>, p: DrawerProps) -> Node {
     // Closed, it rests `size` past its edge; it slides on over `Motion.Base`
     // and off over `Motion.Fast`, and takes focus as it opens. Only the inner
     // edge rounds, so the sheet meets the window edge square.
-    return Overlay(style = drawer_dock(side), visible = open.get(),
-                   on_click = fn() { open.set(false) }) {
-        Box(style = Style(width = len_px(if across { size } else { -1 }),
-                          height = len_px(if across { -1 } else { size }),
-                          direction = Direction.Column, gap = Space.Sm, padding = Space.Md,
-                          elevation = FLOAT_LIFT,
-                          radiusTopLeft = drawer_corner(side, Side.SideBottom, Side.SideEnd, r),
-                          radiusTopRight = drawer_corner(side, Side.SideBottom, Side.SideStart, r),
-                          radiusBottomRight = drawer_corner(side, Side.SideTop, Side.SideStart, r),
-                          radiusBottomLeft = drawer_corner(side, Side.SideTop, Side.SideEnd, r),
-                          borderWidth = HAIRLINE, borderColor = rule(), background = plate(),
-                          shiftX = if side == Side.SideStart { -off() } else if side == Side.SideEnd { off() } else { 0 },
-                          shiftY = if side == Side.SideTop { -off() } else if side == Side.SideBottom { off() } else { 0 },
-                          transition = if open.get() { Motion.Base } else { Motion.Fast }),
+    return Overlay(style = drawer_dock(side), visible = open.get(), on_click = fn() {
+        open.set(false)
+    }) {
+        Box(
+            style = Style(
+                width = len_px(if across { size } else { -1 }),
+                height = len_px(if across { -1 } else { size }),
+                direction = Direction.Column,
+                gap = Space.Sm,
+                padding = Space.Md,
+                elevation = FLOAT_LIFT,
+                radiusTopLeft = drawer_corner(side, Side.SideBottom, Side.SideEnd, r),
+                radiusTopRight = drawer_corner(side, Side.SideBottom, Side.SideStart, r),
+                radiusBottomRight = drawer_corner(side, Side.SideTop, Side.SideStart, r),
+                radiusBottomLeft = drawer_corner(side, Side.SideTop, Side.SideEnd, r),
+                borderWidth = HAIRLINE,
+                borderColor = rule(),
+                background = plate(),
+                shiftX = if side == Side.SideStart {
+                    -off()
+                } else if side == Side.SideEnd {
+                    off()
+                } else {
+                    0
+                },
+                shiftY = if side == Side.SideTop {
+                    -off()
+                } else if side == Side.SideBottom {
+                    off()
+                } else {
+                    0
+                },
+                transition = if open.get() { Motion.Base } else { Motion.Fast },
+            ),
             restyle = p.style,
             role = "dialog",
             on_click = fn() { return },
             autofocus = open.get(),
             enter = Enter.Fade,
-            keys = keys) {
+            keys = keys,
+        ) {
             p.children()
         }
     }
@@ -626,9 +724,13 @@ fn Drawer(open: Signal<bool>, p: DrawerProps) -> Node {
 fn drawer_dock(side: int) -> Style {
     let across = side == Side.SideStart || side == Side.SideEnd
     let at_start = side == Side.SideStart || side == Side.SideTop
-    return Style(direction = if across { Direction.Row } else { Direction.Column },
-                 justify = if at_start { Align.Start } else { Align.End },
-                 align = Align.Stretch, opacity = 80, background = scrim())
+    return Style(
+        direction = if across { Direction.Row } else { Direction.Column },
+        justify = if at_start { Align.Start } else { Align.End },
+        align = Align.Stretch,
+        opacity = 80,
+        background = scrim(),
+    )
 }
 
 /// One corner of the sheet: only the corners on the inner edge round, so a
@@ -657,8 +759,10 @@ struct TooltipProps {
 
 /// 1 when the bubble is above its trigger (so the caret points down).
 fn tooltip_above(place: int) -> bool {
-    if place == Place.PlaceBelow || place == Place.PlaceBelowStart ||
-    place == Place.PlaceBelowCenter || place == Place.PlaceBelowEnd {
+    if place == Place.PlaceBelow ||
+        place == Place.PlaceBelowStart ||
+        place == Place.PlaceBelowCenter ||
+        place == Place.PlaceBelowEnd {
         return false
     }
     return true
@@ -700,23 +804,35 @@ fn Tooltip(p: TooltipProps) -> Node {
     // padding back to land the caret's centre on the edge.
     return Box(ref = host, on_hover = fn(on: bool) { hovered.set(on) }) {
         p.trigger()
-        Box(style = Style(direction = Direction.Column, position = pos_absolute(),
-                          zIndex = Z_HOVER, paddingY = TOOLTIP_PAD_Y, paddingX = TOOLTIP_PAD_X,
-                          radius = RAD_SM, background = ink()),
+        Box(
+            style = Style(
+                direction = Direction.Column,
+                position = pos_absolute(),
+                zIndex = Z_HOVER,
+                paddingY = TOOLTIP_PAD_Y,
+                paddingX = TOOLTIP_PAD_X,
+                radius = RAD_SM,
+                background = ink(),
+            ),
             anchor = Anchor(to = host, place = p.place, gap = p.gap),
             passThrough = true,
             visible = shown.get(),
             role = "tooltip",
             label = p.text.get(),
-            enter = Enter.Fade) {
+            enter = Enter.Fade,
+        ) {
             Text(p.text, style = Style(font = FONT_CAPTION, color = on_ink()))
             if p.arrow && tooltip_arrow_ok(p.place) {
-                Box(style = Style(height = px(TOOLTIP_ARROW),
-                                  direction = Direction.Row,
-                                  justify = tooltip_justify(p.place),
-                                  position = pos_absolute(),
-                                  top = opt_when(!above, edge), right = 0,
-                                  bottom = opt_when(above, edge), left = 0)) {
+                Box(style = Style(
+                    height = px(TOOLTIP_ARROW),
+                    direction = Direction.Row,
+                    justify = tooltip_justify(p.place),
+                    position = pos_absolute(),
+                    top = opt_when(!above, edge),
+                    right = 0,
+                    bottom = opt_when(above, edge),
+                    left = 0,
+                )) {
                     TooltipCaret()
                 }
             }
@@ -726,8 +842,12 @@ fn Tooltip(p: TooltipProps) -> Node {
 
 /// The tooltip's caret: an ink square turned 45°.
 fn TooltipCaret() -> Node {
-    return Box(style = Style(width = px(TOOLTIP_ARROW), height = px(TOOLTIP_ARROW),
-                             background = ink(), rotate = 45))
+    return Box(style = Style(
+        width = px(TOOLTIP_ARROW),
+        height = px(TOOLTIP_ARROW),
+        background = ink(),
+        rotate = 45,
+    ))
 }
 
 /// Hover intent: a flag that turns true once `hovered` has held for `delay`
@@ -775,12 +895,19 @@ fn HoverCard(p: HoverCardProps) -> Node {
     // body would stretch the card instead of wrapping.
     return Box(ref = host, on_hover = fn(on: bool) { hovered.set(on) }) {
         p.trigger()
-        Box(style = floating_panel(0, width = HOVER_CARD_W, gap = Space.Xs, padding = Space.Sm,
-                                   zIndex = Z_HOVER),
+        Box(
+            style = floating_panel(
+                0,
+                width = HOVER_CARD_W,
+                gap = Space.Xs,
+                padding = Space.Sm,
+                zIndex = Z_HOVER,
+            ),
             restyle = p.style,
             anchor = Anchor(to = host, place = p.place, gap = p.gap),
             visible = shown.get(),
-            enter = Enter.Fade) {
+            enter = Enter.Fade,
+        ) {
             p.children()
         }
     }
@@ -809,19 +936,27 @@ fn Toast(open: Signal<bool>, p: ToastProps) -> Node {
     })
 
     // view
-    return Overlay(visible = open.get(), on_click = fn() { open.set(false) },
-                   style = toast_dock(p.place)) {
-        Box(style = Style(direction = Direction.Row,
-                          gap = Space.Xs,
-                          elevation = FLOAT_LIFT,
-                          align = Align.Center,
-                          paddingY = Space.Xs, paddingX = Space.Sm,
-                          radius = RAD_MD,
-                          background = ink(),
-                          cursor = "pointer"),
+    return Overlay(
+        visible = open.get(),
+        on_click = fn() { open.set(false) },
+        style = toast_dock(p.place),
+    ) {
+        Box(
+            style = Style(
+                direction = Direction.Row,
+                gap = Space.Xs,
+                elevation = FLOAT_LIFT,
+                align = Align.Center,
+                paddingY = Space.Xs,
+                paddingX = Space.Sm,
+                radius = RAD_MD,
+                background = ink(),
+                cursor = "pointer",
+            ),
             restyle = p.style,
             on_click = fn() { open.set(false) },
-            enter = Enter.Fade) {
+            enter = Enter.Fade,
+        ) {
             p.children()
         }
     }
@@ -853,34 +988,51 @@ fn DialogShell(open: Signal<bool>, close_x: bool, title: string, children: fn())
     // phone keeps a gutter instead of clipping the card. The panel swallows
     // clicks so a press inside does not reach the scrim. Tab stays inside
     // the card while it is open.
-    return Overlay(style = Style(opacity = 80, background = scrim()),
-                   visible = open.get(),
-                   on_click = fn() => open.set(false)) {
-        Box(style = Style(direction = Direction.Column, gap = Space.Sm, elevation = FLOAT_LIFT,
-                          maxWidth = DIALOG_W, padding = Space.Lg, radius = RAD_LG,
-                          borderWidth = HAIRLINE, borderColor = rule(), background = plate(), width = pct(92)),
+    return Overlay(
+        style = Style(opacity = 80, background = scrim()),
+        visible = open.get(),
+        on_click = fn() => open.set(false),
+    ) {
+        Box(
+            style = Style(
+                direction = Direction.Column,
+                gap = Space.Sm,
+                elevation = FLOAT_LIFT,
+                maxWidth = DIALOG_W,
+                padding = Space.Lg,
+                radius = RAD_LG,
+                borderWidth = HAIRLINE,
+                borderColor = rule(),
+                background = plate(),
+                width = pct(92),
+            ),
             role = "dialog",
             on_click = fn() { return },
             enter = Enter.Fade,
             focusable = true,
             trap = open.get(),
-            keys = keys) {
+            keys = keys,
+        ) {
             Box(style = Style(direction = Direction.Row, gap = Space.Exs, align = Align.Center)) {
                 Title(title)
                 Grow()
                 if close_x {
-                    Box(style = Style(width = px(28),
-                                      height = px(28),
-                                      direction = Direction.Row,
-                                      shrink = 0,
-                                      align = Align.Center,
-                                      justify = Align.Center,
-                                      radius = RAD_MD,
-                                      cursor = "pointer"),
+                    Box(
+                        style = Style(
+                            width = px(28),
+                            height = px(28),
+                            direction = Direction.Row,
+                            shrink = 0,
+                            align = Align.Center,
+                            justify = Align.Center,
+                            radius = RAD_MD,
+                            cursor = "pointer",
+                        ),
                         on_click = fn() => open.set(false),
                         role = "button",
                         label = "Close",
-                        focusable = true) {
+                        focusable = true,
+                    ) {
                         Icon(IC_X, 16, mute())
                     }
                 }
@@ -905,11 +1057,15 @@ fn AlertDialog(open: Signal<bool>, p: DialogProps) -> Node {
 /// `dark = false` to omit it and put Dark in the trailing chrome yourself.
 fn Navbar(brand: string, dark: bool = true) -> Node {
     return Column(0) {
-        Box(style = Style(height = px(BAR),
-                          direction = Direction.Row,
-                          gap = Space.Md,
-                          align = Align.Center),
-            role = "navigation") {
+        Box(
+            style = Style(
+                height = px(BAR),
+                direction = Direction.Row,
+                gap = Space.Md,
+                align = Align.Center,
+            ),
+            role = "navigation",
+        ) {
             Pip(ink(), 10)
             Text(brand, style = Style(font = FONT_TITLE, color = ink()))
             Grow()
@@ -928,17 +1084,28 @@ fn NavTab(label: string, page: Signal<int>, index: int) -> Node {
         return page.get() == index
     }
     return Box(
-        style = Style(height = px(36), direction = Direction.Row, gap = Space.Exxs,
-                      align = Align.Center, paddingX = Space.Xs,
-                      radius = RAD_CONTROL, cursor = "pointer",
-                      background = if active() { raised() } else { paper() }),
+        style = Style(
+            height = px(36),
+            direction = Direction.Row,
+            gap = Space.Exxs,
+            align = Align.Center,
+            paddingX = Space.Xs,
+            radius = RAD_CONTROL,
+            cursor = "pointer",
+            background = if active() { raised() } else { paper() },
+        ),
         on_click = fn() => page.set(index),
         role = "button",
-        label = label
+        label = label,
     ) {
-        Text(label,
-             style = Style(font = FONT_BODY, ellipsis = true,
-                           color = if active() { ink() } else { mute() }))
+        Text(
+            label,
+            style = Style(font = FONT_BODY, ellipsis = true, color = if active() {
+                ink()
+            } else {
+                mute()
+            }),
+        )
     }
 }
 
@@ -947,10 +1114,12 @@ fn NavTab(label: string, page: Signal<int>, index: int) -> Node {
 fn TableHead(cols: []string) -> Node {
     return Column(Space.Exs) {
         // Same gutter as `TableRow`, so header and cells share column edges.
-        Box(style = Style(direction = Direction.Row,
-                          gap = Space.Sm,
-                          align = Align.Center,
-                          paddingX = Space.Exs)) {
+        Box(style = Style(
+            direction = Direction.Row,
+            gap = Space.Sm,
+            align = Align.Center,
+            paddingX = Space.Exs,
+        )) {
             Each(cols, fn(i, t) {
                 return TableCell(t, 0, Align.Start, mute())
             })
@@ -970,16 +1139,20 @@ fn table_row_odd() -> bool {
 fn TableRowShell(p: TableRowProps) -> Node {
     let fill = if p.zebra && table_row_odd() { raised() } else { "" }
     let cursor = if result.is_some(p.on_click) { "pointer" } else { "" }
-    return Box(style = Style(direction = Direction.Row,
-                             gap = Space.Sm,
-                             align = Align.Center,
-                             padding = Space.Exs,
-                             radius = RAD_SM,
-                             background = opt_color(fill),
-                             cursor = opt_color(cursor)),
-               on_click = p.on_click,
-               role = "row",
-               hoverFade = p.hover || result.is_some(p.on_click))
+    return Box(
+        style = Style(
+            direction = Direction.Row,
+            gap = Space.Sm,
+            align = Align.Center,
+            padding = Space.Exs,
+            radius = RAD_SM,
+            background = opt_color(fill),
+            cursor = opt_color(cursor),
+        ),
+        on_click = p.on_click,
+        role = "row",
+        hoverFade = p.hover || result.is_some(p.on_click),
+    )
 }
 
 /// A `TableCol.width` as a `Box` width prop: 0 (share the row) is -1 (unset).
@@ -992,10 +1165,12 @@ fn table_col_width(w: int) -> int {
 
 /// One cell: `width` 0 shares the row, `align` is `Align.*`.
 fn TableCell(text: string, width: int, align: int, tint: string) -> Node {
-    return Box(style = Style(width = if width <= 0 { pct(0) } else { px(table_col_width(width)) },
-                             grow = if width <= 0 { 1 } else { 0 },
-                             direction = Direction.Row,
-                             justify = align)) {
+    return Box(style = Style(
+        width = if width <= 0 { pct(0) } else { px(table_col_width(width)) },
+        grow = if width <= 0 { 1 } else { 0 },
+        direction = Direction.Row,
+        justify = align,
+    )) {
         Text(text, style = Style(font = FONT_BODY, color = tint, ellipsis = true))
     }
 }
@@ -1072,8 +1247,7 @@ struct TableProps {
 /// the sort (the third click) leaves the rows where the last column put them.
 /// `zebra` / `hover` / `on_pick` go to every row. A long list wants
 /// `VirtualTable` (windowed) instead.
-fn Table<T>(spec: []TableCol, rows: Signal<[]T>, cells: fn(T) -> []string,
-            p: TableProps) -> Node {
+fn Table<T>(spec: []TableCol, rows: Signal<[]T>, cells: fn(T) -> []string, p: TableProps) -> Node {
     let sort_set = result.is_some(p.sort)
     let sort = result.some_or(p.sort, no_signal())
 
@@ -1093,8 +1267,7 @@ fn Table<T>(spec: []TableCol, rows: Signal<[]T>, cells: fn(T) -> []string,
         Each(rows.get(), fn(i: int, t: T) {
             return Column(0) {
                 if result.is_some(p.on_pick) {
-                    TableRowCols(cells(t), spec, zebra = p.zebra, hover = p.hover,
-                                 on_click = fn() {
+                    TableRowCols(cells(t), spec, zebra = p.zebra, hover = p.hover, on_click = fn() {
                         emit_with(p.on_pick, table_index_of(rows, cells, cells_key(cells(t))))
                     })
                 } else {
@@ -1112,12 +1285,19 @@ fn TableCols(cols: []TableCol, p: TableColsProps) -> Node {
     return Column(Space.Exs) {
         // Same gutter as the body rows (`padding_x = Space.Exs`), so header
         // and cells share the same column boundaries.
-        Box(style = Style(direction = Direction.Row,
-                          gap = Space.Sm,
-                          align = Align.Center,
-                          paddingX = Space.Exs)) {
+        Box(style = Style(
+            direction = Direction.Row,
+            gap = Space.Sm,
+            align = Align.Center,
+            paddingX = Space.Exs,
+        )) {
             Each(cols, fn(i, c) {
-                return TableColHead(c, i, c.sortable && result.is_some(p.sort), result.some_or(p.sort, no_signal()))
+                return TableColHead(
+                    c,
+                    i,
+                    c.sortable && result.is_some(p.sort),
+                    result.some_or(p.sort, no_signal()),
+                )
             })
         }
         Separator()
@@ -1127,17 +1307,21 @@ fn TableCols(cols: []TableCol, p: TableColsProps) -> Node {
 /// One header cell. A sortable column is a button that cycles `sort` and shows
 /// the arrow for the direction it is sorted in.
 fn TableColHead(c: TableCol, i: int, sortable: bool, sort: Signal<int>) -> Node {
-    return Box(style = Style(width = if c.width <= 0 { pct(0) } else { px(table_col_width(c.width)) },
-                             grow = if c.width <= 0 { 1 } else { 0 },
-                             direction = Direction.Row,
-                             gap = 2,
-                             align = Align.Center,
-                             justify = c.align,
-                             cursor = opt_color(if sortable { "pointer" } else { "" })),
-               on_click = handler_if(sortable, fn() { sort.set(sort_cycle(sort.get(), i)) }),
-               role = if sortable { "button" } else { "" },
-               label = if sortable { "Sort by {{c.title}}" } else { "" },
-               hoverFade = sortable) {
+    return Box(
+        style = Style(
+            width = if c.width <= 0 { pct(0) } else { px(table_col_width(c.width)) },
+            grow = if c.width <= 0 { 1 } else { 0 },
+            direction = Direction.Row,
+            gap = 2,
+            align = Align.Center,
+            justify = c.align,
+            cursor = opt_color(if sortable { "pointer" } else { "" }),
+        ),
+        on_click = handler_if(sortable, fn() { sort.set(sort_cycle(sort.get(), i)) }),
+        role = if sortable { "button" } else { "" },
+        label = if sortable { "Sort by {{c.title}}" } else { "" },
+        hoverFade = sortable,
+    ) {
         Text(c.title, style = Style(font = FONT_BODY, color = mute()))
         if sortable {
             Icon(IC_SORT_ASC, 12, ink(), style = Style(display = shown(sort.get() == i + 1)))
@@ -1172,10 +1356,23 @@ fn BarChartOf(data: Signal<ChartData>, w: int, h: int) -> Node {
 /// Straight-segment line chart with dots. `p` is `LineChartProps`: a fitted
 /// y axis, implied decimals, a label stride, no dots. A `CHART_GAP` value
 /// is not drawn and breaks its line.
-fn LineChart(labels: []string, names: []string, vals: []int, w: int, h: int,
-             p: LineChartProps) -> Node {
-    return LineChartOf(signal(ChartData { labels: labels, names: names, vals: vals }), w, h,
-                       fit = p.fit, decimals = p.decimals, labelEvery = p.labelEvery, dots = p.dots)
+fn LineChart(
+    labels: []string,
+    names: []string,
+    vals: []int,
+    w: int,
+    h: int,
+    p: LineChartProps
+) -> Node {
+    return LineChartOf(
+        signal(ChartData { labels: labels, names: names, vals: vals }),
+        w,
+        h,
+        fit = p.fit,
+        decimals = p.decimals,
+        labelEvery = p.labelEvery,
+        dots = p.dots,
+    )
 }
 
 /// `LineChart` over live data (see `BarChartOf`).
@@ -1253,27 +1450,33 @@ fn chart_col_areas(d: Signal<ChartData>, gw: Signal<int>, h: int) -> Node {
 
 /// Ghost icon step button for the month/year rails.
 fn CalStep(markup: string, label: string, press: fn()) -> Node {
-    return Box(style = Style(width = px(28),
-                             height = px(28),
-                             direction = Direction.Row,
-                             align = Align.Center,
-                             justify = Align.Center,
-                             radius = RAD_CONTROL,
-                             cursor = "pointer"),
-               on_click = press,
-               role = "button",
-               label = label,
-               hoverOff = true) {
+    return Box(
+        style = Style(
+            width = px(28),
+            height = px(28),
+            direction = Direction.Row,
+            align = Align.Center,
+            justify = Align.Center,
+            radius = RAD_CONTROL,
+            cursor = "pointer",
+        ),
+        on_click = press,
+        role = "button",
+        label = label,
+        hoverOff = true,
+    ) {
         Icon(markup, 16, mute())
     }
 }
 
 fn CalWeekday(s: string) -> Node {
-    return Box(style = Style(width = px(CAL_CELL),
-                             height = px(24),
-                             direction = Direction.Row,
-                             align = Align.Center,
-                             justify = Align.Center)) {
+    return Box(style = Style(
+        width = px(CAL_CELL),
+        height = px(24),
+        direction = Direction.Row,
+        align = Align.Center,
+        justify = Align.Center,
+    )) {
         Text(s, style = Style(font = FONT_CAPTION, color = dim()))
     }
 }
@@ -1307,18 +1510,28 @@ fn CalCell(y: Signal<int>, m: Signal<int>, d: Signal<int>, open: Signal<bool>, i
 
     // view. The picked day is the grid's one tab stop while the sheet is
     // open, and takes focus as the pick moves (opening lands on it).
-    return Box(style = Style(width = px(CAL_CELL), height = px(CAL_CELL),
-                             direction = Direction.Row, align = Align.Center,
-                             justify = Align.Center, paddingX = 2,
-                             radius = RAD_LG, cursor = "pointer",
-                             background = if picked() { accent() } else { plate() }),
-               on_click = pick,
-               role = "button",
-               label = if day() == 0 { "" } else { "{{day()}}" },
-               roving = picked() && open.get(),
-               rovingGrab = true) {
-        Text(if day() > 0 { "{{day()}}" } else { "" },
-             style = Style(font = FONT_BODY, color = if picked() { on_ink() } else { ink() }))
+    return Box(
+        style = Style(
+            width = px(CAL_CELL),
+            height = px(CAL_CELL),
+            direction = Direction.Row,
+            align = Align.Center,
+            justify = Align.Center,
+            paddingX = 2,
+            radius = RAD_LG,
+            cursor = "pointer",
+            background = if picked() { accent() } else { plate() },
+        ),
+        on_click = pick,
+        role = "button",
+        label = if day() == 0 { "" } else { "{{day()}}" },
+        roving = picked() && open.get(),
+        rovingGrab = true,
+    ) {
+        Text(
+            if day() > 0 { "{{day()}}" } else { "" },
+            style = Style(font = FONT_BODY, color = if picked() { on_ink() } else { ink() }),
+        )
     }
 }
 
@@ -1452,9 +1665,11 @@ fn DatePicker(y: Signal<int>, m: Signal<int>, d: Signal<int>, p: DatePickerProps
     // misses it; floaters hit-test in z order, so the scrim takes the Z_SCRIM
     // tier and the sheet Z_POPUP, which also swallows its own clicks.
     return Column(Space.Exs) {
-        Overlay(style = Style(zIndex = Z_SCRIM),
-                visible = open.get(),
-                on_click = fn() => open.set(false))
+        Overlay(
+            style = Style(zIndex = Z_SCRIM),
+            visible = open.get(),
+            on_click = fn() => open.set(false),
+        )
         if p.label.len > 0 {
             Label(p.label)
         }
@@ -1465,7 +1680,7 @@ fn DatePicker(y: Signal<int>, m: Signal<int>, d: Signal<int>, p: DatePickerProps
             on_click = fn() => open.set(!open.get()),
             enabled = !p.disabled,
             role = "button",
-            label = "Pick a date"
+            label = "Pick a date",
         ) {
             Icon(IC_CALENDAR, control_icon(size), mute())
             Text("{{y.get()}}", style = Style(font = control_font(size), color = ink()))
@@ -1481,16 +1696,18 @@ fn DatePicker(y: Signal<int>, m: Signal<int>, d: Signal<int>, p: DatePickerProps
             on_click = fn() { return },
             keys = keys,
             visible = open.get(),
-            enter = Enter.Fade
+            enter = Enter.Fade,
         ) {
             Row(4) {
                 CalStep(IC_CHEV_LEFT, "Previous month", prev_month)
                 // One text node whose label tracks `m`, centred between the
                 // month steps so long and short names do not jump the arrows.
-                Box(style = Style(direction = Direction.Row,
-                                  grow = 1,
-                                  align = Align.Center,
-                                  justify = Align.Center)) {
+                Box(style = Style(
+                    direction = Direction.Row,
+                    grow = 1,
+                    align = Align.Center,
+                    justify = Align.Center,
+                )) {
                     Text(cal_month_name(m.get()), style = Style(font = FONT_BODY, color = ink()))
                 }
                 CalStep(IC_CHEV_RIGHT, "Next month", next_month)
@@ -1510,11 +1727,13 @@ fn DatePicker(y: Signal<int>, m: Signal<int>, d: Signal<int>, p: DatePickerProps
 /// roles once; every following Component reads them at paint.
 fn Page() -> Node {
     ensure_role_colors()
-    return Box(style = Style(direction = Direction.Column,
-                             gap = SECTION,
-                             grow = 1,
-                             padding = PAGE_PAD,
-                             background = paper()))
+    return Box(style = Style(
+        direction = Direction.Column,
+        gap = SECTION,
+        grow = 1,
+        padding = PAGE_PAD,
+        background = paper(),
+    ))
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1546,8 +1765,12 @@ fn SplitButton(label: string, p: SplitButtonProps) -> Node {
         Box(style = Style(direction = Direction.Row), role = "group") {
             GroupSegment(label, 0, 2, p.look, p.size, fn() => emit(p.on_click), true, "")
             Box(style = Style(marginLeft = seam)) {
-                Menu(items = p.items, on_select = p.on_select, place = Place.PlaceBelow,
-                     trigger = fn() { SplitCaret(p.look, p.size, p.menuLabel) })
+                Menu(
+                    items = p.items,
+                    on_select = p.on_select,
+                    place = Place.PlaceBelow,
+                    trigger = fn() { SplitCaret(p.look, p.size, p.menuLabel) },
+                )
             }
         }
     }
@@ -1555,17 +1778,24 @@ fn SplitButton(label: string, p: SplitButtonProps) -> Node {
 
 /// The caret half of a `SplitButton`: square, end corners round.
 fn SplitCaret(look: int, size: int, label: string) -> Node {
-    return Box(style = Style(width = px(control_h(size)), height = px(control_h(size)),
-                             align = Align.Center, justify = Align.Center,
-                             radiusTopRight = slot_radius(true),
-                             radiusBottomRight = slot_radius(true),
-                             borderWidth = button_border_width(look), borderColor = opt_color(button_border_color(look)),
-                             background = opt_color(button_background(look)),
-                             cursor = "pointer"),
-               role = "button",
-               label = label,
-               press = true,
-               hoverFade = true) {
+    return Box(
+        style = Style(
+            width = px(control_h(size)),
+            height = px(control_h(size)),
+            align = Align.Center,
+            justify = Align.Center,
+            radiusTopRight = slot_radius(true),
+            radiusBottomRight = slot_radius(true),
+            borderWidth = button_border_width(look),
+            borderColor = opt_color(button_border_color(look)),
+            background = opt_color(button_background(look)),
+            cursor = "pointer",
+        ),
+        role = "button",
+        label = label,
+        press = true,
+        hoverFade = true,
+    ) {
         Icon(IC_CHEV_DOWN, control_icon(size), button_color(look))
     }
 }
@@ -1581,8 +1811,9 @@ struct DropdownMenuProps {
 
 /// A button with a trailing chevron that opens a `Menu` of `items`.
 fn DropdownMenu(label: string, p: DropdownMenuProps) -> Node {
-    return Menu(items = p.items, on_select = p.on_select, place = p.place,
-                trigger = fn() { GroupSegment(label, 0, 1, p.look, p.size, noop, true, IC_CHEV_DOWN) })
+    return Menu(items = p.items, on_select = p.on_select, place = p.place, trigger = fn() {
+        GroupSegment(label, 0, 1, p.look, p.size, noop, true, IC_CHEV_DOWN)
+    })
 }
 
 /// Options for `ContextMenu`.
@@ -1606,26 +1837,28 @@ fn ContextMenu(p: ContextMenuProps) -> Node {
     // view. A 1px point, absolutely placed where the click landed, is the
     // menu host. The panel anchors below that point (gap 0), so it opens on
     // the pointer. The point is out of flow and does not change the region.
-    return Box(ref = region,
-               style = Style(direction = Direction.Column),
-               on_context_menu = fn() {
-                   if p.disabled {
-                       return
-                   }
-                   let m = current_mouse()
-                   let r = rect(region)
-                   at_x.set(m.x - r.x)
-                   at_y.set(m.y - r.y)
-                   active.set(0)
-               }) {
+    return Box(ref = region, style = Style(direction = Direction.Column), on_context_menu = fn() {
+        if p.disabled {
+            return
+        }
+        let m = current_mouse()
+        let r = rect(region)
+        at_x.set(m.x - r.x)
+        at_y.set(m.y - r.y)
+        active.set(0)
+    }) {
         p.children()
-        Box(style = Style(position = pos_absolute(),
-                          left = at_x.get(), top = at_y.get(),
-                          width = px(1), height = px(1))) {
-            Menu(active = active, items = p.items, on_select = p.on_select, gap = 0,
-                 trigger = fn() {
-                     Box(style = Style(width = px(1), height = px(1)), role = "presentation")
-                 })
+        Box(style = Style(
+            position = pos_absolute(),
+            left = at_x.get(),
+            top = at_y.get(),
+            width = px(1),
+            height = px(1),
+        )) {
+            Menu(active = active, items = p.items, on_select = p.on_select, gap = 0, trigger = fn(
+            ) {
+                Box(style = Style(width = px(1), height = px(1)), role = "presentation")
+            })
         }
     }
 }
@@ -1653,11 +1886,14 @@ fn ConfirmDialog(open: Signal<bool>, p: ConfirmDialogProps) -> Node {
                 open.set(false)
                 emit(p.on_cancel)
             })
-            Button(p.confirm, look = if p.danger { Look.Danger } else { Look.Solid },
-                   on_click = fn() {
-                       open.set(false)
-                       emit(p.on_confirm)
-                   })
+            Button(
+                p.confirm,
+                look = if p.danger { Look.Danger } else { Look.Solid },
+                on_click = fn() {
+                    open.set(false)
+                    emit(p.on_confirm)
+                },
+            )
         }
     }
 }
@@ -1704,9 +1940,10 @@ struct SheetProps {
 fn Sheet(open: Signal<bool>, p: SheetProps) -> Node {
     return Drawer(open, side = Side.SideBottom, size = p.size) {
         Box(style = Style(direction = Direction.Row, justify = Align.Center)) {
-            Box(style = Style(width = px(36), height = px(4), radius = 2,
-                              background = hard()),
-                role = "presentation")
+            Box(
+                style = Style(width = px(36), height = px(4), radius = 2, background = hard()),
+                role = "presentation",
+            )
         }
         if p.title.len > 0 {
             Title(p.title)
@@ -1833,8 +2070,14 @@ fn tree_noop(index: int) {
     return
 }
 
-fn TreeRow(rows: []TreeItem, visible: Signal<[]int>, selected: Signal<int>, open: Signal<[]int>,
-           on_open: Option<fn(int)>, index: int) -> Node {
+fn TreeRow(
+    rows: []TreeItem,
+    visible: Signal<[]int>,
+    selected: Signal<int>,
+    open: Signal<[]int>,
+    on_open: Option<fn(int)>,
+    index: int
+) -> Node {
     let name = rows[index].label
     let folder = tree_folder(rows, index)
     let depth = tree_depth(rows, index)
@@ -1868,20 +2111,34 @@ fn TreeRow(rows: []TreeItem, visible: Signal<[]int>, selected: Signal<int>, open
             }
         }),
     }
-    return Box(style = Style(direction = Direction.Row, gap = Space.Exxxs, align = Align.Center,
-                             minHeight = control_h(Size.Md),
-                             paddingLeft = 8 + depth * 16,
-                             radius = RAD_SM,
-                             background = if selected.get() == index { raised() } else { "" }),
-               role = "treeitem",
-               label = name,
-               focusable = true,
-               roving = fn() -> bool { return selected.get() == index },
-               keys = row_keys,
-               on_click = fn() { selected.set(index) }) {
+    return Box(
+        style = Style(
+            direction = Direction.Row,
+            gap = Space.Exxxs,
+            align = Align.Center,
+            minHeight = control_h(Size.Md),
+            paddingLeft = 8 + depth * 16,
+            radius = RAD_SM,
+            background = if selected.get() == index { raised() } else { "" },
+        ),
+        role = "treeitem",
+        label = name,
+        focusable = true,
+        roving = fn() -> bool { return selected.get() == index },
+        keys = row_keys,
+        on_click = fn() { selected.set(index) },
+    ) {
         if folder {
-            Box(style = Style(width = px(20), height = px(20), shrink = 0, align = Align.Center,
-                              justify = Align.Center, radius = RAD_SM, cursor = "pointer"),
+            Box(
+                style = Style(
+                    width = px(20),
+                    height = px(20),
+                    shrink = 0,
+                    align = Align.Center,
+                    justify = Align.Center,
+                    radius = RAD_SM,
+                    cursor = "pointer",
+                ),
                 on_click = toggle,
                 role = "button",
                 label = fn() -> string {
@@ -1889,11 +2146,20 @@ fn TreeRow(rows: []TreeItem, visible: Signal<[]int>, selected: Signal<int>, open
                         return "Collapse {{name}}"
                     }
                     return "Expand {{name}}"
-                }) {
-                Icon(IC_CHEV_DOWN, IconSize.Sm, mute(),
-                     style = Style(display = shown(int_has(open.get(), index))))
-                Icon(IC_CHEV_RIGHT, IconSize.Sm, mute(),
-                     style = Style(display = shown(!int_has(open.get(), index))))
+                },
+            ) {
+                Icon(
+                    IC_CHEV_DOWN,
+                    IconSize.Sm,
+                    mute(),
+                    style = Style(display = shown(int_has(open.get(), index))),
+                )
+                Icon(
+                    IC_CHEV_RIGHT,
+                    IconSize.Sm,
+                    mute(),
+                    style = Style(display = shown(!int_has(open.get(), index))),
+                )
             }
         }
         Text(name, style = Style(font = FONT_BODY, color = ink(), ellipsis = true))
@@ -1902,15 +2168,22 @@ fn TreeRow(rows: []TreeItem, visible: Signal<[]int>, selected: Signal<int>, open
 
 /// Expand and collapse, 16px of indent per level, arrows move among the rows
 /// that are open. `open` holds the indices of expanded folders.
-fn Tree(items: Signal<[]TreeItem>, selected: Signal<int>, open: Signal<[]int>, p: TreeProps) -> Node {
+fn Tree(
+    items: Signal<[]TreeItem>,
+    selected: Signal<int>,
+    open: Signal<[]int>,
+    p: TreeProps
+) -> Node {
     let visible = signal([]int {})
     effect(|| {
         visible.set(tree_visible(items.get(), open.get()))
     })
-    return Box(style = Style(direction = Direction.Column),
-               restyle = p.style,
-               role = "tree",
-               label = p.label) {
+    return Box(
+        style = Style(direction = Direction.Column),
+        restyle = p.style,
+        role = "tree",
+        label = p.label,
+    ) {
         Each(visible.get(), fn(row, index) {
             return TreeRow(items.get(), visible, selected, open, p.on_open, index)
         })
@@ -1926,17 +2199,30 @@ struct SidebarProps {
 /// A side rail: `SIDEBAR_W` (240) open, `SIDEBAR_RAIL` (56) collapsed.
 /// The chevron button is labelled Collapse / Expand.
 fn Sidebar(collapsed: Signal<bool>, p: SidebarProps) -> Node {
-    return Box(style = Style(width = px(if collapsed.get() { SIDEBAR_RAIL } else { SIDEBAR_W }),
-                             shrink = 0, direction = Direction.Column, gap = Space.Exxxs,
-                             padding = Space.Exs, background = raised()),
-               restyle = p.style,
-               role = "navigation",
-               label = "Sidebar") {
+    return Box(
+        style = Style(
+            width = px(if collapsed.get() { SIDEBAR_RAIL } else { SIDEBAR_W }),
+            shrink = 0,
+            direction = Direction.Column,
+            gap = Space.Exxxs,
+            padding = Space.Exs,
+            background = raised(),
+        ),
+        restyle = p.style,
+        role = "navigation",
+        label = "Sidebar",
+    ) {
         // Centred on the rail, so the chevron lines up with the nav icons.
-        Box(style = Style(width = px(control_h(Size.Md)), height = px(control_h(Size.Md)),
-                          align = Align.Center, justify = Align.Center,
-                          alignSelf = if collapsed.get() { Align.Center } else { Align.Start },
-                          radius = RAD_CONTROL, cursor = "pointer"),
+        Box(
+            style = Style(
+                width = px(control_h(Size.Md)),
+                height = px(control_h(Size.Md)),
+                align = Align.Center,
+                justify = Align.Center,
+                alignSelf = if collapsed.get() { Align.Center } else { Align.Start },
+                radius = RAD_CONTROL,
+                cursor = "pointer",
+            ),
             on_click = fn() { collapsed.set(!collapsed.get()) },
             role = "button",
             label = fn() -> string {
@@ -1944,11 +2230,20 @@ fn Sidebar(collapsed: Signal<bool>, p: SidebarProps) -> Node {
                     return "Expand"
                 }
                 return "Collapse"
-            }) {
-            Icon(IC_CHEV_LEFT, IconSize.Md, mute(),
-                 style = Style(display = shown(!collapsed.get())))
-            Icon(IC_CHEV_RIGHT, IconSize.Md, mute(),
-                 style = Style(display = shown(collapsed.get())))
+            },
+        ) {
+            Icon(
+                IC_CHEV_LEFT,
+                IconSize.Md,
+                mute(),
+                style = Style(display = shown(!collapsed.get())),
+            )
+            Icon(
+                IC_CHEV_RIGHT,
+                IconSize.Md,
+                mute(),
+                style = Style(display = shown(collapsed.get())),
+            )
         }
         p.children()
     }
@@ -1966,31 +2261,57 @@ fn NavGroup(title: string, p: NavGroupProps) -> Node {
     let has = result.is_some(p.collapsed)
     let col = result.some_or(p.collapsed, no_flag_signal())
     return Column(4) {
-        Text(title, style = Style(font = FONT_OVERLINE, color = dim(),
-                                  paddingLeft = Space.Exs, paddingTop = Space.Exs,
-                                  display = shown(!has || !col.get())))
+        Text(
+            title,
+            style = Style(
+                font = FONT_OVERLINE,
+                color = dim(),
+                paddingLeft = Space.Exs,
+                paddingTop = Space.Exs,
+                display = shown(!has || !col.get()),
+            ),
+        )
         p.children()
     }
 }
 
 /// One destination in a `Sidebar`. The label hides while `collapsed` is set;
 /// the icon stays, centred on the rail.
-fn NavItem(label: string, icon: string, page: Signal<int>, index: int, collapsed: Signal<bool>) -> Node {
-    return Box(style = Style(minHeight = control_h(Size.Md), direction = Direction.Row,
-                             gap = Space.Exs, align = Align.Center,
-                             justify = if collapsed.get() { Align.Center } else { Align.Start },
-                             paddingX = if collapsed.get() { 0 } else { 8 },
-                             radius = RAD_CONTROL, cursor = "pointer",
-                             background = if page.get() == index { plate() } else { "" }),
-               on_click = fn() { page.set(index) },
-               role = "button",
-               label = label) {
+fn NavItem(
+    label: string,
+    icon: string,
+    page: Signal<int>,
+    index: int,
+    collapsed: Signal<bool>
+) -> Node {
+    return Box(
+        style = Style(
+            minHeight = control_h(Size.Md),
+            direction = Direction.Row,
+            gap = Space.Exs,
+            align = Align.Center,
+            justify = if collapsed.get() { Align.Center } else { Align.Start },
+            paddingX = if collapsed.get() { 0 } else { 8 },
+            radius = RAD_CONTROL,
+            cursor = "pointer",
+            background = if page.get() == index { plate() } else { "" },
+        ),
+        on_click = fn() { page.set(index) },
+        role = "button",
+        label = label,
+    ) {
         if icon.len > 0 {
             Icon(icon, IconSize.Md, if page.get() == index { ink() } else { mute() })
         }
-        Text(label, style = Style(ellipsis = true, font = FONT_BODY,
-                                  color = if page.get() == index { ink() } else { mute() },
-                                  display = shown(!collapsed.get())))
+        Text(
+            label,
+            style = Style(
+                ellipsis = true,
+                font = FONT_BODY,
+                color = if page.get() == index { ink() } else { mute() },
+                display = shown(!collapsed.get()),
+            ),
+        )
     }
 }
 
@@ -2007,9 +2328,15 @@ struct AppShellProps {
 /// Sidebar, then a column of header and the page body. The header is inset
 /// by the same 16px as the body, so its label does not sit on the rail.
 fn AppShell(p: AppShellProps) -> Node {
-    return Box(style = Style(direction = Direction.Row, align = Align.Stretch,
-                             width = pct(100), minHeight = 200),
-               restyle = p.style) {
+    return Box(
+        style = Style(
+            direction = Direction.Row,
+            align = Align.Stretch,
+            width = pct(100),
+            minHeight = 200,
+        ),
+        restyle = p.style,
+    ) {
         p.sidebar()
         Box(style = Style(direction = Direction.Column, grow = 1, minWidth = 0)) {
             Box(style = Style(paddingTop = Space.Sm, paddingX = Space.Sm)) {
@@ -2034,17 +2361,31 @@ struct MasterDetailProps {
 /// A fixed master column, a hairline, and the detail.
 fn MasterDetail(p: MasterDetailProps) -> Node {
     let w = if p.masterWidth > 0 { p.masterWidth } else { 280 }
-    return Box(style = Style(direction = Direction.Row, align = Align.Stretch,
-                             width = pct(100), minHeight = 120),
-               restyle = p.style) {
-        Box(style = Style(width = px(w), shrink = 0, direction = Direction.Column,
-                          background = raised(), padding = Space.Xs)) {
+    return Box(
+        style = Style(
+            direction = Direction.Row,
+            align = Align.Stretch,
+            width = pct(100),
+            minHeight = 120,
+        ),
+        restyle = p.style,
+    ) {
+        Box(style = Style(
+            width = px(w),
+            shrink = 0,
+            direction = Direction.Column,
+            background = raised(),
+            padding = Space.Xs,
+        )) {
             p.master()
         }
-        Box(style = Style(width = px(HAIRLINE), shrink = 0, alignSelf = Align.Stretch,
-                          background = rule()))
-        Box(style = Style(grow = 1, minWidth = 0, direction = Direction.Column,
-                          padding = Space.Xs)) {
+        Box(style = Style(
+            width = px(HAIRLINE),
+            shrink = 0,
+            alignSelf = Align.Stretch,
+            background = rule(),
+        ))
+        Box(style = Style(grow = 1, minWidth = 0, direction = Direction.Column, padding = Space.Xs)) {
             p.children()
         }
     }
@@ -2073,24 +2414,39 @@ fn SplitPane(p: SplitPaneProps) -> Node {
     let host = ref()
     let vertical = p.vertical
     let mn = if p.min > 0 { p.min } else { SPLIT_MIN }
-    return Box(ref = host,
-               style = Style(direction = if vertical { Direction.Column } else { Direction.Row },
-                             align = Align.Stretch, width = pct(100),
-                             height = px(if vertical { 320 } else { p.size })),
-               restyle = p.style,
-               role = "group",
-               label = "Split") {
-        Box(style = Style(width = if vertical { pct(100) } else { px(split.get()) },
-                          height = if vertical { px(split.get()) } else { pct(100) },
-                          overflow = Overflow.Hidden, direction = Direction.Column),
+    return Box(
+        ref = host,
+        style = Style(
+            direction = if vertical { Direction.Column } else { Direction.Row },
+            align = Align.Stretch,
+            width = pct(100),
+            height = px(if vertical { 320 } else { p.size }),
+        ),
+        restyle = p.style,
+        role = "group",
+        label = "Split",
+    ) {
+        Box(
+            style = Style(
+                width = if vertical { pct(100) } else { px(split.get()) },
+                height = if vertical { px(split.get()) } else { pct(100) },
+                overflow = Overflow.Hidden,
+                direction = Direction.Column,
+            ),
             role = "region",
-            label = "First pane") {
+            label = "First pane",
+        ) {
             p.first()
         }
-        Box(style = Style(width = if vertical { pct(100) } else { px(SPLIT_HIT) },
-                          height = if vertical { px(SPLIT_HIT) } else { pct(100) },
-                          shrink = 0, align = Align.Center, justify = Align.Center,
-                          cursor = if vertical { "ns-resize" } else { "ew-resize" }),
+        Box(
+            style = Style(
+                width = if vertical { pct(100) } else { px(SPLIT_HIT) },
+                height = if vertical { px(SPLIT_HIT) } else { pct(100) },
+                shrink = 0,
+                align = Align.Center,
+                justify = Align.Center,
+                cursor = if vertical { "ns-resize" } else { "ew-resize" },
+            ),
             on_drag = fn() {
                 let r = rect(host)
                 let v = if vertical { current_mouse().y - r.y } else { current_mouse().x - r.x }
@@ -2099,13 +2455,22 @@ fn SplitPane(p: SplitPaneProps) -> Node {
                 split.set(clamp_int(v, mn, cap))
             },
             role = "separator",
-            label = "Resize") {
-            Box(style = Style(width = if vertical { pct(100) } else { px(HAIRLINE) },
-                              height = if vertical { px(HAIRLINE) } else { pct(100) },
-                              shrink = 0, background = rule()))
+            label = "Resize",
+        ) {
+            Box(style = Style(
+                width = if vertical { pct(100) } else { px(HAIRLINE) },
+                height = if vertical { px(HAIRLINE) } else { pct(100) },
+                shrink = 0,
+                background = rule(),
+            ))
         }
-        Box(style = Style(grow = 1, minWidth = 0, minHeight = 0, overflow = Overflow.Hidden,
-                          direction = Direction.Column)) {
+        Box(style = Style(
+            grow = 1,
+            minWidth = 0,
+            minHeight = 0,
+            overflow = Overflow.Hidden,
+            direction = Direction.Column,
+        )) {
             p.children()
         }
     }
@@ -2141,22 +2506,41 @@ fn notice_without(xs: []Notice, drop: int) -> []Notice {
 
 /// A single notice card, `TOAST_W` wide. `on_dismiss` shows the X.
 fn Notification(title: Signal<string>, body: Signal<string>, tint: int, on_dismiss: fn()) -> Node {
-    return Box(style = Style(direction = Direction.Row, gap = Space.Xs, align = Align.Start,
-                             width = px(TOAST_W), padding = Space.Xs,
-                             radius = RAD_LG, borderWidth = HAIRLINE, borderColor = tint_line(tint),
-                             background = tint_bg(tint), elevation = FLOAT_LIFT),
-               role = "status",
-               label = title) {
+    return Box(
+        style = Style(
+            direction = Direction.Row,
+            gap = Space.Xs,
+            align = Align.Start,
+            width = px(TOAST_W),
+            padding = Space.Xs,
+            radius = RAD_LG,
+            borderWidth = HAIRLINE,
+            borderColor = tint_line(tint),
+            background = tint_bg(tint),
+            elevation = FLOAT_LIFT,
+        ),
+        role = "status",
+        label = title,
+    ) {
         Icon(tint_icon(tint), IconSize.Md, tint_ink(tint))
         Box(style = Style(direction = Direction.Column, gap = 2, grow = 1)) {
             Text(title, style = Style(font = FONT_BODY, color = tint_ink(tint)))
             Text(body, style = Style(wrap = true, font = FONT_CONTROL, color = ink()))
         }
-        Box(style = Style(width = px(28), height = px(28), shrink = 0, align = Align.Center,
-                          justify = Align.Center, radius = RAD_CONTROL, cursor = "pointer"),
+        Box(
+            style = Style(
+                width = px(28),
+                height = px(28),
+                shrink = 0,
+                align = Align.Center,
+                justify = Align.Center,
+                radius = RAD_CONTROL,
+                cursor = "pointer",
+            ),
             on_click = on_dismiss,
             role = "button",
-            label = fn() -> string { return "Dismiss {{title.get()}}" }) {
+            label = fn() -> string { return "Dismiss {{title.get()}}" },
+        ) {
             Icon(IC_X, IconSize.Md, tint_ink(tint))
         }
     }
@@ -2164,10 +2548,18 @@ fn Notification(title: Signal<string>, body: Signal<string>, tint: int, on_dismi
 
 /// A read-only row in the notification history.
 fn NoticeHistory(title: string, body: string) -> Node {
-    return Box(style = Style(direction = Direction.Column, gap = 2, width = px(TOAST_W),
-                             padding = Space.Xs, radius = RAD_MD, background = raised()),
-               role = "listitem",
-               label = title) {
+    return Box(
+        style = Style(
+            direction = Direction.Column,
+            gap = 2,
+            width = px(TOAST_W),
+            padding = Space.Xs,
+            radius = RAD_MD,
+            background = raised(),
+        ),
+        role = "listitem",
+        label = title,
+    ) {
         Text(title, style = Style(font = FONT_BODY, color = ink()))
         Text(body, style = Style(wrap = true, font = FONT_CONTROL, color = mute()))
     }
@@ -2189,8 +2581,9 @@ fn NotificationCenter(live: Signal<[]Notice>, history: Signal<[]Notice>) -> Node
         Box(style = Style(direction = Direction.Row, align = Align.Center)) {
             Text("Notifications", style = Style(font = FONT_BODY, color = ink()))
             Grow()
-            Button("History", look = Look.Ghost, size = Size.Sm,
-                   on_click = fn() { show.set(!show.get()) })
+            Button("History", look = Look.Ghost, size = Size.Sm, on_click = fn() {
+                show.set(!show.get())
+            })
         }
         Each(live.get(), fn(i, n) {
             return Notification(n.title, n.body, n.tint, fn() { dismiss(i) })
@@ -2227,8 +2620,14 @@ fn command_matches(items: []CommandItem, q: string) -> []int {
 }
 
 /// One filtered command, with a section label when the group changes.
-fn CommandRow(items: []CommandItem, matches: Signal<[]int>, active: Signal<int>,
-              row: int, index: int, pick: fn(int)) -> Node {
+fn CommandRow(
+    items: []CommandItem,
+    matches: Signal<[]int>,
+    active: Signal<int>,
+    row: int,
+    index: int,
+    pick: fn(int)
+) -> Node {
     let sec = items[index].section
     let mut lead = false
     if sec.len > 0 {
@@ -2241,15 +2640,30 @@ fn CommandRow(items: []CommandItem, matches: Signal<[]int>, active: Signal<int>,
     }
     return Box(style = Style(direction = Direction.Column, gap = 2)) {
         if lead {
-            Text(sec, style = Style(font = FONT_CAPTION, color = dim(),
-                                    paddingLeft = Space.Exs, paddingTop = 6))
+            Text(
+                sec,
+                style = Style(
+                    font = FONT_CAPTION,
+                    color = dim(),
+                    paddingLeft = Space.Exs,
+                    paddingTop = 6,
+                ),
+            )
         }
-        Box(style = Style(direction = Direction.Row, align = Align.Center,
-                          paddingY = Space.Exs, paddingX = 10, radius = RAD_SM, cursor = "pointer",
-                          background = if active.get() == row { raised() } else { "" }),
+        Box(
+            style = Style(
+                direction = Direction.Row,
+                align = Align.Center,
+                paddingY = Space.Exs,
+                paddingX = 10,
+                radius = RAD_SM,
+                cursor = "pointer",
+                background = if active.get() == row { raised() } else { "" },
+            ),
             on_click = fn() { pick(index) },
             role = "option",
-            label = items[index].label) {
+            label = items[index].label,
+        ) {
             Text(items[index].label, style = Style(font = FONT_BODY, color = ink()))
         }
     }
@@ -2301,25 +2715,46 @@ fn CommandPalette(open: Signal<bool>, items: []CommandItem, p: CommandPalettePro
             }
         }
     }
-    return Overlay(style = Style(opacity = 80, background = scrim()),
-                   visible = open.get(),
-                   on_click = fn() { open.set(false) }) {
-        Box(style = Style(direction = Direction.Column, gap = Space.Exs, elevation = FLOAT_LIFT,
-                          height = px(400), maxWidth = 600, padding = Space.Xs,
-                          radius = RAD_LG, borderWidth = HAIRLINE, borderColor = rule(),
-                          background = plate(), width = pct(92)),
+    return Overlay(
+        style = Style(opacity = 80, background = scrim()),
+        visible = open.get(),
+        on_click = fn() { open.set(false) },
+    ) {
+        Box(
+            style = Style(
+                direction = Direction.Column,
+                gap = Space.Exs,
+                elevation = FLOAT_LIFT,
+                height = px(400),
+                maxWidth = 600,
+                padding = Space.Xs,
+                radius = RAD_LG,
+                borderWidth = HAIRLINE,
+                borderColor = rule(),
+                background = plate(),
+                width = pct(92),
+            ),
             role = "dialog",
             label = "Commands",
             on_click = fn() { return },
             enter = Enter.Fade,
-            trap = open.get()) {
+            trap = open.get(),
+        ) {
             Box(style = field_chrome(Size.Md)) {
                 Icon(IC_SEARCH, control_icon(Size.Md), dim())
-                Input(ref = input, bind = query, placeholder = p.placeholder,
-                      label = p.placeholder,
-                      style = Style(grow = 1, font = control_font(Size.Md), padding = 0,
-                                    color = ink()),
-                      on_key_down = key)
+                Input(
+                    ref = input,
+                    bind = query,
+                    placeholder = p.placeholder,
+                    label = p.placeholder,
+                    style = Style(
+                        grow = 1,
+                        font = control_font(Size.Md),
+                        padding = 0,
+                        color = ink(),
+                    ),
+                    on_key_down = key,
+                )
             }
             Scroll(style = Style(width = pct(100), height = px(320))) {
                 Each(matches.get(), fn(row, index) {
@@ -2463,23 +2898,36 @@ fn Carousel(sources: Signal<[]string>, p: CarouselProps) -> Node {
         key_bind("end", "carousel.last", fn() { jump(count() - 1) }),
     }
 
-    return Box(style = Style(direction = Direction.Column, gap = Space.Exs, width = pct(100)),
-               restyle = p.style,
-               role = "group",
-               label = p.label,
-               keys = keys_concat(keys, p.keys)) {
-        Box(style = Style(width = pct(100), height = px(frame_h()), overflow = Overflow.Hidden,
-                          radius = RAD_LG, background = raised()),
+    return Box(
+        style = Style(direction = Direction.Column, gap = Space.Exs, width = pct(100)),
+        restyle = p.style,
+        role = "group",
+        label = p.label,
+        keys = keys_concat(keys, p.keys),
+    ) {
+        Box(
+            style = Style(
+                width = pct(100),
+                height = px(frame_h()),
+                overflow = Overflow.Hidden,
+                radius = RAD_LG,
+                background = raised(),
+            ),
             label = "Frame",
             on_resize = fn(r: Rect) {
                 if r.w > 0 && frame_w.peek() != r.w {
                     frame_w.set(r.w)
                 }
-            }) {
+            },
+        ) {
             Show(when = count() == 0) {
-                Box(style = Style(width = pct(100), height = px(tall),
-                                  direction = Direction.Row,
-                                  align = Align.Center, justify = Align.Center)) {
+                Box(style = Style(
+                    width = pct(100),
+                    height = px(tall),
+                    direction = Direction.Row,
+                    align = Align.Center,
+                    justify = Align.Center,
+                )) {
                     Text("No images yet", style = Style(font = FONT_CAPTION, color = mute()))
                 }
             }
@@ -2488,60 +2936,110 @@ fn Carousel(sources: Signal<[]string>, p: CarouselProps) -> Node {
                 // which layout keeps at the source aspect ratio (and never
                 // scales up). The frame takes that ratio at its own width.
                 // Opacity is per node, so it goes on the image, not the box.
-                Box(style = Style(position = pos_absolute(), top = 0, left = 0),
-                    on_resize = fn(r: Rect) {
-                        if r.w > 0 && r.h > 0 && (img_w.peek() != r.w || img_h.peek() != r.h) {
-                            img_w.set(r.w)
-                            img_h.set(r.h)
-                        }
-                    }) {
+                Box(style = Style(position = pos_absolute(), top = 0, left = 0), on_resize = fn(
+                    r: Rect
+                ) {
+                    if r.w > 0 && r.h > 0 && (img_w.peek() != r.w || img_h.peek() != r.h) {
+                        img_w.set(r.w)
+                        img_h.set(r.h)
+                    }
+                }) {
                     Image(fn() => current(), style = Style(opacity = 0))
                 }
-                Box(label = "Slides",
-                    style = Style(width = pct(100), height = px(frame_h()),
-                                  shiftX = -slide(), transition = Motion.Base)) {
+                Box(
+                    label = "Slides",
+                    style = Style(
+                        width = pct(100),
+                        height = px(frame_h()),
+                        shiftX = -slide(),
+                        transition = Motion.Base,
+                    ),
+                ) {
                     // By position, not keyed by source: the same file may be
                     // added twice.
                     Each(sources, fn(i: int, src: string) -> Node {
-                        return Image(src,
-                                     style = Style(position = pos_absolute(), top = 0,
-                                                   left = i * frame_w.get(),
-                                                   width = px(frame_w.get()), height = px(frame_h())),
-                                     fit = p.fit,
-                                     label = "Slide {{i + 1}}")
+                        return Image(
+                            src,
+                            style = Style(
+                                position = pos_absolute(),
+                                top = 0,
+                                left = i * frame_w.get(),
+                                width = px(frame_w.get()),
+                                height = px(frame_h()),
+                            ),
+                            fit = p.fit,
+                            label = "Slide {{i + 1}}",
+                        )
                     })
                 }
             }
-            Box(style = Style(position = pos_absolute(),
-                              top = 0, bottom = 0, left = 8,
-                              direction = Direction.Column, justify = Align.Center),
-                visible = count() > 1) {
-                IconButton(IC_CHEV_LEFT, Look.Ghost, Size.Sm, "Previous image",
-                           on_click = fn() { go(-1) },
-                           style = Style(background = plate(), radius = RAD_FULL))
+            Box(
+                style = Style(
+                    position = pos_absolute(),
+                    top = 0,
+                    bottom = 0,
+                    left = 8,
+                    direction = Direction.Column,
+                    justify = Align.Center,
+                ),
+                visible = count() > 1,
+            ) {
+                IconButton(
+                    IC_CHEV_LEFT,
+                    Look.Ghost,
+                    Size.Sm,
+                    "Previous image",
+                    on_click = fn() { go(-1) },
+                    style = Style(background = plate(), radius = RAD_FULL),
+                )
             }
-            Box(style = Style(position = pos_absolute(),
-                              top = 0, bottom = 0, right = 8,
-                              direction = Direction.Column, justify = Align.Center),
-                visible = count() > 1) {
-                IconButton(IC_CHEV_RIGHT, Look.Ghost, Size.Sm, "Next image",
-                           on_click = fn() { go(1) },
-                           style = Style(background = plate(), radius = RAD_FULL))
+            Box(
+                style = Style(
+                    position = pos_absolute(),
+                    top = 0,
+                    bottom = 0,
+                    right = 8,
+                    direction = Direction.Column,
+                    justify = Align.Center,
+                ),
+                visible = count() > 1,
+            ) {
+                IconButton(
+                    IC_CHEV_RIGHT,
+                    Look.Ghost,
+                    Size.Sm,
+                    "Next image",
+                    on_click = fn() { go(1) },
+                    style = Style(background = plate(), radius = RAD_FULL),
+                )
             }
         }
         Show(when = count() > 0) {
-            Box(style = Style(direction = Direction.Row, gap = Space.Exxs,
-                              align = Align.Center, justify = Align.Center)) {
+            Box(style = Style(
+                direction = Direction.Row,
+                gap = Space.Exxs,
+                align = Align.Center,
+                justify = Align.Center,
+            )) {
                 Each(sources, fn(i: int, src: string) -> Node {
-                    return Box(style = Style(width = px(24), height = px(24),
-                                             align = Align.Center, justify = Align.Center,
-                                             cursor = "pointer"),
-                               on_click = fn() { jump(i) },
-                               role = "button",
-                               label = "Image {{i + 1}}") {
-                        Box(style = Style(width = px(8), height = px(8),
-                                          radius = RAD_FULL,
-                                          background = if index.get() == i { accent() } else { mute() }))
+                    return Box(
+                        style = Style(
+                            width = px(24),
+                            height = px(24),
+                            align = Align.Center,
+                            justify = Align.Center,
+                            cursor = "pointer",
+                        ),
+                        on_click = fn() { jump(i) },
+                        role = "button",
+                        label = "Image {{i + 1}}",
+                    ) {
+                        Box(style = Style(
+                            width = px(8),
+                            height = px(8),
+                            radius = RAD_FULL,
+                            background = if index.get() == i { accent() } else { mute() },
+                        ))
                     }
                 })
                 Text(place, style = Style(font = FONT_CAPTION, color = mute()))

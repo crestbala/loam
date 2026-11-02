@@ -360,7 +360,16 @@ fn latest_open(log: SyncLog) -> int {
     return -1
 }
 
-fn append_sync(root: string, id: int, stamp: string, url: string, kind: string, accepted: int, rejected: int, warnings: int) -> int {
+fn append_sync(
+    root: string,
+    id: int,
+    stamp: string,
+    url: string,
+    kind: string,
+    accepted: int,
+    rejected: int,
+    warnings: int
+) -> int {
     let mut log = read_syncs(root)
     push(log.ids, id)
     push(log.stamps, stamp)
@@ -484,7 +493,10 @@ fn strip_sync(root: string, id: int) -> int {
         if name.len > 4 {
             let tail = name.len - 4
             let mut csv = true
-            if name[tail] != 46 || name[tail + 1] != 99 || name[tail + 2] != 115 || name[tail + 3] != 118 {
+            if name[tail] != 46 ||
+                name[tail + 1] != 99 ||
+                name[tail + 2] != 115 ||
+                name[tail + 3] != 118 {
                 csv = false
             }
             if csv {

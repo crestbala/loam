@@ -10,7 +10,12 @@ import "../studio/store.loam" as store
 
 fn main() {
     store.start()
-    zeus.App("Mune", fn() {
-        approutes.app()
-    }, 1280, 900)
+    zeus.App(
+        "Mune",
+        fn() {
+            approutes.app()
+        },
+        1280,
+        900,
+    )
 }

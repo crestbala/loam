@@ -7,8 +7,7 @@
 
 /// Empty request for `Counter.Hello`. Encodes to zero protobuf bytes.
 #[proto]
-struct HelloReq {
-}
+struct HelloReq {}
 
 /// Reply for `Counter.Hello`. `count` is the UI starting value.
 #[proto]
@@ -18,8 +17,7 @@ struct HelloResp {
 
 /// Empty request for `Counter.Stats`.
 #[proto]
-struct StatsReq {
-}
+struct StatsReq {}
 
 /// Dashboard strings + load for the four metric cards and the load bar.
 #[proto]

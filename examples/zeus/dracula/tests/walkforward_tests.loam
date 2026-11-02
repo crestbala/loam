@@ -43,7 +43,10 @@ fn the_frozen_length_is_the_one_that_won_in_sample() {
     test.assert(w.hold_cagr[0] < 0.0)
     test.assert(w.sip_cagr[0] < 0.0)
     test.assert_eq_int(w.degraded[0], 1)
-    test.assert_eq_str(w.note, "Out of sample, the frozen rule made less than it did on the sample it was fit to.")
+    test.assert_eq_str(
+        w.note,
+        "Out of sample, the frozen rule made less than it did on the sample it was fit to.",
+    )
 }
 
 #[test]

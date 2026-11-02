@@ -190,7 +190,14 @@ fn jumped(prev: i64, nav: i64) -> bool {
 /// and an older date are both refused. A gap of more than five calendar days
 /// is stored, not refused — indicators will not cross it until someone
 /// acknowledges it.
-fn review(prev_date: int, prev_nav: i64, prev_name: string, ymd: int, nav: i64, name: string) -> Verdict {
+fn review(
+    prev_date: int,
+    prev_nav: i64,
+    prev_name: string,
+    ymd: int,
+    nav: i64,
+    name: string
+) -> Verdict {
     if !date.is_valid(ymd) {
         return verdict(0, 0, 0, "bad date")
     }

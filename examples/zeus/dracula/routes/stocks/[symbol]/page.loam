@@ -25,9 +25,14 @@ fn arm(sym: string, v: Signal<StockView>) -> Node {
 }
 
 fn not_cached(sym: string) -> Node {
-    return zui.Empty(icon = zeus.IC_INFO, title = "No cached closes for {{sym}}",
-                     body = "The symbol is not in a fetched NSE bhavcopy. Search, or load closes on the Data page.") {
-        zui.Button(label = "Search stocks", size = zeus.Size.Sm, on_click = fn() { router.navigate("/stocks") })
+    return zui.Empty(
+        icon = zeus.IC_INFO,
+        title = "No cached closes for {{sym}}",
+        body = "The symbol is not in a fetched NSE bhavcopy. Search, or load closes on the Data page.",
+    ) {
+        zui.Button(label = "Search stocks", size = zeus.Size.Sm, on_click = fn() {
+            router.navigate("/stocks")
+        })
     }
 }
 
@@ -56,16 +61,31 @@ fn loaded(v: Signal<StockView>) -> Node {
         }
         zui.Row(8) {
             zui.Badge(fn() -> string { return v.get().sym }, zeus.Tint.Mute)
-            zui.Badge(fn() -> string { return v.get().isin }, zeus.Tint.Mute,
-                      style = Style(display = zeus.shown(v.get().isin.len > 0)))
+            zui.Badge(
+                fn() -> string { return v.get().isin },
+                zeus.Tint.Mute,
+                style = Style(display = zeus.shown(v.get().isin.len > 0)),
+            )
             zui.Badge("NSE close, not a fund", zeus.Tint.Warn)
         }
-        zeus.Text("No cached close in this range.",
-                  style = Style(display = zeus.shown(!has_chart(v.get()))))
-        zui.Card(title = "Daily close, rupees", subtitle = fn() -> string { return chart_note(v.get()) },
-                 style = Style(display = zeus.shown(has_chart(v.get())))) {
-            zui.LineChartOf(chart, 720, 300, fit = true, decimals = v.peek().decimals,
-                            labelEvery = 0, dots = false)
+        zeus.Text(
+            "No cached close in this range.",
+            style = Style(display = zeus.shown(!has_chart(v.get()))),
+        )
+        zui.Card(
+            title = "Daily close, rupees",
+            subtitle = fn() -> string { return chart_note(v.get()) },
+            style = Style(display = zeus.shown(has_chart(v.get()))),
+        ) {
+            zui.LineChartOf(
+                chart,
+                720,
+                300,
+                fit = true,
+                decimals = v.peek().decimals,
+                labelEvery = 0,
+                dots = false,
+            )
         }
         ui.StatGridOf(stats)
     }
@@ -77,7 +97,9 @@ fn Page(p: Params) -> Node {
         zui.Row(8) {
             zui.Heading("Stock")
             zui.Grow()
-            zui.Button(label = "Search stocks", look = zeus.Look.Ghost, on_click = fn() { router.navigate("/stocks") })
+            zui.Button(label = "Search stocks", look = zeus.Look.Ghost, on_click = fn() {
+                router.navigate("/stocks")
+            })
         }
         if stocks.started() {
             stocks.focus(sym)
@@ -85,9 +107,14 @@ fn Page(p: Params) -> Node {
             zeus.effect(fn() { stocks.range_tick() })
             // Keyed by the load state and the decimals the chart was built
             // with: everything else updates the mounted arm in place.
-            zui.MatchBy(stocks.view(), fn(x: StockView) -> string { return "{{x.state}}:{{x.decimals}}" },
-                        fn(v: Signal<StockView>) -> Node { return arm(sym, v) })
-            zui.Body("The line keeps the last close in each bucket; nothing is averaged. Fund rules, exit load, stamp duty, and STT do not apply here.")
+            zui.MatchBy(
+                stocks.view(),
+                fn(x: StockView) -> string { return "{{x.state}}:{{x.decimals}}" },
+                fn(v: Signal<StockView>) -> Node { return arm(sym, v) },
+            )
+            zui.Body(
+                "The line keeps the last close in each bucket; nothing is averaged. Fund rules, exit load, stamp duty, and STT do not apply here.",
+            )
         } else {
             if sym.len > 0 {
                 zeus.Text(sym)
@@ -95,7 +122,6 @@ fn Page(p: Params) -> Node {
             zeus.Text("Loading")
         }
     }
-
 }
 
 fn meta(p: Params) -> Meta {

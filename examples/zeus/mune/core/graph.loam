@@ -114,7 +114,19 @@ fn style_trim(style: int, layer: int) -> int {
     } else if style == styles.AFRO {
         t = []int { 17, 64, 10, 33, -33 }
     }
-    let at = if layer == arrange.L_DRUMS { 0 } else if layer == arrange.L_BASS { 1 } else if layer == arrange.L_PAD { 2 } else if layer == arrange.L_ARP { 3 } else if layer == arrange.L_BELLS { 4 } else { -1 }
+    let at = if layer == arrange.L_DRUMS {
+        0
+    } else if layer == arrange.L_BASS {
+        1
+    } else if layer == arrange.L_PAD {
+        2
+    } else if layer == arrange.L_ARP {
+        3
+    } else if layer == arrange.L_BELLS {
+        4
+    } else {
+        -1
+    }
     return if at >= 0 { t[at] } else { 0 }
 }
 
@@ -234,7 +246,10 @@ fn loop_line(sc: Score, i: int, from: string, src_mono: bool) -> string {
         push(parts, "afade=t=in:ns=192,afade=t=out:ss={{unit - 480}}:ns=480")
     } else {
         let ns = num.clampi(fade * 48, 96, unit / 3)
-        push(parts, "afade=t=in:ns={{ns}}:curve=qsin,afade=t=out:ss={{unit - ns}}:ns={{ns}}:curve=qsin")
+        push(
+            parts,
+            "afade=t=in:ns={{ns}}:curve=qsin,afade=t=out:ss={{unit - ns}}:ns={{ns}}:curve=qsin",
+        )
     }
     push(parts, "volume={{num.f3(f64(sc.lp_db[i]) / 100.0)}}dB")
     if reps > 1 {
@@ -487,7 +502,11 @@ fn loop_key(sc: Score, s: Sound, i: int) -> int {
         let row = if i < sc.sy_pg.len && sc.sy_pg[i] >= 0 { sc.sy_pg[i] + 1 } else { 0 }
         let bars = if row > 0 { num.clampi(nb, 1, 4) } else { 0 }
         let peak = line_peak(sc, bar)
-        let rise = if layer == arrange.L_BASS && peak >= 0 { num.clampi(peak / 16, 0, 3) + 1 } else { 0 }
+        let rise = if layer == arrange.L_BASS && peak >= 0 {
+            num.clampi(peak / 16, 0, 3) + 1
+        } else {
+            0
+        }
         let mut k = row * 2 + swing
         k = k * 5 + bars
         k = k * 16 + num.clampi(variant, 0, 15)
@@ -534,7 +553,11 @@ fn groove_for(sc: Score, g0: Groove, layer: int, variant: int, part: int) -> Gro
     let unit = unit_of(sc, layer, part)
     let mut g = g0
     let bar = if part >= 0 && part < sc.sy_bar.len { sc.sy_bar[part] } else { 0 }
-    let nb = if part >= 0 && part < sc.sy_bars.len && sc.sy_bars[part] > 0 { sc.sy_bars[part] } else { 1 }
+    let nb = if part >= 0 && part < sc.sy_bars.len && sc.sy_bars[part] > 0 {
+        sc.sy_bars[part]
+    } else {
+        1
+    }
     g.den = channel_mean(sc.tn_den, bar, nb, 1000)
     g.dyn = plan.dyn_amt(channel_mean(sc.tn_dyn, bar, nb, 0))
     g.kick = part < 0 || part >= sc.sy_kick.len || sc.sy_kick[part] != 0
@@ -575,8 +598,16 @@ fn groove_for(sc: Score, g0: Groove, layer: int, variant: int, part: int) -> Gro
 
 /// A voice the graph reads from a WAV: its input, at its level, exactly
 /// `unit` samples long. Returns the head of the chain.
-fn voice_src(gr: &mut Graph, dir: string, name: string, layer: int, variant: int, part: int, drum: int,
-             unit: int) -> string {
+fn voice_src(
+    gr: &mut Graph,
+    dir: string,
+    name: string,
+    layer: int,
+    variant: int,
+    part: int,
+    drum: int,
+    unit: int
+) -> string {
     let k = gr.inputs.len
     let path = "{{dir}}/voices/{{name}}.wav"
     push(gr.inputs, path)
@@ -590,8 +621,18 @@ fn voice_src(gr: &mut Graph, dir: string, name: string, layer: int, variant: int
 
 /// Lines that play generator `key` to `[g{key}]`, one loop long, from the
 /// voices `render_voices` writes.
-fn generator(lines: &mut []string, gr: &mut Graph, dir: string, sc: Score, s: Sound, g0: Groove, key: int, layer: int,
-             variant: int, part: int) {
+fn generator(
+    lines: &mut []string,
+    gr: &mut Graph,
+    dir: string,
+    sc: Score,
+    s: Sound,
+    g0: Groove,
+    key: int,
+    layer: int,
+    variant: int,
+    part: int
+) {
     let unit = unit_of(sc, layer, part)
     let g = groove_for(sc, g0, layer, variant, part)
     let tag = "g{{key}}"
@@ -602,10 +643,25 @@ fn generator(lines: &mut []string, gr: &mut Graph, dir: string, sc: Score, s: So
             if synth.kit_hits(g, parts[p], variant).at.len == 0 {
                 continue
             }
-            let mut chain = voice_src(gr, dir, "{{tag}}v{{p}}", layer, variant, part, parts[p], unit)
+            let mut chain = voice_src(
+                gr,
+                dir,
+                "{{tag}}v{{p}}",
+                layer,
+                variant,
+                part,
+                parts[p],
+                unit,
+            )
             if parts[p] == synth.SNARE {
                 // A high taiko keeps its body; a rim loses its thud.
-                let hp = if s.style == styles.CINEMA { 80 } else if s.style == styles.AFRO { 220 } else { 170 }
+                let hp = if s.style == styles.CINEMA {
+                    80
+                } else if s.style == styles.AFRO {
+                    220
+                } else {
+                    170
+                }
                 chain = "{{chain}},highpass=f={{hp}},pan=stereo|c0=c0|c1=c0"
             } else if parts[p] == synth.HAT {
                 let hp = if s.style == styles.AFRO { 4500 } else { 7000 }
@@ -632,15 +688,39 @@ fn generator(lines: &mut []string, gr: &mut Graph, dir: string, sc: Score, s: So
     let mut filt = ""
     if layer == arrange.L_BASS {
         let st = s.style
-        let cut = if st == styles.WAVE { 1600 } else if st == styles.TRAP { 2400 } else if st == styles.AFRO { 1400 } else if st == styles.CINEMA { 750 } else { 950 }
+        let cut = if st == styles.WAVE {
+            1600
+        } else if st == styles.TRAP {
+            2400
+        } else if st == styles.AFRO {
+            1400
+        } else if st == styles.CINEMA {
+            750
+        } else {
+            950
+        }
         filt = "lowpass=f={{cut}},pan=stereo|c0=c0|c1=c0"
     } else if layer == arrange.L_PAD {
         let pt = s.pad_tone
-        let cut = if pt == synth.PAD_GLASS || pt == synth.PAD_SUPER { 9000 } else if pt == synth.PAD_KEYS { 6500 } else if pt == synth.PAD_STRINGS { 5200 } else { 2800 }
+        let cut = if pt == synth.PAD_GLASS || pt == synth.PAD_SUPER {
+            9000
+        } else if pt == synth.PAD_KEYS {
+            6500
+        } else if pt == synth.PAD_STRINGS {
+            5200
+        } else {
+            2800
+        }
         filt = "lowpass=f={{cut}},pan=stereo|c0=c0|c1=c0,adelay=delays=0|11:all=0"
     } else if layer == arrange.L_ARP {
         let at = s.arp_tone
-        let band = if at == synth.ARP_STRINGS { "highpass=f=60,lowpass=f=3400" } else if at == synth.ARP_MALLET { "highpass=f=150,lowpass=f=8000" } else { "highpass=f=240,lowpass=f=6500" }
+        let band = if at == synth.ARP_STRINGS {
+            "highpass=f=60,lowpass=f=3400"
+        } else if at == synth.ARP_MALLET {
+            "highpass=f=150,lowpass=f=8000"
+        } else {
+            "highpass=f=240,lowpass=f=6500"
+        }
         filt = "{{band}},pan=stereo|c0=c0|c1=0.7*c0"
     } else if layer == arrange.L_COUNTER {
         filt = "highpass=f=140,lowpass=f=7000,pan=stereo|c0=c0|c1=0.75*c0,adelay=delays=0|9:all=0"
@@ -654,7 +734,11 @@ fn generator(lines: &mut []string, gr: &mut Graph, dir: string, sc: Score, s: So
         let open = sweep("riser{{key}}", "lowpass", 1200.0, 9000.0, seconds(unit))
         filt = "highpass=f=450,{{open}},pan=stereo|c0=c0|c1=0.85*c0"
     } else {
-        filt = if s.style == styles.CINEMA { "lowpass=f=4500,pan=stereo|c0=c0|c1=c0" } else { "pan=stereo|c0=c0|c1=c0" }
+        filt = if s.style == styles.CINEMA {
+            "lowpass=f=4500,pan=stereo|c0=c0|c1=c0"
+        } else {
+            "pan=stereo|c0=c0|c1=c0"
+        }
     }
     let head = voice_src(gr, dir, tag, layer, variant, part, -1, unit)
     push(lines, "{{head}},{{filt}},atrim=end_sample={{unit}}[{{tag}}]")
@@ -748,7 +832,8 @@ fn part_line(sc: Score, s: Sound, i: int, from: string) -> string {
     let swell = layer == arrange.L_PAD && s.pad_tone == synth.PAD_STRINGS
     let fade_in = if swell { num.clampi(sc.bar_s, 96, len / 2) } else { 96 }
     push(parts, "afade=t=in:ns={{fade_in}}:curve=qsin,afade=t=out:ss={{len - 480}}:ns=480")
-    let db = layer_db(layer, s) + f64(style_trim(s.style, layer)) / 10.0 + slider_db(layer, s) + f64(sc.sy_db[i]) / 100.0
+    let db = layer_db(layer, s) + f64(style_trim(s.style, layer)) / 10.0 + slider_db(layer, s) +
+        f64(sc.sy_db[i]) / 100.0
     push(parts, "volume={{num.f3(db)}}dB")
     let at = time.LEAD_S + sc.sy_bar[i] * sc.bar_s
     push(parts, "adelay=delays={{at}}S:all=1")
@@ -783,7 +868,14 @@ fn joined_fx(xs: []string) -> string {
 /// The graph for `sc`. `paths` are the decoded recordings, `splits` their
 /// voice-free stems (same index; may be empty strings), `mono` per source.
 /// `dir` is the work folder the instrument voices go in (`render_voices`).
-fn build(sc: Score, s: Sound, paths: []string, splits: []string, mono: []bool, dir: string) -> Graph {
+fn build(
+    sc: Score,
+    s: Sound,
+    paths: []string,
+    splits: []string,
+    mono: []bool,
+    dir: string
+) -> Graph {
     let mut lines = []string {}
     let mut inputs = []string {}
     let mut loop_in = []int {}
@@ -813,7 +905,10 @@ fn build(sc: Score, s: Sound, paths: []string, splits: []string, mono: []bool, d
         uses[loop_in[i]] = uses[loop_in[i]] + 1
     }
     for k in 0..inputs.len {
-        push(lines, "[{{k}}:a]aformat=sample_fmts=fltp:channel_layouts=stereo:sample_rates=48000[in{{k}}]")
+        push(
+            lines,
+            "[{{k}}:a]aformat=sample_fmts=fltp:channel_layouts=stereo:sample_rates=48000[in{{k}}]",
+        )
         push(lines, split("in{{k}}", uses[k]))
     }
     let mut cursor = []int {}
@@ -900,7 +995,12 @@ fn build(sc: Score, s: Sound, paths: []string, splits: []string, mono: []bool, d
     let has_r = bus(lines, rhythm, "br", "highpass=f=35")
     let has_m = bus(lines, motif, "bm", "highpass=f=140")
     let has_a = bus(lines, air, "ba", "highpass=f=110,lowpass=f=9500")
-    let has_d = bus(lines, drums, "bd", "acompressor=threshold=0.3:ratio=2.5:attack=6:release=90:makeup=1.1")
+    let has_d = bus(
+        lines,
+        drums,
+        "bd",
+        "acompressor=threshold=0.3:ratio=2.5:attack=6:release=90:makeup=1.1",
+    )
     let has_b = bus(lines, bass_l, "bb", "")
     let has_p = bus(lines, pad_l, "bp", modu)
     let has_q = bus(lines, arp_l, "bq", modu)
@@ -943,7 +1043,11 @@ fn build(sc: Score, s: Sound, paths: []string, splits: []string, mono: []bool, d
     }
     let mut keys_out = []string {}
     if has_d {
-        let n_keys = if pump { (if has_b { 1 } else { 0 }) + (if has_p { 1 } else { 0 }) } else { 0 }
+        let n_keys = if pump {
+            (if has_b { 1 } else { 0 }) + (if has_p { 1 } else { 0 })
+        } else {
+            0
+        }
         let n = 1 + (if verb_on { 1 } else { 0 }) + n_keys
         push(lines, split("bd", n))
         push(mix, "bd_0")
@@ -964,7 +1068,10 @@ fn build(sc: Score, s: Sound, paths: []string, splits: []string, mono: []bool, d
         if pump {
             let key = keys_out[key_at]
             key_at = key_at + 1
-            push(lines, "[bb][{{key}}]sidechaincompress=threshold=0.04:ratio=6:attack=2:release=170:makeup=1[bb_0]")
+            push(
+                lines,
+                "[bb][{{key}}]sidechaincompress=threshold=0.04:ratio=6:attack=2:release=170:makeup=1[bb_0]",
+            )
         } else {
             push(lines, "[bb]anull[bb_0]")
         }
@@ -975,7 +1082,10 @@ fn build(sc: Score, s: Sound, paths: []string, splits: []string, mono: []bool, d
         if pump {
             let key = keys_out[key_at]
             key_at = key_at + 1
-            push(lines, "[bp][{{key}}]sidechaincompress=threshold=0.05:ratio=5:attack=3:release=200:makeup=1[bpd]")
+            push(
+                lines,
+                "[bp][{{key}}]sidechaincompress=threshold=0.05:ratio=5:attack=3:release=200:makeup=1[bpd]",
+            )
             src_label = "bpd"
         }
         let n = 1 + (if verb_on { 1 } else { 0 })
@@ -1035,7 +1145,12 @@ fn build(sc: Score, s: Sound, paths: []string, splits: []string, mono: []bool, d
     push(lines, "anullsrc=r=48000:cl=stereo,atrim=end_sample={{sc.total_s}}[bed]")
     push(mix, "bed")
     push(lines, sum(mix, "mix"))
-    let character = joined_fx([]string { fx.lofi(s.lofi), fx.warmth(s.warmth), fx.width(s.width), fx.master(sc.total_s) })
+    let character = joined_fx([]string {
+        fx.lofi(s.lofi),
+        fx.warmth(s.warmth),
+        fx.width(s.width),
+        fx.master(sc.total_s),
+    })
     push(lines, "[mix]{{character}}[pre]")
     gr.text = str.join(lines, ";\n")
     return gr

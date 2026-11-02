@@ -10,7 +10,6 @@ fn Page(p: Params) -> Node {
     return zui.Column(spacing.SECTION) {
         catalog.Components()
     }
-
 }
 
 fn meta(p: Params) -> Meta {

@@ -160,7 +160,9 @@ fn main() -> int {
             zeus.pump_frame()
         }
         let rss = sys.exec("ps -o rss= -p $PPID")
-        fmt.println("take {{t}} done phase {{store.phase.peek()}} in {{async.now_ms() - t0}} ms rss {{rss}}")
+        fmt.println(
+            "take {{t}} done phase {{store.phase.peek()}} in {{async.now_ms() - t0}} ms rss {{rss}}",
+        )
         frames()
     }
     return 0

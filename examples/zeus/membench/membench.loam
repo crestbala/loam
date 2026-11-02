@@ -95,8 +95,7 @@ fn scroll_proof() {
     }
     let nodes1 = zeus.mem_live_nodes()
     let allocs1 = zeus.proof_allocs()
-    fmt.println("MEMBENCH scroll live_nodes", nodes0, "->", nodes1,
-                "allocs", allocs1 - allocs0)
+    fmt.println("MEMBENCH scroll live_nodes", nodes0, "->", nodes1, "allocs", allocs1 - allocs0)
     if nodes1 > nodes0 + 40 {
         fmt.println("FAIL: live nodes grew with scroll")
         sys.exit(1)

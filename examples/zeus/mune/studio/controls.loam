@@ -68,7 +68,8 @@ fn snapshot() -> Sound {
         arp_on: arp_on.peek(), arp_lvl: arp_lvl.peek(), arp_tone: arp_tone.peek(),
         bells_on: bells_on.peek(), bells_lvl: bells_lvl.peek(),
         echo: echo.peek(), echo_time: echo_time.peek(), reverb: reverb.peek(), space: space.peek(),
-        mod_kind: mod_kind.peek(), mod_amt: mod_amt.peek(), lofi: lofi.peek(), warmth: warmth.peek(),
+        mod_kind: mod_kind.peek(), mod_amt: mod_amt.peek(), lofi: lofi.peek(),
+        warmth: warmth.peek(),
         width: width.peek(), pump: pump.peek(),
         seed: seed,
     }

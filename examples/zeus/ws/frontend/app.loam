@@ -19,23 +19,33 @@ fn Panel(n: Signal<int>, last: Signal<string>, state: Signal<string>) -> Node {
 }
 
 fn connect(n: Signal<int>, last: Signal<string>, state: Signal<string>) {
-    http.ws_open(http.client(""), "/ws", fn(msg) {
-        n.set(n.get() + 1)
-        last.set(msg)
-        state.set("open")
-    }, fn() {
-        // socket closed (server restarted?): retry shortly
-        state.set("reconnecting")
-        async.after(1000, || { connect(n, last, state) })
-    })
+    http.ws_open(
+        http.client(""),
+        "/ws",
+        fn(msg) {
+            n.set(n.get() + 1)
+            last.set(msg)
+            state.set("open")
+        },
+        fn() {
+            // socket closed (server restarted?): retry shortly
+            state.set("reconnecting")
+            async.after(1000, || { connect(n, last, state) })
+        },
+    )
 }
 
 fn main() {
     let n = zeus.signal(0)
     let last = zeus.signal("(waiting)")
     let state = zeus.signal("connecting")
-    zeus.App("ws", fn() -> Node {
-        return Panel(n, last, state)
-    }, 300, 200)
+    zeus.App(
+        "ws",
+        fn() -> Node {
+            return Panel(n, last, state)
+        },
+        300,
+        200,
+    )
     connect(n, last, state)
 }

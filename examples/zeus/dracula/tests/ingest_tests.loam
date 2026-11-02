@@ -139,7 +139,10 @@ fn jumps_gaps_and_an_old_date() {
     test.assert_eq_int(warn.warnings, 1)
     test.assert(has_reason(store.warnings_for(root, warn.sync_id), "nav jump on plan change"))
     let cat = store.read_catalog(root)
-    test.assert_eq_str(cat.names[store.find_code(cat, "1001")], "Sample Equity Fund - Regular Plan - IDCW")
+    test.assert_eq_str(
+        cat.names[store.find_code(cat, "1001")],
+        "Sample Equity Fund - Regular Plan - IDCW",
+    )
 
     let gap = "Open Ended Schemes(Equity Scheme - Large Cap Fund)\nScheme Code;ISIN Div Payout/ ISIN Growth;ISIN Div Reinvestment;Scheme Name;Net Asset Value;Date\n1001;INF000000001;-;Sample Equity Fund - Regular Plan - IDCW;151.0000;15-Apr-2026\n"
     let g = ingest.apply(root, gap, "fixture://daily", "t5")

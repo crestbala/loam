@@ -73,7 +73,11 @@ fn hit_floaters(id: int, px: int, py: int) -> int {
     arena.floater_sort(1)
     let n = arena.floater_id.len
     for i in 0..n {
-        let h = hit_one_floater(arena.floater_id[i], arena.floater_screen_x[i], arena.floater_screen_y[i])
+        let h = hit_one_floater(
+            arena.floater_id[i],
+            arena.floater_screen_x[i],
+            arena.floater_screen_y[i],
+        )
         if h != 0 {
             return h
         }
@@ -364,9 +368,17 @@ fn click(px: int, py: int) -> int {
     arena.ev_x = px
     arena.ev_y = py
     arena.ev_button = 0
-    let c1 = Click { signal_id: nodes.ui[id].click_sig, mode: int(nodes.ui[id].click_mode), setv: nodes.ui[id].click_set }
+    let c1 = Click {
+        signal_id: nodes.ui[id].click_sig,
+        mode: int(nodes.ui[id].click_mode),
+        setv: nodes.ui[id].click_set,
+    }
     apply_click(c1)
-    let c2 = Click { signal_id: nodes.ui[id].click2_sig, mode: int(nodes.ui[id].click2_mode), setv: nodes.ui[id].click2_set }
+    let c2 = Click {
+        signal_id: nodes.ui[id].click2_sig,
+        mode: int(nodes.ui[id].click2_mode),
+        setv: nodes.ui[id].click2_set,
+    }
     apply_click(c2)
     if nodes.ui[id].click_fn > 0 {
         arena.invoke_handler(nodes.ui[id].click_fn, id)
@@ -752,12 +764,20 @@ fn press_focused() -> int {
         return 0
     }
     let mut ran = 0
-    let c1 = Click { signal_id: nodes.ui[id].click_sig, mode: int(nodes.ui[id].click_mode), setv: nodes.ui[id].click_set }
+    let c1 = Click {
+        signal_id: nodes.ui[id].click_sig,
+        mode: int(nodes.ui[id].click_mode),
+        setv: nodes.ui[id].click_set,
+    }
     if c1.signal_id > 0 {
         apply_click(c1)
         ran = 1
     }
-    let c2 = Click { signal_id: nodes.ui[id].click2_sig, mode: int(nodes.ui[id].click2_mode), setv: nodes.ui[id].click2_set }
+    let c2 = Click {
+        signal_id: nodes.ui[id].click2_sig,
+        mode: int(nodes.ui[id].click2_mode),
+        setv: nodes.ui[id].click2_set,
+    }
     if c2.signal_id > 0 {
         apply_click(c2)
         ran = 1

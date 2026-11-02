@@ -8,8 +8,8 @@ import "std:str"
 /// (`https://x.com/`) comes back whole.
 fn file_name(u: string) -> string {
     let mut end = u.len
-    let q = str.index_of_byte(u, 63 /* ? */)
-    let h = str.index_of_byte(u, 35 /* # */)
+    let q = str.index_of_byte(u, 63 /* ? */ )
+    let h = str.index_of_byte(u, 35 /* # */ )
     if q >= 0 {
         end = q
     }
@@ -17,7 +17,7 @@ fn file_name(u: string) -> string {
         end = h
     }
     let path = u.slice(0, end)
-    let start = str.last_index_of_byte(path, 47 /* / */) + 1
+    let start = str.last_index_of_byte(path, 47 /* / */ ) + 1
     if start >= end {
         return u
     }
@@ -27,7 +27,7 @@ fn file_name(u: string) -> string {
 /// Upper-case extension of a name (`movie.mkv` → `MKV`), or `""` when it has
 /// none.
 fn ext_of(name: string) -> string {
-    let dot = str.last_index_of_byte(name, 46 /* . */)
+    let dot = str.last_index_of_byte(name, 46 /* . */ )
     if dot < 0 || dot + 1 >= name.len {
         return ""
     }

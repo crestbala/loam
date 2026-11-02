@@ -23,8 +23,15 @@ const IC_VOICE_OFF: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"
 
 /// A panel: a raised card with a heading, an optional caption, the body.
 fn Panel(title: string, caption: Signal<string>, body: fn()) -> Node {
-    return zeus.Box(style = Style(direction = Direction.Column, gap = 12, padding = 16, radius = 14,
-                                  background = theme.PANEL, borderWidth = 1, borderColor = theme.LINE)) {
+    return zeus.Box(style = Style(
+        direction = Direction.Column,
+        gap = 12,
+        padding = 16,
+        radius = 14,
+        background = theme.PANEL,
+        borderWidth = 1,
+        borderColor = theme.LINE,
+    )) {
         zeus.Box(style = Style(direction = Direction.Column, gap = 3)) {
             zeus.Text(title, style = Style(font = 15, color = theme.INK))
             zeus.Text(caption.get(), style = Style(font = 12, color = theme.FAINT, wrap = true))
@@ -41,9 +48,20 @@ fn Heading(text: string) -> Node {
 /// Label at the left, the control in the middle, a readout at the right.
 /// Every row in a panel shares the two edge columns, so controls line up.
 fn Row(label: string, value: Signal<string>, control: fn()) -> Node {
-    return zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 12, minHeight = 34)) {
+    return zeus.Box(style = Style(
+        direction = Direction.Row,
+        align = Align.Center,
+        gap = 12,
+        minHeight = 34,
+    )) {
         zeus.Text(label, style = Style(font = 13, color = theme.MUTE, width = px(76)))
-        zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, grow = 1, shrink = 1, minWidth = 0)) {
+        zeus.Box(style = Style(
+            direction = Direction.Row,
+            align = Align.Center,
+            grow = 1,
+            shrink = 1,
+            minWidth = 0,
+        )) {
             control()
         }
         zeus.Box(style = Style(direction = Direction.Row, justify = Align.End, width = px(52))) {
@@ -58,7 +76,13 @@ const TAIL_W: int = 104
 /// A dropdown of `labels`, `width` px wide, bound to `value`. The menu opens
 /// under it at the same width.
 fn Choice(value: Signal<int>, labels: []string, label: string, width: int) -> Node {
-    return zui.Select(value, labels, size = zeus.Size.Sm, label = label, style = Style(width = px(width)))
+    return zui.Select(
+        value,
+        labels,
+        size = zeus.Size.Sm,
+        label = label,
+        style = Style(width = px(width)),
+    )
 }
 
 /// A slider in the room's colours: accent fill and knob on a quiet track.
@@ -108,8 +132,16 @@ fn Slider(value: Signal<int>, lo: int, hi: int, label: string, off: bool) -> Nod
         zeus.key_bind("home", "slider.min", fn() { value.set(lo) }),
         zeus.key_bind("end", "slider.max", fn() { value.set(hi) }),
     }
-    return zui.Slider(pos, label = label, disabled = off, keys = keys,
-                      style = Style(color = if off { theme.FAINT } else { theme.ACCENT }, background = theme.TILE_HI))
+    return zui.Slider(
+        pos,
+        label = label,
+        disabled = off,
+        keys = keys,
+        style = Style(
+            color = if off { theme.FAINT } else { theme.ACCENT },
+            background = theme.TILE_HI,
+        ),
+    )
 }
 
 /// Arrow step for a range: one unit on a short one (pitch), a twentieth on
@@ -137,25 +169,45 @@ fn track_value(p: int, lo: int, span: int) -> int {
 
 /// Light or dark. The whole window repaints: every colour is a role.
 fn ThemeToggle() -> Node {
-    return zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, justify = Align.Center, gap = 6,
-                                  height = px(28), width = px(76), radius = 14, background = theme.TILE,
-                                  borderWidth = 1, borderColor = theme.LINE, cursor = "pointer"),
-                    role = "button", label = "Appearance",
-                    on_click = fn() { theme.toggle() }) {
+    return zeus.Box(
+        style = Style(
+            direction = Direction.Row,
+            align = Align.Center,
+            justify = Align.Center,
+            gap = 6,
+            height = px(28),
+            width = px(76),
+            radius = 14,
+            background = theme.TILE,
+            borderWidth = 1,
+            borderColor = theme.LINE,
+            cursor = "pointer",
+        ),
+        role = "button",
+        label = "Appearance",
+        on_click = fn() { theme.toggle() },
+    ) {
         zeus.Box(visible = theme.is_dark(), style = Style(direction = Direction.Row)) {
             zui.Icon(IC_MOON, 14, theme.ACCENT)
         }
         zeus.Box(visible = !theme.is_dark(), style = Style(direction = Direction.Row)) {
             zui.Icon(IC_SUN, 14, theme.WARN)
         }
-        zeus.Text(fn() -> string { return if theme.is_dark() { "Dark" } else { "Light" } },
-                  style = Style(font = 12, color = theme.MUTE))
+        zeus.Text(
+            fn() -> string { return if theme.is_dark() { "Dark" } else { "Light" } },
+            style = Style(font = 12, color = theme.MUTE),
+        )
     }
 }
 
 /// A small round colour mark.
 fn Pip(color: string, size: int) -> Node {
-    return zeus.Box(style = Style(width = px(size), height = px(size), radius = size / 2, background = color))
+    return zeus.Box(style = Style(
+        width = px(size),
+        height = px(size),
+        radius = size / 2,
+        background = color,
+    ))
 }
 
 /// Text and a value, both small: "Echo · 35".

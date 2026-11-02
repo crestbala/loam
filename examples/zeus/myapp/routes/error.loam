@@ -5,5 +5,4 @@ import "std:zui"
 
 fn Error(msg: string) -> Node {
     return zeus.Text("something went wrong")
-
 }

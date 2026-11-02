@@ -7,8 +7,11 @@ import "cache.loam"
 
 fn NavItem(page: Signal<int>, id: int, label: string) -> Node {
     return zeus.Box(
-        style = merge(Style(paddingY = 6, paddingX = 12, radius = 8), Style(background = if page.get() == id { colors.wash() } else { "" })),
-        on_click = fn() => page.set(id)
+        style = merge(
+            Style(paddingY = 6, paddingX = 12, radius = 8),
+            Style(background = if page.get() == id { colors.wash() } else { "" }),
+        ),
+        on_click = fn() => page.set(id),
     ) {
         zeus.Text(label, style = Style(font = 13, color = zeus.ink()))
     }
@@ -61,16 +64,21 @@ fn Article(page: Signal<int>) -> Node {
 }
 
 fn Screen(chip: string, page: Signal<int>) -> Node {
-    return zeus.Box(style = Style(direction = Direction.Column,
-                           gap = 16,
-                           padding = 28,
-                           background = colors.paper())) {
+    return zeus.Box(style = Style(
+        direction = Direction.Column,
+        gap = 16,
+        padding = 28,
+        background = colors.paper(),
+    )) {
         zui.Row(8) {
             zeus.Text("Loam", style = Style(font = 22, color = zeus.ink()))
             zui.Chip(chip, zeus.Tint.Ink)
             zui.Badge("Docs.Page", zeus.Tint.Ok)
         }
-        zui.Alert("RPC", "Sidebar writes a signal. Copy was fetched once over Docs.Page (gRPC-Web).")
+        zui.Alert(
+            "RPC",
+            "Sidebar writes a signal. Copy was fetched once over Docs.Page (gRPC-Web).",
+        )
         zui.Row(24) {
             Nav(page)
             Article(page)

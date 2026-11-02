@@ -151,7 +151,12 @@ fn exit_load_stops_after_365_days() {
     push(inside_d, 20251231)
     push(inside_s, -1)
     push(inside_a, i64(0))
-    let inside = backtest.run(s, Orders { dates: inside_d, sides: inside_s, amounts: inside_a }, costs.equity(), i64(1000000))
+    let inside = backtest.run(
+        s,
+        Orders { dates: inside_d, sides: inside_s, amounts: inside_a },
+        costs.equity(),
+        i64(1000000),
+    )
     test.assert(inside.end_cash == i64(989940))
     test.assert(inside.ledger.load[1] == i64(10000))
 
@@ -164,7 +169,12 @@ fn exit_load_stops_after_365_days() {
     push(outside_d, 20260101)
     push(outside_s, -1)
     push(outside_a, i64(0))
-    let outside = backtest.run(s, Orders { dates: outside_d, sides: outside_s, amounts: outside_a }, costs.equity(), i64(1000000))
+    let outside = backtest.run(
+        s,
+        Orders { dates: outside_d, sides: outside_s, amounts: outside_a },
+        costs.equity(),
+        i64(1000000),
+    )
     test.assert(outside.end_cash == i64(999940))
     test.assert(outside.ledger.load[1] == i64(0))
     test.assert(outside.ledger.stt[1] == i64(10))
@@ -275,7 +285,12 @@ fn partial_sell_keeps_the_rest_of_the_lot() {
     push(od, day(1))
     push(os, -1)
     push(oa, i64(500000))
-    let r = backtest.run(s, Orders { dates: od, sides: os, amounts: oa }, costs.equity(), i64(1000000))
+    let r = backtest.run(
+        s,
+        Orders { dates: od, sides: os, amounts: oa },
+        costs.equity(),
+        i64(1000000),
+    )
     test.assert(r.end_cash == i64(494995))
     test.assert(r.end_units == i64(49995000))
     test.assert(r.end_equity == i64(994945))
@@ -326,7 +341,13 @@ fn a_deposit_is_cash_the_xirr_counts() {
     let mut fa = []i64 {}
     push(fd, day(0))
     push(fa, i64(1000000))
-    let r = backtest.run_flows(s, Orders { dates: od, sides: os, amounts: oa }, Flows { dates: fd, amounts: fa }, costs.equity(), i64(0))
+    let r = backtest.run_flows(
+        s,
+        Orders { dates: od, sides: os, amounts: oa },
+        Flows { dates: fd, amounts: fa },
+        costs.equity(),
+        i64(0),
+    )
     test.assert(r.end_cash == i64(0))
     test.assert(r.ledger.gross[0] == i64(999950))
     test.assert(r.ledger.stamp[0] == i64(50))

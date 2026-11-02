@@ -42,8 +42,10 @@ fn Show(p: ShowProps) -> Node {
             on.set(v)
         }
     })
-    return Box(style = merge(Style(direction = Direction.Column), style_of(p.style)),
-               visible = on.get() == 1) {
+    return Box(
+        style = merge(Style(direction = Direction.Column), style_of(p.style)),
+        visible = on.get() == 1,
+    ) {
         if p.lazy {
             Match(on, fn(v: int) {
                 if v == 1 {
@@ -272,8 +274,13 @@ fn drop_keyed_spacer(node_id: int, k: string) {
 /// scroll from allocating a fresh closure per visible row per frame (the
 /// `docs/mem-baseline.md` §5.1 growth): the delta is O(rows entering/leaving),
 /// not O(window). `key(item)` must be stable and unique.
-fn virtual_refresh_keyed<T>(node_id: int, items: Signal<[]T>, key: fn(T) -> string,
-                            build: fn(int, T) -> Node, row_h: int) {
+fn virtual_refresh_keyed<T>(
+    node_id: int,
+    items: Signal<[]T>,
+    key: fn(T) -> string,
+    build: fn(int, T) -> Node,
+    row_h: int
+) {
     let xs = items.get()
     let m = xs.len
     let w = virtual_window(node_id, m, row_h)
@@ -498,8 +505,13 @@ fn virt_window_var(node_id: int, n: int, heights: []int, fallback: int) -> VirtW
     return VirtWin { first: first, last: last }
 }
 
-fn virt_refresh_var<T>(node_id: int, items: Signal<[]T>, build: fn(int, T) -> Node, fallback: int,
-                       heights: Signal<[]int>) {
+fn virt_refresh_var<T>(
+    node_id: int,
+    items: Signal<[]T>,
+    build: fn(int, T) -> Node,
+    fallback: int,
+    heights: Signal<[]int>
+) {
     let xs = items.get()
     let hs = heights.get()
     let m = xs.len
@@ -637,7 +649,11 @@ fn Each<T>(each: fn() -> []T, build: fn(int, T) -> Node) -> Node {
 ///   move their row — as in `Each`. Duplicate keys rebuild the list.
 /// * Read the item through `item.get()` inside effects (text thunks, props,
 ///   `style`). A value copied out at build time is a snapshot.
-fn EachKeyed<T>(each: fn() -> []T, key: fn(T) -> string, build: fn(Signal<int>, Signal<T>) -> Node) -> Node {
+fn EachKeyed<T>(
+    each: fn() -> []T,
+    key: fn(T) -> string,
+    build: fn(Signal<int>, Signal<T>) -> Node
+) -> Node {
     let items = computed(each)
     let marker = raw_box()
     let host = marker.id
@@ -835,7 +851,13 @@ fn kfor_refresh<T>(host: int, items: Signal<[]T>, build: fn(int, T) -> Node) {
 /// build the new keys, free (or exit) the vanished ones, then lay the rows
 /// into the parent in the new order. O(changes) in rows built or freed.
 /// Returns 0 when an existing key has no row, so the caller rebuilds.
-fn kfor_reconcile(host: int, m: int, nk: []string, mk: fn(int) -> Node, changed: fn(int, int) -> int) -> int {
+fn kfor_reconcile(
+    host: int,
+    m: int,
+    nk: []string,
+    mk: fn(int) -> Node,
+    changed: fn(int, int) -> int
+) -> int {
     let old = arena.key_keys(host)
     let on = old.len
     for o in 0..on {
@@ -908,7 +930,11 @@ fn kfor_wrap(parent: int, before: int) -> int {
     let n = nodes.tree[parent].kids.len - before
     if multi_root_warned == 0 {
         multi_root_warned = 1
-        fmt.println("zeus: an Each row builder mounted", n, "top-level nodes; the row was wrapped in a column. Return a single root node from the row builder.")
+        fmt.println(
+            "zeus: an Each row builder mounted",
+            n,
+            "top-level nodes; the row was wrapped in a column. Return a single root node from the row builder.",
+        )
     }
     let w = raw_box()
     // Appended to the open build parent, after the row's nodes.
@@ -973,9 +999,9 @@ fn Match<T>(on: Signal<T>, build: fn(T) -> Node) -> Node {
     arena.bind_host(on.id, node_id)
     arena.host_push(node_id)
     match_build(node_id, on, build)
-    return Component(n,
-                     style = Style(direction = Direction.Column),
-                     rebuild = || { match_refresh(node_id, on, build) })
+    return Component(n, style = Style(direction = Direction.Column), rebuild = || {
+        match_refresh(node_id, on, build)
+    })
 }
 
 /// Tear the subtree down and rebuild it for the current value of `on`.
@@ -998,7 +1024,9 @@ fn match_rebuild(node_id: int, on_id: int, body: fn()) {
     let mut kept = []int {}
     for i in 0..cn {
         let c = cur[i]
-        if c > 0 && c < nodes.tree.len && (nodes.anim[c].exit_fx != 0 || nodes.tree[c].exiting != 0) {
+        if c > 0 &&
+            c < nodes.tree.len &&
+            (nodes.anim[c].exit_fx != 0 || nodes.tree[c].exiting != 0) {
             if arena.exit_or_free(c) != 0 {
                 push(leaving, c)
             }
@@ -1057,9 +1085,9 @@ fn MatchBy<T>(on: Signal<T>, arm: fn(T) -> string, build: fn(Signal<T>) -> Node)
     arena.bind_host(on.id, node_id)
     arena.host_push(node_id)
     match_by_refresh(node_id, on, arm, build)
-    return Component(n,
-                     style = Style(direction = Direction.Column),
-                     rebuild = || { match_by_refresh(node_id, on, arm, build) })
+    return Component(n, style = Style(direction = Direction.Column), rebuild = || {
+        match_by_refresh(node_id, on, arm, build)
+    })
 }
 
 /// The arm each `MatchBy` host has mounted and its payload cell, by host id.
@@ -1081,7 +1109,12 @@ fn mby_forget(node_id: int) {
     mby_arm[node_id] = ""
 }
 
-fn match_by_refresh<T>(node_id: int, on: Signal<T>, arm: fn(T) -> string, build: fn(Signal<T>) -> Node) {
+fn match_by_refresh<T>(
+    node_id: int,
+    on: Signal<T>,
+    arm: fn(T) -> string,
+    build: fn(Signal<T>) -> Node
+) {
     // Pull first: a `computed` is recomputed on read, and its generation only
     // moves once it is.
     let v = on.peek()
@@ -1126,9 +1159,9 @@ fn MatchKeep<T>(on: Signal<T>, key: fn(T) -> string, build: fn(T) -> Node) -> No
     arena.bind_host(on.id, node_id)
     arena.host_push(node_id)
     match_keep_refresh(node_id, on, key, build)
-    return Component(n,
-                     style = Style(direction = Direction.Column),
-                     rebuild = || { match_keep_refresh(node_id, on, key, build) })
+    return Component(n, style = Style(direction = Direction.Column), rebuild = || {
+        match_keep_refresh(node_id, on, key, build)
+    })
 }
 
 fn match_keep_refresh<T>(node_id: int, on: Signal<T>, key: fn(T) -> string, build: fn(T) -> Node) {
@@ -1148,7 +1181,7 @@ fn match_keep_refresh<T>(node_id: int, on: Signal<T>, key: fn(T) -> string, buil
         let previous = arena.scope_begin(node_id)
         ui_push(node_id)
         let s_mark = arena.rec_mark()
-            let a = raw_box()
+        let a = raw_box()
         ui_push(a.id)
         build(v)
         ui_pop()
@@ -1163,7 +1196,12 @@ fn match_keep_refresh<T>(node_id: int, on: Signal<T>, key: fn(T) -> string, buil
         let ak = nodes.tree[arm].kids
         if ak.len == 1 && nodes.anim[ak[0]].exit_fx != 0 {
             let r = ak[0]
-            arena.set_exit(arm, nodes.anim[r].exit_fx, nodes.anim[r].exit_arg, nodes.anim[r].exit_ms)
+            arena.set_exit(
+                arm,
+                nodes.anim[r].exit_fx,
+                nodes.anim[r].exit_arg,
+                nodes.anim[r].exit_ms,
+            )
         }
     }
     let kids = nodes.tree[node_id].kids
@@ -1209,8 +1247,9 @@ fn Boundary(build: fn() -> Node, fallback: fn(string) -> Node) -> Node {
     // Attach the host before building into it (the position among its
     // siblings is the same either way): if a wasm trap cuts the enclosing build
     // short, the host is still in the tree to show its fallback.
-    Component(host, style = Style(direction = Direction.Column),
-              rebuild = || { boundary_refresh(hid, fallback) })
+    Component(host, style = Style(direction = Direction.Column), rebuild = || {
+        boundary_refresh(hid, fallback)
+    })
     let seq = arena.boundary_next_seq()
     let pre = arena.boundary_preset_msg(seq)
     if pre.len > 0 {
@@ -1401,11 +1440,9 @@ fn VirtualList<T>(items: Signal<[]T>, row_h: int, build: fn(int, T) -> Node) -> 
     let node_id = n.id
     arena.bind_host(items.id, node_id)
     virtual_refresh(node_id, items, build, row_h)
-    let c = Component(n,
-                      style = Style(grow = 1),
-                      role = "list",
-                      rowHeight = row_h,
-                      rebuild = || { virtual_refresh(node_id, items, build, row_h) })
+    let c = Component(n, style = Style(grow = 1), role = "list", rowHeight = row_h, rebuild = || {
+        virtual_refresh(node_id, items, build, row_h)
+    })
     // A windowed list reads its own box and scroll, and its bound signals.
     arena.host_geo(node_id)
     return c
@@ -1418,17 +1455,19 @@ fn VirtualList<T>(items: Signal<[]T>, row_h: int, build: fn(int, T) -> Node) -> 
 /// unique among the items. Row state that must follow the item should read a
 /// signal inside the row, not `i`. Falls back to the unkeyed path if a key is
 /// empty or duplicated.
-fn VirtualListKeyed<T>(items: Signal<[]T>, row_h: int, key: fn(T) -> string,
-                       build: fn(int, T) -> Node) -> Node {
+fn VirtualListKeyed<T>(
+    items: Signal<[]T>,
+    row_h: int,
+    key: fn(T) -> string,
+    build: fn(int, T) -> Node
+) -> Node {
     let n = raw_scroll()
     let node_id = n.id
     arena.bind_host(items.id, node_id)
     virtual_refresh_keyed(node_id, items, key, build, row_h)
-    let c = Component(n,
-                      style = Style(grow = 1),
-                      role = "list",
-                      rowHeight = row_h,
-                      rebuild = || { virtual_refresh_keyed(node_id, items, key, build, row_h) })
+    let c = Component(n, style = Style(grow = 1), role = "list", rowHeight = row_h, rebuild = || {
+        virtual_refresh_keyed(node_id, items, key, build, row_h)
+    })
     // A windowed list reads its own box and scroll, and its bound signals.
     arena.host_geo(node_id)
     return c
@@ -1437,18 +1476,24 @@ fn VirtualListKeyed<T>(items: Signal<[]T>, row_h: int, key: fn(T) -> string,
 /// Windowed list with per-row heights. `heights[i]` is row `i` in points
 /// (0 / missing uses `fallback`). Spacers use the prefix sum so `scroll_max`
 /// matches the real list.
-fn VirtualListVar<T>(items: Signal<[]T>, heights: Signal<[]int>, fallback: int,
-                     build: fn(int, T) -> Node) -> Node {
+fn VirtualListVar<T>(
+    items: Signal<[]T>,
+    heights: Signal<[]int>,
+    fallback: int,
+    build: fn(int, T) -> Node
+) -> Node {
     let n = raw_scroll()
     let node_id = n.id
     arena.bind_host(items.id, node_id)
     arena.bind_host(heights.id, node_id)
     virt_refresh_var(node_id, items, build, fallback, heights)
-    let c = Component(n,
-                      style = Style(grow = 1),
-                      role = "list",
-                      rowHeight = fallback,
-                      rebuild = || { virt_refresh_var(node_id, items, build, fallback, heights) })
+    let c = Component(
+        n,
+        style = Style(grow = 1),
+        role = "list",
+        rowHeight = fallback,
+        rebuild = || { virt_refresh_var(node_id, items, build, fallback, heights) },
+    )
     // A windowed list reads its own box and scroll, and its bound signals.
     arena.host_geo(node_id)
     return c
@@ -1568,7 +1613,6 @@ fn palette_role(p: int, role: int, light: int, dark: int) -> int {
 fn measured_height(n: Node) -> int {
     return nodes.box[n.id].h
 }
-
 
 /// The density signal a `Scope(density = ...)` sets for the node whose style
 /// is running (or the node being built), or 0 outside any scope.

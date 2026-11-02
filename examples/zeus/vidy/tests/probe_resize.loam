@@ -23,7 +23,9 @@ fn frame(rt: Node, w: int, h: int) {
             right = e
         }
     }
-    fmt.println("window {{w}}x{{h}} stage {{r.x}},{{r.y}} {{r.w}}x{{r.h}} picture {{player.box_w()}}x{{player.box_h()}} root {{zeus.node_height(rt.id)}} tall, scroll_max {{zeus.node_scroll_max(rt.id)}} right_edge {{right}}")
+    fmt.println(
+        "window {{w}}x{{h}} stage {{r.x}},{{r.y}} {{r.w}}x{{r.h}} picture {{player.box_w()}}x{{player.box_h()}} root {{zeus.node_height(rt.id)}} tall, scroll_max {{zeus.node_scroll_max(rt.id)}} right_edge {{right}}",
+    )
 }
 
 fn main() {

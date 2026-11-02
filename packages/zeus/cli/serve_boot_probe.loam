@@ -66,7 +66,11 @@ fn exchange(port: int, method: string, path: string, ctype: string, body: string
 /// Where a response's headers end, or `-1`.
 fn headers_len(resp: string) -> int {
     for i in 0..resp.len {
-        if i + 3 < resp.len && resp[i] == 13 && resp[i + 1] == 10 && resp[i + 2] == 13 && resp[i + 3] == 10 {
+        if i + 3 < resp.len &&
+            resp[i] == 13 &&
+            resp[i + 1] == 10 &&
+            resp[i + 2] == 13 &&
+            resp[i + 3] == 10 {
             return i + 4
         }
     }
@@ -187,11 +191,17 @@ fn main() {
     let blog = exchange(port, "GET", "/blog", "", "")
     check(status_of(blog) == 200, "a route serves a shell")
     check(zeli.contains_str(body_of(blog), "</body>"), "and it is a shell")
-    check(zeli.contains_str(body_of(blog), zeli.live_path()), "the shell subscribes to the live channel")
+    check(
+        zeli.contains_str(body_of(blog), zeli.live_path()),
+        "the shell subscribes to the live channel",
+    )
 
     /* 2. The module is served with the type a browser insists on. */
     let wasm = exchange(port, "GET", "/app.wasm", "", "")
-    check(header_of(wasm, "content-type") == "application/wasm", "the wasm module has its content type")
+    check(
+        header_of(wasm, "content-type") == "application/wasm",
+        "the wasm module has its content type",
+    )
 
     /* 3. Subscribe before the edit, so the frame that follows is a *push* and not
           the revision the page booted into. */
@@ -213,11 +223,17 @@ fn main() {
 
     /* 6. The proxy forwards a gRPC-Web call and relays the reply as framed. */
     let posted = exchange(port, "POST", "/Blog/Posts", "application/grpc-web+proto", "x")
-    check(zeli.contains_str(body_of(posted), "GRPCWEB-BODY"), "the proxy relays the backend's reply")
+    check(
+        zeli.contains_str(body_of(posted), "GRPCWEB-BODY"),
+        "the proxy relays the backend's reply",
+    )
     let seen = sys.read_file(backend_log)
     check(zeli.contains_str(seen, "x-grpc-web: 1"), "the upstream call carries the grpc-web header")
     check(zeli.contains_str(seen, "POST /Blog/Posts"), "the upstream call keeps the path")
-    check(zeli.contains_str(seen, "Content-Type: application/grpc-web+proto"), "the upstream call keeps the content type")
+    check(
+        zeli.contains_str(seen, "Content-Type: application/grpc-web+proto"),
+        "the upstream call keeps the content type",
+    )
 
     /* 7. A backend that says nothing becomes a 502, so a missing one shows up as
           a failure rather than as silence. */

@@ -9,8 +9,11 @@ import "std:kv"
 
 fn ButtonScale() -> Node {
     return Column(spacing.SECTION) {
-        zui.SectionHeader("Actions", "Buttons",
-                           "The six variants across three sizes. Primary is the neutral ink fill; it inverts with appearance.")
+        zui.SectionHeader(
+            "Actions",
+            "Buttons",
+            "The six variants across three sizes. Primary is the neutral ink fill; it inverts with appearance.",
+        )
         zui.Card() {
             zui.Overline("Primary · Secondary · Outline · Ghost · Destructive · Link")
             zui.Note("small")
@@ -84,15 +87,29 @@ fn DisplayRow() -> Node {
 
 fn Field(name: Signal<string>, note: Signal<string>, st: Store) -> Node {
     return Column(spacing.SECTION) {
-        zui.SectionHeader("Forms", "Input",
-                           "A label + input pair: 36px tall, rounded, hairline border.")
+        zui.SectionHeader(
+            "Forms",
+            "Input",
+            "A label + input pair: 36px tall, rounded, hairline border.",
+        )
         zui.Card() {
             zui.Field("Name", name, "Your name")
-            zeus.Text(if name.get().len < 3 { "Name must be at least 3 characters." } else { "" },
-                      style = Style(font = spacing.FONT_CONTROL, color = zeus.danger()))
-            zui.TextArea(note, "Draft — saved as you type", on_edit = fn() => kv.set(st, "draft", note.get()))
+            zeus.Text(
+                if name.get().len < 3 { "Name must be at least 3 characters." } else { "" },
+                style = Style(font = spacing.FONT_CONTROL, color = zeus.danger()),
+            )
+            zui.TextArea(
+                note,
+                "Draft — saved as you type",
+                on_edit = fn() => kv.set(st, "draft", note.get()),
+            )
             zui.Note("{{note.get().len}} chars · std:kv under Application Support")
-            zui.Button("Submit", look = zeus.Look.Solid, size = zeus.Size.Md, on_click = fn() => name.set(name.get()))
+            zui.Button(
+                "Submit",
+                look = zeus.Look.Solid,
+                size = zeus.Size.Md,
+                on_click = fn() => name.set(name.get()),
+            )
         }
     }
 }
@@ -102,8 +119,11 @@ fn DateSection() -> Node {
     let month = zeus.signal(10)
     let day = zeus.signal(17)
     return Column(spacing.SECTION) {
-        zui.SectionHeader("Forms", "Date picker",
-                           "Input-like trigger with a calendar icon; the sheet floats above the page, so the scroller cannot clip it.")
+        zui.SectionHeader(
+            "Forms",
+            "Date picker",
+            "Input-like trigger with a calendar icon; the sheet floats above the page, so the scroller cannot clip it.",
+        )
         zui.Card() {
             zui.DatePicker(year, month, day)
         }
@@ -116,8 +136,11 @@ fn Choice() -> Node {
     let mode = zeus.signal(1)
     let group = zeus.signal(0)
     return Column(spacing.SECTION) {
-        zui.SectionHeader("Choice", "Tabs, select, radio, toggle",
-                           "A muted tray for tabs, a dropdown for sizes, radio dots for one pick, and an accent-pressed toggle group.")
+        zui.SectionHeader(
+            "Choice",
+            "Tabs, select, radio, toggle",
+            "A muted tray for tabs, a dropdown for sizes, radio dots for one pick, and an accent-pressed toggle group.",
+        )
         zui.Card() {
             zui.Note("tabs — active trigger is the card surface")
             zui.Tabs(tab, []string { "One", "Two", "Three" })
@@ -139,12 +162,18 @@ fn Controls() -> Node {
     let notes = zeus.signal(false)
     let vol = zeus.signal(42)
     return Column(spacing.SECTION) {
-        zui.SectionHeader("Controls", "Switch, check, slider, toggle",
-                           "The switch eases onto its track; drag the slider thumb or use the arrow keys. Progress echoes the value.")
+        zui.SectionHeader(
+            "Controls",
+            "Switch, check, slider, toggle",
+            "The switch eases onto its track; drag the slider thumb or use the arrow keys. Progress echoes the value.",
+        )
         zui.Card() {
             zui.Row(Space.Md) {
                 zui.Switch(on)
-                zeus.Text(if on.get() { "On" } else { "Off" }, style = Style(font = spacing.FONT_BODY, color = zeus.ink()))
+                zeus.Text(
+                    if on.get() { "On" } else { "Off" },
+                    style = Style(font = spacing.FONT_BODY, color = zeus.ink()),
+                )
                 zui.Grow()
                 zui.Checkbox("Notify me", notes)
             }
@@ -180,13 +209,21 @@ fn Upload() -> Node {
     let pw = zeus.signal(0)
     let ph = zeus.signal(0)
     return Column(spacing.SECTION) {
-        zui.SectionHeader("Media", "Upload",
-                           "Choose a PNG, JPEG, WebP, or GIF. The preview keeps its aspect and auto-sizes to the device width.")
+        zui.SectionHeader(
+            "Media",
+            "Upload",
+            "Choose a PNG, JPEG, WebP, or GIF. The preview keeps its aspect and auto-sizes to the device width.",
+        )
         zui.Card() {
             zui.Row(Space.Sm) {
-                zui.Button("Choose image", look = zeus.Look.Solid, size = zeus.Size.Md, on_click = fn() {
-                    zui.pick_image(photo, pw, ph)
-                })
+                zui.Button(
+                    "Choose image",
+                    look = zeus.Look.Solid,
+                    size = zeus.Size.Md,
+                    on_click = fn() {
+                        zui.pick_image(photo, pw, ph)
+                    },
+                )
                 zui.Button("Clear", look = zeus.Look.Ghost, size = zeus.Size.Md, on_click = fn() {
                     photo.set("")
                     pw.set(0)
@@ -195,14 +232,18 @@ fn Upload() -> Node {
             }
             // `pw` is 0 until `pick_image` reports a real width.
             zui.Show(when = pw.get() == 0) {
-                zeus.Box(
-                    style = Style(height = px(200),
-                                  direction = Direction.Row,
-                                  align = Align.Center,
-                                  justify = Align.Center,
-                                  radius = 8,
-                                  background = colors.raised())) {
-                    zeus.Text("No image yet", style = Style(font = spacing.FONT_CAPTION, color = colors.mute()))
+                zeus.Box(style = Style(
+                    height = px(200),
+                    direction = Direction.Row,
+                    align = Align.Center,
+                    justify = Align.Center,
+                    radius = 8,
+                    background = colors.raised(),
+                )) {
+                    zeus.Text(
+                        "No image yet",
+                        style = Style(font = spacing.FONT_CAPTION, color = colors.mute()),
+                    )
                 }
             }
             // No `max_width` / `aspect` wiring: `Image` reads the decoded source
@@ -219,10 +260,10 @@ fn Data() -> Node {
     return Column(spacing.SECTION) {
         zui.SectionTitle("Data", "Table and pagination")
         zui.Card() {
-            zui.TableHead([]string {"Name", "Role", "Status"})
-            zui.TableRow([]string {"Ada", "Operator", "Active"})
-            zui.TableRow([]string {"Bea", "Editor", "Away"})
-            zui.TableRow([]string {"Cal", "Viewer", "Active"})
+            zui.TableHead([]string { "Name", "Role", "Status" })
+            zui.TableRow([]string { "Ada", "Operator", "Active" })
+            zui.TableRow([]string { "Bea", "Editor", "Away" })
+            zui.TableRow([]string { "Cal", "Viewer", "Active" })
         }
         zui.Note("Pagination — {{page.get()}} / 5 · ghost pages, outline current")
         zui.Pagination(page, 5)

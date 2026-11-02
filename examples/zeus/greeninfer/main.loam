@@ -88,7 +88,13 @@ fn main() {
         let local_model = trim_tail(watcher.gi_read_file(MODEL_FILE))
         if local_model.len > 0 {
             p = agent.ollama_pipeline(local_model)
-            fmt.println("local model", local_model, "from", MODEL_FILE, "- ollama on 127.0.0.1:11434")
+            fmt.println(
+                "local model",
+                local_model,
+                "from",
+                MODEL_FILE,
+                "- ollama on 127.0.0.1:11434",
+            )
         } else {
             fmt.println("no key/model files - answers are the offline context summary")
         }
@@ -115,7 +121,15 @@ fn main() {
         }
 
         let ans = agent.query_agent(p, q, TOPK)
-        fmt.println("agent (", ans.us, "us,", ans.context_chunks, "chunks, remote", ans.remote, "):")
+        fmt.println(
+            "agent (",
+            ans.us,
+            "us,",
+            ans.context_chunks,
+            "chunks, remote",
+            ans.remote,
+            "):",
+        )
         fmt.println(ans.text)
         qi = qi + 1
     }

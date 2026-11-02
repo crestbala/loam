@@ -146,9 +146,18 @@ fn scale_at(sc: Scale, step: int) -> string {
 /// card; the page sits on step 2 (`#f7f6f3`). The hairline (`rule` = 6) is
 /// `#e4e2dc`. Text is step 12 (`#1f1d1a`).
 const NEUTRAL_L: Scale = Scale(
-    s1 = "#ffffff", s2 = "#f7f6f3", s3 = "#f1efe9", s4 = "#ece9e2",
-    s5 = "#e7e4dc", s6 = "#e4e2dc", s7 = "#cfcabf", s8 = "#a8a294",
-    s9 = "#7d786e", s10 = "#5c574f", s11 = "#3d3933", s12 = "#1f1d1a"
+    s1 = "#ffffff",
+    s2 = "#f7f6f3",
+    s3 = "#f1efe9",
+    s4 = "#ece9e2",
+    s5 = "#e7e4dc",
+    s6 = "#e4e2dc",
+    s7 = "#cfcabf",
+    s8 = "#a8a294",
+    s9 = "#7d786e",
+    s10 = "#5c574f",
+    s11 = "#3d3933",
+    s12 = "#1f1d1a",
 )
 
 /// Neutral ramp, dark. Warm stone, not the light ramp reversed: steps 1–5
@@ -156,9 +165,18 @@ const NEUTRAL_L: Scale = Scale(
 /// as text. The page is step 1 (`#121110`), cards are step 3 (`#1b1a18`),
 /// text is step 12 (`#ecebe7`).
 const NEUTRAL_D: Scale = Scale(
-    s1 = "#121110", s2 = "#171614", s3 = "#1b1a18", s4 = "#242220",
-    s5 = "#2e2b27", s6 = "#3c3833", s7 = "#564f48", s8 = "#736c63",
-    s9 = "#948c82", s10 = "#b7aea3", s11 = "#d4cdc4", s12 = "#ecebe7"
+    s1 = "#121110",
+    s2 = "#171614",
+    s3 = "#1b1a18",
+    s4 = "#242220",
+    s5 = "#2e2b27",
+    s6 = "#3c3833",
+    s7 = "#564f48",
+    s8 = "#736c63",
+    s9 = "#948c82",
+    s10 = "#b7aea3",
+    s11 = "#d4cdc4",
+    s12 = "#ecebe7",
 )
 
 // --- accent ramps ---------------------------------------------------------
@@ -172,77 +190,185 @@ const NEUTRAL_D: Scale = Scale(
 /// button is a solid rectangle of the page's own ink. Step 11 clears AA on
 /// steps 1–3; `best_on` picks the opposite ink for step 9.
 const ACCENT_INK_L: Scale = Scale(
-    s1 = "#fafafa", s2 = "#f5f5f5", s3 = "#f0f0f0", s4 = "#e6e6e6",
-    s5 = "#d4d4d4", s6 = "#a3a3a3", s7 = "#737373", s8 = "#404040",
-    s9 = "#171717", s10 = "#0a0a0a", s11 = "#2e2e2e", s12 = "#0a0a0a"
+    s1 = "#fafafa",
+    s2 = "#f5f5f5",
+    s3 = "#f0f0f0",
+    s4 = "#e6e6e6",
+    s5 = "#d4d4d4",
+    s6 = "#a3a3a3",
+    s7 = "#737373",
+    s8 = "#404040",
+    s9 = "#171717",
+    s10 = "#0a0a0a",
+    s11 = "#2e2e2e",
+    s12 = "#0a0a0a",
 )
 const ACCENT_INK_D: Scale = Scale(
-    s1 = "#0c0c0c", s2 = "#121212", s3 = "#1a1a1a", s4 = "#222222",
-    s5 = "#2c2c2c", s6 = "#3a3a3a", s7 = "#525252", s8 = "#737373",
-    s9 = "#f5f5f5", s10 = "#ffffff", s11 = "#e8e8e8", s12 = "#fafafa"
+    s1 = "#0c0c0c",
+    s2 = "#121212",
+    s3 = "#1a1a1a",
+    s4 = "#222222",
+    s5 = "#2c2c2c",
+    s6 = "#3a3a3a",
+    s7 = "#525252",
+    s8 = "#737373",
+    s9 = "#f5f5f5",
+    s10 = "#ffffff",
+    s11 = "#e8e8e8",
+    s12 = "#fafafa",
 )
 
 /// Graphite — a mid charcoal. Lighter than ink in light (`#404040`), softer
 /// than ink in dark (`#d4d4d4`). Step 11 still clears AA on steps 1–3.
 const ACCENT_GRAPHITE_L: Scale = Scale(
-    s1 = "#fafafa", s2 = "#f5f5f5", s3 = "#ececec", s4 = "#e2e2e2",
-    s5 = "#d0d0d0", s6 = "#b4b4b4", s7 = "#8f8f8f", s8 = "#5c5c5c",
-    s9 = "#404040", s10 = "#303030", s11 = "#262626", s12 = "#141414"
+    s1 = "#fafafa",
+    s2 = "#f5f5f5",
+    s3 = "#ececec",
+    s4 = "#e2e2e2",
+    s5 = "#d0d0d0",
+    s6 = "#b4b4b4",
+    s7 = "#8f8f8f",
+    s8 = "#5c5c5c",
+    s9 = "#404040",
+    s10 = "#303030",
+    s11 = "#262626",
+    s12 = "#141414",
 )
 const ACCENT_GRAPHITE_D: Scale = Scale(
-    s1 = "#0e0e0e", s2 = "#141414", s3 = "#222222", s4 = "#2a2a2a",
-    s5 = "#343434", s6 = "#424242", s7 = "#555555", s8 = "#737373",
-    s9 = "#d4d4d4", s10 = "#e2e2e2", s11 = "#ececec", s12 = "#f7f7f7"
+    s1 = "#0e0e0e",
+    s2 = "#141414",
+    s3 = "#222222",
+    s4 = "#2a2a2a",
+    s5 = "#343434",
+    s6 = "#424242",
+    s7 = "#555555",
+    s8 = "#737373",
+    s9 = "#d4d4d4",
+    s10 = "#e2e2e2",
+    s11 = "#ececec",
+    s12 = "#f7f7f7",
 )
 
 /// Stone — the lightest solid in light (`#525252`) and the darkest solid in
 /// dark (`#b0b0b0`). `best_on` still clears the component contrast bar.
 const ACCENT_STONE_L: Scale = Scale(
-    s1 = "#fafafa", s2 = "#f4f4f4", s3 = "#e4e4e4", s4 = "#d6d6d6",
-    s5 = "#c4c4c4", s6 = "#a8a8a8", s7 = "#8a8a8a", s8 = "#6a6a6a",
-    s9 = "#525252", s10 = "#404040", s11 = "#333333", s12 = "#1a1a1a"
+    s1 = "#fafafa",
+    s2 = "#f4f4f4",
+    s3 = "#e4e4e4",
+    s4 = "#d6d6d6",
+    s5 = "#c4c4c4",
+    s6 = "#a8a8a8",
+    s7 = "#8a8a8a",
+    s8 = "#6a6a6a",
+    s9 = "#525252",
+    s10 = "#404040",
+    s11 = "#333333",
+    s12 = "#1a1a1a",
 )
 const ACCENT_STONE_D: Scale = Scale(
-    s1 = "#101010", s2 = "#181818", s3 = "#2c2c2c", s4 = "#363636",
-    s5 = "#424242", s6 = "#525252", s7 = "#666666", s8 = "#808080",
-    s9 = "#b0b0b0", s10 = "#c4c4c4", s11 = "#e0e0e0", s12 = "#f5f5f5"
+    s1 = "#101010",
+    s2 = "#181818",
+    s3 = "#2c2c2c",
+    s4 = "#363636",
+    s5 = "#424242",
+    s6 = "#525252",
+    s7 = "#666666",
+    s8 = "#808080",
+    s9 = "#b0b0b0",
+    s10 = "#c4c4c4",
+    s11 = "#e0e0e0",
+    s12 = "#f5f5f5",
 )
 
 /// Ocean — a lake blue. Step 9 is the solid; step 11 clears AA on steps 1–3.
 const ACCENT_OCEAN_L: Scale = Scale(
-    s1 = "#f5f9fc", s2 = "#ecf3f9", s3 = "#e0ecf5", s4 = "#cfe2f0",
-    s5 = "#b2d0e6", s6 = "#91bbdc", s7 = "#6aa4cf", s8 = "#3f89c1",
-    s9 = "#0f6cb2", s10 = "#0c568d", s11 = "#0c456e", s12 = "#072c48"
+    s1 = "#f5f9fc",
+    s2 = "#ecf3f9",
+    s3 = "#e0ecf5",
+    s4 = "#cfe2f0",
+    s5 = "#b2d0e6",
+    s6 = "#91bbdc",
+    s7 = "#6aa4cf",
+    s8 = "#3f89c1",
+    s9 = "#0f6cb2",
+    s10 = "#0c568d",
+    s11 = "#0c456e",
+    s12 = "#072c48",
 )
 const ACCENT_OCEAN_D: Scale = Scale(
-    s1 = "#1a2126", s2 = "#1e2a33", s3 = "#243744", s4 = "#2c4759",
-    s5 = "#355a73", s6 = "#3e6d8d", s7 = "#4983ac", s8 = "#78bdec",
-    s9 = "#5eb0e8", s10 = "#82c2ee", s11 = "#c5e4fa", s12 = "#d9edfc"
+    s1 = "#1a2126",
+    s2 = "#1e2a33",
+    s3 = "#243744",
+    s4 = "#2c4759",
+    s5 = "#355a73",
+    s6 = "#3e6d8d",
+    s7 = "#4983ac",
+    s8 = "#78bdec",
+    s9 = "#5eb0e8",
+    s10 = "#82c2ee",
+    s11 = "#c5e4fa",
+    s12 = "#d9edfc",
 )
 
 /// Forest — a leaf green. Step 9 is the solid; step 11 clears AA on steps 1–3.
 const ACCENT_FOREST_L: Scale = Scale(
-    s1 = "#f6faf7", s2 = "#edf4ef", s3 = "#e1eee5", s4 = "#d1e4d6",
-    s5 = "#b6d4be", s6 = "#96c2a2", s7 = "#72ad81", s8 = "#49955d",
-    s9 = "#1b7a34", s10 = "#16612a", s11 = "#14562a", s12 = "#0c3318"
+    s1 = "#f6faf7",
+    s2 = "#edf4ef",
+    s3 = "#e1eee5",
+    s4 = "#d1e4d6",
+    s5 = "#b6d4be",
+    s6 = "#96c2a2",
+    s7 = "#72ad81",
+    s8 = "#49955d",
+    s9 = "#1b7a34",
+    s10 = "#16612a",
+    s11 = "#14562a",
+    s12 = "#0c3318",
 )
 const ACCENT_FOREST_D: Scale = Scale(
-    s1 = "#1a221a", s2 = "#1e2d20", s3 = "#243b28", s4 = "#2c4c32",
-    s5 = "#34613e", s6 = "#3e754a", s7 = "#488e58", s8 = "#78ca8c",
-    s9 = "#5dbe74", s10 = "#82d095", s11 = "#c8f0d2", s12 = "#dbf5e2"
+    s1 = "#1a221a",
+    s2 = "#1e2d20",
+    s3 = "#243b28",
+    s4 = "#2c4c32",
+    s5 = "#34613e",
+    s6 = "#3e754a",
+    s7 = "#488e58",
+    s8 = "#78ca8c",
+    s9 = "#5dbe74",
+    s10 = "#82d095",
+    s11 = "#c8f0d2",
+    s12 = "#dbf5e2",
 )
 
 /// Terracotta — a fired-earth red. Step 9 is the solid; step 11 clears AA
 /// on steps 1–3.
 const ACCENT_TERRA_L: Scale = Scale(
-    s1 = "#fcf7f6", s2 = "#f9f0ed", s3 = "#f6e7e2", s4 = "#f1d9d2",
-    s5 = "#e8c3b7", s6 = "#dea998", s7 = "#d38a74", s8 = "#c6694c",
-    s9 = "#b8431f", s10 = "#983618", s11 = "#8a3016", s12 = "#5c1e0c"
+    s1 = "#fcf7f6",
+    s2 = "#f9f0ed",
+    s3 = "#f6e7e2",
+    s4 = "#f1d9d2",
+    s5 = "#e8c3b7",
+    s6 = "#dea998",
+    s7 = "#d38a74",
+    s8 = "#c6694c",
+    s9 = "#b8431f",
+    s10 = "#983618",
+    s11 = "#8a3016",
+    s12 = "#5c1e0c",
 )
 const ACCENT_TERRA_D: Scale = Scale(
-    s1 = "#281d18", s2 = "#36241d", s3 = "#472e24", s4 = "#5d3a2c",
-    s5 = "#784936", s6 = "#935740", s7 = "#b2684b", s8 = "#f49c7a",
-    s9 = "#f08a62", s10 = "#f5a384", s11 = "#ffd2c2", s12 = "#ffe2d7"
+    s1 = "#281d18",
+    s2 = "#36241d",
+    s3 = "#472e24",
+    s4 = "#5d3a2c",
+    s5 = "#784936",
+    s6 = "#935740",
+    s7 = "#b2684b",
+    s8 = "#f49c7a",
+    s9 = "#f08a62",
+    s10 = "#f5a384",
+    s11 = "#ffd2c2",
+    s12 = "#ffe2d7",
 )
 
 /// Accent choices, in picker order. `set_accent` takes one of these.
@@ -301,22 +427,62 @@ struct Tier {
     ink: string,
 }
 
-const OK_L: Tier = Tier(bg = "#e7f5e4", line = "#a8d4a4", fill = "#1c7a34",
-                        fill_hover = "#17692c", ink = "#14632a")
-const OK_D: Tier = Tier(bg = "#132218", line = "#2d5a38", fill = "#1c7a34",
-                        fill_hover = "#17692c", ink = "#8fd9a0")
-const WARN_L: Tier = Tier(bg = "#fbf4df", line = "#ead7a0", fill = "#e6b422",
-                          fill_hover = "#d4a41a", ink = "#7a4808")
-const WARN_D: Tier = Tier(bg = "#2a2212", line = "#6a5420", fill = "#e6b422",
-                          fill_hover = "#d4a41a", ink = "#f0d48a")
-const DANGER_L: Tier = Tier(bg = "#fbecee", line = "#f0c4c6", fill = "#d1252e",
-                            fill_hover = "#b81f28", ink = "#9b1c24")
-const DANGER_D: Tier = Tier(bg = "#2a1416", line = "#6a3034", fill = "#d1252e",
-                            fill_hover = "#b81f28", ink = "#f3b4b4")
-const INFO_L: Tier = Tier(bg = "#e7f2f8", line = "#c5dced", fill = "#1a6fa5",
-                          fill_hover = "#155e8e", ink = "#0f5680")
-const INFO_D: Tier = Tier(bg = "#121c24", line = "#2a4558", fill = "#1a6fa5",
-                          fill_hover = "#155e8e", ink = "#b7d7ee")
+const OK_L: Tier = Tier(
+    bg = "#e7f5e4",
+    line = "#a8d4a4",
+    fill = "#1c7a34",
+    fill_hover = "#17692c",
+    ink = "#14632a",
+)
+const OK_D: Tier = Tier(
+    bg = "#132218",
+    line = "#2d5a38",
+    fill = "#1c7a34",
+    fill_hover = "#17692c",
+    ink = "#8fd9a0",
+)
+const WARN_L: Tier = Tier(
+    bg = "#fbf4df",
+    line = "#ead7a0",
+    fill = "#e6b422",
+    fill_hover = "#d4a41a",
+    ink = "#7a4808",
+)
+const WARN_D: Tier = Tier(
+    bg = "#2a2212",
+    line = "#6a5420",
+    fill = "#e6b422",
+    fill_hover = "#d4a41a",
+    ink = "#f0d48a",
+)
+const DANGER_L: Tier = Tier(
+    bg = "#fbecee",
+    line = "#f0c4c6",
+    fill = "#d1252e",
+    fill_hover = "#b81f28",
+    ink = "#9b1c24",
+)
+const DANGER_D: Tier = Tier(
+    bg = "#2a1416",
+    line = "#6a3034",
+    fill = "#d1252e",
+    fill_hover = "#b81f28",
+    ink = "#f3b4b4",
+)
+const INFO_L: Tier = Tier(
+    bg = "#e7f2f8",
+    line = "#c5dced",
+    fill = "#1a6fa5",
+    fill_hover = "#155e8e",
+    ink = "#0f5680",
+)
+const INFO_D: Tier = Tier(
+    bg = "#121c24",
+    line = "#2a4558",
+    fill = "#1a6fa5",
+    fill_hover = "#155e8e",
+    ink = "#b7d7ee",
+)
 
 // --- contrast -------------------------------------------------------------
 // WCAG relative luminance, so a picker can choose an ink that actually
@@ -440,8 +606,11 @@ fn set_accent(which: int) {
 
 fn register_scale(base: int, light: Scale, dark: Scale) {
     for i in 0..12 {
-        theme(base + i, parse_hex_color(scale_at(light, i + 1)),
-              parse_hex_color(scale_at(dark, i + 1)))
+        theme(
+            base + i,
+            parse_hex_color(scale_at(light, i + 1)),
+            parse_hex_color(scale_at(dark, i + 1)),
+        )
     }
 }
 
@@ -471,8 +640,12 @@ fn accent_palette(which: int) -> int {
     let ad = accent_scale_dark(which)
     let p = palette_new()
     for i in 0..12 {
-        palette_role(p, ROLE.A1 + i, parse_hex_color(scale_at(al, i + 1)),
-                     parse_hex_color(scale_at(ad, i + 1)))
+        palette_role(
+            p,
+            ROLE.A1 + i,
+            parse_hex_color(scale_at(al, i + 1)),
+            parse_hex_color(scale_at(ad, i + 1)),
+        )
     }
     let on_l = best_on(parse_hex_color(al.s9))
     let on_d = best_on(parse_hex_color(ad.s9))
@@ -490,8 +663,7 @@ fn register_accent() {
     register_scale(ROLE.A1, al, ad)
     // Text on the accent's solid step, chosen by contrast rather than
     // assumed. A light solid gets near-black ink; a dark solid gets white.
-    theme(ROLE.OnAccent, best_on(parse_hex_color(al.s9)),
-          best_on(parse_hex_color(ad.s9)))
+    theme(ROLE.OnAccent, best_on(parse_hex_color(al.s9)), best_on(parse_hex_color(ad.s9)))
     // The flat `accent` role tracks the ramp's solid step, so every existing
     // `accent()` call site follows the picker with no change.
     theme(ROLE.Accent, parse_hex_color(al.s9), parse_hex_color(ad.s9))
@@ -588,7 +760,11 @@ fn ensure_role_colors() {
     register_tier(ROLE.InfoS3, INFO_L, INFO_D)
     theme(ROLE.OnOk, best_on(parse_hex_color(OK_L.fill)), best_on(parse_hex_color(OK_D.fill)))
     theme(ROLE.OnWarn, best_on(parse_hex_color(WARN_L.fill)), best_on(parse_hex_color(WARN_D.fill)))
-    theme(ROLE.OnDanger, best_on(parse_hex_color(DANGER_L.fill)), best_on(parse_hex_color(DANGER_D.fill)))
+    theme(
+        ROLE.OnDanger,
+        best_on(parse_hex_color(DANGER_L.fill)),
+        best_on(parse_hex_color(DANGER_D.fill)),
+    )
     theme(ROLE.OnInfo, best_on(parse_hex_color(INFO_L.fill)), best_on(parse_hex_color(INFO_D.fill)))
     // Shadows are true black in both appearances. A tinted shadow reads as a
     // second colour. Themed surfaces stay flat; a caller can still set elevation.
@@ -795,7 +971,7 @@ const LIGHT: Palette = Palette(
     fill2 = "#e1eee5",
     fill3 = "#fbf4df",
     fill4 = "#fbecee",
-    fill5 = "#f6e7e2"
+    fill5 = "#f6e7e2",
 )
 
 /// Dark chrome. Same split as `LIGHT`: the neutral ramp is what paints,
@@ -834,7 +1010,7 @@ const DARK: Palette = Palette(
     fill2 = "#1e2d20",
     fill3 = "#2a2212",
     fill4 = "#2a1416",
-    fill5 = "#36241d"
+    fill5 = "#36241d",
 )
 
 fn empty_view() -> Node {
@@ -885,4 +1061,3 @@ fn density() -> Signal<int> {
     }
     return signal_handle(density_sid)
 }
-

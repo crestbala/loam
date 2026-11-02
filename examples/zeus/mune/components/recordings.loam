@@ -8,76 +8,159 @@ import "../theme.loam" as theme
 import "kit.loam" as kit
 
 fn Recordings() -> Node {
-    return kit.Panel("Recordings", fn() -> string {
-        return "Songs, loops, stems, field recordings. Voices are taken out."
-    }, fn() {
-        DropZone()
-        zeus.Box(style = Style(direction = Direction.Column, gap = 8)) {
-            zeus.EachKeyed(store.paths.get(), fn(path: string) -> string { return path },
-                           fn(at: Signal<int>, path: Signal<string>) -> Node {
-                return RecordingRow(at)
-            })
-        }
-        zeus.Box(style = Style(direction = Direction.Row, gap = 8, align = Align.Center)) {
-            zui.TextInput(store.path_text, "Paste a file path", size = zeus.Size.Sm, style = Style(grow = 1))
-            zui.Button(label = "Add path", look = zeus.Look.Ghost, size = zeus.Size.Sm,
-                       on_click = fn() { store.add_typed() })
-        }
-    })
+    return kit.Panel(
+        "Recordings",
+        fn() -> string {
+            return "Songs, loops, stems, field recordings. Voices are taken out."
+        },
+        fn() {
+            DropZone()
+            zeus.Box(style = Style(direction = Direction.Column, gap = 8)) {
+                zeus.EachKeyed(store.paths.get(), fn(path: string) -> string { return path }, fn(
+                    at: Signal<int>,
+                    path: Signal<string>
+                ) -> Node {
+                    return RecordingRow(at)
+                })
+            }
+            zeus.Box(style = Style(direction = Direction.Row, gap = 8, align = Align.Center)) {
+                zui.TextInput(
+                    store.path_text,
+                    "Paste a file path",
+                    size = zeus.Size.Sm,
+                    style = Style(grow = 1),
+                )
+                zui.Button(
+                    label = "Add path",
+                    look = zeus.Look.Ghost,
+                    size = zeus.Size.Sm,
+                    on_click = fn() { store.add_typed() },
+                )
+            }
+        },
+    )
 }
 
 /// The whole zone opens Finder; a drop anywhere on the window lands here too.
 fn DropZone() -> Node {
-    return zeus.Box(style = Style(direction = Direction.Column, align = Align.Center, gap = 8,
-                                  paddingY = 20, paddingX = 16, radius = 12, background = theme.TILE,
-                                  borderWidth = 1, borderColor = theme.LINE, cursor = "pointer"),
-                    role = "button", label = "Choose recordings",
-                    on_click = fn() { store.pick() }) {
-        zeus.Box(style = Style(width = px(40), height = px(40), radius = 20, background = theme.ACCENT_SOFT,
-                               align = Align.Center, justify = Align.Center)) {
+    return zeus.Box(
+        style = Style(
+            direction = Direction.Column,
+            align = Align.Center,
+            gap = 8,
+            paddingY = 20,
+            paddingX = 16,
+            radius = 12,
+            background = theme.TILE,
+            borderWidth = 1,
+            borderColor = theme.LINE,
+            cursor = "pointer",
+        ),
+        role = "button",
+        label = "Choose recordings",
+        on_click = fn() { store.pick() },
+    ) {
+        zeus.Box(style = Style(
+            width = px(40),
+            height = px(40),
+            radius = 20,
+            background = theme.ACCENT_SOFT,
+            align = Align.Center,
+            justify = Align.Center,
+        )) {
             zui.Icon(kit.IC_UPLOAD, 20, theme.ACCENT)
         }
-        zeus.Text(fn() -> string {
-            if store.names.get().len == 0 {
-                return "Add a recording to begin."
-            }
-            return "Add more recordings"
-        }, style = Style(font = 14, color = theme.INK))
-        zeus.Text("Choose recordings in Finder, or drop audio files on the window.",
-                  style = Style(font = 12, color = theme.FAINT, wrap = true))
+        zeus.Text(
+            fn() -> string {
+                if store.names.get().len == 0 {
+                    return "Add a recording to begin."
+                }
+                return "Add more recordings"
+            },
+            style = Style(font = 14, color = theme.INK),
+        )
+        zeus.Text(
+            "Choose recordings in Finder, or drop audio files on the window.",
+            style = Style(font = 12, color = theme.FAINT, wrap = true),
+        )
     }
 }
 
 fn RecordingRow(at: Signal<int>) -> Node {
-    return zeus.Box(style = Style(direction = Direction.Row, gap = 10, align = Align.Center, paddingY = 8, paddingX = 10,
-                                  radius = 10, background = theme.TILE)) {
-        zeus.Box(style = Style(width = px(32), height = px(32), radius = 8, background = theme.TILE_HI,
-                               align = Align.Center, justify = Align.Center)) {
+    return zeus.Box(style = Style(
+        direction = Direction.Row,
+        gap = 10,
+        align = Align.Center,
+        paddingY = 8,
+        paddingX = 10,
+        radius = 10,
+        background = theme.TILE,
+    )) {
+        zeus.Box(style = Style(
+            width = px(32),
+            height = px(32),
+            radius = 8,
+            background = theme.TILE_HI,
+            align = Align.Center,
+            justify = Align.Center,
+        )) {
             zui.Icon(kit.IC_WAVE, 16, role_tint(at.get()))
         }
-        zeus.Box(style = Style(direction = Direction.Column, gap = 2, grow = 1, shrink = 1, minWidth = 0)) {
-            zeus.Text(store.name_at(at.get()), style = Style(font = 13, color = theme.INK, ellipsis = true))
-            zeus.Text(fn() -> string {
-                let d = store.detail_at(at.get())
-                if d.len == 0 {
-                    return if store.busy() { "Listening…" } else { "Not heard yet" }
-                }
-                return d
-            }, style = Style(font = 11, color = theme.FAINT, ellipsis = true))
+        zeus.Box(style = Style(
+            direction = Direction.Column,
+            gap = 2,
+            grow = 1,
+            shrink = 1,
+            minWidth = 0,
+        )) {
+            zeus.Text(
+                store.name_at(at.get()),
+                style = Style(font = 13, color = theme.INK, ellipsis = true),
+            )
+            zeus.Text(
+                fn() -> string {
+                    let d = store.detail_at(at.get())
+                    if d.len == 0 {
+                        return if store.busy() { "Listening…" } else { "Not heard yet" }
+                    }
+                    return d
+                },
+                style = Style(font = 11, color = theme.FAINT, ellipsis = true),
+            )
         }
-        zeus.Box(visible = store.role_label(at.get()).len > 0,
-                 style = Style(direction = Direction.Row, align = Align.Center, gap = 6, height = px(26),
-                               paddingY = 0, paddingX = 10, radius = 13, background = theme.TILE_HI,
-                               cursor = "pointer"),
-                 role = "button", label = "Role",
-                 on_click = fn() { store.cycle_role(at.peek()) }) {
+        zeus.Box(
+            visible = store.role_label(at.get()).len > 0,
+            style = Style(
+                direction = Direction.Row,
+                align = Align.Center,
+                gap = 6,
+                height = px(26),
+                paddingY = 0,
+                paddingX = 10,
+                radius = 13,
+                background = theme.TILE_HI,
+                cursor = "pointer",
+            ),
+            role = "button",
+            label = "Role",
+            on_click = fn() { store.cycle_role(at.peek()) },
+        ) {
             kit.Pip(role_tint(at.get()), 6)
             zeus.Text(store.role_label(at.get()), style = Style(font = 11, color = theme.MUTE))
         }
-        zeus.Box(style = Style(width = px(26), height = px(26), radius = 13, align = Align.Center,
-                               justify = Align.Center, cursor = "pointer"),
-                 role = "button", label = "Remove",
-                 on_click = fn() { store.remove_at(at.peek()) }) {
+        zeus.Box(
+            style = Style(
+                width = px(26),
+                height = px(26),
+                radius = 13,
+                align = Align.Center,
+                justify = Align.Center,
+                cursor = "pointer",
+            ),
+            role = "button",
+            label = "Remove",
+            on_click = fn() { store.remove_at(at.peek()) },
+        ) {
             zui.Icon(kit.IC_X, 14, theme.FAINT)
         }
     }

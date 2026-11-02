@@ -426,8 +426,18 @@ fn indicators_text(s: NavSeries, ack: int) -> string {
     let i = bars - 1
     let day = date.fmt_iso(s.dates[i])
     let nav = rupees(s.navs[i])
-    let sma_bit = price_bit(indicators.sma(s, 200, ack), i, "200-day average", "200-day average is not ready")
-    let ema_bit = price_bit(indicators.ema(s, 20, ack), i, "20-day exponential average", "20-day exponential average is not ready")
+    let sma_bit = price_bit(
+        indicators.sma(s, 200, ack),
+        i,
+        "200-day average",
+        "200-day average is not ready",
+    )
+    let ema_bit = price_bit(
+        indicators.ema(s, 20, ack),
+        i,
+        "20-day exponential average",
+        "20-day exponential average is not ready",
+    )
     let rsi_line = indicators.rsi(s, 14, ack)
     let mut rsi_bit = "RSI 14 is not ready"
     if i < rsi_line.ready.len && rsi_line.ready[i] == 1 {
@@ -875,7 +885,14 @@ fn empty_chart() -> PriceChart {
 /// second series is `avg`-day average read at the same bars, computed over
 /// the whole history so a window that starts late is not in warm-up again,
 /// and `zui.CHART_GAP` wherever the average is not ready.
-fn price_chart(s: NavSeries, name: string, avg: int, ack: int, from: int, marks: []int) -> PriceChart {
+fn price_chart(
+    s: NavSeries,
+    name: string,
+    avg: int,
+    ack: int,
+    from: int,
+    marks: []int
+) -> PriceChart {
     let total = series.len(s)
     let start = first_bar(s.dates, from)
     if total == 0 || start >= total {

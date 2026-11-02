@@ -13,42 +13,119 @@ import "../theme.loam" as theme
 import "kit.loam" as kit
 
 fn Sound() -> Node {
-    return kit.Panel("Sound", fn() -> string {
-        return styles.blurbs()[controls.style.get()]
-    }, fn() {
-        StyleLine()
-        kit.Heading("INSTRUMENTS")
-        zeus.Box(style = Style(direction = Direction.Column, gap = 2)) {
-            Instrument("Recordings", theme.C_REC, controls.rec_on, controls.rec_lvl, false, controls.pad_tone, []string {})
-            Instrument("Drums", theme.C_DRUMS, controls.drums_on, controls.drums_lvl, false, controls.pad_tone, []string {})
-            Instrument("Bass", theme.C_BASS, controls.bass_on, controls.bass_lvl, false, controls.pad_tone, []string {})
-            Instrument("Pad", theme.C_PAD, controls.pad_on, controls.pad_lvl, true, controls.pad_tone,
-                       synth.pad_names())
-            Instrument("Arp", theme.C_ARP, controls.arp_on, controls.arp_lvl, true, controls.arp_tone,
-                       synth.arp_names())
-            Instrument("Bells", theme.C_BELLS, controls.bells_on, controls.bells_lvl, false, controls.pad_tone, []string {})
-        }
-        kit.Heading("EFFECTS")
-        zui.Grid(config = GridConfig(columns = 2, gap = Space.Lg)) {
-            zeus.Box(style = Style(direction = Direction.Column, gap = 2, minWidth = 0)) {
-                Effect("Echo", controls.echo, false, true, controls.echo_time, sound.echo_names())
-                Effect("Reverb", controls.reverb, false, true, controls.space, sound.space_names())
-                Effect("Movement", controls.mod_amt, controls.mod_kind.get() == sound.MOD_NONE, true,
-                       controls.mod_kind, sound.mod_names())
+    return kit.Panel(
+        "Sound",
+        fn() -> string {
+            return styles.blurbs()[controls.style.get()]
+        },
+        fn() {
+            StyleLine()
+            kit.Heading("INSTRUMENTS")
+            zeus.Box(style = Style(direction = Direction.Column, gap = 2)) {
+                Instrument(
+                    "Recordings",
+                    theme.C_REC,
+                    controls.rec_on,
+                    controls.rec_lvl,
+                    false,
+                    controls.pad_tone,
+                    []string {},
+                )
+                Instrument(
+                    "Drums",
+                    theme.C_DRUMS,
+                    controls.drums_on,
+                    controls.drums_lvl,
+                    false,
+                    controls.pad_tone,
+                    []string {},
+                )
+                Instrument(
+                    "Bass",
+                    theme.C_BASS,
+                    controls.bass_on,
+                    controls.bass_lvl,
+                    false,
+                    controls.pad_tone,
+                    []string {},
+                )
+                Instrument(
+                    "Pad",
+                    theme.C_PAD,
+                    controls.pad_on,
+                    controls.pad_lvl,
+                    true,
+                    controls.pad_tone,
+                    synth.pad_names(),
+                )
+                Instrument(
+                    "Arp",
+                    theme.C_ARP,
+                    controls.arp_on,
+                    controls.arp_lvl,
+                    true,
+                    controls.arp_tone,
+                    synth.arp_names(),
+                )
+                Instrument(
+                    "Bells",
+                    theme.C_BELLS,
+                    controls.bells_on,
+                    controls.bells_lvl,
+                    false,
+                    controls.pad_tone,
+                    []string {},
+                )
             }
-            zeus.Box(style = Style(direction = Direction.Column, gap = 2, minWidth = 0)) {
-                Effect("Lo-fi", controls.lofi, false, false, controls.space, []string {})
-                Effect("Warmth", controls.warmth, false, false, controls.space, []string {})
-                Effect("Width", controls.width, false, false, controls.space, []string {})
+            kit.Heading("EFFECTS")
+            zui.Grid(config = GridConfig(columns = 2, gap = Space.Lg)) {
+                zeus.Box(style = Style(direction = Direction.Column, gap = 2, minWidth = 0)) {
+                    Effect(
+                        "Echo",
+                        controls.echo,
+                        false,
+                        true,
+                        controls.echo_time,
+                        sound.echo_names(),
+                    )
+                    Effect(
+                        "Reverb",
+                        controls.reverb,
+                        false,
+                        true,
+                        controls.space,
+                        sound.space_names(),
+                    )
+                    Effect(
+                        "Movement",
+                        controls.mod_amt,
+                        controls.mod_kind.get() == sound.MOD_NONE,
+                        true,
+                        controls.mod_kind,
+                        sound.mod_names(),
+                    )
+                }
+                zeus.Box(style = Style(direction = Direction.Column, gap = 2, minWidth = 0)) {
+                    Effect("Lo-fi", controls.lofi, false, false, controls.space, []string {})
+                    Effect("Warmth", controls.warmth, false, false, controls.space, []string {})
+                    Effect("Width", controls.width, false, false, controls.space, []string {})
+                }
             }
-        }
-        zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 10, minHeight = 32)) {
-            zui.Switch(controls.pump, size = zeus.Size.Sm, label = "Sidechain pump")
-            zeus.Text("Pump", style = Style(font = 13, color = theme.MUTE))
-            zeus.Text("Pads and bass breathe with the kick",
-                      style = Style(font = 11, color = theme.FAINT, ellipsis = true, shrink = 1))
-        }
-    })
+            zeus.Box(style = Style(
+                direction = Direction.Row,
+                align = Align.Center,
+                gap = 10,
+                minHeight = 32,
+            )) {
+                zui.Switch(controls.pump, size = zeus.Size.Sm, label = "Sidechain pump")
+                zeus.Text("Pump", style = Style(font = 13, color = theme.MUTE))
+                zeus.Text(
+                    "Pads and bass breathe with the kick",
+                    style = Style(font = 11, color = theme.FAINT, ellipsis = true, shrink = 1),
+                )
+            }
+        },
+    )
 }
 
 /// The style dropdown, and three marks for the layers it leans on. A pick
@@ -106,16 +183,42 @@ fn style_mark(s: int, k: int) -> string {
 
 /// One instrument line: its colour, name, on/off, level, and its tone
 /// dropdown when `toned`. A muted line dims but keeps its place.
-fn Instrument(name: string, color: string, on: Signal<bool>, level: Signal<int>, toned: bool, tone: Signal<int>,
-              tones: []string) -> Node {
-    return zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 10, minHeight = 32,
-                                  opacity = if on.get() { 100 } else { 55 })) {
-        zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 8, width = px(84))) {
+fn Instrument(
+    name: string,
+    color: string,
+    on: Signal<bool>,
+    level: Signal<int>,
+    toned: bool,
+    tone: Signal<int>,
+    tones: []string
+) -> Node {
+    return zeus.Box(style = Style(
+        direction = Direction.Row,
+        align = Align.Center,
+        gap = 10,
+        minHeight = 32,
+        opacity = if on.get() { 100 } else { 55 },
+    )) {
+        zeus.Box(style = Style(
+            direction = Direction.Row,
+            align = Align.Center,
+            gap = 8,
+            width = px(84),
+        )) {
             zeus.Box(style = Style(width = px(3), height = px(14), radius = 2, background = color))
-            zeus.Text(name, style = Style(font = 13, color = theme.INK, ellipsis = true, shrink = 1))
+            zeus.Text(
+                name,
+                style = Style(font = 13, color = theme.INK, ellipsis = true, shrink = 1),
+            )
         }
         zui.Switch(on, size = zeus.Size.Sm, label = name)
-        zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, grow = 1, shrink = 1, minWidth = 0)) {
+        zeus.Box(style = Style(
+            direction = Direction.Row,
+            align = Align.Center,
+            grow = 1,
+            shrink = 1,
+            minWidth = 0,
+        )) {
             kit.Slider(level, 0, 100, "{{name}} level", !on.get())
         }
         Readout(fn() -> string { return "{{level.get()}}" })
@@ -129,11 +232,32 @@ fn Instrument(name: string, color: string, on: Signal<bool>, level: Signal<int>,
 }
 
 /// One effect line: name, amount, and its dropdown when `choice`.
-fn Effect(name: string, amount: Signal<int>, off: bool, choice: bool, pick: Signal<int>, picks: []string) -> Node {
-    return zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 10, minHeight = 32,
-                                  minWidth = 0)) {
-        zeus.Text(name, style = Style(font = 13, color = theme.MUTE, width = px(66), ellipsis = true))
-        zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, grow = 1, shrink = 1, minWidth = 0)) {
+fn Effect(
+    name: string,
+    amount: Signal<int>,
+    off: bool,
+    choice: bool,
+    pick: Signal<int>,
+    picks: []string
+) -> Node {
+    return zeus.Box(style = Style(
+        direction = Direction.Row,
+        align = Align.Center,
+        gap = 10,
+        minHeight = 32,
+        minWidth = 0,
+    )) {
+        zeus.Text(
+            name,
+            style = Style(font = 13, color = theme.MUTE, width = px(66), ellipsis = true),
+        )
+        zeus.Box(style = Style(
+            direction = Direction.Row,
+            align = Align.Center,
+            grow = 1,
+            shrink = 1,
+            minWidth = 0,
+        )) {
             kit.Slider(amount, 0, 100, name, off)
         }
         Readout(fn() -> string { return kit.percent(amount.get()) })
