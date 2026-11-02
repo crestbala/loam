@@ -43,7 +43,7 @@ fn main() {
     let pro = zeus.signal(false)
     let plan = zeus.signal(0)
     let which = zeus.signal(0)
-    zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 12, padding = edges(16))) {
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 12, padding = 16)) {
         zui.MultiSelect(picked, []string { "Red", "Green", "Blue" }, placeholder = "Colors", label = "Colors")
         zui.TagInput(tags, placeholder = "Add a tag")
         zui.PinInput(code, length = 6, label = "Code")

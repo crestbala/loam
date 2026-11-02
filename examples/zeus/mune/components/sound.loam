@@ -111,7 +111,7 @@ fn Instrument(name: string, color: string, on: Signal<bool>, level: Signal<int>,
     return zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 10, minHeight = 32,
                                   opacity = if on.get() { 100 } else { 55 })) {
         zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 8, width = px(84))) {
-            zeus.Box(style = Style(width = px(3), height = px(14), radius = corners(2), background = color))
+            zeus.Box(style = Style(width = px(3), height = px(14), radius = 2, background = color))
             zeus.Text(name, style = Style(font = 13, color = theme.INK, ellipsis = true, shrink = 1))
         }
         zui.Switch(on, size = zeus.Size.Sm, label = name)
@@ -144,8 +144,8 @@ fn Effect(name: string, amount: Signal<int>, off: bool, choice: bool, pick: Sign
 }
 
 /// The value at the end of a slider, right-aligned in a fixed column.
-fn Readout(text: fn() -> string) -> Node {
+fn Readout(text: Signal<string>) -> Node {
     return zeus.Box(style = Style(direction = Direction.Row, justify = Align.End, width = px(26))) {
-        zeus.Text(text(), style = Style(font = 11, color = theme.FAINT))
+        zeus.Text(text.get(), style = Style(font = 11, color = theme.FAINT))
     }
 }

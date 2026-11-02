@@ -1,0 +1,76 @@
+// `Signal<T>` props. A call site passes a signal, a literal (lifted to
+// `signal(v)`), an expression (lifted to `computed(|| expr)`), or a closure
+// (lifted to `computed(f)`). The body reads the prop like any signal, with
+// `.get()`; inside an element prop that read is tracked, so the node follows
+// the source. Passing the signal itself on (`Tagged(label)`, `Text(label)`)
+// forwards it.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn describe(label: Signal<string>) -> string {
+    if label.get() == "" {
+        return "empty"
+    }
+    return "{{label.get()}} {{label.get().len}}"
+}
+
+fn flag(on: Signal<bool>) -> string {
+    return if on.get() { "on" } else { "off" }
+}
+
+fn Tagged(label: Signal<string>) -> Node {
+    return zeus.Box(role = "button", label = "Remove {{label.get()}}") {
+        zeus.Text(label)
+    }
+}
+
+fn Relay(label: Signal<string>) -> Node {
+    return Tagged(label)
+}
+
+struct Props {
+    title: Signal<string> = "",
+}
+
+fn titled(p: Props) -> string {
+    return "[{{p.title.get()}}]"
+}
+
+fn main() {
+    must(describe("") == "empty", "a literal lifts to a signal")
+    must(describe("ab") == "ab 2", "the lifted signal reads back")
+    must(flag(true) == "on", "a bool literal lifts")
+    must(flag(fn() -> bool { return false }) == "off", "a closure lifts to computed")
+    must(titled(Props { title: "t" }) == "[t]", "a props field lifts")
+    must(titled(Props {}) == "[]", "a default lifts")
+
+    zeus.window("signal", 200, 100)
+    let name = zeus.signal("Draft")
+    let n = zeus.signal(1)
+    zeus.root(zeus.Box(style = Style(width = px(200), height = px(100))) {
+        Tagged(name)
+        Relay("n = {{n.get()}}")
+    })
+    zeus.pump_frame()
+    must(zeus.text_visible("Draft"), "text forwards the signal")
+    must(zeus.text_visible("Remove Draft"), "label reads the signal")
+    must(zeus.text_visible("Remove n = 1"), "an expression lifts to computed")
+    name.set("Final")
+    n.set(2)
+    zeus.pump_frame()
+    must(zeus.text_visible("Final"), "text follows the signal")
+    must(zeus.text_visible("Remove Final"), "interpolated label follows the signal")
+    must(!zeus.text_visible("Remove Draft"), "old label is gone")
+    must(zeus.text_visible("Remove n = 2"), "a lifted expression follows its inputs")
+
+    fmt.println("signal prop ok")
+}

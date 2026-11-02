@@ -28,16 +28,16 @@ fn roomy() -> bool {
 
 /// The floating glass panel: seek bar over one row of controls.
 fn Panel() -> Node {
-    return zeus.Box(style = Style(position = pos_absolute(), inset = Edges(left = 0, right = 0, bottom = 0),
+    return zeus.Box(style = Style(position = pos_absolute(), left = 0, right = 0, bottom = 0,
                                   align = Align.Center,
-                                  padding = if roomy() { Edges(left = 16, right = 16, bottom = 16) }
-                                            else { Edges(left = 8, right = 8, bottom = 8) }),
+                                  paddingX = if roomy() { 16 } else { 8 },
+                                  paddingBottom = if roomy() { 16 } else { 8 }),
                     visible = player.src.get() != "" && player.controls.get(),
                     enter = Enter.Fade + Enter.Reveal) {
         zeus.Box(style = Style(direction = Direction.Column, gap = 4, width = pct(100), maxWidth = 1100,
-                               padding = Edges(top = 10, bottom = 8, left = 14, right = 14),
-                               radius = corners(18), background = GLASS, opacity = 84,
-                               border = line(1, "#2A2E38"), elevation = Elevation.Floating),
+                               paddingTop = 10, paddingBottom = 8, paddingX = 14,
+                               radius = 18, background = GLASS, opacity = 84,
+                               borderWidth = 1, borderColor = "#2A2E38", elevation = Elevation.Floating),
                  on_click = fn() { player.wake() },
                  on_hover = fn(on: bool) { player.over_panel.set(if on { 1 } else { 0 }) }) {
             SeekBar()
@@ -51,7 +51,7 @@ fn Panel() -> Node {
                 })
                 Volume()
                 zeus.Text("{{timecode.clock(player.pos.get())}} / {{timecode.clock(player.dur.get())}}",
-                          style = Style(font = 12, color = SOFT, margin = Edges(left = 10)))
+                          style = Style(font = 12, color = SOFT, marginLeft = 10))
                 zui.Grow()
                 Toggle(icons.LOOP, "Loop (R)", fn() -> bool { return player.looping.get() }, fn() { player.toggle_loop() })
                 Chip(icons.SPEED, fn() -> string { return timecode.rate_label(player.rate.get()) }, "Speed",
@@ -67,7 +67,7 @@ fn Panel() -> Node {
 
 /// A transport icon button: a 40 dp hit target with a soft hover disc.
 fn Ctl(icon: string, label: string, size: int, run: fn()) -> Node {
-    return zeus.Box(style = Style(width = px(40), height = px(40), radius = corners(20),
+    return zeus.Box(style = Style(width = px(40), height = px(40), radius = 20,
                                   align = Align.Center, justify = Align.Center, cursor = "pointer"),
                     hoverStyle = Style(background = "#FFFFFF", opacity = 12),
                     pressScale = true,
@@ -81,9 +81,9 @@ fn Ctl(icon: string, label: string, size: int, run: fn()) -> Node {
 }
 
 fn PlayPause() -> Node {
-    return zeus.Box(style = Style(width = px(44), height = px(44), radius = corners(22),
+    return zeus.Box(style = Style(width = px(44), height = px(44), radius = 22,
                                   align = Align.Center, justify = Align.Center, cursor = "pointer",
-                                  background = WHITE, margin = Edges(left = 2, right = 2)),
+                                  background = WHITE, marginX = 2),
                     hoverStyle = Style(background = "#E6E8EE"),
                     pressScale = true,
                     role = "button",
@@ -98,7 +98,7 @@ fn PlayPause() -> Node {
 
 /// -10 s / +10 s: a circular arrow with "10" inside.
 fn Skip(dir: int) -> Node {
-    return zeus.Box(style = Style(width = px(40), height = px(40), radius = corners(20),
+    return zeus.Box(style = Style(width = px(40), height = px(40), radius = 20,
                                   align = Align.Center, justify = Align.Center, cursor = "pointer"),
                     hoverStyle = Style(background = "#FFFFFF", opacity = 12),
                     pressScale = true,
@@ -106,9 +106,9 @@ fn Skip(dir: int) -> Node {
                     label = if dir < 0 { "Back 10 seconds (J)" } else { "Forward 10 seconds (L)" },
                     on_click = fn() { player.skip(dir * player.SKIP_MS) }) {
         zui.Icon(if dir < 0 { icons.BACK } else { icons.FWD }, 24, WHITE)
-        zeus.Box(style = Style(position = pos_absolute(), inset = Edges(top = 0, left = 0),
+        zeus.Box(style = Style(position = pos_absolute(), top = 0, left = 0,
                                width = px(40), height = px(40), direction = Direction.Row,
-                               align = Align.Center, justify = Align.Center, padding = Edges(top = 1))) {
+                               align = Align.Center, justify = Align.Center, paddingTop = 1)) {
             zeus.Text("10", style = Style(font = 8, color = WHITE))
         }
     }
@@ -118,7 +118,7 @@ fn Skip(dir: int) -> Node {
 fn Volume() -> Node {
     let tw = 76
     return zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 4)) {
-        zeus.Box(style = Style(width = px(40), height = px(40), radius = corners(20),
+        zeus.Box(style = Style(width = px(40), height = px(40), radius = 20,
                                align = Align.Center, justify = Align.Center, cursor = "pointer"),
                  hoverStyle = Style(background = "#FFFFFF", opacity = 12),
                  role = "button", label = "Mute (M)",
@@ -139,39 +139,39 @@ fn VolumeBar(tw: int) -> Node {
     return zeus.Box(ref = player.vol_ref,
                     style = Style(width = px(tw), height = px(24), cursor = "pointer"),
                     role = "slider", label = "Volume") {
-        zeus.Box(style = Style(position = pos_absolute(), inset = Edges(top = 10, left = 0),
-                               width = px(tw), height = px(4), radius = corners(2), background = TRACK, opacity = 22))
-        zeus.Box(style = Style(position = pos_absolute(), inset = Edges(top = 10, left = 0),
+        zeus.Box(style = Style(position = pos_absolute(), top = 10, left = 0,
+                               width = px(tw), height = px(4), radius = 2, background = TRACK, opacity = 22))
+        zeus.Box(style = Style(position = pos_absolute(), top = 10, left = 0,
                                width = px(if player.muted.get() { 0 } else { player.volume.get() * tw / 100 }),
-                               height = px(4), radius = corners(2), background = WHITE))
+                               height = px(4), radius = 2, background = WHITE))
         zeus.Box(style = Style(position = pos_absolute(),
-                               inset = Edges(top = 6, left = (if player.muted.get() { 0 } else { player.volume.get() * tw / 100 }) - 6),
-                               width = px(12), height = px(12), radius = corners(6), background = WHITE,
+                               top = 6, left = (if player.muted.get() { 0 } else { player.volume.get() * tw / 100 }) - 6,
+                               width = px(12), height = px(12), radius = 6, background = WHITE,
                                elevation = Elevation.Raised))
     }
 }
 
 /// An on / off icon button (loop).
-fn Toggle(icon: string, label: string, on: fn() -> bool, run: fn()) -> Node {
-    return zeus.Box(style = Style(width = px(40), height = px(40), radius = corners(20),
+fn Toggle(icon: string, label: string, on: Signal<bool>, run: fn()) -> Node {
+    return zeus.Box(style = Style(width = px(40), height = px(40), radius = 20,
                                   align = Align.Center, justify = Align.Center, cursor = "pointer"),
                     hoverStyle = Style(background = "#FFFFFF", opacity = 12),
                     pressScale = true,
                     role = "button", label = label,
-                    checked = on(),
+                    checked = on.get(),
                     on_click = run) {
-        zui.Icon(icon, 19, if on() { ACCENT } else { WHITE })
-        zeus.Box(visible = on(),
-                 style = Style(position = pos_absolute(), inset = Edges(bottom = 5, left = 18),
-                               width = px(4), height = px(4), radius = corners(2), background = ACCENT))
+        zui.Icon(icon, 19, if on.get() { ACCENT } else { WHITE })
+        zeus.Box(visible = on.get(),
+                 style = Style(position = pos_absolute(), bottom = 5, left = 18,
+                               width = px(4), height = px(4), radius = 2, background = ACCENT))
     }
 }
 
 /// A labelled chip that opens popover `which` (speed, aspect).
-fn Chip(icon: string, text: fn() -> string, label: string, which: int) -> Node {
+fn Chip(icon: string, text: Signal<string>, label: string, which: int) -> Node {
     return zeus.Box(style = Style(direction = Direction.Row, gap = 6, align = Align.Center, height = px(32),
-                                  padding = edges2(0, 11), radius = corners(16), cursor = "pointer",
-                                  margin = Edges(left = 2, right = 2),
+                                  paddingY = 0, paddingX = 11, radius = 16, cursor = "pointer",
+                                  marginX = 2,
                                   background = if player.menu.get() == which { "#FFFFFF" } else { "#2A2E39" },
                                   opacity = if player.menu.get() == which { 16 } else { 100 }),
                     hoverStyle = Style(background = "#353A47", opacity = 100),
@@ -179,12 +179,12 @@ fn Chip(icon: string, text: fn() -> string, label: string, which: int) -> Node {
                     role = "button", label = label,
                     on_click = fn() { player.toggle_menu(which) }) {
         zui.Icon(icon, 16, SOFT)
-        When(fn() -> bool { return roomy() }, fn() { zeus.Text(text(), style = Style(font = 12, color = WHITE)) })
+        When(fn() -> bool { return roomy() }, fn() { zeus.Text(text.get(), style = Style(font = 12, color = WHITE)) })
     }
 }
 
 fn FullBtn() -> Node {
-    return zeus.Box(style = Style(width = px(40), height = px(40), radius = corners(20),
+    return zeus.Box(style = Style(width = px(40), height = px(40), radius = 20,
                                   align = Align.Center, justify = Align.Center, cursor = "pointer"),
                     hoverStyle = Style(background = "#FFFFFF", opacity = 12),
                     pressScale = true,

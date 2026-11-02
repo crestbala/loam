@@ -32,20 +32,20 @@ fn main() {
     let tree = zeus.Box(style = Style(direction = zeus.Direction.Column)) {
         let host = zeus.Box(style = Style(width = px(200),
                                           height = px(80),
-                                          padding = Edges(top = zeus.Space.Sm, left = zeus.Space.Xs))) {
+                                          paddingTop = zeus.Space.Sm, paddingLeft = zeus.Space.Xs)) {
             let kid = zeus.Box(style = Style(width = px(10), height = px(10)))
             pad_kid = kid.id
         }
         pad_host = host.id
         let ch = zeus.Box(style = Style(width = px(80),
                                         height = px(40),
-                                        padding = Edges(top = zeus.Space.Exs, right = zeus.Space.Md, bottom = zeus.Space.Md, left = zeus.Space.Md))) {
+                                        paddingTop = zeus.Space.Exs, paddingRight = zeus.Space.Md, paddingBottom = zeus.Space.Md, paddingLeft = zeus.Space.Md)) {
             let kid = zeus.Box(style = Style(width = px(4), height = px(4)))
             cas_kid = kid.id
         }
         cas_host = ch.id
         let mh = zeus.Box(style = Style(width = px(200), height = px(40))) {
-            let kid = zeus.Box(style = Style(width = px(10), height = px(10), margin = Edges(left = zeus.Space.Sm)))
+            let kid = zeus.Box(style = Style(width = px(10), height = px(10), marginLeft = zeus.Space.Sm))
             mar_kid = kid.id
         }
         mar_host = mh.id
@@ -70,7 +70,7 @@ fn main() {
             axis_a = a.id
             axis_b = b.id
         }
-        let cp = zui.Comp(style = Style(width = px(80), height = px(30), padding = Edges(left = zeus.Space.Sm))) {
+        let cp = zui.Comp(style = Style(width = px(80), height = px(30), paddingLeft = zeus.Space.Sm)) {
             let kid = zeus.Box(style = Style(width = px(8), height = px(8)))
             comp_kid = kid.id
         }

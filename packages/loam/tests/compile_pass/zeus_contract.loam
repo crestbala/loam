@@ -2,7 +2,7 @@
 // mark and a help / error line that follows state; `Field` draws the danger
 // edge on error; `Alert` takes a `Tint` (and still a legacy `Tone`); `Card`
 // composes from `CardHeader` / `CardFooter`; `Progress` takes a label; `Tabs`
-// has an underline look whose bar sits under the picked trigger.
+// has an underline look whose 2px ink rule sits on the picked trigger's foot.
 
 import "std:fmt"
 import "std:sys"
@@ -69,30 +69,30 @@ fn main() {
     must(zeus.text_visible("Upload"), "progress label")
     must(zeus.text_visible("40%"), "progress percentage")
 
-    // Underline tabs: the bar sits under the picked trigger, at its bottom.
-    // Let the mount-time slide land before measuring.
-    let mut f = 0
-    while f < 30 {
-        zeus.engine_layout(480, 900)
-        zeus.engine_step_dt(16)
-        zeus.engine_paint()
-        f = f + 1
-    }
-    // The tab carries its label, so the lookup lands on the trigger itself.
+    // Underline tabs: the picked trigger paints a 2px ink rule on its own
+    // foot. Unpicked triggers do not. There is no separate sliding bar.
+    zeus.engine_paint()
     let two = zeus.engine_find_text("Two")
-    let tray = zeus.node_parent(two)
-    // The indicator is built after the tray and before the triggers.
-    let mut b = 0
-    let mut i = two - 1
-    while i > tray {
-        if zeus.node_parent(i) == tray && zeus.node_height(i) == 2 {
-            b = i
-        }
-        i = i - 1
-    }
-    must(b > 0, "bar inside the tray")
-    must(zeus.node_x(b) == zeus.node_x(two), "bar under the picked trigger")
-    must(zeus.node_width(b) == zeus.node_width(two), "bar spans the trigger")
-    must(zeus.node_y(b) + 2 == zeus.node_y(two) + zeus.node_height(two), "bar on the trigger's bottom edge")
+    let one = zeus.engine_find_text("One")
+    must(two > 0 && one > 0, "underline triggers")
+    must(rule_under(two), "ink rule under the picked trigger")
+    must(!rule_under(one), "unpicked trigger has no rule")
     fmt.println("contract ok")
+}
+
+/// True when a 2px fill sits on the bottom edge of `id` and spans its width.
+fn rule_under(id: int) -> bool {
+    let x = zeus.node_x(id)
+    let y = zeus.node_y(id) + zeus.node_height(id) - 2
+    let w = zeus.node_width(id)
+    let n = zeus.draw_count()
+    let mut i = 0
+    while i < n {
+        if zeus.draw_op(i) == 0 && zeus.draw_h(i) == 2 && zeus.draw_x(i) == x &&
+            zeus.draw_w(i) == w && zeus.draw_y(i) == y {
+            return true
+        }
+        i = i + 1
+    }
+    return false
 }

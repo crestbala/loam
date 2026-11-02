@@ -225,7 +225,7 @@ comfortable page, cannot be expressed.
 **Fix:** a `Theme` / `Density` provider node whose values cascade to its
 subtree, read through context rather than globals.
 
-**Status: done.** `zui.Scope(accent = ACCENT.Rose)` repaints the accent ramp
+**Status: done.** `zui.Scope(accent = ACCENT.Graphite)` repaints the accent ramp
 and the roles on it (`accent()`, `accent_soft()`, `on_accent()`, `on_ink()`)
 for the subtree. `Scope(palette = p)` takes any role table
 (`palette_new` / `palette_role`). Knobs nest independently: a dark scope inside

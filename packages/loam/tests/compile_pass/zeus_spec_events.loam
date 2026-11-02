@@ -20,7 +20,7 @@ fn CanvasWidget(status: Signal<string>) -> Node {
         on_mouse_down = fn(e: MouseEvent) => status.set("Pressed button {{e.button}} at {{e.x}}"),
         on_mouse_up = fn(e: MouseEvent) => status.set("Released mouse")
     ) {
-        zeus.Box(style = Style(direction = Direction.Column, padding = edges(16))) {
+        zeus.Box(style = Style(direction = Direction.Column, padding = 16)) {
             zeus.Text(status.get())
         }
     }

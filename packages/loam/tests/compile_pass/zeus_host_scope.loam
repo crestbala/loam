@@ -37,7 +37,7 @@ fn main() {
     zui.push_item(names, "Cy")
     let mut below_id = 0
     let mut scroll_id = 0
-    zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 4, padding = edges(10))) {
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 4, padding = 10)) {
         // Fixed card: whichever arm is mounted, the card's box holds.
         zeus.Box(style = Style(width = px(200), height = px(60), background = "#ffffff")) {
             zui.Match(tag, fn(t: int) {

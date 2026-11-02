@@ -45,7 +45,7 @@ fn main() {
     let rail = zeus.signal(true)
     let nav = zeus.signal(0)
     let shade = zeus.signal(true)
-    zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 8, padding = edges(16))) {
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 8, padding = 16)) {
         // First, so it is the first progressbar `engine_find_role` meets.
         zui.Row(Space.Sm) {
             zeus.Text("Load")

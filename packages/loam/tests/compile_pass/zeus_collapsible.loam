@@ -21,7 +21,7 @@ fn main() {
     let open = zeus.signal(false)
     let tree = zui.Page() {
         zui.Collapsible(open = open, title = "Details",
-                        style = Style(border = line(spacing.HAIRLINE, colors.rule()))) {
+                        style = Style(borderWidth = spacing.HAIRLINE, borderColor = colors.rule())) {
             zeus.Text("Hidden body", style = Style(font = spacing.FONT_BODY, color = zeus.ink()))
         }
     }

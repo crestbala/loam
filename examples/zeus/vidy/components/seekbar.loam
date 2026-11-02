@@ -23,8 +23,8 @@ fn SeekBar() -> Node {
         // Time under the pointer, riding above the bar.
         zeus.Box(style = Style(height = px(0))) {
             zeus.Box(style = Style(position = pos_absolute(),
-                                   inset = Edges(top = -30, left = player.hover_x.get() - 28),
-                                   width = px(56), height = px(22), radius = corners(6), background = "#000000",
+                                   top = -30, left = player.hover_x.get() - 28,
+                                   width = px(56), height = px(22), radius = 6, background = "#000000",
                                    opacity = 85, direction = Direction.Row, align = Align.Center, justify = Align.Center),
                      visible = player.bar_hover.get() != 0 && player.dur.get() > 0) {
                 zeus.Text(timecode.clock(player.hover_ms.get()), style = Style(font = 11, color = WHITE))
@@ -34,23 +34,23 @@ fn SeekBar() -> Node {
                  style = Style(width = pct(100), height = px(20), cursor = "pointer"),
                  role = "slider", label = "Seek") {
             zeus.Box(style = Style(position = pos_absolute(),
-                                   inset = Edges(top = if player.bar_hover.get() != 0 || player.scrubbing.get() { 7 } else { 8 }, left = 0),
+                                   top = if player.bar_hover.get() != 0 || player.scrubbing.get() { 7 } else { 8 }, left = 0,
                                    width = px(bw.get()),
                                    height = px(if player.bar_hover.get() != 0 || player.scrubbing.get() { 6 } else { 4 }),
-                                   radius = corners(3), background = TRACK, opacity = 18))
+                                   radius = 3, background = TRACK, opacity = 18))
             zeus.Box(style = Style(position = pos_absolute(),
-                                   inset = Edges(top = if player.bar_hover.get() != 0 || player.scrubbing.get() { 7 } else { 8 }, left = 0),
+                                   top = if player.bar_hover.get() != 0 || player.scrubbing.get() { 7 } else { 8 }, left = 0,
                                    width = px(player.bar_px(player.buffered.get(), bw.get())),
                                    height = px(if player.bar_hover.get() != 0 || player.scrubbing.get() { 6 } else { 4 }),
-                                   radius = corners(3), background = TRACK, opacity = 34))
+                                   radius = 3, background = TRACK, opacity = 34))
             zeus.Box(style = Style(position = pos_absolute(),
-                                   inset = Edges(top = if player.bar_hover.get() != 0 || player.scrubbing.get() { 7 } else { 8 }, left = 0),
+                                   top = if player.bar_hover.get() != 0 || player.scrubbing.get() { 7 } else { 8 }, left = 0,
                                    width = px(player.bar_px(player.pos.get(), bw.get())),
                                    height = px(if player.bar_hover.get() != 0 || player.scrubbing.get() { 6 } else { 4 }),
-                                   radius = corners(3), background = ACCENT))
+                                   radius = 3, background = ACCENT))
             zeus.Box(style = Style(position = pos_absolute(),
-                                   inset = Edges(top = 3, left = player.bar_px(player.pos.get(), bw.get()) - 7),
-                                   width = px(14), height = px(14), radius = corners(7), background = WHITE,
+                                   top = 3, left = player.bar_px(player.pos.get(), bw.get()) - 7,
+                                   width = px(14), height = px(14), radius = 7, background = WHITE,
                                    elevation = Elevation.Raised),
                      visible = player.bar_hover.get() != 0 || player.scrubbing.get())
         }

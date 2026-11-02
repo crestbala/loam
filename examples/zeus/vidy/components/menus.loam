@@ -10,31 +10,31 @@ import { WHITE, SOFT, FAINT, GLASS, ACCENT } from "../theme.loam"
 
 /// A glass list panel pinned above the control panel's right side.
 fn Popover(which: int, title: string, right: int, build: fn()) -> Node {
-    return zeus.Box(style = Style(position = pos_absolute(), inset = Edges(bottom = 118, right = right),
-                                  direction = Direction.Column, width = px(188), padding = edges(6),
-                                  radius = corners(14), background = GLASS, opacity = 94,
-                                  border = line(1, "#2C303B"), elevation = Elevation.Overlay),
+    return zeus.Box(style = Style(position = pos_absolute(), bottom = 118, right = right,
+                                  direction = Direction.Column, width = px(188), padding = 6,
+                                  radius = 14, background = GLASS, opacity = 94,
+                                  borderWidth = 1, borderColor = "#2C303B", elevation = Elevation.Overlay),
                     visible = player.menu.get() == which && player.controls.get(),
                     enter = Enter.Fade + Enter.Reveal,
                     on_click = fn() { player.wake() }) {
-        zeus.Text(title, style = Style(font = 11, color = FAINT, padding = Edges(left = 10, top = 6, bottom = 6)))
+        zeus.Text(title, style = Style(font = 11, color = FAINT, paddingLeft = 10, paddingY = 6))
         build()
     }
 }
 
 /// One row of a popover list, with a check when it is the current pick.
-fn Choice(text: string, picked: fn() -> bool, run: fn()) -> Node {
+fn Choice(text: string, picked: Signal<bool>, run: fn()) -> Node {
     return zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 8, height = px(32),
-                                  padding = edges2(0, 10), radius = corners(8), cursor = "pointer"),
+                                  paddingY = 0, paddingX = 10, radius = 8, cursor = "pointer"),
                     hoverStyle = Style(background = "#FFFFFF", opacity = 10),
-                    role = "menuitemradio", label = text, checked = picked(),
+                    role = "menuitemradio", label = text, checked = picked.get(),
                     on_click = fn() {
                         run()
                         player.menu.set(player.MENU_NONE)
                     }) {
-        zeus.Text(text, style = Style(font = 13, color = if picked() { WHITE } else { SOFT }))
+        zeus.Text(text, style = Style(font = 13, color = if picked.get() { WHITE } else { SOFT }))
         zui.Grow()
-        zeus.Box(visible = picked()) {
+        zeus.Box(visible = picked.get()) {
             zui.Icon(icons.CHECK, 16, ACCENT)
         }
     }

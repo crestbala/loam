@@ -17,7 +17,7 @@ fn main() {
     let tab = zeus.signal(0)
     let pick = zeus.signal(0)
     let hits = zeus.signal(0)
-    let tree = zeus.Box(style = Style(direction = zeus.Direction.Column, gap = 12, padding = edges(16))) {
+    let tree = zeus.Box(style = Style(direction = zeus.Direction.Column, gap = 12, padding = 16)) {
         zui.Button("Before", look = zeus.Look.Outline, size = zeus.Size.Md,
                     on_click = fn() => hits.set(hits.get() + 1))
         zui.Tabs(tab, []string { "One", "Two", "Three" })

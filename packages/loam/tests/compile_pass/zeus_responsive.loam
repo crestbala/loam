@@ -34,14 +34,14 @@ fn Screen() -> Node {
     })
     return zeus.Box(ref = shell, style = Style(direction = Direction.Row, width = pct(100), grow = 1)) {
         zui.Show(when = wide.get() == 1) {
-            zeus.Box(style = Style(direction = Direction.Column, width = px(180), padding = edges(8), gap = 4,
+            zeus.Box(style = Style(direction = Direction.Column, width = px(180), padding = 8, gap = 4,
                                    background = "#eeeeee")) {
                 for i in 0..6 {
                     zeus.Text("nav item {{i}}", style = Style(ellipsis = true))
                 }
             }
         }
-        zeus.Box(style = Style(direction = Direction.Column, grow = 1, shrink = 1, padding = edges(12), gap = 8)) {
+        zeus.Box(style = Style(direction = Direction.Column, grow = 1, shrink = 1, padding = 12, gap = 8)) {
             zeus.Box(style = Style(direction = Direction.Row, gap = 8, wrap = true)) {
                 for i in 0..9 {
                     zui.Button(label = "Action {{i}}")
@@ -57,7 +57,7 @@ fn Screen() -> Node {
             }
             zui.Grid(config = GridConfig(columns = 6, gap = 8, autoColumns = 140)) {
                 for i in 0..14 {
-                    zeus.Box(style = Style(padding = edges(6), background = "#f4f4f4")) {
+                    zeus.Box(style = Style(padding = 6, background = "#f4f4f4")) {
                         zeus.Text("card {{i}} with some text", style = Style(wrap = true))
                     }
                 }

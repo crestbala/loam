@@ -200,7 +200,7 @@ fn Upload() -> Node {
                                   direction = Direction.Row,
                                   align = Align.Center,
                                   justify = Align.Center,
-                                  radius = corners(8),
+                                  radius = 8,
                                   background = colors.raised())) {
                     zeus.Text("No image yet", style = Style(font = spacing.FONT_CAPTION, color = colors.mute()))
                 }
@@ -208,7 +208,7 @@ fn Upload() -> Node {
             // No `max_width` / `aspect` wiring: `Image` reads the decoded source
             // size, keeps the aspect ratio, and shrinks to the card (device) width.
             zui.Show(when = pw.get() != 0) {
-                zui.Image(photo.get(), style = Style(radius = corners(8)), fit = Fit.Contain)
+                zui.Image(photo.get(), style = Style(radius = 8), fit = Fit.Contain)
             }
         }
     }

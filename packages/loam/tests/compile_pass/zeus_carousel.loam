@@ -1,0 +1,160 @@
+// Carousel: empty placeholder, paging that wraps, dot jump, arrow keys while
+// focus is inside, and a slide track whose paint offset is one frame width.
+// Slides sit side by side, one frame apart (a flowing row of frame-wide
+// slides would wrap and stack them), and the gallery's upload path — an
+// effect that appends the picked file with `push_item` — settles, even when
+// the same file is added twice.
+// Sources are paths the host will not decode; the boxes are sized explicitly.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+const K_LEFT: int = 1000
+const K_RIGHT: int = 1001
+const K_HOME: int = 1006
+const K_END: int = 1007
+
+fn settle() {
+    let mut i = 0
+    while i < 24 {
+        if zeus.engine_step() == 0 {
+            i = 24
+        }
+        i = i + 1
+    }
+    zeus.pump_frame()
+}
+
+fn click(label: string) {
+    must(zeus.engine_click_text(label) != 0, "click {{label}}")
+    zeus.engine_mouseup()
+    zeus.pump_frame()
+}
+
+fn key(k: int) {
+    zeus.engine_key_ev(k, 0)
+    zeus.pump_frame()
+}
+
+fn offset() -> int {
+    let id = zeus.engine_find_text("Slides")
+    must(id != 0, "slides track")
+    return zeus.motion_x(zeus.node_handle(id))
+}
+
+fn frame_w() -> int {
+    let id = zeus.engine_find_text("Frame")
+    must(id != 0, "frame")
+    return zeus.node_width(id)
+}
+
+fn slide_x(n: int) -> int {
+    let id = zeus.engine_find_text("Slide {{n}}")
+    must(id != 0, "slide {{n}}")
+    return zeus.node_x(id)
+}
+
+fn slide_y(n: int) -> int {
+    return zeus.node_y(zeus.engine_find_text("Slide {{n}}"))
+}
+
+fn main() {
+    zeus.window("carousel", 400, 320)
+    let slides = zeus.signal([]string {})
+    let picked = zeus.signal("")
+    zeus.root(zeus.Box(style = Style(width = px(400), height = px(320))) {
+        // The gallery's upload: append the picked file, then clear the slot.
+        zeus.effect(fn() {
+            let src = picked.get()
+            if src.len == 0 {
+                return
+            }
+            zui.push_item(slides, src)
+            picked.set("")
+        })
+        zui.Carousel(slides.get(), height = 160, label = "Photos")
+    })
+    zeus.pump_frame()
+
+    must(zeus.text_visible("No images yet"), "empty placeholder")
+    must(!zeus.text_visible("Next image"), "no arrows while empty")
+    must(!zeus.text_visible("1 / 1"), "no counter while empty")
+    must(zeus.engine_find_role("group") != 0, "group role")
+
+    slides.set([]string { "/tmp/a.png", "/tmp/b.png", "/tmp/c.png" })
+    zeus.pump_frame()
+    settle()
+    let w = frame_w()
+    must(w > 0, "frame measured")
+    must(zeus.text_visible("1 / 3"), "opens on the first slide")
+    must(!zeus.text_visible("No images yet"), "placeholder hides once there are slides")
+    must(zeus.text_visible("Next image"), "next arrow")
+    must(zeus.text_visible("Previous image"), "previous arrow")
+    must(offset() == 0, "first slide sits at the origin")
+    must(slide_x(2) - slide_x(1) == w && slide_x(3) - slide_x(2) == w,
+         "slides sit one frame apart")
+    must(slide_y(1) == slide_y(2) && slide_y(2) == slide_y(3), "slides share one line")
+
+    click("Next image")
+    settle()
+    must(zeus.text_visible("2 / 3"), "next moves to the second slide")
+    must(offset() == 0 - w, "second slide is one frame to the left")
+
+    click("Image 3")
+    settle()
+    must(zeus.text_visible("3 / 3"), "dot jumps to the third slide")
+    must(offset() == 0 - w * 2, "third slide is two frames over")
+
+    click("Next image")
+    settle()
+    must(zeus.text_visible("1 / 3"), "next wraps to the first slide")
+    must(offset() == 0, "wrap lands on the origin")
+
+    click("Previous image")
+    settle()
+    must(zeus.text_visible("3 / 3"), "previous wraps to the last slide")
+
+    click("Next image")
+    key(K_RIGHT)
+    settle()
+    must(zeus.text_visible("2 / 3"), "right arrow key steps forward")
+    key(K_LEFT)
+    settle()
+    must(zeus.text_visible("1 / 3"), "left arrow key steps back")
+    key(K_END)
+    settle()
+    must(zeus.text_visible("3 / 3"), "end jumps to the last slide")
+    key(K_HOME)
+    settle()
+    must(zeus.text_visible("1 / 3"), "home jumps to the first slide")
+
+    slides.set([]string { "/tmp/a.png" })
+    zeus.pump_frame()
+    settle()
+    must(zeus.text_visible("1 / 1"), "a shorter list clamps the page")
+    must(!zeus.text_visible("Next image"), "one slide hides the arrows")
+    must(offset() == 0, "the only slide sits at the origin")
+
+    slides.set([]string {})
+    zeus.pump_frame()
+    must(zeus.text_visible("No images yet"), "clearing the list restores the placeholder")
+    must(!zeus.text_visible("1 / 1"), "counter leaves with the slides")
+
+    picked.set("/tmp/d.png")
+    settle()
+    picked.set("/tmp/d.png")
+    settle()
+    must(slides.peek().len == 2, "an upload effect appends once per pick")
+    must(zeus.text_visible("1 / 2"), "a file added twice is two slides")
+    must(slide_x(2) - slide_x(1) == w, "the repeat sits one frame over")
+
+    fmt.println("carousel ok")
+}

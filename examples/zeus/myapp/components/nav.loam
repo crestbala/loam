@@ -23,8 +23,8 @@ fn RamChip() -> Node {
                            direction = Direction.Row,
                            gap = Space.Exxs,
                            align = Align.Center,
-                           padding = edges2(4, 10),
-                           radius = corners(spacing.RAD_FULL),
+                           paddingY = 4, paddingX = 10,
+                           radius = spacing.RAD_FULL,
                            background = colors.raised())) {
         zeus.Text(fn() -> string {
             let mb = ram.get() / 1024
@@ -48,8 +48,8 @@ fn NavLink(label: string, href: string) -> Node {
                       direction = Direction.Row,
                       gap = Space.Exxs,
                       align = Align.Center,
-                      padding = Edges(right = 12, left = 12),
-                      radius = corners(spacing.RAD_MD),
+                      paddingX = 12,
+                      radius = spacing.RAD_MD,
                       cursor = "pointer",
                       background = if active() { colors.raised() } else { "" }),
         on_click = fn() => router.navigate(href),
@@ -69,7 +69,7 @@ fn Navbar() -> Node {
                                direction = Direction.Row,
                                gap = Space.Md,
                                align = Align.Center)) {
-            zeus.Box(style = Style(width = px(22), height = px(22), radius = corners(6), background = zeus.ink()))
+            zeus.Box(style = Style(width = px(22), height = px(22), radius = 6, background = zeus.ink()))
             zeus.Text("myapp", style = Style(font = spacing.FONT_TITLE, color = zeus.ink()))
             NavLink("Foundations", "/")
             NavLink("Components", "/components")

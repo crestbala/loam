@@ -1,7 +1,7 @@
 import "std:zeus"
 
 fn Layout(build: fn()) -> Node {
-    let box = zeus.Box(style = Style(direction = Direction.Column, gap = 4, padding = edges(8)))
+    let box = zeus.Box(style = Style(direction = Direction.Column, gap = 4, padding = 8))
     zeus.slot(box, fn() {
         zeus.Text("root layout")
     })

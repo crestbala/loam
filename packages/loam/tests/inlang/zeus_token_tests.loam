@@ -98,7 +98,7 @@ fn every_accent_meets_aa_in_both_appearances() {
         zeus.appearance().set(1)
         check_all_pairs("{{colors.accent_name(a)}}/dark")
     }
-    colors.set_accent(colors.ACCENT.Blue)
+    colors.set_accent(colors.ACCENT.Ink)
     zeus.appearance().set(0)
 }
 

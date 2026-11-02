@@ -5,7 +5,7 @@ import "std:zeus"
 
 fn Kids() -> Node {
     return zeus.Box(
-        style = Style(direction = Direction.Column, gap = 8, padding = edges(12))
+        style = Style(direction = Direction.Column, gap = 8, padding = 12)
     ) {
         zeus.Text("a"),
         zeus.Text("b"),

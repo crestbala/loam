@@ -2691,7 +2691,7 @@ fn scaffold_files(name: string) -> []ScaffoldFile {
     })
     push(out, ScaffoldFile {
         rel: "routes/layout.loam",
-        body: "//! Root shell: theme + nav. Retained across navigation, so its state\n//! survives — only the page slot rebuilds.\n\nimport \"std:zeus\"\nimport \"../theme.loam\" as theme\n\nfn Layout(build: fn()) -> Node {\n    theme.install()\n    return zeus.Box(style = Style(direction = Direction.Column, gap = 8, padding = edges(12))) {\n        zeus.Text(\"{{name}}\")\n        build()\n    }\n}\n",
+        body: "//! Root shell: theme + nav. Retained across navigation, so its state\n//! survives — only the page slot rebuilds.\n\nimport \"std:zeus\"\nimport \"../theme.loam\" as theme\n\nfn Layout(build: fn()) -> Node {\n    theme.install()\n    return zeus.Box(style = Style(direction = Direction.Column, gap = 8, padding = 12)) {\n        zeus.Text(\"{{name}}\")\n        build()\n    }\n}\n",
     })
     push(out, ScaffoldFile {
         rel: "routes/page.loam",
@@ -2711,7 +2711,7 @@ fn scaffold_files(name: string) -> []ScaffoldFile {
     })
     push(out, ScaffoldFile {
         rel: "routes/blog/layout.loam",
-        body: "import \"std:zeus\"\n\nfn Layout(build: fn()) -> Node {\n    return zeus.Box(style = Style(direction = Direction.Column, gap = 4, padding = edges(8))) {\n        zeus.Text(\"blog\")\n        build()\n    }\n}\n",
+        body: "import \"std:zeus\"\n\nfn Layout(build: fn()) -> Node {\n    return zeus.Box(style = Style(direction = Direction.Column, gap = 4, padding = 8)) {\n        zeus.Text(\"blog\")\n        build()\n    }\n}\n",
     })
     push(out, ScaffoldFile {
         rel: "routes/blog/loader.loam",
@@ -2743,7 +2743,7 @@ fn scaffold_files(name: string) -> []ScaffoldFile {
     })
     push(out, ScaffoldFile {
         rel: "components/card.loam",
-        body: "//! Shared component, no routing knowledge: a fn that builds into the\n//! current host.\n\nimport \"std:zeus\"\n\nfn Card(text: string) -> Node {\n    return zeus.Box(style = Style(gap = 4, padding = edges(12), background = \"#FFFFFF\")) {\n        zeus.Text(text)\n    }\n}\n",
+        body: "//! Shared component, no routing knowledge: a fn that builds into the\n//! current host.\n\nimport \"std:zeus\"\n\nfn Card(text: string) -> Node {\n    return zeus.Box(style = Style(gap = 4, padding = 12, background = \"#FFFFFF\")) {\n        zeus.Text(text)\n    }\n}\n",
     })
     push(out, ScaffoldFile {
         rel: "server/api.loam",

@@ -22,7 +22,7 @@ fn clamp(v: int) -> int {
 
 fn Header(title: string, ticks: Signal<int>, open: Signal<bool>) -> Node {
     return zui.Row(Space.Md) {
-        zeus.Box(style = Style(width = px(8), height = px(24), radius = corners(4), background = zeus.ink()))
+        zeus.Box(style = Style(width = px(8), height = px(24), radius = 4, background = zeus.ink()))
         zeus.Text(title, style = Style(font = spacing.FONT_TITLE, color = zeus.ink()))
         zui.Grow()
         zeus.Text("Dark", style = Style(font = spacing.FONT_BODY, color = colors.mute()))
@@ -38,7 +38,7 @@ fn Activity(title: string, meta: string) -> Node {
     return zeus.Box(style = Style(direction = Direction.Row,
                            gap = Space.Sm,
                            align = Align.Center,
-                           padding = edges(2))) {
+                           padding = 2)) {
         zeus.Text(title, style = Style(grow = 1, font = spacing.FONT_BODY, color = zeus.ink()))
         zeus.Text(meta, style = Style(font = spacing.FONT_CAPTION, color = colors.mute()))
     }

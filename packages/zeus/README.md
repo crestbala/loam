@@ -23,8 +23,8 @@ struct TagProps {
 }
 
 fn Tag(p: TagProps) -> Node {
-    return zeus.Box(style = Style(padding = edges2(4, 12), radius = corners(8),
-                                  border = line(1, zeus.ink()))) {
+    return zeus.Box(style = Style(paddingY = 4, paddingX = 12, radius = 8,
+                                  borderWidth = 1, borderColor = zeus.ink())) {
         zeus.Text(p.label, style = Style(font = 12))
     }
 }
@@ -32,7 +32,7 @@ fn Tag(p: TagProps) -> Node {
 fn main() {
     let n = zeus.signal(0)
     zeus.App("Count", fn() {
-        zeus.Box(style = Style(padding = edges(16), gap = 8)) {
+        zeus.Box(style = Style(padding = 16, gap = 8)) {
             zeus.Text("Count", style = Style(font = 22))
             zeus.Text("{{n.get()}}", style = Style(font = 28))
             zeus.Box(style = Style(direction = Direction.Row, gap = 8)) {

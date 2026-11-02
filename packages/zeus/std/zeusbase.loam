@@ -97,6 +97,38 @@ fn peek<T>(sig: Signal<T>) -> T {
     __sig_load(sig.id)
 }
 
+/// An optional signal as the optional reader an element slot takes. The
+/// compiler inserts these where a component forwards an `Option<Signal<T>>`
+/// prop to an `Option<fn() -> T>` one (`label = p.label`); the read happens
+/// inside the element's own binding, so it stays live. One per `T`: a
+/// generic `Option<fn() -> T>` does not monomorphize.
+fn opt_reader_string(s: Option<Signal<string>>) -> Option<fn() -> string> {
+    let sig = s.val
+    let read = fn() -> string { return get(sig) }
+    if result.is_some(s) {
+        return result.some(read)
+    }
+    return result.none(read)
+}
+
+fn opt_reader_bool(s: Option<Signal<bool>>) -> Option<fn() -> bool> {
+    let sig = s.val
+    let read = fn() -> bool { return get(sig) }
+    if result.is_some(s) {
+        return result.some(read)
+    }
+    return result.none(read)
+}
+
+fn opt_reader_int(s: Option<Signal<int>>) -> Option<fn() -> int> {
+    let sig = s.val
+    let read = fn() -> int { return get(sig) }
+    if result.is_some(s) {
+        return result.some(read)
+    }
+    return result.none(read)
+}
+
 /// Run `body` with dependency tracking suspended: signals read inside it
 /// become dependencies of nothing. Writes still notify as usual.
 fn untrack(body: fn()) {
@@ -507,6 +539,9 @@ fn input_value(node: Node) -> string {
 
 /// Replace the typed buffer for `node`. No-op if it is not an input.
 fn set_input(node: Node, text: string) -> Node {
+    if node.id <= 0 {
+        return node
+    }
     let mut slot = nodes.ui[node.id].edit_slot
     if slot < 0 {
         arena.stamp_edits()
@@ -529,6 +564,31 @@ fn set_input(node: Node, text: string) -> Node {
 /// call. Exposed so a test can pin it at zero rather than hope.
 fn intern_kind_mismatch_count() -> int {
     return platform.plat_intern_kind_mismatch_count()
+}
+
+/// Run `build` in the current slot, then aim the node it just attached at
+/// `handler`. A menu trigger is that node: it is the hit target, including
+/// when it floats above another menu's scrim, so the toggle has to sit on
+/// it rather than on the host behind it.
+fn click_built(build: fn(), handler: fn()) -> Node {
+    let slot_id = current_slot()
+    let mut before = 0
+    if slot_id > 0 && slot_id < nodes.tree.len {
+        before = nodes.tree[slot_id].kids.len
+    }
+    build()
+    let mut id = 0
+    if slot_id > 0 && slot_id < nodes.tree.len {
+        let n = nodes.tree[slot_id].kids.len
+        if n > before {
+            id = nodes.tree[slot_id].kids[n - 1]
+        }
+    }
+    if id > 0 {
+        nodes.ui[id].click_fn = intern_fn(handler)
+        nodes.ui[id].focusable = 1
+    }
+    return node_handle(id)
 }
 
 /// Attach `node` under `parent`. Used by `ui_emit` for trailing blocks.
@@ -1320,9 +1380,9 @@ fn hover_fade(node: Node) -> Node {
     return node
 }
 
-/// Press feedback as a paint-only scale (97% while the pointer is down) on
-/// top of the press wash. Needs `press = true` on the node; `Button` sets
-/// both. No layout pass reads the scale, so pressing never reflows.
+/// Opt-in press scale (96% while the pointer is down) on top of the press
+/// wash. Needs `press = true` as well. Themed buttons leave this off: a press
+/// only darkens. No layout pass reads the scale, so pressing never reflows.
 fn press_scale(node: Node) -> Node {
     nodes.anim[node.id].press_scale = 1
     touched(node.id, 0)
@@ -1330,8 +1390,8 @@ fn press_scale(node: Node) -> Node {
 }
 
 /// Lift a node's shadow to elevation `level` while hovered (paint-only; the
-/// hover wash is dropped in favour of the lift). `Card(interactive = true)`
-/// sets it; any surface can take it.
+/// hover wash is dropped in favour of the lift). Off unless a caller sets
+/// `lift`. Themed cards stay flat.
 fn hover_lift(node: Node, level: int) -> Node {
     let mut l = level
     if l < 0 {
@@ -1453,7 +1513,7 @@ fn state_selected(node: Node) -> bool {
 // written into paint state only — no layout pass reads them, so an animation
 // never re-runs a component or a signal effect. Retargeting keeps the current
 // value as the new `from`. `ease` is an `EASE` curve (`EASE.Standard` when
-// omitted); `EASE.Spring` overshoots and settles, for things that snap.
+// omitted). `EASE.Spring` overshoots; the component library does not use it.
 
 /// Animate `node`'s scale to `to` percent (100 = identity) over `ms`.
 fn animate_scale(node: Node, to: int, ms: int, ease: int = 1) -> Node {
@@ -1747,7 +1807,7 @@ fn apply_int(node_id: int, setter: int, v: int) {
 
 /// `apply_int` without the unset rule: `v` is always a real value. The
 /// `style` prop writes through here, since an `Option` key already says
-/// whether it was set, so `margin = Edges(left = -16)` is a bleed, not a skip.
+/// whether it was set, so `marginLeft = -16` is a bleed, not a skip.
 fn apply_int_value(node_id: int, setter: int, v: int) {
     if arena.anim_bind_on() != 0 {
         if setter_tweens_layout(setter) {
@@ -2237,6 +2297,40 @@ struct BoxProps {
     on_key_down: Option<fn()> = none,
     on_key_up: Option<fn()> = none,
     on_key_press: Option<fn()> = none,
+
+    // Declarative behaviour. Each one is applied by the engine once the
+    // element is mounted and follows the state it reads, so a component never
+    // reaches for a ref, an `effect`, or `on_mount` to get it.
+    /// The caller's style, layered over `style` key by key: a component
+    /// passes its own recipe as `style` and its caller's as `restyle`.
+    restyle: Option<fn() -> Style> = none,
+    /// Float beside another element: `anchor = Anchor(to = trigger)`.
+    anchor: Option<Anchor> = none,
+    /// Take focus each time this turns true.
+    autofocus: Option<fn() -> bool> = none,
+    /// Keep Tab inside this element while true; focus goes back when it ends.
+    trap: Option<fn() -> bool> = none,
+    /// Text input: mask what it draws (one bullet per character) while true.
+    secure: Option<fn() -> bool> = none,
+    /// Take no hits and never occlude hover (a tooltip over its trigger).
+    passThrough: bool = false,
+    /// Runs with the new box after any layout that changed its size, the
+    /// first one included, before that frame paints.
+    on_resize: Option<fn(Rect)> = none,
+    /// Runs on a press inside and on every move until release;
+    /// `current_mouse()` holds the point. The press clicks nothing under it.
+    on_drag: Option<fn()> = none,
+    /// Runs on a secondary click inside; `current_mouse()` holds the point.
+    on_context_menu: Option<fn()> = none,
+}
+
+/// Where an anchored element floats: beside `to`, on side `place` (`Place.*`:
+/// 0 below, 1 above, 2 end, 3 start, …), `gap` dp away. It flips to the
+/// opposite side when the preferred one would leave the window.
+struct Anchor {
+    to: Ref = Ref {},
+    place: int = 0,
+    gap: int = 6,
 }
 
 
@@ -2270,6 +2364,14 @@ let mut vf_root: []int = []int {}
 let mut vf_roots: []int = []int {}
 /// `on_mount` callbacks of every open frame, each frame's from `vf_mount_at`.
 let mut mount_fns: []fn() = []fn() {}
+/// Refs filled inside open frames (cell, element), each frame's from
+/// `vf_ref_at`. They are set when that frame mounts, not when the element is
+/// allocated, so an effect that reads a ref first sees it complete.
+let mut ref_q_cell: []int = []int {}
+let mut ref_q_node: []int = []int {}
+let mut vf_ref_at: []int = []int {}
+/// > 0 while a frame's mount callbacks run: refs filled there set at once.
+let mut vf_mounting: int = 0
 
 /// The slot the next element attaches to (0 at the top level).
 fn current_slot() -> int {
@@ -2288,6 +2390,7 @@ fn __view_begin() -> int {
     push(vf_parent, current_slot())
     push(vf_log, track.log_begin())
     push(vf_mount_at, mount_fns.len)
+    push(vf_ref_at, ref_q_cell.len)
     push(vf_root, 0)
     push(vf_roots, 0)
     arena.set_scope_node(token)
@@ -2306,16 +2409,31 @@ fn __view_end(frame: int, build: fn()) -> Node {
         panic("View must build exactly one root element, built {{built}}")
     }
     let root = vf_root[top]
-    // Mount callbacks run while the frame is still open, so whatever they
-    // create (an effect, a handler) is owned by the root too. Refs are filled
-    // by now: every element of the tree has been built.
+    // Mount: every element of the tree has been built. The refs fill first —
+    // an effect that reads one re-runs now, against a complete element — and
+    // then the `on_mount` callbacks run once. Both happen while the frame is
+    // still open, so whatever they create is owned by the root too.
+    let ref_at = vf_ref_at[top]
+    let mut r = ref_at
+    while r < ref_q_cell.len {
+        signal_handle(ref_q_cell[r]).set(ref_q_node[r])
+        r = r + 1
+    }
+    while ref_q_cell.len > ref_at {
+        pop(ref_q_cell)
+        pop(ref_q_node)
+    }
     let start = vf_mount_at[top]
     let mut i = start
+    vf_mounting = vf_mounting + 1
     while i < mount_fns.len {
+        // Untracked: a component mounting inside a running effect (a list
+        // row, a `Show`) must not subscribe that effect to what it reads.
         let f = mount_fns[i]
-        f()
+        untrack(f)
         i = i + 1
     }
+    vf_mounting = vf_mounting - 1
     while mount_fns.len > start {
         pop(mount_fns)
     }
@@ -2328,6 +2446,7 @@ fn __view_end(frame: int, build: fn()) -> Node {
     pop(vf_parent)
     pop(vf_log)
     pop(vf_mount_at)
+    pop(vf_ref_at)
     pop(vf_root)
     pop(vf_roots)
     // A component whose View is another component (`Stat` is a `Card`): the
@@ -2479,6 +2598,90 @@ fn set_focusable(id: int, on: int) {
 }
 
 /// The behaviour props of `BoxProps` (focus, hover, press, entrance).
+/// `p.restyle` over `p.style`, as one thunk (`no_style` when neither is set).
+fn layered_style(p: BoxProps) -> fn() -> Style {
+    if !result.is_some(p.restyle) {
+        if result.is_some(p.style) {
+            return p.style.val
+        }
+        return no_style
+    }
+    let over = p.restyle.val
+    if !result.is_some(p.style) {
+        return over
+    }
+    let base = p.style.val
+    return fn() -> Style { return merge(base(), over()) }
+}
+
+/// The behaviour props that need the element in the tree with its children
+/// built (`anchor`, `autofocus`, `trap`, `secure`). Each is an effect that
+/// reads a private ref, which fills at mount, so it first acts then — and
+/// again whenever the state it reads changes.
+fn install_mounted(node: Node, p: BoxProps) {
+    let node_id = node.id
+    if p.passThrough {
+        nodes.ui[node_id].ptr_pass = u8(1)
+    }
+    if result.is_some(p.on_resize) {
+        let h = p.on_resize.val
+        on_resize_id(node_id, || {
+            h(Rect { x: nodes.box[node_id].x, y: nodes.box[node_id].y,
+                     w: nodes.box[node_id].w, h: nodes.box[node_id].h })
+        })
+    }
+    if result.is_some(p.on_drag) {
+        arena.hook_set(node_id, arena.HOOK_DRAG, intern_fn(p.on_drag.val))
+    }
+    if result.is_some(p.on_context_menu) {
+        arena.hook_set(node_id, arena.HOOK_CONTEXT, intern_fn(p.on_context_menu.val))
+    }
+    if !result.is_some(p.anchor) && !result.is_some(p.autofocus) &&
+        !result.is_some(p.trap) && !result.is_some(p.secure) {
+        return
+    }
+    let me = ref()
+    ref_fill(me, node_id)
+    if result.is_some(p.anchor) {
+        let a = p.anchor.val
+        node_effect(node, || {
+            let id = ref_id(me)
+            let t = ref_id(a.to)
+            if id > 0 && t > 0 {
+                arena.anchor_to(id, t, a.place, a.gap)
+            }
+        })
+    }
+    if result.is_some(p.autofocus) {
+        let when = p.autofocus.val
+        node_effect(node, || {
+            if ref_id(me) > 0 && when() {
+                arena.claim_focus(node_id)
+            }
+        })
+    }
+    if result.is_some(p.trap) {
+        let when = p.trap.val
+        node_effect(node, || {
+            if ref_id(me) > 0 {
+                if when() {
+                    arena.claim_trap(node_id)
+                } else {
+                    arena.release_trap(node_id)
+                }
+            }
+        })
+    }
+    if result.is_some(p.secure) {
+        let when = p.secure.val
+        node_effect(node, || {
+            if ref_id(me) > 0 {
+                arena.secure_set(node_id, when())
+            }
+        })
+    }
+}
+
 fn install_behaviour(node: Node, p: BoxProps) {
     let node_id = node.id
     if result.is_some(p.focusable) {
@@ -2556,9 +2759,13 @@ fn install_behaviour(node: Node, p: BoxProps) {
 // --- refs ------------------------------------------------------------------------
 // A `Ref` is filled by the element given `ref = r`, so the controller can reach
 // that element (measure it, focus it) without building it by hand. It is a
-// signal cell: an effect that reads it re-runs when it fills.
+// signal cell, filled when the component mounts (the whole tree is built by
+// then). Reading it is a dependency: an `effect` that drives a ref'd element
+// runs once with the ref empty (every ref helper is a no-op on it), then again
+// when the ref fills and whenever the state it reads changes — no `on_mount`
+// around it. `on_mount` is for one-time wiring.
 
-/// A handle to an element, filled when the element builds.
+/// A handle to an element, filled when its component mounts.
 struct Ref {
     id: int = 0,
 }
@@ -2569,12 +2776,13 @@ fn ref() -> Ref {
     return Ref { id: cell.id }
 }
 
-/// The element `r` points at (`Node { id: 0 }` before it builds).
+/// The element `r` points at (`Node { id: 0 }` until it mounts). Inside an
+/// effect this is a dependency, so the effect re-runs when `r` fills.
 fn ref_node(r: Ref) -> Node {
     if r.id <= 0 {
         return node_handle(0)
     }
-    return node_handle(signal_handle(r.id).peek())
+    return node_handle(signal_handle(r.id).get())
 }
 
 fn ref_id(r: Ref) -> int {
@@ -2582,9 +2790,16 @@ fn ref_id(r: Ref) -> int {
 }
 
 fn ref_fill(r: Ref, node_id: int) {
-    if r.id > 0 {
-        signal_handle(r.id).set(node_id)
+    if r.id <= 0 {
+        return
     }
+    // Built inside a component: fill at its mount (`__view_end`).
+    if vf_token.len > 0 && vf_mounting == 0 {
+        push(ref_q_cell, r.id)
+        push(ref_q_node, node_id)
+        return
+    }
+    signal_handle(r.id).set(node_id)
 }
 
 /// A laid-out box: position and size in dp.
@@ -2633,7 +2848,10 @@ fn child_rect(r: Ref, i: int) -> Rect {
 /// from `r` never paints a frame late (a host's full-screen zoom snapshots
 /// that first frame). Call from `on_mount`.
 fn on_resize(r: Ref, body: fn()) {
-    let id = ref_id(r)
+    on_resize_id(ref_id(r), body)
+}
+
+fn on_resize_id(id: int, body: fn()) {
     if id <= 0 {
         return
     }
@@ -2806,7 +3024,7 @@ fn release_focus_trap(r: Ref) {
 // targeted invalidation) as every other prop: a background change is paint-only
 // and damages one node. A style that read no signal on its first run is static:
 // its effect is dropped right there and nothing is kept, so a plain
-// `Style(gap = 8)` costs one write per key and no graph.
+// `Style(gap = Space.Exs)` costs one write per key and no graph.
 
 /// Install `style` on `node`. Called last in `Component`, so a key in `style`
 /// wins over the matching flat prop and over kind chrome.
@@ -2915,8 +3133,10 @@ fn state_restore(id: int, a: Style, b: Style, rest: PaintRest) {
     if result.is_some(a.opacity) && !result.is_some(b.opacity) {
         apply_int_value(id, SET.Opacity, rest.opacity)
     }
-    if result.is_some(a.border) && !result.is_some(b.border) {
+    if result.is_some(a.borderWidth) && !result.is_some(b.borderWidth) {
         apply_int_value(id, SET.Border, rest.border_w)
+    }
+    if result.is_some(a.borderColor) && !result.is_some(b.borderColor) {
         apply_int_value(id, SET.BorderColor, rest.border_c)
     }
     if result.is_some(a.elevation) && !result.is_some(b.elevation) {
@@ -2965,23 +3185,44 @@ fn style_apply(id: int, a: Style, b: Style) {
     st_int(id, SET.MinHeight, a.minHeight, b.minHeight)
     st_int(id, SET.MaxHeight, a.maxHeight, b.maxHeight)
     st_ratio(id, a.aspect, b.aspect)
-    st_box_edges(id, SET.Padding, SET.PaddingX, SET.PaddingY,
-                 SET.PaddingTop, SET.PaddingRight, SET.PaddingBottom, SET.PaddingLeft,
-                 a.padding, b.padding)
-    st_box_edges(id, SET.Margin, SET.MarginX, SET.MarginY,
-                 SET.MarginTop, SET.MarginRight, SET.MarginBottom, SET.MarginLeft,
-                 a.margin, b.margin)
+    st_padding(id, a, b)
+    st_margin(id, a, b)
     st_int(id, SET.Position, a.position, b.position)
-    st_edges(id, SET.Top, SET.Right, SET.Bottom, SET.Left, a.inset, b.inset)
+    st_int(id, SET.Top, a.top, b.top)
+    st_int(id, SET.Right, a.right, b.right)
+    st_int(id, SET.Bottom, a.bottom, b.bottom)
+    st_int(id, SET.Left, a.left, b.left)
     st_int(id, SET.ZIndex, a.zIndex, b.zIndex)
     st_int(id, SET.Overflow, a.overflow, b.overflow)
     st_float(id, a.floating, b.floating)
     st_str(id, SET.Background, a.background, b.background)
     st_str(id, SET.Color, a.color, b.color)
-    st_int(id, SET.Opacity, a.opacity, b.opacity)
-    st_corners(id, a.radius, b.radius)
-    st_border(id, kind, a.border, b.border)
+    if result.is_some(b.transition) {
+        st_motion(id, APROP_OPACITY, a.opacity, b.opacity, b.transition.val)
+    } else {
+        st_int(id, SET.Opacity, a.opacity, b.opacity)
+    }
+    st_int(id, SET.Radius, a.radius, b.radius)
+    st_int(id, SET.CornerTL, a.radiusTopLeft, b.radiusTopLeft)
+    st_int(id, SET.CornerTR, a.radiusTopRight, b.radiusTopRight)
+    st_int(id, SET.CornerBR, a.radiusBottomRight, b.radiusBottomRight)
+    st_int(id, SET.CornerBL, a.radiusBottomLeft, b.radiusBottomLeft)
+    // Only boxes and buttons carry a border width (it insets their content).
+    if kind == 1 || kind == 4 {
+        st_int(id, SET.Border, a.borderWidth, b.borderWidth)
+    }
+    st_str(id, SET.BorderColor, a.borderColor, b.borderColor)
+    // Side borders and rules between children: paint only.
+    st_int(id, SET.BorderTop, a.borderTop, b.borderTop)
+    st_int(id, SET.BorderRight, a.borderRight, b.borderRight)
+    st_int(id, SET.BorderBottom, a.borderBottom, b.borderBottom)
+    st_int(id, SET.BorderLeft, a.borderLeft, b.borderLeft)
+    st_int(id, SET.BorderBetween, a.borderBetween, b.borderBetween)
     st_int(id, SET.Elevation, a.elevation, b.elevation)
+    let ms = if result.is_some(b.transition) { b.transition.val } else { 0 }
+    st_motion(id, APROP_ROTATE, a.rotate, b.rotate, ms)
+    st_motion(id, APROP_SHIFT_X, a.shiftX, b.shiftX, ms)
+    st_motion(id, APROP_SHIFT_Y, a.shiftY, b.shiftY, ms)
     // An image keeps its fit in the font slot.
     if kind != 14 {
         st_int(id, SET.Font, a.font, b.font)
@@ -2989,6 +3230,33 @@ fn style_apply(id: int, a: Style, b: Style) {
     st_bool(id, SET.Ellipsis, a.ellipsis, b.ellipsis)
     st_int(id, SET.TextAlign, a.textAlign, b.textAlign)
     st_str(id, SET.Cursor, a.cursor, b.cursor)
+}
+
+/// The paint tracks a style key can ease.
+const APROP_OPACITY: int = 0
+const APROP_ROTATE: int = 1
+const APROP_SHIFT_X: int = 2
+const APROP_SHIFT_Y: int = 3
+
+/// Ease a paint track to `b` over `ms`. The first value (no `a`) lands at
+/// once, so an element never animates in from the track's default.
+fn st_motion(id: int, track: int, a: Option<int>, b: Option<int>, ms: int) {
+    if !result.is_some(b) {
+        return
+    }
+    if result.is_some(a) && a.val == b.val {
+        return
+    }
+    let dur = if result.is_some(a) { ms } else { 0 }
+    if track == APROP_OPACITY {
+        arena.anim_opacity(id, b.val, dur)
+    } else if track == APROP_ROTATE {
+        arena.anim_rotate(id, b.val, dur)
+    } else if track == APROP_SHIFT_X {
+        arena.anim_translate_x(id, b.val, dur)
+    } else {
+        arena.anim_translate_y(id, b.val, dur)
+    }
 }
 
 fn st_int(id: int, setter: int, a: Option<int>, b: Option<int>) {
@@ -3060,59 +3328,6 @@ fn st_ratio(id: int, a: Option<Ratio>, b: Option<Ratio>) {
     arena.note_prop_write(id, 1)
 }
 
-/// Side by side: only the sides present in `b` and changed are written.
-fn st_edges(id: int, top: int, right: int, bottom: int, left: int,
-            a: Option<Edges>, b: Option<Edges>) {
-    if !result.is_some(b) {
-        return
-    }
-    let mut e = Edges {}
-    if result.is_some(a) {
-        e = a.val
-    }
-    st_int(id, top, e.top, b.val.top)
-    st_int(id, right, e.right, b.val.right)
-    st_int(id, bottom, e.bottom, b.val.bottom)
-    st_int(id, left, e.left, b.val.left)
-}
-
-fn st_corners(id: int, a: Option<Corners>, b: Option<Corners>) {
-    if !result.is_some(b) {
-        return
-    }
-    if result.is_some(a) && corners_eq(a.val, b.val) {
-        return
-    }
-    let c = b.val
-    // The uniform radius takes the shared field (and the uniform paint path);
-    // only corners that differ from it become overrides, as `radius` plus
-    // `radius_top` always did.
-    let mut base = -1
-    if result.is_some(c.br) {
-        base = c.br.val
-    } else if result.is_some(c.tl) {
-        base = c.tl.val
-    }
-    if base >= 0 {
-        apply_int_value(id, SET.Radius, base)
-    }
-    corner_override(id, SET.CornerTL, c.tl, base)
-    corner_override(id, SET.CornerTR, c.tr, base)
-    corner_override(id, SET.CornerBR, c.br, base)
-    corner_override(id, SET.CornerBL, c.bl, base)
-}
-
-fn corner_override(id: int, setter: int, v: Option<int>, base: int) {
-    if result.is_some(v) && v.val != base {
-        apply_int_value(id, setter, v.val)
-    }
-}
-
-fn corners_eq(a: Corners, b: Corners) -> bool {
-    return opt_int_eq(a.tl, b.tl) && opt_int_eq(a.tr, b.tr) && opt_int_eq(a.br, b.br) &&
-           opt_int_eq(a.bl, b.bl)
-}
-
 fn opt_int_eq(a: Option<int>, b: Option<int>) -> bool {
     if result.is_some(a) != result.is_some(b) {
         return false
@@ -3120,81 +3335,56 @@ fn opt_int_eq(a: Option<int>, b: Option<int>) -> bool {
     return !result.is_some(a) || a.val == b.val
 }
 
-/// Padding or margin: all four equal is the `all` setter, equal pairs the axis
-/// setters, anything else per side, so a node's fields are written exactly as
-/// the matching flat props wrote them.
-fn st_box_edges(id: int, all: int, sx: int, sy: int, top: int, right: int, bottom: int,
-                left: int, a: Option<Edges>, b: Option<Edges>) {
-    if !result.is_some(b) {
-        return
-    }
-    let e = b.val
-    if result.is_some(a) && opt_int_eq(a.val.top, e.top) && opt_int_eq(a.val.right, e.right) &&
-       opt_int_eq(a.val.bottom, e.bottom) && opt_int_eq(a.val.left, e.left) {
-        return
-    }
-    let full = result.is_some(e.top) && result.is_some(e.right) && result.is_some(e.bottom) &&
-               result.is_some(e.left)
-    if full && e.top.val == e.right.val && e.top.val == e.bottom.val && e.top.val == e.left.val {
-        apply_int_value(id, all, e.top.val)
-        return
-    }
-    let mut done_x = false
-    let mut done_y = false
-    if result.is_some(e.left) && result.is_some(e.right) && e.left.val == e.right.val {
-        apply_int_value(id, sx, e.left.val)
-        done_x = true
-    }
-    if result.is_some(e.top) && result.is_some(e.bottom) && e.top.val == e.bottom.val {
-        apply_int_value(id, sy, e.top.val)
-        done_y = true
-    }
-    if !done_y {
-        if result.is_some(e.top) {
-            apply_int_value(id, top, e.top.val)
-        }
-        if result.is_some(e.bottom) {
-            apply_int_value(id, bottom, e.bottom.val)
-        }
-    }
-    if !done_x {
-        if result.is_some(e.left) {
-            apply_int_value(id, left, e.left.val)
-        }
-        if result.is_some(e.right) {
-            apply_int_value(id, right, e.right.val)
-        }
-    }
+fn st_padding(id: int, a: Style, b: Style) {
+    st_box(id, SET.Padding, SET.PaddingX, SET.PaddingY,
+           SET.PaddingTop, SET.PaddingRight, SET.PaddingBottom, SET.PaddingLeft,
+           a.padding, a.paddingX, a.paddingY, a.paddingTop, a.paddingRight, a.paddingBottom,
+           a.paddingLeft,
+           b.padding, b.paddingX, b.paddingY, b.paddingTop, b.paddingRight, b.paddingBottom,
+           b.paddingLeft)
 }
 
-fn st_border(id: int, kind: int, a: Option<Border>, b: Option<Border>) {
-    if !result.is_some(b) {
+fn st_margin(id: int, a: Style, b: Style) {
+    st_box(id, SET.Margin, SET.MarginX, SET.MarginY,
+           SET.MarginTop, SET.MarginRight, SET.MarginBottom, SET.MarginLeft,
+           a.margin, a.marginX, a.marginY, a.marginTop, a.marginRight, a.marginBottom,
+           a.marginLeft,
+           b.margin, b.marginX, b.marginY, b.marginTop, b.marginRight, b.marginBottom,
+           b.marginLeft)
+}
+
+/// Padding or margin. The keys overlap (`padding` writes the sides that
+/// `paddingTop` writes), so when any of them changed every present one is
+/// written again, shorthand first, then axis, then side: a side key keeps
+/// winning when the shorthand under it moves.
+fn st_box(id: int, s_all: int, s_x: int, s_y: int, s_t: int, s_r: int, s_b: int, s_l: int,
+          a_all: Option<int>, a_x: Option<int>, a_y: Option<int>, a_t: Option<int>,
+          a_r: Option<int>, a_b: Option<int>, a_l: Option<int>,
+          b_all: Option<int>, b_x: Option<int>, b_y: Option<int>, b_t: Option<int>,
+          b_r: Option<int>, b_b: Option<int>, b_l: Option<int>) {
+    let changed = (result.is_some(b_all) && !opt_int_eq(a_all, b_all)) ||
+                  (result.is_some(b_x) && !opt_int_eq(a_x, b_x)) ||
+                  (result.is_some(b_y) && !opt_int_eq(a_y, b_y)) ||
+                  (result.is_some(b_t) && !opt_int_eq(a_t, b_t)) ||
+                  (result.is_some(b_r) && !opt_int_eq(a_r, b_r)) ||
+                  (result.is_some(b_b) && !opt_int_eq(a_b, b_b)) ||
+                  (result.is_some(b_l) && !opt_int_eq(a_l, b_l))
+    if !changed {
         return
     }
-    let w = b.val.width
-    let c = b.val.color
-    let mut aw = result.none(0)
-    let mut ac = result.none("")
-    if result.is_some(a) {
-        aw = a.val.width
-        ac = a.val.color
+    st_put(id, s_all, b_all)
+    st_put(id, s_x, b_x)
+    st_put(id, s_y, b_y)
+    st_put(id, s_t, b_t)
+    st_put(id, s_r, b_r)
+    st_put(id, s_b, b_b)
+    st_put(id, s_l, b_l)
+}
+
+fn st_put(id: int, setter: int, v: Option<int>) {
+    if result.is_some(v) {
+        apply_int_value(id, setter, v.val)
     }
-    // Only boxes and buttons carry a border width (it insets their content).
-    if kind == 1 || kind == 4 {
-        st_int(id, SET.Border, aw, w)
-    }
-    if result.is_some(c) && (!result.is_some(ac) || ac.val != c.val) {
-        apply_int_value(id, SET.BorderColor, parse_hex_color(c.val))
-    }
-    // Side borders and rules between children: paint only.
-    let mut asd = result.none(Edges {})
-    let mut abt = result.none(0)
-    if result.is_some(a) {
-        asd = a.val.sides
-        abt = a.val.between
-    }
-    st_edges(id, SET.BorderTop, SET.BorderRight, SET.BorderBottom, SET.BorderLeft, asd, b.val.sides)
-    st_int(id, SET.BorderBetween, abt, b.val.between)
 }
 
 /// `Style.floating`: write the fields that differ. A present `Float` is the
@@ -3335,6 +3525,15 @@ fn Component(node: Node, p: BoxProps) -> Node {
             if arena.input_committed(node_id) != seed {
                 set_input(node, seed)
             }
+            // Two-way: a value written from outside (a clear button, a picked
+            // option, a parsed number) shows in the field. Typing commits the
+            // buffer first, so the two already agree and nothing is reset.
+            node_effect(node, || {
+                let v = sig.get()
+                if arena.input_committed(node_id) != v {
+                    set_input(node_handle(node_id), v)
+                }
+            })
         }
     }
     if p.rowHeight != 0 {
@@ -3350,7 +3549,9 @@ fn Component(node: Node, p: BoxProps) -> Node {
         nodes.ui[node.id].focusable = 1
     }
     if k == 13 {
-        set_background(node, role_color(ROLE.Hard))
+        // Tracks sit on the hairline tone: the filled part and the thumb carry
+        // the value, the rest of the track stays quiet.
+        set_background(node, role_color(ROLE.Rule))
         set_color(node, role_color(ROLE.Ink))
         border_color(node, role_color(ROLE.Plate))
         if result.is_some(p.bind) {
@@ -3358,9 +3559,15 @@ fn Component(node: Node, p: BoxProps) -> Node {
         }
     }
     if k == 6 {
-        set_background(node, role_color(ROLE.Hard))
+        set_background(node, role_color(ROLE.Rule))
         set_color(node, role_color(ROLE.Ink))
         border_color(node, role_color(ROLE.Plate))
+        // A bound bar eases each new value over `Motion.Base`; a negative
+        // value sweeps (indeterminate).
+        if result.is_some(p.bind) {
+            let sig = p.bind.val
+            node_effect(node, || { progress_tween(node, sig.id, sig.get(), false) })
+        }
     }
     if k == 9 {
         nodes.lay[node.id].dir = 1
@@ -3387,19 +3594,18 @@ fn Component(node: Node, p: BoxProps) -> Node {
         focus: p.focusStyle,
         disabled: p.disabledStyle,
     }
+    let styled_at_all = result.is_some(p.style) || result.is_some(p.restyle)
+    let style = layered_style(p)
     if has_state_styles(states) {
         if result.is_some(p.pressStyle) {
             nodes.anim[node.id].press = 1
         }
-        let mut base: fn() -> Style = no_style
-        if result.is_some(p.style) {
-            base = p.style.val
-        }
-        install_state_style(node, base, states)
-    } else if result.is_some(p.style) {
-        install_style(node, p.style.val)
+        install_state_style(node, style, states)
+    } else if styled_at_all {
+        install_style(node, style)
     }
     install_behaviour(node, p)
+    install_mounted(node, p)
     if result.is_some(p.ref) {
         ref_fill(p.ref.val, node.id)
     }
@@ -3409,6 +3615,28 @@ fn Component(node: Node, p: BoxProps) -> Node {
     }
     view_note(node.id, slot_id)
     return node
+}
+
+/// Paint-side progress for a bar node (`raw_progress`) bound to signal
+/// `signal_id`, given the value `v` just read. A negative value or `sweep`
+/// spins; otherwise a plain `set` eases from the last value the bar showed
+/// (a `zeus.animate` write brings its own track). Call from the bar's effect.
+fn progress_tween(n: Node, signal_id: int, v: int, sweep: bool) {
+    let node_id = n.id
+    let last = nodes.anim[node_id].tween
+    if v < 0 || sweep {
+        arena.note_spin(node_id, 1400)
+    } else {
+        arena.clear_spin(node_id)
+        if last >= 0 && arena.anim_bind_on() == 0 {
+            arena.anim_paint_from(signal_id, last, Motion.Base)
+        }
+    }
+    if last != v {
+        nodes.anim[node_id].tween = v
+        // Called from the bar's effect: report the node it repaints.
+        arena.note_prop_write(node_id, 0)
+    }
 }
 
 /// Run `build` with `host` as the parent. Trailing blocks lower to this.
@@ -3430,8 +3658,10 @@ fn ui_emit(node: Node) -> Node {
 
 struct TextProps {
     /// CSS-subset style: `color`, `font`, `wrap`, `ellipsis`, and the box keys
-    /// (`grow`, `inset` for pinned chart text, ...).
+    /// (`grow`, `top` / `left` for pinned chart text, ...).
     style: Option<fn() -> Style> = none,
+    /// The caller's style over `style`; see `BoxProps.restyle`.
+    restyle: Option<fn() -> Style> = none,
     /// Filled with this label; see `BoxProps.ref`.
     ref: Option<Ref> = none,
     /// Paint this integer signal's live value (cheaper than a text thunk: no
@@ -3453,7 +3683,8 @@ fn Box(p: BoxProps) -> Node {
 /// this one node. The compiler lifts a plain expression —
 /// `Text("n={{count.get()}}")` — into that thunk, so callers write data.
 fn Text(label: fn() -> string, p: TextProps) -> Node {
-    return Component(raw_label(""), text = label, style = p.style, ref = p.ref, bind = p.bind,
+    return Component(raw_label(""), text = label, style = p.style, restyle = p.restyle,
+                     ref = p.ref, bind = p.bind,
                      label = p.label, role = p.role, keys = p.keys)
 }
 // --- elevation ------------------------------------------------------------
@@ -3482,11 +3713,11 @@ fn elev_now(level: int) -> Elev {
 /// Transition durations in milliseconds. Anything that moves uses one of
 /// these three; a bespoke duration is a bug, not a refinement.
 enum Motion {
-    // Hover, press, focus — feedback that must feel instant.
+    // Hover, press, fades, reveals, switches, and short slides.
     Fast = 100,
-    // The default: state changes, indicators, switches.
+    // Value changes and sliding indicators.
     Base = 170,
-    // Entrances and exits of large surfaces (dialog, drawer, toast).
+    // A long duration, kept for callers. The component library does not use it.
     Slow = 270,
 }
 
@@ -3499,10 +3730,10 @@ enum EASE {
     // The workhorse: fast out, slow in. cubic-bezier(0.215, 0.61, 0.355, 1)
     // (ease-out cubic). Everything unspecified uses it.
     Standard = 1,
-    // More pronounced deceleration, for entrances that should feel arrived.
+    // More pronounced deceleration. Available; components use Standard.
     // cubic-bezier(0.23, 1, 0.32, 1) (ease-out quint).
     Emphasized = 2,
-    // Overshoots and settles. Switch thumbs and anything that "snaps".
+    // Overshoots and settles. Available; components do not use it.
     // cubic-bezier(0.34, 1.56, 0.64, 1) (ease-out-back).
     Spring = 3,
 }
@@ -3582,9 +3813,9 @@ fn clear_font() {
 }
 
 
-/// Theme roles. `accent` is the live brand ramp's solid step — blue by
-/// default, and whatever `set_accent` picks after that. Status tints (ok,
-/// danger) stay semantic; the chart fields are the data-viz layer every chart
+/// Theme roles. `accent` is the live ramp's solid step — ink by
+/// default, and whatever `set_accent` picks after that. Status tints stay
+/// hue-distinct and quiet; the chart fields are the data-viz layer every chart
 /// reads (stroke + area wash).
 // --- C boundary hooks -----------------------------------------------------
 // Bodyless: the runtime implements these (see `zeus_plat.c`), and `zeus`
@@ -3602,7 +3833,7 @@ fn remap_key(spec: string, action: string, ctx: string) {}
 fn ink() -> string { return role_token(ROLE.Ink) }
 
 /// Primary: fills for default buttons, switches, selection. The accent ramp's
-/// solid step (`register_accent`), blue by default.
+/// solid step (`register_accent`), ink by default.
 fn accent() -> string { return role_token(ROLE.Accent) }
 
 /// Destructive text (errors, destructive alerts).

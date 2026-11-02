@@ -1,5 +1,5 @@
 // DRAW-list golden: the Menu surface. An open dropdown anchored below its
-// trigger, with the elevation shadow, a group label, a highlighted command row
+// trigger, flat with a hairline, a group label, a highlighted command row
 // (the active index), a separator, and a destructive row. `active` starts at 1
 // so the highlight is settled on this first frame. Keep this file free of
 // prints: stdout is the golden.

@@ -20,8 +20,7 @@ const LEAD_NORMAL: int = 150
 const LEAD_RELAXED: int = 170
 
 /// Type scale. Canvas hosts draw one weight, so hierarchy leans on size and
-/// color. 15 is the body workhorse: a size up from the usual 14, which suits
-/// the roomier pill controls.
+/// color. Body stays at 14; the quiet chrome around it is what carries the scale.
 const FONT_DISPLAY: int = 32
 const FONT_HEADING: int = 22
 const FONT_TITLE: int = 17
@@ -42,27 +41,27 @@ const FOCUS_WIDTH: int = 2
 const FOCUS_OFFSET: int = 2
 
 // --- radius ---------------------------------------------------------------
-/// Corner radii, small to extra large: surfaces (cards, menus, dialogs) and
-/// the rows inside them. Soft and generous; a nested radius is the outer one
-/// minus the padding between them.
-const RAD_SM: int = 8
-const RAD_MD: int = 12
-const RAD_LG: int = 16
-const RAD_XL: int = 20
+/// Corner radii, small to extra large. One short scale: surfaces and controls
+/// share it, so a button, a field, and a card read as the same geometry.
+/// Circles (`RAD_FULL`) are reserved for marks whose shape means something —
+/// a radio, an avatar, a switch (track and thumb) — not for chrome.
+const RAD_SM: int = 2
+const RAD_MD: int = 4
+const RAD_LG: int = 6
+const RAD_XL: int = 8
 const RAD_FULL: int = 999
-/// Interactive controls (buttons, fields, triggers, tabs, toggles, badges)
-/// are pills: the shape that says "press me", told apart from surfaces at a
-/// glance.
-const RAD_CONTROL: int = RAD_FULL
+/// Buttons, fields, triggers, tabs, toggles, and badges. A small radius, not
+/// a pill: the control is a rectangle with the corners eased.
+const RAD_CONTROL: int = RAD_MD
 /// A checkbox stays a rounded square, so it never reads as a radio.
-const RAD_CHECK: int = 5
+const RAD_CHECK: int = 2
 /// No rounding. Named so a caller can say `RAD_NONE` instead of a bare 0 and
 /// mean it — `radius = 0` and "radius unset" were indistinguishable before.
 const RAD_NONE: int = 0
 
 // --- control scale --------------------------------------------------------
 /// One table every control reads, keyed by a `Size` token: Button, TextInput,
-/// Select, Combobox, Segmented, Toggle, pill Tabs, Pagination, the DatePicker
+/// Select, Combobox, Segmented, Toggle, Tabs, Pagination, the DatePicker
 /// trigger, and NumberInput all share it, so any two of them line up in a row.
 /// Height and side padding follow `density()`; type and icons do not.
 fn control_h(size: int) -> int {
@@ -116,10 +115,7 @@ const METER_TRACK: int = 6
 /// Progress ring diameter.
 const RING: int = 48
 const MENU_MIN_W: int = 200
-const TOOLTIP_MAX_W: int = 256
 const TOAST_W: int = 360
-/// Side sheet / drawer width.
-const SHEET_W: int = 380
 /// Measure for short prose blocks (empty states, descriptions).
 const PROSE_W: int = 320
 /// Page column caps (`Container`).
@@ -139,8 +135,13 @@ const DOT: int = 8
 const HAIRLINE: int = 1
 /// Default width of a `Select` field.
 const SELECT_W: int = 200
+/// The one shadow in the system, for layers that float over content (menus,
+/// selects, popovers, dialogs, drawers, toasts). Cards and inline surfaces
+/// stay flat; the hairline is their edge. Matches `Elevation.Raised`.
+const FLOAT_LIFT: int = 1
 /// Stacking: scrim under the trigger/field, popup above both — so a Select
-/// menu is not covered by a Combobox later in the same card.
+/// menu is not covered by a Combobox field later in the same card. Panels
+/// that sit near each other then order by which one opened most recently.
 const Z_SCRIM: int = 40
 const Z_FIELD: int = 50
 /// Hover floaters (tooltip, hover card): above the page, under an open popup.
@@ -161,17 +162,12 @@ const TOOLTIP_ARROW: int = 8
 // --- dialog ---------------------------------------------------------------
 /// Desktop dialog width; narrower windows get 92% of their width.
 const DIALOG_W: int = 440
-/// Scale the dialog card rests at while closed (percent).
-const DIALOG_REST: int = 96
 
 // --- pagination -----------------------------------------------------------
 /// Slots in a collapsed pagination row: first, last, and a five-wide window.
 const PAGE_SLOTS: int = 7
 
 // --- charts ---------------------------------------------------------------
-/// Chart width/height used by the demos (put charts in a Card column).
-const CHART_W: int = 640
-const CHART_H: int = 200
 /// Left gutter for the y tick labels.
 const CHART_GUTTER: int = 34
 /// Air above the plot, room for the floating tooltip.

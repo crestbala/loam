@@ -57,7 +57,7 @@ fn main() {
     let score = zeus.signal(64)
     let spark = zeus.signal([]int { 3, 5, 4, 8, 7, 9, 12 })
     let nav = zeus.signal(0)
-    zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 8, padding = edges(16))) {
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 8, padding = 16)) {
         zui.Tree(rows, tree_sel, tree_open, label = "Files", on_open = fn(i: int) {
             if i != 2 {
                 return

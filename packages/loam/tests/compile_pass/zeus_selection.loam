@@ -34,9 +34,8 @@ fn main() {
         fmt.println("FAIL no tab node")
         sys.exit(1)
     }
-    // The selected fill lives on the tray's sliding indicator (a `Tabs`
-    // trigger only swaps its label colour), so track the label: ink while
-    // selected, muted otherwise.
+    // The selected trigger's label is ink; the rest are mute. Track that
+    // colour so a click that does not repaint the old trigger fails here.
     let label = first + 1
     let on = zeus.node_color_rgb(label)
 
@@ -51,12 +50,12 @@ fn main() {
     tab.set(0)
     check("tab 0 selected again", zeus.node_color_rgb(label), on)
 
-    // Series 0 takes the first brand colour.
-    if !fmt.eq(zui.chart_stroke_light(0), "#ff6308") {
+    // Series 0 and 1 are the first two strokes of the natural chart palette.
+    if !fmt.eq(zui.chart_stroke_light(0), "#0f6cb2") {
         fmt.println("FAIL series 0 colour:", zui.chart_stroke_light(0))
         sys.exit(1)
     }
-    if !fmt.eq(zui.chart_stroke_light(1), "#6c28d9") {
+    if !fmt.eq(zui.chart_stroke_light(1), "#1b7a34") {
         fmt.println("FAIL series 1 colour:", zui.chart_stroke_light(1))
         sys.exit(1)
     }

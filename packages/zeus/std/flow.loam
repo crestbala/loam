@@ -89,8 +89,8 @@ struct ScopeProps {
 /// zui.Scope(density = Density.Compact) {
 ///     zui.Table(...)
 /// }
-/// zui.Scope(accent = ACCENT.Rose) {
-///     zui.Button("Delete", on_click = drop)
+/// zui.Scope(accent = ACCENT.Graphite) {
+///     zui.Button("Save", on_click = save)
 /// }
 /// ```
 fn Scope(p: ScopeProps) -> Node {
@@ -118,15 +118,19 @@ fn Scope(p: ScopeProps) -> Node {
 
 /// Append `v` to a live list signal and notify. Use with `Each` / `VirtualList`.
 /// A windowed list only rebuilds the visible window, not every row.
+///
+/// The list mutators read with `peek`: called from an effect, they must not
+/// subscribe it to the list they write, or the write re-runs the effect that
+/// made it (an effect that appends a picked file would append it forever).
 fn push_item<T>(sig: Signal<[]T>, v: T) {
-    let mut xs = sig.get()
+    let mut xs = sig.peek()
     push(xs, v)
     sig.set(xs)
 }
 
 /// Insert `v` at index `i` (clamped to `0..len`). Use with `Each` / `VirtualList`.
 fn insert_item<T>(sig: Signal<[]T>, i: int, v: T) {
-    let xs = sig.get()
+    let xs = sig.peek()
     let n = xs.len
     let mut at = i
     if at < 0 {
@@ -151,7 +155,7 @@ fn insert_item<T>(sig: Signal<[]T>, i: int, v: T) {
 
 /// Remove the item at index `i`. No-op if `i` is out of range.
 fn remove_item<T>(sig: Signal<[]T>, i: int) {
-    let xs = sig.get()
+    let xs = sig.peek()
     let n = xs.len
     if i < 0 {
         return
@@ -172,7 +176,7 @@ fn remove_item<T>(sig: Signal<[]T>, i: int) {
 
 /// Remove the last item from a live list signal. No-op if empty.
 fn pop_item<T>(sig: Signal<[]T>) {
-    let mut xs = sig.get()
+    let mut xs = sig.peek()
     if xs.len > 0 {
         pop(xs)
         sig.set(xs)
@@ -1565,27 +1569,6 @@ fn measured_height(n: Node) -> int {
     return nodes.box[n.id].h
 }
 
-/// Paint-side progress for a bar node (`raw_progress`) bound to signal
-/// `signal_id`, given the value `v` just read. A negative value or `sweep`
-/// spins; otherwise a plain `set` eases from the last value the bar showed
-/// (a `zeus.animate` write brings its own track). Call from the bar's effect.
-fn progress_tween(n: Node, signal_id: int, v: int, sweep: bool) {
-    let node_id = n.id
-    let last = nodes.anim[node_id].tween
-    if v < 0 || sweep {
-        arena.note_spin(node_id, 1400)
-    } else {
-        arena.clear_spin(node_id)
-        if last >= 0 && arena.anim_bind_on() == 0 {
-            arena.anim_paint_from(signal_id, last, Motion.Base)
-        }
-    }
-    if last != v {
-        nodes.anim[node_id].tween = v
-        // Called from the bar's effect: report the node it repaints.
-        arena.note_prop_write(node_id, 0)
-    }
-}
 
 /// The density signal a `Scope(density = ...)` sets for the node whose style
 /// is running (or the node being built), or 0 outside any scope.

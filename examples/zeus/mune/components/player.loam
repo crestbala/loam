@@ -20,8 +20,8 @@ const MAX_SECTIONS: int = 9
 const PATH_COLS: int = 60
 
 fn PlayerBar() -> Node {
-    return zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 18, padding = edges2(14, 22),
-                                  background = theme.PANEL, border = line(1, theme.LINE))) {
+    return zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 18, paddingY = 14, paddingX = 22,
+                                  background = theme.PANEL, borderWidth = 1, borderColor = theme.LINE)) {
         PlayButton()
         zeus.Box(style = Style(direction = Direction.Column, gap = 6, grow = 1, shrink = 1, minWidth = 0)) {
             zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 10)) {
@@ -48,7 +48,7 @@ fn PlayerBar() -> Node {
 }
 
 fn PlayButton() -> Node {
-    return zeus.Box(style = Style(width = px(52), height = px(52), radius = corners(26), align = Align.Center,
+    return zeus.Box(style = Style(width = px(52), height = px(52), radius = 26, align = Align.Center,
                                   justify = Align.Center, cursor = "pointer",
                                   background = if store.has_take() { theme.ACCENT } else { theme.TILE_HI }),
                     role = "button",
@@ -57,7 +57,7 @@ fn PlayButton() -> Node {
         zeus.Box(visible = store.playing.get(), style = Style(direction = Direction.Row)) {
             zui.Icon(kit.IC_PAUSE, 22, theme.ON_ACCENT)
         }
-        zeus.Box(visible = !store.playing.get(), style = Style(direction = Direction.Row, padding = Edges(left = 3))) {
+        zeus.Box(visible = !store.playing.get(), style = Style(direction = Direction.Row, paddingLeft = 3)) {
             zui.Icon(kit.IC_PLAY, 22, if store.has_take() { theme.ON_ACCENT } else { theme.FAINT })
         }
     }
@@ -77,7 +77,7 @@ fn Waveform() -> Node {
                 Bar(k)
             }
         }
-        zeus.Box(style = Style(direction = Direction.Row, height = px(4), radius = corners(2), background = theme.TILE)) {
+        zeus.Box(style = Style(direction = Direction.Row, height = px(4), radius = 2, background = theme.TILE)) {
             for k in 0..MAX_SECTIONS {
                 SectionMark(k)
             }
@@ -86,7 +86,7 @@ fn Waveform() -> Node {
 }
 
 fn Bar(k: int) -> Node {
-    return zeus.Box(style = Style(grow = 1, height = px(bar_height(k)), radius = corners(1),
+    return zeus.Box(style = Style(grow = 1, height = px(bar_height(k)), radius = 1,
                                   background = bar_color(k)))
 }
 
@@ -111,7 +111,7 @@ fn bar_color(k: int) -> string {
 /// One section on the strip, as wide as its share of the piece.
 fn SectionMark(k: int) -> Node {
     return zeus.Box(visible = mark_share(k) > 0,
-                    style = Style(grow = mark_share(k), height = px(4), radius = corners(2),
+                    style = Style(grow = mark_share(k), height = px(4), radius = 2,
                                   background = theme.section_color(mark_kind(k)), opacity = 80))
 }
 
@@ -147,7 +147,7 @@ fn EnergyArc() -> Node {
 
 fn PathCol(k: int) -> Node {
     return zeus.Box(style = Style(grow = 1, height = px(2 + path_value(k) * 16 / 1000),
-                                  radius = corners(1),
+                                  radius = 1,
                                   background = if store.path_heard.get().len > 0 && path_value(k) >= 0 {
                                       theme.path_color(path_value(k))
                                   } else {
@@ -214,12 +214,12 @@ fn StatusLine() -> Node {
 
 /// `zui.Button` reads `enabled` when it builds, so each action is two
 /// buttons, an enabled and a disabled one, and only one is shown.
-fn Gate(on: fn() -> bool, live: fn(), dead: fn()) -> Node {
+fn Gate(on: Signal<bool>, live: fn(), dead: fn()) -> Node {
     return zeus.Box(style = Style(direction = Direction.Row, grow = 1)) {
-        zeus.Box(visible = on(), style = Style(direction = Direction.Row, grow = 1)) {
+        zeus.Box(visible = on.get(), style = Style(direction = Direction.Row, grow = 1)) {
             live()
         }
-        zeus.Box(visible = !on(), style = Style(direction = Direction.Row, grow = 1)) {
+        zeus.Box(visible = !on.get(), style = Style(direction = Direction.Row, grow = 1)) {
             dead()
         }
     }

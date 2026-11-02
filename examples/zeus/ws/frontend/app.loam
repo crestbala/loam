@@ -10,7 +10,7 @@ import "std:zeus"
 import "std:http"
 
 fn Panel(n: Signal<int>, last: Signal<string>, state: Signal<string>) -> Node {
-    return zeus.Box(style = Style(width = px(280), direction = Direction.Column, padding = edges(20))) {
+    return zeus.Box(style = Style(width = px(280), direction = Direction.Column, padding = 20)) {
         zeus.Text("Zeus ws demo", style = Style(font = 20))
         zeus.Text("messages: {{n.get()}}", style = Style(font = 15))
         zeus.Text("last: {{last.get()}}", style = Style(font = 13))

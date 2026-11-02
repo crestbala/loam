@@ -17,7 +17,7 @@ fn Home() -> Node {
                                   background = theme.PAPER)) {
         Header()
         zui.Scroll(style = Style(grow = 1, shrink = 1)) {
-            zeus.Box(style = Style(direction = Direction.Row, gap = 18, padding = Edges(left = 22, right = 22, top = 4, bottom = 22),
+            zeus.Box(style = Style(direction = Direction.Row, gap = 18, paddingX = 22, paddingTop = 4, paddingBottom = 22,
                                    align = Align.Start)) {
                 zeus.Box(style = Style(direction = Direction.Column, gap = 18, width = px(400))) {
                     recordings.Recordings()
@@ -33,8 +33,8 @@ fn Home() -> Node {
 }
 
 fn Header() -> Node {
-    return zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 12, padding = edges2(16, 22))) {
-        zeus.Box(style = Style(width = px(36), height = px(36), radius = corners(10), background = theme.ACCENT,
+    return zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 12, paddingY = 16, paddingX = 22)) {
+        zeus.Box(style = Style(width = px(36), height = px(36), radius = 10, background = theme.ACCENT,
                                align = Align.Center, justify = Align.Center)) {
             zui.Icon(kit.IC_NOTE, 18, theme.ON_ACCENT)
         }
@@ -44,7 +44,7 @@ fn Header() -> Node {
         }
         zui.Grow()
         zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 6, height = px(28),
-                               padding = edges2(0, 12), radius = corners(14), background = theme.TILE)) {
+                               paddingY = 0, paddingX = 12, radius = 14, background = theme.TILE)) {
             kit.Pip(if store.tools_ok.get() { theme.OK } else { theme.WARN }, 7)
             zeus.Text(fn() -> string {
                 if !store.engine_up.get() {

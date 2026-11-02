@@ -15,7 +15,7 @@ fn expect(ok: bool, what: string) {
 }
 
 fn Counter(count: Signal<int>) -> Node {
-    return zeus.Box(style = Style(direction = Direction.Column, gap = 8, padding = edges(16))) {
+    return zeus.Box(style = Style(direction = Direction.Column, gap = 8, padding = 16)) {
         zeus.Text("Count: {{count.get()}}")
         zui.Button("Increment", on_click = fn() => count.set(count.get() + 1))
     }

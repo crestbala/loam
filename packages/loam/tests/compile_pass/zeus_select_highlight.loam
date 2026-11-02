@@ -1,6 +1,6 @@
-// Select's keyboard highlight is one sliding fill under the rows. Opening
-// lands it on the first row at once; an arrow tweens it to the next row; a
-// reopen lands on the first row again instead of sliding from the old spot.
+// Select's keyboard highlight is the raised fill on the active row. Opening
+// lands it on the first row at once; an arrow moves it to the next row in
+// the same frame; a reopen lands on the first row again.
 
 import "std:fmt"
 import "std:sys"
@@ -25,25 +25,8 @@ fn row(label: string) -> int {
     return 0
 }
 
-// The lowest-id child of `parent`: the first one built.
-fn first_child(parent: int) -> int {
-    for id in 1..zeus.arena_nodes() {
-        if zeus.node_parent(id) == parent {
-            return id
-        }
-    }
-    return 0
-}
-
 fn layout() {
     zeus.engine_layout(360, 420)
-}
-
-fn settle() {
-    for _ in 0..30 {
-        zeus.engine_step()
-    }
-    layout()
 }
 
 fn main() {
@@ -60,30 +43,24 @@ fn main() {
     layout()
     let small = row("Small")
     let medium = row("Medium")
-    // The highlight is the menu's first child, built before the rows. Not
-    // `small - 1`: the rows' `Each` marker is also a menu child, built between.
-    let hl = first_child(zeus.node_parent(small))
     must(small > 0 && medium > 0, "menu rows found")
-    must(zeus.node_parent(hl) == zeus.node_parent(small), "highlight sits in the menu")
-    must(zeus.node_y(hl) == zeus.node_y(small), "opening lands on the first row")
-    must(zeus.node_height(hl) == zeus.node_height(small), "highlight is one row tall")
+    let on = zeus.node_background_rgb(small)
+    let off = zeus.node_background_rgb(medium)
+    must(on != off, "opening fills the first row")
+    must(on != 0, "the fill is the raised plate")
 
-    // Down tweens: part-way after one frame, on the row once settled.
     zeus.engine_key_ev(1003, 0)
-    zeus.engine_step()
     layout()
-    let mid = zeus.node_y(hl)
-    must(mid > zeus.node_y(small) && mid < zeus.node_y(medium), "down slides the highlight")
-    settle()
-    must(zeus.node_y(hl) == zeus.node_y(medium), "highlight settles on the next row")
+    must(zeus.node_background_rgb(medium) == on, "down fills the next row")
+    must(zeus.node_background_rgb(small) == off, "the first row lost the fill")
 
-    // Close, reopen: back on the first row without a slide.
     zeus.engine_key_ev(27, 0)
     layout()
     zeus.engine_click_text("Large")
     zeus.engine_mouseup()
     layout()
-    must(zeus.node_y(hl) == zeus.node_y(small), "reopening lands on the first row")
+    must(zeus.node_background_rgb(small) == on, "reopening fills the first row")
+    must(zeus.node_background_rgb(medium) == off, "reopening clears the next row")
 
     fmt.println("select highlight ok")
 }

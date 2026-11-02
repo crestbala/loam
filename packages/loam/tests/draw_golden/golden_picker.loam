@@ -1,6 +1,7 @@
 // DRAW-list golden: the lazy calendar picker with its panel open — one 7x6
-// grid, dynamic month label, live year, selected day. Keep this file free of
-// prints: stdout is the golden.
+// grid, dynamic month label, live year, selected day. The second list is the
+// sheet after its fade has settled. Keep this file free of prints: stdout is
+// the golden.
 
 import "std:zeus"
 import "std:zui"
@@ -15,7 +16,13 @@ fn main() {
         }
     })
     zeus.engine_click_text("Pick a date")
-    zeus.engine_layout(400, 420)
-    zeus.engine_paint()
+    // The sheet fades in. Step past the track so the golden is the settled panel.
+    let mut i = 0
+    while i < 16 {
+        zeus.engine_step_dt(16)
+        zeus.engine_layout(400, 420)
+        zeus.engine_paint()
+        i = i + 1
+    }
     zeus.dump_draw_list()
 }

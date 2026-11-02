@@ -21,16 +21,16 @@ fn main() {
                     }
                 }
             }, header = fn() { zui.Note("Header") },
-               style = Style(height = px(240), border = line(spacing.HAIRLINE, colors.rule()))) {
+               style = Style(height = px(240), borderWidth = spacing.HAIRLINE, borderColor = colors.rule())) {
                 zui.MasterDetail(master = fn() { zui.Body("Projects") }) {
                     zui.Body("The open project.")
                 }
             }
             zui.SplitPane(first = fn() {
-                zeus.Box(style = Style(padding = edges(12))) { zui.Body("Source") }
+                zeus.Box(style = Style(padding = 12)) { zui.Body("Source") }
             }, initial = 180, size = 96,
-               style = Style(border = line(spacing.HAIRLINE, colors.rule()))) {
-                zeus.Box(style = Style(padding = edges(12))) { zui.Body("Preview") }
+               style = Style(borderWidth = spacing.HAIRLINE, borderColor = colors.rule())) {
+                zeus.Box(style = Style(padding = 12)) { zui.Body("Preview") }
             }
         }
     })

@@ -25,7 +25,7 @@ fn main() {
         let b = zeus.Box(style = Style(width = px(20),
                                        height = px(20),
                                        position = zeus.pos_absolute(),
-                                       inset = Edges(top = 300, left = 300),
+                                       top = 300, left = 300,
                                        background = "#ff0000"))
         id = b.id
     })

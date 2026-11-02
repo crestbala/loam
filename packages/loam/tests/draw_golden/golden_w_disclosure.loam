@@ -20,11 +20,11 @@ fn main() {
             }
             zui.Accordion(open, items = rows)
             zui.Collapsible(open = shut, title = "Closed options",
-                            style = Style(border = line(spacing.HAIRLINE, colors.rule()))) {
+                            style = Style(borderWidth = spacing.HAIRLINE, borderColor = colors.rule())) {
                 zui.Body("Hidden body.")
             }
             zui.Collapsible(open = shown, title = "Open options",
-                            style = Style(border = line(spacing.HAIRLINE, colors.rule()))) {
+                            style = Style(borderWidth = spacing.HAIRLINE, borderColor = colors.rule())) {
                 zui.Body("Visible body.")
             }
         }

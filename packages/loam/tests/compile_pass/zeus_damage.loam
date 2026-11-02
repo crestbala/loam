@@ -21,14 +21,14 @@ fn main() {
 
     let mut box_id = 0
     let mut card_id = 0
-    zeus.root(zeus.Box(style = Style(padding = edges(20))) {
+    zeus.root(zeus.Box(style = Style(padding = 20)) {
         zeus.Box(style = Style(direction = Direction.Column, gap = 10)) {
             let b = zeus.Box(style = Style(width = px(100), height = px(50), background = "#ff0000"))
             box_id = b.id
             let c = zeus.Box(style = Style(width = px(100),
                                            height = px(50),
                                            elevation = 2,
-                                           radius = corners(10),
+                                           radius = 10,
                                            background = "#ffffff"))
             card_id = c.id
         }

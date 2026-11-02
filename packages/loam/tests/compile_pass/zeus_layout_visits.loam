@@ -31,7 +31,7 @@ fn main() {
             for i in 0..250 {
                 zeus.Box(style = Style(direction = zeus.Direction.Row, gap = 4)) {
                     for k in 0..3 {
-                        zeus.Box(style = Style(grow = 1, padding = edges(2))) {
+                        zeus.Box(style = Style(grow = 1, padding = 2)) {
                             zeus.Text("cell {{i}}.{{k}}")
                         }
                     }
@@ -47,7 +47,7 @@ fn main() {
             // A 6-column grid of 290 boxes with a label each.
             zui.Grid(config = GridConfig(columns = 6, gap = 4)) {
                 for i in 0..290 {
-                    zeus.Box(style = Style(padding = edges(2))) {
+                    zeus.Box(style = Style(padding = 2)) {
                         zeus.Text("g{{i}}")
                     }
                 }

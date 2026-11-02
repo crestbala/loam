@@ -178,7 +178,7 @@ fn LogPanel(p: LogPanelProps) -> Node {
         })
     }
     return zeus.Component(zeus.raw_scroll(), style = Style(direction = Direction.Column, height = px(p.height),
-                                                           padding = edges(8), gap = 2)) {
+                                                           padding = Space.Exs, gap = 2)) {
         zeus.Text("log")
         zeus.Each(fn() -> []Record {
             let v = log_rev.get()

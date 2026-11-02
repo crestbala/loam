@@ -23,6 +23,12 @@ struct Click {
 /// exactly as paint stacks them.
 let mut hit_in_floater: int = 0
 
+/// Which thumb the last hit walk landed on: 1 vertical, 2 horizontal, 0 none.
+/// Recorded where the test ran, in the scroller's own parent coordinates — a
+/// nested scroller under a scrolled page cannot be re-tested with the window
+/// point, which is what `click` used to do (and missed by the page's offset).
+let mut hit_bar: int = 0
+
 fn hit_one_floater(id: int, sx: int, sy: int) -> int {
     if int(nodes.ui[id].ptr_pass) != 0 {
         return 0
@@ -79,7 +85,7 @@ fn hit_scrollbar(id: int, px: int, py: int) -> int {
     if platform.plat_overlay_scroll() != 0 {
         return 0
     }
-    if arena.bar_visible(id) == 0 {
+    if arena.bar_live(id) == 0 {
         return 0
     }
     let tx = arena.bar_x(id, nodes.box[id].x)
@@ -105,7 +111,7 @@ fn hit_h_scrollbar(id: int, px: int, py: int) -> int {
     if platform.plat_overlay_scroll() != 0 {
         return 0
     }
-    if arena.bar_visible_x(id) == 0 {
+    if arena.bar_live_x(id) == 0 {
         return 0
     }
     let tx = arena.bar_thumb_x(id, nodes.box[id].x)
@@ -139,9 +145,11 @@ fn hit_node(id: int, px: int, py: int) -> int {
             return 0
         }
         if hit_h_scrollbar(id, px, py) != 0 {
+            hit_bar = 2
             return id
         }
         if hit_scrollbar(id, px, py) != 0 {
+            hit_bar = 1
             return id
         }
     }
@@ -268,8 +276,10 @@ fn click(px: int, py: int) -> int {
     if arena.root_id <= 0 {
         return 0
     }
+    hit_bar = 0
     let mut id = hit_floaters(arena.root_id, px, py)
     if id <= 0 {
+        hit_bar = 0
         id = hit_node(arena.root_id, px, py)
     }
     if id <= 0 {
@@ -296,7 +306,7 @@ fn click(px: int, py: int) -> int {
         }
     }
     if int(nodes.tree[id].kind) == 11 {
-        if hit_h_scrollbar(id, px, py) != 0 {
+        if hit_bar == 2 {
             // Grab the thumb where it is: the drag moves it from its current
             // scroll, so the content never jumps under the pointer.
             arena.bar_on(id)
@@ -306,10 +316,9 @@ fn click(px: int, py: int) -> int {
             arena.drag_as = nodes.scrl[id].scroll_x
             return 1
         }
-        if hit_scrollbar(id, px, py) != 0 {
+        if hit_bar == 1 {
             // Grab the thumb where it is: the drag moves it from its current
             // scroll, so the content never jumps under the pointer.
-            let maxs = arena.scroll_max(id)
             arena.bar_on(id)
             arena.drag_id = id
             arena.drag_bar = 1
@@ -789,21 +798,34 @@ fn key_handlers(k: int, mods: int, up: int) -> int {
     return ran
 }
 
+/// The innermost scroller from `s` up whose live bar strip is under the
+/// pointer, on either axis (0 = none). Walking up is what lets the page's bar
+/// answer while the pointer sits over a nested table that is not scrolling.
+fn bar_strip_chain(s: int, px: int, py: int) -> int {
+    let mut c = s
+    let mut guard = 0
+    while c > 0 && c < nodes.tree.len && guard < 64 {
+        if int(nodes.tree[c].kind) == 11 {
+            if arena.bar_strip_at(c, px, py) != 0 {
+                return c
+            }
+        }
+        c = nodes.tree[c].parent
+        guard = guard + 1
+    }
+    return 0
+}
+
 /// The pointer is on a shown scrollbar's edge strip: make that bar hot (wider
-/// thumb, visible track, no fade while it stays there). Desktop only.
+/// thumb, visible track, no fade while it stays there). Desktop only. A bar
+/// that is yielding to its chain's lead is never made hot.
 fn bar_hover(px: int, py: int) {
     if platform.plat_overlay_scroll() != 0 {
         return
     }
-    let mut hot = 0
-    let s = scroll_target(px, py, 0)
-    if arena.bar_strip_at(s, px, py) != 0 {
-        hot = s
-    } else {
-        let sx = scroll_target(px, py, 1)
-        if arena.bar_strip_at(sx, px, py) != 0 {
-            hot = sx
-        }
+    let mut hot = bar_strip_chain(scroll_target(px, py, 0), px, py)
+    if hot == 0 {
+        hot = bar_strip_chain(scroll_target(px, py, 1), px, py)
     }
     // A drag keeps the bar it holds.
     if arena.drag_bar != 0 {

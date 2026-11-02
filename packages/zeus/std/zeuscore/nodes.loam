@@ -124,6 +124,11 @@ struct PinRec {
     /// dp, and `flip` allows the opposite side when the preferred one would
     /// overflow.
     anchor: int,
+    /// Open order of an anchored popup. 0 while it is closed. Among popups
+    /// that share a z-index and sit near each other, a higher order paints
+    /// and hits above a lower one. A popup that is not near them keeps tree
+    /// order (`arena.floater_near_order`).
+    open_ord: int,
     span: u16,
     grid_cols: u16,
     grid_min: u16,
@@ -133,6 +138,9 @@ struct PinRec {
     safe: u8,
     place: u8,
     flip: u8,
+    /// 1 after this popup was last seen hidden. The next show takes a new
+    /// `open_ord`, including when an exit fade still holds the old one.
+    popup_closed: u8,
     grid_auto: u8,
     align_self: i8,
     /// Floating box (`Style.floating`): target (`FloatTo`: 0 in flow, 1
@@ -380,8 +388,9 @@ fn blank_pin() -> PinRec {
     return PinRec {
         m_t: 0, m_r: 0, m_b: 0, m_l: 0, align_self: -1, pos: 0, pin_t: -1, pin_r: -1,
         pin_b: -1, pin_l: -1, span: 1, grid_cols: 0, grid_min: 0, grid_auto: 0,
-        safe: 0, z_index: 0, anchor: 0, anchor_gap: 6, place: 0, flip: 1, fl_to: 0,
-        fl_pts: 0, fl_clip: 0, fl_x: 0, fl_y: 0, fl_ew: 0, fl_eh: 0,
+        safe: 0, z_index: 0, anchor: 0, open_ord: 0, anchor_gap: 6, place: 0, flip: 1,
+        popup_closed: 0, fl_to: 0, fl_pts: 0, fl_clip: 0, fl_x: 0, fl_y: 0, fl_ew: 0,
+        fl_eh: 0,
     }
 }
 

@@ -7,7 +7,7 @@ import "std:zui"
 
 fn main() {
     zeus.window("box", 480, 520)
-    zeus.root(zeus.Box(style = Style(direction = Direction.Column, padding = edges(8), gap = 8)) {
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column, padding = 8, gap = 8)) {
         zui.Grid(config = GridConfig(columns = 3, gap = 6, padding = 4)) {
             zeus.Box(style = Style(height = px(20), span = 2))
             for i in 0..5 {
@@ -21,10 +21,10 @@ fn main() {
         }
         zeus.Box(style = Style(height = px(140))) {
             zeus.Box(style = Style(width = px(40), height = px(30), position = zeus.pos_absolute(),
-                                   inset = Edges(top = 5, left = 5)))
+                                   top = 5, left = 5))
             zeus.Box(style = Style(width = px(40), height = px(30), position = zeus.pos_absolute(),
-                                   inset = Edges(right = 5, bottom = 5)))
-            zeus.Box(style = Style(position = zeus.pos_absolute(), inset = Edges(top = 40, left = 60, right = 60, bottom = 40),
+                                   right = 5, bottom = 5))
+            zeus.Box(style = Style(position = zeus.pos_absolute(), top = 40, left = 60, right = 60, bottom = 40,
                                    zIndex = 3))
             zeus.Text("in flow")
         }

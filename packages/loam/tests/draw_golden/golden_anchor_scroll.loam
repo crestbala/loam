@@ -21,7 +21,7 @@ style = Style(width = px(160)),
 trigger = || {
                 zeus.Box(style = Style(width = px(120),
                                        height = px(32),
-                                       border = line(spacing.HAIRLINE, colors.rule()),
+                                       borderWidth = spacing.HAIRLINE, borderColor = colors.rule(),
                                        background = colors.plate()))
             })
         }

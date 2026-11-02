@@ -8,10 +8,10 @@ import "std:zui"
 fn DashboardLayout() -> Node {
     return Column(0) {
         zeus.Box(style = Style(direction = Direction.Row, gap = 16, align = Align.Center)) {
-            zeus.Box(style = Style(grow = 1, padding = edges(12), background = "#313244")) {
+            zeus.Box(style = Style(grow = 1, padding = 12, background = "#313244")) {
                 zeus.Text("Flexible Left Panel")
             }
-            zeus.Box(style = Style(width = px(150), padding = edges(12), background = "#45475a")) {
+            zeus.Box(style = Style(width = px(150), padding = 12, background = "#45475a")) {
                 zeus.Text("Fixed Right Panel (150px)")
             }
         }

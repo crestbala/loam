@@ -55,7 +55,7 @@ fn main() {
     let a = zeus.signal(100)
     let mut m = 0
     zeus.root(zui.Scroll(style = Style(width = px(300), height = px(200))) {
-        zeus.Box(style = Style(direction = Direction.Column, gap = 6, padding = edges(8))) {
+        zeus.Box(style = Style(direction = Direction.Column, gap = 6, padding = 8)) {
             zeus.Box(style = Style(height = px(240)))
             let b = zeus.Box(style = Style(width = px(90), height = px(24), background = "#ff0000"))
             zeus.styled(b, || { zeus.set_prop_int(b, zeus.SET.Opacity, a.get()) })

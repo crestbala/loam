@@ -16,7 +16,7 @@ fn main() {
     let pop = zeus.ref()
     let top = zeus.raw_scroll()
     zeus.slot(top, fn() {
-        zeus.Box(style = Style(direction = Direction.Column, gap = 10, padding = edges(12))) {
+        zeus.Box(style = Style(direction = Direction.Column, gap = 10, padding = 12)) {
             zeus.Box(style = Style(width = px(120), height = px(60))) {
                 zeus.Box(style = Style(width = px(10), height = px(10),
                                        floating = float_parent(Attach.CenterCenter, Attach.RightTop, 0, 0)))

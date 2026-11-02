@@ -83,7 +83,7 @@ fn main() {
     must(zeus.draw_count() == idle + 1, "thumb painted once faded in, no track")
     must(zeus.engine_step_dt(16) == 0, "the fade needs no live frames")
     must(zeus.engine_next_ms() > 16, "one wake at the fade-out, not a busy loop")
-    must(thumb_w() == 6, "resting thumb is 6dp")
+    must(thumb_w() == 4, "resting thumb is 4dp")
 
     // Still shown well into the linger: a slow wheel does not blink it.
     run_ms(400)
@@ -94,7 +94,7 @@ fn main() {
     // Step frames until the fade-out is visibly under way (wall-clock frames
     // run long, so wait on the alpha rather than a frame count).
     let mut guard = 0
-    while thumb_a() >= 150 && guard < 200 {
+    while thumb_a() >= 120 && guard < 200 {
         run_ms(16)
         guard = guard + 1
     }
@@ -119,7 +119,7 @@ fn main() {
     zeus.engine_hover(315, 60)
     run_ms(200)
     must(zeus.draw_count() == idle + 2, "hot bar paints the track and the thumb")
-    must(thumb_w() == 10, "hot thumb widened to 10dp")
+    must(thumb_w() == 8, "hot thumb widened to 8dp")
     run_ms(1400)
     must(zeus.draw_count() == idle + 2, "hot bar does not fade")
     must(zeus.engine_next_ms() == 0, "a resting hot bar needs no wakes")
@@ -127,7 +127,7 @@ fn main() {
     // Leave: it narrows back, lingers, then fades out and is gone.
     zeus.engine_hover(100, 60)
     run_ms(200)
-    must(thumb_w() == 6, "thumb narrowed after the pointer left")
+    must(thumb_w() == 4, "thumb narrowed after the pointer left")
     must(zeus.draw_count() == idle + 1, "track gone, thumb lingering")
     run_ms(1200)
     must(zeus.draw_count() == idle, "faded out after leaving")

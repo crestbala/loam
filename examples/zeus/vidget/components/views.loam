@@ -14,7 +14,7 @@ const IC_DOWNLOAD: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"c
 
 fn Header() -> Node {
     return zui.Row(Space.Sm) {
-        zeus.Box(style = Style(width = px(28), height = px(28), radius = corners(8), background = zeus.accent(),
+        zeus.Box(style = Style(width = px(28), height = px(28), radius = 8, background = zeus.accent(),
                                align = Align.Center, justify = Align.Center)) {
             zui.Icon(IC_DOWNLOAD, 16, colors.on_accent())
         }
@@ -110,7 +110,7 @@ fn PreviewArm(st: int) -> Node {
 
 fn PreviewBody() -> Node {
     return zeus.Box(style = Style(direction = Direction.Column, gap = 10)) {
-        zeus.Box(style = Style(width = pct(100), height = px(220), radius = corners(8), background = colors.raised(),
+        zeus.Box(style = Style(width = pct(100), height = px(220), radius = 8, background = colors.raised(),
                                overflow = Overflow.Hidden, align = Align.Center, justify = Align.Center)) {
             zui.Show(when = store.p_thumb.get() != "") {
                 zui.Image(store.p_thumb.get(), style = Style(width = pct(100), height = px(220)), fit = Fit.Cover,
@@ -155,7 +155,7 @@ fn JobRow(item: Signal<Row>) -> Node {
         let p = store.percent(item.get())
         zeus.untrack(fn() { pct.set(p) })
     })
-    return zeus.Box(style = Style(direction = Direction.Column, gap = 6, padding = edges2(10, 0))) {
+    return zeus.Box(style = Style(direction = Direction.Column, gap = 6, paddingY = 10, paddingX = 0)) {
         zui.Row(Space.Exxs) {
             zeus.Text(item.get().title, style = Style(font = spacing.FONT_BODY, color = zeus.ink(), grow = 1, ellipsis = true))
             zui.Show(when = store.is_running(item.get().state)) {

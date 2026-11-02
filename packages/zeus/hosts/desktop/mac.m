@@ -3532,6 +3532,7 @@ static void mac_pick_image(char *out, int cap, int64_t *w, int64_t *h) {
     const char *utf;
     NSImage *img;
     NSSize sz;
+    NSArray *dirs;
     if (w) *w = 0;
     if (h) *h = 0;
     if (!out || cap <= 0) return;
@@ -3542,6 +3543,10 @@ static void mac_pick_image(char *out, int cap, int64_t *w, int64_t *h) {
     [p setAllowsMultipleSelection:NO];
     [p setAllowedFileTypes:[NSArray arrayWithObjects:@"png", @"jpg", @"jpeg", @"gif",
                                                      @"webp", nil]];
+    dirs = NSSearchPathForDirectoriesInDomains(NSDownloadsDirectory, NSUserDomainMask, YES);
+    if ([dirs count] > 0) {
+        [p setDirectoryURL:[NSURL fileURLWithPath:[dirs objectAtIndex:0]]];
+    }
     if ([p runModal] != NSModalResponseOK) return;
     path = [[p URL] path];
     utf = path ? [path UTF8String] : NULL;

@@ -1,6 +1,6 @@
 //! organisms — the section-level pieces: Card and Comp, Accordion, Popover,
 //! Menu, Drawer, Tooltip, HoverCard, Toast, Dialog, Combobox, Navbar, Table and
-//! VirtualTable, the charts, the calendar / DatePicker, and Page.
+//! VirtualTable, the charts, the calendar / DatePicker, Page, and Carousel.
 //!
 //! Built on `molecules`, `atoms`, and `zeusbase`.
 
@@ -69,17 +69,9 @@ fn VirtualTable<T>(rows: Signal<[]T>, cols: []TableCol, row_h: int, build: fn(in
     }
 }
 
-/// Card chrome. `Card()` keeps the recipe; pass any style prop to restyle
-/// it without copying the widget (`Card(radius = 6, padding = 12)`).
-/// `visible` and `bind` go through `Component`.
-
-/// Card body slot. The trailing block lands here — after the media and
-/// header, before the footer — so `Card(title = "…") { … }` reads top-down.
-
 /// Build your own widget: extends `Component` via `Box`. Trailing block is
 /// the slot. `bind` / `visible` / `press` are the same lifecycle as every
 /// other widget — pass them here, do not call `ui_push` / `bind` / `show`.
-
 fn Comp(p: BoxProps) -> Node {
     // A clickable custom widget presses like a button.
     let press = p.press || result.is_some(p.on_click)
@@ -102,7 +94,7 @@ struct ComboboxProps {
     disabled: bool = false,
     /// Accessible name. Empty uses the placeholder.
     label: string = "",
-    /// Style, merged over the recipe's own: `style = Style(radius = corners(4))`.
+    /// Style, merged over the recipe's own: `style = Style(radius = 4)`.
     style: Option<fn() -> Style> = none,
 }
 
@@ -123,6 +115,9 @@ fn Combobox(text: Signal<string>, options: []string, p: ComboboxProps) -> Node {
     let input = ref()
     let list = ref()
     let scrim = ref()
+    fn open() -> bool {
+        return active.get() >= 0
+    }
 
     // controller
     effect(|| {
@@ -146,26 +141,21 @@ fn Combobox(text: Signal<string>, options: []string, p: ComboboxProps) -> Node {
             let ms = matches.get()
             if picked < ms.len {
                 text.set(ms[picked])
-                set_input(ref_node(input), ms[picked])
             }
             skip_exit(list)
             skip_exit(scrim)
             active.set(-1)
         }
     }
-    on_mount(|| {
-        anchor(list, field, Place.PlaceBelow, 4)
-    })
 
-    // tree. The scrim comes first so the field and list draw over it.
-    return Box(style = merge(Style(direction = Direction.Column), Style(alignSelf = Align.Start))) {
+    // view. The scrim comes first so the field and list draw over it.
+    return Box(style = Style(direction = Direction.Column, alignSelf = Align.Start)) {
         Overlay(on_click = fn() { active.set(-1) }, ref = scrim,
-                style = Style(display = shown(active.get() >= 0), zIndex = Z_SCRIM))
+                style = Style(display = shown(open()), zIndex = Z_SCRIM))
         Box(
             ref = field,
-            style = merge(merge(merge(field_chrome(p.size), invalid_edge(p.invalid)),
-                                Style(width = px(w), zIndex = Z_FIELD, cursor = "text")),
-                          style_of(p.style)),
+            style = field_chrome(p.size, invalid = p.invalid, width = w, zIndex = Z_FIELD),
+            restyle = p.style,
             on_click = open_list,
             focusable = false,
             enabled = !p.disabled
@@ -173,7 +163,7 @@ fn Combobox(text: Signal<string>, options: []string, p: ComboboxProps) -> Node {
             Input(ref = input,
                   bind = text,
                   placeholder = p.placeholder,
-                  style = Style(grow = 1, font = control_font(p.size), padding = edges(0),
+                  style = Style(grow = 1, font = control_font(p.size), padding = 0,
                                 color = ink()),
                   label = field_name(p.label, p.placeholder),
                   on_click = open_list,
@@ -183,8 +173,9 @@ fn Combobox(text: Signal<string>, options: []string, p: ComboboxProps) -> Node {
         }
         Box(
             ref = list,
-            style = merge(merge(floating_panel(0, Elevation.Floating), Style(width = px(w))),
-                          Style(display = shown(active.get() >= 0))),
+            style = floating_panel(0, width = w),
+            anchor = Anchor(to = field, place = Place.PlaceBelow, gap = Space.Exxxs),
+            visible = open(),
             enter = Enter.Fade
         ) {
             Each(matches.get(), fn(i, s) {
@@ -203,28 +194,24 @@ fn ComboRow(text: Signal<string>, active: Signal<int>, input: Ref, index: int, l
     // controller
     fn pick() {
         text.set(label)
-        set_input(ref_node(input), label)
         skip_exit(row)
         skip_exit(scrim)
         active.set(-1)
     }
 
-    // tree
+    // view
     return Box(
         ref = row,
-        hoverStyle = Style(background = raised()),
-        style = merge(Style(direction = Direction.Row,
-                                     gap = 4,
-                                     align = Align.Center,
-                                     padding = edges2(6, 8),
-                                     radius = corners(RAD_SM),
-                                     cursor = "pointer"), style_of(highlight(active.get() == index))),
+        // Hover moves `active` (below), so one fill marks the pointer's row
+        // and the keyboard's.
+        style = Style(direction = Direction.Row, gap = Space.Exxxs, align = Align.Center,
+                      paddingY = 6, paddingX = Space.Exs, radius = RAD_SM,
+                      background = row_fill(active.get() == index), cursor = "pointer"),
         role = "option",
         label = label,
         checked = active.get() == index,
         hoverOff = false,
         on_click = pick,
-        // Hover moves the highlight, so the pointer and the keyboard share one row.
         on_hover = fn(on: bool) {
             if on {
                 active.set(index)
@@ -247,11 +234,11 @@ fn Accordion(open: Signal<int>, p: AccordionProps) -> Node {
         push(heads, ref())
     }
 
-    // tree. Clip the rounded corners, so a body cannot spill past the card edge.
-    return Box(style = merge(merge(Style(direction = Direction.Column,
-                                         radius = corners(RAD_LG),
-                                         border = line(HAIRLINE, rule()),
-                                         background = plate()), Style(overflow = Overflow.Hidden)), style_of(p.style)),
+    // view. Clip the rounded corners, so a body cannot spill past the card edge.
+    return Box(style = Style(direction = Direction.Column, radius = RAD_LG,
+                             borderWidth = HAIRLINE, borderColor = rule(), background = plate(),
+                             overflow = Overflow.Hidden),
+               restyle = p.style,
                bind = p.bind) {
         Each(p.items, (index, item) => {
             AccordionItem(open = open, index = index, title = item.title, body = item.body,
@@ -263,7 +250,7 @@ fn Accordion(open: Signal<int>, p: AccordionProps) -> Node {
 struct AccordionProps {
     bind: Option<Signal<int>> = none,
     items: []AccordionRow,
-    /// Style, merged over the recipe's own: `style = Style(radius = corners(4))`.
+    /// Style, merged over the recipe's own: `style = Style(radius = 4)`.
     style: Option<fn() -> Style> = none,
 }
 
@@ -273,9 +260,9 @@ struct AccordionItemProps {
     /// This item's index within its accordion.
     index: int = 0,
     /// Header label.
-    title: fn() -> string = empty_text,
+    title: Signal<string> = "",
     /// Body copy, shown while this item is open.
-    body: fn() -> string = empty_text,
+    body: Signal<string> = "",
     /// Optional leading icon markup.
     icon: string = "",
     /// Every header in the accordion, by index (`Accordion` fills it). Up /
@@ -290,15 +277,13 @@ fn AccordionItem(p: AccordionItemProps) -> Node {
     // state
     let open = p.open
     let idx = p.index
-    let chev = ref()
 
     // controller
+    fn is_open() -> bool {
+        return open.get() == idx
+    }
     fn toggle() {
-        if open.get() == idx {
-            open.set(-1)
-        } else {
-            open.set(idx)
-        }
+        open.set(if is_open() { -1 } else { idx })
     }
     // Focus moves between headers; the open item does not follow it.
     fn focus_head(i: int) {
@@ -313,39 +298,15 @@ fn AccordionItem(p: AccordionItemProps) -> Node {
         key_bind("end", "accordion.last", fn() { focus_head(p.heads.len - 1) }),
     }
     let head = if idx < p.heads.len { p.heads[idx] } else { ref() }
-    on_mount(|| {
-        effect(|| {
-            if open.get() == idx {
-                animate_rotate(ref_node(chev), 180, Motion.Fast)
-            } else {
-                animate_rotate(ref_node(chev), 0, Motion.Fast)
-            }
-        })
-    })
 
-    // tree. No gap above the body: the header already carries the top inset.
+    // view. A rule between items; the body is its own block under the head,
+    // so the copy never sits on the title or on the next rule.
     return Box(style = Style(direction = Direction.Column)) {
-        Box(style = Style(direction = Direction.Row,
-                          gap = Space.Xs,
-                          align = Align.Center,
-                          padding = edges2(12, 16),
-                          cursor = "pointer"),
-            ref = head,
-            on_click = toggle,
-            keys = keys,
-            role = "button",
-            label = p.title(),
-            hoverOff = false,
-            press = true) {
-            if p.icon.len > 0 {
-                Icon(p.icon, 16, dim())
-            }
-            Text(p.title, style = Style(grow = 1, font = FONT_CONTROL, color = ink()))
-            Icon(IC_CHEV_DOWN, 16, dim(), ref = chev)
+        if idx > 0 {
+            Separator()
         }
-        Box(style = merge(Style(direction = Direction.Column,
-                                padding = Edges(top = 0, right = 16, bottom = 12, left = 16)), Style(display = shown(open.get() == idx))),
-            enter = Enter.Fade + Enter.Reveal) {
+        DisclosureHead(p.title, is_open, toggle, icon = p.icon, keys = keys, ref = head)
+        DisclosureBody(is_open) {
             Text(p.body, style = Style(wrap = true, font = FONT_BODY, color = mute()))
         }
     }
@@ -363,7 +324,7 @@ struct PopoverProps {
     trigger: fn() = noop,
     /// The trailing block: the panel body.
     children: fn() = noop,
-    /// Style, merged over the recipe's own: `style = Style(radius = corners(4))`.
+    /// Style, merged over the recipe's own: `style = Style(radius = 4)`.
     style: Option<fn() -> Style> = none,
 }
 
@@ -374,33 +335,25 @@ fn Popover(p: PopoverProps) -> Node {
     // state
     let open = p.open
     let host = ref()
-    let panel = ref()
 
-    // controller. Focus moves into the panel when it opens, so Escape reaches it.
+    // controller
     fn close() {
         open.set(false)
     }
-    on_mount(|| {
-        anchor(panel, child_ref(host, 0), p.place, p.gap)
-        effect(|| {
-            if open.get() {
-                focus(panel)
-            }
-        })
-    })
 
     // keys
     let keys = []KeyBind { key_bind(p.closeKey, "popover.close", close) }
 
-    // tree. The host holds only the trigger in flow; the transparent scrim
-    // (outside click closes) and the anchored panel float.
+    // view. The host holds only the trigger in flow, so the panel anchors to
+    // it; the transparent scrim (outside click closes) and the panel float.
+    // Focus moves into the open panel, so Escape reaches it.
     return Box(ref = host) {
         p.trigger()
         Overlay(visible = open.get(), on_click = close, style = Style(zIndex = Z_SCRIM))
-        Box(ref = panel,
-            style = merge(merge(floating_panel(0, Elevation.Floating),
-                                Style(gap = Space.Xs, padding = edges(Space.Sm))),
-                          style_of(p.style)),
+        Box(style = floating_panel(0, gap = Space.Xs, padding = Space.Sm),
+            restyle = p.style,
+            anchor = Anchor(to = host, place = p.place, gap = p.gap),
+            autofocus = open.get(),
             visible = open.get(),
             enter = Enter.Fade,
             keys = keys) {
@@ -427,7 +380,7 @@ struct MenuProps {
     trigger: fn() = noop,
     /// The trailing block: more rows after `items` (`MenuItem`, ...).
     children: fn() = noop,
-    /// Style, merged over the recipe's own: `style = Style(radius = corners(4))`.
+    /// Style, merged over the recipe's own: `style = Style(radius = 4)`.
     style: Option<fn() -> Style> = none,
 }
 
@@ -439,38 +392,33 @@ fn Menu(p: MenuProps) -> Node {
     // state. `active` is the menu's only state; omitted, the menu owns it.
     let active = if result.is_some(p.active) { p.active.val } else { signal(-1) }
     let host = ref()
-    let panel = ref()
     let scrim = ref()
+    fn open() -> bool {
+        return active.get() >= 0
+    }
 
-    // controller. The trigger owns the toggle; opening lands on the first item.
+    // controller. A press on the trigger toggles; opening lands on the first item.
     fn toggle() {
-        if active.get() >= 0 {
-            active.set(-1)
-        } else {
-            active.set(0)
-        }
+        active.set(if open() { -1 } else { 0 })
     }
     fn close() {
         active.set(-1)
     }
-    on_mount(|| {
-        let trigger = child_ref(host, 0)
-        set_on_click(trigger, toggle)
-        anchor(panel, trigger, p.place, p.gap)
-    })
 
     // keys. Escape closes while focus is inside the menu.
     let keys = []KeyBind { key_bind(p.closeKey, "menu.dismiss", close) }
 
-    // tree
+    // view. The host wraps the trigger so the panel can anchor to it.
+    // `click_built` puts the toggle on the trigger itself: that node is
+    // what the pointer hits.
     return Box(ref = host) {
-        p.trigger()
+        click_built(p.trigger, toggle)
         Overlay(ref = scrim, on_click = close,
-                style = Style(display = shown(active.get() >= 0), zIndex = Z_SCRIM))
-        Box(ref = panel,
-            style = merge(merge(merge(floating_panel(MENU_MIN_W, Elevation.Floating),
-                                      Style(cursor = "pointer")),
-                                Style(display = shown(active.get() >= 0))), style_of(p.style)),
+                style = Style(display = shown(open()), zIndex = Z_SCRIM))
+        Box(style = floating_panel(MENU_MIN_W, cursor = "pointer"),
+            restyle = p.style,
+            anchor = Anchor(to = host, place = p.place, gap = p.gap),
+            visible = open(),
             role = "menu",
             enter = Enter.Fade,
             keys = keys) {
@@ -507,7 +455,7 @@ struct MenuItemProps {
     /// How many items the menu has, so Up / Down clamp at the ends. Pass the
     /// same number to every item.
     count: int = 0,
-    label: fn() -> string = empty_text,
+    label: Signal<string> = "",
     /// Optional leading icon markup.
     icon: string = "",
     on_click: Option<fn()> = none,
@@ -566,27 +514,24 @@ fn MenuItem(p: MenuItemProps) -> Node {
         }),
     }
 
-    // tree. Hover moves the highlight, so the pointer and the keyboard agree;
+    // view. Hover moves the highlight, so the pointer and the keyboard agree;
     // only the active row is a tab stop, and it takes focus as it activates.
-    // `hoverStyle` guarantees the same raised fill even before `on_hover` runs.
+    // `hoverStyle` gives the same raised fill before `on_hover` runs.
     return Box(ref = row,
                hoverStyle = Style(background = raised()),
-               style = merge(Style(direction = Direction.Row,
-                                   gap = Space.Xs,
-                                   align = Align.Center,
-                                   padding = edges2(7, 10),
-                                   radius = corners(RAD_SM),
-                                   cursor = "pointer"), style_of(highlight(active.get() == idx))),
+               style = Style(direction = Direction.Row, gap = Space.Xs, align = Align.Center,
+                             paddingY = 7, paddingX = 10, radius = RAD_SM,
+                             background = row_fill(active.get() == idx), cursor = "pointer"),
                role = "menuitem",
-               label = p.label(),
+               label = p.label.get(),
                enabled = !off,
                press = true,
                on_click = run,
                on_hover = fn(on: bool) {
-        if on {
-            active.set(idx)
-        }
-    },
+                   if on {
+                       active.set(idx)
+                   }
+               },
                keys = keys,
                roving = active.get() == idx,
                rovingGrab = true) {
@@ -598,15 +543,15 @@ fn MenuItem(p: MenuItemProps) -> Node {
 }
 
 /// A non-interactive group heading inside a `Menu`.
-fn MenuLabel(text: fn() -> string) -> Node {
-    return Box(style = Style(padding = edges2(6, 10))) {
+fn MenuLabel(text: Signal<string>) -> Node {
+    return Box(style = Style(paddingY = 6, paddingX = 10)) {
         Text(text, style = Style(font = FONT_CAPTION, color = dim()))
     }
 }
 
 /// A hairline between menu groups.
 fn MenuSeparator() -> Node {
-    return Box(style = Style(padding = Edges(top = 3, bottom = 3))) {
+    return Box(style = Style(paddingY = 3)) {
         Separator()
     }
 }
@@ -624,7 +569,7 @@ struct DrawerProps {
     closeKey: string = "escape",
     /// The trailing block: the body, placed by the component.
     children: fn() = noop,
-    /// Style, merged over the recipe's own: `style = Style(radius = corners(4))`.
+    /// Style, merged over the recipe's own: `style = Style(radius = 4)`.
     style: Option<fn() -> Style> = none,
 }
 
@@ -634,50 +579,41 @@ struct DrawerProps {
 /// press inside does not close it. Trailing block is the panel content.
 fn Drawer(open: Signal<bool>, p: DrawerProps) -> Node {
     // state
-    let panel = ref()
     let side = p.side
     let size = p.size
     let across = side == Side.SideStart || side == Side.SideEnd
-    let corner = px_or_default(p.radius, RAD_XL)
-
-    // controller. Rest off the edge, then slide on. Paint-only: a transform
-    // never runs the layout pass, and at boot the track jumps to its value.
-    on_mount(|| {
-        drawer_slide(ref_node(panel), side, size, 0)
-        effect(|| {
-            if open.get() {
-                drawer_slide(ref_node(panel), side, 0, Motion.Base)
-            } else {
-                drawer_slide(ref_node(panel), side, size, Motion.Fast)
-            }
-        })
-        effect(|| {
-            if open.get() {
-                focus(panel)
-            }
-        })
-    })
+    let r = px_or_default(p.radius, RAD_XL)
+    // How far past its edge the panel rests: all of it while closed.
+    fn off() -> int {
+        return if open.get() { 0 } else { size }
+    }
 
     // keys
     let keys = []KeyBind { key_bind(p.closeKey, "drawer.close", fn() { open.set(false) }) }
 
-    // tree. The overlay pins the panel to the chosen edge (a row for the side
+    // view. The overlay pins the panel to the chosen edge (a row for the side
     // edges); the panel swallows clicks so a press inside does not close it.
-    // Only the inner edge rounds, so the sheet meets the window edge square.
-    return Overlay(style = merge(Style(opacity = 80, background = scrim()), drawer_dock(side)),
-                   visible = open.get(),
+    // Closed, it rests `size` past its edge; it slides on over `Motion.Base`
+    // and off over `Motion.Fast`, and takes focus as it opens. Only the inner
+    // edge rounds, so the sheet meets the window edge square.
+    return Overlay(style = drawer_dock(side), visible = open.get(),
                    on_click = fn() { open.set(false) }) {
-        Box(ref = panel,
-            style = merge(merge(Style(width = len_px(if across { size } else { -1 }),
-                                      height = len_px(if across { -1 } else { size }),
-                                      direction = Direction.Column,
-                                      gap = Space.Sm,
-                                      elevation = 4,
-                                      padding = edges(Space.Md),
-                                      border = line(HAIRLINE, rule()),
-                                      background = plate()), style_of(drawer_corners(side, corner))), style_of(p.style)),
+        Box(style = Style(width = len_px(if across { size } else { -1 }),
+                          height = len_px(if across { -1 } else { size }),
+                          direction = Direction.Column, gap = Space.Sm, padding = Space.Md,
+                          elevation = FLOAT_LIFT,
+                          radiusTopLeft = drawer_corner(side, Side.SideBottom, Side.SideEnd, r),
+                          radiusTopRight = drawer_corner(side, Side.SideBottom, Side.SideStart, r),
+                          radiusBottomRight = drawer_corner(side, Side.SideTop, Side.SideStart, r),
+                          radiusBottomLeft = drawer_corner(side, Side.SideTop, Side.SideEnd, r),
+                          borderWidth = HAIRLINE, borderColor = rule(), background = plate(),
+                          shiftX = if side == Side.SideStart { -off() } else if side == Side.SideEnd { off() } else { 0 },
+                          shiftY = if side == Side.SideTop { -off() } else if side == Side.SideBottom { off() } else { 0 },
+                          transition = if open.get() { Motion.Base } else { Motion.Fast }),
+            restyle = p.style,
             role = "dialog",
             on_click = fn() { return },
+            autofocus = open.get(),
             enter = Enter.Fade,
             keys = keys) {
             p.children()
@@ -685,53 +621,24 @@ fn Drawer(open: Signal<bool>, p: DrawerProps) -> Node {
     }
 }
 
-/// The overlay's layout for a drawer edge: the panel sits at that edge and
+/// The scrim a drawer sits on, laid out so the panel docks at its edge and
 /// stretches along it.
 fn drawer_dock(side: int) -> Style {
-    if side == Side.SideStart {
-        return Style(direction = Direction.Row, justify = Align.Start, align = Align.Stretch)
-    }
-    if side == Side.SideEnd {
-        return Style(direction = Direction.Row, justify = Align.End, align = Align.Stretch)
-    }
-    if side == Side.SideTop {
-        return Style(justify = Align.Start, align = Align.Stretch)
-    }
-    return Style(justify = Align.End, align = Align.Stretch)
+    let across = side == Side.SideStart || side == Side.SideEnd
+    let at_start = side == Side.SideStart || side == Side.SideTop
+    return Style(direction = if across { Direction.Row } else { Direction.Column },
+                 justify = if at_start { Align.Start } else { Align.End },
+                 align = Align.Stretch, opacity = 80, background = scrim())
 }
 
-/// The sheet shape: only the corners on the inner edge round.
-fn drawer_corners(side: int, r: int) -> Style {
-    if r <= 0 {
-        return Style {}
-    }
-    if side == Side.SideBottom {
-        return Style(radius = corners4(r, r, 0, 0))
-    }
-    if side == Side.SideTop {
-        return Style(radius = corners4(0, 0, r, r))
-    }
-    if side == Side.SideStart {
-        return Style(radius = corners4(0, r, r, 0))
-    }
-    return Style(radius = corners4(r, 0, 0, r))
-}
-
-/// Slide `panel` to `to` points along its edge's axis (positive is out).
-fn drawer_slide(panel: Node, side: int, to: int, ms: int) {
-    if side == Side.SideStart {
-        animate_x(panel, -to, ms)
-    } else if side == Side.SideEnd {
-        animate_x(panel, to, ms)
-    } else if side == Side.SideTop {
-        animate_y(panel, -to, ms)
-    } else {
-        animate_y(panel, to, ms)
-    }
+/// One corner of the sheet: only the corners on the inner edge round, so a
+/// corner rounds when the drawer docks at side `a` or `b`.
+fn drawer_corner(side: int, a: int, b: int, r: int) -> int {
+    if side == a || side == b { r } else { 0 }
 }
 
 struct TooltipProps {
-    text: fn() -> string = empty_text,
+    text: Signal<string> = "",
     /// Where the bubble sits (`Place.*`). The six tooltip placements are
     /// `PlaceAboveStart` / `PlaceAboveCenter` / `PlaceAboveEnd` and the three
     /// `PlaceBelow*` — i.e. top-left, top-centre, top-right, bottom-left,
@@ -779,51 +686,28 @@ fn tooltip_justify(place: int) -> int {
 /// A small non-interactive label shown while the pointer rests on `trigger`.
 fn Tooltip(p: TooltipProps) -> Node {
     // state
-    let hovered = signal(0)
-    let shown_sig = signal(0)
-    let delay = p.delay
+    let hovered = signal(false)
+    let shown = hover_intent(hovered, p.delay)
     let host = ref()
-    let panel = ref()
     let above = tooltip_above(p.place)
     let edge = 0 - (TOOLTIP_PAD_Y + TOOLTIP_ARROW / 2)
 
-    // controller. Hover intent: show after `delay`, hide at once.
-    effect(|| {
-        if hovered.get() != 0 {
-            async.after(delay, fn() {
-                if hovered.get() != 0 {
-                    shown_sig.set(1)
-                }
-            })
-        } else {
-            shown_sig.set(0)
-        }
-    })
-    on_mount(|| {
-        let trigger = child_ref(host, 0)
-        watch_hover(trigger, hovered)
-        anchor(panel, trigger, p.place, p.gap)
-        // A tooltip never takes the pointer from its trigger.
-        pointer_through(panel)
-    })
-
-    // tree. The caret is a square rotated 45°, straddling the edge that faces
-    // the trigger: half lies on the panel's own fill and half sticks out.
-    // Absolute children are placed against the panel's content box, so the
-    // offset adds the padding back to land the caret's centre on the edge.
-    return Box(ref = host) {
+    // view. The host holds only the trigger in flow: it reports the hover and
+    // the panel anchors to it. A tooltip never takes the pointer from its
+    // trigger. The caret is a square rotated 45°, straddling the edge that
+    // faces the trigger: half on the panel's fill, half outside. Absolute
+    // children sit against the panel's content box, so the offset adds the
+    // padding back to land the caret's centre on the edge.
+    return Box(ref = host, on_hover = fn(on: bool) { hovered.set(on) }) {
         p.trigger()
-        Box(ref = panel,
-            style = Style(direction = Direction.Column,
-                          elevation = Elevation.Overlay,
-                          position = pos_absolute(),
-                          zIndex = Z_HOVER,
-                          padding = edges2(TOOLTIP_PAD_Y, TOOLTIP_PAD_X),
-                          radius = corners(RAD_SM),
-                          background = ink()),
-            visible = shown_sig.get() != 0,
+        Box(style = Style(direction = Direction.Column, position = pos_absolute(),
+                          zIndex = Z_HOVER, paddingY = TOOLTIP_PAD_Y, paddingX = TOOLTIP_PAD_X,
+                          radius = RAD_SM, background = ink()),
+            anchor = Anchor(to = host, place = p.place, gap = p.gap),
+            passThrough = true,
+            visible = shown.get(),
             role = "tooltip",
-            label = p.text(),
+            label = p.text.get(),
             enter = Enter.Fade) {
             Text(p.text, style = Style(font = FONT_CAPTION, color = on_ink()))
             if p.arrow && tooltip_arrow_ok(p.place) {
@@ -831,7 +715,8 @@ fn Tooltip(p: TooltipProps) -> Node {
                                   direction = Direction.Row,
                                   justify = tooltip_justify(p.place),
                                   position = pos_absolute(),
-                                  inset = inset_from(if above { -1 } else { edge }, 0, if above { edge } else { -1 }, 0))) {
+                                  top = opt_when(!above, edge), right = 0,
+                                  bottom = opt_when(above, edge), left = 0)) {
                     TooltipCaret()
                 }
             }
@@ -841,11 +726,26 @@ fn Tooltip(p: TooltipProps) -> Node {
 
 /// The tooltip's caret: an ink square turned 45°.
 fn TooltipCaret() -> Node {
-    let caret = ref()
-    on_mount(|| {
-        animate_rotate(ref_node(caret), 45, 0)
+    return Box(style = Style(width = px(TOOLTIP_ARROW), height = px(TOOLTIP_ARROW),
+                             background = ink(), rotate = 45))
+}
+
+/// Hover intent: a flag that turns true once `hovered` has held for `delay`
+/// ms, and false the moment it ends — so a passing pointer opens nothing.
+fn hover_intent(hovered: Signal<bool>, delay: int) -> Signal<bool> {
+    let shown = signal(false)
+    effect(|| {
+        if hovered.get() {
+            async.after(delay, fn() {
+                if hovered.peek() {
+                    shown.set(true)
+                }
+            })
+        } else {
+            shown.set(false)
+        }
     })
-    return Box(ref = caret, style = Style(width = px(TOOLTIP_ARROW), height = px(TOOLTIP_ARROW), background = ink()))
+    return shown
 }
 
 struct HoverCardProps {
@@ -858,50 +758,28 @@ struct HoverCardProps {
     trigger: fn() = noop,
     /// The trailing block: the card body.
     children: fn() = noop,
-    /// Style, merged over the recipe's own: `style = Style(radius = corners(4))`.
+    /// Style, merged over the recipe's own: `style = Style(radius = 4)`.
     style: Option<fn() -> Style> = none,
 }
 
 /// A hover-triggered panel, larger and interactive where a `Tooltip` is not.
 /// Trailing block is the card body.
 fn HoverCard(p: HoverCardProps) -> Node {
-    // state
-    let hovered = signal(0)
-    let shown_sig = signal(0)
-    let delay = p.delay
+    // state. Hover intent, longer than a tooltip's.
+    let hovered = signal(false)
+    let shown = hover_intent(hovered, p.delay)
     let host = ref()
-    let panel = ref()
 
-    // controller. Hover intent, longer than a tooltip's.
-    effect(|| {
-        if hovered.get() != 0 {
-            async.after(delay, fn() {
-                if hovered.get() != 0 {
-                    shown_sig.set(1)
-                }
-            })
-        } else {
-            shown_sig.set(0)
-        }
-    })
-    on_mount(|| {
-        let trigger = child_ref(host, 0)
-        watch_hover(trigger, hovered)
-        anchor(panel, trigger, p.place, p.gap)
-    })
-
-    // tree
-    return Box(ref = host) {
+    // view. The shared floating surface, as `Popover` uses. `HOVER_CARD_W` is
+    // a default the caller's `style` width replaces: content-sized, a long
+    // body would stretch the card instead of wrapping.
+    return Box(ref = host, on_hover = fn(on: bool) { hovered.set(on) }) {
         p.trigger()
-        Box(ref = panel,
-            // The shared floating surface, as `Popover` uses. `HOVER_CARD_W`
-            // is a default the caller's `style` width replaces: content-sized,
-            // a long body would stretch the card instead of wrapping.
-            style = merge(merge(floating_panel(0, Elevation.Floating),
-                                Style(width = px(HOVER_CARD_W), gap = Space.Xs,
-                                      padding = edges(Space.Sm), zIndex = Z_HOVER)),
-                          style_of(p.style)),
-            visible = shown_sig.get() != 0,
+        Box(style = floating_panel(0, width = HOVER_CARD_W, gap = Space.Xs, padding = Space.Sm,
+                                   zIndex = Z_HOVER),
+            restyle = p.style,
+            anchor = Anchor(to = host, place = p.place, gap = p.gap),
+            visible = shown.get(),
             enter = Enter.Fade) {
             p.children()
         }
@@ -915,43 +793,33 @@ struct ToastProps {
     place: int = 0,
     /// The trailing block: the body, placed by the component.
     children: fn() = noop,
-    /// Style, merged over the recipe's own: `style = Style(radius = corners(4))`.
+    /// Style, merged over the recipe's own: `style = Style(radius = 4)`.
     style: Option<fn() -> Style> = none,
 }
 
 /// A transient message pinned to the bottom (or top) of the window. `open` is a
-/// bool signal; it dismisses itself after `ms`, or on click. It rises and fades
-/// in on open, and sinks and fades out on close. Trailing block is the message.
+/// bool signal; it dismisses itself after `ms`, or on click. It fades in on
+/// open and fades out on close. Trailing block is the message.
 fn Toast(open: Signal<bool>, p: ToastProps) -> Node {
-    // state
-    let card = ref()
-    let ms = p.ms
-
-    // controller. Rest 12dp low, then rise to 0 while opening (jumps at boot).
-    on_mount(|| {
-        animate_y(ref_node(card), 12, 0)
-        effect(|| {
-            if open.get() {
-                animate_y(ref_node(card), 0, Motion.Base)
-                async.after(ms, fn() { open.set(false) })
-            } else {
-                animate_y(ref_node(card), 12, Motion.Fast)
-            }
-        })
+    // controller. Fade only (the card's `enter`). Dismisses itself after `ms`.
+    effect(|| {
+        if open.get() {
+            async.after(p.ms, fn() { open.set(false) })
+        }
     })
 
-    // tree
+    // view
     return Overlay(visible = open.get(), on_click = fn() { open.set(false) },
                    style = toast_dock(p.place)) {
-        Box(ref = card,
-            style = merge(Style(direction = Direction.Row,
-                                gap = Space.Xs,
-                                elevation = 2,
-                                align = Align.Center,
-                                padding = edges2(12, 16),
-                                radius = corners(RAD_MD),
-                                background = ink(),
-                                cursor = "pointer"), style_of(p.style)),
+        Box(style = Style(direction = Direction.Row,
+                          gap = Space.Xs,
+                          elevation = FLOAT_LIFT,
+                          align = Align.Center,
+                          paddingY = Space.Xs, paddingX = Space.Sm,
+                          radius = RAD_MD,
+                          background = ink(),
+                          cursor = "pointer"),
+            restyle = p.style,
             on_click = fn() { open.set(false) },
             enter = Enter.Fade) {
             p.children()
@@ -962,9 +830,9 @@ fn Toast(open: Signal<bool>, p: ToastProps) -> Node {
 /// Where the toast sits: 24dp in from the bottom (0) or the top (1).
 fn toast_dock(place: int) -> Style {
     if place == 1 {
-        return Style(justify = Align.Start, padding = Edges(top = 24))
+        return Style(justify = Align.Start, paddingTop = Space.Lg)
     }
-    return Style(justify = Align.End, padding = Edges(bottom = 24))
+    return Style(justify = Align.End, paddingBottom = Space.Lg)
 }
 
 /// Named extras for `Dialog` / `AlertDialog`. `title` shares the header
@@ -978,52 +846,24 @@ struct DialogProps {
 /// Dialog + AlertDialog chrome. Header is a row: title, then `Grow()`, then
 /// a fixed 28px close slot (Dialog only). No `position` / `top` / `left`.
 fn DialogShell(open: Signal<bool>, close_x: bool, title: string, children: fn()) -> Node {
-    // state
-    let panel = ref()
-
-    // controller. Scale-in: rest at 96%, grow to 100% while opening; shrink
-    // back on close under the exit fade (paint-only, as the scrim's fade).
-    // Focus is trapped in the panel while open.
-    on_mount(|| {
-        animate_scale(ref_node(panel), DIALOG_REST, 0)
-        effect(|| {
-            if open.get() {
-                animate_scale(ref_node(panel), 100, Motion.Base)
-            } else {
-                animate_scale(ref_node(panel), DIALOG_REST, Motion.Fast)
-            }
-        })
-        effect(|| {
-            if open.get() {
-                trap_focus(panel)
-            } else {
-                release_focus_trap(panel)
-            }
-        })
-    })
-
     // keys
     let keys = []KeyBind { key_bind("escape", "dialog.close", fn() { open.set(false) }) }
 
-    // tree. Responsive: 92% of the window, capped at the desktop 440dp, so a
+    // view. Responsive: 92% of the window, capped at the desktop 440dp, so a
     // phone keeps a gutter instead of clipping the card. The panel swallows
-    // clicks so a press inside does not reach the scrim.
+    // clicks so a press inside does not reach the scrim. Tab stays inside
+    // the card while it is open.
     return Overlay(style = Style(opacity = 80, background = scrim()),
                    visible = open.get(),
                    on_click = fn() => open.set(false)) {
-        Box(ref = panel,
-            style = merge(Style(direction = Direction.Column,
-                                gap = 16,
-                                elevation = 4,
-                                maxWidth = DIALOG_W,
-                                padding = edges(24),
-                                radius = corners(RAD_LG),
-                                border = line(HAIRLINE, rule()),
-                                background = plate()), Style(width = pct(92))),
+        Box(style = Style(direction = Direction.Column, gap = Space.Sm, elevation = FLOAT_LIFT,
+                          maxWidth = DIALOG_W, padding = Space.Lg, radius = RAD_LG,
+                          borderWidth = HAIRLINE, borderColor = rule(), background = plate(), width = pct(92)),
             role = "dialog",
             on_click = fn() { return },
             enter = Enter.Fade,
             focusable = true,
+            trap = open.get(),
             keys = keys) {
             Box(style = Style(direction = Direction.Row, gap = Space.Exs, align = Align.Center)) {
                 Title(title)
@@ -1035,7 +875,7 @@ fn DialogShell(open: Signal<bool>, close_x: bool, title: string, children: fn())
                                       shrink = 0,
                                       align = Align.Center,
                                       justify = Align.Center,
-                                      radius = corners(RAD_MD),
+                                      radius = RAD_MD,
                                       cursor = "pointer"),
                         on_click = fn() => open.set(false),
                         role = "button",
@@ -1082,25 +922,23 @@ fn Navbar(brand: string, dark: bool = true) -> Node {
     }
 }
 
-/// Docs-style nav item: muted text, muted pill when active, 36px tall.
+/// Docs-style nav item: muted text, a raised fill when active, 36px tall.
 fn NavTab(label: string, page: Signal<int>, index: int) -> Node {
     fn active() -> bool {
         return page.get() == index
     }
     return Box(
-        style = merge(Style(height = px(36),
-                            direction = Direction.Row,
-                            gap = Space.Exxs,
-                            align = Align.Center,
-                            padding = Edges(right = 12, left = 12),
-                            radius = corners(RAD_CONTROL),
-                            cursor = "pointer"), Style(background = if active() { raised() } else { paper() })),
+        style = Style(height = px(36), direction = Direction.Row, gap = Space.Exxs,
+                      align = Align.Center, paddingX = Space.Xs,
+                      radius = RAD_CONTROL, cursor = "pointer",
+                      background = if active() { raised() } else { paper() }),
         on_click = fn() => page.set(index),
         role = "button",
         label = label
     ) {
         Text(label,
-             style = merge(Style(font = FONT_BODY, ellipsis = true), Style(color = if active() { ink() } else { mute() })))
+             style = Style(font = FONT_BODY, ellipsis = true,
+                           color = if active() { ink() } else { mute() }))
     }
 }
 
@@ -1112,7 +950,7 @@ fn TableHead(cols: []string) -> Node {
         Box(style = Style(direction = Direction.Row,
                           gap = Space.Sm,
                           align = Align.Center,
-                          padding = Edges(right = Space.Exs, left = Space.Exs))) {
+                          paddingX = Space.Exs)) {
             Each(cols, fn(i, t) {
                 return TableCell(t, 0, Align.Start, mute())
             })
@@ -1135,8 +973,8 @@ fn TableRowShell(p: TableRowProps) -> Node {
     return Box(style = Style(direction = Direction.Row,
                              gap = Space.Sm,
                              align = Align.Center,
-                             padding = edges(Space.Exs),
-                             radius = corners(RAD_SM),
+                             padding = Space.Exs,
+                             radius = RAD_SM,
                              background = opt_color(fill),
                              cursor = opt_color(cursor)),
                on_click = p.on_click,
@@ -1154,19 +992,12 @@ fn table_col_width(w: int) -> int {
 
 /// One cell: `width` 0 shares the row, `align` is `Align.*`.
 fn TableCell(text: string, width: int, align: int, tint: string) -> Node {
-    return Box(style = merge(Style(width = len_px(table_col_width(width)),
-                                   direction = Direction.Row,
-                                   justify = align), style_of(table_share(width)))) {
+    return Box(style = Style(width = if width <= 0 { pct(0) } else { px(table_col_width(width)) },
+                             grow = if width <= 0 { 1 } else { 0 },
+                             direction = Direction.Row,
+                             justify = align)) {
         Text(text, style = Style(font = FONT_BODY, color = tint, ellipsis = true))
     }
-}
-
-/// A column with no width shares the row: zero basis, grow 1.
-fn table_share(width: int) -> Style {
-    if width <= 0 {
-        return Style(width = pct(0), grow = 1)
-    }
-    return Style {}
 }
 
 /// Body row: cells under a hairline, foreground text. Pair with `TableHead`.
@@ -1195,10 +1026,6 @@ fn TableRowCols(cols: []string, spec: []TableCol, p: TableRowProps) -> Node {
     Separator()
     return shell
 }
-
-/// Parse a cell as an integer (optional sign, digits, then anything —
-/// "12", "-3", "30 kg" all count; "" and "abc" do not). Returns the value
-/// and whether it parsed, so numeric columns sort by value.
 
 /// true when `a` and `b` show the same cells in the same order.
 fn rows_in_order<T>(a: []T, b: []T, cells: fn(T) -> []string) -> bool {
@@ -1288,7 +1115,7 @@ fn TableCols(cols: []TableCol, p: TableColsProps) -> Node {
         Box(style = Style(direction = Direction.Row,
                           gap = Space.Sm,
                           align = Align.Center,
-                          padding = Edges(right = Space.Exs, left = Space.Exs))) {
+                          paddingX = Space.Exs)) {
             Each(cols, fn(i, c) {
                 return TableColHead(c, i, c.sortable && result.is_some(p.sort), result.some_or(p.sort, no_signal()))
             })
@@ -1300,12 +1127,13 @@ fn TableCols(cols: []TableCol, p: TableColsProps) -> Node {
 /// One header cell. A sortable column is a button that cycles `sort` and shows
 /// the arrow for the direction it is sorted in.
 fn TableColHead(c: TableCol, i: int, sortable: bool, sort: Signal<int>) -> Node {
-    return Box(style = merge(Style(width = len_px(table_col_width(c.width)),
-                                   direction = Direction.Row,
-                                   gap = 2,
-                                   align = Align.Center,
-                                   justify = c.align,
-                                   cursor = opt_color(if sortable { "pointer" } else { "" })), style_of(table_share(c.width))),
+    return Box(style = Style(width = if c.width <= 0 { pct(0) } else { px(table_col_width(c.width)) },
+                             grow = if c.width <= 0 { 1 } else { 0 },
+                             direction = Direction.Row,
+                             gap = 2,
+                             align = Align.Center,
+                             justify = c.align,
+                             cursor = opt_color(if sortable { "pointer" } else { "" })),
                on_click = handler_if(sortable, fn() { sort.set(sort_cycle(sort.get(), i)) }),
                role = if sortable { "button" } else { "" },
                label = if sortable { "Sort by {{c.title}}" } else { "" },
@@ -1317,11 +1145,6 @@ fn TableColHead(c: TableCol, i: int, sortable: bool, sort: Signal<int>) -> Node 
         }
     }
 }
-
-/// Page number shown in `slot` (0-based) of a `PAGE_SLOTS`-wide row, or 0
-/// for an ellipsis. Seven or fewer pages list every number; past that the
-/// row keeps 1 and `pages` fixed and slides a window around `current_value`
-/// (`1 … 4 5 6 … 20`), collapsing the ellipsis at either end.
 
 /// Grouped bar chart. One shared y domain.
 /// The plot follows the container: pass the intended width, and the marks
@@ -1435,7 +1258,7 @@ fn CalStep(markup: string, label: string, press: fn()) -> Node {
                              direction = Direction.Row,
                              align = Align.Center,
                              justify = Align.Center,
-                             radius = corners(RAD_CONTROL),
+                             radius = RAD_CONTROL,
                              cursor = "pointer"),
                on_click = press,
                role = "button",
@@ -1456,7 +1279,7 @@ fn CalWeekday(s: string) -> Node {
 }
 
 fn CalWeekRow() -> Node {
-    return Grid(config = GridConfig(columns = 7, gap = 4)) {
+    return Grid(config = GridConfig(columns = 7, gap = Space.Exxxs)) {
         CalWeekday("Mo")
         CalWeekday("Tu")
         CalWeekday("We")
@@ -1482,23 +1305,20 @@ fn CalCell(y: Signal<int>, m: Signal<int>, d: Signal<int>, open: Signal<bool>, i
         }
     }
 
-    // tree. The picked day is the grid's one tab stop while the sheet is
+    // view. The picked day is the grid's one tab stop while the sheet is
     // open, and takes focus as the pick moves (opening lands on it).
-    return Box(style = merge(Style(width = px(CAL_CELL),
-                                   height = px(CAL_CELL),
-                                   direction = Direction.Row,
-                                   align = Align.Center,
-                                   justify = Align.Center,
-                                   padding = Edges(right = 2, left = 2),
-                                   radius = corners(RAD_LG),
-                                   cursor = "pointer"), Style(background = if picked() { accent() } else { plate() })),
+    return Box(style = Style(width = px(CAL_CELL), height = px(CAL_CELL),
+                             direction = Direction.Row, align = Align.Center,
+                             justify = Align.Center, paddingX = 2,
+                             radius = RAD_LG, cursor = "pointer",
+                             background = if picked() { accent() } else { plate() }),
                on_click = pick,
                role = "button",
                label = if day() == 0 { "" } else { "{{day()}}" },
                roving = picked() && open.get(),
                rovingGrab = true) {
         Text(if day() > 0 { "{{day()}}" } else { "" },
-             style = merge(Style(font = FONT_BODY), Style(color = if picked() { on_ink() } else { ink() })))
+             style = Style(font = FONT_BODY, color = if picked() { on_ink() } else { ink() }))
     }
 }
 
@@ -1537,7 +1357,6 @@ fn DatePicker(y: Signal<int>, m: Signal<int>, d: Signal<int>, p: DatePickerProps
     let open = signal(false)
     let size = p.size
     let trigger = ref()
-    let sheet = ref()
 
     // controller. Every move lands on a real date: a month step clamps the
     // day to the new month's length (Jan 31 → Feb 28). Steps only run while
@@ -1629,13 +1448,7 @@ fn DatePicker(y: Signal<int>, m: Signal<int>, d: Signal<int>, p: DatePickerProps
         key_bind("end", "date.week_end", week_end),
     }
 
-    // The sheet hangs under the trigger whatever the label and size make
-    // its height, and flips above it near the bottom of the window.
-    on_mount(|| {
-        anchor(sheet, trigger, Place.PlaceBelow, 4)
-    })
-
-    // tree. An invisible full-window scrim closes the sheet on a click that
+    // view. An invisible full-window scrim closes the sheet on a click that
     // misses it; floaters hit-test in z order, so the scrim takes the Z_SCRIM
     // tier and the sheet Z_POPUP, which also swallows its own clicks.
     return Column(Space.Exs) {
@@ -1647,10 +1460,8 @@ fn DatePicker(y: Signal<int>, m: Signal<int>, d: Signal<int>, p: DatePickerProps
         }
         Box(
             ref = trigger,
-            style = merge(merge(merge(field_chrome(size), invalid_edge(p.invalid)),
-                                Style(width = px(SELECT_W), alignSelf = Align.Start,
-                                      cursor = "pointer")),
-                          style_of(p.style)),
+            style = field_chrome(size, invalid = p.invalid, width = SELECT_W, cursor = "pointer"),
+            restyle = p.style,
             on_click = fn() => open.set(!open.get()),
             enabled = !p.disabled,
             role = "button",
@@ -1664,13 +1475,13 @@ fn DatePicker(y: Signal<int>, m: Signal<int>, d: Signal<int>, p: DatePickerProps
             Text("{{d.get()}}", style = Style(font = control_font(size), color = ink()))
         }
         Box(
-            ref = sheet,
-            style = merge(floating_panel(0, Elevation.Floating),
-                          Style(width = px(DATE_SHEET_W), gap = Space.Exs, padding = edges(12))),
+            style = floating_panel(0, width = DATE_SHEET_W, gap = Space.Exs, padding = Space.Xs),
+            anchor = Anchor(to = trigger, place = Place.PlaceBelow, gap = Space.Exxxs),
             role = "dialog",
             on_click = fn() { return },
             keys = keys,
-            visible = open.get()
+            visible = open.get(),
+            enter = Enter.Fade
         ) {
             Row(4) {
                 CalStep(IC_CHEV_LEFT, "Previous month", prev_month)
@@ -1702,7 +1513,7 @@ fn Page() -> Node {
     return Box(style = Style(direction = Direction.Column,
                              gap = SECTION,
                              grow = 1,
-                             padding = edges(PAGE_PAD),
+                             padding = PAGE_PAD,
                              background = paper()))
 }
 
@@ -1726,24 +1537,29 @@ struct SplitButtonProps {
 /// A primary action with a caret that opens a `Menu` of related ones
 /// ("Save" ▾ Save as… / Save a copy).
 fn SplitButton(label: string, p: SplitButtonProps) -> Node {
+    // The seam sits on the wrapper, not the caret. The menu anchors to its
+    // host, and a margin on the caret would make that host 1px wider than
+    // the face the menu should line up with.
+    let bordered = button_border_width(p.look) > 0
+    let seam = if bordered { -HAIRLINE } else { 1 }
     return Row(0) {
         Box(style = Style(direction = Direction.Row), role = "group") {
             GroupSegment(label, 0, 2, p.look, p.size, fn() => emit(p.on_click), true, "")
-            Menu(items = p.items, on_select = p.on_select, place = Place.PlaceBelow,
-                 trigger = fn() { SplitCaret(p.look, p.size, p.menuLabel) })
+            Box(style = Style(marginLeft = seam)) {
+                Menu(items = p.items, on_select = p.on_select, place = Place.PlaceBelow,
+                     trigger = fn() { SplitCaret(p.look, p.size, p.menuLabel) })
+            }
         }
     }
 }
 
 /// The caret half of a `SplitButton`: square, end corners round.
 fn SplitCaret(look: int, size: int, label: string) -> Node {
-    let bordered = button_border_width(look) > 0
     return Box(style = Style(width = px(control_h(size)), height = px(control_h(size)),
                              align = Align.Center, justify = Align.Center,
-                             margin = Edges(left = if bordered { -HAIRLINE } else { 1 }),
-                             radius = slot_corners(1, 2),
-                             border = Border(width = button_border_width(look),
-                                             color = opt_color(button_border_color(look))),
+                             radiusTopRight = slot_radius(true),
+                             radiusBottomRight = slot_radius(true),
+                             borderWidth = button_border_width(look), borderColor = opt_color(button_border_color(look)),
                              background = opt_color(button_background(look)),
                              cursor = "pointer"),
                role = "button",
@@ -1784,35 +1600,31 @@ fn ContextMenu(p: ContextMenuProps) -> Node {
     // state
     let active = signal(-1)
     let region = ref()
-    let host = ref()
     let at_x = signal(0)
     let at_y = signal(0)
 
-    // controller. The menu anchors to a 1px point placed where the click
-    // landed, relative to the zero-height host the menu sits in.
-    on_mount(|| {
-        on_context_menu(region, fn() {
-            if p.disabled {
-                return
-            }
-            let m = current_mouse()
-            let r = rect(host)
-            at_x.set(m.x - r.x)
-            at_y.set(m.y - r.y)
-            active.set(0)
-        })
-    })
-
-    // view
-    return Box(ref = region, style = Style(direction = Direction.Column)) {
+    // view. A 1px point, absolutely placed where the click landed, is the
+    // menu host. The panel anchors below that point (gap 0), so it opens on
+    // the pointer. The point is out of flow and does not change the region.
+    return Box(ref = region,
+               style = Style(direction = Direction.Column),
+               on_context_menu = fn() {
+                   if p.disabled {
+                       return
+                   }
+                   let m = current_mouse()
+                   let r = rect(region)
+                   at_x.set(m.x - r.x)
+                   at_y.set(m.y - r.y)
+                   active.set(0)
+               }) {
         p.children()
-        Box(ref = host, style = Style(height = px(0))) {
+        Box(style = Style(position = pos_absolute(),
+                          left = at_x.get(), top = at_y.get(),
+                          width = px(1), height = px(1))) {
             Menu(active = active, items = p.items, on_select = p.on_select, gap = 0,
                  trigger = fn() {
-                     Box(style = Style(position = pos_absolute(),
-                                       inset = Edges(left = at_x.get(), top = at_y.get()),
-                                       width = px(1), height = px(1)),
-                         role = "presentation")
+                     Box(style = Style(width = px(1), height = px(1)), role = "presentation")
                  })
         }
     }
@@ -1892,7 +1704,7 @@ struct SheetProps {
 fn Sheet(open: Signal<bool>, p: SheetProps) -> Node {
     return Drawer(open, side = Side.SideBottom, size = p.size) {
         Box(style = Style(direction = Direction.Row, justify = Align.Center)) {
-            Box(style = Style(width = px(36), height = px(4), radius = corners(2),
+            Box(style = Style(width = px(36), height = px(4), radius = 2,
                               background = hard()),
                 role = "presentation")
         }
@@ -2056,10 +1868,10 @@ fn TreeRow(rows: []TreeItem, visible: Signal<[]int>, selected: Signal<int>, open
             }
         }),
     }
-    return Box(style = Style(direction = Direction.Row, gap = 4, align = Align.Center,
+    return Box(style = Style(direction = Direction.Row, gap = Space.Exxxs, align = Align.Center,
                              minHeight = control_h(Size.Md),
-                             padding = Edges(left = 8 + depth * 16),
-                             radius = corners(RAD_SM),
+                             paddingLeft = 8 + depth * 16,
+                             radius = RAD_SM,
                              background = if selected.get() == index { raised() } else { "" }),
                role = "treeitem",
                label = name,
@@ -2069,7 +1881,7 @@ fn TreeRow(rows: []TreeItem, visible: Signal<[]int>, selected: Signal<int>, open
                on_click = fn() { selected.set(index) }) {
         if folder {
             Box(style = Style(width = px(20), height = px(20), shrink = 0, align = Align.Center,
-                              justify = Align.Center, radius = corners(RAD_SM), cursor = "pointer"),
+                              justify = Align.Center, radius = RAD_SM, cursor = "pointer"),
                 on_click = toggle,
                 role = "button",
                 label = fn() -> string {
@@ -2095,7 +1907,8 @@ fn Tree(items: Signal<[]TreeItem>, selected: Signal<int>, open: Signal<[]int>, p
     effect(|| {
         visible.set(tree_visible(items.get(), open.get()))
     })
-    return Box(style = merge(Style(direction = Direction.Column), style_of(p.style)),
+    return Box(style = Style(direction = Direction.Column),
+               restyle = p.style,
                role = "tree",
                label = p.label) {
         Each(visible.get(), fn(row, index) {
@@ -2113,17 +1926,17 @@ struct SidebarProps {
 /// A side rail: `SIDEBAR_W` (240) open, `SIDEBAR_RAIL` (56) collapsed.
 /// The chevron button is labelled Collapse / Expand.
 fn Sidebar(collapsed: Signal<bool>, p: SidebarProps) -> Node {
-    return Box(style = merge(Style(width = px(if collapsed.get() { SIDEBAR_RAIL } else { SIDEBAR_W }),
-                                   shrink = 0, direction = Direction.Column, gap = 4,
-                                   padding = edges(8), background = raised()),
-                             style_of(p.style)),
+    return Box(style = Style(width = px(if collapsed.get() { SIDEBAR_RAIL } else { SIDEBAR_W }),
+                             shrink = 0, direction = Direction.Column, gap = Space.Exxxs,
+                             padding = Space.Exs, background = raised()),
+               restyle = p.style,
                role = "navigation",
                label = "Sidebar") {
         // Centred on the rail, so the chevron lines up with the nav icons.
         Box(style = Style(width = px(control_h(Size.Md)), height = px(control_h(Size.Md)),
                           align = Align.Center, justify = Align.Center,
                           alignSelf = if collapsed.get() { Align.Center } else { Align.Start },
-                          radius = corners(RAD_CONTROL), cursor = "pointer"),
+                          radius = RAD_CONTROL, cursor = "pointer"),
             on_click = fn() { collapsed.set(!collapsed.get()) },
             role = "button",
             label = fn() -> string {
@@ -2154,7 +1967,7 @@ fn NavGroup(title: string, p: NavGroupProps) -> Node {
     let col = result.some_or(p.collapsed, no_flag_signal())
     return Column(4) {
         Text(title, style = Style(font = FONT_OVERLINE, color = dim(),
-                                  padding = Edges(left = 8, top = 8),
+                                  paddingLeft = Space.Exs, paddingTop = Space.Exs,
                                   display = shown(!has || !col.get())))
         p.children()
     }
@@ -2164,11 +1977,10 @@ fn NavGroup(title: string, p: NavGroupProps) -> Node {
 /// the icon stays, centred on the rail.
 fn NavItem(label: string, icon: string, page: Signal<int>, index: int, collapsed: Signal<bool>) -> Node {
     return Box(style = Style(minHeight = control_h(Size.Md), direction = Direction.Row,
-                             gap = 8, align = Align.Center,
+                             gap = Space.Exs, align = Align.Center,
                              justify = if collapsed.get() { Align.Center } else { Align.Start },
-                             padding = Edges(left = if collapsed.get() { 0 } else { 8 },
-                                             right = if collapsed.get() { 0 } else { 8 }),
-                             radius = corners(RAD_CONTROL), cursor = "pointer",
+                             paddingX = if collapsed.get() { 0 } else { 8 },
+                             radius = RAD_CONTROL, cursor = "pointer",
                              background = if page.get() == index { plate() } else { "" }),
                on_click = fn() { page.set(index) },
                role = "button",
@@ -2195,15 +2007,15 @@ struct AppShellProps {
 /// Sidebar, then a column of header and the page body. The header is inset
 /// by the same 16px as the body, so its label does not sit on the rail.
 fn AppShell(p: AppShellProps) -> Node {
-    return Box(style = merge(Style(direction = Direction.Row, align = Align.Stretch,
-                                   width = pct(100), minHeight = 200),
-                             style_of(p.style))) {
+    return Box(style = Style(direction = Direction.Row, align = Align.Stretch,
+                             width = pct(100), minHeight = 200),
+               restyle = p.style) {
         p.sidebar()
         Box(style = Style(direction = Direction.Column, grow = 1, minWidth = 0)) {
-            Box(style = Style(padding = Edges(top = 16, right = 16, left = 16))) {
+            Box(style = Style(paddingTop = Space.Sm, paddingX = Space.Sm)) {
                 p.header()
             }
-            Box(style = Style(grow = 1, padding = edges(16))) {
+            Box(style = Style(grow = 1, padding = Space.Sm)) {
                 p.children()
             }
         }
@@ -2222,17 +2034,17 @@ struct MasterDetailProps {
 /// A fixed master column, a hairline, and the detail.
 fn MasterDetail(p: MasterDetailProps) -> Node {
     let w = if p.masterWidth > 0 { p.masterWidth } else { 280 }
-    return Box(style = merge(Style(direction = Direction.Row, align = Align.Stretch,
-                                   width = pct(100), minHeight = 120),
-                             style_of(p.style))) {
+    return Box(style = Style(direction = Direction.Row, align = Align.Stretch,
+                             width = pct(100), minHeight = 120),
+               restyle = p.style) {
         Box(style = Style(width = px(w), shrink = 0, direction = Direction.Column,
-                          background = raised(), padding = edges(12))) {
+                          background = raised(), padding = Space.Xs)) {
             p.master()
         }
         Box(style = Style(width = px(HAIRLINE), shrink = 0, alignSelf = Align.Stretch,
                           background = rule()))
         Box(style = Style(grow = 1, minWidth = 0, direction = Direction.Column,
-                          padding = edges(12))) {
+                          padding = Space.Xs)) {
             p.children()
         }
     }
@@ -2259,23 +2071,13 @@ struct SplitPaneProps {
 fn SplitPane(p: SplitPaneProps) -> Node {
     let split = signal(if p.initial > 0 { p.initial } else { 240 })
     let host = ref()
-    let handle = ref()
     let vertical = p.vertical
     let mn = if p.min > 0 { p.min } else { SPLIT_MIN }
-    on_mount(|| {
-        on_drag(handle, fn() {
-            let r = rect(host)
-            let v = if vertical { current_mouse().y - r.y } else { current_mouse().x - r.x }
-            let span = if vertical { r.h } else { r.w }
-            let cap = if span - mn > mn { span - mn } else { mn }
-            split.set(clamp_int(v, mn, cap))
-        })
-    })
     return Box(ref = host,
-               style = merge(Style(direction = if vertical { Direction.Column } else { Direction.Row },
-                                   align = Align.Stretch, width = pct(100),
-                                   height = px(if vertical { 320 } else { p.size })),
-                             style_of(p.style)),
+               style = Style(direction = if vertical { Direction.Column } else { Direction.Row },
+                             align = Align.Stretch, width = pct(100),
+                             height = px(if vertical { 320 } else { p.size })),
+               restyle = p.style,
                role = "group",
                label = "Split") {
         Box(style = Style(width = if vertical { pct(100) } else { px(split.get()) },
@@ -2285,11 +2087,17 @@ fn SplitPane(p: SplitPaneProps) -> Node {
             label = "First pane") {
             p.first()
         }
-        Box(ref = handle,
-            style = Style(width = if vertical { pct(100) } else { px(SPLIT_HIT) },
+        Box(style = Style(width = if vertical { pct(100) } else { px(SPLIT_HIT) },
                           height = if vertical { px(SPLIT_HIT) } else { pct(100) },
                           shrink = 0, align = Align.Center, justify = Align.Center,
                           cursor = if vertical { "ns-resize" } else { "ew-resize" }),
+            on_drag = fn() {
+                let r = rect(host)
+                let v = if vertical { current_mouse().y - r.y } else { current_mouse().x - r.x }
+                let span = if vertical { r.h } else { r.w }
+                let cap = if span - mn > mn { span - mn } else { mn }
+                split.set(clamp_int(v, mn, cap))
+            },
             role = "separator",
             label = "Resize") {
             Box(style = Style(width = if vertical { pct(100) } else { px(HAIRLINE) },
@@ -2332,11 +2140,11 @@ fn notice_without(xs: []Notice, drop: int) -> []Notice {
 }
 
 /// A single notice card, `TOAST_W` wide. `on_dismiss` shows the X.
-fn Notification(title: fn() -> string, body: fn() -> string, tint: int, on_dismiss: fn()) -> Node {
-    return Box(style = Style(direction = Direction.Row, gap = 12, align = Align.Start,
-                             width = px(TOAST_W), padding = edges(12),
-                             radius = corners(RAD_LG), border = line(HAIRLINE, tint_line(tint)),
-                             background = tint_bg(tint), elevation = Elevation.Overlay),
+fn Notification(title: Signal<string>, body: Signal<string>, tint: int, on_dismiss: fn()) -> Node {
+    return Box(style = Style(direction = Direction.Row, gap = Space.Xs, align = Align.Start,
+                             width = px(TOAST_W), padding = Space.Xs,
+                             radius = RAD_LG, borderWidth = HAIRLINE, borderColor = tint_line(tint),
+                             background = tint_bg(tint), elevation = FLOAT_LIFT),
                role = "status",
                label = title) {
         Icon(tint_icon(tint), IconSize.Md, tint_ink(tint))
@@ -2345,10 +2153,10 @@ fn Notification(title: fn() -> string, body: fn() -> string, tint: int, on_dismi
             Text(body, style = Style(wrap = true, font = FONT_CONTROL, color = ink()))
         }
         Box(style = Style(width = px(28), height = px(28), shrink = 0, align = Align.Center,
-                          justify = Align.Center, radius = corners(RAD_CONTROL), cursor = "pointer"),
+                          justify = Align.Center, radius = RAD_CONTROL, cursor = "pointer"),
             on_click = on_dismiss,
             role = "button",
-            label = fn() -> string { return "Dismiss {{title()}}" }) {
+            label = fn() -> string { return "Dismiss {{title.get()}}" }) {
             Icon(IC_X, IconSize.Md, tint_ink(tint))
         }
     }
@@ -2357,7 +2165,7 @@ fn Notification(title: fn() -> string, body: fn() -> string, tint: int, on_dismi
 /// A read-only row in the notification history.
 fn NoticeHistory(title: string, body: string) -> Node {
     return Box(style = Style(direction = Direction.Column, gap = 2, width = px(TOAST_W),
-                             padding = edges(12), radius = corners(RAD_MD), background = raised()),
+                             padding = Space.Xs, radius = RAD_MD, background = raised()),
                role = "listitem",
                label = title) {
         Text(title, style = Style(font = FONT_BODY, color = ink()))
@@ -2377,7 +2185,7 @@ fn NotificationCenter(live: Signal<[]Notice>, history: Signal<[]Notice>) -> Node
         history.set(notice_plus(peek(history), xs[i]))
         live.set(notice_without(xs, i))
     }
-    return Box(style = Style(direction = Direction.Column, gap = 8, width = px(TOAST_W))) {
+    return Box(style = Style(direction = Direction.Column, gap = Space.Exs, width = px(TOAST_W))) {
         Box(style = Style(direction = Direction.Row, align = Align.Center)) {
             Text("Notifications", style = Style(font = FONT_BODY, color = ink()))
             Grow()
@@ -2434,10 +2242,10 @@ fn CommandRow(items: []CommandItem, matches: Signal<[]int>, active: Signal<int>,
     return Box(style = Style(direction = Direction.Column, gap = 2)) {
         if lead {
             Text(sec, style = Style(font = FONT_CAPTION, color = dim(),
-                                    padding = Edges(left = 8, top = 6)))
+                                    paddingLeft = Space.Exs, paddingTop = 6))
         }
         Box(style = Style(direction = Direction.Row, align = Align.Center,
-                          padding = edges2(8, 10), radius = corners(RAD_SM), cursor = "pointer",
+                          paddingY = Space.Exs, paddingX = 10, radius = RAD_SM, cursor = "pointer",
                           background = if active.get() == row { raised() } else { "" }),
             on_click = fn() { pick(index) },
             role = "option",
@@ -2455,7 +2263,6 @@ fn CommandPalette(open: Signal<bool>, items: []CommandItem, p: CommandPalettePro
     let matches = signal([]int {})
     let active = signal(0)
     let input = ref()
-    let panel = ref()
     let cmds = items
     let choose = result.some_or(p.on_select, fn(index: int) { return })
     effect(|| {
@@ -2494,31 +2301,23 @@ fn CommandPalette(open: Signal<bool>, items: []CommandItem, p: CommandPalettePro
             }
         }
     }
-    effect(|| {
-        if open.get() {
-            focus(input)
-            trap_focus(panel)
-        } else {
-            release_focus_trap(panel)
-        }
-    })
     return Overlay(style = Style(opacity = 80, background = scrim()),
                    visible = open.get(),
                    on_click = fn() { open.set(false) }) {
-        Box(ref = panel,
-            style = merge(Style(direction = Direction.Column, gap = 8, elevation = Elevation.Modal,
-                                height = px(400), maxWidth = 600,
-                                padding = edges(12), radius = corners(RAD_LG),
-                                border = line(HAIRLINE, rule()), background = plate()),
-                          Style(width = pct(92))),
+        Box(style = Style(direction = Direction.Column, gap = Space.Exs, elevation = FLOAT_LIFT,
+                          height = px(400), maxWidth = 600, padding = Space.Xs,
+                          radius = RAD_LG, borderWidth = HAIRLINE, borderColor = rule(),
+                          background = plate(), width = pct(92)),
             role = "dialog",
             label = "Commands",
-            on_click = fn() { return }) {
+            on_click = fn() { return },
+            enter = Enter.Fade,
+            trap = open.get()) {
             Box(style = field_chrome(Size.Md)) {
                 Icon(IC_SEARCH, control_icon(Size.Md), dim())
                 Input(ref = input, bind = query, placeholder = p.placeholder,
                       label = p.placeholder,
-                      style = Style(grow = 1, font = control_font(Size.Md), padding = edges(0),
+                      style = Style(grow = 1, font = control_font(Size.Md), padding = 0,
                                     color = ink()),
                       on_key_down = key)
             }
@@ -2526,6 +2325,226 @@ fn CommandPalette(open: Signal<bool>, items: []CommandItem, p: CommandPalettePro
                 Each(matches.get(), fn(row, index) {
                     return CommandRow(cmds, matches, active, row, index, pick)
                 })
+            }
+        }
+    }
+}
+
+/// Options for `Carousel`.
+struct CarouselProps {
+    /// Tallest the frame grows, in px. The width follows the parent and the
+    /// height follows the current image's aspect ratio up to this; 0 lifts
+    /// the cap, so every image fills the width.
+    height: int = 240,
+    /// How each image sits in the frame. `Fit.Contain` shows the whole image;
+    /// it only letterboxes one taller than `height` allows. `Fit.Cover` fills
+    /// the frame and crops.
+    fit: int = Fit.Contain,
+    /// Accessible name for the whole control.
+    label: string = "Carousel",
+    /// Style, layered over the column: `style = Style(maxWidth = 640)`.
+    style: Option<fn() -> Style> = none,
+    /// Keyboard actions, after Left / Right / Home / End.
+    keys: []KeyBind = no_keys(),
+}
+
+/// A paged row of images. `sources` is the live list of paths, data URIs, or
+/// URLs — the same strings `Image` takes, so `Carousel(photos.get())` follows
+/// the signal. The current image fills the frame width and the frame height
+/// follows its aspect ratio, capped at `height` (pass `fit = Fit.Cover` to
+/// fill and crop instead). The frame clips to its width; a page change eases `shiftX`
+/// over `Motion.Base`. Each slide is pinned at its own frame offset rather
+/// than laid out in flow: a row of frame-wide slides overflows its width, and
+/// an overflowing row wraps, which would stack the slides under the first. Arrows, dots, and Left / Right / Home / End move the
+/// page and wrap at the ends. An empty list shows a placeholder.
+///
+/// ```
+/// let photos = zeus.signal([]string {})
+/// zui.Carousel(photos.get(), height = 240)
+/// ```
+fn Carousel(sources: Signal<[]string>, p: CarouselProps) -> Node {
+    let index = signal(0)
+    let frame_w = signal(0)
+    let tall = if p.height > 0 { p.height } else { 240 }
+    // The current image's laid-out size, for its aspect ratio; 0 until the
+    // host decodes it.
+    let img_w = signal(0)
+    let img_h = signal(0)
+
+    fn count() -> int {
+        return sources.get().len
+    }
+    fn at() -> int {
+        let n = count()
+        if n <= 0 {
+            return 0
+        }
+        let mut i = index.get()
+        if i < 0 {
+            i = 0
+        }
+        if i >= n {
+            i = n - 1
+        }
+        return i
+    }
+    fn go(delta: int) {
+        let n = count()
+        if n <= 1 {
+            return
+        }
+        let mut m = (index.peek() + delta) % n
+        if m < 0 {
+            m = m + n
+        }
+        index.set(m)
+    }
+    fn jump(i: int) {
+        let n = count()
+        if i < 0 {
+            return
+        }
+        if i >= n {
+            return
+        }
+        index.set(i)
+    }
+    fn slide() -> int {
+        return at() * frame_w.get()
+    }
+    fn place() -> string {
+        let n = count()
+        if n <= 0 {
+            return ""
+        }
+        return "{{at() + 1}} / {{n}}"
+    }
+    // The current image's height at the frame width, capped at `height`;
+    // `tall` until the image decodes.
+    fn frame_h() -> int {
+        let w = img_w.get()
+        let h = img_h.get()
+        let fw = frame_w.get()
+        if w <= 0 || h <= 0 || fw <= 0 {
+            return tall
+        }
+        let fit_h = fw * h / w
+        if fit_h <= 0 {
+            return tall
+        }
+        return if p.height > 0 && fit_h > p.height { p.height } else { fit_h }
+    }
+    fn current() -> string {
+        let list = sources.get()
+        if list.len == 0 {
+            return ""
+        }
+        return list[at()]
+    }
+    // A shorter list must not leave the page past the last slide.
+    effect(fn() {
+        let n = sources.get().len
+        let i = index.peek()
+        if n <= 0 {
+            if i != 0 {
+                index.set(0)
+            }
+        } else if i >= n {
+            index.set(n - 1)
+        } else if i < 0 {
+            index.set(0)
+        }
+    })
+
+    let keys = []KeyBind {
+        key_bind("left", "carousel.prev", fn() { go(-1) }),
+        key_bind("right", "carousel.next", fn() { go(1) }),
+        key_bind("home", "carousel.first", fn() { jump(0) }),
+        key_bind("end", "carousel.last", fn() { jump(count() - 1) }),
+    }
+
+    return Box(style = Style(direction = Direction.Column, gap = Space.Exs, width = pct(100)),
+               restyle = p.style,
+               role = "group",
+               label = p.label,
+               keys = keys_concat(keys, p.keys)) {
+        Box(style = Style(width = pct(100), height = px(frame_h()), overflow = Overflow.Hidden,
+                          radius = RAD_LG, background = raised()),
+            label = "Frame",
+            on_resize = fn(r: Rect) {
+                if r.w > 0 && frame_w.peek() != r.w {
+                    frame_w.set(r.w)
+                }
+            }) {
+            Show(when = count() == 0) {
+                Box(style = Style(width = pct(100), height = px(tall),
+                                  direction = Direction.Row,
+                                  align = Align.Center, justify = Align.Center)) {
+                    Text("No images yet", style = Style(font = FONT_CAPTION, color = mute()))
+                }
+            }
+            Show(when = count() > 0) {
+                // An unpainted copy of the current image at its natural size,
+                // which layout keeps at the source aspect ratio (and never
+                // scales up). The frame takes that ratio at its own width.
+                // Opacity is per node, so it goes on the image, not the box.
+                Box(style = Style(position = pos_absolute(), top = 0, left = 0),
+                    on_resize = fn(r: Rect) {
+                        if r.w > 0 && r.h > 0 && (img_w.peek() != r.w || img_h.peek() != r.h) {
+                            img_w.set(r.w)
+                            img_h.set(r.h)
+                        }
+                    }) {
+                    Image(fn() => current(), style = Style(opacity = 0))
+                }
+                Box(label = "Slides",
+                    style = Style(width = pct(100), height = px(frame_h()),
+                                  shiftX = -slide(), transition = Motion.Base)) {
+                    // By position, not keyed by source: the same file may be
+                    // added twice.
+                    Each(sources, fn(i: int, src: string) -> Node {
+                        return Image(src,
+                                     style = Style(position = pos_absolute(), top = 0,
+                                                   left = i * frame_w.get(),
+                                                   width = px(frame_w.get()), height = px(frame_h())),
+                                     fit = p.fit,
+                                     label = "Slide {{i + 1}}")
+                    })
+                }
+            }
+            Box(style = Style(position = pos_absolute(),
+                              top = 0, bottom = 0, left = 8,
+                              direction = Direction.Column, justify = Align.Center),
+                visible = count() > 1) {
+                IconButton(IC_CHEV_LEFT, Look.Ghost, Size.Sm, "Previous image",
+                           on_click = fn() { go(-1) },
+                           style = Style(background = plate(), radius = RAD_FULL))
+            }
+            Box(style = Style(position = pos_absolute(),
+                              top = 0, bottom = 0, right = 8,
+                              direction = Direction.Column, justify = Align.Center),
+                visible = count() > 1) {
+                IconButton(IC_CHEV_RIGHT, Look.Ghost, Size.Sm, "Next image",
+                           on_click = fn() { go(1) },
+                           style = Style(background = plate(), radius = RAD_FULL))
+            }
+        }
+        Show(when = count() > 0) {
+            Box(style = Style(direction = Direction.Row, gap = Space.Exxs,
+                              align = Align.Center, justify = Align.Center)) {
+                Each(sources, fn(i: int, src: string) -> Node {
+                    return Box(style = Style(width = px(24), height = px(24),
+                                             align = Align.Center, justify = Align.Center,
+                                             cursor = "pointer"),
+                               on_click = fn() { jump(i) },
+                               role = "button",
+                               label = "Image {{i + 1}}") {
+                        Box(style = Style(width = px(8), height = px(8),
+                                          radius = RAD_FULL,
+                                          background = if index.get() == i { accent() } else { mute() }))
+                    }
+                })
+                Text(place, style = Style(font = FONT_CAPTION, color = mute()))
             }
         }
     }
