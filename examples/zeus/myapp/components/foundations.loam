@@ -36,27 +36,27 @@ fn Customize() -> Node {
                 zui.Button("Styled",
                             look = zeus.Look.Solid,
                             size = zeus.Size.Md,
-                            style = Style(padding = Edges(right = 20, left = 20), radius = corners(999)))
+                            style = Style(paddingX = 20, radius = 999))
                 zui.IconButton(zeus.IC_CHECK, zeus.Look.Soft, zeus.Size.Md, "Save")
-                zui.Chip("pill", zeus.Tint.Ok, style = Style(radius = corners(6)))
+                zui.Chip("pill", zeus.Tint.Ok, style = Style(radius = 6))
             }
-            zui.Card(style = Style(padding = edges(12), radius = corners(6))) {
+            zui.Card(style = Style(padding = 12, radius = 6)) {
                 zui.Body("This card used radius = 6, padding = 12.")
             }
             zui.Comp(style = Style(direction = Direction.Row,
                                     gap = 8,
                                     align = Align.Center,
-                                    padding = edges(12),
-                                    radius = corners(10),
+                                    padding = 12,
+                                    radius = 10,
                                     background = colors.raised())) {
                 zui.Pip(zeus.accent(), 8)
                 zeus.Text("Comp — a function widget, styled by props",
                           style = Style(font = spacing.FONT_BODY, color = zeus.ink()))
             }
-            zui.Badge("custom", zeus.Tint.Mute, style = Style(padding = Edges(right = 8, left = 8), radius = corners(2)))
+            zui.Badge("custom", zeus.Tint.Mute, style = Style(paddingX = 8, radius = 2))
             zui.Alert("Styled alert",
                        "Same recipe, different radius.",
-                       style = Style(padding = edges(10), radius = corners(4)))
+                       style = Style(padding = 10, radius = 4))
         }
     }
 }

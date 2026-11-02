@@ -256,7 +256,7 @@ enum SET {
     PointerPass = 68,
     Flip = 69,
     TextAlign = 70,
-    // Side borders and rules (`Border.sides` / `Border.between`): paint only.
+    // Side borders and rules (`borderTop` … / `borderBetween`): paint only.
     BorderTop = 71,
     BorderRight = 72,
     BorderBottom = 73,

@@ -25,7 +25,7 @@ fn main() {
     let mut inner_id = 0
     let mut text_id = 0
     let mut second_id = 0
-    zeus.root(zeus.Box(style = Style(padding = edges(10))) {
+    zeus.root(zeus.Box(style = Style(padding = 10)) {
         // Two explicit boxes in a row: a width write on the first moves the
         // second, so the first cannot be its own boundary.
         zeus.Box(style = Style(direction = Direction.Row)) {

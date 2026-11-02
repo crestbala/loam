@@ -262,7 +262,13 @@ track pool: `animate_scale` / `animate_x` / `animate_y` / `animate_rotate` /
 `animate_opacity` / `animate_radius` (`node`, target, ms). They write paint
 state only — `paint_node` wraps the node in a `save` / `xform` / `restore` — so a
 transform never runs the layout pass. `motion_scale` / `motion_rot` / … read the
-current value for tests. Continuous indicators are clock-driven, not tracks: a
+current value for tests. Components do not call those. They set `Style.opacity`,
+`Style.rotate`, `Style.shiftX`, and `Style.shiftY`, with `Style.transition` as
+the duration in ms (`Motion.Fast` / `Motion.Base` / `Motion.Slow`). The first
+value paints at once, so a golden's first frame is settled; a later change
+eases. A checkbox mark fades with `opacity`, a disclosure chevron turns with
+`rotate`, and a drawer rests `shiftX` / `shiftY` past its edge and slides in
+as that offset goes to 0. Continuous indicators are clock-driven, not tracks: a
 `Spinner` paints its rotation from the frame clock (deterministic on the first
 frame, settled under reduced motion), so nothing is scheduled or allocated per
 frame. Its ring is a line-only polyline, because the host SVG parsers skip arc
@@ -276,7 +282,19 @@ keeps pushing the deadline for as long as it is moving. `bar_next_ms` asks the
 host for 16 ms frames while a fade is in flight and one wake at the deadline
 the rest of the time; the fade is therefore not a live frame (`engine_step_dt`
 stays 0) and costs no track. Overlay-scroll hosts (iOS / Android) paint no
-thumb.
+thumb. Desktop and web never show a resting bar either: the thumb is a thin
+(4dp, 8dp while pointed at) translucent overlay that exists only while
+scrolling.
+
+Nested scrollers share a gutter when their edges meet (a table flush with the
+page), so one bar per scroll chain is live: the **lead**, whichever was last
+scrolled, dragged or pointed at (`bar_lead`). Its ancestors and descendants
+yield — they fade out over `BAR_YIELD_MS`, a press does not grab them, and the
+pointer does not make them hot — while a wheel ease or momentum coast that is
+still finishing (`bar_keep`) never takes the lead back. Scrollers that are not
+nested never yield to each other. A press on a thumb is resolved where the hit
+walk found it (`input.hit_bar`), in that scroller's own coordinates, so a
+nested thumb is grabbable however far the page above it is scrolled.
 
 **Feedback components:** `Spinner(size, color, period, label)` is an
 indeterminate `progressbar`; `Empty(icon, title, body)` is a centred empty state
@@ -284,8 +302,8 @@ whose trailing block is its action. `Accordion(open)` is a single-open
 disclosure: `open` is one signal holding the open item's index (`-1` = closed),
 and `AccordionItem(open = open, index = i, title, body)` carries only its index —
 the item has no state, so opening one closes the rest with no coordination code.
-The chevron rotation and body fade are paint-only; the body is currently
-shown/hidden with a fade rather than an animated height.
+The chevron turns, and the body fades and clips open, on short paint tracks.
+Layout takes the full height at once.
 
 **Overlays** are anchored out-of-flow floaters. `arena.anchor_to(panel, trigger,
 side, gap)` records a node id and the layout pass places the panel against the
@@ -296,7 +314,7 @@ floater takes its trigger as a slot and its body as the trailing block:
 outside-click scrim and closes on Escape; `Tooltip(text = t, trigger = || { ... })`
 and `HoverCard(trigger = || { ... }) { body }` show on hover after a hover-intent
 delay. A tooltip on a popover's button wraps the popover; `Toast(open, ms)` pins to the window
-edge, rises and fades in, and auto-dismisses. None of them rebuilds a tree or
+edge, fades in, and auto-dismisses. None of them rebuilds a tree or
 runs a component while animating.
 
 **Menu** is a dropdown of commands on the same anchored floater:
@@ -319,35 +337,41 @@ forwards `status`.
 
 **Tabs** and **RadioGroup** use the same roving model: arrows move the
 selected index (Left/Right on tabs, Up/Down and Left/Right on radios), clamp
-at the ends, and only the selected item is a tab stop. `Tabs` paints one
-sliding indicator under the selected trigger: an absolute box whose
-`left` / `width` pins are signals, `animate`d on a selection change (the
-pins tween and reflow) and re-placed instantly by the tray's refit hook after
-the first layout or a resize. Triggers only swap their label colour.
+at the ends, and only the selected item is a tab stop. The selected trigger
+fills with the plate (a 2px ink rule for `Look.Link`). Nothing is measured
+and nothing slides.
 
 **Dialog** is a modal: while it is open, Tab cycles only inside the card
 (a focus trap), Escape closes it, and focus returns to the opener on close.
-`Select` also closes on Escape. The card scales in from 96% on a paint track
-while the scrim fades, and its width is 92% of the window capped at 440dp.
+`Select` also closes on Escape. The card fades in with the scrim. Its width
+is 92% of the window capped at 440dp.
 
 **Button** chrome takes `icon` (leading lucide markup), `loading` (a 0/1
 signal: the spinner takes the icon slot, the button dims to 70% and goes
 inert), and a disabled fill swap (`enabled = false` paints a muted plate and
-ink instead of the accent at 40%). A pressed button scales to 97% on the
-paint-only `ScalePct` track (`press_scale`); the wash still paints. Disabled
+ink instead of the accent at 40%). A press darkens on the wash. Scale is
+opt-in (`pressScale`): 96% while the pointer is down, back to 100% on the
+same short curve, with no overshoot. Disabled
 and loading nodes swallow pointer clicks and Enter / Space in the engine
 (`is_inert`), so no handler has to guard itself.
 
-**Accent.** `set_accent(ACCENT.<name>)` re-registers the twelve `A*` role
+**Accent.** The picker keeps Ink (the default), Graphite, and Stone, and adds
+Ocean, Forest, and Terracotta. Each is a 12-step ramp in both appearances:
+step 9 is the solid, step 11 is AA text on steps 1–3.
+`set_accent(ACCENT.<name>)` re-registers the twelve `A*` role
 slots in place, so every themed control follows on the next paint with no
 rebuild and no effect run — the same paint-time resolution that makes the
 light / dark switch free. `accent_choice()` reports the ramp in effect;
 `accent_count()` / `accent_name(i)` drive a picker and
 `accent_scale_light(i).s9` gives a swatch color. The gallery navbar is the
-reference picker.
+reference picker. Neutrals are warm stone: the light page is `#f7f6f3` under
+a white card, text `#1f1d1a`; the dark page is `#121110`, the card `#1b1a18`,
+text `#ecebe7`. Status tiers are leaf, sunflower, poppy, and lake. Each ink
+clears 4.5:1 on the page and on its wash. Ok, danger, and info solids take
+white text; the sunflower solid takes near-black.
 
 **Badge** takes `dot = true` for a leading pip; `BadgeCount(sig, kind, max)`
-is a round numeric pill hidden at 0 and capped at `max+`. **Chip** takes
+hides at 0 and is capped at `max+`. **Chip** takes
 `dot = false` and `on_remove` (a trailing X, role `button`, label
 `Remove <label>`; hiding the chip is the caller's `show`).
 
@@ -361,8 +385,10 @@ of the page signal, so the row never rebuilds; ellipsis slots are inert.
 (`anim_paint_from`: state lands at once, the fill tweens over
 `MOTION.Base`); a `zeus.animate` write keeps its own duration. A negative
 value is indeterminate: a 30% segment sweeps the track on the frame clock
-and keeps the loop live until a value returns. **Slider**'s knob sits on a
-soft shadow and grows 2dp on the hover track.
+and keeps the loop live until a value returns. Progress and slider tracks
+sit on the hairline tone (`rule`); the filled part carries the value.
+**Slider**'s knob is an ink-ringed circle on a 4dp track, so it reads on a
+white card with no shadow. Hover washes the knob; it does not grow.
 
 **Table**: `TableRow` / `TableRowCols` take `zebra` (every second body row,
 counted among `row` siblings), `hover`, and `on_click`; `TableRowCols`
@@ -386,9 +412,9 @@ content box, so the cut is never mid-cluster, and an ellipsized label also
 absorbs a row's deficit (`row_can_absorb`) instead of wrapping its siblings.
 It needs no host op: it rides the same measure as everything else.
 
-**Card** takes `interactive` / `on_click` (role `button`, hover lift to
-elevation 3 and press scale — both paint-only, the lift replaces the wash),
-`lift` on any card, a `title` / `subtitle` header, a `media` image strip
+**Card** takes `interactive` / `on_click` (role `button`; hover is the wash,
+and a press darkens). `lift` is opt-in. It also takes a `title` / `subtitle`
+header, a `media` image strip
 that bleeds to the card edge, and a `footer` thunk under a hairline. A card
 with a footer sets `slot_into` so the caller's trailing block lands in an
 inner body column above the footer while the returned node is still the
@@ -418,8 +444,10 @@ square. Both close on outside click and Escape.
 `Select(value, labels)` and `Combobox(text, options)` share the same anchored
 floater: the menu sits under the trigger, flips when there is no room, and
 tracks it on scroll. Popups stack at z-index 80, above the field (50) and the
-outside-click scrim (40), so an open Select is not covered by a Combobox later
-in the same card. `Select`'s Up / Down / Enter / Escape are bound on the menu,
+outside-click scrim (40), so an open Select is not covered by a Combobox field
+later in the same card. When two popup panels sit near each other, the one
+opened more recently paints and receives hits above the other. A popup elsewhere
+on the page keeps its place. `Select`'s Up / Down / Enter / Escape are bound on the menu,
 which takes focus on open; `Combobox` filters its options case-insensitively as
 you type (including Mac/iOS `insertText`) and handles its keys in the field's
 `on_key_down`, because a focused text field consumes Enter before any keymap
@@ -433,9 +461,13 @@ non-empty; Cmd/Ctrl+A selects all so Backspace can clear.
 surface. The curves live in the core (`arena.elevation` / `elevation_dark`) and
 `elev_now` picks one from the appearance signal, so a theme switch repaints the
 shadow with no effect run. The paint pass emits the shadow **first**, then the
-fill, then the border, so the surface sits on its shadow; `Card` defaults to 1,
-`Popover` / `Tooltip` / `HoverCard` / `Toast` to 2–3, and a dialog panel to 4.
-`elevation` is paint-only, so changing it never runs layout.
+fill, then the border, so the surface sits on its shadow. Inline surfaces are
+flat (`Card`, tooltips): a hairline or an ink fill is the edge. Layers that
+float over content (menus, selects, popovers, hover cards, dialogs, drawers,
+toasts, notifications, the command palette) take the one soft level,
+`FLOAT_LIFT` (`Elevation.Raised`), so they separate from what they cover. A
+caller can still set `elevation`. It is paint-only, so changing it never runs
+layout.
 
 Borders are an anti-aliased `stroke` ring on the outline, not a filled rect
 underneath. `paint_fill_box` fills at the **full** node radius and then strokes

@@ -40,8 +40,8 @@ fn Piece() -> Node {
         kit.Row("Voices", fn() -> string { return "" }, fn() {
             kit.Choice(controls.voices, sound.voice_names(), "Voice handling", 140)
         })
-        zeus.Box(style = Style(direction = Direction.Row, gap = 8, align = Align.Center, padding = edges2(8, 10),
-                               radius = corners(10), background = theme.TILE)) {
+        zeus.Box(style = Style(direction = Direction.Row, gap = 8, align = Align.Center, paddingY = 8, paddingX = 10,
+                               radius = 10, background = theme.TILE)) {
             zui.Icon(kit.IC_VOICE_OFF, 14, if controls.voices.get() == sound.VOICES_REMOVE { theme.OK } else { theme.FAINT })
             zeus.Text(fn() -> string {
                 if controls.voices.get() == sound.VOICES_REMOVE {

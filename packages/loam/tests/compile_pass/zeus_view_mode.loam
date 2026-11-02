@@ -35,7 +35,7 @@ fn main() {
         builds = builds + 1
         local = zeus.signal(0)
         let shape = big.get()
-        zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 4, padding = edges(8))) {
+        zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 4, padding = 8)) {
             zeus.Text("n={{n.get()}}")
             zeus.Text("local={{local.get()}}")
             // A fixed slot, so `b`'s width cannot move its siblings: the re-solve

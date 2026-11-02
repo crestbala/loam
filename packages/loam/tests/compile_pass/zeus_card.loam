@@ -1,5 +1,5 @@
 // Card slots (header / footer / media), the interactive variant (pointer
-// target, hover lift on the paint track, press), and slot redirection: the
+// target, hover wash on the paint track, press), and slot redirection: the
 // trailing block lands between header and footer.
 import "std:fmt"
 import "std:sys"
@@ -56,7 +56,7 @@ fn main() {
     zeus.engine_hover(zeus.node_x(card) + 4, zeus.node_y(card) + 4)
     zeus.engine_layout(480, 400)
     must(zeus.state_hovered(zeus.node_handle(card)), "hovered")
-    must(zeus.proof_anim_live() > 0, "lift on a track")
+    must(zeus.proof_anim_live() > 0, "hover on a track")
     must(zeus.proof_components() == c0, "no component on hover")
 
     // Media: an image strip sits above the body and bleeds to the edge.

@@ -38,7 +38,7 @@ fn main() {
     let a = zeus.signal(0)
     let b = zeus.signal(0)
     let mut box_id = 0
-    zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 4, padding = edges(8))) {
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 4, padding = 8)) {
         zeus.Text("label")
         let bx = zeus.Box(style = Style(width = px(40), height = px(20), background = "#ff0000"))
         box_id = bx.id

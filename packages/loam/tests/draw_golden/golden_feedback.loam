@@ -20,7 +20,7 @@ fn main() {
                 }
                 let scaled = zeus.Box(style = Style(width = px(40),
                                                     height = px(40),
-                                                    radius = corners(8),
+                                                    radius = 8,
                                                     background = zeus.accent()))
                 zeus.animate_scale(scaled, 50, 0)
             }

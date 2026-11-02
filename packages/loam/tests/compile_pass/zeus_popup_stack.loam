@@ -1,0 +1,161 @@
+// Nearby anchored popups stack by open order: the one opened later paints
+// and hits above the other, even when it is earlier in the tree. A popup
+// that sits far from that pair keeps its own place.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:spacing"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn max2(a: int, b: int) -> int {
+    if a > b {
+        return a
+    }
+    return b
+}
+
+fn min2(a: int, b: int) -> int {
+    if a < b {
+        return a
+    }
+    return b
+}
+
+/// The menu panel that holds `label`: the first ancestor clearly taller than
+/// the row, and still a panel rather than the page.
+fn panel_holding(label: string) -> int {
+    let mut id = zeus.engine_find_text(label)
+    let mut guard = 0
+    while id > 0 && guard < 6 {
+        let p = zeus.node_parent(id)
+        if p <= 0 {
+            return id
+        }
+        let taller = zeus.node_height(p) > zeus.node_height(id) + 8
+        if taller && zeus.node_height(p) < 320 {
+            return p
+        }
+        id = p
+        guard = guard + 1
+    }
+    return id
+}
+
+/// Last text draw of `label`, or -1. A later index paints above an earlier one.
+fn text_draw(label: string) -> int {
+    let n = zeus.draw_count()
+    let mut found = -1
+    for i in 0..n {
+        if zeus.draw_op(i) == 2 && fmt.eq(zeus.draw_text(i), label) {
+            found = i
+        }
+    }
+    return found
+}
+
+fn open_at(label: string) {
+    must(zeus.engine_click_text(label) != 0, "click {{label}}")
+    zeus.engine_mouseup()
+    zeus.pump_frame()
+}
+
+fn shut(sig: Signal<int>) {
+    sig.set(-1)
+    zeus.pump_frame()
+}
+
+fn main() {
+    zeus.window("popup-stack", 520, 880)
+    let a = zeus.signal(-1)
+    let b = zeus.signal(-1)
+    let far = zeus.signal(-1)
+    let left_rows = []MenuRow { MenuRow(label = "Alpha"), MenuRow(label = "Beta") }
+    let right_rows = []MenuRow { MenuRow(label = "Cherry"), MenuRow(label = "Date") }
+    let far_rows = []MenuRow { MenuRow(label = "Zinc"), MenuRow(label = "Yarrow") }
+    let tree = zui.Page() {
+        zui.Row(Space.Sm) {
+            zui.Menu(active = a, items = left_rows, trigger = || {
+                zui.Button("Left", look = zeus.Look.Outline, size = zeus.Size.Sm,
+                           style = Style(zIndex = spacing.Z_FIELD))
+            })
+            zui.Menu(active = b, items = right_rows, trigger = || {
+                zui.Button("Right", look = zeus.Look.Outline, size = zeus.Size.Sm,
+                           style = Style(zIndex = spacing.Z_FIELD))
+            })
+        }
+        zeus.Box(style = Style(height = px(460)))
+        zui.Menu(active = far, items = far_rows, trigger = || {
+            zui.Button("Far", look = zeus.Look.Outline, size = zeus.Size.Sm,
+                       style = Style(zIndex = spacing.Z_FIELD))
+        })
+    }
+    zeus.root(tree)
+    zeus.pump_frame()
+
+    // Right is later in the tree. Open it first, then Left. Left is the
+    // recent one and the menus overlap, so Left is the top layer.
+    open_at("Right")
+    must(zeus.text_visible("Cherry"), "right menu opened")
+    open_at("Left")
+    must(zeus.text_visible("Alpha"), "left menu opened over the right one")
+    let left = panel_holding("Alpha")
+    let right = panel_holding("Cherry")
+    must(zeus.is_under(zeus.engine_find_text("Beta"), left) == 1, "alpha and beta share a menu")
+    must(zeus.is_under(zeus.engine_find_text("Date"), right) == 1, "cherry and date share a menu")
+    let x0 = max2(zeus.node_x(left), zeus.node_x(right))
+    let y0 = max2(zeus.node_y(left), zeus.node_y(right))
+    let x1 = min2(zeus.node_x(left) + zeus.node_width(left), zeus.node_x(right) + zeus.node_width(right))
+    let y1 = min2(zeus.node_y(left) + zeus.node_height(left), zeus.node_y(right) + zeus.node_height(right))
+    must(x1 > x0 && y1 > y0, "the two menus overlap")
+    let px = (x0 + x1) / 2
+    let py = (y0 + y1) / 2
+    must(zeus.is_under(zeus.engine_hit(px, py), left) == 1, "recent left menu is the hit layer")
+    must(text_draw("Alpha") > text_draw("Cherry"), "recent left menu paints above the right one")
+
+    // A point that is only inside the older menu still hits that menu.
+    let only_x = zeus.node_x(right) + zeus.node_width(right) - 4
+    let only_y = zeus.node_y(right) + 8
+    must(only_x >= zeus.node_x(left) + zeus.node_width(left), "right edge is outside the left menu")
+    must(zeus.is_under(zeus.engine_hit(only_x, only_y), right) == 1, "older menu still hits where they do not overlap")
+
+    // A third menu, far below, opens last. It does not cover the near pair,
+    // and the near pair keeps the order they already had.
+    open_at("Far")
+    must(zeus.text_visible("Zinc"), "far menu opened")
+    let down = panel_holding("Zinc")
+    must(zeus.node_y(down) > y1 + 8, "far menu is not near the pair")
+    must(zeus.is_under(zeus.engine_hit(px, py), left) == 1, "far menu does not cover the near pair")
+    must(text_draw("Alpha") > text_draw("Cherry"), "near pair keeps recency after a far open")
+    let fx = zeus.node_x(down) + 8
+    let fy = zeus.node_y(down) + 8
+    must(zeus.is_under(zeus.engine_hit(fx, fy), down) == 1, "far menu hits its own panel")
+
+    // Reverse the near pair: Left first, then Right. Right is now the top.
+    shut(a)
+    shut(b)
+    shut(far)
+    must(!zeus.text_visible("Alpha"), "left menu closed")
+    must(!zeus.text_visible("Zinc"), "far menu closed")
+    open_at("Left")
+    open_at("Right")
+    let left2 = panel_holding("Alpha")
+    let right2 = panel_holding("Cherry")
+    let x2 = max2(zeus.node_x(left2), zeus.node_x(right2))
+    let y2 = max2(zeus.node_y(left2), zeus.node_y(right2))
+    let x3 = min2(zeus.node_x(left2) + zeus.node_width(left2), zeus.node_x(right2) + zeus.node_width(right2))
+    let y3 = min2(zeus.node_y(left2) + zeus.node_height(left2), zeus.node_y(right2) + zeus.node_height(right2))
+    must(x3 > x2 && y3 > y2, "menus overlap again")
+    let qx = (x2 + x3) / 2
+    let qy = (y2 + y3) / 2
+    must(zeus.is_under(zeus.engine_hit(qx, qy), right2) == 1, "recent right menu is the hit layer")
+    must(text_draw("Cherry") > text_draw("Alpha"), "recent right menu paints above the left one")
+
+    fmt.println("popup stack ok")
+}

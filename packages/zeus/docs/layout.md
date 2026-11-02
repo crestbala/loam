@@ -65,17 +65,17 @@ release flags.
 |---|---|
 | element identity | `let r = ref()` + `Box(ref = r)`; a node is its `id` |
 | layout direction | `Style(direction = Direction.Row / Column)` |
-| padding, child gap | `padding = edges(..)` / `edges2` / `edges4`, `gap` (`rowGap`, `columnGap`) |
+| padding, child gap | `padding = Space.Sm` / `paddingX` / `paddingY` / `paddingTop` …, `gap` (`rowGap`, `columnGap`) |
 | child alignment | `justify` / `align` (main / cross axis, `Align.*`), `alignSelf` |
 | fixed size | `width = px(n)` |
 | percent size | `width = pct(p)` |
 | fit to content (min / max) | the default; `minWidth`, `maxWidth` |
 | grow to fill (min / max) | `grow = 1` (+ `shrink`, `minWidth`, `maxWidth`) |
 | aspect ratio | `aspect = ratio(16, 9)` |
-| background, corner radius | `background`, `radius = corners(..)` / `corners4` |
-| per-side border | `border = Border(color = c, sides = edges4(t, r, b, l))` — paint only, takes no space |
-| rules between children | `Border(between = n)` — a rule centred in each gap |
-| uniform CSS border (insets content) | `border = line(w, c)` |
+| background, corner radius | `background`, `radius = ..` / `radiusTopLeft` … `radiusBottomLeft` |
+| per-side border | `borderColor = c, borderTop = t, borderRight = r, borderBottom = b, borderLeft = l` — paint only, takes no space |
+| rules between children | `borderBetween = n` — a rule centred in each gap |
+| uniform CSS border (insets content) | `borderWidth = w, borderColor = c` |
 | scroll container | `zeus.Scroll` / `raw_scroll`; `overflow = Overflow.Hidden` to clip without scrolling |
 | scroll offset | the scroller's `scroll_x` / `scroll_y` (`zui.scroll_to`, `bind`) |
 | float on the parent | `floating = float_parent(at, on, x, y)` |
@@ -178,7 +178,7 @@ The layout core has no host dependency beyond a text measurer:
 | `std/zeuscore/layout.loam` | measure, flex / grid / absolute layout, targeted-frame box diff, floating placement |
 | `std/zeuscore/scene.loam` | the draw list (`Draw` records), culling, retained spans and patching |
 | `std/zeuscore/input.loam` | hit-testing, hover, wheel / drag routing |
-| `std/zeuscore/style.loam` | `Style`, `Float`, `Border`, `Edges`, enums |
+| `std/zeuscore/style.loam` | `Style`, `Float`, enums |
 | `std/zeuscore/platform.loam` | the seam: text metrics, insets, clipboard, timers |
 
 A new host implements `platform.loam`'s calls and replays the draw list's

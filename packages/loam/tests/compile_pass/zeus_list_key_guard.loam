@@ -25,7 +25,7 @@ fn main() {
     zeus.window("listkey", 240, 160)
     let items = zeus.signal([]string {})
     let mut host = 0
-    zeus.root(zeus.Box(style = Style(direction = Direction.Column, padding = edges(8))) {
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column, padding = 8)) {
         let h = zui.Each(items.get(), Row)
         host = h.id
     })

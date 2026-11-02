@@ -75,7 +75,7 @@ fn main() {
             }
             // Borders: a top / left side and rules between three children.
             let cd = zeus.Box(style = Style(direction = zeus.Direction.Row, gap = 10, width = px(200), height = px(30),
-                                            border = Border(color = "#123456", sides = edges4(2, 0, 0, 3), between = 2))) {
+                                            borderColor = "#123456", borderTop = 2, borderRight = 0, borderBottom = 0, borderLeft = 3, borderBetween = 2)) {
                 zeus.Box(style = Style(width = px(40), height = px(30)))
                 zeus.Box(style = Style(width = px(40), height = px(30)))
                 zeus.Box(style = Style(width = px(40), height = px(30)))

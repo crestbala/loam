@@ -7,7 +7,7 @@ fn Readout(n: int) -> Node {
 
 fn CounterPanel(initial: int) -> Node {
     let count = zeus.signal(initial)
-    return zeus.Box(style = Style(direction = Direction.Column, gap = 12, padding = edges(16))) {
+    return zeus.Box(style = Style(direction = Direction.Column, gap = 12, padding = 16)) {
         zeus.Text("Counter", style = Style(font = 22))
         zeus.Box(style = Style(direction = Direction.Row, gap = 8)) {
             zui.Button("+1", on_click = fn() { count.set(count.get() + 1) })

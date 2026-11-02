@@ -1,0 +1,135 @@
+// Nested scrollbars share a gutter: a table scroller flush with the page's
+// right edge puts both thumbs in the same strip. Only one bar per scroll chain
+// is live — the lead, whichever was last scrolled, dragged or pointed at. The
+// other fades out within `BAR_YIELD_MS`, is not grabbed by a press, and is not
+// made hot by the pointer, so the thumb you see is the thumb you move.
+
+import "std:fmt"
+import "std:sys"
+import "std:async"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn run_ms(ms: int) {
+    let mut t = 0
+    while t < ms {
+        async.sleep(16)
+        zeus.engine_step_dt(16)
+        zeus.pump_frame()
+        t = t + 16
+    }
+}
+
+/// Translucent fills in the right-hand gutter (x >= 300): thumbs and tracks.
+fn gutter_fills() -> int {
+    let mut c = 0
+    for i in 0..zeus.draw_count() {
+        if zeus.draw_x(i) >= 300 && zeus.draw_alpha(i) > 0 && zeus.draw_alpha(i) < 255 {
+            c = c + 1
+        }
+    }
+    return c
+}
+
+/// Top and width of the (only) thumb in the gutter, -1 when none.
+fn gutter_y() -> int {
+    for i in 0..zeus.draw_count() {
+        if zeus.draw_x(i) >= 300 && zeus.draw_alpha(i) > 0 && zeus.draw_alpha(i) < 255 {
+            return zeus.draw_y(i)
+        }
+    }
+    return -1
+}
+
+fn gutter_w() -> int {
+    let mut w = 0
+    for i in 0..zeus.draw_count() {
+        if zeus.draw_x(i) >= 300 && zeus.draw_alpha(i) > 0 && zeus.draw_w(i) > w {
+            w = zeus.draw_w(i)
+        }
+    }
+    return w
+}
+
+fn scroller_of(id: int) -> int {
+    let mut p = id
+    while p > 0 {
+        if zeus.node_kind(p) == 11 {
+            return p
+        }
+        p = zeus.node_parent(p)
+    }
+    return 0
+}
+
+fn main() {
+    zeus.window("nested bars", 320, 180)
+    zeus.root(zui.Scroll(style = Style(width = pct(100), height = px(180))) {
+        zeus.Box(style = Style(height = px(20)))
+        zui.Scroll(style = Style(width = pct(100), height = px(100))) {
+            zeus.Box(style = Style(height = px(600))) {
+                zeus.Text("inner")
+            }
+        }
+        zeus.Box(style = Style(height = px(900)))
+    })
+    zeus.pump_frame()
+    zeus.engine_step_dt(16)
+    zeus.pump_frame()
+
+    let inner = scroller_of(zeus.engine_find_text("inner"))
+    must(inner > 0, "inner scroller")
+    let page = scroller_of(zeus.node_parent(inner))
+    must(page > 0 && page != inner, "page scroller")
+    must(gutter_fills() == 0, "no bar at rest")
+
+    // Scroll the page (pointer under the table): the page bar shows.
+    zeus.engine_scroll_step(100, 160, 0, 10)
+    run_ms(160)
+    must(zeus.node_scroll_y(page) == 10, "page scrolled")
+    must(gutter_fills() == 1, "page thumb shown")
+
+    // Scroll the table while the page bar still lingers: one thumb, the table's.
+    zeus.engine_scroll_step(100, 60, 0, 40)
+    run_ms(160)
+    must(zeus.node_scroll_y(inner) == 40, "table scrolled")
+    must(zeus.node_scroll_y(page) == 10, "page did not move")
+    must(gutter_fills() == 1, "the page bar yielded: one thumb in the gutter ({{gutter_fills()}})")
+
+    // Grab the thumb that is showing: it is the table's, so the drag moves the
+    // table and leaves the page where it was.
+    let ty = gutter_y()
+    must(ty >= 0, "table thumb painted")
+    zeus.engine_click(315, ty + 4)
+    zeus.engine_drag(315, ty + 34)
+    zeus.engine_mouseup()
+    zeus.pump_frame()
+    must(zeus.node_scroll_y(inner) > 40, "drag moved the table ({{zeus.node_scroll_y(inner)}})")
+    must(zeus.node_scroll_y(page) == 10, "drag did not move the page ({{zeus.node_scroll_y(page)}})")
+
+    // Scroll the page again: now the table yields. Pointing at the gutter over
+    // the table makes the page bar hot (wider), not the hidden table bar.
+    let inner_y = zeus.node_scroll_y(inner)
+    zeus.engine_scroll_step(100, 160, 0, 10)
+    run_ms(160)
+    must(gutter_fills() == 1, "the table bar yielded to the page")
+    zeus.engine_hover(315, 60)
+    run_ms(200)
+    must(gutter_w() == 8, "page bar is hot under the pointer ({{gutter_w()}})")
+    let py = gutter_y()
+    zeus.engine_click(315, py + 4)
+    zeus.engine_drag(315, py + 20)
+    zeus.engine_mouseup()
+    zeus.pump_frame()
+    must(zeus.node_scroll_y(page) > 20, "drag moved the page ({{zeus.node_scroll_y(page)}})")
+    must(zeus.node_scroll_y(inner) == inner_y, "drag did not move the table")
+
+    fmt.println("nested scrollbars ok")
+}

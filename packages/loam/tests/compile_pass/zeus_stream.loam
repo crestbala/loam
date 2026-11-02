@@ -17,7 +17,7 @@ fn fail(what: string) {
 }
 
 fn Panel(n: Signal<int>) -> Node {
-    return zeus.Box(style = Style(width = px(220), direction = Direction.Column, padding = edges(8))) {
+    return zeus.Box(style = Style(width = px(220), direction = Direction.Column, padding = 8)) {
         zeus.Text("events: {{n.get()}}", style = Style(font = 18))
     }
 }

@@ -9,7 +9,7 @@ import "std:zeus"
 
 fn main() {
     zeus.window("box", 480, 640)
-    zeus.root(zeus.Box(style = Style(direction = Direction.Column, padding = edges(10), gap = 6)) {
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column, padding = 10, gap = 6)) {
         zeus.Box(style = Style(direction = Direction.Row, gap = 4, height = px(40))) {
             zeus.Box(style = Style(width = px(50)))
             zeus.Box(style = Style(grow = 1))
@@ -17,7 +17,7 @@ fn main() {
             zeus.Box(style = Style(width = pct(20)))
         }
         zeus.Box(style = Style(direction = Direction.Row, justify = Align.Center, align = Align.End,
-                               height = px(50), padding = edges4(2, 4, 6, 8))) {
+                               height = px(50), paddingTop = 2, paddingRight = 4, paddingBottom = 6, paddingLeft = 8)) {
             zeus.Box(style = Style(width = px(30), height = px(20)))
             zeus.Box(style = Style(width = px(30), height = px(30), alignSelf = Align.Start))
             zeus.Text("label")
@@ -31,7 +31,7 @@ fn main() {
                 zeus.Box(style = Style(width = px(44), height = px(16)))
             }
         }
-        zeus.Box(style = Style(width = px(140), padding = edges(4))) {
+        zeus.Box(style = Style(width = px(140), padding = 4)) {
             zeus.Text("wrapped text that needs more than one line here", style = Style(wrap = true))
         }
         zeus.Box(style = Style(direction = Direction.Row, width = px(200))) {
@@ -39,7 +39,7 @@ fn main() {
             zeus.Box(style = Style(width = px(150), shrink = 1))
         }
         zeus.Box(style = Style(width = px(160), aspect = ratio(16, 9)))
-        zeus.Box(style = Style(margin = edges2(4, 20), minHeight = 24, maxWidth = 300)) {
+        zeus.Box(style = Style(marginY = 4, marginX = 20, minHeight = 24, maxWidth = 300)) {
             zeus.Text("margins and min height")
         }
     })

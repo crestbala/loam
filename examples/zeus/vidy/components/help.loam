@@ -19,24 +19,24 @@ fn two_columns() -> bool {
 }
 
 fn Help() -> Node {
-    return zeus.Box(style = Style(position = pos_absolute(), inset = Edges(top = 0, left = 0, right = 0, bottom = 0),
+    return zeus.Box(style = Style(position = pos_absolute(), top = 0, left = 0, right = 0, bottom = 0,
                                   align = Align.Center, justify = Align.Center, background = "#000000", opacity = 60),
                     visible = player.help.get(),
                     enter = Enter.Fade,
                     on_click = fn() { player.help.set(false) }) {
-        zeus.Box(style = Style(direction = Direction.Column, gap = 18, padding = Edges(top = 20, bottom = 22, left = 26, right = 22),
+        zeus.Box(style = Style(direction = Direction.Column, gap = 18, paddingTop = 20, paddingBottom = 22, paddingLeft = 26, paddingRight = 22,
                                width = px(if two_columns() { 720 } else { 400 }),
                                maxHeight = player.stage_h.get() - 40,
-                               radius = corners(20), background = GLASS, border = line(1, "#2C303B"),
+                               radius = 20, background = GLASS, borderWidth = 1, borderColor = "#2C303B",
                                elevation = Elevation.Modal),
                  enter = Enter.Fade + Enter.Reveal,
                  on_click = fn() { player.wake() }) {
             zeus.Box(style = Style(direction = if two_columns() { Direction.Row } else { Direction.Column }, align = Align.Center)) {
-                zeus.Box(style = Style(width = px(34), height = px(34), radius = corners(10), background = ACCENT,
+                zeus.Box(style = Style(width = px(34), height = px(34), radius = 10, background = ACCENT,
                                        align = Align.Center, justify = Align.Center)) {
                     zui.Icon(icons.KEYBOARD, 18, WHITE)
                 }
-                zeus.Text("Keyboard & gestures", style = Style(font = 17, color = WHITE, margin = Edges(left = 12)))
+                zeus.Text("Keyboard & gestures", style = Style(font = 17, color = WHITE, marginLeft = 12))
                 zui.Grow()
                 Round(icons.CLOSE, "Close", fn() { player.help.set(false) })
             }
@@ -79,7 +79,7 @@ fn SheetColumn(col: int) -> Node {
 /// A section title: small caps in the accent, with air above all but the first.
 fn Section(title: string, first: bool) -> Node {
     return zeus.Text(title.to_upper(), style = Style(font = 11, color = ACCENT,
-                                                    margin = Edges(top = if first { 0 } else { 14 }, bottom = 4)))
+                                                    marginTop = if first { 0 } else { 14 }, marginBottom = 4))
 }
 
 /// One shortcut: its keycaps in a fixed-width lane, then what it does.
@@ -102,8 +102,8 @@ fn Shortcut(keys: string, what: string) -> Node {
 /// A key as a raised cap, sized to its label.
 fn Keycap(label: string) -> Node {
     return zeus.Box(style = Style(direction = Direction.Row, justify = Align.Center, align = Align.Center,
-                                  minWidth = 26, height = px(24), padding = edges2(0, 8), radius = corners(6),
-                                  background = "#2A2E39", border = line(1, "#3B404D"))) {
+                                  minWidth = 26, height = px(24), paddingY = 0, paddingX = 8, radius = 6,
+                                  background = "#2A2E39", borderWidth = 1, borderColor = "#3B404D")) {
         zeus.Text(label, style = Style(font = 12, color = WHITE))
     }
 }

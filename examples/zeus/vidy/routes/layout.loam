@@ -22,8 +22,7 @@ fn Layout(build: fn()) -> Node {
 fn TitleBar() -> Node {
     return zui.TitleBar(style = Style(background = theme.TITLEBAR)) {
         zeus.Box(style = Style(position = pos_absolute(),
-                               inset = Edges(top = 0, bottom = 0, left = -zeus.titlebar().lead,
-                                             right = -titlebar_trail()),
+                               top = 0, bottom = 0, left = -zeus.titlebar().lead, right = -titlebar_trail(),
                                direction = Direction.Row, align = Align.Center, justify = Align.Center)) {
             zeus.Text("Vidy", style = Style(font = 13, color = theme.WHITE))
         }

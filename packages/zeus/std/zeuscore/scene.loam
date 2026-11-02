@@ -1634,12 +1634,12 @@ fn paint_node_body_in(id: int) {
         }
         paint_hover_wash(id)
     } else if k == 13 {
-        let mut text_height = 6
+        let mut text_height = 4
         if text_height > h {
             text_height = h
         }
         let ty = y + (h - text_height) / 2
-        let mut kd = 18
+        let mut kd = 16
         if kd > h {
             kd = h
         }
@@ -1649,27 +1649,24 @@ fn paint_node_body_in(id: int) {
         if nodes.look[id].bg >= 0 {
             track = arena.paint_rgb(nodes.look[id].bg)
         }
-        fill(x, ty, w, text_height, track, text_height / 2)
+        fill(x, ty, w, text_height, track, 1)
         let fw = kx + kd / 2 - x
         if fw > 0 {
-            fill(x, ty, fw, text_height, arena.fg_of(id), text_height / 2)
+            fill(x, ty, fw, text_height, arena.fg_of(id), 1)
         }
         let mut knob = arena.fg_of(id)
         if nodes.look[id].border_c >= 0 {
             knob = arena.paint_rgb(nodes.look[id].border_c)
         }
-        // The knob grows 2dp on hover (hover_amt track) and sits on a soft
-        // shadow so it reads as a thumb above the track, not a dot on it.
-        let grow = int(nodes.anim[id].hover_amt) * 2 / 100
-        let kw = kd + grow
-        let kxx = kx - grow / 2
-        let kyy = y + (h - kw) / 2
-        shadow(kxx, kyy, kw, kw, kw / 2, 0, 40, 4, 0, 1)
-        fill(kxx, kyy, kw, kw, knob, kw / 2)
-        // Hover wash on the knob only, not the whole track.
+        // A ringed circle on the track: an ink ring around the surface tone,
+        // so the thumb reads on a white card without a shadow. No size
+        // change: hover is a wash.
+        let kyy = y + (h - kd) / 2
+        fill(kx, kyy, kd, kd, arena.fg_of(id), kd / 2)
+        fill(kx + 2, kyy + 2, kd - 4, kd - 4, knob, (kd - 4) / 2)
         let ha = int(nodes.anim[id].hover_amt)
         if ha > 0 {
-            fill_a(kxx, kyy, kw, kw, arena.hover_rgb(), kw / 2, ha * 16 / 100)
+            fill_a(kx, kyy, kd, kd, arena.hover_rgb(), kd / 2, ha * 16 / 100)
         }
     } else if k == 7 {
         let mut on = nodes.anim[id].tween

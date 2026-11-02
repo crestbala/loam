@@ -1,5 +1,5 @@
 DRAW 4
-fill 0 0 320 240 16185083 0
+fill 0 0 320 240 16250611 0
 save
 clip 0 0 320 240
 restore

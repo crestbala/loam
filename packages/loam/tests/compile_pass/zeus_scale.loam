@@ -30,7 +30,7 @@ fn main() {
     let sel = zeus.signal(0)
     zeus.window("scale", 800, 600)
     zeus.view(fn() -> Node {
-        zeus.Box(style = Style(direction = Direction.Column, gap = 12, padding = edges(24))) {
+        zeus.Box(style = Style(direction = Direction.Column, gap = 12, padding = 24)) {
             zui.TextInput(name, "Name")
             zui.Checkbox("Agree", on)
             zui.Switch(on)

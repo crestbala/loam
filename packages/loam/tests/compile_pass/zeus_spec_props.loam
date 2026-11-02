@@ -23,8 +23,8 @@ fn Card(style: CardStyle, compact: bool) -> Node {
         style = Style(direction = if compact { Direction.Row } else { Direction.Column },
                       gap = Space.Sm,
                       align = Align.Center,
-                      padding = edges(if compact { 8 } else { style.padding }),
-                      radius = corners(style.radius),
+                      padding = if compact { 8 } else { style.padding },
+                      radius = style.radius,
                       background = style.background)
     ) {
         Tab("Selected", true)

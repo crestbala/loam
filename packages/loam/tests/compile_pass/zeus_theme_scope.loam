@@ -40,10 +40,10 @@ fn main() {
     let mut outer = 0
     let mut inner = 0
     let mut plain = 0
-    let mut rose = 0
-    let mut teal = 0
-    let mut rose_soft = 0
-    let mut rose_dark = 0
+    let mut graphite = 0
+    let mut stone = 0
+    let mut graphite_soft = 0
+    let mut graphite_dark = 0
     let mut plain_dark = 0
     zeus.snapshot(320, 240, fn() -> Node {
         return zeus.Box(style = Style(direction = Direction.Column)) {
@@ -56,14 +56,14 @@ fn main() {
                 zui.Button("small")
             }
             plain = swatch().id
-            zui.Scope(accent = colors.ACCENT.Rose) {
-                rose = swatch().id
-                rose_soft = soft().id
-                zui.Scope(accent = colors.ACCENT.Teal) {
-                    teal = swatch().id
+            zui.Scope(accent = colors.ACCENT.Graphite) {
+                graphite = swatch().id
+                graphite_soft = soft().id
+                zui.Scope(accent = colors.ACCENT.Stone) {
+                    stone = swatch().id
                 }
                 zui.Scope(dark = 1) {
-                    rose_dark = soft().id
+                    graphite_dark = soft().id
                 }
             }
             zui.Scope(dark = 1) {
@@ -79,11 +79,11 @@ fn main() {
     expect(rgb_in(outer) == lo, "scheme leaked out of the scope")
 
     let a0 = rgb_in(plain)
-    let ar = rgb_in(rose)
+    let ar = rgb_in(graphite)
     expect(ar != a0, "accent scope did not change accent()")
-    expect(rgb_in(teal) != ar, "nested accent scope did not win")
-    let ard = rgb_in(rose_dark)
-    expect(ard != rgb_in(rose_soft), "dark scope inside an accent scope kept the light accent")
+    expect(rgb_in(stone) != ar, "nested accent scope did not win")
+    let ard = rgb_in(graphite_dark)
+    expect(ard != rgb_in(graphite_soft), "dark scope inside an accent scope kept the light accent")
     expect(ard != rgb_in(plain_dark), "dark scope dropped the outer accent")
     expect(rgb_in(plain) == a0, "accent leaked out of the scope")
     zeus.appearance().set(2)

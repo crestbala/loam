@@ -38,7 +38,7 @@ fn main() {
             zui.ContextMenu(items = []MenuRow { MenuRow(label = "Rename"),
                                                 MenuRow(label = "Delete", danger = true) }) {
                 zeus.Box(style = Style(height = px(72), align = zeus.Align.Center, justify = zeus.Align.Center,
-                                       border = line(spacing.HAIRLINE, colors.rule()))) {
+                                       borderWidth = spacing.HAIRLINE, borderColor = colors.rule())) {
                     zui.Note("Right-click here")
                 }
             }

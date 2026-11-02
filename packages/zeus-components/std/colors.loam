@@ -14,108 +14,79 @@ import "zeus:enums"
 import "zeus:zeusbase"
 import "zeus:flow"
 
+// --- surfaces -------------------------------------------------------------
+// `ink`, `accent`, and `danger` live in `zeusbase`, under the primitives.
+
+/// Page background.
 fn paper() -> string { return role_token(ROLE.Paper) }
 
 /// Card / popover / dialog surface.
 fn plate() -> string { return role_token(ROLE.Plate) }
 
-/// Muted / secondary / accent background (hover, chips, tab tray).
+/// Raised fill: hover washes, chips, the tab tray.
 fn raised() -> string { return role_token(ROLE.Raised) }
 
-/// Foreground text. `ink` is the strongest ink.
+/// Soft fill for code blocks and inset panels.
+fn wash() -> string { return role_token(ROLE.Wash) }
 
-/// Muted-foreground: secondary text, labels on wash.
+/// Skeleton fill.
+fn bone() -> string { return role_token(ROLE.Bone) }
+
+/// Modal scrim behind dialogs and popovers.
+fn scrim() -> string { return role_token(ROLE.Scrim) }
+
+// --- text and lines -------------------------------------------------------
+
+/// Secondary text and labels.
 fn mute() -> string { return role_token(ROLE.Mute) }
 
 /// Faint text: captions, overlines, placeholders.
 fn dim() -> string { return role_token(ROLE.Dim) }
 
-/// Border / input stroke.
+/// Hairline: borders, dividers, input strokes, tracks.
 fn rule() -> string { return role_token(ROLE.Rule) }
 
-/// Stronger border: popovers, focus-ish outlines.
+/// Stronger line: grips, rules that must read on a raised fill.
 fn hard() -> string { return role_token(ROLE.Hard) }
 
-/// Soft fill for code blocks and inset panels.
-fn wash() -> string { return role_token(ROLE.Wash) }
+// --- accent ---------------------------------------------------------------
 
-/// Text on `accent` (primary-foreground).
-fn on_ink() -> string { return role_token(ROLE.OnInk) }
-
-/// Primary: fills for default buttons, switches, selection. The accent ramp's
-/// solid step (`register_accent`), iris by default.
-
-/// Soft accent surface (`secondary`): soft buttons, pressed toggles.
+/// Soft accent surface: soft buttons, pressed toggles.
 fn accent_soft() -> string { return role_token(ROLE.AccentSoft) }
 
-/// Destructive text (errors, destructive alerts).
+/// Text on `ink` / `accent` fills.
+fn on_ink() -> string { return role_token(ROLE.OnInk) }
+
+/// Text on the accent's solid fill, picked by contrast.
+fn on_accent() -> string { return role_token(ROLE.OnAccent) }
+
+// --- status ---------------------------------------------------------------
+
+/// Success text and marks.
+fn ok() -> string { return role_token(ROLE.Ok) }
+
+/// Solid success fill (ok badges); white text holds on it.
+fn ok_solid() -> string { return role_token(ROLE.OkSolid) }
+
+/// Warning text and marks.
+fn warn() -> string { return role_token(ROLE.Warn) }
+
+/// Warning border.
+fn warn_edge() -> string { return role_token(ROLE.WarnEdge) }
 
 /// Destructive fill (destructive buttons, filled danger badges).
 fn danger_solid() -> string { return role_token(ROLE.DangerSolid) }
 
-/// Destructive border: destructive/50 in light, full in dark.
+/// Destructive border.
 fn danger_edge() -> string { return role_token(ROLE.DangerEdge) }
 
-/// Solid success fill (ok badges). Deeper than `ok` so white text holds.
-fn ok_solid() -> string { return role_token(ROLE.OkSolid) }
-
-/// Success tint.
-fn ok() -> string { return role_token(ROLE.Ok) }
-
-/// Success wash.
-fn ok_fill() -> string { return role_token(ROLE.OkS9) }
-
-/// Warning tint: alert icons, warning chips/pips.
-fn warn() -> string { return role_token(ROLE.Warn) }
-
-/// Warning wash (soft warning badges, alert fills).
-fn warn_fill() -> string { return role_token(ROLE.WarnS9) }
-
-/// Warning border: soft in light, full in dark.
-fn warn_edge() -> string { return role_token(ROLE.WarnEdge) }
-
-/// Text on danger fills is white in both appearances.
+/// Text on danger fills.
 fn on_danger() -> string { return role_token(ROLE.OnFill) }
 
-/// Text on ok fills is white in both appearances.
+/// Text on ok fills.
 fn on_ok() -> string { return role_token(ROLE.OnFill) }
 
-/// Modal scrim behind dialogs and popovers.
-fn scrim() -> string { return role_token(ROLE.Scrim) }
-
-/// Skeleton fill: borders in light, raised in dark.
-fn bone() -> string { return role_token(ROLE.Bone) }
-
-/// Text on the accent's solid fill — dark or light, whichever passes.
-fn on_accent() -> string { return role_token(ROLE.OnAccent) }
-
-/// Elevation shadow colour.
-fn shadow_color() -> string { return role_token(ROLE.Shadow) }
-
-
-
-
-fn ok_fill_hover() -> string { return role_token(ROLE.OkS10) }
-
-
-
-
-
-fn warn_fill_hover() -> string { return role_token(ROLE.WarnS10) }
-
-
-
-
-
-fn danger_fill_hover() -> string { return role_token(ROLE.DangerS10) }
-
-
-
-
-
-fn info_fill_hover() -> string { return role_token(ROLE.InfoS10) }
-
-
+/// The text colour of a `Tint`.
 fn tint_of(kind: int) -> string {
     match kind {
         Tint.Ok => { return ok() }
@@ -127,23 +98,6 @@ fn tint_of(kind: int) -> string {
     }
 }
 
-// --- xAI brand accents ---
-// Published brand colors, for charts, marks and highlights. The neutral
-// palette above stays the chrome; these are the deliberate splashes.
-
-/// Sunset orange — the primary brand accent (`22 100% 51.6%`).
-fn sunset() -> string { return "#ff6308" }
-/// Dawn — the soft partner to `sunset` (`37 100% 76%`).
-fn sunset_soft() -> string { return "#ffd085" }
-/// Dusk purple (`263 70% 50.4%`).
-fn dusk() -> string { return "#6c28d9" }
-/// Twilight violet, the light partner to `dusk` (`255 92% 76%`).
-fn twilight() -> string { return "#a689fa" }
-/// Breeze blue (`214 48.9% 73.9%`).
-fn breeze() -> string { return "#9cb8dd" }
-/// Midnight, the deepest brand blue (`214 58.3% 9.4%`).
-fn midnight() -> string { return "#0a1626" }
-
 /// Choose between a light and a dark value for the current appearance.
 /// Reads the appearance signal, so a caller inside a reactive prop follows
 /// a theme switch automatically.
@@ -153,37 +107,6 @@ fn pick_by_appearance(lit: string, dim: string) -> string {
     }
     return lit
 }
-
-/// Page background. Dark is zinc-950.
-
-/// A color that names a theme slot instead of carrying a value. Resolved by
-/// the paint pass, so it follows `appearance()` with no effect attached.
-
-/// Card / popover / dialog surface.
-/// Muted / secondary / accent background (hover, chips, tab tray).
-/// Foreground text. `ink` is the strongest ink.
-/// Muted-foreground: secondary text, labels on wash.
-/// Faint text: captions, overlines, placeholders.
-/// Border / input stroke.
-/// Stronger border: popovers, focus-ish outlines.
-/// Soft fill for code blocks and inset panels.
-/// Text on `accent` (primary-foreground).
-/// Primary: fills for default buttons, switches, selection. The accent ramp's
-/// solid step (`register_accent`), iris by default.
-/// Soft accent surface (`secondary`): soft buttons, pressed toggles.
-/// Destructive text (errors, destructive alerts).
-/// Destructive fill (destructive buttons, filled danger badges).
-/// Destructive border: destructive/50 in light, full in dark.
-/// Solid success fill (ok badges). Deeper than `ok` so white text holds.
-/// Success tint.
-/// Success wash.
-/// Warning tint: alert icons, warning chips/pips.
-/// Warning wash (soft warning badges, alert fills).
-/// Warning border: soft in light, full in dark.
-/// Text on danger fills is white in both appearances.
-/// Text on ok fills is white in both appearances.
-/// Modal scrim behind dialogs and popovers.
-/// Skeleton fill: borders in light, raised in dark.
 
 // ═══════════════════════════════════════════════════════════════════
 // Design tokens: scales, elevation, motion, focus, contrast
@@ -219,141 +142,145 @@ fn scale_at(sc: Scale, step: int) -> string {
     return sc.s12
 }
 
-/// Neutral ramp, light. Cool greys with a faint iris tint, so the chrome
-/// belongs to the accent instead of reading as stock zinc. Step 1 is the
-/// white card; the page sits one step down (`paper` = 2), so cards lift off
-/// it by tone and shadow rather than by a border alone.
+/// Neutral ramp, light. Warm stone, not a pure grey. Step 1 is the white
+/// card; the page sits on step 2 (`#f7f6f3`). The hairline (`rule` = 6) is
+/// `#e4e2dc`. Text is step 12 (`#1f1d1a`).
 const NEUTRAL_L: Scale = Scale(
-    s1 = "#ffffff", s2 = "#f6f6fb", s3 = "#efeff6", s4 = "#e8e8f1",
-    s5 = "#e1e1ec", s6 = "#d9d9e5", s7 = "#cfcfdd", s8 = "#b5b5c8",
-    s9 = "#737389", s10 = "#63637a", s11 = "#52526a", s12 = "#17172a"
+    s1 = "#ffffff", s2 = "#f7f6f3", s3 = "#f1efe9", s4 = "#ece9e2",
+    s5 = "#e7e4dc", s6 = "#e4e2dc", s7 = "#cfcabf", s8 = "#a8a294",
+    s9 = "#7d786e", s10 = "#5c574f", s11 = "#3d3933", s12 = "#1f1d1a"
 )
 
-/// Neutral ramp, dark. Not the light ramp reversed: the dark end needs
-/// tighter steps near the background (1-5) so surfaces separate at all, and
-/// looser steps at the text end so 11 and 12 stay distinguishable. Tinted
-/// like the light ramp: a blue-black page, cards a visible step above it.
+/// Neutral ramp, dark. Warm stone, not the light ramp reversed: steps 1–5
+/// stay tight so a card still separates from the page, and 11–12 stay apart
+/// as text. The page is step 1 (`#121110`), cards are step 3 (`#1b1a18`),
+/// text is step 12 (`#ecebe7`).
 const NEUTRAL_D: Scale = Scale(
-    s1 = "#0b0b12", s2 = "#111119", s3 = "#181822", s4 = "#20202c",
-    s5 = "#272734", s6 = "#2f2f3d", s7 = "#3e3e50", s8 = "#525268",
-    s9 = "#72728a", s10 = "#808098", s11 = "#a3a3b8", s12 = "#ededf5"
+    s1 = "#121110", s2 = "#171614", s3 = "#1b1a18", s4 = "#242220",
+    s5 = "#2e2b27", s6 = "#3c3833", s7 = "#564f48", s8 = "#736c63",
+    s9 = "#948c82", s10 = "#b7aea3", s11 = "#d4cdc4", s12 = "#ecebe7"
 )
 
 // --- accent ramps ---------------------------------------------------------
-// One per pickable accent. Step 9 is the brand value; 1-8 are tints of it
-// over the page background, 10 is the pressed solid, 11-12 are inks.
+// Step 9 is the solid a primary button paints; 1–8 are tints over the page,
+// 10 is the pressed solid, 11–12 are inks. Step 11 clears AA on steps 1–3.
+// Ink, Graphite, and Stone stay grey. Ocean, Forest, and Terracotta are the
+// natural hues. The solids differ in both appearances, and so do the soft
+// steps (s3), so a nested accent scope still swaps.
 
-/// Sunset — the xAI brand orange (`#ff6308`).
-const ACCENT_SUNSET_L: Scale = Scale(
-    s1 = "#fffaf7", s2 = "#fff4ed", s3 = "#ffe8db", s4 = "#ffdcc7",
-    s5 = "#ffceb0", s6 = "#ffbc94", s7 = "#ffa46f", s8 = "#fb8340",
-    s9 = "#ff6308", s10 = "#f05500", s11 = "#ad4100", s12 = "#5c2100"
+/// Ink — the default. Near-black in light, near-white in dark, so a primary
+/// button is a solid rectangle of the page's own ink. Step 11 clears AA on
+/// steps 1–3; `best_on` picks the opposite ink for step 9.
+const ACCENT_INK_L: Scale = Scale(
+    s1 = "#fafafa", s2 = "#f5f5f5", s3 = "#f0f0f0", s4 = "#e6e6e6",
+    s5 = "#d4d4d4", s6 = "#a3a3a3", s7 = "#737373", s8 = "#404040",
+    s9 = "#171717", s10 = "#0a0a0a", s11 = "#2e2e2e", s12 = "#0a0a0a"
 )
-const ACCENT_SUNSET_D: Scale = Scale(
-    s1 = "#150c06", s2 = "#1d1008", s3 = "#2c1608", s4 = "#3a1a06",
-    s5 = "#481f06", s6 = "#582709", s7 = "#6e320b", s8 = "#8e4310",
-    s9 = "#ff6308", s10 = "#ff7a2b", s11 = "#ffa06b", s12 = "#ffdcc7"
-)
-
-/// Blue. Step 9 is `#2563eb`, deep enough that white
-/// is the ink `best_on` picks in both appearances, which is what keeps the
-/// primary button reading as a primary button.
-const ACCENT_BLUE_L: Scale = Scale(
-    s1 = "#fbfcfe", s2 = "#f5f8ff", s3 = "#e9f0fe", s4 = "#dbe7fd",
-    s5 = "#cbdcfc", s6 = "#b6cdfa", s7 = "#9bbaf7", s8 = "#74a0f2",
-    s9 = "#2563eb", s10 = "#1d56d6", s11 = "#1a4ab8", s12 = "#12275c"
-)
-const ACCENT_BLUE_D: Scale = Scale(
-    s1 = "#070b14", s2 = "#0a0f1c", s3 = "#0e1830", s4 = "#111e3e",
-    s5 = "#14244c", s6 = "#182d5e", s7 = "#1f3a78", s8 = "#2b4fa3",
-    s9 = "#2b6be6", s10 = "#4a87f4", s11 = "#93bbfc", s12 = "#dbe7fd"
+const ACCENT_INK_D: Scale = Scale(
+    s1 = "#0c0c0c", s2 = "#121212", s3 = "#1a1a1a", s4 = "#222222",
+    s5 = "#2c2c2c", s6 = "#3a3a3a", s7 = "#525252", s8 = "#737373",
+    s9 = "#f5f5f5", s10 = "#ffffff", s11 = "#e8e8e8", s12 = "#fafafa"
 )
 
-/// Indigo — a violet-leaning alternative to the default blue.
-const ACCENT_INDIGO_L: Scale = Scale(
-    s1 = "#fcfcfe", s2 = "#f6f8ff", s3 = "#eceffe", s4 = "#e0e6fd",
-    s5 = "#d2dbfc", s6 = "#c0cdfa", s7 = "#a7b9f6", s8 = "#849eef",
-    s9 = "#4f46e5", s10 = "#463dd4", s11 = "#4038c4", s12 = "#1e1b57"
+/// Graphite — a mid charcoal. Lighter than ink in light (`#404040`), softer
+/// than ink in dark (`#d4d4d4`). Step 11 still clears AA on steps 1–3.
+const ACCENT_GRAPHITE_L: Scale = Scale(
+    s1 = "#fafafa", s2 = "#f5f5f5", s3 = "#ececec", s4 = "#e2e2e2",
+    s5 = "#d0d0d0", s6 = "#b4b4b4", s7 = "#8f8f8f", s8 = "#5c5c5c",
+    s9 = "#404040", s10 = "#303030", s11 = "#262626", s12 = "#141414"
 )
-const ACCENT_INDIGO_D: Scale = Scale(
-    s1 = "#0b0b14", s2 = "#101019", s3 = "#171a2e", s4 = "#1c203e",
-    s5 = "#22284b", s6 = "#2a325c", s7 = "#363f74", s8 = "#4650a0",
-    s9 = "#4f46e5", s10 = "#6258f0", s11 = "#a6a1fb", s12 = "#e2e0fe"
-)
-
-/// Teal — a cooler, lower-chroma accent that stays legible on dense data.
-const ACCENT_TEAL_L: Scale = Scale(
-    s1 = "#fafefd", s2 = "#f1fcfa", s3 = "#e0f8f4", s4 = "#cdf2ec",
-    s5 = "#b7e9e1", s6 = "#9cddd3", s7 = "#77cdc1", s8 = "#40b6a7",
-    s9 = "#0d9488", s10 = "#0b857a", s11 = "#0a6f66", s12 = "#0a2e2b"
-)
-const ACCENT_TEAL_D: Scale = Scale(
-    s1 = "#06100f", s2 = "#081614", s3 = "#0a221f", s4 = "#0b2c28",
-    s5 = "#0d3632", s6 = "#10443e", s7 = "#155850", s8 = "#1a766b",
-    s9 = "#0d9488", s10 = "#14b0a1", s11 = "#5fd6c8", s12 = "#cdf2ec"
+const ACCENT_GRAPHITE_D: Scale = Scale(
+    s1 = "#0e0e0e", s2 = "#141414", s3 = "#222222", s4 = "#2a2a2a",
+    s5 = "#343434", s6 = "#424242", s7 = "#555555", s8 = "#737373",
+    s9 = "#d4d4d4", s10 = "#e2e2e2", s11 = "#ececec", s12 = "#f7f7f7"
 )
 
-/// Rose — a warm accent distinct from the danger tier at every step.
-const ACCENT_ROSE_L: Scale = Scale(
-    s1 = "#fffafb", s2 = "#fff1f4", s3 = "#ffe4ea", s4 = "#fed5de",
-    s5 = "#fbc6d2", s6 = "#f7b2c2", s7 = "#f094ab", s8 = "#e66b8b",
-    s9 = "#e11d48", s10 = "#cf1541", s11 = "#b81139", s12 = "#500718"
+/// Stone — the lightest solid in light (`#525252`) and the darkest solid in
+/// dark (`#b0b0b0`). `best_on` still clears the component contrast bar.
+const ACCENT_STONE_L: Scale = Scale(
+    s1 = "#fafafa", s2 = "#f4f4f4", s3 = "#e4e4e4", s4 = "#d6d6d6",
+    s5 = "#c4c4c4", s6 = "#a8a8a8", s7 = "#8a8a8a", s8 = "#6a6a6a",
+    s9 = "#525252", s10 = "#404040", s11 = "#333333", s12 = "#1a1a1a"
 )
-const ACCENT_ROSE_D: Scale = Scale(
-    s1 = "#140a0d", s2 = "#1b0d11", s3 = "#2b1119", s4 = "#38131f",
-    s5 = "#441724", s6 = "#551d2d", s7 = "#6d2639", s8 = "#95344c",
-    s9 = "#e11d48", s10 = "#ef3560", s11 = "#ff8ca6", s12 = "#ffe4ea"
+const ACCENT_STONE_D: Scale = Scale(
+    s1 = "#101010", s2 = "#181818", s3 = "#2c2c2c", s4 = "#363636",
+    s5 = "#424242", s6 = "#525252", s7 = "#666666", s8 = "#808080",
+    s9 = "#b0b0b0", s10 = "#c4c4c4", s11 = "#e0e0e0", s12 = "#f5f5f5"
 )
 
-/// Iris — Zeus's own accent, and the default: a saturated blue-violet that
-/// sits between the stock blue and indigo every other kit ships. White holds
-/// on step 9 in both appearances (5.9:1 light, 4.6:1 dark).
-const ACCENT_IRIS_L: Scale = Scale(
-    s1 = "#fcfbff", s2 = "#f7f6fe", s3 = "#efecfe", s4 = "#e5e1fd",
-    s5 = "#d9d4fc", s6 = "#ccc5fa", s7 = "#bab1f9", s8 = "#9d8ff6",
-    s9 = "#5b45f0", s10 = "#503dd3", s11 = "#3e2fa3", s12 = "#1d164d"
+/// Ocean — a lake blue. Step 9 is the solid; step 11 clears AA on steps 1–3.
+const ACCENT_OCEAN_L: Scale = Scale(
+    s1 = "#f5f9fc", s2 = "#ecf3f9", s3 = "#e0ecf5", s4 = "#cfe2f0",
+    s5 = "#b2d0e6", s6 = "#91bbdc", s7 = "#6aa4cf", s8 = "#3f89c1",
+    s9 = "#0f6cb2", s10 = "#0c568d", s11 = "#0c456e", s12 = "#072c48"
 )
-const ACCENT_IRIS_D: Scale = Scale(
-    s1 = "#0f0e1b", s2 = "#121123", s3 = "#17152e", s4 = "#1c193a",
-    s5 = "#211d46", s6 = "#282257", s7 = "#322a6e", s8 = "#423897",
-    s9 = "#6e5bff", s10 = "#8272ff", s11 = "#afa5ff", s12 = "#e9e6ff"
+const ACCENT_OCEAN_D: Scale = Scale(
+    s1 = "#1a2126", s2 = "#1e2a33", s3 = "#243744", s4 = "#2c4759",
+    s5 = "#355a73", s6 = "#3e6d8d", s7 = "#4983ac", s8 = "#78bdec",
+    s9 = "#5eb0e8", s10 = "#82c2ee", s11 = "#c5e4fa", s12 = "#d9edfc"
+)
+
+/// Forest — a leaf green. Step 9 is the solid; step 11 clears AA on steps 1–3.
+const ACCENT_FOREST_L: Scale = Scale(
+    s1 = "#f6faf7", s2 = "#edf4ef", s3 = "#e1eee5", s4 = "#d1e4d6",
+    s5 = "#b6d4be", s6 = "#96c2a2", s7 = "#72ad81", s8 = "#49955d",
+    s9 = "#1b7a34", s10 = "#16612a", s11 = "#14562a", s12 = "#0c3318"
+)
+const ACCENT_FOREST_D: Scale = Scale(
+    s1 = "#1a221a", s2 = "#1e2d20", s3 = "#243b28", s4 = "#2c4c32",
+    s5 = "#34613e", s6 = "#3e754a", s7 = "#488e58", s8 = "#78ca8c",
+    s9 = "#5dbe74", s10 = "#82d095", s11 = "#c8f0d2", s12 = "#dbf5e2"
+)
+
+/// Terracotta — a fired-earth red. Step 9 is the solid; step 11 clears AA
+/// on steps 1–3.
+const ACCENT_TERRA_L: Scale = Scale(
+    s1 = "#fcf7f6", s2 = "#f9f0ed", s3 = "#f6e7e2", s4 = "#f1d9d2",
+    s5 = "#e8c3b7", s6 = "#dea998", s7 = "#d38a74", s8 = "#c6694c",
+    s9 = "#b8431f", s10 = "#983618", s11 = "#8a3016", s12 = "#5c1e0c"
+)
+const ACCENT_TERRA_D: Scale = Scale(
+    s1 = "#281d18", s2 = "#36241d", s3 = "#472e24", s4 = "#5d3a2c",
+    s5 = "#784936", s6 = "#935740", s7 = "#b2684b", s8 = "#f49c7a",
+    s9 = "#f08a62", s10 = "#f5a384", s11 = "#ffd2c2", s12 = "#ffe2d7"
 )
 
 /// Accent choices, in picker order. `set_accent` takes one of these.
 enum ACCENT {
-    Blue = 0,
-    Indigo = 1,
-    Teal = 2,
-    Rose = 3,
-    Sunset = 4,
-    Iris = 5,
+    Ink = 0,
+    Graphite = 1,
+    Stone = 2,
+    Ocean = 3,
+    Forest = 4,
+    Terracotta = 5,
 }
 
 fn accent_scale_light(which: int) -> Scale {
-    if which == ACCENT.Iris { return ACCENT_IRIS_L }
-    if which == ACCENT.Indigo { return ACCENT_INDIGO_L }
-    if which == ACCENT.Teal { return ACCENT_TEAL_L }
-    if which == ACCENT.Rose { return ACCENT_ROSE_L }
-    if which == ACCENT.Sunset { return ACCENT_SUNSET_L }
-    return ACCENT_BLUE_L
+    if which == ACCENT.Graphite { return ACCENT_GRAPHITE_L }
+    if which == ACCENT.Stone { return ACCENT_STONE_L }
+    if which == ACCENT.Ocean { return ACCENT_OCEAN_L }
+    if which == ACCENT.Forest { return ACCENT_FOREST_L }
+    if which == ACCENT.Terracotta { return ACCENT_TERRA_L }
+    return ACCENT_INK_L
 }
 
 fn accent_scale_dark(which: int) -> Scale {
-    if which == ACCENT.Iris { return ACCENT_IRIS_D }
-    if which == ACCENT.Indigo { return ACCENT_INDIGO_D }
-    if which == ACCENT.Teal { return ACCENT_TEAL_D }
-    if which == ACCENT.Rose { return ACCENT_ROSE_D }
-    if which == ACCENT.Sunset { return ACCENT_SUNSET_D }
-    return ACCENT_BLUE_D
+    if which == ACCENT.Graphite { return ACCENT_GRAPHITE_D }
+    if which == ACCENT.Stone { return ACCENT_STONE_D }
+    if which == ACCENT.Ocean { return ACCENT_OCEAN_D }
+    if which == ACCENT.Forest { return ACCENT_FOREST_D }
+    if which == ACCENT.Terracotta { return ACCENT_TERRA_D }
+    return ACCENT_INK_D
 }
 
 /// Display name, for the gallery's accent picker.
 fn accent_name(which: int) -> string {
-    if which == ACCENT.Indigo { return "Indigo" }
-    if which == ACCENT.Teal { return "Teal" }
-    if which == ACCENT.Rose { return "Rose" }
-    if which == ACCENT.Sunset { return "Sunset" }
-    return "Blue"
+    if which == ACCENT.Graphite { return "Graphite" }
+    if which == ACCENT.Stone { return "Stone" }
+    if which == ACCENT.Ocean { return "Ocean" }
+    if which == ACCENT.Forest { return "Forest" }
+    if which == ACCENT.Terracotta { return "Terracotta" }
+    return "Ink"
 }
 
 fn accent_count() -> int {
@@ -361,9 +288,10 @@ fn accent_count() -> int {
 }
 
 // --- semantic tiers -------------------------------------------------------
-// Five slots each: wash, border, solid, solid hover, ink. The ink values are
-// the ones AA actually constrains, and each was chosen to clear 4.5:1 on the
-// tier's own wash *and* on the page background.
+// Five slots each: wash, border, solid, solid hover, ink. The hues are
+// leaf, sunflower, poppy, and lake. Each ink clears 4.5:1 on the page and
+// on its own wash. Ok, danger, and info solids take white text. The
+// sunflower solid takes near-black, in both appearances.
 
 struct Tier {
     bg: string,
@@ -373,22 +301,22 @@ struct Tier {
     ink: string,
 }
 
-const OK_L: Tier = Tier(bg = "#e8f8ee", line = "#a9e3bf", fill = "#16a34a",
-                        fill_hover = "#15803d", ink = "#126e33")
-const OK_D: Tier = Tier(bg = "#0e2a19", line = "#1d5334", fill = "#22c55e",
-                        fill_hover = "#16a34a", ink = "#4ade80")
-const WARN_L: Tier = Tier(bg = "#fdf5e3", line = "#f3d78a", fill = "#d97706",
-                          fill_hover = "#b45309", ink = "#925309")
-const WARN_D: Tier = Tier(bg = "#2b2109", line = "#5a4610", fill = "#f59e0b",
-                          fill_hover = "#d97706", ink = "#fbbf24")
-const DANGER_L: Tier = Tier(bg = "#fdecec", line = "#f5b5b5", fill = "#dc2626",
-                            fill_hover = "#b91c1c", ink = "#b3201f")
-const DANGER_D: Tier = Tier(bg = "#2c1214", line = "#5c2225", fill = "#ef4444",
-                            fill_hover = "#dc2626", ink = "#f87171")
-const INFO_L: Tier = Tier(bg = "#e9f1fd", line = "#b3cdf7", fill = "#2563eb",
-                          fill_hover = "#1d4ed8", ink = "#1d4ed8")
-const INFO_D: Tier = Tier(bg = "#111f38", line = "#1e3a6b", fill = "#3b82f6",
-                          fill_hover = "#2563eb", ink = "#7ab0fb")
+const OK_L: Tier = Tier(bg = "#e7f5e4", line = "#a8d4a4", fill = "#1c7a34",
+                        fill_hover = "#17692c", ink = "#14632a")
+const OK_D: Tier = Tier(bg = "#132218", line = "#2d5a38", fill = "#1c7a34",
+                        fill_hover = "#17692c", ink = "#8fd9a0")
+const WARN_L: Tier = Tier(bg = "#fbf4df", line = "#ead7a0", fill = "#e6b422",
+                          fill_hover = "#d4a41a", ink = "#7a4808")
+const WARN_D: Tier = Tier(bg = "#2a2212", line = "#6a5420", fill = "#e6b422",
+                          fill_hover = "#d4a41a", ink = "#f0d48a")
+const DANGER_L: Tier = Tier(bg = "#fbecee", line = "#f0c4c6", fill = "#d1252e",
+                            fill_hover = "#b81f28", ink = "#9b1c24")
+const DANGER_D: Tier = Tier(bg = "#2a1416", line = "#6a3034", fill = "#d1252e",
+                            fill_hover = "#b81f28", ink = "#f3b4b4")
+const INFO_L: Tier = Tier(bg = "#e7f2f8", line = "#c5dced", fill = "#1a6fa5",
+                          fill_hover = "#155e8e", ink = "#0f5680")
+const INFO_D: Tier = Tier(bg = "#121c24", line = "#2a4558", fill = "#1a6fa5",
+                          fill_hover = "#155e8e", ink = "#b7d7ee")
 
 // --- contrast -------------------------------------------------------------
 // WCAG relative luminance, so a picker can choose an ink that actually
@@ -475,9 +403,8 @@ fn meets_aa_large(fg: int, bg: int) -> int {
     return 0
 }
 
-/// The ink — near-black or near-white — that reads best on `bg`. This is why
-/// an orange primary button gets dark text and an indigo one gets white,
-/// without either being spelled out per accent.
+/// The ink — near-black or near-white — that reads best on `bg`. A light fill
+/// gets near-black text; a dark fill gets white.
 fn best_on(bg: int) -> int {
     let dark = parse_hex_color("#18181b")
     let light = parse_hex_color("#ffffff")
@@ -488,7 +415,8 @@ fn best_on(bg: int) -> int {
 }
 
 // --- the live accent ------------------------------------------------------
-let mut accent_which: int = 5
+/// Ink. `set_accent` replaces it; the other ramps stay available.
+let mut accent_which: int = 0
 
 /// The accent in effect. Changing it re-registers the twelve A-slots, so the
 /// next paint picks up the new ramp with no rebuild and no effect runs — the
@@ -561,7 +489,7 @@ fn register_accent() {
     let ad = accent_scale_dark(accent_which)
     register_scale(ROLE.A1, al, ad)
     // Text on the accent's solid step, chosen by contrast rather than
-    // assumed: white on `#ff6308` is 2.98:1 and fails AA outright.
+    // assumed. A light solid gets near-black ink; a dark solid gets white.
     theme(ROLE.OnAccent, best_on(parse_hex_color(al.s9)),
           best_on(parse_hex_color(ad.s9)))
     // The flat `accent` role tracks the ramp's solid step, so every existing
@@ -572,45 +500,27 @@ fn register_accent() {
 }
 
 // --- scale accessors ------------------------------------------------------
+/// `step` held to the 1..12 ramp.
+fn ramp_step(step: int) -> int {
+    if step < 1 {
+        return 1
+    }
+    if step > 12 {
+        return 12
+    }
+    return step
+}
+
 /// Neutral ramp step 1..12 as a role token (see the ROLE enum for what each
 /// step means).
 fn n(step: int) -> string {
-    let mut k = step
-    if k < 1 {
-        k = 1
-    }
-    if k > 12 {
-        k = 12
-    }
-    return role_token(ROLE.N1 + k - 1)
+    return role_token(ROLE.N1 + ramp_step(step) - 1)
 }
 
 /// Accent ramp step 1..12 as a role token. Follows `set_accent`.
 fn ac(step: int) -> string {
-    let mut k = step
-    if k < 1 {
-        k = 1
-    }
-    if k > 12 {
-        k = 12
-    }
-    return role_token(ROLE.A1 + k - 1)
+    return role_token(ROLE.A1 + ramp_step(step) - 1)
 }
-
-/// Text on the accent's solid fill — dark or light, whichever passes.
-/// Text on a semantic solid fill, picked per tier by contrast.
-fn on_tint(kind: int) -> string {
-    if kind == Tint.Ok { return role_token(ROLE.OnOk) }
-    if kind == Tint.Warn { return role_token(ROLE.OnWarn) }
-    if kind == Tint.Danger { return role_token(ROLE.OnDanger) }
-    if kind == Tint.Info { return role_token(ROLE.OnInfo) }
-    return role_token(ROLE.OnAccent)
-}
-/// Elevation shadow colour.
-
-
-
-
 
 /// Wash / border / ink for a `Tint`, so a widget takes one token and gets a
 /// consistent tier instead of picking three colours by hand.
@@ -630,14 +540,6 @@ fn tint_line(kind: int) -> string {
     return n(6)
 }
 
-fn tint_fill(kind: int) -> string {
-    if kind == Tint.Ok { return ok_fill_solid() }
-    if kind == Tint.Warn { return warn_fill_solid() }
-    if kind == Tint.Danger { return danger_fill_solid() }
-    if kind == Tint.Info { return info_fill_solid() }
-    return n(9)
-}
-
 fn tint_ink(kind: int) -> string {
     if kind == Tint.Ok { return ok_ink() }
     if kind == Tint.Warn { return warn_ink() }
@@ -648,11 +550,8 @@ fn tint_ink(kind: int) -> string {
     return n(12)
 }
 
-/// Theme roles so native thumbs (switch / slider) follow appearance at paint.
-/// 32 primary, 33 input track, 34 thumb (background), 35 primary/20 track.
-/// Theme roles so native thumbs (switch / slider) follow appearance at paint.
-/// The four slots are palette-backed: text (32), line (33), surface/card
-/// (34), and line_strong (35), so restyling the palette restyles the thumbs.
+/// Register every theme role once, before the first paint: the palette roles,
+/// the neutral / status / accent ramps, and the flat roles bound onto them.
 fn ensure_role_colors() {
     if roles_ready != 0 {
         return
@@ -691,19 +590,18 @@ fn ensure_role_colors() {
     theme(ROLE.OnWarn, best_on(parse_hex_color(WARN_L.fill)), best_on(parse_hex_color(WARN_D.fill)))
     theme(ROLE.OnDanger, best_on(parse_hex_color(DANGER_L.fill)), best_on(parse_hex_color(DANGER_D.fill)))
     theme(ROLE.OnInfo, best_on(parse_hex_color(INFO_L.fill)), best_on(parse_hex_color(INFO_D.fill)))
-    // Light shadows are a deep iris-tinted ink, so lift reads as part of the
-    // palette rather than grey smudge; dark ones are true black, because a
-    // tinted shadow over a near-black surface reads as haze, not lift.
-    theme(ROLE.Shadow, parse_hex_color("#1c1648"), parse_hex_color("#000000"))
+    // Shadows are true black in both appearances. A tinted shadow reads as a
+    // second colour. Themed surfaces stay flat; a caller can still set elevation.
+    theme(ROLE.Shadow, parse_hex_color("#000000"), parse_hex_color("#000000"))
     register_accent()
 
     // The flat role names every existing call site uses now resolve onto the
     // neutral ramp, so there is one source of truth for the chrome. The
     // mapping is where the audit's contrast finding is fixed: `dim` was
     // `#a9b2bc`, which is 2.15:1 on white and failed AA everywhere it was
-    // used for captions and placeholders. It is now step 10 (6.1:1) and
-    // `mute` is step 11 (7.6:1); both clear AA on steps 1-3.
-    // Light: a tinted page (2) under white cards (1). Dark: the page is the
+    // used for captions and placeholders. It is now step 10 (7.2:1 on white)
+    // and `mute` is step 11 (11.5:1); both clear AA on steps 1-3.
+    // Light: a warm page (2) under white cards (1). Dark: the page is the
     // deepest step and cards rise two steps above it.
     theme(ROLE.Paper, parse_hex_color(NEUTRAL_L.s2), parse_hex_color(NEUTRAL_D.s1))
     theme(ROLE.Plate, parse_hex_color(NEUTRAL_L.s1), parse_hex_color(NEUTRAL_D.s3))
@@ -811,8 +709,6 @@ fn role_rgb_now(slot: int) -> int {
     return paint_rgb(role_color(slot))
 }
 
-
-
 /// Identity at scale 1.0. `x * 100 / 100 == x` for every non-negative int.
 struct Palette {
     bg: string,
@@ -831,7 +727,7 @@ struct Palette {
     danger_solid: string,
     success: string,
     success_fill: string,
-    /// Warning tint: text, pips, icons (amber).
+    /// Warning tint: text, pips, icons (ochre).
     warn: string,
     /// Warning wash (alert fills, soft warning badges).
     warn_fill: string,
@@ -839,7 +735,7 @@ struct Palette {
     warn_edge: string,
     /// Destructive border: destructive/50 in light, full in dark.
     danger_edge: string,
-    /// Solid success fill for badges and other ok-on-surface pills.
+    /// Solid success fill for badges and other ok-on-surface marks.
     ok_solid: string,
     /// Text on colored status fills (ok/danger solids) — white in both
     /// appearances.
@@ -862,95 +758,88 @@ struct Palette {
     fill5: string,
 }
 
-/// Light is the xAI paper theme: white canvas, ivory cards, dove hairlines,
-/// jet ink, sunset accent. Values are the published xAI tokens —
-/// `hsl` triplets from `x.ai/grok` converted to hex: background
-/// `0 0% 100%`, card `40 18% 97%`, border `222 19% 86%`, foreground
-/// `0 0% 4%`, primary `0 0% 4%`, accent `22 100% 51.6%`,
-/// success `142 71% 45%`, warning `45 93% 47%`, error `0 84% 60%`.
+/// Light chrome. Paint reads the neutral ramp, not these surface fields.
+/// `accent` is the first pass `register_accent` overwrites with Ink.
+/// Status fields mirror the tiers. Chart series are the natural hues.
 const LIGHT: Palette = Palette(
-    bg = "#ffffff",
-    card = "#f9f8f6",
-    raised = "#f1f2f6",
-    text = "#0a0a0a",
-    muted = "#7d8187",
-    faint = "#a9b2bc",
-    line = "#d5d9e2",
-    line_strong = "#a9b2bc",
-    wash = "#f7f6f4",
+    bg = "#f7f6f3",
+    card = "#ffffff",
+    raised = "#f1efe9",
+    text = "#1f1d1a",
+    muted = "#3d3933",
+    faint = "#5c574f",
+    line = "#e4e2dc",
+    line_strong = "#a8a294",
+    wash = "#f7f6f3",
     on_solid = "#ffffff",
-    accent = "#0a0a0a",
-    accent_soft = "#f1f2f6",
-    danger = "#ef4343",
-    danger_solid = "#dc2828",
-    success = "#21c45d",
-    success_fill = "#e4f8ec",
-    warn = "#e7b008",
-    warn_fill = "#fdf7e6",
-    warn_edge = "#fad66b",
-    danger_edge = "#f69898",
-    ok_solid = "#189044",
+    accent = "#171717",
+    accent_soft = "#f0f0f0",
+    danger = "#9b1c24",
+    danger_solid = "#d1252e",
+    success = "#14632a",
+    success_fill = "#e7f5e4",
+    warn = "#7a4808",
+    warn_fill = "#fbf4df",
+    warn_edge = "#ead7a0",
+    danger_edge = "#f0c4c6",
+    ok_solid = "#1c7a34",
     on_fill = "#ffffff",
     scrim = "#000000",
-    chart_edge = "#d5d9e2",
-    chart1 = "#ff6308",
-    chart2 = "#6c28d9",
-    chart3 = "#0a1626",
-    chart4 = "#477cc2",
-    chart5 = "#23958f",
-    fill1 = "#ffece1",
-    fill2 = "#ede5fa",
-    fill3 = "#e2e3e5",
-    fill4 = "#e9eff8",
-    fill5 = "#e5f2f2"
+    chart_edge = "#e4e2dc",
+    chart1 = "#0f6cb2",
+    chart2 = "#1b7a34",
+    chart3 = "#c48a00",
+    chart4 = "#d1252e",
+    chart5 = "#b8431f",
+    fill1 = "#e0ecf5",
+    fill2 = "#e1eee5",
+    fill3 = "#fbf4df",
+    fill4 = "#fbecee",
+    fill5 = "#f6e7e2"
 )
 
-/// Dark is the xAI canvas: near-black edge to edge, white ink, hairline
-/// borders. Values are the published xAI tokens — canvas `0 0% 4%`, card
-/// `0 0% 10%`, soft `221 12% 14%`, mid `216 4% 22%`, hairline `221 12% 14%`,
-/// body `222 19% 86%`, mute `216 4% 51%` — with the light-appropriate
-/// sunset / dawn / dusk / twilight / breeze series for charts.
+/// Dark chrome. Same split as `LIGHT`: the neutral ramp is what paints,
+/// status fields mirror the tiers, and the chart series are the natural hues.
 const DARK: Palette = Palette(
-    bg = "#0a0a0a",
-    card = "#1a1a1a",
-    raised = "#1f2228",
-    text = "#ffffff",
-    muted = "#d5d9e2",
-    faint = "#7d8187",
-    line = "#1f2228",
-    line_strong = "#36383a",
-    wash = "#121212",
-    on_solid = "#0a0a0a",
-    accent = "#ffffff",
-    accent_soft = "#1f2228",
-    danger = "#e66565",
-    danger_solid = "#dc2828",
-    success = "#4ade80",
-    success_fill = "#142c1d",
-    warn = "#f8c630",
-    warn_fill = "#2e2610",
-    warn_edge = "#947005",
-    danger_edge = "#9a1919",
-    ok_solid = "#189044",
+    bg = "#121110",
+    card = "#1b1a18",
+    raised = "#242220",
+    text = "#ecebe7",
+    muted = "#d4cdc4",
+    faint = "#b7aea3",
+    line = "#3c3833",
+    line_strong = "#736c63",
+    wash = "#171614",
+    on_solid = "#18181b",
+    accent = "#f5f5f5",
+    accent_soft = "#1a1a1a",
+    danger = "#f3b4b4",
+    danger_solid = "#d1252e",
+    success = "#8fd9a0",
+    success_fill = "#132218",
+    warn = "#f0d48a",
+    warn_fill = "#2a2212",
+    warn_edge = "#6a5420",
+    danger_edge = "#6a3034",
+    ok_solid = "#1c7a34",
     on_fill = "#ffffff",
     scrim = "#000000",
-    chart_edge = "#1f2228",
-    chart1 = "#ff6308",
-    chart2 = "#a689fa",
-    chart3 = "#9cb8dd",
-    chart4 = "#ffd085",
-    chart5 = "#45d3cc",
-    fill1 = "#361a0a",
-    fill2 = "#262135",
-    fill3 = "#242930",
-    fill4 = "#362e20",
-    fill5 = "#152e2d"
+    chart_edge = "#3c3833",
+    chart1 = "#5eb0e8",
+    chart2 = "#5dbe74",
+    chart3 = "#f0d48a",
+    chart4 = "#f3b4b4",
+    chart5 = "#f08a62",
+    fill1 = "#1e2a33",
+    fill2 = "#1e2d20",
+    fill3 = "#2a2212",
+    fill4 = "#2a1416",
+    fill5 = "#36241d"
 )
 
 fn empty_view() -> Node {
     return Node { id: 0 }
 }
-
 
 /// 2D grid configuration.
 struct GridConfig {
@@ -963,7 +852,7 @@ struct GridConfig {
     /// The narrowest a cell may be, in points like `gap`. This is what makes
     /// the grid responsive: the count becomes how many cells at least this
     /// wide fit the width the grid is given, capped by `columns` and by the
-    /// child count. With `gap = 12` and `autoColumns = 220`, a grid with 1000
+    /// child count. With `gap = Space.Xs` and `autoColumns = 220`, a grid with 1000
     /// points of content width fits four cells (and `columns = 3` takes it back
     /// to three), 620 points fits two, 420 fits one. The gap is part of the
     /// cell, because `cols` cells leave `cols - 1` gaps.
@@ -996,5 +885,4 @@ fn density() -> Signal<int> {
     }
     return signal_handle(density_sid)
 }
-
 

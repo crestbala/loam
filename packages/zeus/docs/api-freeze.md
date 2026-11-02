@@ -13,12 +13,12 @@ Entry forms the lint checks:
 | `zui.name` | `fn name` is defined in `zeus-components` `atoms`, `molecules` or `organisms` |
 | `value.name` | `fn name` (a `Style` value constructor or helper) is defined in `zeuscore/style.loam` |
 | `Style.key` | `key` is a field of `struct Style` |
-| `Float.key`, `Border.key`, `Edges.key`, `Corners.key` | `key` is a field of that struct |
+| `Float.key` | `key` is a field of that struct |
 
 To refresh after adding API, append the new entries by hand under the right
 heading; keep one entry per line.
 
-## `zeus.*` functions (713)
+## `zeus.*` functions (707)
 
 - `zeus.__ui_scope`
 - `zeus.__view_begin`
@@ -108,8 +108,6 @@ heading; keep one entry per line.
 - `zeus.computed_bool`
 - `zeus.computed_str`
 - `zeus.copy_text`
-- `zeus.corner_override`
-- `zeus.corners_eq`
 - `zeus.create_context`
 - `zeus.ctx_cell`
 - `zeus.ctx_pop`
@@ -663,10 +661,6 @@ heading; keep one entry per line.
 - `zeus.span`
 - `zeus.spin`
 - `zeus.st_bool`
-- `zeus.st_border`
-- `zeus.st_box_edges`
-- `zeus.st_corners`
-- `zeus.st_edges`
 - `zeus.st_float`
 - `zeus.st_int`
 - `zeus.st_len`
@@ -734,7 +728,7 @@ heading; keep one entry per line.
 - `zeus.window_size`
 - `zeus.z_index`
 
-## `zui.*` widgets and helpers (370)
+## `zui.*` widgets and helpers (367)
 
 - `zui.Accordion`
 - `zui.AccordionItem`
@@ -772,7 +766,6 @@ heading; keep one entry per line.
 - `zui.button_border_color`
 - `zui.button_border_width`
 - `zui.button_color`
-- `zui.button_dim`
 - `zui.button_disabled_background`
 - `zui.ButtonGroup`
 - `zui.byte_cmp`
@@ -793,6 +786,7 @@ heading; keep one entry per line.
 - `zui.Card`
 - `zui.CardFooter`
 - `zui.CardHeader`
+- `zui.Carousel`
 - `zui.cell_cmp`
 - `zui.cell_num`
 - `zui.cells_key`
@@ -878,13 +872,13 @@ heading; keep one entry per line.
 - `zui.DescriptionList`
 - `zui.Dialog`
 - `zui.DialogShell`
+- `zui.DisclosureBody`
+- `zui.DisclosureHead`
 - `zui.Display`
 - `zui.Divider`
 - `zui.DotBadge`
 - `zui.Drawer`
-- `zui.drawer_corners`
 - `zui.drawer_dock`
-- `zui.drawer_slide`
 - `zui.DropdownMenu`
 - `zui.Empty`
 - `zui.EmptyState`
@@ -901,12 +895,11 @@ heading; keep one entry per line.
 - `zui.GroupSegment`
 - `zui.Grow`
 - `zui.Heading`
-- `zui.highlight`
+- `zui.hover_intent`
 - `zui.HoverCard`
 - `zui.Icon`
 - `zui.IconButton`
 - `zui.Image`
-- `zui.indicator_chrome`
 - `zui.IndicatorTray`
 - `zui.InlineMessage`
 - `zui.Input`
@@ -961,7 +954,7 @@ heading; keep one entry per line.
 - `zui.Overline`
 - `zui.Page`
 - `zui.page_at`
-- `zui.page_chrome`
+- `zui.page_style`
 - `zui.PageButton`
 - `zui.PageSlot`
 - `zui.Pagination`
@@ -992,6 +985,7 @@ heading; keep one entry per line.
 - `zui.roving_keys`
 - `zui.roving_step`
 - `zui.Row`
+- `zui.row_fill`
 - `zui.rows_in_order`
 - `zui.RowWrap`
 - `zui.Scroll`
@@ -1016,7 +1010,6 @@ heading; keep one entry per line.
 - `zui.Slider`
 - `zui.slider_pos`
 - `zui.slider_snap`
-- `zui.slot_corners`
 - `zui.sort_before`
 - `zui.sort_by`
 - `zui.sort_cells`
@@ -1049,12 +1042,10 @@ heading; keep one entry per line.
 - `zui.Switch`
 - `zui.SwitchTrack`
 - `zui.Tab`
-- `zui.tab_fill`
 - `zui.Table`
 - `zui.table_col_width`
 - `zui.table_index_of`
 - `zui.table_row_odd`
-- `zui.table_share`
 - `zui.TableCell`
 - `zui.TableColHead`
 - `zui.TableCols`
@@ -1089,8 +1080,8 @@ heading; keep one entry per line.
 - `zui.tooltip_arrow_ok`
 - `zui.tooltip_justify`
 - `zui.TooltipCaret`
-- `zui.tray_chrome`
 - `zui.tray_item_h`
+- `zui.TrayItem`
 - `zui.Tree`
 - `zui.tree_depth`
 - `zui.tree_folder`
@@ -1107,7 +1098,7 @@ heading; keep one entry per line.
 - `zui.User`
 - `zui.VirtualTable`
 
-## `Style` keys (36)
+## `Style` keys (65)
 
 - `Style.display`
 - `Style.direction`
@@ -1129,9 +1120,24 @@ heading; keep one entry per line.
 - `Style.maxHeight`
 - `Style.aspect`
 - `Style.padding`
+- `Style.paddingX`
+- `Style.paddingY`
+- `Style.paddingTop`
+- `Style.paddingRight`
+- `Style.paddingBottom`
+- `Style.paddingLeft`
 - `Style.margin`
+- `Style.marginX`
+- `Style.marginY`
+- `Style.marginTop`
+- `Style.marginRight`
+- `Style.marginBottom`
+- `Style.marginLeft`
 - `Style.position`
-- `Style.inset`
+- `Style.top`
+- `Style.right`
+- `Style.bottom`
+- `Style.left`
 - `Style.zIndex`
 - `Style.overflow`
 - `Style.floating`
@@ -1139,49 +1145,50 @@ heading; keep one entry per line.
 - `Style.color`
 - `Style.opacity`
 - `Style.radius`
-- `Style.border`
+- `Style.radiusTopLeft`
+- `Style.radiusTopRight`
+- `Style.radiusBottomRight`
+- `Style.radiusBottomLeft`
+- `Style.borderWidth`
+- `Style.borderColor`
+- `Style.borderTop`
+- `Style.borderRight`
+- `Style.borderBottom`
+- `Style.borderLeft`
+- `Style.borderBetween`
 - `Style.elevation`
 - `Style.font`
 - `Style.ellipsis`
 - `Style.textAlign`
 - `Style.cursor`
+- `Style.rotate`
+- `Style.shiftX`
+- `Style.shiftY`
+- `Style.transition`
 
-## `Style` value constructors and helpers (34)
+## `Style` value constructors and helpers (21)
 
-- `value.corner_or`
-- `value.corners`
-- `value.corners4`
-- `value.corners_bottom`
-- `value.corners_top`
-- `value.edge_of`
-- `value.edge_or`
-- `value.edges`
-- `value.edges2`
-- `value.edges4`
-- `value.edges_from`
 - `value.float_anchor`
 - `value.float_parent`
 - `value.float_root`
-- `value.inset_from`
 - `value.len_or`
 - `value.len_px`
-- `value.line`
 - `value.merge`
-- `value.merge_corners`
-- `value.merge_edges`
 - `value.no_style`
 - `value.opt_color`
 - `value.opt_dim`
+- `value.opt_when`
 - `value.paint_only`
 - `value.pct`
 - `value.pick`
-- `value.pin`
 - `value.px`
 - `value.ratio`
 - `value.shown`
 - `value.style_of`
 - `value.text_color`
+- `value.text_of`
 - `value.text_part`
+- `value.under`
 
 ## `Float` fields (10)
 
@@ -1196,23 +1203,3 @@ heading; keep one entry per line.
 - `Float.clip`
 - `Float.passthrough`
 
-## `Border` fields (4)
-
-- `Border.width`
-- `Border.color`
-- `Border.sides`
-- `Border.between`
-
-## `Edges` fields (4)
-
-- `Edges.top`
-- `Edges.right`
-- `Edges.bottom`
-- `Edges.left`
-
-## `Corners` fields (4)
-
-- `Corners.tl`
-- `Corners.tr`
-- `Corners.br`
-- `Corners.bl`

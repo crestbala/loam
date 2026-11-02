@@ -1,7 +1,7 @@
 // Phase 4 batch 3: the overlay family. Popover anchors below its trigger and
 // flips above when it would leave the viewport; outside click and Escape close
-// it. Tooltip shows on hover after a delay and hides on leave. Toast rises and
-// auto-dismisses. All are out-of-flow floaters.
+// it. Tooltip shows on hover after a delay and hides on leave. Toast fades in
+// and auto-dismisses. All are out-of-flow floaters.
 
 import "std:fmt"
 import "std:sys"

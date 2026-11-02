@@ -53,7 +53,7 @@ fn main() {
     zeus.window("structure", 320, 400)
     let items = zeus.signal([]string { "a", "b", "c" })
     let tab = zeus.signal(0)
-    zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 4, padding = edges(8))) {
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 4, padding = 8)) {
         zeus.Text("header")
         zeus.Box(style = Style(direction = Direction.Column, gap = 2, background = "#eeeeee")) {
             zui.Each(items.get(), fn(i: int, s: string) -> Node {

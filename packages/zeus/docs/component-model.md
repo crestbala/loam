@@ -173,9 +173,15 @@ identity (React `key`, our own `Each(items, ...)`).
 
 ### D7. Two reactivity rules for props
 
-- `text` and `label` are `fn() -> string`, and the compiler wraps a plain
-  expression in a closure that runs it later (`typecheck.c:1124`,
-  `wants_thunk`). So `Text("n = {{count.get()}}")` is reactive for free.
+- Element slots (`Text`, `Box` `label` / `visible` / ...) take
+  `fn() -> string` / `fn() -> bool`, and the compiler wraps a plain
+  expression in a closure that runs it later (`wants_thunk` in `typecheck.c`).
+  So `Text("n = {{count.get()}}")` is reactive for free.
+- Component props are `Signal<T>`. A literal argument becomes `signal(v)` and
+  any other expression `computed(|| expr)` (`make_signal`). Inside the
+  component the prop is read like any signal, with `.get()`: `"Remove
+  {{label.get()}}"`, `if open.get() { ... }`. Passing the signal itself to an
+  element slot or another component forwards it, so it stays live.
 - Every other style prop is plain data read once at build. A fill that follows
   state therefore needs an effect, and `selected_chrome` is that effect with
   seven positional arguments, called from Tab, Choice, SelectRow, NavLink and
@@ -306,7 +312,7 @@ let count = p.labels.len                       // plain constant
 ```
 
 - `Signal<bool>` replaces 0/1 `Signal<int>`. A boolean prop that follows state
-  is a `fn() -> bool` thunk, so a plain expression is wrapped automatically.
+  is a `Signal<bool>`, so a plain expression is lifted automatically.
   *Landed* for every on/off state in the library: `Switch`, `Checkbox`,
   `Toggle`, `Collapsible.open`, `Popover.open`, `Drawer`, `Toast`, `Dialog`,
   `AlertDialog`, `Button.loading`, `Alert.dismiss`, and `DatePicker`'s sheet.
@@ -335,10 +341,9 @@ fn pick(i: int) {
     emit_with(p.on_change, i)                 // Option<fn(int)>: a no-op when absent
 }
 effect(|| {
-    if open.get() { focus(trigger) }          // reads a signal → re-runs
+    rows.set(filter(source.get(), query.get()))   // state sync: re-runs on a read
 })
-on_mount(|| { place_indicator(0) })          // once, after the view is attached
-on_cleanup(|| { release_trap(panel) })        // when the component is freed
+on_cleanup(|| { release() })                  // when the component is freed
 ```
 
 - **Local `fn`.** `fn name(params) -> R { body }` inside a function body is
@@ -349,9 +354,18 @@ on_cleanup(|| { release_trap(panel) })        // when the component is freed
   for that). Passing it on is just its name: `on_click = close`.
 - `emit(h)` / `emit_with(h, v)` invoke an optional handler (*landed*). They
   replace `if p.on_x__set { p.on_x() }`.
-- `on_mount` is new. It runs after `View` has attached the root, so refs are
-  live. It is where `roving_focus`, `claim_trap` and the first measure go.
-  It replaces "wire it up after `ui_pop()`".
+- `effect` and `on_mount` are different tools and never nest. Use them for
+  data fetching, resource cleanup, state or prop changes that must re-render
+  (sync, timers, filters), and performance. Never for style, ref, or
+  animation work, and never put an `effect` inside `on_mount`. Motion is a
+  style key: `opacity`, `rotate`, `shiftX`, `shiftY`, and `transition` (ms,
+  `Motion.*`). The first value paints at once; a later change eases.
+  Behaviour is a prop the engine applies once the element is mounted:
+  `anchor = Anchor(to = ref, place = Place.*, gap = n)`, `autofocus`,
+  `trap`, `secure` (also on `Input`), `passThrough`, `on_resize`, `on_drag`,
+  `on_context_menu`, `on_hover`. A floating panel shows with `visible`, not
+  a `display` key. An event handler may still read a ref (`rect`, `focus`);
+  that read is the event, not a lifecycle hook.
 - `effect` / `computed` / `on_cleanup` keep today's semantics
   (`packages/zeus/docs/reactivity.md` phases 7–8). What changes is the owner (§6.3).
 
@@ -409,9 +423,9 @@ fn install_keys(node: Node, keys: []KeyBind) -> Node   // element layer only
 
 ```loam
 return Column(role = "dialog", ref = panel, keys = keys, focusable = true,
-       style = Style(gap = 16, padding = edges(24), maxWidth = px(DIALOG_W),
+       style = Style(gap = 16, padding = 24, maxWidth = px(DIALOG_W),
                      width = pct(92), background = plate(),
-                     border = line(HAIRLINE, rule()), radius = corners(RAD_LG),
+                     borderWidth = HAIRLINE, borderColor = rule(), radius = RAD_LG,
                      elevation = 4)) {
     Row(style = Style(gap = 8, align = Align.Center)) {
         Title(p.title)
@@ -462,7 +476,7 @@ Box(
     ref = panel, role = "dialog", label = "Settings",   // element props
     focusable = true, disabled = !valid.get(),
     keys = keys,                                         // key bindings
-    style = Style(gap = 16, padding = edges(24)),        // style
+    style = Style(gap = 16, padding = 24),        // style
     hoverStyle = Style(background = raised()),           // state styles
     on_click = close,                                    // handlers
 ) { ...children... }
@@ -564,12 +578,13 @@ struct Style {
     minHeight: Option<int>,
     maxHeight: Option<int>,
     aspect: Option<Ratio>,
-    padding: Option<Edges>,
-    margin: Option<Edges>,       // negatives allowed (a bleed)
+    padding: Option<int>,        // Space.Sm | 16; then paddingX / paddingY,
+                                 // then paddingTop / Right / Bottom / Left
+    margin: Option<int>,         // same seven keys; negatives allowed (a bleed)
 
     // position  (position, top/right/bottom/left, z-index, overflow)
     position: Option<int>,       // Position.Relative | Position.Absolute
-    inset: Option<Edges>,
+    top: Option<int>,            // and right, bottom, left
     zIndex: Option<int>,
     overflow: Option<int>,       // Overflow.Visible | Hidden | Scroll | Auto
 
@@ -577,8 +592,11 @@ struct Style {
     background: Option<string>,  // role token or hex; "" clears it
     color: Option<string>,       // inherited by text
     opacity: Option<int>,        // percent
-    radius: Option<Corners>,
-    border: Option<Border>,
+    radius: Option<int>,         // RAD_MD | 4; radiusTopLeft .. radiusBottomLeft override one corner
+    borderWidth: Option<int>,
+    borderColor: Option<string>,
+    borderTop: Option<int>,      // and Right, Bottom, Left: paint-only side rules
+    borderBetween: Option<int>,  // a rule centred in each gap
     elevation: Option<int>,      // 0..4, the shadow scale
 
     // text  (font-size, text-overflow)
@@ -590,17 +608,22 @@ struct Style {
 }
 ```
 
-Value constructors. Loam has no overloading, so each CSS shorthand form gets
-its own name:
+Spacing and shape keys are plain numbers, never structs: a `Space` step
+(`Space.Sm`), a named constant (`RAD_MD`, `HAIRLINE`), or a literal. A CSS
+shorthand becomes its longhand keys, applied shorthand → axis → side:
 
 ```loam
-px(12)  pct(50)                                   // Len
-edges(8)  edges2(8, 12)  edges4(t, r, b, l)       // padding: 8px | 8px 12px | t r b l
-Edges(top = 0, left = 12)                         // only some sides
-corners(8)  corners_top(8)  corners_bottom(8)  corners4(tl, tr, br, bl)
-line(1, rule())                                   // border: 1px solid <color>
-ratio(16, 9)                                      // aspect-ratio
+padding = Space.Sm                                // padding: 16px
+paddingY = Space.Exs, paddingX = Space.Xs         // padding: 8px 12px
+padding = Space.Sm, paddingTop = 0                // all sides, then one
+radius = RAD_LG                                   // every corner
+radiusTopLeft = RAD_LG, radiusTopRight = RAD_LG   // top pair only
+borderWidth = HAIRLINE, borderColor = rule()      // border: 1px solid <color>
+top = 0, left = 0                                 // a pinned element
 ```
+
+Only lengths and ratios keep a constructor: `px(12)`, `pct(50)`, `ratio(16, 9)`.
+A key only one branch sets uses `opt_when(on, v)` (`top = opt_when(above, 0)`).
 
 The compiler wraps a plain value where an `Option` is expected (§7, C2), so
 the call site is plain data: `Style(gap = 8, width = px(200), background = plate())`.
@@ -609,9 +632,9 @@ the style module.
 
 What is folded in, and what is dropped:
 
-- `padding` / `padding_x` / `padding_y` / `padding_top..left` (7 fields) → `padding: Edges`. Same for `margin` (7 → 1) and `top/right/bottom/left` → `inset`.
-- `radius` / `radius_top` / `radius_bottom` → `radius: Corners`.
-- `border` + `border_color` → `border: Border`.
+- `padding_x` / `padding_top` … → camelCase `paddingX` / `paddingTop` …, each a plain number. Same for `margin`; `top/right/bottom/left` stay as they are.
+- `radius_top` / `radius_bottom` → the corner keys `radiusTopLeft` … `radiusBottomLeft`.
+- `border` + `border_color` → `borderWidth` + `borderColor`.
 - `spacing` (an alias of `gap`) is dropped. `gap` is the only spelling.
 - `show` / `visible` → `display = Display.None` (reactive) or `Show`.
 - `align_direction` → `direction`. `Row` / `Column` set it for you.
@@ -631,9 +654,8 @@ labels with `text_part(style_of(p.style))` (and `text_color(...)` for an icon),
 which is how `Button(style = Style(color = ...))` recolors both its label and
 its icon.
 
-**Border** is `Border { width: Option<int>, color: Option<string> }`:
-`Border(color = rule())` recolors without changing the width; `line(w, c)` sets
-both.
+**Border** is two plain keys: `borderColor = rule()` recolors without changing
+the width; `borderWidth = 1, borderColor = rule()` sets both.
 
 ### 4.4 Reactive style, fine-grained
 
@@ -642,7 +664,7 @@ both.
 
 ```loam
 Box(style = Style(background = if active() { plate() } else { raised() },
-                  padding = edges2(5, 12)))
+                  paddingY = 5, paddingX = 12))
 ```
 
 The element runs the thunk in **one** effect (`install_style` in
@@ -668,18 +690,25 @@ without the "negative means unset" rule). So:
 - A theme switch still re-resolves role tokens at paint time, because
   `plate()` returns a token, not a colour.
 
-### 4.5 Layering: `merge`
+### 4.5 Layering: `restyle`
 
-A recipe's own look sits under the caller's with one call:
+A component passes its own recipe as `style` and the caller's style as
+`restyle`. The engine layers `restyle` over `style` key by key
+(`layered_style`). A label that should only take the caller's `color` and
+`font` passes `restyle = text_of(p.style)`.
 
 ```loam
-style = merge(tab_base(p.size), style_of(p.style))
+Box(style = field_chrome(p.size, invalid = p.invalid),
+    restyle = p.style)
+Text(label, style = Style(font = FONT_BODY, color = ink()),
+     restyle = text_of(p.style))
 ```
 
-`merge(a, b)` takes `b`'s field wherever `b` has one (`Some`) and `a`'s
-otherwise. That is the whole cascade. It replaces all 96 `px_or_default` /
-`str_or_default` calls, and because `b` is a `Style`, the caller can override
-*any* key, not only the 12 a recipe chose to expose.
+`merge(a, b)` is that same layering: `b`'s field wherever `b` has one, `a`'s
+otherwise. Components do not call it. The engine does, when it composites
+`restyle` over `style`. A recipe that varies passes a trailing props struct
+(`field_chrome(size, invalid = p.invalid, width = w)`) or returns the one
+value that varies (`invalid_edge(invalid) -> Border`).
 
 ### 4.6 State styles
 
@@ -800,7 +829,7 @@ Booleans are `bool` (`plain`, `dark`, `multiline`, `lazy`, `safe`), not
 ```loam
 struct TabProps {
     label: string,
-    active: fn() -> bool,
+    active: Signal<bool>,
     on_click: Option<fn()> = none,
 }
 
@@ -808,9 +837,9 @@ struct TabProps {
 fn Tab(p: TabProps) -> Node {
     return Row(role = "tab", label = p.label, focusable = p.active,
         on_click = p.on_click,
-        style = Style(gap = 4, align = Align.Center, padding = edges2(5, 12),
-                      radius = corners(RAD_MD), cursor = "pointer",
-                      color = if p.active() { ink() } else { mute() })) {
+        style = Style(gap = 4, align = Align.Center, paddingY = 5, paddingX = 12,
+                      radius = RAD_MD, cursor = "pointer",
+                      color = if p.active.get() { ink() } else { mute() })) {
         Text(p.label, style = Style(font = FONT_BODY, ellipsis = true))
     }
 }
@@ -823,12 +852,10 @@ struct TabsProps {
     keys: []KeyBind = no_keys(),
 }
 
-/// Tabs with a sliding indicator under the selected trigger.
+/// Tabs: a raised tray. The selected trigger fills with the plate.
 fn Tabs(p: TabsProps) -> Node {
     // state
     let n = p.labels.len
-    let tray = ref()
-    let ind = signal(Rect {})
 
     // controller
     fn select(i: int) {
@@ -836,12 +863,6 @@ fn Tabs(p: TabsProps) -> Node {
         p.selected.set(j)
         emit_with(p.on_change, j)
     }
-    fn place(ms: int) {
-        let r = child_rect(tray, p.selected.get() + 1)    // +1: the indicator is child 0
-        tween(ind, r, ms)
-    }
-    effect(fn() => place(Motion.Base))
-    on_resize(tray, fn() => place(0))
 
     // keys
     let keys = keys_concat([]KeyBind {
@@ -849,16 +870,11 @@ fn Tabs(p: TabsProps) -> Node {
         chord("left",  "tabs.prev", fn() => select(p.selected.get() - 1)),
     }, p.keys)
 
-    // tree
-    return Row(ref = tray, role = "tablist", keys = keys,
-        style = merge(Style(gap = 2, padding = edges(4), align = Align.Center,
-                            background = raised(), radius = corners(RAD_LG)),
-                      style_of(p.style))) {
-        Box(role = "presentation", style = Style(
-            position = Position.Absolute,
-            inset = Edges(top = 0, left = ind.get().x),   // unset edges stay auto
-            width = px(ind.get().w), height = px(ind.get().h),
-            background = plate(), radius = corners(RAD_MD), elevation = 1))
+    // tree. The caller's style layers over the recipe. Nothing is measured.
+    return Row(role = "tablist", keys = keys,
+        style = Style(gap = 2, padding = 4, align = Align.Center,
+                      background = raised(), radius = RAD_LG),
+        restyle = p.style) {
         Each(p.labels, fn(i, label) {
             Tab(label = label, active = p.selected.get() == i,
                 on_click = fn() => select(i))
@@ -867,10 +883,9 @@ fn Tabs(p: TabsProps) -> Node {
 }
 ```
 
-Every behaviour is still there (roving focus, arrow keys, the animated
-indicator, refit on resize), and the tree reads top to bottom. `on_resize(ref,
-fn)` replaces the hand-built `list_fn` / `list_gen` refit hook in `Tabs`. It is
-the same mechanism, behind a name.
+The selection is a fill on the selected trigger (a 2px ink rule for the
+underline look). Roving focus and the arrow keys stay. Nothing slides, and
+nothing is measured.
 
 ### 5.2 Checkbox (controlled or uncontrolled)
 
@@ -899,8 +914,8 @@ fn Checkbox(p: CheckboxProps) -> Node {
     return Row(role = "checkbox", label = p.label, focusable = true, keys = keys,
         on_click = toggle,
         style = Style(gap = 8, align = Align.Center, cursor = "pointer")) {
-        Box(style = Style(width = px(16), height = px(16), radius = corners(RAD_SM),
-                          border = line(HAIRLINE, accent()),
+        Box(style = Style(width = px(16), height = px(16), radius = RAD_SM,
+                          borderWidth = HAIRLINE, borderColor = accent(),
                           align = Align.Center, justify = Align.Center,
                           background = if on.get() { accent() } else { plate() })) {
             Show(when = on.get()) {
@@ -927,8 +942,8 @@ fn NavLink(label: string, href: string, deep: int = 0) -> Node {
     }
     return zeus.Box(
         style = Style(height = px(36), direction = Direction.Row, gap = Space.Exxs,
-                      align = Align.Center, padding = Edges(right = 12, left = 12),
-                      radius = corners(spacing.RAD_MD), cursor = "pointer",
+                      align = Align.Center, paddingX = 12,
+                      radius = spacing.RAD_MD, cursor = "pointer",
                       background = if active() { colors.raised() } else { "" }),
         on_click = fn() => router.navigate(href),
         role = "button",
@@ -1016,12 +1031,17 @@ phase 4*, `zeusbase.loam`):
   `enter` (`Enter.Fade + Enter.Reveal`), `label` (reactive a11y name), `loading`,
   `on_hover`. The interaction-flag props are interim until the state styles
   (§4.6) replace them.
-- **Ref verbs**, called from the controller (usually `on_mount`): `focus(r)`,
-  `trap_focus(r)` / `release_focus_trap(r)`, `rect(r)`, `child_rect(r, i)`,
-  `child_total(r)`, `on_resize(r, fn)`, `anchor(r, target, side, gap)`,
-  `skip_exit(r)`, `child_ref(r, i)`, `set_on_click(r, h)` and
-  `watch_hover(r, sig)`. (`route_children`, the interim before named slots,
-  was removed in phase 6.)
+- **Declarative behaviour**, applied by the engine once the element is
+  mounted, and again when the state they read changes: `restyle` (the
+  caller's style, over `style`), `anchor`, `autofocus`, `trap`, `secure`,
+  `passThrough`, `on_resize`, `on_drag`, `on_context_menu`. A component
+  passes these on the element. It does not `on_mount` an `anchor`, a drag
+  hook, or a focus trap.
+- **Ref verbs** an event handler may still call: `focus(r)`, `rect(r)`,
+  `child_rect(r, i)`, `child_total(r)`. `trap_focus` / `release_focus_trap`,
+  `anchor(r, …)`, `on_resize(r, fn)`, `on_drag(r, fn)`, and `watch_hover`
+  remain in the engine; components use the props above instead.
+  (`route_children`, the interim before named slots, was removed in phase 6.)
 
 `roving_focus`, `tabs_place`, `selected_chrome` (in components) and every
 `arena.nodes[...]` write in a converted component are gone.
@@ -1052,8 +1072,10 @@ body, then:
 
 1. checks that exactly one element was attached to the frame's parent slot
    (a trap otherwise),
-2. runs the `on_mount` callbacks while the frame is still open, so what they
-   create is owned by the root too (refs are filled by then),
+2. fills the refs built under it — an effect that read one re-runs now,
+   against a complete element — then runs the `on_mount` callbacks once,
+   untracked, while the frame is still open, so what they create is owned by
+   the root too,
 3. moves every record the frame's pending owner holds onto the root
    (`arena.own_end`),
 4. rebinds the effects it allocated that were bound to the parent slot onto
@@ -1210,7 +1232,8 @@ last caller moves, so no step is a flag day.
 - [ ] `NameProps` has only this component's data, plus `style`, `keys`, and its `on_*` handlers as `Option<fn(...)>`. Optional fields default to `= none`.
 - [ ] No `__set`, no `-1` / `""` sentinels in public fields.
 - [ ] Root style is `merge(base, style_of(p.style))`. Keys are `keys_concat(own, p.keys)`.
-- [ ] Booleans are `bool` / `Signal<bool>` / `fn() -> bool`.
+- [ ] Booleans are `bool` / `Signal<bool>`.
+- [ ] Reactive props are `Signal<T>` and read with `.get()` (`{{label.get()}}`, never `{{label()}}`).
 - [ ] Reactive visuals go in `style` (and `hoverStyle` & co. for interaction states), reactive presence in `Show` / `Match` / `Each`.
 - [ ] No `ui_push`, `ui_pop`, `slot(`, `arena.`, `intern_`, `prop_int`, `raw_`.
 - [ ] A handle, when needed, is a `ref()`, used in `on_mount` / `effect` through ref verbs.

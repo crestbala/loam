@@ -197,9 +197,10 @@ let mut live_anchors: int = 0
 /// only them) before paint. The rule: a scroll offset is applied when boxes
 /// are positioned, never by re-measuring — so a scroll stays layout-free.
 let mut anchors_dirty: int = 0
-/// Floater stack for one paint / hit pass. `z_index` is only a boolean in
-/// `is_floater`; these lists sort by the numeric value so a Select menu
-/// (80) paints over a later Combobox field (50).
+/// Floater stack for one paint / hit pass. Sorted by z-index so a Select
+/// menu (80) paints over a later Combobox field (50). Within one z-index,
+/// anchored popups whose boxes are near each other then order by open time.
+/// A popup that is not near them stays in tree order.
 let mut floater_id: []int = []int {}
 let mut floater_z: []int = []int {}
 let mut floater_screen_x: []int = []int {}
@@ -3245,6 +3246,10 @@ fn anim_reduced() -> int {
 /// Before the first frame, and under reduced motion, the final value is written
 /// once instead.
 fn anim_schedule(node: int, prop: int, to: int, dur: int, easing: int) {
+    // An empty ref (an effect's first run, before its element mounts).
+    if node <= 0 {
+        return
+    }
     anim_ensure()
     let current_value = anim_read(node, prop)
     let i = anim_find(node, prop)
@@ -3738,13 +3743,12 @@ fn sync_chrome_scan() {
             }
             anim_schedule(i, APROP.PressAmt, target_value, motion_fast(), ease_standard())
             if int(nodes.anim[i].press_scale) != 0 {
-                // Down sinks on the standard curve; the release springs back
-                // past 100 and settles, which is what makes a press feel
-                // physical rather than toggled.
+                // Opt-in only. Down and release share one short standard
+                // curve, so a press never overshoots.
                 if down_id == i {
                     anim_schedule(i, APROP.ScalePct, PRESS_SCALE, motion_fast(), ease_standard())
                 } else {
-                    anim_schedule(i, APROP.ScalePct, 100, motion_base(), ease_spring())
+                    anim_schedule(i, APROP.ScalePct, 100, motion_fast(), ease_standard())
                 }
             }
         }
@@ -3757,7 +3761,7 @@ fn sync_chrome_scan() {
             if nodes.anim[i].tween < 0 {
                 nodes.anim[i].tween = target_value
             } else {
-                anim_schedule(i, APROP.SwitchTween, target_value, motion_base(), ease_spring())
+                anim_schedule(i, APROP.SwitchTween, target_value, motion_fast(), ease_standard())
             }
         }
         if k == 8 {
@@ -3768,7 +3772,7 @@ fn sync_chrome_scan() {
             if nodes.anim[i].tween < 0 {
                 nodes.anim[i].tween = target_value
             } else {
-                anim_schedule(i, APROP.SwitchTween, target_value, motion_base(), ease_spring())
+                anim_schedule(i, APROP.SwitchTween, target_value, motion_fast(), ease_standard())
             }
         }
         if int(nodes.anim[i].enter_fade) != 0 {
@@ -3786,7 +3790,7 @@ fn sync_chrome_scan() {
                 }
                 nodes.anim[i].enter_fade = u8(2)
             } else if w != 0 {
-                anim_schedule(i, APROP.EnterFade, 100, motion_slow(), ease_emphasized())
+                anim_schedule(i, APROP.EnterFade, 100, motion_fast(), ease_standard())
             } else if nodes.is_floater(i) != 0 || want_show(i) != 0 {
                 // Exit: fade out. Paint keeps the node while `show_amt` > 0
                 // (`want_paint`); the tree predicates already say hidden, so it
@@ -3812,7 +3816,7 @@ fn sync_chrome_scan() {
                 }
                 nodes.anim[i].reveal = u8(2)
             } else if w != 0 {
-                anim_schedule(i, APROP.RevealAmt, 100, motion_base(), ease_emphasized())
+                anim_schedule(i, APROP.RevealAmt, 100, motion_fast(), ease_standard())
             } else {
                 nodes.anim[i].an_reveal = u8(0)
             }
@@ -5839,7 +5843,7 @@ fn physics_step() -> int {
                 if ny != nodes.scrl[i].scroll_y {
                     nodes.scrl[i].scroll_y = ny
                     dirty = 1
-                    bar_on(i)
+                    bar_keep(i)
                     if nodes.ui[i].bind_sig > 0 {
                         store_sig_paint(nodes.ui[i].bind_sig, ny)
                     }
@@ -5853,7 +5857,7 @@ fn physics_step() -> int {
                 if nx != nodes.scrl[i].scroll_x {
                     nodes.scrl[i].scroll_x = nx
                     dirty = 1
-                    bar_on(i)
+                    bar_keep(i)
                 }
                 if nx == nodes.scrl[i].tgt_x {
                     nodes.scrl[i].smooth = u8(int(nodes.scrl[i].smooth) & 13)
@@ -5876,7 +5880,7 @@ fn physics_step() -> int {
                 nodes.scrl[i].vel_y = ay.vel
                 if ay.dirty != 0 {
                     dirty = 1
-                    bar_on(i)
+                    bar_keep(i)
                     mark_paint_id(i)
                     if nodes.ui[i].bind_sig > 0 {
                         store_sig_paint(nodes.ui[i].bind_sig, ay.pos)
@@ -5889,7 +5893,7 @@ fn physics_step() -> int {
                 nodes.scrl[i].vel_x = ax.vel
                 if ax.dirty != 0 {
                     dirty = 1
-                    bar_on(i)
+                    bar_keep(i)
                     mark_paint_id(i)
                 }
             }
@@ -6087,16 +6091,27 @@ fn clamp_scroll(id: int) {
 // track appears (both eased), and it stays shown until the pointer leaves.
 // Nothing here is a track or a live frame: paint reads the stamps, and
 // `bar_next_ms` wakes the host only while something is in flight.
+//
+// Nested scrollers (a table inside the page) share one gutter when their right
+// edges meet, so only one bar per chain is live: the "lead", whichever was last
+// scrolled, dragged or pointed at. Its ancestors and descendants yield — they
+// fade out fast and stop taking hits — so the bar under the pointer is always
+// the one that moves. Unrelated scrollers (side-by-side panes) never yield.
 
 const BAR_FADE_IN: int = 120
 const BAR_FADE_OUT: int = 300
 const BAR_LINGER: int = 800
-const BAR_ALPHA: int = 180
+const BAR_ALPHA: int = 140
+/// How fast a yielding bar clears out of the lead's way.
+const BAR_YIELD_MS: int = 100
 /// Thumb thickness at rest and when hot, and the hot strip along the edge.
-const BAR_W: int = 6
-const BAR_W_HOT: int = 10
+const BAR_W: int = 4
+const BAR_W_HOT: int = 8
 const BAR_HOT_STRIP: int = 14
 const BAR_HOT_MS: int = 140
+
+/// The scroller whose bar leads its nested chain (0 = none yet).
+let mut bar_lead: int = 0
 
 /// The scroller whose bar the pointer is on (0 = none), the one it just left,
 /// when that changed, and each one's hot amount (0..1000) at that moment.
@@ -6123,9 +6138,8 @@ fn bar_hide() -> int {
     return BAR_LINGER + BAR_FADE_OUT
 }
 
-/// Scroll / drag bumped the bar: show it and push the hide deadline out. A
-/// fade-in starts on the hidden edge, or from the live alpha when the bar was
-/// fading out; a stream of scroll events at full opacity restarts nothing.
+/// Scroll / drag / pointer bumped the bar: it takes the lead of its chain,
+/// related bars yield, and it shows (`bar_show`).
 fn bar_on(id: int) {
     if id <= 0 {
         return
@@ -6134,15 +6148,125 @@ fn bar_on(id: int) {
         return
     }
     let now = platform.plat_now_ms()
+    // The live alpha first: a bar that was yielding fades back in from where
+    // it is, not from the alpha it had before it yielded.
+    let a_live = bar_alpha(id)
+    bar_yield_related(id, now)
+    bar_lead = id
+    bar_show(id, now, a_live)
+}
+
+/// Motion the scroller is still finishing (a wheel ease, a momentum coast)
+/// keeps its bar up, unless it yielded: follow-on frames never take the lead
+/// back from the bar the user moved to.
+fn bar_keep(id: int) {
+    if id <= 0 {
+        return
+    }
+    if id >= nodes.tree.len {
+        return
+    }
+    if bar_yields(id) != 0 {
+        return
+    }
+    let now = platform.plat_now_ms()
+    bar_show(id, now, bar_alpha(id))
+}
+
+/// Show the bar and push the hide deadline out. A fade-in starts on the
+/// hidden edge, or from the live alpha `a_live` when the bar was fading out;
+/// a stream of scroll events at full opacity restarts nothing.
+fn bar_show(id: int, now: int, a_live: int) {
     if nodes.scrl[id].bar_t <= now {
         nodes.scrl[id].bar_s = now
         nodes.scrl[id].bar_a0 = 0
     } else if nodes.scrl[id].bar_t - now < BAR_FADE_OUT {
-        nodes.scrl[id].bar_a0 = bar_alpha(id)
+        nodes.scrl[id].bar_a0 = a_live
         nodes.scrl[id].bar_s = now
     }
     nodes.scrl[id].bar_t = now + bar_hide()
     mark_paint_id(id)
+}
+
+/// 1 when one of `a` / `b` contains the other (the same scroll chain).
+fn bar_related(a: int, b: int) -> int {
+    if a <= 0 || b <= 0 || a == b {
+        return 0
+    }
+    let n = nodes.tree.len
+    if a >= n || b >= n {
+        return 0
+    }
+    let mut p = nodes.tree[a].parent
+    let mut guard = 0
+    while p > 0 && p < n && guard < 256 {
+        if p == b {
+            return 1
+        }
+        p = nodes.tree[p].parent
+        guard = guard + 1
+    }
+    p = nodes.tree[b].parent
+    guard = 0
+    while p > 0 && p < n && guard < 256 {
+        if p == a {
+            return 1
+        }
+        p = nodes.tree[p].parent
+        guard = guard + 1
+    }
+    return 0
+}
+
+/// 1 while `id`'s bar stands aside for the lead: the lead is a different,
+/// still-shown scroller in the same chain.
+fn bar_yields(id: int) -> int {
+    let l = bar_lead
+    if l <= 0 || l == id || l >= nodes.tree.len {
+        return 0
+    }
+    if int(nodes.tree[l].kind) != 11 {
+        return 0
+    }
+    if bar_active(l) == 0 {
+        return 0
+    }
+    return bar_related(id, l)
+}
+
+/// The lead is about to move to `id`: every shown bar in its chain starts a
+/// `BAR_YIELD_MS` fade from its live alpha (kept in `bar_a0`), so two thumbs
+/// never sit in one gutter for longer than that. Runs before `bar_lead`
+/// changes, so the alpha read is the one on screen. A held thumb never yields.
+fn bar_yield_related(id: int, now: int) {
+    let n = nodes.tree.len
+    for i in 1..n {
+        if i == id {
+            continue
+        }
+        if nodes.scrl[i].bar_t <= now {
+            continue
+        }
+        if drag_id == i && drag_bar != 0 {
+            continue
+        }
+        if bar_related(i, id) == 0 {
+            continue
+        }
+        if bar_hot == i {
+            bar_hot = 0
+            bar_hot_prev = i
+            bar_prev_a0 = 0
+            bar_hot_t = now
+        }
+        let cut = now + BAR_YIELD_MS
+        if nodes.scrl[i].bar_t > cut {
+            nodes.scrl[i].bar_a0 = bar_alpha(i)
+            nodes.scrl[i].bar_s = now - BAR_FADE_IN
+            nodes.scrl[i].bar_t = cut
+        }
+        mark_paint_id(i)
+    }
 }
 
 /// 1 while the bar should be visible: mid-drag, hot, or before its deadline.
@@ -6211,7 +6335,7 @@ fn bar_set_hot(id: int) {
 }
 
 /// 1 when (`px`, `py`) in window space is on scroller `id`'s bar strip and
-/// that bar is shown.
+/// that bar is shown and not yielding.
 fn bar_strip_at(id: int, px: int, py: int) -> int {
     if id <= 0 || id >= nodes.tree.len {
         return 0
@@ -6224,10 +6348,10 @@ fn bar_strip_at(id: int, px: int, py: int) -> int {
     if px < x || py < y || px >= x + w || py >= y + h {
         return 0
     }
-    if bar_visible(id) != 0 && px >= x + w - BAR_HOT_STRIP {
+    if bar_live(id) != 0 && px >= x + w - BAR_HOT_STRIP {
         return 1
     }
-    if bar_visible_x(id) != 0 && py >= y + h - BAR_HOT_STRIP {
+    if bar_live_x(id) != 0 && py >= y + h - BAR_HOT_STRIP {
         return 1
     }
     return 0
@@ -6357,6 +6481,28 @@ fn bar_visible(id: int) -> int {
     return bar_active(id)
 }
 
+/// `bar_visible`, minus a bar that is yielding to its chain's lead: the bar
+/// the pointer can hover, grab and drag.
+fn bar_live(id: int) -> int {
+    if bar_visible(id) == 0 {
+        return 0
+    }
+    if bar_yields(id) != 0 {
+        return 0
+    }
+    return 1
+}
+
+fn bar_live_x(id: int) -> int {
+    if bar_visible_x(id) == 0 {
+        return 0
+    }
+    if bar_yields(id) != 0 {
+        return 0
+    }
+    return 1
+}
+
 fn bar_visible_x(id: int) -> int {
     if id <= 0 {
         return 0
@@ -6392,6 +6538,11 @@ fn bar_alpha(id: int) -> int {
     let now = platform.plat_now_ms()
     if nodes.scrl[id].bar_t <= now {
         return 0
+    }
+    if bar_yields(id) != 0 {
+        // Standing aside: a short fade from the alpha it had when it yielded.
+        let left = geometry.min2(nodes.scrl[id].bar_t - now, BAR_YIELD_MS)
+        return nodes.scrl[id].bar_a0 * ease_io_k(left * 1000 / BAR_YIELD_MS) / 1000
     }
     let mut a = BAR_ALPHA
     let since = now - nodes.scrl[id].bar_s
@@ -6626,11 +6777,40 @@ fn floater_push(id: int, sx: int, sy: int) {
    visits nodes still fading out, which no layout event announces. */
 let mut floater_gen: int = 1
 let mut fc_prunes: int = 0
+/// Next `open_ord` for an anchored popup that just became visible.
+let mut popup_ord: int = 0
+/// Gap, in dp, under which two anchored popups count as near. Overlap is
+/// near. Farther apart, a newer popup does not climb over an older one.
+const POPUP_NEAR: int = 8
+
+/// Remember which anchored popup opened most recently. A fade keeps the old
+/// order until the panel is gone, and the next show takes a fresh one.
+fn note_popup_stack(id: int) {
+    if id <= 0 || id >= nodes.pin.len {
+        return
+    }
+    if nodes.pin[id].anchor <= 0 {
+        return
+    }
+    if want_show(id) != 0 {
+        if nodes.pin[id].open_ord == 0 || int(nodes.pin[id].popup_closed) != 0 {
+            popup_ord = popup_ord + 1
+            nodes.pin[id].open_ord = popup_ord
+        }
+        nodes.pin[id].popup_closed = u8(0)
+        return
+    }
+    nodes.pin[id].popup_closed = u8(1)
+    if want_paint(id) == 0 {
+        nodes.pin[id].open_ord = 0
+    }
+}
 
 fn floater_collect(id: int, sx: int, sy: int, paint: int) {
     if id <= 0 {
         return
     }
+    note_popup_stack(id)
     if paint != 0 {
         if want_paint(id) == 0 {
             return
@@ -6707,6 +6887,7 @@ fn floater_swap(i: int, j: int) {
 }
 
 /// Insertion sort. `desc` 1 = high z first (hit-test), 0 = low z first (paint).
+/// Equal z keeps tree order, then near popups reorder by open time.
 fn floater_sort(desc: int) {
     let n = floater_id.len
     for i in 1..n {
@@ -6728,6 +6909,165 @@ fn floater_sort(desc: int) {
             floater_swap(j - 1, j)
             j = j - 1
         }
+    }
+    floater_near_order(desc)
+}
+
+/// 1 when the two floater boxes are within `POPUP_NEAR` dp, edges included.
+/// Both are anchored panels, so the box is already in window coordinates.
+fn floater_near(i: int, j: int) -> int {
+    let a = floater_id[i]
+    let b = floater_id[j]
+    let ax = nodes.box[a].x
+    let ay = nodes.box[a].y
+    let bx = nodes.box[b].x
+    let by = nodes.box[b].y
+    if ax + nodes.box[a].w + POPUP_NEAR <= bx {
+        return 0
+    }
+    if bx + nodes.box[b].w + POPUP_NEAR <= ax {
+        return 0
+    }
+    if ay + nodes.box[a].h + POPUP_NEAR <= by {
+        return 0
+    }
+    if by + nodes.box[b].h + POPUP_NEAR <= ay {
+        return 0
+    }
+    return 1
+}
+
+/// Within one equal-z run, anchored popups that sit near each other paint
+/// and hit in open order. `desc` 0 paints the newer one last (on top); `desc`
+/// 1 hit-tests it first. A popup outside the cluster keeps its slot, so a
+/// newer panel across the page does not climb over this one.
+fn floater_near_run(lo: int, hi: int, desc: int) {
+    let mut ids = []int {}
+    for t in lo..hi {
+        let id = floater_id[t]
+        if nodes.pin[id].anchor > 0 && nodes.pin[id].open_ord > 0 {
+            if nodes.box[id].w > 0 && nodes.box[id].h > 0 {
+                push(ids, t)
+            }
+        }
+    }
+    let m = ids.len
+    if m < 2 {
+        return
+    }
+    let mut lab = []int {}
+    for a in 0..m {
+        push(lab, a)
+    }
+    for a in 0..m {
+        let start = a + 1
+        for b in start..m {
+            if floater_near(ids[a], ids[b]) != 0 {
+                let mut keep = lab[a]
+                let mut drop = lab[b]
+                if keep != drop {
+                    if keep > drop {
+                        let tmp = keep
+                        keep = drop
+                        drop = tmp
+                    }
+                    for c in 0..m {
+                        if lab[c] == drop {
+                            lab[c] = keep
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for a in 0..m {
+        if lab[a] != a {
+            continue
+        }
+        let mut count = 0
+        for c in 0..m {
+            if lab[c] == a {
+                count = count + 1
+            }
+        }
+        if count < 2 {
+            continue
+        }
+        let mut slots = []int {}
+        let mut ords = []int {}
+        for c in 0..m {
+            if lab[c] == a {
+                push(slots, ids[c])
+                push(ords, nodes.pin[floater_id[ids[c]]].open_ord)
+            }
+        }
+        let mut order = []int {}
+        for s in 0..count {
+            push(order, s)
+        }
+        for s in 1..count {
+            let mut k = s
+            while k > 0 {
+                let prev = ords[order[k - 1]]
+                let cur = ords[order[k]]
+                let mut do_swap = 0
+                if desc != 0 {
+                    if prev < cur {
+                        do_swap = 1
+                    }
+                } else if prev > cur {
+                    do_swap = 1
+                }
+                if do_swap == 0 {
+                    break
+                }
+                let tmp = order[k - 1]
+                order[k - 1] = order[k]
+                order[k] = tmp
+                k = k - 1
+            }
+        }
+        let mut tmp_id = []int {}
+        let mut tmp_z = []int {}
+        let mut tmp_x = []int {}
+        let mut tmp_y = []int {}
+        for p in 0..count {
+            let src = slots[order[p]]
+            push(tmp_id, floater_id[src])
+            push(tmp_z, floater_z[src])
+            push(tmp_x, floater_screen_x[src])
+            push(tmp_y, floater_screen_y[src])
+        }
+        for p in 0..count {
+            let dst = slots[p]
+            floater_id[dst] = tmp_id[p]
+            floater_z[dst] = tmp_z[p]
+            floater_screen_x[dst] = tmp_x[p]
+            floater_screen_y[dst] = tmp_y[p]
+        }
+    }
+}
+
+/// Apply `floater_near_run` to each equal-z run. z-order itself stays put.
+fn floater_near_order(desc: int) {
+    let n = floater_id.len
+    if n < 2 {
+        return
+    }
+    let mut i = 0
+    while i < n {
+        let z = floater_z[i]
+        let mut j = i + 1
+        while j < n {
+            if floater_z[j] != z {
+                break
+            }
+            j = j + 1
+        }
+        if j - i >= 2 {
+            floater_near_run(i, j, desc)
+        }
+        i = j
     }
 }
 

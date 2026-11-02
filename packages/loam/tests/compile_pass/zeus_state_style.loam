@@ -27,12 +27,12 @@ fn main() {
     // engine drops it at run time instead.
     let hover_look = Style(background = "#ff0000", color = "#00ff00", height = px(80))
     zeus.snapshot(300, 200, fn() -> Node {
-        return zeus.Box(style = Style(direction = Direction.Column, gap = 8, padding = edges(8))) {
+        return zeus.Box(style = Style(direction = Direction.Column, gap = 8, padding = 8)) {
             zeus.Box(label = "btn",
                      style = Style(width = px(100), height = px(40), background = "#0000ff"),
                      hoverStyle = hover_look,
                      pressStyle = Style(background = "#00ff00"),
-                     focusStyle = Style(border = line(2, "#ff0000")),
+                     focusStyle = Style(borderWidth = 2, borderColor = "#ff0000"),
                      on_click = fn() => clicks.set(clicks.get() + 1))
             zeus.Box(label = "off", enabled = false,
                      style = Style(width = px(100), height = px(40), background = "#0000ff"),

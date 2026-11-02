@@ -102,10 +102,10 @@ fn RamChip() -> Node {
                            direction = Direction.Row,
                            gap = Space.Exxs,
                            align = Align.Center,
-                           padding = edges2(4, 10),
-                           radius = corners(spacing.RAD_FULL),
+                           paddingY = 4, paddingX = 10,
+                           radius = spacing.RAD_FULL,
                            background = colors.raised())) {
-        zeus.Box(style = Style(width = px(6), height = px(6), radius = corners(3), background = colors.ok()))
+        zeus.Box(style = Style(width = px(6), height = px(6), radius = 3, background = colors.ok()))
         zeus.Text(fn() -> string {
             let mb = ram.get() / 1024
             return "RAM {{mb}} MB"
@@ -116,7 +116,7 @@ style = Style(font = spacing.FONT_CAPTION, color = colors.mute()))
 
 fn Header() -> Node {
     return zui.Row(Space.Md) {
-        zeus.Box(style = Style(width = px(10), height = px(26), radius = corners(5), background = zeus.ink()))
+        zeus.Box(style = Style(width = px(10), height = px(26), radius = 5, background = zeus.ink()))
         zeus.Text("GreenInfer", style = Style(font = spacing.FONT_TITLE, color = zeus.ink()))
         zui.Chip("code memory", zeus.Tint.Mute)
         zui.Grow()
@@ -148,7 +148,7 @@ fn HitRow(i: int, h: Hit) -> Node {
                            direction = Direction.Column,
                            gap = 2,
                            justify = Align.Center,
-                           padding = Edges(right = Space.Exs, left = Space.Exs))) {
+                           paddingX = Space.Exs)) {
         zeus.Text(h.label, style = Style(font = spacing.FONT_CONTROL, color = zeus.ink()))
         zeus.Text(h.snippet, style = Style(font = spacing.FONT_CAPTION, color = colors.dim()))
     }
@@ -158,7 +158,7 @@ fn AnsRow(i: int, s: string) -> Node {
     return zeus.Box(style = Style(height = px(20),
                            direction = Direction.Row,
                            align = Align.Center,
-                           padding = Edges(right = Space.Exs, left = Space.Exs))) {
+                           paddingX = Space.Exs)) {
         zeus.Text(s, style = Style(font = spacing.FONT_CAPTION, color = colors.mute()))
     }
 }
@@ -275,7 +275,7 @@ fn StepAsk(query: Signal<string>, hits: Signal<[]Hit>, qus: Signal<int>,
                 cap.set("swept {{nrows}} chunks in {{us}} us")
             })
         }
-        zeus.Box(style = Style(height = px(LIST_H), radius = corners(8), border = line(1, colors.rule()))) {
+        zeus.Box(style = Style(height = px(LIST_H), radius = 8, borderWidth = 1, borderColor = colors.rule())) {
             zui.VirtualList(hits, HIT_H, HitRow)
         }
         zui.Row(Space.Sm) {
@@ -340,7 +340,7 @@ fn StepModel(prompt: Signal<string>, endpoint: Signal<int>, key_sig: Signal<stri
                 }
             })
         }
-        zeus.Box(style = Style(height = px(200), radius = corners(8), border = line(1, colors.rule()))) {
+        zeus.Box(style = Style(height = px(200), radius = 8, borderWidth = 1, borderColor = colors.rule())) {
             zui.VirtualList(ans, 20, AnsRow)
         }
         zui.Row(Space.Sm) {
@@ -462,7 +462,7 @@ fn GreenInferPage() -> Node {
         zui.Page() {
             Header()
             zui.Row(Space.Md) {
-                zeus.Box(style = Style(width = px(6), height = px(6), radius = corners(3), background = colors.ok()))
+                zeus.Box(style = Style(width = px(6), height = px(6), radius = 3, background = colors.ok()))
                 zeus.Text("Your codebase as local memory — watch a folder, ask in plain words. Everything stays in one file on this machine.", style = Style(font = spacing.FONT_BODY, color = colors.mute()))
                 zui.Grow()
             }

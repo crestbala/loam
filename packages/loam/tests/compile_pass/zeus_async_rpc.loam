@@ -53,7 +53,7 @@ fn srv_main() {
 }
 
 fn Panel(n: Signal<int>) -> Node {
-    return zeus.Box(style = Style(width = px(220), direction = Direction.Column, padding = edges(8))) {
+    return zeus.Box(style = Style(width = px(220), direction = Direction.Column, padding = 8)) {
         zeus.Text("async: {{n.get()}}", style = Style(font = 18))
     }
 }

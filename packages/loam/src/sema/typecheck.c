@@ -1244,7 +1244,20 @@ static int wants_thunk(Type *pt, AstNode *arg) {
     return 1;
 }
 
+static int is_signal_ty(const Type *t);
+static AstNode *zeus_call(const char *name, AstNode *arg);
+static int not_signal(AstNode *a);
+
 static AstNode *make_thunk(AstNode *arg) {
+    /* A signal where a reader is wanted (`Text(label)`, `Each(items, ...)`)
+       is read inside the thunk, so the read is the binding's own. */
+    if (arg->kind == AST_IDENT || arg->kind == AST_FIELD) {
+        Type *at = peek_type(arg);
+        if (is_signal_ty(at)) {
+            AstNode *c = zeus_call("get", arg);
+            if (c) arg = c;
+        }
+    }
     AstNode **st = (AstNode **)malloc(sizeof(AstNode *));
     if (!st) loam_fatal("out of memory");
     st[0] = ast_expr_stmt(arg, arg->loc);
@@ -1321,7 +1334,8 @@ static AstNode *make_none(AstNode *arg) {
  *  drop the key silently (`paint_only`). */
 static void check_state_style(FieldInit *fi) {
     static const char *states[] = { "hoverStyle", "pressStyle", "focusStyle", "disabledStyle" };
-    static const char *paint[] = { "background", "color", "opacity", "border", "elevation" };
+    static const char *paint[] = { "background", "color", "opacity", "borderWidth", "borderColor",
+                                   "elevation" };
     if (!fi || !fi->name || !fi->init) return;
     int is_state = 0;
     for (size_t i = 0; i < sizeof states / sizeof *states; i++)
@@ -1343,7 +1357,7 @@ static void check_state_style(FieldInit *fi) {
         if (!ok)
             err(lit->as.struct_lit.fields[k].init->loc,
                 "'%s' in %s: a state style takes paint keys only (background, color, "
-                "opacity, border, elevation), so hover and press never reflow",
+                "opacity, borderWidth, borderColor, elevation), so hover and press never reflow",
                 key ? key : "?", fi->name);
     }
 }
@@ -1358,17 +1372,142 @@ static AstNode *make_some(AstNode *arg) {
     return ast_struct_lit(loam_dup("Option"), fi, 2, arg->loc);
 }
 
+static int is_signal_ty(const Type *t) {
+    return t && t->kind == TY_STRUCT && t->name && strcmp(t->name, "Signal") == 0 &&
+           t->param_count == 1 && t->params;
+}
+
+/** A Zeus runtime fn (`signal`, `computed`, `get`, `opt_reader_*`) for the
+ *  rewrites below.
+ *  It is looked up in Zeus's own module, so a caller need not import it under
+ *  any particular name. NULL when Zeus is not part of the build. */
+static AstNode *zeus_fn(const char *name) {
+    for (int i = 0; i < Gn; i++) {
+        const char *mn = Gmods[i].name;
+        size_t l = mn ? strlen(mn) : 0;
+        if (l >= 8 && strcmp(mn + l - 8, "zeusbase") == 0) {
+            AstNode *f = find_fn_in(&Gmods[i], name);
+            if (f) return f;
+        }
+    }
+    return NULL;
+}
+
+/** `name(arg)` with the callee already bound to Zeus's `name`. */
+static AstNode *zeus_call(const char *name, AstNode *arg) {
+    AstNode *f = zeus_fn(name);
+    if (!f) return NULL;
+    AstNode *callee = ast_ident(loam_dup(name), arg->loc);
+    callee->as.ident.resolved = f;
+    AstNode **a = (AstNode **)malloc(sizeof(AstNode *));
+    if (!a) loam_fatal("out of memory");
+    a[0] = arg;
+    return ast_call(callee, a, 1, arg->loc);
+}
+
+/** Where a `Signal<T>` is expected, a plain value is lifted into one, so a
+ *  reactive prop takes `"Draft"` or `"n = {{count.get()}}"` as readily as a
+ *  signal. An argument that already is a signal is passed through. */
+static int wants_signal(Type *pt, AstNode *arg) {
+    if (!is_signal_ty(pt) || !arg) return 0;
+    if (!not_signal(arg)) return 0;
+    return zeus_fn("computed") != NULL;
+}
+
+/** 1 if `a` is certainly not a signal, so lifting it cannot double-wrap
+ *  one. An `if`, an index, or a generic call whose type is not yet known
+ *  is left as it is. */
+static int not_signal(AstNode *a) {
+    if (!a) return 0;
+    switch (a->kind) {
+        case AST_STRING: case AST_NUMBER: case AST_FLOAT: case AST_BOOL:
+        case AST_BINARY: case AST_UNARY: case AST_CLOSURE:
+            return 1;
+        case AST_CALL:
+            if (a->as.call.callee && a->as.call.callee->kind == AST_IDENT &&
+                a->as.call.callee->as.ident.name &&
+                strcmp(a->as.call.callee->as.ident.name, "__interp") == 0)
+                return 1;
+            /* `sig.get()` / `sig.peek()` yields the signal's `T`. */
+            if (a->as.call.callee && a->as.call.callee->kind == AST_FIELD &&
+                a->as.call.callee->as.access.field &&
+                (strcmp(a->as.call.callee->as.access.field, "get") == 0 ||
+                 strcmp(a->as.call.callee->as.access.field, "peek") == 0)) {
+                Type *st = peek_value_type(a->as.call.callee->as.access.target);
+                if (is_signal_ty(st)) return !is_signal_ty(st->params[0]);
+            }
+            break;
+        case AST_IF: {
+            /* A value `if`: plain when every arm ends in a plain value. */
+            AstNode *arms[2] = { a->as.if_stmt.then_block, a->as.if_stmt.else_block };
+            for (int k = 0; k < 2; k++) {
+                AstNode *b = arms[k];
+                if (!b) return 0;
+                if (b->kind == AST_IF) {
+                    if (!not_signal(b)) return 0;
+                    continue;
+                }
+                if (b->kind != AST_BLOCK || !b->as.block.stmt_count) return 0;
+                AstNode *last = b->as.block.stmts[b->as.block.stmt_count - 1];
+                if (!last || last->kind != AST_EXPR_STMT || !not_signal(last->as.expr_stmt.expr))
+                    return 0;
+            }
+            return 1;
+        }
+        default:
+            break;
+    }
+    Type *t = peek_value_type(a);
+    return t && !is_signal_ty(t) && !type_has_param(t);
+}
+
+/** A literal never changes, so it becomes a plain `signal(v)`. A no-argument
+ *  closure or fn name is the derivation itself: `computed(f)`. Anything else
+ *  becomes `computed(|| expr)`. Either way the value re-runs when a signal it
+ *  read moves, and only then. */
+static AstNode *make_signal(AstNode *arg) {
+    int lit = arg->kind == AST_STRING || arg->kind == AST_NUMBER ||
+              arg->kind == AST_FLOAT || arg->kind == AST_BOOL;
+    Type *at = arg->kind == AST_CLOSURE ? NULL : peek_type(arg);
+    int is_fn = (arg->kind == AST_CLOSURE && arg->as.fn.param_count == 0) ||
+                (at && at->kind == TY_PROC && at->param_count == 0);
+    AstNode *c = lit     ? zeus_call("signal", arg)
+                 : is_fn ? zeus_call("computed", arg)
+                         : zeus_call("computed", make_thunk(arg));
+    return c ? c : arg;
+}
+
 /** Check an argument against `pt`, wrapping it in a thunk when `pt` is a
- *  no-argument function type and the argument is a plain value, and in
- *  `Some` when `pt` is an `Option` and the argument is a plain value. */
+ *  no-argument function type and the argument is a plain value, in a signal
+ *  when `pt` is a `Signal<T>` (`make_signal`), and in `Some` when `pt` is an
+ *  `Option` and the argument is a plain value. */
 static Type *check_arg_ty(AstNode **slot, Type *pt) {
+    if (is_option_ty(pt) && pt->params[0] && pt->params[0]->kind == TY_PROC &&
+        pt->params[0]->param_count == 0) {
+        /* `label = p.label`: an `Option<Signal<T>>` prop forwarded to an
+           element's `Option<fn() -> T>` slot goes through `opt_reader`. */
+        Type *at = peek_value_type(*slot);
+        if (is_option_ty(at) && is_signal_ty(at->params[0])) {
+            Type *et = at->params[0]->params[0];
+            const char *h = et->kind == TY_STRING ? "opt_reader_string"
+                          : et->kind == TY_BOOL   ? "opt_reader_bool"
+                          : et->kind == TY_INT    ? "opt_reader_int"
+                                                  : NULL;
+            AstNode *c = h ? zeus_call(h, *slot) : NULL;
+            if (c) *slot = c;
+            return check_expr_ty(*slot, pt);
+        }
+    }
     if (is_option_ty(pt) && is_bare_none(*slot)) {
         *slot = make_none(*slot);
     } else if (wants_some(pt, *slot)) {
         if (wants_thunk(pt->params[0], *slot)) *slot = make_thunk(*slot);
+        else if (wants_signal(pt->params[0], *slot)) *slot = make_signal(*slot);
         *slot = make_some(*slot);
     } else if (wants_thunk(pt, *slot)) {
         *slot = make_thunk(*slot);
+    } else if (wants_signal(pt, *slot)) {
+        *slot = make_signal(*slot);
     }
     return check_expr_ty(*slot, pt);
 }
@@ -1518,6 +1657,9 @@ static Type *finish_proc_call(AstNode *n, Type *ft, AstNode *named) {
        struct; an all-defaulted props struct may be left out entirely. */
     if (ft->param_count) {
         Type *last = ft->params[ft->param_count - 1];
+        /* A trailing `Signal<T>` is a value, not a props struct: `f("y")`
+           lifts "y" into the signal rather than into its `id` field. */
+        if (is_signal_ty(last)) last = NULL;
         if (last && last->kind == TY_STRUCT && last->name)
             add_empty_props(n, ft->param_count, last);
         if (last && last->kind == TY_STRUCT && last->name) {
@@ -2496,6 +2638,17 @@ static Type *check_call(AstNode *n, Type *expect) {
         cal->as.access.resolved = fn;
         cal->ty = fn_type_of(fn);
         mark_module_ident(cal->as.access.target, mod);
+    } else if (cal && cal->kind == AST_IDENT && cal->as.ident.resolved &&
+               cal->as.ident.resolved->kind == AST_FN_DECL && cal->as.ident.name &&
+               (strcmp(cal->as.ident.name, "signal") == 0 ||
+                strcmp(cal->as.ident.name, "computed") == 0 ||
+                strcmp(cal->as.ident.name, "get") == 0 ||
+                strncmp(cal->as.ident.name, "opt_reader_", 11) == 0) &&
+               cal->as.ident.resolved == zeus_fn(cal->as.ident.name)) {
+        /* A callee the checker bound itself (`zeus_call`): a local of the same
+           name must not capture it. */
+        fn = cal->as.ident.resolved;
+        cal->ty = fn_type_of(fn);
     } else if (cal && cal->kind == AST_IDENT) {
         Type *lt = NULL;
         if (scope_find(cal->as.ident.name, &lt, NULL) && lt && lt->kind == TY_PROC) {

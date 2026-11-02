@@ -24,7 +24,7 @@ fn main() {
     let label = zeus.signal("aa")
     let tint = zeus.signal("#ff0000")
     let mut box_id = 0
-    zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 8, padding = edges(10))) {
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 8, padding = 10)) {
         zui.Switch(on)
         zui.Switch(on)
         let b = zeus.Box(style = Style(width = px(40), height = px(20), background = "#ff0000"))

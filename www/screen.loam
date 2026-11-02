@@ -7,7 +7,7 @@ import "cache.loam"
 
 fn NavItem(page: Signal<int>, id: int, label: string) -> Node {
     return zeus.Box(
-        style = merge(Style(padding = edges2(6, 12), radius = corners(8)), Style(background = if page.get() == id { colors.wash() } else { "" })),
+        style = merge(Style(paddingY = 6, paddingX = 12, radius = 8), Style(background = if page.get() == id { colors.wash() } else { "" })),
         on_click = fn() => page.set(id)
     ) {
         zeus.Text(label, style = Style(font = 13, color = zeus.ink()))
@@ -44,7 +44,7 @@ fn Block(id: int, page: Signal<int>) -> Node {
         zeus.Text(cache.title(id), style = Style(font = 22, color = zeus.ink()))
         zeus.Text(cache.lead(id), style = Style(font = 14, color = colors.mute()))
         zeus.Text(cache.body(id), style = Style(font = 13, color = zeus.ink()))
-        zeus.Box(style = Style(padding = edges(12), radius = corners(8), background = colors.wash())) {
+        zeus.Box(style = Style(padding = 12, radius = 8, background = colors.wash())) {
             zeus.Text(cache.sample(id), style = Style(font = 12, color = zeus.ink()))
         }
     }
@@ -63,7 +63,7 @@ fn Article(page: Signal<int>) -> Node {
 fn Screen(chip: string, page: Signal<int>) -> Node {
     return zeus.Box(style = Style(direction = Direction.Column,
                            gap = 16,
-                           padding = edges(28),
+                           padding = 28,
                            background = colors.paper())) {
         zui.Row(8) {
             zeus.Text("Loam", style = Style(font = 22, color = zeus.ink()))

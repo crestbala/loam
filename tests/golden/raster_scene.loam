@@ -33,7 +33,7 @@ fn main() {
     zeus.window("zeus-golden", 160, 196)
     zeus.root(zeus.Box(style = Style(direction = Direction.Column,
                                      gap = 6,
-                                     padding = edges(8),
+                                     padding = 8,
                                      background = "#ffffff")) {
         // Body text at the three sizes the baseline calls out, at 2x.
         zeus.Box(style = Style(direction = Direction.Row, gap = 4)) {
@@ -52,17 +52,17 @@ fn main() {
             }
         }
         // A 1px hairline border: it must land on exactly two device rows.
-        zeus.Box(style = Style(width = px(144), height = px(20), border = line(1, "#cccccc")))
+        zeus.Box(style = Style(width = px(144), height = px(20), borderWidth = 1, borderColor = "#cccccc"))
         // Rounded card with a border and a drop shadow.
         zeus.Box(style = Style(width = px(144),
                                height = px(28),
                                elevation = 2,
-                               radius = corners(8),
-                               border = line(1, "#e4e4e7"),
+                               radius = 8,
+                               borderWidth = 1, borderColor = "#e4e4e7",
                                background = "#f4f4f5"))
         // Vertical gradient, `bg` down to `bg2`.
         zeus.set_background_end(
-            zeus.Box(style = Style(width = px(144), height = px(40), radius = corners(6), background = "#4f46e5")),
+            zeus.Box(style = Style(width = px(144), height = px(40), radius = 6, background = "#4f46e5")),
             zeus.rgb(14, 165, 233))
     })
     zeus.engine_layout(160, 196)

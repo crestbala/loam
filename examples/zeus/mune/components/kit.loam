@@ -22,12 +22,12 @@ const IC_CLIMB: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"curr
 const IC_VOICE_OFF: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M9 11V5C9 3.3 10.3 2 12 2C13.7 2 15 3.3 15 5V11\"/><path d=\"M5 10C5 13.9 8.1 17 12 17C13.7 17 15.3 16.4 16.5 15.4\"/><path d=\"M12 19v2\"/><path d=\"M3 3l18 18\"/></svg>"
 
 /// A panel: a raised card with a heading, an optional caption, the body.
-fn Panel(title: string, caption: fn() -> string, body: fn()) -> Node {
-    return zeus.Box(style = Style(direction = Direction.Column, gap = 12, padding = edges(16), radius = corners(14),
-                                  background = theme.PANEL, border = line(1, theme.LINE))) {
+fn Panel(title: string, caption: Signal<string>, body: fn()) -> Node {
+    return zeus.Box(style = Style(direction = Direction.Column, gap = 12, padding = 16, radius = 14,
+                                  background = theme.PANEL, borderWidth = 1, borderColor = theme.LINE)) {
         zeus.Box(style = Style(direction = Direction.Column, gap = 3)) {
             zeus.Text(title, style = Style(font = 15, color = theme.INK))
-            zeus.Text(caption(), style = Style(font = 12, color = theme.FAINT, wrap = true))
+            zeus.Text(caption.get(), style = Style(font = 12, color = theme.FAINT, wrap = true))
         }
         body()
     }
@@ -35,19 +35,19 @@ fn Panel(title: string, caption: fn() -> string, body: fn()) -> Node {
 
 /// A small heading inside a panel: "INSTRUMENTS".
 fn Heading(text: string) -> Node {
-    return zeus.Text(text, style = Style(font = 11, color = theme.FAINT, padding = Edges(top = 4)))
+    return zeus.Text(text, style = Style(font = 11, color = theme.FAINT, paddingTop = 4))
 }
 
 /// Label at the left, the control in the middle, a readout at the right.
 /// Every row in a panel shares the two edge columns, so controls line up.
-fn Row(label: string, value: fn() -> string, control: fn()) -> Node {
+fn Row(label: string, value: Signal<string>, control: fn()) -> Node {
     return zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 12, minHeight = 34)) {
         zeus.Text(label, style = Style(font = 13, color = theme.MUTE, width = px(76)))
         zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, grow = 1, shrink = 1, minWidth = 0)) {
             control()
         }
         zeus.Box(style = Style(direction = Direction.Row, justify = Align.End, width = px(52))) {
-            zeus.Text(value(), style = Style(font = 12, color = theme.FAINT))
+            zeus.Text(value.get(), style = Style(font = 12, color = theme.FAINT))
         }
     }
 }
@@ -138,8 +138,8 @@ fn track_value(p: int, lo: int, span: int) -> int {
 /// Light or dark. The whole window repaints: every colour is a role.
 fn ThemeToggle() -> Node {
     return zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, justify = Align.Center, gap = 6,
-                                  height = px(28), width = px(76), radius = corners(14), background = theme.TILE,
-                                  border = line(1, theme.LINE), cursor = "pointer"),
+                                  height = px(28), width = px(76), radius = 14, background = theme.TILE,
+                                  borderWidth = 1, borderColor = theme.LINE, cursor = "pointer"),
                     role = "button", label = "Appearance",
                     on_click = fn() { theme.toggle() }) {
         zeus.Box(visible = theme.is_dark(), style = Style(direction = Direction.Row)) {
@@ -155,7 +155,7 @@ fn ThemeToggle() -> Node {
 
 /// A small round colour mark.
 fn Pip(color: string, size: int) -> Node {
-    return zeus.Box(style = Style(width = px(size), height = px(size), radius = corners(size / 2), background = color))
+    return zeus.Box(style = Style(width = px(size), height = px(size), radius = size / 2, background = color))
 }
 
 /// Text and a value, both small: "Echo · 35".

@@ -47,7 +47,7 @@ fn main() {
     let open = zeus.signal(false)
     let tab = zeus.signal(0)
     let count = zeus.signal(7)
-    zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 4, padding = edges(8))) {
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 4, padding = 8)) {
         zeus.Text("head")
         zeus.bind(zeus.Text("0"), count)
         for i in 0..200 {

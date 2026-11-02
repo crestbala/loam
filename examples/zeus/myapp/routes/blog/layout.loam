@@ -3,7 +3,7 @@ import "std:zui"
 import "std:spacing"
 
 fn Layout(build: fn()) -> Node {
-    return zeus.Box(style = Style(direction = Direction.Column, gap = 4, padding = edges(8))) {
+    return zeus.Box(style = Style(direction = Direction.Column, gap = 4, padding = 8)) {
         zeus.Text("blog")
         build()
     }

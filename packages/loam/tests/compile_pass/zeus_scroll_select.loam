@@ -61,7 +61,7 @@ fn last_alpha(text: string) -> int {
 fn Page(v: Signal<int>) -> Node {
     return zeus.Box(style = Style(direction = Direction.Column, width = pct(100), height = pct(100))) {
         zui.Scroll(style = Style(grow = 1, shrink = 1)) {
-            zeus.Box(style = Style(direction = Direction.Column, gap = 12, padding = edges(20))) {
+            zeus.Box(style = Style(direction = Direction.Column, gap = 12, padding = 20)) {
                 zeus.Box(style = Style(height = px(120)))
                 zui.Select(v, []string { "Alpha", "Bravo", "Charlie" }, size = zeus.Size.Sm, label = "Pick",
                            style = Style(width = px(120)))

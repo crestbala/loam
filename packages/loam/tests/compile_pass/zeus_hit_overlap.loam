@@ -29,7 +29,7 @@ fn main() {
             // A clickable, hover-tracked row with a z-indexed card over its
             // right half.
             let row = zeus.Box(style = Style(height = px(40), background = colors.plate())) {
-                let card = zeus.Box(style = Style(position = Position.Absolute, inset = edges4(0, 0, -1, 160),
+                let card = zeus.Box(style = Style(position = Position.Absolute, top = 0, right = 0, bottom = -1, left = 160,
                                                   width = px(120), height = px(40), zIndex = 10,
                                                   background = "#ffffff"))
                 zeus.on_click(card, fn() => float_clicks.set(float_clicks.get() + 1))

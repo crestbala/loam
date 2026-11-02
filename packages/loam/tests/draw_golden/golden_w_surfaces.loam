@@ -26,8 +26,8 @@ fn main() {
                     zui.Note("Footer")
                 }
             }
-            zui.Comp(style = Style(direction = Direction.Row, gap = 8, padding = edges(12),
-                                   radius = corners(10), background = colors.raised())) {
+            zui.Comp(style = Style(direction = Direction.Row, gap = 8, padding = 12,
+                                   radius = 10, background = colors.raised())) {
                 zui.Pip(zeus.accent(), 8)
                 zui.Body("Comp")
             }
