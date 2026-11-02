@@ -205,7 +205,13 @@ fn contributed(flows: Flows) -> i64 {
 
 /// The rule, a lump-sum buy-and-hold, and a monthly SIP. All three deploy
 /// `start_cash` plus whatever `flows` add, on `s`, at `c`.
-fn compare_flows(s: NavSeries, orders: Orders, flows: Flows, c: Costs, start_cash: i64) -> Compared {
+fn compare_flows(
+    s: NavSeries,
+    orders: Orders,
+    flows: Flows,
+    c: Costs,
+    start_cash: i64
+) -> Compared {
     let total = start_cash + contributed(flows)
     let rule = backtest.run_flows(s, orders, flows, c, start_cash)
     let held = backtest.run(s, buy_hold(s), c, total)
@@ -455,11 +461,25 @@ fn momentum_top() -> int {
 
 /// Rank, rebalance, and fill. The orders on the result are the ones the
 /// book actually tried to trade. `acks` follows the panel, one per scheme.
-fn momentum_book_each(p: Panel, months: int, top_n: int, acks: []int, c: Costs, start_cash: i64) -> BookRun {
+fn momentum_book_each(
+    p: Panel,
+    months: int,
+    top_n: int,
+    acks: []int,
+    c: Costs,
+    start_cash: i64
+) -> BookRun {
     let targets = momentum_targets_each(p, months, top_n, acks)
     return backtest.run_targets(p, targets, c, start_cash)
 }
 
-fn momentum_book(p: Panel, months: int, top_n: int, ack: int, c: Costs, start_cash: i64) -> BookRun {
+fn momentum_book(
+    p: Panel,
+    months: int,
+    top_n: int,
+    ack: int,
+    c: Costs,
+    start_cash: i64
+) -> BookRun {
     return momentum_book_each(p, months, top_n, repeat_ack(p.codes.len, ack), c, start_cash)
 }

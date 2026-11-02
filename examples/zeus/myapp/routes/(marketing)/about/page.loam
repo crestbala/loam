@@ -3,7 +3,6 @@ import "std:router"
 
 fn Page(p: Params) -> Node {
     return zeus.Text("about")
-
 }
 
 fn meta(p: Params) -> Meta {

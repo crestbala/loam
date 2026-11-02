@@ -423,7 +423,10 @@ fn listening() -> bool {
 
 fn busy() -> bool {
     let p = phase.get()
-    return p == PHASE_DECODE || p == PHASE_VOICES || p == PHASE_ANALYZE || p == PHASE_SPLIT ||
+    return p == PHASE_DECODE ||
+        p == PHASE_VOICES ||
+        p == PHASE_ANALYZE ||
+        p == PHASE_SPLIT ||
         p == PHASE_RENDER
 }
 
@@ -501,13 +504,32 @@ fn send_generate() {
     }
     rem_gen_wait = false
     let s = controls.snapshot()
-    engine.generate(engine.state_scan, s.seed, s.style, s.length_ix, s.energy, s.tempo, s.pitch, s.voices,
-                    inst_on(s), inst_lvl(s), fx_on(s), fx_amt(s))
+    engine.generate(
+        engine.state_scan,
+        s.seed,
+        s.style,
+        s.length_ix,
+        s.energy,
+        s.tempo,
+        s.pitch,
+        s.voices,
+        inst_on(s),
+        inst_lvl(s),
+        fx_on(s),
+        fx_amt(s),
+    )
 }
 
 /// Instrument on/off, `[rec, drums, bass, pad, arp, bells]`, for the wire.
 fn inst_on(s: Sound) -> []int {
-    return []int { b(s.rec_on), b(s.drums_on), b(s.bass_on), b(s.pad_on), b(s.arp_on), b(s.bells_on) }
+    return []int {
+        b(s.rec_on),
+        b(s.drums_on),
+        b(s.bass_on),
+        b(s.pad_on),
+        b(s.arp_on),
+        b(s.bells_on),
+    }
 }
 
 fn inst_lvl(s: Sound) -> []int {
@@ -521,8 +543,10 @@ fn fx_on(s: Sound) -> []int {
 
 /// The effect amounts, then the pad/arp tones and the remaining values.
 fn fx_amt(s: Sound) -> []int {
-    return []int { s.echo, s.reverb, s.echo_time, s.space, s.mod_kind, s.mod_amt,
-                   s.lofi, s.warmth, s.width, b(s.pump), s.pad_tone, s.arp_tone }
+    return []int {
+        s.echo, s.reverb, s.echo_time, s.space, s.mod_kind, s.mod_amt,
+        s.lofi, s.warmth, s.width, b(s.pump), s.pad_tone, s.arp_tone
+    }
 }
 
 fn b(v: bool) -> int {
@@ -683,8 +707,18 @@ fn step_analyze() {
     let vm = if has_map[i] { sys.read_file(jobs.voice_map(session, i)) } else { "" }
     let pcm = sys.read_file(jobs.pcm_raw(session, i))
     mono[i] = info[0] == 1
-    push(sources, arrange.source_of(sys.read_file(jobs.env_raw(session, i)), vm, info[1], pcm, info[2], mono[i],
-                                    has_map[i]))
+    push(
+        sources,
+        arrange.source_of(
+            sys.read_file(jobs.env_raw(session, i)),
+            vm,
+            info[1],
+            pcm,
+            info[2],
+            mono[i],
+            has_map[i],
+        ),
+    )
     progress.set(40 + 12 * analyze_at / n)
 }
 
@@ -754,7 +788,9 @@ fn after_listen() {
     split_queue = []int {}
     if controls.voices.peek() == sound.VOICES_REMOVE {
         for i in 0..sources.len {
-            if sources[i].has_map && !has_split[i] && free_phrases(sources[i]) < 3 &&
+            if sources[i].has_map &&
+                !has_split[i] &&
+                free_phrases(sources[i]) < 3 &&
                 sources[i].heard.dur_ms > 0 {
                 push(split_queue, i)
             }
@@ -869,7 +905,10 @@ fn launch_render() {
     sys.remove_path("{{session}}/stage.txt")
     sys.remove_path("{{session}}/progress.txt")
     let script = "{{session}}/render.sh"
-    if sys.write_file(script, jobs.render_script(session, g.inputs, out, files.take_peaks(n))) != 0 {
+    if sys.write_file(
+        script,
+        jobs.render_script(session, g.inputs, out, files.take_peaks(n)),
+    ) != 0 {
         fail("Could not write the render job.")
         return
     }
@@ -900,7 +939,9 @@ fn note_voices(sc: Score) {
     }
     if hard.len > 0 {
         let who = str.join(hard, ", ")
-        notice.set("{{who}}: almost no voice-free passage, so its quietest-voiced phrases were separated and cleaned.")
+        notice.set(
+            "{{who}}: almost no voice-free passage, so its quietest-voiced phrases were separated and cleaned.",
+        )
     }
 }
 
@@ -946,7 +987,9 @@ fn finish_render(n: int) {
     let sc = render_score
     let k = key.name(Tonality { tonic: sc.tonic, minor: sc.minor, sure: 100 })
     let st = styles.name(controls.style.peek())
-    take_line.set("{{st}} · {{time.bpm_text(sc.bpm_c)}} BPM · {{k}} · {{arrange.chords_text(sc)}} · {{time.clock(render_ms)}}")
+    take_line.set(
+        "{{st}} · {{time.bpm_text(sc.bpm_c)}} BPM · {{k}} · {{arrange.chords_text(sc)}} · {{time.clock(render_ms)}}",
+    )
     let suggestion = "{{st}} in {{plain_key(k)}}"
     if title.peek().len == 0 || title.peek() == auto_title {
         title.set(suggestion)
@@ -1024,7 +1067,8 @@ fn poll_player() {
     }
     let st = zeus.media_state(host)
     let on = st == zeus.MEDIA_PLAYING
-    if on != playing.peek() && (st == zeus.MEDIA_PLAYING || st == zeus.MEDIA_PAUSED || st == zeus.MEDIA_ENDED) {
+    if on != playing.peek() &&
+        (st == zeus.MEDIA_PLAYING || st == zeus.MEDIA_PAUSED || st == zeus.MEDIA_ENDED) {
         playing.set(on)
     }
     let at = zeus.media_position(host)

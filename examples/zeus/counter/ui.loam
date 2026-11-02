@@ -29,7 +29,15 @@ async fn start() {
     let hello = api.decode_HelloResp(hello_raw)
     let stats = api.decode_StatsResp(stats_raw)
     zeus.App("Zeus", fn() -> Node {
-        return screen.Screen("API", host_chip(), stats.users, stats.jobs, stats.uptime, stats.load, hello.count)
+        return screen.Screen(
+            "API",
+            host_chip(),
+            stats.users,
+            stats.jobs,
+            stats.uptime,
+            stats.load,
+            hello.count,
+        )
     })
 }
 

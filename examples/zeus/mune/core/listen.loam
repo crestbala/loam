@@ -658,7 +658,14 @@ struct Pool {
 }
 
 fn empty_pool() -> Pool {
-    return Pool { start: []int {}, len: []int {}, bars: []int {}, kind: []int {}, score: []int {}, voice: []int {} }
+    return Pool {
+        start: []int {},
+        len: []int {},
+        bars: []int {},
+        kind: []int {},
+        score: []int {},
+        voice: []int {},
+    }
 }
 
 fn overlaps(p: &Pool, s: int, len: int) -> bool {
@@ -775,7 +782,8 @@ fn pulse_phrases(g: Grid, on: []f64, level: []int, vm: VoiceMap, dur_ms: int) ->
                     d_sum = d_sum + density[j + k]
                 }
                 let kind = if d_sum / l >= mid_d { KIND_GROOVE } else { KIND_TEXTURE }
-                let score = i32(num.clampf(seam, -1.0, 1.0) * 40.0) + loud * 30 / 100 + num.clampi(steady, 0, 100) * 20 / 100
+                let score = i32(num.clampf(seam, -1.0, 1.0) * 40.0) + loud * 30 / 100 +
+                    num.clampi(steady, 0, 100) * 20 / 100
                 push(cands.start, bars_s[j])
                 push(cands.len, bars_s[j + l] - bars_s[j])
                 push(cands.bars, l)
@@ -817,7 +825,8 @@ fn free_phrases(level: []int, vm: VoiceMap) -> Pool {
             if e > floor_e && e > 0 {
                 let steady = 100 - num.absi(half1 - half2) * 100 / (e + 1)
                 let voice = voice_in(vm, a * 10, (a + w) * 10)
-                let score = num.clampi(e * 100 / (max_e + 1), 0, 100) * 40 / 100 + num.clampi(steady, 0, 100) * 40 / 100
+                let score = num.clampi(e * 100 / (max_e + 1), 0, 100) * 40 / 100 +
+                    num.clampi(steady, 0, 100) * 40 / 100
                 push(cands.start, a * 480)
                 push(cands.len, w * 480)
                 push(cands.bars, 0)

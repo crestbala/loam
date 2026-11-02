@@ -30,5 +30,5 @@ fn rate_label(pct: int) -> string {
 
 /// Two digits, zero-padded.
 fn pad2(n: int) -> string {
-    return str.pad_start("{{n}}", 2, 48 /* 0 */)
+    return str.pad_start("{{n}}", 2, 48 /* 0 */ )
 }

@@ -177,14 +177,27 @@ fn LogPanel(p: LogPanelProps) -> Node {
             }
         })
     }
-    return zeus.Component(zeus.raw_scroll(), style = Style(direction = Direction.Column, height = px(p.height),
-                                                           padding = Space.Exs, gap = 2)) {
+    return zeus.Component(
+        zeus.raw_scroll(),
+        style = Style(
+            direction = Direction.Column,
+            height = px(p.height),
+            padding = Space.Exs,
+            gap = 2,
+        ),
+    ) {
         zeus.Text("log")
-        zeus.Each(fn() -> []Record {
-            let v = log_rev.get()
-            return log_rows()
-        }, fn(i: int, r: Record) -> Node {
-            return zeus.Text(log.line(r), style = Style(color = log_color(r.level), wrap = true))
-        })
+        zeus.Each(
+            fn() -> []Record {
+                let v = log_rev.get()
+                return log_rows()
+            },
+            fn(i: int, r: Record) -> Node {
+                return zeus.Text(
+                    log.line(r),
+                    style = Style(color = log_color(r.level), wrap = true),
+                )
+            },
+        )
     }
 }

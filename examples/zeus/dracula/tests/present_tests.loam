@@ -272,7 +272,10 @@ fn a_window_past_the_last_print_is_empty() {
     let s = flat_then_rise(10)
     let c = present.price_chart(s, "NAV", 200, 0, 20991231, []int {})
     test.assert_eq_int(c.labels.len, 0)
-    test.assert_eq_int(present.price_chart(bars([]i64 {}), "NAV", 200, 0, 0, []int {}).labels.len, 0)
+    test.assert_eq_int(
+        present.price_chart(bars([]i64 {}), "NAV", 200, 0, 0, []int {}).labels.len,
+        0,
+    )
 }
 
 #[test]

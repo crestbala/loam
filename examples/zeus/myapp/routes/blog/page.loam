@@ -22,7 +22,6 @@ fn Page(p: Params) -> Node {
                 zeus.Text("loading...")
             }
         })
-
     }
 }
 

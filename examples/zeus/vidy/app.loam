@@ -34,7 +34,12 @@ fn main() {
     }
     // Vidy draws its own title bar (routes/layout.loam).
     zeus.window_chrome(zeus.CHROME_CUSTOM)
-    zeus.App("Vidy", fn() {
-        approutes.app()
-    }, 1180, 720)
+    zeus.App(
+        "Vidy",
+        fn() {
+            approutes.app()
+        },
+        1180,
+        720,
+    )
 }

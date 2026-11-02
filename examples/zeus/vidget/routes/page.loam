@@ -13,5 +13,8 @@ fn Page(p: Params) -> Node {
 }
 
 fn meta(p: Params) -> Meta {
-    return Meta { title: "Vidget", description: "Fast video downloader: files, HLS/DASH streams, and pages." }
+    return Meta {
+        title: "Vidget",
+        description: "Fast video downloader: files, HLS/DASH streams, and pages.",
+    }
 }

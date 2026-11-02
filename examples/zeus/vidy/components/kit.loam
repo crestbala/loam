@@ -9,8 +9,12 @@ import { WHITE, GLASS, ACCENT } from "../theme.loam"
 /// column's width, so `align = Center` has nothing to centre; a row sizes its
 /// children to their content and `justify` centres them.
 fn Centered(build: fn()) -> Node {
-    return zeus.Box(style = Style(direction = Direction.Row, justify = Align.Center, align = Align.Center,
-                                  width = pct(100))) {
+    return zeus.Box(style = Style(
+        direction = Direction.Row,
+        justify = Align.Center,
+        align = Align.Center,
+        width = pct(100),
+    )) {
         build()
     }
 }
@@ -20,30 +24,52 @@ fn Centered(build: fn()) -> Node {
 /// flow, so swapping play ↔ pause never moves anything. (A plain wrapper box
 /// would stretch to the button's width and pin the icon to its left edge.)
 fn Glyph(shown: Signal<bool>, icon: string, size: int, tint: string, box: int) -> Node {
-    return zeus.Box(style = Style(position = pos_absolute(), top = 0, left = 0,
-                                  width = px(box), height = px(box), direction = Direction.Row,
-                                  align = Align.Center, justify = Align.Center),
-                    visible = shown.get()) {
+    return zeus.Box(
+        style = Style(
+            position = pos_absolute(),
+            top = 0,
+            left = 0,
+            width = px(box),
+            height = px(box),
+            direction = Direction.Row,
+            align = Align.Center,
+            justify = Align.Center,
+        ),
+        visible = shown.get(),
+    ) {
         zui.Icon(icon, size, tint)
     }
 }
 
 /// `build`, shown only while `shown` holds.
 fn When(shown: Signal<bool>, build: fn()) -> Node {
-    return zeus.Box(style = Style(direction = Direction.Row, align = Align.Center), visible = shown.get()) {
+    return zeus.Box(
+        style = Style(direction = Direction.Row, align = Align.Center),
+        visible = shown.get(),
+    ) {
         build()
     }
 }
 
 /// A large rounded action button for the empty state.
 fn Pill(icon: string, text: string, primary: bool, run: fn()) -> Node {
-    return zeus.Box(style = Style(direction = Direction.Row, gap = 8, align = Align.Center,
-                                  paddingY = 11, paddingX = 18, radius = 999, cursor = "pointer",
-                                  background = if primary { ACCENT } else { "#23262F" }),
-                    hoverStyle = Style(background = if primary { "#FF5A73" } else { "#2E323D" }),
-                    pressScale = true,
-                    role = "button", label = text,
-                    on_click = run) {
+    return zeus.Box(
+        style = Style(
+            direction = Direction.Row,
+            gap = 8,
+            align = Align.Center,
+            paddingY = 11,
+            paddingX = 18,
+            radius = 999,
+            cursor = "pointer",
+            background = if primary { ACCENT } else { "#23262F" },
+        ),
+        hoverStyle = Style(background = if primary { "#FF5A73" } else { "#2E323D" }),
+        pressScale = true,
+        role = "button",
+        label = text,
+        on_click = run,
+    ) {
         zui.Icon(icon, 18, WHITE)
         zeus.Text(text, style = Style(font = 14, color = WHITE))
     }
@@ -51,12 +77,23 @@ fn Pill(icon: string, text: string, primary: bool, run: fn()) -> Node {
 
 /// A round glass icon button for the top bar.
 fn Round(icon: string, label: string, run: fn()) -> Node {
-    return zeus.Box(style = Style(width = px(36), height = px(36), radius = 18, background = GLASS, opacity = 72,
-                                  align = Align.Center, justify = Align.Center, cursor = "pointer"),
-                    hoverStyle = Style(background = "#2B2F3A", opacity = 90),
-                    pressScale = true,
-                    role = "button", label = label,
-                    on_click = run) {
+    return zeus.Box(
+        style = Style(
+            width = px(36),
+            height = px(36),
+            radius = 18,
+            background = GLASS,
+            opacity = 72,
+            align = Align.Center,
+            justify = Align.Center,
+            cursor = "pointer",
+        ),
+        hoverStyle = Style(background = "#2B2F3A", opacity = 90),
+        pressScale = true,
+        role = "button",
+        label = label,
+        on_click = run,
+    ) {
         zui.Icon(icon, 18, WHITE)
     }
 }

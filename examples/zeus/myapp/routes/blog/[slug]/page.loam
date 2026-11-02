@@ -6,7 +6,6 @@ import "loader.loam" as post_loader
 // to the next swaps the text in place instead of rebuilding the page.
 fn PageLive() -> Node {
     return zeus.Text(post_loader.get_post(router.param_live("slug")))
-
 }
 
 // Static routes are enumerated at build time from `paths()`.

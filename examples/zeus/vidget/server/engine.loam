@@ -146,7 +146,9 @@ fn fetch_via_aria(url: string, secs: int) -> string {
     let path = "{{dir}}/{{name}}"
     let ctl = "{{path}}.aria2"
     sys.exec("rm -f {{q(path)}} {{q(ctl)}}")
-    sys.exec("{{PFX}}aria2c -q --allow-overwrite=true --auto-file-renaming=false --file-allocation=none --max-tries=3 --retry-wait=1 --timeout={{secs}} --connect-timeout=4 --summary-interval=0 --download-result=hide --console-log-level=error -U {{q(UA)}} -d {{q(dir)}} -o {{q(name)}} {{q(url)}} >/dev/null 2>&1")
+    sys.exec(
+        "{{PFX}}aria2c -q --allow-overwrite=true --auto-file-renaming=false --file-allocation=none --max-tries=3 --retry-wait=1 --timeout={{secs}} --connect-timeout=4 --summary-interval=0 --download-result=hide --console-log-level=error -U {{q(UA)}} -d {{q(dir)}} -o {{q(name)}} {{q(url)}} >/dev/null 2>&1",
+    )
     let n = text.to_int(sys.exec("wc -c < {{q(path)}} 2>/dev/null"))
     let mut body = ""
     if n > 0 && n <= 8000000 {
@@ -159,7 +161,9 @@ fn fetch_via_aria(url: string, secs: int) -> string {
 /// GET `url` as text (pages, playlists, bundles), capped at 8 MB and `secs`.
 fn fetch_for(url: string, secs: int) -> string {
     detect()
-    let via = sys.exec("curl -sL --compressed --connect-timeout 4 --max-time {{secs}} --max-filesize 8000000 -A {{q(UA)}} {{q(url)}} 2>/dev/null")
+    let via = sys.exec(
+        "curl -sL --compressed --connect-timeout 4 --max-time {{secs}} --max-filesize 8000000 -A {{q(UA)}} {{q(url)}} 2>/dev/null",
+    )
     if via != "" || !has_aria2 {
         return via
     }
@@ -238,8 +242,19 @@ fn kind_of_url(url: string) -> int {
     if e == "m3u8" || e == "mpd" {
         return api.kind_stream()
     }
-    if e == "mp4" || e == "m4v" || e == "webm" || e == "mov" || e == "mkv" || e == "ts" || e == "flv" ||
-        e == "avi" || e == "mp3" || e == "m4a" || e == "ogv" || e == "ogg" || e == "3gp" {
+    if e == "mp4" ||
+        e == "m4v" ||
+        e == "webm" ||
+        e == "mov" ||
+        e == "mkv" ||
+        e == "ts" ||
+        e == "flv" ||
+        e == "avi" ||
+        e == "mp3" ||
+        e == "m4a" ||
+        e == "ogv" ||
+        e == "ogg" ||
+        e == "3gp" {
         return api.kind_direct()
     }
     return api.kind_page()
@@ -278,7 +293,9 @@ fn head_kind(url: string, head: string) -> int {
 
 /// HEAD, following redirects.
 fn head(url: string) -> string {
-    return sys.exec("curl -sIL --connect-timeout 3 --max-time 5 -A {{q(UA)}} {{q(url)}} 2>/dev/null")
+    return sys.exec(
+        "curl -sIL --connect-timeout 3 --max-time 5 -A {{q(UA)}} {{q(url)}} 2>/dev/null",
+    )
 }
 
 /// Formats for an HLS URL: each variant, then each separate audio track.
@@ -329,7 +346,10 @@ fn probe(url: string) -> ProbeResp {
     if cached {
         log.debug("engine", "probe {{url}} (cached)")
     } else if r.ok == 1 {
-        log.info("engine", "probe {{url}} -> {{kind_label(r.kind)}} · {{r.formats.len}} formats · {{r.title}}")
+        log.info(
+            "engine",
+            "probe {{url}} -> {{kind_label(r.kind)}} · {{r.formats.len}} formats · {{r.title}}",
+        )
     } else {
         log.warn("engine", "probe {{url}}: {{r.error}}")
     }
@@ -525,11 +545,27 @@ fn fail_plan(err: string) -> Plan {
 }
 
 fn stream_plan(v: string, a: string) -> Plan {
-    return Plan { ok: true, error: "", kind: api.kind_stream(), media: v, video_pl: v, audio_pl: a, title: "" }
+    return Plan {
+        ok: true,
+        error: "",
+        kind: api.kind_stream(),
+        media: v,
+        video_pl: v,
+        audio_pl: a,
+        title: "",
+    }
 }
 
 fn direct_plan(m: string) -> Plan {
-    return Plan { ok: true, error: "", kind: api.kind_direct(), media: m, video_pl: "", audio_pl: "", title: "" }
+    return Plan {
+        ok: true,
+        error: "",
+        kind: api.kind_direct(),
+        media: m,
+        video_pl: "",
+        audio_pl: "",
+        title: "",
+    }
 }
 
 /// Turn a URL plus a `ProbeResp.formats` id into the concrete thing to fetch.
@@ -572,12 +608,28 @@ fn plan(url: string, format: string, depth: int) -> Plan {
     }
     if kind == api.kind_stream() {
         if text.url_ext(target) == "mpd" {
-            return Plan { ok: true, error: "", kind: kind, media: target, video_pl: "", audio_pl: "", title: "" }
+            return Plan {
+                ok: true,
+                error: "",
+                kind: kind,
+                media: target,
+                video_pl: "",
+                audio_pl: "",
+                title: "",
+            }
         }
         let body = fetch(target)
         if !hls.is_playlist(body) {
             // DASH, or a playlist this reader does not know: ffmpeg's job.
-            return Plan { ok: true, error: "", kind: kind, media: target, video_pl: "", audio_pl: "", title: "" }
+            return Plan {
+                ok: true,
+                error: "",
+                kind: kind,
+                media: target,
+                video_pl: "",
+                audio_pl: "",
+                title: "",
+            }
         }
         if !hls.is_master(body) {
             return stream_plan(target, "")
@@ -619,7 +671,16 @@ fn safe_name(t: string) -> string {
             break
         }
         let c = t[i]
-        if c < 32 || c == 47 || c == 58 || c == 92 || c == 34 || c == 42 || c == 63 || c == 60 || c == 62 || c == 124 {
+        if c < 32 ||
+            c == 47 ||
+            c == 58 ||
+            c == 92 ||
+            c == 34 ||
+            c == 42 ||
+            c == 63 ||
+            c == 60 ||
+            c == 62 ||
+            c == 124 {
             push(b, 95)
         } else if c == 46 && b.len == 0 {
             continue
@@ -854,7 +915,8 @@ fn start(req: StartReq) -> StartResp {
         title = stem(text.url_file(p.media))
     }
     let mut job = Job {
-        id: id, url: url, format: req.format, container: req.container, title: title, dir: jdir, file: "", watch: "", pid: 0, mode: MODE_FILE,
+        id: id, url: url, format: req.format, container: req.container, title: title, dir: jdir,
+        file: "", watch: "", pid: 0, mode: MODE_FILE,
         segments: 0, state: api.st_running(), done_kib: 0, total_kib: -1, speed_kib: 0, eta: -1,
         stage: "Starting", error: "", last_kib: 0, last_ms: async.now_ms(),
     }
@@ -880,7 +942,10 @@ fn start(req: StartReq) -> StartResp {
         return StartResp { id: 0, error: "could not launch the downloader" }
     }
     job.pid = pid
-    log.info("engine", "job {{id}} started · {{mode_label(job.mode)}} · {{conns}} connections · {{job.file}}")
+    log.info(
+        "engine",
+        "job {{id}} started · {{mode_label(job.mode)}} · {{conns}} connections · {{job.file}}",
+    )
     push(jobs, job)
     return StartResp { id: id, error: "" }
 }
@@ -913,7 +978,9 @@ fn du_kib(path: string) -> int {
 /// Finished segments in `seg`: files named like segments, less the ones
 /// aria2c still holds a `.aria2` control file for.
 fn segments_done(seg: string) -> int {
-    let out = sys.exec("ls {{q(seg)}} 2>/dev/null | awk '/^[va][0-9]+\\./{n++} /\\.aria2$/{a++} END{print n-a+0}'")
+    let out = sys.exec(
+        "ls {{q(seg)}} 2>/dev/null | awk '/^[va][0-9]+\\./{n++} /\\.aria2$/{a++} END{print n-a+0}'",
+    )
     let n = text.to_int(out)
     if n < 0 {
         return 0
@@ -933,8 +1000,11 @@ fn error_line(ls: []string) -> string {
         }
         last = l
         let lo = text.lower(l)
-        if text.contains(lo, "error") || text.contains(lo, "failed") || text.contains(lo, "curl:") ||
-            text.contains(lo, "denied") || text.contains(lo, "not found") {
+        if text.contains(lo, "error") ||
+            text.contains(lo, "failed") ||
+            text.contains(lo, "curl:") ||
+            text.contains(lo, "denied") ||
+            text.contains(lo, "not found") {
             err = l
         }
     }
@@ -959,7 +1029,9 @@ fn refresh(job: &mut Job) {
             joining = true
         }
     }
-    let ro = if !joining && job.mode == MODE_FILE && has_aria2 { text.aria_readout(ls) } else {
+    let ro = if !joining && job.mode == MODE_FILE && has_aria2 {
+        text.aria_readout(ls)
+    } else {
         text.no_readout()
     }
     if ro.ok {

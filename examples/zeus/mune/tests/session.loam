@@ -166,7 +166,9 @@ fn main() -> int {
     shows("Rhythm")
     let info = wav.inspect(store.take.peek())
     let ms = info.duration_ms
-    fmt.println("wav rate {{info.rate}} ch {{info.channels}} bits {{info.bits}} ms {{ms}} mean {{info.mean_abs}}")
+    fmt.println(
+        "wav rate {{info.rate}} ch {{info.channels}} bits {{info.bits}} ms {{ms}} mean {{info.mean_abs}}",
+    )
     if !info.ok || info.rate != 48000 || info.channels != 2 || info.bits != 24 {
         fail("expected 48 kHz stereo 24-bit")
     }

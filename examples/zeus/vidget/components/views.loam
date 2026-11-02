@@ -14,19 +14,28 @@ const IC_DOWNLOAD: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"c
 
 fn Header() -> Node {
     return zui.Row(Space.Sm) {
-        zeus.Box(style = Style(width = px(28), height = px(28), radius = 8, background = zeus.accent(),
-                               align = Align.Center, justify = Align.Center)) {
+        zeus.Box(style = Style(
+            width = px(28),
+            height = px(28),
+            radius = 8,
+            background = zeus.accent(),
+            align = Align.Center,
+            justify = Align.Center,
+        )) {
             zui.Icon(IC_DOWNLOAD, 16, colors.on_accent())
         }
         zeus.Text("Vidget", style = Style(font = spacing.FONT_HEADING, color = zeus.ink()))
         zui.Chip("{{store.active()}} active", zeus.Tint.Info)
         zui.Grow()
-        zeus.Text(fn() -> string {
-            if !store.online.get() {
-                return "engine offline — run zeli serve examples/zeus/vidget"
-            }
-            return "engine: {{store.tools.get()}}"
-        }, style = Style(font = spacing.FONT_CAPTION, color = colors.mute()))
+        zeus.Text(
+            fn() -> string {
+                if !store.online.get() {
+                    return "engine offline — run zeli serve examples/zeus/vidget"
+                }
+                return "engine: {{store.tools.get()}}"
+            },
+            style = Style(font = spacing.FONT_CAPTION, color = colors.mute()),
+        )
         zui.ThemeSwitch()
     }
 }
@@ -40,17 +49,33 @@ fn LinkBar() -> Node {
     })
     return zui.Card() {
         zui.Row(Space.Xs) {
-            zui.TextInput(store.url, "Paste a video, stream (.m3u8 / .mpd) or page link",
-                          size = zeus.Size.Lg, label = "Video URL",
-                          style = Style(grow = 1),
-                          keys = []KeyBind { zeus.key_bind("enter", "vidget.download", fn() { store.download() }) })
-            zui.Button("Download", look = zeus.Look.Solid, size = zeus.Size.Lg, icon = IC_DOWNLOAD,
-                       on_click = fn() { store.download() })
+            zui.TextInput(
+                store.url,
+                "Paste a video, stream (.m3u8 / .mpd) or page link",
+                size = zeus.Size.Lg,
+                label = "Video URL",
+                style = Style(grow = 1),
+                keys = []KeyBind {
+                    zeus.key_bind("enter", "vidget.download", fn() { store.download() })
+                },
+            )
+            zui.Button(
+                "Download",
+                look = zeus.Look.Solid,
+                size = zeus.Size.Lg,
+                icon = IC_DOWNLOAD,
+                on_click = fn() { store.download() },
+            )
         }
         zui.RowWrap(Space.Sm) {
             zui.Segmented(store.container, api.containers(), size = zeus.Size.Sm)
-            zui.Select(store.conns_idx, store.conn_labels(), size = zeus.Size.Sm, label = "Connections",
-                       style = Style(width = px(160)))
+            zui.Select(
+                store.conns_idx,
+                store.conn_labels(),
+                size = zeus.Size.Sm,
+                label = "Connections",
+                style = Style(width = px(160)),
+            )
         }
         zui.Show(when = store.notice.get() != "") {
             zui.Alert("Heads up", store.notice.get(), tint = zeus.Tint.Warn)
@@ -87,8 +112,13 @@ fn DialogActions(st: int) -> Node {
     return zui.Row(Space.Sm) {
         zui.Grow()
         zui.Button("Cancel", look = zeus.Look.Ghost, on_click = fn() { store.close_dialog() })
-        zui.Button("Save", look = zeus.Look.Solid, icon = IC_DOWNLOAD, enabled = store.is_probe_ready(st),
-                   on_click = fn() { store.save() })
+        zui.Button(
+            "Save",
+            look = zeus.Look.Solid,
+            icon = IC_DOWNLOAD,
+            enabled = store.is_probe_ready(st),
+            on_click = fn() { store.save() },
+        )
     }
 }
 
@@ -110,42 +140,77 @@ fn PreviewArm(st: int) -> Node {
 
 fn PreviewBody() -> Node {
     return zeus.Box(style = Style(direction = Direction.Column, gap = 10)) {
-        zeus.Box(style = Style(width = pct(100), height = px(220), radius = 8, background = colors.raised(),
-                               overflow = Overflow.Hidden, align = Align.Center, justify = Align.Center)) {
+        zeus.Box(style = Style(
+            width = pct(100),
+            height = px(220),
+            radius = 8,
+            background = colors.raised(),
+            overflow = Overflow.Hidden,
+            align = Align.Center,
+            justify = Align.Center,
+        )) {
             zui.Show(when = store.p_thumb.get() != "") {
-                zui.Image(store.p_thumb.get(), style = Style(width = pct(100), height = px(220)), fit = Fit.Cover,
-                          label = "Video thumbnail")
+                zui.Image(
+                    store.p_thumb.get(),
+                    style = Style(width = pct(100), height = px(220)),
+                    fit = Fit.Cover,
+                    label = "Video thumbnail",
+                )
             }
             zui.Show(when = store.p_thumb.get() == "") {
                 zui.Icon(IC_DOWNLOAD, 28, colors.mute())
             }
         }
-        zeus.Text(store.p_title.get(), style = Style(font = spacing.FONT_TITLE, color = zeus.ink(), ellipsis = true))
+        zeus.Text(
+            store.p_title.get(),
+            style = Style(font = spacing.FONT_TITLE, color = zeus.ink(), ellipsis = true),
+        )
         zui.Row(Space.Exxs) {
             zui.Badge(store.kind_name(store.p_kind.get()), zeus.Tint.Info)
             zui.Show(when = store.p_duration.get() > 0) {
                 zui.Badge(store.clock(store.p_duration.get()), zeus.Tint.Mute)
             }
-            zeus.Text(store.p_site.get(), style = Style(font = spacing.FONT_CAPTION, color = colors.mute(), ellipsis = true))
+            zeus.Text(
+                store.p_site.get(),
+                style = Style(font = spacing.FONT_CAPTION, color = colors.mute(), ellipsis = true),
+            )
         }
         zui.Show(when = store.p_desc.get() != "") {
-            zeus.Text(store.p_desc.get(), style = Style(font = spacing.FONT_BODY, color = colors.mute(), wrap = true,
-                                                        maxHeight = 60))
+            zeus.Text(
+                store.p_desc.get(),
+                style = Style(
+                    font = spacing.FONT_BODY,
+                    color = colors.mute(),
+                    wrap = true,
+                    maxHeight = 60,
+                ),
+            )
         }
-        zui.Select(store.fmt_idx, store.p_labels.peek(), label = "Format", style = Style(width = pct(100)))
+        zui.Select(
+            store.fmt_idx,
+            store.p_labels.peek(),
+            label = "Format",
+            style = Style(width = pct(100)),
+        )
     }
 }
 
 fn Downloads() -> Node {
     return zui.Card(title = "Downloads", subtitle = "Saved to {{store.out_dir.get()}}") {
         zui.Show(when = store.rows.get().len == 0) {
-            zui.Empty(icon = IC_DOWNLOAD, title = "No downloads yet",
-                      body = "Paste a link above. Direct files split over parallel connections; streams fetch every segment at once.")
+            zui.Empty(
+                icon = IC_DOWNLOAD,
+                title = "No downloads yet",
+                body = "Paste a link above. Direct files split over parallel connections; streams fetch every segment at once.",
+            )
         }
-        zui.EachKeyed(fn() -> []Row { return store.rows.get() }, fn(r: Row) -> string { return "{{r.id}}" },
-                      fn(i: Signal<int>, item: Signal<Row>) -> Node {
-            return JobRow(item)
-        })
+        zui.EachKeyed(
+            fn() -> []Row { return store.rows.get() },
+            fn(r: Row) -> string { return "{{r.id}}" },
+            fn(i: Signal<int>, item: Signal<Row>) -> Node {
+                return JobRow(item)
+            },
+        )
     }
 }
 
@@ -155,20 +220,39 @@ fn JobRow(item: Signal<Row>) -> Node {
         let p = store.percent(item.get())
         zeus.untrack(fn() { pct.set(p) })
     })
-    return zeus.Box(style = Style(direction = Direction.Column, gap = 6, paddingY = 10, paddingX = 0)) {
+    return zeus.Box(style = Style(
+        direction = Direction.Column,
+        gap = 6,
+        paddingY = 10,
+        paddingX = 0,
+    )) {
         zui.Row(Space.Exxs) {
-            zeus.Text(item.get().title, style = Style(font = spacing.FONT_BODY, color = zeus.ink(), grow = 1, ellipsis = true))
+            zeus.Text(
+                item.get().title,
+                style = Style(
+                    font = spacing.FONT_BODY,
+                    color = zeus.ink(),
+                    grow = 1,
+                    ellipsis = true,
+                ),
+            )
             zui.Show(when = store.is_running(item.get().state)) {
-                zui.Button("Cancel", look = zeus.Look.Ghost, size = zeus.Size.Sm,
-                           on_click = fn() { store.cancel(item.peek().id) })
+                zui.Button("Cancel", look = zeus.Look.Ghost, size = zeus.Size.Sm, on_click = fn() {
+                    store.cancel(item.peek().id)
+                })
             }
             zui.Show(when = store.is_done(item.get().state)) {
-                zui.Button("Show in Finder", look = zeus.Look.Soft, size = zeus.Size.Sm,
-                           on_click = fn() { store.reveal(item.peek().id) })
+                zui.Button(
+                    "Show in Finder",
+                    look = zeus.Look.Soft,
+                    size = zeus.Size.Sm,
+                    on_click = fn() { store.reveal(item.peek().id) },
+                )
             }
             zui.Show(when = !store.is_running(item.get().state)) {
-                zui.Button("Remove", look = zeus.Look.Ghost, size = zeus.Size.Sm,
-                           on_click = fn() { store.remove(item.peek().id) })
+                zui.Button("Remove", look = zeus.Look.Ghost, size = zeus.Size.Sm, on_click = fn() {
+                    store.remove(item.peek().id)
+                })
             }
         }
         zui.Show(when = store.is_running(item.get().state)) {
@@ -185,10 +269,20 @@ fn JobRow(item: Signal<Row>) -> Node {
                 zui.Badge("Cancelled", zeus.Tint.Mute, dot = true)
             }
             zui.Show(when = store.is_running(item.get().state)) {
-                zeus.Text(item.get().stage, style = Style(font = spacing.FONT_CAPTION, color = zeus.accent()))
+                zeus.Text(
+                    item.get().stage,
+                    style = Style(font = spacing.FONT_CAPTION, color = zeus.accent()),
+                )
             }
-            zeus.Text(store.detail(item.get()), style = Style(font = spacing.FONT_CAPTION, color = colors.mute(),
-                                                              grow = 1, ellipsis = true))
+            zeus.Text(
+                store.detail(item.get()),
+                style = Style(
+                    font = spacing.FONT_CAPTION,
+                    color = colors.mute(),
+                    grow = 1,
+                    ellipsis = true,
+                ),
+            )
         }
         zui.Divider()
     }

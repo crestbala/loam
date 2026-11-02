@@ -176,9 +176,20 @@ fn reset() {
 
 /// Start a run for these recordings and this sound. The empty string is
 /// success; anything else is the message to show.
-fn generate(scan_in: int, seed: int, style: int, length: int, energy: int,
-            tempo: int, pitch: int, voices: int,
-            inst_on: []int, inst_lvl: []int, fx_on: []int, fx_amt: []int) -> string {
+fn generate(
+    scan_in: int,
+    seed: int,
+    style: int,
+    length: int,
+    energy: int,
+    tempo: int,
+    pitch: int,
+    voices: int,
+    inst_on: []int,
+    inst_lvl: []int,
+    fx_on: []int,
+    fx_amt: []int
+) -> string {
     if run_phase != PH_IDLE {
         return "A piece is already being made."
     }
@@ -197,8 +208,19 @@ fn generate(scan_in: int, seed: int, style: int, length: int, energy: int,
     err = ""
     notice = ""
     dirty = false
-    sound_now = build_sound(seed, style, length, energy, tempo, pitch, voices,
-                            inst_on, inst_lvl, fx_on, fx_amt)
+    sound_now = build_sound(
+        seed,
+        style,
+        length,
+        energy,
+        tempo,
+        pitch,
+        voices,
+        inst_on,
+        inst_lvl,
+        fx_on,
+        fx_amt,
+    )
     sound_ready = true
     if stage == ST_READY && sources.len == paths.len {
         // The recordings are unchanged and already heard: arrange and render
@@ -214,9 +236,19 @@ fn generate(scan_in: int, seed: int, style: int, length: int, energy: int,
     return ""
 }
 
-fn build_sound(seed: int, style: int, length: int, energy: int, tempo: int,
-               pitch: int, voices: int,
-               i: []int, l: []int, f: []int, a: []int) -> Sound {
+fn build_sound(
+    seed: int,
+    style: int,
+    length: int,
+    energy: int,
+    tempo: int,
+    pitch: int,
+    voices: int,
+    i: []int,
+    l: []int,
+    f: []int,
+    a: []int
+) -> Sound {
     return Sound {
         style: style, energy: energy, length_ix: length, tempo: tempo,
         pitch: pitch, voices: voices,
@@ -271,8 +303,6 @@ fn begin_listen() {
     status = "Reading {{paths.len}} recording(s)…"
     jobs.launch(script)
 }
-
-
 
 // ---- Poll --------------------------------------------------------------------
 
@@ -381,8 +411,18 @@ fn step_analyze() {
     let vm = if has_map[i] { sys.read_file(jobs.voice_map(session, i)) } else { "" }
     let pcm = sys.read_file(jobs.pcm_raw(session, i))
     mono[i] = info[0] == 1
-    push(sources, arrange.source_of(sys.read_file(jobs.env_raw(session, i)), vm, info[1], pcm, info[2], mono[i],
-                                    has_map[i]))
+    push(
+        sources,
+        arrange.source_of(
+            sys.read_file(jobs.env_raw(session, i)),
+            vm,
+            info[1],
+            pcm,
+            info[2],
+            mono[i],
+            has_map[i],
+        ),
+    )
     percent = 40 + 12 * analyze_at / n
 }
 
@@ -414,7 +454,9 @@ fn after_listen() {
     split_queue = []int {}
     if sound_now.voices == sound.VOICES_REMOVE {
         for i in 0..sources.len {
-            if sources[i].has_map && !has_split[i] && free_phrases(sources[i]) < 3 &&
+            if sources[i].has_map &&
+                !has_split[i] &&
+                free_phrases(sources[i]) < 3 &&
                 sources[i].heard.dur_ms > 0 {
                 push(split_queue, i)
             }
@@ -543,7 +585,10 @@ fn launch_render() {
     sys.remove_path("{{session}}/stage.txt")
     sys.remove_path("{{session}}/progress.txt")
     let script = "{{session}}/render.sh"
-    if sys.write_file(script, jobs.render_script(session, g.inputs, out, files.take_peaks(n))) != 0 {
+    if sys.write_file(
+        script,
+        jobs.render_script(session, g.inputs, out, files.take_peaks(n)),
+    ) != 0 {
         errored("Could not write the render job.")
         return
     }
@@ -809,4 +854,3 @@ fn copy_ints(xs: []int) -> []int {
     }
     return out
 }
-

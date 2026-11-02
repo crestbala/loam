@@ -272,7 +272,8 @@ fn download_format(u: string, format: string, title: string) {
     starting = true
     notice.set("")
     let req = StartReq {
-        url: u, format: format, container: container.peek(), connections: conn_count(conns_idx.peek()),
+        url: u, format: format, container: container.peek(),
+        connections: conn_count(conns_idx.peek()),
         title: title,
     }
     http.client().call_async(api.start_rpc(), api.encode_StartReq(req), fn(raw) {
@@ -304,16 +305,21 @@ fn watch_jobs() {
         async.cancel(retry_timer)
         retry_timer = 0
     }
-    http.client().watch(api.jobs_watch_rpc(), api.encode_JobsReq(JobsReq {}), fn(raw) {
-        apply_jobs(raw)
-    }, fn() {
-        watching = false
-        online.set(false)
-        retry_timer = async.after(RETRY_MS, fn() {
-            retry_timer = 0
-            watch_jobs()
-        })
-    })
+    http.client().watch(
+        api.jobs_watch_rpc(),
+        api.encode_JobsReq(JobsReq {}),
+        fn(raw) {
+            apply_jobs(raw)
+        },
+        fn() {
+            watching = false
+            online.set(false)
+            retry_timer = async.after(RETRY_MS, fn() {
+                retry_timer = 0
+                watch_jobs()
+            })
+        },
+    )
 }
 
 /// One pushed job list.
@@ -352,9 +358,16 @@ fn same_rows(a: []Row, b: []Row) -> bool {
     for i in 0..a.len {
         let x = a[i]
         let y = b[i]
-        if x.id != y.id || x.state != y.state || x.done_kib != y.done_kib || x.total_kib != y.total_kib ||
-            x.speed_kib != y.speed_kib || x.eta != y.eta || x.stage != y.stage || x.title != y.title ||
-            x.file != y.file || x.error != y.error {
+        if x.id != y.id ||
+            x.state != y.state ||
+            x.done_kib != y.done_kib ||
+            x.total_kib != y.total_kib ||
+            x.speed_kib != y.speed_kib ||
+            x.eta != y.eta ||
+            x.stage != y.stage ||
+            x.title != y.title ||
+            x.file != y.file ||
+            x.error != y.error {
             return false
         }
     }

@@ -31,7 +31,9 @@ fn tool_ready() -> bool {
 }
 
 fn mp3_ready() -> bool {
-    let out = sys.exec("{{PATH_FIX}}; ffmpeg -hide_banner -encoders 2>/dev/null | grep -c libmp3lame")
+    let out = sys.exec(
+        "{{PATH_FIX}}; ffmpeg -hide_banner -encoders 2>/dev/null | grep -c libmp3lame",
+    )
     return str.trim(out) != "" && str.trim(out) != "0"
 }
 
@@ -79,11 +81,23 @@ fn decode_one(dir: string, i: int, path: string) -> []string {
     let graph = "[0:a]aformat=sample_fmts=fltp:channel_layouts=stereo,aresample=48000,asplit=3[w][e][k];[w]aformat=sample_fmts=s16[wav];[e]pan=mono|c0=0.5*c0+0.5*c1,asplit=3[e0][e1][e2];[e0]{{low}}[b0];[e1]{{mid}}[b1];[e2]{{high}}[b2];[b0][b1][b2]amerge=inputs=3[env];[k]pan=mono|c0=0.5*c0+0.5*c1,aresample=5512,aformat=sample_fmts=s16[pcm]"
     let mut out = []string {}
     push(out, "(")
-    push(out, "ch=$(ffprobe -v error -select_streams a:0 -show_entries stream=channels -of csv=p=0 {{in_q}} | head -n 1 | tr -cd 0-9)")
+    push(
+        out,
+        "ch=$(ffprobe -v error -select_streams a:0 -show_entries stream=channels -of csv=p=0 {{in_q}} | head -n 1 | tr -cd 0-9)",
+    )
     push(out, "[ -z \"$ch\" ] && ch=0")
-    push(out, "if [ \"$ch\" -gt 0 ] && ffmpeg -nostdin -v error -y -t {{time.MAX_SEC}} -i {{in_q}} -vn -filter_complex '{{graph}}' -map '[wav]' -c:a pcm_s16le {{wav}} -map '[env]' -f s16le {{env}} -map '[pcm]' -f s16le {{pcm}}; then")
-    push(out, "  ms=$(ffprobe -v error -show_entries format=duration -of csv=p=0 {{wav}} | awk '{ printf \"%d\", $1 * 1000 }')")
-    push(out, "  lufs=$(ffmpeg -nostdin -v info -i {{wav}} -af ebur128 -f null - 2>&1 | sed -n 's/^ *I: *\\(-*[0-9.]*\\) LUFS.*/\\1/p' | tail -n 1)")
+    push(
+        out,
+        "if [ \"$ch\" -gt 0 ] && ffmpeg -nostdin -v error -y -t {{time.MAX_SEC}} -i {{in_q}} -vn -filter_complex '{{graph}}' -map '[wav]' -c:a pcm_s16le {{wav}} -map '[env]' -f s16le {{env}} -map '[pcm]' -f s16le {{pcm}}; then",
+    )
+    push(
+        out,
+        "  ms=$(ffprobe -v error -show_entries format=duration -of csv=p=0 {{wav}} | awk '{ printf \"%d\", $1 * 1000 }')",
+    )
+    push(
+        out,
+        "  lufs=$(ffmpeg -nostdin -v info -i {{wav}} -af ebur128 -f null - 2>&1 | sed -n 's/^ *I: *\\(-*[0-9.]*\\) LUFS.*/\\1/p' | tail -n 1)",
+    )
     push(out, "  printf 'channels %s\\nms %s\\nlufs %s\\n' \"$ch\" \"$ms\" \"$lufs\" > {{info}}")
     push(out, "else")
     let shown = str.replace_all(path, "'", "")
@@ -103,7 +117,10 @@ fn decode_script(dir: string, paths: []string) -> string {
     let mut lines = []string {}
     push(lines, PATH_FIX)
     push(lines, "{")
-    push(lines, "if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then echo 'ffmpeg is not installed. brew install ffmpeg'; touch {{fail}}; exit 1; fi")
+    push(
+        lines,
+        "if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then echo 'ffmpeg is not installed. brew install ffmpeg'; touch {{fail}}; exit 1; fi",
+    )
     for i in 0..paths.len {
         let one = decode_one(dir, i, paths[i])
         for k in 0..one.len {
@@ -182,29 +199,56 @@ fn render_script(dir: string, inputs: []string, out: string, peaks: string) -> s
     push(lines, PATH_FIX)
     push(lines, "ok=1")
     push(lines, "{")
-    push(lines, "command -v ffmpeg >/dev/null 2>&1 || { echo 'ffmpeg is not installed. brew install ffmpeg'; ok=0; }")
+    push(
+        lines,
+        "command -v ffmpeg >/dev/null 2>&1 || { echo 'ffmpeg is not installed. brew install ffmpeg'; ok=0; }",
+    )
     push(lines, "if [ \"$ok\" -eq 1 ]; then")
     push(lines, "echo 1 > {{stage}}")
-    push(lines, "ffmpeg -nostdin -v error -y -progress {{progress}} {{in_text}} -/filter_complex {{graph}} -map '[pre]' -c:a pcm_f32le -ar 48000 {{pre}} || ok=0")
+    push(
+        lines,
+        "ffmpeg -nostdin -v error -y -progress {{progress}} {{in_text}} -/filter_complex {{graph}} -map '[pre]' -c:a pcm_f32le -ar 48000 {{pre}} || ok=0",
+    )
     push(lines, "fi")
     push(lines, "if [ \"$ok\" -eq 1 ]; then")
     push(lines, "echo 2 > {{stage}}")
-    push(lines, "ffmpeg -nostdin -v info -i {{pre}} -af loudnorm={{target}}:print_format=json -f null - > {{measure}} 2>&1 || true")
+    push(
+        lines,
+        "ffmpeg -nostdin -v info -i {{pre}} -af loudnorm={{target}}:print_format=json -f null - > {{measure}} 2>&1 || true",
+    )
     // Mastering: gain onto the target, then a fast peak limiter. A
     // compressor here pumped with every kick, and loudnorm's dynamic mode
     // rides the gain over seconds; a limiter only touches the peaks.
-    push(lines, "II=$(sed -n 's/.*\"input_i\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p' {{measure}} | head -n 1)")
-    push(lines, "G=$(awk -v i=\"$II\" 'BEGIN { if (i == \"\" || i ~ /inf/) print \"0.00\"; else printf \"%.2f\", {{TARGET_LUFS}} - i + {{LIMIT_LOSS}} }')")
-    push(lines, "AF=\"volume=${G}dB,alimiter=limit={{LIMIT}}:attack=1:release=60:level=0,{{dither}}\"")
+    push(
+        lines,
+        "II=$(sed -n 's/.*\"input_i\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p' {{measure}} | head -n 1)",
+    )
+    push(
+        lines,
+        "G=$(awk -v i=\"$II\" 'BEGIN { if (i == \"\" || i ~ /inf/) print \"0.00\"; else printf \"%.2f\", {{TARGET_LUFS}} - i + {{LIMIT_LOSS}} }')",
+    )
+    push(
+        lines,
+        "AF=\"volume=${G}dB,alimiter=limit={{LIMIT}}:attack=1:release=60:level=0,{{dither}}\"",
+    )
     push(lines, "echo 3 > {{stage}}")
-    push(lines, "ffmpeg -nostdin -v error -y -i {{pre}} -af \"$AF\" -c:a pcm_s24le -ar 48000 -map_metadata -1 -metadata title=Mune {{out_q}} || ok=0")
+    push(
+        lines,
+        "ffmpeg -nostdin -v error -y -i {{pre}} -af \"$AF\" -c:a pcm_s24le -ar 48000 -map_metadata -1 -metadata title=Mune {{out_q}} || ok=0",
+    )
     push(lines, "fi")
     push(lines, "if [ \"$ok\" -eq 1 ]; then")
-    push(lines, "ffmpeg -nostdin -v error -y -i {{out_q}} -af 'pan=mono|c0=0.5*c0+0.5*c1,aeval=abs(val(0)),aresample=50:resampler=swr:filter_size=16,aformat=sample_fmts=s16' -f s16le {{peaks_q}} || true")
+    push(
+        lines,
+        "ffmpeg -nostdin -v error -y -i {{out_q}} -af 'pan=mono|c0=0.5*c0+0.5*c1,aeval=abs(val(0)),aresample=50:resampler=swr:filter_size=16,aformat=sample_fmts=s16' -f s16le {{peaks_q}} || true",
+    )
     push(lines, "rm -f {{pre}}")
     push(lines, "fi")
     push(lines, "} >> {{log}} 2>&1")
-    push(lines, "if [ \"$ok\" -eq 1 ]; then touch {{done}}; else rm -f {{out_q}}; touch {{fail}}; exit 1; fi")
+    push(
+        lines,
+        "if [ \"$ok\" -eq 1 ]; then touch {{done}}; else rm -f {{out_q}}; touch {{fail}}; exit 1; fi",
+    )
     return str.join(lines, "\n")
 }
 
@@ -224,7 +268,10 @@ fn export_script(take: string, dest: string, format: string) -> string {
     }
     let mut lines = []string {}
     push(lines, PATH_FIX)
-    push(lines, "if {{cmd}} && mv -f {{tmp}} {{out_q}}; then touch {{done}}; else rm -f {{tmp}}; echo 'export failed' > {{fail}}; fi")
+    push(
+        lines,
+        "if {{cmd}} && mv -f {{tmp}} {{out_q}}; then touch {{done}}; else rm -f {{tmp}}; echo 'export failed' > {{fail}}; fi",
+    )
     return str.join(lines, "\n")
 }
 

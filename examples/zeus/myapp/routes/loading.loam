@@ -4,5 +4,4 @@ import "std:zeus"
 
 fn Loading() -> Node {
     return zeus.Text("loading...")
-
 }

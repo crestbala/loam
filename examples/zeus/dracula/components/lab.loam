@@ -107,7 +107,13 @@ fn rule_labels() -> []string {
 
 /// An empty result carrying only a note (idle, loading, failed).
 fn bt_note(msg: string) -> BacktestView {
-    return BacktestView { note: msg, ending: []string {}, labels: []string {}, vals: []int {}, trades: []string {} }
+    return BacktestView {
+        note: msg,
+        ending: []string {},
+        labels: []string {},
+        vals: []int {},
+        trades: []string {},
+    }
 }
 
 fn show_bt(v: BacktestView) {
@@ -166,7 +172,10 @@ fn compute_backtest(code: string, which: int) {
         score: present.score_line(rep),
         labels: plot.labels,
         vals: plot.vals,
-        decimals: present.decimals_for(present.scale_div(rep.curve_paise, present.keep_bars(rep.curve_dates, rep.curve_dates.len, 200, rep.ledger.fill_dates))),
+        decimals: present.decimals_for(present.scale_div(
+            rep.curve_paise,
+            present.keep_bars(rep.curve_dates, rep.curve_dates.len, 200, rep.ledger.fill_dates),
+        )),
         trades: present.ledger_cells(rep.ledger, codes),
     })
 }
@@ -221,7 +230,11 @@ fn compute_momentum() {
     let top = strategy.momentum_top()
     let ran = strategy.momentum_book_each(p, 12, top, mom_acks, costs.equity(), cash)
     let cmp = strategy.compare_book(p, ran.orders, costs.equity(), cash)
-    let plot = present.plot_series(cmp.rule.curve_dates, cmp.rule.curve_paise, cmp.rule.ledger.fill_dates)
+    let plot = present.plot_series(
+        cmp.rule.curve_dates,
+        cmp.rule.curve_paise,
+        cmp.rule.ledger.fill_dates,
+    )
     shown_rule = 3
     shown_code = book.first_watch()
     have = 1
@@ -232,7 +245,15 @@ fn compute_momentum() {
         score: present.score_line(cmp.rule),
         labels: plot.labels,
         vals: plot.vals,
-        decimals: present.decimals_for(present.scale_div(cmp.rule.curve_paise, present.keep_bars(cmp.rule.curve_dates, cmp.rule.curve_dates.len, 200, cmp.rule.ledger.fill_dates))),
+        decimals: present.decimals_for(present.scale_div(
+            cmp.rule.curve_paise,
+            present.keep_bars(
+                cmp.rule.curve_dates,
+                cmp.rule.curve_dates.len,
+                200,
+                cmp.rule.ledger.fill_dates,
+            ),
+        )),
         trades: present.ledger_cells(cmp.rule.ledger, p.codes),
     })
 }

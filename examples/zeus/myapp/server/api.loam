@@ -28,8 +28,7 @@ struct HelloResp {
 
 /// Empty request: encodes to zero protobuf bytes.
 #[proto]
-struct PostsReq {
-}
+struct PostsReq {}
 
 /// Post titles, newest first.
 #[proto]

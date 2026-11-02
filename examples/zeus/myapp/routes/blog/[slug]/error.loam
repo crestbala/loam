@@ -2,5 +2,4 @@ import "std:zeus"
 
 fn Error(msg: string) -> Node {
     return zeus.Text("post not available")
-
 }

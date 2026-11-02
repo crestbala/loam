@@ -62,8 +62,9 @@ fn paint_ready() {
         let cells = present.reject_cells(data.reject_at(i))
         let code = cells[1]
         if present.digits(code) {
-            zui.TableRowCols(cells, reject_spec(), hover = true,
-                             on_click = fn() { router.navigate("/scheme/{{code}}") })
+            zui.TableRowCols(cells, reject_spec(), hover = true, on_click = fn() {
+                router.navigate("/scheme/{{code}}")
+            })
         } else {
             zui.TableRowCols(cells, reject_spec(), zebra = true)
         }
@@ -119,17 +120,35 @@ fn paint_stocks() {
 fn Page(p: Params) -> Node {
     return zui.Column(spacing.SECTION) {
         zui.Heading("Sync")
-        zui.Body("A rejected row is kept here with its reason. Rollback restores the previous catalog and drops rows the last sync added.")
-        zui.Body("History is one calendar day per fetch, oldest first. The cache only accepts a later date, and rollback undoes only the last day that landed.")
+        zui.Body(
+            "A rejected row is kept here with its reason. Rollback restores the previous catalog and drops rows the last sync added.",
+        )
+        zui.Body(
+            "History is one calendar day per fetch, oldest first. The cache only accepts a later date, and rollback undoes only the last day that landed.",
+        )
         if data.started() {
             zui.Row(8) {
                 zui.Button(label = "Sync now", on_click = fn() { data.sync_now() })
-                zui.Button(label = "Roll back", look = zeus.Look.Ghost, on_click = fn() { data.rollback_now() })
+                zui.Button(label = "Roll back", look = zeus.Look.Ghost, on_click = fn() {
+                    data.rollback_now()
+                })
             }
             zui.Row(8) {
-                zui.Input(placeholder = "From YYYY-MM-DD", bind = data.from_field(), label = "History from", style = Style(width = px(180)))
-                zui.Input(placeholder = "To YYYY-MM-DD", bind = data.to_field(), label = "History to", style = Style(width = px(180)))
-                zui.Button(label = "Load history", look = zeus.Look.Ghost, on_click = fn() { data.load_history() })
+                zui.Input(
+                    placeholder = "From YYYY-MM-DD",
+                    bind = data.from_field(),
+                    label = "History from",
+                    style = Style(width = px(180)),
+                )
+                zui.Input(
+                    placeholder = "To YYYY-MM-DD",
+                    bind = data.to_field(),
+                    label = "History to",
+                    style = Style(width = px(180)),
+                )
+                zui.Button(label = "Load history", look = zeus.Look.Ghost, on_click = fn() {
+                    data.load_history()
+                })
             }
             zui.Match(data.load_gen(), fn(g) {
                 if g >= 0 {
@@ -141,11 +160,25 @@ fn Page(p: Params) -> Node {
         }
         if stocks.started() {
             zui.Heading("Stock closes")
-            zui.Body("NSE capital-market bhavcopy, one trading day per fetch, from 2024-01-02. EQ series only. A close that is not positive, or on a date not after the last cached close for that symbol, is rejected. The cache sits apart from the fund NAVs.")
+            zui.Body(
+                "NSE capital-market bhavcopy, one trading day per fetch, from 2024-01-02. EQ series only. A close that is not positive, or on a date not after the last cached close for that symbol, is rejected. The cache sits apart from the fund NAVs.",
+            )
             zui.Row(8) {
-                zui.Input(placeholder = "From YYYY-MM-DD", bind = stocks.from_field(), label = "Stock closes from", style = Style(width = px(180)))
-                zui.Input(placeholder = "To YYYY-MM-DD", bind = stocks.to_field(), label = "Stock closes to", style = Style(width = px(180)))
-                zui.Button(label = "Load stock closes", look = zeus.Look.Ghost, on_click = fn() { stocks.load_history() })
+                zui.Input(
+                    placeholder = "From YYYY-MM-DD",
+                    bind = stocks.from_field(),
+                    label = "Stock closes from",
+                    style = Style(width = px(180)),
+                )
+                zui.Input(
+                    placeholder = "To YYYY-MM-DD",
+                    bind = stocks.to_field(),
+                    label = "Stock closes to",
+                    style = Style(width = px(180)),
+                )
+                zui.Button(label = "Load stock closes", look = zeus.Look.Ghost, on_click = fn() {
+                    stocks.load_history()
+                })
             }
             zui.Match(stocks.data_generation(), fn(g) {
                 if g >= 0 {
@@ -154,7 +187,6 @@ fn Page(p: Params) -> Node {
             })
         }
     }
-
 }
 
 fn meta(p: Params) -> Meta {

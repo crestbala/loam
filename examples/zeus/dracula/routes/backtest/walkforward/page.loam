@@ -21,9 +21,14 @@ fn spec() -> []TableCol {
 
 fn paint_pick() {
     if book.watch_count() == 0 {
-        zui.Empty(icon = zeus.IC_INFO, title = "Add a fund on Holdings first",
-                  body = "Walk-forward runs on a scheme from your list.") {
-            zui.Button(label = "Go to Holdings", size = zeus.Size.Sm, on_click = fn() { router.navigate("/") })
+        zui.Empty(
+            icon = zeus.IC_INFO,
+            title = "Add a fund on Holdings first",
+            body = "Walk-forward runs on a scheme from your list.",
+        ) {
+            zui.Button(label = "Go to Holdings", size = zeus.Size.Sm, on_click = fn() {
+                router.navigate("/")
+            })
         }
         return
     }
@@ -59,7 +64,9 @@ fn Page(p: Params) -> Node {
         zui.Heading("Walk-forward")
         zeus.Text("In sample")
         zeus.Text("Out of sample")
-        zui.Body("The length is chosen on the train window and then frozen. In sample starts from fresh cash. Out of sample carries the book from the last train bar. Buy and hold and the monthly SIP deploy that same cash on the test window.")
+        zui.Body(
+            "The length is chosen on the train window and then frozen. In sample starts from fresh cash. Out of sample carries the book from the last train bar. Buy and hold and the monthly SIP deploy that same cash on the test window.",
+        )
         if book.started() && lab.started() {
             zui.Match(book.load_gen(), fn(g) {
                 if g >= 0 {
@@ -76,7 +83,6 @@ fn Page(p: Params) -> Node {
             zeus.Text("Run the frozen rule once a scheme has loaded.")
         }
     }
-
 }
 
 fn meta(p: Params) -> Meta {

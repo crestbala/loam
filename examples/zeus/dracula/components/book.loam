@@ -233,7 +233,12 @@ fn publish_lists() {
         let code = hit_code(i)
         push(hits, FundHit { code: code, cells: hit_cells(i), watching: watching(code) })
     }
-    search_view.set(FundSearch { state: search_status(), query: search_query(), total: hit_total_count(), hits: hits })
+    search_view.set(FundSearch {
+        state: search_status(),
+        query: search_query(),
+        total: hit_total_count(),
+        hits: hits,
+    })
     let mut held = []CodeRow {}
     for i in 0..watch_count() {
         push(held, CodeRow { code: watch_code(i), cells: holding_row(i) })
@@ -511,7 +516,9 @@ fn ensure_cache(code: string) {
 }
 
 fn ask_scheme(code: string) {
-    http.client().call_async(api.scheme_rpc(), api.encode_SchemeReq(SchemeReq { code: code }), fn(raw) {
+    http.client().call_async(api.scheme_rpc(), api.encode_SchemeReq(SchemeReq { code: code }), fn(
+        raw
+    ) {
         if raw.len == 0 {
             server_down(code)
             return
@@ -712,7 +719,14 @@ fn publish_scheme(code: string) {
     if bars > 0 {
         last = s.dates[bars - 1]
     }
-    let chart = present.price_chart(s, "NAV", 200, ack, present.range_from(last, which), orders.dates)
+    let chart = present.price_chart(
+        s,
+        "NAV",
+        200,
+        ack,
+        present.range_from(last, which),
+        orders.dates,
+    )
     nav_labels = chart.labels
     nav_names = chart.names
     nav_vals = chart.vals

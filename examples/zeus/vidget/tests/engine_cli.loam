@@ -40,7 +40,9 @@ fn main() {
                 async.sleep(100)
                 th = engine.thumb(url)
             }
-            fmt.println("thumb: {{int(async.now_ms() - t1)}} ms in background, {{th.thumbnail.len}} bytes, duration {{th.duration}} s")
+            fmt.println(
+                "thumb: {{int(async.now_ms() - t1)}} ms in background, {{th.thumbnail.len}} bytes, duration {{th.duration}} s",
+            )
             sys.exit(if r.ok == 1 { 0 } else { 1 })
         }
     }
@@ -53,7 +55,13 @@ fn main() {
     if argv.len > 4 {
         container = text.to_int(argv[4])
     }
-    let s = engine.start(StartReq { url: url, format: format, container: container, connections: 16, title: "" })
+    let s = engine.start(StartReq {
+        url: url,
+        format: format,
+        container: container,
+        connections: 16,
+        title: "",
+    })
     if s.id == 0 {
         fmt.println("start failed: {{s.error}}")
         sys.exit(1)
@@ -63,7 +71,9 @@ fn main() {
         async.sleep(200)
         let j = engine.snapshot()
         let st = j.states[0]
-        fmt.println("{{int(async.now_ms() - ts)}}ms state={{st}} {{text.human_kib(j.done_kib[0])}}/{{text.human_kib(j.total_kib[0])}} {{j.speed_kib[0]}}KiB/s eta={{j.eta[0]}} [{{j.stages[0]}}] {{j.errors[0]}}")
+        fmt.println(
+            "{{int(async.now_ms() - ts)}}ms state={{st}} {{text.human_kib(j.done_kib[0])}}/{{text.human_kib(j.total_kib[0])}} {{j.speed_kib[0]}}KiB/s eta={{j.eta[0]}} [{{j.stages[0]}}] {{j.errors[0]}}",
+        )
         if st != api.st_running() {
             fmt.println("file: {{j.files[0]}}")
             sys.exit(if st == api.st_done() { 0 } else { 1 })

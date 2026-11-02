@@ -172,7 +172,12 @@ fn publish_search() {
     for i in 0..n {
         push(hits, StockHit { sym: hit_syms[i], cells: hit_cells(i) })
     }
-    search_view.set(StockSearch { state: search_state, query: asked_query, total: hit_total, hits: hits })
+    search_view.set(StockSearch {
+        state: search_state,
+        query: asked_query,
+        total: hit_total,
+        hits: hits,
+    })
 }
 
 fn bump_data() {
@@ -342,7 +347,9 @@ fn focus(sym: string) {
 }
 
 fn ask(sym: string) {
-    http.client().call_async(api.stock_rpc(), api.encode_StockReq(StockReq { symbol: sym }), fn(raw) {
+    http.client().call_async(api.stock_rpc(), api.encode_StockReq(StockReq { symbol: sym }), fn(
+        raw
+    ) {
         got_stock(sym, raw)
     })
 }
@@ -489,38 +496,47 @@ fn stat3(out: []string, label: string, value: string, cap: string) -> []string {
 }
 
 fn fetch_status() {
-    http.client().call_async(api.stock_status_rpc(), api.encode_StockStatusReq(StockStatusReq {}), fn(raw) {
-        let reply = api.decode_StockStatusResp(raw)
-        if raw.len == 0 || reply.live == 0 {
-            status_state = 3
-            status_line = ""
-            status_cells = []string {}
-            reject_lines = []string {}
-            rejected_total = 0
+    http.client().call_async(
+        api.stock_status_rpc(),
+        api.encode_StockStatusReq(StockStatusReq {}),
+        fn(raw) {
+            let reply = api.decode_StockStatusResp(raw)
+            if raw.len == 0 || reply.live == 0 {
+                status_state = 3
+                status_line = ""
+                status_cells = []string {}
+                reject_lines = []string {}
+                rejected_total = 0
+                bump_data()
+                return
+            }
+            status_state = 1
+            reject_lines = copy_strs(reply.rejects)
+            rejected_total = reply.rejected
+            if reply.found == 0 {
+                status_line = "No stock closes cached yet. Load a range of days below."
+                status_cells = []string {}
+            } else {
+                let day = date.fmt_iso(reply.day)
+                let stamp = reply.stamp
+                let url = reply.url
+                let id = reply.fetch_id
+                status_line = "Fetch {{id}}, trading day {{day}}, at {{stamp}} from {{url}}."
+                let mut cells = []string {}
+                cells = stat3(cells, "Symbols", "{{reply.symbols}}", "NSE EQ series")
+                cells = stat3(cells, "Accepted", "{{reply.accepted}}", "Closes cached that day")
+                cells = stat3(cells, "Rejected", "{{reply.rejected}}", "Kept below with a reason")
+                cells = stat3(
+                    cells,
+                    "Moves over 20%",
+                    "{{reply.warnings}}",
+                    "Unadjusted: split or bonus?",
+                )
+                status_cells = cells
+            }
             bump_data()
-            return
-        }
-        status_state = 1
-        reject_lines = copy_strs(reply.rejects)
-        rejected_total = reply.rejected
-        if reply.found == 0 {
-            status_line = "No stock closes cached yet. Load a range of days below."
-            status_cells = []string {}
-        } else {
-            let day = date.fmt_iso(reply.day)
-            let stamp = reply.stamp
-            let url = reply.url
-            let id = reply.fetch_id
-            status_line = "Fetch {{id}}, trading day {{day}}, at {{stamp}} from {{url}}."
-            let mut cells = []string {}
-            cells = stat3(cells, "Symbols", "{{reply.symbols}}", "NSE EQ series")
-            cells = stat3(cells, "Accepted", "{{reply.accepted}}", "Closes cached that day")
-            cells = stat3(cells, "Rejected", "{{reply.rejected}}", "Kept below with a reason")
-            cells = stat3(cells, "Moves over 20%", "{{reply.warnings}}", "Unadjusted: split or bonus?")
-            status_cells = cells
-        }
-        bump_data()
-    })
+        },
+    )
 }
 
 fn status_retry() {
@@ -553,9 +569,13 @@ fn walk_step() {
     let total = walk_days.len
     progress = "Loading {{day}}. {{n}} of {{total}}."
     bump_data()
-    http.client().call_async(api.stock_day_rpc(), api.encode_StockDayReq(StockDayReq { day: day }), fn(raw) {
-        on_day(day, raw)
-    })
+    http.client().call_async(
+        api.stock_day_rpc(),
+        api.encode_StockDayReq(StockDayReq { day: day }),
+        fn(raw) {
+            on_day(day, raw)
+        },
+    )
 }
 
 fn on_day(day: string, raw: string) {

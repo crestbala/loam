@@ -111,7 +111,8 @@ fn parse_master(body: string, base: string) -> Master {
         if text.starts_with(l, "#EXT-X-STREAM-INF:") {
             // The URI is the next line that is not a tag or blank.
             let mut k = i + 1
-            while k < ls.len && (text.trim(ls[k]) == "" || text.starts_with(text.trim(ls[k]), "#")) {
+            while k < ls.len &&
+                (text.trim(ls[k]) == "" || text.starts_with(text.trim(ls[k]), "#")) {
                 k += 1
             }
             if k < ls.len {
@@ -211,7 +212,13 @@ fn pad5(n: int) -> string {
 /// The extension a segment keeps locally (ffmpeg's HLS demuxer checks it).
 fn seg_ext(url: string) -> string {
     let e = text.url_ext(url)
-    if e == "ts" || e == "m4s" || e == "mp4" || e == "aac" || e == "m4a" || e == "mp3" || e == "vtt" {
+    if e == "ts" ||
+        e == "m4s" ||
+        e == "mp4" ||
+        e == "aac" ||
+        e == "m4a" ||
+        e == "mp3" ||
+        e == "vtt" {
         return e
     }
     return "ts"

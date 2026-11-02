@@ -237,9 +237,13 @@ fn walk_step() {
     let total = walk_days.len
     progress = "Loading {{day}}. {{n}} of {{total}}."
     bump()
-    http.client().call_async(api.backfill_rpc(), api.encode_BackfillReq(BackfillReq { frm: day, to: day }), fn(raw) {
-        on_backfill(raw)
-    })
+    http.client().call_async(
+        api.backfill_rpc(),
+        api.encode_BackfillReq(BackfillReq { frm: day, to: day }),
+        fn(raw) {
+            on_backfill(raw)
+        },
+    )
 }
 
 fn load_history() {

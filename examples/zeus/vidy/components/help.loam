@@ -19,30 +19,67 @@ fn two_columns() -> bool {
 }
 
 fn Help() -> Node {
-    return zeus.Box(style = Style(position = pos_absolute(), top = 0, left = 0, right = 0, bottom = 0,
-                                  align = Align.Center, justify = Align.Center, background = "#000000", opacity = 60),
-                    visible = player.help.get(),
-                    enter = Enter.Fade,
-                    on_click = fn() { player.help.set(false) }) {
-        zeus.Box(style = Style(direction = Direction.Column, gap = 18, paddingTop = 20, paddingBottom = 22, paddingLeft = 26, paddingRight = 22,
-                               width = px(if two_columns() { 720 } else { 400 }),
-                               maxHeight = player.stage_h.get() - 40,
-                               radius = 20, background = GLASS, borderWidth = 1, borderColor = "#2C303B",
-                               elevation = Elevation.Modal),
-                 enter = Enter.Fade + Enter.Reveal,
-                 on_click = fn() { player.wake() }) {
-            zeus.Box(style = Style(direction = if two_columns() { Direction.Row } else { Direction.Column }, align = Align.Center)) {
-                zeus.Box(style = Style(width = px(34), height = px(34), radius = 10, background = ACCENT,
-                                       align = Align.Center, justify = Align.Center)) {
+    return zeus.Box(
+        style = Style(
+            position = pos_absolute(),
+            top = 0,
+            left = 0,
+            right = 0,
+            bottom = 0,
+            align = Align.Center,
+            justify = Align.Center,
+            background = "#000000",
+            opacity = 60,
+        ),
+        visible = player.help.get(),
+        enter = Enter.Fade,
+        on_click = fn() { player.help.set(false) },
+    ) {
+        zeus.Box(
+            style = Style(
+                direction = Direction.Column,
+                gap = 18,
+                paddingTop = 20,
+                paddingBottom = 22,
+                paddingLeft = 26,
+                paddingRight = 22,
+                width = px(if two_columns() { 720 } else { 400 }),
+                maxHeight = player.stage_h.get() - 40,
+                radius = 20,
+                background = GLASS,
+                borderWidth = 1,
+                borderColor = "#2C303B",
+                elevation = Elevation.Modal,
+            ),
+            enter = Enter.Fade + Enter.Reveal,
+            on_click = fn() { player.wake() },
+        ) {
+            zeus.Box(style = Style(
+                direction = if two_columns() { Direction.Row } else { Direction.Column },
+                align = Align.Center,
+            )) {
+                zeus.Box(style = Style(
+                    width = px(34),
+                    height = px(34),
+                    radius = 10,
+                    background = ACCENT,
+                    align = Align.Center,
+                    justify = Align.Center,
+                )) {
                     zui.Icon(icons.KEYBOARD, 18, WHITE)
                 }
-                zeus.Text("Keyboard & gestures", style = Style(font = 17, color = WHITE, marginLeft = 12))
+                zeus.Text(
+                    "Keyboard & gestures",
+                    style = Style(font = 17, color = WHITE, marginLeft = 12),
+                )
                 zui.Grow()
                 Round(icons.CLOSE, "Close", fn() { player.help.set(false) })
             }
             zui.Scroll(style = Style(grow = 1)) {
-                zeus.Box(style = Style(direction = if two_columns() { Direction.Row } else { Direction.Column },
-                                       gap = if two_columns() { 36 } else { 18 })) {
+                zeus.Box(style = Style(
+                    direction = if two_columns() { Direction.Row } else { Direction.Column },
+                    gap = if two_columns() { 36 } else { 18 },
+                )) {
                     SheetColumn(0)
                     SheetColumn(1)
                 }
@@ -57,8 +94,11 @@ fn SheetColumn(col: int) -> Node {
     // The sheet's inner width is its width less 48 padding and 2 border; two
     // columns share it around the 36 gap. A row wraps a child that does not
     // fit, so one dp over stacks the columns.
-    return zeus.Box(style = Style(direction = Direction.Column, gap = 4,
-                                  width = px(if two_columns() { (720 - 50 - 36) / 2 } else { 400 - 50 }))) {
+    return zeus.Box(style = Style(
+        direction = Direction.Column,
+        gap = 4,
+        width = px(if two_columns() { (720 - 50 - 36) / 2 } else { 400 - 50 }),
+    )) {
         let mut c = 0
         for i in 0..rs.len / 2 {
             let k = rs[i * 2]
@@ -78,16 +118,33 @@ fn SheetColumn(col: int) -> Node {
 
 /// A section title: small caps in the accent, with air above all but the first.
 fn Section(title: string, first: bool) -> Node {
-    return zeus.Text(title.to_upper(), style = Style(font = 11, color = ACCENT,
-                                                    marginTop = if first { 0 } else { 14 }, marginBottom = 4))
+    return zeus.Text(
+        title.to_upper(),
+        style = Style(
+            font = 11,
+            color = ACCENT,
+            marginTop = if first { 0 } else { 14 },
+            marginBottom = 4,
+        ),
+    )
 }
 
 /// One shortcut: its keycaps in a fixed-width lane, then what it does.
 fn Shortcut(keys: string, what: string) -> Node {
     let range = keys.contains("~")
     let caps = if range { str.split(keys, "~") } else { str.split(keys, "|") }
-    return zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 14, height = px(32))) {
-        zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 5, width = px(KEYS_W))) {
+    return zeus.Box(style = Style(
+        direction = Direction.Row,
+        align = Align.Center,
+        gap = 14,
+        height = px(32),
+    )) {
+        zeus.Box(style = Style(
+            direction = Direction.Row,
+            align = Align.Center,
+            gap = 5,
+            width = px(KEYS_W),
+        )) {
             for i in 0..caps.len {
                 if i > 0 && range {
                     zeus.Text("–", style = Style(font = 12, color = FAINT))
@@ -101,9 +158,19 @@ fn Shortcut(keys: string, what: string) -> Node {
 
 /// A key as a raised cap, sized to its label.
 fn Keycap(label: string) -> Node {
-    return zeus.Box(style = Style(direction = Direction.Row, justify = Align.Center, align = Align.Center,
-                                  minWidth = 26, height = px(24), paddingY = 0, paddingX = 8, radius = 6,
-                                  background = "#2A2E39", borderWidth = 1, borderColor = "#3B404D")) {
+    return zeus.Box(style = Style(
+        direction = Direction.Row,
+        justify = Align.Center,
+        align = Align.Center,
+        minWidth = 26,
+        height = px(24),
+        paddingY = 0,
+        paddingX = 8,
+        radius = 6,
+        background = "#2A2E39",
+        borderWidth = 1,
+        borderColor = "#3B404D",
+    )) {
         zeus.Text(label, style = Style(font = 12, color = WHITE))
     }
 }

@@ -251,8 +251,7 @@ fn push_file(files: &mut []string, mts: &mut []int, full: string) {
     push(mts, gi_file_mtime(full))
 }
 
-fn walk_dir(dir: string, depth: int, exts: []string, files: &mut []string,
-            mts: &mut []int) {
+fn walk_dir(dir: string, depth: int, exts: []string, files: &mut []string, mts: &mut []int) {
     if depth > WALK_DEPTH {
         return
     }
@@ -379,8 +378,7 @@ fn scan_and_index_file(full: string) -> int {
 }
 
 /// Collect every matching file under `root` into sorted manifest order.
-fn collect_files(root: string, exts: []string, files: &mut []string,
-                 mts: &mut []int) {
+fn collect_files(root: string, exts: []string, files: &mut []string, mts: &mut []int) {
     walk_dir(root, 0, exts, files, mts)
     // Insertion sort by path so manifests and labels are deterministic
     // regardless of readdir order.

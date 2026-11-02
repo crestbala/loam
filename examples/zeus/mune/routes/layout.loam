@@ -5,8 +5,12 @@ import "../theme.loam" as theme
 
 fn Layout(build: fn()) -> Node {
     theme.install()
-    return zeus.Box(style = Style(direction = Direction.Column, width = pct(100), height = pct(100),
-                                  background = theme.PAPER)) {
+    return zeus.Box(style = Style(
+        direction = Direction.Column,
+        width = pct(100),
+        height = pct(100),
+        background = theme.PAPER,
+    )) {
         build()
     }
 }

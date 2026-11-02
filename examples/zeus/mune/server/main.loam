@@ -55,9 +55,20 @@ fn main() {
 
     app.rpc(api.generate_rpc(), |body| {
         let req = api.decode_GenerateReq(body)
-        let e = engine.generate(req.scan, req.seed, req.style, req.length, req.energy,
-                                req.tempo, req.pitch, req.voices,
-                                req.inst_on, req.inst_level, req.fx_on, req.fx_amount)
+        let e = engine.generate(
+            req.scan,
+            req.seed,
+            req.style,
+            req.length,
+            req.energy,
+            req.tempo,
+            req.pitch,
+            req.voices,
+            req.inst_on,
+            req.inst_level,
+            req.fx_on,
+            req.fx_amount,
+        )
         api.encode_GenerateResp(GenerateResp { ok: if e == "" { 1 } else { 0 }, error: e })
     })
 
@@ -69,7 +80,12 @@ fn main() {
     app.rpc(api.save_rpc(), |body| {
         let req = api.decode_SaveReq(body)
         let e = engine.save(req.id, req.title, req.format)
-        api.encode_SaveResp(SaveResp { ok: if e == "" { 1 } else { 0 }, done: 0, path: "", error: e })
+        api.encode_SaveResp(SaveResp {
+            ok: if e == "" { 1 } else { 0 },
+            done: 0,
+            path: "",
+            error: e,
+        })
     })
 
     app.rpc(api.reveal_rpc(), |body| {

@@ -70,7 +70,16 @@ fn degraded_note() -> string {
 /// SMA length chosen on each train window from `grid`, frozen, then traded
 /// through the following `test_bars`. The window then steps forward by
 /// `test_bars`. `min_hold` is not fitted; it is the exit-load constraint.
-fn sma(s: NavSeries, grid: []int, min_hold: int, train_bars: int, test_bars: int, ack: int, c: Costs, start_cash: i64) -> Walk {
+fn sma(
+    s: NavSeries,
+    grid: []int,
+    min_hold: int,
+    train_bars: int,
+    test_bars: int,
+    ack: int,
+    c: Costs,
+    start_cash: i64
+) -> Walk {
     let n = series.len(s)
     if grid.len == 0 || train_bars < 2 || test_bars < 1 || n < train_bars + test_bars {
         return empty_walk(short_note())
@@ -110,7 +119,9 @@ fn sma(s: NavSeries, grid: []int, min_hold: int, train_bars: int, test_bars: int
         let oos_orders = strategy.sma_orders(fold, best, min_hold, ack)
         let mark = s.dates[start + train_bars]
         let fold_rep = backtest.run_marked(fold, oos_orders, c, start_cash, mark)
-        let years = f64(date.days_between(s.dates[start + train_bars - 1], s.dates[fold_end - 1])) / f64(365)
+        let years = f64(date.days_between(s.dates[start + train_bars - 1], s.dates[fold_end - 1])) / f64(
+            365,
+        )
         let oos_rate = stats.cagr(f64(fold_rep.mark_equity), f64(fold_rep.end_equity), years)
         let test = series.window(s, start + train_bars, fold_end)
         let open = fold_rep.mark_equity

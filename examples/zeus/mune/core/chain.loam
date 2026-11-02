@@ -134,7 +134,16 @@ fn no_avoid() -> Avoid {
     return Avoid { src: []int {}, start: []int {}, len: []int {}, bar: []int {}, bars: []int {} }
 }
 
-fn add_slot(s: &mut Slots, bar: int, bars: int, target: int, sec: int, kind: int, label: int, varn: int) {
+fn add_slot(
+    s: &mut Slots,
+    bar: int,
+    bars: int,
+    target: int,
+    sec: int,
+    kind: int,
+    label: int,
+    varn: int
+) {
     push(s.bar, bar)
     push(s.bars, bars)
     push(s.target, target)
@@ -182,7 +191,16 @@ fn fit_range(s: Slots, u: Units) -> Slots {
     for k in 0..s.target.len {
         let label = if k < s.label.len { s.label[k] } else { -1 }
         let varn = if k < s.varn.len { s.varn[k] } else { 0 }
-        add_slot(out, s.bar[k], s.bars[k], lo + s.target[k] * (hi - lo) / 1000, s.sec[k], s.kind[k], label, varn)
+        add_slot(
+            out,
+            s.bar[k],
+            s.bars[k],
+            lo + s.target[k] * (hi - lo) / 1000,
+            s.sec[k],
+            s.kind[k],
+            label,
+            varn,
+        )
     }
     return out
 }
@@ -280,8 +298,14 @@ fn same_audio(u: Units, i: int, j: int) -> bool {
     if i == j {
         return true
     }
-    if i < 0 || j < 0 || i >= u.src.len || j >= u.src.len || i >= u.start.len || j >= u.start.len ||
-       i >= u.len.len || j >= u.len.len {
+    if i < 0 ||
+        j < 0 ||
+        i >= u.src.len ||
+        j >= u.src.len ||
+        i >= u.start.len ||
+        j >= u.start.len ||
+        i >= u.len.len ||
+        j >= u.len.len {
         return false
     }
     if u.src[i] < 0 || u.src[i] != u.src[j] {
@@ -462,7 +486,10 @@ fn no_choice() -> Choice {
 fn form_misses(slots: Slots, out: []int) -> int {
     let mut n = 0
     for k in 0..out.len {
-        if k >= slots.label.len || k >= slots.varn.len || slots.label[k] < 0 || slots.varn[k] <= 0 {
+        if k >= slots.label.len ||
+            k >= slots.varn.len ||
+            slots.label[k] < 0 ||
+            slots.varn[k] <= 0 {
             continue
         }
         let lab = slots.label[k]
@@ -514,8 +541,14 @@ fn cross_bus(u: Units, slots: Slots, out: []int, avoid: Avoid) -> int {
         }
         let mut hit = false
         for i in 0..avoid.src.len {
-            if !hit && i < avoid.bar.len && overlaps_placed(u, j, avoid, i) &&
-               bars_overlap(slots.bar[k], slots.bars[k], avoid.bar[i], if i < avoid.bars.len { avoid.bars[i] } else { 0 }) {
+            if !hit &&
+                i < avoid.bar.len &&
+                overlaps_placed(u, j, avoid, i) &&
+                bars_overlap(slots.bar[k], slots.bars[k], avoid.bar[i], if i < avoid.bars.len {
+                    avoid.bars[i]
+                } else {
+                    0
+                }) {
                 hit = true
             }
         }
@@ -598,8 +631,8 @@ fn variety_cost(out: []int) -> int {
 /// plays a new unit costs 40; seams and variety are small; sharing audio
 /// with another bus costs 500 a slot.
 fn assess(u: Units, slots: Slots, out: []int, avoid: Avoid) -> int {
-    return arc_cost(u, slots, out) + form_misses(slots, out) * 40 + seam_cost(u, out) + variety_cost(out) +
-           cross_bus(u, slots, out, avoid) * 500
+    return arc_cost(u, slots, out) + form_misses(slots, out) * 40 + seam_cost(u, out) +
+        variety_cost(out) + cross_bus(u, slots, out, avoid) * 500
 }
 
 /// Insert `n` among the three lowest scores. Ties keep the earlier walk.

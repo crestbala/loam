@@ -10,7 +10,6 @@ fn Page(p: Params) -> Node {
     return zui.Column(spacing.SECTION) {
         patterns.Patterns()
     }
-
 }
 
 fn meta(p: Params) -> Meta {

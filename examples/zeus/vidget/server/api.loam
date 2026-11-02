@@ -61,8 +61,7 @@ struct StartResp {
 }
 
 #[proto]
-struct JobsReq {
-}
+struct JobsReq {}
 
 /// Every job, newest first, as parallel lists.
 #[proto]

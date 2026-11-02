@@ -10,7 +10,9 @@ fn frame(w: int, h: int) {
     }
     let id = zeus.engine_find_text("Video")
     let r = zeus.rect(player.stage_ref)
-    fmt.println("win {{w}}x{{h}} stage {{r.w}}x{{r.h}} box {{player.box_w()}}x{{player.box_h()}} image {{zeus.node_x(id)}},{{zeus.node_y(id)}} {{zeus.node_width(id)}}x{{zeus.node_height(id)}}")
+    fmt.println(
+        "win {{w}}x{{h}} stage {{r.w}}x{{r.h}} box {{player.box_w()}}x{{player.box_h()}} image {{zeus.node_x(id)}},{{zeus.node_y(id)}} {{zeus.node_width(id)}}x{{zeus.node_height(id)}}",
+    )
 }
 
 fn main() {

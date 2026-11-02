@@ -196,11 +196,26 @@ fn measure_text(id: int) {
     let mut text_width = 0
     let mut text_height = 0
     if nodes.has_bound_num(id) != 0 {
-        metrics.measure_int(arena.bound_num(id), i32(nodes.look[id].font), &mut text_width, &mut text_height)
+        metrics.measure_int(
+            arena.bound_num(id),
+            i32(nodes.look[id].font),
+            &mut text_width,
+            &mut text_height,
+        )
     } else if int(nodes.tree[id].kind) == 10 {
-        metrics.measure(arena.input_shown(id), i32(nodes.look[id].font), &mut text_width, &mut text_height)
+        metrics.measure(
+            arena.input_shown(id),
+            i32(nodes.look[id].font),
+            &mut text_width,
+            &mut text_height,
+        )
     } else {
-        metrics.measure(nodes.look[id].text, i32(nodes.look[id].font), &mut text_width, &mut text_height)
+        metrics.measure(
+            nodes.look[id].text,
+            i32(nodes.look[id].font),
+            &mut text_width,
+            &mut text_height,
+        )
     }
     nodes.box[id].text_width = text_width
     nodes.box[id].text_height = text_height
@@ -241,8 +256,10 @@ fn measure_node(id: int) {
     }
     if k == 4 {
         measure_text(id)
-        let mut inner_width = nodes.box[id].text_width + i32(nodes.lay[id].pad_l) + i32(nodes.lay[id].pad_r)
-        let mut inner_height = nodes.box[id].text_height + i32(nodes.lay[id].pad_t) + i32(nodes.lay[id].pad_b)
+        let mut inner_width = nodes.box[id].text_width + i32(nodes.lay[id].pad_l) +
+            i32(nodes.lay[id].pad_r)
+        let mut inner_height = nodes.box[id].text_height + i32(nodes.lay[id].pad_t) +
+            i32(nodes.lay[id].pad_b)
         if nodes.lay[id].explicit_width >= 0 {
             inner_width = nodes.lay[id].explicit_width
         }
@@ -433,10 +450,16 @@ fn measure_node(id: int) {
             first = 0
             if int(nodes.lay[id].dir) == 0 {
                 acc = acc + nodes.box[c].inner_width + nodes.pin[c].m_l + nodes.pin[c].m_r
-                cross = geometry.max2(cross, nodes.box[c].inner_height + nodes.pin[c].m_t + nodes.pin[c].m_b)
+                cross = geometry.max2(
+                    cross,
+                    nodes.box[c].inner_height + nodes.pin[c].m_t + nodes.pin[c].m_b,
+                )
             } else {
                 acc = acc + nodes.box[c].inner_height + nodes.pin[c].m_t + nodes.pin[c].m_b
-                cross = geometry.max2(cross, nodes.box[c].inner_width + nodes.pin[c].m_l + nodes.pin[c].m_r)
+                cross = geometry.max2(
+                    cross,
+                    nodes.box[c].inner_width + nodes.pin[c].m_l + nodes.pin[c].m_r,
+                )
             }
         }
     }
@@ -538,7 +561,12 @@ fn layout_flex_row(id: int) {
             if stretch_cross(id, c, 1) != 0 {
                 ch = geometry.max2(inner_height - nodes.pin[c].m_t - nodes.pin[c].m_b, 0)
             }
-            let cy = geometry.cross_origin(al, y0, inner_height, ch + nodes.pin[c].m_t + nodes.pin[c].m_b) + nodes.pin[c].m_t
+            let cy = geometry.cross_origin(
+                al,
+                y0,
+                inner_height,
+                ch + nodes.pin[c].m_t + nodes.pin[c].m_b,
+            ) + nodes.pin[c].m_t
             layout_node(c, cx + nodes.pin[c].m_l, cy, aw, ch)
             cx = cx + nodes.box[c].w + nodes.pin[c].m_l + nodes.pin[c].m_r + gx + between
         }
@@ -820,7 +848,12 @@ fn layout_flex_row_wrap(id: int) {
             if stretch_cross(id, c, 1) != 0 {
                 ch = geometry.max2(lh - nodes.pin[c].m_t - nodes.pin[c].m_b, 0)
             }
-            let cy = geometry.cross_origin(al, y0 + y, lh, ch + nodes.pin[c].m_t + nodes.pin[c].m_b) + nodes.pin[c].m_t
+            let cy = geometry.cross_origin(
+                al,
+                y0 + y,
+                lh,
+                ch + nodes.pin[c].m_t + nodes.pin[c].m_b,
+            ) + nodes.pin[c].m_t
             layout_node(c, x0 + x + nodes.pin[c].m_l, cy, cw, ch)
             x = x + span + gx
         }
@@ -929,13 +962,19 @@ fn layout_flex_col(id: int) {
                 }
                 cw = geometry.fit_avail(cw, avail)
             }
-            let cx = geometry.cross_origin(al, x0, inner_width, cw + nodes.pin[c].m_l + nodes.pin[c].m_r) + nodes.pin[c].m_l
+            let cx = geometry.cross_origin(
+                al,
+                x0,
+                inner_width,
+                cw + nodes.pin[c].m_l + nodes.pin[c].m_r,
+            ) + nodes.pin[c].m_l
             layout_node(c, cx, cy + nodes.pin[c].m_t, cw, nodes.box[c].ah)
             cy = cy + nodes.box[c].h + nodes.pin[c].m_t + nodes.pin[c].m_b + gy + between
         }
     }
     if nflow > 0 {
-        let content = cy - gy - between - nodes.box[id].y + i32(nodes.lay[id].pad_b) + i32(nodes.lay[id].border_w)
+        let content = cy - gy - between - nodes.box[id].y + i32(nodes.lay[id].pad_b) +
+            i32(nodes.lay[id].border_w)
         if int(nodes.tree[id].kind) == 11 {
             nodes.box[id].ext_h = geometry.max2(content, nodes.box[id].h)
             if nodes.scrolls_x(id) != 0 {
@@ -943,7 +982,8 @@ fn layout_flex_col(id: int) {
                 for i in 0..nk {
                     let c = nodes.tree[id].kids[i]
                     if arena.skip_flow(c) == 0 {
-                        let right = nodes.box[c].x + nodes.box[c].w + nodes.pin[c].m_r - nodes.box[id].x + i32(nodes.lay[id].pad_r) + i32(nodes.lay[id].border_w)
+                        let right = nodes.box[c].x + nodes.box[c].w + nodes.pin[c].m_r -
+                            nodes.box[id].x + i32(nodes.lay[id].pad_r) + i32(nodes.lay[id].border_w)
                         if right > content_w {
                             content_w = right
                         }
@@ -1072,7 +1112,8 @@ fn layout_grid(id: int) {
         }
     }
     if placed != 0 {
-        let content = y + rh - nodes.box[id].y + i32(nodes.lay[id].pad_b) + i32(nodes.lay[id].border_w)
+        let content = y + rh - nodes.box[id].y + i32(nodes.lay[id].pad_b) +
+            i32(nodes.lay[id].border_w)
         if content > nodes.box[id].h {
             nodes.box[id].h = content
         }
@@ -1117,12 +1158,18 @@ fn layout_abs(p: int) {
                         }
                         if nodes.pin[c].pin_l != -1 {
                             if nodes.pin[c].pin_r != -1 {
-                                w = arena.clamp_w(c, inner_width - nodes.pin[c].pin_l - nodes.pin[c].pin_r)
+                                w = arena.clamp_w(
+                                    c,
+                                    inner_width - nodes.pin[c].pin_l - nodes.pin[c].pin_r,
+                                )
                             }
                         }
                         if nodes.pin[c].pin_t != -1 {
                             if nodes.pin[c].pin_b != -1 {
-                                h = arena.clamp_h(c, inner_height - nodes.pin[c].pin_t - nodes.pin[c].pin_b)
+                                h = arena.clamp_h(
+                                    c,
+                                    inner_height - nodes.pin[c].pin_t - nodes.pin[c].pin_b,
+                                )
                             }
                         }
                         if nodes.pin[c].pin_r != -1 {
@@ -1248,8 +1295,13 @@ fn shift_subtree(id: int, dx: int, dy: int) {
 
 /// Bump the epoch when a frame-wide layout input moved since the last layout.
 fn epoch_check() {
-    if ep_gen != arena.measure_gen || ep_w != arena.win_w || ep_h != arena.win_h ||
-       ep_t != arena.safe_t || ep_r != arena.safe_r || ep_b != arena.safe_b || ep_l != arena.safe_l {
+    if ep_gen != arena.measure_gen ||
+        ep_w != arena.win_w ||
+        ep_h != arena.win_h ||
+        ep_t != arena.safe_t ||
+        ep_r != arena.safe_r ||
+        ep_b != arena.safe_b ||
+        ep_l != arena.safe_l {
         lay_epoch = lay_epoch + 1
         ep_gen = arena.measure_gen
         ep_w = arena.win_w
@@ -1394,10 +1446,15 @@ fn verify_memo() {
     for id in 1..n {
         let o = id * 6
         if int(nodes.tree[id].kind) != 0 {
-            if nodes.box[id].x != vb[o] || nodes.box[id].y != vb[o + 1] ||
-               nodes.box[id].w != vb[o + 2] || nodes.box[id].h != vb[o + 3] ||
-               nodes.box[id].ext_w != vb[o + 4] || nodes.box[id].ext_h != vb[o + 5] {
-                panic("ZEUS_LAYOUT_VERIFY: node {{id}} kind {{int(nodes.tree[id].kind)}} memo box {{vb[o]}},{{vb[o + 1]}} {{vb[o + 2]}}x{{vb[o + 3]}} ext {{vb[o + 4]}}x{{vb[o + 5]}} but full box {{nodes.box[id].x}},{{nodes.box[id].y}} {{nodes.box[id].w}}x{{nodes.box[id].h}} ext {{nodes.box[id].ext_w}}x{{nodes.box[id].ext_h}}")
+            if nodes.box[id].x != vb[o] ||
+                nodes.box[id].y != vb[o + 1] ||
+                nodes.box[id].w != vb[o + 2] ||
+                nodes.box[id].h != vb[o + 3] ||
+                nodes.box[id].ext_w != vb[o + 4] ||
+                nodes.box[id].ext_h != vb[o + 5] {
+                panic(
+                    "ZEUS_LAYOUT_VERIFY: node {{id}} kind {{int(nodes.tree[id].kind)}} memo box {{vb[o]}},{{vb[o + 1]}} {{vb[o + 2]}}x{{vb[o + 3]}} ext {{vb[o + 4]}}x{{vb[o + 5]}} but full box {{nodes.box[id].x}},{{nodes.box[id].y}} {{nodes.box[id].w}}x{{nodes.box[id].h}} ext {{nodes.box[id].ext_w}}x{{nodes.box[id].ext_h}}",
+                )
             }
         }
     }
@@ -1450,10 +1507,14 @@ fn box_mark_moved() {
     let n = nodes.tree.len
     for id in 1..n {
         if int(nodes.tree[id].kind) != 0 {
-            if nodes.box[id].x != sb_x[id] || nodes.box[id].y != sb_y[id] ||
-               nodes.box[id].w != sb_w[id] || nodes.box[id].h != sb_h[id] ||
-               nodes.box[id].ext_w != sb_ew[id] || nodes.box[id].ext_h != sb_eh[id] ||
-               nodes.scrl[id].scroll_x != sb_sx[id] || nodes.scrl[id].scroll_y != sb_sy[id] {
+            if nodes.box[id].x != sb_x[id] ||
+                nodes.box[id].y != sb_y[id] ||
+                nodes.box[id].w != sb_w[id] ||
+                nodes.box[id].h != sb_h[id] ||
+                nodes.box[id].ext_w != sb_ew[id] ||
+                nodes.box[id].ext_h != sb_eh[id] ||
+                nodes.scrl[id].scroll_x != sb_sx[id] ||
+                nodes.scrl[id].scroll_y != sb_sy[id] {
                 arena.mark_paint_id(id)
             }
         }

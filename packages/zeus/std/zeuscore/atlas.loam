@@ -639,8 +639,17 @@ fn atlas_lookup(font: int, gid: int, size: int, subx: int) -> int {
 /// mask is stored relative to the pen: blit it with `atlas_blit` at the integer
 /// pen position. Returns the slot, or -1 when the glyph cannot be atlased
 /// (empty, or larger than a tile).
-fn atlas_intern(font: int, gid: int, size: int, subx: int,
-                xs: []int, ys: []int, on: []int, ends: []int, upm: int) -> int {
+fn atlas_intern(
+    font: int,
+    gid: int,
+    size: int,
+    subx: int,
+    xs: []int,
+    ys: []int,
+    on: []int,
+    ends: []int,
+    upm: int
+) -> int {
     atlas_init()
     let have = atlas_find(font, gid, size, subx)
     if have >= 0 {

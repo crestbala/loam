@@ -16,7 +16,20 @@ struct Extracted {
 /// The extensions a media URL may end in. `ts` is last: it only counts when
 /// the URL plainly ends there, so `.tsx` and `.tsv` never match.
 fn media_exts() -> []string {
-    return []string { "m3u8", "mpd", "mp4", "m4v", "webm", "mov", "mkv", "ogv", "ogg", "flv", "avi", "ts" }
+    return []string {
+        "m3u8",
+        "mpd",
+        "mp4",
+        "m4v",
+        "webm",
+        "mov",
+        "mkv",
+        "ogv",
+        "ogg",
+        "flv",
+        "avi",
+        "ts",
+    }
 }
 
 /// `&amp;`, `&quot;`, `&#39;`, `&lt;`, `&gt;` and the JSON escapes a URL
@@ -87,8 +100,22 @@ fn resolve(base: string, ref: string) -> string {
 
 /// A byte that ends a URL in markup, JSON or JS.
 fn url_stop(c: int) -> bool {
-    return c == 34 || c == 39 || c == 96 || c == 32 || c == 10 || c == 13 || c == 9 || c == 60 ||
-        c == 62 || c == 40 || c == 41 || c == 44 || c == 123 || c == 125 || c == 91 || c == 93
+    return c == 34 ||
+        c == 39 ||
+        c == 96 ||
+        c == 32 ||
+        c == 10 ||
+        c == 13 ||
+        c == 9 ||
+        c == 60 ||
+        c == 62 ||
+        c == 40 ||
+        c == 41 ||
+        c == 44 ||
+        c == 123 ||
+        c == 125 ||
+        c == 91 ||
+        c == 93
 }
 
 /// The quoted `content` value of the `<meta>` tag that names `key`.
@@ -222,7 +249,9 @@ fn media_urls(body: string, base: string) -> []string {
             if media_ext_at(text.lower(tok)) < 0 {
                 continue
             }
-            let ok = text.is_http_url(tok) || text.starts_with(tok, "//") || text.starts_with(tok, "/") ||
+            let ok = text.is_http_url(tok) ||
+                text.starts_with(tok, "//") ||
+                text.starts_with(tok, "/") ||
                 attr_value(src, a)
             if !ok {
                 continue

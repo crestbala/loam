@@ -630,7 +630,9 @@ fn run_loam(env: string, args: string) -> string {
     if env != "" {
         envs = cat(env, " ")
     }
-    return sys.exec("unset ZEUS_HEADLESS LOAM_HEADLESS MAYA_HEADLESS; cd {{shell_quote(repo_root())}} && {{envs}}{{shell_quote(loam_path())}} {{args}} 2>&1")
+    return sys.exec(
+        "unset ZEUS_HEADLESS LOAM_HEADLESS MAYA_HEADLESS; cd {{shell_quote(repo_root())}} && {{envs}}{{shell_quote(loam_path())}} {{args}} 2>&1",
+    )
 }
 
 /// Run `cmd` from the repo root, stderr merged into stdout.
@@ -1067,7 +1069,19 @@ fn generate(appdir: string) -> string {
         if extra != "" {
             tail = cat(", ", extra)
         }
-        push(lines, cat(cat(cat(cat(cat("        Route { pattern: \"", url_for(pages[p])), "\", build: b_"), stem), tail), " },"))
+        push(
+            lines,
+            cat(
+                cat(
+                    cat(
+                        cat(cat("        Route { pattern: \"", url_for(pages[p])), "\", build: b_"),
+                        stem,
+                    ),
+                    tail,
+                ),
+                " },",
+            ),
+        )
     }
     push(lines, "    }")
     push(lines, "}")
@@ -1160,7 +1174,7 @@ fn int_str(n: int) -> string {
     }
     let mut rev = []int {}
     if v == 0 {
-        push(rev, 48 /* 0 */)
+        push(rev, 48 /* 0 */ )
     }
     while v > 0 {
         push(rev, 48 + (v % 10))
@@ -1465,7 +1479,10 @@ fn ensure_backend(appdir: string) -> int {
     let bin = join(dir, "main")
     let log = app_log(appdir, "server", "main")
     fmt.println("zeli: building rpc backend…")
-    let built = run_loam(serve_build_env("macos"), cat(cat(shell_quote(entry), " -o "), shell_quote(bin)))
+    let built = run_loam(
+        serve_build_env("macos"),
+        cat(cat(shell_quote(entry), " -o "), shell_quote(bin)),
+    )
     if sys.exec_status() != 0 {
         fmt.println(trim(built))
         fmt.println("zeli: rpc backend failed to build")
@@ -2126,7 +2143,14 @@ fn serve_rpc_addr() -> string {
 /// No CORS handling is needed — the hop from the browser is same-origin and this
 /// hop is server-to-server. A missing backend is a 502, so it shows up as a
 /// failure rather than as silence.
-fn serve_proxy_rpc(fd: int, addr: string, path: string, query: string, ctype: string, body: string) {
+fn serve_proxy_rpc(
+    fd: int,
+    addr: string,
+    path: string,
+    query: string,
+    ctype: string,
+    body: string
+) {
     let hp = rpc_addr_of(addr)
     let up = net.tcp_connect(hp.host, hp.port)
     if up < 0 {
@@ -2157,7 +2181,10 @@ fn serve_proxy_rpc(fd: int, addr: string, path: string, query: string, ctype: st
 /// both the connect and the send can be the thing that fails.
 fn serve_rpc_unreachable(fd: int, addr: string) {
     fmt.println("zeli: rpc backend {{addr}} unreachable")
-    net.tcp_write(fd, serve_http_reply(502, "text/plain; charset=utf-8", "rpc backend {{addr}} unreachable\n"))
+    net.tcp_write(
+        fd,
+        serve_http_reply(502, "text/plain; charset=utf-8", "rpc backend {{addr}} unreachable\n"),
+    )
 }
 
 /// Watch the sources, rebuild on change, and serve `build/web` on localhost.
@@ -2245,7 +2272,9 @@ fn serve_native(appdir: string, target: string, stem: string) -> int {
     }
     guard_app(self, pid)
     tail_add(log, target)
-    fmt.println("zeli: serve on {{target}} (pid {{pid}}) — logs below, also in {{rel_to(repo_root(), log)}}  (Ctrl-C to stop)")
+    fmt.println(
+        "zeli: serve on {{target}} (pid {{pid}}) — logs below, also in {{rel_to(repo_root(), log)}}  (Ctrl-C to stop)",
+    )
     let mut said_exited = false
     let mut tick = 0
     while true {
@@ -2299,16 +2328,19 @@ fn ios_bundle_id(appdir: string, stem: string) -> string {
     if sys.exists(plist) == 0 {
         return ""
     }
-    return between(sys.read_file(plist), "<key>CFBundleIdentifier</key><string>", 60 /* < */)
+    return between(sys.read_file(plist), "<key>CFBundleIdentifier</key><string>", 60 /* < */ )
 }
 
 /// The `applicationId` the Gradle tree was generated with.
 fn android_app_id(appdir: string, stem: string) -> string {
-    let gradle = join(join(join(join(join(appdir, "build"), "android"), stem), "app"), "build.gradle")
+    let gradle = join(
+        join(join(join(join(appdir, "build"), "android"), stem), "app"),
+        "build.gradle",
+    )
     if sys.exists(gradle) == 0 {
         return ""
     }
-    return between(sys.read_file(gradle), "applicationId \"", 34 /* " */)
+    return between(sys.read_file(gradle), "applicationId \"", 34 /* " */ )
 }
 
 /// Stop the instance the last install left running, so what the screen shows is
@@ -2323,7 +2355,10 @@ fn stop_device(appdir: string, target: string, stem: string) -> bool {
         if bid == "" {
             return false
         }
-        let out = sys.exec(cat(cat("xcrun simctl terminate booted ", shell_quote(bid)), " >/dev/null 2>&1"))
+        let out = sys.exec(cat(
+            cat("xcrun simctl terminate booted ", shell_quote(bid)),
+            " >/dev/null 2>&1",
+        ))
         return sys.exec_status() == 0
     }
     let pkg = android_app_id(appdir, stem)
@@ -2355,7 +2390,13 @@ fn serve_device_run(appdir: string, target: string, stem: string, entry: string)
 /// `serve` for ios / android. The watch and the build are the ones every target
 /// uses; the step is "build, install, launch" rather than a process this CLI
 /// holds, so there is no pid to stop — the platform's runtime owns the app.
-fn serve_device(appdir: string, target: string, stem: string, entry: string, build_only: bool) -> int {
+fn serve_device(
+    appdir: string,
+    target: string,
+    stem: string,
+    entry: string,
+    build_only: bool
+) -> int {
     if build_only {
         let r = serve_build(appdir, target)
         if r.routes_changed {
@@ -2582,7 +2623,10 @@ fn pkg_sync(appdir: string) -> int {
             clone = cat(clone, shell_quote(dest))
             let log = run_git(clone)
             if sys.exec_status() != 0 {
-                fmt.println(cat(cat(cat("zeli: ", d.name), ": git clone failed\n"), indent_lines(trim(log), "  ")))
+                fmt.println(cat(
+                    cat(cat("zeli: ", d.name), ": git clone failed\n"),
+                    indent_lines(trim(log), "  "),
+                ))
                 ok = false
                 continue
             }
@@ -2846,7 +2890,7 @@ fn app_targets(appdir: string) -> []string {
     for i in 0..lines.len {
         let l = trim(lines[i])
         if starts_with(l, "targets") {
-            let eq = split_on(l, 61 /* = */)
+            let eq = split_on(l, 61 /* = */ )
             if eq.len >= 2 {
                 let mut names = []int {}
                 let v = eq[1]
@@ -2870,7 +2914,7 @@ fn parse_targets(arg: string, given: bool) -> []string {
     if !given {
         return all_targets()
     }
-    let parts = split_on(arg, 44 /* , */)
+    let parts = split_on(arg, 44 /* , */ )
     let mut out = []string {}
     for i in 0..parts.len {
         let t = trim(parts[i])
@@ -2921,7 +2965,7 @@ fn out_name(t: string, stem: string) -> string {
 fn toml_str(appdir: string, key: string) -> string {
     let lines = split_on(sys.read_file(join(appdir, "zeus.toml")), 10)
     for i in 0..lines.len {
-        let kv = split_on(lines[i], 61 /* = */)
+        let kv = split_on(lines[i], 61 /* = */ )
         if kv.len >= 2 && trim(kv[0]) == key {
             let v = trim(kv[1])
             if v.len >= 2 && v[0] == 34 && v[v.len - 1] == 34 {
@@ -3002,8 +3046,14 @@ fn render_icns(svg: string, out: string) -> bool {
     for i in 0..sizes.len {
         let s = sizes[i]
         let d = s * 2
-        script = cat(script, "sips -z {{s}} {{s}} {{shell_quote(png)}} --out {{shell_quote(set)}}/icon_{{s}}x{{s}}.png >/dev/null; ")
-        script = cat(script, "sips -z {{d}} {{d}} {{shell_quote(png)}} --out {{shell_quote(set)}}/icon_{{s}}x{{s}}@2x.png >/dev/null; ")
+        script = cat(
+            script,
+            "sips -z {{s}} {{s}} {{shell_quote(png)}} --out {{shell_quote(set)}}/icon_{{s}}x{{s}}.png >/dev/null; ",
+        )
+        script = cat(
+            script,
+            "sips -z {{d}} {{d}} {{shell_quote(png)}} --out {{shell_quote(set)}}/icon_{{s}}x{{s}}@2x.png >/dev/null; ",
+        )
     }
     script = cat(script, "iconutil -c icns {{shell_quote(set)}} -o {{shell_quote(out)}}")
     sys.exec("sh -c {{shell_quote(script)}} 2>/dev/null")
@@ -3024,7 +3074,9 @@ fn macos_bundle(appdir: string, bin: string) -> string {
     let res = join(contents, "Resources")
     let macos = join(contents, "MacOS")
     let exe = join(macos, title)
-    sys.exec("rm -rf {{shell_quote(app)}} && mkdir -p {{shell_quote(macos)}} {{shell_quote(res)}} && cp {{shell_quote(bin)}} {{shell_quote(exe)}}")
+    sys.exec(
+        "rm -rf {{shell_quote(app)}} && mkdir -p {{shell_quote(macos)}} {{shell_quote(res)}} && cp {{shell_quote(bin)}} {{shell_quote(exe)}}",
+    )
     if sys.exec_status() != 0 {
         return ""
     }
@@ -3239,7 +3291,10 @@ fn meta_dump_source() -> string {
     push(lines, "            let mut j = 0")
     push(lines, "            while j < ps.len {")
     push(lines, "                if router.match_route(pat, ps[j]) == 1 {")
-    push(lines, "                    let p = Params { keys: router.match_keys(), vals: router.match_vals() }")
+    push(
+        lines,
+        "                    let p = Params { keys: router.match_keys(), vals: router.match_vals() }",
+    )
     push(lines, "                    emit(ps[j], rs[i].meta(p))")
     push(lines, "                }")
     push(lines, "                j = j + 1")
@@ -3351,7 +3406,10 @@ fn shell_html(r: MetaRec, canonical: string, stem: string) -> string {
         push(lines, r.jsonld)
         push(lines, "</script>")
     }
-    push(lines, "<style>html,body{margin:0;height:100%;background:#fafafa}canvas#zeus{display:block;position:fixed;inset:0;width:100%;height:100%;touch-action:none}</style>")
+    push(
+        lines,
+        "<style>html,body{margin:0;height:100%;background:#fafafa}canvas#zeus{display:block;position:fixed;inset:0;width:100%;height:100%;touch-action:none}</style>",
+    )
     push(lines, "</head>")
     push(lines, "<body>")
     push(lines, "<canvas id=\"zeus\" data-wasm=\"/{{stem}}.wasm\"></canvas>")
@@ -3403,11 +3461,15 @@ fn emit_web_shell(appdir: string, stem: string, base: string) {
     }
     sys.write_file(join(web, "robots.txt"), join_lines(robots))
     let n = recs.len
-    fmt.println("zeli: wrote {{n}} HTML shell(s) + sitemap.xml + robots.txt -> {{rel_to(repo_root(), web)}}")
+    fmt.println(
+        "zeli: wrote {{n}} HTML shell(s) + sitemap.xml + robots.txt -> {{rel_to(repo_root(), web)}}",
+    )
 }
 
 fn usage() {
-    fmt.println("usage: zeli new <name> [dir] | zeli routes <appdir> | zeli build <appdir> [--targets a,b | --target a] [--base https://host] | zeli serve <appdir> [--target {{target_list()}}] [--port N] [--build-only] | zeli fmt [dir] | zeli pkg sync <appdir>")
+    fmt.println(
+        "usage: zeli new <name> [dir] | zeli routes <appdir> | zeli build <appdir> [--targets a,b | --target a] [--base https://host] | zeli serve <appdir> [--target {{target_list()}}] [--port N] [--build-only] | zeli fmt [dir] | zeli pkg sync <appdir>",
+    )
 }
 
 fn main() {

@@ -83,7 +83,16 @@ fn swept(base: f64, sweep: f64, rate: f64, t: f64, e: f64) -> f64 {
     return base * t + sweep * (1.0 - e) / rate
 }
 
-fn kick_note(buf: &mut []f64, at: int, len: int, cut: bool, wrap: bool, vel: f64, st: int, r: &mut Rng) {
+fn kick_note(
+    buf: &mut []f64,
+    at: int,
+    len: int,
+    cut: bool,
+    wrap: bool,
+    vel: f64,
+    st: int,
+    r: &mut Rng
+) {
     let mut base: f64 = 46.0
     let mut sweep: f64 = 110.0
     let mut rate: f64 = 28.0
@@ -148,7 +157,17 @@ fn clap(t: f64, tail: f64, r: &mut Rng) -> f64 {
 
 /// The snare, clap, rim, or high taiko. `gate` above 0 is the noise decay a
 /// build roll asks for; otherwise the style's own.
-fn snare_note(buf: &mut []f64, at: int, len: int, cut: bool, wrap: bool, vel: f64, gate: f64, st: int, r: &mut Rng) {
+fn snare_note(
+    buf: &mut []f64,
+    at: int,
+    len: int,
+    cut: bool,
+    wrap: bool,
+    vel: f64,
+    gate: f64,
+    st: int,
+    r: &mut Rng
+) {
     let mut tail_rate: f64 = 17.0
     if st == styles.HOUSE || st == styles.WAVE {
         tail_rate = 13.0
@@ -212,7 +231,18 @@ fn snare_note(buf: &mut []f64, at: int, len: int, cut: bool, wrap: bool, vel: f6
 
 /// Hats keep their decay in the gate. Afrobeats' shaker swells in; its open
 /// voice is a conga.
-fn hat_note(buf: &mut []f64, at: int, len: int, cut: bool, wrap: bool, vel: f64, gate: f64, st: int, open: bool, r: &mut Rng) {
+fn hat_note(
+    buf: &mut []f64,
+    at: int,
+    len: int,
+    cut: bool,
+    wrap: bool,
+    vel: f64,
+    gate: f64,
+    st: int,
+    open: bool,
+    r: &mut Rng
+) {
     if open && st == styles.AFRO {
         let m13 = dsp.decay(13.0)
         let m40 = dsp.decay(40.0)
@@ -222,7 +252,8 @@ fn hat_note(buf: &mut []f64, at: int, len: int, cut: bool, wrap: bool, vel: f64,
         let mut e120: f64 = 1.0
         for j in 0..len {
             let t = secs(j)
-            let v: f64 = dsp.sine(swept(305.0, 45.0, 40.0, t, e40)) * e13 + 0.15 * dsp.noise(r) * e120
+            let v: f64 = dsp.sine(swept(305.0, 45.0, 40.0, t, e40)) * e13 +
+                0.15 * dsp.noise(r) * e120
             dsp.put(buf, at + j, vel * v * cut_gain(j, len, cut), wrap)
             e13 = e13 * m13
             e40 = e40 * m40
@@ -273,7 +304,18 @@ fn drum(g: Groove, part: int, variant: int) -> []f64 {
         } else if part == synth.SNARE {
             snare_note(buf, at, len, cut, true, h.vel[i], h.gate[i], g.style, r)
         } else {
-            hat_note(buf, at, len, cut, true, h.vel[i], h.gate[i], g.style, part == synth.OPEN_HAT, r)
+            hat_note(
+                buf,
+                at,
+                len,
+                cut,
+                true,
+                h.vel[i],
+                h.gate[i],
+                g.style,
+                part == synth.OPEN_HAT,
+                r,
+            )
         }
     }
     return buf
@@ -289,7 +331,15 @@ fn bass_note(buf: &mut []f64, at: int, len: int, cut: bool, vel: f64, f: f64, ga
     let m22 = dsp.decay(22.0)
     let m9 = dsp.decay(9.0)
     let m5 = dsp.decay(5.0)
-    let att: f64 = if st == styles.CINEMA { 0.14 } else if st == styles.DREAM { 0.08 } else if st == styles.TRAP || st == styles.AFRO { 0.003 } else { 0.004 }
+    let att: f64 = if st == styles.CINEMA {
+        0.14
+    } else if st == styles.DREAM {
+        0.08
+    } else if st == styles.TRAP || st == styles.AFRO {
+        0.003
+    } else {
+        0.004
+    }
     let mut life: f64 = 1.0
     let mut rel: f64 = 1.0
     let mut e25: f64 = 1.0
@@ -303,11 +353,14 @@ fn bass_note(buf: &mut []f64, at: int, len: int, cut: bool, vel: f64, f: f64, ga
         let mut v: f64 = 0.0
         if st == styles.TRAP {
             // A sine that drops onto its note, held, softly clipped.
-            let x: f64 = 1.8 * vel * attack(t, att) * held * life * dsp.sine(ph + f * 0.6 * (1.0 - e25) / 25.0)
+            let x: f64 = 1.8 * vel * attack(t, att) * held * life * dsp.sine(
+                ph + f * 0.6 * (1.0 - e25) / 25.0,
+            )
             v = 0.5 * x / (1.0 + math.abs(x))
         } else if st == styles.AFRO {
             // A log drum.
-            let osc: f64 = dsp.sine(ph + f * 0.8 * (1.0 - e22) / 22.0) + 0.3 * dsp.sine(2.0 * ph) * e9
+            let osc: f64 = dsp.sine(ph + f * 0.8 * (1.0 - e22) / 22.0) +
+                0.3 * dsp.sine(2.0 * ph) * e9
             v = 0.42 * vel * attack(t, att) * e5 * osc
         } else {
             let mut osc: f64 = dsp.sine(ph) + 0.3 * dsp.sine(2.0 * ph) + 0.12 * dsp.sine(3.0 * ph)
@@ -315,7 +368,8 @@ fn bass_note(buf: &mut []f64, at: int, len: int, cut: bool, vel: f64, f: f64, ga
                 osc = SAW_LEVEL * dsp.saw(ph, dt)
             } else if st == styles.CINEMA {
                 // A contrabass section.
-                osc = SAW_LEVEL * 0.5 * (dsp.saw(ph * 0.997, dt * 0.997) + dsp.saw(ph * 1.003, dt * 1.003))
+                osc = SAW_LEVEL * 0.5 * (dsp.saw(ph * 0.997, dt * 0.997) +
+                    dsp.saw(ph * 1.003, dt * 1.003))
             } else if st == styles.FUTURE {
                 osc = dsp.sine(ph) + 0.15 * dsp.sine(2.0 * ph)
             }
@@ -374,14 +428,17 @@ fn pad_osc(tone: int, f: f64, tw: f64, dtw: f64, ts: f64, loop: f64) -> f64 {
     if tone == synth.PAD_KEYS {
         let ph: f64 = f * ts
         let fm: f64 = 1.3 * math.exp(-3.0 * ts) * dsp.sine(ph) / num.TAU
-        return dsp.sine(ph + fm) * math.exp(-1.6 * ts) + 0.25 * dsp.sine(2.0 * ph) * math.exp(-4.0 * ts)
+        return dsp.sine(ph + fm) * math.exp(-1.6 * ts) +
+            0.25 * dsp.sine(2.0 * ph) * math.exp(-4.0 * ts)
     }
     if tone == synth.PAD_STRINGS {
-        let s3: f64 = saw_at(f, 0.9965, tw, dtw, loop) + saw_at(f, 1.0, tw, dtw, loop) + saw_at(f, 1.0035, tw, dtw, loop)
+        let s3: f64 = saw_at(f, 0.9965, tw, dtw, loop) + saw_at(f, 1.0, tw, dtw, loop) +
+            saw_at(f, 1.0035, tw, dtw, loop)
         return SAW_LEVEL * s3 / 3.0
     }
     if tone == synth.PAD_SUPER {
-        let s3: f64 = saw_at(f, 0.993, tw, dtw, loop) + saw_at(f, 1.0, tw, dtw, loop) + saw_at(f, 1.007, tw, dtw, loop)
+        let s3: f64 = saw_at(f, 0.993, tw, dtw, loop) + saw_at(f, 1.0, tw, dtw, loop) +
+            saw_at(f, 1.007, tw, dtw, loop)
         return SAW_LEVEL * s3 / 3.0
     }
     let s2: f64 = saw_at(f, 1.0035, tw, dtw, loop) + saw_at(f, 1.0 / 1.0035, tw, dtw, loop)
@@ -559,7 +616,8 @@ fn arp_note(buf: &mut []f64, at: int, len: int, vel: f64, f: f64, tone: int) {
         } else if tone == synth.ARP_SQUARE {
             osc = SQUARE_LEVEL * dsp.square(ph, dt)
         } else if tone == synth.ARP_STRINGS {
-            osc = SAW_LEVEL * 0.5 * (dsp.saw(ph * 0.996, dt * 0.996) + dsp.saw(ph * 1.004, dt * 1.004))
+            osc = SAW_LEVEL * 0.5 * (dsp.saw(ph * 0.996, dt * 0.996) +
+                dsp.saw(ph * 1.004, dt * 1.004))
         } else if tone == synth.ARP_MALLET {
             // A marimba: the fundamental and its fourth partial, dying fast.
             osc = dsp.sine(ph) + 0.35 * dsp.sine(4.0 * ph) * e30
@@ -603,7 +661,8 @@ fn bell_note(buf: &mut []f64, at: int, len: int, wrap: bool, vel: f64, f: f64, s
         let ph: f64 = f * t
         let mut v: f64 = 0.0
         if st == styles.CINEMA {
-            v = 0.32 * vel * attack(t, 0.004) * (dsp.sine(ph) * e14 + 0.35 * dsp.sine(2.0 * ph) * e3 + 0.12 * dsp.sine(3.0 * ph) * e5)
+            v = 0.32 * vel * attack(t, 0.004) * (dsp.sine(ph) * e14 +
+                0.35 * dsp.sine(2.0 * ph) * e3 + 0.12 * dsp.sine(3.0 * ph) * e5)
         } else {
             v = 0.3 * vel * attack(t, 0.002) * dsp.sine(ph + index * e4 * dsp.sine(2.0 * ph)) * e24
         }
@@ -657,7 +716,14 @@ fn counter(h: Hits, loop_sec: f64, tone: int) -> []f64 {
         for j in 0..len {
             let t = secs(j)
             let held: f64 = if t < gate { 1.0 } else { rel }
-            let v: f64 = 0.22 * h.vel[i] * attack(t, att) * held * pad_osc(tone, h.freq[i], t, 1.0, t, 0.0)
+            let v: f64 = 0.22 * h.vel[i] * attack(t, att) * held * pad_osc(
+                tone,
+                h.freq[i],
+                t,
+                1.0,
+                t,
+                0.0,
+            )
             dsp.put(buf, at + j, v, false)
             if t >= gate {
                 rel = rel * m
@@ -677,7 +743,8 @@ fn riser(sec: f64, seed: int) -> []f64 {
     for j in 0..n {
         let t = secs(j)
         let x: f64 = t / sec
-        buf[j] = 0.32 * dsp.noise(r) * x * x + 0.18 * dsp.sine(220.0 * t + 700.0 * t * t / sec) * x * x * x
+        buf[j] = 0.32 * dsp.noise(r) * x * x +
+            0.18 * dsp.sine(220.0 * t + 700.0 * t * t / sec) * x * x * x
     }
     return buf
 }
@@ -706,7 +773,8 @@ fn impact(g: Groove, sec: f64) -> []f64 {
                 es[k] = es[k] * ms[k]
             }
             let growl: f64 = 1.0 + 0.25 * dsp.sine(31.0 * t)
-            buf[j] = 0.32 * attack(t, 0.02) * growl * brass + 0.6 * dsp.sine(f * 0.5 * t) * e12 * attack(t, 0.01)
+            buf[j] = 0.32 * attack(t, 0.02) * growl * brass +
+                0.6 * dsp.sine(f * 0.5 * t) * e12 * attack(t, 0.01)
             e12 = e12 * m12
         }
         return buf

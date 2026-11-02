@@ -17,7 +17,9 @@ import "../core/styles.loam" as styles
 
 /// Integrated loudness of `wav` in LUFS ×10, or -999 when silent.
 fn lufs(wav: string) -> int {
-    let out = sys.exec("ffmpeg -nostdin -v info -i '{{wav}}' -af ebur128 -f null - 2>&1 | sed -n 's/^ *I: *\\(-*[0-9.]*\\) LUFS.*/\\1/p' | tail -n 1")
+    let out = sys.exec(
+        "ffmpeg -nostdin -v info -i '{{wav}}' -af ebur128 -f null - 2>&1 | sed -n 's/^ *I: *\\(-*[0-9.]*\\) LUFS.*/\\1/p' | tail -n 1",
+    )
     let t = str.trim(out)
     if t.len == 0 || str.contains(t, "inf") {
         return -999
@@ -75,26 +77,48 @@ fn main() -> int {
     let a = sys.args()
     let dir = if a.len > 1 { a[1] } else { "/tmp/mune-stems" }
     sys.mkdir(dir)
-    let layers = []int { arrange.L_DRUMS, arrange.L_BASS, arrange.L_PAD, arrange.L_ARP, arrange.L_BELLS }
+    let layers = []int {
+        arrange.L_DRUMS,
+        arrange.L_BASS,
+        arrange.L_PAD,
+        arrange.L_ARP,
+        arrange.L_BELLS,
+    }
     let names = []string { "drums", "bass", "pad", "arp", "bells" }
     if a.len > 2 {
         sys.write_file("{{dir}}/decode.sh", jobs.decode_script(dir, []string { a[2] }))
         sys.exec("sh '{{dir}}/decode.sh'")
         let info = jobs.read_info(dir, 0)
-        let mut src = arrange.source_of(sys.read_file(jobs.env_raw(dir, 0)), "", info[1],
-                                        sys.read_file(jobs.pcm_raw(dir, 0)), info[2], info[0] == 1, false)
+        let mut src = arrange.source_of(
+            sys.read_file(jobs.env_raw(dir, 0)),
+            "",
+            info[1],
+            sys.read_file(jobs.pcm_raw(dir, 0)),
+            info[2],
+            info[0] == 1,
+            false,
+        )
         src.role = arrange.RHYTHM
         let s = only(sound.preset(styles.HOUSE), -1)
         let mut r = s
         r.rec_on = true
         r.rec_lvl = 70
         let sc = arrange.arrange([]Source { src }, r)
-        let g = graph.build(sc, r, []string { jobs.src_wav(dir, 0) }, []string { "" }, []bool { info[0] == 1 }, dir)
+        let g = graph.build(
+            sc,
+            r,
+            []string { jobs.src_wav(dir, 0) },
+            []string { "" },
+            []bool { info[0] == 1 },
+            dir,
+        )
         graph.render_voices(sc, r, g, dir)
         let gp = "{{dir}}/grec.txt"
         sys.write_file(gp, g.text)
         let wav = "{{dir}}/rec.wav"
-        sys.exec("ffmpeg -nostdin -v error -y {{inputs(g)}} -/filter_complex '{{gp}}' -map '[pre]' -c:a pcm_f32le '{{wav}}'")
+        sys.exec(
+            "ffmpeg -nostdin -v error -y {{inputs(g)}} -/filter_complex '{{gp}}' -map '[pre]' -c:a pcm_f32le '{{wav}}'",
+        )
         fmt.println("recordings {{lufs(wav)}} (target -214)")
     }
     let targets = []int { -219, -239, -259, -279, -279 }
@@ -111,7 +135,9 @@ fn main() -> int {
             let gp = "{{dir}}/g{{st}}_{{li}}.txt"
             let wav = "{{dir}}/s{{st}}_{{li}}.wav"
             sys.write_file(gp, g.text)
-            sys.exec("ffmpeg -nostdin -v error -y {{inputs(g)}} -/filter_complex '{{gp}}' -map '[pre]' -c:a pcm_f32le '{{wav}}'")
+            sys.exec(
+                "ffmpeg -nostdin -v error -y {{inputs(g)}} -/filter_complex '{{gp}}' -map '[pre]' -c:a pcm_f32le '{{wav}}'",
+            )
             let l = lufs(wav)
             let trim = targets[li] - l
             line = "{{line}}  {{names[li]}} {{l}} (trim {{trim}})"

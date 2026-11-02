@@ -38,9 +38,18 @@ fn echo_lines(input: string, output: string, amount: int, which: int, bpm_c: int
     let gain = -22.0 + 16.0 * f64(amount) / 100.0
     let mut out = []string {}
     push(out, "[{{input}}]pan=mono|c0=0.5*c0+0.5*c1,asplit=2[{{output}}_l][{{output}}_r]")
-    push(out, "[{{output}}_l]aecho=in_gain=0:out_gain=1:delays={{d}}|{{d * 3}}:decays={{num.f3(fb)}}|{{num.f3(f2 * fb)}}[{{output}}_wl]")
-    push(out, "[{{output}}_r]aecho=in_gain=0:out_gain=1:delays={{d * 2}}|{{d * 4}}:decays={{num.f3(f2)}}|{{num.f3(f2 * f2)}}[{{output}}_wr]")
-    push(out, "[{{output}}_wl][{{output}}_wr]join=inputs=2:channel_layout=stereo,highpass=f=280,lowpass=f=5200,volume={{num.f3(gain)}}dB[{{output}}]")
+    push(
+        out,
+        "[{{output}}_l]aecho=in_gain=0:out_gain=1:delays={{d}}|{{d * 3}}:decays={{num.f3(fb)}}|{{num.f3(f2 * fb)}}[{{output}}_wl]",
+    )
+    push(
+        out,
+        "[{{output}}_r]aecho=in_gain=0:out_gain=1:delays={{d * 2}}|{{d * 4}}:decays={{num.f3(f2)}}|{{num.f3(f2 * f2)}}[{{output}}_wr]",
+    )
+    push(
+        out,
+        "[{{output}}_wl][{{output}}_wr]join=inputs=2:channel_layout=stereo,highpass=f=280,lowpass=f=5200,volume={{num.f3(gain)}}dB[{{output}}]",
+    )
     return out
 }
 
@@ -69,7 +78,10 @@ fn reverb_lines(input: string, output: string, amount: int, space: int) -> []str
     let gain = -16.0 + 15.0 * f64(amount) / 100.0
     let mut out = []string {}
     push(out, "{{reverb_ir(space)}}[{{output}}_ir]")
-    push(out, "[{{input}}][{{output}}_ir]afir=irnorm=-1:irgain=1,volume={{num.f3(gain)}}dB[{{output}}]")
+    push(
+        out,
+        "[{{input}}][{{output}}_ir]afir=irnorm=-1:irgain=1,volume={{num.f3(gain)}}dB[{{output}}]",
+    )
     return out
 }
 

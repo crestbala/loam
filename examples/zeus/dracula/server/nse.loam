@@ -225,7 +225,9 @@ fn fetch_day(ymd: int) -> Got {
         sys.remove_path(tmp)
         return Got { state: 2, body: "", err: "HTTP {{code}}" }
     }
-    let body = sys.exec("unzip -p {{fetchx.sh_quote(tmp)}} 2>/dev/null > {{fetchx.sh_quote(tmp)}}.csv; echo $?")
+    let body = sys.exec(
+        "unzip -p {{fetchx.sh_quote(tmp)}} 2>/dev/null > {{fetchx.sh_quote(tmp)}}.csv; echo $?",
+    )
     let unz = csvx.trim(body)
     let csv = sys.read_file("{{tmp}}.csv")
     sys.remove_path(tmp)

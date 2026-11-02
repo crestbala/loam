@@ -49,8 +49,14 @@ fn main() {
     })
     frames()
     // The dead server answered: the page is on its server-down arm. Load it.
-    stocks.view().set(view(1, "Acme Ltd", []int { 10000, 12000, 11000, 15000 },
-                           []string { "Last", "150.00", "Apr", "High", "150.00", "Apr" }))
+    stocks.view().set(view(1, "Acme Ltd", []int { 10000, 12000, 11000, 15000 }, []string {
+        "Last",
+        "150.00",
+        "Apr",
+        "High",
+        "150.00",
+        "Apr",
+    }))
     frames()
     if zeus.engine_find_text("Acme Ltd") == 0 {
         fail("loaded arm shows the name")
@@ -62,8 +68,14 @@ fn main() {
     // New closes and stats, same shape: the arm, chart and grid update in place.
     let nodes0 = zeus.arena_nodes()
     let rows0 = zeus.reactive_rows()
-    stocks.view().set(view(1, "Acme Limited", []int { 9000, 9500, 9700, 9900 },
-                           []string { "Last", "99.00", "Apr", "High", "99.00", "Apr" }))
+    stocks.view().set(view(1, "Acme Limited", []int { 9000, 9500, 9700, 9900 }, []string {
+        "Last",
+        "99.00",
+        "Apr",
+        "High",
+        "99.00",
+        "Apr",
+    }))
     frames()
     if zeus.engine_find_text("Acme Limited") == 0 {
         fail("the name follows the view")
@@ -98,7 +110,12 @@ fn main() {
     if row_b == 0 {
         fail("search rows show")
     }
-    stocks.search().set(StockSearch { state: 2, query: "ab", total: 3, hits: []StockHit { c, b, a } })
+    stocks.search().set(StockSearch {
+        state: 2,
+        query: "ab",
+        total: 3,
+        hits: []StockHit { c, b, a },
+    })
     frames()
     if zeus.engine_find_text("Ccc Ltd") == 0 {
         fail("the new row shows")

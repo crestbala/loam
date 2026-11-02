@@ -529,7 +529,16 @@ fn statement(m: Motif, label: int, varn: int, kind: int, seed: int) -> Motif {
 /// Statement, response, and cadence, before chord snapping. At density 700
 /// or more the body is diminished, except a build (it already sequences
 /// the fragment) and an intro (it stays stated). The cadence stays put.
-fn plan_line(m: Motif, label: int, varn: int, kind: int, ending: int, span: int, seed: int, den: int) -> Motif {
+fn plan_line(
+    m: Motif,
+    label: int,
+    varn: int,
+    kind: int,
+    ending: int,
+    span: int,
+    seed: int,
+    den: int
+) -> Motif {
     let place = tail_place(ending, span)
     let tail_at = place[0]
     let tail_len = place[1]
@@ -845,15 +854,38 @@ fn cadence_ok(m: Motif, ending: int, span: int) -> bool {
     return weak || held
 }
 
-fn weighted(steps: int, leaps: int, range: int, chord: int, rec: int, contour: int, rhythm: int, mot: int, fresh: int) -> int {
-    return (20 * steps + 15 * leaps + 5 * range + 20 * chord + 10 * rec + 10 * contour + 5 * rhythm + 10 * mot + 5 * fresh) / 100
+fn weighted(
+    steps: int,
+    leaps: int,
+    range: int,
+    chord: int,
+    rec: int,
+    contour: int,
+    rhythm: int,
+    mot: int,
+    fresh: int
+) -> int {
+    return (20 * steps + 15 * leaps + 5 * range + 20 * chord + 10 * rec + 10 * contour +
+        5 * rhythm + 10 * mot + 5 * fresh) / 100
 }
 
 fn as_line(m: Motif, total: int, term: []int) -> Line {
     return Line { deg: m.deg, at: m.at, len: m.len, total: total, term: term }
 }
 
-fn judge(m: Motif, refm: Motif, prev: []int, repeat: bool, start_bar: int, prog: []int, chroma: []int, tonic: int, minor: bool, ending: int, span: int) -> Line {
+fn judge(
+    m: Motif,
+    refm: Motif,
+    prev: []int,
+    repeat: bool,
+    start_bar: int,
+    prog: []int,
+    chroma: []int,
+    tonic: int,
+    minor: bool,
+    ending: int,
+    span: int
+) -> Line {
     if !cadence_ok(m, ending, span) {
         return as_line(m, -1, []int {})
     }
@@ -873,17 +905,57 @@ fn judge(m: Motif, refm: Motif, prev: []int, repeat: bool, start_bar: int, prog:
 /// The best line for one phrase. Candidate 0 is the plan; the rest ornament
 /// it, nudge a rhythm, or step the answer up. A line that misses its
 /// cadence is dropped. Ties keep the earlier candidate.
-fn choose(m: Motif, label: int, varn: int, kind: int, ending: int, span: int, start_bar: int, prog: []int, chroma: []int, tonic: int, minor: bool, seed: int, prev: []int, repeat: bool, den: int) -> Line {
+fn choose(
+    m: Motif,
+    label: int,
+    varn: int,
+    kind: int,
+    ending: int,
+    span: int,
+    start_bar: int,
+    prog: []int,
+    chroma: []int,
+    tonic: int,
+    minor: bool,
+    seed: int,
+    prev: []int,
+    repeat: bool,
+    den: int
+) -> Line {
     let base = plan_line(m, label, varn, kind, ending, span, seed, den)
     let refm = statement(m, label, varn, kind, seed)
-    let mut best = judge(snap(base, start_bar, prog, tonic, minor), refm, prev, repeat, start_bar, prog, chroma, tonic, minor, ending, span)
+    let mut best = judge(
+        snap(base, start_bar, prog, tonic, minor),
+        refm,
+        prev,
+        repeat,
+        start_bar,
+        prog,
+        chroma,
+        tonic,
+        minor,
+        ending,
+        span,
+    )
     if best.total < 0 {
         best = as_line(base, 0, []int { 0, 0, 0, 0, 0, 0, 0, 0, 0 })
     }
     for c in 1..CANDIDATES {
         let varied = vary(base, seed + c * 17)
         let snapped = snap(varied, start_bar, prog, tonic, minor)
-        let got = judge(snapped, refm, prev, repeat, start_bar, prog, chroma, tonic, minor, ending, span)
+        let got = judge(
+            snapped,
+            refm,
+            prev,
+            repeat,
+            start_bar,
+            prog,
+            chroma,
+            tonic,
+            minor,
+            ending,
+            span,
+        )
         if got.total > best.total {
             best = got
         }
@@ -1006,7 +1078,16 @@ fn chord_near(prev_deg: int, ceiling: int, chord: int, tonic: int, minor: bool) 
 /// third, a sixth, or an octave under it; where it rests, on a chord tone
 /// at least a third under the lead's last note. The last note is the
 /// downbeat of the last bar, held.
-fn counter_draw(lead: Motif, span: int, start_bar: int, prog: []int, tonic: int, minor: bool, base: int, seed: int) -> Motif {
+fn counter_draw(
+    lead: Motif,
+    span: int,
+    start_bar: int,
+    prog: []int,
+    tonic: int,
+    minor: bool,
+    base: int,
+    seed: int
+) -> Motif {
     let tail = if span >= 16 { span - 16 } else { 0 }
     let mut onsets = []int {}
     let mut step = 0
@@ -1140,7 +1221,16 @@ fn term_counter_steps(c: Motif, minor: bool, base: int) -> int {
 /// `term` is motion, consonance, fill, and steps, each 0..1000. Ties keep
 /// the earlier candidate. Both lines are read over the tonic note `base`
 /// (`anchor`), so the counter's beats sit under the lead and never cross.
-fn counter(lead: Motif, span: int, start_bar: int, prog: []int, tonic: int, minor: bool, base: int, seed: int) -> Line {
+fn counter(
+    lead: Motif,
+    span: int,
+    start_bar: int,
+    prog: []int,
+    tonic: int,
+    minor: bool,
+    base: int,
+    seed: int
+) -> Line {
     let mut best = no_line()
     if lead.deg.len == 0 || span < 1 {
         return best

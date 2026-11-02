@@ -9,5 +9,8 @@ fn Page(p: Params) -> Node {
 }
 
 fn meta(p: Params) -> Meta {
-    return Meta { title: "Vidy", description: "A smooth video player for mouse, keyboard and touch." }
+    return Meta {
+        title: "Vidy",
+        description: "A smooth video player for mouse, keyboard and touch.",
+    }
 }

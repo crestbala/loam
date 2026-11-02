@@ -89,7 +89,15 @@ fn exit_load(amount: i64, held_days: int, c: Costs) -> i64 {
 /// Tax on a realised gain. `split_days` is the long-term threshold: a
 /// holding of that many days or fewer uses the short rate. A loss taxes
 /// nothing. The backtest does not call this.
-fn capital_gains(gain: i64, held_days: int, split_days: int, short_numer: i64, short_denom: i64, long_numer: i64, long_denom: i64) -> i64 {
+fn capital_gains(
+    gain: i64,
+    held_days: int,
+    split_days: int,
+    short_numer: i64,
+    short_denom: i64,
+    long_numer: i64,
+    long_denom: i64
+) -> i64 {
     if gain <= 0 {
         return i64(0)
     }

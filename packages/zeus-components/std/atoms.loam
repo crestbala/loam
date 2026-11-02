@@ -87,13 +87,20 @@ fn Grid(p: GridProps) -> Node {
         set_auto_columns(raw_grid(p.config.columns, p.config.gap), p.config.autoColumns),
         style = Style(padding = opt_dim(p.config.padding)),
         restyle = p.style,
-        keys = p.keys)
+        keys = p.keys,
+    )
 }
 
 /// Full-window floater. Kind 9 is out of flow. Children are centred.
 fn Overlay(p: OverlayProps) -> Node {
-    return Component(raw_overlay(), style = p.style, visible = p.visible, on_click = p.on_click,
-                     ref = p.ref, keys = p.keys)
+    return Component(
+        raw_overlay(),
+        style = p.style,
+        visible = p.visible,
+        on_click = p.on_click,
+        ref = p.ref,
+        keys = p.keys,
+    )
 }
 
 /// Vertical scroller. Children keep intrinsic height; a bar appears on overflow.
@@ -124,12 +131,19 @@ struct TitleBarProps {
 /// }
 /// ```
 fn TitleBar(p: TitleBarProps) -> Node {
-    return Box(style = Style(direction = Direction.Row, align = Align.Center, gap = Space.Exs,
-                             height = px(titlebar().height),
-                             paddingLeft = titlebar().lead, paddingRight = if titlebar().trail > 12 { titlebar().trail } else { 12 }),
-               restyle = p.style,
-               visible = titlebar().height > 0,
-               role = "titlebar")
+    return Box(
+        style = Style(
+            direction = Direction.Row,
+            align = Align.Center,
+            gap = Space.Exs,
+            height = px(titlebar().height),
+            paddingLeft = titlebar().lead,
+            paddingRight = if titlebar().trail > 12 { titlebar().trail } else { 12 },
+        ),
+        restyle = p.style,
+        visible = titlebar().height > 0,
+        role = "titlebar",
+    )
 }
 
 /// Inline SVG. `currentColor` follows the node's foreground. Geometry props:
@@ -147,8 +161,16 @@ fn Svg(markup: string, p: SvgProps) -> Node {
 /// `fit` is `Fit` (stretch / contain / cover / none). `lazy = true` skips
 /// decode while off-screen.
 fn Image(src: Signal<string>, p: ImageProps) -> Node {
-    return Component(raw_image(""), text = src, style = p.style, fit = p.fit, lazy = p.lazy,
-                     label = p.label, role = "img", keys = p.keys)
+    return Component(
+        raw_image(""),
+        text = src,
+        style = p.style,
+        fit = p.fit,
+        lazy = p.lazy,
+        label = p.label,
+        role = "img",
+        keys = p.keys,
+    )
 }
 
 /// `markup` painted at `px` square and tinted by `tint`. Returns the node so
@@ -169,32 +191,42 @@ struct IconProps {
 /// `px` is the glyph box: pass an `IconSize` (`IconSize.Md` is 16) or, for
 /// SVG art, any raw px.
 fn Icon(markup: string, px: int, tint: string, p: IconProps) -> Node {
-    return Component(raw_svg(markup),
-                     style = Style(width = px(px), height = px(px), color = tint),
-                     restyle = p.style,
-                     ref = p.ref,
-                     role = p.role,
-                     label = p.label)
+    return Component(
+        raw_svg(markup),
+        style = Style(width = px(px), height = px(px), color = tint),
+        restyle = p.style,
+        ref = p.ref,
+        role = p.role,
+        label = p.label,
+    )
 }
 
 fn Pip(fill: string, size: int) -> Node {
-    return Box(style = Style(width = px(size),
-                             height = px(size),
-                             radius = size / 2,
-                             background = opt_color(fill)))
+    return Box(style = Style(
+        width = px(size),
+        height = px(size),
+        radius = size / 2,
+        background = opt_color(fill),
+    ))
 }
 
 fn Row(spacing: int) -> Node {
-    return Box(style = Style(direction = Direction.Row, gap = opt_dim(spacing), align = Align.Center))
+    return Box(style = Style(
+        direction = Direction.Row,
+        gap = opt_dim(spacing),
+        align = Align.Center,
+    ))
 }
 
 /// Row that wraps onto the next line when it overflows (`flex-wrap: wrap`).
 /// Use for responsive clusters of chips, buttons, and badges.
 fn RowWrap(spacing: int) -> Node {
-    return Box(style = Style(direction = Direction.Row,
-                             wrap = true,
-                             gap = opt_dim(spacing),
-                             align = Align.Center))
+    return Box(style = Style(
+        direction = Direction.Row,
+        wrap = true,
+        gap = opt_dim(spacing),
+        align = Align.Center,
+    ))
 }
 
 fn Column(spacing: int) -> Node {
@@ -240,8 +272,7 @@ fn Note(text: Signal<string>) -> Node {
 }
 
 /// Overline + heading + supporting copy as one block.
-fn SectionHeader(overline: Signal<string>, title: Signal<string>,
-                 body: Signal<string>) -> Node {
+fn SectionHeader(overline: Signal<string>, title: Signal<string>, body: Signal<string>) -> Node {
     return Column(Space.Exxxs) {
         Text(overline, style = Style(font = FONT_OVERLINE, color = dim()))
         Text(title, style = Style(font = FONT_HEADING, color = ink()))
@@ -279,26 +310,48 @@ fn Chip(label: Signal<string>, kind: int, p: ChipProps) -> Node {
     let removable = result.is_some(p.on_remove)
 
     // view. The label takes the caller's `color` / `font` when given.
-    return Box(style = Style(height = px(chip_h()), direction = Direction.Row, gap = Space.Exxs,
-                             align = Align.Center,
-                             paddingTop = 5, paddingRight = if removable { 4 } else { 10 }, paddingBottom = 5, paddingLeft = 10,
-                             radius = RAD_CONTROL, borderWidth = HAIRLINE, borderColor = rule(),
-                             background = raised()),
-               restyle = p.style,
-               keys = p.keys) {
+    return Box(
+        style = Style(
+            height = px(chip_h()),
+            direction = Direction.Row,
+            gap = Space.Exxs,
+            align = Align.Center,
+            paddingTop = 5,
+            paddingRight = if removable { 4 } else { 10 },
+            paddingBottom = 5,
+            paddingLeft = 10,
+            radius = RAD_CONTROL,
+            borderWidth = HAIRLINE,
+            borderColor = rule(),
+            background = raised(),
+        ),
+        restyle = p.style,
+        keys = p.keys,
+    ) {
         if p.dot {
             Pip(tint_of(kind), DOT - 2)
         }
-        Text(label, style = Style(font = FONT_CAPTION, color = tint_of(kind), ellipsis = true),
-                    restyle = text_of(p.style))
+        Text(
+            label,
+            style = Style(font = FONT_CAPTION, color = tint_of(kind), ellipsis = true),
+            restyle = text_of(p.style),
+        )
         if removable {
-            Box(style = Style(width = px(18), height = px(18), shrink = 0,
-                              align = Align.Center, justify = Align.Center,
-                              radius = RAD_CONTROL, cursor = "pointer"),
+            Box(
+                style = Style(
+                    width = px(18),
+                    height = px(18),
+                    shrink = 0,
+                    align = Align.Center,
+                    justify = Align.Center,
+                    radius = RAD_CONTROL,
+                    cursor = "pointer",
+                ),
                 on_click = p.on_remove,
                 role = "button",
                 label = "Remove {{label.get()}}",
-                hoverFade = true) {
+                hoverFade = true,
+            ) {
                 Icon(IC_X, 12, mute())
             }
         }
@@ -372,55 +425,76 @@ struct BadgeProps {
 }
 
 fn Badge(label: Signal<string>, kind: int, p: BadgeProps) -> Node {
-    return Box(style = Style(height = px(badge_h(p.size)), direction = Direction.Row,
-                             gap = Space.Exxs, align = Align.Center, justify = Align.Center,
-                             paddingX = 10, radius = RAD_CONTROL,
-                             borderWidth = badge_border_width(kind), borderColor = opt_color(badge_border_color(kind)),
-                             background = opt_color(badge_background(kind))),
-               restyle = p.style,
-               keys = p.keys) {
+    return Box(
+        style = Style(
+            height = px(badge_h(p.size)),
+            direction = Direction.Row,
+            gap = Space.Exxs,
+            align = Align.Center,
+            justify = Align.Center,
+            paddingX = 10,
+            radius = RAD_CONTROL,
+            borderWidth = badge_border_width(kind),
+            borderColor = opt_color(badge_border_color(kind)),
+            background = opt_color(badge_background(kind)),
+        ),
+        restyle = p.style,
+        keys = p.keys,
+    ) {
         if p.dot {
             Pip(badge_color(kind), DOT - 2)
         }
-        Text(label, style = Style(font = FONT_CAPTION, color = badge_color(kind)),
-                    restyle = text_of(p.style))
+        Text(
+            label,
+            style = Style(font = FONT_CAPTION, color = badge_color(kind)),
+            restyle = text_of(p.style),
+        )
     }
 }
 
 /// Count badge: a small rounded label bound to a number, hidden while it is
 /// 0 and capped at `max` ("99+"). Sits over an icon or after a nav label.
 fn BadgeCount(count: Signal<int>, kind: int, max: int = 99) -> Node {
-    return Box(style = Style(display = shown(count.get() != 0),
-                             height = px(badge_h(Size.Sm)),
-                             direction = Direction.Row,
-                             align = Align.Center,
-                             justify = Align.Center,
-                             minWidth = badge_h(Size.Sm),
-                             paddingX = 5,
-                             radius = RAD_CONTROL,
-                             background = opt_color(badge_background(kind))),
-               role = "status") {
-        Text(fn() -> string {
-            let v = count.get()
-            if v > max {
-                return "{{max}}+"
-            }
-            return "{{v}}"
-        },
-             style = Style(font = 11, color = badge_color(kind)))
+    return Box(
+        style = Style(
+            display = shown(count.get() != 0),
+            height = px(badge_h(Size.Sm)),
+            direction = Direction.Row,
+            align = Align.Center,
+            justify = Align.Center,
+            minWidth = badge_h(Size.Sm),
+            paddingX = 5,
+            radius = RAD_CONTROL,
+            background = opt_color(badge_background(kind)),
+        ),
+        role = "status",
+    ) {
+        Text(
+            fn() -> string {
+                let v = count.get()
+                if v > max {
+                    return "{{max}}+"
+                }
+                return "{{v}}"
+            },
+            style = Style(font = 11, color = badge_color(kind)),
+        )
     }
 }
 
 /// Key cap: 1px border on muted, mono-ish small text, 20px tall.
 fn Kbd(key: Signal<string>) {
-    Box(style = Style(height = px(20),
-                      direction = Direction.Row,
-                      align = Align.Center,
-                      justify = Align.Center,
-                      paddingX = 6,
-                      radius = RAD_MD,
-                      borderWidth = HAIRLINE, borderColor = rule(),
-                      background = raised())) {
+    Box(style = Style(
+        height = px(20),
+        direction = Direction.Row,
+        align = Align.Center,
+        justify = Align.Center,
+        paddingX = 6,
+        radius = RAD_MD,
+        borderWidth = HAIRLINE,
+        borderColor = rule(),
+        background = raised(),
+    )) {
         Text(key, style = Style(font = 10, color = mute()))
     }
 }
@@ -462,8 +536,10 @@ fn ProgressLabeled(value: Signal<int>, p: ProgressProps) -> Node {
     return Box(style = Style(direction = Direction.Column, gap = 6)) {
         Box(style = Style(direction = Direction.Row, align = Align.Center)) {
             Text(p.label, style = Style(grow = 1, font = FONT_CONTROL, color = ink()))
-            Text(if sweep || value.get() < 0 { "" } else { "{{value.get()}}%" },
-                 style = Style(font = FONT_CONTROL, color = mute()))
+            Text(
+                if sweep || value.get() < 0 { "" } else { "{{value.get()}}%" },
+                style = Style(font = FONT_CONTROL, color = mute()),
+            )
         }
         ProgressTrack(value, p)
     }
@@ -474,13 +550,14 @@ fn ProgressLabeled(value: Signal<int>, p: ProgressProps) -> Node {
 fn ProgressTrack(value: Signal<int>, p: ProgressProps) -> Node {
     // Fills a column; `grow` takes the free width in a row, where a bare
     // 100% would be the (empty) content width.
-    return Component(raw_progress(),
-                     bind = if p.indeterminate { signal(-1) } else { value },
-                     style = Style(width = pct(100), grow = 1, height = px(progress_h(p.size)),
-                                   radius = 1),
-                     restyle = p.style,
-                     label = p.label,
-                     role = "progressbar")
+    return Component(
+        raw_progress(),
+        bind = if p.indeterminate { signal(-1) } else { value },
+        style = Style(width = pct(100), grow = 1, height = px(progress_h(p.size)), radius = 1),
+        restyle = p.style,
+        label = p.label,
+        role = "progressbar",
+    )
 }
 
 /// Legacy name for `Progress`.
@@ -509,13 +586,13 @@ fn tone_tint(tone: int) -> int {
 
 /// Raised panel (no border). Prefer `Card` for the bordered look.
 fn Surface() -> Node {
-    return Box(
-        style = Style(direction = Direction.Column,
-                      gap = Space.Xs,
-                      padding = Space.Md,
-                      radius = RAD_LG,
-                      background = raised())
-    )
+    return Box(style = Style(
+        direction = Direction.Column,
+        gap = Space.Xs,
+        padding = Space.Md,
+        radius = RAD_LG,
+        background = raised(),
+    ))
 }
 
 /// Form label: body-size, medium weight.
@@ -546,32 +623,47 @@ struct AvatarProps {
 /// while the host loads. `status` is a `Tint` for the corner presence pip
 /// (`-1` = none). `User` composes it; `AvatarGroup` stacks several.
 fn Avatar(initials: string, size: int, p: AvatarProps) -> Node {
-    return Box(style = Style(width = px(size),
-                             height = px(size),
-                             direction = Direction.Row,
-                             align = Align.Center,
-                             justify = Align.Center,
-                             radius = size / 2,
-                             background = raised()),
-               restyle = p.style) {
+    return Box(
+        style = Style(
+            width = px(size),
+            height = px(size),
+            direction = Direction.Row,
+            align = Align.Center,
+            justify = Align.Center,
+            radius = size / 2,
+            background = raised(),
+        ),
+        restyle = p.style,
+    ) {
         Text(initials, style = Style(font = (size + 8) / 4, color = ink()))
         if p.src.len > 0 {
-            Image(p.src,
-                  style = Style(width = px(size),
-                                height = px(size),
-                                position = pos_absolute(),
-                                top = 0, left = 0,
-                                radius = size / 2))
+            Image(
+                p.src,
+                style = Style(
+                    width = px(size),
+                    height = px(size),
+                    position = pos_absolute(),
+                    top = 0,
+                    left = 0,
+                    radius = size / 2,
+                ),
+            )
         }
         if p.status >= 0 {
-            Box(style = Style(width = px(avatar_dot(size)),
-                              height = px(avatar_dot(size)),
-                              position = pos_absolute(),
-                              right = 0, bottom = 0,
-                              radius = avatar_dot(size) / 2,
-                              borderWidth = 2, borderColor = plate(),
-                              background = tint_of(p.status)),
-                role = "status")
+            Box(
+                style = Style(
+                    width = px(avatar_dot(size)),
+                    height = px(avatar_dot(size)),
+                    position = pos_absolute(),
+                    right = 0,
+                    bottom = 0,
+                    radius = avatar_dot(size) / 2,
+                    borderWidth = 2,
+                    borderColor = plate(),
+                    background = tint_of(p.status),
+                ),
+                role = "status",
+            )
         }
     }
 }
@@ -659,11 +751,13 @@ fn spark_markup(vals: []int, w: int, h: int) -> string {
 /// Inline trend line, `w`×`h` dp, stroked in `tint`. The markup is a text
 /// thunk over `vals`, so pushing a point repaints only this node.
 fn Sparkline(vals: Signal<[]int>, w: int, h: int, tint: string) -> Node {
-    return Component(raw_svg(""),
-                     style = Style(width = px(w), height = px(h), color = tint),
-                     text = fn() -> string { return spark_markup(vals.get(), w, h) },
-                     role = "img",
-                     label = "sparkline")
+    return Component(
+        raw_svg(""),
+        style = Style(width = px(w), height = px(h), color = tint),
+        text = fn() -> string { return spark_markup(vals.get(), w, h) },
+        role = "img",
+        label = "sparkline",
+    )
 }
 
 /// Stat card: small muted label over a big tinted value. `delta` + `trend`
@@ -679,8 +773,10 @@ fn Stat(label: Signal<string>, value: Signal<string>, kind: int, p: StatProps) -
             }
         }
         if p.delta.get().len > 0 {
-            Box(style = Style(direction = Direction.Row, gap = 2, align = Align.Center),
-               role = "status") {
+            Box(
+                style = Style(direction = Direction.Row, gap = 2, align = Align.Center),
+                role = "status",
+            ) {
                 if p.trend == Trend.Up {
                     Icon(IC_TREND_UP, 14, trend_tint(p.trend))
                 }
@@ -733,8 +829,13 @@ fn roving_jump(value: Signal<int>, index: int, target: int) {
 /// The four bindings every roving group shares: the arrow pair along its
 /// axis, plus Home / End. `prefix` names the actions (`"tab"` → `tab.next`).
 /// `vertical` adds up / down beside left / right, for groups that stack.
-fn roving_keys(prefix: string, value: Signal<int>, index: int, count: int,
-               vertical: bool = false) -> []KeyBind {
+fn roving_keys(
+    prefix: string,
+    value: Signal<int>,
+    index: int,
+    count: int,
+    vertical: bool = false
+) -> []KeyBind {
     let mut keys = []KeyBind {
         key_bind("right", "{{prefix}}.next", fn() { roving_step(value, index, count, 1) }),
         key_bind("left", "{{prefix}}.prev", fn() { roving_step(value, index, count, -1) }),
@@ -742,7 +843,10 @@ fn roving_keys(prefix: string, value: Signal<int>, index: int, count: int,
         key_bind("end", "{{prefix}}.last", fn() { roving_jump(value, index, count - 1) }),
     }
     if vertical {
-        push(keys, key_bind("down", "{{prefix}}.next", fn() { roving_step(value, index, count, 1) }))
+        push(
+            keys,
+            key_bind("down", "{{prefix}}.next", fn() { roving_step(value, index, count, 1) }),
+        )
         push(keys, key_bind("up", "{{prefix}}.prev", fn() { roving_step(value, index, count, -1) }))
     }
     return keys
@@ -846,12 +950,11 @@ fn combo_key(active: Signal<int>, matches: Signal<[]string>) -> int {
 /// shimmer band on the frame clock (static under reduced motion). Width /
 /// height explicit; wrap in a card to demo.
 fn Skeleton(w: int, h: int, radius: int) -> Node {
-    let n = Box(style = Style(width = px(w),
-                              height = px(h),
-                              radius = radius,
-                              background = bone()),
-                role = "progressbar",
-                label = "Loading")
+    let n = Box(
+        style = Style(width = px(w), height = px(h), radius = radius, background = bone()),
+        role = "progressbar",
+        label = "Loading",
+    )
     return pulse(n)
 }
 
@@ -871,8 +974,14 @@ struct SpinnerProps {
 /// re-runs a component or effect and skips layout, and it keeps a frame live
 /// while it is visible. Under reduced motion it settles static.
 fn Spinner(p: SpinnerProps) -> Node {
-    let n = Icon(IC_LOADER, px_or_default(p.size, 16), str_or_default(p.color, dim()),
-                 role = "progressbar", label = p.label, style = p.style)
+    let n = Icon(
+        IC_LOADER,
+        px_or_default(p.size, 16),
+        str_or_default(p.color, dim()),
+        role = "progressbar",
+        label = p.label,
+        style = p.style,
+    )
     return spin(n, px_or_default(p.period, 900))
 }
 
@@ -890,10 +999,16 @@ struct EmptyProps {
 /// Centred empty state: optional icon, title, supporting copy, then an action
 /// supplied as the trailing block.
 fn Empty(p: EmptyProps) -> Node {
-    return Box(style = Style(direction = Direction.Column, gap = Space.Xs,
-                             align = Align.Center, justify = Align.Center,
-                             padding = Space.Xl),
-               restyle = p.style) {
+    return Box(
+        style = Style(
+            direction = Direction.Column,
+            gap = Space.Xs,
+            align = Align.Center,
+            justify = Align.Center,
+            padding = Space.Xl,
+        ),
+        restyle = p.style,
+    ) {
         if p.icon.len > 0 {
             Icon(p.icon, 28, dim())
         }
@@ -1153,7 +1268,10 @@ fn sort_key(s: string) -> []int {
                 if is_digit(t) {
                     break
                 }
-                if t == 45 && i + 1 < s.len && is_digit(s[i + 1]) && (i == 0 || !is_alnum(s[i - 1])) {
+                if t == 45 &&
+                    i + 1 < s.len &&
+                    is_digit(s[i + 1]) &&
+                    (i == 0 || !is_alnum(s[i - 1])) {
                     break
                 }
                 push(key, lower_byte(t))
@@ -1293,13 +1411,17 @@ fn sort_cells<T>(items: []T, cells: fn(T) -> []string, sort: int) -> []T {
         }
         return out
     }
-    return sort_by(items, fn(t: T) -> string {
-        let c = cells(t)
-        if col < c.len {
-            return c[col]
-        }
-        return ""
-    }, sort_desc(sort))
+    return sort_by(
+        items,
+        fn(t: T) -> string {
+            let c = cells(t)
+            if col < c.len {
+                return c[col]
+            }
+            return ""
+        },
+        sort_desc(sort),
+    )
 }
 
 /// Cells joined by tabs: `Table`'s row key.
@@ -1594,8 +1716,18 @@ fn chart_fy(lo: int, hi: int, plot_h: int, top: int, v: int) -> int {
 }
 
 /// Polyline for series `j` over `lo..hi`. A gap lifts the pen.
-fn chart_fline_d(vals: []int, s: int, j: int, lo: int, hi: int, gutter: int, col_w: int,
-                 plot_h: int, top: int, n: int) -> string {
+fn chart_fline_d(
+    vals: []int,
+    s: int,
+    j: int,
+    lo: int,
+    hi: int,
+    gutter: int,
+    col_w: int,
+    plot_h: int,
+    top: int,
+    n: int
+) -> string {
     let mut b = []int {}
     let mut pen = false
     for i in 0..n {
@@ -1623,34 +1755,46 @@ fn chart_faxes(gw: Signal<int>, h: int, sp: Signal<[]int>, dec: int) {
     let base_y = CHART_TOP + plot_h
     for k in 0..4 {
         let line = Box(style = || {
-            return Style(width = px(chart_gw(gw) - CHART_GUTTER),
-                         height = px(1),
-                         opacity = 45,
-                         position = pos_absolute(),
-                         top = CHART_TOP + k * plot_h / 4, left = CHART_GUTTER,
-                         background = rule())
+            return Style(
+                width = px(chart_gw(gw) - CHART_GUTTER),
+                height = px(1),
+                opacity = 45,
+                position = pos_absolute(),
+                top = CHART_TOP + k * plot_h / 4,
+                left = CHART_GUTTER,
+                background = rule(),
+            )
         })
     }
     for k in 0..5 {
-        let lab = Box(style = Style(width = px(CHART_GUTTER - 6),
-                                    height = px(12),
-                                    direction = Direction.Row,
-                                    justify = Align.End,
-                                    position = pos_absolute(),
-                                    top = CHART_TOP + k * plot_h / 4 - 6, left = 0)) {
-            Text(fn() -> string {
-                let lh = sp.get()
-                let tv = lh[1] - int(i64(k) * i64(lh[1] - lh[0]) / i64(4))
-                return chart_tick(tv, dec, lh[1] - lh[0])
-            }, style = Style(font = FONT_CAPTION, color = mute()))
+        let lab = Box(style = Style(
+            width = px(CHART_GUTTER - 6),
+            height = px(12),
+            direction = Direction.Row,
+            justify = Align.End,
+            position = pos_absolute(),
+            top = CHART_TOP + k * plot_h / 4 - 6,
+            left = 0,
+        )) {
+            Text(
+                fn() -> string {
+                    let lh = sp.get()
+                    let tv = lh[1] - int(i64(k) * i64(lh[1] - lh[0]) / i64(4))
+                    return chart_tick(tv, dec, lh[1] - lh[0])
+                },
+                style = Style(font = FONT_CAPTION, color = mute()),
+            )
         }
     }
     let axis = Box(style = || {
-        return Style(width = px(chart_gw(gw) - CHART_GUTTER),
-                     height = px(1),
-                     position = pos_absolute(),
-                     top = base_y, left = CHART_GUTTER,
-                     background = hard())
+        return Style(
+            width = px(chart_gw(gw) - CHART_GUTTER),
+            height = px(1),
+            position = pos_absolute(),
+            top = base_y,
+            left = CHART_GUTTER,
+            background = hard(),
+        )
     })
 }
 
@@ -1719,28 +1863,38 @@ fn chart_svg(d: string, w: int, h: int, fill: string, stroke: string, sw: int) -
 
 /// Full-size svg node for the plot, layered at 0,0.
 fn ChartLayer(markup: string, w: int, h: int) -> Node {
-    return Svg(markup,
-               style = Style(width = px(w),
-                             height = px(h),
-                             position = pos_absolute(),
-                             top = 0, left = 0))
+    return Svg(
+        markup,
+        style = Style(width = px(w), height = px(h), position = pos_absolute(), top = 0, left = 0),
+    )
 }
 
 /// `ChartLayer` that follows the plot width: the markup and the box are
 /// thunks over `gw`, so a resize rewrites the path in place.
 fn chart_layer_live(markup: Signal<string>, gw: Signal<int>, h: int) -> Node {
-    return Component(raw_svg(""), text = markup,
-                     style = || {
-                         return Style(width = px(chart_gw(gw)),
-                                      height = px(h),
-                                      position = pos_absolute(),
-                                      top = 0, left = 0)
-                     })
+    return Component(raw_svg(""), text = markup, style = || {
+        return Style(
+            width = px(chart_gw(gw)),
+            height = px(h),
+            position = pos_absolute(),
+            top = 0,
+            left = 0,
+        )
+    })
 }
 
 /// Polyline for series `j` (straight segments — recharts default linear).
-fn chart_line_d(vals: []int, s: int, j: int, maxv: int, gutter: int, col_w: int,
-                plot_h: int, top: int, n: int) -> string {
+fn chart_line_d(
+    vals: []int,
+    s: int,
+    j: int,
+    maxv: int,
+    gutter: int,
+    col_w: int,
+    plot_h: int,
+    top: int,
+    n: int
+) -> string {
     let mut b = []int {}
     b = bytes_s(b, "M")
     for i in 0..n {
@@ -1757,8 +1911,17 @@ fn chart_line_d(vals: []int, s: int, j: int, maxv: int, gutter: int, col_w: int,
 }
 
 /// Closed polygon under series `j`: the line plus the baseline (area fill).
-fn chart_area_d(vals: []int, s: int, j: int, maxv: int, gutter: int, col_w: int,
-                plot_h: int, top: int, n: int) -> string {
+fn chart_area_d(
+    vals: []int,
+    s: int,
+    j: int,
+    maxv: int,
+    gutter: int,
+    col_w: int,
+    plot_h: int,
+    top: int,
+    n: int
+) -> string {
     let base = top + plot_h
     let first_x = chart_pt_x(gutter, col_w, n, 0)
     let last_x = chart_pt_x(gutter, col_w, n, n - 1)
@@ -1790,36 +1953,48 @@ fn chart_axes(gw: Signal<int>, h: int, maxv: Signal<int>) {
     // Gridlines above the baseline (top = max value).
     for k in 0..4 {
         let line = Box(style = || {
-            return Style(width = px(chart_gw(gw) - CHART_GUTTER),
-                         height = px(1),
-                         opacity = 45,
-                         position = pos_absolute(),
-                         top = CHART_TOP + k * plot_h / 4, left = CHART_GUTTER,
-                         background = rule())
+            return Style(
+                width = px(chart_gw(gw) - CHART_GUTTER),
+                height = px(1),
+                opacity = 45,
+                position = pos_absolute(),
+                top = CHART_TOP + k * plot_h / 4,
+                left = CHART_GUTTER,
+                background = rule(),
+            )
         })
     }
     // Y tick labels, max .. 0 (bottom 0 sits above the baseline).
     for k in 0..5 {
-        let lab = Box(style = Style(width = px(CHART_GUTTER - 6),
-                                    height = px(12),
-                                    direction = Direction.Row,
-                                    justify = Align.End,
-                                    position = pos_absolute(),
-                                    top = CHART_TOP + k * plot_h / 4 - 6, left = 0)) {
-            Text(fn() -> string {
-                let m = maxv.get()
-                let tv = m - k * m / 4
-                return "{{tv}}"
-            }, style = Style(font = FONT_CAPTION, color = mute()))
+        let lab = Box(style = Style(
+            width = px(CHART_GUTTER - 6),
+            height = px(12),
+            direction = Direction.Row,
+            justify = Align.End,
+            position = pos_absolute(),
+            top = CHART_TOP + k * plot_h / 4 - 6,
+            left = 0,
+        )) {
+            Text(
+                fn() -> string {
+                    let m = maxv.get()
+                    let tv = m - k * m / 4
+                    return "{{tv}}"
+                },
+                style = Style(font = FONT_CAPTION, color = mute()),
+            )
         }
     }
     // Baseline axis.
     let axis = Box(style = || {
-        return Style(width = px(chart_gw(gw) - CHART_GUTTER),
-                     height = px(1),
-                     position = pos_absolute(),
-                     top = base_y, left = CHART_GUTTER,
-                     background = hard())
+        return Style(
+            width = px(chart_gw(gw) - CHART_GUTTER),
+            height = px(1),
+            position = pos_absolute(),
+            top = base_y,
+            left = CHART_GUTTER,
+            background = hard(),
+        )
     })
 }
 
@@ -1874,23 +2049,36 @@ fn chart_tip_place(mx: int, my: int, reach: int, tip_h: int, w: int, h: int) -> 
 /// props are plain data, so a prop that must follow a signal gets `styled`.
 /// `ys` is each column's topmost mark (the anchor) and `reach` the mark's
 /// half-width, so the panel sits beside the mark rather than on it.
-fn chart_tooltip(d: Signal<ChartData>, s: int, n: int,
-                 gw: Signal<int>, h: int, act: Signal<int>, pt: int, dec: int,
-                 ys: fn(int) -> int, reach: int) {
+fn chart_tooltip(
+    d: Signal<ChartData>,
+    s: int,
+    n: int,
+    gw: Signal<int>,
+    h: int,
+    act: Signal<int>,
+    pt: int,
+    dec: int,
+    ys: fn(int) -> int,
+    reach: int
+) {
     let panel = Box(
-        style = Style(width = px(CHART_TIP_W),
-                      direction = Direction.Column,
-                      gap = Space.Exxxs,
-                      position = pos_absolute(),
-                      zIndex = 8,
-                      paddingY = 6, paddingX = 10,
-                      top = 0,
-                      radius = RAD_LG,
-                      borderWidth = HAIRLINE, borderColor = chart_edge(),
-                      background = plate()),
+        style = Style(
+            width = px(CHART_TIP_W),
+            direction = Direction.Column,
+            gap = Space.Exxxs,
+            position = pos_absolute(),
+            zIndex = 8,
+            paddingY = 6,
+            paddingX = 10,
+            top = 0,
+            radius = RAD_LG,
+            borderWidth = HAIRLINE,
+            borderColor = chart_edge(),
+            background = plate(),
+        ),
         on_click = fn() { return },
         role = "dialog",
-        visible = act.get() != 0
+        visible = act.get() != 0,
     )
     enter_fade(panel)
     // Follow the hovered mark; -1 (no pin) while `act` is 0, when the panel
@@ -1911,8 +2099,14 @@ fn chart_tooltip(d: Signal<ChartData>, s: int, n: int,
                 if r == CHART_REACH_BARS {
                     r = max2((col_w - 2 * chart_bar_inset(col_w)) / s, 1) * s / 2
                 }
-                let at = chart_tip_place(chart_mx(pt, CHART_GUTTER, col_w, n, a), ys(a),
-                                         r, tip_h, chart_gw(gw), h)
+                let at = chart_tip_place(
+                    chart_mx(pt, CHART_GUTTER, col_w, n, a),
+                    ys(a),
+                    r,
+                    tip_h,
+                    chart_gw(gw),
+                    h,
+                )
                 x = at[0]
                 y = at[1]
             }
@@ -1921,35 +2115,44 @@ fn chart_tooltip(d: Signal<ChartData>, s: int, n: int,
         top(panel, y)
     })
     slot(panel, || {
-        Text(fn() -> string {
-            let a = act.get() - 1
-            if a >= 0 {
-                if a < n {
-                    return d.get().labels[a]
+        Text(
+            fn() -> string {
+                let a = act.get() - 1
+                if a >= 0 {
+                    if a < n {
+                        return d.get().labels[a]
+                    }
                 }
-            }
-            return ""
-        },
-             style = Style(font = FONT_CAPTION, color = ink()))
+                return ""
+            },
+            style = Style(font = FONT_CAPTION, color = ink()),
+        )
         for j in 0..s {
             let jj = j
             Row(Space.Exs) {
-                Box(style = Style(width = px(8),
-                                  height = px(8),
-                                  radius = 2,
-                                  background = chart_color(jj)))
-                Text(fn() -> string { return d.get().names[jj] }, style = Style(font = FONT_CAPTION, color = mute()))
+                Box(style = Style(
+                    width = px(8),
+                    height = px(8),
+                    radius = 2,
+                    background = chart_color(jj),
+                ))
+                Text(
+                    fn() -> string { return d.get().names[jj] },
+                    style = Style(font = FONT_CAPTION, color = mute()),
+                )
                 Grow()
-                Text(fn() -> string {
-                    let a = act.get() - 1
-                    if a >= 0 {
-                        if a < n {
-                            return chart_fmt(d.get().vals[a * s + jj], dec)
+                Text(
+                    fn() -> string {
+                        let a = act.get() - 1
+                        if a >= 0 {
+                            if a < n {
+                                return chart_fmt(d.get().vals[a * s + jj], dec)
+                            }
                         }
-                    }
-                    return ""
-                },
-                     style = Style(font = FONT_CAPTION, color = ink()))
+                        return ""
+                    },
+                    style = Style(font = FONT_CAPTION, color = ink()),
+                )
             }
         }
     })
@@ -1961,14 +2164,24 @@ fn chart_tooltip(d: Signal<ChartData>, s: int, n: int,
 /// previous mark to the midpoint of the next (the ends reach the plot
 /// edges), so the pointer always lands on the nearest mark; column mode
 /// keeps the full-band coverage of the bar columns.
-fn chart_zone(i: int, hov: Signal<int>, act: Signal<int>, h: int, gw: Signal<int>, pt: int,
-              n: int) {
+fn chart_zone(
+    i: int,
+    hov: Signal<int>,
+    act: Signal<int>,
+    h: int,
+    gw: Signal<int>,
+    pt: int,
+    n: int
+) {
     let zone = Box(style = || {
         let lw = chart_zone_lw(i, chart_colw(gw, n), pt, n)
-        return Style(width = px(lw[1]),
-                     height = px(h),
-                     position = pos_absolute(),
-                     top = 0, left = lw[0])
+        return Style(
+            width = px(lw[1]),
+            height = px(h),
+            position = pos_absolute(),
+            top = 0,
+            left = lw[0],
+        )
     })
     hover(zone, hov)
     styled(zone, || {
@@ -1995,12 +2208,14 @@ fn chart_zone_lw(i: int, col_w: int, pt: int, n: int) -> []int {
             if i == 0 {
                 zl = CHART_GUTTER
             } else {
-                zl = (chart_pt_x(CHART_GUTTER, col_w, n, i - 1) + chart_pt_x(CHART_GUTTER, col_w, n, i)) / 2
+                zl = (chart_pt_x(CHART_GUTTER, col_w, n, i - 1) +
+                    chart_pt_x(CHART_GUTTER, col_w, n, i)) / 2
             }
             if i == n - 1 {
                 zw = CHART_GUTTER + col_w * n - zl
             } else {
-                let zr = (chart_pt_x(CHART_GUTTER, col_w, n, i) + chart_pt_x(CHART_GUTTER, col_w, n, i + 1)) / 2
+                let zr = (chart_pt_x(CHART_GUTTER, col_w, n, i) +
+                    chart_pt_x(CHART_GUTTER, col_w, n, i + 1)) / 2
                 zw = zr - zl
             }
         }
@@ -2017,27 +2232,40 @@ fn chart_xlab(d: Signal<ChartData>, i: int, gw: Signal<int>, plot_h: int, pt: in
     // 8px of air below the baseline axis: the rotated strip starts below the
     // line, not on it (the pivot corner is the strip's top edge). Span mode
     // labels sit just left of their mark so the strip stays inside the plot.
-    let lab = Text(fn() -> string { return d.get().labels[i] },
-                   style = || {
-                       let col_w = chart_colw(gw, n)
-                       let x = if pt != 0 { chart_pt_x(CHART_GUTTER, col_w, n, i) - 4 } else { chart_col_x(CHART_GUTTER, col_w, i) + 3 }
-                       return Style(position = pos_absolute(),
-                                    font = FONT_CAPTION,
-                                    top = CHART_TOP + plot_h + 8, left = x,
-                                    color = mute())
-                   })
+    let lab = Text(fn() -> string { return d.get().labels[i] }, style = || {
+        let col_w = chart_colw(gw, n)
+        let x = if pt != 0 {
+            chart_pt_x(CHART_GUTTER, col_w, n, i) - 4
+        } else {
+            chart_col_x(CHART_GUTTER, col_w, i) + 3
+        }
+        return Style(
+            position = pos_absolute(),
+            font = FONT_CAPTION,
+            top = CHART_TOP + plot_h + 8,
+            left = x,
+            color = mute(),
+        )
+    })
     text_rot(lab, 45)
 }
 
 /// Bottom-centered legend, 16px between entries.
 fn chart_legend(d: Signal<ChartData>) {
-    Box(style = Style(direction = Direction.Row, wrap = true, gap = Space.Sm, justify = Align.Center)) {
+    Box(style = Style(
+        direction = Direction.Row,
+        wrap = true,
+        gap = Space.Sm,
+        justify = Align.Center,
+    )) {
         Each(d.get().names, fn(j, name) {
             return Row(Space.Exxs) {
-                Box(style = Style(width = px(8),
-                                  height = px(8),
-                                  radius = 2,
-                                  background = chart_color(j)))
+                Box(style = Style(
+                    width = px(8),
+                    height = px(8),
+                    radius = 2,
+                    background = chart_color(j),
+                ))
                 Text(name, style = Style(font = FONT_CAPTION, color = mute()))
             }
         })
@@ -2048,15 +2276,19 @@ fn chart_legend(d: Signal<ChartData>) {
 /// `act` = category + 1; the line shows and slides with it. Build it before
 /// the marks, so the line runs behind the dots and bars rather than over them.
 fn chart_cursor(act: Signal<int>, n: int, gw: Signal<int>, plot_h: int, pt: int) {
-    let line = Box(style = Style(width = px(1),
-                                 height = px(plot_h),
-                                 opacity = 55,
-                                 position = pos_absolute(),
-                                 top = CHART_TOP,
-                                 radius = 0,
-                                 background = hard()),
-                   label = "cursor",
-                   role = "presentation")
+    let line = Box(
+        style = Style(
+            width = px(1),
+            height = px(plot_h),
+            opacity = 55,
+            position = pos_absolute(),
+            top = CHART_TOP,
+            radius = 0,
+            background = hard(),
+        ),
+        label = "cursor",
+        role = "presentation",
+    )
     styled(line, || {
         let a = act.get() - 1
         let mut x = -1
@@ -2076,9 +2308,18 @@ fn chart_cursor(act: Signal<int>, n: int, gw: Signal<int>, plot_h: int, pt: int)
 /// column. `pt` = 1 for plot-spanning line/area charts (zone strips snap to
 /// the nearest mark), 0 for column-mode bar charts. `ys` / `reach`: see
 /// `chart_tooltip`.
-fn chart_tooltips(d: Signal<ChartData>, s: int, n: int,
-                  h: int, gw: Signal<int>, act: Signal<int>, pt: int, ys: fn(int) -> int,
-                  reach: int, dec: int = 0) {
+fn chart_tooltips(
+    d: Signal<ChartData>,
+    s: int,
+    n: int,
+    h: int,
+    gw: Signal<int>,
+    act: Signal<int>,
+    pt: int,
+    ys: fn(int) -> int,
+    reach: int,
+    dec: int = 0
+) {
     for i in 0..n {
         let hov = signal(0)
         chart_zone(i, hov, act, h, gw, pt, n)
@@ -2170,13 +2411,16 @@ fn chart_bars(d: Signal<ChartData>, n: int, s: int, gw: Signal<int>, h: int) {
                     let inset = chart_bar_inset(col_w)
                     let bar_w = max2((col_w - 2 * inset) / s, 1)
                     let x0 = chart_col_x(CHART_GUTTER, col_w, ii) + inset
-                    return Style(width = px(bar_w),
-                                 height = px(bh),
-                                 position = pos_absolute(),
-                                 top = base_y - bh, left = x0 + j * bar_w,
-                                 radius = 3,
-                                 display = shown(v > 0),
-                                 background = chart_color(j))
+                    return Style(
+                        width = px(bar_w),
+                        height = px(bh),
+                        position = pos_absolute(),
+                        top = base_y - bh,
+                        left = x0 + j * bar_w,
+                        radius = 3,
+                        display = shown(v > 0),
+                        background = chart_color(j),
+                    )
                 })
                 styled(bar, || { opacity(bar, chart_dim(act, ii)) })
             }
@@ -2225,15 +2469,33 @@ fn chart_lines(d: Signal<ChartData>, n: int, s: int, gw: Signal<int>, h: int, p:
             let jj = j
             let path = fn() -> string {
                 let lh = sp.get()
-                return chart_fline_d(d.get().vals, s, jj, lh[0], lh[1], CHART_GUTTER, chart_colw(gw, n), plot_h,
-                                     CHART_TOP, n)
+                return chart_fline_d(
+                    d.get().vals,
+                    s,
+                    jj,
+                    lh[0],
+                    lh[1],
+                    CHART_GUTTER,
+                    chart_colw(gw, n),
+                    plot_h,
+                    CHART_TOP,
+                    n,
+                )
             }
-            let line_l = chart_layer_live(fn() -> string {
-                return chart_svg(path(), chart_gw(gw), h, "none", chart_stroke_light(jj), 2)
-            }, gw, h)
-            let line_d = chart_layer_live(fn() -> string {
-                return chart_svg(path(), chart_gw(gw), h, "none", chart_stroke_dark(jj), 2)
-            }, gw, h)
+            let line_l = chart_layer_live(
+                fn() -> string {
+                    return chart_svg(path(), chart_gw(gw), h, "none", chart_stroke_light(jj), 2)
+                },
+                gw,
+                h,
+            )
+            let line_d = chart_layer_live(
+                fn() -> string {
+                    return chart_svg(path(), chart_gw(gw), h, "none", chart_stroke_dark(jj), 2)
+                },
+                gw,
+                h,
+            )
             show_eq(line_l, appearance(), 0)
             show_eq(line_d, appearance(), 1)
             if p.dots {
@@ -2248,13 +2510,16 @@ fn chart_lines(d: Signal<ChartData>, n: int, s: int, gw: Signal<int>, h: int, p:
                         if v != CHART_GAP {
                             y = chart_fy(lh[0], lh[1], plot_h, CHART_TOP, v)
                         }
-                        return Style(width = px(6),
-                                     height = px(6),
-                                     position = pos_absolute(),
-                                     top = y - 3, left = x - 3,
-                                     radius = 3,
-                                     display = shown(v != CHART_GAP),
-                                     background = chart_color(jj))
+                        return Style(
+                            width = px(6),
+                            height = px(6),
+                            position = pos_absolute(),
+                            top = y - 3,
+                            left = x - 3,
+                            radius = 3,
+                            display = shown(v != CHART_GAP),
+                            background = chart_color(jj),
+                        )
                     })
                 }
             }
@@ -2294,40 +2559,89 @@ fn chart_areas(d: Signal<ChartData>, n: int, s: int, gw: Signal<int>, h: int) {
         for j in 0..s {
             let jj = j
             let fill_d = fn() -> string {
-                return chart_area_d(d.get().vals, s, jj, domain.get(), CHART_GUTTER, chart_colw(gw, n), plot_h,
-                                    CHART_TOP, n)
+                return chart_area_d(
+                    d.get().vals,
+                    s,
+                    jj,
+                    domain.get(),
+                    CHART_GUTTER,
+                    chart_colw(gw, n),
+                    plot_h,
+                    CHART_TOP,
+                    n,
+                )
             }
-            let area_l = chart_layer_live(fn() -> string {
-                return chart_svg(fill_d(), chart_gw(gw), h, chart_fl(jj), "none", 0)
-            }, gw, h)
-            let area_d = chart_layer_live(fn() -> string {
-                return chart_svg(fill_d(), chart_gw(gw), h, chart_fd(jj), "none", 0)
-            }, gw, h)
+            let area_l = chart_layer_live(
+                fn() -> string {
+                    return chart_svg(fill_d(), chart_gw(gw), h, chart_fl(jj), "none", 0)
+                },
+                gw,
+                h,
+            )
+            let area_d = chart_layer_live(
+                fn() -> string {
+                    return chart_svg(fill_d(), chart_gw(gw), h, chart_fd(jj), "none", 0)
+                },
+                gw,
+                h,
+            )
             show_eq(area_l, appearance(), 0)
             show_eq(area_d, appearance(), 1)
             let line_d_of = fn() -> string {
-                return chart_line_d(d.get().vals, s, jj, domain.get(), CHART_GUTTER, chart_colw(gw, n), plot_h,
-                                    CHART_TOP, n)
+                return chart_line_d(
+                    d.get().vals,
+                    s,
+                    jj,
+                    domain.get(),
+                    CHART_GUTTER,
+                    chart_colw(gw, n),
+                    plot_h,
+                    CHART_TOP,
+                    n,
+                )
             }
-            let line_l = chart_layer_live(fn() -> string {
-                return chart_svg(line_d_of(), chart_gw(gw), h, "none", chart_stroke_light(jj), 2)
-            }, gw, h)
-            let line_d = chart_layer_live(fn() -> string {
-                return chart_svg(line_d_of(), chart_gw(gw), h, "none", chart_stroke_dark(jj), 2)
-            }, gw, h)
+            let line_l = chart_layer_live(
+                fn() -> string {
+                    return chart_svg(
+                        line_d_of(),
+                        chart_gw(gw),
+                        h,
+                        "none",
+                        chart_stroke_light(jj),
+                        2,
+                    )
+                },
+                gw,
+                h,
+            )
+            let line_d = chart_layer_live(
+                fn() -> string {
+                    return chart_svg(line_d_of(), chart_gw(gw), h, "none", chart_stroke_dark(jj), 2)
+                },
+                gw,
+                h,
+            )
             show_eq(line_l, appearance(), 0)
             show_eq(line_d, appearance(), 1)
             for i in 0..n {
                 let ii = i
                 let dot = Box(style = || {
                     let x = chart_pt_x(CHART_GUTTER, chart_colw(gw, n), n, ii)
-                    let y = chart_y(domain.get(), plot_h, CHART_TOP, chart_val(d.get().vals, s, ii, jj))
-                    return Style(width = px(6),
-                                 height = px(6),
-                                 position = pos_absolute(),
-                                 top = y - 3, left = x - 3,
-                                 radius = 3,
-                                 background = chart_color(jj))
+                    let y = chart_y(
+                        domain.get(),
+                        plot_h,
+                        CHART_TOP,
+                        chart_val(d.get().vals, s, ii, jj),
+                    )
+                    return Style(
+                        width = px(6),
+                        height = px(6),
+                        position = pos_absolute(),
+                        top = y - 3,
+                        left = x - 3,
+                        radius = 3,
+                        background = chart_color(jj),
+                    )
                 })
                 styled(dot, || { opacity(dot, chart_dim(act, ii)) })
             }
@@ -2436,7 +2750,6 @@ fn cal_day_at(year: int, m: int, idx: int) -> int {
 /// it without copying the widget (`Card(radius = 6, padding = Space.Xs)`).
 /// `visible` and `bind` go through `Component`.
 struct CardProps {
-
     visible: Option<Signal<bool>> = none,
     bind: Option<Signal<int>> = none,
     /// Interactive card: a pointer target with a hover wash and `on_click`
@@ -2476,18 +2789,29 @@ fn Card(p: CardProps) -> Node {
     let interactive = p.interactive || result.is_some(p.on_click)
     let has_header = p.title.get().len > 0 || p.subtitle.get().len > 0
     let user = style_of(p.style)
-    let bleed = result.some_or(user.paddingLeft,
-                               result.some_or(user.paddingX, result.some_or(user.padding, Space.Md)))
+    let bleed = result.some_or(
+        user.paddingLeft,
+        result.some_or(user.paddingX, result.some_or(user.padding, Space.Md)),
+    )
     let r = result.some_or(user.radius, RAD_XL)
     let lift = if p.lift > 0 { p.lift } else { -1 }
 
     // view
     return Box(
-        style = Style(direction = Direction.Column, gap = Space.Xs, elevation = p.elevation,
-                      paddingTop = if p.media.len > 0 { 0 } else { 16 }, paddingRight = Space.Md, paddingBottom = Space.Sm, paddingLeft = Space.Md,
-                      radius = RAD_XL, borderWidth = HAIRLINE, borderColor = rule(),
-                      background = plate(),
-                      cursor = opt_color(if interactive { "pointer" } else { "" })),
+        style = Style(
+            direction = Direction.Column,
+            gap = Space.Xs,
+            elevation = p.elevation,
+            paddingTop = if p.media.len > 0 { 0 } else { 16 },
+            paddingRight = Space.Md,
+            paddingBottom = Space.Sm,
+            paddingLeft = Space.Md,
+            radius = RAD_XL,
+            borderWidth = HAIRLINE,
+            borderColor = rule(),
+            background = plate(),
+            cursor = opt_color(if interactive { "pointer" } else { "" }),
+        ),
         restyle = p.style,
         visible = p.visible,
         bind = p.bind,
@@ -2497,15 +2821,19 @@ fn Card(p: CardProps) -> Node {
         hoverFade = interactive,
         lift = lift,
         press = interactive,
-        keys = p.keys
+        keys = p.keys,
     ) {
         if p.media.len > 0 {
-            Box(style = Style(height = px(p.mediaHeight), radius = r,
-                              marginX = -bleed,
-                              overflow = Overflow.Hidden),
-                role = "img") {
-                Image(p.media, style = Style(height = px(p.mediaHeight), grow = 1),
-                      fit = Fit.Cover)
+            Box(
+                style = Style(
+                    height = px(p.mediaHeight),
+                    radius = r,
+                    marginX = -bleed,
+                    overflow = Overflow.Hidden,
+                ),
+                role = "img",
+            ) {
+                Image(p.media, style = Style(height = px(p.mediaHeight), grow = 1), fit = Fit.Cover)
             }
         }
         if has_header {
@@ -2659,23 +2987,42 @@ struct TagProps {
 /// told apart from the pill `Badge` (a status) and the dotted `Chip`.
 fn Tag(label: Signal<string>, p: TagProps) -> Node {
     let removable = result.is_some(p.on_remove)
-    return Box(style = Style(height = px(badge_h(p.size)), direction = Direction.Row,
-                             gap = Space.Exxxs, align = Align.Center,
-                             paddingLeft = Space.Exs, paddingRight = if removable { 2 } else { 8 },
-                             radius = RAD_SM,
-                             borderWidth = HAIRLINE, borderColor = tint_line(p.tint),
-                             background = tint_bg(p.tint)),
-               restyle = p.style) {
-        Text(label, style = Style(font = FONT_CAPTION, color = tint_ink(p.tint), ellipsis = true),
-                    restyle = text_of(p.style))
+    return Box(
+        style = Style(
+            height = px(badge_h(p.size)),
+            direction = Direction.Row,
+            gap = Space.Exxxs,
+            align = Align.Center,
+            paddingLeft = Space.Exs,
+            paddingRight = if removable { 2 } else { 8 },
+            radius = RAD_SM,
+            borderWidth = HAIRLINE,
+            borderColor = tint_line(p.tint),
+            background = tint_bg(p.tint),
+        ),
+        restyle = p.style,
+    ) {
+        Text(
+            label,
+            style = Style(font = FONT_CAPTION, color = tint_ink(p.tint), ellipsis = true),
+            restyle = text_of(p.style),
+        )
         if removable {
-            Box(style = Style(width = px(16), height = px(16), shrink = 0,
-                              align = Align.Center, justify = Align.Center,
-                              radius = RAD_SM, cursor = "pointer"),
+            Box(
+                style = Style(
+                    width = px(16),
+                    height = px(16),
+                    shrink = 0,
+                    align = Align.Center,
+                    justify = Align.Center,
+                    radius = RAD_SM,
+                    cursor = "pointer",
+                ),
                 on_click = p.on_remove,
                 role = "button",
                 label = "Remove {{label.get()}}",
-                hoverFade = true) {
+                hoverFade = true,
+            ) {
                 Icon(IC_X, IconSize.Xs, tint_ink(p.tint))
             }
         }
@@ -2684,9 +3031,11 @@ fn Tag(label: Signal<string>, p: TagProps) -> Node {
 
 /// Status dot + label, no chrome: "● Online" in a table cell or a header.
 fn DotBadge(label: Signal<string>, kind: int) -> Node {
-    return Box(style = Style(direction = Direction.Row, gap = 6, align = Align.Center),
-               role = "status",
-               label = label.get()) {
+    return Box(
+        style = Style(direction = Direction.Row, gap = 6, align = Align.Center),
+        role = "status",
+        label = label.get(),
+    ) {
         Pip(tint_of(kind), DOT)
         Text(label, style = Style(font = FONT_CONTROL, color = ink()))
     }
@@ -2706,19 +3055,28 @@ struct LinkProps {
 fn Link(label: Signal<string>, on_click: fn(), p: LinkProps) -> Node {
     let hot = signal(false)
     return Row(0) {
-        Box(style = Style(direction = Direction.Row, gap = 2, align = Align.Center,
-                          cursor = "pointer"),
+        Box(
+            style = Style(
+                direction = Direction.Row,
+                gap = 2,
+                align = Align.Center,
+                cursor = "pointer",
+            ),
             restyle = p.style,
             on_click = on_click,
             on_hover = fn(on: bool) { hot.set(on) },
             role = "link",
-            label = label.get()) {
+            label = label.get(),
+        ) {
             Box(style = Style(direction = Direction.Column)) {
                 Text(label, style = Style(font = p.font, color = accent()))
                 // The underline is a 1px rule under the text, shown on hover.
-                Box(style = Style(height = px(HAIRLINE), background = accent(),
-                                  opacity = if hot.get() { 100 } else { 0 },
-                                  transition = Motion.Fast))
+                Box(style = Style(
+                    height = px(HAIRLINE),
+                    background = accent(),
+                    opacity = if hot.get() { 100 } else { 0 },
+                    transition = Motion.Fast,
+                ))
             }
             if p.external {
                 Icon(IC_EXTERNAL, p.font - 2, accent())
@@ -2730,9 +3088,13 @@ fn Link(label: Signal<string>, on_click: fn(), p: LinkProps) -> Node {
 /// Inline code: mono-ish caption type on a raised wash.
 fn Code(text: Signal<string>) -> Node {
     return Row(0) {
-        Box(style = Style(direction = Direction.Row,
-                          paddingX = Space.Exxxs, paddingY = 1,
-                          radius = 4, background = raised())) {
+        Box(style = Style(
+            direction = Direction.Row,
+            paddingX = Space.Exxxs,
+            paddingY = 1,
+            radius = 4,
+            background = raised(),
+        )) {
             Text(text, style = Style(font = FONT_CONTROL, color = ink()))
         }
     }
@@ -2770,14 +3132,20 @@ struct KbdComboProps {
 fn KbdCombo(spec: string, p: KbdComboProps) -> Node {
     let apple = if p.apple >= 0 { p.apple == 1 } else { apple_keys() }
     let parts = combo_parts(spec)
-    return Box(style = Style(direction = Direction.Row, gap = Space.Exxxs, align = Align.Center),
-               role = "group",
-               label = combo_text(parts, apple, "+")) {
+    return Box(
+        style = Style(direction = Direction.Row, gap = Space.Exxxs, align = Align.Center),
+        role = "group",
+        label = combo_text(parts, apple, "+"),
+    ) {
         if apple {
             Kbd(combo_text(parts, true, ""))
         } else {
             Each(parts, fn(i, part) {
-                return Box(style = Style(direction = Direction.Row, gap = Space.Exxxs, align = Align.Center)) {
+                return Box(style = Style(
+                    direction = Direction.Row,
+                    gap = Space.Exxxs,
+                    align = Align.Center,
+                )) {
                     if i > 0 {
                         Text("+", style = Style(font = 10, color = mute()))
                     }
@@ -2880,19 +3248,40 @@ struct ProgressRingProps {
 /// sweeping clockwise from the top, and the percentage in the middle.
 fn ProgressRing(value: Signal<int>, p: ProgressRingProps) -> Node {
     let d = p.size
-    return Box(style = Style(width = px(d), height = px(d), shrink = 0,
-                             align = Align.Center, justify = Align.Center),
-               role = "progressbar",
-               label = "{{value.get()}}%") {
-        Svg(RING_TRACK, style = Style(width = px(d), height = px(d), position = pos_absolute(),
-                                      top = 0, left = 0, color = rule()))
+    return Box(
+        style = Style(
+            width = px(d),
+            height = px(d),
+            shrink = 0,
+            align = Align.Center,
+            justify = Align.Center,
+        ),
+        role = "progressbar",
+        label = "{{value.get()}}%",
+    ) {
+        Svg(
+            RING_TRACK,
+            style = Style(
+                width = px(d),
+                height = px(d),
+                position = pos_absolute(),
+                top = 0,
+                left = 0,
+                color = rule(),
+            ),
+        )
         RingArc(value, d, str_or_default(p.color, accent()))
         if p.label {
             // Content width, so the ring's centring applies; a full-width
             // label would paint from the ring's left edge.
-            Text("{{value.get()}}%", style = Style(width = pct(-1),
-                                                   font = if d >= 48 { FONT_CONTROL } else { 10 },
-                                                   color = ink()))
+            Text(
+                "{{value.get()}}%",
+                style = Style(
+                    width = pct(-1),
+                    font = if d >= 48 { FONT_CONTROL } else { 10 },
+                    color = ink(),
+                ),
+            )
         }
     }
 }
@@ -2900,14 +3289,21 @@ fn ProgressRing(value: Signal<int>, p: ProgressRingProps) -> Node {
 /// The ring's arc: an svg whose markup follows `value` (the node keeps its
 /// markup in its text, so a reactive text redraws it).
 fn RingArc(value: Signal<int>, d: int, tint: string) -> Node {
-    return Component(raw_svg(ring_markup(peek(value))),
-                     text = ring_markup(value.get()),
-                     style = Style(width = px(d), height = px(d), position = pos_absolute(),
-                                   top = 0, left = 0, color = tint))
+    return Component(
+        raw_svg(ring_markup(peek(value))),
+        text = ring_markup(value.get()),
+        style = Style(
+            width = px(d),
+            height = px(d),
+            position = pos_absolute(),
+            top = 0,
+            left = 0,
+            color = tint,
+        ),
+    )
 }
 
-const RING_TRACK: string =
-"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><circle cx='12' cy='12' r='10' fill='none' stroke='currentColor' stroke-width='2.5'/></svg>"
+const RING_TRACK: string = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><circle cx='12' cy='12' r='10' fill='none' stroke='currentColor' stroke-width='2.5'/></svg>"
 
 /// sin(10° × i) × 1000 for i = 0..36. cos(a) is sin(a + 90°).
 const SIN10: []int = []int {
@@ -2965,12 +3361,18 @@ fn clamp_pct(v: int) -> int {
 /// Lines of placeholder text: `lines` bars at body height, the last one
 /// shorter, like a paragraph's ragged end. Fills its parent's width.
 fn SkeletonText(lines: int = 3) -> Node {
-    return Box(style = Style(direction = Direction.Column, gap = Space.Exs),
-               role = "progressbar",
-               label = "Loading") {
+    return Box(
+        style = Style(direction = Direction.Column, gap = Space.Exs),
+        role = "progressbar",
+        label = "Loading",
+    ) {
         for i in 0..lines {
-            pulse(Box(style = Style(width = pct(if i == lines - 1 && lines > 1 { 60 } else { 100 }),
-                                    height = px(12), radius = 4, background = bone())))
+            pulse(Box(style = Style(
+                width = pct(if i == lines - 1 && lines > 1 { 60 } else { 100 }),
+                height = px(12),
+                radius = 4,
+                background = bone(),
+            )))
         }
     }
 }
@@ -2982,18 +3384,34 @@ fn SkeletonAvatar(size: int = AvatarSize.Lg) -> Node {
 
 /// A card-shaped placeholder: avatar and two lines over a short paragraph.
 fn SkeletonCard() -> Node {
-    return Box(style = Style(direction = Direction.Column, gap = Space.Sm, padding = Space.Md,
-                             radius = RAD_XL, borderWidth = HAIRLINE, borderColor = rule(),
-                             background = plate()),
-               role = "progressbar",
-               label = "Loading") {
+    return Box(
+        style = Style(
+            direction = Direction.Column,
+            gap = Space.Sm,
+            padding = Space.Md,
+            radius = RAD_XL,
+            borderWidth = HAIRLINE,
+            borderColor = rule(),
+            background = plate(),
+        ),
+        role = "progressbar",
+        label = "Loading",
+    ) {
         Box(style = Style(direction = Direction.Row, gap = Space.Xs, align = Align.Center)) {
             SkeletonAvatar(AvatarSize.Lg)
             Box(style = Style(direction = Direction.Column, gap = Space.Exs, grow = 1)) {
-                pulse(Box(style = Style(width = pct(50), height = px(12), radius = 4,
-                                        background = bone())))
-                pulse(Box(style = Style(width = pct(30), height = px(10), radius = 4,
-                                        background = bone())))
+                pulse(Box(style = Style(
+                    width = pct(50),
+                    height = px(12),
+                    radius = 4,
+                    background = bone(),
+                )))
+                pulse(Box(style = Style(
+                    width = pct(30),
+                    height = px(10),
+                    radius = 4,
+                    background = bone(),
+                )))
             }
         }
         SkeletonText(3)
@@ -3021,12 +3439,21 @@ fn fade_strip(opacity: int) -> Node {
 /// Edge fade over a scroller. `top` hugs the top edge; otherwise the bottom.
 /// `on` is read from layout (`shown`), so it follows the scroll offset.
 fn ScrollShadow(top: bool, on: Signal<bool>) -> Node {
-    return Box(style = Style(position = pos_absolute(),
-                             top = opt_when(top, 0), bottom = opt_when(!top, 0), left = 0, right = 0,
-                             height = px(24), direction = Direction.Column, zIndex = 2,
-                             display = shown(on.get())),
-               role = "presentation",
-               label = if top { "More above" } else { "More below" }) {
+    return Box(
+        style = Style(
+            position = pos_absolute(),
+            top = opt_when(top, 0),
+            bottom = opt_when(!top, 0),
+            left = 0,
+            right = 0,
+            height = px(24),
+            direction = Direction.Column,
+            zIndex = 2,
+            display = shown(on.get()),
+        ),
+        role = "presentation",
+        label = if top { "More above" } else { "More below" },
+    ) {
         fade_strip(if top { 100 } else { 25 })
         fade_strip(60)
         fade_strip(if top { 25 } else { 100 })
@@ -3048,12 +3475,15 @@ fn ScrollArea(p: ScrollAreaProps) -> Node {
     let vh = signal(0)
     let ch = signal(0)
     let h = if p.height > 0 { p.height } else { 240 }
-    return Box(style = Style(position = Position.Relative, width = pct(100), height = px(h)),
-               restyle = p.style,
-               on_resize = fn(r: Rect) { vh.set(r.h) }) {
+    return Box(
+        style = Style(position = Position.Relative, width = pct(100), height = px(h)),
+        restyle = p.style,
+        on_resize = fn(r: Rect) { vh.set(r.h) },
+    ) {
         Scroll(bind = y, style = Style(width = pct(100), height = px(h))) {
-            Box(style = Style(direction = Direction.Column, gap = Space.Exs),
-                on_resize = fn(r: Rect) { ch.set(r.h) }) {
+            Box(style = Style(direction = Direction.Column, gap = Space.Exs), on_resize = fn(
+                r: Rect
+            ) { ch.set(r.h) }) {
                 p.children()
             }
         }
@@ -3074,9 +3504,15 @@ struct ContainerProps {
 /// Centres a column and caps its width. A page measure, not a card.
 fn Container(p: ContainerProps) -> Node {
     let w = if p.width > 0 { p.width } else { CONTAINER_MD }
-    return Box(style = Style(width = pct(100), maxWidth = w, alignSelf = Align.Center,
-                             direction = Direction.Column),
-               restyle = p.style) {
+    return Box(
+        style = Style(
+            width = pct(100),
+            maxWidth = w,
+            alignSelf = Align.Center,
+            direction = Direction.Column,
+        ),
+        restyle = p.style,
+    ) {
         p.children()
     }
 }
@@ -3089,10 +3525,15 @@ struct AspectRatioProps {
 
 /// A frame whose height follows its width at `w`:`h` (pass 16 and 9, or 1 and 1).
 fn AspectRatio(w: int, h: int, p: AspectRatioProps) -> Node {
-    return Box(style = Style(width = pct(100), aspect = ratio(if w > 0 { w } else { 1 }, if h > 0 { h } else { 1 }),
-                             overflow = Overflow.Hidden),
-               restyle = p.style,
-               role = "presentation") {
+    return Box(
+        style = Style(
+            width = pct(100),
+            aspect = ratio(if w > 0 { w } else { 1 }, if h > 0 { h } else { 1 }),
+            overflow = Overflow.Hidden,
+        ),
+        restyle = p.style,
+        role = "presentation",
+    ) {
         p.children()
     }
 }
@@ -3107,9 +3548,10 @@ struct SimpleGridProps {
 /// A wrapping row. Each child is a `GridCell` with the same column count,
 /// so the cells share the row and wrap onto the next.
 fn SimpleGrid(p: SimpleGridProps) -> Node {
-    return Box(style = Style(direction = Direction.Row, wrap = true, gap = p.gap,
-                             align = Align.Stretch),
-               restyle = p.style) {
+    return Box(
+        style = Style(direction = Direction.Row, wrap = true, gap = p.gap, align = Align.Stretch),
+        restyle = p.style,
+    ) {
         p.children()
     }
 }
@@ -3123,8 +3565,10 @@ struct GridCellProps {
 /// One cell of a `SimpleGrid`: `100 / columns` percent of the row.
 fn GridCell(columns: int, p: GridCellProps) -> Node {
     let cols = if columns > 0 { columns } else { 1 }
-    return Box(style = Style(width = pct(100 / cols), direction = Direction.Column),
-               restyle = p.style) {
+    return Box(
+        style = Style(width = pct(100 / cols), direction = Direction.Column),
+        restyle = p.style,
+    ) {
         p.children()
     }
 }
@@ -3140,11 +3584,20 @@ struct GaugeProps {
 
 /// A `ProgressRing` with a caption: one reading (a score, a capacity).
 fn Gauge(value: Signal<int>, p: GaugeProps) -> Node {
-    return Box(style = Style(direction = Direction.Column, gap = 6, align = Align.Center),
-               restyle = p.style) {
+    return Box(
+        style = Style(direction = Direction.Column, gap = 6, align = Align.Center),
+        restyle = p.style,
+    ) {
         ProgressRing(value, size = p.size, label = true)
-        Text(p.caption, style = Style(width = pct(-1), font = FONT_CAPTION, color = mute(),
-                                      display = shown(p.caption.get().len > 0)))
+        Text(
+            p.caption,
+            style = Style(
+                width = pct(-1),
+                font = FONT_CAPTION,
+                color = mute(),
+                display = shown(p.caption.get().len > 0),
+            ),
+        )
     }
 }
 
@@ -3158,22 +3611,40 @@ struct UsageBarProps {
 
 /// Labelled meter on the 6px `METER_TRACK`. Accent until `threshold`, then danger.
 fn UsageBar(value: Signal<int>, p: UsageBarProps) -> Node {
-    return Box(style = Style(direction = Direction.Column, gap = 6, width = pct(100)),
-               restyle = p.style,
-               role = "progressbar",
-               label = fn() -> string { return "{{p.label.get()}} {{clamp_pct(value.get())}}%" }) {
+    return Box(
+        style = Style(direction = Direction.Column, gap = 6, width = pct(100)),
+        restyle = p.style,
+        role = "progressbar",
+        label = fn() -> string { return "{{p.label.get()}} {{clamp_pct(value.get())}}%" },
+    ) {
         Box(style = Style(direction = Direction.Row, align = Align.Center)) {
             Text(p.label, style = Style(font = FONT_CONTROL, color = mute()))
             Grow()
-            Text(fn() -> string { return "{{clamp_pct(value.get())}}%" },
-                 style = Style(font = FONT_CONTROL,
-                               color = if clamp_pct(value.get()) >= p.threshold { danger() } else { ink() }))
+            Text(
+                fn() -> string { return "{{clamp_pct(value.get())}}%" },
+                style = Style(font = FONT_CONTROL, color = if clamp_pct(value.get()) >= p.threshold {
+                    danger()
+                } else {
+                    ink()
+                }),
+            )
         }
-        Box(style = Style(width = pct(100), height = px(METER_TRACK), radius = 1,
-                          background = raised())) {
-            Box(style = Style(width = pct(clamp_pct(value.get())), height = pct(100),
-                              radius = 1,
-                              background = if clamp_pct(value.get()) >= p.threshold { danger() } else { accent() }))
+        Box(style = Style(
+            width = pct(100),
+            height = px(METER_TRACK),
+            radius = 1,
+            background = raised(),
+        )) {
+            Box(style = Style(
+                width = pct(clamp_pct(value.get())),
+                height = pct(100),
+                radius = 1,
+                background = if clamp_pct(value.get()) >= p.threshold {
+                    danger()
+                } else {
+                    accent()
+                },
+            ))
         }
     }
 }

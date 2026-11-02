@@ -15,8 +15,7 @@
 import "std:http"
 
 #[proto]
-struct SyncReq {
-}
+struct SyncReq {}
 
 #[proto]
 struct SyncResp {
@@ -36,8 +35,7 @@ struct BackfillReq {
 }
 
 #[proto]
-struct StatusReq {
-}
+struct StatusReq {}
 
 #[proto]
 struct StatusResp {
@@ -55,8 +53,7 @@ struct StatusResp {
 }
 
 #[proto]
-struct RejectsReq {
-}
+struct RejectsReq {}
 
 #[proto]
 struct RejectsResp {
@@ -111,8 +108,7 @@ struct AckResp {
 }
 
 #[proto]
-struct RollbackReq {
-}
+struct RollbackReq {}
 
 #[proto]
 struct RollbackResp {
@@ -171,8 +167,7 @@ struct StockDayResp {
 }
 
 #[proto]
-struct StockStatusReq {
-}
+struct StockStatusReq {}
 
 #[proto]
 struct StockStatusResp {

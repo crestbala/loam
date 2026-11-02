@@ -17,7 +17,16 @@ const FLOW: int = 1
 const DRIVE: int = 2
 
 fn names() -> []string {
-    return []string { "Dream", "Lo-fi", "House", "Cinematic", "Synthwave", "Trap", "Future bass", "Afrobeats" }
+    return []string {
+        "Dream",
+        "Lo-fi",
+        "House",
+        "Cinematic",
+        "Synthwave",
+        "Trap",
+        "Future bass",
+        "Afrobeats",
+    }
 }
 
 fn blurbs() -> []string {

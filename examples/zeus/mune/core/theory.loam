@@ -94,7 +94,9 @@ fn chord_pcs(chord: int, seventh: bool, tonic: int, minor: bool) -> []int {
         let r = key.chord_root(chord)
         let maj7 = (r + 11) % 12
         let min7 = (r + 10) % 12
-        let use_maj = !key.chord_minor(chord) && key.in_scale(maj7, tonic, minor) && !key.in_scale(min7, tonic, minor)
+        let use_maj = !key.chord_minor(chord) &&
+            key.in_scale(maj7, tonic, minor) &&
+            !key.in_scale(min7, tonic, minor)
         push(out, if use_maj { maj7 } else { min7 })
     }
     return out

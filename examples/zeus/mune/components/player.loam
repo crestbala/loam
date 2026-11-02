@@ -20,24 +20,44 @@ const MAX_SECTIONS: int = 9
 const PATH_COLS: int = 60
 
 fn PlayerBar() -> Node {
-    return zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 18, paddingY = 14, paddingX = 22,
-                                  background = theme.PANEL, borderWidth = 1, borderColor = theme.LINE)) {
+    return zeus.Box(style = Style(
+        direction = Direction.Row,
+        align = Align.Center,
+        gap = 18,
+        paddingY = 14,
+        paddingX = 22,
+        background = theme.PANEL,
+        borderWidth = 1,
+        borderColor = theme.LINE,
+    )) {
         PlayButton()
-        zeus.Box(style = Style(direction = Direction.Column, gap = 6, grow = 1, shrink = 1, minWidth = 0)) {
+        zeus.Box(style = Style(
+            direction = Direction.Column,
+            gap = 6,
+            grow = 1,
+            shrink = 1,
+            minWidth = 0,
+        )) {
             zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 10)) {
-                zeus.Text(fn() -> string {
-                    let l = store.take_line.get()
-                    if l.len == 0 {
-                        return "No piece yet"
-                    }
-                    return l
-                }, style = Style(font = 13, color = theme.INK, grow = 1, ellipsis = true))
-                zeus.Text(fn() -> string {
-                    if !store.has_take() {
-                        return ""
-                    }
-                    return "{{time.clock(store.pos.get())}} / {{time.clock(store.take_ms.get())}}"
-                }, style = Style(font = 12, color = theme.FAINT))
+                zeus.Text(
+                    fn() -> string {
+                        let l = store.take_line.get()
+                        if l.len == 0 {
+                            return "No piece yet"
+                        }
+                        return l
+                    },
+                    style = Style(font = 13, color = theme.INK, grow = 1, ellipsis = true),
+                )
+                zeus.Text(
+                    fn() -> string {
+                        if !store.has_take() {
+                            return ""
+                        }
+                        return "{{time.clock(store.pos.get())}} / {{time.clock(store.take_ms.get())}}"
+                    },
+                    style = Style(font = 12, color = theme.FAINT),
+                )
             }
             Waveform()
             EnergyArc()
@@ -48,16 +68,27 @@ fn PlayerBar() -> Node {
 }
 
 fn PlayButton() -> Node {
-    return zeus.Box(style = Style(width = px(52), height = px(52), radius = 26, align = Align.Center,
-                                  justify = Align.Center, cursor = "pointer",
-                                  background = if store.has_take() { theme.ACCENT } else { theme.TILE_HI }),
-                    role = "button",
-                    label = if store.playing.get() { "Pause" } else { "Play" },
-                    on_click = fn() { store.toggle_play() }) {
+    return zeus.Box(
+        style = Style(
+            width = px(52),
+            height = px(52),
+            radius = 26,
+            align = Align.Center,
+            justify = Align.Center,
+            cursor = "pointer",
+            background = if store.has_take() { theme.ACCENT } else { theme.TILE_HI },
+        ),
+        role = "button",
+        label = if store.playing.get() { "Pause" } else { "Play" },
+        on_click = fn() { store.toggle_play() },
+    ) {
         zeus.Box(visible = store.playing.get(), style = Style(direction = Direction.Row)) {
             zui.Icon(kit.IC_PAUSE, 22, theme.ON_ACCENT)
         }
-        zeus.Box(visible = !store.playing.get(), style = Style(direction = Direction.Row, paddingLeft = 3)) {
+        zeus.Box(
+            visible = !store.playing.get(),
+            style = Style(direction = Direction.Row, paddingLeft = 3),
+        ) {
             zui.Icon(kit.IC_PLAY, 22, if store.has_take() { theme.ON_ACCENT } else { theme.FAINT })
         }
     }
@@ -69,15 +100,28 @@ fn Waveform() -> Node {
     zeus.on_mount(fn() {
         zeus.on_drag(wave_ref, fn() { seek_to(zeus.current_mouse().x) })
     })
-    return zeus.Box(ref = wave_ref,
-                    style = Style(direction = Direction.Column, gap = 4, cursor = "pointer"),
-                    role = "slider", label = "Seek") {
-        zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 2, height = px(46))) {
+    return zeus.Box(
+        ref = wave_ref,
+        style = Style(direction = Direction.Column, gap = 4, cursor = "pointer"),
+        role = "slider",
+        label = "Seek",
+    ) {
+        zeus.Box(style = Style(
+            direction = Direction.Row,
+            align = Align.Center,
+            gap = 2,
+            height = px(46),
+        )) {
             for k in 0..store.WAVE_BARS {
                 Bar(k)
             }
         }
-        zeus.Box(style = Style(direction = Direction.Row, height = px(4), radius = 2, background = theme.TILE)) {
+        zeus.Box(style = Style(
+            direction = Direction.Row,
+            height = px(4),
+            radius = 2,
+            background = theme.TILE,
+        )) {
             for k in 0..MAX_SECTIONS {
                 SectionMark(k)
             }
@@ -86,8 +130,12 @@ fn Waveform() -> Node {
 }
 
 fn Bar(k: int) -> Node {
-    return zeus.Box(style = Style(grow = 1, height = px(bar_height(k)), radius = 1,
-                                  background = bar_color(k)))
+    return zeus.Box(style = Style(
+        grow = 1,
+        height = px(bar_height(k)),
+        radius = 1,
+        background = bar_color(k),
+    ))
 }
 
 fn bar_height(k: int) -> int {
@@ -110,9 +158,16 @@ fn bar_color(k: int) -> string {
 
 /// One section on the strip, as wide as its share of the piece.
 fn SectionMark(k: int) -> Node {
-    return zeus.Box(visible = mark_share(k) > 0,
-                    style = Style(grow = mark_share(k), height = px(4), radius = 2,
-                                  background = theme.section_color(mark_kind(k)), opacity = 80))
+    return zeus.Box(
+        visible = mark_share(k) > 0,
+        style = Style(
+            grow = mark_share(k),
+            height = px(4),
+            radius = 2,
+            background = theme.section_color(mark_kind(k)),
+            opacity = 80,
+        ),
+    )
 }
 
 fn mark_kind(k: int) -> int {
@@ -132,12 +187,23 @@ fn mark_share(k: int) -> int {
 /// shows the arc the chain will aim for, faint.
 fn EnergyArc() -> Node {
     return zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 10)) {
-        zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 5, width = px(78))) {
+        zeus.Box(style = Style(
+            direction = Direction.Row,
+            align = Align.Center,
+            gap = 5,
+            width = px(78),
+        )) {
             zui.Icon(kit.IC_CLIMB, 12, theme.FAINT)
             zeus.Text("Energy arc", style = Style(font = 11, color = theme.FAINT))
         }
-        zeus.Box(style = Style(direction = Direction.Row, align = Align.End, gap = 2, height = px(18), grow = 1,
-                               minWidth = 0)) {
+        zeus.Box(style = Style(
+            direction = Direction.Row,
+            align = Align.End,
+            gap = 2,
+            height = px(18),
+            grow = 1,
+            minWidth = 0,
+        )) {
             for k in 0..PATH_COLS {
                 PathCol(k)
             }
@@ -146,13 +212,16 @@ fn EnergyArc() -> Node {
 }
 
 fn PathCol(k: int) -> Node {
-    return zeus.Box(style = Style(grow = 1, height = px(2 + path_value(k) * 16 / 1000),
-                                  radius = 1,
-                                  background = if store.path_heard.get().len > 0 && path_value(k) >= 0 {
-                                      theme.path_color(path_value(k))
-                                  } else {
-                                      theme.TILE_HI
-                                  }))
+    return zeus.Box(style = Style(
+        grow = 1,
+        height = px(2 + path_value(k) * 16 / 1000),
+        radius = 1,
+        background = if store.path_heard.get().len > 0 && path_value(k) >= 0 {
+            theme.path_color(path_value(k))
+        } else {
+            theme.TILE_HI
+        },
+    ))
 }
 
 /// Energy 0..1000 at column `k`: what was heard, or a typical arc.
@@ -184,30 +253,53 @@ fn seek_to(x: int) {
 /// Progress while working; otherwise the last error, a notice, or where the
 /// piece was saved.
 fn StatusLine() -> Node {
-    return zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 10, height = px(20))) {
-        zeus.Box(visible = store.busy(), style = Style(direction = Direction.Row, align = Align.Center, gap = 10, grow = 1)) {
+    return zeus.Box(style = Style(
+        direction = Direction.Row,
+        align = Align.Center,
+        gap = 10,
+        height = px(20),
+    )) {
+        zeus.Box(
+            visible = store.busy(),
+            style = Style(direction = Direction.Row, align = Align.Center, gap = 10, grow = 1),
+        ) {
             zeus.Box(style = Style(direction = Direction.Row, width = px(160))) {
                 zui.Progress(store.progress, size = zeus.Size.Sm, style = Style(width = px(160)))
             }
-            zeus.Text(store.status.get(), style = Style(font = 12, color = theme.MUTE, ellipsis = true, grow = 1))
+            zeus.Text(
+                store.status.get(),
+                style = Style(font = 12, color = theme.MUTE, ellipsis = true, grow = 1),
+            )
         }
-        zeus.Box(visible = !store.busy(), style = Style(direction = Direction.Row, align = Align.Center, gap = 8, grow = 1)) {
-            zeus.Text(fn() -> string {
-                if store.error.get().len > 0 {
-                    return store.error.get()
-                }
-                if store.notice.get().len > 0 {
-                    return store.notice.get()
-                }
-                if store.saved.get().len > 0 {
-                    return "Saved to {{files.short(store.saved.get())}}"
-                }
-                if store.has_take() {
-                    return "This take is temporary until you save it."
-                }
-                return "Add recordings, pick a style, and Generate."
-            }, style = Style(font = 12, ellipsis = true, grow = 1,
-                             color = if store.error.get().len > 0 { theme.WARN } else if store.saved.get().len > 0 { theme.OK } else { theme.FAINT }))
+        zeus.Box(
+            visible = !store.busy(),
+            style = Style(direction = Direction.Row, align = Align.Center, gap = 8, grow = 1),
+        ) {
+            zeus.Text(
+                fn() -> string {
+                    if store.error.get().len > 0 {
+                        return store.error.get()
+                    }
+                    if store.notice.get().len > 0 {
+                        return store.notice.get()
+                    }
+                    if store.saved.get().len > 0 {
+                        return "Saved to {{files.short(store.saved.get())}}"
+                    }
+                    if store.has_take() {
+                        return "This take is temporary until you save it."
+                    }
+                    return "Add recordings, pick a style, and Generate."
+                },
+                style = Style(font = 12, ellipsis = true, grow = 1, color = if store.error.get(
+                ).len > 0 {
+                    theme.WARN
+                } else if store.saved.get().len > 0 {
+                    theme.OK
+                } else {
+                    theme.FAINT
+                }),
+            )
         }
     }
 }
@@ -228,42 +320,96 @@ fn Gate(on: Signal<bool>, live: fn(), dead: fn()) -> Node {
 fn Actions() -> Node {
     return zeus.Box(style = Style(direction = Direction.Column, gap = 8, width = px(330))) {
         zeus.Box(style = Style(direction = Direction.Row, gap = 8)) {
-            Gate(fn() -> bool { return store.can_generate() }, fn() {
-                zui.Button(label = "Generate", icon = kit.IC_SPARK, style = Style(width = pct(100)),
-                           on_click = fn() { store.generate() })
-            }, fn() {
-                zui.Button(label = if store.busy() { "Working…" } else { "Generate" }, icon = kit.IC_SPARK,
-                           enabled = false, style = Style(width = pct(100)))
-            })
+            Gate(
+                fn() -> bool { return store.can_generate() },
+                fn() {
+                    zui.Button(
+                        label = "Generate",
+                        icon = kit.IC_SPARK,
+                        style = Style(width = pct(100)),
+                        on_click = fn() { store.generate() },
+                    )
+                },
+                fn() {
+                    zui.Button(
+                        label = if store.busy() { "Working…" } else { "Generate" },
+                        icon = kit.IC_SPARK,
+                        enabled = false,
+                        style = Style(width = pct(100)),
+                    )
+                },
+            )
             zeus.Box(style = Style(direction = Direction.Row, width = px(122))) {
-                Gate(fn() -> bool { return store.can_generate() && store.has_take() }, fn() {
-                    zui.Button(label = "New take", icon = kit.IC_SHUFFLE, look = zeus.Look.Soft,
-                               style = Style(width = pct(100)), on_click = fn() { store.new_take() })
-                }, fn() {
-                    zui.Button(label = "New take", icon = kit.IC_SHUFFLE, look = zeus.Look.Soft, enabled = false,
-                               style = Style(width = pct(100)))
-                })
+                Gate(
+                    fn() -> bool { return store.can_generate() && store.has_take() },
+                    fn() {
+                        zui.Button(
+                            label = "New take",
+                            icon = kit.IC_SHUFFLE,
+                            look = zeus.Look.Soft,
+                            style = Style(width = pct(100)),
+                            on_click = fn() { store.new_take() },
+                        )
+                    },
+                    fn() {
+                        zui.Button(
+                            label = "New take",
+                            icon = kit.IC_SHUFFLE,
+                            look = zeus.Look.Soft,
+                            enabled = false,
+                            style = Style(width = pct(100)),
+                        )
+                    },
+                )
             }
         }
         zeus.Box(style = Style(direction = Direction.Row, gap = 8, align = Align.Center)) {
-            zui.TextInput(store.title, "Name this piece", size = zeus.Size.Sm, label = "Name",
-                          style = Style(grow = 1))
+            zui.TextInput(
+                store.title,
+                "Name this piece",
+                size = zeus.Size.Sm,
+                label = "Name",
+                style = Style(grow = 1),
+            )
             kit.Choice(store.export_fmt, store.format_names(), "Export format", 92)
         }
         zeus.Box(style = Style(direction = Direction.Row, gap = 8, align = Align.Center)) {
             zeus.Box(style = Style(direction = Direction.Row, width = px(96))) {
-                Gate(fn() -> bool { return store.has_take() && !store.saving.get() }, fn() {
-                    zui.Button(label = "Save", icon = kit.IC_SAVE, look = zeus.Look.Outline, size = zeus.Size.Sm,
-                               style = Style(width = pct(100)), on_click = fn() { store.save() })
-                }, fn() {
-                    zui.Button(label = if store.saving.get() { "Saving…" } else { "Save" }, icon = kit.IC_SAVE,
-                               look = zeus.Look.Outline, size = zeus.Size.Sm, enabled = false,
-                               style = Style(width = pct(100)))
-                })
+                Gate(
+                    fn() -> bool { return store.has_take() && !store.saving.get() },
+                    fn() {
+                        zui.Button(
+                            label = "Save",
+                            icon = kit.IC_SAVE,
+                            look = zeus.Look.Outline,
+                            size = zeus.Size.Sm,
+                            style = Style(width = pct(100)),
+                            on_click = fn() { store.save() },
+                        )
+                    },
+                    fn() {
+                        zui.Button(
+                            label = if store.saving.get() { "Saving…" } else { "Save" },
+                            icon = kit.IC_SAVE,
+                            look = zeus.Look.Outline,
+                            size = zeus.Size.Sm,
+                            enabled = false,
+                            style = Style(width = pct(100)),
+                        )
+                    },
+                )
             }
-            zeus.Text("to ~/Documents/Mune", style = Style(font = 11, color = theme.FAINT, grow = 1))
-            zui.Button(label = "Show", icon = kit.IC_FOLDER, look = zeus.Look.Ghost, size = zeus.Size.Sm,
-                       on_click = fn() { store.reveal_saved() })
+            zeus.Text(
+                "to ~/Documents/Mune",
+                style = Style(font = 11, color = theme.FAINT, grow = 1),
+            )
+            zui.Button(
+                label = "Show",
+                icon = kit.IC_FOLDER,
+                look = zeus.Look.Ghost,
+                size = zeus.Size.Sm,
+                on_click = fn() { store.reveal_saved() },
+            )
         }
     }
 }

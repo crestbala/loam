@@ -50,7 +50,15 @@ struct DayReport {
 }
 
 fn day_err(msg: string) -> DayReport {
-    return DayReport { ok: 0, closed: 0, fetch_id: 0, accepted: 0, rejected: 0, warnings: 0, err: msg }
+    return DayReport {
+        ok: 0,
+        closed: 0,
+        fetch_id: 0,
+        accepted: 0,
+        rejected: 0,
+        warnings: 0,
+        err: msg,
+    }
 }
 
 /// `~/Library/Application Support/dracula/stocks`. Beside `nav`, never in it.
@@ -332,8 +340,19 @@ fn apply(root: string, b: Bhav, url: string, stamp: string) -> DayReport {
         append_line("{{root}}/rejects.txt", rej[i])
         i = i + 1
     }
-    append_line("{{root}}/fetches.txt", "{{id}};{{stamp}};{{url}};{{b.day}};{{accepted}};{{rejected}};{{warnings}}")
-    return DayReport { ok: 1, closed: 0, fetch_id: id, accepted: accepted, rejected: rejected, warnings: warnings, err: "" }
+    append_line(
+        "{{root}}/fetches.txt",
+        "{{id}};{{stamp}};{{url}};{{b.day}};{{accepted}};{{rejected}};{{warnings}}",
+    )
+    return DayReport {
+        ok: 1,
+        closed: 0,
+        fetch_id: id,
+        accepted: accepted,
+        rejected: rejected,
+        warnings: warnings,
+        err: "",
+    }
 }
 
 /// Fetch and cache one trading day. A day with no session is `closed`.
@@ -350,7 +369,15 @@ fn day_live(ymd: int, stamp: string) -> DayReport {
     }
     let got = nse.fetch_day(ymd)
     if got.state == 1 {
-        return DayReport { ok: 1, closed: 1, fetch_id: 0, accepted: 0, rejected: 0, warnings: 0, err: "" }
+        return DayReport {
+            ok: 1,
+            closed: 1,
+            fetch_id: 0,
+            accepted: 0,
+            rejected: 0,
+            warnings: 0,
+            err: "",
+        }
     }
     if got.state != 0 {
         return day_err(got.err)

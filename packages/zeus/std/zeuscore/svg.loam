@@ -565,8 +565,16 @@ fn svg_sub_close() {
 
 /// Adaptive cubic flattening; appends device points t = 1/n..1 (the start point
 /// is already in the subpath). `n = clamp(ceil(sqrt(len/(8*tol))), 1, 64)`.
-fn svg_flat_cubic(ux0: float, uy0: float, ux1: float, uy1: float,
-                  ux2: float, uy2: float, ux3: float, uy3: float) {
+fn svg_flat_cubic(
+    ux0: float,
+    uy0: float,
+    ux1: float,
+    uy1: float,
+    ux2: float,
+    uy2: float,
+    ux3: float,
+    uy3: float
+) {
     let x0 = svg_ox + ux0 * svg_scale
     let y0 = svg_oy + uy0 * svg_scale
     let x1 = svg_ox + ux1 * svg_scale
@@ -999,8 +1007,16 @@ fn svg_add_tri(ax: float, ay: float, bx: float, by: float, cx: float, cy: float)
 /// Join at vertex `v`, between the incoming (p→v) and outgoing (v→n) segments.
 /// Round and miter use a disc; bevel fills the outer wedge with two triangles
 /// (each stays inside the disc, so the union is well formed).
-fn svg_join(join: int, px: float, py: float, vx: float, vy: float,
-            nx: float, ny: float, half: float) {
+fn svg_join(
+    join: int,
+    px: float,
+    py: float,
+    vx: float,
+    vy: float,
+    nx: float,
+    ny: float,
+    half: float
+) {
     if join == 2 {
         let l0 = svg_dist(px, py, vx, vy)
         let l1 = svg_dist(vx, vy, nx, ny)
@@ -1014,8 +1030,22 @@ fn svg_join(join: int, px: float, py: float, vx: float, vy: float,
                 let a0y = d0x
                 let a1x = 0.0 - d1y
                 let a1y = d1x
-                svg_add_tri(vx, vy, vx + a0x * half, vy + a0y * half, vx + a1x * half, vy + a1y * half)
-                svg_add_tri(vx, vy, vx - a0x * half, vy - a0y * half, vx - a1x * half, vy - a1y * half)
+                svg_add_tri(
+                    vx,
+                    vy,
+                    vx + a0x * half,
+                    vy + a0y * half,
+                    vx + a1x * half,
+                    vy + a1y * half,
+                )
+                svg_add_tri(
+                    vx,
+                    vy,
+                    vx - a0x * half,
+                    vy - a0y * half,
+                    vx - a1x * half,
+                    vy - a1y * half,
+                )
                 return
             }
         }
@@ -1127,9 +1157,23 @@ fn svg_emit_stroke(sw_dev: float, cap: int, join: int) {
                     svg_join(join, sg_x[ip], sg_y[ip], sg_x[ic], sg_y[ic], sg_x[iq], sg_y[iq], half)
                     v = v + 1
                 }
-                svg_cap(cap, sg_x[off], sg_y[off], sg_x[off] - sg_x[off + 1], sg_y[off] - sg_y[off + 1], half)
+                svg_cap(
+                    cap,
+                    sg_x[off],
+                    sg_y[off],
+                    sg_x[off] - sg_x[off + 1],
+                    sg_y[off] - sg_y[off + 1],
+                    half,
+                )
                 let last = off + cnt - 1
-                svg_cap(cap, sg_x[last], sg_y[last], sg_x[last] - sg_x[last - 1], sg_y[last] - sg_y[last - 1], half)
+                svg_cap(
+                    cap,
+                    sg_x[last],
+                    sg_y[last],
+                    sg_x[last] - sg_x[last - 1],
+                    sg_y[last] - sg_y[last - 1],
+                    half,
+                )
             }
         } else if cnt == 1 {
             svg_cap(cap, sg_x[off], sg_y[off], 0.0, 0.0, half)
@@ -1145,7 +1189,12 @@ fn svg_emit(style: SvgStyle) -> int {
         raster.raster_multi_begin()
         svg_emit_fill()
         if raster.raster_multi_count() > 0 {
-            raster.raster_fill_multi(style.fill / 65536 % 256, style.fill / 256 % 256, style.fill % 256, svg_alpha)
+            raster.raster_fill_multi(
+                style.fill / 65536 % 256,
+                style.fill / 256 % 256,
+                style.fill % 256,
+                svg_alpha,
+            )
             painted = 1
         }
     }
@@ -1154,7 +1203,12 @@ fn svg_emit(style: SvgStyle) -> int {
             raster.raster_multi_begin()
             svg_emit_stroke(style.sw * svg_scale, style.cap, style.join)
             if raster.raster_multi_count() > 0 {
-                raster.raster_fill_multi(style.stroke / 65536 % 256, style.stroke / 256 % 256, style.stroke % 256, svg_alpha)
+                raster.raster_fill_multi(
+                    style.stroke / 65536 % 256,
+                    style.stroke / 256 % 256,
+                    style.stroke % 256,
+                    svg_alpha,
+                )
                 painted = 1
             }
         }
