@@ -142,6 +142,30 @@ typedef struct {
                  int64_t width, int64_t style);
 } ZeusDraw;
 
+/* One frame, in the format of packages/zeus/docs/frame-format.md: `n` ops of
+   `stride` int32 (`kind x y w h rgb radius alpha font value str`), `str`
+   indexing `strs` (-1 for none), path ops indexing the `np` ints of `path`.
+   The buffers are the engine's and valid only for the call that receives them. */
+#define ZEUS_FRAME_MAGIC 0x5355455A /* "ZEUS" */
+#define ZEUS_FRAME_VERSION 1
+#define ZEUS_FRAME_STRIDE 11
+typedef struct {
+    int32_t version, stride;
+    const int32_t *ops;
+    int64_t n;
+    const loam_str *strs;
+    int64_t ns;
+    const int32_t *path;
+    int64_t np;
+} ZeusFrame;
+
+/* Decode a frame into the bound ZeusDraw, with the NULL-callback fallbacks.
+   This is the default; a host needs it only to replay a frame it kept. */
+void zeus_replay(const ZeusFrame *f);
+/* Take each frame whole instead of as ZeusDraw calls (NULL restores replay).
+   For a host that decodes the buffer itself: the web host hands it to JS. */
+void zeus_bind_frame(void (*sink)(const ZeusFrame *f));
+
 void zeus_set_platform(void (*run)(void),
                       void (*measure)(const char *s, int64_t px, int64_t *w, int64_t *h),
                       void (*redraw)(void));
@@ -266,11 +290,7 @@ int64_t loam_platform_plat_now_ms(void);
    The parameter types are `int32_t` because that is exactly what codegen emits
    in the forward declaration it writes for this bodyless fn (`int` is i32), and
    C requires the declaration and the definition to agree. */
-/* One frame's draw list as a command buffer (`platform.plat_frame`), decoded
-   into the bound ZeusDraw. Exposed so a host can replay a buffer it holds. */
-void zeus_replay(const int32_t *ops, int64_t n, const loam_str *strs, int64_t ns,
-                 const int32_t *path, int64_t np);
-void loam_platform_plat_frame(loam_vec ops, int32_t n, loam_vec strs, loam_vec path, int32_t np);
+void loam_platform_plat_frame(loam_vec head, loam_vec ops, loam_vec strs, loam_vec path);
 int32_t loam_platform_plat_blit(loam_vec buf, int32_t w, int32_t h, int32_t gen,
                                 int32_t scale);
 int64_t loam_runtime_key_intern(loam_str name);

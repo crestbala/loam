@@ -6,6 +6,29 @@
 
 let mem: WebAssembly.Memory | null = null;
 
+// The real frame decoder from loader.js (a plain script: evaluated globally,
+// it defines `zeusDecodeFrame` and skips its DOM auto-boot). Every frame the
+// wasm paints is decoded into a recorder, so a format drift between the
+// engine and the web host fails here.
+(0, eval)(Deno.readTextFileSync(new URL("./loader.js", import.meta.url)));
+const decodeFrame = (globalThis as Record<string, unknown>).zeusDecodeFrame as (
+  buf: ArrayBuffer,
+  head: number,
+  paint: Record<string, (...a: unknown[]) => void>,
+) => number;
+const painted: Record<string, number> = {};
+let framesSeen = 0;
+let frameErrors = 0;
+const recorder = new Proxy({}, {
+  get: (_t, name: string) => (...a: unknown[]) => {
+    painted[name] = (painted[name] ?? 0) + 1;
+    for (const v of a) {
+      if (typeof v === "number" && !Number.isFinite(v)) frameErrors++;
+    }
+    if ((name === "text" || name === "text_rot") && typeof a[2] !== "string") frameErrors++;
+  },
+}) as Record<string, (...a: unknown[]) => void>;
+
 const stub = (): number => 0;
 
 const dec = new TextDecoder();
@@ -30,6 +53,11 @@ const special: Record<string, (...a: number[]) => unknown> = {
     void px;
   },
   pick_image: () => 0,
+  frame: (head: number) => {
+    if (!mem) return;
+    framesSeen++;
+    if (decodeFrame(mem.buffer, head, recorder) < 0) frameErrors++;
+  },
 };
 
 function importsFor(): Record<string, unknown> {
@@ -108,6 +136,10 @@ for (let f = 0; f < 600; f++) {
 }
 const grown = heapKb() - warm;
 must(grown <= 8, "live heap flat over 600 frames (grew " + grown + " KB)");
+
+must(framesSeen > 0, "the wasm handed frames to the JS decoder");
+must(frameErrors === 0, "every frame decoded (" + frameErrors + " bad ops)");
+must((painted.text ?? 0) > 0, "decoded frames draw text");
 
 if (failures) Deno.exit(1);
 console.log("wasm smoke ok");

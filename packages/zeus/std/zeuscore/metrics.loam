@@ -72,8 +72,8 @@ fn tc_slot(s: string, px: int, max_w: int, wrap: int) -> int {
     return i32((h ^ (h >> 12)) & i64(TC_SIZE - 1))
 }
 
-/// Measure through the cache: one line when `wrap` is 0, else wrapped to
-/// `max_w`.
+/// Measure through the cache: one line when `wrap` is 0, wrapped to `max_w`
+/// when 1, and one line by the host's own face (never the bound font) when 2.
 fn tc_measure(s: string, px: int, max_w: int, wrap: int, w: &mut int, h: &mut int) {
     tc_ensure()
     let k = tc_slot(s, px, max_w, wrap)
@@ -88,6 +88,8 @@ fn tc_measure(s: string, px: int, max_w: int, wrap: int, w: &mut int, h: &mut in
     let mut mh = 0
     if wrap == 0 {
         measure_raw(s, px, &mut mw, &mut mh)
+    } else if wrap == 2 {
+        platform.plat_measure(s, px, &mut mw, &mut mh)
     } else if metrics_font.len > 0 {
         font.measure_wrap(metrics_font, px, s, max_w, &mut mw, &mut mh)
     } else {
@@ -184,6 +186,13 @@ fn measure_int(v: int, px: int, w: &mut int, h: &mut int) {
 /// Measure `s` wrapped to `max_w`, for the height a label grows to.
 fn measure_wrap(s: string, px: int, max_w: int, w: &mut int, h: &mut int) {
     tc_measure(s, px, max_w, 1, w, h)
+}
+
+/// Measure one line of `s` as the host draws it, ignoring any bound font. Paint
+/// positions the words of wrapped text with this, so they sit where the host's
+/// glyphs land.
+fn measure_host(s: string, px: int, w: &mut int, h: &mut int) {
+    tc_measure(s, px, 0, 2, w, h)
 }
 
 // --- ellipsis -------------------------------------------------------------

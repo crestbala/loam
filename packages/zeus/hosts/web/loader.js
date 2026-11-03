@@ -3,6 +3,73 @@
    `window.attachZeus(canvas, opts)` boots from an ArrayBuffer; a canvas with
    `data-wasm` still auto-loads that URL (counter, gallery). */
 (function (root) {
+  /* One frame (docs/frame-format.md), decoded straight out of wasm memory into
+     `paint`. `head` points at 8 int32: version stride n ops ns strs np path,
+     the last of each pair a pointer; `strs` is `ns` (ptr, len) pairs. Pure: it
+     reads `buffer` and calls `paint`, so a test can drive it with a recorder.
+     The guards match `zeus_replay` in zeus_plat.c. Returns the op count, or -1
+     for a version this decoder does not know. */
+  const FRAME_VERSION = 1;
+  const FRAME_STRIDE = 11;
+  const utf8 = new TextDecoder();
+  function decodeFrame(buffer, head, paint) {
+    const h = new Int32Array(buffer, head, 8);
+    const version = h[0], stride = h[1], n = h[2], ns = h[4], np = h[6];
+    if (version !== FRAME_VERSION || stride !== FRAME_STRIDE) return -1;
+    const ops = new Int32Array(buffer, h[3], n * stride);
+    const st = new Int32Array(buffer, h[5], ns * 2);
+    const path = new Int32Array(buffer, h[7], np);
+    const u8 = new Uint8Array(buffer);
+    const cache = new Array(ns);
+    const str = (i) => {
+      if (i < 0 || i >= ns) return "";
+      let v = cache[i];
+      if (v === undefined) {
+        const p = st[i * 2];
+        v = cache[i] = utf8.decode(u8.subarray(p, p + st[i * 2 + 1]));
+      }
+      return v;
+    };
+    for (let i = 0; i < n; i++) {
+      const o = i * stride;
+      const x = ops[o + 1], y = ops[o + 2], w = ops[o + 3], hh = ops[o + 4];
+      const rgb = ops[o + 5] & 0xffffff, radius = ops[o + 6], alpha = ops[o + 7];
+      const font = ops[o + 8], value = ops[o + 9], si = ops[o + 10];
+      switch (ops[o]) {
+        case 0: paint.fill(x, y, w, hh, rgb, radius); break;
+        case 1: paint.fill_a(x, y, w, hh, rgb, radius, alpha); break;
+        case 2: paint.text(x, y, str(si), rgb, font); break;
+        case 6: paint.save(); break;
+        case 7: paint.clip(x, y, w, hh, radius); break;
+        case 8: paint.restore(); break;
+        case 9: paint.text_rot(x, y, str(si), rgb, font, w); break;
+        case 10: paint.image(x, y, w, hh, str(si), radius, alpha, value); break;
+        case 11: paint.fill_g(x, y, w, hh, rgb, value & 0xffffff, font, radius, alpha); break;
+        case 12:
+          if (alpha > 0 && w > 0 && hh > 0) {
+            paint.shadow(x, y, w, hh, radius, rgb, alpha, font,
+                         (value % 256) - 128, Math.trunc(value / 256) - 128);
+          }
+          break;
+        case 13: if (font > 0 && w > 0 && hh > 0) paint.stroke(x, y, w, hh, rgb, radius, font, alpha); break;
+        case 14:
+          paint.fill4(x, y, w, hh, rgb, alpha, radius % 65536, Math.trunc(radius / 65536),
+                      value % 65536, Math.trunc(value / 65536));
+          break;
+        case 15: paint.xform(x, y, radius, font, w, hh); break;
+        case 16:
+        case 17:
+          if (value >= 0 && w > 0 && value + w <= np && (ops[o] === 16 || font > 0)) {
+            paint.path(path, value, w, rgb, alpha, ops[o] === 16 ? 0 : font, ops[o] === 16 ? 0 : radius);
+          }
+          break;
+        case 18: paint.alpha(alpha); break;
+        default: break;
+      }
+    }
+    return n;
+  }
+  root.zeusDecodeFrame = decodeFrame;
   function attachZeus(canvas, opts) {
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("Canvas2D unavailable");
@@ -457,6 +524,269 @@
     return new TextDecoder().decode(u8().subarray(ptr, ptr + len));
   }
 
+  /* Canvas2D for each primitive of a frame (docs/frame-format.md). Called only
+     by `decodeFrame`, in op order, with strings already decoded; units are
+     layout points under the scaled CTM. */
+  const paint = {
+    fill: (x, y, w, h, color, r) => {
+      ctx.fillStyle = rgb(color);
+      roundRect(x, y, w, h, r);
+    },
+    fill_a: (x, y, w, h, color, r, a) => {
+      ctx.fillStyle = rgba(color, a);
+      roundRect(x, y, w, h, r);
+    },
+    fill_g: (x, y, w, h, c0, c1, axis, radius, a) => {
+      const p = snapRect(x, y, w, h);
+      const g = axis
+        ? ctx.createLinearGradient(p.x, p.y, p.x + p.w, p.y)
+        : ctx.createLinearGradient(p.x, p.y, p.x, p.y + p.h);
+      g.addColorStop(0, rgb(c0));
+      g.addColorStop(1, rgb(c1));
+      ctx.save();
+      if (a < 255) ctx.globalAlpha = Math.max(0, a) / 255;
+      ctx.fillStyle = g;
+      /* The radius used to be dropped, which is why every gradient
+         background painted square-cornered. */
+      traceRoundRect(p.x, p.y, p.w, p.h, Math.round(radius * sx) / sx);
+      ctx.fill();
+      popState();
+    },
+    /* Soft drop shadow. Canvas2D's shadow applies to the next fill, so the
+       rounded path is filled offscreen-left and only its blur lands inside
+       the real rect — filling in place would paint over whatever the
+       shadow is meant to sit under.
+       Units: the path is in layout (CSS) space under the scaled CTM, but
+       `shadowOffset*` / `shadowBlur` are device pixels and ignore the CTM.
+       So the path moves by `off` and the shadow by `off * sx`; mixing the
+       two put the fill on screen at 2x (a black card-sized block). `off`
+       also has to clear the canvas' left edge from wherever the rect is,
+       so it includes `p.x` — a rect at x = 1000 needs more than its own
+       width to leave the screen. */
+    shadow: (x, y, w, h, radius, color, a, blur, dx, dy) => {
+      const p = snapRect(x, y, w, h);
+      if (cachedShadow(p, radius, color, a, blur, dx, dy)) return;
+      /* Canvas2D's shadow applies to the next fill, so the rounded path is
+         filled past the LEFT edge of the canvas and only its blur lands where
+         the rect is — filling in place would paint over whatever the shadow
+         sits under.
+
+         How far "past the left edge" depends on the CURRENT transform, which
+         is why this reads the matrix instead of assuming the layout origin is
+         the device origin. A paint transform (the drawer sliding out) moves
+         that origin, so the old fixed margin stopped clearing the canvas and
+         the black fill itself showed up as a block on the left — the bug you
+         saw while a drawer closed. In device terms the path must end before
+         device x = 0: `end = sc * (p.x + p.w - off) + originDev <= 0`. */
+      const m = ctx.getTransform();
+      const sc = m.a || 1; /* device pixels per layout unit */
+      const originX = m.e / sc; /* device origin, in layout units */
+      const originY = m.f / (m.d || sc);
+      const offX = p.x + p.w + originX + 2 * blur + 64;
+      const offY = p.y + p.h + originY + 2 * blur + 64;
+      ctx.save();
+      ctx.shadowColor = rgba(color, a);
+      /* shadow* values are DEVICE pixels and ignore the CTM, so the path's
+         leftward shift has to be cancelled out in device terms and the blur
+         scales with the device-per-layout factor. */
+      ctx.shadowBlur = blur * sc;
+      ctx.shadowOffsetX = sc * offX + dx * sc;
+      ctx.shadowOffsetY = sc * offY + dy * (m.d || sc);
+      ctx.fillStyle = "#000";
+      traceRoundRect(p.x - offX, p.y - offY, p.w, p.h,
+                     Math.round(radius * sc) / sc);
+      ctx.fill();
+      popState();
+    },
+    /* Ring stroke inset by half the width, so the line paints inside the
+       rect — the box model layout already assumes when it insets content
+       by `border_w`. */
+    stroke: (x, y, w, h, color, radius, width, a) => {
+      const p = snapRect(x, y, w, h);
+      /* Whole device pixels, expressed in layout units: `lineWidth` is in
+         user space under the scaled CTM, so a device-pixel count here drew
+         a 1dp border 2dp wide at 2x. */
+      const lw = Math.max(1, Math.round(width * sx)) / sx;
+      if (p.w - lw <= 0 || p.h - lw <= 0) return;
+      ctx.save();
+      ctx.lineWidth = lw;
+      ctx.strokeStyle = rgba(color, a);
+      traceRoundRect(p.x + lw / 2, p.y + lw / 2, p.w - lw, p.h - lw,
+                     Math.max(0, Math.round(radius * sx) / sx - lw / 2));
+      ctx.stroke();
+      popState();
+    },
+    fill4: (x, y, w, h, color, a, tl, tr, br, bl) => {
+      const p = snapRect(x, y, w, h);
+      const k = (v) => Math.round(v * sx) / sx;
+      ctx.fillStyle = rgba(color, a);
+      traceRect4(p.x, p.y, p.w, p.h, k(tl), k(tr), k(br), k(bl));
+      ctx.fill();
+    },
+    /* Paint-space transform: translate, then scale and rotate about
+       (ox, oy). Composes with the enclosing clip and unwinds with the
+       enclosing restore, so it never escapes its save level. */
+    xform: (dx, dy, scale, rot, ox, oy) => {
+      /* LAYOUT units, like every other callback here: `applyLayoutTransform`
+         has already put `sx, sy` on the CTM, so scaling these translates
+         again moved the content by sx^2 (4x at dpr 2 — the spinner lands far
+         from its box) and swung the rotation about a pivot that no longer
+         coincided with the node's centre (so it "rotates differently").
+         Translate in user space and let the CTM do the device mapping. */
+      ctx.translate(ox + dx, oy + dy);
+      if (rot) ctx.rotate((rot * Math.PI) / 180);
+      if (scale !== 100) ctx.scale(scale / 100, scale / 100);
+      ctx.translate(-ox, -oy);
+    },
+    text: (x, y, s, color, font) => {
+      const px = font > 0 ? font : 13;
+      const box = lineBox(px);
+      ctx.fillStyle = rgb(color);
+      setFont(px);
+      ctx.textBaseline = "alphabetic";
+      ctx.fillText(s, snapX(x), snapY(y + box.ascent));
+    },
+    /* Rotated text, clockwise around the top-left of the line box. */
+    text_rot: (x, y, s, color, font, deg) => {
+      const px = font > 0 ? font : 13;
+      const box = lineBox(px);
+      ctx.fillStyle = rgb(color);
+      setFont(px);
+      ctx.textBaseline = "alphabetic";
+      ctx.save();
+      ctx.translate(snapX(x), snapY(y + box.ascent));
+      ctx.rotate((deg * Math.PI) / 180);
+      ctx.fillText(s, 0, 0);
+      popState();
+    },
+    save: () => ctx.save(),
+    alpha: (a) => {
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, Math.min(255, a)) / 255;
+    },
+    clip: (x, y, w, h, radius) => {
+      const box = snapRect(x, y, w, h);
+      traceRoundRect(box.x, box.y, box.w, box.h,
+                     radius > 0 ? Math.round(radius * sx) / sx : 0);
+      ctx.clip();
+    },
+    restore: () => popState(),
+    /* PNG / JPEG / WebP / GIF via the browser decoder. Cache by src.
+       fit: 0 stretch, 1 contain, 2 cover, 3 none. */
+    image: (x, y, w, h, src, radius, alpha, fit) => {
+      if (!src || w <= 0 || h <= 0) return;
+      let rec = null;
+      let iw = 0;
+      let ih = 0;
+      if (src.startsWith("media:")) {
+        /* A player's current frame (see `media`). Nothing until the first
+           frame decodes; the poster is the app's business. */
+        const m = media[parseInt(src.slice(6), 10) | 0];
+        if (!m || !m.src || m.error || m.el.readyState < 2 || !m.el.videoWidth) return;
+        rec = m.el;
+        iw = rec.videoWidth;
+        ih = rec.videoHeight;
+      } else {
+        rec = imgCache.get(src);
+        if (rec === "fail") return;
+        if (!rec) {
+          const im = new Image();
+          /* Tiny `data:` catalog shots should decode on this paint, not the
+             next rAF. `decoding = "sync"` is a hint; we still draw if
+             `complete` after setting `src`. */
+          if ("decoding" in im) im.decoding = "sync";
+          im.onload = () => schedule(0);
+          im.onerror = () => {
+            imgCache.set(src, "fail");
+          };
+          im.src = src;
+          imgCache.set(src, im);
+          rec = im;
+        }
+        if (!rec.complete || !rec.naturalWidth) return;
+        iw = rec.naturalWidth;
+        ih = rec.naturalHeight;
+      }
+      const p = snapRect(x, y, w, h);
+      let dx = p.x, dy = p.y, dw = p.w, dh = p.h;
+      if (fit === 3) {
+        dw = iw;
+        dh = ih;
+      } else if (fit === 1 || fit === 2) {
+        if ((fit === 1 && iw * p.h <= ih * p.w) || (fit === 2 && iw * p.h >= ih * p.w)) {
+          dh = p.h;
+          dw = ih ? (iw * p.h) / ih : p.w;
+        } else {
+          dw = p.w;
+          dh = iw ? (ih * p.w) / iw : p.h;
+        }
+        dx = p.x + (p.w - dw) / 2;
+        dy = p.y + (p.h - dh) / 2;
+      }
+      ctx.save();
+      if (radius > 0) {
+        let r = radius;
+        if (r > p.w / 2) r = p.w / 2;
+        if (r > p.h / 2) r = p.h / 2;
+        ctx.beginPath();
+        ctx.moveTo(p.x + r, p.y);
+        ctx.arcTo(p.x + p.w, p.y, p.x + p.w, p.y + p.h, r);
+        ctx.arcTo(p.x + p.w, p.y + p.h, p.x, p.y + p.h, r);
+        ctx.arcTo(p.x, p.y + p.h, p.x, p.y, r);
+        ctx.arcTo(p.x, p.y, p.x + p.w, p.y, r);
+        ctx.closePath();
+        ctx.clip();
+      } else {
+        ctx.beginPath();
+        ctx.rect(p.x, p.y, p.w, p.h);
+        ctx.clip();
+      }
+      ctx.globalAlpha = alpha >= 0 && alpha < 255 ? alpha / 255 : 1;
+      ctx.drawImage(rec, dx, dy, dw, dh);
+      popState();
+    },
+    /* A vector path the engine parsed (icons, charts, `Svg`): `n` int32 of
+       the frame's path stream `c` from `start`, commands 0 move x y / 1 line x y / 2 cubic x1 y1 x2 y2 x y /
+       3 close, in 1/64 px. `width` 0 fills (non-zero); otherwise a stroke
+       `width`/64 wide, `style` = cap + 4 * join. */
+    path: (c, start, n, color, a, width, style) => {
+      const u = 1 / 64;
+      const end = start + n;
+      ctx.beginPath();
+      let i = start;
+      while (i < end) {
+        const k = c[i++];
+        if (k === 0) {
+          ctx.moveTo(c[i] * u, c[i + 1] * u);
+          i += 2;
+        } else if (k === 1) {
+          ctx.lineTo(c[i] * u, c[i + 1] * u);
+          i += 2;
+        } else if (k === 2) {
+          ctx.bezierCurveTo(c[i] * u, c[i + 1] * u, c[i + 2] * u, c[i + 3] * u,
+                            c[i + 4] * u, c[i + 5] * u);
+          i += 6;
+        } else if (k === 3) {
+          ctx.closePath();
+        } else {
+          break;
+        }
+      }
+      if (width === 0) {
+        ctx.fillStyle = rgba(color, a);
+        ctx.fill();
+        return;
+      }
+      ctx.save();
+      ctx.strokeStyle = rgba(color, a);
+      ctx.lineWidth = width * u;
+      ctx.lineCap = ["butt", "round", "square"][style & 3] || "butt";
+      ctx.lineJoin = ["miter", "round", "bevel"][style >> 2] || "miter";
+      ctx.stroke();
+      ctx.restore();
+    },
+  };
+
   const imports = {
     /* clang wasm32 libcalls (`__multi3`, …) land in `env` unless linked in C. */
     env: {
@@ -649,139 +979,8 @@
       },
       view_w: () => Math.max(1, Math.round(canvas.clientWidth || window.innerWidth || 1)),
       view_h: () => Math.max(1, Math.round(canvas.clientHeight || window.innerHeight || 1)),
-      fill: (x, y, w, h, color, r) => {
-        ctx.fillStyle = rgb(color);
-        roundRect(x, y, w, h, r);
-      },
-      fill_a: (x, y, w, h, color, r, a) => {
-        ctx.fillStyle = rgba(color, a);
-        roundRect(x, y, w, h, r);
-      },
-      fill_g: (x, y, w, h, c0, c1, axis, radius, a) => {
-        const p = snapRect(x, y, w, h);
-        const g = axis
-          ? ctx.createLinearGradient(p.x, p.y, p.x + p.w, p.y)
-          : ctx.createLinearGradient(p.x, p.y, p.x, p.y + p.h);
-        g.addColorStop(0, rgb(c0));
-        g.addColorStop(1, rgb(c1));
-        ctx.save();
-        if (a < 255) ctx.globalAlpha = Math.max(0, a) / 255;
-        ctx.fillStyle = g;
-        /* The radius used to be dropped, which is why every gradient
-           background painted square-cornered. */
-        traceRoundRect(p.x, p.y, p.w, p.h, Math.round(radius * sx) / sx);
-        ctx.fill();
-        popState();
-      },
-      /* Soft drop shadow. Canvas2D's shadow applies to the next fill, so the
-         rounded path is filled offscreen-left and only its blur lands inside
-         the real rect — filling in place would paint over whatever the
-         shadow is meant to sit under.
-         Units: the path is in layout (CSS) space under the scaled CTM, but
-         `shadowOffset*` / `shadowBlur` are device pixels and ignore the CTM.
-         So the path moves by `off` and the shadow by `off * sx`; mixing the
-         two put the fill on screen at 2x (a black card-sized block). `off`
-         also has to clear the canvas' left edge from wherever the rect is,
-         so it includes `p.x` — a rect at x = 1000 needs more than its own
-         width to leave the screen. */
-      shadow: (x, y, w, h, radius, color, a, blur, dx, dy) => {
-        const p = snapRect(x, y, w, h);
-        if (cachedShadow(p, radius, color, a, blur, dx, dy)) return;
-        /* Canvas2D's shadow applies to the next fill, so the rounded path is
-           filled past the LEFT edge of the canvas and only its blur lands where
-           the rect is — filling in place would paint over whatever the shadow
-           sits under.
-
-           How far "past the left edge" depends on the CURRENT transform, which
-           is why this reads the matrix instead of assuming the layout origin is
-           the device origin. A paint transform (the drawer sliding out) moves
-           that origin, so the old fixed margin stopped clearing the canvas and
-           the black fill itself showed up as a block on the left — the bug you
-           saw while a drawer closed. In device terms the path must end before
-           device x = 0: `end = sc * (p.x + p.w - off) + originDev <= 0`. */
-        const m = ctx.getTransform();
-        const sc = m.a || 1; /* device pixels per layout unit */
-        const originX = m.e / sc; /* device origin, in layout units */
-        const originY = m.f / (m.d || sc);
-        const offX = p.x + p.w + originX + 2 * blur + 64;
-        const offY = p.y + p.h + originY + 2 * blur + 64;
-        ctx.save();
-        ctx.shadowColor = rgba(color, a);
-        /* shadow* values are DEVICE pixels and ignore the CTM, so the path's
-           leftward shift has to be cancelled out in device terms and the blur
-           scales with the device-per-layout factor. */
-        ctx.shadowBlur = blur * sc;
-        ctx.shadowOffsetX = sc * offX + dx * sc;
-        ctx.shadowOffsetY = sc * offY + dy * (m.d || sc);
-        ctx.fillStyle = "#000";
-        traceRoundRect(p.x - offX, p.y - offY, p.w, p.h,
-                       Math.round(radius * sc) / sc);
-        ctx.fill();
-        popState();
-      },
-      /* Ring stroke inset by half the width, so the line paints inside the
-         rect — the box model layout already assumes when it insets content
-         by `border_w`. */
-      stroke: (x, y, w, h, color, radius, width, a) => {
-        const p = snapRect(x, y, w, h);
-        /* Whole device pixels, expressed in layout units: `lineWidth` is in
-           user space under the scaled CTM, so a device-pixel count here drew
-           a 1dp border 2dp wide at 2x. */
-        const lw = Math.max(1, Math.round(width * sx)) / sx;
-        if (p.w - lw <= 0 || p.h - lw <= 0) return;
-        ctx.save();
-        ctx.lineWidth = lw;
-        ctx.strokeStyle = rgba(color, a);
-        traceRoundRect(p.x + lw / 2, p.y + lw / 2, p.w - lw, p.h - lw,
-                       Math.max(0, Math.round(radius * sx) / sx - lw / 2));
-        ctx.stroke();
-        popState();
-      },
-      fill4: (x, y, w, h, color, a, tl, tr, br, bl) => {
-        const p = snapRect(x, y, w, h);
-        const k = (v) => Math.round(v * sx) / sx;
-        ctx.fillStyle = rgba(color, a);
-        traceRect4(p.x, p.y, p.w, p.h, k(tl), k(tr), k(br), k(bl));
-        ctx.fill();
-      },
-      /* Paint-space transform: translate, then scale and rotate about
-         (ox, oy). Composes with the enclosing clip and unwinds with the
-         enclosing restore, so it never escapes its save level. */
-      xform: (dx, dy, scale, rot, ox, oy) => {
-        /* LAYOUT units, like every other callback here: `applyLayoutTransform`
-           has already put `sx, sy` on the CTM, so scaling these translates
-           again moved the content by sx^2 (4x at dpr 2 — the spinner lands far
-           from its box) and swung the rotation about a pivot that no longer
-           coincided with the node's centre (so it "rotates differently").
-           Translate in user space and let the CTM do the device mapping. */
-        ctx.translate(ox + dx, oy + dy);
-        if (rot) ctx.rotate((rot * Math.PI) / 180);
-        if (scale !== 100) ctx.scale(scale / 100, scale / 100);
-        ctx.translate(-ox, -oy);
-      },
-      text: (x, y, ptr, color, font) => {
-        const s = cstr(ptr);
-        const px = font > 0 ? font : 13;
-        const box = lineBox(px);
-        ctx.fillStyle = rgb(color);
-        setFont(px);
-        ctx.textBaseline = "alphabetic";
-        ctx.fillText(s, snapX(x), snapY(y + box.ascent));
-      },
-      /* Rotated text, clockwise around the top-left of the line box. */
-      text_rot: (x, y, ptr, color, font, deg) => {
-        const s = cstr(ptr);
-        const px = font > 0 ? font : 13;
-        const box = lineBox(px);
-        ctx.fillStyle = rgb(color);
-        setFont(px);
-        ctx.textBaseline = "alphabetic";
-        ctx.save();
-        ctx.translate(snapX(x), snapY(y + box.ascent));
-        ctx.rotate((deg * Math.PI) / 180);
-        ctx.fillText(s, 0, 0);
-        popState();
-      },
+      /* The whole frame, once per paint: see `decodeFrame`. */
+      frame: (head) => decodeFrame(mem.buffer, head, paint),
       /* "" restores the host default. Quoting the family lets names with
          spaces ("Universal Sans") survive the CSS shorthand. */
       set_font_family: (ptr) => {
@@ -850,18 +1049,6 @@
         view.setInt32(wPtr, Math.ceil(w), true);
         view.setInt32(hPtr, box.height, true);
       },
-      save: () => ctx.save(),
-      alpha: (a) => {
-        ctx.save();
-        ctx.globalAlpha = Math.max(0, Math.min(255, a)) / 255;
-      },
-      clip: (x, y, w, h, radius) => {
-        const box = snapRect(x, y, w, h);
-        traceRoundRect(box.x, box.y, box.w, box.h,
-                       radius > 0 ? Math.round(radius * sx) / sx : 0);
-        ctx.clip();
-      },
-      restore: () => popState(),
       pick_image: () => {
         if (!fileInput) {
           fileInput = document.createElement("input");
@@ -893,81 +1080,6 @@
           });
         }
         fileInput.click();
-      },
-      /* PNG / JPEG / WebP / GIF via the browser decoder. Cache by src.
-         fit: 0 stretch, 1 contain, 2 cover, 3 none. */
-      image: (x, y, w, h, ptr, radius, alpha, fit) => {
-        const src = cstr(ptr);
-        if (!src || w <= 0 || h <= 0) return;
-        let rec = null;
-        let iw = 0;
-        let ih = 0;
-        if (src.startsWith("media:")) {
-          /* A player's current frame (see `media`). Nothing until the first
-             frame decodes; the poster is the app's business. */
-          const m = media[parseInt(src.slice(6), 10) | 0];
-          if (!m || !m.src || m.error || m.el.readyState < 2 || !m.el.videoWidth) return;
-          rec = m.el;
-          iw = rec.videoWidth;
-          ih = rec.videoHeight;
-        } else {
-          rec = imgCache.get(src);
-          if (rec === "fail") return;
-          if (!rec) {
-            const im = new Image();
-            /* Tiny `data:` catalog shots should decode on this paint, not the
-               next rAF. `decoding = "sync"` is a hint; we still draw if
-               `complete` after setting `src`. */
-            if ("decoding" in im) im.decoding = "sync";
-            im.onload = () => schedule(0);
-            im.onerror = () => {
-              imgCache.set(src, "fail");
-            };
-            im.src = src;
-            imgCache.set(src, im);
-            rec = im;
-          }
-          if (!rec.complete || !rec.naturalWidth) return;
-          iw = rec.naturalWidth;
-          ih = rec.naturalHeight;
-        }
-        const p = snapRect(x, y, w, h);
-        let dx = p.x, dy = p.y, dw = p.w, dh = p.h;
-        if (fit === 3) {
-          dw = iw;
-          dh = ih;
-        } else if (fit === 1 || fit === 2) {
-          if ((fit === 1 && iw * p.h <= ih * p.w) || (fit === 2 && iw * p.h >= ih * p.w)) {
-            dh = p.h;
-            dw = ih ? (iw * p.h) / ih : p.w;
-          } else {
-            dw = p.w;
-            dh = iw ? (ih * p.w) / iw : p.h;
-          }
-          dx = p.x + (p.w - dw) / 2;
-          dy = p.y + (p.h - dh) / 2;
-        }
-        ctx.save();
-        if (radius > 0) {
-          let r = radius;
-          if (r > p.w / 2) r = p.w / 2;
-          if (r > p.h / 2) r = p.h / 2;
-          ctx.beginPath();
-          ctx.moveTo(p.x + r, p.y);
-          ctx.arcTo(p.x + p.w, p.y, p.x + p.w, p.y + p.h, r);
-          ctx.arcTo(p.x + p.w, p.y + p.h, p.x, p.y + p.h, r);
-          ctx.arcTo(p.x, p.y + p.h, p.x, p.y, r);
-          ctx.arcTo(p.x, p.y, p.x + p.w, p.y, r);
-          ctx.closePath();
-          ctx.clip();
-        } else {
-          ctx.beginPath();
-          ctx.rect(p.x, p.y, p.w, p.h);
-          ctx.clip();
-        }
-        ctx.globalAlpha = alpha >= 0 && alpha < 255 ? alpha / 255 : 1;
-        ctx.drawImage(rec, dx, dy, dw, dh);
-        popState();
       },
       /* Intrinsic size for layout (`platform.plat_image_size`): the two i32
          out-params. Decode is shared with `image`; a not-yet-decoded source
@@ -1121,46 +1233,6 @@
           return 0;
         }
         return d.fullscreenElement ? 1 : 0;
-      },
-      /* A vector path the engine parsed (icons, charts, `Svg`): `n` int32 at
-         `ptr`, commands 0 move x y / 1 line x y / 2 cubic x1 y1 x2 y2 x y /
-         3 close, in 1/64 px. `width` 0 fills (non-zero); otherwise a stroke
-         `width`/64 wide, `style` = cap + 4 * join. */
-      path: (ptr, n, color, a, width, style) => {
-        const c = new Int32Array(mem.buffer, ptr, n);
-        const u = 1 / 64;
-        ctx.beginPath();
-        let i = 0;
-        while (i < n) {
-          const k = c[i++];
-          if (k === 0) {
-            ctx.moveTo(c[i] * u, c[i + 1] * u);
-            i += 2;
-          } else if (k === 1) {
-            ctx.lineTo(c[i] * u, c[i + 1] * u);
-            i += 2;
-          } else if (k === 2) {
-            ctx.bezierCurveTo(c[i] * u, c[i + 1] * u, c[i + 2] * u, c[i + 3] * u,
-                              c[i + 4] * u, c[i + 5] * u);
-            i += 6;
-          } else if (k === 3) {
-            ctx.closePath();
-          } else {
-            break;
-          }
-        }
-        if (width === 0) {
-          ctx.fillStyle = rgba(color, a);
-          ctx.fill();
-          return;
-        }
-        ctx.save();
-        ctx.strokeStyle = rgba(color, a);
-        ctx.lineWidth = width * u;
-        ctx.lineCap = ["butt", "round", "square"][style & 3] || "butt";
-        ctx.lineJoin = ["miter", "round", "bevel"][style >> 2] || "miter";
-        ctx.stroke();
-        ctx.restore();
       },
       fetch_rpc_async: (pathPtr, pathLen, bodyPtr, bodyLen, outPtr, cap, handle, sync) => {
         /* `sync` 1: a blocking XHR, for `await` (its pump loop holds this
@@ -1838,7 +1910,7 @@
 
   root.attachZeus = attachZeus;
 
-  const canvas = document.getElementById("zeus");
+  const canvas = typeof document !== "undefined" ? document.getElementById("zeus") : null;
   if (canvas && canvas.getAttribute("data-wasm")) {
     const host = attachZeus(canvas);
     host.bootUrl(canvas.getAttribute("data-wasm") || "app.wasm").catch((err) => {

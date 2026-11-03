@@ -1,7 +1,8 @@
 /* wasm.c — Canvas2D glue for Zeus (zeus/web). Not WebGPU.
  *
- * One paint path: Loam `scene.paint` (`loam_zeus_engine_paint`). This file
- * binds Canvas2D as the plat_* backend. The browser owns rAF: `zeus_paint`
+ * One paint path: Loam `scene.paint` (`loam_zeus_engine_paint`) produces one
+ * frame buffer (docs/frame-format.md) a frame, which this file hands to JS
+ * whole; loader.js decodes it into Canvas2D. The browser owns rAF: `zeus_paint`
  * returns 0 when idle so the loader can stop, like Cocoa `engine_next_ms`.
  */
 #include "zeus_rt.h"
@@ -11,40 +12,6 @@
 #include <string.h>
 
 int main(void);
-
-__attribute__((import_module("zeus"), import_name("fill")))
-void zeus_js_fill(int32_t x, int32_t y, int32_t w, int32_t h, int32_t rgb, int32_t radius);
-
-__attribute__((import_module("zeus"), import_name("fill_a")))
-void zeus_js_fill_a(int32_t x, int32_t y, int32_t w, int32_t h, int32_t rgb, int32_t radius,
-                    int32_t alpha);
-
-__attribute__((import_module("zeus"), import_name("fill_g")))
-void zeus_js_fill_g(int32_t x, int32_t y, int32_t w, int32_t h, int32_t c0, int32_t c1,
-                    int32_t axis, int32_t radius, int32_t alpha);
-
-__attribute__((import_module("zeus"), import_name("shadow")))
-void zeus_js_shadow(int32_t x, int32_t y, int32_t w, int32_t h, int32_t radius,
-                    int32_t rgb, int32_t alpha, int32_t blur, int32_t dx, int32_t dy);
-
-__attribute__((import_module("zeus"), import_name("stroke")))
-void zeus_js_stroke(int32_t x, int32_t y, int32_t w, int32_t h, int32_t rgb,
-                    int32_t radius, int32_t width, int32_t alpha);
-
-__attribute__((import_module("zeus"), import_name("fill4")))
-void zeus_js_fill4(int32_t x, int32_t y, int32_t w, int32_t h, int32_t rgb, int32_t alpha,
-                   int32_t tl, int32_t tr, int32_t br, int32_t bl);
-
-__attribute__((import_module("zeus"), import_name("xform")))
-void zeus_js_xform(int32_t dx, int32_t dy, int32_t scale, int32_t rot,
-                   int32_t ox, int32_t oy);
-
-__attribute__((import_module("zeus"), import_name("text")))
-void zeus_js_text(int32_t x, int32_t y, const char *s, int32_t rgb, int32_t font);
-
-__attribute__((import_module("zeus"), import_name("text_rot")))
-void zeus_js_text_rot(int32_t x, int32_t y, const char *s, int32_t rgb, int32_t font,
-                      int32_t deg);
 
 __attribute__((import_module("zeus"), import_name("measure")))
 void zeus_js_measure(const char *s, int32_t px, int32_t *w, int32_t *h);
@@ -58,131 +25,11 @@ int32_t zeus_js_load_font(const char *family, const char *src);
 __attribute__((import_module("zeus"), import_name("font_fetch")))
 int32_t zeus_js_font_fetch(const char *src);
 
-__attribute__((import_module("zeus"), import_name("save")))
-void zeus_js_save(void);
-
-__attribute__((import_module("zeus"), import_name("alpha")))
-void zeus_js_alpha(int32_t a);
-
-__attribute__((import_module("zeus"), import_name("clip")))
-void zeus_js_clip(int32_t x, int32_t y, int32_t w, int32_t h, int32_t radius);
-
-__attribute__((import_module("zeus"), import_name("restore")))
-void zeus_js_restore(void);
-
-__attribute__((import_module("zeus"), import_name("path")))
-void zeus_js_path(const int32_t *cmds, int32_t n, int32_t rgb, int32_t alpha, int32_t width,
-                  int32_t style);
-
-__attribute__((import_module("zeus"), import_name("image")))
-void zeus_js_image(int32_t x, int32_t y, int32_t w, int32_t h, const char *src, int32_t radius,
-                   int32_t alpha, int32_t fit);
-
 __attribute__((import_module("zeus"), import_name("image_size")))
 void zeus_js_image_size(const char *src, int32_t *w, int32_t *h);
 
 __attribute__((import_module("zeus"), import_name("pick_image")))
 void zeus_js_pick_image(void);
-
-static void draw_fill(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
-                      int64_t radius) {
-    (void)ctx;
-    zeus_js_fill((int32_t)x, (int32_t)y, (int32_t)w, (int32_t)h, (int32_t)(rgb & 0xFFFFFF),
-                 (int32_t)radius);
-}
-
-static void draw_fill_a(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
-                        int64_t radius, int64_t alpha) {
-    (void)ctx;
-    zeus_js_fill_a((int32_t)x, (int32_t)y, (int32_t)w, (int32_t)h, (int32_t)(rgb & 0xFFFFFF),
-                   (int32_t)radius, (int32_t)alpha);
-}
-
-static void draw_fill_g(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h, int64_t c0,
-                        int64_t c1, int64_t axis, int64_t radius, int64_t alpha) {
-    (void)ctx;
-    zeus_js_fill_g((int32_t)x, (int32_t)y, (int32_t)w, (int32_t)h, (int32_t)(c0 & 0xFFFFFF),
-                   (int32_t)(c1 & 0xFFFFFF), (int32_t)axis, (int32_t)radius, (int32_t)alpha);
-}
-
-static void draw_shadow(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
-                        int64_t radius, int64_t rgb, int64_t alpha, int64_t blur,
-                        int64_t dx, int64_t dy) {
-    (void)ctx;
-    zeus_js_shadow((int32_t)x, (int32_t)y, (int32_t)w, (int32_t)h, (int32_t)radius,
-                   (int32_t)(rgb & 0xFFFFFF), (int32_t)alpha, (int32_t)blur,
-                   (int32_t)dx, (int32_t)dy);
-}
-
-static void draw_stroke(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
-                        int64_t rgb, int64_t radius, int64_t width, int64_t alpha) {
-    (void)ctx;
-    zeus_js_stroke((int32_t)x, (int32_t)y, (int32_t)w, (int32_t)h,
-                   (int32_t)(rgb & 0xFFFFFF), (int32_t)radius, (int32_t)width,
-                   (int32_t)alpha);
-}
-
-static void draw_fill4(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
-                       int64_t alpha, int64_t tl, int64_t tr, int64_t br, int64_t bl) {
-    (void)ctx;
-    zeus_js_fill4((int32_t)x, (int32_t)y, (int32_t)w, (int32_t)h,
-                  (int32_t)(rgb & 0xFFFFFF), (int32_t)alpha,
-                  (int32_t)tl, (int32_t)tr, (int32_t)br, (int32_t)bl);
-}
-
-static void draw_xform(void *ctx, int64_t dx, int64_t dy, int64_t scale, int64_t rot,
-                       int64_t ox, int64_t oy) {
-    (void)ctx;
-    zeus_js_xform((int32_t)dx, (int32_t)dy, (int32_t)scale, (int32_t)rot,
-                  (int32_t)ox, (int32_t)oy);
-}
-
-static void draw_text(void *ctx, int64_t x, int64_t y, const char *s, int64_t rgb, int64_t font) {
-    (void)ctx;
-    zeus_js_text((int32_t)x, (int32_t)y, s ? s : "", (int32_t)(rgb & 0xFFFFFF), (int32_t)font);
-}
-
-static void draw_text_rot(void *ctx, int64_t x, int64_t y, const char *s, int64_t rgb,
-                          int64_t font, int64_t deg) {
-    (void)ctx;
-    zeus_js_text_rot((int32_t)x, (int32_t)y, s ? s : "", (int32_t)(rgb & 0xFFFFFF),
-                     (int32_t)font, (int32_t)deg);
-}
-
-static void draw_save(void *ctx) {
-    (void)ctx;
-    zeus_js_save();
-}
-
-static void draw_alpha(void *ctx, int64_t a) {
-    (void)ctx;
-    zeus_js_alpha((int32_t)a);
-}
-
-static void draw_clip(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
-                     int64_t radius) {
-    (void)ctx;
-    zeus_js_clip((int32_t)x, (int32_t)y, (int32_t)w, (int32_t)h, (int32_t)radius);
-}
-
-static void draw_restore(void *ctx) {
-    (void)ctx;
-    zeus_js_restore();
-}
-
-static void draw_path(void *ctx, const int32_t *cmds, int64_t n, int64_t rgb, int64_t alpha,
-                      int64_t width, int64_t style) {
-    (void)ctx;
-    zeus_js_path(cmds, (int32_t)n, (int32_t)(rgb & 0xFFFFFF), (int32_t)alpha, (int32_t)width,
-                 (int32_t)style);
-}
-
-static void draw_image(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h, const char *src,
-                       int64_t radius, int64_t alpha, int64_t fit) {
-    (void)ctx;
-    zeus_js_image((int32_t)x, (int32_t)y, (int32_t)w, (int32_t)h, src ? src : "",
-                  (int32_t)radius, (int32_t)alpha, (int32_t)fit);
-}
 
 /* Canvas2D caches metrics per size, so the family change has to reach JS. */
 static void wasm_set_font_family(const char *family) {
@@ -276,25 +123,38 @@ static void wasm_redraw(void) {
     zeus_js_request_frame();
 }
 
-static void bind_canvas(void) {
-    ZeusDraw d;
-    memset(&d, 0, sizeof d);
-    d.fill = draw_fill;
-    d.fill_a = draw_fill_a;
-    d.fill_g = draw_fill_g;
-    d.shadow = draw_shadow;
-    d.stroke = draw_stroke;
-    d.fill4 = draw_fill4;
-    d.xform = draw_xform;
-    d.text = draw_text;
-    d.text_rot = draw_text_rot;
-    d.save = draw_save;
-    d.alpha = draw_alpha;
-    d.clip = draw_clip;
-    d.restore = draw_restore;
-    d.path = draw_path;
-    d.image = draw_image;
-    zeus_bind_draw(d);
+/* The frame goes to JS whole: `frame` gets one pointer to `wasm_frame_head`,
+   `version stride n ops ns strs np path`, the pointers into this memory. The
+   strings are `ns` (ptr, len) int32 pairs, so JS decodes UTF-8 straight from
+   the engine's bytes. Everything stays valid only during the call. */
+__attribute__((import_module("zeus"), import_name("frame")))
+void zeus_js_frame(const int32_t *head);
+
+static int32_t wasm_frame_head[8];
+static int32_t *wasm_strs;
+static int64_t wasm_strs_cap;
+
+static void wasm_frame(const ZeusFrame *f) {
+    if (f->ns * 2 > wasm_strs_cap) {
+        int64_t cap = f->ns * 2 + 64;
+        int32_t *p = (int32_t *)realloc(wasm_strs, (size_t)cap * sizeof *p);
+        if (!p) return;
+        wasm_strs = p;
+        wasm_strs_cap = cap;
+    }
+    for (int64_t i = 0; i < f->ns; i++) {
+        wasm_strs[i * 2] = (int32_t)(intptr_t)f->strs[i].ptr;
+        wasm_strs[i * 2 + 1] = (int32_t)f->strs[i].len;
+    }
+    wasm_frame_head[0] = f->version;
+    wasm_frame_head[1] = f->stride;
+    wasm_frame_head[2] = (int32_t)f->n;
+    wasm_frame_head[3] = (int32_t)(intptr_t)f->ops;
+    wasm_frame_head[4] = (int32_t)f->ns;
+    wasm_frame_head[5] = (int32_t)(intptr_t)wasm_strs;
+    wasm_frame_head[6] = (int32_t)f->np;
+    wasm_frame_head[7] = (int32_t)(intptr_t)f->path;
+    zeus_js_frame(wasm_frame_head);
 }
 
 /* 1 while `main` runs (the initial build). A trap then cannot be recovered in
@@ -309,7 +169,7 @@ void zeus_start(void) {
     zeus_set_image_size(wasm_image_size);
     zeus_set_font_hooks(wasm_load_font, wasm_set_font_family);
     zeus_set_font_bytes_hook(wasm_font_bytes);
-    bind_canvas();
+    zeus_bind_frame(wasm_frame);
     wasm_booting = 1;
     main();
     wasm_booting = 0;

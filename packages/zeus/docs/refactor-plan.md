@@ -484,8 +484,16 @@ Next, each its own change:
    `tests/draw_golden/replay_trace` binds a printing host
    (`runtime.trace_draw`) and pins the exact `ZeusDraw` call sequence; it was
    recorded on the old path and matched byte for byte after the switch.
-   Not done: the web host still turns each `ZeusDraw` call into its own JS
-   import. Handing JS the buffer needs a JS decoder the Deno smoke can check.
+   **Done (2026-11-03): the buffer is the contract.** The format is
+   versioned and specified in `docs/frame-format.md`. `present()` now also
+   lowers wrapped text (one text op per word, laid out by the rules
+   `measure_wrap` sizes with, and measured through the text cache), number
+   labels and text opacity (an explicit `alpha` op, 18). Hosts draw
+   primitives only, and the C `wrap_text` only measures. `zeus_bind_frame`
+   hands a host the whole frame. The web host uses it: `wasm.c` dropped its 15
+   draw imports for one `frame` import, and `loader.js` decodes the buffer
+   from wasm memory (`decodeFrame`, pure, run by `wasm_smoke` on every frame).
+   `replay_trace` stayed byte-identical through the lowering.
    **Done (2026-11-03): SVG is parsed once, in Loam.** Each host carried
    its own SVG parser (CoreGraphics in mac.m and ios.m, Canvas2D in
    loader.js, `android.graphics` in ZeusView.java), about 400 lines each,
