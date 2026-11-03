@@ -723,13 +723,6 @@ static void op_text_rot(int64_t x, int64_t y, loam_str s, int64_t rgb, int64_t f
     free(p);
 }
 
-static void op_text_int(int64_t x, int64_t y, int64_t v, int64_t rgb, int64_t font) {
-    char buf[32];
-    if (!have_draw || !paint_draw.text) return;
-    snprintf(buf, sizeof buf, "%lld", (long long)v);
-    paint_draw.text(paint_ctx, x, y, buf, rgb & 0xFFFFFF, font);
-}
-
 static void op_image(int64_t x, int64_t y, int64_t w, int64_t h, loam_str src,
                          int64_t radius, int64_t alpha, int64_t fit) {
     char *p;
@@ -852,9 +845,12 @@ static int64_t wrap_line_h(int64_t px) {
     return h;
 }
 
-static void wrap_text(const char *s, int64_t n, int64_t px, int64_t max_w, int paint,
-                      int64_t x0, int64_t y0, int64_t rgb, int64_t *out_w, int64_t *out_h) {
-    int64_t i = 0, line_w = 0, maxlw = 0, lines = 0, y = y0;
+/* The wrapped size of `s` at `px` within `max_w`: words split on space, tab
+   and newline, a space counted only between words on one line. Paint lowers
+   wrapped text with the same rules (`scene.lower_wrap`). */
+static void wrap_text(const char *s, int64_t n, int64_t px, int64_t max_w, int64_t *out_w,
+                      int64_t *out_h) {
+    int64_t i = 0, line_w = 0, maxlw = 0, lines = 0;
     int64_t lh, sw = 0, sh = 0;
     if (!s) s = "";
     if (n < 0) n = 0;
@@ -867,7 +863,6 @@ static void wrap_text(const char *s, int64_t n, int64_t px, int64_t max_w, int p
             if (line_w > maxlw) maxlw = line_w;
             line_w = 0;
             lines++;
-            y += lh;
             i++;
             continue;
         }
@@ -877,10 +872,7 @@ static void wrap_text(const char *s, int64_t n, int64_t px, int64_t max_w, int p
                     if (line_w > maxlw) maxlw = line_w;
                     line_w = 0;
                     lines++;
-                    y += lh;
                 } else {
-                    if (paint && have_draw && paint_draw.text)
-                        paint_draw.text(paint_ctx, x0 + line_w, y, " ", rgb & 0xFFFFFF, px);
                     line_w += sw;
                 }
             }
@@ -894,22 +886,6 @@ static void wrap_text(const char *s, int64_t n, int64_t px, int64_t max_w, int p
             if (line_w > maxlw) maxlw = line_w;
             line_w = 0;
             lines++;
-            y += lh;
-        }
-        if (paint && have_draw && paint_draw.text) {
-            char stack[256];
-            char *tmp;
-            int64_t wn = j - i;
-            if (wn < 0) wn = 0;
-            if ((size_t)wn + 1 <= sizeof stack) tmp = stack;
-            else {
-                tmp = (char *)malloc((size_t)wn + 1);
-                if (!tmp) abort();
-            }
-            if (wn) memcpy(tmp, s + i, (size_t)wn);
-            tmp[wn] = '\0';
-            paint_draw.text(paint_ctx, x0 + line_w, y, tmp, rgb & 0xFFFFFF, px);
-            if (tmp != stack) free(tmp);
         }
         line_w += ww;
         i = j;
@@ -924,14 +900,9 @@ static void wrap_text(const char *s, int64_t n, int64_t px, int64_t max_w, int p
 
 void loam_zeus_plat_measure_wrap(loam_str s, int32_t px, int32_t max_w, int32_t *w, int32_t *h) {
     int64_t ww = 0, hh = 0;
-    wrap_text(s.ptr, s.len, px, max_w, 0, 0, 0, 0, &ww, &hh);
+    wrap_text(s.ptr, s.len, px, max_w, &ww, &hh);
     if (w) *w = (int32_t)ww;
     if (h) *h = (int32_t)hh;
-}
-
-static void op_text_wrap(int64_t x, int64_t y, loam_str s, int64_t rgb, int64_t font,
-                             int64_t max_w) {
-    wrap_text(s.ptr, s.len, font, max_w, 1, x, y, rgb, NULL, NULL);
 }
 
 void loam_zeus_plat_set_window(loam_str title, int64_t width, int64_t height) {
@@ -2575,65 +2546,42 @@ void loam_platform_plat_history_back(void) {
 }
 
 /* --- the frame (`platform.plat_frame`) ------------------------------------
-   The one paint call a frame makes across the seam: the whole draw list as
-   `n` records of ZEUS_FRAME_STRIDE ints (`kind x y w h rgb radius alpha font
-   value str`, `str` indexing `strs` or -1) and the path stream path ops index
-   into, decoded here into the host's
-   `ZeusDraw`. The `op_*` helpers above hold the fallbacks for hosts that leave
-   a callback NULL, so a host implements only what it can draw. The op table
-   is documented on `plat_frame` in platform.loam. */
-#define ZEUS_FRAME_STRIDE 11
+   The one paint call a frame makes across the seam: one buffer in the format
+   of packages/zeus/docs/frame-format.md. The engine has already lowered
+   everything a host would have to compute (SVG, wrapped text, number labels,
+   text alpha), so each op is one primitive. A host either takes the buffer
+   whole (`zeus_bind_frame`, as the web host does to decode it in JS) or lets
+   `zeus_replay` decode it into its `ZeusDraw`; the `op_*` helpers above hold
+   the fallbacks for a host that leaves a callback NULL. */
+static void (*frame_sink)(const ZeusFrame *f);
 
-static int text_alpha_begin(int64_t alpha) {
-    if (alpha < 255) {
-        op_alpha(alpha);
-        return 1;
-    }
-    return 0;
+void zeus_bind_frame(void (*sink)(const ZeusFrame *f)) {
+    frame_sink = sink;
 }
 
-static void op_path(const int32_t *path, int64_t np, int64_t start, int64_t len, int64_t rgb,
+static void op_path(const ZeusFrame *f, int64_t start, int64_t len, int64_t rgb,
                     int64_t alpha, int64_t width, int64_t style) {
-    if (!have_draw || !paint_draw.path || !path) return;
-    if (start < 0 || len <= 0 || start + len > np) return;
-    paint_draw.path(paint_ctx, path + start, len, rgb & 0xFFFFFF, alpha, width, style);
+    if (!have_draw || !paint_draw.path || !f->path) return;
+    if (start < 0 || len <= 0 || start + len > f->np) return;
+    paint_draw.path(paint_ctx, f->path + start, len, rgb & 0xFFFFFF, alpha, width, style);
 }
 
-void zeus_replay(const int32_t *ops, int64_t n, const loam_str *strs, int64_t ns,
-                 const int32_t *path, int64_t np) {
+void zeus_replay(const ZeusFrame *f) {
     static const loam_str none = {"", 0, 0};
-    for (int64_t i = 0; i < n; i++) {
-        const int32_t *o = ops + i * ZEUS_FRAME_STRIDE;
+    if (!f || f->version != ZEUS_FRAME_VERSION || f->stride != ZEUS_FRAME_STRIDE) return;
+    for (int64_t i = 0; i < f->n; i++) {
+        const int32_t *o = f->ops + i * ZEUS_FRAME_STRIDE;
         int64_t x = o[1], y = o[2], w = o[3], h = o[4], rgb = o[5];
         int64_t radius = o[6], alpha = o[7], font = o[8], value = o[9];
-        loam_str str = o[10] >= 0 && o[10] < ns ? strs[o[10]] : none;
-        int wrap;
+        loam_str str = o[10] >= 0 && o[10] < f->ns ? f->strs[o[10]] : none;
         switch (o[0]) {
         case 0: op_fill(x, y, w, h, rgb, radius); break;
         case 1: op_fill_a(x, y, w, h, rgb, radius, alpha); break;
-        case 2:
-            wrap = text_alpha_begin(alpha);
-            op_text(x, y, str, rgb, font);
-            if (wrap) op_restore();
-            break;
-        case 3:
-            wrap = text_alpha_begin(alpha);
-            op_text_int(x, y, value, rgb, font);
-            if (wrap) op_restore();
-            break;
-        case 4:
-            wrap = text_alpha_begin(alpha);
-            op_text_wrap(x, y, str, rgb, font, w);
-            if (wrap) op_restore();
-            break;
+        case 2: op_text(x, y, str, rgb, font); break;
         case 6: op_save(); break;
         case 7: op_clip(x, y, w, h, radius); break;
         case 8: op_restore(); break;
-        case 9:
-            wrap = text_alpha_begin(alpha);
-            op_text_rot(x, y, str, rgb, font, w);
-            if (wrap) op_restore();
-            break;
+        case 9: op_text_rot(x, y, str, rgb, font, w); break;
         case 10: op_image(x, y, w, h, str, radius, alpha, value); break;
         case 11: op_fill_g(x, y, w, h, rgb, value, font, radius, alpha); break;
         case 12:
@@ -2645,25 +2593,38 @@ void zeus_replay(const int32_t *ops, int64_t n, const loam_str *strs, int64_t ns
                      value / 65536);
             break;
         case 15: op_xform(x, y, radius, font, w, h); break;
-        case 16: op_path(path, np, value, w, rgb, alpha, 0, 0); break;
+        case 16: op_path(f, value, w, rgb, alpha, 0, 0); break;
         case 17:
-            if (font > 0) op_path(path, np, value, w, rgb, alpha, font, radius);
+            if (font > 0) op_path(f, value, w, rgb, alpha, font, radius);
             break;
+        case 18: op_alpha(alpha); break;
         default: break;
         }
     }
 }
 
-/* `ops` / `strs` are the Loam vectors by value (int32 elements, loam_str
-   elements); the record count is checked against the buffer's length. */
-void loam_platform_plat_frame(loam_vec ops, int32_t n, loam_vec strs, loam_vec path,
-                              int32_t np) {
-    if (!ops.ptr || n <= 0) return;
-    if ((int64_t)n * ZEUS_FRAME_STRIDE > ops.len) n = (int32_t)(ops.len / ZEUS_FRAME_STRIDE);
-    if (!path.ptr || np < 0) np = 0;
-    if (np > path.len) np = (int32_t)path.len;
-    zeus_replay((const int32_t *)ops.ptr, n, (const loam_str *)strs.ptr, strs.ptr ? strs.len : 0,
-                (const int32_t *)path.ptr, np);
+/* The Loam vectors arrive by value (int32 elements, loam_str elements). The
+   header's counts are clamped to what the vectors hold, so a short buffer
+   draws less instead of reading past its end. */
+void loam_platform_plat_frame(loam_vec head, loam_vec ops, loam_vec strs, loam_vec path) {
+    const int32_t *hd = (const int32_t *)head.ptr;
+    ZeusFrame f;
+    if (!hd || head.len < 6 || hd[0] != ZEUS_FRAME_MAGIC) return;
+    f.version = hd[1];
+    f.stride = hd[2];
+    f.n = hd[3];
+    f.ns = hd[4];
+    f.np = hd[5];
+    if (f.stride <= 0 || !ops.ptr) return;
+    if (f.n * f.stride > ops.len) f.n = ops.len / f.stride;
+    if (!strs.ptr || f.ns > strs.len) f.ns = strs.ptr ? strs.len : 0;
+    if (!path.ptr || f.np > path.len) f.np = path.ptr ? path.len : 0;
+    f.ops = (const int32_t *)ops.ptr;
+    f.strs = (const loam_str *)strs.ptr;
+    f.path = (const int32_t *)path.ptr;
+    if (f.n <= 0) return;
+    if (frame_sink) frame_sink(&f);
+    else zeus_replay(&f);
 }
 
 /* --- trace host (`runtime.trace_draw`) -----------------------------------

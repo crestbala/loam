@@ -278,11 +278,17 @@ fn restore() {
 /// not extra draw-list ops (`draw_count` stays the open-panel count).
 /// Ints per op in the frame buffer: `kind x y w h rgb radius alpha font value`
 /// and the op's string index (-1 when it has none). The fields are the `Draw`
-/// record's, unchanged, except that an `svg` op (kind 5) never reaches a host:
-/// it is lowered here into path ops (kinds 16 / 17) over `frame_path`.
+/// record's; the kinds a host would have to compute (3, 4, 5) are lowered in
+/// `present` and never arrive.
 const FRAME_STRIDE: int = 11
+const OP_TEXT: int = 2
 const OP_PATH_FILL: int = 16
 const OP_PATH_STROKE: int = 17
+const OP_ALPHA: int = 18
+/// "ZEUS" read as a little-endian int32, then the format version. A host
+/// checks both before decoding.
+const FRAME_MAGIC: int = 0x5355455A
+const FRAME_VERSION: int = 1
 
 /// The frame handed to the host: `FRAME_STRIDE` ints per op, the strings text /
 /// image ops point into, and the path stream path ops point into (`SP_*`
@@ -293,6 +299,10 @@ let mut frame_strs: []string = []string {}
 let mut frame_path: []int = []int {}
 let mut frame_n: int = 0
 let mut frame_np: int = 0
+let mut frame_ns: int = 0
+/// The frame header: magic, version, stride, op count, string count, path
+/// length (`docs/frame-format.md`).
+let mut frame_head: []int = []int { 0, 0, 0, 0, 0, 0 }
 
 fn frame_put(i: int, v: int) {
     if i < frame_ops.len {
@@ -399,33 +409,137 @@ fn lower_svg(d: Draw) {
     }
 }
 
-/// Hand the draw list to the host as one command buffer. The runtime replays
-/// it into the host's `ZeusDraw` (`zeus_replay` in zeus_plat.c), so this is the
+/// Put `s` in the frame's string table and return its index.
+fn frame_str(s: string) -> int {
+    if frame_ns < frame_strs.len {
+        frame_strs[frame_ns] = s
+    } else {
+        push(frame_strs, s)
+    }
+    frame_ns = frame_ns + 1
+    return frame_ns - 1
+}
+
+fn text_op(x: int, y: int, s: string, rgb: int, font: int) {
+    frame_op(OP_TEXT, x, y, 0, 0, rgb, 0, 255, font, 0, frame_str(s))
+}
+
+/// Wrapped text (kind 4) as one text op per word, broken at `max_w` exactly as
+/// `measure_wrap` sized it: words split on space, tab and newline; a space is
+/// drawn only between words on the same line; a newline always breaks. Word
+/// widths come from the host's own face (`measure_host`, cached), so the words
+/// sit where the host's glyphs land.
+fn lower_wrap(d: Draw) {
+    let s = d.text
+    let px = d.font
+    let mut max_w = d.w
+    if max_w < 1 {
+        max_w = 1
+    }
+    let mut lh = 0
+    let mut mh = 0
+    metrics.measure_host("Mg", px, &mut mh, &mut lh)
+    if lh < 1 {
+        lh = px + 4
+    }
+    let mut sw = 0
+    let mut sh = 0
+    metrics.measure_host(" ", px, &mut sw, &mut sh)
+    let mut line_w = 0
+    let mut y = d.y
+    let mut i = 0
+    while i < s.len {
+        let c = s[i]
+        if c == 10 {
+            line_w = 0
+            y = y + lh
+            i = i + 1
+        } else if c == 32 || c == 9 {
+            if line_w > 0 {
+                if line_w + sw > max_w {
+                    line_w = 0
+                    y = y + lh
+                } else {
+                    text_op(d.x + line_w, y, " ", d.rgb, px)
+                    line_w = line_w + sw
+                }
+            }
+            i = i + 1
+        } else {
+            let mut j = i
+            while j < s.len && s[j] != 32 && s[j] != 9 && s[j] != 10 {
+                j = j + 1
+            }
+            let word = metrics.sub_bytes(s, i, j)
+            let mut ww = 0
+            let mut wh = 0
+            metrics.measure_host(word, px, &mut ww, &mut wh)
+            if line_w > 0 && line_w + ww > max_w {
+                line_w = 0
+                y = y + lh
+            }
+            text_op(d.x + line_w, y, word, d.rgb, px)
+            line_w = line_w + ww
+            i = j
+        }
+    }
+}
+
+/// Hand the draw list to the host as one command buffer, in the versioned
+/// format of `docs/frame-format.md`. Everything a host would otherwise have to
+/// compute is lowered here first, so a host only draws primitives:
+///
+/// - `svg` (5) becomes path ops (16 / 17);
+/// - wrapped text (4) becomes one text op per word;
+/// - a number label (3) becomes a text op over its decimal string;
+/// - text drawn at partial alpha (2, 3, 4, 9) is bracketed by an `alpha` op
+///   (18) and a `restore` (8), so text ops themselves carry no alpha.
+///
+/// The runtime either replays the buffer into the host's `ZeusDraw`
+/// (`zeus_replay`) or hands it over whole (`zeus_bind_frame`), so this is the
 /// only paint call a frame makes across the seam.
 fn present() {
     let n = draws.len
-    let mut ns = 0
     frame_n = 0
     frame_np = 0
+    frame_ns = 0
     for i in 0..n {
         let d = draws[i]
-        if d.kind == 5 {
+        let k = d.kind
+        if k == 5 {
             lower_svg(d)
             continue
         }
-        let mut si = -1
-        if d.text.len > 0 {
-            if ns < frame_strs.len {
-                frame_strs[ns] = d.text
-            } else {
-                push(frame_strs, d.text)
-            }
-            si = ns
-            ns = ns + 1
+        let is_text = k == 2 || k == 3 || k == 4 || k == 9
+        if is_text && d.alpha < 255 {
+            frame_op(OP_ALPHA, 0, 0, 0, 0, 0, 0, d.alpha, 0, 0, -1)
         }
-        frame_op(d.kind, d.x, d.y, d.w, d.h, d.rgb, d.radius, d.alpha, d.font, d.value, si)
+        if k == 2 {
+            text_op(d.x, d.y, d.text, d.rgb, d.font)
+        } else if k == 3 {
+            text_op(d.x, d.y, metrics.decimal(d.value), d.rgb, d.font)
+        } else if k == 4 {
+            lower_wrap(d)
+        } else if k == 9 {
+            frame_op(9, d.x, d.y, d.w, 0, d.rgb, 0, 255, d.font, 0, frame_str(d.text))
+        } else {
+            let mut si = -1
+            if d.text.len > 0 {
+                si = frame_str(d.text)
+            }
+            frame_op(k, d.x, d.y, d.w, d.h, d.rgb, d.radius, d.alpha, d.font, d.value, si)
+        }
+        if is_text && d.alpha < 255 {
+            frame_op(8, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1)
+        }
     }
-    platform.plat_frame(frame_ops, frame_n, frame_strs, frame_path, frame_np)
+    frame_head[0] = FRAME_MAGIC
+    frame_head[1] = FRAME_VERSION
+    frame_head[2] = FRAME_STRIDE
+    frame_head[3] = frame_n
+    frame_head[4] = frame_ns
+    frame_head[5] = frame_np
+    platform.plat_frame(frame_head, frame_ops, frame_strs, frame_path)
 }
 
 

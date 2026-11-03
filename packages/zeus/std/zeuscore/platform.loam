@@ -8,37 +8,14 @@
 fn plat_run() {}
 fn plat_headless() -> int {}
 fn plat_measure(s: string, px: int, w: &mut int, h: &mut int) {}
-/// The frame: the whole draw list in one call. `ops` holds `n` records of 11
-/// ints, `kind x y w h rgb radius alpha font value str`, where `str` indexes
-/// `strs` (-1 for none). The runtime replays it into the host's `ZeusDraw`
-/// (`zeus_replay` in zeus_plat.c), applying the fallbacks a host may rely on.
-/// Coordinates are layout points; colours are 0xRRGGBB; alpha is 0..255.
-///
-/// | kind | op | fields used |
-/// |---|---|---|
-/// | 0 | fill | x y w h rgb radius |
-/// | 1 | fill_a | + alpha |
-/// | 2 | text | x y str rgb font (alpha < 255 wraps it in alpha / restore) |
-/// | 3 | text_int | x y value rgb font |
-/// | 4 | text_wrap | x y str rgb font, w = wrap width |
-/// | 6 | save | |
-/// | 7 | clip | x y w h radius (rounded when radius > 0) |
-/// | 8 | restore | |
-/// | 9 | text_rot | x y str rgb font, w = clockwise degrees |
-/// | 10 | image | x y w h str radius alpha, value = fit |
-/// | 11 | fill_g | x y w h, rgb → value, font = axis, radius alpha |
-/// | 12 | shadow | x y w h radius rgb alpha, font = blur, value = packed dx/dy |
-/// | 13 | stroke | x y w h rgb radius alpha, font = width |
-/// | 14 | fill4 | x y w h rgb alpha, radius / value = packed corners |
-/// | 15 | xform | x y = translate, radius = scale %, font = degrees, w h = origin |
-/// | 16 | path fill | rgb alpha; value = start in `path`, w = its length |
-/// | 17 | path stroke | as 16, font = width (1/64 pt), radius = cap + 4 × join |
-///
-/// Kind 5 (`svg`) is lowered to 16 / 17 by the engine and never arrives.
-/// `path` holds `np` ints: commands `0` move x y, `1` line x y, `2` cubic
-/// x1 y1 x2 y2 x y, `3` close, coordinates in 1/64 layout point. Caps and joins
-/// are 0 butt / miter, 1 round, 2 square / bevel.
-fn plat_frame(ops: []int, n: int, strs: []string, path: []int, np: int) {}
+/// The frame: the whole draw list in one call, in the versioned format of
+/// `packages/zeus/docs/frame-format.md` (the op table lives there, once).
+/// `head` is `magic version stride n ns np`; `ops` holds `n` records of
+/// `stride` ints; `strs` the `ns` strings text and image ops index; `path` the
+/// `np` ints path ops index. The runtime either replays it into the host's
+/// `ZeusDraw` (`zeus_replay`) or hands it whole to a frame sink
+/// (`zeus_bind_frame`), which is how the web host decodes it in JS.
+fn plat_frame(head: []int, ops: []int, strs: []string, path: []int) {}
 /// Set the family every later measure and draw uses. One global family, not
 /// a per-node field: the text ABI carries a pixel size only, and every host
 /// (Cocoa / Canvas2D / Android) would have to change to thread a family
