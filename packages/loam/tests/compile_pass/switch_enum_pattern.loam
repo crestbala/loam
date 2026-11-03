@@ -1,6 +1,6 @@
-// Match patterns accept `Enum.Member`, not just bare literals — matching on
+// Case patterns accept `Enum.Member`, not just bare literals — switching on
 // raw 0/1/2 would lose the names the enum exists to provide. Alternatives
-// (`A | B`) and `_` work the same as with literals.
+// (`case A, B:`) and `default:` work the same as with literals.
 import "std:fmt"
 import "std:sys"
 
@@ -12,10 +12,13 @@ enum Look {
 }
 
 fn name_of(look: int) -> string {
-    match look {
-        Look.Solid => { return "solid" }
-        Look.Soft | Look.Outline => { return "layered" }
-        _ => { return "bare" }
+    switch look {
+        case Look.Solid:
+            return "solid"
+        case Look.Soft, Look.Outline:
+            return "layered"
+        default:
+            return "bare"
     }
 }
 

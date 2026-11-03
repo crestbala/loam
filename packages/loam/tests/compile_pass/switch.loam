@@ -1,0 +1,56 @@
+// `switch`: cases with alternatives, `default`, bool and string scrutinees,
+// no fallthrough, an empty case, a one-line case, `continue` in a case, and a
+// `break` that belongs to a loop inside the case.
+import "std:fmt"
+
+fn main() {
+    let x = 3
+    let mut s = 0
+    switch x {
+        case 0, 1:
+            s = 10
+        case 2:
+            s = 20
+        default:
+            s = 30
+    }
+    fmt.println(s)
+    switch true {
+        case true:
+            fmt.println(1)
+        case false:
+            fmt.println(0)
+    }
+    switch "ok" {
+        case "ok":
+            fmt.println(1)
+        default:
+            fmt.println(0)
+    }
+    let b: bool = false
+    switch b {
+        case true:
+            fmt.println(9)
+        default:
+            fmt.println(8)
+    }
+    let mut seen = 0
+    for i in 0..6 {
+        switch i {
+            case 0:
+            case 1: seen = seen + 1
+            case 2:
+                continue
+            case 3:
+                for j in 0..10 {
+                    if j == 2 {
+                        break
+                    }
+                    seen = seen + 10
+                }
+            default:
+                seen = seen + 100
+        }
+    }
+    fmt.println(seen)
+}

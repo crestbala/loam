@@ -1853,40 +1853,40 @@ static void emit_stmt(FILE *o, AstNode *n, int ind) {
             indent(o, ind);
             fprintf(o, "continue;\n");
             break;
-        case AST_MATCH: {
+        case AST_SWITCH: {
             indent(o, ind);
             fprintf(o, "{\n");
             indent(o, ind + 1);
-            emit_var_decl_type(o, n->as.match_stmt.scrut->ty, "_m");
+            emit_var_decl_type(o, n->as.switch_stmt.scrut->ty, "_m");
             fprintf(o, " = ");
-            emit_expr(o, n->as.match_stmt.scrut);
+            emit_expr(o, n->as.switch_stmt.scrut);
             fprintf(o, ";\n");
-            for (size_t i = 0; i < n->as.match_stmt.arm_count; i++) {
-                AstNode *arm = n->as.match_stmt.arms[i];
+            for (size_t i = 0; i < n->as.switch_stmt.case_count; i++) {
+                AstNode *cs = n->as.switch_stmt.cases[i];
                 indent(o, ind + 1);
                 if (i) fprintf(o, "else ");
-                if (arm && arm->as.match_arm.is_wild) {
+                if (cs && cs->as.switch_case.is_default) {
                     fprintf(o, "{\n");
                 } else {
                     fprintf(o, "if (");
-                    Type *st = n->as.match_stmt.scrut->ty;
-                    for (size_t p = 0; p < (arm ? arm->as.match_arm.pat_count : 0); p++) {
+                    Type *st = n->as.switch_stmt.scrut->ty;
+                    for (size_t p = 0; p < (cs ? cs->as.switch_case.pat_count : 0); p++) {
                         if (p) fprintf(o, " || ");
                         if (st && st->kind == TY_STRING) {
                             fprintf(o, "loam_fmt_eq(_m, ");
-                            emit_expr(o, arm->as.match_arm.pats[p]);
+                            emit_expr(o, cs->as.switch_case.pats[p]);
                             fprintf(o, ")");
                         } else {
                             fprintf(o, "_m == ");
-                            emit_expr(o, arm->as.match_arm.pats[p]);
+                            emit_expr(o, cs->as.switch_case.pats[p]);
                         }
                     }
                     fprintf(o, ") {\n");
                 }
                 drop_sp++;
                 drop_n[drop_sp] = 0;
-                if (arm && arm->as.match_arm.body && arm->as.match_arm.body->kind == AST_BLOCK)
-                    emit_block_body(o, arm->as.match_arm.body, ind + 2, 0);
+                if (cs && cs->as.switch_case.body && cs->as.switch_case.body->kind == AST_BLOCK)
+                    emit_block_body(o, cs->as.switch_case.body, ind + 2, 0);
                 emit_drops_scope(o, ind + 2, drop_sp);
                 drop_sp--;
                 indent(o, ind + 1);
@@ -3477,15 +3477,15 @@ static void collect_clos(AstNode *n) {
             collect_clos(n->as.if_stmt.cond);
             collect_clos(n->as.if_stmt.then_block);
             break;
-        case AST_MATCH:
-            collect_clos(n->as.match_stmt.scrut);
-            for (size_t i = 0; i < n->as.match_stmt.arm_count; i++)
-                collect_clos(n->as.match_stmt.arms[i]);
+        case AST_SWITCH:
+            collect_clos(n->as.switch_stmt.scrut);
+            for (size_t i = 0; i < n->as.switch_stmt.case_count; i++)
+                collect_clos(n->as.switch_stmt.cases[i]);
             break;
-        case AST_MATCH_ARM:
-            for (size_t i = 0; i < n->as.match_arm.pat_count; i++)
-                collect_clos(n->as.match_arm.pats[i]);
-            collect_clos(n->as.match_arm.body);
+        case AST_CASE:
+            for (size_t i = 0; i < n->as.switch_case.pat_count; i++)
+                collect_clos(n->as.switch_case.pats[i]);
+            collect_clos(n->as.switch_case.body);
             break;
         case AST_RETURN:
             collect_clos(n->as.ret.expr);

@@ -42,9 +42,9 @@ fn of(id: int) -> PageResp {
     if id == 5 {
         return pack(
             "Control flow",
-            "if, for, while, and match. break and continue have no labels.",
-            "Ranges are half-open: for i in lo..hi runs while i < hi. match patterns: literals, or-patterns, _. bool needs both arms or _; other types need _.",
-            "if n > 0 {\n    fmt.println(\"positive\")\n}\n\nfor i in 0..10 {\n    fmt.println(i)\n}\n\nmatch x {\n    0 | 1 => { fmt.println(\"small\") }\n    _ => { fmt.println(\"other\") }\n}"
+            "if, for, while, and switch. break and continue have no labels.",
+            "Ranges are half-open: for i in lo..hi runs while i < hi. switch cases: literals or Enum.Member, several per case (case 0, 1:), default: last; no fallthrough. bool needs both cases or default; other types need default (an enum may name every variant instead).",
+            "if n > 0 {\n    fmt.println(\"positive\")\n}\n\nfor i in 0..10 {\n    fmt.println(i)\n}\n\nswitch x {\n    case 0, 1:\n        fmt.println(\"small\")\n    default:\n        fmt.println(\"other\")\n}"
         )
     }
     if id == 6 {

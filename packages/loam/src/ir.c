@@ -1572,23 +1572,23 @@ static void lower_stmt(AstNode *n) {
             emit_drops_from(loop_base[nloop - 1], n->loc);
             term_jmp(loop_cont[nloop - 1]);
             return;
-        case AST_MATCH: {
-            int scrut = lower_expr(n->as.match_stmt.scrut);
+        case AST_SWITCH: {
+            int scrut = lower_expr(n->as.switch_stmt.scrut);
             int join = new_block();
-            Type *st = n->as.match_stmt.scrut ? n->as.match_stmt.scrut->ty : NULL;
-            for (size_t i = 0; i < n->as.match_stmt.arm_count; i++) {
-                AstNode *arm = n->as.match_stmt.arms[i];
-                if (!arm || arm->kind != AST_MATCH_ARM) continue;
+            Type *st = n->as.switch_stmt.scrut ? n->as.switch_stmt.scrut->ty : NULL;
+            for (size_t i = 0; i < n->as.switch_stmt.case_count; i++) {
+                AstNode *cs = n->as.switch_stmt.cases[i];
+                if (!cs || cs->kind != AST_CASE) continue;
                 int body = new_block();
                 int next = new_block();
-                if (arm->as.match_arm.is_wild) {
+                if (cs->as.switch_case.is_default) {
                     term_jmp(body);
                 } else {
                     int acc = -1;
-                    for (size_t p = 0; p < arm->as.match_arm.pat_count; p++) {
-                        int pv = lower_expr(arm->as.match_arm.pats[p]);
+                    for (size_t p = 0; p < cs->as.switch_case.pat_count; p++) {
+                        int pv = lower_expr(cs->as.switch_case.pats[p]);
                         int eq = new_local(ty_bool(), NULL, 0);
-                        IrInst *cmp = emit(IR_BIN, arm->loc);
+                        IrInst *cmp = emit(IR_BIN, cs->loc);
                         cmp->dst = eq;
                         cmp->a = scrut;
                         cmp->b = pv;
@@ -1598,7 +1598,7 @@ static void lower_stmt(AstNode *n) {
                         if (acc < 0) acc = eq;
                         else {
                             int o = new_local(ty_bool(), NULL, 0);
-                            IrInst *orv = emit(IR_BIN, arm->loc);
+                            IrInst *orv = emit(IR_BIN, cs->loc);
                             orv->dst = o;
                             orv->a = acc;
                             orv->b = eq;
@@ -1611,7 +1611,7 @@ static void lower_stmt(AstNode *n) {
                     else term_jmp(next);
                 }
                 CUR = body;
-                lower_stmt(arm->as.match_arm.body);
+                lower_stmt(cs->as.switch_case.body);
                 term_jmp(join);
                 CUR = next;
             }
@@ -1675,15 +1675,15 @@ static void collect_clos(AstNode *n) {
             collect_clos(n->as.if_stmt.cond);
             collect_clos(n->as.if_stmt.then_block);
             break;
-        case AST_MATCH:
-            collect_clos(n->as.match_stmt.scrut);
-            for (size_t i = 0; i < n->as.match_stmt.arm_count; i++)
-                collect_clos(n->as.match_stmt.arms[i]);
+        case AST_SWITCH:
+            collect_clos(n->as.switch_stmt.scrut);
+            for (size_t i = 0; i < n->as.switch_stmt.case_count; i++)
+                collect_clos(n->as.switch_stmt.cases[i]);
             break;
-        case AST_MATCH_ARM:
-            for (size_t i = 0; i < n->as.match_arm.pat_count; i++)
-                collect_clos(n->as.match_arm.pats[i]);
-            collect_clos(n->as.match_arm.body);
+        case AST_CASE:
+            for (size_t i = 0; i < n->as.switch_case.pat_count; i++)
+                collect_clos(n->as.switch_case.pats[i]);
+            collect_clos(n->as.switch_case.body);
             break;
         case AST_RETURN:
             collect_clos(n->as.ret.expr);
@@ -1875,13 +1875,13 @@ static void lower_clos_in(IrModule *m, AstNode *n) {
             lower_clos_in(m, n->as.if_stmt.cond);
             lower_clos_in(m, n->as.if_stmt.then_block);
             break;
-        case AST_MATCH:
-            lower_clos_in(m, n->as.match_stmt.scrut);
-            for (size_t i = 0; i < n->as.match_stmt.arm_count; i++)
-                lower_clos_in(m, n->as.match_stmt.arms[i]);
+        case AST_SWITCH:
+            lower_clos_in(m, n->as.switch_stmt.scrut);
+            for (size_t i = 0; i < n->as.switch_stmt.case_count; i++)
+                lower_clos_in(m, n->as.switch_stmt.cases[i]);
             break;
-        case AST_MATCH_ARM:
-            lower_clos_in(m, n->as.match_arm.body);
+        case AST_CASE:
+            lower_clos_in(m, n->as.switch_case.body);
             break;
         case AST_RETURN:
             lower_clos_in(m, n->as.ret.expr);

@@ -976,10 +976,13 @@ let search_state: Signal<Load> = ...           // Idle | Loading | Ready | Faile
 
 // tree
 Match(search_state, fn(s) {
-    match s {
-        Load.Ready => { Each(hits.get(), fn(i, h) { HitRow(hit = h) }) }
-        Load.Failed => { ServerDown(retry = search) }
-        _ => { Spinner() }
+    switch s {
+        case Load.Ready:
+            Each(hits.get(), fn(i, h) { HitRow(hit = h) })
+        case Load.Failed:
+            ServerDown(retry = search)
+        default:
+            Spinner()
     }
 })
 ```

@@ -88,13 +88,19 @@ fn on_ok() -> string { return role_token(ROLE.OnFill) }
 
 /// The text colour of a `Tint`.
 fn tint_of(kind: int) -> string {
-    match kind {
-        Tint.Ok => { return ok() }
-        Tint.Mute => { return mute() }
-        Tint.Dim => { return dim() }
-        Tint.Danger => { return danger() }
-        Tint.Warn => { return warn() }
-        _ => { return ink() }
+    switch kind {
+        case Tint.Ok:
+            return ok()
+        case Tint.Mute:
+            return mute()
+        case Tint.Dim:
+            return dim()
+        case Tint.Danger:
+            return danger()
+        case Tint.Warn:
+            return warn()
+        default:
+            return ink()
     }
 }
 

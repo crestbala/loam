@@ -1,0 +1,12 @@
+// `break` directly in a switch case is rejected: a case ends on its own, and
+// a `break` there would leave the loop around the switch, not the case.
+fn main() {
+    for i in 0..3 {
+        switch i {
+            case 1:
+                break
+            default:
+                let _ = i
+        }
+    }
+}

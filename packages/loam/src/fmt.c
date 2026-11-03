@@ -256,7 +256,7 @@ static int NT;
 
 static int is_kw(const Tok *t) {
     static const char *kw[] = {"fn", "let", "mut", "return", "if", "else", "for", "in",
-                               "while", "match", "struct", "enum", "import", "pub", "const",
+                               "while", "switch", "case", "default", "struct", "enum", "import", "pub", "const",
                                "break", "continue", "as", "loop", "type", "use", NULL};
     if (t->k != K_WORD) return 0;
     for (int i = 0; kw[i]; i++)
@@ -757,16 +757,23 @@ static int continues(int k, int a) {
     if (p->k == K_LCOM || p->k == K_BCOM) return 0;
     if (t->k == K_OP && (is(t, ".") || is(t, "?"))) return 1;
     if (t->k == K_WORD && is(t, "else")) return 1;
-    if (p->k == K_OP && !is(p, ",") && !is(p, ";") && !is(p, "?") && !is(p, "++") &&
+    if (p->k == K_OP && !is(p, ",") && !is(p, ";") && !is(p, ":") && !is(p, "?") && !is(p, "++") &&
         !is(p, "--") && !p->gen && p->pipe != 2)
         return 1;
     return 0;
 }
 
-/** Statements of `[a, b)`, one per line at `ind`. `top` is the file level. */
+static int is_case_label(int k) {
+    return T[k].k == K_WORD && (is(&T[k], "case") || is(&T[k], "default"));
+}
+
+/** Statements of `[a, b)`, one per line at `ind`. `top` is the file level.
+ *  In a switch body, `case` / `default` sit at `ind` and the statements
+ *  under each sit one level in. */
 static void emit_stmts(int a, int b, int ind, int top) {
     int s = a;
     int first = 1;
+    int in_case = 0;
     while (s < b) {
         int e = s + 1;
         for (; e < b; e++) {
@@ -779,9 +786,12 @@ static void emit_stmts(int a, int b, int ind, int top) {
             /* `{ // note`: a comment on the opening line stays there. */
             put(s);
         } else {
+            int at = ind;
+            if (is_case_label(s)) in_case = 1;
+            else if (in_case) at = ind + INDENT;
             if (!first && T[s].nl >= 2) bput(&OUT, '\n');
-            if (!(first && top)) newline(ind);
-            emit_range(s, e, ind, 0);
+            if (!(first && top)) newline(at);
+            emit_range(s, e, at, 0);
         }
         first = 0;
         s = e;

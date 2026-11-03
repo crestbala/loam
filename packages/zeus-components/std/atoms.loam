@@ -372,40 +372,54 @@ fn badge_h(size: int) -> int {
 /// Fill for a badge `Tint`. Split from the button pickers because badges
 /// use filled status colors where buttons use accent chrome.
 fn badge_background(kind: int) -> string {
-    match kind {
-        Tint.Mute => { return raised() }
-        Tint.Ok => { return ok_solid() }
-        Tint.Danger => { return danger_solid() }
-        Tint.Warn => { return warn_fill_solid() }
-        // Outline: the border carries it, so no fill.
-        Tint.Dim => { return "" }
-        _ => { return accent() }
+    switch kind {
+        case Tint.Mute:
+            return raised()
+        case Tint.Ok:
+            return ok_solid()
+        case Tint.Danger:
+            return danger_solid()
+        case Tint.Warn:
+            return warn_fill_solid()
+            // Outline: the border carries it, so no fill.
+        case Tint.Dim:
+            return ""
+        default:
+            return accent()
     }
 }
 
 /// Label color for a badge `Tint`; see `badge_background`.
 fn badge_color(kind: int) -> string {
-    match kind {
-        Tint.Mute | Tint.Dim => { return ink() }
-        Tint.Ok => { return on_ok() }
-        Tint.Warn => { return warn() }
-        _ => { return on_ink() }
+    switch kind {
+        case Tint.Mute, Tint.Dim:
+            return ink()
+        case Tint.Ok:
+            return on_ok()
+        case Tint.Warn:
+            return warn()
+        default:
+            return on_ink()
     }
 }
 
 /// Border width for a badge `Tint` — only the outline tint carries one.
 fn badge_border_width(kind: int) -> int {
-    match kind {
-        Tint.Dim => { return HAIRLINE }
-        _ => { return 0 }
+    switch kind {
+        case Tint.Dim:
+            return HAIRLINE
+        default:
+            return 0
     }
 }
 
 /// Border color for a badge `Tint`; see `badge_border_width`.
 fn badge_border_color(kind: int) -> string {
-    match kind {
-        Tint.Dim => { return hard() }
-        _ => { return "" }
+    switch kind {
+        case Tint.Dim:
+            return hard()
+        default:
+            return ""
     }
 }
 
@@ -576,11 +590,15 @@ enum Tone {
 
 /// The `Tint` an old `Tone` code stands for.
 fn tone_tint(tone: int) -> int {
-    match tone {
-        Tone.Danger => { return Tint.Danger }
-        Tone.Warn => { return Tint.Warn }
-        Tone.Ok => { return Tint.Ok }
-        _ => { return Tint.Info }
+    switch tone {
+        case Tone.Danger:
+            return Tint.Danger
+        case Tone.Warn:
+            return Tint.Warn
+        case Tone.Ok:
+            return Tint.Ok
+        default:
+            return Tint.Info
     }
 }
 
@@ -706,10 +724,13 @@ struct StatProps {
 }
 
 fn trend_tint(trend: int) -> string {
-    match trend {
-        Trend.Up => { return ok() }
-        Trend.Down => { return danger() }
-        _ => { return mute() }
+    switch trend {
+        case Trend.Up:
+            return ok()
+        case Trend.Down:
+            return danger()
+        default:
+            return mute()
     }
 }
 
@@ -1450,45 +1471,65 @@ fn sort_cycle(current_value: int, i: int) -> int {
 
 /// Light-mode stroke for series `i`.
 fn chart_stroke_light(i: int) -> string {
-    match i % 5 {
-        0 => { return LIGHT.chart1 }
-        1 => { return LIGHT.chart2 }
-        2 => { return LIGHT.chart3 }
-        3 => { return LIGHT.chart4 }
-        _ => { return LIGHT.chart5 }
+    switch i % 5 {
+        case 0:
+            return LIGHT.chart1
+        case 1:
+            return LIGHT.chart2
+        case 2:
+            return LIGHT.chart3
+        case 3:
+            return LIGHT.chart4
+        default:
+            return LIGHT.chart5
     }
 }
 
 /// Dark-mode stroke for series `i`.
 fn chart_stroke_dark(i: int) -> string {
-    match i % 5 {
-        0 => { return DARK.chart1 }
-        1 => { return DARK.chart2 }
-        2 => { return DARK.chart3 }
-        3 => { return DARK.chart4 }
-        _ => { return DARK.chart5 }
+    switch i % 5 {
+        case 0:
+            return DARK.chart1
+        case 1:
+            return DARK.chart2
+        case 2:
+            return DARK.chart3
+        case 3:
+            return DARK.chart4
+        default:
+            return DARK.chart5
     }
 }
 
 /// Light-mode area wash for series `i`.
 fn chart_fl(i: int) -> string {
-    match i % 5 {
-        0 => { return LIGHT.fill1 }
-        1 => { return LIGHT.fill2 }
-        2 => { return LIGHT.fill3 }
-        3 => { return LIGHT.fill4 }
-        _ => { return LIGHT.fill5 }
+    switch i % 5 {
+        case 0:
+            return LIGHT.fill1
+        case 1:
+            return LIGHT.fill2
+        case 2:
+            return LIGHT.fill3
+        case 3:
+            return LIGHT.fill4
+        default:
+            return LIGHT.fill5
     }
 }
 
 /// Dark-mode area wash for series `i`.
 fn chart_fd(i: int) -> string {
-    match i % 5 {
-        0 => { return DARK.fill1 }
-        1 => { return DARK.fill2 }
-        2 => { return DARK.fill3 }
-        3 => { return DARK.fill4 }
-        _ => { return DARK.fill5 }
+    switch i % 5 {
+        case 0:
+            return DARK.fill1
+        case 1:
+            return DARK.fill2
+        case 2:
+            return DARK.fill3
+        case 3:
+            return DARK.fill4
+        default:
+            return DARK.fill5
     }
 }
 
@@ -1497,12 +1538,17 @@ fn chart_fd(i: int) -> string {
 /// was painted in the *last* color. Returns a role token, so a theme switch
 /// repaints the series without rebuilding the chart.
 fn chart_color(i: int) -> string {
-    match i % 5 {
-        0 => { return role_token(ROLE.Chart1) }
-        1 => { return role_token(ROLE.Chart2) }
-        2 => { return role_token(ROLE.Chart3) }
-        3 => { return role_token(ROLE.Chart4) }
-        _ => { return role_token(ROLE.Chart5) }
+    switch i % 5 {
+        case 0:
+            return role_token(ROLE.Chart1)
+        case 1:
+            return role_token(ROLE.Chart2)
+        case 2:
+            return role_token(ROLE.Chart3)
+        case 3:
+            return role_token(ROLE.Chart4)
+        default:
+            return role_token(ROLE.Chart5)
     }
 }
 
@@ -1511,12 +1557,17 @@ fn chart_color(i: int) -> string {
 /// Area wash under series `i`, matched to `chart_color` and indexed the
 /// same way.
 fn chart_fill(i: int) -> string {
-    match i % 5 {
-        0 => { return role_token(ROLE.Fill1) }
-        1 => { return role_token(ROLE.Fill2) }
-        2 => { return role_token(ROLE.Fill3) }
-        3 => { return role_token(ROLE.Fill4) }
-        _ => { return role_token(ROLE.Fill5) }
+    switch i % 5 {
+        case 0:
+            return role_token(ROLE.Fill1)
+        case 1:
+            return role_token(ROLE.Fill2)
+        case 2:
+            return role_token(ROLE.Fill3)
+        case 3:
+            return role_token(ROLE.Fill4)
+        default:
+            return role_token(ROLE.Fill5)
     }
 }
 
@@ -2715,19 +2766,31 @@ fn cal_first_monday(year: int, month: int) -> int {
 }
 
 fn cal_month_name(m: int) -> string {
-    match m {
-        1 => { return "January" }
-        2 => { return "February" }
-        3 => { return "March" }
-        4 => { return "April" }
-        5 => { return "May" }
-        6 => { return "June" }
-        7 => { return "July" }
-        8 => { return "August" }
-        9 => { return "September" }
-        10 => { return "October" }
-        11 => { return "November" }
-        _ => { return "December" }
+    switch m {
+        case 1:
+            return "January"
+        case 2:
+            return "February"
+        case 3:
+            return "March"
+        case 4:
+            return "April"
+        case 5:
+            return "May"
+        case 6:
+            return "June"
+        case 7:
+            return "July"
+        case 8:
+            return "August"
+        case 9:
+            return "September"
+        case 10:
+            return "October"
+        case 11:
+            return "November"
+        default:
+            return "December"
     }
 }
 
@@ -2939,35 +3002,51 @@ struct CellNum {
 
 /// Soft wash behind a `Tint` (tags, callouts, banners).
 fn tint_bg(kind: int) -> string {
-    match kind {
-        Tint.Ok => { return ok_bg() }
-        Tint.Warn => { return warn_bg() }
-        Tint.Danger => { return danger_bg() }
-        Tint.Info => { return info_bg() }
-        _ => { return raised() }
+    switch kind {
+        case Tint.Ok:
+            return ok_bg()
+        case Tint.Warn:
+            return warn_bg()
+        case Tint.Danger:
+            return danger_bg()
+        case Tint.Info:
+            return info_bg()
+        default:
+            return raised()
     }
 }
 
 /// Edge for a `Tint`; see `tint_bg`.
 fn tint_line(kind: int) -> string {
-    match kind {
-        Tint.Ok => { return ok_line() }
-        Tint.Warn => { return warn_line() }
-        Tint.Danger => { return danger_line() }
-        Tint.Info => { return info_line() }
-        _ => { return rule() }
+    switch kind {
+        case Tint.Ok:
+            return ok_line()
+        case Tint.Warn:
+            return warn_line()
+        case Tint.Danger:
+            return danger_line()
+        case Tint.Info:
+            return info_line()
+        default:
+            return rule()
     }
 }
 
 /// Text ink for a `Tint` that clears AA on its `tint_bg`.
 fn tint_ink(kind: int) -> string {
-    match kind {
-        Tint.Ok => { return ok_ink() }
-        Tint.Warn => { return warn_ink() }
-        Tint.Danger => { return danger_ink() }
-        Tint.Info => { return info_ink() }
-        Tint.Mute | Tint.Dim => { return mute() }
-        _ => { return ink() }
+    switch kind {
+        case Tint.Ok:
+            return ok_ink()
+        case Tint.Warn:
+            return warn_ink()
+        case Tint.Danger:
+            return danger_ink()
+        case Tint.Info:
+            return info_ink()
+        case Tint.Mute, Tint.Dim:
+            return mute()
+        default:
+            return ink()
     }
 }
 

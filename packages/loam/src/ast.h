@@ -40,8 +40,8 @@ typedef enum {
     AST_IF,
     AST_FOR,
     AST_WHILE,
-    AST_MATCH,
-    AST_MATCH_ARM,
+    AST_SWITCH,
+    AST_CASE,
     AST_RETURN,
     AST_BREAK,
     AST_CONTINUE,
@@ -184,15 +184,15 @@ struct AstNode {
         } for_stmt;
         struct {
             AstNode *scrut;
-            AstNode **arms;
-            size_t arm_count;
-        } match_stmt;
+            AstNode **cases;
+            size_t case_count;
+        } switch_stmt;
         struct {
             AstNode **pats;
             size_t pat_count;
-            int is_wild;
+            int is_default;
             AstNode *body;
-        } match_arm;
+        } switch_case;
         struct {
             AstNode *expr;
         } ret;
@@ -314,8 +314,8 @@ AstNode *ast_block(AstNode **stmts, size_t n, SourceLoc loc);
 AstNode *ast_if(AstNode *cond, AstNode *thenb, AstNode *elseb, SourceLoc loc);
 AstNode *ast_for(const char *var, AstNode *iter, AstNode *body, SourceLoc loc);
 AstNode *ast_while(AstNode *cond, AstNode *body, SourceLoc loc);
-AstNode *ast_match(AstNode *scrut, AstNode **arms, size_t n, SourceLoc loc);
-AstNode *ast_match_arm(AstNode **pats, size_t np, int wild, AstNode *body, SourceLoc loc);
+AstNode *ast_switch(AstNode *scrut, AstNode **cases, size_t n, SourceLoc loc);
+AstNode *ast_case(AstNode **pats, size_t np, int is_default, AstNode *body, SourceLoc loc);
 AstNode *ast_return(AstNode *expr, SourceLoc loc);
 AstNode *ast_break(SourceLoc loc);
 AstNode *ast_continue(SourceLoc loc);

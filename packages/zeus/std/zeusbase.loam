@@ -1230,16 +1230,14 @@ fn install_key(node: Node, spec: string, action: string, handler_fn: int, is_glo
         return node
     }
     let act = key_action_name(spec, action)
-    match is_global {
-        true => {
+    switch is_global {
+        case true:
             // ctx 0 = matches whatever holds focus.
             platform.plat_map_key(spec, act, 0)
             on_action_global(act, signal_handle(0), 5, handler_fn)
-        }
-        _ => {
+        default:
             key(node, spec, act)
             on_action(node, act, signal_handle(0), 5, handler_fn)
-        }
     }
     return node
 }
@@ -1696,78 +1694,99 @@ fn role_color(slot: int) -> int {
 /// its width is additive in `content_x`/`content_y`, so applying the unset `-1`
 /// shifted every container's content by one pixel.
 fn skip_unset(setter: int, v: int) -> bool {
-    match setter {
-        SET.Direction | SET.Wrap | SET.Safe | SET.ShowOn => { return false }
-        /* The four pin offsets are the one geometry prop where a negative is a
-           real value: `left = -3, top = -3` is how a 22px ring is centred on a
-           16px dot. `v < 0` here silently dropped those, so the ring drew at the
-           parent's origin and hung 3px down-right of the dot it was meant to
-           circle. `-1` still means "unset" in the layout guards. */
-        SET.Left | SET.Top | SET.Right | SET.Bottom => { return false }
-        // A 0px glyph is not a size, so font rejects 0 as well.
-        SET.Font => { return v <= 0 }
-        _ => { return v < 0 }
+    switch setter {
+        case SET.Direction, SET.Wrap, SET.Safe, SET.ShowOn:
+            return false
+        case /* The four pin offsets are the one geometry prop where a negative is a real value: `left = -3, top = -3` is how a 22px ring is centred on a 16px dot. `v < 0` here silently dropped those, so the ring drew at the parent's origin and hung 3px down-right of the dot it was meant to circle. `-1` still means "unset" in the layout guards. */ SET.Left,
+            SET.Top, SET.Right, SET.Bottom:
+            return false
+            // A 0px glyph is not a size, so font rejects 0 as well.
+        case SET.Font:
+            return v <= 0
+        default:
+            return v < 0
     }
 }
 
 /// Geometry a layout-driving `animate` may tween. Flags (direction, wrap,
 /// show) still jump: they are not a continuous length.
 fn setter_tweens_layout(setter: int) -> bool {
-    match setter {
-        SET.Width | SET.Height | SET.MinWidth | SET.MaxWidth | SET.MinHeight | SET.MaxHeight |
-            SET.Left | SET.Top | SET.Right | SET.Bottom => { return true }
-        _ => { return false }
+    switch setter {
+        case SET.Width, SET.Height, SET.MinWidth, SET.MaxWidth, SET.MinHeight, SET.MaxHeight,
+            SET.Left, SET.Top, SET.Right, SET.Bottom:
+            return true
+        default:
+            return false
     }
 }
 
 fn layout_target_px(setter: int, v: int) -> int {
-    match setter {
-        SET.Width | SET.Height | SET.MinWidth | SET.MaxWidth | SET.MinHeight | SET.MaxHeight |
-            SET.Left | SET.Top | SET.Right | SET.Bottom => { return scaled(v) }
-        _ => { return v }
+    switch setter {
+        case SET.Width, SET.Height, SET.MinWidth, SET.MaxWidth, SET.MinHeight, SET.MaxHeight,
+            SET.Left, SET.Top, SET.Right, SET.Bottom:
+            return scaled(v)
+        default:
+            return v
     }
 }
 
 fn layout_read(node_id: int, setter: int) -> int {
-    match setter {
-        SET.Width => {
+    switch setter {
+        case SET.Width:
             if nodes.lay[node_id].explicit_width >= 0 {
                 return nodes.lay[node_id].explicit_width
             }
             return nodes.box[node_id].w
-        }
-        SET.Height => {
+        case SET.Height:
             if nodes.lay[node_id].explicit_height >= 0 {
                 return nodes.lay[node_id].explicit_height
             }
             return nodes.box[node_id].h
-        }
-        SET.MinWidth => { return nodes.lay[node_id].min_w }
-        SET.MaxWidth => { return nodes.lay[node_id].max_w }
-        SET.MinHeight => { return nodes.lay[node_id].min_h }
-        SET.MaxHeight => { return nodes.lay[node_id].max_h }
-        SET.Left => { return nodes.pin[node_id].pin_l }
-        SET.Top => { return nodes.pin[node_id].pin_t }
-        SET.Right => { return nodes.pin[node_id].pin_r }
-        SET.Bottom => { return nodes.pin[node_id].pin_b }
-        _ => { return 0 }
+        case SET.MinWidth:
+            return nodes.lay[node_id].min_w
+        case SET.MaxWidth:
+            return nodes.lay[node_id].max_w
+        case SET.MinHeight:
+            return nodes.lay[node_id].min_h
+        case SET.MaxHeight:
+            return nodes.lay[node_id].max_h
+        case SET.Left:
+            return nodes.pin[node_id].pin_l
+        case SET.Top:
+            return nodes.pin[node_id].pin_t
+        case SET.Right:
+            return nodes.pin[node_id].pin_r
+        case SET.Bottom:
+            return nodes.pin[node_id].pin_b
+        default:
+            return 0
     }
 }
 
 fn apply_int_px(node_id: int, setter: int, v: int) {
     let n = node_handle(node_id)
-    match setter {
-        SET.Width => { set_width(n, v) }
-        SET.Height => { set_height(n, v) }
-        SET.MinWidth => { set_min_width(n, v) }
-        SET.MaxWidth => { set_max_width(n, v) }
-        SET.MinHeight => { set_min_height(n, v) }
-        SET.MaxHeight => { set_max_height(n, v) }
-        SET.Left => { nodes.pin[node_id].pin_l = v }
-        SET.Top => { nodes.pin[node_id].pin_t = v }
-        SET.Right => { nodes.pin[node_id].pin_r = v }
-        SET.Bottom => { nodes.pin[node_id].pin_b = v }
-        _ => {}
+    switch setter {
+        case SET.Width:
+            set_width(n, v)
+        case SET.Height:
+            set_height(n, v)
+        case SET.MinWidth:
+            set_min_width(n, v)
+        case SET.MaxWidth:
+            set_max_width(n, v)
+        case SET.MinHeight:
+            set_min_height(n, v)
+        case SET.MaxHeight:
+            set_max_height(n, v)
+        case SET.Left:
+            nodes.pin[node_id].pin_l = v
+        case SET.Top:
+            nodes.pin[node_id].pin_t = v
+        case SET.Right:
+            nodes.pin[node_id].pin_r = v
+        case SET.Bottom:
+            nodes.pin[node_id].pin_b = v
+        default:
     }
 }
 
@@ -1837,110 +1856,178 @@ fn apply_int_value(node_id: int, setter: int, v: int) {
     // geometry and type scale; weights, flags, colors and z-order do not —
     // so `scaled` is called in those arms only (scaling a packed color would
     // overflow the 32-bit default).
-    match setter {
-        SET.Width => { set_width(n, scaled(v)) }
-        SET.Height => { set_height(n, scaled(v)) }
-        SET.Padding => { set_padding(n, scaled(v)) }
-        SET.PaddingX => { set_padding_x(n, scaled(v)) }
-        SET.PaddingY => { set_padding_y(n, scaled(v)) }
-        SET.PaddingTop => { set_padding_top(n, scaled(v)) }
-        SET.PaddingRight => { set_padding_right(n, scaled(v)) }
-        SET.PaddingBottom => { set_padding_bottom(n, scaled(v)) }
-        SET.PaddingLeft => { set_padding_left(n, scaled(v)) }
-        SET.Margin => { margin(n, scaled(v)) }
-        SET.MarginX => { marginX(n, scaled(v)) }
-        SET.MarginY => { marginY(n, scaled(v)) }
-        SET.MarginTop => { marginTop(n, scaled(v)) }
-        SET.MarginRight => { marginRight(n, scaled(v)) }
-        SET.MarginBottom => { marginBottom(n, scaled(v)) }
-        SET.MarginLeft => { marginLeft(n, scaled(v)) }
-        SET.Spacing => { set_spacing(n, scaled(v)) }
-        SET.GapRow => { set_spacing_row(n, scaled(v)) }
-        SET.GapCol => { set_spacing_col(n, scaled(v)) }
-        SET.Radius => { radius(n, scaled(v)) }
-        SET.RadiusTop => { radius_top(n, scaled(v)) }
-        SET.RadiusBottom => { radius_bottom(n, scaled(v)) }
-        SET.Border => { nodes.lay[node_id].border_w = u16(v) }
-        SET.Grow => { grow(n, v) }
-        SET.AlignItems => { align(n, v) }
-        SET.Justify => { justify(n, v) }
-        SET.Font => { font(n, scaled(v)) }
-        SET.Opacity => { opacity(n, v) }
-        SET.Direction => {
-            match v {
-                1 => { flex_col(n) }
-                _ => { flex_row(n) }
+    switch setter {
+        case SET.Width:
+            set_width(n, scaled(v))
+        case SET.Height:
+            set_height(n, scaled(v))
+        case SET.Padding:
+            set_padding(n, scaled(v))
+        case SET.PaddingX:
+            set_padding_x(n, scaled(v))
+        case SET.PaddingY:
+            set_padding_y(n, scaled(v))
+        case SET.PaddingTop:
+            set_padding_top(n, scaled(v))
+        case SET.PaddingRight:
+            set_padding_right(n, scaled(v))
+        case SET.PaddingBottom:
+            set_padding_bottom(n, scaled(v))
+        case SET.PaddingLeft:
+            set_padding_left(n, scaled(v))
+        case SET.Margin:
+            margin(n, scaled(v))
+        case SET.MarginX:
+            marginX(n, scaled(v))
+        case SET.MarginY:
+            marginY(n, scaled(v))
+        case SET.MarginTop:
+            marginTop(n, scaled(v))
+        case SET.MarginRight:
+            marginRight(n, scaled(v))
+        case SET.MarginBottom:
+            marginBottom(n, scaled(v))
+        case SET.MarginLeft:
+            marginLeft(n, scaled(v))
+        case SET.Spacing:
+            set_spacing(n, scaled(v))
+        case SET.GapRow:
+            set_spacing_row(n, scaled(v))
+        case SET.GapCol:
+            set_spacing_col(n, scaled(v))
+        case SET.Radius:
+            radius(n, scaled(v))
+        case SET.RadiusTop:
+            radius_top(n, scaled(v))
+        case SET.RadiusBottom:
+            radius_bottom(n, scaled(v))
+        case SET.Border:
+            nodes.lay[node_id].border_w = u16(v)
+        case SET.Grow:
+            grow(n, v)
+        case SET.AlignItems:
+            align(n, v)
+        case SET.Justify:
+            justify(n, v)
+        case SET.Font:
+            font(n, scaled(v))
+        case SET.Opacity:
+            opacity(n, v)
+        case SET.Direction:
+            switch v {
+                case 1:
+                    flex_col(n)
+                default:
+                    flex_row(n)
             }
-        }
-        SET.Background => { set_background(n, v) }
-        SET.Color => { set_color(n, v) }
-        SET.BorderColor => { border_color(n, v) }
-        SET.MinWidth => { set_min_width(n, scaled(v)) }
-        SET.MaxWidth => { set_max_width(n, scaled(v)) }
-        SET.MinHeight => { set_min_height(n, scaled(v)) }
-        SET.MaxHeight => { set_max_height(n, scaled(v)) }
-        SET.Wrap => {
-            match v {
-                0 => {}
-                _ => { flex_wrap(n) }
+        case SET.Background:
+            set_background(n, v)
+        case SET.Color:
+            set_color(n, v)
+        case SET.BorderColor:
+            border_color(n, v)
+        case SET.MinWidth:
+            set_min_width(n, scaled(v))
+        case SET.MaxWidth:
+            set_max_width(n, scaled(v))
+        case SET.MinHeight:
+            set_min_height(n, scaled(v))
+        case SET.MaxHeight:
+            set_max_height(n, scaled(v))
+        case SET.Wrap:
+            switch v {
+                case 0:
+                default:
+                    flex_wrap(n)
             }
-        }
-        SET.Safe => {
-            match v {
-                0 => { nodes.pin[node_id].safe = u8(0) }
-                _ => { nodes.pin[node_id].safe = u8(1) }
+        case SET.Safe:
+            switch v {
+                case 0:
+                    nodes.pin[node_id].safe = u8(0)
+                default:
+                    nodes.pin[node_id].safe = u8(1)
             }
-        }
-        SET.Position => { nodes.pin[node_id].pos = u8(v) }
-        SET.Left => { nodes.pin[node_id].pin_l = scaled(v) }
-        SET.Top => { nodes.pin[node_id].pin_t = scaled(v) }
-        SET.Right => { nodes.pin[node_id].pin_r = scaled(v) }
-        SET.Bottom => { nodes.pin[node_id].pin_b = scaled(v) }
-        SET.ZIndex => { nodes.pin[node_id].z_index = i16(v) }
-        SET.Shrink => { shrink(n, v) }
-        SET.ShowOn => {
-            match v {
-                0 | 1 => { nodes.tree[node_id].show_on = u8(v) }
-                _ => {}
+        case SET.Position:
+            nodes.pin[node_id].pos = u8(v)
+        case SET.Left:
+            nodes.pin[node_id].pin_l = scaled(v)
+        case SET.Top:
+            nodes.pin[node_id].pin_t = scaled(v)
+        case SET.Right:
+            nodes.pin[node_id].pin_r = scaled(v)
+        case SET.Bottom:
+            nodes.pin[node_id].pin_b = scaled(v)
+        case SET.ZIndex:
+            nodes.pin[node_id].z_index = i16(v)
+        case SET.Shrink:
+            shrink(n, v)
+        case SET.ShowOn:
+            switch v {
+                case 0, 1:
+                    nodes.tree[node_id].show_on = u8(v)
+                default:
             }
-        }
-        SET.AlignSelf => { align_self(n, v) }
-        SET.Span => { span(n, v) }
-        SET.Overflow => { overflow(n, v) }
-        SET.WidthPct => { width_pct(n, v) }
-        SET.HeightPct => {
+        case SET.AlignSelf:
+            align_self(n, v)
+        case SET.Span:
+            span(n, v)
+        case SET.Overflow:
+            overflow(n, v)
+        case SET.WidthPct:
+            width_pct(n, v)
+        case SET.HeightPct:
             nodes.lay[node_id].explicit_height = -1
             height_pct(n, v)
-        }
-        SET.Ellipsis => { nodes.look[node_id].ellipsis = u8(v) }
-        SET.CornerTL => { nodes.set_corner(node_id, 0, scaled(v)) }
-        SET.CornerTR => { nodes.set_corner(node_id, 1, scaled(v)) }
-        SET.CornerBR => { nodes.set_corner(node_id, 2, scaled(v)) }
-        SET.CornerBL => { nodes.set_corner(node_id, 3, scaled(v)) }
-        SET.WrapFlag => { nodes.lay[node_id].wrap = u8(v) }
-        SET.FloatTo => {
+        case SET.Ellipsis:
+            nodes.look[node_id].ellipsis = u8(v)
+        case SET.CornerTL:
+            nodes.set_corner(node_id, 0, scaled(v))
+        case SET.CornerTR:
+            nodes.set_corner(node_id, 1, scaled(v))
+        case SET.CornerBR:
+            nodes.set_corner(node_id, 2, scaled(v))
+        case SET.CornerBL:
+            nodes.set_corner(node_id, 3, scaled(v))
+        case SET.WrapFlag:
+            nodes.lay[node_id].wrap = u8(v)
+        case SET.FloatTo:
             // A floating box is out of flow: the solver sizes it as an
             // absolute child, then `place_float` moves it to its target.
             nodes.pin[node_id].fl_to = u8(v)
             nodes.pin[node_id].pos = u8(if v != 0 { 1 } else { 0 })
-        }
-        SET.FloatPoints => { nodes.pin[node_id].fl_pts = u8(v) }
-        SET.FloatX => { nodes.pin[node_id].fl_x = i16(scaled(v)) }
-        SET.FloatY => { nodes.pin[node_id].fl_y = i16(scaled(v)) }
-        SET.FloatExpandW => { nodes.pin[node_id].fl_ew = i16(scaled(v)) }
-        SET.FloatExpandH => { nodes.pin[node_id].fl_eh = i16(scaled(v)) }
-        SET.FloatClip => { nodes.pin[node_id].fl_clip = u8(v) }
-        SET.PointerPass => { nodes.ui[node_id].ptr_pass = u8(v) }
-        SET.Flip => { nodes.pin[node_id].flip = u8(v) }
-        SET.TextAlign => { nodes.look[node_id].t_align = u8(v) }
-        SET.BorderTop => { nodes.look[node_id].bd_t = u8(scaled(v)) }
-        SET.BorderRight => { nodes.look[node_id].bd_r = u8(scaled(v)) }
-        SET.BorderBottom => { nodes.look[node_id].bd_b = u8(scaled(v)) }
-        SET.BorderLeft => { nodes.look[node_id].bd_l = u8(scaled(v)) }
-        SET.BorderBetween => { nodes.look[node_id].bd_between = u8(scaled(v)) }
-        SET.SvgFit => { nodes.look[node_id].font = u16(v) }
-        SET.SvgLazy => { nodes.lay[node_id].wrap = u8(v) }
-        SET.Elevation => {
+        case SET.FloatPoints:
+            nodes.pin[node_id].fl_pts = u8(v)
+        case SET.FloatX:
+            nodes.pin[node_id].fl_x = i16(scaled(v))
+        case SET.FloatY:
+            nodes.pin[node_id].fl_y = i16(scaled(v))
+        case SET.FloatExpandW:
+            nodes.pin[node_id].fl_ew = i16(scaled(v))
+        case SET.FloatExpandH:
+            nodes.pin[node_id].fl_eh = i16(scaled(v))
+        case SET.FloatClip:
+            nodes.pin[node_id].fl_clip = u8(v)
+        case SET.PointerPass:
+            nodes.ui[node_id].ptr_pass = u8(v)
+        case SET.Flip:
+            nodes.pin[node_id].flip = u8(v)
+        case SET.TextAlign:
+            nodes.look[node_id].t_align = u8(v)
+        case SET.BorderTop:
+            nodes.look[node_id].bd_t = u8(scaled(v))
+        case SET.BorderRight:
+            nodes.look[node_id].bd_r = u8(scaled(v))
+        case SET.BorderBottom:
+            nodes.look[node_id].bd_b = u8(scaled(v))
+        case SET.BorderLeft:
+            nodes.look[node_id].bd_l = u8(scaled(v))
+        case SET.BorderBetween:
+            nodes.look[node_id].bd_between = u8(scaled(v))
+        case SET.SvgFit:
+            nodes.look[node_id].font = u16(v)
+        case SET.SvgLazy:
+            nodes.lay[node_id].wrap = u8(v)
+        case SET.Elevation:
             if v <= 0 {
                 nodes.look[node_id].elev = u8(0)
             } else {
@@ -1951,8 +2038,7 @@ fn apply_int_value(node_id: int, setter: int, v: int) {
                 nodes.look[node_id].elev = u8(lv)
                 nodes.look[node_id].elev_c = role_color(ROLE.Shadow)
             }
-        }
-        _ => {}
+        default:
     }
     apply_depth = apply_depth - 1
     // Report the write so the frame marks this node (a paint-only property) or
@@ -1968,21 +2054,29 @@ fn apply_int_value(node_id: int, setter: int, v: int) {
 /// write? Only the props that land on one field as-is are checked; anything
 /// else answers false and is written.
 fn apply_holds(node_id: int, setter: int, v: int) -> bool {
-    match setter {
-        SET.Opacity => { return int(nodes.look[node_id].opacity) == v }
-        SET.Background => { return nodes.look[node_id].bg == v }
-        SET.Color => { return nodes.look[node_id].fg == v }
-        SET.BorderColor => { return nodes.look[node_id].border_c == v }
-        SET.ZIndex => { return int(nodes.pin[node_id].z_index) == v }
-        SET.Grow => { return nodes.lay[node_id].grow == v }
-        SET.Font => { return v > 0 && int(nodes.look[node_id].font) == scaled(v) }
-        SET.Height => { return v >= 0 && nodes.lay[node_id].explicit_height == scaled(v) }
-        SET.Width => {
+    switch setter {
+        case SET.Opacity:
+            return int(nodes.look[node_id].opacity) == v
+        case SET.Background:
+            return nodes.look[node_id].bg == v
+        case SET.Color:
+            return nodes.look[node_id].fg == v
+        case SET.BorderColor:
+            return nodes.look[node_id].border_c == v
+        case SET.ZIndex:
+            return int(nodes.pin[node_id].z_index) == v
+        case SET.Grow:
+            return nodes.lay[node_id].grow == v
+        case SET.Font:
+            return v > 0 && int(nodes.look[node_id].font) == scaled(v)
+        case SET.Height:
+            return v >= 0 && nodes.lay[node_id].explicit_height == scaled(v)
+        case SET.Width:
             return v >= 0 &&
                 nodes.lay[node_id].explicit_width == scaled(v) &&
                 int(nodes.lay[node_id].w_pct) == -1
-        }
-        _ => { return false }
+        default:
+            return false
     }
 }
 
@@ -1990,19 +2084,20 @@ fn apply_holds(node_id: int, setter: int, v: int) -> bool {
 /// that writes one skips `layout.layout()`. Everything else (sizes, padding,
 /// border, text, font, position, show) can move the box model.
 fn setter_is_paint_only(setter: int) -> bool {
-    match setter {
-        SET.Radius | SET.RadiusTop | SET.RadiusBottom | SET.Opacity | SET.Background | SET.Color |
-            SET.BorderColor | SET.ZIndex | SET.SvgFit | SET.SvgLazy | SET.Elevation | SET.CornerTL |
-            SET.CornerTR | SET.CornerBR | SET.CornerBL | SET.TextAlign | SET.PointerPass |
-            SET.BorderTop | SET.BorderRight | SET.BorderBottom | SET.BorderLeft |
-            SET.BorderBetween => { return true }
-        _ => { return false }
+    switch setter {
+        case SET.Radius, SET.RadiusTop, SET.RadiusBottom, SET.Opacity, SET.Background, SET.Color,
+            SET.BorderColor, SET.ZIndex, SET.SvgFit, SET.SvgLazy, SET.Elevation, SET.CornerTL,
+            SET.CornerTR, SET.CornerBR, SET.CornerBL, SET.TextAlign, SET.PointerPass, SET.BorderTop,
+            SET.BorderRight, SET.BorderBottom, SET.BorderLeft, SET.BorderBetween:
+            return true
+        default:
+            return false
     }
 }
 
 fn apply_str(node_id: int, setter: int, v: string) {
-    match setter {
-        SET.Text => {
+    switch setter {
+        case SET.Text:
             // The same text again (a thunk that re-ran for another reason) is
             // no write: no re-measure, no layout, no repaint.
             if nodes.look[node_id].text == v {
@@ -2010,21 +2105,20 @@ fn apply_str(node_id: int, setter: int, v: string) {
             }
             nodes.look[node_id].text = v
             arena.note_prop_write(node_id, 1)
-        }
-        // The semantic tree is re-dumped when layout ran (`engine_layout_gen`),
-        // so a label or role reports as a layout write: its boundary re-solves
-        // and the mirror sees the change.
-        SET.A11yLabel => {
+            // The semantic tree is re-dumped when layout ran (`engine_layout_gen`),
+            // so a label or role reports as a layout write: its boundary re-solves
+            // and the mirror sees the change.
+        case SET.A11yLabel:
             nodes.ui[node_id].a11y_label = v
             arena.note_prop_write(node_id, 1)
-        }
-        SET.A11yRole => {
+        case SET.A11yRole:
             nodes.ui[node_id].a11y_role = v
             arena.note_prop_write(node_id, 1)
-        }
-        // Read under the pointer, never painted: nothing to mark.
-        SET.Cursor => { nodes.look[node_id].cursor = v }
-        _ => { apply_int(node_id, setter, parse_hex_color(v)) }
+            // Read under the pointer, never painted: nothing to mark.
+        case SET.Cursor:
+            nodes.look[node_id].cursor = v
+        default:
+            apply_int(node_id, setter, parse_hex_color(v))
     }
 }
 
@@ -3313,11 +3407,11 @@ fn st_str(id: int, setter: int, a: Option<string>, b: Option<string>) {
     if result.is_some(a) && a.val == b.val {
         return
     }
-    match setter {
-        SET.Background | SET.Color | SET.BorderColor => {
+    switch setter {
+        case SET.Background, SET.Color, SET.BorderColor:
             apply_int_value(id, setter, parse_hex_color(b.val))
-        }
-        _ => { apply_str(id, setter, b.val) }
+        default:
+            apply_str(id, setter, b.val)
     }
 }
 

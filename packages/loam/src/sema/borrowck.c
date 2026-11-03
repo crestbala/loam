@@ -321,13 +321,13 @@ static int stmt_uses(AstNode *n, const char *name) {
             return expr_uses(n->as.for_stmt.iter, name) || stmt_uses(n->as.for_stmt.body, name);
         case AST_WHILE:
             return expr_uses(n->as.if_stmt.cond, name) || stmt_uses(n->as.if_stmt.then_block, name);
-        case AST_MATCH:
-            if (expr_uses(n->as.match_stmt.scrut, name)) return 1;
-            for (size_t i = 0; i < n->as.match_stmt.arm_count; i++)
-                if (stmt_uses(n->as.match_stmt.arms[i], name)) return 1;
+        case AST_SWITCH:
+            if (expr_uses(n->as.switch_stmt.scrut, name)) return 1;
+            for (size_t i = 0; i < n->as.switch_stmt.case_count; i++)
+                if (stmt_uses(n->as.switch_stmt.cases[i], name)) return 1;
             return 0;
-        case AST_MATCH_ARM:
-            return stmt_uses(n->as.match_arm.body, name);
+        case AST_CASE:
+            return stmt_uses(n->as.switch_case.body, name);
         default:
             return 0;
     }
@@ -694,24 +694,24 @@ static int check_stmt(AstNode *n) {
             if (!rc) rc = check_stmt(n->as.if_stmt.then_block);
             return rc;
         }
-        case AST_MATCH: {
-            if (check_expr(n->as.match_stmt.scrut, 0)) return 1;
+        case AST_SWITCH: {
+            if (check_expr(n->as.switch_stmt.scrut, 0)) return 1;
             release_temps();
             BSnap *pre = NULL;
             int npre = snapshot(&pre);
             int rc = 0;
             BSnap **snaps = NULL;
             int *nsn = NULL;
-            size_t na = n->as.match_stmt.arm_count;
+            size_t na = n->as.switch_stmt.case_count;
             if (na) {
                 snaps = (BSnap **)calloc(na, sizeof(BSnap *));
                 nsn = (int *)calloc(na, sizeof(int));
             }
             for (size_t i = 0; i < na; i++) {
                 restore(pre, npre);
-                AstNode *arm = n->as.match_stmt.arms[i];
-                if (arm && arm->kind == AST_MATCH_ARM)
-                    rc = check_stmt(arm->as.match_arm.body);
+                AstNode *cs = n->as.switch_stmt.cases[i];
+                if (cs && cs->kind == AST_CASE)
+                    rc = check_stmt(cs->as.switch_case.body);
                 if (rc) break;
                 if (snaps) nsn[i] = snapshot(&snaps[i]);
             }

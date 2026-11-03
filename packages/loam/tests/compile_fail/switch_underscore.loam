@@ -1,0 +1,8 @@
+// `_` is not a case pattern; the catch-all is `default:`.
+fn main() {
+    let x = 1
+    switch x {
+        case _:
+            let _ = x
+    }
+}
