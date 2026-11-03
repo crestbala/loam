@@ -449,6 +449,37 @@ Deleting an extra's import removes the feature and nothing else.
 **Exit:** `examples/zcore-hello` renders through the existing Canvas2D and
 macOS hosts using only `zcore`.
 
+### Platform independence: a tiny host seam (2026-11-03)
+
+The core is not platform independent yet, for two reasons: it carried a second
+render backend, and its host seam is 103 bodyless `plat_*` functions, half of
+which are runtime logic rather than OS services. Each paint primitive is declared
+6–8 times (platform.loam → zeus_plat.c → `ZeusDraw` → wasm.c → loader.js /
+mac.m / ios.m / android.c).
+
+**Done (2026-11-03): the software rasterizer is opt-in.** `raster`, `atlas`,
+`image` and `svg` moved from `zeuscore/` to `zeusraster/`, the scene's raster
+pass to `zeusraster/pass.loam` (it reads only `scene.draws`), and the
+`zeus.raster_*` / `image_*` / `atlas_*` / `scene_raster*` / `damage_tiles_*`
+wrappers to `std:zeusraster` (`zeusraster.*`, listed in `api-freeze.md`).
+Nothing in the core imports it. `zeuscore` is 16.2k lines; the rasterizer is
+10.2k beside it. The 96 `zeus_rt.h` prototypes with no definition (the old
+`loam_zeus_raw_*` / `pad*` builder ABI) are deleted.
+
+Next, each its own change:
+
+1. **Runtime out of the seam.** Edit buffers, key mapping, interned handlers,
+   signal cells and trap boundaries are not OS services; they leave
+   `platform.loam` for the runtime (or Loam). Seam target: about 40 functions.
+2. **One command buffer.** `present()` encodes the draw list into one `[]int`
+   plus a string table; native hosts replay it through a shared C
+   `zeus_replay`, the web host with one JS call per frame. The per-primitive
+   `plat_fill` / `plat_text` / … functions go.
+3. **Optional services in one module.** Clipboard, history, media, pickers,
+   fonts and full screen behind one stubbable interface, so a new host needs
+   only: window, event pump, replay, text measure, clock, view size.
+4. **Hosts shrink.** Targets: mac.m under 1k lines, loader.js under 600.
+
 ## What stays exactly the same
 
 - Every `Style` key and value constructor (`px`, `pct`, `edges*`, `corners*`,

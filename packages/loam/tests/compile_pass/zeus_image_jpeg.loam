@@ -14,6 +14,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:zeusraster"
 
 fn must(ok: bool, what: string) {
     if ok {
@@ -38,13 +39,13 @@ fn load(name: string) -> string {
 /// the worst and mean absolute differences. `label` names it in the output.
 fn compare(name: string, label: string, ew: int, eh: int) {
     let s = load(name)
-    let f = zeus.image_format_of(s)
-    must(zeus.image_format_name(f) == "jpeg", "{{label}} sniffs as jpeg")
-    must(zeus.image_format_is_decodable(f) == 1, "jpeg is decodable in Loam")
-    must(zeus.image_decode_jpeg(s) == 1, "{{label}} decodes")
-    must(zeus.image_last_status() == zeus.image_status_ok(), "{{label}} status ok")
-    let w = zeus.image_src_width()
-    let h = zeus.image_src_height()
+    let f = zeusraster.image_format_of(s)
+    must(zeusraster.image_format_name(f) == "jpeg", "{{label}} sniffs as jpeg")
+    must(zeusraster.image_format_is_decodable(f) == 1, "jpeg is decodable in Loam")
+    must(zeusraster.image_decode_jpeg(s) == 1, "{{label}} decodes")
+    must(zeusraster.image_last_status() == zeusraster.image_status_ok(), "{{label}} status ok")
+    let w = zeusraster.image_src_width()
+    let h = zeusraster.image_src_height()
     must(w == ew, "{{label}} width")
     must(h == eh, "{{label}} height")
 
@@ -59,7 +60,7 @@ fn compare(name: string, label: string, ew: int, eh: int) {
         while x < w {
             let mut c = 0
             while c < 4 {
-                let got = zeus.image_src_get(x, y, c)
+                let got = zeusraster.image_src_get(x, y, c)
                 let want = int(orc[(y * w + x) * 4 + c])
                 let d = abs_i(got - want)
                 if d > mx {
@@ -96,19 +97,19 @@ fn main() {
 
     // --- grayscale: one component, so no colour transform at all -----------
     let gs = load("jpg_gray.jpg")
-    must(zeus.image_decode_any(gs) == 1, "grayscale decodes")
-    let gw = zeus.image_src_width()
-    let gh = zeus.image_src_height()
+    must(zeusraster.image_decode_any(gs) == 1, "grayscale decodes")
+    let gw = zeusraster.image_src_width()
+    let gh = zeusraster.image_src_height()
     let gorc = load("jpg_gray.jpg.rgba")
     let mut gmx = 0
     let mut gy = 0
     while gy < gh {
         let mut gx = 0
         while gx < gw {
-            let got = zeus.image_src_get(gx, gy, 0)
+            let got = zeusraster.image_src_get(gx, gy, 0)
             // A gray JPEG must come out gray: R == G == B.
-            must(zeus.image_src_get(gx, gy, 1) == got, "gray G == R")
-            must(zeus.image_src_get(gx, gy, 2) == got, "gray B == R")
+            must(zeusraster.image_src_get(gx, gy, 1) == got, "gray G == R")
+            must(zeusraster.image_src_get(gx, gy, 2) == got, "gray B == R")
             let d = abs_i(got - int(gorc[(gy * gw + gx) * 4]))
             if d > gmx {
                 gmx = d
@@ -122,12 +123,12 @@ fn main() {
 
     // --- progressive: recognised, reported, NOT a failure -------------------
     let pr = load("jpg_progressive.jpg")
-    must(zeus.image_format_name(zeus.image_format_of(pr)) == "jpeg",
+    must(zeusraster.image_format_name(zeusraster.image_format_of(pr)) == "jpeg",
          "progressive still sniffs as jpeg")
-    must(zeus.image_decode_any(pr) == 0, "progressive is not decoded in Loam")
-    must(zeus.image_last_status() == zeus.image_status_unsupported(),
+    must(zeusraster.image_decode_any(pr) == 0, "progressive is not decoded in Loam")
+    must(zeusraster.image_last_status() == zeusraster.image_status_unsupported(),
          "and it says UNSUPPORTED, so the platform path loads it")
-    must(zeus.image_last_status() != zeus.image_status_malformed(),
+    must(zeusraster.image_last_status() != zeusraster.image_status_malformed(),
          "it is not reported as malformed")
 
     // --- a truncated file fails cleanly, never traps ------------------------
@@ -138,7 +139,7 @@ fn main() {
         k = k + 1
     }
     let cut = string_from_bytes(cutb)
-    must(zeus.image_decode_any(cut) == 0, "a truncated jpeg does not decode")
+    must(zeusraster.image_decode_any(cut) == 0, "a truncated jpeg does not decode")
 
     fmt.println("jpeg ok")
 }

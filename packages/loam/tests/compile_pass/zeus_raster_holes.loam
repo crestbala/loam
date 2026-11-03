@@ -5,6 +5,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:zeusraster"
 
 fn must(ok: bool, what: string) {
     if ok {
@@ -15,41 +16,41 @@ fn must(ok: bool, what: string) {
 }
 
 fn main() {
-    zeus.raster_ensure(200, 200, 1)
+    zeusraster.raster_ensure(200, 200, 1)
 
     // --- a ring: outer circle + an opposite-winding hole ------------------
-    zeus.raster_clear(255, 255, 255)
-    zeus.raster_multi_begin()
-    zeus.raster_multi_add_circle(100, 100, 60, 1)
-    zeus.raster_multi_add_circle(100, 100, 30, -1)
-    must(zeus.raster_multi_count() == 2, "two contours recorded")
-    zeus.raster_fill_multi(0, 0, 0, 255)
-    must(zeus.raster_get(100, 100, 1) == 255, "the hole is empty")
-    must(zeus.raster_get(100, 55, 1) == 0, "the ring band is filled (radius 45)")
-    must(zeus.raster_get(100, 35, 1) == 255, "outside the outer circle is untouched")
+    zeusraster.raster_clear(255, 255, 255)
+    zeusraster.raster_multi_begin()
+    zeusraster.raster_multi_add_circle(100, 100, 60, 1)
+    zeusraster.raster_multi_add_circle(100, 100, 30, -1)
+    must(zeusraster.raster_multi_count() == 2, "two contours recorded")
+    zeusraster.raster_fill_multi(0, 0, 0, 255)
+    must(zeusraster.raster_get(100, 100, 1) == 255, "the hole is empty")
+    must(zeusraster.raster_get(100, 55, 1) == 0, "the ring band is filled (radius 45)")
+    must(zeusraster.raster_get(100, 35, 1) == 255, "outside the outer circle is untouched")
 
     // --- a concave L-shape: the notch stays empty -------------------------
-    zeus.raster_clear(255, 255, 255)
+    zeusraster.raster_clear(255, 255, 255)
     let xs: []float = []float { 40.0, 140.0, 140.0, 80.0, 80.0, 40.0 }
     let ys: []float = []float { 40.0, 40.0, 80.0, 80.0, 140.0, 140.0 }
-    zeus.raster_multi_begin()
-    zeus.raster_multi_add_poly(xs, ys, 1)
-    zeus.raster_fill_multi(0, 0, 0, 255)
-    must(zeus.raster_get(60, 60, 1) == 0, "the top bar is filled")
-    must(zeus.raster_get(60, 110, 1) == 0, "the left bar is filled")
-    must(zeus.raster_get(110, 110, 1) == 255, "the notch is empty (concave contour)")
-    must(zeus.raster_get(20, 20, 1) == 255, "outside the L is untouched")
+    zeusraster.raster_multi_begin()
+    zeusraster.raster_multi_add_poly(xs, ys, 1)
+    zeusraster.raster_fill_multi(0, 0, 0, 255)
+    must(zeusraster.raster_get(60, 60, 1) == 0, "the top bar is filled")
+    must(zeusraster.raster_get(60, 110, 1) == 0, "the left bar is filled")
+    must(zeusraster.raster_get(110, 110, 1) == 255, "the notch is empty (concave contour)")
+    must(zeusraster.raster_get(20, 20, 1) == 255, "outside the L is untouched")
 
     // --- the damage clip applies to multi-contour fills too ---------------
-    zeus.raster_clear(255, 255, 255)
-    zeus.raster_clip_box(0, 0, 100, 200)
-    zeus.raster_multi_begin()
-    zeus.raster_multi_add_circle(100, 100, 60, 1)
-    zeus.raster_multi_add_circle(100, 100, 30, -1)
-    zeus.raster_fill_multi(0, 0, 0, 255)
-    must(zeus.raster_get(55, 100, 1) == 0, "inside the clip the ring band is drawn")
-    must(zeus.raster_get(150, 100, 1) == 255, "outside the clip nothing is written")
-    zeus.raster_clip_reset()
+    zeusraster.raster_clear(255, 255, 255)
+    zeusraster.raster_clip_box(0, 0, 100, 200)
+    zeusraster.raster_multi_begin()
+    zeusraster.raster_multi_add_circle(100, 100, 60, 1)
+    zeusraster.raster_multi_add_circle(100, 100, 30, -1)
+    zeusraster.raster_fill_multi(0, 0, 0, 255)
+    must(zeusraster.raster_get(55, 100, 1) == 0, "inside the clip the ring band is drawn")
+    must(zeusraster.raster_get(150, 100, 1) == 255, "outside the clip nothing is written")
+    zeusraster.raster_clip_reset()
 
     fmt.println("raster holes ok")
 }

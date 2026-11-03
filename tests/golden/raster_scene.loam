@@ -18,6 +18,7 @@
 
 import "std:sys"
 import "std:zeus"
+import "std:zeusraster"
 
 fn main() {
     let argv = sys.args()
@@ -25,7 +26,7 @@ fn main() {
     if argv.len > 1 {
         out = argv[1]
     }
-    if zeus.scene_load_font("packages/loam/tests/fonts/tiny.ttf") != 1 {
+    if zeusraster.scene_load_font("packages/loam/tests/fonts/tiny.ttf") != 1 {
         sys.exit(5)
     }
 
@@ -68,21 +69,21 @@ fn main() {
     zeus.engine_layout(160, 196)
     zeus.engine_paint()
 
-    zeus.raster_ensure(160, 196, 2)
-    zeus.scene_rasterize(2, 255, 255, 255)
+    zeusraster.raster_ensure(160, 196, 2)
+    zeusraster.scene_rasterize(2, 255, 255, 255)
 
     // The pass must not be silently dropping the elements this screen is made
     // of: shapes, gradients and text should leave nothing unhandled.
-    if zeus.scene_raster_unhandled_total() != 0 {
+    if zeusraster.scene_raster_unhandled_total() != 0 {
         sys.exit(2)
     }
-    if zeus.scene_glyphs_missing() != 0 {
+    if zeusraster.scene_glyphs_missing() != 0 {
         sys.exit(6)
     }
-    if zeus.raster_width() != 320 {
+    if zeusraster.raster_width() != 320 {
         sys.exit(3)
     }
-    if zeus.raster_dump_ppm(out) != 0 {
+    if zeusraster.raster_dump_ppm(out) != 0 {
         sys.exit(4)
     }
 }

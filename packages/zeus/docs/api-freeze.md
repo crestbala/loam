@@ -10,6 +10,7 @@ Entry forms the lint checks:
 | Entry | Holds when |
 |---|---|
 | `zeus.name` | `fn name` is defined in `std/zeus.loam`, `zeusbase.loam`, `flow.loam` or `media.loam` |
+| `zeusraster.name` | `fn name` is defined in `std/zeusraster.loam` (the opt-in software rasterizer) |
 | `zui.name` | `fn name` is defined in `zeus-components` `atoms`, `molecules` or `organisms` |
 | `value.name` | `fn name` (a `Style` value constructor or helper) is defined in `zeuscore/style.loam` |
 | `Style.key` | `key` is a field of `struct Style` |
@@ -18,7 +19,7 @@ Entry forms the lint checks:
 To refresh after adding API, append the new entries by hand under the right
 heading; keep one entry per line.
 
-## `zeus.*` functions (707)
+## `zeus.*` functions (588)
 
 - `zeus.__ui_scope`
 - `zeus.__view_begin`
@@ -56,29 +57,6 @@ heading; keep one entry per line.
 - `zeus.arena_nodes`
 - `zeus.arena_sigs`
 - `zeus.aspect`
-- `zeus.atlas_blit`
-- `zeus.atlas_bytes`
-- `zeus.atlas_cov`
-- `zeus.atlas_dim`
-- `zeus.atlas_entry_count`
-- `zeus.atlas_eviction_count`
-- `zeus.atlas_failure_count`
-- `zeus.atlas_gamma`
-- `zeus.atlas_glyph_h`
-- `zeus.atlas_glyph_origin_x`
-- `zeus.atlas_glyph_origin_y`
-- `zeus.atlas_glyph_w`
-- `zeus.atlas_grow_count`
-- `zeus.atlas_intern`
-- `zeus.atlas_lookup`
-- `zeus.atlas_max_entries`
-- `zeus.atlas_mem_bytes`
-- `zeus.atlas_raster_count`
-- `zeus.atlas_repack_count`
-- `zeus.atlas_reset`
-- `zeus.atlas_reset_default`
-- `zeus.atlas_subx_bucket`
-- `zeus.atlas_subx_offset`
 - `zeus.batch`
 - `zeus.bind`
 - `zeus.border`
@@ -121,10 +99,6 @@ heading; keep one entry per line.
 - `zeus.damage_count`
 - `zeus.damage_full`
 - `zeus.damage_h`
-- `zeus.damage_tiles_build`
-- `zeus.damage_tiles_count`
-- `zeus.damage_tiles_x`
-- `zeus.damage_tiles_y`
 - `zeus.damage_w`
 - `zeus.damage_x`
 - `zeus.damage_y`
@@ -254,41 +228,6 @@ heading; keep one entry per line.
 - `zeus.hover_fade`
 - `zeus.hover_lift`
 - `zeus.hover_off`
-- `zeus.image_blit`
-- `zeus.image_cache_budget`
-- `zeus.image_cache_bytes`
-- `zeus.image_cache_capacity`
-- `zeus.image_cache_clear`
-- `zeus.image_cache_count`
-- `zeus.image_cache_eviction_count`
-- `zeus.image_cache_hit_count`
-- `zeus.image_cache_miss_count`
-- `zeus.image_cache_refusal_count`
-- `zeus.image_decode_any`
-- `zeus.image_decode_count`
-- `zeus.image_decode_failure_count`
-- `zeus.image_decode_failure_reason`
-- `zeus.image_decode_jpeg`
-- `zeus.image_decode_png`
-- `zeus.image_format_is_decodable`
-- `zeus.image_format_name`
-- `zeus.image_format_of`
-- `zeus.image_gamma_assumed_count`
-- `zeus.image_get`
-- `zeus.image_get_px`
-- `zeus.image_h`
-- `zeus.image_last_status`
-- `zeus.image_mem_bytes`
-- `zeus.image_resize_count`
-- `zeus.image_scratch_bytes`
-- `zeus.image_set_budget`
-- `zeus.image_src_get`
-- `zeus.image_src_height`
-- `zeus.image_src_width`
-- `zeus.image_status_malformed`
-- `zeus.image_status_ok`
-- `zeus.image_status_unsupported`
-- `zeus.image_w`
 - `zeus.info_bg`
 - `zeus.info_fill_solid`
 - `zeus.info_ink`
@@ -361,12 +300,6 @@ heading; keep one entry per line.
 - `zeus.MatchBy`
 - `zeus.MatchKeep`
 - `zeus.mby_forget`
-- `zeus.measure_cache_capacity`
-- `zeus.measure_cache_clear`
-- `zeus.measure_cache_count`
-- `zeus.measure_cache_eviction_count`
-- `zeus.measure_cached`
-- `zeus.measure_store`
 - `zeus.measure_visits`
 - `zeus.measured_height`
 - `zeus.measured_width`
@@ -508,45 +441,6 @@ heading; keep one entry per line.
 - `zeus.radius_bottom`
 - `zeus.radius_corner`
 - `zeus.radius_top`
-- `zeus.raster_blend`
-- `zeus.raster_blit`
-- `zeus.raster_blit_generation`
-- `zeus.raster_bytes`
-- `zeus.raster_checksum`
-- `zeus.raster_clear`
-- `zeus.raster_clip_box`
-- `zeus.raster_clip_from_damage`
-- `zeus.raster_clip_reset`
-- `zeus.raster_dither`
-- `zeus.raster_dump_ppm`
-- `zeus.raster_ensure`
-- `zeus.raster_fill_multi`
-- `zeus.raster_fill_round_rect_gradient`
-- `zeus.raster_fill_round_rect_tiled`
-- `zeus.raster_fill_round_rect_whole`
-- `zeus.raster_flat_tol`
-- `zeus.raster_generation`
-- `zeus.raster_get`
-- `zeus.raster_height`
-- `zeus.raster_lin_to_srgb`
-- `zeus.raster_mask_get`
-- `zeus.raster_mask_h`
-- `zeus.raster_mask_w`
-- `zeus.raster_multi_add_circle`
-- `zeus.raster_multi_add_glyph`
-- `zeus.raster_multi_add_poly`
-- `zeus.raster_multi_begin`
-- `zeus.raster_multi_count`
-- `zeus.raster_multi_to_mask`
-- `zeus.raster_push_str`
-- `zeus.raster_realloc_count`
-- `zeus.raster_scale`
-- `zeus.raster_set`
-- `zeus.raster_shadow_rect`
-- `zeus.raster_srgb_to_lin`
-- `zeus.raster_stroke_round_rect`
-- `zeus.raster_stroke_round_rect_dev`
-- `zeus.raster_width`
 - `zeus.raw_box`
 - `zeus.raw_button`
 - `zeus.raw_check`
@@ -589,15 +483,6 @@ heading; keep one entry per line.
 - `zeus.root_relayouts`
 - `zeus.run`
 - `zeus.scaled`
-- `zeus.scene_font_is_ready`
-- `zeus.scene_glyphs_drawn`
-- `zeus.scene_glyphs_missing`
-- `zeus.scene_load_font`
-- `zeus.scene_raster_rounded_clips`
-- `zeus.scene_raster_unhandled`
-- `zeus.scene_raster_unhandled_total`
-- `zeus.scene_rasterize`
-- `zeus.scene_register_image`
 - `zeus.Scope`
 - `zeus.scope`
 - `zeus.scope_eid`
@@ -677,9 +562,6 @@ heading; keep one entry per line.
 - `zeus.state_selected`
 - `zeus.state_style_run`
 - `zeus.str_or_default`
-- `zeus.string_intern`
-- `zeus.string_intern_count`
-- `zeus.string_intern_overflow_count`
 - `zeus.style_apply`
 - `zeus.style_run`
 - `zeus.styled`
@@ -727,6 +609,131 @@ heading; keep one entry per line.
 - `zeus.window_chrome`
 - `zeus.window_size`
 - `zeus.z_index`
+
+## `zeusraster.*` functions (119)
+
+The software rasterizer moved out of the core into `std:zeusraster`; these
+were `zeus.*` before.
+
+- `zeusraster.atlas_blit`
+- `zeusraster.atlas_bytes`
+- `zeusraster.atlas_cov`
+- `zeusraster.atlas_dim`
+- `zeusraster.atlas_entry_count`
+- `zeusraster.atlas_eviction_count`
+- `zeusraster.atlas_failure_count`
+- `zeusraster.atlas_gamma`
+- `zeusraster.atlas_glyph_h`
+- `zeusraster.atlas_glyph_origin_x`
+- `zeusraster.atlas_glyph_origin_y`
+- `zeusraster.atlas_glyph_w`
+- `zeusraster.atlas_grow_count`
+- `zeusraster.atlas_intern`
+- `zeusraster.atlas_lookup`
+- `zeusraster.atlas_max_entries`
+- `zeusraster.atlas_mem_bytes`
+- `zeusraster.atlas_raster_count`
+- `zeusraster.atlas_repack_count`
+- `zeusraster.atlas_reset`
+- `zeusraster.atlas_reset_default`
+- `zeusraster.atlas_subx_bucket`
+- `zeusraster.atlas_subx_offset`
+- `zeusraster.damage_tiles_build`
+- `zeusraster.damage_tiles_count`
+- `zeusraster.damage_tiles_x`
+- `zeusraster.damage_tiles_y`
+- `zeusraster.image_blit`
+- `zeusraster.image_cache_budget`
+- `zeusraster.image_cache_bytes`
+- `zeusraster.image_cache_capacity`
+- `zeusraster.image_cache_clear`
+- `zeusraster.image_cache_count`
+- `zeusraster.image_cache_eviction_count`
+- `zeusraster.image_cache_hit_count`
+- `zeusraster.image_cache_miss_count`
+- `zeusraster.image_cache_refusal_count`
+- `zeusraster.image_decode_any`
+- `zeusraster.image_decode_count`
+- `zeusraster.image_decode_failure_count`
+- `zeusraster.image_decode_failure_reason`
+- `zeusraster.image_decode_jpeg`
+- `zeusraster.image_decode_png`
+- `zeusraster.image_format_is_decodable`
+- `zeusraster.image_format_name`
+- `zeusraster.image_format_of`
+- `zeusraster.image_gamma_assumed_count`
+- `zeusraster.image_get`
+- `zeusraster.image_get_px`
+- `zeusraster.image_h`
+- `zeusraster.image_last_status`
+- `zeusraster.image_mem_bytes`
+- `zeusraster.image_resize_count`
+- `zeusraster.image_scratch_bytes`
+- `zeusraster.image_set_budget`
+- `zeusraster.image_src_get`
+- `zeusraster.image_src_height`
+- `zeusraster.image_src_width`
+- `zeusraster.image_status_malformed`
+- `zeusraster.image_status_ok`
+- `zeusraster.image_status_unsupported`
+- `zeusraster.image_w`
+- `zeusraster.measure_cache_capacity`
+- `zeusraster.measure_cache_clear`
+- `zeusraster.measure_cache_count`
+- `zeusraster.measure_cache_eviction_count`
+- `zeusraster.measure_cached`
+- `zeusraster.measure_store`
+- `zeusraster.raster_blend`
+- `zeusraster.raster_blit`
+- `zeusraster.raster_blit_generation`
+- `zeusraster.raster_bytes`
+- `zeusraster.raster_checksum`
+- `zeusraster.raster_clear`
+- `zeusraster.raster_clip_box`
+- `zeusraster.raster_clip_from_damage`
+- `zeusraster.raster_clip_reset`
+- `zeusraster.raster_dither`
+- `zeusraster.raster_dump_ppm`
+- `zeusraster.raster_ensure`
+- `zeusraster.raster_fill_multi`
+- `zeusraster.raster_fill_round_rect_gradient`
+- `zeusraster.raster_fill_round_rect_tiled`
+- `zeusraster.raster_fill_round_rect_whole`
+- `zeusraster.raster_flat_tol`
+- `zeusraster.raster_generation`
+- `zeusraster.raster_get`
+- `zeusraster.raster_height`
+- `zeusraster.raster_lin_to_srgb`
+- `zeusraster.raster_mask_get`
+- `zeusraster.raster_mask_h`
+- `zeusraster.raster_mask_w`
+- `zeusraster.raster_multi_add_circle`
+- `zeusraster.raster_multi_add_glyph`
+- `zeusraster.raster_multi_add_poly`
+- `zeusraster.raster_multi_begin`
+- `zeusraster.raster_multi_count`
+- `zeusraster.raster_multi_to_mask`
+- `zeusraster.raster_push_str`
+- `zeusraster.raster_realloc_count`
+- `zeusraster.raster_scale`
+- `zeusraster.raster_set`
+- `zeusraster.raster_shadow_rect`
+- `zeusraster.raster_srgb_to_lin`
+- `zeusraster.raster_stroke_round_rect`
+- `zeusraster.raster_stroke_round_rect_dev`
+- `zeusraster.raster_width`
+- `zeusraster.scene_font_is_ready`
+- `zeusraster.scene_glyphs_drawn`
+- `zeusraster.scene_glyphs_missing`
+- `zeusraster.scene_load_font`
+- `zeusraster.scene_raster_rounded_clips`
+- `zeusraster.scene_raster_unhandled`
+- `zeusraster.scene_raster_unhandled_total`
+- `zeusraster.scene_rasterize`
+- `zeusraster.scene_register_image`
+- `zeusraster.string_intern`
+- `zeusraster.string_intern_count`
+- `zeusraster.string_intern_overflow_count`
 
 ## `zui.*` widgets and helpers (367)
 
