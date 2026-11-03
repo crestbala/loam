@@ -7,6 +7,7 @@
  */
 #include "zeus_rt.h"
 #include "zeus_key.h"
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -613,13 +614,13 @@ int64_t loam_zeus_plat_headless(void) {
     return 0;
 }
 
-void loam_zeus_plat_fill(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
+static void op_fill(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
                         int64_t radius) {
     if (!have_draw || !paint_draw.fill) return;
     paint_draw.fill(paint_ctx, x, y, w, h, rgb & 0xFFFFFF, radius);
 }
 
-void loam_zeus_plat_fill_a(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
+static void op_fill_a(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
                           int64_t radius, int64_t alpha) {
     if (!have_draw) return;
     if (paint_draw.fill_a)
@@ -628,7 +629,7 @@ void loam_zeus_plat_fill_a(int64_t x, int64_t y, int64_t w, int64_t h, int64_t r
         paint_draw.fill(paint_ctx, x, y, w, h, rgb & 0xFFFFFF, radius);
 }
 
-void loam_zeus_plat_fill_g(int64_t x, int64_t y, int64_t w, int64_t h, int64_t c0,
+static void op_fill_g(int64_t x, int64_t y, int64_t w, int64_t h, int64_t c0,
                           int64_t c1, int64_t axis, int64_t radius, int64_t alpha) {
     if (!have_draw) return;
     if (paint_draw.fill_g)
@@ -644,7 +645,7 @@ void loam_zeus_plat_fill_g(int64_t x, int64_t y, int64_t w, int64_t h, int64_t c
    approximating it: a hard-edged rectangle under every card reads far worse
    than no shadow at all, and the design system's flat level (0) is a real
    level, so "no shadow" is always a valid rendering. */
-void loam_zeus_plat_shadow(int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius,
+static void op_shadow(int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius,
                           int64_t rgb, int64_t alpha, int64_t blur, int64_t dx,
                           int64_t dy) {
     if (!have_draw || !paint_draw.shadow) return;
@@ -655,7 +656,7 @@ void loam_zeus_plat_shadow(int64_t x, int64_t y, int64_t w, int64_t h, int64_t r
 /* Ring stroke. The fallback paints four edges with `fill_a`, which is square
    at the corners but keeps the border visible and — unlike the old underlay
    fill it replaces — does not require the node to have a background. */
-void loam_zeus_plat_stroke(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
+static void op_stroke(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
                           int64_t radius, int64_t width, int64_t alpha) {
     if (!have_draw) return;
     if (width <= 0 || w <= 0 || h <= 0) return;
@@ -673,7 +674,7 @@ void loam_zeus_plat_stroke(int64_t x, int64_t y, int64_t w, int64_t h, int64_t r
                       rgb & 0xFFFFFF, 0, alpha);
 }
 
-void loam_zeus_plat_fill4(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
+static void op_fill4(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
                          int64_t alpha, int64_t tl, int64_t tr, int64_t br, int64_t bl) {
     if (!have_draw) return;
     if (paint_draw.fill4) {
@@ -695,13 +696,13 @@ void loam_zeus_plat_fill4(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rg
 /* Paint-space transform. A NULL host leaves the widget at its settled
    position, which is the correct degradation: the transition is skipped,
    not half-applied. */
-void loam_zeus_plat_xform(int64_t dx, int64_t dy, int64_t scale, int64_t rot,
+static void op_xform(int64_t dx, int64_t dy, int64_t scale, int64_t rot,
                          int64_t ox, int64_t oy) {
     if (!have_draw || !paint_draw.xform) return;
     paint_draw.xform(paint_ctx, dx, dy, scale, rot, ox, oy);
 }
 
-void loam_zeus_plat_text(int64_t x, int64_t y, loam_str s, int64_t rgb, int64_t font) {
+static void op_text(int64_t x, int64_t y, loam_str s, int64_t rgb, int64_t font) {
     char *p;
     if (!have_draw || !paint_draw.text) return;
     p = dup_ys(s);
@@ -709,12 +710,12 @@ void loam_zeus_plat_text(int64_t x, int64_t y, loam_str s, int64_t rgb, int64_t 
     free(p);
 }
 
-void loam_zeus_plat_text_rot(int64_t x, int64_t y, loam_str s, int64_t rgb, int64_t font,
+static void op_text_rot(int64_t x, int64_t y, loam_str s, int64_t rgb, int64_t font,
                              int64_t deg) {
     char *p;
     if (!have_draw) return;
     if (!paint_draw.text_rot) {
-        if (paint_draw.text) loam_zeus_plat_text(x, y, s, rgb, font);
+        if (paint_draw.text) op_text(x, y, s, rgb, font);
         return;
     }
     p = dup_ys(s);
@@ -722,14 +723,14 @@ void loam_zeus_plat_text_rot(int64_t x, int64_t y, loam_str s, int64_t rgb, int6
     free(p);
 }
 
-void loam_zeus_plat_text_int(int64_t x, int64_t y, int64_t v, int64_t rgb, int64_t font) {
+static void op_text_int(int64_t x, int64_t y, int64_t v, int64_t rgb, int64_t font) {
     char buf[32];
     if (!have_draw || !paint_draw.text) return;
     snprintf(buf, sizeof buf, "%lld", (long long)v);
     paint_draw.text(paint_ctx, x, y, buf, rgb & 0xFFFFFF, font);
 }
 
-void loam_zeus_plat_svg(int64_t x, int64_t y, int64_t w, int64_t h, loam_str markup,
+static void op_svg(int64_t x, int64_t y, int64_t w, int64_t h, loam_str markup,
                        int64_t rgb, int64_t alpha) {
     char *p;
     if (!have_draw || !paint_draw.svg) return;
@@ -738,7 +739,7 @@ void loam_zeus_plat_svg(int64_t x, int64_t y, int64_t w, int64_t h, loam_str mar
     free(p);
 }
 
-void loam_zeus_plat_image(int64_t x, int64_t y, int64_t w, int64_t h, loam_str src,
+static void op_image(int64_t x, int64_t y, int64_t w, int64_t h, loam_str src,
                          int64_t radius, int64_t alpha, int64_t fit) {
     char *p;
     if (!have_draw || !paint_draw.image) return;
@@ -747,19 +748,19 @@ void loam_zeus_plat_image(int64_t x, int64_t y, int64_t w, int64_t h, loam_str s
     free(p);
 }
 
-void loam_zeus_plat_save(void) {
+static void op_save(void) {
     if (have_draw && paint_draw.save) paint_draw.save(paint_ctx);
 }
 
-void loam_zeus_plat_alpha(int64_t a) {
+static void op_alpha(int64_t a) {
     if (have_draw && paint_draw.alpha) paint_draw.alpha(paint_ctx, a);
 }
 
-void loam_zeus_plat_clip(int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius) {
+static void op_clip(int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius) {
     if (have_draw && paint_draw.clip) paint_draw.clip(paint_ctx, x, y, w, h, radius);
 }
 
-void loam_zeus_plat_restore(void) {
+static void op_restore(void) {
     if (have_draw && paint_draw.restore) paint_draw.restore(paint_ctx);
 }
 
@@ -937,7 +938,7 @@ void loam_zeus_plat_measure_wrap(loam_str s, int32_t px, int32_t max_w, int32_t 
     if (h) *h = (int32_t)hh;
 }
 
-void loam_zeus_plat_text_wrap(int64_t x, int64_t y, loam_str s, int64_t rgb, int64_t font,
+static void op_text_wrap(int64_t x, int64_t y, loam_str s, int64_t rgb, int64_t font,
                              int64_t max_w) {
     wrap_text(s.ptr, s.len, font, max_w, 1, x, y, rgb, NULL, NULL);
 }
@@ -1072,63 +1073,13 @@ int64_t loam_zeus_plat_overlay_scroll(void) {
    loam_zeus_plat_* so existing callers do not change. */
 void loam_platform_plat_run(void) { loam_zeus_plat_run(); }
 int64_t loam_platform_plat_headless(void) { return loam_zeus_plat_headless(); }
-void loam_platform_plat_fill(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
-                             int64_t radius) {
-    loam_zeus_plat_fill(x, y, w, h, rgb, radius);
-}
-void loam_platform_plat_fill_a(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
-                               int64_t radius, int64_t alpha) {
-    loam_zeus_plat_fill_a(x, y, w, h, rgb, radius, alpha);
-}
-void loam_platform_plat_fill_g(int64_t x, int64_t y, int64_t w, int64_t h, int64_t c0,
-                               int64_t c1, int64_t axis, int64_t radius, int64_t alpha) {
-    loam_zeus_plat_fill_g(x, y, w, h, c0, c1, axis, radius, alpha);
-}
-void loam_platform_plat_shadow(int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius,
-                               int64_t rgb, int64_t alpha, int64_t blur, int64_t dx,
-                               int64_t dy) {
-    loam_zeus_plat_shadow(x, y, w, h, radius, rgb, alpha, blur, dx, dy);
-}
-void loam_platform_plat_stroke(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
-                               int64_t radius, int64_t width, int64_t alpha) {
-    loam_zeus_plat_stroke(x, y, w, h, rgb, radius, width, alpha);
-}
-void loam_platform_plat_fill4(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
-                              int64_t alpha, int64_t tl, int64_t tr, int64_t br,
-                              int64_t bl) {
-    loam_zeus_plat_fill4(x, y, w, h, rgb, alpha, tl, tr, br, bl);
-}
-void loam_platform_plat_xform(int64_t dx, int64_t dy, int64_t scale, int64_t rot,
-                              int64_t ox, int64_t oy) {
-    loam_zeus_plat_xform(dx, dy, scale, rot, ox, oy);
-}
-void loam_platform_plat_text(int64_t x, int64_t y, loam_str s, int64_t rgb, int64_t font) {
-    loam_zeus_plat_text(x, y, s, rgb, font);
-}
 
-void loam_platform_plat_text_rot(int64_t x, int64_t y, loam_str s, int64_t rgb, int64_t font,
-                                 int64_t deg) {
-    loam_zeus_plat_text_rot(x, y, s, rgb, font, deg);
-}
-void loam_platform_plat_text_int(int64_t x, int64_t y, int64_t v, int64_t rgb, int64_t font) {
-    loam_zeus_plat_text_int(x, y, v, rgb, font);
-}
-void loam_platform_plat_svg(int64_t x, int64_t y, int64_t w, int64_t h, loam_str markup,
-                            int64_t rgb, int64_t alpha) {
-    loam_zeus_plat_svg(x, y, w, h, markup, rgb, alpha);
-}
-void loam_platform_plat_image(int64_t x, int64_t y, int64_t w, int64_t h, loam_str src,
-                              int64_t radius, int64_t alpha, int64_t fit) {
-    loam_zeus_plat_image(x, y, w, h, src, radius, alpha, fit);
-}
 loam_str loam_platform_plat_pick_image(int32_t *w, int32_t *h) {
     return loam_zeus_plat_pick_image(w, h);
 }
 void loam_platform_plat_image_size(loam_str src, int32_t *w, int32_t *h) {
     loam_zeus_plat_image_size(src, w, h);
 }
-void loam_platform_plat_save(void) { loam_zeus_plat_save(); }
-void loam_platform_plat_alpha(int64_t a) { loam_zeus_plat_alpha(a); }
 
 /* Wall clock for host-sleep-safe deadlines (scrollbar hide). The clock itself is
    the runtime's `loam_now_ms`, so there is exactly one monotonic clock in the
@@ -1238,10 +1189,6 @@ int64_t loam_platform_rt_mem_eq(int64_t p, int64_t offset, loam_vec *src) {
     return memcmp((const unsigned char *)(long)p + (size_t)offset, src->ptr, n) == 0 ? 1 : 0;
 }
 
-void loam_platform_plat_clip(int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius) {
-    loam_zeus_plat_clip(x, y, w, h, radius);
-}
-void loam_platform_plat_restore(void) { loam_zeus_plat_restore(); }
 
 /* Phase 4: the one blit. `buf` is the Loam framebuffer vector handed over by
    value — we pass its first byte and its length straight through, so not one
@@ -1774,10 +1721,6 @@ void loam_platform_plat_measure_int(int32_t v, int32_t px, int32_t *w, int32_t *
 void loam_platform_plat_measure_wrap(loam_str s, int32_t px, int32_t max_w, int32_t *w,
                                      int32_t *h) {
     loam_zeus_plat_measure_wrap(s, px, max_w, w, h);
-}
-void loam_platform_plat_text_wrap(int64_t x, int64_t y, loam_str s, int64_t rgb, int64_t font,
-                                  int64_t max_w) {
-    loam_zeus_plat_text_wrap(x, y, s, rgb, font, max_w);
 }
 void loam_platform_plat_set_window(loam_str title, int64_t width, int64_t height) {
     loam_zeus_plat_set_window(title, width, height);
@@ -2637,5 +2580,222 @@ void loam_platform_plat_history_replace(loam_str path) {
 void loam_platform_plat_history_back(void) {
 #ifdef __wasm32__
     zeus_js_history_back();
+#endif
+}
+
+/* --- the frame (`platform.plat_frame`) ------------------------------------
+   The one paint call a frame makes across the seam: the whole draw list as
+   `n` records of ZEUS_FRAME_STRIDE ints (`kind x y w h rgb radius alpha font
+   value str`, `str` indexing `strs` or -1), decoded here into the host's
+   `ZeusDraw`. The `op_*` helpers above hold the fallbacks for hosts that leave
+   a callback NULL, so a host implements only what it can draw. The op table
+   is documented on `plat_frame` in platform.loam. */
+#define ZEUS_FRAME_STRIDE 11
+
+static int text_alpha_begin(int64_t alpha) {
+    if (alpha < 255) {
+        op_alpha(alpha);
+        return 1;
+    }
+    return 0;
+}
+
+void zeus_replay(const int32_t *ops, int64_t n, const loam_str *strs, int64_t ns) {
+    static const loam_str none = {"", 0, 0};
+    for (int64_t i = 0; i < n; i++) {
+        const int32_t *o = ops + i * ZEUS_FRAME_STRIDE;
+        int64_t x = o[1], y = o[2], w = o[3], h = o[4], rgb = o[5];
+        int64_t radius = o[6], alpha = o[7], font = o[8], value = o[9];
+        loam_str str = o[10] >= 0 && o[10] < ns ? strs[o[10]] : none;
+        int wrap;
+        switch (o[0]) {
+        case 0: op_fill(x, y, w, h, rgb, radius); break;
+        case 1: op_fill_a(x, y, w, h, rgb, radius, alpha); break;
+        case 2:
+            wrap = text_alpha_begin(alpha);
+            op_text(x, y, str, rgb, font);
+            if (wrap) op_restore();
+            break;
+        case 3:
+            wrap = text_alpha_begin(alpha);
+            op_text_int(x, y, value, rgb, font);
+            if (wrap) op_restore();
+            break;
+        case 4:
+            wrap = text_alpha_begin(alpha);
+            op_text_wrap(x, y, str, rgb, font, w);
+            if (wrap) op_restore();
+            break;
+        case 5: op_svg(x, y, w, h, str, rgb, alpha); break;
+        case 6: op_save(); break;
+        case 7: op_clip(x, y, w, h, radius); break;
+        case 8: op_restore(); break;
+        case 9:
+            wrap = text_alpha_begin(alpha);
+            op_text_rot(x, y, str, rgb, font, w);
+            if (wrap) op_restore();
+            break;
+        case 10: op_image(x, y, w, h, str, radius, alpha, value); break;
+        case 11: op_fill_g(x, y, w, h, rgb, value, font, radius, alpha); break;
+        case 12:
+            op_shadow(x, y, w, h, radius, rgb, alpha, font, value % 256 - 128, value / 256 - 128);
+            break;
+        case 13: op_stroke(x, y, w, h, rgb, radius, font, alpha); break;
+        case 14:
+            op_fill4(x, y, w, h, rgb, alpha, radius % 65536, radius / 65536, value % 65536,
+                     value / 65536);
+            break;
+        case 15: op_xform(x, y, radius, font, w, h); break;
+        default: break;
+        }
+    }
+}
+
+/* `ops` / `strs` are the Loam vectors by value (int32 elements, loam_str
+   elements); the record count is checked against the buffer's length. */
+void loam_platform_plat_frame(loam_vec ops, int32_t n, loam_vec strs) {
+    if (!ops.ptr || n <= 0) return;
+    if ((int64_t)n * ZEUS_FRAME_STRIDE > ops.len) n = (int32_t)(ops.len / ZEUS_FRAME_STRIDE);
+    zeus_replay((const int32_t *)ops.ptr, n, (const loam_str *)strs.ptr, strs.ptr ? strs.len : 0);
+}
+
+/* --- trace host (`runtime.trace_draw`) -----------------------------------
+   A ZeusDraw that prints every call it receives, one line each. It is the
+   reference host: exactly what a real host is handed for a frame, after the
+   runtime's fallbacks and text wrapping. The replay golden
+   (`tests/draw_golden/replay_trace`) prints it so the path from the draw list
+   to a host is covered headlessly, not only by eye in a window. */
+#ifndef __wasm32__
+/* Unbuffered, like Loam's own stdout, so trace lines and `fmt.println` output
+   keep their order. */
+static void tr_printf(const char *fmt, ...) {
+    char buf[512];
+    va_list ap;
+    int n;
+    va_start(ap, fmt);
+    n = vsnprintf(buf, sizeof buf, fmt, ap);
+    va_end(ap);
+    if (n < 0) return;
+    if ((size_t)n >= sizeof buf) n = (int)sizeof buf - 1;
+    loam_write_bytes(buf, (size_t)n);
+}
+static void tr_fill(void *c, int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
+                    int64_t r) {
+    (void)c;
+    tr_printf("T fill %lld %lld %lld %lld %lld %lld\n", (long long)x, (long long)y, (long long)w,
+           (long long)h, (long long)rgb, (long long)r);
+}
+static void tr_fill_a(void *c, int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
+                      int64_t r, int64_t a) {
+    (void)c;
+    tr_printf("T fill_a %lld %lld %lld %lld %lld %lld %lld\n", (long long)x, (long long)y,
+           (long long)w, (long long)h, (long long)rgb, (long long)r, (long long)a);
+}
+static void tr_text(void *c, int64_t x, int64_t y, const char *s, int64_t rgb, int64_t f) {
+    (void)c;
+    tr_printf("T text %lld %lld %lld %lld %s\n", (long long)x, (long long)y, (long long)rgb,
+           (long long)f, s ? s : "");
+}
+static void tr_text_rot(void *c, int64_t x, int64_t y, const char *s, int64_t rgb, int64_t f,
+                        int64_t deg) {
+    (void)c;
+    tr_printf("T text_rot %lld %lld %lld %lld %lld %s\n", (long long)x, (long long)y,
+           (long long)rgb, (long long)f, (long long)deg, s ? s : "");
+}
+static void tr_save(void *c) {
+    (void)c;
+    tr_printf("T save\n");
+}
+static void tr_clip(void *c, int64_t x, int64_t y, int64_t w, int64_t h, int64_t r) {
+    (void)c;
+    tr_printf("T clip %lld %lld %lld %lld %lld\n", (long long)x, (long long)y, (long long)w,
+           (long long)h, (long long)r);
+}
+static void tr_restore(void *c) {
+    (void)c;
+    tr_printf("T restore\n");
+}
+static void tr_alpha(void *c, int64_t a) {
+    (void)c;
+    tr_printf("T alpha %lld\n", (long long)a);
+}
+static void tr_svg(void *c, int64_t x, int64_t y, int64_t w, int64_t h, const char *m,
+                   int64_t rgb, int64_t a) {
+    (void)c;
+    tr_printf("T svg %lld %lld %lld %lld %lld %lld %zu\n", (long long)x, (long long)y,
+           (long long)w, (long long)h, (long long)rgb, (long long)a, m ? strlen(m) : 0);
+}
+static void tr_image(void *c, int64_t x, int64_t y, int64_t w, int64_t h, const char *src,
+                     int64_t r, int64_t a, int64_t fit) {
+    (void)c;
+    tr_printf("T image %lld %lld %lld %lld %lld %lld %lld %zu\n", (long long)x, (long long)y,
+           (long long)w, (long long)h, (long long)r, (long long)a, (long long)fit,
+           src ? strlen(src) : 0);
+}
+static void tr_fill_g(void *c, int64_t x, int64_t y, int64_t w, int64_t h, int64_t c0,
+                      int64_t c1, int64_t axis, int64_t r, int64_t a) {
+    (void)c;
+    tr_printf("T fill_g %lld %lld %lld %lld %lld %lld %lld %lld %lld\n", (long long)x,
+           (long long)y, (long long)w, (long long)h, (long long)c0, (long long)c1,
+           (long long)axis, (long long)r, (long long)a);
+}
+static void tr_shadow(void *c, int64_t x, int64_t y, int64_t w, int64_t h, int64_t r,
+                      int64_t rgb, int64_t a, int64_t blur, int64_t dx, int64_t dy) {
+    (void)c;
+    tr_printf("T shadow %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld\n", (long long)x,
+           (long long)y, (long long)w, (long long)h, (long long)r, (long long)rgb,
+           (long long)a, (long long)blur, (long long)dx, (long long)dy);
+}
+static void tr_stroke(void *c, int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
+                      int64_t r, int64_t width, int64_t a) {
+    (void)c;
+    tr_printf("T stroke %lld %lld %lld %lld %lld %lld %lld %lld\n", (long long)x, (long long)y,
+           (long long)w, (long long)h, (long long)rgb, (long long)r, (long long)width,
+           (long long)a);
+}
+static void tr_fill4(void *c, int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
+                     int64_t a, int64_t tl, int64_t tr, int64_t br, int64_t bl) {
+    (void)c;
+    tr_printf("T fill4 %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld\n", (long long)x,
+           (long long)y, (long long)w, (long long)h, (long long)rgb, (long long)a,
+           (long long)tl, (long long)tr, (long long)br, (long long)bl);
+}
+static void tr_xform(void *c, int64_t dx, int64_t dy, int64_t s, int64_t rot, int64_t ox,
+                     int64_t oy) {
+    (void)c;
+    tr_printf("T xform %lld %lld %lld %lld %lld %lld\n", (long long)dx, (long long)dy,
+           (long long)s, (long long)rot, (long long)ox, (long long)oy);
+}
+
+#endif
+
+void loam_runtime_trace_draw(int64_t on) {
+#ifdef __wasm32__
+    /* No stdout to trace to; the web host is checked in the browser. */
+    (void)on;
+#else
+    ZeusDraw d;
+    memset(&d, 0, sizeof d);
+    if (on) {
+        d.fill = tr_fill;
+        d.fill_a = tr_fill_a;
+        d.text = tr_text;
+        d.text_rot = tr_text_rot;
+        d.save = tr_save;
+        d.clip = tr_clip;
+        d.restore = tr_restore;
+        d.alpha = tr_alpha;
+        d.svg = tr_svg;
+        d.image = tr_image;
+        d.fill_g = tr_fill_g;
+        d.shadow = tr_shadow;
+        d.stroke = tr_stroke;
+        d.fill4 = tr_fill4;
+        d.xform = tr_xform;
+        zeus_bind_draw(d);
+    } else {
+        paint_draw = d;
+        have_draw = 0;
+    }
 #endif
 }

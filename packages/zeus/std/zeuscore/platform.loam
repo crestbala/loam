@@ -7,71 +7,32 @@
 
 fn plat_run() {}
 fn plat_headless() -> int {}
-fn plat_fill(x: int, y: int, w: int, h: int, rgb: int, radius: int) {}
-fn plat_fill_a(x: int, y: int, w: int, h: int, rgb: int, radius: int, alpha: int) {}
-/// Linear gradient. `axis` 0 = top `c0` → bottom `c1`, 1 = left → right.
-/// `radius` rounds the corners and `alpha` is 0..255 — before both existed
-/// every gradient background painted square-cornered and fully opaque.
-fn plat_fill_g(
-    x: int,
-    y: int,
-    w: int,
-    h: int,
-    c0: int,
-    c1: int,
-    axis: int,
-    radius: int,
-    alpha: int
-) {}
-/// Soft drop shadow of a rounded rect, painted under the fill it belongs to.
-/// `blur` is the blur radius in dp, `dx`/`dy` the offset, `alpha` 0..255.
-/// Elevation cannot be expressed without it: every other primitive here has
-/// a hard edge. Hosts that cannot blur skip it, so a surface reads flat
-/// rather than gaining a hard black rectangle.
-fn plat_shadow(
-    x: int,
-    y: int,
-    w: int,
-    h: int,
-    radius: int,
-    rgb: int,
-    alpha: int,
-    blur: int,
-    dx: int,
-    dy: int
-) {}
-/// Anti-aliased ring stroke, inset by `width`/2 so it paints inside the rect
-/// — the box model layout already assumes when it insets content by the
-/// border width. Replaces drawing a larger filled rect underneath, which
-/// made a translucent bordered surface impossible and forced every bordered
-/// node to carry a background.
-fn plat_stroke(x: int, y: int, w: int, h: int, rgb: int, radius: int, width: int, alpha: int) {}
-/// Per-corner radius fill, clockwise from the top-left. Grouped button runs,
-/// top-rounded sheets, and rounded table headers need corners to differ.
-fn plat_fill4(
-    x: int,
-    y: int,
-    w: int,
-    h: int,
-    rgb: int,
-    alpha: int,
-    tl: int,
-    tr: int,
-    br: int,
-    bl: int
-) {}
-/// Translate by (`dx`, `dy`), then scale and rotate about (`ox`, `oy`).
-/// `scale` is a percent (100 = identity), `rot` clockwise degrees. Applies
-/// within the current `plat_save` / `plat_restore` level.
-///
-/// This is what lets a transition move or scale a box **without** changing
-/// its layout: press scale, dialog scale-in, the tabs indicator, and the
-/// toast stack all animate through here, so the layout pass never runs.
-fn plat_xform(dx: int, dy: int, scale: int, rot: int, ox: int, oy: int) {}
-fn plat_text(x: int, y: int, s: string, rgb: int, font: int) {}
-fn plat_text_rot(x: int, y: int, s: string, rgb: int, font: int, deg: int) {}
-fn plat_text_int(x: int, y: int, v: int, rgb: int, font: int) {}
 fn plat_measure(s: string, px: int, w: &mut int, h: &mut int) {}
+/// The frame: the whole draw list in one call. `ops` holds `n` records of 11
+/// ints, `kind x y w h rgb radius alpha font value str`, where `str` indexes
+/// `strs` (-1 for none). The runtime replays it into the host's `ZeusDraw`
+/// (`zeus_replay` in zeus_plat.c), applying the fallbacks a host may rely on.
+/// Coordinates are layout points; colours are 0xRRGGBB; alpha is 0..255.
+///
+/// | kind | op | fields used |
+/// |---|---|---|
+/// | 0 | fill | x y w h rgb radius |
+/// | 1 | fill_a | + alpha |
+/// | 2 | text | x y str rgb font (alpha < 255 wraps it in alpha / restore) |
+/// | 3 | text_int | x y value rgb font |
+/// | 4 | text_wrap | x y str rgb font, w = wrap width |
+/// | 5 | svg | x y w h str rgb alpha |
+/// | 6 | save | |
+/// | 7 | clip | x y w h radius (rounded when radius > 0) |
+/// | 8 | restore | |
+/// | 9 | text_rot | x y str rgb font, w = clockwise degrees |
+/// | 10 | image | x y w h str radius alpha, value = fit |
+/// | 11 | fill_g | x y w h, rgb → value, font = axis, radius alpha |
+/// | 12 | shadow | x y w h radius rgb alpha, font = blur, value = packed dx/dy |
+/// | 13 | stroke | x y w h rgb radius alpha, font = width |
+/// | 14 | fill4 | x y w h rgb alpha, radius / value = packed corners |
+/// | 15 | xform | x y = translate, radius = scale %, font = degrees, w h = origin |
+fn plat_frame(ops: []int, n: int, strs: []string) {}
 /// Set the family every later measure and draw uses. One global family, not
 /// a per-node field: the text ABI carries a pixel size only, and every host
 /// (Cocoa / Canvas2D / Android) would have to change to thread a family
@@ -87,7 +48,6 @@ fn plat_measure_wrap(s: string, px: int, max_w: int, w: &mut int, h: &mut int) {
 /// URL on the web. Empty when the host cannot provide them; the caller then
 /// keeps host measurement (`packages/zeus/std/zeuscore/metrics.loam`).
 fn plat_font_bytes(src: string) -> string {}
-fn plat_text_wrap(x: int, y: int, s: string, rgb: int, font: int, max_w: int) {}
 fn plat_set_window(title: string, width: int, height: int) {}
 /// Update the host window title without reopening it (router `Meta.title`).
 fn plat_set_title(title: string) {}
@@ -111,10 +71,6 @@ fn plat_apple_keys() -> int {}
 /// window opens it is the live view size.
 fn plat_view_width() -> int {}
 fn plat_view_height() -> int {}
-fn plat_svg(x: int, y: int, w: int, h: int, markup: string, rgb: int, alpha: int) {}
-/// Raster image. `src` is a path, data URI, or http(s) URL. Decode is in the
-/// host (PNG / JPEG / WebP / GIF); this seam only forwards the string.
-fn plat_image(x: int, y: int, w: int, h: int, src: string, radius: int, alpha: int, fit: int) {}
 /// Intrinsic size of the decoded image at `src` in layout points: 0 while the
 /// host is still decoding it (remote loads) or cannot decode it at all.
 /// Layout reads it so an `Image` with no explicit `width` keeps the source
@@ -156,7 +112,6 @@ fn plat_media_dropped(name: string, src: string) {}
 fn plat_media_voice(what: int, src: string, out: string) -> int {}
 /// Enter (1) or leave (0) full screen, or ask (-1). Returns 1 when full screen.
 fn plat_fullscreen(on: int) -> int {}
-fn plat_save() {}
 /// The one blit of a finished frame, and the only place a host may touch our
 /// pixels: `buf` is the framebuffer Zeus rasterized itself (`physical_w *
 /// physical_h * 4`, BGRA8 premultiplied, sRGB), handed over as a byte slice
@@ -166,10 +121,6 @@ fn plat_save() {}
 /// is what keeps a frame from churning a second full-size buffer. Returns 1 when
 /// the host presented, 0 when it has no display to present to.
 fn plat_blit(buf: []u8, w: int, h: int, gen: int, scale: int) -> int {}
-/// Save, then multiply subsequent drawing by `a` (0..255) until `plat_restore`.
-/// Text has no alpha argument, so overlay exit wraps faded text here — extra
-/// host calls, not extra draw-list ops, so `draw_count` holds.
-fn plat_alpha(a: int) {}
 /// Host process memory in KB: Apple phys_footprint (Xcode's memory-gauge
 /// number), Linux/Android resident set, or the live wasm heap on the web
 /// host. 0 when the host reports nothing.
@@ -178,11 +129,6 @@ fn plat_mem_kb() -> int {}
 /// across an idle host sleep: the engine's own `now_ms` advances by a capped
 /// frame delta, so it lags wall time after a wake.
 fn plat_now_ms() -> int {}
-/// Clip to a rect, rounded when `radius` > 0. The rounded form is what stops
-/// an image or a gradient inside a rounded card from having square corners,
-/// and it is how the accordion animates its open height (clip, not layout).
-fn plat_clip(x: int, y: int, w: int, h: int, radius: int) {}
-fn plat_restore() {}
 /// Router history: mirror a pushed / replaced entry into the host's own
 /// back stack (browser history, Cocoa/Android back button).
 fn plat_history_push(path: string) {}

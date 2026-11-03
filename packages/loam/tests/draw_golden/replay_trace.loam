@@ -1,0 +1,98 @@
+// Host-replay golden: what a host is actually handed for a frame. The other
+// draw goldens print the Loam draw list; this one binds the trace host
+// (`runtime.trace_draw`), so every paint below goes through the runtime's
+// replay — fallbacks, text alpha wrapping, wrapped-text splitting, packed
+// shadow / corner fields — and prints the `ZeusDraw` calls it makes, one `T`
+// line each. Between them the screens below use every op kind. Keep this file
+// free of prints: stdout is the golden.
+
+import "std:zeus"
+import "std:spacing"
+import "std:zui"
+import "zeus:zeuscore/runtime"
+import "../../../../examples/zeus/gallery/screen.loam" as screen
+
+fn settle(w: int, h: int) {
+    let mut i = 0
+    while i < 16 {
+        zeus.engine_step_dt(16)
+        zeus.engine_layout(w, h)
+        zeus.engine_paint()
+        i = i + 1
+    }
+}
+
+fn main() {
+    runtime.trace_draw(1)
+
+    // Gallery: fill, text, stroke, svg, clip, fill_a, shadow, text_wrap,
+    // fill4, text_rot, gradient.
+    zeus.snapshot(1100, 2400, fn() -> Node {
+        return zui.Page() {
+            zui.Column(spacing.SECTION) {
+                screen.DateSection()
+                screen.ButtonScale()
+                screen.DisplayRow()
+                screen.Choice()
+                screen.Controls()
+                screen.People()
+                screen.Data()
+                screen.Disclosure()
+                screen.Menus()
+                screen.States()
+                screen.Catalogue()
+                screen.Primitives()
+            }
+        }
+    })
+
+    // Image.
+    zeus.snapshot(120, 48, fn() -> Node {
+        zeus.Box(style = Style(padding = 8, background = "#ffffff")) {
+            zui.Image("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mO4o6YGAAMKASneDRr/AAAAAElFTkSuQmCC", style = Style(width = px(32), height = px(32), radius = 4))
+        }
+    })
+
+    // text_int, under a fading sheet (text alpha wrapping).
+    let y = zeus.signal(2026)
+    let m = zeus.signal(9)
+    let d = zeus.signal(15)
+    zeus.snapshot(400, 420, fn() -> Node {
+        zui.Page() {
+            zui.DatePicker(y, m, d)
+        }
+    })
+    zeus.engine_click_text("Pick a date")
+    zeus.engine_step_dt(16)
+    zeus.engine_layout(400, 420)
+    zeus.engine_paint()
+    settle(400, 420)
+
+    // xform (a scaled box) and a spinner.
+    zeus.snapshot(420, 240, fn() -> Node {
+        zui.Page() {
+            zui.Row(Space.Md) {
+                zui.Spinner()
+                zui.Empty(icon = zeus.IC_INFO, title = "No projects",
+                          body = "Create one to get started.")
+                let scaled = zeus.Box(style = Style(width = px(40),
+                                                    height = px(40),
+                                                    radius = 8,
+                                                    background = zeus.accent()))
+                zeus.animate_scale(scaled, 50, 0)
+            }
+        }
+    })
+
+    // text_rot (chart axis labels).
+    let labs = []string { "Jan", "Feb", "Mar", "Apr" }
+    let names = []string { "Desktop", "Mobile" }
+    let vals = []int { 186, 82, 305, 134, 130, 170, 160, 210 }
+    zeus.snapshot(480, 400, fn() -> Node {
+        zui.Page() {
+            zui.BarChart(labs, names, vals, 400, 180)
+        }
+    })
+
+    runtime.trace_draw(0)
+}

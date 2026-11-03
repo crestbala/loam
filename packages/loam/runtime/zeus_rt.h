@@ -200,22 +200,6 @@ void zeus_set_blit(void *ctx, ZeusBlit fn);
 /* Empty packages/zeus/std/zeus.loam fns → these C symbols. */
 void loam_zeus_plat_run(void);
 int64_t loam_zeus_plat_headless(void);
-void loam_zeus_plat_fill(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
-                        int64_t radius);
-void loam_zeus_plat_fill_a(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
-                          int64_t radius, int64_t alpha);
-void loam_zeus_plat_fill_g(int64_t x, int64_t y, int64_t w, int64_t h, int64_t c0,
-                          int64_t c1, int64_t axis, int64_t radius, int64_t alpha);
-void loam_zeus_plat_shadow(int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius,
-                          int64_t rgb, int64_t alpha, int64_t blur, int64_t dx, int64_t dy);
-void loam_zeus_plat_stroke(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
-                          int64_t radius, int64_t width, int64_t alpha);
-void loam_zeus_plat_fill4(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
-                         int64_t alpha, int64_t tl, int64_t tr, int64_t br, int64_t bl);
-void loam_zeus_plat_xform(int64_t dx, int64_t dy, int64_t scale, int64_t rot,
-                         int64_t ox, int64_t oy);
-void loam_zeus_plat_text(int64_t x, int64_t y, loam_str s, int64_t rgb, int64_t font);
-void loam_zeus_plat_alpha(int64_t a);
 /* Current global font family ("" = host default) and the hook a host
    registers to load one. See zeus_plat.c for why the family is global. */
 const char *zeus_font_family(void);
@@ -227,26 +211,14 @@ void zeus_set_font_bytes_hook(loam_str (*fetch)(loam_str src));
 void loam_platform_plat_set_font_family(loam_str name);
 int64_t loam_platform_plat_load_font(loam_str family, loam_str src);
 
-void loam_zeus_plat_text_rot(int64_t x, int64_t y, loam_str s, int64_t rgb, int64_t font,
-                             int64_t deg);
-void loam_zeus_plat_text_int(int64_t x, int64_t y, int64_t v, int64_t rgb, int64_t font);
 void loam_zeus_plat_measure(loam_str s, int32_t px, int32_t *w, int32_t *h);
 void loam_zeus_plat_measure_int(int32_t v, int32_t px, int32_t *w, int32_t *h);
 void loam_zeus_plat_measure_wrap(loam_str s, int32_t px, int32_t max_w, int32_t *w, int32_t *h);
-void loam_zeus_plat_text_wrap(int64_t x, int64_t y, loam_str s, int64_t rgb, int64_t font,
-                             int64_t max_w);
 void loam_zeus_plat_set_window(loam_str title, int64_t width, int64_t height);
 int64_t loam_zeus_plat_view_width(void);
 int64_t loam_zeus_plat_view_height(void);
-void loam_zeus_plat_svg(int64_t x, int64_t y, int64_t w, int64_t h, loam_str markup,
-                       int64_t rgb, int64_t alpha);
-void loam_zeus_plat_image(int64_t x, int64_t y, int64_t w, int64_t h, loam_str src,
-                         int64_t radius, int64_t alpha, int64_t fit);
 void loam_zeus_plat_image_size(loam_str src, int32_t *w, int32_t *h);
 loam_str loam_zeus_plat_pick_image(int32_t *w, int32_t *h);
-void loam_zeus_plat_save(void);
-void loam_zeus_plat_clip(int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius);
-void loam_zeus_plat_restore(void);
 
 /* The engine side of the blit: dispatched to the hook `zeus_set_blit`
    registered, or a no-op returning 0 when no host did. */
@@ -261,32 +233,11 @@ void loam_zeus_plat_inset_get(loam_vec *out);
 /* packages/zeus/std/zeuscore/platform.loam FFI (aliases of loam_zeus_plat_*). */
 void loam_platform_plat_run(void);
 int64_t loam_platform_plat_headless(void);
-void loam_platform_plat_fill(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
-                             int64_t radius);
-void loam_platform_plat_fill_a(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
-                               int64_t radius, int64_t alpha);
-void loam_platform_plat_fill_g(int64_t x, int64_t y, int64_t w, int64_t h, int64_t c0,
-                               int64_t c1, int64_t axis, int64_t radius, int64_t alpha);
-void loam_platform_plat_shadow(int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius,
-                               int64_t rgb, int64_t alpha, int64_t blur,
-                               int64_t dx, int64_t dy);
-void loam_platform_plat_stroke(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
-                               int64_t radius, int64_t width, int64_t alpha);
-void loam_platform_plat_fill4(int64_t x, int64_t y, int64_t w, int64_t h, int64_t rgb,
-                              int64_t alpha, int64_t tl, int64_t tr, int64_t br, int64_t bl);
-void loam_platform_plat_xform(int64_t dx, int64_t dy, int64_t scale, int64_t rot,
-                              int64_t ox, int64_t oy);
-void loam_platform_plat_text(int64_t x, int64_t y, loam_str s, int64_t rgb, int64_t font);
-void loam_platform_plat_text_rot(int64_t x, int64_t y, loam_str s, int64_t rgb, int64_t font,
-                                 int64_t deg);
-void loam_platform_plat_text_int(int64_t x, int64_t y, int64_t v, int64_t rgb, int64_t font);
 void loam_platform_plat_measure(loam_str s, int32_t px, int32_t *w, int32_t *h);
 loam_str loam_platform_plat_font_bytes(loam_str src);
 void loam_platform_plat_measure_int(int32_t v, int32_t px, int32_t *w, int32_t *h);
 void loam_platform_plat_measure_wrap(loam_str s, int32_t px, int32_t max_w, int32_t *w,
                                      int32_t *h);
-void loam_platform_plat_text_wrap(int64_t x, int64_t y, loam_str s, int64_t rgb, int64_t font,
-                                  int64_t max_w);
 void loam_platform_plat_set_window(loam_str title, int64_t width, int64_t height);
 void loam_platform_plat_set_title(loam_str title);
 void loam_platform_plat_set_chrome(int64_t mode);
@@ -298,25 +249,22 @@ int64_t loam_platform_plat_apple_keys(void);
 void loam_runtime_edit_set_secure(int64_t slot, int64_t on);
 int64_t loam_platform_plat_view_width(void);
 int64_t loam_platform_plat_view_height(void);
-void loam_platform_plat_svg(int64_t x, int64_t y, int64_t w, int64_t h, loam_str markup,
-                            int64_t rgb, int64_t alpha);
-void loam_platform_plat_image(int64_t x, int64_t y, int64_t w, int64_t h, loam_str src,
-                              int64_t radius, int64_t alpha, int64_t fit);
 void loam_platform_plat_image_size(loam_str src, int32_t *w, int32_t *h);
 loam_str loam_platform_plat_pick_image(int32_t *w, int32_t *h);
-void loam_platform_plat_save(void);
-void loam_platform_plat_alpha(int64_t a);
 int64_t loam_platform_plat_mem_kb(void);
 /* 1 when built `-DZEUS_MEM_STATS` or run with `ZEUS_MEM_STATS=1` (Phase 0). */
 int64_t loam_runtime_mem_stats(void);
+void loam_runtime_trace_draw(int64_t on);
 int64_t loam_platform_plat_now_ms(void);
-void loam_platform_plat_clip(int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius);
-void loam_platform_plat_restore(void);
 /* Phase 4 blit. The Loam `[]u8` arrives as a `loam_vec` (ptr/len/cap) BY VALUE,
    so the pixels are handed over rather than copied. See loam_zeus_plat_blit.
    The parameter types are `int32_t` because that is exactly what codegen emits
    in the forward declaration it writes for this bodyless fn (`int` is i32), and
    C requires the declaration and the definition to agree. */
+/* One frame's draw list as a command buffer (`platform.plat_frame`), decoded
+   into the bound ZeusDraw. Exposed so a host can replay a buffer it holds. */
+void zeus_replay(const int32_t *ops, int64_t n, const loam_str *strs, int64_t ns);
+void loam_platform_plat_frame(loam_vec ops, int32_t n, loam_vec strs);
 int32_t loam_platform_plat_blit(loam_vec buf, int32_t w, int32_t h, int32_t gen,
                                 int32_t scale);
 int64_t loam_runtime_key_intern(loam_str name);
