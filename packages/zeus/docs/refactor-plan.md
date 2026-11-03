@@ -505,10 +505,30 @@ Next, each its own change:
    calls. `zeusraster/svg.loam` reuses the same lexer, colour and style rules.
    Hosts lost about 1.6k lines. `compile_pass/zeus_svgpath` covers one parse
    per markup, `currentColor`, `rx`, arcs, viewBox fit and stroke scaling.
-3. **Optional services in one module.** Clipboard, history, media, pickers,
-   fonts and full screen behind one stubbable interface, so a new host needs
-   only: window, event pump, replay, text measure, clock, view size.
-4. **Hosts shrink.** Targets: mac.m under 1k lines, loader.js under 600.
+3. **Optional services. Done (2026-11-03), by documentation.** Every
+   optional hook was already a NULL-safe setter with a working fallback, so a
+   `ZeusServices` struct would only have renamed them. `docs/host-contract.md`
+   lists what a host must provide (start-up, a frame, paint, input, view
+   size) and every optional hook with its fallback.
+4. **Hosts shrink. Done for Apple (2026-11-03).** macOS and iOS each carried
+   a full copy of the paint code, text measure, fonts, image cache and
+   AVFoundation player. They now share `hosts/apple/` (`apple_draw.m`,
+   `apple_media.m`, `zeus_apple.h`), on plain CoreGraphics, behind two hooks
+   per platform (`za_cg`, `za_redraw`). `mac.m` 3,246 → 2,207 lines, `ios.m`
+   1,136 → 365, shared 1,148; 4,382 → 3,720 in all. What remains in `mac.m`
+   is window, view, input and IME, the display path, pickers, voice tools and
+   hot reload.
+   Checked with a new offscreen host snapshot (`ZEUS_SNAPSHOT=out.png`):
+   against snapshots taken before the change, macOS is pixel-identical on
+   `counter` and the gallery's first screen, and differs by 3 pixels of 1/255
+   on the gallery's full Components page. That needed AppKit's path flatness
+   (0.6) on CoreGraphics. iOS was compared in the simulator: the same, except
+   that corners are now circular, as on macOS and the web, instead of UIKit's
+   continuous curve. Intrinsic image sizes are now pixels on macOS, as on iOS
+   and the web (an `NSImage` reported points for a PNG tagged above 72 DPI).
+   Not done: `loader.js` stays one file (1,921 lines). The compiler and
+   three example Vite configs each ship it as a single script, so a split
+   needs a build step first.
 
 ## What stays exactly the same
 

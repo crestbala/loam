@@ -7,7 +7,7 @@
 #import <SoundAnalysis/SoundAnalysis.h>
 #import <CoreVideo/CoreVideo.h>
 #import <VideoToolbox/VideoToolbox.h>
-#include "zeus_rt.h"
+#include "zeus_apple.h"
 #include "zeus_key.h"
 #include <string.h>
 #include <stdlib.h>
@@ -16,737 +16,15 @@
 static NSView *g_view;
 static NSWindow *g_win;
 
-/* Font cache, keyed by size and invalidated when the family changes
-   (zeus_font_family() is global — see zeus_plat.c). Falling back to the
-   system font keeps text rendering when a face is missing. */
-static char font_cache_family[128];
-
-static NSFont *font_at(int64_t px) {
-    static NSFont *cache[72];
-    const char *fam = zeus_font_family();
-    int i = (int)px;
-    if (!fam) fam = "";
-    if (strcmp(fam, font_cache_family) != 0) {
-        for (int k = 0; k < 72; k++) {
-            if (cache[k]) [cache[k] release];
-            cache[k] = nil;
-        }
-        strncpy(font_cache_family, fam, sizeof font_cache_family - 1);
-        font_cache_family[sizeof font_cache_family - 1] = 0;
-    }
-    if (i < 8) i = 8;
-    if (i > 71) i = 71;
-    if (!cache[i]) {
-        NSFont *f = nil;
-        if (fam[0]) {
-            NSString *n = [NSString stringWithUTF8String:fam];
-            f = [NSFont fontWithName:n size:(CGFloat)i];
-        }
-        if (!f) f = [NSFont systemFontOfSize:(CGFloat)i];
-        cache[i] = [f retain];
-    }
-    return cache[i];
+/* The shared Apple layer (../apple/zeus_apple.h) paints, measures, decodes
+   images and plays media; this file supplies its two hooks and the rest:
+   window, view, input, display, pickers, voice tools and hot reload. */
+CGContextRef za_cg(void) {
+    return [[NSGraphicsContext currentContext] CGContext];
 }
 
-/* Register a font file with the process so `fontWithName:` can find it.
-   `src` is a path to a .ttf / .otf / .ttc. */
-static int mac_load_font(const char *family, const char *src) {
-    (void)family;
-    if (!src || !src[0]) return 0;
-    NSString *path = [NSString stringWithUTF8String:src];
-    NSURL *url = [NSURL fileURLWithPath:path];
-    if (![[NSFileManager defaultManager] fileExistsAtPath:path]) return 0;
-    CFErrorRef err = NULL;
-    bool ok = CTFontManagerRegisterFontsForURL((__bridge CFURLRef)url,
-                                               kCTFontManagerScopeProcess, &err);
-    if (!ok && err) CFRelease(err);
-    return ok ? 1 : 0;
-}
-
-static NSColor *zeus_color(int64_t rgb) {
-    CGFloat r = ((rgb >> 16) & 255) / 255.0;
-    CGFloat g = ((rgb >> 8) & 255) / 255.0;
-    CGFloat b = (rgb & 255) / 255.0;
-    return [NSColor colorWithCalibratedRed:r green:g blue:b alpha:1.0];
-}
-
-/* Attributes are pure functions of (colour, size), so they are cached — this is
-   called from both measure and draw, every text node, every frame. The cache is
-   bounded and evicts (releasing) once full: the previous version stopped
-   *storing* past 24 entries but still returned a freshly retained dictionary,
-   so a themed app with more than 24 colour/size pairs leaked one dictionary
-   per text node per frame — the steady climb the RAM chip showed. */
-static NSDictionary *zeus_attrs(int64_t rgb, int64_t px) {
-    enum { ATTR_CACHE = 256 };
-    static NSDictionary *cache[ATTR_CACHE];
-    static int64_t keys[ATTR_CACHE];
-    static unsigned n, next;
-    int64_t key = (rgb << 8) ^ (px & 255);
-    unsigned i;
-    for (i = 0; i < n; i++)
-        if (keys[i] == key) return cache[i];
-    NSDictionary *a = [@{
-        NSFontAttributeName: font_at(px),
-        NSForegroundColorAttributeName: zeus_color(rgb)
-    } retain];
-    if (n < ATTR_CACHE) {
-        i = n++;
-    } else {
-        i = next;
-        next = (next + 1) % ATTR_CACHE;
-        [cache[i] release];
-    }
-    keys[i] = key;
-    cache[i] = a;
-    return a;
-}
-
-static void mac_measure(const char *s, int64_t px, int64_t *w, int64_t *h) {
-    NSString *str = s ? [NSString stringWithUTF8String:s] : @"";
-    NSDictionary *a = zeus_attrs(0x000000, px);
-    NSSize sz = [str sizeWithAttributes:a];
-    *w = (int64_t)(sz.width + 0.999);
-    *h = (int64_t)(sz.height + 0.999);
-}
-
-static void mac_fill_a(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
-                       int64_t rgb, int64_t radius, int64_t alpha) {
-    (void)ctx;
-    CGFloat a = alpha < 0 ? 0 : (alpha > 255 ? 1.0 : (CGFloat)alpha / 255.0);
-    CGFloat r = ((rgb >> 16) & 255) / 255.0;
-    CGFloat g = ((rgb >> 8) & 255) / 255.0;
-    CGFloat b = (rgb & 255) / 255.0;
-    NSRect rect = NSMakeRect((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h);
-    [[NSColor colorWithCalibratedRed:r green:g blue:b alpha:a] setFill];
-    if (radius > 0) {
-        CGFloat rad = (CGFloat)radius;
-        if (rad > rect.size.width / 2) rad = rect.size.width / 2;
-        if (rad > rect.size.height / 2) rad = rect.size.height / 2;
-        [[NSBezierPath bezierPathWithRoundedRect:rect xRadius:rad yRadius:rad] fill];
-    } else {
-        [[NSBezierPath bezierPathWithRect:rect] fill];
-    }
-}
-
-/* Clamp a corner radius to what the rect can actually hold, so a `RAD_FULL`
-   (999) pill on a short box is a capsule rather than a degenerate path. */
-static CGFloat mac_rad(CGFloat rad, NSRect r) {
-    if (rad < 0) rad = 0;
-    if (rad > r.size.width / 2) rad = r.size.width / 2;
-    if (rad > r.size.height / 2) rad = r.size.height / 2;
-    return rad;
-}
-
-static NSBezierPath *mac_rrect(NSRect r, CGFloat rad) {
-    rad = mac_rad(rad, r);
-    if (rad <= 0) return [NSBezierPath bezierPathWithRect:r];
-    return [NSBezierPath bezierPathWithRoundedRect:r xRadius:rad yRadius:rad];
-}
-
-static void mac_fill_g(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
-                       int64_t c0, int64_t c1, int64_t axis, int64_t radius,
-                       int64_t alpha) {
-    (void)ctx;
-    NSRect r = NSMakeRect((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h);
-    CGFloat a = alpha < 0 ? 0 : (alpha > 255 ? 1.0 : (CGFloat)alpha / 255.0);
-    NSGradient *g = [[NSGradient alloc] initWithStartingColor:zeus_color(c0)
-                                                 endingColor:zeus_color(c1)];
-    [NSGraphicsContext saveGraphicsState];
-    if (a < 1.0) [[NSGraphicsContext currentContext] setCompositingOperation:NSCompositingOperationSourceOver];
-    /* The radius used to be dropped here, which is why every gradient
-       background painted with square corners. Clipping to the rounded path
-       is what NSGradient offers in place of a rounded-rect gradient fill. */
-    if (radius > 0) [mac_rrect(r, (CGFloat)radius) addClip];
-    if (a < 1.0) {
-        CGContextSetAlpha([[NSGraphicsContext currentContext] CGContext], a);
-    }
-    [g drawInRect:r angle:(axis ? 0.0 : 90.0)];
-    [NSGraphicsContext restoreGraphicsState];
-    [g release];
-}
-
-/* Soft drop shadow under a rounded rect.
- *
- * The shadow is the blur of an opaque path, so that path has to be drawn —
- * but drawing it would paint over whatever sits under the card. The fix is
- * an even-odd clip that excludes the rect's own area: the solid fill lands
- * entirely outside the clip and only its blur survives. Painting the shape
- * and letting the caller's fill cover it would look identical on an opaque
- * surface and wrong on a translucent one, which is exactly the case
- * elevation-on-glass needs. */
-/* `blur`, `dx`, `dy` are in the context's PIXELS: NSShadow ignores the CTM's
- * scale (blur 20 reaches 19 pt at 1x and 9.5 pt at 2x), so a template built
- * at a coarser scale passes them scaled down to match. */
-static void mac_shadow_direct(int64_t x, int64_t y, int64_t w, int64_t h,
-                              int64_t radius, int64_t rgb, int64_t alpha, CGFloat blur,
-                              CGFloat dx, CGFloat dy) {
-    NSRect r = NSMakeRect((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h);
-    CGFloat a = alpha < 0 ? 0 : (alpha > 255 ? 1.0 : (CGFloat)alpha / 255.0);
-    CGFloat pad = blur * 3 + fabs(dx) + fabs(dy) + 8;
-    NSShadow *sh = [[NSShadow alloc] init];
-    NSBezierPath *hole = [NSBezierPath bezierPathWithRect:NSInsetRect(r, -pad, -pad)];
-    [NSGraphicsContext saveGraphicsState];
-    [hole appendBezierPath:mac_rrect(r, (CGFloat)radius)];
-    [hole setWindingRule:NSWindingRuleEvenOdd];
-    [hole addClip];
-    /* The view is flipped (y grows down), so a positive dy must read as
-       "downward" here too — AppKit shadow offsets are in unflipped space. */
-    [sh setShadowOffset:NSMakeSize(dx, -dy)];
-    [sh setShadowBlurRadius:blur];
-    [sh setShadowColor:[zeus_color(rgb) colorWithAlphaComponent:a]];
-    [sh set];
-    [[NSColor blackColor] setFill];
-    [mac_rrect(r, (CGFloat)radius) fill];
-    [NSGraphicsContext restoreGraphicsState];
-    [sh release];
-}
-
-/* Cached shadow. The direct path above runs a Gaussian blur over the whole
- * padded rect on every call, and a scroll repaints every card each frame:
- * with `ZEUS_FRAME_DEBUG=1` the gallery spent ~45 % of its frame in vImage
- * convolution, which is what pushed the interval to 20-25 ms (a missed vsync
- * every other frame — the scroll stagger).
- *
- * The blur of a rounded rect only varies near its corners. Along a straight
- * edge, the shadow, the hole, and the offset are all translation-invariant,
- * so one small template rendered by the direct path itself — with the same
- * radius, blur, color, alpha, and offset — can be nine-sliced onto any rect at
- * least as large as its corner region. The corners are drawn 1:1 and the edges
- * stretch a band whose pixels are constant along the stretch, so the output
- * matches the direct path. Rects too small to slice (and `ZEUS_SHADOW_DIRECT=1`)
- * keep the direct path. */
-static NSMutableDictionary *g_shadow_cache;
-
-/* Template geometry for (radius, blur, offset): `margin` is how far the
-   template draws past the rect, `inset` the corner region (past it every row /
-   column of an edge is the same), `side` the template's edge in points. Pure
-   arithmetic, so a caller can reject a rect before any template is built. */
-static void mac_shadow_geom(int64_t radius, int64_t blur, int64_t dx, int64_t dy,
-                            int64_t *inset, int64_t *margin, int64_t *side) {
-    int64_t ax = dx < 0 ? -dx : dx, ay = dy < 0 ? -dy : dy;
-    int64_t d = ax > ay ? ax : ay;
-    /* The blur's reach past the shape. A Gaussian with this blur radius is
-       spent well inside 2x; the margin must cover the visible tail plus the
-       offset. */
-    int64_t reach = blur * 2 + 2;
-    int64_t m = reach + d;
-    int64_t k = m + radius + reach + d;
-    *margin = m;
-    *inset = k;
-    *side = 2 * k + 2;
-}
-
-/* Largest template kept, in pixels per side (~2.3 MB at 4 bytes a pixel). A
-   template that would be bigger at the backing scale is built at a coarser
-   whole scale instead (1x on a 2x display): the Modal elevation's blur-52
-   template is 554 points, 1108 px at 2x, and the direct blur it used to fall
-   back to re-ran a full-panel Gaussian on every frame of a drawer or sheet
-   slide. A wide blur is a smooth ramp, so the upscale is invisible. Only a
-   template over the cap even at 1x takes the direct path. */
-#define SHADOW_TEMPLATE_MAX_PX 768
-
-/* The template for one (radius, color, alpha, blur, offset, scale): a CGImage
-   of `side` x `side` points whose rows run top-down, with the shadowed rect
-   inset by `margin` and a straight band `inset` points in from every edge.
-   `scale` is the template's pixels per point; `ratio` is that over the
-   backing scale (1 normally, 0.5 for a 1x template on a 2x display), which
-   the pixel-space blur and offset are multiplied by. */
-static CGImageRef mac_shadow_template(CGFloat scale, CGFloat ratio, int64_t radius, int64_t rgb,
-                                      int64_t alpha, int64_t blur, int64_t dx,
-                                      int64_t dy, int64_t *inset, int64_t *margin,
-                                      int64_t *side_out) {
-    int64_t k, m, side;
-    NSString *key = [NSString stringWithFormat:@"%lld,%lld,%lld,%lld,%lld,%lld,%.2f,%.3f",
-                     (long long)radius, (long long)rgb, (long long)alpha,
-                     (long long)blur, (long long)dx, (long long)dy, (double)scale,
-                     (double)ratio];
-    CGImageRef ci;
-    mac_shadow_geom(radius, blur, dx, dy, &k, &m, &side);
-    *inset = k;
-    *margin = m;
-    *side_out = side;
-    if (!g_shadow_cache) g_shadow_cache = [[NSMutableDictionary alloc] init];
-    ci = (CGImageRef)[g_shadow_cache objectForKey:key];
-    if (ci) return ci;
-    {
-        size_t pw = (size_t)((CGFloat)side * scale + 0.5);
-        CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
-        CGContextRef bc = CGBitmapContextCreate(NULL, pw, pw, 8, 0, cs,
-                                                kCGImageAlphaPremultipliedFirst |
-                                                kCGBitmapByteOrder32Host);
-        NSGraphicsContext *prev = [NSGraphicsContext currentContext];
-        CGColorSpaceRelease(cs);
-        if (!bc) return NULL;
-        /* y-down, `scale` pixels per point: the space the view draws in, so the
-           direct path's blur and offset come out identical. */
-        CGContextTranslateCTM(bc, 0, (CGFloat)pw);
-        CGContextScaleCTM(bc, scale, -scale);
-        [NSGraphicsContext setCurrentContext:
-            [NSGraphicsContext graphicsContextWithCGContext:bc flipped:YES]];
-        mac_shadow_direct(m, m, side - 2 * m, side - 2 * m, radius, rgb, alpha,
-                          (CGFloat)blur * ratio, (CGFloat)dx * ratio, (CGFloat)dy * ratio);
-        [NSGraphicsContext setCurrentContext:prev];
-        ci = CGBitmapContextCreateImage(bc);
-        CGContextRelease(bc);
-        if (!ci) return NULL;
-    }
-    /* Elevations come from a short token list, so the live set is small; the
-       bound is for an app that animates a shadow's blur or offset. */
-    if ([g_shadow_cache count] >= 256) [g_shadow_cache removeAllObjects];
-    [g_shadow_cache setObject:(id)ci forKey:key];
-    CGImageRelease(ci);
-    return ci;
-}
-
-/* One slice of the template, `src` in points from its top-left, drawn into
-   `dst` (user space). `CGContextDrawImage` puts an image's first row at the
-   rect's max y, so under a y-down transform the slice is flipped back. */
-static void mac_shadow_slice(CGContextRef cg, CGImageRef ci, CGFloat scale, int smooth,
-                             int down, CGRect src, CGRect dst) {
-    CGImageRef part;
-    if (dst.size.width <= 0 || dst.size.height <= 0) return;
-    part = CGImageCreateWithImageInRect(ci, CGRectMake(src.origin.x * scale, src.origin.y * scale,
-                                                       src.size.width * scale, src.size.height * scale));
-    if (!part) return;
-    CGContextSaveGState(cg);
-    /* Corners land 1:1 and edges stretch a band that is constant along the
-       stretch, so no sample ever needs filtering: nearest is exact and skips
-       CoreGraphics' resampler, which otherwise cost as much as the blur did. */
-    CGContextSetInterpolationQuality(cg, smooth ? kCGInterpolationLow : kCGInterpolationNone);
-    if (down) {
-        CGContextTranslateCTM(cg, dst.origin.x, dst.origin.y + dst.size.height);
-        CGContextScaleCTM(cg, 1, -1);
-        CGContextDrawImage(cg, CGRectMake(0, 0, dst.size.width, dst.size.height), part);
-    } else {
-        CGContextDrawImage(cg, dst, part);
-    }
-    CGContextRestoreGState(cg);
-    CGImageRelease(part);
-}
-
-static void mac_shadow(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
-                       int64_t radius, int64_t rgb, int64_t alpha, int64_t blur,
-                       int64_t dx, int64_t dy) {
-    static int direct = -1;
-    NSGraphicsContext *gc = [NSGraphicsContext currentContext];
-    CGContextRef cg;
-    CGAffineTransform ctm;
-    CGFloat scale, tscale, K, S, T, X0, Y0, X1, Y1, W, H;
-    int smooth;
-    int64_t k = 0, m = 0, side = 0;
-    int down;
-    CGImageRef ci;
-    (void)ctx;
-    if (direct < 0) {
-        const char *e = getenv("ZEUS_SHADOW_DIRECT");
-        direct = (e && e[0] && e[0] != '0') ? 1 : 0;
-    }
-    if (direct || !gc || blur <= 0 || alpha <= 0) {
-        mac_shadow_direct(x, y, w, h, radius, rgb, alpha, blur, dx, dy);
-        return;
-    }
-    /* A corner can be no rounder than half the rect's short side — that is
-       what gets drawn (CSS clamps the same way). Pill controls carry a huge
-       nominal radius (`RAD_CONTROL` = 999), and keying a template on it built
-       ~2000-point templates: tens of MB each, ~140 MB at start-up. */
-    if (radius > w / 2) radius = w / 2;
-    if (radius > h / 2) radius = h / 2;
-    if (radius < 0) radius = 0;
-    cg = [gc CGContext];
-    ctm = CGContextGetCTM(cg);
-    scale = fabs(ctm.a);
-    /* Zeus draws y-down (flipped view, flipped owned buffers): `d` < 0. */
-    down = ctm.d < 0;
-    /* A rotated or fractionally scaled context would resample the template;
-       only the plain pixel grid takes the cache. */
-    if (scale < 1.0 || ctm.b != 0 || ctm.c != 0 || fabs(fabs(ctm.d) - scale) > 0.001 ||
-        fabs(scale - floor(scale + 0.5)) > 0.001) {
-        mac_shadow_direct(x, y, w, h, radius, rgb, alpha, blur, dx, dy);
-        return;
-    }
-    /* Decide before building: the edge band must exist on both axes (the rect
-       wider and taller than the two corner regions, or slicing would invent
-       pixels), and the template must be small enough to be worth keeping. A
-       rect that fails either never creates — or caches — a template. */
-    mac_shadow_geom(radius, blur, dx, dy, &k, &m, &side);
-    tscale = scale;
-    if ((CGFloat)side * tscale > (CGFloat)SHADOW_TEMPLATE_MAX_PX)
-        tscale = floor((CGFloat)SHADOW_TEMPLATE_MAX_PX / (CGFloat)side);
-    if (w + 2 * m < 2 * k + 2 || h + 2 * m < 2 * k + 2 || tscale < 1.0) {
-        mac_shadow_direct(x, y, w, h, radius, rgb, alpha, blur, dx, dy);
-        return;
-    }
-    smooth = tscale != scale;
-    ci = mac_shadow_template(tscale, tscale / scale, radius, rgb, alpha, blur, dx, dy,
-                             &k, &m, &side);
-    if (!ci) {
-        mac_shadow_direct(x, y, w, h, radius, rgb, alpha, blur, dx, dy);
-        return;
-    }
-    K = (CGFloat)k;
-    S = (CGFloat)side;
-    /* Only a ring `T` deep is drawn: the template is transparent past the
-       margin and the rounded corner (the direct path clips the shape out), so
-       the rest of each corner square and edge band is blending zeros. On a
-       sheet that halves the pixels touched. `T` <= `K` by construction. */
-    T = (CGFloat)(m + radius);
-    X0 = (CGFloat)(x - m);
-    Y0 = (CGFloat)(y - m);
-    W = (CGFloat)(w + 2 * m);
-    H = (CGFloat)(h + 2 * m);
-    X1 = X0 + W - K;
-    Y1 = Y0 + H - K;
-    /* top and bottom strips: corners 1:1, a 1-point column stretched between */
-    mac_shadow_slice(cg, ci, tscale, smooth, down, CGRectMake(0, 0, K, T), CGRectMake(X0, Y0, K, T));
-    mac_shadow_slice(cg, ci, tscale, smooth, down, CGRectMake(K, 0, 1, T), CGRectMake(X0 + K, Y0, W - 2 * K, T));
-    mac_shadow_slice(cg, ci, tscale, smooth, down, CGRectMake(S - K, 0, K, T), CGRectMake(X1, Y0, K, T));
-    mac_shadow_slice(cg, ci, tscale, smooth, down, CGRectMake(0, S - T, K, T), CGRectMake(X0, Y0 + H - T, K, T));
-    mac_shadow_slice(cg, ci, tscale, smooth, down, CGRectMake(K, S - T, 1, T), CGRectMake(X0 + K, Y0 + H - T, W - 2 * K, T));
-    mac_shadow_slice(cg, ci, tscale, smooth, down, CGRectMake(S - K, S - T, K, T), CGRectMake(X1, Y0 + H - T, K, T));
-    /* left and right strips, between those: corner tails 1:1, a 1-point row
-       stretched between */
-    mac_shadow_slice(cg, ci, tscale, smooth, down, CGRectMake(0, T, T, K - T), CGRectMake(X0, Y0 + T, T, K - T));
-    mac_shadow_slice(cg, ci, tscale, smooth, down, CGRectMake(0, K, T, 1), CGRectMake(X0, Y0 + K, T, H - 2 * K));
-    mac_shadow_slice(cg, ci, tscale, smooth, down, CGRectMake(0, S - K, T, K - T), CGRectMake(X0, Y1, T, K - T));
-    mac_shadow_slice(cg, ci, tscale, smooth, down, CGRectMake(S - T, T, T, K - T), CGRectMake(X0 + W - T, Y0 + T, T, K - T));
-    mac_shadow_slice(cg, ci, tscale, smooth, down, CGRectMake(S - T, K, T, 1), CGRectMake(X0 + W - T, Y0 + K, T, H - 2 * K));
-    mac_shadow_slice(cg, ci, tscale, smooth, down, CGRectMake(S - T, S - K, T, K - T), CGRectMake(X0 + W - T, Y1, T, K - T));
-}
-
-/* Ring stroke, inset by half the width so the line paints inside the rect —
-   the same box model CSS `border` uses, and what the engine's layout assumes
-   when it insets content by `border_w`. */
-static void mac_stroke(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
-                       int64_t rgb, int64_t radius, int64_t width, int64_t alpha) {
-    (void)ctx;
-    CGFloat lw = (CGFloat)width;
-    NSRect r = NSMakeRect((CGFloat)x + lw / 2, (CGFloat)y + lw / 2,
-                          (CGFloat)w - lw, (CGFloat)h - lw);
-    CGFloat a = alpha < 0 ? 0 : (alpha > 255 ? 1.0 : (CGFloat)alpha / 255.0);
-    NSBezierPath *p;
-    if (r.size.width <= 0 || r.size.height <= 0) return;
-    p = mac_rrect(r, (CGFloat)radius - lw / 2);
-    [p setLineWidth:lw];
-    [[zeus_color(rgb) colorWithAlphaComponent:a] setStroke];
-    [p stroke];
-}
-
-static void mac_fill4(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
-                      int64_t rgb, int64_t alpha, int64_t tl, int64_t tr,
-                      int64_t br, int64_t bl) {
-    (void)ctx;
-    CGFloat a = alpha < 0 ? 0 : (alpha > 255 ? 1.0 : (CGFloat)alpha / 255.0);
-    CGFloat X = (CGFloat)x, Y = (CGFloat)y, W = (CGFloat)w, H = (CGFloat)h;
-    CGFloat lim = (W < H ? W : H) / 2;
-    CGFloat a1 = (CGFloat)tl, a2 = (CGFloat)tr, a3 = (CGFloat)br, a4 = (CGFloat)bl;
-    NSBezierPath *p = [NSBezierPath bezierPath];
-    if (W <= 0 || H <= 0) return;
-    if (a1 > lim) a1 = lim;
-    if (a2 > lim) a2 = lim;
-    if (a3 > lim) a3 = lim;
-    if (a4 > lim) a4 = lim;
-    /* Clockwise from the top-left, arcs tangent to each corner. The view is
-       flipped, so this traversal is visually clockwise on screen. */
-    [p moveToPoint:NSMakePoint(X + a1, Y)];
-    [p lineToPoint:NSMakePoint(X + W - a2, Y)];
-    if (a2 > 0)
-        [p appendBezierPathWithArcFromPoint:NSMakePoint(X + W, Y)
-                                    toPoint:NSMakePoint(X + W, Y + a2) radius:a2];
-    [p lineToPoint:NSMakePoint(X + W, Y + H - a3)];
-    if (a3 > 0)
-        [p appendBezierPathWithArcFromPoint:NSMakePoint(X + W, Y + H)
-                                    toPoint:NSMakePoint(X + W - a3, Y + H) radius:a3];
-    [p lineToPoint:NSMakePoint(X + a4, Y + H)];
-    if (a4 > 0)
-        [p appendBezierPathWithArcFromPoint:NSMakePoint(X, Y + H)
-                                    toPoint:NSMakePoint(X, Y + H - a4) radius:a4];
-    [p lineToPoint:NSMakePoint(X, Y + a1)];
-    if (a1 > 0)
-        [p appendBezierPathWithArcFromPoint:NSMakePoint(X, Y)
-                                    toPoint:NSMakePoint(X + a1, Y) radius:a1];
-    [p closePath];
-    [[zeus_color(rgb) colorWithAlphaComponent:a] setFill];
-    [p fill];
-}
-
-/* Translate, then scale and rotate about (ox, oy). Concatenated onto the
-   current CTM, so it composes with an enclosing clip and unwinds with the
-   enclosing `restore`. */
-static void mac_xform(void *ctx, int64_t dx, int64_t dy, int64_t scale,
-                      int64_t rot, int64_t ox, int64_t oy) {
-    (void)ctx;
-    NSAffineTransform *t = [NSAffineTransform transform];
-    [t translateXBy:(CGFloat)(ox + dx) yBy:(CGFloat)(oy + dy)];
-    if (rot) [t rotateByDegrees:(CGFloat)rot];
-    if (scale != 100) {
-        CGFloat k = (CGFloat)scale / 100.0;
-        [t scaleXBy:k yBy:k];
-    }
-    [t translateXBy:(CGFloat)-ox yBy:(CGFloat)-oy];
-    [t concat];
-}
-
-static void mac_fill(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
-                     int64_t rgb, int64_t radius) {
-    (void)ctx;
-    NSRect r = NSMakeRect((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h);
-    [zeus_color(rgb) setFill];
-    if (radius > 0) {
-        CGFloat rad = (CGFloat)radius;
-        if (rad > r.size.width / 2) rad = r.size.width / 2;
-        if (rad > r.size.height / 2) rad = r.size.height / 2;
-        [[NSBezierPath bezierPathWithRoundedRect:r xRadius:rad yRadius:rad] fill];
-    } else {
-        NSRectFill(r);
-    }
-}
-
-static void mac_text(void *ctx, int64_t x, int64_t y, const char *s,
-                     int64_t rgb, int64_t font) {
-    (void)ctx;
-    NSString *str = s ? [NSString stringWithUTF8String:s] : @"";
-    [str drawAtPoint:NSMakePoint((CGFloat)x, (CGFloat)y) withAttributes:zeus_attrs(rgb, font)];
-}
-
-/* Rotated text around the top-left corner of the line box. The view is
-   flipped (y grows down), where a positive AppKit rotation appears
-   clockwise on screen — exactly the engine's convention (UiNode.text_rot:
-   "clockwise-on-screen degrees"). Web (canvas rotate(+deg)) renders the
-   same way. */
-static void mac_text_rot(void *ctx, int64_t x, int64_t y, const char *s,
-                         int64_t rgb, int64_t font, int64_t deg) {
-    (void)ctx;
-    NSString *str = s ? [NSString stringWithUTF8String:s] : @"";
-    [NSGraphicsContext saveGraphicsState];
-    NSAffineTransform *t = [NSAffineTransform transform];
-    [t translateXBy:(CGFloat)x yBy:(CGFloat)y];
-    [t rotateByDegrees:(CGFloat)deg];
-    [t concat];
-    [str drawAtPoint:NSZeroPoint withAttributes:zeus_attrs(rgb, font)];
-    [NSGraphicsContext restoreGraphicsState];
-}
-
-static void mac_save(void *ctx) {
-    (void)ctx;
-    [NSGraphicsContext saveGraphicsState];
-}
-
-static void mac_alpha(void *ctx, int64_t alpha) {
-    CGFloat a = alpha < 0 ? 0 : (alpha > 255 ? 1.0 : (CGFloat)alpha / 255.0);
-    (void)ctx;
-    [NSGraphicsContext saveGraphicsState];
-    CGContextSetAlpha([[NSGraphicsContext currentContext] CGContext], a);
-}
-
-static void mac_clip(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
-                     int64_t radius) {
-    NSRect r = NSMakeRect((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h);
-    (void)ctx;
-    if (radius > 0) {
-        [mac_rrect(r, (CGFloat)radius) addClip];
-        return;
-    }
-    NSRectClip(r);
-}
-
-static void mac_restore(void *ctx) {
-    (void)ctx;
-    [NSGraphicsContext restoreGraphicsState];
-}
-
-/* --- vector paths (icons, charts, `Svg`: parsed by the engine) --- */
-
-static NSColor *path_color(int64_t rgb, int64_t alpha) {
-    CGFloat a = alpha < 0 ? 0 : (alpha > 255 ? 1.0 : (CGFloat)alpha / 255.0);
-    return [NSColor colorWithCalibratedRed:((rgb >> 16) & 255) / 255.0
-                                     green:((rgb >> 8) & 255) / 255.0
-                                      blue:(rgb & 255) / 255.0
-                                     alpha:a];
-}
-
-static void mac_path(void *ctx, const int32_t *c, int64_t n, int64_t rgb, int64_t alpha,
-                     int64_t width, int64_t style) {
-    (void)ctx;
-    NSBezierPath *path = [NSBezierPath bezierPath];
-    const CGFloat u = 1.0 / 64.0;
-    int64_t i = 0;
-    while (i < n) {
-        int32_t k = c[i++];
-        if (k == 0 && i + 2 <= n) {
-            [path moveToPoint:NSMakePoint(c[i] * u, c[i + 1] * u)];
-            i += 2;
-        } else if (k == 1 && i + 2 <= n) {
-            [path lineToPoint:NSMakePoint(c[i] * u, c[i + 1] * u)];
-            i += 2;
-        } else if (k == 2 && i + 6 <= n) {
-            [path curveToPoint:NSMakePoint(c[i + 4] * u, c[i + 5] * u)
-                 controlPoint1:NSMakePoint(c[i] * u, c[i + 1] * u)
-                 controlPoint2:NSMakePoint(c[i + 2] * u, c[i + 3] * u)];
-            i += 6;
-        } else if (k == 3) {
-            [path closePath];
-        } else {
-            break;
-        }
-    }
-    if ([path isEmpty]) return;
-    if (width == 0) {
-        [path_color(rgb, alpha) setFill];
-        [path fill];
-        return;
-    }
-    int cap = (int)(style & 3), join = (int)(style >> 2);
-    [path setLineWidth:width * u];
-    [path setLineCapStyle:cap == 1 ? NSLineCapStyleRound
-                         : cap == 2 ? NSLineCapStyleSquare
-                                    : NSLineCapStyleButt];
-    [path setLineJoinStyle:join == 1 ? NSLineJoinStyleRound
-                          : join == 2 ? NSLineJoinStyleBevel
-                                      : NSLineJoinStyleMiter];
-    [path_color(rgb, alpha) setStroke];
-    [path stroke];
-}
-
-/* PNG / JPEG / WebP / GIF via ImageIO. Cache by src; http(s) loads off-thread.
-   A decoded image is the largest thing a page can hold — one 4000×3000 photo is
-   ~48 MB resident — and an unbounded cache pins every source a feed ever drew
-   for the life of the process, which is memory no retry would have cost. The
-   cache is bounded and evicts least-recently-used first; an evicted source just
-   decodes again on the next frame that draws it. A failed load stays in as
-   NSNull (a real answer, not a retry every frame) and ages out like any other. */
-enum { IMG_CACHE_MAX = 24 };
-static NSMutableDictionary *g_img;
-static NSMutableSet *g_img_load;
-static NSMutableArray *g_img_lru; /* keys, least recently used first */
-
-static void img_lru_touch(NSString *key) {
-    [g_img_lru removeObject:key];
-    [g_img_lru addObject:key];
-}
-
-static void mac_img_put(NSString *key, NSImage *img) {
-    [g_img setObject:(img ? (id)img : (id)[NSNull null]) forKey:key];
-    [img release];
-    img_lru_touch(key);
-    while ([g_img_lru count] > IMG_CACHE_MAX) {
-        NSString *old = [g_img_lru objectAtIndex:0];
-        [g_img_lru removeObjectAtIndex:0];
-        [g_img removeObjectForKey:old];
-    }
-}
-
-static NSImage *mac_img_get(const char *src) {
-    NSString *key;
-    NSImage *img;
-    if (!src || !src[0]) return nil;
-    if (!g_img) {
-        g_img = [[NSMutableDictionary alloc] init];
-        g_img_load = [[NSMutableSet alloc] init];
-        g_img_lru = [[NSMutableArray alloc] init];
-    }
-    key = [NSString stringWithUTF8String:src];
-    img = [g_img objectForKey:key];
-    if (img) {
-        img_lru_touch(key);
-        return img == (id)[NSNull null] ? nil : img;
-    }
-    if ([g_img_load containsObject:key]) return nil;
-    if ([key hasPrefix:@"data:"]) {
-        NSRange comma = [key rangeOfString:@","];
-        NSData *data = nil;
-        if (comma.location != NSNotFound)
-            data = [[NSData alloc] initWithBase64EncodedString:[key substringFromIndex:comma.location + 1]
-                                                       options:NSDataBase64DecodingIgnoreUnknownCharacters];
-        img = data ? [[NSImage alloc] initWithData:data] : nil;
-        [data release];
-        mac_img_put(key, img);
-        return img;
-    }
-    if ([key hasPrefix:@"http://"] || [key hasPrefix:@"https://"]) {
-        NSURL *url = [NSURL URLWithString:key];
-        if (!url) {
-            mac_img_put(key, nil);
-            return nil;
-        }
-        [g_img_load addObject:key];
-        [[[NSURLSession sharedSession] dataTaskWithURL:url
-                                     completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
-            (void)resp;
-            (void)err;
-            NSImage *im = data ? [[NSImage alloc] initWithData:data] : nil;
-            dispatch_async(dispatch_get_main_queue(), ^{
-                mac_img_put(key, im);
-                [g_img_load removeObject:key];
-                if (g_view) [g_view setNeedsDisplay:YES];
-            });
-        }] resume];
-        return nil;
-    }
-    if ([key hasPrefix:@"file://"])
-        img = [[NSImage alloc] initWithContentsOfURL:[NSURL URLWithString:key]];
-    else
-        img = [[NSImage alloc] initWithContentsOfFile:key];
-    mac_img_put(key, img);
-    return img;
-}
-
-/* Media frames ride the image op (see the media section below). */
-static int64_t mac_media_slot_of(const char *src);
-static int64_t mac_media_get(int64_t slot, int64_t what);
-static void mac_media_draw(int64_t x, int64_t y, int64_t w, int64_t h, int64_t slot,
-                           int64_t radius, int64_t alpha, int64_t fit);
-
-static NSRect mac_image_dest(int64_t x, int64_t y, int64_t w, int64_t h,
-                             int64_t iw, int64_t ih, int64_t fit) {
-    int64_t dw, dh;
-    if (fit != 1 && fit != 2 && fit != 3) return NSMakeRect((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h);
-    if (iw <= 0 || ih <= 0) return NSMakeRect((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h);
-    if (fit == 3) return NSMakeRect((CGFloat)x, (CGFloat)y, (CGFloat)iw, (CGFloat)ih);
-    if ((fit == 1 && iw * h <= ih * w) || (fit == 2 && iw * h >= ih * w)) {
-        dh = h;
-        dw = iw * h / ih;
-    } else {
-        dw = w;
-        dh = ih * w / iw;
-    }
-    return NSMakeRect((CGFloat)(x + (w - dw) / 2), (CGFloat)(y + (h - dh) / 2),
-                      (CGFloat)dw, (CGFloat)dh);
-}
-
-static void mac_image(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
-                      const char *src, int64_t radius, int64_t alpha, int64_t fit) {
-    NSImage *img;
-    NSRect box, dest;
-    NSSize sz;
-    CGFloat a, rad;
-    (void)ctx;
-    if (w <= 0 || h <= 0) return;
-    if (mac_media_slot_of(src) >= 0) {
-        mac_media_draw(x, y, w, h, mac_media_slot_of(src), radius, alpha, fit);
-        return;
-    }
-    img = mac_img_get(src);
-    if (!img) return;
-    a = alpha < 0 ? 0 : (alpha > 255 ? 1.0 : (CGFloat)alpha / 255.0);
-    sz = [img size];
-    box = NSMakeRect((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h);
-    dest = mac_image_dest(x, y, w, h, (int64_t)(sz.width + 0.5), (int64_t)(sz.height + 0.5), fit);
-    [NSGraphicsContext saveGraphicsState];
-    if (radius > 0) {
-        rad = (CGFloat)radius;
-        if (rad > box.size.width / 2) rad = box.size.width / 2;
-        if (rad > box.size.height / 2) rad = box.size.height / 2;
-        [[NSBezierPath bezierPathWithRoundedRect:box xRadius:rad yRadius:rad] addClip];
-    } else {
-        [[NSBezierPath bezierPathWithRect:box] addClip];
-    }
-    [img drawInRect:dest
-           fromRect:NSZeroRect
-          operation:NSCompositingOperationSourceOver
-           fraction:a
-     respectFlipped:YES
-              hints:nil];
-    [NSGraphicsContext restoreGraphicsState];
+void za_redraw(void) {
+    if (g_view) [g_view setNeedsDisplay:YES];
 }
 
 static void mac_redraw(void) {
@@ -769,346 +47,6 @@ static void mac_mem_debug(void) {
             (long long)loam_platform_plat_mem_kb(),
             (long long)zeus_window_width(), (long long)zeus_window_height(),
             g_view ? g_view.bounds.size.width : 0.0, g_view ? g_view.bounds.size.height : 0.0);
-}
-
-/* Intrinsic size for layout (`platform.plat_image_size`): decodes from the
- * same cache `mac_image` draws from, so a widthless `Image` keeps the source
- * aspect. Remote loads return 0 here and answer on a later frame — the
- * completion handler already calls `setNeedsDisplay`. */
-static void mac_image_size(const char *src, int64_t *w, int64_t *h) {
-    NSImage *img;
-    NSSize sz;
-    if (w) *w = 0;
-    if (h) *h = 0;
-    if (!src) return;
-    if (mac_media_slot_of(src) >= 0) {
-        if (w) *w = mac_media_get(mac_media_slot_of(src), 4);
-        if (h) *h = mac_media_get(mac_media_slot_of(src), 5);
-        return;
-    }
-    img = mac_img_get(src);
-    if (!img) return;
-    sz = [img size];
-    if (w) *w = (int64_t)(sz.width + 0.5);
-    if (h) *h = (int64_t)(sz.height + 0.5);
-}
-
-/* ── media playback (`plat_media_*`) ─────────────────────────────────────
-   One AVPlayer per slot. Frames come out of an AVPlayerItemVideoOutput as
-   BGRA pixel buffers; each NEW buffer becomes one CGImage (VideoToolbox, no
-   copy of ours) that `mac_image` draws for a `media:<slot>` src, so the video
-   is just another image op in the draw list and composites under the
-   controls like anything else. The previous frame is kept and redrawn until
-   a newer one is due. `mac_frame` asks for frames while a player runs. */
-enum { MEDIA_SLOTS_MAX = 8 };
-typedef struct {
-    AVPlayer *player;
-    AVPlayerItem *item;
-    AVPlayerItemVideoOutput *out;
-    id end_obs;
-    CGImageRef frame;
-    int64_t fw, fh;
-    float rate;
-    int loop, ended, seeking;
-    int64_t pending_seek; /* -1 = none; a scrub coalesces to the latest point */
-    char err[256];
-} MacMedia;
-static MacMedia g_media[MEDIA_SLOTS_MAX];
-static int g_media_init;
-
-static MacMedia *mac_media_at(int64_t slot) {
-    int i;
-    if (!g_media_init) {
-        for (i = 0; i < MEDIA_SLOTS_MAX; i++) {
-            g_media[i].rate = 1.0f;
-            g_media[i].pending_seek = -1;
-        }
-        g_media_init = 1;
-    }
-    if (slot <= 0 || slot >= MEDIA_SLOTS_MAX) return NULL;
-    return &g_media[slot];
-}
-
-static void mac_media_release(MacMedia *m) {
-    if (m->end_obs) {
-        [[NSNotificationCenter defaultCenter] removeObserver:m->end_obs];
-        [m->end_obs release];
-        m->end_obs = nil;
-    }
-    if (m->player) {
-        [m->player pause];
-        [m->player replaceCurrentItemWithPlayerItem:nil];
-        [m->player release];
-        m->player = nil;
-    }
-    if (m->item && m->out) [m->item removeOutput:m->out];
-    [m->out release];
-    m->out = nil;
-    [m->item release];
-    m->item = nil;
-    if (m->frame) CGImageRelease(m->frame);
-    m->frame = NULL;
-    m->fw = m->fh = 0;
-    m->ended = 0;
-    m->seeking = 0;
-    m->pending_seek = -1;
-    m->err[0] = 0;
-}
-
-static void mac_media_seek_now(MacMedia *m, int64_t ms);
-
-static void mac_media_seek_done(MacMedia *m) {
-    int64_t next = m->pending_seek;
-    m->seeking = 0;
-    if (next >= 0) {
-        m->pending_seek = -1;
-        mac_media_seek_now(m, next);
-    }
-    if (g_view) [g_view setNeedsDisplay:YES];
-}
-
-static void mac_media_seek_now(MacMedia *m, int64_t ms) {
-    CMTime t = CMTimeMake(ms, 1000);
-    if (!m->player) return;
-    m->seeking = 1;
-    m->ended = 0;
-    [m->player seekToTime:t
-          toleranceBefore:kCMTimeZero
-           toleranceAfter:kCMTimeZero
-        completionHandler:^(BOOL finished) {
-        (void)finished;
-        dispatch_async(dispatch_get_main_queue(), ^{
-            mac_media_seek_done(m);
-        });
-    }];
-}
-
-static NSURL *mac_media_url(const char *src) {
-    NSString *s = [NSString stringWithUTF8String:src];
-    if (!s) return nil;
-    if ([s hasPrefix:@"http://"] || [s hasPrefix:@"https://"] || [s hasPrefix:@"file://"])
-        return [NSURL URLWithString:s];
-    return [NSURL fileURLWithPath:[s stringByExpandingTildeInPath]];
-}
-
-static int64_t mac_media_open(int64_t slot, const char *src) {
-    MacMedia *m = mac_media_at(slot);
-    NSURL *url;
-    NSDictionary *attrs;
-    if (!m) return 0;
-    mac_media_release(m);
-    if (!src || !src[0]) return 0;
-    url = mac_media_url(src);
-    if (!url) {
-        snprintf(m->err, sizeof m->err, "Not a valid path or URL.");
-        return 0;
-    }
-    m->item = [[AVPlayerItem alloc] initWithURL:url];
-    attrs = @{
-        (id)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA),
-        (id)kCVPixelBufferIOSurfacePropertiesKey : @{},
-    };
-    m->out = [[AVPlayerItemVideoOutput alloc] initWithPixelBufferAttributes:attrs];
-    [m->item addOutput:m->out];
-    m->player = [[AVPlayer alloc] initWithPlayerItem:m->item];
-    m->player.actionAtItemEnd = AVPlayerActionAtItemEndPause;
-    m->end_obs = [[[NSNotificationCenter defaultCenter]
-        addObserverForName:AVPlayerItemDidPlayToEndTimeNotification
-                    object:m->item
-                     queue:[NSOperationQueue mainQueue]
-                usingBlock:^(NSNotification *n) {
-        (void)n;
-        if (m->loop && m->player) {
-            [m->player seekToTime:kCMTimeZero];
-            m->player.rate = m->rate;
-        } else {
-            m->ended = 1;
-        }
-        if (g_view) [g_view setNeedsDisplay:YES];
-    }] retain];
-    return 1;
-}
-
-static void mac_media_cmd(int64_t slot, int64_t cmd, int64_t value) {
-    MacMedia *m = mac_media_at(slot);
-    if (!m || !m->player) return;
-    switch (cmd) {
-    case 1: /* play: from the top again once it has ended */
-        if (m->ended) {
-            m->ended = 0;
-            [m->player seekToTime:kCMTimeZero];
-        }
-        m->player.rate = m->rate;
-        break;
-    case 2:
-        [m->player pause];
-        break;
-    case 3:
-        if (value < 0) value = 0;
-        if (m->seeking) m->pending_seek = value;
-        else mac_media_seek_now(m, value);
-        break;
-    case 4:
-        m->rate = (float)value / 100.0f;
-        if (m->rate < 0.0625f) m->rate = 0.0625f;
-        if (m->rate > 16.0f) m->rate = 16.0f;
-        if (@available(macOS 13.0, *)) m->player.defaultRate = m->rate;
-        if (m->player.rate != 0.0f) m->player.rate = m->rate;
-        break;
-    case 5:
-        m->player.volume = (float)(value < 0 ? 0 : (value > 100 ? 100 : value)) / 100.0f;
-        break;
-    case 6:
-        m->player.muted = value ? YES : NO;
-        break;
-    case 7:
-        m->loop = value ? 1 : 0;
-        break;
-    case 8:
-        mac_media_release(m);
-        break;
-    }
-    if (g_view) [g_view setNeedsDisplay:YES];
-}
-
-static int64_t mac_media_ms(CMTime t) {
-    if (!CMTIME_IS_NUMERIC(t)) return 0;
-    return (int64_t)(CMTimeGetSeconds(t) * 1000.0 + 0.5);
-}
-
-static int64_t mac_media_state(MacMedia *m) {
-    if (!m->player || !m->item) return m->err[0] ? 5 : 0;
-    if (m->item.status == AVPlayerItemStatusFailed) {
-        if (!m->err[0]) {
-            NSError *e = m->item.error;
-            NSString *why = e ? (e.localizedFailureReason ?: e.localizedDescription) : nil;
-            snprintf(m->err, sizeof m->err, "%s",
-                     why ? [why UTF8String] : "This file could not be played.");
-        }
-        return 5;
-    }
-    if (m->item.status != AVPlayerItemStatusReadyToPlay) return 1;
-    if (m->ended) return 4;
-    if (m->player.timeControlStatus == AVPlayerTimeControlStatusPlaying) return m->seeking ? 6 : 3;
-    if (m->player.timeControlStatus == AVPlayerTimeControlStatusWaitingToPlayAtSpecifiedRate) return 6;
-    return 2;
-}
-
-static int64_t mac_media_get(int64_t slot, int64_t what) {
-    MacMedia *m = mac_media_at(slot);
-    if (!m) return 0;
-    if (what == 3) return mac_media_state(m);
-    if (!m->player || !m->item) return 0;
-    switch (what) {
-    case 1:
-        return mac_media_ms([m->player currentTime]);
-    case 2:
-        return m->item.status == AVPlayerItemStatusReadyToPlay ? mac_media_ms(m->item.duration) : 0;
-    case 4:
-        return (int64_t)(m->item.presentationSize.width + 0.5);
-    case 5:
-        return (int64_t)(m->item.presentationSize.height + 0.5);
-    case 6: {
-        CMTime now = [m->player currentTime];
-        for (NSValue *v in m->item.loadedTimeRanges) {
-            CMTimeRange r = [v CMTimeRangeValue];
-            if (CMTimeRangeContainsTime(r, now)) return mac_media_ms(CMTimeRangeGetEnd(r));
-        }
-        return mac_media_ms(now);
-    }
-    }
-    return 0;
-}
-
-static void mac_media_text(int64_t slot, int64_t what, char *out, int cap) {
-    MacMedia *m = mac_media_at(slot);
-    if (!out || cap <= 0) return;
-    out[0] = 0;
-    if (!m || what != 0) return;
-    (void)mac_media_state(m); /* fills `err` from a failed item */
-    snprintf(out, (size_t)cap, "%s", m->err);
-}
-
-/* True while any player wants frames: playing, waiting for data, or seeking. */
-static int mac_media_live(void) {
-    int i;
-    if (!g_media_init) return 0;
-    for (i = 1; i < MEDIA_SLOTS_MAX; i++) {
-        MacMedia *m = &g_media[i];
-        if (!m->player) continue;
-        if (m->seeking || m->player.rate != 0.0f) return 1;
-    }
-    return 0;
-}
-
-/* The newest frame for `slot`, or the last one while no newer is due. */
-static CGImageRef mac_media_frame(int64_t slot) {
-    MacMedia *m = mac_media_at(slot);
-    CMTime t;
-    CVPixelBufferRef pb;
-    CGImageRef img = NULL;
-    if (!m || !m->out) return NULL;
-    t = [m->out itemTimeForHostTime:CACurrentMediaTime()];
-    if ([m->out hasNewPixelBufferForItemTime:t]) {
-        pb = [m->out copyPixelBufferForItemTime:t itemTimeForDisplay:NULL];
-        if (pb) {
-            if (VTCreateCGImageFromCVPixelBuffer(pb, NULL, &img) == noErr && img) {
-                if (m->frame) CGImageRelease(m->frame);
-                m->frame = img;
-                m->fw = (int64_t)CGImageGetWidth(img);
-                m->fh = (int64_t)CGImageGetHeight(img);
-            }
-            CVPixelBufferRelease(pb);
-        }
-    }
-    return m->frame;
-}
-
-static void mac_media_draw(int64_t x, int64_t y, int64_t w, int64_t h, int64_t slot,
-                           int64_t radius, int64_t alpha, int64_t fit) {
-    CGImageRef img = mac_media_frame(slot);
-    MacMedia *m = mac_media_at(slot);
-    CGContextRef cg;
-    NSRect box, dest;
-    CGFloat rad;
-    int64_t iw, ih;
-    if (!img || !m) return;
-    /* Fit by the display size (anamorphic sources), not the coded size. */
-    iw = (int64_t)(m->item.presentationSize.width + 0.5);
-    ih = (int64_t)(m->item.presentationSize.height + 0.5);
-    if (iw <= 0 || ih <= 0) {
-        iw = m->fw;
-        ih = m->fh;
-    }
-    cg = [[NSGraphicsContext currentContext] CGContext];
-    if (!cg) return;
-    box = NSMakeRect((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h);
-    dest = mac_image_dest(x, y, w, h, iw, ih, fit);
-    CGContextSaveGState(cg);
-    if (radius > 0) {
-        rad = (CGFloat)radius;
-        if (rad > box.size.width / 2) rad = box.size.width / 2;
-        if (rad > box.size.height / 2) rad = box.size.height / 2;
-        CGPathRef path = CGPathCreateWithRoundedRect(NSRectToCGRect(box), rad, rad, NULL);
-        CGContextAddPath(cg, path);
-        CGPathRelease(path);
-        CGContextClip(cg);
-    } else {
-        CGContextClipToRect(cg, NSRectToCGRect(box));
-    }
-    if (alpha >= 0 && alpha < 255) CGContextSetAlpha(cg, (CGFloat)alpha / 255.0);
-    CGContextSetInterpolationQuality(cg, kCGInterpolationHigh);
-    /* The view is flipped (y down); CGContextDrawImage paints row 0 at the
-       bottom of its rect, so flip about the destination. */
-    CGContextTranslateCTM(cg, dest.origin.x, dest.origin.y + dest.size.height);
-    CGContextScaleCTM(cg, 1.0, -1.0);
-    CGContextDrawImage(cg, CGRectMake(0, 0, dest.size.width, dest.size.height), img);
-    CGContextRestoreGState(cg);
-}
-
-static int64_t mac_media_slot_of(const char *src) {
-    if (!src || strncmp(src, "media:", 6) != 0) return -1;
-    return (int64_t)atoi(src + 6);
 }
 
 static void mac_media_pick(void) {
@@ -1779,6 +717,51 @@ static void mac_sync_chrome(void) {
     zeus_set_titlebar_box((int64_t)(h + 0.5), (int64_t)(lead + 0.5), (int64_t)(trail + 0.5));
 }
 
+
+/* `ZEUS_SNAPSHOT=out.png`: paint one frame at 2x through the real draw table
+   into an offscreen sRGB bitmap, write it as PNG, and exit, with no window.
+   `ZEUS_SNAPSHOT_SIZE=WxH` overrides the window size (a tall one captures a
+   whole scrolling page).
+   Animations are stepped for one simulated second first, so the frame is the
+   settled one. For host-level pixel checks and before / after diffs. */
+static void mac_snapshot(const char *path) {
+    @autoreleasepool {
+        int64_t w = zeus_window_width(), h = zeus_window_height();
+        const char *sz = getenv("ZEUS_SNAPSHOT_SIZE");
+        long sw = 0, sh = 0;
+        CGFloat scale = 2;
+        if (sz && sscanf(sz, "%ldx%ld", &sw, &sh) == 2 && sw > 0 && sh > 0) {
+            w = sw;
+            h = sh;
+            zeus_set_window_size(w, h);
+        }
+        size_t pw = (size_t)(w * scale), ph = (size_t)(h * scale);
+        CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+        CGContextRef bc = CGBitmapContextCreate(NULL, pw, ph, 8, 0, cs,
+                                                kCGImageAlphaPremultipliedFirst |
+                                                    kCGBitmapByteOrder32Host);
+        CGColorSpaceRelease(cs);
+        if (!bc) exit(2);
+        CGContextSetRGBFillColor(bc, 1, 1, 1, 1);
+        CGContextFillRect(bc, CGRectMake(0, 0, pw, ph));
+        CGContextTranslateCTM(bc, 0, (CGFloat)ph);
+        CGContextScaleCTM(bc, scale, -scale);
+        [NSGraphicsContext setCurrentContext:
+            [NSGraphicsContext graphicsContextWithCGContext:bc flipped:YES]];
+        zeus_layout(w, h);
+        for (int i = 0; i < 60; i++) zeus_step(1.f / 60.f);
+        zeus_layout(w, h);
+        zeus_paint(NULL, za_draw_table());
+        CGImageRef img = CGBitmapContextCreateImage(bc);
+        NSBitmapImageRep *rep = [[NSBitmapImageRep alloc] initWithCGImage:img];
+        NSData *png = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+        int ok = [png writeToFile:[NSString stringWithUTF8String:path] atomically:YES];
+        CGImageRelease(img);
+        CGContextRelease(bc);
+        exit(ok ? 0 : 3);
+    }
+}
+
 static int mac_frame(int64_t vw, int64_t vh) {
     static CFAbsoluteTime last;
     CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
@@ -1793,24 +776,9 @@ static int mac_frame(int64_t vw, int64_t vh) {
     mac_sync_chrome();
     zeus_layout(vw, vh);
     more = zeus_step(dt);
-    memset(&d, 0, sizeof d);
-    d.fill = mac_fill;
-    d.fill_a = mac_fill_a;
-    d.fill_g = mac_fill_g;
-    d.shadow = mac_shadow;
-    d.stroke = mac_stroke;
-    d.fill4 = mac_fill4;
-    d.xform = mac_xform;
-    d.text = mac_text;
-    d.text_rot = mac_text_rot;
-    d.save = mac_save;
-    d.alpha = mac_alpha;
-    d.clip = mac_clip;
-    d.restore = mac_restore;
-    d.path = mac_path;
-    d.image = mac_image;
+    d = za_draw_table();
     zeus_paint(NULL, d);
-    if (mac_media_live()) more = 1;
+    if (za_media_live()) more = 1;
     return more;
 }
 
@@ -2801,6 +1769,8 @@ static void mac_clipboard_write(const char *t) {
 }
 
 static void mac_run(void) {
+    const char *snap = getenv("ZEUS_SNAPSHOT");
+    if (snap && *snap) mac_snapshot(snap);
     @autoreleasepool {
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
@@ -3117,8 +2087,6 @@ static void mac_pick_image(char *out, int cap, int64_t *w, int64_t *h) {
     NSOpenPanel *p;
     NSString *path;
     const char *utf;
-    NSImage *img;
-    NSSize sz;
     NSArray *dirs;
     if (w) *w = 0;
     if (h) *h = 0;
@@ -3140,11 +2108,7 @@ static void mac_pick_image(char *out, int cap, int64_t *w, int64_t *h) {
     if (!utf) return;
     strncpy(out, utf, (size_t)cap - 1);
     out[cap - 1] = 0;
-    img = mac_img_get(utf);
-    if (!img) return;
-    sz = [img size];
-    if (w) *w = (int64_t)(sz.width + 0.5);
-    if (h) *h = (int64_t)(sz.height + 0.5);
+    za_image_size(utf, w, h);
 }
 
 /* Phase 4: the ONE blit of a frame Zeus rasterized itself.
@@ -3212,28 +2176,25 @@ static int64_t mac_blit(void *ctx, const uint8_t *px, int64_t w, int64_t h,
 
 __attribute__((constructor))
 static void zeus_mac_register(void) {
-    zeus_set_platform(mac_run, mac_measure, mac_redraw);
+    zeus_set_platform(mac_run, za_measure, mac_redraw);
 #ifdef LOAM_HOST_BUILD
     /* A dev host loads the app as an image and owns the loop; the shim's
        `zeus.host_run` reaches the loader through this hook. */
     zeus_set_host_hooks(loam_mac_host_run);
 #endif
     zeus_set_pick_image(mac_pick_image);
-    zeus_set_image_size(mac_image_size);
+    zeus_set_image_size(za_image_size);
     {
         ZeusMedia media;
         memset(&media, 0, sizeof media);
-        media.open = mac_media_open;
-        media.cmd = mac_media_cmd;
-        media.get = mac_media_get;
-        media.text = mac_media_text;
+        za_media_table(&media);
         media.pick = mac_media_pick;
         media.pick_audio = mac_audio_pick;
         media.voice = mac_media_voice;
         media.fullscreen = mac_fullscreen;
         zeus_set_media(media);
     }
-    zeus_set_font_hooks(mac_load_font, NULL);
+    zeus_set_font_hooks(za_load_font, NULL);
     /* The one blit of a frame: the engine hands its own BGRA8 buffer over, and
        this wraps it in a CGImage over a reused data provider. */
     zeus_set_blit(NULL, mac_blit);
