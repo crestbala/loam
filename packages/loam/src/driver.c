@@ -219,6 +219,39 @@ static const char *find_wasm_cc(char *buf, size_t n) {
     return NULL;
 }
 
+/* A directory that can sit inside a shell-quoted -ffile-prefix-map. */
+static int plain_abs_dir(const char *s) {
+    if (!s || s[0] != '/') return 0;
+    for (const char *p = s; *p; p++) {
+        unsigned char c = (unsigned char)*p;
+        int ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                 (c >= '0' && c <= '9') || c == '/' || c == '_' || c == '.' ||
+                 c == '-' || c == '+';
+        if (!ok) return 0;
+    }
+    return 1;
+}
+
+static void add_prefix_map(char *dst, size_t n, const char *prefix) {
+    if (!plain_abs_dir(prefix)) return;
+    size_t len = strlen(dst);
+    size_t pl = strlen(prefix);
+    if (len + pl + 32 >= n) return;
+    int slash = pl > 1 && prefix[pl - 1] == '/';
+    snprintf(dst + len, n - len, " \"-ffile-prefix-map=%.*s/=\"",
+             slash ? (int)(pl - 1) : (int)pl, prefix);
+}
+
+/* Remap __FILE__ in the wasm link: the repo, the temp dir, and /tmp. */
+static void wasm_file_maps(char *dst, size_t n) {
+    dst[0] = '\0';
+    char cwd[1024];
+    if (getcwd(cwd, sizeof cwd)) add_prefix_map(dst, n, cwd);
+    const char *tmp = getenv("TMPDIR");
+    if (tmp) add_prefix_map(dst, n, tmp);
+    add_prefix_map(dst, n, "/tmp");
+}
+
 static int ios_sdk_path(char *buf, size_t n) {
     FILE *f = popen("xcrun --sdk iphonesimulator --show-sdk-path 2>/dev/null", "r");
     size_t len;
@@ -913,6 +946,16 @@ int main(int argc, char **argv) {
        client hosts join when their targets are split out). `LOAM_SERVER_SPLIT`
        forces it on so the exclusion can be checked from a generated-C build. */
     codegen_set_server_split(target_wasm || getenv("LOAM_SERVER_SPLIT") != NULL);
+    /* Wasm is what gets published. Record Loam locations relative to the
+       directory the compiler was run from, and drop any other absolute path
+       to its basename, so the binary does not carry a home directory.
+       The pointer stays live through codegen_emit_c. */
+    static char path_root[1024];
+    path_root[0] = '\0';
+    if (target_wasm && getcwd(path_root, sizeof path_root))
+        codegen_set_path_strip(path_root);
+    else
+        codegen_set_path_strip(NULL);
     codegen_emit_c(out, sess.mods, sess.nmods, LOAM_RT_PATH);
     fclose(out);
     if (show_time) fprintf(stderr, "loam: codegen %.3fs\n", now_sec() - t0);
@@ -973,7 +1016,7 @@ int main(int argc, char **argv) {
         char wasmcc[512];
         char loader_src[768], loader_dst[768];
         char *outdir = dir_of(binpath);
-        char cmdw[8192];
+        char cmdw[16384];
         const char *cc;
         snprintf(loader_src, sizeof loader_src, "%s/hosts/web/loader.js", LOAM_ZEUS_DIR);
         snprintf(loader_dst, sizeof loader_dst, "%s/loader.js", outdir);
@@ -1007,28 +1050,37 @@ int main(int argc, char **argv) {
            at -O2, 2.0 MB at -Oz). */
         {
             char http_w[512] = "";
+            char maps[2048];
+            wasm_file_maps(maps, sizeof maps);
             if (uses_http || uses_net)
                 snprintf(http_w, sizeof http_w, " \"%s/net.c\"", LOAM_RUNTIME_DIR);
             if (uses_zeus) {
                 snprintf(cmdw, sizeof cmdw,
-                         "\"%s\" --target=wasm32 -nostdlib -ffreestanding "
+                         "\"%s\"%s --target=wasm32 -nostdlib -ffreestanding "
                          "-fno-stack-protector -Oz -ffp-contract=off -DLOAM_ALLOC_TRACE%s -I\"%s/wasm_inc\" -I\"%s\" "
                          "-Wl,--no-entry -Wl,--export-dynamic -Wl,--fatal-warnings "
                          /* The loader resets the shadow stack after a trap
                             unwinds an export (`guardExports` in loader.js). */
                          "-Wl,--export=__stack_pointer "
+                         /* wasm-ld's default is a 64 KB stack placed after the
+                            data, so a deep recursion silently overwrote globals
+                            (the handler table) instead of trapping. Put a larger
+                            stack first: an overflow then runs below address 0
+                            and traps cleanly. */
+                         "-Wl,-z,stack-size=4194304 -Wl,--stack-first "
                          "-x c \"%s\" -x none "
                          "\"%s/zeus_wasm_libc.c\" \"%s/hosts/web/wasm.c\" "
                          "\"%s/zeus_plat.c\" \"%s/zeus_key.c\"%s -o \"%s\"",
-                         cc, owns_def, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR, cpath, LOAM_RUNTIME_DIR,
+                         cc, maps, owns_def, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR, cpath, LOAM_RUNTIME_DIR,
                          LOAM_ZEUS_DIR, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR, http_w, binpath);
             } else {
                 snprintf(cmdw, sizeof cmdw,
-                         "\"%s\" --target=wasm32 -nostdlib -ffreestanding "
+                         "\"%s\"%s --target=wasm32 -nostdlib -ffreestanding "
                          "-fno-stack-protector -Oz -ffp-contract=off%s -I\"%s/wasm_inc\" -I\"%s\" "
                          "-Wl,--no-entry -Wl,--export-dynamic -Wl,--export=main -Wl,--fatal-warnings "
+                         "-Wl,-z,stack-size=4194304 -Wl,--stack-first "
                          "-x c \"%s\" -x none \"%s/zeus_wasm_libc.c\"%s -o \"%s\"",
-                         cc, owns_def, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR, cpath, LOAM_RUNTIME_DIR,
+                         cc, maps, owns_def, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR, cpath, LOAM_RUNTIME_DIR,
                          http_w, binpath);
             }
         }

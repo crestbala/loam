@@ -1,0 +1,8 @@
+//! Shown while a route's loaders are pending. This site's pages have none.
+
+import "std:zeus"
+import "std:zui"
+
+fn Loading() -> Node {
+    return zui.Body("loading...")
+}

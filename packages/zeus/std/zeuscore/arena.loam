@@ -63,6 +63,11 @@ let mut ev_y: int = 0
 let mut ev_button: int = 0
 let mut ev_key: int = 0
 let mut ev_mods: int = 0
+/// Text for a `KEY_TEXT` event: what was typed, pasted, or committed by an
+/// IME into a `capture_text` box that is not an input.
+let mut ev_text: string = ""
+/// 1 while an `on_drag` handler runs for the press that starts the drag.
+let mut ev_drag_first: int = 0
 let mut down_id: int = 0
 let mut paint_skip_z: int = 1
 let mut safe_t: int = 0

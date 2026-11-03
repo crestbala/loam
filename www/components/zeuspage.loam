@@ -1,0 +1,250 @@
+//! The framework: signals, hosts, routing, and the zeli CLI.
+
+import "std:zeus"
+import "std:spacing"
+import "std:zui"
+import "prose.loam" as prose
+
+fn ZeusPage() -> Node {
+    return zui.Column(prose.SECTION_GAP) {
+        zui.Column(prose.HEAD_GAP) {
+            zui.Overline("Framework")
+            zui.Display("Zeus")
+            zui.Body(
+                "Zeus is the UI framework. One entry builds a page. Hosts present that page: Canvas2D in the browser, Cocoa on macOS, UIKit on iOS, and a Canvas on Android. This site declares only the web target.",
+            )
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            zui.SectionHeader(
+                "State",
+                "Signals",
+                "A widget function runs once. Text and label thunks run again when a signal they read changes. Structure that must appear and disappear uses Show or Each, not a build-time if.",
+            )
+            prose.CodeBlock([]string {
+                "let count = signal(0)",
+                "",
+                "Button(\"Save\", on_click = fn() => count.set(count.get() + 1))",
+                "Text(fn() -> string {",
+                "    let n = count.get()",
+                prose.join3("    return \"saved ", "{{", "n}}\""),
+                "})",
+            })
+            zui.Alert(
+                "The braces in that sample are interpolation",
+                "A string with a value in double braces formats that value into the text when it is built. The playground runs interpolation too.",
+                tint = zeus.Tint.Info,
+            )
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            zui.SectionHeader(
+                "Calls",
+                "One named struct at the end",
+                "Named arguments fill the last parameter, and that parameter is a struct. A trailing block is the children of the node.",
+            )
+            prose.CodeBlock([]string {
+                "Card(title = \"Notes\") {",
+                "    Body(\"Rounded, hairline, paper.\")",
+                "}",
+            })
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            zui.SectionHeader(
+                "Routes",
+                "Files are the router",
+                "routes/page.loam is /. A directory is a path segment. layout.loam stays mounted. The page slot is what navigation replaces. zeli routes generates the table; it is not hand-edited.",
+            )
+            zui.DescriptionList(
+                []DescItem {
+                    DescItem {
+                        term: "zeli new",
+                        detail: "Write the app tree, then generate its route table.",
+                    },
+                    DescItem {
+                        term: "zeli serve",
+                        detail: "Build one target and reload on save. web is the default.",
+                    },
+                    DescItem {
+                        term: "zeli build",
+                        detail: "Compile the targets in zeus.toml. This app lists web.",
+                    },
+                    DescItem {
+                        term: "zeli fmt",
+                        detail: "Rewrite every Loam file with loam-fmt. One style, no flags.",
+                    },
+                },
+                divided = true,
+            )
+            zui.Note(
+                "A #[server] function is omitted from a wasm build. This site does not define one.",
+            )
+        }
+    }
+}
+
+fn Signals() -> Node {
+    return zui.Column(prose.SECTION_GAP) {
+        zui.Column(prose.HEAD_GAP) {
+            zui.Overline("Zeus")
+            zui.Display("Signals and Show")
+            zui.Body(
+                "A signal is a value the page can read and write. A widget function runs once. A build-time if, or a plain bool prop, stays frozen after the first paint. Text and label thunks run again when a signal they read changes.",
+            )
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            prose.CodeBlock([]string {
+                "let count = signal(0)",
+                "",
+                "Button(\"Save\", on_click = fn() => count.set(count.get() + 1))",
+                "Text(fn() -> string {",
+                "    let n = count.get()",
+                prose.join3("    return \"saved ", "{{", "n}}\""),
+                "})",
+            })
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            zui.SectionHeader(
+                "Structure",
+                "Show and Each",
+                "Show mounts a subtree while its condition is true. Each mounts one row per item. The row identity is the item value, so a surviving value keeps that row's state. A language for walks a slice and does not mount rows.",
+            )
+            prose.CodeBlock([]string {
+                "Show(when = open.get()) {",
+                "    Body(\"Visible while open is true.\")",
+                "}",
+                "",
+                "Each(fn() -> []string { return names.get() }, fn(i: int, name: string) -> Node {",
+                "    return Body(name)",
+                "})",
+            })
+            zui.Note(
+                "A control that must enable and disable mounts both buttons and toggles them with visible. Button enabled is read once.",
+            )
+        }
+    }
+}
+
+fn Views() -> Node {
+    return zui.Column(prose.SECTION_GAP) {
+        zui.Column(prose.HEAD_GAP) {
+            zui.Overline("Zeus")
+            zui.Display("Views and arguments")
+            zui.Body(
+                "A widget is a function that returns a node. Named arguments fill the last parameter, and that parameter is a struct. A trailing block is the children. The block is lowered to the view that the widget's children field receives.",
+            )
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            prose.CodeBlock([]string {
+                "Card(title = \"Notes\") {",
+                "    Body(\"Rounded, hairline, paper.\")",
+                "}",
+                "",
+                "Button(\"Save\", look = Look.Solid, on_click = fn() {",
+                "    saved.set(true)",
+                "})",
+            })
+            zui.DescriptionList(
+                []DescItem {
+                    DescItem {
+                        term: "Style",
+                        detail: "A struct of layout and paint. A signal read inside it updates that field.",
+                    },
+                    DescItem {
+                        term: "Row and Column",
+                        detail: "Direction, gap, and alignment. Grow takes the free space.",
+                    },
+                    DescItem {
+                        term: "Page",
+                        detail: "The app root. It scrolls. A layout stays mounted across navigation.",
+                    },
+                },
+                divided = true,
+            )
+            zui.Alert(
+                "One struct at the end",
+                "look = and on_click = work because they are fields of the last parameter. A named argument cannot fill an earlier parameter.",
+                tint = zeus.Tint.Info,
+            )
+        }
+    }
+}
+
+fn Routing() -> Node {
+    return zui.Column(prose.SECTION_GAP) {
+        zui.Column(prose.HEAD_GAP) {
+            zui.Overline("Zeus")
+            zui.Display("Files are the router")
+            zui.Body(
+                "routes/page.loam is /. A directory is a path segment. layout.loam stays mounted while navigation replaces the page slot. zeli routes generates the table. The generated file is not hand-edited.",
+            )
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            prose.CodeBlock([]string {
+                "routes/page.loam",
+                "routes/layout.loam",
+                "routes/language/page.loam",
+                "routes/language/ownership/page.loam",
+            })
+            zui.DescriptionList(
+                []DescItem {
+                    DescItem { term: "Page", detail: "fn Page(p: Params) -> Node. One per URL." },
+                    DescItem {
+                        term: "meta",
+                        detail: "Title and description for that route's HTML shell.",
+                    },
+                    DescItem {
+                        term: "layout",
+                        detail: "Wraps every page under that directory. This site has one, at the root.",
+                    },
+                    DescItem {
+                        term: "not-found",
+                        detail: "The fallback. This site's error page does not paint the trap text.",
+                    },
+                },
+                divided = true,
+            )
+            zui.Note(
+                "zeli serve rebuilds when a source file changes. zeli build writes one HTML file per route plus the wasm module.",
+            )
+        }
+    }
+}
+
+fn Hosts() -> Node {
+    return zui.Column(prose.SECTION_GAP) {
+        zui.Column(prose.HEAD_GAP) {
+            zui.Overline("Zeus")
+            zui.Display("Hosts and wasm")
+            zui.Body(
+                "One entry builds a page. A host presents it. The browser host is a canvas and a loader. macOS uses Cocoa, iOS uses UIKit, and Android uses its canvas. This site's zeus.toml lists the web target only, so the native hosts are not in the published module.",
+            )
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            zui.DescriptionList(
+                []DescItem {
+                    DescItem {
+                        term: "web",
+                        detail: "wasm32, canvas, loader.js. zeli serve defaults to port 5173.",
+                    },
+                    DescItem {
+                        term: "#[server]",
+                        detail: "The body is omitted from a wasm client. This site defines none.",
+                    },
+                    DescItem {
+                        term: "Paths",
+                        detail: "A wasm build records locations relative to the working directory and drops other absolute paths to a file name.",
+                    },
+                    DescItem {
+                        term: "Playground",
+                        detail: "An interpreter in the page. It does not call the compiler or the host.",
+                    },
+                },
+                divided = true,
+            )
+            zui.Alert(
+                "Nothing on this site reads the machine",
+                "No working directory, no environment, and no secret is drawn. The playground refuses sys, net, and file imports.",
+                tint = zeus.Tint.Ok,
+            )
+        }
+    }
+}

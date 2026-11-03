@@ -1,0 +1,261 @@
+//! The playground: pick an example or write a program, run it in the page.
+
+import "std:zeus"
+import "std:spacing"
+import "std:colors"
+import "std:zui"
+import "std:str"
+import "runner.loam" as runner
+import "editor.loam" as editor
+import "highlight.loam" as highlight
+import "prose.loam" as prose
+
+/// Samples are written with `%{` and `}%` for interpolation braces: a Loam
+/// string literal cannot hold two opening braces without interpolating.
+fn tpl(s: string) -> string {
+    let o = string_from_bytes([]int { 123, 123 })
+    let c = string_from_bytes([]int { 125, 125 })
+    return str.replace_all(str.replace_all(s, "%{", o), "}%", c)
+}
+
+fn example_names() -> []string {
+    return []string {
+        "Hello",
+        "Functions",
+        "Loops",
+        "Structs and methods",
+        "Arrays and closures",
+        "Enums and switch",
+        "Strings",
+        "Runtime error",
+    }
+}
+
+fn example(i: int) -> string {
+    if i == 1 {
+        return tpl(
+            "import \"std:fmt\"\n\nfn fib(n: int) -> int {\n    if n < 2 {\n        return n\n    }\n    return fib(n - 1) + fib(n - 2)\n}\n\nfn main() {\n    for i in 0..10 {\n        fmt.println(\"fib(%{i}%) =\", fib(i))\n    }\n}\n",
+        )
+    }
+    if i == 2 {
+        return "import \"std:fmt\"\n\nfn main() {\n    for i in 1..16 {\n        if i % 15 == 0 {\n            fmt.println(\"FizzBuzz\")\n        } else if i % 3 == 0 {\n            fmt.println(\"Fizz\")\n        } else if i % 5 == 0 {\n            fmt.println(\"Buzz\")\n        } else {\n            fmt.println(i)\n        }\n    }\n\n    let mut n = 27\n    let mut steps = 0\n    while n != 1 {\n        n = if n % 2 == 0 { n / 2 } else { 3 * n + 1 }\n        steps += 1\n    }\n    fmt.println(\"collatz(27) takes\", steps, \"steps\")\n}\n"
+    }
+    if i == 3 {
+        return tpl(
+            "import \"std:fmt\"\n\nstruct Account {\n    owner: string,\n    balance: int,\n}\n\nfn deposit(a: &mut Account, amount: int) {\n    a.balance += amount\n}\n\nfn describe(a: &Account) -> string {\n    return \"%{a.owner}%: %{a.balance}%\"\n}\n\nfn main() {\n    let mut acct = Account { owner: \"ada\", balance: 10 }\n    deposit(acct, 5)    // borrowed as &mut for the call\n    acct.deposit(20)    // a method call: deposit(acct, 20)\n    fmt.println(acct.describe())\n}\n",
+        )
+    }
+    if i == 4 {
+        return "import \"std:fmt\"\n\nfn apply(xs: &[]int, f: fn(int) -> int) -> []int {\n    let mut out = []int {}\n    for i in 0..xs.len {\n        out.push(f(xs[i]))\n    }\n    return out\n}\n\nfn main() {\n    let xs = []int { 1, 2, 3, 4 }\n    let k = 10\n    let scaled = apply(xs, |x: int| { x * k })\n    let mut total = 0\n    for i in 0..scaled.len {\n        total += scaled[i]\n    }\n    fmt.println(scaled.len, \"values, total\", total)\n}\n"
+    }
+    if i == 5 {
+        return "import \"std:fmt\"\n\nenum Light {\n    Red,\n    Yellow,\n    Green,\n}\n\nfn next(l: Light) -> Light {\n    switch l {\n        case Light.Red:\n            return Light.Green\n        case Light.Green:\n            return Light.Yellow\n        default:\n            return Light.Red\n    }\n}\n\nfn name(l: Light) -> string {\n    switch l {\n        case Light.Red:\n            return \"red\"\n        case Light.Yellow:\n            return \"yellow\"\n        default:\n            return \"green\"\n    }\n}\n\nfn main() {\n    let mut l = Light.Red\n    for step in 0..4 {\n        fmt.println(step, name(l))\n        l = next(l)\n    }\n}\n"
+    }
+    if i == 6 {
+        return "import \"std:fmt\"\nimport \"std:str\"\n\nfn main() {\n    let line = \"  loam, zeus, wasm  \"\n    let parts = str.split(line.trim(), \", \")\n    for i in 0..parts.len {\n        let word = parts[i]\n        fmt.println(i, word.to_upper(), word.len)\n    }\n    fmt.println(str.join(parts, \" + \"))\n    fmt.println(\"has zeus:\", line.contains(\"zeus\"))\n}\n"
+    }
+    if i == 7 {
+        return "import \"std:fmt\"\n\nfn divide(a: int, b: int) -> int {\n    return a / b\n}\n\nfn main() {\n    fmt.println(divide(10, 2))\n    fmt.println(divide(1, 0))    // traps: division by zero\n}\n"
+    }
+    return "import \"std:fmt\"\n\nfn main() {\n    fmt.println(\"hello, loam\")\n}\n"
+}
+
+fn lines_of(s: string) -> []string {
+    let mut out = str.lines(s)
+    // The final newline of the last println is not an empty line.
+    if out.len > 0 && out[out.len - 1].len == 0 {
+        pop(out)
+    }
+    if out.len == 0 {
+        push(out, "")
+    }
+    return out
+}
+
+/// 0 not run, 1 ok, 2 error.
+fn status_text(state: int, line: int) -> string {
+    if state == 1 {
+        return "Finished"
+    }
+    if state == 2 {
+        return "Error on line {{line}}"
+    }
+    return "Not run yet"
+}
+
+fn status_color(state: int) -> string {
+    if state == 1 {
+        return colors.ok()
+    }
+    if state == 2 {
+        return zeus.danger()
+    }
+    return colors.mute()
+}
+
+/// A dot and a word that follow the run state.
+fn StatusPill(state: Signal<int>, line: Signal<int>) -> Node {
+    return zeus.Box(style = Style(
+        direction = Direction.Row,
+        align = Align.Center,
+        gap = 6,
+        height = px(24),
+        paddingX = 10,
+        radius = 12,
+        borderWidth = 1,
+        borderColor = colors.rule(),
+    )) {
+        zeus.Box(style = Style(
+            width = px(7),
+            height = px(7),
+            radius = 4,
+            background = status_color(state.get()),
+        ))
+        zeus.Text(
+            fn() -> string {
+                return status_text(state.get(), line.get())
+            },
+            style = Style(font = spacing.FONT_CAPTION, color = status_color(state.get())),
+        )
+    }
+}
+
+fn OutLine(line: string, tone: string) -> Node {
+    let shown = if line.len == 0 { " " } else { line }
+    return zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, minHeight = 20)) {
+        zeus.Text(shown, style = Style(font = highlight.CODE_FONT, color = tone))
+    }
+}
+
+fn Playground() -> Node {
+    let pick = zeus.signal(0)
+    let src = zeus.signal(example(0))
+    let out = zeus.signal("")
+    let err = zeus.signal("")
+    let state = zeus.signal(0)
+    let err_line = zeus.signal(0)
+    fn run() {
+        let r = runner.run_source(src.get())
+        out.set(r.out)
+        err.set(r.err)
+        err_line.set(r.line)
+        state.set(if r.ok { 1 } else { 2 })
+    }
+    fn reset_output() {
+        out.set("")
+        err.set("")
+        state.set(0)
+    }
+    zeus.effect(fn() {
+        let i = pick.get()
+        src.set(example(i))
+        reset_output()
+    })
+    return zui.Column(Space.Xl) {
+        zui.Column(prose.HEAD_GAP) {
+            zui.Overline("Playground")
+            zui.Display("Run Loam in the browser")
+            zui.Body(
+                "Programs run in this page, in the site's wasm module, with no server. The runner covers the everyday language: functions and recursion, closures, structs, enums, arrays, if, while, for, switch, interpolation, and method calls. It imports std:fmt, std:str, and std:math, and refuses files and host modules.",
+            )
+        }
+        zui.Column(Space.Xs) {
+            zeus.Box(style = Style(
+                direction = Direction.Row,
+                align = Align.Center,
+                gap = Space.Sm,
+                wrap = true,
+                width = pct(100),
+            )) {
+                zui.Label("Example")
+                zui.Select(pick, example_names())
+                zui.Grow()
+                zui.Button("Reset", look = zeus.Look.Ghost, on_click = fn() {
+                    src.set(example(pick.get()))
+                    reset_output()
+                })
+                zui.Button("Run", look = zeus.Look.Solid, on_click = fn() => run())
+            }
+            editor.CodeEditor(src, fn() => run())
+            zeus.Box(style = Style(
+                direction = Direction.Row,
+                align = Align.Center,
+                gap = Space.Sm,
+                wrap = true,
+            )) {
+                zui.KbdCombo("cmd+enter")
+                zui.Note("run")
+                zui.KbdCombo("tab")
+                zui.Note("indent")
+                zui.KbdCombo("cmd+/")
+                zui.Note("comment")
+                zui.KbdCombo("cmd+z")
+                zui.Note("undo")
+                zui.KbdCombo("esc")
+                zui.Note("leave the editor")
+            }
+        }
+        zeus.Box(style = Style(
+            direction = Direction.Column,
+            gap = Space.Sm,
+            padding = 16,
+            radius = 10,
+            width = pct(100),
+            background = colors.plate(),
+            borderWidth = 1,
+            borderColor = colors.rule(),
+        )) {
+            zeus.Box(style = Style(
+                direction = Direction.Row,
+                align = Align.Center,
+                gap = Space.Sm,
+                width = pct(100),
+            )) {
+                zui.Title("Output")
+                zui.Grow()
+                StatusPill(state, err_line)
+            }
+            zui.Show(when = state.get() == 0) {
+                zui.Note("Press Run, or Cmd/Ctrl+Enter in the editor.")
+            }
+            zui.Show(when = state.get() != 0 && out.get().len == 0 && err.get().len == 0) {
+                zui.Note("The program printed nothing.")
+            }
+            zui.Show(when = out.get().len > 0) {
+                zeus.Box(style = Style(direction = Direction.Column, width = pct(100))) {
+                    zui.Each(
+                        fn() -> []string {
+                            return lines_of(out.get())
+                        },
+                        fn(i: int, line: string) -> Node {
+                            return OutLine(line, zeus.ink())
+                        },
+                    )
+                }
+            }
+            zui.Show(when = err.get().len > 0) {
+                zeus.Box(style = Style(
+                    direction = Direction.Row,
+                    align = Align.Center,
+                    minHeight = 20,
+                    gap = Space.Xs,
+                )) {
+                    zeus.Text(
+                        fn() -> string {
+                            let n = err_line.get()
+                            let e = err.get()
+                            return "line {{n}}: {{e}}"
+                        },
+                        style = Style(font = highlight.CODE_FONT, color = zeus.danger()),
+                    )
+                }
+            }
+        }
+        zui.Column(prose.HEAD_GAP) {
+            zui.SectionTitle("Scope", "What the browser runner leaves out")
+            zui.Body(
+                "It is an interpreter, not loamc: it does not typecheck or borrow-check, so a program it runs may still fail to compile. Result and Option, generics, Box, threads, files, and the network are compiler-only. Int is i32 and traps on overflow, like compiled Loam. A program stops after a million steps or 160 nested calls.",
+            )
+        }
+    }
+}

@@ -1,0 +1,69 @@
+//! Root shell. Retained across navigation, so the bar and the theme survive.
+//!
+//! One centered column: the top bar, then the sidebar beside the page, then
+//! the footer. Under `shell.WIDE` the sidebar folds away; the top bar's links
+//! still reach every section.
+
+import "std:zeus"
+import "std:zui"
+import "std:router"
+import "../theme.loam" as theme
+import "../components/shell.loam" as shell
+
+fn Layout(build: fn()) -> Node {
+    theme.install()
+    let width = shell.page_w
+    let column = zeus.ref()
+    // A new page starts at its top. The root scroller is the column's
+    // outermost ancestor; the router keeps scroll across navigation.
+    zeus.effect(fn() {
+        let path = router.path_signal().get()
+        let mut id = zeus.ref_id(column)
+        if id <= 0 || path.len == 0 {
+            return
+        }
+        while zeus.node_parent(id) > 0 {
+            id = zeus.node_parent(id)
+        }
+        zeus.scroll_to(zeus.node_handle(id), 0)
+    })
+    return zui.Page() {
+        zeus.Box(
+            ref = column,
+            on_resize = fn(r: Rect) {
+                if r.w > 0 && r.w != width.peek() {
+                    width.set(r.w)
+                }
+            },
+            style = Style(
+                direction = Direction.Column,
+                width = pct(100),
+                maxWidth = 1160,
+                alignSelf = Align.Center,
+            ),
+        ) {
+            shell.Topbar()
+            zeus.Box(style = Style(
+                direction = Direction.Row,
+                gap = 48,
+                align = Align.Start,
+                width = pct(100),
+                paddingTop = 32,
+            )) {
+                zui.Show(when = shell.wide()) {
+                    shell.Sidebar()
+                }
+                zeus.Box(style = Style(
+                    grow = 1,
+                    minWidth = 0,
+                    maxWidth = 840,
+                    direction = Direction.Column,
+                )) {
+                    build()
+                }
+            }
+            shell.Footer()
+        }
+        shell.MenuDrawer()
+    }
+}

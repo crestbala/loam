@@ -1,0 +1,10 @@
+import "std:zeus"
+import "std:spacing"
+import "std:zui"
+
+fn NotFound() -> Node {
+    return zui.Column(spacing.SECTION) {
+        zui.Heading("not found")
+        zui.Body("That path is not a page on this site.")
+    }
+}

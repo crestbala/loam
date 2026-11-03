@@ -598,10 +598,13 @@ fn row_child_w(id: int, c: int, inner_width: int) -> int {
 /// gaps: `n` children at `100 / n` percent fill exactly one line, where a
 /// plain share of the width plus the gaps between them would overflow it and
 /// wrap every cell onto its own line (the reason CSS grids reach for
-/// `calc(50% - gap / 2)`). Everything else sizes as in any row.
+/// `calc(50% - gap / 2)`). An explicit `pct(100)` is a full line; the
+/// default 100 every node starts with still sizes to the content, as in any
+/// row. Everything else sizes as in any row.
 fn wrap_child_w(id: int, c: int, inner_width: int) -> int {
     let pc = int(nodes.lay[c].w_pct)
-    if nodes.lay[c].explicit_width < 0 && pc > 0 && pc < 100 {
+    let full = pc == 100 && int(nodes.lay[c].w_pct_set) != 0
+    if nodes.lay[c].explicit_width < 0 && pc > 0 && (pc < 100 || full) {
         let gx = nodes.gap_x(id)
         let avail = inner_width - nodes.pin[c].m_l - nodes.pin[c].m_r
         let w = (inner_width + gx) * pc / 100 - gx
@@ -829,6 +832,11 @@ fn layout_flex_row_wrap(id: int) {
     let mut y = 0
     line_start = 0
     first = 1
+    // A child can end up taller than its measured line height once its own
+    // text wraps at the final width (a card with a wrapped paragraph). The
+    // next line starts below the tallest child actually laid out, so wrapped
+    // lines never overlap.
+    let mut line_real = 0
     for i in 0..nk {
         let c = nodes.tree[id].kids[i]
         if arena.skip_flow(c) == 0 {
@@ -836,9 +844,11 @@ fn layout_flex_row_wrap(id: int) {
             let span = cw + nodes.pin[c].m_l + nodes.pin[c].m_r
             if first == 0 {
                 if x + span > inner_width {
-                    y = y + nodes.box[nodes.tree[id].kids[line_start]].ah + gy
+                    let planned = nodes.box[nodes.tree[id].kids[line_start]].ah
+                    y = y + geometry.max2(planned, line_real) + gy
                     x = 0
                     line_start = i
+                    line_real = 0
                 }
             }
             first = 0
@@ -855,6 +865,10 @@ fn layout_flex_row_wrap(id: int) {
                 ch + nodes.pin[c].m_t + nodes.pin[c].m_b,
             ) + nodes.pin[c].m_t
             layout_node(c, x0 + x + nodes.pin[c].m_l, cy, cw, ch)
+            let real = nodes.box[c].y + nodes.box[c].h + nodes.pin[c].m_b - (y0 + y)
+            if real > line_real {
+                line_real = real
+            }
             x = x + span + gx
         }
     }

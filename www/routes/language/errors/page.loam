@@ -1,0 +1,15 @@
+import "std:zeus"
+import "std:zui"
+import "std:router"
+import "../../../components/language.loam" as language
+
+fn Page(p: Params) -> Node {
+    return language.Errors()
+}
+
+fn meta(p: Params) -> Meta {
+    return Meta {
+        title: "Errors — Loam",
+        description: "Result, Option, and the ? operator.",
+    }
+}

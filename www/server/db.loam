@@ -1,0 +1,1 @@
+//! No database. The site does not open a connection or store a secret.

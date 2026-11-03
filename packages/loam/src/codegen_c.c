@@ -138,6 +138,9 @@ static int test_mode;
 /* `#[server]` splitting: on a client target, a server fn's body is replaced by
    a trap stub, so the body (and its literals) never reach the client binary. */
 static int server_split;
+/* Absolute prefix stripped from paths written into the generated C.
+   Set for wasm so a published binary does not carry the build machine. */
+static const char *path_strip;
 
 void codegen_set_test_mode(int on) {
     test_mode = on;
@@ -145,6 +148,28 @@ void codegen_set_test_mode(int on) {
 
 void codegen_set_server_split(int on) {
     server_split = on;
+}
+
+void codegen_set_path_strip(const char *prefix) {
+    path_strip = (prefix && prefix[0]) ? prefix : NULL;
+}
+
+/* Path safe to embed. Under `path_strip`, the relative tail. Any other
+   absolute path contributes only its final component. */
+static const char *public_file(const char *file) {
+    if (!file || !file[0]) return "loam";
+    if (path_strip) {
+        size_t n = strlen(path_strip);
+        if (strncmp(file, path_strip, n) == 0 && (file[n] == '/' || file[n] == '\0')) {
+            if (file[n] == '\0') return "loam";
+            return file + n + 1;
+        }
+    }
+    if (file[0] == '/') {
+        const char *base = strrchr(file, '/');
+        if (base && base[1]) return base + 1;
+    }
+    return file;
 }
 
 static void indent(FILE *o, int n) {
@@ -169,7 +194,7 @@ static void emit_line_directive(FILE *o, SourceLoc loc) {
         fprintf(o, "#line %d\n", loc.line);
     } else {
         fprintf(o, "#line %d \"", loc.line);
-        for (const char *p = loc.file; *p; p++) {
+        for (const char *p = public_file(loc.file); *p; p++) {
             if (*p == '\\' || *p == '"') fputc('\\', o);
             fputc(*p, o);
         }
@@ -585,7 +610,7 @@ static const char *src_file(AstNode *n) {
 /** File and line arguments for loam_panic / loam_idx / loam_new. */
 static void emit_loc_args(FILE *o, AstNode *n) {
     fprintf(o, "\"");
-    const char *f = src_file(n);
+    const char *f = public_file(src_file(n));
     for (const char *p = f; *p; p++) {
         if (*p == '\\' || *p == '"') fputc('\\', o);
         fputc(*p, o);
@@ -2079,7 +2104,7 @@ static const char *lv(int id) {
 
 static void emit_ir_loc(FILE *o, SourceLoc loc) {
     fprintf(o, "\"");
-    const char *f = loc.file ? loc.file : "loam";
+    const char *f = public_file(loc.file ? loc.file : "loam");
     for (const char *p = f; *p; p++) {
         if (*p == '\\' || *p == '"') fputc('\\', o);
         fputc(*p, o);

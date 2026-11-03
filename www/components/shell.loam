@@ -1,0 +1,308 @@
+//! Site chrome: the top bar, the section sidebar, and the footer. Every entry
+//! is a real URL.
+
+import "std:zeus"
+import "std:colors"
+import "std:spacing"
+import "std:zui"
+import "std:router"
+
+/// Below this content width the sidebar folds away and the top bar wraps.
+const WIDE: int = 920
+
+/// Width of the site column, set by the layout. Pages size grids from it.
+let page_w = zeus.signal(1200)
+
+/// The navigation drawer on narrow screens.
+let menu_open = zeus.signal(false)
+
+const MENU_ICON: string = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' d='M4 7h16M4 12h16M4 17h16'/></svg>"
+const CLOSE_ICON: string = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' d='M6 6l12 12M18 6L6 18'/></svg>"
+
+/// True while the page is wide enough for the sidebar and the top links.
+fn wide() -> bool {
+    return page_w.get() >= WIDE
+}
+
+/// Go to `href` and close the drawer, if it is open.
+fn go(href: string) {
+    menu_open.set(false)
+    router.navigate(href)
+}
+
+/// Width left for a page's content: the column, less the sidebar and its gap
+/// when the sidebar shows.
+fn content_w() -> int {
+    let w = page_w.get()
+    if w >= WIDE {
+        let rest = w - 248
+        return if rest > 840 { 840 } else { rest }
+    }
+    return w
+}
+
+fn starts_with(path: string, href: string) -> bool {
+    if href.len == 0 || href == "/" {
+        return false
+    }
+    if path.len < href.len {
+        return false
+    }
+    for i in 0..href.len {
+        if path[i] != href[i] {
+            return false
+        }
+    }
+    if path.len == href.len {
+        return true
+    }
+    return path[href.len] == 47
+}
+
+fn NavLink(label: string, href: string) -> Node {
+    let path = router.path_signal()
+    fn active() -> bool {
+        return starts_with(path.get(), href) || path.get() == href
+    }
+    return zeus.Box(
+        style = Style(
+            height = px(32),
+            direction = Direction.Row,
+            align = Align.Center,
+            paddingX = 10,
+            radius = 6,
+            cursor = "pointer",
+            background = if active() { colors.raised() } else { "" },
+        ),
+        hoverStyle = fn() -> Style {
+            return Style(background = colors.raised())
+        },
+        on_click = fn() => go(href),
+        role = "link",
+        label = label,
+    ) {
+        zeus.Text(
+            label,
+            style = Style(font = spacing.FONT_BODY, color = if active() {
+                zeus.ink()
+            } else {
+                colors.mute()
+            }),
+        )
+    }
+}
+
+fn Brand() -> Node {
+    return zeus.Box(
+        style = Style(
+            direction = Direction.Row,
+            align = Align.Center,
+            gap = 10,
+            cursor = "pointer",
+        ),
+        on_click = fn() => go("/"),
+        role = "link",
+        label = "Loam home",
+    ) {
+        zeus.Box(style = Style(
+            width = px(26),
+            height = px(26),
+            radius = 7,
+            direction = Direction.Row,
+            align = Align.Center,
+            justify = Align.Center,
+            background = zeus.accent(),
+        )) {
+            zeus.Text("L", style = Style(font = spacing.FONT_TITLE, color = colors.on_accent()))
+        }
+        zeus.Text("Loam", style = Style(font = spacing.FONT_TITLE, color = zeus.ink()))
+    }
+}
+
+fn Topbar() -> Node {
+    return zeus.Box(style = Style(direction = Direction.Column, gap = 0, width = pct(100))) {
+        zeus.Box(style = Style(
+            direction = Direction.Row,
+            align = Align.Center,
+            gap = 4,
+            wrap = true,
+            width = pct(100),
+            paddingBottom = 14,
+        )) {
+            zui.Show(when = !wide()) {
+                zui.IconButton(
+                    MENU_ICON,
+                    zeus.Look.Ghost,
+                    Size.Md,
+                    "Open navigation",
+                    on_click = fn() => menu_open.set(true),
+                )
+            }
+            Brand()
+            zui.Show(when = wide()) {
+                zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 4, paddingLeft = 20)) {
+                    NavLink("Language", "/language")
+                    NavLink("Types", "/types")
+                    NavLink("Zeus", "/zeus")
+                    NavLink("Components", "/components")
+                    NavLink("Tooling", "/tooling")
+                    NavLink("Playground", "/playground")
+                }
+            }
+            zui.Grow()
+            zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 8)) {
+                zeus.Text("Dark", style = Style(font = spacing.FONT_CONTROL, color = colors.mute()))
+                zui.ThemeSwitch()
+            }
+        }
+        zui.Separator()
+    }
+}
+
+fn SideLink(label: string, href: string) -> Node {
+    let path = router.path_signal()
+    fn active() -> bool {
+        return path.get() == href
+    }
+    return zeus.Box(
+        style = Style(
+            width = pct(100),
+            height = px(30),
+            direction = Direction.Row,
+            align = Align.Center,
+            paddingX = 10,
+            radius = 6,
+            cursor = "pointer",
+            background = if active() { colors.raised() } else { "" },
+        ),
+        hoverStyle = fn() -> Style {
+            return Style(background = colors.raised())
+        },
+        on_click = fn() => go(href),
+        role = "link",
+        label = label,
+    ) {
+        zeus.Text(
+            label,
+            style = Style(font = spacing.FONT_BODY, color = if active() {
+                zeus.ink()
+            } else {
+                colors.mute()
+            }),
+        )
+    }
+}
+
+/// A group heading. It is a link to the group's overview page.
+fn Group(title: string, href: string) -> Node {
+    let path = router.path_signal()
+    fn active() -> bool {
+        return path.get() == href
+    }
+    return zeus.Box(
+        style = Style(
+            width = pct(100),
+            height = px(30),
+            direction = Direction.Row,
+            align = Align.Center,
+            paddingX = 10,
+            marginTop = 12,
+            radius = 6,
+            cursor = "pointer",
+            background = if active() { colors.raised() } else { "" },
+        ),
+        hoverStyle = fn() -> Style {
+            return Style(background = colors.raised())
+        },
+        on_click = fn() => go(href),
+        role = "link",
+        label = title,
+    ) {
+        zeus.Text(title, style = Style(font = spacing.FONT_CONTROL, color = zeus.ink()))
+    }
+}
+
+fn Sidebar() -> Node {
+    return zeus.Box(style = Style(
+        width = px(200),
+        shrink = 0,
+        direction = Direction.Column,
+        gap = 2,
+    )) {
+        Group("Language", "/language")
+        SideLink("Ownership", "/language/ownership")
+        SideLink("Control flow", "/language/control")
+        SideLink("Errors", "/language/errors")
+        SideLink("Modules", "/language/modules")
+        SideLink("Functions", "/language/functions")
+        Group("Types", "/types")
+        SideLink("Numbers", "/types/numbers")
+        SideLink("Aggregates", "/types/aggregates")
+        SideLink("Text", "/types/text")
+        SideLink("Memory", "/types/memory")
+        Group("Zeus", "/zeus")
+        SideLink("Signals", "/zeus/signals")
+        SideLink("Views", "/zeus/views")
+        SideLink("Routing", "/zeus/routing")
+        SideLink("Hosts", "/zeus/hosts")
+        Group("Tooling", "/tooling")
+        SideLink("Formatter", "/tooling/fmt")
+        SideLink("Tests", "/tooling/tests")
+        Group("Components", "/components")
+        Group("Playground", "/playground")
+    }
+}
+
+/// The sidebar in a drawer from the start edge, for narrow screens. Every
+/// link closes it; so do Escape and a tap outside.
+fn MenuDrawer() -> Node {
+    return zui.Drawer(menu_open, side = Side.SideStart, size = 280) {
+        zeus.Box(style = Style(
+            direction = Direction.Column,
+            gap = 8,
+            width = pct(100),
+            grow = 1,
+            minHeight = 0,
+        )) {
+            zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, width = pct(100))) {
+                Brand()
+                zui.Grow()
+                zui.IconButton(
+                    CLOSE_ICON,
+                    zeus.Look.Ghost,
+                    Size.Md,
+                    "Close navigation",
+                    on_click = fn() => menu_open.set(false),
+                )
+            }
+            zui.Separator()
+            zui.Scroll(style = Style(direction = Direction.Column, grow = 1, minHeight = 0, width = pct(100))) {
+                SideLink("Home", "/")
+                Sidebar()
+            }
+        }
+    }
+}
+
+fn Footer() -> Node {
+    return zeus.Box(style = Style(
+        direction = Direction.Column,
+        gap = 14,
+        width = pct(100),
+        marginTop = 64,
+    )) {
+        zui.Separator()
+        zeus.Box(style = Style(
+            direction = Direction.Row,
+            align = Align.Center,
+            gap = 16,
+            wrap = true,
+            width = pct(100),
+        )) {
+            zeus.Text(
+                "Loam. This site is a Loam program, compiled to WebAssembly and drawn by Zeus.",
+                style = Style(font = spacing.FONT_CONTROL, color = colors.mute(), wrap = true),
+            )
+        }
+    }
+}

@@ -1,0 +1,6 @@
+//! The published site has no backend.
+//!
+//! Do not add credentials, host paths, environment reads, or filesystem
+//! access here. This app's zeus.toml lists only the web target, and the
+//! entry does not import this file, so nothing in server/ is linked into
+//! the wasm module.

@@ -1,0 +1,173 @@
+//! Opening page: what Loam is, a sample, the compile pipeline, and where to go next.
+
+import "std:zeus"
+import "std:spacing"
+import "std:colors"
+import "std:zui"
+import "std:router"
+import "prose.loam" as prose
+import "shell.loam" as shell
+
+/// Percent width of a tile: three to a row on a wide page, two on a
+/// tablet, one on a phone. A wrapping row shares its gaps between percent
+/// children, so the tiles fill each line exactly.
+fn tile_pct() -> int {
+    let w = shell.content_w()
+    if w >= 640 {
+        return 33
+    }
+    if w >= 420 {
+        return 50
+    }
+    return 100
+}
+
+/// A wrapping row of tiles.
+fn TileGrid(build: fn()) -> Node {
+    return zeus.Box(style = Style(
+        direction = Direction.Row,
+        wrap = true,
+        gap = 16,
+        width = pct(100),
+    )) {
+        build()
+    }
+}
+
+/// A bordered card. `href` makes the whole card a link.
+fn Tile(title: string, body: string, href: string) -> Node {
+    return zeus.Box(
+        style = Style(
+            direction = Direction.Column,
+            gap = 6,
+            padding = 16,
+            radius = 10,
+            width = pct(tile_pct()),
+            background = colors.plate(),
+            borderWidth = 1,
+            borderColor = colors.rule(),
+            cursor = if href.len > 0 { "pointer" } else { "" },
+        ),
+        hoverStyle = fn() -> Style {
+            return Style(borderColor = if href.len > 0 { zeus.accent() } else { colors.rule() })
+        },
+        on_click = fn() {
+            if href.len > 0 {
+                router.navigate(href)
+            }
+        },
+        role = if href.len > 0 { "link" } else { "" },
+        label = title,
+    ) {
+        zeus.Text(title, style = Style(font = spacing.FONT_TITLE, color = zeus.ink()))
+        zeus.Text(body, style = Style(font = spacing.FONT_BODY, color = colors.mute(), wrap = true))
+    }
+}
+
+fn Home() -> Node {
+    return zui.Column(prose.SECTION_GAP) {
+        zui.Column(prose.HEAD_GAP) {
+            zui.Overline("The Loam language")
+            zui.Display("A memory-safe systems language")
+            zui.Body(
+                "Loam reads like Odin and checks ownership like Rust. The compiler typechecks and borrow-checks a program, lowers it to IR, and emits C for the system compiler. Its standard UI, Zeus, draws the same app on the web, macOS, iOS, and Android. This site is a Loam program built for the web.",
+            )
+            zui.RowWrap(Space.Sm) {
+                zui.Button(
+                    "Open the playground",
+                    look = zeus.Look.Solid,
+                    on_click = fn() => router.navigate("/playground"),
+                )
+                zui.Button(
+                    "Take the language tour",
+                    look = zeus.Look.Outline,
+                    on_click = fn() => router.navigate("/language"),
+                )
+            }
+        }
+        TileGrid(fn() {
+            Tile(
+                "Ownership, no collector",
+                "Moves and borrows are checked at compile time. A borrow ends at its last use.",
+                "",
+            )
+            Tile(
+                "C out",
+                "One Loam program becomes one C file. Proven indexes skip their bounds checks.",
+                "",
+            )
+            Tile(
+                "One UI on every host",
+                "Zeus signals and components run on the web, macOS, iOS, and Android.",
+                "",
+            )
+        })
+        zui.Column(prose.BLOCK_GAP) {
+            zui.SectionHeader(
+                "A first program",
+                "Structs, borrows, and interpolation",
+                "fmt.println writes its arguments by length, with spaces between. Load the Structs example in the playground to run it.",
+            )
+            prose.CodeBlock([]string {
+                "import \"std:fmt\"",
+                "",
+                "struct Counter {",
+                "    name: string,",
+                "    count: int,",
+                "}",
+                "",
+                "fn bump(c: &mut Counter) {",
+                "    c.count += 1",
+                "}",
+                "",
+                "fn main() {",
+                "    let mut c = Counter { name: \"tick\", count: 0 }",
+                "    bump(c)",
+                "    c.bump()",
+                prose.join3("    fmt.println(\"", "{{", "c.name}}\", c.count)"),
+                "}",
+            })
+            zui.Note("loamc counter.loam -o counter && ./counter    prints: tick 2")
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            zui.SectionHeader(
+                "Pipeline",
+                "What the compiler does",
+                "Each stage rejects the program before the next one runs.",
+            )
+            zui.DescriptionList(
+                []DescItem {
+                    DescItem { term: "Load", detail: "Resolve imports. Cycles are errors." },
+                    DescItem { term: "Lex and parse", detail: "Tokens become an AST." },
+                    DescItem { term: "Typecheck", detail: "Names, types, auto-borrow, generics." },
+                    DescItem {
+                        term: "Borrow check",
+                        detail: "Exclusive and shared borrows, moves, last use.",
+                    },
+                    DescItem { term: "Bounds", detail: "Proven indexes skip the runtime trap." },
+                    DescItem { term: "IR and C", detail: "A C file, then the system compiler." },
+                },
+                divided = true,
+            )
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            zui.SectionTitle("Explore", "Where to go next")
+            TileGrid(fn() {
+                Tile(
+                    "Language",
+                    "Ownership, control flow, errors, modules, and closures.",
+                    "/language",
+                )
+                Tile("Types", "Numeric widths, structs and enums, strings, and memory.", "/types")
+                Tile("Zeus", "Signals, views, file routing, and the hosts.", "/zeus")
+                Tile(
+                    "Components",
+                    "The core zeus-components, live, with the calls that build them.",
+                    "/components",
+                )
+                Tile("Tooling", "loamc, the formatter, the language server, and tests.", "/tooling")
+                Tile("Playground", "Edit a program and run it here, in the page.", "/playground")
+            })
+        }
+    }
+}

@@ -105,6 +105,10 @@ struct LayRec {
     overflow: u8,
     w_pct: i8,
     h_pct: i8,
+    /// 1 when the width percent was set on purpose (`width = pct(n)`), not
+    /// the 100 every node starts with. A wrapping row gives an explicit 100
+    /// a full line; the default still sizes to the content.
+    w_pct_set: u8,
 }
 
 /// Placement inputs: margins, align-self, absolute pins, grid cell, safe
@@ -380,7 +384,7 @@ fn blank_lay() -> LayRec {
         max_w: -1, min_h: -1, max_h: -1, w_pct: 100, h_pct: -1, aspect_w: 0,
         aspect_h: 0, pad: 0, padx: 0, pady: 0, pad_t: 0, pad_r: 0, pad_b: 0, pad_l: 0,
         border_w: 0, dir: 0, justify: 0, align: 0, wrap: 0, reverse: 0, gap: 0,
-        gap_row: 0, gap_col: 0, overflow: 0,
+        gap_row: 0, gap_col: 0, overflow: 0, w_pct_set: 0,
     }
 }
 

@@ -858,6 +858,7 @@ fn set_width(node: Node, px: int) -> Node {
         nodes.lay[node.id].explicit_width = px
         nodes.lay[node.id].w_pct = -1
     }
+    nodes.lay[node.id].w_pct_set = 0
     touched(node.id, 1)
     return node
 }
@@ -877,6 +878,7 @@ fn set_height(node: Node, px: int) -> Node {
 /// must keep a fixed pixel width use `.set_width(px)` instead.
 fn set_flex_basis_zero(node: Node) -> Node {
     nodes.lay[node.id].w_pct = 0
+    nodes.lay[node.id].w_pct_set = 0
     touched(node.id, 1)
     return node
 }
@@ -891,6 +893,7 @@ fn size_px(node: Node, px: int) -> Node {
 fn width_pct(node: Node, percent_value: int) -> Node {
     nodes.lay[node.id].explicit_width = -1
     nodes.lay[node.id].w_pct = i8(percent_value)
+    nodes.lay[node.id].w_pct_set = 1
     touched(node.id, 1)
     return node
 }
@@ -2255,7 +2258,14 @@ struct MouseEvent {
     x: int,
     y: int,
     button: int,
+    /// Inside `on_drag`: true for the press that starts the drag, false for
+    /// the moves after it.
+    first: bool,
 }
+
+/// `KeyEvent.key` for text typed, pasted, or committed by an IME into a box
+/// marked `capture_text` (a code editor). The text is in `KeyEvent.text`.
+const KEY_TEXT: int = 2000
 
 /// Keyboard payload, staged by the engine and read inside a handler.
 struct KeyEvent {
@@ -2263,6 +2273,11 @@ struct KeyEvent {
     ctrl: bool,
     shift: bool,
     alt: bool,
+    /// Cmd on macOS, the Windows / Super key elsewhere.
+    meta: bool,
+    /// For `key == KEY_TEXT` (2000): the typed, pasted, or IME-committed text
+    /// a `capture_text` box receives. Empty for every other key.
+    text: string,
 }
 
 /// `v` when the caller set it (>= 0), else the recipe's `fallback`. Both
@@ -2287,7 +2302,12 @@ fn str_or_default(v: string, fallback: string) -> string {
 /// The event payload for the handler now running. A handler is invoked with
 /// no arguments, so `fn(e: MouseEvent)` is lowered to a `let` of this.
 fn current_mouse() -> MouseEvent {
-    return MouseEvent { x: arena.ev_x, y: arena.ev_y, button: arena.ev_button }
+    return MouseEvent {
+        x: arena.ev_x,
+        y: arena.ev_y,
+        button: arena.ev_button,
+        first: arena.ev_drag_first != 0,
+    }
 }
 
 fn current_key() -> KeyEvent {
@@ -2296,6 +2316,8 @@ fn current_key() -> KeyEvent {
         ctrl: arena.ev_mods % 4 >= 2,
         shift: arena.ev_mods % 2 == 1,
         alt: arena.ev_mods % 8 >= 4,
+        meta: arena.ev_mods % 16 >= 8,
+        text: arena.ev_text,
     }
 }
 
@@ -2336,6 +2358,9 @@ struct BoxProps {
     loading: Option<fn() -> bool> = none,
     /// Tab stop. A thunk, so `focusable = active()` follows state.
     focusable: Option<fn() -> bool> = none,
+    /// A custom text editor: focusable, and while focused it receives typed,
+    /// pasted, and IME text as `KEY_TEXT` key events (`current_key().text`).
+    captureText: bool = false,
     /// Roving tab stop (one per tab list / radio group): focusable only while
     /// true, and it takes focus when it becomes true while focus is already in
     /// the group (arrow keys); a pick made from outside leaves focus alone.
@@ -2787,6 +2812,9 @@ fn install_mounted(node: Node, p: BoxProps) {
 
 fn install_behaviour(node: Node, p: BoxProps) {
     let node_id = node.id
+    if p.captureText {
+        capture_text(node)
+    }
     if result.is_some(p.focusable) {
         let f = p.focusable.val
         node_effect(node, || {
