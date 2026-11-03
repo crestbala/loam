@@ -91,3 +91,7 @@ fn alloc_count() -> int {}
 /// started with `ZEUS_MEM_STATS=1`. Phase 0 instrumentation only — no
 /// allocation decision reads it.
 fn mem_stats() -> int {}
+/// Bind (1) or unbind (0) the trace host: a `ZeusDraw` that prints every call
+/// a host would receive, one line each. Headless tests use it to cover the path
+/// from the draw list to a host.
+fn trace_draw(on: int) {}

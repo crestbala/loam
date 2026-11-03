@@ -275,90 +275,57 @@ fn restore() {
 /// 1 when this op needs a host alpha layer. Text has no alpha argument, so
 /// present() wraps it in `plat_alpha` / `plat_restore` — extra host calls,
 /// not extra draw-list ops (`draw_count` stays the open-panel count).
-fn text_needs_alpha(alpha: int) -> int {
-    if alpha < 255 {
-        platform.plat_alpha(alpha)
-        return 1
+/// Ints per op in the frame buffer: `kind x y w h rgb radius alpha font value`
+/// and the op's string index (-1 when it has none). The fields are the `Draw`
+/// record's, unchanged, so the buffer is the draw list itself, flattened.
+const FRAME_STRIDE: int = 11
+
+/// The frame handed to the host: `FRAME_STRIDE` ints per op, and the strings
+/// text / svg / image ops point into. Reused across frames, so a steady frame
+/// allocates nothing.
+let mut frame_ops: []int = []int {}
+let mut frame_strs: []string = []string {}
+
+fn frame_put(i: int, v: int) {
+    if i < frame_ops.len {
+        frame_ops[i] = v
+    } else {
+        push(frame_ops, v)
     }
-    return 0
 }
 
+/// Hand the draw list to the host as one command buffer. The runtime replays
+/// it into the host's `ZeusDraw` (`zeus_replay` in zeus_plat.c), so this is the
+/// only paint call a frame makes across the seam.
 fn present() {
     let n = draws.len
+    let mut ns = 0
     for i in 0..n {
         let d = draws[i]
-        if d.kind == 0 {
-            platform.plat_fill(d.x, d.y, d.w, d.h, d.rgb, d.radius)
-        } else if d.kind == 1 {
-            platform.plat_fill_a(d.x, d.y, d.w, d.h, d.rgb, d.radius, d.alpha)
-        } else if d.kind == 2 {
-            let wrap = text_needs_alpha(d.alpha)
-            platform.plat_text(d.x, d.y, d.text, d.rgb, d.font)
-            if wrap != 0 {
-                platform.plat_restore()
+        let o = i * FRAME_STRIDE
+        let mut si = -1
+        if d.text.len > 0 {
+            if ns < frame_strs.len {
+                frame_strs[ns] = d.text
+            } else {
+                push(frame_strs, d.text)
             }
-        } else if d.kind == 3 {
-            let wrap = text_needs_alpha(d.alpha)
-            platform.plat_text_int(d.x, d.y, d.value, d.rgb, d.font)
-            if wrap != 0 {
-                platform.plat_restore()
-            }
-        } else if d.kind == 4 {
-            let wrap = text_needs_alpha(d.alpha)
-            platform.plat_text_wrap(d.x, d.y, d.text, d.rgb, d.font, d.w)
-            if wrap != 0 {
-                platform.plat_restore()
-            }
-        } else if d.kind == 5 {
-            platform.plat_svg(d.x, d.y, d.w, d.h, d.text, d.rgb, d.alpha)
-        } else if d.kind == 6 {
-            platform.plat_save()
-        } else if d.kind == 7 {
-            platform.plat_clip(d.x, d.y, d.w, d.h, d.radius)
-        } else if d.kind == 8 {
-            platform.plat_restore()
-        } else if d.kind == 9 {
-            let wrap = text_needs_alpha(d.alpha)
-            platform.plat_text_rot(d.x, d.y, d.text, d.rgb, d.font, d.w)
-            if wrap != 0 {
-                platform.plat_restore()
-            }
-        } else if d.kind == 10 {
-            platform.plat_image(d.x, d.y, d.w, d.h, d.text, d.radius, d.alpha, d.value)
-        } else if d.kind == 11 {
-            platform.plat_fill_g(d.x, d.y, d.w, d.h, d.rgb, d.value, d.font, d.radius, d.alpha)
-        } else if d.kind == 12 {
-            platform.plat_shadow(
-                d.x,
-                d.y,
-                d.w,
-                d.h,
-                d.radius,
-                d.rgb,
-                d.alpha,
-                d.font,
-                d.value % 256 - 128,
-                d.value / 256 - 128,
-            )
-        } else if d.kind == 13 {
-            platform.plat_stroke(d.x, d.y, d.w, d.h, d.rgb, d.radius, d.font, d.alpha)
-        } else if d.kind == 14 {
-            platform.plat_fill4(
-                d.x,
-                d.y,
-                d.w,
-                d.h,
-                d.rgb,
-                d.alpha,
-                d.radius % 65536,
-                d.radius / 65536,
-                d.value % 65536,
-                d.value / 65536,
-            )
-        } else if d.kind == 15 {
-            platform.plat_xform(d.x, d.y, d.radius, d.font, d.w, d.h)
+            si = ns
+            ns = ns + 1
         }
+        frame_put(o, d.kind)
+        frame_put(o + 1, d.x)
+        frame_put(o + 2, d.y)
+        frame_put(o + 3, d.w)
+        frame_put(o + 4, d.h)
+        frame_put(o + 5, d.rgb)
+        frame_put(o + 6, d.radius)
+        frame_put(o + 7, d.alpha)
+        frame_put(o + 8, d.font)
+        frame_put(o + 9, d.value)
+        frame_put(o + 10, si)
     }
+    platform.plat_frame(frame_ops, n, frame_strs)
 }
 
 

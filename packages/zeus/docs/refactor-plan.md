@@ -475,10 +475,17 @@ Next, each its own change:
    implemented once in `zeus_plat.c` and no host touches them. `platform.loam`
    is now the host contract alone: 56 functions, every one an OS service, and
    step 2 removes most of the paint ones.
-2. **One command buffer.** `present()` encodes the draw list into one `[]int`
-   plus a string table; native hosts replay it through a shared C
-   `zeus_replay`, the web host with one JS call per frame. The per-primitive
-   `plat_fill` / `plat_text` / … functions go.
+2. **One command buffer. Done for the seam (2026-11-03).** `present()`
+   flattens the draw list into one `[]int` (11 ints per op) plus a string
+   table and makes one call, `platform.plat_frame`. The runtime's
+   `zeus_replay` decodes it into the host's `ZeusDraw`, keeping every fallback.
+   The 17 per-primitive `plat_*` functions and both C forwarding layers are
+   gone; `platform.loam` is 40 functions and documents the op table.
+   `tests/draw_golden/replay_trace` binds a printing host
+   (`runtime.trace_draw`) and pins the exact `ZeusDraw` call sequence; it was
+   recorded on the old path and matched byte for byte after the switch.
+   Not done: the web host still turns each `ZeusDraw` call into its own JS
+   import. Handing JS the buffer needs a JS decoder the Deno smoke can check.
 3. **Optional services in one module.** Clipboard, history, media, pickers,
    fonts and full screen behind one stubbable interface, so a new host needs
    only: window, event pump, replay, text measure, clock, view size.
