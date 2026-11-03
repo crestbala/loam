@@ -1,6 +1,11 @@
 ; Loam syntax highlighting for Zed — node types must match the compiled grammar.
+; Kept identical to tree-sitter-loam/queries/highlights.scm below this line.
 
 (comment) @comment
+
+; `#[proto]` / `#[test]` attributes
+(attribute
+  (identifier) @attribute)
 
 [
   "fn"
@@ -37,6 +42,9 @@
 (identifier) @variable
 
 (function_item
+  name: (identifier) @function)
+
+(local_function
   name: (identifier) @function)
 
 (parameter
@@ -92,6 +100,12 @@
 (struct_literal
   type: (identifier) @type)
 
+(generic_struct_name
+  name: (identifier) @type)
+
+(struct_method_call
+  method: (identifier) @function)
+
 (cast_expression
   type: (_) @type)
 
@@ -130,6 +144,7 @@
   "=>"
   "::"
   "|"
+  "?"
 ] @operator
 
 [
