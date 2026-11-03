@@ -486,6 +486,17 @@ Next, each its own change:
    recorded on the old path and matched byte for byte after the switch.
    Not done: the web host still turns each `ZeusDraw` call into its own JS
    import. Handing JS the buffer needs a JS decoder the Deno smoke can check.
+   **Done (2026-11-03): SVG is parsed once, in Loam.** Each host carried
+   its own SVG parser (CoreGraphics in mac.m and ios.m, Canvas2D in
+   loader.js, `android.graphics` in ZeusView.java), about 400 lines each,
+   with drifting rules: none drew `<rect rx>` or arcs. `zeuscore/svgpath.loam`
+   parses markup into move / line / cubic / close commands, cached per
+   markup in viewBox units. `present()` lowers each `svg` op (kind 5) into
+   path ops (16 fill, 17 stroke) over a shared int stream in 1/64 pt, so a
+   host's `ZeusDraw.svg` became `ZeusDraw.path`, about 50 lines of path API
+   calls. `zeusraster/svg.loam` reuses the same lexer, colour and style rules.
+   Hosts lost about 1.6k lines. `compile_pass/zeus_svgpath` covers one parse
+   per markup, `currentColor`, `rx`, arcs, viewBox fit and stroke scaling.
 3. **Optional services in one module.** Clipboard, history, media, pickers,
    fonts and full screen behind one stubbable interface, so a new host needs
    only: window, event pump, replay, text measure, clock, view size.

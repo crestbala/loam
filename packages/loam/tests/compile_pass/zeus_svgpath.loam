@@ -1,0 +1,122 @@
+// SVG reaches hosts as path ops (kinds 16 / 17 over `scene.frame_path`), parsed
+// once in Loam by `zeuscore/svgpath.loam`. This pins what that lowering must
+// keep: one parse per markup however often it paints, `currentColor` resolved
+// per op, `<rect rx>` and arc segments drawn (every host used to drop both),
+// the viewBox fitted uniformly and centred, and strokes scaled with it.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+import "zeus:zeuscore/scene"
+import "zeus:zeuscore/svgpath"
+
+fn must(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+const PAUSE: string = "<svg viewBox=\"0 0 24 24\" fill=\"currentColor\"><rect x=\"6\" y=\"5\" width=\"4\" height=\"14\" rx=\"1\"/><rect x=\"14\" y=\"5\" width=\"4\" height=\"14\" rx=\"1\"/></svg>"
+const ARC: string = "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"butt\" stroke-linejoin=\"bevel\"><path d=\"M2 12A10 10 0 0 1 22 12\"/></svg>"
+const WIDE: string = "<svg viewBox=\"0 0 10 20\" fill=\"#ff0000\"><rect x=\"0\" y=\"0\" width=\"10\" height=\"20\"/></svg>"
+
+/// Path ops of `kind` in the last frame.
+fn count(kind: int) -> int {
+    let mut n = 0
+    for i in 0..scene.frame_n {
+        if scene.frame_ops[i * 11] == kind {
+            n = n + 1
+        }
+    }
+    return n
+}
+
+/// Commands of `cmd` across the path stream of op `i`.
+fn cmds_in(i: int, cmd: int) -> int {
+    let start = scene.frame_ops[i * 11 + 9]
+    let len = scene.frame_ops[i * 11 + 3]
+    let mut j = start
+    let mut n = 0
+    while j < start + len {
+        let c = scene.frame_path[j]
+        if c == cmd {
+            n = n + 1
+        }
+        j = j + 1
+        if c == 0 || c == 1 {
+            j = j + 2
+        } else if c == 2 {
+            j = j + 6
+        }
+    }
+    return n
+}
+
+fn first(kind: int) -> int {
+    for i in 0..scene.frame_n {
+        if scene.frame_ops[i * 11] == kind {
+            return i
+        }
+    }
+    return -1
+}
+
+fn main() {
+    let before = svgpath.parse_count()
+    zeus.snapshot(200, 100, fn() -> Node {
+        zeus.Box(style = Style(direction = Direction.Row, gap = 4)) {
+            zui.Svg(PAUSE, style = Style(width = px(24), height = px(24), color = "#112233"))
+            zui.Svg(PAUSE, style = Style(width = px(48), height = px(48), color = "#445566"))
+        }
+    })
+    // Two rects per icon, both filled with the op's own colour.
+    must(count(16) == 4, "pause: four rect fills")
+    must(count(17) == 0, "pause: no strokes")
+    must(svgpath.parse_count() - before == 1, "one parse for one markup at two sizes")
+    let f0 = first(16)
+    must(scene.frame_ops[f0 * 11 + 5] == 0x112233, "currentColor is the first op's colour")
+    must(scene.frame_ops[(f0 + 2) * 11 + 5] == 0x445566, "and the second op's")
+    // Rounded rect: 4 lines + 4 corner cubics, closed.
+    must(cmds_in(f0, 2) == 4, "rx rounds four corners")
+    must(cmds_in(f0, 3) == 1, "the rect is closed")
+
+    // Repaints reuse the parse.
+    zeus.engine_paint()
+    must(svgpath.parse_count() - before == 1, "a repaint parses nothing")
+
+    zeus.snapshot(100, 100, fn() -> Node {
+        zeus.Box(style = Style(direction = Direction.Row)) {
+            zui.Svg(ARC, style = Style(width = px(48), height = px(48), color = "#000000"))
+        }
+    })
+    let s0 = first(17)
+    must(s0 >= 0 && count(16) == 0, "arc: one stroke, no fill")
+    // A half circle is two quarter cubics.
+    must(cmds_in(s0, 2) == 2, "the arc is drawn, as two cubics")
+    // stroke-width 2 at scale 2 is 4pt, i.e. 256 in 1/64.
+    must(scene.frame_ops[s0 * 11 + 8] == 256, "stroke width scales with the fit")
+    must(scene.frame_ops[s0 * 11 + 6] == 0 + 2 * 4, "butt cap, bevel join")
+    // The arc ends exactly at (22, 12) in viewBox units: x = 22 * 2, y = 12 * 2.
+    let st = scene.frame_ops[s0 * 11 + 9]
+    let ln = scene.frame_ops[s0 * 11 + 3]
+    must(scene.frame_path[st + ln - 2] == 44 * 64, "arc end x")
+    must(scene.frame_path[st + ln - 1] == 24 * 64, "arc end y")
+
+    // A 10x20 viewBox in a 40x40 box: scale 2, centred horizontally.
+    zeus.snapshot(100, 100, fn() -> Node {
+        zeus.Box(style = Style(direction = Direction.Row)) {
+            zui.Svg(WIDE, style = Style(width = px(40), height = px(40)))
+        }
+    })
+    let w0 = first(16)
+    must(scene.frame_ops[w0 * 11 + 5] == 0xff0000, "a literal fill keeps its colour")
+    let ws = scene.frame_ops[w0 * 11 + 9]
+    let box_x = scene.frame_path[ws + 1] / 64
+    must(scene.frame_path[ws + 2] == 0, "top edge at the box top")
+    must(box_x == 10, "centred: (40 - 20) / 2")
+
+    fmt.println("svgpath ok")
+}

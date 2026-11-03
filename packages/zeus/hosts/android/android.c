@@ -14,7 +14,7 @@ int loam_app_main(void);
 
 static JavaVM *g_jvm;
 static jobject g_view;
-static jmethodID m_fill, m_fill_a, m_fill_g, m_shadow, m_stroke, m_fill4, m_xform, m_text, m_text_rot, m_save, m_alpha, m_clip, m_restore, m_svg, m_image, m_image_size, m_pick, m_measure, m_invalidate;
+static jmethodID m_fill, m_fill_a, m_fill_g, m_shadow, m_stroke, m_fill4, m_xform, m_text, m_text_rot, m_save, m_alpha, m_clip, m_restore, m_path, m_image, m_image_size, m_pick, m_measure, m_invalidate;
 static JNIEnv *g_env;
 static jobject g_canvas;
 static int g_started;
@@ -147,16 +147,18 @@ static void draw_restore(void *ctx) {
     (*env)->CallVoidMethod(env, g_view, m_restore, g_canvas);
 }
 
-static void draw_svg(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h, const char *markup,
-                     int64_t rgb, int64_t alpha) {
+static void draw_path(void *ctx, const int32_t *cmds, int64_t n, int64_t rgb, int64_t alpha,
+                      int64_t width, int64_t style) {
     JNIEnv *env = g_env;
-    jstring js;
+    jintArray arr;
     (void)ctx;
-    if (!env || !g_view || !g_canvas || !m_svg) return;
-    js = (*env)->NewStringUTF(env, markup ? markup : "");
-    (*env)->CallVoidMethod(env, g_view, m_svg, g_canvas, (jint)x, (jint)y, (jint)w, (jint)h, js,
-                           (jint)(rgb & 0xFFFFFF), (jint)alpha);
-    (*env)->DeleteLocalRef(env, js);
+    if (!env || !g_view || !g_canvas || !m_path || n <= 0) return;
+    arr = (*env)->NewIntArray(env, (jsize)n);
+    if (!arr) return;
+    (*env)->SetIntArrayRegion(env, arr, 0, (jsize)n, (const jint *)cmds);
+    (*env)->CallVoidMethod(env, g_view, m_path, g_canvas, arr, (jint)(rgb & 0xFFFFFF),
+                           (jint)alpha, (jint)width, (jint)style);
+    (*env)->DeleteLocalRef(env, arr);
 }
 
 static void draw_image(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h, const char *src,
@@ -237,7 +239,7 @@ static void bind_canvas(void) {
     d.alpha = draw_alpha;
     d.clip = draw_clip;
     d.restore = draw_restore;
-    d.svg = draw_svg;
+    d.path = draw_path;
     d.image = draw_image;
     zeus_bind_draw(d);
 }
@@ -259,8 +261,7 @@ static void cache_methods(JNIEnv *env, jobject thiz) {
     m_xform = (*env)->GetMethodID(env, cls, "jniXform", "(Landroid/graphics/Canvas;IIIIII)V");
     m_clip = (*env)->GetMethodID(env, cls, "jniClip", "(Landroid/graphics/Canvas;IIIII)V");
     m_restore = (*env)->GetMethodID(env, cls, "jniRestore", "(Landroid/graphics/Canvas;)V");
-    m_svg = (*env)->GetMethodID(env, cls, "jniSvg",
-                                "(Landroid/graphics/Canvas;IIIILjava/lang/String;II)V");
+    m_path = (*env)->GetMethodID(env, cls, "jniPath", "(Landroid/graphics/Canvas;[IIIII)V");
     m_image = (*env)->GetMethodID(env, cls, "jniImage",
                                   "(Landroid/graphics/Canvas;IIIILjava/lang/String;III)V");
     m_pick = (*env)->GetMethodID(env, cls, "jniPick", "()V");
@@ -353,7 +354,7 @@ JNIEXPORT void JNICALL Java_com_loam_zeus_ZeusView_nativePaint(JNIEnv *env, jobj
     d.alpha = draw_alpha;
     d.clip = draw_clip;
     d.restore = draw_restore;
-    d.svg = draw_svg;
+    d.path = draw_path;
     d.image = draw_image;
     zeus_paint(NULL, d);
     g_canvas = NULL;

@@ -730,15 +730,6 @@ static void op_text_int(int64_t x, int64_t y, int64_t v, int64_t rgb, int64_t fo
     paint_draw.text(paint_ctx, x, y, buf, rgb & 0xFFFFFF, font);
 }
 
-static void op_svg(int64_t x, int64_t y, int64_t w, int64_t h, loam_str markup,
-                       int64_t rgb, int64_t alpha) {
-    char *p;
-    if (!have_draw || !paint_draw.svg) return;
-    p = dup_ys(markup);
-    paint_draw.svg(paint_ctx, x, y, w, h, p, rgb & 0xFFFFFF, alpha);
-    free(p);
-}
-
 static void op_image(int64_t x, int64_t y, int64_t w, int64_t h, loam_str src,
                          int64_t radius, int64_t alpha, int64_t fit) {
     char *p;
@@ -2586,7 +2577,8 @@ void loam_platform_plat_history_back(void) {
 /* --- the frame (`platform.plat_frame`) ------------------------------------
    The one paint call a frame makes across the seam: the whole draw list as
    `n` records of ZEUS_FRAME_STRIDE ints (`kind x y w h rgb radius alpha font
-   value str`, `str` indexing `strs` or -1), decoded here into the host's
+   value str`, `str` indexing `strs` or -1) and the path stream path ops index
+   into, decoded here into the host's
    `ZeusDraw`. The `op_*` helpers above hold the fallbacks for hosts that leave
    a callback NULL, so a host implements only what it can draw. The op table
    is documented on `plat_frame` in platform.loam. */
@@ -2600,7 +2592,15 @@ static int text_alpha_begin(int64_t alpha) {
     return 0;
 }
 
-void zeus_replay(const int32_t *ops, int64_t n, const loam_str *strs, int64_t ns) {
+static void op_path(const int32_t *path, int64_t np, int64_t start, int64_t len, int64_t rgb,
+                    int64_t alpha, int64_t width, int64_t style) {
+    if (!have_draw || !paint_draw.path || !path) return;
+    if (start < 0 || len <= 0 || start + len > np) return;
+    paint_draw.path(paint_ctx, path + start, len, rgb & 0xFFFFFF, alpha, width, style);
+}
+
+void zeus_replay(const int32_t *ops, int64_t n, const loam_str *strs, int64_t ns,
+                 const int32_t *path, int64_t np) {
     static const loam_str none = {"", 0, 0};
     for (int64_t i = 0; i < n; i++) {
         const int32_t *o = ops + i * ZEUS_FRAME_STRIDE;
@@ -2626,7 +2626,6 @@ void zeus_replay(const int32_t *ops, int64_t n, const loam_str *strs, int64_t ns
             op_text_wrap(x, y, str, rgb, font, w);
             if (wrap) op_restore();
             break;
-        case 5: op_svg(x, y, w, h, str, rgb, alpha); break;
         case 6: op_save(); break;
         case 7: op_clip(x, y, w, h, radius); break;
         case 8: op_restore(); break;
@@ -2646,6 +2645,10 @@ void zeus_replay(const int32_t *ops, int64_t n, const loam_str *strs, int64_t ns
                      value / 65536);
             break;
         case 15: op_xform(x, y, radius, font, w, h); break;
+        case 16: op_path(path, np, value, w, rgb, alpha, 0, 0); break;
+        case 17:
+            if (font > 0) op_path(path, np, value, w, rgb, alpha, font, radius);
+            break;
         default: break;
         }
     }
@@ -2653,10 +2656,14 @@ void zeus_replay(const int32_t *ops, int64_t n, const loam_str *strs, int64_t ns
 
 /* `ops` / `strs` are the Loam vectors by value (int32 elements, loam_str
    elements); the record count is checked against the buffer's length. */
-void loam_platform_plat_frame(loam_vec ops, int32_t n, loam_vec strs) {
+void loam_platform_plat_frame(loam_vec ops, int32_t n, loam_vec strs, loam_vec path,
+                              int32_t np) {
     if (!ops.ptr || n <= 0) return;
     if ((int64_t)n * ZEUS_FRAME_STRIDE > ops.len) n = (int32_t)(ops.len / ZEUS_FRAME_STRIDE);
-    zeus_replay((const int32_t *)ops.ptr, n, (const loam_str *)strs.ptr, strs.ptr ? strs.len : 0);
+    if (!path.ptr || np < 0) np = 0;
+    if (np > path.len) np = (int32_t)path.len;
+    zeus_replay((const int32_t *)ops.ptr, n, (const loam_str *)strs.ptr, strs.ptr ? strs.len : 0,
+                (const int32_t *)path.ptr, np);
 }
 
 /* --- trace host (`runtime.trace_draw`) -----------------------------------
@@ -2719,11 +2726,24 @@ static void tr_alpha(void *c, int64_t a) {
     (void)c;
     tr_printf("T alpha %lld\n", (long long)a);
 }
-static void tr_svg(void *c, int64_t x, int64_t y, int64_t w, int64_t h, const char *m,
-                   int64_t rgb, int64_t a) {
+static void tr_path(void *c, const int32_t *cmds, int64_t n, int64_t rgb, int64_t a,
+                    int64_t width, int64_t style) {
+    int64_t sum = 0, ops = 0, i = 0;
     (void)c;
-    tr_printf("T svg %lld %lld %lld %lld %lld %lld %zu\n", (long long)x, (long long)y,
-           (long long)w, (long long)h, (long long)rgb, (long long)a, m ? strlen(m) : 0);
+    while (i < n) {
+        int32_t k = cmds[i++];
+        int pts = k == 0 || k == 1 ? 1 : k == 2 ? 3 : 0;
+        ops++;
+        while (pts-- > 0 && i + 1 < n + 1) {
+            sum = sum * 31 + cmds[i] + 7 * (i + 1 < n ? cmds[i + 1] : 0);
+            sum &= 0xFFFFFFF;
+            i += 2;
+        }
+    }
+    tr_printf("T path %s %lld %lld %lld %lld ops=%lld first=%d,%d sum=%lld\n",
+              width ? "stroke" : "fill", (long long)rgb, (long long)a, (long long)width,
+              (long long)style, (long long)ops, n > 2 ? cmds[1] : 0, n > 2 ? cmds[2] : 0,
+              (long long)sum);
 }
 static void tr_image(void *c, int64_t x, int64_t y, int64_t w, int64_t h, const char *src,
                      int64_t r, int64_t a, int64_t fit) {
@@ -2785,7 +2805,7 @@ void loam_runtime_trace_draw(int64_t on) {
         d.clip = tr_clip;
         d.restore = tr_restore;
         d.alpha = tr_alpha;
-        d.svg = tr_svg;
+        d.path = tr_path;
         d.image = tr_image;
         d.fill_g = tr_fill_g;
         d.shadow = tr_shadow;
