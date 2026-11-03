@@ -7,7 +7,7 @@ description = "Loam language: syntax highlighting and diagnostics via loam-lsp"
 
 [grammars.loam]
 repository = "file:///Users/bala_mani/Documents/loam/packages/tooling/tree-sitter-loam"
-rev = "17a1ecf6e3f24369d324eb07e9a05c3a038d4ac6"
+rev = "061351b64c357b30833ec1e189800247d0af6df1"
 
 [language_servers.loam-lsp]
 name = "Loam LSP"
