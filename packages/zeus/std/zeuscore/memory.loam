@@ -3,7 +3,7 @@
 //! A signal holds a `T` whose layout only the compiler knows: 4 bytes for an
 //! `int` (i32), 16 for a `string` or a `[]U`, a struct's size for a Copy struct.
 
-import "platform.loam"
+import "runtime.loam"
 
 //! The language already provides the pair that makes this possible without the
 //! engine ever naming a type:
@@ -301,7 +301,7 @@ fn cell_drop(c: &mut Cell) {
     if c.id == 0 {
         return
     }
-    plat_sig_free(c.id)
+    runtime.sig_free(c.id)
     c.id = 0
     c.n = 0
     c.gen = 0

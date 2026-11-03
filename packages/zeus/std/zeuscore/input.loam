@@ -9,6 +9,7 @@ import "arena.loam"
 import "nodes.loam"
 import "geometry.loam"
 import "platform.loam"
+import "runtime.loam"
 import "std:unicode"
 
 struct Click {
@@ -306,7 +307,7 @@ fn click(px: int, py: int) -> int {
             if font < 8 {
                 font = 14
             }
-            platform.plat_edit_click(slot, relx, rely, arena.input_inner_w(id), font)
+            runtime.edit_click(slot, relx, rely, arena.input_inner_w(id), font)
         }
     }
     if int(nodes.tree[id].kind) == 11 {
@@ -993,47 +994,47 @@ fn cursor_at() -> string {
 /// ZWJ sequence moves as one unit instead of one code point (`docs/loam_zeus_v2.md`
 /// §1.4, Phase 13).
 fn edit_move_grapheme(slot: int, dir: int, extend: int) -> int {
-    let text = platform.plat_edit_text(slot)
-    let caret = platform.plat_edit_caret(slot)
+    let text = runtime.edit_text(slot)
+    let caret = runtime.edit_caret(slot)
     let mut pos = caret
     if dir < 0 {
         pos = unicode.prev_grapheme(text, caret)
     } else {
         pos = unicode.next_grapheme(text, caret)
     }
-    platform.plat_edit_set_caret(slot, pos)
+    runtime.edit_set_caret(slot, pos)
     if extend == 0 {
-        platform.plat_edit_set_anchor(slot, pos)
+        runtime.edit_set_anchor(slot, pos)
     }
     return 1
 }
 
 /// Backspace one grapheme cluster, or the current selection.
 fn edit_back_grapheme(slot: int) -> int {
-    let caret = platform.plat_edit_caret(slot)
-    if platform.plat_edit_anchor(slot) != caret {
-        return platform.plat_edit_back(slot)
+    let caret = runtime.edit_caret(slot)
+    if runtime.edit_anchor(slot) != caret {
+        return runtime.edit_back(slot)
     }
     if caret <= 0 {
         return 0
     }
-    let text = platform.plat_edit_text(slot)
-    platform.plat_edit_set_anchor(slot, unicode.prev_grapheme(text, caret))
-    return platform.plat_edit_back(slot)
+    let text = runtime.edit_text(slot)
+    runtime.edit_set_anchor(slot, unicode.prev_grapheme(text, caret))
+    return runtime.edit_back(slot)
 }
 
 /// Delete forward one grapheme cluster, or the current selection.
 fn edit_del_grapheme(slot: int) -> int {
-    let caret = platform.plat_edit_caret(slot)
-    if platform.plat_edit_anchor(slot) != caret {
-        return platform.plat_edit_del(slot)
+    let caret = runtime.edit_caret(slot)
+    if runtime.edit_anchor(slot) != caret {
+        return runtime.edit_del(slot)
     }
-    let text = platform.plat_edit_text(slot)
+    let text = runtime.edit_text(slot)
     if caret >= text.len {
         return 0
     }
-    platform.plat_edit_set_anchor(slot, unicode.next_grapheme(text, caret))
-    return platform.plat_edit_del(slot)
+    runtime.edit_set_anchor(slot, unicode.next_grapheme(text, caret))
+    return runtime.edit_del(slot)
 }
 
 fn key(k: int) -> int {
@@ -1134,9 +1135,9 @@ fn key(k: int) -> int {
     }
     if chord != 0 {
         if k == 97 {
-            let n = platform.plat_edit_len(slot)
-            platform.plat_edit_set_anchor(slot, 0)
-            platform.plat_edit_set_caret(slot, n)
+            let n = runtime.edit_len(slot)
+            runtime.edit_set_anchor(slot, 0)
+            runtime.edit_set_caret(slot, n)
             arena.mark_paint()
             return 1
         }
@@ -1149,30 +1150,30 @@ fn key(k: int) -> int {
     } else if k == 127 {
         edited = edit_del_grapheme(slot)
     } else if k == 9 {
-        edited = platform.plat_edit_append(slot, 9)
+        edited = runtime.edit_append(slot, 9)
     } else if k == 10 {
         if int(nodes.lay[id].wrap) != 0 {
-            edited = platform.plat_edit_append(slot, 10)
+            edited = runtime.edit_append(slot, 10)
         }
     } else if k == 13 {
         if int(nodes.lay[id].wrap) != 0 {
-            edited = platform.plat_edit_append(slot, 10)
+            edited = runtime.edit_append(slot, 10)
         }
     } else if k == 1000 {
         edited = edit_move_grapheme(slot, -1, extend)
     } else if k == 1001 {
         edited = edit_move_grapheme(slot, 1, extend)
     } else if k == 1002 {
-        edited = platform.plat_edit_move(slot, -3, extend)
+        edited = runtime.edit_move(slot, -3, extend)
     } else if k == 1003 {
-        edited = platform.plat_edit_move(slot, 3, extend)
+        edited = runtime.edit_move(slot, 3, extend)
     } else if k == 1006 {
-        edited = platform.plat_edit_move(slot, -2, extend)
+        edited = runtime.edit_move(slot, -2, extend)
     } else if k == 1007 {
-        edited = platform.plat_edit_move(slot, 2, extend)
+        edited = runtime.edit_move(slot, 2, extend)
     } else if k >= 32 {
         if k < 127 {
-            edited = platform.plat_edit_append(slot, k)
+            edited = runtime.edit_append(slot, k)
         }
     }
     if edited != 0 {
@@ -1204,7 +1205,7 @@ fn insert_text(s: string) -> int {
     if slot < 0 {
         return 0
     }
-    if platform.plat_edit_insert(slot, s) == 0 {
+    if runtime.edit_insert(slot, s) == 0 {
         return 0
     }
     if nodes.ui[id].bind_fn > 0 {
@@ -1233,5 +1234,5 @@ fn mark_text(s: string) -> int {
     if slot < 0 {
         return 0
     }
-    return platform.plat_edit_mark(slot, s)
+    return runtime.edit_mark(slot, s)
 }

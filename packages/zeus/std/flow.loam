@@ -15,6 +15,7 @@ import "zeusbase.loam"
 import "zeus_constants.loam"
 import "std:fmt"
 import "zeuscore/platform.loam"
+import "zeuscore/runtime.loam"
 import "zeuscore/arena.loam"
 import "zeuscore/nodes.loam"
 
@@ -188,7 +189,7 @@ fn pop_item<T>(sig: Signal<[]T>) {
 fn virtual_refresh<T>(node_id: int, items: Signal<[]T>, build: fn(int, T) -> Node, row_h: int) {
     let xs = items.get()
     let m = xs.len
-    let gen = platform.plat_sig_gen(items.id)
+    let gen = runtime.sig_gen(items.id)
     let mut first = 0
     let mut last = m
     if row_h > 0 {
@@ -286,7 +287,7 @@ fn virtual_refresh_keyed<T>(
     let w = virtual_window(node_id, m, row_h)
     let first = w.first
     let last = w.last
-    let gen = platform.plat_sig_gen(items.id)
+    let gen = runtime.sig_gen(items.id)
     if gen == nodes.tree[node_id].list_gen {
         if first == nodes.tree[node_id].list_lo {
             if last == nodes.tree[node_id].list_hi {
@@ -515,7 +516,7 @@ fn virt_refresh_var<T>(
     let xs = items.get()
     let hs = heights.get()
     let m = xs.len
-    let gen = platform.plat_sig_gen(items.id) + platform.plat_sig_gen(heights.id)
+    let gen = runtime.sig_gen(items.id) + runtime.sig_gen(heights.id)
     let w = virt_window_var(node_id, m, hs, fallback)
     let first = w.first
     let last = w.last
@@ -679,12 +680,12 @@ fn EachKeyed<T>(
 fn kby_refresh<T>(host: int, items: Signal<[]T>, key: fn(T) -> string, build: fn(int, T) -> Node) {
     let xs = items.get()
     let m = xs.len
-    if platform.plat_sig_gen(items.id) == nodes.tree[host].list_gen {
+    if runtime.sig_gen(items.id) == nodes.tree[host].list_gen {
         if nodes.tree[host].list_n == m {
             return
         }
     }
-    nodes.tree[host].list_gen = platform.plat_sig_gen(items.id)
+    nodes.tree[host].list_gen = runtime.sig_gen(items.id)
     nodes.tree[host].list_n = m
     let mut nk = []string {}
     for i in 0..m {
@@ -768,9 +769,9 @@ fn kfor_item_changed<T>(row: int, x: T) -> int {
     if c <= 0 {
         return 0
     }
-    let g0 = platform.plat_sig_gen(c)
+    let g0 = runtime.sig_gen(c)
     live_cell(c, x).set(x)
-    if platform.plat_sig_gen(c) != g0 {
+    if runtime.sig_gen(c) != g0 {
         return 1
     }
     return 0
@@ -819,12 +820,12 @@ fn kfor_refresh<T>(host: int, items: Signal<[]T>, build: fn(int, T) -> Node) {
     let m = xs.len
     // Fast path 0: nothing it reads has moved since it built these `m` items.
     // (Compared by item count, not key count: duplicate values share an entry.)
-    if platform.plat_sig_gen(items.id) == nodes.tree[host].list_gen {
+    if runtime.sig_gen(items.id) == nodes.tree[host].list_gen {
         if nodes.tree[host].list_n == m {
             return
         }
     }
-    nodes.tree[host].list_gen = platform.plat_sig_gen(items.id)
+    nodes.tree[host].list_gen = runtime.sig_gen(items.id)
     nodes.tree[host].list_n = m
     // Identity is the item value. Equal text matches; the string header does not.
     let mut nk = []string {}
@@ -1014,7 +1015,7 @@ fn match_build<T>(node_id: int, on: Signal<T>, build: fn(T) -> Node) {
 /// `match_build`'s body, shared with `MatchBy`: tear the arm down and run
 /// `body` under the host's rebuild scope, recording `on`'s generation.
 fn match_rebuild(node_id: int, on_id: int, body: fn()) {
-    nodes.tree[node_id].list_gen = platform.plat_sig_gen(on_id)
+    nodes.tree[node_id].list_gen = runtime.sig_gen(on_id)
     // The outgoing arm's roots that declare an exit transition leave the
     // host's children before the rebuild drops them, play their exit pinned
     // where they were, and are put back (last, out of flow) after the new arm.
@@ -1057,7 +1058,7 @@ fn match_refresh<T>(node_id: int, on: Signal<T>, build: fn(T) -> Node) {
     // Pull first: a `computed` is recomputed on read, and its generation only
     // moves once it is.
     let cur = on.peek()
-    if platform.plat_sig_gen(on.id) == nodes.tree[node_id].list_gen {
+    if runtime.sig_gen(on.id) == nodes.tree[node_id].list_gen {
         return
     }
     match_build(node_id, on, build)
@@ -1118,7 +1119,7 @@ fn match_by_refresh<T>(
     // Pull first: a `computed` is recomputed on read, and its generation only
     // moves once it is.
     let v = on.peek()
-    let gen = platform.plat_sig_gen(on.id)
+    let gen = runtime.sig_gen(on.id)
     if gen == nodes.tree[node_id].list_gen && mby_cell[node_id] > 0 {
         return
     }
@@ -1167,7 +1168,7 @@ fn MatchKeep<T>(on: Signal<T>, key: fn(T) -> string, build: fn(T) -> Node) -> No
 fn match_keep_refresh<T>(node_id: int, on: Signal<T>, key: fn(T) -> string, build: fn(T) -> Node) {
     // Pull first (see `match_refresh`).
     let pulled = on.peek()
-    let gen = platform.plat_sig_gen(on.id)
+    let gen = runtime.sig_gen(on.id)
     if gen == nodes.tree[node_id].list_gen {
         if nodes.tree[node_id].kids.len > 0 {
             return
@@ -1264,7 +1265,7 @@ fn Boundary(build: fn() -> Node, fallback: fn(string) -> Node) -> Node {
     ui_push(hid)
     let stack0 = ui_parents.len
     arena.build_enter(hid, m, seq)
-    let msg = platform.plat_boundary(|| { build() })
+    let msg = runtime.boundary(|| { build() })
     arena.build_leave()
     arena.scope_end(previous)
     if msg.len == 0 {
@@ -1373,7 +1374,7 @@ fn refit_refresh(node_id: int, build: fn()) {
 /// The host's refresh hook, owned by the host itself: freed with the host, and
 /// by each rebuild of it (which is why `refit_refresh` re-registers it).
 fn refit_hook(node_id: int, build: fn()) -> int {
-    let id = platform.plat_intern_fn(|| {
+    let id = runtime.intern_fn(|| {
         refit_refresh(node_id, build)
     })
     arena.record_intern(id, node_id)
@@ -1399,7 +1400,7 @@ fn width_signal(host: Node, estimate: int) -> Signal<int> {
     arena.ensure()
     let out = signal(estimate)
     let node_id = host.id
-    let id = platform.plat_intern_fn(|| {
+    let id = runtime.intern_fn(|| {
         let w = nodes.box[node_id].w
         // A zero width is a host not laid out yet (or hidden): keep the last.
         if w > 0 && out.peek() != w {

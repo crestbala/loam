@@ -450,7 +450,7 @@ fn make() -> fn() -> int {
 ```
 
 `fn` values are Copy handles (shared env). They may be returned or stored. Zeus
-intern (`plat_intern_fn`) memcpy's that env using `env_size`, so a click handler
+intern (`runtime.intern_fn`) memcpy's that env using `env_size`, so a click handler
 still sees captured `Signal`s after the stack frame that created the closure is
 gone.
 

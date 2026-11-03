@@ -95,6 +95,7 @@
 
 import "zeuscore/geometry.loam"
 import "zeuscore/platform.loam"
+import "zeuscore/runtime.loam"
 import "zeuscore/memory.loam"
 import "zeuscore/arena.loam"
 import "zeuscore/nodes.loam"
@@ -336,7 +337,7 @@ fn app(title: string, width: int, height: int, build: fn() -> Node) {
 fn engine_key_apply(signal_id: int, mode: int, value: int, lo: int, hi: int) {
     arena.ensure()
     if mode == 5 {
-        platform.plat_invoke_fn(value)
+        runtime.invoke_fn(value)
         return
     }
     if signal_id <= 0 {
@@ -395,7 +396,7 @@ fn refresh_lists() {
 /// Returns 1 when a boundary took the trap, 0 when none was at work.
 fn engine_recover() -> int {
     view_building = 0
-    return arena.recover_trap(platform.plat_trap_msg())
+    return arena.recover_trap(runtime.trap_msg())
 }
 
 /// Build-order number of the boundary the last `engine_recover` failed in its
@@ -453,7 +454,7 @@ fn engine_layout(width: int, height: int) {
         arena.snapshot_focus()
         arena.snapshot_scroll()
         arena.reset_tree()
-        platform.plat_key_reset()
+        runtime.key_reset()
         track.reset()
         view_reads_size = 0
         view_building = 1
@@ -650,7 +651,7 @@ fn engine_set_mods(mods: int) {
 fn engine_key_ev(key: int, mods: int) -> int {
     arena.ensure()
     arena.ev_mods = mods
-    return platform.plat_key_ev(key, mods)
+    return runtime.key_ev(key, mods)
 }
 
 /// Key release, from hosts that deliver it. Runs the focused node's
@@ -763,7 +764,7 @@ fn proof_spin_live() -> int {
 /// Allocations since boot (runtime allocator). A frame that only animates
 /// allocates nothing, so this must not move while a track is running.
 fn proof_allocs() -> int {
-    return platform.plat_alloc_count()
+    return runtime.alloc_count()
 }
 
 /// High-water size of the effect table. A `scope` that re-runs must reuse the
@@ -1578,7 +1579,7 @@ fn arena_sigs() -> int {
 /// Live rows in the shared interned-handler table (diagnostics for tests). A
 /// streaming `Each` or a re-running `scope` recycles handlers, so this stays flat.
 fn intern_count() -> int {
-    return platform.plat_intern_live_count()
+    return runtime.intern_live_count()
 }
 
 /// Polled host hooks run, and geometry-host hooks skipped because their box,

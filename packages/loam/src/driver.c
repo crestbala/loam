@@ -1212,7 +1212,7 @@ int main(int argc, char **argv) {
              env_on("LOAM_DEBUG") ? " -g" : "",
              uses_zeus ? " -DLOAM_ALLOC_TRACE" : "",
              /* Phase 0 arena instrumentation: the app's own C, so the flag
-                reaches `platform.plat_mem_stats()` on every frame. */
+                reaches `runtime.mem_stats()` on every frame. */
              env_on("ZEUS_MEM_STATS") ? " -DZEUS_MEM_STATS" : "",
              owns_def);
     const char *copt = copt_buf;

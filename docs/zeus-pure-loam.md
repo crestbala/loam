@@ -180,7 +180,7 @@ sit on the C path.
 | 7 | Rename `platform.loam` → `bindings.loam` with `bnd_*` | — |
 | 8 | Enforcement gate in `nob test` | reject library C that is not a host loop or an ABI trampoline |
 
-`plat_sig_free` is the one piece that genuinely belongs in C: releasing a payload
+`runtime.sig_free` is the one piece that genuinely belongs in C: releasing a payload
 by id needs the bound type, and the type is a compile-time property of the call
 site that bound it. Everything else about a signal cell is policy, and policy
 belongs in Loam.

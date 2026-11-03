@@ -116,7 +116,7 @@ commit per phase. Line anchors are for the tree at `feat/zeus-upgrade-v2`.
 ### D — Graph completeness & typing
 - Signals are id-indexed `int` arena slots; `computed` / `computed_str` /
   `computed_bool` were three hand-written variants (`zeusbase.loam:303-330`) because
-  the runtime interns and invokes only four closure kinds (`plat_intern_fn` / `_int`
+  the runtime interns and invokes only four closure kinds (`runtime.intern_fn` / `_int`
   / `_bool` / `_str` and the matching `plat_invoke_*`) and Loam has no generic
   persistent closure table or generic invoke. **Phase 7b:** one generic
   `computed<T>`. The body is a closure, and a closure can only be persisted through
@@ -130,7 +130,7 @@ commit per phase. Line anchors are for the tree at `feat/zeus-upgrade-v2`.
   node. A write marks it dirty and queues its readers; it recomputes when something
   reads it (`get` / `peek`) or when the flush reaches one of its readers, and only
   if an input's recorded generation actually moved — the check-clean pass, over
-  `plat_sig_gen`. A reader whose inputs turn out not to have moved is skipped, so
+  `runtime.sig_gen`. A reader whose inputs turn out not to have moved is skipped, so
   the change gate the eager form got from `set` is preserved, and a memo nothing
   observes is never recomputed at all.
 - Ownership is manual: `effect_owner`, `ui_parents`, `record_intern`,

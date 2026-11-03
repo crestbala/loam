@@ -34,7 +34,7 @@ The other direction: C calls compiled Loam as `loam_zeus_engine_paint`,
 |---|---|---|
 | Language (`loam_rt`) | Allocator, panic/trap, overflow, wrapping bit ops, `string_from_bytes`, `loam_fn` `{fn, env, env_size}`, `env_set` / `exit` | — |
 | net (`packages/loam/std/net`) | TCP connect/read/write/close, listen/accept/peek, wasm `fetch_rpc` | — |
-| Zeus | Host event loop + replay of the draw list; `plat_intern_fn` memcpy's a `loam_fn` env so click/styled handlers outlive the interned value | Tree, layout, signals, design system, `platform.loam` signatures |
+| Zeus | Host event loop + replay of the draw list; `runtime.intern_fn` memcpy's a `loam_fn` env so click/styled handlers outlive the interned value | Tree, layout, signals, design system, `platform.loam` signatures |
 | Maya | Host event loop + present (Cocoa blit / 2D discs) | Scene, orbits, camera, CPU tracer, 2D map layout, `sin`/`cos` |
 | raygui | Host window + event pump (raylib) and a thin raygui trampoline (`runtime/raygui_plat.c`); no widget logic | API, frame loop, and all retained state (`packages/raygui/std/raygui.loam`) |
 | http | — | unary gRPC: `#[proto]`, dispatch, path/frame, HTTP/1.1 parse, h2c, `listen`, client `rt_call` / `h2_call`, loopback `h1_read_unary` / `h2_read_unary`, HEADLESS selftest |

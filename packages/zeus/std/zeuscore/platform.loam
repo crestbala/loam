@@ -1,6 +1,9 @@
-//! platform — OS seam. Bodyless `fn`s are the link boundary (docs/boundary.md).
-//! Compiler emits `loam_platform_plat_*` declarations only; the host / loam_rt
-//! provides the symbols. No widget or layout logic here.
+//! platform — the host contract. Bodyless `fn`s are the link boundary
+//! (docs/boundary.md): the compiler emits `loam_platform_plat_*` declarations
+//! and the host provides them, through `zeus_plat.c`'s hooks. Everything here is
+//! an OS service (paint, text measure, window, clock, clipboard, media…). The
+//! engine's own runtime builtins live in `runtime.loam`. No widget or layout
+//! logic here.
 
 fn plat_run() {}
 fn plat_headless() -> int {}
@@ -180,84 +183,6 @@ fn plat_now_ms() -> int {}
 /// and it is how the accordion animates its open height (clip, not layout).
 fn plat_clip(x: int, y: int, w: int, h: int, radius: int) {}
 fn plat_restore() {}
-fn plat_key_intern(name: string) -> int {}
-fn plat_key_intern_action(action: string) -> int {}
-fn plat_key_reset() {}
-fn plat_map_key(spec: string, action: string, ctx: int) {}
-fn plat_key_ev(key: int, mods: int) -> int {}
-fn plat_edit_append(slot: int, key: int) -> int {}
-fn plat_edit_back(slot: int) -> int {}
-fn plat_edit_del(slot: int) -> int {}
-fn plat_edit_len(slot: int) -> int {}
-fn plat_edit_text(slot: int) -> string {}
-fn plat_edit_shown(slot: int) -> string {}
-/// Mask a slot (password field): shown, measured, and hit-tested as one
-/// bullet per code point. The text itself is unchanged.
-fn plat_edit_set_secure(slot: int, on: int) {}
-fn plat_edit_set(slot: int, text: string) -> int {}
-fn plat_edit_insert(slot: int, text: string) -> int {}
-fn plat_edit_caret(slot: int) -> int {}
-fn plat_edit_anchor(slot: int) -> int {}
-/// Move the caret (selection pivot unchanged) to byte offset `pos`.
-fn plat_edit_set_caret(slot: int, pos: int) -> int {}
-/// Move the selection anchor to byte offset `pos`. With `plat_edit_set_caret`
-/// this forms a selection, which `plat_edit_back` / `plat_edit_del` then
-/// delete — how grapheme-aware editing removes one cluster at a time.
-fn plat_edit_set_anchor(slot: int, pos: int) -> int {}
-fn plat_edit_mark(slot: int, text: string) -> int {}
-fn plat_edit_metrics(slot: int, wrap_w: int, font: int) {}
-fn plat_edit_click(slot: int, x: int, y: int, wrap_w: int, font: int) -> int {}
-fn plat_edit_move(slot: int, dir: int, extend: int) -> int {}
-fn plat_edit_caret_x(slot: int) -> int {}
-fn plat_edit_caret_y(slot: int) -> int {}
-fn plat_edit_line_h(slot: int) -> int {}
-fn plat_intern_fn(handler: fn()) -> int {}
-fn plat_invoke_fn(id: int) {}
-/// Reactive props are thunks. Interning one yields an int id, which a plain
-/// `||` effect closure can capture (a `fn` value is not Copy and cannot be).
-fn plat_intern_int_fn(thunk: fn() -> int) -> int {}
-fn plat_invoke_int_fn(id: int) -> int {}
-fn plat_intern_bool_fn(thunk: fn() -> bool) -> int {}
-fn plat_invoke_bool_fn(id: int) -> int {}
-fn plat_intern_str_fn(thunk: fn() -> string) -> int {}
-fn plat_invoke_str_fn(id: int) -> string {}
-/// Calls refused because the interned slot held a handler of another signature.
-/// Zero is the contract: the intern table is shared by the void / int / bool /
-/// string kinds, so an invoke that reaches a slot of the wrong kind is a bug
-/// (it was undefined behaviour before, garbage on native and a trap on wasm).
-fn plat_intern_kind_mismatch_count() -> int {}
-/// Live rows in the shared interned-handler table. A streaming list or a
-/// re-running scope must recycle handlers, not grow this. Exposed for tests.
-fn plat_intern_live_count() -> int {}
-fn plat_sig_bind_int(id: int, value: int) {}
-/// Every `plat_sig_bind_*` bumps the cell's generation; `plat_sig_gen` reads it
-/// back. `computed<T>` records the generation of each input it reads, so a lazy
-/// memo can tell whether an input's *value* moved before it recomputes.
-fn plat_sig_gen(id: int) -> int {}
-/// Reserving a signal slot with no value bound yet. `computed<T>` needs an
-/// output cell for a `T` it cannot name a default for; the first pull binds it.
-fn plat_sig_alloc_zero() -> int {}
-/// Free a signal slot: release its cell, zero its int mirror, and make the
-/// id reusable. No-op for ids that are already free.
-fn plat_sig_free(id: int) {}
-/// Drop the text buffer of an edit slot so a rebuilt input never shows a
-/// dead input's contents.
-fn plat_edit_reset(slot: int) {}
-/// Free an interned handler/thunk: release its captured env and make the id
-/// reusable. No-op for ids that are already free.
-fn plat_intern_free(id: int) {}
-/// Run `build` under a recoverable trap (`zui.Boundary`). Returns "" when the
-/// build completed, else the panic message. On wasm a trap is not caught here;
-/// it unwinds to the host, which recovers through `zeus.engine_recover`.
-fn plat_boundary(build: fn()) -> string {}
-/// Invoke interned handler `id` under a trap arm: "" when it returned, else the
-/// panic message. On wasm a trap is not caught here; it unwinds to the host.
-fn plat_guard_fn(id: int) -> string {}
-/// The last panic's message, "" before any. Static storage: copy before keeping.
-fn plat_trap_msg() -> string {}
-/// The message boundary number `seq` trapped with during a previous wasm
-/// instance's startup (pre-seeded by the web loader), or "".
-fn plat_boundary_preset(seq: int) -> string {}
 /// Router history: mirror a pushed / replaced entry into the host's own
 /// back stack (browser history, Cocoa/Android back button).
 fn plat_history_push(path: string) {}
@@ -280,11 +205,3 @@ fn plat_inset_get(out: &mut []int) {}
 /// inset). iOS and Android write these every frame; tests set them through
 /// `zeus.engine_set_insets` so a layout pass sees a notched viewport.
 fn plat_set_insets(top: int, right: int, bottom: int, left: int) {}
-/// Runtime allocation count since boot, for the animation proof harness. The
-/// runtime counts `loam_new` and array growth; an animated frame must not move
-/// it. 0 when the host/runtime does not track it.
-fn plat_alloc_count() -> int {}
-/// 1 when arena memory stats are on: compiled with `-DZEUS_MEM_STATS` or
-/// started with `ZEUS_MEM_STATS=1`. Phase 0 instrumentation only — no
-/// allocation decision reads it.
-fn plat_mem_stats() -> int {}
