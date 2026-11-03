@@ -5,12 +5,13 @@
 //! closures. Closures never rebuild the tree.
 
 import "platform.loam"
+import "runtime.loam"
 
 let mut stack: []int = []int {}
 let mut fn_ids: []int = []int {}
 let mut node_ids: []int = []int {}
 /* Dependency edges, an indexed pool. Edge `e` says effect `e_eff[e]` read
-   signal `e_sig[e]`; `e_gen[e]` is the generation `plat_sig_gen` reported when
+   signal `e_sig[e]`; `e_gen[e]` is the generation `runtime.sig_gen` reported when
    it was recorded (a lazy memo compares it against the live one to skip a
    recompute whose inputs did not move — the check-clean pass). Every edge is
    on two doubly linked lists — its signal's readers and its effect's inputs —
@@ -234,7 +235,7 @@ fn set_scope_disposer(f: fn(int)) {
 /// under a `Boundary` behind a trap arm, so a trapping effect swaps that
 /// boundary to its fallback instead of aborting.
 let mut guard_hook: fn(int, int) -> string = fn(fid: int, node: int) -> string {
-    platform.plat_invoke_fn(fid)
+    runtime.invoke_fn(fid)
     return ""
 }
 
@@ -551,7 +552,7 @@ fn note_read(signal_id: int) {
             e = e_en[e]
         }
     }
-    edge_add(signal_id, effect_id, platform.plat_sig_gen(signal_id))
+    edge_add(signal_id, effect_id, runtime.sig_gen(signal_id))
     /* A new edge onto a signal an effect writes: read the derived value only
        after the producer has recomputed it. */
     if signal_id < produced_by.len {
@@ -577,7 +578,7 @@ fn run_cleanup(effect_id: int) {
     }
     let fn_id = cleanup_fn[effect_id]
     if fn_id != 0 {
-        platform.plat_invoke_fn(fn_id)
+        runtime.invoke_fn(fn_id)
         cleanup_fn[effect_id] = 0
     }
 }
@@ -876,7 +877,7 @@ fn dispose_eid(e: int) {
     // The row's interned handler is not needed by anyone else, so return it: a
     // scope that re-runs must not leak an intern id per run.
     if fn_ids[e] != 0 {
-        platform.plat_intern_free(fn_ids[e])
+        runtime.intern_free(fn_ids[e])
     }
     fn_ids[e] = 0
     node_ids[e] = 0
@@ -1003,7 +1004,7 @@ fn inputs_changed(effect_id: int) -> int {
         let mut e = eff_head[effect_id]
         while e >= 0 {
             any = 1
-            if platform.plat_sig_gen(e_sig[e]) != e_gen[e] {
+            if runtime.sig_gen(e_sig[e]) != e_gen[e] {
                 changed = 1
             }
             e = e_en[e]

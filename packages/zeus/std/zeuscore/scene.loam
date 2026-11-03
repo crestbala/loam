@@ -7,6 +7,7 @@ import "nodes.loam"
 import "geometry.loam"
 import "metrics.loam"
 import "platform.loam"
+import "runtime.loam"
 
 // Fields grouped by width, widest first, so the 8-byte-aligned `text` slice
 // does not force padding between 4-byte ints (Phase 11). `text` is empty for
@@ -592,14 +593,14 @@ fn paint_input(id: int) {
         if font < 8 {
             font = 14
         }
-        platform.plat_edit_metrics(slot, arena.input_inner_w(id), font)
-        let a = platform.plat_edit_anchor(slot)
-        let c = platform.plat_edit_caret(slot)
+        runtime.edit_metrics(slot, arena.input_inner_w(id), font)
+        let a = runtime.edit_anchor(slot)
+        let c = runtime.edit_caret(slot)
         if a != c {
             let sel = 11053224
-            let lh = platform.plat_edit_line_h(slot)
-            let cx = tx + platform.plat_edit_caret_x(slot)
-            let cy = ty + platform.plat_edit_caret_y(slot)
+            let lh = runtime.edit_line_h(slot)
+            let cx = tx + runtime.edit_caret_x(slot)
+            let cy = ty + runtime.edit_caret_y(slot)
             fill(tx, cy, inner, lh, sel, 0)
             fill(cx, cy, 1, lh, sel, 0)
         }
@@ -617,9 +618,9 @@ fn paint_input(id: int) {
     }
     if arena.focus_id == id {
         if slot >= 0 {
-            let lh = platform.plat_edit_line_h(slot)
-            let cx = tx + platform.plat_edit_caret_x(slot)
-            let cy = ty + platform.plat_edit_caret_y(slot)
+            let lh = runtime.edit_line_h(slot)
+            let cx = tx + runtime.edit_caret_x(slot)
+            let cy = ty + runtime.edit_caret_y(slot)
             fill(cx, cy, 1, lh, fg, 0)
         }
     }

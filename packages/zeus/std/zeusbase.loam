@@ -18,6 +18,7 @@ import "enums.loam"
 import "zeus_constants.loam"
 import "zeuscore/geometry.loam"
 import "zeuscore/platform.loam"
+import "zeuscore/runtime.loam"
 import "zeuscore/arena.loam"
 import "zeuscore/nodes.loam"
 import "zeuscore/layout.loam"
@@ -144,25 +145,25 @@ fn untrack(body: fn()) {
 /// row; when the host is torn down the recorded ids are freed and recycled,
 /// so streaming lists do not leak handler envs.
 fn intern_fn(h: fn()) -> int {
-    let id = platform.plat_intern_fn(h)
+    let id = runtime.intern_fn(h)
     arena.record_intern(id, arena.owner_now())
     return id
 }
 
 fn intern_int(h: fn() -> int) -> int {
-    let id = platform.plat_intern_int_fn(h)
+    let id = runtime.intern_int_fn(h)
     arena.record_intern(id, arena.owner_now())
     return id
 }
 
 fn intern_bool(h: fn() -> bool) -> int {
-    let id = platform.plat_intern_bool_fn(h)
+    let id = runtime.intern_bool_fn(h)
     arena.record_intern(id, arena.owner_now())
     return id
 }
 
 fn intern_str(h: fn() -> string) -> int {
-    let id = platform.plat_intern_str_fn(h)
+    let id = runtime.intern_str_fn(h)
     arena.record_intern(id, arena.owner_now())
     return id
 }
@@ -403,7 +404,7 @@ fn computed<T>(calc: fn() -> T) -> Signal<T> {
     let owner = arena.owner_now()
     // The output is reserved unbound: `T` may be a struct or a list with no
     // nameable default, and the first pull is what binds it.
-    let out_id = platform.plat_sig_alloc_zero()
+    let out_id = runtime.sig_alloc_zero()
     // A closure can only be persisted through an environment that is a plain int
     // copy, and a `fn` value is not — so the body is stored in a raw signal cell
     // (whose payload is typed bytes) and rehydrated by id inside the thunk. That
@@ -411,7 +412,7 @@ fn computed<T>(calc: fn() -> T) -> Signal<T> {
     // builtins take a plain id, so no generic `signal` / `get` is instantiated at
     // a closure type.
     let holder_id = __sig_push(calc)
-    let fn_id = platform.plat_intern_fn(|| {
+    let fn_id = runtime.intern_fn(|| {
         let reopened: fn() -> T = __sig_load(holder_id)
         let value: T = reopened()
         __sig_store(out_id, value)
@@ -548,7 +549,7 @@ fn set_input(node: Node, text: string) -> Node {
         slot = nodes.ui[node.id].edit_slot
     }
     if slot >= 0 {
-        platform.plat_edit_set(slot, text)
+        runtime.edit_set(slot, text)
     }
     return node
 }
@@ -563,7 +564,7 @@ fn set_input(node: Node, text: string) -> Node {
 /// and read as a jittering UI) and a hard trap on wasm, which type-checks the
 /// call. Exposed so a test can pin it at zero rather than hope.
 fn intern_kind_mismatch_count() -> int {
-    return platform.plat_intern_kind_mismatch_count()
+    return runtime.intern_kind_mismatch_count()
 }
 
 /// Run `build` in the current slot, then aim the node it just attached at
@@ -1233,7 +1234,7 @@ fn install_key(node: Node, spec: string, action: string, handler_fn: int, is_glo
     switch is_global {
         case true:
             // ctx 0 = matches whatever holds focus.
-            platform.plat_map_key(spec, act, 0)
+            runtime.map_key(spec, act, 0)
             on_action_global(act, signal_handle(0), 5, handler_fn)
         default:
             key(node, spec, act)
@@ -1311,7 +1312,7 @@ fn install_keys(node: Node, keys: []KeyBind) -> Node {
 }
 
 fn key_context(node: Node, name: string) -> Node {
-    nodes.ui[node.id].key_ctx = platform.plat_key_intern(name)
+    nodes.ui[node.id].key_ctx = runtime.key_intern(name)
     return node
 }
 fn focusable(node: Node) -> Node {
@@ -1332,11 +1333,11 @@ fn capture_text(node: Node) -> Node {
 fn key(node: Node, spec: string, action: string) -> Node {
     let mut ctx = nodes.ui[node.id].key_ctx
     if ctx == 0 {
-        ctx = platform.plat_key_intern_action(action)
+        ctx = runtime.key_intern_action(action)
         nodes.ui[node.id].key_ctx = ctx
     }
     if ctx != 0 {
-        platform.plat_map_key(spec, action, ctx)
+        runtime.map_key(spec, action, ctx)
     }
     nodes.ui[node.id].focusable = 1
     return node
@@ -2138,13 +2139,13 @@ fn set_prop_str(node: Node, setter: int, v: string) -> Node {
 fn prop_int(node: Node, setter: int, thunk: fn() -> int) -> Node {
     let fn_id = intern_int(thunk)
     let node_id = node.id
-    return styled(node, || { apply_int(node_id, setter, platform.plat_invoke_int_fn(fn_id)) })
+    return styled(node, || { apply_int(node_id, setter, runtime.invoke_int_fn(fn_id)) })
 }
 
 fn prop_str(node: Node, setter: int, thunk: fn() -> string) -> Node {
     let fn_id = intern_str(thunk)
     let node_id = node.id
-    return styled(node, || { apply_str(node_id, setter, platform.plat_invoke_str_fn(fn_id)) })
+    return styled(node, || { apply_str(node_id, setter, runtime.invoke_str_fn(fn_id)) })
 }
 // --- UI scale (density + type, one knob) ---
 /// Scale in percent; 100 is the design system's 1.0. Clamped to 50..200.
@@ -3694,7 +3695,7 @@ fn Component(node: Node, p: BoxProps) -> Node {
                and behave empty.
 
                Only on a real difference: a rebuild re-runs this on every
-               keystroke, and `plat_edit_set` resets the caret to the end and
+               keystroke, and `runtime.edit_set` resets the caret to the end and
                drops the selection, so an unconditional seed would make typing
                anywhere but the end jump to the end. When the buffer already
                holds what the signal holds, the two agree and there is nothing

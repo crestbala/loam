@@ -468,9 +468,13 @@ Nothing in the core imports it. `zeuscore` is 16.2k lines; the rasterizer is
 
 Next, each its own change:
 
-1. **Runtime out of the seam.** Edit buffers, key mapping, interned handlers,
-   signal cells and trap boundaries are not OS services; they leave
-   `platform.loam` for the runtime (or Loam). Seam target: about 40 functions.
+1. **Runtime out of the seam. Done (2026-11-03).** Edit buffers, the key
+   table, interned handlers, signal cells, trap boundaries and the allocation
+   counters (47 functions) moved from `platform.loam` to
+   `zeuscore/runtime.loam` (`runtime.*`, C symbols `loam_runtime_*`). They are
+   implemented once in `zeus_plat.c` and no host touches them. `platform.loam`
+   is now the host contract alone: 56 functions, every one an OS service, and
+   step 2 removes most of the paint ones.
 2. **One command buffer.** `present()` encodes the draw list into one `[]int`
    plus a string table; native hosts replay it through a shared C
    `zeus_replay`, the web host with one JS call per frame. The per-primitive

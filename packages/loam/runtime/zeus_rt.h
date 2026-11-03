@@ -295,7 +295,7 @@ void loam_platform_plat_titlebar_get(loam_vec *out);
 void loam_platform_plat_clipboard_write(loam_str text);
 loam_str loam_platform_plat_clipboard_last(void);
 int64_t loam_platform_plat_apple_keys(void);
-void loam_platform_plat_edit_set_secure(int64_t slot, int64_t on);
+void loam_runtime_edit_set_secure(int64_t slot, int64_t on);
 int64_t loam_platform_plat_view_width(void);
 int64_t loam_platform_plat_view_height(void);
 void loam_platform_plat_svg(int64_t x, int64_t y, int64_t w, int64_t h, loam_str markup,
@@ -308,7 +308,7 @@ void loam_platform_plat_save(void);
 void loam_platform_plat_alpha(int64_t a);
 int64_t loam_platform_plat_mem_kb(void);
 /* 1 when built `-DZEUS_MEM_STATS` or run with `ZEUS_MEM_STATS=1` (Phase 0). */
-int64_t loam_platform_plat_mem_stats(void);
+int64_t loam_runtime_mem_stats(void);
 int64_t loam_platform_plat_now_ms(void);
 void loam_platform_plat_clip(int64_t x, int64_t y, int64_t w, int64_t h, int64_t radius);
 void loam_platform_plat_restore(void);
@@ -319,59 +319,59 @@ void loam_platform_plat_restore(void);
    C requires the declaration and the definition to agree. */
 int32_t loam_platform_plat_blit(loam_vec buf, int32_t w, int32_t h, int32_t gen,
                                 int32_t scale);
-int64_t loam_platform_plat_key_intern(loam_str name);
-int64_t loam_platform_plat_key_intern_action(loam_str action);
-void loam_platform_plat_key_reset(void);
-void loam_platform_plat_map_key(loam_str spec, loam_str action, int64_t ctx);
-int64_t loam_platform_plat_key_ev(int64_t key, int64_t mods);
-int64_t loam_platform_plat_edit_append(int64_t slot, int64_t key);
-int64_t loam_platform_plat_edit_back(int64_t slot);
-int64_t loam_platform_plat_edit_del(int64_t slot);
-int64_t loam_platform_plat_edit_len(int64_t slot);
-loam_str loam_platform_plat_edit_text(int64_t slot);
-loam_str loam_platform_plat_edit_shown(int64_t slot);
-int64_t loam_platform_plat_edit_set(int64_t slot, loam_str text);
-int64_t loam_platform_plat_edit_insert(int64_t slot, loam_str text);
-int64_t loam_platform_plat_edit_caret(int64_t slot);
-int64_t loam_platform_plat_edit_anchor(int64_t slot);
-int64_t loam_platform_plat_edit_set_caret(int64_t slot, int64_t pos);
-int64_t loam_platform_plat_edit_set_anchor(int64_t slot, int64_t pos);
-int64_t loam_platform_plat_edit_mark(int64_t slot, loam_str text);
-void loam_platform_plat_edit_metrics(int64_t slot, int64_t wrap_w, int64_t font);
-int64_t loam_platform_plat_edit_click(int64_t slot, int64_t x, int64_t y, int64_t wrap_w,
+int64_t loam_runtime_key_intern(loam_str name);
+int64_t loam_runtime_key_intern_action(loam_str action);
+void loam_runtime_key_reset(void);
+void loam_runtime_map_key(loam_str spec, loam_str action, int64_t ctx);
+int64_t loam_runtime_key_ev(int64_t key, int64_t mods);
+int64_t loam_runtime_edit_append(int64_t slot, int64_t key);
+int64_t loam_runtime_edit_back(int64_t slot);
+int64_t loam_runtime_edit_del(int64_t slot);
+int64_t loam_runtime_edit_len(int64_t slot);
+loam_str loam_runtime_edit_text(int64_t slot);
+loam_str loam_runtime_edit_shown(int64_t slot);
+int64_t loam_runtime_edit_set(int64_t slot, loam_str text);
+int64_t loam_runtime_edit_insert(int64_t slot, loam_str text);
+int64_t loam_runtime_edit_caret(int64_t slot);
+int64_t loam_runtime_edit_anchor(int64_t slot);
+int64_t loam_runtime_edit_set_caret(int64_t slot, int64_t pos);
+int64_t loam_runtime_edit_set_anchor(int64_t slot, int64_t pos);
+int64_t loam_runtime_edit_mark(int64_t slot, loam_str text);
+void loam_runtime_edit_metrics(int64_t slot, int64_t wrap_w, int64_t font);
+int64_t loam_runtime_edit_click(int64_t slot, int64_t x, int64_t y, int64_t wrap_w,
                                       int64_t font);
-int64_t loam_platform_plat_edit_move(int64_t slot, int64_t dir, int64_t extend);
-int64_t loam_platform_plat_edit_caret_x(int64_t slot);
-int64_t loam_platform_plat_edit_caret_y(int64_t slot);
-int64_t loam_platform_plat_edit_line_h(int64_t slot);
-int64_t loam_platform_plat_intern_fn(loam_fn handler);
-void loam_platform_plat_invoke_fn(int64_t id);
+int64_t loam_runtime_edit_move(int64_t slot, int64_t dir, int64_t extend);
+int64_t loam_runtime_edit_caret_x(int64_t slot);
+int64_t loam_runtime_edit_caret_y(int64_t slot);
+int64_t loam_runtime_edit_line_h(int64_t slot);
+int64_t loam_runtime_intern_fn(loam_fn handler);
+void loam_runtime_invoke_fn(int64_t id);
 /* Reactive prop thunks: interned like handlers, called for their result. */
-int64_t loam_platform_plat_intern_int_fn(loam_fn thunk);
-int64_t loam_platform_plat_invoke_int_fn(int64_t id);
-int64_t loam_platform_plat_intern_bool_fn(loam_fn thunk);
-int64_t loam_platform_plat_invoke_bool_fn(int64_t id);
-int64_t loam_platform_plat_intern_str_fn(loam_fn thunk);
-loam_str loam_platform_plat_invoke_str_fn(int64_t id);
+int64_t loam_runtime_intern_int_fn(loam_fn thunk);
+int64_t loam_runtime_invoke_int_fn(int64_t id);
+int64_t loam_runtime_intern_bool_fn(loam_fn thunk);
+int64_t loam_runtime_invoke_bool_fn(int64_t id);
+int64_t loam_runtime_intern_str_fn(loam_fn thunk);
+loam_str loam_runtime_invoke_str_fn(int64_t id);
 /* Calls refused because the slot held a handler interned under another
    signature. Zero is the contract; see the kind guard in zeus_plat.c. */
-int32_t loam_platform_plat_intern_kind_mismatch_count(void);
-int32_t loam_platform_plat_intern_live_count(void);
-void loam_platform_plat_sig_bind_int(int64_t id, int64_t value);
-int64_t loam_platform_plat_sig_gen(int64_t id);
-int64_t loam_platform_plat_sig_alloc_zero(void);
-void loam_platform_plat_sig_free(int64_t id);
-void loam_platform_plat_edit_reset(int64_t slot);
-void loam_platform_plat_intern_free(int64_t id);
+int32_t loam_runtime_intern_kind_mismatch_count(void);
+int32_t loam_runtime_intern_live_count(void);
+void loam_runtime_sig_bind_int(int64_t id, int64_t value);
+int64_t loam_runtime_sig_gen(int64_t id);
+int64_t loam_runtime_sig_alloc_zero(void);
+void loam_runtime_sig_free(int64_t id);
+void loam_runtime_edit_reset(int64_t slot);
+void loam_runtime_intern_free(int64_t id);
 /* Recoverable trap (`zeus.Boundary`): "" on success, else the panic message. */
-loam_str loam_platform_plat_boundary(loam_fn build);
+loam_str loam_runtime_boundary(loam_fn build);
 /* Guarded handler invoke: "" when `id` returned, else the panic message. */
-loam_str loam_platform_plat_guard_fn(int64_t id);
+loam_str loam_runtime_guard_fn(int64_t id);
 /* The last panic's message (static storage). */
-loam_str loam_platform_plat_trap_msg(void);
+loam_str loam_runtime_trap_msg(void);
 /* Boundary `seq` trapped during a previous instance's startup (wasm restart):
    its message, or "". `zeus_boundary_preset_add` records one. */
-loam_str loam_platform_plat_boundary_preset(int64_t seq);
+loam_str loam_runtime_boundary_preset(int64_t seq);
 void zeus_boundary_preset_add(int32_t seq, const char *msg, size_t n);
 /* Router history mirror (host back stack). */
 void loam_platform_plat_history_push(loam_str path);
@@ -380,7 +380,7 @@ void loam_platform_plat_history_back(void);
 int64_t loam_platform_plat_overlay_scroll(void);
 void loam_platform_plat_set_overlay_scroll(int64_t on);
 void loam_platform_plat_inset_get(loam_vec *out);
-int64_t loam_platform_plat_alloc_count(void);
+int64_t loam_runtime_alloc_count(void);
 void loam_platform_plat_set_insets(int64_t top, int64_t right, int64_t bottom,
                                   int64_t left);
 

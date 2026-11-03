@@ -191,16 +191,16 @@ void loam_zeus_set(Signal sig, int64_t value) {
     loam_arena_store_sig((int32_t)sig.id, (int32_t)value);
 }
 
-void loam_platform_plat_sig_bind_int(int64_t id, int64_t value) {
+void loam_runtime_sig_bind_int(int64_t id, int64_t value) {
     int32_t v32 = (int32_t)value;
     loam_zeus_sig_bind(id, &v32, (int64_t)sizeof(v32));
 }
 
-int64_t loam_platform_plat_sig_gen(int64_t id) {
+int64_t loam_runtime_sig_gen(int64_t id) {
     return loam_zeus_sig_gen(id);
 }
 
-int64_t loam_platform_plat_sig_alloc_zero(void) {
+int64_t loam_runtime_sig_alloc_zero(void) {
     return loam_zeus_sig_alloc_zero();
 }
 
@@ -283,14 +283,14 @@ void loam_zeus_sig_free(int64_t id) {
     free_sig_push(id);
 }
 
-void loam_platform_plat_sig_free(int64_t id) {
+void loam_runtime_sig_free(int64_t id) {
     loam_zeus_sig_free(id);
 }
 
 /* Allocation accounting (phase 3 proof harness). `loam_rt.h` increments this
    from `loam_new` / array growth when the program was compiled with
    `-DLOAM_ALLOC_TRACE` (all Zeus programs are); `zeus.proof_allocs()` reads it. */
-int64_t loam_platform_plat_alloc_count(void) {
+int64_t loam_runtime_alloc_count(void) {
     /* The counter is the runtime's (`loam_rt.h`, `LOAM_RT_DEFINE_ALLOC`); this
        seam only reports it. The copy that used to live here — one line, but a
        Zeus translation unit defining a language-runtime symbol — is gone. */
@@ -1166,9 +1166,9 @@ int64_t loam_platform_plat_mem_kb(void) {
 #endif
 }
 
-/* Phase 0 arena-stats gate (`platform.plat_mem_stats`). A build flag turns it on
+/* Phase 0 arena-stats gate (`runtime.mem_stats`). A build flag turns it on
    for good; the env var turns it on for one run; neither changes allocation. */
-int64_t loam_platform_plat_mem_stats(void) {
+int64_t loam_runtime_mem_stats(void) {
 #if defined(ZEUS_MEM_STATS)
     return 1;
 #else
@@ -1258,13 +1258,13 @@ int32_t loam_platform_plat_blit(loam_vec buf, int32_t w, int32_t h, int32_t gen,
     if (!buf.ptr || w <= 0 || h <= 0 || (int64_t)buf.len < need) return 0;
     return (int32_t)loam_zeus_plat_blit((const uint8_t *)buf.ptr, w, h, gen, scale);
 }
-int64_t loam_platform_plat_key_intern(loam_str name) {
+int64_t loam_runtime_key_intern(loam_str name) {
     char *s = dup_ys(name);
     int id = zeus_key_context_id(s);
     free(s);
     return id;
 }
-int64_t loam_platform_plat_key_intern_action(loam_str action) {
+int64_t loam_runtime_key_intern_action(loam_str action) {
     char *s = dup_ys(action);
     int id = zeus_key_context_from_action(s);
     free(s);
@@ -1272,18 +1272,18 @@ int64_t loam_platform_plat_key_intern_action(loam_str action) {
 }
 static void intern_fn_reset(void);
 
-void loam_platform_plat_key_reset(void) {
+void loam_runtime_key_reset(void) {
     zeus_key_reset_handlers();
     intern_fn_reset();
 }
-void loam_platform_plat_map_key(loam_str spec, loam_str action, int64_t ctx) {
+void loam_runtime_map_key(loam_str spec, loam_str action, int64_t ctx) {
     char *a = dup_ys(spec), *b = dup_ys(action);
     zeus_key_map_ctx(a, b, (int)ctx);
     free(a);
     free(b);
 }
 
-int64_t loam_platform_plat_key_ev(int64_t key, int64_t mods) {
+int64_t loam_runtime_key_ev(int64_t key, int64_t mods) {
     return zeus_handle_key_ev((int)key, (int)mods);
 }
 
@@ -1414,7 +1414,7 @@ static int edit_put(int slot, char ch) {
     return edit_insert_bytes(slot, b, 1);
 }
 
-int64_t loam_platform_plat_edit_append(int64_t slot, int64_t key) {
+int64_t loam_runtime_edit_append(int64_t slot, int64_t key) {
     int i;
     if (!edit_ok(slot)) return 0;
     if (key == 13) key = 10;
@@ -1428,7 +1428,7 @@ int64_t loam_platform_plat_edit_append(int64_t slot, int64_t key) {
     return edit_put((int)slot, (char)key);
 }
 
-int64_t loam_platform_plat_edit_back(int64_t slot) {
+int64_t loam_runtime_edit_back(int64_t slot) {
     int lo, hi;
     if (!edit_ok(slot)) return 0;
     if (edit_has_sel((int)slot))
@@ -1439,7 +1439,7 @@ int64_t loam_platform_plat_edit_back(int64_t slot) {
     return edit_delete_range((int)slot, lo, hi);
 }
 
-int64_t loam_platform_plat_edit_del(int64_t slot) {
+int64_t loam_runtime_edit_del(int64_t slot) {
     int lo, hi, n;
     if (!edit_ok(slot)) return 0;
     if (edit_has_sel((int)slot))
@@ -1451,18 +1451,18 @@ int64_t loam_platform_plat_edit_del(int64_t slot) {
     return edit_delete_range((int)slot, lo, hi);
 }
 
-int64_t loam_platform_plat_edit_len(int64_t slot) {
+int64_t loam_runtime_edit_len(int64_t slot) {
     if (!edit_ok(slot)) return 0;
     return edit_len[slot];
 }
 
-loam_str loam_platform_plat_edit_text(int64_t slot) {
+loam_str loam_runtime_edit_text(int64_t slot) {
     if (!edit_ok(slot) || edit_len[slot] <= 0 || !edit_buf[slot])
         return (loam_str){"", 0};
     return (loam_str){edit_buf[slot], edit_len[slot]};
 }
 
-int64_t loam_platform_plat_edit_set(int64_t slot, loam_str text) {
+int64_t loam_runtime_edit_set(int64_t slot, loam_str text) {
     int n;
     if (!edit_ok(slot)) return 0;
     n = text.len > 0 && text.ptr ? (int)text.len : 0;
@@ -1477,7 +1477,7 @@ int64_t loam_platform_plat_edit_set(int64_t slot, loam_str text) {
     return 1;
 }
 
-int64_t loam_platform_plat_edit_insert(int64_t slot, loam_str text) {
+int64_t loam_runtime_edit_insert(int64_t slot, loam_str text) {
     int n;
     if (!edit_ok(slot)) return 0;
     n = text.len > 0 && text.ptr ? (int)text.len : 0;
@@ -1485,12 +1485,12 @@ int64_t loam_platform_plat_edit_insert(int64_t slot, loam_str text) {
     return edit_insert_bytes((int)slot, text.ptr, n);
 }
 
-int64_t loam_platform_plat_edit_caret(int64_t slot) {
+int64_t loam_runtime_edit_caret(int64_t slot) {
     if (!edit_ok(slot)) return 0;
     return edit_pos[slot];
 }
 
-int64_t loam_platform_plat_edit_anchor(int64_t slot) {
+int64_t loam_runtime_edit_anchor(int64_t slot) {
     if (!edit_ok(slot)) return 0;
     return edit_anchor[slot];
 }
@@ -1498,21 +1498,21 @@ int64_t loam_platform_plat_edit_anchor(int64_t slot) {
 /* Absolute caret / anchor setters. The Loam side computes grapheme-cluster
    boundaries with `std:unicode` and parks them here, then reuses the existing
    selection delete paths. */
-int64_t loam_platform_plat_edit_set_caret(int64_t slot, int64_t pos) {
+int64_t loam_runtime_edit_set_caret(int64_t slot, int64_t pos) {
     if (!edit_ok(slot)) return 0;
     edit_pos[slot] = (int)pos;
     edit_clamp((int)slot);
     return 1;
 }
 
-int64_t loam_platform_plat_edit_set_anchor(int64_t slot, int64_t pos) {
+int64_t loam_runtime_edit_set_anchor(int64_t slot, int64_t pos) {
     if (!edit_ok(slot)) return 0;
     edit_anchor[slot] = (int)pos;
     edit_clamp((int)slot);
     return 1;
 }
 
-int64_t loam_platform_plat_edit_mark(int64_t slot, loam_str text) {
+int64_t loam_runtime_edit_mark(int64_t slot, loam_str text) {
     int n;
     char *p;
     if (!edit_ok(slot)) return 0;
@@ -1530,7 +1530,7 @@ int64_t loam_platform_plat_edit_mark(int64_t slot, loam_str text) {
     return 1;
 }
 
-loam_str loam_platform_plat_edit_shown(int64_t slot) {
+loam_str loam_runtime_edit_shown(int64_t slot) {
     int n, m, at, need;
     char *v;
     if (!edit_ok(slot)) return (loam_str){"", 0};
@@ -1573,7 +1573,7 @@ loam_str loam_platform_plat_edit_shown(int64_t slot) {
     return (loam_str){v, n + m};
 }
 
-void loam_platform_plat_edit_metrics(int64_t slot, int64_t wrap_w, int64_t font) {
+void loam_runtime_edit_metrics(int64_t slot, int64_t wrap_w, int64_t font) {
     if (!edit_ok(slot)) return;
     edit_wrap_w[slot] = wrap_w > 0 ? (int)wrap_w : 0;
     edit_font[slot] = font > 0 ? (int)font : 14;
@@ -1592,7 +1592,7 @@ static void edit_measure(int slot, const char *s, int64_t n, int64_t font, int64
     measure_span(s, n, font, w, h);
 }
 
-void loam_platform_plat_edit_set_secure(int64_t slot, int64_t on) {
+void loam_runtime_edit_set_secure(int64_t slot, int64_t on) {
     if (!edit_ok(slot)) return;
     edit_secure[slot] = on ? 1 : 0;
 }
@@ -1691,7 +1691,7 @@ static void edit_pos_to_xy(int slot, int pos, int wrap_w, int font, int64_t *ox,
     if (oy) *oy = yy;
 }
 
-int64_t loam_platform_plat_edit_click(int64_t slot, int64_t x, int64_t y, int64_t wrap_w,
+int64_t loam_runtime_edit_click(int64_t slot, int64_t x, int64_t y, int64_t wrap_w,
                                       int64_t font) {
     int p;
     if (!edit_ok(slot)) return 0;
@@ -1702,7 +1702,7 @@ int64_t loam_platform_plat_edit_click(int64_t slot, int64_t x, int64_t y, int64_
     return 1;
 }
 
-int64_t loam_platform_plat_edit_caret_x(int64_t slot) {
+int64_t loam_runtime_edit_caret_x(int64_t slot) {
     int64_t x = 0, y = 0;
     if (!edit_ok(slot)) return 0;
     edit_pos_to_xy((int)slot, edit_pos[slot], edit_wrap_w[slot] ? edit_wrap_w[slot] : (1 << 20),
@@ -1710,7 +1710,7 @@ int64_t loam_platform_plat_edit_caret_x(int64_t slot) {
     return x;
 }
 
-int64_t loam_platform_plat_edit_caret_y(int64_t slot) {
+int64_t loam_runtime_edit_caret_y(int64_t slot) {
     int64_t x = 0, y = 0;
     if (!edit_ok(slot)) return 0;
     edit_pos_to_xy((int)slot, edit_pos[slot], edit_wrap_w[slot] ? edit_wrap_w[slot] : (1 << 20),
@@ -1718,14 +1718,14 @@ int64_t loam_platform_plat_edit_caret_y(int64_t slot) {
     return y;
 }
 
-int64_t loam_platform_plat_edit_line_h(int64_t slot) {
+int64_t loam_runtime_edit_line_h(int64_t slot) {
     int font;
     if (!edit_ok(slot)) return 18;
     font = edit_font[slot] ? edit_font[slot] : 14;
     return wrap_line_h(font);
 }
 
-int64_t loam_platform_plat_edit_move(int64_t slot, int64_t dir, int64_t extend) {
+int64_t loam_runtime_edit_move(int64_t slot, int64_t dir, int64_t extend) {
     int n, wrap_w, font, p;
     int64_t x = 0, y = 0, lh;
     if (!edit_ok(slot)) return 0;
@@ -1755,7 +1755,7 @@ int64_t loam_platform_plat_edit_move(int64_t slot, int64_t dir, int64_t extend) 
 
 /* Drop the text of a slot (keeps the buffer) so a recycled slot starts
    empty. Called when the input node holding the slot is torn down. */
-void loam_platform_plat_edit_reset(int64_t slot) {
+void loam_runtime_edit_reset(int64_t slot) {
     if (!edit_ok(slot)) return;
     if (edit_buf[slot]) edit_buf[slot][0] = '\0';
     edit_len[slot] = 0;
@@ -2151,7 +2151,7 @@ static int click_fns_cap;
 static int64_t intern_kind_mismatches;
 static int intern_kind_reported;
 
-/* Freed interned-handler slots, recycled by plat_intern_fn. A slot is freed
+/* Freed interned-handler slots, recycled by runtime.intern_fn. A slot is freed
    only when the subtree that interned it is torn down, so recycling never
    aliases a live handler. */
 static int *free_fns;
@@ -2218,7 +2218,7 @@ static int intern_kind_matches(int id, int want) {
 }
 
 /* Free one interned handler; its id becomes recyclable. */
-void loam_platform_plat_intern_free(int64_t id) {
+void loam_runtime_intern_free(int64_t id) {
     if (id <= 0 || id >= nclick_fns) return;
     if (!click_fns[id].h.fn && !click_fns[id].h.env) return;
     free(click_fns[id].h.env);
@@ -2231,7 +2231,7 @@ void loam_platform_plat_intern_free(int64_t id) {
     free_fn_push((int)id);
 }
 
-int64_t loam_platform_plat_intern_fn(loam_fn handler) {
+int64_t loam_runtime_intern_fn(loam_fn handler) {
     loam_fn kept;
     int id = free_fn_pop();
     if (id == 0) {
@@ -2259,16 +2259,16 @@ int64_t loam_platform_plat_intern_fn(loam_fn handler) {
    The kind is recorded with the slot, so the matching `invoke_*` can tell its
    own thunks from the other three kinds. */
 static int64_t intern_fn_as(loam_fn thunk, int kind) {
-    int64_t id = loam_platform_plat_intern_fn(thunk);
+    int64_t id = loam_runtime_intern_fn(thunk);
     if (id > 0 && id < nclick_fns) click_fns[id].kind = (unsigned char)kind;
     return id;
 }
 
-int64_t loam_platform_plat_intern_int_fn(loam_fn thunk) {
+int64_t loam_runtime_intern_int_fn(loam_fn thunk) {
     return intern_fn_as(thunk, ZEUS_FN_INT);
 }
 
-int64_t loam_platform_plat_invoke_int_fn(int64_t id) {
+int64_t loam_runtime_invoke_int_fn(int64_t id) {
     if (id <= 0 || id >= nclick_fns) return 0;
     if (!click_fns[id].h.fn) return 0;
     if (!intern_kind_matches((int)id, ZEUS_FN_INT)) return 0;
@@ -2283,29 +2283,29 @@ int64_t loam_platform_plat_invoke_int_fn(int64_t id) {
     return (int64_t)((int32_t (*)(void *))click_fns[id].h.fn)(click_fns[id].h.env);
 }
 
-int64_t loam_platform_plat_intern_bool_fn(loam_fn thunk) {
+int64_t loam_runtime_intern_bool_fn(loam_fn thunk) {
     return intern_fn_as(thunk, ZEUS_FN_BOOL);
 }
 
-int64_t loam_platform_plat_invoke_bool_fn(int64_t id) {
+int64_t loam_runtime_invoke_bool_fn(int64_t id) {
     if (id <= 0 || id >= nclick_fns) return 0;
     if (!click_fns[id].h.fn) return 0;
     if (!intern_kind_matches((int)id, ZEUS_FN_BOOL)) return 0;
     return ((bool (*)(void *))click_fns[id].h.fn)(click_fns[id].h.env) ? 1 : 0;
 }
 
-int64_t loam_platform_plat_intern_str_fn(loam_fn thunk) {
+int64_t loam_runtime_intern_str_fn(loam_fn thunk) {
     return intern_fn_as(thunk, ZEUS_FN_STR);
 }
 
-loam_str loam_platform_plat_invoke_str_fn(int64_t id) {
+loam_str loam_runtime_invoke_str_fn(int64_t id) {
     if (id <= 0 || id >= nclick_fns) return (loam_str){ "", 0 };
     if (!click_fns[id].h.fn) return (loam_str){ "", 0 };
     if (!intern_kind_matches((int)id, ZEUS_FN_STR)) return (loam_str){ "", 0 };
     return ((loam_str (*)(void *))click_fns[id].h.fn)(click_fns[id].h.env);
 }
 
-void loam_platform_plat_invoke_fn(int64_t id) {
+void loam_runtime_invoke_fn(int64_t id) {
     if (id <= 0 || id >= nclick_fns) return;
     if (!click_fns[id].h.fn) return;
     if (!intern_kind_matches((int)id, ZEUS_FN_VOID)) return;
@@ -2315,14 +2315,14 @@ void loam_platform_plat_invoke_fn(int64_t id) {
 /* How many calls were refused because the slot held another signature. Zero is
    the contract: a non-zero count means a handler was interned as one kind and
    invoked as another, which is the bug this guard exists to make visible. */
-int32_t loam_platform_plat_intern_kind_mismatch_count(void) {
+int32_t loam_runtime_intern_kind_mismatch_count(void) {
     return (int32_t)intern_kind_mismatches;
 }
 
 /* Live rows in the interned-handler table: a slot is live while it carries a
    kind. A streaming list, or a re-running `scope`, must recycle handlers rather
    than grow this, so a test can hold it flat. */
-int32_t loam_platform_plat_intern_live_count(void) {
+int32_t loam_runtime_intern_live_count(void) {
     int i, n = 0;
     for (i = 1; i < nclick_fns; i++) {
         if (click_fns[i].kind != 0) n++;
@@ -2535,14 +2535,14 @@ void loam_zeusbase_remap_key(loam_str spec, loam_str action, loam_str ctx) {
    facility. The verb is generic: any library that wants a recoverable region
    calls the same one. On wasm it runs the body unprotected: a trap unwinds to
    the host, which calls `zeus_recover` (see `engine_recover`). */
-loam_str loam_platform_plat_boundary(loam_fn build) {
+loam_str loam_runtime_boundary(loam_fn build) {
     return loam_trap_guard(build);
 }
 
 /* Invoke interned void handler `id` under a trap arm: "" when it returned, else
    the panic message. A handler or effect inside a `Boundary` runs through this,
    so a trap swaps that boundary to its fallback instead of killing the app. */
-loam_str loam_platform_plat_guard_fn(int64_t id) {
+loam_str loam_runtime_guard_fn(int64_t id) {
     loam_str none = { "", 0, 0 };
     if (id <= 0 || id >= nclick_fns) return none;
     if (!click_fns[id].h.fn) return none;
@@ -2572,7 +2572,7 @@ void zeus_boundary_preset_add(int32_t seq, const char *msg, size_t n) {
     g_bnd_pre_n++;
 }
 
-loam_str loam_platform_plat_boundary_preset(int64_t seq) {
+loam_str loam_runtime_boundary_preset(int64_t seq) {
     loam_str none = { "", 0, 0 };
     int i;
     for (i = 0; i < g_bnd_pre_n; i++) {
@@ -2583,7 +2583,7 @@ loam_str loam_platform_plat_boundary_preset(int64_t seq) {
 
 /* The message of the last panic (empty before any). Static storage: copy it
    before another panic can overwrite it. */
-loam_str loam_platform_plat_trap_msg(void) {
+loam_str loam_runtime_trap_msg(void) {
     loam_str msg;
     msg.ptr = loam_jmp_msg;
     msg.len = (int64_t)strlen(loam_jmp_msg);

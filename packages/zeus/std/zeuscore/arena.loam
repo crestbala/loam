@@ -5,6 +5,7 @@
 import "geometry.loam"
 import "nodes.loam"
 import "platform.loam"
+import "runtime.loam"
 import "track.loam"
 import "style.loam"
 import "std:fmt"
@@ -429,12 +430,12 @@ fn rec_release(slot: int) {
     let kind = r_kind[slot]
     rec_drop(slot)
     if kind == 0 {
-        platform.plat_sig_free(k)
+        runtime.sig_free(k)
         forget_sig_meta(k)
         track.drop_sig(k)
         anim_drop_sig(k)
     } else {
-        platform.plat_intern_free(k)
+        runtime.intern_free(k)
     }
 }
 
@@ -1120,7 +1121,7 @@ fn edit_sync_secure(id: int, slot: int) {
             on = 1
         }
     }
-    platform.plat_edit_set_secure(slot, on)
+    runtime.edit_set_secure(slot, on)
 }
 
 /// Pointer hooks that only a few nodes carry — `on_context_menu` (kind
@@ -1236,7 +1237,7 @@ fn free_node(id: int) {
     }
     if int(nodes.tree[id].kind) == 10 {
         if nodes.ui[id].edit_slot >= 0 {
-            platform.plat_edit_reset(nodes.ui[id].edit_slot)
+            runtime.edit_reset(nodes.ui[id].edit_slot)
         }
     }
     if int(nodes.look[id].pulse) != 0 {
@@ -1623,7 +1624,7 @@ fn release(m: ArenaMark) {
     for slot in 0..r_kind.len {
         if r_kind[slot] >= 0 && r_seq[slot] > m.rec {
             if r_kind[slot] == 1 {
-                platform.plat_intern_free(r_key[slot])
+                runtime.intern_free(r_key[slot])
             }
             rec_drop(slot)
         }
@@ -1631,7 +1632,7 @@ fn release(m: ArenaMark) {
     let mut s = sigs.len
     while s > m.sigs {
         s = s - 1
-        platform.plat_sig_free(s)
+        runtime.sig_free(s)
         forget_sig_meta(s)
         track.drop_sig(s)
         anim_drop_sig(s)
@@ -1933,7 +1934,7 @@ fn hosts_for_signal(sig_id: int) -> int {
 }
 
 // --- error boundaries at run time ---
-// `Boundary` catches a trap in its own build directly (`plat_boundary`). A trap
+// `Boundary` catches a trap in its own build directly (`runtime.boundary`). A trap
 // later — in a click handler, a key handler, an effect — happens long after
 // that build returned, so it is caught here instead: every handler / effect
 // invocation goes through `invoke_on`, which runs it behind a trap arm when its
@@ -1975,7 +1976,7 @@ fn boundary_next_seq() -> int {
 
 /// The pre-seeded message for boundary `seq`, or "".
 fn boundary_preset_msg(seq: int) -> string {
-    return platform.plat_boundary_preset(seq)
+    return runtime.boundary_preset(seq)
 }
 
 /// Mark `id` as a boundary host. Its refresh hook (push-only) builds the
@@ -2035,12 +2036,12 @@ fn invoke_on(fid: int, node: int) -> string {
         return ""
     }
     if bnd_any == 0 {
-        platform.plat_invoke_fn(fid)
+        runtime.invoke_fn(fid)
         return ""
     }
     let b = nodes.boundary_of(node)
     if b == 0 {
-        platform.plat_invoke_fn(fid)
+        runtime.invoke_fn(fid)
         return ""
     }
     let depth = trap_host.len
@@ -2051,7 +2052,7 @@ fn invoke_on(fid: int, node: int) -> string {
     let scope0 = scope_node
     let ui0 = ui_depth_hook()
     let tm = track.mark()
-    let msg = platform.plat_guard_fn(fid)
+    let msg = runtime.guard_fn(fid)
     trap_trim(depth)
     if msg.len > 0 {
         // The trap skipped every pop the body would have done.
@@ -2679,7 +2680,7 @@ fn store_sig(id: int, value: int) {
         }
     }
     sigs[id] = value
-    platform.plat_sig_bind_int(id, value)
+    runtime.sig_bind_int(id, value)
     note_write(id)
 }
 
@@ -2845,7 +2846,7 @@ fn store_sig_paint(id: int, value: int) {
         return
     }
     sigs[id] = value
-    platform.plat_sig_bind_int(id, value)
+    runtime.sig_bind_int(id, value)
     let ran0 = track.runs
     let pw0 = prop_writes
     let lay0 = prop_layout
@@ -4442,7 +4443,7 @@ fn node_overflow_get() -> int {
 
 /// 1 when the host says arena stats are on (`-DZEUS_MEM_STATS` or env).
 fn mem_stats_on() -> int {
-    return platform.plat_mem_stats()
+    return runtime.mem_stats()
 }
 
 /// Bytes held by the signal table.
@@ -7441,15 +7442,15 @@ fn input_shown(id: int) -> string {
         return nodes.look[id].text
     }
     edit_sync_secure(id, slot)
-    let shown = platform.plat_edit_shown(slot)
+    let shown = runtime.edit_shown(slot)
     if shown.len > 0 {
         return shown
     }
-    if secure_ids.len > 0 && platform.plat_edit_len(slot) > 0 {
+    if secure_ids.len > 0 && runtime.edit_len(slot) > 0 {
         return shown
     }
-    if platform.plat_edit_len(slot) > 0 {
-        return platform.plat_edit_text(slot)
+    if runtime.edit_len(slot) > 0 {
+        return runtime.edit_text(slot)
     }
     return nodes.look[id].text
 }
@@ -7462,10 +7463,10 @@ fn input_is_placeholder(id: int) -> int {
         return 1
     }
     edit_sync_secure(id, slot)
-    if platform.plat_edit_shown(slot).len > 0 {
+    if runtime.edit_shown(slot).len > 0 {
         return 0
     }
-    if platform.plat_edit_len(slot) > 0 {
+    if runtime.edit_len(slot) > 0 {
         return 0
     }
     return 1
@@ -7476,7 +7477,7 @@ fn input_committed(id: int) -> string {
     if slot < 0 {
         return ""
     }
-    return platform.plat_edit_text(slot)
+    return runtime.edit_text(slot)
 }
 
 fn input_inner_w(id: int) -> int {
@@ -7509,7 +7510,7 @@ fn edit_ready(id: int) -> int {
     if font < 8 {
         font = 14
     }
-    platform.plat_edit_metrics(slot, input_inner_w(id), font)
+    runtime.edit_metrics(slot, input_inner_w(id), font)
     return slot
 }
 
