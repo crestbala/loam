@@ -118,7 +118,9 @@ const char *token_kind_name(TokenKind k) {
         case TOK_RETURN: return "return";
         case TOK_BREAK: return "break";
         case TOK_CONTINUE: return "continue";
-        case TOK_MATCH: return "match";
+        case TOK_SWITCH: return "switch";
+        case TOK_CASE: return "case";
+        case TOK_DEFAULT: return "default";
         case TOK_AS: return "as";
         case TOK_TRUE: return "true";
         case TOK_FALSE: return "false";
@@ -188,7 +190,9 @@ Token lexer_next(Lexer *l) {
         if (kw_eq(start, len, "return")) return make_token(l, TOK_RETURN, start, sl, sc);
         if (kw_eq(start, len, "break")) return make_token(l, TOK_BREAK, start, sl, sc);
         if (kw_eq(start, len, "continue")) return make_token(l, TOK_CONTINUE, start, sl, sc);
-        if (kw_eq(start, len, "match")) return make_token(l, TOK_MATCH, start, sl, sc);
+        if (kw_eq(start, len, "switch")) return make_token(l, TOK_SWITCH, start, sl, sc);
+        if (kw_eq(start, len, "case")) return make_token(l, TOK_CASE, start, sl, sc);
+        if (kw_eq(start, len, "default")) return make_token(l, TOK_DEFAULT, start, sl, sc);
         if (kw_eq(start, len, "as")) return make_token(l, TOK_AS, start, sl, sc);
         if (kw_eq(start, len, "true")) return make_token(l, TOK_TRUE, start, sl, sc);
         if (kw_eq(start, len, "false")) return make_token(l, TOK_FALSE, start, sl, sc);

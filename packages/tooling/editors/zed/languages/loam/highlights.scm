@@ -20,7 +20,9 @@
   "return"
   "break"
   "continue"
-  "match"
+  "switch"
+  "case"
+  "default"
   "as"
 ] @keyword
 

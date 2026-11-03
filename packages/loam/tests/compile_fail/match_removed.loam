@@ -1,0 +1,7 @@
+// `match` was replaced by `switch`; the old form is an error that says so.
+fn main() {
+    let x = 1
+    match x {
+        _ => { let _ = x }
+    }
+}

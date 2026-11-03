@@ -76,15 +76,13 @@ async fn pick_by_appearance(flag: int) -> int {
 }
 
 async fn label_of(flag: int) -> string {
-    match flag == 1 {
-        true => {
+    switch flag == 1 {
+        case true:
             return after_str("yes")
-        }
-        false => {
+        case false:
             let f = async.future_str()
             async.spawn(|| { async.resolve(f, "no") })
             return await f
-        }
     }
 }
 

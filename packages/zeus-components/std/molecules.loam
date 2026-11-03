@@ -90,9 +90,11 @@ fn Button(p: ButtonProps) -> Node {
 /// 40% alpha, so a disabled Solid button reads as a control that is off
 /// rather than a washed-out one. Outline keeps its ring on `rule()`.
 fn button_disabled_background(look: int) -> string {
-    match look {
-        Look.Ghost | Look.Link => { return "" }
-        _ => { return raised() }
+    switch look {
+        case Look.Ghost, Look.Link:
+            return ""
+        default:
+            return raised()
     }
 }
 
@@ -121,40 +123,55 @@ fn Input(p: InputProps) -> Node {
 /// Fill for a `Look` token. Returns a theme accessor result, so calling it
 /// inside a prop expression keeps the button following the palette.
 fn button_background(look: int) -> string {
-    match look {
-        Look.Solid => { return accent() }
-        Look.Soft => { return raised() }
-        Look.Subtle => { return wash() }
-        Look.Outline => { return plate() }
-        Look.Danger => { return danger_solid() }
-        Look.Success => { return ok_solid() }
-        _ => { return "" }
+    switch look {
+        case Look.Solid:
+            return accent()
+        case Look.Soft:
+            return raised()
+        case Look.Subtle:
+            return wash()
+        case Look.Outline:
+            return plate()
+        case Look.Danger:
+            return danger_solid()
+        case Look.Success:
+            return ok_solid()
+        default:
+            return ""
     }
 }
 
 /// Label color for a `Look` token; see `button_background`.
 fn button_color(look: int) -> string {
-    match look {
-        Look.Solid => { return on_ink() }
-        Look.Danger => { return on_danger() }
-        Look.Success => { return on_ok() }
-        _ => { return ink() }
+    switch look {
+        case Look.Solid:
+            return on_ink()
+        case Look.Danger:
+            return on_danger()
+        case Look.Success:
+            return on_ok()
+        default:
+            return ink()
     }
 }
 
 /// Border width for a `Look` token — only the outline look carries one.
 fn button_border_width(look: int) -> int {
-    match look {
-        Look.Outline => { return HAIRLINE }
-        _ => { return 0 }
+    switch look {
+        case Look.Outline:
+            return HAIRLINE
+        default:
+            return 0
     }
 }
 
 /// Border color for a `Look` token; see `button_border_width`.
 fn button_border_color(look: int) -> string {
-    match look {
-        Look.Outline => { return rule() }
-        _ => { return "" }
+    switch look {
+        case Look.Outline:
+            return rule()
+        default:
+            return ""
     }
 }
 
@@ -396,37 +413,52 @@ fn Alert(title: Signal<string>, body: Signal<string>, p: AlertProps) -> Node {
 }
 
 fn alert_edge(kind: int) -> string {
-    match kind {
-        Tint.Danger => { return danger_edge() }
-        Tint.Warn => { return warn_edge() }
-        Tint.Ok => { return ok() }
-        _ => { return info_line() }
+    switch kind {
+        case Tint.Danger:
+            return danger_edge()
+        case Tint.Warn:
+            return warn_edge()
+        case Tint.Ok:
+            return ok()
+        default:
+            return info_line()
     }
 }
 
 fn alert_title_tint(kind: int) -> string {
-    match kind {
-        Tint.Danger => { return danger() }
-        Tint.Warn => { return warn() }
-        Tint.Ok => { return ok() }
-        _ => { return info_ink() }
+    switch kind {
+        case Tint.Danger:
+            return danger()
+        case Tint.Warn:
+            return warn()
+        case Tint.Ok:
+            return ok()
+        default:
+            return info_ink()
     }
 }
 
 fn alert_body_tint(kind: int) -> string {
-    match kind {
-        Tint.Danger => { return danger() }
-        Tint.Ok => { return ok() }
-        _ => { return mute() }
+    switch kind {
+        case Tint.Danger:
+            return danger()
+        case Tint.Ok:
+            return ok()
+        default:
+            return mute()
     }
 }
 
 fn alert_icon(kind: int) {
-    match kind {
-        Tint.Danger => { Icon(IC_ALERT_CIRCLE, 16, danger()) }
-        Tint.Warn => { Icon(IC_ALERT_CIRCLE, 16, warn()) }
-        Tint.Ok => { Icon(IC_CHECK, 16, ok()) }
-        _ => { Icon(IC_INFO, 16, info_ink()) }
+    switch kind {
+        case Tint.Danger:
+            Icon(IC_ALERT_CIRCLE, 16, danger())
+        case Tint.Warn:
+            Icon(IC_ALERT_CIRCLE, 16, warn())
+        case Tint.Ok:
+            Icon(IC_CHECK, 16, ok())
+        default:
+            Icon(IC_INFO, 16, info_ink())
     }
 }
 
@@ -2488,10 +2520,13 @@ fn RangeThumb(
 
 /// Markup of the status icon for a `Tint`.
 fn tint_icon(kind: int) -> string {
-    match kind {
-        Tint.Ok => { return IC_CHECK }
-        Tint.Warn | Tint.Danger => { return IC_ALERT_CIRCLE }
-        _ => { return IC_INFO }
+    switch kind {
+        case Tint.Ok:
+            return IC_CHECK
+        case Tint.Warn, Tint.Danger:
+            return IC_ALERT_CIRCLE
+        default:
+            return IC_INFO
     }
 }
 

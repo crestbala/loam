@@ -91,3 +91,15 @@ fn spacing(x: &mut int) -> Option<Signal<T>> {
     }
     return none
 }
+
+// Switch: cases at the switch's indent plus one, bodies one further.
+fn pick(k: int) -> int {
+    switch k {
+        case 1, 2:
+            return 1
+        case 3: return 2
+        default:
+            let x = 3
+            return x
+    }
+}

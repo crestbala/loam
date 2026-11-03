@@ -909,23 +909,17 @@ static int is_assign_op(TokenKind k) {
            k == TOK_SHL_EQ || k == TOK_SHR_EQ;
 }
 
-/** One match pattern: literal, enum constant (`LOOK.Solid`), or `_`. */
-static AstNode *parse_match_pat(Parser *p, int *wild) {
+/** One case pattern: a literal or an enum constant (`LOOK.Solid`). */
+static AstNode *parse_case_pat(Parser *p) {
     SourceLoc loc = p->current.loc;
-    *wild = 0;
     if (match(p, TOK_IDENT)) {
         char *nm = tok_text(p->previous);
-        if (strcmp(nm, "_") == 0) {
-            free(nm);
-            *wild = 1;
-            return NULL;
-        }
         /* `Enum.Member` is a compile-time constant, so it is a legal pattern
-           and keeps the arm readable — matching on raw 0/1/2 would not. */
+           and keeps the case readable — switching on raw 0/1/2 would not. */
         if (match(p, TOK_DOT)) {
             if (!match(p, TOK_IDENT)) {
                 free(nm);
-                error(p, "expected a name after `.` in a match pattern");
+                error(p, "expected a name after `.` in a case pattern");
                 return NULL;
             }
             char *field = tok_text(p->previous);
@@ -934,8 +928,10 @@ static AstNode *parse_match_pat(Parser *p, int *wild) {
             /* ast_ident / ast_field take ownership of these names. */
             return ast_field(ast_ident(nm, loc), field, 0, loc);
         }
+        int under = strcmp(nm, "_") == 0;
         free(nm);
-        error(p, "match patterns are literals, `Enum.Member`, or `_`");
+        error(p, under ? "`_` is not a case pattern; write `default:`"
+                       : "case patterns are literals or `Enum.Member`");
         return NULL;
     }
     if (match(p, TOK_NUMBER)) {
@@ -956,46 +952,52 @@ static AstNode *parse_match_pat(Parser *p, int *wild) {
         if (holes) { error(p, "bad {{ }} interpolation"); return NULL; }
         return ast_string(raw, loc);
     }
-    error(p, "expected match pattern");
+    error(p, "expected a case pattern");
     return NULL;
 }
 
-static AstNode *parse_match_arm(Parser *p) {
+/** `case A, B:` or `default:`, then its statements up to the next `case`,
+ *  `default`, or the closing `}`. There is no fallthrough. */
+static AstNode *parse_case(Parser *p) {
     SourceLoc loc = p->current.loc;
-    int wild = 0;
     AstNode **pats = NULL;
     size_t np = 0;
-    int w0 = 0;
-    AstNode *first = parse_match_pat(p, &w0);
-    if (w0) {
-        wild = 1;
+    int is_default = 0;
+    if (match(p, TOK_DEFAULT)) {
+        is_default = 1;
+    } else if (match(p, TOK_CASE)) {
+        do {
+            AstNode *q = parse_case_pat(p);
+            if (!q) break;
+            pats = (AstNode **)realloc(pats, (np + 1) * sizeof(AstNode *));
+            pats[np++] = q;
+        } while (match(p, TOK_COMMA));
         if (check(p, TOK_PIPE)) {
-            error(p, "wildcard `_` cannot be in an or-pattern");
+            error(p, "separate case patterns with `,`, not `|`");
             return NULL;
         }
-    } else if (first) {
-        pats = (AstNode **)malloc(sizeof(AstNode *));
-        pats[0] = first;
-        np = 1;
-        while (match(p, TOK_PIPE)) {
-            int w = 0;
-            AstNode *q = parse_match_pat(p, &w);
-            if (w) {
-                error(p, "wildcard `_` cannot be in an or-pattern");
-                break;
-            }
-            if (q) {
-                pats = (AstNode **)realloc(pats, (np + 1) * sizeof(AstNode *));
-                pats[np++] = q;
-            }
-        }
+    } else {
+        error(p, "expected `case` or `default` in a switch");
+        return NULL;
     }
-    consume(p, TOK_FAT_ARROW, "expected => after match pattern");
-    AstNode *body = parse_block(p);
-    return ast_match_arm(pats, np, wild, body, loc);
+    if (p->had_error) return NULL;
+    consume(p, TOK_COLON, is_default ? "expected : after default" : "expected : after case pattern");
+    SourceLoc bloc = p->current.loc;
+    AstNode **stmts = NULL;
+    size_t count = 0;
+    while (!check(p, TOK_CASE) && !check(p, TOK_DEFAULT) && !check(p, TOK_RBRACE) &&
+           !check(p, TOK_EOF)) {
+        AstNode *st = parse_stmt(p);
+        if (st) {
+            stmts = (AstNode **)realloc(stmts, (count + 1) * sizeof(AstNode *));
+            stmts[count++] = st;
+        }
+        if (p->had_error) break;
+    }
+    return ast_case(pats, np, is_default, ast_block(stmts, count, bloc), loc);
 }
 
-/** One statement: if, for, while, match, return, break, continue, let, assign, or expression. */
+/** One statement: if, for, while, switch, return, break, continue, let, assign, or expression. */
 static AstNode *parse_stmt(Parser *p) {
     char *doc = take_docs(p);
     SourceLoc loc = p->current.loc;
@@ -1028,22 +1030,36 @@ static AstNode *parse_stmt(Parser *p) {
         AstNode *body = parse_block(p);
         return ast_while(cond, body, loc);
     }
-    if (match(p, TOK_MATCH)) {
+    if (match(p, TOK_SWITCH)) {
         free(doc);
         AstNode *scrut = parse_cond_expr(p);
-        consume(p, TOK_LBRACE, "expected { after match");
-        AstNode **arms = NULL;
-        size_t na = 0;
+        consume(p, TOK_LBRACE, "expected { after switch");
+        AstNode **cases = NULL;
+        size_t nc = 0;
+        int seen_default = 0;
         while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
-            AstNode *arm = parse_match_arm(p);
-            if (arm) {
-                arms = (AstNode **)realloc(arms, (na + 1) * sizeof(AstNode *));
-                arms[na++] = arm;
+            if (seen_default) {
+                error(p, "`default` must be the last case of a switch");
+                break;
+            }
+            AstNode *c = parse_case(p);
+            if (c) {
+                if (c->as.switch_case.is_default) seen_default = 1;
+                cases = (AstNode **)realloc(cases, (nc + 1) * sizeof(AstNode *));
+                cases[nc++] = c;
             }
             if (p->had_error) break;
         }
         consume(p, TOK_RBRACE, "expected }");
-        return ast_match(scrut, arms, na, loc);
+        return ast_switch(scrut, cases, nc, loc);
+    }
+    /* `match` was replaced by `switch`; say so rather than fail on `x {`. */
+    if (check(p, TOK_IDENT) && p->current.len == 5 && strncmp(p->current.start, "match", 5) == 0 &&
+        p->peek.loc.line == p->current.loc.line &&
+        (p->peek.kind == TOK_IDENT || p->peek.kind == TOK_NUMBER || p->peek.kind == TOK_STRING)) {
+        free(doc);
+        error(p, "`match` was replaced by `switch`: `switch x { case A, B: ... default: ... }`");
+        return NULL;
     }
     if (match(p, TOK_BREAK)) {
         free(doc);

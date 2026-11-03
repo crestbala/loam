@@ -116,15 +116,15 @@ static void walk(AstNode *n) {
             walk(n->as.if_stmt.cond);
             walk(n->as.if_stmt.then_block);
             break;
-        case AST_MATCH:
-            walk(n->as.match_stmt.scrut);
-            for (size_t i = 0; i < n->as.match_stmt.arm_count; i++)
-                walk(n->as.match_stmt.arms[i]);
+        case AST_SWITCH:
+            walk(n->as.switch_stmt.scrut);
+            for (size_t i = 0; i < n->as.switch_stmt.case_count; i++)
+                walk(n->as.switch_stmt.cases[i]);
             break;
-        case AST_MATCH_ARM:
-            for (size_t i = 0; i < n->as.match_arm.pat_count; i++)
-                walk(n->as.match_arm.pats[i]);
-            walk(n->as.match_arm.body);
+        case AST_CASE:
+            for (size_t i = 0; i < n->as.switch_case.pat_count; i++)
+                walk(n->as.switch_case.pats[i]);
+            walk(n->as.switch_case.body);
             break;
         case AST_RETURN:
             walk(n->as.ret.expr);

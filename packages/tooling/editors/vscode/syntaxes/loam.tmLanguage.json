@@ -74,7 +74,7 @@
         },
         {
           "name": "keyword.control.loam",
-          "match": "\\b(fn|let|const|mut|struct|enum|import|if|else|for|while|in|return|break|continue|match|as)\\b"
+          "match": "\\b(fn|let|const|mut|struct|enum|import|if|else|for|while|in|return|break|continue|switch|case|default|as)\\b"
         }
       ]
     },

@@ -70,8 +70,14 @@ fn main() {
     expect(saturating_add(u16(65535), u16(1)) == u16(65535), "saturating_add u16")
     expect(wrapping_add(u32(4294967295), u32(1)) == u32(0), "wrapping_add u32")
     expect(saturating_add(u32(4294967295), u32(1)) == u32(4294967295), "saturating_add u32")
-    expect(wrapping_sub(i64(-9223372036854775807), i64(2)) == i64(9223372036854775807), "wrapping_sub i64")
-    expect(saturating_sub(i64(-9223372036854775807), i64(2)) == i64(-9223372036854775807) - i64(1), "saturating_sub i64")
+    expect(
+        wrapping_sub(i64(-9223372036854775807), i64(2)) == i64(9223372036854775807),
+        "wrapping_sub i64",
+    )
+    expect(
+        saturating_sub(i64(-9223372036854775807), i64(2)) == i64(-9223372036854775807) - i64(1),
+        "saturating_sub i64",
+    )
     expect(wrapping_add(u64(9000000000), u64(1)) == u64(9000000001), "wrapping_add u64")
 
     // Shifts, including wrap through the unsigned width.
@@ -112,10 +118,13 @@ fn main() {
     // Literal patterns adopt the scrutinee's width.
     let code: u8 = 2
     let mut label = 0
-    match code {
-        1 => { label = 1 }
-        2 => { label = 2 }
-        _ => { label = 3 }
+    switch code {
+        case 1:
+            label = 1
+        case 2:
+            label = 2
+        default:
+            label = 3
     }
     expect(label == 2, "match u8")
 

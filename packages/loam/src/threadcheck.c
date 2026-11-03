@@ -324,13 +324,13 @@ static void worker_walk(AstNode *n, ThreadCheck *tc) {
             worker_walk(n->as.if_stmt.cond, tc);
             worker_walk(n->as.if_stmt.then_block, tc);
             break;
-        case AST_MATCH:
-            worker_walk(n->as.match_stmt.scrut, tc);
-            for (i = 0; i < n->as.match_stmt.arm_count; i++)
-                worker_walk(n->as.match_stmt.arms[i], tc);
+        case AST_SWITCH:
+            worker_walk(n->as.switch_stmt.scrut, tc);
+            for (i = 0; i < n->as.switch_stmt.case_count; i++)
+                worker_walk(n->as.switch_stmt.cases[i], tc);
             break;
-        case AST_MATCH_ARM:
-            worker_walk(n->as.match_arm.body, tc);
+        case AST_CASE:
+            worker_walk(n->as.switch_case.body, tc);
             break;
         case AST_RETURN:
             worker_walk(n->as.ret.expr, tc);
@@ -473,13 +473,13 @@ static void scan_walk(AstNode *n, ThreadCheck *tc) {
             scan_walk(n->as.if_stmt.cond, tc);
             scan_walk(n->as.if_stmt.then_block, tc);
             break;
-        case AST_MATCH:
-            scan_walk(n->as.match_stmt.scrut, tc);
-            for (i = 0; i < n->as.match_stmt.arm_count; i++)
-                scan_walk(n->as.match_stmt.arms[i], tc);
+        case AST_SWITCH:
+            scan_walk(n->as.switch_stmt.scrut, tc);
+            for (i = 0; i < n->as.switch_stmt.case_count; i++)
+                scan_walk(n->as.switch_stmt.cases[i], tc);
             break;
-        case AST_MATCH_ARM:
-            scan_walk(n->as.match_arm.body, tc);
+        case AST_CASE:
+            scan_walk(n->as.switch_case.body, tc);
             break;
         case AST_RETURN:
             scan_walk(n->as.ret.expr, tc);

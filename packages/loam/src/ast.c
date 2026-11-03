@@ -105,17 +105,17 @@ void ast_free(AstNode *node) {
             ast_free(node->as.for_stmt.iter);
             ast_free(node->as.for_stmt.body);
             break;
-        case AST_MATCH:
-            ast_free(node->as.match_stmt.scrut);
-            for (size_t i = 0; i < node->as.match_stmt.arm_count; i++)
-                ast_free(node->as.match_stmt.arms[i]);
-            free(node->as.match_stmt.arms);
+        case AST_SWITCH:
+            ast_free(node->as.switch_stmt.scrut);
+            for (size_t i = 0; i < node->as.switch_stmt.case_count; i++)
+                ast_free(node->as.switch_stmt.cases[i]);
+            free(node->as.switch_stmt.cases);
             break;
-        case AST_MATCH_ARM:
-            for (size_t i = 0; i < node->as.match_arm.pat_count; i++)
-                ast_free(node->as.match_arm.pats[i]);
-            free(node->as.match_arm.pats);
-            ast_free(node->as.match_arm.body);
+        case AST_CASE:
+            for (size_t i = 0; i < node->as.switch_case.pat_count; i++)
+                ast_free(node->as.switch_case.pats[i]);
+            free(node->as.switch_case.pats);
+            ast_free(node->as.switch_case.body);
             break;
         case AST_RETURN:
             ast_free(node->as.ret.expr);
@@ -296,20 +296,20 @@ AstNode *ast_while(AstNode *cond, AstNode *body, SourceLoc loc) {
     return n;
 }
 
-AstNode *ast_match(AstNode *scrut, AstNode **arms, size_t n, SourceLoc loc) {
-    AstNode *node = ast_new(AST_MATCH, loc);
-    node->as.match_stmt.scrut = scrut;
-    node->as.match_stmt.arms = arms;
-    node->as.match_stmt.arm_count = n;
+AstNode *ast_switch(AstNode *scrut, AstNode **cases, size_t n, SourceLoc loc) {
+    AstNode *node = ast_new(AST_SWITCH, loc);
+    node->as.switch_stmt.scrut = scrut;
+    node->as.switch_stmt.cases = cases;
+    node->as.switch_stmt.case_count = n;
     return node;
 }
 
-AstNode *ast_match_arm(AstNode **pats, size_t np, int wild, AstNode *body, SourceLoc loc) {
-    AstNode *n = ast_new(AST_MATCH_ARM, loc);
-    n->as.match_arm.pats = pats;
-    n->as.match_arm.pat_count = np;
-    n->as.match_arm.is_wild = wild;
-    n->as.match_arm.body = body;
+AstNode *ast_case(AstNode **pats, size_t np, int is_default, AstNode *body, SourceLoc loc) {
+    AstNode *n = ast_new(AST_CASE, loc);
+    n->as.switch_case.pats = pats;
+    n->as.switch_case.pat_count = np;
+    n->as.switch_case.is_default = is_default;
+    n->as.switch_case.body = body;
     return n;
 }
 

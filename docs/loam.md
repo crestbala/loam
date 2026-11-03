@@ -290,14 +290,41 @@ return the same `Result<T>` / `Option<T>` type; there are no exceptions and no
 unwinding. Helpers: `result.is_ok` / `is_err` / `is_some`, `result.unwrap` /
 `unwrap_or` / `unwrap_some` / `some_or`.
 
-A `match` over the tag is exhaustive when it names every variant, no `_` needed:
+A `switch` over the tag is exhaustive when it names every variant, no
+`default` needed:
 
 ```loam
-match r.tag {
-    ResultTag.Ok  => { use(r.val) }
-    ResultTag.Err => { log(r.err) }
+switch r.tag {
+    case ResultTag.Ok:
+        use(r.val)
+    case ResultTag.Err:
+        log(r.err)
 }
 ```
+
+### 2c. `switch`
+
+`switch` picks one case by value: an `int`, `float`, `bool`, or `string`.
+Patterns are literals or `Enum.Member` constants, several to a case
+separated by commas, and `default:` (last) catches the rest. A case runs the
+statements up to the next `case`, `default`, or `}` — there is no
+fallthrough, so an empty case simply does nothing.
+
+```loam
+switch kind {
+    case Tint.Ok, Tint.Info:
+        return ok()
+    case Tint.Danger:
+        return danger()
+    default:
+        return ink()
+}
+```
+
+A `switch` must be exhaustive: either `default:`, every variant of the enum
+its patterns name, or both `true` and `false`. `continue` and `return` work
+in a case as anywhere else; a bare `break` in a case is an error, because it
+would leave the loop around the switch rather than the case.
 
 `http.call` returns `Res<string>` — the older `{ ok, val, err }` shape kept for
 that edge; new code should prefer `Result<T>`.

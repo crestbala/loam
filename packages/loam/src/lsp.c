@@ -1103,7 +1103,9 @@ static void handle_completion(const char *msg, const char *id) {
         add_comp(&c, "return", "keyword", 14, prefix);
         add_comp(&c, "break", "keyword", 14, prefix);
         add_comp(&c, "continue", "keyword", 14, prefix);
-        add_comp(&c, "match", "keyword", 14, prefix);
+        add_comp(&c, "switch", "keyword", 14, prefix);
+        add_comp(&c, "case", "keyword", 14, prefix);
+        add_comp(&c, "default", "keyword", 14, prefix);
         add_comp(&c, "as", "keyword", 14, prefix);
         add_comp(&c, "int", "type", 25, prefix);
         add_comp(&c, "float", "type", 25, prefix);
@@ -1559,7 +1561,9 @@ static int st_is_keyword_tok(TokenKind k) {
         case TOK_RETURN:
         case TOK_BREAK:
         case TOK_CONTINUE:
-        case TOK_MATCH:
+        case TOK_SWITCH:
+        case TOK_CASE:
+        case TOK_DEFAULT:
         case TOK_AS:
             return 1;
         default:

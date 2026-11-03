@@ -1,0 +1,17 @@
+// A `switch` over an enum must name every variant (or add `default:`);
+// leaving one out is not exhaustive.
+
+enum Tag {
+    A = 0,
+    B = 1,
+    C = 2,
+}
+
+fn f(t: Tag) -> int {
+    switch t {
+        case Tag.A:
+            return 1
+        case Tag.B:
+            return 2
+    }
+}

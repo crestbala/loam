@@ -1,0 +1,10 @@
+// A case pattern must be a literal or an `Enum.Member`. A bare name is not a
+// binding pattern in this language, so it is rejected rather than silently
+// shadowing the scrutinee.
+fn main() {
+    let x = 3
+    switch x {
+        case y:
+            let _ = y
+    }
+}

@@ -119,6 +119,9 @@ static int scope_find(const char *name, Type **ty, int *is_mut) {
 
 static Type *cur_ret;
 static int loop_depth;
+/* `loop_depth` at the innermost switch case being checked, or -1. A `break`
+   at that depth would leave the loop around the switch, not the case. */
+static int case_floor = -1;
 static int cur_async; /* 1 inside an `async fn` body: `await` is legal */
 static const char *cur_mod_name;
 static const char **cur_tparams;
@@ -3506,7 +3509,7 @@ static Type *check_expr(AstNode *n) { return check_expr_ty(n, NULL); }
 static void check_stmt(AstNode *n);
 
 /** 1 if every variant of enum `en` appears in the captured `covered` names —
- *  a complete, `_`-free `match` over the enum. */
+ *  a complete, `default`-free `switch` over the enum. */
 static int enum_variants_covered(AstNode *en, const char **covered, int n) {
     if (!en) return 0;
     for (size_t i = 0; i < en->as.enm.count; i++) {
@@ -3639,38 +3642,43 @@ static void check_stmt(AstNode *n) {
             break;
         case AST_BREAK:
             if (loop_depth <= 0) err(n->loc, "`break` outside of a loop");
+            else if (loop_depth == case_floor)
+                err(n->loc, "`break` in a switch case would leave the enclosing loop; a case "
+                            "ends on its own (use `return`, or move the loop exit out of the switch)");
             break;
         case AST_CONTINUE:
             if (loop_depth <= 0) err(n->loc, "`continue` outside of a loop");
             break;
-        case AST_MATCH: {
-            Type *st = check_expr(n->as.match_stmt.scrut);
+        case AST_SWITCH: {
+            Type *st = check_expr(n->as.switch_stmt.scrut);
             if (st && st->kind != TY_INT && st->kind != TY_FLOAT && st->kind != TY_BOOL &&
                 st->kind != TY_STRING)
-                err(n->loc, "match requires int, float, bool, or string");
+                err(n->loc, "switch requires int, float, bool, or string");
             int saw_wild = 0;
+            int save_floor = case_floor;
+            case_floor = loop_depth;
             int saw_true = 0, saw_false = 0;
             /* If the arms name enum variants (`Tag.Ok`), the set of covered
                variants can be checked against the enum: all of them, with no
-               `_`, is exhaustive. The names are captured here because
+               `default`, is exhaustive. The names are captured here because
                `check_expr_ty` below lowers `Tag.Ok` to an int literal. */
             AstNode *pat_enum = NULL;
             const char *cov_variants[128];
             int cov_n = 0;
-            if (n->as.match_stmt.arm_count == 0)
-                err(n->loc, "match needs at least one arm");
-            for (size_t i = 0; i < n->as.match_stmt.arm_count; i++) {
-                AstNode *arm = n->as.match_stmt.arms[i];
-                if (!arm || arm->kind != AST_MATCH_ARM) continue;
+            if (n->as.switch_stmt.case_count == 0)
+                err(n->loc, "switch needs at least one case");
+            for (size_t i = 0; i < n->as.switch_stmt.case_count; i++) {
+                AstNode *cs = n->as.switch_stmt.cases[i];
+                if (!cs || cs->kind != AST_CASE) continue;
                 if (saw_wild)
-                    err(arm->loc, "unreachable match arm after `_`");
-                if (arm->as.match_arm.is_wild) {
+                    err(cs->loc, "unreachable case after `default`");
+                if (cs->as.switch_case.is_default) {
                     saw_wild = 1;
-                    check_block(arm->as.match_arm.body);
+                    check_block(cs->as.switch_case.body);
                     continue;
                 }
-                for (size_t p = 0; p < arm->as.match_arm.pat_count; p++) {
-                    AstNode *pat = arm->as.match_arm.pats[p];
+                for (size_t p = 0; p < cs->as.switch_case.pat_count; p++) {
+                    AstNode *pat = cs->as.switch_case.pats[p];
                     /* `Enum.Member` pattern: remember the enum so completeness
                        can be judged against its variant set. Detected *before*
                        `check_expr_ty`, which lowers the enum constant to an int
@@ -3698,14 +3706,15 @@ static void check_stmt(AstNode *n) {
                         else saw_false = 1;
                     }
                 }
-                check_block(arm->as.match_arm.body);
+                check_block(cs->as.switch_case.body);
             }
             if (st && st->kind == TY_BOOL) {
                 if (!saw_wild && !(saw_true && saw_false))
-                    err(n->loc, "match on bool is not exhaustive (add `_` or both true and false)");
+                    err(n->loc, "switch on bool is not exhaustive (add `default:` or both true and false)");
             } else if (!saw_wild && !(pat_enum && enum_variants_covered(pat_enum, cov_variants, cov_n))) {
-                err(n->loc, "match must be exhaustive (add `_`)");
+                err(n->loc, "switch must be exhaustive (add `default:`)");
             }
+            case_floor = save_floor;
             for (int ci = 0; ci < cov_n; ci++) free((void *)cov_variants[ci]);
             break;
         }
@@ -4468,13 +4477,13 @@ static void walk_instantiate(AstNode *n, const char **names, Type **args, size_t
             walk_instantiate(n->as.if_stmt.cond, names, args, na, added);
             walk_instantiate(n->as.if_stmt.then_block, names, args, na, added);
             break;
-        case AST_MATCH:
-            walk_instantiate(n->as.match_stmt.scrut, names, args, na, added);
-            for (size_t i = 0; i < n->as.match_stmt.arm_count; i++)
-                walk_instantiate(n->as.match_stmt.arms[i], names, args, na, added);
+        case AST_SWITCH:
+            walk_instantiate(n->as.switch_stmt.scrut, names, args, na, added);
+            for (size_t i = 0; i < n->as.switch_stmt.case_count; i++)
+                walk_instantiate(n->as.switch_stmt.cases[i], names, args, na, added);
             break;
-        case AST_MATCH_ARM:
-            walk_instantiate(n->as.match_arm.body, names, args, na, added);
+        case AST_CASE:
+            walk_instantiate(n->as.switch_case.body, names, args, na, added);
             break;
         case AST_RETURN:
             walk_instantiate(n->as.ret.expr, names, args, na, added);
