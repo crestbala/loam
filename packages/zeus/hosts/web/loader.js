@@ -442,193 +442,6 @@
     ctx.closePath();
   }
 
-  function svgAttr(tag, name) {
-    const m = new RegExp("(?:^|\\s)" + name + "=['\"]([^'\"]+)['\"]", "i").exec(tag || "");
-    return m ? m[1] : null;
-  }
-
-  function svgPaint(v, cur) {
-    if (!v || v === "none" || v === "transparent") return null;
-    if (v === "currentColor" || v === "currentcolor") return cur;
-    return v;
-  }
-
-  /* Path2D rejects some SVG number runs (`m0-6.5`). Trace onto ctx instead. */
-  /* Path2D rejects some SVG number runs (`m0-6.5`). Trace onto ctx instead.
-     Covers every command the icons and charts emit: M/L/H/V/C/S/Q/T/Z, absolute
-     and relative, with the implicit-repeat rule (a run of numbers after `M` is
-     `L`, after anything else repeats the command). An unknown command stops, so
-     an `A` arc segment is skipped rather than misdrawn. */
-  function traceSvgPath(d) {
-    let i = 0;
-    const n = d.length;
-    function skip() {
-      while (i < n && (d[i] === " " || d[i] === "\t" || d[i] === "\n" || d[i] === "\r" || d[i] === ",")) i++;
-    }
-    function num() {
-      skip();
-      if (i >= n) return null;
-      let j = i;
-      if (d[j] === "+" || d[j] === "-") j++;
-      const s0 = j;
-      while (j < n && d[j] >= "0" && d[j] <= "9") j++;
-      if (j < n && d[j] === ".") {
-        j++;
-        while (j < n && d[j] >= "0" && d[j] <= "9") j++;
-      }
-      if (j < n && (d[j] === "e" || d[j] === "E")) {
-        j++;
-        if (d[j] === "+" || d[j] === "-") j++;
-        while (j < n && d[j] >= "0" && d[j] <= "9") j++;
-      }
-      if (j === s0 && d[i] !== ".") return null;
-      const v = parseFloat(d.slice(i, j));
-      i = j;
-      return v;
-    }
-    ctx.beginPath();
-    let cmd = "";
-    let prev = "";
-    let px = 0, py = 0, sx = 0, sy = 0, cx1 = 0, cy1 = 0;
-    let started = false;
-    while (i < n) {
-      skip();
-      if (i >= n) break;
-      const c = d[i];
-      if ((c >= "A" && c <= "Z") || (c >= "a" && c <= "z")) {
-        cmd = c;
-        i++;
-      } else if (!cmd) {
-        break;
-      } else if (prev === "M") {
-        cmd = "L";
-      } else if (prev === "m") {
-        cmd = "l";
-      } else {
-        cmd = prev;
-      }
-      const rel = cmd >= "a";
-      const op = cmd.toUpperCase();
-      if (op === "Z") {
-        ctx.closePath();
-        px = sx;
-        py = sy;
-        started = false;
-        prev = cmd;
-        continue;
-      }
-      if (op === "M") {
-        const x = num();
-        const y = num();
-        if (x == null || y == null) break;
-        px = rel ? px + x : x;
-        py = rel ? py + y : y;
-        sx = px;
-        sy = py;
-        ctx.moveTo(px, py);
-        started = true;
-      } else if (op === "L") {
-        const x = num();
-        const y = num();
-        if (x == null || y == null) break;
-        px = rel ? px + x : x;
-        py = rel ? py + y : y;
-        if (!started) {
-          ctx.moveTo(px, py);
-          started = true;
-        } else {
-          ctx.lineTo(px, py);
-        }
-      } else if (op === "H") {
-        const x = num();
-        if (x == null) break;
-        px = rel ? px + x : x;
-        ctx.lineTo(px, py);
-      } else if (op === "V") {
-        const y = num();
-        if (y == null) break;
-        py = rel ? py + y : y;
-        ctx.lineTo(px, py);
-      } else if (op === "C" || op === "S" || op === "Q" || op === "T") {
-        /* Relative coordinates are relative to the point BEFORE this segment,
-           so the raw numbers are converted first and `px`/`py` updated after. */
-        if (!started) break;
-        let a1, b1, a2, b2, ax, ay;
-        if (op === "C" || op === "S") {
-          if (op === "C") {
-            a1 = num();
-            b1 = num();
-          } else {
-            const refl = prev === "C" || prev === "c" || prev === "S" || prev === "s";
-            a1 = refl ? 2 * px - cx1 : px;
-            b1 = refl ? 2 * py - cy1 : py;
-          }
-          a2 = num();
-          b2 = num();
-          ax = num();
-          ay = num();
-          if (a1 == null || b1 == null || a2 == null || b2 == null || ax == null || ay == null) break;
-          if (rel) {
-            if (op === "C") {
-              a1 += px;
-              b1 += py;
-            }
-            a2 += px;
-            b2 += py;
-            ax += px;
-            ay += py;
-          }
-          ctx.bezierCurveTo(a1, b1, a2, b2, ax, ay);
-          cx1 = a2;
-          cy1 = b2;
-        } else {
-          if (op === "Q") {
-            a1 = num();
-            b1 = num();
-          } else {
-            const refl = prev === "Q" || prev === "q" || prev === "T" || prev === "t";
-            a1 = refl ? 2 * px - cx1 : px;
-            b1 = refl ? 2 * py - cy1 : py;
-          }
-          ax = num();
-          ay = num();
-          if (a1 == null || b1 == null || ax == null || ay == null) break;
-          if (rel) {
-            if (op === "Q") {
-              a1 += px;
-              b1 += py;
-            }
-            ax += px;
-            ay += py;
-          }
-          ctx.quadraticCurveTo(a1, b1, ax, ay);
-          cx1 = a1;
-          cy1 = b1;
-        }
-        px = ax;
-        py = ay;
-      } else {
-        break;
-      }
-      prev = cmd;
-    }
-  }
-
-  /* Fill and/or stroke the path `traceSvgPath` / the shape helpers just built. */
-  function paintSvgShape(fillPaint, strokePaint, sw, cap, join) {
-    if (fillPaint) {
-      ctx.fillStyle = fillPaint;
-      ctx.fill();
-    }
-    if (strokePaint) {
-      ctx.strokeStyle = strokePaint;
-      ctx.lineWidth = sw ? parseFloat(sw) : 1;
-      if (cap) ctx.lineCap = cap;
-      if (join) ctx.lineJoin = join;
-      ctx.stroke();
-    }
-  }
-
   function u8() {
     return new Uint8Array(mem.buffer);
   }
@@ -1309,89 +1122,45 @@
         }
         return d.fullscreenElement ? 1 : 0;
       },
-      svg: (x, y, w, h, ptr, color, alpha) => {
-        const markup = cstr(ptr);
-        if (!markup || w <= 0 || h <= 0) return;
-        const svgTag = (/<svg\b([^>]*)>/i.exec(markup) || [])[1] || "";
-        const vb = /viewBox=['"]([^'"]+)['"]/i.exec(markup);
-        let vx = 0, vy = 0, vw = 24, vh = 24;
-        if (vb) {
-          const p = vb[1].trim().split(/[\s,]+/).map(Number);
-          if (p.length >= 4) {
-            vx = p[0];
-            vy = p[1];
-            vw = p[2] || 24;
-            vh = p[3] || 24;
-          }
-        }
-        const p = snapRect(x, y, w, h);
-        const isx = p.w / (vw || 1);
-        const isy = p.h / (vh || 1);
-        ctx.save();
-        ctx.translate(p.x, p.y);
-        ctx.scale(isx, isy);
-        ctx.translate(-vx, -vy);
-        ctx.globalAlpha = (alpha >= 0 && alpha < 255) ? alpha / 255 : 1;
-        const cur = rgb(color);
-        const defFill = svgAttr(svgTag, "fill");
-        const defStroke = svgAttr(svgTag, "stroke");
-        const defSw = svgAttr(svgTag, "stroke-width");
-        const defCap = svgAttr(svgTag, "stroke-linecap");
-        const defJoin = svgAttr(svgTag, "stroke-linejoin");
-        /* Every shape element, in document order — not just `path`. The Alert
-           and Info icons are a `<circle>` plus two paths, so ignoring the circle
-           drew the exclamation mark and the dot with no ring around them. */
-        const re = /<(path|circle|rect)\b([^>]*?)\/?\s*>/gi;
-        let m;
-        while ((m = re.exec(markup))) {
-          const el = m[1].toLowerCase();
-          const tag = m[2];
-          let fillV = svgAttr(tag, "fill");
-          if (fillV == null) fillV = defFill;
-          let strokeV = svgAttr(tag, "stroke");
-          if (strokeV == null) strokeV = defStroke;
-          const sw = svgAttr(tag, "stroke-width") || defSw;
-          const cap = svgAttr(tag, "stroke-linecap") || defCap;
-          const join = svgAttr(tag, "stroke-linejoin") || defJoin;
-          const fillPaint = svgPaint(fillV, cur);
-          let strokePaint = svgPaint(strokeV, cur);
-          if (!fillPaint && !strokePaint) strokePaint = cur;
-          if (el === "path") {
-            const d = svgAttr(tag, "d");
-            if (!d) continue;
-            traceSvgPath(d);
-          } else if (el === "circle") {
-            const cx = parseFloat(svgAttr(tag, "cx") || "0");
-            const cy = parseFloat(svgAttr(tag, "cy") || "0");
-            const r = parseFloat(svgAttr(tag, "r") || "0");
-            if (!(r > 0)) continue;
-            ctx.beginPath();
-            ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      /* A vector path the engine parsed (icons, charts, `Svg`): `n` int32 at
+         `ptr`, commands 0 move x y / 1 line x y / 2 cubic x1 y1 x2 y2 x y /
+         3 close, in 1/64 px. `width` 0 fills (non-zero); otherwise a stroke
+         `width`/64 wide, `style` = cap + 4 * join. */
+      path: (ptr, n, color, a, width, style) => {
+        const c = new Int32Array(mem.buffer, ptr, n);
+        const u = 1 / 64;
+        ctx.beginPath();
+        let i = 0;
+        while (i < n) {
+          const k = c[i++];
+          if (k === 0) {
+            ctx.moveTo(c[i] * u, c[i + 1] * u);
+            i += 2;
+          } else if (k === 1) {
+            ctx.lineTo(c[i] * u, c[i + 1] * u);
+            i += 2;
+          } else if (k === 2) {
+            ctx.bezierCurveTo(c[i] * u, c[i + 1] * u, c[i + 2] * u, c[i + 3] * u,
+                              c[i + 4] * u, c[i + 5] * u);
+            i += 6;
+          } else if (k === 3) {
+            ctx.closePath();
           } else {
-            const x = parseFloat(svgAttr(tag, "x") || "0");
-            const y = parseFloat(svgAttr(tag, "y") || "0");
-            const rw = parseFloat(svgAttr(tag, "width") || "0");
-            const rh = parseFloat(svgAttr(tag, "height") || "0");
-            if (!(rw > 0) || !(rh > 0)) continue;
-            let rr = parseFloat(svgAttr(tag, "rx") || "0");
-            if (!(rr > 0)) rr = 0;
-            if (rr > rw / 2) rr = rw / 2;
-            if (rr > rh / 2) rr = rh / 2;
-            ctx.beginPath();
-            if (rr > 0) {
-              ctx.moveTo(x + rr, y);
-              ctx.arcTo(x + rw, y, x + rw, y + rh, rr);
-              ctx.arcTo(x + rw, y + rh, x, y + rh, rr);
-              ctx.arcTo(x, y + rh, x, y, rr);
-              ctx.arcTo(x, y, x + rw, y, rr);
-              ctx.closePath();
-            } else {
-              ctx.rect(x, y, rw, rh);
-            }
+            break;
           }
-          paintSvgShape(fillPaint, strokePaint, sw, cap, join);
         }
-        popState();
+        if (width === 0) {
+          ctx.fillStyle = rgba(color, a);
+          ctx.fill();
+          return;
+        }
+        ctx.save();
+        ctx.strokeStyle = rgba(color, a);
+        ctx.lineWidth = width * u;
+        ctx.lineCap = ["butt", "round", "square"][style & 3] || "butt";
+        ctx.lineJoin = ["miter", "round", "bevel"][style >> 2] || "miter";
+        ctx.stroke();
+        ctx.restore();
       },
       fetch_rpc_async: (pathPtr, pathLen, bodyPtr, bodyLen, outPtr, cap, handle, sync) => {
         /* `sync` 1: a blocking XHR, for `await` (its pump loop holds this

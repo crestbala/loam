@@ -70,9 +70,9 @@ void zeus_js_clip(int32_t x, int32_t y, int32_t w, int32_t h, int32_t radius);
 __attribute__((import_module("zeus"), import_name("restore")))
 void zeus_js_restore(void);
 
-__attribute__((import_module("zeus"), import_name("svg")))
-void zeus_js_svg(int32_t x, int32_t y, int32_t w, int32_t h, const char *markup, int32_t rgb,
-                 int32_t alpha);
+__attribute__((import_module("zeus"), import_name("path")))
+void zeus_js_path(const int32_t *cmds, int32_t n, int32_t rgb, int32_t alpha, int32_t width,
+                  int32_t style);
 
 __attribute__((import_module("zeus"), import_name("image")))
 void zeus_js_image(int32_t x, int32_t y, int32_t w, int32_t h, const char *src, int32_t radius,
@@ -170,11 +170,11 @@ static void draw_restore(void *ctx) {
     zeus_js_restore();
 }
 
-static void draw_svg(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h, const char *markup,
-                     int64_t rgb, int64_t alpha) {
+static void draw_path(void *ctx, const int32_t *cmds, int64_t n, int64_t rgb, int64_t alpha,
+                      int64_t width, int64_t style) {
     (void)ctx;
-    zeus_js_svg((int32_t)x, (int32_t)y, (int32_t)w, (int32_t)h, markup ? markup : "",
-                (int32_t)(rgb & 0xFFFFFF), (int32_t)alpha);
+    zeus_js_path(cmds, (int32_t)n, (int32_t)(rgb & 0xFFFFFF), (int32_t)alpha, (int32_t)width,
+                 (int32_t)style);
 }
 
 static void draw_image(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h, const char *src,
@@ -292,7 +292,7 @@ static void bind_canvas(void) {
     d.alpha = draw_alpha;
     d.clip = draw_clip;
     d.restore = draw_restore;
-    d.svg = draw_svg;
+    d.path = draw_path;
     d.image = draw_image;
     zeus_bind_draw(d);
 }

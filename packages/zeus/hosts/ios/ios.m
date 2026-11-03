@@ -2,7 +2,7 @@
  *
  * UIKit is only the host: UIWindow / UIView / touches. Buttons, labels,
  * navigation bars, Dynamic Type, and semantic colors are not used. Theme,
- * layout, and paint stay in Loam — the same fill / text / clip / SVG list
+ * layout, and paint stay in Loam — the same fill / text / clip / path list
  * as Cocoa and Canvas2D.
  */
 #import <UIKit/UIKit.h>
@@ -292,129 +292,9 @@ static void ios_restore(void *ctx) {
     CGContextRestoreGState(UIGraphicsGetCurrentContext());
 }
 
-/* --- SVG (same subset as zeus/desktop/mac.m; UIBezierPath instead of NSBezierPath) --- */
+/* --- vector paths (icons, charts, `Svg`: parsed by the engine) --- */
 
-typedef struct {
-    const char *p;
-} SvgScan;
-
-typedef struct {
-    int has_fill, has_stroke;
-    int64_t fill, stroke;
-    float sw;
-    int cap;
-    int join;
-} SvgStyle;
-
-static void svg_skip(SvgScan *s) {
-    while (*s->p && (*s->p == ' ' || *s->p == '\t' || *s->p == '\n' ||
-                     *s->p == '\r' || *s->p == ','))
-        s->p++;
-}
-
-static int svg_num(SvgScan *s, float *out) {
-    svg_skip(s);
-    const char *p = s->p;
-    char *end = NULL;
-    float v;
-    if (!*p) return 0;
-    v = strtof(p, &end);
-    if (end == p) return 0;
-    s->p = end;
-    *out = v;
-    return 1;
-}
-
-static int svg_attr(const char *tag, const char *name, char *out, int cap) {
-    size_t nlen = strlen(name);
-    const char *p = tag;
-    while (*p) {
-        if ((p == tag || p[-1] == ' ' || p[-1] == '\t' || p[-1] == '\n') &&
-            strncmp(p, name, nlen) == 0 && p[nlen] == '=') {
-            p += nlen + 1;
-            char q = *p;
-            int i = 0;
-            if (q != '"' && q != '\'') return 0;
-            p++;
-            while (*p && *p != q && i + 1 < cap) out[i++] = *p++;
-            out[i] = 0;
-            return 1;
-        }
-        p++;
-    }
-    return 0;
-}
-
-static int svg_color(const char *s, int64_t current, int64_t *out) {
-    if (!s || !*s) return 0;
-    if (strcmp(s, "none") == 0 || strcmp(s, "transparent") == 0) return 0;
-    if (strcmp(s, "currentColor") == 0 || strcmp(s, "currentcolor") == 0) {
-        *out = current;
-        return 1;
-    }
-    if (s[0] == '#') {
-        unsigned v = 0;
-        int n = 0;
-        const char *p = s + 1;
-        while (*p && n < 8) {
-            int d;
-            if (*p >= '0' && *p <= '9') d = *p - '0';
-            else if (*p >= 'a' && *p <= 'f') d = *p - 'a' + 10;
-            else if (*p >= 'A' && *p <= 'F') d = *p - 'A' + 10;
-            else break;
-            v = (v << 4) | (unsigned)d;
-            p++;
-            n++;
-        }
-        if (n == 3)
-            *out = (int64_t)(((v >> 8) & 0xF) * 0x110000 + ((v >> 4) & 0xF) * 0x1100 +
-                             (v & 0xF) * 0x11);
-        else if (n == 6)
-            *out = (int64_t)v;
-        else
-            return 0;
-        return 1;
-    }
-    return 0;
-}
-
-static void svg_style_from(const char *tag, SvgStyle *st, int64_t current) {
-    char buf[128];
-    int64_t c;
-    if (svg_attr(tag, "fill", buf, (int)sizeof buf)) {
-        if (svg_color(buf, current, &c)) {
-            st->has_fill = 1;
-            st->fill = c;
-        } else {
-            st->has_fill = 0;
-        }
-    }
-    if (svg_attr(tag, "stroke", buf, (int)sizeof buf)) {
-        if (svg_color(buf, current, &c)) {
-            st->has_stroke = 1;
-            st->stroke = c;
-        } else {
-            st->has_stroke = 0;
-        }
-    }
-    if (svg_attr(tag, "stroke-width", buf, (int)sizeof buf)) {
-        SvgScan sc = {buf};
-        float v;
-        if (svg_num(&sc, &v) && v > 0) st->sw = v;
-    }
-    if (svg_attr(tag, "stroke-linecap", buf, (int)sizeof buf)) {
-        if (strcmp(buf, "round") == 0) st->cap = 1;
-        else if (strcmp(buf, "square") == 0) st->cap = 2;
-        else st->cap = 0;
-    }
-    if (svg_attr(tag, "stroke-linejoin", buf, (int)sizeof buf)) {
-        if (strcmp(buf, "round") == 0) st->join = 1;
-        else if (strcmp(buf, "bevel") == 0) st->join = 2;
-        else st->join = 0;
-    }
-}
-
-static UIColor *svg_uicolor(int64_t rgb, int64_t alpha) {
+static UIColor *path_color(int64_t rgb, int64_t alpha) {
     CGFloat a = alpha < 0 ? 0 : (alpha > 255 ? 1.0 : (CGFloat)alpha / 255.0);
     return [UIColor colorWithRed:((rgb >> 16) & 255) / 255.0
                            green:((rgb >> 8) & 255) / 255.0
@@ -422,349 +302,45 @@ static UIColor *svg_uicolor(int64_t rgb, int64_t alpha) {
                            alpha:a];
 }
 
-static void svg_paint_path(UIBezierPath *path, const SvgStyle *st, float scale,
-                           int64_t alpha) {
-    if (!path || [path isEmpty]) return;
-    path.lineWidth = (CGFloat)(st->sw * scale);
-    path.lineCapStyle = st->cap == 1 ? kCGLineCapRound
-                      : st->cap == 2 ? kCGLineCapSquare
-                                     : kCGLineCapButt;
-    path.lineJoinStyle = st->join == 1 ? kCGLineJoinRound
-                       : st->join == 2 ? kCGLineJoinBevel
-                                       : kCGLineJoinMiter;
-    if (st->has_fill) {
-        [svg_uicolor(st->fill, alpha) setFill];
-        [path fill];
-    }
-    if (st->has_stroke) {
-        [svg_uicolor(st->stroke, alpha) setStroke];
-        [path stroke];
-    }
-}
-
-static CGPoint svg_xf(float x, float y, float ox, float oy, float s) {
-    return CGPointMake((CGFloat)(ox + x * s), (CGFloat)(oy + y * s));
-}
-
-static int svg_cmd_is(int c) {
-    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
-}
-
-static void svg_parse_d(const char *d, float ox, float oy, float s, UIBezierPath *path) {
-    SvgScan sc = {d};
-    float cx = 0, cy = 0, sx = 0, sy = 0, ox1 = 0, oy1 = 0;
-    int prev = 0, started = 0;
-    while (1) {
-        int cmd, rel, op;
-        svg_skip(&sc);
-        if (!*sc.p) break;
-        cmd = *sc.p;
-        if (svg_cmd_is(cmd)) {
-            sc.p++;
-        } else {
-            if (!prev) break;
-            cmd = (prev == 'M') ? 'L' : (prev == 'm') ? 'l' : prev;
-        }
-        rel = cmd >= 'a';
-        op = rel ? cmd - 32 : cmd;
-        if (op == 'M') {
-            float x, y;
-            if (!svg_num(&sc, &x) || !svg_num(&sc, &y)) break;
-            if (rel) {
-                x += cx;
-                y += cy;
-            }
-            cx = x;
-            cy = y;
-            sx = cx;
-            sy = cy;
-            [path moveToPoint:svg_xf(cx, cy, ox, oy, s)];
-            started = 1;
-            prev = rel ? 'm' : 'M';
-            continue;
-        }
-        if (!started) {
-            prev = cmd;
-            continue;
-        }
-        if (op == 'L') {
-            float x, y;
-            if (!svg_num(&sc, &x) || !svg_num(&sc, &y)) break;
-            if (rel) {
-                x += cx;
-                y += cy;
-            }
-            cx = x;
-            cy = y;
-            [path addLineToPoint:svg_xf(cx, cy, ox, oy, s)];
-        } else if (op == 'H') {
-            float x;
-            if (!svg_num(&sc, &x)) break;
-            if (rel) x += cx;
-            cx = x;
-            [path addLineToPoint:svg_xf(cx, cy, ox, oy, s)];
-        } else if (op == 'V') {
-            float y;
-            if (!svg_num(&sc, &y)) break;
-            if (rel) y += cy;
-            cy = y;
-            [path addLineToPoint:svg_xf(cx, cy, ox, oy, s)];
-        } else if (op == 'C') {
-            float x1, y1, x2, y2, x, y;
-            if (!svg_num(&sc, &x1) || !svg_num(&sc, &y1) || !svg_num(&sc, &x2) ||
-                !svg_num(&sc, &y2) || !svg_num(&sc, &x) || !svg_num(&sc, &y))
-                break;
-            if (rel) {
-                x1 += cx;
-                y1 += cy;
-                x2 += cx;
-                y2 += cy;
-                x += cx;
-                y += cy;
-            }
-            [path addCurveToPoint:svg_xf(x, y, ox, oy, s)
-                    controlPoint1:svg_xf(x1, y1, ox, oy, s)
-                    controlPoint2:svg_xf(x2, y2, ox, oy, s)];
-            ox1 = x2;
-            oy1 = y2;
-            cx = x;
-            cy = y;
-        } else if (op == 'S') {
-            float x2, y2, x, y, x1, y1;
-            if (!svg_num(&sc, &x2) || !svg_num(&sc, &y2) || !svg_num(&sc, &x) ||
-                !svg_num(&sc, &y))
-                break;
-            if (rel) {
-                x2 += cx;
-                y2 += cy;
-                x += cx;
-                y += cy;
-            }
-            x1 = cx;
-            y1 = cy;
-            if (prev == 'C' || prev == 'c' || prev == 'S' || prev == 's') {
-                x1 = 2 * cx - ox1;
-                y1 = 2 * cy - oy1;
-            }
-            [path addCurveToPoint:svg_xf(x, y, ox, oy, s)
-                    controlPoint1:svg_xf(x1, y1, ox, oy, s)
-                    controlPoint2:svg_xf(x2, y2, ox, oy, s)];
-            ox1 = x2;
-            oy1 = y2;
-            cx = x;
-            cy = y;
-        } else if (op == 'Q') {
-            float qx, qy, x, y, x1, y1, x2, y2;
-            if (!svg_num(&sc, &qx) || !svg_num(&sc, &qy) || !svg_num(&sc, &x) ||
-                !svg_num(&sc, &y))
-                break;
-            if (rel) {
-                qx += cx;
-                qy += cy;
-                x += cx;
-                y += cy;
-            }
-            x1 = cx + 2.f / 3.f * (qx - cx);
-            y1 = cy + 2.f / 3.f * (qy - cy);
-            x2 = x + 2.f / 3.f * (qx - x);
-            y2 = y + 2.f / 3.f * (qy - y);
-            [path addCurveToPoint:svg_xf(x, y, ox, oy, s)
-                    controlPoint1:svg_xf(x1, y1, ox, oy, s)
-                    controlPoint2:svg_xf(x2, y2, ox, oy, s)];
-            ox1 = qx;
-            oy1 = qy;
-            cx = x;
-            cy = y;
-        } else if (op == 'T') {
-            float x, y, qx, qy, x1, y1, x2, y2;
-            if (!svg_num(&sc, &x) || !svg_num(&sc, &y)) break;
-            if (rel) {
-                x += cx;
-                y += cy;
-            }
-            qx = cx;
-            qy = cy;
-            if (prev == 'Q' || prev == 'q' || prev == 'T' || prev == 't') {
-                qx = 2 * cx - ox1;
-                qy = 2 * cy - oy1;
-            }
-            x1 = cx + 2.f / 3.f * (qx - cx);
-            y1 = cy + 2.f / 3.f * (qy - cy);
-            x2 = x + 2.f / 3.f * (qx - x);
-            y2 = y + 2.f / 3.f * (qy - y);
-            [path addCurveToPoint:svg_xf(x, y, ox, oy, s)
-                    controlPoint1:svg_xf(x1, y1, ox, oy, s)
-                    controlPoint2:svg_xf(x2, y2, ox, oy, s)];
-            ox1 = qx;
-            oy1 = qy;
-            cx = x;
-            cy = y;
-        } else if (op == 'Z') {
-            [path closePath];
-            cx = sx;
-            cy = sy;
-        } else if (op == 'A') {
-            float dump;
-            int i;
-            for (i = 0; i < 7; i++)
-                if (!svg_num(&sc, &dump)) break;
-        } else {
-            break;
-        }
-        prev = cmd;
-    }
-}
-
-static const char *svg_tag_end(const char *p, int *self_close) {
-    *self_close = 0;
-    while (*p && *p != '>') {
-        if (*p == '/' && p[1] == '>') {
-            *self_close = 1;
-            return p + 2;
-        }
-        if (*p == '"' || *p == '\'') {
-            char q = *p++;
-            while (*p && *p != q) p++;
-            if (*p) p++;
-            continue;
-        }
-        p++;
-    }
-    if (*p == '>') p++;
-    return p;
-}
-
-static void svg_draw_tree(const char **pp, SvgStyle st, float ox, float oy, float scale,
-                          int64_t current, int64_t alpha, const char *stop) {
-    const char *p = *pp;
-    while (*p) {
-        int nlen, self_close, tlen;
-        const char *name, *gt;
-        char tag[2048];
-        SvgStyle kid;
-        if (stop && strncmp(p, stop, strlen(stop)) == 0) {
-            p += strlen(stop);
-            break;
-        }
-        if (p[0] == '<' && p[1] == '/') {
-            while (*p && *p != '>') p++;
-            if (*p) p++;
-            break;
-        }
-        if (*p != '<') {
-            p++;
-            continue;
-        }
-        if (strncmp(p, "<!--", 4) == 0) {
-            p = strstr(p, "-->");
-            p = p ? p + 3 : p;
-            if (!p) break;
-            continue;
-        }
-        p++;
-        while (*p == ' ' || *p == '\t' || *p == '\n') p++;
-        name = p;
-        while (*p && *p != ' ' && *p != '\t' && *p != '\n' && *p != '/' && *p != '>') p++;
-        nlen = (int)(p - name);
-        self_close = 0;
-        gt = svg_tag_end(p, &self_close);
-        tlen = (int)(gt - name);
-        if (tlen > 2047) tlen = 2047;
-        memcpy(tag, name, (size_t)tlen);
-        tag[tlen] = 0;
-        p = gt;
-        kid = st;
-        svg_style_from(tag, &kid, current);
-        if (nlen == 1 && name[0] == 'g') {
-            if (!self_close) {
-                const char *rest = p;
-                svg_draw_tree(&rest, kid, ox, oy, scale, current, alpha, "</g>");
-                p = rest;
-            }
-        } else if (nlen == 3 && strncmp(name, "svg", 3) == 0) {
-            if (!self_close) {
-                const char *rest = p;
-                svg_draw_tree(&rest, kid, ox, oy, scale, current, alpha, "</svg>");
-                p = rest;
-            }
-        } else if (nlen == 4 && strncmp(name, "path", 4) == 0) {
-            char d[4096];
-            if (svg_attr(tag, "d", d, (int)sizeof d)) {
-                UIBezierPath *path = [UIBezierPath bezierPath];
-                svg_parse_d(d, ox, oy, scale, path);
-                svg_paint_path(path, &kid, scale, alpha);
-            }
-        } else if (nlen == 6 && strncmp(name, "circle", 6) == 0) {
-            char buf[64];
-            float cx = 0, cy = 0, r = 0, v;
-            SvgScan sc;
-            if (svg_attr(tag, "cx", buf, (int)sizeof buf)) {
-                sc.p = buf;
-                if (svg_num(&sc, &v)) cx = v;
-            }
-            if (svg_attr(tag, "cy", buf, (int)sizeof buf)) {
-                sc.p = buf;
-                if (svg_num(&sc, &v)) cy = v;
-            }
-            if (svg_attr(tag, "r", buf, (int)sizeof buf)) {
-                sc.p = buf;
-                if (svg_num(&sc, &v)) r = v;
-            }
-            if (r > 0) {
-                CGPoint c = svg_xf(cx, cy, ox, oy, scale);
-                CGFloat rr = (CGFloat)(r * scale);
-                UIBezierPath *path =
-                    [UIBezierPath bezierPathWithOvalInRect:CGRectMake(c.x - rr, c.y - rr,
-                                                                      rr * 2, rr * 2)];
-                svg_paint_path(path, &kid, scale, alpha);
-            }
-        }
-        (void)self_close;
-    }
-    *pp = p;
-}
-
-static void ios_svg(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
-                    const char *markup, int64_t rgb, int64_t alpha) {
-    float vb_x = 0, vb_y = 0, vb_w = 24, vb_h = 24;
-    const char *svg, *name, *gt, *body;
-    char tag[2048], vb[128];
-    int self_close = 0, tlen;
-    float sx, sy, scale, ox, oy;
-    SvgStyle st;
+static void ios_path(void *ctx, const int32_t *c, int64_t n, int64_t rgb, int64_t alpha,
+                     int64_t width, int64_t style) {
     (void)ctx;
-    if (!markup || w <= 0 || h <= 0) return;
-    svg = strstr(markup, "<svg");
-    if (!svg) svg = markup;
-    name = svg + 1;
-    while (*name == ' ') name++;
-    gt = svg_tag_end(name, &self_close);
-    tlen = (int)(gt - name);
-    if (tlen > 2047) tlen = 2047;
-    memcpy(tag, name, (size_t)tlen);
-    tag[tlen] = 0;
-    if (svg_attr(tag, "viewBox", vb, (int)sizeof vb) ||
-        svg_attr(tag, "viewbox", vb, (int)sizeof vb)) {
-        SvgScan sc = {vb};
-        svg_num(&sc, &vb_x);
-        svg_num(&sc, &vb_y);
-        svg_num(&sc, &vb_w);
-        svg_num(&sc, &vb_h);
-        if (vb_w < 1) vb_w = 24;
-        if (vb_h < 1) vb_h = 24;
+    UIBezierPath *path = [UIBezierPath bezierPath];
+    const CGFloat u = 1.0 / 64.0;
+    int64_t i = 0;
+    while (i < n) {
+        int32_t k = c[i++];
+        if (k == 0 && i + 2 <= n) {
+            [path moveToPoint:CGPointMake(c[i] * u, c[i + 1] * u)];
+            i += 2;
+        } else if (k == 1 && i + 2 <= n) {
+            [path addLineToPoint:CGPointMake(c[i] * u, c[i + 1] * u)];
+            i += 2;
+        } else if (k == 2 && i + 6 <= n) {
+            [path addCurveToPoint:CGPointMake(c[i + 4] * u, c[i + 5] * u)
+                    controlPoint1:CGPointMake(c[i] * u, c[i + 1] * u)
+                    controlPoint2:CGPointMake(c[i + 2] * u, c[i + 3] * u)];
+            i += 6;
+        } else if (k == 3) {
+            [path closePath];
+        } else {
+            break;
+        }
     }
-    sx = (float)w / vb_w;
-    sy = (float)h / vb_h;
-    scale = sx < sy ? sx : sy;
-    ox = (float)x + ((float)w - vb_w * scale) * 0.5f - vb_x * scale;
-    oy = (float)y + ((float)h - vb_h * scale) * 0.5f - vb_y * scale;
-    memset(&st, 0, sizeof st);
-    st.sw = 1.f;
-    st.cap = 1;
-    st.join = 1;
-    svg_style_from(tag, &st, rgb);
-    body = gt;
-    svg_draw_tree(&body, st, ox, oy, scale, rgb, alpha, NULL);
+    if ([path isEmpty]) return;
+    if (width == 0) {
+        [path_color(rgb, alpha) setFill];
+        [path fill];
+        return;
+    }
+    int cap = (int)(style & 3), join = (int)(style >> 2);
+    path.lineWidth = width * u;
+    path.lineCapStyle = cap == 1 ? kCGLineCapRound : cap == 2 ? kCGLineCapSquare : kCGLineCapButt;
+    path.lineJoinStyle = join == 1 ? kCGLineJoinRound
+                       : join == 2 ? kCGLineJoinBevel
+                                   : kCGLineJoinMiter;
+    [path_color(rgb, alpha) setStroke];
+    [path stroke];
 }
 
 /* PNG / JPEG / WebP / GIF via ImageIO. Cache by src; http(s) loads off-thread.
@@ -1351,7 +927,7 @@ static void zeus_sync_keyboard(UIView *v) {
     d.alpha = ios_alpha;
     d.clip = ios_clip;
     d.restore = ios_restore;
-    d.svg = ios_svg;
+    d.path = ios_path;
     d.image = ios_image;
     zeus_paint(NULL, d);
 }

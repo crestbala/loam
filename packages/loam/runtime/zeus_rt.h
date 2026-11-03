@@ -91,9 +91,6 @@ typedef struct {
        callback itself saves, so the caller only restores. NULL hosts skip
        it and text stays opaque. */
     void (*alpha)(void *ctx, int64_t a);
-    /* SVG markup in `markup`; `currentColor` paints as `rgb`. alpha is 0..255. */
-    void (*svg)(void *ctx, int64_t x, int64_t y, int64_t w, int64_t h,
-                const char *markup, int64_t rgb, int64_t alpha);
     /* Raster image. `src` is a path, data URI, or URL. Decode is in the host
        (PNG / JPEG / WebP / GIF); NULL skips. radius clips; alpha is 0..255.
        fit: 0 stretch, 1 contain, 2 cover, 3 none. */
@@ -135,6 +132,14 @@ typedef struct {
        NULL hosts no-op, so the widget lands at its settled position. */
     void (*xform)(void *ctx, int64_t dx, int64_t dy, int64_t scale,
                   int64_t rot, int64_t ox, int64_t oy);
+    /* A vector path: `n` ints of commands, `0` move x y, `1` line x y,
+       `2` cubic x1 y1 x2 y2 x y, `3` close, coordinates in 1/64 of a layout
+       point. `width` 0 fills it (non-zero winding) in `rgb`; otherwise it is
+       stroked `width`/64 wide with `style` = cap + 4 * join (0 butt / miter,
+       1 round, 2 square / bevel). alpha is 0..255. Icons, charts and every
+       `Svg` arrive this way: the engine parses the markup, never the host. */
+    void (*path)(void *ctx, const int32_t *cmds, int64_t n, int64_t rgb, int64_t alpha,
+                 int64_t width, int64_t style);
 } ZeusDraw;
 
 void zeus_set_platform(void (*run)(void),
@@ -263,8 +268,9 @@ int64_t loam_platform_plat_now_ms(void);
    C requires the declaration and the definition to agree. */
 /* One frame's draw list as a command buffer (`platform.plat_frame`), decoded
    into the bound ZeusDraw. Exposed so a host can replay a buffer it holds. */
-void zeus_replay(const int32_t *ops, int64_t n, const loam_str *strs, int64_t ns);
-void loam_platform_plat_frame(loam_vec ops, int32_t n, loam_vec strs);
+void zeus_replay(const int32_t *ops, int64_t n, const loam_str *strs, int64_t ns,
+                 const int32_t *path, int64_t np);
+void loam_platform_plat_frame(loam_vec ops, int32_t n, loam_vec strs, loam_vec path, int32_t np);
 int32_t loam_platform_plat_blit(loam_vec buf, int32_t w, int32_t h, int32_t gen,
                                 int32_t scale);
 int64_t loam_runtime_key_intern(loam_str name);

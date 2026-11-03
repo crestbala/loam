@@ -7,6 +7,7 @@ import "nodes.loam"
 import "geometry.loam"
 import "metrics.loam"
 import "platform.loam"
+import "svgpath.loam"
 import "runtime.loam"
 
 // Fields grouped by width, widest first, so the 8-byte-aligned `text` slice
@@ -277,14 +278,21 @@ fn restore() {
 /// not extra draw-list ops (`draw_count` stays the open-panel count).
 /// Ints per op in the frame buffer: `kind x y w h rgb radius alpha font value`
 /// and the op's string index (-1 when it has none). The fields are the `Draw`
-/// record's, unchanged, so the buffer is the draw list itself, flattened.
+/// record's, unchanged, except that an `svg` op (kind 5) never reaches a host:
+/// it is lowered here into path ops (kinds 16 / 17) over `frame_path`.
 const FRAME_STRIDE: int = 11
+const OP_PATH_FILL: int = 16
+const OP_PATH_STROKE: int = 17
 
-/// The frame handed to the host: `FRAME_STRIDE` ints per op, and the strings
-/// text / svg / image ops point into. Reused across frames, so a steady frame
-/// allocates nothing.
+/// The frame handed to the host: `FRAME_STRIDE` ints per op, the strings text /
+/// image ops point into, and the path stream path ops point into (`SP_*`
+/// command codes, then coordinates in 1/64 layout point). Reused across frames,
+/// so a steady frame allocates nothing.
 let mut frame_ops: []int = []int {}
 let mut frame_strs: []string = []string {}
+let mut frame_path: []int = []int {}
+let mut frame_n: int = 0
+let mut frame_np: int = 0
 
 fn frame_put(i: int, v: int) {
     if i < frame_ops.len {
@@ -294,15 +302,117 @@ fn frame_put(i: int, v: int) {
     }
 }
 
+fn path_put(v: int) {
+    if frame_np < frame_path.len {
+        frame_path[frame_np] = v
+    } else {
+        push(frame_path, v)
+    }
+    frame_np = frame_np + 1
+}
+
+fn frame_op(kind: int, x: int, y: int, w: int, h: int, rgb: int, radius: int, alpha: int,
+            font: int, value: int, si: int) {
+    let o = frame_n * FRAME_STRIDE
+    frame_put(o, kind)
+    frame_put(o + 1, x)
+    frame_put(o + 2, y)
+    frame_put(o + 3, w)
+    frame_put(o + 4, h)
+    frame_put(o + 5, rgb)
+    frame_put(o + 6, radius)
+    frame_put(o + 7, alpha)
+    frame_put(o + 8, font)
+    frame_put(o + 9, value)
+    frame_put(o + 10, si)
+    frame_n = frame_n + 1
+}
+
+/// Layout points to the path stream's 1/64 fixed point, rounded half away
+/// from zero.
+fn fix64(v: float) -> int {
+    if v >= 0.0 {
+        return i32(v * 64.0 + 0.5)
+    }
+    return 0 - i32(0.5 - v * 64.0)
+}
+
+/// An `svg` op as path ops: the markup's cached shapes fitted into the op's
+/// box (uniform scale, centred), `currentColor` resolved to the op's colour.
+fn lower_svg(d: Draw) {
+    if d.w <= 0 || d.h <= 0 {
+        return
+    }
+    let k = svgpath.lookup(d.text)
+    if svgpath.sp_cache[k].ok == 0 {
+        return
+    }
+    let e = svgpath.sp_cache[k]
+    let mut scale = float(d.w) / e.vb_w
+    let sy = float(d.h) / e.vb_h
+    if sy < scale {
+        scale = sy
+    }
+    let ox = float(d.x) + (float(d.w) - e.vb_w * scale) * 0.5 - e.vb_x * scale
+    let oy = float(d.y) + (float(d.h) - e.vb_h * scale) * 0.5 - e.vb_y * scale
+    for si in 0..e.shapes.len {
+        let sh = e.shapes[si]
+        let start = frame_np
+        let mut c = sh.from
+        while c < sh.to {
+            let cmd = i32(e.cmds[c])
+            path_put(cmd)
+            c = c + 1
+            let mut pts = 0
+            if cmd == svgpath.SP_M || cmd == svgpath.SP_L {
+                pts = 1
+            } else if cmd == svgpath.SP_C {
+                pts = 3
+            }
+            while pts > 0 {
+                path_put(fix64(ox + e.cmds[c] * scale))
+                path_put(fix64(oy + e.cmds[c + 1] * scale))
+                c = c + 2
+                pts = pts - 1
+            }
+        }
+        let len = frame_np - start
+        if sh.fill != svgpath.SP_NONE {
+            let mut rgb = sh.fill
+            if rgb == svgpath.SP_CURRENT {
+                rgb = d.rgb
+            }
+            frame_op(OP_PATH_FILL, 0, 0, len, 0, rgb, 0, d.alpha, 0, start, -1)
+        }
+        if sh.stroke != svgpath.SP_NONE {
+            let mut rgb = sh.stroke
+            if rgb == svgpath.SP_CURRENT {
+                rgb = d.rgb
+            }
+            let mut sw = fix64(sh.sw * scale)
+            if sw < 1 {
+                sw = 1
+            }
+            frame_op(OP_PATH_STROKE, 0, 0, len, 0, rgb, sh.cap + sh.join * 4, d.alpha, sw,
+                     start, -1)
+        }
+    }
+}
+
 /// Hand the draw list to the host as one command buffer. The runtime replays
 /// it into the host's `ZeusDraw` (`zeus_replay` in zeus_plat.c), so this is the
 /// only paint call a frame makes across the seam.
 fn present() {
     let n = draws.len
     let mut ns = 0
+    frame_n = 0
+    frame_np = 0
     for i in 0..n {
         let d = draws[i]
-        let o = i * FRAME_STRIDE
+        if d.kind == 5 {
+            lower_svg(d)
+            continue
+        }
         let mut si = -1
         if d.text.len > 0 {
             if ns < frame_strs.len {
@@ -313,19 +423,9 @@ fn present() {
             si = ns
             ns = ns + 1
         }
-        frame_put(o, d.kind)
-        frame_put(o + 1, d.x)
-        frame_put(o + 2, d.y)
-        frame_put(o + 3, d.w)
-        frame_put(o + 4, d.h)
-        frame_put(o + 5, d.rgb)
-        frame_put(o + 6, d.radius)
-        frame_put(o + 7, d.alpha)
-        frame_put(o + 8, d.font)
-        frame_put(o + 9, d.value)
-        frame_put(o + 10, si)
+        frame_op(d.kind, d.x, d.y, d.w, d.h, d.rgb, d.radius, d.alpha, d.font, d.value, si)
     }
-    platform.plat_frame(frame_ops, n, frame_strs)
+    platform.plat_frame(frame_ops, frame_n, frame_strs, frame_path, frame_np)
 }
 
 
