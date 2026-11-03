@@ -1,0 +1,170 @@
+//! Compiler, formatter, language server, tests, and the zeli CLI.
+
+import "std:zeus"
+import "std:spacing"
+import "std:zui"
+import "prose.loam" as prose
+
+fn Tooling() -> Node {
+    return zui.Column(prose.SECTION_GAP) {
+        zui.Column(prose.HEAD_GAP) {
+            zui.Overline("Tools")
+            zui.Display("Tooling")
+            zui.Body(
+                "loamc typechecks, emits C, and links. loam-fmt is one style with no options. loam-lsp serves diagnostics, hover, and go to definition. Tests are ordinary functions marked with the test attribute.",
+            )
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            zui.SectionHeader(
+                "Compiler",
+                "loamc",
+                "A check is the frontend only. A wasm build needs a clang that knows wasm32.",
+            )
+            prose.CodeBlock([]string {
+                "loamc app.loam -o app",
+                "loamc app.loam --emit-c -o app.c",
+                "loamc app.loam --run",
+                "loamc app.loam --target wasm -o app.wasm",
+                "loamc test app.loam",
+            })
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            zui.SectionHeader(
+                "Formatter",
+                "loam-fmt",
+                "Four spaces per block, not per call parenthesis. One space around = and the arrow. Comments and string literals are copied as written. zeli fmt runs it over a tree.",
+            )
+            prose.CodeBlock([]string {
+                "zeus.App(\"loam\", fn() {",
+                "    body",
+                "})",
+            })
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            zui.SectionHeader(
+                "Tests",
+                "A function with no parameters",
+                "The entry imports std:test. loam test compiles a runner that calls every test function. An assertion that fails traps, and the run stops there.",
+            )
+            prose.CodeBlock([]string {
+                "import \"std:test\"",
+                "",
+                "#[test]",
+                "fn adds() {",
+                "    assert_eq_int(1 + 2, 3)",
+                "}",
+            })
+            zui.DescriptionList(
+                []DescItem {
+                    DescItem {
+                        term: "make",
+                        detail: "Build loamc, nob, loam-lsp, loam-fmt, and zeli.",
+                    },
+                    DescItem {
+                        term: "nob test",
+                        detail: "Language suites: compile, golden, in-language.",
+                    },
+                    DescItem {
+                        term: "nob integration",
+                        detail: "The slower zeli routes, build, fmt, and serve suite.",
+                    },
+                    DescItem {
+                        term: "loam-lsp",
+                        detail: "Editor diagnostics. Restart it after a rebuild.",
+                    },
+                },
+                divided = true,
+            )
+            zui.Alert(
+                "The formatter is not in this page",
+                "loam-fmt is a native tool. The playground runs programs in a small interpreter. It does not format them.",
+                tint = zeus.Tint.Info,
+            )
+        }
+    }
+}
+
+fn Formatter() -> Node {
+    return zui.Column(prose.SECTION_GAP) {
+        zui.Column(prose.HEAD_GAP) {
+            zui.Overline("Tooling")
+            zui.Display("The formatter")
+            zui.Body(
+                "loam-fmt is one style and no flags. zeli fmt runs it over an app tree. Four spaces per block, not per call parenthesis. One space around = and the arrow. Comments and string literals are copied as written.",
+            )
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            prose.CodeBlock([]string {
+                "zeus.App(\"loam\", fn() {",
+                "    body",
+                "})",
+                "",
+                "fn add(a: int, b: int) -> int {",
+                "    return a + b",
+                "}",
+            })
+            zui.DescriptionList(
+                []DescItem {
+                    DescItem {
+                        term: "Indent",
+                        detail: "Four spaces for each block. Tabs are rewritten.",
+                    },
+                    DescItem {
+                        term: "Calls",
+                        detail: "A space after a comma. The parenthesis stays tight.",
+                    },
+                    DescItem {
+                        term: "Comments",
+                        detail: "Line and block comments keep their text.",
+                    },
+                    DescItem {
+                        term: "Strings",
+                        detail: "A string is copied. The formatter does not rewrite escapes.",
+                    },
+                },
+                divided = true,
+            )
+            zui.Note(
+                "zeli fmt www rewrites the site. The published wasm does not include the formatter.",
+            )
+        }
+    }
+}
+
+fn TestsPage() -> Node {
+    return zui.Column(prose.SECTION_GAP) {
+        zui.Column(prose.HEAD_GAP) {
+            zui.Overline("Tooling")
+            zui.Display("Test functions")
+            zui.Body(
+                "A test is a function with no parameters, marked with the test attribute. The entry imports std:test. loam test compiles a runner that calls every test. An assertion that fails traps, and the run stops there.",
+            )
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            prose.CodeBlock([]string {
+                "import \"std:test\"",
+                "",
+                "#[test]",
+                "fn adds() {",
+                "    assert_eq_int(1 + 2, 3)",
+                "    assert_eq_str(\"loam\", \"loam\")",
+                "}",
+            })
+            zui.DescriptionList(
+                []DescItem {
+                    DescItem { term: "assert", detail: "A bool. Failure traps." },
+                    DescItem { term: "assert_eq_int", detail: "Two integers." },
+                    DescItem { term: "assert_eq_str", detail: "Two strings, by length and bytes." },
+                    DescItem {
+                        term: "Headless Zeus",
+                        detail: "ZEUS_HEADLESS lays out a tree and searches for a node's whole text.",
+                    },
+                },
+                divided = true,
+            )
+            zui.Note(
+                "This site's runner tests live next to the pages. They check the playground subset, including the imports it allows and the host modules it refuses.",
+            )
+        }
+    }
+}

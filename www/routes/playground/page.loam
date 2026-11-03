@@ -1,0 +1,15 @@
+import "std:zeus"
+import "std:zui"
+import "std:router"
+import "../../components/playground.loam" as playground
+
+fn Page(p: Params) -> Node {
+    return playground.Playground()
+}
+
+fn meta(p: Params) -> Meta {
+    return Meta {
+        title: "Playground — Loam",
+        description: "Write Loam and run it in the browser: functions, loops, structs, closures, and switch.",
+    }
+}

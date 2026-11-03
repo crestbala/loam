@@ -1,0 +1,364 @@
+//! Language tour: ownership, control flow, errors, modules, closures.
+
+import "std:zeus"
+import "std:spacing"
+import "std:zui"
+import "prose.loam" as prose
+
+fn Language() -> Node {
+    return zui.Column(prose.SECTION_GAP) {
+        zui.Column(prose.HEAD_GAP) {
+            zui.Overline("Reference")
+            zui.Display("Language")
+            zui.Body(
+                "let is immutable. let mut is mutable. A value passed to a &T or &mut T parameter is borrowed for you. A borrow ends at its last use, so the place is free again after that use.",
+            )
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            prose.CodeBlock([]string {
+                "struct Counter {",
+                "    name: string,",
+                "    count: int,",
+                "}",
+                "",
+                "fn increment(c: &mut Counter) {",
+                "    c.count = c.count + 1",
+                "}",
+                "",
+                "fn main() {",
+                "    let mut c = Counter { name: \"tick\", count: 0 }",
+                "    increment(c)",
+                "    let b = Box::new(42)",
+                "}",
+            })
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            zui.SectionHeader(
+                "Control",
+                "switch is exhaustive",
+                "Cases are literals or enum members. There is no fallthrough. A switch needs default, or every variant, or both true and false.",
+            )
+            prose.CodeBlock([]string {
+                "switch kind {",
+                "    case Tint.Ok, Tint.Info:",
+                "        return ok()",
+                "    case Tint.Danger:",
+                "        return danger()",
+                "    default:",
+                "        return ink()",
+                "}",
+            })
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            zui.SectionHeader(
+                "Errors",
+                "Result and Option",
+                "Both are checked containers. Dropping one without reading it is a compile error. ? returns early on the bad tag. There are no exceptions.",
+            )
+            prose.CodeBlock([]string {
+                "fn half(n: int) -> Result<int> {",
+                "    if n % 2 != 0 {",
+                "        return result.res_err(\"odd\", 0)",
+                "    }",
+                "    return result.res_ok(n / 2)",
+                "}",
+                "",
+                "fn quarter(n: int) -> Result<int> {",
+                "    let h = half(n)?",
+                "    return result.res_ok(h / 2)",
+                "}",
+            })
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            zui.SectionHeader(
+                "Modules",
+                "Three import forms",
+                "No globs. A selective import names the declarations you want. The module name is the file stem.",
+            )
+            zui.DescriptionList(
+                []DescItem {
+                    DescItem {
+                        term: "std:fmt",
+                        detail: "Language standard library, then each search root.",
+                    },
+                    DescItem { term: "math.loam", detail: "A file next to the importer." },
+                    DescItem {
+                        term: "pkg:name",
+                        detail: "Vendored code, searched upward from the entry.",
+                    },
+                },
+                divided = true,
+            )
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            zui.SectionHeader(
+                "Closures",
+                "Copy, move, no borrowed capture",
+                "A Copy value is captured by copy. An owned Box or vector is moved in. A reference cannot be captured.",
+            )
+            prose.CodeBlock([]string {
+                "let add = |a: int, b: int| { a + b }",
+                "let n = add(2, 40)",
+            })
+            zui.Note(
+                "int is i32 and float is f32. Widths never mix without an explicit conversion.",
+            )
+        }
+    }
+}
+
+fn Ownership() -> Node {
+    return zui.Column(prose.SECTION_GAP) {
+        zui.Column(prose.HEAD_GAP) {
+            zui.Overline("Language")
+            zui.Display("Ownership and borrows")
+            zui.Body(
+                "A binding is immutable unless it says mut. Passing a value to a &T or &mut T parameter borrows it for you. The borrow ends at the last use of that reference, and the place is free again after that use.",
+            )
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            prose.CodeBlock([]string {
+                "fn increment(c: &mut Counter) {",
+                "    c.count = c.count + 1",
+                "}",
+                "",
+                "fn main() {",
+                "    let mut c = Counter { name: \"tick\", count: 0 }",
+                "    increment(c)",
+                "    let n = c.count",
+                "}",
+            })
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            zui.SectionHeader(
+                "Moves",
+                "One owner",
+                "An owned Box or vector is moved into a closure or a call. After the move, the old name is gone. Copy values, including integers and bools, are copied instead.",
+            )
+            prose.CodeBlock([]string {
+                "let n = 2",
+                "let add = |a: int| { a + n }",
+                "let b = Box::new(42)",
+            })
+            zui.Alert(
+                "No borrowed capture",
+                "A closure can copy a Copy value or move an owned one. It cannot capture a reference. That keeps a closure from outliving the borrow.",
+                tint = zeus.Tint.Info,
+            )
+            zui.DescriptionList(
+                []DescItem {
+                    DescItem {
+                        term: "let",
+                        detail: "Immutable binding. Assigning again is an error.",
+                    },
+                    DescItem { term: "let mut", detail: "The binding can be assigned." },
+                    DescItem {
+                        term: "&T",
+                        detail: "Shared borrow. The caller writes the value, the callee sees a reference.",
+                    },
+                    DescItem {
+                        term: "&mut T",
+                        detail: "Exclusive borrow. No other borrow of that place overlaps it.",
+                    },
+                    DescItem {
+                        term: "Box",
+                        detail: "A heap owner. Box::new moves the value onto the heap.",
+                    },
+                },
+                divided = true,
+            )
+            zui.Note(
+                "A slice passed by value copies the header. Pushes inside that copy do not change the caller. Push on a field of an &mut struct, or pass the slice as &mut.",
+            )
+        }
+    }
+}
+
+fn Control() -> Node {
+    return zui.Column(prose.SECTION_GAP) {
+        zui.Column(prose.HEAD_GAP) {
+            zui.Overline("Language")
+            zui.Display("Control flow")
+            zui.Body(
+                "if, for, while, and switch are statements. A switch does not fall through. It needs default, or every enum variant, or both true and false when the scrutinee is a bool.",
+            )
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            prose.CodeBlock([]string {
+                "if n % 2 == 0 {",
+                "    fmt.println(\"even\")",
+                "} else {",
+                "    fmt.println(\"odd\")",
+                "}",
+                "",
+                "for i in 0..n {",
+                "    sum = sum + i",
+                "}",
+                "",
+                "while left > 0 {",
+                "    left = left - 1",
+                "}",
+            })
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            zui.SectionHeader(
+                "switch",
+                "Literals or enum members",
+                "A case can list several patterns. default is the rest. break and continue apply to the nearest loop.",
+            )
+            prose.CodeBlock([]string {
+                "switch kind {",
+                "    case Tint.Ok, Tint.Info:",
+                "        return ok()",
+                "    case Tint.Danger:",
+                "        return danger()",
+                "    default:",
+                "        return ink()",
+                "}",
+            })
+            zui.Note(
+                "A build-time if inside a Zeus view freezes on the first value. Pages that appear and disappear use Show.",
+            )
+        }
+    }
+}
+
+fn Errors() -> Node {
+    return zui.Column(prose.SECTION_GAP) {
+        zui.Column(prose.HEAD_GAP) {
+            zui.Overline("Language")
+            zui.Display("Result and Option")
+            zui.Body(
+                "There are no exceptions. Result and Option are checked containers. Dropping one without reading it is a compile error. The ? operator returns early on the bad tag and unwraps the good one.",
+            )
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            prose.CodeBlock([]string {
+                "fn half(n: int) -> Result<int> {",
+                "    if n % 2 != 0 {",
+                "        return result.res_err(\"odd\", 0)",
+                "    }",
+                "    return result.res_ok(n / 2)",
+                "}",
+                "",
+                "fn quarter(n: int) -> Result<int> {",
+                "    let h = half(n)?",
+                "    return result.res_ok(h / 2)",
+                "}",
+            })
+            zui.DescriptionList(
+                []DescItem {
+                    DescItem {
+                        term: "Result",
+                        detail: "res_ok and res_err. The error string and a dummy value share the container.",
+                    },
+                    DescItem {
+                        term: "Option",
+                        detail: "some and none. Use it when absence is not a failure.",
+                    },
+                    DescItem {
+                        term: "?",
+                        detail: "Inside a function that returns the same container. Early return on the bad tag.",
+                    },
+                },
+                divided = true,
+            )
+            zui.Note(
+                "The playground runner has no Result or ?. These samples are for the compiler.",
+            )
+        }
+    }
+}
+
+fn Modules() -> Node {
+    return zui.Column(prose.SECTION_GAP) {
+        zui.Column(prose.HEAD_GAP) {
+            zui.Overline("Language")
+            zui.Display("Import paths")
+            zui.Body(
+                "An import names a module. There are no globs. The module name is the file stem, unless as renames it. One file keeps one alias across every importer.",
+            )
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            prose.CodeBlock([]string {
+                "import \"std:fmt\"",
+                "import \"std:str\" as text",
+                "import \"math.loam\"",
+                "",
+                "fn main() {",
+                "    fmt.println(text.trim(\"  hi  \"))",
+                "}",
+            })
+            zui.DescriptionList(
+                []DescItem {
+                    DescItem {
+                        term: "std:name",
+                        detail: "The language standard library: fmt, str, math, sys, json, test, and the rest.",
+                    },
+                    DescItem {
+                        term: "file.loam",
+                        detail: "A file next to the importer. The module name is the stem.",
+                    },
+                    DescItem {
+                        term: "pkg:name",
+                        detail: "Vendored code, searched upward from the entry file.",
+                    },
+                    DescItem {
+                        term: "as",
+                        detail: "Renames the module in this file. Other files must use the same alias.",
+                    },
+                },
+                divided = true,
+            )
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            zui.SectionHeader(
+                "Standard library",
+                "What a program can import",
+                "fmt writes by length. str is byte search, slice, trim, and case. math is f64, written in Loam. sys, net, thread, and kv touch the host. The playground allows fmt, str, and math, and refuses the host modules.",
+            )
+            zui.Alert(
+                "Selective, not glob",
+                "You name the module, then call module.function. A later import of the same file under a second alias typechecks and then emits the wrong C name. Pick one alias and keep it.",
+                tint = zeus.Tint.Warn,
+            )
+        }
+    }
+}
+
+fn Functions() -> Node {
+    return zui.Column(prose.SECTION_GAP) {
+        zui.Column(prose.HEAD_GAP) {
+            zui.Overline("Language")
+            zui.Display("Functions and closures")
+            zui.Body(
+                "A function names its parameters and its return type. Named arguments fill only the last parameter, and that parameter is a struct. A trailing block is how a Zeus widget receives children.",
+            )
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            prose.CodeBlock([]string {
+                "fn add(a: int, b: int) -> int {",
+                "    return a + b",
+                "}",
+                "",
+                "let n = add(2, 40)",
+                "let mul = |a: int, b: int| { a * b }",
+            })
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            zui.SectionHeader(
+                "Generics",
+                "A value binds the parameter",
+                "A type parameter is inferred from a value argument. It is not inferred from the return type alone. Each widget takes fn() -> []T so the slice is read again when the signal changes.",
+            )
+            prose.CodeBlock([]string {
+                "fn first(items: []int) -> int {",
+                "    return items[0]",
+                "}",
+            })
+            zui.Note(
+                "An index write needs &mut []T. A plain []T parameter is immutable. int literals do not become i64 by themselves. Write i64(n).",
+            )
+        }
+    }
+}

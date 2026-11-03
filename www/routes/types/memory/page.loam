@@ -1,0 +1,15 @@
+import "std:zeus"
+import "std:zui"
+import "std:router"
+import "../../../components/typespage.loam" as typespage
+
+fn Page(p: Params) -> Node {
+    return typespage.Memory()
+}
+
+fn meta(p: Params) -> Meta {
+    return Meta {
+        title: "Memory — Loam",
+        description: "Borrows, boxes, and bounds.",
+    }
+}

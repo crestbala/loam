@@ -1,0 +1,9 @@
+//! Route error page. The message is not drawn: a trap can name a source file,
+//! and this page is what a browser shows.
+
+import "std:zeus"
+import "std:zui"
+
+fn Error(msg: string) -> Node {
+    return zui.Heading("something went wrong")
+}

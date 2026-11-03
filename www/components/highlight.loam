@@ -1,0 +1,245 @@
+//! Loam token colors. A span is one string: the first byte is a kind marker
+//! and the rest is the text, so a line stays a slice of strings.
+
+import "std:zeus"
+import "std:colors"
+import "std:spacing"
+import "std:zui"
+import "std:str"
+
+/// Font size of code, in the editor and in code blocks.
+const CODE_FONT: int = 13
+
+const MARK_TEXT: int = 116
+const MARK_KW: int = 107
+const MARK_STR: int = 115
+const MARK_NUM: int = 110
+const MARK_CMT: int = 99
+const MARK_PUN: int = 112
+
+fn is_alpha(c: int) -> bool {
+    if c >= 65 && c <= 90 {
+        return true
+    }
+    if c >= 97 && c <= 122 {
+        return true
+    }
+    return c == 95
+}
+
+fn is_digit(c: int) -> bool {
+    return c >= 48 && c <= 57
+}
+
+fn is_ident(c: int) -> bool {
+    return is_alpha(c) || is_digit(c)
+}
+
+fn is_hex(c: int) -> bool {
+    if is_digit(c) {
+        return true
+    }
+    if c >= 65 && c <= 70 {
+        return true
+    }
+    return c >= 97 && c <= 102
+}
+
+fn is_kw(w: string) -> bool {
+    if w == "fn" || w == "let" || w == "mut" || w == "const" {
+        return true
+    }
+    if w == "struct" || w == "enum" || w == "import" || w == "as" {
+        return true
+    }
+    if w == "if" || w == "else" || w == "for" || w == "while" || w == "in" {
+        return true
+    }
+    if w == "return" || w == "break" || w == "continue" {
+        return true
+    }
+    if w == "switch" || w == "case" || w == "default" {
+        return true
+    }
+    return w == "true" || w == "false"
+}
+
+fn pack(kind: int, text: string) -> string {
+    let m = string_from_bytes([]int { kind })
+    return "{{m}}{{text}}"
+}
+
+/// Tokens of one line. An empty line is a single space so the row has height.
+fn spans(line: string) -> []string {
+    let mut out = []string {}
+    if line.len == 0 {
+        push(out, pack(MARK_TEXT, " "))
+        return out
+    }
+    let mut i = 0
+    while i < line.len {
+        let c = line[i]
+        if c == 32 || c == 9 {
+            let start = i
+            while i < line.len && (line[i] == 32 || line[i] == 9) {
+                i = i + 1
+            }
+            push(out, pack(MARK_TEXT, str.slice(line, start, i)))
+            continue
+        }
+        if c == 47 && i + 1 < line.len && line[i + 1] == 47 {
+            push(out, pack(MARK_CMT, str.slice(line, i, line.len)))
+            return out
+        }
+        if c == 47 && i + 1 < line.len && line[i + 1] == 42 {
+            let start = i
+            i = i + 2
+            while i + 1 < line.len && !(line[i] == 42 && line[i + 1] == 47) {
+                i = i + 1
+            }
+            if i + 1 < line.len {
+                i = i + 2
+            } else {
+                i = line.len
+            }
+            push(out, pack(MARK_CMT, str.slice(line, start, i)))
+            continue
+        }
+        if c == 34 {
+            let start = i
+            i = i + 1
+            while i < line.len && line[i] != 34 {
+                if line[i] == 92 && i + 1 < line.len {
+                    i = i + 2
+                } else {
+                    i = i + 1
+                }
+            }
+            if i < line.len {
+                i = i + 1
+            }
+            push(out, pack(MARK_STR, str.slice(line, start, i)))
+            continue
+        }
+        if is_digit(c) {
+            let start = i
+            if c == 48 && i + 1 < line.len && (line[i + 1] == 120 || line[i + 1] == 88) {
+                i = i + 2
+                while i < line.len && is_hex(line[i]) {
+                    i = i + 1
+                }
+            } else {
+                while i < line.len && is_digit(line[i]) {
+                    i = i + 1
+                }
+                if i + 1 < line.len && line[i] == 46 && is_digit(line[i + 1]) {
+                    i = i + 1
+                    while i < line.len && is_digit(line[i]) {
+                        i = i + 1
+                    }
+                }
+            }
+            push(out, pack(MARK_NUM, str.slice(line, start, i)))
+            continue
+        }
+        if is_alpha(c) {
+            let start = i
+            i = i + 1
+            while i < line.len && is_ident(line[i]) {
+                i = i + 1
+            }
+            let w = str.slice(line, start, i)
+            let kind = if is_kw(w) { MARK_KW } else { MARK_TEXT }
+            push(out, pack(kind, w))
+            continue
+        }
+        let mut n = 1
+        if i + 1 < line.len {
+            let d = line[i + 1]
+            if (c == 61 && d == 61) ||
+                (c == 33 && d == 61) ||
+                (c == 60 && d == 61) ||
+                (c == 62 && d == 61) ||
+                (c == 38 && d == 38) ||
+                (c == 124 && d == 124) ||
+                (c == 45 && d == 62) ||
+                (c == 58 && d == 58) ||
+                (c == 46 && d == 46) {
+                n = 2
+            }
+        }
+        push(out, pack(MARK_PUN, str.slice(line, i, i + n)))
+        i = i + n
+    }
+    if out.len == 0 {
+        push(out, pack(MARK_TEXT, " "))
+    }
+    return out
+}
+
+fn tone(kind: int) -> string {
+    if kind == MARK_KW {
+        return zeus.accent()
+    }
+    if kind == MARK_STR {
+        return colors.ok()
+    }
+    if kind == MARK_NUM {
+        return colors.warn()
+    }
+    if kind == MARK_CMT {
+        return colors.mute()
+    }
+    if kind == MARK_PUN {
+        return colors.dim()
+    }
+    return zeus.ink()
+}
+
+fn SpanNode(span: string) -> Node {
+    let mut kind = MARK_TEXT
+    let mut body = " "
+    if span.len > 0 {
+        kind = span[0]
+        if span.len > 1 {
+            body = str.slice(span, 1, span.len)
+        }
+    }
+    return zeus.Text(body, style = Style(font = CODE_FONT, color = tone(kind)))
+}
+
+fn Line(line: string) -> Node {
+    return zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, height = px(20))) {
+        zui.Each(
+            fn() -> []string {
+                return spans(line)
+            },
+            fn(i: int, span: string) -> Node {
+                return SpanNode(span)
+            },
+        )
+    }
+}
+
+fn Block(lines: []string) -> Node {
+    return zeus.Box(style = Style(
+        direction = Direction.Column,
+        paddingX = 16,
+        paddingY = 12,
+        radius = 10,
+        background = colors.raised(),
+        borderWidth = 1,
+        borderColor = colors.rule(),
+        width = pct(100),
+        overflow = Overflow.Hidden,
+    )) {
+        zui.Each(
+            fn() -> []string {
+                return lines
+            },
+            fn(i: int, line: string) -> Node {
+                return Line(line)
+            },
+        )
+    }
+}

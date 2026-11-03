@@ -1,0 +1,15 @@
+import "std:zeus"
+import "std:zui"
+import "std:router"
+import "../../../components/language.loam" as language
+
+fn Page(p: Params) -> Node {
+    return language.Modules()
+}
+
+fn meta(p: Params) -> Meta {
+    return Meta {
+        title: "Modules — Loam",
+        description: "std imports, file imports, and aliases.",
+    }
+}

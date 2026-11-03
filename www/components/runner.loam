@@ -1,0 +1,3458 @@
+//! Browser runner: a small Loam interpreter that lives in the page.
+//!
+//! The playground tokenizes, parses, and walks the tree here, inside the wasm
+//! module. It is not loamc: there is no typechecker or borrow checker, so it
+//! accepts some programs loamc would reject. What it runs is the everyday
+//! core of the language:
+//!
+//! - `fn` declarations, recursion, nested `fn`, closures (`|a| a + 1`, `fn(x: int) -> int { .. }`)
+//! - `let`, `let mut`, `const`, `=`, `+=`, `-=`, `*=`, `/=`, `%=`
+//! - `if` / `else if` / `else` (also as a value), `while`, `for i in a..b`,
+//!   `break`, `continue`, `return`, `switch` / `case` / `default`
+//! - structs, enums, `[]T` arrays with `push`, `pop`, and `.len`
+//! - method calls: `x.f(a)` runs `f(x, a)`; `s.trim()` uses `std:str`
+//! - `{{expr}}` string interpolation, int, float, bool, and string values
+//!
+//! Imports are an allow-list: std:fmt, std:str, and std:math. Files, network,
+//! and host modules are refused. A step budget and a call-depth cap stop a
+//! runaway program, and int arithmetic traps on i32 overflow the way compiled
+//! Loam does. When `main` exists it runs after the top-level statements.
+
+import "std:str"
+import "std:math"
+
+// ---- limits ----
+
+const SRC_MAX: int = 20000
+const OUT_MAX: int = 20000
+const NODE_MAX: int = 40000
+const HEAP_MAX: int = 60000
+const STEP_MAX: int = 1000000
+const CALL_MAX: int = 160
+const NEST_MAX: int = 48
+const INT_HI: i64 = 2147483647
+const INT_LO: i64 = -2147483648
+
+// ---- values ----
+
+const K_UNIT: int = 0
+const K_INT: int = 1
+const K_FLOAT: int = 2
+const K_BOOL: int = 3
+const K_STR: int = 4
+const K_ARR: int = 5
+const K_STRUCT: int = 6
+const K_ENUM: int = 7
+const K_FN: int = 8
+
+const MOD_FMT: int = 1
+const MOD_STR: int = 2
+const MOD_MATH: int = 3
+
+// ---- tokens ----
+
+const T_EOF: int = 0
+const T_INT: int = 1
+const T_FLOAT: int = 2
+const T_STR: int = 3
+const T_NAME: int = 4
+const T_OP: int = 5
+
+// ---- tree ----
+
+const N_UNIT: int = 0
+const N_INT: int = 1
+const N_FLOAT: int = 2
+const N_STR: int = 3
+const N_INTERP: int = 4
+const N_BOOL: int = 5
+const N_NAME: int = 6
+const N_NEG: int = 7
+const N_NOT: int = 8
+const N_BIN: int = 9
+const N_AND: int = 10
+const N_OR: int = 11
+const N_CALL: int = 12
+const N_METHOD: int = 13
+const N_FIELD: int = 14
+const N_INDEX: int = 15
+const N_ARRAY: int = 16
+const N_STRUCT: int = 17
+const N_FIELDINIT: int = 18
+const N_LAMBDA: int = 19
+const N_IF: int = 20
+const N_BLOCK: int = 21
+const N_LET: int = 22
+const N_ASSIGN: int = 23
+const N_EXPR: int = 24
+const N_WHILE: int = 25
+const N_FOR: int = 26
+const N_BREAK: int = 27
+const N_CONTINUE: int = 28
+const N_RETURN: int = 29
+const N_SWITCH: int = 30
+const N_CASE: int = 31
+const N_CAST: int = 32
+
+// ---- control flow out of a statement ----
+
+const F_NEXT: int = 0
+const F_BREAK: int = 1
+const F_CONTINUE: int = 2
+const F_RETURN: int = 3
+const F_ERR: int = 4
+
+struct RnVal {
+    kind: int,
+    n: i64,
+    f: f64,
+    b: bool,
+    s: string,
+    h: int,
+}
+
+struct RnTok {
+    kind: int,
+    text: string,
+    n: i64,
+    f: f64,
+    line: int,
+    nl: bool,
+}
+
+struct RnNode {
+    kind: int,
+    a: int,
+    b: int,
+    c: int,
+    n: i64,
+    f: f64,
+    s: string,
+    kids: []int,
+    line: int,
+}
+
+struct RnFunc {
+    name: string,
+    params: []string,
+    refs: []bool,
+    body: int,
+    expr_body: bool,
+}
+
+struct RnType {
+    name: string,
+    fields: []string,
+}
+
+struct RnEnum {
+    name: string,
+    members: []string,
+}
+
+struct RnUse {
+    alias: string,
+    kind: int,
+}
+
+struct RnVar {
+    name: string,
+    val: RnVal,
+    mutable: bool,
+}
+
+/// Arrays, structs, and closure captures. `names` is empty for an array.
+struct RnObj {
+    tname: string,
+    names: []string,
+    items: []RnVal,
+}
+
+struct Runner {
+    toks: []RnTok,
+    tp: int,
+    no_struct: bool,
+    pdepth: int,
+    nodes: []RnNode,
+    fns: []RnFunc,
+    types: []RnType,
+    enums: []RnEnum,
+    uses: []RnUse,
+    globals: []RnVar,
+    vars: []RnVar,
+    base: int,
+    caps: int,
+    heap: []RnObj,
+    out: []string,
+    out_len: int,
+    err: string,
+    err_line: int,
+    line: int,
+    steps: int,
+    calls: int,
+    edepth: int,
+    ret: RnVal,
+    last: RnVal,
+    has_last: bool,
+}
+
+/// What a run produced. `out` is everything the program printed, even when
+/// it stopped on an error. `err` is empty on success; `line` is 1-based.
+struct RunResult {
+    ok: bool,
+    out: string,
+    err: string,
+    line: int,
+}
+
+// ---- value constructors ----
+
+fn v_unit() -> RnVal {
+    return RnVal { kind: K_UNIT, n: i64(0), f: 0.0, b: false, s: "", h: -1 }
+}
+
+fn v_int(n: i64) -> RnVal {
+    return RnVal { kind: K_INT, n: n, f: 0.0, b: false, s: "", h: -1 }
+}
+
+fn v_float(f: f64) -> RnVal {
+    return RnVal { kind: K_FLOAT, n: i64(0), f: f, b: false, s: "", h: -1 }
+}
+
+fn v_bool(b: bool) -> RnVal {
+    return RnVal { kind: K_BOOL, n: i64(0), f: 0.0, b: b, s: "", h: -1 }
+}
+
+fn v_str(s: string) -> RnVal {
+    return RnVal { kind: K_STR, n: i64(0), f: 0.0, b: false, s: s, h: -1 }
+}
+
+fn v_ref(kind: int, h: int) -> RnVal {
+    return RnVal { kind: kind, n: i64(0), f: 0.0, b: false, s: "", h: h }
+}
+
+fn v_enum(name: string, idx: int) -> RnVal {
+    return RnVal { kind: K_ENUM, n: i64(idx), f: 0.0, b: false, s: name, h: -1 }
+}
+
+fn v_fn(index: int, caps: int) -> RnVal {
+    return RnVal { kind: K_FN, n: i64(index), f: 0.0, b: false, s: "", h: caps }
+}
+
+fn kind_name(k: int) -> string {
+    if k == K_INT {
+        return "int"
+    }
+    if k == K_FLOAT {
+        return "float"
+    }
+    if k == K_BOOL {
+        return "bool"
+    }
+    if k == K_STR {
+        return "string"
+    }
+    if k == K_ARR {
+        return "array"
+    }
+    if k == K_STRUCT {
+        return "struct"
+    }
+    if k == K_ENUM {
+        return "enum"
+    }
+    if k == K_FN {
+        return "fn"
+    }
+    return "()"
+}
+
+// ---- text helpers ----
+
+fn is_alpha(c: int) -> bool {
+    if c >= 65 && c <= 90 {
+        return true
+    }
+    if c >= 97 && c <= 122 {
+        return true
+    }
+    return c == 95
+}
+
+fn is_digit(c: int) -> bool {
+    return c >= 48 && c <= 57
+}
+
+fn is_ident(c: int) -> bool {
+    return is_alpha(c) || is_digit(c)
+}
+
+fn is_upper(s: string) -> bool {
+    return s.len > 0 && s[0] >= 65 && s[0] <= 90
+}
+
+fn copy_text(s: string) -> string {
+    let mut bytes = []int {}
+    for i in 0..s.len {
+        push(bytes, s[i])
+    }
+    return string_from_bytes(bytes)
+}
+
+fn open2() -> string {
+    return string_from_bytes([]int { 123, 123 })
+}
+
+fn close2() -> string {
+    return string_from_bytes([]int { 125, 125 })
+}
+
+fn reserved(w: string) -> bool {
+    if w == "let" || w == "mut" || w == "const" || w == "fn" || w == "if" || w == "else" {
+        return true
+    }
+    if w == "while" || w == "for" || w == "in" || w == "return" || w == "break" {
+        return true
+    }
+    if w == "continue" || w == "switch" || w == "case" || w == "default" {
+        return true
+    }
+    if w == "struct" || w == "enum" || w == "import" || w == "as" {
+        return true
+    }
+    return w == "true" || w == "false"
+}
+
+fn host_module(name: string) -> bool {
+    if name == "sys" || name == "net" || name == "http" || name == "thread" || name == "fs" {
+        return true
+    }
+    return name == "kv" || name == "log" || name == "async" || name == "process"
+}
+
+// ---- errors ----
+
+fn perr(p: &mut Runner, msg: string) {
+    if p.err == "" {
+        p.err = msg
+        p.err_line = p.toks[p.tp].line
+    }
+}
+
+fn rerr(p: &mut Runner, msg: string) -> RnVal {
+    if p.err == "" {
+        p.err = msg
+        p.err_line = p.line
+    }
+    return v_unit()
+}
+
+// ---- lexer ----
+
+fn op_at(src: string, i: int) -> string {
+    if i + 2 < src.len && src[i] == 46 && src[i + 1] == 46 && src[i + 2] == 61 {
+        return "..="
+    }
+    if i + 1 < src.len {
+        let two = str.slice(src, i, i + 2)
+        if two == "==" || two == "!=" || two == "<=" || two == ">=" || two == "&&" {
+            return two
+        }
+        if two == "||" || two == "->" || two == "=>" || two == ".." || two == "::" {
+            return two
+        }
+        if two == "+=" || two == "-=" || two == "*=" || two == "/=" || two == "%=" {
+            return two
+        }
+    }
+    return str.slice(src, i, i + 1)
+}
+
+fn single_op(c: int) -> bool {
+    if c == 43 || c == 45 || c == 42 || c == 47 || c == 37 || c == 60 || c == 62 {
+        return true
+    }
+    if c == 61 || c == 33 || c == 40 || c == 41 || c == 123 || c == 125 || c == 91 {
+        return true
+    }
+    if c == 93 || c == 44 || c == 46 || c == 58 || c == 59 || c == 124 || c == 38 {
+        return true
+    }
+    return c == 63
+}
+
+fn tok(kind: int, text: string, line: int, nl: bool) -> RnTok {
+    return RnTok { kind: kind, text: text, n: i64(0), f: 0.0, line: line, nl: nl }
+}
+
+/// Tokens of `src`, starting at `line0`. On a bad character the error is set
+/// and the list ends there with an EOF token.
+fn lex(p: &mut Runner, src: string, line0: int) -> []RnTok {
+    let mut out = []RnTok {}
+    let mut i = 0
+    let mut line = line0
+    let mut nl = true
+    let mut bad = ""
+    while i < src.len && bad == "" {
+        let c = src[i]
+        if c == 10 {
+            line += 1
+            nl = true
+            i += 1
+            continue
+        }
+        if c == 32 || c == 9 || c == 13 {
+            i += 1
+            continue
+        }
+        if c == 47 && i + 1 < src.len && src[i + 1] == 47 {
+            while i < src.len && src[i] != 10 {
+                i += 1
+            }
+            continue
+        }
+        if c == 47 && i + 1 < src.len && src[i + 1] == 42 {
+            i += 2
+            while i < src.len && !(src[i] == 42 && i + 1 < src.len && src[i + 1] == 47) {
+                if src[i] == 10 {
+                    line += 1
+                    nl = true
+                }
+                i += 1
+            }
+            i += 2
+            continue
+        }
+        if c == 35 && i + 1 < src.len && src[i + 1] == 91 {
+            while i < src.len && src[i] != 93 && src[i] != 10 {
+                i += 1
+            }
+            i += 1
+            continue
+        }
+        if is_digit(c) {
+            let mut n = i64(0)
+            let mut big = false
+            let mut t = tok(T_INT, "", line, nl)
+            if c == 48 && i + 1 < src.len && (src[i + 1] == 120 || src[i + 1] == 88) {
+                i += 2
+                while i < src.len && (is_ident(src[i])) {
+                    let d = src[i]
+                    let mut v = -1
+                    if is_digit(d) {
+                        v = d - 48
+                    } else if d >= 97 && d <= 102 {
+                        v = d - 87
+                    } else if d >= 65 && d <= 70 {
+                        v = d - 55
+                    } else if d != 95 {
+                        bad = "bad hex digit"
+                    }
+                    if v >= 0 {
+                        n = n * i64(16) + i64(v)
+                        if n > INT_HI {
+                            big = true
+                            n = i64(0)
+                        }
+                    }
+                    i += 1
+                }
+            } else {
+                while i < src.len && (is_digit(src[i]) || src[i] == 95) {
+                    if src[i] != 95 {
+                        n = n * i64(10) + i64(src[i] - 48)
+                        if n > INT_HI + i64(1) {
+                            big = true
+                            n = i64(0)
+                        }
+                    }
+                    i += 1
+                }
+                if i + 1 < src.len && src[i] == 46 && is_digit(src[i + 1]) {
+                    i += 1
+                    let mut frac: f64 = 0.0
+                    let mut scale: f64 = 1.0
+                    while i < src.len && is_digit(src[i]) {
+                        frac = frac * 10.0 + f64(src[i] - 48)
+                        scale = scale * 10.0
+                        i += 1
+                    }
+                    t.kind = T_FLOAT
+                    t.f = f64(n) + frac / scale
+                }
+            }
+            if big {
+                bad = "integer literal does not fit in int"
+            }
+            t.n = n
+            push(out, t)
+            nl = false
+            continue
+        }
+        if c == 34 || c == 39 {
+            let quote = c
+            let mut bytes = []int {}
+            i += 1
+            let mut closed = false
+            while i < src.len {
+                let d = src[i]
+                i += 1
+                if d == quote {
+                    closed = true
+                    break
+                }
+                if d == 10 {
+                    break
+                }
+                if d == 92 && i < src.len {
+                    let e = src[i]
+                    i += 1
+                    if e == 110 {
+                        push(bytes, 10)
+                    } else if e == 116 {
+                        push(bytes, 9)
+                    } else if e == 114 {
+                        push(bytes, 13)
+                    } else if e == 48 {
+                        push(bytes, 0)
+                    } else {
+                        push(bytes, e)
+                    }
+                    continue
+                }
+                push(bytes, d)
+            }
+            if !closed {
+                bad = "a string literal does not span lines"
+            } else if quote == 39 {
+                if bytes.len != 1 {
+                    bad = "a char literal holds one byte"
+                } else {
+                    let mut t = tok(T_INT, "", line, nl)
+                    t.n = i64(bytes[0])
+                    push(out, t)
+                }
+            } else {
+                push(out, tok(T_STR, string_from_bytes(bytes), line, nl))
+            }
+            nl = false
+            continue
+        }
+        if is_alpha(c) {
+            let start = i
+            while i < src.len && is_ident(src[i]) {
+                i += 1
+            }
+            push(out, tok(T_NAME, str.slice(src, start, i), line, nl))
+            nl = false
+            continue
+        }
+        if single_op(c) {
+            let op = op_at(src, i)
+            push(out, tok(T_OP, op, line, nl))
+            i += op.len
+            nl = false
+            continue
+        }
+        bad = "unexpected character"
+    }
+    push(out, tok(T_EOF, "", line, true))
+    if bad != "" && p.err == "" {
+        p.err = bad
+        p.err_line = line
+    }
+    return out
+}
+
+// ---- parser helpers ----
+
+fn tk(p: &mut Runner) -> RnTok {
+    return p.toks[p.tp]
+}
+
+fn peek_tok(p: &mut Runner, ahead: int) -> RnTok {
+    let i = p.tp + ahead
+    if i >= p.toks.len {
+        return p.toks[p.toks.len - 1]
+    }
+    return p.toks[i]
+}
+
+fn adv(p: &mut Runner) {
+    if p.tp < p.toks.len - 1 {
+        p.tp += 1
+    }
+}
+
+fn at_op(p: &mut Runner, s: string) -> bool {
+    let t = p.toks[p.tp]
+    return t.kind == T_OP && t.text == s
+}
+
+fn at_word(p: &mut Runner, s: string) -> bool {
+    let t = p.toks[p.tp]
+    return t.kind == T_NAME && t.text == s
+}
+
+fn at_eof(p: &mut Runner) -> bool {
+    return p.toks[p.tp].kind == T_EOF
+}
+
+fn eat_op(p: &mut Runner, s: string) -> bool {
+    if at_op(p, s) {
+        adv(p)
+        return true
+    }
+    return false
+}
+
+fn want_op(p: &mut Runner, s: string) -> bool {
+    if eat_op(p, s) {
+        return true
+    }
+    let t = tk(p)
+    if t.kind == T_EOF {
+        perr(p, "expected {{s}} before the end of the program")
+    } else {
+        perr(p, "expected {{s}} but found {{describe(t)}}")
+    }
+    return false
+}
+
+fn describe(t: RnTok) -> string {
+    if t.kind == T_EOF {
+        return "the end"
+    }
+    if t.kind == T_STR {
+        return "a string"
+    }
+    if t.kind == T_INT || t.kind == T_FLOAT {
+        return "a number"
+    }
+    return "`{{t.text}}`"
+}
+
+fn want_name(p: &mut Runner, what: string) -> string {
+    let t = tk(p)
+    if t.kind != T_NAME || reserved(t.text) {
+        perr(p, "expected {{what}} but found {{describe(t)}}")
+        return ""
+    }
+    adv(p)
+    return t.text
+}
+
+fn mk(p: &mut Runner, kind: int, line: int) -> int {
+    if p.nodes.len >= NODE_MAX {
+        perr(p, "the program is too large for the browser runner")
+    }
+    push(p.nodes, RnNode {
+        kind: kind,
+        a: -1,
+        b: -1,
+        c: -1,
+        n: i64(0),
+        f: 0.0,
+        s: "",
+        kids: []int {},
+        line: line,
+    })
+    return p.nodes.len - 1
+}
+
+fn mk_s(p: &mut Runner, kind: int, line: int, s: string) -> int {
+    let n = mk(p, kind, line)
+    p.nodes[n].s = s
+    return n
+}
+
+fn mk_ab(p: &mut Runner, kind: int, line: int, a: int, b: int) -> int {
+    let n = mk(p, kind, line)
+    p.nodes[n].a = a
+    p.nodes[n].b = b
+    return n
+}
+
+fn find_fn(p: &mut Runner, name: string) -> int {
+    for i in 0..p.fns.len {
+        if p.fns[i].name == name {
+            return i
+        }
+    }
+    return -1
+}
+
+fn find_type(p: &mut Runner, name: string) -> int {
+    for i in 0..p.types.len {
+        if p.types[i].name == name {
+            return i
+        }
+    }
+    return -1
+}
+
+fn find_enum(p: &mut Runner, name: string) -> int {
+    for i in 0..p.enums.len {
+        if p.enums[i].name == name {
+            return i
+        }
+    }
+    return -1
+}
+
+fn find_use(p: &mut Runner, alias: string) -> int {
+    for i in 0..p.uses.len {
+        if p.uses[i].alias == alias {
+            return p.uses[i].kind
+        }
+    }
+    return 0
+}
+
+fn has_module(p: &mut Runner, kind: int) -> bool {
+    for i in 0..p.uses.len {
+        if p.uses[i].kind == kind {
+            return true
+        }
+    }
+    return false
+}
+
+fn name_taken(p: &mut Runner, name: string) -> bool {
+    return find_fn(p, name) >= 0 ||
+        find_type(p, name) >= 0 ||
+        find_enum(p, name) >= 0 ||
+        find_use(p, name) != 0
+}
+
+// ---- types (parsed and skipped; `&mut` is remembered) ----
+
+fn skip_type(p: &mut Runner) -> bool {
+    let mut is_ref = false
+    if eat_op(p, "&") {
+        if at_word(p, "mut") {
+            adv(p)
+            is_ref = true
+        }
+        skip_type(p)
+        return is_ref
+    }
+    if eat_op(p, "[") {
+        let t = tk(p)
+        if t.kind == T_INT || t.kind == T_NAME {
+            adv(p)
+        }
+        want_op(p, "]")
+        skip_type(p)
+        return false
+    }
+    if at_word(p, "fn") {
+        adv(p)
+        want_op(p, "(")
+        while p.err == "" && !at_op(p, ")") {
+            skip_type(p)
+            if !eat_op(p, ",") {
+                break
+            }
+        }
+        want_op(p, ")")
+        if eat_op(p, "->") {
+            skip_type(p)
+        }
+        return false
+    }
+    if eat_op(p, "(") {
+        while p.err == "" && !at_op(p, ")") {
+            skip_type(p)
+            if !eat_op(p, ",") {
+                break
+            }
+        }
+        want_op(p, ")")
+        return false
+    }
+    let t = tk(p)
+    if t.kind != T_NAME {
+        perr(p, "expected a type but found {{describe(t)}}")
+        return false
+    }
+    adv(p)
+    while at_op(p, ".") || at_op(p, "::") {
+        adv(p)
+        want_name(p, "a type name")
+    }
+    if eat_op(p, "<") {
+        while p.err == "" {
+            skip_type(p)
+            if eat_op(p, ",") {
+                continue
+            }
+            want_op(p, ">")
+            break
+        }
+    }
+    return false
+}
+
+// ---- declarations ----
+
+fn parse_params(p: &mut Runner, f: &mut RnFunc, close: string) {
+    while p.err == "" && !at_op(p, close) {
+        if at_word(p, "mut") {
+            adv(p)
+        }
+        let name = want_name(p, "a parameter name")
+        let mut r = false
+        if eat_op(p, ":") {
+            r = skip_type(p)
+        }
+        push(f.params, name)
+        push(f.refs, r)
+        if !eat_op(p, ",") {
+            break
+        }
+    }
+    want_op(p, close)
+}
+
+fn add_fn(p: &mut Runner, f: RnFunc) -> int {
+    push(p.fns, f)
+    return p.fns.len - 1
+}
+
+fn parse_fn_decl(p: &mut Runner) {
+    adv(p)
+    let name = want_name(p, "a function name")
+    if p.err != "" {
+        return
+    }
+    if name_taken(p, name) {
+        perr(p, "{{name}} is already declared")
+        return
+    }
+    let mut f = RnFunc {
+        name: name,
+        params: []string {},
+        refs: []bool {},
+        body: -1,
+        expr_body: false,
+    }
+    want_op(p, "(")
+    parse_params(p, f, ")")
+    if eat_op(p, "->") {
+        skip_type(p)
+    }
+    let slot = add_fn(p, f)
+    let body = parse_block(p)
+    p.fns[slot].body = body
+}
+
+/// `fn name(..)` inside a body: a closure bound to `name`.
+fn parse_nested_fn(p: &mut Runner) -> int {
+    let line = tk(p).line
+    adv(p)
+    let name = want_name(p, "a function name")
+    let mut f = RnFunc {
+        name: "",
+        params: []string {},
+        refs: []bool {},
+        body: -1,
+        expr_body: false,
+    }
+    want_op(p, "(")
+    parse_params(p, f, ")")
+    if eat_op(p, "->") {
+        skip_type(p)
+    }
+    let slot = add_fn(p, f)
+    p.fns[slot].body = parse_block(p)
+    let lam = mk(p, N_LAMBDA, line)
+    p.nodes[lam].n = i64(slot)
+    let n = mk_s(p, N_LET, line, name)
+    p.nodes[n].a = lam
+    return n
+}
+
+fn parse_struct_decl(p: &mut Runner) {
+    adv(p)
+    let name = want_name(p, "a struct name")
+    if p.err != "" {
+        return
+    }
+    if name_taken(p, name) {
+        perr(p, "{{name}} is already declared")
+        return
+    }
+    if eat_op(p, "<") {
+        while p.err == "" && !eat_op(p, ">") {
+            adv(p)
+        }
+    }
+    let mut ty = RnType { name: name, fields: []string {} }
+    want_op(p, "{")
+    while p.err == "" && !at_op(p, "}") && !at_eof(p) {
+        let field = want_name(p, "a field name")
+        want_op(p, ":")
+        skip_type(p)
+        push(ty.fields, field)
+        if !eat_op(p, ",") && !tk(p).nl {
+            break
+        }
+    }
+    want_op(p, "}")
+    push(p.types, ty)
+}
+
+fn parse_enum_decl(p: &mut Runner) {
+    adv(p)
+    let name = want_name(p, "an enum name")
+    if p.err != "" {
+        return
+    }
+    if name_taken(p, name) {
+        perr(p, "{{name}} is already declared")
+        return
+    }
+    let mut en = RnEnum { name: name, members: []string {} }
+    want_op(p, "{")
+    while p.err == "" && !at_op(p, "}") && !at_eof(p) {
+        push(en.members, want_name(p, "an enum member"))
+        if !eat_op(p, ",") && !tk(p).nl {
+            break
+        }
+    }
+    want_op(p, "}")
+    push(p.enums, en)
+}
+
+fn module_kind(name: string) -> int {
+    if name == "fmt" {
+        return MOD_FMT
+    }
+    if name == "str" {
+        return MOD_STR
+    }
+    if name == "math" {
+        return MOD_MATH
+    }
+    return 0
+}
+
+fn parse_import(p: &mut Runner) {
+    adv(p)
+    let mut picks = []string {}
+    if eat_op(p, "{") {
+        while p.err == "" && !at_op(p, "}") {
+            push(picks, want_name(p, "a name to import"))
+            if at_word(p, "as") {
+                perr(p, "renamed selective imports are not in the browser runner")
+                return
+            }
+            if !eat_op(p, ",") {
+                break
+            }
+        }
+        want_op(p, "}")
+        if !at_word(p, "from") {
+            perr(p, "expected from after the import list")
+            return
+        }
+        adv(p)
+    }
+    let t = tk(p)
+    if t.kind != T_STR {
+        perr(p, "expected an import path in quotes")
+        return
+    }
+    adv(p)
+    let spec = t.text
+    if str.contains(spec, "/") || str.contains(spec, "\\") || str.ends_with(spec, ".loam") {
+        perr(p, "file imports are not in the browser runner")
+        return
+    }
+    if !str.starts_with(spec, "std:") {
+        perr(p, "only std:fmt, std:str, and std:math import here")
+        return
+    }
+    let name = str.slice_from(spec, 4)
+    let kind = module_kind(name)
+    if kind == 0 {
+        if host_module(name) {
+            perr(p, "std:{{name}} can reach the host, so the browser runner refuses it")
+        } else {
+            perr(p, "std:{{name}} is not in the browser runner (std:fmt, std:str, std:math are)")
+        }
+        return
+    }
+    let mut alias = name
+    if at_word(p, "as") {
+        adv(p)
+        alias = want_name(p, "an alias")
+    }
+    if p.err != "" {
+        return
+    }
+    if name_taken(p, alias) {
+        perr(p, "{{alias}} is already declared")
+        return
+    }
+    push(p.uses, RnUse { alias: alias, kind: kind })
+    for i in 0..picks.len {
+        push(p.uses, RnUse { alias: "{{picks[i]}}", kind: -kind })
+    }
+}
+
+// ---- statements ----
+
+fn end_stmt(p: &mut Runner) {
+    if p.err != "" {
+        return
+    }
+    while eat_op(p, ";") {}
+    let t = tk(p)
+    if t.kind == T_EOF || t.nl {
+        return
+    }
+    if t.kind == T_OP && t.text == "}" {
+        return
+    }
+    perr(p, "expected a new line after the statement, found {{describe(t)}}")
+}
+
+fn parse_block(p: &mut Runner) -> int {
+    let b = mk(p, N_BLOCK, tk(p).line)
+    if !want_op(p, "{") {
+        return b
+    }
+    while p.err == "" && !at_op(p, "}") && !at_eof(p) {
+        let s = parse_stmt(p, false)
+        if s >= 0 {
+            push(p.nodes[b].kids, s)
+        }
+        end_stmt(p)
+    }
+    want_op(p, "}")
+    return b
+}
+
+/// One statement. Declarations register themselves and return -1.
+fn parse_stmt(p: &mut Runner, top: bool) -> int {
+    let t = tk(p)
+    let line = t.line
+    if t.kind == T_NAME {
+        let w = t.text
+        if w == "let" || w == "const" {
+            adv(p)
+            let mut m = false
+            if at_word(p, "mut") {
+                adv(p)
+                m = true
+            }
+            let name = want_name(p, "a name")
+            if eat_op(p, ":") {
+                skip_type(p)
+            }
+            want_op(p, "=")
+            let n = mk_s(p, N_LET, line, name)
+            p.nodes[n].a = parse_expr(p)
+            if m {
+                p.nodes[n].n = i64(1)
+            }
+            return n
+        }
+        if w == "fn" && peek_tok(p, 1).kind == T_NAME {
+            if top {
+                parse_fn_decl(p)
+                return -1
+            }
+            return parse_nested_fn(p)
+        }
+        if w == "struct" {
+            parse_struct_decl(p)
+            return -1
+        }
+        if w == "enum" {
+            parse_enum_decl(p)
+            return -1
+        }
+        if w == "import" {
+            if !top {
+                perr(p, "import belongs at the top level")
+                return -1
+            }
+            parse_import(p)
+            return -1
+        }
+        if w == "if" {
+            return parse_if(p)
+        }
+        if w == "while" {
+            adv(p)
+            let n = mk(p, N_WHILE, line)
+            p.nodes[n].a = parse_cond(p)
+            p.nodes[n].b = parse_block(p)
+            return n
+        }
+        if w == "for" {
+            adv(p)
+            let n = mk_s(p, N_FOR, line, want_name(p, "a loop variable"))
+            if !at_word(p, "in") {
+                perr(p, "expected in after the loop variable")
+                return n
+            }
+            adv(p)
+            p.nodes[n].a = parse_cond(p)
+            if at_op(p, "..=") {
+                perr(p, "Loam ranges are lo..hi, with hi left out; there is no ..=")
+                return n
+            }
+            if !eat_op(p, "..") {
+                perr(p, "for-loop requires a range `lo..hi`")
+                return n
+            }
+            p.nodes[n].b = parse_cond(p)
+            p.nodes[n].c = parse_block(p)
+            return n
+        }
+        if w == "break" {
+            adv(p)
+            return mk(p, N_BREAK, line)
+        }
+        if w == "continue" {
+            adv(p)
+            return mk(p, N_CONTINUE, line)
+        }
+        if w == "return" {
+            adv(p)
+            let n = mk(p, N_RETURN, line)
+            let nt = tk(p)
+            if !(nt.kind == T_EOF ||
+                nt.nl ||
+                (nt.kind == T_OP && (nt.text == "}" || nt.text == ";"))) {
+                p.nodes[n].a = parse_expr(p)
+            }
+            return n
+        }
+        if w == "switch" {
+            return parse_switch(p)
+        }
+        if w == "else" {
+            perr(p, "else without an if")
+            return -1
+        }
+        if w == "case" || w == "default" {
+            perr(p, "{{w}} outside a switch")
+            return -1
+        }
+    }
+    if t.kind == T_OP && t.text == "{" {
+        return parse_block(p)
+    }
+    let e = parse_expr(p)
+    let nt = tk(p)
+    if nt.kind == T_OP {
+        let op = nt.text
+        if op == "=" || op == "+=" || op == "-=" || op == "*=" || op == "/=" || op == "%=" {
+            let k = p.nodes[e].kind
+            if k != N_NAME && k != N_FIELD && k != N_INDEX {
+                perr(p, "the left side of {{op}} is not a place")
+                return -1
+            }
+            adv(p)
+            let n = mk_s(p, N_ASSIGN, line, op)
+            p.nodes[n].a = e
+            p.nodes[n].b = parse_expr(p)
+            return n
+        }
+    }
+    let n = mk(p, N_EXPR, line)
+    p.nodes[n].a = e
+    return n
+}
+
+/// An expression where `Name {` opens a block, not a struct literal.
+fn parse_cond(p: &mut Runner) -> int {
+    let saved = p.no_struct
+    p.no_struct = true
+    let e = parse_expr(p)
+    p.no_struct = saved
+    return e
+}
+
+fn parse_if(p: &mut Runner) -> int {
+    let n = mk(p, N_IF, tk(p).line)
+    adv(p)
+    p.nodes[n].a = parse_cond(p)
+    p.nodes[n].b = parse_block(p)
+    if at_word(p, "else") {
+        adv(p)
+        if at_word(p, "if") {
+            p.nodes[n].c = parse_if(p)
+        } else {
+            p.nodes[n].c = parse_block(p)
+        }
+    }
+    return n
+}
+
+fn parse_switch(p: &mut Runner) -> int {
+    let n = mk(p, N_SWITCH, tk(p).line)
+    adv(p)
+    p.nodes[n].a = parse_cond(p)
+    want_op(p, "{")
+    let mut seen_default = false
+    while p.err == "" && !at_op(p, "}") && !at_eof(p) {
+        let line = tk(p).line
+        let c = mk(p, N_CASE, line)
+        if at_word(p, "case") {
+            adv(p)
+            while p.err == "" {
+                let pat = parse_expr(p)
+                push(p.nodes[c].kids, pat)
+                if !eat_op(p, ",") {
+                    break
+                }
+            }
+        } else if at_word(p, "default") {
+            adv(p)
+            if seen_default {
+                perr(p, "a switch has one default")
+            }
+            seen_default = true
+            p.nodes[c].n = i64(1)
+        } else {
+            perr(p, "expected case or default in the switch")
+            break
+        }
+        want_op(p, ":")
+        let body = mk(p, N_BLOCK, line)
+        while p.err == "" &&
+            !at_op(p, "}") &&
+            !at_word(p, "case") &&
+            !at_word(p, "default") &&
+            !at_eof(p) {
+            let s = parse_stmt(p, false)
+            if s >= 0 {
+                push(p.nodes[body].kids, s)
+            }
+            end_stmt(p)
+        }
+        p.nodes[c].a = body
+        push(p.nodes[n].kids, c)
+    }
+    want_op(p, "}")
+    return n
+}
+
+// ---- expressions ----
+
+fn parse_expr(p: &mut Runner) -> int {
+    p.pdepth += 1
+    if p.pdepth > NEST_MAX {
+        perr(p, "the expression is nested too deeply")
+        p.pdepth -= 1
+        return mk(p, N_UNIT, tk(p).line)
+    }
+    let e = parse_or(p)
+    p.pdepth -= 1
+    return e
+}
+
+fn parse_or(p: &mut Runner) -> int {
+    let mut left = parse_and(p)
+    while p.err == "" && at_op(p, "||") {
+        let line = tk(p).line
+        adv(p)
+        left = mk_ab(p, N_OR, line, left, parse_and(p))
+    }
+    return left
+}
+
+fn parse_and(p: &mut Runner) -> int {
+    let mut left = parse_cmp(p)
+    while p.err == "" && at_op(p, "&&") {
+        let line = tk(p).line
+        adv(p)
+        left = mk_ab(p, N_AND, line, left, parse_cmp(p))
+    }
+    return left
+}
+
+fn parse_cmp(p: &mut Runner) -> int {
+    let left = parse_add(p)
+    let t = tk(p)
+    if t.kind == T_OP {
+        let op = t.text
+        if op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=" {
+            adv(p)
+            let n = mk_ab(p, N_BIN, t.line, left, parse_add(p))
+            p.nodes[n].s = op
+            return n
+        }
+    }
+    return left
+}
+
+fn parse_add(p: &mut Runner) -> int {
+    let mut left = parse_mul(p)
+    while p.err == "" {
+        let t = tk(p)
+        if t.kind != T_OP || (t.text != "+" && t.text != "-") {
+            break
+        }
+        adv(p)
+        left = mk_ab(p, N_BIN, t.line, left, parse_mul(p))
+        p.nodes[left].s = t.text
+    }
+    return left
+}
+
+fn parse_mul(p: &mut Runner) -> int {
+    let mut left = parse_unary(p)
+    while p.err == "" {
+        let t = tk(p)
+        if t.kind != T_OP || (t.text != "*" && t.text != "/" && t.text != "%") {
+            break
+        }
+        adv(p)
+        left = mk_ab(p, N_BIN, t.line, left, parse_unary(p))
+        p.nodes[left].s = t.text
+    }
+    return left
+}
+
+fn parse_unary(p: &mut Runner) -> int {
+    let t = tk(p)
+    if t.kind == T_OP {
+        if t.text == "-" {
+            adv(p)
+            let n = mk(p, N_NEG, t.line)
+            p.nodes[n].a = parse_unary(p)
+            return n
+        }
+        if t.text == "!" {
+            adv(p)
+            let n = mk(p, N_NOT, t.line)
+            p.nodes[n].a = parse_unary(p)
+            return n
+        }
+        if t.text == "&" {
+            adv(p)
+            if at_word(p, "mut") {
+                adv(p)
+            }
+            return parse_unary(p)
+        }
+        if t.text == "*" {
+            adv(p)
+            return parse_unary(p)
+        }
+    }
+    return parse_postfix(p)
+}
+
+fn parse_args(p: &mut Runner, n: int) {
+    adv(p)
+    let saved = p.no_struct
+    p.no_struct = false
+    while p.err == "" && !at_op(p, ")") {
+        let arg = parse_expr(p)
+        push(p.nodes[n].kids, arg)
+        if !eat_op(p, ",") {
+            break
+        }
+    }
+    p.no_struct = saved
+    want_op(p, ")")
+}
+
+fn parse_postfix(p: &mut Runner) -> int {
+    let mut e = parse_primary(p)
+    while p.err == "" {
+        let t = tk(p)
+        if t.kind == T_OP && t.text == "(" && !t.nl {
+            let n = mk(p, N_CALL, t.line)
+            p.nodes[n].a = e
+            parse_args(p, n)
+            e = n
+            continue
+        }
+        if t.kind == T_OP && t.text == "[" && !t.nl {
+            adv(p)
+            let saved = p.no_struct
+            p.no_struct = false
+            let idx = parse_expr(p)
+            p.no_struct = saved
+            want_op(p, "]")
+            e = mk_ab(p, N_INDEX, t.line, e, idx)
+            continue
+        }
+        if t.kind == T_OP && t.text == "." {
+            adv(p)
+            let name = want_name(p, "a field or method name")
+            let nt = tk(p)
+            if nt.kind == T_OP && nt.text == "(" && !nt.nl {
+                let n = mk_s(p, N_METHOD, t.line, name)
+                p.nodes[n].a = e
+                parse_args(p, n)
+                e = n
+            } else {
+                let n = mk_s(p, N_FIELD, t.line, name)
+                p.nodes[n].a = e
+                e = n
+            }
+            continue
+        }
+        if t.kind == T_OP && t.text == "?" {
+            perr(p, "? needs Result, which the browser runner does not have")
+            break
+        }
+        if t.kind == T_NAME && t.text == "as" && !t.nl {
+            adv(p)
+            let n = mk_s(p, N_CAST, t.line, want_name(p, "a type"))
+            p.nodes[n].a = e
+            e = n
+            continue
+        }
+        break
+    }
+    return e
+}
+
+fn parse_lambda_body(p: &mut Runner, f: &mut RnFunc, arrow_ok: bool) {
+    if eat_op(p, "->") {
+        skip_type(p)
+    }
+    if arrow_ok && eat_op(p, "=>") {
+        f.body = parse_expr(p)
+        f.expr_body = true
+        return
+    }
+    if at_op(p, "{") {
+        f.body = parse_block(p)
+        return
+    }
+    if arrow_ok {
+        perr(p, "expected { or => after the closure parameters")
+        return
+    }
+    f.body = parse_expr(p)
+    f.expr_body = true
+}
+
+fn lambda_node(p: &mut Runner, f: RnFunc, line: int) -> int {
+    let slot = add_fn(p, f)
+    let n = mk(p, N_LAMBDA, line)
+    p.nodes[n].n = i64(slot)
+    return n
+}
+
+fn struct_ahead(p: &mut Runner) -> bool {
+    if p.no_struct {
+        return false
+    }
+    let a = peek_tok(p, 1)
+    if a.kind != T_OP || a.text != "{" {
+        return false
+    }
+    let b = peek_tok(p, 2)
+    if b.kind == T_OP && b.text == "}" {
+        return true
+    }
+    let c = peek_tok(p, 3)
+    return b.kind == T_NAME && c.kind == T_OP && c.text == ":"
+}
+
+fn parse_primary(p: &mut Runner) -> int {
+    let t = tk(p)
+    let line = t.line
+    if t.kind == T_INT {
+        adv(p)
+        let n = mk(p, N_INT, line)
+        p.nodes[n].n = t.n
+        return n
+    }
+    if t.kind == T_FLOAT {
+        adv(p)
+        let n = mk(p, N_FLOAT, line)
+        p.nodes[n].f = t.f
+        return n
+    }
+    if t.kind == T_STR {
+        adv(p)
+        return parse_string(p, t.text, line)
+    }
+    if t.kind == T_NAME {
+        let w = t.text
+        if w == "true" || w == "false" {
+            adv(p)
+            let n = mk(p, N_BOOL, line)
+            if w == "true" {
+                p.nodes[n].n = i64(1)
+            }
+            return n
+        }
+        if w == "if" {
+            return parse_if(p)
+        }
+        if w == "fn" {
+            adv(p)
+            let mut f = RnFunc {
+                name: "",
+                params: []string {},
+                refs: []bool {},
+                body: -1,
+                expr_body: false,
+            }
+            want_op(p, "(")
+            parse_params(p, f, ")")
+            parse_lambda_body(p, f, true)
+            return lambda_node(p, f, line)
+        }
+        if w == "Box" && peek_tok(p, 1).text == "::" {
+            adv(p)
+            adv(p)
+            let what = want_name(p, "new")
+            if what != "new" && p.err == "" {
+                perr(p, "only Box::new is in the browser runner")
+            }
+            want_op(p, "(")
+            let e = parse_expr(p)
+            want_op(p, ")")
+            return e
+        }
+        if reserved(w) {
+            perr(p, "expected a value but found `{{w}}`")
+            return mk(p, N_UNIT, line)
+        }
+        if is_upper(w) && struct_ahead(p) {
+            return parse_struct_lit(p)
+        }
+        adv(p)
+        return mk_s(p, N_NAME, line, w)
+    }
+    if t.kind == T_OP {
+        if t.text == "(" {
+            adv(p)
+            if eat_op(p, ")") {
+                return mk(p, N_UNIT, line)
+            }
+            let saved = p.no_struct
+            p.no_struct = false
+            let e = parse_expr(p)
+            p.no_struct = saved
+            want_op(p, ")")
+            return e
+        }
+        if t.text == "[" {
+            adv(p)
+            let sz = tk(p)
+            if sz.kind == T_INT || sz.kind == T_NAME {
+                adv(p)
+            }
+            want_op(p, "]")
+            skip_type(p)
+            let n = mk(p, N_ARRAY, line)
+            want_op(p, "{")
+            let saved = p.no_struct
+            p.no_struct = false
+            while p.err == "" && !at_op(p, "}") {
+                let item = parse_expr(p)
+                push(p.nodes[n].kids, item)
+                if !eat_op(p, ",") {
+                    break
+                }
+            }
+            p.no_struct = saved
+            want_op(p, "}")
+            return n
+        }
+        if t.text == "|" || t.text == "||" {
+            adv(p)
+            let mut f = RnFunc {
+                name: "",
+                params: []string {},
+                refs: []bool {},
+                body: -1,
+                expr_body: false,
+            }
+            if t.text == "|" {
+                parse_params(p, f, "|")
+            }
+            parse_lambda_body(p, f, false)
+            return lambda_node(p, f, line)
+        }
+    }
+    if t.kind == T_EOF {
+        perr(p, "expected a value before the end of the program")
+    } else {
+        perr(p, "expected a value but found {{describe(t)}}")
+    }
+    return mk(p, N_UNIT, line)
+}
+
+fn parse_struct_lit(p: &mut Runner) -> int {
+    let t = tk(p)
+    adv(p)
+    adv(p)
+    let n = mk_s(p, N_STRUCT, t.line, t.text)
+    let saved = p.no_struct
+    p.no_struct = false
+    while p.err == "" && !at_op(p, "}") && !at_eof(p) {
+        let ft = tk(p)
+        let fname = want_name(p, "a field name")
+        want_op(p, ":")
+        let fi = mk_s(p, N_FIELDINIT, ft.line, fname)
+        p.nodes[fi].a = parse_expr(p)
+        push(p.nodes[n].kids, fi)
+        if !eat_op(p, ",") && !tk(p).nl {
+            break
+        }
+    }
+    p.no_struct = saved
+    want_op(p, "}")
+    return n
+}
+
+/// Parse `src` as one expression, for an interpolation hole.
+fn parse_hole(p: &mut Runner, src: string, line: int) -> int {
+    let saved_toks = p.toks
+    let saved_tp = p.tp
+    let saved_ns = p.no_struct
+    let sub = lex(p, src, line)
+    p.toks = sub
+    p.tp = 0
+    p.no_struct = false
+    let mut e = -1
+    if p.err == "" {
+        e = parse_expr(p)
+        if p.err == "" && !at_eof(p) {
+            perr(p, "unexpected {{describe(tk(p))}} in a string interpolation")
+        }
+    }
+    p.toks = saved_toks
+    p.tp = saved_tp
+    p.no_struct = saved_ns
+    if e < 0 {
+        e = mk(p, N_UNIT, line)
+    }
+    return e
+}
+
+/// A string literal. Holes follow loamc: nested double braces count, and an
+/// unclosed one leaves the rest as plain text.
+fn parse_string(p: &mut Runner, s: string, line: int) -> int {
+    let o = open2()
+    if !str.contains(s, o) {
+        return mk_s(p, N_STR, line, s)
+    }
+    let n = mk(p, N_INTERP, line)
+    let mut i = 0
+    let mut lit = 0
+    while i + 1 < s.len && p.err == "" {
+        if s[i] == 123 && s[i + 1] == 123 {
+            let mut close = i + 2
+            let mut depth = 1
+            while close + 1 < s.len && depth > 0 {
+                if s[close] == 123 && s[close + 1] == 123 {
+                    depth += 1
+                    close += 2
+                    continue
+                }
+                if s[close] == 125 && s[close + 1] == 125 {
+                    depth -= 1
+                    if depth == 0 {
+                        break
+                    }
+                    close += 2
+                    continue
+                }
+                close += 1
+            }
+            if depth > 0 {
+                break
+            }
+            if i > lit {
+                let chunk = mk_s(p, N_STR, line, str.slice(s, lit, i))
+                push(p.nodes[n].kids, chunk)
+            }
+            let hole = parse_hole(p, str.slice(s, i + 2, close), line)
+            push(p.nodes[n].kids, hole)
+            i = close + 2
+            lit = i
+            continue
+        }
+        i += 1
+    }
+    if lit < s.len {
+        let tail = mk_s(p, N_STR, line, str.slice_from(s, lit))
+        push(p.nodes[n].kids, tail)
+    }
+    return n
+}
+
+// ---- heap ----
+
+fn alloc(p: &mut Runner, tname: string) -> int {
+    if p.heap.len >= HEAP_MAX {
+        rerr(p, "the program made too many arrays and structs for the browser runner")
+        return -1
+    }
+    push(p.heap, RnObj { tname: tname, names: []string {}, items: []RnVal {} })
+    return p.heap.len - 1
+}
+
+fn is_agg(v: RnVal) -> bool {
+    return v.kind == K_ARR || v.kind == K_STRUCT
+}
+
+/// A deep copy: Loam arrays and structs are values, so `let b = a` must not
+/// alias `a`.
+fn deep_copy(p: &mut Runner, v: RnVal, depth: int) -> RnVal {
+    if !is_agg(v) || v.h < 0 {
+        return v
+    }
+    if depth > 32 {
+        return rerr(p, "the value is nested too deeply")
+    }
+    let src = p.heap[v.h]
+    let h = alloc(p, src.tname)
+    if h < 0 {
+        return v_unit()
+    }
+    p.heap[h].names = src.names
+    for i in 0..src.items.len {
+        let item = deep_copy(p, src.items[i], depth + 1)
+        push(p.heap[h].items, item)
+    }
+    return v_ref(v.kind, h)
+}
+
+fn needs_copy(p: &mut Runner, node: int) -> bool {
+    let k = p.nodes[node].kind
+    return k == N_NAME || k == N_FIELD || k == N_INDEX || k == N_CALL || k == N_METHOD
+}
+
+fn eval_owned(p: &mut Runner, node: int) -> RnVal {
+    let v = eval(p, node)
+    if is_agg(v) && needs_copy(p, node) {
+        return deep_copy(p, v, 0)
+    }
+    return v
+}
+
+// ---- rendering ----
+
+fn render(p: &mut Runner, v: RnVal, depth: int) -> string {
+    if v.kind == K_INT {
+        return "{{v.n}}"
+    }
+    if v.kind == K_FLOAT {
+        return "{{v.f}}"
+    }
+    if v.kind == K_BOOL {
+        if v.b {
+            return "true"
+        }
+        return "false"
+    }
+    if v.kind == K_STR {
+        return v.s
+    }
+    if v.kind == K_ENUM {
+        return v.s
+    }
+    if v.kind == K_FN {
+        return "fn"
+    }
+    if v.kind == K_UNIT {
+        return "()"
+    }
+    if depth > 6 || v.h < 0 {
+        return "..."
+    }
+    let o = p.heap[v.h]
+    let mut parts = []string {}
+    for i in 0..o.items.len {
+        let item = o.items[i]
+        let mut text = render(p, item, depth + 1)
+        if item.kind == K_STR && depth >= 0 {
+            text = "\"{{text}}\""
+        }
+        if v.kind == K_STRUCT {
+            text = "{{o.names[i]}}: {{text}}"
+        }
+        push(parts, text)
+    }
+    let body = str.join(parts, ", ")
+    if v.kind == K_ARR {
+        return "[{{body}}]"
+    }
+    if o.items.len == 0 {
+        return "{{o.tname}} {}"
+    }
+    return "{{o.tname}} { {{body}} }"
+}
+
+fn emit(p: &mut Runner, s: string) {
+    if p.out_len >= OUT_MAX {
+        return
+    }
+    let room = OUT_MAX - p.out_len
+    if s.len <= room {
+        push(p.out, s)
+        p.out_len += s.len
+        return
+    }
+    push(p.out, str.slice(s, 0, room))
+    push(p.out, "\n... output cut at {{OUT_MAX}} bytes")
+    p.out_len = OUT_MAX
+}
+
+// ---- variables ----
+
+fn find_local(p: &mut Runner, name: string) -> int {
+    let mut i = p.vars.len - 1
+    while i >= p.base {
+        if p.vars[i].name == name {
+            return i
+        }
+        i -= 1
+    }
+    return -1
+}
+
+fn find_global(p: &mut Runner, name: string) -> int {
+    let mut i = p.globals.len - 1
+    while i >= 0 {
+        if p.globals[i].name == name {
+            return i
+        }
+        i -= 1
+    }
+    return -1
+}
+
+fn find_cap(p: &mut Runner, name: string) -> int {
+    if p.caps < 0 {
+        return -1
+    }
+    let names = p.heap[p.caps].names
+    let mut i = names.len - 1
+    while i >= 0 {
+        if names[i] == name {
+            return i
+        }
+        i -= 1
+    }
+    return -1
+}
+
+fn is_var(p: &mut Runner, name: string) -> bool {
+    return find_local(p, name) >= 0 || find_cap(p, name) >= 0 || find_global(p, name) >= 0
+}
+
+fn lookup(p: &mut Runner, name: string) -> RnVal {
+    let l = find_local(p, name)
+    if l >= 0 {
+        return p.vars[l].val
+    }
+    let c = find_cap(p, name)
+    if c >= 0 {
+        return p.heap[p.caps].items[c]
+    }
+    let g = find_global(p, name)
+    if g >= 0 {
+        return p.globals[g].val
+    }
+    let f = find_fn(p, name)
+    if f >= 0 {
+        return v_fn(f, -1)
+    }
+    if find_use(p, name) > 0 {
+        return rerr(p, "{{name}} is a module; call one of its functions, like {{name}}.name(..)")
+    }
+    if find_type(p, name) >= 0 || find_enum(p, name) >= 0 {
+        return rerr(p, "{{name}} is a type, not a value")
+    }
+    if module_kind(name) != 0 {
+        return rerr(p, "{{name}} is not imported; add import \"std:{{name}}\" at the top")
+    }
+    return rerr(p, "unknown name {{name}}")
+}
+
+fn bind(p: &mut Runner, name: string, v: RnVal, mutable: bool) {
+    push(p.vars, RnVar { name: name, val: v, mutable: mutable })
+}
+
+fn trim_vars(p: &mut Runner, mark: int) {
+    while p.vars.len > mark {
+        pop(p.vars)
+    }
+}
+
+// ---- arithmetic ----
+
+fn fit(p: &mut Runner, n: i64) -> RnVal {
+    if n > INT_HI || n < INT_LO {
+        return rerr(p, "integer overflow: {{n}} does not fit in int (i32)")
+    }
+    return v_int(n)
+}
+
+fn as_f(v: RnVal) -> f64 {
+    if v.kind == K_INT {
+        return f64(v.n)
+    }
+    return v.f
+}
+
+fn is_num(v: RnVal) -> bool {
+    return v.kind == K_INT || v.kind == K_FLOAT
+}
+
+fn arith(p: &mut Runner, op: string, l: RnVal, r: RnVal) -> RnVal {
+    if op == "+" && l.kind == K_STR && r.kind == K_STR {
+        return v_str("{{l.s}}{{r.s}}")
+    }
+    if !is_num(l) || !is_num(r) {
+        return rerr(
+            p,
+            "{{op}} wants two numbers, found {{kind_name(l.kind)}} and {{kind_name(r.kind)}}",
+        )
+    }
+    if l.kind == K_INT && r.kind == K_INT {
+        if op == "+" {
+            return fit(p, l.n + r.n)
+        }
+        if op == "-" {
+            return fit(p, l.n - r.n)
+        }
+        if op == "*" {
+            return fit(p, l.n * r.n)
+        }
+        if r.n == i64(0) {
+            return rerr(p, "division by zero")
+        }
+        if op == "/" {
+            return fit(p, l.n / r.n)
+        }
+        return fit(p, l.n % r.n)
+    }
+    let a = as_f(l)
+    let b = as_f(r)
+    if op == "+" {
+        return v_float(a + b)
+    }
+    if op == "-" {
+        return v_float(a - b)
+    }
+    if op == "*" {
+        return v_float(a * b)
+    }
+    if op == "/" {
+        return v_float(a / b)
+    }
+    if b == 0.0 {
+        return rerr(p, "division by zero")
+    }
+    let q = math.trunc(a / b)
+    return v_float(a - q * b)
+}
+
+fn same(p: &mut Runner, l: RnVal, r: RnVal) -> bool {
+    if is_num(l) && is_num(r) {
+        if l.kind == K_INT && r.kind == K_INT {
+            return l.n == r.n
+        }
+        return as_f(l) == as_f(r)
+    }
+    if l.kind != r.kind {
+        return false
+    }
+    if l.kind == K_BOOL {
+        return l.b == r.b
+    }
+    if l.kind == K_STR || l.kind == K_ENUM {
+        return l.s == r.s
+    }
+    if l.kind == K_UNIT {
+        return true
+    }
+    if is_agg(l) {
+        let a = p.heap[l.h]
+        let b = p.heap[r.h]
+        if a.items.len != b.items.len {
+            return false
+        }
+        for i in 0..a.items.len {
+            if !same(p, a.items[i], b.items[i]) {
+                return false
+            }
+        }
+        return true
+    }
+    return l.n == r.n && l.h == r.h
+}
+
+fn compare(p: &mut Runner, op: string, l: RnVal, r: RnVal) -> RnVal {
+    if op == "==" || op == "!=" {
+        let ok_kinds = (is_num(l) && is_num(r)) || l.kind == r.kind
+        if !ok_kinds {
+            return rerr(p, "{{op}} compares a {{kind_name(l.kind)}} with a {{kind_name(r.kind)}}")
+        }
+        let eq = same(p, l, r)
+        if op == "==" {
+            return v_bool(eq)
+        }
+        return v_bool(!eq)
+    }
+    let mut c = 0
+    if is_num(l) && is_num(r) {
+        if l.kind == K_INT && r.kind == K_INT {
+            if l.n < r.n {
+                c = -1
+            } else if l.n > r.n {
+                c = 1
+            }
+        } else {
+            let a = as_f(l)
+            let b = as_f(r)
+            if a < b {
+                c = -1
+            } else if a > b {
+                c = 1
+            }
+        }
+    } else if l.kind == K_STR && r.kind == K_STR {
+        let n = if l.s.len < r.s.len { l.s.len } else { r.s.len }
+        let mut i = 0
+        while i < n && c == 0 {
+            if l.s[i] < r.s[i] {
+                c = -1
+            } else if l.s[i] > r.s[i] {
+                c = 1
+            }
+            i += 1
+        }
+        if c == 0 {
+            if l.s.len < r.s.len {
+                c = -1
+            } else if l.s.len > r.s.len {
+                c = 1
+            }
+        }
+    } else {
+        return rerr(
+            p,
+            "{{op}} wants two numbers, found {{kind_name(l.kind)}} and {{kind_name(r.kind)}}",
+        )
+    }
+    if op == "<" {
+        return v_bool(c < 0)
+    }
+    if op == "<=" {
+        return v_bool(c <= 0)
+    }
+    if op == ">" {
+        return v_bool(c > 0)
+    }
+    return v_bool(c >= 0)
+}
+
+fn truthy(p: &mut Runner, v: RnVal, what: string) -> bool {
+    if v.kind != K_BOOL {
+        if p.err == "" {
+            rerr(p, "{{what}} wants a bool, found {{kind_name(v.kind)}}")
+        }
+        return false
+    }
+    return v.b
+}
+
+// ---- evaluation ----
+
+fn eval(p: &mut Runner, node: int) -> RnVal {
+    if p.err != "" {
+        return v_unit()
+    }
+    p.edepth += 1
+    if p.edepth > 400 {
+        p.edepth -= 1
+        return rerr(p, "the program nests too deeply for the browser runner")
+    }
+    let v = eval_node(p, node)
+    p.edepth -= 1
+    return v
+}
+
+fn eval_node(p: &mut Runner, node: int) -> RnVal {
+    let nd = p.nodes[node]
+    let k = nd.kind
+    if k == N_INT {
+        return v_int(nd.n)
+    }
+    if k == N_FLOAT {
+        return v_float(nd.f)
+    }
+    if k == N_STR {
+        return v_str(nd.s)
+    }
+    if k == N_BOOL {
+        return v_bool(nd.n != i64(0))
+    }
+    if k == N_UNIT {
+        return v_unit()
+    }
+    if k == N_NAME {
+        return lookup(p, nd.s)
+    }
+    if k == N_INTERP {
+        let mut parts = []string {}
+        for i in 0..nd.kids.len {
+            let v = eval(p, nd.kids[i])
+            if p.err != "" {
+                return v_unit()
+            }
+            push(parts, render(p, v, -1))
+        }
+        return v_str(str.join(parts, ""))
+    }
+    if k == N_NEG {
+        let v = eval(p, nd.a)
+        if v.kind == K_INT {
+            return fit(p, i64(0) - v.n)
+        }
+        if v.kind == K_FLOAT {
+            return v_float(0.0 - v.f)
+        }
+        return rerr(p, "unary - wants a number, found {{kind_name(v.kind)}}")
+    }
+    if k == N_NOT {
+        let v = eval(p, nd.a)
+        return v_bool(!truthy(p, v, "!"))
+    }
+    if k == N_AND {
+        let l = eval(p, nd.a)
+        if !truthy(p, l, "&&") {
+            return v_bool(false)
+        }
+        let r = eval(p, nd.b)
+        return v_bool(truthy(p, r, "&&"))
+    }
+    if k == N_OR {
+        let l = eval(p, nd.a)
+        if p.err != "" {
+            return v_unit()
+        }
+        if truthy(p, l, "||") {
+            return v_bool(true)
+        }
+        let r = eval(p, nd.b)
+        return v_bool(truthy(p, r, "||"))
+    }
+    if k == N_BIN {
+        let l = eval(p, nd.a)
+        let r = eval(p, nd.b)
+        if p.err != "" {
+            return v_unit()
+        }
+        let op = nd.s
+        if op == "+" || op == "-" || op == "*" || op == "/" || op == "%" {
+            return arith(p, op, l, r)
+        }
+        return compare(p, op, l, r)
+    }
+    if k == N_IF {
+        let flow = exec_if(p, node)
+        if flow == F_NEXT && p.has_last {
+            return p.last
+        }
+        if flow != F_NEXT && flow != F_ERR {
+            return rerr(p, "break, continue, and return cannot leave an if expression here")
+        }
+        return v_unit()
+    }
+    if k == N_ARRAY {
+        let h = alloc(p, "")
+        for i in 0..nd.kids.len {
+            let v = eval_owned(p, nd.kids[i])
+            if p.err != "" {
+                return v_unit()
+            }
+            push(p.heap[h].items, v)
+        }
+        return v_ref(K_ARR, h)
+    }
+    if k == N_STRUCT {
+        return eval_struct(p, nd)
+    }
+    if k == N_LAMBDA {
+        return make_closure(p, int(nd.n))
+    }
+    if k == N_FIELD {
+        return eval_field(p, nd)
+    }
+    if k == N_INDEX {
+        let base = eval(p, nd.a)
+        let iv = eval(p, nd.b)
+        if p.err != "" {
+            return v_unit()
+        }
+        if iv.kind != K_INT {
+            return rerr(p, "an index must be an int, found {{kind_name(iv.kind)}}")
+        }
+        let i = int(iv.n)
+        if base.kind == K_STR {
+            if i < 0 || i >= base.s.len {
+                return rerr(p, "index {{i}} is out of range for a string of length {{base.s.len}}")
+            }
+            return v_int(i64(base.s[i]))
+        }
+        if base.kind != K_ARR {
+            return rerr(p, "cannot index a {{kind_name(base.kind)}}")
+        }
+        let n = p.heap[base.h].items.len
+        if i < 0 || i >= n {
+            return rerr(p, "index {{i}} is out of range for length {{n}}")
+        }
+        return p.heap[base.h].items[i]
+    }
+    if k == N_CALL {
+        return eval_call(p, nd)
+    }
+    if k == N_METHOD {
+        return eval_method(p, nd)
+    }
+    if k == N_CAST {
+        let v = eval(p, nd.a)
+        return convert(p, nd.s, v)
+    }
+    return rerr(p, "that is not an expression")
+}
+
+fn eval_struct(p: &mut Runner, nd: RnNode) -> RnVal {
+    let ti = find_type(p, nd.s)
+    if ti < 0 {
+        return rerr(p, "unknown struct {{nd.s}}")
+    }
+    let ty = p.types[ti]
+    let mut vals = []RnVal {}
+    let mut got = []bool {}
+    for i in 0..ty.fields.len {
+        push(vals, v_unit())
+        push(got, false)
+    }
+    for i in 0..nd.kids.len {
+        let fi = p.nodes[nd.kids[i]]
+        let mut slot = -1
+        for j in 0..ty.fields.len {
+            if ty.fields[j] == fi.s {
+                slot = j
+            }
+        }
+        if slot < 0 {
+            return rerr(p, "{{nd.s}} has no field {{fi.s}}")
+        }
+        if got[slot] {
+            return rerr(p, "field {{fi.s}} is set twice")
+        }
+        p.line = fi.line
+        vals[slot] = eval_owned(p, fi.a)
+        got[slot] = true
+        if p.err != "" {
+            return v_unit()
+        }
+    }
+    for i in 0..ty.fields.len {
+        if !got[i] {
+            return rerr(p, "{{nd.s}} literal is missing field {{ty.fields[i]}}")
+        }
+    }
+    let h = alloc(p, nd.s)
+    if h < 0 {
+        return v_unit()
+    }
+    p.heap[h].names = ty.fields
+    p.heap[h].items = vals
+    return v_ref(K_STRUCT, h)
+}
+
+fn make_closure(p: &mut Runner, index: int) -> RnVal {
+    if p.vars.len == p.base && p.caps < 0 {
+        return v_fn(index, -1)
+    }
+    let h = alloc(p, "")
+    if h < 0 {
+        return v_unit()
+    }
+    if p.caps >= 0 {
+        let outer = p.heap[p.caps]
+        p.heap[h].names = outer.names
+        p.heap[h].items = outer.items
+    }
+    for i in p.base..p.vars.len {
+        push(p.heap[h].names, p.vars[i].name)
+        push(p.heap[h].items, p.vars[i].val)
+    }
+    return v_fn(index, h)
+}
+
+fn eval_field(p: &mut Runner, nd: RnNode) -> RnVal {
+    let an = p.nodes[nd.a]
+    if an.kind == N_NAME && !is_var(p, an.s) {
+        let ei = find_enum(p, an.s)
+        if ei >= 0 {
+            let members = p.enums[ei].members
+            for i in 0..members.len {
+                if members[i] == nd.s {
+                    return v_enum("{{an.s}}.{{nd.s}}", i)
+                }
+            }
+            return rerr(p, "{{an.s}} has no member {{nd.s}}")
+        }
+        let mk_kind = find_use(p, an.s)
+        if mk_kind > 0 {
+            return module_const(p, mk_kind, an.s, nd.s)
+        }
+    }
+    let base = eval(p, nd.a)
+    if p.err != "" {
+        return v_unit()
+    }
+    if nd.s == "len" {
+        if base.kind == K_STR {
+            return v_int(i64(base.s.len))
+        }
+        if base.kind == K_ARR {
+            return v_int(i64(p.heap[base.h].items.len))
+        }
+    }
+    if base.kind == K_STRUCT {
+        let o = p.heap[base.h]
+        for i in 0..o.names.len {
+            if o.names[i] == nd.s {
+                return o.items[i]
+            }
+        }
+        return rerr(p, "{{o.tname}} has no field {{nd.s}}")
+    }
+    return rerr(p, "a {{kind_name(base.kind)}} has no field {{nd.s}}")
+}
+
+fn module_const(p: &mut Runner, kind: int, alias: string, name: string) -> RnVal {
+    if kind == MOD_MATH {
+        if name == "PI" {
+            return v_float(3.141592653589793)
+        }
+        if name == "E" {
+            return v_float(2.718281828459045)
+        }
+    }
+    return rerr(p, "{{alias}}.{{name}} is not a value in the browser runner")
+}
+
+fn convert(p: &mut Runner, ty: string, v: RnVal) -> RnVal {
+    if p.err != "" {
+        return v_unit()
+    }
+    if ty == "int" ||
+        ty == "i32" ||
+        ty == "i64" ||
+        ty == "u8" ||
+        ty == "u32" ||
+        ty == "i8" ||
+        ty == "i16" ||
+        ty == "u16" ||
+        ty == "u64" {
+        if v.kind == K_INT {
+            return v
+        }
+        if v.kind == K_FLOAT {
+            if v.f != v.f {
+                return rerr(p, "cannot convert NaN to int")
+            }
+            return fit(p, i64(math.trunc(v.f)))
+        }
+        if v.kind == K_BOOL {
+            return v_int(if v.b { i64(1) } else { i64(0) })
+        }
+        return rerr(p, "cannot convert a {{kind_name(v.kind)}} to {{ty}}")
+    }
+    if ty == "float" || ty == "f32" || ty == "f64" {
+        if is_num(v) {
+            return v_float(as_f(v))
+        }
+        return rerr(p, "cannot convert a {{kind_name(v.kind)}} to {{ty}}")
+    }
+    return rerr(p, "the browser runner cannot convert to {{ty}}")
+}
+
+// ---- calls ----
+
+struct RnArgs {
+    vals: []RnVal,
+    nodes: []int,
+}
+
+fn eval_args(p: &mut Runner, kids: []int) -> RnArgs {
+    let mut a = RnArgs { vals: []RnVal {}, nodes: []int {} }
+    for i in 0..kids.len {
+        let v = eval(p, kids[i])
+        push(a.vals, v)
+        push(a.nodes, kids[i])
+        if p.err != "" {
+            return a
+        }
+    }
+    return a
+}
+
+fn eval_call(p: &mut Runner, nd: RnNode) -> RnVal {
+    let callee = p.nodes[nd.a]
+    if callee.kind == N_NAME && !is_var(p, callee.s) && find_fn(p, callee.s) < 0 {
+        let name = callee.s
+        if find_use(p, name) < 0 {
+            let args = eval_args(p, nd.kids)
+            if p.err != "" {
+                return v_unit()
+            }
+            return call_module(p, -find_use(p, name), name, name, args.vals)
+        }
+        if is_builtin(name) {
+            let args = eval_args(p, nd.kids)
+            if p.err != "" {
+                return v_unit()
+            }
+            return call_builtin(p, name, args.vals)
+        }
+        if find_type(p, name) >= 0 {
+            return rerr(p, "{{name}} is a struct; build it with {{name}} { field: value }")
+        }
+    }
+    let f = eval(p, nd.a)
+    if p.err != "" {
+        return v_unit()
+    }
+    if f.kind != K_FN {
+        return rerr(p, "a {{kind_name(f.kind)}} is not callable")
+    }
+    let args = eval_args(p, nd.kids)
+    if p.err != "" {
+        return v_unit()
+    }
+    return call_fn(p, int(f.n), f.h, args)
+}
+
+fn is_builtin(name: string) -> bool {
+    if name == "push" || name == "pop" || name == "assert" || name == "panic" {
+        return true
+    }
+    if name == "string_from_bytes" || name == "int" || name == "float" {
+        return true
+    }
+    return name == "i64" || name == "i32" || name == "f64" || name == "f32" || name == "u8"
+}
+
+fn call_builtin(p: &mut Runner, name: string, args: []RnVal) -> RnVal {
+    if name == "push" {
+        if args.len != 2 || args[0].kind != K_ARR {
+            return rerr(p, "push wants an array and a value")
+        }
+        let v = deep_copy(p, args[1], 0)
+        push(p.heap[args[0].h].items, v)
+        return v_unit()
+    }
+    if name == "pop" {
+        if args.len != 1 || args[0].kind != K_ARR {
+            return rerr(p, "pop wants an array")
+        }
+        let n = p.heap[args[0].h].items.len
+        if n == 0 {
+            return rerr(p, "pop on an empty array")
+        }
+        let v = p.heap[args[0].h].items[n - 1]
+        pop(p.heap[args[0].h].items)
+        return v
+    }
+    if name == "assert" {
+        if args.len < 1 || args[0].kind != K_BOOL {
+            return rerr(p, "assert wants a bool")
+        }
+        if !args[0].b {
+            return rerr(p, "assertion failed")
+        }
+        return v_unit()
+    }
+    if name == "panic" {
+        if args.len > 0 {
+            return rerr(p, "panic: {{render(p, args[0], 0)}}")
+        }
+        return rerr(p, "panic")
+    }
+    if name == "string_from_bytes" {
+        if args.len != 1 || args[0].kind != K_ARR {
+            return rerr(p, "string_from_bytes wants an array of bytes")
+        }
+        let items = p.heap[args[0].h].items
+        let mut bytes = []int {}
+        for i in 0..items.len {
+            if items[i].kind != K_INT || items[i].n < i64(0) || items[i].n > i64(255) {
+                return rerr(p, "string_from_bytes wants bytes 0..255")
+            }
+            push(bytes, int(items[i].n))
+        }
+        return v_str(string_from_bytes(bytes))
+    }
+    if args.len != 1 {
+        return rerr(p, "{{name}}(x) takes one value")
+    }
+    return convert(p, name, args[0])
+}
+
+fn call_fn(p: &mut Runner, index: int, caps: int, args: RnArgs) -> RnVal {
+    let f = p.fns[index]
+    let label = if f.name == "" { "the closure" } else { f.name }
+    if args.vals.len != f.params.len {
+        return rerr(p, "{{label}} takes {{f.params.len}} argument(s), got {{args.vals.len}}")
+    }
+    if p.calls >= CALL_MAX {
+        return rerr(p, "call depth passed {{CALL_MAX}}: is the recursion missing a base case?")
+    }
+    let saved_base = p.base
+    let saved_caps = p.caps
+    let saved_line = p.line
+    let mark = p.vars.len
+    p.calls += 1
+    p.base = mark
+    p.caps = caps
+    for i in 0..f.params.len {
+        bind(p, f.params[i], args.vals[i], f.refs[i])
+    }
+    let mut result = v_unit()
+    if f.expr_body {
+        result = eval(p, f.body)
+    } else {
+        p.has_last = false
+        let flow = exec_block(p, f.body)
+        if flow == F_RETURN {
+            result = p.ret
+        } else if flow == F_NEXT && p.has_last {
+            result = p.last
+        } else if flow == F_BREAK || flow == F_CONTINUE {
+            rerr(p, "break or continue outside a loop")
+        }
+    }
+    // `&mut` parameters write back to the caller's place.
+    let mut outs = []RnVal {}
+    let mut out_nodes = []int {}
+    for i in 0..f.params.len {
+        if f.refs[i] && i < args.nodes.len && args.nodes[i] >= 0 && mark + i < p.vars.len {
+            push(outs, p.vars[mark + i].val)
+            push(out_nodes, args.nodes[i])
+        }
+    }
+    trim_vars(p, mark)
+    p.base = saved_base
+    p.caps = saved_caps
+    p.calls -= 1
+    p.line = saved_line
+    p.has_last = false
+    if p.err == "" {
+        for i in 0..outs.len {
+            let k = p.nodes[out_nodes[i]].kind
+            if (k == N_NAME || k == N_FIELD || k == N_INDEX) && !is_agg(outs[i]) {
+                assign(p, out_nodes[i], outs[i], true)
+            }
+        }
+    }
+    return result
+}
+
+fn eval_method(p: &mut Runner, nd: RnNode) -> RnVal {
+    let recv = p.nodes[nd.a]
+    let name = nd.s
+    if recv.kind == N_NAME && !is_var(p, recv.s) {
+        let kind = find_use(p, recv.s)
+        if kind > 0 {
+            let args = eval_args(p, nd.kids)
+            if p.err != "" {
+                return v_unit()
+            }
+            return call_module(p, kind, recv.s, name, args.vals)
+        }
+        if find_enum(p, recv.s) >= 0 || find_type(p, recv.s) >= 0 {
+            return rerr(p, "{{recv.s}}.{{name}}() is not in the browser runner")
+        }
+    }
+    let v = eval(p, nd.a)
+    if p.err != "" {
+        return v_unit()
+    }
+    if v.kind == K_STRUCT {
+        let o = p.heap[v.h]
+        for i in 0..o.names.len {
+            if o.names[i] == name && o.items[i].kind == K_FN {
+                let args = eval_args(p, nd.kids)
+                if p.err != "" {
+                    return v_unit()
+                }
+                return call_fn(p, int(o.items[i].n), o.items[i].h, args)
+            }
+        }
+    }
+    let rest = eval_args(p, nd.kids)
+    if p.err != "" {
+        return v_unit()
+    }
+    let mut args = RnArgs { vals: []RnVal { v }, nodes: []int { nd.a } }
+    for i in 0..rest.vals.len {
+        push(args.vals, rest.vals[i])
+        push(args.nodes, rest.nodes[i])
+    }
+    let fi = find_fn(p, name)
+    if fi >= 0 {
+        return call_fn(p, fi, -1, args)
+    }
+    if name == "push" || name == "pop" {
+        return call_builtin(p, name, args.vals)
+    }
+    if v.kind == K_STR {
+        if str_fn(name) {
+            if !has_module(p, MOD_STR) {
+                return rerr(p, "add import \"std:str\" to call .{{name}}() on a string")
+            }
+            return call_module(p, MOD_STR, "str", name, args.vals)
+        }
+    }
+    if is_num(v) && math_fn(name) {
+        if !has_module(p, MOD_MATH) {
+            return rerr(p, "add import \"std:math\" to call .{{name}}() on a number")
+        }
+        return call_module(p, MOD_MATH, "math", name, args.vals)
+    }
+    return rerr(p, "no function {{name}} takes a {{kind_name(v.kind)}} first")
+}
+
+// ---- std modules ----
+
+fn str_fn(n: string) -> bool {
+    if n == "len" || n == "trim" || n == "trim_start" || n == "trim_end" || n == "to_upper" {
+        return true
+    }
+    if n == "to_lower" || n == "is_blank" || n == "starts_with" || n == "ends_with" {
+        return true
+    }
+    if n == "contains" || n == "strip_prefix" || n == "strip_suffix" || n == "index_of" {
+        return true
+    }
+    if n == "last_index_of" || n == "count" || n == "slice" || n == "slice_from" {
+        return true
+    }
+    if n == "repeat" || n == "split" || n == "lines" || n == "join" || n == "replace_all" {
+        return true
+    }
+    return n == "pad_start" || n == "pad_end" || n == "eq_fold"
+}
+
+fn math_fn(n: string) -> bool {
+    if n == "abs" || n == "min" || n == "max" || n == "clamp" || n == "sqrt" || n == "pow" {
+        return true
+    }
+    return n == "floor" || n == "ceil" || n == "round" || n == "trunc"
+}
+
+fn want_args(p: &mut Runner, args: []RnVal, kinds: string, what: string) -> bool {
+    if args.len != kinds.len {
+        rerr(p, "{{what}} takes {{kinds.len}} argument(s), got {{args.len}}")
+        return false
+    }
+    for i in 0..kinds.len {
+        let want = kinds[i]
+        let k = args[i].kind
+        let mut ok = true
+        if want == 115 {
+            ok = k == K_STR
+        } else if want == 105 {
+            ok = k == K_INT
+        } else if want == 110 {
+            ok = k == K_INT || k == K_FLOAT
+        } else if want == 97 {
+            ok = k == K_ARR
+        }
+        if !ok {
+            let at = i + 1
+            rerr(p, "{{what}} argument {{at}} is a {{kind_name(k)}}")
+            return false
+        }
+    }
+    return true
+}
+
+fn str_array(p: &mut Runner, items: []string) -> RnVal {
+    let h = alloc(p, "")
+    if h < 0 {
+        return v_unit()
+    }
+    for i in 0..items.len {
+        push(p.heap[h].items, v_str(items[i]))
+    }
+    return v_ref(K_ARR, h)
+}
+
+fn call_module(p: &mut Runner, kind: int, alias: string, name: string, args: []RnVal) -> RnVal {
+    let what = "{{alias}}.{{name}}"
+    if kind == MOD_FMT {
+        return call_fmt(p, name, what, args)
+    }
+    if kind == MOD_STR {
+        return call_str(p, name, what, args)
+    }
+    if kind == MOD_MATH {
+        return call_math(p, name, what, args)
+    }
+    return rerr(p, "unknown module {{alias}}")
+}
+
+fn call_fmt(p: &mut Runner, name: string, what: string, args: []RnVal) -> RnVal {
+    if name == "println" {
+        let mut parts = []string {}
+        for i in 0..args.len {
+            push(parts, render(p, args[i], 0))
+        }
+        emit(p, str.join(parts, " "))
+        emit(p, "\n")
+        return v_unit()
+    }
+    if name == "write" {
+        if want_args(p, args, "s", what) {
+            emit(p, args[0].s)
+        }
+        return v_unit()
+    }
+    if name == "writeln" {
+        if want_args(p, args, "", what) {
+            emit(p, "\n")
+        }
+        return v_unit()
+    }
+    if name == "write_int" {
+        if want_args(p, args, "i", what) {
+            emit(p, render(p, args[0], 0))
+        }
+        return v_unit()
+    }
+    if name == "write_float" {
+        if want_args(p, args, "n", what) {
+            emit(p, render(p, v_float(as_f(args[0])), 0))
+        }
+        return v_unit()
+    }
+    if name == "write_bool" {
+        if args.len != 1 || args[0].kind != K_BOOL {
+            return rerr(p, "{{what}} wants one bool")
+        }
+        emit(p, render(p, args[0], 0))
+        return v_unit()
+    }
+    if name == "eq" {
+        if !want_args(p, args, "ss", what) {
+            return v_unit()
+        }
+        return v_bool(args[0].s == args[1].s)
+    }
+    if name == "print" || name == "printf" {
+        return rerr(p, "fmt has no {{name}}; use fmt.println or fmt.write")
+    }
+    return rerr(p, "fmt has no {{name}}")
+}
+
+fn call_str(p: &mut Runner, name: string, what: string, args: []RnVal) -> RnVal {
+    if name == "len" {
+        if !want_args(p, args, "s", what) {
+            return v_unit()
+        }
+        return v_int(i64(args[0].s.len))
+    }
+    if name == "trim" ||
+        name == "trim_start" ||
+        name == "trim_end" ||
+        name == "to_upper" ||
+        name == "to_lower" {
+        if !want_args(p, args, "s", what) {
+            return v_unit()
+        }
+        let s = args[0].s
+        if name == "trim" {
+            return v_str(str.trim(s))
+        }
+        if name == "trim_start" {
+            return v_str(str.trim_start(s))
+        }
+        if name == "trim_end" {
+            return v_str(str.trim_end(s))
+        }
+        if name == "to_upper" {
+            return v_str(str.to_upper(s))
+        }
+        return v_str(str.to_lower(s))
+    }
+    if name == "is_blank" {
+        if !want_args(p, args, "s", what) {
+            return v_unit()
+        }
+        return v_bool(str.is_blank(args[0].s))
+    }
+    if name == "lines" {
+        if !want_args(p, args, "s", what) {
+            return v_unit()
+        }
+        return str_array(p, str.lines(args[0].s))
+    }
+    if name == "starts_with" || name == "ends_with" || name == "contains" || name == "eq_fold" {
+        if !want_args(p, args, "ss", what) {
+            return v_unit()
+        }
+        let a = args[0].s
+        let b = args[1].s
+        if name == "starts_with" {
+            return v_bool(str.starts_with(a, b))
+        }
+        if name == "ends_with" {
+            return v_bool(str.ends_with(a, b))
+        }
+        if name == "contains" {
+            return v_bool(str.contains(a, b))
+        }
+        return v_bool(str.eq_fold(a, b))
+    }
+    if name == "strip_prefix" || name == "strip_suffix" || name == "split" {
+        if !want_args(p, args, "ss", what) {
+            return v_unit()
+        }
+        let a = args[0].s
+        let b = args[1].s
+        if name == "strip_prefix" {
+            return v_str(str.strip_prefix(a, b))
+        }
+        if name == "strip_suffix" {
+            return v_str(str.strip_suffix(a, b))
+        }
+        if b.len == 0 {
+            return rerr(p, "{{what}} wants a non-empty separator")
+        }
+        return str_array(p, str.split(a, b))
+    }
+    if name == "index_of" || name == "last_index_of" || name == "count" {
+        if !want_args(p, args, "ss", what) {
+            return v_unit()
+        }
+        let a = args[0].s
+        let b = args[1].s
+        if name == "index_of" {
+            return v_int(i64(str.index_of(a, b)))
+        }
+        if name == "last_index_of" {
+            return v_int(i64(str.last_index_of(a, b)))
+        }
+        if b.len == 0 {
+            return rerr(p, "{{what}} wants a non-empty needle")
+        }
+        return v_int(i64(str.count(a, b)))
+    }
+    if name == "slice" {
+        if !want_args(p, args, "sii", what) {
+            return v_unit()
+        }
+        return v_str(str.slice(args[0].s, int(args[1].n), int(args[2].n)))
+    }
+    if name == "slice_from" {
+        if !want_args(p, args, "si", what) {
+            return v_unit()
+        }
+        return v_str(str.slice_from(args[0].s, int(args[1].n)))
+    }
+    if name == "repeat" {
+        if !want_args(p, args, "si", what) {
+            return v_unit()
+        }
+        let n = args[1].n
+        if n < i64(0) || i64(args[0].s.len) * n > i64(OUT_MAX) {
+            return rerr(p, "{{what}} would make a string that is too long")
+        }
+        return v_str(str.repeat(args[0].s, int(n)))
+    }
+    if name == "pad_start" || name == "pad_end" {
+        if !want_args(p, args, "sii", what) {
+            return v_unit()
+        }
+        if args[1].n > i64(OUT_MAX) {
+            return rerr(p, "{{what}} would make a string that is too long")
+        }
+        if name == "pad_start" {
+            return v_str(str.pad_start(args[0].s, int(args[1].n), int(args[2].n)))
+        }
+        return v_str(str.pad_end(args[0].s, int(args[1].n), int(args[2].n)))
+    }
+    if name == "replace_all" {
+        if !want_args(p, args, "sss", what) {
+            return v_unit()
+        }
+        if args[1].s.len == 0 {
+            return rerr(p, "{{what}} wants a non-empty pattern")
+        }
+        let out = str.replace_all(args[0].s, args[1].s, args[2].s)
+        if out.len > OUT_MAX {
+            return rerr(p, "{{what}} made a string that is too long")
+        }
+        return v_str(out)
+    }
+    if name == "join" {
+        if !want_args(p, args, "as", what) {
+            return v_unit()
+        }
+        let items = p.heap[args[0].h].items
+        let mut parts = []string {}
+        for i in 0..items.len {
+            if items[i].kind != K_STR {
+                return rerr(p, "{{what}} wants an array of strings")
+            }
+            push(parts, items[i].s)
+        }
+        return v_str(str.join(parts, args[1].s))
+    }
+    return rerr(p, "str has no {{name}} in the browser runner")
+}
+
+fn all_int(args: []RnVal) -> bool {
+    for i in 0..args.len {
+        if args[i].kind != K_INT {
+            return false
+        }
+    }
+    return true
+}
+
+fn call_math(p: &mut Runner, name: string, what: string, args: []RnVal) -> RnVal {
+    if name == "abs" {
+        if !want_args(p, args, "n", what) {
+            return v_unit()
+        }
+        if args[0].kind == K_INT {
+            if args[0].n < i64(0) {
+                return fit(p, i64(0) - args[0].n)
+            }
+            return args[0]
+        }
+        return v_float(math.abs(args[0].f))
+    }
+    if name == "min" || name == "max" {
+        if !want_args(p, args, "nn", what) {
+            return v_unit()
+        }
+        let less = as_f(args[0]) < as_f(args[1])
+        let pick_first = if name == "min" { less } else { !less }
+        let v = if pick_first { args[0] } else { args[1] }
+        if all_int(args) {
+            return v
+        }
+        return v_float(as_f(v))
+    }
+    if name == "clamp" {
+        if !want_args(p, args, "nnn", what) {
+            return v_unit()
+        }
+        let mut v = args[0]
+        if as_f(v) < as_f(args[1]) {
+            v = args[1]
+        }
+        if as_f(v) > as_f(args[2]) {
+            v = args[2]
+        }
+        if all_int(args) {
+            return v
+        }
+        return v_float(as_f(v))
+    }
+    if name == "sqrt" || name == "floor" || name == "ceil" || name == "round" || name == "trunc" {
+        if !want_args(p, args, "n", what) {
+            return v_unit()
+        }
+        let x = as_f(args[0])
+        if name == "sqrt" {
+            if x < 0.0 {
+                return rerr(p, "{{what}} of a negative number")
+            }
+            return v_float(math.sqrt(x))
+        }
+        if name == "floor" {
+            return v_float(math.floor(x))
+        }
+        if name == "ceil" {
+            return v_float(math.ceil(x))
+        }
+        if name == "round" {
+            return v_float(math.round(x))
+        }
+        return v_float(math.trunc(x))
+    }
+    if name == "pow" {
+        if !want_args(p, args, "nn", what) {
+            return v_unit()
+        }
+        return v_float(math.pow(as_f(args[0]), as_f(args[1])))
+    }
+    return rerr(p, "math has no {{name}} in the browser runner")
+}
+
+// ---- statements ----
+
+fn tick(p: &mut Runner) -> bool {
+    p.steps += 1
+    if p.steps > STEP_MAX {
+        rerr(p, "the program ran {{STEP_MAX}} steps and was stopped (an endless loop?)")
+        return false
+    }
+    return true
+}
+
+fn exec_block(p: &mut Runner, node: int) -> int {
+    let kids = p.nodes[node].kids
+    let mark = p.vars.len
+    let mut flow = F_NEXT
+    p.has_last = false
+    for i in 0..kids.len {
+        flow = exec_stmt(p, kids[i])
+        if flow != F_NEXT {
+            break
+        }
+    }
+    trim_vars(p, mark)
+    if p.err != "" {
+        return F_ERR
+    }
+    return flow
+}
+
+fn exec_if(p: &mut Runner, node: int) -> int {
+    let nd = p.nodes[node]
+    let c = eval(p, nd.a)
+    let yes = truthy(p, c, "if")
+    if p.err != "" {
+        return F_ERR
+    }
+    if yes {
+        return exec_block(p, nd.b)
+    }
+    p.has_last = false
+    if nd.c < 0 {
+        return F_NEXT
+    }
+    if p.nodes[nd.c].kind == N_IF {
+        return exec_if(p, nd.c)
+    }
+    return exec_block(p, nd.c)
+}
+
+/// Root of a place (`a` in `a.b[2].c`), or -1.
+fn place_root(p: &mut Runner, node: int) -> int {
+    let mut n = node
+    while n >= 0 {
+        let nd = p.nodes[n]
+        if nd.kind == N_NAME {
+            return n
+        }
+        if nd.kind != N_FIELD && nd.kind != N_INDEX {
+            return -1
+        }
+        n = nd.a
+    }
+    return -1
+}
+
+fn check_mutable(p: &mut Runner, node: int) -> bool {
+    let root = place_root(p, node)
+    if root < 0 {
+        return true
+    }
+    let name = p.nodes[root].s
+    let l = find_local(p, name)
+    if l >= 0 {
+        if !p.vars[l].mutable {
+            rerr(p, "{{name}} is not mutable; declare it with let mut")
+            return false
+        }
+        return true
+    }
+    if find_cap(p, name) >= 0 {
+        rerr(p, "a closure cannot change {{name}}; it holds a copy")
+        return false
+    }
+    let g = find_global(p, name)
+    if g >= 0 {
+        if !p.globals[g].mutable {
+            rerr(p, "{{name}} is not mutable; declare it with let mut")
+            return false
+        }
+        return true
+    }
+    lookup(p, name)
+    return false
+}
+
+fn assign(p: &mut Runner, target: int, v: RnVal, checked: bool) {
+    if !checked && !check_mutable(p, target) {
+        return
+    }
+    let nd = p.nodes[target]
+    if nd.kind == N_NAME {
+        let l = find_local(p, nd.s)
+        if l >= 0 {
+            p.vars[l].val = v
+            return
+        }
+        let g = find_global(p, nd.s)
+        if g >= 0 {
+            p.globals[g].val = v
+            return
+        }
+        rerr(p, "unknown name {{nd.s}}")
+        return
+    }
+    if nd.kind == N_FIELD {
+        let base = eval(p, nd.a)
+        if p.err != "" {
+            return
+        }
+        if base.kind != K_STRUCT {
+            rerr(p, "a {{kind_name(base.kind)}} has no field {{nd.s}}")
+            return
+        }
+        let names = p.heap[base.h].names
+        for i in 0..names.len {
+            if names[i] == nd.s {
+                p.heap[base.h].items[i] = v
+                return
+            }
+        }
+        rerr(p, "{{p.heap[base.h].tname}} has no field {{nd.s}}")
+        return
+    }
+    if nd.kind == N_INDEX {
+        let base = eval(p, nd.a)
+        let iv = eval(p, nd.b)
+        if p.err != "" {
+            return
+        }
+        if base.kind == K_STR {
+            rerr(p, "strings are immutable; build a new one")
+            return
+        }
+        if base.kind != K_ARR {
+            rerr(p, "cannot index a {{kind_name(base.kind)}}")
+            return
+        }
+        if iv.kind != K_INT {
+            rerr(p, "an index must be an int")
+            return
+        }
+        let i = int(iv.n)
+        let n = p.heap[base.h].items.len
+        if i < 0 || i >= n {
+            rerr(p, "index {{i}} is out of range for length {{n}}")
+            return
+        }
+        p.heap[base.h].items[i] = v
+        return
+    }
+    rerr(p, "that is not a place")
+}
+
+fn exec_stmt(p: &mut Runner, node: int) -> int {
+    if p.err != "" {
+        return F_ERR
+    }
+    if !tick(p) {
+        return F_ERR
+    }
+    let nd = p.nodes[node]
+    p.line = nd.line
+    let k = nd.kind
+    if k != N_IF && k != N_BLOCK {
+        p.has_last = false
+    }
+    if k == N_EXPR {
+        let v = eval(p, nd.a)
+        if p.err != "" {
+            return F_ERR
+        }
+        p.last = v
+        p.has_last = true
+        return F_NEXT
+    }
+    if k == N_LET {
+        let v = eval_owned(p, nd.a)
+        if p.err != "" {
+            return F_ERR
+        }
+        if v.kind == K_UNIT && p.nodes[nd.a].kind != N_UNIT {
+            rerr(p, "that call does not return a value")
+            return F_ERR
+        }
+        bind(p, nd.s, v, nd.n != i64(0))
+        return F_NEXT
+    }
+    if k == N_ASSIGN {
+        if !check_mutable(p, nd.a) {
+            return F_ERR
+        }
+        let mut v = eval_owned(p, nd.b)
+        if nd.s != "=" {
+            let old = eval(p, nd.a)
+            if p.err != "" {
+                return F_ERR
+            }
+            v = arith(p, str.slice(nd.s, 0, 1), old, v)
+        }
+        if p.err != "" {
+            return F_ERR
+        }
+        assign(p, nd.a, v, true)
+        if p.err != "" {
+            return F_ERR
+        }
+        return F_NEXT
+    }
+    if k == N_IF {
+        return exec_if(p, node)
+    }
+    if k == N_BLOCK {
+        return exec_block(p, node)
+    }
+    if k == N_WHILE {
+        while true {
+            let c = eval(p, nd.a)
+            let go = truthy(p, c, "while")
+            if p.err != "" {
+                return F_ERR
+            }
+            if !go {
+                break
+            }
+            let flow = exec_block(p, nd.b)
+            if flow == F_BREAK {
+                break
+            }
+            if flow == F_RETURN || flow == F_ERR {
+                return flow
+            }
+            if !tick(p) {
+                return F_ERR
+            }
+        }
+        p.has_last = false
+        return F_NEXT
+    }
+    if k == N_FOR {
+        let lo = eval(p, nd.a)
+        let hi = eval(p, nd.b)
+        if p.err != "" {
+            return F_ERR
+        }
+        if lo.kind != K_INT || hi.kind != K_INT {
+            rerr(p, "a for range wants ints")
+            return F_ERR
+        }
+        let mut i = lo.n
+        let mut end = hi.n
+        if nd.n != i64(0) {
+            end = end + i64(1)
+        }
+        while i < end {
+            let mark = p.vars.len
+            bind(p, nd.s, v_int(i), false)
+            let flow = exec_block(p, nd.c)
+            trim_vars(p, mark)
+            if flow == F_BREAK {
+                break
+            }
+            if flow == F_RETURN || flow == F_ERR {
+                return flow
+            }
+            if !tick(p) {
+                return F_ERR
+            }
+            i = i + i64(1)
+        }
+        p.has_last = false
+        return F_NEXT
+    }
+    if k == N_BREAK {
+        return F_BREAK
+    }
+    if k == N_CONTINUE {
+        return F_CONTINUE
+    }
+    if k == N_RETURN {
+        if nd.a >= 0 {
+            p.ret = eval(p, nd.a)
+        } else {
+            p.ret = v_unit()
+        }
+        if p.err != "" {
+            return F_ERR
+        }
+        return F_RETURN
+    }
+    if k == N_SWITCH {
+        return exec_switch(p, nd)
+    }
+    rerr(p, "that is not a statement")
+    return F_ERR
+}
+
+fn exec_switch(p: &mut Runner, nd: RnNode) -> int {
+    let subject = eval(p, nd.a)
+    if p.err != "" {
+        return F_ERR
+    }
+    let mut fallback = -1
+    for i in 0..nd.kids.len {
+        let c = p.nodes[nd.kids[i]]
+        if c.n != i64(0) {
+            fallback = c.a
+            continue
+        }
+        for j in 0..c.kids.len {
+            p.line = c.line
+            let pat = eval(p, c.kids[j])
+            if p.err != "" {
+                return F_ERR
+            }
+            let hit = compare(p, "==", subject, pat)
+            if p.err != "" {
+                return F_ERR
+            }
+            if hit.b {
+                return exec_case(p, c.a)
+            }
+        }
+    }
+    if fallback >= 0 {
+        return exec_case(p, fallback)
+    }
+    p.has_last = false
+    return F_NEXT
+}
+
+fn exec_case(p: &mut Runner, body: int) -> int {
+    let flow = exec_block(p, body)
+    if flow == F_BREAK {
+        rerr(p, "break inside a switch case would leave the loop around it; loamc rejects it")
+        return F_ERR
+    }
+    return flow
+}
+
+// ---- entry ----
+
+fn new_runner() -> Runner {
+    return Runner {
+        toks: []RnTok {},
+        tp: 0,
+        no_struct: false,
+        pdepth: 0,
+        nodes: []RnNode {},
+        fns: []RnFunc {},
+        types: []RnType {},
+        enums: []RnEnum {},
+        uses: []RnUse {},
+        globals: []RnVar {},
+        vars: []RnVar {},
+        base: 0,
+        caps: -1,
+        heap: []RnObj {},
+        out: []string {},
+        out_len: 0,
+        err: "",
+        err_line: 0,
+        line: 0,
+        steps: 0,
+        calls: 0,
+        edepth: 0,
+        ret: v_unit(),
+        last: v_unit(),
+        has_last: false,
+    }
+}
+
+fn finish(p: &mut Runner) -> RunResult {
+    let out = str.join(p.out, "")
+    if p.err != "" {
+        return RunResult { ok: false, out: out, err: p.err, line: p.err_line }
+    }
+    return RunResult { ok: true, out: out, err: "", line: 0 }
+}
+
+/// Run `src`. Nothing in here reads the process, the clock, or a file.
+fn run_source(src: string) -> RunResult {
+    if src.len > SRC_MAX {
+        return RunResult {
+            ok: false,
+            out: "",
+            err: "the program is longer than {{SRC_MAX}} bytes",
+            line: 1,
+        }
+    }
+    let mut p = new_runner()
+    let toks = lex(p, copy_text(src), 1)
+    p.toks = toks
+    if p.err != "" {
+        return finish(p)
+    }
+    let mut top = []int {}
+    while p.err == "" && !at_eof(p) {
+        let s = parse_stmt(p, true)
+        if s >= 0 {
+            push(top, s)
+        }
+        end_stmt(p)
+    }
+    if p.err != "" {
+        return finish(p)
+    }
+    // Top-level statements run in order; a top-level let is a global.
+    for i in 0..top.len {
+        let nd = p.nodes[top[i]]
+        if nd.kind == N_LET {
+            p.line = nd.line
+            let v = eval_owned(p, nd.a)
+            if p.err != "" {
+                return finish(p)
+            }
+            push(p.globals, RnVar { name: nd.s, val: v, mutable: nd.n != i64(0) })
+            continue
+        }
+        let flow = exec_stmt(p, top[i])
+        if flow == F_ERR {
+            return finish(p)
+        }
+        if flow == F_RETURN {
+            break
+        }
+        if flow == F_BREAK || flow == F_CONTINUE {
+            rerr(p, "break or continue outside a loop")
+            return finish(p)
+        }
+    }
+    let main_fn = find_fn(p, "main")
+    if main_fn >= 0 {
+        if p.fns[main_fn].params.len != 0 {
+            p.line = p.nodes[p.fns[main_fn].body].line
+            rerr(p, "main takes no arguments")
+            return finish(p)
+        }
+        call_fn(p, main_fn, -1, RnArgs { vals: []RnVal {}, nodes: []int {} })
+    }
+    return finish(p)
+}

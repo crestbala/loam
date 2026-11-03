@@ -1,0 +1,15 @@
+import "std:zeus"
+import "std:zui"
+import "std:router"
+import "../../components/widgets.loam" as widgets
+
+fn Page(p: Params) -> Node {
+    return widgets.Widgets()
+}
+
+fn meta(p: Params) -> Meta {
+    return Meta {
+        title: "Components — Loam",
+        description: "The core zeus-components, live: buttons, inputs, feedback, data, and overlays.",
+    }
+}

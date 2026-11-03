@@ -54,8 +54,8 @@ list() {
   echo "playground         (./run.sh repl [web|backend|frontend|macos])"
   echo "  repl               edit Loam in the browser; Run is Playground.Run over gRPC-Web"
   echo
-  echo "docs               (./run.sh www [web|backend|frontend|macos])"
-  echo "  www                Zeus docs; UI :5175, Docs.Page :8082"
+  echo "docs               (./run.sh www [--port N])"
+  echo "  www                Loam site, wasm via zeli serve --target web"
 }
 
 ensure_loam() {
@@ -266,7 +266,7 @@ shift
 
 case $what in
   list|-l|--list|-h|--help) list; exit 0 ;;
-  www|docs) exec "$HERE/www/run.sh" "$@" ;;
+  www|docs) exec "$HERE/bin/zeli" serve "$HERE/www" --target web "$@" ;;
   language/*) run_language "${what#language/}" ;;
   repl|zeus/repl) run_repl_stack "$@" ;;
   counter|zeus/counter) run_counter_stack "$@" ;;

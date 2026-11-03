@@ -1,0 +1,15 @@
+import "std:zeus"
+import "std:zui"
+import "std:router"
+import "../components/home.loam" as home
+
+fn Page(p: Params) -> Node {
+    return home.Home()
+}
+
+fn meta(p: Params) -> Meta {
+    return Meta {
+        title: "Loam",
+        description: "A memory-safe systems language, its standard UI, and a browser playground.",
+    }
+}

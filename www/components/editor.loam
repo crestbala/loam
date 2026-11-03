@@ -1,0 +1,992 @@
+//! The playground's code editor. Typing is handled here, so each token keeps
+//! its own color; a text field paints one color.
+//!
+//! The box is marked `capture_text`, so typed text, paste, and IME input
+//! arrive as `KEY_TEXT` events, and editing keys arrive as key codes. Keys:
+//!
+//! - arrows move; Shift extends the selection; Alt moves by word; Cmd/Ctrl
+//!   with arrows jumps to the line or document edge; Home / End, PageUp / PageDown
+//! - Enter keeps the indent and indents after `{`, `(`, `[`, or `:`
+//! - Tab / Shift+Tab indent and dedent (whole lines when a selection spans lines)
+//! - Backspace removes an indent step inside leading spaces
+//! - Cmd/Ctrl + A, C, X, V, Z, Shift+Z, Y, / (toggle `//`), Enter (run)
+//! - Esc leaves the editor, so Tab moves focus again
+
+import "std:zeus"
+import "std:colors"
+import "std:zui"
+import "std:str"
+import "highlight.loam" as highlight
+
+const CAP: int = 20000
+const LH: int = 20
+const PAD_X: int = 12
+const PAD_Y: int = 10
+const GUTTER: int = 44
+const UNDO_MAX: int = 200
+
+struct EdSnap {
+    text: string,
+    caret: int,
+}
+
+/// Editor state. Every field is a signal, so the struct is a cheap handle.
+struct EdState {
+    src: Signal<string>,
+    caret: Signal<int>,
+    anchor: Signal<int>,
+    goal: Signal<int>,
+    focused: Signal<bool>,
+    undo: Signal<[]EdSnap>,
+    redo: Signal<[]EdSnap>,
+    typing: Signal<bool>,
+}
+
+// ---- text helpers ----
+
+fn cat(a: string, b: string) -> string {
+    return "{{a}}{{b}}"
+}
+
+fn spaces(n: int) -> string {
+    if n <= 0 {
+        return ""
+    }
+    return str.repeat(" ", n)
+}
+
+fn clamp_at(s: string, at: int) -> int {
+    if at < 0 {
+        return 0
+    }
+    if at > s.len {
+        return s.len
+    }
+    return at
+}
+
+fn line_start_of(s: string, at: int) -> int {
+    let mut i = clamp_at(s, at)
+    while i > 0 && s[i - 1] != 10 {
+        i -= 1
+    }
+    return i
+}
+
+fn line_end_of(s: string, at: int) -> int {
+    let mut i = clamp_at(s, at)
+    while i < s.len && s[i] != 10 {
+        i += 1
+    }
+    return i
+}
+
+fn line_count(s: string) -> int {
+    let mut n = 1
+    for i in 0..s.len {
+        if s[i] == 10 {
+            n += 1
+        }
+    }
+    return n
+}
+
+fn line_index_at(s: string, at: int) -> int {
+    let end = clamp_at(s, at)
+    let mut n = 0
+    for i in 0..end {
+        if s[i] == 10 {
+            n += 1
+        }
+    }
+    return n
+}
+
+fn line_start(s: string, index: int) -> int {
+    let mut n = 0
+    let mut at = 0
+    while n < index && at < s.len {
+        if s[at] == 10 {
+            n += 1
+        }
+        at += 1
+    }
+    return at
+}
+
+fn line_at(s: string, index: int) -> string {
+    let a = line_start(s, index)
+    return str.slice(s, a, line_end_of(s, a))
+}
+
+fn indexes(n: int) -> []int {
+    let mut out = []int {}
+    for i in 0..n {
+        push(out, i)
+    }
+    return out
+}
+
+fn indent_width(s: string, ls: int) -> int {
+    let mut i = ls
+    while i < s.len && s[i] == 32 {
+        i += 1
+    }
+    return i - ls
+}
+
+fn is_word(c: int) -> bool {
+    if c >= 48 && c <= 57 {
+        return true
+    }
+    if c >= 65 && c <= 90 {
+        return true
+    }
+    if c >= 97 && c <= 122 {
+        return true
+    }
+    return c == 95 || c >= 128
+}
+
+/// Previous UTF-8 boundary.
+fn prev_char(s: string, at: int) -> int {
+    let mut i = clamp_at(s, at)
+    if i == 0 {
+        return 0
+    }
+    i -= 1
+    while i > 0 && s[i] >= 128 && s[i] < 192 {
+        i -= 1
+    }
+    return i
+}
+
+/// Next UTF-8 boundary.
+fn next_char(s: string, at: int) -> int {
+    let mut i = clamp_at(s, at)
+    if i >= s.len {
+        return s.len
+    }
+    i += 1
+    while i < s.len && s[i] >= 128 && s[i] < 192 {
+        i += 1
+    }
+    return i
+}
+
+fn word_left(s: string, at: int) -> int {
+    let mut i = clamp_at(s, at)
+    while i > 0 && !is_word(s[i - 1]) && s[i - 1] != 10 {
+        i -= 1
+    }
+    if i > 0 && s[i - 1] == 10 && i == clamp_at(s, at) {
+        return i - 1
+    }
+    while i > 0 && is_word(s[i - 1]) {
+        i -= 1
+    }
+    return i
+}
+
+fn word_right(s: string, at: int) -> int {
+    let mut i = clamp_at(s, at)
+    while i < s.len && !is_word(s[i]) && s[i] != 10 {
+        i += 1
+    }
+    if i < s.len && s[i] == 10 && i == clamp_at(s, at) {
+        return i + 1
+    }
+    while i < s.len && is_word(s[i]) {
+        i += 1
+    }
+    return i
+}
+
+/// Drop carriage returns and turn tabs into four spaces.
+fn clean(t: string) -> string {
+    let mut out = []int {}
+    for i in 0..t.len {
+        let c = t[i]
+        if c == 13 {
+            continue
+        }
+        if c == 9 {
+            for j in 0..4 {
+                push(out, 32)
+            }
+            continue
+        }
+        push(out, c)
+    }
+    return string_from_bytes(out)
+}
+
+// ---- selection and edits ----
+
+fn sel_lo(st: EdState) -> int {
+    let a = st.anchor.get()
+    let c = st.caret.get()
+    return if a < c { a } else { c }
+}
+
+fn sel_hi(st: EdState) -> int {
+    let a = st.anchor.get()
+    let c = st.caret.get()
+    return if a > c { a } else { c }
+}
+
+fn has_sel(st: EdState) -> bool {
+    return st.anchor.get() != st.caret.get()
+}
+
+fn move_to(st: EdState, to: int, extend: bool) {
+    let s = st.src.get()
+    let at = clamp_at(s, to)
+    st.caret.set(at)
+    if !extend {
+        st.anchor.set(at)
+    }
+    st.typing.set(false)
+}
+
+fn push_snap(list: Signal<[]EdSnap>, snap: EdSnap) {
+    let old = list.get()
+    let mut next = []EdSnap {}
+    let start = if old.len >= UNDO_MAX { old.len - UNDO_MAX + 1 } else { 0 }
+    for i in start..old.len {
+        push(next, old[i])
+    }
+    push(next, snap)
+    list.set(next)
+}
+
+fn pop_snap(list: Signal<[]EdSnap>) -> EdSnap {
+    let old = list.get()
+    let mut next = []EdSnap {}
+    for i in 0..(old.len - 1) {
+        push(next, old[i])
+    }
+    let last = old[old.len - 1]
+    list.set(next)
+    return last
+}
+
+/// Replace `[a, b)` with `text`, leaving the caret after it. `typing` edits
+/// in a row share one undo step.
+fn replace(st: EdState, a: int, b: int, text: string, typing: bool) {
+    let s = st.src.get()
+    let lo = clamp_at(s, a)
+    let hi = clamp_at(s, b)
+    if s.len - (hi - lo) + text.len > CAP {
+        return
+    }
+    if !(typing && st.typing.get()) {
+        push_snap(st.undo, EdSnap { text: s, caret: st.caret.get() })
+    }
+    st.redo.set([]EdSnap {})
+    st.src.set(cat(cat(str.slice(s, 0, lo), text), str.slice(s, hi, s.len)))
+    st.caret.set(lo + text.len)
+    st.anchor.set(lo + text.len)
+    st.goal.set(-1)
+    st.typing.set(typing)
+}
+
+/// Replace the whole buffer as one undo step, then select `[a, c)`.
+fn rewrite(st: EdState, text: string, a: int, c: int) {
+    let s = st.src.get()
+    push_snap(st.undo, EdSnap { text: s, caret: st.caret.get() })
+    st.redo.set([]EdSnap {})
+    st.src.set(text)
+    st.anchor.set(clamp_at(text, a))
+    st.caret.set(clamp_at(text, c))
+    st.goal.set(-1)
+    st.typing.set(false)
+}
+
+fn undo(st: EdState) {
+    if st.undo.get().len == 0 {
+        return
+    }
+    let snap = pop_snap(st.undo)
+    push_snap(st.redo, EdSnap { text: st.src.get(), caret: st.caret.get() })
+    st.src.set(snap.text)
+    st.caret.set(clamp_at(snap.text, snap.caret))
+    st.anchor.set(clamp_at(snap.text, snap.caret))
+    st.typing.set(false)
+}
+
+fn redo(st: EdState) {
+    if st.redo.get().len == 0 {
+        return
+    }
+    let snap = pop_snap(st.redo)
+    push_snap(st.undo, EdSnap { text: st.src.get(), caret: st.caret.get() })
+    st.src.set(snap.text)
+    st.caret.set(clamp_at(snap.text, snap.caret))
+    st.anchor.set(clamp_at(snap.text, snap.caret))
+    st.typing.set(false)
+}
+
+fn type_text(st: EdState, raw: string) {
+    let t = clean(raw)
+    if t.len == 0 {
+        return
+    }
+    let s = st.src.get()
+    let lo = sel_lo(st)
+    let hi = sel_hi(st)
+    // A closing brace typed into leading spaces steps back one indent.
+    if lo == hi && (t == "}" || t == ")" || t == "]") {
+        let ls = line_start_of(s, lo)
+        if lo - ls >= 4 && indent_width(s, ls) >= lo - ls {
+            let back = 4 - ((lo - ls) % 4)
+            let cut = if back == 4 || back == 0 { 4 } else { back }
+            replace(st, lo - cut, lo, t, false)
+            return
+        }
+    }
+    let single = t.len == 1 && t != " " && t != "\n"
+    replace(st, lo, hi, t, single)
+}
+
+fn newline(st: EdState) {
+    let s = st.src.get()
+    let lo = sel_lo(st)
+    let hi = sel_hi(st)
+    let ls = line_start_of(s, lo)
+    let mut ind = indent_width(s, ls)
+    if ind > lo - ls {
+        ind = lo - ls
+    }
+    let mut j = lo
+    while j > ls && s[j - 1] == 32 {
+        j -= 1
+    }
+    let before = if j > ls { s[j - 1] } else { 0 }
+    let after = if hi < s.len { s[hi] } else { 0 }
+    let opens = before == 123 || before == 40 || before == 91
+    if opens || before == 58 {
+        let pad = spaces(ind + 4)
+        let pairs = (before == 123 && after == 125) ||
+            (before == 40 && after == 41) ||
+            (before == 91 && after == 93)
+        if pairs {
+            let text = "\n{{pad}}\n{{spaces(ind)}}"
+            replace(st, j, hi, text, false)
+            let c = j + 1 + pad.len
+            st.caret.set(c)
+            st.anchor.set(c)
+            return
+        }
+        replace(st, j, hi, "\n{{pad}}", false)
+        return
+    }
+    replace(st, lo, hi, "\n{{spaces(ind)}}", false)
+}
+
+/// Start of each line touched by `[lo, hi]`.
+fn touched_lines(s: string, lo: int, hi: int) -> []int {
+    let mut out = []int {}
+    let mut ls = line_start_of(s, lo)
+    let mut end = hi
+    // A selection that ends at a line start does not take that line.
+    if hi > lo && line_start_of(s, hi) == hi {
+        end = hi - 1
+    }
+    while true {
+        push(out, ls)
+        let le = line_end_of(s, ls)
+        if le >= end || le >= s.len {
+            break
+        }
+        ls = le + 1
+    }
+    return out
+}
+
+/// Indent (`dir` 1) or dedent (-1) every line in the selection by 4.
+fn shift_lines(st: EdState, dir: int) {
+    let s = st.src.get()
+    let lo = sel_lo(st)
+    let hi = sel_hi(st)
+    let starts = touched_lines(s, lo, hi)
+    let mut out = []string {}
+    let mut prev = 0
+    let mut d_lo = 0
+    let mut d_hi = 0
+    for i in 0..starts.len {
+        let ls = starts[i]
+        push(out, str.slice(s, prev, ls))
+        let mut change = 0
+        if dir > 0 {
+            if line_end_of(s, ls) > ls || starts.len == 1 {
+                push(out, "    ")
+                change = 4
+            }
+            prev = ls
+        } else {
+            let w = indent_width(s, ls)
+            let cut = if w >= 4 { 4 } else { w }
+            prev = ls + cut
+            change = -cut
+        }
+        if ls <= lo {
+            d_lo += change
+        }
+        if ls <= hi {
+            d_hi += change
+        }
+    }
+    push(out, str.slice(s, prev, s.len))
+    let text = str.join(out, "")
+    if text == s {
+        return
+    }
+    let ls0 = starts[0]
+    let mut new_lo = lo + d_lo
+    if new_lo < ls0 {
+        new_lo = ls0
+    }
+    let new_hi = hi + d_hi
+    if st.anchor.get() <= st.caret.get() {
+        rewrite(st, text, new_lo, new_hi)
+    } else {
+        rewrite(st, text, new_hi, new_lo)
+    }
+}
+
+fn starts_comment(s: string, at: int) -> bool {
+    return at + 1 < s.len && s[at] == 47 && s[at + 1] == 47
+}
+
+/// Cmd/Ctrl + /: comment the selected lines out, or back in.
+fn toggle_comment(st: EdState) {
+    let s = st.src.get()
+    let lo = sel_lo(st)
+    let hi = sel_hi(st)
+    let starts = touched_lines(s, lo, hi)
+    let mut all = true
+    let mut min_ind = 100000
+    for i in 0..starts.len {
+        let ls = starts[i]
+        let w = indent_width(s, ls)
+        if ls + w == line_end_of(s, ls) {
+            continue
+        }
+        if w < min_ind {
+            min_ind = w
+        }
+        if !starts_comment(s, ls + w) {
+            all = false
+        }
+    }
+    if min_ind == 100000 {
+        min_ind = 0
+        all = false
+    }
+    let mut out = []string {}
+    let mut prev = 0
+    let mut delta_caret = 0
+    let caret = st.caret.get()
+    for i in 0..starts.len {
+        let ls = starts[i]
+        let w = indent_width(s, ls)
+        let blank = ls + w == line_end_of(s, ls)
+        if blank && starts.len > 1 {
+            continue
+        }
+        if all {
+            let at = ls + w
+            let cut = if at + 2 < s.len && s[at + 2] == 32 { 3 } else { 2 }
+            push(out, str.slice(s, prev, at))
+            prev = at + cut
+            if at < caret {
+                delta_caret -= if caret - at < cut { caret - at } else { cut }
+            }
+        } else {
+            let at = ls + min_ind
+            push(out, str.slice(s, prev, at))
+            push(out, "// ")
+            prev = at
+            if at <= caret {
+                delta_caret += 3
+            }
+        }
+    }
+    push(out, str.slice(s, prev, s.len))
+    let text = str.join(out, "")
+    if has_sel(st) {
+        let last_idx = line_index_at(s, starts[starts.len - 1])
+        rewrite(st, text, starts[0], line_end_of(text, line_start(text, last_idx)))
+        return
+    }
+    rewrite(st, text, caret + delta_caret, caret + delta_caret)
+}
+
+fn copy_sel(st: EdState) -> bool {
+    let s = st.src.get()
+    if has_sel(st) {
+        zeus.copy_text(str.slice(s, sel_lo(st), sel_hi(st)))
+        return true
+    }
+    // No selection: copy the whole line, as most code editors do.
+    let ls = line_start_of(s, st.caret.get())
+    let le = line_end_of(s, ls)
+    zeus.copy_text(cat(str.slice(s, ls, le), "\n"))
+    return false
+}
+
+fn vertical(st: EdState, lines: int, extend: bool) {
+    let s = st.src.get()
+    let at = clamp_at(s, st.caret.get())
+    let ls = line_start_of(s, at)
+    let mut col = st.goal.get()
+    if col < 0 {
+        col = at - ls
+    }
+    let i = line_index_at(s, at)
+    let n = line_count(s)
+    let target = i + lines
+    let mut to = 0
+    if target < 0 {
+        to = 0
+    } else if target >= n {
+        to = s.len
+    } else {
+        let ts = line_start(s, target)
+        let len = line_end_of(s, ts) - ts
+        to = ts + (if col < len { col } else { len })
+    }
+    st.caret.set(to)
+    if !extend {
+        st.anchor.set(to)
+    }
+    st.goal.set(col)
+    st.typing.set(false)
+}
+
+fn on_key(st: EdState, run: fn()) {
+    let ev = zeus.current_key()
+    let k = ev.key
+    st.focused.set(true)
+    if k == zeus.KEY_TEXT {
+        type_text(st, ev.text)
+        return
+    }
+    let s = st.src.get()
+    let at = clamp_at(s, st.caret.get())
+    let lo = sel_lo(st)
+    let hi = sel_hi(st)
+    let cmd = ev.meta || ev.ctrl
+    let shift = ev.shift
+    if k == 27 {
+        st.anchor.set(at)
+        st.focused.set(false)
+        return
+    }
+    if cmd {
+        if k == 13 {
+            run()
+        } else if k == 97 || k == 65 {
+            st.anchor.set(0)
+            st.caret.set(s.len)
+        } else if k == 99 || k == 67 {
+            copy_sel(st)
+        } else if k == 120 || k == 88 {
+            if copy_sel(st) {
+                replace(st, lo, hi, "", false)
+            } else {
+                let ls = line_start_of(s, at)
+                replace(st, ls, next_char(s, line_end_of(s, ls)), "", false)
+            }
+        } else if (k == 122 && !shift) {
+            undo(st)
+        } else if k == 90 || (k == 122 && shift) || k == 121 || k == 89 {
+            redo(st)
+        } else if k == 47 {
+            toggle_comment(st)
+        } else if k == 1000 {
+            let ls = line_start_of(s, at)
+            let first = ls + indent_width(s, ls)
+            move_to(st, if at == first { ls } else { first }, shift)
+        } else if k == 1001 {
+            move_to(st, line_end_of(s, at), shift)
+        } else if k == 1002 || k == 1006 {
+            move_to(st, 0, shift)
+        } else if k == 1003 || k == 1007 {
+            move_to(st, s.len, shift)
+        } else if k == 8 {
+            if lo != hi {
+                replace(st, lo, hi, "", false)
+            } else {
+                replace(st, line_start_of(s, at), at, "", false)
+            }
+        }
+        return
+    }
+    if k == 13 || k == 10 {
+        newline(st)
+        return
+    }
+    if k == 9 {
+        let multi = lo != hi && line_start_of(s, lo) != line_start_of(s, hi)
+        if shift || multi {
+            shift_lines(st, if shift { -1 } else { 1 })
+            return
+        }
+        let col = lo - line_start_of(s, lo)
+        replace(st, lo, hi, spaces(4 - col % 4), false)
+        return
+    }
+    if k == 8 {
+        if lo != hi {
+            replace(st, lo, hi, "", false)
+            return
+        }
+        if at == 0 {
+            return
+        }
+        if ev.alt {
+            replace(st, word_left(s, at), at, "", false)
+            return
+        }
+        let ls = line_start_of(s, at)
+        let col = at - ls
+        if col > 0 && indent_width(s, ls) >= col {
+            let back = if col % 4 == 0 { 4 } else { col % 4 }
+            replace(st, at - back, at, "", false)
+            return
+        }
+        replace(st, prev_char(s, at), at, "", false)
+        return
+    }
+    if k == 127 {
+        if lo != hi {
+            replace(st, lo, hi, "", false)
+            return
+        }
+        if ev.alt {
+            replace(st, at, word_right(s, at), "", false)
+            return
+        }
+        replace(st, at, next_char(s, at), "", false)
+        return
+    }
+    if k == 1000 {
+        if lo != hi && !shift {
+            move_to(st, lo, false)
+            return
+        }
+        move_to(st, if ev.alt { word_left(s, at) } else { prev_char(s, at) }, shift)
+        return
+    }
+    if k == 1001 {
+        if lo != hi && !shift {
+            move_to(st, hi, false)
+            return
+        }
+        move_to(st, if ev.alt { word_right(s, at) } else { next_char(s, at) }, shift)
+        return
+    }
+    if k == 1002 {
+        vertical(st, -1, shift)
+        return
+    }
+    if k == 1003 {
+        vertical(st, 1, shift)
+        return
+    }
+    if k == 1004 {
+        vertical(st, -12, shift)
+        return
+    }
+    if k == 1005 {
+        vertical(st, 12, shift)
+        return
+    }
+    if k == 1006 {
+        let ls = line_start_of(s, at)
+        let first = ls + indent_width(s, ls)
+        move_to(st, if at == first { ls } else { first }, shift)
+        return
+    }
+    if k == 1007 {
+        move_to(st, line_end_of(s, at), shift)
+        return
+    }
+    if k >= 32 && k <= 126 && !ev.alt {
+        type_text(st, string_from_bytes([]int { k }))
+    }
+}
+
+// ---- geometry ----
+
+/// x of column `col` in `line`, measured span by span the way the row lays
+/// the spans out.
+fn col_x(line: string, col: int) -> int {
+    let spans = highlight.spans(line)
+    let mut x = 0
+    let mut used = 0
+    for i in 0..spans.len {
+        let body = str.slice_from(spans[i], 1)
+        if line.len == 0 {
+            break
+        }
+        if used + body.len <= col {
+            x += zeus.text_width(body, highlight.CODE_FONT)
+            used += body.len
+            continue
+        }
+        if col > used {
+            x += zeus.text_width(str.slice(body, 0, col - used), highlight.CODE_FONT)
+        }
+        break
+    }
+    return x
+}
+
+/// The column nearest `x` in `line`.
+fn col_at(line: string, x: int) -> int {
+    if x <= 0 {
+        return 0
+    }
+    let mut prev = 0
+    let mut i = 0
+    while i < line.len {
+        let j = next_char(line, i)
+        let w = col_x(line, j)
+        if x < (prev + w) / 2 {
+            return i
+        }
+        prev = w
+        i = j
+    }
+    return line.len
+}
+
+fn point_to_offset(st: EdState, code: Ref) -> int {
+    let s = st.src.get()
+    let id = zeus.ref_id(code)
+    if id <= 0 {
+        return st.caret.get()
+    }
+    let m = zeus.current_mouse()
+    let mut row = (m.y - zeus.node_y(id) - PAD_Y) / LH
+    let n = line_count(s)
+    if m.y < zeus.node_y(id) + PAD_Y {
+        row = 0
+    }
+    if row >= n {
+        return s.len
+    }
+    let ls = line_start(s, row)
+    let line = line_at(s, row)
+    return ls + col_at(line, m.x - zeus.node_x(id) - PAD_X)
+}
+
+// ---- view ----
+
+fn on_line(st: EdState, index: int) -> bool {
+    let s = st.src.get()
+    return line_index_at(s, clamp_at(s, st.caret.get())) == index
+}
+
+fn sel_left(st: EdState, index: int) -> int {
+    let s = st.src.get()
+    let ls = line_start(s, index)
+    let lo = sel_lo(st)
+    if lo <= ls {
+        return 0
+    }
+    return col_x(line_at(s, index), lo - ls)
+}
+
+fn sel_width(st: EdState, index: int) -> int {
+    let s = st.src.get()
+    let ls = line_start(s, index)
+    let le = line_end_of(s, ls)
+    let lo = sel_lo(st)
+    let hi = sel_hi(st)
+    if lo == hi || hi < ls || lo > le || (hi == ls && lo < ls) {
+        return 0
+    }
+    let line = str.slice(s, ls, le)
+    let x0 = if lo <= ls { 0 } else { col_x(line, lo - ls) }
+    let mut x1 = 0
+    if hi > le {
+        x1 = col_x(line, le - ls) + 7
+    } else {
+        x1 = col_x(line, hi - ls)
+    }
+    return x1 - x0
+}
+
+fn caret_left(st: EdState, index: int) -> int {
+    let s = st.src.get()
+    let at = clamp_at(s, st.caret.get())
+    let ls = line_start_of(s, at)
+    if line_index_at(s, at) != index {
+        return 0
+    }
+    return col_x(str.slice(s, ls, line_end_of(s, ls)), at - ls)
+}
+
+fn LineRow(st: EdState, index: int) -> Node {
+    return zeus.Box(style = Style(
+        direction = Direction.Row,
+        align = Align.Center,
+        height = px(LH),
+        width = pct(100),
+    )) {
+        zeus.Box(
+            style = Style(
+                position = pos_absolute(),
+                left = sel_left(st, index),
+                top = 1,
+                width = px(sel_width(st, index)),
+                height = px(LH - 2),
+                radius = 2,
+                background = zeus.accent(),
+                opacity = 30,
+            ),
+            visible = sel_width(st, index) > 0,
+        )
+        zui.Each(
+            fn() -> []string {
+                return highlight.spans(line_at(st.src.get(), index))
+            },
+            fn(i: int, span: string) -> Node {
+                return highlight.SpanNode(span)
+            },
+        )
+        zeus.Box(
+            style = Style(
+                position = pos_absolute(),
+                left = caret_left(st, index),
+                top = 2,
+                width = px(2),
+                height = px(LH - 4),
+                background = zeus.accent(),
+            ),
+            visible = st.focused.get() && on_line(st, index),
+        )
+    }
+}
+
+fn GutterRow(st: EdState, index: int) -> Node {
+    let n = index + 1
+    return zeus.Box(style = Style(
+        direction = Direction.Row,
+        align = Align.Center,
+        justify = Align.End,
+        height = px(LH),
+        width = pct(100),
+    )) {
+        zeus.Text(
+            "{{n}}",
+            style = Style(font = highlight.CODE_FONT - 1, color = if on_line(st, index) {
+                colors.mute()
+            } else {
+                colors.dim()
+            }),
+        )
+    }
+}
+
+/// A program editor bound to `src`. `run` is called for Cmd/Ctrl+Enter.
+fn CodeEditor(src: Signal<string>, run: fn()) -> Node {
+    let st = EdState {
+        src: src,
+        caret: zeus.signal(src.get().len),
+        anchor: zeus.signal(src.get().len),
+        goal: zeus.signal(-1),
+        focused: zeus.signal(false),
+        undo: zeus.signal([]EdSnap {}),
+        redo: zeus.signal([]EdSnap {}),
+        typing: zeus.signal(false),
+    }
+    let ed = zeus.ref()
+    let code = zeus.ref()
+    // A new program loaded from outside (an example button) resets the caret.
+    zeus.effect(fn() {
+        let s = src.get()
+        if zeus.peek(st.caret) > s.len || zeus.peek(st.anchor) > s.len {
+            st.caret.set(s.len)
+            st.anchor.set(s.len)
+        }
+    })
+    return zeus.Box(
+        ref = ed,
+        captureText = true,
+        role = "textbox",
+        label = "Program editor",
+        on_key_down = fn() {
+            on_key(st, run)
+        },
+        on_drag = fn() {
+            let m = zeus.current_mouse()
+            let at = point_to_offset(st, code)
+            if m.first {
+                zeus.focus(ed)
+                st.focused.set(true)
+                st.anchor.set(at)
+                st.goal.set(-1)
+                st.typing.set(false)
+            }
+            st.caret.set(at)
+        },
+        focusStyle = fn() -> Style {
+            return Style(borderColor = zeus.accent())
+        },
+        style = Style(
+            direction = Direction.Row,
+            align = Align.Start,
+            radius = 10,
+            background = colors.raised(),
+            width = pct(100),
+            minHeight = 260,
+            borderWidth = 1,
+            borderColor = colors.rule(),
+            cursor = "text",
+            overflow = Overflow.Hidden,
+        ),
+    ) {
+        zeus.Box(style = Style(
+            direction = Direction.Column,
+            width = px(GUTTER),
+            shrink = 0,
+            paddingY = PAD_Y,
+            paddingRight = 4,
+            borderRight = 1,
+            borderColor = colors.rule(),
+        )) {
+            zui.Each(
+                fn() -> []int {
+                    return indexes(line_count(src.get()))
+                },
+                fn(n: int, index: int) -> Node {
+                    return GutterRow(st, index)
+                },
+            )
+        }
+        zeus.Box(
+            ref = code,
+            style = Style(
+                direction = Direction.Column,
+                grow = 1,
+                minWidth = 0,
+                paddingX = PAD_X,
+                paddingY = PAD_Y,
+            ),
+        ) {
+            zui.Each(
+                fn() -> []int {
+                    return indexes(line_count(src.get()))
+                },
+                fn(n: int, index: int) -> Node {
+                    return LineRow(st, index)
+                },
+            )
+        }
+    }
+}

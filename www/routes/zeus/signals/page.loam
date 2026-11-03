@@ -1,0 +1,15 @@
+import "std:zeus"
+import "std:zui"
+import "std:router"
+import "../../../components/zeuspage.loam" as zeuspage
+
+fn Page(p: Params) -> Node {
+    return zeuspage.Signals()
+}
+
+fn meta(p: Params) -> Meta {
+    return Meta {
+        title: "Signals — Loam",
+        description: "Signals, Show, and Each.",
+    }
+}

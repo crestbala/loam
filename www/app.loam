@@ -1,0 +1,15 @@
+//! Loam — the language site. One entry, the wasm web target.
+//!
+//! `zeli routes` generates app_routes.loam from routes/. This file mounts it.
+//! The published build is client-only: no server import, no filesystem, no
+//! working directory.
+
+import "std:zeus"
+import "app_routes.loam" as approutes
+import "tests/smoke.loam" as smoketest
+
+fn main() {
+    zeus.App("Loam", fn() -> Node {
+        return approutes.app()
+    })
+}

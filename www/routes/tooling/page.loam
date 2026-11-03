@@ -1,0 +1,15 @@
+import "std:zeus"
+import "std:zui"
+import "std:router"
+import "../../components/tooling.loam" as tooling
+
+fn Page(p: Params) -> Node {
+    return tooling.Tooling()
+}
+
+fn meta(p: Params) -> Meta {
+    return Meta {
+        title: "Tooling — Loam",
+        description: "loamc, loam-fmt, the language server, and tests.",
+    }
+}

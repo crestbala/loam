@@ -1,0 +1,65 @@
+//! Drives the generated route table headlessly and asserts every page paints.
+//!
+//!     ZEUS_HEADLESS=1 ./bin/loamc www/tests/routes.loam -o /tmp/loam-www-routes && /tmp/loam-www-routes
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:router"
+import "../app_routes.loam" as approutes
+
+fn fail(what: string) {
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn visit(path: string, want: string) {
+    router.navigate(path)
+    zeus.engine_layout(1200, 800)
+    if zeus.engine_find_text(want) == 0 {
+        fail(path)
+    }
+    if zeus.engine_find_text("Loam") == 0 {
+        fail("root shell lost at {{path}}")
+    }
+}
+
+fn main() {
+    zeus.snapshot(1200, 800, fn() -> Node {
+        return zeus.Box(style = Style(direction = Direction.Column)) {
+            approutes.app()
+        }
+    })
+    if zeus.engine_find_text("A memory-safe systems language") == 0 {
+        fail("root page")
+    }
+    if zeus.engine_find_text("Language") == 0 {
+        fail("nav missing Language")
+    }
+    if zeus.engine_find_text("Playground") == 0 {
+        fail("nav missing Playground")
+    }
+    visit("/language", "Language")
+    visit("/language/ownership", "Ownership and borrows")
+    visit("/language/control", "Control flow")
+    visit("/language/errors", "Result and Option")
+    visit("/language/modules", "Import paths")
+    visit("/language/functions", "Functions and closures")
+    visit("/types", "Types")
+    visit("/types/numbers", "Numeric widths")
+    visit("/types/aggregates", "Structs, enums, and slices")
+    visit("/types/text", "Strings and interpolation")
+    visit("/types/memory", "Borrows and boxes")
+    visit("/zeus", "Zeus")
+    visit("/zeus/signals", "Signals and Show")
+    visit("/zeus/views", "Views and arguments")
+    visit("/zeus/routing", "Files are the router")
+    visit("/zeus/hosts", "Hosts and wasm")
+    visit("/components", "Inputs and choices")
+    visit("/tooling", "Tooling")
+    visit("/tooling/fmt", "The formatter")
+    visit("/tooling/tests", "Test functions")
+    visit("/playground", "Run Loam in the browser")
+    visit("/nope", "not found")
+    fmt.println("www routes ok")
+}

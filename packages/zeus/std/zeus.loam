@@ -897,6 +897,15 @@ fn engine_context_click(px: int, py: int) -> int {
     return input.context_click(px, py)
 }
 
+/// Width in pixels of one line of `s` at font size `px`, as the host draws
+/// it. A code editor places its caret and maps clicks to columns with this.
+fn text_width(s: string, px: int) -> int {
+    let mut w = 0
+    let mut h = 0
+    metrics.measure(s, px, w, h)
+    return w
+}
+
 /// The text the last `copy_text` put on the clipboard.
 fn clipboard_last() -> string {
     return platform.plat_clipboard_last()

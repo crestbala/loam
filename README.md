@@ -309,7 +309,7 @@ packages/tooling/editors/       Zed extension, VSCode extension
 install.sh             one-time macOS setup (core tools; android stack)
 examples/language/     standalone .loam programs
 examples/zeus/         gallery (component catalog), dashboard, full-stack counter
-www/                   Zeus + gRPC docs (Vite serves wasm, no Svelte)
+www/                   language site (zeli, wasm web target)
 docs/                  loam.md (language + architecture), boundary.md (C seam),
                        loam-vs-c-and-rust.md (comparison + disadvantages),
                        downsides.md (self-improvement phases),

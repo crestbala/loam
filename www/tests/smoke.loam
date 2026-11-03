@@ -1,0 +1,178 @@
+//! Runner tests. The browser runner never touches the host.
+//!
+//!     ./bin/loamc test www/tests/smoke.loam
+
+import "std:test"
+import "std:str"
+import "../components/runner.loam" as runner
+
+fn ran(src: string) -> RunResult {
+    return runner.run_source(src)
+}
+
+fn ok_out(src: string, want: string) {
+    let r = ran(src)
+    if !r.ok {
+        assert_eq_str(r.err, "")
+    }
+    assert(r.ok)
+    assert_eq_str(r.out, want)
+}
+
+fn fails(src: string, part: string, line: int) {
+    let r = ran(src)
+    assert(!r.ok)
+    if !str.contains(r.err, part) {
+        assert_eq_str(r.err, part)
+    }
+    assert_eq_int(r.line, line)
+}
+
+#[test]
+fn println_spaces_args() {
+    ok_out("import \"std:fmt\"\nfmt.println(\"hello,\", 42, true)", "hello, 42 true\n")
+}
+
+#[test]
+fn arithmetic_and_precedence() {
+    ok_out(
+        "import \"std:fmt\"\nfmt.println(1 + 2 * 3, 7 / 2, 0 - 7 % 3, 7.0 / 2.0)",
+        "7 3 -1 3.5\n",
+    )
+}
+
+#[test]
+fn functions_and_recursion() {
+    ok_out(
+        "import \"std:fmt\"\nfn fib(n: int) -> int {\n    if n < 2 {\n        return n\n    }\n    return fib(n - 1) + fib(n - 2)\n}\nfn main() {\n    fmt.println(fib(15))\n}",
+        "610\n",
+    )
+}
+
+#[test]
+fn loops_break_continue() {
+    ok_out(
+        "import \"std:fmt\"\nlet mut total = 0\nfor i in 0..10 {\n    if i == 2 {\n        continue\n    }\n    if i == 6 {\n        break\n    }\n    total += i\n}\nlet mut n = 3\nwhile n > 0 {\n    n -= 1\n}\nfmt.println(total, n)",
+        "13 0\n",
+    )
+}
+
+#[test]
+fn structs_and_methods() {
+    ok_out(
+        "import \"std:fmt\"\nstruct P {\n    x: int,\n    y: int,\n}\nfn bump(p: &mut P) {\n    p.x += 1\n}\nfn sum(p: P) -> int {\n    return p.x + p.y\n}\nlet mut p = P { x: 1, y: 2 }\nbump(p)\np.bump()\nfmt.println(p.x, p.sum())",
+        "3 5\n",
+    )
+}
+
+#[test]
+fn values_copy_on_let() {
+    ok_out(
+        "import \"std:fmt\"\nlet mut a = []int { 1 }\nlet b = a\na.push(2)\nfmt.println(a.len, b.len)",
+        "2 1\n",
+    )
+}
+
+#[test]
+fn mut_ref_scalar_writes_back() {
+    ok_out(
+        "import \"std:fmt\"\nfn inc(n: &mut int) {\n    *n += 1\n}\nlet mut k = 1\ninc(&mut k)\nfmt.println(k)",
+        "2\n",
+    )
+}
+
+#[test]
+fn closures_capture() {
+    ok_out(
+        "import \"std:fmt\"\nfn adder(n: int) -> fn(int) -> int {\n    return |x: int| { x + n }\n}\nlet add = adder(40)\nfmt.println(add(2))",
+        "42\n",
+    )
+}
+
+#[test]
+fn switch_and_enum() {
+    ok_out(
+        "import \"std:fmt\"\nenum Tint {\n    Ok,\n    Bad,\n}\nfn name(t: Tint) -> string {\n    switch t {\n        case Tint.Ok:\n            return \"ok\"\n        default:\n            return \"bad\"\n    }\n}\nfmt.println(name(Tint.Ok), name(Tint.Bad))",
+        "ok bad\n",
+    )
+}
+
+#[test]
+fn interpolation_and_if_value() {
+    let o = string_from_bytes([]int { 123, 123 })
+    let c = string_from_bytes([]int { 125, 125 })
+    ok_out(
+        "import \"std:fmt\"\nlet n = 4\nlet kind = if n % 2 == 0 { \"even\" } else { \"odd\" }\nfmt.println(\"n={{o}}n * 2{{c}} {{o}}kind{{c}}\")",
+        "n=8 even\n",
+    )
+}
+
+#[test]
+fn str_module_and_methods() {
+    ok_out(
+        "import \"std:fmt\"\nimport \"std:str\" as s\nfmt.println(\"  hi  \".trim().to_upper(), s.contains(\"loam\", \"oa\"))",
+        "HI true\n",
+    )
+}
+
+#[test]
+fn math_module() {
+    ok_out(
+        "import \"std:fmt\"\nimport \"std:math\"\nfmt.println(math.abs(0 - 4), math.max(2, 9))",
+        "4 9\n",
+    )
+}
+
+#[test]
+fn output_kept_before_error() {
+    let r = ran("import \"std:fmt\"\nfmt.println(\"before\")\nfmt.println(1 / 0)")
+    assert(!r.ok)
+    assert_eq_str(r.out, "before\n")
+    assert_eq_str(r.err, "division by zero")
+    assert_eq_int(r.line, 3)
+}
+
+#[test]
+fn overflow_traps() {
+    fails("import \"std:fmt\"\nfmt.println(2147483647 + 1)", "integer overflow", 2)
+}
+
+#[test]
+fn endless_loop_stops() {
+    fails("let mut i = 0\nwhile true {\n    i += 1\n}", "steps", 3)
+}
+
+#[test]
+fn runaway_recursion_stops() {
+    fails("fn f(n: int) -> int {\n    return f(n + 1)\n}\nf(0)", "call depth", 2)
+}
+
+#[test]
+fn immutable_assign() {
+    fails("let x = 1\nx = 2", "not mutable", 2)
+}
+
+#[test]
+fn parse_error_has_line() {
+    fails("import \"std:fmt\"\nfn main() {\n    let x = (1 +\n}", "expected a value", 4)
+}
+
+#[test]
+fn no_host_import() {
+    fails("import \"std:sys\"", "host", 1)
+}
+
+#[test]
+fn no_file_import() {
+    fails("import \"fmt.loam\"", "file imports", 1)
+}
+
+#[test]
+fn missing_import() {
+    fails("fmt.println(1)", "not imported", 1)
+}
+
+#[test]
+fn inclusive_range_rejected() {
+    fails("for i in 0..=3 {\n}", "no ..=", 1)
+}

@@ -1,0 +1,246 @@
+//! The core of zeus-components, live, each next to the call that builds it.
+//! This is a curated set, not the whole library.
+
+import "std:zeus"
+import "std:spacing"
+import "std:colors"
+import "std:zui"
+import "prose.loam" as prose
+
+struct LangRow {
+    name: string
+    kind: string
+    year: string
+}
+
+fn lang_cells(row: LangRow) -> []string {
+    return []string { row.name, row.kind, row.year }
+}
+
+/// A live demo on a plate, then the code that builds it.
+fn Demo(build: fn()) -> Node {
+    return zeus.Box(style = Style(
+        direction = Direction.Column,
+        gap = Space.Sm,
+        padding = 20,
+        radius = 10,
+        width = pct(100),
+        background = colors.plate(),
+        borderWidth = 1,
+        borderColor = colors.rule(),
+    )) {
+        build()
+    }
+}
+
+fn Widgets() -> Node {
+    let clicks = zeus.signal(0)
+    let name = zeus.signal("")
+    let notify = zeus.signal(true)
+    let agree = zeus.signal(false)
+    let size = zeus.signal(1)
+    let level = zeus.signal(60)
+    let view = zeus.signal(0)
+    let tab = zeus.signal(0)
+    let dialog = zeus.signal(false)
+    let toast = zeus.signal(false)
+    let rows = zeus.signal([]LangRow {
+        LangRow { name: "fmt", kind: "printing", year: "std" },
+        LangRow { name: "str", kind: "byte strings", year: "std" },
+        LangRow { name: "zeus", kind: "UI framework", year: "package" },
+    })
+    return zui.Column(prose.SECTION_GAP) {
+        zui.Column(prose.HEAD_GAP) {
+            zui.Overline("Design system")
+            zui.Display("Components")
+            zui.Body(
+                "zeus-components is the widget library on top of Zeus. These are the pieces most apps start with, mounted live with the same calls an app makes. Every one follows the theme, so flip the Dark switch in the top bar to see both palettes.",
+            )
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            zui.SectionHeader(
+                "Actions",
+                "Buttons",
+                "Four looks for one Button. on_click takes a closure; the label follows the signal.",
+            )
+            Demo(fn() {
+                zui.RowWrap(Space.Sm) {
+                    zui.Button(
+                        "Solid",
+                        look = zeus.Look.Solid,
+                        on_click = fn() => clicks.set(clicks.get() + 1),
+                    )
+                    zui.Button(
+                        "Soft",
+                        look = zeus.Look.Soft,
+                        on_click = fn() => clicks.set(clicks.get() + 1),
+                    )
+                    zui.Button(
+                        "Outline",
+                        look = zeus.Look.Outline,
+                        on_click = fn() => clicks.set(clicks.get() + 1),
+                    )
+                    zui.Button(
+                        "Ghost",
+                        look = zeus.Look.Ghost,
+                        on_click = fn() => clicks.set(clicks.get() + 1),
+                    )
+                }
+                zeus.Text(
+                    fn() -> string {
+                        let n = clicks.get()
+                        return "Pressed {{n}} times"
+                    },
+                    style = Style(font = spacing.FONT_BODY, color = colors.mute()),
+                )
+            })
+            prose.CodeBlock([]string {
+                "let clicks = zeus.signal(0)",
+                "zui.Button(\"Solid\", look = zeus.Look.Solid,",
+                "    on_click = fn() => clicks.set(clicks.get() + 1))",
+            })
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            zui.SectionHeader(
+                "Forms",
+                "Inputs and choices",
+                "Each control binds a signal. Reading the signal anywhere keeps that spot in sync.",
+            )
+            Demo(fn() {
+                zui.FormField("Name") {
+                    zui.TextInput(name, "Ada")
+                }
+                zeus.Text(
+                    fn() -> string {
+                        let n = name.get()
+                        if n.len == 0 {
+                            return "Type a name above."
+                        }
+                        return "Hello, {{n}}."
+                    },
+                    style = Style(font = spacing.FONT_BODY, color = colors.mute()),
+                )
+                zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 10)) {
+                    zui.Switch(notify, label = "Email me when a build finishes")
+                    zeus.Text(
+                        "Email me when a build finishes",
+                        style = Style(font = spacing.FONT_BODY, color = zeus.ink()),
+                    )
+                }
+                zui.Checkbox("I read the ownership chapter", agree)
+                zui.RowWrap(Space.Sm) {
+                    zui.Label("Target")
+                    zui.Select(size, []string { "web", "macOS", "iOS", "Android" })
+                    zui.Segmented(view, []string { "Debug", "Release" })
+                }
+            })
+            prose.CodeBlock([]string {
+                "let name = zeus.signal(\"\")",
+                "zui.FormField(\"Name\") {",
+                "    zui.TextInput(name, \"Ada\")",
+                "}",
+                "zui.Switch(notify, label = \"Email me when a build finishes\")",
+                "zui.Select(target, []string { \"web\", \"macOS\", \"iOS\", \"Android\" })",
+            })
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            zui.SectionHeader(
+                "Feedback",
+                "Status, progress, and alerts",
+                "Drag the slider: the bar and the label read the same signal.",
+            )
+            Demo(fn() {
+                zui.Slider(level)
+                zui.Progress(level, label = "Build")
+                zui.RowWrap(Space.Sm) {
+                    zui.Badge("Passing", zeus.Tint.Ok)
+                    zui.Badge("Beta", zeus.Tint.Info)
+                    zui.Badge("Deprecated", zeus.Tint.Warn)
+                    zui.Badge("Failing", zeus.Tint.Danger)
+                }
+                zui.Alert(
+                    "Borrow ends at last use",
+                    "The place is free again after the borrow's final read.",
+                    tint = zeus.Tint.Info,
+                )
+            })
+            prose.CodeBlock([]string {
+                "let level = zeus.signal(60)",
+                "zui.Slider(level)",
+                "zui.Progress(level, label = \"Build\")",
+                "zui.Badge(\"Passing\", zeus.Tint.Ok)",
+            })
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            zui.SectionHeader(
+                "Data",
+                "Tabs and tables",
+                "A table draws rows from a signal; a cell function turns a row into strings.",
+            )
+            Demo(fn() {
+                zui.Tabs(tab, []string { "Modules", "About" })
+                zui.Show(when = tab.get() == 0) {
+                    zui.Table(
+                        []TableCol {
+                            TableCol { title: "Name", width: 0 },
+                            TableCol { title: "What", width: 0 },
+                            TableCol { title: "Where", width: 0 },
+                        },
+                        rows,
+                        lang_cells,
+                    )
+                }
+                zui.Show(when = tab.get() == 1) {
+                    zui.Body(
+                        "Tabs bind an index signal. Show swaps the panel without rebuilding the page.",
+                    )
+                }
+            })
+            prose.CodeBlock([]string {
+                "zui.Tabs(tab, []string { \"Modules\", \"About\" })",
+                "zui.Table(cols, rows, lang_cells)",
+            })
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            zui.SectionHeader(
+                "Overlays",
+                "Dialogs, toasts, and tooltips",
+                "An overlay stays shut until its signal turns true. Escape closes a dialog.",
+            )
+            Demo(fn() {
+                zui.RowWrap(Space.Sm) {
+                    zui.Button(
+                        "Open dialog",
+                        look = zeus.Look.Outline,
+                        on_click = fn() => dialog.set(true),
+                    )
+                    zui.Button(
+                        "Show toast",
+                        look = zeus.Look.Outline,
+                        on_click = fn() => toast.set(true),
+                    )
+                    zui.Tooltip(text = "Tooltips show on hover and focus", trigger = fn() {
+                        zui.Button("Hover me", look = zeus.Look.Ghost)
+                    })
+                }
+            })
+            prose.CodeBlock([]string {
+                "let open = zeus.signal(false)",
+                "zui.Button(\"Open dialog\", on_click = fn() => open.set(true))",
+                "zui.Dialog(open, title = \"Ship it?\") {",
+                "    zui.Body(\"The build passed on every host.\")",
+                "}",
+            })
+        }
+        zui.Dialog(dialog, title = "Ship it?") {
+            zui.Body("The build passed on every host.")
+            zui.RowWrap(Space.Sm) {
+                zui.Button("Ship", look = zeus.Look.Solid, on_click = fn() => dialog.set(false))
+                zui.Button("Cancel", look = zeus.Look.Ghost, on_click = fn() => dialog.set(false))
+            }
+        }
+        zui.Toast(toast) {
+            zui.Body("Saved")
+        }
+    }
+}

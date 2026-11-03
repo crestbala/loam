@@ -359,7 +359,9 @@ fn click(px: int, py: int) -> int {
         arena.ev_x = px
         arena.ev_y = py
         arena.ev_button = 0
+        arena.ev_drag_first = 1
         arena.invoke_handler(arena.hook_of(dr, arena.HOOK_DRAG), dr)
+        arena.ev_drag_first = 0
         arena.mark_chrome()
         return 1
     }
@@ -1114,7 +1116,8 @@ fn key(k: int) -> int {
         return 0
     }
     if int(nodes.tree[id].kind) != 10 {
-        return 0
+        // A `capture_text` box edits in its own key handler.
+        return handled
     }
     let slot = arena.edit_ready(id)
     if slot < 0 {
@@ -1201,6 +1204,20 @@ fn insert_text(s: string) -> int {
         return 0
     }
     let id = arena.focus_id
+    // A box with `capture_text` that is not an input (a code editor) owns its
+    // buffer: the text reaches its key handler as one KEY_TEXT (2000) event.
+    if id > 0 && id < nodes.tree.len && int(nodes.tree[id].kind) != 10 {
+        if nodes.ui[id].kdown_fn <= 0 || s.len == 0 {
+            return 0
+        }
+        arena.ev_text = s
+        arena.ev_key = 2000
+        arena.ev_mods = 0
+        arena.invoke_handler(nodes.ui[id].kdown_fn, id)
+        arena.ev_text = ""
+        arena.mark_paint()
+        return 1
+    }
     let slot = arena.edit_ready(id)
     if slot < 0 {
         return 0

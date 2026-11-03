@@ -1,0 +1,5 @@
+name = "loam"
+targets = ["web"]
+routes = "routes"
+theme = "theme.loam"
+revalidate = 60

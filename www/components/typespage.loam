@@ -1,0 +1,262 @@
+//! Data types. Widths, aggregates, and the library containers.
+
+import "std:zeus"
+import "std:spacing"
+import "std:zui"
+import "prose.loam" as prose
+
+fn Types() -> Node {
+    return zui.Column(prose.SECTION_GAP) {
+        zui.Column(prose.HEAD_GAP) {
+            zui.Overline("Reference")
+            zui.Display("Types")
+            zui.Body(
+                "A literal stays untyped until context gives it a width. A literal that does not fit is a compile error. Arithmetic that overflows traps. Unsigned subtraction that underflows traps too.",
+            )
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            zui.SectionHeader(
+                "Numbers",
+                "Numeric widths",
+                "int means i32. float means f32. Mixed widths do not typecheck.",
+            )
+            zui.DescriptionList(
+                []DescItem {
+                    DescItem { term: "i8 i16 i32 i64", detail: "Signed integers. int is i32." },
+                    DescItem {
+                        term: "u8 u16 u32 u64",
+                        detail: "Unsigned integers. A string index is a byte.",
+                    },
+                    DescItem {
+                        term: "f32 f64",
+                        detail: "Floats. float is f32. Untyped float literals are f32.",
+                    },
+                    DescItem {
+                        term: "bool",
+                        detail: "true and false. A switch on bool must name both.",
+                    },
+                },
+                divided = true,
+            )
+            prose.CodeBlock([]string {
+                "let p: u8 = 200",
+                "let wide: i64 = i64(p)",
+                "let x: f64 = 1.5",
+            })
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            zui.SectionHeader(
+                "Aggregates",
+                "Structs, enums, slices, arrays",
+                "[]T is a growable vector. [N]T is a fixed array. A generic struct is monomorphized. The language has no union type; Result and Option are structs with a tag.",
+            )
+            prose.CodeBlock([]string {
+                "struct Pair<T> { a: T, b: T }",
+                "",
+                "fn main() {",
+                "    let mut v = []int {}",
+                "    push(v, 10)",
+                "    v.push(20)",
+                "    let pair = Pair { a: 1, b: 2 }",
+                "}",
+            })
+            zui.DescriptionList(
+                []DescItem {
+                    DescItem {
+                        term: "string",
+                        detail: "A length and bytes. s[i] is the unsigned byte at i.",
+                    },
+                    DescItem {
+                        term: "fn",
+                        detail: "A function value. Copy. Closures are a handle plus an environment.",
+                    },
+                    DescItem {
+                        term: "Box<T>",
+                        detail: "A heap allocation. Not Copy. *b reads it.",
+                    },
+                    DescItem {
+                        term: "&T  &mut T",
+                        detail: "Shared and exclusive borrows. Explicit, and inserted at a call.",
+                    },
+                    DescItem { term: "Result<T>", detail: "tag, val, err. Read val only on Ok." },
+                    DescItem { term: "Option<T>", detail: "tag and val. Some or None." },
+                },
+                divided = true,
+            )
+            zui.Note(
+                "Signal<T> is a Zeus type, not a language primitive. It lives on the Zeus page.",
+            )
+        }
+    }
+}
+
+fn Numbers() -> Node {
+    return zui.Column(prose.SECTION_GAP) {
+        zui.Column(prose.HEAD_GAP) {
+            zui.Overline("Types")
+            zui.Display("Numeric widths")
+            zui.Body(
+                "int is i32. float is f32. An untyped integer literal does not become i64 because a parameter is i64. An untyped float literal is f32, including at module scope. Mixed widths do not typecheck.",
+            )
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            prose.CodeBlock([]string {
+                "let p: u8 = 200",
+                "let wide: i64 = i64(p)",
+                "let x: f64 = 1.5",
+                "let y: f32 = float(x)",
+            })
+            zui.DescriptionList(
+                []DescItem {
+                    DescItem {
+                        term: "i8 i16 i32 i64",
+                        detail: "Signed. int is i32. Overflow traps.",
+                    },
+                    DescItem {
+                        term: "u8 u16 u32 u64",
+                        detail: "Unsigned. Underflow traps. A string index is a byte.",
+                    },
+                    DescItem {
+                        term: "f32 f64",
+                        detail: "float is f32. Write f64(n) when the value must be f64.",
+                    },
+                    DescItem { term: "bool", detail: "true and false. A switch must name both." },
+                },
+                divided = true,
+            )
+            zui.Note(
+                "The playground runner has one int (i32, trapping on overflow) and one float (f64). Sized widths are compiler-only.",
+            )
+        }
+    }
+}
+
+fn Aggregates() -> Node {
+    return zui.Column(prose.SECTION_GAP) {
+        zui.Column(prose.HEAD_GAP) {
+            zui.Overline("Types")
+            zui.Display("Structs, enums, and slices")
+            zui.Body(
+                "A struct is a product of named fields. An enum is a closed set of integer variants. A slice is a pointer and a length. There is no language-level union of types.",
+            )
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            prose.CodeBlock([]string {
+                "struct Pair {",
+                "    a: int,",
+                "    b: int,",
+                "}",
+                "",
+                "enum Tint {",
+                "    Ok = 0,",
+                "    Danger = 1,",
+                "}",
+                "",
+                "let nums = []int { 1, 2, 3 }",
+                "let pair = Pair { a: 1, b: 2 }",
+            })
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            zui.SectionHeader(
+                "Slices",
+                "Headers copy",
+                "Passing a slice by value copies the header. push on that copy does not update the caller. An index write requires &mut []T. A slice of structs that themselves hold slices must stay flat if it will be copied.",
+            )
+            zui.Note(
+                "Named arguments fill the last parameter only, and that parameter has to be a struct. Pair { a: 1, b: 2 } is a value, not a call.",
+            )
+        }
+    }
+}
+
+fn Text() -> Node {
+    return zui.Column(prose.SECTION_GAP) {
+        zui.Column(prose.HEAD_GAP) {
+            zui.Overline("Types")
+            zui.Display("Strings and interpolation")
+            zui.Body(
+                "A string is bytes plus a length. s[i] is one byte, not a character. Concatenation is interpolation, not +. An unterminated open brace stays literal, which is how a sample shows braces.",
+            )
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            prose.CodeBlock([]string {
+                "let a = \"loam\"",
+                "let b = \" wasm\"",
+                "fmt.write(a)",
+                "fmt.write(b)",
+                "fmt.writeln()",
+                "let n = string_from_bytes([]int { 65, 66 })",
+                prose.join3("let s = \"", "{{", "a}}!\"    // \"loam!\"")
+            })
+            zui.Alert(
+                "Interpolation",
+                "A name or an expression in double braces is formatted into the string when it is built. fmt.println writes the bytes. It is not printf.",
+                tint = zeus.Tint.Info,
+            )
+            zui.DescriptionList(
+                []DescItem {
+                    DescItem { term: "s.len", detail: "Byte length. Not a display width." },
+                    DescItem { term: "s[i]", detail: "The byte at i, as an int." },
+                    DescItem {
+                        term: "std:str",
+                        detail: "slice, trim, case, search. Offsets are bytes. UTF-8 stays intact when the offset came from a search.",
+                    },
+                    DescItem {
+                        term: "std:unicode",
+                        detail: "Grapheme steps when a byte index would split a character.",
+                    },
+                },
+                divided = true,
+            )
+        }
+    }
+}
+
+fn Memory() -> Node {
+    return zui.Column(prose.SECTION_GAP) {
+        zui.Column(prose.HEAD_GAP) {
+            zui.Overline("Types")
+            zui.Display("Borrows and boxes")
+            zui.Body(
+                "The borrow checker tracks shared and exclusive borrows and the last use of each one. A proven index can skip the runtime trap. A Box is the heap owner. *b reads it. Moving the box ends the old name.",
+            )
+        }
+        zui.Column(prose.BLOCK_GAP) {
+            prose.CodeBlock([]string {
+                "fn bump(xs: &mut []int) {",
+                "    xs[0] = xs[0] + 1",
+                "}",
+                "",
+                "fn main() {",
+                "    let mut xs = []int { 1, 2 }",
+                "    bump(xs)",
+                "    let boxed = Box::new(xs)",
+                "}",
+            })
+            zui.DescriptionList(
+                []DescItem {
+                    DescItem {
+                        term: "Last use",
+                        detail: "A borrow ends at the last use of the reference, not at the closing brace.",
+                    },
+                    DescItem {
+                        term: "Auto-borrow",
+                        detail: "A call that wants &T or &mut T borrows the argument. You write the value.",
+                    },
+                    DescItem {
+                        term: "Copy",
+                        detail: "Integers, floats, bools, and enums copy. Box and a vector move.",
+                    },
+                    DescItem {
+                        term: "Bounds",
+                        detail: "An index the compiler can prove is in range does not emit a trap check.",
+                    },
+                },
+                divided = true,
+            )
+            zui.Note(
+                "This site's wasm build does not keep absolute paths in the binary. A panic location is relative to the directory the compiler was run from, or a file name.",
+            )
+        }
+    }
+}

@@ -29,4 +29,12 @@ void codegen_set_test_mode(int on);
  */
 void codegen_set_server_split(int on);
 
+/**
+ * Wasm publish mode. Panic locations and `#line` names that sit under
+ * `prefix` are emitted relative to it. Any other absolute path is reduced
+ * to its basename, so a home directory or temp folder never lands in the
+ * binary. `NULL` keeps the path the compiler loaded.
+ */
+void codegen_set_path_strip(const char *prefix);
+
 #endif
