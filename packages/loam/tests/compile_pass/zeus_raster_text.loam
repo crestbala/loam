@@ -14,6 +14,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:zeusraster"
 import "std:zui"
 
 fn must(ok: bool, what: string) {
@@ -31,7 +32,7 @@ fn ink_in(x0: int, y0: int, x1: int, y1: int, t: int) -> int {
     while y < y1 {
         let mut x = x0
         while x < x1 {
-            if zeus.raster_get(x, y, 0) < t {
+            if zeusraster.raster_get(x, y, 0) < t {
                 n = n + 1
             }
             x = x + 1
@@ -47,7 +48,7 @@ fn ink_row_width(y: int, x0: int, x1: int, t: int) -> int {
     let mut n = 0
     let mut x = x0
     while x < x1 {
-        let v = zeus.raster_get(x, y, 0)
+        let v = zeusraster.raster_get(x, y, 0)
         if v < t {
             n = n + 1
         }
@@ -58,10 +59,10 @@ fn ink_row_width(y: int, x0: int, x1: int, t: int) -> int {
 
 fn main() {
     // --- the chain needs a font, and says so when it has none -------------
-    must(zeus.scene_font_is_ready() == 0, "no font until one is loaded")
-    must(zeus.scene_load_font("packages/loam/tests/fonts/tiny.ttf") == 1,
+    must(zeusraster.scene_font_is_ready() == 0, "no font until one is loaded")
+    must(zeusraster.scene_load_font("packages/loam/tests/fonts/tiny.ttf") == 1,
          "the fixture font loads")
-    must(zeus.scene_font_is_ready() == 1, "and the pass knows it")
+    must(zeusraster.scene_font_is_ready() == 1, "and the pass knows it")
 
     // --- a text scene -----------------------------------------------------
     zeus.window("zeus-raster-text", 160, 80)
@@ -85,13 +86,13 @@ fn main() {
     }
     must(ti >= 0, "there is a text op")
 
-    zeus.raster_ensure(160, 80, 2)
-    let drawn = zeus.scene_rasterize(2, 255, 255, 255)
+    zeusraster.raster_ensure(160, 80, 2)
+    let drawn = zeusraster.scene_rasterize(2, 255, 255, 255)
     must(drawn > 0, "ops were rasterized")
-    must(zeus.scene_raster_unhandled(2) == 0, "text is no longer unhandled")
-    must(zeus.scene_raster_unhandled_total() == 0, "nothing is unhandled")
-    must(zeus.scene_glyphs_drawn() == 3, "three glyphs were composited")
-    must(zeus.scene_glyphs_missing() == 0, "and none were missing")
+    must(zeusraster.scene_raster_unhandled(2) == 0, "text is no longer unhandled")
+    must(zeusraster.scene_raster_unhandled_total() == 0, "nothing is unhandled")
+    must(zeusraster.scene_glyphs_drawn() == 3, "three glyphs were composited")
+    must(zeusraster.scene_glyphs_missing() == 0, "and none were missing")
 
     // --- the ink is where the op says it is -------------------------------
     // Logical (x, y) at scale 2, and the glyphs sit on the baseline below the
@@ -116,12 +117,12 @@ fn main() {
     must(apex_w < base_w, "the apex is narrower than the base")
 
     // --- glyphs come from the atlas, so a redraw reuses them --------------
-    let rasters = zeus.scene_glyphs_drawn()
+    let rasters = zeusraster.scene_glyphs_drawn()
     must(rasters == 3, "three glyphs on the first pass")
     // A second frame at the same size must hit the atlas rather than re-rasterize.
     zeus.engine_paint()
-    zeus.scene_rasterize(2, 255, 255, 255)
-    must(zeus.scene_glyphs_drawn() == 6, "and three more on the second")
+    zeusraster.scene_rasterize(2, 255, 255, 255)
+    must(zeusraster.scene_glyphs_drawn() == 6, "and three more on the second")
     must(zeus.draw_count() > 0, "the second frame produced a draw list too")
 
     // --- the same string at a larger size is bigger ink -------------------
@@ -131,9 +132,9 @@ fn main() {
     })
     zeus.engine_layout(320, 160)
     zeus.engine_paint()
-    zeus.raster_ensure(320, 160, 2)
-    zeus.scene_rasterize(2, 255, 255, 255)
-    must(zeus.scene_glyphs_drawn() == 9, "three more glyphs at the larger size")
+    zeusraster.raster_ensure(320, 160, 2)
+    zeusraster.scene_rasterize(2, 255, 255, 255)
+    must(zeusraster.scene_glyphs_drawn() == 9, "three more glyphs at the larger size")
     let big = ink_in(0, 0, 320, 160, 128)
     must(big > 200, "the larger size has ink too")
 
@@ -144,10 +145,10 @@ fn main() {
     })
     zeus.engine_layout(160, 40)
     zeus.engine_paint()
-    zeus.raster_ensure(160, 40, 2)
-    zeus.scene_rasterize(2, 255, 255, 255)
-    must(zeus.scene_raster_unhandled_total() == 0, "an empty label is still handled")
+    zeusraster.raster_ensure(160, 40, 2)
+    zeusraster.scene_rasterize(2, 255, 255, 255)
+    must(zeusraster.scene_raster_unhandled_total() == 0, "an empty label is still handled")
 
-    fmt.println("raster text ok", drawn, zeus.scene_glyphs_drawn(),
-                zeus.scene_glyphs_missing())
+    fmt.println("raster text ok", drawn, zeusraster.scene_glyphs_drawn(),
+                zeusraster.scene_glyphs_missing())
 }

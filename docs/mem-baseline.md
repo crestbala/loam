@@ -19,7 +19,7 @@ Everything in this file was produced by commands in
 | Frame damage list (Phase 1) | `packages/zeus/std/zeuscore/arena.loam`, `scene.loam` |
 | Node-arena ceiling (Phase 2) | `packages/zeus/std/zeuscore/arena.loam` (`node_cap`) |
 | `UiNode` field ordering (Phase 3) | `packages/zeus/std/zeuscore/arena.loam` |
-| Framebuffer + color pipeline (Phase 4) | `packages/zeus/std/zeuscore/raster.loam` |
+| Framebuffer + color pipeline (Phase 4) | `packages/zeus/std/zeusraster/raster.loam` |
 
 The gate is a no-op when off: `mem_stats_report` calls one host function that
 returns 0, and `mem_sample()` (the only per-frame cost) is skipped entirely.
@@ -416,7 +416,7 @@ Net: Phase 3's free/ordering step is done and measured; its structural items
 ### Phase 4 — software rasterizer (framebuffer, color, coverage, borders, shadows, tiles, damage clip, blit contract, multi-contour, glyph outlines, glyph bitmaps, glyph atlas)
 
 - bytes/node: **476.0 — unchanged.** No tree/geometry code was touched.
-- New module `packages/zeus/std/zeuscore/raster.loam`:
+- New module `packages/zeus/std/zeusraster/raster.loam`:
   - **One owned framebuffer**, `physical_w * physical_h * 4`, BGRA8,
     premultiplied. Enabled by a fact worth recording: Loam has `[]u8` with a
     1-byte element, so the buffer is 20 MB — not the 83 MB a `[]int` buffer at
@@ -583,7 +583,7 @@ triangle exactly as expected, which pointed at the scale, not the rasterizer.)
   network suites this sandbox blocks), all 15 draw goldens byte-identical,
   structural golden pass, `tools/mem-baseline.sh --headless` unchanged.
 
-**The glyph atlas (eleventh step).** `std/zeuscore/atlas.loam` is the cache
+**The glyph atlas (eleventh step).** `std/zeusraster/atlas.loam` is the cache
 that makes per-frame glyph rasterization affordable, and it is where the memory
 discipline shows:
 

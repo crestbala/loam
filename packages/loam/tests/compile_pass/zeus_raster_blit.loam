@@ -11,6 +11,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:zeusraster"
 // Reached directly (and relatively) so the C seam's length guard can be
 // exercised with a slice that is deliberately too short to be a frame.
 import "../../../zeus/std/zeuscore/platform.loam" as platform
@@ -24,12 +25,12 @@ fn must(ok: bool, what: string) {
 }
 
 fn main() {
-    zeus.raster_ensure(8, 8, 1)
-    zeus.raster_clear(10, 20, 30)
+    zeusraster.raster_ensure(8, 8, 1)
+    zeusraster.raster_clear(10, 20, 30)
 
     // --- PPM dump: header + w*h*3 bytes, channels in R,G,B order -----------
     let path = "out/raster_dump_test.ppm"
-    must(zeus.raster_dump_ppm(path) == 0, "dump wrote the file")
+    must(zeusraster.raster_dump_ppm(path) == 0, "dump wrote the file")
     let s = sys.read_file(path)
     // "P6\n" (3) + "8 8\n" (4) + "255\n" (4) = 11 bytes of header.
     must(s.len == 11 + 8 * 8 * 3, "ppm is header + w*h*3 bytes")
@@ -38,24 +39,24 @@ fn main() {
     must(s[13] == 30, "first pixel B")
 
     // --- blit generation: stable across redraws, changes on realloc -------
-    let g = zeus.raster_blit_generation()
-    must(g == zeus.raster_generation(), "blit generation is the buffer generation")
-    zeus.raster_clear(1, 2, 3)
-    zeus.raster_ensure(8, 8, 1)
-    must(zeus.raster_blit_generation() == g, "redraw does not reallocate, so the wrapper is reused")
-    zeus.raster_ensure(8, 8, 2)
-    must(zeus.raster_blit_generation() != g, "a scale change reallocates and invalidates the wrapper")
+    let g = zeusraster.raster_blit_generation()
+    must(g == zeusraster.raster_generation(), "blit generation is the buffer generation")
+    zeusraster.raster_clear(1, 2, 3)
+    zeusraster.raster_ensure(8, 8, 1)
+    must(zeusraster.raster_blit_generation() == g, "redraw does not reallocate, so the wrapper is reused")
+    zeusraster.raster_ensure(8, 8, 2)
+    must(zeusraster.raster_blit_generation() != g, "a scale change reallocates and invalidates the wrapper")
 
     // --- the blit itself: with no display, it presents nothing -------------
     // The buffer is real (8x8 at scale 2), so this is not the "no buffer" case:
     // the 0 comes from the host having nowhere to present, which is exactly what
     // the return value is for. Headless must never claim a frame went out.
-    must(zeus.raster_blit() == 0, "a headless blit presents nothing")
-    let gb = zeus.raster_blit_generation()
-    let rb = zeus.raster_realloc_count()
-    must(zeus.raster_blit() == 0, "and a second frame is the same")
-    must(zeus.raster_blit_generation() == gb, "blitting never reallocates")
-    must(zeus.raster_realloc_count() == rb, "and never counts a realloc")
+    must(zeusraster.raster_blit() == 0, "a headless blit presents nothing")
+    let gb = zeusraster.raster_blit_generation()
+    let rb = zeusraster.raster_realloc_count()
+    must(zeusraster.raster_blit() == 0, "and a second frame is the same")
+    must(zeusraster.raster_blit_generation() == gb, "blitting never reallocates")
+    must(zeusraster.raster_realloc_count() == rb, "and never counts a realloc")
 
     // --- the C seam's guard: a slice too short for w*h*4 is refused --------
     // `plat_blit` forwards `buf.ptr` and `buf.len` straight through with no

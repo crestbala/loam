@@ -11,6 +11,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:zeusraster"
 
 fn must(ok: bool, what: string) {
     if ok {
@@ -28,107 +29,107 @@ fn load(name: string) -> string {
 
 fn main() {
     // --- grayscale, including the packed sub-byte depths -------------------
-    must(zeus.image_decode_any(load("gray8.png")) == 1, "gray8 decodes")
-    must(zeus.image_src_width() == 8, "gray8: 8 wide")
-    must(zeus.image_src_height() == 4, "gray8: 4 tall")
-    must(zeus.image_src_get(0, 0, 0) == 0, "gray8: 0 stays 0")
-    must(zeus.image_src_get(2, 0, 0) == 72, "gray8: value passes through")
-    must(zeus.image_src_get(7, 0, 0) == 252, "gray8: 252")
-    must(zeus.image_src_get(3, 0, 1) == 108, "grayscale is r=g=b")
+    must(zeusraster.image_decode_any(load("gray8.png")) == 1, "gray8 decodes")
+    must(zeusraster.image_src_width() == 8, "gray8: 8 wide")
+    must(zeusraster.image_src_height() == 4, "gray8: 4 tall")
+    must(zeusraster.image_src_get(0, 0, 0) == 0, "gray8: 0 stays 0")
+    must(zeusraster.image_src_get(2, 0, 0) == 72, "gray8: value passes through")
+    must(zeusraster.image_src_get(7, 0, 0) == 252, "gray8: 252")
+    must(zeusraster.image_src_get(3, 0, 1) == 108, "grayscale is r=g=b")
     // tRNS on grayscale names the sample that is transparent. x=1 is that one.
-    must(zeus.image_src_get(1, 0, 3) == 0, "gray8: the tRNS value is transparent")
-    must(zeus.image_src_get(1, 0, 0) == 0, "and premultiplies to nothing")
-    must(zeus.image_src_get(2, 0, 3) == 255, "gray8: other values are opaque")
+    must(zeusraster.image_src_get(1, 0, 3) == 0, "gray8: the tRNS value is transparent")
+    must(zeusraster.image_src_get(1, 0, 0) == 0, "and premultiplies to nothing")
+    must(zeusraster.image_src_get(2, 0, 3) == 255, "gray8: other values are opaque")
 
-    must(zeus.image_decode_any(load("gray1.png")) == 1, "gray1 decodes")
-    must(zeus.image_src_get(0, 0, 0) == 0, "gray1: bit 0 -> black")
-    must(zeus.image_src_get(1, 0, 0) == 255, "gray1: bit 1 -> white")
-    must(zeus.image_src_get(2, 0, 0) == 0, "gray1: alternating")
-    must(zeus.image_src_get(7, 0, 0) == 255, "gray1: last pixel of the byte")
-    must(zeus.image_src_get(7, 1, 0) == 255, "gray1: second row too")
+    must(zeusraster.image_decode_any(load("gray1.png")) == 1, "gray1 decodes")
+    must(zeusraster.image_src_get(0, 0, 0) == 0, "gray1: bit 0 -> black")
+    must(zeusraster.image_src_get(1, 0, 0) == 255, "gray1: bit 1 -> white")
+    must(zeusraster.image_src_get(2, 0, 0) == 0, "gray1: alternating")
+    must(zeusraster.image_src_get(7, 0, 0) == 255, "gray1: last pixel of the byte")
+    must(zeusraster.image_src_get(7, 1, 0) == 255, "gray1: second row too")
 
-    must(zeus.image_decode_any(load("gray4.png")) == 1, "gray4 decodes")
-    must(zeus.image_src_get(0, 0, 0) == 0, "gray4: 0 -> 0")
-    must(zeus.image_src_get(1, 0, 0) == 17, "gray4: 1 -> 17")
-    must(zeus.image_src_get(7, 0, 0) == 119, "gray4: 7 -> 119")
+    must(zeusraster.image_decode_any(load("gray4.png")) == 1, "gray4 decodes")
+    must(zeusraster.image_src_get(0, 0, 0) == 0, "gray4: 0 -> 0")
+    must(zeusraster.image_src_get(1, 0, 0) == 17, "gray4: 1 -> 17")
+    must(zeusraster.image_src_get(7, 0, 0) == 119, "gray4: 7 -> 119")
 
     // --- grayscale + alpha, premultiplied ---------------------------------
-    must(zeus.image_decode_any(load("ga8.png")) == 1, "ga8 decodes")
-    must(zeus.image_src_get(0, 0, 3) == 255, "ga8: first pixel opaque")
-    must(zeus.image_src_get(0, 0, 0) == 200, "ga8: gray 200")
-    must(zeus.image_src_get(1, 0, 3) == 128, "ga8: second pixel half")
-    must(zeus.image_src_get(1, 0, 0) == 100, "ga8: premultiplied 200*128/255")
-    must(zeus.image_src_get(2, 0, 3) == 0, "ga8: third pixel transparent")
-    must(zeus.image_src_get(2, 0, 0) == 0, "ga8: and premultiplies to nothing")
+    must(zeusraster.image_decode_any(load("ga8.png")) == 1, "ga8 decodes")
+    must(zeusraster.image_src_get(0, 0, 3) == 255, "ga8: first pixel opaque")
+    must(zeusraster.image_src_get(0, 0, 0) == 200, "ga8: gray 200")
+    must(zeusraster.image_src_get(1, 0, 3) == 128, "ga8: second pixel half")
+    must(zeusraster.image_src_get(1, 0, 0) == 100, "ga8: premultiplied 200*128/255")
+    must(zeusraster.image_src_get(2, 0, 3) == 0, "ga8: third pixel transparent")
+    must(zeusraster.image_src_get(2, 0, 0) == 0, "ga8: and premultiplies to nothing")
 
     // --- 16-bit samples: the high byte is the value -----------------------
-    must(zeus.image_decode_any(load("rgb16.png")) == 1, "rgb16 decodes")
-    must(zeus.image_src_get(0, 0, 0) == 0x12, "rgb16: high byte of r")
-    must(zeus.image_src_get(0, 0, 1) == 0x56, "rgb16: high byte of g")
-    must(zeus.image_src_get(0, 0, 2) == 0x9A, "rgb16: high byte of b")
-    must(zeus.image_src_get(1, 0, 0) == 255, "rgb16: 0xFFFF -> 255")
-    must(zeus.image_src_get(1, 0, 1) == 0, "rgb16: 0x0000 -> 0")
-    must(zeus.image_src_get(2, 0, 0) == 1, "rgb16: 0x0100 -> 1")
-    must(zeus.image_src_get(2, 0, 2) == 0, "rgb16: 0x00FF -> 0 (high byte)")
-    must(zeus.image_src_get(2, 0, 1) == 0, "rgb16: 0x0001 -> 0")
-    must(zeus.image_src_get(2, 0, 3) == 255, "rgb16: opaque")
+    must(zeusraster.image_decode_any(load("rgb16.png")) == 1, "rgb16 decodes")
+    must(zeusraster.image_src_get(0, 0, 0) == 0x12, "rgb16: high byte of r")
+    must(zeusraster.image_src_get(0, 0, 1) == 0x56, "rgb16: high byte of g")
+    must(zeusraster.image_src_get(0, 0, 2) == 0x9A, "rgb16: high byte of b")
+    must(zeusraster.image_src_get(1, 0, 0) == 255, "rgb16: 0xFFFF -> 255")
+    must(zeusraster.image_src_get(1, 0, 1) == 0, "rgb16: 0x0000 -> 0")
+    must(zeusraster.image_src_get(2, 0, 0) == 1, "rgb16: 0x0100 -> 1")
+    must(zeusraster.image_src_get(2, 0, 2) == 0, "rgb16: 0x00FF -> 0 (high byte)")
+    must(zeusraster.image_src_get(2, 0, 1) == 0, "rgb16: 0x0001 -> 0")
+    must(zeusraster.image_src_get(2, 0, 3) == 255, "rgb16: opaque")
 
     // --- truecolour tRNS ---------------------------------------------------
-    must(zeus.image_decode_any(load("rgb_trns.png")) == 1, "rgb_trns decodes")
-    must(zeus.image_src_get(0, 0, 0) == 10, "rgb_trns: first pixel opaque")
-    must(zeus.image_src_get(0, 0, 3) == 255, "rgb_trns: alpha 255")
-    must(zeus.image_src_get(1, 0, 3) == 0, "rgb_trns: the named colour is clear")
-    must(zeus.image_src_get(1, 0, 0) == 0, "rgb_trns: and premultiplies away")
-    must(zeus.image_src_get(2, 0, 3) == 255, "rgb_trns: third pixel opaque")
+    must(zeusraster.image_decode_any(load("rgb_trns.png")) == 1, "rgb_trns decodes")
+    must(zeusraster.image_src_get(0, 0, 0) == 10, "rgb_trns: first pixel opaque")
+    must(zeusraster.image_src_get(0, 0, 3) == 255, "rgb_trns: alpha 255")
+    must(zeusraster.image_src_get(1, 0, 3) == 0, "rgb_trns: the named colour is clear")
+    must(zeusraster.image_src_get(1, 0, 0) == 0, "rgb_trns: and premultiplies away")
+    must(zeusraster.image_src_get(2, 0, 3) == 255, "rgb_trns: third pixel opaque")
 
     // --- palette at depths 8, 4 and 1 -------------------------------------
-    must(zeus.image_decode_any(load("pal8.png")) == 1, "pal8 decodes")
+    must(zeusraster.image_decode_any(load("pal8.png")) == 1, "pal8 decodes")
     // Entry 0 carries tRNS alpha 128, so its colour premultiplies.
-    must(zeus.image_src_get(0, 0, 0) == 128, "pal8: entry 0 red, premultiplied")
-    must(zeus.image_src_get(0, 0, 1) == 0, "pal8: entry 0 has no green")
-    must(zeus.image_src_get(0, 0, 3) == 128, "pal8: entry 0 is half transparent")
-    must(zeus.image_src_get(1, 0, 1) == 255, "pal8: entry 1 is green")
-    must(zeus.image_src_get(1, 0, 3) == 255, "pal8: entry 1 has no tRNS alpha")
-    must(zeus.image_src_get(2, 0, 2) == 255, "pal8: entry 2 is blue")
-    must(zeus.image_src_get(3, 0, 0) == 255, "pal8: entry 3 is white")
-    must(zeus.image_src_get(0, 1, 0) == 128, "pal8: second row too")
+    must(zeusraster.image_src_get(0, 0, 0) == 128, "pal8: entry 0 red, premultiplied")
+    must(zeusraster.image_src_get(0, 0, 1) == 0, "pal8: entry 0 has no green")
+    must(zeusraster.image_src_get(0, 0, 3) == 128, "pal8: entry 0 is half transparent")
+    must(zeusraster.image_src_get(1, 0, 1) == 255, "pal8: entry 1 is green")
+    must(zeusraster.image_src_get(1, 0, 3) == 255, "pal8: entry 1 has no tRNS alpha")
+    must(zeusraster.image_src_get(2, 0, 2) == 255, "pal8: entry 2 is blue")
+    must(zeusraster.image_src_get(3, 0, 0) == 255, "pal8: entry 3 is white")
+    must(zeusraster.image_src_get(0, 1, 0) == 128, "pal8: second row too")
 
-    must(zeus.image_decode_any(load("pal4.png")) == 1, "pal4 decodes")
-    must(zeus.image_src_get(0, 0, 0) == 255, "pal4: entry 0 red")
-    must(zeus.image_src_get(2, 0, 2) == 255, "pal4: entry 2 blue (packed index)")
-    must(zeus.image_src_get(3, 0, 3) == 255, "pal4: entry 3 opaque")
+    must(zeusraster.image_decode_any(load("pal4.png")) == 1, "pal4 decodes")
+    must(zeusraster.image_src_get(0, 0, 0) == 255, "pal4: entry 0 red")
+    must(zeusraster.image_src_get(2, 0, 2) == 255, "pal4: entry 2 blue (packed index)")
+    must(zeusraster.image_src_get(3, 0, 3) == 255, "pal4: entry 3 opaque")
 
-    must(zeus.image_decode_any(load("pal1.png")) == 1, "pal1 decodes")
-    must(zeus.image_src_get(0, 0, 0) == 0, "pal1: index 0 black")
-    must(zeus.image_src_get(1, 0, 0) == 255, "pal1: index 1 white")
-    must(zeus.image_src_get(7, 0, 0) == 255, "pal1: last of the byte")
+    must(zeusraster.image_decode_any(load("pal1.png")) == 1, "pal1 decodes")
+    must(zeusraster.image_src_get(0, 0, 0) == 0, "pal1: index 0 black")
+    must(zeusraster.image_src_get(1, 0, 0) == 255, "pal1: index 1 white")
+    must(zeusraster.image_src_get(7, 0, 0) == 255, "pal1: last of the byte")
 
     // --- a non-sRGB gAMA is decoded, and the assumption is counted --------
-    let gamma_before = zeus.image_gamma_assumed_count()
-    must(zeus.image_decode_any(load("gama_odd.png")) == 1, "gama_odd decodes")
-    must(zeus.image_src_get(0, 0, 0) == 1, "gama_odd: values are unchanged")
-    must(zeus.image_src_get(3, 0, 2) == 12, "gama_odd: and blue decodes")
-    must(zeus.image_gamma_assumed_count() == gamma_before + 1,
+    let gamma_before = zeusraster.image_gamma_assumed_count()
+    must(zeusraster.image_decode_any(load("gama_odd.png")) == 1, "gama_odd decodes")
+    must(zeusraster.image_src_get(0, 0, 0) == 1, "gama_odd: values are unchanged")
+    must(zeusraster.image_src_get(3, 0, 2) == 12, "gama_odd: and blue decodes")
+    must(zeusraster.image_gamma_assumed_count() == gamma_before + 1,
          "the sRGB assumption is counted, not silent")
 
     // --- Adam7: every pass lands where it belongs --------------------------
     // Dimensions are deliberately not multiples of 8, so several of the seven
     // passes are partial -- the case where pass geometry goes wrong.
-    must(zeus.image_decode_any(load("adam7_rgb.png")) == 1, "adam7 rgb decodes")
-    must(zeus.image_src_width() == 13, "adam7 rgb: 13 wide")
-    must(zeus.image_src_height() == 11, "adam7 rgb: 11 tall")
+    must(zeusraster.image_decode_any(load("adam7_rgb.png")) == 1, "adam7 rgb decodes")
+    must(zeusraster.image_src_width() == 13, "adam7 rgb: 13 wide")
+    must(zeusraster.image_src_height() == 11, "adam7 rgb: 11 tall")
     let mut bad = 0
     let mut y = 0
     while y < 11 {
         let mut x = 0
         while x < 13 {
-            if zeus.image_src_get(x, y, 0) != x * 17 % 256 {
+            if zeusraster.image_src_get(x, y, 0) != x * 17 % 256 {
                 bad = bad + 1
             }
-            if zeus.image_src_get(x, y, 1) != y * 23 % 256 {
+            if zeusraster.image_src_get(x, y, 1) != y * 23 % 256 {
                 bad = bad + 1
             }
-            if zeus.image_src_get(x, y, 2) != (x + y) * 11 % 256 {
+            if zeusraster.image_src_get(x, y, 2) != (x + y) * 11 % 256 {
                 bad = bad + 1
             }
             x = x + 1
@@ -140,40 +141,40 @@ fn main() {
     // The same pixels written non-interlaced, checked at both ends. The full
     // formula check above is what pins pass placement; this is the cross-check
     // that the two encodings of one image agree.
-    must(zeus.image_decode_any(load("adam7_rgb_flat.png")) == 1, "flat twin decodes")
-    must(zeus.image_src_get(0, 0, 0) == 0, "flat twin first pixel")
-    must(zeus.image_src_get(12, 10, 2) == 242, "flat twin last pixel blue")
+    must(zeusraster.image_decode_any(load("adam7_rgb_flat.png")) == 1, "flat twin decodes")
+    must(zeusraster.image_src_get(0, 0, 0) == 0, "flat twin first pixel")
+    must(zeusraster.image_src_get(12, 10, 2) == 242, "flat twin last pixel blue")
 
     // Adam7 with packed sub-byte samples and a palette + tRNS.
-    must(zeus.image_decode_any(load("adam7_pal.png")) == 1, "adam7 palette decodes")
-    must(zeus.image_src_width() == 9, "adam7 palette: 9 wide")
+    must(zeusraster.image_decode_any(load("adam7_pal.png")) == 1, "adam7 palette decodes")
+    must(zeusraster.image_src_width() == 9, "adam7 palette: 9 wide")
     // Index (x+y)%4, and entry 0 carries tRNS alpha 200.
-    must(zeus.image_src_get(0, 0, 0) == 200, "adam7 palette: entry 0 red, premultiplied")
-    must(zeus.image_src_get(0, 0, 3) == 200, "adam7 palette: tRNS alpha")
-    must(zeus.image_src_get(1, 1, 2) == 255, "adam7 palette: entry 2 is blue")
-    must(zeus.image_src_get(1, 1, 3) == 255, "adam7 palette: no tRNS on entry 2")
-    must(zeus.image_src_get(8, 8, 2) == 0, "adam7 palette: entry 0 has no blue")
-    must(zeus.image_src_get(2, 3, 1) == 255, "adam7 palette: entry 1 is green")
+    must(zeusraster.image_src_get(0, 0, 0) == 200, "adam7 palette: entry 0 red, premultiplied")
+    must(zeusraster.image_src_get(0, 0, 3) == 200, "adam7 palette: tRNS alpha")
+    must(zeusraster.image_src_get(1, 1, 2) == 255, "adam7 palette: entry 2 is blue")
+    must(zeusraster.image_src_get(1, 1, 3) == 255, "adam7 palette: no tRNS on entry 2")
+    must(zeusraster.image_src_get(8, 8, 2) == 0, "adam7 palette: entry 0 has no blue")
+    must(zeusraster.image_src_get(2, 3, 1) == 255, "adam7 palette: entry 1 is green")
 
-    must(zeus.image_decode_any(load("adam7_gray.png")) == 1, "adam7 1-bit gray decodes")
-    must(zeus.image_src_width() == 5, "adam7 gray: 5 wide")
-    must(zeus.image_src_get(0, 0, 0) == 0, "adam7 gray: (0,0)")
-    must(zeus.image_src_get(1, 0, 0) == 255, "adam7 gray: (1,0)")
-    must(zeus.image_src_get(0, 1, 0) == 255, "adam7 gray: (0,1)")
-    must(zeus.image_src_get(4, 2, 0) == 0, "adam7 gray: (4,2)")
+    must(zeusraster.image_decode_any(load("adam7_gray.png")) == 1, "adam7 1-bit gray decodes")
+    must(zeusraster.image_src_width() == 5, "adam7 gray: 5 wide")
+    must(zeusraster.image_src_get(0, 0, 0) == 0, "adam7 gray: (0,0)")
+    must(zeusraster.image_src_get(1, 0, 0) == 255, "adam7 gray: (1,0)")
+    must(zeusraster.image_src_get(0, 1, 0) == 255, "adam7 gray: (0,1)")
+    must(zeusraster.image_src_get(4, 2, 0) == 0, "adam7 gray: (4,2)")
 
     // --- and the variants work through the cache/blit pipeline ------------
-    zeus.image_cache_clear()
-    zeus.image_set_budget(8 * 1024 * 1024)
-    let slot = zeus.image_get(1, load("pal8.png"), 4, 2)
+    zeusraster.image_cache_clear()
+    zeusraster.image_set_budget(8 * 1024 * 1024)
+    let slot = zeusraster.image_get(1, load("pal8.png"), 4, 2)
     must(slot >= 0, "a palette PNG goes through the cache")
     // The cache holds the STRAIGHT (unpremultiplied) form the framebuffer blend
     // wants, so red is back to 255 with alpha 128 beside it.
-    must(zeus.image_get_px(slot, 0, 0, 0) == 255, "cached palette red")
-    must(zeus.image_get_px(slot, 0, 0, 3) == 128, "cached palette alpha")
-    must(zeus.image_get_px(slot, 2, 0, 2) == 255, "cached palette blue")
+    must(zeusraster.image_get_px(slot, 0, 0, 0) == 255, "cached palette red")
+    must(zeusraster.image_get_px(slot, 0, 0, 3) == 128, "cached palette alpha")
+    must(zeusraster.image_get_px(slot, 2, 0, 2) == 255, "cached palette blue")
 
-    fmt.println("image png variants ok", zeus.image_decode_count(),
-                zeus.image_decode_failure_count(),
-                zeus.image_gamma_assumed_count(), zeus.image_scratch_bytes())
+    fmt.println("image png variants ok", zeusraster.image_decode_count(),
+                zeusraster.image_decode_failure_count(),
+                zeusraster.image_gamma_assumed_count(), zeusraster.image_scratch_bytes())
 }

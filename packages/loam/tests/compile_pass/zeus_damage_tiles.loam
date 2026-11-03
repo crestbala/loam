@@ -5,6 +5,7 @@
 import "std:fmt"
 import "std:sys"
 import "std:zeus"
+import "std:zeusraster"
 import "std:colors"
 
 fn must(ok: bool, what: string) {
@@ -17,7 +18,7 @@ fn must(ok: bool, what: string) {
 
 fn main() {
     // 600x600 at scale 1 is a 3x3 grid of 256px tiles.
-    zeus.raster_ensure(600, 600, 1)
+    zeusraster.raster_ensure(600, 600, 1)
     zeus.window("damage-tiles", 600, 600)
 
     let mut id = 0
@@ -32,7 +33,7 @@ fn main() {
     zeus.pump_frame()
 
     // A layout frame damages the whole surface: every tile is selected.
-    let full = zeus.damage_tiles_build()
+    let full = zeusraster.damage_tiles_build()
     must(full == 9, "a full-damage frame selects all 9 tiles")
 
     // A paint-only change (a running track) damages just the node, which lies
@@ -40,10 +41,10 @@ fn main() {
     zeus.animate_opacity(Node { id: id }, 50, 100)
     zeus.engine_step_dt(16)
     zeus.engine_paint()
-    let n = zeus.damage_tiles_build()
+    let n = zeusraster.damage_tiles_build()
     must(n == 1, "a paint-only node selects exactly one tile")
-    must(zeus.damage_tiles_x(0) == 256, "the selected tile is the node's column")
-    must(zeus.damage_tiles_y(0) == 256, "the selected tile is the node's row")
+    must(zeusraster.damage_tiles_x(0) == 256, "the selected tile is the node's column")
+    must(zeusraster.damage_tiles_y(0) == 256, "the selected tile is the node's row")
 
     fmt.println("damage tiles ok", full, n)
 }
