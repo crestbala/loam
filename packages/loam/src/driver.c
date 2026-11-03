@@ -1110,14 +1110,15 @@ int main(int argc, char **argv) {
                  "xcrun clang -isysroot \"%s\" -target %s-apple-ios16.0-simulator "
                  "-O1 -ffp-contract=off -DLOAM_ALLOC_TRACE -fno-asynchronous-unwind-tables -DLOAM_IOS%s -I\"%s\" "
                  "-x c -std=gnu99 \"%s\" \"%s/zeus_plat.c\" \"%s/zeus_key.c\"%s "
-                 "-x objective-c -fno-objc-arc \"%s/hosts/ios/ios.m\" "
+                 "-x objective-c -fno-objc-arc -I\"%s/hosts/apple\" \"%s/hosts/ios/ios.m\" "
+                 "\"%s/hosts/apple/apple_draw.m\" \"%s/hosts/apple/apple_media.m\" "
                  "-framework UIKit -framework Foundation -framework CoreGraphics "
-                 "-framework CoreText -framework QuartzCore "
+                 "-framework CoreText -framework QuartzCore -framework ImageIO "
                  "-framework AVFoundation -framework CoreMedia -framework CoreVideo "
                  "-framework VideoToolbox "
                  "-framework Security -framework CoreFoundation -o \"%s\"",
                  sdk, arch, owns_def, LOAM_RUNTIME_DIR, cpath, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR,
-                 http_ios, LOAM_ZEUS_DIR, exe);
+                 http_ios, LOAM_ZEUS_DIR, LOAM_ZEUS_DIR, LOAM_ZEUS_DIR, LOAM_ZEUS_DIR, exe);
         t0 = now_sec();
         if (env_on("LOAM_TIME")) fprintf(stderr, "loam: cc ios\n");
         if (system(cmdios) != 0) {
@@ -1299,23 +1300,41 @@ int main(int argc, char **argv) {
         }
 #if defined(__APPLE__)
         if (!headless) {
-            const char *mac_deps[] = {mac_m, rt_h, key_h};
-            if (ensure_obj(mac_m, mac_o, host ? "-x objective-c -DLOAM_HOST_BUILD" : "-x objective-c",
-                           mac_deps, 3)) {
-                fprintf(stderr, "loam: failed to compile %s\n", mac_m);
+            /* The Cocoa host is three objects: mac.m and the two files it shares
+               with iOS (hosts/apple). All three see the same flags, so a host
+               build's engine calls resolve the same way in each. */
+            char apple_h[512], draw_m[512], media_m[512], draw_o[512], media_o[512];
+            char mac_flags[256];
+            snprintf(apple_h, sizeof apple_h, "%s/hosts/apple/zeus_apple.h", LOAM_ZEUS_DIR);
+            snprintf(draw_m, sizeof draw_m, "%s/hosts/apple/apple_draw.m", LOAM_ZEUS_DIR);
+            snprintf(media_m, sizeof media_m, "%s/hosts/apple/apple_media.m", LOAM_ZEUS_DIR);
+            snprintf(draw_o, sizeof draw_o, "%s/.obj/zeus_apple_draw%s.o", LOAM_RUNTIME_DIR, obj_tag);
+            snprintf(media_o, sizeof media_o, "%s/.obj/zeus_apple_media%s.o", LOAM_RUNTIME_DIR,
+                     obj_tag);
+            snprintf(mac_flags, sizeof mac_flags, "-x objective-c%s -I\"%s/hosts/apple\"",
+                     host ? " -DLOAM_HOST_BUILD" : "", LOAM_ZEUS_DIR);
+            const char *mac_deps[] = {mac_m, rt_h, key_h, apple_h};
+            const char *draw_deps[] = {draw_m, rt_h, apple_h};
+            const char *media_deps[] = {media_m, rt_h, apple_h};
+            if (ensure_obj(mac_m, mac_o, mac_flags, mac_deps, 4) ||
+                ensure_obj(draw_m, draw_o, mac_flags, draw_deps, 3) ||
+                ensure_obj(media_m, media_o, mac_flags, media_deps, 3)) {
+                fprintf(stderr, "loam: failed to compile the Cocoa host\n");
                 if (cpath_is_temp) unlink(cpath);
                 free(stem);
                 loam_session_free(&sess);
                 return 1;
             }
             snprintf(cmd, sizeof cmd,
-                     "cc %s %s -o \"%s\" -I\"%s\" -x c \"%s\" -x none \"%s\" \"%s\" \"%s\"%s%s "
+                     "cc %s %s -o \"%s\" -I\"%s\" -x c \"%s\" -x none \"%s\" \"%s\" \"%s\" "
+                     "\"%s\" \"%s\"%s%s "
                      "-framework Cocoa -framework QuartzCore -framework IOSurface -framework Security "
+                     "-framework CoreText -framework ImageIO "
                      "-framework AVFoundation -framework CoreMedia -framework CoreVideo "
                      "-framework VideoToolbox -framework AudioToolbox -weak_framework SoundAnalysis "
                      "-framework CoreFoundation -lm",
-                     copt, ld, binpath, LOAM_RUNTIME_DIR, cpath, plat_o, key_o, mac_o, http_link,
-                     extra_link);
+                     copt, ld, binpath, LOAM_RUNTIME_DIR, cpath, plat_o, key_o, mac_o, draw_o,
+                     media_o, http_link, extra_link);
         } else {
             snprintf(cmd, sizeof cmd,
                      "cc %s -o \"%s\" -I\"%s\" -x c \"%s\" -x none \"%s\" \"%s\"%s%s "
