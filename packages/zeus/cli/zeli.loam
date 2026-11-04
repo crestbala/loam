@@ -3274,8 +3274,6 @@ struct MetaRec {
     route: string,
     /// The page's text, from `zeus.engine_text_outline`.
     outline: string,
-    ink_light: string,
-    ink_dark: string,
     /// The theme's page colour as packed rgb, for the first paint. "" = unknown.
     paper: string,
     /// The same colour in each appearance, for a visitor who chose one.
@@ -3302,7 +3300,7 @@ struct ChunkFile {
     url: string,
 }
 
-/// The most page text a route's HTML carries before the wasm arrives, in bytes.
+/// The most page text a route's HTML carries, in bytes.
 const MAX_PREPAINT: int = 40000
 
 /// The metadata dump: a native Loam program that prints one JSON record per
@@ -3335,18 +3333,12 @@ fn meta_dump_source() -> string {
     push(lines, "    json.enc_str(m.robots)")
     push(lines, "    json.enc_key(\"jsonld\")")
     push(lines, "    json.enc_str(m.jsonld)")
-    // The page itself, for the markup shown before the wasm arrives.
+    // The page itself, for the markup crawlers and screen readers get.
     push(lines, "    router.engine_open_url(path)")
     push(lines, "    zeus.pump_frame()")
     push(lines, "    zeus.pump_frame()")
     push(lines, "    json.enc_key(\"outline\")")
     push(lines, "    json.enc_str(zeus.engine_text_outline())")
-    push(lines, "    json.enc_key(\"ink_light\")")
-    push(lines, "    let ink_l = zeus.engine_role_rgb_in(ROLE.Ink, 0)")
-    push(lines, cat(cat("    json.enc_str(\"", cat("{", "{")), "ink_l}}\")"))
-    push(lines, "    json.enc_key(\"ink_dark\")")
-    push(lines, "    let ink_d = zeus.engine_role_rgb_in(ROLE.Ink, 1)")
-    push(lines, cat(cat("    json.enc_str(\"", cat("{", "{")), "ink_d}}\")"))
     push(lines, "    json.enc_key(\"route\")")
     push(lines, cat(cat("    json.enc_str(\"", cat("{", "{")), "route}}\")"))
     push(lines, "    json.enc_key(\"paper\")")
@@ -3453,8 +3445,6 @@ fn collect_meta(appdir: string) -> []MetaRec {
             jsonld: fld(doc, "jsonld"),
             route: fld(doc, "route"),
             outline: fld(doc, "outline"),
-            ink_light: fld(doc, "ink_light"),
-            ink_dark: fld(doc, "ink_dark"),
             paper: fld(doc, "paper"),
             paper_light: fld(doc, "paper_light"),
             paper_dark: fld(doc, "paper_dark"),
@@ -3517,11 +3507,11 @@ fn prepaint_tag(px: int) -> string {
     return "p"
 }
 
-/// A page's text as plain semantic markup, for the moment before its wasm has
-/// arrived. Spans on one line are joined, and a line built from several touching
+/// A page's text as plain semantic markup, for crawlers and for screen readers
+/// before the wasm has arrived. Spans on one line are joined, and a line built from several touching
 /// spans is highlighted code, which keeps going through its single-span lines
-/// (a comment) at the same size. Stops at `MAX_PREPAINT` bytes, as this text is
-/// on screen for a moment and its weight is on every first load.
+/// (a comment) at the same size. Stops at `MAX_PREPAINT` bytes, as its weight is
+/// on every first load.
 fn prepaint_html(outline: string) -> string {
     let spans = outline_spans(outline)
     let mut out = []string {}
@@ -3580,13 +3570,11 @@ fn prepaint_html(outline: string) -> string {
     return join_lines(out)
 }
 
-/// The stylesheet for `prepaint_html`. The canvas stays clear of it, and of the
-/// pointer, until its first frame: the loader then fades it in over the text.
-fn prepaint_css(ink: string) -> string {
-    let text = "#zeus-prepaint{box-sizing:border-box;max-width:720px;margin:0 auto;padding:24px 20px;font:15px/1.55 system-ui,sans-serif;color:var(--zeus-ink,{{ink}})}"
-    let heads = "#zeus-prepaint h1{font-size:30px;line-height:1.2}#zeus-prepaint h2{font-size:22px;line-height:1.25}#zeus-prepaint h3{font-size:17px}#zeus-prepaint p{margin:.7em 0}#zeus-prepaint a{color:inherit}"
-    let code = "#zeus-prepaint pre{margin:1em 0;overflow:auto;font:13px/1.5 ui-monospace,Menlo,Consolas,monospace}"
-    return "{{text}}{{heads}}{{code}}canvas#zeus{opacity:0;pointer-events:none;transition:opacity .12s}"
+/// The stylesheet for `prepaint_html`. Hidden, not styled: only the canvas is
+/// ever on screen, as unstyled text flashing up on each load looked like a broken
+/// page. Crawlers and screen readers still read it.
+fn prepaint_css() -> string {
+    return "#zeus-prepaint{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}"
 }
 
 /// The `<head>` a crawler and a link preview read, then the canvas the wasm
@@ -3600,12 +3588,7 @@ fn shell_html(r: MetaRec, canonical: string, assets: WebAssets) -> string {
     push(lines, "<!DOCTYPE html>")
     let light = css_hex(r.paper_light)
     let dark = css_hex(r.paper_dark)
-    let ink_l = css_hex(r.ink_light)
-    let ink_d = css_hex(r.ink_dark)
-    push(
-        lines,
-        "<html lang=\"en\" data-paper-light=\"{{light}}\" data-paper-dark=\"{{dark}}\" data-ink-light=\"{{ink_l}}\" data-ink-dark=\"{{ink_d}}\">",
-    )
+    push(lines, "<html lang=\"en\" data-paper-light=\"{{light}}\" data-paper-dark=\"{{dark}}\">")
     push(lines, "<head>")
     push(lines, "<meta charset=\"utf-8\" />")
     push(lines, "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />")
@@ -3650,8 +3633,7 @@ fn shell_html(r: MetaRec, canonical: string, assets: WebAssets) -> string {
     )
     let prepaint = prepaint_html(r.outline)
     if prepaint != "" {
-        let ink = if paper == dark { ink_d } else { ink_l }
-        push(lines, "<style>{{prepaint_css(ink)}}</style>")
+        push(lines, "<style>{{prepaint_css()}}</style>")
     }
     push(lines, "</head>")
     push(lines, "<body>")
@@ -3697,7 +3679,7 @@ fn can_split(appdir: string) -> bool {
 /// Paint a visitor's saved appearance before anything draws. Inline and ahead of
 /// the first paint: anywhere later, a light-mode visitor sees dark on every load.
 fn appearance_script() -> string {
-    return "<script>try{var a=localStorage.getItem(\"zeus-appearance\"),r=document.documentElement,s=r.style,d=r.dataset,c=a===\"0\"?d.paperLight:a===\"1\"?d.paperDark:\"\";if(c){s.setProperty(\"--zeus-paper\",c);s.setProperty(\"--zeus-ink\",a===\"0\"?d.inkLight:d.inkDark);document.querySelector(\"meta[name=theme-color]\").content=c}}catch(e){}</script>"
+    return "<script>try{var a=localStorage.getItem(\"zeus-appearance\"),r=document.documentElement,c=a===\"0\"?r.dataset.paperLight:a===\"1\"?r.dataset.paperDark:\"\";if(c){r.style.setProperty(\"--zeus-paper\",c);document.querySelector(\"meta[name=theme-color]\").content=c}}catch(e){}</script>"
 }
 
 /// The asset names `zeli serve` keeps when it cannot split.
