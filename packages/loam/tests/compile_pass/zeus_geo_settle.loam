@@ -1,0 +1,58 @@
+// A resize hook that changes the layout moves other geometry hosts in the
+// frame's follow-up layout. They must hear about it that same frame, or they
+// keep the width from before the change until something else forces a layout.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn expect(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn main() {
+    zeus.window("settle", 800, 200)
+    let page_w = zeus.signal(800)
+    let seen = zeus.signal(0)
+    zeus.root(zeus.Box(
+        style = Style(direction = Direction.Row, width = pct(100)),
+        on_resize = fn(r: Rect) {
+            if r.w != page_w.peek() {
+                page_w.set(r.w)
+            }
+        },
+    ) {
+        // A sidebar that folds away on a narrow page, as a site shell does.
+        zui.Show(when = page_w.get() >= 500) {
+            zeus.Box(style = Style(width = px(240), height = px(20)))
+        }
+        zeus.Box(style = Style(direction = Direction.Column, grow = 1, minWidth = 0)) {
+            zeus.Box(
+                style = Style(width = pct(100), height = px(20)),
+                on_resize = fn(r: Rect) => seen.set(r.w),
+            ) {
+                zeus.Text("body")
+            }
+        }
+    })
+    zeus.engine_layout(800, 200)
+    expect(seen.get() == 560, "wide: the body sits beside the sidebar")
+
+    // Narrow: the sidebar folds in the follow-up layout, so the body's second
+    // width comes from there. One frame must settle it.
+    zeus.engine_layout(400, 200)
+    let body = zeus.node_parent(zeus.engine_find_text("body"))
+    expect(zeus.node_width(body) == 400, "narrow: the body fills the page")
+    expect(seen.get() == 400, "narrow: the hook saw the settled width")
+
+    // And back again.
+    zeus.engine_layout(800, 200)
+    expect(zeus.node_width(body) == 560, "wide again: the sidebar is back")
+    expect(seen.get() == 560, "wide again: the hook saw the settled width")
+
+    fmt.println("geo settle ok")
+}
