@@ -406,6 +406,9 @@ fn engine_trap_seq() -> int {
     return arena.last_trap_seq
 }
 
+/// Most refresh-then-layout rounds one frame runs before it paints anyway.
+const HOST_SETTLE_ROUNDS: int = 4
+
 fn engine_layout(width: int, height: int) {
     ensure_role_colors()
     arena.damage_frame_begin()
@@ -537,9 +540,19 @@ fn engine_layout(width: int, height: int) {
     // when its box held. A pure scroll frame that stays inside the mounted
     // window, or a frame where every host returns early, pays the sweep and
     // nothing else.
+    //
+    // That second layout can move other geometry hosts: a resize hook that folds
+    // a sidebar widens everything beside it. So the pass repeats until no host
+    // rebuilds; `geo_due` keeps it to the hosts whose box really moved, and the
+    // round limit stops a hook that fights its own layout.
     if lay != 0 || arena.virtual_dirty != 0 || arena.host_queue.len > 0 {
-        refresh_lists()
-        if arena.layout_dirty != 0 {
+        let mut settle = 0
+        while settle < HOST_SETTLE_ROUNDS {
+            settle = settle + 1
+            refresh_lists()
+            if arena.layout_dirty == 0 {
+                break
+            }
             // Same rule as the first pass: a host that rebuilt marked itself,
             // so the frame stays targeted.
             let full2 = arena.take_layout_full()
