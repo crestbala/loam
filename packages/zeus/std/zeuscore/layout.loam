@@ -10,7 +10,6 @@ import "nodes.loam"
 import "geometry.loam"
 import "platform.loam"
 import "metrics.loam"
-import "std:sys"
 
 fn flex_grow_shrink(id: int, extra: int, row: int) -> int {
     let nk = nodes.tree[id].kids.len
@@ -1268,7 +1267,6 @@ let mut ep_l: int = -1
 /// 1 while the memo is bypassed (the verify pass).
 let mut memo_off: int = 0
 /// -1 until read from the environment, then 0 / 1.
-let mut verify_on: int = -1
 /// Subtrees the memo skipped, and subtrees it translated (diagnostics).
 let mut layout_skips: int = 0
 let mut layout_shifts: int = 0
@@ -1411,13 +1409,7 @@ fn layout(width: int, height: int) {
     epoch_check()
     layout_node(arena.root_id, 0, 0, arena.win_w, arena.win_h)
     layout_overlays(arena.root_id)
-    if verify_on < 0 {
-        verify_on = 0
-        if sys.env("ZEUS_LAYOUT_VERIFY") == "1" {
-            verify_on = 1
-        }
-    }
-    if verify_on != 0 {
+    if platform.plat_layout_verify() != 0 {
         verify_memo()
     }
     // Floaters are re-placed every layout, and a scroll re-runs layout while any

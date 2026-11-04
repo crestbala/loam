@@ -356,6 +356,7 @@ loam_str loam_platform_plat_boot_path(void);
 int64_t loam_platform_plat_chunks_ready(int64_t index);
 void loam_platform_plat_chunks_load(int64_t index);
 void loam_platform_plat_open_external(loam_str url);
+int64_t loam_platform_plat_layout_verify(void);
 int64_t loam_platform_plat_appearance_load(void);
 void loam_platform_plat_appearance_save(int64_t dark);
 void loam_platform_plat_chunks_preload(int64_t index);

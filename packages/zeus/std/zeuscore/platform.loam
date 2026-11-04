@@ -131,6 +131,9 @@ fn plat_chunks_preload(index: int) {}
 fn plat_appearance_load() -> int {}
 /// Remember the user's light / dark choice across visits.
 fn plat_appearance_save(dark: int) {}
+/// 1 when `ZEUS_LAYOUT_VERIFY=1` asks layout to check its memo. Always 0 in a web
+/// release, which leaves the check's code out of the download.
+fn plat_layout_verify() -> int {}
 /// Open a URL outside the app. A no-op on hosts without a browser to hand it to.
 fn plat_open_external(url: string) {}
 /// The path a host wants the app to start on (the browser's URL), "" for none.

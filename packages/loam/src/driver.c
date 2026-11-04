@@ -1088,7 +1088,7 @@ int main(int argc, char **argv) {
                          wasm_split_input ? "-Xclang -Oz" : "-Oz",
                          /* The allocation proof is a test harness, and a
                             release is what visitors download. */
-                         wasm_release ? " -DLOAM_NO_TRAP_LOC"
+                         wasm_release ? " -DLOAM_NO_TRAP_LOC -DLOAM_WEB_RELEASE"
                                       : " -DLOAM_ALLOC_TRACE",
                          owns_def, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR, cpath, LOAM_RUNTIME_DIR,
                          LOAM_ZEUS_DIR, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR, http_w, binpath);

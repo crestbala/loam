@@ -340,22 +340,22 @@ fn idle_fetch_takes_shared_small_chunks_most_shared_first() {
 }
 
 #[test]
-fn prepaint_keeps_reading_order_and_drops_icons() {
-    let outline = "14\t20\t60\t100\tBody & more\n0\t4\t0\t16\t<svg/>\n32\t20\t10\t100\tTitle\n22\t20\t40\t100\tSection\n"
+fn prepaint_keeps_reading_order_links_and_drops_icons() {
+    let outline = "14\t20\t60\t100\t/more\tBody & more\n0\t4\t0\t16\t\t<svg/>\n32\t20\t10\t100\t\tTitle\n22\t20\t40\t100\t\tSection\n"
     let html = zeli.prepaint_html(outline)
-    test.assert_eq_str(html, "<h1>Title</h1>\n<h2>Section</h2>\n<p>Body &amp; more</p>\n")
+    test.assert_eq_str(html, "<h1>Title</h1>\n<h2>Section</h2>\n<p><a href=\"/more\">Body &amp; more</a></p>\n")
 }
 
 #[test]
 fn prepaint_keeps_highlighted_code_together() {
-    let outline = "14\t20\t10\t50\tBefore\n13\t20\t30\t20\tlet\n13\t40\t30\t8\t \n13\t48\t30\t8\tx\n13\t20\t50\t60\t// note\n14\t20\t70\t50\tAfter\n"
+    let outline = "14\t20\t10\t50\t\tBefore\n13\t20\t30\t20\t\tlet\n13\t40\t30\t8\t\t \n13\t48\t30\t8\t\tx\n13\t20\t50\t60\t\t// note\n14\t20\t70\t50\t\tAfter\n"
     let html = zeli.prepaint_html(outline)
     test.assert_eq_str(html, "<p>Before</p>\n<pre>\nlet x\n// note\n</pre>\n<p>After</p>\n")
 }
 
 #[test]
 fn prepaint_is_empty_for_a_page_with_no_words() {
-    test.assert_eq_str(zeli.prepaint_html("0\t4\t0\t16\t<svg/>\n"), "")
+    test.assert_eq_str(zeli.prepaint_html("0\t4\t0\t16\t\t<svg/>\n"), "")
 }
 
 #[test]

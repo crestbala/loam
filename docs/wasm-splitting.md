@@ -6,7 +6,7 @@ content before any wasm arrives, and moves between pages with no visible wait.
 This is a Zeus and `zeli` feature, not a `www` feature. Any web app with routes
 gets it. `www` is the first user and the test bed.
 
-Status: Phases 1 to 5 done, and Phase 6 in part: the primary is 570 KB against a 550 KB goal. Sizes under "What we measured" are from `feat/www` at `e981527`. Compression is deferred (see [Later](#later-compression)), so goals
+Status: Phases 1 to 5 done, and Phase 6 in part: the primary is 561 KB against a 550 KB goal. Sizes under "What we measured" are from `feat/www` at `e981527`. Compression is deferred (see [Later](#later-compression)), so goals
 are in raw bytes.
 
 ## What we measured
@@ -109,9 +109,9 @@ before wasm arrives (Phase 5) removes the blank screen itself.
 
 | Budget, raw bytes | Today | Target |
 |---|---|---|
-| First load of `/` or a docs page | 1,650 KB | 550 KB or less (docs 570 to 710, `/` 652 now) |
-| First load of `/playground` | 1,650 KB | 1,050 KB or less (1,162 now) |
-| First load of a `/components` page | 1,650 KB | 750 KB or less (759 to 825 now) |
+| First load of `/` or a docs page | 1,650 KB | 550 KB or less (docs 561 to 702, `/` 644 now) |
+| First load of `/playground` | 1,650 KB | 1,050 KB or less (1,154 now) |
+| First load of a `/components` page | 1,650 KB | 750 KB or less (750 to 817 now) |
 | Time until real content shows, slow 4G | seconds | under 500 ms (435 ms, 200 KB/s and 150 ms latency in Chrome) |
 | Next page, chunk already prefetched | n/a | no visible wait |
 | White flash on a dark theme | yes | none (done) |
@@ -208,9 +208,8 @@ small inline script picks light or dark before first paint.
 The canvas fades in over that markup on its first frame, and then the markup is
 removed. Search engines and link previews get real content as a side effect.
 
-The page can be read and scrolled until wasm is running, but not used. The
-markup comes from `zeus.engine_text_outline`, which reports text but no link
-targets, so links are plain text for now.
+The page can be read and scrolled until wasm is running. A `Box` with `href` gives
+real links, which work as normal navigation.
 
 ### Files and caching
 
@@ -282,21 +281,24 @@ A 390 px mount supplies the text, so the page's phone layout is what gets writte
 
 ### Phase 6: trim the primary
 
-Done, taking the primary from 688 KB to 570 KB:
+Done, taking the primary from 688 KB to 561 KB:
 
 - Global constants are C initializers, not `__init` code, and a `[]int` table of 8
   or more constants is static data. This took 37 KB out of `unicode` and `colors`.
-- `--wasm-release`, from `zeli build` only, drops `LOAM_ALLOC_TRACE` and the file
-  and line from each panic path. A panic keeps its message. `zeli serve` keeps both.
+- `--wasm-release`, from `zeli build` only, drops `LOAM_ALLOC_TRACE`, the file and
+  line from each panic path, hot reload, the layout verifier and the memory report.
+  A panic keeps its message. `zeli serve` keeps all of them.
 - Placeholder imports use the namespace `p.`, saving 13 KB of import names.
 - `MIN_CHUNK_C` is 12,000, so a page's code leaves the primary sooner.
 
 A docs page that uses shared component code (`/language/modules`, `/zeus/views`)
-also loads the two shared chunks, so it costs 705 to 710 KB. Left to try:
+also loads the two shared chunks, so it costs 697 to 702 KB.
 
-- `layout.verify_memo` (9 KB) only runs under an env var the web never has, but the
-  language has no compile-time switch to remove it with.
-- `--no-placeholders` would save the remaining 18 KB of imports, at the cost of the
+Left to try:
+
+- The primary's 62 KB of data is mostly page text and icons. `wasm-split` keeps all
+  data in the primary, so moving it needs a data scheme of our own.
+- `--no-placeholders` would save the remaining 19 KB of imports, at the cost of the
   safety net.
 - Optional `zui.Lazy(...)` for a heavy widget inside a page, such as the
   playground's editor, loaded when it is needed.
@@ -339,7 +341,7 @@ and the browser check caught it. Keep that check.
 
 Deferred on purpose. Splitting comes first, and we will check this afterwards.
 
-- Brotli takes `app.wasm` from 1,650 KB to 368 KB, and today's 570 KB primary to
+- Brotli takes `app.wasm` from 1,650 KB to 368 KB, and today's 561 KB primary to
   about 160 KB, so this is worth doing next.
 - Needs a decision on the host. There is no deploy config in the repo, so we do not
   yet know whether it compresses `.wasm` itself or needs `.br` files from the build.

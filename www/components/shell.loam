@@ -94,6 +94,7 @@ fn NavLink(label: string, href: string) -> Node {
         },
         on_click = fn() => go(href),
         on_hover = on_link_hover(href),
+        href = href,
         role = "link",
         label = label,
     ) {
@@ -206,6 +207,7 @@ fn SideLink(label: string, href: string) -> Node {
         },
         on_click = fn() => go(href),
         on_hover = on_link_hover(href),
+        href = href,
         role = "link",
         label = label,
     ) {
@@ -243,6 +245,7 @@ fn Group(title: string, href: string) -> Node {
         },
         on_click = fn() => go(href),
         on_hover = on_link_hover(href),
+        href = href,
         role = "link",
         label = title,
     ) {
