@@ -8,9 +8,11 @@
 //
 //     loamc test packages/zeus/cli/serve_tests.loam
 
+import "std:str"
 import "std:sys"
 import "std:test"
 import "zeli.loam" as zeli
+import "chunks.loam" as chunks
 
 /// Shorthand, so the assertions below read as the behaviour they check.
 fn has(hay: string, needle: string) -> bool {
@@ -187,6 +189,120 @@ fn the_snippet_lands_before_the_closing_body() {
     fixture(root)
     let body = zeli.serve_reply(root, "/blog/", snip).body
     test.assert(has(body, "<!--LIVE--></body>"))
+}
+
+// --- the release shell ---
+
+#[test]
+fn page_colour_is_css_hex() {
+    test.assert_eq_str(zeli.css_hex("1184529"), "#121311")
+    test.assert_eq_str(zeli.css_hex("255"), "#0000ff")
+    /* No colour from the dump: the plain light page. */
+    test.assert_eq_str(zeli.css_hex(""), "#fafafa")
+}
+
+#[test]
+fn hashed_assets_cache_forever_and_pages_do_not() {
+    let h = zeli.web_headers()
+    test.assert(has(h, "/_zeus/*\n  Cache-Control: public, max-age=31536000, immutable"))
+    /* The catch-all rule sets no cache, so a page is checked on every visit. */
+    test.assert(has(h, "\n/*\n  X-Content-Type-Options: nosniff"))
+}
+
+// --- route chunks ---
+
+/* The shape emitted C has: functions in the first column, and a `main` that
+   opens behind `#if`. */
+fn fixture_c() -> string {
+    let mut lines = []string {}
+    lines.push("static inline int loam_core(void) {")
+    lines.push("    return 1;")
+    lines.push("}")
+    lines.push("int loam_shell(void) {")
+    lines.push("    return loam_core() + loam_widget();")
+    lines.push("}")
+    lines.push("int loam_widget(void) {")
+    lines.push("    return 2;")
+    lines.push("}")
+    lines.push("int loam_b_home(void) {")
+    lines.push("    return loam_core() + loam_home_only() + loam_widget();")
+    lines.push("}")
+    lines.push("int loam_home_only(void) {")
+    lines.push("    return loam_clos_1();")
+    lines.push("}")
+    lines.push("void loam_clos_1(void *_env) {")
+    lines.push("    return;")
+    lines.push("}")
+    lines.push("int loam_b_docs(void) {")
+    lines.push("    return loam_docs_only();")
+    lines.push("}")
+    lines.push("int loam_docs_only(void) {")
+    lines.push("    return 3;")
+    lines.push("}")
+    lines.push("#if defined(__wasm32__)")
+    lines.push("int main(void)")
+    lines.push("#else")
+    lines.push("int main(int argc, char **argv)")
+    lines.push("#endif")
+    lines.push(" {")
+    lines.push("    return loam_shell();")
+    lines.push("}")
+    return str.join(lines, "\n")
+}
+
+fn fixture_plan(min_size: int) -> Plan {
+    let mut g = chunks.parse_c(fixture_c())
+    let roots = chunks.roots_of(&mut g, "")
+    let entries = []int { chunks.find_suffix(&g, "b_home"), chunks.find_suffix(&g, "b_docs") }
+    return chunks.plan(&g, roots, entries, min_size)
+}
+
+fn has_fn(g: &Graph, c: Chunk, name: string) -> bool {
+    for i in 0..c.fns.len {
+        if g.names[c.fns[i]] == name {
+            return true
+        }
+    }
+    return false
+}
+
+#[test]
+fn main_is_a_root_though_it_opens_behind_an_if() {
+    let mut g = chunks.parse_c(fixture_c())
+    test.assert(chunks.find_suffix(&g, "shell") >= 0)
+    let roots = chunks.roots_of(&mut g, "")
+    test.assert(roots.len > 0)
+    test.assert_eq_str(g.names[roots[0]], "main")
+}
+
+#[test]
+fn a_route_keeps_its_own_code_and_the_shell_keeps_the_primary() {
+    let g = chunks.parse_c(fixture_c())
+    let p = fixture_plan(1)
+    test.assert_eq_int(p.chunks.len, 2)
+    /* A closure goes where the code that names it goes. */
+    let home = p.route_chunks[0]
+    test.assert_eq_int(home.len, 1)
+    test.assert(has_fn(&g, p.chunks[home[0]], "loam_home_only"))
+    test.assert(has_fn(&g, p.chunks[home[0]], "loam_clos_1"))
+    /* The layout reaches this too, so no route's chunk may take it. */
+    test.assert(!has_fn(&g, p.chunks[home[0]], "loam_widget"))
+    test.assert(!has_fn(&g, p.chunks[home[0]], "loam_core"))
+}
+
+#[test]
+fn chunks_too_small_to_fetch_stay_in_the_primary() {
+    let p = fixture_plan(1000000)
+    test.assert_eq_int(p.chunks.len, 0)
+    test.assert_eq_int(p.route_chunks[0].len, 0)
+}
+
+#[test]
+fn a_route_with_nothing_unique_needs_no_chunks() {
+    let mut g = chunks.parse_c("int loam_b_a(void) {\n    return 0;\n}\nint loam_b_b(void) {\n    return 0;\n}\n")
+    let entries = []int { chunks.find_suffix(&g, "b_a"), chunks.find_suffix(&g, "b_b") }
+    let p = chunks.plan(&g, []int {}, entries, 1000)
+    test.assert_eq_int(p.chunks.len, 0)
 }
 
 // --- numbers, substring ids, and the processes a native target lives in ---

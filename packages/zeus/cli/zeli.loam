@@ -18,6 +18,7 @@ import "std:http"
 import "std:json"
 import "std:net"
 import "std:sys"
+import "chunks.loam" as chunks
 
 /// `p` without its last path segment ("" when it has none).
 fn dir_of(p: string) -> string {
@@ -1337,7 +1338,12 @@ fn serve_build(appdir: string, target: string) -> BuildStep {
     let dir = join(join(appdir, "build"), target)
     sys.mkdir(dir)
     let out = join(dir, out_name(target, stem))
-    let flags = target_flags(target)
+    // Dev splits like a release, so the Network tab shows what visitors get.
+    let split = target == "web" && can_split(appdir)
+    let mut flags = target_flags(target)
+    if split {
+        flags = cat(flags, " --wasm-split-input")
+    }
     let mut args = ""
     if flags != "" {
         args = cat(flags, " ")
@@ -1348,8 +1354,14 @@ fn serve_build(appdir: string, target: string) -> BuildStep {
         fmt.println(trim(log))
         return BuildStep { ok: false, routes_changed: step.routes_changed }
     }
-    if target == "web" {
-        emit_web_shell(appdir, stem, "")
+    if split {
+        // Hashes change with every edit, so clear the last build's files.
+        let assets = join(dir, "_zeus")
+        sys.exec("rm -rf {{shell_quote(assets)}}")
+        emit_web_shell(appdir, split_web(appdir, dir, stem), "")
+        report_web_sizes(dir)
+    } else if target == "web" {
+        emit_web_shell(appdir, plain_assets(stem), "")
     }
     return BuildStep { ok: true, routes_changed: step.routes_changed }
 }
@@ -3198,16 +3210,24 @@ fn build(appdir: string, targets: []string, base: string) -> int {
         let dir = fresh_target_dir(appdir, t)
         let out = join(dir, out_name(t, stem))
         let mut args = cat(cat(shell_quote(entry), " -o "), shell_quote(out))
-        let flags = target_flags(t)
+        let mut flags = target_flags(t)
+        if t == "web" && sys.exists(join(appdir, "routes")) == 1 {
+            flags = cat(flags, " --wasm-split-input")
+        }
         if flags != "" {
             args = cat(cat(flags, " "), args)
+        }
+        if t == "web" && (!has_tool("wasm-opt") || !has_tool("wasm-split")) {
+            die("zeli: wasm-opt and wasm-split are needed for a web release: install binaryen.")
         }
         let log = run_loam("", args)
         if sys.exec_status() == 0 {
             fmt.println("zeli: {{t}} ok -> {{rel_to(repo_root(), out)}}")
             built += 1
             if t == "web" && sys.exists(join(appdir, "routes")) == 1 {
-                emit_web_shell(appdir, stem, base)
+                let web = join(join(appdir, "build"), "web")
+                emit_web_shell(appdir, split_web(appdir, web, stem), base)
+                report_web_sizes(web)
             }
             if t == "macos" && sys.target() == "native" && sys.exists("/usr/bin/codesign") == 1 {
                 let bundle = macos_bundle(appdir, out)
@@ -3246,6 +3266,25 @@ struct MetaRec {
     og_type: string,
     robots: string,
     jsonld: string,
+    /// Index of the route that serves this URL.
+    route: string,
+    /// The theme's page colour as packed rgb, for the first paint. "" = unknown.
+    paper: string,
+}
+
+/// The URLs one web build's shells point at.
+struct WebAssets {
+    wasm: string,
+    loader: string,
+    /// Route chunks, empty for an unsplit build.
+    chunks: []ChunkFile,
+    /// Chunk names each route needs, by route index.
+    routes: [][]string,
+}
+
+struct ChunkFile {
+    name: string,
+    url: string,
 }
 
 /// The metadata dump: a native Loam program that prints one JSON record per
@@ -3257,9 +3296,10 @@ fn meta_dump_source() -> string {
     push(lines, "import \"std:fmt\"")
     push(lines, "import \"std:json\"")
     push(lines, "import \"std:router\"")
+    push(lines, "import \"std:zeus\"")
     push(lines, "import \"../app_routes.loam\" as approutes")
     push(lines, "")
-    push(lines, "fn emit(path: string, m: Meta) {")
+    push(lines, "fn emit(path: string, route: int, m: Meta) {")
     push(lines, "    json.enc_obj_begin()")
     push(lines, "    json.enc_key(\"path\")")
     push(lines, "    json.enc_str(path)")
@@ -3277,11 +3317,22 @@ fn meta_dump_source() -> string {
     push(lines, "    json.enc_str(m.robots)")
     push(lines, "    json.enc_key(\"jsonld\")")
     push(lines, "    json.enc_str(m.jsonld)")
+    push(lines, "    json.enc_key(\"route\")")
+    push(lines, cat(cat("    json.enc_str(\"", cat("{", "{")), "route}}\")"))
+    push(lines, "    json.enc_key(\"paper\")")
+    push(lines, "    let paper = zeus.engine_role_rgb(ROLE.Paper)")
+    // `{` `{` apart: this line is text for the dump, not a value here.
+    push(lines, cat(cat("    json.enc_str(\"", cat("{", "{")), "paper}}\")"))
     push(lines, "    json.enc_obj_end()")
     push(lines, "    fmt.println(json.enc_take())")
     push(lines, "}")
     push(lines, "")
     push(lines, "fn main() {")
+    // Mount the app once, off screen, so its own layout installs its theme and
+    // `paper` below is the colour the first frame really paints.
+    push(lines, "    zeus.snapshot(390, 844, fn() -> Node {")
+    push(lines, "        return approutes.app()")
+    push(lines, "    })")
     push(lines, "    let rs = approutes.routes()")
     push(lines, "    let mut i = 0")
     push(lines, "    while i < rs.len {")
@@ -3295,13 +3346,13 @@ fn meta_dump_source() -> string {
         lines,
         "                    let p = Params { keys: router.match_keys(), vals: router.match_vals() }",
     )
-    push(lines, "                    emit(ps[j], rs[i].meta(p))")
+    push(lines, "                    emit(ps[j], i, rs[i].meta(p))")
     push(lines, "                }")
     push(lines, "                j = j + 1")
     push(lines, "            }")
     push(lines, "        } else {")
     push(lines, "            let p = Params { keys: []string {}, vals: []string {} }")
-    push(lines, "            emit(pat, rs[i].meta(p))")
+    push(lines, "            emit(pat, i, rs[i].meta(p))")
     push(lines, "        }")
     push(lines, "        i = i + 1")
     push(lines, "    }")
@@ -3339,7 +3390,7 @@ fn collect_meta(appdir: string) -> []MetaRec {
     if sys.exec_status() != 0 {
         die_extra("zeli: metadata dump failed to compile", trim(cc))
     }
-    let log = run_here(shell_quote(bin))
+    let log = run_here(cat("ZEUS_HEADLESS=1 ", shell_quote(bin)))
     if sys.exec_status() != 0 {
         die_extra("zeli: metadata dump failed to run", trim(log))
     }
@@ -3364,6 +3415,8 @@ fn collect_meta(appdir: string) -> []MetaRec {
             og_type: fld(doc, "og_type"),
             robots: fld(doc, "robots"),
             jsonld: fld(doc, "jsonld"),
+            route: fld(doc, "route"),
+            paper: fld(doc, "paper"),
         })
     }
     return recs
@@ -3371,7 +3424,8 @@ fn collect_meta(appdir: string) -> []MetaRec {
 
 /// The `<head>` a crawler and a link preview read, then the canvas the wasm
 /// module paints into. `canonical` arrives already resolved against `--base`.
-fn shell_html(r: MetaRec, canonical: string, stem: string) -> string {
+fn shell_html(r: MetaRec, canonical: string, assets: WebAssets) -> string {
+    let paper = css_hex(r.paper)
     let title = esc(r.title)
     let desc = esc(r.description)
     let canon = esc(canonical)
@@ -3381,7 +3435,16 @@ fn shell_html(r: MetaRec, canonical: string, stem: string) -> string {
     push(lines, "<head>")
     push(lines, "<meta charset=\"utf-8\" />")
     push(lines, "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />")
+    push(lines, "<meta name=\"theme-color\" content=\"{{paper}}\" />")
     push(lines, "<title>{{title}}</title>")
+    // Starts the download now, not after `loader.js` has arrived and run. The
+    // loader's own `fetch` picks up this response; `crossorigin` is what makes
+    // the two requests match.
+    push(lines, preload_link(assets.wasm))
+    let boot = boot_chunks(r, assets)
+    for i in 0..boot.len {
+        push(lines, preload_link(chunk_url(assets, boot[i])))
+    }
     push(lines, "<meta name=\"description\" content=\"{{desc}}\" />")
     push(lines, "<link rel=\"canonical\" href=\"{{canon}}\" />")
     push(lines, "<meta name=\"robots\" content=\"{{esc(r.robots)}}\" />")
@@ -3408,15 +3471,280 @@ fn shell_html(r: MetaRec, canonical: string, stem: string) -> string {
     }
     push(
         lines,
-        "<style>html,body{margin:0;height:100%;background:#fafafa}canvas#zeus{display:block;position:fixed;inset:0;width:100%;height:100%;touch-action:none}</style>",
+        "<style>html,body{margin:0;height:100%;background:{{paper}}}canvas#zeus{display:block;position:fixed;inset:0;width:100%;height:100%;touch-action:none}</style>",
     )
     push(lines, "</head>")
     push(lines, "<body>")
-    push(lines, "<canvas id=\"zeus\" data-wasm=\"/{{stem}}.wasm\"></canvas>")
-    push(lines, "<script src=\"/loader.js\"></script>")
+    push(lines, "<canvas id=\"zeus\" data-wasm=\"{{assets.wasm}}\"></canvas>")
+    if assets.chunks.len > 0 {
+        let table = chunk_table_json(assets, boot)
+        push(lines, "<script type=\"application/json\" id=\"zeus-chunks\">{{table}}</script>")
+    }
+    push(lines, "<script src=\"{{assets.loader}}\"></script>")
     push(lines, "</body>")
     push(lines, "</html>")
     return join_lines(lines)
+}
+
+/// Packed rgb as `#rrggbb`, from the decimal string the metadata dump prints.
+/// Anything else falls back to the plain light page.
+fn css_hex(rgb: string) -> string {
+    if rgb == "" {
+        return "#fafafa"
+    }
+    let n = int_of(rgb)
+    let digits = "0123456789abcdef"
+    let mut out = []int { 35 }
+    let mut shift = 20
+    while shift >= 0 {
+        push(out, digits[(n >> shift) & 15])
+        shift = shift - 4
+    }
+    return string_from_bytes(out)
+}
+
+/// A routed web app with binaryen installed. Without it `zeli serve` still works,
+/// as one module, and only a release insists.
+fn can_split(appdir: string) -> bool {
+    return sys.exists(join(appdir, "routes")) == 1 && has_tool("wasm-opt") && has_tool("wasm-split")
+}
+
+/// The asset names `zeli serve` keeps when it cannot split.
+fn plain_assets(stem: string) -> WebAssets {
+    return WebAssets {
+        wasm: "/{{stem}}.wasm",
+        loader: "/loader.js",
+        chunks: []ChunkFile {},
+        routes: [][]string {},
+    }
+}
+
+fn has_tool(name: string) -> bool {
+    sys.exec("command -v {{shell_quote(name)}} >/dev/null 2>&1")
+    return sys.exec_status() == 0
+}
+
+/// First 12 hex digits of a file's SHA-256.
+fn short_hash(file: string) -> string {
+    let tool = if has_tool("sha256sum") { "sha256sum" } else { "shasum -a 256" }
+    let out = trim(sys.exec("{{tool}} {{shell_quote(file)}} | cut -c1-12"))
+    if out == "" || sys.exec_status() != 0 {
+        die("zeli: could not hash {{file}}")
+    }
+    return out
+}
+
+/// Move one build output into `dir` under its content hash and return its
+/// final name.
+fn fingerprint_file(src: string, dir: string, stem: string, ext: string) -> string {
+    let name = "{{stem}}.{{short_hash(src)}}.{{ext}}"
+    let dst = join(dir, name)
+    sys.exec("mv {{shell_quote(src)}} {{shell_quote(dst)}}")
+    if sys.exec_status() != 0 {
+        die("zeli: could not write {{dst}}")
+    }
+    return name
+}
+
+/// What a static host needs to cache a release: the hashed assets for a year,
+/// since a new build gets new names, and every page checked each visit.
+fn web_headers() -> string {
+    let mut lines = []string {}
+    push(lines, "/_zeus/*")
+    push(lines, "  Cache-Control: public, max-age=31536000, immutable")
+    push(lines, "/*")
+    push(lines, "  X-Content-Type-Options: nosniff")
+    return join_lines(lines)
+}
+
+fn preload_link(url: string) -> string {
+    return "<link rel=\"preload\" href=\"{{url}}\" as=\"fetch\" type=\"application/wasm\" crossorigin=\"anonymous\" />"
+}
+
+/// The chunks a page needs before its first frame.
+fn boot_chunks(r: MetaRec, assets: WebAssets) -> []string {
+    let route = int_of(r.route)
+    if r.route == "" || route >= assets.routes.len {
+        return []string {}
+    }
+    return assets.routes[route]
+}
+
+fn chunk_url(assets: WebAssets, name: string) -> string {
+    for i in 0..assets.chunks.len {
+        if assets.chunks[i].name == name {
+            return assets.chunks[i].url
+        }
+    }
+    return ""
+}
+
+fn json_names(names: []string) -> string {
+    let mut out = "["
+    for i in 0..names.len {
+        let sep = if i > 0 { "," } else { "" }
+        let n = names[i]
+        out = "{{out}}{{sep}}\"{{n}}\""
+    }
+    return cat(out, "]")
+}
+
+/// What the loader needs in order to find a route's chunks, inline so that it
+/// costs no request.
+fn chunk_table_json(assets: WebAssets, boot: []string) -> string {
+    let mut urls = ""
+    for i in 0..assets.chunks.len {
+        let sep = if i > 0 { "," } else { "" }
+        let name = assets.chunks[i].name
+        let url = assets.chunks[i].url
+        urls = "{{urls}}{{sep}}\"{{name}}\":\"{{url}}\""
+    }
+    let mut routes = ""
+    for i in 0..assets.routes.len {
+        let sep = if i > 0 { "," } else { "" }
+        let r = json_names(assets.routes[i])
+        routes = "{{routes}}{{sep}}{{r}}"
+    }
+    let bootj = json_names(boot)
+    return cat(cat("{\"chunks\":{", urls), "},\"routes\":[{{routes}}],\"boot\":{{bootj}}}")
+}
+
+/// The generated route table's builders, in route order (`b_root_page`, ...).
+fn route_builders(appdir: string) -> []string {
+    let lines = split_lines(sys.read_file(join(appdir, "app_routes.loam")))
+    let mut out = []string {}
+    for i in 0..lines.len {
+        let t = trim(lines[i])
+        if !starts_with(t, "Route {") {
+            continue
+        }
+        let parts = split_on(t, 44 /* , */ )
+        for j in 0..parts.len {
+            let kv = split_on(parts[j], 58 /* : */ )
+            if kv.len == 2 && trim(kv[0]) == "build" {
+                push(out, trim(kv[1]))
+            }
+        }
+    }
+    return out
+}
+
+/// The C the runtime and the web host are written in. The names it uses are the
+/// entry points into Loam code.
+fn runtime_sources() -> string {
+    let rt = join(repo_root(), "packages/loam/runtime")
+    let web = join(repo_root(), "packages/zeus/hosts/web")
+    let files = []string {
+        join(rt, "zeus_plat.c"),
+        join(rt, "zeus_key.c"),
+        join(rt, "zeus_rt.h"),
+        join(web, "wasm.c"),
+    }
+    let mut out = ""
+    for i in 0..files.len {
+        out = cat(out, sys.read_file(files[i]))
+    }
+    return out
+}
+
+/// Split a `--wasm-split-input` build into a primary and route chunks, optimise
+/// each, and fingerprint them all. Optimising after the split matters: run first,
+/// `wasm-opt` merges identical functions, which ties routes to each other.
+fn split_web(appdir: string, web: string, stem: string) -> WebAssets {
+    let raw = join(web, "{{stem}}.wasm")
+    let csrc = cat(raw, ".c")
+    let dir = join(web, "_zeus")
+    let tmp = join(web, ".split")
+    sys.mkdir(dir)
+    sys.mkdir(tmp)
+
+    let mut g = chunks.parse_c(sys.read_file(csrc))
+    let roots = chunks.roots_of(&mut g, runtime_sources())
+    let builders = route_builders(appdir)
+    let mut entries = []int {}
+    for i in 0..builders.len {
+        let f = chunks.find_suffix(&g, builders[i])
+        if f < 0 {
+            die("zeli: no function for route builder {{builders[i]}}")
+        }
+        push(entries, f)
+    }
+    let plan = chunks.plan(&g, roots, entries, chunks.MIN_CHUNK_C)
+
+    let man = join(tmp, "manifest.txt")
+    sys.write_file(man, chunks.manifest(&g, &plan))
+    let features = "--enable-bulk-memory --enable-mutable-globals --enable-sign-ext --enable-nontrapping-float-to-int --enable-reference-types --enable-multivalue"
+    let prim = join(tmp, "primary.wasm")
+    let prefix = shell_quote(cat(tmp, "/"))
+    let log = sys.exec(
+        "wasm-split --multi-split {{features}} --manifest {{shell_quote(man)}} --out-prefix {{prefix}} --export-prefix=% -g -o {{shell_quote(prim)}} {{shell_quote(raw)}} 2>&1",
+    )
+    if sys.exec_status() != 0 {
+        die_extra("zeli: wasm-split failed", trim(log))
+    }
+
+    let mut files = []ChunkFile {}
+    let mut names = []string { "primary" }
+    for i in 0..plan.chunks.len {
+        push(names, plan.chunks[i].name)
+    }
+    let mut primary = ""
+    for i in 0..names.len {
+        let src = join(tmp, "{{names[i]}}.wasm")
+        let opt = cat(src, ".opt")
+        let out = sys.exec(
+            "wasm-opt -Oz --strip-debug --strip-producers {{features}} {{shell_quote(src)}} -o {{shell_quote(opt)}} 2>&1",
+        )
+        if sys.exec_status() != 0 {
+            die_extra("zeli: wasm-opt failed on {{names[i]}}", trim(out))
+        }
+        let file = fingerprint_file(opt, dir, if i == 0 { stem } else { names[i] }, "wasm")
+        if i == 0 {
+            primary = "/_zeus/{{file}}"
+        } else {
+            push(files, ChunkFile { name: names[i], url: "/_zeus/{{file}}" })
+        }
+    }
+
+    let mut routes = [][]string {}
+    for r in 0..plan.route_chunks.len {
+        let mut mine = []string {}
+        let cs = plan.route_chunks[r]
+        for j in 0..cs.len {
+            push(mine, plan.chunks[cs[j]].name)
+        }
+        push(routes, mine)
+    }
+    sys.exec("rm -rf {{shell_quote(tmp)}} {{shell_quote(raw)}} {{shell_quote(csrc)}}")
+    return finish_web(web, primary, files, routes)
+}
+
+/// Fingerprint the loader and write the files a static host reads.
+fn finish_web(web: string, wasm: string, files: []ChunkFile, routes: [][]string) -> WebAssets {
+    let loader = fingerprint_file(join(web, "loader.js"), join(web, "_zeus"), "loader", "js")
+    sys.write_file(join(web, "_headers"), web_headers())
+    // GitHub Pages hides `_` directories unless this file exists.
+    sys.write_file(join(web, ".nojekyll"), "")
+    return WebAssets { wasm: wasm, loader: "/_zeus/{{loader}}", chunks: files, routes: routes }
+}
+
+/// One size in KB, for the build report.
+fn kb_of(file: string) -> string {
+    if sys.exists(file) == 0 {
+        return "-"
+    }
+    let n = int_of(trim(sys.exec("wc -c < {{shell_quote(file)}}")))
+    return "{{(n + 512) / 1024}} KB"
+}
+
+/// What a visitor actually downloads, per file.
+fn report_web_sizes(web: string) {
+    let dir = join(web, "_zeus")
+    let names = split_lines(trim(sys.exec("ls {{shell_quote(dir)}}")))
+    fmt.println("zeli: web assets")
+    for i in 0..names.len {
+        fmt.println("  {{names[i]}}  {{kb_of(join(dir, names[i]))}}")
+    }
 }
 
 /// One HTML file per route, plus `sitemap.xml` and `robots.txt`.
@@ -3424,7 +3752,7 @@ fn shell_html(r: MetaRec, canonical: string, stem: string) -> string {
 /// The route table is the source of the URLs: a static route contributes its
 /// pattern, and a dynamic one contributes each entry of its `paths()`. A route
 /// with no `meta()` still gets a shell, from the empty record.
-fn emit_web_shell(appdir: string, stem: string, base: string) {
+fn emit_web_shell(appdir: string, assets: WebAssets, base: string) {
     let web = join(join(appdir, "build"), "web")
     sys.mkdir(web)
     let recs = collect_meta(appdir)
@@ -3442,7 +3770,7 @@ fn emit_web_shell(appdir: string, stem: string, base: string) {
             dir = join(web, rel)
             sys.mkdir(dir)
         }
-        sys.write_file(join(dir, "index.html"), shell_html(r, canon, stem))
+        sys.write_file(join(dir, "index.html"), shell_html(r, canon, assets))
         push(urls, canon)
     }
     let mut sm = []string {}

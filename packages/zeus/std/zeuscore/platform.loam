@@ -34,6 +34,9 @@ fn plat_font_bytes(src: string) -> string {}
 fn plat_set_window(title: string, width: int, height: int) {}
 /// Update the host window title without reopening it (router `Meta.title`).
 fn plat_set_title(title: string) {}
+/// Update one piece of the page's metadata (`Meta`, by field name). "" removes
+/// it. Only a browser has a `<head>`; other hosts ignore this.
+fn plat_set_head(key: string, value: string) {}
 /// Window chrome: 0 the host's title bar, 1 drawn by the app (`TitleBar`).
 fn plat_set_chrome(mode: int) {}
 /// The host title bar's box under app-drawn chrome: [height, lead, trail] in
@@ -117,6 +120,14 @@ fn plat_now_ms() -> int {}
 fn plat_history_push(path: string) {}
 fn plat_history_replace(path: string) {}
 fn plat_history_back() {}
+/// 1 when route `index`'s code is loaded. Always 1 where code is not split.
+fn plat_chunks_ready(index: int) -> int {}
+/// Start loading route `index`'s code. The host answers through
+/// `router.engine_chunks_done`.
+fn plat_chunks_load(index: int) {}
+/// The path a host wants the app to start on (the browser's URL), "" for none.
+/// Read before the first build, so a deep link never builds another page first.
+fn plat_boot_path() -> string {}
 /// 1 = overlay scroll hosts (iOS/Android): thumb drag is disabled in input
 /// and the track/thumb is not painted — panes scroll by touch only.
 fn plat_overlay_scroll() -> int {}

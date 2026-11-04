@@ -1,0 +1,468 @@
+//! Route chunks: which function goes in which wasm module.
+//!
+//! The input is the C the compiler emitted, because it is the one place that
+//! names everything the binary holds, closures and generic clones included. A
+//! function's body names every function it calls or takes the address of, so a
+//! scan of those names gives the whole graph.
+//!
+//! Each function gets a usage signature, the set of routes that reach it. Equal
+//! signatures form a chunk, small chunks merge into larger ones, and anything
+//! most routes need stays in the primary module. Nothing here has to be exact:
+//! a function placed badly costs bytes, and a call into an unloaded chunk is
+//! caught by the loader's placeholder.
+
+import "std:map"
+import "std:str"
+
+/// Below this much C, a chunk costs more in requests than it saves in bytes.
+/// About 8 KB of wasm.
+const MIN_CHUNK_C: int = 40000
+/// Most chunks a route may need. More means slower first paints.
+const MAX_ROUTE_CHUNKS: int = 3
+/// A function used by at least this percent of routes stays in the primary.
+const PRIMARY_PERCENT: int = 50
+
+struct Graph {
+    names: []string,
+    sizes: []int,
+    calls: [][]int,
+    ids: Map<int>,
+}
+
+struct Chunk {
+    name: string,
+    fns: []int,
+    routes: []int,
+    size: int,
+}
+
+struct Plan {
+    chunks: []Chunk,
+    /// Chunk indexes each route needs, by route index.
+    route_chunks: [][]int,
+}
+
+fn is_ident(c: int) -> bool {
+    return (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) || c == 95
+}
+
+fn is_ident_start(c: int) -> bool {
+    return (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || c == 95
+}
+
+fn graph_new() -> Graph {
+    return Graph {
+        names: []string {},
+        sizes: []int {},
+        calls: [][]int {},
+        ids: map.map_new(-1),
+    }
+}
+
+fn intern(g: &mut Graph, name: string) -> int {
+    if map.map_has(&mut g.ids, name) {
+        return map.map_at(&mut g.ids, name)
+    }
+    let id = g.names.len
+    push(g.names, name)
+    push(g.sizes, 0)
+    push(g.calls, []int {})
+    map.map_put(&mut g.ids, name, id)
+    return id
+}
+
+/// The function a top-level line defines, or "". The name is the identifier
+/// before the last top-level parentheses, which skips `__attribute__((...))`.
+fn defined_name(src: string, from: int, to: int) -> string {
+    let mut end = to
+    while end > from && src[end - 1] <= 32 {
+        end = end - 1
+    }
+    if end - from < 3 || src[end - 1] != 123 || !is_ident_start(src[from]) {
+        return ""
+    }
+    let mut depth = 0
+    let mut open = -1
+    let mut i = from
+    while i < end {
+        let c = src[i]
+        if c == 61 {
+            return ""
+        }
+        if c == 40 {
+            if depth == 0 {
+                open = i
+            }
+            depth = depth + 1
+        } else if c == 41 {
+            depth = depth - 1
+        }
+        i = i + 1
+    }
+    if open < 0 {
+        return ""
+    }
+    let mut a = open
+    while a > from && is_ident(src[a - 1]) {
+        a = a - 1
+    }
+    return str.slice(src, a, open)
+}
+
+/// True when `src[at..]` starts with `prefix`.
+fn has_at(src: string, at: int, prefix: string) -> bool {
+    if at + prefix.len > src.len {
+        return false
+    }
+    for i in 0..prefix.len {
+        if src[at + i] != prefix[i] {
+            return false
+        }
+    }
+    return true
+}
+
+/// Add every `loam_*` / `zeus_*` name in `src[from..to]` to function `f`'s calls.
+fn scan_body(g: &mut Graph, f: int, src: string, from: int, to: int) {
+    let mut i = from
+    while i < to {
+        if is_ident_start(src[i]) {
+            let a = i
+            while i < to && is_ident(src[i]) {
+                i = i + 1
+            }
+            if has_at(src, a, "loam_") || has_at(src, a, "zeus_") {
+                let name = str.slice(src, a, i)
+                let id = intern(g, name)
+                push(g.calls[f], id)
+            }
+        } else if src[i] >= 48 && src[i] <= 57 {
+            while i < to && is_ident(src[i]) {
+                i = i + 1
+            }
+        } else {
+            i = i + 1
+        }
+    }
+}
+
+/// Build the call graph from emitted C.
+fn parse_c(src: string) -> Graph {
+    let mut g = graph_new()
+    let mut i = 0
+    while i < src.len {
+        let mut eol = i
+        while eol < src.len && src[eol] != 10 {
+            eol = eol + 1
+        }
+        let name = defined_name(src, i, eol)
+        if name == "" {
+            i = eol + 1
+            continue
+        }
+        // A body ends at the first `}` in the first column.
+        let mut end = eol + 1
+        while end < src.len {
+            if src[end] == 125 {
+                break
+            }
+            while end < src.len && src[end] != 10 {
+                end = end + 1
+            }
+            end = end + 1
+        }
+        let f = intern(&mut g, name)
+        g.sizes[f] = g.sizes[f] + end - eol
+        scan_body(&mut g, f, src, eol, if end < src.len { end } else { src.len })
+        i = end + 1
+    }
+    // `main` opens differently per target behind `#if`, so no single line defines
+    // it. It is the last thing emitted, and it starts the app's layout, so it
+    // must not be missed.
+    let at = str.last_index_of(src, "int main(")
+    if at >= 0 {
+        let f = intern(&mut g, "main")
+        g.sizes[f] = src.len - at
+        scan_body(&mut g, f, src, at, src.len)
+    }
+    return g
+}
+
+/// The functions the primary must hold: `main`, every module initializer, every
+/// wasm export, and every Loam function the C runtime calls by name (`runtime`
+/// is that source text).
+fn roots_of(g: &mut Graph, runtime: string) -> []int {
+    let mut out = []int {}
+    for i in 0..g.names.len {
+        let n = g.names[i]
+        if n == "main" || str.ends_with(n, "__init") || str.starts_with(n, "zeus_") {
+            push(out, i)
+        }
+    }
+    let mut i = 0
+    while i < runtime.len {
+        if is_ident_start(runtime[i]) {
+            let a = i
+            while i < runtime.len && is_ident(runtime[i]) {
+                i = i + 1
+            }
+            if has_at(runtime, a, "loam_") {
+                let name = str.slice(runtime, a, i)
+                if map.map_has(&mut g.ids, name) {
+                    push(out, map.map_at(&mut g.ids, name))
+                }
+            }
+        } else {
+            i = i + 1
+        }
+    }
+    return out
+}
+
+/// The function whose name ends with `_suffix`, or -1. Generated route builders
+/// carry their module's import alias as a prefix.
+fn find_suffix(g: &Graph, suffix: string) -> int {
+    let tail = "_{{suffix}}"
+    for i in 0..g.names.len {
+        if g.names[i].len >= tail.len && str.ends_with(g.names[i], tail) {
+            return i
+        }
+    }
+    return -1
+}
+
+/// Mark everything reachable from `starts`, never entering a `stop` node.
+fn reach(g: &Graph, starts: []int, stop: []bool, seen: &mut []bool) {
+    let mut todo = []int {}
+    for i in 0..starts.len {
+        push(todo, starts[i])
+    }
+    while todo.len > 0 {
+        let f = todo[todo.len - 1]
+        todo.pop()
+        if seen[f] {
+            continue
+        }
+        seen[f] = true
+        let cs = g.calls[f]
+        for j in 0..cs.len {
+            if !seen[cs[j]] && !stop[cs[j]] {
+                push(todo, cs[j])
+            }
+        }
+    }
+}
+
+fn int_list_key(xs: []int) -> string {
+    let mut out = ""
+    for i in 0..xs.len {
+        let x = xs[i]
+        out = "{{out}}{{x}},"
+    }
+    return out
+}
+
+fn contains_int(xs: []int, x: int) -> bool {
+    for i in 0..xs.len {
+        if xs[i] == x {
+            return true
+        }
+    }
+    return false
+}
+
+fn subset(a: []int, b: []int) -> bool {
+    for i in 0..a.len {
+        if !contains_int(b, a[i]) {
+            return false
+        }
+    }
+    return true
+}
+
+fn union_sorted(a: []int, b: []int) -> []int {
+    let mut out = []int {}
+    let mut i = 0
+    let mut j = 0
+    while i < a.len || j < b.len {
+        if j >= b.len || (i < a.len && a[i] < b[j]) {
+            push(out, a[i])
+            i = i + 1
+        } else if i >= a.len || b[j] < a[i] {
+            push(out, b[j])
+            j = j + 1
+        } else {
+            push(out, a[i])
+            i = i + 1
+            j = j + 1
+        }
+    }
+    return out
+}
+
+/// Fold chunk `from` into `into`, leaving `from` empty.
+fn merge_into(cs: &mut []Chunk, from: int, into: int) {
+    let fns = cs[from].fns
+    for i in 0..fns.len {
+        push(cs[into].fns, fns[i])
+    }
+    cs[into].routes = union_sorted(cs[into].routes, cs[from].routes)
+    cs[into].size = cs[into].size + cs[from].size
+    cs[from].fns = []int {}
+    cs[from].routes = []int {}
+    cs[from].size = 0
+}
+
+/// Fold each undersized chunk into the smallest chunk that already loads on all
+/// of its routes. With none, its code goes to the primary: every route has that.
+fn merge_small(cs: &mut []Chunk, min_size: int) {
+    for i in 0..cs.len {
+        if cs[i].size == 0 || cs[i].size >= min_size {
+            continue
+        }
+        let mut best = -1
+        for j in 0..cs.len {
+            if j == i || cs[j].size < min_size || !subset(cs[i].routes, cs[j].routes) {
+                continue
+            }
+            if best < 0 || cs[j].size < cs[best].size {
+                best = j
+            }
+        }
+        if best >= 0 {
+            merge_into(cs, i, best)
+        }
+    }
+}
+
+/// While a route needs too many chunks, fold its two smallest together.
+fn enforce_cap(cs: &mut []Chunk, routes: int, cap: int) {
+    for r in 0..routes {
+        while true {
+            let mut mine = []int {}
+            for i in 0..cs.len {
+                if cs[i].size > 0 && contains_int(cs[i].routes, r) {
+                    push(mine, i)
+                }
+            }
+            if mine.len <= cap {
+                break
+            }
+            let mut a = -1
+            let mut b = -1
+            for k in 0..mine.len {
+                let c = mine[k]
+                if a < 0 || cs[c].size < cs[a].size {
+                    b = a
+                    a = c
+                } else if b < 0 || cs[c].size < cs[b].size {
+                    b = c
+                }
+            }
+            merge_into(cs, a, b)
+        }
+    }
+}
+
+/// `entries` are the route builders by route index, `roots` the functions the
+/// primary must hold however little they are used.
+fn plan(g: &Graph, roots: []int, entries: []int, min_size: int) -> Plan {
+    let n = g.names.len
+    let mut stop = []bool {}
+    for i in 0..n {
+        push(stop, false)
+    }
+    for i in 0..entries.len {
+        stop[entries[i]] = true
+    }
+
+    let mut base = []bool {}
+    for i in 0..n {
+        push(base, false)
+    }
+    reach(g, roots, stop, &mut base)
+
+    let mut users = [][]int {}
+    for i in 0..n {
+        push(users, []int {})
+    }
+    for r in 0..entries.len {
+        let mut seen = []bool {}
+        for i in 0..n {
+            push(seen, base[i])
+        }
+        // Ignore other routes' builders, but do enter this one.
+        stop[entries[r]] = false
+        let mut todo = []int { entries[r] }
+        reach(g, todo, stop, &mut seen)
+        stop[entries[r]] = true
+        for i in 0..n {
+            if seen[i] && !base[i] {
+                push(users[i], r)
+            }
+        }
+    }
+
+    let mut by_sig: Map<int> = map.map_new(-1)
+    let mut cs = []Chunk {}
+    let shared = (entries.len * PRIMARY_PERCENT + 99) / 100
+    for i in 0..n {
+        if users[i].len == 0 || (users[i].len >= shared && entries.len > 2) {
+            continue
+        }
+        let key = int_list_key(users[i])
+        let mut c = -1
+        if map.map_has(&mut by_sig, key) {
+            c = map.map_at(&mut by_sig, key)
+        } else {
+            c = cs.len
+            push(cs, Chunk { name: "", fns: []int {}, routes: users[i], size: 0 })
+            map.map_put(&mut by_sig, key, c)
+        }
+        push(cs[c].fns, i)
+        cs[c].size = cs[c].size + g.sizes[i]
+    }
+
+    merge_small(&mut cs, min_size)
+    enforce_cap(&mut cs, entries.len, MAX_ROUTE_CHUNKS)
+
+    let mut out = []Chunk {}
+    for i in 0..cs.len {
+        // Whatever stayed too small has no home but the primary.
+        if cs[i].size >= min_size {
+            let c = out.len
+            push(out, Chunk {
+                name: "c{{c}}",
+                fns: cs[i].fns,
+                routes: cs[i].routes,
+                size: cs[i].size,
+            })
+        }
+    }
+    let mut route_chunks = [][]int {}
+    for r in 0..entries.len {
+        let mut mine = []int {}
+        for i in 0..out.len {
+            if contains_int(out[i].routes, r) {
+                push(mine, i)
+            }
+        }
+        push(route_chunks, mine)
+    }
+    return Plan { chunks: out, route_chunks: route_chunks }
+}
+
+/// The `wasm-split --multi-split` manifest: a chunk name, its functions, a blank
+/// line.
+fn manifest(g: &Graph, p: &Plan) -> string {
+    let mut lines = []string {}
+    for i in 0..p.chunks.len {
+        push(lines, p.chunks[i].name)
+        let fns = p.chunks[i].fns
+        for j in 0..fns.len {
+            push(lines, g.names[fns[j]])
+        }
+        push(lines, "")
+    }
+    return str.join(lines, "\n")
+}

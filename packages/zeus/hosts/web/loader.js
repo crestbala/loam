@@ -820,6 +820,19 @@
         /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent) ? 1 : 0,
       /* Router history mirror: the Loam stack is authoritative; these keep the
          browser's own back/forward in step and make URLs shareable. */
+      /* The URL the app starts on, written to `buf`, length returned. Asked for
+         while `main` builds, so a deep link builds only its own page. */
+      boot_path: (buf, cap) => {
+        const enc = new TextEncoder().encode(location.pathname + location.search);
+        const n = enc.length < cap ? enc.length : 0;
+        new Uint8Array(mem.buffer, buf, n).set(enc.subarray(0, n));
+        return n;
+      },
+      set_head: (keyPtr, keyLen, valuePtr, valueLen) => {
+        setHead(bytes(keyPtr, keyLen), bytes(valuePtr, valueLen));
+      },
+      chunks_ready: (index) => (routeReady(index) ? 1 : 0),
+      chunks_load: (index) => loadRoute(index),
       history_push: (p) => {
         const path = cstr(p);
         if (location.pathname + location.search !== path) {
@@ -1327,8 +1340,204 @@
        innermost `Boundary` that was at work takes the trap and shows its
        fallback on the next frame. A trap no boundary covers is rethrown. */
     /* Boundaries that trapped during startup, carried across re-instantiation. */
+    /* Page metadata. The build writes each route's tags into its HTML, and a
+       route change has no new HTML, so these keep the head matching the page.
+       An empty value removes a tag, so one page's tags never outlive it. */
+    function setTag(attr, name, value) {
+      let el = document.head.querySelector(`meta[${attr}="${name}"]`);
+      if (!value) {
+        if (el) el.remove();
+        return;
+      }
+      if (!el) {
+        el = document.createElement("meta");
+        el.setAttribute(attr, name);
+        document.head.appendChild(el);
+      }
+      el.setAttribute("content", value);
+    }
+
+    /* `--base` is only known to the build, so it comes from the canonical URL
+       the page was served with. */
+    function canonicalOrigin(link) {
+      try {
+        return new URL(link.href).origin;
+      } catch (e) {
+        return location.origin;
+      }
+    }
+
+    function setCanonical(value) {
+      let link = document.head.querySelector('link[rel="canonical"]');
+      const base = link ? canonicalOrigin(link) : location.origin;
+      const url = new URL(value, base).href;
+      if (!link) {
+        link = document.createElement("link");
+        link.rel = "canonical";
+        document.head.appendChild(link);
+      }
+      link.href = url;
+      setTag("property", "og:url", url);
+    }
+
+    function setJsonLd(value) {
+      let el = document.head.querySelector('script[type="application/ld+json"]');
+      if (!value) {
+        if (el) el.remove();
+        return;
+      }
+      if (!el) {
+        el = document.createElement("script");
+        el.type = "application/ld+json";
+        document.head.appendChild(el);
+      }
+      el.textContent = value;
+    }
+
+    /* A card takes its text from Open Graph, and only a page with an image gets
+       the large card, matching what the build writes. */
+    function setImage(value) {
+      const og = (n) => {
+        const el = document.head.querySelector(`meta[property="og:${n}"]`);
+        return el ? el.getAttribute("content") : "";
+      };
+      setTag("property", "og:image", value);
+      setTag("name", "twitter:card", value ? "summary_large_image" : "summary");
+      setTag("name", "twitter:image", value);
+      setTag("name", "twitter:title", value ? og("title") : "");
+      setTag("name", "twitter:description", value ? og("description") : "");
+    }
+
+    function setHead(key, value) {
+      if (key === "title") {
+        if (value) setTag("property", "og:title", value);
+      } else if (key === "description") {
+        setTag("name", "description", value);
+        setTag("property", "og:description", value);
+      } else if (key === "canonical") {
+        setCanonical(value);
+      } else if (key === "robots") {
+        setTag("name", "robots", value);
+      } else if (key === "og_type") {
+        setTag("property", "og:type", value);
+      } else if (key === "jsonld") {
+        setJsonLd(value);
+      } else if (key === "og_image") {
+        setImage(value);
+      }
+    }
+
     const bootPresets = [];
     let wasmModule = null;
+
+    /* Route chunks. A split build keeps each route's code in its own module,
+       sharing the primary's memory, table and stack pointer. A chunk has no
+       start function: instantiating it writes its functions into the table.
+       The router loads what a route needs before building it, so nothing below
+       `placeholders` runs in normal use. */
+    const chunkUrls = opts.chunks || {};
+    const routeChunks = opts.routes || [];
+    const chunkLinked = new Set();
+    /* Compiled modules, kept so a restarted instance can link them again. */
+    const chunkModules = new Map();
+    const chunkPending = new Map();
+    let primaryExports = null;
+
+    function linkChunk(name, mod) {
+      chunkModules.set(name, mod);
+      if (chunkLinked.has(name) || !primaryExports) return;
+      new WebAssembly.Instance(mod, { primary: primaryExports, zeus: imports.zeus });
+      chunkLinked.add(name);
+    }
+
+    /* Fetch and link one chunk, once, with two retries for a flaky network. */
+    function loadChunk(name, tries = 3) {
+      if (chunkModules.has(name)) {
+        linkChunk(name, chunkModules.get(name));
+        return Promise.resolve();
+      }
+      if (chunkPending.has(name)) return chunkPending.get(name);
+      const p = fetch(chunkUrls[name])
+        .then((r) => {
+          if (!r.ok) throw new Error("chunk " + name + ": " + r.status);
+          return WebAssembly.compileStreaming ? WebAssembly.compileStreaming(r) : r.arrayBuffer().then((b) => WebAssembly.compile(b));
+        })
+        .then((mod) => {
+          chunkPending.delete(name);
+          linkChunk(name, mod);
+        })
+        .catch((e) => {
+          chunkPending.delete(name);
+          if (tries > 1) return new Promise((r) => setTimeout(r, 300)).then(() => loadChunk(name, tries - 1));
+          throw e;
+        });
+      chunkPending.set(name, p);
+      return p;
+    }
+
+    function routeReady(index) {
+      return (routeChunks[index] || []).every((n) => chunkLinked.has(n));
+    }
+
+    /* A chunk that cannot be had usually means a new deploy replaced it, so
+       load this URL for real, once. A page that fails again stops here. */
+    function reloadForChunks() {
+      const key = "zeus-chunk-reload";
+      if (sessionStorage.getItem(key) === location.href) return;
+      sessionStorage.setItem(key, location.href);
+      location.reload();
+    }
+
+    function loadRoute(index) {
+      Promise.all((routeChunks[index] || []).map((n) => loadChunk(n))).then(
+        () => {
+          exp.zeus_chunks_done(index);
+          schedule(0);
+        },
+        reloadForChunks
+      );
+    }
+
+    /* Sync XHR refuses `responseType` on a page, so the bytes come back as
+       text with one code unit per byte. */
+    function fetchChunkSync(name) {
+      const xhr = new XMLHttpRequest();
+      xhr.open("GET", chunkUrls[name], false);
+      xhr.overrideMimeType("text/plain; charset=x-user-defined");
+      xhr.send();
+      if (xhr.status !== 200) throw new Error("failed to load chunk " + name + " (" + xhr.status + ")");
+      const text = xhr.responseText;
+      const bytes = new Uint8Array(text.length);
+      for (let i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i) & 255;
+      return new WebAssembly.Module(bytes);
+    }
+
+    /* The safety net. Each table slot of a function in an unloaded chunk holds
+       one of these: the module is `placeholder.<chunk>`, the field its slot.
+       A call means the router missed a dependency, so load the chunk now, which
+       overwrites the slot, and call the real function. Slow, but correct. */
+    function placeholder(chunk, slot) {
+      return function (...args) {
+        console.warn("zeus: chunk " + chunk + " loaded late, by a call");
+        linkChunk(chunk, fetchChunkSync(chunk));
+        return splitTable().get(slot)(...args);
+      };
+    }
+
+    /* The table `wasm-split` adds for calls into chunks, beside the original. */
+    function splitTable() {
+      const name = Object.keys(primaryExports).find((k) => k.startsWith("%table_"));
+      return primaryExports[name];
+    }
+
+    function placeholders(mod) {
+      const chunk = mod.slice("placeholder.".length);
+      return new Proxy({}, { get: (_, field) => placeholder(chunk, Number(field)) });
+    }
+
+    const moduleImports = new Proxy(imports, {
+      get: (t, k) => (typeof k === "string" && k.startsWith("placeholder.") ? placeholders(k) : t[k]),
+    });
 
     function cstrIn(raw, ptr) {
       if (!ptr) return "";
@@ -1386,6 +1595,9 @@
 
     function start(instance) {
         if (stopped) return;
+        primaryExports = instance.exports;
+        chunkLinked.clear();
+        for (const [name, mod] of chunkModules) linkChunk(name, mod);
         exp = guardExports(instance.exports);
         mem = exp.memory;
         const sz = sizeCanvas();
@@ -1442,7 +1654,7 @@
           exp.zeus_start();
         } catch (e) {
           if (e && e.zeusRestart && wasmModule && bootPresets.length <= 16) {
-            return WebAssembly.instantiate(wasmModule, imports).then((inst) => start(inst));
+            return WebAssembly.instantiate(wasmModule, moduleImports).then((inst) => start(inst));
           }
           throw e;
         }
@@ -1504,12 +1716,12 @@
           new Uint8Array(mem.buffer, ptr + n, 1)[0] = 0;
           exp.zeus_open_url(ptr);
         };
-        openUrl(location.pathname + location.search);
         const win = canvas.ownerDocument && canvas.ownerDocument.defaultView;
         if (win) {
-          win.addEventListener("popstate", () =>
-            openUrl(location.pathname + location.search)
-          );
+          win.addEventListener("popstate", () => {
+            openUrl(location.pathname + location.search);
+            schedule(0);
+          });
         }
         const ime = document.createElement("textarea");
         ime.setAttribute("autocapitalize", "off");
@@ -1885,23 +2097,27 @@
     }
 
     function boot(wasmBuffer) {
-      return WebAssembly.instantiate(wasmBuffer, imports).then((r) => {
+      return WebAssembly.instantiate(wasmBuffer, moduleImports).then((r) => {
         wasmModule = r.module;
         return start(r.instance);
       });
     }
 
     function bootUrl(url) {
+      /* This page's chunks download alongside the primary, and link just before
+         `main`, so the first frame is the real page. */
+      const chunksReady = Promise.all((opts.boot || []).map((n) => loadChunk(n)));
+      const started = (x) => {
+        wasmModule = x.module;
+        return chunksReady.then(() => start(x.instance));
+      };
       return fetch(url).then((r) => {
         if (!r.ok) throw new Error("failed to load " + url + " (" + r.status + ")");
         const ct = (r.headers.get("content-type") || "").toLowerCase();
         if (typeof WebAssembly.instantiateStreaming === "function" && ct.indexOf("wasm") >= 0) {
-          return WebAssembly.instantiateStreaming(r, imports).then((x) => {
-            wasmModule = x.module;
-            return start(x.instance);
-          });
+          return WebAssembly.instantiateStreaming(r, moduleImports).then(started);
         }
-        return r.arrayBuffer().then(boot);
+        return r.arrayBuffer().then((buf) => WebAssembly.instantiate(buf, moduleImports).then(started));
       });
     }
 
@@ -1912,7 +2128,8 @@
 
   const canvas = typeof document !== "undefined" ? document.getElementById("zeus") : null;
   if (canvas && canvas.getAttribute("data-wasm")) {
-    const host = attachZeus(canvas);
+    const chunkList = document.getElementById("zeus-chunks");
+    const host = attachZeus(canvas, chunkList ? JSON.parse(chunkList.textContent) : undefined);
     host.bootUrl(canvas.getAttribute("data-wasm") || "app.wasm").catch((err) => {
       console.error(err);
       document.body.appendChild(document.createTextNode(String(err)));

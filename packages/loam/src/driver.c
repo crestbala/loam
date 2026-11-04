@@ -597,6 +597,8 @@ static void usage(void) {
             "  --emit-ir   emit backend-neutral IR instead of a binary\n"
             "  --target native  desktop GUI: Cocoa on macOS, X11 on Linux (default)\n"
             "  --target wasm32  Canvas2D GUI .wasm (alias: wasm; needs clang wasm32).\n"
+            "  --wasm-split-input  with wasm32: keep symbol names, skip wasm-opt, and\n"
+            "              write the C beside the output, for `zeli build` to split.\n"
             "                   This is the browser *canvas host*, not a CLI target:\n"
             "                   a future CLI/WASI build is a separate target.\n"
             "  --target ios     iOS Simulator .app (same Zeus paint as Cocoa; needs Xcode)\n"
@@ -699,6 +701,7 @@ int main(int argc, char **argv) {
     int test_mode = 0;
     int check_only = 0;
     int target_wasm = 0;
+    int wasm_split_input = 0;
     int target_ios = 0;
     int target_android = 0;
     int int64_compat = 0;
@@ -715,6 +718,8 @@ int main(int argc, char **argv) {
             emit_c = 1;
         } else if (strcmp(argv[i], "--emit-ir") == 0) {
             emit_ir = 1;
+        } else if (strcmp(argv[i], "--wasm-split-input") == 0) {
+            wasm_split_input = 1;
         } else if (strncmp(argv[i], "--target=", 9) == 0 ||
                    (strcmp(argv[i], "--target") == 0 && i + 1 < argc)) {
             const char *t = strncmp(argv[i], "--target=", 9) == 0
@@ -1057,7 +1062,7 @@ int main(int argc, char **argv) {
             if (uses_zeus) {
                 snprintf(cmdw, sizeof cmdw,
                          "\"%s\"%s --target=wasm32 -nostdlib -ffreestanding "
-                         "-fno-stack-protector -Oz -ffp-contract=off -DLOAM_ALLOC_TRACE%s -I\"%s/wasm_inc\" -I\"%s\" "
+                         "-fno-stack-protector %s -ffp-contract=off -DLOAM_ALLOC_TRACE%s -I\"%s/wasm_inc\" -I\"%s\" "
                          "-Wl,--no-entry -Wl,--export-dynamic -Wl,--fatal-warnings "
                          /* The loader resets the shadow stack after a trap
                             unwinds an export (`guardExports` in loader.js). */
@@ -1071,7 +1076,13 @@ int main(int argc, char **argv) {
                          "-x c \"%s\" -x none "
                          "\"%s/zeus_wasm_libc.c\" \"%s/hosts/web/wasm.c\" "
                          "\"%s/zeus_plat.c\" \"%s/zeus_key.c\"%s -o \"%s\"",
-                         cc, maps, owns_def, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR, cpath, LOAM_RUNTIME_DIR,
+                         cc, maps,
+                         /* clang runs wasm-opt after any link it sees -O for,
+                            which strips the names the splitter needs. Giving
+                            -Oz to the compile step alone keeps the optimised
+                            code and skips that. */
+                         wasm_split_input ? "-Xclang -Oz" : "-Oz",
+                         owns_def, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR, cpath, LOAM_RUNTIME_DIR,
                          LOAM_ZEUS_DIR, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR, http_w, binpath);
             } else {
                 snprintf(cmdw, sizeof cmdw,
@@ -1094,6 +1105,11 @@ int main(int argc, char **argv) {
             return 1;
         }
         if (show_time) fprintf(stderr, "loam: cc %.3fs\n", now_sec() - t0);
+        if (wasm_split_input) {
+            char keep[4096];
+            snprintf(keep, sizeof keep, "cp \"%s\" \"%s.c\"", cpath, binpath);
+            if (system(keep) != 0) fprintf(stderr, "loam: could not keep the C for splitting\n");
+        }
         if (cpath_is_temp) unlink(cpath);
         printf("loam: %s -> %s (Canvas2D wasm)\n", in_path, binpath);
         free(outdir);
