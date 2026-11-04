@@ -6,6 +6,7 @@
  * (`loam_<mod>_<fn>`). wrapping_* / string_from_bytes are language builtins.
  * Capturing closures copy Copy locals into a heap env and may escape.
  */
+#include "../compile.h"
 #include "typecheck.h"
 #include "../diagnostics.h"
 #include "../ast.h"
@@ -2918,6 +2919,13 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
             n->ty = ty_string();
             return n->ty;
         case AST_IDENT: {
+            /* Already a function value. A generic body is checked once per
+               instantiation, and a rewritten `mod.fn` must not be looked up
+               again by its bare name, which a local may shadow. */
+            if ((n->flags & ASTF_FN_VAL) && n->as.ident.resolved) {
+                n->ty = fn_type_of(n->as.ident.resolved);
+                return n->ty;
+            }
             Type *ty = NULL;
             int mut = 0;
             SourceLoc dloc = {0};
@@ -3271,7 +3279,38 @@ static Type *check_expr_ty(AstNode *n, Type *expect) {
                         n->place_mut = gv->as.var.is_mut;
                         return n->ty;
                     }
-                    /* path used as value — only valid as call callee */
+                    /* `mod.fn` as a value: from here on it is the same node a
+                       bare imported name resolves to, so every later pass has
+                       one form to handle. A call never gets here. */
+                    AstNode *mfn = mod ? lookup_through(mod, n->as.access.field, find_fn_in) : NULL;
+                    if (mfn) {
+                        if (mfn->as.fn.tparam_count) {
+                            err(n->loc, "cannot use generic function '%s' as a value",
+                                n->as.access.field);
+                            n->ty = ty_void();
+                            return n->ty;
+                        }
+                        /* The runtime's own functions have no callable symbol
+                           to take the address of. */
+                        if (mfn->as.fn.is_intrinsic && loam_is_std_path(mfn->loc.file)) {
+                            err(n->loc, "cannot use built-in '%s.%s' as a value; wrap it in a closure",
+                                base, n->as.access.field);
+                            n->ty = ty_void();
+                            return n->ty;
+                        }
+                        const char *fname = n->as.access.field;
+                        memset(&n->as, 0, sizeof n->as);
+                        n->kind = AST_IDENT;
+                        n->as.ident.name = fname;
+                        mfn->as.fn.used_as_value = 1;
+                        n->flags |= ASTF_FN_VAL;
+                        n->ty = fn_type_of(mfn);
+                        n->place_mut = 0;
+                        n->as.ident.resolved = mfn;
+                        n->as.ident.def_loc = mfn->loc;
+                        return n->ty;
+                    }
+                    err(n->loc, "no '%s' in module '%s'", n->as.access.field, base);
                     n->ty = ty_void();
                     return n->ty;
                 }

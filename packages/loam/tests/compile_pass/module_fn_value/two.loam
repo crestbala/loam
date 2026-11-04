@@ -1,0 +1,5 @@
+import "one.loam"
+
+fn pick() -> fn(int) -> int {
+    return one.thrice
+}
