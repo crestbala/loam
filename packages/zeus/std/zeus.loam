@@ -852,6 +852,13 @@ fn engine_click(px: int, py: int) -> int {
     return input.click(px, py)
 }
 
+/// What a finger at (`px`, `py`) grabs, without pressing it. The web host
+/// uses this so a pan can scroll and a tap can still click on release.
+/// 1 = slider or scrollbar thumb, 2 = `on_drag`, 0 = anything else.
+fn engine_grab(px: int, py: int) -> int {
+    return input.grab(px, py)
+}
+
 /// The node a press at (`px`, `py`) would land on, without pressing: floaters
 /// first, top `zIndex` first, then the page — the order paint stacks them.
 /// Anchored popups that share a z-index and sit near each other break that
@@ -1244,6 +1251,30 @@ fn a11y_build() {
     }
 }
 
+/// The text on the page, one `font<TAB>x<TAB>y<TAB>width<TAB>text` line per text
+/// node in reading order. `zeli build` turns it into the markup a page shows
+/// before its wasm arrives.
+fn engine_text_outline() -> string {
+    A11Y_out = []int {}
+    for i in 1..nodes.tree.len {
+        let txt = nodes.look[i].text
+        if txt.len == 0 || arena.shown_in_tree(i) == 0 {
+            continue
+        }
+        a11y_num(int(nodes.look[i].font))
+        push(A11Y_out, 9)
+        a11y_num(nodes.box[i].x)
+        push(A11Y_out, 9)
+        a11y_num(nodes.box[i].y)
+        push(A11Y_out, 9)
+        a11y_num(nodes.box[i].w)
+        push(A11Y_out, 9)
+        a11y_push(txt)
+        push(A11Y_out, 10)
+    }
+    return string_from_bytes(A11Y_out)
+}
+
 /// Assistive tech activated node `id` (a screen reader's "press"): focus it
 /// and run what Enter would. Returns 1 when something ran.
 fn engine_a11y_activate(id: int) -> int {
@@ -1433,6 +1464,12 @@ fn engine_scroll(px: int, py: int, dx: int, dy: int) -> int {
 /// exactly where it lands.
 fn engine_scroll_step(px: int, py: int, dx: int, dy: int) -> int {
     return input.scroll_step(px, py, dx, dy)
+}
+
+/// Hold the scrollers under (`px`, `py`) for a touch gesture, so its pan and
+/// fling stay on them as content slides by. A negative point lets go.
+fn engine_scroll_latch(px: int, py: int) {
+    input.scroll_latch(px, py)
 }
 
 /// Mouse-wheel notch: eases to the target over ~150 ms (browser feel).

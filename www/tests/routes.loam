@@ -73,5 +73,10 @@ fn main() {
     if router.current() != "/language" {
         fail("preload moved the page")
     }
+    // Only a route still waiting on its code can be slow.
+    router.engine_chunks_slow(3)
+    if router.pending().peek() {
+        fail("a finished route reported itself slow")
+    }
     fmt.println("www routes ok")
 }

@@ -17,6 +17,7 @@ import "std:fmt"
 import "std:http"
 import "std:json"
 import "std:net"
+import "std:str"
 import "std:sys"
 import "chunks.loam" as chunks
 
@@ -3211,6 +3212,9 @@ fn build(appdir: string, targets: []string, base: string) -> int {
         let out = join(dir, out_name(t, stem))
         let mut args = cat(cat(shell_quote(entry), " -o "), shell_quote(out))
         let mut flags = target_flags(t)
+        if t == "web" {
+            flags = cat(flags, " --wasm-release")
+        }
         if t == "web" && sys.exists(join(appdir, "routes")) == 1 {
             flags = cat(flags, " --wasm-split-input")
         }
@@ -3268,6 +3272,10 @@ struct MetaRec {
     jsonld: string,
     /// Index of the route that serves this URL.
     route: string,
+    /// The page's text, from `zeus.engine_text_outline`.
+    outline: string,
+    ink_light: string,
+    ink_dark: string,
     /// The theme's page colour as packed rgb, for the first paint. "" = unknown.
     paper: string,
     /// The same colour in each appearance, for a visitor who chose one.
@@ -3285,12 +3293,17 @@ struct WebAssets {
     routes: [][]string,
     /// Chunks to fetch while the browser is idle, in order.
     idle: []string,
+    /// Chunks a screen without hover fetches after those.
+    idle_touch: []string,
 }
 
 struct ChunkFile {
     name: string,
     url: string,
 }
+
+/// The most page text a route's HTML carries before the wasm arrives, in bytes.
+const MAX_PREPAINT: int = 40000
 
 /// The metadata dump: a native Loam program that prints one JSON record per
 /// concrete route URL by calling each route's `meta()` — and `paths()` for a
@@ -3322,6 +3335,18 @@ fn meta_dump_source() -> string {
     push(lines, "    json.enc_str(m.robots)")
     push(lines, "    json.enc_key(\"jsonld\")")
     push(lines, "    json.enc_str(m.jsonld)")
+    // The page itself, for the markup shown before the wasm arrives.
+    push(lines, "    router.engine_open_url(path)")
+    push(lines, "    zeus.pump_frame()")
+    push(lines, "    zeus.pump_frame()")
+    push(lines, "    json.enc_key(\"outline\")")
+    push(lines, "    json.enc_str(zeus.engine_text_outline())")
+    push(lines, "    json.enc_key(\"ink_light\")")
+    push(lines, "    let ink_l = zeus.engine_role_rgb_in(ROLE.Ink, 0)")
+    push(lines, cat(cat("    json.enc_str(\"", cat("{", "{")), "ink_l}}\")"))
+    push(lines, "    json.enc_key(\"ink_dark\")")
+    push(lines, "    let ink_d = zeus.engine_role_rgb_in(ROLE.Ink, 1)")
+    push(lines, cat(cat("    json.enc_str(\"", cat("{", "{")), "ink_d}}\")"))
     push(lines, "    json.enc_key(\"route\")")
     push(lines, cat(cat("    json.enc_str(\"", cat("{", "{")), "route}}\")"))
     push(lines, "    json.enc_key(\"paper\")")
@@ -3427,12 +3452,138 @@ fn collect_meta(appdir: string) -> []MetaRec {
             robots: fld(doc, "robots"),
             jsonld: fld(doc, "jsonld"),
             route: fld(doc, "route"),
+            outline: fld(doc, "outline"),
+            ink_light: fld(doc, "ink_light"),
+            ink_dark: fld(doc, "ink_dark"),
             paper: fld(doc, "paper"),
             paper_light: fld(doc, "paper_light"),
             paper_dark: fld(doc, "paper_dark"),
         })
     }
     return recs
+}
+
+/// A span of page text, as `engine_text_outline` reports it.
+struct OutlineSpan {
+    px: int,
+    x: int,
+    y: int,
+    w: int,
+    text: string,
+}
+
+/// Spans in reading order, top to bottom and then left to right. Icons are text
+/// nodes holding SVG, with no font, and have no words to show.
+fn outline_spans(outline: string) -> []OutlineSpan {
+    let mut out = []OutlineSpan {}
+    let lines = split_lines(outline)
+    for i in 0..lines.len {
+        let f = str.split(lines[i], "\t")
+        if f.len < 5 || int_of(f[0]) <= 0 || starts_with(f[4], "<svg") {
+            continue
+        }
+        let s = OutlineSpan {
+            px: int_of(f[0]),
+            x: int_of(f[1]),
+            y: int_of(f[2]),
+            w: int_of(f[3]),
+            text: f[4],
+        }
+        push(out, s)
+        let mut j = out.len - 1
+        while j > 0 && (out[j - 1].y > s.y || (out[j - 1].y == s.y && out[j - 1].x > s.x)) {
+            out[j] = out[j - 1]
+            j = j - 1
+        }
+        out[j] = s
+    }
+    return out
+}
+
+/// The tag for a line of `px` type. Sizes, not roles: a page's headings are
+/// drawn big whatever its components call them.
+fn prepaint_tag(px: int) -> string {
+    if px >= 28 {
+        return "h1"
+    }
+    if px >= 20 {
+        return "h2"
+    }
+    if px >= 16 {
+        return "h3"
+    }
+    return "p"
+}
+
+/// A page's text as plain semantic markup, for the moment before its wasm has
+/// arrived. Spans on one line are joined, and a line built from several touching
+/// spans is highlighted code, which keeps going through its single-span lines
+/// (a comment) at the same size. Stops at `MAX_PREPAINT` bytes, as this text is
+/// on screen for a moment and its weight is on every first load.
+fn prepaint_html(outline: string) -> string {
+    let spans = outline_spans(outline)
+    let mut out = []string {}
+    let mut total = 0
+    let mut code_px = 0
+    let mut in_pre = false
+    let mut i = 0
+    while i < spans.len && total < MAX_PREPAINT {
+        let first = spans[i]
+        let mut line = first.text
+        let mut end = first.x + first.w
+        let mut touching = 0
+        let mut j = i + 1
+        while j < spans.len && spans[j].y == first.y {
+            let gap = spans[j].x - end
+            if gap > 1 {
+                line = cat(line, " ")
+            } else {
+                touching = touching + 1
+            }
+            line = cat(line, spans[j].text)
+            end = spans[j].x + spans[j].w
+            j = j + 1
+        }
+        i = j
+        if trim(line) == "" {
+            continue
+        }
+        let code = touching > 0 || first.px == code_px
+        if code && !in_pre {
+            push(out, "<pre>")
+            in_pre = true
+            code_px = first.px
+        }
+        if !code && in_pre {
+            push(out, "</pre>")
+            in_pre = false
+            code_px = 0
+        }
+        let text = esc(line)
+        total = total + text.len
+        if code {
+            push(out, text)
+        } else {
+            let tag = prepaint_tag(first.px)
+            push(out, "<{{tag}}>{{text}}</{{tag}}>")
+        }
+    }
+    if in_pre {
+        push(out, "</pre>")
+    }
+    if out.len == 0 {
+        return ""
+    }
+    return join_lines(out)
+}
+
+/// The stylesheet for `prepaint_html`. The canvas stays clear of it, and of the
+/// pointer, until its first frame: the loader then fades it in over the text.
+fn prepaint_css(ink: string) -> string {
+    let text = "#zeus-prepaint{box-sizing:border-box;max-width:720px;margin:0 auto;padding:24px 20px;font:15px/1.55 system-ui,sans-serif;color:var(--zeus-ink,{{ink}})}"
+    let heads = "#zeus-prepaint h1{font-size:30px;line-height:1.2}#zeus-prepaint h2{font-size:22px;line-height:1.25}#zeus-prepaint h3{font-size:17px}#zeus-prepaint p{margin:.7em 0}"
+    let code = "#zeus-prepaint pre{margin:1em 0;overflow:auto;font:13px/1.5 ui-monospace,Menlo,Consolas,monospace}"
+    return "{{text}}{{heads}}{{code}}canvas#zeus{opacity:0;pointer-events:none;transition:opacity .12s}"
 }
 
 /// The `<head>` a crawler and a link preview read, then the canvas the wasm
@@ -3446,7 +3597,12 @@ fn shell_html(r: MetaRec, canonical: string, assets: WebAssets) -> string {
     push(lines, "<!DOCTYPE html>")
     let light = css_hex(r.paper_light)
     let dark = css_hex(r.paper_dark)
-    push(lines, "<html lang=\"en\" data-paper-light=\"{{light}}\" data-paper-dark=\"{{dark}}\">")
+    let ink_l = css_hex(r.ink_light)
+    let ink_d = css_hex(r.ink_dark)
+    push(
+        lines,
+        "<html lang=\"en\" data-paper-light=\"{{light}}\" data-paper-dark=\"{{dark}}\" data-ink-light=\"{{ink_l}}\" data-ink-dark=\"{{ink_d}}\">",
+    )
     push(lines, "<head>")
     push(lines, "<meta charset=\"utf-8\" />")
     push(lines, "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />")
@@ -3489,8 +3645,18 @@ fn shell_html(r: MetaRec, canonical: string, assets: WebAssets) -> string {
         lines,
         "<style>html,body{margin:0;height:100%;background:var(--zeus-paper,{{paper}})}canvas#zeus{display:block;position:fixed;inset:0;width:100%;height:100%;touch-action:none}</style>",
     )
+    let prepaint = prepaint_html(r.outline)
+    if prepaint != "" {
+        let ink = if paper == dark { ink_d } else { ink_l }
+        push(lines, "<style>{{prepaint_css(ink)}}</style>")
+    }
     push(lines, "</head>")
     push(lines, "<body>")
+    if prepaint != "" {
+        push(lines, "<main id=\"zeus-prepaint\">")
+        push(lines, prepaint)
+        push(lines, "</main>")
+    }
     push(lines, "<canvas id=\"zeus\" data-wasm=\"{{assets.wasm}}\"></canvas>")
     if assets.chunks.len > 0 {
         let table = chunk_table_json(assets, boot)
@@ -3528,7 +3694,7 @@ fn can_split(appdir: string) -> bool {
 /// Paint a visitor's saved appearance before anything draws. Inline and ahead of
 /// the first paint: anywhere later, a light-mode visitor sees dark on every load.
 fn appearance_script() -> string {
-    return "<script>try{var a=localStorage.getItem(\"zeus-appearance\"),r=document.documentElement,c=a===\"0\"?r.dataset.paperLight:a===\"1\"?r.dataset.paperDark:\"\";if(c){r.style.setProperty(\"--zeus-paper\",c);document.querySelector(\"meta[name=theme-color]\").content=c}}catch(e){}</script>"
+    return "<script>try{var a=localStorage.getItem(\"zeus-appearance\"),r=document.documentElement,s=r.style,d=r.dataset,c=a===\"0\"?d.paperLight:a===\"1\"?d.paperDark:\"\";if(c){s.setProperty(\"--zeus-paper\",c);s.setProperty(\"--zeus-ink\",a===\"0\"?d.inkLight:d.inkDark);document.querySelector(\"meta[name=theme-color]\").content=c}}catch(e){}</script>"
 }
 
 /// The asset names `zeli serve` keeps when it cannot split.
@@ -3539,6 +3705,7 @@ fn plain_assets(stem: string) -> WebAssets {
         chunks: []ChunkFile {},
         routes: [][]string {},
         idle: []string {},
+        idle_touch: []string {},
     }
 }
 
@@ -3630,7 +3797,8 @@ fn chunk_table_json(assets: WebAssets, boot: []string) -> string {
     }
     let bootj = json_names(boot)
     let idlej = json_names(assets.idle)
-    return cat(cat("{\"chunks\":{", urls), "},\"routes\":[{{routes}}],\"boot\":{{bootj}},\"idle\":{{idlej}}}")
+    let touchj = json_names(assets.idle_touch)
+    return cat(cat("{\"chunks\":{", urls), "},\"routes\":[{{routes}}],\"boot\":{{bootj}},\"idle\":{{idlej}},\"idleTouch\":{{touchj}}}")
 }
 
 /// The generated route table's builders, in route order (`b_root_page`, ...).
@@ -3701,7 +3869,7 @@ fn split_web(appdir: string, web: string, stem: string) -> WebAssets {
     let prim = join(tmp, "primary.wasm")
     let prefix = shell_quote(cat(tmp, "/"))
     let log = sys.exec(
-        "wasm-split --multi-split {{features}} --manifest {{shell_quote(man)}} --out-prefix {{prefix}} --export-prefix=% -g -o {{shell_quote(prim)}} {{shell_quote(raw)}} 2>&1",
+        "wasm-split --multi-split {{features}} --manifest {{shell_quote(man)}} --out-prefix {{prefix}} --export-prefix=% --placeholder-namespace-prefix=p. -g -o {{shell_quote(prim)}} {{shell_quote(raw)}} 2>&1",
     )
     if sys.exec_status() != 0 {
         die_extra("zeli: wasm-split failed", trim(log))
@@ -3746,8 +3914,13 @@ fn split_web(appdir: string, web: string, stem: string) -> WebAssets {
     for i in 0..picked.len {
         push(idle, plan.chunks[picked[i]].name)
     }
+    let mut idle_touch = []string {}
+    let extra = chunks.touch_chunks(&plan, sizes, picked)
+    for i in 0..extra.len {
+        push(idle_touch, plan.chunks[extra[i]].name)
+    }
     sys.exec("rm -rf {{shell_quote(tmp)}} {{shell_quote(raw)}} {{shell_quote(csrc)}}")
-    return finish_web(web, primary, files, routes, idle)
+    return finish_web(web, primary, files, routes, idle, idle_touch)
 }
 
 /// Fingerprint the loader and write the files a static host reads.
@@ -3756,7 +3929,8 @@ fn finish_web(
     wasm: string,
     files: []ChunkFile,
     routes: [][]string,
-    idle: []string
+    idle: []string,
+    idle_touch: []string
 ) -> WebAssets {
     let loader = fingerprint_file(join(web, "loader.js"), join(web, "_zeus"), "loader", "js")
     sys.write_file(join(web, "_headers"), web_headers())
@@ -3768,6 +3942,7 @@ fn finish_web(
         chunks: files,
         routes: routes,
         idle: idle,
+        idle_touch: idle_touch,
     }
 }
 

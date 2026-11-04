@@ -6,7 +6,7 @@ content before any wasm arrives, and moves between pages with no visible wait.
 This is a Zeus and `zeli` feature, not a `www` feature. Any web app with routes
 gets it. `www` is the first user and the test bed.
 
-Status: Phases 1 to 4 done. Painting before wasm and trimming the primary are next. Sizes under "What we measured" are from `feat/www` at `e981527`. Compression is deferred (see [Later](#later-compression)), so goals
+Status: Phases 1 to 5 done, and Phase 6 in part: the primary is 570 KB against a 550 KB goal. Sizes under "What we measured" are from `feat/www` at `e981527`. Compression is deferred (see [Later](#later-compression)), so goals
 are in raw bytes.
 
 ## What we measured
@@ -109,10 +109,10 @@ before wasm arrives (Phase 5) removes the blank screen itself.
 
 | Budget, raw bytes | Today | Target |
 |---|---|---|
-| First load of `/` or a docs page | 1,650 KB | 550 KB or less (681 and 808 now) |
-| First load of `/playground` | 1,650 KB | 1,050 KB or less (1,269 now) |
-| First load of a `/components` page | 1,650 KB | 750 KB or less (930 now) |
-| Time until real content shows, slow 4G | seconds | under 500 ms |
+| First load of `/` or a docs page | 1,650 KB | 550 KB or less (docs 570 to 710, `/` 652 now) |
+| First load of `/playground` | 1,650 KB | 1,050 KB or less (1,162 now) |
+| First load of a `/components` page | 1,650 KB | 750 KB or less (759 to 825 now) |
+| Time until real content shows, slow 4G | seconds | under 500 ms (435 ms, 200 KB/s and 150 ms latency in Chrome) |
 | Next page, chunk already prefetched | n/a | no visible wait |
 | White flash on a dark theme | yes | none (done) |
 
@@ -175,7 +175,9 @@ The URL and the active nav link update at once, so a click always responds. Back
 and forward use the same path. If the user moves on while a chunk loads, the newer
 route wins and the older answer is ignored.
 
-Still to add: showing `loading.loam` after 150 ms, for a slow connection.
+A wait past 150 ms sets `router.pending()`, a signal a shell can show a spinner from.
+The current page stays up rather than swapping to `loading.loam`, and a quick load
+never sets it, so a fast connection never flashes.
 
 Before Phase 3 the web host started every app at `/` and sent the real URL after
 `main`, so each deep link built the home page first and threw it away. The router
@@ -187,7 +189,9 @@ now reads the URL before its first build, which also helps unsplit builds.
 |---|---|---|
 | In the HTML | Primary and this route's chunks | `<link rel="preload" as="fetch" crossorigin>`, emitted per route |
 | Pointer rests on a link for 80 ms | That route's chunks | `router.preload(path)` from the link's `on_hover`, skipped on `saveData` and 2G |
+| A finger lands on a link | That route's chunks, at once | The same `on_hover`, reported when the touch starts |
 | Browser idle after first paint | Chunks shared by 2 or more routes, up to 150 KB, one at a time | The build lists them; skipped on `saveData` and 2G |
+| After that, on a screen with no hover | The smallest other chunks, up to 250 KB in all | `idleTouch` in the chunk table, same rules |
 | Repeat visit | Everything fetched before | Content-hashed names with `immutable` caching |
 
 Every route HTML names its own files, so a deep link to `/language/errors` starts
@@ -204,8 +208,9 @@ small inline script picks light or dark before first paint.
 The canvas fades in over that markup on its first frame, and then the markup is
 removed. Search engines and link previews get real content as a side effect.
 
-The page cannot be used until wasm is running, except that the markup's links are
-real links and work as normal navigation.
+The page can be read and scrolled until wasm is running, but not used. The
+markup comes from `zeus.engine_text_outline`, which reports text but no link
+targets, so links are plain text for now.
 
 ### Files and caching
 
@@ -263,24 +268,36 @@ Each phase ships alone and improves the site without the next one.
 
 - `router.preload(path)`, called from `on_hover` on the site's links. The newest
   hover replaces a waiting one, so a sweep down a list costs nothing.
-- `zeli` lists the chunks to fetch at idle, so apps need no code for it. A touch
-  screen has no hover, so a tap still waits for its chunks.
+- `zeli` lists the chunks to fetch at idle, so apps need no code for it.
+- A touch reports its hover as it lands, so a tap starts fetching at once, and a
+  screen with no hover fetches more at idle.
 
-### Phase 5: painting before wasm
+### Phase 5: painting before wasm (done)
 
-- Headless text-tree extraction at build time.
-- Pre-paint markup, inline styles, canvas swap.
+- The metadata dump visits each URL and writes `engine_text_outline` to its record.
+- `zeli` turns that into headings, paragraphs and code, capped at 40 KB per page.
+- The canvas stays clear until its first frame, fades in, and the text is removed.
 
-Done when: on slow 4G a deep link shows its real heading and text in under 500 ms.
+A 390 px mount supplies the text, so the page's phone layout is what gets written.
 
 ### Phase 6: trim the primary
 
-Measure each, keep what pays:
+Done, taking the primary from 688 KB to 570 KB:
 
-- Module init code: `loam_unicode__init` (17 KB) and `loam_colors__init` (16 KB)
-  build tables at startup that could be static data.
-- `-DLOAM_ALLOC_TRACE` is on for every Zeus web build; move it to dev only.
-- Wrappers: the prototype's primary has 310 exports and 1,192 placeholder imports.
+- Global constants are C initializers, not `__init` code, and a `[]int` table of 8
+  or more constants is static data. This took 37 KB out of `unicode` and `colors`.
+- `--wasm-release`, from `zeli build` only, drops `LOAM_ALLOC_TRACE` and the file
+  and line from each panic path. A panic keeps its message. `zeli serve` keeps both.
+- Placeholder imports use the namespace `p.`, saving 13 KB of import names.
+- `MIN_CHUNK_C` is 12,000, so a page's code leaves the primary sooner.
+
+A docs page that uses shared component code (`/language/modules`, `/zeus/views`)
+also loads the two shared chunks, so it costs 705 to 710 KB. Left to try:
+
+- `layout.verify_memo` (9 KB) only runs under an env var the web never has, but the
+  language has no compile-time switch to remove it with.
+- `--no-placeholders` would save the remaining 18 KB of imports, at the cost of the
+  safety net.
 - Optional `zui.Lazy(...)` for a heavy widget inside a page, such as the
   playground's editor, loaded when it is needed.
 
@@ -322,8 +339,8 @@ and the browser check caught it. Keep that check.
 
 Deferred on purpose. Splitting comes first, and we will check this afterwards.
 
-- Brotli takes `app.wasm` from 1,650 KB to 368 KB, and the prototype's primary to
-  184 KB, so this is worth doing next.
+- Brotli takes `app.wasm` from 1,650 KB to 368 KB, and today's 570 KB primary to
+  about 160 KB, so this is worth doing next.
 - Needs a decision on the host. There is no deploy config in the repo, so we do not
   yet know whether it compresses `.wasm` itself or needs `.br` files from the build.
 

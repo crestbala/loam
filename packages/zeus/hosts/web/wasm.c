@@ -260,6 +260,12 @@ void zeus_pointer_down(int32_t x, int32_t y) {
     zeus_handle_click(x, y);
 }
 
+/* Touch classification for the loader, without pressing. See `engine_grab`. */
+__attribute__((export_name("zeus_grab")))
+int32_t zeus_grab(int32_t x, int32_t y) {
+    return loam_zeus_engine_grab(x, y);
+}
+
 /* Secondary click (`contextmenu`): the nearest `on_context_menu` handler. */
 __attribute__((export_name("zeus_context_click")))
 int32_t zeus_context_click(int32_t x, int32_t y) {
@@ -376,6 +382,12 @@ void zeus_chunks_done(int32_t index) {
     loam_router_engine_chunks_done(index);
 }
 
+/* That route's chunks are slow: time to say so on screen. */
+__attribute__((export_name("zeus_chunks_slow")))
+void zeus_chunks_slow(int32_t index) {
+    loam_router_engine_chunks_slow(index);
+}
+
 /* Hot reload (§2.5): expose the signal arena as text, and restore it. The dev
    loader stashes the snapshot in sessionStorage before reloading. */
 static char wasm_state_buf[65536];
@@ -406,9 +418,16 @@ void zeus_scroll(int32_t x, int32_t y, int32_t dx, int32_t dy) {
     zeus_handle_scroll(x, y, dx, dy);
 }
 
+/* 1 if anything moved: a fling stops when it runs out of content. */
 __attribute__((export_name("zeus_scroll_step")))
-void zeus_scroll_step(int32_t x, int32_t y, int32_t dx, int32_t dy) {
-    zeus_handle_scroll_step(x, y, dx, dy);
+int32_t zeus_scroll_step(int32_t x, int32_t y, int32_t dx, int32_t dy) {
+    return zeus_handle_scroll_step(x, y, dx, dy);
+}
+
+/* Hold the scrollers under a touch for its whole gesture. See `scroll_latch`. */
+__attribute__((export_name("zeus_scroll_latch")))
+void zeus_scroll_latch(int32_t x, int32_t y) {
+    loam_zeus_engine_scroll_latch(x, y);
 }
 
 __attribute__((export_name("zeus_scroll_smooth")))

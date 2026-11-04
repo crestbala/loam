@@ -87,10 +87,7 @@ fn Widgets() -> Node {
                     )
                 }
                 zeus.Text(
-                    fn() -> string {
-                        let n = clicks.get()
-                        return "Pressed {{n}} times"
-                    },
+                    "Pressed {{clicks.get()}} times",
                     style = Style(font = spacing.FONT_BODY, color = colors.mute()),
                 )
             })

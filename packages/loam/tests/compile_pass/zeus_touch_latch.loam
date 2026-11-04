@@ -1,0 +1,67 @@
+// A touch gesture stays on the scroller it started on, however far the content
+// slides under the finger, until it lets go.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn expect(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn scroller_of(id: int) -> int {
+    let mut p = id
+    while p > 0 {
+        if zeus.node_kind(p) == 11 {
+            return p
+        }
+        p = zeus.node_parent(p)
+    }
+    return 0
+}
+
+fn main() {
+    zeus.snapshot(240, 240, fn() -> Node {
+        zui.Scroll(style = Style(height = px(240))) {
+            zeus.Box(style = Style(height = px(160))) {
+                zeus.Text("page-top")
+            }
+            zui.Scroll(style = Style(height = px(80))) {
+                zeus.Box(style = Style(height = px(400))) {
+                    zeus.Text("inner-top")
+                }
+            }
+            zeus.Box(style = Style(height = px(400))) {
+                zeus.Text("page-bot")
+            }
+        }
+    })
+
+    let inner = scroller_of(zeus.engine_find_text("inner-top"))
+    let page = scroller_of(zeus.engine_find_text("page-top"))
+    expect(inner > 0 && page > 0 && inner != page, "nested scrollers")
+
+    // The finger rests where the inner list starts once the page has moved 120.
+    let x = 40
+    let y = 60
+    zeus.engine_scroll_latch(x, y)
+    expect(zeus.engine_scroll_step(x, y, 0, 120) != 0, "the page moves")
+    zeus.engine_layout(240, 240)
+    expect(zeus.node_scroll_y(page) == 120, "the page took the pan")
+
+    expect(zeus.engine_scroll_step(x, y, 0, 20) != 0, "the page moves on")
+    expect(zeus.node_scroll_y(inner) == 0, "a scroller passing beneath stays put")
+    expect(zeus.node_scroll_y(page) == 140, "the held page takes the rest")
+
+    zeus.engine_scroll_latch(-1, -1)
+    zeus.engine_layout(240, 240)
+    zeus.engine_scroll_step(x, y, 0, 30)
+    expect(zeus.node_scroll_y(inner) == 30, "released, the scroller under the point wins")
+    expect(zeus.node_scroll_y(page) == 140, "and the page stays")
+
+    fmt.println("touch-latch ok")
+}
