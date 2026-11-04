@@ -1251,9 +1251,21 @@ fn a11y_build() {
     }
 }
 
-/// The text on the page, one `font<TAB>x<TAB>y<TAB>width<TAB>text` line per text
-/// node in reading order. `zeli build` turns it into the markup a page shows
-/// before its wasm arrives.
+/// The nearest `href` at or above node `id`, or "".
+fn link_of(id: int) -> string {
+    let mut p = id
+    while p > 0 {
+        if nodes.ui[p].href.len > 0 {
+            return nodes.ui[p].href
+        }
+        p = nodes.tree[p].parent
+    }
+    return ""
+}
+
+/// The text on the page, one `font<TAB>x<TAB>y<TAB>width<TAB>href<TAB>text` line
+/// per text node. `zeli build` turns it into the markup a page shows before its
+/// wasm arrives.
 fn engine_text_outline() -> string {
     A11Y_out = []int {}
     for i in 1..nodes.tree.len {
@@ -1268,6 +1280,8 @@ fn engine_text_outline() -> string {
         a11y_num(nodes.box[i].y)
         push(A11Y_out, 9)
         a11y_num(nodes.box[i].w)
+        push(A11Y_out, 9)
+        a11y_push(link_of(i))
         push(A11Y_out, 9)
         a11y_push(txt)
         push(A11Y_out, 10)

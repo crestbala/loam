@@ -1082,6 +1082,9 @@ int64_t loam_platform_plat_mem_kb(void) {
 /* Phase 0 arena-stats gate (`runtime.mem_stats`). A build flag turns it on
    for good; the env var turns it on for one run; neither changes allocation. */
 int64_t loam_runtime_mem_stats(void) {
+#ifdef LOAM_WEB_RELEASE
+    return 0;
+#endif
 #if defined(ZEUS_MEM_STATS)
     return 1;
 #else
@@ -2614,6 +2617,19 @@ void loam_platform_plat_appearance_save(int64_t dark) {
 __attribute__((import_module("zeus"), import_name("open_external")))
 void zeus_js_open_external(const char *url, int32_t len);
 #endif
+
+int64_t loam_platform_plat_layout_verify(void) {
+#ifdef LOAM_WEB_RELEASE
+    return 0;
+#else
+    static int on = -1;
+    if (on < 0) {
+        const char *v = getenv("ZEUS_LAYOUT_VERIFY");
+        on = v && strcmp(v, "1") == 0;
+    }
+    return on;
+#endif
+}
 
 void loam_platform_plat_open_external(loam_str url) {
 #ifdef __wasm32__

@@ -57,6 +57,7 @@ fn Tile(title: string, body: string, href: string) -> Node {
             }
         },
         on_hover = shell.on_link_hover(href),
+        href = href,
         role = if href.len > 0 { "link" } else { "" },
         label = title,
     ) {
@@ -74,14 +75,14 @@ fn Home() -> Node {
                 "Loam reads like Odin and checks ownership like Rust. The compiler typechecks and borrow-checks a program, lowers it to IR, and emits C for the system compiler. Its standard UI, Zeus, draws the same app on the web, macOS, iOS, and Android. This site is a Loam program built for the web.",
             )
             zui.RowWrap(Space.Sm) {
-                zeus.Box(on_hover = shell.on_link_hover("/playground")) {
+                zeus.Box(on_hover = shell.on_link_hover("/playground"), href = "/playground") {
                     zui.Button(
                         "Open the playground",
                         look = zeus.Look.Solid,
                         on_click = fn() => router.navigate("/playground"),
                     )
                 }
-                zeus.Box(on_hover = shell.on_link_hover("/language")) {
+                zeus.Box(on_hover = shell.on_link_hover("/language"), href = "/language") {
                     zui.Button(
                         "Take the language tour",
                         look = zeus.Look.Outline,

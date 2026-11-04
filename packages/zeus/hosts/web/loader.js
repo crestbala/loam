@@ -1858,6 +1858,7 @@
             schedule(0);
           });
         }
+        /* 16px: iOS zooms the page to focus anything smaller. */
         const ime = document.createElement("textarea");
         ime.setAttribute("autocapitalize", "off");
         ime.setAttribute("autocomplete", "off");
@@ -1865,7 +1866,7 @@
         ime.setAttribute("spellcheck", "false");
         ime.setAttribute("aria-hidden", "true");
         ime.style.cssText =
-          "position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;border:0;padding:0;margin:0;resize:none;z-index:-1;";
+          "position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;border:0;padding:0;margin:0;resize:none;z-index:-1;font-size:16px;";
         document.body.appendChild(ime);
         function syncIme() {
           if (!exp) return;
@@ -2214,6 +2215,9 @@
           },
           { passive: false, signal }
         );
+        /* iOS opens its keyboard only for a focus made inside the gesture, so
+           the frame's `syncIme` is too late. This runs after the tap. */
+        canvas.addEventListener("touchend", syncIme, { signal });
         canvas.addEventListener(
           "pointerdown",
           (e) => {

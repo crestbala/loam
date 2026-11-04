@@ -388,6 +388,7 @@ void zeus_chunks_slow(int32_t index) {
     loam_router_engine_chunks_slow(index);
 }
 
+#ifndef LOAM_WEB_RELEASE
 /* Hot reload (§2.5): expose the signal arena as text, and restore it. The dev
    loader stashes the snapshot in sessionStorage before reloading. */
 static char wasm_state_buf[65536];
@@ -412,6 +413,7 @@ int32_t zeus_state_restore(const char *snapshot) {
     p[n] = '\0';
     return loam_zeus_engine_state_load((loam_str){p, n});
 }
+#endif
 
 __attribute__((export_name("zeus_scroll")))
 void zeus_scroll(int32_t x, int32_t y, int32_t dx, int32_t dy) {

@@ -3469,6 +3469,7 @@ struct OutlineSpan {
     x: int,
     y: int,
     w: int,
+    href: string,
     text: string,
 }
 
@@ -3479,7 +3480,7 @@ fn outline_spans(outline: string) -> []OutlineSpan {
     let lines = split_lines(outline)
     for i in 0..lines.len {
         let f = str.split(lines[i], "\t")
-        if f.len < 5 || int_of(f[0]) <= 0 || starts_with(f[4], "<svg") {
+        if f.len < 6 || int_of(f[0]) <= 0 || starts_with(f[5], "<svg") {
             continue
         }
         let s = OutlineSpan {
@@ -3487,7 +3488,8 @@ fn outline_spans(outline: string) -> []OutlineSpan {
             x: int_of(f[1]),
             y: int_of(f[2]),
             w: int_of(f[3]),
-            text: f[4],
+            href: f[4],
+            text: f[5],
         }
         push(out, s)
         let mut j = out.len - 1
@@ -3565,7 +3567,8 @@ fn prepaint_html(outline: string) -> string {
             push(out, text)
         } else {
             let tag = prepaint_tag(first.px)
-            push(out, "<{{tag}}>{{text}}</{{tag}}>")
+            let inner = if first.href != "" { "<a href=\"{{esc(first.href)}}\">{{text}}</a>" } else { text }
+            push(out, "<{{tag}}>{{inner}}</{{tag}}>")
         }
     }
     if in_pre {
@@ -3581,7 +3584,7 @@ fn prepaint_html(outline: string) -> string {
 /// pointer, until its first frame: the loader then fades it in over the text.
 fn prepaint_css(ink: string) -> string {
     let text = "#zeus-prepaint{box-sizing:border-box;max-width:720px;margin:0 auto;padding:24px 20px;font:15px/1.55 system-ui,sans-serif;color:var(--zeus-ink,{{ink}})}"
-    let heads = "#zeus-prepaint h1{font-size:30px;line-height:1.2}#zeus-prepaint h2{font-size:22px;line-height:1.25}#zeus-prepaint h3{font-size:17px}#zeus-prepaint p{margin:.7em 0}"
+    let heads = "#zeus-prepaint h1{font-size:30px;line-height:1.2}#zeus-prepaint h2{font-size:22px;line-height:1.25}#zeus-prepaint h3{font-size:17px}#zeus-prepaint p{margin:.7em 0}#zeus-prepaint a{color:inherit}"
     let code = "#zeus-prepaint pre{margin:1em 0;overflow:auto;font:13px/1.5 ui-monospace,Menlo,Consolas,monospace}"
     return "{{text}}{{heads}}{{code}}canvas#zeus{opacity:0;pointer-events:none;transition:opacity .12s}"
 }

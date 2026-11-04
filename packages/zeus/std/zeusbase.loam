@@ -2434,6 +2434,9 @@ struct BoxProps {
     on_mouse_up: Option<fn()> = none,
     /// Runs with `true` when the pointer enters and `false` when it leaves.
     on_hover: Option<fn(bool)> = none,
+    /// The URL this box links to, when it is a link. `on_click` still does the
+    /// navigating: this is what `zeli build` writes into the page's HTML.
+    href: string = "",
     on_key_down: Option<fn()> = none,
     on_key_up: Option<fn()> = none,
     on_key_press: Option<fn()> = none,
@@ -2880,6 +2883,9 @@ fn install_behaviour(node: Node, p: BoxProps) {
     if result.is_some(p.label) {
         let l = p.label.val
         node_effect(node, || { apply_str(node_id, SET.A11yLabel, l()) })
+    }
+    if p.href.len > 0 {
+        nodes.ui[node_id].href = p.href
     }
     if result.is_some(p.on_hover) {
         let h = p.on_hover.val
