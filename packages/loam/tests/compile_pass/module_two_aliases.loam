@@ -1,0 +1,23 @@
+// One module imported under two aliases, from two files: a module keeps the
+// alias it first loaded under, and the second alias used to compile to a call of
+// the bare function name, which the C compiler rejected.
+import "std:fmt"
+import "std:sys"
+import "module_aliases/lib.loam" as first
+import "module_aliases/user.loam" as user
+
+fn expect(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn main() {
+    let b = Box2 {}
+    expect(first.twice(1) + first.LIMIT + first.counter + first.area(b) == 22, "first alias")
+    expect(user.go() == 45, "second alias reaches every kind of declaration")
+    expect(first.counter == 4, "both aliases name one module, so one global")
+    fmt.println("module aliases ok")
+}

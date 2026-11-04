@@ -1,0 +1,30 @@
+// Imported by two files, each under its own alias.
+
+const LIMIT: int = 7
+let mut counter: int = 3
+
+enum Mode {
+    Off = 0,
+    On = 1,
+}
+
+struct Box2 {
+    w: int = 2,
+    h: int = 5,
+}
+
+fn area(b: Box2) -> int {
+    return b.w * b.h
+}
+
+fn twice(x: int) -> int {
+    return x * 2
+}
+
+fn pick<T>(a: T, b: T, first: bool) -> T {
+    return if first { a } else { b }
+}
+
+fn apply(f: fn(int) -> int, x: int) -> int {
+    return f(x)
+}
