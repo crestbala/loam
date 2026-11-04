@@ -1,12 +1,11 @@
 # Route-based wasm splitting
 
-Goal: a visitor downloads only the code for the page they asked for, sees real
-content before any wasm arrives, and moves between pages with no visible wait.
+Goal: a visitor downloads only the code for the page they asked for, and moves between pages with no visible wait.
 
 This is a Zeus and `zeli` feature, not a `www` feature. Any web app with routes
 gets it. `www` is the first user and the test bed.
 
-Status: Phases 1 to 5 done, and Phase 6 in part: the primary is 561 KB against a 550 KB goal. Sizes under "What we measured" are from `feat/www` at `e981527`. Compression is deferred (see [Later](#later-compression)), so goals
+Status: Phases 1 to 4 done, Phase 5 changed (see there), and Phase 6 in part: the primary is 561 KB against a 550 KB goal. Sizes under "What we measured" are from `feat/www` at `e981527`. Compression is deferred (see [Later](#later-compression)), so goals
 are in raw bytes.
 
 ## What we measured
@@ -112,7 +111,7 @@ before wasm arrives (Phase 5) removes the blank screen itself.
 | First load of `/` or a docs page | 1,650 KB | 550 KB or less (docs 561 to 702, `/` 644 now) |
 | First load of `/playground` | 1,650 KB | 1,050 KB or less (1,154 now) |
 | First load of a `/components` page | 1,650 KB | 750 KB or less (750 to 817 now) |
-| Time until real content shows, slow 4G | seconds | under 500 ms (435 ms, 200 KB/s and 150 ms latency in Chrome) |
+| Time until real content shows, slow 4G | seconds | about 4 s: only the canvas is shown, see Phase 5 |
 | Next page, chunk already prefetched | n/a | no visible wait |
 | White flash on a dark theme | yes | none (done) |
 
@@ -197,19 +196,14 @@ now reads the URL before its first build, which also helps unsplit builds.
 Every route HTML names its own files, so a deep link to `/language/errors` starts
 all of its downloads in parallel with `loader.js`.
 
-### Painting before wasm
+### Text in the HTML
 
-`zeli build` already compiles and runs a native helper to collect each route's
-`meta()`. The same step will mount each route headlessly and write its text tree
-into that route's HTML as plain semantic markup with a small inline stylesheet:
-headings, paragraphs, code, and links. It uses the theme's real colours, and a
-small inline script picks light or dark before first paint.
+`zeli build` mounts each route headlessly and writes its text into that route's
+HTML as hidden semantic markup: headings, paragraphs, code, and real links. Search
+engines, link previews and screen readers read it. Nobody sees it.
 
-The canvas fades in over that markup on its first frame, and then the markup is
-removed. Search engines and link previews get real content as a side effect.
-
-The page can be read and scrolled until wasm is running. A `Box` with `href` gives
-real links, which work as normal navigation.
+Only the canvas is ever on screen. Until its first frame the page is the theme's
+background colour.
 
 ### Files and caching
 
@@ -271,13 +265,15 @@ Each phase ships alone and improves the site without the next one.
 - A touch reports its hover as it lands, so a tap starts fetching at once, and a
   screen with no hover fetches more at idle.
 
-### Phase 5: painting before wasm (done)
+### Phase 5: painting before wasm (changed)
 
-- The metadata dump visits each URL and writes `engine_text_outline` to its record.
-- `zeli` turns that into headings, paragraphs and code, capped at 40 KB per page.
-- The canvas stays clear until its first frame, fades in, and the text is removed.
+Built, shipped, and taken back. The text showed in 435 ms on slow 4G, but it was
+unstyled, and on every load it cross-faded into a canvas that looked nothing like
+it, worst on desktop, where the text came from a phone-width mount. Text that
+differs from the page reads as a broken page, so the markup is now hidden.
 
-A 390 px mount supplies the text, so the page's phone layout is what gets written.
+Painting the real page before wasm would need a draw list per viewport width, so
+it is not planned.
 
 ### Phase 6: trim the primary
 
@@ -327,7 +323,6 @@ Left to try:
 | Function pointers across modules | They are table indexes, shared by every module, so identity holds |
 | Trap recovery across instances | Stack pointer is a single shared global; covered in Phase 3 tests |
 | The planner misses a function | Safety net keeps it correct; this happened once in development (see below) |
-| Pre-paint text differs from the canvas layout | The swap is a short fade, and the text is the same content |
 | Too many small chunks | Minimum size and the 3-chunk cap |
 
 ## Lessons from the build

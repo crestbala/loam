@@ -126,16 +126,13 @@
     /* Set once input is wired: applies the frame's pan and fling, and says
        whether a fling wants another frame. */
     let touchFrame = null;
-    /* The page text `zeli build` put in the HTML. The canvas fades in over it on
-       its first frame, and the text goes once it is covered. */
+    /* The hidden page text `zeli build` put in the HTML. Once the canvas has a
+       frame, the mirror below speaks for the page and this would repeat it. */
     let prepaint = document.getElementById("zeus-prepaint");
-    function revealCanvas() {
+    function dropPrepaint() {
       if (!prepaint) return;
-      const text = prepaint;
+      prepaint.remove();
       prepaint = null;
-      canvas.style.opacity = "1";
-      canvas.style.pointerEvents = "auto";
-      setTimeout(() => text.remove(), 200);
     }
     /* True while a touch reports its hover. See `preloadRoute`. */
     let touching = false;
@@ -1744,7 +1741,7 @@
             const coasting = touchFrame ? touchFrame() : false;
             next = exp.zeus_paint() | 0;
             if (coasting) next = 1;
-            revealCanvas();
+            dropPrepaint();
             syncIme();
             syncA11y();
           } catch (e) {
