@@ -779,6 +779,38 @@ int ir_static_const(const AstNode *e) {
  *  C backend) and only the remaining fields are stored. Returns field-indexed
  *  constant defaults, or NULL to lower every field. Generic instances are
  *  left alone: their C type can be registered after the templates go out. */
+/* A `[]T` literal of integer constants, long enough to be worth a table. */
+static int int_list_lit(const AstNode *n) {
+    const int MIN_INT_TABLE = 8;
+    Type *t = ir_subst(n->ty);
+    if (!t || t->kind != TY_VEC || !t->elem || t->elem->kind != TY_INT) return 0;
+    if ((int)n->as.array_lit.count < MIN_INT_TABLE) return 0;
+    for (size_t k = 0; k < n->as.array_lit.count; k++)
+        if (n->as.array_lit.elems[k]->kind != AST_NUMBER) return 0;
+    return 1;
+}
+
+/* Plain data: no function value, so it can sit in a C initializer above the
+   function prototypes. */
+int ir_static_data(const AstNode *e) {
+    if (!e || !e->ty) return 0;
+    switch (e->kind) {
+        case AST_NUMBER:
+        case AST_BOOL:
+        case AST_STRING:
+            return 1;
+        case AST_FLOAT:
+            return e->as.lit.f - e->as.lit.f == 0;
+        case AST_STRUCT_LIT:
+            if (e->ty->kind != TY_STRUCT || e->ty->param_count) return 0;
+            for (size_t k = 0; k < e->as.struct_lit.field_count; k++)
+                if (!ir_static_data(e->as.struct_lit.fields[k].init)) return 0;
+            return 1;
+        default:
+            return 0;
+    }
+}
+
 static AstNode **lit_template(AstNode *n, Type *t) {
     if (!t || t->kind != TY_STRUCT || t->param_count || !t->field_count) return NULL;
     AstNode **d = (AstNode **)calloc(t->field_count, sizeof(AstNode *));
@@ -1237,6 +1269,19 @@ static int lower_expr(AstNode *n) {
         }
         case AST_ARRAY_LIT: {
             int nf = (int)n->as.array_lit.count;
+            /* A run of integers is data. A push each costs some 30 bytes of
+               code per element in a table that never changes. */
+            if (int_list_lit(n)) {
+                int64_t *vals = (int64_t *)calloc((size_t)nf, sizeof(int64_t));
+                for (int k = 0; k < nf; k++) vals[k] = n->as.array_lit.elems[k]->as.lit.value;
+                int d = new_local(n->ty, NULL, 0);
+                IrInst *i = emit(IR_ARRAY_LIT, n->loc);
+                i->dst = d;
+                i->lit_ints = vals;
+                i->nlit_ints = nf;
+                i->ty = ir_subst(n->ty);
+                return d;
+            }
             int *args = nf ? (int *)calloc((size_t)nf, sizeof(int)) : NULL;
             for (int k = 0; k < nf; k++) args[k] = lower_expr(n->as.array_lit.elems[k]);
             int d = new_local(n->ty, NULL, 0);
@@ -2029,6 +2074,9 @@ IrModule *ir_lower(LoamModule *mods, int nmods) {
         for (size_t k = 0; k < p->as.program.decl_count; k++) {
             AstNode *d = p->as.program.decls[k];
             if (d->kind != AST_VAR_DECL) continue;
+            /* Codegen writes it as the global's initializer: a table of
+               constants costs data, not startup code. */
+            if (ir_static_data(d->as.var.init)) continue;
             int gid = scope_find(d->as.var.name);
             int v = d->as.var.init ? lower_expr(d->as.var.init) : -1;
             if (v >= 0 && gid >= 0) {
@@ -2153,6 +2201,8 @@ static void print_inst(FILE *o, const IrInst *i) {
         case IR_STRUCT_LIT:
         case IR_ARRAY_LIT:
             fprintf(o, "%s {", i->op == IR_STRUCT_LIT ? "struct" : "array");
+            for (int k = 0; k < i->nlit_ints; k++)
+                fprintf(o, "%s%lld", k ? ", " : "", (long long)i->lit_ints[k]);
             for (int k = 0; k < i->nargs; k++) {
                 if (i->args[k] < 0 && i->lit_dflt)
                     fprintf(o, "%sdefault", k ? ", " : "");
