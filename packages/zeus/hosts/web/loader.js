@@ -70,6 +70,10 @@
     return n;
   }
   root.zeusDecodeFrame = decodeFrame;
+  /* The light / dark choice. `zeli`'s page shell reads this key too, before the
+     first paint. */
+  const APPEARANCE_KEY = "zeus-appearance";
+
   function attachZeus(canvas, opts) {
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("Canvas2D unavailable");
@@ -831,8 +835,30 @@
       set_head: (keyPtr, keyLen, valuePtr, valueLen) => {
         setHead(bytes(keyPtr, keyLen), bytes(valuePtr, valueLen));
       },
+      /* localStorage throws when storage is blocked: then the choice lasts as
+         long as the page. */
+      appearance_load: () => {
+        try {
+          const v = localStorage.getItem(APPEARANCE_KEY);
+          return v === "0" ? 0 : v === "1" ? 1 : -1;
+        } catch (e) {
+          return -1;
+        }
+      },
+      appearance_save: (dark) => {
+        try {
+          localStorage.setItem(APPEARANCE_KEY, String(dark));
+        } catch (e) {}
+        const root = document.documentElement;
+        const paper = dark ? root.dataset.paperDark : root.dataset.paperLight;
+        if (!paper) return;
+        root.style.setProperty("--zeus-paper", paper);
+        const bar = document.querySelector('meta[name="theme-color"]');
+        if (bar) bar.setAttribute("content", paper);
+      },
       chunks_ready: (index) => (routeReady(index) ? 1 : 0),
       chunks_load: (index) => loadRoute(index),
+      chunks_preload: (index) => preloadRoute(index),
       history_push: (p) => {
         const path = cstr(p);
         if (location.pathname + location.search !== path) {
@@ -1488,6 +1514,37 @@
       location.reload();
     }
 
+    /* Fetching ahead is a guess, so it never spends a metered connection, and a
+       failure is left for the real navigation to retry and report. */
+    function canFetchAhead() {
+      const net = navigator.connection;
+      return !(net && (net.saveData || /2g/.test(net.effectiveType || "")));
+    }
+
+    /* Wait out the pointer: a sweep down a nav list settles on one link, and
+       only that one should cost a download. */
+    let preloadTimer = 0;
+    function preloadRoute(index) {
+      clearTimeout(preloadTimer);
+      if (!canFetchAhead()) return;
+      preloadTimer = setTimeout(() => {
+        for (const n of routeChunks[index] || []) loadChunk(n).catch(() => {});
+      }, 80);
+    }
+
+    /* After the page is up, fetch the chunks most other pages share, one at a
+       time so a visitor's own requests always come first. */
+    function preloadIdle() {
+      const names = (opts.idle || []).slice();
+      if (!canFetchAhead()) return;
+      const later = window.requestIdleCallback || ((f) => setTimeout(f, 1000));
+      const next = () => {
+        const name = names.shift();
+        if (name) loadChunk(name).catch(() => {}).then(() => later(next));
+      };
+      later(next);
+    }
+
     function loadRoute(index) {
       Promise.all((routeChunks[index] || []).map((n) => loadChunk(n))).then(
         () => {
@@ -2109,7 +2166,10 @@
       const chunksReady = Promise.all((opts.boot || []).map((n) => loadChunk(n)));
       const started = (x) => {
         wasmModule = x.module;
-        return chunksReady.then(() => start(x.instance));
+        return chunksReady.then(() => {
+          start(x.instance);
+          preloadIdle();
+        });
       };
       return fetch(url).then((r) => {
         if (!r.ok) throw new Error("failed to load " + url + " (" + r.status + ")");

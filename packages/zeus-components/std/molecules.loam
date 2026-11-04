@@ -242,10 +242,11 @@ fn Switch(on: Signal<bool>, p: SwitchProps) -> Node {
 }
 
 /// The light / dark switch: the native toggle bound to `appearance()` (an
-/// engine-level 0/1 signal every role token resolves against at paint).
+/// engine-level 0/1 signal every role token resolves against at paint). The
+/// choice is kept across visits.
 fn ThemeSwitch() -> Node {
     let dark = appearance()
-    return SwitchTrack(dark, fn() => dark.set(1 - dark.get()), Size.Md, "Dark mode", true, none)
+    return SwitchTrack(dark, fn() => set_appearance(1 - dark.get()), Size.Md, "Dark mode", true, none)
 }
 
 /// The native toggle both switches draw: `bind` is the 0/1 the thumb tweens

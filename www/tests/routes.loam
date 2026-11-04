@@ -66,5 +66,12 @@ fn main() {
     visit("/tooling/tests", "Test functions")
     visit("/playground", "Run Loam in the browser")
     visit("/nope", "not found")
+    // Fetching ahead leaves the current page alone, and an unknown path is fine.
+    visit("/language", "Language")
+    router.preload("/playground")
+    router.preload("/nope")
+    if router.current() != "/language" {
+        fail("preload moved the page")
+    }
     fmt.println("www routes ok")
 }

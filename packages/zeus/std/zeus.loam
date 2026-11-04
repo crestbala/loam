@@ -1415,6 +1415,15 @@ fn engine_role_rgb(slot: int) -> int {
     return arena.paint_rgb(role_color(slot))
 }
 
+/// What role `slot` paints in light (0) or dark (1), whichever is showing.
+fn engine_role_rgb_in(slot: int, dark: int) -> int {
+    let was = arena.paint_dark
+    arena.paint_dark = dark
+    let rgb = engine_role_rgb(slot)
+    arena.paint_dark = was
+    return rgb
+}
+
 fn engine_scroll(px: int, py: int, dx: int, dy: int) -> int {
     return input.scroll(px, py, dx, dy)
 }

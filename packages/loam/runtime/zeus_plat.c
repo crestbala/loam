@@ -2557,6 +2557,8 @@ __attribute__((import_module("zeus"), import_name("chunks_ready")))
 int32_t zeus_js_chunks_ready(int32_t index);
 __attribute__((import_module("zeus"), import_name("chunks_load")))
 void zeus_js_chunks_load(int32_t index);
+__attribute__((import_module("zeus"), import_name("chunks_preload")))
+void zeus_js_chunks_preload(int32_t index);
 #endif
 
 int64_t loam_platform_plat_chunks_ready(int64_t index) {
@@ -2573,6 +2575,37 @@ void loam_platform_plat_chunks_load(int64_t index) {
     zeus_js_chunks_load((int32_t)index);
 #else
     (void)index;
+#endif
+}
+
+void loam_platform_plat_chunks_preload(int64_t index) {
+#ifdef __wasm32__
+    zeus_js_chunks_preload((int32_t)index);
+#else
+    (void)index;
+#endif
+}
+
+#ifdef __wasm32__
+__attribute__((import_module("zeus"), import_name("appearance_load")))
+int32_t zeus_js_appearance_load(void);
+__attribute__((import_module("zeus"), import_name("appearance_save")))
+void zeus_js_appearance_save(int32_t dark);
+#endif
+
+int64_t loam_platform_plat_appearance_load(void) {
+#ifdef __wasm32__
+    return zeus_js_appearance_load();
+#else
+    return -1;
+#endif
+}
+
+void loam_platform_plat_appearance_save(int64_t dark) {
+#ifdef __wasm32__
+    zeus_js_appearance_save((int32_t)dark);
+#else
+    (void)dark;
 #endif
 }
 
