@@ -1,0 +1,11 @@
+// Reaches the library under a different alias from the file that loaded it.
+
+import "lib.loam" as second
+
+fn go() -> int {
+    second.counter = second.counter + 1
+    let b = Box2 { w: 3, h: 4 }
+    let c = Box2 {}
+    let doubled = second.apply(fn(x: int) -> int { return second.twice(x) }, 5)
+    return second.area(b) + second.area(c) + second.LIMIT + second.counter + second.Mode.On + doubled + second.pick(1, 2, true)
+}

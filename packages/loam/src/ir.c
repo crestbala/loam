@@ -120,13 +120,11 @@ static const char *resolve_callee(AstNode *cal) {
     }
     if (cal->kind == AST_FIELD && cal->as.access.target &&
         cal->as.access.target->kind == AST_IDENT) {
-        const char *mod = cal->as.access.target->as.ident.name;
-        for (int i = 0; i < Gnmods; i++)
-            if (Gmods[i].name && strcmp(Gmods[i].name, mod) == 0) {
-                const char *c = fn_cname_through(&Gmods[i], cal->as.access.field);
-                if (c) return c;
-            }
-        return cal->as.access.field;
+        /* A module keeps the alias it first loaded under, so this file's alias
+           has to go through this file's imports. */
+        LoamModule *m = find_mod_here(&Gmods[Gcur], cal->as.access.target->as.ident.name);
+        const char *c = m ? fn_cname_through(m, cal->as.access.field) : NULL;
+        return c ? c : cal->as.access.field;
     }
     return NULL;
 }
