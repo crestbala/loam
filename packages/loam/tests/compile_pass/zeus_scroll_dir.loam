@@ -57,6 +57,7 @@ fn main() {
 
     // The coast runs on the frames AFTER the finger stops: same direction,
     // decaying, and it does move (the finger's speed becomes the launch speed).
+    zeus.engine_mouseup()
     let before = zeus.node_scroll_y(id)
     zeus.engine_step_dt(16)
     zeus.pump_frame()

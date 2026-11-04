@@ -1,0 +1,65 @@
+// A held finger owns the position: a frame with no pan in it must not coast, or
+// the content outruns the finger. Release is what starts the coast, and only a
+// finger still moving has one.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn expect(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn page() -> Node {
+    return zui.Scroll(style = Style(height = px(240))) {
+        zeus.Box(style = Style(height = px(4000))) {
+            zeus.Text("top")
+        }
+    }
+}
+
+fn scroller() -> int {
+    let mut p = zeus.engine_find_text("top")
+    while p > 0 && zeus.node_kind(p) != 11 {
+        p = zeus.node_parent(p)
+    }
+    return p
+}
+
+fn main() {
+    zeus.snapshot(240, 240, page)
+    let s = scroller()
+    expect(s > 0, "the page scrolls")
+
+    zeus.engine_scroll(40, 40, 0, 30)
+    zeus.pump_frame()
+    zeus.pump_frame()
+    zeus.pump_frame()
+    expect(zeus.node_scroll_y(s) == 30, "no coast under a held finger")
+
+    zeus.engine_scroll(40, 40, 0, 30)
+    zeus.engine_mouseup()
+    zeus.pump_frame()
+    zeus.pump_frame()
+    expect(zeus.node_scroll_y(s) > 60, "release coasts from a moving finger")
+    for i in 0..200 {
+        zeus.pump_frame()
+    }
+    let settled = zeus.node_scroll_y(s)
+
+    zeus.engine_scroll(40, 40, 0, 30)
+    for i in 0..8 {
+        zeus.pump_frame()
+    }
+    zeus.engine_mouseup()
+    for i in 0..8 {
+        zeus.pump_frame()
+    }
+    expect(zeus.node_scroll_y(s) == settled + 30, "a rested finger has nothing to release")
+
+    fmt.println("touch-hold ok")
+}

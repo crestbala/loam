@@ -31,6 +31,7 @@ fn main() {
     zeus.engine_scroll(zeus.node_x(a) + 4, zeus.node_y(a) + 4, 0, 40)
     let b = zeus.engine_find_text("Row 1")
     zeus.engine_scroll(zeus.node_x(b) + 4, zeus.node_y(b) + 4, 0, 90)
+    zeus.engine_mouseup()
     let mut i = 0
     while i < 16 {
         zeus.pump_frame()

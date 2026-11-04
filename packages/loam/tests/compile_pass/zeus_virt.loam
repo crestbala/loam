@@ -132,6 +132,7 @@ fn main() {
     // layout frame).
     zeus.engine_scroll(20, 20, 0, 400)
     expect(zeus.node_scroll_y(list) == 400, "fling lands")
+    zeus.engine_mouseup()
     k = 0
     while k < 60 {
         zeus.engine_layout(240, 240)
