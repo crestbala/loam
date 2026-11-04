@@ -488,11 +488,16 @@ fn scroll_target(px: int, py: int, horiz: int) -> int {
 }
 
 /// Next overflowing scroller above `id` on the same axis (nested chaining).
+/// The chain ends at the floater `scroll_target` resolved in (`ptr_cover`): a
+/// list at its bound inside a Drawer or Dialog must not slide the page behind.
 fn parent_scroll(id: int, horiz: int) -> int {
     if id <= 0 {
         return 0
     }
     if id >= nodes.tree.len {
+        return 0
+    }
+    if id == arena.ptr_cover {
         return 0
     }
     let mut p = nodes.tree[id].parent
@@ -512,6 +517,9 @@ fn parent_scroll(id: int, horiz: int) -> int {
                     return p
                 }
             }
+        }
+        if p == arena.ptr_cover {
+            return 0
         }
         p = nodes.tree[p].parent
     }
