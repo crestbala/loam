@@ -5897,6 +5897,12 @@ fn smooth_axis(pos: int, target_value: int, dt: int) -> int {
     return pos + step
 }
 
+/// A finger is panning: from the first `input.scroll` to its `mouseup`. The
+/// position is the finger's until then, so nothing coasts. Touch reports slower
+/// than a fast screen draws, so most frames have no pan in them, and coasting
+/// those moved the content at twice the finger's speed.
+let mut pan_held: int = 0
+
 /// One frame of momentum + rubber-band + wheel easing. Returns 1 if anything
 /// moved. Thumb drag (`drag_bar`) owns the position until mouseup.
 fn physics_step() -> int {
@@ -5956,6 +5962,16 @@ fn physics_step() -> int {
             let panned_y = sm2 & 4
             let panned_x = sm2 & 8
             nodes.scrl[i].smooth = u8(sm2 & 3)
+            // A resting finger has no speed left to release with.
+            if pan_held != 0 {
+                if panned_y == 0 {
+                    nodes.scrl[i].vel_y = nodes.scrl[i].vel_y / 2
+                }
+                if panned_x == 0 {
+                    nodes.scrl[i].vel_x = nodes.scrl[i].vel_x / 2
+                }
+                continue
+            }
             if panned_y == 0 {
                 let ay = physics_axis(
                     nodes.scrl[i].scroll_y,

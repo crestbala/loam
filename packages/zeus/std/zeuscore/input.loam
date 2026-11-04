@@ -650,6 +650,7 @@ fn scroll(px: int, py: int, dx: int, dy: int) -> int {
     if arena.root_id <= 0 {
         return 0
     }
+    arena.pan_held = 1
     let mut changed = 0
     if dy != 0 {
         if chain_axis(px, py, dy, 0, 1) != 0 {
@@ -802,6 +803,7 @@ fn drag(px: int, py: int) -> int {
 }
 
 fn mouseup() {
+    arena.pan_held = 0
     // A released thumb lingers and fades like any scroll, instead of
     // vanishing the moment the pointer lets go.
     if arena.drag_bar != 0 && arena.drag_id > 0 {
