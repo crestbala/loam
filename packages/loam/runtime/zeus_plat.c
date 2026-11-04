@@ -2517,6 +2517,7 @@ loam_str loam_runtime_trap_msg(void) {
 __attribute__((weak)) void loam_router_engine_open_url(loam_str url) { (void)url; }
 __attribute__((weak)) void loam_router_engine_history_back(void) {}
 __attribute__((weak)) void loam_router_engine_chunks_done(int32_t index) { (void)index; }
+__attribute__((weak)) void loam_router_engine_chunks_slow(int32_t index) { (void)index; }
 
 /* Router history mirror. The Loam-side stack is authoritative; these mirror a
    push / replace / back into the host's own affordance. The web host forwards
@@ -2606,6 +2607,19 @@ void loam_platform_plat_appearance_save(int64_t dark) {
     zeus_js_appearance_save((int32_t)dark);
 #else
     (void)dark;
+#endif
+}
+
+#ifdef __wasm32__
+__attribute__((import_module("zeus"), import_name("open_external")))
+void zeus_js_open_external(const char *url, int32_t len);
+#endif
+
+void loam_platform_plat_open_external(loam_str url) {
+#ifdef __wasm32__
+    zeus_js_open_external(url.ptr, (int32_t)url.len);
+#else
+    (void)url;
 #endif
 }
 

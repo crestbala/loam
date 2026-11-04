@@ -1,0 +1,62 @@
+// A finger asks what it grabbed before it presses. 0 is an ordinary control
+// (a tap clicks on release, a pan scrolls). 1 is a slider, which keeps the
+// gesture. 2 is an on_drag region. Asking does not fire the click.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    zeus.window("touch-grab", 320, 240)
+    let clicks = zeus.signal(0)
+    let value = zeus.signal(40)
+    let drags = zeus.signal(0)
+    let tree = zeus.Box(style = Style(direction = Direction.Column, padding = 16, gap = 16)) {
+        zeus.Box(
+            style = Style(width = px(80), height = px(32), background = zeus.accent()),
+            on_click = fn() { clicks.set(clicks.get() + 1) },
+            label = "Go",
+        )
+        zui.Slider(value, label = "Level")
+        zeus.Box(
+            style = Style(width = px(120), height = px(40), background = zeus.ink()),
+            on_drag = fn() { drags.set(drags.get() + 1) },
+            label = "Editor",
+        )
+    }
+    zeus.root(tree)
+    zeus.pump_frame()
+
+    let go = zeus.engine_find_text("Go")
+    let level = zeus.engine_find_text("Level")
+    let editor = zeus.engine_find_text("Editor")
+    must(go > 0 && level > 0 && editor > 0, "controls are on screen")
+
+    let gx = zeus.node_x(go) + 8
+    let gy = zeus.node_y(go) + 8
+    must(zeus.engine_grab(gx, gy) == 0, "a button is not a grab")
+    must(clicks.get() == 0, "grab does not click")
+
+    let sx = zeus.node_x(level) + zeus.node_width(level) / 2
+    let sy = zeus.node_y(level) + zeus.node_height(level) / 2
+    must(zeus.engine_grab(sx, sy) == 1, "a slider keeps the gesture")
+    must(value.get() == 40, "grab does not move the slider")
+
+    let ex = zeus.node_x(editor) + 8
+    let ey = zeus.node_y(editor) + 8
+    must(zeus.engine_grab(ex, ey) == 2, "on_drag is a selection grab")
+    must(drags.get() == 0, "grab does not run on_drag")
+
+    zeus.engine_click(gx, gy)
+    zeus.engine_mouseup()
+    must(clicks.get() == 1, "a later click still fires")
+
+    fmt.println("touch-grab ok")
+}

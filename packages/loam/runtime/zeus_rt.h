@@ -355,6 +355,7 @@ void loam_platform_plat_history_back(void);
 loam_str loam_platform_plat_boot_path(void);
 int64_t loam_platform_plat_chunks_ready(int64_t index);
 void loam_platform_plat_chunks_load(int64_t index);
+void loam_platform_plat_open_external(loam_str url);
 int64_t loam_platform_plat_appearance_load(void);
 void loam_platform_plat_appearance_save(int64_t dark);
 void loam_platform_plat_chunks_preload(int64_t index);
@@ -379,9 +380,12 @@ int32_t loam_zeus_engine_next_ms(void);
 int32_t loam_zeus_engine_recover(void);
 int32_t loam_zeus_engine_trap_seq(void);
 int32_t loam_zeus_engine_click(int32_t x, int32_t y);
+/* What a finger grabs without pressing: 1 slider/thumb, 2 on_drag, 0 else. */
+int32_t loam_zeus_engine_grab(int32_t x, int32_t y);
 int32_t loam_zeus_engine_context_click(int32_t x, int32_t y);
 int32_t loam_zeus_engine_window_drag_at(int32_t x, int32_t y);
 int32_t loam_zeus_engine_scroll(int32_t x, int32_t y, int32_t dx, int32_t dy);
+void loam_zeus_engine_scroll_latch(int32_t x, int32_t y);
 int32_t loam_zeus_engine_scroll_step(int32_t x, int32_t y, int32_t dx, int32_t dy);
 int32_t loam_zeus_engine_scroll_smooth(int32_t x, int32_t y, int32_t dx, int32_t dy);
 int32_t loam_zeus_engine_drag(int32_t x, int32_t y);
@@ -403,6 +407,7 @@ int32_t loam_zeus_engine_state_load(loam_str snapshot);
 void loam_router_engine_open_url(loam_str url);
 void loam_router_engine_history_back(void);
 void loam_router_engine_chunks_done(int32_t index);
+void loam_router_engine_chunks_slow(int32_t index);
 void loam_zeus_engine_key_apply(int32_t sig, int32_t mode, int32_t value, int32_t lo,
                                int32_t hi);
 void loam_zeus_engine_fill_focus(void);

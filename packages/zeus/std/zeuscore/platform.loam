@@ -131,6 +131,8 @@ fn plat_chunks_preload(index: int) {}
 fn plat_appearance_load() -> int {}
 /// Remember the user's light / dark choice across visits.
 fn plat_appearance_save(dark: int) {}
+/// Open a URL outside the app. A no-op on hosts without a browser to hand it to.
+fn plat_open_external(url: string) {}
 /// The path a host wants the app to start on (the browser's URL), "" for none.
 /// Read before the first build, so a deep link never builds another page first.
 fn plat_boot_path() -> string {}

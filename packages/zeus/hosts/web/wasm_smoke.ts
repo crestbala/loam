@@ -11,6 +11,27 @@ let mem: WebAssembly.Memory | null = null;
 // wasm paints is decoded into a recorder, so a format drift between the
 // engine and the web host fails here.
 (0, eval)(Deno.readTextFileSync(new URL("./loader.js", import.meta.url)));
+{
+  type Sample = { t: number; x: number; y: number };
+  const fling = (globalThis as Record<string, unknown>).zeusFling as {
+    velocity(samples: Sample[], now: number): { x: number; y: number };
+    step(v: number, dt: number): { d: number; v: number };
+  };
+  const swipe = [
+    { t: 0, x: 0, y: 500 },
+    { t: 40, x: 0, y: 460 },
+    { t: 80, x: 0, y: 420 },
+  ];
+  // The fingertip moves up the glass, so the content scrolls down: positive.
+  if (fling.velocity(swipe, 90).y !== 1) throw new Error("fling: velocity of a swipe");
+  if (fling.velocity(swipe, 400).y !== 0) throw new Error("fling: a rested finger has no velocity");
+  if (fling.velocity(swipe.slice(0, 1), 5).y !== 0) throw new Error("fling: one sample has no velocity");
+  const whole = fling.step(1, 32);
+  const half = fling.step(1, 16);
+  const rest = fling.step(half.v, 16);
+  if (Math.abs(whole.d - (half.d + rest.d)) > 1e-9) throw new Error("fling: distance depends on frame rate");
+}
+
 const decodeFrame = (globalThis as Record<string, unknown>).zeusDecodeFrame as (
   buf: ArrayBuffer,
   head: number,

@@ -353,6 +353,7 @@ fn ensure_path() {
         cur_path = zeus.signal(start)
         params_gen = zeus.signal(0)
         page_key = zeus.signal(0)
+        pending_sig = zeus.signal(false)
         hist = []string { start }
         hist_at = 0
     }
@@ -377,6 +378,8 @@ fn resolve(path: string) -> int {
 
 /// The route whose code is loading, or -1.
 let mut waiting_route: int = -1
+/// See `pending`.
+let mut pending_sig: Signal<bool> = Signal { id: 0 }
 
 /// Make `path` current. The params are resolved first, so an effect that
 /// `params_gen` re-runs reads the new ones; the slot then rebuilds unless the
@@ -397,6 +400,7 @@ fn set_path(path: string) {
         }
     }
     waiting_route = -1
+    pending_sig.set(false)
     let mut keep = 0
     if idx >= 0 {
         if idx == prev {
@@ -545,11 +549,28 @@ fn preload(path: string) {
     }
 }
 
+/// True while a navigation has been waiting on its code long enough to notice.
+/// A signal, so a shell can show a spinner from it. The current page stays up
+/// meanwhile. A quick load never sets it, so a fast connection never flashes.
+fn pending() -> Signal<bool> {
+    ensure_path()
+    return pending_sig
+}
+
+/// Route `index`'s code is taking a while to arrive. Navigating on since makes
+/// this a no-op.
+fn engine_chunks_slow(index: int) {
+    if index == waiting_route {
+        pending_sig.set(true)
+    }
+}
+
 /// Route `index`'s code has landed. Navigating on since it was asked for makes
 /// this a no-op: the newer route is the one waiting now.
 fn engine_chunks_done(index: int) {
     if index == waiting_route {
         waiting_route = -1
+        pending_sig.set(false)
         page_key.set(page_key.get() + 1)
     }
 }

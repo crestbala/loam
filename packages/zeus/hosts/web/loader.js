@@ -70,6 +70,35 @@
     return n;
   }
   root.zeusDecodeFrame = decodeFrame;
+
+  /* A canvas gets no OS inertia, so a released pan coasts here. Time-based, so a
+     phone that drops frames travels as far as one that does not. The constant
+     is iOS's normal rate (0.998 per ms). */
+  const FLING_DECAY = 0.002;
+  const FLING_WINDOW_MS = 100;
+  const FLING_REST_MS = 80;
+  const FLING_MIN = 0.1;
+  const FLING_MAX = 8;
+  const FLING_STOP = 0.02;
+  /* Finger velocity at lift in layout units per ms, from `samples` of
+     `{t, x, y}`, oldest first. The last pair alone is noise: a real lift slows
+     in its final sample. A finger that rested before lifting has no velocity. */
+  function flingVelocity(samples, now) {
+    const last = samples[samples.length - 1];
+    if (!last || now - last.t > FLING_REST_MS) return { x: 0, y: 0 };
+    let first = last;
+    for (let i = samples.length - 1; i >= 0 && last.t - samples[i].t <= FLING_WINDOW_MS; i--) first = samples[i];
+    const dt = last.t - first.t;
+    if (dt <= 0) return { x: 0, y: 0 };
+    const clamp = (v) => (Math.abs(v) < FLING_MIN ? 0 : Math.max(-FLING_MAX, Math.min(FLING_MAX, v)));
+    return { x: clamp((first.x - last.x) / dt), y: clamp((first.y - last.y) / dt) };
+  }
+  /* `dt` ms of coast from velocity `v`: the distance covered and what is left. */
+  function flingStep(v, dt) {
+    const f = Math.exp(-FLING_DECAY * dt);
+    return { d: (v * (1 - f)) / FLING_DECAY, v: v * f };
+  }
+  root.zeusFling = { velocity: flingVelocity, step: flingStep };
   /* The light / dark choice. `zeli`'s page shell reads this key too, before the
      first paint. */
   const APPEARANCE_KEY = "zeus-appearance";
@@ -79,7 +108,11 @@
     if (!ctx) throw new Error("Canvas2D unavailable");
     opts = opts || {};
 
-    const dpr = window.devicePixelRatio || 1;
+    /* A phone's 3x canvas is 2.25 times the pixels of 2x, all repainted on every
+       scroll frame, for detail nobody sees at arm's length. Rastering fewer
+       keeps a pan on the finger on the phones that need it most. */
+    const coarse = !!(window.matchMedia && matchMedia("(pointer: coarse)").matches);
+    const dpr = Math.min(window.devicePixelRatio || 1, coarse ? 2 : Infinity);
     let layoutW = 1;
     let layoutH = 1;
     let sx = dpr;
@@ -90,6 +123,22 @@
     let wakeTimer = 0;
     /* `start` rebinds this so `request_frame` / image onload can wake rAF. */
     let schedule = function (_ms) {};
+    /* Set once input is wired: applies the frame's pan and fling, and says
+       whether a fling wants another frame. */
+    let touchFrame = null;
+    /* The page text `zeli build` put in the HTML. The canvas fades in over it on
+       its first frame, and the text goes once it is covered. */
+    let prepaint = document.getElementById("zeus-prepaint");
+    function revealCanvas() {
+      if (!prepaint) return;
+      const text = prepaint;
+      prepaint = null;
+      canvas.style.opacity = "1";
+      canvas.style.pointerEvents = "auto";
+      setTimeout(() => text.remove(), 200);
+    }
+    /* True while a touch reports its hover. See `preloadRoute`. */
+    let touching = false;
     /* Instance exports; imports that finish asynchronously (fetch_rpc_async)
        call back into these once `boot` has instantiated the module. */
     let exp = null;
@@ -856,6 +905,14 @@
         const bar = document.querySelector('meta[name="theme-color"]');
         if (bar) bar.setAttribute("content", paper);
       },
+      /* Not the `noopener` feature: with it `open` always returns null, which
+         reads as blocked. A really blocked popup leaves in this tab instead. */
+      open_external: (ptr, len) => {
+        const url = bytes(ptr, len);
+        const tab = window.open(url, "_blank");
+        if (tab) tab.opener = null;
+        else location.href = url;
+      },
       chunks_ready: (index) => (routeReady(index) ? 1 : 0),
       chunks_load: (index) => loadRoute(index),
       chunks_preload: (index) => preloadRoute(index),
@@ -1527,15 +1584,20 @@
     function preloadRoute(index) {
       clearTimeout(preloadTimer);
       if (!canFetchAhead()) return;
-      preloadTimer = setTimeout(() => {
+      const fetchAll = () => {
         for (const n of routeChunks[index] || []) loadChunk(n).catch(() => {});
-      }, 80);
+      };
+      /* A finger is already on the link, with a tap about 100 ms away. */
+      if (touching) fetchAll();
+      else preloadTimer = setTimeout(fetchAll, 80);
     }
 
     /* After the page is up, fetch the chunks most other pages share, one at a
-       time so a visitor's own requests always come first. */
+       time so a visitor's own requests always come first. A screen without hover
+       never gets a head start on a link, so it takes the build's next few too. */
     function preloadIdle() {
-      const names = (opts.idle || []).slice();
+      const noHover = window.matchMedia && matchMedia("(hover: none)").matches;
+      const names = (opts.idle || []).concat(noHover ? opts.idleTouch || [] : []);
       if (!canFetchAhead()) return;
       const later = window.requestIdleCallback || ((f) => setTimeout(f, 1000));
       const next = () => {
@@ -1546,12 +1608,21 @@
     }
 
     function loadRoute(index) {
+      /* Under 150 ms a wait reads as instant, and a spinner would only flash. */
+      const slow = setTimeout(() => {
+        if (exp.zeus_chunks_slow) exp.zeus_chunks_slow(index);
+        schedule(0);
+      }, 150);
       Promise.all((routeChunks[index] || []).map((n) => loadChunk(n))).then(
         () => {
+          clearTimeout(slow);
           exp.zeus_chunks_done(index);
           schedule(0);
         },
-        reloadForChunks
+        (e) => {
+          clearTimeout(slow);
+          reloadForChunks(e);
+        }
       );
     }
 
@@ -1587,13 +1658,17 @@
       return primaryExports[name];
     }
 
+    /* Short, as every function in a chunk has an import naming it (`zeli`'s
+       `--placeholder-namespace-prefix`). */
+    const PLACEHOLDER_NS = "p.";
+
     function placeholders(mod) {
-      const chunk = mod.slice("placeholder.".length);
+      const chunk = mod.slice(PLACEHOLDER_NS.length);
       return new Proxy({}, { get: (_, field) => placeholder(chunk, Number(field)) });
     }
 
     const moduleImports = new Proxy(imports, {
-      get: (t, k) => (typeof k === "string" && k.startsWith("placeholder.") ? placeholders(k) : t[k]),
+      get: (t, k) => (typeof k === "string" && k.startsWith(PLACEHOLDER_NS) ? placeholders(k) : t[k]),
     });
 
     function cstrIn(raw, ptr) {
@@ -1666,7 +1741,10 @@
           applyLayoutTransform();
           let next = 0;
           try {
+            const coasting = touchFrame ? touchFrame() : false;
             next = exp.zeus_paint() | 0;
+            if (coasting) next = 1;
+            revealCanvas();
             syncIme();
             syncA11y();
           } catch (e) {
@@ -1970,11 +2048,219 @@
           },
           { signal }
         );
+        /* A finger on the canvas. `touch-action: none` means the browser never
+           scrolls this page, and a phone has no wheel, so a touch is handled
+           here: a tap clicks on release, so a pan that starts on a link scrolls
+           instead of navigating. A slider or scrollbar thumb keeps the gesture.
+           An `on_drag` region (the playground editor) keeps a horizontal drag
+           and yields a vertical one to the page.
+           The pan follows the finger exactly, through `zeus_scroll_step`: the
+           engine's own coast runs on every frame without a touch event, which
+           is most of them on a 120 Hz screen, and moved the page at twice the
+           finger's speed. Moves are added up and applied once per frame. The
+           fling then runs from here (see `flingStep`). */
+        const PAN_SLOP2 = 64;
+        const AXIS_BOTH = 0;
+        const AXIS_X = 1;
+        const AXIS_Y = 2;
+        const pan = { id: -1, on: false, scroll: false, grab: 0, tap: false, axis: AXIS_BOTH };
+        const panDown = { x: 0, y: 0, ox: 0, oy: 0, rect: null };
+        const panLast = { x: 0, y: 0 };
+        const panRem = { x: 0, y: 0 };
+        const panWant = { x: 0, y: 0 };
+        let panSamples = [];
+        let fling = null;
+        /* Velocity a new touch cut short, so swiping again keeps speed. */
+        let flingCarry = null;
+        function directPointer(e) {
+          return e.pointerType === "touch" || e.pointerType === "pen";
+        }
+        function panPoint(e) {
+          const r = panDown.rect;
+          return {
+            x: (e.clientX - r.left) * (layoutW / (r.width || 1)),
+            y: (e.clientY - r.top) * (layoutH / (r.height || 1)),
+          };
+        }
+        /* Whole points go to the engine, and the fraction waits for the next
+           frame, so a slow pan neither freezes nor loses distance. Returns
+           whether anything moved. */
+        function panScrollBy(dx, dy) {
+          if (panRem.x * dx < 0) panRem.x = 0;
+          if (panRem.y * dy < 0) panRem.y = 0;
+          dx += panRem.x;
+          dy += panRem.y;
+          const ix = Math.trunc(dx);
+          const iy = Math.trunc(dy);
+          panRem.x = dx - ix;
+          panRem.y = dy - iy;
+          if (!ix && !iy) return true;
+          return !!(exp.zeus_scroll_step(panDown.x, panDown.y, ix, iy) | 0);
+        }
+        function releaseLatch() {
+          if (exp.zeus_scroll_latch) exp.zeus_scroll_latch(-1, -1);
+        }
+        function stopFling() {
+          if (fling) flingCarry = { x: fling.vx, y: fling.vy, t: performance.now() };
+          fling = null;
+        }
+        function startFling(now) {
+          let v = flingVelocity(panSamples, now);
+          const axis = pan.axis;
+          if (axis === AXIS_X) v = { x: v.x, y: 0 };
+          if (axis === AXIS_Y) v = { x: 0, y: v.y };
+          if (!v.x && !v.y) return false;
+          if (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) return false;
+          const c = flingCarry;
+          if (c && now - c.t < 400) {
+            if (c.x * v.x > 0) v.x = Math.max(-FLING_MAX * 2, Math.min(FLING_MAX * 2, v.x + c.x));
+            if (c.y * v.y > 0) v.y = Math.max(-FLING_MAX * 2, Math.min(FLING_MAX * 2, v.y + c.y));
+          }
+          fling = { vx: v.x, vy: v.y, t: now };
+          return true;
+        }
+        /* Runs before each paint, so a frame draws the finger where it is now. */
+        touchFrame = function () {
+          if (panWant.x || panWant.y) {
+            panScrollBy(panWant.x, panWant.y);
+            panWant.x = 0;
+            panWant.y = 0;
+          }
+          if (!fling) return false;
+          const now = performance.now();
+          const dt = Math.min(now - fling.t, 100);
+          fling.t = now;
+          const fx = flingStep(fling.vx, dt);
+          const fy = flingStep(fling.vy, dt);
+          fling.vx = fx.v;
+          fling.vy = fy.v;
+          const moved = panScrollBy(fx.d, fy.d);
+          if (!moved || Math.hypot(fling.vx, fling.vy) < FLING_STOP) {
+            fling = null;
+            flingCarry = null;
+            releaseLatch();
+            return false;
+          }
+          return true;
+        };
+        function trackPan(e) {
+          const raw = panPoint(e);
+          if (pan.grab === 1) {
+            exp.zeus_pointer_move(Math.round(raw.x), Math.round(raw.y));
+            schedule(0);
+            return;
+          }
+          /* Kept from the moment the finger lands, slop included: the browser
+             merges moves, so a hard flick may be only a sample or two past it. */
+          panSamples.push({ t: e.timeStamp, x: raw.x, y: raw.y });
+          if (panSamples.length > 24) panSamples.shift();
+          if (!pan.scroll) {
+            const adx = panDown.ox - raw.x;
+            const ady = panDown.oy - raw.y;
+            if (adx * adx + ady * ady <= PAN_SLOP2) return;
+            /* A selection keeps a drag along the line. */
+            if (pan.grab === 2 && Math.abs(adx) > Math.abs(ady)) {
+              exp.zeus_pointer_move(Math.round(raw.x), Math.round(raw.y));
+              schedule(0);
+              return;
+            }
+            pan.scroll = true;
+            pan.tap = false;
+            /* A pan that leans on one axis stays on it, so reading down a page
+               does not nudge the code block a thumb passes over sideways. */
+            const ax = Math.abs(adx);
+            const ay = Math.abs(ady);
+            pan.axis = ay > ax * 2 ? AXIS_Y : ax > ay * 2 ? AXIS_X : AXIS_BOTH;
+            if (pan.grab) exp.zeus_pointer_up();
+            /* The press lit whatever it landed on: this was never a press. */
+            exp.zeus_pointer_move(-1, -1);
+            if (exp.zeus_scroll_latch) exp.zeus_scroll_latch(panDown.x, panDown.y);
+            panLast.x = raw.x;
+            panLast.y = raw.y;
+          }
+          if (pan.axis !== AXIS_Y) panWant.x += panLast.x - raw.x;
+          if (pan.axis !== AXIS_X) panWant.y += panLast.y - raw.y;
+          panLast.x = raw.x;
+          panLast.y = raw.y;
+          schedule(0);
+        }
+        function finishPan(e, cancel) {
+          if (!pan.on || e.pointerId !== pan.id) return;
+          const scrolled = pan.scroll;
+          const flung = scrolled && !cancel && startFling(e.timeStamp);
+          if (pan.tap && !cancel) exp.zeus_pointer_down(panDown.x, panDown.y);
+          if (!scrolled) exp.zeus_pointer_up();
+          /* No finger means no hover: a tapped link must not stay lit. */
+          exp.zeus_pointer_move(-1, -1);
+          if (!flung) releaseLatch();
+          pan.on = false;
+          pan.scroll = false;
+          pan.grab = 0;
+          pan.tap = false;
+          pan.id = -1;
+          schedule(0);
+        }
+        canvas.addEventListener(
+          "touchstart",
+          (e) => {
+            if (e.cancelable) e.preventDefault();
+          },
+          { passive: false, signal }
+        );
+        canvas.addEventListener(
+          "touchmove",
+          (e) => {
+            if (e.cancelable) e.preventDefault();
+          },
+          { passive: false, signal }
+        );
         canvas.addEventListener(
           "pointerdown",
           (e) => {
-            const p = layoutPoint(e.clientX, e.clientY);
-            exp.zeus_pointer_down(p.x, p.y);
+            if (directPointer(e)) {
+              if (pan.on) return;
+              const wasFlinging = !!fling;
+              stopFling();
+              const r = canvas.getBoundingClientRect();
+              panDown.rect = r;
+              const raw = panPoint(e);
+              panDown.ox = raw.x;
+              panDown.oy = raw.y;
+              panDown.x = Math.round(raw.x);
+              panDown.y = Math.round(raw.y);
+              panLast.x = raw.x;
+              panLast.y = raw.y;
+              panRem.x = 0;
+              panRem.y = 0;
+              panWant.x = 0;
+              panWant.y = 0;
+              panSamples = [{ t: e.timeStamp, x: raw.x, y: raw.y }];
+              releaseLatch();
+              /* Hover runs here because a touch has no other chance to: `on_hover`
+                 is what fetches a link's code ahead of the tap. */
+              touching = true;
+              exp.zeus_pointer_move(panDown.x, panDown.y);
+              touching = false;
+              const grab = exp.zeus_grab ? exp.zeus_grab(panDown.x, panDown.y) | 0 : 0;
+              pan.on = true;
+              pan.id = e.pointerId;
+              pan.scroll = false;
+              pan.axis = AXIS_BOTH;
+              pan.grab = grab === 1 || grab === 2 ? grab : 0;
+              /* A touch that stops a fling only stops it. */
+              pan.tap = pan.grab === 0 && !wasFlinging;
+              if (pan.grab) exp.zeus_pointer_down(panDown.x, panDown.y);
+              if (canvas.setPointerCapture) {
+                try {
+                  canvas.setPointerCapture(e.pointerId);
+                } catch (err) {
+                  /* The gesture still works while the finger is over the canvas. */
+                }
+              }
+            } else {
+              const p = layoutPoint(e.clientX, e.clientY);
+              exp.zeus_pointer_down(p.x, p.y);
+            }
             schedule(0);
           },
           { signal }
@@ -1982,6 +2268,10 @@
         canvas.addEventListener(
           "pointermove",
           (e) => {
+            if (directPointer(e)) {
+              if (pan.on && e.pointerId === pan.id) trackPan(e);
+              return;
+            }
             const p = layoutPoint(e.clientX, e.clientY);
             exp.zeus_pointer_move(p.x, p.y);
             const cp = exp.zeus_cursor_sync ? exp.zeus_cursor_sync() : 0;
@@ -1996,6 +2286,8 @@
             const p = layoutPoint(e.clientX, e.clientY);
             if (exp.zeus_context_click && exp.zeus_context_click(p.x, p.y)) {
               e.preventDefault();
+              /* A long press opened a menu: its release is not also a tap. */
+              pan.tap = false;
               schedule(0);
             }
           },
@@ -2003,9 +2295,24 @@
         );
         canvas.addEventListener(
           "pointerup",
-          () => {
+          (e) => {
+            if (directPointer(e)) {
+              finishPan(e, false);
+              return;
+            }
             exp.zeus_pointer_up();
             schedule(0);
+          },
+          { signal }
+        );
+        canvas.addEventListener(
+          "pointercancel",
+          (e) => {
+            if (directPointer(e)) finishPan(e, true);
+            else {
+              exp.zeus_pointer_up();
+              schedule(0);
+            }
           },
           { signal }
         );

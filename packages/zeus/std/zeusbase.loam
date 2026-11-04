@@ -1664,6 +1664,12 @@ fn appearance() -> Signal<int> {
     return signal_handle(arena.appearance_sid)
 }
 
+/// Open a URL outside the app, in a new browser tab on the web. Call it from a
+/// click: a browser blocks a new tab that no user action asked for.
+fn open_external(url: string) {
+    platform.plat_open_external(url)
+}
+
 /// The user chose light (0) or dark (1): apply it and keep it for their next
 /// visit. Code that only needs to change the look, unasked, writes `appearance()`.
 fn set_appearance(dark: int) {

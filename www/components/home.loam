@@ -88,6 +88,11 @@ fn Home() -> Node {
                         on_click = fn() => router.navigate("/language"),
                     )
                 }
+                zui.Button(
+                    "View on GitHub",
+                    look = zeus.Look.Ghost,
+                    on_click = fn() => zeus.open_external(shell.GITHUB_URL),
+                )
             }
         }
         TileGrid(fn() {

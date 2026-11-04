@@ -339,6 +339,45 @@ fn idle_fetch_takes_shared_small_chunks_most_shared_first() {
     test.assert_eq_str(p.chunks[got[1]].name, "some")
 }
 
+#[test]
+fn prepaint_keeps_reading_order_and_drops_icons() {
+    let outline = "14\t20\t60\t100\tBody & more\n0\t4\t0\t16\t<svg/>\n32\t20\t10\t100\tTitle\n22\t20\t40\t100\tSection\n"
+    let html = zeli.prepaint_html(outline)
+    test.assert_eq_str(html, "<h1>Title</h1>\n<h2>Section</h2>\n<p>Body &amp; more</p>\n")
+}
+
+#[test]
+fn prepaint_keeps_highlighted_code_together() {
+    let outline = "14\t20\t10\t50\tBefore\n13\t20\t30\t20\tlet\n13\t40\t30\t8\t \n13\t48\t30\t8\tx\n13\t20\t50\t60\t// note\n14\t20\t70\t50\tAfter\n"
+    let html = zeli.prepaint_html(outline)
+    test.assert_eq_str(html, "<p>Before</p>\n<pre>\nlet x\n// note\n</pre>\n<p>After</p>\n")
+}
+
+#[test]
+fn prepaint_is_empty_for_a_page_with_no_words() {
+    test.assert_eq_str(zeli.prepaint_html("0\t4\t0\t16\t<svg/>\n"), "")
+}
+
+#[test]
+fn touch_fetch_takes_the_smallest_of_the_rest_up_to_its_budget() {
+    let p = Plan {
+        chunks: []Chunk {
+            chunk_of("shared", 3),
+            chunk_of("large", 1),
+            chunk_of("small", 1),
+            chunk_of("mid", 1),
+            chunk_of("over", 1),
+        },
+        route_chunks: [][]int { []int {}, []int {}, []int {} },
+    }
+    let sizes = []int { 1000, 120000, 40000, 90000, 300000 }
+    let got = chunks.touch_chunks(&p, sizes, []int { 0 })
+    test.assert_eq_int(got.len, 3)
+    test.assert_eq_str(p.chunks[got[0]].name, "small")
+    test.assert_eq_str(p.chunks[got[1]].name, "mid")
+    test.assert_eq_str(p.chunks[got[2]].name, "large")
+}
+
 // --- numbers, substring ids, and the processes a native target lives in ---
 
 #[test]

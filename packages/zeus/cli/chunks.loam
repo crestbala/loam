@@ -16,11 +16,13 @@ import "std:str"
 
 /// Below this much C, a chunk costs more in requests than it saves in bytes.
 /// About 8 KB of wasm.
-const MIN_CHUNK_C: int = 40000
+const MIN_CHUNK_C: int = 12000
 /// Most chunks a route may need. More means slower first paints.
 const MAX_ROUTE_CHUNKS: int = 3
 /// The largest chunk worth fetching on a guess.
 const MAX_IDLE_BYTES: int = 150000
+/// All a touch screen fetches on a guess beyond `MAX_IDLE_BYTES`, in bytes.
+const MAX_TOUCH_BYTES: int = 250000
 /// A function used by at least this percent of routes stays in the primary.
 const PRIMARY_PERCENT: int = 50
 
@@ -467,6 +469,42 @@ fn idle_chunks(p: &Plan, sizes: []int) -> []int {
             }
         }
         users = users - 1
+    }
+    return out
+}
+
+/// What a touch screen also fetches at idle, as it gets no hover to go on: the
+/// smallest of the rest, up to `MAX_TOUCH_BYTES` in all, so it covers the most
+/// pages for the data. `idle` is what `idle_chunks` already took.
+fn touch_chunks(p: &Plan, sizes: []int, idle: []int) -> []int {
+    let mut left = []int {}
+    for i in 0..p.chunks.len {
+        if !contains_int(idle, i) {
+            push(left, i)
+        }
+    }
+    let mut out = []int {}
+    let mut total = 0
+    while left.len > 0 {
+        let mut best = 0
+        for i in 1..left.len {
+            if sizes[left[i]] < sizes[left[best]] {
+                best = i
+            }
+        }
+        let c = left[best]
+        if total + sizes[c] > MAX_TOUCH_BYTES {
+            break
+        }
+        total = total + sizes[c]
+        push(out, c)
+        let mut rest = []int {}
+        for i in 0..left.len {
+            if i != best {
+                push(rest, left[i])
+            }
+        }
+        left = rest
     }
     return out
 }
