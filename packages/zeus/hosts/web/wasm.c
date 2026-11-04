@@ -370,6 +370,12 @@ void zeus_open_url(const char *path) {
     loam_router_engine_open_url((loam_str){p, n});
 }
 
+/* A route's chunks have landed: mount the page that was waiting for them. */
+__attribute__((export_name("zeus_chunks_done")))
+void zeus_chunks_done(int32_t index) {
+    loam_router_engine_chunks_done(index);
+}
+
 /* Hot reload (§2.5): expose the signal arena as text, and restore it. The dev
    loader stashes the snapshot in sessionStorage before reloading. */
 static char wasm_state_buf[65536];

@@ -107,6 +107,7 @@ static const char *const c_roots_metrics[] = {
    even when the app never calls them directly. */
 static const char *const c_roots_router[] = {
     "engine_open_url", "engine_history_back",
+    "engine_open_url", "engine_chunks_done",
     NULL,
 };
 

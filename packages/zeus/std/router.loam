@@ -348,10 +348,12 @@ let mut cur_title: string = ""
 
 fn ensure_path() {
     if cur_path.id == 0 {
-        cur_path = zeus.signal("/")
+        let boot = platform.plat_boot_path()
+        let start = if boot.len > 0 { boot } else { "/" }
+        cur_path = zeus.signal(start)
         params_gen = zeus.signal(0)
         page_key = zeus.signal(0)
-        hist = []string { "/" }
+        hist = []string { start }
         hist_at = 0
     }
 }
@@ -373,6 +375,9 @@ fn resolve(path: string) -> int {
     return -1
 }
 
+/// The route whose code is loading, or -1.
+let mut waiting_route: int = -1
+
 /// Make `path` current. The params are resolved first, so an effect that
 /// `params_gen` re-runs reads the new ones; the slot then rebuilds unless the
 /// route is the one already mounted and it is `live`, in which case only the
@@ -382,6 +387,16 @@ fn set_path(path: string) {
     let idx = resolve(path)
     cur_path.set(path)
     params_gen.set(params_gen.get() + 1)
+    // Its code is not here yet: the URL and the nav highlight have moved, and
+    // the current page stays up until `engine_chunks_done`.
+    if idx >= 0 {
+        if platform.plat_chunks_ready(idx) == 0 {
+            waiting_route = idx
+            platform.plat_chunks_load(idx)
+            return
+        }
+    }
+    waiting_route = -1
     let mut keep = 0
     if idx >= 0 {
         if idx == prev {
@@ -391,7 +406,7 @@ fn set_path(path: string) {
         }
     }
     if keep != 0 {
-        apply_title(cur_routes[idx].meta(cur_params))
+        apply_meta(cur_routes[idx].meta(cur_params))
     } else {
         page_key.set(page_key.get() + 1)
     }
@@ -430,14 +445,36 @@ fn on_load(pattern: string, load: fn(Params)) {
     route_loaders.push(LoaderEntry { pattern: pattern, load: load })
 }
 
-/// Push a route's title to the host (window title / `document.title`). Empty
-/// titles are ignored, so routes without `meta` leave the title alone. Called
-/// from `RouterPage`, where the matched route is already in hand.
-fn apply_title(m: Meta) {
+/// `path` without its query or fragment: what a canonical URL names.
+fn clean_path(path: string) -> string {
+    let mut out = []int {}
+    for i in 0..path.len {
+        if path[i] == 63 || path[i] == 35 {
+            break
+        }
+        push(out, path[i])
+    }
+    return string_from_bytes(out)
+}
+
+/// Push a route's `Meta` to the host: the window title, and on the web the whole
+/// `<head>`, so a shared or indexed URL describes the page it shows. Empty titles
+/// are ignored, so routes without `meta` leave the title alone. Every other field
+/// is sent even when empty, so one page's tags never outlive it. Called from
+/// `RouterPage`, where the matched route is already in hand.
+fn apply_meta(m: Meta) {
     if m.title.len > 0 {
         cur_title = m.title
         platform.plat_set_title(m.title)
     }
+    platform.plat_set_head("title", m.title)
+    platform.plat_set_head("description", m.description)
+    platform.plat_set_head("canonical", if m.canonical.len > 0 { m.canonical } else { clean_path(cur_path.peek()) })
+    platform.plat_set_head("robots", m.robots)
+    platform.plat_set_head("og_type", m.og_type)
+    platform.plat_set_head("jsonld", m.jsonld)
+    // Last: the Twitter card is built from the fields above.
+    platform.plat_set_head("og_image", m.og_image)
 }
 
 /// Title last applied on navigation ("" until a route with `meta` is shown).
@@ -495,6 +532,15 @@ fn engine_open_url(url: string) {
     navigate(url)
 }
 
+/// Route `index`'s code has landed. Navigating on since it was asked for makes
+/// this a no-op: the newer route is the one waiting now.
+fn engine_chunks_done(index: int) {
+    if index == waiting_route {
+        waiting_route = -1
+        page_key.set(page_key.get() + 1)
+    }
+}
+
 /// Back one entry, for a host that only knows "the user went back".
 fn engine_history_back() {
     back()
@@ -505,11 +551,13 @@ fn engine_history_back() {
 /// Mount the page for the resolved route (`cur_index` / `cur_params`).
 fn RouterPage(p: RouterProps) -> Node {
     if cur_index < 0 {
+        // Nothing here to index, and nothing of the last page's to keep.
+        apply_meta(Meta { robots: "noindex" })
         return p.notFound()
     }
     let i = cur_index
     let params = cur_params
-    apply_title(cur_routes[i].meta(params))
+    apply_meta(cur_routes[i].meta(params))
     return zui.Boundary(fn() { return cur_routes[i].build(params) }, fn(msg) {
         return p.error(msg)
     })

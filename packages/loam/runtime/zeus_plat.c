@@ -1693,6 +1693,21 @@ __attribute__((import_module("zeus"), import_name("set_title")))
 void zeus_js_set_title(const char *t);
 #endif
 
+#ifdef __wasm32__
+__attribute__((import_module("zeus"), import_name("set_head")))
+void zeus_js_set_head(const char *key, int32_t key_len, const char *value, int32_t value_len);
+#endif
+
+/* One `Meta` field for the page's head. Passed by length: JSON-LD has no limit. */
+void loam_platform_plat_set_head(loam_str key, loam_str value) {
+#ifdef __wasm32__
+    zeus_js_set_head(key.ptr, (int32_t)key.len, value.ptr, (int32_t)value.len);
+#else
+    (void)key;
+    (void)value;
+#endif
+}
+
 /* Retitle the open window without reopening it (router `Meta.title`). */
 void loam_platform_plat_set_title(loam_str title) {
 #ifdef __wasm32__
@@ -2501,6 +2516,7 @@ loam_str loam_runtime_trap_msg(void) {
    the router overrides these weak no-ops. */
 __attribute__((weak)) void loam_router_engine_open_url(loam_str url) { (void)url; }
 __attribute__((weak)) void loam_router_engine_history_back(void) {}
+__attribute__((weak)) void loam_router_engine_chunks_done(int32_t index) { (void)index; }
 
 /* Router history mirror. The Loam-side stack is authoritative; these mirror a
    push / replace / back into the host's own affordance. The web host forwards
@@ -2514,6 +2530,51 @@ void zeus_js_history_replace(const char *path);
 __attribute__((import_module("zeus"), import_name("history_back")))
 void zeus_js_history_back(void);
 #endif
+
+#ifdef __wasm32__
+__attribute__((import_module("zeus"), import_name("boot_path")))
+int32_t zeus_js_boot_path(char *buf, int32_t cap);
+#endif
+
+loam_str loam_platform_plat_boot_path(void) {
+#ifdef __wasm32__
+    char buf[2048];
+    int32_t n = zeus_js_boot_path(buf, (int32_t)sizeof buf);
+    if (n > 0) {
+        char *p = (char *)loam_new((size_t)n + 1, "boot_path", 0);
+        if (p) {
+            memcpy(p, buf, (size_t)n);
+            p[n] = '\0';
+            return (loam_str){p, n};
+        }
+    }
+#endif
+    return (loam_str){"", 0};
+}
+
+#ifdef __wasm32__
+__attribute__((import_module("zeus"), import_name("chunks_ready")))
+int32_t zeus_js_chunks_ready(int32_t index);
+__attribute__((import_module("zeus"), import_name("chunks_load")))
+void zeus_js_chunks_load(int32_t index);
+#endif
+
+int64_t loam_platform_plat_chunks_ready(int64_t index) {
+#ifdef __wasm32__
+    return zeus_js_chunks_ready((int32_t)index);
+#else
+    (void)index;
+    return 1;
+#endif
+}
+
+void loam_platform_plat_chunks_load(int64_t index) {
+#ifdef __wasm32__
+    zeus_js_chunks_load((int32_t)index);
+#else
+    (void)index;
+#endif
+}
 
 static const char *history_path(loam_str path, char *buf, size_t cap) {
     size_t n = (path.len > 0 && path.ptr) ? (size_t)path.len : 0;

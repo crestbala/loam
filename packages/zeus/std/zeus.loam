@@ -1408,6 +1408,13 @@ fn engine_click_text(label: string) -> int {
     return click_id(id)
 }
 
+/// What theme role `slot` paints right now, as packed rgb. `zeli build` reads
+/// the page colour here so the HTML can match it before the wasm arrives.
+fn engine_role_rgb(slot: int) -> int {
+    ensure_role_colors()
+    return arena.paint_rgb(role_color(slot))
+}
+
 fn engine_scroll(px: int, py: int, dx: int, dy: int) -> int {
     return input.scroll(px, py, dx, dy)
 }

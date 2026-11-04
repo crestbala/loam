@@ -269,6 +269,7 @@ void loam_platform_plat_measure_wrap(loam_str s, int32_t px, int32_t max_w, int3
                                      int32_t *h);
 void loam_platform_plat_set_window(loam_str title, int64_t width, int64_t height);
 void loam_platform_plat_set_title(loam_str title);
+void loam_platform_plat_set_head(loam_str key, loam_str value);
 void loam_platform_plat_set_chrome(int64_t mode);
 void loam_platform_plat_set_titlebar_box(int64_t height, int64_t lead, int64_t trail);
 void loam_platform_plat_titlebar_get(loam_vec *out);
@@ -351,6 +352,9 @@ void zeus_boundary_preset_add(int32_t seq, const char *msg, size_t n);
 void loam_platform_plat_history_push(loam_str path);
 void loam_platform_plat_history_replace(loam_str path);
 void loam_platform_plat_history_back(void);
+loam_str loam_platform_plat_boot_path(void);
+int64_t loam_platform_plat_chunks_ready(int64_t index);
+void loam_platform_plat_chunks_load(int64_t index);
 int64_t loam_platform_plat_overlay_scroll(void);
 void loam_platform_plat_set_overlay_scroll(int64_t on);
 void loam_platform_plat_inset_get(loam_vec *out);
@@ -395,6 +399,7 @@ int32_t loam_zeus_engine_state_load(loam_str snapshot);
    link and `history_back` for an OS back button. */
 void loam_router_engine_open_url(loam_str url);
 void loam_router_engine_history_back(void);
+void loam_router_engine_chunks_done(int32_t index);
 void loam_zeus_engine_key_apply(int32_t sig, int32_t mode, int32_t value, int32_t lo,
                                int32_t hi);
 void loam_zeus_engine_fill_focus(void);

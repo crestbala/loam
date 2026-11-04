@@ -581,7 +581,7 @@ fn build(what: string) -> int {
     }
 
     // `zeli` is a Loam program built by the compiler above it in this file.
-    if sys.exists("{{BIN}}/zeli") == 0 || is_newer("{{BIN}}/loamc", "{{BIN}}/zeli") || is_newer("{{ROOT}}/packages/zeus/cli/zeli.loam", "{{BIN}}/zeli") {
+    if sys.exists("{{BIN}}/zeli") == 0 || is_newer("{{BIN}}/loamc", "{{BIN}}/zeli") || is_newer("{{ROOT}}/packages/zeus/cli/zeli.loam", "{{BIN}}/zeli") || is_newer("{{ROOT}}/packages/zeus/cli/chunks.loam", "{{BIN}}/zeli") {
         fmt.println("  loamc packages/zeus/cli/zeli.loam -> bin/zeli")
         sys.exec("cd {{shq(ROOT)}} && ./bin/loamc packages/zeus/cli/zeli.loam -o bin/zeli")
         if sys.exec_status() != 0 {
