@@ -125,6 +125,12 @@ fn plat_chunks_ready(index: int) -> int {}
 /// Start loading route `index`'s code. The host answers through
 /// `router.engine_chunks_done`.
 fn plat_chunks_load(index: int) {}
+/// Fetch route `index`'s code ahead of a navigation that may not happen.
+fn plat_chunks_preload(index: int) {}
+/// The light / dark choice the user saved: 0 light, 1 dark, -1 none yet.
+fn plat_appearance_load() -> int {}
+/// Remember the user's light / dark choice across visits.
+fn plat_appearance_save(dark: int) {}
 /// The path a host wants the app to start on (the browser's URL), "" for none.
 /// Read before the first build, so a deep link never builds another page first.
 fn plat_boot_path() -> string {}

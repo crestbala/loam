@@ -19,6 +19,8 @@ import "std:str"
 const MIN_CHUNK_C: int = 40000
 /// Most chunks a route may need. More means slower first paints.
 const MAX_ROUTE_CHUNKS: int = 3
+/// The largest chunk worth fetching on a guess.
+const MAX_IDLE_BYTES: int = 150000
 /// A function used by at least this percent of routes stays in the primary.
 const PRIMARY_PERCENT: int = 50
 
@@ -450,6 +452,23 @@ fn plan(g: &Graph, roots: []int, entries: []int, min_size: int) -> Plan {
         push(route_chunks, mine)
     }
     return Plan { chunks: out, route_chunks: route_chunks }
+}
+
+/// Chunks worth fetching while the browser is idle: shared by several routes, so
+/// each saves the most next-page waits, and small enough to be a fair guess. Most
+/// shared first. `sizes` are file sizes in bytes, by chunk.
+fn idle_chunks(p: &Plan, sizes: []int) -> []int {
+    let mut out = []int {}
+    let mut users = p.route_chunks.len
+    while users >= 2 {
+        for i in 0..p.chunks.len {
+            if p.chunks[i].routes.len == users && sizes[i] <= MAX_IDLE_BYTES {
+                push(out, i)
+            }
+        }
+        users = users - 1
+    }
+    return out
 }
 
 /// The `wasm-split --multi-split` manifest: a chunk name, its functions, a blank

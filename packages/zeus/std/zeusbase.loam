@@ -1657,10 +1657,18 @@ fn center(node: Node) -> Node {
 fn appearance() -> Signal<int> {
     arena.ensure()
     if arena.appearance_sid == 0 {
-        let s = global_signal(1)
+        let saved = platform.plat_appearance_load()
+        let s = global_signal(if saved >= 0 { saved } else { 1 })
         arena.appearance_sid = s.id
     }
     return signal_handle(arena.appearance_sid)
+}
+
+/// The user chose light (0) or dark (1): apply it and keep it for their next
+/// visit. Code that only needs to change the look, unasked, writes `appearance()`.
+fn set_appearance(dark: int) {
+    appearance().set(dark)
+    platform.plat_appearance_save(dark)
 }
 
 fn theme(slot: int, light: int, dark: int) {

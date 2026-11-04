@@ -6,8 +6,7 @@ content before any wasm arrives, and moves between pages with no visible wait.
 This is a Zeus and `zeli` feature, not a `www` feature. Any web app with routes
 gets it. `www` is the first user and the test bed.
 
-Status: Phases 1, 2 and 3 done. Prefetching, painting before wasm and trimming the
-primary are next. Sizes under "What we measured" are from `feat/www` at `e981527`. Compression is deferred (see [Later](#later-compression)), so goals
+Status: Phases 1 to 4 done. Painting before wasm and trimming the primary are next. Sizes under "What we measured" are from `feat/www` at `e981527`. Compression is deferred (see [Later](#later-compression)), so goals
 are in raw bytes.
 
 ## What we measured
@@ -73,10 +72,10 @@ primary reaches chunk functions through a second table that `wasm-split` adds.
 
 | Route | Downloads | Total | Today |
 |---|---|---|---|
-| Docs pages (`/language`, `/types`, ...) | primary | 676 KB | 1,650 KB |
-| `/` | primary + 2 | 803 KB | 1,650 KB |
-| `/components/*` | primary + 3 | 863 to 925 KB | 1,650 KB |
-| `/playground` | primary + 3 | 1,264 KB | 1,650 KB |
+| Docs pages (`/language`, `/types`, ...) | primary | 681 KB | 1,650 KB |
+| `/` | primary + 2 | 808 KB | 1,650 KB |
+| `/components/*` | primary + 3 | 868 to 930 KB | 1,650 KB |
+| `/playground` | primary + 3 | 1,269 KB | 1,650 KB |
 
 In a real browser, all 27 routes load cold with no placeholder calls and no errors,
 and navigation, back and forward all go through the router gate. That is 59% less
@@ -110,9 +109,9 @@ before wasm arrives (Phase 5) removes the blank screen itself.
 
 | Budget, raw bytes | Today | Target |
 |---|---|---|
-| First load of `/` or a docs page | 1,650 KB | 550 KB or less (676 and 803 now) |
-| First load of `/playground` | 1,650 KB | 1,050 KB or less (1,264 now) |
-| First load of a `/components` page | 1,650 KB | 750 KB or less (925 now) |
+| First load of `/` or a docs page | 1,650 KB | 550 KB or less (681 and 808 now) |
+| First load of `/playground` | 1,650 KB | 1,050 KB or less (1,269 now) |
+| First load of a `/components` page | 1,650 KB | 750 KB or less (930 now) |
 | Time until real content shows, slow 4G | seconds | under 500 ms |
 | Next page, chunk already prefetched | n/a | no visible wait |
 | White flash on a dark theme | yes | none (done) |
@@ -187,8 +186,8 @@ now reads the URL before its first build, which also helps unsplit builds.
 | When | What | How |
 |---|---|---|
 | In the HTML | Primary and this route's chunks | `<link rel="preload" as="fetch" crossorigin>`, emitted per route |
-| Pointer over a link, or a touch starts | That route's chunks | `router.preload(path)`, called from nav links |
-| Browser idle after first paint | Likely next routes, on a good connection | `requestIdleCallback`, skipped on `saveData` and 2G |
+| Pointer rests on a link for 80 ms | That route's chunks | `router.preload(path)` from the link's `on_hover`, skipped on `saveData` and 2G |
+| Browser idle after first paint | Chunks shared by 2 or more routes, up to 150 KB, one at a time | The build lists them; skipped on `saveData` and 2G |
 | Repeat visit | Everything fetched before | Content-hashed names with `immutable` caching |
 
 Every route HTML names its own files, so a deep link to `/language/errors` starts
@@ -260,12 +259,12 @@ Each phase ships alone and improves the site without the next one.
 - Placeholder safety net, retries, and a single reload on failure.
 - Chunks relink on a restarted instance, so `Boundary` restart still works.
 
-### Phase 4: prefetching
+### Phase 4: prefetching (done)
 
-- `router.preload(path)` and hover or touch prefetch in nav links.
-- Idle prefetch with network checks.
-
-Done when: a hovered link opens with no chunk request left to wait for.
+- `router.preload(path)`, called from `on_hover` on the site's links. The newest
+  hover replaces a waiting one, so a sweep down a list costs nothing.
+- `zeli` lists the chunks to fetch at idle, so apps need no code for it. A touch
+  screen has no hover, so a tap still waits for its chunks.
 
 ### Phase 5: painting before wasm
 
@@ -332,7 +331,5 @@ Deferred on purpose. Splitting comes first, and we will check this afterwards.
 
 - **Where will this be hosted?** `_headers` covers Netlify and Cloudflare Pages;
   other hosts need their own config, and this decides the compression work.
-- **Should idle prefetch fetch the playground?** It is the largest chunk and a
-  heavy download for people who never open it. Current plan: only on hover.
 - **Does the home page keep its live demos?** Each extra component it uses moves
   code into its first load.

@@ -3270,6 +3270,9 @@ struct MetaRec {
     route: string,
     /// The theme's page colour as packed rgb, for the first paint. "" = unknown.
     paper: string,
+    /// The same colour in each appearance, for a visitor who chose one.
+    paper_light: string,
+    paper_dark: string,
 }
 
 /// The URLs one web build's shells point at.
@@ -3280,6 +3283,8 @@ struct WebAssets {
     chunks: []ChunkFile,
     /// Chunk names each route needs, by route index.
     routes: [][]string,
+    /// Chunks to fetch while the browser is idle, in order.
+    idle: []string,
 }
 
 struct ChunkFile {
@@ -3323,6 +3328,12 @@ fn meta_dump_source() -> string {
     push(lines, "    let paper = zeus.engine_role_rgb(ROLE.Paper)")
     // `{` `{` apart: this line is text for the dump, not a value here.
     push(lines, cat(cat("    json.enc_str(\"", cat("{", "{")), "paper}}\")"))
+    push(lines, "    json.enc_key(\"paper_light\")")
+    push(lines, "    let light = zeus.engine_role_rgb_in(ROLE.Paper, 0)")
+    push(lines, cat(cat("    json.enc_str(\"", cat("{", "{")), "light}}\")"))
+    push(lines, "    json.enc_key(\"paper_dark\")")
+    push(lines, "    let dark = zeus.engine_role_rgb_in(ROLE.Paper, 1)")
+    push(lines, cat(cat("    json.enc_str(\"", cat("{", "{")), "dark}}\")"))
     push(lines, "    json.enc_obj_end()")
     push(lines, "    fmt.println(json.enc_take())")
     push(lines, "}")
@@ -3417,6 +3428,8 @@ fn collect_meta(appdir: string) -> []MetaRec {
             jsonld: fld(doc, "jsonld"),
             route: fld(doc, "route"),
             paper: fld(doc, "paper"),
+            paper_light: fld(doc, "paper_light"),
+            paper_dark: fld(doc, "paper_dark"),
         })
     }
     return recs
@@ -3431,11 +3444,14 @@ fn shell_html(r: MetaRec, canonical: string, assets: WebAssets) -> string {
     let canon = esc(canonical)
     let mut lines = []string {}
     push(lines, "<!DOCTYPE html>")
-    push(lines, "<html lang=\"en\">")
+    let light = css_hex(r.paper_light)
+    let dark = css_hex(r.paper_dark)
+    push(lines, "<html lang=\"en\" data-paper-light=\"{{light}}\" data-paper-dark=\"{{dark}}\">")
     push(lines, "<head>")
     push(lines, "<meta charset=\"utf-8\" />")
     push(lines, "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />")
     push(lines, "<meta name=\"theme-color\" content=\"{{paper}}\" />")
+    push(lines, appearance_script())
     push(lines, "<title>{{title}}</title>")
     // Starts the download now, not after `loader.js` has arrived and run. The
     // loader's own `fetch` picks up this response; `crossorigin` is what makes
@@ -3471,7 +3487,7 @@ fn shell_html(r: MetaRec, canonical: string, assets: WebAssets) -> string {
     }
     push(
         lines,
-        "<style>html,body{margin:0;height:100%;background:{{paper}}}canvas#zeus{display:block;position:fixed;inset:0;width:100%;height:100%;touch-action:none}</style>",
+        "<style>html,body{margin:0;height:100%;background:var(--zeus-paper,{{paper}})}canvas#zeus{display:block;position:fixed;inset:0;width:100%;height:100%;touch-action:none}</style>",
     )
     push(lines, "</head>")
     push(lines, "<body>")
@@ -3509,6 +3525,12 @@ fn can_split(appdir: string) -> bool {
     return sys.exists(join(appdir, "routes")) == 1 && has_tool("wasm-opt") && has_tool("wasm-split")
 }
 
+/// Paint a visitor's saved appearance before anything draws. Inline and ahead of
+/// the first paint: anywhere later, a light-mode visitor sees dark on every load.
+fn appearance_script() -> string {
+    return "<script>try{var a=localStorage.getItem(\"zeus-appearance\"),r=document.documentElement,c=a===\"0\"?r.dataset.paperLight:a===\"1\"?r.dataset.paperDark:\"\";if(c){r.style.setProperty(\"--zeus-paper\",c);document.querySelector(\"meta[name=theme-color]\").content=c}}catch(e){}</script>"
+}
+
 /// The asset names `zeli serve` keeps when it cannot split.
 fn plain_assets(stem: string) -> WebAssets {
     return WebAssets {
@@ -3516,6 +3538,7 @@ fn plain_assets(stem: string) -> WebAssets {
         loader: "/loader.js",
         chunks: []ChunkFile {},
         routes: [][]string {},
+        idle: []string {},
     }
 }
 
@@ -3606,7 +3629,8 @@ fn chunk_table_json(assets: WebAssets, boot: []string) -> string {
         routes = "{{routes}}{{sep}}{{r}}"
     }
     let bootj = json_names(boot)
-    return cat(cat("{\"chunks\":{", urls), "},\"routes\":[{{routes}}],\"boot\":{{bootj}}}")
+    let idlej = json_names(assets.idle)
+    return cat(cat("{\"chunks\":{", urls), "},\"routes\":[{{routes}}],\"boot\":{{bootj}},\"idle\":{{idlej}}}")
 }
 
 /// The generated route table's builders, in route order (`b_root_page`, ...).
@@ -3689,6 +3713,7 @@ fn split_web(appdir: string, web: string, stem: string) -> WebAssets {
         push(names, plan.chunks[i].name)
     }
     let mut primary = ""
+    let mut sizes = []int {}
     for i in 0..names.len {
         let src = join(tmp, "{{names[i]}}.wasm")
         let opt = cat(src, ".opt")
@@ -3703,6 +3728,7 @@ fn split_web(appdir: string, web: string, stem: string) -> WebAssets {
             primary = "/_zeus/{{file}}"
         } else {
             push(files, ChunkFile { name: names[i], url: "/_zeus/{{file}}" })
+            push(sizes, int_of(trim(sys.exec("wc -c < {{shell_quote(join(dir, file))}}"))))
         }
     }
 
@@ -3715,17 +3741,34 @@ fn split_web(appdir: string, web: string, stem: string) -> WebAssets {
         }
         push(routes, mine)
     }
+    let mut idle = []string {}
+    let picked = chunks.idle_chunks(&plan, sizes)
+    for i in 0..picked.len {
+        push(idle, plan.chunks[picked[i]].name)
+    }
     sys.exec("rm -rf {{shell_quote(tmp)}} {{shell_quote(raw)}} {{shell_quote(csrc)}}")
-    return finish_web(web, primary, files, routes)
+    return finish_web(web, primary, files, routes, idle)
 }
 
 /// Fingerprint the loader and write the files a static host reads.
-fn finish_web(web: string, wasm: string, files: []ChunkFile, routes: [][]string) -> WebAssets {
+fn finish_web(
+    web: string,
+    wasm: string,
+    files: []ChunkFile,
+    routes: [][]string,
+    idle: []string
+) -> WebAssets {
     let loader = fingerprint_file(join(web, "loader.js"), join(web, "_zeus"), "loader", "js")
     sys.write_file(join(web, "_headers"), web_headers())
     // GitHub Pages hides `_` directories unless this file exists.
     sys.write_file(join(web, ".nojekyll"), "")
-    return WebAssets { wasm: wasm, loader: "/_zeus/{{loader}}", chunks: files, routes: routes }
+    return WebAssets {
+        wasm: wasm,
+        loader: "/_zeus/{{loader}}",
+        chunks: files,
+        routes: routes,
+        idle: idle,
+    }
 }
 
 /// One size in KB, for the build report.

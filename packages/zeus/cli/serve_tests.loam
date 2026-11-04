@@ -305,6 +305,40 @@ fn a_route_with_nothing_unique_needs_no_chunks() {
     test.assert_eq_int(p.chunks.len, 0)
 }
 
+#[test]
+fn a_saved_appearance_is_read_with_the_key_the_loader_writes() {
+    let s = zeli.appearance_script()
+    test.assert(has(s, "zeus-appearance"))
+    test.assert(has(s, "--zeus-paper"))
+    let loader = sys.read_file("packages/zeus/hosts/web/loader.js")
+    test.assert(has(loader, "APPEARANCE_KEY = \"zeus-appearance\""))
+}
+
+fn chunk_of(name: string, users: int) -> Chunk {
+    let mut routes = []int {}
+    for i in 0..users {
+        push(routes, i)
+    }
+    return Chunk { name: name, fns: []int {}, routes: routes, size: 0 }
+}
+
+#[test]
+fn idle_fetch_takes_shared_small_chunks_most_shared_first() {
+    let p = Plan {
+        chunks: []Chunk {
+            chunk_of("one_route", 1),
+            chunk_of("some", 2),
+            chunk_of("too_big", 4),
+            chunk_of("most", 3),
+        },
+        route_chunks: [][]int { []int {}, []int {}, []int {}, []int {} },
+    }
+    let got = chunks.idle_chunks(&p, []int { 1000, 1000, 500000, 1000 })
+    test.assert_eq_int(got.len, 2)
+    test.assert_eq_str(p.chunks[got[0]].name, "most")
+    test.assert_eq_str(p.chunks[got[1]].name, "some")
+}
+
 // --- numbers, substring ids, and the processes a native target lives in ---
 
 #[test]

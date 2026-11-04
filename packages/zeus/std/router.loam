@@ -532,6 +532,19 @@ fn engine_open_url(url: string) {
     navigate(url)
 }
 
+/// Fetch the code for `path` ahead of time, so a navigation there has nothing to
+/// wait for. Call it from a link's `on_hover`. Cheap to repeat, a no-op where code
+/// is not split, and it changes nothing about the current page.
+fn preload(path: string) {
+    for i in 0..cur_routes.len {
+        if match_route(cur_routes[i].pattern, path) == 1 {
+            // Even for a loaded route: the newest hover replaces a waiting one.
+            platform.plat_chunks_preload(i)
+            return
+        }
+    }
+}
+
 /// Route `index`'s code has landed. Navigating on since it was asked for makes
 /// this a no-op: the newer route is the one waiting now.
 fn engine_chunks_done(index: int) {

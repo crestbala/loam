@@ -1,0 +1,32 @@
+// `zeus.set_appearance` is what a user's choice goes through, and a host with no
+// saved choice starts dark.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn main() {
+    if zeus.appearance().get() != 1 {
+        fmt.println("FAIL starts dark")
+        sys.exit(1)
+    }
+    zeus.set_appearance(0)
+    if zeus.appearance().get() != 0 {
+        fmt.println("FAIL set_appearance applies")
+        sys.exit(1)
+    }
+    zeus.snapshot(200, 60, fn() -> Node {
+        return zui.ThemeSwitch()
+    })
+    let light = zeus.engine_role_rgb_in(ROLE.Paper, 0)
+    let dark = zeus.engine_role_rgb_in(ROLE.Paper, 1)
+    if light == dark {
+        fmt.println("FAIL each appearance has its own colour")
+        sys.exit(1)
+    }
+    if zeus.appearance().get() != 0 {
+        fmt.println("FAIL reading a colour must not change the appearance")
+        sys.exit(1)
+    }
+    fmt.println("appearance choice ok")
+}
