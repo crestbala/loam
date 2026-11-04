@@ -687,7 +687,8 @@ fn Avatar(initials: string, size: int, p: AvatarProps) -> Node {
 }
 
 /// Overlapping row of avatars. Later faces sit on top; each one after the
-/// first pulls left by a third of `size`.
+/// first pulls left by a quarter of `size`, and a ring in the surface colour
+/// keeps neighbours apart.
 fn AvatarGroup(labels: []string, size: int = AvatarSize.Md) -> Node {
     return Row(0) {
         Each(labels, fn(i, label) {
@@ -696,13 +697,19 @@ fn AvatarGroup(labels: []string, size: int = AvatarSize.Md) -> Node {
     }
 }
 
-/// Each avatar after the first tucks a third of its width under the one
-/// before it, and sits above it.
+/// Each avatar after the first tucks a quarter of its width over the one
+/// before it, which leaves the initials clear, and sits above it. Every face
+/// wears the ring, since faces share one fill and would otherwise merge.
 fn avatar_overlap(i: int, size: int) -> Style {
     if i == 0 {
-        return Style(zIndex = 1)
+        return Style(zIndex = 1, borderWidth = 2, borderColor = plate())
     }
-    return Style(marginLeft = -(size / 3), zIndex = i + 1)
+    return Style(
+        marginLeft = -(size / 4),
+        zIndex = i + 1,
+        borderWidth = 2,
+        borderColor = plate(),
+    )
 }
 
 /// Trend direction for `Stat`'s delta row.
