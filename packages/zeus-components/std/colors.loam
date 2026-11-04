@@ -672,8 +672,8 @@ fn register_accent() {
     theme(ROLE.OnAccent, best_on(parse_hex_color(al.s9)), best_on(parse_hex_color(ad.s9)))
     // The flat `accent` role tracks the ramp's solid step, so every existing
     // `accent()` call site follows the picker with no change.
-    theme(ROLE.Accent, parse_hex_color(al.s9), parse_hex_color(ad.s9))
-    theme(ROLE.AccentSoft, parse_hex_color(al.s3), parse_hex_color(ad.s3))
+    theme_hex(ROLE.Accent, al.s9, ad.s9)
+    theme_hex(ROLE.AccentSoft, al.s3, ad.s3)
     theme(ROLE.OnInk, best_on(parse_hex_color(al.s9)), best_on(parse_hex_color(ad.s9)))
 }
 
@@ -730,6 +730,11 @@ fn tint_ink(kind: int) -> string {
 
 /// Register every theme role once, before the first paint: the palette roles,
 /// the neutral / status / accent ramps, and the flat roles bound onto them.
+/// `theme` from two hex strings, for the long role table below.
+fn theme_hex(role: int, light: string, dark: string) {
+    theme(role, parse_hex_color(light), parse_hex_color(dark))
+}
+
 fn ensure_role_colors() {
     if roles_ready != 0 {
         return
@@ -741,22 +746,22 @@ fn ensure_role_colors() {
     // Everything the ramp does cover — surfaces, text, rules, and the status
     // tiers — is set exactly once, further down, so each role has one source of
     // truth rather than a first-pass value that a second pass overwrites.
-    theme(ROLE.OnInk, parse_hex_color(LIGHT.on_solid), parse_hex_color(DARK.on_solid))
-    theme(ROLE.Accent, parse_hex_color(LIGHT.accent), parse_hex_color(DARK.accent))
-    theme(ROLE.AccentSoft, parse_hex_color(LIGHT.accent_soft), parse_hex_color(DARK.accent_soft))
-    theme(ROLE.OnFill, parse_hex_color(LIGHT.on_fill), parse_hex_color(DARK.on_fill))
-    theme(ROLE.Scrim, parse_hex_color(LIGHT.scrim), parse_hex_color(DARK.scrim))
-    theme(ROLE.ChartEdge, parse_hex_color(LIGHT.chart_edge), parse_hex_color(DARK.chart_edge))
-    theme(ROLE.Chart1, parse_hex_color(LIGHT.chart1), parse_hex_color(DARK.chart1))
-    theme(ROLE.Chart2, parse_hex_color(LIGHT.chart2), parse_hex_color(DARK.chart2))
-    theme(ROLE.Chart3, parse_hex_color(LIGHT.chart3), parse_hex_color(DARK.chart3))
-    theme(ROLE.Chart4, parse_hex_color(LIGHT.chart4), parse_hex_color(DARK.chart4))
-    theme(ROLE.Chart5, parse_hex_color(LIGHT.chart5), parse_hex_color(DARK.chart5))
-    theme(ROLE.Fill1, parse_hex_color(LIGHT.fill1), parse_hex_color(DARK.fill1))
-    theme(ROLE.Fill2, parse_hex_color(LIGHT.fill2), parse_hex_color(DARK.fill2))
-    theme(ROLE.Fill3, parse_hex_color(LIGHT.fill3), parse_hex_color(DARK.fill3))
-    theme(ROLE.Fill4, parse_hex_color(LIGHT.fill4), parse_hex_color(DARK.fill4))
-    theme(ROLE.Fill5, parse_hex_color(LIGHT.fill5), parse_hex_color(DARK.fill5))
+    theme_hex(ROLE.OnInk, LIGHT.on_solid, DARK.on_solid)
+    theme_hex(ROLE.Accent, LIGHT.accent, DARK.accent)
+    theme_hex(ROLE.AccentSoft, LIGHT.accent_soft, DARK.accent_soft)
+    theme_hex(ROLE.OnFill, LIGHT.on_fill, DARK.on_fill)
+    theme_hex(ROLE.Scrim, LIGHT.scrim, DARK.scrim)
+    theme_hex(ROLE.ChartEdge, LIGHT.chart_edge, DARK.chart_edge)
+    theme_hex(ROLE.Chart1, LIGHT.chart1, DARK.chart1)
+    theme_hex(ROLE.Chart2, LIGHT.chart2, DARK.chart2)
+    theme_hex(ROLE.Chart3, LIGHT.chart3, DARK.chart3)
+    theme_hex(ROLE.Chart4, LIGHT.chart4, DARK.chart4)
+    theme_hex(ROLE.Chart5, LIGHT.chart5, DARK.chart5)
+    theme_hex(ROLE.Fill1, LIGHT.fill1, DARK.fill1)
+    theme_hex(ROLE.Fill2, LIGHT.fill2, DARK.fill2)
+    theme_hex(ROLE.Fill3, LIGHT.fill3, DARK.fill3)
+    theme_hex(ROLE.Fill4, LIGHT.fill4, DARK.fill4)
+    theme_hex(ROLE.Fill5, LIGHT.fill5, DARK.fill5)
 
     // --- scales, then the flat roles rebound onto them ---
     register_scale(ROLE.N1, NEUTRAL_L, NEUTRAL_D)
@@ -785,28 +790,28 @@ fn ensure_role_colors() {
     // and `mute` is step 11 (11.5:1); both clear AA on steps 1-3.
     // Light: a warm page (2) under white cards (1). Dark: the page is the
     // deepest step and cards rise two steps above it.
-    theme(ROLE.Paper, parse_hex_color(NEUTRAL_L.s2), parse_hex_color(NEUTRAL_D.s1))
-    theme(ROLE.Plate, parse_hex_color(NEUTRAL_L.s1), parse_hex_color(NEUTRAL_D.s3))
-    theme(ROLE.Raised, parse_hex_color(NEUTRAL_L.s3), parse_hex_color(NEUTRAL_D.s4))
-    theme(ROLE.Wash, parse_hex_color(NEUTRAL_L.s2), parse_hex_color(NEUTRAL_D.s2))
-    theme(ROLE.Rule, parse_hex_color(NEUTRAL_L.s6), parse_hex_color(NEUTRAL_D.s6))
-    theme(ROLE.Hard, parse_hex_color(NEUTRAL_L.s8), parse_hex_color(NEUTRAL_D.s8))
-    theme(ROLE.Ink, parse_hex_color(NEUTRAL_L.s12), parse_hex_color(NEUTRAL_D.s12))
-    theme(ROLE.Mute, parse_hex_color(NEUTRAL_L.s11), parse_hex_color(NEUTRAL_D.s11))
-    theme(ROLE.Dim, parse_hex_color(NEUTRAL_L.s10), parse_hex_color(NEUTRAL_D.s10))
-    theme(ROLE.Bone, parse_hex_color(NEUTRAL_L.s4), parse_hex_color(NEUTRAL_D.s4))
-    theme(ROLE.FocusRing, parse_hex_color(NEUTRAL_L.s12), parse_hex_color(NEUTRAL_D.s12))
+    theme_hex(ROLE.Paper, NEUTRAL_L.s2, NEUTRAL_D.s1)
+    theme_hex(ROLE.Plate, NEUTRAL_L.s1, NEUTRAL_D.s3)
+    theme_hex(ROLE.Raised, NEUTRAL_L.s3, NEUTRAL_D.s4)
+    theme_hex(ROLE.Wash, NEUTRAL_L.s2, NEUTRAL_D.s2)
+    theme_hex(ROLE.Rule, NEUTRAL_L.s6, NEUTRAL_D.s6)
+    theme_hex(ROLE.Hard, NEUTRAL_L.s8, NEUTRAL_D.s8)
+    theme_hex(ROLE.Ink, NEUTRAL_L.s12, NEUTRAL_D.s12)
+    theme_hex(ROLE.Mute, NEUTRAL_L.s11, NEUTRAL_D.s11)
+    theme_hex(ROLE.Dim, NEUTRAL_L.s10, NEUTRAL_D.s10)
+    theme_hex(ROLE.Bone, NEUTRAL_L.s4, NEUTRAL_D.s4)
+    theme_hex(ROLE.FocusRing, NEUTRAL_L.s12, NEUTRAL_D.s12)
     // Status roles follow their tier, so `danger()` and `danger_ink()` can
     // never drift apart.
-    theme(ROLE.Ok, parse_hex_color(OK_L.ink), parse_hex_color(OK_D.ink))
-    theme(ROLE.OkFill, parse_hex_color(OK_L.bg), parse_hex_color(OK_D.bg))
-    theme(ROLE.OkSolid, parse_hex_color(OK_L.fill), parse_hex_color(OK_D.fill))
-    theme(ROLE.Warn, parse_hex_color(WARN_L.ink), parse_hex_color(WARN_D.ink))
-    theme(ROLE.WarnFill, parse_hex_color(WARN_L.bg), parse_hex_color(WARN_D.bg))
-    theme(ROLE.WarnEdge, parse_hex_color(WARN_L.line), parse_hex_color(WARN_D.line))
-    theme(ROLE.Danger, parse_hex_color(DANGER_L.ink), parse_hex_color(DANGER_D.ink))
-    theme(ROLE.DangerSolid, parse_hex_color(DANGER_L.fill), parse_hex_color(DANGER_D.fill))
-    theme(ROLE.DangerEdge, parse_hex_color(DANGER_L.line), parse_hex_color(DANGER_D.line))
+    theme_hex(ROLE.Ok, OK_L.ink, OK_D.ink)
+    theme_hex(ROLE.OkFill, OK_L.bg, OK_D.bg)
+    theme_hex(ROLE.OkSolid, OK_L.fill, OK_D.fill)
+    theme_hex(ROLE.Warn, WARN_L.ink, WARN_D.ink)
+    theme_hex(ROLE.WarnFill, WARN_L.bg, WARN_D.bg)
+    theme_hex(ROLE.WarnEdge, WARN_L.line, WARN_D.line)
+    theme_hex(ROLE.Danger, DANGER_L.ink, DANGER_D.ink)
+    theme_hex(ROLE.DangerSolid, DANGER_L.fill, DANGER_D.fill)
+    theme_hex(ROLE.DangerEdge, DANGER_L.line, DANGER_D.line)
 }
 
 /// Every (ink, surface) pair the design system can produce, checked against

@@ -597,6 +597,7 @@ static void usage(void) {
             "  --emit-ir   emit backend-neutral IR instead of a binary\n"
             "  --target native  desktop GUI: Cocoa on macOS, X11 on Linux (default)\n"
             "  --target wasm32  Canvas2D GUI .wasm (alias: wasm; needs clang wasm32).\n"
+            "  --wasm-release  with wasm32: drop the file and line from panics\n"
             "  --wasm-split-input  with wasm32: keep symbol names, skip wasm-opt, and\n"
             "              write the C beside the output, for `zeli build` to split.\n"
             "                   This is the browser *canvas host*, not a CLI target:\n"
@@ -702,6 +703,7 @@ int main(int argc, char **argv) {
     int check_only = 0;
     int target_wasm = 0;
     int wasm_split_input = 0;
+    int wasm_release = 0;
     int target_ios = 0;
     int target_android = 0;
     int int64_compat = 0;
@@ -718,6 +720,8 @@ int main(int argc, char **argv) {
             emit_c = 1;
         } else if (strcmp(argv[i], "--emit-ir") == 0) {
             emit_ir = 1;
+        } else if (strcmp(argv[i], "--wasm-release") == 0) {
+            wasm_release = 1;
         } else if (strcmp(argv[i], "--wasm-split-input") == 0) {
             wasm_split_input = 1;
         } else if (strncmp(argv[i], "--target=", 9) == 0 ||
@@ -1062,7 +1066,7 @@ int main(int argc, char **argv) {
             if (uses_zeus) {
                 snprintf(cmdw, sizeof cmdw,
                          "\"%s\"%s --target=wasm32 -nostdlib -ffreestanding "
-                         "-fno-stack-protector %s -ffp-contract=off -DLOAM_ALLOC_TRACE%s -I\"%s/wasm_inc\" -I\"%s\" "
+                         "-fno-stack-protector %s -ffp-contract=off%s%s -I\"%s/wasm_inc\" -I\"%s\" "
                          "-Wl,--no-entry -Wl,--export-dynamic -Wl,--fatal-warnings "
                          /* The loader resets the shadow stack after a trap
                             unwinds an export (`guardExports` in loader.js). */
@@ -1082,6 +1086,10 @@ int main(int argc, char **argv) {
                             -Oz to the compile step alone keeps the optimised
                             code and skips that. */
                          wasm_split_input ? "-Xclang -Oz" : "-Oz",
+                         /* The allocation proof is a test harness, and a
+                            release is what visitors download. */
+                         wasm_release ? " -DLOAM_NO_TRAP_LOC"
+                                      : " -DLOAM_ALLOC_TRACE",
                          owns_def, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR, cpath, LOAM_RUNTIME_DIR,
                          LOAM_ZEUS_DIR, LOAM_RUNTIME_DIR, LOAM_RUNTIME_DIR, http_w, binpath);
             } else {

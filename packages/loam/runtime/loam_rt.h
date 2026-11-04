@@ -214,6 +214,17 @@ static inline void loam_panic_str(const char *file, int line, loam_str msg) {
     abort();
 }
 
+/* A web release has thousands of checked operations, and a file and line for
+   each one's panic path came to a tenth of the download. They all share this
+   instead, and the panic keeps its message. */
+#ifdef LOAM_NO_TRAP_LOC
+__attribute__((noinline, noreturn, cold)) static void loam_trap(const char *msg) {
+    loam_jmp_set_msg(msg, (int64_t)strlen(msg));
+    abort();
+}
+#define loam_panic(f, l, msg) loam_trap(msg)
+#endif
+
 static inline int64_t loam_add_i64(int64_t a, int64_t b, const char *f, int l) {
     int64_t r;
 #if defined(__GNUC__) || defined(__clang__)
@@ -690,6 +701,15 @@ static inline void loam_vec_push(loam_vec *v, const void *elem, size_t esz, cons
     loam_vec_reserve(v, v->len + 1, esz, f, l);
     if (esz && elem) memcpy((char *)v->ptr + (size_t)v->len * esz, elem, esz);
     v->len++;
+}
+
+/* A fresh list holding a copy of `n` plain elements, for a constant table. */
+static inline loam_vec loam_vec_of(const void *src, int64_t n, size_t esz, const char *f, int l) {
+    loam_vec v = loam_vec_new();
+    loam_vec_reserve(&v, n, esz, f, l);
+    memcpy(v.ptr, src, (size_t)n * esz);
+    v.len = n;
+    return v;
 }
 
 /* --- container element lifetime -----------------------------------------

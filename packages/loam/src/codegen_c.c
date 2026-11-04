@@ -3196,7 +3196,22 @@ static void emit_ir_inst(FILE *o, const IrInst *in) {
         case IR_ARRAY_LIT: {
             char dbuf[64];
             snprintf(dbuf, sizeof dbuf, "%s", lv(in->dst));
-            if (in->ty && in->ty->kind == TY_VEC) {
+            if (in->nlit_ints) {
+                fprintf(o, "{\n");
+                indent(o, 2);
+                fprintf(o, "static const ");
+                emit_ctype(o, in->ty->elem);
+                fprintf(o, " _t[] = {");
+                for (int k = 0; k < in->nlit_ints; k++)
+                    fprintf(o, "%s%lld", k ? "," : "", (long long)in->lit_ints[k]);
+                fprintf(o, "};\n");
+                indent(o, 2);
+                fprintf(o, "%s = loam_vec_of(_t, %d, sizeof _t[0], ", dbuf, in->nlit_ints);
+                emit_ir_loc(o, in->loc);
+                fprintf(o, ");\n");
+                indent(o, 1);
+                fprintf(o, "}\n");
+            } else if (in->ty && in->ty->kind == TY_VEC) {
                 char rr[64], rl[64];
                 elem_hook_cnames(in->ty->elem, rr, sizeof rr, rl, sizeof rl);
                 (void)rl;
@@ -3987,6 +4002,10 @@ void codegen_emit_c(FILE *out, LoamModule *mods, int nmods, const char *rt_path)
         const char *cn = typecheck_global_cname(i);
         if (!gv || !cn) continue;
         emit_var_decl_type(out, gv->ty, cn);
+        if (ir_static_data(gv->as.var.init)) {
+            fprintf(out, " = ");
+            emit_const_init(out, gv->as.var.init);
+        }
         fprintf(out, ";\n");
     }
     if (typecheck_global_count()) fprintf(out, "\n");

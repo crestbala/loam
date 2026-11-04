@@ -81,6 +81,9 @@ typedef struct {
        (in the template) and `args[k]` is -1 for every field the template
        supplies. NULL = every field is in `args`. */
     struct AstNode **lit_dflt;
+    /* IR_ARRAY_LIT: the values of a `[]int` constant table, with no `args`. */
+    const int64_t *lit_ints;
+    int nlit_ints;
     Type *ty;
     SourceLoc loc;
 } IrInst;
@@ -144,6 +147,7 @@ int ir_verify(const IrModule *m);
  *  bool, string literal, named fn value, empty-vec call, or a struct literal
  *  of those (`none`). */
 int ir_static_const(const AstNode *e);
+int ir_static_data(const AstNode *e);
 /** The C name of the fn a constant fn-value default (`= noop`) names, or NULL. */
 const char *ir_const_fn_val(const AstNode *e);
 /** 1 if `e` is a call that always returns the empty vec (`no_keys()`). */
