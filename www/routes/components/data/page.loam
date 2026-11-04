@@ -1,0 +1,15 @@
+import "std:zeus"
+import "std:zui"
+import "std:router"
+import "../../../components/showcase.loam" as showcase
+
+fn Page(p: Params) -> Node {
+    return showcase.DataDisplay()
+}
+
+fn meta(p: Params) -> Meta {
+    return Meta {
+        title: "Data display — Loam",
+        description: "Avatars, a ten-thousand-row virtual table, trees, timelines, and loading states.",
+    }
+}

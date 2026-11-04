@@ -1,0 +1,15 @@
+import "std:zeus"
+import "std:zui"
+import "std:router"
+import "../../../components/showcase.loam" as showcase
+
+fn Page(p: Params) -> Node {
+    return showcase.Navigation()
+}
+
+fn meta(p: Params) -> Meta {
+    return Meta {
+        title: "Navigation — Loam",
+        description: "Breadcrumbs, pagination, steps, menus, and a table of contents.",
+    }
+}

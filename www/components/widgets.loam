@@ -136,6 +136,8 @@ fn Widgets() -> Node {
             })
             prose.CodeBlock([]string {
                 "let name = zeus.signal(\"\")",
+                "let notify = zeus.signal(true)",
+                "let target = zeus.signal(1)",
                 "zui.FormField(\"Name\") {",
                 "    zui.TextInput(name, \"Ada\")",
                 "}",

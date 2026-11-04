@@ -1,0 +1,15 @@
+import "std:zeus"
+import "std:zui"
+import "std:router"
+import "../../../components/showcase.loam" as showcase
+
+fn Page(p: Params) -> Node {
+    return showcase.Charts()
+}
+
+fn meta(p: Params) -> Meta {
+    return Meta {
+        title: "Dashboards — Loam",
+        description: "KPI cards, live charts, gauges, and usage meters, drawn by Zeus.",
+    }
+}

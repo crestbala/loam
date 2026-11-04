@@ -1,0 +1,15 @@
+import "std:zeus"
+import "std:zui"
+import "std:router"
+import "../../../components/showcase.loam" as showcase
+
+fn Page(p: Params) -> Node {
+    return showcase.Forms()
+}
+
+fn meta(p: Params) -> Meta {
+    return Meta {
+        title: "Forms — Loam",
+        description: "Text fields, pickers, dates, one-time codes, ranges, and choice cards, live.",
+    }
+}

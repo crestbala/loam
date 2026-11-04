@@ -249,6 +249,11 @@ fn Sidebar() -> Node {
         SideLink("Formatter", "/tooling/fmt")
         SideLink("Tests", "/tooling/tests")
         Group("Components", "/components")
+        SideLink("Forms", "/components/forms")
+        SideLink("Dashboards", "/components/charts")
+        SideLink("Data display", "/components/data")
+        SideLink("Navigation", "/components/navigation")
+        SideLink("Overlays", "/components/overlays")
         Group("Playground", "/playground")
     }
 }

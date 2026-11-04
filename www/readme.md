@@ -14,7 +14,8 @@ www/
 
 Routes: `/`, `/language` (ownership, control, errors, modules, functions),
 `/types` (numbers, aggregates, text, memory), `/zeus` (signals, views,
-routing, hosts), `/components` (a curated set of zeus-components, live),
+routing, hosts), `/components` (the core zeus-components, live, with subpages for forms,
+dashboards, data display, navigation, and overlays),
 `/tooling` (fmt, tests), `/playground`. A sidebar lists every section on
 wide screens and folds away on narrow ones.
 

@@ -1,0 +1,746 @@
+//! The wider zeus-components catalogue, one page per job an app has: forms,
+//! dashboards, data display, navigation, and overlays. Every demo is live and
+//! sits above the calls that build it.
+
+import "std:zeus"
+import "std:spacing"
+import "std:colors"
+import "std:zui"
+import "prose.loam" as prose
+import "widgets.loam" as widgets
+
+struct Build {
+    id: string
+    branch: string
+    status: string
+}
+
+fn PageHead(kicker: string, title: string, lead: string) -> Node {
+    return zui.Column(prose.HEAD_GAP) {
+        zui.Overline(kicker)
+        zui.Display(title)
+        zui.Body(lead)
+    }
+}
+
+/// One section: a header, the live demo, then the code.
+fn Section(kicker: string, title: string, lead: string, demo: fn(), code: []string) -> Node {
+    return zui.Column(prose.BLOCK_GAP) {
+        zui.SectionHeader(kicker, title, lead)
+        widgets.Demo(demo)
+        prose.CodeBlock(code)
+    }
+}
+
+/// A quiet line that reads a signal, so a demo shows its value changing.
+fn Readout(text: fn() -> string) -> Node {
+    return zeus.Text(text, style = Style(font = spacing.FONT_BODY, color = colors.mute()))
+}
+
+fn pad2(n: int) -> string {
+    return if n < 10 { "0{{n}}" } else { "{{n}}" }
+}
+
+fn joined(items: []string) -> string {
+    if items.len == 0 {
+        return "none"
+    }
+    let mut out = items[0]
+    for i in 1..items.len {
+        out = "{{out}}, {{items[i]}}"
+    }
+    return out
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Forms
+// ═══════════════════════════════════════════════════════════════════
+
+fn Forms() -> Node {
+    let search = zeus.signal("")
+    let email = zeus.signal("")
+    let password = zeus.signal("")
+    let seats = zeus.signal(3)
+    let bio = zeus.signal("")
+    let city = zeus.signal("")
+    let stacks = zeus.signal([]string { "Loam" })
+    let tags = zeus.signal([]string { "design", "wasm" })
+    let year = zeus.signal(2026)
+    let month = zeus.signal(11)
+    let day = zeus.signal(4)
+    let pin = zeus.signal("")
+    let lo = zeus.signal(20)
+    let hi = zeus.signal(80)
+    let stars = zeus.signal(9)
+    let plan = zeus.signal(1)
+    let backups = zeus.signal(true)
+    let sso = zeus.signal(false)
+    let align = zeus.signal(0)
+    return zui.Column(prose.SECTION_GAP) {
+        PageHead(
+            "Components",
+            "Forms",
+            "Sign-up, settings, and checkout are built from these. Each control binds a signal, so the value is already in your hands when the user types.",
+        )
+        Section(
+            "Text",
+            "Fields",
+            "Search carries a shortcut hint, the password field has a reveal toggle, and NumberInput has steppers with a range.",
+            fn() {
+                zui.SearchInput(search, placeholder = "Search the docs", shortcut = "cmd+k")
+                zui.FormField("Email") {
+                    zui.TextInput(email, "ada@example.com")
+                }
+                zui.FormField("Password") {
+                    zui.PasswordInput(password, placeholder = "At least 12 characters")
+                }
+                zui.FormField("Seats") {
+                    zui.NumberInput(seats, min = 1, max = 50, label = "Seats")
+                }
+                zui.FormField("Bio") {
+                    zui.TextArea(bio, "Tell us about your project")
+                }
+            },
+            []string {
+                "zui.SearchInput(search, placeholder = \"Search the docs\", shortcut = \"cmd+k\")",
+                "zui.PasswordInput(password, placeholder = \"At least 12 characters\")",
+                "zui.NumberInput(seats, min = 1, max = 50, label = \"Seats\")",
+                "zui.TextArea(bio, \"Tell us about your project\")",
+            },
+        )
+        Section(
+            "Pickers",
+            "Search, multi-select, and tags",
+            "Combobox filters as you type. MultiSelect and TagInput both bind a list of strings.",
+            fn() {
+                zui.FormField("City") {
+                    zui.Combobox(
+                        city,
+                        []string { "Amsterdam", "Bengaluru", "Chennai", "Lisbon", "Oslo", "Tokyo" },
+                        placeholder = "Find a city",
+                    )
+                }
+                zui.FormField("Stack") {
+                    zui.MultiSelect(
+                        stacks,
+                        []string { "Loam", "Zeus", "WebAssembly", "Android", "iOS" },
+                        placeholder = "Choose",
+                    )
+                }
+                zui.FormField("Tags") {
+                    zui.TagInput(tags, placeholder = "Add a tag and press Enter")
+                }
+                Readout(fn() -> string {
+                    return "Stack: {{joined(stacks.get())}}"
+                })
+            },
+            []string {
+                "let stacks = zeus.signal([]string { \"Loam\" })",
+                "zui.Combobox(city, cities, placeholder = \"Find a city\")",
+                "zui.MultiSelect(stacks, options, placeholder = \"Choose\")",
+                "zui.TagInput(tags, placeholder = \"Add a tag and press Enter\")",
+            },
+        )
+        Section(
+            "Date and codes",
+            "Date picker and one-time codes",
+            "DatePicker opens a calendar and writes three signals. PinInput moves to the next cell as you type.",
+            fn() {
+                zui.DatePicker(year, month, day, label = "Launch date")
+                Readout(fn() -> string {
+                    return "Selected {{year.get()}}-{{pad2(month.get())}}-{{pad2(day.get())}}"
+                })
+                zui.FormField("Verification code") {
+                    zui.PinInput(pin, length = 6)
+                }
+            },
+            []string {
+                "zui.DatePicker(year, month, day, label = \"Launch date\")",
+                "zui.PinInput(pin, length = 6)",
+            },
+        )
+        Section(
+            "Ranges and choices",
+            "Sliders, ratings, and choice cards",
+            "A range has two thumbs and two signals. A half-star rating counts in halves, so 9 is 4.5. Cards give a pricing choice more room than a radio button.",
+            fn() {
+                zui.RangeSlider(lo, hi, label = "Price", style = Style(width = pct(100)))
+                Readout(fn() -> string {
+                    return "Price between {{lo.get()}} and {{hi.get()}}"
+                })
+                zui.Rating(stars, half = true)
+                Readout(fn() -> string {
+                    let n = stars.get()
+                    return "{{n / 2}}.{{(n % 2) * 5}} out of 5"
+                })
+                zui.RadioCard("Monthly", "Billed each month", plan, 0)
+                zui.RadioCard("Yearly", "Two months free", plan, 1)
+                zui.CheckboxCard("Daily backups", "Keep 30 days of snapshots", backups)
+                zui.CheckboxCard("Single sign-on", "SAML for your whole team", sso)
+                zui.ToggleGroup(align, []string { "Left", "Center", "Right" })
+            },
+            []string {
+                "zui.RangeSlider(lo, hi, label = \"Price\", style = Style(width = pct(100)))",
+                "zui.Rating(stars, half = true)",
+                "zui.RadioCard(\"Yearly\", \"Two months free\", plan, 1)",
+                "zui.CheckboxCard(\"Daily backups\", \"Keep 30 days of snapshots\", backups)",
+                "zui.ToggleGroup(align, []string { \"Left\", \"Center\", \"Right\" })",
+            },
+        )
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Charts
+// ═══════════════════════════════════════════════════════════════════
+
+/// Two series over six months. Values go row by row: each month's desktop
+/// figure, then its mobile figure.
+fn visits(shift: int) -> ChartData {
+    let a = []int { 186, 305, 237, 173, 209, 214 }
+    let b = []int { 80, 200, 120, 190, 130, 140 }
+    let mut vals = []int {}
+    for i in 0..a.len {
+        push(vals, a[(i + shift) % a.len])
+        push(vals, b[(i + shift) % b.len])
+    }
+    return ChartData {
+        labels: []string { "Jan", "Feb", "Mar", "Apr", "May", "Jun" },
+        names: []string { "Desktop", "Mobile" },
+        vals: vals,
+    }
+}
+
+fn Charts() -> Node {
+    let spark = zeus.signal([]int { 12, 18, 14, 22, 19, 27, 24, 31 })
+    let tick = zeus.signal(0)
+    let data = zeus.signal(visits(0))
+    let disk = zeus.signal(93)
+    let score = zeus.signal(72)
+    let first = visits(0)
+    return zui.Column(prose.SECTION_GAP) {
+        PageHead(
+            "Components",
+            "Dashboards",
+            "Metrics and charts are drawn by Zeus, so there is no chart library to load. Hover a chart for its tooltip, and resize the window to watch it refit.",
+        )
+        Section(
+            "Metrics",
+            "KPI cards",
+            "A value, a trend, and a sparkline. The series is a signal, so pushing a point redraws only the line.",
+            fn() {
+                zui.RowWrap(Space.Sm) {
+                    zui.Stat(
+                        "Revenue",
+                        "$48.2k",
+                        zeus.Tint.Ink,
+                        delta = "+12.4%",
+                        trend = zui.Trend.Up,
+                        spark = spark,
+                    )
+                    zui.Stat("Churn", "1.8%", zeus.Tint.Ink, delta = "+0.3%", trend = zui.Trend.Down)
+                }
+                zui.KpiCard(
+                    "Active users",
+                    "12,480",
+                    zeus.Tint.Ok,
+                    delta = "+842 this week",
+                    trend = zui.Trend.Up,
+                    spark = spark,
+                )
+                zui.Button("Add a point", look = zeus.Look.Outline, on_click = fn() {
+                    let mut next = spark.get()
+                    let point = 10 + (next.len * 7) % 25
+                    push(next, point)
+                    spark.set(next)
+                })
+            },
+            []string {
+                "let spark = zeus.signal([]int { 12, 18, 14, 22 })",
+                "zui.Stat(\"Revenue\", \"$48.2k\", zeus.Tint.Ink,",
+                "    delta = \"+12.4%\", trend = zui.Trend.Up, spark = spark)",
+            },
+        )
+        Section(
+            "Charts",
+            "Live bars",
+            "BarChartOf takes a signal. A write moves the bars in place; nothing is rebuilt.",
+            fn() {
+                zui.BarChartOf(data, 760, 216)
+                zui.Button("Next period", look = zeus.Look.Outline, on_click = fn() {
+                    tick.set(tick.get() + 1)
+                    data.set(visits(tick.get()))
+                })
+            },
+            []string {
+                "let data = zeus.signal(visits(0))",
+                "zui.BarChartOf(data, 760, 216)",
+                "zui.Button(\"Next period\", on_click = fn() => data.set(visits(1)))",
+            },
+        )
+        Section(
+            "Charts",
+            "Lines and areas",
+            "The same data in two more forms. The width is a hint: a chart follows its container.",
+            fn() {
+                zui.LineChart(first.labels, first.names, first.vals, 760, 216)
+                zui.AreaChart(first.labels, first.names, first.vals, 760, 216)
+            },
+            []string {
+                "zui.LineChart(labels, names, vals, 760, 216)",
+                "zui.AreaChart(labels, names, vals, 760, 216)",
+            },
+        )
+        Section(
+            "Meters",
+            "Gauges, rings, and usage",
+            "UsageBar turns red past its threshold. Drag the slider to move all three.",
+            fn() {
+                zui.RowWrap(Space.Lg) {
+                    zui.Gauge(score, caption = "Health")
+                    zui.ProgressRing(score, label = true)
+                }
+                zui.Slider(score)
+                zui.UsageBar(score, label = "CPU")
+                zui.UsageBar(disk, label = "Disk")
+            },
+            []string {
+                "zui.Gauge(score, caption = \"Health\")",
+                "zui.ProgressRing(score, label = true)",
+                "zui.UsageBar(disk, label = \"Disk\")",
+            },
+        )
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Data display
+// ═══════════════════════════════════════════════════════════════════
+
+fn build_cols() -> []TableCol {
+    return []TableCol {
+        TableCol { title: "Build", width: 0 },
+        TableCol { title: "Branch", width: 0 },
+        TableCol { title: "Status", width: 0 },
+    }
+}
+
+fn BuildRow(i: int, b: Build) -> Node {
+    return zui.TableRowCols([]string { b.id, b.branch, b.status }, build_cols())
+}
+
+fn many_builds() -> []Build {
+    let states = []string { "Passed", "Passed", "Queued", "Failed" }
+    let mut out = []Build {}
+    for i in 0..10000 {
+        push(out, Build {
+            id: "#{{i + 1}}",
+            branch: "feat/{{i % 40}}",
+            status: states[i % states.len],
+        })
+    }
+    return out
+}
+
+fn file_tree() -> []TreeItem {
+    return []TreeItem {
+        TreeItem(label = "www", parent = -1, folder = true),
+        TreeItem(label = "routes", parent = 0, folder = true),
+        TreeItem(label = "layout.loam", parent = 1),
+        TreeItem(label = "page.loam", parent = 1),
+        TreeItem(label = "components", parent = 0, folder = true),
+        TreeItem(label = "shell.loam", parent = 4),
+        TreeItem(label = "zeus.toml", parent = 0),
+    }
+}
+
+fn DataDisplay() -> Node {
+    let builds = zeus.signal(many_builds())
+    let tree = zeus.signal(file_tree())
+    let picked = zeus.signal(2)
+    let opened = zeus.signal([]int { 0, 1 })
+    let faq = zeus.signal(0)
+    let beta = zeus.signal(true)
+    let loading = zeus.signal(true)
+    return zui.Column(prose.SECTION_GAP) {
+        PageHead(
+            "Components",
+            "Data display",
+            "Feeds, inboxes, file browsers, and admin tables. The list below holds ten thousand rows, and only the visible ones exist.",
+        )
+        Section(
+            "People",
+            "Avatars, tags, and chips",
+            "A status dot on an avatar, a stack for a team, and tags that can be removed.",
+            fn() {
+                zui.RowWrap(Space.Lg) {
+                    zui.User("AL", "Ada Lovelace", "Maintainer", status = zeus.Tint.Ok)
+                    zui.User("GH", "Grace Hopper", "Reviewer", status = zeus.Tint.Warn)
+                }
+                zui.RowWrap(Space.Sm) {
+                    zui.AvatarGroup([]string { "AL", "GH", "KJ", "LT" }, 32)
+                    zui.Chip("Stable", zeus.Tint.Ok)
+                    zui.Chip("Canvas2D", zeus.Tint.Ink)
+                    zui.Show(when = beta.get()) {
+                        zui.Tag("beta", tint = zeus.Tint.Info, on_remove = fn() => beta.set(false))
+                    }
+                }
+            },
+            []string {
+                "zui.User(\"AL\", \"Ada Lovelace\", \"Maintainer\", status = zeus.Tint.Ok)",
+                "zui.AvatarGroup([]string { \"AL\", \"GH\", \"KJ\" }, 32)",
+                "zui.Tag(\"beta\", tint = zeus.Tint.Info, on_remove = fn() => beta.set(false))",
+            },
+        )
+        Section(
+            "Lists",
+            "Ten thousand rows",
+            "VirtualTable builds only the rows on screen, so scrolling stays smooth at any length.",
+            fn() {
+                zeus.Box(style = Style(direction = Direction.Column, height = px(280), width = pct(100))) {
+                    zui.VirtualTable(builds, build_cols(), 36, BuildRow)
+                }
+            },
+            []string {
+                "fn BuildRow(i: int, b: Build) -> Node {",
+                "    return zui.TableRowCols([]string { b.id, b.branch, b.status }, cols)",
+                "}",
+                "zui.VirtualTable(builds, cols, 36, BuildRow)",
+            },
+        )
+        Section(
+            "Structure",
+            "Tree and timeline",
+            "Tree takes a flat list with parent indexes. Arrow keys move through it and open folders.",
+            fn() {
+                zui.Tree(tree, picked, opened, label = "Project files")
+                zui.Timeline([]TimelineItem {
+                    TimelineItem(title = "Merged", body = "Drawer scroll fix", time = "10:42"),
+                    TimelineItem(title = "Deployed", body = "Rolled out to every host", time = "11:05"),
+                    TimelineItem(title = "Verified", body = "Smoke tests passed", time = "Now"),
+                })
+            },
+            []string {
+                "zui.Tree(tree, picked, opened, label = \"Project files\")",
+                "zui.Timeline([]TimelineItem {",
+                "    TimelineItem(title = \"Merged\", body = \"Drawer scroll fix\", time = \"10:42\"),",
+                "})",
+            },
+        )
+        Section(
+            "Disclosure",
+            "Accordion",
+            "One open index, so opening a row closes the last by construction.",
+            fn() {
+                zui.Accordion(faq, items = []AccordionRow {
+                    AccordionRow { title: "Does it need a DOM?", body: "No. Zeus lays out and paints the whole page into one canvas." },
+                    AccordionRow { title: "Which hosts does it run on?", body: "The web, macOS, iOS, and Android." },
+                    AccordionRow { title: "Can I theme it?", body: "Every component follows the theme. Try the Dark switch." },
+                })
+            },
+            []string {
+                "zui.Accordion(open, items = []AccordionRow {",
+                "    AccordionRow { title: \"Can I theme it?\", body: \"Yes.\" },",
+                "})",
+            },
+        )
+        Section(
+            "States",
+            "Loading and empty",
+            "Skeletons hold the layout while data arrives. An empty state tells the user what to do next.",
+            fn() {
+                zeus.Box(style = Style(direction = Direction.Row, align = Align.Center, gap = 10)) {
+                    zui.Switch(loading, label = "Show loading state")
+                    zeus.Text(
+                        "Show loading state",
+                        style = Style(font = spacing.FONT_BODY, color = zeus.ink()),
+                    )
+                }
+                zui.Show(when = loading.get()) {
+                    zui.SkeletonCard()
+                }
+                zui.Show(when = !loading.get()) {
+                    zui.EmptyState(
+                        icon = zeus.IC_INFO,
+                        title = "No deployments yet",
+                        body = "Your first build will show up here.",
+                    )
+                }
+            },
+            []string {
+                "zui.Show(when = loading.get()) {",
+                "    zui.SkeletonCard()",
+                "}",
+                "zui.EmptyState(icon = zeus.IC_INFO, title = \"No deployments yet\")",
+            },
+        )
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Navigation
+// ═══════════════════════════════════════════════════════════════════
+
+fn Navigation() -> Node {
+    let step = zeus.signal(1)
+    let page = zeus.signal(3)
+    let section = zeus.signal(0)
+    let last = zeus.signal("Nothing yet")
+    let menu = []MenuRow {
+        MenuRow(label = "Duplicate"),
+        MenuRow(label = "Archive"),
+        MenuRow(label = "Delete", isSeparated = true, danger = true),
+    }
+    fn picked(i: int) {
+        last.set(menu[i].label)
+    }
+    return zui.Column(prose.SECTION_GAP) {
+        PageHead(
+            "Components",
+            "Navigation",
+            "Where am I, what comes next, and what can I do here. These answer all three.",
+        )
+        Section(
+            "Location",
+            "Breadcrumbs and pagination",
+            "Pagination collapses a long range and binds the current page to a signal.",
+            fn() {
+                zui.Breadcrumbs([]string { "Projects", "Loam", "Settings" })
+                zui.Pagination(page, 12)
+                Readout(fn() -> string {
+                    return "Page {{page.get()}} of 12"
+                })
+            },
+            []string {
+                "zui.Breadcrumbs([]string { \"Projects\", \"Loam\", \"Settings\" })",
+                "zui.Pagination(page, 12)",
+            },
+        )
+        Section(
+            "Flows",
+            "Steps",
+            "A checkout or onboarding flow. The current step is a signal, so any button can move it.",
+            fn() {
+                zui.Steps(step, []string { "Account", "Plan", "Review" })
+                zui.RowWrap(Space.Sm) {
+                    zui.Button("Back", look = zeus.Look.Ghost, on_click = fn() {
+                        if step.get() > 0 {
+                            step.set(step.get() - 1)
+                        }
+                    })
+                    zui.Button("Next", look = zeus.Look.Solid, on_click = fn() {
+                        if step.get() < 2 {
+                            step.set(step.get() + 1)
+                        }
+                    })
+                }
+            },
+            []string {
+                "zui.Steps(step, []string { \"Account\", \"Plan\", \"Review\" })",
+                "zui.Button(\"Next\", on_click = fn() => step.set(step.get() + 1))",
+            },
+        )
+        Section(
+            "Actions",
+            "Menus and button groups",
+            "A dropdown, a split button with a default action, and a joined group.",
+            fn() {
+                zui.RowWrap(Space.Sm) {
+                    zui.DropdownMenu("Actions", items = menu, on_select = picked)
+                    zui.SplitButton(
+                        "Deploy",
+                        items = menu,
+                        on_select = picked,
+                        on_click = fn() => last.set("Deploy"),
+                    )
+                    zui.ButtonGroup([]string { "Day", "Week", "Month" })
+                    zui.CopyButton("zeli serve www")
+                }
+                Readout(fn() -> string {
+                    let what = last.get()
+                    return "Last action: {{what}}"
+                })
+            },
+            []string {
+                "zui.DropdownMenu(\"Actions\", items = menu, on_select = picked)",
+                "zui.SplitButton(\"Deploy\", items = menu, on_click = fn() => deploy())",
+                "zui.ButtonGroup([]string { \"Day\", \"Week\", \"Month\" })",
+                "zui.CopyButton(\"zeli serve www\")",
+            },
+        )
+        Section(
+            "Reading",
+            "Table of contents",
+            "The rail for a long document. Bind it to scroll offsets and it tracks the reader.",
+            fn() {
+                zui.TableOfContents(section, []string { "Overview", "Install", "Usage", "Reference" })
+            },
+            []string {
+                "zui.TableOfContents(section, []string { \"Overview\", \"Install\", \"Usage\" })",
+            },
+        )
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Overlays
+// ═══════════════════════════════════════════════════════════════════
+
+fn Overlays() -> Node {
+    let palette = zeus.signal(false)
+    let sheet = zeus.signal(false)
+    let pop = zeus.signal(false)
+    let confirm = zeus.signal(false)
+    let prompt = zeus.signal(false)
+    let name = zeus.signal("")
+    let banner = zeus.signal(true)
+    let live = zeus.signal([]Notice {})
+    let past = zeus.signal([]Notice {})
+    let last = zeus.signal("Nothing yet")
+    let commands = []CommandItem {
+        CommandItem(label = "New project", section = "File"),
+        CommandItem(label = "Open recent", section = "File"),
+        CommandItem(label = "Toggle theme", section = "View"),
+        CommandItem(label = "Go to playground", section = "Go"),
+    }
+    let rows = []MenuRow {
+        MenuRow(label = "Rename"),
+        MenuRow(label = "Delete", danger = true),
+    }
+    return zui.Column(prose.SECTION_GAP) {
+        PageHead(
+            "Components",
+            "Overlays and messages",
+            "Everything that floats above the page. Each opens from a signal, and Escape closes it.",
+        )
+        Section(
+            "Power users",
+            "Command palette",
+            "Search every action from one box. Rows group by section and the arrow keys move through them.",
+            fn() {
+                zui.Button("Open commands", look = zeus.Look.Outline, on_click = fn() => palette.set(true))
+                Readout(fn() -> string {
+                    let what = last.get()
+                    return "Last action: {{what}}"
+                })
+            },
+            []string {
+                "zui.CommandPalette(open, []CommandItem {",
+                "    CommandItem(label = \"New project\", section = \"File\"),",
+                "}, on_select = fn(i: int) => run(i))",
+            },
+        )
+        Section(
+            "Panels",
+            "Sheets, popovers, and hover cards",
+            "A bottom sheet for mobile, a popover anchored to its trigger, and a hover card for a quick preview.",
+            fn() {
+                zui.RowWrap(Space.Sm) {
+                    zui.Button("Open sheet", look = zeus.Look.Outline, on_click = fn() => sheet.set(true))
+                    zui.Popover(open = pop, style = Style(width = px(220)), trigger = fn() {
+                        zui.Button("Popover", look = zeus.Look.Outline, on_click = fn() => pop.set(true))
+                    }) {
+                        zui.Title("Share")
+                        zui.Body("Anyone with the link can view.")
+                    }
+                    zui.HoverCard(style = Style(width = px(240)), trigger = fn() {
+                        zui.Button("Hover card", look = zeus.Look.Ghost)
+                    }) {
+                        zui.Title("Ada Lovelace")
+                        zui.Body("Wrote the first algorithm for a machine.")
+                    }
+                }
+            },
+            []string {
+                "zui.Sheet(open, title = \"Filters\") {",
+                "    zui.Body(\"A bottom sheet with a grip.\")",
+                "}",
+                "zui.Popover(open = pop, trigger = fn() { zui.Button(\"Popover\") }) {",
+                "    zui.Title(\"Share\")",
+                "}",
+            },
+        )
+        Section(
+            "Menus",
+            "Context menu",
+            "Right-click the panel. The same rows as a dropdown, opened at the pointer.",
+            fn() {
+                zui.ContextMenu(items = rows, on_select = fn(i: int) => last.set(rows[i].label)) {
+                    zeus.Box(style = Style(
+                        height = px(72),
+                        width = pct(100),
+                        align = Align.Center,
+                        justify = Align.Center,
+                        direction = Direction.Row,
+                        radius = spacing.RAD_MD,
+                        borderWidth = spacing.HAIRLINE,
+                        borderColor = colors.rule(),
+                    )) {
+                        Readout(fn() -> string {
+                            return "Right-click here"
+                        })
+                    }
+                }
+            },
+            []string {
+                "zui.ContextMenu(items = rows, on_select = fn(i: int) => pick(i)) {",
+                "    zeus.Box() { zeus.Text(\"Right-click here\") }",
+                "}",
+            },
+        )
+        Section(
+            "Decisions",
+            "Confirm and prompt",
+            "Dialog presets for the two questions every app asks.",
+            fn() {
+                zui.RowWrap(Space.Sm) {
+                    zui.Button("Delete project", look = zeus.Look.Outline, on_click = fn() => confirm.set(true))
+                    zui.Button("Rename", look = zeus.Look.Outline, on_click = fn() => prompt.set(true))
+                }
+            },
+            []string {
+                "zui.ConfirmDialog(open, title = \"Delete project?\", confirm = \"Delete\", danger = true)",
+                "zui.PromptDialog(open, name, title = \"New name\", placeholder = \"Name\")",
+            },
+        )
+        Section(
+            "Messages",
+            "Banners, callouts, and notifications",
+            "A banner for the whole page, a callout inside the content, and a notification center that keeps a history.",
+            fn() {
+                zui.Show(when = banner.get()) {
+                    zui.Banner("A new version is ready.", dismiss = banner)
+                }
+                zui.Callout("Heads up", "Drafts stay on this device.")
+                zui.InlineMessage("That name is already taken.", zeus.Tint.Danger)
+                zui.Button("Send a notification", look = zeus.Look.Outline, on_click = fn() {
+                    let mut next = live.get()
+                    push(next, Notice(title = "Build finished", body = "All hosts passed.", tint = zeus.Tint.Ok))
+                    live.set(next)
+                })
+                zui.NotificationCenter(live, past)
+            },
+            []string {
+                "zui.Banner(\"A new version is ready.\", dismiss = banner)",
+                "zui.Callout(\"Heads up\", \"Drafts stay on this device.\")",
+                "zui.NotificationCenter(live, past)",
+            },
+        )
+        zui.CommandPalette(
+            palette,
+            commands,
+            on_select = fn(i: int) => last.set(commands[i].label),
+        )
+        zui.Sheet(sheet, title = "Filters") {
+            zui.Body("A bottom sheet with a grip. It slides up from the bottom edge.")
+        }
+        zui.ConfirmDialog(
+            confirm,
+            title = "Delete project?",
+            body = "This cannot be undone.",
+            confirm = "Delete",
+            danger = true,
+        )
+        zui.PromptDialog(prompt, name, title = "New name", placeholder = "Name")
+    }
+}
