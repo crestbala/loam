@@ -1,0 +1,5 @@
+import "../compile_pass/module_fn_value/one.loam"
+
+fn main() {
+    let f = one.nope
+}

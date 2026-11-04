@@ -1,0 +1,48 @@
+// A module's function is a value like a local one: an argument, a local, a
+// field, an element, a return value, and through an alias.
+import "std:fmt"
+import "std:sys"
+import "module_fn_value/one.loam"
+import "module_fn_value/one.loam" as other
+import "module_fn_value/two.loam"
+
+fn call(f: fn(int) -> int, x: int) -> int {
+    return f(x)
+}
+
+fn call_each<T>(x: T, fs: []fn(int) -> int) -> int {
+    let mut total = 0
+    let twice = 10
+    for i in 0..fs.len {
+        total = total + fs[i](twice)
+    }
+    return total + call(one.twice, twice)
+}
+
+struct Holder {
+    f: fn(int) -> string,
+}
+
+fn expect(got: int, want: int, what: string) {
+    if got != want {
+        fmt.println("FAIL", what, got)
+        sys.exit(1)
+    }
+}
+
+fn main() {
+    expect(call(one.twice, 4), 8, "as an argument")
+    let f = one.thrice
+    expect(f(4), 12, "in a local")
+    expect(call(other.twice, 5), 10, "through an alias")
+    expect(two.pick()(2), 6, "returned from another module")
+    let fs = []fn(int) -> int { one.twice, other.thrice }
+    expect(fs[1](3), 9, "in a list")
+    expect(call_each(0, fs), 70, "inside a generic body")
+    let h = Holder { f: one.say }
+    if h.f(1) != "n1" {
+        fmt.println("FAIL in a struct")
+        sys.exit(1)
+    }
+    fmt.println("module fn value ok")
+}
