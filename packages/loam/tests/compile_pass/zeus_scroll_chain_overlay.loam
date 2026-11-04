@@ -1,0 +1,88 @@
+// Scroll chaining stops at a floater: a list in an open drawer, at its bound,
+// keeps the leftover wheel instead of sliding the page behind the overlay.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+let open = zeus.signal(true)
+
+fn expect(ok: bool, what: string) {
+    if ok {
+        return
+    }
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+fn scroller_of(id: int) -> int {
+    let mut p = id
+    while p > 0 {
+        if zeus.node_kind(p) == 11 {
+            return p
+        }
+        p = zeus.node_parent(p)
+    }
+    return 0
+}
+
+fn main() {
+    zeus.snapshot(320, 240, fn() -> Node {
+        zui.Scroll(style = Style(height = px(240))) {
+            zeus.Box(style = Style(height = px(800))) {
+                zeus.Text("page-top")
+            }
+            zui.Drawer(open, side = Side.SideStart, size = 200) {
+                zui.Scroll(style = Style(height = px(100))) {
+                    zeus.Box(style = Style(height = px(400))) {
+                        zeus.Text("list-top")
+                    }
+                }
+            }
+        }
+    })
+
+    let list = scroller_of(zeus.engine_find_text("list-top"))
+    expect(list > 0, "list scroller")
+    let page = scroller_of(zeus.engine_find_text("page-top"))
+    expect(page > 0, "page scroller")
+    expect(page != list, "two scrollers")
+    let lmax = zeus.node_scroll_max(list)
+    expect(lmax > 0, "list overflows")
+    expect(zeus.node_scroll_max(page) > 0, "page overflows")
+
+    let x = zeus.node_x(list) + zeus.node_width(list) / 2
+    let y = zeus.node_y(list) + zeus.node_height(list) / 2
+
+    // Inside its range the list takes the wheel.
+    zeus.engine_scroll_step(x, y, 0, 40)
+    expect(zeus.node_scroll_y(list) == 40, "list takes the wheel")
+    expect(zeus.node_scroll_y(page) == 0, "page stays while the list moves")
+
+    // Past the end: the leftover stops at the drawer.
+    zeus.engine_scroll_step(x, y, 0, lmax + 500)
+    expect(zeus.node_scroll_y(list) == lmax, "list stops at its end")
+    expect(zeus.node_scroll_y(page) == 0, "step does not chain past the drawer")
+    zeus.engine_scroll(x, y, 0, 60)
+    expect(zeus.node_scroll_y(page) == 0, "pan does not chain past the drawer")
+    zeus.engine_scroll_smooth(x, y, 0, 60)
+    zeus.engine_layout(320, 240)
+    expect(zeus.node_scroll_y(page) == 0, "notch does not chain past the drawer")
+
+    // Past the top, the same.
+    zui.scroll_to(Node { id: list }, 0)
+    zeus.engine_layout(320, 240)
+    zeus.engine_scroll_step(x, y, 0, -50)
+    expect(zeus.node_scroll_y(list) == 0, "list stops at its top")
+    expect(zeus.node_scroll_y(page) == 0, "upward does not chain past the drawer")
+
+    // Closed, the same spot scrolls the page again.
+    open.set(false)
+    zeus.engine_layout(320, 240)
+    zeus.engine_step_dt(1000)
+    zeus.engine_layout(320, 240)
+    zeus.engine_scroll_step(x, y, 0, 30)
+    expect(zeus.node_scroll_y(page) == 30, "page scrolls once the drawer closes")
+
+    fmt.println("scroll chain overlay ok")
+}
