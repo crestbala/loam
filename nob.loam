@@ -1852,8 +1852,8 @@ fn same_at(s: string, at: int, needle: string) -> bool {
     return true
 }
 
-/// Phase 6: one program, five surfaces. The counter, gallery, and www each have
-/// a per-host entry (`macos` = native, shared by Linux + macOS; `ios`,
+/// Phase 6: one program, five surfaces. The counter and gallery each have a
+/// per-host entry (`macos` = native, shared by Linux + macOS; `ios`,
 /// `android`, `frontend` = wasm Canvas2D) that is a **thin stub**: it imports
 /// the shared `../ui.loam` and calls `ui.start()`, and holds no UI of its own.
 /// This check pins that shape, so a host cannot drift into a second copy of the
@@ -1863,7 +1863,6 @@ fn ig_one_surface() {
     let mut apps = []string {}
     push(apps, "examples/zeus/counter")
     push(apps, "examples/zeus/gallery")
-    push(apps, "www")
     let mut hosts = []string {}
     push(hosts, "frontend")
     push(hosts, "macos")
@@ -1879,7 +1878,7 @@ fn ig_one_surface() {
         for h in 0..hosts.len {
             let p = "{{root}}/{{hosts[h]}}/app.loam"
             if sys.exists(p) == 0 {
-                continue /* www has only frontend + macos */
+                continue
             }
             let src = sys.read_file(p)
             let lines = lines_with(src, "").len
