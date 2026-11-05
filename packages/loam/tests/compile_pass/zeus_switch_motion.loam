@@ -1,0 +1,86 @@
+// A switch is one motion: the thumb eases across, with no overshoot, and the
+// track's colour moves with it instead of flipping halfway.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn frame() {
+    zeus.engine_layout(300, 200)
+    zeus.engine_step_dt(16)
+    zeus.engine_paint()
+}
+
+/// Index of the track's fill in the draw list.
+fn track_op(x: int, w: int) -> int {
+    for i in 0..zeus.draw_count() {
+        if zeus.draw_x(i) == x && zeus.draw_w(i) == w {
+            return i
+        }
+    }
+    return -1
+}
+
+fn main() {
+    zeus.window("switch", 300, 200)
+    let on = zeus.signal(false)
+    zeus.root(zeus.Box(style = Style(padding = 16)) {
+        zui.Switch(on, label = "Wifi")
+    })
+    zeus.pump_frame()
+    frame()
+    let s = zeus.engine_find_role("switch")
+    let x = zeus.node_x(s)
+    let w = zeus.node_width(s)
+    let i0 = track_op(x, w)
+    must(i0 >= 0, "track drawn")
+    let off_rgb = zeus.draw_rgb(i0)
+    let thumb_off = zeus.draw_x(i0 + 1)
+
+    on.set(true)
+    let mut frames = 0
+    let mut last_x = thumb_off
+    let mut between = 0
+    let mut changes = 0
+    let mut last_rgb = off_rgb
+    let mut limit = 0
+    while frames < 30 {
+        frame()
+        frames = frames + 1
+        let i = track_op(x, w)
+        let tx = zeus.draw_x(i + 1)
+        must(tx >= last_x, "the thumb never comes back")
+        last_x = tx
+        if zeus.draw_rgb(i) != last_rgb {
+            changes = changes + 1
+        }
+        last_rgb = zeus.draw_rgb(i)
+        if zeus.proof_anim_live() == 0 {
+            limit = frames
+            frames = 30
+        }
+    }
+    must(limit > 2 && limit * 16 <= 136, "done within 136 ms")
+    must(changes >= 3, "the colour moves with the thumb")
+    must(last_rgb != off_rgb, "lands on the on colour")
+    must(last_x > thumb_off, "thumb crossed")
+
+    // And back, to exactly where it began.
+    on.set(false)
+    let mut k = 0
+    while k < 12 {
+        frame()
+        k = k + 1
+    }
+    let i = track_op(x, w)
+    must(zeus.draw_rgb(i) == off_rgb, "off colour restored")
+    must(zeus.draw_x(i + 1) == thumb_off, "thumb back")
+    fmt.println("switch motion ok")
+}

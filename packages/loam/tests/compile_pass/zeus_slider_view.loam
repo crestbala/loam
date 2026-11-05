@@ -1,0 +1,49 @@
+// A `view` build that reads a slider's value outside any effect has no
+// subscription, so the rebuild is what shows the drag. Plain and stepped: a
+// stepped slider writes the value through its own effect.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+let plain = zeus.signal(50)
+let stepped = zeus.signal(50)
+
+fn page() -> Node {
+    let a = plain.get()
+    let b = stepped.get()
+    return zeus.Box(style = Style(direction = Direction.Column, gap = 8, width = px(800))) {
+        zui.Slider(plain, label = "Plain")
+        zui.Slider(stepped, label = "Stepped", step = 5)
+        zeus.Text(if a == 50 { "plain held" } else { "plain moved" })
+        zeus.Text(if b == 50 { "stepped held" } else { "stepped moved" })
+    }
+}
+
+fn press(label: string) {
+    zeus.engine_layout(816, 200)
+    let s = zeus.engine_find_text(label)
+    zeus.engine_click(zeus.node_x(s) + 600, zeus.node_y(s) + 10)
+    zeus.engine_mouseup()
+    zeus.pump_frame()
+    zeus.engine_layout(816, 200)
+}
+
+fn main() {
+    zeus.window("slider-view", 816, 200)
+    zeus.view(page)
+    zeus.pump_frame()
+    press("Plain")
+    must(zeus.text_visible("plain moved"), "a plain slider reaches the build")
+    press("Stepped")
+    must(zeus.text_visible("stepped moved"), "a stepped slider reaches the build")
+    must(stepped.get() % 5 == 0, "the value kept its step")
+    fmt.println("slider view ok")
+}

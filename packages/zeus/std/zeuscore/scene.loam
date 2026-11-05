@@ -1311,12 +1311,9 @@ fn paint_node_body_in(id: int) {
             text_height = h
         }
         let ty = y + (h - text_height) / 2
-        let mut kd = 16
-        if kd > h {
-            kd = h
-        }
+        let kd = geometry.min2(16, h)
         let travel = geometry.max2(w - kd, 0)
-        let kx = x + travel * arena.bind_pct(id) / 100
+        let kx = x + arena.slider_x(id, travel)
         let mut track = 0
         if nodes.look[id].bg >= 0 {
             track = arena.paint_rgb(nodes.look[id].bg)
@@ -1348,14 +1345,13 @@ fn paint_node_body_in(id: int) {
                 on = 100
             }
         }
+        // One motion: the track's colour moves with the thumb.
         let mut track = 0
         if nodes.look[id].bg >= 0 {
             track = arena.paint_rgb(nodes.look[id].bg)
         }
-        if on > 50 {
-            if nodes.look[id].fg >= 0 {
-                track = arena.paint_rgb(nodes.look[id].fg)
-            }
+        if nodes.look[id].fg >= 0 {
+            track = mix_rgb(track, arena.paint_rgb(nodes.look[id].fg), on)
         }
         fill(x, y, w, h, track, i32(nodes.look[id].radius))
         let pad = geometry.max2(h / 6, 1)
@@ -2095,6 +2091,19 @@ fn paint() {
     present()
     arena.clear_dirty()
     arena.damage_frame_end()
+}
+
+/// `a` moved `pct` percent of the way to `b`, per channel.
+fn mix_rgb(a: int, b: int, pct: int) -> int {
+    let mut out = 0
+    let mut shift = 1
+    for i in 0..3 {
+        let ca = a / shift % 256
+        let cb = b / shift % 256
+        out = out + (ca + (cb - ca) * pct / 100) * shift
+        shift = shift * 256
+    }
+    return out
 }
 
 fn step(delta_ms: int) -> int {

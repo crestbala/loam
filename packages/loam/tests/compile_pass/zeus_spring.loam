@@ -86,7 +86,7 @@ fn main() {
     // --- reversed in flight, it keeps its speed ---
     zeus.animate_x(n, 200, zeus.Motion.Base, zeus.EASE.Glide)
     let mut i = 0
-    while i < 6 {
+    while i < 3 {
         zeus.engine_step_dt(16)
         i = i + 1
     }

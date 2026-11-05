@@ -727,7 +727,7 @@ struct TooltipProps {
     /// placements, which have no edge facing the trigger.
     arrow: bool = true,
     /// Delay before showing, in ms (hover intent).
-    delay: int = 400,
+    delay: int = 250,
     /// The element the tooltip describes.
     trigger: fn() = noop,
 }

@@ -1,0 +1,67 @@
+// A slider follows the pointer: the thumb sits under it to the pixel, even
+// while the value holds one whole percent. A key moves it to the value. A drag
+// marks the slider, not the window, so this `view` app, whose build does not
+// read the value, does not rebuild.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+let level = zeus.signal(50)
+
+fn page() -> Node {
+    return zeus.Box(style = Style(padding = 8)) {
+        zui.Slider(level, label = "Level")
+    }
+}
+
+/// Paint one frame and return the left edge of the thumb.
+fn thumb_x(s: int) -> int {
+    zeus.engine_layout(816, 200)
+    zeus.engine_step_dt(16)
+    zeus.engine_paint()
+    return zeus.node_x(s) + zeus.motion_thumb(zeus.node_handle(s))
+}
+
+fn main() {
+    zeus.window("slider", 816, 200)
+    zeus.view(page)
+    zeus.pump_frame()
+    zeus.engine_layout(816, 200)
+    let s = zeus.engine_find_text("Level")
+    let x0 = zeus.node_x(s)
+    let y = zeus.node_y(s) + 10
+    let w = zeus.node_width(s)
+    must(w == 800, "track width")
+
+    zeus.engine_click(x0 + 100, y)
+    let rebuilds = zeus.view_rebuilds()
+    // Across two whole percents, one pixel at a time: the thumb never stalls.
+    let mut px = 100
+    while px <= 116 {
+        must(zeus.engine_drag(x0 + px, y) != 0, "drag lands")
+        must(thumb_x(s) == x0 + px - 8, "thumb centred on the pointer")
+        px = px + 1
+    }
+    must(level.get() == (108 * 100 + 392) / 784, "value rounds to a percent")
+    must(zeus.view_rebuilds() == rebuilds, "a drag does not rebuild the view")
+
+    // Past both ends it holds there.
+    zeus.engine_drag(x0 - 40, y)
+    must(thumb_x(s) == x0 && level.get() == 0, "held at the start")
+    zeus.engine_drag(x0 + w + 40, y)
+    must(thumb_x(s) == x0 + w - 16 && level.get() == 100, "held at the end")
+    zeus.engine_mouseup()
+
+    // A write elsewhere: the thumb goes to the value, not the old drag.
+    level.set(25)
+    must(thumb_x(s) == x0 + 784 / 4, "thumb follows a plain write")
+    fmt.println("slider drag ok")
+}
