@@ -155,7 +155,10 @@ fn main() {
     land(16)
 
     // --- an exit speeds up ---
-    must(zeus.anim_ease(zeus.EASE.Exit, 500) < 300, "starts slowly")
+    // Slow to start reads as lag on a close, and a curve that saves its speed
+    // for the end is cut off when the host hides the surface.
+    must(zeus.anim_ease(zeus.EASE.Exit, 300) > 450, "answers at once")
+    must(zeus.anim_ease(zeus.EASE.Exit, 900) > 950, "lands before it is hidden")
     must(zeus.anim_ease(zeus.EASE.Exit, 1000) == 1000, "ends where it should")
 
     // --- the shadow leaves with the surface ---

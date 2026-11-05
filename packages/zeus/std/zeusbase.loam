@@ -4134,7 +4134,7 @@ enum Motion {
     Pop = 100005,
     Bounce = 100006,
     Glide = 100007,
-    // Speeds up as it goes: something leaving (110 ms).
+    // Answers at once and lands in time: something leaving (110 ms).
     Fall = 100008,
 }
 
@@ -4164,8 +4164,8 @@ enum EASE {
     Bounce = 6,
     // Long and heavy, barely overshoots: sheets, pages, values.
     Glide = 7,
-    // Not a spring: it speeds up as it goes, for what is leaving.
-    // cubic-bezier(0.4, 0, 1, 0.6).
+    // Not a spring: it moves at once and lands in time, for what is leaving.
+    // cubic-bezier(0.3, 0.6, 0.6, 1).
     Exit = 8,
 }
 

@@ -1413,7 +1413,7 @@ moves now runs on real springs in the track pool (`EASE.Snap` / `Pop` /
 `Bounce` / `Glide`, `Motion.*` in `Style.transition`): unit mass, stiffness and
 damping, integrated in 4 ms steps so the curve does not depend on the frame
 rate. A spring has no duration, stops when it has stopped, and keeps its
-velocity through a retarget. What leaves uses `EASE.Exit`, which speeds up.
+velocity through a retarget. What leaves uses `EASE.Exit`, which moves at once and lands in time.
 
 - Tracks run in sub-units: `an_scale` is permille and `an_tx` / `an_ty` 1/16 dp,
   and so is the xform op, so slow motion does not stair-step. The API stays in

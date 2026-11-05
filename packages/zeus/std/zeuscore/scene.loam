@@ -1149,7 +1149,7 @@ fn paint_node_shaped(id: int) {
     // A spinning progress bar (kind 6) sweeps instead of rotating: the
     // flag only keeps the frame loop alive for it.
     if int(nodes.look[id].spin) != 0 && int(nodes.tree[id].kind) != 6 {
-        if arena.spin_live() != 0 {
+        if arena.anim_reduced() == 0 {
             let per = int(nodes.look[id].spin_ms)
             if per > 0 {
                 rotation_degrees = (arena.now_ms % per) * 360 / per
@@ -1288,7 +1288,7 @@ fn paint_node_body_in(id: int) {
             // motion parks it a third of the way in.
             let seg = w * 3 / 10
             let mut sx = x + (w - seg) / 3
-            if arena.spin_live() != 0 {
+            if arena.anim_reduced() == 0 {
                 let per = int(nodes.look[id].spin_ms)
                 if per > 0 {
                     sx = x - seg + (w + seg) * (arena.now_ms % per) / per

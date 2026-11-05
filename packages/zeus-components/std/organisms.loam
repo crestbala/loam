@@ -646,7 +646,7 @@ fn Drawer(open: Signal<bool>, p: DrawerProps) -> Node {
     // view. The overlay pins the panel to the chosen edge (a row for the side
     // edges); the panel swallows clicks so a press inside does not close it.
     // Closed, it rests `size` past its edge. It is a solid sheet, so it does
-    // not fade: it glides on with weight, is pulled off speeding up, and takes
+    // not fade: it glides on with weight, leaves at once, and takes
     // focus as it opens. Only the inner edge rounds, so the sheet meets the
     // window edge square.
     return Overlay(style = drawer_dock(side), visible = open.get(), on_click = fn() {
