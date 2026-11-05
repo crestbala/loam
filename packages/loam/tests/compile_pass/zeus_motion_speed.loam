@@ -1,0 +1,103 @@
+// Motion is quick: a dialog lands and leaves inside a fixed number of frames,
+// and each spring gets most of the way there within its budget.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn frame() {
+    zeus.engine_layout(800, 600)
+    zeus.engine_step_dt(16)
+    zeus.engine_paint()
+}
+
+/// Frames until nothing is animating, at 16 ms each.
+fn frames_to_rest() -> int {
+    let mut n = 0
+    while zeus.proof_anim_live() > 0 && n < 120 {
+        frame()
+        n = n + 1
+    }
+    return n
+}
+
+/// ms for a spring to cover 90% of a 1000 unit move.
+fn reach_90(node: Node, ease: int) -> int {
+    zeus.animate_x(node, 0, 0)
+    zeus.animate_x(node, 1000, 100, ease)
+    let mut ms = 0
+    while zeus.motion_x(node) < 900 && ms < 1000 {
+        frame()
+        ms = ms + 16
+    }
+    while zeus.proof_anim_live() > 0 {
+        frame()
+    }
+    return ms
+}
+
+fn main() {
+    zeus.window("speed", 800, 600)
+    let open = zeus.signal(false)
+    let rows = zeus.signal([]string { "Leaving" })
+    zeus.root(zeus.Box(style = Style(padding = 16)) {
+        zeus.Box(style = Style(width = px(8), height = px(8)), label = "Mark")
+        zui.Button("Open", on_click = fn() => open.set(true))
+        zui.Button("Drop", on_click = fn() => rows.set([]string {}))
+        zeus.Each(rows, fn(i: int, s: string) -> Node {
+            return zeus.exit_fade(zeus.Text(s))
+        })
+        zui.Dialog(open, title = "Confirm") {
+            zeus.Text("Inside")
+        }
+    })
+    zeus.pump_frame()
+    zeus.engine_layout(800, 600)
+
+    must(zeus.engine_click_text("Open") != 0, "open")
+    zeus.engine_layout(800, 600)
+    let opening = frames_to_rest()
+    must(opening > 1 && opening * 16 <= 176, "a dialog lands within 176 ms")
+    zeus.engine_key(27)
+    zeus.engine_layout(800, 600)
+    let closing = frames_to_rest()
+    must(closing > 1 && closing * 16 <= 128, "a dialog leaves within 128 ms")
+
+    let mark = zeus.node_handle(zeus.engine_find_text("Mark"))
+    must(reach_90(mark, EASE.Snap) <= 80, "Snap: 90% within 80 ms")
+    must(reach_90(mark, EASE.Pop) <= 96, "Pop: 90% within 96 ms")
+    must(reach_90(mark, EASE.Glide) <= 128, "Glide: 90% within 128 ms")
+    // The frame that wakes an idle host starts a motion from where one 16 ms
+    // frame would, or a short fade is over before it is seen.
+    zeus.animate_opacity(mark, 0, Motion.Base)
+    zeus.engine_step_dt(16)
+    let after_one = zeus.motion_opacity(mark)
+    zeus.animate_opacity(mark, 100, 0)
+    zeus.animate_opacity(mark, 0, Motion.Base)
+    zeus.engine_step_dt(64)
+    must(zeus.motion_opacity(mark) == after_one, "a wake does not skip the start")
+    zeus.engine_step_dt(16)
+    must(zeus.motion_opacity(mark) > 0, "and the rest still runs")
+    while zeus.proof_anim_live() > 0 {
+        frame()
+    }
+
+    // An exit lasts its whole fade, however long the frame that began it.
+    zeus.engine_click_text("Drop")
+    zeus.engine_layout(800, 600)
+    zeus.engine_step_dt(64)
+    let mut exit_frames = 0
+    while zeus.text_visible("Leaving") && exit_frames < 60 {
+        frame()
+        exit_frames = exit_frames + 1
+    }
+    must(exit_frames * 16 >= 80, "the fade was not cut off")
+    fmt.println("motion speed ok")
+}

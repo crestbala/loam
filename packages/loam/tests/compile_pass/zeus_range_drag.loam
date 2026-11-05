@@ -1,0 +1,93 @@
+// A RangeSlider thumb follows the pointer between whole values, stops at the
+// other thumb, snaps on a coarse step, and goes to its value on a key.
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+
+fn must(ok: bool, what: string) {
+    if !ok {
+        fmt.println("FAIL", what)
+        sys.exit(1)
+    }
+}
+
+fn by_label(label: string) -> int {
+    for id in 1..zeus.arena_nodes() {
+        if zeus.node_label(id) == label {
+            return id
+        }
+    }
+    return 0
+}
+
+/// The `nth` low thumb, while both still hold 20 (its label has the value).
+fn thumb_of(nth: int) -> int {
+    let mut seen = 0
+    for id in 1..zeus.arena_nodes() {
+        if zeus.node_label(id) == "Minimum 20" {
+            if seen == nth {
+                return id
+            }
+            seen = seen + 1
+        }
+    }
+    return 0
+}
+
+fn frame() {
+    zeus.engine_layout(816, 240)
+    zeus.engine_step_dt(16)
+    zeus.engine_paint()
+}
+
+fn main() {
+    zeus.window("range", 816, 240)
+    let lo = zeus.signal(20)
+    let hi = zeus.signal(80)
+    let c_lo = zeus.signal(20)
+    let c_hi = zeus.signal(80)
+    zeus.root(zeus.Box(style = Style(direction = Direction.Column, gap = 16, padding = 8)) {
+        zui.RangeSlider(lo, hi, label = "Fine")
+        zui.RangeSlider(c_lo, c_hi, step = 10, label = "Coarse")
+    })
+    zeus.pump_frame()
+    frame()
+
+    let track = by_label("Fine")
+    let x0 = zeus.node_x(track)
+    let y = zeus.node_y(track) + 10
+    let low = thumb_of(0)
+    let coarse_low = thumb_of(1)
+    let thumb = zeus.node_width(low)
+    let travel = zeus.node_width(track) - thumb
+    must(thumb > 0, "thumb found")
+
+    // Along three whole values, a pixel at a time.
+    must(zeus.engine_click(x0 + 180, y) != 0, "press")
+    let mut px = 180
+    while px <= 204 {
+        zeus.engine_drag(x0 + px, y)
+        frame()
+        must(zeus.node_x(low) == x0 + px - thumb / 2, "thumb centred on the pointer")
+        px = px + 1
+    }
+    must(lo.get() == (204 - thumb / 2) * 100 / travel, "value follows")
+    zeus.engine_mouseup()
+
+    // A key goes to the value, not the old drag.
+    lo.set(25)
+    frame()
+    must(zeus.node_x(low) == x0 + 25 * travel / 100, "a write moves the thumb")
+
+    // Coarse: only the detents.
+    let coarse = by_label("Coarse")
+    let cx = zeus.node_x(coarse)
+    let cy = zeus.node_y(coarse) + 10
+    zeus.engine_click(cx + 180, cy)
+    zeus.engine_mouseup()
+    frame()
+    must(c_lo.get() % 10 == 0, "stepped value")
+    must(zeus.node_x(coarse_low) == cx + c_lo.get() * travel / 100, "thumb sits on a detent")
+    fmt.println("range drag ok")
+}

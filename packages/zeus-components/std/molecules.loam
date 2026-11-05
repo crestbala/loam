@@ -2399,15 +2399,29 @@ fn RangeSlider(lo: Signal<int>, hi: Signal<int>, p: RangeSliderProps) -> Node {
     let step = if p.step > 0 { p.step } else { 1 }
     let page = if (mx - mn) / 10 > step { (mx - mn) / 10 } else { step }
     let t = SLIDER_THUMB
+    // Where a drag left each thumb, in dp along the track; -1 before any drag.
+    let lo_at = signal(-1)
+    let hi_at = signal(-1)
+    // A step under 1% of the range is not a detent: the thumb follows the
+    // pointer between values. A coarser one snaps.
+    let glides = step * 100 <= mx - mn
 
     // controller
+    fn room() -> int {
+        return if tw.get() - t > 1 { tw.get() - t } else { 1 }
+    }
     fn pos(v: int) -> int {
         return (clamp_int(v, mn, mx) - mn) * (tw.get() - t) / (mx - mn)
     }
-    fn at(x: int) -> int {
-        let r = screen_rect(track)
-        let travel = if r.w - t > 1 { r.w - t } else { 1 }
-        return slider_snap(mn + (x - r.x - t / 2) * (mx - mn) / travel, mn, mx, step)
+    fn value_at(off: int) -> int {
+        return slider_snap(mn + off * (mx - mn) / room(), mn, mx, step)
+    }
+    // A drag's place stands while it still names the value: a key, a write or
+    // the other thumb's stop moved the thumb otherwise.
+    fn shown(value: Signal<int>, at: Signal<int>) -> int {
+        let off = at.get()
+        let v = value.get()
+        return if glides && off >= 0 && value_at(off) == v { off } else { pos(v) }
     }
     fn set_lo(v: int) {
         lo.set(clamp_int(slider_snap(v, mn, mx, step), mn, peek(hi)))
@@ -2421,14 +2435,17 @@ fn RangeSlider(lo: Signal<int>, hi: Signal<int>, p: RangeSliderProps) -> Node {
         if p.disabled {
             return
         }
-        let v = at(current_mouse().x)
+        let off = clamp_int(current_mouse().x - screen_rect(track).x - t / 2, 0, room())
+        let v = value_at(off)
         let a = peek(lo)
         let b = peek(hi)
         let dl = if v > a { v - a } else { a - v }
         let dh = if v > b { v - b } else { b - v }
         if dl < dh || (dl == dh && v < a) {
+            lo_at.set(off)
             set_lo(v)
         } else {
+            hi_at.set(off)
             set_hi(v)
         }
     }
@@ -2438,7 +2455,11 @@ fn RangeSlider(lo: Signal<int>, hi: Signal<int>, p: RangeSliderProps) -> Node {
         ref = track,
         style = Style(width = pct(100), grow = 1, height = px(20), cursor = "pointer"),
         restyle = p.style,
-        on_resize = fn(r: Rect) { tw.set(r.w) },
+        on_resize = fn(r: Rect) {
+            tw.set(r.w)
+            lo_at.set(-1)
+            hi_at.set(-1)
+        },
         on_drag = drag,
         role = "group",
         label = p.label,
@@ -2460,8 +2481,8 @@ fn RangeSlider(lo: Signal<int>, hi: Signal<int>, p: RangeSliderProps) -> Node {
             style = Style(
                 position = pos_absolute(),
                 top = (20 - SLIDER_TRACK) / 2,
-                left = t / 2 + pos(lo.get()),
-                width = px(pos(hi.get()) - pos(lo.get())),
+                left = t / 2 + shown(lo, lo_at),
+                width = px(shown(hi, hi_at) - shown(lo, lo_at)),
                 height = px(SLIDER_TRACK),
                 radius = 1,
                 background = accent(),
@@ -2471,7 +2492,7 @@ fn RangeSlider(lo: Signal<int>, hi: Signal<int>, p: RangeSliderProps) -> Node {
         RangeThumb(
             lo,
             "Minimum",
-            fn() -> int { return pos(lo.get()) },
+            fn() -> int { return shown(lo, lo_at) },
             fn(v: int) { set_lo(v) },
             step,
             page,
@@ -2481,7 +2502,7 @@ fn RangeSlider(lo: Signal<int>, hi: Signal<int>, p: RangeSliderProps) -> Node {
         RangeThumb(
             hi,
             "Maximum",
-            fn() -> int { return pos(hi.get()) },
+            fn() -> int { return shown(hi, hi_at) },
             fn(v: int) { set_hi(v) },
             step,
             page,

@@ -1416,19 +1416,19 @@ fn hover_off(node: Node) -> Node {
 /// Exit transition: when `Each`, `Match`, or a lazy `Show` removes `node`, it
 /// fades out over `ms` — pinned where it was, inert — before it is freed. Its
 /// siblings take its place at once. Put it on the row / arm root.
-fn exit_fade(node: Node, ms: int = 160) -> Node {
+fn exit_fade(node: Node, ms: int = 100) -> Node {
     arena.set_exit(node.id, 1, 0, ms)
     return node
 }
 
 /// Exit transition: fade out while sliding `dy` dp (down when positive).
-fn exit_slide(node: Node, dy: int = 8, ms: int = 200) -> Node {
+fn exit_slide(node: Node, dy: int = 8, ms: int = 120) -> Node {
     arena.set_exit(node.id, 2, dy, ms)
     return node
 }
 
 /// Exit transition: fade out while scaling to `to` percent.
-fn exit_scale(node: Node, to: int = 95, ms: int = 160) -> Node {
+fn exit_scale(node: Node, to: int = 95, ms: int = 100) -> Node {
     arena.set_exit(node.id, 3, to, ms)
     return node
 }
@@ -1611,6 +1611,11 @@ fn motion_spin(node: Node) -> int {
         return 0
     }
     return (arena.now_ms % per) * 360 / per
+}
+/// A slider thumb's offset along its track, in dp.
+fn motion_thumb(node: Node) -> int {
+    let id = node.id
+    return arena.slider_x(id, geometry.max2(nodes.box[id].w - arena.slider_knob(id), 0))
 }
 fn motion_opacity(node: Node) -> int {
     return int(nodes.look[node.id].opacity)
@@ -4015,17 +4020,17 @@ fn elev_now(level: int) -> Elev {
 /// refinement.
 enum Motion {
     // Fades and hover.
-    Fast = 100,
+    Fast = 70,
     // Slower fades.
-    Base = 170,
+    Base = 120,
     // The tail of a hover or a highlight as it cools.
-    Slow = 270,
+    Slow = 180,
     // The springs, `arena.MOTION_EASED` + the `EASE` code.
     Snap = 100004,
     Pop = 100005,
     Bounce = 100006,
     Glide = 100007,
-    // Speeds up as it goes: something leaving (170 ms).
+    // Speeds up as it goes: something leaving (110 ms).
     Fall = 100008,
 }
 

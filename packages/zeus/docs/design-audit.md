@@ -1432,6 +1432,55 @@ trigger, a sheet from its edge, a value changing. Small controls respond on
 `Snap`, with no visible overshoot, and nothing in the component library
 bounces. `EASE.Bounce` stays available to apps.
 
+### Motion speed
+
+The curves were too long, and the frame cost was not the cause. Measured on the
+engine's 4 ms integrator, `Snap` needed 116 ms to reach 90% (slower than `Pop`),
+`Pop` took 300 ms to stop and `Glide` up to 500 ms. Nothing a component names
+changed: the tokens did, so every component follows.
+
+| | Before | After |
+|---|---|---|
+| Dialog opens, to rest | 320 ms | 160 ms |
+| Dialog closes, to rest | 176 ms | 112 ms |
+| `Snap` / `Pop` / `Glide`, to 90% | 116 / 108 / 168 ms | 72 / 92 / 120 ms |
+| `Motion.Fast` / `Base` / `Slow` | 100 / 170 / 270 ms | 70 / 120 / 180 ms |
+| Surface fade in / out, scrim, `Fall` | 120 / 130, 170, 170 ms | 80 / 90, 110, 110 ms |
+
+The springs sit a little under critical damping, which arrives sooner than
+critical does; overshoot stays at or under 0.5%. The scrim still outlasts the
+panel it hosts. `Tooltip` waits 250 ms rather than 400, under `HoverCard`'s 300.
+`zeus_motion_speed.loam` locks these as budgets.
+
+A slider's thumb has no track: it follows the pointer directly. It was held
+back by three other things, all gone:
+
+- The value is a whole percent and paint used it, so a 700 dp track moved in
+  7 dp steps. `tween` keeps the drag in 1/100 percent. It stands while it rounds
+  to the value, so a key, a write or a coarse `step` still wins.
+- Input assumed a 14 dp thumb and paint drew 16.
+- `store_sig_paint` ignored bound nodes: each step was a frame-wide paint, and in
+  a `view` app a rebuild of the tree (14 ms a step in a 300-row page). The bound
+  node now carries the dirt. `track.view_read` records what a build reads outside
+  any effect, so a write rebuilds only a view that read that signal.
+
+`RangeSlider` had the first of these too. A thumb keeps where the drag left it,
+in dp, while that still names its value and a step is under 1% of the range; a
+coarser step snaps.
+
+`zeus_slider_drag.loam`, `zeus_slider_view.loam` and `zeus_range_drag.loam` lock
+this.
+
+`Switch` is one motion: the thumb eases over `Motion.Base` and the track's
+colour moves with it, where the thumb used to ride a spring and the colour
+flipped in one frame at the halfway point. `zeus_switch_motion.loam` locks it.
+
+Hosts sleep when idle, so the frame that starts a motion carries a delta of up
+to the 64 ms cap. Against an 80 ms fade that hides the whole motion, and on real
+hosts it undercuts the 16 ms frames the table above is measured on. A track's
+first tick now advances at most `FIRST_STEP_MS` (16 ms). After that it runs on
+real time, and an exit waits for its track rather than the frame clock alone.
+
 ### Scroll speed
 
 Frame cost was not the limit (0.5-2 ms of script a scroll frame on the web

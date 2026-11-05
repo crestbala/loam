@@ -134,6 +134,25 @@ fn readers_of(signal_id: int) -> []int {
     }
     return out
 }
+/* Signals the `view` build read outside any effect, flagged by id. Nothing
+   subscribes to such a read, so a write to one of these rebuilds the view. */
+let mut view_reads: []int = []int {}
+let mut view_logging: int = 0
+
+fn view_read_add(signal_id: int) {
+    if signal_id <= 0 {
+        return
+    }
+    while view_reads.len <= signal_id {
+        push(view_reads, 0)
+    }
+    view_reads[signal_id] = 1
+}
+
+fn view_read(signal_id: int) -> bool {
+    return signal_id > 0 && signal_id < view_reads.len && view_reads[signal_id] != 0
+}
+
 let mut ready: int = 0
 /* Untracked-read depth. `peek` / `untrack` raise it so reads inside a
    reactive scope do not become dependency edges — a setter that reads the
@@ -329,6 +348,7 @@ fn reset() {
     memo_out = []int {}
     memo_state = []int {}
     silent_of = []int {}
+    view_reads = []int {}
     flushing = 0
     mute = 0
     ready = 0
@@ -532,6 +552,9 @@ fn mute_end() {
 }
 
 fn note_read(signal_id: int) {
+    if view_logging != 0 && stack.len == 0 {
+        view_read_add(signal_id)
+    }
     if mute != 0 {
         return
     }

@@ -461,7 +461,9 @@ fn engine_layout(width: int, height: int) {
         track.reset()
         view_reads_size = 0
         view_building = 1
+        track.view_logging = 1
         let n = view_fn()
+        track.view_logging = 0
         view_building = 0
         arena.root_id = n.id
         arena.restore_scroll()

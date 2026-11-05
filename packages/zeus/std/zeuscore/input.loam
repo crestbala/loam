@@ -393,18 +393,7 @@ fn click(px: int, py: int) -> int {
     }
     if int(nodes.tree[id].kind) == 13 {
         if nodes.ui[id].bind_sig > 0 {
-            let kd = 14
-            let travel = geometry.max2(nodes.box[id].w - kd, 1)
-            let mut rel = px - nodes.box[id].x - kd / 2
-            if rel < 0 {
-                rel = 0
-            }
-            if rel > travel {
-                rel = travel
-            }
-            let v = (rel * 100 + travel / 2) / travel
-            let signal_id = nodes.ui[id].bind_sig
-            arena.store_sig_paint(signal_id, v)
+            arena.slider_seek(id, px)
             arena.drag_id = id
             return 1
         }
@@ -803,18 +792,7 @@ fn drag(px: int, py: int) -> int {
     }
     let kind = int(nodes.tree[arena.drag_id].kind)
     if kind == 13 {
-        let kd = 14
-        let travel = geometry.max2(nodes.box[arena.drag_id].w - kd, 1)
-        let mut rel = px - nodes.box[arena.drag_id].x - kd / 2
-        if rel < 0 {
-            rel = 0
-        }
-        if rel > travel {
-            rel = travel
-        }
-        let v = (rel * 100 + travel / 2) / travel
-        let signal_id = nodes.ui[arena.drag_id].bind_sig
-        arena.store_sig_paint(signal_id, v)
+        arena.slider_seek(arena.drag_id, px)
         return 1
     }
     if kind != 11 {

@@ -2341,7 +2341,9 @@ fn exit_tick() {
     for i in 0..n {
         let id = exit_nodes[i]
         if id > 0 && id < nodes.tree.len && nodes.tree[id].exiting != 0 {
-            if now_ms < exit_until[i] {
+            // `exit_until` runs on the frame clock; the fade's own track can
+            // be behind it (`FIRST_STEP_MS`), so it has the last word.
+            if now_ms < exit_until[i] || anim_find(id, APROP.OpacityAmt) >= 0 {
                 push(keep_n, id)
                 push(keep_t, exit_until[i])
                 push(keep_h, exit_hide[i])
@@ -2766,6 +2768,9 @@ fn settle_write(id: int, ran: int, pw: int, memo_hits: int) {
     if pw < ran {
         silent_runs = silent_runs + ran - pw
     }
+    if track.view_read(id) {
+        view_stale = 1
+    }
     let mut targeted = 0
     if direct_layout != 0 {
         // Layout reads this signal itself: queue the nodes that read it, or
@@ -2860,15 +2865,50 @@ fn store_sig_paint(id: int, value: int) {
     let ran = track.runs - ran0
     let pw = prop_writes - pw0
     let lay = prop_layout - lay0
+    // A bound node paints its own value, so it carries the dirt: a slider drag
+    // repaints the slider, not the window.
+    let bound = chrome_for_signal(id)
+    if track.view_read(id) {
+        view_stale = 1
+    }
     // A layout prop the effect wrote marked its own path; otherwise fall back to
     // a frame-wide paint mark when the effect could not be attributed.
-    if ran == 0 || pw < ran {
+    if bound == 0 && (ran == 0 || pw < ran) {
         // Unattributed: a `view` build may have read it.
         view_stale = 1
         if lay == 0 {
             mark_paint()
         }
     }
+}
+
+/// Thumb size of slider `id`.
+fn slider_knob(id: int) -> int {
+    return geometry.min2(16, nodes.box[id].h)
+}
+
+/// Put slider `id`'s thumb under `px`. The bound value is a whole percent;
+/// `tween` keeps the same place in 1/100 percent, so a drag does not paint in
+/// steps of 1% of the track.
+fn slider_seek(id: int, px: int) {
+    let kd = slider_knob(id)
+    let travel = geometry.max2(nodes.box[id].w - kd, 1)
+    let rel = geometry.min2(geometry.max2(px - nodes.box[id].x - kd / 2, 0), travel)
+    let fine = (rel * 10000 + travel / 2) / travel
+    nodes.anim[id].tween = fine
+    store_sig_paint(nodes.ui[id].bind_sig, (fine + 50) / 100)
+    mark_paint_id(id)
+}
+
+/// Thumb offset along `travel`. The drag's place stands only while it still
+/// rounds to the value: a key, a write or a coarse `step` moved it otherwise.
+fn slider_x(id: int, travel: int) -> int {
+    let pct = bind_pct(id)
+    let fine = nodes.anim[id].tween
+    if fine >= 0 && (fine + 50) / 100 == pct {
+        return (travel * fine + 5000) / 10000
+    }
+    return travel * pct / 100
 }
 
 // --- animation track pool (Phase 3) ---------------------------------------
@@ -2938,6 +2978,8 @@ struct Track {
     /// Kept apart from `current_value` so a retarget inherits the speed.
     pos: int,
     vel: int,
+    /// 1 until the track's first tick (`FIRST_STEP_MS`).
+    fresh: int,
 }
 
 let mut tracks: []Track = []Track {}
@@ -2987,7 +3029,7 @@ fn anim_ensure() {
             easing: 0,
             state: 0,
             pos: 0,
-            vel: 0,
+            vel: 0, fresh: 0,
         })
     }
     let mut i = 0
@@ -3019,24 +3061,24 @@ fn ease_bounce() -> int { return 6 }
 fn ease_glide() -> int { return 7 }
 fn ease_exit() -> int { return 8 }
 // Durations in ms, in step with `zeus.Motion`.
-fn motion_fast() -> int { return 100 }
-fn motion_base() -> int { return 170 }
-fn motion_slow() -> int { return 270 }
+fn motion_fast() -> int { return 70 }
+fn motion_base() -> int { return 120 }
+fn motion_slow() -> int { return 180 }
 
 /// `Style.transition` value naming an easing instead of a time: this plus an
 /// `EASE` code (`Motion.Pop`, ...).
 const MOTION_EASED: int = 100000
 /// The time a `Motion.Fall` exit takes: the scrim's own exit, so a sheet
 /// leaving on it is still painted when it lands.
-const FALL_MS: int = 170
+const FALL_MS: int = 110
 
 /// How long a surface takes to go: shorter than it took to arrive, because
 /// what leaves has already been read.
-const ENTER_FADE_MS: int = 120
-const EXIT_FADE_MS: int = 130
+const ENTER_FADE_MS: int = 80
+const EXIT_FADE_MS: int = 90
 /// The scrim outlasts the panel it hosts: paint stops at a hidden scrim, so a
 /// shorter fade would cut the panel's exit off.
-const SCRIM_FADE_MS: int = 170
+const SCRIM_FADE_MS: int = 110
 /// Where a `Enter.Pop` surface starts and leaves from (percent).
 const POP_FROM: int = 96
 const POP_TO: int = 98
@@ -3046,24 +3088,27 @@ const SINK_DP: int = 6
 
 // Spring constants for unit mass: stiffness in 1/s², damping in 1/s. A
 // spring has no duration: it stops when it has stopped, and `dur` is ignored.
+// All three the library uses are a little under critical damping, which gets
+// there sooner than critical does: 90% of the way in about 70 ms (Snap), 90 ms
+// (Pop) and 120 ms (Glide).
 fn spring_k(easing: int) -> int {
-    if easing == ease_snap() { return 900 }
-    if easing == ease_pop() { return 520 }
-    if easing == ease_bounce() { return 600 }
-    return 380
+    if easing == ease_snap() { return 2400 }
+    if easing == ease_pop() { return 1100 }
+    if easing == ease_bounce() { return 1200 }
+    return 800
 }
 fn spring_c(easing: int) -> int {
-    if easing == ease_snap() { return 54 }
-    if easing == ease_pop() { return 30 }
-    if easing == ease_bounce() { return 26 }
-    return 34
+    if easing == ease_snap() { return 88 }
+    if easing == ease_pop() { return 54 }
+    if easing == ease_bounce() { return 38 }
+    return 50
 }
 fn is_spring(easing: int) -> bool {
     return easing >= ease_snap() && easing <= ease_glide()
 }
 
-/// Integration step in ms. Small against the stiffest spring (k 900, period
-/// about 200 ms), and whole frames of 60 and 120 Hz divide it evenly.
+/// Integration step in ms. Small against the stiffest spring (k 2400, period
+/// about 130 ms), and whole frames of 60 and 120 Hz divide it evenly.
 const SPRING_STEP: int = 4
 /// At rest, in 1/256 of a track's unit: closer than the eye can tell (half a
 /// percent or degree, 1/8 dp, 0.1% of a scale), and all but stopped.
@@ -3485,6 +3530,7 @@ fn anim_schedule(node: int, prop: int, to_units: int, dur: int, easing: int) {
     tracks[slot].state = 1
     tracks[slot].pos = current_value * 256
     tracks[slot].vel = 0
+    tracks[slot].fresh = 1
     anim_active = anim_active + 1
     trk_inc(node, prop)
 }
@@ -3694,6 +3740,11 @@ fn anim_live_count() -> int {
     return anim_active
 }
 
+/// The most a track advances on its first tick. Hosts sleep when idle, so the
+/// frame that starts a motion carries a delta of up to the 64 ms cap; spent on
+/// the motion, it would skip most of a short fade before it was ever seen.
+const FIRST_STEP_MS: int = 16
+
 /// Advance every active track by `delta_ms` ms. Returns 1 when any track ran this
 /// frame (including the frame a track settles on, so its final value is drawn).
 fn anim_tick(delta_ms: int) -> int {
@@ -3710,10 +3761,13 @@ fn anim_tick(delta_ms: int) -> int {
             if dur <= 0 {
                 dur = 1
             }
-            let e = a.elapsed + delta_ms
+            // The delta after an idle spell measures the idle, not the motion.
+            let d = if a.fresh != 0 { geometry.min2(delta_ms, FIRST_STEP_MS) } else { delta_ms }
+            tracks[i].fresh = 0
+            let e = a.elapsed + d
             let is_sig = a.prop == APROP.SigVal
             if is_spring(a.easing) {
-                spring_tick(i, a, delta_ms, is_sig)
+                spring_tick(i, a, d, is_sig)
             } else if e >= dur {
                 tracks[i].current_value = a.to
                 tracks[i].elapsed = dur
@@ -4092,7 +4146,7 @@ fn sync_chrome_scan() {
             if nodes.anim[i].tween == TWEEN_UNSET {
                 nodes.anim[i].tween = target_value
             } else {
-                anim_schedule(i, APROP.SwitchTween, target_value, motion_fast(), ease_snap())
+                anim_schedule(i, APROP.SwitchTween, target_value, motion_base(), ease_standard())
             }
         }
         if k == 8 {
