@@ -139,6 +139,9 @@ const SELECT_W: int = 200
 /// selects, popovers, dialogs, drawers, toasts). Cards and inline surfaces
 /// stay flat; the hairline is their edge. Matches `Elevation.Raised`.
 const FLOAT_LIFT: int = 1
+/// How far a modal dims the page, percent. Enough to set the layer apart; the
+/// page stays legible behind it.
+const SCRIM_DIM: int = 50
 /// Stacking: scrim under the trigger/field, popup above both — so a Select
 /// menu is not covered by a Combobox field later in the same card. Panels
 /// that sit near each other then order by which one opened most recently.

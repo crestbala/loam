@@ -5,10 +5,10 @@ import "std:zeus"
 fn install() {
     zeus.theme(ROLE.Accent, 0x1F4B3A, 0x8FBF9F)
     zeus.theme(ROLE.AccentSoft, 0xE5F2EA, 0x1E3328)
-    zeus.theme(ROLE.Paper, 0xF6F5F1, 0x121311)
-    zeus.theme(ROLE.Ink, 0x1A1C19, 0xF2F3EF)
-    zeus.theme(ROLE.Mute, 0x5E655C, 0xA8B0A6)
-    zeus.theme(ROLE.Plate, 0xFFFDF8, 0x1C1E1B)
-    zeus.theme(ROLE.Raised, 0xEEEDE7, 0x262824)
-    zeus.theme(ROLE.Rule, 0xD9D6CC, 0x34362F)
+    zeus.theme(ROLE.Paper, 0xF6F7F9, 0x0B0C0F)
+    zeus.theme(ROLE.Ink, 0x15181D, 0xECEEF2)
+    zeus.theme(ROLE.Mute, 0x545A65, 0xADB4BF)
+    zeus.theme(ROLE.Plate, 0xFFFFFF, 0x14161B)
+    zeus.theme(ROLE.Raised, 0xEFF1F4, 0x1C1F25)
+    zeus.theme(ROLE.Rule, 0xE0E3E8, 0x31353E)
 }

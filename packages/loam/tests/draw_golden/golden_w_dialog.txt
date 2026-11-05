@@ -1,14 +1,14 @@
 DRAW 13
-fill 0 0 480 360 16250611 0
-text 32 32 2039066 17 Behind the dialog
-fill_a 0 0 480 360 0 204
-shadow 20 98 440 164 0 6 22 16 0 6
-shadow 20 98 440 164 0 6 20 2 0 1
+fill 0 0 480 360 16185337 0
+text 32 32 1382429 17 Behind the dialog
+fill_a 0 0 480 360 0 127
+shadow 20 98 440 164 0 6 16 20 0 8
+shadow 20 98 440 164 0 6 14 2 0 1
 fill 20 98 440 164 16777215 6
-stroke 20 98 440 164 15000284 6 1 255
-text 45 126 2039066 17 Share the link?
-svg 413 129 16 16 4012339
-text 45 167 4012339 14 Anyone with the link can view this project.
-text 283 210 2039066 14 Cancel
+stroke 20 98 440 164 14738408 6 1 255
+text 45 126 1382429 17 Share the link?
+svg 413 129 16 16 3685702
+text 45 167 3685702 14 Anyone with the link can view this project.
+text 283 210 1382429 14 Cancel
 fill 363 201 72 36 1513239 4
 text 379 210 16777215 14 Share

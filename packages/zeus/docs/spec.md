@@ -364,9 +364,9 @@ rebuild and no effect run — the same paint-time resolution that makes the
 light / dark switch free. `accent_choice()` reports the ramp in effect;
 `accent_count()` / `accent_name(i)` drive a picker and
 `accent_scale_light(i).s9` gives a swatch color. The gallery navbar is the
-reference picker. Neutrals are warm stone: the light page is `#f7f6f3` under
-a white card, text `#1f1d1a`; the dark page is `#121110`, the card `#1b1a18`,
-text `#ecebe7`. Status tiers are leaf, sunflower, poppy, and lake. Each ink
+reference picker. Neutrals are a cool grey: the light page is `#f6f7f9` under
+a white card, text `#15181d`; the dark page is `#0b0c0f`, the card `#14161b`,
+text `#eceef2`. Status tiers are leaf, sunflower, poppy, and lake. Each ink
 clears 4.5:1 on the page and on its wash. Ok, danger, and info solids take
 white text; the sunflower solid takes near-black.
 

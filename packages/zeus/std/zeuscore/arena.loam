@@ -5115,7 +5115,7 @@ struct Elev {
 fn elevation(level: int) -> Elev {
     if level <= 0 { return Elev(alpha = 0, blur = 0, dx = 0, dy = 0) }
     if level == 1 {
-        return Elev(alpha = 20, blur = 2, dx = 0, dy = 1, amb_alpha = 22, amb_blur = 16, amb_dy = 6)
+        return Elev(alpha = 14, blur = 2, dx = 0, dy = 1, amb_alpha = 16, amb_blur = 20, amb_dy = 8)
     }
     if level == 2 {
         return Elev(alpha = 22, blur = 4, dx = 0, dy = 2, amb_alpha = 20, amb_blur = 18, amb_dy = 8)
@@ -5137,7 +5137,7 @@ fn elevation(level: int) -> Elev {
 fn elevation_dark(level: int) -> Elev {
     if level <= 0 { return Elev(alpha = 0, blur = 0, dx = 0, dy = 0) }
     if level == 1 {
-        return Elev(alpha = 70, blur = 2, dx = 0, dy = 1, amb_alpha = 50, amb_blur = 10, amb_dy = 4)
+        return Elev(alpha = 70, blur = 2, dx = 0, dy = 1, amb_alpha = 60, amb_blur = 20, amb_dy = 8)
     }
     if level == 2 {
         return Elev(alpha = 80, blur = 4, dx = 0, dy = 2, amb_alpha = 70, amb_blur = 18, amb_dy = 8)

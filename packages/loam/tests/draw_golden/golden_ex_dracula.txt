@@ -5,18 +5,18 @@ clip 0 0 640 480
 fill 0 0 640 480 1119000 0
 fill 32 39 22 22 15987958 6
 text 74 39 15987958 17 dracula
-fill 164 32 88 36 2368032 4
+fill 164 32 88 36 1842981 4
 text 176 41 15987958 14 Holdings
-text 284 41 13946308 14 Charts
-text 376 41 13946308 14 Screener
-text 484 41 13946308 14 Backtest
-text 44 97 13946308 14 Walk-forward
-text 184 97 13946308 14 Stocks
-text 276 97 13946308 14 Data
-text 360 98 13946308 12 Dark
+text 284 41 13488858 14 Charts
+text 376 41 13488858 14 Screener
+text 484 41 13488858 14 Backtest
+text 44 97 13488858 14 Walk-forward
+text 184 97 13488858 14 Stocks
+text 276 97 13488858 14 Data
+text 360 98 13488858 12 Dark
 fill 408 96 36 20 15987958 999
-fill 427 99 14 14 1776152 7
-fill 32 124 576 1 3946547 0
+fill 427 99 14 14 1316379 7
+fill 32 124 576 1 3224894 0
 text 32 149 15987958 22 Holdings
 text_wrap 32 199 576 A signal names the rule and the NAV it saw. The fill is the next published NAV. Nothing on this page is an order. Click a row for its chart.
 text 32 277 0 0 No holdings yet
