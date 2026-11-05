@@ -40,6 +40,10 @@ still runs, without that feature.
 | Safe area, overlay scrollbars | `zeus_set_insets`, `zeus_set_overlay_scroll` | no insets; classic scrollbars |
 | Initial window size | `zeus_set_initial_view` | 640 × 480 until the window opens |
 
+The web host also implements `std:analytics` (`track_start`, `track_send`,
+`track_opt_out`, `track_opted_out`). Other hosts need nothing: those calls do
+nothing there.
+
 ## The hosts in this repo
 
 | Host | Files |

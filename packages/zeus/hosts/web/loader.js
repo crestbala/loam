@@ -109,6 +109,173 @@
     return { d: (v * (1 - f)) / FLING_DECAY, v: v * f };
   }
   root.zeusFling = { velocity: flingVelocity, step: flingStep };
+
+  /* Site analytics (`std:analytics`). The wasm says what happened; this keeps the
+     anonymous ids, measures time on a page, and posts batches. `env` is the
+     browser, passed in so a test can drive the clock and the lifecycle. */
+  const TRACK_ID_KEY = "zeus.track.id";
+  const TRACK_OFF_KEY = "zeus.track.off";
+  const TRACK_SESSION_MS = 30 * 60 * 1000;
+  const TRACK_BATCH = 20;
+  /* Long, as each post costs the endpoint a call: hiding the tab sends the rest. */
+  const TRACK_FLUSH_MS = 30000;
+  function createTracker(env) {
+    let endpoint = "";
+    let queue = [];
+    let timer = 0;
+    let ids = null;
+    let page = null;
+    const started = () => endpoint !== "" && env.get(TRACK_OFF_KEY) !== "1";
+    /* The ids, renewed: a session ends after 30 idle minutes, across tabs. */
+    const session = () => {
+      const t = env.now();
+      let s = null;
+      try {
+        s = JSON.parse(env.get(TRACK_ID_KEY));
+      } catch (e) {}
+      if (!s || !s.vid) s = { vid: env.id(), sid: "", at: 0 };
+      const fresh = !s.sid || t - s.at > TRACK_SESSION_MS;
+      if (fresh) s.sid = env.id();
+      s.at = t;
+      env.set(TRACK_ID_KEY, JSON.stringify(s));
+      ids = s;
+      return fresh;
+    };
+    const flush = () => {
+      if (timer) env.cancel(timer);
+      timer = 0;
+      if (!queue.length) return;
+      const body = JSON.stringify({ v: 1, vid: ids.vid, events: queue });
+      queue = [];
+      env.post(endpoint, body);
+    };
+    const add = (ev) => {
+      ev.sid = ids.sid;
+      ev.ts = env.now();
+      queue.push(ev);
+      if (queue.length >= TRACK_BATCH) flush();
+      else if (!timer) timer = env.after(flush, TRACK_FLUSH_MS);
+    };
+    /* Report the visible time since the last report. A page sends this in
+       parts, whenever the tab hides, and the parts add up. */
+    const leave = () => {
+      if (!page) return;
+      if (page.since) page.ms += env.now() - page.since;
+      page.since = 0;
+      if (page.ms > 0) add({ k: "leave", path: page.path, pv: page.pv, ms: page.ms });
+      page.ms = 0;
+    };
+    const open = (path, fresh) => {
+      leave();
+      if (session()) fresh = true;
+      page = { path: path, pv: env.id(), ms: 0, since: env.visible() ? env.now() : 0 };
+      const ev = { k: "page", path: path, pv: page.pv, w: env.width() };
+      if (fresh) ev.ref = env.referrer();
+      add(ev);
+    };
+    const onHide = () => {
+      if (!started()) return;
+      leave();
+      flush();
+    };
+    const onShow = () => {
+      if (!started() || !page) return;
+      /* Back after the session ran out: this is a new visit to this page. */
+      if (env.now() - ids.at > TRACK_SESSION_MS) open(page.path, true);
+      else page.since = env.now();
+    };
+    return {
+      start(url, local) {
+        if (endpoint || env.blocked(local)) return;
+        endpoint = url;
+        env.watch(onShow, onHide);
+      },
+      send(kind, name, data) {
+        if (!started()) return;
+        if (kind === 0) {
+          open(name, false);
+          return;
+        }
+        if (!page) return;
+        session();
+        const ev = { k: kind === 1 ? "click" : "event", path: page.path, pv: page.pv, name: name };
+        if (data) ev.data = data;
+        add(ev);
+      },
+      optOut(off) {
+        if (off) {
+          queue = [];
+          page = null;
+          env.set(TRACK_OFF_KEY, "1");
+          env.remove(TRACK_ID_KEY);
+        } else {
+          env.remove(TRACK_OFF_KEY);
+        }
+      },
+      optedOut: () => env.get(TRACK_OFF_KEY) === "1",
+    };
+  }
+  root.zeusTracker = createTracker;
+  /* `env` for a real page. Storage falls back to memory when it is blocked,
+     so ids then last as long as the page. */
+  function browserTrackEnv() {
+    const mem = new Map();
+    return {
+      now: () => Date.now(),
+      id: () => Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join(""),
+      get: (k) => {
+        try {
+          const v = localStorage.getItem(k);
+          if (v !== null) return v;
+        } catch (e) {}
+        return mem.has(k) ? mem.get(k) : null;
+      },
+      set: (k, v) => {
+        mem.set(k, v);
+        try {
+          localStorage.setItem(k, v);
+        } catch (e) {}
+      },
+      remove: (k) => {
+        mem.delete(k);
+        try {
+          localStorage.removeItem(k);
+        } catch (e) {}
+      },
+      after: (fn, ms) => setTimeout(fn, ms),
+      cancel: (t) => clearTimeout(t),
+      /* A string body is text/plain, so a beacon needs no preflight. */
+      post: (url, body) => {
+        if (navigator.sendBeacon && navigator.sendBeacon(url, body)) return;
+        fetch(url, { method: "POST", body: body, keepalive: true }).catch(() => {});
+      },
+      visible: () => document.visibilityState === "visible",
+      width: () => innerWidth,
+      /* Another site that sent the visitor here, by host only. */
+      referrer: () => {
+        try {
+          const host = new URL(document.referrer).host;
+          return host === location.host ? "" : host;
+        } catch (e) {
+          return "";
+        }
+      },
+      /* Global Privacy Control, Do Not Track, automated browsers, and a dev
+         machine unless the app asked for it. */
+      blocked: (local) =>
+        navigator.globalPrivacyControl === true ||
+        navigator.doNotTrack === "1" ||
+        navigator.webdriver === true ||
+        (!local && /^(localhost|127\.|\[::1\])/.test(location.hostname)),
+      watch: (show, hide) => {
+        document.addEventListener("visibilitychange", () => {
+          if (document.visibilityState === "visible") show();
+          else hide();
+        });
+        addEventListener("pagehide", hide);
+      },
+    };
+  }
   /* The light / dark choice. `zeli`'s page shell reads this key too, before the
      first paint. */
   const APPEARANCE_KEY = "zeus-appearance";
@@ -195,6 +362,8 @@
       logRelay.queue.push(line);
       if (!logRelay.timer) logRelay.timer = setTimeout(relayFlush, 100);
     };
+    let tracker = null;
+    const tracked = () => tracker || (tracker = createTracker(browserTrackEnv()));
     const imgCache = new Map();
     let fileInput = null;
     /* Media players (`plat_media_*`): one <video> per slot, never in the DOM.
@@ -911,6 +1080,11 @@
         const bar = document.querySelector('meta[name="theme-color"]');
         if (bar) bar.setAttribute("content", paper);
       },
+      track_start: (ptr, len, local) => tracked().start(bytes(ptr, len), local !== 0),
+      track_send: (kind, namePtr, nameLen, dataPtr, dataLen) =>
+        tracked().send(kind, bytes(namePtr, nameLen), bytes(dataPtr, dataLen)),
+      track_opt_out: (off) => tracked().optOut(off !== 0),
+      track_opted_out: () => (tracked().optedOut() ? 1 : 0),
       /* Not the `noopener` feature: with it `open` always returns null, which
          reads as blocked. A really blocked popup leaves in this tab instead. */
       open_external: (ptr, len) => {

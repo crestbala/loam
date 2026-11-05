@@ -1,0 +1,82 @@
+// `std:analytics`: what it reports is decided in Loam and checked here. The web
+// side (ids, timing, batches) runs in `hosts/web/wasm_smoke.ts`.
+
+import "std:fmt"
+import "std:sys"
+import "std:zeus"
+import "std:zui"
+import "std:analytics"
+import "std:router"
+
+fn fail(what: string) {
+    fmt.println("FAIL", what)
+    sys.exit(1)
+}
+
+let mut seen: []string = []string {}
+
+fn saw(name: string) -> bool {
+    for i in 0..seen.len {
+        if fmt.eq(seen[i], name) {
+            return true
+        }
+    }
+    return false
+}
+
+fn main() {
+    if !fmt.eq(analytics.clean_path("/a/b?token=1#x"), "/a/b") {
+        fail("query kept in a path")
+    }
+    if !fmt.eq(analytics.clean_path("/a#x"), "/a") {
+        fail("fragment kept in a path")
+    }
+    if !fmt.eq(analytics.clean_path("/"), "/") {
+        fail("plain path changed")
+    }
+    let hits = zeus.signal(0)
+    zeus.snapshot(400, 300, fn() -> Node {
+        // Every call is a no-op off web, and must be safe to make.
+        analytics.start(AnalyticsProps {})
+        analytics.start(AnalyticsProps {})
+        analytics.event("signed_up", "pro")
+        zeus.watch_clicks(fn(name: string, link: string) {
+            push(seen, name)
+            if link.len > 0 {
+                push(seen, link)
+            }
+        })
+        return zeus.Box(style = Style(direction = Direction.Column)) {
+            zui.Button("Save", on_click = fn() => hits.set(hits.get() + 1))
+            let door = zeus.Box(style = Style(width = px(100), height = px(30)), label = "Open door")
+            zeus.on_click(door, fn() => hits.set(hits.get() + 1))
+            let row = zeus.Box(style = Style(direction = Direction.Row)) {
+                zeus.Text("Nested name")
+            }
+            zeus.on_click(row, fn() => hits.set(hits.get() + 1))
+            zeus.Text("Not a control")
+        }
+    })
+    zeus.engine_click_text("Save")
+    zeus.engine_click_text("Open door")
+    zeus.engine_click_text("Nested name")
+    zeus.engine_click_text("Not a control")
+    if hits.get() != 3 {
+        fail("handlers still run")
+    }
+    if !saw("Save") {
+        fail("button text")
+    }
+    if !saw("Open door") {
+        fail("accessible label")
+    }
+    if !saw("Nested name") {
+        fail("text under a control")
+    }
+    if saw("Not a control") {
+        fail("a label with no click action was reported")
+    }
+    if analytics.opted_out() {
+        fail("opted out by default")
+    }
+}

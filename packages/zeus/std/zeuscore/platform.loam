@@ -131,6 +131,15 @@ fn plat_chunks_preload(index: int) {}
 fn plat_appearance_load() -> int {}
 /// Remember the user's light / dark choice across visits.
 fn plat_appearance_save(dark: int) {}
+/// Send analytics to `endpoint`. `local` also reports from a loopback host.
+/// Web only, like the two below: elsewhere these do nothing.
+fn plat_track_start(endpoint: string, local: int) {}
+/// Report one thing. `kind`: 0 page (`name` is the path), 1 click, 2 event.
+fn plat_track_send(kind: int, name: string, data: string) {}
+/// Opt this browser out of analytics (1) or back in (0).
+fn plat_track_opt_out(off: int) {}
+/// 1 when this browser is opted out.
+fn plat_track_opted_out() -> int {}
 /// 1 when `ZEUS_LAYOUT_VERIFY=1` asks layout to check its memo. Always 0 in a web
 /// release, which leaves the check's code out of the download.
 fn plat_layout_verify() -> int {}

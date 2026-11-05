@@ -2082,6 +2082,18 @@ fn set_ui_hooks(depth: fn() -> int, trim: fn(int)) {
     ui_trim_hook = trim
 }
 
+let mut click_hook: fn(int) = fn(id: int) {}
+
+/// Have `watch` told about each click on a control, by node id, before the
+/// control's handler runs (that handler may rebuild the node away).
+fn set_click_hook(watch: fn(int)) {
+    click_hook = watch
+}
+
+fn note_click(id: int) {
+    click_hook(id)
+}
+
 /// A handler call site: run `fid` for `node` through the guard.
 fn invoke_handler(fid: int, node: int) {
     invoke_on(fid, node)
