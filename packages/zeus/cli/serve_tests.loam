@@ -299,7 +299,9 @@ fn chunks_too_small_to_fetch_stay_in_the_primary() {
 
 #[test]
 fn a_route_with_nothing_unique_needs_no_chunks() {
-    let mut g = chunks.parse_c("int loam_b_a(void) {\n    return 0;\n}\nint loam_b_b(void) {\n    return 0;\n}\n")
+    let mut g = chunks.parse_c(
+        "int loam_b_a(void) {\n    return 0;\n}\nint loam_b_b(void) {\n    return 0;\n}\n",
+    )
     let entries = []int { chunks.find_suffix(&g, "b_a"), chunks.find_suffix(&g, "b_b") }
     let p = chunks.plan(&g, []int {}, entries, 1000)
     test.assert_eq_int(p.chunks.len, 0)
@@ -343,7 +345,10 @@ fn idle_fetch_takes_shared_small_chunks_most_shared_first() {
 fn prepaint_keeps_reading_order_links_and_drops_icons() {
     let outline = "14\t20\t60\t100\t/more\tBody & more\n0\t4\t0\t16\t\t<svg/>\n32\t20\t10\t100\t\tTitle\n22\t20\t40\t100\t\tSection\n"
     let html = zeli.prepaint_html(outline)
-    test.assert_eq_str(html, "<h1>Title</h1>\n<h2>Section</h2>\n<p><a href=\"/more\">Body &amp; more</a></p>\n")
+    test.assert_eq_str(
+        html,
+        "<h1>Title</h1>\n<h2>Section</h2>\n<p><a href=\"/more\">Body &amp; more</a></p>\n",
+    )
 }
 
 #[test]
@@ -452,4 +457,90 @@ fn a_launched_process_is_stoppable() {
     test.assert(zeli.stop_pid(pid))
     test.assert(!zeli.pid_alive(0))
     test.assert(!zeli.pid_alive(-1))
+}
+
+#[test]
+fn run_jobs_reports_each_command_in_order() {
+    let dir = "/tmp/zeli_jobs_test"
+    sys.remove_path(dir)
+    let jobs = zeli.run_jobs(dir, []string { "echo one", "echo two; exit 3", "echo three" })
+    test.assert(jobs.len == 3)
+    test.assert(jobs[0].ok && has(jobs[0].log, "one"))
+    test.assert(!jobs[1].ok && has(jobs[1].log, "two"))
+    test.assert(jobs[2].ok && has(jobs[2].log, "three"))
+    sys.remove_path(dir)
+}
+
+/* `sys.exec` refuses a command over 8 KB and says nothing, which is the size a
+   web build's per-chunk `wasm-opt` commands reach. */
+#[test]
+fn run_jobs_takes_more_than_one_exec_can_hold() {
+    let dir = "/tmp/zeli_jobs_big_test"
+    sys.remove_path(dir)
+    let mut filler = ""
+    for i in 0..1000 {
+        filler = "{{filler}}x"
+    }
+    let mut cmds = []string {}
+    for i in 0..12 {
+        push(cmds, "echo {{filler}} >/dev/null; echo job{{i}}")
+    }
+    let jobs = zeli.run_jobs(dir, cmds)
+    test.assert(jobs.len == 12)
+    for i in 0..12 {
+        test.assert(jobs[i].ok)
+        test.assert(has(jobs[i].log, "job{{i}}"))
+    }
+    sys.remove_path(dir)
+}
+
+#[test]
+fn panel_times_read_in_tenths() {
+    test.assert_eq_str(zeli.ui_time(0), "0.0s")
+    test.assert_eq_str(zeli.ui_time(2150), "2.1s")
+    test.assert_eq_str(zeli.ui_time(61900), "61.9s")
+}
+
+#[test]
+fn panel_report_follows_the_build_env() {
+    test.assert_eq_str(zeli.ui_env("LOAM_DEV=1", ""), "LOAM_DEV=1")
+    test.assert_eq_str(zeli.ui_env("", "/a"), "LOAM_PROGRESS='/a'")
+    test.assert_eq_str(zeli.ui_env("LOAM_DEV=1", "/a"), "LOAM_DEV=1 LOAM_PROGRESS='/a'")
+}
+
+#[test]
+fn panel_stays_off_outside_a_terminal() {
+    /* What the suite and every log file rely on: `say` is a plain print. */
+    zeli.ui_open("Web", true)
+    test.assert(!zeli.ui_on)
+}
+
+#[test]
+fn the_compiler_reports_its_steps() {
+    let dir = "/tmp/zeli_progress_test"
+    sys.remove_path(dir)
+    sys.mkdir(dir)
+    let src = "{{dir}}/p.loam"
+    sys.write_file(src, "fn main() {\n}\n")
+    sys.exec("LOAM_PROGRESS={{dir}}/log {{zeli.loam_path()}} {{src}} -o {{dir}}/p 2>&1")
+    let log = sys.read_file("{{dir}}/log")
+    test.assert(has(log, "check\n"))
+    test.assert(has(log, "modules "))
+    test.assert(has(log, "codegen\n"))
+    test.assert(has(log, "cc\n"))
+    sys.remove_path(dir)
+}
+
+#[test]
+fn hashes_come_back_in_the_order_asked() {
+    let dir = "/tmp/zeli_hash_test"
+    sys.remove_path(dir)
+    sys.mkdir(dir)
+    sys.write_file("{{dir}}/b.txt", "bee")
+    sys.write_file("{{dir}}/a.txt", "ay")
+    let both = zeli.short_hashes(dir, []string { "b.txt", "a.txt" })
+    test.assert_eq_str(both[0], zeli.short_hash("{{dir}}/b.txt"))
+    test.assert_eq_str(both[1], zeli.short_hash("{{dir}}/a.txt"))
+    test.assert(both[0].len == 12)
+    sys.remove_path(dir)
 }

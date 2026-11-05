@@ -24,6 +24,10 @@ fn exec(cmd: string) -> string {}
 /// Exit code of the last `exec` (`1` if it could not start).
 fn exec_status() -> int {}
 
+/// `1` if stdout is a terminal, so output may be redrawn in place. A child of
+/// `exec` cannot tell, its stdout being the capture pipe. Wasm returns `0`.
+fn stdout_tty() -> int {}
+
 /// Read the whole file. Empty if missing or over 1 GiB. Native only; wasm
 /// returns empty.
 fn read_file(path: string) -> string {}

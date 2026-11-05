@@ -1256,6 +1256,7 @@ static inline loam_str loam_sys_exec(loam_str cmd) {
     return (loam_str){"", 0};
 }
 static inline int64_t loam_sys_exec_status(void) { return 1; }
+static inline int64_t loam_sys_stdout_tty(void) { return 0; }
 static inline loam_str loam_sys_read_file(loam_str path) {
     (void)path;
     return (loam_str){"", 0};
@@ -1407,6 +1408,7 @@ static inline loam_str loam_sys_exec(loam_str cmd) {
 }
 
 static inline int64_t loam_sys_exec_status(void) { return loam_sys_last_status; }
+static inline int64_t loam_sys_stdout_tty(void) { return isatty(STDOUT_FILENO); }
 
 /* The development-host seam (`std:host`): hand the process to a `zeli serve` host
    that loads the app as a shared image. Declared here because that is where a

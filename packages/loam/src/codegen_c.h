@@ -37,4 +37,13 @@ void codegen_set_server_split(int on);
  */
 void codegen_set_path_strip(const char *prefix);
 
+/**
+ * Shard mode, for `LOAM_SHARD` builds: the output stays one file, marked so the
+ * driver can cut it into separately compiled units. Everything before the first
+ * `@S name` comment is a header every unit includes, each of those comments starts
+ * one definition, and an `@D` comment starts the data only `LOAM_SHARD_DEFS`
+ * compiles. The file is still one valid translation unit with that macro defined.
+ */
+void codegen_set_shard(int on);
+
 #endif
