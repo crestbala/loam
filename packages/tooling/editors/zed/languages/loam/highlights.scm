@@ -53,6 +53,9 @@
 (let_statement
   name: (identifier) @variable)
 
+(let_tuple
+  name: (identifier) @variable)
+
 (const_item
   name: (identifier) @constant)
 
